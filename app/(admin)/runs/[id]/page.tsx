@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { getRun } from "@/lib/domain/runs";
 import { requireAdmin } from "@/lib/security/require-admin";
+import { RUN_KIND_LABELS, RUN_STATUS_LABELS, SCOPE_TYPE_LABELS, STAGE_STATUS_LABELS } from "../../_components/labels";
 
 export default async function Page({ params }: PageProps<"/runs/[id]">) {
   await requireAdmin();
@@ -15,13 +16,13 @@ export default async function Page({ params }: PageProps<"/runs/[id]">) {
       <h1 className="text-lg font-semibold">Lauf {run.id}</h1>
       <dl className="grid grid-cols-[8rem_1fr] gap-y-1">
         <dt>Art</dt>
-        <dd>{run.kind}</dd>
+        <dd>{RUN_KIND_LABELS[run.kind]}</dd>
         <dt>Umfang</dt>
         <dd>
-          {run.scope.type}: {run.scope.id}
+          {SCOPE_TYPE_LABELS[run.scope.type]}: {run.scope.id}
         </dd>
         <dt>Status</dt>
-        <dd>{run.status}</dd>
+        <dd>{RUN_STATUS_LABELS[run.status]}</dd>
         <dt>Gestartet von</dt>
         <dd>{run.triggeredBy}</dd>
         <dt>Kosten</dt>
@@ -41,7 +42,7 @@ export default async function Page({ params }: PageProps<"/runs/[id]">) {
           {run.stages.map((s) => (
             <tr key={s.stage} className="border-b border-neutral-200">
               <td className="py-1 pr-4">{s.stage}</td>
-              <td className="pr-4">{s.status}</td>
+              <td className="pr-4">{STAGE_STATUS_LABELS[s.status]}</td>
               <td className="pr-4">{s.done}</td>
               <td className="pr-4">{s.failed}</td>
               <td>{s.total}</td>

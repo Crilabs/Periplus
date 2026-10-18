@@ -47,6 +47,8 @@ services:
     restart: unless-stopped
     <<: [*app-env, *logging]
     command: ["node", "--import", "tsx", "worker/index.ts"]
+    # Lets running jobs finish and the heartbeat row be removed before SIGKILL.
+    stop_grace_period: 60s
     depends_on:
       postgres:
         condition: service_healthy

@@ -61,3 +61,17 @@ test("health endpoints are public", async ({ request }) => {
   expect((await request.get("/healthz")).status()).toBe(200);
   expect(await (await request.get("/readyz")).json()).toEqual({ status: "ok" });
 });
+
+test("redirect Location is relative and ignores a spoofed Host header", async ({ baseURL }) => {
+  const { request } = await import("node:http");
+  const url = new URL("/runs", baseURL);
+  const location = await new Promise<string | undefined>((resolve, reject) => {
+    request(url, { headers: { host: "evil.example" } }, (res) => {
+      res.resume();
+      resolve(res.headers.location);
+    })
+      .on("error", reject)
+      .end();
+  });
+  expect(location).toBe("/login?next=%2Fruns");
+});

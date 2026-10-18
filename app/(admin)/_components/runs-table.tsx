@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { RunView } from "@/lib/domain/runs";
+import { RUN_KIND_LABELS, RUN_STATUS_LABELS } from "./labels";
 
 const date = (d: Date | null) => (d ? d.toISOString().slice(0, 19).replace("T", " ") : "–");
 
@@ -25,8 +26,8 @@ export function RunsTable({ runs }: { runs: RunView[] }) {
                 {run.id.slice(0, 8)}
               </Link>
             </td>
-            <td className="pr-4">{run.kind}</td>
-            <td className="pr-4">{run.status}</td>
+            <td className="pr-4">{RUN_KIND_LABELS[run.kind]}</td>
+            <td className="pr-4">{RUN_STATUS_LABELS[run.status]}</td>
             <td className="pr-4">{date(run.startedAt)}</td>
             <td className="pr-4">{run.triggeredBy}</td>
             <td className="text-right">{run.costEur.toFixed(4)} €</td>

@@ -13,6 +13,9 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
     hasBearer: BEARER.test(request.headers.get("authorization") ?? ""),
   });
 
+  // Next's proxy adapter requires an absolute Location (it parses it with NextURL) and rewrites a
+  // same-host one to a relative path, so the client-controlled Host never reaches the browser.
+  // Asserted end-to-end in e2e/login.spec.ts ("redirect Location is relative …").
   if (decision.action === "redirect") return NextResponse.redirect(new URL(decision.to, request.url));
   if (decision.action === "deny") {
     const code = decision.status === 401 ? "unauthorized" : "not_found";
@@ -32,5 +35,6 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Exact exclusions: `/_next/static/…`, `/_next/image…` and `/favicon.ico` only (tested in lib/security/__tests__/proxy.test.ts).
+  matcher: ["/((?!_next/static/|_next/image|favicon\\.ico$).*)"],
 };

@@ -1,5 +1,5 @@
 import { hostname } from "node:os";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { workerHeartbeats } from "@/lib/db/schema";
@@ -34,8 +34,9 @@ async function main(): Promise<void> {
       .onConflictDoUpdate({ target: workerHeartbeats.workerId, set: { beatAt: sql`now()` } });
   }
   await beat();
+  let beating: Promise<void> = Promise.resolve();
   const heartbeat = setInterval(() => {
-    beat().catch((err: unknown) => log.error({ err }, "heartbeat failed"));
+    beating = beat().catch((err: unknown) => log.error({ err }, "heartbeat failed"));
   }, HEARTBEAT_MS);
 
   log.info({ workerId, queues: [...QUEUES, DEAD_LETTER_QUEUE] }, "worker started");
@@ -49,6 +50,10 @@ async function main(): Promise<void> {
     try {
       await workers.stop();
       await boss.stop({ graceful: true });
+      // Remove our heartbeat so the overview does not list this worker as alive; wait for an
+      // in-flight beat first so it cannot re-insert the row afterwards.
+      await beating;
+      await db.delete(workerHeartbeats).where(eq(workerHeartbeats.workerId, workerId));
       log.info("worker stopped");
       process.exit(0);
     } catch (err) {

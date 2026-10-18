@@ -32,11 +32,11 @@ describe("logger", () => {
     expect(line.headers.cookie).toBe("[Redacted]");
   });
 
-  it("redacts nested token, key, passwordHash, authorization and cookie", () => {
+  it("redacts nested token, apiKey, passwordHash, authorization and cookie", () => {
     const [line] = captureLogs((log) =>
       log.info(
         {
-          user: { token: "t", key: "k", passwordHash: "h" },
+          user: { token: "t", apiKey: "k", passwordHash: "h" },
           req: { authorization: "a", cookie: "c" },
           token: "t2",
           passwordHash: "h2",
@@ -44,10 +44,16 @@ describe("logger", () => {
         "x",
       ),
     );
-    expect(line.user).toEqual({ token: "[Redacted]", key: "[Redacted]", passwordHash: "[Redacted]" });
+    expect(line.user).toEqual({ token: "[Redacted]", apiKey: "[Redacted]", passwordHash: "[Redacted]" });
     expect(line.req).toEqual({ authorization: "[Redacted]", cookie: "[Redacted]" });
     expect(line.token).toBe("[Redacted]");
     expect(line.passwordHash).toBe("[Redacted]");
+  });
+
+  it("keeps job business keys visible", () => {
+    const [line] = captureLogs((log) => log.info({ key: "berlin-mitte", job: { key: "page-1" } }, "x"));
+    expect(line.key).toBe("berlin-mitte");
+    expect(line.job).toEqual({ key: "page-1" });
   });
 
   it("createLogger tags the module", () => {

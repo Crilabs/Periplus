@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { getDb } from "@/lib/db/client";
-import { overview } from "@/lib/domain/overview";
+import { overview, REVIEW_KINDS } from "@/lib/domain/overview";
 import { requireAdmin } from "@/lib/security/require-admin";
+import { REVIEW_KIND_LABELS } from "./_components/labels";
 import { RunsTable } from "./_components/runs-table";
 
 const eur = (n: number) => `${n.toFixed(2)} €`;
@@ -18,9 +19,9 @@ export default async function Page() {
         <h2 className="mb-1 font-semibold">Offene Prüfungen</h2>
         <p>Gesamt: {openTotal}</p>
         <ul className="grid grid-cols-2 gap-x-6 sm:grid-cols-4">
-          {Object.entries(data.openReviewTasks).map(([kind, n]) => (
+          {REVIEW_KINDS.map((kind) => (
             <li key={kind}>
-              {kind}: {n}
+              {REVIEW_KIND_LABELS[kind]}: {data.openReviewTasks[kind]}
             </li>
           ))}
         </ul>
