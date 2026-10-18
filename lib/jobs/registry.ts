@@ -1,5 +1,6 @@
 import { gazetteerHandler } from "./handlers/gazetteer";
 import { advanceHandler } from "./handlers/run-advance";
+import { seedTileHandler } from "./handlers/seed";
 import { pingHandler } from "./handlers/system-ping";
 import { tilesEnsureHandler } from "./handlers/tiles";
 import type { QueueName } from "./queues";
@@ -11,4 +12,5 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "run.advance": advanceHandler,
   "tiles.ensure": tilesEnsureHandler,
   "gazetteer.build": gazetteerHandler,
+  "seed.tile": seedTileHandler,
 };

@@ -5,6 +5,7 @@ import {
   gazetteerOsmStage,
   gazetteerWikidataStage,
 } from "./handlers/gazetteer";
+import { seedTileStage } from "./handlers/seed";
 import { pingStage } from "./handlers/system-ping";
 import { tilesEnsureStage } from "./handlers/tiles";
 
@@ -16,4 +17,5 @@ export const STAGES: Record<string, StageDefinition> = {
   [gazetteerWikidataStage.name]: gazetteerWikidataStage,
   [gazetteerGeonamesStage.name]: gazetteerGeonamesStage,
   [gazetteerHierarchyStage.name]: gazetteerHierarchyStage,
+  [seedTileStage.name]: seedTileStage,
 };
