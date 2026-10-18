@@ -1,4 +1,5 @@
 import type { StageDefinition } from "@/lib/pipeline/runs";
+import { advanceHandler } from "./handlers/run-advance";
 import { pingHandler, pingStage } from "./handlers/system-ping";
 import type { QueueName } from "./queues";
 import type { JobData, JobHandler } from "./worker";
@@ -11,4 +12,5 @@ export const STAGES: Record<string, StageDefinition> = {
 /** The handler the worker runs for each queue. */
 export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "system.ping": pingHandler,
+  "run.advance": advanceHandler,
 };

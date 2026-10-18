@@ -23,6 +23,12 @@ export default async function Page({ params }: PageProps<"/runs/[id]">) {
         </dd>
         <dt>Status</dt>
         <dd>{RUN_STATUS_LABELS[run.status]}</dd>
+        {run.failureReason && (
+          <>
+            <dt>Fehlergrund</dt>
+            <dd>{run.failureReason}</dd>
+          </>
+        )}
         <dt>Gestartet von</dt>
         <dd>{run.triggeredBy}</dd>
         <dt>Kosten</dt>

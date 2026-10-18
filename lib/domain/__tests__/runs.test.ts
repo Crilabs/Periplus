@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { testDb } from "@/test/db";
 import { externalCalls } from "@/lib/db/schema";
-import { beginStage, createRun, getRun, listRuns, recordJobOutcome } from "@/lib/domain/runs";
+import { beginStage, createRun, failRun, getRun, listRuns, recordJobOutcome } from "@/lib/domain/runs";
 
 const db = testDb();
 
@@ -19,7 +19,15 @@ describe("runs", () => {
   it("creates pending stages with ordinals and a queued run", async () => {
     const { id } = await newRun(["a", "b"]);
     const run = await getRun(db, id);
-    expect(run).toMatchObject({ id, kind: "full", status: "queued", triggeredBy: "test", startedAt: null, costEur: 0 });
+    expect(run).toMatchObject({
+      id,
+      kind: "full",
+      status: "queued",
+      triggeredBy: "test",
+      startedAt: null,
+      costEur: 0,
+      failureReason: null,
+    });
     expect(run!.scope.type).toBe("tile");
     expect(run!.stages).toMatchObject([
       { stage: "a", ordinal: 0, total: 0, done: 0, failed: 0, status: "pending" },
@@ -37,12 +45,27 @@ describe("runs", () => {
     expect((await getRun(db, id))!.status).toBe("running");
     expect((await getRun(db, id))!.startedAt).toBeInstanceOf(Date);
 
-    expect(await recordJobOutcome(db, id, "a", "done")).toEqual({ stageFinished: false, nextStage: null, runFinished: false });
-    expect(await recordJobOutcome(db, id, "a", "failed")).toEqual({ stageFinished: true, nextStage: "b", runFinished: false });
+    expect(await recordJobOutcome(db, id, "a", "k1", "done")).toEqual({
+      recorded: true,
+      stageFinished: false,
+      nextStage: null,
+      runFinished: false,
+    });
+    expect(await recordJobOutcome(db, id, "a", "k2", "failed")).toEqual({
+      recorded: true,
+      stageFinished: true,
+      nextStage: "b",
+      runFinished: false,
+    });
     expect((await getRun(db, id))!.status).toBe("running");
 
     await beginStage(db, id, "b", 1);
-    expect(await recordJobOutcome(db, id, "b", "done")).toEqual({ stageFinished: true, nextStage: null, runFinished: true });
+    expect(await recordJobOutcome(db, id, "b", "k1", "done")).toEqual({
+      recorded: true,
+      stageFinished: true,
+      nextStage: null,
+      runFinished: true,
+    });
     const run = (await getRun(db, id))!;
     expect(run.status).toBe("finished");
     expect(run.finishedAt).toBeInstanceOf(Date);
@@ -52,15 +75,15 @@ describe("runs", () => {
   it("marks the run failed when every job of the last stage failed", async () => {
     const { id } = await newRun(["a"]);
     await beginStage(db, id, "a", 2);
-    await recordJobOutcome(db, id, "a", "failed");
-    expect(await recordJobOutcome(db, id, "a", "failed")).toMatchObject({ runFinished: true });
+    await recordJobOutcome(db, id, "a", "k1", "failed");
+    expect(await recordJobOutcome(db, id, "a", "k2", "failed")).toMatchObject({ runFinished: true });
     expect((await getRun(db, id))!.status).toBe("failed");
   });
 
   it("counts concurrent outcomes exactly and reports completion once", async () => {
     const { id } = await newRun(["ping"]);
     await beginStage(db, id, "ping", 20);
-    const results = await Promise.all(Array.from({ length: 20 }, () => recordJobOutcome(db, id, "ping", "done")));
+    const results = await Promise.all(Array.from({ length: 20 }, (_, i) => recordJobOutcome(db, id, "ping", String(i), "done")));
     expect((await getRun(db, id))!.stages[0]).toMatchObject({ done: 20, failed: 0, status: "finished" });
     expect(results.filter((r) => r.stageFinished)).toHaveLength(1);
     expect(results.filter((r) => r.runFinished)).toHaveLength(1);
@@ -78,7 +101,65 @@ describe("runs", () => {
 
   it("rejects an outcome for a stage that is not running", async () => {
     const { id } = await newRun(["a"]);
-    await expect(recordJobOutcome(db, id, "a", "done")).rejects.toThrow(/not running/);
+    await expect(recordJobOutcome(db, id, "a", "k1", "done")).rejects.toThrow(/not running/);
+  });
+
+  it("recordJobOutcome counts each (stage, key) once", async () => {
+    const { id } = await newRun(["ping"]);
+    await beginStage(db, id, "ping", 2);
+    expect((await recordJobOutcome(db, id, "ping", "a", "done")).recorded).toBe(true);
+    expect(await recordJobOutcome(db, id, "ping", "a", "done")).toEqual({
+      recorded: false,
+      stageFinished: false,
+      nextStage: null,
+      runFinished: false,
+    });
+    expect((await recordJobOutcome(db, id, "ping", "a", "failed")).recorded).toBe(false);
+    expect((await getRun(db, id))!.stages[0]).toMatchObject({ done: 1, failed: 0, status: "running" });
+  });
+
+  it("counts concurrent outcomes for the same key once", async () => {
+    const { id } = await newRun(["ping"]);
+    await beginStage(db, id, "ping", 2);
+    const results = await Promise.all(Array.from({ length: 5 }, () => recordJobOutcome(db, id, "ping", "a", "done")));
+    expect(results.filter((r) => r.recorded)).toHaveLength(1);
+    expect((await getRun(db, id))!.stages[0]).toMatchObject({ done: 1, failed: 0, status: "running" });
+  });
+
+  it("a failed outcome flips to done on a later success without finishing anything twice", async () => {
+    const { id } = await newRun(["ping"]);
+    await beginStage(db, id, "ping", 1);
+    expect(await recordJobOutcome(db, id, "ping", "a", "failed")).toEqual({
+      recorded: true,
+      stageFinished: true,
+      nextStage: null,
+      runFinished: true,
+    });
+    const failedRun = (await getRun(db, id))!;
+    expect(failedRun.status).toBe("failed");
+
+    expect(await recordJobOutcome(db, id, "ping", "a", "done")).toEqual({
+      recorded: true,
+      stageFinished: false,
+      nextStage: null,
+      runFinished: false,
+    });
+    const run = (await getRun(db, id))!;
+    expect(run.stages[0]).toMatchObject({ done: 1, failed: 0, status: "finished" });
+    expect(run.status).toBe("failed");
+    expect(run.finishedAt).toEqual(failedRun.finishedAt);
+
+    expect((await recordJobOutcome(db, id, "ping", "a", "done")).recorded).toBe(false);
+    expect((await getRun(db, id))!.stages[0]).toMatchObject({ done: 1, failed: 0 });
+  });
+
+  it("failRun marks the run failed with a reason", async () => {
+    const { id } = await newRun(["a", "b"]);
+    await beginStage(db, id, "a", 1);
+    await failRun(db, id, "stage transition failed: boom");
+    const run = (await getRun(db, id))!;
+    expect(run).toMatchObject({ status: "failed", failureReason: "stage transition failed: boom" });
+    expect(run.finishedAt).toBeInstanceOf(Date);
   });
 
   it("sums external call costs into costEur", async () => {

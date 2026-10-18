@@ -8,6 +8,7 @@ import { newId } from "@/lib/domain/ids";
 import { beginStage, createRun, getRun } from "@/lib/domain/runs";
 import { createBoss } from "@/lib/jobs/boss";
 import { isQueuePaused, resumeQueue } from "@/lib/jobs/controls";
+import { advanceHandler } from "@/lib/jobs/handlers/run-advance";
 import { pingHandler, pingStage } from "@/lib/jobs/handlers/system-ping";
 import { STAGES } from "@/lib/jobs/registry";
 import { DEAD_LETTER_QUEUE, deadLetterQueueOptions, ensureQueues, QUEUES } from "@/lib/jobs/queues";
@@ -55,14 +56,27 @@ const db = testDb();
 // Fast retries so a job exhausts its 3 attempts within the test timeout.
 const queueConfig = {
   "system.ping": { concurrency: 2, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "run.advance": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   [DEAD_LETTER_QUEUE]: { concurrency: 1, retryLimit: 1, retryDelaySeconds: 0, retryBackoff: false },
 };
 
-/** Jobs with `budgetOnce` throw BudgetExceeded on their first attempt only. */
+/**
+ * Jobs with `budgetOnce` throw BudgetExceeded on their first attempt only; jobs with `failThenBudget`
+ * fail their first attempt and throw BudgetExceeded on their second.
+ */
 const budgetThrown = new Set<string>();
+const failedOnce = new Set<string>();
 
 const testPing: JobHandler<JobData> = async (data, ctx) => {
   const marker = `${ctx.runId}:${data.key}`;
+  if (data.failThenBudget === true && !failedOnce.has(marker)) {
+    failedOnce.add(marker);
+    throw new Error("first attempt fails");
+  }
+  if (data.failThenBudget === true && !budgetThrown.has(marker)) {
+    budgetThrown.add(marker);
+    throw new BudgetExceeded("anthropic", 11, 10);
+  }
   if (data.budgetOnce === true && !budgetThrown.has(marker)) {
     budgetThrown.add(marker);
     throw new BudgetExceeded("anthropic", 11, 10);
@@ -89,18 +103,28 @@ function scope() {
 beforeAll(async () => {
   // Test-only second stage to exercise stage chaining.
   STAGES.ping2 = { ...pingStage, name: "ping2" };
+  // Test-only stage whose planning always fails, to exercise a failing stage transition.
+  STAGES.explode = {
+    name: "explode",
+    queue: "system.ping",
+    async plan() {
+      throw new Error("explode plan failed");
+    },
+  };
   boss = createBoss(process.env.TEST_DATABASE_URL!);
   await boss.start();
   await ensureQueues(boss, queueConfig);
   for (const q of [...QUEUES, DEAD_LETTER_QUEUE]) await boss.deleteAllJobs(q);
   for (const q of QUEUES) await resumeQueue(db, q, "test");
-  workers = await startWorkers(boss, db, { "system.ping": testPing }, queueConfig, {
+  workers = await startWorkers(boss, db, { "system.ping": testPing, "run.advance": advanceHandler }, queueConfig, {
     pollingIntervalSeconds: 0.5,
     controlPollMs: 200,
   });
 }, 30_000);
 
 afterAll(async () => {
+  delete STAGES.ping2;
+  delete STAGES.explode;
   await workers?.stop();
   for (const q of QUEUES) await resumeQueue(db, q, "test");
   await boss?.stop({ graceful: false });
@@ -188,6 +212,64 @@ describe("worker", () => {
     await waitFor(async () => (await getRun(db, id))!.status === "finished", 20_000);
     run = (await getRun(db, id))!;
     expect(run.stages[0]).toMatchObject({ total: 3, done: 3, failed: 0 });
+  }, 40_000);
+
+  it("a failing next-stage plan does not fail the last job of the previous stage", async () => {
+    const { id } = await startRun(db, boss, {
+      kind: "system",
+      scope: scope(),
+      stages: ["ping", "explode"],
+      params: { count: 2 },
+      triggeredBy: "test",
+    });
+    await waitFor(async () => (await getRun(db, id))!.status === "failed", 25_000);
+
+    const pingJobs = await boss.findJobs<JobData>("system.ping", { data: { runId: id } });
+    expect(pingJobs).toHaveLength(2);
+    expect(pingJobs.map((j) => j.state)).toEqual(["completed", "completed"]);
+
+    const advanceJobs = await boss.findJobs<JobData>("run.advance", { data: { runId: id } });
+    expect(advanceJobs).toHaveLength(1);
+    expect(advanceJobs[0]).toMatchObject({ state: "failed", retryCount: 2, singletonKey: `${id}:explode` });
+    expect(advanceJobs[0].data).toEqual({ runId: id, nextStage: "explode", key: `${id}:explode` });
+
+    const tasks = await db
+      .select()
+      .from(reviewTasks)
+      .where(and(eq(reviewTasks.kind, "failed_job"), eq(reviewTasks.subjectId, advanceJobs[0].id)));
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].context).toMatchObject({ queue: "run.advance", runId: id });
+
+    const run = (await getRun(db, id))!;
+    expect(run.status).toBe("failed");
+    expect(run.failureReason).toContain("stage transition failed");
+    expect(run.failureReason).toContain("explode plan failed");
+    expect(run.stages).toMatchObject([
+      { stage: "ping", total: 2, done: 2, failed: 0, status: "finished" },
+      { stage: "explode", status: "pending" },
+    ]);
+  }, 40_000);
+
+  it("a job re-sent after a budget pause keeps its used attempts", async () => {
+    const { id } = await createRun(db, {
+      kind: "system",
+      scope: scope(),
+      stages: ["ping"],
+      params: {},
+      triggeredBy: "test",
+    });
+    await beginStage(db, id, "ping", 1);
+    await enqueueStageJobs(boss, "system.ping", id, "ping", [{ key: "0", failThenBudget: true }]);
+
+    await waitFor(async () => isQueuePaused(db, "system.ping"), 15_000);
+    const deferred = await boss.findJobs<JobData>("system.ping", { data: { runId: id, key: "0" }, queued: true });
+    expect(deferred).toHaveLength(1);
+    expect(deferred[0].data.priorAttempts).toBe(1);
+    expect(deferred[0].retryLimit).toBe(1);
+
+    await resumeQueue(db, "system.ping", "test");
+    await waitFor(async () => (await getRun(db, id))!.status === "finished", 20_000);
+    expect((await getRun(db, id))!.stages[0]).toMatchObject({ total: 1, done: 1, failed: 0 });
   }, 40_000);
 
   it("enqueueing the same run stage twice does not duplicate jobs", async () => {

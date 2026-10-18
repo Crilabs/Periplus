@@ -5,7 +5,7 @@ import type { Db } from "@/lib/db/client";
 import { runs } from "@/lib/db/schema";
 import { beginStage, createRun } from "@/lib/domain/runs";
 import { STAGES } from "@/lib/jobs/registry";
-import type { QueueName } from "@/lib/jobs/queues";
+import { RUN_ADVANCE_QUEUE, type QueueName } from "@/lib/jobs/queues";
 import type { JobData } from "@/lib/jobs/worker";
 
 export type StageDefinition = {
@@ -77,4 +77,19 @@ export async function enqueueStageJobs(
     { returnId: true, ...(tx ? { db: fromDrizzle(tx, sql) } : {}) },
   );
   return ids?.length ?? 0;
+}
+
+/** Job data of a `run.advance` job. Deliberately without `stage`, so the worker records no stage outcome for it. */
+export type RunAdvanceData = { runId: string; nextStage: string; key: string };
+
+/**
+ * Enqueues the job that moves a run to `nextStage`, in the caller's transaction when given. Its id and
+ * singletonKey `runId:nextStage` make a repeated enqueue a no-op.
+ */
+export async function enqueueRunAdvance(boss: PgBoss, runId: string, nextStage: string, tx?: Db): Promise<void> {
+  const key = `${runId}:${nextStage}`;
+  const data: RunAdvanceData = { runId, nextStage, key };
+  await boss.insert(RUN_ADVANCE_QUEUE, [{ id: uuidv5(key, JOB_ID_NAMESPACE), singletonKey: key, data }], {
+    ...(tx ? { db: fromDrizzle(tx, sql) } : {}),
+  });
 }

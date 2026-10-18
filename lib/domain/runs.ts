@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { externalCalls, runStages, runs } from "@/lib/db/schema";
+import { externalCalls, jobOutcomes, runStages, runs } from "@/lib/db/schema";
 import type { RunKind, RunScopeType, RunStageStatus, RunStatus } from "@/lib/db/schema";
 
 export type { RunKind, RunStatus };
@@ -24,6 +24,7 @@ export type RunView = {
   triggeredBy: string;
   startedAt: Date | null;
   finishedAt: Date | null;
+  failureReason: string | null;
   costEur: number;
   stages: RunStageView[];
 };
@@ -97,30 +98,86 @@ export async function beginStage(
   return { stageFinished: false, nextStage: null, runFinished: false };
 }
 
+export type JobOutcome = "done" | "failed";
+
+export type JobOutcomeResult = { recorded: boolean; stageFinished: boolean; nextStage: string | null; runFinished: boolean };
+
+const NOTHING_FINISHED = { stageFinished: false, nextStage: null, runFinished: false } as const;
+
+/**
+ * Records the outcome of the job `key` in a stage, once per (run, stage, key):
+ * - first outcome: counts it; the call that completes the stage finishes it and reports the follow-up;
+ * - same outcome again: `recorded: false`, nothing changes;
+ * - `done` after `failed` (e.g. a manual retry): rewrites the outcome and moves one count from `failed`
+ *   to `done`, also on a finished stage, without any stage or run transition;
+ * - `failed` after `done`: `recorded: false`, a success is never downgraded.
+ */
 export async function recordJobOutcome(
   db: Db,
   runId: string,
   stage: string,
-  outcome: "done" | "failed",
-): Promise<{ stageFinished: boolean; nextStage: string | null; runFinished: boolean }> {
-  // Single atomic increment; row locking serialises concurrent callers, so each sees a distinct counter value.
-  const [row] = await db
-    .update(runStages)
-    .set(outcome === "done" ? { done: sql`${runStages.done} + 1` } : { failed: sql`${runStages.failed} + 1` })
-    .where(and(eq(runStages.runId, runId), eq(runStages.stage, stage), eq(runStages.status, "running")))
-    .returning();
-  if (!row) throw new Error(`stage ${stage} of run ${runId} is not running`);
-  if (row.done + row.failed < row.total) return { stageFinished: false, nextStage: null, runFinished: false };
+  key: string,
+  outcome: JobOutcome,
+): Promise<JobOutcomeResult> {
+  return db.transaction(async (tx) => {
+    // A concurrent insert of the same key waits on the primary key, so exactly one caller inserts.
+    const [inserted] = await tx
+      .insert(jobOutcomes)
+      .values({ runId, stage, key, outcome })
+      .onConflictDoNothing()
+      .returning({ key: jobOutcomes.key });
+    if (!inserted) return { recorded: await upgradeOutcome(tx, runId, stage, key, outcome), ...NOTHING_FINISHED };
 
-  // Conditional transition: exactly one caller can flip running -> finished.
-  const [finished] = await db
+    // Single atomic increment; row locking serialises concurrent callers, so each sees a distinct counter value.
+    const [row] = await tx
+      .update(runStages)
+      .set(outcome === "done" ? { done: sql`${runStages.done} + 1` } : { failed: sql`${runStages.failed} + 1` })
+      .where(and(eq(runStages.runId, runId), eq(runStages.stage, stage), eq(runStages.status, "running")))
+      .returning();
+    if (!row) throw new Error(`stage ${stage} of run ${runId} is not running`);
+    if (row.done + row.failed < row.total) return { recorded: true, ...NOTHING_FINISHED };
+
+    // Conditional transition: exactly one caller can flip running -> finished.
+    const [finished] = await tx
+      .update(runStages)
+      .set({ status: "finished" })
+      .where(and(eq(runStages.id, row.id), eq(runStages.status, "running")))
+      .returning();
+    if (!finished) return { recorded: true, ...NOTHING_FINISHED };
+    const follow = await afterStageFinished(tx, finished);
+    return { recorded: true, stageFinished: true, ...follow };
+  });
+}
+
+/** Turns a recorded `failed` into `done`; returns whether anything changed. */
+async function upgradeOutcome(db: Db, runId: string, stage: string, key: string, outcome: JobOutcome): Promise<boolean> {
+  if (outcome !== "done") return false;
+  const [flipped] = await db
+    .update(jobOutcomes)
+    .set({ outcome: "done", updatedAt: sql`now()` })
+    .where(
+      and(
+        eq(jobOutcomes.runId, runId),
+        eq(jobOutcomes.stage, stage),
+        eq(jobOutcomes.key, key),
+        eq(jobOutcomes.outcome, "failed"),
+      ),
+    )
+    .returning({ key: jobOutcomes.key });
+  if (!flipped) return false;
+  await db
     .update(runStages)
-    .set({ status: "finished" })
-    .where(and(eq(runStages.id, row.id), eq(runStages.status, "running")))
-    .returning();
-  if (!finished) return { stageFinished: false, nextStage: null, runFinished: false };
-  const follow = await afterStageFinished(db, finished);
-  return { stageFinished: true, ...follow };
+    .set({ done: sql`${runStages.done} + 1`, failed: sql`${runStages.failed} - 1` })
+    .where(and(eq(runStages.runId, runId), eq(runStages.stage, stage)));
+  return true;
+}
+
+/** Ends a run as failed, e.g. when moving to its next stage failed for good. Keeps the first reason. */
+export async function failRun(db: Db, runId: string, reason: string): Promise<void> {
+  await db
+    .update(runs)
+    .set({ status: "failed", finishedAt: sql`coalesce(${runs.finishedAt}, now())`, failureReason: reason })
+    .where(and(eq(runs.id, runId), sql`${runs.failureReason} is null`));
 }
 
 type RunRow = typeof runs.$inferSelect;
@@ -147,6 +204,7 @@ async function toViews(db: Db, rows: RunRow[]): Promise<RunView[]> {
     triggeredBy: r.triggeredBy,
     startedAt: r.startedAt,
     finishedAt: r.finishedAt,
+    failureReason: r.failureReason,
     costEur: costs.get(r.id) ?? 0,
     stages: stageRows
       .filter((s) => s.runId === r.id)
