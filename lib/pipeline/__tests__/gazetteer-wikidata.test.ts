@@ -1,9 +1,10 @@
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import type { AreaConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geoNames, geoObjects, rateLimits, reviewTasks } from "@/lib/db/schema";
+import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
 import { newId } from "@/lib/domain/ids";
 import { upsertGeoObject, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
 import { importWikidata } from "@/lib/pipeline/gazetteer/wikidata";
@@ -219,20 +220,86 @@ describe("importWikidata", () => {
       expect((tasks[0]!.context as { distanceM: number }).distanceM).toBeLessThan(2000);
     }));
 
+  it("same match whose object carries another QID creates a new object and a pair task", () =>
+    withRollback(async (db) => {
+      const ids = await prepare(db);
+      const osmBay = ids[osm("node", 2)]!;
+      await db.update(geoObjects).set({ wikidataId: q(7) }).where(eq(geoObjects.id, osmBay));
+
+      const result = await run(db, ITEMS.bay);
+      expect(result).toMatchObject({ linked: 0, created: 1, uncertain: 1 });
+      const [bay] = await byWikidata(db, q(2));
+      expect(bay).toMatchObject({ type: "bay", origin: "wikidata", osmId: null });
+      expect(bay!.id).not.toBe(osmBay);
+      const [osmRow] = await db.select({ wikidataId: geoObjects.wikidataId }).from(geoObjects).where(eq(geoObjects.id, osmBay));
+      expect(osmRow!.wikidataId).toBe(q(7));
+      const tasks = await db
+        .select()
+        .from(reviewTasks)
+        .where(eq(reviewTasks.subjectId, [bay!.id, osmBay].sort().join(":")));
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0]!.context).toMatchObject({ source: "wikidata", similarity: 1 });
+    }));
+
+  it("an item merged into an object with another QID links to the survivor on the next run", () =>
+    withRollback(async (db) => {
+      const ids = await prepare(db);
+      const osmCape = ids[osm("node", 4)]!;
+      await db.update(geoObjects).set({ wikidataId: q(6) }).where(eq(geoObjects.id, osmCape));
+
+      expect(await run(db, ITEMS.cape)).toMatchObject({ created: 1, uncertain: 1 });
+      const [cape] = await byWikidata(db, q(4));
+      // A reviewer decided "same": the wikidata cape is merged into the OSM cape, which keeps its own QID.
+      await mergeGeoObjects(db, osmCape, cape!.id);
+      expect(await byWikidata(db, q(4))).toEqual([]);
+
+      const count = async () => ({
+        objects: (await db.select({ id: geoObjects.id }).from(geoObjects).where(eq(geoObjects.type, "cape"))).length,
+        tasks: (await db.select({ id: reviewTasks.id }).from(reviewTasks).where(eq(reviewTasks.kind, "place_candidate"))).length,
+      });
+      const before = await count();
+      const second = await run(db, ITEMS.cape);
+      expect(second).toEqual({ linked: 1, created: 0, uncertain: 0, names: 0 });
+      expect(await count()).toEqual(before);
+      expect(await names(db, osmCape)).toEqual(
+        expect.arrayContaining([{ name: "Akrotiri Kavos", language: "en", origin: "wikidata", isPreferred: false }]),
+      );
+    }));
+
   it("second run changes nothing", () =>
     withRollback(async (db) => {
       const ids = await prepare(db);
       const first = await run(db);
       expect(first).toMatchObject({ linked: 2, created: 2, uncertain: 1 });
+      const qids = [1, 2, 3, 4, 5].map(q);
+      const objects = await db
+        .select({ id: geoObjects.id, wikidataId: geoObjects.wikidataId })
+        .from(geoObjects)
+        .where(or(inArray(geoObjects.wikidataId, qids), inArray(geoObjects.id, Object.values(ids))))
+        .orderBy(geoObjects.id);
+      const objectIds = objects.map((o) => o.id);
+      const historyCount = async (table: "geo_objects_history" | "geo_names_history") => {
+        const { rows } = await db.execute<{ n: number }>(
+          sql`select count(*)::int as n from ${sql.identifier(table)} where row_id in ${objectIds}`,
+        );
+        return rows[0]!.n;
+      };
       const snapshot = async () => ({
         objects: await db
-          .select({ id: geoObjects.id, wikidataId: geoObjects.wikidataId, updatedAt: geoObjects.updatedAt })
+          .select({ id: geoObjects.id, wikidataId: geoObjects.wikidataId })
           .from(geoObjects)
-          .where(inArray(geoObjects.wikidataId, [1, 2, 3, 4, 5].map(q))),
-        names: await db.select({ id: geoNames.id }).from(geoNames).where(inArray(geoNames.geoObjectId, Object.values(ids))),
+          .where(or(inArray(geoObjects.wikidataId, qids), inArray(geoObjects.id, Object.values(ids))))
+          .orderBy(geoObjects.id),
+        objectHistory: await historyCount("geo_objects_history"),
+        names: await db
+          .select({ id: geoNames.id, validTo: geoNames.validTo, isPreferred: geoNames.isPreferred })
+          .from(geoNames)
+          .where(inArray(geoNames.geoObjectId, objectIds))
+          .orderBy(geoNames.id),
         tasks: await db.select({ id: reviewTasks.id }).from(reviewTasks).where(eq(reviewTasks.kind, "place_candidate")),
       });
       const before = await snapshot();
+      expect(before.objects.map((o) => o.wikidataId).sort()).toEqual([q(1), q(2), q(3), q(4), null].sort());
       const second = await run(db);
       expect(second).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0 });
       expect(await snapshot()).toEqual(before);

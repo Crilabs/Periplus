@@ -6,7 +6,7 @@ import type { Db } from "@/lib/db/client";
 import { geoObjects, type GeoObjectType, type PoiCategory } from "@/lib/db/schema";
 import { areaBbox } from "@/lib/domain/gazetteer/areas";
 import { bufferBbox } from "@/lib/domain/gazetteer/land";
-import { findMatch, openPairTask } from "@/lib/domain/gazetteer/merge";
+import { findMatch, openPairTask, resolveMergedByExternalId } from "@/lib/domain/gazetteer/merge";
 import { addNames, type NameDraft } from "@/lib/domain/gazetteer/names";
 import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
 import { createLogger } from "@/lib/logger";
@@ -40,13 +40,20 @@ function itemNames(item: WikidataItem): NameDraft[] {
     .map((l) => ({ name: l.value, language: l.language, origin: "wikidata" }));
 }
 
-/** The valid object already carrying this Wikidata ID. */
-async function byWikidataId(db: Db, qid: string): Promise<string | undefined> {
+/**
+ * The valid object already carrying this Wikidata ID (lowest id), else the survivor of an object with this
+ * ID that was merged away (e.g. into an object keeping its own QID after a "same" review decision).
+ */
+async function byWikidataId(db: Db, qid: string): Promise<{ id: string; merged: boolean } | undefined> {
   const [row] = await db
     .select({ id: geoObjects.id })
     .from(geoObjects)
-    .where(and(eq(geoObjects.wikidataId, qid), isNull(geoObjects.validTo)));
-  return row?.id;
+    .where(and(eq(geoObjects.wikidataId, qid), isNull(geoObjects.validTo)))
+    .orderBy(asc(geoObjects.id))
+    .limit(1);
+  if (row) return { id: row.id, merged: false };
+  const survivor = await resolveMergedByExternalId(db, "wikidata_id", qid);
+  return survivor ? { id: survivor, merged: true } : undefined;
 }
 
 /** The valid, unlinked object whose OSM tag `wikidata` names this item (lowest id of several). */
@@ -80,8 +87,9 @@ async function link(db: Db, id: string, qid: string): Promise<boolean> {
 /**
  * Stage `gazetteer.wikidata` (Spec 03, step 2): queries WDQS for items of the configured classes in the
  * area box plus `bboxBufferKm` and, in one transaction, per item: (1) an object with this `wikidata_id`
- * gets the names; (2) else an object whose OSM tag `wikidata` names the item is linked; (3) else
- * `findMatch` within `wikidataLinkDistanceM`: `same` links (unless that object carries another Wikidata
+ * gets the names (for an object merged away with it, its survivor gets them and counts as linked); (2) else
+ * an object whose OSM tag `wikidata` names the item is linked; (3) else `findMatch` within
+ * `wikidataLinkDistanceM`: `same` links (unless that object carries another Wikidata
  * ID, then it counts as uncertain), `uncertain` creates a new object and opens a pair task, `none` creates
  * one only for poi, island, islet, cape and bay. Labels and aliases become names with `origin wikidata`.
  */
@@ -108,7 +116,8 @@ export async function importWikidata(
 
       const known = await byWikidataId(tx, item.id);
       if (known) {
-        result.names += await addNames(tx, known, names);
+        if (known.merged) result.linked++;
+        result.names += await addNames(tx, known.id, names);
         continue;
       }
 

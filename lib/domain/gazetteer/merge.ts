@@ -129,6 +129,45 @@ export async function openPairTask(
   });
 }
 
+/** External ID columns of `geo_objects` that `resolveMergedByExternalId` follows. */
+export type ExternalIdColumn = "wikidata_id" | "geonames_id" | "osm_id";
+
+const EXTERNAL_ID_COLUMNS = {
+  wikidata_id: geoObjects.wikidataId,
+  geonames_id: geoObjects.geonamesId,
+  osm_id: geoObjects.osmId,
+} as const;
+
+/** Upper bound on merge-chain hops, against a corrupt cycle. */
+const MAX_MERGE_HOPS = 100;
+
+/**
+ * The surviving valid object for an external ID that is only carried by objects merged away: starts at
+ * the ended objects with `column = value` and `merged_into_id` set and follows `merged_into_id` to an
+ * object that is valid and unmerged. Null when there is none (also for an ID on a valid object or on an
+ * object ended without merge). Of several survivors the lowest id wins.
+ */
+export async function resolveMergedByExternalId(
+  db: Db,
+  column: ExternalIdColumn,
+  value: string,
+): Promise<string | null> {
+  const col = EXTERNAL_ID_COLUMNS[column];
+  const { rows } = await db.execute<{ id: string }>(sql`
+    with recursive chain(id, merged_into_id, valid_to, hops) as (
+      select id, merged_into_id, valid_to, 0
+      from geo_objects
+      where ${col} = ${value} and valid_to is not null and merged_into_id is not null
+      union
+      select o.id, o.merged_into_id, o.valid_to, c.hops + 1
+      from chain c join geo_objects o on o.id = c.merged_into_id
+      where c.hops < ${MAX_MERGE_HOPS}
+    )
+    select id from chain where valid_to is null and merged_into_id is null order by id limit 1
+  `);
+  return rows[0]?.id ?? null;
+}
+
 /**
  * Merges `drop` into `keep` in one transaction: the valid names of `drop` become new rows on `keep`
  * (transliterations and fallbacks are regenerated, not copied) and are ended on `drop`; external IDs

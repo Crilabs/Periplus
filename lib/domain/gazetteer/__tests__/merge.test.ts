@@ -4,7 +4,7 @@ import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects, places, reviewTasks, type GeoObjectType } from "@/lib/db/schema";
-import { findMatch, mergeGeoObjects, openPairTask } from "@/lib/domain/gazetteer/merge";
+import { findMatch, mergeGeoObjects, openPairTask, resolveMergedByExternalId } from "@/lib/domain/gazetteer/merge";
 import { upsertGeoObject, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
 import { withRollback } from "@/test/db";
 
@@ -234,6 +234,42 @@ describe("mergeGeoObjects", () => {
       await mergeGeoObjects(tx, a, b);
       await expect(tx.transaction((t) => mergeGeoObjects(t, c, b))).rejects.toThrow(/not valid/);
       await expect(tx.transaction((t) => mergeGeoObjects(t, b, c))).rejects.toThrow(/not valid/);
+    });
+  });
+});
+
+describe("resolveMergedByExternalId", () => {
+  it("follows the merged_into chain from an ended object to the surviving valid object", async () => {
+    await withRollback(async (tx) => {
+      const a = await insert(tx, "bay", ["Ormos A"], point(offset(0)), { wikidataId: "Q91000011" });
+      const b = await insert(tx, "bay", ["Ormos B"], point(offset(100)), {
+        wikidataId: "Q91000012",
+        geonamesId: "91000012",
+        osmId: "node/91000012",
+      });
+      const c = await insert(tx, "bay", ["Ormos C"], point(offset(200)), { wikidataId: "Q91000013" });
+
+      // A valid object carrying the ID is no merged one.
+      expect(await resolveMergedByExternalId(tx, "wikidata_id", "Q91000012")).toBeNull();
+      expect(await resolveMergedByExternalId(tx, "wikidata_id", "Q91999999")).toBeNull();
+
+      // b into a: a keeps its own QID, b's QID resolves to a.
+      await mergeGeoObjects(tx, a, b);
+      expect(await resolveMergedByExternalId(tx, "wikidata_id", "Q91000012")).toBe(a);
+
+      // a into c: the chain b -> a -> c ends at c, for every external ID column.
+      await mergeGeoObjects(tx, c, a);
+      expect(await resolveMergedByExternalId(tx, "wikidata_id", "Q91000012")).toBe(c);
+      expect(await resolveMergedByExternalId(tx, "wikidata_id", "Q91000011")).toBe(c);
+      expect(await resolveMergedByExternalId(tx, "osm_id", "node/91000012")).toBe(c);
+    });
+  });
+
+  it("returns null for an object ended without merge", async () => {
+    await withRollback(async (tx) => {
+      const a = await insert(tx, "bay", ["Ormos A"], point(offset(0)), { wikidataId: "Q91000021" });
+      await tx.update(geoObjects).set({ validTo: sql`current_date` }).where(eq(geoObjects.id, a));
+      expect(await resolveMergedByExternalId(tx, "wikidata_id", "Q91000021")).toBeNull();
     });
   });
 });
