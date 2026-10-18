@@ -6,6 +6,7 @@ import { asGeoJson } from "@/lib/db/geometry";
 import { geoObjects, places, tiles } from "@/lib/db/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import type { Bbox } from "@/lib/domain/tiles";
+import { BBOX_TOLERANCE, MAX_BBOX_DEGREES } from "@/lib/domain/map-limits";
 import { validAt } from "@/lib/domain/timeline";
 
 export const MAP_LAYERS = ["areas", "tiles", "geo-objects", "places"] as const;
@@ -14,8 +15,6 @@ export type MapLayer = (typeof MAP_LAYERS)[number];
 /** Default cap per request; beyond ~5,000 objects the map switches to vector tiles (spec 09). */
 export const MAP_FEATURE_LIMIT = 5000;
 
-/** Largest bbox side (degrees) a map-data request may ask for. */
-export const MAX_BBOX_DEGREES = 5;
 
 const coordinate = z
   .string()
@@ -29,7 +28,7 @@ export const bboxParam = z
   .pipe(z.tuple([coordinate, coordinate, coordinate, coordinate]))
   .refine(([w, s, e, n]) => w >= -180 && e <= 180 && s >= -90 && n <= 90, "outside WGS84")
   .refine(([w, s, e, n]) => w < e && s < n, "empty bbox")
-  .refine(([w, s, e, n]) => e - w <= MAX_BBOX_DEGREES && n - s <= MAX_BBOX_DEGREES, "bbox too large")
+  .refine(([w, s, e, n]) => e - w <= MAX_BBOX_DEGREES + BBOX_TOLERANCE && n - s <= MAX_BBOX_DEGREES + BBOX_TOLERANCE, "bbox too large")
   .transform((b): Bbox => b);
 
 export const mapDataRequest = z.object({ layer: z.enum(MAP_LAYERS), bbox: bboxParam });

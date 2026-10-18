@@ -138,6 +138,7 @@ export const geoNames = pgTable("geo_names", {
   uniqueIndex("geo_names_valid_unique")
     .on(t.geoObjectId, t.name, t.language, t.origin)
     .where(sql`${t.validTo} is null`),
+  index("geo_names_geo_object_id_idx").on(t.geoObjectId),
   index("geo_names_name_normalized_trgm").using("gin", t.nameNormalized.op("gin_trgm_ops")),
 ]);
 

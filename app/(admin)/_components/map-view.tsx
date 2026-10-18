@@ -12,13 +12,13 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { GeoObjectType, PlaceStatus } from "@/lib/db/schema";
 import type { MapLayer } from "@/lib/domain/map-data";
+import { CLIENT_BBOX_DEGREES } from "@/lib/domain/map-limits";
 import { GEO_OBJECT_TYPE_LABELS, PLACE_KIND_LABELS, PLACE_STATUS_LABELS } from "./labels";
 import { DEFAULT_CENTER, MAP_STYLE_URL, OSM_ATTRIBUTION } from "./map-style";
 
 const LAYERS: MapLayer[] = ["tiles", "areas", "geo-objects", "places"];
 const DEBOUNCE_MS = 300;
 /** The map-data route accepts at most 5° × 5°; larger views load the 5° box around the centre. */
-const MAX_SPAN = 5;
 const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
 const GEO_TYPES = (Object.keys(GEO_OBJECT_TYPE_LABELS) as GeoObjectType[]).filter((t) => t !== "area");
@@ -126,10 +126,13 @@ const isOn = (layer: MapLayer, v: Visibility): boolean =>
 /** The visible bounds as `w,s,e,n`, clamped to 5° × 5° around the centre and to WGS84. */
 function bboxParam(m: MapLibreMap): { bbox: string; clamped: boolean } {
   const b = m.getBounds();
-  const c = m.getCenter();
+  const center = m.getCenter();
+  // After panning around the world the centre may lie beyond ±180: shift the bounds by the same offset.
+  const c = center.wrap();
+  const shift = c.lng - center.lng;
   const span = (lo: number, hi: number, mid: number) =>
-    hi - lo > MAX_SPAN ? { lo: mid - MAX_SPAN / 2, hi: mid + MAX_SPAN / 2, clamped: true } : { lo, hi, clamped: false };
-  const x = span(b.getWest(), b.getEast(), c.lng);
+    hi - lo > CLIENT_BBOX_DEGREES ? { lo: mid - CLIENT_BBOX_DEGREES / 2, hi: mid + CLIENT_BBOX_DEGREES / 2, clamped: true } : { lo, hi, clamped: false };
+  const x = span(b.getWest() + shift, b.getEast() + shift, c.lng);
   const y = span(b.getSouth(), b.getNorth(), c.lat);
   const round = (n: number) => n.toFixed(5);
   const w = Math.max(-180, x.lo);

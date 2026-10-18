@@ -64,6 +64,13 @@
       "when": 1792354047303,
       "tag": "0008_geo_history_fixes",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792363424019,
+      "tag": "0009_fuzzy_lionheart",
+      "breakpoints": true
     }
   ]
 }
