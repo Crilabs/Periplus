@@ -4,7 +4,6 @@ import { loginAttempts, users } from "@/lib/db/schema";
 import { createLogger } from "@/lib/logger";
 import { hashPassword, verifyPassword } from "@/lib/security/password";
 
-const log = createLogger("users");
 
 const WINDOW_MS = 15 * 60_000;
 const MAX_FAILED = 10;
@@ -67,7 +66,7 @@ export async function authenticate(
     const byIp = await recentFailures(tx, "ip", input.ip, now);
     if (byEmail >= MAX_FAILED || byIp >= MAX_FAILED) {
       await record(false);
-      log.warn({ ip: input.ip }, "login rate limited");
+      createLogger("users").warn({ ip: input.ip }, "login rate limited");
       return { ok: false, reason: "rate_limited" } as const;
     }
 
