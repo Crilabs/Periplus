@@ -66,13 +66,13 @@ describe("runs", () => {
     expect(results.filter((r) => r.runFinished)).toHaveLength(1);
   });
 
-  it("a stage with total 0 is finished at once", async () => {
+  it("a stage with total 0 is finished at once and reports the next stage", async () => {
     const { id } = await newRun(["a", "b"]);
-    await beginStage(db, id, "a", 0);
+    expect(await beginStage(db, id, "a", 0)).toEqual({ stageFinished: true, nextStage: "b", runFinished: false });
     const run = (await getRun(db, id))!;
     expect(run.status).toBe("running");
     expect(run.stages.map((s) => s.status)).toEqual(["finished", "pending"]);
-    await beginStage(db, id, "b", 0);
+    expect(await beginStage(db, id, "b", 0)).toEqual({ stageFinished: true, nextStage: null, runFinished: true });
     expect((await getRun(db, id))!.status).toBe("finished");
   });
 

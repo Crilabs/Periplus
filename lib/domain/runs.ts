@@ -74,7 +74,12 @@ async function afterStageFinished(
   return { nextStage: null, runFinished: true };
 }
 
-export async function beginStage(db: Db, runId: string, stage: string, total: number): Promise<void> {
+export async function beginStage(
+  db: Db,
+  runId: string,
+  stage: string,
+  total: number,
+): Promise<{ stageFinished: boolean; nextStage: string | null; runFinished: boolean }> {
   await db
     .update(runs)
     .set({ status: "running", startedAt: sql`coalesce(${runs.startedAt}, now())` })
@@ -85,7 +90,11 @@ export async function beginStage(db: Db, runId: string, stage: string, total: nu
     .where(and(eq(runStages.runId, runId), eq(runStages.stage, stage), eq(runStages.status, "pending")))
     .returning();
   if (!row) throw new Error(`stage ${stage} of run ${runId} is not pending`);
-  if (total === 0) await afterStageFinished(db, row);
+  if (total === 0) {
+    const follow = await afterStageFinished(db, row);
+    return { stageFinished: true, ...follow };
+  }
+  return { stageFinished: false, nextStage: null, runFinished: false };
 }
 
 export async function recordJobOutcome(
