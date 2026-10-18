@@ -133,6 +133,18 @@ Ergebnis der letzten Prüfung (nach Abnahme eintragen): _Datum: offen, restore-c
    - Ein Ping-Lauf unter „Läufe“ startet, endet und erscheint mit seinen Stufenzahlen auf der Übersicht.
    - `scripts/ops/backup.sh` läuft; `scripts/ops/restore-check.sh` endet mit Exit 0; Ergebnis mit Datum oben eintragen.
 
+## Gazetteer und Seed
+Reihenfolge je Revier (Pilot: `saronic`, danach `argolic`):
+1. **Landpolygone importieren** (Abschnitt „Landpolygone“ unten), je Revier einmal. Ohne sie ist keine Kachel „Küste“.
+2. **Läufe → „Gazetteer aufbauen“** (Revier wählen). `tiles.ensure` synchronisiert jedes Mal alle Reviere aus `config/areas`; die Reihenfolge der Reviere ist deshalb egal. Danach Stufen OSM, Wikidata, GeoNames, Hierarchie.
+3. **Läufe → „Seed für Revier“**: legt aus den Geo-Objekten Ortskandidaten an und öffnet je Kandidat eine Prüfaufgabe.
+4. **Review**: Ortskandidaten, unsichere Paare und „Küstenkachel ohne Revier“ abarbeiten, bis die Queue leer ist. Fehlgeschlagene Jobs stehen dort ebenfalls.
+5. **Abnahme-Prüfung**: `npm run check:gazetteer -- --area saronic` (auf dem Server: `dc run --rm worker node --import tsx scripts/check-gazetteer.ts --area saronic`). Ausgabe: Kacheln mit Küste, offene Kandidatenaufgaben, Objekte ohne Namen in de/en/el. Exit 1, solange Namen fehlen. Der Prüfbereich ist die `tileBbox` des Reviers. Checkliste: `docs/pilot/m1-abnahme.md`.
+
+Aufnahme neuer Testdaten (Entwicklung): `npm run fixtures:record -- --area saronic [--land <pfad>/land_polygons.shp] [--cache <dir>]` ruft die echten Dienste auf und schreibt die Fixtures nach `test/fixtures`. Es schreibt nur in eine Wegwerf-Datenbank, deren Name auf `_scratch` endet (`DATABASE_URL` darauf setzen); jede andere Datenbank wird abgelehnt.
+
+Deploy: Solange `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS` und `DEPLOY_HOST` (Abschnitt 5) und der Server fehlen, schlägt der CI-Job `deploy` fehl; der Job `check` ist davon unabhängig.
+
 ## Landpolygone
 OSM-Landpolygone (Küstenlinie) bestimmen, welche Kacheln Küste haben und welche Orte küstennah liegen. Sie werden je Revier auf dessen Box (Revier-Polygon ∪ `tileBbox`, erweitert um `landBufferKm`) zugeschnitten importiert.
 1. Herunterladen und entpacken: `https://osmdata.openstreetmap.de/download/land-polygons-split-4326.zip` (enthält `land-polygons-split-4326/land_polygons.shp`).
