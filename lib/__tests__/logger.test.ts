@@ -12,7 +12,10 @@ function captureLogs(fn: (log: ReturnType<typeof createLogger>) => void): Line[]
       cb();
     },
   });
-  fn(createLogger("test", stream));
+  // Tests run with LOG_LEVEL=silent; capture needs an explicit level.
+  const log = createLogger("test", stream);
+  log.level = "info";
+  fn(log);
   return lines.map((l) => JSON.parse(l));
 }
 

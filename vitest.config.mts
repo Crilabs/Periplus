@@ -13,6 +13,7 @@ export default defineConfig({
     // Non-secret test defaults so tests run without a local .env file.
     env: {
       NODE_ENV: "test",
+      LOG_LEVEL: "silent",
       TEST_DATABASE_URL: "postgres://periplus:periplus@localhost:5434/periplus_test",
       DATABASE_URL: "postgres://periplus:periplus@localhost:5434/periplus_test",
       S3_ENDPOINT: "http://localhost:8333",

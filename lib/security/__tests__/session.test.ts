@@ -10,7 +10,11 @@ import {
 const u = { id: "00000000-0000-7000-8000-000000000001", email: "a@test.invalid" };
 const t0 = new Date("2026-01-01T00:00:00Z");
 const addHours = (d: Date, h: number) => new Date(d.getTime() + h * 3600_000);
-const flipLastChar = (s: string) => s.slice(0, -1) + (s.endsWith("A") ? "B" : "A");
+// Tamper a character in the middle of the signature segment (the last char carries base64url padding bits).
+const tamperSignature = (t: string) => {
+  const i = t.lastIndexOf(".") + 1 + 20;
+  return t.slice(0, i) + (t[i] === "A" ? "B" : "A") + t.slice(i + 1);
+};
 
 describe("session tokens", () => {
   it("round-trips claims", async () => {
@@ -23,7 +27,7 @@ describe("session tokens", () => {
 
   it("returns null for a tampered token", async () => {
     const t = await createSessionToken(u, t0);
-    expect(await verifySessionToken(flipLastChar(t), t0)).toBeNull();
+    expect(await verifySessionToken(tamperSignature(t), t0)).toBeNull();
   });
 
   it("returns null for missing and malformed tokens", async () => {

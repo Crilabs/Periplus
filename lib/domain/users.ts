@@ -1,4 +1,4 @@
-import { and, count, eq, gt } from "drizzle-orm";
+import { and, count, eq, gt, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { loginAttempts, users } from "@/lib/db/schema";
 import { createLogger } from "@/lib/logger";
@@ -38,7 +38,9 @@ export type AuthResult =
   | { ok: true; user: { id: string; email: string } }
   | { ok: false; reason: "invalid" | "rate_limited" | "disabled" };
 
-async function recentFailures(db: Db, column: "email" | "ip", value: string, now: Date): Promise<number> {
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+async function recentFailures(db: Tx, column: "email" | "ip", value: string, now: Date): Promise<number> {
   const since = new Date(now.getTime() - WINDOW_MS);
   const [row] = await db
     .select({ n: count() })
@@ -53,29 +55,37 @@ export async function authenticate(
   now: Date = new Date(),
 ): Promise<AuthResult> {
   const email = normalizeEmail(input.email);
-  const record = (success: boolean) => db.insert(loginAttempts).values({ email, ip: input.ip, success, at: now });
+  // Serialise attempts per email and per IP (fixed lock order: email, then ip) so concurrent
+  // requests cannot all read the failure count before any of them records its own failure.
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"login:email:" + email}))`);
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"login:ip:" + input.ip}))`);
 
-  const [byEmail, byIp] = await Promise.all([recentFailures(db, "email", email, now), recentFailures(db, "ip", input.ip, now)]);
-  if (byEmail >= MAX_FAILED || byIp >= MAX_FAILED) {
-    await record(false);
-    log.warn({ ip: input.ip }, "login rate limited");
-    return { ok: false, reason: "rate_limited" };
-  }
+    const record = (success: boolean) => tx.insert(loginAttempts).values({ email, ip: input.ip, success, at: now });
 
-  const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
-  const passwordOk = await verifyPassword(user?.passwordHash ?? (await getDummyHash()), input.password);
+    const byEmail = await recentFailures(tx, "email", email, now);
+    const byIp = await recentFailures(tx, "ip", input.ip, now);
+    if (byEmail >= MAX_FAILED || byIp >= MAX_FAILED) {
+      await record(false);
+      log.warn({ ip: input.ip }, "login rate limited");
+      return { ok: false, reason: "rate_limited" } as const;
+    }
 
-  if (!user || !passwordOk) {
-    await record(false);
-    return { ok: false, reason: "invalid" };
-  }
-  // Only reveal "disabled" to someone who knows the password.
-  if (user.disabledAt) {
-    await record(false);
-    return { ok: false, reason: "disabled" };
-  }
+    const [user] = await tx.select().from(users).where(eq(users.email, email)).limit(1);
+    const passwordOk = await verifyPassword(user?.passwordHash ?? (await getDummyHash()), input.password);
 
-  await record(true);
-  await db.update(users).set({ lastLoginAt: now }).where(eq(users.id, user.id));
-  return { ok: true, user: { id: user.id, email: user.email } };
+    if (!user || !passwordOk) {
+      await record(false);
+      return { ok: false, reason: "invalid" } as const;
+    }
+    // Only reveal "disabled" to someone who knows the password.
+    if (user.disabledAt) {
+      await record(false);
+      return { ok: false, reason: "disabled" } as const;
+    }
+
+    await record(true);
+    await tx.update(users).set({ lastLoginAt: now }).where(eq(users.id, user.id));
+    return { ok: true, user: { id: user.id, email: user.email } } as const;
+  });
 }

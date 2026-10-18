@@ -68,6 +68,18 @@ describe("users", () => {
     expect(await authenticate(db, { email: u.email, password: correct, ip }, addMinutes(t0, 1))).toEqual({ ok: false, reason: "rate_limited" });
   });
 
+  it("enforces the limit under concurrent wrong attempts", async () => {
+    const { email } = fresh();
+    await createUser(db, email, correct);
+    const results = await Promise.all(
+      Array.from({ length: 15 }, () => authenticate(db, { email, password: "wrong-password-x", ip: `ip-${newId()}` }, t0)),
+    );
+    const invalid = results.filter((r) => !r.ok && r.reason === "invalid").length;
+    const limited = results.filter((r) => !r.ok && r.reason === "rate_limited").length;
+    expect(invalid).toBeLessThanOrEqual(10);
+    expect(invalid + limited).toBe(15);
+  });
+
   it("allows login again after the 15-minute window", async () => {
     const { email, ip } = fresh();
     await createUser(db, email, correct);

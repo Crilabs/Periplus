@@ -11,7 +11,7 @@ const envSchema = z.object({
   S3_SECRET_ACCESS_KEY: z.string().min(1),
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
   CONTACT_EMAIL: z.string().min(1),
-  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+  LOG_LEVEL: z.enum(["debug", "info", "warn", "error", "silent"]).default("info"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 });
 
