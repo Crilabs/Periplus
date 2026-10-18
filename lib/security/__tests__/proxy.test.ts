@@ -39,14 +39,22 @@ describe("proxy redirect", () => {
 });
 
 describe("proxy session refresh", () => {
-  async function sessionCookie(): Promise<string> {
+  const HOUR = 3_600_000;
+  async function sessionCookie(issuedAt = new Date(Date.now() - 2 * HOUR)): Promise<string> {
     const { createSessionToken, SESSION_COOKIE } = await import("@/lib/security/session");
-    return `${SESSION_COOKIE}=${await createSessionToken({ id: "00000000-0000-7000-8000-000000000001", email: "a@test.invalid" })}`;
+    const token = await createSessionToken({ id: "00000000-0000-7000-8000-000000000001", email: "a@test.invalid" }, issuedAt);
+    return `${SESSION_COOKIE}=${token}`;
   }
 
-  it("refreshes the session cookie on a GET page request", async () => {
+  it("refreshes a session older than an hour on a GET navigation", async () => {
     const response = await proxy(new NextRequest("http://localhost:3000/runs", { headers: { cookie: await sessionCookie() } }));
     expect(response.headers.get("set-cookie")).toMatch(/periplus_session=/);
+  });
+
+  it("does not refresh a session issued less than an hour ago", async () => {
+    const cookie = await sessionCookie(new Date(Date.now() - 10 * 60_000));
+    const response = await proxy(new NextRequest("http://localhost:3000/runs", { headers: { cookie } }));
+    expect(response.headers.get("set-cookie")).toBeNull();
   });
 
   it("never sets the session cookie on a server action POST (logout must win)", async () => {
@@ -58,4 +66,14 @@ describe("proxy session refresh", () => {
     );
     expect(response.headers.get("set-cookie")).toBeNull();
   });
+
+  it.each(["next-router-prefetch", "next-router-segment-prefetch"])(
+    "never sets the session cookie on a router prefetch (%s), which may land after logout",
+    async (header) => {
+      const response = await proxy(
+        new NextRequest("http://localhost:3000/costs", { headers: { cookie: await sessionCookie(), [header]: "1" } }),
+      );
+      expect(response.headers.get("set-cookie")).toBeNull();
+    },
+  );
 });

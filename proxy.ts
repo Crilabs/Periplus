@@ -27,13 +27,24 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-trace-id", crypto.randomUUID());
   const response = NextResponse.next({ request: { headers: requestHeaders } });
-  // Refresh only on plain navigations. A server action (POST) may delete the cookie itself (logout);
-  // a refresh Set-Cookie on the same response would race with that deletion and keep the session alive.
-  if (session && (request.method === "GET" || request.method === "HEAD")) {
+  if (session && shouldRefresh(request, session.iat)) {
     const refreshed = await refreshSessionToken(session);
     if (refreshed) response.cookies.set(SESSION_COOKIE, refreshed, sessionCookieOptions());
   }
   return response;
+}
+
+const REFRESH_AFTER_SECONDS = 3600;
+
+/**
+ * Slide the session only on real navigations, at most once an hour. Server actions (POST) may delete the
+ * cookie themselves (logout), and router prefetches can still be in flight when logout completes; a refresh
+ * Set-Cookie on either would race with the deletion and keep the session alive.
+ */
+function shouldRefresh(request: NextRequest, issuedAt: number): boolean {
+  if (request.method !== "GET" && request.method !== "HEAD") return false;
+  if (request.headers.has("next-router-prefetch") || request.headers.has("next-router-segment-prefetch")) return false;
+  return Date.now() / 1000 - issuedAt >= REFRESH_AFTER_SECONDS;
 }
 
 export const config = {
