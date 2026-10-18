@@ -35,13 +35,14 @@ export async function isQueuePaused(db: Db, queue: string, now: Date = new Date(
   return row.pausedUntil === null || row.pausedUntil.getTime() > now.getTime();
 }
 
-/** Pauses the given queues until the next 00:00 UTC after `now`. */
+/** Pauses the given queues until the next 00:00 UTC after `now`; returns the pause end. */
 export async function pauseForBudget(
   db: Db,
   err: BudgetExceeded,
   queues: string[],
   now: Date = new Date(),
-): Promise<void> {
+): Promise<Date> {
   const until = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
   for (const queue of queues) await pauseQueue(db, queue, until, `budget:${err.service}`, "system");
+  return until;
 }

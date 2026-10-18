@@ -13,7 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "worker": "tsx --env-file-if-exists=.env.local watch worker/index.ts",
+    "worker": "tsx watch --env-file-if-exists=.env.local worker/index.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=.env.local scripts/migrate.ts",
     "user:create": "tsx --env-file-if-exists=.env.local scripts/user.ts create",

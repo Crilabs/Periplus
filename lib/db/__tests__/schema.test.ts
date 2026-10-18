@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { reviewDecisions, reviewTasks } from "@/lib/db/schema";
+import { newId } from "@/lib/domain/ids";
 import { testDb } from "@/test/db";
 
 /** drizzle wraps driver errors ("Failed query"); the Postgres message lives on `cause`. */
@@ -21,7 +22,7 @@ async function insertDecision(): Promise<string> {
     .values({
       kind: "conflict",
       subjectType: "place",
-      subjectId: "p1",
+      subjectId: newId(),
       context: {},
     })
     .returning({ id: reviewTasks.id });

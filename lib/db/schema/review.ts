@@ -1,4 +1,5 @@
-import { integer, jsonb, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { newId } from "@/lib/domain/ids";
 
 export const reviewKindEnum = pgEnum("review_kind", [
@@ -24,7 +25,10 @@ export const reviewTasks = pgTable("review_tasks", {
   status: reviewStatusEnum("status").notNull().default("open"),
   priority: integer("priority").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [
+  // At most one open task per subject and kind; createReviewTask relies on it.
+  uniqueIndex("review_tasks_open_subject_unique").on(t.kind, t.subjectId).where(sql`${t.status} = 'open'`),
+]);
 
 /** Append-only (forbid_mutation trigger). */
 export const reviewDecisions = pgTable("review_decisions", {

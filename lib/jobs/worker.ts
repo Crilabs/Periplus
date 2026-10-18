@@ -1,0 +1,163 @@
+import { sql } from "drizzle-orm";
+import { fromDrizzle, type Job, type JobWithMetadata, type PgBoss } from "pg-boss";
+import type { Logger } from "pino";
+import type { QueueConfig } from "@/lib/config";
+import type { Db } from "@/lib/db/client";
+import { BudgetExceeded } from "@/lib/domain/costs";
+import { createReviewTask } from "@/lib/domain/review";
+import { recordJobOutcome } from "@/lib/domain/runs";
+import { createLogger } from "@/lib/logger";
+import { enqueueStage } from "@/lib/pipeline/runs";
+import { isQueuePaused, pauseForBudget } from "./controls";
+import { DEAD_LETTER_QUEUE, QUEUES, type QueueName } from "./queues";
+
+export type JobContext = { db: Db; log: Logger; jobId: string; runId?: string };
+export type JobHandler<T> = (data: T, ctx: JobContext) => Promise<void>;
+export type JobData = { runId?: string; stage?: string; key: string; [k: string]: unknown };
+
+export type WorkerOptions = {
+  /** pg-boss polling interval per queue (default 2 s). */
+  pollingIntervalSeconds?: number;
+  /** How often queue_controls is checked (default 30 s). */
+  controlPollMs?: number;
+};
+
+/** Marks a job re-sent after a budget pause, so a manual resume can release it early. */
+const BUDGET_DEFERRED = "budgetDeferred";
+
+function errorText(output: unknown): string {
+  if (output && typeof output === "object" && "message" in output) return String(output.message);
+  if (output === null || output === undefined) return "unknown error";
+  return typeof output === "string" ? output : JSON.stringify(output);
+}
+
+/**
+ * Starts one pg-boss worker per queue in QUEUES plus the dead-letter worker. Each handler is wrapped:
+ * success records a `done` outcome and enqueues the next stage when it finishes the current one;
+ * `BudgetExceeded` pauses the queue and defers the job (no attempt consumed, no outcome);
+ * any other error is rethrown so pg-boss retries and finally dead-letters the job.
+ */
+export async function startWorkers(
+  boss: PgBoss,
+  db: Db,
+  handlers: Record<QueueName, JobHandler<JobData>>,
+  config: Record<string, QueueConfig>,
+  options: WorkerOptions = {},
+): Promise<{ stop(): Promise<void> }> {
+  const log = createLogger("worker");
+  const pollingIntervalSeconds = options.pollingIntervalSeconds ?? 2;
+  const controlPollMs = options.controlPollMs ?? 30_000;
+
+  /** Records the outcome and enqueues the next stage atomically, so a retry never double-counts. */
+  async function settle(tx: Db, data: JobData, outcome: "done" | "failed"): Promise<void> {
+    if (!data.runId || !data.stage) return;
+    const result = await recordJobOutcome(tx, data.runId, data.stage, outcome);
+    if (result.nextStage) await enqueueStage(tx, boss, data.runId, result.nextStage);
+  }
+
+  async function deferForBudget(queue: QueueName, job: Job<JobData>, err: BudgetExceeded): Promise<void> {
+    await db.transaction(async (tx) => {
+      const until = await pauseForBudget(tx, err, [queue]);
+      // Same data, no singletonKey: the original job still holds it until this handler returns.
+      await boss.send(queue, { ...job.data, [BUDGET_DEFERRED]: true }, { startAfter: until, db: fromDrizzle(tx, sql) });
+    });
+    log.warn({ queue, jobId: job.id, service: err.service }, "budget exceeded, queue paused and job deferred");
+    void syncControls();
+  }
+
+  async function runJob(queue: QueueName, job: Job<JobData>): Promise<void> {
+    const ctx: JobContext = {
+      db,
+      log: log.child({ queue, jobId: job.id, runId: job.data.runId }),
+      jobId: job.id,
+      runId: job.data.runId,
+    };
+    try {
+      await handlers[queue](job.data, ctx);
+    } catch (err) {
+      if (err instanceof BudgetExceeded) return deferForBudget(queue, job, err);
+      ctx.log.warn({ err, attempt: job.retryCount + 1 }, "job attempt failed");
+      throw err;
+    }
+    await db.transaction((tx) => settle(tx, job.data, "done"));
+  }
+
+  async function handleDeadLetter(job: JobWithMetadata<JobData>): Promise<void> {
+    const jobId = job.sourceId ?? job.id;
+    const queue = job.sourceName ?? "unknown";
+    const error = errorText(job.sourceOutput);
+    await db.transaction(async (tx) => {
+      const task = await createReviewTask(tx, {
+        kind: "failed_job",
+        subjectType: "job",
+        subjectId: jobId,
+        context: { queue, key: job.data.key, runId: job.data.runId, stage: job.data.stage, error },
+      });
+      // Only the call that opened the task records the failure, so a retried dead-letter job counts once.
+      if (task.created) await settle(tx, job.data, "failed");
+    });
+    log.error({ queue, jobId, runId: job.data.runId, key: job.data.key, error }, "job failed permanently");
+  }
+
+  /** Pulls budget-deferred jobs forward once their queue runs again (e.g. after a manual resume). */
+  async function releaseDeferred(queue: QueueName): Promise<void> {
+    const deferred = await boss.findJobs<JobData>(queue, { data: { [BUDGET_DEFERRED]: true }, queued: true });
+    const now = new Date();
+    for (const job of deferred) {
+      if (job.startAfter.getTime() > now.getTime()) await boss.update(queue, undefined, { id: job.id, startAfter: now });
+    }
+  }
+
+  const active = new Set<QueueName>();
+  let syncing: Promise<void> = Promise.resolve();
+  let stopped = false;
+
+  async function syncOnce(): Promise<void> {
+    for (const queue of QUEUES) {
+      if (stopped) return;
+      const paused = await isQueuePaused(db, queue);
+      if (paused && active.has(queue)) {
+        active.delete(queue);
+        await boss.offWork(queue, { wait: false });
+        log.info({ queue }, "queue paused, worker stopped");
+      } else if (!paused && !active.has(queue)) {
+        await releaseDeferred(queue);
+        await boss.work<JobData>(
+          queue,
+          { localConcurrency: config[queue]?.concurrency ?? 1, pollingIntervalSeconds },
+          async (jobs) => {
+            for (const job of jobs) await runJob(queue, job);
+          },
+        );
+        active.add(queue);
+        log.info({ queue }, "queue worker started");
+      }
+    }
+  }
+
+  /** Serialised so overlapping timer ticks and budget triggers never double-start a queue. */
+  function syncControls(): Promise<void> {
+    syncing = syncing.then(syncOnce).catch((err: unknown) => log.error({ err }, "queue control sync failed"));
+    return syncing;
+  }
+
+  await boss.work<JobData, unknown, { includeMetadata: true; pollingIntervalSeconds: number }>(
+    DEAD_LETTER_QUEUE,
+    { includeMetadata: true, pollingIntervalSeconds },
+    async (jobs) => {
+      for (const job of jobs) await handleDeadLetter(job);
+    },
+  );
+  await syncControls();
+  const timer = setInterval(() => void syncControls(), controlPollMs);
+
+  return {
+    async stop() {
+      stopped = true;
+      clearInterval(timer);
+      await syncing;
+      for (const queue of [...active, DEAD_LETTER_QUEUE]) await boss.offWork(queue, { wait: true });
+      active.clear();
+    },
+  };
+}
