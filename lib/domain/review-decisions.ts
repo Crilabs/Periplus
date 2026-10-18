@@ -211,29 +211,37 @@ async function lockPlace(tx: Db, placeId: string) {
   return place;
 }
 
+/** Queue order of review tasks: highest `priority` first, then the oldest. */
+export const QUEUE_ORDER = [desc(reviewTasks.priority), asc(reviewTasks.createdAt), asc(reviewTasks.id)] as const;
+
+/**
+ * Tasks after task `afterId` in `QUEUE_ORDER` (all tasks when it does not exist). Compared in SQL: created_at
+ * has microseconds, a JS Date only milliseconds.
+ */
+export function afterInQueue(afterId: string): SQL {
+  return sql`(
+    not exists (select 1 from review_tasks a where a.id = ${afterId})
+    or exists (
+      select 1 from review_tasks a
+      where a.id = ${afterId}
+        and (${reviewTasks.priority} < a.priority
+             or (${reviewTasks.priority} = a.priority and (${reviewTasks.createdAt}, ${reviewTasks.id}) > (a.created_at, a.id)))
+    )
+  )`;
+}
+
 /**
  * The next open task, optionally of one kind: highest `priority` first, then the oldest. With `afterId`, the
  * first one after that task in this order (the task itself may be decided by now).
  */
 export async function nextOpenTask(db: Db, kind?: ReviewKind, afterId?: string): Promise<{ id: string } | null> {
   const conditions: (SQL | undefined)[] = [eq(reviewTasks.status, "open"), kind ? eq(reviewTasks.kind, kind) : undefined];
-  if (afterId) {
-    // Compared in SQL: created_at has microseconds, a JS Date only milliseconds.
-    conditions.push(sql`(
-      not exists (select 1 from review_tasks a where a.id = ${afterId})
-      or exists (
-        select 1 from review_tasks a
-        where a.id = ${afterId}
-          and (${reviewTasks.priority} < a.priority
-               or (${reviewTasks.priority} = a.priority and (${reviewTasks.createdAt}, ${reviewTasks.id}) > (a.created_at, a.id)))
-      )
-    )`);
-  }
+  if (afterId) conditions.push(afterInQueue(afterId));
   const [row] = await db
     .select({ id: reviewTasks.id })
     .from(reviewTasks)
     .where(and(...conditions))
-    .orderBy(desc(reviewTasks.priority), asc(reviewTasks.createdAt), asc(reviewTasks.id))
+    .orderBy(...QUEUE_ORDER)
     .limit(1);
   return row ?? null;
 }
