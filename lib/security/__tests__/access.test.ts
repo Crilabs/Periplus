@@ -11,7 +11,7 @@ const claims: SessionClaims = {
 };
 
 describe("decideAccess", () => {
-  it.each(["/runs", "/runs/abc", "/", "/map", "/jobs", "/costs", "/settings"])(
+  it.each(["/runs", "/runs/abc", "/", "/map", "/map-data/places", "/jobs", "/costs", "/settings"])(
     "redirects %s to login without session",
     (p) => {
       expect(decideAccess({ pathname: p, session: null, hasBearer: false })).toEqual({

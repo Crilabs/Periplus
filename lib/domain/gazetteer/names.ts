@@ -1,6 +1,7 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { geoNames, type NameOrigin, type NameScript } from "@/lib/db/schema";
+import { validAt } from "@/lib/domain/timeline";
 
 /**
  * A name as delivered by an import; `language` is ISO 639-1 or `"und"`.
@@ -252,4 +253,17 @@ export async function ensureFallbackNames(db: Db, geoObjectIds?: string[]): Prom
     .onConflictDoNothing()
     .returning({ id: geoNames.id });
   return inserted.length;
+}
+
+/**
+ * Display name of a geo object as a scalar subquery: a valid German name, else English, else any valid name;
+ * within a language the preferred name first, then alphabetical. Null when the object has no valid name.
+ */
+export function displayNameSql(geoObjectId: SQL | AnyColumn): SQL<string | null> {
+  return sql<string | null>`(
+    select ${geoNames.name} from ${geoNames}
+    where ${geoNames.geoObjectId} = ${geoObjectId} and ${validAt(geoNames)}
+    order by case ${geoNames.language} when 'de' then 0 when 'en' then 1 else 2 end, ${geoNames.isPreferred} desc, ${geoNames.name}
+    limit 1
+  )`;
 }

@@ -3,8 +3,8 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 import { type GeoJSONSource, LngLatBounds, Map as MapLibreMap, NavigationControl } from "maplibre-gl";
 import { useEffect, useRef } from "react";
+import { DEFAULT_CENTER, MAP_STYLE_URL } from "./map-style";
 
-const STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
 const SOURCE = "review";
 /** Colour per feature property `role`. */
 const ROLE_COLOR = [
@@ -59,8 +59,8 @@ export function MiniMap({
     const bounds = boundsOf(initial);
     const m = new MapLibreMap({
       container: container.current,
-      style: STYLE_URL,
-      ...(bounds ? { bounds, fitBoundsOptions: { padding: 40, maxZoom: 15 } } : { center: [23.4, 37.55], zoom: 8 }),
+      style: MAP_STYLE_URL,
+      ...(bounds ? { bounds, fitBoundsOptions: { padding: 40, maxZoom: 15 } } : { center: DEFAULT_CENTER, zoom: 8 }),
       attributionControl: { compact: true },
     });
     m.addControl(new NavigationControl({ showCompass: false }), "top-right");

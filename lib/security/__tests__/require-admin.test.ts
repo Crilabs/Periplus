@@ -21,7 +21,7 @@ vi.mock("@/lib/db/client", async (importActual) => ({
   getDb: () => db,
 }));
 
-const { requireAdmin } = await import("../require-admin");
+const { adminSession, requireAdmin } = await import("../require-admin");
 
 beforeEach(() => {
   token = undefined;
@@ -45,5 +45,20 @@ describe("requireAdmin", () => {
     token = await createSessionToken({ id, email });
     await disableUser(db, email);
     await expect(requireAdmin()).rejects.toThrow("NEXT_REDIRECT:/login");
+  });
+});
+
+describe("adminSession", () => {
+  it("returns null without a session instead of redirecting", async () => {
+    await expect(adminSession()).resolves.toBeNull();
+  });
+
+  it("returns null for a disabled user and the claims for an active one", async () => {
+    const email = `${newId()}@test.invalid`;
+    const { id } = await createUser(db, email, "correct horse battery");
+    token = await createSessionToken({ id, email });
+    await expect(adminSession()).resolves.toMatchObject({ sub: id, email });
+    await disableUser(db, email);
+    await expect(adminSession()).resolves.toBeNull();
   });
 });

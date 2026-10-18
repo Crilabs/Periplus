@@ -17,6 +17,7 @@ import {
   type ReviewKind,
   type ReviewStatus,
 } from "@/lib/db/schema";
+import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { afterInQueue, nextOpenTask, QUEUE_ORDER } from "@/lib/domain/review-decisions";
 
 /** Places offered for "merge into a place". */
@@ -207,13 +208,6 @@ export async function reviewTaskDetail(db: Db, id: string): Promise<ReviewTaskDe
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
 const isUuid = (v: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 
-/** Preferred display name of a geo object: German, then English, then any; preferred names first. */
-const displayName = (geoObjectId: SQL) => sql<string | null>`(
-  select n.name from geo_names n
-  where n.geo_object_id = ${geoObjectId} and n.valid_to is null
-  order by case n.language when 'de' then 0 when 'en' then 1 else 2 end, n.is_preferred desc, n.name
-  limit 1
-)`;
 
 async function geoObjectViews(db: Db, ids: string[]): Promise<GeoObjectView[]> {
   if (ids.length === 0) return [];
@@ -275,7 +269,7 @@ async function placeSubject(db: Db, placeId: string): Promise<ReviewSubject> {
     lat: number;
     distance_m: number;
   }>(sql`
-    select p.id, ${displayName(sql`p.geo_object_id`)} as name, p.kind, p.status,
+    select p.id, ${displayNameSql(sql`p.geo_object_id`)} as name, p.kind, p.status,
            ST_X(p.position) as lon, ST_Y(p.position) as lat,
            ST_Distance(p.position::geography, s.position::geography) as distance_m
     from places p, places s
@@ -333,7 +327,7 @@ async function tileSubject(db: Db, tileId: string): Promise<ReviewSubject> {
     name: string | null;
     distance_m: number;
   }>(sql`
-    select o.id, ${displayName(sql`o.id`)} as name, ST_Distance(o.geom::geography, t.bbox::geography) as distance_m
+    select o.id, ${displayNameSql(sql`o.id`)} as name, ST_Distance(o.geom::geography, t.bbox::geography) as distance_m
     from geo_objects o, tiles t
     where t.id = ${tile.id} and o.type = 'area' and o.valid_to is null and o.merged_into_id is null
     order by distance_m, o.id

@@ -12,6 +12,7 @@ export const ROUTE_POLICY: Record<string, RouteRule> = {
   "/healthz": { kind: "public" },
   "/readyz": { kind: "public" },
   "/map": { kind: "admin" },
+  "/map-data/[layer]": { kind: "admin" },
   "/runs": { kind: "admin" },
   "/runs/[id]": { kind: "admin" },
   "/jobs": { kind: "admin" },
