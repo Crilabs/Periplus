@@ -82,21 +82,32 @@ export async function startWorkers(
     await db.transaction((tx) => settle(tx, job.data, "done"));
   }
 
+  /**
+   * Opens the failed_job review task and records the failure. Errors are logged and rethrown, so
+   * system.dead retries the job and, once its attempts are used up, keeps it as `failed` where the
+   * overview and jobs views count it.
+   */
   async function handleDeadLetter(job: JobWithMetadata<JobData>): Promise<void> {
     const jobId = job.sourceId ?? job.id;
+    const runId = job.data.runId;
     const queue = job.sourceName ?? "unknown";
     const error = errorText(job.sourceOutput);
-    await db.transaction(async (tx) => {
-      const task = await createReviewTask(tx, {
-        kind: "failed_job",
-        subjectType: "job",
-        subjectId: jobId,
-        context: { queue, key: job.data.key, runId: job.data.runId, stage: job.data.stage, error },
+    try {
+      await db.transaction(async (tx) => {
+        const task = await createReviewTask(tx, {
+          kind: "failed_job",
+          subjectType: "job",
+          subjectId: jobId,
+          context: { queue, key: job.data.key, runId, stage: job.data.stage, error },
+        });
+        // Only the call that opened the task records the failure, so a retried dead-letter job counts once.
+        if (task.created) await settle(tx, job.data, "failed");
       });
-      // Only the call that opened the task records the failure, so a retried dead-letter job counts once.
-      if (task.created) await settle(tx, job.data, "failed");
-    });
-    log.error({ queue, jobId, runId: job.data.runId, key: job.data.key, error }, "job failed permanently");
+    } catch (err) {
+      log.error({ err, jobId, runId, deadLetterJobId: job.id, attempt: job.retryCount + 1 }, "dead-letter handling failed");
+      throw err;
+    }
+    log.error({ queue, jobId, runId, key: job.data.key, error }, "job failed permanently");
   }
 
   /** Pulls budget-deferred jobs forward once their queue runs again (e.g. after a manual resume). */

@@ -1,12 +1,12 @@
 import { getDb } from "@/lib/db/client";
 import { queuesView } from "@/lib/domain/queues-view";
-import { getBoss } from "@/lib/jobs/boss";
 import { requireAdmin } from "@/lib/security/require-admin";
+import { queueStateLabel } from "../_components/labels";
 import { pauseQueueAction, resumeQueueAction } from "./actions";
 
 export default async function Page() {
   await requireAdmin();
-  const queues = await queuesView(getDb(), await getBoss());
+  const queues = await queuesView(getDb());
   return (
     <div className="space-y-4 text-sm">
       <h1 className="text-lg font-semibold">Jobs</h1>
@@ -28,14 +28,16 @@ export default async function Page() {
               <td className="pr-4">{s.queued}</td>
               <td className="pr-4">{s.active}</td>
               <td className="pr-4">{s.failed}</td>
-              <td className="pr-4">{s.paused ? "pausiert" : "läuft"}</td>
+              <td className="pr-4">{queueStateLabel(s.paused)}</td>
               <td>
-                <form action={s.paused ? resumeQueueAction : pauseQueueAction}>
-                  <input type="hidden" name="queue" value={queue} />
-                  <button type="submit" className="underline">
-                    {s.paused ? "Fortsetzen" : "Pausieren"}
-                  </button>
-                </form>
+                {s.pausable && (
+                  <form action={s.paused ? resumeQueueAction : pauseQueueAction}>
+                    <input type="hidden" name="queue" value={queue} />
+                    <button type="submit" className="underline">
+                      {s.paused ? "Fortsetzen" : "Pausieren"}
+                    </button>
+                  </form>
+                )}
               </td>
             </tr>
           ))}

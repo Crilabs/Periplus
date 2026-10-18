@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { testDb } from "@/test/db";
 import { reviewTasks } from "@/lib/db/schema";
 import { BudgetExceeded } from "@/lib/domain/costs";
@@ -10,15 +10,52 @@ import { createBoss } from "@/lib/jobs/boss";
 import { isQueuePaused, resumeQueue } from "@/lib/jobs/controls";
 import { pingHandler, pingStage } from "@/lib/jobs/handlers/system-ping";
 import { STAGES } from "@/lib/jobs/registry";
-import { DEAD_LETTER_QUEUE, ensureQueues, QUEUES } from "@/lib/jobs/queues";
+import { DEAD_LETTER_QUEUE, deadLetterQueueOptions, ensureQueues, QUEUES } from "@/lib/jobs/queues";
 import { startWorkers, type JobData, type JobHandler } from "@/lib/jobs/worker";
 import { enqueueStageJobs, startRun } from "@/lib/pipeline/runs";
+import { jobsFromDb } from "@/lib/domain/queues-view";
+
+/** Shared with the module mocks below: keys whose review task creation throws, and captured worker error logs. */
+const probe = vi.hoisted(() => ({
+  failReviewFor: new Set<string>(),
+  workerErrors: [] as Array<{ obj: Record<string, unknown>; msg?: string }>,
+}));
+
+vi.mock("@/lib/domain/review", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/lib/domain/review")>();
+  return {
+    ...original,
+    createReviewTask: async (...args: Parameters<typeof original.createReviewTask>) => {
+      if (probe.failReviewFor.has(String(args[1].context.key))) throw new Error("review task insert failed");
+      return original.createReviewTask(...args);
+    },
+  };
+});
+
+vi.mock("@/lib/logger", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/lib/logger")>();
+  return {
+    ...original,
+    createLogger: (...args: Parameters<typeof original.createLogger>) => {
+      const log = original.createLogger(...args);
+      if (args[0] === "worker") {
+        const error = log.error.bind(log);
+        log.error = ((obj: Record<string, unknown>, msg?: string) => {
+          probe.workerErrors.push({ obj, msg });
+          return error(obj, msg);
+        }) as typeof log.error;
+      }
+      return log;
+    },
+  };
+});
 
 const db = testDb();
 
 // Fast retries so a job exhausts its 3 attempts within the test timeout.
 const queueConfig = {
   "system.ping": { concurrency: 2, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  [DEAD_LETTER_QUEUE]: { concurrency: 1, retryLimit: 1, retryDelaySeconds: 0, retryBackoff: false },
 };
 
 /** Jobs with `budgetOnce` throw BudgetExceeded on their first attempt only. */
@@ -170,4 +207,28 @@ describe("worker", () => {
     expect(await boss.findJobs("system.ping", { data: { runId: id } })).toHaveLength(2);
     expect((await getRun(db, id))!.stages[0]).toMatchObject({ total: 2, done: 2, failed: 0 });
   }, 30_000);
+
+  it("a dead-letter job whose review task creation throws is logged and ends failed in the jobs view", async () => {
+    const key = `dl-boom-${newId()}`;
+    probe.failReviewFor.add(key);
+    const before = (await jobsFromDb(db))[DEAD_LETTER_QUEUE].failed;
+    const id = await boss.send(DEAD_LETTER_QUEUE, { key });
+    expect(id).toBeTruthy();
+
+    await waitFor(async () => (await boss.getJobById(DEAD_LETTER_QUEUE, id!))?.state === "failed", 20_000);
+    const job = await boss.getJobById(DEAD_LETTER_QUEUE, id!);
+    expect(job?.retryCount).toBe(1);
+    expect((await jobsFromDb(db))[DEAD_LETTER_QUEUE].failed).toBeGreaterThanOrEqual(before + 1);
+
+    const logged = probe.workerErrors.filter((e) => e.msg === "dead-letter handling failed" && e.obj.jobId === id);
+    expect(logged).toHaveLength(2);
+    expect(String(logged[0].obj.err)).toContain("review task insert failed");
+    expect(probe.workerErrors.some((e) => e.msg === "job failed permanently" && e.obj.jobId === id)).toBe(false);
+  }, 30_000);
+
+  it("the dead-letter queue gets explicit retry settings", async () => {
+    expect(deadLetterQueueOptions({})).toEqual({ retryLimit: 5, retryDelay: 60, retryBackoff: true });
+    const queue = await boss.getQueue(DEAD_LETTER_QUEUE);
+    expect(queue).toMatchObject({ retryLimit: 1, retryDelay: 0, retryBackoff: false });
+  });
 });

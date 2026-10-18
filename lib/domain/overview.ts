@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq, gt, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { reviewKindEnum, reviewTasks, workerHeartbeats, type ReviewKind } from "@/lib/db/schema";
 import { budgetStatus, type BudgetStatus } from "@/lib/domain/costs";
@@ -6,6 +6,9 @@ import { jobsFromDb, type JobsView } from "@/lib/domain/queues-view";
 import { listRuns, type RunView } from "@/lib/domain/runs";
 
 export const REVIEW_KINDS: readonly ReviewKind[] = reviewKindEnum.enumValues;
+
+/** Workers whose last heartbeat is older than this are treated as gone and not listed. */
+export const WORKER_STALE_MS = 3_600_000;
 
 export type Overview = {
   openReviewTasks: Record<ReviewKind, number>;
@@ -24,7 +27,10 @@ export async function overview(db: Db, now: Date = new Date()): Promise<Overview
       .groupBy(reviewTasks.kind),
     jobsFromDb(db, now),
     budgetStatus(db, undefined, now),
-    db.select().from(workerHeartbeats),
+    db
+      .select()
+      .from(workerHeartbeats)
+      .where(gt(workerHeartbeats.beatAt, new Date(now.getTime() - WORKER_STALE_MS))),
     listRuns(db, { limit: 5 }),
   ]);
   const openReviewTasks = Object.fromEntries(REVIEW_KINDS.map((kind) => [kind, 0])) as Record<ReviewKind, number>;
