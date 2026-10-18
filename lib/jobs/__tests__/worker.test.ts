@@ -386,6 +386,37 @@ describe("worker", () => {
     expect(run.stages[0]).toMatchObject({ total: 1, done: 1, failed: 0 });
   }, 50_000);
 
+  it("a stage whose jobs all failed stops the run; a successful retry continues it to finished", async () => {
+    const { id } = await createRun(db, {
+      kind: "system",
+      scope: scope(),
+      stages: ["ping", "ping2"],
+      params: { count: 1 },
+      triggeredBy: "test",
+    });
+    await beginStage(db, id, "ping", 1);
+    await enqueueStageJobs(boss, "system.ping", id, "ping", [{ key: "0", failUntilFixed: true }]);
+
+    await waitFor(async () => (await getRun(db, id))!.status === "failed", 25_000);
+    const failedRun = (await getRun(db, id))!;
+    expect(failedRun.failureReason).toBe("stage ping failed completely");
+    expect(failedRun.stages.map((s) => s.status)).toEqual(["finished", "pending"]);
+    expect(await boss.findJobs("run.advance", { data: { runId: id } })).toEqual([]);
+    const [job] = await failedJobsOfRun(db, id);
+    expect(job).toMatchObject({ queue: "system.ping", stage: "ping" });
+
+    fixed.add(`${id}:0`);
+    await retryFailedJob(db, boss, "system.ping", job.id);
+    await waitFor(async () => (await getRun(db, id))!.status === "finished", 25_000);
+    const run = (await getRun(db, id))!;
+    expect(run.failureReason).toBeNull();
+    expect(run.finishedAt).toBeInstanceOf(Date);
+    expect(run.stages).toMatchObject([
+      { stage: "ping", total: 1, done: 1, failed: 0, status: "finished" },
+      { stage: "ping2", total: 1, done: 1, failed: 0, status: "finished" },
+    ]);
+  }, 60_000);
+
   it("retrying a failed stage transition resumes the run, which fails again or finishes", async () => {
     const { id } = await startRun(db, boss, {
       kind: "system",

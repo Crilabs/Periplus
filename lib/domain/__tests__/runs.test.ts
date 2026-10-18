@@ -77,7 +77,49 @@ describe("runs", () => {
     await beginStage(db, id, "a", 2);
     await recordJobOutcome(db, id, "a", "k1", "failed");
     expect(await recordJobOutcome(db, id, "a", "k2", "failed")).toMatchObject({ runFinished: true });
-    expect((await getRun(db, id))!.status).toBe("failed");
+    expect((await getRun(db, id))!).toMatchObject({ status: "failed", failureReason: "stage a failed completely" });
+  });
+
+  it("a stage whose jobs all failed fails the run and reports no next stage", async () => {
+    const { id } = await newRun(["a", "b"]);
+    await beginStage(db, id, "a", 2);
+    await recordJobOutcome(db, id, "a", "k1", "failed");
+    expect(await recordJobOutcome(db, id, "a", "k2", "failed")).toEqual({
+      recorded: true,
+      stageFinished: true,
+      nextStage: null,
+      runFinished: true,
+    });
+    const run = (await getRun(db, id))!;
+    expect(run).toMatchObject({ status: "failed", failureReason: "stage a failed completely" });
+    expect(run.finishedAt).toBeInstanceOf(Date);
+    expect(run.stages.map((s) => s.status)).toEqual(["finished", "pending"]);
+  });
+
+  it("a success in a stage that failed completely resumes the run and reports the next stage once", async () => {
+    const { id } = await newRun(["a", "b"]);
+    await beginStage(db, id, "a", 2);
+    await recordJobOutcome(db, id, "a", "k1", "failed");
+    await recordJobOutcome(db, id, "a", "k2", "failed");
+
+    expect(await recordJobOutcome(db, id, "a", "k1", "done")).toEqual({
+      recorded: true,
+      stageFinished: false,
+      nextStage: "b",
+      runFinished: false,
+    });
+    expect((await getRun(db, id))!).toMatchObject({ status: "running", failureReason: null, finishedAt: null });
+    // A second success in the same stage finds the run already running: no second transition.
+    expect(await recordJobOutcome(db, id, "a", "k2", "done")).toEqual({
+      recorded: true,
+      stageFinished: false,
+      nextStage: null,
+      runFinished: false,
+    });
+
+    await beginStage(db, id, "b", 1);
+    expect(await recordJobOutcome(db, id, "b", "k1", "done")).toMatchObject({ runFinished: true });
+    expect((await getRun(db, id))!).toMatchObject({ status: "finished", failureReason: null });
   });
 
   it("counts concurrent outcomes exactly and reports completion once", async () => {
@@ -154,32 +196,34 @@ describe("runs", () => {
     expect((await getRun(db, id))!.stages[0]).toMatchObject({ done: 1, failed: 0 });
   });
 
-  it("a flip keeps a run failed while its last stage is still all-failed", async () => {
+  it("a flip in an earlier stage keeps a run failed by its last stage", async () => {
     const { id } = await newRun(["a", "b"]);
-    await beginStage(db, id, "a", 1);
+    await beginStage(db, id, "a", 2);
     await recordJobOutcome(db, id, "a", "x", "failed");
+    expect((await recordJobOutcome(db, id, "a", "w", "done")).nextStage).toBe("b");
     await beginStage(db, id, "b", 1);
     expect(await recordJobOutcome(db, id, "b", "y", "failed")).toMatchObject({ runFinished: true });
+    expect((await getRun(db, id))!).toMatchObject({ status: "failed", failureReason: "stage b failed completely" });
+
+    expect(await recordJobOutcome(db, id, "a", "x", "done")).toMatchObject({ recorded: true, nextStage: null });
     expect((await getRun(db, id))!.status).toBe("failed");
 
-    expect((await recordJobOutcome(db, id, "a", "x", "done")).recorded).toBe(true);
-    expect((await getRun(db, id))!.status).toBe("failed");
-
-    expect((await recordJobOutcome(db, id, "b", "y", "done")).recorded).toBe(true);
-    expect((await getRun(db, id))!.status).toBe("finished");
+    expect(await recordJobOutcome(db, id, "b", "y", "done")).toMatchObject({ recorded: true, nextStage: null });
+    expect((await getRun(db, id))!).toMatchObject({ status: "finished", failureReason: null });
   });
 
-  it("a flip never revives a run failed with a reason", async () => {
-    const { id } = await newRun(["a"]);
-    await beginStage(db, id, "a", 1);
+  it("a flip never revives a run failed for another reason", async () => {
+    const { id } = await newRun(["a", "b"]);
+    await beginStage(db, id, "a", 2);
     await recordJobOutcome(db, id, "a", "x", "failed");
-    // The last stage alone would allow finishing; the recorded reason must keep the run failed.
     await failRun(db, id, "stage transition failed: boom");
+    // The stage now fails completely, but the first reason stays and nothing moves on.
+    expect(await recordJobOutcome(db, id, "a", "y", "failed")).toMatchObject({ stageFinished: true, nextStage: null });
 
-    expect((await recordJobOutcome(db, id, "a", "x", "done")).recorded).toBe(true);
+    expect(await recordJobOutcome(db, id, "a", "x", "done")).toMatchObject({ recorded: true, nextStage: null });
     const run = (await getRun(db, id))!;
     expect(run).toMatchObject({ status: "failed", failureReason: "stage transition failed: boom" });
-    expect(run.stages[0]).toMatchObject({ done: 1, failed: 0 });
+    expect(run.stages[0]).toMatchObject({ done: 1, failed: 1 });
   });
 
   it("failRun marks the run failed with a reason", async () => {
