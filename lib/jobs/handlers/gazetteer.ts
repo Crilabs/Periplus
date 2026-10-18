@@ -3,6 +3,7 @@ import { getArchive } from "@/lib/adapters/s3";
 import { areaByKey } from "@/lib/config";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import { importOsm, OSM_STAGE } from "@/lib/pipeline/gazetteer/osm";
+import { importWikidata, WIKIDATA_STAGE } from "@/lib/pipeline/gazetteer/wikidata";
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import { areaKeyOf } from "./tiles";
 
@@ -20,6 +21,7 @@ function gazetteerStage(name: string): StageDefinition {
 }
 
 export const gazetteerOsmStage = gazetteerStage(OSM_STAGE);
+export const gazetteerWikidataStage = gazetteerStage(WIKIDATA_STAGE);
 
 /** Runs the gazetteer stage named in `data.stage` for `data.areaKey`. */
 export const gazetteerHandler: JobHandler<JobData> = async (data, ctx) => {
@@ -33,6 +35,11 @@ export const gazetteerHandler: JobHandler<JobData> = async (data, ctx) => {
         { transport: getTransport(), archive: getArchive() },
       );
       ctx.log.info({ areaKey: area.key, ...result }, "osm imported");
+      return;
+    }
+    case WIKIDATA_STAGE: {
+      const result = await importWikidata(ctx.db, { area, runId: data.runId }, { transport: getTransport() });
+      ctx.log.info({ areaKey: area.key, ...result }, "wikidata imported");
       return;
     }
     default:
