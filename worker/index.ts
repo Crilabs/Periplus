@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { workerHeartbeats } from "@/lib/db/schema";
+import { getArchive } from "@/lib/adapters/s3";
 import { getEnv } from "@/lib/env";
 import { createBoss } from "@/lib/jobs/boss";
 import { DEAD_LETTER_QUEUE, ensureQueues, QUEUES } from "@/lib/jobs/queues";
@@ -16,6 +17,8 @@ const log = createLogger("worker-main");
 async function main(): Promise<void> {
   const config = getConfig();
   const db = getDb();
+  await getArchive().ensureBucket();
+  log.info("archive bucket ready");
   const boss = createBoss(getEnv().DATABASE_URL);
   await boss.start();
   await ensureQueues(boss, config.queues);
