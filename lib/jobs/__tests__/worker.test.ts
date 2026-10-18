@@ -438,6 +438,37 @@ describe("worker", () => {
     expect(await boss.findJobs("system.ping", { data: { runId: id } })).toEqual([]);
   });
 
+  it("a late dead-letter delivery for a run.advance job that is no longer failed leaves the run alone", async () => {
+    const { id } = await createRun(db, {
+      kind: "system",
+      scope: scope(),
+      stages: ["ping"],
+      params: {},
+      triggeredBy: "test",
+    });
+    await beginStage(db, id, "ping", 1);
+    // The transition job was retried and has completed since; its dead-letter copy arrives only now.
+    const data = { runId: id, nextStage: "ping", key: `${id}:ping` };
+    const sourceId = newId();
+    await db.execute(sql`
+      insert into pgboss.job (id, name, data, state, completed_on)
+      values (${sourceId}, 'run.advance', ${JSON.stringify(data)}::jsonb, 'completed', now())`);
+    const { rows } = await db.execute<{ id: string }>(sql`
+      insert into pgboss.job (name, data, source_name, source_id, source_output)
+      values (${DEAD_LETTER_QUEUE}, ${JSON.stringify(data)}::jsonb, 'run.advance', ${sourceId}, '{"message":"late"}'::jsonb)
+      returning id`);
+    const deadId = rows[0]!.id;
+
+    await waitFor(async () => (await boss.getJobById(DEAD_LETTER_QUEUE, deadId))?.state === "completed", 20_000);
+    expect((await getRun(db, id))!).toMatchObject({ status: "running", failureReason: null });
+    // The failure is still on record for review.
+    const tasks = await db
+      .select()
+      .from(reviewTasks)
+      .where(and(eq(reviewTasks.kind, "failed_job"), eq(reviewTasks.subjectId, sourceId)));
+    expect(tasks).toHaveLength(1);
+  }, 30_000);
+
   it("enqueueing the same run stage twice does not duplicate jobs", async () => {
     const { id } = await createRun(db, {
       kind: "system",

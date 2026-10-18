@@ -4,7 +4,7 @@ import type { Logger } from "pino";
 import type { QueueConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { BudgetExceeded } from "@/lib/domain/costs";
-import { errorText } from "@/lib/domain/jobs-view";
+import { errorText, lockFailedJob } from "@/lib/domain/jobs-view";
 import { createReviewTask } from "@/lib/domain/review";
 import { failRun, recordJobOutcome } from "@/lib/domain/runs";
 import { createLogger } from "@/lib/logger";
@@ -91,7 +91,8 @@ export async function startWorkers(
   }
 
   /**
-   * Opens the failed_job review task and records the failure; a failed `run.advance` job fails its run.
+   * Opens the failed_job review task and records the failure; a `run.advance` job that is still failed
+   * fails its run.
    * Errors are logged and rethrown, so system.dead retries the job and, once its attempts are used up,
    * keeps it as `failed` where the overview and jobs views count it.
    */
@@ -109,8 +110,11 @@ export async function startWorkers(
           context: { queue, key: job.data.key, runId, stage: job.data.stage, error },
         });
         // A failed transition fails its run every time: after a manual retry resumed the run, the task of
-        // the first failure may still be open.
-        if (queue === RUN_ADVANCE_QUEUE && runId) await failRun(tx, runId, `stage transition failed: ${error}`);
+        // the first failure may still be open. Only while the source job is still failed, though: a late or
+        // repeated delivery after a retry must not fail the resumed or finished run.
+        if (queue === RUN_ADVANCE_QUEUE && runId && (await lockFailedJob(tx, queue, jobId))) {
+          await failRun(tx, runId, `stage transition failed: ${error}`);
+        }
         // Only the call that opened the task records the failure, so a retried dead-letter job counts once.
         if (!task.created) return;
         await settle(tx, job.data, "failed");

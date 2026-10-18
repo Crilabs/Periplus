@@ -49,6 +49,16 @@ export async function failedJobsOfRun(db: Db, runId: string): Promise<FailedJob[
 }
 
 /**
+ * True when the job is still `failed` in pg-boss; locks its row until the transaction ends, so a concurrent
+ * `retryFailedJob` runs entirely before or after the caller.
+ */
+export async function lockFailedJob(tx: Db, queue: string, jobId: string): Promise<boolean> {
+  const { rows } = await tx.execute(sql`
+    select 1 from pgboss.job where name = ${queue} and id = ${jobId} and state = 'failed' for update`);
+  return rows.length > 0;
+}
+
+/**
  * Sends a failed job back to its queue for one more attempt. An open `failed_job` review task stays open;
  * a later success flips the run outcome (see `recordJobOutcome`). Retrying a failed `run.advance` job
  * resumes its run in the same transaction (ruling T3-R2), so the run can finish again. A job that is no
