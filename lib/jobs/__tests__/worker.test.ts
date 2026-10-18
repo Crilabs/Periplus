@@ -11,6 +11,7 @@ import { isQueuePaused, resumeQueue } from "@/lib/jobs/controls";
 import { createLogger } from "@/lib/logger";
 import { advanceHandler } from "@/lib/jobs/handlers/run-advance";
 import { pingHandler, pingStage } from "@/lib/jobs/handlers/system-ping";
+import { HANDLERS } from "@/lib/jobs/registry";
 import { STAGES } from "@/lib/jobs/stages";
 import { DEAD_LETTER_QUEUE, deadLetterQueueOptions, ensureQueues, QUEUES } from "@/lib/jobs/queues";
 import { startWorkers, type JobData, type JobHandler } from "@/lib/jobs/worker";
@@ -59,6 +60,7 @@ const db = testDb();
 const queueConfig = {
   "system.ping": { concurrency: 2, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "run.advance": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "tiles.ensure": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   [DEAD_LETTER_QUEUE]: { concurrency: 1, retryLimit: 1, retryDelaySeconds: 0, retryBackoff: false },
 };
 
@@ -138,7 +140,7 @@ beforeAll(async () => {
   await ensureQueues(boss, queueConfig);
   for (const q of [...QUEUES, DEAD_LETTER_QUEUE]) await boss.deleteAllJobs(q);
   for (const q of QUEUES) await resumeQueue(db, q, "test");
-  workers = await startWorkers(boss, db, { "system.ping": testPing, "run.advance": advanceHandler }, queueConfig, {
+  workers = await startWorkers(boss, db, { ...HANDLERS, "system.ping": testPing, "run.advance": advanceHandler }, queueConfig, {
     pollingIntervalSeconds: 0.5,
     controlPollMs: 200,
   });

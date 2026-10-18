@@ -40,3 +40,13 @@ export async function createReviewTask(db: Db, input: ReviewTaskInput): Promise<
   if (!existing) throw new Error(`open review task for ${input.kind}/${input.subjectId} vanished during insert`);
   return { id: existing.id, created: false };
 }
+
+/** Whether a task of this kind for this subject was ever decided. */
+export async function hasDecidedTask(db: Db, kind: ReviewKind, subjectId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: reviewTasks.id })
+    .from(reviewTasks)
+    .where(and(eq(reviewTasks.kind, kind), eq(reviewTasks.subjectId, subjectId), eq(reviewTasks.status, "decided")))
+    .limit(1);
+  return row !== undefined;
+}
