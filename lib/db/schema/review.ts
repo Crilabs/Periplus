@@ -1,0 +1,40 @@
+import { integer, jsonb, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { newId } from "@/lib/domain/ids";
+
+export const reviewKindEnum = pgEnum("review_kind", [
+  "source_approval",
+  "place_candidate",
+  "conflict",
+  "failed_job",
+  "coast_tile_without_area",
+  "uncertain_change",
+  "comparison_deviation",
+]);
+export const reviewStatusEnum = pgEnum("review_status", ["open", "decided", "dismissed"]);
+
+export type ReviewKind = (typeof reviewKindEnum.enumValues)[number];
+export type ReviewStatus = (typeof reviewStatusEnum.enumValues)[number];
+
+export const reviewTasks = pgTable("review_tasks", {
+  id: uuid("id").primaryKey().$defaultFn(newId),
+  kind: reviewKindEnum("kind").notNull(),
+  subjectType: text("subject_type").notNull(),
+  subjectId: text("subject_id").notNull(),
+  context: jsonb("context").notNull().default({}),
+  status: reviewStatusEnum("status").notNull().default("open"),
+  priority: integer("priority").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Append-only (forbid_mutation trigger). */
+export const reviewDecisions = pgTable("review_decisions", {
+  id: uuid("id").primaryKey().$defaultFn(newId),
+  taskId: uuid("task_id")
+    .notNull()
+    .references(() => reviewTasks.id),
+  decision: jsonb("decision").notNull(),
+  decidedBy: text("decided_by").notNull(),
+  decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+  durationMs: integer("duration_ms"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
