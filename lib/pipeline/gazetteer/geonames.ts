@@ -5,7 +5,7 @@ import type { Db } from "@/lib/db/client";
 import { geoObjects, type GeoObjectType } from "@/lib/db/schema";
 import { areaBbox } from "@/lib/domain/gazetteer/areas";
 import { bufferBbox } from "@/lib/domain/gazetteer/land";
-import { findMatch, resolveMergedByExternalId } from "@/lib/domain/gazetteer/merge";
+import { findMatch, ISLAND_GROUP, openPairTask, resolveMergedByExternalId } from "@/lib/domain/gazetteer/merge";
 import { addNames, isGreek, type NameDraft } from "@/lib/domain/gazetteer/names";
 import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
 import { createLogger } from "@/lib/logger";
@@ -13,9 +13,6 @@ import { createLogger } from "@/lib/logger";
 export const GEONAMES_STAGE = "gazetteer.geonames";
 
 const log = createLogger("gazetteer.geonames");
-
-/** Types matched together, as in `findMatch`. */
-const ISLAND_GROUP: GeoObjectType[] = ["island", "islet"];
 
 /**
  * Names with `origin geonames`: the main name (`el` when Greek, else `und`), the ASCII name as `en` only
@@ -61,10 +58,14 @@ async function link(db: Db, id: string, geonamesId: string): Promise<boolean> {
 /** True when a valid, unmerged object of the type group lies within `radiusM` of the point. */
 async function hasNeighbour(db: Db, type: GeoObjectType, row: GeonamesRow, radiusM: number): Promise<boolean> {
   const types = ISLAND_GROUP.includes(type) ? ISLAND_GROUP : [type];
+  // Bbox prefilter so the GiST index is used (a degree is at least ~110 km in latitude, less in longitude).
+  const dLat = radiusM / 110_000;
+  const dLon = radiusM / (110_000 * Math.max(Math.cos((row.lat * Math.PI) / 180), 0.01));
   const { rows } = await db.execute<{ found: boolean }>(sql`
     select exists (
       select 1 from geo_objects o
       where o.valid_to is null and o.merged_into_id is null and o.type in ${types}
+        and o.geom && ST_Expand(ST_SetSRID(ST_MakePoint(${row.lon}, ${row.lat}), 4326), ${dLon}, ${dLat})
         and ST_DWithin(o.geom::geography, ST_SetSRID(ST_MakePoint(${row.lon}, ${row.lat}), 4326)::geography, ${radiusM})
     ) as found
   `);
@@ -78,13 +79,14 @@ async function hasNeighbour(db: Db, type: GeoObjectType, row: GeonamesRow, radiu
  * its survivor gets them and counts as linked); (2) else a `same` match of `findMatch` within
  * `geonamesNewObjectRadiusM` that has no GeoNames ID yet is linked and gets the names; (3) else, when any
  * valid object of the same type group lies within that radius, the row is skipped (GeoNames only
- * supplements); otherwise a new point object with `origin geonames` is created.
+ * supplements); otherwise a new point object with `origin geonames` is created (with a pair task when the match was
+ * `uncertain`, so a possible duplicate gets reviewed).
  */
 export async function importGeonames(
   db: Db,
   input: { area: AreaConfig; runId: string },
   deps: { source: GeonamesSource },
-): Promise<{ linked: number; created: number; skipped: number; names: number }> {
+): Promise<{ linked: number; created: number; skipped: number; uncertain: number; names: number }> {
   const { area } = input;
   const { gazetteer } = getConfig();
   const { countries, featureCodes } = gazetteer.geonames;
@@ -104,7 +106,7 @@ export async function importGeonames(
   }
 
   return db.transaction(async (tx) => {
-    const result = { linked: 0, created: 0, skipped: 0, names: 0 };
+    const result = { linked: 0, created: 0, skipped: 0, uncertain: 0, names: 0 };
     for (const row of rows) {
       const type = featureCodes[row.featureCode]!;
       const names = rowNames(row, alternates.get(row.id) ?? []);
@@ -147,6 +149,14 @@ export async function importGeonames(
       }
       result.created++;
       result.names += created.names;
+      if (match.kind === "uncertain") {
+        await openPairTask(tx, created.id, match.id, {
+          similarity: match.similarity,
+          distanceM: match.distanceM,
+          source: "geonames",
+        });
+        result.uncertain++;
+      }
     }
     return result;
   });

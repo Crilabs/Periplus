@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { GeonamesAltName, GeonamesRow, GeonamesSource } from "@/lib/adapters/geonames";
 import type { AreaConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { geoNames, geoObjects } from "@/lib/db/schema";
+import { geoNames, geoObjects, reviewTasks } from "@/lib/db/schema";
 import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
 import { newId } from "@/lib/domain/ids";
 import { upsertGeoObject, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
@@ -45,8 +45,8 @@ const ROWS = {
   otherBay: row(2, "BAY", 26.203, 35.75, "Ormos Xenos"),
   // A cape far from any object, Greek main name.
   cape: row(3, "CAPE", 26.3, 35.8, "Ακρωτήριο Δοκιμή", "Akrotirio Dokimi"),
-  // A cape ~1500 m north of the OSM cape, same name: beyond 500 m.
-  nearCape: row(4, "CAPE", 26.35, 35.6635, "Akrotiri Kavos"),
+  // A cape ~700 m north of the OSM cape, same name: beyond 500 m, within the uncertain band (up to 1000 m).
+  nearCape: row(4, "CAPE", 26.35, 35.6563, "Akrotiri Kavos"),
   // A feature code that is not configured: ignored.
   hotel: row(5, "HTL", 26.1, 35.85, "Test Hotel"),
 };
@@ -127,7 +127,7 @@ describe("importGeonames", () => {
       const seen: { country: string; bbox: Bbox }[] = [];
       const result = await run(db, [ROWS.bay], seen);
       // Kalm Bay (und), Όρμος Καλμ (el) + transliteration, Kalmbucht (de), Kalm Bay (en, geonames).
-      expect(result).toEqual({ linked: 1, created: 0, skipped: 0, names: 5 });
+      expect(result).toEqual({ linked: 1, created: 0, skipped: 0, uncertain: 0, names: 5 });
 
       const [bay] = await byGeonames(db, gn(1));
       expect(bay).toMatchObject({ id: ids[osm("node", 1)], type: "bay", origin: "osm" });
@@ -154,7 +154,7 @@ describe("importGeonames", () => {
     withRollback(async (db) => {
       await prepare(db);
       const result = await run(db, [ROWS.otherBay]);
-      expect(result).toEqual({ linked: 0, created: 0, skipped: 1, names: 0 });
+      expect(result).toEqual({ linked: 0, created: 0, skipped: 1, uncertain: 0, names: 0 });
       expect(await byGeonames(db, gn(2))).toEqual([]);
     }));
 
@@ -199,11 +199,27 @@ describe("importGeonames", () => {
         (await db.select({ id: geoObjects.id }).from(geoObjects).where(eq(geoObjects.type, "cape"))).length;
       const before = await capes();
       const second = await run(db, [ROWS.nearCape]);
-      expect(second).toEqual({ linked: 1, created: 0, skipped: 0, names: 0 });
+      expect(second).toEqual({ linked: 1, created: 0, skipped: 0, uncertain: 0, names: 0 });
       expect(await capes()).toBe(before);
       expect(await names(db, osmCape)).toEqual(
         expect.arrayContaining([{ name: "Akrotiri Kavos", language: "und", origin: "geonames", isPreferred: true }]),
       );
+    }));
+
+  it("an uncertain match that ends as a new cape opens one pair task", () =>
+    withRollback(async (db) => {
+      const ids = await prepare(db);
+      const result = await run(db, [ROWS.nearCape]);
+      expect(result).toMatchObject({ linked: 0, created: 1, skipped: 0, uncertain: 1 });
+      const [cape] = await byGeonames(db, gn(4));
+      const subjectId = [cape!.id, ids[osm("node", 4)]!].sort().join(":");
+      const tasks = await db.select().from(reviewTasks).where(eq(reviewTasks.subjectId, subjectId));
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0]).toMatchObject({ kind: "place_candidate", subjectType: "geo_object_pair", status: "open" });
+      expect(tasks[0]!.context).toMatchObject({ source: "geonames", similarity: 1 });
+      const distanceM = (tasks[0]!.context as { distanceM: number }).distanceM;
+      expect(distanceM).toBeGreaterThan(500);
+      expect(distanceM).toBeLessThan(1000);
     }));
 
   it("second run changes nothing", () =>
@@ -227,6 +243,7 @@ describe("importGeonames", () => {
           .from(geoObjects)
           .where(scope)
           .orderBy(geoObjects.id),
+        tasks: (await db.select({ id: reviewTasks.id }).from(reviewTasks).where(eq(reviewTasks.kind, "place_candidate"))).length,
         objectHistory: await historyCount("geo_objects_history"),
         names: await db
           .select({ id: geoNames.id, validTo: geoNames.validTo, isPreferred: geoNames.isPreferred })
@@ -235,9 +252,10 @@ describe("importGeonames", () => {
           .orderBy(geoNames.id),
       });
       const before = await snapshot();
+      expect(before.tasks).toBe(1);
       expect(before.objects.map((o) => o.geonamesId).sort()).toEqual([gn(1), gn(3), gn(4), null].sort());
       const second = await run(db);
-      expect(second).toEqual({ linked: 0, created: 0, skipped: 1, names: 0 });
+      expect(second).toEqual({ linked: 0, created: 0, skipped: 1, uncertain: 0, names: 0 });
       expect(await snapshot()).toEqual(before);
     }));
 });

@@ -16,7 +16,7 @@ export type Match =
 type MergeRules = GazetteerConfig["merge"];
 type Found = Exclude<Match, { kind: "none" }>;
 
-const ISLAND_GROUP: GeoObjectType[] = ["island", "islet"];
+export const ISLAND_GROUP: GeoObjectType[] = ["island", "islet"];
 
 /** Metres per degree of latitude, rounded down so the bounding box never cuts off a candidate. */
 const MIN_M_PER_DEG = 110_000;
