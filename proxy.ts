@@ -27,7 +27,9 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-trace-id", crypto.randomUUID());
   const response = NextResponse.next({ request: { headers: requestHeaders } });
-  if (session) {
+  // Refresh only on plain navigations. A server action (POST) may delete the cookie itself (logout);
+  // a refresh Set-Cookie on the same response would race with that deletion and keep the session alive.
+  if (session && (request.method === "GET" || request.method === "HEAD")) {
     const refreshed = await refreshSessionToken(session);
     if (refreshed) response.cookies.set(SESSION_COOKIE, refreshed, sessionCookieOptions());
   }

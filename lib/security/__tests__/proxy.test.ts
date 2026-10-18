@@ -37,3 +37,25 @@ describe("proxy redirect", () => {
     expect(location.pathname + location.search).toBe("/login?next=%2Fruns");
   });
 });
+
+describe("proxy session refresh", () => {
+  async function sessionCookie(): Promise<string> {
+    const { createSessionToken, SESSION_COOKIE } = await import("@/lib/security/session");
+    return `${SESSION_COOKIE}=${await createSessionToken({ id: "00000000-0000-7000-8000-000000000001", email: "a@test.invalid" })}`;
+  }
+
+  it("refreshes the session cookie on a GET page request", async () => {
+    const response = await proxy(new NextRequest("http://localhost:3000/runs", { headers: { cookie: await sessionCookie() } }));
+    expect(response.headers.get("set-cookie")).toMatch(/periplus_session=/);
+  });
+
+  it("never sets the session cookie on a server action POST (logout must win)", async () => {
+    const response = await proxy(
+      new NextRequest("http://localhost:3000/runs", {
+        method: "POST",
+        headers: { cookie: await sessionCookie(), "next-action": "abc123" },
+      }),
+    );
+    expect(response.headers.get("set-cookie")).toBeNull();
+  });
+});
