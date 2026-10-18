@@ -1,7 +1,8 @@
 import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { reviewDecisions, reviewTasks, tiles } from "@/lib/db/schema";
+import { comparisonSet, geoObjects, places, reviewDecisions, reviewTasks, tiles } from "@/lib/db/schema";
+import { geomFromGeoJson } from "@/lib/db/geometry";
 import { newId } from "@/lib/domain/ids";
 import { createReviewTask } from "@/lib/domain/review";
 import { tileIdFor } from "@/lib/domain/tiles";
@@ -36,6 +37,7 @@ import { startGazetteerAction, startPingRun, startSeedAction } from "../runs/act
 import { seedTileAction } from "../tiles/[id]/actions";
 import { pauseQueueAction, resumeQueueAction } from "../jobs/actions";
 import { retryJobAction } from "../runs/[id]/actions";
+import { toggleComparisonAction } from "../quality/actions";
 
 const form = (fields: Record<string, string>) => {
   const data = new FormData();
@@ -190,5 +192,43 @@ describe("admin server actions", () => {
       await expect(seedTileAction({ tileId })).rejects.toThrow("NEXT_REDIRECT");
       await expect(startGazetteerAction({ areaKey: "saronic" })).rejects.toThrow("NEXT_REDIRECT");
       expect(startRun).toHaveBeenCalledTimes(2);
+    }));
+  it("toggleComparisonAction: validates input, adds and removes a confirmed place", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      // Open sea outside the pilot box, at a spot no other test uses.
+      const geom = sql`${geomFromGeoJson({ type: "Point", coordinates: [24.61, 32.83] })}`;
+      let [area] = await tx
+        .select({ id: geoObjects.id })
+        .from(geoObjects)
+        .where(sql`${geoObjects.type} = 'area' and ${geoObjects.configKey} = 'saronic' and ${geoObjects.validTo} is null`);
+      area ??= (
+        await tx.insert(geoObjects).values({ type: "area", origin: "manual", configKey: "saronic", geom }).returning({ id: geoObjects.id })
+      )[0]!;
+      const tileId = tileIdFor(24.61, 32.83);
+      await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(24.5, 32.75, 24.75, 33.0, 4326)`, areaId: area.id });
+      const [obj] = await tx.insert(geoObjects).values({ type: "bay", origin: "osm", geom }).returning({ id: geoObjects.id });
+      const [place] = await tx
+        .insert(places)
+        .values({ geoObjectId: obj!.id, kind: "anchorage", status: "confirmed", position: geom })
+        .returning({ id: places.id });
+      const placeId = place!.id;
+      const rows = () => tx.select().from(comparisonSet).where(sql`${comparisonSet.placeId} = ${placeId}`);
+
+      await expect(toggleComparisonAction({ placeId, areaKey: "atlantis", include: true })).rejects.toThrow();
+      await expect(toggleComparisonAction({ placeId: "nope", areaKey: "saronic", include: true })).rejects.toThrow();
+      expect(await rows()).toHaveLength(0);
+
+      await toggleComparisonAction(form({ placeId, areaKey: "saronic", include: "true" }));
+      await toggleComparisonAction({ placeId, areaKey: "saronic", include: true });
+      expect(await rows()).toMatchObject([{ placeId, areaId: area.id, addedBy: "admin@example.invalid" }]);
+
+      // An unticked checkbox sends no `include` field.
+      await toggleComparisonAction(form({ placeId, areaKey: "saronic" }));
+      expect(await rows()).toHaveLength(0);
+
+      requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
+      await expect(toggleComparisonAction({ placeId, areaKey: "saronic", include: true })).rejects.toThrow("NEXT_REDIRECT");
+      expect(await rows()).toHaveLength(0);
     }));
 });

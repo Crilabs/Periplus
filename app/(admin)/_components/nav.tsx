@@ -12,6 +12,7 @@ const ITEMS = [
   { href: "/runs", label: "Läufe" },
   { href: "/jobs", label: "Jobs" },
   { href: "/costs", label: "Kosten" },
+  { href: "/quality", label: "Qualität" },
   { href: "/settings", label: "Einstellungen" },
 ] as const;
 
