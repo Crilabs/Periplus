@@ -1,0 +1,3 @@
+{
+  "system.ping": { "concurrency": 2, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true }
+}

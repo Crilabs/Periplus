@@ -1,0 +1,83 @@
+# Production stack. Secrets and settings come from .env next to this file's working directory:
+#   IMAGE_TAG=<sha> PERIPLUS_DOMAIN=example.com docker compose -f docker/compose.prod.yml --env-file .env up -d
+# One-off migration:  docker compose -f docker/compose.prod.yml --profile migrate run --rm migrate
+# The archive is Hetzner Object Storage (S3_* in .env); there is no object-storage container.
+name: periplus
+
+x-app-env: &app-env
+  env_file: ../.env
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    <<: *logging
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PERIPLUS_DOMAIN: ${PERIPLUS_DOMAIN:?set PERIPLUS_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - web
+
+  web:
+    image: ghcr.io/crilabs/periplus-web:${IMAGE_TAG:?set IMAGE_TAG}
+    restart: unless-stopped
+    <<: [*app-env, *logging]
+    environment:
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    image: ghcr.io/crilabs/periplus-worker:${IMAGE_TAG:?set IMAGE_TAG}
+    restart: unless-stopped
+    <<: [*app-env, *logging]
+    command: ["node", "--import", "tsx", "worker/index.ts"]
+    # Lets running jobs finish and the heartbeat row be removed before SIGKILL.
+    stop_grace_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  migrate:
+    image: ghcr.io/crilabs/periplus-worker:${IMAGE_TAG:?set IMAGE_TAG}
+    profiles: ["migrate"]
+    <<: [*app-env, *logging]
+    command: ["node", "--import", "tsx", "scripts/migrate.ts"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: ghcr.io/crilabs/periplus-postgres:${IMAGE_TAG:?set IMAGE_TAG}
+    restart: unless-stopped
+    <<: *logging
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-periplus}
+      POSTGRES_USER: ${POSTGRES_USER:-periplus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  pg-data:
+  caddy-data:
+  caddy-config:

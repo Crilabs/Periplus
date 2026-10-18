@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "periplus",
+      "credentials": [{ "accessKey": "periplus", "secretKey": "periplus-dev-secret" }],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

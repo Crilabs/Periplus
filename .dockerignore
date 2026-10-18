@@ -1,0 +1,16 @@
+.git
+.idea
+.next
+.remember
+.superpowers
+.env*
+!.env.example
+node_modules
+test-results
+playwright-report
+coverage
+docs
+e2e
+*.tsbuildinfo
+Dockerfile*
+docker

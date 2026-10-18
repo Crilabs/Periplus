@@ -1,0 +1,77 @@
+import { expect, test } from "@playwright/test";
+
+const E2E_EMAIL = process.env.E2E_EMAIL!;
+const E2E_PASSWORD = process.env.E2E_PASSWORD!;
+
+async function signIn(page: import("@playwright/test").Page, password = E2E_PASSWORD) {
+  await page.getByLabel("E-Mail").fill(E2E_EMAIL);
+  await page.getByLabel("Passwort").fill(password);
+  await page.getByRole("button", { name: "Anmelden" }).click();
+}
+
+test("admin logs in, sees the overview, logs out", async ({ page }) => {
+  await page.goto("/runs");
+  await expect(page).toHaveURL(/\/login\?next=%2Fruns/);
+  await signIn(page);
+  await expect(page).toHaveURL(/\/runs$/);
+  await expect(page.getByRole("heading", { name: "Läufe" })).toBeVisible();
+  await page.getByRole("button", { name: "Abmelden" }).click();
+  await expect(page).toHaveURL(/\/login/);
+  await page.goto("/runs");
+  await expect(page).toHaveURL(/\/login\?next=%2Fruns/);
+});
+
+test("admin starts a ping run and sees it listed; all admin pages render", async ({ page }) => {
+  await page.goto("/login");
+  await signIn(page);
+  await expect(page.getByRole("heading", { name: "Übersicht" })).toBeVisible();
+  await expect(page.getByText("Offene Prüfungen")).toBeVisible();
+  await page.goto("/runs");
+  const before = await page.locator("tbody tr").count();
+  await page.getByRole("button", { name: "Ping-Lauf starten" }).click();
+  await expect(page).toHaveURL(/\/runs$/);
+  await expect(page.locator("tbody tr")).toHaveCount(Math.min(before + 1, 50));
+  await page.locator("tbody tr").first().getByRole("link").click();
+  await expect(page.getByRole("heading", { name: /^Lauf / })).toBeVisible();
+  for (const [path, heading] of [
+    ["/jobs", "Jobs"],
+    ["/costs", "Kosten"],
+    ["/settings", "Einstellungen"],
+    ["/map", "Karte"],
+  ] as const) {
+    await page.goto(path);
+    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+  }
+});
+
+test("open redirect via next is ignored", async ({ page }) => {
+  await page.goto("/login?next=//evil.example");
+  await signIn(page);
+  await expect(page).toHaveURL(/localhost:\d+\/$/);
+  await expect(page.getByRole("heading", { name: "Übersicht" })).toBeVisible();
+});
+
+test("wrong password shows the generic error", async ({ page }) => {
+  await page.goto("/login");
+  await signIn(page, "definitely-wrong-password");
+  await expect(page.getByText("E-Mail oder Passwort falsch.")).toBeVisible();
+});
+
+test("health endpoints are public", async ({ request }) => {
+  expect((await request.get("/healthz")).status()).toBe(200);
+  expect(await (await request.get("/readyz")).json()).toEqual({ status: "ok" });
+});
+
+test("redirect Location is relative and ignores a spoofed Host header", async ({ baseURL }) => {
+  const { request } = await import("node:http");
+  const url = new URL("/runs", baseURL);
+  const location = await new Promise<string | undefined>((resolve, reject) => {
+    request(url, { headers: { host: "evil.example" } }, (res) => {
+      res.resume();
+      resolve(res.headers.location);
+    })
+      .on("error", reject)
+      .end();
+  });
+  expect(location).toBe("/login?next=%2Fruns");
+});

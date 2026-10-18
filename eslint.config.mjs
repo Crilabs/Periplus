@@ -12,7 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    "drizzle/**",
+    "playwright-report/**",
   ]),
+  { rules: { "no-console": "error" } },
 ]);
 
 export default eslintConfig;
