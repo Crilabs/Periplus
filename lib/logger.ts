@@ -8,7 +8,12 @@ export const REDACT_PATHS = [
   "key",
   "token",
   "*.password",
+  "*.passwordHash",
   "*.apiKey",
+  "*.key",
+  "*.token",
+  "*.authorization",
+  "*.cookie",
   "headers.authorization",
   "headers.cookie",
   "authorization",
@@ -19,18 +24,16 @@ function resolveSettings(): { level: string; pretty: boolean } {
   try {
     const env = getEnv();
     return { level: env.LOG_LEVEL, pretty: env.NODE_ENV === "development" };
-  } catch {
-    // Invalid or incomplete env (e.g. in tests): fall back to safe defaults.
-    return { level: "info", pretty: false };
+  } catch (error) {
+    // Only tests may run with an incomplete env; everywhere else the env error must surface.
+    if (process.env.NODE_ENV === "test") return { level: "info", pretty: false };
+    throw error;
   }
 }
 
-export function createLogger(module: string): pino.Logger {
+export function createLogger(module: string, destination?: pino.DestinationStream): pino.Logger {
   const { level, pretty } = resolveSettings();
-  return pino({
-    level,
-    redact: REDACT_PATHS,
-    base: { module },
-    ...(pretty ? { transport: { target: "pino-pretty" } } : {}),
-  });
+  const options: pino.LoggerOptions = { level, redact: REDACT_PATHS, base: { module } };
+  if (destination) return pino(options, destination);
+  return pino(pretty ? { ...options, transport: { target: "pino-pretty" } } : options);
 }

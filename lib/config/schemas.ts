@@ -7,18 +7,19 @@ export const queueConfigSchema = z.object({
   retryBackoff: z.boolean(),
 });
 
-export const budgetServices = ["anthropic", "voyage", "dataforseo", "firecrawl", "jina"] as const;
-export type BudgetService = (typeof budgetServices)[number];
+export const BUDGET_SERVICES = ["anthropic", "voyage", "dataforseo", "firecrawl", "jina"] as const;
+export type BudgetService = (typeof BUDGET_SERVICES)[number];
 
 export const queuesSchema = z.record(z.string(), queueConfigSchema);
 
-export const budgetsSchema = z.strictObject({
-  anthropic: z.strictObject({ dailyEur: z.number().positive() }),
-  voyage: z.strictObject({ dailyEur: z.number().positive() }),
-  dataforseo: z.strictObject({ dailyEur: z.number().positive() }),
-  firecrawl: z.strictObject({ dailyEur: z.number().positive() }),
-  jina: z.strictObject({ dailyEur: z.number().positive() }),
-});
+const budgetEntrySchema = z.strictObject({ dailyEur: z.number().positive() });
+
+export const budgetsSchema = z.strictObject(
+  Object.fromEntries(BUDGET_SERVICES.map((s) => [s, budgetEntrySchema])) as Record<
+    BudgetService,
+    typeof budgetEntrySchema
+  >,
+);
 
 export const modelsSchema = z.object({
   tasks: z.record(
@@ -34,6 +35,6 @@ export const modelsSchema = z.object({
 export type QueueConfig = z.infer<typeof queueConfigSchema>;
 export type AppConfig = {
   queues: Record<string, QueueConfig>;
-  budgets: z.infer<typeof budgetsSchema>;
+  budgets: Record<BudgetService, { dailyEur: number }>;
   models: z.infer<typeof modelsSchema>;
 };

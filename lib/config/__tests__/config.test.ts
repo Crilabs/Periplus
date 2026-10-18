@@ -47,6 +47,12 @@ describe("loadConfig", () => {
     ).toThrow(/bogus/);
   });
 
+  it("names the file when a config file is malformed JSON", () => {
+    const dir = fixtureDir({});
+    writeFileSync(join(dir, "budgets.json"), "{ not json");
+    expect(() => loadConfig(dir)).toThrow(/budgets\.json/);
+  });
+
   it("rejects a missing config file", () => {
     expect(() => loadConfig(join(tmpdir(), "periplus-does-not-exist"))).toThrow();
   });

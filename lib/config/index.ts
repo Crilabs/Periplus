@@ -7,7 +7,13 @@ export type { AppConfig, BudgetService, QueueConfig } from "./schemas";
 
 function readJson<T>(dir: string, name: string, schema: ZodType<T>): T {
   const file = join(dir, `${name}.json`);
-  const parsed = schema.safeParse(JSON.parse(readFileSync(file, "utf8")));
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(file, "utf8"));
+  } catch (error) {
+    throw new Error(`Cannot read config ${file}: ${(error as Error).message}`, { cause: error });
+  }
+  const parsed = schema.safeParse(raw);
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
