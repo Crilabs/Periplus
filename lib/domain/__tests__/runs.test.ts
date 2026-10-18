@@ -146,11 +146,40 @@ describe("runs", () => {
     });
     const run = (await getRun(db, id))!;
     expect(run.stages[0]).toMatchObject({ done: 1, failed: 0, status: "finished" });
-    expect(run.status).toBe("failed");
+    // The last stage is no longer all-failed, so the run counts as finished; its end time stays.
+    expect(run.status).toBe("finished");
     expect(run.finishedAt).toEqual(failedRun.finishedAt);
 
     expect((await recordJobOutcome(db, id, "ping", "a", "done")).recorded).toBe(false);
     expect((await getRun(db, id))!.stages[0]).toMatchObject({ done: 1, failed: 0 });
+  });
+
+  it("a flip keeps a run failed while its last stage is still all-failed", async () => {
+    const { id } = await newRun(["a", "b"]);
+    await beginStage(db, id, "a", 1);
+    await recordJobOutcome(db, id, "a", "x", "failed");
+    await beginStage(db, id, "b", 1);
+    expect(await recordJobOutcome(db, id, "b", "y", "failed")).toMatchObject({ runFinished: true });
+    expect((await getRun(db, id))!.status).toBe("failed");
+
+    expect((await recordJobOutcome(db, id, "a", "x", "done")).recorded).toBe(true);
+    expect((await getRun(db, id))!.status).toBe("failed");
+
+    expect((await recordJobOutcome(db, id, "b", "y", "done")).recorded).toBe(true);
+    expect((await getRun(db, id))!.status).toBe("finished");
+  });
+
+  it("a flip never revives a run failed with a reason", async () => {
+    const { id } = await newRun(["a"]);
+    await beginStage(db, id, "a", 1);
+    await recordJobOutcome(db, id, "a", "x", "failed");
+    // The last stage alone would allow finishing; the recorded reason must keep the run failed.
+    await failRun(db, id, "stage transition failed: boom");
+
+    expect((await recordJobOutcome(db, id, "a", "x", "done")).recorded).toBe(true);
+    const run = (await getRun(db, id))!;
+    expect(run).toMatchObject({ status: "failed", failureReason: "stage transition failed: boom" });
+    expect(run.stages[0]).toMatchObject({ done: 1, failed: 0 });
   });
 
   it("failRun marks the run failed with a reason", async () => {

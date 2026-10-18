@@ -4,7 +4,7 @@ import { testDb } from "@/test/db";
 import { newId } from "@/lib/domain/ids";
 import { workerHeartbeats } from "@/lib/db/schema";
 import { overview, REVIEW_KINDS } from "@/lib/domain/overview";
-import { queuesView } from "@/lib/domain/queues-view";
+import { jobsFromDb, queuesView, VIEW_QUEUES } from "@/lib/domain/queues-view";
 import { getConfig } from "@/lib/config";
 import { createBoss } from "@/lib/jobs/boss";
 import { DEAD_LETTER_QUEUE, ensureQueues, QUEUES } from "@/lib/jobs/queues";
@@ -92,5 +92,19 @@ describe("overview", () => {
     }
     expect(deltas).toContain(1);
     expect(viewMatched).toBe(true);
+  });
+
+  it("jobsFromDb returns zeros without pgboss schema", async () => {
+    const rollback = new Error("rollback");
+    let jobs: Awaited<ReturnType<typeof jobsFromDb>> | undefined;
+    await expect(
+      db.transaction(async (tx) => {
+        // Simulates a fresh installation where the worker has not created pg-boss' schema yet.
+        await tx.execute(sql`alter schema pgboss rename to pgboss_x`);
+        jobs = await jobsFromDb(tx);
+        throw rollback;
+      }),
+    ).rejects.toBe(rollback);
+    for (const queue of VIEW_QUEUES) expect(jobs?.[queue]).toMatchObject({ queued: 0, active: 0, failed: 0 });
   });
 });

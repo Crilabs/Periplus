@@ -15,6 +15,7 @@ import { DEAD_LETTER_QUEUE, deadLetterQueueOptions, ensureQueues, QUEUES } from 
 import { startWorkers, type JobData, type JobHandler } from "@/lib/jobs/worker";
 import { enqueueStageJobs, startRun } from "@/lib/pipeline/runs";
 import { jobsFromDb } from "@/lib/domain/queues-view";
+import { failedJobsOfRun, retryFailedJob } from "@/lib/domain/jobs-view";
 
 /** Shared with the module mocks below: keys whose review task creation throws, and captured worker error logs. */
 const probe = vi.hoisted(() => ({
@@ -66,6 +67,8 @@ const queueConfig = {
  */
 const budgetThrown = new Set<string>();
 const failedOnce = new Set<string>();
+/** Jobs with `failUntilFixed` fail until their `runId:key` marker is added here. */
+const fixed = new Set<string>();
 
 const testPing: JobHandler<JobData> = async (data, ctx) => {
   const marker = `${ctx.runId}:${data.key}`;
@@ -77,6 +80,7 @@ const testPing: JobHandler<JobData> = async (data, ctx) => {
     budgetThrown.add(marker);
     throw new BudgetExceeded("anthropic", 11, 10);
   }
+  if (data.failUntilFixed === true && !fixed.has(marker)) throw new Error(`not fixed yet: ${data.key}`);
   if (data.budgetOnce === true && !budgetThrown.has(marker)) {
     budgetThrown.add(marker);
     throw new BudgetExceeded("anthropic", 11, 10);
@@ -312,6 +316,60 @@ describe("worker", () => {
     await waitFor(async () => (await getRun(db, id))!.status === "finished", 20_000);
     expect((await getRun(db, id))!.stages[0]).toMatchObject({ total: 1, done: 1, failed: 0 });
   }, 40_000);
+
+  it("retry moves the job back and the later success flips the outcome", async () => {
+    const { id } = await createRun(db, {
+      kind: "system",
+      scope: scope(),
+      stages: ["ping"],
+      params: {},
+      triggeredBy: "test",
+    });
+    await beginStage(db, id, "ping", 2);
+    await enqueueStageJobs(boss, "system.ping", id, "ping", [{ key: "0" }, { key: "1", failUntilFixed: true }]);
+
+    // Every job of the last stage counted, one failed: the run finishes; the failed job is listed.
+    await waitFor(async () => (await getRun(db, id))!.stages[0].failed === 1, 25_000);
+    await waitFor(async () => (await getRun(db, id))!.status === "finished", 10_000);
+    const failed = await failedJobsOfRun(db, id);
+    expect(failed).toHaveLength(1);
+    expect(failed[0]).toMatchObject({ queue: "system.ping", key: "1", stage: "ping" });
+    expect(failed[0].error).toContain("not fixed yet: 1");
+
+    fixed.add(`${id}:1`);
+    await retryFailedJob(boss, "system.ping", failed[0].id);
+    expect((await boss.getJobById("system.ping", failed[0].id))?.state).not.toBe("failed");
+
+    await waitFor(async () => (await boss.getJobById("system.ping", failed[0].id))?.state === "completed", 20_000);
+    await waitFor(async () => (await getRun(db, id))!.stages[0].done === 2, 10_000);
+    const run = (await getRun(db, id))!;
+    expect(run.status).toBe("finished");
+    expect(run.stages[0]).toMatchObject({ total: 2, done: 2, failed: 0, status: "finished" });
+    expect(await failedJobsOfRun(db, id)).toEqual([]);
+  }, 50_000);
+
+  it("a run failed because its last stage all failed turns finished after a successful retry", async () => {
+    const { id } = await createRun(db, {
+      kind: "system",
+      scope: scope(),
+      stages: ["ping"],
+      params: {},
+      triggeredBy: "test",
+    });
+    await beginStage(db, id, "ping", 1);
+    await enqueueStageJobs(boss, "system.ping", id, "ping", [{ key: "0", failUntilFixed: true }]);
+
+    await waitFor(async () => (await getRun(db, id))!.status === "failed", 25_000);
+    const [job] = await failedJobsOfRun(db, id);
+    expect(job).toBeDefined();
+
+    fixed.add(`${id}:0`);
+    await retryFailedJob(boss, "system.ping", job.id);
+    await waitFor(async () => (await getRun(db, id))!.status === "finished", 20_000);
+    const run = (await getRun(db, id))!;
+    expect(run.failureReason).toBeNull();
+    expect(run.stages[0]).toMatchObject({ total: 1, done: 1, failed: 0 });
+  }, 50_000);
 
   it("enqueueing the same run stage twice does not duplicate jobs", async () => {
     const { id } = await createRun(db, {

@@ -1,4 +1,4 @@
-import { and, gte, lt, eq, sql } from "drizzle-orm";
+import { and, eq, gte, isNotNull, lt, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { externalCalls } from "@/lib/db/schema";
 import { getConfig, type AppConfig, type BudgetService } from "@/lib/config";
@@ -99,4 +99,42 @@ export async function spendByService(
     .where(and(gte(externalCalls.at, since), lt(externalCalls.at, new Date(now.getTime() + 1))))
     .groupBy(externalCalls.service);
   return rows.map((r) => ({ service: r.service, costEur: Number(r.total) })).sort((a, b) => b.costEur - a.costEur);
+}
+
+export type SpendBreakdownBy = "stage" | "run" | "month";
+export type SpendBreakdownRow = { key: string; costEur: number; calls: number };
+
+/**
+ * Spend and call count over the last `days` days (default 30) up to `now`, grouped by stage, run or
+ * UTC month (`YYYY-MM`). Calls without a stage or run are left out of those groupings. Stages and runs
+ * come highest cost first, months newest first.
+ */
+export async function spendBreakdown(
+  db: Db,
+  by: SpendBreakdownBy,
+  opts: { days?: number; now?: Date } = {},
+): Promise<SpendBreakdownRow[]> {
+  const now = opts.now ?? new Date();
+  const since = new Date(now.getTime() - (opts.days ?? 30) * 24 * 3_600_000);
+  const key =
+    by === "stage"
+      ? sql<string>`${externalCalls.stage}`
+      : by === "run"
+        ? sql<string>`${externalCalls.runId}::text`
+        : sql<string>`to_char(${externalCalls.at} at time zone 'UTC', 'YYYY-MM')`;
+  const rows = await db
+    .select({ key, total: sql<string>`sum(${externalCalls.costEur})`, calls: sql<number>`count(*)::int` })
+    .from(externalCalls)
+    .where(
+      and(
+        gte(externalCalls.at, since),
+        lt(externalCalls.at, new Date(now.getTime() + 1)),
+        by === "stage" ? isNotNull(externalCalls.stage) : by === "run" ? isNotNull(externalCalls.runId) : undefined,
+      ),
+    )
+    .groupBy(key);
+  const result = rows.map((r) => ({ key: r.key, costEur: Number(r.total), calls: r.calls }));
+  return by === "month"
+    ? result.sort((a, b) => b.key.localeCompare(a.key))
+    : result.sort((a, b) => b.costEur - a.costEur || a.key.localeCompare(b.key));
 }

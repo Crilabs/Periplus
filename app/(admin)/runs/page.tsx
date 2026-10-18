@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db/client";
 import { listRuns } from "@/lib/domain/runs";
 import { requireAdmin } from "@/lib/security/require-admin";
+import { AutoRefresh } from "../_components/auto-refresh";
 import { RunsTable } from "../_components/runs-table";
 import { startPingRun } from "./actions";
 
@@ -9,6 +10,7 @@ export default async function Page() {
   const runs = await listRuns(getDb(), { limit: 50 });
   return (
     <div className="space-y-4 text-sm">
+      <AutoRefresh intervalMs={5000} />
       <h1 className="text-lg font-semibold">Läufe</h1>
       <form action={startPingRun} className="flex items-center gap-2">
         <label htmlFor="count">Anzahl Pings</label>

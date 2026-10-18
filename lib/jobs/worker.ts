@@ -4,6 +4,7 @@ import type { Logger } from "pino";
 import type { QueueConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { BudgetExceeded } from "@/lib/domain/costs";
+import { errorText } from "@/lib/domain/jobs-view";
 import { createReviewTask } from "@/lib/domain/review";
 import { failRun, recordJobOutcome } from "@/lib/domain/runs";
 import { createLogger } from "@/lib/logger";
@@ -26,12 +27,6 @@ export type WorkerOptions = {
 const BUDGET_DEFERRED = "budgetDeferred";
 /** Attempts a job used before it was re-sent after budget pauses; the re-sent job gets only the rest. */
 const PRIOR_ATTEMPTS = "priorAttempts";
-
-function errorText(output: unknown): string {
-  if (output && typeof output === "object" && "message" in output) return String(output.message);
-  if (output === null || output === undefined) return "unknown error";
-  return typeof output === "string" ? output : JSON.stringify(output);
-}
 
 /**
  * Starts one pg-boss worker per queue in QUEUES plus the dead-letter worker. Each handler is wrapped:

@@ -169,7 +169,31 @@ async function upgradeOutcome(db: Db, runId: string, stage: string, key: string,
     .update(runStages)
     .set({ done: sql`${runStages.done} + 1`, failed: sql`${runStages.failed} - 1` })
     .where(and(eq(runStages.runId, runId), eq(runStages.stage, stage)));
+  await reviveRun(db, runId);
   return true;
+}
+
+/**
+ * A run failed only because every job of its last stage failed (no `failure_reason`) counts as finished
+ * once that stage has a success again. A run failed with a reason (e.g. a stage transition) stays failed.
+ * Its `finished_at` stays the time it ended.
+ */
+async function reviveRun(db: Db, runId: string): Promise<void> {
+  await db
+    .update(runs)
+    .set({ status: "finished" })
+    .where(
+      and(
+        eq(runs.id, runId),
+        eq(runs.status, "failed"),
+        sql`${runs.failureReason} is null`,
+        sql`exists (
+          select 1 from ${runStages} s
+          where s.run_id = ${runs.id} and s.status = 'finished' and s.failed < s.total
+            and s.ordinal = (select max(l.ordinal) from ${runStages} l where l.run_id = ${runs.id})
+        )`,
+      ),
+    );
 }
 
 /** Ends a run as failed, e.g. when moving to its next stage failed for good. Keeps the first reason. */

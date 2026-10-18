@@ -7,6 +7,7 @@ const startRun = vi.fn();
 const redirect = vi.fn();
 const pauseQueue = vi.fn();
 const resumeQueue = vi.fn();
+const retryFailedJob = vi.fn();
 
 vi.mock("@/lib/security/require-admin", () => ({ requireAdmin: () => requireAdmin() }));
 vi.mock("@/lib/db/client", async (importOriginal) => ({
@@ -19,11 +20,13 @@ vi.mock("@/lib/jobs/controls", () => ({
   pauseQueue: (...args: unknown[]) => pauseQueue(...args),
   resumeQueue: (...args: unknown[]) => resumeQueue(...args),
 }));
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/lib/domain/jobs-view", () => ({ retryFailedJob: (...args: unknown[]) => retryFailedJob(...args) }));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => redirect(url) }));
 
 import { startPingRun } from "../runs/actions";
 import { pauseQueueAction, resumeQueueAction } from "../jobs/actions";
+import { retryJobAction } from "../runs/[id]/actions";
 
 const form = (fields: Record<string, string>) => {
   const data = new FormData();
@@ -71,5 +74,20 @@ describe("admin server actions", () => {
     expect(startRun).not.toHaveBeenCalled();
     expect(pauseQueue).not.toHaveBeenCalled();
     expect(resumeQueue).not.toHaveBeenCalled();
+  });
+
+  it("retryJobAction rejects an unknown queue", async () => {
+    const jobId = "0190a6c2-7a1b-7c3d-8e4f-0123456789ab";
+    await expect(retryJobAction(form({ queue: "nope", jobId }))).rejects.toThrow();
+    await expect(retryJobAction(form({ queue: "system.dead", jobId }))).rejects.toThrow();
+    await expect(retryJobAction({ queue: "system.ping", jobId: "not-a-uuid" })).rejects.toThrow();
+    expect(retryFailedJob).not.toHaveBeenCalled();
+
+    await retryJobAction(form({ queue: "system.ping", jobId }));
+    expect(retryFailedJob).toHaveBeenCalledWith(expect.anything(), "system.ping", jobId);
+
+    requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
+    await expect(retryJobAction({ queue: "system.ping", jobId })).rejects.toThrow("NEXT_REDIRECT");
+    expect(retryFailedJob).toHaveBeenCalledTimes(1);
   });
 });
