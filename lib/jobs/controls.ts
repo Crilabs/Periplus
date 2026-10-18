@@ -4,8 +4,6 @@ import { queueControls } from "@/lib/db/schema";
 import type { BudgetExceeded } from "@/lib/domain/costs";
 import { createLogger } from "@/lib/logger";
 
-const log = createLogger("queue-controls");
-
 /** `until` null = paused until resumed. */
 export async function pauseQueue(
   db: Db,
@@ -26,7 +24,7 @@ export async function pauseQueue(
 /** Removes the pause row; `by` is recorded in the log since the row is gone afterwards. */
 export async function resumeQueue(db: Db, queue: string, by: string): Promise<void> {
   await db.delete(queueControls).where(eq(queueControls.queue, queue));
-  log.info({ queue, by }, "queue resumed");
+  createLogger("queue-controls").info({ queue, by }, "queue resumed");
 }
 
 export async function isQueuePaused(db: Db, queue: string, now: Date = new Date()): Promise<boolean> {

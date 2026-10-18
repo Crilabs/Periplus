@@ -85,3 +85,18 @@ export async function budgetStatus(
     }),
   );
 }
+
+/** Spend per service over the last `days` days up to `now`, highest first. */
+export async function spendByService(
+  db: Db,
+  days = 30,
+  now: Date = new Date(),
+): Promise<Array<{ service: string; costEur: number }>> {
+  const since = new Date(now.getTime() - days * 24 * 3_600_000);
+  const rows = await db
+    .select({ service: externalCalls.service, total: sql<string>`sum(${externalCalls.costEur})` })
+    .from(externalCalls)
+    .where(and(gte(externalCalls.at, since), lt(externalCalls.at, new Date(now.getTime() + 1))))
+    .groupBy(externalCalls.service);
+  return rows.map((r) => ({ service: r.service, costEur: Number(r.total) })).sort((a, b) => b.costEur - a.costEur);
+}

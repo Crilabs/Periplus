@@ -4,11 +4,9 @@ import { getEnv } from "@/lib/env";
 import { createLogger } from "@/lib/logger";
 import { ensureQueues } from "./queues";
 
-const log = createLogger("boss");
-
 export function createBoss(url: string): PgBoss {
   const boss = new PgBoss({ connectionString: url, schema: "pgboss" });
-  boss.on("error", (err) => log.error({ err }, "pg-boss error"));
+  boss.on("error", (err) => createLogger("boss").error({ err }, "pg-boss error"));
   return boss;
 }
 
