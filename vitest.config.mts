@@ -9,6 +9,7 @@ export default defineConfig({
     environment: "node",
     include: ["**/__tests__/**/*.test.ts", "test/**/*.test.ts"],
     exclude: ["node_modules/**", ".next/**"],
+    globalSetup: ["test/global-setup.ts"],
     // Non-secret test defaults so tests run without a local .env file.
     env: {
       NODE_ENV: "test",
