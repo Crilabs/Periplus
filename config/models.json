@@ -1,0 +1,10 @@
+{
+  "tasks": {
+    "system.echo": { "model": "claude-haiku-5-5", "promptVersion": 1 }
+  },
+  "pricesEurPerMTok": {
+    "claude-haiku-5-5": { "input": 0.0889, "output": 0.4443 },
+    "claude-sonnet-5-5": { "input": 1.7773, "output": 8.8865 },
+    "claude-opus-5-5": { "input": 3.5546, "output": 17.773 }
+  }
+}
