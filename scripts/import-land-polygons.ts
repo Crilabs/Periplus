@@ -1,10 +1,12 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { open } from "shapefile";
-import { areaByKey, getConfig } from "../lib/config";
+import { areaByKey, getConfig, type AreaConfig } from "../lib/config";
 import { createDb } from "../lib/db/client";
 import { areaBbox } from "../lib/domain/gazetteer/areas";
 import { bufferBbox, importLandPolygons } from "../lib/domain/gazetteer/land";
+import { areaTileIds } from "../lib/domain/gazetteer/tiles-ensure";
+import { tileBbox, TILE_SIZE, type Bbox } from "../lib/domain/tiles";
 
 const USAGE = "usage: import-land-polygons.ts --shp <path/land_polygons.shp> --area <key> [--version <YYYY-MM-DD>]";
 
@@ -42,11 +44,30 @@ export async function* readShapefile(shp: string): AsyncGenerator<GeoJSON.Featur
   }
 }
 
+/**
+ * The box land polygons are imported for: the area box plus `bufferKm`, snapped outward to the tile grid and
+ * widened to every tile of `areaTileIds`, so `has_coast` of each area tile sees all land touching it.
+ */
+export function landImportBbox(area: AreaConfig, bufferKm: number): Bbox {
+  const [w, s, e, n] = bufferBbox(areaBbox(area), bufferKm);
+  let box: Bbox = [
+    Math.floor(w / TILE_SIZE) * TILE_SIZE,
+    Math.floor(s / TILE_SIZE) * TILE_SIZE,
+    Math.ceil(e / TILE_SIZE) * TILE_SIZE,
+    Math.ceil(n / TILE_SIZE) * TILE_SIZE,
+  ];
+  for (const id of areaTileIds(area)) {
+    const [tw, ts, te, tn] = tileBbox(id);
+    box = [Math.min(box[0], tw), Math.min(box[1], ts), Math.max(box[2], te), Math.max(box[3], tn)];
+  }
+  return box;
+}
+
 async function main(): Promise<void> {
   const { shp, area, version } = parseArgs(process.argv.slice(2));
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
-  const bbox = bufferBbox(areaBbox(areaByKey(area)), getConfig().gazetteer.landBufferKm);
+  const bbox = landImportBbox(areaByKey(area), getConfig().gazetteer.landBufferKm);
   const { db, close } = createDb(url);
   try {
     const r = await importLandPolygons(db, readShapefile(shp), bbox, version);
