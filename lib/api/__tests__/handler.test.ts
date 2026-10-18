@@ -9,7 +9,7 @@ const reqWith = (key?: string) =>
   new Request("http://localhost/api/v1/x", { headers: key ? { authorization: `Bearer ${key}` } : {} });
 const ok = async () => Response.json({ ok: true });
 
-afterEach(() => setApiLimiter(async () => ({ ok: true })));
+afterEach(() => setApiLimiter(null));
 
 describe("withApiClient", () => {
   it("returns 401 without header, 403 with wrong scope, 200 with right scope", async () => {
@@ -41,6 +41,16 @@ describe("withApiClient", () => {
     expect(res.status).toBe(429);
     expect(res.headers.get("retry-after")).toBe("2");
     expect(await res.json()).toEqual({ error: { code: "rate_limited" } });
+  });
+
+  it("returns 429 after the client's limit", async () => {
+    const { key } = await createApiClient(db, { name: `test-${newId()}`, scopes: ["delivery:read"], rateLimitPerMin: 2 });
+    const wrapped = withApiClient("delivery:read", ok);
+    expect((await wrapped(reqWith(key))).status).toBe(200);
+    expect((await wrapped(reqWith(key))).status).toBe(200);
+    const third = await wrapped(reqWith(key));
+    expect(third.status).toBe(429);
+    expect(Number(third.headers.get("retry-after"))).toBeGreaterThanOrEqual(1);
   });
 
   it("hides thrown error messages", async () => {

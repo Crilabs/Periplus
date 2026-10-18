@@ -1,15 +1,17 @@
 import { authenticateApiClient, type ApiClient, type ApiScope } from "@/lib/domain/api-clients";
 import { getDb } from "@/lib/db/client";
+import { takeToken } from "@/lib/domain/rate-limit";
 import { createLogger } from "@/lib/logger";
 
 export type LimitResult = { ok: true } | { ok: false; retryAfterMs: number };
 type Limiter = (client: ApiClient) => Promise<LimitResult>;
 
-// Seam: Task 10 replaces this with takeToken(db, "api:" + client.id, client.rateLimitPerMin).
-let limiter: Limiter = async () => ({ ok: true });
+const defaultLimiter: Limiter = (client) => takeToken(getDb(), "api:" + client.id, client.rateLimitPerMin);
+let limiter: Limiter = defaultLimiter;
 
-export function setApiLimiter(next: Limiter): void {
-  limiter = next;
+/** Test seam; pass null to restore the Postgres token bucket. */
+export function setApiLimiter(next: Limiter | null): void {
+  limiter = next ?? defaultLimiter;
 }
 
 function errorResponse(status: number, code: string, headers?: Record<string, string>): Response {
