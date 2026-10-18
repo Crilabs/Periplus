@@ -1,4 +1,6 @@
+import { sql } from "drizzle-orm";
 import {
+  check,
   doublePrecision,
   index,
   integer,
@@ -6,6 +8,7 @@ import {
   numeric,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -34,6 +37,7 @@ export const runs = pgTable("runs", {
   status: runStatusEnum("status").notNull().default("queued"),
   startedAt: timestamp("started_at", { withTimezone: true }),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
+  failureReason: text("failure_reason"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -53,6 +57,25 @@ export const runStages = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [unique("run_stages_run_id_stage_unique").on(t.runId, t.stage)],
+);
+
+/** One row per (run, stage, job key): makes recording a job outcome idempotent. Working state, not append-only. */
+export const jobOutcomes = pgTable(
+  "job_outcomes",
+  {
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => runs.id),
+    stage: text("stage").notNull(),
+    key: text("key").notNull(),
+    outcome: text("outcome", { enum: ["done", "failed"] }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.runId, t.stage, t.key] }),
+    check("job_outcomes_outcome_check", sql`${t.outcome} in ('done', 'failed')`),
+  ],
 );
 
 export const externalCalls = pgTable(

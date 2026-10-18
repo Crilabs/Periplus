@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createDb } from "../lib/db/client";
-import { createApiClient, type ApiScope } from "../lib/domain/api-clients";
+import { createApiClient, revokeApiClientByName, type ApiScope } from "../lib/domain/api-clients";
 
 const SCOPES: readonly ApiScope[] = ["delivery:read", "reports:write"];
 
@@ -20,6 +20,20 @@ export function parseArgs(argv: string[]): { name: string; scopes: ApiScope[] } 
 }
 
 async function main(): Promise<void> {
+  const [first, target] = process.argv.slice(2);
+  if (first === "revoke") {
+    if (!target) throw new Error("usage: apikey.ts revoke <name>");
+    const url = process.env.DATABASE_URL;
+    if (!url) throw new Error("DATABASE_URL is not set");
+    const { db, close } = createDb(url);
+    try {
+      await revokeApiClientByName(db, target);
+      process.stdout.write("revoked\n");
+    } finally {
+      await close();
+    }
+    return;
+  }
   const { name, scopes } = parseArgs(process.argv.slice(2));
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");

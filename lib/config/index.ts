@@ -1,12 +1,31 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import type { ZodType } from "zod";
-import { budgetsSchema, modelsSchema, queuesSchema, type AppConfig } from "./schemas";
+import {
+  areaConfigSchema,
+  budgetsSchema,
+  categoriesSchema,
+  gazetteerSchema,
+  modelsSchema,
+  queuesSchema,
+  type AppConfig,
+  type AreaConfig,
+} from "./schemas";
 
-export type { AppConfig, BudgetService, QueueConfig } from "./schemas";
+export type {
+  AppConfig,
+  AreaConfig,
+  BudgetService,
+  CategoriesConfig,
+  GazetteerConfig,
+  QueueConfig,
+} from "./schemas";
 
 function readJson<T>(dir: string, name: string, schema: ZodType<T>): T {
-  const file = join(dir, `${name}.json`);
+  return readJsonFile(join(dir, `${name}.json`), schema);
+}
+
+function readJsonFile<T>(file: string, schema: ZodType<T>): T {
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(file, "utf8"));
@@ -23,12 +42,30 @@ function readJson<T>(dir: string, name: string, schema: ZodType<T>): T {
   return parsed.data;
 }
 
+/** Reads every `<dir>/areas/*.json`; each area's `key` must equal its file name, which makes keys unique. */
+function readAreas(dir: string): AreaConfig[] {
+  const areasDir = join(dir, "areas");
+  const files = readdirSync(areasDir).filter((f) => f.endsWith(".json")).sort();
+  return files.map((f) => {
+    const file = join(areasDir, f);
+    const area = readJsonFile(file, areaConfigSchema);
+    const expected = basename(f, ".json");
+    if (area.key !== expected) {
+      throw new Error(`Invalid config ${file}: key "${area.key}" must equal the file name "${expected}"`);
+    }
+    return area;
+  });
+}
+
 /** Loads and validates all config files; throws on any invalid or missing file. */
 export function loadConfig(dir = "config"): AppConfig {
   return {
     queues: readJson(dir, "queues", queuesSchema),
     budgets: readJson(dir, "budgets", budgetsSchema),
     models: readJson(dir, "models", modelsSchema),
+    areas: readAreas(dir),
+    categories: readJson(dir, "categories", categoriesSchema),
+    gazetteer: readJson(dir, "gazetteer", gazetteerSchema),
   };
 }
 
@@ -37,4 +74,11 @@ let cached: AppConfig | undefined;
 export function getConfig(): AppConfig {
   cached ??= loadConfig();
   return cached;
+}
+
+/** The configured area with this key; throws for an unknown key. */
+export function areaByKey(key: string): AreaConfig {
+  const area = getConfig().areas.find((a) => a.key === key);
+  if (!area) throw new Error(`Unknown area ${key}`);
+  return area;
 }

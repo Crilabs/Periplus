@@ -1,0 +1,23 @@
+{
+  "osm": [
+    { "key": "amenity", "values": ["restaurant", "cafe", "bar", "pub", "fast_food"], "category": "food" },
+    { "key": "shop", "values": ["supermarket", "convenience", "bakery", "butcher"], "category": "supply" },
+    { "key": "amenity", "values": ["fuel", "pharmacy", "atm", "drinking_water"], "category": "supply" },
+    { "key": "natural", "values": ["beach"], "category": "beach" },
+    { "key": "leisure", "values": ["beach_resort"], "category": "beach" },
+    { "key": "natural", "values": ["cave_entrance", "cliff", "reef", "spring", "peak"], "category": "nature" },
+    { "key": "tourism", "values": ["viewpoint"], "category": "active" },
+    { "key": "shop", "values": ["scuba_diving"], "category": "active" },
+    { "key": "historic", "values": "*", "category": "culture" },
+    { "key": "tourism", "values": ["museum"], "category": "culture" },
+    { "key": "man_made", "values": ["lighthouse"], "category": "culture" },
+    { "key": "amenity", "values": ["marketplace"], "category": "town" }
+  ],
+  "wikidata": {
+    "Q839954": "culture",
+    "Q44613": "culture",
+    "Q39715": "culture",
+    "Q33506": "culture",
+    "Q40080": "beach"
+  }
+}

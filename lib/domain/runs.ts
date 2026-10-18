@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { externalCalls, runStages, runs } from "@/lib/db/schema";
+import { externalCalls, jobOutcomes, runStages, runs } from "@/lib/db/schema";
 import type { RunKind, RunScopeType, RunStageStatus, RunStatus } from "@/lib/db/schema";
 
 export type { RunKind, RunStatus };
@@ -24,6 +24,7 @@ export type RunView = {
   triggeredBy: string;
   startedAt: Date | null;
   finishedAt: Date | null;
+  failureReason: string | null;
   costEur: number;
   stages: RunStageView[];
 };
@@ -53,23 +54,35 @@ export async function createRun(
   });
 }
 
+/** The failure reason of a run whose stage `stage` finished with every job failed. */
+export function stageFailedReason(stage: string): string {
+  return `stage ${stage} failed completely`;
+}
+
 /**
- * Marks a stage finished (caller guarantees it won the transition) and, if it was the last stage,
- * finishes the run. Returns the follow-up the worker needs.
+ * Follows up a stage the caller just finished (it won the transition). A stage whose jobs all failed fails
+ * the run with `stageFailedReason` and plans nothing further (ruling F-R1), so later stages never run on
+ * missing data; otherwise it reports the next stage or, after the last one, finishes the run.
  */
 async function afterStageFinished(
   db: Db,
-  stageRow: { runId: string; ordinal: number; total: number; failed: number },
+  stageRow: { runId: string; stage: string; ordinal: number; total: number; failed: number },
 ): Promise<{ nextStage: string | null; runFinished: boolean }> {
+  if (stageRow.total > 0 && stageRow.failed === stageRow.total) {
+    await db
+      .update(runs)
+      .set({ status: "failed", finishedAt: sql`now()`, failureReason: stageFailedReason(stageRow.stage) })
+      .where(and(eq(runs.id, stageRow.runId), eq(runs.status, "running")));
+    return { nextStage: null, runFinished: true };
+  }
   const [next] = await db
     .select({ stage: runStages.stage })
     .from(runStages)
     .where(and(eq(runStages.runId, stageRow.runId), eq(runStages.ordinal, stageRow.ordinal + 1)));
   if (next) return { nextStage: next.stage, runFinished: false };
-  const allFailed = stageRow.total > 0 && stageRow.failed === stageRow.total;
   await db
     .update(runs)
-    .set({ status: allFailed ? "failed" : "finished", finishedAt: sql`now()` })
+    .set({ status: "finished", finishedAt: sql`now()` })
     .where(and(eq(runs.id, stageRow.runId), eq(runs.status, "running")));
   return { nextStage: null, runFinished: true };
 }
@@ -97,30 +110,137 @@ export async function beginStage(
   return { stageFinished: false, nextStage: null, runFinished: false };
 }
 
+export type JobOutcome = "done" | "failed";
+
+export type JobOutcomeResult = { recorded: boolean; stageFinished: boolean; nextStage: string | null; runFinished: boolean };
+
+const NOTHING_FINISHED = { stageFinished: false, nextStage: null, runFinished: false } as const;
+
+/**
+ * Records the outcome of the job `key` in a stage, once per (run, stage, key):
+ * - first outcome: counts it; the call that completes the stage finishes it and reports the follow-up;
+ * - same outcome again: `recorded: false`, nothing changes;
+ * - `done` after `failed` (e.g. a manual retry): rewrites the outcome and moves one count from `failed`
+ *   to `done`, also on a finished stage, without any stage transition; a run that failed because this stage
+ *   failed completely continues (`reviveRun`, rulings T3-R1 and F-R1): after its last stage it is finished,
+ *   otherwise running again with the next stage reported, which the caller enqueues in the same transaction;
+ * - `failed` after `done`: `recorded: false`, a success is never downgraded.
+ */
 export async function recordJobOutcome(
   db: Db,
   runId: string,
   stage: string,
-  outcome: "done" | "failed",
-): Promise<{ stageFinished: boolean; nextStage: string | null; runFinished: boolean }> {
-  // Single atomic increment; row locking serialises concurrent callers, so each sees a distinct counter value.
-  const [row] = await db
-    .update(runStages)
-    .set(outcome === "done" ? { done: sql`${runStages.done} + 1` } : { failed: sql`${runStages.failed} + 1` })
-    .where(and(eq(runStages.runId, runId), eq(runStages.stage, stage), eq(runStages.status, "running")))
-    .returning();
-  if (!row) throw new Error(`stage ${stage} of run ${runId} is not running`);
-  if (row.done + row.failed < row.total) return { stageFinished: false, nextStage: null, runFinished: false };
+  key: string,
+  outcome: JobOutcome,
+): Promise<JobOutcomeResult> {
+  return db.transaction(async (tx) => {
+    // A concurrent insert of the same key waits on the primary key, so exactly one caller inserts.
+    const [inserted] = await tx
+      .insert(jobOutcomes)
+      .values({ runId, stage, key, outcome })
+      .onConflictDoNothing()
+      .returning({ key: jobOutcomes.key });
+    if (!inserted) {
+      const upgrade = await upgradeOutcome(tx, runId, stage, key, outcome);
+      return { ...NOTHING_FINISHED, recorded: upgrade.recorded, nextStage: upgrade.nextStage };
+    }
 
-  // Conditional transition: exactly one caller can flip running -> finished.
-  const [finished] = await db
+    // Single atomic increment; row locking serialises concurrent callers, so each sees a distinct counter value.
+    const [row] = await tx
+      .update(runStages)
+      .set(outcome === "done" ? { done: sql`${runStages.done} + 1` } : { failed: sql`${runStages.failed} + 1` })
+      .where(and(eq(runStages.runId, runId), eq(runStages.stage, stage), eq(runStages.status, "running")))
+      .returning();
+    if (!row) throw new Error(`stage ${stage} of run ${runId} is not running`);
+    if (row.done + row.failed < row.total) return { recorded: true, ...NOTHING_FINISHED };
+
+    // Conditional transition: exactly one caller can flip running -> finished.
+    const [finished] = await tx
+      .update(runStages)
+      .set({ status: "finished" })
+      .where(and(eq(runStages.id, row.id), eq(runStages.status, "running")))
+      .returning();
+    if (!finished) return { recorded: true, ...NOTHING_FINISHED };
+    const follow = await afterStageFinished(tx, finished);
+    return { recorded: true, stageFinished: true, ...follow };
+  });
+}
+
+/** Turns a recorded `failed` into `done`; returns whether anything changed and the stage the run resumes with. */
+async function upgradeOutcome(
+  db: Db,
+  runId: string,
+  stage: string,
+  key: string,
+  outcome: JobOutcome,
+): Promise<{ recorded: boolean; nextStage: string | null }> {
+  if (outcome !== "done") return { recorded: false, nextStage: null };
+  const [flipped] = await db
+    .update(jobOutcomes)
+    .set({ outcome: "done", updatedAt: sql`now()` })
+    .where(
+      and(
+        eq(jobOutcomes.runId, runId),
+        eq(jobOutcomes.stage, stage),
+        eq(jobOutcomes.key, key),
+        eq(jobOutcomes.outcome, "failed"),
+      ),
+    )
+    .returning({ key: jobOutcomes.key });
+  if (!flipped) return { recorded: false, nextStage: null };
+  await db
     .update(runStages)
-    .set({ status: "finished" })
-    .where(and(eq(runStages.id, row.id), eq(runStages.status, "running")))
-    .returning();
-  if (!finished) return { stageFinished: false, nextStage: null, runFinished: false };
-  const follow = await afterStageFinished(db, finished);
-  return { stageFinished: true, ...follow };
+    .set({ done: sql`${runStages.done} + 1`, failed: sql`${runStages.failed} - 1` })
+    .where(and(eq(runStages.runId, runId), eq(runStages.stage, stage)));
+  return { recorded: true, nextStage: await reviveRun(db, runId, stage) };
+}
+
+/**
+ * A run failed because `stage` failed completely continues once that stage has a success again: after its
+ * last stage it counts as finished (its `finished_at` stays the time it ended); otherwise it is running
+ * again and the next stage, still pending, is returned for the caller to enqueue. The conditional update
+ * lets exactly one of several concurrent successes revive the run. A run failed for any other reason
+ * (e.g. a stage transition) stays failed.
+ */
+async function reviveRun(db: Db, runId: string, stage: string): Promise<string | null> {
+  const [current] = await db
+    .select({ ordinal: runStages.ordinal })
+    .from(runStages)
+    .where(and(eq(runStages.runId, runId), eq(runStages.stage, stage)));
+  if (!current) return null;
+  const [next] = await db
+    .select({ stage: runStages.stage, status: runStages.status })
+    .from(runStages)
+    .where(and(eq(runStages.runId, runId), eq(runStages.ordinal, current.ordinal + 1)));
+  if (next && next.status !== "pending") return null;
+  const revived = await db
+    .update(runs)
+    .set(next ? { status: "running", failureReason: null, finishedAt: null } : { status: "finished", failureReason: null })
+    .where(and(eq(runs.id, runId), eq(runs.status, "failed"), eq(runs.failureReason, stageFailedReason(stage))))
+    .returning({ id: runs.id });
+  return revived.length > 0 && next ? next.stage : null;
+}
+
+/** Ends a run as failed, e.g. when moving to its next stage failed for good. Keeps the first reason. */
+export async function failRun(db: Db, runId: string, reason: string): Promise<void> {
+  await db
+    .update(runs)
+    .set({ status: "failed", finishedAt: sql`coalesce(${runs.finishedAt}, now())`, failureReason: reason })
+    .where(and(eq(runs.id, runId), sql`${runs.failureReason} is null`));
+}
+
+/**
+ * Puts a failed run back to running, e.g. when its failed stage transition (`run.advance`) is retried:
+ * clears the reason and the end time, so the run ends again when its last stage finishes. Returns whether
+ * the run was failed.
+ */
+export async function resumeRun(db: Db, runId: string): Promise<boolean> {
+  const resumed = await db
+    .update(runs)
+    .set({ status: "running", failureReason: null, finishedAt: null })
+    .where(and(eq(runs.id, runId), eq(runs.status, "failed")))
+    .returning({ id: runs.id });
+  return resumed.length > 0;
 }
 
 type RunRow = typeof runs.$inferSelect;
@@ -147,6 +267,7 @@ async function toViews(db: Db, rows: RunRow[]): Promise<RunView[]> {
     triggeredBy: r.triggeredBy,
     startedAt: r.startedAt,
     finishedAt: r.finishedAt,
+    failureReason: r.failureReason,
     costEur: costs.get(r.id) ?? 0,
     stages: stageRows
       .filter((s) => s.runId === r.id)

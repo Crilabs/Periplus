@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db/client";
 import { queuesView } from "@/lib/domain/queues-view";
 import { requireAdmin } from "@/lib/security/require-admin";
+import { AutoRefresh } from "../_components/auto-refresh";
 import { queueStateLabel } from "../_components/labels";
 import { pauseQueueAction, resumeQueueAction } from "./actions";
 
@@ -9,6 +10,7 @@ export default async function Page() {
   const queues = await queuesView(getDb());
   return (
     <div className="space-y-4 text-sm">
+      <AutoRefresh intervalMs={5000} />
       <h1 className="text-lg font-semibold">Jobs</h1>
       <table className="w-full text-left">
         <thead>

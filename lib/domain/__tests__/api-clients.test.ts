@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { testDb } from "@/test/db";
 import { newId } from "@/lib/domain/ids";
-import { authenticateApiClient, createApiClient, revokeApiClient } from "@/lib/domain/api-clients";
+import { authenticateApiClient, createApiClient, revokeApiClient, revokeApiClientByName } from "@/lib/domain/api-clients";
 import { generateApiKey, hashApiKey } from "@/lib/security/api-keys";
 
 const db = testDb();
@@ -23,6 +23,15 @@ describe("api clients", () => {
     expect(client).toMatchObject({ id, scopes: ["delivery:read"], rateLimitPerMin: 5 });
     await revokeApiClient(db, id);
     expect(await authenticateApiClient(db, `Bearer ${key}`)).toBeNull();
+  });
+
+  it("revoked key no longer authenticates when revoked by name", async () => {
+    const name = `test-${newId()}`;
+    const { key } = await createApiClient(db, { name, scopes: ["delivery:read"] });
+    expect(await authenticateApiClient(db, `Bearer ${key}`)).not.toBeNull();
+    await revokeApiClientByName(db, name);
+    expect(await authenticateApiClient(db, `Bearer ${key}`)).toBeNull();
+    await expect(revokeApiClientByName(db, `unknown-${newId()}`)).rejects.toThrow("api_client_not_found");
   });
 
   it("stores only the hash, never the key", async () => {

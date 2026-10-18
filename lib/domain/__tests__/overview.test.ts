@@ -4,9 +4,10 @@ import { testDb } from "@/test/db";
 import { newId } from "@/lib/domain/ids";
 import { workerHeartbeats } from "@/lib/db/schema";
 import { overview, REVIEW_KINDS } from "@/lib/domain/overview";
-import { queuesView } from "@/lib/domain/queues-view";
+import { jobsFromDb, queuesView, VIEW_QUEUES } from "@/lib/domain/queues-view";
 import { getConfig } from "@/lib/config";
 import { createBoss } from "@/lib/jobs/boss";
+import { fromDrizzle } from "pg-boss";
 import { DEAD_LETTER_QUEUE, ensureQueues, QUEUES } from "@/lib/jobs/queues";
 
 const db = testDb();
@@ -68,29 +69,41 @@ describe("overview", () => {
   });
 
   it("counts a real queued job identically in overview and queuesView", async () => {
-    // Other test files enqueue system.ping jobs on the shared database, so a single before/after
-    // window can be disturbed; the delta must be exactly +1 in at least one undisturbed attempt.
-    const deltas: number[] = [];
-    let viewMatched = false;
-    for (let attempt = 0; attempt < 10 && !(deltas.includes(1) && viewMatched); attempt++) {
-      const before = await overview(db);
-      // Far-future start keeps concurrently running test workers from picking the job up.
-      const id = await boss.send("system.ping", { key: "overview-test" }, { startAfter: 3600 });
-      expect(id).toBeTruthy();
-      try {
-        const after = await overview(db);
-        const view = await queuesView(db);
-        const delta = after.jobs["system.ping"].queued - before.jobs["system.ping"].queued;
-        deltas.push(delta);
-        if (delta === 1) {
-          expect(after.jobs["system.ping"].active).toBe(before.jobs["system.ping"].active);
-          viewMatched = view["system.ping"].queued === after.jobs["system.ping"].queued;
-        }
-      } finally {
-        await db.execute(sql`delete from pgboss.job where id = ${id}`);
-      }
-    }
-    expect(deltas).toContain(1);
-    expect(viewMatched).toBe(true);
+    // Other test files enqueue, run and delete system.ping jobs on the shared database meanwhile. A
+    // repeatable-read transaction sees one snapshot plus its own writes, so the delta is exactly this job.
+    const rollback = new Error("rollback");
+    await expect(
+      db.transaction(
+        async (tx) => {
+          const before = await overview(tx);
+          // Far-future start: no worker could take it even if it were committed.
+          const id = await boss.send("system.ping", { key: "overview-test" }, { startAfter: 3600, db: fromDrizzle(tx, sql) });
+          expect(id).toBeTruthy();
+          const after = await overview(tx);
+          const view = await queuesView(tx);
+          expect(after.jobs["system.ping"]).toEqual({
+            ...before.jobs["system.ping"],
+            queued: before.jobs["system.ping"].queued + 1,
+          });
+          expect(view["system.ping"]).toEqual(after.jobs["system.ping"]);
+          throw rollback;
+        },
+        { isolationLevel: "repeatable read" },
+      ),
+    ).rejects.toBe(rollback);
+  });
+
+  it("jobsFromDb returns zeros without pgboss schema", async () => {
+    const rollback = new Error("rollback");
+    let jobs: Awaited<ReturnType<typeof jobsFromDb>> | undefined;
+    await expect(
+      db.transaction(async (tx) => {
+        // Simulates a fresh installation where the worker has not created pg-boss' schema yet.
+        await tx.execute(sql`alter schema pgboss rename to pgboss_x`);
+        jobs = await jobsFromDb(tx);
+        throw rollback;
+      }),
+    ).rejects.toBe(rollback);
+    for (const queue of VIEW_QUEUES) expect(jobs?.[queue]).toMatchObject({ queued: 0, active: 0, failed: 0 });
   });
 });

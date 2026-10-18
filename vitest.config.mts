@@ -1,15 +1,30 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
+/** Tests that run whole gazetteer passes over the pilot area in one long transaction. */
+const PILOT_RUN_TESTS = ["lib/pipeline/__tests__/gazetteer-run.test.ts"];
+
 export default defineConfig({
   resolve: {
     alias: { "@": fileURLToPath(new URL(".", import.meta.url)) },
   },
   test: {
     environment: "node",
-    include: ["**/__tests__/**/*.test.ts", "test/**/*.test.ts"],
-    exclude: ["node_modules/**", ".next/**"],
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "default",
+          include: ["**/__tests__/**/*.test.ts", "test/**/*.test.ts"],
+          exclude: ["node_modules/**", ".next/**", ...PILOT_RUN_TESTS],
+        },
+      },
+      // Long pilot-area runs hold rows (pilot tiles, configured areas) other test files write too:
+      // run them after everything else instead of beside it.
+      { extends: true, test: { name: "pilot-run", include: PILOT_RUN_TESTS, sequence: { groupOrder: 1 } } },
+    ],
     globalSetup: ["test/global-setup.ts"],
+    setupFiles: ["test/setup.ts"],
     // Non-secret test defaults so tests run without a local .env file.
     env: {
       NODE_ENV: "test",

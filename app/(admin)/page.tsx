@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getDb } from "@/lib/db/client";
 import { overview, REVIEW_KINDS } from "@/lib/domain/overview";
 import { requireAdmin } from "@/lib/security/require-admin";
+import { AutoRefresh } from "./_components/auto-refresh";
 import { REVIEW_KIND_LABELS } from "./_components/labels";
 import { RunsTable } from "./_components/runs-table";
 
@@ -13,6 +14,7 @@ export default async function Page() {
   const openTotal = Object.values(data.openReviewTasks).reduce((a, b) => a + b, 0);
   return (
     <div className="space-y-6 text-sm">
+      <AutoRefresh intervalMs={5000} />
       <h1 className="text-lg font-semibold">Übersicht</h1>
 
       <section>

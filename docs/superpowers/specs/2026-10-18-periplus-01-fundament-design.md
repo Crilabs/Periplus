@@ -41,7 +41,7 @@ Alles, worauf die Pipeline-Stufen aufsetzen: lauffähiges Repo, Datenbank mit Er
 
 ## Läufe
 
-Ein `Run` ist ein Durchlauf einer oder mehrerer Stufen für einen Umfang (Kachel, Kachelblock, Revier, Ort, Quelle). Felder: Art (`full`, `stage`, `revisit`, `event`, `reprocess`), Umfang, Stufen, Auslöser (Admin-ID oder `scheduler`), Status, Start/Ende, Kostensumme (aus `external_calls`), Ergebniszahlen je Stufe (JSON). Stufen innerhalb eines Laufs laufen in Reihenfolge: ein Lauf legt die Jobs der nächsten Stufe erst an, wenn alle Jobs der vorigen fertig oder endgültig fehlgeschlagen sind (`lib/pipeline/runs.ts`, Fortschritt per Zähler in `run_stages`).
+Ein `Run` ist ein Durchlauf einer oder mehrerer Stufen für einen Umfang (Kachel, Kachelblock, Revier, Ort, Quelle). Felder: Art (`full`, `stage`, `revisit`, `event`, `reprocess`), Umfang, Stufen, Auslöser (Admin-ID oder `scheduler`), Status, Start/Ende, Kostensumme (aus `external_calls`), Ergebniszahlen je Stufe (JSON). Stufen innerhalb eines Laufs laufen in Reihenfolge: ein Lauf legt die Jobs der nächsten Stufe erst an, wenn alle Jobs der vorigen fertig oder endgültig fehlgeschlagen sind; sind alle Jobs einer Stufe endgültig fehlgeschlagen, endet der Lauf als fehlgeschlagen und läuft erst weiter, wenn ein erneut gestarteter Job dieser Stufe gelingt (Entscheidung M1) (`lib/pipeline/runs.ts`, Fortschritt per Zähler in `run_stages`).
 
 ## Modell-Schnittstelle (`lib/ai/`)
 

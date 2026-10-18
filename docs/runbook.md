@@ -80,6 +80,20 @@ Der Schlüssel wird einmalig ausgegeben. Zugelassene Scopes siehe `scripts/apike
 
 Prüfung des Anthropic-Schlüssels auf einem Entwicklungsrechner: `npm run smoke:ai`.
 
+## Zugang sperren
+Nutzer sperren (bestehende Sitzungen werden beim nächsten Aufruf abgewiesen, keine Passwortabfrage):
+```bash
+dc run --rm worker node --import tsx scripts/user.ts disable <email>
+```
+API-Key sperren (nach Name; wirkt sofort):
+```bash
+dc run --rm worker node --import tsx scripts/apikey.ts revoke <name>
+```
+Unbekannte E-Mail bzw. unbekannter oder bereits gesperrter Name endet mit Fehler.
+
+## SESSION_SECRET rotieren
+`SESSION_SECRET` in `.env` ersetzen (mindestens 32 Zeichen, z. B. `openssl rand -base64 48`) und web neu starten. Das meldet alle Sitzungen ab; alle Admins müssen sich neu anmelden.
+
 ## Logs
 ```bash
 dc logs -f worker
@@ -107,6 +121,10 @@ Ergebnis der letzten Prüfung (nach Abnahme eintragen): _Datum: offen, restore-c
 - Caddy darf **kein** `trusted_proxies` setzen. Das Login-Rate-Limit nutzt den ersten `X-Forwarded-For`-Eintrag; das ist nur korrekt, solange Caddy diesen Header mit der echten Client-Adresse überschreibt.
 - Compose-Layout auf dem Server: `.env` neben `docker/`; `compose.prod.yml` liest `../.env`.
 
+## Reviere (`config/areas/*.json`)
+- Je Revier eine Datei; `key` muss dem Dateinamen entsprechen. Die Datei wird beim Start mit zod geprüft (Namen `de`, `en`, `el` Pflicht).
+- **Entwurf:** Die Polygone von `saronic` und `argolic` sowie die Küstenabschnitte von `saronic` (Methana, Ermioni, Porto Cheli, Epidavros) sind grobe Entwürfe. Vor der Abnahme M1 in geojson.io nachzeichnen und die Koordinaten in die Dateien übernehmen (Task 23).
+
 ## Offene Checkliste (nicht automatisiert, Abnahme M0)
 1. Branch pushen, Pull Request öffnen; Job `check` in GitHub Actions grün (`gh pr checks --watch`).
 2. Menschliche Schritte oben erledigen (Server, Bucket, Storage Box, DNS, Secrets); nach Merge Job `deploy` grün; `https://<domain>/readyz` liefert `{"status":"ok"}`.
@@ -114,3 +132,28 @@ Ergebnis der letzten Prüfung (nach Abnahme eintragen): _Datum: offen, restore-c
    - Admin-Login funktioniert.
    - Ein Ping-Lauf unter „Läufe“ startet, endet und erscheint mit seinen Stufenzahlen auf der Übersicht.
    - `scripts/ops/backup.sh` läuft; `scripts/ops/restore-check.sh` endet mit Exit 0; Ergebnis mit Datum oben eintragen.
+
+## Gazetteer und Seed
+Reihenfolge je Revier (Pilot: `saronic`, danach `argolic`):
+1. **Landpolygone importieren** (Abschnitt „Landpolygone“ unten), je Revier einmal. Ohne sie ist keine Kachel „Küste“.
+2. **Läufe → „Gazetteer aufbauen“** (Revier wählen). `tiles.ensure` synchronisiert jedes Mal alle Reviere aus `config/areas`; die Reihenfolge der Reviere ist deshalb egal. Danach Stufen OSM, Wikidata, GeoNames, Hierarchie.
+3. **Läufe → „Seed für Revier“**: legt aus den Geo-Objekten Ortskandidaten an und öffnet je Kandidat eine Prüfaufgabe.
+4. **Review**: Ortskandidaten, unsichere Paare und „Küstenkachel ohne Revier“ abarbeiten, bis die Queue leer ist. Fehlgeschlagene Jobs stehen dort ebenfalls.
+5. **Abnahme-Prüfung**: `npm run check:gazetteer -- --area saronic` (auf dem Server: `dc run --rm worker node --import tsx scripts/check-gazetteer.ts --area saronic`). Ausgabe: Kacheln mit Küste, offene Kandidatenaufgaben, Objekte ohne Namen in de/en/el. Exit 1, solange Namen fehlen. Der Prüfbereich ist die `tileBbox` des Reviers. Checkliste: `docs/pilot/m1-abnahme.md`.
+
+Aufnahme neuer Testdaten (Entwicklung): `npm run fixtures:record -- --area saronic [--land <pfad>/land_polygons.shp] [--cache <dir>]` ruft die echten Dienste auf und schreibt die Fixtures nach `test/fixtures`. Es schreibt nur in eine Wegwerf-Datenbank, deren Name auf `_scratch` endet (`DATABASE_URL` darauf setzen); jede andere Datenbank wird abgelehnt.
+
+Deploy: Solange `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS` und `DEPLOY_HOST` (Abschnitt 5) und der Server fehlen, schlägt der CI-Job `deploy` fehl; der Job `check` ist davon unabhängig.
+
+## Landpolygone
+OSM-Landpolygone (Küstenlinie) bestimmen, welche Kacheln Küste haben und welche Orte küstennah liegen. Sie werden je Revier auf dessen Box (Revier-Polygon ∪ `tileBbox`, erweitert um `landBufferKm`) zugeschnitten importiert.
+1. Herunterladen und entpacken: `https://osmdata.openstreetmap.de/download/land-polygons-split-4326.zip` (enthält `land-polygons-split-4326/land_polygons.shp`).
+2. Je Revier importieren:
+   ```bash
+   npm run import:land-polygons -- --shp <pfad>/land_polygons.shp --area saronic [--version 2026-10-18]
+   ```
+   `--version` (Standard: heutiges Datum) benennt den Datenstand. Ein erneuter Import ersetzt alle Polygone in der Box des Reviers; Polygone außerhalb bleiben.
+3. Auf dem Server mit gemountetem Verzeichnis (hier `/data/land`):
+   ```bash
+   docker compose run --rm -v /data/land:/data/land:ro web npm run import:land-polygons -- --shp /data/land/land_polygons.shp --area saronic
+   ```

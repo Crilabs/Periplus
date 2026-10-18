@@ -1,17 +1,27 @@
+import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { testDb } from "@/test/db";
+import type { Db } from "@/lib/db/client";
+import { comparisonSet, geoObjects, places, reviewDecisions, reviewTasks, tiles } from "@/lib/db/schema";
+import { geomFromGeoJson } from "@/lib/db/geometry";
+import { newId } from "@/lib/domain/ids";
+import { createReviewTask } from "@/lib/domain/review";
+import { tileIdFor } from "@/lib/domain/tiles";
+import { testDb, withRollback } from "@/test/db";
 
 const db = testDb();
+/** What getDb() returns; a test may point it at a rollback transaction. */
+let currentDb: Db = db;
 const requireAdmin = vi.fn();
 const startRun = vi.fn();
 const redirect = vi.fn();
 const pauseQueue = vi.fn();
 const resumeQueue = vi.fn();
+const retryFailedJob = vi.fn();
 
 vi.mock("@/lib/security/require-admin", () => ({ requireAdmin: () => requireAdmin() }));
 vi.mock("@/lib/db/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/client")>()),
-  getDb: () => db,
+  getDb: () => currentDb,
 }));
 vi.mock("@/lib/jobs/boss", () => ({ getBoss: async () => ({}) }));
 vi.mock("@/lib/pipeline/runs", () => ({ startRun: (...args: unknown[]) => startRun(...args) }));
@@ -19,11 +29,15 @@ vi.mock("@/lib/jobs/controls", () => ({
   pauseQueue: (...args: unknown[]) => pauseQueue(...args),
   resumeQueue: (...args: unknown[]) => resumeQueue(...args),
 }));
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/lib/domain/jobs-view", () => ({ retryFailedJob: (...args: unknown[]) => retryFailedJob(...args) }));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => redirect(url) }));
 
-import { startPingRun } from "../runs/actions";
+import { startGazetteerAction, startPingRun, startSeedAction } from "../runs/actions";
+import { seedTileAction } from "../tiles/[id]/actions";
 import { pauseQueueAction, resumeQueueAction } from "../jobs/actions";
+import { retryJobAction } from "../runs/[id]/actions";
+import { toggleComparisonAction } from "../quality/actions";
 
 const form = (fields: Record<string, string>) => {
   const data = new FormData();
@@ -33,6 +47,7 @@ const form = (fields: Record<string, string>) => {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  currentDb = db;
   requireAdmin.mockResolvedValue({ email: "admin@example.invalid" });
   startRun.mockResolvedValue({ id: "run-1" });
 });
@@ -72,4 +87,172 @@ describe("admin server actions", () => {
     expect(pauseQueue).not.toHaveBeenCalled();
     expect(resumeQueue).not.toHaveBeenCalled();
   });
+
+  it("retryJobAction rejects an unknown queue", async () => {
+    const jobId = "0190a6c2-7a1b-7c3d-8e4f-0123456789ab";
+    await expect(retryJobAction(form({ queue: "nope", jobId }))).rejects.toThrow();
+    await expect(retryJobAction(form({ queue: "system.dead", jobId }))).rejects.toThrow();
+    await expect(retryJobAction({ queue: "system.ping", jobId: "not-a-uuid" })).rejects.toThrow();
+    expect(retryFailedJob).not.toHaveBeenCalled();
+
+    await retryJobAction(form({ queue: "system.ping", jobId }));
+    expect(retryFailedJob).toHaveBeenCalledWith(db, expect.anything(), "system.ping", jobId);
+
+    requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
+    await expect(retryJobAction({ queue: "system.ping", jobId })).rejects.toThrow("NEXT_REDIRECT");
+    expect(retryFailedJob).toHaveBeenCalledTimes(1);
+  });
+
+  it("retryJobAction decides an open failed_job task of the job with retry", async () => {
+    const jobId = newId();
+    const { id: taskId } = await createReviewTask(db, {
+      kind: "failed_job",
+      subjectType: "job",
+      subjectId: jobId,
+      context: { queue: "seed.tile" },
+    });
+    await retryJobAction({ queue: "seed.tile", jobId });
+    expect(retryFailedJob).toHaveBeenCalledTimes(1);
+    expect(retryFailedJob).toHaveBeenCalledWith(db, expect.anything(), "seed.tile", jobId);
+    const [task] = await db.select().from(reviewTasks).where(eq(reviewTasks.id, taskId));
+    expect(task!.status).toBe("decided");
+    const decisions = await db.select().from(reviewDecisions).where(eq(reviewDecisions.taskId, taskId));
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({ decision: { action: "retry" }, decidedBy: "admin@example.invalid" });
+  });
+
+  it("startGazetteerAction: unknown areaKey rejected, a configured area starts a gazetteer run", async () => {
+    await expect(startGazetteerAction(form({ areaKey: "atlantis" }))).rejects.toThrow();
+    await expect(startGazetteerAction({ areaKey: "" })).rejects.toThrow();
+    expect(startRun).not.toHaveBeenCalled();
+
+    await startGazetteerAction(form({ areaKey: "saronic" }));
+    expect(startRun).toHaveBeenCalledWith(
+      db,
+      expect.anything(),
+      expect.objectContaining({
+        kind: "stage",
+        scope: { type: "area", id: "saronic" },
+        stages: ["tiles.ensure", "gazetteer.osm", "gazetteer.wikidata", "gazetteer.geonames", "gazetteer.hierarchy"],
+        params: { areaKey: "saronic" },
+        triggeredBy: "admin@example.invalid",
+      }),
+    );
+    expect(redirect).toHaveBeenCalledWith("/runs/run-1");
+  });
+
+  it("startSeedAction: unknown areaKey, malformed or unknown tileId rejected without a run", async () => {
+    await expect(startSeedAction(form({ areaKey: "atlantis" }))).rejects.toThrow();
+    await expect(startSeedAction({ tileId: "q025:813" })).rejects.toThrow();
+    await expect(startSeedAction({ tileId: "q025:813:510; drop" })).rejects.toThrow();
+    // Well-formed but no such tile (north pole row, never created).
+    await expect(startSeedAction({ tileId: "q025:0:719" })).rejects.toThrow();
+    await expect(seedTileAction(form({ tileId: "q025:0:719" }))).rejects.toThrow();
+    expect(startRun).not.toHaveBeenCalled();
+  });
+
+  it("startSeedAction for an area starts an area-scoped seed run", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      // The area needs its geo object (normally written by tiles.ensure) before a seed run may start.
+      const [area] = await tx
+        .select({ id: geoObjects.id })
+        .from(geoObjects)
+        .where(sql`${geoObjects.type} = 'area' and ${geoObjects.configKey} = 'saronic' and ${geoObjects.validTo} is null`);
+      if (!area) {
+        const geom = sql`${geomFromGeoJson({ type: "Point", coordinates: [24.61, 32.83] })}`;
+        await tx.insert(geoObjects).values({ type: "area", origin: "manual", configKey: "saronic", geom });
+      }
+      await startSeedAction(form({ areaKey: "saronic" }));
+      expect(startRun).toHaveBeenCalledWith(
+        tx,
+        expect.anything(),
+        expect.objectContaining({
+          kind: "stage",
+          scope: { type: "area", id: "saronic" },
+          stages: ["seed.tile"],
+          params: { areaKey: "saronic" },
+          triggeredBy: "admin@example.invalid",
+        }),
+      );
+    }));
+
+  it("seed for a tile starts a tile-scoped run", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      // Open sea outside the pilot box, at a spot no other test uses.
+      const tileId = tileIdFor(24.61, 32.83);
+      await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(24.5, 32.75, 24.75, 33.0, 4326)` });
+      const expected = expect.objectContaining({
+        kind: "stage",
+        scope: { type: "tile", id: tileId },
+        stages: ["seed.tile"],
+        params: { tileIds: [tileId] },
+        triggeredBy: "admin@example.invalid",
+      });
+
+      await startSeedAction(form({ tileId }));
+      expect(startRun).toHaveBeenLastCalledWith(tx, expect.anything(), expected);
+      await seedTileAction(form({ tileId }));
+      expect(startRun).toHaveBeenLastCalledWith(tx, expect.anything(), expected);
+      expect(startRun).toHaveBeenCalledTimes(2);
+      expect(redirect).toHaveBeenLastCalledWith("/runs/run-1");
+
+      requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
+      await expect(startSeedAction({ tileId })).rejects.toThrow("NEXT_REDIRECT");
+      await expect(seedTileAction({ tileId })).rejects.toThrow("NEXT_REDIRECT");
+      await expect(startGazetteerAction({ areaKey: "saronic" })).rejects.toThrow("NEXT_REDIRECT");
+      expect(startRun).toHaveBeenCalledTimes(2);
+    }));
+  it("startSeedAction rejects a payload with both fields or an unknown tile next to a valid area", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      // Open sea outside the pilot box, at a spot no other test uses.
+      const tileId = tileIdFor(24.61, 32.83);
+      await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(24.5, 32.75, 24.75, 33.0, 4326)` });
+      await expect(startSeedAction(form({ tileId, areaKey: "saronic" }))).rejects.toThrow();
+      await expect(startSeedAction({ tileId: "q025:0:719", areaKey: "saronic" })).rejects.toThrow();
+      await expect(startSeedAction(form({ tileId: "q025:813", areaKey: "saronic" }))).rejects.toThrow();
+      expect(startRun).not.toHaveBeenCalled();
+      expect(redirect).not.toHaveBeenCalled();
+    }));
+
+  it("toggleComparisonAction: validates input, adds and removes a confirmed place", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      // Open sea outside the pilot box, at a spot no other test uses.
+      const geom = sql`${geomFromGeoJson({ type: "Point", coordinates: [24.61, 32.83] })}`;
+      let [area] = await tx
+        .select({ id: geoObjects.id })
+        .from(geoObjects)
+        .where(sql`${geoObjects.type} = 'area' and ${geoObjects.configKey} = 'saronic' and ${geoObjects.validTo} is null`);
+      area ??= (
+        await tx.insert(geoObjects).values({ type: "area", origin: "manual", configKey: "saronic", geom }).returning({ id: geoObjects.id })
+      )[0]!;
+      const tileId = tileIdFor(24.61, 32.83);
+      await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(24.5, 32.75, 24.75, 33.0, 4326)`, areaId: area.id });
+      const [obj] = await tx.insert(geoObjects).values({ type: "bay", origin: "osm", geom }).returning({ id: geoObjects.id });
+      const [place] = await tx
+        .insert(places)
+        .values({ geoObjectId: obj!.id, kind: "anchorage", status: "confirmed", position: geom })
+        .returning({ id: places.id });
+      const placeId = place!.id;
+      const rows = () => tx.select().from(comparisonSet).where(sql`${comparisonSet.placeId} = ${placeId}`);
+
+      await expect(toggleComparisonAction({ placeId, areaKey: "atlantis", include: true })).rejects.toThrow();
+      await expect(toggleComparisonAction({ placeId: "nope", areaKey: "saronic", include: true })).rejects.toThrow();
+      expect(await rows()).toHaveLength(0);
+
+      await toggleComparisonAction(form({ placeId, areaKey: "saronic", include: "true" }));
+      await toggleComparisonAction({ placeId, areaKey: "saronic", include: true });
+      expect(await rows()).toMatchObject([{ placeId, areaId: area.id, addedBy: "admin@example.invalid" }]);
+
+      // An unticked checkbox sends no `include` field.
+      await toggleComparisonAction(form({ placeId, areaKey: "saronic" }));
+      expect(await rows()).toHaveLength(0);
+
+      requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
+      await expect(toggleComparisonAction({ placeId, areaKey: "saronic", include: true })).rejects.toThrow("NEXT_REDIRECT");
+      expect(await rows()).toHaveLength(0);
+    }));
 });

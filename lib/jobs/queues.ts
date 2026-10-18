@@ -1,8 +1,11 @@
 import type { PgBoss } from "pg-boss";
 import type { QueueConfig } from "@/lib/config";
 
-export const QUEUES = ["system.ping"] as const;
+export const QUEUES = ["system.ping", "run.advance", "tiles.ensure", "gazetteer.build", "seed.tile"] as const;
 export type QueueName = (typeof QUEUES)[number];
+
+/** Moves a run to its next stage (plans and enqueues it), decoupled from the job that finished the stage. */
+export const RUN_ADVANCE_QUEUE = "run.advance" satisfies QueueName;
 
 /** Receives every job that exhausted its attempts on any queue in QUEUES. */
 export const DEAD_LETTER_QUEUE = "system.dead";

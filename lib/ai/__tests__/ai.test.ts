@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { desc, eq } from "drizzle-orm";
-import { testDb } from "@/test/db";
+import { testDb, withRollback } from "@/test/db";
+import { quietDay } from "@/test/external-calls";
 import { externalCalls } from "@/lib/db/schema";
 import { BudgetExceeded, recordExternalCall } from "@/lib/domain/costs";
-import type { AppConfig } from "@/lib/config";
+import { loadConfig, type AppConfig } from "@/lib/config";
 import { loadPrompt, renderPrompt } from "@/lib/ai/prompts";
 import { MockModel } from "@/lib/ai/mock";
 import { createAnthropicClient, type AnthropicMessagesApi } from "@/lib/ai/anthropic";
@@ -13,6 +14,7 @@ import { echoTask } from "@/lib/ai/tasks/system-echo";
 const db = testDb();
 
 const config: AppConfig = {
+  ...loadConfig("config"),
   queues: {},
   budgets: {
     anthropic: { dailyEur: 0.01 },
@@ -78,43 +80,47 @@ describe("MockModel", () => {
 });
 
 describe("anthropic client", () => {
-  it("refuses to call when the budget is exhausted", async () => {
-    const now = new Date(Date.UTC(2201, 5, 1, 12));
-    await recordExternalCall(db, { service: "anthropic", operation: "seed", units: 1, unit: "tokens", costEur: 0.02, at: now });
-    const { api, create } = fakeSdk('{"echo":"x","language":"en"}');
-    const client = createAnthropicClient(db, config, { sdk: api, now: () => now });
-    await expect(client.call(echoTask, { text: "x" })).rejects.toBeInstanceOf(BudgetExceeded);
-    expect(create).not.toHaveBeenCalled();
-  });
+  // Budget checks sum a whole day: each test writes inside a rollback transaction on a day nothing else spent on.
+  it("refuses to call when the budget is exhausted", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      await recordExternalCall(tx, { service: "anthropic", operation: "seed", units: 1, unit: "tokens", costEur: 0.02, at: now });
+      const { api, create } = fakeSdk('{"echo":"x","language":"en"}');
+      const client = createAnthropicClient(tx, config, { sdk: api, now: () => now });
+      await expect(client.call(echoTask, { text: "x" })).rejects.toBeInstanceOf(BudgetExceeded);
+      expect(create).not.toHaveBeenCalled();
+    }));
 
-  it("records tokens and cost", async () => {
-    const now = new Date(Date.UTC(2202, 5, 1, 12));
-    const stage = `ai-test-${Math.random()}`;
-    const { api, create } = fakeSdk('{"echo":"hello","language":"en"}');
-    const client = createAnthropicClient(db, config, { sdk: api, now: () => now });
-    const r = await client.call(echoTask, { text: "hello" }, { stage });
-    const expected = (1000 / 1e6) * 0.1 + (200 / 1e6) * 0.5;
-    expect(r.output).toEqual({ echo: "hello", language: "en" });
-    expect(r.usage).toEqual({ inputTokens: 1000, outputTokens: 200 });
-    expect(r.costEur).toBeCloseTo(expected, 10);
-    const params = create.mock.calls[0]![0] as { model: string; output_config: { format: { type: string } } };
-    expect(params.model).toBe("claude-haiku-5-5");
-    expect(params.output_config.format.type).toBe("json_schema");
-    const [row] = await db.select().from(externalCalls).where(eq(externalCalls.stage, stage)).orderBy(desc(externalCalls.at));
-    expect(row).toMatchObject({ service: "anthropic", operation: "system.echo", unit: "tokens" });
-    expect(Number(row!.units)).toBe(1200);
-    expect(Number(row!.costEur)).toBeCloseTo(expected, 6);
-  });
+  it("records tokens and cost", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      const stage = `ai-test-${Math.random()}`;
+      const { api, create } = fakeSdk('{"echo":"hello","language":"en"}');
+      const client = createAnthropicClient(tx, config, { sdk: api, now: () => now });
+      const r = await client.call(echoTask, { text: "hello" }, { stage });
+      const expected = (1000 / 1e6) * 0.1 + (200 / 1e6) * 0.5;
+      expect(r.output).toEqual({ echo: "hello", language: "en" });
+      expect(r.usage).toEqual({ inputTokens: 1000, outputTokens: 200 });
+      expect(r.costEur).toBeCloseTo(expected, 10);
+      const params = create.mock.calls[0]![0] as { model: string; output_config: { format: { type: string } } };
+      expect(params.model).toBe("claude-haiku-5-5");
+      expect(params.output_config.format.type).toBe("json_schema");
+      const [row] = await tx.select().from(externalCalls).where(eq(externalCalls.stage, stage)).orderBy(desc(externalCalls.at));
+      expect(row).toMatchObject({ service: "anthropic", operation: "system.echo", unit: "tokens" });
+      expect(Number(row!.units)).toBe(1200);
+      expect(Number(row!.costEur)).toBeCloseTo(expected, 6);
+    }));
 
-  it("throws ModelOutputInvalid for output violating the schema, still recording the spend", async () => {
-    const now = new Date(Date.UTC(2203, 5, 1, 12));
-    const stage = `ai-test-${Math.random()}`;
-    const { api } = fakeSdk('{"echo":1}');
-    const client = createAnthropicClient(db, config, { sdk: api, now: () => now });
-    await expect(client.call(echoTask, { text: "x" }, { stage })).rejects.toBeInstanceOf(ModelOutputInvalid);
-    const rows = await db.select().from(externalCalls).where(eq(externalCalls.stage, stage));
-    expect(rows).toHaveLength(1);
-  });
+  it("throws ModelOutputInvalid for output violating the schema, still recording the spend", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      const stage = `ai-test-${Math.random()}`;
+      const { api } = fakeSdk('{"echo":1}');
+      const client = createAnthropicClient(tx, config, { sdk: api, now: () => now });
+      await expect(client.call(echoTask, { text: "x" }, { stage })).rejects.toBeInstanceOf(ModelOutputInvalid);
+      const rows = await tx.select().from(externalCalls).where(eq(externalCalls.stage, stage));
+      expect(rows).toHaveLength(1);
+    }));
 
   it("throws a config error before calling when the model has no price", async () => {
     const { api, create } = fakeSdk("{}");

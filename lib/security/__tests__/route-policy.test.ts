@@ -35,6 +35,8 @@ describe("normalizePath", () => {
     ["/", "/"],
     ["/Healthz", "/Healthz"],
     ["/runs/a%20b", "/runs/a b"],
+    ["/tiles/q025%3A813%3A510", "/tiles/q025:813:510"],
+    ["/tiles/q025:813:510", "/tiles/q025:813:510"],
   ])("normalizes %s to %s", (input, expected) => {
     expect(normalizePath(input)).toBe(expected);
   });
@@ -66,6 +68,18 @@ describe("matchRoute", () => {
     expect(matchRoute("/runs")).toEqual({ pattern: "/runs", rule: { kind: "admin" } });
     expect(matchRoute("/runs/abc")).toEqual({ pattern: "/runs/[id]", rule: { kind: "admin" } });
     expect(matchRoute("/")).toEqual({ pattern: "/", rule: { kind: "admin" } });
+  });
+
+  it("matches detail pages, including a tile id with `:` after decoding", () => {
+    const tile = normalizePath("/tiles/q025%3A813%3A510");
+    expect(tile).not.toBeNull();
+    expect(matchRoute(tile!)).toEqual({ pattern: "/tiles/[id]", rule: { kind: "admin" } });
+    expect(matchRoute("/tiles/q025:813:510")).toEqual({ pattern: "/tiles/[id]", rule: { kind: "admin" } });
+    expect(matchRoute("/geo/0190a6c2-7a1b-7c3d-8e4f-0123456789ab")).toEqual({ pattern: "/geo/[id]", rule: { kind: "admin" } });
+    expect(matchRoute("/places/0190a6c2-7a1b-7c3d-8e4f-0123456789ab")).toEqual({
+      pattern: "/places/[id]",
+      rule: { kind: "admin" },
+    });
   });
 
   it("returns null for unknown or partially matching paths", () => {

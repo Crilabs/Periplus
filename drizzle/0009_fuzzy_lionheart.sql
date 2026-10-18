@@ -1,0 +1,1 @@
+CREATE INDEX "geo_names_geo_object_id_idx" ON "geo_names" USING btree ("geo_object_id");

@@ -1,0 +1,1 @@
+CREATE INDEX "places_anchor_position_gist" ON "places" USING gist ("anchor_position");

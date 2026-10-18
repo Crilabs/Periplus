@@ -1,0 +1,1019 @@
+11265834	251582	el	Nisída Xéra						
+11265835	251582	el	Νησίδα Ξέρα						
+11265836	251582	el	Nisís Xéra						
+11265837	251582	el	Νησίς Ξέρα						
+11265838	251612	el	Vromosykiá						
+11265839	251612	el	Βρωμοσυκιά						
+11265840	251612		Vromosikiá						
+9786704	251617	el	Βρωμολίμνη	1					
+9786710	251617	en	Vromolimni						
+162877	251786		Ákra Boundoúri						
+3222664	251786		Ákra Voudhoúri						
+11265841	251786	el	Ákra Voudoúri						
+11265842	251786	el	Άκρα Βουδούρη						
+163004	251899		Vlákidhes						
+3222672	251899		Vlákhidhes						
+9711417	251899	el	Βλάχηδες	1					
+19745641	251899	wkdt	Q21623904						
+3222674	251988	el	Vígla						
+3222675	251988	el	Βίγλα						
+163085	251991		Órmos Vídhi						
+3222676	251991		Órmos Vidhíou						
+163086	251992		Vidhi						
+3222677	251992		Vídhion						
+9788380	251992	el	Βύδιο						
+9788384	251992	el	Βύδι	1					
+9788389	251992	en	Vydi						
+163232	252146		Porthmós Vathéos						
+163233	252146		Vathi Channel						
+163234	252146		Vathí Strait						
+3222698	252146		Stenón Vathí						
+11265848	252146	el	Stenó Vathý						
+11265849	252146	el	Στενό Βαθύ						
+11265850	252146	el	Stenón Vathý						
+11265851	252146	el	Στενόν Βαθύ						
+163262	252160		Akra Spourtea						
+163263	252160		Cape Vathi						
+163264	252160		Ákra Skourtéa						
+3222699	252160	el	Ákra Vathí						
+3222700	252160	el	Άκρα Βαθύ	1					
+6132289	252160	en	Cape Vathi						
+3222704	252165	el	Vathí						
+3222705	252165	el	Βαθύ	1					
+9711435	252165	en	Vathy						
+11265852	252165	el	Vathý						
+3222706	252167	el	Vathý						
+3222707	252167	el	Βαθύ	1					
+3222708	252167	el	Vathí						
+9786531	252167	en	Vathy						
+11265853	252214	el	Kávos Vasíli						
+11265854	252214	el	Κάβος Βασίλη						
+163368	252265		Limín Prinalí						
+3222715	252265	el	Ormískos Voreiarniá						
+3222716	252265	el	Ορμίσκος Βορειαρνιά						
+3222717	252265	el	Órmos Variarniá						
+6132295	252265	el	Limín Prinalí						
+11265855	252265	el	Όρμος Βαριαρνιά						
+11265856	252339	el	Órmos Valarioú						
+11265857	252339	el	Όρμος Βαλαριού						
+163465	252359		Váyia						
+3222719	252359	el	Vaḯa						
+3222720	252359	el	Βαΐα	1					
+3222721	252359	grc	Afaía						
+3222722	252359	grc	Αφαία						
+6132296	252359	el	Váyia						
+9711443	252359	el	Βάγια						
+11265858	252359	el	Vagía						
+11265859	252359	el	Βαγία						
+163467	252361		Barpariá						
+163468	252361		Órmos Vayionías						
+163469	252361		Órmos Barmbariá						
+3222723	252361	el	Órmos Vagoniás						
+3222724	252361	el	Órmos Barmpariá						
+3222725	252361	el	Όρμος Μπαρμπαριά						
+6132297	252361	el	Órmos Vayionías						
+6132298	252361	el	Barpariá						
+6132299	252361	el	Órmos Barmbariá						
+11265860	252361	el	Órmos Vagioniás						
+11265861	252361	el	Όρμος Βαγιονιάς						
+9711433	252382	el	Τζίκηδες	1					
+9711434	252382	en	Tzikides						
+9530195	252421	el	Τσουκάλια						
+163634	252573		Dhamalás						
+163635	252573		Troichken						
+163636	252573		Troizen						
+3222729	252573	el	Troizín						
+3222730	252573	el	Τροιζήν						
+7154208	252573	link	https://en.wikipedia.org/wiki/Troezen						
+7362633	252573	el	Troizinía						
+7362634	252573	el	Τροιζηνία						
+9786048	252573	en	Troizina						
+9786049	252573	en	Troezen	1					
+9786050	252573	el	Τροιζήνα	1					
+163900	252768		Nisís Toúrlos						
+163901	252768		Nisís Nisída						
+163902	252768		Nisídha						
+163903	252768		Nísos Nisís						
+3222750	252768	el	Νησίς Νησίδα						
+6132313	252768	el	Nisís Toúrlos						
+6132314	252768	el	Nísos Nisís						
+6132315	252768	el	Nisídha						
+6132316	252768	el	Nisís Nisída						
+11265886	252768	el	Nisída						
+11265887	252768	el	Νησίδα						
+19745643	252768	wkdt	Q24888091						
+163938	252807		Zervéïka						
+4438734	252807		Tourkálaka						
+9788172	252807	el	Ζερβαίικα	1					
+9788181	252807	en	Zervaiika						
+164067	252923		Thíni						
+164068	252923		Órmos Thounni						
+3222769	252923		Órmos Thinní						
+11265889	252923	el	Órmos Thynní						
+11265890	252923	el	Όρμος Θυννί						
+164221	253058		Dhára						
+3222783	253058	el	Taktikoúpolis						
+3222784	253058	el	Τακτικούπολις						
+6132336	253058	el	Dhára						
+9788459	253058	el	Τακτικούπολη	1					
+9788464	253058	en	Taktikoupolis						
+11265897	253058	el	Taktikoúpoli						
+13774713	253058	unlc	GRTAK						
+11265898	253059	el	Órmos Taktikoupóleos						
+11265899	253059	el	Όρμος Τακτικουπόλεως						
+164385	253199		Port Steno						
+164386	253199		Limín Stenó						
+3222788	253199	el	Órmos Stenó						
+3222789	253199	el	Όρμος Στενό						
+6132339	253199	en	Port Steno						
+6132340	253199	el	Limín Stenó						
+164614	253406		Salakhtonísi						
+164615	253406		Nisí Salaftó						
+164616	253406		Salaphto Nisi						
+164617	253406		Vrakhonisís Salaftonísi						
+164618	253406		Salaphtonisi Islet						
+3222821	253406	el	Vrakhonisís Spalathronísi						
+3222822	253406	el	Βραχονησίς Σπαλαθρονήσι						
+3222823	253406	el	Spalathronísi						
+3222824	253406	el	Σπαλαθρονήσι						
+6132362	253406	en	Salaphtonisi Islet						
+6132363	253406	el	Salaphto Nisi						
+6132364	253406	el	Salakhtonísi						
+6132365	253406	el	Vrakhonisís Salaftonísi						
+6132366	253406	el	Nisí Salaftó						
+11265920	253406	el	Vrachonisís Spalathronísi						
+11265924	253476	el	Sorós						
+11265925	253476	el	Σωρός						
+11265926	253476		Sopós						
+11265927	253546	el	Órmos Skoúmpis						
+11265928	253546	el	Όρμος Σκούμπης						
+11265929	253546		Órmos Skoúmbis						
+164841	253630		Ákra Skilómanga						
+164842	253630		Ákra Skilómango						
+164843	253630		Cape Skilomango						
+3222834	253630	el	Ákra Skylómagkas						
+3222835	253630	el	Άκρα Σκυλόμαγκας						
+3222836	253630	el	Ákra Skilómangas						
+6132371	253630	en	Cape Skilomango						
+6132372	253630	el	Ákra Skilómango						
+6132373	253630	el	Ákra Skilómanga						
+164928	253690		Skapéti						
+4439384	253690		Skapétion						
+9787967	253690	el	Σκαπέτι	1					
+9787974	253690	en	Skapeti						
+9711447	253958	el	Σφεντούριο						
+9711448	253958	el	Σφεντούρι						
+9711449	253958	en	Sfentourio						
+165335	254051		Ormískos Sárpa						
+3222858	254051		Órmos Sarpá						
+9530180	254428	el	Ράδο	1					
+9530181	254428	en	Rado						
+9711454	254545	el	Ψαχνή	1					
+9711455	254545	en	Psachni						
+11265946	254645	el	Profítis Ilías						
+11265947	254645	el	Προφήτης Ηλίας						
+166001	254652		Ormískos Profítis Ilías						
+3222909	254652		Órmos Profítis Ilía						
+11265949	254652	el	Όρμος Προφήτης Ηλία						
+166193	254768		Poúnto						
+3222916	254768	el	Ákra Poúnta						
+3222917	254768	el	Άκρα Πούντα						
+3222918	254768	el	Ákra Poúnda						
+9788690	254838	el	Ποτάμι						
+3222932	254850	el	Ormískos Pórtes						
+3222933	254850	el	Ορμίσκος Πόρτες						
+3222934	254850	el	Órmos Pórtais						
+11265955	254850	el	Órmos Pórtes						
+11265956	254850	el	Όρμος Πόρτες						
+166238	254853		Pórtes						
+3222935	254853		Pórtai						
+9711431	254853	el	Πόρτες	1					
+9711432	254853	en	Portes						
+11265957	254857	el	Stenó Pórou						
+11265958	254857	el	Στενό Πόρου						
+11265959	254857	el	Stenón Pórou						
+11265960	254857	el	Στενόν Πόρου						
+166243	254860		Poros Harbour						
+3222938	254860		Limín Pórou						
+11265961	254860	el	Limáni Pórou						
+11265962	254860	el	Λιμάνι Πόρου						
+11265963	254860	el	Λιμήν Πόρου						
+166246	254862		Kalavría						
+2922032	254862	link	https://en.wikipedia.org/wiki/Kalaureia						
+3047466	254862	link	https://ru.wikipedia.org/wiki/%D0%9F%D0%BE%D1%80%D0%BE%D1%81						
+3222939	254862	el	Nísos Póros						
+3222940	254862	el	Νήσος Πόρος						
+3222941	254862	grc	Καλαυρια						
+6132427	254862	grc	Kalavría						
+2181602	254865	el	Πόρος	1					
+3222942	254865	el	Póros						
+7170750	254865	link	https://en.wikipedia.org/wiki/Poros						
+9711887	254865	en	Poros						
+166367	254936		Órmos Pógonos						
+3222950	254936		Limín Pógonos						
+11265971	254936	el	Limáni Pógonos						
+11265972	254936	el	Λιμάνι Πώγωνος						
+11265973	254936	el	Λιμήν Πώγωνος						
+3222958	254996	el	Nisís Plateiá						
+3222959	254996	el	Νησίς Πλατειά						
+3222960	254996	el	Nisís Platiá						
+11265976	254996	el	Nisída Plateiá						
+11265977	254996	el	Νησίδα Πλατειά						
+19713689	254996	wkdt	Q24997495						
+166521	255115		Cape Plakakia						
+166522	255115		Pláka						
+3222967	255115	el	Ákra Plakákia						
+3222968	255115	el	Άκρα Πλακάκια						
+6132433	255115	en	Cape Plakakia						
+6132434	255115	el	Pláka						
+166642	255214		Cape Pírgos						
+166643	255214		Cape Pyrgos						
+3222975	255214	el	Ákra Pýrgos						
+3222976	255214	el	Άκρα Πύργος						
+3222977	255214	el	Ákra Pírgos						
+6132435	255214	en	Cape Pyrgos						
+6132436	255214	en	Cape Pírgos						
+166847	255405		Petro Kargo						
+3222984	255405	el	Vrachonisís Petrokáravo						
+3222985	255405	el	Βραχονησίς Πετροκάραβο						
+3222986	255405	el	Nisís Petrokáravo						
+11265992	255405	el	Nisída Petrokáravo						
+11265993	255405	el	Νησίδα Πετροκάραβο						
+11265994	255405	el	Νησίς Πετροκάραβο						
+11266001	255559	el	Ákra Pérdika						
+11266002	255559	el	Άκρα Πέρδικα						
+11266003	255559		Ákra Pérdhika						
+3074655	255565	el	Περδικα						
+3074656	255565	en	Perdika						
+3223001	255565	el	Pérdhika						
+3223002	255565	el	Pérdika						
+3223003	255565	el	Πέρδικα	1					
+3223016	255605	el	Ákra Penínta Vráchia						
+3223017	255605	el	Άκρα Πενήντα Βράχηα						
+3223018	255605	el	Ákra Penínda						
+11266004	255605	el	Ákra Penínta						
+11266005	255605	el	Άκρα Πενήντα						
+9788638	255886	el	Παναγίτσα						
+167528	256000		Ákra Palaiópirgos						
+3223051	256000	el	Ákra Palaiópyrgos						
+3223052	256000	el	Άκρα Παλαιόπυργος						
+3223053	256000	el	Ákra Paliópirgos						
+6132462	256000	el	Ákra Palaiópirgos						
+11266015	256000	el	Ákra Paliópyrgos						
+11266016	256000	el	Άκρα Παλιόπυργος						
+167768	256169		Moúskha Káto				1		
+3223071	256169		Palaiá Loutrá						
+9786326	256169	el	Παλαιά Λουτρά	1					
+9786332	256169	en	Palaia Loutra						
+9711429	256185	el	Παχειά Ράχη	1					
+9711430	256185	en	Pacheia Rachi						
+19745640	256185	wkdt	Q21623928						
+3223086	256247	el	Ortholíthi						
+3223087	256247	el	Ορθολίθι						
+168057	256377	el	Ákra Nisídha						
+3223092	256377	el	Ákra Nisída						
+3223093	256377	el	Άκρα Νησίδα						
+3223094	256377		Ákra Nísiza						
+168282	256567		Point Neda						
+168283	256567		Cape Nédha						
+3223099	256567		Ákra Nédha						
+11266035	256567	el	Ákra Néda						
+11266036	256567	el	Άκρα Νέδα						
+168541	256784		Porthmós Monís						
+3223119	256784		Stenón Monís						
+11266049	256784	el	Stenó Monís						
+11266050	256784	el	Στενό Μονής						
+11266051	256784	el	Στενόν Μονής						
+3223120	256787	el	Nisís Moní						
+3223121	256787	el	Νησίς Μονή						
+11266052	256797	el	Órmos Monastiríou						
+11266053	256797	el	Όρμος Μοναστηρίου						
+11266054	256797	el	Órmos Pórou						
+11266055	256797		Poros Bay						
+11266056	256797	el	Όρμος Πόρου						
+3223134	256849	el	Nisís Módi						
+3223135	256849	el	Νησίς Μόδι						
+3223136	256849	el	Nisís Módhi						
+11266062	256849	el	Nisída Módi						
+11266063	256849	el	Νησίδα Μόδι						
+168979	257085		Dhíavlos Metópis						
+168980	257085		Metopi Channel						
+168981	257085		Metópis Porthmós						
+3223147	257085	el	Stenón Metópis						
+3223148	257085	el	Stenó Metópis						
+3223149	257085	el	Στενό Μετώπης						
+6132481	257085	el	Metópis Porthmós						
+6132482	257085	el	Dhíavlos Metópis						
+6132483	257085	en	Metopi Channel						
+11266068	257085	el	Στενόν Μετώπης						
+3223150	257086	el	Nisís Metópi						
+3223151	257086	el	Νησίς Μετώπη						
+11266069	257086	el	Nisída Metópi						
+11266070	257086	el	Νησίδα Μετώπη						
+168996	257101		Metókhi						
+3223155	257101		Metókhion						
+9711259	257101	el	Μετόχι Αγκιστρίου						
+9711265	257101	el	Μετόχι						
+3223159	257124	el	Stenó Methánon						
+3223160	257124	el	Στενό Μεθάνων						
+3223161	257124	el	Stenón Methánon						
+11266071	257124	el	Στενόν Μεθάνων						
+169009	257125		Methana						
+169010	257125		Khersónisos Methánon						
+3223162	257125	el	Chersónisos Methánon						
+3223163	257125	el	Χερσόνησος Μεθάνων						
+6132485	257125	el	Khersónisos Methánon						
+6132486	257125	el	Methana						
+13774511	257125	unlc	GRMEA						
+2181613	257126	el	Μέθανα	1					
+2922118	257126	link	https://en.wikipedia.org/wiki/Methana						
+3223164	257126	el	Méthana						
+9786510	257126	en	Methana						
+15910235	257126	wkdt	Q1925381						
+17992873	257126	nn	Méthana						
+17992874	257126	de	Methana						
+17992875	257126	ceb	Méthana						
+17992876	257126	ru	Метана						
+17992877	257126	fi	Méthana						
+17992878	257126	hyw	Մեթանա						
+17992879	257126	fr	Méthana						
+17992880	257126	hy	Մետանա						
+17992881	257126	ca	Metana						
+17992882	257126	sv	Méthana						
+17992883	257126	arz	ميثانا						
+17992884	257126	it	Methana						
+17992885	257126	es	Methana						
+17992886	257126	zh	邁薩納						
+17992887	257126	eu	Methana						
+17992888	257126	ar	ميثانا						
+17992889	257126	nb	Methana						
+17992890	257126	la	Methana						
+17992891	257126	ja	メタナ						
+17992892	257126	fa	متانا						
+17992893	257126	he	מתאנה						
+17992894	257126	nl	Methana						
+17992895	257126	tr	Metana						
+169022	257141		Valarión						
+169023	257141		Psagnoí						
+3223165	257141		Metamórfosis						
+7362855	257141		Metamórfosi						
+7362856	257141	el	Μεταμόρφωση Τροιζήνος	1					
+9788431	257141	en	Metamorfosi Troizinos						
+3242952	257237	el	Mesagrós						
+3242953	257237	el	Μεσαγρός	1					
+9711446	257237	en	Mesagros						
+169298	257373		Ormískos Megálo Neórion						
+3223172	257373		Órmos Méga Neórion						
+11266076	257373	el	Órmos Méga Neório						
+11266077	257373	el	Όρμος Μέγα Νεώριο						
+11266078	257373	el	Όρμος Μέγα Νεώριον						
+169320	257393		Megálo Potámi						
+3223173	257393		Megalopotámion						
+9786569	257393	el	Μεγάλο Ποτάμι	1					
+9786574	257393	en	Megalo Potami						
+169348	257408		Megalokhóri						
+3223174	257408	el	Megalochórion						
+3223175	257408	el	Μεγαλοχώριον						
+3223176	257408	el	Megalokhórion						
+6132496	257408	el	Megalokhóri						
+9786590	257408	el	Μεγαλοχώρι	1					
+9786594	257408	en	Megalochori						
+11313147	257408	link	https://en.wikipedia.org/wiki/Megalochori%2C_Methana						
+169648	257713		Órmos Perivólas						
+169649	257713		Marathón Bay						
+169650	257713		Marathona Bay						
+3223191	257713	el	Órmos Marathóna						
+3223192	257713	el	Όρμος Μαραθώνα						
+3223193	257713	el	Órmos Marathónos						
+6132500	257713	el	Órmos Perivólas						
+6132501	257713	en	Marathón Bay						
+6132502	257713	en	Marathona Bay						
+3223194	257718	el	Marathón						
+3223195	257718	el	Μαραθών						
+7362881	257718	el	Marathóna						
+7362882	257718	el	Μαραθώνα	1					
+169705	257756		Ákra Manóli						
+3223196	257756		Ákra Manólis						
+11266087	257756	el	Άκρα Μανώλης						
+11266089	257805	el	Órmos Mandráki						
+11266090	257805	el	Όρμος Μανδράκι						
+11266091	257824	el	Ákra Mánti						
+11266092	257824	el	Άκρα Μάντη						
+11266093	257824		Ákra Mándi						
+169970	257943		Moúskha Áno				1		
+169971	257943		Makrólongos						
+3223207	257943		Makrílongos						
+9786289	257943	el	Μακρύλογγος	1					
+9786297	257943	en	Makrylongos						
+170146	258119		Loukaíti						
+3223220	258119		Loukaḯtion						
+9530175	258119	el	Λουκαΐτι						
+9530176	258119	el	Λουκαίτι	1					
+9530177	258119	en	Loukaiti						
+170195	258174		Ormískos Liyea						
+3223221	258174		Órmos Liyéa						
+3223222	258197	el	Ákra Leivádia						
+3223223	258197	el	Άκρα Λειβάδια						
+3223224	258197	el	Ákra Livádhia						
+11266104	258197	el	Ákra Livádia						
+11266105	258197	el	Άκρα Λιβάδια						
+170390	258323		Limenárion						
+3223233	258323		Limenária						
+8522180	258323	el	Λιμενάρια	1					
+9711426	258534	el	Λαζάρηδες	1					
+9711427	258534	en	Lazarides						
+19745599	258534	wkdt	Q21623922						
+170691	258536		Nisís Lazarétto						
+170692	258536		Nísos Lazaréto						
+3223250	258536		Nisís Lazaréta						
+11266117	258536	el	Nisída Lazaréta						
+11266118	258536	el	Νησίδα Λαζαρέτα						
+11266119	258536	el	Νησίς Λαζαρέτα						
+170771	258592		Longaráki						
+3223262	258592		Langarákhia						
+11722216	258592	el	Longarákia						
+11722217	258592	el	Λογγαράκια						
+11266123	258629	el	Lampoúsa						
+11266124	258629	el	Λαμπούσα						
+11266125	258629		Lamboúsa						
+3223265	258806	el	Ákra Kryonéri						
+3223266	258806	el	Άκρα Κρυονέρι						
+3223267	258806	el	Ákra Krionéri						
+171092	258864	el	Ákra Panayía						
+171093	258864		Ákra Krasopanayiá						
+171094	258864		Cape Panayiá						
+171095	258864		Ákra Panayías						
+171096	258864		Panagia Point						
+3223274	258864	el	Ákra Panagiá						
+3223275	258864	el	Άκρα Παναγιά						
+3223276	258864	el	Ákra Krasopanayiás						
+6132544	258864	en	Ákra Panayías						
+6132545	258864	en	Cape Panayiá						
+6132546	258864	en	Panagia Point						
+6132547	258864	el	Ákra Krasopanayiá						
+11266128	258864	el	Ákra Krasopanagiás						
+11266129	258864	el	Άκρα Κρασοπαναγιάς						
+171251	259036		Kounopítsa						
+3223285	259036	el	Kounoupítsa						
+3223286	259036	el	Κουνουπίτσα	1					
+6132551	259036	el	Kounopítsa						
+8695071	259036	link	https://en.wikipedia.org/wiki/Kounoupitsa						
+9786265	259036	en	Kounoupitsa						
+15419304	259036	wkdt	Q4247297						
+17993036	259036	de	Kounoupitsa						
+17993037	259036	ru	Кунупица						
+17993038	259036	fr	Kounoupítsa						
+17993039	259036	nl	Kounoupitsa						
+171420	259223		Ákra Kostís						
+3223298	259223		Ákra Kostí						
+11266139	259223	el	Άκρα Κωστή						
+11722283	259392	el	Koní						
+11722284	259392	el	Κονί						
+171619	259410		Kóntos						
+3223325	259410		Kondós						
+9711419	259410	en	Kontos						
+9711420	259410	el	Κοντός	1					
+171735	259525		Cape Kalauri						
+171736	259525		Ákra Kalávria						
+171737	259525		Cape Kalávria						
+3223330	259525	el	Kávos Kokorélli						
+6132580	259525	en	Cape Kalávria						
+6132581	259525	el	Ákra Kalávria						
+6132582	259525	en	Cape Kalauri						
+11266148	259525	el	Κάβος Κοκορέλλι						
+11266156	259739	el	Ákra Kyr Annítsa						
+11266157	259739	el	Άκρα Κυρ Αννίτσα						
+11266158	259739		Ákra Kir Annítsa						
+171973	259741		Nisís Kirá						
+171974	259741	grc	Pityónisos						
+171975	259741	el	Kyrá						
+171976	259741		Pitionisos						
+171977	259741		Kvra						
+3223355	259741	el	Nisída Kyrá						
+3223356	259741	el	Νησίς Κυρά						
+3223357	259741	el	Nisís Kyrá						
+3223358	259741	grc	Πιτυόνησος						
+6132600	259741	grc	Pitionisos						
+6132601	259741	el	Kvra						
+6132602	259741	el	Nisís Kirá						
+7569124	259741	el	Νησίδα Κυρά						
+171993	259750		Khalasméni						
+3223359	259750	el	Kypséli						
+3223360	259750	el	Κυψέλη	1					
+3223361	259750	el	Kipséli						
+6132604	259750	el	Khalasméni						
+9711436	259750	en	Kypseli						
+171994	259751		Kosóna						
+3223362	259751		Kipséli						
+9786387	259751	el	Κυψέλη						
+9786393	259751	en	Kypseli						
+16244378	259751	link	https://en.wikipedia.org/wiki/Kypseli,_Methana						
+172000	259759		Órmos Kípon						
+3223363	259759	el	Órmos Kípos						
+3223364	259759	el	Όρμος Κήπος						
+6132605	259759	el	Órmos Kípon						
+172091	259814		Margaronídhes						
+3223372	259814		Kílindros						
+9711424	259814	el	Κυλινδράς	1					
+9711425	259814	en	Kylindras						
+11266161	259961	el	Kamára						
+11266162	259961	el	Καμάρα						
+11266163	259961		Khlóï						
+172405	260012		Khelóni						
+3223380	260012		Khelóna						
+172849	260385		Ákra Kavaláris						
+3223390	260385	el	Ákra Kavalláris						
+3223391	260385	el	Άκρα Καβαλλάρης						
+6132640	260385	el	Ákra Kavaláris						
+173410	260942		Ormískos Kariótis						
+3223411	260942		Órmos Karióti						
+11266182	260942	el	Órmos Karyóti						
+11266183	260942	el	Όρμος Καρυώτη						
+173505	261035		Karatzá						
+173506	261035		Karajá						
+4444903	261035		Karatzás						
+9788203	261035	el	Καρατζάς	1					
+9788209	261035	en	Karatzas						
+9711418	261110	el	Καπότηδες	1					
+9771052	261110		Kapótidhes						
+11266189	261110	el	Kapótides						
+19745598	261110	wkdt	Q21623907						
+11266190	261115	el	Ákra Kapnodóchi						
+11266191	261115	el	Άκρα Καπνοδόχη						
+11266192	261115		Ákra Kapnodhókhi						
+9711452	261174	el	Kανάκηδες	1					
+9711453	261174	en	Kanakides						
+11266204	261292	el	Kamára						
+11266205	261292	el	Καμάρα						
+173876	261399		Lessiá						
+173877	261399		Lesía						
+3223432	261399	el	Kalloní						
+3223433	261399	el	Καλλονή	1					
+9787782	261399	en	Kalloni						
+9786545	261686	el	Καημένη Χώρα	1					
+9786555	261686	en	Kaimeni Chora						
+2181518	262143	el	Γαλατάς	1					
+2922278	262143	link	https://en.wikipedia.org/wiki/Galatas%2C_Troizina						
+3223489	262143	el	Galatás						
+9786043	262143	en	Galatas						
+15801022	262143	wkdt	Q992384						
+11266224	262208	el	Ákra Frínithi						
+11266225	262208	el	Άκρα Φρίνηθι						
+175005	262305		Ákra Fórmio						
+3223497	262305		Ákra Formí						
+11266226	262305	el	Ákri						
+11266227	262305	el	Άκρη						
+175443	262660		Órmos Methánon						
+3223525	262660	el	Kólpos Epidávrou						
+3223526	262660	el	Κόλπος Επιδαύρου						
+3223527	262660	el	Kólpos Epidhávrou						
+6132711	262660	el	Órmos Methánon						
+175750	262882		Plákisa						
+175751	262882		Dhritzaíïka						
+3223540	262882		Dhritsaíika						
+9786465	262882	el	Δριτσαίικα	1					
+9786468	262882	en	Dritsaiika						
+9786814	262882	el	Δριτζέϊκα				1		
+175759	262888		Ortholíthion				1		
+175760	262888		Káto Fanári				1		
+3223541	262888	el	Dryópi						
+3223542	262888	el	Δρυόπη	1					
+3223543	262888	el	Dhriópi						
+6132718	262888	el	Ortholíthion				1		
+6132719	262888	el	Káto Fanári				1		
+9787735	262888	en	Dryopi						
+9787752	262888	el	Κάτω Φανάρι						
+11266262	262896	el	Drymóna						
+11266263	262896	el	Δρυμώνα						
+11266264	262896		Dhrimóna						
+175912	262990		Thorussa						
+175913	262990		Thorussa Island						
+3223551	262990	el	Nisís Doroúsa						
+3223552	262990	el	Νησίς Δορούσα						
+3223553	262990	el	Nisís Dhoroúsa						
+6132723	262990	en	Thorussa Island						
+6132724	262990	el	Thorussa						
+11266275	262990	el	Nisída Doroúsa						
+11266276	262990	el	Νησίδα Δορούσα						
+176219	263188		Dhéndhron						
+3223579	263188		Vounó Dhéndrou						
+11266300	263188	el	Vounó Déndrou						
+11266301	263188	el	Βουνό Δένδρου						
+176296	263248		Dhaskaliá						
+3223583	263248		Nisís Dhaskalió						
+11266302	263248	el	Nisída Daskalió						
+11266303	263248	el	Νησίδα Δασκαλιό						
+11266304	263248	el	Nisís Daskalió						
+11266305	263248	el	Νησίς Δασκαλιό						
+19713642	263248	wkdt	Q25094384						
+176309	263255		Dhardhiza				1		
+3223590	263255		Dháriza				1		
+9787450	263255	el	Δάριζα				1		
+9787478	263255	el	Σαρωνίς Τροιζήνος						
+9787487	263255	el	Σαρωνίδα Τροιζήνος	1					
+9787493	263255	en	Saronida Troizinos						
+3223595	263349	el	Ákra Ntána						
+3223596	263349	el	Άκρα Ντάνα						
+3223597	263349	el	Ákra Dána						
+11266308	263390	el	Nisída Boúrtzi						
+11266309	263390	el	Νησίδα Μπούρτζι						
+11266310	263390	el	Nisís Boúrtzi						
+11266311	263390	el	Νησίς Μπούρτζι						
+11266316	263447	el	Karákia						
+11266317	263447	el	Καράκια						
+11266318	263447		Bizimí						
+3223604	263452	el	Nisís Bísti						
+3223605	263452	el	Νησίς Μπίστη						
+11266319	263452	el	Nisída Bísti						
+11266320	263452	el	Νησίδα Μπίστη						
+19713688	263452	wkdt	Q25094292						
+11266322	263579	el	Órmos Agíou Nikoláou						
+11266323	263579	el	Όρμος Αγίου Νικολάου						
+11266324	263579		Órmos Ayíou Nikoláou						
+176713	263607		Ákra Áyios Andónios						
+176714	263607		Ákra Ayíou Antoníou						
+176715	263607		Cape Andonis						
+176716	263607		Ákra Andónis						
+3223616	263607	el	Ákra Antónis						
+3223617	263607	el	Άκρα Αντώνης						
+3223618	263607	el	Ákra Ayíou Andoníou						
+6132756	263607	el	Ákra Ayíou Antoníou						
+6132757	263607	el	Ákra Áyios Andónios						
+6132758	263607	en	Cape Andonis						
+6132759	263607	el	Ákra Andónis						
+11266330	263607	el	Ákra Agíou Antoníou						
+11266331	263607	el	Άκρα Αγίου Αντωνίου						
+3223622	263620	el	Ákra Ágios Geórgios						
+3223623	263620	el	Άκρα Άγιος Γεώργιος						
+3223624	263620	el	Ákra Áyios Yeóryios						
+176779	263654		Moúlkia				1		
+3223625	263654		Áyios Yeóryios						
+9786044	263654	el	Μούλκια				1		
+9786045	263654	el	Άγιος Γεώργιος Τροιζήνος	1					
+9786046	263654	en	Agios Georgios Troizinos						
+176961	263859		Pasiá						
+176962	263859		Pasás						
+4447004	263859		Áyios Konstandínos						
+9788298	263859	el	Άγιος Κωνσταντίνος Τροιζήνος						
+9788307	263859	en	Agios Konstantinos Troizinos						
+9786420	264069	el	Άγιοι Θεόδωροι Μεθάνων						
+9786430	264069	en	Agioi Theodoroi Methanon						
+8792273	264084	el	Άγιοι Ασώματοι	1					
+8803287	264084		Áyioi Asómatoi						
+9711458	264084	el	Ασώματος				1		
+9711459	264084	el	Ασώματοι				1		
+177226	264104		Áyioi						
+4447148	264104		Ágioi						
+9711456	264104	el	Άγιοι	1					
+9711457	264104	en	Agioi						
+177280	264155		Saint Marina Bay						
+177281	264155		Ayía Marína Bay						
+3223660	264155	el	Órmos Agía Marína						
+3223661	264155	el	Όρμος Αγία Μαρίνα						
+3223662	264155	el	Órmos Ayías Marínas						
+6132773	264155	en	Saint Marina Bay						
+6132774	264155	en	Ayía Marína Bay						
+11266345	264155	el	Órmos Agías Marínas						
+11266346	264155	el	Όρμος Αγίας Μαρίνας						
+16766497	264155	en	St. Marina Bay						
+177282	264156		Ákra Ayía Marína						
+177283	264156		Ákra Ayía Marínas						
+3223663	264156	el	Ákra Agía Marína						
+3223664	264156	el	Άκρα Αγία Μαρίνα						
+3223665	264156	el	Ákra Ayías Marínas						
+6132775	264156	el	Ákra Ayía Marínas						
+6132776	264156	el	Ákra Ayía Marína						
+11266347	264156	el	Ákra Agías Marínas						
+11266348	264156	el	Άκρα Αγίας Μαρίνας						
+9711437	264220	en	Agia Marina						
+9711438	264220	el	Αγία Μαρίνα	1					
+9711439	264220		Aghia Marina						
+9711440	264220		Agia Marina						
+13774212	264220	unlc	GRAMR						
+11266357	264427	el	Asprovoúni						
+11266358	264427	el	Ασπροβούνι						
+11266359	264537	el	Nisída Arvanítis						
+11266360	264537	el	Νησίδα Αρβανίτης						
+11266361	264537	el	Nisís Arvanítis						
+11266362	264537	el	Νησίς Αρβανίτης						
+19745656	264537	wkdt	Q25105460						
+177772	264555		Ormos Ártemis						
+3223687	264555		Órmos Artémidhos						
+11266363	264555	el	Órmos Artémidos						
+11266364	264555	el	Όρμος Αρτέμιδος						
+178237	264940		Áno Fanári						
+4447794	264940		Áno Fanárion						
+9787706	264940	el	Άνω Φανάρι	1					
+9787710	264940	en	Ano Fanari						
+11304100	264940	link	https://en.wikipedia.org/wiki/Ano_Fanari						
+15642871	264940	wkdt	Q21643875						
+17993663	264940	ceb	Áno Fanári						
+17993664	264940	de	Ano Fanari						
+17993665	264940	sv	Áno Fanári						
+17993666	264940	fr	Áno Fanári						
+17993667	264940	nl	Ano Fanari						
+178262	264978		Anestaíon						
+3223698	264978		Anítsaion						
+8792272	264978	el	Ανίτσαιον						
+8792274	264978	el	Ανίτσαιο	1					
+8792275	264978	en	Anitsaio						
+178289	264999		Stenón Angístri						
+3223699	264999		Stenón Angístriou						
+11266369	264999	el	Stenó Agkístriou						
+11266370	264999	el	Στενό Αγκίστριου						
+11266371	264999	el	Stenón Agkístriou						
+11266372	264999	el	Στενόν Αγκίστριου						
+178290	265000		Nísos Angístri						
+178291	265000		Nísos Agkístri						
+178292	265000		Anghisti						
+178293	265000		Nísos Angístrion						
+3223700	265000	el	Νήσος Αγκίστρι						
+3223701	265000	el	Nísos Agkístrion						
+3223702	265000	grc	Kekryfáleia						
+3223703	265000	grc	Κεκρυφάλεια						
+6132783	265000	el	Nísos Agkístri						
+6132784	265000	el	Nísos Angístrion						
+6132785	265000	el	Nísos Angístri						
+6132786	265000	el	Anghisti						
+7569218	265000	el	Nisí Agkístri						
+7569219	265000	el	Νησί Αγκίστρι						
+7569220	265000	el	Agkístri						
+7569221	265000	el	Αγκίστρι						
+11266373	265000	el	Νήσος Αγκίστριον						
+16633372	265000	link	https://en.wikipedia.org/wiki/Agistri						
+16633373	265000		Agistri						
+16633374	265000		Angistri						
+16633375	265000		Agkistri						
+16633376	265000		Αγκίστρι						
+17993668	265000	nn	Agístri						
+17993669	265000	de	Angistri						
+17993670	265000	ceb	Nisí Agkístri						
+17993671	265000	ru	Ангистрион						
+17993672	265000	fi	Agkístri						
+17993673	265000	pt	Agistri						
+17993674	265000	hyw	Ակիսդրի						
+17993675	265000	hr	Angistri						
+17993676	265000	fr	Angistri						
+17993677	265000	hy	Անգիստրի						
+17993678	265000	uk	Ангістрі						
+17993679	265000	ur	آگستری						
+17993680	265000	sq	Angjistri						
+17993681	265000	ca	Anguistri						
+17993682	265000	mk	Ангистри						
+17993683	265000	sr	Ангистри						
+17993684	265000	sv	Agistri						
+17993685	265000	ko	앙기스트리섬						
+17993686	265000	gl	Angistri						
+17993687	265000	en	Agistri	1					
+17993688	265000	eo	Angistri						
+17993689	265000	it	Angistri						
+17993690	265000	zh	阿格基斯特里島						
+17993691	265000	es	Angistri						
+17993692	265000	et	Agkístri						
+17993693	265000	vi	Agistri						
+17993694	265000	nb	Angistri						
+17993695	265000	la	Cecryphalia						
+17993696	265000	ja	アンギストリ島						
+17993697	265000	pl	Angistiri						
+17993698	265000	he	אגיסטרי						
+17993699	265000	da	Agistri						
+17993700	265000	nl	Angistri						
+17993701	265000	tr	Angistri						
+17993702	265000	wkdt	Q539983						
+178294	265001		Megalokhóri						
+178295	265001		Angístri						
+3223704	265001	el	Agkístrion						
+3223705	265001	el	Αγκίστριον						
+3223706	265001	el	Angístrion						
+6132787	265001	el	Megalokhóri						
+6132788	265001	el	Angístri						
+7363199	265001	el	Agkístri						
+7363200	265001	el	Αγκίστρι						
+9711258	265001	el	Μεγαλοχώρι	1					
+9711264	265001	en	Angistri						
+9711266	265001	en	Megalochori	1					
+9711267	265001	el	Μύλος			1			
+9711268	265001	en	Megalohori						
+9711269	265001	en	Milos			1			
+16244381	265001	link	https://en.wikipedia.org/wiki/Megalochori,_Methana						
+11266381	265111	el	Anáthema						
+11266382	265111	el	Ανάθεμα						
+178692	265270		Sálones						
+3223721	265270		Álones						
+9711441	265270	el	Άλωνες	1					
+9711442	265270	en	Alones						
+11266386	265327	el	Ákra Alykís						
+11266387	265327	el	Άκρα Αλυκής						
+11266388	265327		Ákra Alikís						
+178978	265480		Bísti						
+178979	265480		Akherdo Point						
+178980	265480		Ákhero						
+178981	265480		Ákra Akerdho						
+178982	265480		Ákra Akerdhoú						
+178983	265480		Ákra Ákerdhon						
+3223730	265480	el	Ákra Achérdo						
+3223731	265480	el	Άκρα Αχέρδο						
+3223732	265480	el	Ákra Akhérdho						
+6132797	265480	el	Bísti						
+6132798	265480	en	Akherdo Point						
+6132799	265480	el	Ákra Ákerdhon						
+6132800	265480	el	Ákra Akerdho						
+179028	265501		Egina						
+179029	265501		Nísos Aíyina						
+179030	265501		Engia						
+179031	265501		Aegina						
+179032	265501		Aígina						
+1639959	265501	en	Aegina						
+1639960	265501	es	Egina						
+1639961	265501	de	Aigina						
+1639962	265501	pl	Egina						
+1639963	265501	ca	Egina						
+1639964	265501	el	Αίγινα						
+1639965	265501	et	Aígina						
+1639966	265501	fi	Aigina						
+1639967	265501	fr	Égine						
+1639968	265501	it	Egina						
+1639969	265501	ja	アイギナ島						
+1639970	265501	la	Aegina						
+1639971	265501	nl	Egina						
+1639972	265501	sv	Egina						
+1992874	265501	bg	Егина						
+1992875	265501	no	Ejina						
+3047516	265501	link	https://ru.wikipedia.org/wiki/%D0%AD%D0%B3%D0%B8%D0%BD%D0%B0_%28%D0%BE%D1%81%D1%82%D1%80%D0%BE%D0%B2%29						
+3223733	265501	el	Nísos Aígina						
+3223734	265501	el	Νήσος Αίγινα						
+6132801	265501	el	Nísos Aíyina						
+6132802	265501	el	Aígina						
+7658265	265501	en	Aegina Island						
+7658266	265501	el	Nisí Aígina						
+7658267	265501	el	Νησί Αίγινα						
+179033	265502		Aíyina						
+179034	265502	en	Aegina	1					
+2181637	265502	el	Αίγινα	1					
+2426907	265502	es	Egina						
+3223735	265502	el	Aígina						
+9138715	265502	link	https://en.wikipedia.org/wiki/Aegina						
+13774176	265502	unlc	GRAEG						
+179283	265703		Aderes						
+3223744	265703	el	Adéres Óros						
+3223745	265703	el	Αδέρες Όρος						
+3223746	265703	el	Adhéres Óros						
+3223747	265703	grc	Forvantion Óros						
+3223748	265703	grc	Φορβαντιον Όρος						
+6132810	265703	el	Aderes						
+11266393	265704	el	Adéres						
+11266394	265704	el	Αδέρες						
+11266395	265704		Adhéres						
+11266396	265705	el	Adéres						
+11266397	265705	el	Αδέρες						
+11266398	265705		Adhéres						
+269943	406101		Piraiévs						
+16452436	406101	link	https://en.wikipedia.org/wiki/Piraeus_Prefecture						
+276594	445402		Eparchía Aíginas						
+7166581	6950985	link	https://en.wikipedia.org/wiki/Agistri						
+9711270	6950985	el	Αγκίστρι	1					
+9711271	6950985	en	Angistri						
+9711272	6950985	en	Agistri						
+9711260	6951020	el	Σκληρή	1					
+9711261	6951020	en	Skliri						
+3074356	7289851	el	Σκάλα	1					
+3074357	7289851	en	Scala						
+3347999	7329969	el	Ormískos Souválas						
+3348000	7329969	el	Ορμίσκος Σουβάλας						
+11269445	7329969	el	Órmos Souválas						
+11269446	7329969	el	Όρμος Σουβάλας						
+3348001	7329971	el	Ákra Kolóna						
+3348002	7329971	el	Άκρα Κολώνα						
+3348003	7329972	el	Liménas Aíginas						
+3348004	7329972	el	Λιμένας Αίγινας						
+7588639	7329972	el	Limáni Aíginas						
+7588640	7329972	el	Λιμάνι Αίγινας						
+3348073	7330052	el	Óros						
+3348074	7330052	el	Όρος						
+3363951	7342928	el	Psísta						
+3363952	7342928	el	Ψήστα						
+9788531	7342928	el	Ψήφτα	1					
+9788535	7342928	en	Psifta						
+3368889	7347434	el	Ákra Kapnodóki						
+3368890	7347434	el	Άκρα Καπνοδόκη						
+5709731	7602853	link	https://en.wikipedia.org/wiki/Temple_of_Aphaea						
+13460669	7602853		Naós Afaías						
+9711421	7602854	el	Ιερά Μονή Αγίας Τριάδας - Αγίου Νεκταρίου	1					
+9711422	7602854	el	Άγιος Νεκτάριος			1			
+9711423	7602854	el	Ιερά Μονή Αγίου Νεκταρίου		1				
+7116655	8133696	el	Αίγινας						
+7116657	8133696	en	Aegina		1				
+7116707	8133709	el	Πόρου						
+7116708	8133709	en	Poros		1				
+7116956	8133768	el	Τροιζηνίας				1		
+7116957	8133768	en	Troizinia		1		1		
+9140279	8133768	el	Τροιζηνίας-Μεθάνων						
+9711218	8133768	en	Troizinia-Methana	1	1				
+7117393	8133874	el	Αγκιστρίου						
+7117394	8133874	en	Agkistri		1				
+7371529	8200487		Perifereiakí Enótita Níson						
+7371530	8200487		Περιφερειακή Ενότητα Νήσων						
+9530130	9257402	el	Τριανταφύλλι	1					
+19857115	9257402	wkdt	Q21590184						
+9711262	9409211	el	Παραλία Σκάλας						
+9711263	9409211	el	Σκάλα		1				
+9711273	9409211	en	Skala		1				
+9711274	9409212	el	Παραλία Σκληρής						
+9711275	9409212	el	Σκληρή		1				
+9711276	9409212	en	Skliri		1				
+9711277	9409213	el	Χαλικάδα		1				
+9711278	9409213	en	Chalikada						
+17416055	9409213	el	Χαλικιάδα						
+17416056	9409213	en	Chalikiada						
+17416057	9409213		Halikiada						
+9711428	9409660	el	Μονή Κοιμήσεως Θεοτόκου	1					
+9711444	9409661	el	Κάβος	1					
+9711445	9409661	en	Kavos						
+9711450	9409662	el	Αιγινήτισσα	1					
+9711451	9409662	en	Aiginitissa						
+19745642	9409662	wkdt	Q21623880						
+9784595	9470387	el	Μονή Ζωοδόχου Πηγής Καλαυρείας	1					
+9784596	9470388	el	Άγιος Νεκτάριος		1				
+9784597	9470388	el	Άγιος Νεκτάριος Πόρου	1					
+17271565	9470388	wkdt	Q21643703						
+9784598	9470389	el	Κυανή Ακτή	1					
+9784599	9470389	en	Kyani Akti						
+9786051	9470404	el	Άγιος Γεώργιος Μεθάνων	1					
+9786052	9470404	en	Agios Georgios Methanon						
+9786222	9470495	el	Άγιος Νικόλαος Μεθάνων	1					
+9786233	9470495	en	Agios Nikolaos Methanon						
+13136094	9470495	el	Άγιος Νικόλαος						
+9787030	9471226	el	Αγία Σωτήρα	1					
+9787037	9471226	en	Agia Sotira						
+9787829	9471970	el	Μύλος	1					
+9787835	9471970	en	Mylos						
+9787868	9472003	el	Νερατζιά	1					
+9787873	9472003	en	Neratzia						
+9787899	9472037	el	Νησίδα	1					
+9787906	9472037	en	Nisida						
+9788101	9472143	el	Χώρα	1					
+9788113	9472143	en	Chora						
+9788351	9472367	el	Ακτή Αγάπης	1					
+9788358	9472367	en	Akti Agapis						
+10223786	9853485	en	Aegina Harbour						
+10223787	9853485	en	Aegina Ferry Port						
+16710403	9853485	unlc	GRAEG						
+10223788	9853491	en	Agistri Ferry Port						
+10223789	9853491	en	Agistri Harbour						
+10223793	9853559	en	Poros Ferry Port						
+10223794	9853559	en	Poros Harbour						
+10223840	9853871	en	Methana Ferry Port						
+10223841	9853871	en	Methana Harbour						
+11277161	11058880	el	Ydroviótopos Psífta						
+11277162	11058880	el	Υδροβιότοπος Ψήφτα						
+11277938	11060725	el	Megálo Neório						
+11277939	11060725	el	Μεγάλο Νεώριο						
+11277952	11060738	el	Alykí						
+11277953	11060738	el	Αλυκή						
+11279157	11063838	el	Profítis Ilías						
+11279158	11063838	el	Προφήτης Ηλίας						
+11279159	11063839	el	Petrovoúnia						
+11279160	11063839	el	Πετροβούνια						
+11279163	11063841	el	Moní Agíou Miná						
+11279164	11063841	el	Μονή Αγίου Μηνά						
+11279165	11063842	el	Giannákides						
+11279166	11063842	el	Γιαννάκηδες						
+11279167	11063843	el	Platyvoúni						
+11279168	11063843	el	Πλατυβούνι						
+11279169	11063844	el	Naós Ellániou Diós						
+11279170	11063844	el	Ναός Ελλάνιου Διός						
+11279171	11063845	el	Análipsi						
+11279172	11063845	el	Ανάληψη						
+11279173	11063846	el	Kávos tou Pitsiloú						
+11279174	11063846	el	Κάβος του Πιτσιλού						
+11279175	11063847	el	Apospórides						
+11279176	11063847	el	Αποσπόρηδες						
+11279390	11064083	el	Klíma						
+11279391	11064083	el	Κλίμα						
+11279392	11064084	el	Profítis Ilías						
+11279393	11064084	el	Προφήτης Ηλίας						
+11279394	11064085	el	Ráikou						
+11279395	11064085	el	Ράικου						
+11279494	11064141	el	Profítis Ilías						
+11279495	11064141	el	Προφήτης Ηλίας						
+11279496	11064142	el	Ágios Elefthérios						
+11279497	11064142	el	Άγιος Ελευθέριος						
+11279498	11064143	el	Skoteinís Réma						
+11279499	11064143	el	Σκοτεινής Ρέμα						
+11279512	11064151	el	Pagóni						
+11279513	11064151	el	Παγώνι						
+11279514	11064152	el	Paliachóra						
+11279515	11064152	el	Παλιαχώρα						
+11279742	11064714	el	Ómorfi Ekklisía						
+11279743	11064714	el	Όμορφη Εκκλησία						
+11279751	11064719	el	Souvála						
+11279752	11064719	el	Σουβάλα						
+13774690	11064719	unlc	GRSLA						
+11279753	11064720	el	Agía Marína						
+11279754	11064720	el	Αγία Μαρίνα						
+19745657	13117782	el	Γαλένθη						
+19745658	13117782	wkdt	Q130395588						
+20195820	13431128	el	Ágios Geórgios						
+20195821	13431128	el	Άγιος Γεώργιος						
+20195854	13431179	el	Moní Agíou Nektaríou						
+20195855	13431179	el	Μονή Αγίου Νεκταρίου						

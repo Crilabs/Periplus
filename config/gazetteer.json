@@ -1,0 +1,67 @@
+{
+  "overpass": {
+    "endpoint": "https://overpass-api.de/api/interpreter",
+    "timeoutSeconds": 180,
+    "ratePerMinute": 2
+  },
+  "wikidata": {
+    "endpoint": "https://query.wikidata.org/sparql",
+    "languages": ["de", "en", "el", "it", "hr"],
+    "classes": {
+      "Q23442": "island",
+      "Q207524": "islet",
+      "Q33837": "archipelago",
+      "Q39594": "bay",
+      "Q185113": "cape",
+      "Q37901": "strait",
+      "Q44782": "harbour",
+      "Q486972": "settlement",
+      "Q839954": "poi",
+      "Q44613": "poi",
+      "Q39715": "poi",
+      "Q33506": "poi",
+      "Q40080": "poi"
+    },
+    "ratePerMinute": 10
+  },
+  "geonames": {
+    "baseUrl": "https://download.geonames.org/export/dump",
+    "countries": ["GR"],
+    "featureCodes": {
+      "BAY": "bay",
+      "BAYS": "bay",
+      "COVE": "bay",
+      "INLT": "bay",
+      "CAPE": "cape",
+      "PT": "cape",
+      "ISL": "island",
+      "ISLET": "islet",
+      "ISLS": "archipelago",
+      "STRT": "strait",
+      "CHN": "channel",
+      "PRT": "harbour",
+      "MAR": "harbour",
+      "PPL": "settlement",
+      "PPLA": "settlement",
+      "PPLA2": "settlement",
+      "PPLA3": "settlement",
+      "PPLX": "settlement",
+      "PPLL": "settlement"
+    },
+    "refreshDays": 30
+  },
+  "bboxBufferKm": 5,
+  "landBufferKm": 10,
+  "coastDistanceM": 2000,
+  "islandParentBufferM": 200,
+  "coastSectionMaxAreaKm2": 1000,
+  "merge": {
+    "trigramMin": 0.8,
+    "uncertainTrigramMin": 0.5,
+    "distanceM": { "bay": 300, "settlement": 500, "harbour": 300, "default": 500 },
+    "uncertainDistanceFactor": 2,
+    "wikidataLinkDistanceM": 1000,
+    "geonamesNewObjectRadiusM": 500
+  },
+  "noAnchoringKinds": ["military", "cable", "firing_area"]
+}
