@@ -143,6 +143,44 @@ describe("addNames", () => {
     });
   });
 
+  it("collapses inner whitespace in the stored name so spacing variants are one row", async () => {
+    await withRollback(async (tx) => {
+      const id = await insertGeoObject(tx);
+      expect(await addNames(tx, id, [{ name: "Πόρτο Χέλι", language: "el", origin: "osm" }])).toBe(2);
+      expect(await addNames(tx, id, [{ name: "  Πόρτο \t Χέλι ", language: "el", origin: "osm" }])).toBe(0);
+      expect((await validNames(tx, id)).map((n) => n.name).sort()).toEqual(["Porto Cheli", "Πόρτο Χέλι"]);
+    });
+  });
+
+  it("a real name ends the valid fallback row of its language and becomes preferred", async () => {
+    await withRollback(async (tx) => {
+      const id = await insertGeoObject(tx);
+      await addNames(tx, id, [{ name: "Spetses", language: "en", origin: "osm" }]);
+      expect(await ensureFallbackNames(tx, [id])).toBe(1);
+      expect(await addNames(tx, id, [{ name: "Spetsä", language: "de", origin: "wikidata" }])).toBe(1);
+
+      const valid = (await validNames(tx, id)).filter((n) => n.language === "de");
+      expect(valid.map((n) => [n.name, n.origin, n.isPreferred])).toEqual([["Spetsä", "wikidata", true]]);
+      const ended = await tx
+        .select({ validTo: geoNames.validTo })
+        .from(geoNames)
+        .where(and(eq(geoNames.geoObjectId, id), eq(geoNames.origin, "fallback")));
+      expect(ended).toHaveLength(1);
+      expect(ended[0]!.validTo).not.toBeNull();
+      expect(await ensureFallbackNames(tx, [id])).toBe(0);
+    });
+  });
+
+  it("a fallback row of another language is not ended", async () => {
+    await withRollback(async (tx) => {
+      const id = await insertGeoObject(tx);
+      await addNames(tx, id, [{ name: "Spetses", language: "en", origin: "osm" }]);
+      await ensureFallbackNames(tx, [id]);
+      await addNames(tx, id, [{ name: "Σπέτσες", language: "el", origin: "osm" }]);
+      expect((await validNames(tx, id)).some((n) => n.origin === "fallback")).toBe(true);
+    });
+  });
+
   it("a transliterated name is found by trigram similarity from its common Latin spellings", async () => {
     await withRollback(async (tx) => {
       const id = await insertGeoObject(tx);

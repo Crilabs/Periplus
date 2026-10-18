@@ -1,8 +1,13 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { geoNames, type NameOrigin, type NameScript } from "@/lib/db/schema";
 
-/** A name as delivered by an import; `language` is ISO 639-1 or `"und"`. */
+/**
+ * A name as delivered by an import; `language` is ISO 639-1 or `"und"`.
+ * `isPreferred: true` only applies when the language has no valid preferred row yet for the object;
+ * otherwise it is ignored. The one takeover: a real (non-fallback) name of a language ends the valid
+ * `fallback` row of that language and then becomes preferred (see `addNames`).
+ */
 export type NameDraft = { name: string; language: string; origin: NameOrigin; isPreferred?: boolean };
 
 const GREEK_LETTER = /(?=\p{L})\p{Script=Greek}/gu;
@@ -150,7 +155,7 @@ export async function addNames(db: Db, geoObjectId: string, names: NameDraft[]):
     if (isExplicit) explicit.add(row);
   };
   for (const draft of names) {
-    const name = draft.name.trim();
+    const name = draft.name.trim().replace(/\s+/g, " ");
     const greek = isGreek(name);
     push({
       name,
@@ -173,6 +178,24 @@ export async function addNames(db: Db, geoObjectId: string, names: NameDraft[]):
     }
   }
   if (rows.length === 0) return 0;
+
+  // A real name replaces the fallback of its language: end the fallback row (never delete it).
+  const realLanguages = [
+    ...new Set(rows.filter((r) => r.origin !== "fallback" && r.origin !== "transliteration").map((r) => r.language)),
+  ];
+  if (realLanguages.length > 0) {
+    await db
+      .update(geoNames)
+      .set({ validTo: sql`current_date` })
+      .where(
+        and(
+          eq(geoNames.geoObjectId, geoObjectId),
+          eq(geoNames.origin, "fallback"),
+          isNull(geoNames.validTo),
+          inArray(geoNames.language, realLanguages),
+        ),
+      );
+  }
 
   const existingPreferred = await db
     .selectDistinct({ language: geoNames.language })
