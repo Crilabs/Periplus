@@ -50,6 +50,20 @@
       "when": 1792353808872,
       "tag": "0006_geo_triggers",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792354046426,
+      "tag": "0007_places_anchor_gist",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792354047303,
+      "tag": "0008_geo_history_fixes",
+      "breakpoints": true
     }
   ]
 }

@@ -197,6 +197,7 @@ export const places = pgTable("places", {
   uniqueIndex("places_public_id_unique").on(t.publicId),
   index("places_tile_id_idx").on(t.tileId),
   index("places_position_gist").using("gist", t.position),
+  index("places_anchor_position_gist").using("gist", t.anchorPosition),
 ]);
 
 /** Official exclusion areas (spec 04). */
