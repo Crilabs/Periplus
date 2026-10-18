@@ -71,6 +71,20 @@
       "when": 1792363424019,
       "tag": "0009_fuzzy_lionheart",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792367932412,
+      "tag": "0010_derived_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792367938774,
+      "tag": "0011_derived_triggers",
+      "breakpoints": true
     }
   ]
 }
