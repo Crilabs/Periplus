@@ -9,7 +9,7 @@
     "lint": "eslint . --max-warnings 0",
     "services:up": "docker compose -f docker/compose.dev.yml up -d --build",
     "services:down": "docker compose -f docker/compose.dev.yml down",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
