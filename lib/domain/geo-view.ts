@@ -144,8 +144,8 @@ export async function tileDetail(db: Db, id: string): Promise<TileDetail | null>
     .where(eq(tiles.id, id));
   if (!tile) return null;
 
-  const objectName = displayNameSql(sql`"geo_objects"."id"`);
-  const placeName = displayNameSql(sql`"places"."geo_object_id"`);
+  const objectName = displayNameSql(geoObjects.id);
+  const placeName = displayNameSql(places.geoObjectId);
   const [area, objects, placeRows, runRows, costRows] = await Promise.all([
     tile.areaId
       ? db
@@ -211,7 +211,7 @@ export async function geoObjectDetail(db: Db, id: string): Promise<GeoObjectDeta
     .select({
       id: geoObjects.id,
       type: geoObjects.type,
-      name: displayNameSql(sql`"geo_objects"."id"`),
+      name: displayNameSql(geoObjects.id),
       origin: geoObjects.origin,
       publicId: geoObjects.publicId,
       configKey: geoObjects.configKey,
@@ -227,7 +227,7 @@ export async function geoObjectDetail(db: Db, id: string): Promise<GeoObjectDeta
     .where(eq(geoObjects.id, id));
   if (!object) return null;
 
-  const objectName = displayNameSql(sql`"geo_objects"."id"`);
+  const objectName = displayNameSql(geoObjects.id);
   const [names, ancestors, children, place, tileRows] = await Promise.all([
     db
       .select({
@@ -281,7 +281,7 @@ export async function placeDetail(db: Db, id: string): Promise<PlaceDetail | nul
   const [place] = await db
     .select({
       id: places.id,
-      name: displayNameSql(sql`"places"."geo_object_id"`),
+      name: displayNameSql(places.geoObjectId),
       geoObjectId: places.geoObjectId,
       kind: places.kind,
       status: places.status,

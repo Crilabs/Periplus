@@ -1,4 +1,5 @@
-import { and, eq, inArray, isNull, sql, type AnyColumn, type SQL } from "drizzle-orm";
+import { and, eq, getTableName, inArray, is, isNull, SQL, sql, type AnyColumn } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "@/lib/db/client";
 import { geoNames, type NameOrigin, type NameScript } from "@/lib/db/schema";
 import { validAt } from "@/lib/domain/timeline";
@@ -255,15 +256,27 @@ export async function ensureFallbackNames(db: Db, geoObjectIds?: string[]): Prom
   return inserted.length;
 }
 
+/** geo_names inside the display-name subquery, aliased so no outer column can be mistaken for its own. */
+const gn = alias(geoNames, "gn");
+
+/** A column rendered as `"table"."column"` in any query, unlike a bare column in a single-table select. */
+function qualified(column: AnyColumn): SQL {
+  return sql`${sql.identifier(getTableName(column.table))}.${sql.identifier(column.name)}`;
+}
+
 /**
  * Display name of a geo object as a scalar subquery: a valid German name, else English, else any valid name;
  * within a language the preferred name first, then alphabetical. Null when the object has no valid name.
+ *
+ * `geoObjectId` is the outer query's id: a column (rendered table-qualified, so it can never resolve to
+ * a column of the inner `geo_names gn`) or an SQL expression such as an alias column (`sql\`o.id\``).
  */
 export function displayNameSql(geoObjectId: SQL | AnyColumn): SQL<string | null> {
+  const outerId = is(geoObjectId, SQL) ? geoObjectId : qualified(geoObjectId);
   return sql<string | null>`(
-    select ${geoNames.name} from ${geoNames}
-    where ${geoNames.geoObjectId} = ${geoObjectId} and ${validAt(geoNames)}
-    order by case ${geoNames.language} when 'de' then 0 when 'en' then 1 else 2 end, ${geoNames.isPreferred} desc, ${geoNames.name}
+    select gn.name from geo_names gn
+    where gn.geo_object_id = ${outerId} and ${validAt(gn)}
+    order by case gn.language when 'de' then 0 when 'en' then 1 else 2 end, gn.is_preferred desc, gn.name
     limit 1
   )`;
 }

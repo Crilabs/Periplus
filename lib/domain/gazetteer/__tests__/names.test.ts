@@ -2,9 +2,10 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { geoNames, geoObjects } from "@/lib/db/schema";
+import { geoNames, geoObjects, places } from "@/lib/db/schema";
 import {
   addNames,
+  displayNameSql,
   ensureFallbackNames,
   isGreek,
   normalizeName,
@@ -244,4 +245,70 @@ describe("ensureFallbackNames", () => {
       ]);
     });
   });
+});
+
+describe("displayNameSql", () => {
+  /** Two objects, so a subquery that matched the wrong id would find another object's name or none. */
+  async function twoNamedObjects(tx: Db) {
+    const bay = await insertGeoObject(tx);
+    const other = await insertGeoObject(tx);
+    await addNames(tx, bay, [
+      { name: "Kalm Bay", language: "en", origin: "osm" },
+      { name: "Kalmbucht", language: "de", origin: "wikidata" },
+      { name: "Όρμος Καλμ", language: "el", origin: "osm" },
+    ]);
+    await addNames(tx, other, [{ name: "Other Bay", language: "en", origin: "osm" }]);
+    return { bay, other };
+  }
+
+  it("a column in a single-table select yields the object's name", () =>
+    withRollback(async (tx) => {
+      const { bay, other } = await twoNamedObjects(tx);
+      const rows = await tx
+        .select({ id: geoObjects.id, name: displayNameSql(geoObjects.id) })
+        .from(geoObjects)
+        .where(sql`${geoObjects.id} in (${bay}, ${other})`)
+        .orderBy(geoObjects.id);
+      expect(Object.fromEntries(rows.map((r) => [r.id, r.name]))).toEqual({ [bay]: "Kalmbucht", [other]: "Other Bay" });
+
+      const [place] = await tx.insert(places).values({ geoObjectId: bay, kind: "anchorage", position: geom }).returning({ id: places.id });
+      const [row] = await tx
+        .select({ name: displayNameSql(places.geoObjectId) })
+        .from(places)
+        .where(eq(places.id, place!.id));
+      expect(row!.name).toBe("Kalmbucht");
+    }));
+
+  it("an outer geo_names column is not confused with the inner names", () =>
+    withRollback(async (tx) => {
+      const { bay } = await twoNamedObjects(tx);
+      const rows = await tx
+        .select({ own: geoNames.name, display: displayNameSql(geoNames.geoObjectId) })
+        .from(geoNames)
+        .where(eq(geoNames.geoObjectId, bay))
+        .orderBy(geoNames.name);
+      expect(rows.length).toBeGreaterThan(1);
+      expect(rows.every((r) => r.display === "Kalmbucht")).toBe(true);
+    }));
+
+  it("an SQL expression works in joins and raw queries; ended names are skipped", () =>
+    withRollback(async (tx) => {
+      const { bay } = await twoNamedObjects(tx);
+      await tx
+        .update(geoNames)
+        .set({ validTo: sql`current_date` })
+        .where(and(eq(geoNames.geoObjectId, bay), eq(geoNames.language, "de")));
+      const { rows } = await tx.execute<{ name: string | null }>(
+        sql`select ${displayNameSql(sql`o.id`)} as name from geo_objects o where o.id = ${bay}`,
+      );
+      expect(rows).toEqual([{ name: "Kalm Bay" }]);
+
+      const [joined] = await tx
+        .select({ name: displayNameSql(geoObjects.id) })
+        .from(geoObjects)
+        .innerJoin(geoNames, eq(geoNames.geoObjectId, geoObjects.id))
+        .where(eq(geoObjects.id, bay))
+        .limit(1);
+      expect(joined!.name).toBe("Kalm Bay");
+    }));
 });

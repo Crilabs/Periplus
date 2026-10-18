@@ -27,7 +27,7 @@ async function areaIdFor(db: Db, areaKey: string): Promise<string> {
 /** Confirmed, valid places in tiles labelled with the area, by tile and name. */
 export async function listComparisonCandidates(db: Db, areaKey: string): Promise<ComparisonCandidate[]> {
   const areaId = await areaIdFor(db, areaKey);
-  const name = displayNameSql(sql`"places"."geo_object_id"`);
+  const name = displayNameSql(places.geoObjectId);
   const rows = await db
     .select({
       placeId: places.id,
