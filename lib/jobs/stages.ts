@@ -1,5 +1,5 @@
 import type { StageDefinition } from "@/lib/pipeline/runs";
-import { gazetteerOsmStage, gazetteerWikidataStage } from "./handlers/gazetteer";
+import { gazetteerGeonamesStage, gazetteerOsmStage, gazetteerWikidataStage } from "./handlers/gazetteer";
 import { pingStage } from "./handlers/system-ping";
 import { tilesEnsureStage } from "./handlers/tiles";
 
@@ -9,4 +9,5 @@ export const STAGES: Record<string, StageDefinition> = {
   [tilesEnsureStage.name]: tilesEnsureStage,
   [gazetteerOsmStage.name]: gazetteerOsmStage,
   [gazetteerWikidataStage.name]: gazetteerWikidataStage,
+  [gazetteerGeonamesStage.name]: gazetteerGeonamesStage,
 };
