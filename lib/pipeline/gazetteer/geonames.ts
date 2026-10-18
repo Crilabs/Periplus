@@ -12,7 +12,8 @@ import { createLogger } from "@/lib/logger";
 
 export const GEONAMES_STAGE = "gazetteer.geonames";
 
-const log = createLogger("gazetteer.geonames");
+let logger: ReturnType<typeof createLogger> | undefined;
+const getLog = () => (logger ??= createLogger("gazetteer.geonames"));
 
 /**
  * Names with `origin geonames`: the main name (`el` when Greek, else `und`), the ASCII name as `en` only
@@ -143,7 +144,7 @@ export async function importGeonames(
         names,
       });
       if ("skipped" in created) {
-        log.warn({ geonamesId: row.id, reason: created.skipped }, "skipped geonames row with unusable geometry");
+        getLog().warn({ geonamesId: row.id, reason: created.skipped }, "skipped geonames row with unusable geometry");
         result.skipped++;
         continue;
       }

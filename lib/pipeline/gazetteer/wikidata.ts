@@ -13,7 +13,8 @@ import { createLogger } from "@/lib/logger";
 
 export const WIKIDATA_STAGE = "gazetteer.wikidata";
 
-const log = createLogger("gazetteer.wikidata");
+let logger: ReturnType<typeof createLogger> | undefined;
+const getLog = () => (logger ??= createLogger("gazetteer.wikidata"));
 
 /** Types a Wikidata item may create without OSM counterpart; OSM is more complete for the others. */
 const CREATE_WITHOUT_MATCH = new Set<GeoObjectType>(["poi", "island", "islet", "cape", "bay"]);
@@ -165,7 +166,7 @@ export async function importWikidata(
         names,
       });
       if ("skipped" in created) {
-        log.warn({ wikidataId: item.id, reason: created.skipped }, "skipped wikidata item with unusable geometry");
+        getLog().warn({ wikidataId: item.id, reason: created.skipped }, "skipped wikidata item with unusable geometry");
         continue;
       }
       result.created++;

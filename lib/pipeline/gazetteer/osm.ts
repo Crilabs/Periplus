@@ -13,7 +13,8 @@ import { createLogger } from "@/lib/logger";
 
 export const OSM_STAGE = "gazetteer.osm";
 
-const log = createLogger("gazetteer.osm");
+let logger: ReturnType<typeof createLogger> | undefined;
+const getLog = () => (logger ??= createLogger("gazetteer.osm"));
 
 /** OSM tag keys kept in `geo_objects.tags`; `seamark:*` by prefix. */
 const KEPT_TAGS = new Set(["place", "natural", "leisure", "harbour", "mooring", "historic", "tourism", "amenity", "shop", "wikidata"]);
@@ -119,7 +120,7 @@ export async function importOsm(
         names: osmNames(tags),
       });
       if ("skipped" in r) {
-        log.warn({ osmId, reason: r.skipped }, "skipped osm element with unusable geometry");
+        getLog().warn({ osmId, reason: r.skipped }, "skipped osm element with unusable geometry");
         result.skipped++;
         continue;
       }
