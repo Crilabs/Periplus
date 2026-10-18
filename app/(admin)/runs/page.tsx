@@ -1,13 +1,23 @@
+import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { listRuns } from "@/lib/domain/runs";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { AutoRefresh } from "../_components/auto-refresh";
 import { RunsTable } from "../_components/runs-table";
-import { startPingRun } from "./actions";
+import { startGazetteerAction, startPingRun, startSeedAction } from "./actions";
+
+const BUTTON = "rounded border border-neutral-400 px-3 py-1 hover:bg-neutral-100";
+const SELECT = "rounded border border-neutral-400 px-2 py-1";
 
 export default async function Page() {
   await requireAdmin();
   const runs = await listRuns(getDb(), { limit: 50 });
+  const areas = getConfig().areas.map((a) => ({ key: a.key, name: a.names.de ?? a.key }));
+  const areaOptions = areas.map((a) => (
+    <option key={a.key} value={a.key}>
+      {a.name}
+    </option>
+  ));
   return (
     <div className="space-y-4 text-sm">
       <AutoRefresh intervalMs={5000} />
@@ -24,8 +34,26 @@ export default async function Page() {
           required
           className="w-20 rounded border border-neutral-400 px-2 py-1"
         />
-        <button type="submit" className="rounded border border-neutral-400 px-3 py-1 hover:bg-neutral-100">
+        <button type="submit" className={BUTTON}>
           Ping-Lauf starten
+        </button>
+      </form>
+      <form action={startGazetteerAction} className="flex items-center gap-2">
+        <label htmlFor="gazetteer-area">Revier</label>
+        <select id="gazetteer-area" name="areaKey" required className={SELECT}>
+          {areaOptions}
+        </select>
+        <button type="submit" className={BUTTON}>
+          Gazetteer aufbauen
+        </button>
+      </form>
+      <form action={startSeedAction} className="flex items-center gap-2">
+        <label htmlFor="seed-area">Revier</label>
+        <select id="seed-area" name="areaKey" required className={SELECT}>
+          {areaOptions}
+        </select>
+        <button type="submit" className={BUTTON}>
+          Seed für Revier
         </button>
       </form>
       <RunsTable runs={runs} />

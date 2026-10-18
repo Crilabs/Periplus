@@ -20,6 +20,9 @@ export const ROUTE_POLICY: Record<string, RouteRule> = {
   "/settings": { kind: "admin" },
   "/review": { kind: "admin" },
   "/review/[id]": { kind: "admin" },
+  "/tiles/[id]": { kind: "admin" },
+  "/geo/[id]": { kind: "admin" },
+  "/places/[id]": { kind: "admin" },
   "/api/v1/ping": { kind: "api", scope: "delivery:read" },
 };
 

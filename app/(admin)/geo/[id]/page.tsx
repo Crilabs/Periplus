@@ -1,0 +1,165 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { z } from "zod";
+import { getDb } from "@/lib/db/client";
+import { geoObjectDetail, type GeoObjectRef } from "@/lib/domain/geo-view";
+import { requireAdmin } from "@/lib/security/require-admin";
+import {
+  GEO_OBJECT_TYPE_LABELS,
+  GEO_ORIGIN_LABELS,
+  NAME_ORIGIN_LABELS,
+  PLACE_KIND_LABELS,
+  PLACE_STATUS_LABELS,
+} from "../../_components/labels";
+
+const SCRIPT_LABELS = { latin: "Lateinisch", greek: "Griechisch" } as const;
+
+function GeoLink({ o }: { o: GeoObjectRef }) {
+  return (
+    <>
+      <Link href={`/geo/${o.id}`} className="underline">
+        {o.name ?? o.id}
+      </Link>{" "}
+      ({GEO_OBJECT_TYPE_LABELS[o.type]})
+    </>
+  );
+}
+
+export default async function Page({ params }: PageProps<"/geo/[id]">) {
+  await requireAdmin();
+  const id = z.uuid().safeParse((await params).id);
+  if (!id.success) notFound();
+  const detail = await geoObjectDetail(getDb(), id.data);
+  if (!detail) notFound();
+  const { object: o } = detail;
+  const externalIds = [
+    o.osmId && `OSM ${o.osmId}`,
+    o.wikidataId && `Wikidata ${o.wikidataId}`,
+    o.geonamesId && `GeoNames ${o.geonamesId}`,
+  ].filter(Boolean);
+  return (
+    <div className="space-y-4 text-sm">
+      <h1 className="text-lg font-semibold">
+        {o.name ?? o.id} ({GEO_OBJECT_TYPE_LABELS[o.type]})
+      </h1>
+      <dl className="grid grid-cols-[8rem_1fr] gap-y-1">
+        <dt>Eltern-Kette</dt>
+        <dd>
+          {detail.ancestors.length === 0
+            ? "–"
+            : detail.ancestors.map((a, i) => (
+                <span key={a.id}>
+                  {i > 0 && " → "}
+                  <GeoLink o={a} />
+                </span>
+              ))}
+        </dd>
+        <dt>Herkunft</dt>
+        <dd>{GEO_ORIGIN_LABELS[o.origin]}</dd>
+        <dt>Externe IDs</dt>
+        <dd>{externalIds.length === 0 ? "–" : externalIds.join(" · ")}</dd>
+        {o.publicId && (
+          <>
+            <dt>Öffentliche ID</dt>
+            <dd className="font-mono text-xs">{o.publicId}</dd>
+          </>
+        )}
+        {o.configKey && (
+          <>
+            <dt>Konfiguration</dt>
+            <dd>{o.configKey}</dd>
+          </>
+        )}
+        <dt>Ort</dt>
+        <dd>
+          {detail.place ? (
+            <>
+              <Link href={`/places/${detail.place.id}`} className="underline">
+                {PLACE_KIND_LABELS[detail.place.kind]}
+              </Link>{" "}
+              ({PLACE_STATUS_LABELS[detail.place.status]})
+            </>
+          ) : (
+            "–"
+          )}
+        </dd>
+        <dt>Kacheln</dt>
+        <dd>
+          {detail.tileIds.length === 0
+            ? "–"
+            : detail.tileIds.map((t, i) => (
+                <span key={t}>
+                  {i > 0 && ", "}
+                  <Link href={`/tiles/${encodeURIComponent(t)}`} className="underline">
+                    {t}
+                  </Link>
+                </span>
+              ))}
+        </dd>
+        <dt>Gültig</dt>
+        <dd>
+          ab {o.validFrom}
+          {o.validTo && ` bis ${o.validTo}`}
+        </dd>
+        {o.mergedIntoId && (
+          <>
+            <dt>Zusammengeführt in</dt>
+            <dd>
+              <Link href={`/geo/${o.mergedIntoId}`} className="font-mono text-xs underline">
+                {o.mergedIntoId}
+              </Link>
+            </dd>
+          </>
+        )}
+        <dt>Geo-Objekt</dt>
+        <dd className="font-mono text-xs">{o.id}</dd>
+      </dl>
+
+      <section>
+        <h2 className="mb-1 font-semibold">Namen</h2>
+        <table className="w-full text-left">
+          <thead>
+            <tr className="border-b border-neutral-300">
+              <th className="py-1 pr-4">Name</th>
+              <th className="pr-4">Sprache</th>
+              <th className="pr-4">Schrift</th>
+              <th className="pr-4">Herkunft</th>
+              <th className="pr-4">Bevorzugt</th>
+              <th>Gültig</th>
+            </tr>
+          </thead>
+          <tbody>
+            {detail.names.map((n) => (
+              <tr
+                key={`${n.name}|${n.language}|${n.origin}|${n.validFrom}`}
+                className={`border-b border-neutral-200 ${n.valid ? "" : "text-neutral-500"}`}
+              >
+                <td className="py-1 pr-4">{n.name}</td>
+                <td className="pr-4">{n.language}</td>
+                <td className="pr-4">{SCRIPT_LABELS[n.script]}</td>
+                <td className="pr-4">{NAME_ORIGIN_LABELS[n.origin]}</td>
+                <td className="pr-4">{n.isPreferred ? "Ja" : "Nein"}</td>
+                <td>{n.valid ? "Ja" : `Nein (bis ${n.validTo ?? "–"})`}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2 className="mb-1 font-semibold">Kinder</h2>
+        {detail.children.length === 0 ? (
+          <p>Keine Kinder.</p>
+        ) : (
+          <ul>
+            {detail.children.map((c) => (
+              <li key={c.id}>
+                <GeoLink o={c} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+}
