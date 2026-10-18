@@ -54,6 +54,7 @@
   "landBufferKm": 10,
   "coastDistanceM": 2000,
   "islandParentBufferM": 200,
+  "coastSectionMaxAreaKm2": 1000,
   "merge": {
     "trigramMin": 0.8,
     "uncertainTrigramMin": 0.5,

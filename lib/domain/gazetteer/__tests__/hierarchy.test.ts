@@ -119,6 +119,22 @@ describe("assignParents", () => {
       expect(await parentOf(db, sectionId)).toBe(areaId);
     }));
 
+  it("an OSM coast section is a parent only up to coastSectionMaxAreaKm2", () =>
+    withRollback(async (db) => {
+      const { areaId } = await setup(db);
+      // A peninsula of ~28,000 km2 (the Peloponnese class) without config_key: never a parent.
+      const large = await insert(db, "coast_section", box(24.6, 34.5, 25.9, 35.9));
+      const bay = await insert(db, "bay", point(25.4, 35.4));
+      await assignParents(db, "hier-test");
+      expect(await parentOf(db, bay)).toBe(areaId);
+
+      // A peninsula of ~230 km2 without config_key: parent like a configured section.
+      const small = await insert(db, "coast_section", box(25.3, 35.3, 25.45, 35.45));
+      await assignParents(db, "hier-test");
+      expect(await parentOf(db, bay)).toBe(small);
+      expect(await parentOf(db, small)).not.toBe(large);
+    }));
+
   it("island gets the smallest containing area, or its archipelago", () =>
     withRollback(async (db) => {
       const { areaId } = await setup(db);

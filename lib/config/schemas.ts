@@ -126,6 +126,7 @@ export const gazetteerSchema = z.strictObject({
   landBufferKm: z.number().nonnegative(),
   coastDistanceM: z.number().positive(),
   islandParentBufferM: z.number().nonnegative(),
+  coastSectionMaxAreaKm2: z.number().positive(),
   merge: z.strictObject({
     trigramMin: z.number().min(0).max(1),
     uncertainTrigramMin: z.number().min(0).max(1),

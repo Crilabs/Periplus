@@ -28,15 +28,18 @@ function smallestCovering(types: GeoObjectType[], extra: SQL = sql``): SQL {
 
 /**
  * The smallest island or islet whose polygon lies within `bufferM` of the child's centroid, or coast
- * section covering it. The bbox prefilter (`bufferM / 50 km` per degree over-covers longitude up to ~60°)
- * keeps the GiST index in play.
+ * section covering it. A coast section without `config_key` (an OSM peninsula) counts only up to
+ * `maxSectionKm2`: the Peloponnese or the Balkans are no useful parent; objects there fall through to the
+ * area/sea rule. The bbox prefilter (`bufferM / 50 km` per degree over-covers longitude up to ~60°) keeps
+ * the GiST index in play.
  */
-function smallestIslandOrSection(bufferM: number): SQL {
+function smallestIslandOrSection(bufferM: number, maxSectionKm2: number): SQL {
   return sql`(select p.id from geo_objects p
     where ${CANDIDATE} and (
       (p.type in ${ISLANDS} and p.geom && ST_Expand(c.centroid, ${bufferM / 50_000})
         and ST_DWithin(p.geom::geography, c.centroid::geography, ${bufferM}))
-      or (p.type = 'coast_section' and ST_Covers(p.geom, c.centroid))
+      or (p.type = 'coast_section' and ST_Covers(p.geom, c.centroid)
+        and (p.config_key is not null or ST_Area(p.geom::geography) <= ${maxSectionKm2 * 1e6}))
     )
     order by ST_Area(p.geom::geography), p.id limit 1)`;
 }
@@ -64,8 +67,8 @@ async function setParents(db: Db, types: GeoObjectType[], box: SQL, parent: SQL)
  *    a gulf and an area never become each other's parent).
  * 4. `island`, `islet` → smallest containing `archipelago`, else smallest `area`.
  * 5. bay, harbour, settlement, poi, cape, strait, channel → smallest island/islet polygon within
- *    `islandParentBufferM` or coast section containing the centroid; else smallest `area`; else smallest
- *    `sea`/`gulf`.
+ *    `islandParentBufferM` or coast section containing the centroid (without `config_key` only up to
+ *    `coastSectionMaxAreaKm2`); else smallest `area`; else smallest `sea`/`gulf`.
  * Only changed `parent_id`s are written (the history trigger records each). Returns the number of updates.
  */
 export async function assignParents(db: Db, areaKey: string): Promise<{ updated: number }> {
@@ -79,7 +82,7 @@ export async function assignParents(db: Db, areaKey: string): Promise<{ updated:
     ["coast_section"],
     box,
     sql`(select p.id from geo_objects p
-      where p.valid_to is null and p.type = 'area' and p.config_key = split_part(c.config_key, '/', 1)
+      where p.valid_to is null and p.merged_into_id is null and p.type = 'area' and p.config_key = split_part(c.config_key, '/', 1)
       order by p.id limit 1)`,
   );
   updated += await setParents(
@@ -93,14 +96,16 @@ export async function assignParents(db: Db, areaKey: string): Promise<{ updated:
     db,
     LOCAL_TYPES,
     box,
-    sql`coalesce(${smallestIslandOrSection(gazetteer.islandParentBufferM)}, ${area}, ${smallestCovering(SEAS)})`,
+    sql`coalesce(${smallestIslandOrSection(gazetteer.islandParentBufferM, gazetteer.coastSectionMaxAreaKm2)}, ${area}, ${smallestCovering(SEAS)})`,
   );
   return { updated };
 }
 
 /**
  * Rewrites `tile_geo_objects` for the existing tiles of the area: every valid, unmerged object whose
- * geometry intersects the tile box. Returns the number of links written.
+ * geometry intersects the tile box. Returns the number of links written. A tile shared with another area
+ * is rebuilt completely, including objects that only that other area imported: the links depend on the
+ * geometries alone, so the result is the same whichever area's run writes it.
  */
 export async function assignTiles(db: Db, areaKey: string): Promise<{ links: number }> {
   const tileIds = areaTileIds(areaByKey(areaKey));

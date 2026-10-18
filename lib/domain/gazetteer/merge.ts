@@ -18,6 +18,11 @@ type Found = Exclude<Match, { kind: "none" }>;
 
 export const ISLAND_GROUP: GeoObjectType[] = ["island", "islet"];
 
+/** The types an object of `type` may match: `island`/`islet` together, every other type only itself. */
+export function typeGroup(type: GeoObjectType): GeoObjectType[] {
+  return ISLAND_GROUP.includes(type) ? ISLAND_GROUP : [type];
+}
+
 /** Metres per degree of latitude, rounded down so the bounding box never cuts off a candidate. */
 const MIN_M_PER_DEG = 110_000;
 
@@ -41,20 +46,24 @@ function searchKeys(names: string[]): string[] {
  * and all input names (with transliterations). `same`: similarity `≥ trigramMin` and within distance;
  * `uncertain`: (`≥ trigramMin` and `≤ d × uncertainDistanceFactor`) or (`≥ uncertainTrigramMin` and within
  * distance). Of several candidates `same` wins over `uncertain`, then the higher similarity, then the
- * smaller distance.
+ * smaller distance. With `opts.excludeGeonamesOnly`, objects known only from GeoNames (origin `geonames`, no
+ * OSM or Wikidata ID) are no candidates.
  */
 export async function findMatch(
   db: Db,
   input: MatchInput,
   rules: MergeRules,
-  opts?: { distanceM?: number },
+  opts?: { distanceM?: number; excludeGeonamesOnly?: boolean },
 ): Promise<Match> {
   const keys = searchKeys(input.names);
   if (keys.length === 0) return { kind: "none" };
   const d = opts?.distanceM ?? rules.distanceM[input.type] ?? rules.distanceM.default;
   const maxM = d * rules.uncertainDistanceFactor;
   const islandGroup = ISLAND_GROUP.includes(input.type);
-  const types = islandGroup ? ISLAND_GROUP : [input.type];
+  const types = typeGroup(input.type);
+  const excludeGeonamesOnly = opts?.excludeGeonamesOnly
+    ? sql`and not (o.origin = 'geonames' and o.osm_id is null and o.wikidata_id is null)`
+    : sql``;
   const { lon, lat } = input.point;
   const dLat = maxM / MIN_M_PER_DEG;
   const dLon = maxM / (MIN_M_PER_DEG * Math.max(Math.cos((lat * Math.PI) / 180), 0.01));
@@ -82,7 +91,7 @@ export async function findMatch(
                     else ST_Distance(o.centroid::geography, p.g::geography) end as distance_m
       ) x
       where o.valid_to is null and o.merged_into_id is null and o.type in ${types}
-        and o.geom && ST_Expand(p.g, ${dLon}, ${dLat})
+        and o.geom && ST_Expand(p.g, ${dLon}, ${dLat}) ${excludeGeonamesOnly}
     ) c
     where c.distance_m <= ${maxM} and c.similarity >= ${rules.uncertainTrigramMin}
   `);

@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Transport } from "@/lib/adapters/http";
 import { buildWikidataQuery, wikidataQuery, type WikidataItem } from "@/lib/adapters/wikidata";
 import { getConfig, type AreaConfig } from "@/lib/config";
@@ -6,7 +6,7 @@ import type { Db } from "@/lib/db/client";
 import { geoObjects, type GeoObjectType, type PoiCategory } from "@/lib/db/schema";
 import { areaBbox } from "@/lib/domain/gazetteer/areas";
 import { bufferBbox } from "@/lib/domain/gazetteer/land";
-import { findMatch, openPairTask, resolveMergedByExternalId } from "@/lib/domain/gazetteer/merge";
+import { findMatch, openPairTask, resolveMergedByExternalId, typeGroup } from "@/lib/domain/gazetteer/merge";
 import { addNames, type NameDraft } from "@/lib/domain/gazetteer/names";
 import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
 import { createLogger } from "@/lib/logger";
@@ -18,12 +18,14 @@ const log = createLogger("gazetteer.wikidata");
 /** Types a Wikidata item may create without OSM counterpart; OSM is more complete for the others. */
 const CREATE_WITHOUT_MATCH = new Set<GeoObjectType>(["poi", "island", "islet", "cape", "bay"]);
 
+type Classified = { type: GeoObjectType; category?: PoiCategory };
+
 /** Type (and POI category) of the first class in config order that the item has. */
 function classify(
   item: WikidataItem,
   classes: Record<string, GeoObjectType>,
   categories: Record<string, PoiCategory>,
-): { type: GeoObjectType; category?: PoiCategory } | null {
+): Classified | null {
   const cls = Object.keys(classes).find((c) => item.classes.includes(c));
   if (!cls) return null;
   const type = classes[cls]!;
@@ -56,14 +58,19 @@ async function byWikidataId(db: Db, qid: string): Promise<{ id: string; merged: 
   return survivor ? { id: survivor, merged: true } : undefined;
 }
 
-/** The valid, unlinked object whose OSM tag `wikidata` names this item (lowest id of several). */
-async function byOsmTag(db: Db, qid: string): Promise<string | undefined> {
+/**
+ * The valid, unlinked object of a type compatible with the item's (same type group as in `findMatch`) whose
+ * OSM tag `wikidata` names this item (lowest id of several). A tag naming an item of another type (e.g. a
+ * village node tagged with a museum in it) does not link.
+ */
+async function byOsmTag(db: Db, qid: string, type: GeoObjectType): Promise<string | undefined> {
   const [row] = await db
     .select({ id: geoObjects.id })
     .from(geoObjects)
     .where(
       and(
         sql`${geoObjects.tags}->>'wikidata' = ${qid}`,
+        inArray(geoObjects.type, typeGroup(type)),
         isNull(geoObjects.wikidataId),
         isNull(geoObjects.validTo),
         isNull(geoObjects.mergedIntoId),
@@ -88,10 +95,11 @@ async function link(db: Db, id: string, qid: string): Promise<boolean> {
  * Stage `gazetteer.wikidata` (Spec 03, step 2): queries WDQS for items of the configured classes in the
  * area box plus `bboxBufferKm` and, in one transaction, per item: (1) an object with this `wikidata_id`
  * gets the names (for an object merged away with it, its survivor gets them and counts as linked); (2) else
- * an object whose OSM tag `wikidata` names the item is linked; (3) else `findMatch` within
- * `wikidataLinkDistanceM`: `same` links (unless that object carries another Wikidata
- * ID, then it counts as uncertain), `uncertain` creates a new object and opens a pair task, `none` creates
- * one only for poi, island, islet, cape and bay. Labels and aliases become names with `origin wikidata`.
+ * an object of a compatible type whose OSM tag `wikidata` names the item is linked; (3) else `findMatch`
+ * within `wikidataLinkDistanceM`, ignoring objects known only from GeoNames: `same` links (unless that
+ * object carries another Wikidata ID, then it counts as uncertain), `uncertain` creates a new object and
+ * opens a pair task, `none` creates one only for poi, island, islet, cape and bay. Steps 1 and 2 run for all
+ * items before step 3. Labels and aliases become names with `origin wikidata`.
  */
 export async function importWikidata(
   db: Db,
@@ -109,6 +117,9 @@ export async function importWikidata(
 
   return db.transaction(async (tx) => {
     const result = { linked: 0, created: 0, uncertain: 0, names: 0 };
+    // ID and tag links first, matching by name second: a name match then sees the names of every item
+    // linked by ID, as a rerun would, so it does not depend on the order of the items.
+    const unlinked: Array<{ item: WikidataItem; cls: Classified; names: NameDraft[] }> = [];
     for (const item of items) {
       const cls = classify(item, classes, categories.wikidata);
       if (!cls) continue;
@@ -121,19 +132,23 @@ export async function importWikidata(
         continue;
       }
 
-      const tagged = await byOsmTag(tx, item.id);
+      const tagged = await byOsmTag(tx, item.id, cls.type);
       if (tagged) {
         await link(tx, tagged, item.id);
         result.linked++;
         result.names += await addNames(tx, tagged, names);
         continue;
       }
+      unlinked.push({ item, cls, names });
+    }
 
+    for (const { item, cls, names } of unlinked) {
       const match = await findMatch(
         tx,
         { type: cls.type, point: { lon: item.lon, lat: item.lat }, names: names.map((n) => n.name) },
         gazetteer.merge,
-        { distanceM: gazetteer.merge.wikidataLinkDistanceM },
+        // GeoNames runs after this stage: matching its objects would link differently on every rerun.
+        { distanceM: gazetteer.merge.wikidataLinkDistanceM, excludeGeonamesOnly: true },
       );
       if (match.kind === "same" && (await link(tx, match.id, item.id))) {
         result.linked++;

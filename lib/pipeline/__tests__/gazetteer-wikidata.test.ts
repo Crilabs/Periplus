@@ -266,6 +266,73 @@ describe("importWikidata", () => {
       );
     }));
 
+  it("does not match an object known only from GeoNames", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      // GeoNames objects come from a later stage; matching them here would link differently on every rerun.
+      const created = await upsertGeoObject(db, {
+        type: "settlement",
+        origin: "geonames",
+        geonamesId: String(ID + 5),
+        geometry: { type: "Point", coordinates: [26.05, 35.85] },
+        names: [{ name: "Testdorf", language: "de", origin: "geonames" }],
+      });
+      if ("skipped" in created) throw new Error(created.skipped);
+      const result = await run(db, ITEMS.settlement);
+      expect(result).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0 });
+      const [row] = await db.select({ wikidataId: geoObjects.wikidataId }).from(geoObjects).where(eq(geoObjects.id, created.id));
+      expect(row!.wikidataId).toBeNull();
+      expect(await db.select().from(reviewTasks).where(eq(reviewTasks.kind, "place_candidate"))).toEqual([]);
+    }));
+
+  it("links an OSM tag only to an object of a compatible type", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      // A village node whose wikidata tag names a museum in it.
+      const village = await upsertGeoObject(db, {
+        type: "settlement",
+        origin: "osm",
+        osmId: osm("node", 8),
+        tags: { place: "village", wikidata: q(8) },
+        geometry: { type: "Point", coordinates: [26.25, 35.85] },
+        names: [{ name: "Testchori", language: "en", origin: "osm" }],
+      });
+      if ("skipped" in village) throw new Error(village.skipped);
+      // An islet item tagged on an island object: same type group, linked.
+      const islet = rows(q(1), "Q207524", 26.1, 35.7, [["Testinsel", "de"]]);
+      const museum = rows(q(8), "Q33506", 26.2505, 35.8505, [["Test Museum", "en"]]);
+
+      const result = await run(db, [...islet, ...museum]);
+      expect(result).toMatchObject({ linked: 1, created: 1, uncertain: 0 });
+      const [poi] = await byWikidata(db, q(8));
+      expect(poi).toMatchObject({ type: "poi", category: "culture", origin: "wikidata", osmId: null });
+      const [row] = await db.select({ wikidataId: geoObjects.wikidataId }).from(geoObjects).where(eq(geoObjects.id, village.id));
+      expect(row!.wikidataId).toBeNull();
+      expect(await byWikidata(db, q(1))).toMatchObject([{ osmId: osm("relation", 1), type: "island" }]);
+    }));
+
+  it("matches by name only after every ID and tag link, independent of item order", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      const village = await upsertGeoObject(db, {
+        type: "settlement",
+        origin: "osm",
+        osmId: osm("node", 9),
+        tags: { place: "village", wikidata: q(9) },
+        geometry: { type: "Point", coordinates: [26.15, 35.65] },
+        names: [{ name: "Nisida", language: "en", origin: "osm" }],
+      });
+      if ("skipped" in village) throw new Error(village.skipped);
+      // q(10) comes first but resembles the village only by the label that the tag-linked q(9) brings.
+      const items = [
+        ...rows(q(10), "Q486972", 26.1505, 35.6505, [["Nisida Troizinas", "en"]]),
+        ...rows(q(9), "Q486972", 26.15, 35.65, [["Nisida Troizinias", "en"]]),
+      ];
+      expect(await run(db, items)).toMatchObject({ linked: 1, created: 1, uncertain: 1 });
+      expect(await byWikidata(db, q(9))).toMatchObject([{ id: village.id }]);
+      expect(await run(db, items)).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0 });
+    }));
+
   it("second run changes nothing", () =>
     withRollback(async (db) => {
       const ids = await prepare(db);

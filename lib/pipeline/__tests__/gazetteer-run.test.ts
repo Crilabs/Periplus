@@ -44,7 +44,11 @@ const AEGINA = "relation/543490";
 const AGISTRI = "relation/543488";
 const PERDIKA = "node/1854238899";
 
-/** Valid objects per type created by one run on the recorded fixtures (output of `npm run fixtures:record`). */
+/**
+ * Valid objects per type created by one run on the recorded fixtures. `npm run fixtures:record` printed 83
+ * settlements; since Wikidata links by ID and tag before matching by name, Q141142371 "Nisida Troizinas"
+ * becomes its own settlement with a pair task in run 1 (instead of only in run 2).
+ */
 const EXPECTED_BY_TYPE = {
   sea: 1,
   gulf: 1,
@@ -55,7 +59,7 @@ const EXPECTED_BY_TYPE = {
   strait: 5,
   bay: 39,
   harbour: 14,
-  settlement: 83,
+  settlement: 84,
   poi: 424,
 };
 
@@ -135,7 +139,7 @@ async function counts(db: Db) {
 beforeAll(() => testArchive().ensureBucket());
 
 describe("gazetteer run", () => {
-  it("builds the Aegina-West gazetteer and reaches a fixed point on rerun", () =>
+  it("builds the Aegina-West gazetteer; a second run adds no objects, tile links or tasks", () =>
     withRollback(async (db) => {
       await importLand(db);
       await runGazetteer(db);
@@ -165,22 +169,14 @@ describe("gazetteer run", () => {
       );
       expect(links.map((l) => l.tile_id)).toContain(TILE);
 
-      // Known gap (Task 16 report): Wikidata runs before GeoNames, so the second run's Wikidata stage sees the
-      // settlements and straits GeoNames created in the first. It links "same" items to them (new names) and
-      // creates new settlements with pair tasks for "uncertain" ones. These deltas must become zero once the
-      // stage order or the Wikidata rules are fixed; the run converges after the second pass.
+      // Second run: no new objects, tile links or review tasks. Open gap (Task 16 fix round 1): two names.
+      // GeoNames enriches the OSM settlement Metochi (node/5159177669) with "Μετόχι Αγκιστρίου" in run 1, after
+      // the Wikidata stage found no match for Q125262471 of that name; in run 2 the Wikidata stage links it
+      // by that name and adds its two labels. Must become zero once Wikidata matching ignores names that
+      // came from GeoNames (or the stage order changes).
       const first = await counts(db);
       await runGazetteer(db);
-      const second = await counts(db);
-      expect({
-        objects: second.objects - first.objects,
-        names: second.names - first.names,
-        links: second.links - first.links,
-        tasks: second.tasks - first.tasks,
-      }).toEqual({ objects: 4, names: 61, links: 2, tasks: 4 });
-
-      await runGazetteer(db);
-      expect(await counts(db)).toEqual(second);
+      expect(await counts(db)).toEqual({ ...first, names: first.names + 2 });
     }), 300_000);
 });
 
