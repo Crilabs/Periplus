@@ -1,0 +1,6 @@
+{$PERIPLUS_DOMAIN} {
+	# Deliberately no trusted_proxies: Caddy is the edge, so it overwrites any client-supplied
+	# X-Forwarded-For with the real peer address. The login rate limit takes the leftmost
+	# X-Forwarded-For entry and relies on exactly that.
+	reverse_proxy web:3000
+}
