@@ -28,16 +28,19 @@ describe("buildGazetteerQuery", () => {
     const ql = buildGazetteerQuery([23.0, 37.5, 23.25, 37.75], config.categories, 180);
     expect(ql.startsWith("[out:json][timeout:180];")).toBe(true);
     expect(ql).toContain('relation["place"~"sea|gulf"](37.5,23,37.75,23.25);');
+    expect(ql).toContain('relation["natural"="bay"](37.5,23,37.75,23.25);');
     expect(ql).toContain('way["natural"="bay"](37.5,23,37.75,23.25);');
     expect(ql).toContain('nwr["place"~"^(island|islet|archipelago)$"](37.5,23,37.75,23.25);');
     expect(ql).toContain('node["place"~"^(town|village|hamlet)$"](37.5,23,37.75,23.25);');
+    expect(ql).toContain('nwr["natural"~"^(bay|cape|strait|peninsula)$"](37.5,23,37.75,23.25);');
+    expect(ql).toContain('nwr["leisure"="marina"](37.5,23,37.75,23.25);');
     expect(ql).toContain('nwr["seamark:type"~"^(harbour|anchorage|mooring|small_craft_facility)$"](37.5,23,37.75,23.25);');
     expect(ql).toContain('nwr["harbour"](37.5,23,37.75,23.25);');
     for (const rule of config.categories.osm) {
       const filter = rule.values === "*" ? `["${rule.key}"]` : `["${rule.key}"~"^(${rule.values.join("|")})$"]`;
       expect(ql).toContain(`nwr${filter}["name"](37.5,23,37.75,23.25);`);
     }
-    expect(ql.trimEnd().endsWith("out tags geom;")).toBe(true);
+    expect(ql.trimEnd().endsWith("\nout geom;")).toBe(true);
   });
 });
 

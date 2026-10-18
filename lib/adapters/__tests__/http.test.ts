@@ -44,6 +44,21 @@ afterEach(async () => {
 });
 
 describe("httpCall", () => {
+  it("rethrows the original transport error when recording the failed call fails too", async () => {
+    const boom = new RetryableHttpError("network down");
+    const failingDb = {
+      insert: () => {
+        throw new Error("db down");
+      },
+    } as unknown as typeof db;
+    const transport: Transport = async () => {
+      throw boom;
+    };
+    await expect(
+      httpCall(transport, { service: uniqueService(), operation: "probe", url: "https://example.invalid/x", timeoutMs: 1000 }, { db: failingDb }),
+    ).rejects.toBe(boom);
+  });
+
   it("sets the contact user agent and records an external call with cost 0", async () => {
     const service = uniqueService();
     const transport = stubTransport(200, "hello");

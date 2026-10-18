@@ -9,6 +9,8 @@ export type OverpassElement = {
   lat?: number;
   lon?: number;
   geometry?: Array<{ lat: number; lon: number }>;
+  bounds?: { minlat: number; minlon: number; maxlat: number; maxlon: number };
+  nodes?: number[];
   members?: Array<{ type: string; ref: number; role: string; geometry?: Array<{ lat: number; lon: number }> }>;
 };
 
@@ -53,7 +55,7 @@ export function buildGazetteerQuery(bbox: Bbox, categories: CategoriesConfig, ti
     "(",
     ...statements.map((s) => `  ${s}${box};`),
     ");",
-    "out tags geom;",
+    "out geom;",
     "",
   ].join("\n");
 }

@@ -5,6 +5,7 @@ import type { Db } from "@/lib/db/client";
 import { recordExternalCall } from "@/lib/domain/costs";
 import { takeToken } from "@/lib/domain/rate-limit";
 import { getEnv } from "@/lib/env";
+import { createLogger } from "@/lib/logger";
 
 export type HttpRequest = {
   service: string;
@@ -115,7 +116,12 @@ export async function httpCall(
   try {
     res = await transport({ ...req, headers: { ...req.headers, "User-Agent": userAgent() } });
   } catch (error) {
-    await record({ status: null, bytes: 0, error: (error as Error).message });
+    try {
+      await record({ status: null, bytes: 0, error: (error as Error).message });
+    } catch (recordError) {
+      // The transport error is the one callers must see; the failed bookkeeping is only logged.
+      createLogger("http").error({ err: recordError, service: req.service }, "recording failed external call failed");
+    }
     throw error;
   }
   await record({ status: res.status, bytes: res.body.byteLength });
