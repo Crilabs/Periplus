@@ -4,6 +4,10 @@ on:
   pull_request:
   push:
 
+# Least privilege by default; only the deploy job may push images.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -13,12 +17,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Deploy script tests
+        run: npm run test:ops
       - name: Start test services
         run: |
           docker compose -f docker/compose.dev.yml up -d --build --wait db-test s3
@@ -50,15 +56,15 @@ jobs:
     env:
       REGISTRY: ghcr.io/crilabs
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push web
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/web.Dockerfile
@@ -67,7 +73,7 @@ jobs:
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
       - name: Build and push worker
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/worker.Dockerfile
@@ -76,7 +82,7 @@ jobs:
           cache-from: type=gha,scope=worker
           cache-to: type=gha,mode=max,scope=worker
       - name: Build and push postgres
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: docker/postgres
           file: docker/postgres/Dockerfile
@@ -93,14 +99,7 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-      - name: Registry login on server
-        env:
-          HOST: ${{ secrets.DEPLOY_HOST }}
-          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REGISTRY_USER: ${{ github.actor }}
-        run: |
-          printf '%s' "$REGISTRY_TOKEN" | ssh -i ~/.ssh/id_deploy "deploy@$HOST" \
-            "docker login ghcr.io -u '$REGISTRY_USER' --password-stdin"
+      # The server pulls with its own persistent read-only ghcr.io login (docs/runbook.md), never with this job's token.
       - name: Deploy
         env:
           HOST: ${{ secrets.DEPLOY_HOST }}

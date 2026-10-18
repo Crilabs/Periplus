@@ -18,17 +18,29 @@ NAME="periplus-restore-check-$$"
 trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true' EXIT
 
 docker run -d --name "$NAME" -e POSTGRES_PASSWORD=restore-check -e POSTGRES_USER=periplus -e POSTGRES_DB=periplus "$IMAGE" >/dev/null
+# TCP probe: the image's init phase runs a temporary server on the socket only, so a socket probe
+# can report ready before the final server is up.
 for _ in $(seq 1 60); do
-  if docker exec "$NAME" pg_isready -U periplus -d periplus >/dev/null 2>&1; then break; fi
+  if docker exec "$NAME" pg_isready -h 127.0.0.1 -U periplus -d periplus >/dev/null 2>&1; then break; fi
   sleep 1
 done
-docker exec "$NAME" pg_isready -U periplus -d periplus >/dev/null
+docker exec "$NAME" pg_isready -h 127.0.0.1 -U periplus -d periplus >/dev/null
 
 echo "restoring latest dump"
-# pg_restore may report harmless "already exists" errors for objects the image creates itself.
+# restic must succeed; pg_restore may report harmless "already exists" errors for objects the image
+# creates itself, so its status only warns and the query below decides.
+set +e
 restic dump latest /periplus.dump \
-  | docker exec -i "$NAME" pg_restore -U periplus -d periplus --no-owner --clean --if-exists \
-  || echo "pg_restore reported warnings; the query below decides" >&2
+  | docker exec -i "$NAME" pg_restore -U periplus -d periplus --no-owner --clean --if-exists
+STATUSES=("${PIPESTATUS[@]}")
+set -e
+if [ "${STATUSES[0]}" -ne 0 ]; then
+  echo "restic dump failed (exit ${STATUSES[0]})" >&2
+  exit 1
+fi
+if [ "${STATUSES[1]}" -ne 0 ]; then
+  echo "pg_restore reported warnings (exit ${STATUSES[1]}); the query below decides" >&2
+fi
 
 COUNT="$(docker exec "$NAME" psql -U periplus -d periplus -tAc 'select count(*) from users')"
 echo "users in restored dump: $COUNT"

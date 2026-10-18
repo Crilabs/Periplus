@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Deploys an image tag on the server. Run on the server via: ssh deploy@host bash -s <sha> < deploy.sh
 # Rollback = run it again with the previous sha.
+# Any failing step (pull, migrate, up, /readyz) rolls back to the previous tag and exits 1.
 set -euo pipefail
 
 NEW_TAG="${1:?usage: deploy.sh <image-tag>}"
-APP_DIR=/opt/periplus
+# PERIPLUS_APP_DIR is only overridden by the test harness (scripts/deploy/__tests__/deploy-test.sh).
+APP_DIR="${PERIPLUS_APP_DIR:-/opt/periplus}"
 cd "$APP_DIR"
 
 COMPOSE=(docker compose --env-file .env -f docker/compose.prod.yml)
 PREVIOUS_TAG=""
-[ -f .deployed-tag ] && PREVIOUS_TAG="$(tr -d '[:space:]' < .deployed-tag)"
+if [ -f .deployed-tag ]; then PREVIOUS_TAG="$(tr -d '[:space:]' < .deployed-tag)"; fi
 
 ready() {
   # /readyz checked from inside the web container, independent of DNS and TLS.
@@ -26,17 +28,21 @@ wait_ready() {
   return 1
 }
 
+# Every step fails explicitly: set -e is ignored inside functions whose status is tested by the caller.
 release() {
   local tag="$1"
   export IMAGE_TAG="$tag"
-  "${COMPOSE[@]}" pull
-  "${COMPOSE[@]}" up -d postgres
-  "${COMPOSE[@]}" --profile migrate run --rm migrate
-  "${COMPOSE[@]}" up -d web worker caddy
+  "${COMPOSE[@]}" pull || { echo "step failed: pull" >&2; return 1; }
+  "${COMPOSE[@]}" up -d postgres || { echo "step failed: up postgres" >&2; return 1; }
+  "${COMPOSE[@]}" --profile migrate run --rm migrate || { echo "step failed: migrate" >&2; return 1; }
+  "${COMPOSE[@]}" up -d web worker caddy || { echo "step failed: up web worker caddy" >&2; return 1; }
+  wait_ready || { echo "step failed: /readyz not ready within 60 s" >&2; return 1; }
 }
 
 echo "deploying $NEW_TAG (previous: ${PREVIOUS_TAG:-none})"
-if release "$NEW_TAG" && wait_ready; then
+STATUS=0
+release "$NEW_TAG" || STATUS=$?
+if [ "$STATUS" -eq 0 ]; then
   printf '%s\n' "$NEW_TAG" > .deployed-tag
   echo "deployed $NEW_TAG"
   exit 0
@@ -48,8 +54,11 @@ if [ -n "$PREVIOUS_TAG" ] && [ "$PREVIOUS_TAG" != "$NEW_TAG" ]; then
   echo "rolling back to $PREVIOUS_TAG" >&2
   # Migrations are not reverted; they must stay backward compatible with the previous release.
   export IMAGE_TAG="$PREVIOUS_TAG"
-  "${COMPOSE[@]}" up -d web worker caddy || true
-  if wait_ready; then echo "rollback to $PREVIOUS_TAG ok" >&2; else echo "rollback to $PREVIOUS_TAG is NOT ready" >&2; fi
+  if "${COMPOSE[@]}" up -d postgres web worker caddy && wait_ready; then
+    echo "rollback to $PREVIOUS_TAG ok" >&2
+  else
+    echo "rollback to $PREVIOUS_TAG is NOT ready" >&2
+  fi
 else
   echo "no previous tag to roll back to" >&2
 fi

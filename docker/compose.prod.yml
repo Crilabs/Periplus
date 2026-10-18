@@ -7,10 +7,18 @@ name: periplus
 x-app-env: &app-env
   env_file: ../.env
 
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
 services:
   caddy:
     image: caddy:2
     restart: unless-stopped
+    <<: *logging
     ports:
       - "80:80"
       - "443:443"
@@ -26,7 +34,7 @@ services:
   web:
     image: ghcr.io/crilabs/periplus-web:${IMAGE_TAG:?set IMAGE_TAG}
     restart: unless-stopped
-    <<: *app-env
+    <<: [*app-env, *logging]
     environment:
       HOSTNAME: 0.0.0.0
       PORT: "3000"
@@ -37,7 +45,7 @@ services:
   worker:
     image: ghcr.io/crilabs/periplus-worker:${IMAGE_TAG:?set IMAGE_TAG}
     restart: unless-stopped
-    <<: *app-env
+    <<: [*app-env, *logging]
     command: ["node", "--import", "tsx", "worker/index.ts"]
     depends_on:
       postgres:
@@ -46,7 +54,7 @@ services:
   migrate:
     image: ghcr.io/crilabs/periplus-worker:${IMAGE_TAG:?set IMAGE_TAG}
     profiles: ["migrate"]
-    <<: *app-env
+    <<: [*app-env, *logging]
     command: ["node", "--import", "tsx", "scripts/migrate.ts"]
     depends_on:
       postgres:
@@ -55,6 +63,7 @@ services:
   postgres:
     image: ghcr.io/crilabs/periplus-postgres:${IMAGE_TAG:?set IMAGE_TAG}
     restart: unless-stopped
+    <<: *logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-periplus}
       POSTGRES_USER: ${POSTGRES_USER:-periplus}

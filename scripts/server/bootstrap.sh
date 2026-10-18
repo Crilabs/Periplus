@@ -42,13 +42,28 @@ ufw allow 80/tcp
 ufw allow 443/tcp
 ufw --force enable
 
-# SSH: key login only
-cat > /etc/ssh/sshd_config.d/99-periplus.conf <<'CONF'
+# SSH: key login only. sshd uses the FIRST value it reads for each option, and drop-ins are read in
+# lexical order, so this file must sort before e.g. 50-cloud-init.conf (which may enable passwords).
+rm -f /etc/ssh/sshd_config.d/99-periplus.conf
+cat > /etc/ssh/sshd_config.d/00-periplus.conf <<'CONF'
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PermitRootLogin prohibit-password
 CONF
 sshd -t
+# Verify the effective configuration, not just the file.
+SSHD_EFFECTIVE="$(sshd -T)"
+for expected in 'passwordauthentication no' 'kbdinteractiveauthentication no'; do
+  if ! grep -qx "$expected" <<<"$SSHD_EFFECTIVE"; then
+    echo "sshd effective config is missing '$expected'; check /etc/ssh/sshd_config.d/" >&2
+    exit 1
+  fi
+done
+# sshd -T prints prohibit-password as "without-password"; only "yes" is unacceptable.
+if grep -qx 'permitrootlogin yes' <<<"$SSHD_EFFECTIVE"; then
+  echo "sshd effective config has 'permitrootlogin yes'; check /etc/ssh/sshd_config.d/" >&2
+  exit 1
+fi
 systemctl reload ssh
 
 # Automatic security updates

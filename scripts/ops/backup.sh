@@ -21,9 +21,16 @@ IMAGE_TAG="$(tr -d '[:space:]' < .deployed-tag)"
 export IMAGE_TAG
 COMPOSE=(docker compose --env-file .env -f docker/compose.prod.yml)
 
+# Dump to a temp file first, so a failing pg_dump aborts before restic records a broken snapshot.
+DUMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$DUMP_DIR"' EXIT
+DUMP="$DUMP_DIR/periplus.dump"
 echo "$(date -u +%FT%TZ) dumping database"
-"${COMPOSE[@]}" exec -T postgres pg_dump -Fc -U "${POSTGRES_USER:-periplus}" "${POSTGRES_DB:-periplus}" \
-  | restic backup --stdin --stdin-filename periplus.dump --tag periplus-db
+"${COMPOSE[@]}" exec -T postgres pg_dump -Fc -U "${POSTGRES_USER:-periplus}" "${POSTGRES_DB:-periplus}" > "$DUMP"
+[ -s "$DUMP" ] || { echo "pg_dump produced an empty file" >&2; exit 1; }
+# --stdin-filename keeps the snapshot path /periplus.dump that restore-check.sh and the runbook expect.
+restic backup --stdin --stdin-filename periplus.dump --tag periplus-db < "$DUMP"
+rm -f "$DUMP"
 
 restic forget --keep-daily 7 --keep-weekly 4 --keep-monthly 12 --prune
 
@@ -37,6 +44,8 @@ export RCLONE_SFTP_HOST="$STORAGEBOX_HOST"
 export RCLONE_SFTP_USER="$STORAGEBOX_USER"
 export RCLONE_SFTP_PORT="${STORAGEBOX_PORT:-23}"
 export RCLONE_SFTP_KEY_FILE="${STORAGEBOX_KEY_FILE:-$HOME/.ssh/id_storagebox}"
+# Verify the Storage Box host key (recorded by the first manual ssh login, see runbook).
+export RCLONE_SFTP_KNOWN_HOSTS_FILE="$HOME/.ssh/known_hosts"
 echo "$(date -u +%FT%TZ) copying archive"
 rclone copy ":s3:${S3_BUCKET}" ":sftp:periplus-archive"
 echo "$(date -u +%FT%TZ) backup done"
