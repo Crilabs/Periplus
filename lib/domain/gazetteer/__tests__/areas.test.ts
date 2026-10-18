@@ -114,6 +114,21 @@ describe("syncAreas", () => {
       expect(en).toEqual([{ name: "Gulf of Testing", language: "en", origin: "manual", isPreferred: true }]);
     });
   });
+
+  it("keeps an area's parent set by the hierarchy stage", async () => {
+    await withRollback(async (tx) => {
+      const [sea] = await tx
+        .insert(geoObjects)
+        .values({ type: "sea", origin: "osm", geom: sql`ST_MakeEnvelope(24.0, 34.0, 27.0, 37.0, 4326)` })
+        .returning({ id: geoObjects.id });
+      const ids = await syncAreas(tx, [testArea()]);
+      const areaId = ids.get("test-area")!;
+      await tx.update(geoObjects).set({ parentId: sea!.id }).where(eq(geoObjects.id, areaId));
+      await syncAreas(tx, [testArea()]);
+      expect((await validObject(tx, "test-area")).parentId).toBe(sea!.id);
+      expect(await historyCount(tx, areaId)).toBe(1);
+    });
+  });
 });
 
 describe("areaBbox", () => {

@@ -26,6 +26,11 @@ function tileBboxLabels(area: AreaConfig, areaIds: Map<string, string>): Map<str
   return labels;
 }
 
+/** The tiles of an area: `tilesInBbox(tileBbox)` ∪ `tilesInBbox(bbox(polygon))`. */
+export function areaTileIds(area: AreaConfig): string[] {
+  return [...new Set([...(area.tileBbox ? tilesInBbox(area.tileBbox) : []), ...tilesInBbox(polygonBbox(area.polygon))])];
+}
+
 /**
  * Creates or updates the tiles of `area`: `tilesInBbox(tileBbox)` ∪ `tilesInBbox(bbox(polygon))`.
  * - `has_coast`: the tile box intersects a land polygon.
@@ -42,7 +47,7 @@ export async function ensureTiles(
   area: AreaConfig,
   areaIds: Map<string, string>,
 ): Promise<{ tiles: number; coast: number; withoutArea: number }> {
-  const tileIds = [...new Set([...(area.tileBbox ? tilesInBbox(area.tileBbox) : []), ...tilesInBbox(polygonBbox(area.polygon))])];
+  const tileIds = areaTileIds(area);
   const bboxLabels = tileBboxLabels(area, areaIds);
   // Postgres array literal; drizzle would expand a JS array into a parameter list.
   const areaIdArray = `{${[...areaIds.values()].join(",")}}`;

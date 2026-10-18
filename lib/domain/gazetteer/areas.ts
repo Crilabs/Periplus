@@ -36,12 +36,14 @@ type ConfigObject = {
   type: "area" | "coast_section";
   polygon: Polygon | MultiPolygon;
   names: Record<string, string>;
-  parentId: string | null;
+  /** `undefined`: the parent is left alone (an area's sea is set by the hierarchy stage). */
+  parentId?: string;
 };
 
 /**
  * Creates or updates the `geo_objects` of the configured areas (`type area`, `ar_…`) and their coast
- * sections (`type coast_section`, `rg_…`, `config_key "<area>/<section>"`, parent = the area).
+ * sections (`type coast_section`, `rg_…`, `config_key "<area>/<section>"`, parent = the area). An area's
+ * parent (its sea or gulf) is left to `assignParents`.
  * Geometry and parent are only written when they changed, so an unchanged rerun writes no history.
  * Config names are `origin manual`; a manual name no longer in the config is ended (`valid_to`).
  * Returns `config_key → id`.
@@ -55,7 +57,6 @@ export async function syncAreas(db: Db, areas: AreaConfig[]): Promise<Map<string
         type: "area",
         polygon: area.polygon,
         names: area.names,
-        parentId: null,
       });
       ids.set(area.key, areaId);
       for (const section of area.coastSections) {
@@ -86,15 +87,12 @@ async function syncObject(db: Db, o: ConfigObject): Promise<string> {
   let id: string;
   if (existing) {
     id = existing.id;
+    const parentChanged =
+      o.parentId === undefined ? sql`false` : sql`${geoObjects.parentId} is distinct from ${o.parentId}`;
     await db
       .update(geoObjects)
-      .set({ geom: sql`${geom}`, parentId: o.parentId })
-      .where(
-        and(
-          eq(geoObjects.id, id),
-          sql`(not ST_OrderingEquals(${geoObjects.geom}, ${geom}) or ${geoObjects.parentId} is distinct from ${o.parentId})`,
-        ),
-      );
+      .set({ geom: sql`${geom}`, ...(o.parentId === undefined ? {} : { parentId: o.parentId }) })
+      .where(and(eq(geoObjects.id, id), sql`(not ST_OrderingEquals(${geoObjects.geom}, ${geom}) or ${parentChanged})`));
   } else {
     const [row] = await db
       .insert(geoObjects)
@@ -103,7 +101,7 @@ async function syncObject(db: Db, o: ConfigObject): Promise<string> {
         origin: "manual",
         configKey: o.configKey,
         publicId: newPublicId(o.type === "area" ? "ar" : "rg"),
-        parentId: o.parentId,
+        parentId: o.parentId ?? null,
         geom: sql`${geom}`,
       })
       .returning({ id: geoObjects.id });

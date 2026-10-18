@@ -23,6 +23,7 @@
     "apikey:revoke": "tsx --env-file-if-exists=.env.local scripts/apikey.ts revoke",
     "apikey:create": "tsx --env-file-if-exists=.env.local scripts/apikey.ts create",
     "import:land-polygons": "tsx --env-file-if-exists=.env.local scripts/import-land-polygons.ts",
+    "fixtures:record": "tsx --env-file-if-exists=.env.local scripts/fixtures-record.ts",
     "smoke:ai": "tsx --env-file-if-exists=.env.local scripts/smoke-ai.ts"
   },
   "dependencies": {

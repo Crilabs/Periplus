@@ -26,7 +26,7 @@ export function parseArgs(argv: string[]): { shp: string; area: string; version:
   return { shp, area, version };
 }
 
-async function* readShapefile(shp: string): AsyncGenerator<GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>> {
+export async function* readShapefile(shp: string): AsyncGenerator<GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>> {
   const source = await open(shp);
   try {
     for (;;) {

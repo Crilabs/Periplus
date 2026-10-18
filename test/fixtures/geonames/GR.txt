@@ -1,20 +1,292 @@
-1001	Perdika	Perdika	Perdhika,Πέρδικα	37.6967	23.4617	P	PPL	GR						0		0	Europe/Athens	2020-01-01
-1002	Skala	Skala	Skala Agistriou,Σκάλα	37.705	23.34	P	PPL	GR						0		0	Europe/Athens	2020-01-01
-1003	Agistri	Agistri	Angistri,Aghistri,Αγκίστρι	37.7	23.35	T	ISL	GR						0		0	Europe/Athens	2020-01-01
-1004	Moni	Moni	Moni Island,Μονή	37.7	23.43	T	ISLET	GR						0		0	Europe/Athens	2020-01-01
-1005	Marathonas	Marathonas	Marathon,Μαραθώνας	37.733	23.453	P	PPL	GR						0		0	Europe/Athens	2020-01-01
-1006	Kolpos Perdikas	Kolpos Perdikas	Perdika Bay	37.69	23.45	H	BAY	GR						0		0	Europe/Athens	2020-01-01
-1007	Akra Perdika	Akra Perdika	Cape Perdika	37.685	23.44	T	CAPE	GR						0		0	Europe/Athens	2020-01-01
-1008	Limin Perdikas	Limin Perdikas	Perdika Harbour	37.696	23.463	H	PRT	GR						0		0	Europe/Athens	2020-01-01
-1009	Akra Fteli	Akra Fteli	Cape Fteli	37.71	23.37	T	CAPE	GR						0		0	Europe/Athens	2020-01-01
-1010	Dorousa	Dorousa	Dorusa	37.708	23.33	T	ISLET	GR						0		0	Europe/Athens	2020-01-01
-1011	Ormos Marathona	Ormos Marathona	Marathon Bay	37.73	23.46	H	COVE	GR						0		0	Europe/Athens	2020-01-01
-1012	Stenon Moni	Stenon Moni	Moni Strait	37.695	23.425	H	STRT	GR						0		0	Europe/Athens	2020-01-01
-1013	Souvala	Souvala	Σούβαλα	37.738	23.488	P	PPL	GR						0		0	Europe/Athens	2020-01-01
-1014	Aegina Mountain Hut	Aegina Mountain Hut		37.72	23.44	S	HUT	GR						0		0	Europe/Athens	2020-01-01
-1015	Vagia	Vagia	Βαγία	37.715	23.405	P	PPL	GR						0		0	Europe/Athens	2020-01-01
-1016	Aponisos	Aponisos	Aponissos	37.716	23.35	P	PPLX	GR						0		0	Europe/Athens	2020-01-01
-1017	Athens	Athens	Athina,Αθήνα	37.9838	23.7278	P	PPLA	GR						0		0	Europe/Athens	2020-01-01
-1018	Poros	Poros	Πόρος	37.498	23.46	T	ISL	GR						0		0	Europe/Athens	2020-01-01
-1019	Kolpos Souvalas	Kolpos Souvalas	Souvala Bay	37.745	23.49	H	BAYS	GR						0		0	Europe/Athens	2020-01-01
-1020	Akra Kavouropetra	Akra Kavouropetra		37.56	23.26	T	PT	GR						0		0	Europe/Athens	2020-01-01
+251582	Nisída Xéra	Nisida Xera	Nisida Xera,Nisis Xera,Nisída Xéra,Nisís Xéra,Νησίδα Ξέρα,Νησίς Ξέρα	37.69858	23.26601	T	ISL	GR		ESYE31	36			0		-9999	Europe/Athens	2016-02-07
+251612	Vromosykiá	Vromosykia	Vromosikia,Vromosikiá,Vromosykia,Vromosykiá,Βρωμοσυκιά	37.46523	23.43684	T	PK	GR		ESYE31	35			0		715	Europe/Athens	2016-02-07
+251617	Vromolímni	Vromolimni	Vromolimni,Βρωμολίμνη	37.58921	23.3877	P	PPLX	GR		ESYE31	96	9213		0		78	Europe/Athens	2019-10-23
+251786	Ákra Voudoúri	Akra Voudouri	Akra Boundouri,Akra Voudhouri,Akra Voudouri,Ákra Boundoúri,Ákra Voudhoúri,Ákra Voudoúri,Άκρα Βουδούρη	37.50774	23.44521	T	CAPE	GR		ESYE31	35			0		-9999	Europe/Athens	2016-02-07
+251899	Vlákhidhes	Vlakhidhes	Vlachides,Vlakhidhes,Vlakidhes,Vlákhidhes,Vlákidhes,Βλάχηδες	37.69822	23.50791	P	PPL	GR		ESYE31	96	9208		5		249	Europe/Athens	2024-10-15
+251988	Vígla	Vigla	Vigla,Vígla,Βίγλα	37.5231	23.49238	T	HLL	GR		ESYE31	96	9210		0	358	327	Europe/Athens	2019-10-23
+251991	Órmos Vidhíou	Ormos Vidhiou	Ormos Vidhi,Ormos Vidhiou,Órmos Vidhíou,Órmos Vídhi	37.51517	23.4032	H	BAY	GR		ESYE31	35			0		-9999	Europe/Athens	2014-11-17
+251992	Vídhion	Vidhion	Vidhi,Vidhion,Vydi,Vydio,Vídhion,Βύδι,Βύδιο	37.51771	23.38534	P	PPL	GR		ESYE31	96	9213		12		4	Europe/Athens	2019-10-23
+252146	Stenó Vathý	Steno Vathy	Porthmos Vatheos,Porthmós Vathéos,Steno Vathy,Stenon Vathi,Stenon Vathy,Stenó Vathý,Stenón Vathí,Stenón Vathý,Vathi Channel,Vathi Strait,Vathí Strait,Στενό Βαθύ,Στενόν Βαθύ	37.69045	23.39852	H	STRT	GR		ESYE31	35			0		-9999	Europe/Athens	2020-06-10
+252160	Ákra Vathí	Akra Vathi	Akra Skourtea,Akra Spourtea,Akra Vathi,Akra Vathy,Cape Vathi,Ákra Skourtéa,Ákra Vathí,Άκρα Βαθύ	37.69385	23.37323	T	CAPE	GR		ESYE31	35			0		13	Europe/Athens	2014-08-26
+252165	Vathý	Vathy	Vathi,Vathy,Vathí,Vathý,Βαθύ	37.7642	23.48011	P	PPL	GR		ESYE31	96	9208		1495		53	Europe/Athens	2019-10-23
+252167	Vathý	Vathy	Vathi,Vathy,Vathí,Vathý,Βαθύ	37.59251	23.3408	P	PPL	GR		ESYE31	96	9213		129		15	Europe/Athens	2019-10-23
+252214	Kávos Vasíli	Kavos Vasili	Kavos Vasili,Kávos Vasíli,Κάβος Βασίλη	37.52743	23.51153	T	CAPE	GR		ESYE31	35			0		8	Europe/Athens	2016-02-07
+252265	Órmos Variarniá	Ormos Variarnia	Limin Prinali,Limín Prinalí,Ormiskos Voreiarnia,Ormos Variarnia,Ormískos Voreiarniá,Órmos Variarniá,Όρμος Βαριαρνιά,Ορμίσκος Βορειαρνιά	37.53608	23.47281	H	BAY	GR		ESYE31	35			0		-9999	Europe/Athens	2016-02-07
+252339	Órmos Valarioú	Ormos Valariou	Ormos Valariou,Órmos Valarioú,Όρμος Βαλαριού	37.53989	23.35071	H	BAY	GR		ESYE31	35			0		191	Europe/Athens	2016-02-07
+252359	Vagía	Vagia	Afaia,Afaía,Vagia,Vagía,Vaia,Vayia,Vaḯa,Váyia,Αφαία,Βάγια,Βαΐα,Βαγία	37.76957	23.53162	P	PPL	GR		ESYE31	96	9208		291		41	Europe/Athens	2019-10-23
+252361	Órmos Vagioniás	Ormos Vagionias	Barparia,Barpariá,Ormos Barmbaria,Ormos Barmparia,Ormos Vagionias,Ormos Vagonias,Ormos Vayionias,Órmos Barmbariá,Órmos Barmpariá,Órmos Vagioniás,Órmos Vagoniás,Órmos Vayionías,Όρμος Βαγιονιάς,Όρμος Μπαρμπαριά	37.53539	23.48561	H	BAY	GR		ESYE31	35			0		1	Europe/Athens	2016-02-07
+252382	Tzíkidhes	Tzikidhes	Tzikides,Τζίκηδες	37.72918	23.47066	P	PPL	GR		ESYE31	96	9208		55		207	Europe/Athens	2019-10-23
+252421	Tsoukaliá	Tsoukalia	Tsoukalia,Τσουκάλια	37.48333	23.26667	P	PPLQ	GR		ESYE25	36	9235		0		426	Europe/Athens	2014-07-31
+252573	Troizína	Troizina	Dhamalas,Dhamalás,Troezen,Troichken,Troizen,Troizin,Troizina,Troizinia,Troizinía,Troizín,Τροιζήν,Τροιζήνα,Τροιζηνία	37.49727	23.36295	P	PPL	GR		ESYE31	96	9213		4668		64	Europe/Athens	2026-05-25
+252768	Nisída	Nisida	Nisida,Nisidha,Nisis Nisida,Nisis Tourlos,Nisos Nisis,Nisída,Nisídha,Nisís Nisída,Nisís Toúrlos,Nísos Nisís,Νησίδα,Νησίς Νησίδα	37.77525	23.55135	T	ISL	GR		ESYE31	35			0		-9999	Europe/Athens	2024-10-15
+252807	Zervaíika	Zervaiika	Tourkalaka,Tourkálaka,Zervaiika,Zerveika,Zervéïka,Ζερβαίικα	37.53809	23.22589	P	PPL	GR		ESYE31	96	9213		16		381	Europe/Athens	2019-10-23
+252828	Ákra Tombázi	Akra Tombazi		37.50302	23.43644	T	CAPE	GR		ESYE31	35			0		13	Europe/Athens	2014-09-06
+252923	Órmos Thynní	Ormos Thynni	Ormos Thinni,Ormos Thounni,Ormos Thynni,Thini,Thíni,Órmos Thinní,Órmos Thounni,Órmos Thynní,Όρμος Θυννί	37.5605	23.36153	H	COVE	GR		ESYE31	35			0		-9999	Europe/Athens	2016-02-07
+253058	Taktikoúpoli	Taktikoupoli	Dhara,Dhára,Taktikoupoli,Taktikoupolis,Taktikoúpoli,Taktikoúpolis,Τακτικούπολη,Τακτικούπολις	37.54513	23.37334	P	PPL	GR		ESYE31	96	9213		250		131	Europe/Athens	2019-10-23
+253059	Órmos Taktikoupóleos	Ormos Taktikoupoleos	Ormos Taktikoupoleos,Órmos Taktikoupóleos,Όρμος Τακτικουπόλεως	37.54355	23.39195	H	BAY	GR		ESYE31	35			0		-9999	Europe/Athens	2016-02-07
+253199	Órmos Stenó	Ormos Steno	Limin Steno,Limín Stenó,Ormos Steno,Port Steno,Órmos Stenó,Όρμος Στενό	37.55632	23.37071	H	BAY	GR		ESYE31	35			0		1	Europe/Athens	2020-06-10
+253406	Spalathronísi	Spalathronisi	Nisi Salafto,Nisí Salaftó,Salakhtonisi,Salakhtonísi,Salaphto Nisi,Salaphtonisi Islet,Spalathronisi,Spalathronísi,Vrachonisis Spalathronisi,Vrachonisís Spalathronísi,Vrakhonisis Salaftonisi,Vrakhonisis Spalathronisi,Vrakhonisís Salaftonísi,Vrakhonisís Spalathronísi,Βραχονησίς Σπαλαθρονήσι,Σπαλαθρονήσι	37.70239	23.23683	T	ISL	GR		ESYE31	36			0		19	Europe/Athens	2020-06-10
+253476	Sorós	Soros	Sopos,Sopós,Soros,Sorós,Σωρός	37.47784	23.31113	T	PK	GR		ESYE31	96	9213		0		678	Europe/Athens	2019-10-23
+253546	Órmos Skoúmpis	Ormos Skoumpis	Ormos Skoumbis,Ormos Skoumpis,Órmos Skoúmbis,Órmos Skoúmpis,Όρμος Σκούμπης	37.57325	23.35761	H	BAY	GR		ESYE31	35			0		-9999	Europe/Athens	2016-02-07
+253630	Ákra Skylómagkas	Akra Skylomagkas	Akra Skilomanga,Akra Skilomangas,Akra Skilomango,Akra Skylomagkas,Akra Skylomankas,Cape Skilomango,Ákra Skilómanga,Ákra Skilómangas,Ákra Skilómango,Ákra Skylómagkas,Άκρα Σκυλόμαγκας	37.67341	23.34112	T	CAPE	GR		ESYE31	96	9207		0		17	Europe/Athens	2019-10-23
+253690	Skapéti	Skapeti	Skapeti,Skapetion,Skapéti,Skapétion,Σκαπέτι	37.52134	23.303	P	PPL	GR		ESYE31	96	9213		94		270	Europe/Athens	2019-10-23
+253958	Sfendoúrion	Sfendourion	Sfentouri,Sfentourio,Σφεντούρι,Σφεντούριο	37.68761	23.481	P	PPL	GR		ESYE31	96	9208		52		198	Europe/Athens	2019-10-23
+254051	Órmos Sarpá	Ormos Sarpa	Ormiskos Sarpa,Ormos Sarpa,Ormískos Sárpa,Órmos Sarpá	37.67822	23.46654	H	BAY	GR		ESYE31	35			0		-9999	Europe/Athens	2014-08-30
+254428	Rádhon	Radhon	Rado,Ράδο	37.51728	23.20656	P	PPL	GR		ESYE25	36	9235		0		422	Europe/Athens	2014-07-31
+254545	Psakhní	Psakhni	Psachni,Ψαχνή	37.73812	23.4911	P	PPLQ	GR		ESYE31	96	9208		0		278	Europe/Athens	2019-10-23
+254645	Profítis Ilías	Profitis Ilias	Profitis Ilias,Profítis Ilías,Προφήτης Ηλίας	37.5164	23.47093	T	HLL	GR		ESYE31	96	9210		0		208	Europe/Athens	2019-10-23
+254652	Órmos Profítis Ilía	Ormos Profitis Ilia	Ormiskos Profitis Ilias,Ormos Profitis Ilia,Ormískos Profítis Ilías,Órmos Profítis Ilía,Όρμος Προφήτης Ηλία	37.69905	23.46677	H	BAY	GR		ESYE31	35			0		1	Europe/Athens	2016-02-07
+254768	Ákra Poúnta	Akra Pounta	Akra Pounda,Akra Pounta,Pounto,Poúnto,Ákra Poúnda,Ákra Poúnta,Άκρα Πούντα	37.58099	23.34741	T	CAPE	GR		ESYE31	35			0		14	Europe/Athens	2016-02-07
+254838	Potámi	Potami	Potami,Ποτάμι	37.51297	23.27652	P	PPLH	GR		ESYE31	96	9213		0		260	Europe/Athens	2019-10-23
+254850	Órmos Pórtes	Ormos Portes	Ormiskos Portes,Ormos Portais,Ormos Portes,Ormískos Pórtes,Órmos Pórtais,Órmos Pórtes,Όρμος Πόρτες,Ορμίσκος Πόρτες	37.71171	23.52499	H	COVE	GR		ESYE31	35			0		1	Europe/Athens	2016-02-07
+254853	Pórtes	Portes	Portai,Portes,Pórtai,Pórtes,Πόρτες	37.71289	23.52126	P	PPL	GR		ESYE31	96	9208		104		17	Europe/Athens	2019-10-23
+254857	Stenó Pórou	Steno Porou	Steno Porou,Stenon Porou,Stenó Pórou,Stenón Pórou,Στενό Πόρου,Στενόν Πόρου	37.52225	23.41988	H	STRT	GR		ESYE31	35			0		-9999	Europe/Athens	2016-02-07
+254860	Limáni Pórou	Limani Porou	Limani Porou,Limin Porou,Limáni Pórou,Limín Pórou,Poros Harbour,Λιμάνι Πόρου,Λιμήν Πόρου	37.50003	23.45153	L	PRT	GR		ESYE31	35			0		10	Europe/Athens	2020-06-10
+254862	Nísos Póros	Nisos Poros	Kalavria,Kalavría,Nisos Poros,Nísos Póros,Καλαυρια,Νήσος Πόρος	37.52007	23.47538	T	ISL	GR		ESYE31	35	TROIZINIAS		0	273	234	Europe/Athens	2014-11-17
+254865	Póros	Poros	Poros,Póros,Πόρος	37.49944	23.45361	P	PPLA3	GR		ESYE31	96	9210		3651		23	Europe/Athens	2019-10-23
+254936	Limáni Pógonos	Limani Pogonos	Limani Pogonos,Limin Pogonos,Limáni Pógonos,Limín Pógonos,Ormos Pogonos,Órmos Pógonos,Λιμάνι Πώγωνος,Λιμήν Πώγωνος	37.50679	23.44045	H	HBR	GR		ESYE31	35			0		1	Europe/Athens	2016-02-07
+254996	Nisída Plateiá	Nisida Plateia	Nisida Plateia,Nisis Plateia,Nisis Platia,Nisída Plateiá,Nisís Plateiá,Nisís Platiá,Νησίδα Πλατειά,Νησίς Πλατειά	37.57622	23.50711	T	ISL	GR		ESYE31	35			0		3	Europe/Athens	2024-10-02
+255115	Ákra Plakákia	Akra Plakakia	Akra Plakakia,Cape Plakakia,Plaka,Pláka,Ákra Plakákia,Άκρα Πλακάκια	37.76275	23.41858	T	CAPE	GR		ESYE31	96	9208		0		0	Europe/Athens	2019-10-23
+255214	Ákra Pýrgos	Akra Pyrgos	Akra Pirgos,Akra Pyrgos,Cape Pirgos,Cape Pyrgos,Cape Pírgos,Ákra Pírgos,Ákra Pýrgos,Άκρα Πύργος	37.6738	23.47861	T	CAPE	GR		ESYE31	35			0		6	Europe/Athens	2020-06-10
+255405	Nisída Petrokáravo	Nisida Petrokaravo	Nisida Petrokaravo,Nisis Petrokaravo,Nisída Petrokáravo,Nisís Petrokáravo,Petro Kargo,Vrachonisis Petrokaravo,Vrachonisís Petrokáravo,Βραχονησίς Πετροκάραβο,Νησίδα Πετροκάραβο,Νησίς Πετροκάραβο	37.61373	23.47799	T	ISL	GR		ESYE31	35			0		-9999	Europe/Athens	2020-06-10
+255447	Pétra	Petra		37.52281	23.42472	T	ISL	GR		ESYE31	35			0		-9999	Europe/Athens	2025-05-26
+255559	Ákra Pérdika	Akra Perdika	Akra Perdhika,Akra Perdika,Ákra Pérdhika,Ákra Pérdika,Άκρα Πέρδικα	37.69337	23.44908	T	CAPE	GR		ESYE31	35			0		-9999	Europe/Athens	2016-02-07
+255565	Pérdhika	Perdhika	Perdhika,Perdika,Pérdhika,Pérdika,Πέρδικα,Περδικα	37.69226	23.45306	P	PPL	GR		ESYE31	96	9208		680		22	Europe/Athens	2019-10-23
+255605	Ákra Penínta	Akra Peninta	Akra Peninda,Akra Peninta,Akra Peninta Vrachia,Ákra Penínda,Ákra Penínta,Ákra Penínta Vráchia,Άκρα Πενήντα,Άκρα Πενήντα Βράχηα	37.72602	23.53962	T	CAPE	GR		ESYE31	35			0		6	Europe/Athens	2016-02-07
+255886	Panayítsa	Panayitsa	Panagitsa,Παναγίτσα	37.59756	23.36536	P	PPLQ	GR		ESYE31	96	9213		0		468	Europe/Athens	2019-10-23
+256000	Ákra Paliópyrgos	Akra Paliopyrgos	Akra Palaiopirgos,Akra Palaiopyrgos,Akra Paliopirgos,Akra Paliopyrgos,Ákra Palaiópirgos,Ákra Palaiópyrgos,Ákra Paliópirgos,Ákra Paliópyrgos,Άκρα Παλαιόπυργος,Άκρα Παλιόπυργος	37.73442	23.43152	T	CAPE	GR		ESYE31	35			0		-9999	Europe/Athens	2016-02-07
+256169	Palaiá Loutrá	Palaia Loutra	Mouskha Kato,Moúskha Káto,Palaia Loutra,Palaiá Loutrá,Παλαιά Λουτρά	37.62606	23.35755	P	PPL	GR		ESYE31	96	9213		25		277	Europe/Athens	2019-10-23
+256185	Pakhía Rákhi	Pakhia Rakhi	Pacheia Rachi,Παχειά Ράχη	37.71781	23.4807	P	PPL	GR		ESYE31	96	9208		25		213	Europe/Athens	2024-10-15
+256247	Ortholíthi	Ortholithi	Ortholithi,Ortholíthi,Ορθολίθι	37.52893	23.24624	T	MT	GR		ESYE31	96	9213		0	1103	1068	Europe/Athens	2019-10-23
+256377	Ákra Nisída	Akra Nisida	Akra Nisida,Akra Nisidha,Akra Nisiza,Ákra Nisída,Ákra Nisídha,Ákra Nísiza,Άκρα Νησίδα	37.58499	23.24365	T	CAPE	GR		ESYE31				0		9	Europe/Athens	2016-02-07
+256567	Ákra Néda	Akra Neda	Akra Neda,Akra Nedha,Cape Nedha,Cape Nédha,Point Neda,Ákra Néda,Ákra Nédha,Άκρα Νέδα	37.5179	23.42285	T	CAPE	GR		ESYE31	35			0		8	Europe/Athens	2020-06-10
+256703	Órmos Mouriótou	Ormos Mouriotou		37.68436	23.46186	H	BAY	GR		ESYE31	35			0		-9999	Europe/Athens	2014-08-30
+256784	Stenó Monís	Steno Monis	Porthmos Monis,Porthmós Monís,Steno Monis,Stenon Monis,Stenó Monís,Stenón Monís,Στενό Μονής,Στενόν Μονής	37.69165	23.44579	H	STRT	GR		ESYE31	35			0		-9999	Europe/Athens	2016-02-07
+256787	Nisís Moní	Nisis Moni	Nisis Moni,Nisís Moní,Νησίς Μονή	37.69197	23.43504	T	ISL	GR		ESYE31	35			0	179	116	Europe/Athens	2010-08-03
+256797	Órmos Monastiríou	Ormos Monastiriou	Ormos Monastiriou,Ormos Porou,Poros Bay,Órmos Monastiríou,Órmos Pórou,Όρμος Μοναστηρίου,Όρμος Πόρου	37.50329	23.46564	H	BAY	GR		ESYE31	35			0		1	Europe/Athens	2020-06-10
+256849	Nisída Módi	Nisida Modi	Nisida Modi,Nisis Modhi,Nisis Modi,Nisída Módi,Nisís Módhi,Nisís Módi,Νησίδα Μόδι,Νησίς Μόδι	37.51031	23.53117	T	ISL	GR		ESYE31	35			0		27	Europe/Athens	2016-02-07
+257085	Stenó Metópis	Steno Metopis	Dhiavlos Metopis,Dhíavlos Metópis,Metopi Channel,Metopis Porthmos,Metópis Porthmós,Steno Metopis,Stenon Metopis,Stenó Metópis,Stenón Metópis,Στενό Μετώπης,Στενόν Μετώπης	37.72803	23.40795	H	CHNM	GR		ESYE31	35			0		-9999	Europe/Athens	2020-06-10
+257086	Nisída Metópi	Nisida Metopi	Nisida Metopi,Nisis Metopi,Nisída Metópi,Nisís Metópi,Νησίδα Μετώπη,Νησίς Μετώπη	37.72399	23.38266	T	ISL	GR		ESYE31	35			0		9	Europe/Athens	2016-02-07
+257101	Metókhion	Metokhion	Metochi,Metochi Ankistriou,Metokhi,Metokhion,Metókhi,Metókhion,Μετόχι,Μετόχι Αγκιστρίου	37.70557	23.35994	P	PPLX	GR		ESYE31	96	9207		0		62	Europe/Athens	2019-10-23
+257124	Stenó Methánon	Steno Methanon	Steno Methanon,Stenon Methanon,Stenó Methánon,Stenón Methánon,Στενό Μεθάνων,Στενόν Μεθάνων	37.65923	23.35107	H	STRT	GR		ESYE31	35			0		-9999	Europe/Athens	2016-02-07
+257125	Chersónisos Methánon	Chersonisos Methanon	Chersonisos Methanon,Chersónisos Methánon,Khersonisos Methanon,Khersónisos Methánon,Methana,Χερσόνησος Μεθάνων	37.59909	23.36988	T	PEN	GR		ESYE31	35			0	740	584	Europe/Athens	2020-06-10
+257126	Méthana	Methana	Metana,Methana,Méthana,mai sa na,metana,mtana,mythana,Μέθανα,Метана,Մեթանա,Մետանա,מתאנה,متانا,ميثانا,メタナ,邁薩納	37.58131	23.39016	P	PPL	GR		ESYE31	96	9213		892		13	Europe/Athens	2019-10-23
+257141	Metamórfosi Troizínos	Metamorfosi Troizinos	Metamorfosi,Metamorfosi Troizinos,Metamorfosis,Metamórfosi,Metamórfosis,Psagnoi,Psagnoí,Valarion,Valarión,Μεταμόρφωση Τροιζήνος	37.53333	23.35	P	PPL	GR		ESYE31	96	9213		75		70	Europe/Athens	2019-10-23
+257237	Mesagrós	Mesagros	Mesagros,Mesagrós,Μεσαγρός	37.75658	23.51688	P	PPL	GR		ESYE31	96	9208		575		70	Europe/Athens	2019-10-23
+257373	Órmos Méga Neório	Ormos Mega Neorio	Ormiskos Megalo Neorion,Ormos Mega Neorio,Ormos Mega Neorion,Ormískos Megálo Neórion,Órmos Méga Neório,Órmos Méga Neórion,Όρμος Μέγα Νεώριο,Όρμος Μέγα Νεώριον	37.51372	23.43742	H	BAY	GR		ESYE31	35			0		-9999	Europe/Athens	2016-02-07
+257393	Megálo Potámi	Megalo Potami	Megalo Potami,Megalopotamion,Megalopotámion,Megálo Potámi,Μεγάλο Ποτάμι	37.59722	23.34912	P	PPL	GR		ESYE31	96	9213		25		133	Europe/Athens	2019-10-23
+257408	Megalochóri	Megalochori	Megalochori,Megalochorion,Megalochórion,Megalokhori,Megalokhorion,Megalokhóri,Megalokhórion,Μεγαλοχώρι,Μεγαλοχώριον	37.59221	23.35614	P	PPL	GR		ESYE31	96	9213		260		134	Europe/Athens	2026-05-16
+257713	Órmos Marathóna	Ormos Marathona	Marathon Bay,Marathona Bay,Marathón Bay,Ormos Marathona,Ormos Marathonos,Ormos Perivolas,Órmos Marathóna,Órmos Marathónos,Órmos Perivólas,Όρμος Μαραθώνα	37.71541	23.45247	H	BAY	GR		ESYE31	35			0		-9999	Europe/Athens	2020-06-10
+257718	Marathóna	Marathona	Marathon,Marathona,Marathón,Marathóna,Μαραθών,Μαραθώνα	37.72064	23.45931	P	PPLX	GR		ESYE31	96	9208		0		20	Europe/Athens	2019-10-23
+257756	Ákra Manólis	Akra Manolis	Akra Manoli,Akra Manolis,Ákra Manóli,Ákra Manólis,Άκρα Μανώλης	37.6971	23.43307	T	CAPE	GR		ESYE31	35			0		-9999	Europe/Athens	2016-02-07
+257805	Órmos Mandráki	Ormos Mandraki	Ormos Mandraki,Órmos Mandráki,Όρμος Μανδράκι	37.71261	23.35171	H	BAY	GR		ESYE31	35			0		1	Europe/Athens	2016-02-07
+257824	Ákra Mánti	Akra Manti	Akra Mandi,Akra Manti,Ákra Mándi,Ákra Mánti,Άκρα Μάντη	37.68736	23.51754	T	CAPE	GR		ESYE31	35			0		35	Europe/Athens	2016-02-07
+257943	Makrílongos	Makrilongos	Makrilongos,Makrolongos,Makrylongos,Makrílongos,Makrólongos,Mouskha Ano,Moúskha Áno,Μακρύλογγος	37.62166	23.35764	P	PPL	GR		ESYE31	96	9213		24		395	Europe/Athens	2019-10-23
+258119	Loukaḯtion	Loukaition	Loukaiti,Loukaition,Loukaíti,Loukaḯtion,Λουκαΐτι,Λουκαίτι	37.45699	23.23703	P	PPL	GR		ESYE25	36	9235		196		254	Europe/Athens	2014-07-31
+258174	Órmos Liyéa	Ormos Liyea	Ormiskos Liyea,Ormos Liyea,Ormískos Liyea,Órmos Liyéa	37.67628	23.47774	H	BAY	GR		ESYE31	35			0		-9999	Europe/Athens	2014-08-30
+258197	Ákra Livádia	Akra Livadia	Akra Leivadia,Akra Livadhia,Akra Livadia,Ákra Leivádia,Ákra Livádhia,Ákra Livádia,Άκρα Λειβάδια,Άκρα Λιβάδια	37.76737	23.42608	T	CAPE	GR		ESYE31	35			0		2	Europe/Athens	2016-02-07
+258323	Limenária	Limenaria	Limenaria,Limenarion,Limenária,Limenárion,Λιμενάρια	37.67991	23.34093	P	PPL	GR		ESYE31	96	9207		128		40	Europe/Athens	2019-10-23
+258534	Lazáridhes	Lazaridhes	Lazarides,Λαζάρηδες	37.72131	23.50489	P	PPL	GR		ESYE31	96	9208		9		332	Europe/Athens	2024-10-14
+258536	Nisída Lazaréta	Nisida Lazareta	Nisida Lazareta,Nisis Lazareta,Nisis Lazaretto,Nisos Lazareto,Nisída Lazaréta,Nisís Lazaréta,Nisís Lazarétto,Nísos Lazaréto,Νησίδα Λαζαρέτα,Νησίς Λαζαρέτα	37.49003	23.47051	T	ISL	GR		ESYE31	35			0		1	Europe/Athens	2016-02-07
+258592	Longarákia	Longarakia	Langarakhia,Langarákhia,Longaraki,Longarakia,Longaráki,Longarákia,Λογγαράκια	37.4793	23.29131	T	RDGE	GR		ESYE25	35			0		613	Europe/Athens	2016-05-07
+258629	Lampoúsa	Lampousa	Lambousa,Lamboúsa,Lampousa,Lampoúsa,Λαμπούσα	37.46382	23.3771	T	PK	GR		ESYE31	96	9213		0		679	Europe/Athens	2019-10-23
+258806	Ákra Kryonéri	Akra Kryoneri	Akra Krioneri,Akra Kryoneri,Ákra Krionéri,Ákra Kryonéri,Άκρα Κρυονέρι	37.46949	23.50119	T	CAPE	GR		ESYE31	35			0		15	Europe/Athens	2016-02-07
+258864	Ákra Krasopanagiás	Akra Krasopanagias	Akra Krasopanagias,Akra Krasopanayia,Akra Krasopanayias,Akra Panagia,Akra Panayia,Akra Panayias,Cape Panayia,Cape Panayiá,Panagia Point,Ákra Krasopanagiás,Ákra Krasopanayiá,Ákra Krasopanayiás,Ákra Panagiá,Ákra Panayía,Ákra Panayías,Άκρα Κρασοπαναγιάς,Άκρα Παναγιά	37.61147	23.30552	T	CAPE	GR		ESYE31	35			0		24	Europe/Athens	2020-06-10
+259036	Kounoupítsa	Kounoupitsa	Kounopitsa,Kounopítsa,Kounoupitsa,Kounoupítsa,Kunupica,Κουνουπίτσα,Кунупица	37.63258	23.37459	P	PPL	GR		ESYE31	96	9213		75		138	Europe/Athens	2019-10-23
+259223	Ákra Kostí	Akra Kosti	Akra Kosti,Akra Kostis,Ákra Kostí,Ákra Kostís,Άκρα Κωστή	37.68618	23.42341	T	PT	GR		ESYE31	35			0		-9999	Europe/Athens	2016-02-07
+259392	Koní	Koni	Koni,Koní,Κονί	37.49492	23.2061	T	PK	GR		ESYE25	36	9235		0		1114	Europe/Athens	2016-06-22
+259410	Kondós	Kondos	Kondos,Kondós,Kontos,Kóntos,Κοντός	37.74501	23.48298	P	PPL	GR		ESYE31	96	9208		138		152	Europe/Athens	2019-10-23
+259522	Kólani	Kolani		37.5822	23.37745	P	PPLH	GR		ESYE31	96	9213		0		145	Europe/Athens	2019-10-23
+259525	Kávos Kokorélli	Kavos Kokorelli	Akra Kalavria,Cape Kalauri,Cape Kalavria,Cape Kalávria,Kavos Kokorelli,Kávos Kokorélli,Ákra Kalávria,Κάβος Κοκορέλλι	37.5229	23.52379	T	CAPE	GR		ESYE31	35			0		9	Europe/Athens	2020-06-10
+259586	Ákra Kokkinári	Akra Kokkinari		37.50386	23.47718	T	CAPE	GR		ESYE31	35			0		14	Europe/Athens	2016-02-07
+259739	Ákra Kyr Annítsa	Akra Kyr Annitsa	Akra Kir Annitsa,Akra Kyr Annitsa,Ákra Kir Annítsa,Ákra Kyr Annítsa,Άκρα Κυρ Αννίτσα	37.72949	23.54189	T	CAPE	GR		ESYE31	35			0		12	Europe/Athens	2016-02-07
+259741	Nisída Kyrá	Nisida Kyra	Kvra,Kyra,Kyrá,Nisida Kyra,Nisis Kira,Nisis Kyra,Nisída Kyrá,Nisís Kirá,Nisís Kyrá,Pitionisos,Pityonisos,Pityónisos,Νησίδα Κυρά,Νησίς Κυρά,Πιτυόνησος	37.70329	23.2621	T	ISL	GR		ESYE31	35	AIGINIS		0	137	101	Europe/Athens	2020-06-10
+259750	Kypséli	Kypseli	Khalasmeni,Khalasméni,Kipseli,Kipséli,Kypseli,Kypséli,Κυψέλη	37.76021	23.45448	P	PPL	GR		ESYE31	96	9208		2124		57	Europe/Athens	2019-10-23
+259751	Kipséli	Kipseli	Kipseli,Kipséli,Kosona,Kosóna,Kypseli,Κυψέλη	37.61059	23.39809	P	PPL	GR		ESYE31	96	9213		47		224	Europe/Athens	2019-10-23
+259759	Órmos Kípos	Ormos Kipos	Ormos Kipon,Ormos Kipos,Órmos Kípon,Órmos Kípos,Όρμος Κήπος	37.68536	23.51158	H	BAY	GR		ESYE31	35			0		-9999	Europe/Athens	2016-02-07
+259814	Kylindrás	Kylindras	Kilindros,Kylindras,Kílindros,Margaronidhes,Margaronídhes,Κυλινδράς	37.71901	23.52173	P	PPL	GR		ESYE31	96	9208		22		108	Europe/Athens	2019-10-23
+259961	Kamára	Kamara	Kamara,Kamára,Khloi,Khlóï,Καμάρα	37.76462	23.44647	L	AREA	GR		ESYE31	35			0		19	Europe/Athens	2016-02-07
+260012	Khelóna	Khelona	Khelona,Kheloni,Khelóna,Khelóni	37.60008	23.36629	T	MT	GR		ESYE31	96	9213		0		566	Europe/Athens	2019-10-23
+260385	Ákra Kavalláris	Akra Kavallaris	Akra Kavalaris,Akra Kavallaris,Ákra Kavalláris,Ákra Kavaláris,Άκρα Καβαλλάρης	37.61353	23.41498	T	CAPE	GR		ESYE31	35			0		11	Europe/Athens	2016-02-07
+260942	Órmos Karyóti	Ormos Karyoti	Ormiskos Kariotis,Ormos Karioti,Ormos Karyoti,Ormískos Kariótis,Órmos Karióti,Órmos Karyóti,Όρμος Καρυώτη	37.69542	23.46259	H	BAY	GR		ESYE31	35			0		1	Europe/Athens	2016-02-07
+261035	Karatzás	Karatzas	Karaja,Karajá,Karatza,Karatzas,Karatzá,Karatzás,Καρατζάς	37.53895	23.20889	P	PPL	GR		ESYE31	96	9213		287		314	Europe/Athens	2019-10-23
+261110	Kapótides	Kapotides	Kapotides,Kapotidhes,Kapótides,Kapótidhes,Καπότηδες	37.71901	23.47083	P	PPL	GR		ESYE31	96	9208		1		119	Europe/Athens	2024-10-14
+261115	Ákra Kapnodóchi	Akra Kapnodochi	Akra Kapnodhokhi,Akra Kapnodochi,Ákra Kapnodhókhi,Ákra Kapnodóchi,Άκρα Καπνοδόχη	37.71195	23.34265	T	CAPE	GR		ESYE31	35			0		4	Europe/Athens	2016-02-07
+261174	Kanákidhes	Kanakidhes	Kanakides,Kανάκηδες	37.70282	23.51808	P	PPLQ	GR		ESYE31	96	9208		0		74	Europe/Athens	2019-10-23
+261292	Kamára	Kamara	Kamara,Kamára,Καμάρα	37.51972	23.4548	T	HLL	GR		ESYE31	96	9210		0		269	Europe/Athens	2019-10-23
+261399	Kalloní	Kalloni	Kalloni,Kalloní,Lesia,Lessia,Lessiá,Lesía,Καλλονή	37.53875	23.28873	P	PPL	GR		ESYE31	96	9213		669		35	Europe/Athens	2019-10-23
+261686	Kaïméni Khóra	Kaimeni Khora	Kaimeni Chora,Καημένη Χώρα	37.61463	23.33374	P	PPL	GR		ESYE31	96	9213		21		228	Europe/Athens	2019-10-23
+262143	Galatás	Galatas	Galatas,Galatás,Γαλατάς	37.49618	23.44886	P	PPLA3	GR		ESYE31	96	9213		2195		16	Europe/Athens	2019-10-23
+262208	Ákra Frínithi	Akra Frinithi	Akra Frinithi,Ákra Frínithi,Άκρα Φρίνηθι	37.59135	23.40641	T	CAPE	GR		ESYE31	35			0		15	Europe/Athens	2016-02-07
+262305	Ákri	Akri	Akra Formi,Akra Formio,Akri,Ákra Formí,Ákra Fórmio,Ákri,Άκρη	37.52814	23.41878	T	CAPE	GR		ESYE31	35			0		-9999	Europe/Athens	2016-02-07
+262660	Kólpos Epidávrou	Kolpos Epidavrou	Kolpos Epidavrou,Kolpos Epidhavrou,Kólpos Epidhávrou,Kólpos Epidávrou,Ormos Methanon,Órmos Methánon,Κόλπος Επιδαύρου	37.63337	23.24412	H	GULF	GR						0		-9999	Europe/Athens	2016-02-07
+262882	Dhritsaíika	Dhritsaiika	Dhritsaiika,Dhritsaíika,Dhritzaiika,Dhritzaíïka,Dritsaiika,Dritzeika,Plakisa,Plákisa,Δριτζέϊκα,Δριτσαίικα	37.5874	23.38464	P	PPL	GR		ESYE31	96	9213		205		68	Europe/Athens	2019-10-23
+262888	Dryópi	Dryopi	Dhriopi,Dhriópi,Dryopi,Dryópi,Kato Fanari,Káto Fanári,Ortholithion,Ortholíthion,Δρυόπη,Κάτω Φανάρι	37.57334	23.24179	P	PPL	GR		ESYE31	96	9213		239		263	Europe/Athens	2019-10-23
+262896	Drymóna	Drymona	Dhrimona,Dhrimóna,Drymona,Drymóna,Δρυμώνα	37.69547	23.34997	T	HLL	GR		ESYE31	96	9207		0		238	Europe/Athens	2019-10-23
+262990	Nisída Doroúsa	Nisida Dorousa	Nisida Dorousa,Nisis Dhorousa,Nisis Dorousa,Nisída Doroúsa,Nisís Dhoroúsa,Nisís Doroúsa,Thorussa,Thorussa Island,Νησίδα Δορούσα,Νησίς Δορούσα	37.68001	23.3158	T	ISL	GR		ESYE31	35			0	77	33	Europe/Athens	2020-06-10
+263188	Vounó Déndrou	Vouno Dendrou	Dhendhron,Dhéndhron,Vouno Dendrou,Vouno Dhendrou,Vounó Dhéndrou,Vounó Déndrou,Βουνό Δένδρου	37.73869	23.47726	T	HLL	GR		ESYE31	96	9208		0		322	Europe/Athens	2019-10-23
+263248	Nisída Daskalió	Nisida Daskalio	Dhaskalia,Dhaskaliá,Nisida Daskalio,Nisis Daskalio,Nisis Dhaskalio,Nisída Daskalió,Nisís Daskalió,Nisís Dhaskalió,Νησίδα Δασκαλιό,Νησίς Δασκαλιό	37.5168	23.42988	T	ISL	GR		ESYE31	35			0		-9999	Europe/Athens	2024-10-01
+263255	Saronída Troizínos	Saronida Troizinos	Dariza,Dhardhiza,Dhariza,Dháriza,Saronida Troizinos,Saronis Troizinos,Δάριζα,Σαρωνίδα Τροιζήνος,Σαρωνίς Τροιζήνος	37.46057	23.49377	P	PPL	GR		ESYE31	96	9213		9		209	Europe/Athens	2019-10-23
+263349	Ákra Ntána	Akra Ntana	Akra Dana,Akra Ntana,Ákra Dána,Ákra Ntána,Άκρα Ντάνα	37.52684	23.42519	T	CAPE	GR		ESYE31	35			0		15	Europe/Athens	2016-02-07
+263390	Nisída Boúrtzi	Nisida Bourtzi	Nisida Bourtzi,Nisis Bourtzi,Nisída Boúrtzi,Nisís Boúrtzi,Νησίδα Μπούρτζι,Νησίς Μπούρτζι	37.49037	23.47489	T	ISL	GR		ESYE31	35			0		12	Europe/Athens	2016-02-07
+263447	Karákia	Karakia	Bizimi,Bizimí,Karakia,Karákia,Καράκια	37.4643	23.41164	T	RDGE	GR		ESYE31	35			0		569	Europe/Athens	2016-02-07
+263452	Nisída Bísti	Nisida Bisti	Nisida Bisti,Nisis Bisti,Nisída Bísti,Nisís Bísti,Νησίδα Μπίστη,Νησίς Μπίστη	37.55245	23.48534	T	ISL	GR		ESYE31	35			0		0	Europe/Athens	2024-10-02
+263579	Órmos Agíou Nikoláou	Ormos Agiou Nikolaou	Ormos Agiou Nikolaou,Ormos Ayiou Nikolaou,Órmos Agíou Nikoláou,Órmos Ayíou Nikoláou,Όρμος Αγίου Νικολάου	37.53547	23.40385	H	BAY	GR		ESYE31	35			0		1	Europe/Athens	2016-02-07
+263607	Ákra Agíou Antoníou	Akra Agiou Antoniou	Akra Agiou Antoniou,Akra Andonis,Akra Antonis,Akra Ayios Andonios,Akra Ayiou Andoniou,Akra Ayiou Antoniou,Cape Andonis,Ákra Agíou Antoníou,Ákra Andónis,Ákra Antónis,Ákra Ayíou Andoníou,Ákra Ayíou Antoníou,Ákra Áyios Andónios,Άκρα Αγίου Αντωνίου,Άκρα Αντώνης	37.69251	23.52511	T	CAPE	GR		ESYE31	35			0		11	Europe/Athens	2020-06-10
+263620	Ákra Ágios Geórgios	Akra Agios Georgios	Akra Agios Georgios,Akra Ayios Yeoryios,Ákra Ágios Geórgios,Ákra Áyios Yeóryios,Άκρα Άγιος Γεώργιος	37.63477	23.40273	T	CAPE	GR		ESYE31	35			0		10	Europe/Athens	2016-02-07
+263654	Áyios Yeóryios Troizínos	Ayios Yeoryios Troizinos	Agios Georgios Troizinos,Ayios Yeoryios,Moulkia,Moúlkia,Áyios Yeóryios,Άγιος Γεώργιος Τροιζήνος,Μούλκια	37.50615	23.38785	P	PPL	GR		ESYE31	96	9213		228		9	Europe/Athens	2019-10-23
+263859	Áyios Konstandínos Troizínos	Ayios Konstandinos Troizinos	Agios Konstantinos Troizinos,Ayios Konstandinos,Pasas,Pasia,Pasiá,Pasás,Áyios Konstandínos,Άγιος Κωνσταντίνος Τροιζήνος	37.51667	23.36667	P	PPL	GR		ESYE31	96	9213		60		13	Europe/Athens	2019-10-23
+264069	Áyioi Theódhoroi Methánon	Ayioi Theodhoroi Methanon	Agioi Theodoroi Methanon,Άγιοι Θεόδωροι Μεθάνων	37.62091	23.39879	P	PPL	GR		ESYE31	96	9213		45		128	Europe/Athens	2019-10-23
+264084	Áyioi Asómatoi	Ayioi Asomatoi	Agioi Asomatoi,Asomatoi,Asomatos,Ayioi Asomatoi,Áyioi Asómatoi,Άγιοι Ασώματοι,Ασώματοι,Ασώματος	37.75	23.45	P	PPLX	GR		ESYE31	96	9208		0		61	Europe/Athens	2019-10-23
+264104	Ágioi	Agioi	Agioi,Ayioi,Ágioi,Áyioi,Άγιοι	37.76944	23.50917	P	PPLX	GR		ESYE31	96	9208		0		27	Europe/Athens	2019-10-23
+264155	Órmos Agías Marínas	Ormos Agias Marinas	Ayia Marina Bay,Ayía Marína Bay,Ormos Agia Marina,Ormos Agias Marinas,Ormos Ayias Marinas,Saint Marina Bay,St. Marina Bay,Órmos Agía Marína,Órmos Agías Marínas,Órmos Ayías Marínas,Όρμος Αγία Μαρίνα,Όρμος Αγίας Μαρίνας	37.74152	23.53832	H	BAY	GR		ESYE31	35			0		67	Europe/Athens	2021-02-20
+264156	Ákra Agías Marínas	Akra Agias Marinas	Akra Agia Marina,Akra Agias Marinas,Akra Ayia Marina,Akra Ayia Marinas,Akra Ayias Marinas,Ákra Agía Marína,Ákra Agías Marínas,Ákra Ayía Marína,Ákra Ayía Marínas,Ákra Ayías Marínas,Άκρα Αγία Μαρίνα,Άκρα Αγίας Μαρίνας	37.74574	23.5549	T	CAPE	GR		ESYE31	35			0		11	Europe/Athens	2016-02-07
+264220	Ayía Marína	Ayia Marina	Aghia Marina,Agia Marina,Αγία Μαρίνα	37.74656	23.53649	P	PPL	GR		ESYE31	96	9208		277		41	Europe/Athens	2019-10-23
+264427	Asprovoúni	Asprovouni	Asprovouni,Asprovoúni,Ασπροβούνι	37.56929	23.36997	T	HLL	GR		ESYE31	96	9213		0		345	Europe/Athens	2019-10-23
+264537	Nisída Arvanítis	Nisida Arvanitis	Nisida Arvanitis,Nisis Arvanitis,Nisída Arvanítis,Nisís Arvanítis,Νησίδα Αρβανίτης,Νησίς Αρβανίτης	37.49102	23.4697	T	ISL	GR		ESYE31	35			0		1	Europe/Athens	2024-10-15
+264555	Órmos Artémidos	Ormos Artemidos	Ormos Artemidhos,Ormos Artemidos,Ormos Artemis,Ormos Ártemis,Órmos Artémidhos,Órmos Artémidos,Όρμος Αρτέμιδος	37.47854	23.48054	H	BAY	GR		ESYE31	35			0		1	Europe/Athens	2016-02-07
+264940	Áno Fanári	Ano Fanari	Ano Fanari,Ano Fanarion,Áno Fanári,Áno Fanárion,Άνω Φανάρι	37.57654	23.22531	P	PPL	GR		ESYE31	96	9213		218		521	Europe/Athens	2026-06-07
+264978	Anítsaion	Anitsaion	Anestaion,Anestaíon,Anitsaio,Anitsaion,Anítsaion,Ανίτσαιο,Ανίτσαιον	37.70701	23.50518	P	PPL	GR		ESYE31	96	9208		28		232	Europe/Athens	2019-10-23
+264999	Stenó Agkístriou	Steno Agkistriou	Steno Agkistriou,Steno Ankistriou,Stenon Agkistriou,Stenon Angistri,Stenon Angistriou,Stenon Ankistriou,Stenó Agkístriou,Stenón Agkístriou,Stenón Angístri,Stenón Angístriou,Στενό Αγκίστριου,Στενόν Αγκίστριου	37.7153	23.37225	H	STRT	GR		ESYE31	35			0		-9999	Europe/Athens	2016-02-07
+265000	Nisí Agkístri	Nisi Agkistri	Agistri,Agkistri,Agkístri,Agístri,Akisdri,Anghisti,Angistiri,Angistri,Angistri - Ankistri,Angistrion,Angjistri,Anguistri,Ankistri,Cecryphalia,Kekryfaleia,Kekryfáleia,Nisi Agkistri,Nisi Ankistri,Nisos Agkistri,Nisos Agkistrion,Nisos Angistri,Nisos Angistrion,Nisos Ankistri,Nisos Ankistrion,Nisí Agkístri,Nísos Agkístri,Nísos Agkístrion,Nísos Angístri,Nísos Angístrion,a ge ji si te li dao,agstry,ang-giseuteuliseom,angisutori dao,Αγκίστρι,Κεκρυφάλεια,Νήσος Αγκίστρι,Νήσος Αγκίστριον,Νησί Αγκίστρι,Ангистри,Ангистрион,Ангістрі,Ակիսդրի,Անգիստրի,אגיסטרי,آگستری,アンギストリ島,阿格基斯特里島,앙기스트리섬	37.69206	23.34653	T	ISL	GR		ESYE31	35	AIGINIS		1142		182	Europe/Athens	2024-09-05
+265001	Megalochóri	Megalochori	Agkistri,Agkistrion,Agkístri,Agkístrion,Angistri,Angistrion,Angístri,Angístrion,Ankistri,Ankistrion,Megalochori,Megalohori,Megalokhori,Megalokhóri,Milos,Mylos,Αγκίστρι,Αγκίστριον,Μεγαλοχώρι,Μύλος	37.71051	23.34659	P	PPLA3	GR		ESYE31	96	9207		566		20	Europe/Athens	2019-10-23
+265111	Anáthema	Anathema	Anathema,Anáthema,Ανάθεμα	37.47212	23.34126	T	PK	GR		ESYE31	35			0		636	Europe/Athens	2016-02-07
+265270	Álones	Alones	Alones,Salones,Sálones,Álones,Άλωνες	37.73772	23.52632	P	PPL	GR		ESYE31	96	9208		189		28	Europe/Athens	2019-10-23
+265327	Ákra Alykís	Akra Alykis	Akra Alikis,Akra Alykis,Ákra Alikís,Ákra Alykís,Άκρα Αλυκής	37.48581	23.47738	T	CAPE	GR		ESYE31	35			0		7	Europe/Athens	2016-02-07
+265480	Ákra Achérdo	Akra Acherdo	Akherdo Point,Akhero,Akra Acherdo,Akra Akerdho,Akra Akerdhon,Akra Akerdhou,Akra Akherdho,Bisti,Bísti,Ákhero,Ákra Achérdo,Ákra Akerdho,Ákra Akerdhoú,Ákra Akhérdho,Ákra Ákerdhon,Άκρα Αχέρδο	37.55979	23.4846	T	CAPE	GR		ESYE31	35			0		-9999	Europe/Athens	2020-06-10
+265501	Aegina	Aegina	Aegina,Aegina Island,Aigina,Aígina,Egina,Egine,Ejina,Engia,Nisi Aigina,Nisos Aigina,Nisos Aiyina,Nisí Aígina,Nísos Aígina,Nísos Aíyina,aigina dao,Égine,Αίγινα,Νήσος Αίγινα,Νησί Αίγινα,Егина,アイギナ島	37.72363	23.49267	T	ISL	GR		ESYE31	35	AIGINIS		12911		386	Europe/Athens	2025-04-06
+265502	Aegina	Aegina	Aegina,Aigina,Aiyina,Aígina,Aíyina,Egina,Αίγινα	37.74667	23.4275	P	PPLA3	GR		ESYE31	96	9208		6867		4	Europe/Athens	2019-10-23
+265703	Adéres Óros	Aderes Oros	Aderes,Aderes Oros,Adheres Oros,Adhéres Óros,Adéres Óros,Forvantion Oros,Forvantion Óros,Αδέρες Όρος,Φορβαντιον Όρος	37.46296	23.35861	T	MT	GR		ESYE31	96	9213		0		573	Europe/Athens	2020-06-10
+265704	Adéres	Aderes	Aderes,Adheres,Adhéres,Adéres,Αδέρες	37.50303	23.29665	T	RDGE	GR		ESYE31	35			0		746	Europe/Athens	2016-02-07
+265705	Adéres	Aderes	Aderes,Adheres,Adhéres,Adéres,Αδέρες	37.53692	23.36962	T	HLL	GR		ESYE31	96	9213		0		225	Europe/Athens	2019-10-23
+406101	Nomós Piraiós	Nomos Piraios	Piraievs,Piraiévs	37.5	23.41667	A	ADM2	GR		ESYE31	96			523937		27	Europe/Athens	2024-01-09
+445402	Eparchía Aigínis	Eparchia Aiginis	Eparchia Aiginas,Eparchía Aíginas	37.75	23.38333	A	ADMD	GR		ESYE31	35	445402		0		-9999	Europe/Athens	2012-01-17
+445403	Eparchía Troizinías	Eparchia Troizinias		37.5	23.35	A	ADMD	GR		ESYE31	35	445403		0		99	Europe/Athens	2012-01-17
+6463500	Argo Spa Hotel	Argo Spa Hotel		37.747	23.5478	S	HTL	GR		ESYE31	96	9208		0		8	Europe/Athens	2019-10-23
+6494181	Hotel Rachel	Hotel Rachel		37.7458	23.5413	S	HTL	GR		ESYE31	96	9208		0		5	Europe/Athens	2019-10-23
+6494911	Hotel Katerina	Hotel Katerina		37.7454	23.5407	S	HTL	GR		ESYE31	96	9208		0		1	Europe/Athens	2019-10-23
+6495529	Hotel Danae	Hotel Danae		37.7449	23.433	S	HTL	GR		ESYE31	96	9208		0		11	Europe/Athens	2019-10-23
+6495807	Esperides Maisonettes	Esperides Maisonettes		37.7457	23.5409	S	HTL	GR		ESYE31	96	9208		0		10	Europe/Athens	2019-10-23
+6496780	Hotel Karyatides	Hotel Karyatides		37.7473	23.5454	S	HTL	GR		ESYE31	96	9208		0		27	Europe/Athens	2019-10-23
+6518699	Kavos Bay Seafront Hotel	Kavos Bay Seafront Hotel		37.7467	23.4394	S	HTL	GR		ESYE31	96	9208		0		35	Europe/Athens	2019-10-23
+6528286	Kavos Bay Seafront Hotel  Studi	Kavos Bay Seafront Hotel  Studi		37.7467	23.4394	S	HTL	GR		ESYE31	96	9208		0		35	Europe/Athens	2019-10-23
+6531804	Apollo Aegina	Apollo Aegina		37.75	23.4333	S	HTL	GR		ESYE31	96	9208		0		26	Europe/Athens	2019-10-23
+6950985	Agkístri	Agkistri	Agistri,Angistri,Ankistri,Αγκίστρι	37.6917	23.3456	P	PPL	GR		ESYE25				1131		183	Europe/Athens	2026-06-03
+6951020	Skliri	Skliri	Skliri,Σκληρή	37.704	23.371	P	PPLX	GR		ESYE31	96	9207		0		28	Europe/Athens	2019-10-23
+7289851	Skála	Skala	Scala,Skala,Σκάλα	37.70752	23.36539	P	PPL	GR		ESYE31	96	9207		448		12	Europe/Athens	2019-10-23
+7329969	Órmos Souválas	Ormos Souvalas	Ormiskos Souvalas,Ormos Souvalas,Ormískos Souválas,Órmos Souválas,Όρμος Σουβάλας,Ορμίσκος Σουβάλας	37.77369	23.48753	H	COVE	GR		ESYE31	35			0		51	Europe/Athens	2016-02-07
+7329971	Ákra Kolóna	Akra Kolona	Akra Kolona,Ákra Kolóna,Άκρα Κολώνα	37.75022	23.42255	T	CAPE	GR		ESYE31	96	9208		0		-9999	Europe/Athens	2019-10-23
+7329972	Limáni Aíginas	Limani Aiginas	Limani Aiginas,Limenas Aiginas,Limáni Aíginas,Liménas Aíginas,Λιμάνι Αίγινας,Λιμένας Αίγινας	37.74527	23.42776	H	HBR	GR		ESYE31	35			0		-9999	Europe/Athens	2016-02-07
+7330052	Óros	Oros	Oros,Óros,Όρος	37.70152	23.49655	T	MT	GR		ESYE31	96	9208		0		456	Europe/Athens	2019-10-23
+7342928	Psífta	Psifta	Psifta,Psista,Psísta,Ψήστα,Ψήφτα	37.53162	23.32906	P	PPL	GR		ESYE31	96	9213		32		9	Europe/Athens	2019-10-23
+7347434	Ákra Kapnodóki	Akra Kapnodoki	Akra Kapnodoki,Ákra Kapnodóki,Άκρα Καπνοδόκη	37.71173	23.33995	T	CAPE	GR		ESYE31	35			0		-9999	Europe/Athens	2012-01-21
+7602853	Temple of Aphaea	Temple of Aphaea	Naos Afaias,Naós Afaías	37.75448	23.53333	S	RUIN	GR		ESYE31	96	9208		0		174	Europe/Athens	2019-10-23
+7602854	Agios Nektarios Monastery	Agios Nektarios Monastery	Agios Nektarios,Iera Moni Agias Triadas - Agiou Nektariou,Iera Moni Agiou Nektariou,Άγιος Νεκτάριος,Ιερά Μονή Αγίας Τριάδας - Αγίου Νεκταρίου,Ιερά Μονή Αγίου Νεκταρίου	37.74796	23.48389	S	MSTY	GR		ESYE25				0		198	Europe/Athens	2014-08-30
+8133696	Dimos Aegina	Dimos Aegina	Aegina,Aiginas,Αίγινας	37.73697	23.48181	A	ADM3	GR		ESYE31	96	9208		13056		272	Europe/Athens	2019-10-23
+8133709	Dimos Poros	Dimos Poros	Poros,Porou,Πόρου	37.4842	23.47721	A	ADM3	GR		ESYE31	96	9210		4282		11	Europe/Athens	2019-10-23
+8133768	Dimos Troizinia-Methana	Dimos Troizinia-Methana	Troizinia,Troizinia-Methana,Troizinias,Troizinias-Methanon,Τροιζηνίας,Τροιζηνίας-Μεθάνων	37.5327	23.33083	A	ADM3	GR		ESYE31	96	9213		7143		5	Europe/Athens	2019-10-23
+8133874	Dimos Agkistri	Dimos Agkistri	Agkistri,Ankistriou,Αγκιστρίου	37.69503	23.34009	A	ADM3	GR		ESYE31	96	9207		1142		164	Europe/Athens	2019-10-23
+8200487	Perifereiakí Enótita Níson	Perifereiaki Enotita Nison	Perifereiaki Enotita Nison,Perifereiakí Enótita Níson,Περιφερειακή Ενότητα Νήσων	37.46978	23.52213	A	ADMD	GR		ESYE31				0		-9999	Europe/Athens	2012-02-29
+9257402	Triantafylli	Triantafylli	Triantafylli,Τριανταφύλλι	37.46185	23.27724	P	PPL	GR		ESYE25	36	9235		8		294	Europe/Athens	2025-02-17
+9260551	Aktaion	Aktaion		37.70827	23.36691	S	HTL	GR		ESYE31	96			0		2	Europe/Athens	2019-10-23
+9260552	Aktaion Ii	Aktaion Ii		37.7081	23.36672	S	HTL	GR		ESYE31	96			0		2	Europe/Athens	2019-10-23
+9260668	Alterego Apartments	Alterego Apartments		37.68908	23.34068	S	HTL	GR		ESYE31	96	9207		0		105	Europe/Athens	2019-10-23
+9260723	Anatoli	Anatoli		37.74487	23.5388	S	HTL	GR		ESYE31	96	9208		0		1	Europe/Athens	2019-10-23
+9268909	Cascade Studios	Cascade Studios		37.50794	23.46205	S	HTL	GR		ESYE31	96	9210		0		55	Europe/Athens	2019-10-23
+9273055	Dionysos	Dionysos		37.7058	23.37046	S	HTL	GR		ESYE31	96	9207		0		10	Europe/Athens	2019-10-23
+9279870	Golden View	Golden View		37.50821	23.46517	S	HTL	GR		ESYE31	96			0		11	Europe/Athens	2019-10-23
+9282289	Hotel Agistri	Hotel Agistri		37.70963	23.3644	S	HTL	GR		ESYE31	96	9207		0		2	Europe/Athens	2019-10-23
+9282696	Hotel Yianna	Hotel Yianna		37.70854	23.36363	S	HTL	GR		ESYE31	96	9207		0		11	Europe/Athens	2019-10-23
+9292757	Irides Luxury Studios & Apartments	Irides Luxury Studios & Apartments		37.77068	23.49527	S	HTL	GR		ESYE31	96	9208		0		14	Europe/Athens	2019-10-23
+9292980	Kalimera Studios & Apartments	Kalimera Studios & Apartments		37.50557	23.45895	S	HTL	GR		ESYE31	96			0		1	Europe/Athens	2019-10-23
+9293122	Klonos Anna Htl	Klonos Anna Htl		37.76501	23.43238	S	HTL	GR		ESYE31	96	9208		0		5	Europe/Athens	2019-10-23
+9293155	Kostis Villas	Kostis Villas		37.51008	23.47022	S	HTL	GR		ESYE31	96	9210		0		20	Europe/Athens	2019-10-23
+9293193	Kyriakos Klonos Hotel	Kyriakos Klonos Hotel		37.76563	23.43163	S	HTL	GR		ESYE31	96	9208		0		3	Europe/Athens	2019-10-23
+9293375	Manessi	Manessi		37.49985	23.4513	S	HTL	GR		ESYE31	96	9210		0		10	Europe/Athens	2019-10-23
+9293584	Miranta Hotel	Miranta Hotel		37.74108	23.43137	S	HTL	GR		ESYE31	96	9208		0		5	Europe/Athens	2019-10-23
+9293622	Moond Bay	Moond Bay		37.72073	23.50949	S	HTL	GR		ESYE31	96	9208		0		285	Europe/Athens	2019-10-23
+9293707	New Aegli	New Aegli		37.50836	23.46439	S	HTL	GR		ESYE31	96	9210		0		22	Europe/Athens	2019-10-23
+9293718	Niki'S Village	Niki'S Village		37.50115	23.45442	S	HTL	GR		ESYE31	96	9210		0		6	Europe/Athens	2019-10-23
+9293772	Oasis Scala Beach Hotel	Oasis Scala Beach Hotel		37.70848	23.36612	S	HTL	GR		ESYE31	96			0		5	Europe/Athens	2019-10-23
+9293902	Panorama Hotel	Panorama Hotel		37.74541	23.54026	S	HTL	GR		ESYE31	96	9208		0		1	Europe/Athens	2019-10-23
+9294132	Porto View Suites And Spa	Porto View Suites And Spa		37.60848	23.3823	S	HTL	GR		ESYE31	96	9213		0		547	Europe/Athens	2019-10-23
+9294365	Senia	Senia		37.73619	23.53768	S	HTL	GR		ESYE31	96	9208		0		51	Europe/Athens	2019-10-23
+9294403	Sirene Blue Resort	Sirene Blue Resort		37.51813	23.48356	S	HTL	GR		ESYE31	96	9210		0		172	Europe/Athens	2019-10-23
+9294582	Sylvia	Sylvia		37.74153	23.53537	S	HTL	GR		ESYE31	96			0		5	Europe/Athens	2019-10-23
+9294741	Venetia Hotel	Venetia Hotel		37.69768	23.4565	S	HTL	GR		ESYE31	96			0		-9999	Europe/Athens	2019-10-23
+9294891	Xanthippi Hotel Apartments	Xanthippi Hotel Apartments		37.77194	23.4905	S	HTL	GR		ESYE31	96	9208		0		14	Europe/Athens	2019-10-23
+9295868	Saga Hotel & Studios	Saga Hotel & Studios		37.50795	23.45663	S	HTL	GR		ESYE31	96	9210		0		16	Europe/Athens	2019-10-23
+9295925	Xenia Poros Image	Xenia Poros Image		37.51521	23.43939	S	HTL	GR		ESYE31	96	9210		0		26	Europe/Athens	2019-10-23
+9403168	Ninetta'S Studios	Ninetta'S Studios		37.50856	23.465	S	HTL	GR		ESYE31	96			0		11	Europe/Athens	2019-10-23
+9409211	Paralía Skálas	Paralia Skalas	Paralia Skalas,Skala,Παραλία Σκάλας,Σκάλα	37.70985	23.36624	T	BCH	GR		ESYE31				0		5	Europe/Athens	2014-08-26
+9409212	Paralía Sklirís	Paralia Skliris	Paralia Skliris,Skliri,Παραλία Σκληρής,Σκληρή	37.70497	23.37136	T	BCH	GR		ESYE31	96			0		13	Europe/Athens	2019-10-23
+9409213	Chalikádha	Chalikadha	Chalikada,Chalikiada,Halikiada,Χαλικάδα,Χαλικιάδα	37.70067	23.37276	T	BCH	GR		ESYE31	96	9207		0		18	Europe/Athens	2022-08-31
+9409660	Moní Koimíseos Theotókou	Moni Koimiseos Theotokou	Moni Koimiseos Theotokou,Μονή Κοιμήσεως Θεοτόκου	37.72748	23.48667	S	MSTY	GR		ESYE31	96	9208		0		339	Europe/Athens	2019-10-23
+9409661	Kávos	Kavos	Kavos,Κάβος	37.74949	23.5505	P	PPL	GR		ESYE31	96	9208		29		63	Europe/Athens	2019-10-23
+9409662	Aiginítissa	Aiginitissa	Aiginitissa,Αιγινήτισσα	37.701	23.47027	P	PPL	GR		ESYE31	96	9208		91		29	Europe/Athens	2024-10-15
+9470387	Moní Zoodóchou Pigís Kalevreiás	Moni Zoodochou Pigis Kalevreias	Moni Zoodochou Pigis Kalavreias,Μονή Ζωοδόχου Πηγής Καλαυρείας	37.50664	23.48611	P	PPLR	GR		ESYE31	96	9210		28		43	Europe/Athens	2019-10-23
+9470388	Ágios Nektários Pórou	Agios Nektarios Porou	Agios Nektarios,Agios Nektarios Porou,Άγιος Νεκτάριος,Άγιος Νεκτάριος Πόρου	37.52339	23.47116	P	PPL	GR		ESYE31	96	9210		101		151	Europe/Athens	2022-02-16
+9470389	Kyaní Aktí	Kyani Akti	Kyani Akti,Κυανή Ακτή	37.50972	23.47134	P	PPL	GR		ESYE31	96	9210		213		20	Europe/Athens	2019-10-23
+9470404	Áyios Geórgios Methánon	Ayios Georgios Methanon	Agios Georgios Methanon,Άγιος Γεώργιος Μεθάνων	37.637	23.39466	P	PPL	GR		ESYE31	96			46		8	Europe/Athens	2019-10-23
+9470495	Áyios Nikólaos Methánon	Ayios Nikolaos Methanon	Agios Nikolaos,Agios Nikolaos Methanon,Άγιος Νικόλαος,Άγιος Νικόλαος Μεθάνων	37.63653	23.35442	P	PPL	GR		ESYE31	96	9213		8		12	Europe/Athens	2019-10-23
+9471226	Ayía Sotíra	Ayia Sotira	Agia Sotira,Αγία Σωτήρα	37.49999	23.42319	P	PPL	GR		ESYE31	96	9213		302		14	Europe/Athens	2019-10-23
+9471970	Mylos	Mylos	Mylos,Μύλος	37.57397	23.25709	P	PPL	GR		ESYE31	96	9213		1		21	Europe/Athens	2019-10-23
+9472003	Neratziá	Neratzia	Neratzia,Νερατζιά	37.55774	23.26581	P	PPL	GR		ESYE31	96	9213		1		37	Europe/Athens	2019-10-23
+9472037	Nisída	Nisida	Nisida,Νησίδα	37.5819	23.24215	P	PPL	GR		ESYE31	96	9213		2		42	Europe/Athens	2019-10-23
+9472143	Chóra	Chora	Chora,Χώρα	37.51926	23.24746	P	PPL	GR		ESYE31	96	9213		37		524	Europe/Athens	2019-10-23
+9472367	Aktí Agápis	Akti Agapis	Akti Agapis,Ακτή Αγάπης	37.54564	23.3828	P	PPL	GR		ESYE31	96	9213		2		26	Europe/Athens	2019-10-23
+9853330	Port Pogon	Port Pogon		37.50966	23.43487	H	BAY	GR		ESYE31	96			0		-9999	Europe/Athens	2019-10-23
+9853485	Aegina Port	Aegina Port	Aegina Ferry Port,Aegina Harbour	37.74539	23.42603	L	PRT	GR		ESYE31	96	9208		0		-9999	Europe/Athens	2020-10-31
+9853491	Agistri Port	Agistri Port	Agistri Ferry Port,Agistri Harbour	37.71325	23.34605	L	PRT	GR		ESYE31	96			0		60	Europe/Athens	2019-10-23
+9853559	Galatas - Poros Ferry	Galatas - Poros Ferry	Poros Ferry Port,Poros Harbour	37.49727	23.44759	L	PRT	GR		ESYE31	96	9213		0		4	Europe/Athens	2023-08-16
+9853871	Methana Port	Methana Port	Methana Ferry Port,Methana Harbour	37.58132	23.39225	L	PRT	GR		ESYE31	96	9213		0		4	Europe/Athens	2019-10-23
+9962474	Best Western Poros Image	Best Western Poros Image		37.51521	23.43939	S	HTL	GR		ESYE31	96	9210		0		26	Europe/Athens	2019-10-23
+10127580	Vasilaras Apartment I	Vasilaras Apartment I		37.70711	23.36657	S	HTL	GR		ESYE31	96	9207		0		8	Europe/Athens	2019-10-23
+10177382	Askeli	Askeli		37.50913	23.46781	P	PPL	GR		ESYE31	96			0		17	Europe/Athens	2019-10-23
+10233042	Levendi	Levendi		37.52333	23.3694	S	HTL	GR		ESYE31	96	9213		0		50	Europe/Athens	2019-10-23
+10235253	Eleonas Studios	Eleonas Studios		37.50025	23.45507	S	HTL	GR		ESYE31	96	9210		0		23	Europe/Athens	2019-10-23
+10235254	Marini Luxury Apartments Ans Suites	Marini Luxury Apartments Ans Suites		37.74199	23.4678	S	HTL	GR		ESYE31	96	9208		0		208	Europe/Athens	2019-10-23
+10235255	Aeginitiko Archontiko	Aeginitiko Archontiko		37.74733	23.42917	S	HTL	GR		ESYE31	96	9208		0		13	Europe/Athens	2019-10-23
+10235256	Laza Beach Inn	Laza Beach Inn		37.70989	23.35952	S	HTL	GR		ESYE31	96	9207		0		6	Europe/Athens	2019-10-23
+10239093	Apollo Htl	Apollo Htl		37.74701	23.54344	S	HTL	GR		ESYE31	96	9208		0		10	Europe/Athens	2019-10-23
+10240046	Magda	Magda		37.74762	23.53795	S	HTL	GR		ESYE31	96	9208		0		41	Europe/Athens	2019-10-23
+10295387	Milos	Milos		37.7123	23.3467	S	HTL	GR		ESYE31	96			0		13	Europe/Athens	2019-10-23
+10295388	Kekrifalia	Kekrifalia		37.70645	23.36933	S	HTL	GR		ESYE31	96			0		16	Europe/Athens	2019-10-23
+10295389	Boulas	Boulas		37.71112	23.34718	S	HTL	GR		ESYE31	96	9207		0		19	Europe/Athens	2019-10-23
+10295390	Andreas	Andreas		37.70729	23.36437	S	HTL	GR		ESYE31	96	9207		0		13	Europe/Athens	2019-10-23
+10295391	Ulrika	Ulrika		37.74904	23.42614	S	HTL	GR		ESYE31	96	9208		0		0	Europe/Athens	2019-10-23
+10295392	The Delfini Hotel	The Delfini Hotel		37.74388	23.53731	S	HTL	GR		ESYE31	96	9208		0		14	Europe/Athens	2019-10-23
+10295393	Sylvia Studios	Sylvia Studios		37.74343	23.53589	S	HTL	GR		ESYE31	96	9208		0		8	Europe/Athens	2019-10-23
+10295394	Seaside Village Rooms	Seaside Village Rooms		37.74	23.54	S	HTL	GR		ESYE31	96			0		67	Europe/Athens	2019-10-23
+10295395	Liberty 1	Liberty 1		37.74388	23.53711	S	HTL	GR		ESYE31	96	9208		0		14	Europe/Athens	2019-10-23
+10295396	Faros	Faros		37.73114	23.43461	S	HTL	GR		ESYE31	96	9208		0		4	Europe/Athens	2019-10-23
+10295397	Afea	Afea		37.74291	23.53248	S	HTL	GR		ESYE31	96	9208		0		14	Europe/Athens	2019-10-23
+10344983	Kaikas Studios	Kaikas Studios		37.50841	23.46982	S	HTL	GR		ESYE31	96	9210		0		6	Europe/Athens	2019-10-23
+11058880	Ydroviótopos Psífta	Ydroviotopos Psifta	Ydroviotopos Psifta,Ydroviótopos Psífta,Υδροβιότοπος Ψήφτα	37.52978	23.33754	H	WTLD	GR		ESYE31				0		0	Europe/Athens	2016-02-08
+11060725	Megálo Neório	Megalo Neorio	Megalo Neorio,Megálo Neório,Μεγάλο Νεώριο	37.51501	23.44078	P	PPL	GR		ESYE31	96	9210		0		16	Europe/Athens	2019-10-23
+11060738	Alykí	Alyki	Alyki,Alykí,Αλυκή	37.48538	23.47066	P	PPL	GR		ESYE31	96	9210		0		10	Europe/Athens	2019-10-23
+11063838	Profítis Ilías	Profitis Ilias	Profitis Ilias,Profítis Ilías,Προφήτης Ηλίας	37.76637	23.53857	S	CH	GR		ESYE31	96	9208		0		76	Europe/Athens	2019-10-23
+11063839	Petrovoúnia	Petrovounia	Petrovounia,Petrovoúnia,Πετροβούνια	37.7563	23.54064	T	HLL	GR		ESYE31	96	9208		0		196	Europe/Athens	2019-10-23
+11063841	Moní Agíou Miná	Moni Agiou Mina	Moni Agiou Mina,Moní Agíou Miná,Μονή Αγίου Μηνά	37.75037	23.5302	S	MSTY	GR		ESYE31	96	9208		0		159	Europe/Athens	2019-10-23
+11063842	Giannákides	Giannakides	Giannakides,Giannákides,Γιαννάκηδες	37.72677	23.51598	P	PPL	GR		ESYE31	96	9208		0		235	Europe/Athens	2019-10-23
+11063843	Platyvoúni	Platyvouni	Platyvouni,Platyvoúni,Πλατυβούνι	37.72059	23.49681	T	HLL	GR		ESYE31	96	9208		0		440	Europe/Athens	2019-10-23
+11063844	Naós Ellániou Diós	Naos Ellaniou Dios	Naos Ellaniou Dios,Naós Ellániou Diós,Ναός Ελλάνιου Διός	37.70778	23.49745	S	ANS	GR		ESYE31	96	9208		0		307	Europe/Athens	2019-10-23
+11063845	Análipsi	Analipsi	Analipsi,Análipsi,Ανάληψη	37.70079	23.49558	S	CH	GR		ESYE31	96	9208		0		511	Europe/Athens	2019-10-23
+11063846	Kávos tou Pitsiloú	Kavos tou Pitsilou	Kavos tou Pitsilou,Kávos tou Pitsiloú,Κάβος του Πιτσιλού	37.70776	23.52463	T	CAPE	GR		ESYE31				0		4	Europe/Athens	2016-02-08
+11063847	Apospórides	Aposporides	Aposporides,Apospórides,Αποσπόρηδες	37.70447	23.50575	P	PPL	GR		ESYE31	96	9208		0		244	Europe/Athens	2019-10-23
+11064083	Klíma	Klima	Klima,Klíma,Κλίμα	37.68193	23.47675	P	PPL	GR		ESYE31	96	9208		0		86	Europe/Athens	2019-10-23
+11064084	Profítis Ilías	Profitis Ilias	Profitis Ilias,Profítis Ilías,Προφήτης Ηλίας	37.69546	23.4692	P	PPL	GR		ESYE31	96	9208		0		36	Europe/Athens	2019-10-23
+11064085	Ráikou	Raikou	Raikou,Ráikou,Ράικου	37.70093	23.48097	T	HLL	GR		ESYE31	96	9208		0		206	Europe/Athens	2019-10-23
+11064141	Profítis Ilías	Profitis Ilias	Profitis Ilias,Profítis Ilías,Προφήτης Ηλίας	37.70867	23.4724	S	CH	GR		ESYE31	96	9208		0		114	Europe/Athens	2019-10-23
+11064142	Ágios Elefthérios	Agios Eleftherios	Agios Eleftherios,Ágios Elefthérios,Άγιος Ελευθέριος	37.72544	23.44384	S	CH	GR		ESYE31	96	9208		0		-1	Europe/Athens	2019-10-23
+11064143	Skoteinís Réma	Skoteinis Rema	Skoteinis Rema,Skoteinís Réma,Σκοτεινής Ρέμα	37.72729	23.43652	H	STM	GR		ESYE31				0		3	Europe/Athens	2016-02-08
+11064151	Pagóni	Pagoni	Pagoni,Pagóni,Παγώνι	37.73738	23.45526	P	PPL	GR		ESYE31	96	9208		0		100	Europe/Athens	2019-10-23
+11064152	Paliachóra	Paliachora	Paliachora,Paliachóra,Παλιαχώρα	37.74957	23.4877	T	HLL	GR		ESYE31	96	9208		0		180	Europe/Athens	2019-10-23
+11064714	Ómorfi Ekklisía	Omorfi Ekklisia	Omorfi Ekklisia,Ómorfi Ekklisía,Όμορφη Εκκλησία	37.75038	23.44548	S	CH	GR		ESYE31	96	9208		0		49	Europe/Athens	2019-10-23
+11064719	Souvála	Souvala	Souvala,Souvála,Σουβάλα	37.77171	23.48253	P	PPL	GR		ESYE31	96	9208		0		24	Europe/Athens	2019-10-23
+11064720	Agía Marína	Agia Marina	Agia Marina,Agía Marína,Αγία Μαρίνα	37.76964	23.4617	S	CH	GR		ESYE31	96	9208		0		12	Europe/Athens	2019-10-23
+11669677	Archaeological Museum of Aegina Αρχαιολογικό Μουσείο Αίγινας	Archaeological Museum of Aegina Archaiologiko Mouseio Aiginas		37.74963	23.42463	S	MUS	GR		ESYE31	96	9208		0		8	Europe/Athens	2019-10-23
+13117782	Galenthi	Galenthi	Galenthi,Γαλένθη	37.48143	23.47936	T	ISLET	GR		ESYE31	96	9210		0		1	Europe/Athens	2024-10-15
+13431128	Ágios Geórgios	Agios Georgios	Agios Georgios,Ágios Geórgios,Άγιος Γεώργιος	37.63635	23.39417	P	PPL	GR		ESYE31	96	9213		0		1	Europe/Athens	2025-07-18
+13431179	Moní Agíou Nektaríou	Moni Agiou Nektariou	Moni Agiou Nektariou,Moní Agíou Nektaríou,Μονή Αγίου Νεκταρίου	37.74789	23.48368	S	MSTY	GR		ESYE31	96	9208		0		141	Europe/Athens	2025-07-18
+13580176	Sanctuary of Poseidon	Sanctuary of Poseidon		37.52189	23.48002	S	ANS	GR		ESYE31	96	9210		0		241	Europe/Athens	2026-01-27

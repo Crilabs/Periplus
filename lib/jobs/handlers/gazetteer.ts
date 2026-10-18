@@ -4,6 +4,7 @@ import { getArchive } from "@/lib/adapters/s3";
 import { areaByKey } from "@/lib/config";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import { GEONAMES_STAGE, importGeonames } from "@/lib/pipeline/gazetteer/geonames";
+import { buildHierarchy, HIERARCHY_STAGE } from "@/lib/pipeline/gazetteer/hierarchy";
 import { importOsm, OSM_STAGE } from "@/lib/pipeline/gazetteer/osm";
 import { importWikidata, WIKIDATA_STAGE } from "@/lib/pipeline/gazetteer/wikidata";
 import type { StageDefinition } from "@/lib/pipeline/runs";
@@ -25,6 +26,7 @@ function gazetteerStage(name: string): StageDefinition {
 export const gazetteerOsmStage = gazetteerStage(OSM_STAGE);
 export const gazetteerWikidataStage = gazetteerStage(WIKIDATA_STAGE);
 export const gazetteerGeonamesStage = gazetteerStage(GEONAMES_STAGE);
+export const gazetteerHierarchyStage = gazetteerStage(HIERARCHY_STAGE);
 
 /** Runs the gazetteer stage named in `data.stage` for `data.areaKey`. */
 export const gazetteerHandler: JobHandler<JobData> = async (data, ctx) => {
@@ -49,6 +51,11 @@ export const gazetteerHandler: JobHandler<JobData> = async (data, ctx) => {
       const source = getGeonamesSource({ db: ctx.db, runId: data.runId, stage: GEONAMES_STAGE });
       const result = await importGeonames(ctx.db, { area, runId: data.runId }, { source });
       ctx.log.info({ areaKey: area.key, ...result }, "geonames imported");
+      return;
+    }
+    case HIERARCHY_STAGE: {
+      const result = await buildHierarchy(ctx.db, area);
+      ctx.log.info({ areaKey: area.key, ...result }, "hierarchy built");
       return;
     }
     default:
