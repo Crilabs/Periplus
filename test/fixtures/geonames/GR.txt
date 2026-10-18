@@ -1,0 +1,20 @@
+1001	Perdika	Perdika	Perdhika,Πέρδικα	37.6967	23.4617	P	PPL	GR						0		0	Europe/Athens	2020-01-01
+1002	Skala	Skala	Skala Agistriou,Σκάλα	37.705	23.34	P	PPL	GR						0		0	Europe/Athens	2020-01-01
+1003	Agistri	Agistri	Angistri,Aghistri,Αγκίστρι	37.7	23.35	T	ISL	GR						0		0	Europe/Athens	2020-01-01
+1004	Moni	Moni	Moni Island,Μονή	37.7	23.43	T	ISLET	GR						0		0	Europe/Athens	2020-01-01
+1005	Marathonas	Marathonas	Marathon,Μαραθώνας	37.733	23.453	P	PPL	GR						0		0	Europe/Athens	2020-01-01
+1006	Kolpos Perdikas	Kolpos Perdikas	Perdika Bay	37.69	23.45	H	BAY	GR						0		0	Europe/Athens	2020-01-01
+1007	Akra Perdika	Akra Perdika	Cape Perdika	37.685	23.44	T	CAPE	GR						0		0	Europe/Athens	2020-01-01
+1008	Limin Perdikas	Limin Perdikas	Perdika Harbour	37.696	23.463	H	PRT	GR						0		0	Europe/Athens	2020-01-01
+1009	Akra Fteli	Akra Fteli	Cape Fteli	37.71	23.37	T	CAPE	GR						0		0	Europe/Athens	2020-01-01
+1010	Dorousa	Dorousa	Dorusa	37.708	23.33	T	ISLET	GR						0		0	Europe/Athens	2020-01-01
+1011	Ormos Marathona	Ormos Marathona	Marathon Bay	37.73	23.46	H	COVE	GR						0		0	Europe/Athens	2020-01-01
+1012	Stenon Moni	Stenon Moni	Moni Strait	37.695	23.425	H	STRT	GR						0		0	Europe/Athens	2020-01-01
+1013	Souvala	Souvala	Σούβαλα	37.738	23.488	P	PPL	GR						0		0	Europe/Athens	2020-01-01
+1014	Aegina Mountain Hut	Aegina Mountain Hut		37.72	23.44	S	HUT	GR						0		0	Europe/Athens	2020-01-01
+1015	Vagia	Vagia	Βαγία	37.715	23.405	P	PPL	GR						0		0	Europe/Athens	2020-01-01
+1016	Aponisos	Aponisos	Aponissos	37.716	23.35	P	PPLX	GR						0		0	Europe/Athens	2020-01-01
+1017	Athens	Athens	Athina,Αθήνα	37.9838	23.7278	P	PPLA	GR						0		0	Europe/Athens	2020-01-01
+1018	Poros	Poros	Πόρος	37.498	23.46	T	ISL	GR						0		0	Europe/Athens	2020-01-01
+1019	Kolpos Souvalas	Kolpos Souvalas	Souvala Bay	37.745	23.49	H	BAYS	GR						0		0	Europe/Athens	2020-01-01
+1020	Akra Kavouropetra	Akra Kavouropetra		37.56	23.26	T	PT	GR						0		0	Europe/Athens	2020-01-01
