@@ -13,6 +13,7 @@ import {
 } from "@/lib/db/schema";
 import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
 import { newPublicId } from "@/lib/domain/ids";
+import { QUEUES, type QueueName } from "@/lib/jobs/queues";
 
 export const reviewDecisionSchema = z.discriminatedUnion("action", [
   // place_candidate / place
@@ -61,7 +62,7 @@ const ALLOWED: Record<string, readonly Action[]> = {
   "failed_job/job": ["retry", "ignore"],
 };
 
-export type DecideDeps = { retryJob?: (queue: string, jobId: string) => Promise<void> };
+export type DecideDeps = { retryJob?: (queue: QueueName, jobId: string) => Promise<void> };
 
 type Task = typeof reviewTasks.$inferSelect;
 
@@ -188,9 +189,9 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
     }
     case "retry": {
       if (!deps.retryJob) throw new Error("retry decision needs deps.retryJob");
-      const queue = (task.context as { queue?: unknown }).queue;
-      if (typeof queue !== "string") throw new DecisionNotAllowed(`failed_job task ${task.id} has no queue`);
-      await deps.retryJob(queue, task.subjectId);
+      const queue = z.enum(QUEUES).safeParse((task.context as { queue?: unknown }).queue);
+      if (!queue.success) throw new DecisionNotAllowed(`failed_job task ${task.id} has no retryable queue`);
+      await deps.retryJob(queue.data, task.subjectId);
       return;
     }
     case "distinct":

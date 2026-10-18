@@ -372,15 +372,29 @@ describe("coast tile decisions", () => {
 });
 
 describe("failed job decisions", () => {
-  async function jobTask(tx: Db, jobId: string): Promise<string> {
+  async function jobTask(tx: Db, jobId: string, queue: unknown = "seed.tile"): Promise<string> {
     const { id } = await createReviewTask(tx, {
       kind: "failed_job",
       subjectType: "job",
       subjectId: jobId,
-      context: { queue: "seed.tile" },
+      context: { queue },
     });
     return id;
   }
+
+  it("retry of a task whose queue is no work queue is DecisionNotAllowed", () =>
+    withRollback(async (tx) => {
+      const retryJob = vi.fn();
+      for (const queue of ["nope", "system.dead", null]) {
+        const taskId = await jobTask(tx, newId(), queue);
+        await expect(
+          tx.transaction((sp) => decideReviewTask(sp, { taskId, decision: { action: "retry" }, decidedBy: ADMIN }, { retryJob })),
+        ).rejects.toThrow(DecisionNotAllowed);
+        expect((await taskOf(tx, taskId)).status).toBe("open");
+        expect(await decisionsOf(tx, taskId)).toHaveLength(0);
+      }
+      expect(retryJob).not.toHaveBeenCalled();
+    }));
 
   it("retry retries the job through deps.retryJob", () =>
     withRollback(async (tx) => {

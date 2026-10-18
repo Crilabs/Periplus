@@ -16,10 +16,11 @@ const pingSchema = z.object({ count: z.coerce.number().int().min(1).max(50) });
 const areaKeySchema = z.string().refine((key) => getConfig().areas.some((a) => a.key === key), "unknown area");
 const tileIdSchema = z.string().regex(/^q025:\d+:\d+$/);
 const gazetteerSchema = z.object({ areaKey: areaKeySchema });
+/** Exactly one of tileId and areaKey: a payload with both, or a rejected tile next to an area, never falls back. */
 const seedSchema = (db: Db) =>
   z.union([
-    z.object({ tileId: tileIdSchema.refine((id) => tileExists(db, id), "unknown tile") }),
-    z.object({ areaKey: areaKeySchema }),
+    z.object({ tileId: tileIdSchema.refine((id) => tileExists(db, id), "unknown tile"), areaKey: z.undefined().optional() }),
+    z.object({ areaKey: areaKeySchema, tileId: z.undefined().optional() }),
   ]);
 
 const fields = (input: FormData | object) => (input instanceof FormData ? Object.fromEntries(input) : input);

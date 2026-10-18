@@ -161,6 +161,23 @@ describe("review server actions", () => {
     expect(await statusOf(taskId)).toBe("decided");
   });
 
+  it("retry of a failed job with a manipulated queue redirects with error=1", async () => {
+    for (const queue of ["nope", "system.dead"]) {
+      const { id: taskId } = await createReviewTask(db, {
+        kind: "failed_job",
+        subjectType: "job",
+        subjectId: newId(),
+        context: { queue },
+      });
+      await decideAction(form({ taskId, decision: JSON.stringify({ action: "retry" }) }));
+      expect(redirect).toHaveBeenLastCalledWith(`/review/${taskId}?error=1`);
+      expect(await statusOf(taskId)).toBe("open");
+      expect(await decisionsOf(taskId)).toHaveLength(0);
+      await decideReviewTask(db, { taskId, decision: { action: "ignore" }, decidedBy: ADMIN });
+    }
+    expect(retryFailedJob).not.toHaveBeenCalled();
+  });
+
   it("requires an admin session", async () => {
     const { taskId } = await candidateTask();
     requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));

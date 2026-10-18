@@ -7,7 +7,7 @@ import { retryFailedJob } from "@/lib/domain/jobs-view";
 import { DecisionNotAllowed, decideReviewTask, reviewDecisionSchema, TaskNotOpen } from "@/lib/domain/review-decisions";
 import { nextTaskHref } from "@/lib/domain/review-view";
 import { getBoss } from "@/lib/jobs/boss";
-import { QUEUES } from "@/lib/jobs/queues";
+import type { QueueName } from "@/lib/jobs/queues";
 import { requireAdmin } from "@/lib/security/require-admin";
 
 const fieldsSchema = z.object({
@@ -37,8 +37,7 @@ export async function decideAction(formData: FormData): Promise<void> {
   });
   const decision = reviewDecisionSchema.parse(fields.decision);
   const db = getDb();
-  const retryJob = async (queue: string, jobId: string) =>
-    retryFailedJob(db, await getBoss(), z.enum(QUEUES).parse(queue), jobId);
+  const retryJob = async (queue: QueueName, jobId: string) => retryFailedJob(db, await getBoss(), queue, jobId);
 
   let target: string;
   try {

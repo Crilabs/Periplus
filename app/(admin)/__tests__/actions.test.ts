@@ -193,6 +193,19 @@ describe("admin server actions", () => {
       await expect(startGazetteerAction({ areaKey: "saronic" })).rejects.toThrow("NEXT_REDIRECT");
       expect(startRun).toHaveBeenCalledTimes(2);
     }));
+  it("startSeedAction rejects a payload with both fields or an unknown tile next to a valid area", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      // Open sea outside the pilot box, at a spot no other test uses.
+      const tileId = tileIdFor(24.61, 32.83);
+      await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(24.5, 32.75, 24.75, 33.0, 4326)` });
+      await expect(startSeedAction(form({ tileId, areaKey: "saronic" }))).rejects.toThrow();
+      await expect(startSeedAction({ tileId: "q025:0:719", areaKey: "saronic" })).rejects.toThrow();
+      await expect(startSeedAction(form({ tileId: "q025:813", areaKey: "saronic" }))).rejects.toThrow();
+      expect(startRun).not.toHaveBeenCalled();
+      expect(redirect).not.toHaveBeenCalled();
+    }));
+
   it("toggleComparisonAction: validates input, adds and removes a confirmed place", () =>
     withRollback(async (tx) => {
       currentDb = tx;

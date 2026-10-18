@@ -7,7 +7,7 @@ import { retryFailedJob } from "@/lib/domain/jobs-view";
 import { openTaskFor } from "@/lib/domain/review";
 import { decideReviewTask, TaskNotOpen } from "@/lib/domain/review-decisions";
 import { getBoss } from "@/lib/jobs/boss";
-import { QUEUES } from "@/lib/jobs/queues";
+import { QUEUES, type QueueName } from "@/lib/jobs/queues";
 import { requireAdmin } from "@/lib/security/require-admin";
 
 const retrySchema = z.object({ queue: z.enum(QUEUES), jobId: z.uuid() });
@@ -19,8 +19,7 @@ export async function retryJobAction(input: FormData | { queue: string; jobId: s
   const db = getDb();
   const boss = await getBoss();
   const retry = () => retryFailedJob(db, boss, queue, jobId);
-  const retryTaskJob = (taskQueue: string, taskJobId: string) =>
-    retryFailedJob(db, boss, z.enum(QUEUES).parse(taskQueue), taskJobId);
+  const retryTaskJob = (taskQueue: QueueName, taskJobId: string) => retryFailedJob(db, boss, taskQueue, taskJobId);
   const task = await openTaskFor(db, "failed_job", jobId);
   try {
     if (task) {
