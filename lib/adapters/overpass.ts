@@ -1,0 +1,102 @@
+import type { CategoriesConfig, GazetteerConfig } from "@/lib/config";
+import type { Bbox } from "@/lib/domain/tiles";
+import { RetryableHttpError, httpCall, type CallContext, type Transport } from "./http";
+
+export type OverpassElement = {
+  type: "node" | "way" | "relation";
+  id: number;
+  tags?: Record<string, string>;
+  lat?: number;
+  lon?: number;
+  geometry?: Array<{ lat: number; lon: number }>;
+  members?: Array<{ type: string; ref: number; role: string; geometry?: Array<{ lat: number; lon: number }> }>;
+};
+
+/** Escapes a string for use inside a double-quoted Overpass QL literal. */
+function qlString(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+/** Escapes regex metacharacters so a configured tag value matches literally. */
+function regexLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Overpass QL for the gazetteer sources of one box (Spec 03, step 1): seas and gulfs, bays, islands,
+ * coastal settlements, capes, straits, harbours, marinas and the named POIs of every category rule.
+ */
+export function buildGazetteerQuery(bbox: Bbox, categories: CategoriesConfig, timeoutSeconds: number): string {
+  const [west, south, east, north] = bbox;
+  const box = `(${south},${west},${north},${east})`;
+  const statements = [
+    'relation["place"~"sea|gulf"]',
+    'relation["natural"="bay"]',
+    'way["natural"="bay"]',
+    'nwr["place"~"^(island|islet|archipelago)$"]',
+    'node["place"~"^(town|village|hamlet)$"]',
+    'nwr["natural"~"^(bay|cape|strait|peninsula)$"]',
+    'nwr["seamark:type"~"^(harbour|anchorage|mooring|small_craft_facility)$"]',
+    'nwr["leisure"="marina"]',
+    'nwr["harbour"]',
+    ...categories.osm.map((rule) => {
+      const key = qlString(rule.key);
+      const filter =
+        rule.values === "*"
+          ? `["${key}"]`
+          : `["${key}"~"^(${rule.values.map((v) => qlString(regexLiteral(v))).join("|")})$"]`;
+      return `nwr${filter}["name"]`;
+    }),
+  ];
+  return [
+    `[out:json][timeout:${timeoutSeconds}];`,
+    "(",
+    ...statements.map((s) => `  ${s}${box};`),
+    ");",
+    "out tags geom;",
+    "",
+  ].join("\n");
+}
+
+/** Client-side margin over the server-side `[timeout:…]`, so Overpass can answer with its own remark. */
+const CLIENT_TIMEOUT_MARGIN_MS = 30_000;
+
+/**
+ * Runs one Overpass query. Overpass reports overload and timeouts as HTML or as a `remark` in an
+ * otherwise valid 200 answer; both become `RetryableHttpError`.
+ */
+export async function overpassQuery(
+  transport: Transport,
+  ql: string,
+  ctx: CallContext,
+  cfg: GazetteerConfig["overpass"],
+): Promise<{ raw: string; elements: OverpassElement[] }> {
+  const res = await httpCall(
+    transport,
+    {
+      service: "overpass",
+      operation: "interpreter",
+      url: cfg.endpoint,
+      method: "POST",
+      body: `data=${encodeURIComponent(ql)}`,
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      timeoutMs: cfg.timeoutSeconds * 1000 + CLIENT_TIMEOUT_MARGIN_MS,
+      ratePerMinute: cfg.ratePerMinute,
+    },
+    ctx,
+  );
+  const raw = res.text();
+  let parsed: { elements?: unknown; remark?: unknown };
+  try {
+    parsed = JSON.parse(raw) as typeof parsed;
+  } catch (error) {
+    throw new RetryableHttpError(`overpass returned invalid JSON (${raw.length} chars)`, res.status, { cause: error });
+  }
+  if (typeof parsed.remark === "string" && /runtime error|timed out/i.test(parsed.remark)) {
+    throw new RetryableHttpError(`overpass: ${parsed.remark}`, res.status);
+  }
+  if (!Array.isArray(parsed.elements)) {
+    throw new RetryableHttpError("overpass answer has no elements array", res.status);
+  }
+  return { raw, elements: parsed.elements as OverpassElement[] };
+}
