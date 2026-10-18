@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { testDb } from "@/test/db";
@@ -10,7 +10,7 @@ import { createBoss } from "@/lib/jobs/boss";
 import { isQueuePaused, resumeQueue } from "@/lib/jobs/controls";
 import { advanceHandler } from "@/lib/jobs/handlers/run-advance";
 import { pingHandler, pingStage } from "@/lib/jobs/handlers/system-ping";
-import { STAGES } from "@/lib/jobs/registry";
+import { STAGES } from "@/lib/jobs/stages";
 import { DEAD_LETTER_QUEUE, deadLetterQueueOptions, ensureQueues, QUEUES } from "@/lib/jobs/queues";
 import { startWorkers, type JobData, type JobHandler } from "@/lib/jobs/worker";
 import { enqueueStageJobs, startRun } from "@/lib/pipeline/runs";
@@ -111,6 +111,14 @@ beforeAll(async () => {
       throw new Error("explode plan failed");
     },
   };
+  // Test-only stage that plans no jobs, to exercise chaining across a zero-job stage.
+  STAGES.empty = {
+    name: "empty",
+    queue: "system.ping",
+    async plan() {
+      return [];
+    },
+  };
   boss = createBoss(process.env.TEST_DATABASE_URL!);
   await boss.start();
   await ensureQueues(boss, queueConfig);
@@ -125,6 +133,7 @@ beforeAll(async () => {
 afterAll(async () => {
   delete STAGES.ping2;
   delete STAGES.explode;
+  delete STAGES.empty;
   await workers?.stop();
   for (const q of QUEUES) await resumeQueue(db, q, "test");
   await boss?.stop({ graceful: false });
@@ -246,6 +255,38 @@ describe("worker", () => {
     expect(run.failureReason).toContain("explode plan failed");
     expect(run.stages).toMatchObject([
       { stage: "ping", total: 2, done: 2, failed: 0, status: "finished" },
+      { stage: "explode", status: "pending" },
+    ]);
+  }, 40_000);
+
+  it("a failing plan after a zero-job stage fails the run with one failed_job task", async () => {
+    const { id } = await startRun(db, boss, {
+      kind: "system",
+      scope: scope(),
+      stages: ["ping", "empty", "explode"],
+      params: { count: 1 },
+      triggeredBy: "test",
+    });
+    await waitFor(async () => (await getRun(db, id))!.status === "failed", 25_000);
+
+    const advanceJobs = await boss.findJobs<JobData>("run.advance", { data: { runId: id } });
+    expect(advanceJobs.map((j) => [j.data.nextStage, j.state]).sort()).toEqual([
+      ["empty", "completed"],
+      ["explode", "failed"],
+    ]);
+
+    const tasks = await db
+      .select()
+      .from(reviewTasks)
+      .where(and(eq(reviewTasks.kind, "failed_job"), sql`${reviewTasks.context}->>'runId' = ${id}`));
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].context).toMatchObject({ queue: "run.advance", runId: id });
+
+    const run = (await getRun(db, id))!;
+    expect(run.failureReason).toContain("explode plan failed");
+    expect(run.stages).toMatchObject([
+      { stage: "ping", total: 1, done: 1, status: "finished" },
+      { stage: "empty", total: 0, status: "finished" },
       { stage: "explode", status: "pending" },
     ]);
   }, 40_000);
