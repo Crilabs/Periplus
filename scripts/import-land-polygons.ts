@@ -3,8 +3,8 @@ import { fileURLToPath } from "node:url";
 import { open } from "shapefile";
 import { areaByKey, getConfig } from "../lib/config";
 import { createDb } from "../lib/db/client";
+import { areaBbox } from "../lib/domain/gazetteer/areas";
 import { bufferBbox, importLandPolygons } from "../lib/domain/gazetteer/land";
-import type { Bbox } from "../lib/domain/tiles";
 
 const USAGE = "usage: import-land-polygons.ts --shp <path/land_polygons.shp> --area <key> [--version <YYYY-MM-DD>]";
 
@@ -24,18 +24,6 @@ export function parseArgs(argv: string[]): { shp: string; area: string; version:
   const version = values.get("--version") ?? new Date().toISOString().slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(version)) throw new Error(`--version must be YYYY-MM-DD, got ${version}`);
   return { shp, area, version };
-}
-
-/** Union of the area polygon's box and its tile box. */
-export function areaBbox(area: { polygon: GeoJSON.Polygon | GeoJSON.MultiPolygon; tileBbox: Bbox | null }): Bbox {
-  const points = (
-    area.polygon.type === "Polygon" ? area.polygon.coordinates.flat() : area.polygon.coordinates.flat(2)
-  );
-  const lons = points.map((p) => p[0]);
-  const lats = points.map((p) => p[1]);
-  const box: Bbox = [Math.min(...lons), Math.min(...lats), Math.max(...lons), Math.max(...lats)];
-  const t = area.tileBbox;
-  return t ? [Math.min(box[0], t[0]), Math.min(box[1], t[1]), Math.max(box[2], t[2]), Math.max(box[3], t[3])] : box;
 }
 
 async function* readShapefile(shp: string): AsyncGenerator<GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>> {

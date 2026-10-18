@@ -25,10 +25,11 @@ function area(key = "osm-test"): AreaConfig {
   };
 }
 
-const LAND: GeoJSON.Polygon = {
-  type: "Polygon",
-  coordinates: [[[24.5, 34.9], [25.7, 34.9], [25.7, 35.35], [24.5, 35.35], [24.5, 34.9]]],
-};
+// The land south of 35.35 N as two pieces sharing the cut line 25.0 E, like the split land polygons dataset.
+const LAND: GeoJSON.Polygon[] = [
+  { type: "Polygon", coordinates: [[[24.5, 34.9], [25.0, 34.9], [25.0, 35.35], [24.5, 35.35], [24.5, 34.9]]] },
+  { type: "Polygon", coordinates: [[[25.0, 34.9], [25.7, 34.9], [25.7, 35.35], [25.0, 35.35], [25.0, 34.9]]] },
+];
 
 const ID = 9_120_000_000;
 const osm = (type: string, n: number) => `${type}/${ID + n}`;
@@ -74,7 +75,7 @@ function transport(payload: unknown, seen: HttpRequest[] = [], status = 200): Tr
 
 /** Land polygon of the area and a full overpass token bucket, both rolled back with the test. */
 async function prepare(db: Db): Promise<void> {
-  await db.insert(landPolygons).values({ geom: sql`${geomFromGeoJson(LAND)}`, datasetVersion: "test" });
+  await db.insert(landPolygons).values(LAND.map((p) => ({ geom: sql`${geomFromGeoJson(p)}`, datasetVersion: "test" })));
   await db
     .insert(rateLimits)
     .values({ key: "http:overpass", tokens: 1_000_000, updatedAt: new Date() })
@@ -169,18 +170,89 @@ describe("importOsm", () => {
 
   it("no partial import: a failing upsert rolls back every object of the run", () =>
     withRollback(async (db) => {
+      // A real database failure on the last imported element, after six successful upserts.
+      await db.execute(sql`
+        CREATE FUNCTION test_fail_geo_object_insert() RETURNS trigger LANGUAGE plpgsql
+        AS $$ BEGIN RAISE EXCEPTION 'injected insert failure'; END $$`);
+      await db.execute(sql.raw(`
+        CREATE TRIGGER test_fail_geo_object_insert BEFORE INSERT ON geo_objects
+        FOR EACH ROW WHEN (NEW.osm_id = '${osm("node", 9)}') EXECUTE FUNCTION test_fail_geo_object_insert()`));
       await prepare(db);
-      const broken: OverpassElement = {
+      const error = await importOsm(db, { area: area(), runId: newId() }, { transport: transport({ elements: ELEMENTS }), archive }).then(
+        () => null,
+        (e: unknown) => e as Error & { cause?: Error },
+      );
+      expect(`${error?.message} ${error?.cause?.message}`).toContain("injected insert failure");
+      expect(await objects(db)).toEqual([]);
+      const names = await db.execute(sql`SELECT 1 FROM geo_names WHERE name IN ('Test Marina', 'Taverna Test')`);
+      expect(names.rows).toEqual([]);
+    }));
+
+  it("repairs a self-intersecting way, skips an unrepairable one and still imports the rest", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      const bowtie: OverpassElement = {
         type: "way",
         id: ID + 11,
+        tags: { natural: "bay", name: "Bowtie Bay" },
+        nodes: [1, 2, 3, 4, 1],
+        geometry: pts([[25.2, 35.36], [25.22, 35.38], [25.22, 35.36], [25.2, 35.38], [25.2, 35.36]]),
+      };
+      const broken: OverpassElement = {
+        type: "way",
+        id: ID + 12,
         tags: { natural: "bay", name: "Broken Bay" },
         nodes: [1],
         geometry: pts([[25.2, 35.36]]),
       };
-      await expect(
-        importOsm(db, { area: area(), runId: newId() }, { transport: transport({ elements: [...ELEMENTS, broken] }), archive }),
-      ).rejects.toThrow(`invalid geometry for ${osm("way", 11)}`);
-      expect(await objects(db, [...ALL, osm("way", 11)])).toEqual([]);
+      const result = await importOsm(
+        db,
+        { area: area(), runId: newId() },
+        { transport: transport({ elements: [...ELEMENTS, bowtie, broken] }), archive },
+      );
+      expect(result).toMatchObject({ created: 8, updated: 0, skipped: 4 });
+      const rows = await objects(db, [...ALL, osm("way", 11), osm("way", 12)]);
+      expect(rows.map((r) => r.osmId).sort()).toEqual([...IMPORTED, osm("way", 11)].sort());
+      const [repaired] = await db
+        .select({ type: sql<string>`GeometryType(${geoObjects.geom})`, valid: sql<boolean>`ST_IsValid(${geoObjects.geom})` })
+        .from(geoObjects)
+        .where(inArray(geoObjects.osmId, [osm("way", 11)]));
+      expect(repaired).toEqual({ type: "MULTIPOLYGON", valid: true });
+    }));
+
+  it("a settlement near a cut line between land pieces is inland, one near the water is coastal", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      const villages: OverpassElement[] = [
+        // ~500 m east of the shared edge 25.0 E, ~11 km from the water.
+        { type: "node", id: ID + 21, lat: 35.25, lon: 25.0055, tags: { place: "village", name: "Kopi" } },
+        // ~500 m south of the coastline 35.35 N.
+        { type: "node", id: ID + 22, lat: 35.3455, lon: 25.15, tags: { place: "village", name: "Akti" } },
+      ];
+      const result = await importOsm(db, { area: area(), runId: newId() }, { transport: transport({ elements: villages }), archive });
+      expect(result).toMatchObject({ created: 1, skipped: 1 });
+      const rows = await objects(db, [osm("node", 21), osm("node", 22)]);
+      expect(rows.map((r) => r.osmId)).toEqual([osm("node", 22)]);
+    }));
+
+  it("relations use inner and role-less members too: an island with a hole", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      const island: OverpassElement = {
+        type: "relation",
+        id: ID + 31,
+        tags: { type: "multipolygon", place: "island", name: "Ring Island" },
+        members: [
+          { type: "way", ref: 1, role: "", geometry: pts([[25.1, 35.4], [25.2, 35.4], [25.2, 35.48], [25.1, 35.48], [25.1, 35.4]]) },
+          { type: "way", ref: 2, role: "inner", geometry: pts([[25.13, 35.42], [25.17, 35.42], [25.17, 35.46], [25.13, 35.46], [25.13, 35.42]]) },
+        ],
+      };
+      await importOsm(db, { area: area(), runId: newId() }, { transport: transport({ elements: [island] }), archive });
+      const [row] = await db
+        .select({ type: sql<string>`GeometryType(${geoObjects.geom})`, holes: sql<number>`ST_NumInteriorRings(${geoObjects.geom})` })
+        .from(geoObjects)
+        .where(inArray(geoObjects.osmId, [osm("relation", 31)]));
+      expect(row).toEqual({ type: "POLYGON", holes: 1 });
     }));
 
   it("missing land polygons fails with a clear message", () =>

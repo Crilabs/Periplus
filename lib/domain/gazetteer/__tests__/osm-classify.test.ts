@@ -29,6 +29,16 @@ describe("classifyOsm", () => {
     expect(classifyOsm({ natural: "bay" }, categories)).toBeNull();
   });
 
+  it("a name the names cannot use (name:etymology, empty name) does not count as a name", () => {
+    expect(classifyOsm({ natural: "bay", "name:etymology": "after a saint" }, categories)).toBeNull();
+    expect(classifyOsm({ natural: "bay", name: "" }, categories)).toBeNull();
+    expect(classifyOsm({ natural: "bay", "name:en": "" }, categories)).toBeNull();
+  });
+
+  it("a bay relation with only a Greek name containing Κόλπος is a gulf", () => {
+    expect(classifyOsm({ natural: "bay", name: "Κόλπος Σουσακίου" }, categories, "relation")).toEqual({ type: "gulf" });
+  });
+
   it("an unmatched named object is null", () => {
     expect(classifyOsm({ amenity: "bench", name: "Bench" }, categories)).toBeNull();
   });

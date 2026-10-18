@@ -15,8 +15,9 @@ const ANCHORAGE_SEAMARKS = new Set(["anchorage", "mooring"]);
 /** Normalized (see `normalizeName`) words that make a bay relation a gulf. */
 const GULF_WORDS = ["gulf", "κολποσ"];
 
+/** A name `osmNames` turns into a primary name: non-empty `name` or `name:<lang>`. */
 function hasName(tags: Record<string, string>): boolean {
-  return Object.keys(tags).some((k) => k === "name" || k.startsWith("name:"));
+  return Object.entries(tags).some(([k, v]) => v.trim() !== "" && (k === "name" || LANGUAGE_NAME_KEY.test(k)));
 }
 
 function namedGulf(tags: Record<string, string>): boolean {
@@ -29,7 +30,7 @@ function namedGulf(tags: Record<string, string>): boolean {
  * Gazetteer type of an OSM object by its tags, first match wins: sea, gulf (also a bay relation named
  * "Gulf"/"Κόλπος"), island/islet/archipelago, cape, strait, peninsula (coast section), bay, harbour
  * (marina, harbour seamark, `harbour=*`), anchorage/mooring seamark (bay), town/village/hamlet
- * (settlement), then the first category rule (poi). Objects without `name`/`name:*` are null.
+ * (settlement), then the first category rule (poi). Objects without a non-empty `name`/`name:<lang>` are null.
  */
 export function classifyOsm(
   tags: Record<string, string>,
@@ -69,10 +70,10 @@ export function classifyOsm(
 export function osmNames(tags: Record<string, string>): NameDraft[] {
   const byScript = (name: string) => (isGreek(name) ? "el" : "und");
   const names: NameDraft[] = [];
-  if (tags.name) names.push({ name: tags.name, language: byScript(tags.name), origin: "osm" });
+  if (tags.name?.trim()) names.push({ name: tags.name, language: byScript(tags.name), origin: "osm" });
   for (const [key, value] of Object.entries(tags)) {
     const language = LANGUAGE_NAME_KEY.exec(key)?.[1];
-    if (language && value) names.push({ name: value, language, origin: "osm" });
+    if (language && value.trim()) names.push({ name: value, language, origin: "osm" });
   }
   for (const key of ALTERNATE_NAME_KEYS) {
     for (const name of (tags[key] ?? "").split(";").map((s) => s.trim())) {

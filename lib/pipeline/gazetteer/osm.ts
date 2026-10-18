@@ -9,8 +9,11 @@ import { areaBbox } from "@/lib/domain/gazetteer/areas";
 import { bufferBbox, landCoverage } from "@/lib/domain/gazetteer/land";
 import { classifyOsm, osmNames } from "@/lib/domain/gazetteer/osm-classify";
 import { upsertGeoObject, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
+import { createLogger } from "@/lib/logger";
 
 export const OSM_STAGE = "gazetteer.osm";
+
+const log = createLogger("gazetteer.osm");
 
 /** OSM tag keys kept in `geo_objects.tags`; `seamark:*` by prefix. */
 const KEPT_TAGS = new Set(["place", "natural", "leisure", "harbour", "mooring", "historic", "tourism", "amenity", "shop", "wikidata"]);
@@ -19,12 +22,15 @@ function keptTags(tags: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(tags).filter(([k]) => KEPT_TAGS.has(k) || k.startsWith("seamark:")));
 }
 
+/** Multipolygon member roles that carry rings; older relations leave the role empty. */
+const RING_ROLES = new Set(["outer", "inner", ""]);
+
 type Coord = { lat: number; lon: number };
 const position = (c: Coord): GeoJSON.Position => [c.lon, c.lat];
 
 /**
- * Node → point; way → polygon when closed, else line; relation → its `outer` member ways as lines.
- * Null when the element carries no geometry.
+ * Node → point; way → polygon when closed, else line; relation → its `outer`, `inner` and role-less
+ * member ways as lines (`ST_BuildArea` turns inner rings into holes). Null when there is no geometry.
  */
 function elementGeometry(el: OverpassElement): GeoObjectDraft["geometry"] | null {
   if (el.type === "node") {
@@ -39,23 +45,27 @@ function elementGeometry(el: OverpassElement): GeoObjectDraft["geometry"] | null
     return closed ? { type: "Polygon", coordinates: [coords] } : { type: "LineString", coordinates: coords };
   }
   const lines = (el.members ?? [])
-    .filter((m) => m.role === "outer" && m.geometry?.length)
+    .filter((m) => RING_ROLES.has(m.role) && m.geometry?.length)
     .map((m): GeoJSON.LineString => ({ type: "LineString", coordinates: m.geometry!.map(position) }));
   return lines.length > 0 ? { lines } : null;
 }
 
-/** The geometry lies within `distanceM` of the coastline (the land polygons' boundary), measured on the geography. */
+/**
+ * The geometry lies within `distanceM` of non-land: its geography buffer of `distanceM` is not fully
+ * covered by the union of the land polygons around it. Cut lines between land pieces (the split
+ * dataset, clipping at box edges) therefore do not count as coast.
+ */
 async function nearCoast(db: Db, geometry: GeoObjectDraft["geometry"], distanceM: number): Promise<boolean> {
   const g = geomFromGeoJson(
     "lines" in geometry ? { type: "MultiLineString", coordinates: geometry.lines.map((l) => l.coordinates) } : geometry,
   );
   // Index prefilter: distanceM / 50 km per degree over-covers longitude degrees up to ~60° latitude.
   const { rows } = await db.execute<{ near: boolean }>(sql`
-    SELECT EXISTS (
-      SELECT 1 FROM land_polygons l
+    SELECT NOT COALESCE((
+      SELECT ST_Covers(ST_Union(l.geom), ST_Buffer(${g}::geography, ${distanceM})::geometry)
+      FROM land_polygons l
       WHERE l.geom && ST_Expand(${g}, ${distanceM / 50_000})
-        AND ST_DWithin(${g}::geography, ST_Boundary(l.geom)::geography, ${distanceM})
-    ) AS near`);
+    ), false) AS near`);
   return rows[0]!.near;
 }
 
@@ -63,7 +73,8 @@ async function nearCoast(db: Db, geometry: GeoObjectDraft["geometry"], distanceM
  * Stage `gazetteer.osm` (Spec 03, step 1): queries Overpass for the area box plus `bboxBufferKm`,
  * archives the raw answer under `datasets/overpass/<area>/<YYYY-MM-DD>.json` and upserts every
  * classified, named element in one transaction (all or nothing). Settlements are kept only within
- * `coastDistanceM` of the coastline. Requires land polygons for the box.
+ * `coastDistanceM` of the water. An element whose geometry cannot be repaired is logged and skipped.
+ * Requires land polygons for the box.
  */
 export async function importOsm(
   db: Db,
@@ -98,14 +109,20 @@ export async function importOsm(
         result.skipped++;
         continue;
       }
+      const osmId = `${el.type}/${el.id}`;
       const r = await upsertGeoObject(tx, {
         ...cls,
         origin: "osm",
-        osmId: `${el.type}/${el.id}`,
+        osmId,
         tags: keptTags(tags),
         geometry,
         names: osmNames(tags),
       });
+      if ("skipped" in r) {
+        log.warn({ osmId, reason: r.skipped }, "skipped osm element with unusable geometry");
+        result.skipped++;
+        continue;
+      }
       if (r.created) result.created++;
       else if (r.changed) result.updated++;
       result.names += r.names;

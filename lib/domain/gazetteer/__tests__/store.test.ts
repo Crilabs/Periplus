@@ -2,8 +2,16 @@ import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { geoNames, geoObjects } from "@/lib/db/schema";
 import { isPublicId } from "@/lib/domain/ids";
-import { upsertGeoObject, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
+import { upsertGeoObject as upsertOrSkip, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
+import type { Db } from "@/lib/db/client";
 import { withRollback } from "@/test/db";
+
+/** upsertGeoObject for drafts with a usable geometry: fails the test when the draft is skipped. */
+async function upsertGeoObject(db: Db, draft: GeoObjectDraft) {
+  const r = await upsertOrSkip(db, draft);
+  if ("skipped" in r) throw new Error(`unexpected skip: ${r.skipped}`);
+  return r;
+}
 
 // Outside the pilot box 23.0-23.75 E x 37.0-38.0 N; osm ids unique per test so committed rows of other tests never match.
 const osmId = (kind: string) => `${kind}/${Date.now()}${Math.floor(Math.random() * 1e6)}`;
@@ -142,4 +150,42 @@ describe("upsertGeoObject", () => {
       expect(isPublicId(byId.get(ids.poi)!, "hl")).toBe(true);
       expect(byId.get(ids.bay)).toBeNull();
     }));
+
+  it("repairs a self-intersecting polygon (bowtie) into a valid area", () =>
+    withRollback(async (db) => {
+      const bowtie: GeoJSON.Polygon = {
+        type: "Polygon",
+        coordinates: [[[25.0, 35.3], [25.1, 35.4], [25.1, 35.3], [25.0, 35.4], [25.0, 35.3]]],
+      };
+      const draft: GeoObjectDraft = { type: "bay", origin: "osm", osmId: osmId("way"), geometry: bowtie, names: [] };
+      const r = await upsertGeoObject(db, draft);
+      const [row] = await db
+        .select({
+          type: sql<string>`GeometryType(${geoObjects.geom})`,
+          valid: sql<boolean>`ST_IsValid(${geoObjects.geom})`,
+          area: sql<number>`ST_Area(${geoObjects.geom})`,
+        })
+        .from(geoObjects)
+        .where(eq(geoObjects.id, r.id));
+      expect(row).toMatchObject({ type: "MULTIPOLYGON", valid: true });
+      expect(row!.area).toBeCloseTo(0.005, 6);
+      // The repaired geometry is stable: a rerun changes nothing.
+      const again = await upsertGeoObject(db, draft);
+      expect(again).toMatchObject({ id: r.id, created: false, changed: false });
+    }));
+
+  it("skips a geometry that cannot be repaired and stores nothing", () =>
+    withRollback(async (db) => {
+      const id = osmId("way");
+      const r = await upsertOrSkip(db, {
+        type: "bay",
+        origin: "osm",
+        osmId: id,
+        geometry: { type: "LineString", coordinates: [[25.2, 35.36]] },
+        names: [{ name: "Broken Bay", language: "en", origin: "osm" }],
+      });
+      expect(r).toEqual({ skipped: expect.any(String) });
+      expect(await db.select().from(geoObjects).where(eq(geoObjects.osmId, id))).toEqual([]);
+    }));
 });
+

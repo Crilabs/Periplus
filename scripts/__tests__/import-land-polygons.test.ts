@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { areaBbox, parseArgs } from "../import-land-polygons";
+import { parseArgs } from "../import-land-polygons";
 
 describe("import-land-polygons CLI", () => {
   it("parses flags and defaults the version to today", () => {
@@ -13,14 +13,5 @@ describe("import-land-polygons CLI", () => {
     expect(() => parseArgs(["--area", "a"])).toThrow(/usage/);
     expect(() => parseArgs(["--shp", "x", "--area", "a", "--foo", "1"])).toThrow(/usage/);
     expect(() => parseArgs(["--shp", "x", "--area", "a", "--version", "today"])).toThrow(/YYYY-MM-DD/);
-  });
-
-  it("unions the polygon box with the tile box", () => {
-    const polygon: GeoJSON.Polygon = {
-      type: "Polygon",
-      coordinates: [[[1, 2], [3, 2], [3, 4], [1, 4], [1, 2]]],
-    };
-    expect(areaBbox({ polygon, tileBbox: null })).toEqual([1, 2, 3, 4]);
-    expect(areaBbox({ polygon, tileBbox: [0, 3, 2, 5] })).toEqual([0, 2, 3, 5]);
   });
 });

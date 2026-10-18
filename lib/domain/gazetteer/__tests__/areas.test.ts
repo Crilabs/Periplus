@@ -4,7 +4,7 @@ import type { AreaConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { asGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects } from "@/lib/db/schema";
-import { syncAreas } from "@/lib/domain/gazetteer/areas";
+import { areaBbox, syncAreas } from "@/lib/domain/gazetteer/areas";
 import { isPublicId } from "@/lib/domain/ids";
 import { withRollback } from "@/test/db";
 
@@ -113,5 +113,13 @@ describe("syncAreas", () => {
       const en = (await validNames(tx, ids.get("test-area")!)).filter((n) => n.language === "en");
       expect(en).toEqual([{ name: "Gulf of Testing", language: "en", origin: "manual", isPreferred: true }]);
     });
+  });
+});
+
+describe("areaBbox", () => {
+  it("unions the polygon box with the tile box", () => {
+    const area = testArea();
+    expect(areaBbox(area)).toEqual([25.0, 35.0, 26.0, 36.0]);
+    expect(areaBbox({ ...area, tileBbox: [24.5, 35.5, 25.5, 36.5] })).toEqual([24.5, 35.0, 26.0, 36.5]);
   });
 });

@@ -35,10 +35,12 @@ function publicIdFor(type: GeoObjectType): string | null {
 }
 
 /**
- * The draft geometry as EWKB hex. Lines become `ST_BuildArea(ST_Collect(…))`; when they enclose no
- * area, the centroid of the lines. An invalid result (`ST_IsValid`) throws: it is never stored.
+ * The draft geometry as EWKB hex, or why it is unusable. Lines become `ST_BuildArea(ST_Collect(…))`;
+ * when they enclose no area, the centroid of the lines. An invalid geometry is repaired with
+ * `ST_MakeValid`, keeping only parts of its own dimension (an area stays an area, a line a line);
+ * when nothing valid remains, the reason is returned instead.
  */
-async function resolveGeometry(db: Db, geometry: GeoObjectDraft["geometry"], label: string): Promise<string> {
+async function resolveGeometry(db: Db, geometry: GeoObjectDraft["geometry"]): Promise<{ geom: string } | { invalid: string }> {
   let expr: SQL;
   if ("lines" in geometry) {
     const lines = sql.join(geometry.lines.map((l) => geomFromGeoJson(l)), sql`, `);
@@ -47,13 +49,18 @@ async function resolveGeometry(db: Db, geometry: GeoObjectDraft["geometry"], lab
   } else {
     expr = geomFromGeoJson(geometry);
   }
-  const { rows } = await db.execute<{ g: string; valid: boolean; reason: string }>(
-    sql`SELECT g, ST_IsValid(g) AS valid, ST_IsValidReason(g) AS reason FROM (SELECT ${expr} AS g) x`,
-  );
-  const { g, valid, reason } = rows[0]!;
-  if (!valid) throw new Error(`invalid geometry for ${label}: ${reason}`);
-  return g;
+  const { rows } = await db.execute<{ g: string | null; reason: string }>(sql`
+    SELECT CASE WHEN r IS NOT NULL AND NOT ST_IsEmpty(r) AND ST_IsValid(r) THEN r END AS g, reason
+    FROM (
+      SELECT CASE WHEN ST_IsValid(g) THEN g ELSE ST_CollectionExtract(ST_MakeValid(g), ST_Dimension(g) + 1) END AS r,
+             CASE WHEN ST_IsValid(g) THEN 'empty geometry' ELSE ST_IsValidReason(g) END AS reason
+      FROM (SELECT ${expr} AS g) x
+    ) y`);
+  const { g, reason } = rows[0]!;
+  return g ? { geom: g } : { invalid: reason };
 }
+
+export type UpsertResult = { id: string; created: boolean; changed: boolean; names: number };
 
 /** The first external ID present on the draft, as column and value. */
 function externalKey(draft: GeoObjectDraft) {
@@ -74,14 +81,13 @@ function sameTags(a: unknown, b: Record<string, string>): boolean {
  * `wikidata_id`, else `geonames_id`; without any ID always a new object), then adds its names.
  * An existing object is only updated when type, category, tags or geometry changed (the history
  * trigger records core-column changes); a delivered type without public ID gets one. Origin and
- * external IDs of an existing object are left alone. An invalid geometry throws.
+ * external IDs of an existing object are left alone. An invalid geometry is repaired; one that cannot
+ * be repaired writes nothing and returns `{ skipped: <reason> }`.
  */
-export async function upsertGeoObject(
-  db: Db,
-  draft: GeoObjectDraft,
-): Promise<{ id: string; created: boolean; changed: boolean; names: number }> {
-  const label = draft.osmId ?? draft.wikidataId ?? draft.geonamesId ?? `new ${draft.type}`;
-  const geom = await resolveGeometry(db, draft.geometry, label);
+export async function upsertGeoObject(db: Db, draft: GeoObjectDraft): Promise<UpsertResult | { skipped: string }> {
+  const resolved = await resolveGeometry(db, draft.geometry);
+  if ("invalid" in resolved) return { skipped: resolved.invalid };
+  const { geom } = resolved;
   const tags = draft.tags ?? {};
   const category = draft.category ?? null;
   const key = externalKey(draft);
