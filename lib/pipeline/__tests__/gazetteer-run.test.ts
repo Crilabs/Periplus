@@ -223,4 +223,11 @@ describe("startGazetteerRun", () => {
         { queue: "tiles.ensure", data: { key: AREA, areaKey: AREA, runId: id, stage: "tiles.ensure" } },
       ]);
     }));
+
+  it("rejects an area that is not configured before creating a run", () =>
+    withRollback(async (db) => {
+      const boss = { insert: async () => [] } as unknown as PgBoss;
+      await expect(startGazetteerRun(db, boss, "nowhere-test", "test")).rejects.toThrow("Unknown area nowhere-test");
+      expect(await db.select().from(runs).where(eq(runs.scopeId, "nowhere-test"))).toEqual([]);
+    }));
 });

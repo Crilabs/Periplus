@@ -151,20 +151,31 @@ describe("admin server actions", () => {
     expect(startRun).not.toHaveBeenCalled();
   });
 
-  it("startSeedAction for an area starts an area-scoped seed run", async () => {
-    await startSeedAction(form({ areaKey: "saronic" }));
-    expect(startRun).toHaveBeenCalledWith(
-      db,
-      expect.anything(),
-      expect.objectContaining({
-        kind: "stage",
-        scope: { type: "area", id: "saronic" },
-        stages: ["seed.tile"],
-        params: { areaKey: "saronic" },
-        triggeredBy: "admin@example.invalid",
-      }),
-    );
-  });
+  it("startSeedAction for an area starts an area-scoped seed run", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      // The area needs its geo object (normally written by tiles.ensure) before a seed run may start.
+      const [area] = await tx
+        .select({ id: geoObjects.id })
+        .from(geoObjects)
+        .where(sql`${geoObjects.type} = 'area' and ${geoObjects.configKey} = 'saronic' and ${geoObjects.validTo} is null`);
+      if (!area) {
+        const geom = sql`${geomFromGeoJson({ type: "Point", coordinates: [24.61, 32.83] })}`;
+        await tx.insert(geoObjects).values({ type: "area", origin: "manual", configKey: "saronic", geom });
+      }
+      await startSeedAction(form({ areaKey: "saronic" }));
+      expect(startRun).toHaveBeenCalledWith(
+        tx,
+        expect.anything(),
+        expect.objectContaining({
+          kind: "stage",
+          scope: { type: "area", id: "saronic" },
+          stages: ["seed.tile"],
+          params: { areaKey: "saronic" },
+          triggeredBy: "admin@example.invalid",
+        }),
+      );
+    }));
 
   it("seed for a tile starts a tile-scoped run", () =>
     withRollback(async (tx) => {

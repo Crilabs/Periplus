@@ -1,7 +1,9 @@
 import { and, asc, eq } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
+import { areaByKey } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geoObjects, tiles } from "@/lib/db/schema";
+import { tileExists } from "@/lib/domain/geo-view";
 import { parseTileId } from "@/lib/domain/tiles";
 import { validAt } from "@/lib/domain/timeline";
 import { startRun } from "@/lib/pipeline/runs";
@@ -21,26 +23,44 @@ export async function seedTileIds(db: Db, params: Record<string, unknown>): Prom
     return params.tileIds as string[];
   }
   if (typeof params.areaKey !== "string" || params.areaKey === "") throw new Error("tileIds or areaKey is required");
-  const [area] = await db
-    .select({ id: geoObjects.id })
-    .from(geoObjects)
-    .where(and(eq(geoObjects.type, "area"), eq(geoObjects.configKey, params.areaKey), validAt(geoObjects)));
-  if (!area) throw new Error(`Unknown area ${params.areaKey}`);
+  const areaId = await areaGeoObjectId(db, params.areaKey);
+  if (!areaId) throw new Error(`Unknown area ${params.areaKey}`);
   const rows = await db
     .select({ id: tiles.id })
     .from(tiles)
-    .where(and(eq(tiles.areaId, area.id), eq(tiles.hasCoast, true), validAt(tiles)))
+    .where(and(eq(tiles.areaId, areaId), eq(tiles.hasCoast, true), validAt(tiles)))
     .orderBy(asc(tiles.id));
   return rows.map((r) => r.id);
 }
 
-/** Starts a seed run for one tile (scope `tile`) or for the coast tiles of an area (scope `area`). */
-export function startSeedRun(
+/** The valid geo object of the area `areaKey` (written by `tiles.ensure`); null before it exists. */
+async function areaGeoObjectId(db: Db, areaKey: string): Promise<string | null> {
+  const [area] = await db
+    .select({ id: geoObjects.id })
+    .from(geoObjects)
+    .where(and(eq(geoObjects.type, "area"), eq(geoObjects.configKey, areaKey), validAt(geoObjects)));
+  return area?.id ?? null;
+}
+
+/**
+ * Starts a seed run for one tile (scope `tile`) or for the coast tiles of an area (scope `area`). The scope
+ * is checked before the run exists, so a scope the run cannot plan leaves no queued run behind: the tile
+ * must exist; the area must be configured and already have its geo object.
+ */
+export async function startSeedRun(
   db: Db,
   boss: PgBoss,
   scope: { tileId: string } | { areaKey: string },
   triggeredBy: string,
 ): Promise<{ id: string }> {
+  if ("tileId" in scope) {
+    if (!(await tileExists(db, scope.tileId))) throw new Error(`Unknown tile ${scope.tileId}`);
+  } else {
+    areaByKey(scope.areaKey);
+    if (!(await areaGeoObjectId(db, scope.areaKey))) {
+      throw new Error(`Area ${scope.areaKey} has no geo object yet; build its gazetteer first`);
+    }
+  }
   const run =
     "tileId" in scope
       ? { scope: { type: "tile" as const, id: scope.tileId }, params: { tileIds: [scope.tileId] } }

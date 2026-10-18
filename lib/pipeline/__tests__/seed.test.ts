@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoObjects, places, runs, runStages, tileGeoObjects, tiles } from "@/lib/db/schema";
@@ -11,6 +11,28 @@ import { STAGES } from "@/lib/jobs/stages";
 import { createLogger } from "@/lib/logger";
 import { SEED_STAGE, startSeedRun } from "@/lib/pipeline/seed";
 import { withRollback } from "@/test/db";
+
+// The synthetic area "seed-test" joins the configured areas; everything else is the real config.
+vi.mock("@/lib/config", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/lib/config")>();
+  const testArea = {
+    ...original.getConfig().areas[0]!,
+    key: "seed-test",
+    polygon: { type: "Polygon" as const, coordinates: [[[27, 34], [28, 34], [28, 34.25], [27, 34.25], [27, 34]]] },
+    tileBbox: [27, 34, 28, 34.25] as [number, number, number, number],
+    coastSections: [],
+  };
+  const getConfig = () => ({ ...original.getConfig(), areas: [...original.getConfig().areas, testArea] });
+  return {
+    ...original,
+    getConfig,
+    areaByKey: (key: string) => {
+      const found = getConfig().areas.find((a) => a.key === key);
+      if (!found) throw new Error(`Unknown area ${key}`);
+      return found;
+    },
+  };
+});
 
 // Synthetic area "seed-test" outside the pilot box 23.0-23.75 E x 37.0-38.0 N (open sea, 27-28 E x 34 N).
 const AREA_KEY = "seed-test";
@@ -105,6 +127,7 @@ describe("stage seed.tile", () => {
 describe("startSeedRun", () => {
   it("creates a tile run and enqueues its seed job", () =>
     withRollback(async (db) => {
+      await insertTile(db, COAST_1, null, true);
       const { boss, inserted } = recordingBoss();
       const { id } = await startSeedRun(db, boss, { tileId: COAST_1 }, "test");
 
@@ -136,5 +159,34 @@ describe("startSeedRun", () => {
       expect(inserted).toEqual([
         { queue: "seed.tile", data: { key: COAST_1, tileId: COAST_1, runId: id, stage: "seed.tile" } },
       ]);
+    }));
+
+  it("rejects an unknown tile before creating a run", () =>
+    withRollback(async (db) => {
+      const { boss, inserted } = recordingBoss();
+      await expect(startSeedRun(db, boss, { tileId: COAST_1 }, "test")).rejects.toThrow(`Unknown tile ${COAST_1}`);
+      expect(await db.select().from(runs).where(eq(runs.scopeId, COAST_1))).toEqual([]);
+      expect(inserted).toEqual([]);
+    }));
+
+  it("rejects an area that is not configured before creating a run", () =>
+    withRollback(async (db) => {
+      await insertArea(db, "seed-unconfigured");
+      const { boss, inserted } = recordingBoss();
+      await expect(startSeedRun(db, boss, { areaKey: "seed-unconfigured" }, "test")).rejects.toThrow(
+        "Unknown area seed-unconfigured",
+      );
+      expect(await db.select().from(runs).where(eq(runs.scopeId, "seed-unconfigured"))).toEqual([]);
+      expect(inserted).toEqual([]);
+    }));
+
+  it("rejects a configured area without its geo object before creating a run", () =>
+    withRollback(async (db) => {
+      const { boss, inserted } = recordingBoss();
+      await expect(startSeedRun(db, boss, { areaKey: AREA_KEY }, "test")).rejects.toThrow(
+        `Area ${AREA_KEY} has no geo object yet`,
+      );
+      expect(await db.select().from(runs).where(eq(runs.scopeId, AREA_KEY))).toEqual([]);
+      expect(inserted).toEqual([]);
     }));
 });
