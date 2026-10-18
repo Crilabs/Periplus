@@ -1,7 +1,8 @@
 import { sql } from "drizzle-orm";
-import type { PgBoss } from "pg-boss";
+import { fromDrizzle, type PgBoss } from "pg-boss";
 import type { Db } from "@/lib/db/client";
-import { DEAD_LETTER_QUEUE, type QueueName } from "@/lib/jobs/queues";
+import { resumeRun } from "@/lib/domain/runs";
+import { DEAD_LETTER_QUEUE, RUN_ADVANCE_QUEUE, type QueueName } from "@/lib/jobs/queues";
 
 export type FailedJob = { id: string; queue: string; key: string; stage: string | null; error: string; failedAt: Date };
 
@@ -49,8 +50,21 @@ export async function failedJobsOfRun(db: Db, runId: string): Promise<FailedJob[
 
 /**
  * Sends a failed job back to its queue for one more attempt. An open `failed_job` review task stays open;
- * a later success flips the run outcome (see `recordJobOutcome`).
+ * a later success flips the run outcome (see `recordJobOutcome`). Retrying a failed `run.advance` job
+ * resumes its run in the same transaction (ruling T3-R2), so the run can finish again. A job that is no
+ * longer `failed` (e.g. a double click) is left alone.
  */
-export async function retryFailedJob(boss: PgBoss, queue: QueueName, jobId: string): Promise<void> {
-  await boss.retry(queue, jobId);
+export async function retryFailedJob(db: Db, boss: PgBoss, queue: QueueName, jobId: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    if (queue === RUN_ADVANCE_QUEUE) {
+      const [job] = (
+        await tx.execute<{ run_id: string | null }>(sql`
+          select data->>'runId' as run_id from pgboss.job
+          where name = ${queue} and id = ${jobId} and state = 'failed'
+          for update`)
+      ).rows;
+      if (job?.run_id) await resumeRun(tx, job.run_id);
+    }
+    await boss.retry(queue, jobId, { db: fromDrizzle(tx, sql) });
+  });
 }

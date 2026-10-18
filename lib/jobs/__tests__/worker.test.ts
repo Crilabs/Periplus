@@ -5,9 +5,10 @@ import { testDb } from "@/test/db";
 import { reviewTasks } from "@/lib/db/schema";
 import { BudgetExceeded } from "@/lib/domain/costs";
 import { newId } from "@/lib/domain/ids";
-import { beginStage, createRun, getRun } from "@/lib/domain/runs";
+import { beginStage, createRun, failRun, getRun } from "@/lib/domain/runs";
 import { createBoss } from "@/lib/jobs/boss";
 import { isQueuePaused, resumeQueue } from "@/lib/jobs/controls";
+import { createLogger } from "@/lib/logger";
 import { advanceHandler } from "@/lib/jobs/handlers/run-advance";
 import { pingHandler, pingStage } from "@/lib/jobs/handlers/system-ping";
 import { STAGES } from "@/lib/jobs/stages";
@@ -115,6 +116,15 @@ beforeAll(async () => {
       throw new Error("explode plan failed");
     },
   };
+  // Test-only stage whose planning fails until its `runId:flaky` marker is in `fixed`, then plans one ping.
+  STAGES.flaky = {
+    name: "flaky",
+    queue: "system.ping",
+    async plan(_db, run) {
+      if (!fixed.has(`${run.id}:flaky`)) throw new Error("flaky plan failed");
+      return [{ key: "0" }];
+    },
+  };
   // Test-only stage that plans no jobs, to exercise chaining across a zero-job stage.
   STAGES.empty = {
     name: "empty",
@@ -138,6 +148,7 @@ afterAll(async () => {
   delete STAGES.ping2;
   delete STAGES.explode;
   delete STAGES.empty;
+  delete STAGES.flaky;
   await workers?.stop();
   for (const q of QUEUES) await resumeQueue(db, q, "test");
   await boss?.stop({ graceful: false });
@@ -337,7 +348,7 @@ describe("worker", () => {
     expect(failed[0].error).toContain("not fixed yet: 1");
 
     fixed.add(`${id}:1`);
-    await retryFailedJob(boss, "system.ping", failed[0].id);
+    await retryFailedJob(db, boss, "system.ping", failed[0].id);
     expect((await boss.getJobById("system.ping", failed[0].id))?.state).not.toBe("failed");
 
     await waitFor(async () => (await boss.getJobById("system.ping", failed[0].id))?.state === "completed", 20_000);
@@ -364,12 +375,64 @@ describe("worker", () => {
     expect(job).toBeDefined();
 
     fixed.add(`${id}:0`);
-    await retryFailedJob(boss, "system.ping", job.id);
+    await retryFailedJob(db, boss, "system.ping", job.id);
     await waitFor(async () => (await getRun(db, id))!.status === "finished", 20_000);
     const run = (await getRun(db, id))!;
     expect(run.failureReason).toBeNull();
     expect(run.stages[0]).toMatchObject({ total: 1, done: 1, failed: 0 });
   }, 50_000);
+
+  it("retrying a failed stage transition resumes the run, which fails again or finishes", async () => {
+    const { id } = await startRun(db, boss, {
+      kind: "system",
+      scope: scope(),
+      stages: ["ping", "flaky", "ping2"],
+      params: { count: 1 },
+      triggeredBy: "test",
+    });
+    await waitFor(async () => (await getRun(db, id))!.status === "failed", 25_000);
+    const [advance] = await failedJobsOfRun(db, id);
+    expect(advance).toMatchObject({ queue: "run.advance", stage: null });
+
+    // A retry that fails again fails the run again with a fresh reason.
+    await retryFailedJob(db, boss, "run.advance", advance.id);
+    expect((await getRun(db, id))!).toMatchObject({ status: "running", failureReason: null, finishedAt: null });
+    await waitFor(async () => (await getRun(db, id))!.status === "failed", 20_000);
+    expect((await getRun(db, id))!.failureReason).toContain("flaky plan failed");
+
+    fixed.add(`${id}:flaky`);
+    await retryFailedJob(db, boss, "run.advance", advance.id);
+    await waitFor(async () => (await getRun(db, id))!.status === "finished", 25_000);
+    const run = (await getRun(db, id))!;
+    expect(run.failureReason).toBeNull();
+    expect(run.finishedAt).toBeInstanceOf(Date);
+    expect(run.stages).toMatchObject([
+      { stage: "ping", total: 1, done: 1, status: "finished" },
+      { stage: "flaky", total: 1, done: 1, status: "finished" },
+      { stage: "ping2", total: 1, done: 1, status: "finished" },
+    ]);
+    expect(await failedJobsOfRun(db, id)).toEqual([]);
+  }, 80_000);
+
+  it("a stray run.advance for a failed run enqueues nothing", async () => {
+    const { id } = await createRun(db, {
+      kind: "system",
+      scope: scope(),
+      stages: ["ping"],
+      params: { count: 2 },
+      triggeredBy: "test",
+    });
+    await failRun(db, id, "stage transition failed: boom");
+
+    await advanceHandler(
+      { runId: id, nextStage: "ping", key: `${id}:ping` },
+      { db, boss, log: createLogger("test"), jobId: newId(), runId: id },
+    );
+    const run = (await getRun(db, id))!;
+    expect(run).toMatchObject({ status: "failed", failureReason: "stage transition failed: boom" });
+    expect(run.stages[0]).toMatchObject({ status: "pending", total: 0 });
+    expect(await boss.findJobs("system.ping", { data: { runId: id } })).toEqual([]);
+  });
 
   it("enqueueing the same run stage twice does not duplicate jobs", async () => {
     const { id } = await createRun(db, {

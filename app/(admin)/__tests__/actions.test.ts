@@ -84,7 +84,7 @@ describe("admin server actions", () => {
     expect(retryFailedJob).not.toHaveBeenCalled();
 
     await retryJobAction(form({ queue: "system.ping", jobId }));
-    expect(retryFailedJob).toHaveBeenCalledWith(expect.anything(), "system.ping", jobId);
+    expect(retryFailedJob).toHaveBeenCalledWith(db, expect.anything(), "system.ping", jobId);
 
     requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
     await expect(retryJobAction({ queue: "system.ping", jobId })).rejects.toThrow("NEXT_REDIRECT");

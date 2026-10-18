@@ -4,13 +4,18 @@ import type { JobData, JobHandler } from "@/lib/jobs/worker";
 
 /**
  * Plans and enqueues the next stage of a run. A stage that is no longer pending was already advanced
- * (e.g. this job is repeated after its first attempt committed), so the job does nothing.
+ * (e.g. this job is repeated after its first attempt committed), so the job does nothing. Neither does a
+ * stray job for a failed run: only a retry through `retryFailedJob` resumes the run first.
  */
 export const advanceHandler: JobHandler<JobData> = async (data, ctx) => {
   const runId = String(data.runId);
   const nextStage = String(data.nextStage);
   const run = await getRun(ctx.db, runId);
   if (!run) throw new Error(`run ${runId} not found`);
+  if (run.status === "failed") {
+    ctx.log.info({ nextStage }, "run failed, skipping stage transition");
+    return;
+  }
   const stage = run.stages.find((s) => s.stage === nextStage);
   if (!stage) throw new Error(`run ${runId} has no stage ${nextStage}`);
   if (stage.status !== "pending") {

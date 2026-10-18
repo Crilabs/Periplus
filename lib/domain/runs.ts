@@ -109,7 +109,8 @@ const NOTHING_FINISHED = { stageFinished: false, nextStage: null, runFinished: f
  * - first outcome: counts it; the call that completes the stage finishes it and reports the follow-up;
  * - same outcome again: `recorded: false`, nothing changes;
  * - `done` after `failed` (e.g. a manual retry): rewrites the outcome and moves one count from `failed`
- *   to `done`, also on a finished stage, without any stage or run transition;
+ *   to `done`, also on a finished stage, without any stage transition; a run that failed only because its
+ *   last stage all failed becomes finished again (`reviveRun`, ruling T3-R1);
  * - `failed` after `done`: `recorded: false`, a success is never downgraded.
  */
 export async function recordJobOutcome(
@@ -202,6 +203,20 @@ export async function failRun(db: Db, runId: string, reason: string): Promise<vo
     .update(runs)
     .set({ status: "failed", finishedAt: sql`coalesce(${runs.finishedAt}, now())`, failureReason: reason })
     .where(and(eq(runs.id, runId), sql`${runs.failureReason} is null`));
+}
+
+/**
+ * Puts a failed run back to running, e.g. when its failed stage transition (`run.advance`) is retried:
+ * clears the reason and the end time, so the run ends again when its last stage finishes. Returns whether
+ * the run was failed.
+ */
+export async function resumeRun(db: Db, runId: string): Promise<boolean> {
+  const resumed = await db
+    .update(runs)
+    .set({ status: "running", failureReason: null, finishedAt: null })
+    .where(and(eq(runs.id, runId), eq(runs.status, "failed")))
+    .returning({ id: runs.id });
+  return resumed.length > 0;
 }
 
 type RunRow = typeof runs.$inferSelect;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { testDb } from "@/test/db";
 import { externalCalls } from "@/lib/db/schema";
-import { beginStage, createRun, failRun, getRun, listRuns, recordJobOutcome } from "@/lib/domain/runs";
+import { beginStage, createRun, failRun, getRun, listRuns, recordJobOutcome, resumeRun } from "@/lib/domain/runs";
 
 const db = testDb();
 
@@ -189,6 +189,28 @@ describe("runs", () => {
     const run = (await getRun(db, id))!;
     expect(run).toMatchObject({ status: "failed", failureReason: "stage transition failed: boom" });
     expect(run.finishedAt).toBeInstanceOf(Date);
+  });
+
+  it("resumeRun turns a failed run running again without reason or end time", async () => {
+    const { id } = await newRun(["a", "b"]);
+    await beginStage(db, id, "a", 1);
+    await failRun(db, id, "stage transition failed: boom");
+
+    expect(await resumeRun(db, id)).toBe(true);
+    const run = (await getRun(db, id))!;
+    expect(run).toMatchObject({ status: "running", failureReason: null, finishedAt: null });
+    expect(run.startedAt).toBeInstanceOf(Date);
+  });
+
+  it("resumeRun leaves a run that has not failed alone", async () => {
+    const { id } = await newRun(["a"]);
+    await beginStage(db, id, "a", 1);
+    await recordJobOutcome(db, id, "a", "x", "done");
+    const before = (await getRun(db, id))!;
+    expect(before.status).toBe("finished");
+
+    expect(await resumeRun(db, id)).toBe(false);
+    expect(await getRun(db, id)).toEqual(before);
   });
 
   it("sums external call costs into costEur", async () => {

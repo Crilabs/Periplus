@@ -108,10 +108,12 @@ export async function startWorkers(
           subjectId: jobId,
           context: { queue, key: job.data.key, runId, stage: job.data.stage, error },
         });
+        // A failed transition fails its run every time: after a manual retry resumed the run, the task of
+        // the first failure may still be open.
+        if (queue === RUN_ADVANCE_QUEUE && runId) await failRun(tx, runId, `stage transition failed: ${error}`);
         // Only the call that opened the task records the failure, so a retried dead-letter job counts once.
         if (!task.created) return;
         await settle(tx, job.data, "failed");
-        if (queue === RUN_ADVANCE_QUEUE && runId) await failRun(tx, runId, `stage transition failed: ${error}`);
       });
     } catch (err) {
       log.error({ err, jobId, runId, deadLetterJobId: job.id, attempt: job.retryCount + 1 }, "dead-letter handling failed");
