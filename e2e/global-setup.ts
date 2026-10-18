@@ -63,6 +63,12 @@ export default async function globalSetup(): Promise<void> {
       if (!/duplicate key|unique/i.test(String(error) + String((error as { cause?: unknown }).cause))) throw error;
     }
     process.env.E2E_REVIEW_PLACE = await createReviewCandidate(db);
+    // Pilot-area tests roll back, so the test database normally has no saronic area object (like a fresh
+    // installation before its first gazetteer run); the quality spec checks the page for either state.
+    const { rows } = await db.execute(
+      sql`select 1 from geo_objects where type = 'area' and config_key = 'saronic' and valid_to is null`,
+    );
+    process.env.E2E_SARONIC_AREA = rows.length > 0 ? "created" : "missing";
   } finally {
     await close();
   }

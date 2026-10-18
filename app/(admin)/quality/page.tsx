@@ -2,7 +2,7 @@ import Link from "next/link";
 import { z } from "zod";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
-import { COMPARISON_TARGET, comparisonSetSize, listComparisonCandidates } from "@/lib/domain/comparison";
+import { COMPARISON_TARGET, comparisonOverview } from "@/lib/domain/comparison";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { PLACE_KIND_LABELS } from "../_components/labels";
 import { toggleComparisonAction } from "./actions";
@@ -18,8 +18,8 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
   const query = querySchema.parse(await searchParams);
   const area = areas.find((a) => a.key === query.area) ?? areas[0];
   if (!area) return <p className="text-sm">Kein Revier konfiguriert.</p>;
-  const db = getDb();
-  const [candidates, size] = await Promise.all([listComparisonCandidates(db, area.key), comparisonSetSize(db, area.key)]);
+  const overview = await comparisonOverview(getDb(), area.key);
+  const { candidates, size } = overview ?? { candidates: [], size: 0 };
   const tileIds = [...new Set(candidates.flatMap((c) => (c.tileId ? [c.tileId] : [])))];
   const tile = tileIds.includes(query.tile ?? "") ? query.tile : undefined;
   const shown = tile ? candidates.filter((c) => c.tileId === tile) : candidates;
@@ -62,7 +62,14 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
             </li>
           ))}
         </ul>
-        {shown.length === 0 ? (
+        {!overview ? (
+          <p data-testid="area-missing">
+            Revier noch nicht angelegt –{" "}
+            <Link href="/runs" className="underline">
+              Gazetteer-Lauf starten
+            </Link>
+          </p>
+        ) : shown.length === 0 ? (
           <p>Keine bestätigten Orte.</p>
         ) : (
           <ul className="divide-y divide-neutral-200">

@@ -15,13 +15,30 @@ export type ComparisonCandidate = {
   inSet: boolean;
 };
 
-async function areaIdFor(db: Db, areaKey: string): Promise<string> {
+/** The valid area object of a configured area; null until a gazetteer run has created it. */
+async function findAreaId(db: Db, areaKey: string): Promise<string | null> {
   const [area] = await db
     .select({ id: geoObjects.id })
     .from(geoObjects)
     .where(and(eq(geoObjects.type, "area"), eq(geoObjects.configKey, areaKey), validAt(geoObjects)));
-  if (!area) throw new Error(`Unknown area ${areaKey}`);
-  return area.id;
+  return area?.id ?? null;
+}
+
+async function areaIdFor(db: Db, areaKey: string): Promise<string> {
+  const areaId = await findAreaId(db, areaKey);
+  if (!areaId) throw new Error(`Unknown area ${areaKey}`);
+  return areaId;
+}
+
+export type ComparisonOverview = { candidates: ComparisonCandidate[]; size: number };
+
+/**
+ * Candidates and set size of an area for the quality page; null when the area object does not exist yet
+ * (configured, but no gazetteer run so far), so the page can say so instead of failing.
+ */
+export async function comparisonOverview(db: Db, areaKey: string): Promise<ComparisonOverview | null> {
+  if (!(await findAreaId(db, areaKey))) return null;
+  return { candidates: await listComparisonCandidates(db, areaKey), size: await comparisonSetSize(db, areaKey) };
 }
 
 /** Confirmed, valid places in tiles labelled with the area, by tile and name. */

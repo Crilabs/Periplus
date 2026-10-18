@@ -5,6 +5,7 @@ import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects, places, tiles, type PlaceStatus } from "@/lib/db/schema";
 import {
   addToComparisonSet,
+  comparisonOverview,
   comparisonSetSize,
   listComparisonCandidates,
   removeFromComparisonSet,
@@ -109,5 +110,25 @@ describe("comparison set", () => {
       );
       const names = (res.rows as { column_name: string }[]).map((r) => r.column_name);
       expect(names).toEqual(["added_at", "added_by", "area_id", "place_id"]);
+    }));
+});
+
+describe("comparisonOverview", () => {
+  it("is null for a configured area without an area object (no gazetteer run yet)", () =>
+    withRollback(async (tx) => {
+      expect(await comparisonOverview(tx, `not-created-${newId()}`)).toBeNull();
+    }));
+
+  it("lists the candidates and the set size of an existing area", () =>
+    withRollback(async (tx) => {
+      const area = await insertArea(tx);
+      expect(await comparisonOverview(tx, area.key)).toEqual({ candidates: [], size: 0 });
+      await insertTile(tx, area.id);
+      const placeId = await insertPlace(tx, "confirmed", "Testbucht");
+      await addToComparisonSet(tx, placeId, area.key, BY);
+      expect(await comparisonOverview(tx, area.key)).toEqual({
+        candidates: [{ placeId, name: "Testbucht", kind: "anchorage", tileId: TILE, inSet: true }],
+        size: 1,
+      });
     }));
 });
