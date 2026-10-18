@@ -282,7 +282,12 @@ describe("importWikidata", () => {
       expect(result).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0 });
       const [row] = await db.select({ wikidataId: geoObjects.wikidataId }).from(geoObjects).where(eq(geoObjects.id, created.id));
       expect(row!.wikidataId).toBeNull();
-      expect(await db.select().from(reviewTasks).where(eq(reviewTasks.kind, "place_candidate"))).toEqual([]);
+      expect(
+        await db
+          .select()
+          .from(reviewTasks)
+          .where(and(eq(reviewTasks.kind, "place_candidate"), eq(reviewTasks.subjectType, "geo_object_pair"))),
+      ).toEqual([]);
     }));
 
   it("links an OSM tag only to an object of a compatible type", () =>

@@ -50,3 +50,12 @@ export async function hasDecidedTask(db: Db, kind: ReviewKind, subjectId: string
     .limit(1);
   return row !== undefined;
 }
+
+/** The open task of this kind for this subject, if any. */
+export async function openTaskFor(db: Db, kind: ReviewKind, subjectId: string): Promise<{ id: string } | null> {
+  const [row] = await db
+    .select({ id: reviewTasks.id })
+    .from(reviewTasks)
+    .where(and(eq(reviewTasks.kind, kind), eq(reviewTasks.subjectId, subjectId), eq(reviewTasks.status, "open")));
+  return row ?? null;
+}

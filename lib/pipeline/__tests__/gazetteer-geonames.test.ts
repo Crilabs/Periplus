@@ -243,7 +243,12 @@ describe("importGeonames", () => {
           .from(geoObjects)
           .where(scope)
           .orderBy(geoObjects.id),
-        tasks: (await db.select({ id: reviewTasks.id }).from(reviewTasks).where(eq(reviewTasks.kind, "place_candidate"))).length,
+        tasks: (
+          await db
+            .select({ id: reviewTasks.id })
+            .from(reviewTasks)
+            .where(and(eq(reviewTasks.kind, "place_candidate"), eq(reviewTasks.subjectType, "geo_object_pair")))
+        ).length,
         objectHistory: await historyCount("geo_objects_history"),
         names: await db
           .select({ id: geoNames.id, validTo: geoNames.validTo, isPreferred: geoNames.isPreferred })

@@ -1,4 +1,8 @@
+import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { reviewDecisions, reviewTasks } from "@/lib/db/schema";
+import { newId } from "@/lib/domain/ids";
+import { createReviewTask } from "@/lib/domain/review";
 import { testDb } from "@/test/db";
 
 const db = testDb();
@@ -89,5 +93,23 @@ describe("admin server actions", () => {
     requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
     await expect(retryJobAction({ queue: "system.ping", jobId })).rejects.toThrow("NEXT_REDIRECT");
     expect(retryFailedJob).toHaveBeenCalledTimes(1);
+  });
+
+  it("retryJobAction decides an open failed_job task of the job with retry", async () => {
+    const jobId = newId();
+    const { id: taskId } = await createReviewTask(db, {
+      kind: "failed_job",
+      subjectType: "job",
+      subjectId: jobId,
+      context: { queue: "seed.tile" },
+    });
+    await retryJobAction({ queue: "seed.tile", jobId });
+    expect(retryFailedJob).toHaveBeenCalledTimes(1);
+    expect(retryFailedJob).toHaveBeenCalledWith(db, expect.anything(), "seed.tile", jobId);
+    const [task] = await db.select().from(reviewTasks).where(eq(reviewTasks.id, taskId));
+    expect(task!.status).toBe("decided");
+    const decisions = await db.select().from(reviewDecisions).where(eq(reviewDecisions.taskId, taskId));
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({ decision: { action: "retry" }, decidedBy: "admin@example.invalid" });
   });
 });
