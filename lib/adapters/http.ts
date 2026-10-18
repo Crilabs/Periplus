@@ -1,6 +1,3 @@
-import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import type { Db } from "@/lib/db/client";
 import { recordExternalCall } from "@/lib/domain/costs";
 import { takeToken } from "@/lib/domain/rate-limit";
@@ -152,57 +149,19 @@ export const fetchTransport: Transport = async (req) => {
   }
 };
 
-const DEFAULT_FIXTURE_DIR = "test/fixtures/http";
+let transportOverride: Transport | undefined;
 
-type FixtureFile = {
-  request: { method: string; url: string; body: string | null };
-  status: number;
-  bodyBase64: string;
-};
-
-/** sha256 hex of `method + " " + url + "\n" + body`: stable across processes and machines. */
-export function fixtureKey(req: Pick<HttpRequest, "method" | "url" | "body">): string {
-  return createHash("sha256")
-    .update(`${req.method ?? "GET"} ${req.url}\n${req.body ?? ""}`)
-    .digest("hex");
+/**
+ * Replaces the transport `getTransport()` hands out; `undefined` restores the default. The test setup
+ * (`test/setup.ts`) installs the fixture replay of `./http-fixtures` here, which production code never imports.
+ */
+export function setTransport(transport: Transport | undefined): void {
+  transportOverride = transport;
 }
 
-function fixturePath(dir: string, req: HttpRequest): string {
-  return join(dir, req.service, `${fixtureKey(req)}.json`);
-}
-
-/** Replays recorded responses from `<dir>/<service>/<key>.json`; an unrecorded request is an error. */
-export function fixtureTransport(dir: string = DEFAULT_FIXTURE_DIR): Transport {
-  return async (req) => {
-    let raw: string;
-    try {
-      raw = await readFile(fixturePath(dir, req), "utf8");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      throw new Error(`no fixture for ${req.service} ${req.method ?? "GET"} ${req.url}`);
-    }
-    const fixture = JSON.parse(raw) as FixtureFile;
-    return makeResponse(fixture.status, new Uint8Array(Buffer.from(fixture.bodyBase64, "base64")));
-  };
-}
-
-/** Passes requests to `inner` and writes every response as a fixture that `fixtureTransport` replays. */
-export function recordingTransport(inner: Transport, dir: string = DEFAULT_FIXTURE_DIR): Transport {
-  return async (req) => {
-    const res = await inner(req);
-    const fixture: FixtureFile = {
-      request: { method: req.method ?? "GET", url: req.url, body: req.body ?? null },
-      status: res.status,
-      bodyBase64: Buffer.from(res.body).toString("base64"),
-    };
-    const file = fixturePath(dir, req);
-    await mkdir(join(dir, req.service), { recursive: true });
-    await writeFile(file, `${JSON.stringify(fixture, null, 2)}\n`);
-    return res;
-  };
-}
-
-/** The network everywhere except under test, where recorded fixtures are replayed. */
+/** The transport set with `setTransport`, else the network; under test it refuses: tests never call the network. */
 export function getTransport(): Transport {
-  return getEnv().NODE_ENV === "test" ? fixtureTransport() : fetchTransport;
+  if (transportOverride) return transportOverride;
+  if (getEnv().NODE_ENV === "test") throw new Error("no transport set under test: install one with setTransport");
+  return fetchTransport;
 }

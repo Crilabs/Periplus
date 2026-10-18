@@ -9,14 +9,15 @@ import { newId } from "@/lib/domain/ids";
 import {
   HttpError,
   RetryableHttpError,
-  fixtureKey,
-  fixtureTransport,
+  fetchTransport,
+  getTransport,
   httpCall,
   makeResponse,
-  recordingTransport,
+  setTransport,
   type HttpRequest,
   type Transport,
 } from "@/lib/adapters/http";
+import { fixtureKey, fixtureTransport, recordingTransport } from "@/lib/adapters/http-fixtures";
 
 const db = testDb();
 
@@ -186,5 +187,25 @@ describe("fixtures", () => {
     const replayed = await fixtureTransport(dir)(req);
     expect(replayed.status).toBe(418);
     expect(Array.from(replayed.body)).toEqual(Array.from(bytes));
+  });
+});
+
+describe("getTransport", () => {
+  it("hands out the transport installed by the test setup and refuses under test without one", async () => {
+    const installed = getTransport();
+    expect(installed).not.toBe(fetchTransport);
+    // test/setup.ts installs the fixture replay: an unrecorded request fails instead of reaching the network.
+    await expect(installed({ service: "svc", operation: "op", url: "https://example.invalid/none", timeoutMs: 1 })).rejects.toThrow(
+      "no fixture for svc GET https://example.invalid/none",
+    );
+    try {
+      setTransport(undefined);
+      expect(() => getTransport()).toThrow("no transport set under test");
+      const stub = stubTransport(200);
+      setTransport(stub);
+      expect(getTransport()).toBe(stub);
+    } finally {
+      setTransport(installed);
+    }
   });
 });

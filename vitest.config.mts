@@ -24,6 +24,7 @@ export default defineConfig({
       { extends: true, test: { name: "pilot-run", include: PILOT_RUN_TESTS, sequence: { groupOrder: 1 } } },
     ],
     globalSetup: ["test/global-setup.ts"],
+    setupFiles: ["test/setup.ts"],
     // Non-secret test defaults so tests run without a local .env file.
     env: {
       NODE_ENV: "test",

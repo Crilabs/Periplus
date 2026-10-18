@@ -5,14 +5,8 @@ import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
 import { unzipSync } from "fflate";
 import { createGeonamesSource } from "../lib/adapters/geonames";
-import {
-  fetchTransport,
-  fixtureTransport,
-  makeResponse,
-  recordingTransport,
-  RetryableHttpError,
-  type Transport,
-} from "../lib/adapters/http";
+import { fetchTransport, makeResponse, RetryableHttpError, type Transport } from "../lib/adapters/http";
+import { fixtureTransport, recordingTransport } from "../lib/adapters/http-fixtures";
 import type { Archive } from "../lib/adapters/s3";
 import { getConfig, type AreaConfig } from "../lib/config";
 import { areaConfigSchema } from "../lib/config/schemas";
