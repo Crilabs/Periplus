@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { unzipSync } from "fflate";
-import { httpCall, getTransport, type CallContext, type Transport } from "@/lib/adapters/http";
+import { httpCall, getTransport, RetryableHttpError, type CallContext, type Transport } from "@/lib/adapters/http";
 import { getArchive, type Archive } from "@/lib/adapters/s3";
 import { getConfig, type GazetteerConfig } from "@/lib/config";
 import { getEnv } from "@/lib/env";
@@ -80,13 +80,23 @@ export function parseGeonamesAltNames(text: string, ids: ReadonlySet<string>): G
   return out;
 }
 
+/** The named entry of a zip, or null when the bytes are no readable zip or lack the entry. */
+function zipEntry(zip: Uint8Array, entryName: string): Uint8Array | null {
+  try {
+    return unzipSync(zip, { filter: (f) => f.name === entryName })[entryName] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function monthKey(now: Date): string {
   return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 /**
  * GeoNames country dumps, refreshed once per calendar month: the zip is archived under
- * `datasets/geonames/<C>[-alternate]/<YYYY-MM>.zip` and reused for the rest of that month.
+ * `datasets/geonames/<C>[-alternate]/<YYYY-MM>.zip` and reused for the rest of that month. A download
+ * is archived only once its `<C>.txt` entry was read; one that is no such zip is a `RetryableHttpError`.
  */
 export function createGeonamesSource(deps: {
   transport: Transport;
@@ -100,20 +110,22 @@ export function createGeonamesSource(deps: {
 
   async function dumpText(country: string, alternate: boolean): Promise<string> {
     const key = `datasets/geonames/${country}${alternate ? "-alternate" : ""}/${monthKey(deps.now ?? new Date())}.zip`;
-    let zip = await archive.get(key);
-    if (!zip) {
-      const url = `${cfg.baseUrl}/${alternate ? "alternatenames/" : ""}${country}.zip`;
-      const res = await httpCall(
-        transport,
-        { service: "geonames", operation: alternate ? "alternate-names" : "dump", url, timeoutMs: DOWNLOAD_TIMEOUT_MS },
-        ctx,
-      );
-      zip = res.body;
-      await archive.put(key, zip, "application/zip");
-    }
     const entryName = `${country}.txt`;
-    const entry = unzipSync(zip, { filter: (f) => f.name === entryName })[entryName];
-    if (!entry) throw new Error(`${entryName} missing in GeoNames archive ${key}`);
+    // A broken archived zip (from before downloads were checked) counts as a cache miss and is replaced.
+    const cached = await archive.get(key);
+    const cachedEntry = cached && zipEntry(cached, entryName);
+    if (cachedEntry) return new TextDecoder().decode(cachedEntry);
+
+    const url = `${cfg.baseUrl}/${alternate ? "alternatenames/" : ""}${country}.zip`;
+    const res = await httpCall(
+      transport,
+      { service: "geonames", operation: alternate ? "alternate-names" : "dump", url, timeoutMs: DOWNLOAD_TIMEOUT_MS },
+      ctx,
+    );
+    // Check before archiving: an HTML error page or a cut-off zip answered with 200 must not become the month's dump.
+    const entry = zipEntry(res.body, entryName);
+    if (!entry) throw new RetryableHttpError(`GeoNames download ${url} is no zip with ${entryName}`, res.status);
+    await archive.put(key, res.body, "application/zip");
     return new TextDecoder().decode(entry);
   }
 

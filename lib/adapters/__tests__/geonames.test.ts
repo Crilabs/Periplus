@@ -3,7 +3,7 @@ import { zipSync, strToU8 } from "fflate";
 import { beforeAll, describe, expect, it } from "vitest";
 import { testDb } from "@/test/db";
 import { testArchive } from "@/test/s3";
-import { makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
+import { makeResponse, RetryableHttpError, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import { createGeonamesSource, fixtureGeonamesSource } from "@/lib/adapters/geonames";
 import { newId } from "@/lib/domain/ids";
 import { getConfig } from "@/lib/config";
@@ -49,9 +49,71 @@ describe("fixture source", () => {
   });
 });
 
+const keyOf = (month: Date, alternate = false) =>
+  `datasets/geonames/GR${alternate ? "-alternate" : ""}/${month.toISOString().slice(0, 7)}.zip`;
+
+/** A random far-future month with nothing archived yet, so the shared test bucket cannot satisfy the cache. */
+async function freshMonth(): Promise<Date> {
+  for (;;) {
+    const month = new Date(Date.UTC(3000 + Math.floor(Math.random() * 6000), Math.floor(Math.random() * 12), 15));
+    if (!(await testArchive().exists(keyOf(month))) && !(await testArchive().exists(keyOf(month, true)))) return month;
+  }
+}
+
+const MAIN_ZIP = () => zipSync({ "GR.txt": readFileSync("test/fixtures/geonames/GR.txt") });
+
+/** Answers each request with the next body of `bodies` (status 200) and records it. */
+function sequence(bodies: Uint8Array[]): Transport & { seen: HttpRequest[] } {
+  const seen: HttpRequest[] = [];
+  const t = (async (req: HttpRequest) => {
+    seen.push(req);
+    const body = bodies[seen.length - 1];
+    if (!body) throw new Error(`unexpected request ${seen.length}: ${req.url}`);
+    return makeResponse(200, body);
+  }) as Transport & { seen: HttpRequest[] };
+  t.seen = seen;
+  return t;
+}
+
 describe("createGeonamesSource", () => {
   beforeAll(async () => {
     await testArchive().ensureBucket();
+  });
+
+  const source = (transport: Transport, now: Date) =>
+    createGeonamesSource({ transport, archive: testArchive(), ctx: { db, runId: newId(), stage: "geonames" }, cfg: cfg(), now });
+
+  it("does not archive a 200 answer that is HTML or a cut-off zip, and loads again next time", async () => {
+    const now = await freshMonth();
+    const zip = MAIN_ZIP();
+    const html = strToU8("<html><body>Service temporarily unavailable</body></html>");
+    const truncated = zip.slice(0, Math.floor(zip.length / 2));
+    const transport = sequence([html, truncated, zip]);
+
+    await expect(source(transport, now).rows("GR", AEGINA_WEST)).rejects.toBeInstanceOf(RetryableHttpError);
+    expect(await testArchive().exists(keyOf(now))).toBe(false);
+    await expect(source(transport, now).rows("GR", AEGINA_WEST)).rejects.toBeInstanceOf(RetryableHttpError);
+    expect(await testArchive().exists(keyOf(now))).toBe(false);
+
+    const rows = await source(transport, now).rows("GR", AEGINA_WEST);
+    expect(rows.map((r) => r.name)).toContain("Pérdhika");
+    expect(transport.seen).toHaveLength(3);
+    expect(await testArchive().get(keyOf(now))).toEqual(zip);
+  });
+
+  it("treats a broken archived zip as a cache miss and replaces it", async () => {
+    const now = await freshMonth();
+    await testArchive().put(keyOf(now), strToU8("<html>not a zip</html>"), "application/zip");
+    const zip = MAIN_ZIP();
+    const transport = sequence([zip]);
+
+    const rows = await source(transport, now).rows("GR", AEGINA_WEST);
+    expect(rows.map((r) => r.name)).toContain("Pérdhika");
+    expect(transport.seen).toHaveLength(1);
+    expect(await testArchive().get(keyOf(now))).toEqual(zip);
+    // The replaced archive now serves the month without another download.
+    await source(transport, now).rows("GR", AEGINA_WEST);
+    expect(transport.seen).toHaveLength(1);
   });
 
   it("downloads once per month and reuses the archived zip", async () => {
@@ -69,8 +131,7 @@ describe("createGeonamesSource", () => {
     };
     const config = cfg();
     const runId = newId();
-    // A random far-future month keeps the shared test bucket from satisfying the cache by accident.
-    const now = new Date(Date.UTC(3000 + Math.floor(Math.random() * 6000), Math.floor(Math.random() * 12), 15));
+    const now = await freshMonth();
     const make = () => createGeonamesSource({ transport, archive: testArchive(), ctx: { db, runId, stage: "geonames" }, cfg: config, now });
 
     const first = await make().rows("GR", AEGINA_WEST);
