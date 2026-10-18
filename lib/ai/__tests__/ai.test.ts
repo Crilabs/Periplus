@@ -3,7 +3,7 @@ import { desc, eq } from "drizzle-orm";
 import { testDb } from "@/test/db";
 import { externalCalls } from "@/lib/db/schema";
 import { BudgetExceeded, recordExternalCall } from "@/lib/domain/costs";
-import type { AppConfig } from "@/lib/config";
+import { loadConfig, type AppConfig } from "@/lib/config";
 import { loadPrompt, renderPrompt } from "@/lib/ai/prompts";
 import { MockModel } from "@/lib/ai/mock";
 import { createAnthropicClient, type AnthropicMessagesApi } from "@/lib/ai/anthropic";
@@ -13,6 +13,7 @@ import { echoTask } from "@/lib/ai/tasks/system-echo";
 const db = testDb();
 
 const config: AppConfig = {
+  ...loadConfig("config"),
   queues: {},
   budgets: {
     anthropic: { dailyEur: 0.01 },
