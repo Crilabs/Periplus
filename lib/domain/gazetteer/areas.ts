@@ -5,7 +5,31 @@ import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects } from "@/lib/db/schema";
 import { newPublicId } from "@/lib/domain/ids";
+import type { Bbox } from "@/lib/domain/tiles";
 import { addNames } from "./names";
+
+/** Bounding box of a polygon's outer rings. */
+export function polygonBbox(polygon: AreaConfig["polygon"]): Bbox {
+  const rings = polygon.type === "Polygon" ? [polygon.coordinates] : polygon.coordinates;
+  let [west, south, east, north] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const ring of rings) {
+    for (const [x, y] of ring[0]) {
+      west = Math.min(west, x);
+      east = Math.max(east, x);
+      south = Math.min(south, y);
+      north = Math.max(north, y);
+    }
+  }
+  return [west, south, east, north];
+}
+
+/** The area's bounding box: its polygon's box, widened to cover the configured `tileBbox`. */
+export function areaBbox(area: AreaConfig): Bbox {
+  const box = polygonBbox(area.polygon);
+  if (!area.tileBbox) return box;
+  const [w, s, e, n] = area.tileBbox;
+  return [Math.min(box[0], w), Math.min(box[1], s), Math.max(box[2], e), Math.max(box[3], n)];
+}
 
 type ConfigObject = {
   configKey: string;

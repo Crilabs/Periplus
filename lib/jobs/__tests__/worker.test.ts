@@ -61,6 +61,7 @@ const queueConfig = {
   "system.ping": { concurrency: 2, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "run.advance": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "tiles.ensure": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "gazetteer.build": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   [DEAD_LETTER_QUEUE]: { concurrency: 1, retryLimit: 1, retryDelaySeconds: 0, retryBackoff: false },
 };
 

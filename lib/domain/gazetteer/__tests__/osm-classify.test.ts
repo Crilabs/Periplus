@@ -1,0 +1,74 @@
+import { describe, expect, it } from "vitest";
+import { loadConfig } from "@/lib/config";
+import { classifyOsm, osmNames } from "@/lib/domain/gazetteer/osm-classify";
+
+const { categories } = loadConfig();
+
+describe("classifyOsm", () => {
+  it.each([
+    ["marina", { leisure: "marina", name: "Marina Aegina" }, { type: "harbour" }],
+    ["seamark harbour", { "seamark:type": "harbour", name: "Limani" }, { type: "harbour" }],
+    ["harbour tag", { harbour: "yes", name: "Port" }, { type: "harbour" }],
+    ["anchorage seamark", { "seamark:type": "anchorage", name: "Anchorage A" }, { type: "bay" }],
+    ["island", { place: "island", name: "Αίγινα" }, { type: "island" }],
+    ["islet", { place: "islet", "name:en": "Small Rock" }, { type: "islet" }],
+    ["sea", { place: "sea", name: "Saronic" }, { type: "sea" }],
+    ["gulf", { place: "gulf", name: "Σαρωνικός Κόλπος" }, { type: "gulf" }],
+    ["cape", { natural: "cape", name: "Akra" }, { type: "cape" }],
+    ["strait", { natural: "strait", name: "Stenó" }, { type: "strait" }],
+    ["peninsula", { natural: "peninsula", name: "Methana" }, { type: "coast_section" }],
+    ["bay", { natural: "bay", name: "Όρμος Κλήμα" }, { type: "bay" }],
+    ["village", { place: "village", name: "Perdika" }, { type: "settlement" }],
+    ["taverna", { amenity: "restaurant", name: "Taverna Nontas" }, { type: "poi", category: "food" }],
+    ["ruins", { historic: "ruins", name: "Temple" }, { type: "poi", category: "culture" }],
+  ])("%s", (_label, tags, expected) => {
+    expect(classifyOsm(tags, categories)).toEqual(expected);
+  });
+
+  it("an unnamed bay is null", () => {
+    expect(classifyOsm({ natural: "bay" }, categories)).toBeNull();
+  });
+
+  it("an unmatched named object is null", () => {
+    expect(classifyOsm({ amenity: "bench", name: "Bench" }, categories)).toBeNull();
+  });
+
+  it("a bay relation named gulf is a gulf, a bay way with the same name stays a bay", () => {
+    const tags = { natural: "bay", name: "Κόλπος Επιδαύρου", "name:en": "Gulf of Epidaurus" };
+    expect(classifyOsm(tags, categories, "relation")).toEqual({ type: "gulf" });
+    expect(classifyOsm(tags, categories, "way")).toEqual({ type: "bay" });
+    expect(classifyOsm({ natural: "bay", name: "Ormos Klima" }, categories, "relation")).toEqual({ type: "bay" });
+  });
+
+  it("place outranks a harbour tag", () => {
+    expect(classifyOsm({ place: "island", harbour: "yes", name: "Agistri" }, categories)).toEqual({ type: "island" });
+  });
+});
+
+describe("osmNames", () => {
+  it("maps name, name:<lang> and alternate names", () => {
+    const names = osmNames({
+      name: "Αίγινα",
+      "name:de": "Ägina",
+      "name:en": "Aegina",
+      "name:etymology": "ignored",
+      alt_name: "Egina;Aigina",
+      old_name: "Engia",
+      int_name: "Aegina Island",
+      place: "island",
+    });
+    expect(names).toEqual([
+      { name: "Αίγινα", language: "el", origin: "osm" },
+      { name: "Ägina", language: "de", origin: "osm" },
+      { name: "Aegina", language: "en", origin: "osm" },
+      { name: "Aegina Island", language: "und", origin: "osm", isPreferred: false },
+      { name: "Egina", language: "und", origin: "osm", isPreferred: false },
+      { name: "Aigina", language: "und", origin: "osm", isPreferred: false },
+      { name: "Engia", language: "und", origin: "osm", isPreferred: false },
+    ]);
+  });
+
+  it("a Latin name has language und", () => {
+    expect(osmNames({ name: "Perdika" })).toEqual([{ name: "Perdika", language: "und", origin: "osm" }]);
+  });
+});

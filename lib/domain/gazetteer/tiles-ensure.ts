@@ -3,25 +3,12 @@ import type { AreaConfig } from "@/lib/config";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { tiles } from "@/lib/db/schema";
+import { polygonBbox } from "./areas";
 import { createReviewTask, hasDecidedTask } from "@/lib/domain/review";
 import { tileBbox, tilesInBbox, type Bbox } from "@/lib/domain/tiles";
 
 function envelope([west, south, east, north]: Bbox) {
   return sql`ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)`;
-}
-
-function polygonBbox(polygon: AreaConfig["polygon"]): Bbox {
-  const rings = polygon.type === "Polygon" ? [polygon.coordinates] : polygon.coordinates;
-  let [west, south, east, north] = [Infinity, Infinity, -Infinity, -Infinity];
-  for (const ring of rings) {
-    for (const [x, y] of ring[0]) {
-      west = Math.min(west, x);
-      east = Math.max(east, x);
-      south = Math.min(south, y);
-      north = Math.max(north, y);
-    }
-  }
-  return [west, south, east, north];
 }
 
 /**

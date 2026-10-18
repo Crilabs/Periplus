@@ -4,7 +4,8 @@ import { ensureTiles } from "@/lib/domain/gazetteer/tiles-ensure";
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 
-function areaKeyOf(params: Record<string, unknown>): string {
+/** `areaKey` of run params or job data; throws when missing. */
+export function areaKeyOf(params: Record<string, unknown>): string {
   if (typeof params.areaKey !== "string" || params.areaKey === "") throw new Error("areaKey is required");
   return params.areaKey;
 }
