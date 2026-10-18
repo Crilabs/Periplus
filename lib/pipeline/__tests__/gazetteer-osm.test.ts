@@ -267,12 +267,15 @@ describe("importOsm", () => {
   it("a 429 from overpass leaves the database untouched and throws RetryableHttpError", () =>
     withRollback(async (db) => {
       await prepare(db);
-      const count = async () =>
-        (await db.select({ n: sql<number>`count(*)::int` }).from(geoObjects))[0]!.n;
-      const before = await count();
+      // Only rows this transaction wrote (`created_at = now()`): other test files commit geo rows meanwhile.
+      const written = async () => ({
+        objects: (await db.select({ n: sql<number>`count(*)::int` }).from(geoObjects).where(sql`${geoObjects.createdAt} = now()`))[0]!.n,
+        names: (await db.select({ n: sql<number>`count(*)::int` }).from(geoNames).where(sql`${geoNames.createdAt} = now()`))[0]!.n,
+      });
       await expect(
         importOsm(db, { area: area(), runId: newId() }, { transport: transport({}, [], 429), archive }),
       ).rejects.toBeInstanceOf(RetryableHttpError);
-      expect(await count()).toBe(before);
+      expect(await written()).toEqual({ objects: 0, names: 0 });
+      expect(await objects(db)).toEqual([]);
     }));
 });

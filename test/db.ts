@@ -28,14 +28,21 @@ class Rollback extends Error {}
  * pilot box 23.0-23.75 E x 37.0-38.0 N so it cannot pollute pilot-area queries.
  * After a failed statement the transaction is aborted; wrap expected failures in `tx.transaction`
  * (savepoint) if the test continues afterwards.
+ *
+ * Pass `isolationLevel: "repeatable read"` for before/after comparisons of database-wide aggregates
+ * (counts per kind, per queue): the transaction then sees one snapshot plus its own writes, never rows
+ * other test files commit meanwhile.
  */
-export async function withRollback<T>(fn: (tx: Db) => Promise<T>): Promise<T> {
+export async function withRollback<T>(
+  fn: (tx: Db) => Promise<T>,
+  options: { isolationLevel?: "read committed" | "repeatable read" } = {},
+): Promise<T> {
   let result: T;
   try {
     await testDb().transaction(async (tx) => {
       result = await fn(tx);
       throw new Rollback();
-    });
+    }, options);
   } catch (e) {
     if (!(e instanceof Rollback)) throw e;
   }

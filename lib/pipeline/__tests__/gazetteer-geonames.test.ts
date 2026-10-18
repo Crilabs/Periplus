@@ -10,6 +10,7 @@ import { upsertGeoObject, type GeoObjectDraft } from "@/lib/domain/gazetteer/sto
 import type { Bbox } from "@/lib/domain/tiles";
 import { importGeonames } from "@/lib/pipeline/gazetteer/geonames";
 import { withRollback } from "@/test/db";
+import { createdInThisTransaction, pairTasksOf } from "@/test/gazetteer";
 
 // Synthetic area outside the pilot box 23.0-23.75 E x 37.0-38.0 N.
 function area(): AreaConfig {
@@ -196,7 +197,8 @@ describe("importGeonames", () => {
       expect(await byGeonames(db, gn(4))).toEqual([]);
 
       const capes = async () =>
-        (await db.select({ id: geoObjects.id }).from(geoObjects).where(eq(geoObjects.type, "cape"))).length;
+        (await db.select({ id: geoObjects.id }).from(geoObjects).where(and(eq(geoObjects.type, "cape"), createdInThisTransaction)))
+          .length;
       const before = await capes();
       const second = await run(db, [ROWS.nearCape]);
       expect(second).toEqual({ linked: 1, created: 0, skipped: 0, uncertain: 0, names: 0 });
@@ -243,12 +245,7 @@ describe("importGeonames", () => {
           .from(geoObjects)
           .where(scope)
           .orderBy(geoObjects.id),
-        tasks: (
-          await db
-            .select({ id: reviewTasks.id })
-            .from(reviewTasks)
-            .where(and(eq(reviewTasks.kind, "place_candidate"), eq(reviewTasks.subjectType, "geo_object_pair")))
-        ).length,
+        tasks: (await pairTasksOf(db, objectIds)).length,
         objectHistory: await historyCount("geo_objects_history"),
         names: await db
           .select({ id: geoNames.id, validTo: geoNames.validTo, isPreferred: geoNames.isPreferred })

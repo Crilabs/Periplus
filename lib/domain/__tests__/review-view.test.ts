@@ -82,6 +82,7 @@ describe("review view", () => {
     }));
 
   // A kind no pipeline code creates yet, so concurrent test files cannot change its count.
+  // Repeatable read: the per-kind counts are database-wide, other test files commit tasks meanwhile.
   it("lists open tasks in queue order and counts them per kind", () =>
     withRollback(async (tx) => {
       const before = await reviewCounts(tx);
@@ -116,5 +117,5 @@ describe("review view", () => {
         before: high.id,
       });
       expect(next.map((t) => t.id)).toEqual([low.id]);
-    }));
+    }, { isolationLevel: "repeatable read" }));
 });

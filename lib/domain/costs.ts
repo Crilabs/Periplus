@@ -77,13 +77,14 @@ export async function budgetStatus(
   budgets: AppConfig["budgets"] = getConfig().budgets,
   now: Date = new Date(),
 ): Promise<BudgetStatus[]> {
-  return Promise.all(
-    BUDGET_SERVICES.map(async (service) => {
-      const budgetEur = budgets[service].dailyEur;
-      const spentEur = await dailySpendEur(db, service, now);
-      return { service, spentEur, budgetEur, ratio: budgetEur > 0 ? spentEur / budgetEur : 1 };
-    }),
-  );
+  // One query after another: `db` may be a transaction, whose single connection must not run queries concurrently.
+  const status: BudgetStatus[] = [];
+  for (const service of BUDGET_SERVICES) {
+    const budgetEur = budgets[service].dailyEur;
+    const spentEur = await dailySpendEur(db, service, now);
+    status.push({ service, spentEur, budgetEur, ratio: budgetEur > 0 ? spentEur / budgetEur : 1 });
+  }
+  return status;
 }
 
 /** Spend per service over the last `days` days up to `now`, highest first. */

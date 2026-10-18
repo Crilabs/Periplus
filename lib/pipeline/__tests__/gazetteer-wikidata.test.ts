@@ -9,6 +9,7 @@ import { newId } from "@/lib/domain/ids";
 import { upsertGeoObject, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
 import { importWikidata } from "@/lib/pipeline/gazetteer/wikidata";
 import { withRollback } from "@/test/db";
+import { createdInThisTransaction, ownGeoObjectIds, pairTasksOf } from "@/test/gazetteer";
 
 // Synthetic area outside the pilot box 23.0-23.75 E x 37.0-38.0 N.
 function area(): AreaConfig {
@@ -254,8 +255,9 @@ describe("importWikidata", () => {
       expect(await byWikidata(db, q(4))).toEqual([]);
 
       const count = async () => ({
-        objects: (await db.select({ id: geoObjects.id }).from(geoObjects).where(eq(geoObjects.type, "cape"))).length,
-        tasks: (await db.select({ id: reviewTasks.id }).from(reviewTasks).where(eq(reviewTasks.kind, "place_candidate"))).length,
+        objects: (await db.select({ id: geoObjects.id }).from(geoObjects).where(and(eq(geoObjects.type, "cape"), createdInThisTransaction)))
+          .length,
+        tasks: (await pairTasksOf(db, await ownGeoObjectIds(db))).length,
       });
       const before = await count();
       const second = await run(db, ITEMS.cape);
@@ -282,12 +284,7 @@ describe("importWikidata", () => {
       expect(result).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0 });
       const [row] = await db.select({ wikidataId: geoObjects.wikidataId }).from(geoObjects).where(eq(geoObjects.id, created.id));
       expect(row!.wikidataId).toBeNull();
-      expect(
-        await db
-          .select()
-          .from(reviewTasks)
-          .where(and(eq(reviewTasks.kind, "place_candidate"), eq(reviewTasks.subjectType, "geo_object_pair"))),
-      ).toEqual([]);
+      expect(await pairTasksOf(db, await ownGeoObjectIds(db))).toEqual([]);
     }));
 
   it("links an OSM tag only to an object of a compatible type", () =>
@@ -368,7 +365,7 @@ describe("importWikidata", () => {
           .from(geoNames)
           .where(inArray(geoNames.geoObjectId, objectIds))
           .orderBy(geoNames.id),
-        tasks: await db.select({ id: reviewTasks.id }).from(reviewTasks).where(eq(reviewTasks.kind, "place_candidate")),
+        tasks: await pairTasksOf(db, objectIds),
       });
       const before = await snapshot();
       expect(before.objects.map((o) => o.wikidataId).sort()).toEqual([q(1), q(2), q(3), q(4), null].sort());
