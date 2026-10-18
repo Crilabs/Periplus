@@ -36,6 +36,20 @@
       "when": 1792352052800,
       "tag": "0004_job_outcomes",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792353803962,
+      "tag": "0005_geo_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792353808872,
+      "tag": "0006_geo_triggers",
+      "breakpoints": true
     }
   ]
 }
