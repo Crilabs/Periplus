@@ -37,6 +37,13 @@ function fakeSdk(text: string, usage = { input_tokens: 1000, output_tokens: 200 
   return { api: { messages: { create } } as unknown as AnthropicMessagesApi, create };
 }
 
+function uniqueDay(): Date {
+  const year = 2200 + Math.floor(Math.random() * 800);
+  const month = Math.floor(Math.random() * 12);
+  const day = 1 + Math.floor(Math.random() * 28);
+  return new Date(Date.UTC(year, month, day, 12));
+}
+
 describe("prompts", () => {
   it("renderPrompt throws on a missing variable", () => {
     expect(() => renderPrompt("Hi {{name}}", {})).toThrow(/name/);
@@ -79,7 +86,7 @@ describe("MockModel", () => {
 
 describe("anthropic client", () => {
   it("refuses to call when the budget is exhausted", async () => {
-    const now = new Date(Date.UTC(2201, 5, 1, 12));
+    const now = uniqueDay();
     await recordExternalCall(db, { service: "anthropic", operation: "seed", units: 1, unit: "tokens", costEur: 0.02, at: now });
     const { api, create } = fakeSdk('{"echo":"x","language":"en"}');
     const client = createAnthropicClient(db, config, { sdk: api, now: () => now });
@@ -88,7 +95,7 @@ describe("anthropic client", () => {
   });
 
   it("records tokens and cost", async () => {
-    const now = new Date(Date.UTC(2202, 5, 1, 12));
+    const now = uniqueDay();
     const stage = `ai-test-${Math.random()}`;
     const { api, create } = fakeSdk('{"echo":"hello","language":"en"}');
     const client = createAnthropicClient(db, config, { sdk: api, now: () => now });
@@ -107,7 +114,7 @@ describe("anthropic client", () => {
   });
 
   it("throws ModelOutputInvalid for output violating the schema, still recording the spend", async () => {
-    const now = new Date(Date.UTC(2203, 5, 1, 12));
+    const now = uniqueDay();
     const stage = `ai-test-${Math.random()}`;
     const { api } = fakeSdk('{"echo":1}');
     const client = createAnthropicClient(db, config, { sdk: api, now: () => now });
