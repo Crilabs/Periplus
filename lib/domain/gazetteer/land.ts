@@ -20,9 +20,31 @@ function envelope([west, south, east, north]: Bbox) {
   return sql`ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)`;
 }
 
+/** Cheap JS test on the coordinate extent; edges count as intersecting. */
+export function featureIntersectsBbox(feature: LandFeature, [west, south, east, north]: Bbox): boolean {
+  const g = feature.geometry;
+  const rings = g.type === "Polygon" ? [g.coordinates] : g.coordinates;
+  for (const polygon of rings) {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const [x, y] of polygon[0]) {
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    if (maxX >= west && minX <= east && maxY >= south && minY <= north) return true;
+  }
+  return false;
+}
+
 /**
- * Imports land polygons clipped to `bbox`. Polygons in the box that come from another or the same
- * dataset version are removed first (working state), so re-imports never duplicate.
+ * Imports land polygons clipped to `bbox`. Stored polygons overlapping the box are first removed
+ * (completely inside) or trimmed to their part outside it (working state), so re-imports never
+ * duplicate and neighbouring areas keep their land. `replaced` counts the stored rows removed or
+ * trimmed in the box.
  */
 export async function importLandPolygons(
   db: Db,
@@ -31,25 +53,42 @@ export async function importLandPolygons(
   datasetVersion: string,
 ): Promise<{ inserted: number; replaced: number }> {
   return db.transaction(async (tx) => {
-    const deleted = await tx
-      .delete(landPolygons)
-      .where(sql`ST_Intersects(${landPolygons.geom}, ${envelope(bbox)})`)
-      .returning({ id: landPolygons.id });
+    const box = envelope(bbox);
+    const old = await tx.execute(sql`
+      WITH old AS (
+        DELETE FROM land_polygons
+        WHERE ST_Intersects(geom, ${box}) AND NOT ST_Touches(geom, ${box})
+        RETURNING geom, dataset_version
+      ), kept AS (
+        INSERT INTO land_polygons (id, geom, dataset_version)
+        SELECT gen_random_uuid(), d.geom, d.dataset_version
+        FROM (
+          SELECT (ST_Dump(ST_CollectionExtract(ST_Difference(geom, ${box}), 3))).geom AS geom, dataset_version
+          FROM old WHERE NOT ST_Covers(${box}, geom)
+        ) d
+        WHERE NOT ST_IsEmpty(d.geom)
+      )
+      SELECT count(*)::int AS n FROM old`);
+    const replaced = Number((old.rows[0] as { n: number }).n);
     let inserted = 0;
     for await (const feature of features) {
+      if (!featureIntersectsBbox(feature, bbox)) continue;
       const res = await tx.execute(sql`
         INSERT INTO land_polygons (id, geom, dataset_version)
         SELECT gen_random_uuid(), d.geom, ${datasetVersion}
         FROM (
-          SELECT (ST_Dump(ST_CollectionExtract(
-            ST_Intersection(ST_MakeValid(src.g), ${envelope(bbox)}), 3))).geom AS geom
-          FROM (SELECT ${geomFromGeoJson(feature.geometry)} AS g) src
-          WHERE ST_Intersects(src.g, ${envelope(bbox)})
+          SELECT (ST_Dump(ST_CollectionExtract(ST_Intersection(src.g, ${box}), 3))).geom AS geom
+          FROM (
+            SELECT ST_MakeValid(raw.g) AS g
+            FROM (SELECT ${geomFromGeoJson(feature.geometry)} AS g) raw
+            WHERE raw.g && ${box}
+          ) src
+          WHERE ST_Intersects(src.g, ${box})
         ) d
         WHERE NOT ST_IsEmpty(d.geom)`);
       inserted += res.rowCount ?? 0;
     }
-    return { inserted, replaced: deleted.length };
+    return { inserted, replaced };
   });
 }
 

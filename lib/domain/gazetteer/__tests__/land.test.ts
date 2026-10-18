@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { asGeoJson } from "@/lib/db/geometry";
 import { landPolygons } from "@/lib/db/schema";
-import { bufferBbox, importLandPolygons, landCoverage } from "@/lib/domain/gazetteer/land";
+import { bufferBbox, featureIntersectsBbox, importLandPolygons, landCoverage } from "@/lib/domain/gazetteer/land";
 import type { Bbox } from "@/lib/domain/tiles";
 import { withRollback } from "@/test/db";
 
@@ -86,6 +86,81 @@ describe("importLandPolygons", () => {
       );
       expect(versions.rows.map((x) => x.v)).toEqual(["2026-01-01", "2026-02-01"]);
     }));
+});
+
+describe("importLandPolygons neighbours and invalid input", () => {
+  it("importing area B keeps area A's land outside B's box", () =>
+    withRollback(async (db) => {
+      const boxA: Bbox = [26.0, 35.0, 26.5, 36.0];
+      const boxB: Bbox = [26.4, 35.0, 27.0, 36.0];
+      const wide = square(26.0, 35.3, 27.0, 35.4);
+      await importLandPolygons(db, stream([wide]), boxA, "2026-01-01");
+      const area = (b: Bbox) => db.execute<{ a: number }>(
+        sql`SELECT coalesce(sum(ST_Area(ST_Intersection(geom, ST_MakeEnvelope(${b[0]}, ${b[1]}, ${b[2]}, ${b[3]}, 4326)))), 0)::float AS a
+            FROM ${landPolygons}`,
+      ).then((x) => x.rows[0].a);
+      const before = await area([26.0, 35.0, 26.4, 36.0]);
+      expect(before).toBeCloseTo(0.4 * 0.1, 6);
+      const r = await importLandPolygons(db, stream([wide]), boxB, "2026-01-01");
+      expect(r.inserted).toBe(1);
+      expect(r.replaced).toBe(1);
+      expect(await area([26.0, 35.0, 26.4, 36.0])).toBeCloseTo(before, 6);
+      expect(await area([26.4, 35.0, 27.0, 36.0])).toBeCloseTo(0.6 * 0.1, 6);
+    }));
+
+  it("re-importing the same version for the same box keeps the row count with neighbours present", () =>
+    withRollback(async (db) => {
+      const boxA: Bbox = [26.0, 35.0, 26.5, 36.0];
+      const boxB: Bbox = [26.5, 35.0, 27.0, 36.0];
+      const wide = square(26.0, 35.3, 27.0, 35.4);
+      await importLandPolygons(db, stream([wide]), boxA, "2026-01-01");
+      await importLandPolygons(db, stream([wide]), boxB, "2026-01-01");
+      const count = () => landCoverage(db, [26.0, 35.0, 27.0, 36.0]);
+      const n = await count();
+      await importLandPolygons(db, stream([wide]), boxB, "2026-01-01");
+      expect(await count()).toBe(n);
+    }));
+
+  it("imports a self-intersecting polygon as valid polygons", () =>
+    withRollback(async (db) => {
+      const bowtie: LandFeature = {
+        type: "Feature",
+        properties: {},
+        geometry: { type: "Polygon", coordinates: [[[26.2, 35.2], [26.4, 35.4], [26.4, 35.2], [26.2, 35.4], [26.2, 35.2]]] },
+      };
+      const r = await importLandPolygons(db, stream([bowtie]), BOX, "2026-01-01");
+      expect(r.inserted).toBeGreaterThan(0);
+      const rows = await db.execute<{ valid: boolean }>(
+        sql`SELECT ST_IsValid(geom) AS valid FROM ${landPolygons}
+            WHERE ST_Intersects(geom, ST_MakeEnvelope(26, 35, 27, 36, 4326))`,
+      );
+      expect(rows.rows.length).toBe(r.inserted);
+      expect(rows.rows.every((x) => x.valid)).toBe(true);
+    }));
+});
+
+describe("featureIntersectsBbox", () => {
+  const box: Bbox = [0, 0, 1, 1];
+  const poly = (w: number, s: number, e: number, n: number) => square(w, s, e, n);
+  it("accepts overlapping and touching extents, rejects disjoint ones", () => {
+    expect(featureIntersectsBbox(poly(0.5, 0.5, 2, 2), box)).toBe(true);
+    expect(featureIntersectsBbox(poly(1, 0, 2, 1), box)).toBe(true);
+    expect(featureIntersectsBbox(poly(1.1, 0, 2, 1), box)).toBe(false);
+    expect(featureIntersectsBbox(poly(0, 1.1, 1, 2), box)).toBe(false);
+  });
+  it("checks every part of a multipolygon", () => {
+    const multi: LandFeature = {
+      type: "Feature",
+      properties: {},
+      geometry: {
+        type: "MultiPolygon",
+        coordinates: [poly(5, 5, 6, 6).geometry, poly(0.2, 0.2, 0.3, 0.3).geometry].map(
+          (g) => (g as GeoJSON.Polygon).coordinates,
+        ),
+      },
+    };
+    expect(featureIntersectsBbox(multi, box)).toBe(true);
+  });
 });
 
 describe("bufferBbox", () => {

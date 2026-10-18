@@ -45,7 +45,7 @@ async function* readShapefile(shp: string): AsyncGenerator<GeoJSON.Feature<GeoJS
       const { done, value } = await source.read();
       if (done) return;
       const g = value.geometry;
-      if (g.type === "Polygon" || g.type === "MultiPolygon") {
+      if (g?.type === "Polygon" || g?.type === "MultiPolygon") {
         yield value as GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
       }
     }
