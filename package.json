@@ -19,6 +19,8 @@
     "db:migrate": "tsx --env-file-if-exists=.env.local scripts/migrate.ts",
     "user:create": "tsx --env-file-if-exists=.env.local scripts/user.ts create",
     "user:password": "tsx --env-file-if-exists=.env.local scripts/user.ts password",
+    "user:disable": "tsx --env-file-if-exists=.env.local scripts/user.ts disable",
+    "apikey:revoke": "tsx --env-file-if-exists=.env.local scripts/apikey.ts revoke",
     "apikey:create": "tsx --env-file-if-exists=.env.local scripts/apikey.ts create",
     "smoke:ai": "tsx --env-file-if-exists=.env.local scripts/smoke-ai.ts"
   },

@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { testDb } from "@/test/db";
 import { loginAttempts, users } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
-import { authenticate, createUser, setPassword } from "../users";
+import { authenticate, createUser, disableUser, isUserActive, setPassword } from "../users";
 
 const db = testDb();
 const correct = "correct horse battery";
@@ -105,5 +105,22 @@ describe("users", () => {
 
   it("setPassword throws for an unknown user", async () => {
     await expect(setPassword(db, fresh().email, correct)).rejects.toThrow("user_not_found");
+  });
+
+  it("authenticate rejects a disabled user", async () => {
+    const { email, ip } = fresh();
+    await createUser(db, email, correct);
+    await disableUser(db, email.toUpperCase());
+    expect(await authenticate(db, { email, password: correct, ip }, t0)).toEqual({ ok: false, reason: "disabled" });
+  });
+
+  it("disableUser sets disabled_at, isUserActive reflects it, unknown email throws", async () => {
+    const { email } = fresh();
+    const { id } = await createUser(db, email, correct);
+    expect(await isUserActive(db, id)).toBe(true);
+    await disableUser(db, email);
+    expect(await isUserActive(db, id)).toBe(false);
+    expect(await isUserActive(db, newId())).toBe(false);
+    await expect(disableUser(db, `${newId()}@test.invalid`)).rejects.toThrow("user_not_found");
   });
 });

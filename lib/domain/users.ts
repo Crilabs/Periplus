@@ -26,6 +26,25 @@ export async function setPassword(db: Db, email: string, password: string): Prom
   if (rows.length === 0) throw new Error("user_not_found");
 }
 
+export async function disableUser(db: Db, email: string): Promise<void> {
+  const rows = await db
+    .update(users)
+    .set({ disabledAt: new Date() })
+    .where(eq(users.email, normalizeEmail(email)))
+    .returning({ id: users.id });
+  if (rows.length === 0) throw new Error("user_not_found");
+}
+
+/** False for unknown and disabled users. */
+export async function isUserActive(db: Db, userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ disabledAt: users.disabledAt })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return Boolean(row) && row!.disabledAt === null;
+}
+
 // Verified against for unknown emails so response time does not reveal whether an account exists.
 let dummyHash: Promise<string> | undefined;
 function getDummyHash(): Promise<string> {

@@ -37,6 +37,15 @@ export async function authenticateApiClient(db: Db, authorization: string | null
   return { id: row.id, name: row.name, scopes: row.scopes as ApiScope[], rateLimitPerMin: row.rateLimitPerMin };
 }
 
+export async function revokeApiClientByName(db: Db, name: string): Promise<void> {
+  const rows = await db
+    .update(apiClients)
+    .set({ revokedAt: new Date() })
+    .where(and(eq(apiClients.name, name), isNull(apiClients.revokedAt)))
+    .returning({ id: apiClients.id });
+  if (rows.length === 0) throw new Error("api_client_not_found");
+}
+
 export async function revokeApiClient(db: Db, id: string): Promise<void> {
   await db
     .update(apiClients)

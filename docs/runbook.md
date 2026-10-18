@@ -80,6 +80,20 @@ Der Schlüssel wird einmalig ausgegeben. Zugelassene Scopes siehe `scripts/apike
 
 Prüfung des Anthropic-Schlüssels auf einem Entwicklungsrechner: `npm run smoke:ai`.
 
+## Zugang sperren
+Nutzer sperren (bestehende Sitzungen werden beim nächsten Aufruf abgewiesen, keine Passwortabfrage):
+```bash
+dc run --rm worker node --import tsx scripts/user.ts disable <email>
+```
+API-Key sperren (nach Name; wirkt sofort):
+```bash
+dc run --rm worker node --import tsx scripts/apikey.ts revoke <name>
+```
+Unbekannte E-Mail bzw. unbekannter oder bereits gesperrter Name endet mit Fehler.
+
+## SESSION_SECRET rotieren
+`SESSION_SECRET` in `.env` ersetzen (mindestens 32 Zeichen, z. B. `openssl rand -base64 48`) und web neu starten. Das meldet alle Sitzungen ab; alle Admins müssen sich neu anmelden.
+
 ## Logs
 ```bash
 dc logs -f worker

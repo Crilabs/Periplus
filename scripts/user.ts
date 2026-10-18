@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import readline from "node:readline";
 import { Writable } from "node:stream";
 import { createDb } from "../lib/db/client";
-import { createUser, setPassword } from "../lib/domain/users";
+import { createUser, disableUser, setPassword } from "../lib/domain/users";
 
 /** Reads one line from stdin without echoing it; works for TTY and piped input. */
 function readSecret(prompt: string): Promise<string> {
@@ -27,15 +27,18 @@ function readSecret(prompt: string): Promise<string> {
 
 async function main(): Promise<void> {
   const [command, email] = process.argv.slice(2);
-  if ((command !== "create" && command !== "password") || !email) {
-    throw new Error("usage: user.ts <create|password> <email>");
+  if ((command !== "create" && command !== "password" && command !== "disable") || !email) {
+    throw new Error("usage: user.ts <create|password|disable> <email>");
   }
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
-  const password = await readSecret("Password: ");
+  const password = command === "disable" ? "" : await readSecret("Password: ");
   const { db, close } = createDb(url);
   try {
-    if (command === "create") {
+    if (command === "disable") {
+      await disableUser(db, email);
+      process.stdout.write("disabled\n");
+    } else if (command === "create") {
       await createUser(db, email, password);
       process.stdout.write("created\n");
     } else {

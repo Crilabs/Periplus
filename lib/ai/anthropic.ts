@@ -8,7 +8,8 @@ import { createLogger } from "@/lib/logger";
 import { loadPrompt, renderPrompt } from "./prompts";
 import { ModelOutputInvalid, type ModelClient, type ModelResult, type ModelTask } from "./types";
 
-const log = createLogger("ai.anthropic");
+let logger: ReturnType<typeof createLogger> | undefined;
+const getLog = () => (logger ??= createLogger("ai.anthropic"));
 
 const MAX_TOKENS = 4096;
 
@@ -66,7 +67,7 @@ export function createAnthropicClient(db: Db, config: AppConfig = getConfig(), o
         meta: { model, promptVersion, inputTokens, outputTokens },
         ...(options.now ? { at: options.now() } : {}),
       });
-      log.debug({ task: task.name, model, inputTokens, outputTokens, costEur }, "model call finished");
+      getLog().debug({ task: task.name, model, inputTokens, outputTokens, costEur }, "model call finished");
 
       if (response.stop_reason === "refusal" || response.stop_reason === "max_tokens") {
         throw new ModelOutputInvalid(task.name, `stop_reason ${response.stop_reason}`);
