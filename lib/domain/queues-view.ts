@@ -35,11 +35,12 @@ export async function jobsFromDb(db: Db, now?: Date): Promise<JobsView> {
   return withPaused(db, (queue) => byQueue.get(queue) ?? ZERO, now);
 }
 
-/** Queue stats from pg-boss' own counters (used by the jobs page). */
+/**
+ * Queue stats for the jobs page. Counts are read live from pgboss.job (same source as the
+ * overview) rather than pg-boss' maintenance-refreshed counters, so both pages agree.
+ * `boss` is kept for the signature only; no counters are read from it.
+ */
 export async function queuesView(db: Db, boss: PgBoss): Promise<JobsView> {
-  const stats = new Map((await boss.getQueues([...QUEUES])).map((q) => [q.name, q]));
-  return withPaused(db, (queue) => {
-    const q = stats.get(queue);
-    return q ? { queued: q.queuedCount, active: q.activeCount, failed: q.failedCount } : ZERO;
-  });
+  void boss;
+  return jobsFromDb(db);
 }

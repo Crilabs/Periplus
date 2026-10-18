@@ -1,12 +1,26 @@
-import { describe, expect, it } from "vitest";
+import { sql } from "drizzle-orm";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { testDb } from "@/test/db";
 import { newId } from "@/lib/domain/ids";
 import { workerHeartbeats } from "@/lib/db/schema";
-import { overview } from "@/lib/domain/overview";
-import { QUEUES } from "@/lib/jobs/queues";
-import { REVIEW_KINDS } from "@/lib/domain/overview";
+import { overview, REVIEW_KINDS } from "@/lib/domain/overview";
+import { queuesView } from "@/lib/domain/queues-view";
+import { getConfig } from "@/lib/config";
+import { createBoss } from "@/lib/jobs/boss";
+import { ensureQueues, QUEUES } from "@/lib/jobs/queues";
 
 const db = testDb();
+const boss = createBoss(process.env.TEST_DATABASE_URL!);
+
+beforeAll(async () => {
+  await boss.start();
+  // Never reconfigure an existing queue: other test files share this database.
+  if (!(await boss.getQueue("system.ping"))) await ensureQueues(boss, getConfig().queues);
+});
+
+afterAll(async () => {
+  await boss.stop({ graceful: false });
+});
 
 describe("overview", () => {
   it("reports a worker heartbeat age", async () => {
@@ -32,5 +46,32 @@ describe("overview", () => {
     }
     expect(result.budgets).toHaveLength(5);
     expect(result.recentRuns.length).toBeLessThanOrEqual(5);
+  });
+
+  it("counts a real queued job identically in overview and queuesView", async () => {
+    // Other test files enqueue system.ping jobs on the shared database, so a single before/after
+    // window can be disturbed; the delta must be exactly +1 in at least one undisturbed attempt.
+    const deltas: number[] = [];
+    let viewMatched = false;
+    for (let attempt = 0; attempt < 10 && !(deltas.includes(1) && viewMatched); attempt++) {
+      const before = await overview(db);
+      // Far-future start keeps concurrently running test workers from picking the job up.
+      const id = await boss.send("system.ping", { key: "overview-test" }, { startAfter: 3600 });
+      expect(id).toBeTruthy();
+      try {
+        const after = await overview(db);
+        const view = await queuesView(db, boss);
+        const delta = after.jobs["system.ping"].queued - before.jobs["system.ping"].queued;
+        deltas.push(delta);
+        if (delta === 1) {
+          expect(after.jobs["system.ping"].active).toBe(before.jobs["system.ping"].active);
+          viewMatched = view["system.ping"].queued === after.jobs["system.ping"].queued;
+        }
+      } finally {
+        await db.execute(sql`delete from pgboss.job where id = ${id}`);
+      }
+    }
+    expect(deltas).toContain(1);
+    expect(viewMatched).toBe(true);
   });
 });
