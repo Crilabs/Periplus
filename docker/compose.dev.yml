@@ -1,0 +1,50 @@
+# Local development services. The Next.js app and the worker run on the host (npm run dev / npm run worker).
+#   docker compose -f docker/compose.dev.yml up -d
+name: periplus-dev
+
+services:
+  db:
+    build: ./postgres
+    environment:
+      POSTGRES_DB: periplus
+      POSTGRES_USER: periplus
+      POSTGRES_PASSWORD: periplus
+    ports:
+      - "5433:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U periplus -d periplus"]
+      interval: 5s
+      retries: 10
+
+  # Separate instance for Vitest; the test setup refuses database names that do not end in _test.
+  db-test:
+    build: ./postgres
+    environment:
+      POSTGRES_DB: periplus_test
+      POSTGRES_USER: periplus
+      POSTGRES_PASSWORD: periplus
+    ports:
+      - "5434:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U periplus -d periplus_test"]
+      interval: 5s
+      retries: 10
+
+  # S3-compatible archive for development (production uses Hetzner Object Storage).
+  # The app creates the bucket on first use (lib/adapters/s3.ts ensureBucket).
+  s3:
+    image: chrislusf/seaweedfs:3.97
+    command: server -dir=/data -ip=127.0.0.1 -ip.bind=0.0.0.0 -filer -master.volumeSizeLimitMB=1024 -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
+    ports:
+      - "8333:8333"
+    volumes:
+      - s3-data:/data
+      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+
+volumes:
+  db-data:
+  s3-data:
