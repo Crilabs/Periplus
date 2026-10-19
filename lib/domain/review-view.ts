@@ -30,7 +30,7 @@ import {
 } from "@/lib/db/schema";
 import type { AttributeProvenance, ConflictResolution, ConflictSide } from "@/lib/domain/consolidation/types";
 import type { ProposalRobots, SerpHit } from "@/lib/domain/discovery/proposals";
-import { factAttributeLabel, formatFactValue } from "@/lib/domain/facts/labels";
+import { formatProfileValue, profileAttributeLabel } from "@/lib/domain/consolidation/format";
 import { factViewsByIds, type FactView } from "@/lib/domain/geo-facts";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { candidateObjects, withNeighbours } from "@/lib/domain/mentions/scope";
@@ -165,6 +165,15 @@ export type ReviewSubject =
       nearby: NearbyPlace[];
     }
   | ProfileAttributeSubject
+  | {
+      type: "profile_summary";
+      geoObjectId: string;
+      name: string | null;
+      version: number;
+      attempts: number | null;
+      /** Why each attempt failed: `copied`, `sentences`, `invalid`. */
+      reasons: string[];
+    }
   | { type: "missing" };
 
 /** One value of a conflict: its summed weight, when it was observed and the facts behind it. */
@@ -311,6 +320,9 @@ export async function reviewTaskDetail(db: Db, id: string): Promise<ReviewTaskDe
     case "profile_attribute":
       subject = await profileAttributeSubject(db, task.subjectId, context);
       break;
+    case "profile_summary":
+      subject = await profileSummarySubject(db, task.subjectId, context);
+      break;
     default:
       subject = { type: "missing" };
   }
@@ -367,7 +379,7 @@ async function profileAttributeSubject(db: Db, subjectId: string, context: Recor
     const s = parsed.data as Omit<ConflictSide, "sourceKeys">;
     return {
       value: s.value,
-      display: formatFactValue(attribute, s.value),
+      display: formatProfileValue(attribute, s.value),
       weight: s.weight,
       observedFrom: s.observedFrom,
       observedTo: s.observedTo,
@@ -380,11 +392,11 @@ async function profileAttributeSubject(db: Db, subjectId: string, context: Recor
     geoObjectId,
     name: rows[0].name,
     attribute,
-    label: factAttributeLabel(attribute),
+    label: profileAttributeLabel(attribute),
     key,
     current: {
       value: current ?? null,
-      display: current === undefined ? "–" : formatFactValue(attribute, current),
+      display: current === undefined ? "–" : formatProfileValue(attribute, current),
       provenance: profile?.provenance[attribute] ?? null,
     },
     resolution: (key && profile?.conflicts.find((c) => c.key === key)?.resolution) || null,
@@ -399,11 +411,29 @@ async function profileAttributeSubject(db: Db, subjectId: string, context: Recor
     const ids = z.array(z.string()).safeParse(context.factIds);
     subject.proposed = {
       value: context.newValue,
-      display: context.newValue === null ? "–" : formatFactValue(attribute, context.newValue),
+      display: context.newValue === null ? "–" : formatProfileValue(attribute, context.newValue),
       facts: await factsOf(db, ids.success ? ids.data : []),
     };
   }
   return subject;
+}
+
+async function profileSummarySubject(db: Db, subjectId: string, context: Record<string, unknown>): Promise<ReviewSubject> {
+  const [geoObjectId, rawVersion] = [subjectId.slice(0, 36), subjectId.slice(37)];
+  const version = Number(rawVersion);
+  if (!isUuid(geoObjectId) || subjectId[36] !== ":" || !Number.isInteger(version)) return { type: "missing" };
+  const { rows } = await db.execute<{ name: string | null }>(sql`
+    select ${displayNameSql(sql`o.id`)} as name from geo_objects o where o.id = ${geoObjectId}`);
+  if (!rows[0]) return { type: "missing" };
+  const reasons = z.array(z.string()).safeParse(context.reasons);
+  return {
+    type: "profile_summary",
+    geoObjectId,
+    name: rows[0].name,
+    version,
+    attempts: typeof context.attempts === "number" ? context.attempts : null,
+    reasons: reasons.success ? reasons.data : [],
+  };
 }
 
 // Lenient readers of a source_approval context (written by proposeSources): a part that does not parse is left out.

@@ -31,6 +31,7 @@ import { newPublicId } from "@/lib/domain/ids";
 import { candidateObjects, withNeighbours } from "@/lib/domain/mentions/scope";
 import { crawlRulesSchema } from "@/lib/domain/sources/crawl-rules";
 import { QUEUES, type QueueName } from "@/lib/jobs/queues";
+import { CONSOLIDATION_SUMMARY_STAGE } from "@/lib/pipeline/consolidation/stages";
 
 const lonLatSchema = z.object({ lon: z.number().min(-180).max(180), lat: z.number().min(-90).max(90) });
 
@@ -64,6 +65,8 @@ export const reviewDecisionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("retry") }),
   z.object({ action: z.literal("ignore") }),
   z.object({ action: z.literal("pause_source") }),
+  // failed_job / profile_summary: run the summary stage again for the object
+  z.object({ action: z.literal("regenerate_summary") }),
   // conflict / profile_attribute: one of the two values, both seasonally, or leave the conflict open
   z.object({ action: z.literal("value_a") }),
   z.object({ action: z.literal("value_b") }),
@@ -120,6 +123,7 @@ const ALLOWED: Record<string, readonly Action[]> = {
   "place_candidate/name_candidate": ["create_place", "assign_name", "reject"],
   "coast_tile_without_area/tile": ["assign_area", "no_area"],
   "failed_job/job": ["retry", "ignore", "pause_source"],
+  "failed_job/profile_summary": ["ignore", "regenerate_summary"],
   "source_approval/source": ["approve", "reject"],
 };
 
@@ -144,7 +148,8 @@ type Task = typeof reviewTasks.$inferSelect;
  * A `create_place` or `assign_name` decision on a `name_candidate` (new name from texts) returns the current versions
  * of the documents the name was found in (`documentVersionIds`, for the rematch run of Task 17); every other decision,
  * including `reject`, returns none. A decision on a `profile_attribute` task (`applyProfileDecision`) returns the geo
- * object to consolidate again (`consolidate`); the caller starts that run after the commit (ruling M5-P10). It needs
+ * object to consolidate again (`consolidate`); `regenerate_summary` on a `failed_job` / `profile_summary` task returns
+ * it with `stagesOnly ["consolidation.summary"]`; the caller starts that run after the commit (ruling M5-P10). It needs
  * `taskKey`, the `context.key` the admin saw: another key means a later run replaced the question
  * (`TaskContextChanged`, ruling M5-F-R2).
  *
@@ -190,6 +195,12 @@ export async function decideReviewTask(
     if (task.subjectType === PROFILE_SUBJECT) {
       const geoObjectId = await applyProfileDecision(tx, task, decision, decisionRow!.id, now);
       return { documentVersionIds: [], consolidate: { geoObjectId } };
+    }
+    if (decision.action === "regenerate_summary") {
+      // `<geoObjectId>:<version>` of a summary that stayed empty: the summary stage runs again after the commit
+      const geoObjectId = task.subjectId.slice(0, 36);
+      if (!z.uuid().safeParse(geoObjectId).success) throw new DecisionNotAllowed(`subject ${task.subjectId} is no profile summary`);
+      return { documentVersionIds: [], consolidate: { geoObjectId, stagesOnly: [CONSOLIDATION_SUMMARY_STAGE] } };
     }
     await apply(tx, task, decision, deps);
     return { documentVersionIds: [], consolidate: null };
@@ -334,6 +345,8 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
     case "accept_change":
     case "discard_change":
       throw new DecisionNotAllowed(`action ${decision.action} needs a profile attribute`);
+    case "regenerate_summary":
+      throw new DecisionNotAllowed(`action ${decision.action} needs a profile summary`);
   }
 }
 

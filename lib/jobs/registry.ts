@@ -1,5 +1,6 @@
 import { aiBatchPollHandler } from "./handlers/ai-batch";
 import { compareConvertersHandler } from "./handlers/compare";
+import { consolidationSummaryHandler } from "./handlers/consolidation";
 import { datasetsImportHandler } from "./handlers/datasets";
 import { discoveryAreaHandler, discoveryProposeHandler, discoveryTileHandler } from "./handlers/discovery";
 import { embedChunksHandler } from "./handlers/embed";
@@ -48,4 +49,5 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "extraction.mention": extractMentionsHandler,
   "extraction.route": extractRoutesHandler,
   "extraction.check": checkExtractionRunHandler,
+  "consolidation.summary": consolidationSummaryHandler,
 };

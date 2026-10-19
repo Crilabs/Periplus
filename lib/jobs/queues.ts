@@ -25,6 +25,7 @@ export const QUEUES = [
   "extraction.mention",
   "extraction.route",
   "extraction.check",
+  "consolidation.summary",
 ] as const;
 export type QueueName = (typeof QUEUES)[number];
 

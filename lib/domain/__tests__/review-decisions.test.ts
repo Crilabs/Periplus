@@ -1121,4 +1121,23 @@ describe("profile attribute decisions (conflict, uncertain_change)", () => {
         .returning({ id: reviewTasks.id });
       await expect(decideProfile(tx, bad!.id, "k", { action: "accept_change" })).rejects.toThrow(DecisionNotAllowed);
     }));
+
+  it("a failed summary is ignored, or generated again by a summary-only run (ruling M5-P10)", () =>
+    withRollback(async (tx) => {
+      const { objectId } = await insertProfilePlace(tx);
+      const task = async () => {
+        const [t] = await tx
+          .insert(reviewTasks)
+          .values({ kind: "failed_job", subjectType: "profile_summary", subjectId: `${objectId}:1`, context: { geoObjectId: objectId, version: 1 } })
+          .returning({ id: reviewTasks.id });
+        return t!.id;
+      };
+      await expect(decide(tx, await task(), { action: "retry" })).rejects.toThrow(DecisionNotAllowed);
+      await tx.update(reviewTasks).set({ status: "dismissed" }).where(eq(reviewTasks.subjectId, `${objectId}:1`));
+      expect(await decide(tx, await task(), { action: "ignore" })).toEqual({ documentVersionIds: [], consolidate: null });
+      expect(await decide(tx, await task(), { action: "regenerate_summary" })).toEqual({
+        documentVersionIds: [],
+        consolidate: { geoObjectId: objectId, stagesOnly: ["consolidation.summary"] },
+      });
+    }));
 });

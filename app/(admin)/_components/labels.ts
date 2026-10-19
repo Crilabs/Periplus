@@ -414,6 +414,13 @@ export const CONFLICT_RESOLUTION_LABELS: Record<ConflictResolution, string> = {
   decided: "Für einen Wert entschieden",
 };
 
+/** Why an attempt at a profile summary failed. */
+export const SUMMARY_FAILURE_LABELS: Record<string, string> = {
+  copied: "15 Wörter wörtlich aus dem Archiv",
+  sentences: "Satzzahl verfehlt",
+  invalid: "Antwort ungültig, abgeschnitten oder abgelehnt",
+};
+
 /* ---- M4: model comparison ---- */
 
 /** Verdicts on a deviation of the model comparison, in button order (keys 1–5). */

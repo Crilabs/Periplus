@@ -21,5 +21,6 @@
   "mentions.geocode": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
   "extraction.mention": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
   "extraction.route": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
-  "extraction.check": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true }
+  "extraction.check": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
+  "consolidation.summary": { "concurrency": 2, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true }
 }
