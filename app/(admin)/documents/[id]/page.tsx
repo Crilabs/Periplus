@@ -3,16 +3,30 @@ import { notFound } from "next/navigation";
 import { getArchive } from "@/lib/adapters/s3";
 import { getDb } from "@/lib/db/client";
 import { documentDetail, versionContent, versionDiff } from "@/lib/domain/document-view";
+import { versionAnnotations, type ChunkAnnotations } from "@/lib/domain/text-annotations";
 import { requireAdmin } from "@/lib/security/require-admin";
+import { AnnotatedText, AnnotationLegend } from "../../_components/annotated-text";
 import { ArchiveMarkdown } from "../../_components/archive-markdown";
 import { DiffView } from "../../_components/diff-view";
-import { DOC_TYPE_LABELS, DOCUMENT_STATUS_LABELS, OBSERVED_AT_BASIS_LABELS } from "../../_components/labels";
+import {
+  DOC_TYPE_LABELS,
+  DOCUMENT_STATUS_LABELS,
+  factAttributeLabel,
+  formatFactValue,
+  MATCH_KIND_LABELS,
+  OBSERVED_AT_BASIS_LABELS,
+} from "../../_components/labels";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const param = (v: string | string[] | undefined): string | undefined => (typeof v === "string" ? v : undefined);
 const time = (d: Date | null) => (d ? d.toISOString().slice(0, 16).replace("T", " ") : "–");
 const isWebUrl = (url: string) => /^https?:\/\//i.test(url);
+const share = (n: number) => n.toLocaleString("de-DE", { maximumFractionDigits: 2 });
+
+/** Tabs of the document page (`?tab=`). */
+const TABS = { content: "Inhalt", annotations: "Erwähnungen und Zitate" } as const;
+type Tab = keyof typeof TABS;
 
 export default async function Page({ params, searchParams }: PageProps<"/documents/[id]">) {
   await requireAdmin();
@@ -26,13 +40,17 @@ export default async function Page({ params, searchParams }: PageProps<"/documen
   const known = (v: string | undefined) => (v && versions.some((x) => x.id === v) ? v : undefined);
   const selectedId = known(param(sp.v)) ?? document.currentVersionId ?? versions[0]?.id;
   const compareId = known(param(sp.diff));
+  const tab: Tab = param(sp.tab) === "annotations" ? "annotations" : "content";
   const archive = getArchive();
-  const [content, diff] = await Promise.all([
-    selectedId ? versionContent(db, archive, id, selectedId) : null,
-    selectedId && compareId && compareId !== selectedId ? versionDiff(db, archive, id, compareId, selectedId) : null,
+  const [content, diff, annotations] = await Promise.all([
+    selectedId && tab === "content" ? versionContent(db, archive, id, selectedId) : null,
+    selectedId && tab === "content" && compareId && compareId !== selectedId ? versionDiff(db, archive, id, compareId, selectedId) : null,
+    selectedId && tab === "annotations" ? versionAnnotations(db, selectedId) : null,
   ]);
   const selected = versions.find((v) => v.id === selectedId);
-  const versionHref = (v: string, compare?: string) => `/documents/${id}?v=${v}${compare ? `&diff=${compare}` : ""}`;
+  const versionHref = (v: string, compare?: string) =>
+    `/documents/${id}?v=${v}${compare ? `&diff=${compare}` : ""}${tab === "annotations" ? "&tab=annotations" : ""}`;
+  const tabHref = (t: Tab) => `/documents/${id}${selectedId ? `?v=${selectedId}` : ""}${t === "annotations" ? `${selectedId ? "&" : "?"}tab=annotations` : ""}`;
 
   return (
     <div className="space-y-6 text-sm">
@@ -108,6 +126,23 @@ export default async function Page({ params, searchParams }: PageProps<"/documen
       </section>
 
       {selected && (
+        <nav aria-label="Reiter" className="flex gap-1 border-b border-neutral-300">
+          {(Object.keys(TABS) as Tab[]).map((t) => (
+            <Link
+              key={t}
+              href={tabHref(t)}
+              aria-current={t === tab ? "page" : undefined}
+              className={`-mb-px border-b-2 px-3 py-1 ${t === tab ? "border-neutral-800 font-semibold" : "border-transparent hover:border-neutral-400"}`}
+            >
+              {TABS[t]}
+            </Link>
+          ))}
+        </nav>
+      )}
+
+      {annotations && <Annotations chunks={annotations} />}
+
+      {selected && (
         <p>
           <a href={`/documents/${id}/raw/${selected.id}`} className="underline" download>
             Rohdatei
@@ -125,7 +160,7 @@ export default async function Page({ params, searchParams }: PageProps<"/documen
         </section>
       )}
 
-      {selected && !content && (
+      {selected && tab === "content" && !content && (
         <p role="alert" className="rounded bg-red-100 px-3 py-2">
           Das Markdown dieser Version fehlt im Archiv.
         </p>
@@ -166,5 +201,79 @@ export default async function Page({ params, searchParams }: PageProps<"/documen
         </>
       )}
     </div>
+  );
+}
+
+/** Tab "Erwähnungen und Zitate": every chunk with its mentions and quotes highlighted, and its facts. */
+function Annotations({ chunks }: { chunks: ChunkAnnotations[] }) {
+  if (chunks.length === 0) return <p>Diese Version hat keine Chunks.</p>;
+  const annotated = chunks.filter((c) => c.spans.length > 0).length;
+  return (
+    <section className="space-y-3">
+      <AnnotationLegend />
+      <p className="text-neutral-600">
+        {annotated} von {chunks.length} Chunks mit Erwähnungen oder Zitaten. Facts nicht aktiver Extraktionsläufe sind grau.
+      </p>
+      {chunks.map((c) => (
+        <article key={c.chunkId} className="max-w-3xl space-y-2 rounded border border-neutral-300 p-3">
+          <h3 className="text-xs text-neutral-600">
+            Chunk {c.ordinal}
+            {c.carriedFrom ? " · übernommen (Erwähnungen und Zitate des Ursprungs)" : ""}
+          </h3>
+          <p>
+            <AnnotatedText text={c.text} spans={c.spans} />
+          </p>
+          {c.mentions.length > 0 && (
+            <ul className="flex flex-wrap gap-x-4 text-xs">
+              {c.mentions.map((m) => (
+                <li key={m.id}>
+                  <Link href={`/geo/${m.geoObjectId}`} className="underline">
+                    {m.name ?? m.geoObjectId}
+                  </Link>{" "}
+                  ({MATCH_KIND_LABELS[m.matchKind]}, {share(m.confidence)})
+                </li>
+              ))}
+            </ul>
+          )}
+          {c.facts.length > 0 && (
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-neutral-300">
+                  <th className="py-1 pr-4">Attribut</th>
+                  <th className="pr-4">Wert</th>
+                  <th className="pr-4">Konfidenz</th>
+                  <th className="pr-4">Modell</th>
+                  <th>Lauf</th>
+                </tr>
+              </thead>
+              <tbody>
+                {c.facts.map((f) => (
+                  <tr key={f.id} className={`border-b border-neutral-200 ${f.active ? "" : "text-neutral-400"}`}>
+                    <td className="py-1 pr-4">
+                      <Link href={`/geo/${f.geoObjectId}`} className="underline">
+                        {factAttributeLabel(f.attribute)}
+                      </Link>
+                    </td>
+                    <td className="pr-4">{formatFactValue(f.attribute, f.value)}</td>
+                    <td className="pr-4 tabular-nums">{share(f.confidence)}</td>
+                    <td className="pr-4">{f.model ?? "–"}</td>
+                    <td>
+                      {f.runId ? (
+                        <Link href={`/runs/${f.runId}`} className="font-mono underline">
+                          {f.runId.slice(0, 8)}
+                        </Link>
+                      ) : (
+                        "–"
+                      )}
+                      {f.active ? "" : " (nicht aktiv)"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </article>
+      ))}
+    </section>
   );
 }

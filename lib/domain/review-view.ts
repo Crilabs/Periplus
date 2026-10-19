@@ -1,13 +1,17 @@
 import { and, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import type { Geometry, Point, Polygon } from "geojson";
 import { z } from "zod";
+import type { NominatimHit } from "@/lib/adapters/nominatim";
 import type { Db } from "@/lib/db/client";
 import { asGeoJson } from "@/lib/db/geometry";
 import {
   changeRateEnum,
   DOC_TYPES,
   geoNames,
+  documents,
   geoObjects,
+  nameCandidates,
+  placeKindEnum,
   places,
   reviewKindEnum,
   reviewTasks,
@@ -15,8 +19,10 @@ import {
   type GeoObjectType,
   type GeoOrigin,
   type NameOrigin,
+  type NameCandidateStatus,
   type PlaceKind,
   type PlaceStatus,
+  type PoiCategory,
   type ReviewKind,
   type ReviewStatus,
   type ChangeRate,
@@ -24,7 +30,14 @@ import {
 } from "@/lib/db/schema";
 import type { ProposalRobots, SerpHit } from "@/lib/domain/discovery/proposals";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
-import { afterInQueue, nextOpenTask, QUEUE_ORDER } from "@/lib/domain/review-decisions";
+import { candidateObjects, withNeighbours } from "@/lib/domain/mentions/scope";
+import {
+  afterInQueue,
+  nameCandidateRing,
+  newNameObjectType,
+  nextOpenTask,
+  QUEUE_ORDER,
+} from "@/lib/domain/review-decisions";
 import { crawlRulesSchema, type CrawlRules } from "@/lib/domain/sources/crawl-rules";
 import { getSource, type Source } from "@/lib/domain/sources/store";
 
@@ -32,6 +45,8 @@ import { getSource, type Source } from "@/lib/domain/sources/store";
 export const NEARBY_PLACES = 5;
 /** Areas offered for a coast tile, nearest first. */
 export const AREA_CHOICES = 20;
+/** Objects of a name candidate's candidate space offered for "assign the name", nearest first. */
+export const OBJECT_CHOICES = 30;
 
 export type ReviewTaskRow = {
   id: string;
@@ -123,7 +138,40 @@ export type ReviewSubject =
       /** Suggested approval values; the source's current values when the task has none. */
       suggestion: SourceSuggestion;
     }
+  | {
+      type: "name_candidate";
+      candidate: {
+        id: string;
+        name: string;
+        hint: string | null;
+        tileId: string;
+        status: NameCandidateStatus;
+        documents: number;
+        sources: number;
+      };
+      /** Null when the tile row is missing. */
+      tile: { id: string; bbox: Polygon } | null;
+      /** The geo object "create place" makes for each place kind (from the hint, else the kind). */
+      objectTypes: Record<PlaceKind, { type: GeoObjectType; category: PoiCategory | null }>;
+      hits: NominatimHit[];
+      occurrences: NameOccurrenceView[];
+      /** Valid objects of the candidate space (tile and neighbours), nearest to the tile centre first. */
+      objects: Array<{ id: string; name: string | null; type: GeoObjectType; distanceM: number }>;
+      /** Places nearest to the tile centre. */
+      nearby: NearbyPlace[];
+    }
   | { type: "missing" };
+
+/** Where a new name stands in a text; `start`/`end` index into `snippet`. */
+export type NameOccurrenceView = {
+  documentId: string;
+  versionId: string;
+  chunkId: string;
+  snippet: string;
+  start: number;
+  end: number;
+  url: string | null;
+};
 
 export type SourceSuggestion = { type: DocType; weight: number; changeRate: ChangeRate; crawlRules: CrawlRules };
 
@@ -219,6 +267,9 @@ export async function reviewTaskDetail(db: Db, id: string): Promise<ReviewTaskDe
     case "source":
       subject = await sourceSubject(db, task.subjectId, context);
       break;
+    case "name_candidate":
+      subject = await nameCandidateSubject(db, task.subjectId, context);
+      break;
     default:
       subject = { type: "missing" };
   }
@@ -286,6 +337,103 @@ async function sourceSubject(db: Db, sourceId: string, context: Record<string, u
     suggestion: suggestion.success
       ? suggestion.data
       : { type: source.type, weight: source.weight, changeRate: source.changeRate, crawlRules: source.crawlRules },
+  };
+}
+
+// Lenient readers of a name candidate context (written by geocodeCandidate): an entry that does not parse is left out.
+const hitSchema = z.object({
+  osmId: z.string(),
+  name: z.string(),
+  lon: z.number(),
+  lat: z.number(),
+  category: z.string(),
+  type: z.string(),
+  distanceM: z.number(),
+});
+const occurrenceSchema = z.object({
+  documentId: z.string(),
+  versionId: z.string(),
+  chunkId: z.string(),
+  snippet: z.string(),
+  start: z.number().int().nonnegative(),
+  end: z.number().int().nonnegative(),
+});
+const lenientArray = <T extends z.ZodType>(schema: T, value: unknown): z.infer<T>[] =>
+  Array.isArray(value)
+    ? value.flatMap((v) => {
+        const parsed = schema.safeParse(v);
+        return parsed.success ? [parsed.data as z.infer<T>] : [];
+      })
+    : [];
+
+async function nameCandidateSubject(db: Db, candidateId: string, context: Record<string, unknown>): Promise<ReviewSubject> {
+  if (!isUuid(candidateId)) return { type: "missing" };
+  const [candidate] = await db
+    .select({
+      id: nameCandidates.id,
+      name: nameCandidates.displayName,
+      hint: nameCandidates.hint,
+      tileId: nameCandidates.tileId,
+      status: nameCandidates.status,
+      documents: nameCandidates.documents,
+      sources: nameCandidates.sources,
+    })
+    .from(nameCandidates)
+    .where(eq(nameCandidates.id, candidateId));
+  if (!candidate) return { type: "missing" };
+  const [tile] = await db.select({ id: tiles.id, bbox: asGeoJson(tiles.bbox) }).from(tiles).where(eq(tiles.id, candidate.tileId));
+
+  const found = lenientArray(occurrenceSchema, context.occurrences);
+  const docIds = [...new Set(found.map((o) => o.documentId).filter(isUuid))];
+  const urls = docIds.length
+    ? new Map(
+        (await db.select({ id: documents.id, url: documents.url }).from(documents).where(inArray(documents.id, docIds))).map((d) => [d.id, d.url]),
+      )
+    : new Map<string, string>();
+
+  // Same candidate space as a valid assign_name target in decideReviewTask.
+  const space = await candidateObjects(db, withNeighbours([candidate.tileId], nameCandidateRing()));
+  const centre = sql`ST_Centroid(t.bbox)`;
+  const { rows: objects } = space.length
+    ? await db.execute<{ id: string; name: string | null; type: GeoObjectType; distance_m: number }>(sql`
+        select o.id, ${displayNameSql(sql`o.id`)} as name, o.type,
+               ST_Distance(o.centroid::geography, ${centre}::geography) as distance_m
+        from geo_objects o, tiles t
+        where t.id = ${candidate.tileId} and o.id in (select value::uuid from jsonb_array_elements_text(${JSON.stringify(space)}::jsonb))
+        order by distance_m, o.id
+        limit ${OBJECT_CHOICES}`)
+    : { rows: [] };
+  const { rows: nearby } = tile
+    ? await db.execute<{ id: string; name: string | null; kind: PlaceKind; status: PlaceStatus; lon: number; lat: number; distance_m: number }>(sql`
+        select p.id, ${displayNameSql(sql`p.geo_object_id`)} as name, p.kind, p.status,
+               ST_X(p.position) as lon, ST_Y(p.position) as lat,
+               ST_Distance(p.position::geography, ${centre}::geography) as distance_m
+        from places p, tiles t
+        where t.id = ${candidate.tileId}
+          and p.valid_to is null and p.merged_into_id is null and p.status in ('candidate', 'confirmed')
+        order by distance_m, p.id
+        limit ${NEARBY_PLACES}`)
+    : { rows: [] };
+
+  return {
+    type: "name_candidate",
+    candidate,
+    tile: tile ? { id: tile.id, bbox: tile.bbox as Polygon } : null,
+    objectTypes: Object.fromEntries(placeKindEnum.enumValues.map((k) => [k, newNameObjectType(candidate.hint, k)])) as Record<
+      PlaceKind,
+      { type: GeoObjectType; category: PoiCategory | null }
+    >,
+    hits: lenientArray(hitSchema, context.hits),
+    occurrences: found.map((o) => ({ ...o, url: urls.get(o.documentId) ?? null })),
+    objects: objects.map((o) => ({ id: o.id, name: o.name, type: o.type, distanceM: Number(o.distance_m) })),
+    nearby: nearby.map((r) => ({
+      id: r.id,
+      name: r.name,
+      kind: r.kind,
+      status: r.status,
+      position: { lon: Number(r.lon), lat: Number(r.lat) },
+      distanceM: Number(r.distance_m),
+    })),
   };
 }
 
@@ -449,6 +597,12 @@ export function detailFeatures(detail: ReviewTaskDetail): GeoJSON.FeatureCollect
     for (const o of s.objects) features.push(feature(o.geom, "subject", o.names[0]?.name ?? null));
   } else if (s.type === "tile") {
     features.push(feature(s.tile.bbox, "subject", s.tile.id));
+  } else if (s.type === "name_candidate") {
+    if (s.tile) features.push(feature(s.tile.bbox, "subject", s.tile.id));
+    for (const h of s.hits) {
+      features.push({ ...feature(point(h), "hit", h.name), properties: { role: "hit", label: h.name, color: "#d97706" } });
+    }
+    for (const n of s.nearby) features.push(feature(point(n.position), "nearby", n.name));
   }
   return { type: "FeatureCollection", features };
 }

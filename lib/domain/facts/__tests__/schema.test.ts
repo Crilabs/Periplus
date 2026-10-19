@@ -32,7 +32,7 @@ describe("fact schema v1", () => {
   });
 
   it("defaults to the active version and rejects an unknown one", () => {
-    expect(getFactSchema().version).toBe("v1");
+    expect(getFactSchema().version).toBe("v2");
     expect(() => getFactSchema("v99")).toThrow(/v99/);
   });
 
@@ -46,37 +46,37 @@ describe("fact schema v1", () => {
   });
 
   it("describes rules and origins", () => {
-    expect(attributeDef("shelter.SW")).toMatchObject({ rule: "shelter", origins: ["computed", "text"] });
-    expect(attributeDef("anchor_position")).toMatchObject({ rule: "review_over_computed", origins: ["computed", "observed"] });
-    expect(attributeDef("prohibitions")).toMatchObject({ rule: "prohibitions", origins: ["computed"] });
-    expect(attributeDef("fetch.N").rule).toBe("computed_only");
-    expect(() => attributeDef("restriction")).toThrow(UnknownAttribute);
+    expect(attributeDef("shelter.SW", "v1")).toMatchObject({ rule: "shelter", origins: ["computed", "text"] });
+    expect(attributeDef("anchor_position", "v1")).toMatchObject({ rule: "review_over_computed", origins: ["computed", "observed"] });
+    expect(attributeDef("prohibitions", "v1")).toMatchObject({ rule: "prohibitions", origins: ["computed"] });
+    expect(attributeDef("fetch.N", "v1").rule).toBe("computed_only");
+    expect(() => attributeDef("restriction", "v1")).toThrow(UnknownAttribute);
   });
 
   it("validates values", () => {
-    expect(validateFactValue("shelter.N", 0.4)).toBe(0.4);
-    expect(() => validateFactValue("shelter.N", 1.2)).toThrow(InvalidFactValue);
-    expect(() => validateFactValue("seabed", [{ type: "sand", share: 0.8 }])).toThrow(InvalidFactValue);
-    expect(validateFactValue("opening_bearing", { bearingDeg: null, widthDeg: 50 })).toBeTruthy();
-    expect(() => validateFactValue("shelter.X", 0.5)).toThrow(UnknownAttribute);
+    expect(validateFactValue("shelter.N", 0.4, "v1")).toBe(0.4);
+    expect(() => validateFactValue("shelter.N", 1.2, "v1")).toThrow(InvalidFactValue);
+    expect(() => validateFactValue("seabed", [{ type: "sand", share: 0.8 }], "v1")).toThrow(InvalidFactValue);
+    expect(validateFactValue("opening_bearing", { bearingDeg: null, widthDeg: 50 }, "v1")).toBeTruthy();
+    expect(() => validateFactValue("shelter.X", 0.5, "v1")).toThrow(UnknownAttribute);
   });
 
   it("validates the structured values", () => {
-    expect(() => validateFactValue("opening_bearing", { bearingDeg: 360, widthDeg: 50 })).toThrow(InvalidFactValue);
-    expect(() => validateFactValue("fetch.N", 120.5)).toThrow(InvalidFactValue);
-    expect(() => validateFactValue("fetch.N", 50001)).toThrow(InvalidFactValue);
-    expect(validateFactValue("fetch.N", 50000)).toBe(50000);
-    expect(() => validateFactValue("depth.min", -1)).toThrow(InvalidFactValue);
-    expect(validateFactValue("depth.approach", { at50m: 4, at100m: null, at200m: 12.5 })).toBeTruthy();
+    expect(() => validateFactValue("opening_bearing", { bearingDeg: 360, widthDeg: 50 }, "v1")).toThrow(InvalidFactValue);
+    expect(() => validateFactValue("fetch.N", 120.5, "v1")).toThrow(InvalidFactValue);
+    expect(() => validateFactValue("fetch.N", 50001, "v1")).toThrow(InvalidFactValue);
+    expect(validateFactValue("fetch.N", 50000, "v1")).toBe(50000);
+    expect(() => validateFactValue("depth.min", -1, "v1")).toThrow(InvalidFactValue);
+    expect(validateFactValue("depth.approach", { at50m: 4, at100m: null, at200m: 12.5 }, "v1")).toBeTruthy();
     expect(
       validateFactValue("seabed", [
         { type: "sand", share: 0.7 },
         { type: "weed", share: 0.295 },
-      ]),
+      ], "v1"),
     ).toHaveLength(2);
-    expect(() => validateFactValue("seabed", [])).toThrow(InvalidFactValue);
-    expect(() => validateFactValue("seabed", [{ type: "coral", share: 1 }])).toThrow(InvalidFactValue);
-    expect(() => validateFactValue("anchor_position", { lon: 181, lat: 0 })).toThrow(InvalidFactValue);
+    expect(() => validateFactValue("seabed", [], "v1")).toThrow(InvalidFactValue);
+    expect(() => validateFactValue("seabed", [{ type: "coral", share: 1 }], "v1")).toThrow(InvalidFactValue);
+    expect(() => validateFactValue("anchor_position", { lon: 181, lat: 0 }, "v1")).toThrow(InvalidFactValue);
     const hit = {
       kind: "military",
       restrictedAreaId: "0199f0a4-1b2c-7d3e-8f40-123456789abc",
@@ -84,13 +84,13 @@ describe("fact schema v1", () => {
       share: 0.6,
       anchoringBan: true,
     };
-    expect(validateFactValue("prohibitions", [hit])).toEqual([hit]);
-    expect(validateFactValue("prohibitions", [])).toEqual([]);
-    expect(() => validateFactValue("prohibitions", [{ ...hit, kind: "harbour" }])).toThrow(InvalidFactValue);
+    expect(validateFactValue("prohibitions", [hit], "v1")).toEqual([hit]);
+    expect(validateFactValue("prohibitions", [], "v1")).toEqual([]);
+    expect(() => validateFactValue("prohibitions", [{ ...hit, kind: "harbour" }], "v1")).toThrow(InvalidFactValue);
   });
 
   it("names the key and the zod issues in the error", () => {
-    expect(() => validateFactValue("shelter.N", 1.2)).toThrow(/shelter\.N.*1/);
+    expect(() => validateFactValue("shelter.N", 1.2, "v1")).toThrow(/shelter\.N.*1/);
   });
 });
 

@@ -26,7 +26,7 @@ import { runs } from "./ops";
  * Sources and archive (spec 05).
  * - sources, documents are stable: never deleted (forbid_delete), end via valid_to; core-column changes write
  *   <table>_history (record_history); updated_at maintained by set_updated_at.
- * - document_versions is append-only (forbid_mutation('')); chunks is append-only except embedding and
+ * - document_versions is append-only except the classified_* columns (ruling M4-P11, 0024); chunks is append-only except embedding and
  *   embedding_model (forbid_mutation('embedding,embedding_model')).
  * - text_shingles, crawl_frontier are working state.
  * Triggers and history tables: drizzle/0017_sources_triggers.sql.
@@ -148,6 +148,21 @@ export const documentVersions = pgTable(
     charCount: integer("char_count").notNull(),
     runId: uuid("run_id").references(() => runs.id),
     createdAt: createdAt(),
+    /*
+     * Model classification (spec 06, ruling M4-P11): technical columns, the only ones the append-only trigger
+     * releases (drizzle/0024_text_triggers.sql). The fetch-time columns above never change; readers prefer these.
+     */
+    classifiedDocType: docTypeEnum("classified_doc_type"),
+    classifiedLanguages: text("classified_languages").array(),
+    classifiedPublishedAt: date("classified_published_at"),
+    classifiedObservedAt: date("classified_observed_at"),
+    classifiedObservedAtBasis: observedAtBasisEnum("classified_observed_at_basis"),
+    observedAtReason: text("observed_at_reason"),
+    areaHints: text("area_hints").array(),
+    classifiedModel: text("classified_model"),
+    classifiedPromptVersion: integer("classified_prompt_version"),
+    classifiedRunId: uuid("classified_run_id").references(() => runs.id),
+    classifiedAt: timestamp("classified_at", { withTimezone: true }),
   },
   (t) => [uniqueIndex("document_versions_document_id_content_hash_unique").on(t.documentId, t.contentHash)],
 );

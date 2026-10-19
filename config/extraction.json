@@ -1,0 +1,31 @@
+{
+  "quote": { "minChars": 12, "maxChars": 300 },
+  "unit": { "neighbourChunks": 1, "maxChunksPerUnit": 6 },
+  "maxFactsPerUnit": 40,
+  "unitsPerBatch": 100,
+  "classifyWords": 1500,
+  "routeSectionWords": 20000,
+  "routeMaxStops": 60,
+  "routeStop": { "nameMaxChars": 80, "maxBeaufort": 12 },
+  "properNameMaxChars": 80,
+  "poiMatchRadiusM": 2000,
+  "poiSimilarity": 0.75,
+  "geocode": {
+    "minDocuments": 2,
+    "minSources": 2,
+    "radiusKm": 20,
+    "limit": 5,
+    "endpoint": "https://nominatim.openstreetmap.org/search",
+    "ratePerMinute": 60
+  },
+  "earliestDate": "1990-01-01",
+  "acceptance": { "minDeterministicShare": 0.7 },
+  "comparison": {
+    "units": 200,
+    "minSources": 8,
+    "ratingSample": 50,
+    "numericTolerance": 0.1,
+    "systemTokens": 3000,
+    "outputTokensPerUnit": 4000
+  }
+}

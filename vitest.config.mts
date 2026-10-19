@@ -14,6 +14,8 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // All files share one test Postgres; beyond 8 workers they only wait on each other and hit the 5 s timeout.
+    maxWorkers: 8,
     projects: [
       {
         extends: true,

@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { z, ZodError } from "zod";
 import { changeRateEnum, DOC_TYPES } from "@/lib/db/schema";
-import { getDb } from "@/lib/db/client";
+import { getDb, type Db } from "@/lib/db/client";
 import { retryFailedJob } from "@/lib/domain/jobs-view";
 import {
   DecisionNotAllowed,
@@ -15,6 +15,9 @@ import {
 import { nextTaskHref } from "@/lib/domain/review-view";
 import { getBoss } from "@/lib/jobs/boss";
 import type { QueueName } from "@/lib/jobs/queues";
+import { createLogger } from "@/lib/logger";
+import { startTextRun } from "@/lib/pipeline/text/run";
+import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { requireAdmin } from "@/lib/security/require-admin";
 import type { CrawlRules } from "@/lib/domain/sources/crawl-rules";
 import { parseCrawlRulesForm } from "../../_components/crawl-rules-fields";
@@ -46,7 +49,21 @@ const taskFields = (formData: FormData) =>
   taskFieldsSchema.parse({ taskId: formData.get("taskId"), openedAt: formData.get("openedAt") || undefined });
 
 /**
- * Decides the task, then redirects to the next open task of the same kind (or `/review`). An already decided
+ * The rematch after a "Neuer Name" decision (`create_place`, `assign_name`): a text run over the current versions that
+ * named it, which matches them again and extracts only the mentions this creates. The decision stands without it: a
+ * version that is no longer current by now is logged, and the next text run of its tile takes it in.
+ */
+async function startRematch(db: Db, documentVersionIds: string[], triggeredBy: string): Promise<void> {
+  try {
+    await startTextRun(db, await getBoss(), { documentVersionIds, rematch: true, triggeredBy });
+  } catch (e) {
+    if (!(e instanceof RunScopeNotReady)) throw e;
+    createLogger("review").warn({ documentVersionIds, reason: e.reason }, "rematch run not started");
+  }
+}
+
+/**
+ * Decides the task, starts the rematch run a new name asks for, then redirects to the next open task of the same kind (or `/review`). An already decided
  * task redirects back with `?stale=1`, a decision that does not fit the task with `?error=1`.
  */
 async function decideAndRedirect(
@@ -59,11 +76,12 @@ async function decideAndRedirect(
 
   let target: string;
   try {
-    await decideReviewTask(
+    const { documentVersionIds } = await decideReviewTask(
       db,
       { taskId: task.taskId, decision, decidedBy, openedAt: task.openedAt ? new Date(task.openedAt) : undefined },
       { retryJob },
     );
+    if (documentVersionIds.length > 0) await startRematch(db, documentVersionIds, decidedBy);
     target = await nextTaskHref(db, task.taskId);
   } catch (e) {
     if (e instanceof TaskNotOpen) target = `/review/${task.taskId}?stale=1`;

@@ -6,6 +6,7 @@ import type { ProposalRobots } from "@/lib/domain/discovery/proposals";
 import { detailFeatures, nextTaskHref, reviewTaskDetail, type GeoObjectView } from "@/lib/domain/review-view";
 import { QUEUES } from "@/lib/jobs/queues";
 import { requireAdmin } from "@/lib/security/require-admin";
+import { AnnotatedText } from "../../_components/annotated-text";
 import { CrawlRulesFields } from "../../_components/crawl-rules-fields";
 import { DecisionKeys } from "../../_components/decision-keys";
 import {
@@ -14,15 +15,19 @@ import {
   DOC_TYPE_LABELS,
   GEO_OBJECT_TYPE_LABELS,
   GEO_ORIGIN_LABELS,
+  NAME_CANDIDATE_STATUS_LABELS,
+  NAME_HINT_LABELS,
   NAME_ORIGIN_LABELS,
   PLACE_KIND_LABELS,
   PLACE_STATUS_LABELS,
+  POI_CATEGORY_LABELS,
   REVIEW_KIND_LABELS,
   SOURCE_STATUS_LABELS,
 } from "../../_components/labels";
 import { MiniMap } from "../../_components/mini-map";
 import { approveSourceAction } from "./actions";
 import { DecisionForm } from "./decision-form";
+import { NameCandidateCreate } from "./name-candidate";
 import { PlaceConfirm } from "./place-confirm";
 
 const distance = (m: number) =>
@@ -50,6 +55,16 @@ function robotsText(robots: ProposalRobots | null): string {
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+/** "Bucht", "Highlight (Essen)", or the raw hint when it is unknown. */
+function hintLabel(hint: string | null): string {
+  if (!hint) return "–";
+  if (hint.startsWith("poi:")) {
+    const category = hint.slice(4);
+    return `Highlight (${Object.hasOwn(POI_CATEGORY_LABELS, category) ? POI_CATEGORY_LABELS[category as keyof typeof POI_CATEGORY_LABELS] : category})`;
+  }
+  return Object.hasOwn(NAME_HINT_LABELS, hint) ? NAME_HINT_LABELS[hint as keyof typeof NAME_HINT_LABELS] : hint;
 }
 
 function ObjectFacts({ o }: { o: GeoObjectView }) {
@@ -109,7 +124,7 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
         <kbd className="rounded border border-neutral-300 px-1 text-xs text-neutral-500">n</kbd>
       </p>
       <h1 className="text-lg font-semibold">
-        {REVIEW_KIND_LABELS[task.kind]}
+        {subject.type === "name_candidate" ? `Neuer Name: ${subject.candidate.name}` : REVIEW_KIND_LABELS[task.kind]}
         {subject.type === "place" && subject.geoObject.names[0] ? `: ${subject.geoObject.names[0].name}` : ""}
         {subject.type === "source" ? `: ${subject.source.domain}` : ""}
       </h1>
@@ -260,6 +275,101 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
                 </DecisionForm>
                 <DecisionForm {...props} n={2} label="Kein Revier nötig" decision={{ action: "no_area" }} />
               </div>
+            )}
+          </section>
+        </div>
+      )}
+
+      {subject.type === "name_candidate" && (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <NameCandidateCreate
+            {...props}
+            name={subject.candidate.name}
+            features={features}
+            hits={subject.hits}
+            objectTypes={subject.objectTypes}
+            open={open}
+          />
+          <section className="space-y-4">
+            <dl className="grid grid-cols-[8rem_1fr] gap-y-1">
+              <dt>Name</dt>
+              <dd>{subject.candidate.name}</dd>
+              <dt>Hinweis</dt>
+              <dd>{hintLabel(subject.candidate.hint)}</dd>
+              <dt>Kachel</dt>
+              <dd>{subject.candidate.tileId}</dd>
+              <dt>Fundstellen</dt>
+              <dd>
+                {subject.candidate.documents} Dokumente aus {subject.candidate.sources} Quellen
+              </dd>
+              <dt>Status</dt>
+              <dd>{NAME_CANDIDATE_STATUS_LABELS[subject.candidate.status]}</dd>
+            </dl>
+            <div>
+              <h2 className="mb-1 font-semibold">Nominatim-Treffer</h2>
+              {subject.hits.length === 0 ? (
+                <p>Keine Treffer im Umkreis – Position per Klick in die Karte setzen.</p>
+              ) : (
+                <ul>
+                  {subject.hits.map((h) => (
+                    <li key={h.osmId}>
+                      {h.name} – {h.category}/{h.type}, {distance(h.distanceM)} vom Kachelmittelpunkt{" "}
+                      <span className="font-mono text-xs">{h.osmId}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div>
+              <h2 className="mb-1 font-semibold">Nächste Orte</h2>
+              {subject.nearby.length === 0 ? (
+                <p>Keine Orte in der Nähe.</p>
+              ) : (
+                <ul>
+                  {subject.nearby.map((n) => (
+                    <li key={n.id}>
+                      {n.name ?? n.id} – {PLACE_KIND_LABELS[n.kind]}, {PLACE_STATUS_LABELS[n.status]}, {distance(n.distanceM)}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            {open && (
+              <div className="space-y-2">
+                <DecisionForm {...props} n={2} label="Einem Objekt zuordnen" disabled={subject.objects.length === 0}>
+                  {subject.objects.length > 0 && (
+                    <select name="decision" aria-label="Objekt" className={SELECT}>
+                      {subject.objects.map((o) => (
+                        <option key={o.id} value={JSON.stringify({ action: "assign_name", geoObjectId: o.id })}>
+                          {o.name ?? o.id} ({GEO_OBJECT_TYPE_LABELS[o.type]}, {distance(o.distanceM)})
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </DecisionForm>
+                <DecisionForm {...props} n={3} label="Verwerfen" decision={{ action: "reject" }} />
+              </div>
+            )}
+          </section>
+          <section className="space-y-3 lg:col-span-2">
+            <h2 className="font-semibold">Fundstellen</h2>
+            {subject.occurrences.length === 0 ? (
+              <p>Keine Fundstellen gespeichert.</p>
+            ) : (
+              <ul className="space-y-3">
+                {subject.occurrences.map((o) => (
+                  <li key={o.chunkId} className="space-y-1">
+                    <p>
+                      <Link href={`/documents/${o.documentId}`} className="underline">
+                        {o.url ?? o.documentId}
+                      </Link>
+                    </p>
+                    <blockquote className="border-l-2 border-neutral-300 pl-3 text-neutral-700">
+                      …<AnnotatedText text={o.snippet} spans={[{ start: o.start, end: o.end, kind: "mention", ref: o.chunkId }]} />…
+                    </blockquote>
+                  </li>
+                ))}
+              </ul>
             )}
           </section>
         </div>

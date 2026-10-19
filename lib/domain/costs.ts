@@ -1,6 +1,6 @@
-import { and, eq, gte, isNotNull, lt, sql } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { externalCalls } from "@/lib/db/schema";
+import { aiBatches, externalCalls } from "@/lib/db/schema";
 import { getConfig, type AppConfig, type BudgetService } from "@/lib/config";
 import { BUDGET_SERVICES } from "@/lib/config/schemas";
 
@@ -62,16 +62,53 @@ export class BudgetExceeded extends Error {
   }
 }
 
+/**
+ * Throws `BudgetExceeded` when today's spend of the service, plus `reservedEur` already promised to calls whose cost is
+ * not booked yet (open message batches, ruling M4-C-R5), has reached its daily budget.
+ */
 export async function assertWithinBudget(
   db: Db,
   service: BudgetService,
   budgets: AppConfig["budgets"] = getConfig().budgets,
   now: Date = new Date(),
+  reservedEur = 0,
 ): Promise<void> {
   const budgetEur = budgets[service].dailyEur;
-  const spentEur = await dailySpendEur(db, service, now);
-  if (spentEur >= budgetEur) throw new BudgetExceeded(service, spentEur, budgetEur);
+  const committedEur = (await dailySpendEur(db, service, now)) + reservedEur;
+  if (committedEur >= budgetEur) throw new BudgetExceeded(service, committedEur, budgetEur);
 }
+
+/** Which batches a reservation sum covers: all (production) or only some runs (tests, ruling M4-P23). */
+export type ReservationScope = { runIds: string[] };
+
+/**
+ * The anthropic budget still promised to message batches whose cost is not booked yet (rulings M4-P6, M4-C-R5): the
+ * `estimated_cost_eur` of every batch that is not sent, being sent or running (`submitting`, `sending`, `submitted`),
+ * plus failed batches the provider may still bill (sent, never collected). Batches older than `hours` no longer count:
+ * the provider has ended them long ago, and a booking that never came must not block the budget for good.
+ */
+export async function reservedBatchEur(
+  db: Db,
+  opts: { now: Date; hours: number; scope?: ReservationScope },
+): Promise<number> {
+  const since = new Date(opts.now.getTime() - opts.hours * 3_600_000);
+  const [row] = await db
+    .select({ reserved: sql<string>`coalesce(sum(${aiBatches.estimatedCostEur}), 0)` })
+    .from(aiBatches)
+    .where(
+      and(
+        gt(aiBatches.createdAt, since),
+        or(
+          inArray(aiBatches.status, ["submitting", "sending", "submitted"]),
+          and(eq(aiBatches.status, "failed"), isNotNull(aiBatches.providerBatchId), isNull(aiBatches.endedAt)),
+        ),
+        opts.scope ? inArray(aiBatches.runId, opts.scope.runIds.length > 0 ? opts.scope.runIds : [NO_RUN]) : undefined,
+      ),
+    );
+  return Number(row?.reserved ?? 0);
+}
+
+const NO_RUN = "00000000-0000-0000-0000-000000000000";
 
 export type BudgetStatus = { service: BudgetService; spentEur: number; budgetEur: number; ratio: number };
 

@@ -1,0 +1,2 @@
+ALTER TABLE "facts" ADD CONSTRAINT "facts_text_extraction_run" CHECK ("facts"."mention_id" is null or "facts"."extraction_run_id" is not null);--> statement-breakpoint
+ALTER TABLE "facts" ADD CONSTRAINT "facts_text_quote_span" CHECK ("facts"."mention_id" is null or ("facts"."quote_start" is not null and "facts"."quote_end" is not null and "facts"."quote_start" >= 0 and "facts"."quote_start" < "facts"."quote_end"));

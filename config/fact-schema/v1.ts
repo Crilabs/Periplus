@@ -10,7 +10,7 @@ import { SECTORS, type AttributeDef, type FactSchema } from "@/lib/domain/facts/
 const share = z.number().min(0).max(1);
 const depthM = z.number().min(0);
 
-const SEABED_TYPES = ["sand", "mud", "gravel", "rock", "mixed", "weed"] as const;
+export const SEABED_TYPES = ["sand", "mud", "gravel", "rock", "mixed", "weed"] as const;
 
 const sectorAttributes = (
   prefix: string,

@@ -11,6 +11,7 @@ import {
   createSourceAction,
   discoveryAreaAction,
   embedBackfillAction,
+  pendingTextRunAction,
   proposalRunAction,
   wikivoyageRunAction,
 } from "./actions";
@@ -117,6 +118,11 @@ export default async function Page({ searchParams }: PageProps<"/sources">) {
         <form action={embedBackfillAction}>
           <button type="submit" className={BUTTON}>
             Einbettungen nachholen
+          </button>
+        </form>
+        <form action={pendingTextRunAction}>
+          <button type="submit" className={BUTTON}>
+            Neue Texte auswerten
           </button>
         </form>
       </section>

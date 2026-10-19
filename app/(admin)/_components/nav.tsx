@@ -11,6 +11,7 @@ const ITEMS = [
   { href: "/map", label: "Karte" },
   { href: "/sources", label: "Quellen" },
   { href: "/compare/converters", label: "Konverter" },
+  { href: "/compare/models", label: "Modellvergleich" },
   { href: "/runs", label: "Läufe" },
   { href: "/jobs", label: "Jobs" },
   { href: "/costs", label: "Kosten" },

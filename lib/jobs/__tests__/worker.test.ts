@@ -2,10 +2,10 @@ import { and, eq, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { testDb } from "@/test/db";
-import { reviewTasks } from "@/lib/db/schema";
+import { aiBatches, aiBatchItems, reviewTasks } from "@/lib/db/schema";
 import { BudgetExceeded } from "@/lib/domain/costs";
 import { newId } from "@/lib/domain/ids";
-import { beginStage, createRun, failRun, getRun, RUN_ENDED_REASON, resumeRun } from "@/lib/domain/runs";
+import { beginStage, createRun, failRun, getRun, recordJobOutcome, RUN_ENDED_REASON, resumeRun } from "@/lib/domain/runs";
 import { createBoss } from "@/lib/jobs/boss";
 import { isQueuePaused, resumeQueue } from "@/lib/jobs/controls";
 import { createLogger } from "@/lib/logger";
@@ -18,6 +18,13 @@ import { startWorkers, type JobData, type JobHandler } from "@/lib/jobs/worker";
 import { endRunByAdmin, enqueueStageJobs, startRun } from "@/lib/pipeline/runs";
 import { jobsFromDb } from "@/lib/domain/queues-view";
 import { failedJobsOfRun, retryFailedJob } from "@/lib/domain/jobs-view";
+import { loadConfig, type AppConfig } from "@/lib/config";
+import { MockModel } from "@/lib/ai/mock";
+import { echoTask } from "@/lib/ai/tasks/system-echo";
+import type { ModelTask } from "@/lib/ai/types";
+import { BATCH_HANDLERS } from "@/lib/jobs/batch-handlers";
+import { setModelClientFactory } from "@/lib/jobs/handlers/ai-batch";
+import { submitStageBatch } from "@/lib/pipeline/batches";
 
 /** Shared with the module mocks below: keys whose review task creation throws, and captured worker error logs. */
 const probe = vi.hoisted(() => ({
@@ -73,6 +80,14 @@ const queueConfig = {
   "embed.chunks": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "sources.wikivoyage": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "compare.converters": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "ai.batch.poll": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "classify.document_version": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "mentions.batch": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "mentions.disambiguate": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "mentions.geocode": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "extraction.mention": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "extraction.route": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "extraction.check": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   [DEAD_LETTER_QUEUE]: { concurrency: 1, retryLimit: 1, retryDelaySeconds: 0, retryBackoff: false },
 };
 
@@ -96,12 +111,41 @@ const testPing: JobHandler<JobData> = async (data, ctx) => {
     throw new BudgetExceeded("anthropic", 11, 10);
   }
   if (data.failUntilFixed === true && !fixed.has(marker)) throw new Error(`not fixed yet: ${data.key}`);
+  if (data.batchSubmit === true) return submitTestBatch(data, ctx);
   if (data.budgetOnce === true && !budgetThrown.has(marker)) {
     budgetThrown.add(marker);
     throw new BudgetExceeded("anthropic", 11, 10);
   }
   await pingHandler(data, ctx);
 };
+
+/** Model of the batch-submitting test jobs: its provider call fails until the job's marker is in `fixed`. */
+const batchModel = new MockModel(
+  { "system.echo": (input) => ({ echo: (input as { text: string }).text, language: "en" }) },
+  { batchIdPrefix: `mock-${newId()}-` },
+);
+const baseConfig = loadConfig("config");
+// The first poll after a send comes after 1 s, so the real poll job runs within the test.
+const batchConfig: AppConfig = { ...baseConfig, models: { ...baseConfig.models, batch: { ...baseConfig.models.batch, pollSeconds: 1 } } };
+const batchesDistributed: string[] = [];
+
+/** Stage jobs with `batchSubmit` hand one echo request to a message batch, like the text stages do. */
+async function submitTestBatch(data: JobData, ctx: Parameters<JobHandler<JobData>>[1]): Promise<void> {
+  const marker = `${ctx.runId}:${data.key}`;
+  const original = MockModel.prototype.submitBatch;
+  const model = Object.create(batchModel) as MockModel;
+  model.submitBatch = async (...args) => {
+    if (!fixed.has(marker)) throw new Error("provider rejects the batch");
+    return original.apply(batchModel, args);
+  };
+  await submitStageBatch(ctx.db, { model, boss: ctx.boss, config: batchConfig }, {
+    task: echoTask as ModelTask<unknown, unknown>,
+    runId: ctx.runId!,
+    stage: String(data.stage),
+    key: data.key,
+    items: [{ subjectType: "test", subjectId: marker, input: { text: marker } }],
+  });
+}
 
 let boss: PgBoss;
 let workers: { stop(): Promise<void> };
@@ -139,6 +183,14 @@ beforeAll(async () => {
       return [{ key: "0" }];
     },
   };
+  // Test-only stage with one job that submits a message batch.
+  STAGES.batchsubmit = {
+    name: "batchsubmit",
+    queue: "system.ping",
+    async plan() {
+      return [{ key: "b0", batchSubmit: true }];
+    },
+  };
   // Test-only stage that plans no jobs, to exercise chaining across a zero-job stage.
   STAGES.empty = {
     name: "empty",
@@ -155,6 +207,8 @@ beforeAll(async () => {
   workers = await startWorkers(boss, db, { ...HANDLERS, "system.ping": testPing, "run.advance": advanceHandler }, queueConfig, {
     pollingIntervalSeconds: 0.5,
     controlPollMs: 200,
+    // as the composition root (worker/index.ts) passes it
+    batchHandlers: BATCH_HANDLERS,
   });
 }, 30_000);
 
@@ -163,6 +217,7 @@ afterAll(async () => {
   delete STAGES.explode;
   delete STAGES.empty;
   delete STAGES.flaky;
+  delete STAGES.batchsubmit;
   await workers?.stop();
   for (const q of QUEUES) await resumeQueue(db, q, "test");
   await boss?.stop({ graceful: false });
@@ -583,6 +638,81 @@ describe("worker", () => {
     expect(String(logged[0].obj.err)).toContain("review task insert failed");
     expect(probe.workerErrors.some((e) => e.msg === "job failed permanently" && e.obj.jobId === id)).toBe(false);
   }, 30_000);
+
+  it("a dead-lettered batch poll fails its batch, records the unit as failed and reports its items", async () => {
+    const reported: string[] = [];
+    BATCH_HANDLERS["system.echo"] = {
+      task: echoTask as ModelTask<unknown, unknown>,
+      handle: async () => {},
+      fail: async (_db, item) => {
+        reported.push(item.subjectId);
+      },
+    };
+    try {
+      const { id: runId } = await createRun(db, { kind: "system", scope: scope(), stages: ["batchpoll"], triggeredBy: "test" });
+      // One submit job (done) plus the batch unit it added.
+      await beginStage(db, runId, "batchpoll", 2);
+      await recordJobOutcome(db, runId, "batchpoll", "k", "done");
+      const [batch] = await db
+        .insert(aiBatches)
+        .values({
+          providerBatchId: `mock-${newId()}`,
+          task: "system.echo",
+          model: "claude-haiku-5-5",
+          promptVersion: 1,
+          status: "submitted",
+          runId,
+          stage: "batchpoll",
+          outcomeKey: "batch:k",
+          requestCount: 1,
+        })
+        .returning();
+      await db.insert(aiBatchItems).values({ batchId: batch!.id, subjectType: "test", subjectId: `${runId}:s0`, input: {} });
+      // No model client is configured in this process, so every attempt of the poll fails.
+      await boss.send("ai.batch.poll", { key: `poll:${batch!.id}:0`, batchId: batch!.id });
+
+      await waitFor(async () => (await getRun(db, runId))!.status === "finished", 20_000);
+      expect((await getRun(db, runId))!.stages[0]).toMatchObject({ total: 2, done: 1, failed: 1 });
+      const [after] = await db.select().from(aiBatches).where(eq(aiBatches.id, batch!.id));
+      expect(after!.status).toBe("failed");
+      // the item never distributed went to the task's fail handler
+      expect(reported).toEqual([`${runId}:s0`]);
+    } finally {
+      delete BATCH_HANDLERS["system.echo"];
+    }
+  }, 30_000);
+
+  it("a dead-lettered batch submit job fails its unit; a manual retry sends it and the real poll job finishes the run", async () => {
+    BATCH_HANDLERS["system.echo"] = {
+      task: echoTask as ModelTask<unknown, unknown>,
+      handle: async (_db, item) => {
+        batchesDistributed.push(item.subjectId);
+      },
+    };
+    setModelClientFactory(() => batchModel);
+    try {
+      const { id: runId } = await startRun(db, boss, { kind: "system", scope: scope(), stages: ["batchsubmit"], triggeredBy: "test" });
+      // Three failed provider calls: the job and the batch unit it added both count as failed.
+      await waitFor(async () => (await getRun(db, runId))!.status === "failed", 20_000);
+      expect((await getRun(db, runId))!.stages[0]).toMatchObject({ total: 2, done: 0, failed: 2 });
+      const [unsent] = await db.select().from(aiBatches).where(eq(aiBatches.runId, runId));
+      expect(unsent).toMatchObject({ status: "failed", providerBatchId: null });
+
+      fixed.add(`${runId}:b0`);
+      const [failedJob] = await failedJobsOfRun(db, runId);
+      await retryFailedJob(db, boss, "system.ping", failedJob!.id);
+      // The job's own success finishes the revived run already; the batch unit follows with the poll job.
+      await waitFor(async () => (await getRun(db, runId))!.stages[0]!.done === 2, 20_000);
+      expect(await getRun(db, runId)).toMatchObject({ status: "finished" });
+      expect((await getRun(db, runId))!.stages[0]).toMatchObject({ total: 2, done: 2, failed: 0 });
+      const [sent] = await db.select().from(aiBatches).where(eq(aiBatches.runId, runId));
+      expect(sent!.status).toBe("distributed");
+      expect(batchesDistributed).toContain(`${runId}:b0`);
+    } finally {
+      setModelClientFactory(undefined);
+      delete BATCH_HANDLERS["system.echo"];
+    }
+  }, 40_000);
 
   it("a dead-letter job with a sourceId puts it into the failed_job context", async () => {
     const key = `dl-source-${newId()}`;

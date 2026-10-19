@@ -17,6 +17,8 @@ export type HttpRequest = {
   ratePerMinute?: number;
   /** Rate bucket `http:<rateKey ?? service>`, e.g. one per crawled domain of the same service. */
   rateKey?: string;
+  /** Bucket capacity (default `ratePerMinute`); 1 spaces the calls evenly (e.g. 60 per minute = one per second). */
+  rateBurst?: number;
   /** Longest total wait for a rate token before giving up with `RetryableHttpError` (default 60 000). */
   maxRateWaitMs?: number;
   /** Statuses returned to the caller instead of thrown (e.g. 304, 404, 410, redirects of a crawl). */
@@ -144,7 +146,7 @@ export type HttpCallDeps = {
 const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** A shared request budget: `perMinute` tokens of bucket `http:<key>`, waiting at most `maxWaitMs` in total. */
-export type RateLimit = { key: string; perMinute: number; maxWaitMs?: number };
+export type RateLimit = { key: string; perMinute: number; burst?: number; maxWaitMs?: number };
 
 /**
  * Waits for a token of the rate bucket `http:<key>` (shared across processes via `takeToken`); gives up with
@@ -157,7 +159,7 @@ export async function waitForRateToken(db: Db, limit: RateLimit, deps: HttpCallD
   const maxWaitMs = limit.maxWaitMs ?? DEFAULT_MAX_RATE_WAIT_MS;
   let waitedMs = 0;
   for (;;) {
-    const token = await takeToken(db, `http:${limit.key}`, limit.perMinute, now());
+    const token = await takeToken(db, `http:${limit.key}`, limit.perMinute, now(), limit.burst);
     if (token.ok) return;
     if (waitedMs + token.retryAfterMs > maxWaitMs) {
       throw new RetryableHttpError(
@@ -171,7 +173,11 @@ export async function waitForRateToken(db: Db, limit: RateLimit, deps: HttpCallD
 
 async function waitForToken(db: Db, req: HttpRequest, deps: HttpCallDeps): Promise<void> {
   if (req.ratePerMinute === undefined) return;
-  await waitForRateToken(db, { key: req.rateKey ?? req.service, perMinute: req.ratePerMinute, maxWaitMs: req.maxRateWaitMs }, deps);
+  await waitForRateToken(
+    db,
+    { key: req.rateKey ?? req.service, perMinute: req.ratePerMinute, burst: req.rateBurst, maxWaitMs: req.maxRateWaitMs },
+    deps,
+  );
 }
 
 /**

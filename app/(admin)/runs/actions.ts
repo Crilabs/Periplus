@@ -12,6 +12,7 @@ import { startGazetteerRun } from "@/lib/pipeline/gazetteer/stages";
 import { startGeometryRun } from "@/lib/pipeline/geometry-run";
 import { startRun } from "@/lib/pipeline/runs";
 import { startSeedRun } from "@/lib/pipeline/seed";
+import { startReprocessRun, startTextRun } from "@/lib/pipeline/text/run";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { startAndRedirect } from "../_components/run-start";
 
@@ -78,4 +79,33 @@ export async function startGeometryAction(input: FormData | { areaKey: string } 
   const boss = await getBoss();
   const errorPath = "tileId" in scope && scope.tileId ? `/tiles/${encodeURIComponent(scope.tileId)}` : "/runs";
   await startAndRedirect(() => startGeometryRun(db, boss, scope, admin.email), errorPath);
+}
+
+/** Where a refused text run of this scope returns to (the tile page for a tile, else the runs page). */
+const textRunErrorPath = (scope: { tileId?: string; areaKey?: string }) =>
+  scope.tileId ? `/tiles/${encodeURIComponent(scope.tileId)}` : "/runs";
+
+/**
+ * "Texte auswerten" for a configured area or one existing tile: a text run over the versions mentioning objects there
+ * plus the pending versions of its sources; refusals return to the calling page.
+ */
+export async function startTextRunAction(input: FormData | { areaKey: string } | { tileId: string }): Promise<void> {
+  const admin = await requireAdmin();
+  const db = getDb();
+  const scope = await tileOrAreaSchema(db).parseAsync(fields(input));
+  const boss = await getBoss();
+  await startAndRedirect(() => startTextRun(db, boss, { ...scope, triggeredBy: admin.email }), textRunErrorPath(scope));
+}
+
+/**
+ * "Reprozessieren (Stufen 6–7)" for a configured area or one existing tile: every mention there is extracted again
+ * into a new extraction run (the old facts stay); refusals return to the calling page.
+ */
+export async function startReprocessAction(input: FormData | { areaKey: string } | { tileId: string }): Promise<void> {
+  const admin = await requireAdmin();
+  const db = getDb();
+  const parsed = await tileOrAreaSchema(db).parseAsync(fields(input));
+  const scope = parsed.tileId ? { tileId: parsed.tileId } : { areaKey: parsed.areaKey! };
+  const boss = await getBoss();
+  await startAndRedirect(() => startReprocessRun(db, boss, { scope, triggeredBy: admin.email }), textRunErrorPath(parsed));
 }

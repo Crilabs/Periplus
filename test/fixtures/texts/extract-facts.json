@@ -1,0 +1,26 @@
+{
+  "note": "Hand-written extract-facts answers for the fixture texts, per text and object display name (MockModel). Each fact as the model would give it; one fabricated quote (de, Kolona) must be dropped by the quote check. Prompt rules (ruling M4-G-R4): 'shelter from the meltemi' names a wind, not a sector, so Vathy (a place, no meltemi_exposure) gets no fact; 'fiel der Anker auf 6 m' is a single sounding, no depth minimum.",
+  "responses": {
+    "de-trip-report.md": {
+      "Kolona": [
+        { "attribute": "seabed", "value": "[\"sand\"]", "quote": "In der Bucht Kolona fiel der Anker auf 6 m Sand", "chunk": 2, "confidence": 0.9, "observed_at": null, "poi_name": null },
+        { "attribute": "holding", "value": "\"good\"", "quote": "Der Anker hielt gut im Sand", "chunk": 2, "confidence": 0.9, "observed_at": null, "poi_name": null }
+      ]
+    },
+    "en-pilot-guide.md": {
+      "Kolona": [
+        { "attribute": "holding", "value": "\"good\"", "quote": "Holding is good in sand.", "chunk": 2, "confidence": 0.95, "observed_at": null, "poi_name": null },
+        { "attribute": "seabed", "value": "[\"sand\"]", "quote": "Holding is good in sand", "chunk": 2, "confidence": 0.9, "observed_at": null, "poi_name": null }
+      ],
+      "Vathy": [],
+      "Limnionas": [
+        { "attribute": "quietness", "value": "\"quiet\"", "quote": "Limnionas is quiet in the evening", "chunk": 2, "confidence": 0.85, "observed_at": null, "poi_name": null }
+      ]
+    },
+    "el-forum.md": {
+      "Kolona": [
+        { "attribute": "quietness", "value": "\"quiet\"", "quote": "Ο όρμος Κολόνα ήταν ήσυχος", "chunk": 2, "confidence": 0.8, "observed_at": null, "poi_name": null }
+      ]
+    }
+  }
+}

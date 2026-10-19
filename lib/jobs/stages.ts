@@ -13,6 +13,15 @@ import {
 } from "./handlers/gazetteer";
 import { seedTileStage } from "./handlers/seed";
 import { pingStage } from "./handlers/system-ping";
+import {
+  classifyDocumentVersionStage,
+  extractionCheckStage,
+  extractionMentionStage,
+  extractionRouteStage,
+  mentionsBatchStage,
+  mentionsDisambiguateStage,
+  mentionsGeocodeStage,
+} from "./handlers/text";
 import { tilesEnsureStage } from "./handlers/tiles";
 import { wikivoyageStage } from "./handlers/wikivoyage";
 
@@ -35,4 +44,11 @@ export const STAGES: Record<string, StageDefinition> = {
   [embedChunksStage.name]: embedChunksStage,
   [wikivoyageStage.name]: wikivoyageStage,
   [compareConvertersStage.name]: compareConvertersStage,
+  [classifyDocumentVersionStage.name]: classifyDocumentVersionStage,
+  [mentionsBatchStage.name]: mentionsBatchStage,
+  [mentionsDisambiguateStage.name]: mentionsDisambiguateStage,
+  [mentionsGeocodeStage.name]: mentionsGeocodeStage,
+  [extractionMentionStage.name]: extractionMentionStage,
+  [extractionRouteStage.name]: extractionRouteStage,
+  [extractionCheckStage.name]: extractionCheckStage,
 };

@@ -1,0 +1,28 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://nominatim.openstreetmap.org/search?format=jsonv2&q=Kolona&viewbox=23.02316%2C37.92966%2C23.72684%2C37.32034&bounded=1&limit=5&accept-language=de%2Cen%2Cel",
+    "body": null
+  },
+  "status": 200,
+  "bodyBase64": "W3sicGxhY2VfaWQiOjU2NDEyNjM0LCJsaWNlbmNlIjoiRGF0YSDCqSBPcGVuU3RyZWV0TWFwIGNvbnRyaWJ1dG9ycywgT0RiTCAxLjAuIGh0dHA6Ly9vc20ub3JnL2NvcHlyaWdodCIsIm9zbV90eXBlIjoid2F5Iiwib3NtX2lkIjoxMDg1NTUyNDQ0LCJsYXQiOiIzNy43NTE4Mzk0IiwibG9uIjoiMjMuNDIzNjk1NCIsImNhdGVnb3J5IjoibmF0dXJhbCIsInR5cGUiOiJiZWFjaCIsInBsYWNlX3JhbmsiOjIyLCJpbXBvcnRhbmNlIjowLjEwNjcwNjY2NzQyOTYxNzc0LCJhZGRyZXNzdHlwZSI6ImJlYWNoIiwibmFtZSI6IktvbG9uYSBCZWFjaCIsImRpc3BsYXlfbmFtZSI6IktvbG9uYSBCZWFjaCwgw4RnaW5hLCBNdW5pY2lwYWxpdHkgb2YgQWVnaW5hLCBSZWdpb25hbGJlemlyayBJbnNlbG4sIFJlZ2lvbiBBdHRpa2EsIEF0dGlrYSwgR3JpZWNoZW5sYW5kIiwiYm91bmRpbmdib3giOlsiMzcuNzUxMjQxNiIsIjM3Ljc1MjIwODciLCIyMy40MjM0MjAwIiwiMjMuNDIzODE2MCJdfSx7InBsYWNlX2lkIjo1NjUxMTg0MCwibGljZW5jZSI6IkRhdGEgwqkgT3BlblN0cmVldE1hcCBjb250cmlidXRvcnMsIE9EYkwgMS4wLiBodHRwOi8vb3NtLm9yZy9jb3B5cmlnaHQiLCJvc21fdHlwZSI6IndheSIsIm9zbV9pZCI6Mzc4ODIzNDA2LCJsYXQiOiIzNy43NTAwNDc4IiwibG9uIjoiMjMuNDIzNDkxOCIsImNhdGVnb3J5IjoidG91cmlzbSIsInR5cGUiOiJhdHRyYWN0aW9uIiwicGxhY2VfcmFuayI6MzAsImltcG9ydGFuY2UiOjQuMDAwMDc2Mjk1MTA0OTMyNmUtMDUsImFkZHJlc3N0eXBlIjoidG91cmlzbSIsIm5hbWUiOiLOkc+Bz4fOsc65zr/Ou86/zrPOuc66z4zPgiDPh8+Oz4HOv8+CIM6azr/Ou8+Ozr3Osc+CIiwiZGlzcGxheV9uYW1lIjoizpHPgc+HzrHOuc6/zrvOv86zzrnOus+Mz4Igz4fPjs+Bzr/PgiDOms6/zrvPjs69zrHPgiwgzp3Or866zr/PhSDOms6xzrbOsc69z4TOts6szrrOtywgw4RnaW5hLCBNdW5pY2lwYWxpdHkgb2YgQWVnaW5hLCBSZWdpb25hbGJlemlyayBJbnNlbG4sIFJlZ2lvbiBBdHRpa2EsIEF0dGlrYSwgMTgwIDEwLCBHcmllY2hlbmxhbmQiLCJib3VuZGluZ2JveCI6WyIzNy43NDkxNjIzIiwiMzcuNzUwODAwMyIsIjIzLjQyMjAzMjQiLCIyMy40MjUyODAyIl19XQ==",
+  "headers": {
+    "accept-ranges": "bytes",
+    "age": "0",
+    "alt-svc": "h3=\":443\";ma=86400,h3-29=\":443\";ma=86400,h3-27=\":443\";ma=86400",
+    "connection": "keep-alive",
+    "content-encoding": "br",
+    "content-length": "519",
+    "content-type": "application/json; charset=utf-8",
+    "date": "Mon, 19 Oct 2026 10:51:19 GMT",
+    "server": "gunicorn/asgi",
+    "strict-transport-security": "max-age=300",
+    "vary": "accept-language, Accept-Encoding",
+    "via": "1.1 varnish",
+    "x-cache": "MISS, MISS",
+    "x-cache-hits": "0, 0",
+    "x-nominatim-server": "longma.openstreetmap.org",
+    "x-served-by": "cache-muc13958-MUC, cache-muc13963-MUC",
+    "x-timer": "S1792407079.441045,VS0,VE125"
+  }
+}

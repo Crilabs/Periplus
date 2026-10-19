@@ -21,6 +21,8 @@ services:
   # Separate instance for Vitest; the test setup refuses database names that do not end in _test.
   db-test:
     build: ./postgres
+    # Vitest runs one worker per core, each with its own pool (up to 10 clients); 100 is too few on large machines.
+    command: postgres -c max_connections=400
     environment:
       POSTGRES_DB: periplus_test
       POSTGRES_USER: periplus

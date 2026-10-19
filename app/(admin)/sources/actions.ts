@@ -11,6 +11,7 @@ import { createManualSource, InvalidSourceDomain, SourceDomainKnown } from "@/li
 import { getBoss } from "@/lib/jobs/boss";
 import { startDiscoveryRun, startProposalRun } from "@/lib/pipeline/discovery-run";
 import { startEmbedBackfillRun, startFetchRun, startWikivoyageRun } from "@/lib/pipeline/fetch/run";
+import { startTextRun } from "@/lib/pipeline/text/run";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { startAndRedirect } from "../_components/run-start";
@@ -109,4 +110,15 @@ export async function embedBackfillAction(): Promise<void> {
   const db = getDb();
   const boss = await getBoss();
   await startAndRedirect(() => startEmbedBackfillRun(db, boss, admin.email), "/sources");
+}
+
+/**
+ * "Neue Texte auswerten": a text run over every current version (of all sources) the match has not passed with the
+ * current configuration; with nothing to do it still starts and finishes at once.
+ */
+export async function pendingTextRunAction(): Promise<void> {
+  const admin = await requireAdmin();
+  const db = getDb();
+  const boss = await getBoss();
+  await startAndRedirect(() => startTextRun(db, boss, { pending: true, triggeredBy: admin.email }), "/sources");
 }

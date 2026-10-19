@@ -1,10 +1,22 @@
 import { getConfig } from "@/lib/config";
+import { getFactSchema } from "@/lib/domain/facts/schema";
+import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { requireAdmin } from "@/lib/security/require-admin";
+
+const LEVEL_LABELS: Record<FactLevel, string> = {
+  place: "Ort",
+  area: "Revier",
+  island: "Insel",
+  cape_strait: "Kap/Enge",
+  poi: "POI",
+};
+
+const EFFORT_LABELS = { low: "niedrig", medium: "mittel", high: "hoch" } as const;
 
 export default async function Page() {
   await requireAdmin();
   const { areas, gazetteer, ...rest } = getConfig();
-  const { geometry, factSchema, fetch, embeddings } = rest;
+  const { geometry, factSchema, fetch, embeddings, models } = rest;
   const exceptions = Object.entries(fetch.converterBySource);
   const archiveRows: [string, string][] = [
     [
@@ -35,6 +47,15 @@ export default async function Page() {
       "Konfidenz",
       `Fetch ${geometry.fetch.confidence}, Schutz ${geometry.shelter.confidence}, Öffnung ${geometry.opening.confidence}, Schwell ${geometry.swell.confidence}`,
     ],
+  ];
+  const factSchemaLevels = getFactSchema(factSchema.version).levels;
+  const factSchemaRows: [string, string][] = [
+    ["Aktive Version", factSchema.version],
+    ...(Object.keys(LEVEL_LABELS) as FactLevel[]).map((level): [string, string] => {
+      const defs = factSchemaLevels[level];
+      const fromText = defs.filter((d) => d.origins.includes("text")).length;
+      return [LEVEL_LABELS[level], `${defs.length} Attribute, davon ${fromText} aus Texten`];
+    }),
   ];
   const thresholds: [string, string][] = [
     ["Puffer Kachelbox", `${gazetteer.bboxBufferKm} km`],
@@ -113,6 +134,56 @@ export default async function Page() {
           ))}
         </tbody>
       </table>
+
+      <h2 className="font-semibold">Fact-Schema</h2>
+      <table className="text-left">
+        <tbody>
+          {factSchemaRows.map(([label, value]) => (
+            <tr key={label} className="border-b">
+              <th className="py-1 pr-4 font-normal">{label}</th>
+              <td className="py-1 pr-4">{value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <h2 className="font-semibold">Modelle je Aufgabe</h2>
+      <table className="text-left">
+        <thead>
+          <tr className="border-b">
+            <th className="py-1 pr-4">Aufgabe</th>
+            <th className="py-1 pr-4">Modell</th>
+            <th className="py-1 pr-4">Prompt</th>
+            <th className="py-1 pr-4">Aufwand</th>
+            <th className="py-1 pr-4">Max. Token</th>
+            <th className="py-1 pr-4">Entscheidung</th>
+          </tr>
+        </thead>
+        <tbody>
+          {Object.entries(models.tasks).map(([task, t]) => (
+            <tr key={task} className="border-b align-top">
+              <td className="py-1 pr-4 font-mono">{task}</td>
+              <td className="py-1 pr-4 font-mono">{t.model}</td>
+              <td className="py-1 pr-4">v{t.promptVersion}</td>
+              <td className="py-1 pr-4">{EFFORT_LABELS[t.effort]}</td>
+              <td className="py-1 pr-4">
+                {t.maxTokens}
+                {t.cacheSystem ? ", System-Prompt gecacht" : ""}
+              </td>
+              <td className="py-1 pr-4">
+                {t.decision
+                  ? `${t.decision.status === "decided" ? "Entschieden" : "Vorläufig"}: ${t.decision.note}`
+                  : "–"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p>
+        Batch-Rabatt {models.batch.discount}, Abfrage alle {models.batch.pollSeconds} s, Abbruch nach{" "}
+        {models.batch.maxHours} h, höchstens {models.batch.maxRequests} Anfragen je Batch. Modellvergleich:{" "}
+        {models.comparison.models.join(", ")}.
+      </p>
 
       <h2 className="font-semibold">Quellen und Archiv</h2>
       <table className="text-left">

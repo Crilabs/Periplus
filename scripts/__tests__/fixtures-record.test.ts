@@ -1,6 +1,13 @@
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { fixtureKey, loadAiFixtures } from "@/lib/ai/fixtures";
+import { MockModel } from "@/lib/ai/mock";
+import { echoTask } from "@/lib/ai/tasks/system-echo";
+import type { ModelTask } from "@/lib/ai/types";
 import { areaByKey, getConfig } from "@/lib/config";
-import { assertScratchUrl, compactOverpass, parseArgs, serpRecordingQueries } from "../fixtures-record";
+import { assertScratchUrl, compactOverpass, parseArgs, recordAiAnswers, serpRecordingQueries } from "../fixtures-record";
 
 describe("fixtures-record CLI", () => {
   it("parses flags", () => {
@@ -63,6 +70,59 @@ describe("fixtures-record CLI", () => {
     expect(parseArgs(["--voyage"])).toEqual({ voyage: true });
     expect(() => parseArgs(["--voyage", "--area", "saronic"])).toThrow(/usage/);
     expect(() => parseArgs(["--area", "saronic", "--voyage"])).toThrow(/usage/);
+  });
+
+  it("--nominatim takes a query and a tile id and stands alone", () => {
+    expect(parseArgs(["--nominatim", "Kolona", "q025:813:510"])).toEqual({ nominatim: { query: "Kolona", tileId: "q025:813:510" } });
+    expect(() => parseArgs(["--nominatim", "Kolona"])).toThrow(/usage/);
+    expect(() => parseArgs(["--nominatim", "Kolona", "813:510"])).toThrow(/usage/);
+    expect(() => parseArgs(["--nominatim", " ", "q025:813:510"])).toThrow(/usage/);
+    expect(() => parseArgs(["--nominatim", "Kolona", "q025:813:510", "--area", "saronic"])).toThrow(/usage/);
+    expect(() => parseArgs(["--area", "saronic", "--nominatim", "Kolona", "q025:813:510"])).toThrow(/usage/);
+  });
+
+  it("--ai takes a model task, at most 5 answers and a cost ceiling, and stands alone", () => {
+    expect(parseArgs(["--ai", "extract-facts"])).toEqual({ ai: { task: "extract-facts", limit: 5, maxEur: 1 } });
+    expect(parseArgs(["--ai", "extract-facts", "--limit", "5", "--max-eur", "1"])).toEqual({ ai: { task: "extract-facts", limit: 5, maxEur: 1 } });
+    expect(parseArgs(["--ai", "classify-document", "--max-eur", "0.2", "--limit", "2"])).toEqual({ ai: { task: "classify-document", limit: 2, maxEur: 0.2 } });
+    for (const task of ["disambiguate-mention", "extract-route"]) expect(parseArgs(["--ai", task])).toMatchObject({ ai: { task } });
+    for (const argv of [
+      ["--ai"],
+      ["--ai", "pdf.to_markdown"],
+      ["--ai", "extract-facts", "--limit", "6"],
+      ["--ai", "extract-facts", "--limit", "0"],
+      ["--ai", "extract-facts", "--max-eur", "0"],
+      ["--ai", "extract-facts", "--max-eur"],
+      ["--ai", "extract-facts", "--limit", "2", "--limit", "3"],
+      ["--ai", "extract-facts", "--area", "saronic"],
+      ["--area", "saronic", "--ai", "extract-facts"],
+    ]) {
+      expect(() => parseArgs(argv)).toThrow(/usage/);
+    }
+  });
+
+  it("--ai writes sanitized answers and stops at the cost ceiling", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "periplus-ai-"));
+    try {
+      const task = echoTask as ModelTask<unknown, unknown>;
+      const model = new MockModel({ "system.echo": (input) => ({ echo: (input as { text: string }).text, language: "en" }) });
+      const inputs = [{ text: "eins" }, { text: "zwei" }, { text: "drei" }];
+      // each call books 0.4 EUR (MockModel books nothing, so the client is wrapped)
+      const client = { ...model, call: async (t: ModelTask<unknown, unknown>, i: unknown) => ({ ...(await model.call(t, i)), costEur: 0.4 }) } as unknown as MockModel;
+      const result = await recordAiAnswers(task, inputs, { client, maxEur: 1, estimateEur: () => 0.3, dir, now: () => new Date("2026-10-19T08:00:00Z") });
+      // after two answers 0.8 EUR are spent: a third (estimate 0.3) would pass 1 EUR
+      expect(result).toMatchObject({ spentEur: 0.8, stopped: true });
+      expect(result.recorded).toHaveLength(2);
+      const files = await readdir(join(dir, "system.echo"));
+      expect(files.sort()).toEqual([`${fixtureKey("system.echo", inputs[0])}.json`, `${fixtureKey("system.echo", inputs[1])}.json`].sort());
+      const stored = JSON.parse(await readFile(join(dir, "system.echo", files[0]!), "utf8")) as Record<string, unknown>;
+      expect(Object.keys(stored).sort()).toEqual(["input", "key", "model", "output", "recordedAt", "task"]);
+      expect(stored.recordedAt).toBe("2026-10-19T08:00:00.000Z");
+      // the files load as MockModel fixtures
+      expect(loadAiFixtures(dir)["system.echo"]!({ text: "zwei" })).toEqual({ echo: "zwei", language: "en" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("--wikivoyage needs an area and excludes the other recordings", () => {

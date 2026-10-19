@@ -1,11 +1,38 @@
 {
   "tasks": {
     "system.echo": { "model": "claude-haiku-5-5", "promptVersion": 1, "maxTokens": 1024 },
-    "pdf.to_markdown": { "model": "claude-sonnet-5-5", "promptVersion": 1, "maxTokens": 16000 }
+    "pdf.to_markdown": { "model": "claude-sonnet-5-5", "promptVersion": 1, "maxTokens": 16000 },
+    "classify-document": { "model": "claude-haiku-5-5", "promptVersion": 1, "effort": "low", "maxTokens": 4096 },
+    "disambiguate-mention": { "model": "claude-haiku-5-5", "promptVersion": 1, "effort": "low", "maxTokens": 4096 },
+    "extract-facts": {
+      "model": "claude-sonnet-5-5",
+      "promptVersion": 3,
+      "effort": "medium",
+      "maxTokens": 16000,
+      "cacheSystem": true,
+      "decision": {
+        "status": "provisional",
+        "note": "Vorläufig Sonnet bis zur Auswertung des Vergleichs an 200 Erwähnungen."
+      }
+    },
+    "extract-route": { "model": "claude-sonnet-5-5", "promptVersion": 1, "effort": "medium", "maxTokens": 16000 }
   },
   "pricesEurPerMTok": {
-    "claude-haiku-5-5": { "input": 0.0889, "output": 0.4443 },
-    "claude-sonnet-5-5": { "input": 1.7773, "output": 8.8865 },
-    "claude-opus-5-5": { "input": 3.5546, "output": 17.773 }
-  }
+    "claude-haiku-5-5": { "input": 0.0889, "output": 0.4443, "cacheReadFactor": 0.1 },
+    "claude-sonnet-5-5": { "input": 1.7773, "output": 8.8865, "cacheReadFactor": 0.1 },
+    "claude-opus-5-5": { "input": 3.5546, "output": 17.773, "cacheReadFactor": 0.05 }
+  },
+  "cacheWriteFactor": 1.25,
+  "batch": {
+    "discount": 0.5,
+    "pollSeconds": 60,
+    "maxHours": 26,
+    "maxRequests": 1000,
+    "providerTimeoutSeconds": 120,
+    "leaseSeconds": 600,
+    "clockSkewSeconds": 120,
+    "reservationHours": 48,
+    "budgetRetrySeconds": 900
+  },
+  "comparison": { "models": ["claude-sonnet-5-5", "claude-opus-5-5"] }
 }

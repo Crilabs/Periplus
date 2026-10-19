@@ -4,6 +4,7 @@ import {
   check,
   date,
   index,
+  integer,
   jsonb,
   pgEnum,
   pgTable,
@@ -17,6 +18,8 @@ import { newId } from "@/lib/domain/ids";
 import { geoObjects } from "./geo";
 import { runs } from "./ops";
 import { reviewDecisions } from "./review";
+import { chunks } from "./sources";
+import { extractionRuns, mentions } from "./text";
 
 /*
  * Derived data. computations and facts are append-only (forbid_mutation trigger,
@@ -65,18 +68,20 @@ export const facts = pgTable(
       .references(() => geoObjects.id),
     attribute: text("attribute").notNull(),
     value: jsonb("value").notNull(),
-    /** No foreign key yet: the mentions table arrives in M4. */
-    mentionId: uuid("mention_id"),
+    mentionId: uuid("mention_id").references(() => mentions.id),
     computationId: uuid("computation_id").references(() => computations.id),
     /** No foreign key yet: the observations table arrives in M8. */
     observationId: uuid("observation_id"),
     reviewDecisionId: uuid("review_decision_id").references(() => reviewDecisions.id),
     quote: text("quote"),
     quoteVerified: boolean("quote_verified").notNull().default(false),
+    /** Where the verified quote lies: chunk and UTF-16 offsets into chunks.text (for highlighting). */
+    quoteChunkId: uuid("quote_chunk_id").references(() => chunks.id),
+    quoteStart: integer("quote_start"),
+    quoteEnd: integer("quote_end"),
     observedAt: date("observed_at").notNull(),
     confidence: real("confidence").notNull(),
-    /** No foreign key yet: extraction runs arrive in M4. */
-    extractionRunId: uuid("extraction_run_id"),
+    extractionRunId: uuid("extraction_run_id").references(() => extractionRuns.id),
     factSchemaVersion: text("fact_schema_version").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -86,6 +91,17 @@ export const facts = pgTable(
       sql`num_nonnulls(${t.mentionId}, ${t.computationId}, ${t.observationId}, ${t.reviewDecisionId}) = 1`,
     ),
     check("facts_quote_for_mention", sql`${t.mentionId} is null or ${t.quote} is not null`),
+    // No text fact without a verified, located quote.
+    check(
+      "facts_text_quote_verified",
+      sql`${t.mentionId} is null or (${t.quoteVerified} and ${t.quoteChunkId} is not null)`,
+    ),
+    check("facts_text_extraction_run", sql`${t.mentionId} is null or ${t.extractionRunId} is not null`),
+    // The located quote: offsets into quote_chunk_id's text, end exclusive.
+    check(
+      "facts_text_quote_span",
+      sql`${t.mentionId} is null or (${t.quoteStart} is not null and ${t.quoteEnd} is not null and ${t.quoteStart} >= 0 and ${t.quoteStart} < ${t.quoteEnd})`,
+    ),
     check("facts_confidence_range", sql`${t.confidence} between 0 and 1`),
     uniqueIndex("facts_mention_attribute_run_unique").on(t.mentionId, t.attribute, t.extractionRunId),
     uniqueIndex("facts_computation_attribute_unique")

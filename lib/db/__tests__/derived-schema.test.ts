@@ -6,6 +6,7 @@ import { computations, facts, geoObjects, reviewDecisions, reviewTasks } from "@
 import { newId } from "@/lib/domain/ids";
 import type { Db } from "@/lib/db/client";
 import { withRollback } from "@/test/db";
+import { insertTestExtractionRun, insertTestMention } from "@/test/text";
 
 /** drizzle wraps driver errors ("Failed query"); the Postgres message lives on `cause`. */
 async function rejectionMessage(tx: Db, run: (tx: Db) => Promise<unknown>): Promise<string> {
@@ -107,14 +108,25 @@ describe("computations and facts", () => {
 
   it("a fact from a mention needs a quote", async () => {
     await withRollback(async (tx) => {
-      const geoObjectId = await insertGeoObject(tx);
-      const mentionId = newId();
+      const { mentionId, geoObjectId, chunkId } = await insertTestMention(tx);
+      const extractionRunId = await insertTestExtractionRun(tx);
 
       const message = await rejectionMessage(tx, (sp) => insertFact(sp, factValues(geoObjectId, { mentionId })));
       expect(message).toMatch(/facts_quote_for_mention/);
 
       await expect(
-        insertFact(tx, factValues(geoObjectId, { mentionId, quote: "good holding in sand" })),
+        insertFact(
+          tx,
+          factValues(geoObjectId, {
+            mentionId,
+            extractionRunId,
+            quote: "Good holding in sand",
+            quoteVerified: true,
+            quoteChunkId: chunkId,
+            quoteStart: 0,
+            quoteEnd: 20,
+          }),
+        ),
       ).resolves.toBeTruthy();
     });
   });
@@ -157,14 +169,5 @@ describe("computations and facts", () => {
     });
   });
 
-  it("(mention_id, attribute, extraction_run_id) is unique", async () => {
-    await withRollback(async (tx) => {
-      const geoObjectId = await insertGeoObject(tx);
-      const mention = { mentionId: newId(), extractionRunId: newId(), quote: "q", attribute: "seabed" };
-      await insertFact(tx, factValues(geoObjectId, mention));
-
-      const message = await rejectionMessage(tx, (sp) => insertFact(sp, factValues(geoObjectId, mention)));
-      expect(message).toMatch(/facts_mention_attribute_run_unique/);
-    });
-  });
+  // (mention_id, attribute, extraction_run_id) uniqueness: lib/db/__tests__/text-schema.test.ts
 });

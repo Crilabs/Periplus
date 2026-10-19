@@ -5,9 +5,12 @@ import { getDb } from "@/lib/db/client";
 import { workerHeartbeats } from "@/lib/db/schema";
 import { closeRenderer } from "@/lib/adapters/fetch/browser";
 import { getArchive } from "@/lib/adapters/s3";
+import { createAnthropicClient } from "@/lib/ai/anthropic";
 import { assertEmbeddingDimension } from "@/lib/pipeline/embed";
 import { getEnv } from "@/lib/env";
 import { createBoss } from "@/lib/jobs/boss";
+import { BATCH_HANDLERS } from "@/lib/jobs/batch-handlers";
+import { setModelClientFactory } from "@/lib/jobs/handlers/ai-batch";
 import { DEAD_LETTER_QUEUE, ensureQueues, QUEUES } from "@/lib/jobs/queues";
 import { HANDLERS } from "@/lib/jobs/registry";
 import { startWorkers } from "@/lib/jobs/worker";
@@ -26,7 +29,9 @@ async function main(): Promise<void> {
   const boss = createBoss(getEnv().DATABASE_URL);
   await boss.start();
   await ensureQueues(boss, config.queues);
-  const workers = await startWorkers(boss, db, HANDLERS, config.queues);
+  // Batch jobs submit and collect message batches through this client (the key is read on first use).
+  setModelClientFactory((jobDb) => createAnthropicClient(jobDb, config));
+  const workers = await startWorkers(boss, db, HANDLERS, config.queues, { batchHandlers: BATCH_HANDLERS });
 
   const host = hostname();
   const workerId = `${host}:${process.pid}`;

@@ -1,11 +1,15 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import {
+  documentVersions,
   geoNames,
   geoObjects,
+  nameCandidates,
   places,
+  tileGeoObjects,
+  unmatchedNames,
   reviewDecisions,
   reviewTasks,
   serpQueries,
@@ -32,6 +36,20 @@ import { getSource } from "@/lib/domain/sources/store";
 import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
 import { getConfig } from "@/lib/config";
 import { testDb, withRollback } from "@/test/db";
+import { insertNamedObject, insertTestSource, insertTestVersion } from "@/test/text";
+
+// `config/mentions.json` neighbourRing as the test switch sets it (undefined: as configured).
+const RING = vi.hoisted(() => ({ value: undefined as 1 | 2 | undefined }));
+vi.mock("@/lib/config", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/lib/config")>();
+  return {
+    ...original,
+    getConfig: () => {
+      const cfg = original.getConfig();
+      return RING.value ? { ...cfg, mentions: { ...cfg.mentions, neighbourRing: RING.value } } : cfg;
+    },
+  };
+});
 
 // Synthetic data in open sea outside the pilot box 23.0-23.75 E x 37.0-38.0 N (around 28.1 E, 35.1 N).
 const LON = 28.1;
@@ -126,6 +144,21 @@ async function ensureTile(tx: Db, lon: number, lat: number): Promise<string> {
     .onConflictDoNothing();
   return id;
 }
+
+/** A valid polygon object of `type` over the box (a parent candidate of the hierarchy rule). */
+async function insertPolygon(tx: Db, type: GeoObjectType, w: number, s: number, e: number, n: number): Promise<string> {
+  const [row] = await tx
+    .insert(geoObjects)
+    .values({ type, origin: "osm", geom: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)` })
+    .returning({ id: geoObjects.id });
+  return row!.id;
+}
+
+/** Greek letters without ELOT 743 digraph rules, with their transliteration, indexed by a hex digit. */
+const GREEK_HEX: [string, string][] = [
+  ["α", "a"], ["β", "v"], ["δ", "d"], ["ε", "e"], ["ζ", "z"], ["η", "i"], ["θ", "th"], ["κ", "k"],
+  ["λ", "l"], ["μ", "m"], ["ν", "n"], ["ξ", "x"], ["ο", "o"], ["ρ", "r"], ["φ", "f"], ["χ", "ch"],
+];
 
 const decide = (tx: Db, taskId: string, decision: ReviewDecision, extra: { openedAt?: Date; now?: Date } = {}) =>
   decideReviewTask(tx, { taskId, decision, decidedBy: ADMIN, ...extra });
@@ -633,6 +666,252 @@ describe("source decisions", () => {
         DecisionNotAllowed,
       );
     }));
+});
+
+describe("name candidate decisions", () => {
+  // The candidate's tile at LON/LAT; a new name found in two documents of two sources.
+  async function nameTask(tx: Db, o: { hint?: string | null; name?: string } = {}) {
+    const tileId = await ensureTile(tx, LON, LAT);
+    const name = o.name ?? `Xen${newId().slice(-8).replace(/\d/g, (d) => "ghijklmnop"[Number(d)]!)}`;
+    const [candidate] = await tx
+      .insert(nameCandidates)
+      .values({ nameNormalized: name.toLowerCase(), displayName: name, hint: o.hint === undefined ? "bay" : o.hint, tileId, status: "review", documents: 2, sources: 2 })
+      .returning({ id: nameCandidates.id });
+    const versionIds: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const sourceId = await insertTestSource(tx);
+      const v = await insertTestVersion(tx, [`Wir ankerten in der Bucht von ${name}.`], { sourceId });
+      await tx.insert(unmatchedNames).values({
+        nameNormalized: name.toLowerCase(),
+        displayName: name,
+        hint: "bay",
+        documentVersionId: v.versionId,
+        chunkId: v.chunkIds[0]!,
+        sourceId,
+        tileId,
+      });
+      versionIds.push(v.versionId);
+    }
+    const { id: taskId } = await createReviewTask(tx, {
+      kind: "place_candidate",
+      subjectType: "name_candidate",
+      subjectId: candidate!.id,
+      context: { name, tileId },
+    });
+    return { taskId, candidateId: candidate!.id, tileId, name, versionIds: versionIds.sort() };
+  }
+
+  const createPlace = (name: string, extra: Partial<Extract<ReviewDecision, { action: "create_place" }>> = {}): ReviewDecision => ({
+    action: "create_place",
+    kind: "anchorage",
+    position: { lon: LON + 0.01, lat: LAT + 0.01 },
+    name,
+    language: "en",
+    ...extra,
+  });
+
+  const candidateStatus = async (tx: Db, id: string) =>
+    (await tx.select({ status: nameCandidates.status }).from(nameCandidates).where(eq(nameCandidates.id, id)))[0]!.status;
+
+  /** The object created by the decision: the one whose valid names include `name` with origin text. */
+  async function createdObject(tx: Db, name: string) {
+    const [row] = await tx
+      .select({
+        id: geoObjects.id,
+        type: geoObjects.type,
+        origin: geoObjects.origin,
+        category: geoObjects.category,
+        publicId: geoObjects.publicId,
+        parentId: geoObjects.parentId,
+      })
+      .from(geoObjects)
+      .innerJoin(geoNames, eq(geoNames.geoObjectId, geoObjects.id))
+      .where(and(eq(geoNames.name, name), eq(geoNames.origin, "text")));
+    return row;
+  }
+
+  it("create_place makes a bay object under its island, its name and a confirmed place in one decision", () =>
+    withRollback(async (tx) => {
+      // The bay's position LON+0.01/LAT+0.01 lies on an island inside an area: the island is the parent (Spec 03 step 6).
+      await insertPolygon(tx, "area", LON - 0.1, LAT - 0.1, LON + 0.1, LAT + 0.1);
+      const islandId = await insertPolygon(tx, "island", LON, LAT, LON + 0.02, LAT + 0.02);
+      const t = await nameTask(tx);
+      const result = await decide(tx, t.taskId, createPlace(t.name));
+
+      expect(result).toEqual({ documentVersionIds: t.versionIds });
+      const object = await createdObject(tx, t.name);
+      expect(object).toMatchObject({ type: "bay", origin: "text", category: null, parentId: islandId });
+      const names = await tx
+        .select({ name: geoNames.name, language: geoNames.language, origin: geoNames.origin, isPreferred: geoNames.isPreferred })
+        .from(geoNames)
+        .where(eq(geoNames.geoObjectId, object!.id))
+        .orderBy(geoNames.language);
+      expect(names).toEqual([
+        { name: t.name, language: "de", origin: "fallback", isPreferred: true },
+        { name: t.name, language: "en", origin: "text", isPreferred: true },
+      ]);
+      const links = await tx.select().from(tileGeoObjects).where(eq(tileGeoObjects.geoObjectId, object!.id));
+      expect(links.map((l) => l.tileId)).toEqual([t.tileId]);
+      const [place] = await tx.select({ id: places.id }).from(places).where(eq(places.geoObjectId, object!.id));
+      const p = await placeOf(tx, place!.id);
+      expect(p).toMatchObject({ kind: "anchorage", status: "confirmed", tileId: t.tileId });
+      expect(isPublicId(p.publicId!, "sp")).toBe(true);
+      expect(p.lon).toBeCloseTo(LON + 0.01, 6);
+      expect(p.lat).toBeCloseTo(LAT + 0.01, 6);
+      expect(await candidateStatus(tx, t.candidateId)).toBe("decided");
+      expect((await taskOf(tx, t.taskId)).status).toBe("decided");
+      expect(await decisionsOf(tx, t.taskId)).toHaveLength(1);
+    }));
+
+  it("a poi hint creates a poi object with category and no place", () =>
+    withRollback(async (tx) => {
+      const t = await nameTask(tx, { hint: "poi:food" });
+      await decide(tx, t.taskId, createPlace(t.name, { language: "de" }));
+
+      const object = await createdObject(tx, t.name);
+      expect(object).toMatchObject({ type: "poi", category: "food", origin: "text" });
+      expect(isPublicId(object!.publicId!, "hl")).toBe(true);
+      expect(await tx.select().from(places).where(eq(places.geoObjectId, object!.id))).toEqual([]);
+      // A German name needs no fallback.
+      const fallbacks = await tx.select().from(geoNames).where(and(eq(geoNames.geoObjectId, object!.id), eq(geoNames.origin, "fallback")));
+      expect(fallbacks).toEqual([]);
+    }));
+
+  it("an island hint creates an islet without a place under its area; a Greek name gets its transliteration as German fallback", () =>
+    withRollback(async (tx) => {
+      // An own Greek name: hex digits of a fresh id as Greek letters without digraph rules, with their ELOT 743 form.
+      const suffix = [...newId().slice(-6)].map((h) => GREEK_HEX[parseInt(h, 16)]!);
+      const name = `Κολώνα ${suffix.map(([g]) => g).join("")}`;
+      const latin = `Kolona ${suffix.map(([, l]) => l).join("")}`;
+      const areaId = await insertPolygon(tx, "area", LON - 0.1, LAT - 0.1, LON + 0.1, LAT + 0.1);
+      const t = await nameTask(tx, { hint: "island", name });
+      await decide(tx, t.taskId, createPlace(name, { language: "el" }));
+
+      const object = await createdObject(tx, name);
+      expect(object).toMatchObject({ type: "islet", parentId: areaId });
+      expect(await tx.select().from(places).where(eq(places.geoObjectId, object!.id))).toEqual([]);
+      const names = await tx
+        .select({ name: geoNames.name, language: geoNames.language, origin: geoNames.origin })
+        .from(geoNames)
+        .where(eq(geoNames.geoObjectId, object!.id))
+        .orderBy(geoNames.origin);
+      expect(names).toEqual(
+        expect.arrayContaining([
+          { name, language: "el", origin: "text" },
+          { name: latin, language: "el", origin: "transliteration" },
+          { name: latin, language: "de", origin: "fallback" },
+        ]),
+      );
+    }));
+
+  it("without a known hint the place kind decides the type", () =>
+    withRollback(async (tx) => {
+      const t = await nameTask(tx, { hint: null });
+      await decide(tx, t.taskId, createPlace(t.name, { kind: "marina" }));
+      expect(await createdObject(tx, t.name)).toMatchObject({ type: "harbour" });
+    }));
+
+  it("assign_name adds a review name to the chosen object", () =>
+    withRollback(async (tx) => {
+      const t = await nameTask(tx);
+      // In a neighbour tile of the candidate's tile.
+      const neighbour = await ensureTile(tx, LON + 0.25, LAT);
+      const objectId = await insertNamedObject(tx, { type: "bay", names: [{ name: "Other Bay" }], lon: LON + 0.26, lat: LAT, tiles: [neighbour] });
+      const result = await decide(tx, t.taskId, { action: "assign_name", geoObjectId: objectId });
+
+      expect(result).toEqual({ documentVersionIds: t.versionIds });
+      const names = await tx
+        .select({ name: geoNames.name, language: geoNames.language, origin: geoNames.origin })
+        .from(geoNames)
+        .where(and(eq(geoNames.geoObjectId, objectId), eq(geoNames.origin, "review")));
+      expect(names).toEqual([{ name: t.name, language: "und", origin: "review" }]);
+      expect(await candidateStatus(tx, t.candidateId)).toBe("decided");
+    }));
+
+  it("assign_name to an object outside the candidate tiles is not allowed", () =>
+    withRollback(async (tx) => {
+      const t = await nameTask(tx);
+      const far = await ensureTile(tx, LON + 0.5, LAT);
+      const outside = await insertNamedObject(tx, { type: "bay", names: [{ name: "Far Bay" }], lon: LON + 0.51, lat: LAT, tiles: [far] });
+      const ended = await insertNamedObject(tx, { type: "bay", names: [{ name: "Old Bay" }], lon: LON + 0.01, lat: LAT, tiles: [t.tileId] });
+      await tx.update(geoObjects).set({ validTo: sql`current_date` }).where(eq(geoObjects.id, ended));
+
+      for (const geoObjectId of [outside, ended, newId()]) {
+        await expect(decide(tx, t.taskId, { action: "assign_name", geoObjectId })).rejects.toBeInstanceOf(DecisionNotAllowed);
+      }
+      expect((await taskOf(tx, t.taskId)).status).toBe("open");
+      expect(await decisionsOf(tx, t.taskId)).toHaveLength(0);
+      expect(await candidateStatus(tx, t.candidateId)).toBe("review");
+    }));
+
+  it("reject only decides the candidate", () =>
+    withRollback(async (tx) => {
+      const t = await nameTask(tx);
+      expect(await decide(tx, t.taskId, { action: "reject" })).toEqual({ documentVersionIds: [] });
+      expect(await candidateStatus(tx, t.candidateId)).toBe("decided");
+      expect(await createdObject(tx, t.name)).toBeUndefined();
+    }));
+
+  it("returns only the current version of each document, superseded versions with the name left out", () =>
+    withRollback(async (tx) => {
+      const t = await nameTask(tx);
+      // A newer version of the first document (it no longer needs to carry the name) replaces the one with the name.
+      const [old] = await tx.select({ documentId: documentVersions.documentId }).from(documentVersions).where(eq(documentVersions.id, t.versionIds[0]!));
+      const newer = await insertTestVersion(tx, ["Neue Fassung."], { documentId: old!.documentId });
+      const objectId = await insertNamedObject(tx, { type: "bay", names: [{ name: "Own Bay" }], lon: LON + 0.01, lat: LAT, tiles: [t.tileId] });
+      const result = await decide(tx, t.taskId, { action: "assign_name", geoObjectId: objectId });
+
+      expect(result).toEqual({ documentVersionIds: [newer.versionId, t.versionIds[1]!].sort() });
+    }));
+
+  it("assign_name offers the candidate space of the configured neighbourRing", () =>
+    withRollback(async (tx) => {
+      const t = await nameTask(tx);
+      // Two tiles away: outside ring 1, inside the test switch ring 2.
+      const twoAway = await ensureTile(tx, LON + 0.5, LAT);
+      const objectId = await insertNamedObject(tx, { type: "bay", names: [{ name: "Ring Bay" }], lon: LON + 0.51, lat: LAT, tiles: [twoAway] });
+      RING.value = 2;
+      try {
+        await decide(tx, t.taskId, { action: "assign_name", geoObjectId: objectId });
+      } finally {
+        RING.value = undefined;
+      }
+      expect(await candidateStatus(tx, t.candidateId)).toBe("decided");
+    }));
+
+  it("deciding twice fails with TaskNotOpen", () =>
+    withRollback(async (tx) => {
+      const t = await nameTask(tx);
+      await decide(tx, t.taskId, { action: "reject" });
+      await expect(decide(tx, t.taskId, createPlace(t.name))).rejects.toBeInstanceOf(TaskNotOpen);
+      expect(await decisionsOf(tx, t.taskId)).toHaveLength(1);
+      expect(await createdObject(tx, t.name)).toBeUndefined();
+    }));
+
+  it("a decided candidate cannot be decided through a second task; place actions do not fit it", () =>
+    withRollback(async (tx) => {
+      const t = await nameTask(tx);
+      await expect(decide(tx, t.taskId, { action: "confirm", kind: "anchorage" })).rejects.toBeInstanceOf(DecisionNotAllowed);
+      await tx.update(nameCandidates).set({ status: "decided" }).where(eq(nameCandidates.id, t.candidateId));
+      await expect(decide(tx, t.taskId, createPlace(t.name))).rejects.toBeInstanceOf(DecisionNotAllowed);
+      expect((await taskOf(tx, t.taskId)).status).toBe("open");
+    }));
+
+  it("other decisions return no document versions", () =>
+    withRollback(async (tx) => {
+      const place = await insertPlace(tx);
+      expect(await decide(tx, await placeTask(tx, place.id), { action: "reject" })).toEqual({ documentVersionIds: [] });
+    }));
+
+  it("the schema bounds name, language and position", () => {
+    const base = { action: "create_place", kind: "anchorage", position: { lon: 21, lat: 35 }, name: "Kolona", language: "el" };
+    expect(reviewDecisionSchema.parse(base)).toEqual(base);
+    expect(() => reviewDecisionSchema.parse({ ...base, name: " " })).toThrow();
+    expect(() => reviewDecisionSchema.parse({ ...base, name: "x".repeat(121) })).toThrow();
+    expect(() => reviewDecisionSchema.parse({ ...base, language: "ell" })).toThrow();
+    expect(() => reviewDecisionSchema.parse({ ...base, position: { lon: 200, lat: 35 } })).toThrow();
+    expect(() => reviewDecisionSchema.parse({ action: "assign_name", geoObjectId: "x" })).toThrow();
+  });
 });
 
 describe("nextOpenTask", () => {

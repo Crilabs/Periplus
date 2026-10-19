@@ -5,7 +5,15 @@ import { requireAdmin } from "@/lib/security/require-admin";
 import { AutoRefresh } from "../_components/auto-refresh";
 import { runScopeError } from "../_components/labels";
 import { RunsTable } from "../_components/runs-table";
-import { startDatasetImportAction, startGazetteerAction, startGeometryAction, startPingRun, startSeedAction } from "./actions";
+import {
+  startDatasetImportAction,
+  startGazetteerAction,
+  startGeometryAction,
+  startPingRun,
+  startReprocessAction,
+  startSeedAction,
+  startTextRunAction,
+} from "./actions";
 
 const BUTTON = "rounded border border-neutral-400 px-3 py-1 hover:bg-neutral-100";
 const SELECT = "rounded border border-neutral-400 px-2 py-1";
@@ -79,6 +87,24 @@ export default async function Page({ searchParams }: PageProps<"/runs">) {
         </select>
         <button type="submit" className={BUTTON}>
           Geometrie für Revier
+        </button>
+      </form>
+      <form action={startTextRunAction} className="flex items-center gap-2">
+        <label htmlFor="texts-area">Revier</label>
+        <select id="texts-area" name="areaKey" required className={SELECT}>
+          {areaOptions}
+        </select>
+        <button type="submit" className={BUTTON}>
+          Texte auswerten für Revier
+        </button>
+      </form>
+      <form action={startReprocessAction} className="flex items-center gap-2">
+        <label htmlFor="reprocess-area">Revier</label>
+        <select id="reprocess-area" name="areaKey" required className={SELECT}>
+          {areaOptions}
+        </select>
+        <button type="submit" className={BUTTON}>
+          Reprozessieren für Revier (Stufen 6–7)
         </button>
       </form>
       <RunsTable runs={runs} />

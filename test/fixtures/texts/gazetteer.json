@@ -1,0 +1,15 @@
+{
+  "note": "Synthetic gazetteer around 21.0° E / 35.2° N (outside the pilot box) for the name-match fixtures; tiles q025:804:500 (A), q025:805:500 (B, east of A), q025:804:501 (D, north of A).",
+  "tiles": ["q025:804:500", "q025:805:500", "q025:804:501"],
+  "objects": [
+    { "key": "kalonisi", "type": "island", "names": [{ "name": "Kalonisi", "language": "en" }, { "name": "Καλονήσι", "language": "el" }], "lon": 21.12, "lat": 35.12, "tiles": ["q025:804:500"] },
+    { "key": "kolona", "type": "bay", "names": [{ "name": "Kolona", "language": "en" }, { "name": "Κολόνα", "language": "el" }], "lon": 21.1, "lat": 35.1, "tiles": ["q025:804:500"], "parent": "kalonisi" },
+    { "key": "vathy-bay", "type": "bay", "names": [{ "name": "Vathy", "language": "en" }], "lon": 21.15, "lat": 35.15, "tiles": ["q025:804:500"], "parent": "kalonisi" },
+    { "key": "vathy-harbour", "type": "harbour", "names": [{ "name": "Vathy", "language": "en" }, { "name": "Βαθύ", "language": "el" }], "lon": 21.3, "lat": 35.1, "tiles": ["q025:805:500"] },
+    { "key": "porto-cheli", "type": "harbour", "names": [{ "name": "Porto Cheli", "language": "en" }, { "name": "Πόρτο Χέλι", "language": "el" }], "lon": 21.05, "lat": 35.05, "tiles": ["q025:804:500"] },
+    { "key": "agia-marina", "type": "bay", "names": [{ "name": "Agia Marina", "language": "en" }], "lon": 21.35, "lat": 35.2, "tiles": ["q025:805:500"] },
+    { "key": "spathi", "type": "cape", "names": [{ "name": "Akrotirio Spathi", "language": "el" }], "lon": 21.24, "lat": 35.24, "tiles": ["q025:804:500"] },
+    { "key": "limnionas", "type": "bay", "names": [{ "name": "Limnionas", "language": "en" }], "lon": 21.1, "lat": 35.3, "tiles": ["q025:804:501"] },
+    { "key": "ermioni", "type": "settlement", "names": [{ "name": "Ermioni", "language": "en" }, { "name": "Ερμιόνη", "language": "el" }], "lon": 21.4, "lat": 35.15, "tiles": ["q025:805:500"] }
+  ]
+}

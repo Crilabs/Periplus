@@ -1,7 +1,7 @@
-import { sql, type SQL } from "drizzle-orm";
+import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { areaByKey, getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import type { GeoObjectType } from "@/lib/db/schema";
+import { geoObjects, type GeoObjectType } from "@/lib/db/schema";
 import type { Bbox } from "@/lib/domain/tiles";
 import { areaBbox } from "./areas";
 import { bufferBbox } from "./land";
@@ -44,13 +44,13 @@ function smallestIslandOrSection(bufferM: number, maxSectionKm2: number): SQL {
     order by ST_Area(p.geom::geography), p.id limit 1)`;
 }
 
-/** Sets `parent_id = <parent>` for the valid objects of `types` whose centroid lies in `box`; only changed rows. */
-async function setParents(db: Db, types: GeoObjectType[], box: SQL, parent: SQL): Promise<number> {
+/** Sets `parent_id = <parent>` for the valid objects `c` of `types` that pass `filter`; only changed rows. */
+async function setParents(db: Db, types: GeoObjectType[], filter: SQL, parent: SQL): Promise<number> {
   const res = await db.execute(sql`
     with target as (
       select c.id, ${parent} as parent_id
       from geo_objects c
-      where c.valid_to is null and c.merged_into_id is null and c.type in ${types} and c.centroid && ${box}
+      where c.valid_to is null and c.merged_into_id is null and c.type in ${types} and ${filter}
     )
     update geo_objects o set parent_id = t.parent_id, updated_at = now()
     from target t
@@ -59,8 +59,8 @@ async function setParents(db: Db, types: GeoObjectType[], box: SQL, parent: SQL)
 }
 
 /**
- * Sets the parent of every valid object whose centroid lies in the area box plus `bboxBufferKm`, in this
- * order (Spec 03, step 6):
+ * The hierarchy rule (Spec 03, step 6), in the order it is applied; each step's `parent` is an expression on the child
+ * `c`:
  * 1. `area` → smallest `sea`/`gulf` polygon containing its centroid, else none.
  * 2. `coast_section` → its area (from `config_key`).
  * 3. `archipelago`, `gulf` → smallest containing `area` (an area whose parent is this gulf is skipped, so
@@ -69,36 +69,55 @@ async function setParents(db: Db, types: GeoObjectType[], box: SQL, parent: SQL)
  * 5. bay, harbour, settlement, poi, cape, strait, channel → smallest island/islet polygon within
  *    `islandParentBufferM` or coast section containing the centroid (without `config_key` only up to
  *    `coastSectionMaxAreaKm2`); else smallest `area`; else smallest `sea`/`gulf`.
- * Only changed `parent_id`s are written (the history trigger records each). Returns the number of updates.
+ */
+function parentRules(): { types: GeoObjectType[]; parent: SQL }[] {
+  const { gazetteer } = getConfig();
+  const area = smallestCovering(["area"]);
+  return [
+    { types: ["area"], parent: smallestCovering(SEAS) },
+    {
+      types: ["coast_section"],
+      parent: sql`(select p.id from geo_objects p
+        where p.valid_to is null and p.merged_into_id is null and p.type = 'area' and p.config_key = split_part(c.config_key, '/', 1)
+        order by p.id limit 1)`,
+    },
+    { types: ["archipelago", "gulf"], parent: smallestCovering(["area"], sql`and p.parent_id is distinct from c.id`) },
+    { types: ISLANDS, parent: sql`coalesce(${smallestCovering(["archipelago"])}, ${area})` },
+    {
+      types: LOCAL_TYPES,
+      parent: sql`coalesce(${smallestIslandOrSection(gazetteer.islandParentBufferM, gazetteer.coastSectionMaxAreaKm2)}, ${area}, ${smallestCovering(SEAS)})`,
+    },
+  ];
+}
+
+/**
+ * Sets the parent of every valid object whose centroid lies in the area box plus `bboxBufferKm` by the hierarchy rule
+ * (`parentRules`). Only changed `parent_id`s are written (the history trigger records each). Returns the number of
+ * updates.
  */
 export async function assignParents(db: Db, areaKey: string): Promise<{ updated: number }> {
   const { gazetteer } = getConfig();
   const box = envelope(bufferBbox(areaBbox(areaByKey(areaKey)), gazetteer.bboxBufferKm));
-  const area = smallestCovering(["area"]);
   let updated = 0;
-  updated += await setParents(db, ["area"], box, smallestCovering(SEAS));
-  updated += await setParents(
-    db,
-    ["coast_section"],
-    box,
-    sql`(select p.id from geo_objects p
-      where p.valid_to is null and p.merged_into_id is null and p.type = 'area' and p.config_key = split_part(c.config_key, '/', 1)
-      order by p.id limit 1)`,
-  );
-  updated += await setParents(
-    db,
-    ["archipelago", "gulf"],
-    box,
-    smallestCovering(["area"], sql`and p.parent_id is distinct from c.id`),
-  );
-  updated += await setParents(db, ISLANDS, box, sql`coalesce(${smallestCovering(["archipelago"])}, ${area})`);
-  updated += await setParents(
-    db,
-    LOCAL_TYPES,
-    box,
-    sql`coalesce(${smallestIslandOrSection(gazetteer.islandParentBufferM, gazetteer.coastSectionMaxAreaKm2)}, ${area}, ${smallestCovering(SEAS)})`,
-  );
+  for (const rule of parentRules()) updated += await setParents(db, rule.types, sql`c.centroid && ${box}`, rule.parent);
   return { updated };
+}
+
+/**
+ * Sets the parent of the one valid object `objectId` by the same hierarchy rule as `assignParents` (for an object
+ * created outside a gazetteer run, such as a new name from texts). Returns its parent id (null for none, or when the
+ * object is not valid).
+ */
+export async function assignParentOf(db: Db, objectId: string): Promise<string | null> {
+  const [object] = await db
+    .select({ type: geoObjects.type })
+    .from(geoObjects)
+    .where(and(eq(geoObjects.id, objectId), isNull(geoObjects.validTo), isNull(geoObjects.mergedIntoId)));
+  if (!object) return null;
+  const rule = parentRules().find((r) => r.types.includes(object.type));
+  if (rule) await setParents(db, rule.types, sql`c.id = ${objectId}`, rule.parent);
+  const [row] = await db.select({ parentId: geoObjects.parentId }).from(geoObjects).where(eq(geoObjects.id, objectId));
+  return row?.parentId ?? null;
 }
 
 /**
