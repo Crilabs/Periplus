@@ -6,7 +6,9 @@ import { places } from "@/lib/db/schema";
 import { insertMention, insertMentionFact, insertExtraction, insertProfile, provenanceEntry } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { seedDeliveryArea, spotAProvenance, SPOT_A_ATTRIBUTES } from "@/test/fixtures/delivery/area";
+import { spotSchema } from "@/contract/v1";
 import { loadAreaScope } from "../load";
+import { mapSpot } from "../map-spot";
 
 const cfg = loadConfig("config").delivery;
 
@@ -59,6 +61,28 @@ describe("loadAreaScope", () => {
       expect(scope.passages).toEqual([
         expect.objectContaining({ geoObjectId: f.capeId, type: "cape", name: "Akra Test", point: { lon: 21.2, lat: 35.15 } }),
       ]);
+    });
+  });
+
+  it("the fixture's spots map to contract spots: A complete, B incomplete, C excluded as military", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliveryArea(tx);
+      const scope = await loadAreaScope(tx, f.areaId, cfg, await dbToday(tx));
+      const results = new Map(scope.spots.map((s) => [s.publicId, mapSpot(s, { regionId: null, highlightIds: [], cfg })]));
+      const spot = (id: string | null) => {
+        const r = results.get(id!)!;
+        if (!("spot" in r)) throw new Error(`omitted ${r.omitted}`);
+        return r.spot;
+      };
+      expect(results.get(f.places.B.publicId!)).toEqual({ omitted: "shelter_incomplete" });
+      expect(spot(f.places.C.publicId).exclude).toEqual({ excluded: true, reason: "military", detail: "Militärisches Sperrgebiet" });
+      expect(spot(f.places.M.publicId)).toMatchObject({ kind: "marina", berth: { status: "seasonFull", months: [7, 8] } });
+      const a = spot(f.places.A.publicId);
+      // the version of the fact was fetched (observed) on 2026-10-19
+      expect(a.sources).toEqual([{ url: f.documentUrl, kind: "tripReport", observedAt: "2026-10-19" }]);
+      for (const id of [f.places.A, f.places.C, f.places.M].map((p) => p.publicId)) {
+        expect(spotSchema.safeParse({ ...spot(id), profileVersion: 1, validFrom: "2026-10-19" }).error?.issues, id!).toBeUndefined();
+      }
     });
   });
 
