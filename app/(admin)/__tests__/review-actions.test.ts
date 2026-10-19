@@ -11,6 +11,7 @@ const db = testDb();
 const requireAdmin = vi.fn();
 const redirect = vi.fn();
 const retryFailedJob = vi.fn();
+const startConsolidationRun = vi.fn();
 
 vi.mock("@/lib/security/require-admin", () => ({
   requireAdmin: () => requireAdmin(),
@@ -22,6 +23,9 @@ vi.mock("@/lib/db/client", async (importOriginal) => ({
 vi.mock("@/lib/jobs/boss", () => ({ getBoss: async () => ({}) }));
 vi.mock("@/lib/domain/jobs-view", () => ({
   retryFailedJob: (...args: unknown[]) => retryFailedJob(...args),
+}));
+vi.mock("@/lib/pipeline/consolidation/run", () => ({
+  startConsolidationRun: (...args: unknown[]) => startConsolidationRun(...args),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({
@@ -44,7 +48,7 @@ const form = (fields: Record<string, string>) => {
   return data;
 };
 
-async function candidateTask(): Promise<{ taskId: string; placeId: string }> {
+async function candidateTask(): Promise<{ taskId: string; placeId: string; geoObjectId: string }> {
   const geom = sql`${geomFromGeoJson({ type: "Point", coordinates: [LON, LAT] })}`;
   const [object] = await db
     .insert(geoObjects)
@@ -61,7 +65,7 @@ async function candidateTask(): Promise<{ taskId: string; placeId: string }> {
     context: {},
     priority: PRIORITY,
   });
-  return { taskId: id, placeId: place!.id };
+  return { taskId: id, placeId: place!.id, geoObjectId: object!.id };
 }
 
 const decisionsOf = (taskId: string) => db.select().from(reviewDecisions).where(eq(reviewDecisions.taskId, taskId));
@@ -71,6 +75,7 @@ const statusOf = async (taskId: string) =>
 beforeEach(() => {
   vi.resetAllMocks();
   requireAdmin.mockResolvedValue({ email: ADMIN });
+  startConsolidationRun.mockResolvedValue({ id: newId() });
 });
 
 describe("review server actions", () => {
@@ -107,6 +112,9 @@ describe("review server actions", () => {
       decision: { action: "confirm", kind: "marina" },
     });
     expect(decisions[0]!.durationMs).toBeGreaterThanOrEqual(5000);
+    // the place's object is consolidated after the decision committed (final review I-2)
+    expect(startConsolidationRun).toHaveBeenCalledTimes(1);
+    expect(startConsolidationRun.mock.calls[0]![2]).toEqual({ scope: { geoObjectIds: [a.geoObjectId] }, triggeredBy: ADMIN });
 
     // Leave no open task behind; then the queue of this kind continues below this test's priority.
     await decideAction(
@@ -117,6 +125,7 @@ describe("review server actions", () => {
     );
     expect(redirect).toHaveBeenLastCalledWith(expect.not.stringContaining(b.taskId));
     expect(await statusOf(b.taskId)).toBe("decided");
+    expect(startConsolidationRun.mock.calls[1]![2]).toEqual({ scope: { geoObjectIds: [b.geoObjectId] }, triggeredBy: ADMIN });
   });
 
   it("invalid decision JSON is rejected without a decision row", async () => {

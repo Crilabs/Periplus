@@ -6,6 +6,7 @@ import { geomFromGeoJson } from "@/lib/db/geometry";
 import { newId } from "@/lib/domain/ids";
 import { createReviewTask } from "@/lib/domain/review";
 import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
+import { CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
 import { testDb, withRollback } from "@/test/db";
 import { buildBayScene } from "@/test/geometry/scene";
 
@@ -316,7 +317,7 @@ describe("admin server actions", () => {
       const expected = expect.objectContaining({
         kind: "stage",
         scope: { type: "tile", id: scene.tileId },
-        stages: ["geometry.place"],
+        stages: ["geometry.place", ...CONSOLIDATION_STAGES],
         params: { tileIds: [scene.tileId] },
         triggeredBy: "admin@example.invalid",
       });

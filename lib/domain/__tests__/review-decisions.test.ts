@@ -266,6 +266,39 @@ describe("place decisions", () => {
       expect(await placeOf(tx, place.id)).toMatchObject({ status: "no_anchoring", statusReason: "review" });
     }));
 
+  it("confirm, merge, reject and no_anchoring return the place's object to consolidate after the commit (final review I-2)", () =>
+    withRollback(async (tx) => {
+      const target = await insertPlace(tx, { lon: 28.13 });
+      const cases: ReviewDecision[] = [
+        { action: "confirm", kind: "anchorage" },
+        { action: "merge", intoPlaceId: target.id },
+        { action: "reject" },
+        { action: "no_anchoring" },
+      ];
+      for (const decision of cases) {
+        const place = await insertPlace(tx);
+        const result = await decide(tx, await placeTask(tx, place.id), decision);
+        expect(result, decision.action).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: place.geoObjectId } });
+        // the decision itself never consolidates (ruling M5-F-R4)
+        expect(await tx.select().from(profiles).where(eq(profiles.geoObjectId, place.geoObjectId))).toEqual([]);
+      }
+    }));
+
+  it("the consolidation after no_anchoring carries the exclusion into the profile as a safety change (final review I-2)", () =>
+    withRollback(async (tx) => {
+      const { rows } = await tx.execute<{ today: string }>(sql`select current_date::text as today`);
+      const today = rows[0]!.today;
+      const place = await insertPlace(tx, { status: "confirmed" });
+      await consolidateGeo(tx, place.geoObjectId, { today });
+      const { consolidate } = await decide(tx, await placeTask(tx, place.id), { action: "no_anchoring" });
+      expect(await consolidateGeo(tx, consolidate!.geoObjectId, { today })).toMatchObject({ status: "created", version: 2 });
+      const events = await tx
+        .select({ newValue: changeEvents.newValue, severity: changeEvents.severity })
+        .from(changeEvents)
+        .where(and(eq(changeEvents.geoObjectId, place.geoObjectId), eq(changeEvents.attribute, "exclude")));
+      expect(events).toEqual([{ newValue: { excluded: true, reason: "anchoringProhibited", detail: null }, severity: "safety" }]);
+    }));
+
   it("an action of another kind is DecisionNotAllowed", () =>
     withRollback(async (tx) => {
       const place = await insertPlace(tx);
@@ -907,7 +940,7 @@ describe("name candidate decisions", () => {
   it("other decisions return no document versions", () =>
     withRollback(async (tx) => {
       const place = await insertPlace(tx);
-      expect(await decide(tx, await placeTask(tx, place.id), { action: "reject" })).toEqual({ documentVersionIds: [], consolidate: null });
+      expect(await decide(tx, await placeTask(tx, place.id), { action: "reject" })).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: place.geoObjectId } });
     }));
 
   it("the schema bounds name, language and position", () => {

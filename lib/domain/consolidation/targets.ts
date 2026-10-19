@@ -45,6 +45,9 @@ const consolidatable = (day: string) => sql`${validObject(day)} and ${takesFacts
  * - `tileId`: the objects of the tile (`tile_geo_objects`);
  * - `areaKey`: the objects of every valid coast tile of the area;
  * - `comparisonSetArea`: the geo objects of the places in the area's comparison set;
+ * - a geometry run (`placeIds` or `tileIds`; its `areaKey` is the area case): the geo objects of its places, i.e. the
+ *   given places or the places on the given tiles (final review I-2: status, exclusion and computed values reach
+ *   the profile in the same run);
  * - otherwise as a text run.
  * Except for `geoObjectIds`, only valid, unmerged objects that take facts (a settlement would only be skipped). Validity
  * is judged on `today`, default the run date (`runDate`, final review M-7), as `consolidateGeo` judges it.
@@ -69,6 +72,21 @@ export async function consolidationTargets(db: Db, run: { id: string; params: Re
         join tile_geo_objects tgo on tgo.tile_id = t.id
         join geo_objects o on o.id = tgo.geo_object_id and ${consolidatable(day)}
         where ${areaObject(p.areaKey, day)}
+      `);
+      return ids(rows);
+    }
+    const placeIds = strings(p.placeIds);
+    const tileIds = strings(p.tileIds);
+    if (Array.isArray(p.placeIds) || Array.isArray(p.tileIds)) {
+      const scope = Array.isArray(p.placeIds)
+        ? sql`pl.id in (select value::uuid from jsonb_array_elements_text(${JSON.stringify(placeIds)}::jsonb))`
+        : sql`pl.tile_id in (select value from jsonb_array_elements_text(${JSON.stringify(tileIds)}::jsonb))`;
+      const { rows } = await db.execute<{ id: string }>(sql`
+        select distinct o.id
+        from places pl
+        join geo_objects o on o.id = pl.geo_object_id and ${consolidatable(day)}
+        where ${scope} and pl.merged_into_id is null
+          and pl.valid_from <= ${day}::date and (pl.valid_to is null or pl.valid_to > ${day}::date)
       `);
       return ids(rows);
     }

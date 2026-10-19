@@ -142,8 +142,9 @@ export type DecideDeps = { retryJob?: (queue: QueueName, jobId: string) => Promi
 
 /**
  * What a decision asks for after its commit (ruling M5-P10): `documentVersionIds` for the rematch of a new name;
- * `consolidate` for a consolidation run of one geo object (after a `conflict` / `uncertain_change` decision), never
- * started inside the decision's transaction, which could roll back under a started run.
+ * `consolidate` for a consolidation run of one geo object (after a `conflict` / `uncertain_change` decision or a
+ * `place_candidate` decision on a place), never started inside the decision's transaction, which could roll back under
+ * a started run.
  */
 export type DecideResult = { documentVersionIds: string[]; consolidate: { geoObjectId: string; stagesOnly?: string[] } | null };
 
@@ -158,8 +159,8 @@ type Task = typeof reviewTasks.$inferSelect;
  *
  * A `create_place` or `assign_name` decision on a `name_candidate` (new name from texts) returns the current versions
  * of the documents the name was found in (`documentVersionIds`, for the rematch run of Task 17); every other decision,
- * including `reject`, returns none. A decision on a `profile_attribute` task (`applyProfileDecision`) returns the geo
- * object to consolidate again (`consolidate`); `regenerate_summary` on a `failed_job` / `profile_summary` task returns
+ * including `reject`, returns none. A decision on a `profile_attribute` task (`applyProfileDecision`) and a
+ * `confirm` / `merge` / `reject` / `no_anchoring` on a place return the geo object to consolidate again (`consolidate`); `regenerate_summary` on a `failed_job` / `profile_summary` task returns
  * it with `stagesOnly ["consolidation.summary"]`; the caller starts that run after the commit (ruling M5-P10). It needs
  * `taskKey`, the `context.key` the admin saw: another key means a later run replaced the question
  * (`TaskContextChanged`, ruling M5-F-R2); `value_a` / `value_b` also need `valueKey`, the `valueFingerprint` of the
@@ -216,12 +217,18 @@ export async function decideReviewTask(
       if (!object) throw new DecisionNotAllowed(`geo object ${geoObjectId} does not exist`);
       return { documentVersionIds: [], consolidate: { geoObjectId, stagesOnly: [CONSOLIDATION_SUMMARY_STAGE] } };
     }
-    await apply(tx, task, decision, deps);
-    return { documentVersionIds: [], consolidate: null };
+    const placeObject = await apply(tx, task, decision, deps);
+    return { documentVersionIds: [], consolidate: placeObject ? { geoObjectId: placeObject } : null };
   });
 }
 
-async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideDeps): Promise<void> {
+/**
+ * Applies a decision that is no name or profile decision. Returns the geo object of the place a `place_candidate`
+ * decision changed (`confirm`, `merge`, `reject`, `no_anchoring`): its status, exclusion and `place_new` /
+ * `place_abandoned` reach the profile only through a consolidation, which the caller starts after the commit (final
+ * review I-2, ruling M5-FIN-R1); null otherwise.
+ */
+async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideDeps): Promise<string | null> {
   switch (decision.action) {
     case "confirm": {
       const place = await lockPlace(tx, task.subjectId);
@@ -237,7 +244,7 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
             : {}),
         })
         .where(eq(places.id, place.id));
-      return;
+      return place.geoObjectId;
     }
     case "merge": {
       const place = await lockPlace(tx, task.subjectId);
@@ -261,7 +268,7 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
         .update(places)
         .set({ status: "rejected", statusReason: "merged", mergedIntoId: target.id })
         .where(eq(places.id, place.id));
-      return;
+      return place.geoObjectId;
     }
     case "approve": {
       await lockSource(tx, task.subjectId, ["proposed"]);
@@ -276,7 +283,7 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
           statusReason: null,
         })
         .where(eq(sources.id, task.subjectId));
-      return;
+      return null;
     }
     case "reject":
       if (task.kind === "source_approval") {
@@ -285,7 +292,7 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
           .update(sources)
           .set({ status: "rejected", statusReason: "review" })
           .where(eq(sources.id, task.subjectId));
-        return;
+        return null;
       }
       return applyPlaceStatus(tx, task, "rejected");
     case "no_anchoring":
@@ -299,7 +306,7 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
         .update(sources)
         .set({ status: "paused", statusReason: `Job fehlgeschlagen: ${text(context.queue)}/${text(context.key)}` })
         .where(eq(sources.id, sourceId.data));
-      return;
+      return null;
     }
     case "same": {
       const ids = task.subjectId.split(":");
@@ -315,7 +322,7 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
       const [older, newer] = objects as [(typeof objects)[0], (typeof objects)[0]];
       const [keep, drop] = newer.osmId !== null && older.osmId === null ? [newer, older] : [older, newer];
       await mergeGeoObjects(tx, keep.id, drop.id);
-      return;
+      return null;
     }
     case "assign_area": {
       const [area] = await tx
@@ -336,19 +343,19 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
         .where(and(eq(tiles.id, task.subjectId), isNull(tiles.validTo)))
         .returning({ id: tiles.id });
       if (updated.length === 0) throw new DecisionNotAllowed(`tile ${task.subjectId} is not valid`);
-      return;
+      return null;
     }
     case "retry": {
       if (!deps.retryJob) throw new Error("retry decision needs deps.retryJob");
       const queue = z.enum(QUEUES).safeParse((task.context as { queue?: unknown }).queue);
       if (!queue.success) throw new DecisionNotAllowed(`failed_job task ${task.id} has no retryable queue`);
       await deps.retryJob(queue.data, task.subjectId);
-      return;
+      return null;
     }
     case "distinct":
     case "no_area":
     case "ignore":
-      return;
+      return null;
     case "create_place":
     case "assign_name":
       throw new DecisionNotAllowed(`action ${decision.action} needs a name candidate`);
@@ -569,9 +576,11 @@ async function lockNameCandidate(tx: Db, candidateId: string) {
 
 const text = (v: unknown): string => (typeof v === "string" ? v : "?");
 
-async function applyPlaceStatus(tx: Db, task: Task, status: "rejected" | "no_anchoring"): Promise<void> {
+/** Sets the status of the task's place; returns its geo object. */
+async function applyPlaceStatus(tx: Db, task: Task, status: "rejected" | "no_anchoring"): Promise<string> {
   const place = await lockPlace(tx, task.subjectId);
   await tx.update(places).set({ status, statusReason: "review" }).where(eq(places.id, place.id));
+  return place.geoObjectId;
 }
 
 /**
