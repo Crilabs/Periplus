@@ -1,0 +1,162 @@
+import { describe, expect, it } from "vitest";
+import type { ConsolidationInput } from "@/lib/domain/consolidation/types";
+import { computed, review, ruleCtx, text } from "@/test/fixtures/consolidation/scenarios";
+import { bathymetryRule } from "../bathymetry";
+import { computedOnlyRule } from "../computed-only";
+import { reviewOverComputedRule } from "../review-over-computed";
+import { shelterRule } from "../shelter";
+import { swellProtectionRule } from "../swell-protection";
+
+type Over = Partial<ConsolidationInput>;
+const c = (value: unknown, over: Over = {}) => computed({ value, ...over });
+const t = (value: unknown, over: Over = {}) => text({ value, ...over });
+
+const ctx = ruleCtx({ today: "2026-10-19", attribute: "shelter.N" });
+const marinaCtx = ruleCtx({ attribute: "shelter.N", place: { kind: "marina", status: "confirmed" } });
+const portCtx = ruleCtx({ attribute: "shelter.N", place: { kind: "port", status: "confirmed" } });
+const swellCtx = ruleCtx({ attribute: "swell_protection" });
+const depthCtx = ruleCtx({ attribute: "depth.anchoring_min" });
+
+describe("shelterRule", () => {
+  it.each<[string, ConsolidationInput[], number, string]>([
+    ["computed only", [c(0.6)], 0.6, "computed"],
+    ["good text within one step", [c(0.6), t(0.9)], 0.9, "text"],
+    ["poor text corrected by at most 0.3", [c(0.6), t(0.1)], 0.3, "text"],
+    ["contradicting texts take the worse", [c(0.6), t(0.9), t(0.5, { sourceKey: "source:b" })], 0.5, "text"],
+    ["no computation: text value", [t(0.5)], 0.5, "text"],
+    ["an observation corrects like a text", [c(0.6), t(0.1, { origin: "observed" })], 0.3, "observed"],
+  ])("shelter: %s", (_n, inputs, value, origin) => {
+    expect(shelterRule(inputs, ctx)).toMatchObject({ value, origin, conflict: null });
+  });
+
+  it("the youngest computation is the basis", () => {
+    const r = shelterRule([c(0.6, { observedAt: "2025-01-01" }), c(0.4, { observedAt: "2026-01-01" })], ctx)!;
+    expect(r).toMatchObject({ value: 0.4, origin: "computed", observedAt: "2026-01-01" });
+    expect(r.support).toHaveLength(1);
+  });
+
+  it("rounds to the precision", () => {
+    expect(shelterRule([c(0.6), t(0.1 + 0.2)], ctx)!.value).toBe(0.3);
+    expect(shelterRule([c(0.12345)], ctx)!.value).toBe(0.123);
+  });
+
+  it("confidence over the support: computed alone, confirmed by a text", () => {
+    expect(shelterRule([c(0.6, { confidence: 0.6 })], ctx)!.confidence).toBe(0.6);
+    // base max(0.6, 0.8 × 1), second independent source +0.15, cap 0.95
+    expect(shelterRule([c(0.6, { confidence: 0.6 }), t(0.9)], ctx)!.confidence).toBe(0.95);
+  });
+
+  it("a duplicated mention of one source changes nothing (ruling M5-P4)", () => {
+    const once = shelterRule([c(0.6), t(0.5, { factId: "f1" })], ctx)!;
+    const twice = shelterRule([c(0.6), t(0.5, { factId: "f1" }), t(0.5, { factId: "f2" })], ctx)!;
+    expect({ value: twice.value, confidence: twice.confidence }).toEqual({ value: once.value, confidence: once.confidence });
+  });
+
+  it("a marina keeps the 0.8 floor without proof of an open side", () => {
+    expect(shelterRule([c(0.4)], marinaCtx)!.value).toBe(0.8);
+    expect(shelterRule([c(0.4), t(0.1, { confidence: 0.6 })], marinaCtx)!.value).toBe(0.8);
+    expect(shelterRule([c(0.4), t(0.6, { confidence: 0.9 })], portCtx)!.value).toBe(0.8);
+    expect(shelterRule([c(0.9)], portCtx)!.value).toBe(0.9);
+  });
+
+  it("a text with confidence 0.7 proving an open side lifts the floor", () => {
+    expect(shelterRule([c(0.4), t(0.1, { confidence: 0.7 })], marinaCtx)!.value).toBe(0.1);
+    expect(shelterRule([c(0.4), t(0.5, { confidence: 0.7 })], portCtx)!.value).toBe(0.5);
+  });
+
+  it("a marina without any input gets 0.8 with confidence 0.3", () => {
+    expect(shelterRule([], marinaCtx)).toEqual({ value: 0.8, origin: "computed", confidence: 0.3, observedAt: null, support: [], conflict: null });
+  });
+
+  it("an anchorage without any input has no value", () => {
+    expect(shelterRule([], ctx)).toBeNull();
+    expect(shelterRule([], ruleCtx({ place: null }))).toBeNull();
+  });
+});
+
+describe("swellProtectionRule", () => {
+  it("swell: text 0.7 beats computation, text 0.6 does not", () => {
+    expect(swellProtectionRule([c(0.3), t(0.9, { confidence: 0.7 })], swellCtx)).toMatchObject({ value: 0.9, origin: "text" });
+    expect(swellProtectionRule([c(0.3), t(0.9, { confidence: 0.6 })], swellCtx)).toMatchObject({ value: 0.3, origin: "computed" });
+  });
+
+  it("among good texts the heaviest wins; without a computation any text", () => {
+    const r = swellProtectionRule(
+      [c(0.3), t(0.9, { confidence: 0.7, sourceWeight: 0.5 }), t(0.5, { confidence: 0.8, sourceWeight: 0.9, sourceKey: "source:b" })],
+      swellCtx,
+    );
+    expect(r).toMatchObject({ value: 0.5, origin: "text" });
+    expect(
+      swellProtectionRule([t(0.9, { confidence: 0.3, sourceWeight: 0.5 }), t(0.1, { confidence: 0.5, sourceKey: "source:b" })], swellCtx),
+    ).toMatchObject({ value: 0.1, origin: "text" });
+  });
+
+  it("the youngest computation without good texts; no input no value", () => {
+    expect(swellProtectionRule([c(0.3, { observedAt: "2025-01-01" }), c(0.7, { observedAt: "2026-01-01" })], swellCtx)!.value).toBe(0.7);
+    expect(swellProtectionRule([], swellCtx)).toBeNull();
+  });
+});
+
+describe("bathymetryRule", () => {
+  it("two simultaneous contradicting depth texts at 0.6 keep the bathymetry", () => {
+    expect(
+      bathymetryRule([c(4.0, { confidence: 0.6 }), t(2.5, { confidence: 0.6 }), t(6.0, { confidence: 0.6, sourceKey: "source:b" })], depthCtx),
+    ).toMatchObject({ value: 4, origin: "computed" });
+  });
+
+  it("a depth text above 0.8 corrects; a weak raster (0.3) yields to any text", () => {
+    expect(bathymetryRule([c(4.0, { confidence: 0.6 }), t(2.5, { confidence: 0.85 })], depthCtx)).toMatchObject({ value: 2.5, origin: "text" });
+    expect(bathymetryRule([c(4.0, { confidence: 0.6 }), t(2.5, { confidence: 0.8 })], depthCtx)).toMatchObject({ value: 4, origin: "computed" });
+    expect(bathymetryRule([c(4.0, { confidence: 0.3 }), t(2.5, { confidence: 0.5 })], depthCtx)).toMatchObject({ value: 2.5, origin: "text" });
+    expect(bathymetryRule([c(4.0, { confidence: 0.3 })], depthCtx)).toMatchObject({ value: 4, origin: "computed" });
+  });
+
+  it("equal weights: the pick does not depend on input order", () => {
+    const inputs = [
+      c(4.0, { confidence: 0.6 }),
+      t(2.5, { confidence: 0.9, observedAt: "2026-05-01", sourceKey: "source:a" }),
+      t(3.0, { confidence: 0.9, observedAt: "2026-05-01", sourceKey: "source:b" }),
+      t(3.5, { confidence: 0.9, observedAt: "2026-05-01", sourceWeight: 0.5, sourceKey: "source:c" }),
+    ];
+    const forward = bathymetryRule(inputs, depthCtx)!;
+    expect(forward.origin).toBe("text");
+    expect([2.5, 3]).toContain(forward.value);
+    expect(bathymetryRule([...inputs].reverse(), depthCtx)!.value).toBe(forward.value);
+  });
+
+  it("enum-like values (seabed) pass unchanged; no input no value", () => {
+    const seabed = [{ type: "sand", share: 1 }];
+    expect(bathymetryRule([c(seabed, { confidence: 0.6 })], ruleCtx({ attribute: "seabed" }))!.value).toEqual(seabed);
+    expect(bathymetryRule([], depthCtx)).toBeNull();
+  });
+});
+
+describe("computedOnlyRule and reviewOverComputedRule", () => {
+  const pos = (lon: number) => ({ lon, lat: 37.5 });
+
+  it("computed only takes the youngest computation and ignores texts", () => {
+    expect(computedOnlyRule([c(10, { observedAt: "2025-01-01" }), c(12, { observedAt: "2026-01-01" }), t(99)], ruleCtx({ attribute: "anchor_area" })))
+      .toMatchObject({ value: 12, origin: "computed" });
+    expect(computedOnlyRule([t(99)], ruleCtx({ attribute: "anchor_area" }))).toBeNull();
+  });
+
+  it("review anchor beats computed anchor", () => {
+    const actx = ruleCtx({ attribute: "anchor_position" });
+    expect(reviewOverComputedRule([c(pos(23.1234567), { observedAt: "2026-10-19" }), review({ value: pos(23.2), observedAt: "2025-01-01" })], actx))
+      .toMatchObject({ value: pos(23.2), origin: "review", confidence: 0.95 });
+    expect(reviewOverComputedRule([c(pos(23.1)), t(pos(23.3), { origin: "observed", observedAt: "2025-01-01" })], actx)).toMatchObject({
+      value: pos(23.3),
+      origin: "observed",
+    });
+    // coordinates keep their digits
+    expect(reviewOverComputedRule([c(pos(23.1234567))], actx)).toMatchObject({ value: pos(23.1234567), origin: "computed" });
+    expect(reviewOverComputedRule([], actx)).toBeNull();
+  });
+
+  it("the youngest review wins among reviews", () => {
+    const actx = ruleCtx({ attribute: "anchor_position" });
+    expect(
+      reviewOverComputedRule([review({ value: pos(23.2), observedAt: "2025-01-01" }), review({ value: pos(23.4), observedAt: "2026-01-01" })], actx)!.value,
+    ).toEqual(pos(23.4));
+  });
+});
