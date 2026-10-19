@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
+import { BlockedAddressError } from "@/lib/adapters/fetch/guarded";
 import { makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
@@ -246,6 +247,18 @@ describe("proposeSources", () => {
       await propose(tx, robotsTransport({ [`https://${domain}`]: 503 }));
       const source = await sourceOf(tx, domain);
       const [task] = await tasksOf(tx, source!.id);
+      expect(task!.context).toMatchObject({ robots: { status: "unavailable" } });
+    }));
+
+  it("a robots.txt the address guard refuses is unavailable, not a failed proposal job", () =>
+    withRollback(async (tx) => {
+      const domain = testDomain();
+      await insertHits(tx, domain, pages(domain, 3));
+      const blocked: Transport = async (req) => {
+        throw new BlockedAddressError(new URL(req.url).hostname, "169.254.169.254");
+      };
+      await propose(tx, blocked);
+      const [task] = await tasksOf(tx, (await sourceOf(tx, domain))!.id);
       expect(task!.context).toMatchObject({ robots: { status: "unavailable" } });
     }));
 

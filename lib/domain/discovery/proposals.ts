@@ -1,4 +1,5 @@
 import { inArray, sql } from "drizzle-orm";
+import { BlockedUrlError } from "@/lib/adapters/fetch/ssrf";
 import { HttpError, RetryableHttpError, type CallContext, type Transport } from "@/lib/adapters/http";
 import type { Archive } from "@/lib/adapters/s3";
 import { getConfig, type AppConfig, type DiscoveryConfig } from "@/lib/config";
@@ -154,7 +155,10 @@ export async function domainCandidates(db: Db, cfg: ProposalsConfig): Promise<Do
   }));
 }
 
-/** robots.txt summary of `origin` for the run; a robots.txt that cannot be read is `unavailable`, not an error. */
+/**
+ * robots.txt summary of `origin` for the run; a robots.txt that cannot be read (also one the address guard of the
+ * crawl transport refuses) is `unavailable`, not an error.
+ */
 async function proposalRobots(
   db: Db,
   deps: { transport: Transport; archive: Archive },
@@ -166,7 +170,7 @@ async function proposalRobots(
     const policy = await robotsForRun(db, deps.archive, deps.transport, origin, ctx.runId, ctx);
     return robotsSummary(policy, startUrls);
   } catch (error) {
-    if (!(error instanceof RetryableHttpError || error instanceof HttpError)) throw error;
+    if (!(error instanceof RetryableHttpError || error instanceof HttpError || error instanceof BlockedUrlError)) throw error;
     log.warn({ origin, err: error }, "robots.txt unavailable for a source proposal");
     return { status: "unavailable" };
   }

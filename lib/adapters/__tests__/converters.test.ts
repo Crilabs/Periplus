@@ -6,9 +6,11 @@ import { createConverters, resolveConverter } from "@/lib/adapters/fetch/index";
 import { createJinaConverter } from "@/lib/adapters/fetch/jina";
 import { createLocalConverter, htmlToMarkdown } from "@/lib/adapters/fetch/local";
 import { createServer } from "node:http";
+import { createServer as createTcpServer } from "node:net";
 import type { AddressInfo } from "node:net";
 import type { Browser } from "playwright";
 import {
+  AnswerTooLarge,
   chromiumLaunchOptions,
   closeRenderer,
   createPlaywrightRenderer,
@@ -352,8 +354,80 @@ describe("playwright renderer", () => {
     }
   }, 60_000);
 
-  it("chromium is launched without non-proxied WebRTC UDP", () => {
-    expect(chromiumLaunchOptions()).toEqual({ headless: true, args: ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"] });
+  it("chromium is launched behind a dead proxy (loopback included) and without non-proxied WebRTC UDP", () => {
+    expect(chromiumLaunchOptions()).toEqual({
+      headless: true,
+      proxy: { server: "http://127.0.0.1:9", bypass: "<-loopback>" },
+      args: ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"],
+    });
+  });
+
+  it.skipIf(!chromiumInstalled())("TURN over TCP and a worker's websocket open no connection past the route guard", async () => {
+    const site = await startSiteServer();
+    let connections = 0;
+    const victim = createTcpServer((socket) => {
+      connections++;
+      socket.destroy();
+    });
+    await new Promise<void>((resolve) => victim.listen(0, "127.0.0.1", resolve));
+    const port = (victim.address() as AddressInfo).port;
+    try {
+      site.set("/probe", {
+        body: `<!doctype html><html><body><p>Sonde</p><script>
+          const pc = new RTCPeerConnection({ iceServers: [{ urls: "turn:127.0.0.1:${port}?transport=tcp", username: "u", credential: "p" }] });
+          pc.createDataChannel("d");
+          pc.createOffer().then((offer) => pc.setLocalDescription(offer));
+          const code = 'new WebSocket("ws://127.0.0.1:${port}/")';
+          new Worker(URL.createObjectURL(new Blob([code], { type: "text/javascript" })));
+          </script></body></html>`,
+        headers: { "content-type": "text/html" },
+      });
+      const r = await renderer.render(`${site.origin}/probe`, { timeoutMs: 15_000 });
+      expect(r.html).toContain("Sonde");
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      expect(connections).toBe(0);
+    } finally {
+      await site.close();
+      await new Promise((resolve) => victim.close(resolve));
+    }
+  }, 60_000);
+
+  it("a sub-request answer above the cap is refused; a cross-origin hop drops cookie and authorization", async () => {
+    const seen: Array<{ path: string; host: string; cookie?: string; authorization?: string }> = [];
+    const server = createServer((req, res) => {
+      seen.push({ path: req.url ?? "", host: req.headers.host ?? "", cookie: req.headers.cookie, authorization: req.headers.authorization });
+      if (req.url === "/big") return void res.writeHead(200, { "content-type": "text/plain" }).end("x".repeat(2_000));
+      if (req.url === "/same") return void res.writeHead(302, { location: "/other" }).end();
+      if (req.url === "/away") return void res.writeHead(302, { location: `http://localhost:${port}/other` }).end();
+      res.writeHead(200, { "content-type": "text/plain" }).end("ok");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    const origin = `http://127.0.0.1:${port}`;
+    const agent = createGuardedAgent({ isAllowedAddress: () => true, resolveAll: async () => [{ address: "127.0.0.1", family: 4 }] });
+    const get = (path: string, max: number) =>
+      fetchFollowingRedirects(
+        { url: `${origin}${path}`, method: "GET", headers: { cookie: "s=1", authorization: "Bearer t" }, body: null },
+        async () => true,
+        agent,
+        5000,
+        max,
+      );
+    try {
+      await expect(get("/big", 1_000)).rejects.toBeInstanceOf(AnswerTooLarge);
+      expect((await get("/big", 2_000))!.body).toHaveLength(2_000);
+      await get("/same", 1_000);
+      await get("/away", 1_000);
+      const others = seen.filter((q) => q.path === "/other");
+      expect(others).toEqual([
+        { path: "/other", host: `127.0.0.1:${port}`, cookie: "s=1", authorization: "Bearer t" },
+        { path: "/other", host: `localhost:${port}`, cookie: undefined, authorization: undefined },
+      ]);
+    } finally {
+      await agent.close();
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 
   it("a context blocks service workers, closes websockets, drops its routes before closing; a crashed browser is relaunched", async () => {

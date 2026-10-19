@@ -74,8 +74,9 @@ export function guardedFetch(url: string, init: Parameters<typeof undiciFetch>[1
 }
 
 /**
- * The network transport of the crawl: like `fetchTransport`, but every connection goes through a guarded agent
- * and the body is read only up to `maxBodyBytes`. A refused address is a `BlockedUrlError` (not retried); other
+ * The network transport of the crawl: like `fetchTransport`, but every connection goes through a guarded agent,
+ * the body is read only up to `maxBodyBytes`, and redirects are followed only on request (`redirect: "follow"`):
+ * a new caller gets the 3xx itself instead of silently skipping the crawl's per-hop checks. A refused address is a `BlockedUrlError` (not retried); other
  * network failures and timeouts are `RetryableHttpError`.
  */
 export function createGuardedTransport(dispatcher: Dispatcher = createGuardedAgent()): Transport {
@@ -86,7 +87,7 @@ export function createGuardedTransport(dispatcher: Dispatcher = createGuardedAge
         method,
         body: req.body,
         headers: req.headers,
-        redirect: req.redirect ?? "follow",
+        redirect: req.redirect ?? "manual",
         signal: AbortSignal.timeout(req.timeoutMs),
         dispatcher,
       });

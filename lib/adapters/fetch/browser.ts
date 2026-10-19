@@ -1,6 +1,7 @@
 import type { Browser, BrowserContext, LaunchOptions, Request } from "playwright";
 import type { Dispatcher } from "undici";
-import { userAgent } from "../http";
+import { getConfig } from "@/lib/config";
+import { readBodyCapped, userAgent } from "../http";
 import { blockedCause, getGuardedAgent, guardedFetch } from "./guarded";
 import { BlockedUrlError, isPublicHttpUrl } from "./ssrf";
 import type { RenderPage } from "./types";
@@ -18,9 +19,30 @@ const UNFORWARDED_REQUEST_HEADERS = new Set(["host", "connection", "content-leng
 /** Headers of an answer that no longer describe the body handed to the browser (fetch decoded it). */
 const UNFORWARDED_RESPONSE_HEADERS = new Set(["content-encoding", "content-length", "transfer-encoding", "connection"]);
 
-/** Chromium launch options: headless, and WebRTC never uses UDP outside a proxy (no ICE requests past the route guard). */
+/**
+ * A proxy nobody listens on. Everything the route guard does not intercept (WebRTC TURN over TCP, WebSockets of
+ * dedicated workers) goes to this proxy and fails; routed requests are fulfilled before any proxy is asked.
+ */
+export const DEAD_PROXY = "http://127.0.0.1:9";
+
+/**
+ * Chromium launch options: headless; every connection the browser would make itself goes to `DEAD_PROXY` (loopback
+ * included); WebRTC may not use UDP outside the proxy, so STUN and TURN over UDP never leave either.
+ */
 export function chromiumLaunchOptions(): LaunchOptions {
-  return { headless: true, args: ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"] };
+  return {
+    headless: true,
+    proxy: { server: DEAD_PROXY, bypass: "<-loopback>" },
+    args: ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"],
+  };
+}
+
+/** An answer larger than the renderer's per-request cap: the request is aborted. */
+export class AnswerTooLarge extends Error {
+  constructor(url: string, max: number) {
+    super(`answer of ${url} exceeds ${max} bytes`);
+    this.name = "AnswerTooLarge";
+  }
 }
 
 export type FetchedAnswer = { status: number; headers: Record<string, string>; body: Buffer; url: string };
@@ -30,14 +52,16 @@ export type OutgoingRequest = { url: string; method: string; headers: Record<str
 /**
  * Fetches a request through `dispatcher` with redirects followed hop by hop, every hop's URL checked with
  * `isAllowed` before it is requested; `null` when a hop is not allowed. 301/302 turn a POST into a GET and 303
- * every method but HEAD; 307/308 keep method and body. The answer's headers lose those that described the encoded
- * body (fetch decodes it).
+ * every method but HEAD; 307/308 keep method and body; a hop to another origin drops `cookie` and `authorization`.
+ * The body is read up to `maxBodyBytes` (more is `AnswerTooLarge`). The answer's headers lose those that described
+ * the encoded body (fetch decodes it).
  */
 export async function fetchFollowingRedirects(
   request: OutgoingRequest,
   isAllowed: (url: string) => Promise<boolean>,
   dispatcher: Dispatcher,
   timeoutMs: number,
+  maxBodyBytes: number = getConfig().fetch.maxRawBytes,
 ): Promise<FetchedAnswer | null> {
   let { url, method, body } = request;
   const headers = { ...request.headers };
@@ -55,7 +79,9 @@ export async function fetchFollowingRedirects(
     if (res.status < 300 || res.status > 399 || !location) {
       const answerHeaders: Record<string, string> = {};
       for (const [name, value] of res.headers) if (!UNFORWARDED_RESPONSE_HEADERS.has(name)) answerHeaders[name] = value;
-      return { status: res.status, headers: answerHeaders, body: Buffer.from(await res.arrayBuffer()), url };
+      const { body: answer, truncated } = await readBodyCapped(res.body as ReadableStream<Uint8Array> | null, maxBodyBytes);
+      if (truncated) throw new AnswerTooLarge(url, maxBodyBytes);
+      return { status: res.status, headers: answerHeaders, body: Buffer.from(answer), url };
     }
     await res.body?.cancel();
     if (hop >= MAX_REDIRECTS) throw new Error(`more than ${MAX_REDIRECTS} redirects from ${request.url}`);
@@ -64,7 +90,13 @@ export async function fetchFollowingRedirects(
       body = null;
       delete headers["content-type"];
     }
-    url = new URL(location, url).href;
+    const next = new URL(location, url);
+    if (next.origin !== new URL(url).origin) {
+      for (const name of Object.keys(headers)) {
+        if (name.toLowerCase() === "cookie" || name.toLowerCase() === "authorization") delete headers[name];
+      }
+    }
+    url = next.href;
   }
 }
 

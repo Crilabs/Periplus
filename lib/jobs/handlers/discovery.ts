@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { getCrawlTransport } from "@/lib/adapters/fetch/guarded";
 import { getTransport } from "@/lib/adapters/http";
 import { getArchive } from "@/lib/adapters/s3";
 import { areaByKey } from "@/lib/config";
@@ -64,9 +65,13 @@ export const discoveryTileHandler: JobHandler<JobData> = async (data, ctx) => {
   ctx.log.info({ tileId, ...result }, "tile discovery done");
 };
 
-/** Proposes new sources from all SERP hits and the link graph. */
+/**
+ * Proposes new sources from all SERP hits and the link graph. Their robots.txt is read through the crawl transport:
+ * the origins come from SERP hits and crawled links, so every connection passes the address guard (M3-SEC-R3).
+ */
 export const discoveryProposeHandler: JobHandler<JobData> = async (data, ctx) => {
   if (typeof data.runId !== "string") throw new Error("runId is required");
-  const result = await proposeSources(ctx.db, deps(), { db: ctx.db, runId: data.runId, stage: data.stage });
+  const robotsDeps = { transport: getCrawlTransport(), archive: getArchive() };
+  const result = await proposeSources(ctx.db, robotsDeps, { db: ctx.db, runId: data.runId, stage: data.stage });
   ctx.log.info(result, "source proposals made");
 };

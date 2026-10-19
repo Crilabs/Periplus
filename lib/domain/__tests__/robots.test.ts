@@ -12,7 +12,9 @@ import {
   robotsForRun,
   robotsSummary,
 } from "@/lib/domain/sources/robots";
+import { createGuardedAgent, createGuardedTransport } from "@/lib/adapters/fetch/guarded";
 import { withRollback } from "@/test/db";
+import { startSiteServer } from "@/test/site-server";
 import { memoryArchive } from "@/test/s3";
 
 const fixture = (name: string) => readFileSync(join("test/fixtures/robots", name), "utf8");
@@ -179,6 +181,22 @@ describe("fetchRobots", () => {
     expect(transport.seen[0]).toMatchObject({ service: "robots", url: `${o}/robots.txt` });
     expect(policy.status).toBe("parsed");
     expect(policy.crawlDelaySec).toBe(10);
+  });
+
+  it("follows a redirect of robots.txt on the crawl transport, which otherwise returns redirects as they are", async () => {
+    const site = await startSiteServer();
+    const agent = createGuardedAgent({ resolveAll: async () => [{ address: "127.0.0.1", family: 4 }], isAllowedAddress: () => true });
+    try {
+      site.set("/robots.txt", { status: 301, body: "", headers: { location: "/real-robots.txt" } });
+      site.set("/real-robots.txt", { body: "User-agent: *\nDisallow: /private/\n" });
+      const o = `http://${newId()}.test.invalid:${new URL(site.origin).port}`;
+      const policy = await withRollback((db) => fetchRobots(createGuardedTransport(agent), o, { db }));
+      expect(policy.status).toBe("parsed");
+      expect(policy.isAllowed(`${o}/private/x`)).toBe(false);
+    } finally {
+      await agent.close();
+      await site.close();
+    }
   });
 
   it("404 means allow all", async () => {

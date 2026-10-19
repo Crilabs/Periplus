@@ -135,6 +135,8 @@ export async function fetchRobots(transport: Transport, origin: string, ctx: Cal
       service: "robots",
       operation: "robots.txt",
       url,
+      // RFC 9309 follows redirects; on the crawl transport every hop's connection still passes the address guard.
+      redirect: "follow",
       timeoutMs: getConfig().fetch.timeoutMs,
       maxBodyBytes: MAX_ROBOTS_BYTES,
       okStatuses: Array.from({ length: 400 }, (_, i) => 100 + i).filter((s) => s !== 429),

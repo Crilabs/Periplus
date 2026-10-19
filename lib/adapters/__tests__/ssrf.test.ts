@@ -68,6 +68,8 @@ describe("isPublicUrlLiteral", () => {
     expect(isPublicUrlLiteral("https://boat.example/a")).toBe(true);
     expect(isPublicUrlLiteral("http://localhost:3000/")).toBe(false);
     expect(isPublicUrlLiteral("http://api.localhost/")).toBe(false);
+    expect(isPublicUrlLiteral("http://localhost./")).toBe(false);
+    expect(isPublicUrlLiteral("http://api.localhost./")).toBe(false);
     expect(isPublicUrlLiteral("http://169.254.169.254/")).toBe(false);
     expect(isPublicUrlLiteral("http://[::ffff:10.0.0.1]/")).toBe(false);
     expect(isPublicUrlLiteral("file:///etc/passwd")).toBe(false);
@@ -79,8 +81,22 @@ describe("isPublicAddress ranges", () => {
     for (const ip of ["192.0.0.8", "198.18.0.1", "198.19.255.255", "224.0.0.1", "239.255.255.250", "240.0.0.1", "255.255.255.255", "ff02::1", "ff0e::1"]) {
       expect(isPublicAddress(ip), ip).toBe(false);
     }
-    expect(isPublicAddress("192.0.2.1")).toBe(true);
+    expect(isPublicAddress("192.0.3.1")).toBe(true);
     expect(isPublicAddress("198.20.0.1")).toBe(true);
+  });
+
+  it("rejects documentation, discard-only and deprecated site-local ranges", () => {
+    for (const ip of ["192.0.2.1", "198.51.100.7", "203.0.113.200", "2001:db8::1", "100::1", "fec0::1", "feff::1"]) {
+      expect(isPublicAddress(ip), ip).toBe(false);
+    }
+    expect(isPublicAddress("100:0:0:1::1")).toBe(true);
+    expect(isPublicAddress("203.0.114.1")).toBe(true);
+  });
+
+  it("judges IPv4-translated (SIIT) addresses by their IPv4", () => {
+    expect(isPublicAddress("::ffff:0:7f00:1")).toBe(false);
+    expect(isPublicAddress("::ffff:0:10.0.0.1")).toBe(false);
+    expect(isPublicAddress("::ffff:0:8.8.8.8")).toBe(true);
   });
 
   it("judges NAT64, 6to4 and IPv4-compatible addresses by their IPv4", () => {
@@ -98,7 +114,7 @@ describe("isPublicAddress ranges", () => {
   it("rejects Teredo and local-use NAT64 outright", () => {
     expect(isPublicAddress("2001:0:4136:e378:8000:63bf:3fff:fdd2")).toBe(false);
     expect(isPublicAddress("64:ff9b:1::8.8.8.8")).toBe(false);
-    expect(isPublicAddress("2001:db8::1")).toBe(true);
+    expect(isPublicAddress("2001:4860::8888")).toBe(true);
   });
 });
 
@@ -120,6 +136,19 @@ describe("guarded agent", () => {
     expect(error).toBeInstanceOf(BlockedAddressError);
     expect(error).toBeInstanceOf(BlockedUrlError);
     expect(site.requests.some((r) => r.path === "/x")).toBe(false);
+    await agent.close();
+  });
+
+  it("returns a redirect as it is unless the request asks to follow it", async () => {
+    const site = await sitePromise;
+    site.set("/hop", { status: 302, body: "", headers: { location: "/target" } });
+    site.set("/target", { body: "target" });
+    const port = new URL(site.origin).port;
+    const agent = createGuardedAgent({ resolveAll: async () => [{ address: "127.0.0.1", family: 4 }], isAllowedAddress: () => true });
+    const transport = createGuardedTransport(agent);
+    const url = `http://hop.test.invalid:${port}/hop`;
+    expect((await transport({ service: "crawl", operation: "get", url, timeoutMs: 5000 })).status).toBe(302);
+    expect((await transport({ service: "crawl", operation: "get", url, timeoutMs: 5000, redirect: "follow" })).status).toBe(200);
     await agent.close();
   });
 
