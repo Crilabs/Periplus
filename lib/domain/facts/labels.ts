@@ -182,6 +182,8 @@ const FIELD_WORDS: Record<string, string> = {
   restrictedAreaId: "Gebiet",
   sourceRef: "Quelle",
   type: "Art",
+  // a review fact removing one entry of a list (`UnionRemoval`)
+  remove: "entfernt",
 };
 
 export const MONTHS = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];

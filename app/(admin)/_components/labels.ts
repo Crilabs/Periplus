@@ -27,6 +27,7 @@ import type {
   SourceOrigin,
   SourceStatus,
 } from "@/lib/db/schema";
+import type { SummaryStatus } from "@/lib/db/schema/profiles";
 import type { ConfidenceClass, ConflictResolution, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
 import type { GapReason } from "@/lib/domain/geometry/gaps";
 import type { CrawlRules } from "@/lib/domain/sources/crawl-rules";
@@ -434,6 +435,31 @@ export const CONFLICT_RESOLUTION_LABELS: Record<ConflictResolution, string> = {
   seasonal: "Beide gelten (saisonal)",
   left_open: "Offen gelassen",
   decided: "Für einen Wert entschieden",
+};
+
+/**
+ * Why a profile attribute has no value (`ProfileGap.reason`; ruling M5-P13): the computation's gap reason, or one of
+ * the profile's own reasons.
+ */
+export const PROFILE_GAP_REASON_LABELS: Record<string, string> = {
+  ...GAP_REASON_LABELS,
+  no_facts: "Keine Facts",
+  too_few_parts: "Zu wenige Teilwerte",
+  no_category: "Keine Kategorie",
+};
+
+/** The label of a gap reason; the reason itself when unknown. */
+export const profileGapReasonLabel = (reason: string): string => PROFILE_GAP_REASON_LABELS[reason] ?? reason;
+
+/** Status of a profile summary. */
+export const SUMMARY_STATUS_LABELS: Record<SummaryStatus, string> = { ok: "erzeugt", rejected: "verworfen", empty: "leer (in Prüfung)" };
+
+/** Notices of the profile tab (`?notice=`) after „Eintrag entfernen“. */
+export const PROFILE_NOTICE_LABELS: Record<string, string> = {
+  entry_removed: "Eintrag entfernt. Das Profil wird neu berechnet.",
+  entry_removed_no_run: "Eintrag entfernt. Der Folgelauf konnte nicht gestartet werden – bitte „Profil neu berechnen“.",
+  changed: "Das Profil hat sich geändert – bitte neu laden.",
+  error: "Der Eintrag kann nicht entfernt werden.",
 };
 
 /** Why an attempt at a profile summary failed. */

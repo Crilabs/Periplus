@@ -52,3 +52,13 @@ export async function latestProfile(db: Db, geoObjectId: string): Promise<Profil
     .limit(1);
   return row ?? null;
 }
+
+/** Version `version` of the geo object's profile, or null when it has no such version. */
+export async function profileVersion(db: Db, geoObjectId: string, version: number): Promise<ProfileSnapshot | null> {
+  const [row] = await db
+    .select(snapshotColumns)
+    .from(profiles)
+    .where(and(eq(profiles.geoObjectId, geoObjectId), eq(profiles.version, version)))
+    .limit(1);
+  return row ?? null;
+}

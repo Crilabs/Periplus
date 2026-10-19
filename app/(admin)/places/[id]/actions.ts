@@ -2,13 +2,16 @@
 
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getConfig } from "@/lib/config";
-import { getDb } from "@/lib/db/client";
+import { getDb, type Db } from "@/lib/db/client";
 import { places } from "@/lib/db/schema";
 import { setAnchorPosition } from "@/lib/domain/geometry/anchor-correction";
+import { ProfileChanged, removeProfileEntry } from "@/lib/domain/profile-entry-removal";
 import { DecisionNotAllowed } from "@/lib/domain/review-decisions";
 import { getBoss } from "@/lib/jobs/boss";
+import { createLogger } from "@/lib/logger";
 import { startConsolidationRun } from "@/lib/pipeline/consolidation/run";
 import { startGeometryRun } from "@/lib/pipeline/geometry-run";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
@@ -91,4 +94,57 @@ export async function recomputeGeoProfileAction(input: FormData | { geoObjectId:
     () => startConsolidationRun(db, boss, { scope: { geoObjectIds: [geoObjectId] }, triggeredBy: admin.email }),
     `/geo/${geoObjectId}`,
   );
+}
+
+const removeEntrySchema = z.object({
+  geoObjectId: z.uuid(),
+  attribute: z.string().min(1).max(64),
+  entryKey: z.string().min(1).max(2000),
+  version: z.coerce.number().int().min(1),
+  /** The place page the form is on; without it the geo page. */
+  placeId: z.uuid().optional(),
+});
+
+/**
+ * „Eintrag entfernen“ on a safety-list entry of the profile tab (place page) or the profile section (geo page): writes
+ * the review fact (`removeProfileEntry`), then, after that commit, starts a consolidation run for the object (never
+ * inside the decision, ruling M5-F-R4) and returns to the attribute with a notice: `entry_removed` (with `run`),
+ * `entry_removed_no_run` when the run did not start (the removal stands), `changed` when the profile has a newer
+ * version than the one shown, `error` when the entry cannot be removed.
+ */
+export async function removeProfileEntryAction(input: FormData | z.input<typeof removeEntrySchema>): Promise<void> {
+  const admin = await requireAdmin();
+  const raw = fields(input) as Record<string, unknown>;
+  const f = removeEntrySchema.parse({ ...raw, placeId: raw.placeId || undefined });
+  const back = f.placeId
+    ? `/places/${f.placeId}?tab=profile&attr=${encodeURIComponent(f.attribute)}`
+    : `/geo/${f.geoObjectId}?attr=${encodeURIComponent(f.attribute)}`;
+  const db = getDb();
+  let notice: string;
+  try {
+    await removeProfileEntry(db, { geoObjectId: f.geoObjectId, attribute: f.attribute, entryKey: f.entryKey, version: f.version, decidedBy: admin.email });
+    notice = await startAfterRemoval(db, f.geoObjectId, admin.email);
+    revalidatePath(f.placeId ? `/places/${f.placeId}` : `/geo/${f.geoObjectId}`);
+  } catch (e) {
+    if (e instanceof ProfileChanged) notice = "changed";
+    else if (e instanceof DecisionNotAllowed) notice = "error";
+    else throw e;
+  }
+  redirect(`${back}&notice=${notice}`);
+}
+
+/**
+ * The consolidation run after a committed removal: `entry_removed&run=<id>`, or `entry_removed_no_run` (logged) when
+ * it does not start — the removal stands either way.
+ */
+async function startAfterRemoval(db: Db, geoObjectId: string, triggeredBy: string): Promise<string> {
+  try {
+    const run = await startConsolidationRun(db, await getBoss(), { scope: { geoObjectIds: [geoObjectId] }, triggeredBy });
+    return `entry_removed&run=${run.id}`;
+  } catch (e) {
+    const log = createLogger("profile");
+    if (e instanceof RunScopeNotReady) log.warn({ geoObjectId, reason: e.reason }, "consolidation run not started after an entry removal");
+    else log.error({ geoObjectId, err: e }, "consolidation run failed to start after an entry removal");
+    return "entry_removed_no_run";
+  }
 }

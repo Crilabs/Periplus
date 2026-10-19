@@ -1,10 +1,11 @@
 import { sql, type AnyColumn, type SQL } from "drizzle-orm";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import { z } from "zod";
-import { getConfig } from "@/lib/config";
+import { getConfig, getConsolidationConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { asGeoJson } from "@/lib/db/geometry";
 import { geoObjects, places, restrictedAreas, tiles, type RestrictedKind } from "@/lib/db/schema";
+import { confidenceClass } from "@/lib/domain/consolidation/weights";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { isAnchoringBan, type AnchoringBanConfig } from "@/lib/domain/geometry/restrictions";
 import type { Bbox } from "@/lib/domain/tiles";
@@ -93,7 +94,12 @@ function layerQuery(layer: MapLayer, bbox: Bbox, limit: number): SQL {
             'kind', ${places.kind},
             'status', ${places.status},
             'name', ${displayNameSql(places.geoObjectId)},
-            'publicId', ${places.publicId}
+            'publicId', ${places.publicId},
+            'profile', (
+              select json_build_object('confidence', pr.confidence, 'rulesVersion', pr.rules_version)
+              from profiles pr where pr.geo_object_id = ${places.geoObjectId}
+              order by pr.version desc limit 1
+            )
           ) as properties
         from ${places}
         where ${validAt(places)} and ${intersects(places.position, bbox)}
@@ -127,7 +133,9 @@ function configuredAnchoringBan(): AnchoringBanConfig {
  * One map layer as GeoJSON: valid rows intersecting `bbox`, at most `limit` features (default 5,000).
  * `geo-objects` leaves out areas (own layer). Tile counts: `placeCount` all valid places of the tile,
  * `candidateCount` those still `candidate`. `restricted-areas` carry `anchoringBan` by `opts.anchoringBan`
- * (default: the configured rule).
+ * (default: the configured rule). `places` carry `profileConfidence` and `profileClass` of the newest profile version
+ * of their geo object (its class by that version's rules), both null without a profile (or without a profile
+ * confidence).
  */
 export async function mapLayer(
   db: Db,
@@ -141,6 +149,15 @@ export async function mapLayer(
     for (const r of rows) {
       const p = r.properties as { kind: RestrictedKind; sourceRef: string | null };
       r.properties.anchoringBan = isAnchoringBan(p.kind, p.sourceRef, ban);
+    }
+  }
+  if (layer === "places") {
+    for (const r of rows) {
+      const profile = r.properties.profile as { confidence: number | null; rulesVersion: string } | null;
+      delete r.properties.profile;
+      const confidence = profile?.confidence ?? null;
+      r.properties.profileConfidence = confidence;
+      r.properties.profileClass = confidence === null ? null : confidenceClass(confidence, getConsolidationConfig(profile!.rulesVersion));
     }
   }
   const features: Feature[] = rows.map((r) => ({ type: "Feature", geometry: r.geometry, properties: r.properties }));

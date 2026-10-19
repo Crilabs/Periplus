@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { geoFacts, geoMentions, MENTIONS_PER_PAGE } from "@/lib/domain/geo-facts";
 import { geoObjectDetail, type GeoObjectRef } from "@/lib/domain/geo-view";
+import { profileAttributeFacts, profileView } from "@/lib/domain/profile-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import {
   GEO_OBJECT_TYPE_LABELS,
@@ -17,10 +18,13 @@ import {
 import { AnnotatedText } from "../../_components/annotated-text";
 import { recomputeGeoProfileAction } from "../../places/[id]/actions";
 import { FactsTab } from "../../places/[id]/facts-tab";
+import { ProfileTab } from "../../places/[id]/profile-tab";
 
 const SCRIPT_LABELS = { latin: "Lateinisch", greek: "Griechisch" } as const;
 const runsParam = z.enum(["active", "all"]).catch("active");
 const pageParam = z.coerce.number().int().min(1).catch(1);
+const textParam = z.string().max(200).optional().catch(undefined);
+const uuidParam = z.uuid().optional().catch(undefined);
 const share = (n: number) => n.toLocaleString("de-DE", { maximumFractionDigits: 2 });
 
 function GeoLink({ o }: { o: GeoObjectRef }) {
@@ -45,12 +49,19 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
   const runs = runsParam.parse(sp.runs);
   const page = pageParam.parse(sp.mp);
   const error = runScopeError(sp.error);
-  const [mentionPage, facts] = await Promise.all([geoMentions(db, id.data, page), geoFacts(db, id.data, { runs })]);
+  const attr = textParam.parse(sp.attr);
+  const [mentionPage, facts, profile] = await Promise.all([
+    geoMentions(db, id.data, page),
+    geoFacts(db, id.data, { runs }),
+    profileView(db, id.data),
+  ]);
+  const selected = profile && attr ? await profileAttributeFacts(db, id.data, profile.snapshot.version, attr) : null;
   const pages = Math.max(1, Math.ceil(mentionPage.total / MENTIONS_PER_PAGE));
-  const href = (q: { runs?: "active" | "all"; mp?: number }) => {
+  const href = (q: { runs?: "active" | "all"; mp?: number; attr?: string | null }) => {
     const r = q.runs ?? runs;
     const m = q.mp ?? page;
-    const parts = [r === "all" ? "runs=all" : "", m > 1 ? `mp=${m}` : ""].filter(Boolean);
+    const a = q.attr === undefined ? attr : q.attr;
+    const parts = [r === "all" ? "runs=all" : "", m > 1 ? `mp=${m}` : "", a ? `attr=${encodeURIComponent(a)}` : ""].filter(Boolean);
     return `/geo/${id.data}${parts.length > 0 ? `?${parts.join("&")}` : ""}`;
   };
   const { object: o } = detail;
@@ -149,6 +160,17 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
           </button>
         </form>
       )}
+
+      <section>
+        <h2 className="mb-1 font-semibold">Profil</h2>
+        <ProfileTab
+          view={profile}
+          selected={selected}
+          notice={textParam.parse(sp.notice)}
+          noticeRunId={uuidParam.parse(sp.run)}
+          links={{ geoObjectId: o.id, attrHref: (a) => href({ attr: a }) }}
+        />
+      </section>
 
       <section>
         <h2 className="mb-1 font-semibold">Namen</h2>

@@ -1,5 +1,7 @@
+import type { ConsolidationConfig } from "@/lib/config/schemas";
 import { FACT_ATTRIBUTE_LABELS, formatFactValue, MONTHS, scaleWord } from "@/lib/domain/facts/labels";
 import type { ExcludeReason } from "./exclude";
+import type { AttributeProvenance } from "./types";
 
 /*
  * German display of consolidated profile values (ruling M5-P13): `formatFactValue` for every fact value, plus the
@@ -105,4 +107,47 @@ export function formatProfileValue(attribute: string, value: unknown): string {
 export function formatReviewValue(attribute: string, value: unknown): string {
   if (typeof value === "number" && scaleWord(attribute, value) !== undefined) return formatFactValue(attribute, value);
   return formatProfileValue(attribute, value);
+}
+
+const deNumber = (n: number) => n.toLocaleString("de-DE", { maximumFractionDigits: 2 });
+
+/**
+ * The German sentence of a consolidation rule (spec 07), with the thresholds of the rules version `cfg` (they live in
+ * `config/consolidation/<version>.json`, not here): v1 `shelter` → „Berechnung, Text korrigiert um höchstens ±0,3, Häfen
+ * mind. 0,8“. `prohibitions` follows ruling M5-C-R2 I-2 (a ban is lifted only by a review, never by omission).
+ */
+export function ruleLabel(rule: AttributeProvenance["rule"], cfg: ConsolidationConfig): string {
+  const r = cfg.rules;
+  switch (rule) {
+    case "shelter":
+      return `Berechnung, Text korrigiert um höchstens ±${deNumber(r.shelter.maxCorrection)}, Häfen mind. ${deNumber(r.shelter.harbourFloor)}`;
+    case "swell_protection":
+      return `Text vor Berechnung, wenn ein Text-Fact ≥ ${deNumber(r.swell_protection.textMinConfidence)} existiert; sonst berechnet`;
+    case "bathymetry":
+      return `Bathymetrie; Text nur als Korrektur bei Konfidenz > ${deNumber(r.bathymetry.textMinConfidence)}, bei Rasterkonfidenz < ${deNumber(r.bathymetry.weakRasterConfidence)} gilt der Text`;
+    case "holding":
+      return "Nur Text; Mehrheit gewichtet nach Quellengewicht × Konfidenz × Aktualität";
+    case "latest_observation":
+      return "Jüngste Beobachtung gewinnt; bei gleichem Monat die stärkere Quelle";
+    case "highlight":
+      return "Jüngste Beobachtung gewinnt (vorhanden ja/nein); Namen vereinigt";
+    case "occupancy":
+      return "Verteilung je Monat; Monat ohne Daten unbekannt";
+    case "prohibitions":
+      return "Jede Nennung gilt, bis eine Prüfung sie aufhebt; Sperrgebiete aus der Berechnung bleiben";
+    case "area_weighted":
+      return "Gewichteter Mittelwert (Zahl) bzw. Mehrheit (Auswahl)";
+    case "union":
+      return "Vereinigung, sortiert nach Zahl unabhängiger Nennungen";
+    case "default":
+      return `Jüngste Beobachtung mit Konfidenz ≥ ${deNumber(r.default.latestMinConfidence)}, sonst gewichtete Mehrheit`;
+    case "computed_only":
+      return "Nur Berechnung";
+    case "review_over_computed":
+      return "Prüfung vor Berechnung";
+    case "identity":
+      return "Aus dem Gazetteer";
+    case "derived":
+      return "Abgeleitet aus dem Profil";
+  }
 }
