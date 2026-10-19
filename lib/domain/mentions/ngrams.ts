@@ -1,3 +1,4 @@
+import { linkMarkup } from "@/lib/domain/extraction/quote";
 import { normalizeName, transliterateElot743 } from "@/lib/domain/gazetteer/names";
 
 /*
@@ -15,6 +16,20 @@ const WORD = /[\p{L}\p{N}\p{M}]+(?:['’\-‐‑][\p{L}\p{N}\p{M}]+)*/gu;
 /** Sentence ends between two words: `. ! ? ;`, the greek question mark and ano teleia, and line breaks. */
 const SENTENCE_END = /[.!?;\n\r\u037e\u0387\u00b7]/u;
 const GREEK = /\p{Script=Greek}/u;
+
+/** Bare web addresses and `<…>` autolinks. */
+const BARE_URL = /<?\b(?:https?:\/\/|www\.)[^\s<>]+>?/giu;
+
+/**
+ * The text with Markdown links reduced to their link text (images to their alt text) and bare web addresses removed,
+ * every removed code unit replaced by a space: offsets stay those of the original text, and no n-gram comes from a URL.
+ */
+export function linkTextOnly(text: string): string {
+  const chars = text.split("");
+  for (const [from, to] of linkMarkup(text)) chars.fill(" ", from, to);
+  const reduced = chars.join("");
+  return reduced.replace(BARE_URL, (m) => " ".repeat(m.length));
+}
 
 /** The words of a text grouped by sentence; no group is empty. */
 export function sentenceWords(text: string): Word[][] {

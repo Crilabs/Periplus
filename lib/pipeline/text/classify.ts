@@ -1,13 +1,13 @@
 import { and, asc, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
-import { estimateBatchItemCostsEur, resolveTaskModel } from "@/lib/ai/cost";
+import { estimateBatchItemCostsEur } from "@/lib/ai/cost";
 import { classifyDocumentTask, type ClassifyDocumentInput } from "@/lib/ai/tasks/classify-document";
 import type { ModelTask } from "@/lib/ai/types";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { aiBatches, aiBatchItems, documents, documentVersions } from "@/lib/db/schema";
 import { BudgetExceeded } from "@/lib/domain/costs";
-import { firstWords, storeClassification } from "@/lib/domain/mentions/classification";
+import { activeClassifier, firstWords, storeClassification } from "@/lib/domain/mentions/classification";
 import { extendStage, stageAcceptsJobs } from "@/lib/domain/runs";
 import { enqueueStageJobs } from "@/lib/jobs/enqueue";
 import type { JobData } from "@/lib/jobs/worker";
@@ -40,12 +40,6 @@ const task = classifyDocumentTask as ModelTask<unknown, unknown>;
 
 export type ClassifyJob = { runId: string; stage: string; key: string; documentVersionIds: string[] };
 export type ClassifyDeps = BatchDeps & { archive: Pick<Archive, "get"> };
-
-/** The active model and prompt version of the classification. */
-function activeClassifier(config: AppConfig): { model: string; promptVersion: number } {
-  const { model, taskConfig } = resolveTaskModel(config, classifyDocumentTask.name);
-  return { model, promptVersion: taskConfig.promptVersion };
-}
 
 /** Of `ids`, those not classified by the active model and prompt version, in id order. */
 async function unclassified(db: Db, ids: string[], config: AppConfig): Promise<string[]> {

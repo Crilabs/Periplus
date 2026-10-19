@@ -10,9 +10,16 @@ export type Hint = (typeof NAME_AFFIX_HINTS)[number];
 
 const ONLY_DIGITS = /^[\p{N} ]+$/u;
 
-/** Affixes longest first, so "bucht von" wins over a shorter affix of the same form. */
+const sortedByConfig = new WeakMap<NameAffixesConfig, NameAffixesConfig>();
+
+/** Affixes longest first, so "bucht von" wins over a shorter affix of the same form; sorted once per config list. */
 function byLength(affixes: NameAffixesConfig): NameAffixesConfig {
-  return [...affixes].sort((a, b) => b.affix.length - a.affix.length);
+  let sorted = sortedByConfig.get(affixes);
+  if (!sorted) {
+    sorted = [...affixes].sort((a, b) => b.affix.length - a.affix.length);
+    sortedByConfig.set(affixes, sorted);
+  }
+  return sorted;
 }
 
 /**

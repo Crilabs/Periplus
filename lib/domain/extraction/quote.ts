@@ -26,41 +26,65 @@ const LIST_BULLET = /^[ \t]*(?:[-*+]|\d{1,3}[.)])[ \t]+/gm;
 type Normalized = { text: string; map: number[]; ends: number[] };
 
 /**
- * Inline links and images: `[text](url)`, `[text](url "title")`, `![alt](url)`, with balanced parentheses inside
- * the url. Returns the ranges to remove around the kept text (`!`, `[`, and `](…)`).
+ * The end (index of the closing `)`) of a link target that starts after the `(` at `open - 1`: balanced parentheses,
+ * an optional quoted title, all on one line; -1 when it does not close.
  */
-function linkMarkup(s: string): Array<[number, number]> {
+function linkTargetEnd(s: string, from: number): number {
+  let depth = 0;
+  let quote: string | null = null;
+  for (let k = from; k < s.length; k++) {
+    const ch = s[k]!;
+    if (ch === "\n") return -1;
+    if (quote) {
+      if (ch === quote) quote = null;
+    } else if ((ch === '"' || ch === "'") && /\s/.test(s[k - 1]!)) {
+      quote = ch;
+    } else if (ch === "(") {
+      depth++;
+    } else if (ch === ")") {
+      if (depth === 0) return k;
+      depth--;
+    }
+  }
+  return -1;
+}
+
+/** A `[text](target)` starting at the `[` at `i`: the index of `]` and of the closing `)`, or null. */
+function simpleLink(s: string, i: number): { close: number; end: number } | null {
+  const close = s.indexOf("]", i + 1);
+  if (close < 0) return null;
+  const text = s.slice(i + 1, close);
+  if (text.length === 0 || text.includes("\n") || text.includes("[") || s[close + 1] !== "(") return null;
+  const end = linkTargetEnd(s, close + 2);
+  return end < 0 ? null : { close, end };
+}
+
+/**
+ * Inline links and images: `[text](url)`, `[text](url "title")`, `![alt](url)`, with balanced parentheses inside
+ * the url, and a linked image `[![alt](img)](href)`. Returns the ranges to remove around the kept text (`!`, `[`, and
+ * `](…)`), in order. Also used to reduce links to their text before the name match.
+ */
+export function linkMarkup(s: string): Array<[number, number]> {
   const ranges: Array<[number, number]> = [];
   for (let i = 0; i < s.length; i++) {
     if (s[i] !== "[") continue;
-    const close = s.indexOf("]", i + 1);
-    if (close < 0) break;
-    const text = s.slice(i + 1, close);
-    if (text.length === 0 || text.includes("\n") || text.includes("[") || s[close + 1] !== "(") continue;
-    let depth = 0;
-    let quote: string | null = null;
-    let end = -1;
-    for (let k = close + 2; k < s.length; k++) {
-      const ch = s[k]!;
-      if (ch === "\n") break;
-      if (quote) {
-        if (ch === quote) quote = null;
-      } else if ((ch === '"' || ch === "'") && /\s/.test(s[k - 1]!)) {
-        quote = ch;
-      } else if (ch === "(") {
-        depth++;
-      } else if (ch === ")") {
-        if (depth === 0) {
-          end = k;
-          break;
+    if (s[i + 1] === "!" && s[i + 2] === "[") {
+      // `[![alt](img)](href)`: keep only the alt text
+      const inner = simpleLink(s, i + 2);
+      if (inner && s[inner.end + 1] === "]" && s[inner.end + 2] === "(") {
+        const end = linkTargetEnd(s, inner.end + 3);
+        if (end >= 0) {
+          ranges.push([i, i + 3], [inner.close, end + 1]);
+          i = end;
+          continue;
         }
-        depth--;
       }
     }
-    if (end < 0) continue;
+    const link = simpleLink(s, i);
+    if (!link) continue;
     const from = i > 0 && s[i - 1] === "!" ? i - 1 : i;
-    ranges.push([from, i + 1], [close, end + 1]);
-    i = end;
+    ranges.push([from, i + 1], [link.close, link.end + 1]);
+    i = link.end;
   }
   return ranges;
 }

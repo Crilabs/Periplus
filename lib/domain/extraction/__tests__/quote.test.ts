@@ -79,6 +79,15 @@ describe("locateQuote", () => {
     expect(img.ok && chunk.slice(img.start, img.end)).toBe("sowie ![Hafen von Poros](img/poros.jpg) am");
   });
 
+  it("a linked image keeps only its alt text", () => {
+    const chunk = "Blick: [![Hafen von Poros](img/poros.jpg)](https://poros.example/(hafen)) am Abend.";
+    expect(normalizeForQuote(chunk).text).toBe("Blick: Hafen von Poros am Abend.");
+    const r = locateQuote(chunk, "Blick: Hafen von Poros am Abend", cfg);
+    expect(r.ok && chunk.slice(r.start, r.end)).toBe(chunk.slice(0, chunk.length - 1));
+    const alt = locateQuote(chunk, "Hafen von Poros am Abend", cfg);
+    expect(alt.ok && chunk.slice(alt.start, alt.end)).toBe("Hafen von Poros](img/poros.jpg)](https://poros.example/(hafen)) am Abend");
+  });
+
   it("returns the first match", () => {
     const chunk = "Gut haltender Sand. Gut haltender Sand.";
     expect(locateQuote(chunk, "Gut haltender Sand", cfg)).toEqual({ ok: true, start: 0, end: 18 });

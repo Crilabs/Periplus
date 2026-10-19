@@ -42,9 +42,54 @@ function defaultSdk(): AnthropicMessagesApi {
 }
 
 /**
+ * JSON-Schema keywords structured outputs do not support (numerical, string and complex array constraints, formats
+ * and patterns; ruling M4-D-R1). They are removed from the schema sent to the provider; the answer is still checked
+ * against the full zod schema when it arrives.
+ */
+const UNSUPPORTED_KEYWORDS = new Set([
+  "minLength",
+  "maxLength",
+  "pattern",
+  "format",
+  "minimum",
+  "maximum",
+  "exclusiveMinimum",
+  "exclusiveMaximum",
+  "multipleOf",
+  "minItems",
+  "maxItems",
+  "uniqueItems",
+  "contains",
+  "minContains",
+  "maxContains",
+  "minProperties",
+  "maxProperties",
+]);
+/** Keywords whose value is a map of names to subschemas (the names are data, never keywords). */
+const SCHEMA_MAPS = new Set(["properties", "$defs", "definitions", "patternProperties", "dependentSchemas"]);
+
+/** A JSON schema without the keywords structured outputs reject, at every level (property names stay untouched). */
+export function structuredOutputSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(structuredOutputSchema);
+  if (schema === null || typeof schema !== "object") return schema;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (UNSUPPORTED_KEYWORDS.has(key)) continue;
+    if (SCHEMA_MAPS.has(key) && value !== null && typeof value === "object" && !Array.isArray(value)) {
+      out[key] = Object.fromEntries(Object.entries(value).map(([name, sub]) => [name, structuredOutputSchema(sub)]));
+    } else if (key === "enum" || key === "const" || key === "required" || key === "default" || key === "examples") {
+      out[key] = value;
+    } else {
+      out[key] = structuredOutputSchema(value);
+    }
+  }
+  return out;
+}
+
+/**
  * The Messages API parameters of one request, shared by `call` and batches: the rendered system prompt (marked for
  * prompt caching when the task sets `cacheSystem`), the user prompt after any attachments, the configured effort,
- * the JSON schema of the output and `max_tokens`.
+ * the JSON schema of the output (without unsupported keywords, `structuredOutputSchema`) and `max_tokens`.
  */
 export function buildParams<I, O>(
   task: ModelTask<I, O>,
@@ -76,7 +121,7 @@ export function buildParams<I, O>(
     max_tokens: taskConfig.maxTokens,
     system,
     messages: [{ role: "user", content }],
-    output_config: { effort: taskConfig.effort, format: { type: "json_schema", schema: z.toJSONSchema(task.output) } },
+    output_config: { effort: taskConfig.effort, format: { type: "json_schema", schema: structuredOutputSchema(z.toJSONSchema(task.output)) as Record<string, unknown> } },
   };
 }
 

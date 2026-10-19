@@ -529,6 +529,8 @@ export const mentionsSchema = z
     fallbackScope: z.literal("source_areas"),
     /** Normalized words that never form a mention on their own. */
     stopNames: z.array(z.string().min(1).refine((n) => n === normalizeName(n), "must be normalized (normalizeName)")),
+    /** Normalized capitalised words that never belong to a new-name hint (sentence starts, common nouns). */
+    nameHintStopWords: z.array(z.string().min(1).refine((n) => n === normalizeName(n), "must be normalized (normalizeName)")),
   })
   .refine((m) => m.uncertainSimilarity < m.sureSimilarity, "uncertainSimilarity must be below sureSimilarity");
 

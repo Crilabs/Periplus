@@ -1,6 +1,7 @@
 import { and, eq, isNull, ne, or, sql } from "drizzle-orm";
-import type { ClassifyDocumentOutput } from "@/lib/ai/tasks/classify-document";
-import { getConfig } from "@/lib/config";
+import { resolveTaskModel } from "@/lib/ai/cost";
+import { classifyDocumentTask, type ClassifyDocumentOutput } from "@/lib/ai/tasks/classify-document";
+import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { documents, documentVersions } from "@/lib/db/schema";
 import type { DocType, ObservedAtBasis } from "@/lib/db/schema/sources";
@@ -38,20 +39,23 @@ function calendarDate(y: number, m: number, d: number): string | null {
 }
 
 /**
- * A model date as `YYYY-MM-DD` (a month `YYYY-MM` only when `allowMonth`, placed on day 15), kept only between
- * `earliest` and the fetch date; anything else is `null`.
+ * A model date as `YYYY-MM-DD` (a month `YYYY-MM` only when `allowMonth`, placed on day 15, or on the fetch date when
+ * that is earlier in the fetch month, ruling M4-D-R3), kept only between `earliest` and the fetch date; anything else
+ * is `null`.
  */
 function plausibleDate(value: string | null, fetchedAt: Date, earliest: string, allowMonth: boolean): string | null {
   if (value === null) return null;
   const v = value.trim();
+  const fetched = fetchedAt.toISOString().slice(0, 10);
   const day = DAY.exec(v);
   const month = allowMonth ? MONTH.exec(v) : null;
-  const date = day
+  let date = day
     ? calendarDate(Number(day[1]), Number(day[2]), Number(day[3]))
     : month
       ? calendarDate(Number(month[1]), Number(month[2]), MID_MONTH)
       : null;
-  if (date === null || date < earliest || date > fetchedAt.toISOString().slice(0, 10)) return null;
+  if (month && date !== null && date > fetched && date.slice(0, 7) === fetched.slice(0, 7)) date = fetched;
+  if (date === null || date < earliest || date > fetched) return null;
   return date;
 }
 
@@ -76,10 +80,18 @@ function cleanList(values: string[], max: number, keep: (v: string) => boolean =
   return [...new Set(values.map((v) => v.trim()).filter((v) => v.length > 0 && keep(v)))].slice(0, max);
 }
 
+/** The model and prompt version the configuration classifies with now. */
+export function activeClassifier(config: AppConfig = getConfig()): { model: string; promptVersion: number } {
+  const { model, taskConfig } = resolveTaskModel(config, classifyDocumentTask.name);
+  return { model, promptVersion: taskConfig.promptVersion };
+}
+
 /**
- * Stores a classification on the version (conditional update, ruling M4-P11): a version already classified by the
- * same model and prompt version is left as it is, so a repeated or doubled distribution changes nothing; another
- * model or prompt version overwrites. Languages are ISO 639-1 codes (≤ 5), areas ≤ 10, the reason ≤ 300 characters.
+ * Stores a classification on the version (conditional update, ruling M4-P11): only a result of the active model and
+ * prompt version (`active`) writes, so a late batch of an older configuration never overwrites a newer
+ * classification; a version already classified by the same model and prompt version is left as it is, so a repeated
+ * or doubled distribution changes nothing. Languages are ISO 639-1 codes (≤ 5), areas ≤ 10, the reason ≤ 300
+ * characters. Returns whether the version was written.
  */
 export async function storeClassification(
   db: Db,
@@ -87,10 +99,12 @@ export async function storeClassification(
   out: ClassifyDocumentOutput,
   meta: { model: string; promptVersion: number; runId: string; fetchedAt: Date },
   earliest: string = getConfig().extraction.earliestDate,
-): Promise<void> {
+  active: { model: string; promptVersion: number } = activeClassifier(),
+): Promise<boolean> {
+  if (meta.model !== active.model || meta.promptVersion !== active.promptVersion) return false;
   const observed = resolveObservedAt(out, meta.fetchedAt, earliest);
   const reason = out.observed_at_reason?.trim().slice(0, MAX_REASON_CHARS) || null;
-  await db
+  const written = await db
     .update(documentVersions)
     .set({
       classifiedDocType: out.doc_type,
@@ -119,7 +133,9 @@ export async function storeClassification(
           ne(documentVersions.classifiedPromptVersion, meta.promptVersion),
         ),
       ),
-    );
+    )
+    .returning({ id: documentVersions.id });
+  return written.length > 0;
 }
 
 export type EffectiveVersionMeta = {

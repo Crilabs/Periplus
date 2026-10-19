@@ -761,13 +761,26 @@ async function continueUnit(db: Db, deps: BatchDeps, batch: BatchRow, entry: Bat
     .orderBy(aiBatches.id)
     .limit(1);
   if (!followUp) return "distributed";
-  const current = followUp.status === "failed" ? await reviveBatch(db, followUp) : followUp;
-  if (current && followUp.status === "failed" && current.status === "submitted") {
-    // Revived as sent: its own poll chain ended with the dead letter (whose job id the chain id would collide with),
-    // so it gets a poll of its own, which continues the chain from the batch's poll count.
-    const config = deps.config ?? getConfig();
-    await enqueueBatchJob(deps.boss, { key: `revive:${current.id}:${current.pollCount}`, batchId: current.id }, config.models.batch.pollSeconds);
-  }
+  const current =
+    followUp.status === "failed"
+      ? await db.transaction(async (tx) => {
+          const revived = await reviveBatch(tx, followUp);
+          if (revived?.status === "submitted") {
+            // Revived as sent: its own poll chain ended with the dead letter (whose job id the chain id would collide
+            // with), so it gets a poll of its own in the revive's transaction (no revived batch without its poll),
+            // which continues the chain from the batch's poll count. Each revival has its own key: a revived poll that
+            // dead-letters again before advancing the poll count must not reuse the id of the first revive poll.
+            const config = deps.config ?? getConfig();
+            await enqueueBatchJob(
+              deps.boss,
+              { key: `revive:${revived.id}:${revived.pollCount}:${newId()}`, batchId: revived.id },
+              config.models.batch.pollSeconds,
+              tx,
+            );
+          }
+          return revived;
+        })
+      : followUp;
   if (current && isUnsent(current.status) && (await sendFromPoll(db, deps, current, entry.task)) === "deferred") return "waiting";
   return "resubmitted";
 }

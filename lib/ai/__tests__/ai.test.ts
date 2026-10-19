@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { desc, eq } from "drizzle-orm";
 import { testDb, withRollback } from "@/test/db";
 import { quietDay } from "@/test/external-calls";
@@ -7,8 +8,8 @@ import { BudgetExceeded, recordExternalCall } from "@/lib/domain/costs";
 import { loadConfig, type AppConfig } from "@/lib/config";
 import { loadPrompt, renderPrompt } from "@/lib/ai/prompts";
 import { MockModel } from "@/lib/ai/mock";
-import { createAnthropicClient, type AnthropicMessagesApi } from "@/lib/ai/anthropic";
-import { ModelOutputInvalid } from "@/lib/ai/types";
+import { buildParams, createAnthropicClient, structuredOutputSchema, type AnthropicMessagesApi } from "@/lib/ai/anthropic";
+import { ModelOutputInvalid, type ModelTask } from "@/lib/ai/types";
 import { echoTask } from "@/lib/ai/tasks/system-echo";
 import { pdfToMarkdownTask } from "@/lib/ai/tasks/pdf-to-markdown";
 import { sources } from "@/lib/db/schema";
@@ -193,6 +194,51 @@ describe("anthropic client", () => {
     await expect(client.call(echoTask, { text: "x" })).rejects.toThrow(/claude-haiku-5-5/);
     expect(create).not.toHaveBeenCalled();
   });
+});
+
+describe("structured output schema (ruling M4-D-R1)", () => {
+  type Constrained = { echo: string; language: string; on: string; tags: string[]; score: number; format: string | null };
+  /** `system.echo` with limits structured outputs reject; a property named `format` must survive. */
+  const constrainedTask: ModelTask<{ text: string }, Constrained> = {
+    name: "system.echo",
+    output: z.object({
+      echo: z.string().max(3),
+      language: z.string().regex(/^[a-z]{2}$/),
+      on: z.iso.date(),
+      tags: z.array(z.string().min(1)).max(2),
+      score: z.number().min(0).max(1),
+      format: z.string().nullable(),
+    }),
+    variables: echoTask.variables,
+  };
+  const KEYWORDS = /"(maxLength|minLength|pattern|format|minimum|maximum|maxItems|minItems|exclusiveMinimum|exclusiveMaximum|multipleOf)":[^{]/;
+
+  it("strips unsupported keywords at every level but keeps property names", () => {
+    const schema = structuredOutputSchema(z.toJSONSchema(constrainedTask.output)) as { properties: Record<string, unknown>; required: string[] };
+    const json = JSON.stringify(schema);
+    expect(json).not.toMatch(KEYWORDS);
+    expect(Object.keys(schema.properties)).toEqual(["echo", "language", "on", "tags", "score", "format"]);
+    expect(schema.required).toContain("format");
+    expect(schema.properties.tags).toEqual({ type: "array", items: { type: "string" } });
+    expect(schema).toMatchObject({ type: "object", additionalProperties: false });
+  });
+
+  it("the batch and sync params send the stripped schema; the answer is checked against the full one", () =>
+    withRollback(async (tx) => {
+      const params = buildParams(constrainedTask, { text: "x" }, config.models.tasks["system.echo"]!, "claude-haiku-5-5");
+      expect(JSON.stringify(params.output_config)).not.toMatch(KEYWORDS);
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      const ok = { echo: "abc", language: "en", on: "2026-10-19", tags: ["a"], score: 0.5, format: null };
+      const { api, create } = fakeSdk(JSON.stringify(ok));
+      const client = createAnthropicClient(tx, { ...config, budgets: { ...config.budgets, anthropic: { dailyEur: 1000 } } }, { sdk: api, now: () => now });
+      expect((await client.call(constrainedTask, { text: "x" })).output).toEqual(ok);
+      expect(JSON.stringify((create.mock.calls[0]![0] as { output_config: unknown }).output_config)).not.toMatch(KEYWORDS);
+      for (const bad of [{ ...ok, echo: "abcd" }, { ...ok, language: "EN" }, { ...ok, on: "2026-13-01" }, { ...ok, tags: ["a", "b", "c"] }, { ...ok, score: 2 }]) {
+        const { api: badApi } = fakeSdk(JSON.stringify(bad));
+        const badClient = createAnthropicClient(tx, { ...config, budgets: { ...config.budgets, anthropic: { dailyEur: 1000 } } }, { sdk: badApi, now: () => now });
+        await expect(badClient.call(constrainedTask, { text: "x" })).rejects.toBeInstanceOf(ModelOutputInvalid);
+      }
+    }));
 });
 
 describe("anthropic client options", () => {

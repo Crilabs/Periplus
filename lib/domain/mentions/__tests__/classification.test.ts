@@ -101,6 +101,17 @@ describe("observed date", () => {
     expect(resolveObservedAt(answer({ published_at: "2024-05" }), FETCHED, EARLIEST).publishedAt).toBeNull();
   });
 
+  it("a month-only date in the fetch month is clamped to the fetch date (ruling M4-D-R3)", () => {
+    const early = new Date("2026-10-05T08:00:00Z");
+    const out = answer({ observed_at: "2026-10", observed_at_explicit: true });
+    expect(resolveObservedAt(out, early, EARLIEST)).toEqual({ observedAt: "2026-10-05", basis: "explicit", publishedAt: null });
+    // after the 15th the month stays on the 15th; a later month is still dropped
+    expect(resolveObservedAt(out, FETCHED, EARLIEST).observedAt).toBe("2026-10-15");
+    expect(resolveObservedAt(answer({ observed_at: "2026-11", observed_at_explicit: true }), early, EARLIEST).basis).toBe("fetched");
+    // a full day after the fetch date is not clamped
+    expect(resolveObservedAt(answer({ observed_at: "2026-10-07", observed_at_explicit: true }), early, EARLIEST).basis).toBe("fetched");
+  });
+
   it("firstWords keeps the text up to the n-th word", () => {
     expect(firstWords("# Poros\n\nWir  ankerten vor Kolona.", 3)).toBe("# Poros\n\nWir");
     expect(firstWords("kurz", 1500)).toBe("kurz");
@@ -146,9 +157,28 @@ describe("classification storage", () => {
       // the same model and prompt version again: nothing changes
       await storeClassification(tx, versionId, answer({ doc_type: "forum" }), { model: "claude-haiku-5-5", promptVersion: 1, runId, fetchedAt: FETCHED }, EARLIEST);
       expect((await versionRow(tx, versionId)).classifiedDocType).toBe("pilot_guide");
-      // a new prompt version overwrites (ruling M4-P11)
-      await storeClassification(tx, versionId, answer({ doc_type: "forum" }), { model: "claude-haiku-5-5", promptVersion: 2, runId, fetchedAt: FETCHED }, EARLIEST);
+      // a new prompt version overwrites once it is the active one (ruling M4-P11)
+      const v2 = { model: "claude-haiku-5-5", promptVersion: 2 };
+      expect(await storeClassification(tx, versionId, answer({ doc_type: "forum" }), { ...v2, runId, fetchedAt: FETCHED }, EARLIEST)).toBe(false);
+      expect((await versionRow(tx, versionId)).classifiedDocType).toBe("pilot_guide");
+      expect(await storeClassification(tx, versionId, answer({ doc_type: "forum" }), { ...v2, runId, fetchedAt: FETCHED }, EARLIEST, v2)).toBe(true);
       expect(await versionRow(tx, versionId)).toMatchObject({ classifiedDocType: "forum", classifiedPromptVersion: 2, classifiedObservedAtBasis: "fetched" });
+    }));
+
+  it("a late result of an older prompt version or another model never overwrites a newer classification", () =>
+    withRollback(async (tx) => {
+      const { versionId } = await insertTestChunk(tx);
+      const runId = await classifyRun(tx, {});
+      const active = { model: "claude-haiku-5-5", promptVersion: 2 };
+      await storeClassification(tx, versionId, answer({ doc_type: "forum" }), { ...active, runId, fetchedAt: FETCHED }, EARLIEST, active);
+      const stale = [
+        { model: "claude-haiku-5-5", promptVersion: 1 },
+        { model: "claude-sonnet-5-5", promptVersion: 2 },
+      ];
+      for (const old of stale) {
+        expect(await storeClassification(tx, versionId, answer({ doc_type: "marina" }), { ...old, runId, fetchedAt: FETCHED }, EARLIEST, active)).toBe(false);
+      }
+      expect(await versionRow(tx, versionId)).toMatchObject({ classifiedDocType: "forum", classifiedPromptVersion: 2, classifiedModel: "claude-haiku-5-5" });
     }));
 });
 

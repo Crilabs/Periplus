@@ -9,5 +9,13 @@
   "versionsPerJob": 50,
   "prepassTypes": ["area", "gulf", "archipelago", "island"],
   "fallbackScope": "source_areas",
-  "stopNames": ["agios", "agia", "agioi", "ag", "port", "porto", "marina", "kap", "cape", "bay", "nisos", "nisi", "limani"]
+  "stopNames": ["agios", "agia", "agioi", "ag", "port", "porto", "marina", "kap", "cape", "bay", "nisos", "nisi", "limani"],
+  "nameHintStopWords": [
+    "in", "im", "am", "an", "auf", "bei", "vor", "nach", "von", "vom", "zur", "zum", "aus", "die", "der", "das", "den", "dem",
+    "ein", "eine", "einer", "wir", "dann", "danach", "hier", "dort", "unsere", "unser",
+    "the", "a", "at", "on", "to", "from", "near", "off", "of", "we", "our", "then", "this", "that", "next",
+    "norden", "suden", "osten", "westen", "nordosten", "nordwesten", "sudosten", "sudwesten",
+    "north", "south", "east", "west", "northern", "southern", "eastern", "western",
+    "ostseite", "westseite", "nordseite", "sudseite", "kuste", "strand", "dorf", "ort", "stadt", "insel", "tag", "abend", "morgen", "nacht"
+  ]
 }

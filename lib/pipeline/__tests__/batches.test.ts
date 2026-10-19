@@ -827,10 +827,52 @@ describe("stage batches", () => {
       expect(await pollBatch(tx, { model, boss, config, handlers }, batchId!, { n: 0 })).toBe("resubmitted");
       expect((await batchesOf(tx, runId))[1]!.status).toBe("submitted");
       const poll = inserted.slice(before).find((j) => j.queue === "ai.batch.poll" && j.data.batchId === followUp.id && j.data.mode === undefined);
-      expect(poll?.data).toMatchObject({ key: `revive:${followUp.id}:${followUp.pollCount}`, batchId: followUp.id });
+      expect(poll?.data).toMatchObject({ batchId: followUp.id });
+      expect(String(poll?.data.key)).toMatch(new RegExp(`^revive:${followUp.id}:${followUp.pollCount}:`));
+
+      // The revived poll dead-letters again before advancing the poll count; a second manual retry revives it with a
+      // poll whose job id differs from the first revive poll's (pg-boss would drop a duplicate id).
+      expect(await failBatchUnit(tx, boss, followUp.id)).toBe(true);
+      const before2 = inserted.length;
+      expect(await pollBatch(tx, { model, boss, config, handlers }, batchId!, { n: 0 })).toBe("resubmitted");
+      const poll2 = inserted.slice(before2).find((j) => j.queue === "ai.batch.poll" && j.data.batchId === followUp.id && j.data.mode === undefined);
+      expect(poll2).toBeDefined();
+      expect(poll2!.id).not.toBe(poll!.id);
+      expect(poll2!.data.key).not.toBe(poll!.data.key);
+
       expect(await pollBatch(tx, { model, boss, config, handlers }, followUp.id)).toBe("distributed");
       expect(seen.map((s) => s.subjectId)).toEqual(["s0", "s1"]);
       expect(await stageRow(tx, runId)).toMatchObject({ done: 2, failed: 0 });
+    }));
+
+  it("a revive whose poll cannot be enqueued is rolled back with it", () =>
+    withRollback(async (tx) => {
+      const runId = await stageRun(tx);
+      const retriedOnce = new Set<string>();
+      const model = new MockModel(
+        {
+          "system.echo": (input) => {
+            if ((input as { text: string }).text === "busy" && !retriedOnce.has("busy")) {
+              retriedOnce.add("busy");
+              throw new MockBatchError("overloaded", true);
+            }
+            return echoBack(input);
+          },
+        },
+        { batchRounds: 0 },
+      );
+      const { boss } = recordingBoss();
+      const { handlers } = countingHandlers();
+      const { batchId } = await submitStageBatch(tx, { model, boss, config }, { task, runId, stage: STAGE, key: "k", items: items("a", "busy") });
+      await recordJobOutcome(tx, runId, STAGE, "k", "done");
+      expect(await pollBatch(tx, { model, boss, config, handlers }, batchId!)).toBe("resubmitted");
+      const followUp = (await batchesOf(tx, runId))[1]!;
+      expect(await failBatchUnit(tx, boss, followUp.id)).toBe(true);
+
+      const failingBoss = { insert: async () => { throw new Error("queue down"); } } as unknown as PgBoss;
+      await expect(pollBatch(tx, { model, boss: failingBoss, config, handlers }, batchId!, { n: 0 })).rejects.toThrow("queue down");
+      // nothing half done: the follow-up is still failed (no sent batch without its poll)
+      expect((await batchesOf(tx, runId))[1]!.status).toBe("failed");
     }));
 
   it("sizeBatch takes the longest prefix that stays below the headroom", () => {

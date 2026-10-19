@@ -19,11 +19,15 @@ function spells(words: Word[], at: number, affix: string[]): boolean {
   return affix.every((part, k) => at + k < words.length && normalizeName(words[at + k]!.text) === part);
 }
 
-export function nameHints(text: string, affixes: NameAffixesConfig): UnmatchedDraft[] {
+/**
+ * `stopWords` (normalized, `mentions.nameHintStopWords`) are capitalised words that are no name: a capitalised word at
+ * a sentence start ("In Kolona Bay") or a German common noun ("im Süden Kolona Bay").
+ */
+export function nameHints(text: string, affixes: NameAffixesConfig, stopWords: readonly string[] = []): UnmatchedDraft[] {
   const parsed = affixes.map((a) => ({ ...a, parts: a.affix.split(" ") }));
-  const affixWords = new Set(parsed.filter((a) => a.parts.length === 1).map((a) => a.affix));
-  // A capitalised word that is itself a generic part ("Marina", "Bay") never belongs to the name.
-  const isNameWord = (w: Word | undefined) => w !== undefined && CAPITALISED.test(w.text) && !affixWords.has(normalizeName(w.text));
+  const noName = new Set([...parsed.filter((a) => a.parts.length === 1).map((a) => a.affix), ...stopWords]);
+  // A capitalised word that is itself a generic part ("Marina", "Bay") or a stop word never belongs to the name.
+  const isNameWord = (w: Word | undefined) => w !== undefined && CAPITALISED.test(w.text) && !noName.has(normalizeName(w.text));
   const drafts = new Map<string, UnmatchedDraft>();
   const add = (words: Word[], from: number, to: number, hint: Hint) => {
     const start = words[from]!.start;
