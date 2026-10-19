@@ -54,14 +54,20 @@ export function inputWeight(i: ConsolidationInput, ctx: RuleContext): number {
 }
 
 /**
- * The correction inputs a rule weighs (text, observations, reviews). The youngest review decision supersedes what it
- * saw: older reviews and texts/observations not younger than it drop out; younger ones stay and compete with it.
+ * The inputs without what the youngest review decision saw: older reviews and texts/observations not younger than it
+ * drop out; younger texts/observations, computations and POIs stay and compete with it (ruling M5-B-R3).
  */
-export function corrections(inputs: ConsolidationInput[]): ConsolidationInput[] {
+export function afterReview(inputs: ConsolidationInput[]): ConsolidationInput[] {
   const decision = youngest(inputs.filter((i) => i.origin === "review"));
+  if (!decision) return inputs;
   return inputs.filter(
-    (i) => isCorrection(i.origin) && (!decision || i === decision || (i.origin !== "review" && i.observedAt > decision.observedAt)),
+    (i) => i === decision || (i.origin !== "review" && (!isTextual(i.origin) || i.observedAt > decision.observedAt)),
   );
+}
+
+/** The correction inputs a rule weighs (text, observations, reviews), after the youngest review's supersession. */
+export function corrections(inputs: ConsolidationInput[]): ConsolidationInput[] {
+  return afterReview(inputs).filter((i) => isCorrection(i.origin));
 }
 
 /** Independent sources: documents of one source count once. */
