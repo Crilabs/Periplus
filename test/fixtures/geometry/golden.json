@@ -1,0 +1,89 @@
+{
+  "rulesVersion": "geometry-1",
+  "places": {
+    "Perdika": {
+      "sectors": {
+        "N": 0.999,
+        "NE": 1,
+        "E": 0.988,
+        "SE": 1,
+        "S": 1,
+        "SW": 0.174,
+        "W": 0.448,
+        "NW": 0.201
+      },
+      "swell": 0.201,
+      "opening": {
+        "bearingDeg": 263,
+        "widthDeg": 75
+      },
+      "depth": {
+        "approach": {
+          "at50m": 14.4,
+          "at100m": 14.4,
+          "at200m": 17.9
+        },
+        "min": 0.3,
+        "max": 13.6
+      },
+      "seabed": null,
+      "anchorAreaM2": 10005
+    },
+    "Aponisos": {
+      "sectors": {
+        "N": 0.014,
+        "NE": 0.329,
+        "E": 0.817,
+        "SE": 0.777,
+        "S": 0.581,
+        "SW": 0.297,
+        "W": 0.14,
+        "NW": 0.044
+      },
+      "swell": 0.022,
+      "opening": {
+        "bearingDeg": 308,
+        "widthDeg": 195
+      },
+      "depth": {
+        "approach": {
+          "at50m": 9.8,
+          "at100m": 17,
+          "at200m": 13.9
+        },
+        "min": 0.1,
+        "max": 20
+      },
+      "seabed": null,
+      "anchorAreaM2": 82853
+    },
+    "Aegina harbour": {
+      "sectors": {
+        "N": 0.949,
+        "NE": 1,
+        "E": 1,
+        "SE": 0.7,
+        "S": 0.104,
+        "SW": 0.123,
+        "W": 0.006,
+        "NW": 0.02
+      },
+      "swell": 0.01,
+      "opening": {
+        "bearingDeg": 245,
+        "widthDeg": 185
+      },
+      "depth": {
+        "approach": {
+          "at50m": 7.4,
+          "at100m": 7.9,
+          "at200m": 9.5
+        },
+        "min": 0,
+        "max": 7.6
+      },
+      "seabed": null,
+      "anchorAreaM2": 26326
+    }
+  }
+}

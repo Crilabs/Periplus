@@ -75,8 +75,17 @@ export async function fetchCoverage(
 /**
  * One WFS 2.0.0 GetFeature page as GeoJSON. Box and output in CRS84, i.e. lon/lat order: with
  * EPSG:4326 WFS 2.0 servers read the box as lat/lon and return features from the wrong region.
+ * `sortBy` gives the pages a stable order where the server has no primary key to page by (GeoServer
+ * refuses `startIndex` then: "Cannot do natural order without a primary key").
  */
-export function wfsPageUrl(input: { url: string; typeName: string; bbox: Bbox; startIndex: number; count: number }): string {
+export function wfsPageUrl(input: {
+  url: string;
+  typeName: string;
+  bbox: Bbox;
+  startIndex: number;
+  count: number;
+  sortBy?: string;
+}): string {
   const [west, south, east, north] = input.bbox;
   const params = new URLSearchParams({
     service: "WFS",
@@ -89,6 +98,7 @@ export function wfsPageUrl(input: { url: string; typeName: string; bbox: Bbox; s
     count: String(input.count),
     startIndex: String(input.startIndex),
   });
+  if (input.sortBy) params.set("sortBy", input.sortBy);
   return `${input.url}?${params}`;
 }
 
@@ -138,6 +148,7 @@ export async function fetchWfsFeatures(
     pageSize: number;
     timeoutMs: number;
     ratePerMinute: number;
+    sortBy?: string;
   },
   ctx: CallContext,
 ): Promise<{ pages: string[]; features: Feature[] }> {
@@ -151,7 +162,14 @@ export async function fetchWfsFeatures(
       {
         service: input.service,
         operation: "GetFeature",
-        url: wfsPageUrl({ url: input.url, typeName: input.typeName, bbox: input.bbox, startIndex, count: input.pageSize }),
+        url: wfsPageUrl({
+          url: input.url,
+          typeName: input.typeName,
+          bbox: input.bbox,
+          startIndex,
+          count: input.pageSize,
+          sortBy: input.sortBy,
+        }),
         timeoutMs: input.timeoutMs,
         ratePerMinute: input.ratePerMinute,
       },

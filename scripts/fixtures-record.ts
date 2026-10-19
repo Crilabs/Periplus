@@ -20,7 +20,7 @@ import { DATASET_KINDS, DATASETS_STAGE, importDataset } from "../lib/pipeline/da
 import { GEONAMES_STAGE, importGeonames } from "../lib/pipeline/gazetteer/geonames";
 import { importOsm } from "../lib/pipeline/gazetteer/osm";
 import { importWikidata } from "../lib/pipeline/gazetteer/wikidata";
-import { readShapefile } from "./import-land-polygons";
+import { landImportBbox, readShapefile } from "./import-land-polygons";
 
 const USAGE = "usage: fixtures-record.ts --area <key> [--land <path/land_polygons.shp>] [--cache <dir>] [--datasets]";
 const FIXTURES = "test/fixtures";
@@ -296,7 +296,8 @@ async function main(): Promise<void> {
   const url = assertScratchUrl(process.env.DATABASE_URL);
   const area = loadArea(args.area);
   const { gazetteer } = getConfig();
-  const landBox = bufferBbox(areaBbox(area), gazetteer.landBufferKm);
+  // The land import box (area box plus `landBufferKm`, snapped to the tile grid): 50 km fetch rays need it.
+  const landBox = landImportBbox(area, gazetteer.landBufferKm);
   const queryBox = bufferBbox(areaBbox(area), gazetteer.bboxBufferKm);
   const out = (line: string) => process.stdout.write(`${line}\n`);
 

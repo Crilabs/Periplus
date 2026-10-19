@@ -70,7 +70,9 @@ export function datasetKindsOf(params: Record<string, unknown>): DatasetKind[] {
 /**
  * Bathymetry for the coast tiles of the area and their 8 neighbours: per tile exactly its box from the
  * EMODnet WCS, archived as `datasets/emodnet-bathymetry/<datasetVersion>/<tileId>.tif`. An archived tile is
- * reused without HTTP. All downloads happen before the first raster import (one transaction per tile).
+ * reused without HTTP. All downloads happen before the first raster import (one transaction per tile); a
+ * downloaded tile is archived only after its import succeeded, so a body that cannot be imported is never
+ * reused and the next run downloads it again.
  */
 export async function importBathymetry(
   db: Db,
@@ -82,22 +84,16 @@ export async function importBathymetry(
   if (coast.length === 0) throw new Error(`area ${input.area.key} has no coast tiles; build its gazetteer first`);
   const tileIds = [...new Set(coast.flatMap((id) => [id, ...tileNeighbours(id)]))].sort();
 
-  const rasters: Array<{ tileId: string; bytes: Uint8Array }> = [];
-  let reused = 0;
+  const rasters: Array<{ tileId: string; key: string; bytes: Uint8Array; downloaded: boolean }> = [];
   for (const tileId of tileIds) {
     const key = `datasets/emodnet-bathymetry/${cfg.datasetVersion}/${tileId}.tif`;
-    let bytes = await deps.archive.get(key);
-    if (bytes) {
-      reused++;
-    } else {
-      bytes = await fetchCoverage(deps.transport, tileBbox(tileId), callContext(db, input, tileId), cfg);
-      await deps.archive.put(key, bytes, "image/tiff");
-    }
-    rasters.push({ tileId, bytes });
+    const archived = await deps.archive.get(key);
+    const bytes = archived ?? (await fetchCoverage(deps.transport, tileBbox(tileId), callContext(db, input, tileId), cfg));
+    rasters.push({ tileId, key, bytes, downloaded: archived === null });
   }
 
   let rasterTiles = 0;
-  for (const { tileId, bytes } of rasters) {
+  for (const { tileId, key, bytes, downloaded } of rasters) {
     const result = await importBathymetryRaster(db, {
       bytes,
       dataset: cfg.dataset,
@@ -107,8 +103,9 @@ export async function importBathymetry(
       valueIsElevation: cfg.valueIsElevation,
     });
     rasterTiles += result.rasterTiles;
+    if (downloaded) await deps.archive.put(key, bytes, "image/tiff");
   }
-  return { tiles: tileIds.length, rasterTiles, reused };
+  return { tiles: tileIds.length, rasterTiles, reused: rasters.filter((r) => !r.downloaded).length };
 }
 
 const isPolygonal = (g: Geometry | null): g is Polygon | MultiPolygon => g?.type === "Polygon" || g?.type === "MultiPolygon";
@@ -136,6 +133,7 @@ export async function importSeabed(
       pageSize: cfg.pageSize,
       timeoutMs: cfg.timeoutSeconds * 1000,
       ratePerMinute: cfg.ratePerMinute,
+      sortBy: cfg.sortBy,
     },
     callContext(db, input),
   );

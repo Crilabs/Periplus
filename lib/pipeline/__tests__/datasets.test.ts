@@ -204,6 +204,27 @@ describe("importBathymetry", () => {
       );
       expect(rows[0]!.n).toBe(1);
     }));
+  it("a downloaded tile that cannot be imported is not archived; the next import downloads it again", () =>
+    withRollback(async (db) => {
+      await prepareArea(db);
+      const archive = memoryArchive();
+      const good = scriptedServices(db);
+      // TIFF magic bytes (passes the adapter's check) but no raster PostGIS can read.
+      const broken: Transport = async (req) =>
+        subsetBox(req.url).join() === tileBbox(TILE).join() ? makeResponse(200, new Uint8Array([0x49, 0x49, 0x2a, 0x00, 1, 2, 3])) : good.transport(req);
+
+      // The savepoint keeps the outer test transaction usable after the failed raster import.
+      await expect(
+        db.transaction((tx) => importBathymetry(tx, { area: areaByKey(AREA) }, { transport: broken, archive })),
+      ).rejects.toThrow();
+      expect(archive.keys()).not.toContain(`datasets/emodnet-bathymetry/2024/${TILE}.tif`);
+
+      const { transport, seen } = scriptedServices(db);
+      const again = await importBathymetry(db, { area: areaByKey(AREA) }, { transport, archive });
+      expect(seen.map((r) => subsetBox(r.url))).toContainEqual(tileBbox(TILE));
+      expect(again.rasterTiles).toBe(9);
+      expect(archive.keys()).toContain(`datasets/emodnet-bathymetry/2024/${TILE}.tif`);
+    }));
 });
 
 describe("importSeabed", () => {

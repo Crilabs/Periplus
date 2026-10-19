@@ -1,0 +1,9 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://ows.emodnet-humanactivities.eu/wfs?service=WFS&version=2.0.0&request=GetFeature&typeNames=emodnet%3Ashellfish&outputFormat=application%2Fjson&srsName=urn%3Aogc%3Adef%3Acrs%3AOGC%3A1.3%3ACRS84&bbox=23.22448054827652%2C37.479787998562706%2C23.52551945172348%2C37.770212001437294%2Curn%3Aogc%3Adef%3Acrs%3AOGC%3A1.3%3ACRS84&count=1000&startIndex=0",
+    "body": null
+  },
+  "status": 200,
+  "bodyBase64": "eyJ0eXBlIjoiRmVhdHVyZUNvbGxlY3Rpb24iLCJmZWF0dXJlcyI6W10sInRvdGFsRmVhdHVyZXMiOjAsIm51bWJlck1hdGNoZWQiOjAsIm51bWJlclJldHVybmVkIjowLCJ0aW1lU3RhbXAiOiIyMDI2LTEwLTE5VDAyOjA3OjI3LjE0NVoiLCJjcnMiOm51bGx9"
+}

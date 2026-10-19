@@ -22,6 +22,7 @@ const cfg: DatasetsConfig["seabed"] = {
     "Rock or other hard substrata": "rock",
   },
   weedPatterns: ["posidonia", "seagrass", "cymodocea", "zostera"],
+  sortBy: "objectid",
   pageSize: 500,
   timeoutSeconds: 180,
   ratePerMinute: 20,

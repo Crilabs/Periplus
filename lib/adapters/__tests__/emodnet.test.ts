@@ -113,6 +113,12 @@ describe("wfsPageUrl", () => {
     expect(p.get("bbox")).toBe("20.9,35.1,21.1,35.3,urn:ogc:def:crs:OGC:1.3:CRS84");
     expect(p.get("count")).toBe("1000");
     expect(p.get("startIndex")).toBe("1000");
+    expect(p.has("sortBy")).toBe(false);
+  });
+
+  it("wfsPageUrl sorts by the given attribute so a layer without primary key can be paged", () => {
+    const url = wfsPageUrl({ url: "https://wfs.example.invalid/wfs", typeName: "x:y", bbox: BOX, startIndex: 0, count: 500, sortBy: "objectid" });
+    expect(new URL(url).searchParams.get("sortBy")).toBe("objectid");
   });
 });
 
