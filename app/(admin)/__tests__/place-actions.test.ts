@@ -2,7 +2,7 @@ import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { facts, reviewDecisions } from "@/lib/db/schema";
-import { CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
+import { GEOMETRY_CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
 import { testDb, withRollback } from "@/test/db";
 import { buildBayScene } from "@/test/geometry/scene";
 import { lonLatOf } from "@/test/geometry/synthetic";
@@ -98,7 +98,7 @@ describe("setAnchorAction", () => {
         expect.objectContaining({
           kind: "stage",
           scope: { type: "place", id: scene.placeId },
-          stages: ["geometry.place", ...CONSOLIDATION_STAGES],
+          stages: ["geometry.place", ...GEOMETRY_CONSOLIDATION_STAGES],
           params: { placeIds: [scene.placeId] },
           triggeredBy: ADMIN,
         }),
