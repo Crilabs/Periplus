@@ -18,7 +18,10 @@ export type RunScopeReason =
   | "source_not_approved"
   | "source_run_active"
   | "wikivoyage_source_ended"
-  | "document_not_upload";
+  | "document_not_upload"
+  | "no_converter_samples"
+  | "converter_samples_done"
+  | "comparison_run_active";
 
 /** A run start refused before the run exists because its scope lacks an input (an expected, user-facing error). */
 export class RunScopeNotReady extends Error {

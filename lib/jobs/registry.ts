@@ -1,3 +1,4 @@
+import { compareConvertersHandler } from "./handlers/compare";
 import { datasetsImportHandler } from "./handlers/datasets";
 import { discoveryAreaHandler, discoveryProposeHandler, discoveryTileHandler } from "./handlers/discovery";
 import { embedChunksHandler } from "./handlers/embed";
@@ -28,4 +29,5 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "fetch.url": fetchUrlHandler,
   "embed.chunks": embedChunksHandler,
   "sources.wikivoyage": wikivoyageHandler,
+  "compare.converters": compareConvertersHandler,
 };

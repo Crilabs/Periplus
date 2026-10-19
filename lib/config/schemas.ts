@@ -390,7 +390,7 @@ export const fetchSchema = z.strictObject({
    * Keyed by domain, not source id: this file is shared by all environments, whose source ids differ.
    */
   converterBySource: z.record(z.string().regex(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/, "must be a lower-case domain"), z.enum(CONVERTERS)),
-  decision: z.strictObject({ status: z.enum(["provisional", "final"]), note: z.string().trim().min(1) }),
+  decision: z.strictObject({ status: z.enum(["provisional", "decided"]), note: z.string().trim().min(1) }),
   /** `render: auto` renders a page whose HTTP text has less main content than this many characters. */
   renderMinMainChars: positiveInt,
   timeoutMs: positiveInt,

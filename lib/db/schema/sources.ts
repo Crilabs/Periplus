@@ -7,6 +7,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
   primaryKey,
@@ -284,4 +285,41 @@ export const outlinks = pgTable(
     primaryKey({ columns: [t.fromSourceId, t.toDomain, t.runId] }),
     index("outlinks_to_domain_idx").on(t.toDomain),
   ],
+);
+
+export const converterNameEnum = pgEnum("converter_name", ["jina", "firecrawl", "local"]);
+
+/** Working state: the pages of the converter comparison (spec 05: 50 pages from 10 sources). */
+export const converterSamples = pgTable("converter_samples", {
+  id: uuid("id").primaryKey().$defaultFn(newId),
+  sourceId: uuid("source_id")
+    .notNull()
+    .references(() => sources.id),
+  url: text("url").notNull(),
+  urlNormalized: text("url_normalized").notNull().unique(),
+  createdAt: createdAt(),
+});
+
+/** Working state: one converter's Markdown of a sample page (`comparison/converters/<sampleId>/<converter>.md`) and its rating. */
+export const converterOutputs = pgTable(
+  "converter_outputs",
+  {
+    id: uuid("id").primaryKey().$defaultFn(newId),
+    sampleId: uuid("sample_id")
+      .notNull()
+      .references(() => converterSamples.id),
+    converter: converterNameEnum("converter").notNull(),
+    /** Null when the conversion failed (`error`). */
+    mdKey: text("md_key"),
+    chars: integer("chars").notNull().default(0),
+    durationMs: integer("duration_ms").notNull().default(0),
+    costEur: numeric("cost_eur", { precision: 12, scale: 6 }).notNull().default("0"),
+    error: text("error"),
+    /** `{ mainContent: boolean; boilerplateRemoved: boolean; tablesKept: boolean | null }` */
+    rating: jsonb("rating"),
+    ratedBy: text("rated_by"),
+    ratedAt: timestamp("rated_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("converter_outputs_sample_id_converter_unique").on(t.sampleId, t.converter)],
 );

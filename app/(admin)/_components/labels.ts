@@ -266,6 +266,9 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   source_run_active: "Für die Quelle läuft bereits ein Abruf",
   wikivoyage_source_ended: "Die Wikivoyage-Quelle ist beendet",
   document_not_upload: "Dokument ist keine hochgeladene Datei",
+  no_converter_samples: "Keine Seiten für den Vergleich – zuerst Quellen freigeben und crawlen",
+  converter_samples_done: "Alle Seiten der Stichprobe sind bereits mit allen drei Konvertern umgewandelt",
+  comparison_run_active: "Ein Konverter-Vergleich läuft bereits",
 };
 
 /** The German text of a `?error=<reason>` a run action redirected with; null for none or an unknown reason. */
@@ -286,7 +289,7 @@ export const SOURCE_ERROR_LABELS = {
   not_approved: "Nur eine freigegebene Quelle kann pausiert werden",
   not_paused: "Nur eine pausierte Quelle kann fortgesetzt werden",
   source_ended: "Die Quelle ist beendet",
-  upload_not_allowed: "PDFs lassen sich nur bei freigegebenen oder vorgeschlagenen Quellen hochladen",
+  upload_not_allowed: "PDFs lassen sich nur bei freigegebenen, vorgeschlagenen oder pausierten Quellen hochladen",
 } as const;
 
 export type SourceErrorCode = keyof typeof SOURCE_ERROR_LABELS;
@@ -295,6 +298,18 @@ export type SourceErrorCode = keyof typeof SOURCE_ERROR_LABELS;
 export function sourcePageError(param: string | string[] | undefined): string | null {
   if (typeof param !== "string") return null;
   return runScopeError(param) ?? (Object.hasOwn(SOURCE_ERROR_LABELS, param) ? SOURCE_ERROR_LABELS[param as SourceErrorCode] : null);
+}
+
+/** Errors of the converter comparison page besides refused runs (`?error=<code>`). */
+export const COMPARE_ERROR_LABELS = {
+  invalid_rating: "Die Bewertung war unvollständig",
+  not_rateable: "Diese Umwandlung ist fehlgeschlagen und lässt sich nicht bewerten",
+} as const;
+
+/** The German text of a `?error=` on the converter comparison page; null for none or an unknown code. */
+export function comparePageError(param: string | string[] | undefined): string | null {
+  if (typeof param !== "string") return null;
+  return runScopeError(param) ?? (Object.hasOwn(COMPARE_ERROR_LABELS, param) ? COMPARE_ERROR_LABELS[param as keyof typeof COMPARE_ERROR_LABELS] : null);
 }
 
 export const queueStateLabel = (paused: boolean): string => (paused ? "Pausiert" : "Läuft");

@@ -1,4 +1,5 @@
 import type { StageDefinition } from "@/lib/pipeline/runs";
+import { compareConvertersStage } from "./handlers/compare";
 import { datasetsImportStage } from "./handlers/datasets";
 import { discoveryAreaStage, discoveryProposeStage, discoveryTileStage } from "./handlers/discovery";
 import { embedChunksStage } from "./handlers/embed";
@@ -33,4 +34,5 @@ export const STAGES: Record<string, StageDefinition> = {
   [fetchUrlStage.name]: fetchUrlStage,
   [embedChunksStage.name]: embedChunksStage,
   [wikivoyageStage.name]: wikivoyageStage,
+  [compareConvertersStage.name]: compareConvertersStage,
 };
