@@ -267,6 +267,20 @@
       "when": 1792435768494,
       "tag": "0037_facts_extraction_run_id_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1792442968162,
+      "tag": "0038_deliveries_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1792442980982,
+      "tag": "0039_delivery_triggers",
+      "breakpoints": true
     }
   ]
 }

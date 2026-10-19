@@ -10,6 +10,8 @@ RUN npm ci --omit=dev && npm cache clean --force
 # tsconfig.json provides the "@/" path alias that tsx resolves at runtime.
 COPY --chown=pwuser:pwuser tsconfig.json ./
 COPY --chown=pwuser:pwuser config ./config
+# The delivery contract (zod schemas); lib/config and the delivery build import it.
+COPY --chown=pwuser:pwuser contract ./contract
 COPY --chown=pwuser:pwuser drizzle ./drizzle
 COPY --chown=pwuser:pwuser lib ./lib
 COPY --chown=pwuser:pwuser worker ./worker

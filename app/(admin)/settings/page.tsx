@@ -33,6 +33,18 @@ const CONSOLIDATION_GROUPS: Record<Exclude<keyof AppConfig["consolidation"], "ve
   summary: "Zusammenfassung",
 };
 
+/** Parameter groups of the delivery configuration, in display order. */
+const DELIVERY_GROUPS: Record<Exclude<keyof AppConfig["delivery"], "schemaVersion" | "forbiddenDomains" | "licenses">, string> = {
+  spots: "Spots",
+  coast: "Küste",
+  regions: "Regionen",
+  weather: "Wetterpunkte",
+  highlights: "Highlights",
+  validation: "Validierung",
+  severity: "Schwere",
+  api: "API",
+};
+
 /** Flattens parameters to `a.b: value` pairs for a read-only table cell. */
 function parameterText(value: unknown, prefix = ""): string[] {
   if (value !== null && typeof value === "object" && !Array.isArray(value)) {
@@ -45,7 +57,7 @@ function parameterText(value: unknown, prefix = ""): string[] {
 export default async function Page() {
   await requireAdmin();
   const { areas, gazetteer, ...rest } = getConfig();
-  const { geometry, factSchema, fetch, embeddings, models, consolidation } = rest;
+  const { geometry, factSchema, fetch, embeddings, models, consolidation, delivery } = rest;
   const exceptions = Object.entries(fetch.converterBySource);
   const archiveRows: [string, string][] = [
     [
@@ -95,6 +107,18 @@ export default async function Page() {
     ...(Object.keys(CONSOLIDATION_GROUPS) as (keyof typeof CONSOLIDATION_GROUPS)[]).map((group): [string, string] => [
       CONSOLIDATION_GROUPS[group],
       parameterText(consolidation[group]).join("; "),
+    ]),
+  ];
+  const deliveryRows: [string, string][] = [
+    ["Vertragsversion", delivery.schemaVersion],
+    ...(Object.keys(DELIVERY_GROUPS) as (keyof typeof DELIVERY_GROUPS)[]).map((group): [string, string] => [
+      DELIVERY_GROUPS[group],
+      parameterText(delivery[group]).join("; "),
+    ]),
+    ["Verbotene Domains", delivery.forbiddenDomains.join(", ")],
+    ...delivery.licenses.map((l): [string, string] => [
+      `Lizenz ${l.name}`,
+      `${l.attribution} (${l.url}); Dateien: ${l.files.join(", ") || "keine"}; Felder: ${l.fields.join(", ") || "keine"}`,
     ]),
   ];
   const thresholds: [string, string][] = [
@@ -191,6 +215,18 @@ export default async function Page() {
       <table className="text-left">
         <tbody>
           {consolidationRows.map(([label, value]) => (
+            <tr key={label} className="border-b align-top">
+              <th className="py-1 pr-4 font-normal">{label}</th>
+              <td className="py-1 pr-4 font-mono">{value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <h2 className="font-semibold">Lieferung</h2>
+      <table className="text-left">
+        <tbody>
+          {deliveryRows.map(([label, value]) => (
             <tr key={label} className="border-b align-top">
               <th className="py-1 pr-4 font-normal">{label}</th>
               <td className="py-1 pr-4 font-mono">{value}</td>

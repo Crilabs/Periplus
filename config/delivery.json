@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "1.0",
+  "spots": { "statuses": ["confirmed", "no_anchoring"], "maxSources": 20 },
+  "coast": {
+    "marginNm": 2,
+    "simplifyToleranceM": 10,
+    "source": "OpenStreetMap, ODbL",
+    "restrictedSourceDefault": "EMODnet Human Activities"
+  },
+  "regions": {
+    "types": ["island", "archipelago", "coast_section", "gulf", "channel"],
+    "pointRadiusNm": 2,
+    "simplifyToleranceM": 50,
+    "character": { "meltemiHigh": 0.6, "meltemiLow": 0.3 }
+  },
+  "weather": { "regionBufferNm": 3, "capeOffsetNm": 1, "capeLandRadiusM": 2000 },
+  "highlights": { "maxSpotIds": 50 },
+  "validation": {
+    "maxWaterDistanceNm": 1.5,
+    "spotDuplicateM": 150,
+    "highlightDuplicateM": 500,
+    "maxDraftM": [0.5, 10],
+    "maxLengthM": [5, 100],
+    "harbourMinShelter": 0.8,
+    "lowConfidence": 0.3,
+    "lowConfidenceNote": "wenig belegt"
+  },
+  "severity": { "shelterDelta": 0.2 },
+  "forbiddenDomains": ["navily.com", "google.com", "google.de", "goo.gl", "googleusercontent.com", "googleapis.com"],
+  "licenses": [
+    {
+      "name": "ODbL-1.0",
+      "attribution": "© OpenStreetMap contributors",
+      "url": "https://opendatacommons.org/licenses/odbl/1-0/",
+      "files": ["coast.geojson"],
+      "fields": [
+        "spots.json#/spots/*/name",
+        "spots.json#/spots/*/names",
+        "spots.json#/spots/*/externalRefs/osmId",
+        "highlights.json#/highlights/*/name",
+        "regions.json#/regions/*/name",
+        "regions.json#/regions/*/names",
+        "regions.json#/regions/*/polygon"
+      ]
+    }
+  ],
+  "api": { "cacheMaxAgeSeconds": 60 }
+}

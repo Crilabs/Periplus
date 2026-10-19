@@ -10,6 +10,7 @@ import {
   consolidationActiveSchema,
   consolidationSchema,
   datasetsSchema,
+  deliverySchema,
   discoverySchema,
   embeddingsSchema,
   extractionSchema,
@@ -37,6 +38,7 @@ export type {
   CategoriesConfig,
   ConsolidationConfig,
   DatasetsConfig,
+  DeliveryConfig,
   DiscoveryConfig,
   EmbeddingsConfig,
   ExtractionConfig,
@@ -158,6 +160,7 @@ export function loadConfig(dir = "config"): AppConfig {
     nameAffixes: readJson(dir, "name-affixes", nameAffixesSchema),
     extraction: readJson(dir, "extraction", extractionSchema),
     consolidation: readConsolidation(dir, readJson(dir, "consolidation/active", consolidationActiveSchema).version),
+    delivery: readJson(dir, "delivery", deliverySchema),
   };
 }
 
