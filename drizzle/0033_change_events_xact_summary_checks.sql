@@ -1,0 +1,4 @@
+ALTER TABLE "change_events" ADD COLUMN "xact_id" "xid8" DEFAULT pg_current_xact_id() NOT NULL;--> statement-breakpoint
+ALTER TABLE "profile_summaries" ADD CONSTRAINT "profile_summaries_attempts_nonnegative" CHECK ("profile_summaries"."attempts" >= 0);--> statement-breakpoint
+ALTER TABLE "profile_summaries" ADD CONSTRAINT "profile_summaries_ok_complete" CHECK ("profile_summaries"."status" <> 'ok' OR ("profile_summaries"."prompt_version" IS NOT NULL AND "profile_summaries"."text" IS NOT NULL));--> statement-breakpoint
+ALTER TABLE "profile_summaries" ADD CONSTRAINT "profile_summaries_empty_no_text" CHECK ("profile_summaries"."status" <> 'empty' OR "profile_summaries"."text" IS NULL);

@@ -78,12 +78,12 @@ async function insertProfiles(tx: Db, versions: Array<[number, string]>): Promis
 describe("profileAsOf", () => {
   it("profileAsOf picks the largest valid_from on or before the date", () =>
     withRollback(async (tx) => {
-      // Inserted out of order: the read must not depend on insertion order.
+      // valid_from never goes back per object (trigger); versions within a day arrive out of order and the higher wins.
       const id = await insertProfiles(tx, [
-        [3, "2026-06-01"],
         [1, "2026-03-01"],
-        [4, "2026-09-01"],
+        [3, "2026-06-01"],
         [2, "2026-06-01"],
+        [4, "2026-09-01"],
       ]);
       expect(await profileAsOf(tx, id, "2026-02-28")).toBeNull();
       expect((await profileAsOf(tx, id, "2026-03-01"))!.version).toBe(1);

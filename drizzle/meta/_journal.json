@@ -232,6 +232,20 @@
       "when": 1792421494409,
       "tag": "0032_profile_triggers",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1792422338531,
+      "tag": "0033_change_events_xact_summary_checks",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1792422344829,
+      "tag": "0034_profiles_valid_from_monotonic",
+      "breakpoints": true
     }
   ]
 }

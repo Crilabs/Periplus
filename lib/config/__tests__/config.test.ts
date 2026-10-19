@@ -543,6 +543,29 @@ describe("consolidation rules", () => {
     expect(withRules(() => {})).not.toThrow();
   });
 
+  it("union keys must be fields of the list entries in the fact schema", () => {
+    const withKeys = (keys: Record<string, string[]>) => () => {
+      const c = rulesFile();
+      c.rules.union.keys = keys;
+      return loadConfig(fixtureDir({ consolidation: { v1: c } }));
+    };
+    expect(withKeys({ hazards: ["kind", "nmae"] })).toThrow(/consolidation\/v1\.json.*"hazards".*"nmae"/);
+    // A key on an entry that is no object (a list of enum values) cannot identify anything.
+    expect(withKeys({ "mooring.types": ["kind"] })).toThrow(/"mooring\.types".*"kind"/);
+    expect(withKeys({ no_such_attribute: [] })).toThrow(/no_such_attribute.*fact schema v2/);
+    expect(withKeys({ hazards: ["kind", "name"] })).not.toThrow();
+  });
+
+  it("getConsolidationConfig caches per (version, dir)", () => {
+    const dir = fixtureDir({ consolidation: { v1: rulesFile(), v2: { ...rulesFile(), conflict: { minRatio: 2 } } } });
+    const other = fixtureDir({ consolidation: { v1: rulesFile(), v2: { ...rulesFile(), conflict: { minRatio: 3 } } } });
+    const first = getConsolidationConfig("v2", dir);
+    expect(getConsolidationConfig("v2", dir)).toBe(first);
+    expect(getConsolidationConfig("v2", other)).not.toBe(first);
+    expect(getConsolidationConfig("v2", other).conflict.minRatio).toBe(3);
+    expect(first.conflict.minRatio).toBe(2);
+  });
+
   it("an unknown rules version throws", () => {
     expect(() => getConsolidationConfig("v99")).toThrow(/v99/);
     expect(() => getConsolidationConfig("../models")).toThrow(/rules version/);

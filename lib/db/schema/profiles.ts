@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   bigserial,
   check,
+  customType,
   date,
   index,
   integer,
@@ -41,6 +42,9 @@ export const summaryStatusEnum = pgEnum("summary_status", ["ok", "rejected", "em
 export type ChangeType = (typeof changeTypeEnum.enumValues)[number];
 export type ChangeSeverity = (typeof changeSeverityEnum.enumValues)[number];
 export type SummaryStatus = (typeof summaryStatusEnum.enumValues)[number];
+
+/** Postgres `xid8` (transaction id); the driver returns it as a decimal string. */
+const xid8 = customType<{ data: string; driverData: string }>({ dataType: () => "xid8" });
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 
@@ -94,6 +98,11 @@ export const changeEvents = pgTable(
     severity: changeSeverityEnum("severity").notNull(),
     details: jsonb("details").notNull().default({}),
     runId: uuid("run_id").references(() => runs.id),
+    /**
+     * Transaction that wrote the row (outbox guard, ruling M5-A-R2): `seq` is assigned at insert, not at commit, so a
+     * reader of the feed must only return rows passing `visibleChangeEventsFilter` (lib/domain/change-feed.ts).
+     */
+    xactId: xid8("xact_id").notNull().default(sql`pg_current_xact_id()`),
     createdAt: createdAt(),
   },
   (t) => [index("change_events_geo_object_seq_idx").on(t.geoObjectId, t.seq)],
@@ -117,6 +126,10 @@ export const profileSummaries = pgTable(
     createdAt: createdAt(),
   },
   (t) => [
+    check("profile_summaries_attempts_nonnegative", sql`${t.attempts} >= 0`),
+    // An ok summary has its text and the prompt version the partial unique index below keys on; an empty one has no text.
+    check("profile_summaries_ok_complete", sql`${t.status} <> 'ok' OR (${t.promptVersion} IS NOT NULL AND ${t.text} IS NOT NULL)`),
+    check("profile_summaries_empty_no_text", sql`${t.status} <> 'empty' OR ${t.text} IS NULL`),
     // An empty summary may be generated again later; an ok one exists once per prompt version.
     uniqueIndex("profile_summaries_ok_unique")
       .on(t.geoObjectId, t.profileVersion, t.promptVersion)

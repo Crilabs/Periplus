@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { geomFromGeoJson } from "@/lib/db/geometry";
+import { visibleChangeEventsFilter } from "@/lib/domain/change-feed";
 import { changeEvents, geoObjects, profileSummaries, profiles } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/client";
 import { withRollback } from "@/test/db";
@@ -139,6 +140,65 @@ describe("profiles, change events and summaries", () => {
       // Another prompt version may summarise the same profile version.
       await expect(
         tx.insert(profileSummaries).values({ ...base, promptVersion: 2, text: "Eine Bucht.", status: "ok" }),
+      ).resolves.toBeTruthy();
+    });
+  });
+
+  it("a change event records its transaction id; the visibility filter hides rows of transactions still in flight", async () => {
+    await withRollback(async (tx) => {
+      const geoObjectId = await insertGeoObject(tx);
+      const [row] = await tx
+        .insert(changeEvents)
+        .values({ geoObjectId, type: "place_new", severity: "info" })
+        .returning({ id: changeEvents.id, xactId: changeEvents.xactId });
+      expect(row!.xactId).toMatch(/^\d+$/);
+      const current = await tx.execute<{ xid: string }>(sql`select pg_current_xact_id()::text as xid`);
+      expect(row!.xactId).toBe(current.rows[0]!.xid);
+      // This transaction is still running, so its own event is not yet safe to hand out.
+      const visible = await tx.select({ id: changeEvents.id }).from(changeEvents).where(visibleChangeEventsFilter());
+      expect(visible.map((v) => v.id)).not.toContain(row!.id);
+    });
+  });
+
+  it("a profile version may not start before the latest valid_from of its object", async () => {
+    await withRollback(async (tx) => {
+      const geoObjectId = await insertGeoObject(tx);
+      const otherId = await insertGeoObject(tx);
+      await tx.insert(profiles).values(profileValues(geoObjectId, 1, "2026-10-19"));
+      const message = await rejectionMessage(tx, (sp) =>
+        sp.insert(profiles).values(profileValues(geoObjectId, 2, "2026-10-18")),
+      );
+      expect(message).toMatch(/valid_from.*precedes/);
+      // The same day and a later day are fine, and other objects are independent.
+      await tx.insert(profiles).values(profileValues(geoObjectId, 2, "2026-10-19"));
+      await tx.insert(profiles).values(profileValues(geoObjectId, 3, "2026-11-01"));
+      await tx.insert(profiles).values(profileValues(otherId, 1, "2026-01-01"));
+    });
+  });
+
+  it("summary rows must be complete: ok needs text and prompt version, empty has no text, attempts >= 0", async () => {
+    await withRollback(async (tx) => {
+      const geoObjectId = await insertGeoObject(tx);
+      const base = { geoObjectId, profileVersion: 1, attempts: 1, model: "m", promptVersion: 1 };
+      const noText = await rejectionMessage(tx, (sp) =>
+        sp.insert(profileSummaries).values({ ...base, text: null, status: "ok" }),
+      );
+      expect(noText).toMatch(/profile_summaries_ok_complete/);
+      const noPrompt = await rejectionMessage(tx, (sp) =>
+        sp.insert(profileSummaries).values({ ...base, promptVersion: null, text: "Eine Bucht.", status: "ok" }),
+      );
+      expect(noPrompt).toMatch(/profile_summaries_ok_complete/);
+      const emptyText = await rejectionMessage(tx, (sp) =>
+        sp.insert(profileSummaries).values({ ...base, text: "Doch Text.", status: "empty" }),
+      );
+      expect(emptyText).toMatch(/profile_summaries_empty_no_text/);
+      const attempts = await rejectionMessage(tx, (sp) =>
+        sp.insert(profileSummaries).values({ ...base, attempts: -1, text: null, status: "rejected" }),
+      );
+      expect(attempts).toMatch(/profile_summaries_attempts_nonnegative/);
+      // A rejected summary may keep its text for the audit trail, and may lack a prompt version.
+      await expect(
+        tx.insert(profileSummaries).values({ ...base, promptVersion: null, attempts: 0, text: "Abgelehnt.", status: "rejected" }),
       ).resolves.toBeTruthy();
     });
   });
