@@ -2,13 +2,13 @@ import { createHash } from "node:crypto";
 import { and, asc, count, eq, inArray, ne, sql } from "drizzle-orm";
 import { resolveConverter, type Converter, type ConverterName } from "@/lib/adapters/fetch";
 import { BlockedUrlError, isPublicHttpUrl } from "@/lib/adapters/fetch/ssrf";
-import { HttpError, httpCall, type CallContext, type HttpResponse, type Transport } from "@/lib/adapters/http";
+import { HttpError, httpCall, RetryableHttpError, type CallContext, type HttpResponse, type Transport } from "@/lib/adapters/http";
 import { convertPdf, type runPdftotext } from "@/lib/adapters/pdf";
 import type { Archive } from "@/lib/adapters/s3";
 import type { ModelClient } from "@/lib/ai/types";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { crawlFrontier, documents, documentVersions, outlinks, sources, type FrontierStatus } from "@/lib/db/schema";
+import { crawlFrontier, documents, documentVersions, jobOutcomes, outlinks, sources, type FrontierStatus } from "@/lib/db/schema";
 import { detectLanguage } from "@/lib/domain/documents/language";
 import { extractLinks } from "@/lib/domain/documents/links";
 import { extractPublishedAt } from "@/lib/domain/documents/metadata";
@@ -19,6 +19,7 @@ import { urlAllowed } from "@/lib/domain/sources/crawl-rules";
 import { effectiveRate, robotsForRun } from "@/lib/domain/sources/robots";
 import { getSource, type Source } from "@/lib/domain/sources/store";
 import { normalizeUrl, registrableDomain } from "@/lib/domain/sources/urls";
+import { FETCH_SOURCE_STAGE } from "./source";
 import type { JobData } from "@/lib/jobs/worker";
 
 // No import of ../runs here: the job handlers import this module (import cycle through the stage registry).
@@ -67,7 +68,8 @@ function stringList(value: unknown): string[] {
 }
 
 /**
- * Plan of the stage `fetch.url`: for every approved source of `params.sourceIds`, its frontier rows except `skipped`
+ * Plan of the stage `fetch.url`: for every current approved source of `params.sourceIds` whose `fetch.source` job of
+ * this run did not fail (its robots.txt could not be read: the rows stay queued), its frontier rows except `skipped`
  * (final verdicts only, ruling M3-C-R5) by depth and discovery, at most `params.maxPages ?? rules.maxPages`. The
  * planned rows are stamped with the run (ruling M3-P2: the per-run cap counts them) and queued again, so a row
  * `fetched`/`failed` with this run's id is one a job of this run has finished (retries check it). Plus one job per
@@ -76,9 +78,19 @@ function stringList(value: unknown): string[] {
 export async function planFetchUrls(db: Db, run: { id: string; params: Record<string, unknown> }): Promise<JobData[]> {
   const jobs: JobData[] = [];
   const paramMax = typeof run.params.maxPages === "number" ? run.params.maxPages : undefined;
+  const unprepared = new Set(
+    (
+      await db
+        .select({ key: jobOutcomes.key })
+        .from(jobOutcomes)
+        .where(and(eq(jobOutcomes.runId, run.id), eq(jobOutcomes.stage, FETCH_SOURCE_STAGE), eq(jobOutcomes.outcome, "failed")))
+    ).map((r) => r.key),
+  );
   for (const sourceId of stringList(run.params.sourceIds)) {
+    // A source whose fetch.source job failed (e.g. robots.txt answered 5xx) keeps its rows queued for the next run.
+    if (unprepared.has(sourceId)) continue;
     const source = await getSource(db, sourceId);
-    if (!source || source.status !== "approved") continue;
+    if (!source || source.status !== "approved" || source.validTo !== null) continue;
     const maxPages = paramMax ?? source.crawlRules.maxPages;
     const rows = await db
       .select({ id: crawlFrontier.id, url: crawlFrontier.url, urlNormalized: crawlFrontier.urlNormalized, depth: crawlFrontier.depth })
@@ -128,7 +140,8 @@ export type Fetched =
 /**
  * GETs the page with redirects followed here, at most `MAX_REDIRECTS` hops: before every hop the target must be on
  * the source's registrable domain (else `skipped`/`redirect_offsite`, final), pass the address check (else
- * `queued`/`blocked_address`) and then the robots.txt of its host, read once per run (else `queued`/`robots`). The
+ * `queued`/`blocked_address`) and then the robots.txt of its host, read once per run (else `queued`/`robots`, or
+ * `queued`/`robots_unavailable` when it cannot be read). The
  * temporary reasons leave the row for the next run (ruling M3-C-R5). Conditional headers go with the first request
  * only.
  */
@@ -147,7 +160,15 @@ export async function fetchFollowing(
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     if (hop > 0 && registrableDomain(current) !== domain) return { kind: "stop", outcome: "skipped", status: "skipped", reason: "redirect_offsite" };
     if (!(await isAllowed(current))) return { kind: "stop", outcome: "skipped", status: "queued", reason: "blocked_address" };
-    const robots = await robotsForRun(db, deps.archive, deps.transport, new URL(current).origin, ctx.runId, ctx);
+    let robots: Awaited<ReturnType<typeof robotsForRun>>;
+    try {
+      robots = await robotsForRun(db, deps.archive, deps.transport, new URL(current).origin, ctx.runId, ctx);
+    } catch (error) {
+      // robots.txt unreadable (5xx, timeout) means nothing is allowed now: a temporary stop, not one failed job per
+      // URL (ruling M3-FIN-R1; fetch.source already retried the start host).
+      if (error instanceof RetryableHttpError) return { kind: "stop", outcome: "disallowed", status: "queued", reason: "robots_unavailable" };
+      throw error;
+    }
     if (!robots.isAllowed(current)) return { kind: "stop", outcome: "disallowed", status: "queued", reason: "robots" };
     const ratePerMinute = effectiveRate(source.crawlRules.ratePerMinute, robots.crawlDelaySec);
     const headers: Record<string, string> = {};

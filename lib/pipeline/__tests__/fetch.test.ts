@@ -552,6 +552,51 @@ describe("crawl stages", () => {
     });
   });
 
+  it("a robots.txt answering 503 fails only fetch.source; its source is not planned and a hop to such a host waits", async () => {
+    const s = newSite();
+    const url = (p: string) => `${s.origin}${s.path(p)}`;
+    site.set("/robots.txt", { status: 503, body: "busy" }, s.host);
+    await withRollback(async (tx) => {
+      const sourceId = await insertSource(tx, s, { startUrls: [url("/a")] });
+      // A row an earlier run left queued.
+      await tx.insert(crawlFrontier).values({ sourceId, url: url("/a"), urlNormalized: url("/a") });
+      const d = deps();
+      const params = { sourceIds: [sourceId] };
+      const { id: runId } = await createRun(tx, { kind: "stage", scope: { type: "source", id: sourceId }, stages: FETCH_RUN_STAGES, params, triggeredBy: "test" });
+      await beginStage(tx, runId, FETCH_SOURCE_STAGE, 1);
+      await expect(prepareSourceCrawl(tx, sourceId, d, { db: tx, runId, stage: FETCH_SOURCE_STAGE })).rejects.toBeInstanceOf(RetryableHttpError);
+      // The job dead-lettered (one failed_job task); the URLs of the source get no job each.
+      await recordJobOutcome(tx, runId, FETCH_SOURCE_STAGE, sourceId, "failed");
+      expect(await planFetchUrls(tx, { id: runId, params })).toEqual([]);
+      expect(await frontierOf(tx, sourceId)).toEqual([expect.objectContaining({ status: "queued", lastRunId: null })]);
+    });
+
+    // A redirect hop to another host of the source whose robots.txt answers 503: the row waits for the next run.
+    const t = newSite();
+    const mirror = `mirror.${t.host}`;
+    site.set("/robots.txt", { status: 503, body: "busy" }, mirror);
+    t.set("/a", { status: 301, body: "", headers: { location: `${t.sub("mirror")}${t.path("/a")}` } });
+    await withRollback(async (tx) => {
+      const sourceId = await insertSource(tx, t, { startUrls: [`${t.origin}${t.path("/a")}`] });
+      const { results } = await crawl(tx, sourceId, deps());
+      expect(results).toEqual([expect.objectContaining({ outcome: "disallowed", newUrls: 0 })]);
+      expect(await frontierOf(tx, sourceId)).toEqual([expect.objectContaining({ status: "queued", reason: "robots_unavailable" })]);
+    });
+  });
+
+  it("an ended source's rows are not planned", async () => {
+    const s = newSite();
+    await withRollback(async (tx) => {
+      const sourceId = await insertSource(tx, s, {});
+      const u = `${s.origin}${s.path("/a")}`;
+      await tx.insert(crawlFrontier).values({ sourceId, url: u, urlNormalized: u });
+      await tx.update(sources).set({ validTo: "2026-01-01" }).where(eq(sources.id, sourceId));
+      const { id: runId } = await newRun(tx, sourceId);
+      expect(await planFetchUrls(tx, { id: runId, params: { sourceIds: [sourceId] } })).toEqual([]);
+      expect((await frontierOf(tx, sourceId))[0]).toMatchObject({ status: "queued", lastRunId: null });
+    });
+  });
+
   it("an explicit robots ban on one of two start hosts skips only that host", async () => {
     const s = newSite();
     const banned = `${s.sub("closed")}${s.path("/a")}`;
