@@ -84,6 +84,9 @@ export const EXCLUDE_REASON_DE: Record<ContractExcludeReason, string> = {
   aquaculture: "Aquakultur",
 };
 
+/** Appended to `exclude.detail` of an excluded spot whose shelter values are missing (ruling M6-B-R2 I-2). */
+export const NO_SHELTER_NOTE_DE = "ausgeschlossen – keine Schutzwerte";
+
 /** `hazards[].text`: the German word of a hazard kind (a proper name follows after a colon). */
 export const HAZARD_DE: Record<ContractHazardKind, string> = {
   rock: "Fels",

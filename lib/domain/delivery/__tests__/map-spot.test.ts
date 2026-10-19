@@ -6,7 +6,7 @@ import { excludeValue } from "@/lib/domain/consolidation/exclude";
 import type { AttributeProvenance, ProfileSnapshot, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
 import { provenanceEntry } from "@/test/consolidation";
 import { SPOT_A_ATTRIBUTES, SPOT_A_SUMMARY, spotAProvenance } from "@/test/fixtures/delivery/area";
-import { mapSpot, SPOT_FIELDS } from "../map-spot";
+import { mapSpot, SPOT_FIELDS, type SpotWarning } from "../map-spot";
 import type { SpotSource } from "../types";
 import { aggregateProvenance, combineSource, ORIGIN } from "../vocab";
 
@@ -79,11 +79,19 @@ function spotA(
 
 const ctx: { regionId: string | null; highlightIds: string[]; cfg: typeof cfg } = { regionId: RG, highlightIds: [HL], cfg };
 
-function mapped(src: SpotSource = spotA(), c: Partial<typeof ctx> = {}): SpotBody {
+function mappedWithWarnings(src: SpotSource = spotA(), c: Partial<typeof ctx> = {}): { spot: SpotBody; warnings: SpotWarning[] } {
   const result = mapSpot(src, { ...ctx, ...c });
   if (!("spot" in result)) throw new Error(`omitted: ${result.omitted}`);
-  return result.spot;
+  return result;
 }
+
+function mapped(src: SpotSource = spotA(), c: Partial<typeof ctx> = {}): SpotBody {
+  return mappedWithWarnings(src, c).spot;
+}
+
+const parses = (spot: SpotBody) => spotSchema.safeParse({ ...spot, profileVersion: 1, validFrom: "2026-10-19" }).error?.issues;
+const MILITARY = "restricted:military:01a15602-0000-7000-8000-0000000000cc";
+const SECTOR_KEYS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"].map((s) => `shelter.${s}`);
 
 const marina = (attributes: Record<string, unknown> = {}) =>
   spotA({ attributes: { "place.kind": "marina", ...attributes }, src: { kind: "marina" } });
@@ -212,6 +220,100 @@ describe("mapSpot", () => {
 
   it("without a profile the spot is omitted as no_profile", () => {
     expect(mapSpot({ ...spotA(), profile: null }, ctx)).toEqual({ omitted: "no_profile" });
+  });
+
+  it("a profile exclude false with place status no_anchoring is excluded, reason from the status (I-1)", () => {
+    // the admin's no_anchoring decision is newer than the last consolidation
+    const military = mapped(spotA({ src: { status: "no_anchoring", statusReason: MILITARY } }));
+    expect(military.exclude).toEqual({ excluded: true, reason: "military", detail: "Militärisches Sperrgebiet" });
+    const review = mapped(spotA({ src: { status: "no_anchoring", statusReason: "review" } }));
+    expect(review.exclude).toEqual({ excluded: true, reason: "anchoringProhibited", detail: "Ankerverbot" });
+    // the profile's reason comes first
+    const both = spotA({ attributes: { exclude: { excluded: true, reason: "cable", detail: null } }, src: { status: "no_anchoring", statusReason: MILITARY } });
+    expect(mapped(both).exclude.reason).toBe("cable");
+    // a stale excluded profile on a confirmed place stays excluded (safe direction)
+    expect(mapped(spotA({ attributes: { exclude: { excluded: true, reason: "military", detail: null } } })).exclude.excluded).toBe(true);
+  });
+
+  it("an excluded spot without a profile is delivered with shelter 0 and the note (I-2)", () => {
+    const { spot, warnings } = mappedWithWarnings({ ...spotA({ src: { status: "no_anchoring", statusReason: MILITARY } }), profile: null });
+    expect(spot.exclude).toEqual({ excluded: true, reason: "military", detail: "Militärisches Sperrgebiet (ausgeschlossen – keine Schutzwerte)" });
+    expect(spot.shelter).toEqual({ sectors: { N: 0, NE: 0, E: 0, SE: 0, S: 0, SW: 0, W: 0, NW: 0 }, swell: 0, source: "computed" });
+    expect(spot.score).toEqual({ confidence: 0, popularity: 0.55, quietness: null, sourcesCount: 0, lastObserved: null });
+    expect(spot.provenance).toEqual({});
+    expect(warnings).toEqual([]);
+    expect(parses(spot)).toBeUndefined();
+  });
+
+  it("an excluded spot with a shelter gap is delivered, the missing sector 0; a confirmed one is omitted (I-2)", () => {
+    const gap = { drop: ["shelter.W"], src: { status: "no_anchoring" as const, statusReason: MILITARY } };
+    const spot = mapped(spotA(gap));
+    expect(spot.shelter.sectors).toEqual({ N: 0.9, NE: 0.8, E: 0.4, SE: 0.1, S: 0.2, SW: 0.7, W: 0, NW: 0.95 });
+    expect(spot.shelter.source).toBe("computed+text");
+    expect(spot.exclude.detail).toBe("Militärisches Sperrgebiet (ausgeschlossen – keine Schutzwerte)");
+    expect(parses(spot)).toBeUndefined();
+    // excluded by a year-round text ban only: delivered too
+    const banned = spotA({ drop: ["shelter.W"], attributes: { prohibitions: [{ kind: "anchoring", months: null }] } });
+    expect(mapped(banned).exclude).toMatchObject({ excluded: true, reason: "anchoringProhibited" });
+    // a sector without provenance is a gap for a confirmed spot
+    const unproven = spotA();
+    delete unproven.profile!.provenance["shelter.W"];
+    expect(mapSpot(unproven, ctx)).toEqual({ omitted: "shelter_incomplete" });
+  });
+
+  it("an excluded spot with a sector without provenance keeps the value and warns", () => {
+    const src = spotA({ src: { status: "no_anchoring", statusReason: MILITARY } });
+    for (const key of SECTOR_KEYS) delete src.profile!.provenance[key];
+    delete src.profile!.provenance["swell_protection"];
+    const { spot, warnings } = mappedWithWarnings(src);
+    expect(spot.shelter).toEqual({ sectors: { N: 0.9, NE: 0.8, E: 0.4, SE: 0.1, S: 0.2, SW: 0.7, W: 0.9, NW: 0.95 }, swell: 0.5, source: "computed" });
+    expect(spot.exclude.detail).toBe("Militärisches Sperrgebiet");
+    expect(warnings).toEqual([{ code: "missing_provenance", field: "shelter" }]);
+  });
+
+  it("a value without provenance drops anchorPosition and depth with a warning (M-6)", () => {
+    const src = spotA();
+    delete src.profile!.provenance["anchor_position"];
+    delete src.profile!.provenance["depth.max"];
+    const { spot, warnings } = mappedWithWarnings(src);
+    expect(spot.anchorPosition).toBeUndefined();
+    expect(spot.depth).toBeUndefined();
+    expect(spot.provenance["anchorPosition"]).toBeUndefined();
+    expect(spot.provenance["depth"]).toBeUndefined();
+    expect(warnings).toEqual([
+      { code: "missing_provenance", field: "anchorPosition" },
+      { code: "missing_provenance", field: "depth" },
+    ]);
+    expect(mappedWithWarnings().warnings).toEqual([]);
+  });
+
+  it("a computed cable area adds the hazard cable (M-1)", () => {
+    const cableArea = { kind: "cable", restrictedAreaId: "01a15602-0000-7000-8000-0000000000dd", sourceRef: null, share: 0.1, anchoringBan: false };
+    const s = mapped(spotA({ attributes: { prohibitions: [cableArea] }, provenance: { prohibitions: provenanceEntry("computed", { confidence: 0.9 }) } }));
+    expect(s.hazards).toEqual([
+      { kind: "cable", text: "Kabel" },
+      { kind: "rock", text: "Fels: Petra" },
+    ]);
+    expect(s.provenance["hazards"]).toMatchObject({ source: "text", confidence: 0.7 });
+    expect(s.exclude.excluded).toBe(false);
+    // a military area is no hazard (it is in coast.geojson)
+    const military = { ...cableArea, kind: "military" };
+    expect(mapped(spotA({ attributes: { prohibitions: [military] } })).hazards).toEqual([{ kind: "rock", text: "Fels: Petra" }]);
+  });
+
+  it("an anchoring ban naming all twelve months is year-round (M-2)", () => {
+    const months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    const s = mapped(spotA({ attributes: { prohibitions: [{ kind: "anchoring", months }] } }));
+    expect(s.exclude).toEqual({ excluded: true, reason: "anchoringProhibited", detail: "Ankerverbot" });
+    expect(s.seasonNote).toEqual([{ months: [6, 7, 8, 9], text: "Geöffnet" }]);
+  });
+
+  it("a hazard of an unknown kind is delivered as other, never dropped (M-3)", () => {
+    const s = mapped(spotA({ attributes: { hazards: [{ kind: "sandbank", name: "Ammos" }, { kind: "mystery", name: null }] } }));
+    expect(s.hazards).toEqual([
+      { kind: "other", text: "Gefahr" },
+      { kind: "other", text: "Gefahr: Ammos" },
+    ]);
   });
 
   it("kind mooring_field maps to mooringField", () => {

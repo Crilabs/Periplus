@@ -11,6 +11,7 @@ import {
   combineSource,
   EXCLUDE_REASON_DE,
   HAZARD_DE,
+  NO_SHELTER_NOTE_DE,
   HAZARD_KIND,
   HOLDING,
   MOORING_TYPE,
@@ -58,13 +59,17 @@ export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
   position: { attributes: ["place.position"], note: "places.position, round5" },
   anchorPosition: {
     attributes: ["anchor_position"],
-    note: "omitted for port and marina; confidence and source (ORIGIN) from its provenance",
+    note: "omitted for port and marina; confidence and source (ORIGIN) from its provenance; without provenance omitted (warning missing_provenance)",
   },
   shelter: {
     attributes: SHELTER_ATTRIBUTES,
-    note: "a missing sector omits the spot (shelter_incomplete); swell = swell_protection, else the sectors' minimum; source = combineSource",
+    note:
+      "a sector missing or without provenance omits the spot (shelter_incomplete); an excluded spot is delivered with a missing sector (or no profile) as 0 and 'ausgeschlossen – keine Schutzwerte' in exclude.detail; swell = swell_protection, else the sectors' minimum; source = combineSource, computed without any provenance",
   },
-  depth: { attributes: DEPTH_ATTRIBUTES, note: "omitted without any depth; confidence = minimum, source = combineSource" },
+  depth: {
+    attributes: DEPTH_ATTRIBUTES,
+    note: "omitted without any depth, or when a depth has no provenance (warning missing_provenance); confidence = minimum, source = combineSource; depth.approach is not delivered (no Teil-B field)",
+  },
   seabed: { attributes: ["seabed"], note: "types and shares as in the profile" },
   holding: { attributes: ["holding"], note: "HOLDING; missing → unknown" },
   limits: { attributes: LIMIT_ATTRIBUTES, note: "missing → null" },
@@ -83,11 +88,11 @@ export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
   occupancy: { attributes: ["occupancy"], note: "known months ascending; omitted without occupancy" },
   exclude: {
     attributes: ["exclude", "prohibitions"],
-    note: "the profile's exclude (ruling M6-P4), a year-round text anchoring ban excludes as anchoringProhibited; detail = EXCLUDE_REASON_DE",
+    note: "excluded = profile exclude, place status no_anchoring or a year-round text anchoring ban (months null or all 12); reason from the profile, else the status, else anchoringProhibited (rulings M6-P4, M6-B-R2); detail = EXCLUDE_REASON_DE; the text kinds swimming, fishing, fire, jet_ski and other are not delivered (no Teil-B field)",
   },
   hazards: {
     attributes: ["hazards", "prohibitions"],
-    note: "HAZARD_KIND with HAZARD_DE text and proper name; a ferry lane prohibition adds ferryTraffic (ruling M6-P11)",
+    note: "HAZARD_KIND (unknown kind → other) with HAZARD_DE text and proper name; a computed ferry lane adds ferryTraffic (ruling M6-P11), a computed cable area cable; the other computed restrictions (military, protected area, aquaculture, firing area) show in coast.geojson only",
   },
   seasonNote: {
     attributes: ["derived.season", "prohibitions"],
@@ -112,55 +117,94 @@ export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
   mergedInto: { attributes: [], note: "null; merged spots are carried by the build" },
 };
 
-export type MappedSpot = { spot: SpotBody } | { omitted: "no_profile" | "shelter_incomplete" };
+/**
+ * A delivered value the spot carries without it: a field whose contract value names its own source and confidence
+ * (`anchorPosition`, `depth`) is dropped when the profile has the value but no provenance for it (ruling M6-B-R2 M-6);
+ * `shelter` is filled from the present sectors only on an excluded spot. Reported as validation warnings (Task 9).
+ */
+export type SpotWarning = { code: "missing_provenance"; field: "anchorPosition" | "depth" | "shelter" };
+
+/**
+ * An excluded spot is always delivered (Teil B "Ausgeschlossene Spots werden mit `exclude.excluded = true` und Grund
+ * geliefert", ruling M6-B-R2 I-2); any other spot without a profile or without all eight sectors (each with its
+ * provenance) is omitted, which the build reports as a warning (`no_profile`, `shelter_incomplete`, ruling M6-P31).
+ */
+export type MappedSpot = { spot: SpotBody; warnings: SpotWarning[] } | { omitted: "no_profile" | "shelter_incomplete" };
 
 const round3 = (n: number) => Number(n.toFixed(3));
 const isRecord = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const HARBOUR_KINDS: PlaceKind[] = ["port", "marina"];
 
-type Prohibition = { kind?: unknown; months?: unknown };
+type Prohibition = { kind?: unknown; months?: unknown; restrictedAreaId?: unknown };
+
+/** A text ban without months, or one naming every month, holds all year (ruling M6-B-R2 M-2). */
+const allYear = (months: unknown) =>
+  months === null || (Array.isArray(months) && Array.from({ length: 12 }, (_, i) => i + 1).every((m) => months.includes(m)));
+/** A computed prohibition: a restricted area over the place (fact schema v1 entry). */
+const isComputed = (e: Prohibition) => typeof e.restrictedAreaId === "string";
 
 export function mapSpot(
   src: SpotSource,
   ctx: { regionId: string | null; highlightIds: string[]; cfg: DeliveryConfig },
 ): MappedSpot {
   const profile = src.profile;
-  if (!profile) return { omitted: "no_profile" };
-  const a = profile.attributes;
-  const p = profile.provenance;
+  const a: Record<string, unknown> = profile?.attributes ?? {};
+  const p: Record<string, AttributeProvenance> = profile?.provenance ?? {};
   const has = (key: string) => a[key] !== undefined && a[key] !== null;
   const provenanceOf = (keys: string[]) => keys.filter(has).map((k) => p[k]).filter((e): e is AttributeProvenance => e !== undefined);
   const originsOf = (keys: string[]): ProvenanceOrigin[] => provenanceOf(keys).map((e) => e.origin);
+  const warnings: SpotWarning[] = [];
 
-  // shelter: all eight sectors or no spot
+  const prohibitions = (Array.isArray(a["prohibitions"]) ? a["prohibitions"] : []) as Prohibition[];
+  const anchoringBans = prohibitions.filter((e) => e.kind === "anchoring" && !isComputed(e));
+  const yearRoundBan = anchoringBans.some((e) => allYear(e.months));
+  const seasonalBans = anchoringBans.filter((e) => !allYear(e.months) && Array.isArray(e.months) && e.months.length > 0);
+  const ferryLane = prohibitions.some((e) => e.kind === "ferry_lane");
+  const cable = prohibitions.some((e) => e.kind === "cable" && isComputed(e));
+
+  // exclude (rulings M6-P4, M6-B-R2 I-1): the profile's exclude, the place status (a no_anchoring decision may be
+  // newer than the last consolidation) or a year-round text ban; the reason in that order.
+  const profileExclude = isRecord(a["exclude"]) ? (a["exclude"] as ExcludeValue) : null;
+  const statusExclude = excludeValue(src.status, src.statusReason);
+  const reason = profileExclude?.excluded
+    ? (profileExclude.reason ?? "anchoringProhibited")
+    : statusExclude.excluded
+      ? statusExclude.reason
+      : yearRoundBan
+        ? "anchoringProhibited"
+        : null;
+  const excluded = reason !== null;
+  const banExcludes = excluded && !profileExclude?.excluded && !statusExclude.excluded;
+
+  if (!profile && !excluded) return { omitted: "no_profile" };
+
+  // shelter: all eight sectors, each with its provenance, or no spot; an excluded spot is delivered anyway, a missing
+  // sector as 0 (the worst value) with the note in `exclude.detail`
   const sectorValues = SECTORS.map((s) => num(a[`shelter.${s}`]));
-  if (sectorValues.some((v) => v === null)) return { omitted: "shelter_incomplete" };
-  const sectors = Object.fromEntries(SECTORS.map((s, i) => [s, sectorValues[i]!])) as SpotBody["shelter"]["sectors"];
+  const unproven = SECTORS.some((s, i) => sectorValues[i] !== null && !p[`shelter.${s}`]);
+  const missingSector = sectorValues.some((v) => v === null);
+  if ((missingSector || unproven) && !excluded) return { omitted: "shelter_incomplete" };
+  if (unproven) warnings.push({ code: "missing_provenance", field: "shelter" });
+  const filled = sectorValues.map((v) => v ?? 0);
+  const shelterOrigins = originsOf(SHELTER_ATTRIBUTES);
   const shelter: SpotBody["shelter"] = {
-    sectors,
-    swell: num(a["swell_protection"]) ?? Math.min(...(sectorValues as number[])),
-    source: combineSource(originsOf(SHELTER_ATTRIBUTES)),
+    sectors: Object.fromEntries(SECTORS.map((s, i) => [s, filled[i]!])) as SpotBody["shelter"]["sectors"],
+    swell: num(a["swell_protection"]) ?? Math.min(...filled),
+    source: shelterOrigins.length > 0 ? combineSource(shelterOrigins) : "computed",
+  };
+
+  const exclude: SpotBody["exclude"] = {
+    excluded,
+    reason,
+    detail: reason ? (missingSector ? `${EXCLUDE_REASON_DE[reason]} (${NO_SHELTER_NOTE_DE})` : EXCLUDE_REASON_DE[reason]) : null,
   };
 
   const placeKind = (typeof a["place.kind"] === "string" ? a["place.kind"] : src.kind) as PlaceKind;
   const isHarbour = HARBOUR_KINDS.includes(placeKind);
-  const prohibitions = (Array.isArray(a["prohibitions"]) ? a["prohibitions"] : []) as Prohibition[];
-  const anchoringBans = prohibitions.filter((e) => e.kind === "anchoring");
-  const yearRoundBan = anchoringBans.some((e) => e.months === null);
-  const seasonalBans = anchoringBans.filter((e) => Array.isArray(e.months) && e.months.length > 0);
-  const ferryLane = prohibitions.some((e) => e.kind === "ferry_lane");
   const seasonHints = (Array.isArray(a["derived.season"]) ? a["derived.season"] : []) as Array<{ kind: string; months: number[] }>;
-
-  // exclude (ruling M6-P4)
-  const profileExclude = isRecord(a["exclude"]) ? (a["exclude"] as ExcludeValue) : excludeValue(src.status, src.statusReason);
-  const textBanExcludes = !profileExclude.excluded && yearRoundBan;
-  const reason = textBanExcludes ? "anchoringProhibited" : profileExclude.excluded ? profileExclude.reason : null;
-  const exclude: SpotBody["exclude"] = {
-    excluded: profileExclude.excluded || textBanExcludes,
-    reason,
-    detail: reason ? EXCLUDE_REASON_DE[reason] : null,
-  };
+  const anchor = isHarbour ? undefined : anchorPosition(a["anchor_position"], p["anchor_position"], warnings);
+  const depthValue = depth(a, p, warnings);
 
   const spot: SpotBody = {
     id: src.publicId,
@@ -168,9 +212,9 @@ export function mapSpot(
     name: src.name,
     names: src.names.length > 0 ? src.names : undefined,
     position: { lat: round5(src.position.lat), lon: round5(src.position.lon) },
-    anchorPosition: isHarbour ? undefined : anchorPosition(a["anchor_position"], p["anchor_position"]),
+    anchorPosition: anchor,
     shelter,
-    depth: depth(a, provenanceOf(DEPTH_ATTRIBUTES), originsOf(DEPTH_ATTRIBUTES)),
+    depth: depthValue,
     seabed: Array.isArray(a["seabed"]) ? (a["seabed"] as NonNullable<SpotBody["seabed"]>).map(({ type, share }) => ({ type, share })) : undefined,
     holding: HOLDING[a["holding"] as keyof typeof HOLDING] ?? "unknown",
     limits: { maxDraft: num(a["max_draft"]), maxLength: num(a["max_length"]), capacity: num(a["capacity"]) },
@@ -179,45 +223,67 @@ export function mapSpot(
     berth: berth(a["occupancy"], isHarbour, p["occupancy"]),
     occupancy: occupancy(a["occupancy"]),
     exclude,
-    hazards: hazards(a["hazards"], ferryLane),
+    hazards: hazards(a["hazards"], { ferryLane, cable }),
     seasonNote: seasonNotes(seasonHints, seasonalBans),
     score: {
-      confidence: round3(profile.confidence ?? 0),
+      confidence: round3(profile?.confidence ?? 0),
       popularity: round3(src.popularity ?? 0),
       quietness: num(a["derived.quietness"]) === null ? null : round3(num(a["derived.quietness"])!),
-      sourcesCount: profile.sourcesCount,
+      sourcesCount: profile?.sourcesCount ?? 0,
       lastObserved: lastObserved(Object.values(p)),
     },
     highlightIds: ctx.highlightIds,
     externalRefs: { googlePlaceIds: {}, osmId: src.osmId, wikidataId: src.wikidataId },
-    summary: summary(src.summary, profile.confidence, ctx.cfg),
+    summary: summary(src.summary, profile?.confidence ?? null, ctx.cfg),
     sources: mapSources(src.sources, ctx.cfg),
-    provenance: provenance(p, has, { isHarbour, textBanExcludes, ferryLane, seasonalBan: seasonalBans.length > 0 }),
+    provenance: provenance(p, has, {
+      anchorPosition: anchor !== undefined,
+      depth: depthValue !== undefined,
+      banExcludes,
+      prohibitionHazard: ferryLane || cable,
+      seasonalBan: seasonalBans.length > 0,
+    }),
     regionId: ctx.regionId,
     mergedInto: null,
   };
-  return { spot: withoutUndefined(spot) };
+  return { spot: withoutUndefined(spot), warnings };
 }
 
-function anchorPosition(value: unknown, prov: AttributeProvenance | undefined): SpotBody["anchorPosition"] {
+function anchorPosition(
+  value: unknown,
+  prov: AttributeProvenance | undefined,
+  warnings: SpotWarning[],
+): SpotBody["anchorPosition"] {
   if (!isRecord(value) || num(value.lon) === null || num(value.lat) === null) return undefined;
+  if (!prov) {
+    warnings.push({ code: "missing_provenance", field: "anchorPosition" });
+    return undefined;
+  }
   return {
     lat: round5(value.lat as number),
     lon: round5(value.lon as number),
-    confidence: round3(prov?.confidence ?? 0),
-    source: ORIGIN[prov?.origin ?? "computed"],
+    confidence: round3(prov.confidence),
+    source: ORIGIN[prov.origin],
   };
 }
 
-function depth(a: Record<string, unknown>, entries: AttributeProvenance[], origins: ProvenanceOrigin[]): SpotBody["depth"] {
+/** Depths; a present depth without provenance drops the field with a warning (ruling M6-B-R2 M-6). */
+function depth(a: Record<string, unknown>, p: Record<string, AttributeProvenance>, warnings: SpotWarning[]): SpotBody["depth"] {
+  const present = DEPTH_ATTRIBUTES.filter((k) => num(a[k]) !== null);
+  if (present.length === 0) return undefined;
+  const entries = present.map((k) => p[k]);
+  if (entries.some((e) => e === undefined)) {
+    warnings.push({ code: "missing_provenance", field: "depth" });
+    return undefined;
+  }
   const [min, max, anchoringMin, anchoringMax] = DEPTH_ATTRIBUTES.map((k) => num(a[k]));
-  if ([min, max, anchoringMin, anchoringMax].every((v) => v === null) || entries.length === 0) return undefined;
+  const proven = entries as AttributeProvenance[];
   return {
-    min: min ?? null,
-    max: max ?? null,
-    anchoring: { min: anchoringMin ?? null, max: anchoringMax ?? null },
-    confidence: round3(Math.min(...entries.map((e) => e.confidence))),
-    source: combineSource(origins),
+    min,
+    max,
+    anchoring: { min: anchoringMin, max: anchoringMax },
+    confidence: round3(Math.min(...proven.map((e) => e.confidence))),
+    source: combineSource(proven.map((e) => e.origin)),
   };
 }
 
@@ -263,16 +329,20 @@ function occupancy(value: unknown): SpotBody["occupancy"] {
   return months.length > 0 ? months : undefined;
 }
 
-function hazards(value: unknown, ferryLane: boolean): SpotBody["hazards"] {
+/**
+ * Hazards: an unknown internal kind is `other`, never dropped (ruling M6-B-R2 M-3); a computed ferry lane adds
+ * `ferryTraffic` (ruling M6-P11), a computed cable area `cable` (ruling M6-B-R2 M-1).
+ */
+function hazards(value: unknown, computed: { ferryLane: boolean; cable: boolean }): SpotBody["hazards"] {
   const list: Array<{ kind: ContractHazardKind; text: string }> = [];
   for (const entry of Array.isArray(value) ? value : []) {
     if (!isRecord(entry)) continue;
-    const kind = HAZARD_KIND[entry.kind as keyof typeof HAZARD_KIND];
-    if (!kind) continue;
+    const kind = Object.hasOwn(HAZARD_KIND, String(entry.kind)) ? HAZARD_KIND[entry.kind as keyof typeof HAZARD_KIND] : "other";
     const name = typeof entry.name === "string" && entry.name.trim() !== "" ? entry.name.trim() : null;
     list.push({ kind, text: name ? `${HAZARD_DE[kind]}: ${name}` : HAZARD_DE[kind] });
   }
-  if (ferryLane) list.push({ kind: "ferryTraffic", text: HAZARD_DE.ferryTraffic });
+  if (computed.ferryLane) list.push({ kind: "ferryTraffic", text: HAZARD_DE.ferryTraffic });
+  if (computed.cable) list.push({ kind: "cable", text: HAZARD_DE.cable });
   const unique = [...new Map(list.map((h) => [`${h.kind}\u0000${h.text}`, h])).values()];
   unique.sort((x, y) => (x.kind < y.kind ? -1 : x.kind > y.kind ? 1 : x.text < y.text ? -1 : x.text > y.text ? 1 : 0));
   return unique.length > 0 ? unique : undefined;
@@ -339,20 +409,20 @@ export function mapSources(rows: SourceRefRow[], cfg: DeliveryConfig): SpotBody[
 function provenance(
   p: Record<string, AttributeProvenance>,
   has: (key: string) => boolean,
-  o: { isHarbour: boolean; textBanExcludes: boolean; ferryLane: boolean; seasonalBan: boolean },
+  o: { anchorPosition: boolean; depth: boolean; banExcludes: boolean; prohibitionHazard: boolean; seasonalBan: boolean },
 ): SpotBody["provenance"] {
   const groups: Record<string, string[]> = {
     shelter: SHELTER_ATTRIBUTES,
-    depth: DEPTH_ATTRIBUTES,
+    depth: o.depth ? DEPTH_ATTRIBUTES : [],
     seabed: ["seabed"],
     holding: ["holding"],
     limits: LIMIT_ATTRIBUTES,
     mooring: MOORING_ATTRIBUTES,
     ...Object.fromEntries((Object.keys(SERVICE_ATTRIBUTE) as Service[]).map((s) => [`services.${s}`, [SERVICE_ATTRIBUTE[s]]])),
     occupancy: ["occupancy"],
-    exclude: o.textBanExcludes ? ["exclude", "prohibitions"] : ["exclude"],
-    hazards: o.ferryLane ? ["hazards", "prohibitions"] : ["hazards"],
-    anchorPosition: o.isHarbour ? [] : ["anchor_position"],
+    exclude: o.banExcludes ? ["exclude", "prohibitions"] : ["exclude"],
+    hazards: o.prohibitionHazard ? ["hazards", "prohibitions"] : ["hazards"],
+    anchorPosition: o.anchorPosition ? ["anchor_position"] : [],
     seasonNote: o.seasonalBan ? ["derived.season", "prohibitions"] : ["derived.season"],
   };
   const out: SpotBody["provenance"] = {};
