@@ -5,8 +5,10 @@ import { fetchCoverage, fetchWfsFeatures } from "@/lib/adapters/emodnet";
 import type { CallContext, Transport } from "@/lib/adapters/http";
 import { buildCablesQuery, buildRoadsQuery, overpassQuery, type OverpassElement } from "@/lib/adapters/overpass";
 import type { Archive } from "@/lib/adapters/s3";
+import { sitelinkCounts } from "@/lib/adapters/wikidata";
 import { getConfig, type AreaConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
+import { wikidataSitelinks } from "@/lib/db/schema";
 import { areaBbox } from "@/lib/domain/gazetteer/areas";
 import { bufferBbox } from "@/lib/domain/gazetteer/land";
 import { importBathymetryRaster } from "@/lib/domain/geometry/bathymetry";
@@ -20,12 +22,12 @@ import { replaceRoads, type RoadFeature } from "@/lib/domain/geometry/roads";
 import { classifySeabed, replaceSeabed, type SeabedFeature } from "@/lib/domain/geometry/seabed";
 import { tileBbox, tileNeighbours, type Bbox } from "@/lib/domain/tiles";
 import { createLogger } from "@/lib/logger";
-import { seedTileIds } from "@/lib/pipeline/tile-scope";
+import { areaGeoObjectId, seedTileIds } from "@/lib/pipeline/tile-scope";
 
 export const DATASETS_STAGE = "datasets.import";
 
 /** The datasets of the run "Datensätze laden", one job each per area. */
-export const DATASET_KINDS = ["bathymetry", "seabed", "restrictions", "vessel_density", "roads"] as const;
+export const DATASET_KINDS = ["bathymetry", "seabed", "restrictions", "vessel_density", "roads", "sitelinks"] as const;
 export type DatasetKind = (typeof DATASET_KINDS)[number];
 
 export type DatasetImportInput = { area: AreaConfig; runId?: string; now?: Date };
@@ -344,6 +346,51 @@ export async function importRoads(
   return { roads: stored, removed, version };
 }
 
+/** Rows per upsert statement of sitelink counts. */
+const SITELINK_UPSERT_ROWS = 1000;
+
+/**
+ * Wikidata sitelink counts (importance signal, ruling M5-P1) of the valid, unmerged objects with a `wikidata_id` in
+ * the area's tiles: a count fetched within `datasets.sitelinks.reuseDays` is reused without a call, the others are
+ * fetched (50 per request) and upserted with `fetched_at` = now; an item Wikidata no longer knows counts 0.
+ */
+export async function importSitelinks(
+  db: Db,
+  input: DatasetImportInput,
+  deps: Pick<DatasetImportDeps, "transport">,
+): Promise<{ fetched: number; reused: number }> {
+  const { datasets, gazetteer } = getConfig();
+  const areaId = await areaGeoObjectId(db, input.area.key);
+  if (!areaId) throw new Error(`area ${input.area.key} has no geo object; build its gazetteer first`);
+  const now = input.now ?? new Date();
+  const { rows } = await db.execute<{ qid: string; fresh: boolean }>(sql`
+    select o.wikidata_id as qid,
+           bool_or(coalesce(s.fetched_at > ${now.toISOString()}::timestamptz - make_interval(days => ${datasets.sitelinks.reuseDays}::int), false)) as fresh
+    from geo_objects o
+    join tile_geo_objects tg on tg.geo_object_id = o.id
+    join tiles t on t.id = tg.tile_id
+    left join wikidata_sitelinks s on s.wikidata_id = o.wikidata_id
+    where t.area_id = ${areaId} and t.valid_from <= current_date and (t.valid_to is null or t.valid_to > current_date)
+      and o.wikidata_id is not null and o.merged_into_id is null
+      and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
+    group by o.wikidata_id
+    order by o.wikidata_id`);
+  const stale = rows.filter((r) => !r.fresh).map((r) => r.qid);
+  if (stale.length > 0) {
+    const counts = await sitelinkCounts(deps.transport, stale, callContext(db, input), gazetteer.wikidata);
+    for (let i = 0; i < stale.length; i += SITELINK_UPSERT_ROWS) {
+      await db
+        .insert(wikidataSitelinks)
+        .values(stale.slice(i, i + SITELINK_UPSERT_ROWS).map((id) => ({ wikidataId: id, sitelinks: counts.get(id) ?? 0, fetchedAt: now })))
+        .onConflictDoUpdate({
+          target: wikidataSitelinks.wikidataId,
+          set: { sitelinks: sql`excluded.sitelinks`, fetchedAt: sql`excluded.fetched_at` },
+        });
+    }
+  }
+  return { fetched: stale.length, reused: rows.length - stale.length };
+}
+
 /** Runs the import of one dataset kind for one area. */
 export async function importDataset(
   db: Db,
@@ -362,5 +409,7 @@ export async function importDataset(
       return importVesselDensity(db, input, deps);
     case "roads":
       return importRoads(db, input, deps);
+    case "sitelinks":
+      return importSitelinks(db, input, deps);
   }
 }

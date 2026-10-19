@@ -171,7 +171,7 @@ export const placeDiscoveryRequests = pgTable(
   (t) => [index("place_discovery_requests_geo_object_idx").on(t.geoObjectId, t.requestedAt.desc())],
 );
 
-/** Working state: number of Wikipedia sitelinks per Wikidata item (importance signal, ruling M5-P1). */
+/** Working state: number of sitelinks (all wikis) per Wikidata item (importance signal, ruling M5-P1). */
 export const wikidataSitelinks = pgTable("wikidata_sitelinks", {
   wikidataId: text("wikidata_id").primaryKey(),
   sitelinks: integer("sitelinks").notNull(),

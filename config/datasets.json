@@ -61,5 +61,6 @@
     "highways": ["motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential", "track"],
     "bufferKm": 5
   },
+  "sitelinks": { "reuseDays": 30 },
   "bufferKm": 2
 }

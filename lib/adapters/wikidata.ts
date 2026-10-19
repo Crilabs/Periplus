@@ -119,9 +119,64 @@ const SITE = /^[a-z0-9_]+$/;
 const API_TIMEOUT_MS = 30_000;
 
 type EntitiesAnswer = {
-  entities?: Record<string, { id?: string; missing?: string; sitelinks?: Record<string, { site?: unknown; title?: unknown; url?: unknown }> }>;
+  entities?: Record<
+    string,
+    {
+      id?: string;
+      missing?: string;
+      redirects?: { from?: string; to?: string };
+      sitelinks?: Record<string, { site?: unknown; title?: unknown; url?: unknown }>;
+    }
+  >;
   error?: { code?: string; info?: string };
 };
+
+/** Sorted, distinct, validated item ids. */
+function itemIds(qids: string[]): string[] {
+  const ids = [...new Set(qids)].sort();
+  for (const id of ids) if (!QID.test(id)) throw new Error(`invalid Wikidata item ${id}`);
+  return ids;
+}
+
+/**
+ * One `wbgetentities` request for `ids` with `query` (props, filters) in the bucket of all Wikidata calls. An API
+ * error is an `HttpError`, except `maxlag` and unreadable answers (`RetryableHttpError`).
+ */
+async function getEntities(
+  transport: Transport,
+  ids: string[],
+  query: string,
+  operation: string,
+  ctx: CallContext,
+  cfg: GazetteerConfig["wikidata"],
+): Promise<NonNullable<EntitiesAnswer["entities"]>> {
+  const res = await httpCall(
+    transport,
+    {
+      service: "wikidata",
+      operation,
+      url: `${cfg.apiEndpoint}?action=wbgetentities&ids=${ids.join("|")}&${query}&format=json`,
+      headers: { Accept: "application/json" },
+      timeoutMs: API_TIMEOUT_MS,
+      ratePerMinute: cfg.ratePerMinute,
+      meta: { items: ids.length },
+    },
+    ctx,
+  );
+  let answer: EntitiesAnswer;
+  try {
+    answer = JSON.parse(res.text()) as EntitiesAnswer;
+    if (typeof answer !== "object" || answer === null) throw new Error("not an object");
+  } catch (error) {
+    throw new RetryableHttpError("wikidata returned an unreadable answer", res.status, { cause: error });
+  }
+  if (answer.error) {
+    const message = `wikidata wbgetentities: ${answer.error.code ?? "error"}: ${answer.error.info ?? ""}`;
+    if (answer.error.code === "maxlag") throw new RetryableHttpError(message, res.status);
+    throw new HttpError(message, res.status);
+  }
+  return answer.entities ?? {};
+}
 
 /**
  * The sitelinks of the items `qids` on the wikis `sites` (e.g. `enwikivoyage`), with their article URLs: one
@@ -136,40 +191,15 @@ export async function fetchSitelinks(
   ctx: CallContext,
   cfg: GazetteerConfig["wikidata"],
 ): Promise<Map<string, Sitelink[]>> {
-  const ids = [...new Set(qids)].sort();
+  const ids = itemIds(qids);
   const wikis = [...new Set(sites)].sort();
-  for (const id of ids) if (!QID.test(id)) throw new Error(`invalid Wikidata item ${id}`);
   for (const site of wikis) if (!SITE.test(site)) throw new Error(`invalid site ${site}`);
   const result = new Map<string, Sitelink[]>();
   if (ids.length === 0 || wikis.length === 0) return result;
   for (let i = 0; i < ids.length; i += MAX_IDS_PER_REQUEST) {
     const batch = ids.slice(i, i + MAX_IDS_PER_REQUEST);
-    const res = await httpCall(
-      transport,
-      {
-        service: "wikidata",
-        operation: "sitelinks",
-        url: `${cfg.apiEndpoint}?action=wbgetentities&ids=${batch.join("|")}&props=sitelinks/urls&sitefilter=${wikis.join("|")}&format=json`,
-        headers: { Accept: "application/json" },
-        timeoutMs: API_TIMEOUT_MS,
-        ratePerMinute: cfg.ratePerMinute,
-        meta: { items: batch.length },
-      },
-      ctx,
-    );
-    let answer: EntitiesAnswer;
-    try {
-      answer = JSON.parse(res.text()) as EntitiesAnswer;
-      if (typeof answer !== "object" || answer === null) throw new Error("not an object");
-    } catch (error) {
-      throw new RetryableHttpError("wikidata returned an unreadable answer", res.status, { cause: error });
-    }
-    if (answer.error) {
-      const message = `wikidata wbgetentities: ${answer.error.code ?? "error"}: ${answer.error.info ?? ""}`;
-      if (answer.error.code === "maxlag") throw new RetryableHttpError(message, res.status);
-      throw new HttpError(message, res.status);
-    }
-    for (const [key, entity] of Object.entries(answer.entities ?? {})) {
+    const entities = await getEntities(transport, batch, `props=sitelinks/urls&sitefilter=${wikis.join("|")}`, "sitelinks", ctx, cfg);
+    for (const [key, entity] of Object.entries(entities)) {
       if (entity.missing !== undefined) continue;
       const links: Sitelink[] = [];
       for (const link of Object.values(entity.sitelinks ?? {})) {
@@ -179,6 +209,33 @@ export async function fetchSitelinks(
       }
       links.sort((a, b) => (a.site < b.site ? -1 : a.site > b.site ? 1 : 0));
       if (links.length > 0) result.set(entity.id ?? key, links);
+    }
+  }
+  return result;
+}
+
+/**
+ * The number of sitelinks (all wikis, as `wikibase:sitelinks` counts them) of the items `qids`, an importance signal
+ * (spec 07): one `wbgetentities` call (`props=sitelinks`, no site filter) per 50 items, ids sorted, in the bucket of
+ * all Wikidata calls (ruling M5-P1). A redirected item counts under the asked id; a missing (deleted) item is absent
+ * from the map. Errors as `fetchSitelinks`.
+ */
+export async function sitelinkCounts(
+  transport: Transport,
+  qids: string[],
+  ctx: CallContext,
+  cfg: GazetteerConfig["wikidata"],
+): Promise<Map<string, number>> {
+  const ids = itemIds(qids);
+  const result = new Map<string, number>();
+  for (let i = 0; i < ids.length; i += MAX_IDS_PER_REQUEST) {
+    const batch = ids.slice(i, i + MAX_IDS_PER_REQUEST);
+    const entities = await getEntities(transport, batch, "props=sitelinks", "sitelink_counts", ctx, cfg);
+    for (const [key, entity] of Object.entries(entities)) {
+      if (entity.missing !== undefined) continue;
+      const id = entity.redirects?.from ?? entity.id ?? key;
+      if (!batch.includes(id)) continue;
+      result.set(id, Object.keys(entity.sitelinks ?? {}).length);
     }
   }
   return result;

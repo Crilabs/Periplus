@@ -32,12 +32,12 @@ import { extractionUnits } from "../lib/db/schema";
 import { planUnits } from "../lib/domain/extraction/units";
 import { effectiveVersionMeta } from "../lib/domain/mentions/classification";
 import { areaBbox, syncAreas } from "../lib/domain/gazetteer/areas";
-import { ensureTiles } from "../lib/domain/gazetteer/tiles-ensure";
+import { areaTileIds, ensureTiles } from "../lib/domain/gazetteer/tiles-ensure";
 import { bufferBbox, importLandPolygons } from "../lib/domain/gazetteer/land";
 import { createRun } from "../lib/domain/runs";
 import { ensureWhitelistSources, getSource, sourceIdByDomain } from "../lib/domain/sources/store";
 import { parseTileId, type Bbox } from "../lib/domain/tiles";
-import { DATASET_KINDS, DATASETS_STAGE, importDataset } from "../lib/pipeline/datasets";
+import { DATASET_KINDS, DATASETS_STAGE, datasetKindsOf, importDataset, type DatasetKind } from "../lib/pipeline/datasets";
 import { GEONAMES_STAGE, importGeonames } from "../lib/pipeline/gazetteer/geonames";
 import { classifyInputs } from "../lib/pipeline/text/classify";
 import { disambiguationInputs } from "../lib/pipeline/text/disambiguate";
@@ -50,7 +50,7 @@ import { queueArticles, WIKIVOYAGE_DOMAIN } from "../lib/pipeline/sources/wikivo
 import { landImportBbox, readShapefile } from "./import-land-polygons";
 
 const USAGE =
-  "usage: fixtures-record.ts --area <key> [--land <path/land_polygons.shp>] [--cache <dir>] [--datasets | --serp [--limit <1-3>] | --wikivoyage]\n" +
+  "usage: fixtures-record.ts --area <key> [--land <path/land_polygons.shp>] [--cache <dir>] [--datasets [<kind,…>] | --serp [--limit <1-3>] | --wikivoyage]\n" +
   "       fixtures-record.ts --converters <url> [<url> <url>]\n" +
   "       fixtures-record.ts --voyage\n" +
   "       fixtures-record.ts --nominatim <query> <tileId>\n" +
@@ -75,6 +75,8 @@ export type AreaRecordArgs = {
   land?: string;
   cache?: string;
   datasets: boolean;
+  /** `--datasets <kind,…>`: only these dataset kinds (default every kind). */
+  datasetKinds?: DatasetKind[];
   serp: boolean;
   limit?: number;
   /** Record the Wikivoyage sitelinks and articles. */
@@ -118,7 +120,8 @@ function isHttpUrl(value: string): boolean {
 }
 
 /**
- * `--area`, `--land`, `--cache`, `--limit` take a value; `--datasets` (record the dataset imports only),
+ * `--area`, `--land`, `--cache`, `--limit` take a value; `--datasets` (record the dataset imports only, optionally
+ * followed by a comma-separated list of dataset kinds),
  * `--serp` (record at most `--limit` ≤ 3 area SERP searches, default 3) and `--wikivoyage` (the Wikivoyage sitelinks
  * and articles) take none. `--converters` takes 1–3 page URLs and stands alone (no area), as does `--voyage` (one
  * embedding call), as does `--nominatim <query> <tileId>` (one Nominatim radius search).
@@ -157,14 +160,25 @@ export function parseArgs(argv: string[]): RecordArgs {
   }
   const values = new Map<string, string>();
   let datasets = false;
+  let datasetKinds: DatasetKind[] | undefined;
   let serp = false;
   let wikivoyage = false;
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]!;
     if (flag === "--converters" || flag === "--voyage" || flag === "--nominatim" || flag === "--ai") throw new Error(USAGE);
     if (flag === "--datasets" || flag === "--serp" || flag === "--wikivoyage") {
-      if (flag === "--datasets") datasets = true;
-      else if (flag === "--serp") serp = true;
+      if (flag === "--datasets") {
+        datasets = true;
+        const list = argv[i + 1];
+        if (list !== undefined && !list.startsWith("--")) {
+          try {
+            datasetKinds = datasetKindsOf({ datasets: list.split(",") });
+          } catch {
+            throw new Error(USAGE);
+          }
+          i++;
+        }
+      } else if (flag === "--serp") serp = true;
       else wikivoyage = true;
       continue;
     }
@@ -188,6 +202,7 @@ export function parseArgs(argv: string[]): RecordArgs {
     land: values.get("--land"),
     cache: values.get("--cache"),
     datasets,
+    ...(datasetKinds ? { datasetKinds } : {}),
     serp,
     ...(serp ? { limit } : {}),
     ...(wikivoyage ? { wikivoyage: true as const } : {}),
@@ -681,6 +696,21 @@ export function compactOverpass(raw: string): string {
 }
 
 /** Thins successful Overpass answers and minifies Wikidata's before they are recorded and imported. */
+/**
+ * Links the valid objects to the area's tiles as `assignTiles` does, for an area that may exist only as a test file
+ * (`assignTiles` resolves configured areas by key).
+ */
+async function linkAreaTiles(db: Db, area: AreaConfig): Promise<number> {
+  const tileIds = areaTileIds(area);
+  await db.execute(sql`delete from tile_geo_objects where tile_id in ${tileIds}`);
+  const res = await db.execute(sql`
+    insert into tile_geo_objects (tile_id, geo_object_id)
+    select t.id, o.id from tiles t
+    join geo_objects o on o.geom && t.bbox and ST_Intersects(t.bbox, o.geom)
+    where t.id in ${tileIds} and t.valid_to is null and o.valid_to is null and o.merged_into_id is null`);
+  return res.rowCount ?? 0;
+}
+
 function compacting(inner: Transport): Transport {
   return async (req) => {
     const res = await inner(req);
@@ -788,7 +818,15 @@ async function main(): Promise<void> {
       out(`tiles: ${JSON.stringify(await ensureTiles(db, area, areaIds))}`);
       const recordingSource = recordingTransport(source);
       const archive = memoryArchive();
-      for (const dataset of DATASET_KINDS) {
+      const kinds = args.datasetKinds ?? [...DATASET_KINDS];
+      if (kinds.includes("sitelinks")) {
+        // Sitelinks are asked for the area's objects with a Wikidata id: the gazetteer from its recorded fixtures.
+        const replay = fixtureTransport();
+        await importOsm(db, { area, runId }, { transport: replay, archive });
+        await importWikidata(db, { area, runId }, { transport: replay });
+        out(`tile links: ${await linkAreaTiles(db, area)}`);
+      }
+      for (const dataset of kinds) {
         const result = await withRetry(dataset, () =>
           importDataset(db, dataset, { area, runId }, { transport: recordingSource, archive }),
         );

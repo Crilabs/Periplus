@@ -382,6 +382,12 @@ export const roadsDatasetSchema = z.strictObject({
   bufferKm: z.number().nonnegative(),
 });
 
+/** Wikidata sitelink counts (importance signal, ruling M5-P1). */
+export const sitelinksDatasetSchema = z.strictObject({
+  /** A count fetched within this many days is reused without a call. */
+  reuseDays: z.number().int().positive(),
+});
+
 /** `config/datasets.json`: external datasets of the geometry stage. */
 export const datasetsSchema = z.strictObject({
   bathymetry: bathymetryDatasetSchema,
@@ -390,6 +396,7 @@ export const datasetsSchema = z.strictObject({
   vesselDensity: vesselDensityDatasetSchema,
   cables: cablesDatasetSchema,
   roads: roadsDatasetSchema,
+  sitelinks: sitelinksDatasetSchema,
   /** Margin around an area's box for every dataset request, in km. */
   bufferKm: z.number().nonnegative(),
 });
