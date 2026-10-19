@@ -8,6 +8,7 @@ import { recordComputation, type ComputedFact } from "@/lib/domain/facts/computa
 import { SECTORS } from "@/lib/domain/facts/schema-types";
 import { anchorArea, type AnchorArea } from "@/lib/domain/geometry/anchor-area";
 import { depthConfidence, depthRange, sampleDepths } from "@/lib/domain/geometry/depth";
+import type { Gap, GapReason } from "@/lib/domain/geometry/gaps";
 import { computeFetch } from "@/lib/domain/geometry/rays";
 import { applyExclusion, exclusionFor, restrictionHits } from "@/lib/domain/geometry/restrictions";
 import { seabedShares } from "@/lib/domain/geometry/seabed";
@@ -21,10 +22,7 @@ import { seedTileIds } from "@/lib/pipeline/tile-scope";
 
 export const GEOMETRY_STAGE = "geometry.place";
 
-export const GAP_REASONS = ["no_water", "origin_unresolved", "no_bathymetry", "no_anchor_area", "no_seabed_coverage"] as const;
-export type GapReason = (typeof GAP_REASONS)[number];
-/** An attribute without a value and why; stored in `outputs.gaps` of the computation it belongs to. */
-export type Gap = { attribute: string; reason: GapReason };
+export { GAP_REASONS, type Gap, type GapReason } from "@/lib/domain/geometry/gaps";
 
 export type PlaceGeometryResult = {
   created: ComputationKind[];
