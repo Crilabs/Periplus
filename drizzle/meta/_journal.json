@@ -176,6 +176,13 @@
       "when": 1792397981844,
       "tag": "0024_text_triggers",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1792398936852,
+      "tag": "0025_facts_text_checks",
+      "breakpoints": true
     }
   ]
 }

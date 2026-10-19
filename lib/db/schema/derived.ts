@@ -96,6 +96,12 @@ export const facts = pgTable(
       "facts_text_quote_verified",
       sql`${t.mentionId} is null or (${t.quoteVerified} and ${t.quoteChunkId} is not null)`,
     ),
+    check("facts_text_extraction_run", sql`${t.mentionId} is null or ${t.extractionRunId} is not null`),
+    // The located quote: offsets into quote_chunk_id's text, end exclusive.
+    check(
+      "facts_text_quote_span",
+      sql`${t.mentionId} is null or (${t.quoteStart} is not null and ${t.quoteEnd} is not null and ${t.quoteStart} >= 0 and ${t.quoteStart} < ${t.quoteEnd})`,
+    ),
     check("facts_confidence_range", sql`${t.confidence} between 0 and 1`),
     uniqueIndex("facts_mention_attribute_run_unique").on(t.mentionId, t.attribute, t.extractionRunId),
     uniqueIndex("facts_computation_attribute_unique")

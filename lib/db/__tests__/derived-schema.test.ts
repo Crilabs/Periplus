@@ -6,7 +6,7 @@ import { computations, facts, geoObjects, reviewDecisions, reviewTasks } from "@
 import { newId } from "@/lib/domain/ids";
 import type { Db } from "@/lib/db/client";
 import { withRollback } from "@/test/db";
-import { insertTestMention } from "@/test/text";
+import { insertTestExtractionRun, insertTestMention } from "@/test/text";
 
 /** drizzle wraps driver errors ("Failed query"); the Postgres message lives on `cause`. */
 async function rejectionMessage(tx: Db, run: (tx: Db) => Promise<unknown>): Promise<string> {
@@ -109,6 +109,7 @@ describe("computations and facts", () => {
   it("a fact from a mention needs a quote", async () => {
     await withRollback(async (tx) => {
       const { mentionId, geoObjectId, chunkId } = await insertTestMention(tx);
+      const extractionRunId = await insertTestExtractionRun(tx);
 
       const message = await rejectionMessage(tx, (sp) => insertFact(sp, factValues(geoObjectId, { mentionId })));
       expect(message).toMatch(/facts_quote_for_mention/);
@@ -116,7 +117,15 @@ describe("computations and facts", () => {
       await expect(
         insertFact(
           tx,
-          factValues(geoObjectId, { mentionId, quote: "Good holding in sand", quoteVerified: true, quoteChunkId: chunkId }),
+          factValues(geoObjectId, {
+            mentionId,
+            extractionRunId,
+            quote: "Good holding in sand",
+            quoteVerified: true,
+            quoteChunkId: chunkId,
+            quoteStart: 0,
+            quoteEnd: 20,
+          }),
         ),
       ).resolves.toBeTruthy();
     });

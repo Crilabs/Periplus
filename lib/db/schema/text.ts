@@ -25,7 +25,8 @@ import { chunks, documentVersions, sources } from "./sources";
  * Mentions, extraction and AI batches (spec 06).
  * - mentions (only extraction_status may change), routes, route_stops are append-only (forbid_mutation).
  * - ambiguous_matches, unmatched_names, name_candidates, extraction_runs, extraction_units, ai_batches,
- *   ai_batch_items, pipeline_passes are working state; updated_at maintained by set_updated_at.
+ *   ai_batch_items, pipeline_passes are working state. Only ambiguous_matches, name_candidates and
+ *   extraction_units have updated_at, maintained by set_updated_at.
  * - The document classification lives on document_versions (classified_* columns, ruling M4-P11).
  * Triggers: drizzle/0024_text_triggers.sql.
  */

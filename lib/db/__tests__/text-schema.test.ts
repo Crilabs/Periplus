@@ -176,6 +176,35 @@ describe("text schema", () => {
     });
   });
 
+  it("a text fact needs an extraction run", async () => {
+    await withRollback(async (tx) => {
+      const m = await insertTestMention(tx);
+      const runId = await insertTestExtractionRun(tx);
+      const message = await rejectionMessage(tx, (sp) =>
+        sp.insert(facts).values(textFact(m, runId, { extractionRunId: null })),
+      );
+      expect(message).toMatch(/facts_text_extraction_run/);
+    });
+  });
+
+  it("a text fact needs a non-empty quote span from 0 on", async () => {
+    await withRollback(async (tx) => {
+      const m = await insertTestMention(tx);
+      const runId = await insertTestExtractionRun(tx);
+      for (const span of [
+        { quoteStart: null },
+        { quoteEnd: null },
+        { quoteStart: -1 },
+        { quoteStart: 20, quoteEnd: 20 },
+        { quoteStart: 21, quoteEnd: 20 },
+      ]) {
+        const message = await rejectionMessage(tx, (sp) => sp.insert(facts).values(textFact(m, runId, span)));
+        expect(message, JSON.stringify(span)).toMatch(/facts_text_quote_span/);
+      }
+      await expect(tx.insert(facts).values(textFact(m, runId, { quoteStart: 0, quoteEnd: 1 }))).resolves.toBeTruthy();
+    });
+  });
+
   it("a text fact points at an existing mention and extraction run", async () => {
     await withRollback(async (tx) => {
       const m = await insertTestMention(tx);
