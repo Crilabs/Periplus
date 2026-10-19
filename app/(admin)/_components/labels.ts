@@ -387,6 +387,7 @@ export const EXTRACTION_BLOCK_REASON_LABELS: Record<ExtractionRunBlockReason, st
   quote_fidelity: "Belegtreue unter 100 %",
   late_results: "Ergebnisse nach der Prüfung eingetroffen – Belegtreue neu prüfen",
   run_ended: "Lauf von Hand beendet, vor der Prüfung",
+  run_failed: "Lauf fehlgeschlagen, vor der Prüfung – Belegtreue neu prüfen",
 };
 
 export const EXTRACTION_PURPOSE_LABELS: Record<ExtractionPurpose, string> = {

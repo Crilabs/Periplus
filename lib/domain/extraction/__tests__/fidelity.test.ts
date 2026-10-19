@@ -10,6 +10,7 @@ import { belegtreue, checkQuoteFidelity, fidelityOutcome, fidelityShare } from "
 import { completeUnit, emptyFactStats } from "@/lib/domain/extraction/facts";
 import { blockLateResults, blockUncheckedRuns } from "@/lib/domain/extraction/run-status";
 import { storeRoute } from "@/lib/domain/extraction/routes";
+import { failRun } from "@/lib/domain/runs";
 import { checkExtractionRun, CHECK_STAGE, planCheck } from "@/lib/pipeline/text/check";
 import { ROUTE_STAGE } from "@/lib/pipeline/text/routes";
 import { TEXT_RUN_STAGES } from "@/lib/pipeline/text/run";
@@ -206,7 +207,7 @@ describe("quote fidelity", () => {
       // run_ended: the run was ended by hand before its check stage
       const ended = await extractionRun(tx, s);
       await insertFact(tx, s, ended, "holding");
-      expect(await blockUncheckedRuns(tx, s.runId)).toEqual([ended]);
+      expect(await blockUncheckedRuns(tx, s.runId, "run_ended")).toEqual([ended]);
       expect(await runRow(tx, ended)).toMatchObject({ status: "blocked", blockedReason: "run_ended" });
       await checkExtractionRun(tx, ended, config);
       expect(await runRow(tx, ended)).toMatchObject({ status: "finished", blockedReason: null });
@@ -226,6 +227,21 @@ describe("quote fidelity", () => {
       expect(await runRow(tx, failing)).toMatchObject({ status: "blocked", blockedReason: "late_results" });
       await checkExtractionRun(tx, failing, config);
       expect(await runRow(tx, failing)).toMatchObject({ status: "blocked", blockedReason: "quote_fidelity" });
+    }));
+
+  it("a failed stage transition (failRun) blocks the run's unchecked extraction runs with run_failed; the check lifts it", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx);
+      const unchecked = await extractionRun(tx, s);
+      await insertFact(tx, s, unchecked, "holding");
+      const checked = await extractionRun(tx, s, { model: "claude-opus-5-5" });
+      await checkExtractionRun(tx, checked, config);
+      await failRun(tx, s.runId, "stage transition failed: boom");
+      expect(await runRow(tx, unchecked)).toMatchObject({ status: "blocked", blockedReason: "run_failed", quoteCheck: null });
+      // a run checked before the failure keeps its result
+      expect(await runRow(tx, checked)).toMatchObject({ status: "finished", blockedReason: null });
+      await checkExtractionRun(tx, unchecked, config);
+      expect(await runRow(tx, unchecked)).toMatchObject({ status: "finished", blockedReason: null });
     }));
 
   it("a unit completed while the run is still running does not block it", () =>

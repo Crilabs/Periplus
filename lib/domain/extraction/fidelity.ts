@@ -53,7 +53,7 @@ type StoredLeg = { quote?: unknown; quote_chunk_id?: unknown } | null;
  * result: `quote_check`, status `blocked` (reason `quote_fidelity`) when any item fails, else `finished`, and
  * `finished_at`. The status follows the failures, not the rounded share, so one failure among millions still blocks
  * (ruling M4-H-R3). Idempotent and re-runnable: a repeated check writes the result for what is stored now, so it also
- * lifts a `late_results` or `run_ended` block once every quote holds up.
+ * lifts a `late_results`, `run_ended` or `run_failed` block once every quote holds up.
  */
 export async function checkQuoteFidelity(db: Db, extractionRunId: string, cfg: AppConfig): Promise<QuoteFidelity> {
   const quoteCfg = cfg.extraction.quote;

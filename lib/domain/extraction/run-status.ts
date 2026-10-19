@@ -6,7 +6,9 @@ import type { Db } from "@/lib/db/client";
  * an extraction run, and only for what was stored when it ran. Results distributed after that (a dead-lettered poll
  * retried by hand) are verified when stored, but the check's counters and result no longer cover them, so the run is
  * `blocked` with reason `late_results` until the check is run again. A run ended by hand never reaches its check
- * stage; its unchecked extraction runs are `blocked` with reason `run_ended`. A blocked run is never active
+ * stage; its unchecked extraction runs are `blocked` with reason `run_ended`. A run that fails (a stage whose jobs all
+ * failed, a failed stage transition) never reaches it either; they are `blocked` with reason `run_failed` (ruling
+ * M4-FIN-R1). "Belegtreue neu prüfen" lifts either block once every quote holds up. A blocked run is never active
  * (`activeExtractionRun`).
  */
 
@@ -27,12 +29,13 @@ export async function blockLateResults(db: Db, extractionRunId: string): Promise
 }
 
 /**
- * Blocks every extraction run of the run that has not been checked yet (no `quote_check`, still `running`) with reason
- * `run_ended`: called when an admin ends the run, so none of them stays `running` for ever. Returns their ids.
+ * Blocks every extraction run of the run that has not been checked yet (no `quote_check`, still `running`) with
+ * `reason`: `run_ended` when an admin ends the run, `run_failed` when the run fails, so none of them stays `running`
+ * for ever. Returns their ids.
  */
-export async function blockUncheckedRuns(db: Db, runId: string): Promise<string[]> {
+export async function blockUncheckedRuns(db: Db, runId: string, reason: "run_ended" | "run_failed"): Promise<string[]> {
   const { rows } = await db.execute<{ id: string }>(sql`
-    update extraction_runs set status = 'blocked', blocked_reason = 'run_ended', finished_at = now()
+    update extraction_runs set status = 'blocked', blocked_reason = ${reason}, finished_at = now()
     where run_id = ${runId} and status = 'running' and quote_check is null
     returning id
   `);

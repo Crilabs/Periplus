@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { externalCalls, jobOutcomes, runStages, runs } from "@/lib/db/schema";
 import type { RunKind, RunScopeType, RunStageStatus, RunStatus } from "@/lib/db/schema";
+import { blockUncheckedRuns } from "@/lib/domain/extraction/run-status";
 import { failOpenUnits } from "@/lib/domain/extraction/unit-status";
 
 export type { RunKind, RunStatus };
@@ -67,7 +68,8 @@ export function stageFailedReason(stage: string): string {
  * Follows up a stage the caller just finished (it won the transition). A stage whose jobs all failed fails
  * the run with `stageFailedReason` and plans nothing further (ruling F-R1), so later stages never run on
  * missing data; otherwise it reports the next stage or, after the last one, finishes the run. First it fails the
- * run's extraction units that are still open (`failOpenUnits`).
+ * run's extraction units that are still open (`failOpenUnits`). A failed run never reaches its quote check, so its
+ * unchecked extraction runs are blocked (`run_failed`, ruling M4-FIN-R1) for "Belegtreue neu prüfen".
  */
 async function afterStageFinished(
   db: Db,
@@ -80,6 +82,7 @@ async function afterStageFinished(
       .update(runs)
       .set({ status: "failed", finishedAt: sql`now()`, failureReason: stageFailedReason(stageRow.stage) })
       .where(and(eq(runs.id, stageRow.runId), eq(runs.status, "running")));
+    await blockUncheckedRuns(db, stageRow.runId, "run_failed");
     return { nextStage: null, runFinished: true };
   }
   const [next] = await db
@@ -258,12 +261,16 @@ async function reviveRun(db: Db, runId: string, stage: string): Promise<string |
   return revived.length > 0 && next ? next.stage : null;
 }
 
-/** Ends a run as failed, e.g. when moving to its next stage failed for good. Keeps the first reason. */
+/**
+ * Ends a run as failed, e.g. when moving to its next stage failed for good. Keeps the first reason. Its unchecked
+ * extraction runs are blocked (`run_failed`, ruling M4-FIN-R1), as the run never reaches its quote check.
+ */
 export async function failRun(db: Db, runId: string, reason: string): Promise<void> {
   await db
     .update(runs)
     .set({ status: "failed", finishedAt: sql`coalesce(${runs.finishedAt}, now())`, failureReason: reason })
     .where(and(eq(runs.id, runId), sql`${runs.failureReason} is null`));
+  await blockUncheckedRuns(db, runId, "run_failed");
 }
 
 /**

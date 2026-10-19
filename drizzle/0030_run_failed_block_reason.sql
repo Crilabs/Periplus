@@ -1,0 +1,1 @@
+ALTER TYPE "public"."extraction_run_block_reason" ADD VALUE 'run_failed';

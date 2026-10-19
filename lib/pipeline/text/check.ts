@@ -35,7 +35,7 @@ export async function planCheck(db: Db, run: { id: string; params: Record<string
  * Writes the extraction run's counters and records its quote check (status `finished` or `blocked`), in one
  * transaction. Idempotent: a retried job writes the same result. Re-runnable for one extraction run at any time (the
  * admin action "Belegtreue neu prüfen", ruling M4-H-R3): after late results (`blocked`, reason `late_results`) or a run
- * ended by hand (`run_ended`) it counts and checks what is stored now and finishes or blocks the run accordingly.
+ * ended by hand (`run_ended`) or failed (`run_failed`) it counts and checks what is stored now and finishes or blocks the run accordingly.
  */
 export async function checkExtractionRun(db: Db, extractionRunId: string, config: AppConfig = getConfig()): Promise<QuoteFidelity> {
   return db.transaction(async (tx) => {

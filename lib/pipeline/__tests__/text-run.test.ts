@@ -29,6 +29,7 @@ import {
   sources,
   type GeoObjectType,
 } from "@/lib/db/schema";
+import { activeExtractionRun } from "@/lib/domain/extraction/active-run";
 import { belegtreue } from "@/lib/domain/extraction/fidelity";
 import { newId } from "@/lib/domain/ids";
 import { recordJobOutcome } from "@/lib/domain/runs";
@@ -140,7 +141,7 @@ const noNetwork: Transport = async () => {
  * record their outcome (enqueueing `run.advance` when it finishes the stage), `run.advance` plans the next stage, and
  * `ai.batch.poll` polls the batch (which records the batch unit's outcome). Returns the run's status.
  */
-async function drive(tx: Db, rec: ReturnType<typeof recordingBoss>, model: MockModel, runId: string, now: Date) {
+async function drive(tx: Db, rec: ReturnType<typeof recordingBoss>, model: MockModel, runId: string, now: Date, opts: { failQueue?: string } = {}) {
   const archive = archiveOf.get(tx);
   const deps: BatchDeps = { model, boss: rec.boss, config, now: () => now, reservationScope: { runIds: [runId] } };
   type Job = JobData & { runId: string; stage: string; key: string };
@@ -163,8 +164,10 @@ async function drive(tx: Db, rec: ReturnType<typeof recordingBoss>, model: MockM
       const job = data as Job;
       const run = stageJobs[queue];
       if (!run) throw new Error(`no driver for queue ${queue}`);
-      await run(job);
-      const result = await recordJobOutcome(tx, job.runId, job.stage, job.key, "done");
+      // A job of `failQueue` dead-letters before doing anything (e.g. a transient provider or S3 error).
+      const failed = queue === opts.failQueue;
+      if (!failed) await run(job);
+      const result = await recordJobOutcome(tx, job.runId, job.stage, job.key, failed ? "failed" : "done");
       if (result.nextStage) await enqueueRunAdvance(rec.boss, job.runId, result.nextStage, tx);
     }
   }
@@ -295,6 +298,29 @@ describe("text run", () => {
       // no mention is left pending
       const left = await tx.select().from(mentions).where(and(inArray(mentions.documentVersionId, r.versionIds), eq(mentions.extractionStatus, "pending")));
       expect(left).toEqual([]);
+    }));
+
+  it("a run whose route stage fails completely blocks its unchecked extraction runs; the recheck finishes them", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      const scene = await fixtureScene(tx);
+      const rec = recordingBoss();
+      const { model } = fixtureModel();
+      const { id: runId } = await startTextRun(tx, rec.boss, { documentVersionIds: scene.versionIds, triggeredBy: "test" }, config);
+      expect(await drive(tx, rec, model, runId, now, { failQueue: ROUTE_QUEUE })).toBe("failed");
+      // the check stage never ran: the paid fact extraction is blocked, not left running for ever
+      const ers = await extractionRunsOf(tx, runId);
+      const factsRun = ers.find((e) => e.task === "extract-facts")!;
+      expect(factsRun).toMatchObject({ status: "blocked", blockedReason: "run_failed", quoteCheck: null });
+      expect(ers.every((e) => e.status === "blocked" && e.blockedReason === "run_failed")).toBe(true);
+      const unit = (await tx.select().from(extractionUnits).where(eq(extractionUnits.extractionRunId, factsRun.id)))[0]!;
+      expect(await activeExtractionRun(tx, unit.documentVersionId, unit.geoObjectId, config)).toBeNull();
+      // "Belegtreue neu prüfen" finishes it, as its quotes hold up, and it becomes active
+      expect(await recheckBlockedExtractionRun(tx, factsRun.id, config)).toBe(true);
+      const [after] = await tx.select().from(extractionRuns).where(eq(extractionRuns.id, factsRun.id));
+      expect(after).toMatchObject({ status: "finished", blockedReason: null });
+      expect((await factsOf(tx, [factsRun.id])).length).toBeGreaterThan(0);
+      expect(await activeExtractionRun(tx, unit.documentVersionId, unit.geoObjectId, config)).toEqual({ id: factsRun.id });
     }));
 
   it("reprocess creates a new extraction run and keeps the old facts", () =>

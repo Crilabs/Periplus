@@ -69,7 +69,7 @@ export async function endRunByAdmin(db: Db, boss: PgBoss, runId: string, by: str
   // Its stages never finish now: extraction units still open fail here (ruling M4-G-R3).
   const failedUnits = (await failOpenUnits(db, runId)).length;
   // Nor does its check stage: its unchecked extraction runs are blocked, never left running (ruling M4-H-R3).
-  const blockedExtractionRuns = (await blockUncheckedRuns(db, runId)).length;
+  const blockedExtractionRuns = (await blockUncheckedRuns(db, runId, "run_ended")).length;
   createLogger("runs").info({ runId, by, cancelledJobs, batches, failedUnits, blockedExtractionRuns }, "run ended by admin");
   return { ended: true, cancelledJobs };
 }

@@ -43,10 +43,10 @@ export const extractionPurposeEnum = pgEnum("extraction_purpose", ["regular", "r
 export const extractionRunStatusEnum = pgEnum("extraction_run_status", ["running", "finished", "blocked", "failed"]);
 /**
  * Why an extraction run is `blocked` (ruling M4-H-R3): its quote check found a quote that does not hold up
- * (`quote_fidelity`), results arrived after its check (`late_results`, until the check is run again), or its run was
- * ended by hand before the check (`run_ended`).
+ * (`quote_fidelity`), results arrived after its check (`late_results`, until the check is run again), its run was
+ * ended by hand before the check (`run_ended`), or its run failed before the check (`run_failed`, ruling M4-FIN-R1).
  */
-export const extractionRunBlockReasonEnum = pgEnum("extraction_run_block_reason", ["quote_fidelity", "late_results", "run_ended"]);
+export const extractionRunBlockReasonEnum = pgEnum("extraction_run_block_reason", ["quote_fidelity", "late_results", "run_ended", "run_failed"]);
 export const unitStatusEnum = pgEnum("unit_status", ["pending", "submitted", "done", "failed"]);
 export const mooringKindEnum = pgEnum("mooring_kind", ["anchor", "buoy", "quay", "marina", "unknown"]);
 /**
