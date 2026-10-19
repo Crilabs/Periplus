@@ -90,11 +90,16 @@ export const externalCalls = pgTable(
     runId: uuid("run_id"),
     tileId: text("tile_id"),
     stage: text("stage"),
+    /** Source the call was made for (costs per source); no foreign key, like run_id. */
+    sourceId: uuid("source_id"),
     meta: jsonb("meta").notNull().default({}),
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("external_calls_service_at_idx").on(t.service, t.at)],
+  (t) => [
+    index("external_calls_service_at_idx").on(t.service, t.at),
+    index("external_calls_source_id_at_idx").on(t.sourceId, t.at),
+  ],
 );
 
 export const rateLimits = pgTable("rate_limits", {

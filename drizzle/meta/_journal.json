@@ -113,6 +113,20 @@
       "when": 1792371352685,
       "tag": "0015_roads_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1792383142198,
+      "tag": "0016_sources_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792383148043,
+      "tag": "0017_sources_triggers",
+      "breakpoints": true
     }
   ]
 }
