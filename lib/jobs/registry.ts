@@ -1,3 +1,4 @@
+import { aiBatchPollHandler } from "./handlers/ai-batch";
 import { compareConvertersHandler } from "./handlers/compare";
 import { datasetsImportHandler } from "./handlers/datasets";
 import { discoveryAreaHandler, discoveryProposeHandler, discoveryTileHandler } from "./handlers/discovery";
@@ -30,4 +31,5 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "embed.chunks": embedChunksHandler,
   "sources.wikivoyage": wikivoyageHandler,
   "compare.converters": compareConvertersHandler,
+  "ai.batch.poll": aiBatchPollHandler,
 };

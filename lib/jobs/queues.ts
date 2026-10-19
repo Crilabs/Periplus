@@ -17,11 +17,15 @@ export const QUEUES = [
   "embed.chunks",
   "sources.wikivoyage",
   "compare.converters",
+  "ai.batch.poll",
 ] as const;
 export type QueueName = (typeof QUEUES)[number];
 
 /** Moves a run to its next stage (plans and enqueues it), decoupled from the job that finished the stage. */
 export const RUN_ADVANCE_QUEUE = "run.advance" satisfies QueueName;
+
+/** Polls one provider message batch and hands its results on; not part of a run's stage counts (ruling M4-P2). */
+export const BATCH_POLL_QUEUE = "ai.batch.poll" satisfies QueueName;
 
 /** Receives every job that exhausted its attempts on any queue in QUEUES. */
 export const DEAD_LETTER_QUEUE = "system.dead";

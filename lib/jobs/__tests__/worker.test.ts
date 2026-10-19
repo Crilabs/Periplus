@@ -2,10 +2,10 @@ import { and, eq, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { testDb } from "@/test/db";
-import { reviewTasks } from "@/lib/db/schema";
+import { aiBatches, reviewTasks } from "@/lib/db/schema";
 import { BudgetExceeded } from "@/lib/domain/costs";
 import { newId } from "@/lib/domain/ids";
-import { beginStage, createRun, failRun, getRun, RUN_ENDED_REASON, resumeRun } from "@/lib/domain/runs";
+import { beginStage, createRun, failRun, getRun, recordJobOutcome, RUN_ENDED_REASON, resumeRun } from "@/lib/domain/runs";
 import { createBoss } from "@/lib/jobs/boss";
 import { isQueuePaused, resumeQueue } from "@/lib/jobs/controls";
 import { createLogger } from "@/lib/logger";
@@ -73,6 +73,7 @@ const queueConfig = {
   "embed.chunks": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "sources.wikivoyage": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "compare.converters": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "ai.batch.poll": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   [DEAD_LETTER_QUEUE]: { concurrency: 1, retryLimit: 1, retryDelaySeconds: 0, retryBackoff: false },
 };
 
@@ -582,6 +583,34 @@ describe("worker", () => {
     expect(logged).toHaveLength(2);
     expect(String(logged[0].obj.err)).toContain("review task insert failed");
     expect(probe.workerErrors.some((e) => e.msg === "job failed permanently" && e.obj.jobId === id)).toBe(false);
+  }, 30_000);
+
+  it("a dead-lettered batch poll fails its batch and records the unit as failed", async () => {
+    const { id: runId } = await createRun(db, { kind: "system", scope: scope(), stages: ["batchpoll"], triggeredBy: "test" });
+    // One submit job (done) plus the batch unit it added.
+    await beginStage(db, runId, "batchpoll", 2);
+    await recordJobOutcome(db, runId, "batchpoll", "k", "done");
+    const [batch] = await db
+      .insert(aiBatches)
+      .values({
+        providerBatchId: `mock-${newId()}`,
+        task: "system.echo",
+        model: "claude-haiku-5-5",
+        promptVersion: 1,
+        status: "submitted",
+        runId,
+        stage: "batchpoll",
+        outcomeKey: "batch:k",
+        requestCount: 1,
+      })
+      .returning();
+    // No model client is configured in this process, so every attempt of the poll fails.
+    await boss.send("ai.batch.poll", { key: `poll:${batch!.id}:0`, batchId: batch!.id });
+
+    await waitFor(async () => (await getRun(db, runId))!.status === "finished", 20_000);
+    expect((await getRun(db, runId))!.stages[0]).toMatchObject({ total: 2, done: 1, failed: 1 });
+    const [after] = await db.select().from(aiBatches).where(eq(aiBatches.id, batch!.id));
+    expect(after!.status).toBe("failed");
   }, 30_000);
 
   it("a dead-letter job with a sourceId puts it into the failed_job context", async () => {
