@@ -418,6 +418,7 @@ describe("text configuration", () => {
     });
     expect(cfg.mentions.stopNames).toContain("limani");
     expect(cfg.extraction.quote).toEqual({ minChars: 12, maxChars: 300 });
+    expect(cfg.extraction.routeStop).toEqual({ nameMaxChars: 80, maxBeaufort: 12 });
     expect(cfg.extraction.geocode).toMatchObject({ minDocuments: 2, minSources: 2, radiusKm: 20, ratePerMinute: 60 });
     expect(cfg.extraction.comparison).toEqual({
       units: 200,
@@ -435,6 +436,10 @@ describe("text configuration", () => {
       /mentions\.json/,
     );
     expect(() => loadConfig(fixtureDir({ extraction: { ...cfg.extraction, bogus: 1 } }))).toThrow(/extraction\.json/);
+    const routeStop = (value: unknown) => loadConfig(fixtureDir({ extraction: { ...cfg.extraction, routeStop: value } }));
+    expect(() => routeStop({ nameMaxChars: 80, maxBeaufort: 12, bogus: 1 })).toThrow(/extraction\.json/);
+    expect(() => routeStop({ nameMaxChars: 80 })).toThrow(/extraction\.json/);
+    expect(() => routeStop({ nameMaxChars: 0, maxBeaufort: 12 })).toThrow(/extraction\.json/);
   });
 });
 

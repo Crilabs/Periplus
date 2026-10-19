@@ -41,6 +41,12 @@ export const ambiguousStatusEnum = pgEnum("ambiguous_status", ["pending", "resol
 export const nameCandidateStatusEnum = pgEnum("name_candidate_status", ["collecting", "geocoded", "review", "decided"]);
 export const extractionPurposeEnum = pgEnum("extraction_purpose", ["regular", "reprocess", "comparison"]);
 export const extractionRunStatusEnum = pgEnum("extraction_run_status", ["running", "finished", "blocked", "failed"]);
+/**
+ * Why an extraction run is `blocked` (ruling M4-H-R3): its quote check found a quote that does not hold up
+ * (`quote_fidelity`), results arrived after its check (`late_results`, until the check is run again), or its run was
+ * ended by hand before the check (`run_ended`).
+ */
+export const extractionRunBlockReasonEnum = pgEnum("extraction_run_block_reason", ["quote_fidelity", "late_results", "run_ended"]);
 export const unitStatusEnum = pgEnum("unit_status", ["pending", "submitted", "done", "failed"]);
 export const mooringKindEnum = pgEnum("mooring_kind", ["anchor", "buoy", "quay", "marina", "unknown"]);
 /**
@@ -64,6 +70,7 @@ export type AmbiguousStatus = (typeof ambiguousStatusEnum.enumValues)[number];
 export type NameCandidateStatus = (typeof nameCandidateStatusEnum.enumValues)[number];
 export type ExtractionPurpose = (typeof extractionPurposeEnum.enumValues)[number];
 export type ExtractionRunStatus = (typeof extractionRunStatusEnum.enumValues)[number];
+export type ExtractionRunBlockReason = (typeof extractionRunBlockReasonEnum.enumValues)[number];
 export type UnitStatus = (typeof unitStatusEnum.enumValues)[number];
 export type MooringKind = (typeof mooringKindEnum.enumValues)[number];
 export type BatchStatus = (typeof batchStatusEnum.enumValues)[number];
@@ -198,12 +205,17 @@ export const extractionRuns = pgTable(
       .notNull()
       .references(() => runs.id),
     status: extractionRunStatusEnum("status").notNull().default("running"),
+    /** Set exactly when `status` is `blocked`. */
+    blockedReason: extractionRunBlockReasonEnum("blocked_reason"),
     stats: jsonb("stats").notNull().default({}),
     quoteCheck: jsonb("quote_check"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
   },
-  (t) => [uniqueIndex("extraction_runs_run_task_model_unique").on(t.runId, t.task, t.model)],
+  (t) => [
+    uniqueIndex("extraction_runs_run_task_model_unique").on(t.runId, t.task, t.model),
+    check("extraction_runs_blocked_reason", sql`(${t.status} = 'blocked') = (${t.blockedReason} is not null)`),
+  ],
 );
 
 /** Working state: one model request of an extraction run, (document version, geo object, part). */

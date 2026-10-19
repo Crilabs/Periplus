@@ -8,6 +8,7 @@ import { effectiveVersionMeta, plausibleDate } from "@/lib/domain/mentions/class
 import { findNameHits, nameFormsOf } from "@/lib/domain/mentions/match";
 import { nameForms } from "@/lib/domain/mentions/ngrams";
 import { locateQuote } from "./quote";
+import { blockLateResults } from "./run-status";
 
 /*
  * Routes of trip reports (spec 06): the stops of a voyage in order, each with a verbatim quote that the quote check
@@ -17,9 +18,6 @@ import { locateQuote } from "./quote";
  * stops are append-only: one route per version and extraction run.
  */
 
-/** Longest stop name (as for proper names in the fact schema). */
-const MAX_STOP_NAME = 80;
-const MAX_BEAUFORT = 12;
 /** A Markdown heading of level 1 to 3 at a line start. */
 const HEADING = /^#{1,3}[ \t]+\S/gm;
 
@@ -132,7 +130,7 @@ function storedLeg(leg: RouteLeg | null, versionChunks: VersionChunk[], cfg: App
     distance_nm: nonNegative(leg.distance_nm),
     duration_h: nonNegative(leg.duration_h),
     wind_direction: leg.wind_direction !== null && (SECTORS as readonly string[]).includes(leg.wind_direction) ? leg.wind_direction : null,
-    wind_beaufort: beaufort !== null && Number.isInteger(beaufort) && beaufort >= 0 && beaufort <= MAX_BEAUFORT ? beaufort : null,
+    wind_beaufort: beaufort !== null && Number.isInteger(beaufort) && beaufort >= 0 && beaufort <= cfg.extraction.routeStop.maxBeaufort ? beaufort : null,
     quote: leg.quote,
     quote_chunk_id: chunk.id,
   };
@@ -160,7 +158,7 @@ export async function storeRoute(db: Db, input: StoreRouteInput, cfg: AppConfig)
     const considered = section.stops.slice(0, cfg.extraction.routeMaxStops);
     dropped += section.stops.length - considered.length;
     for (const stop of considered) {
-      const chunk = stop.name.trim().length > 0 && stop.name.length <= MAX_STOP_NAME ? locateInVersion(stop.quote, versionChunks, cfg.extraction.quote) : null;
+      const chunk = stop.name.trim().length > 0 && stop.name.length <= cfg.extraction.routeStop.nameMaxChars ? locateInVersion(stop.quote, versionChunks, cfg.extraction.quote) : null;
       if (!chunk) {
         dropped++;
         continue;
@@ -194,6 +192,8 @@ export async function storeRoute(db: Db, input: StoreRouteInput, cfg: AppConfig)
     });
   }
   await db.insert(routeStops).values(rows);
+  // A route stored after the extraction run's check blocks the run until the check runs again (ruling M4-H-R3).
+  await blockLateResults(db, input.extractionRunId);
   return { stops: rows.length, dropped, assigned: rows.filter((r) => r.geoObjectId !== null).length };
 }
 

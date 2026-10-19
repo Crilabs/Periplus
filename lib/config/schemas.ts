@@ -575,6 +575,8 @@ export const extractionSchema = z.strictObject({
   routeSectionWords: positiveInt,
   /** At most this many stops of a route section are looked at (the prompt says so too). */
   routeMaxStops: positiveInt,
+  /** Limits of a route stop, enforced when it is stored and stated in the prompt: name length, top of the Beaufort scale. */
+  routeStop: z.strictObject({ nameMaxChars: positiveInt, maxBeaufort: positiveInt }),
   /** A highlight POI matches a gazetteer POI within this distance. */
   poiMatchRadiusM: meters,
   poiSimilarity: share,

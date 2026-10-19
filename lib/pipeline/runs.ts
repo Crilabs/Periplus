@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import type { Db } from "@/lib/db/client";
 import { runs } from "@/lib/db/schema";
+import { blockUncheckedRuns } from "@/lib/domain/extraction/run-status";
 import { failOpenUnits } from "@/lib/domain/extraction/unit-status";
 import { beginStage, createRun, endRun } from "@/lib/domain/runs";
 import { STAGES } from "@/lib/jobs/stages";
@@ -57,7 +58,8 @@ export async function enqueueStage(db: Db, boss: PgBoss, runId: string, stageNam
 /**
  * "Lauf beenden": ends a queued or running run by hand (`endRun`, recording who and when), cancels its jobs that
  * have not started and, after that commit, ends its message batches (`endRunBatches`: unsent ones fail, running ones
- * are cancelled at the provider by their next poll and booked) and fails its extraction units that are still open.
+ * are cancelled at the provider by their next poll and booked), fails its extraction units that are still open and
+ * blocks its extraction runs not checked yet (reason `run_ended`).
  * Returns whether the run was active; for a run that has ended already nothing happens.
  */
 export async function endRunByAdmin(db: Db, boss: PgBoss, runId: string, by: string): Promise<{ ended: boolean; cancelledJobs: number }> {
@@ -66,6 +68,8 @@ export async function endRunByAdmin(db: Db, boss: PgBoss, runId: string, by: str
   const batches = await endRunBatches(db, boss, runId);
   // Its stages never finish now: extraction units still open fail here (ruling M4-G-R3).
   const failedUnits = (await failOpenUnits(db, runId)).length;
-  createLogger("runs").info({ runId, by, cancelledJobs, batches, failedUnits }, "run ended by admin");
+  // Nor does its check stage: its unchecked extraction runs are blocked, never left running (ruling M4-H-R3).
+  const blockedExtractionRuns = (await blockUncheckedRuns(db, runId)).length;
+  createLogger("runs").info({ runId, by, cancelledJobs, batches, failedUnits, blockedExtractionRuns }, "run ended by admin");
   return { ended: true, cancelledJobs };
 }

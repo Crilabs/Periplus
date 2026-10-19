@@ -10,7 +10,7 @@ import { MockBatchError, MockModel } from "@/lib/ai/mock";
 import { extractRouteTask, type ExtractRouteInput, type ExtractRouteOutput } from "@/lib/ai/tasks/extract-route";
 import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { aiBatches, documentVersions, extractionRuns, mentions, routes, routeStops } from "@/lib/db/schema";
+import { aiBatches, aiBatchItems, documentVersions, extractionRuns, mentions, routes, routeStops } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { beginStage, createRun } from "@/lib/domain/runs";
 import { tileIdFor } from "@/lib/domain/tiles";
@@ -140,6 +140,8 @@ describe("stage extraction.route", () => {
         [1, 2, "2026-10-19", 60, "# Day 1"],
         [2, 2, "2026-10-19", 60, "# Day 2"],
       ]);
+      // the limits of the prompt come from the config
+      expect(seen[0]).toMatchObject({ quoteMinChars: 12, quoteMaxChars: 300, stopNameMaxChars: 80, maxBeaufort: 12 });
       const stops = await tx
         .select({ ordinal: routeStops.ordinal, name: routeStops.name, geoObjectId: routeStops.geoObjectId })
         .from(routeStops)
@@ -189,11 +191,88 @@ describe("stage extraction.route", () => {
         quoteCheck: { facts: 0, ratio: 1 },
       });
     }));
-  it("the prompt states the rules and the configured stop limit and carries the section", () => {
-    const input: ExtractRouteInput = { section: 2, sections: 3, observedAt: "2024-05-15", maxStops: 7, text: "## Day 2\n\nWe anchored in Kolona." };
+  it("sections never sent and reports never sent count as failed in the run's stats", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      const s = await scene(tx);
+      // a second trip report whose archived Markdown is missing: none of its sections can be sent
+      const missing = await insertTestVersion(tx, CHUNKS);
+      const params = { documentVersionIds: [s.report.versionId, missing.versionId] };
+      const { id: runId } = await createRun(tx, { kind: "stage", scope: { type: "system", id: `route-test-${newId()}` }, stages: [ROUTE_STAGE], params, triggeredBy: "test" });
+      const model = new MockModel({ "extract-route": (input) => ANSWERS[(input as ExtractRouteInput).section]! });
+      const jobs = await planRoutes(tx, { id: runId, params }, config);
+      await beginStage(tx, runId, ROUTE_STAGE, jobs.length);
+      // one request per batch: the report's second section goes to a follow-on job that never runs
+      const oneEach: AppConfig = { ...config, models: { ...config.models, batch: { ...config.models.batch, maxRequests: 1 } } };
+      const deps = { model, boss: recordingBoss().boss, archive: s.archive, config: oneEach, now: () => now, reservationScope: { runIds: [runId] } };
+      expect(await extractRoutes(tx, deps, asJob(runId, jobs[0]!))).toMatchObject({ submitted: 1, remainder: 1 });
+      const [batch] = await tx.select().from(aiBatches).where(eq(aiBatches.runId, runId));
+      await pollBatch(tx, { ...deps, handlers: HANDLERS }, batch!.id);
+      const [run] = await tx.select().from(extractionRuns).where(eq(extractionRuns.runId, runId));
+      await checkExtractionRun(tx, run!.id, config);
+      const [checked] = await tx.select().from(extractionRuns).where(eq(extractionRuns.id, run!.id));
+      expect(checked!.stats).toMatchObject({ versions: 2, sections: 2, sectionsFailed: 1, versionsNotSent: 1, routes: 0, versionsWithoutRoute: 2 });
+    }));
+
+  it("of two answers to a section the latest by creation counts, not the higher id", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx);
+      await planRoutes(tx, { id: s.runId, params: s.params }, config);
+      const [run] = await tx.select().from(extractionRuns).where(eq(extractionRuns.runId, s.runId));
+      const subjectId = `${s.report.versionId}:1`;
+      const input: ExtractRouteInput = { section: 1, sections: 1, observedAt: "2026-10-19", maxStops: 60, quoteMinChars: 12, quoteMaxChars: 300, stopNameMaxChars: 80, maxBeaufort: 12, text: CHUNKS.join("\n\n") };
+      const answer = async (id: string, createdAt: Date, output: ExtractRouteOutput) => {
+        const [batch] = await tx
+          .insert(aiBatches)
+          .values({ task: "extract-route", model: run!.model, promptVersion: 1, status: "distributed", runId: s.runId, stage: ROUTE_STAGE, outcomeKey: `route:${id}`, requestCount: 1 })
+          .returning();
+        await tx.insert(aiBatchItems).values({ id, batchId: batch!.id, subjectType: "route_section", subjectId, input, status: "succeeded", output, createdAt });
+        return batch!;
+      };
+      // the older answer has the higher uuid
+      await answer("ffffffff-ffff-4fff-8fff-ffffffffffff", new Date("2026-10-19T08:00:00Z"), ANSWERS[1]!);
+      const newer = await answer("00000000-0000-4000-8000-000000000001", new Date("2026-10-19T09:00:00Z"), ANSWERS[2]!);
+      await routeSectionBatchEntry.handle(
+        tx,
+        {
+          id: "00000000-0000-4000-8000-000000000001",
+          subjectType: "route_section",
+          subjectId,
+          input,
+          output: ANSWERS[2],
+          usage: { inputTokens: 0, outputTokens: 0 },
+          costEur: 0,
+          batch: { id: newer.id, model: newer.model, promptVersion: newer.promptVersion, runId: s.runId, stage: ROUTE_STAGE },
+        },
+        { config },
+      );
+      const stops = await tx
+        .select({ name: routeStops.name })
+        .from(routeStops)
+        .innerJoin(routes, eq(routes.id, routeStops.routeId))
+        .where(eq(routes.extractionRunId, run!.id));
+      expect(stops).toEqual([{ name: "Vathy" }]);
+    }));
+
+  it("the prompt states the rules and the configured limits and carries the section", () => {
+    const input: ExtractRouteInput = {
+      section: 2,
+      sections: 3,
+      observedAt: "2024-05-15",
+      maxStops: 7,
+      quoteMinChars: 11,
+      quoteMaxChars: 299,
+      stopNameMaxChars: 79,
+      maxBeaufort: 13,
+      text: "## Day 2\n\nWe anchored in Kolona.",
+    };
     const params = buildParams(extractRouteTask, input, config.models.tasks["extract-route"]!, "claude-sonnet-5-5");
     const system = JSON.stringify(params.system);
     expect(system).toContain("At most 7 stops.");
+    expect(system).toContain("at least 11 and at most 299 characters");
+    expect(system).toContain("at most 79 characters");
+    expect(system).toContain("Beaufort (0 to 13)");
+    expect(system).not.toContain("{{");
     expect(system).toContain("anchor, buoy, quay, marina, unknown");
     expect(system).toContain("N, NE, E, SE, S, SW, W, NW");
     expect(system).toContain("verbatim quote");

@@ -11,6 +11,7 @@ import { findNameHits, type MatchHit, type NameForm } from "@/lib/domain/mention
 import { nameForms } from "@/lib/domain/mentions/ngrams";
 import { tileIdFor } from "@/lib/domain/tiles";
 import { locateQuote, normalizeForQuote } from "./quote";
+import { blockLateResults } from "./run-status";
 import { restoreUnitMentions } from "./unit-status";
 
 /*
@@ -404,7 +405,8 @@ async function objectTile(db: Db, geoObjectId: string): Promise<string | null> {
 /**
  * Marks a unit done with its counters and the tokens and cost billed for it (ruling M4-P9: every attempt, M4-G-R3),
  * in the transaction that stored its facts; a unit already done keeps its first result. A unit that had failed before
- * (completed by a revived batch) turns its mentions back to `done`. Returns whether it was marked.
+ * (completed by a revived batch) turns its mentions back to `done`; one completed after the extraction run's check blocks
+ * the run (`late_results`, ruling M4-H-R3). Returns whether it was marked.
  */
 export async function completeUnit(
   db: Db,
@@ -424,7 +426,9 @@ export async function completeUnit(
       updatedAt: sql`now()`,
     })
     .where(sql`${extractionUnits.id} = ${unitId} and ${extractionUnits.status} <> 'done'`)
-    .returning({ id: extractionUnits.id });
-  if (rows.length > 0) await restoreUnitMentions(db, unitId);
-  return rows.length > 0;
+    .returning({ id: extractionUnits.id, extractionRunId: extractionUnits.extractionRunId });
+  if (rows.length === 0) return false;
+  await restoreUnitMentions(db, unitId);
+  await blockLateResults(db, rows[0]!.extractionRunId);
+  return true;
 }

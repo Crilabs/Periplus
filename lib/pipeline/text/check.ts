@@ -33,7 +33,9 @@ export async function planCheck(db: Db, run: { id: string; params: Record<string
 
 /**
  * Writes the extraction run's counters and records its quote check (status `finished` or `blocked`), in one
- * transaction. Idempotent: a retried job writes the same result.
+ * transaction. Idempotent: a retried job writes the same result. Re-runnable for one extraction run at any time (the
+ * admin action "Belegtreue neu prüfen", ruling M4-H-R3): after late results (`blocked`, reason `late_results`) or a run
+ * ended by hand (`run_ended`) it counts and checks what is stored now and finishes or blocks the run accordingly.
  */
 export async function checkExtractionRun(db: Db, extractionRunId: string, config: AppConfig = getConfig()): Promise<QuoteFidelity> {
   return db.transaction(async (tx) => {
@@ -44,7 +46,7 @@ export async function checkExtractionRun(db: Db, extractionRunId: string, config
     const fidelity = await checkQuoteFidelity(tx, extractionRunId, config);
     const log = getLog();
     const entry = { extractionRunId, task: run.task, facts: fidelity.facts, verified: fidelity.verified, ratio: fidelity.ratio };
-    if (fidelity.ratio < 1) log.warn({ ...entry, first: fidelity.failures[0] }, "extraction run blocked: Belegtreue below 100 %");
+    if (fidelity.failures.length > 0) log.warn({ ...entry, first: fidelity.failures[0] }, "extraction run blocked: Belegtreue below 100 %");
     else log.info(entry, "extraction run finished");
     return fidelity;
   });

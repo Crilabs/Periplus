@@ -10,7 +10,7 @@ import { locateQuote } from "./quote";
  * trust it: every text fact of an extraction run is checked again against the text of its quote chunk, and the span
  * the quote check finds must be the stored span. Route stops (and the quote of their leg) are checked the same way
  * against their chunk. The result goes to `extraction_runs.quote_check`; a run below 100 % is `blocked` and never the
- * active run of a version (`activeExtractionRun`), so M5 never consolidates its facts.
+ * active run of a (version, geo object) (`activeExtractionRun`), so M5 never consolidates its facts.
  */
 
 export type FidelityFailure = {
@@ -35,14 +35,25 @@ function quoteFailure(item: Located, cfg: AppConfig["extraction"]["quote"]): str
   return null;
 }
 
-const shareOf = (verified: number, total: number) => (total === 0 ? 1 : Number((verified / total).toFixed(6)));
+/** The verified share, rounded to 6 places for display (1 without any item); never the basis of the run's status. */
+export const fidelityShare = (verified: number, total: number) => (total === 0 ? 1 : Number((verified / total).toFixed(6)));
+
+/**
+ * The status a quote check gives its extraction run: `blocked` (reason `quote_fidelity`) on any failure, else
+ * `finished`. Decided on the failures, not on the rounded share: one failure among millions rounds to 1 (ruling M4-H-R3).
+ */
+export function fidelityOutcome(result: Pick<QuoteFidelity, "failures">): { status: "finished" | "blocked"; blockedReason: "quote_fidelity" | null } {
+  return result.failures.length > 0 ? { status: "blocked", blockedReason: "quote_fidelity" } : { status: "finished", blockedReason: null };
+}
 
 type StoredLeg = { quote?: unknown; quote_chunk_id?: unknown } | null;
 
 /**
  * Checks every text fact and route stop of the extraction run again (whatever its stored flag says) and records the
- * result: `quote_check`, status `blocked` when the share is below 1, else `finished`, and `finished_at`. Idempotent:
- * a repeated check writes the same result.
+ * result: `quote_check`, status `blocked` (reason `quote_fidelity`) when any item fails, else `finished`, and
+ * `finished_at`. The status follows the failures, not the rounded share, so one failure among millions still blocks
+ * (ruling M4-H-R3). Idempotent and re-runnable: a repeated check writes the result for what is stored now, so it also
+ * lifts a `late_results` or `run_ended` block once every quote holds up.
  */
 export async function checkQuoteFidelity(db: Db, extractionRunId: string, cfg: AppConfig): Promise<QuoteFidelity> {
   const quoteCfg = cfg.extraction.quote;
@@ -95,10 +106,10 @@ export async function checkQuoteFidelity(db: Db, extractionRunId: string, cfg: A
   }
 
   const verified = total - failures.length;
-  const result: QuoteFidelity = { facts: total, verified, ratio: shareOf(verified, total), failures };
+  const result: QuoteFidelity = { facts: total, verified, ratio: fidelityShare(verified, total), failures };
   await db
     .update(extractionRuns)
-    .set({ quoteCheck: result, status: result.ratio < 1 ? "blocked" : "finished", finishedAt: sql`now()` })
+    .set({ quoteCheck: result, ...fidelityOutcome(result), finishedAt: sql`now()` })
     .where(eq(extractionRuns.id, extractionRunId));
   return result;
 }
@@ -123,5 +134,5 @@ export async function belegtreue(db: Db, runId: string): Promise<{ facts: number
   `);
   const facts = Number(rows[0]!.facts);
   const verified = Number(rows[0]!.verified);
-  return { facts, verified, ratio: shareOf(verified, facts) };
+  return { facts, verified, ratio: fidelityShare(verified, facts) };
 }

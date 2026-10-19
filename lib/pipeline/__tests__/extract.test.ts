@@ -28,6 +28,7 @@ import {
 } from "@/lib/pipeline/text/extract";
 import { matchVersion } from "@/lib/pipeline/text/mentions";
 import { endRunByAdmin } from "@/lib/pipeline/runs";
+import { checkExtractionRun } from "@/lib/pipeline/text/check";
 
 /*
  * Stage extraction.mention end to end inside withRollback: plan → job (message batch via MockModel) → poll (handler).
@@ -521,6 +522,10 @@ describe("stage extraction.mention", () => {
       expect(units.map((u) => u.status)).toEqual(["failed"]);
       const kolona = s.mentions.filter((m) => m.geoObjectId === s.kolona).map((m) => m.id);
       expect(await statusOf(tx, kolona)).toEqual(["failed", "failed", "failed"]);
+      // its check stage never runs: the unchecked extraction run is blocked, not left running (ruling M4-H-R3)
+      const [extractionRun] = await tx.select().from(extractionRuns).where(eq(extractionRuns.id, job!.extractionRunId as string));
+      expect(extractionRun).toMatchObject({ status: "blocked", blockedReason: "run_ended", quoteCheck: null });
+      expect(extractionRun!.finishedAt).toBeInstanceOf(Date);
     }));
 
   it("a dead-lettered poll fails its units; a manual retry still completes them", () =>
@@ -542,10 +547,19 @@ describe("stage extraction.mention", () => {
       expect(await failBatchUnit(tx, boss, batch!.id, HANDLERS)).toBe(true);
       expect(await unitStatus()).toBe("failed");
       expect(await statusOf(tx, kolona)).toEqual(["failed", "failed", "failed"]);
+      // the check stage finishes the extraction run without the unit
+      const extractionRunId = job!.extractionRunId as string;
+      const extractionRun = async () => (await tx.select().from(extractionRuns).where(eq(extractionRuns.id, extractionRunId)))[0]!;
+      expect(await checkExtractionRun(tx, extractionRunId, config)).toMatchObject({ facts: 0, ratio: 1 });
+      expect(await extractionRun()).toMatchObject({ status: "finished", blockedReason: null, stats: { done: 0, failed: 1 } });
       // a manual retry of the poll revives the batch and distributes it: the unit and its mentions are done after all
       expect(await pollBatch(tx, { ...deps, handlers: HANDLERS }, batch!.id)).toBe("distributed");
       expect(await unitStatus()).toBe("done");
       expect(await statusOf(tx, kolona)).toEqual(["done", "done", "done"]);
+      // results after the check: the run is blocked until the check runs again (ruling M4-H-R3)
+      expect(await extractionRun()).toMatchObject({ status: "blocked", blockedReason: "late_results", stats: { done: 0, failed: 1 } });
+      expect(await checkExtractionRun(tx, extractionRunId, config)).toMatchObject({ facts: 1, verified: 1, ratio: 1 });
+      expect(await extractionRun()).toMatchObject({ status: "finished", blockedReason: null, stats: { done: 1, failed: 0, facts: 1 } });
     }));
 
   it("units still open when the stage finishes fail with their mentions", () =>

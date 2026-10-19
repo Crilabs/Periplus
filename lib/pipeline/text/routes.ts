@@ -5,7 +5,7 @@ import { extractRouteTask, type ExtractRouteInput, type ExtractRouteOutput } fro
 import type { ModelTask } from "@/lib/ai/types";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { documentVersions, extractionRuns } from "@/lib/db/schema";
+import { documentVersions, extractionRuns, runs } from "@/lib/db/schema";
 import { routeSections, storeRoute } from "@/lib/domain/extraction/routes";
 import { effectiveVersionMeta } from "@/lib/domain/mentions/classification";
 import { jsonUuids } from "@/lib/domain/mentions/scope";
@@ -22,7 +22,8 @@ import { frozenRunVersions, textRunParamsSchema } from "./versions";
  * (`routeSections`: whole up to `routeSectionWords` words, else cut at headings), one batch item per section
  * (`subjectId` `<versionId>:<section>`, from 1). The batch handler stores the route once every section of its version
  * has an answer, wherever its items ended up (a section the budget pushed into a follow-on batch counts as well). A
- * section that fails for good leaves its version without a route; the run's stats say so (`routeRunStats`).
+ * section that fails for good or is never sent leaves its version without a route; the run's stats say so
+ * (`routeRunStats`).
  */
 
 export const ROUTE_STAGE = "extraction.route";
@@ -55,6 +56,15 @@ async function versionsWithRoute(db: Db, extractionRunId: string, versionIds: st
   return new Set(rows.map((r) => r.id));
 }
 
+/** The versions of the run's frozen set whose effective document type is `trip_report`, in the set's order. */
+async function tripReports(db: Db, params: Record<string, unknown>): Promise<string[]> {
+  const reports: string[] = [];
+  for (const versionId of await frozenRunVersions(db, params)) {
+    if ((await effectiveVersionMeta(db, versionId)).docType === "trip_report") reports.push(versionId);
+  }
+  return reports;
+}
+
 /**
  * Plan, from the run's frozen version set (ruling M4-E-R2): its versions of effective type `trip_report` without a
  * route in the run's `extract-route` extraction run (created here, with the configured model, when there is work or
@@ -66,10 +76,7 @@ export async function planRoutes(
   config: AppConfig = getConfig(),
 ): Promise<JobData[]> {
   const params = textRunParamsSchema.parse(run.params);
-  const reports: string[] = [];
-  for (const versionId of await frozenRunVersions(db, run.params)) {
-    if ((await effectiveVersionMeta(db, versionId)).docType === "trip_report") reports.push(versionId);
-  }
+  const reports = await tripReports(db, run.params);
   const [existing] = await db
     .select({ id: extractionRuns.id })
     .from(extractionRuns)
@@ -155,6 +162,10 @@ export async function extractRoutes(db: Db, deps: RouteDeps, job: RouteJob): Pro
           sections: parts.length,
           observedAt: observedAt.get(versionId)!,
           maxStops: config.extraction.routeMaxStops,
+          quoteMinChars: config.extraction.quote.minChars,
+          quoteMaxChars: config.extraction.quote.maxChars,
+          stopNameMaxChars: config.extraction.routeStop.nameMaxChars,
+          maxBeaufort: config.extraction.routeStop.maxBeaufort,
           text: parts[section - 1]!,
         };
         return { subjectType: SUBJECT, subjectId: id, input };
@@ -165,7 +176,8 @@ export async function extractRoutes(db: Db, deps: RouteDeps, job: RouteJob): Pro
 
 /**
  * Batch handler of `extract-route`: when every section of the item's version has an answer (succeeded items of this
- * run, stage and model, in any batch), the route is stored from them in section order (`storeRoute`, idempotent), in
+ * run, stage and model, in any batch; of several answers to a section the latest, by creation and attempt), the route
+ * is stored from them in section order (`storeRoute`, idempotent), in
  * the distribution transaction; before that it waits. An answer that does not fit the output schema leaves the
  * version without a route (logged; the same answer would fail again).
  */
@@ -179,7 +191,7 @@ export const routeSectionBatchEntry: BatchHandlerEntry = {
       from ai_batch_items i join ai_batches b on b.id = i.batch_id
       where b.run_id = ${item.batch.runId} and b.stage = ${item.batch.stage} and b.model = ${item.batch.model}
         and i.subject_type = ${SUBJECT} and i.status = 'succeeded' and i.subject_id like ${`${versionId}:%`}
-      order by i.subject_id, i.id desc
+      order by i.subject_id, i.created_at desc, i.attempt desc, i.id desc
     `);
     if (rows.length < total) return;
     const outputs: ExtractRouteOutput[] = [];
@@ -202,13 +214,16 @@ export const routeSectionBatchEntry: BatchHandlerEntry = {
 };
 
 export type RouteRunStats = {
-  /** Trip report versions sent (at least one section). */
+  /** Trip report versions of the run (its frozen version set), sent or not. */
   versions: number;
+  /** Sections of the versions sent, by the section count each was cut into (also those of its sections never sent). */
   sections: number;
-  /** Sections without an answer (failed for good, or never sent): their version gets no route. */
+  /** Of these, the sections without an answer (failed for good, or never sent): their version gets no route. */
   sectionsFailed: number;
+  /** Trip report versions of which no section was sent (archived Markdown missing, stage closed first). */
+  versionsNotSent: number;
   routes: number;
-  /** Versions sent without a stored route (a failed section, or no verifiable stop). */
+  /** Versions without a stored route (not sent, a failed section, or no verifiable stop). */
   versionsWithoutRoute: number;
   stops: number;
   assigned: number;
@@ -220,33 +235,37 @@ export type RouteRunStats = {
 /** The counters of an `extract-route` extraction run, written to `extraction_runs.stats`. */
 export async function routeRunStats(db: Db, extractionRunId: string): Promise<RouteRunStats> {
   const [run] = await db
-    .select({ runId: extractionRuns.runId, model: extractionRuns.model })
+    .select({ runId: extractionRuns.runId, model: extractionRuns.model, params: runs.params })
     .from(extractionRuns)
+    .innerJoin(runs, eq(runs.id, extractionRuns.runId))
     .where(eq(extractionRuns.id, extractionRunId));
   if (!run) throw new Error(`extraction run ${extractionRunId} does not exist`);
+  const reports = await tripReports(db, (run.params ?? {}) as Record<string, unknown>);
   const { rows } = await db.execute<{
-    versions: number;
+    sent_versions: string[];
     sections: number;
     sections_failed: number;
     proposed: number;
     cost_eur: number;
   }>(sql`
     with items as (
-      select i.subject_id, i.status, i.output, i.cost_eur, i.input, split_part(i.subject_id, ':', 1) as version_id
+      select i.subject_id, i.status, i.output, i.cost_eur, i.input, i.created_at, i.attempt, i.id,
+        split_part(i.subject_id, ':', 1) as version_id
       from ai_batch_items i join ai_batches b on b.id = i.batch_id
       where b.run_id = ${run.runId} and b.stage = ${ROUTE_STAGE} and b.model = ${run.model} and i.subject_type = ${SUBJECT}
     ),
     answered as (
-      select distinct on (subject_id) subject_id, version_id, output from items where status = 'succeeded' order by subject_id
+      select distinct on (subject_id) subject_id, version_id, output from items where status = 'succeeded'
+      order by subject_id, created_at desc, attempt desc, id desc
     ),
+    totals as (select version_id, max((input ->> 'sections')::int) as total from items group by version_id),
     complete as (
-      select v.version_id from (select distinct version_id, (input ->> 'sections')::int as total from items) v
-      where (select count(*) from answered a where a.version_id = v.version_id) >= v.total
+      select t.version_id from totals t where (select count(*) from answered a where a.version_id = t.version_id) >= t.total
     )
     select
-      (select count(distinct version_id) from items)::int as versions,
-      (select count(distinct subject_id) from items)::int as sections,
-      ((select count(distinct subject_id) from items) - (select count(*) from answered))::int as sections_failed,
+      coalesce((select array_agg(version_id) from totals), '{}') as sent_versions,
+      (select coalesce(sum(total), 0) from totals)::int as sections,
+      ((select coalesce(sum(total), 0) from totals) - (select count(*) from answered))::int as sections_failed,
       (select coalesce(sum(jsonb_array_length(coalesce(a.output -> 'stops', '[]'::jsonb))), 0) from answered a
         where a.version_id in (select version_id from complete))::int as proposed,
       (select coalesce(sum(cost_eur), 0) from items)::float8 as cost_eur
@@ -258,12 +277,15 @@ export async function routeRunStats(db: Db, extractionRunId: string): Promise<Ro
   `);
   const r = rows[0]!;
   const st = stored[0]!;
+  const sent = new Set(r.sent_versions);
+  const versions = new Set([...reports, ...sent]).size;
   const stats: RouteRunStats = {
-    versions: Number(r.versions),
+    versions,
     sections: Number(r.sections),
     sectionsFailed: Number(r.sections_failed),
+    versionsNotSent: reports.filter((id) => !sent.has(id)).length,
     routes: Number(st.routes),
-    versionsWithoutRoute: Number(r.versions) - Number(st.routes),
+    versionsWithoutRoute: versions - Number(st.routes),
     stops: Number(st.stops),
     assigned: Number(st.assigned),
     droppedStops: Math.max(0, Number(r.proposed) - Number(st.stops)),

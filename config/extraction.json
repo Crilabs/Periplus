@@ -6,6 +6,7 @@
   "classifyWords": 1500,
   "routeSectionWords": 20000,
   "routeMaxStops": 60,
+  "routeStop": { "nameMaxChars": 80, "maxBeaufort": 12 },
   "poiMatchRadiusM": 2000,
   "poiSimilarity": 0.75,
   "geocode": {
