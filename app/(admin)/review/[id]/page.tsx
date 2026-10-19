@@ -2,19 +2,26 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
+import type { ProposalRobots } from "@/lib/domain/discovery/proposals";
 import { detailFeatures, nextTaskHref, reviewTaskDetail, type GeoObjectView } from "@/lib/domain/review-view";
 import { QUEUES } from "@/lib/jobs/queues";
 import { requireAdmin } from "@/lib/security/require-admin";
+import { CrawlRulesFields } from "../../_components/crawl-rules-fields";
 import { DecisionKeys } from "../../_components/decision-keys";
 import {
+  CHANGE_RATE_LABELS,
+  CRAWL_RULE_LABELS,
+  DOC_TYPE_LABELS,
   GEO_OBJECT_TYPE_LABELS,
   GEO_ORIGIN_LABELS,
   NAME_ORIGIN_LABELS,
   PLACE_KIND_LABELS,
   PLACE_STATUS_LABELS,
   REVIEW_KIND_LABELS,
+  SOURCE_STATUS_LABELS,
 } from "../../_components/labels";
 import { MiniMap } from "../../_components/mini-map";
+import { approveSourceAction } from "./actions";
 import { DecisionForm } from "./decision-form";
 import { PlaceConfirm } from "./place-confirm";
 
@@ -22,6 +29,28 @@ const distance = (m: number) =>
   m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toLocaleString("de-DE", { maximumFractionDigits: 1 })} km`;
 const coord = (lat: number, lon: number) => `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
 const SELECT = "max-w-full rounded border border-neutral-300 px-1 py-0.5";
+
+/** Labels of the fields `approveSourceAction` names in `?invalid=`. */
+const APPROVAL_FIELD_LABELS: Record<string, string> = {
+  type: "Typ",
+  weight: "Gewicht",
+  changeRate: "Änderungsrate",
+  ...CRAWL_RULE_LABELS,
+};
+
+function robotsText(robots: ProposalRobots | null): string {
+  if (!robots) return "–";
+  if (robots.status === "unavailable") return "Nicht lesbar (wird beim Crawl erneut gelesen)";
+  if (robots.status === "allow_all") return "Keine robots.txt – alles erlaubt";
+  return [
+    robots.disallowAll ? "Crawlen der Website verboten" : "Crawlen erlaubt",
+    robots.blockedStartUrls.length > 0 && `gesperrte Start-URLs: ${robots.blockedStartUrls.join(", ")}`,
+    robots.crawlDelaySec !== null && `Crawl-Delay ${robots.crawlDelaySec} s`,
+    `${robots.sitemaps} Sitemap${robots.sitemaps === 1 ? "" : "s"}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
 
 function ObjectFacts({ o }: { o: GeoObjectView }) {
   return (
@@ -65,6 +94,7 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
   const openedAt = new Date().toISOString();
   const features = detailFeatures(detail);
   const props = { taskId: task.id, openedAt };
+  const invalid = typeof query.invalid === "string" ? query.invalid.split(",") : [];
 
   return (
     <div className="space-y-4 text-sm">
@@ -81,6 +111,7 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
       <h1 className="text-lg font-semibold">
         {REVIEW_KIND_LABELS[task.kind]}
         {subject.type === "place" && subject.geoObject.names[0] ? `: ${subject.geoObject.names[0].name}` : ""}
+        {subject.type === "source" ? `: ${subject.source.domain}` : ""}
       </h1>
       {(!open || query.stale) && (
         <p role="status" className="rounded bg-amber-100 px-3 py-2">
@@ -90,6 +121,12 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
       {query.error && open && (
         <p role="alert" className="rounded bg-red-100 px-3 py-2">
           Diese Entscheidung ist nicht möglich.
+        </p>
+      )}
+
+      {invalid.length > 0 && open && (
+        <p role="alert" className="rounded bg-red-100 px-3 py-2">
+          Ungültige Eingaben: {invalid.map((f) => (Object.hasOwn(APPROVAL_FIELD_LABELS, f) ? APPROVAL_FIELD_LABELS[f] : f)).join(", ")}
         </p>
       )}
 
@@ -251,6 +288,12 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
             </dd>
             <dt>Job</dt>
             <dd className="font-mono text-xs">{subject.job.id}</dd>
+            {subject.job.sourceId && (
+              <>
+                <dt>Quelle</dt>
+                <dd className="font-mono text-xs">{subject.job.sourceId}</dd>
+              </>
+            )}
           </dl>
           {open && (
             <div className="space-y-2">
@@ -262,9 +305,125 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
                 disabled={!(QUEUES as readonly (string | null)[]).includes(subject.job.queue)}
               />
               <DecisionForm {...props} n={2} label="Ignorieren" decision={{ action: "ignore" }} />
+              {subject.job.sourceId && (
+                <DecisionForm {...props} n={3} label="Quelle pausieren" decision={{ action: "pause_source" }} />
+              )}
             </div>
           )}
         </section>
+      )}
+
+      {subject.type === "source" && (
+        <div className="space-y-6">
+          <section className="space-y-2">
+            <h2 className="font-semibold">Quellenvorschlag</h2>
+            <dl className="grid grid-cols-[10rem_1fr] gap-y-1">
+              <dt>Domain</dt>
+              <dd>{subject.source.domain}</dd>
+              <dt>Status</dt>
+              <dd>
+                {SOURCE_STATUS_LABELS[subject.source.status]}
+                {subject.source.statusReason ? ` (${subject.source.statusReason})` : ""}
+              </dd>
+              <dt>Suchtreffer</dt>
+              <dd>
+                {subject.hitCount}
+                {subject.hitCount > subject.hits.length ? ` (die besten ${subject.hits.length} unten)` : ""}
+              </dd>
+              <dt>Verlinkt von</dt>
+              <dd>
+                {subject.linkingSources} freigegebenen Quelle{subject.linkingSources === 1 ? "" : "n"}
+              </dd>
+              <dt>Sprachen</dt>
+              <dd>{subject.languages.join(", ") || "–"}</dd>
+              <dt>robots.txt</dt>
+              <dd>{robotsText(subject.robots)}</dd>
+              <dt>Vorschlag</dt>
+              <dd>
+                {DOC_TYPE_LABELS[subject.suggestion.type]}, Gewicht{" "}
+                {subject.suggestion.weight.toLocaleString("de-DE", { maximumFractionDigits: 2 })},{" "}
+                {CHANGE_RATE_LABELS[subject.suggestion.changeRate]}
+              </dd>
+            </dl>
+          </section>
+          {subject.hits.length > 0 && (
+            <section>
+              <h2 className="mb-1 font-semibold">Suchtreffer</h2>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-neutral-300">
+                      <th className="pr-3">Rang</th>
+                      <th className="pr-3">Query</th>
+                      <th className="pr-3">Titel</th>
+                      <th className="pr-3">Snippet</th>
+                      <th>URL</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {subject.hits.map((h) => (
+                      <tr
+                        key={`${h.keyword}|${h.languageCode}|${h.url}`}
+                        className="border-b border-neutral-100 align-top"
+                      >
+                        <td className="pr-3">{h.rank}</td>
+                        <td className="pr-3">
+                          {h.keyword} ({h.languageCode})
+                        </td>
+                        <td className="pr-3">{h.title}</td>
+                        <td className="pr-3">{h.snippet}</td>
+                        <td className="break-all font-mono text-xs">{h.url}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+          {open && (
+            <section className="space-y-3">
+              <DecisionForm {...props} n={1} label="Freigeben" action={approveSourceAction}>
+                <div className="flex w-full flex-wrap gap-4">
+                  <label className="flex items-center gap-1">
+                    Typ
+                    <select name="type" defaultValue={subject.suggestion.type} className={SELECT}>
+                      {Object.entries(DOC_TYPE_LABELS).map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-1">
+                    Gewicht
+                    <input
+                      type="number"
+                      name="weight"
+                      required
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      defaultValue={subject.suggestion.weight}
+                      className={`${SELECT} w-20`}
+                    />
+                  </label>
+                  <label className="flex items-center gap-1">
+                    Änderungsrate
+                    <select name="changeRate" defaultValue={subject.suggestion.changeRate} className={SELECT}>
+                      {Object.entries(CHANGE_RATE_LABELS).map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <CrawlRulesFields defaults={subject.suggestion.crawlRules} invalid={invalid} />
+              </DecisionForm>
+              <DecisionForm {...props} n={2} label="Ablehnen" decision={{ action: "reject" }} />
+            </section>
+          )}
+        </div>
       )}
     </div>
   );

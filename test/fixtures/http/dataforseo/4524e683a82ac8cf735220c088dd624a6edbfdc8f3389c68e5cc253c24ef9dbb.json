@@ -1,0 +1,26 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "https://api.dataforseo.com/v3/serp/google/organic/live/regular",
+    "body": "[{\"keyword\":\"Saronic Gulf anchorages\",\"language_code\":\"en\",\"location_code\":2826,\"depth\":20}]"
+  },
+  "status": 200,
+  "bodyBase64": "eyJ2ZXJzaW9uIjoiMC4xLjIwMjYwOTE3Iiwic3RhdHVzX2NvZGUiOjIwMDAwLCJzdGF0dXNfbWVzc2FnZSI6Ik9rLiIsInRpbWUiOiIxNS43MDYwIHNlYy4iLCJjb3N0IjowLjAwMiwidGFza3NfY291bnQiOjEsInRhc2tzX2Vycm9yIjowLCJ0YXNrcyI6W3siaWQiOiIxMDE5MDQ0My0xMzA3LTAxMjEtMDAwMC1jNGQ0NWU3MDhkYjYiLCJzdGF0dXNfY29kZSI6NDAxMDEsInN0YXR1c19tZXNzYWdlIjoiSW50ZXJuYWwgU0UgU2VydmVyIEVycm9yLiIsInRpbWUiOiIxNS42NDMyIHNlYy4iLCJjb3N0IjowLjAwMiwicmVzdWx0X2NvdW50IjowLCJwYXRoIjpbInYzIiwic2VycCIsImdvb2dsZSIsIm9yZ2FuaWMiLCJsaXZlIiwicmVndWxhciJdLCJkYXRhIjp7ImFwaSI6InNlcnAiLCJmdW5jdGlvbiI6ImxpdmUiLCJzZSI6Imdvb2dsZSIsInNlX3R5cGUiOiJvcmdhbmljIiwia2V5d29yZCI6IlNhcm9uaWMgR3VsZiBhbmNob3JhZ2VzIiwibGFuZ3VhZ2VfY29kZSI6ImVuIiwibG9jYXRpb25fY29kZSI6MjgyNiwiZGVwdGgiOjIwLCJkZXZpY2UiOiJkZXNrdG9wIiwib3MiOiJ3aW5kb3dzIn0sInJlc3VsdCI6bnVsbH1dfQ==",
+  "headers": {
+    "access-control-allow-credentials": "true",
+    "access-control-allow-headers": "X-Requested-With, Content-Type, Access-Control-Allow-Origin, Access-Control-Allow-Methods, Access-Control-Allow-Headers, Authorization",
+    "access-control-allow-methods": "GET,POST,PUT,DELETE,OPTIONS",
+    "access-control-allow-origin": "*",
+    "cache-control": "must-revalidate, no-cache",
+    "connection": "keep-alive",
+    "content-encoding": "br",
+    "content-type": "application/json",
+    "date": "Mon, 19 Oct 2026 04:44:00 GMT",
+    "expires": "0",
+    "server": "nginx",
+    "transfer-encoding": "chunked",
+    "vary": "Accept-Encoding",
+    "x-ratelimit-limit": "10000",
+    "x-ratelimit-remaining": "9998"
+  }
+}

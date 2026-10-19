@@ -1,7 +1,23 @@
 import type { PgBoss } from "pg-boss";
 import type { QueueConfig } from "@/lib/config";
 
-export const QUEUES = ["system.ping", "run.advance", "tiles.ensure", "gazetteer.build", "seed.tile", "datasets.import", "geometry.compute"] as const;
+export const QUEUES = [
+  "system.ping",
+  "run.advance",
+  "tiles.ensure",
+  "gazetteer.build",
+  "seed.tile",
+  "datasets.import",
+  "geometry.compute",
+  "discovery.area",
+  "discovery.tile",
+  "discovery.propose",
+  "fetch.source",
+  "fetch.url",
+  "embed.chunks",
+  "sources.wikivoyage",
+  "compare.converters",
+] as const;
 export type QueueName = (typeof QUEUES)[number];
 
 /** Moves a run to its next stage (plans and enqueues it), decoupled from the job that finished the stage. */
@@ -23,7 +39,7 @@ export function deadLetterQueueOptions(config: Record<string, QueueConfig>) {
 }
 
 /**
- * Creates the dead-letter queue and every queue in QUEUES, and (re)applies the retry settings
+ * Creates the dead-letter queue and every queue in QUEUES, and (re)applies the retry and expiry settings
  * so changed settings take effect on existing queues too.
  */
 export async function ensureQueues(boss: PgBoss, config: Record<string, QueueConfig>): Promise<void> {
@@ -38,6 +54,8 @@ export async function ensureQueues(boss: PgBoss, config: Record<string, QueueCon
       retryDelay: queueConfig.retryDelaySeconds,
       retryBackoff: queueConfig.retryBackoff,
       deadLetter: DEAD_LETTER_QUEUE,
+      // Long jobs (a crawled PDF transcribed page by page) must not expire mid-way and run twice.
+      ...(queueConfig.expireInSeconds !== undefined ? { expireInSeconds: queueConfig.expireInSeconds } : {}),
     };
     if (await boss.getQueue(name)) await boss.updateQueue(name, options);
     else await boss.createQueue(name, options);

@@ -4,48 +4,285 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
 import { unzipSync } from "fflate";
+import { searchOrganic } from "../lib/adapters/dataforseo";
+import { createConverters } from "../lib/adapters/fetch";
+import { createFirecrawlConverter } from "../lib/adapters/fetch/firecrawl";
+import { getCrawlTransport } from "../lib/adapters/fetch/guarded";
+import { createJinaConverter } from "../lib/adapters/fetch/jina";
 import { createGeonamesSource } from "../lib/adapters/geonames";
 import { fetchTransport, makeResponse, RetryableHttpError, type Transport } from "../lib/adapters/http";
 import { fixtureTransport, recordingTransport } from "../lib/adapters/http-fixtures";
+import { runPdftotext } from "../lib/adapters/pdf";
 import type { Archive } from "../lib/adapters/s3";
-import { getConfig, type AreaConfig } from "../lib/config";
+import { embedTexts } from "../lib/adapters/voyage";
+import { fetchSitelinks } from "../lib/adapters/wikidata";
+import { getConfig, type AreaConfig, type DiscoveryConfig } from "../lib/config";
 import { areaConfigSchema } from "../lib/config/schemas";
 import { createDb, type Db } from "../lib/db/client";
 import { areaBbox, syncAreas } from "../lib/domain/gazetteer/areas";
 import { ensureTiles } from "../lib/domain/gazetteer/tiles-ensure";
 import { bufferBbox, importLandPolygons } from "../lib/domain/gazetteer/land";
 import { createRun } from "../lib/domain/runs";
+import { ensureWhitelistSources, getSource, sourceIdByDomain } from "../lib/domain/sources/store";
 import type { Bbox } from "../lib/domain/tiles";
 import { DATASET_KINDS, DATASETS_STAGE, importDataset } from "../lib/pipeline/datasets";
 import { GEONAMES_STAGE, importGeonames } from "../lib/pipeline/gazetteer/geonames";
 import { importOsm } from "../lib/pipeline/gazetteer/osm";
 import { importWikidata } from "../lib/pipeline/gazetteer/wikidata";
+import { fetchUrl } from "../lib/pipeline/fetch/url";
+import { queueArticles, WIKIVOYAGE_DOMAIN } from "../lib/pipeline/sources/wikivoyage";
 import { landImportBbox, readShapefile } from "./import-land-polygons";
 
-const USAGE = "usage: fixtures-record.ts --area <key> [--land <path/land_polygons.shp>] [--cache <dir>] [--datasets]";
+const USAGE =
+  "usage: fixtures-record.ts --area <key> [--land <path/land_polygons.shp>] [--cache <dir>] [--datasets | --serp [--limit <1-3>] | --wikivoyage]\n" +
+  "       fixtures-record.ts --converters <url> [<url> <url>]\n" +
+  "       fixtures-record.ts --voyage";
+/** Real DataForSEO searches one `--serp` recording may make. */
+const MAX_SERP_CALLS = 3;
+/** Pages one `--converters` recording sends to each paid converter (Jina, Firecrawl). */
+const MAX_CONVERTER_URLS = 3;
 const FIXTURES = "test/fixtures";
 const ATTEMPTS = 3;
 const RETRY_WAIT_MS = 90_000;
 
 type LandFeature = GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
 
-/** `--area`, `--land`, `--cache` take a value; `--datasets` (record the dataset imports only) takes none. */
-export function parseArgs(argv: string[]): { area: string; land?: string; cache?: string; datasets: boolean } {
+export type AreaRecordArgs = {
+  area: string;
+  land?: string;
+  cache?: string;
+  datasets: boolean;
+  serp: boolean;
+  limit?: number;
+  /** Record the Wikivoyage sitelinks and articles. */
+  wikivoyage?: true;
+};
+export type RecordArgs = AreaRecordArgs | { converters: string[] } | { voyage: true };
+
+/** The two texts of the recorded Voyage answer (`--voyage`); the embedding tests send exactly these. */
+export const VOYAGE_RECORDING_TEXTS = [
+  "Aegina harbour gives good shelter from the meltemi; anchor in sand at five metres off the town quay.",
+  "Die Bucht von Perdika ist bei Nordwind gut geschützt, Ankergrund Sand und Seegras auf sechs Metern.",
+] as const;
+
+/**
+ * Wikidata items whose Wikivoyage sitelinks `--wikivoyage` records (one `wbgetentities` call): the island of Aegina,
+ * the fixture of `lib/pipeline/__tests__/wikivoyage.test.ts`.
+ */
+export const WIKIVOYAGE_RECORDING_ITEMS = ["Q191082"];
+/** Articles `--wikivoyage` fetches (robots.txt and HTML) for the crawl test. */
+const MAX_WIKIVOYAGE_ARTICLES = 3;
+
+function isHttpUrl(value: string): boolean {
+  try {
+    return ["http:", "https:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `--area`, `--land`, `--cache`, `--limit` take a value; `--datasets` (record the dataset imports only),
+ * `--serp` (record at most `--limit` ≤ 3 area SERP searches, default 3) and `--wikivoyage` (the Wikivoyage sitelinks
+ * and articles) take none. `--converters` takes 1–3 page URLs and stands alone (no area), as does `--voyage` (one
+ * embedding call).
+ */
+export function parseArgs(argv: string[]): RecordArgs {
+  if (argv[0] === "--voyage") {
+    if (argv.length !== 1) throw new Error(USAGE);
+    return { voyage: true };
+  }
+  if (argv[0] === "--converters") {
+    const urls = argv.slice(1);
+    if (urls.length < 1 || urls.length > MAX_CONVERTER_URLS || !urls.every(isHttpUrl)) throw new Error(USAGE);
+    return { converters: urls };
+  }
   const values = new Map<string, string>();
   let datasets = false;
+  let serp = false;
+  let wikivoyage = false;
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]!;
-    if (flag === "--datasets") {
-      datasets = true;
+    if (flag === "--converters" || flag === "--voyage") throw new Error(USAGE);
+    if (flag === "--datasets" || flag === "--serp" || flag === "--wikivoyage") {
+      if (flag === "--datasets") datasets = true;
+      else if (flag === "--serp") serp = true;
+      else wikivoyage = true;
       continue;
     }
     const value = argv[++i];
-    if (!["--area", "--land", "--cache"].includes(flag) || value === undefined || value.startsWith("--")) throw new Error(USAGE);
+    if (!["--area", "--land", "--cache", "--limit"].includes(flag) || value === undefined || value.startsWith("--")) {
+      throw new Error(USAGE);
+    }
     values.set(flag, value);
   }
   const area = values.get("--area");
-  if (!area) throw new Error(USAGE);
-  return { area, land: values.get("--land"), cache: values.get("--cache"), datasets };
+  if (!area || Number(datasets) + Number(serp) + Number(wikivoyage) > 1) throw new Error(USAGE);
+  const rawLimit = values.get("--limit");
+  if (rawLimit !== undefined && !serp) throw new Error(USAGE);
+  let limit: number | undefined;
+  if (serp) {
+    limit = rawLimit === undefined ? MAX_SERP_CALLS : Number(rawLimit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_SERP_CALLS) throw new Error(USAGE);
+  }
+  return {
+    area,
+    land: values.get("--land"),
+    cache: values.get("--cache"),
+    datasets,
+    serp,
+    ...(serp ? { limit } : {}),
+    ...(wikivoyage ? { wikivoyage: true as const } : {}),
+  };
+}
+
+/**
+ * The area SERP searches a `--serp` recording makes, from the area's configured names (no database): each
+ * area template whose language is one of the area's `sourceLanguages` and has a name, the first `limit`.
+ */
+export function serpRecordingQueries(
+  area: AreaConfig,
+  discovery: DiscoveryConfig,
+  limit: number,
+): Array<{ keyword: string; languageCode: string; locationCode: number }> {
+  const names = area.names as Record<string, string | undefined>;
+  return discovery.templates.area
+    .filter((t) => area.sourceLanguages.includes(t.lang) && names[t.lang])
+    .map((t) => ({ keyword: t.template.replaceAll("{name}", names[t.lang]!), languageCode: t.lang, locationCode: t.locationCode }))
+    .slice(0, Math.min(limit, MAX_SERP_CALLS));
+}
+
+/**
+ * Records real DataForSEO answers as fixtures. Calls are booked (budget, `external_calls`) in the database of
+ * `DATABASE_URL`, the development database: they cost real money, so no scratch database hides them.
+ */
+async function recordSerp(area: AreaConfig, limit: number): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is not set");
+  const { discovery } = getConfig();
+  const { db, close } = createDb(url);
+  try {
+    const recording = recordingTransport(fetchTransport);
+    for (const q of serpRecordingQueries(area, discovery, limit)) {
+      const { items } = await searchOrganic(recording, q, { db, stage: "fixtures:record" }, discovery.serp);
+      process.stdout.write(`serp "${q.keyword}" (${q.languageCode}/${q.locationCode}): ${items.length} organic results\n`);
+    }
+  } finally {
+    await close();
+  }
+}
+
+/**
+ * Records real Jina and Firecrawl answers for each URL (one call per service and URL) as fixtures. Like
+ * `--serp`, the calls are booked in the database of `DATABASE_URL` (budgets, `external_calls`).
+ */
+async function recordConverters(urls: string[]): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is not set");
+  const { fetch } = getConfig();
+  const { db, close } = createDb(url);
+  const recording = recordingTransport(fetchTransport);
+  const converters = [createJinaConverter(recording, fetch.jina), createFirecrawlConverter(recording, fetch.firecrawl)];
+  let failed = 0;
+  try {
+    for (const page of urls) {
+      for (const converter of converters) {
+        try {
+          const r = await converter.convert(
+            { url: page, html: null, boilerplateSelectors: [], render: "auto" },
+            { db, stage: "fixtures:record" },
+          );
+          process.stdout.write(
+            `${converter.name} ${page}: ${r.markdown.length} chars, title ${JSON.stringify(r.title)}, ${r.costEur.toFixed(6)} EUR, ${r.durationMs} ms\n`,
+          );
+        } catch (error) {
+          failed++;
+          process.stdout.write(`${converter.name} ${page}: failed: ${(error as Error).message}\n`);
+        }
+      }
+    }
+  } finally {
+    await close();
+  }
+  if (failed > 0) throw new Error(`${failed} converter call(s) failed`);
+}
+
+/**
+ * Records one real Voyage answer embedding `VOYAGE_RECORDING_TEXTS`, booked in the database of `DATABASE_URL`
+ * (budget `voyage`, `external_calls`).
+ */
+async function recordVoyage(): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is not set");
+  const { db, close } = createDb(url);
+  try {
+    const { vectors, tokens } = await embedTexts(
+      recordingTransport(fetchTransport),
+      [...VOYAGE_RECORDING_TEXTS],
+      { db, stage: "fixtures:record" },
+      getConfig().embeddings,
+    );
+    process.stdout.write(`voyage: ${vectors.length} vectors of ${vectors[0]?.length} dimensions, ${tokens} tokens\n`);
+  } finally {
+    await close();
+  }
+}
+
+class RecordingRollback extends Error {}
+
+/**
+ * Records the Wikivoyage sitelinks of `WIKIVOYAGE_RECORDING_ITEMS` on the area's languages (one `wbgetentities` call)
+ * and crawls up to `MAX_WIKIVOYAGE_ARTICLES` of the articles with the crawl's own code (robots.txt and pages through
+ * the guarded crawl transport, local converter, no renderer). The database work runs in a transaction of the
+ * `DATABASE_URL` database that is rolled back: the calls are free, and the recording leaves no source, document or
+ * frontier row behind.
+ */
+async function recordWikivoyage(area: AreaConfig): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is not set");
+  const config = getConfig();
+  const { db, close } = createDb(url);
+  const out = (line: string) => process.stdout.write(`${line}\n`);
+  try {
+    await db
+      .transaction(async (tx) => {
+        await ensureWhitelistSources(tx);
+        const sourceId = await sourceIdByDomain(tx, WIKIVOYAGE_DOMAIN);
+        const source = sourceId ? await getSource(tx, sourceId) : null;
+        if (!source) throw new Error(`no source for ${WIKIVOYAGE_DOMAIN}`);
+        const { id: runId } = await createRun(tx, {
+          kind: "stage",
+          scope: { type: "area", id: area.key },
+          stages: [],
+          params: { areaKey: area.key, sourceIds: [source.id] },
+          triggeredBy: "fixtures:record",
+        });
+        const ctx = { db: tx, runId, stage: "fixtures:record", sourceId: source.id };
+        const sites = area.sourceLanguages.map((lang) => `${lang}wikivoyage`);
+        const links = await fetchSitelinks(recordingTransport(fetchTransport), WIKIVOYAGE_RECORDING_ITEMS, sites, ctx, config.gazetteer.wikidata);
+        const articles = [...links.values()].flat().slice(0, MAX_WIKIVOYAGE_ARTICLES);
+        out(`wikidata sitelinks: ${articles.map((a) => a.url).join(", ") || "none"}`);
+        await queueArticles(tx, source, articles);
+        const crawl = recordingTransport(getCrawlTransport());
+        const deps = {
+          transport: crawl,
+          archive: memoryArchive(),
+          converters: createConverters({ transport: crawl, cfg: config.fetch }),
+          pdf: { pdftotext: runPdftotext },
+          enqueue: async () => 0,
+        };
+        for (const article of articles) {
+          const result = await fetchUrl(tx, { sourceId: source.id, url: article.url, depth: 0 }, deps, ctx);
+          out(`${article.url}: ${JSON.stringify(result)}`);
+        }
+        throw new RecordingRollback();
+      })
+      .catch((error: unknown) => {
+        if (!(error instanceof RecordingRollback)) throw error;
+      });
+  } finally {
+    await close();
+  }
 }
 
 /** Only a throwaway database whose name ends in `_scratch` may be written by the recording. */
@@ -293,6 +530,10 @@ async function writeGeonames(downloads: Map<string, Uint8Array>, countries: stri
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  if ("voyage" in args) return recordVoyage();
+  if ("converters" in args) return recordConverters(args.converters);
+  if (args.serp) return recordSerp(loadArea(args.area), args.limit!);
+  if (args.wikivoyage) return recordWikivoyage(loadArea(args.area));
   const url = assertScratchUrl(process.env.DATABASE_URL);
   const area = loadArea(args.area);
   const { gazetteer } = getConfig();
@@ -376,6 +617,8 @@ async function main(): Promise<void> {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((err: unknown) => {
     process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}\n`);
+    // drizzle wraps driver errors ("Failed query"); the Postgres message is the cause.
+    if (err instanceof Error && err.cause instanceof Error) process.stderr.write(`cause: ${err.cause.message}\n`);
     process.exit(1);
   });
 }

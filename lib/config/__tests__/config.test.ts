@@ -17,6 +17,11 @@ type Overrides = {
   restrictions?: unknown;
   datasets?: unknown;
   quality?: unknown;
+  sourceTypes?: unknown;
+  discovery?: unknown;
+  fetch?: unknown;
+  embeddings?: unknown;
+  whitelist?: unknown;
   /** File name (without `.json`) to content; replaces all repo area files. */
   areas?: Record<string, unknown>;
 };
@@ -34,6 +39,11 @@ function fixtureDir(overrides: Overrides): string {
     restrictions: overrides.restrictions ?? repoConfig.restrictions,
     datasets: overrides.datasets ?? repoConfig.datasets,
     quality: overrides.quality ?? repoConfig.quality,
+    "source-types": overrides.sourceTypes ?? repoConfig.sourceTypes,
+    discovery: overrides.discovery ?? repoConfig.discovery,
+    fetch: overrides.fetch ?? repoConfig.fetch,
+    embeddings: overrides.embeddings ?? repoConfig.embeddings,
+    "sources-whitelist": overrides.whitelist ?? repoConfig.whitelist,
   };
   for (const [name, value] of Object.entries(files)) {
     writeFileSync(join(dir, `${name}.json`), JSON.stringify(value));
@@ -54,6 +64,8 @@ describe("loadConfig", () => {
   it("loads the repo config", () => {
     const c = loadConfig("config");
     expect(c.queues["system.ping"].retryLimit).toBe(2);
+    // A crawled PDF is transcribed page by page in one job: it must not expire after pg-boss's default 15 minutes.
+    expect(c.queues["fetch.url"].expireInSeconds).toBeGreaterThanOrEqual(3600);
     expect(c.budgets.anthropic.dailyEur).toBeGreaterThan(0);
     expect(c.models.tasks["system.echo"].model).toBe("claude-haiku-5-5");
     expect(c.models.pricesEurPerMTok["claude-haiku-5-5"].input).toBeGreaterThan(0);
@@ -69,6 +81,18 @@ describe("loadConfig", () => {
         }),
       ),
     ).toThrow(/concurrency/);
+  });
+
+  it("rejects a queue expiry below one second", () => {
+    expect(() =>
+      loadConfig(
+        fixtureDir({
+          queues: {
+            "system.ping": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 60, retryBackoff: true, expireInSeconds: 0 },
+          },
+        }),
+      ),
+    ).toThrow(/expireInSeconds/);
   });
 
   it("rejects an unknown budget service", () => {
@@ -206,6 +230,97 @@ describe("loadConfig", () => {
     const gazetteer = structuredClone(repoConfig.gazetteer);
     gazetteer.wikidata.classes.Q23442 = "volcano" as never;
     expect(() => loadConfig(fixtureDir({ gazetteer }))).toThrow(/gazetteer\.json/);
+  });
+});
+
+describe("source configuration", () => {
+  it("the source type weights match spec 05", () => {
+    const { sourceTypes } = loadConfig("config");
+    expect(Object.fromEntries(Object.entries(sourceTypes).map(([t, v]) => [t, v.weight]))).toEqual({
+      pilot_guide: 0.9,
+      authority: 0.9,
+      marina: 0.8,
+      trip_report: 0.6,
+      travel_guide: 0.5,
+      forum: 0.4,
+      dataset: 0.9,
+      other: 0.3,
+    });
+    expect(sourceTypes.marina.changeRate).toBe("high");
+    expect(sourceTypes.forum.changeRate).toBe("high");
+    expect(sourceTypes.pilot_guide.changeRate).toBe("static");
+    expect(sourceTypes.dataset.changeRate).toBe("static");
+    expect(sourceTypes.trip_report.changeRate).toBe("normal");
+  });
+
+  it("rejects a source types file missing a type or with a weight above 1", () => {
+    const sourceTypes = structuredClone(repoConfig.sourceTypes) as Record<string, unknown>;
+    delete sourceTypes.other;
+    expect(() => loadConfig(fixtureDir({ sourceTypes }))).toThrow(/source-types\.json.*other/);
+    const heavy = structuredClone(repoConfig.sourceTypes);
+    heavy.forum.weight = 1.2;
+    expect(() => loadConfig(fixtureDir({ sourceTypes: heavy }))).toThrow(/source-types\.json.*forum\.weight/);
+  });
+
+  it("config/fetch.json starts with a provisional local converter", () => {
+    const { fetch } = loadConfig("config");
+    expect(fetch.defaultConverter).toBe("local");
+    expect(fetch.converterBySource).toEqual({});
+    expect(fetch.decision.status).toBe("provisional");
+    expect(fetch.trackingParams).toEqual(["utm_*", "fbclid", "gclid", "msclkid", "mc_cid", "mc_eid"]);
+    expect(fetch.chunk).toEqual({ targetWords: 500, maxWords: 800, maxOverlapWords: 200 });
+    expect(fetch.goneAfter).toBe(2);
+    expect(fetch.renderMinMainChars).toBe(500);
+  });
+
+  it("converterBySource is keyed by lower-case source domain", () => {
+    const byDomain = { ...repoConfig.fetch, converterBySource: { "sailing.example": "jina" } };
+    expect(loadConfig(fixtureDir({ fetch: byDomain })).fetch.converterBySource).toEqual({ "sailing.example": "jina" });
+    const byId = { ...repoConfig.fetch, converterBySource: { "0b9e4c1e-6f0a-4c39-9a52-4c0f4f1f2a10": "jina" } };
+    expect(() => loadConfig(fixtureDir({ fetch: byId }))).toThrow(/fetch\.json.*converterBySource/);
+  });
+
+  it("loads discovery, embeddings and the whitelist", () => {
+    const c = loadConfig("config");
+    expect(c.discovery.serp).toMatchObject({ depth: 20, reuseDays: 30, maxQueriesPerRun: 240 });
+    expect(c.discovery.templates.tile).toContainEqual({ template: "αγκυροβόλιο {name}", lang: "el", locationCode: 2300 });
+    expect(c.discovery.bay).toEqual({ minAnchorAreaM2: 20000, minWikidataNames: 2 });
+    expect(c.discovery.proposals).toMatchObject({ minSerpHits: 3, minLinkingSources: 2, defaultType: "trip_report" });
+    expect(c.discovery.proposals.typeHints.map((h) => h.type)).toEqual([
+      "forum",
+      "authority",
+      "marina",
+      "pilot_guide",
+      "pilot_guide",
+      "trip_report",
+    ]);
+    expect(c.discovery.proposals.ignoreDomains).toContain("navily.com");
+    expect(c.embeddings).toMatchObject({ provider: "voyage", model: "voyage-3.5", dimension: 1024 });
+    expect(c.whitelist).toHaveLength(1);
+    expect(c.whitelist[0]).toMatchObject({ domain: "wikivoyage.org", type: "travel_guide", changeRate: "normal" });
+    expect(c.whitelist[0]!.crawlRules).toMatchObject({ allow: ["^/wiki/[^:?]+$"], maxDepth: 0, render: "never", pdf: false });
+  });
+
+  it("rejects a discovery template without {name} and an invalid type hint", () => {
+    const discovery = structuredClone(repoConfig.discovery);
+    discovery.templates.area[0]!.template = "Törnbericht";
+    expect(() => loadConfig(fixtureDir({ discovery }))).toThrow(/discovery\.json.*templates\.area\.0\.template/);
+    const d2 = structuredClone(repoConfig.discovery);
+    d2.proposals.typeHints = [{ pattern: "(forum", type: "forum" }];
+    expect(() => loadConfig(fixtureDir({ discovery: d2 }))).toThrow(/discovery\.json.*typeHints\.0\.pattern/);
+  });
+
+  it("rejects whitelist crawl rules with defaults filled in or invalid", () => {
+    const whitelist = structuredClone(repoConfig.whitelist);
+    whitelist[0]!.crawlRules = { maxDepth: 42 };
+    expect(() => loadConfig(fixtureDir({ whitelist }))).toThrow(/sources-whitelist\.json.*crawlRules\.maxDepth/);
+    expect(repoConfig.whitelist[0]!.crawlRules).not.toHaveProperty("maxPages");
+  });
+
+  it("rejects an embeddings dimension that is not a positive integer", () => {
+    expect(() => loadConfig(fixtureDir({ embeddings: { ...repoConfig.embeddings, dimension: 0 } }))).toThrow(
+      /embeddings\.json.*dimension/,
+    );
   });
 });
 

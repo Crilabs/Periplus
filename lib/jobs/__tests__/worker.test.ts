@@ -5,7 +5,7 @@ import { testDb } from "@/test/db";
 import { reviewTasks } from "@/lib/db/schema";
 import { BudgetExceeded } from "@/lib/domain/costs";
 import { newId } from "@/lib/domain/ids";
-import { beginStage, createRun, failRun, getRun } from "@/lib/domain/runs";
+import { beginStage, createRun, failRun, getRun, RUN_ENDED_REASON, resumeRun } from "@/lib/domain/runs";
 import { createBoss } from "@/lib/jobs/boss";
 import { isQueuePaused, resumeQueue } from "@/lib/jobs/controls";
 import { createLogger } from "@/lib/logger";
@@ -15,7 +15,7 @@ import { HANDLERS } from "@/lib/jobs/registry";
 import { STAGES } from "@/lib/jobs/stages";
 import { DEAD_LETTER_QUEUE, deadLetterQueueOptions, ensureQueues, QUEUES } from "@/lib/jobs/queues";
 import { startWorkers, type JobData, type JobHandler } from "@/lib/jobs/worker";
-import { enqueueStageJobs, startRun } from "@/lib/pipeline/runs";
+import { endRunByAdmin, enqueueStageJobs, startRun } from "@/lib/pipeline/runs";
 import { jobsFromDb } from "@/lib/domain/queues-view";
 import { failedJobsOfRun, retryFailedJob } from "@/lib/domain/jobs-view";
 
@@ -65,6 +65,14 @@ const queueConfig = {
   "seed.tile": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "datasets.import": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "geometry.compute": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "discovery.area": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "discovery.tile": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "discovery.propose": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "fetch.source": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "fetch.url": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "embed.chunks": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "sources.wikivoyage": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "compare.converters": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   [DEAD_LETTER_QUEUE]: { concurrency: 1, retryLimit: 1, retryDelaySeconds: 0, retryBackoff: false },
 };
 
@@ -502,6 +510,31 @@ describe("worker", () => {
     expect(tasks).toHaveLength(1);
   }, 30_000);
 
+  it("ending a run cancels its waiting jobs; a job of it that still starts does nothing; no retry resumes it", async () => {
+    const { id } = await createRun(db, { kind: "system", scope: scope(), stages: ["ping"], params: {}, triggeredBy: "test" });
+    await beginStage(db, id, "ping", 2);
+    const later = new Date(Date.now() + 3_600_000);
+    const waiting = await boss.send("system.ping", { runId: id, stage: "ping", key: "waiting" }, { startAfter: later });
+
+    expect(await endRunByAdmin(db, boss, id, "admin@example.invalid")).toEqual({ ended: true, cancelledJobs: 1 });
+    expect((await boss.getJobById("system.ping", waiting!))?.state).toBe("cancelled");
+    const run = (await getRun(db, id))!;
+    expect(run).toMatchObject({ status: "failed", failureReason: RUN_ENDED_REASON, endedBy: "admin@example.invalid" });
+    expect(run.endedAt).toBeInstanceOf(Date);
+    expect(run.finishedAt).toBeInstanceOf(Date);
+    // Ending again changes nothing.
+    expect(await endRunByAdmin(db, boss, id, "other@example.invalid")).toEqual({ ended: false, cancelledJobs: 0 });
+
+    // A job a still-active job enqueued after the end: its handler would fail every attempt, but it never runs.
+    const late = await boss.send("system.ping", { runId: id, stage: "ping", key: "late", failUntilFixed: true });
+    await waitFor(async () => (await boss.getJobById("system.ping", late!))?.state === "completed", 20_000);
+    expect((await getRun(db, id))!.stages[0]).toMatchObject({ total: 2, done: 0, failed: 0, status: "running" });
+    expect(await failedJobsOfRun(db, id)).toEqual([]);
+
+    expect(await resumeRun(db, id)).toBe(false);
+    expect((await getRun(db, id))!).toMatchObject({ status: "failed", endedBy: "admin@example.invalid" });
+  }, 30_000);
+
   it("enqueueing the same run stage twice does not duplicate jobs", async () => {
     const { id } = await createRun(db, {
       kind: "system",
@@ -518,6 +551,19 @@ describe("worker", () => {
     await waitFor(async () => (await getRun(db, id))!.status === "finished", 20_000);
     expect(await boss.findJobs("system.ping", { data: { runId: id } })).toHaveLength(2);
     expect((await getRun(db, id))!.stages[0]).toMatchObject({ total: 2, done: 2, failed: 0 });
+  }, 30_000);
+
+  it("enqueueing in a transaction counts only the jobs pg-boss newly inserted", async () => {
+    const { id } = await createRun(db, { kind: "system", scope: scope(), stages: ["ping"], params: {}, triggeredBy: "test" });
+    await beginStage(db, id, "ping", 3);
+    expect(await enqueueStageJobs(boss, "system.ping", id, "ping", [{ key: "a" }, { key: "b" }])).toBe(2);
+    // One known job and one new one, in the caller's transaction (as fetch.url extends its stage by the count).
+    const added = await db.transaction((tx) => enqueueStageJobs(boss, "system.ping", id, "ping", [{ key: "b" }, { key: "c" }], tx));
+    expect(added).toBe(1);
+
+    await waitFor(async () => (await getRun(db, id))!.status === "finished", 20_000);
+    expect(await boss.findJobs("system.ping", { data: { runId: id } })).toHaveLength(3);
+    expect((await getRun(db, id))!.stages[0]).toMatchObject({ total: 3, done: 3, failed: 0 });
   }, 30_000);
 
   it("a dead-letter job whose review task creation throws is logged and ends failed in the jobs view", async () => {
@@ -537,6 +583,33 @@ describe("worker", () => {
     expect(String(logged[0].obj.err)).toContain("review task insert failed");
     expect(probe.workerErrors.some((e) => e.msg === "job failed permanently" && e.obj.jobId === id)).toBe(false);
   }, 30_000);
+
+  it("a dead-letter job with a sourceId puts it into the failed_job context", async () => {
+    const key = `dl-source-${newId()}`;
+    const sourceId = newId();
+    const id = await boss.send(DEAD_LETTER_QUEUE, { key, sourceId });
+    await waitFor(async () => (await boss.getJobById(DEAD_LETTER_QUEUE, id!))?.state === "completed", 20_000);
+    const [task] = await db
+      .select()
+      .from(reviewTasks)
+      .where(and(eq(reviewTasks.kind, "failed_job"), eq(reviewTasks.subjectId, id!)));
+    expect(task!.context).toMatchObject({ key, sourceId });
+
+    const other = await boss.send(DEAD_LETTER_QUEUE, { key: `dl-nosource-${newId()}`, sourceId: 7 });
+    await waitFor(async () => (await boss.getJobById(DEAD_LETTER_QUEUE, other!))?.state === "completed", 20_000);
+    const [plain] = await db
+      .select()
+      .from(reviewTasks)
+      .where(and(eq(reviewTasks.kind, "failed_job"), eq(reviewTasks.subjectId, other!)));
+    expect(plain!.context).not.toHaveProperty("sourceId");
+  }, 30_000);
+
+  it("a queue's expiry from the config is applied", async () => {
+    const before = await boss.getQueue("fetch.url");
+    await ensureQueues(boss, { ...queueConfig, "fetch.url": { ...queueConfig["fetch.url"], expireInSeconds: 3600 } });
+    expect(await boss.getQueue("fetch.url")).toMatchObject({ expireInSeconds: 3600 });
+    await ensureQueues(boss, { ...queueConfig, "fetch.url": { ...queueConfig["fetch.url"], expireInSeconds: before!.expireInSeconds } });
+  });
 
   it("the dead-letter queue gets explicit retry settings", async () => {
     expect(deadLetterQueueOptions({})).toEqual({ retryLimit: 5, retryDelay: 60, retryBackoff: true });

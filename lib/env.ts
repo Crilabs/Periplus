@@ -10,7 +10,14 @@ const envSchema = z.object({
   S3_ACCESS_KEY_ID: z.string().min(1),
   S3_SECRET_ACCESS_KEY: z.string().min(1),
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  VOYAGE_API_KEY: z.string().min(1).optional(),
+  DATAFORSEO_LOGIN: z.string().min(1).optional(),
+  DATAFORSEO_PASSWORD: z.string().min(1).optional(),
+  JINA_API_KEY: z.string().min(1).optional(),
+  FIRECRAWL_API_KEY: z.string().min(1).optional(),
   CONTACT_EMAIL: z.string().min(1),
+  /** `playwright`: the worker renders pages in headless Chromium when a crawl rule asks for it; `off`: never. */
+  PERIPLUS_RENDERER: z.enum(["playwright", "off"]).default("playwright"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error", "silent"]).default("info"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 });

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { makeResponse, type HttpRequest, type Transport } from "./http";
+import { capBody, makeResponse, type HttpRequest, type Transport } from "./http";
 
 /**
  * Recorded HTTP responses for tests and the fixture script. Kept out of `./http` so the app bundle never
@@ -14,12 +14,26 @@ type FixtureFile = {
   request: { method: string; url: string; body: string | null };
   status: number;
   bodyBase64: string;
+  /** Response headers (lower-case names); absent in fixtures recorded before M3. */
+  headers?: Record<string, string>;
+  /** URL after redirects; absent = the request URL. */
+  finalUrl?: string;
 };
 
-/** sha256 hex of `method + " " + url + "\n" + body`: stable across processes and machines. */
-export function fixtureKey(req: Pick<HttpRequest, "method" | "url" | "body">): string {
+/**
+ * Headers never written into a fixture: cookies a site hands out are no test data, and some servers echo the
+ * recording machine's public address back (Wikimedia: `x-client-ip`, inside `x-analytics`).
+ */
+const UNRECORDED_HEADERS = new Set(["set-cookie", "x-client-ip", "x-analytics"]);
+
+/**
+ * sha256 hex of `method + " " + url + "\n" + body`, plus `"\nredirect: manual"` for a request that follows no
+ * redirects (a crawl hop answers with the 3xx itself, a followed request with its target): stable across processes
+ * and machines, and unchanged for every request recorded before redirect modes existed.
+ */
+export function fixtureKey(req: Pick<HttpRequest, "method" | "url" | "body" | "redirect">): string {
   return createHash("sha256")
-    .update(`${req.method ?? "GET"} ${req.url}\n${req.body ?? ""}`)
+    .update(`${req.method ?? "GET"} ${req.url}\n${req.body ?? ""}${req.redirect === "manual" ? "\nredirect: manual" : ""}`)
     .digest("hex");
 }
 
@@ -38,7 +52,8 @@ export function fixtureTransport(dir: string = DEFAULT_FIXTURE_DIR): Transport {
       throw new Error(`no fixture for ${req.service} ${req.method ?? "GET"} ${req.url}`);
     }
     const fixture = JSON.parse(raw) as FixtureFile;
-    return makeResponse(fixture.status, new Uint8Array(Buffer.from(fixture.bodyBase64, "base64")));
+    const { body, truncated } = capBody(new Uint8Array(Buffer.from(fixture.bodyBase64, "base64")), req.maxBodyBytes);
+    return makeResponse(fixture.status, body, { headers: fixture.headers ?? {}, finalUrl: fixture.finalUrl ?? req.url, truncated });
   };
 }
 
@@ -59,6 +74,8 @@ export function recordingTransport(
       request: { method: req.method ?? "GET", url: req.url, body: req.body ?? null },
       status: res.status,
       bodyBase64: Buffer.from(res.body).toString("base64"),
+      headers: Object.fromEntries(Object.entries(res.headers).filter(([name]) => !UNRECORDED_HEADERS.has(name))),
+      ...(res.finalUrl && res.finalUrl !== req.url ? { finalUrl: res.finalUrl } : {}),
     };
     const file = fixturePath(dir, req);
     await mkdir(join(dir, req.service), { recursive: true });

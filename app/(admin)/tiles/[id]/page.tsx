@@ -12,7 +12,7 @@ import {
   runScopeError,
   SCOPE_TYPE_LABELS,
 } from "../../_components/labels";
-import { geometryTileAction, seedTileAction } from "./actions";
+import { discoveryForTileAction, geometryTileAction, seedTileAction } from "./actions";
 
 const TILE_ID = /^q025:\d+:\d+$/;
 const time = (d: Date | null) => (d ? d.toISOString().slice(0, 19).replace("T", " ") : "–");
@@ -91,6 +91,12 @@ export default async function Page({ params, searchParams }: PageProps<"/tiles/[
           <input type="hidden" name="tileId" value={tile.id} />
           <button type="submit" className={BUTTON}>
             Geometrie
+          </button>
+        </form>
+        <form action={discoveryForTileAction}>
+          <input type="hidden" name="tileId" value={tile.id} />
+          <button type="submit" className={BUTTON}>
+            Quellenfindung
           </button>
         </form>
       </div>

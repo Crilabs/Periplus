@@ -17,6 +17,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { geometry, raster } from "@/lib/db/geometry";
 import { newId } from "@/lib/domain/ids";
+import { sources } from "./sources";
 
 /*
  * Stable tables (geo_objects, geo_names, places, tiles, restricted_areas) reject DELETE (forbid_delete trigger);
@@ -208,8 +209,7 @@ export const restrictedAreas = pgTable("restricted_areas", {
   id: uuid("id").primaryKey().$defaultFn(newId),
   kind: restrictedKindEnum("kind").notNull(),
   geom: geometry("geom", "Geometry").notNull(),
-  /** References sources once that table exists (M3). */
-  sourceId: uuid("source_id"),
+  sourceId: uuid("source_id").references(() => sources.id),
   sourceRef: text("source_ref"),
   validFrom: validFrom(),
   validTo: validTo(),

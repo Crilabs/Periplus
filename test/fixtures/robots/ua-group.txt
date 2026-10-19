@@ -1,0 +1,7 @@
+# Everyone else stays out; Periplus may crawl.
+User-agent: *
+Disallow: /
+
+User-agent: Periplus
+Allow: /
+Disallow: /drafts/

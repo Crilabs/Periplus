@@ -3,10 +3,12 @@ import type { ReviewDecision } from "@/lib/domain/review-decisions";
 import { decideAction } from "./actions";
 
 /**
- * One decision of a review task: a form for `decideAction`, reachable with key `n` (see DecisionKeys). The
- * decision is `decision` as JSON, or a field named `decision` among `children` (e.g. a select of choices).
+ * One decision of a review task: a form for `decideAction` (or `action`), reachable with key `n` (see
+ * DecisionKeys). The decision is `decision` as JSON, or a field named `decision` among `children` (e.g. a select
+ * of choices); another `action` reads its own fields from `children`.
  */
 export function DecisionForm({
+  action = decideAction,
   n,
   taskId,
   openedAt,
@@ -15,6 +17,7 @@ export function DecisionForm({
   disabled = false,
   children,
 }: {
+  action?: (formData: FormData) => Promise<void>;
   n: number;
   taskId: string;
   openedAt: string;
@@ -24,7 +27,7 @@ export function DecisionForm({
   children?: ReactNode;
 }) {
   return (
-    <form action={decideAction} data-decision-key={n} className="flex flex-wrap items-center gap-2">
+    <form action={action} data-decision-key={n} className="flex flex-wrap items-center gap-2">
       <input type="hidden" name="taskId" value={taskId} />
       <input type="hidden" name="openedAt" value={openedAt} />
       {decision && <input type="hidden" name="decision" value={JSON.stringify(decision)} />}

@@ -13,6 +13,8 @@ export type ExternalCall = {
   runId?: string;
   tileId?: string;
   stage?: string;
+  /** Source the call was made for: `external_calls.source_id` (costs per source). */
+  sourceId?: string;
   meta?: Record<string, unknown>;
   /** Defaults to now; settable so tests and backfills can place a call on a specific day. */
   at?: Date;
@@ -28,6 +30,7 @@ export async function recordExternalCall(db: Db, call: ExternalCall): Promise<vo
     runId: call.runId ?? null,
     tileId: call.tileId ?? null,
     stage: call.stage ?? null,
+    sourceId: call.sourceId ?? null,
     meta: call.meta ?? {},
     ...(call.at ? { at: call.at } : {}),
   });

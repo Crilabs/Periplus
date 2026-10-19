@@ -19,7 +19,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: "default",
-          include: ["**/__tests__/**/*.test.ts", "test/**/*.test.ts"],
+          include: ["**/__tests__/**/*.test.{ts,tsx}", "test/**/*.test.ts"],
           exclude: ["node_modules/**", ".next/**", ...PILOT_RUN_TESTS],
         },
       },
@@ -43,6 +43,12 @@ export default defineConfig({
       S3_SECRET_ACCESS_KEY: "periplus-dev-secret",
       SESSION_SECRET: "test-session-secret-0123456789-abcdefghijklmnopqrst",
       CONTACT_EMAIL: "test@example.invalid",
+      // Fixture replay ignores request headers; any Basic-Auth pair will do.
+      DATAFORSEO_LOGIN: "test@example.invalid",
+      DATAFORSEO_PASSWORD: "test-password",
+      JINA_API_KEY: "test-jina-key",
+      FIRECRAWL_API_KEY: "test-firecrawl-key",
+      VOYAGE_API_KEY: "test-voyage-key",
     },
   },
 });

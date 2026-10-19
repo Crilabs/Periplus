@@ -1,5 +1,10 @@
 import type {
+  ChangeRate,
   ComputationKind,
+  DocType,
+  DocumentStatus,
+  ObservedAtBasis,
+  FrontierStatus,
   GeoObjectType,
   GeoOrigin,
   NameOrigin,
@@ -12,9 +17,12 @@ import type {
   RestrictedKind,
   RunStatus,
   SeabedType,
+  SourceOrigin,
+  SourceStatus,
 } from "@/lib/db/schema";
 import type { Sector } from "@/lib/domain/facts/schema-types";
 import type { GapReason } from "@/lib/domain/geometry/gaps";
+import type { CrawlRules } from "@/lib/domain/sources/crawl-rules";
 import type { OriginSource } from "@/lib/domain/geometry/water";
 import type { RunScopeReason } from "@/lib/pipeline/tile-scope";
 
@@ -168,6 +176,83 @@ export const ORIGIN_SOURCE_LABELS: Record<OriginSource, string> = {
   moved_off_land: "Position, vom Land ins Wasser verschoben",
 };
 
+export const DOC_TYPE_LABELS: Record<DocType, string> = {
+  pilot_guide: "Revierführer",
+  trip_report: "Törnbericht",
+  forum: "Forum",
+  marina: "Marina",
+  authority: "Behörde",
+  dataset: "Datensatz",
+  travel_guide: "Reiseführer",
+  other: "Sonstiges",
+};
+
+export const SOURCE_STATUS_LABELS: Record<SourceStatus, string> = {
+  proposed: "Vorgeschlagen",
+  approved: "Freigegeben",
+  rejected: "Abgelehnt",
+  paused: "Pausiert",
+};
+
+export const SOURCE_ORIGIN_LABELS: Record<SourceOrigin, string> = {
+  serp: "Suchtreffer",
+  linkgraph: "Linkgraph",
+  whitelist: "Whitelist",
+  manual: "Manuell",
+};
+
+export const DOCUMENT_STATUS_LABELS: Record<DocumentStatus, string> = {
+  active: "Aktiv",
+  gone: "Verschwunden",
+};
+
+/** Where the observation date of a version comes from. */
+export const OBSERVED_AT_BASIS_LABELS: Record<ObservedAtBasis, string> = {
+  explicit: "Im Text genannt",
+  published: "Veröffentlichungsdatum",
+  fetched: "Abrufdatum",
+};
+
+export const CHANGE_RATE_LABELS: Record<ChangeRate, string> = {
+  high: "Hoch (täglich)",
+  normal: "Normal",
+  static: "Statisch",
+};
+
+export const FRONTIER_STATUS_LABELS: Record<FrontierStatus, string> = {
+  queued: "Offen",
+  fetched: "Abgerufen",
+  skipped: "Übersprungen",
+  failed: "Fehlgeschlagen",
+};
+
+/** Field names of the crawl rules (spec 05). */
+export const CRAWL_RULE_LABELS: Record<keyof CrawlRules, string> = {
+  startUrls: "Start-URLs",
+  allow: "Erlaubte Pfade",
+  deny: "Gesperrte Pfade",
+  maxDepth: "Maximale Tiefe",
+  maxPages: "Maximale Seiten",
+  ratePerMinute: "Abrufe pro Minute",
+  render: "Rendern",
+  converter: "Konverter",
+  pdf: "PDFs abrufen",
+  boilerplateSelectors: "Boilerplate-Selektoren",
+};
+
+export const RENDER_MODE_LABELS: Record<CrawlRules["render"], string> = {
+  auto: "Automatisch",
+  never: "Nie",
+  always: "Immer",
+};
+
+export const CONVERTER_LABELS: Record<CrawlRules["converter"], string> = {
+  auto: "Automatisch",
+  jina: "Jina",
+  firecrawl: "Firecrawl",
+  local: "Lokal",
+};
+
 /** Why a run did not start (`RunScopeNotReady`). */
 export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   area_without_geo_object: "Revier hat noch kein Geo-Objekt – zuerst „Gazetteer aufbauen“",
@@ -175,6 +260,16 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   bathymetry_missing: "Bathymetrie fehlt – zuerst „Datensätze laden“",
   land_missing: "Landpolygone fehlen – zuerst die Landpolygone importieren",
   place_not_computable: "Ort wird nicht berechnet (beendet, zusammengeführt, verworfen oder ohne Kachel)",
+  tile_without_area: "Kachel gehört zu keinem konfigurierten Revier – Suchsprachen unbekannt",
+  no_approved_sources: "Keine freigegebene Quelle",
+  source_not_approved: "Quelle ist nicht freigegeben",
+  source_run_active: "Für die Quelle läuft bereits ein Abruf",
+  wikivoyage_source_ended: "Die Wikivoyage-Quelle ist beendet",
+  document_not_upload: "Dokument ist keine hochgeladene Datei",
+  no_converter_samples: "Keine Seiten für den Vergleich – zuerst Quellen freigeben und crawlen",
+  converter_samples_done: "Alle Seiten der Stichprobe sind bereits mit allen drei Konvertern umgewandelt",
+  comparison_run_active: "Ein Konverter-Vergleich läuft bereits",
+  embed_backfill_active: "„Einbettungen nachholen“ läuft bereits",
 };
 
 /** The German text of a `?error=<reason>` a run action redirected with; null for none or an unknown reason. */
@@ -182,6 +277,40 @@ export function runScopeError(param: string | string[] | undefined): string | nu
   return typeof param === "string" && Object.hasOwn(RUN_SCOPE_REASON_LABELS, param)
     ? RUN_SCOPE_REASON_LABELS[param as RunScopeReason]
     : null;
+}
+
+/** Errors of the source pages besides refused runs (`?error=<code>`). */
+export const SOURCE_ERROR_LABELS = {
+  not_pdf: "Die Datei ist kein PDF",
+  too_large: "Die Datei ist größer als 100 MB",
+  no_file: "Keine Datei ausgewählt",
+  domain_known: "Für diese Domain gibt es bereits eine Quelle",
+  invalid_domain: "Das ist keine gültige Domain",
+  invalid_source: "Domain, Name und Typ angeben",
+  not_approved: "Nur eine freigegebene Quelle kann pausiert werden",
+  not_paused: "Nur eine pausierte Quelle kann fortgesetzt werden",
+  source_ended: "Die Quelle ist beendet",
+  upload_not_allowed: "PDFs lassen sich nur bei freigegebenen, vorgeschlagenen oder pausierten Quellen hochladen",
+} as const;
+
+export type SourceErrorCode = keyof typeof SOURCE_ERROR_LABELS;
+
+/** The German text of a `?error=` on the source pages: a refused run or a `SOURCE_ERROR_LABELS` code. */
+export function sourcePageError(param: string | string[] | undefined): string | null {
+  if (typeof param !== "string") return null;
+  return runScopeError(param) ?? (Object.hasOwn(SOURCE_ERROR_LABELS, param) ? SOURCE_ERROR_LABELS[param as SourceErrorCode] : null);
+}
+
+/** Errors of the converter comparison page besides refused runs (`?error=<code>`). */
+export const COMPARE_ERROR_LABELS = {
+  invalid_rating: "Die Bewertung war unvollständig",
+  not_rateable: "Diese Umwandlung ist fehlgeschlagen und lässt sich nicht bewerten",
+} as const;
+
+/** The German text of a `?error=` on the converter comparison page; null for none or an unknown code. */
+export function comparePageError(param: string | string[] | undefined): string | null {
+  if (typeof param !== "string") return null;
+  return runScopeError(param) ?? (Object.hasOwn(COMPARE_ERROR_LABELS, param) ? COMPARE_ERROR_LABELS[param as keyof typeof COMPARE_ERROR_LABELS] : null);
 }
 
 export const queueStateLabel = (paused: boolean): string => (paused ? "Pausiert" : "Läuft");

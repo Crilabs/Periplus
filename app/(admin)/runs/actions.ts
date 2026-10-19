@@ -12,8 +12,8 @@ import { startGazetteerRun } from "@/lib/pipeline/gazetteer/stages";
 import { startGeometryRun } from "@/lib/pipeline/geometry-run";
 import { startRun } from "@/lib/pipeline/runs";
 import { startSeedRun } from "@/lib/pipeline/seed";
-import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { requireAdmin } from "@/lib/security/require-admin";
+import { startAndRedirect } from "../_components/run-start";
 
 const pingSchema = z.object({ count: z.coerce.number().int().min(1).max(50) });
 const areaKeySchema = z.string().refine((key) => getConfig().areas.some((a) => a.key === key), "unknown area");
@@ -27,22 +27,6 @@ const tileOrAreaSchema = (db: Db) =>
   ]);
 
 const fields = (input: FormData | object) => (input instanceof FormData ? Object.fromEntries(input) : input);
-
-/**
- * Starts a run and redirects to it. A scope lacking an input (`RunScopeNotReady`) redirects to `errorPath` with
- * `?error=<reason>` instead, which that page shows in German.
- */
-async function startAndRedirect(start: () => Promise<{ id: string }>, errorPath: string): Promise<void> {
-  let target: string;
-  try {
-    target = `/runs/${(await start()).id}`;
-  } catch (e) {
-    if (!(e instanceof RunScopeNotReady)) throw e;
-    target = `${errorPath}?error=${e.reason}`;
-  }
-  revalidatePath("/runs");
-  redirect(target);
-}
 
 export async function startPingRun(input: FormData | { count: number | string }): Promise<void> {
   const admin = await requireAdmin();

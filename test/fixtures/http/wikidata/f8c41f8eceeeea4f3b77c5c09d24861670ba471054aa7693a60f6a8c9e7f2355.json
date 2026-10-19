@@ -1,0 +1,30 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://www.wikidata.org/w/api.php?action=wbgetentities&ids=Q191082&props=sitelinks/urls&sitefilter=dewikivoyage|elwikivoyage|enwikivoyage&format=json",
+    "body": null
+  },
+  "status": 200,
+  "bodyBase64": "eyJlbnRpdGllcyI6eyJRMTkxMDgyIjp7InR5cGUiOiJpdGVtIiwiaWQiOiJRMTkxMDgyIiwic2l0ZWxpbmtzIjp7ImRld2lraXZveWFnZSI6eyJzaXRlIjoiZGV3aWtpdm95YWdlIiwidGl0bGUiOiJcdTAwYzRnaW5hIiwiYmFkZ2VzIjpbXSwidXJsIjoiaHR0cHM6Ly9kZS53aWtpdm95YWdlLm9yZy93aWtpLyVDMyU4NGdpbmEifSwiZWx3aWtpdm95YWdlIjp7InNpdGUiOiJlbHdpa2l2b3lhZ2UiLCJ0aXRsZSI6Ilx1MDM5MVx1MDNhZlx1MDNiM1x1MDNiOVx1MDNiZFx1MDNiMSIsImJhZGdlcyI6W10sInVybCI6Imh0dHBzOi8vZWwud2lraXZveWFnZS5vcmcvd2lraS8lQ0UlOTElQ0UlQUYlQ0UlQjMlQ0UlQjklQ0UlQkQlQ0UlQjEifSwiZW53aWtpdm95YWdlIjp7InNpdGUiOiJlbndpa2l2b3lhZ2UiLCJ0aXRsZSI6IkFlZ2luYSIsImJhZGdlcyI6W10sInVybCI6Imh0dHBzOi8vZW4ud2lraXZveWFnZS5vcmcvd2lraS9BZWdpbmEifX19fSwic3VjY2VzcyI6MX0=",
+  "headers": {
+    "age": "0",
+    "cache-control": "private, must-revalidate, max-age=0",
+    "content-disposition": "inline; filename=api-result.json",
+    "content-encoding": "gzip",
+    "content-length": "227",
+    "content-security-policy": "default-src 'self'; script-src 'none'; object-src 'none'",
+    "content-type": "application/json; charset=utf-8",
+    "date": "Mon, 19 Oct 2026 06:42:42 GMT",
+    "nel": "{ \"report_to\": \"wm_nel\", \"max_age\": 604800, \"failure_fraction\": 0.05, \"success_fraction\": 0.0}",
+    "report-to": "{ \"group\": \"wm_nel\", \"max_age\": 604800, \"endpoints\": [{ \"url\": \"https://intake-logging.wikimedia.org/v1/events?stream=w3c.reportingapi.network_error&schema_uri=/w3c/reportingapi/network_error/1.0.0\" }] }",
+    "server": "mw-api-ext.eqiad.main-5564d958dd-nsmdz",
+    "server-timing": "cache;desc=\"pass\", host;desc=\"cp3074\",co_id;desc=\"2993164119\"",
+    "strict-transport-security": "max-age=106384710; includeSubDomains; preload",
+    "vary": "Accept-Encoding,X-Subdomain,Treat-as-Untrusted,X-Forwarded-Proto,Cookie,Authorization,User-Agent",
+    "x-cache": "cp3074 miss, cp3074 pass",
+    "x-cache-status": "pass",
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
+    "x-request-id": "d1fe774c-966b-4e74-8c9b-39b7da1b34de"
+  }
+}

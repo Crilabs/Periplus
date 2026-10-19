@@ -1,0 +1,177 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { PDFDocument } from "pdf-lib";
+import { describe, expect, it, vi } from "vitest";
+import { convertPdf } from "@/lib/adapters/pdf";
+import { hasPdftotext, runPdftotext } from "@/lib/adapters/pdf/pdftotext";
+import { splitPdfPages } from "@/lib/adapters/pdf/split";
+import { MockModel } from "@/lib/ai/mock";
+import { ModelOutputInvalid } from "@/lib/ai/types";
+import { memoryArchive } from "@/test/s3";
+import { BudgetExceeded } from "@/lib/domain/costs";
+import { getConfig } from "@/lib/config";
+
+const twoPages = new Uint8Array(readFileSync("test/fixtures/pdf/two-pages.pdf"));
+const sample = readFileSync("test/fixtures/pdf/layout-sample.txt", "utf8");
+const [page1] = sample.split("\f");
+/** Page 2 as a broken font extracts it: replacement and private-use characters. */
+const garbled = `${page1}\f${"� ".repeat(80)}\f`;
+const cfg = () => getConfig().fetch.pdf;
+const pdftotextHere = await hasPdftotext();
+
+describe("convertPdf", () => {
+  it("an unreadable page is replaced by the model page", async () => {
+    const seen: number[] = [];
+    const model = new MockModel({
+      "pdf.to_markdown": (input) => {
+        seen.push((input as { page: number }).page);
+        return { markdown: "## Tiefen und Plätze\n\n| Ort | Tiefe |\n| --- | --- |\n| Perdika | 3-8 m |" };
+      },
+    });
+    const pdftotext = vi.fn(async () => garbled);
+    const r = await convertPdf(twoPages, { pdftotext, model, cfg: cfg() }, { stage: "test" });
+    expect(r.converter).toBe("pdftotext+claude");
+    expect(r.modelPages).toEqual([2]);
+    expect(r.unreadablePages).toEqual([]);
+    expect(seen).toEqual([2]);
+    expect(r.markdown).toContain("<!-- page 1 -->\n\n## REVIERFÜHRER SARONISCHER GOLF");
+    expect(r.markdown).toContain("<!-- page 2 -->\n\n## Tiefen und Plätze\n\n| Ort | Tiefe |");
+    expect(r.markdown).not.toContain("�");
+  });
+
+  it("hands the model the single unreadable page as a one-page PDF", async () => {
+    const call = vi.fn(async (...args: [task: unknown, input: unknown, ctx?: unknown]) => {
+      const input = args[1];
+      const { pdf } = input as { pdf: Uint8Array };
+      expect((await PDFDocument.load(pdf)).getPageCount()).toBe(1);
+      return { output: { markdown: "Seite" }, model: "m", promptVersion: 1, usage: { inputTokens: 0, outputTokens: 0 }, costEur: 0 };
+    });
+    const sourceId = "00000000-0000-4000-8000-000000000001";
+    await convertPdf(twoPages, { pdftotext: async () => garbled, model: { call } as never, cfg: cfg() }, { runId: "r", stage: "s", sourceId });
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(call.mock.calls[0]![2]).toEqual({ runId: "r", stage: "s", sourceId });
+  });
+
+  it("modelFallback false calls no model", async () => {
+    const model = new MockModel({});
+    const spy = vi.spyOn(model, "call");
+    const r = await convertPdf(twoPages, { pdftotext: async () => garbled, model, cfg: { ...cfg(), modelFallback: false } }, {});
+    expect(spy).not.toHaveBeenCalled();
+    expect(r.converter).toBe("pdftotext");
+    expect(r.modelPages).toEqual([]);
+    expect(r.unreadablePages).toEqual([2]);
+    expect(r.markdown).toContain("<!-- page 2 -->");
+  });
+
+  it("more unreadable pages than allowed calls no model", async () => {
+    const model = new MockModel({});
+    const spy = vi.spyOn(model, "call");
+    const r = await convertPdf(
+      twoPages,
+      { pdftotext: async () => garbled, model, cfg: { ...cfg(), maxModelPagesPerDocument: 1, unreadableMinChars: 100_000 } },
+      {},
+    );
+    expect(spy).not.toHaveBeenCalled();
+    expect(r.unreadablePages).toEqual([1, 2]);
+  });
+
+  it("a budget running out midway keeps the pages already transcribed and lists the rest as unreadable", async () => {
+    const calls: number[] = [];
+    const model = {
+      call: async (_task: unknown, input: unknown) => {
+        const page = (input as { page: number }).page;
+        calls.push(page);
+        if (calls.length > 1) throw new BudgetExceeded("anthropic", 5, 5);
+        return { output: { markdown: `Seite ${page}` }, model: "m", promptVersion: 1, usage: { inputTokens: 0, outputTokens: 0 }, costEur: 0 };
+      },
+    };
+    const allGarbled = `${"� ".repeat(80)}\f${"� ".repeat(80)}\f`;
+    const r = await convertPdf(twoPages, { pdftotext: async () => allGarbled, model: model as never, cfg: cfg() }, {});
+    expect(calls).toEqual([1, 2]);
+    expect(r).toMatchObject({ converter: "pdftotext+claude", modelPages: [1], unreadablePages: [2] });
+    expect(r.markdown).toContain("<!-- page 1 -->\n\nSeite 1");
+    expect(r.markdown).toContain("<!-- page 2 -->");
+
+    // The budget already spent before the first page: pdftotext only.
+    const broke = { call: async () => Promise.reject(new BudgetExceeded("anthropic", 5, 5)) };
+    const none = await convertPdf(twoPages, { pdftotext: async () => allGarbled, model: broke as never, cfg: cfg() }, {});
+    expect(none).toMatchObject({ converter: "pdftotext", modelPages: [], unreadablePages: [1, 2] });
+  });
+
+  it("a retry pays only for the pages not transcribed yet: transcribed pages stay in the archive", async () => {
+    const allGarbled = `${"� ".repeat(80)}\f${"� ".repeat(80)}\f`;
+    const archive = memoryArchive();
+    const calls: number[] = [];
+    const answer = (page: number) => ({ output: { markdown: `Seite ${page}` }, model: "m", promptVersion: 1, usage: { inputTokens: 0, outputTokens: 0 }, costEur: 0 });
+    const flaky = {
+      call: async (_task: unknown, input: unknown) => {
+        const page = (input as { page: number }).page;
+        calls.push(page);
+        if (page === 2) throw new Error("overloaded");
+        return answer(page);
+      },
+    };
+    await expect(convertPdf(twoPages, { pdftotext: async () => allGarbled, model: flaky as never, cfg: cfg(), archive }, {})).rejects.toThrow(
+      "overloaded",
+    );
+    const { model, promptVersion } = getConfig().models.tasks["pdf.to_markdown"]!;
+    const sha = createHash("sha256").update(twoPages).digest("hex");
+    expect(archive.keys()).toEqual([`pdf-pages/${sha}/${model}/v${promptVersion}/1.md`]);
+
+    const steady = {
+      call: async (_task: unknown, input: unknown) => {
+        calls.push((input as { page: number }).page);
+        return answer((input as { page: number }).page);
+      },
+    };
+    const r = await convertPdf(twoPages, { pdftotext: async () => allGarbled, model: steady as never, cfg: cfg(), archive }, {});
+    expect(calls).toEqual([1, 2, 2]);
+    expect(r).toMatchObject({ converter: "pdftotext+claude", modelPages: [1, 2], unreadablePages: [] });
+    expect(r.markdown).toContain("<!-- page 1 -->\n\nSeite 1");
+    expect(r.markdown).toContain("<!-- page 2 -->\n\nSeite 2");
+  });
+
+  it("an invalid model answer leaves its page unreadable and keeps the others", async () => {
+    const allGarbled = `${"� ".repeat(80)}\f${"� ".repeat(80)}\f`;
+    const model = {
+      call: async (_task: unknown, input: unknown) => {
+        const page = (input as { page: number }).page;
+        if (page === 1) throw new ModelOutputInvalid("pdf.to_markdown", "stop_reason max_tokens");
+        return { output: { markdown: `Seite ${page}` }, model: "m", promptVersion: 1, usage: { inputTokens: 0, outputTokens: 0 }, costEur: 0 };
+      },
+    };
+    const r = await convertPdf(twoPages, { pdftotext: async () => allGarbled, model: model as never, cfg: cfg(), archive: memoryArchive() }, {});
+    expect(r).toMatchObject({ converter: "pdftotext+claude", modelPages: [2], unreadablePages: [1] });
+  });
+
+  it("readable pages need no model", async () => {
+    const r = await convertPdf(twoPages, { pdftotext: async () => sample, cfg: cfg() }, {});
+    expect(r).toMatchObject({ converter: "pdftotext", modelPages: [], unreadablePages: [] });
+  });
+});
+
+describe("splitPdfPages", () => {
+  it("cuts single pages, 1-based", async () => {
+    const [second] = await splitPdfPages(twoPages, [2]);
+    const doc = await PDFDocument.load(second!);
+    expect(doc.getPageCount()).toBe(1);
+    await expect(splitPdfPages(twoPages, [3])).rejects.toThrow(/page 3/);
+  });
+});
+
+describe("pdftotext", () => {
+  it.skipIf(!pdftotextHere)("pdftotext reads the two-page fixture", async () => {
+    const text = await runPdftotext(twoPages);
+    const pages = text.split("\f");
+    expect(pages[0]).toContain("ANKERPLAETZE AEGINA");
+    expect(pages[1]).toMatch(/Perdika\s{2,}3-8 m\s{2,}40/);
+  });
+
+  it.skipIf(!pdftotextHere)("output beyond the cap is an error", async () => {
+    await expect(runPdftotext(twoPages, { maxOutputBytes: 10 })).rejects.toThrow(/exceeds 10 bytes/);
+  });
+
+  it.skipIf(!pdftotextHere)("a broken file is an error", async () => {
+    await expect(runPdftotext(new TextEncoder().encode("not a pdf"))).rejects.toThrow(/pdftotext/);
+  });
+});

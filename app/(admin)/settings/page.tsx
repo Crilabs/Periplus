@@ -4,7 +4,21 @@ import { requireAdmin } from "@/lib/security/require-admin";
 export default async function Page() {
   await requireAdmin();
   const { areas, gazetteer, ...rest } = getConfig();
-  const { geometry, factSchema } = rest;
+  const { geometry, factSchema, fetch, embeddings } = rest;
+  const exceptions = Object.entries(fetch.converterBySource);
+  const archiveRows: [string, string][] = [
+    [
+      "Konverter-Entscheidung",
+      `${fetch.decision.status === "decided" ? "Entschieden" : "Vorläufig"}: ${fetch.decision.note}`,
+    ],
+    ["Standard-Konverter", fetch.defaultConverter],
+    ["Konverter je Quelle", exceptions.length > 0 ? exceptions.map(([d, c]) => `${d} → ${c}`).join(", ") : "keine Ausnahmen"],
+    [
+      "PDF-Extraktor",
+      `${fetch.pdf.extractor}${fetch.pdf.modelFallback ? `, Claude für unlesbare Seiten (höchstens ${fetch.pdf.maxModelPagesPerDocument} je Dokument)` : ""}`,
+    ],
+    ["Embedding-Modell", `${embeddings.provider} ${embeddings.model}, Dimension ${embeddings.dimension}`],
+  ];
   const geometryRows: [string, string][] = [
     ["Regelversion", geometry.rulesVersion],
     ["Fact-Schema-Version", factSchema.version],
@@ -92,6 +106,18 @@ export default async function Page() {
       <table className="text-left">
         <tbody>
           {geometryRows.map(([label, value]) => (
+            <tr key={label} className="border-b">
+              <th className="py-1 pr-4 font-normal">{label}</th>
+              <td className="py-1 pr-4">{value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <h2 className="font-semibold">Quellen und Archiv</h2>
+      <table className="text-left">
+        <tbody>
+          {archiveRows.map(([label, value]) => (
             <tr key={label} className="border-b">
               <th className="py-1 pr-4 font-normal">{label}</th>
               <td className="py-1 pr-4">{value}</td>

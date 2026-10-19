@@ -1,6 +1,6 @@
 import type { GazetteerConfig } from "@/lib/config";
 import type { Bbox } from "@/lib/domain/tiles";
-import { RetryableHttpError, httpCall, type CallContext, type Transport } from "./http";
+import { HttpError, RetryableHttpError, httpCall, type CallContext, type Transport } from "./http";
 
 export type WikidataItem = {
   id: string;
@@ -109,4 +109,77 @@ export async function wikidataQuery(
     if (row.osmRel && item.osmRelationId === undefined) item.osmRelationId = row.osmRel.value;
   }
   return [...items.values()];
+}
+
+export type Sitelink = { site: string; title: string; url: string };
+
+/** Items per `wbgetentities` request (the API's limit for anonymous clients). */
+const MAX_IDS_PER_REQUEST = 50;
+const SITE = /^[a-z0-9_]+$/;
+const API_TIMEOUT_MS = 30_000;
+
+type EntitiesAnswer = {
+  entities?: Record<string, { id?: string; missing?: string; sitelinks?: Record<string, { site?: unknown; title?: unknown; url?: unknown }> }>;
+  error?: { code?: string; info?: string };
+};
+
+/**
+ * The sitelinks of the items `qids` on the wikis `sites` (e.g. `enwikivoyage`), with their article URLs: one
+ * `wbgetentities` call (`props=sitelinks/urls`) per 50 items, ids and sites sorted (stable URLs). Items without such a
+ * sitelink (or unknown items) are missing from the map. Rate limit `cfg.ratePerMinute` in the bucket of all Wikidata
+ * calls; an API error is an `HttpError`, except `maxlag` and unreadable answers (`RetryableHttpError`).
+ */
+export async function fetchSitelinks(
+  transport: Transport,
+  qids: string[],
+  sites: string[],
+  ctx: CallContext,
+  cfg: GazetteerConfig["wikidata"],
+): Promise<Map<string, Sitelink[]>> {
+  const ids = [...new Set(qids)].sort();
+  const wikis = [...new Set(sites)].sort();
+  for (const id of ids) if (!QID.test(id)) throw new Error(`invalid Wikidata item ${id}`);
+  for (const site of wikis) if (!SITE.test(site)) throw new Error(`invalid site ${site}`);
+  const result = new Map<string, Sitelink[]>();
+  if (ids.length === 0 || wikis.length === 0) return result;
+  for (let i = 0; i < ids.length; i += MAX_IDS_PER_REQUEST) {
+    const batch = ids.slice(i, i + MAX_IDS_PER_REQUEST);
+    const res = await httpCall(
+      transport,
+      {
+        service: "wikidata",
+        operation: "sitelinks",
+        url: `${cfg.apiEndpoint}?action=wbgetentities&ids=${batch.join("|")}&props=sitelinks/urls&sitefilter=${wikis.join("|")}&format=json`,
+        headers: { Accept: "application/json" },
+        timeoutMs: API_TIMEOUT_MS,
+        ratePerMinute: cfg.ratePerMinute,
+        meta: { items: batch.length },
+      },
+      ctx,
+    );
+    let answer: EntitiesAnswer;
+    try {
+      answer = JSON.parse(res.text()) as EntitiesAnswer;
+      if (typeof answer !== "object" || answer === null) throw new Error("not an object");
+    } catch (error) {
+      throw new RetryableHttpError("wikidata returned an unreadable answer", res.status, { cause: error });
+    }
+    if (answer.error) {
+      const message = `wikidata wbgetentities: ${answer.error.code ?? "error"}: ${answer.error.info ?? ""}`;
+      if (answer.error.code === "maxlag") throw new RetryableHttpError(message, res.status);
+      throw new HttpError(message, res.status);
+    }
+    for (const [key, entity] of Object.entries(answer.entities ?? {})) {
+      if (entity.missing !== undefined) continue;
+      const links: Sitelink[] = [];
+      for (const link of Object.values(entity.sitelinks ?? {})) {
+        if (typeof link.site !== "string" || typeof link.title !== "string" || typeof link.url !== "string") continue;
+        if (!wikis.includes(link.site)) continue;
+        links.push({ site: link.site, title: link.title, url: link.url });
+      }
+      links.sort((a, b) => (a.site < b.site ? -1 : a.site > b.site ? 1 : 0));
+      if (links.length > 0) result.set(entity.id ?? key, links);
+    }
+  }
+  return result;
 }

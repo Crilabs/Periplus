@@ -9,6 +9,8 @@ const ITEMS = [
   { href: "/", label: "Übersicht" },
   { href: "/review", label: "Prüfen" },
   { href: "/map", label: "Karte" },
+  { href: "/sources", label: "Quellen" },
+  { href: "/compare/converters", label: "Konverter" },
   { href: "/runs", label: "Läufe" },
   { href: "/jobs", label: "Jobs" },
   { href: "/costs", label: "Kosten" },

@@ -38,6 +38,8 @@ test("admin starts a ping run and sees it listed; all admin pages render", async
     ["/costs", "Kosten"],
     ["/settings", "Einstellungen"],
     ["/map", "Karte"],
+    ["/sources", "Quellen"],
+    ["/compare/converters", "Konverter-Vergleich"],
   ] as const) {
     await page.goto(path);
     await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();

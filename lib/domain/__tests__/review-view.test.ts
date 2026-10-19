@@ -2,9 +2,19 @@ import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { geoNames, geoObjects, places, reviewDecisions, reviewKindEnum, type PlaceStatus } from "@/lib/db/schema";
+import {
+  geoNames,
+  geoObjects,
+  places,
+  reviewDecisions,
+  reviewKindEnum,
+  sources,
+  type PlaceStatus,
+} from "@/lib/db/schema";
 import { setAnchorPosition } from "@/lib/domain/geometry/anchor-correction";
+import { newId } from "@/lib/domain/ids";
 import { createReviewTask } from "@/lib/domain/review";
+import { DEFAULT_CRAWL_RULES } from "@/lib/domain/sources/crawl-rules";
 import { listOpenTasks, reviewCounts, reviewTaskDetail } from "@/lib/domain/review-view";
 import { withRollback } from "@/test/db";
 
@@ -80,6 +90,88 @@ describe("review view", () => {
       expect([...distances].sort((a, b) => a - b)).toEqual(distances);
 
       expect(await reviewTaskDetail(tx, "0190a6c2-7a1b-7c3d-8e4f-0123456789ab")).toBeNull();
+    }));
+
+  it("reviewTaskDetail shows a source proposal with hits, link graph, languages, robots and suggestion", () =>
+    withRollback(async (tx) => {
+      const insertSource = async () => {
+        const domain = `${newId()}.test.invalid`;
+        const [row] = await tx
+          .insert(sources)
+          .values({
+            domain,
+            name: domain,
+            type: "trip_report",
+            weight: 0.6,
+            crawlRules: DEFAULT_CRAWL_RULES,
+            languages: ["en", "de"],
+            origin: "serp",
+          })
+          .returning({ id: sources.id });
+        return { id: row!.id, domain };
+      };
+      const source = await insertSource();
+      const domain = source.domain;
+      const hit = {
+        url: `https://${domain}/blog/a`,
+        keyword: "hydra anchorage",
+        languageCode: "en",
+        rank: 3,
+        title: "Hydra",
+        snippet: "Anchoring off Hydra",
+      };
+      const robots = { status: "parsed", disallowAll: false, blockedStartUrls: [], crawlDelaySec: 5, sitemaps: 1 };
+      const suggestion = {
+        type: "pilot_guide",
+        weight: 0.9,
+        changeRate: "static",
+        crawlRules: { ...DEFAULT_CRAWL_RULES, allow: ["^/blog/"] },
+      };
+      const { id } = await createReviewTask(tx, {
+        kind: "source_approval",
+        subjectType: "source",
+        subjectId: source.id,
+        context: { hits: [hit], hitCount: 14, linkingSources: 2, languages: ["en", "de"], robots, suggestion },
+      });
+
+      const detail = await reviewTaskDetail(tx, id);
+      expect(detail?.subject).toMatchObject({
+        type: "source",
+        source: { id: source.id, domain, status: "proposed" },
+        hits: [hit],
+        hitCount: 14,
+        linkingSources: 2,
+        languages: ["en", "de"],
+        robots,
+        suggestion,
+      });
+
+      // Without (valid) context the suggestion is the source's current values.
+      const { id: bare } = await createReviewTask(tx, {
+        kind: "source_approval",
+        subjectType: "source",
+        subjectId: (await insertSource()).id,
+        context: { hits: "nope" },
+      });
+      expect((await reviewTaskDetail(tx, bare))?.subject).toMatchObject({
+        type: "source",
+        hits: [],
+        hitCount: 0,
+        linkingSources: 0,
+        robots: null,
+        suggestion: { type: "trip_report", weight: 0.6, changeRate: "normal", crawlRules: DEFAULT_CRAWL_RULES },
+      });
+    }));
+
+  it("reviewTaskDetail of a source task whose source does not exist is missing", () =>
+    withRollback(async (tx) => {
+      const { id } = await createReviewTask(tx, {
+        kind: "source_approval",
+        subjectType: "source",
+        subjectId: newId(),
+        context: {},
+      });
+      expect((await reviewTaskDetail(tx, id))?.subject).toEqual({ type: "missing" });
     }));
 
   it("reviewTaskDetail renders a decided place_anchor task from an anchor correction without error", () =>

@@ -1,8 +1,11 @@
 import { and, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import type { Geometry, Point, Polygon } from "geojson";
+import { z } from "zod";
 import type { Db } from "@/lib/db/client";
 import { asGeoJson } from "@/lib/db/geometry";
 import {
+  changeRateEnum,
+  DOC_TYPES,
   geoNames,
   geoObjects,
   places,
@@ -16,9 +19,14 @@ import {
   type PlaceStatus,
   type ReviewKind,
   type ReviewStatus,
+  type ChangeRate,
+  type DocType,
 } from "@/lib/db/schema";
+import type { ProposalRobots, SerpHit } from "@/lib/domain/discovery/proposals";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { afterInQueue, nextOpenTask, QUEUE_ORDER } from "@/lib/domain/review-decisions";
+import { crawlRulesSchema, type CrawlRules } from "@/lib/domain/sources/crawl-rules";
+import { getSource, type Source } from "@/lib/domain/sources/store";
 
 /** Places offered for "merge into a place". */
 export const NEARBY_PLACES = 5;
@@ -96,9 +104,28 @@ export type ReviewSubject =
         stage: string | null;
         error: string | null;
         runId: string | null;
+        /** The source the job worked on (offers "pause source"). */
+        sourceId: string | null;
       };
     }
+  | {
+      type: "source";
+      source: Source;
+      /** Best SERP hits by rank (empty for a link graph proposal). */
+      hits: SerpHit[];
+      /** All SERP hits of the domain; `hits` holds only the best of them. */
+      hitCount: number;
+      /** Approved sources linking to the domain. */
+      linkingSources: number;
+      languages: string[];
+      /** robots.txt summary at proposal time; null when the task has none. */
+      robots: ProposalRobots | null;
+      /** Suggested approval values; the source's current values when the task has none. */
+      suggestion: SourceSuggestion;
+    }
   | { type: "missing" };
+
+export type SourceSuggestion = { type: DocType; weight: number; changeRate: ChangeRate; crawlRules: CrawlRules };
 
 export type ReviewTaskDetail = {
   task: {
@@ -159,7 +186,7 @@ export async function nextTaskHref(db: Db, taskId: string): Promise<string> {
   return next ? `/review/${next.id}` : "/review";
 }
 
-/** A task with the context of its subject (place, geo object pair, tile or failed job); null when unknown. */
+/** A task with the context of its subject (place, geo object pair, tile, failed job or source); null when unknown. */
 export async function reviewTaskDetail(db: Db, id: string): Promise<ReviewTaskDetail | null> {
   const [task] = await db.select().from(reviewTasks).where(eq(reviewTasks.id, id));
   if (!task) return null;
@@ -185,8 +212,12 @@ export async function reviewTaskDetail(db: Db, id: string): Promise<ReviewTaskDe
           stage: str(context.stage),
           error: str(context.error),
           runId: str(context.runId),
+          sourceId: str(context.sourceId),
         },
       };
+      break;
+    case "source":
+      subject = await sourceSubject(db, task.subjectId, context);
       break;
     default:
       subject = { type: "missing" };
@@ -208,6 +239,55 @@ export async function reviewTaskDetail(db: Db, id: string): Promise<ReviewTaskDe
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
 const isUuid = (v: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 
+
+// Lenient readers of a source_approval context (written by proposeSources): a part that does not parse is left out.
+const serpHitSchema = z.object({
+  url: z.string(),
+  keyword: z.string(),
+  languageCode: z.string(),
+  rank: z.number(),
+  title: z.string(),
+  snippet: z.string(),
+});
+const proposalRobotsSchema = z.union([
+  z.object({ status: z.literal("unavailable") }),
+  z.object({
+    status: z.enum(["parsed", "allow_all"]),
+    disallowAll: z.boolean(),
+    blockedStartUrls: z.array(z.string()),
+    crawlDelaySec: z.number().nullable(),
+    sitemaps: z.number(),
+  }),
+]);
+const suggestionSchema = z.object({
+  type: z.enum(DOC_TYPES),
+  weight: z.number().min(0).max(1),
+  changeRate: z.enum(changeRateEnum.enumValues),
+  crawlRules: crawlRulesSchema,
+});
+
+async function sourceSubject(db: Db, sourceId: string, context: Record<string, unknown>): Promise<ReviewSubject> {
+  if (!isUuid(sourceId)) return { type: "missing" };
+  const source = await getSource(db, sourceId);
+  if (!source) return { type: "missing" };
+  const hits = z.array(serpHitSchema).safeParse(context.hits);
+  const languages = z.array(z.string()).safeParse(context.languages);
+  const robots = proposalRobotsSchema.safeParse(context.robots);
+  const suggestion = suggestionSchema.safeParse(context.suggestion);
+  return {
+    type: "source",
+    source,
+    hits: hits.success ? hits.data : [],
+    hitCount:
+      typeof context.hitCount === "number" ? context.hitCount : hits.success ? hits.data.length : 0,
+    linkingSources: typeof context.linkingSources === "number" ? context.linkingSources : 0,
+    languages: languages.success ? languages.data : source.languages,
+    robots: robots.success ? robots.data : null,
+    suggestion: suggestion.success
+      ? suggestion.data
+      : { type: source.type, weight: source.weight, changeRate: source.changeRate, crawlRules: source.crawlRules },
+  };
+}
 
 async function geoObjectViews(db: Db, ids: string[]): Promise<GeoObjectView[]> {
   if (ids.length === 0) return [];
