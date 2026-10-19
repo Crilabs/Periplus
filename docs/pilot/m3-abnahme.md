@@ -9,12 +9,13 @@ Ablauf der Läufe: `docs/runbook.md`, Abschnitt „Quellen und Archiv“.
 - [x] Archiv: Rohdatei, Markdown und Diff je Version in S3, `content_hash` eindeutig je Dokument, Chunks an Überschriften (Ziel 500, Grenze 800 Wörter), unveränderte Chunks übernommen, Embeddings mit Voyage (`voyage-3.5`, 1024) und HNSW-Index; Kosten je Aufruf mit `source_id` in `external_calls`.
 - [x] Wikivoyage über Wikidata-Sitelinks der Gazetteer-Objekte; PDF-Upload (100 MB) mit `pdftotext` und Claude-Fallback für unlesbare Seiten; Konverter Jina, Firecrawl und lokal (Readability, Rendern bei wenig Hauptinhalt).
 - [x] Admin-Oberfläche: `/sources` (Liste, Status, Läufe, Kosten 30 Tage), Quell-Detail (Regeln, Testcrawl, Crawl, Pausieren/Fortsetzen, PDF-Upload, Kosten je Dienst), Dokumentansicht mit Versionen, Diff, Chunks und Rohdatei in Sandbox, `/compare/converters` mit Bewertung in drei Spalten, `/settings` mit Konverter-Entscheidung, PDF-Extraktor und Embedding-Modell.
-- [x] `npm run report:converters` schreibt `docs/pilot/m3-konverter-vergleich.md`; `npm run pdf:compare` schreibt `docs/pilot/m3-pdf-vergleich.md`; `npm run check:sources` prüft die Abnahme (Exit 1 bei 19 Quellen oder vorläufiger Entscheidung, Test `scripts/__tests__/check-sources.test.ts`).
+- [x] `npm run report:converters` schreibt `docs/pilot/m3-konverter-vergleich.md`; `npm run pdf:compare` schreibt `docs/pilot/m3-pdf-vergleich.md`; `npm run check:sources` prüft die Abnahme (Exit 1 bei 19 Quellen, vorläufiger Entscheidung oder einer freigegebenen Quelle ohne Dokument, Test `scripts/__tests__/check-sources.test.ts`).
+- [x] Robustheit der Läufe (letzte Fix-Runde): „Lauf beenden“ auf der Laufseite beendet einen hängenden Lauf, bricht seine wartenden Jobs ab und vermerkt, wer ihn wann beendet hat; ein nach Stufenende wiederholter Crawl-Job legt neue Links für den nächsten Lauf ab; robots.txt mit 5xx hält die Seiten der Quelle offen statt je URL einen Fehler zu erzeugen; `fetch.url` läuft bis 60 Minuten je Job und von Claude umgeschriebene PDF-Seiten liegen in S3 (`pdf-pages/…`), eine Wiederholung bezahlt nur fehlende Seiten; ein abgelehnter Jina-/Firecrawl-Schlüssel lässt die Jobs sichtbar scheitern statt jede Seite als fehlgeschlagen zu markieren.
 - [x] End-to-End-Test `e2e/sources.spec.ts`: Login → Quellen → vorgeschlagene Quelle im Review freigeben → Quelle als „Freigegeben“ gelistet.
 
 ## Offen für Christian (Übergabe, nicht automatisierbar)
-1. [ ] **Voyage-Zahlungsmethode hinterlegen**, bevor der volle Crawl läuft (Ruling M3-D-R1). Ohne sie gelten 3 Anfragen und 10 000 Token je Minute; `embed.chunks` läuft dann dauernd in 429-Wiederholungen. Danach fehlende Embeddings mit „Einbettungen nachholen“ (Runbook, „Embeddings neu berechnen“).
-2. [ ] **Hängende Läufe beenden**: Ein Crawl-Lauf, der nach einem Worker-Absturz „Wartend“ oder „Läuft“ bleibt, sperrt seine Quellen für jeden neuen Abruf, bis er beendet ist. Eine Schaltfläche fehlt; Beenden per SQL steht im Runbook („Hängender Lauf“).
+1. [ ] **Voyage-Zahlungsmethode hinterlegen**, bevor der volle Crawl läuft (Ruling M3-D-R1). Ohne sie gelten 3 Anfragen und 10 000 Token je Minute; `embed.chunks`-Jobs bekommen 429, scheitern nach drei Versuchen (etwa 3 Minuten) und erscheinen je Job unter „Prüfen“ (zählen in `check:sources`). Danach diese Aufgaben entscheiden und fehlende Embeddings mit „Einbettungen nachholen“ berechnen (Runbook, „Embeddings neu berechnen“).
+2. [ ] **Hängende Läufe kennen**: Ein Crawl-Lauf, der nach einem Worker-Absturz „Wartend“ oder „Läuft“ bleibt, sperrt seine Quellen für jeden neuen Abruf. Beenden über „Lauf beenden“ auf der Laufseite (Runbook, „Hängender Lauf“); kein SQL mehr nötig.
 3. [ ] **Netz des Workers absichern**: Der Renderer verlässt sich auf den toten Proxy `127.0.0.1:9` (Ruling M3-SEC-R3) und die Adressprüfung im Code. Zusätzlich auf dem Server ausgehende Verbindungen in private Netze (RFC 1918, 169.254.0.0/16, 100.64.0.0/10, fc00::/7, ::1) per Firewall sperren (Verteidigung in der Tiefe).
 4. [ ] **Auf dem Server** in der Reihenfolge des Runbooks:
    1. Quellenfindung für `saronic` (danach `argolic`), Vorschläge prüfen und freigeben, Ziel 20–40.
@@ -37,13 +38,15 @@ Ablauf der Läufe: `docs/runbook.md`, Abschnitt „Quellen und Archiv“.
 ## Kosten der Umsetzung (echte Aufrufe)
 | Dienst | Bündel F (Konverter-Vergleich, 1 Seite Probe) | Stand Entwicklungsdatenbank vor Bündel F (Aufnahmen M3) |
 | --- | ---: | ---: |
-| Jina | 0,0002 € | 0,0008 € |
-| Firecrawl | 0,0047 € | 0,0141 € |
-| DataForSEO | 0 € | 0,0038 € |
-| Anthropic | 0 € | 0,0050 € |
-| Voyage | 0 € | 0 € |
+| Jina | 0,0002 € | 0,0008 € (3 Aufrufe) |
+| Firecrawl | 0,0047 € | 0,0141 € (3 Aufrufe) |
+| DataForSEO | 0 € | 0,0038 € (3 Aufrufe) |
+| Anthropic | 0 € | 0,0050 € (2 Aufrufe) |
+| Voyage | 0 € | < 0,0001 € (1 Aufruf, 53 Token) |
 
-Die Probe (eine Wikivoyage-Seite durch alle drei Konverter) lief gegen die Entwicklungsdatenbank in einer zurückgerollten Transaktion; die Kosten oben stammen aus ihren `external_calls`-Zeilen vor dem Rollback. Alles liegt weit unter `config/budgets.json`. Der eigentliche Vergleich (50 Seiten) kostet auf dem Server etwa 0,24 € Firecrawl und 0,01 € Jina.
+Die Probe (eine Wikivoyage-Seite durch alle drei Konverter) lief gegen die Entwicklungsdatenbank in einer zurückgerollten Transaktion; die Kosten oben stammen aus ihren `external_calls`-Zeilen vor dem Rollback. Die rechte Spalte ist am 2026-10-19 gegen `external_calls` der Entwicklungsdatenbank nachgeprüft (Summe je Dienst, alle Zeilen). Alles liegt weit unter `config/budgets.json`. Der eigentliche Vergleich (50 Seiten) kostet auf dem Server etwa 0,24 € Firecrawl und 0,01 € Jina.
+
+Kosten je Quelle gibt es an zwei Stellen mit verschiedenem Zeitraum: `/sources` zeigt „Kosten 30 Tage“, `check:sources` die Summe seit Beginn. Beide zählen jeden Aufruf mit `source_id`, also auch die Jina- und Firecrawl-Aufrufe des Konverter-Vergleichs.
 
 ## Offene Kleinpunkte aus den Reviews (bewusst verschoben)
 | Punkt | Ort |
@@ -58,7 +61,10 @@ Die Probe (eine Wikivoyage-Seite durch alle drei Konverter) lief gegen die Entwi
 | Kein Gesamt-Bytebudget je Seitendarstellung, nur je Teilanfrage (Ruling M3-C-R7) | `lib/adapters/fetch/browser.ts` |
 | „Alle freigegebenen crawlen“ nimmt je Quelle eine Advisory-Sperre in einer Transaktion; bei Tausenden Quellen `max_locks_per_transaction` beachten | `lib/pipeline/fetch/run.ts` |
 | Beendete Quellen sind nur noch per URL erreichbar (angenommen, M3-E-R1) | `app/(admin)/sources/[id]/page.tsx` |
-| Konverter-Vergleich: eine fehlgeschlagene Umwandlung kostet 0 € in `converter_outputs` (bezahlte Jina-/Firecrawl-Antworten mit Zielfehler stehen nur in `external_calls`); der Start prüft „kein anderer Vergleich läuft“ ohne Sperre | `lib/pipeline/compare-converters.ts`, `lib/pipeline/compare-converters-run.ts` |
+| Konverter-Vergleich: eine fehlgeschlagene Umwandlung kostet 0 € in `converter_outputs` (bezahlte Jina-/Firecrawl-Antworten mit Zielfehler stehen nur in `external_calls`) | `lib/pipeline/compare-converters.ts` |
+| `prepareSourceCrawl` meldet `paused`, auch wenn das bedingte Pausieren nichts änderte (Quelle war nicht mehr freigegeben); nur die Log-Zeile ist ungenau | `lib/pipeline/fetch/source.ts` |
+| Eine weiterleitende Frontier-URL (`/a` → `/b`) und ihr ebenfalls verlinktes Ziel werden zwei Dokumente mit gleichem Inhalt (doppelte Chunks und Embeddings); später nach `final_url` zusammenführen (M3-FIN-R2) | `lib/pipeline/fetch/url.ts` |
+| Archiviertes Markdown lädt Bilder fremder Hosts im Browser des Admins (ohne Referrer, verzögert); angenommen (M3-FIN-R2) | `app/(admin)/_components/archive-markdown.tsx` |
 
 ## Bewusst verschoben
 - Täglicher Abruf über RSS und Sitemaps → M8 (Spec 05); `change_rate` wird in M3 nur gepflegt.
