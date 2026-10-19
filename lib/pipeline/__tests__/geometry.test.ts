@@ -3,12 +3,14 @@ import type { PgBoss } from "pg-boss";
 import { describe, expect, it } from "vitest";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { computations, facts, places, restrictedAreas, reviewTasks, runs, tiles, type ComputationKind } from "@/lib/db/schema";
+import { computations, facts, geoObjects, places, restrictedAreas, reviewTasks, runs, tiles, type ComputationKind } from "@/lib/db/schema";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { latestComputations } from "@/lib/domain/facts/computations";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
 import { setAnchorPosition } from "@/lib/domain/geometry/anchor-correction";
 import { newId } from "@/lib/domain/ids";
+import { createReviewTask } from "@/lib/domain/review";
+import { decideReviewTask } from "@/lib/domain/review-decisions";
 import { createRun } from "@/lib/domain/runs";
 import { tileBbox } from "@/lib/domain/tiles";
 import { HANDLERS } from "@/lib/jobs/registry";
@@ -16,7 +18,7 @@ import { STAGES } from "@/lib/jobs/stages";
 import { createLogger } from "@/lib/logger";
 import { computePlaceGeometry, GEOMETRY_STAGE, geometryPlaceIds, storeComputedAnchor } from "@/lib/pipeline/geometry";
 import { startGeometryRun } from "@/lib/pipeline/geometry-run";
-import { withRollback } from "@/test/db";
+import { testDb, withRollback } from "@/test/db";
 import { insertTestRaster } from "@/test/geometry/raster";
 import { buildBayScene, insertScenePlace, SCENE_LAND_VERSION } from "@/test/geometry/scene";
 import { lonLatOf, rect, SYNTHETIC_SRID, utmOf } from "@/test/geometry/synthetic";
@@ -393,4 +395,73 @@ describe("storeComputedAnchor", () => {
       await storeComputedAnchor(tx, place.placeId, null, 0.3);
       expect(await placeRow(tx, place.placeId)).toMatchObject({ lon: null, anchor_confidence: null, anchor_origin: null });
     }));
+});
+
+describe("lock order", () => {
+  // Needs two committing connections, so it cannot run in withRollback: the synthetic place stays in the test
+  // database, in open sea outside the pilot box and away from the bay scene (≈ 28.3 E / 35.2 N).
+  it("the stage locks the open review task before the place, like decideReviewTask", async () => {
+    const db = testDb();
+    const position: GeoJSON.Point = { type: "Point", coordinates: [28.3, 35.2] };
+    const { placeId, taskId } = await db.transaction(async (tx) => {
+      const [object] = await tx
+        .insert(geoObjects)
+        .values({ type: "bay", origin: "geonames", geom: sql`${geomFromGeoJson(position)}` })
+        .returning({ id: geoObjects.id });
+      const [place] = await tx
+        .insert(places)
+        .values({ geoObjectId: object!.id, kind: "anchorage", status: "candidate", position: sql`${geomFromGeoJson(position)}` })
+        .returning({ id: places.id });
+      const task = await createReviewTask(tx, { kind: "place_candidate", subjectType: "place", subjectId: place!.id, context: {} });
+      return { placeId: place!.id, taskId: task.id };
+    });
+
+    // The decision holds the task lock (its first step) and pauses before locking the place.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let decisionPid!: number;
+    let taskLocked!: () => void;
+    const locked = new Promise<void>((resolve) => (taskLocked = resolve));
+    const decision = db.transaction(async (b) => {
+      await b.execute(sql`select id from review_tasks where id = ${taskId} for update`);
+      const { rows } = await b.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
+      decisionPid = rows[0]!.pid;
+      taskLocked();
+      await gate;
+      await decideReviewTask(b, { taskId, decision: { action: "reject" }, decidedBy: "admin@example.org" });
+    });
+    await locked;
+
+    const stage = computePlaceGeometry(db, placeId, { today: TODAY }).then(
+      (result) => ({ result }),
+      (error: unknown) => ({ error }),
+    );
+    try {
+      // The stage blocks on the task lock held by the decision …
+      let blocked = false;
+      for (let i = 0; i < 100 && !blocked; i++) {
+        const { rows } = await db.execute<{ n: number }>(
+          sql`select count(*)::int as n from pg_stat_activity where ${decisionPid}::int = any(pg_blocking_pids(pid))`,
+        );
+        blocked = rows[0]!.n > 0;
+        if (!blocked) await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(blocked).toBe(true);
+      // … and holds no lock on the place, so the decision can take it next.
+      const placeFree = await db
+        .transaction(async (c) => {
+          await c.execute(sql`select id from places where id = ${placeId} for update nowait`);
+          return true;
+        })
+        .catch(() => false);
+      expect(placeFree).toBe(true);
+    } finally {
+      release();
+    }
+
+    await decision;
+    // The stage then sees the rejected place and skips it.
+    expect(await stage).toEqual({ result: { created: [], unchanged: [], gaps: [], excluded: false } });
+    expect((await placeRow(db, placeId)).status).toBe("rejected");
+  });
 });

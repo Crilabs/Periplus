@@ -141,8 +141,17 @@ export async function storeComputedAnchor(db: Db, placeId: string, anchor: LonLa
     .where(and(eq(places.id, placeId), or(isNull(places.anchorOrigin), ne(places.anchorOrigin, "review"))));
 }
 
-/** Loads the place and locks its row, so an admin anchor correction cannot commit between this read and the write. */
+/**
+ * Loads the place and locks its row, so an admin anchor correction cannot commit between this read and the write.
+ * Global lock order (as in `decideReviewTask` and `applyExclusion`): the open `place_candidate` review task row
+ * first, then the place row. The stage takes the task lock here, before the place, although only a later
+ * exclusion writes the task; otherwise the stage (place → task) and a decision (task → place) can deadlock.
+ */
 async function loadPlace(db: Db, placeId: string): Promise<PlaceInput | null> {
+  await db.execute(sql`
+    select id from review_tasks
+    where kind = 'place_candidate' and subject_id = ${placeId} and status = 'open'
+    for update`);
   const { rows } = await db.execute<{
     geo_object_id: string;
     type: string;
