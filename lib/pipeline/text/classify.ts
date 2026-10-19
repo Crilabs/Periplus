@@ -73,8 +73,11 @@ function titleOf(md: string): string | null {
   return m ? m[1]!.trim() : null;
 }
 
-/** The task inputs of the versions, in the given order; a version whose Markdown is missing in the archive is skipped. */
-async function classifyInputs(db: Db, archive: Pick<Archive, "get">, ids: string[], config: AppConfig): Promise<BatchItemInput[]> {
+/**
+ * The task inputs of the versions, in the given order; a version whose Markdown is missing in the archive is skipped.
+ * Also used by `fixtures:record --ai classify-document`.
+ */
+export async function classifyInputs(db: Db, archive: Pick<Archive, "get">, ids: string[], config: AppConfig): Promise<BatchItemInput[]> {
   if (ids.length === 0) return [];
   const rows = await db
     .select({ id: documentVersions.id, mdKey: documentVersions.mdKey, fetchedAt: documentVersions.fetchedAt, url: documents.url })

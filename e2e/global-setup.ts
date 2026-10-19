@@ -2,7 +2,21 @@ import { execFileSync } from "node:child_process";
 import { and, eq, like, sql } from "drizzle-orm";
 import { createDb, type Db } from "../lib/db/client";
 import { geomFromGeoJson } from "../lib/db/geometry";
-import { geoNames, geoObjects, places, sources } from "../lib/db/schema";
+import { loadConfig } from "../lib/config";
+import {
+  chunks,
+  documents,
+  documentVersions,
+  extractionRuns,
+  extractionUnits,
+  facts,
+  geoNames,
+  geoObjects,
+  mentions,
+  places,
+  runs,
+  sources,
+} from "../lib/db/schema";
 import { createReviewTask } from "../lib/domain/review";
 import { createUser } from "../lib/domain/users";
 
@@ -42,6 +56,93 @@ async function createReviewCandidate(db: Db): Promise<string> {
     });
   });
   return name;
+}
+
+/** The text of the e2e fact scene; the fact quotes `FACT_QUOTE` from it. */
+const FACT_TEXT = "The bay is calm in the evening. Holding is good in sand at five metres, well sheltered from the north.";
+const FACT_QUOTE = "Holding is good in sand at five metres";
+
+/**
+ * A bay with a place and one verified text fact of a finished, active extraction run, quoted from a document of a
+ * proposed `*.e2e.test.invalid` source, unique per run (all these rows are append-only or stable, so every run adds
+ * one). Open sea outside the pilot box. The document is `gone`, so no text run, pending selection or model comparison
+ * sample of another test ever takes it in. Returns the place id.
+ */
+async function createFactScene(db: Db): Promise<string> {
+  const cfg = loadConfig("config");
+  const task = cfg.models.tasks["extract-facts"]!;
+  const name = `E2E Fact Bay ${new Date().toISOString()}`;
+  const geom = sql`${geomFromGeoJson({ type: "Point", coordinates: [27.93, 34.93] })}`;
+  return db.transaction(async (tx) => {
+    const [object] = await tx.insert(geoObjects).values({ type: "bay", origin: "manual", geom }).returning({ id: geoObjects.id });
+    await tx.insert(geoNames).values({ geoObjectId: object!.id, name, nameNormalized: name.toLowerCase(), language: "en", script: "latin", origin: "manual" });
+    const [place] = await tx.insert(places).values({ geoObjectId: object!.id, kind: "anchorage", position: geom }).returning({ id: places.id });
+    const domain = `${Date.now()}.facts${E2E_SOURCE_SUFFIX}`;
+    const [source] = await tx
+      .insert(sources)
+      .values({ domain, name: domain, type: "pilot_guide", weight: 0.9, status: "proposed", crawlRules: {}, origin: "manual" })
+      .returning({ id: sources.id });
+    const url = `https://${domain}/bay`;
+    const [doc] = await tx.insert(documents).values({ sourceId: source!.id, url, urlNormalized: url, docType: "pilot_guide", status: "gone" }).returning({ id: documents.id });
+    const [version] = await tx
+      .insert(documentVersions)
+      .values({
+        documentId: doc!.id,
+        fetchedAt: new Date(),
+        contentHash: `e2e-${Date.now()}`,
+        rawHash: "e2e",
+        rawKey: `archive/${doc!.id}/e2e.raw.html`,
+        mdKey: `archive/${doc!.id}/e2e.md`,
+        observedAt: new Date().toISOString().slice(0, 10),
+        observedAtBasis: "fetched",
+        docType: "pilot_guide",
+        converter: "local",
+        charCount: FACT_TEXT.length,
+      })
+      .returning({ id: documentVersions.id });
+    await tx.update(documents).set({ currentVersionId: version!.id }).where(eq(documents.id, doc!.id));
+    const [chunk] = await tx
+      .insert(chunks)
+      .values({ documentVersionId: version!.id, ordinal: 0, text: FACT_TEXT, textNormalized: FACT_TEXT, textHash: "e2e", charStart: 0, charEnd: FACT_TEXT.length, wordCount: 19 })
+      .returning({ id: chunks.id });
+    const [mention] = await tx
+      .insert(mentions)
+      .values({ documentVersionId: version!.id, chunkId: chunk!.id, geoObjectId: object!.id, surface: "The bay", charStart: 0, charEnd: 7, observedAt: new Date().toISOString().slice(0, 10), confidence: 1, matchKind: "deterministic", extractionStatus: "done" })
+      .returning({ id: mentions.id });
+    const [run] = await tx.insert(runs).values({ kind: "stage", scopeType: "system", scopeId: "e2e", triggeredBy: "e2e", status: "finished" }).returning({ id: runs.id });
+    const [er] = await tx
+      .insert(extractionRuns)
+      .values({
+        task: "extract-facts",
+        model: task.model,
+        promptVersion: task.promptVersion,
+        factSchemaVersion: cfg.factSchema.version,
+        purpose: "regular",
+        runId: run!.id,
+        status: "finished",
+        quoteCheck: { facts: 1, verified: 1, ratio: 1, failures: [] },
+        finishedAt: new Date(),
+      })
+      .returning({ id: extractionRuns.id });
+    await tx.insert(extractionUnits).values({ extractionRunId: er!.id, documentVersionId: version!.id, geoObjectId: object!.id, part: 0, level: "place", mentionIds: [mention!.id], chunkIds: [chunk!.id], status: "done" });
+    const start = FACT_TEXT.indexOf(FACT_QUOTE);
+    await tx.insert(facts).values({
+      geoObjectId: object!.id,
+      attribute: "holding",
+      value: "good",
+      mentionId: mention!.id,
+      quote: FACT_QUOTE,
+      quoteVerified: true,
+      quoteChunkId: chunk!.id,
+      quoteStart: start,
+      quoteEnd: start + FACT_QUOTE.length,
+      observedAt: new Date().toISOString().slice(0, 10),
+      confidence: 0.9,
+      extractionRunId: er!.id,
+      factSchemaVersion: cfg.factSchema.version,
+    });
+    return place!.id;
+  });
 }
 
 /** Domain suffix of the sources the e2e run proposes (never a real domain). */
@@ -97,6 +198,8 @@ export default async function globalSetup(): Promise<void> {
     const proposal = await createSourceProposal(db);
     process.env.E2E_SOURCE_DOMAIN = proposal.domain;
     process.env.E2E_SOURCE_TASK = proposal.taskId;
+    process.env.E2E_FACT_PLACE = await createFactScene(db);
+    process.env.E2E_FACT_QUOTE = FACT_QUOTE;
     // Pilot-area tests roll back, so the test database normally has no saronic area object (like a fresh
     // installation before its first gazetteer run); the quality spec checks the page for either state.
     const { rows } = await db.execute(

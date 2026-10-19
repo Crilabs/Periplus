@@ -126,8 +126,11 @@ export async function planRoutes(
   return jobs;
 }
 
-/** The sections of the versions' archived Markdown; a version whose Markdown is missing is left out and logged. */
-async function sectionsOf(db: Db, archive: Pick<Archive, "get">, versionIds: string[], config: AppConfig): Promise<Map<string, string[]>> {
+/**
+ * The sections of the versions' archived Markdown; a version whose Markdown is missing is left out and logged. Also used
+ * by `fixtures:record --ai extract-route`.
+ */
+export async function sectionsOf(db: Db, archive: Pick<Archive, "get">, versionIds: string[], config: AppConfig): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>();
   if (versionIds.length === 0) return out;
   const rows = await db.select({ id: documentVersions.id, mdKey: documentVersions.mdKey }).from(documentVersions).where(inArray(documentVersions.id, versionIds));
@@ -140,6 +143,21 @@ async function sectionsOf(db: Db, archive: Pick<Archive, "get">, versionIds: str
     out.set(row.id, routeSections(new TextDecoder().decode(body), config.extraction.routeSectionWords));
   }
   return out;
+}
+
+/** The task input of section `section` (from 1) of a report's `parts`, with the limits from config. */
+export function routeSectionInput(parts: string[], section: number, observedAt: string, config: AppConfig): ExtractRouteInput {
+  return {
+    section,
+    sections: parts.length,
+    observedAt,
+    maxStops: config.extraction.routeMaxStops,
+    quoteMinChars: config.extraction.quote.minChars,
+    quoteMaxChars: config.extraction.quote.maxChars,
+    stopNameMaxChars: config.extraction.routeStop.nameMaxChars,
+    maxBeaufort: config.extraction.routeStop.maxBeaufort,
+    text: parts[section - 1]!,
+  };
 }
 
 /**
@@ -181,18 +199,7 @@ export async function extractRoutes(db: Db, deps: RouteDeps, job: RouteJob): Pro
     inputs: async (ids) =>
       ids.map((id): BatchItemInput => {
         const { versionId, section } = parseSectionId(id);
-        const parts = sections.get(versionId)!;
-        const input: ExtractRouteInput = {
-          section,
-          sections: parts.length,
-          observedAt: observedAt.get(versionId)!,
-          maxStops: config.extraction.routeMaxStops,
-          quoteMinChars: config.extraction.quote.minChars,
-          quoteMaxChars: config.extraction.quote.maxChars,
-          stopNameMaxChars: config.extraction.routeStop.nameMaxChars,
-          maxBeaufort: config.extraction.routeStop.maxBeaufort,
-          text: parts[section - 1]!,
-        };
+        const input = routeSectionInput(sections.get(versionId)!, section, observedAt.get(versionId)!, config);
         return { subjectType: SUBJECT, subjectId: id, input };
       }),
     remainderData: (ids) => ({ extractionRunId: job.extractionRunId, sectionIds: ids }),

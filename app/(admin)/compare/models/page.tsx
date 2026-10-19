@@ -16,6 +16,7 @@ import {
   RUN_STATUS_LABELS,
 } from "../../_components/labels";
 import { QuoteContext } from "../../_components/quote-context";
+import { documentHref } from "../../places/[id]/facts-tab";
 import { createComparisonAction, rateDeviationAction, startComparisonRunAction } from "./actions";
 
 const BUTTON = "rounded border border-neutral-400 px-3 py-1 hover:bg-neutral-100";
@@ -51,7 +52,7 @@ function FactColumn({ title, model, fact, attribute }: { title: string; model: s
             <p className="text-xs">
               Quelle:{" "}
               {fact.documentId ? (
-                <Link href={`/documents/${fact.documentId}?tab=annotations`} className="underline">
+                <Link href={documentHref(fact)} className="underline">
                   {fact.source.domain}
                 </Link>
               ) : (

@@ -243,7 +243,7 @@ describe("model comparison", () => {
         [MODEL_A]: answer(MODEL_A, () => [fact("holding", "good", "Good holding in sand")]),
         [MODEL_B]: answer(MODEL_B, () => [fact("holding", "moderate", "Good holding in sand"), fact("seabed", ["sand"], "holding in sand")]),
       });
-      const { id: runId } = await startModelComparisonRun(tx, rec.boss, { comparisonId, triggeredBy: "test" });
+      const { id: runId } = await startModelComparisonRun(tx, rec.boss, { comparisonId, triggeredBy: "test", now }, config);
       expect(await drive(tx, rec, model, runId, now)).toBe("finished");
 
       const [run] = await tx.select().from(runs).where(eq(runs.id, runId));
@@ -268,7 +268,7 @@ describe("model comparison", () => {
       ]);
       expect(summary.agreement).toEqual({ same: 0, deviation: 4, onlyA: 0, onlyB: 4, pct: 0 });
       // a second start is refused
-      await expect(startModelComparisonRun(tx, rec.boss, { comparisonId, triggeredBy: "test" })).rejects.toMatchObject({ reason: "comparison_started" });
+      await expect(startModelComparisonRun(tx, rec.boss, { comparisonId, triggeredBy: "test", now }, config)).rejects.toMatchObject({ reason: "comparison_started" });
 
       // NOTE T19: while the decision is provisional no comparison run is active; once decided, the chosen model's is
       const [unit] = await tx.select().from(extractionUnits).where(eq(extractionUnits.extractionRunId, ers[0]!.id)).limit(1);
@@ -420,8 +420,16 @@ describe("model comparison", () => {
       expect(ok).toMatchObject({ units: 1, sources: 1, docTypes: ["trip_report"], estimateEur: estimate });
     }));
 
-  it("a comparison without units does not start", () =>
+  it("a comparison without units, unknown or above today's budget does not start", () =>
     withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      await scene(tx, { sources: 1, types: ["trip_report"], perSource: 1 });
+      const { id } = await createModelComparison(tx, { label: "dear", createdBy: "test", cfg: config });
+      const estimate = await estimateComparisonCostEur(tx, id, config);
+      const poor: AppConfig = { ...config, budgets: { ...config.budgets, anthropic: { dailyEur: estimate / 2 } } };
+      const refused = await startModelComparisonRun(tx, recordingBoss().boss, { comparisonId: id, triggeredBy: "test", now }, poor).catch((e: unknown) => e);
+      expect(refused).toMatchObject({ reason: "comparison_over_budget" });
+      expect((await tx.select().from(modelComparisons).where(eq(modelComparisons.id, id)))[0]!.runId).toBeNull();
       const [row] = await tx.insert(modelComparisons).values({ label: "empty", models: [MODEL_A, MODEL_B], createdBy: "test" }).returning({ id: modelComparisons.id });
       const reason = (p: Promise<unknown>) => p.then(() => "started", (e: unknown) => (e instanceof RunScopeNotReady ? e.reason : String(e)));
       expect(await reason(startModelComparisonRun(tx, recordingBoss().boss, { comparisonId: row!.id, triggeredBy: "test" }))).toBe("comparison_without_units");

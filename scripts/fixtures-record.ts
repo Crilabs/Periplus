@@ -14,12 +14,23 @@ import { fetchTransport, makeResponse, RetryableHttpError, type Transport } from
 import { fixtureTransport, recordingTransport } from "../lib/adapters/http-fixtures";
 import { searchNominatim } from "../lib/adapters/nominatim";
 import { runPdftotext } from "../lib/adapters/pdf";
-import type { Archive } from "../lib/adapters/s3";
+import { getArchive, type Archive } from "../lib/adapters/s3";
+import { createAnthropicClient } from "../lib/ai/anthropic";
+import { estimateBatchItemCostsEur } from "../lib/ai/cost";
+import { fixtureKey } from "../lib/ai/fixtures";
+import { classifyDocumentTask } from "../lib/ai/tasks/classify-document";
+import { disambiguateMentionTask } from "../lib/ai/tasks/disambiguate-mention";
+import { extractFactsTask } from "../lib/ai/tasks/extract-facts";
+import { extractRouteTask } from "../lib/ai/tasks/extract-route";
+import type { ModelClient, ModelTask } from "../lib/ai/types";
 import { embedTexts } from "../lib/adapters/voyage";
 import { fetchSitelinks } from "../lib/adapters/wikidata";
-import { getConfig, type AreaConfig, type DiscoveryConfig } from "../lib/config";
+import { getConfig, type AppConfig, type AreaConfig, type DiscoveryConfig } from "../lib/config";
 import { areaConfigSchema } from "../lib/config/schemas";
 import { createDb, type Db } from "../lib/db/client";
+import { extractionUnits } from "../lib/db/schema";
+import { planUnits } from "../lib/domain/extraction/units";
+import { effectiveVersionMeta } from "../lib/domain/mentions/classification";
 import { areaBbox, syncAreas } from "../lib/domain/gazetteer/areas";
 import { ensureTiles } from "../lib/domain/gazetteer/tiles-ensure";
 import { bufferBbox, importLandPolygons } from "../lib/domain/gazetteer/land";
@@ -28,6 +39,10 @@ import { ensureWhitelistSources, getSource, sourceIdByDomain } from "../lib/doma
 import { parseTileId, type Bbox } from "../lib/domain/tiles";
 import { DATASET_KINDS, DATASETS_STAGE, importDataset } from "../lib/pipeline/datasets";
 import { GEONAMES_STAGE, importGeonames } from "../lib/pipeline/gazetteer/geonames";
+import { classifyInputs } from "../lib/pipeline/text/classify";
+import { disambiguationInputs } from "../lib/pipeline/text/disambiguate";
+import { ensureExtractionRun, unitInputs } from "../lib/pipeline/text/extract";
+import { routeSectionInput, sectionsOf } from "../lib/pipeline/text/routes";
 import { importOsm } from "../lib/pipeline/gazetteer/osm";
 import { importWikidata } from "../lib/pipeline/gazetteer/wikidata";
 import { fetchUrl } from "../lib/pipeline/fetch/url";
@@ -38,7 +53,13 @@ const USAGE =
   "usage: fixtures-record.ts --area <key> [--land <path/land_polygons.shp>] [--cache <dir>] [--datasets | --serp [--limit <1-3>] | --wikivoyage]\n" +
   "       fixtures-record.ts --converters <url> [<url> <url>]\n" +
   "       fixtures-record.ts --voyage\n" +
-  "       fixtures-record.ts --nominatim <query> <tileId>";
+  "       fixtures-record.ts --nominatim <query> <tileId>\n" +
+  "       fixtures-record.ts --ai <classify-document|disambiguate-mention|extract-facts|extract-route> [--limit <1-5>] [--max-eur <eur>]";
+/** Model tasks `--ai` records real answers of (synchronous calls, at most `MAX_AI_ANSWERS`, at most `--max-eur`). */
+export const AI_RECORDING_TASKS = ["classify-document", "disambiguate-mention", "extract-facts", "extract-route"] as const;
+export type AiRecordingTask = (typeof AI_RECORDING_TASKS)[number];
+const MAX_AI_ANSWERS = 5;
+const DEFAULT_AI_MAX_EUR = 1;
 /** Real DataForSEO searches one `--serp` recording may make. */
 const MAX_SERP_CALLS = 3;
 /** Pages one `--converters` recording sends to each paid converter (Jina, Firecrawl). */
@@ -63,7 +84,8 @@ export type RecordArgs =
   | AreaRecordArgs
   | { converters: string[] }
   | { voyage: true }
-  | { nominatim: { query: string; tileId: string } };
+  | { nominatim: { query: string; tileId: string } }
+  | { ai: { task: AiRecordingTask; limit: number; maxEur: number } };
 
 /** The two texts of the recorded Voyage answer (`--voyage`); the embedding tests send exactly these. */
 export const VOYAGE_RECORDING_TEXTS = [
@@ -102,6 +124,23 @@ function isHttpUrl(value: string): boolean {
  * embedding call), as does `--nominatim <query> <tileId>` (one Nominatim radius search).
  */
 export function parseArgs(argv: string[]): RecordArgs {
+  if (argv[0] === "--ai") {
+    const task = argv[1] as AiRecordingTask | undefined;
+    if (!task || !AI_RECORDING_TASKS.includes(task)) throw new Error(USAGE);
+    let limit = MAX_AI_ANSWERS;
+    let maxEur = DEFAULT_AI_MAX_EUR;
+    const seen = new Set<string>();
+    for (let i = 2; i < argv.length; i += 2) {
+      const [flag, value] = [argv[i]!, argv[i + 1]];
+      if (seen.has(flag) || value === undefined || value.startsWith("--")) throw new Error(USAGE);
+      seen.add(flag);
+      if (flag === "--limit") limit = Number(value);
+      else if (flag === "--max-eur") maxEur = Number(value);
+      else throw new Error(USAGE);
+    }
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_AI_ANSWERS || !Number.isFinite(maxEur) || maxEur <= 0) throw new Error(USAGE);
+    return { ai: { task, limit, maxEur } };
+  }
   if (argv[0] === "--nominatim") {
     const [query, tileId] = [argv[1]?.trim(), argv[2]];
     if (argv.length !== 3 || !query || query.startsWith("--") || !isTileId(tileId)) throw new Error(USAGE);
@@ -122,7 +161,7 @@ export function parseArgs(argv: string[]): RecordArgs {
   let wikivoyage = false;
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]!;
-    if (flag === "--converters" || flag === "--voyage" || flag === "--nominatim") throw new Error(USAGE);
+    if (flag === "--converters" || flag === "--voyage" || flag === "--nominatim" || flag === "--ai") throw new Error(USAGE);
     if (flag === "--datasets" || flag === "--serp" || flag === "--wikivoyage") {
       if (flag === "--datasets") datasets = true;
       else if (flag === "--serp") serp = true;
@@ -271,6 +310,142 @@ async function recordNominatim(query: string, tileId: string): Promise<void> {
 }
 
 class RecordingRollback extends Error {}
+
+const AI_TASKS: Record<AiRecordingTask, ModelTask<unknown, unknown>> = {
+  "classify-document": classifyDocumentTask as ModelTask<unknown, unknown>,
+  "disambiguate-mention": disambiguateMentionTask as ModelTask<unknown, unknown>,
+  "extract-facts": extractFactsTask as ModelTask<unknown, unknown>,
+  "extract-route": extractRouteTask as ModelTask<unknown, unknown>,
+};
+
+/**
+ * Calls the model once per input (synchronously, in order) and writes each answer as `<dir>/<task>/<fixtureKey>.json`
+ * with only `task`, `key`, `input`, `output`, `model` and `recordedAt` (no keys, no headers; an `extract-facts` input
+ * carries the unit's chunk texts). Stops before an answer whose estimate (`estimateEur`) would take the spend beyond
+ * `maxEur`, and as soon as the booked spend reaches it.
+ */
+export async function recordAiAnswers(
+  task: ModelTask<unknown, unknown>,
+  inputs: unknown[],
+  deps: { client: ModelClient; maxEur: number; estimateEur: (input: unknown) => number; dir: string; now?: () => Date },
+): Promise<{ recorded: string[]; spentEur: number; stopped: boolean }> {
+  const recorded: string[] = [];
+  let spentEur = 0;
+  for (const input of inputs) {
+    if (spentEur >= deps.maxEur || spentEur + deps.estimateEur(input) > deps.maxEur) return { recorded, spentEur, stopped: true };
+    const result = await deps.client.call(task, input, { stage: "fixtures:record" });
+    spentEur += result.costEur;
+    const key = fixtureKey(task.name, input);
+    const file = path.join(deps.dir, task.name, `${key}.json`);
+    await mkdir(path.dirname(file), { recursive: true });
+    const fixture = { task: task.name, key, input, output: result.output, model: result.model, recordedAt: (deps.now?.() ?? new Date()).toISOString() };
+    await writeFile(file, `${JSON.stringify(fixture, null, 2)}\n`);
+    recorded.push(file);
+  }
+  return { recorded, spentEur, stopped: false };
+}
+
+/** Current versions of active documents, in id order (the inputs of `--ai` come from these). */
+async function currentVersions(db: Db): Promise<string[]> {
+  const { rows } = await db.execute<{ id: string }>(sql`
+    select v.id from documents d join document_versions v on v.id = d.current_version_id
+    where d.status = 'active' and d.valid_to is null order by v.id
+  `);
+  return rows.map((r) => r.id);
+}
+
+/**
+ * The first `limit` task inputs from the development database, built by the pipeline's own input code: versions
+ * (classification), pending ambiguous matches (disambiguation), the first extraction units of the mentions (built in a
+ * transaction that is rolled back, so no run or unit stays), the first sections of trip reports (routes).
+ */
+async function aiRecordingInputs(db: Db, task: AiRecordingTask, limit: number, config: AppConfig): Promise<unknown[]> {
+  if (task === "classify-document") {
+    const items = await classifyInputs(db, getArchive(), (await currentVersions(db)).slice(0, limit), config);
+    return items.map((i) => i.input);
+  }
+  if (task === "disambiguate-mention") {
+    const { rows } = await db.execute<{ id: string }>(sql`select id from ambiguous_matches where status = 'pending' order by id limit ${limit}`);
+    const inputs = await disambiguationInputs(db, rows.map((r) => r.id), config);
+    return rows.flatMap((r) => (inputs.has(r.id) ? [inputs.get(r.id)] : []));
+  }
+  if (task === "extract-route") {
+    const inputs: unknown[] = [];
+    for (const versionId of await currentVersions(db)) {
+      if (inputs.length >= limit) break;
+      const meta = await effectiveVersionMeta(db, versionId);
+      if (meta.docType !== "trip_report") continue;
+      const parts = (await sectionsOf(db, getArchive(), [versionId], config)).get(versionId) ?? [];
+      for (let section = 1; section <= parts.length && inputs.length < limit; section++) inputs.push(routeSectionInput(parts, section, meta.observedAt, config));
+    }
+    return inputs;
+  }
+  const { rows } = await db.execute<{ id: string }>(sql`
+    select m.id from mentions m join documents d on d.current_version_id = m.document_version_id
+    where d.status = 'active' order by m.document_version_id, m.geo_object_id, m.char_start, m.id
+  `);
+  const { units } = await planUnits(db, rows.map((r) => r.id), config.extraction.unit);
+  let inputs: unknown[] = [];
+  await db
+    .transaction(async (tx) => {
+      const { id: runId } = await createRun(tx, { kind: "stage", scope: { type: "system", id: "fixtures" }, stages: [], triggeredBy: "fixtures:record" });
+      const { id: extractionRunId } = await ensureExtractionRun(
+        tx,
+        { runId, task: "extract-facts", model: config.models.tasks["extract-facts"]!.model, promptVersion: config.models.tasks["extract-facts"]!.promptVersion, purpose: "regular" },
+        config,
+      );
+      const picked = units.slice(0, limit);
+      const ids =
+        picked.length === 0
+          ? []
+          : (
+              await tx
+                .insert(extractionUnits)
+                .values(picked.map((u) => ({ extractionRunId, documentVersionId: u.documentVersionId, geoObjectId: u.geoObjectId, part: u.part, level: u.level, mentionIds: u.mentionIds, chunkIds: u.chunkIds })))
+                .returning({ id: extractionUnits.id })
+            ).map((r) => r.id);
+      const built = await unitInputs(tx, ids, config);
+      inputs = ids.flatMap((id) => (built.has(id) ? [built.get(id)] : []));
+      throw new RecordingRollback();
+    })
+    .catch((error: unknown) => {
+      if (!(error instanceof RecordingRollback)) throw error;
+    });
+  return inputs;
+}
+
+/**
+ * Records up to `limit` real answers of one model task as fixtures (`test/fixtures/ai/<task>/`), from inputs of the
+ * development database of `DATABASE_URL`. Synchronous calls through the Anthropic adapter: budget `anthropic` and
+ * `external_calls` are booked there, and the recording stops at `maxEur` (a sync call costs the batch estimate without
+ * the batch discount).
+ */
+async function recordAi(args: { task: AiRecordingTask; limit: number; maxEur: number }): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is not set");
+  const config = getConfig();
+  const task = AI_TASKS[args.task];
+  const { db, close } = createDb(url);
+  try {
+    const inputs = await aiRecordingInputs(db, args.task, args.limit, config);
+    if (inputs.length === 0) {
+      process.stdout.write(`${args.task}: no inputs in the database (run "Texte auswerten" first); nothing recorded\n`);
+      return;
+    }
+    const result = await recordAiAnswers(task, inputs, {
+      client: createAnthropicClient(db, config),
+      maxEur: args.maxEur,
+      estimateEur: (input) => estimateBatchItemCostsEur(config, task, [input])[0]! / config.models.batch.discount,
+      dir: path.join(FIXTURES, "ai"),
+    });
+    for (const file of result.recorded) process.stdout.write(`recorded ${file}\n`);
+    process.stdout.write(
+      `${args.task}: ${result.recorded.length} of ${inputs.length} answers, ${result.spentEur.toFixed(4)} EUR${result.stopped ? ` (stopped at the ${args.maxEur} EUR ceiling)` : ""}\n`,
+    );
+  } finally {
+    await close();
+  }
+}
 
 /**
  * Records the Wikivoyage sitelinks of `WIKIVOYAGE_RECORDING_ITEMS` on the area's languages (one `wbgetentities` call)
@@ -572,6 +747,7 @@ async function writeGeonames(downloads: Map<string, Uint8Array>, countries: stri
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  if ("ai" in args) return recordAi(args.ai);
   if ("nominatim" in args) return recordNominatim(args.nominatim.query, args.nominatim.tileId);
   if ("voyage" in args) return recordVoyage();
   if ("converters" in args) return recordConverters(args.converters);

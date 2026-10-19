@@ -4,6 +4,8 @@ import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { modelComparisons, modelComparisonUnits, runs } from "@/lib/db/schema";
 import { createRun, type RunScope } from "@/lib/domain/runs";
+import { estimateComparisonCostEur } from "@/lib/domain/extraction/comparison";
+import { anthropicHeadroomEur } from "@/lib/pipeline/batches";
 import { enqueueStage, startRun } from "@/lib/pipeline/runs";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { CHECK_STAGE } from "./check";
@@ -112,14 +114,16 @@ export const MODEL_COMPARISON_SCOPE = "model-comparison";
  * "Lauf starten" of a model comparison (Task 19): a run of kind `stage` with `MODEL_COMPARISON_STAGES` and params
  * `{ comparisonId, models, documentVersionIds }` (the versions of its units, for the record); the extraction stage
  * plans one comparison extraction run per model from the comparison's units. Refused before the run exists
- * (`RunScopeNotReady`) for an unknown comparison, one without units, and one whose run is queued, running or finished
- * (a failed or ended run may be started again: a new run gets new extraction runs). Comparison row and run are written
- * in one transaction under a row lock, so two starts never create two runs.
+ * (`RunScopeNotReady`) for an unknown comparison, one without units, one whose run is queued, running or finished (a
+ * failed or ended run may be started again: a new run gets new extraction runs), and one whose cost estimate does not
+ * fit today's `anthropic` headroom (spend and open batch reservations, ruling M4-P6). Comparison row and run are
+ * written in one transaction under a row lock, so two starts never create two runs.
  */
 export async function startModelComparisonRun(
   db: Db,
   boss: PgBoss,
-  input: { comparisonId: string; triggeredBy: string },
+  input: { comparisonId: string; triggeredBy: string; now?: Date },
+  config: AppConfig = getConfig(),
 ): Promise<{ id: string }> {
   const created = await db.transaction(async (tx) => {
     const [comparison] = await tx.select().from(modelComparisons).where(eq(modelComparisons.id, input.comparisonId)).for("update");
@@ -133,6 +137,11 @@ export async function startModelComparisonRun(
       .from(modelComparisonUnits)
       .where(eq(modelComparisonUnits.comparisonId, comparison.id));
     if (units.length === 0) throw new RunScopeNotReady("comparison_without_units", `model comparison ${comparison.id} has no units`);
+    const estimateEur = await estimateComparisonCostEur(tx, comparison.id, config);
+    const headroomEur = await anthropicHeadroomEur(tx, config, input.now ?? new Date());
+    if (estimateEur >= headroomEur) {
+      throw new RunScopeNotReady("comparison_over_budget", `estimate ${estimateEur.toFixed(2)} EUR exceeds today's anthropic headroom ${headroomEur.toFixed(2)} EUR`);
+    }
     const documentVersionIds = [...new Set(units.map((u) => u.versionId))].sort();
     const { id } = await createRun(tx, {
       kind: "stage",

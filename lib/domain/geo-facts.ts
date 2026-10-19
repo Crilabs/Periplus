@@ -25,6 +25,8 @@ export type FactView = {
   context: { before: string; quote: string; after: string } | null;
   source: { domain: string; weight: number } | null;
   documentId: string | null;
+  /** The document version the quote is from (the document page's annotations show it highlighted). */
+  documentVersionId: string | null;
   model: string | null;
   extractionRunId: string | null;
   /** The run the extraction run belongs to (for the link to its run page). */
@@ -103,6 +105,7 @@ async function loadFactViews(db: Db, where: SQL, cfg: AppConfig): Promise<FactVi
       context,
       source: f.domain !== null ? { domain: f.domain, weight: Number(f.weight) } : null,
       documentId: f.document_id,
+      documentVersionId: f.version_id,
       model: f.model,
       extractionRunId: f.extraction_run_id,
       runId: f.run_id,

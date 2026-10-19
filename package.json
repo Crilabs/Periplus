@@ -32,7 +32,8 @@
     "report:converters": "tsx --env-file-if-exists=.env.local scripts/converter-report.ts",
     "check:sources": "tsx --env-file-if-exists=.env.local scripts/check-sources.ts",
     "compare:models": "tsx --env-file-if-exists=.env.local scripts/compare-models.ts",
-    "report:models": "tsx --env-file-if-exists=.env.local scripts/model-report.ts"
+    "report:models": "tsx --env-file-if-exists=.env.local scripts/model-report.ts",
+    "check:texts": "tsx --env-file-if-exists=.env.local scripts/check-texts.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

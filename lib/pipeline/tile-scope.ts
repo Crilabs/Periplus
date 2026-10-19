@@ -29,7 +29,8 @@ export type RunScopeReason =
   | "versions_not_current"
   | "unknown_comparison"
   | "comparison_without_units"
-  | "comparison_started";
+  | "comparison_started"
+  | "comparison_over_budget";
 
 /** A run start refused before the run exists because its scope lacks an input (an expected, user-facing error). */
 export class RunScopeNotReady extends Error {

@@ -313,6 +313,7 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   unknown_comparison: "Diesen Modellvergleich gibt es nicht",
   comparison_without_units: "Der Modellvergleich hat keine Einheiten – zuerst Texte auswerten",
   comparison_started: "Für diesen Modellvergleich gibt es bereits einen Lauf",
+  comparison_over_budget: "Die Kostenschätzung passt heute nicht mehr ins Anthropic-Budget (config/budgets.json) – morgen erneut starten",
 };
 
 /** The German text of a `?error=<reason>` a run action redirected with; null for none or an unknown reason. */

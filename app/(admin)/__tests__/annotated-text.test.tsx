@@ -49,6 +49,7 @@ describe("FactsTab", () => {
     context: { before: "Kolona. ", quote: "Holding is good in sand", after: "." },
     source: { domain: "example.test.invalid", weight: 0.6 },
     documentId: "d1",
+    documentVersionId: "v1",
     model: "claude-sonnet-5-5",
     extractionRunId: "e1",
     runId: "r1234567-0000",
@@ -67,7 +68,8 @@ describe("FactsTab", () => {
     expect(html).toContain("Halt");
     expect(html).toContain("gut");
     expect(html).toContain('<mark data-kind="quote">Holding is good in sand</mark>');
-    expect(html).toContain('href="/documents/d1"');
+    // the document link opens the quote's version on the tab that highlights it
+    expect(html).toContain('href="/documents/d1?v=v1&amp;tab=annotations"');
     expect(html).toContain('href="/runs/r1234567-0000"');
     expect(html).toMatch(/text-neutral-400[^>]*><p><span class="font-semibold">mäßig/);
     expect(html).toContain("nicht aktiver Lauf");

@@ -72,7 +72,7 @@ async function main(): Promise<void> {
     await boss.start();
     try {
       await ensureQueues(boss, config.queues);
-      const { id } = await startModelComparisonRun(db, boss, { comparisonId: created.id, triggeredBy: "compare:models" });
+      const { id } = await startModelComparisonRun(db, boss, { comparisonId: created.id, triggeredBy: "compare:models" }, config);
       out(`run ${id} started; follow it on /runs/${id}, then rate the deviations on /compare/models?comparison=${created.id}`);
     } finally {
       await boss.stop({ graceful: true });
