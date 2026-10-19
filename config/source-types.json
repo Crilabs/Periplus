@@ -1,0 +1,10 @@
+{
+  "pilot_guide": { "weight": 0.9, "changeRate": "static" },
+  "trip_report": { "weight": 0.6, "changeRate": "normal" },
+  "forum": { "weight": 0.4, "changeRate": "high" },
+  "marina": { "weight": 0.8, "changeRate": "high" },
+  "authority": { "weight": 0.9, "changeRate": "normal" },
+  "dataset": { "weight": 0.9, "changeRate": "static" },
+  "travel_guide": { "weight": 0.5, "changeRate": "normal" },
+  "other": { "weight": 0.3, "changeRate": "normal" }
+}

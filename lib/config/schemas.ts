@@ -6,6 +6,8 @@ import {
   seabedTypeEnum,
   type GeoObjectType,
 } from "@/lib/db/schema/geo";
+import { changeRateEnum, DOC_TYPES, type ChangeRate, type DocType } from "@/lib/db/schema/sources";
+import { CONVERTERS, crawlRulesPatchSchema, regexPattern } from "@/lib/domain/sources/crawl-rules";
 
 export const queueConfigSchema = z.object({
   concurrency: z.number().int().min(1),
@@ -323,6 +325,121 @@ export const datasetsSchema = z.strictObject({
   bufferKm: z.number().nonnegative(),
 });
 
+const docType = z.enum(DOC_TYPES);
+const changeRate = z.enum(changeRateEnum.enumValues);
+const positiveInt = z.number().int().positive();
+const eur = z.number().nonnegative();
+const languageCode = z.string().regex(/^[a-z]{2,3}$/, "must be an ISO 639 language code");
+const domainName = z
+  .string()
+  .regex(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/, "must be a lower-case domain name without scheme or path");
+
+const sourceTypeEntrySchema = z.strictObject({ weight: share, changeRate });
+
+/** `config/source-types.json`: default weight and change rate per document type (spec 05). */
+export const sourceTypesSchema = z.strictObject(
+  Object.fromEntries(DOC_TYPES.map((t) => [t, sourceTypeEntrySchema])) as Record<DocType, typeof sourceTypeEntrySchema>,
+);
+
+const queryTemplateSchema = z.strictObject({
+  template: z.string().refine((t) => t.includes("{name}"), "must contain {name}"),
+  lang: languageCode,
+  /** DataForSEO location code (e.g. 2276 Germany, 2826 United Kingdom, 2300 Greece). */
+  locationCode: positiveInt,
+});
+
+/** `config/discovery.json`: SERP search, query templates and the thresholds for source proposals. */
+export const discoverySchema = z.strictObject({
+  serp: z.strictObject({
+    endpoint: z.url(),
+    depth: positiveInt,
+    /** The same query is not searched again within this many days. */
+    reuseDays: positiveInt,
+    maxQueriesPerRun: positiveInt,
+    costPerQueryEur: eur,
+    ratePerMinute: z.number().positive(),
+    timeoutMs: positiveInt,
+  }),
+  templates: z.strictObject({ area: z.array(queryTemplateSchema), tile: z.array(queryTemplateSchema) }),
+  /** A named bay becomes a tile query with an anchor area of at least this size or this many Wikidata names. */
+  bay: z.strictObject({ minAnchorAreaM2: z.number().positive(), minWikidataNames: positiveInt }),
+  proposals: z.strictObject({
+    minSerpHits: positiveInt,
+    minLinkingSources: positiveInt,
+    maxHitsInContext: positiveInt,
+    /** Registrable domains never proposed. */
+    ignoreDomains: z.array(domainName),
+    /** In order of precedence; patterns match `host + pathname`, case-insensitive. */
+    typeHints: z.array(z.strictObject({ pattern: regexPattern, type: docType })),
+    defaultType: docType,
+  }),
+});
+
+/** `config/fetch.json`: fetching, conversion, chunking and the converter decision. */
+export const fetchSchema = z.strictObject({
+  defaultConverter: z.enum(CONVERTERS),
+  /** Source id → converter, overriding `defaultConverter`. */
+  converterBySource: z.record(z.uuid(), z.enum(CONVERTERS)),
+  decision: z.strictObject({ status: z.enum(["provisional", "final"]), note: z.string().trim().min(1) }),
+  /** `render: auto` renders a page whose HTTP text has less main content than this many characters. */
+  renderMinMainChars: positiveInt,
+  timeoutMs: positiveInt,
+  maxRawBytes: positiveInt,
+  maxRateWaitMs: positiveInt,
+  /** Consecutive 404/410 answers after which a document is `gone`. */
+  goneAfter: positiveInt,
+  /** Query parameters dropped by URL normalisation; an entry ending in `*` is a prefix. */
+  trackingParams: z.array(z.string().regex(/^[A-Za-z0-9_.-]+\*?$/, "must be a parameter name, optionally ending in *")),
+  /** ISO 639-3 (language detection) → ISO 639-1 code stored on documents. */
+  languages: z.record(z.string().regex(/^[a-z]{3}$/), z.string().regex(/^[a-z]{2}$/)),
+  chunk: z
+    .strictObject({ targetWords: positiveInt, maxWords: positiveInt, maxOverlapWords: z.number().int().nonnegative() })
+    .refine((c) => c.targetWords <= c.maxWords, "targetWords must not exceed maxWords"),
+  pdf: z.strictObject({
+    extractor: z.literal("pdftotext"),
+    modelFallback: z.boolean(),
+    /** Extracted text below this many characters counts as unreadable. */
+    unreadableMinChars: z.number().int().nonnegative(),
+    maxModelPagesPerDocument: positiveInt,
+  }),
+  jina: z.strictObject({ endpoint: z.url(), eurPerMTok: eur, timeoutMs: positiveInt }),
+  firecrawl: z.strictObject({ endpoint: z.url(), eurPerCredit: eur, timeoutMs: positiveInt }),
+});
+
+/** `config/embeddings.json`: embedding provider, model and dimension of `chunks.embedding`. */
+export const embeddingsSchema = z.strictObject({
+  provider: z.literal("voyage"),
+  endpoint: z.url(),
+  model: z.string().min(1),
+  dimension: positiveInt,
+  batchSize: positiveInt,
+  eurPerMTok: eur,
+  ratePerMinute: z.number().positive(),
+  timeoutMs: positiveInt,
+});
+
+/** `config/sources-whitelist.json`: sources created as approved without a proposal. */
+export const whitelistSchema = z
+  .array(
+    z.strictObject({
+      domain: domainName,
+      name: z.string().trim().min(1),
+      type: docType,
+      changeRate,
+      crawlRules: crawlRulesPatchSchema,
+    }),
+  )
+  .superRefine((entries, ctx) => {
+    const domains = entries.map((e) => e.domain);
+    const dup = domains.find((d, i) => domains.indexOf(d) !== i);
+    if (dup) ctx.addIssue({ code: "custom", message: `duplicate domain ${dup}` });
+  });
+
+export type SourceTypesConfig = Record<DocType, { weight: number; changeRate: ChangeRate }>;
+export type DiscoveryConfig = z.infer<typeof discoverySchema>;
+export type FetchConfig = z.infer<typeof fetchSchema>;
+export type EmbeddingsConfig = z.infer<typeof embeddingsSchema>;
+export type WhitelistConfig = z.infer<typeof whitelistSchema>;
 export type DatasetsConfig = z.infer<typeof datasetsSchema>;
 export type QueueConfig = z.infer<typeof queueConfigSchema>;
 export type GeometryConfig = z.infer<typeof geometrySchema>;
@@ -343,4 +460,9 @@ export type AppConfig = {
   restrictions: RestrictionsConfig;
   datasets: DatasetsConfig;
   quality: QualityConfig;
+  sourceTypes: SourceTypesConfig;
+  discovery: DiscoveryConfig;
+  fetch: FetchConfig;
+  embeddings: EmbeddingsConfig;
+  whitelist: WhitelistConfig;
 };

@@ -1,0 +1,46 @@
+{
+  "serp": {
+    "endpoint": "https://api.dataforseo.com/v3/serp/google/organic/live/regular",
+    "depth": 20,
+    "reuseDays": 30,
+    "maxQueriesPerRun": 240,
+    "costPerQueryEur": 0.0019,
+    "ratePerMinute": 30,
+    "timeoutMs": 120000
+  },
+  "templates": {
+    "area": [
+      { "template": "Törnbericht {name}", "lang": "de", "locationCode": 2276 },
+      { "template": "Revierführer {name}", "lang": "de", "locationCode": 2276 },
+      { "template": "{name} anchorages", "lang": "en", "locationCode": 2826 }
+    ],
+    "tile": [
+      { "template": "Ankerplatz {name}", "lang": "de", "locationCode": 2276 },
+      { "template": "anchorage {name}", "lang": "en", "locationCode": 2826 },
+      { "template": "αγκυροβόλιο {name}", "lang": "el", "locationCode": 2300 }
+    ]
+  },
+  "bay": { "minAnchorAreaM2": 20000, "minWikidataNames": 2 },
+  "proposals": {
+    "minSerpHits": 3,
+    "minLinkingSources": 2,
+    "maxHitsInContext": 20,
+    "ignoreDomains": [
+      "navily.com",
+      "google.com",
+      "youtube.com",
+      "facebook.com",
+      "instagram.com",
+      "pinterest.com",
+      "wikipedia.org",
+      "tripadvisor.com",
+      "tripadvisor.de",
+      "tripadvisor.co.uk",
+      "booking.com",
+      "amazon.com",
+      "amazon.de"
+    ],
+    "typeHints": [],
+    "defaultType": "trip_report"
+  }
+}

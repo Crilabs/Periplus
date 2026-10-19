@@ -1,0 +1,17 @@
+[
+  {
+    "domain": "wikivoyage.org",
+    "name": "Wikivoyage",
+    "type": "travel_guide",
+    "changeRate": "normal",
+    "crawlRules": {
+      "allow": ["^/wiki/[^:]+$"],
+      "maxDepth": 0,
+      "ratePerMinute": 30,
+      "render": "never",
+      "converter": "local",
+      "pdf": false,
+      "boilerplateSelectors": [".mw-editsection", "#toc", ".navbox", "#mw-navigation", "#footer", ".noprint"]
+    }
+  }
+]

@@ -6,13 +6,18 @@ import {
   budgetsSchema,
   categoriesSchema,
   datasetsSchema,
+  discoverySchema,
+  embeddingsSchema,
   factSchemaConfigSchema,
+  fetchSchema,
   gazetteerSchema,
   geometrySchema,
   modelsSchema,
   qualitySchema,
   queuesSchema,
   restrictionsSchema,
+  sourceTypesSchema,
+  whitelistSchema,
   type AppConfig,
   type AreaConfig,
 } from "./schemas";
@@ -23,11 +28,16 @@ export type {
   BudgetService,
   CategoriesConfig,
   DatasetsConfig,
+  DiscoveryConfig,
+  EmbeddingsConfig,
+  FetchConfig,
   GazetteerConfig,
   GeometryConfig,
   QualityConfig,
   QueueConfig,
   RestrictionsConfig,
+  SourceTypesConfig,
+  WhitelistConfig,
 } from "./schemas";
 
 function readJson<T>(dir: string, name: string, schema: ZodType<T>): T {
@@ -80,6 +90,11 @@ export function loadConfig(dir = "config"): AppConfig {
     restrictions: readJson(dir, "restrictions", restrictionsSchema),
     datasets: readJson(dir, "datasets", datasetsSchema),
     quality: readJson(dir, "quality", qualitySchema),
+    sourceTypes: readJson(dir, "source-types", sourceTypesSchema),
+    discovery: readJson(dir, "discovery", discoverySchema),
+    fetch: readJson(dir, "fetch", fetchSchema),
+    embeddings: readJson(dir, "embeddings", embeddingsSchema),
+    whitelist: readJson(dir, "sources-whitelist", whitelistSchema),
   };
 }
 
