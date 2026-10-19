@@ -27,8 +27,9 @@ import type {
   SourceOrigin,
   SourceStatus,
 } from "@/lib/db/schema";
-import type { SummaryStatus } from "@/lib/db/schema/profiles";
+import type { ChangeSeverity, ChangeType, SummaryStatus } from "@/lib/db/schema/profiles";
 import type { ConfidenceClass, ConflictResolution, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
+import type { VersionDiff } from "@/lib/domain/profile-timeline";
 import type { GapReason } from "@/lib/domain/geometry/gaps";
 import type { CrawlRules } from "@/lib/domain/sources/crawl-rules";
 import type { NAME_AFFIX_HINTS } from "@/lib/config/schemas";
@@ -453,6 +454,27 @@ export const profileGapReasonLabel = (reason: string): string => PROFILE_GAP_REA
 
 /** Status of a profile summary. */
 export const SUMMARY_STATUS_LABELS: Record<SummaryStatus, string> = { ok: "erzeugt", rejected: "verworfen", empty: "leer (in Prüfung)" };
+
+/** Change event types of the change feed (spec 07). */
+export const CHANGE_TYPE_LABELS: Record<ChangeType, string> = {
+  new_attribute: "Neu",
+  changed: "Geändert",
+  uncertain: "Unsicher",
+  expired: "Abgelaufen",
+  place_new: "Ort neu",
+  place_abandoned: "Ort aufgegeben",
+  geo_changed: "Gazetteer geändert",
+};
+
+export const SEVERITY_LABELS: Record<ChangeSeverity, string> = { info: "Info", notable: "Bemerkenswert", safety: "Sicherheit" };
+
+/** Kinds of a difference between two profile versions. */
+export const VERSION_DIFF_LABELS: Record<VersionDiff["kind"], string> = {
+  added: "neu",
+  removed: "entfallen",
+  changed: "geändert",
+  class: "Konfidenzklasse",
+};
 
 /** Notices of the profile tab (`?notice=`) after „Eintrag entfernen“. */
 export const PROFILE_NOTICE_LABELS: Record<string, string> = {

@@ -17,6 +17,7 @@ import {
   runs,
   sources,
 } from "../lib/db/schema";
+import { consolidateGeo } from "../lib/domain/consolidation/store";
 import { createReviewTask } from "../lib/domain/review";
 import { createUser } from "../lib/domain/users";
 
@@ -199,6 +200,9 @@ export default async function globalSetup(): Promise<void> {
     process.env.E2E_SOURCE_DOMAIN = proposal.domain;
     process.env.E2E_SOURCE_TASK = proposal.taskId;
     process.env.E2E_FACT_PLACE = await createFactScene(db);
+    // the fact scene's profile (version 1 today) for the profile and timeline tabs (append-only, one per run)
+    const [scene] = await db.select({ geoObjectId: places.geoObjectId }).from(places).where(eq(places.id, process.env.E2E_FACT_PLACE));
+    await consolidateGeo(db, scene!.geoObjectId);
     process.env.E2E_FACT_QUOTE = FACT_QUOTE;
     // Pilot-area tests roll back, so the test database normally has no saronic area object (like a fresh
     // installation before its first gazetteer run); the quality spec checks the page for either state.

@@ -5,6 +5,7 @@ import { getDb } from "@/lib/db/client";
 import { geoFacts } from "@/lib/domain/geo-facts";
 import { placeDetail } from "@/lib/domain/geo-view";
 import { placeGeometry } from "@/lib/domain/geometry-view";
+import { timelineView } from "@/lib/domain/profile-timeline";
 import { profileAttributeFacts, profileView } from "@/lib/domain/profile-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { PLACE_KIND_LABELS, PLACE_STATUS_LABELS, REVIEW_KIND_LABELS, runScopeError } from "../../_components/labels";
@@ -12,12 +13,13 @@ import { recomputePlaceProfileAction } from "./actions";
 import { FactsTab } from "./facts-tab";
 import { GeometryTab } from "./geometry-tab";
 import { ProfileTab } from "./profile-tab";
+import { TimelineTab } from "./timeline-tab";
 
 const time = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
 const coord = (lat: number, lon: number) => `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
 
 /** Tabs of the place page (`?tab=`); later milestones add theirs. */
-const TABS = { overview: "Übersicht", geometry: "Geometrie", facts: "Facts", profile: "Profil" } as const;
+const TABS = { overview: "Übersicht", geometry: "Geometrie", facts: "Facts", profile: "Profil", timeline: "Zeitachse" } as const;
 type Tab = keyof typeof TABS;
 const tabParam = z.enum(Object.keys(TABS) as [Tab, ...Tab[]]).catch("overview");
 const runsParam = z.enum(["active", "all"]).catch("active");
@@ -72,6 +74,8 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
       </nav>
       {tab === "profile" ? (
         <ProfileTabView placeId={p.id} geoObjectId={p.geoObjectId} version={versionParam.parse(sp.version)} attr={attr} notice={textParam.parse(sp.notice)} runId={uuidParam.parse(sp.run)} />
+      ) : tab === "timeline" ? (
+        <TimelineTabView placeId={p.id} geoObjectId={p.geoObjectId} version={versionParam.parse(sp.v)} asOf={textParam.parse(sp.asOf)} attr={attr} />
       ) : facts ? (
         <FactsTab groups={facts} runs={runs} runsHref={(r) => `/places/${p.id}?tab=facts${r === "all" ? "&runs=all" : ""}`} />
       ) : geometry ? (
@@ -102,6 +106,28 @@ async function ProfileTabView({ placeId, geoObjectId, version, attr, notice, run
       notice={notice}
       noticeRunId={runId}
       links={{ geoObjectId, placeId, attrHref: (a) => (a ? `${base}&attr=${encodeURIComponent(a)}` : base) }}
+    />
+  );
+}
+
+async function TimelineTabView({ placeId, geoObjectId, version, asOf, attr }: ProfileTabProps & { asOf: string | undefined }) {
+  const db = getDb();
+  const t = await timelineView(db, geoObjectId, { version, asOf });
+  const selected = t.view && attr ? await profileAttributeFacts(db, geoObjectId, t.view.snapshot.version, attr) : null;
+  const baseHref = `/places/${placeId}?tab=timeline`;
+  const shown = t.asOf ? `&asOf=${t.asOf}` : t.view ? `&v=${t.view.snapshot.version}` : "";
+  return (
+    <TimelineTab
+      placeId={placeId}
+      baseHref={baseHref}
+      versions={t.versions}
+      events={t.events}
+      view={t.view}
+      selected={selected}
+      diff={t.diff}
+      asOf={t.asOf}
+      asOfInvalid={t.asOfInvalid}
+      links={{ geoObjectId, placeId, attrHref: (a) => `${baseHref}${shown}${a ? `&attr=${encodeURIComponent(a)}` : ""}` }}
     />
   );
 }
