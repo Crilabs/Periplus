@@ -26,6 +26,8 @@ export const ROUTE_POLICY: Record<string, RouteRule> = {
   "/places/[id]": { kind: "admin" },
   "/sources": { kind: "admin" },
   "/sources/[id]": { kind: "admin" },
+  "/documents/[id]": { kind: "admin" },
+  "/documents/[id]/raw/[versionId]": { kind: "admin" },
   "/api/v1/ping": { kind: "api", scope: "delivery:read" },
 };
 

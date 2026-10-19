@@ -51,6 +51,8 @@
     "playwright": "1.64",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "robots-parser": "^3.0.1",
     "shapefile": "^0.6.6",
     "tldts": "^7.4.18",

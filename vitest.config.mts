@@ -19,7 +19,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: "default",
-          include: ["**/__tests__/**/*.test.ts", "test/**/*.test.ts"],
+          include: ["**/__tests__/**/*.test.{ts,tsx}", "test/**/*.test.ts"],
           exclude: ["node_modules/**", ".next/**", ...PILOT_RUN_TESTS],
         },
       },
