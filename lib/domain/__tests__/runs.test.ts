@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { testDb } from "@/test/db";
 import { externalCalls } from "@/lib/db/schema";
-import { beginStage, createRun, failRun, getRun, listRuns, recordJobOutcome, resumeRun } from "@/lib/domain/runs";
+import { beginStage, createRun, extendStage, failRun, getRun, listRuns, recordJobOutcome, resumeRun } from "@/lib/domain/runs";
 
 const db = testDb();
 
@@ -139,6 +139,22 @@ describe("runs", () => {
     expect(run.stages.map((s) => s.status)).toEqual(["finished", "pending"]);
     expect(await beginStage(db, id, "b", 0)).toEqual({ stageFinished: true, nextStage: null, runFinished: true });
     expect((await getRun(db, id))!.status).toBe("finished");
+  });
+
+  it("a stage with total 1 extended by 2 finishes only after 3 outcomes", async () => {
+    const { id } = await newRun(["crawl"]);
+    await beginStage(db, id, "crawl", 1);
+    await extendStage(db, id, "crawl", 2);
+    expect((await getRun(db, id))!.stages[0]).toMatchObject({ total: 3, status: "running" });
+    expect(await recordJobOutcome(db, id, "crawl", "a", "done")).toMatchObject({ stageFinished: false });
+    expect(await recordJobOutcome(db, id, "crawl", "b", "failed")).toMatchObject({ stageFinished: false });
+    expect(await recordJobOutcome(db, id, "crawl", "c", "done")).toMatchObject({ stageFinished: true, runFinished: true });
+    expect((await getRun(db, id))!.stages[0]).toMatchObject({ total: 3, done: 2, failed: 1, status: "finished" });
+  });
+
+  it("extendStage refuses a stage that is not running", async () => {
+    const { id } = await newRun(["crawl"]);
+    await expect(extendStage(db, id, "crawl", 1)).rejects.toThrow(/not running/);
   });
 
   it("rejects an outcome for a stage that is not running", async () => {

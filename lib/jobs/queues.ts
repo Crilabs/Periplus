@@ -12,6 +12,8 @@ export const QUEUES = [
   "discovery.area",
   "discovery.tile",
   "discovery.propose",
+  "fetch.source",
+  "fetch.url",
 ] as const;
 export type QueueName = (typeof QUEUES)[number];
 

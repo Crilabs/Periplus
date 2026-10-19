@@ -110,6 +110,19 @@ export async function beginStage(
   return { stageFinished: false, nextStage: null, runFinished: false };
 }
 
+/**
+ * Adds `by` jobs to a running stage (a crawl job that discovered new pages). Callers extend in the transaction that
+ * enqueues the new jobs and before their own job's outcome is recorded, so the stage cannot finish in between.
+ */
+export async function extendStage(db: Db, runId: string, stage: string, by: number): Promise<void> {
+  const [row] = await db
+    .update(runStages)
+    .set({ total: sql`${runStages.total} + ${by}` })
+    .where(and(eq(runStages.runId, runId), eq(runStages.stage, stage), eq(runStages.status, "running")))
+    .returning({ id: runStages.id });
+  if (!row) throw new Error(`stage ${stage} of run ${runId} is not running`);
+}
+
 export type JobOutcome = "done" | "failed";
 
 export type JobOutcomeResult = { recorded: boolean; stageFinished: boolean; nextStage: string | null; runFinished: boolean };

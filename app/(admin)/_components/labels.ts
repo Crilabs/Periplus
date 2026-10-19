@@ -239,6 +239,9 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   land_missing: "Landpolygone fehlen – zuerst die Landpolygone importieren",
   place_not_computable: "Ort wird nicht berechnet (beendet, zusammengeführt, verworfen oder ohne Kachel)",
   tile_without_area: "Kachel gehört zu keinem konfigurierten Revier – Suchsprachen unbekannt",
+  no_approved_sources: "Keine freigegebene Quelle",
+  source_not_approved: "Quelle ist nicht freigegeben",
+  document_not_upload: "Dokument ist keine hochgeladene Datei",
 };
 
 /** The German text of a `?error=<reason>` a run action redirected with; null for none or an unknown reason. */
