@@ -22,6 +22,7 @@ export const QUEUES = [
   "mentions.batch",
   "mentions.disambiguate",
   "mentions.geocode",
+  "extraction.mention",
 ] as const;
 export type QueueName = (typeof QUEUES)[number];
 

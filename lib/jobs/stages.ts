@@ -13,7 +13,13 @@ import {
 } from "./handlers/gazetteer";
 import { seedTileStage } from "./handlers/seed";
 import { pingStage } from "./handlers/system-ping";
-import { classifyDocumentVersionStage, mentionsBatchStage, mentionsDisambiguateStage, mentionsGeocodeStage } from "./handlers/text";
+import {
+  classifyDocumentVersionStage,
+  extractionMentionStage,
+  mentionsBatchStage,
+  mentionsDisambiguateStage,
+  mentionsGeocodeStage,
+} from "./handlers/text";
 import { tilesEnsureStage } from "./handlers/tiles";
 import { wikivoyageStage } from "./handlers/wikivoyage";
 
@@ -40,4 +46,5 @@ export const STAGES: Record<string, StageDefinition> = {
   [mentionsBatchStage.name]: mentionsBatchStage,
   [mentionsDisambiguateStage.name]: mentionsDisambiguateStage,
   [mentionsGeocodeStage.name]: mentionsGeocodeStage,
+  [extractionMentionStage.name]: extractionMentionStage,
 };

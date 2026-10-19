@@ -5,6 +5,7 @@ import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import { CLASSIFY_QUEUE, CLASSIFY_STAGE, classifyVersions, planClassify } from "@/lib/pipeline/text/classify";
 import { DISAMBIGUATE_QUEUE, DISAMBIGUATE_STAGE, disambiguateMatches, planDisambiguate } from "@/lib/pipeline/text/disambiguate";
+import { EXTRACT_QUEUE, EXTRACT_STAGE, extractUnits, planExtraction } from "@/lib/pipeline/text/extract";
 import { GEOCODE_QUEUE, GEOCODE_STAGE, geocodeCandidate, planGeocode } from "@/lib/pipeline/text/geocode";
 import { MENTIONS_QUEUE, MENTIONS_STAGE, matchVersions, planMentions } from "@/lib/pipeline/text/mentions";
 import { modelClientFor } from "./ai-batch";
@@ -13,7 +14,7 @@ import { modelClientFor } from "./ai-batch";
  * Text stages are planned lazily, when each stage starts (`enqueueStage`). They therefore plan from the run's frozen
  * version set (`frozenRunVersions`, ruling M4-E-R2), never from a re-resolved `pending`/`tileId`/`areaKey`: the
  * passes written by `mentions.batch` would make `pending` empty for every later stage. `mentions.geocode` plans from it
- * as well; the stages added in Task 17 (extraction, routes, check) must too.
+ * as well, and so does `extraction.mention`; the stages added later (routes, check) must too.
  */
 
 /** Stage `classify.document_version`: one job per `unitsPerBatch` versions of the text run. */
@@ -98,4 +99,26 @@ export const geocodeNameCandidateHandler: JobHandler<JobData> = async (data, ctx
   const job = geocodeJobSchema.parse(data);
   const result = await geocodeCandidate(ctx.db, job.candidateId, { transport: getTransport() }, { runId: job.runId });
   ctx.log.info({ candidateId: job.candidateId, ...(result ?? { skipped: "decided" }) }, "name candidate geocoded");
+};
+
+/** Stage `extraction.mention`: the run's pending mentions as extraction units, `unitsPerBatch` units per job. */
+export const extractionMentionStage: StageDefinition = {
+  name: EXTRACT_STAGE,
+  queue: EXTRACT_QUEUE,
+  plan: (db, run) => planExtraction(db, run),
+};
+
+const extractJobSchema = z.object({
+  runId: z.string().uuid(),
+  stage: z.string().min(1),
+  key: z.string().min(1),
+  extractionRunId: z.string().uuid(),
+  unitIds: z.array(z.string().uuid()).min(1),
+});
+
+/** Sends one job's extraction units to `extract-facts` as a message batch; the poll job stores the facts. */
+export const extractMentionsHandler: JobHandler<JobData> = async (data, ctx) => {
+  const job = extractJobSchema.parse(data);
+  const result = await extractUnits(ctx.db, { model: modelClientFor(ctx.db), boss: ctx.boss }, job);
+  ctx.log.info({ units: job.unitIds.length, ...result }, "extraction batch submitted");
 };

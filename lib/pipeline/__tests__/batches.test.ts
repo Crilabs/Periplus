@@ -277,6 +277,44 @@ describe("stage batches", () => {
       expect(await tx.select().from(externalCalls).where(eq(externalCalls.runId, runId))).toHaveLength(2);
     }));
 
+  it("an item that failed for good is reported once to the fail handler: after its retry, unretryable, or expired", () =>
+    withRollback(async (tx) => {
+      const runId = await stageRun(tx);
+      const model = new MockModel({
+        "system.echo": (input) => {
+          if ((input as { text: string }).text === "busy") throw new MockBatchError("overloaded", true);
+          if ((input as { text: string }).text === "bad") throw new MockBatchError("invalid", false);
+          return echoBack(input);
+        },
+      });
+      const { boss } = recordingBoss();
+      const reported: Array<[string, string | null]> = [];
+      const handlers: Record<string, BatchHandlerEntry> = {
+        "system.echo": { task, handle: async () => undefined, fail: async (_db, item) => void reported.push([item.subjectId, item.error]) },
+      };
+      const { batchId } = await submitStageBatch(tx, { model, boss, config }, { task, runId, stage: STAGE, key: "k", items: items("a", "busy", "bad") });
+      expect(await pollBatch(tx, { model, boss, config, handlers }, batchId!)).toBe("resubmitted");
+      // the unretryable one at once; the retried one not yet
+      expect(reported).toEqual([["s2", "invalid"]]);
+      const [first, followUp] = await batchesOf(tx, runId);
+      expect(await pollBatch(tx, { model, boss, config, handlers }, first!.id)).toBe("resubmitted");
+      expect(await pollBatch(tx, { model, boss, config, handlers }, followUp!.id)).toBe("distributed");
+      expect(await pollBatch(tx, { model, boss, config, handlers }, followUp!.id)).toBe("distributed");
+      expect(reported).toEqual([
+        ["s2", "invalid"],
+        ["s1", "overloaded"],
+      ]);
+
+      // a batch past maxHours reports its open items
+      const slow = new MockModel({ "system.echo": echoBack }, { batchRounds: 100, batchIdPrefix: "mock-slow-" });
+      const submittedAt = new Date();
+      const expiring = await submitStageBatch(tx, { model: slow, boss, config, now: () => submittedAt }, { task, runId, stage: STAGE, key: "late", items: items("x") });
+      const late = new Date(submittedAt.getTime() + (config.models.batch.maxHours + 1) * 3_600_000);
+      expect(await pollBatch(tx, { model: slow, boss, config, handlers, now: () => late }, expiring.batchId!)).toBe("failed");
+      expect(await pollBatch(tx, { model: slow, boss, config, handlers, now: () => late }, expiring.batchId!)).toBe("failed");
+      expect(reported.slice(2)).toEqual([["s0", "batch exceeded maxHours"]]);
+    }));
+
   it("a batch older than maxHours fails its unit", () =>
     withRollback(async (tx) => {
       const runId = await stageRun(tx);

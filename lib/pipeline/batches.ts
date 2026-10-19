@@ -53,8 +53,25 @@ export type BatchHandlerContext = { config: AppConfig };
 /** Stores the result of one item; runs in the transaction that marks the item distributed. */
 export type BatchHandler = (db: Db, item: BatchHandlerItem, ctx: BatchHandlerContext) => Promise<void>;
 
-/** What `pollBatch` needs per task name: the task (output schema for collecting) and its handler. */
-export type BatchHandlerEntry = { task: ModelTask<unknown, unknown>; handle: BatchHandler };
+/** An item that failed for good (after its retry, or not retryable, or its batch expired), with what it was billed. */
+export type BatchFailedItem = {
+  id: string;
+  subjectType: string;
+  subjectId: string;
+  error: string | null;
+  usage: { inputTokens: number; outputTokens: number };
+  costEur: number;
+  batch: BatchHandlerItem["batch"];
+};
+
+/** Records that an item failed for good; runs once, in the transaction that closes or expires its batch. */
+export type BatchFailHandler = (db: Db, item: BatchFailedItem) => Promise<void>;
+
+/**
+ * What `pollBatch` needs per task name: the task (output schema for collecting), its handler and, optionally, what to
+ * do with an item that failed for good (e.g. mark its extraction unit failed).
+ */
+export type BatchHandlerEntry = { task: ModelTask<unknown, unknown>; handle: BatchHandler; fail?: BatchFailHandler };
 
 export type BatchDeps = {
   model: ModelClient;
@@ -632,7 +649,7 @@ async function distribute(db: Db, deps: BatchDeps, batch: BatchRow, handle: Batc
  * `retried` items move into a follow-up batch of the same unit (attempt 2, `submitting`, sent after the commit), or
  * the unit is done. Only when no successful item is left undistributed.
  */
-async function closeBatch(db: Db, deps: BatchDeps, batch: BatchRow): Promise<void> {
+async function closeBatch(db: Db, deps: BatchDeps, batch: BatchRow, entry: BatchHandlerEntry): Promise<void> {
   await db.transaction(async (tx) => {
     const [closed] = await tx
       .update(aiBatches)
@@ -647,6 +664,7 @@ async function closeBatch(db: Db, deps: BatchDeps, batch: BatchRow): Promise<voi
       )
       .returning({ id: aiBatches.id });
     if (!closed) return;
+    await reportFailedItems(tx, batch, entry);
     const retried = await tx
       .select()
       .from(aiBatchItems)
@@ -681,6 +699,30 @@ async function closeBatch(db: Db, deps: BatchDeps, batch: BatchRow): Promise<voi
   });
 }
 
+/**
+ * Hands every item of the batch that failed for good to the entry's fail handler, in the caller's transaction; only
+ * called by the transaction that wins the batch's close or expiry, so once per item.
+ */
+async function reportFailedItems(tx: Db, batch: BatchRow, entry: BatchHandlerEntry | undefined): Promise<void> {
+  if (!entry?.fail) return;
+  const failed = await tx
+    .select()
+    .from(aiBatchItems)
+    .where(and(eq(aiBatchItems.batchId, batch.id), eq(aiBatchItems.status, "failed")))
+    .orderBy(aiBatchItems.id);
+  for (const item of failed) {
+    await entry.fail(tx, {
+      id: item.id,
+      subjectType: item.subjectType,
+      subjectId: item.subjectId,
+      error: item.error,
+      usage: { inputTokens: item.inputTokens ?? 0, outputTokens: item.outputTokens ?? 0 },
+      costEur: Number(item.costEur ?? 0),
+      batch: { id: batch.id, model: batch.model, promptVersion: batch.promptVersion, runId: batch.runId, stage: batch.stage },
+    });
+  }
+}
+
 /** Booking poll of a batch (mode `book`), `delaySeconds` from now, in the caller's transaction when given. */
 async function enqueueBooking(boss: PgBoss, batchId: string, n: number, delaySeconds: number, tx?: Db): Promise<void> {
   await enqueueBatchJob(boss, { key: `book:${batchId}:${n}`, batchId, n, mode: "book" }, delaySeconds, tx);
@@ -690,7 +732,7 @@ async function enqueueBooking(boss: PgBoss, batchId: string, n: number, delaySec
  * Gives up on a batch the provider has not finished within `maxHours`: the batch and its open items fail and the
  * unit is recorded as failed, once. The provider may still bill it, so a booking poll cancels and books it.
  */
-async function expireBatch(db: Db, deps: BatchDeps, batch: BatchRow): Promise<void> {
+async function expireBatch(db: Db, deps: BatchDeps, batch: BatchRow, entry: BatchHandlerEntry | undefined): Promise<void> {
   await db.transaction(async (tx) => {
     const [failed] = await tx
       .update(aiBatches)
@@ -702,6 +744,7 @@ async function expireBatch(db: Db, deps: BatchDeps, batch: BatchRow): Promise<vo
       .update(aiBatchItems)
       .set({ status: "failed", error: ERROR_MAX_HOURS })
       .where(and(eq(aiBatchItems.batchId, batch.id), eq(aiBatchItems.status, "pending")));
+    await reportFailedItems(tx, batch, entry);
     await settleUnit(tx, deps.boss, batch, "failed");
     await enqueueBooking(deps.boss, batch.id, failed.pollCount, 0, tx);
   });
@@ -812,12 +855,19 @@ async function requestCancel(db: Db, deps: BatchDeps, batch: BatchRow): Promise<
  * `poll_count + 1` from the poll's own number, so a redelivered poll whose successor is scheduled already does nothing.
  * A regular poll past `maxHours` (from `submitted_at`) expires the batch instead.
  */
-async function scheduleNextPoll(db: Db, deps: BatchDeps, batch: BatchRow, n: number | undefined, kind: "poll" | "book"): Promise<PollResult> {
+async function scheduleNextPoll(
+  db: Db,
+  deps: BatchDeps,
+  batch: BatchRow,
+  n: number | undefined,
+  kind: "poll" | "book",
+  entry?: BatchHandlerEntry,
+): Promise<PollResult> {
   const config = deps.config ?? getConfig();
   const now = nowOf(deps);
   const since = batch.submittedAt ?? batch.createdAt;
   if (kind === "poll" && now.getTime() - since.getTime() > config.models.batch.maxHours * 3_600_000) {
-    await expireBatch(db, deps, batch);
+    await expireBatch(db, deps, batch, entry);
     return "failed";
   }
   await db.transaction(async (tx) => {
@@ -877,7 +927,7 @@ async function pollEndedRun(db: Db, deps: BatchDeps, batch: BatchRow, entry: Bat
     if (isStalePoll(batch, n)) return "waiting";
     await requestCancel(db, deps, batch);
     const collected = await deps.model.collectBatch(entry.task, batch.providerBatchId!, { runId: batch.runId, stage: batch.stage, model: batch.model });
-    if (collected.status === "in_progress") return scheduleNextPoll(db, deps, batch, n, "poll");
+    if (collected.status === "in_progress") return scheduleNextPoll(db, deps, batch, n, "poll", entry);
     await storeResults(db, deps, batch, collected, "submitted");
   }
   const failed = await db
@@ -948,7 +998,7 @@ async function pollOnce(
       stage: batch.stage,
       model: batch.model,
     });
-    if (collected.status === "in_progress") return scheduleNextPoll(db, deps, batch, n, "poll");
+    if (collected.status === "in_progress") return scheduleNextPoll(db, deps, batch, n, "poll", entry);
     await storeResults(db, deps, batch, collected, "submitted");
     [batch] = await db.select().from(aiBatches).where(eq(aiBatches.id, batchId));
     if (batch!.status !== "ended") {
@@ -959,7 +1009,7 @@ async function pollOnce(
   }
 
   await distribute(db, deps, batch!, entry.handle);
-  await closeBatch(db, deps, batch!);
+  await closeBatch(db, deps, batch!, entry);
   return continueUnit(db, deps, batch!, entry);
 }
 

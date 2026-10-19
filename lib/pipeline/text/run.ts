@@ -5,6 +5,7 @@ import type { RunScope } from "@/lib/domain/runs";
 import { startRun } from "@/lib/pipeline/runs";
 import { CLASSIFY_STAGE } from "./classify";
 import { DISAMBIGUATE_STAGE } from "./disambiguate";
+import { EXTRACT_STAGE } from "./extract";
 import { GEOCODE_STAGE } from "./geocode";
 import { MENTIONS_STAGE } from "./mentions";
 import { freezeTextRunParams, type TextRunParams } from "./versions";
@@ -14,8 +15,8 @@ import { freezeTextRunParams, type TextRunParams } from "./versions";
  * the remaining stages, the reprocess and the model comparison starters.
  */
 
-/** The stages of a text run, in order (Task 17 appends extraction, routes and the check). */
-export const TEXT_RUN_STAGES = [CLASSIFY_STAGE, MENTIONS_STAGE, DISAMBIGUATE_STAGE, GEOCODE_STAGE] as const;
+/** The stages of a text run, in order (Task 17 appends routes and the check). */
+export const TEXT_RUN_STAGES = [CLASSIFY_STAGE, MENTIONS_STAGE, DISAMBIGUATE_STAGE, GEOCODE_STAGE, EXTRACT_STAGE] as const;
 
 function scopeOf(params: TextRunParams): RunScope {
   if (params.tileId) return { type: "tile", id: params.tileId };

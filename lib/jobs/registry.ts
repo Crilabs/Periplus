@@ -9,7 +9,13 @@ import { geometryPlaceHandler } from "./handlers/geometry";
 import { advanceHandler } from "./handlers/run-advance";
 import { seedTileHandler } from "./handlers/seed";
 import { pingHandler } from "./handlers/system-ping";
-import { classifyDocumentVersionHandler, disambiguateMentionsHandler, geocodeNameCandidateHandler, mentionsBatchHandler } from "./handlers/text";
+import {
+  classifyDocumentVersionHandler,
+  disambiguateMentionsHandler,
+  extractMentionsHandler,
+  geocodeNameCandidateHandler,
+  mentionsBatchHandler,
+} from "./handlers/text";
 import { tilesEnsureHandler } from "./handlers/tiles";
 import { wikivoyageHandler } from "./handlers/wikivoyage";
 import type { QueueName } from "./queues";
@@ -37,4 +43,5 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "mentions.batch": mentionsBatchHandler,
   "mentions.disambiguate": disambiguateMentionsHandler,
   "mentions.geocode": geocodeNameCandidateHandler,
+  "extraction.mention": extractMentionsHandler,
 };

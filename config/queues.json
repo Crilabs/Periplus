@@ -18,5 +18,6 @@
   "classify.document_version": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
   "mentions.batch": { "concurrency": 2, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true, "expireInSeconds": 3600 },
   "mentions.disambiguate": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
-  "mentions.geocode": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true }
+  "mentions.geocode": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
+  "extraction.mention": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true }
 }

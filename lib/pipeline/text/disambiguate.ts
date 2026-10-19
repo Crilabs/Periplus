@@ -87,8 +87,8 @@ export function markedContext(text: string, start: number, end: number, maxChars
 
 type CandidateRow = { id: string; depth: number; name: string | null; type: GeoObjectType; lon: number; lat: number };
 
-/** Name, type, parent chain (nearest first) and coordinate of the given objects, in one query. */
-async function candidateDetails(db: Db, geoObjectIds: string[]): Promise<Map<string, Omit<DisambiguateCandidate, "n">>> {
+/** Name, type, parent chain (nearest first) and coordinate of the given objects, in one query (also for extraction). */
+export async function candidateDetails(db: Db, geoObjectIds: string[]): Promise<Map<string, Omit<DisambiguateCandidate, "n">>> {
   const out = new Map<string, Omit<DisambiguateCandidate, "n">>();
   if (geoObjectIds.length === 0) return out;
   const { rows } = await db.execute<CandidateRow>(sql`
