@@ -18,7 +18,7 @@ import { HANDLERS } from "@/lib/jobs/registry";
 import { STAGES } from "@/lib/jobs/stages";
 import { createLogger } from "@/lib/logger";
 import { consolidateGeoJob } from "@/lib/pipeline/consolidation/geo";
-import { CONSOLIDATION_GEO_STAGE, CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
+import { CONSOLIDATION_FOLLOWUP_STAGE, CONSOLIDATION_GEO_STAGE, CONSOLIDATION_STAGES, GEOMETRY_CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
 import { computePlaceGeometry, GEOMETRY_STAGE, geometryPlaceIds, storeComputedAnchor } from "@/lib/pipeline/geometry";
 import { startGeometryRun } from "@/lib/pipeline/geometry-run";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
@@ -385,7 +385,8 @@ describe("startGeometryRun", () => {
       const { id } = await startGeometryRun(tx, boss, { tileId: scene.tileId }, "test");
       const [run] = await tx.select().from(runs).where(eq(runs.id, id));
       // the consolidation stages follow for the run's places (final review I-2)
-      expect(run).toMatchObject({ scopeType: "tile", scopeId: scene.tileId, stages: [GEOMETRY_STAGE, ...CONSOLIDATION_STAGES], params: { tileIds: [scene.tileId] } });
+      expect(run).toMatchObject({ scopeType: "tile", scopeId: scene.tileId, stages: [GEOMETRY_STAGE, ...GEOMETRY_CONSOLIDATION_STAGES], params: { tileIds: [scene.tileId] } });
+      expect(run!.stages).not.toContain(CONSOLIDATION_FOLLOWUP_STAGE);
       expect(await consolidationTargets(tx, { id, params: run!.params as Record<string, unknown> })).toContain(scene.geoObjectId);
       expect(inserted).toContainEqual({
         queue: "geometry.compute",
@@ -400,7 +401,7 @@ describe("startGeometryRun", () => {
       const { boss, inserted } = recordingBoss();
       const { id } = await startGeometryRun(tx, boss, { placeId: scene.placeId }, "test");
       const [run] = await tx.select().from(runs).where(eq(runs.id, id));
-      expect(run).toMatchObject({ scopeType: "place", scopeId: scene.placeId, stages: [GEOMETRY_STAGE, ...CONSOLIDATION_STAGES], params: { placeIds: [scene.placeId] } });
+      expect(run).toMatchObject({ scopeType: "place", scopeId: scene.placeId, stages: [GEOMETRY_STAGE, ...GEOMETRY_CONSOLIDATION_STAGES], params: { placeIds: [scene.placeId] } });
       // the consolidation of this run takes exactly the place's object
       expect(await consolidationTargets(tx, { id, params: run!.params as Record<string, unknown> })).toEqual([scene.geoObjectId]);
       expect(inserted).toEqual([

@@ -4,7 +4,7 @@ import { areaByKey } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { places } from "@/lib/db/schema";
 import { tileExists } from "@/lib/domain/geo-view";
-import { CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
+import { GEOMETRY_CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
 import { checkGeometryTiles, GEOMETRY_STAGE, geometryPlaceIds } from "@/lib/pipeline/geometry";
 import { startRun } from "@/lib/pipeline/runs";
 import { areaGeoObjectId, RunScopeNotReady, seedTileIds } from "@/lib/pipeline/tile-scope";
@@ -14,8 +14,8 @@ import { areaGeoObjectId, RunScopeNotReady, seedTileIds } from "@/lib/pipeline/t
 
 /**
  * Starts the run "Geometrie" for one tile (scope `tile`), the coast tiles of an area (scope `area`) or one place
- * (scope `place`, e.g. after an anchor correction), stage `geometry.place`, then the consolidation stages for its
- * places (`CONSOLIDATION_STAGES`, final review I-2: a new exclusion or computed shelter reaches the profile and the
+ * (scope `place`, e.g. after an anchor correction), stage `geometry.place`, then profile and summary for its
+ * places (`GEOMETRY_CONSOLIDATION_STAGES`, no paid source discovery; final review I-2: a new exclusion or computed shelter reaches the profile and the
  * change feed in the same run; `consolidationTargets` maps the run's params). Checked before the run exists: the tile
  * exists, or the area is configured and has its geo object and coast tiles, or the place is one the stage computes
  * and lies on a tile; every scoped tile has bathymetry and land polygons within the ray length. A scope lacking
@@ -61,5 +61,5 @@ export async function startGeometryRun(
     run = { scope: { type: "place", id: scope.placeId }, params: { placeIds: [scope.placeId] } };
   }
   await checkGeometryTiles(db, tileIds);
-  return startRun(db, boss, { kind: "stage", ...run, stages: [GEOMETRY_STAGE, ...CONSOLIDATION_STAGES], triggeredBy });
+  return startRun(db, boss, { kind: "stage", ...run, stages: [GEOMETRY_STAGE, ...GEOMETRY_CONSOLIDATION_STAGES], triggeredBy });
 }

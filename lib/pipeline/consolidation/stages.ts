@@ -14,3 +14,10 @@ export const CONSOLIDATION_FOLLOWUP_STAGE = "consolidation.followup";
 
 /** The stages of a consolidation run, in order (a text run appends them after its quote check). */
 export const CONSOLIDATION_STAGES = [CONSOLIDATION_GEO_STAGE, CONSOLIDATION_SUMMARY_STAGE, CONSOLIDATION_FOLLOWUP_STAGE] as const;
+
+/**
+ * The consolidation stages a geometry run appends (final review I-2): profile and summary only. A paid source discovery
+ * (`consolidation.followup`, DataForSEO) is never a side effect of recomputing geometry; it runs with consolidation and
+ * text runs.
+ */
+export const GEOMETRY_CONSOLIDATION_STAGES = [CONSOLIDATION_GEO_STAGE, CONSOLIDATION_SUMMARY_STAGE] as const;
