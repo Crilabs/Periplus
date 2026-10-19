@@ -21,4 +21,10 @@ describe("consolidate parseArgs", () => {
     expect(() => parseArgs(["--comparison-set", "saronic", "--evaluation"])).toThrow(/usage/);
     expect(() => parseArgs(["--area", "saronic", "--rules", "v2"])).toThrow(/usage/);
   });
+
+  it("a repeated flag is refused, not overridden by its last value (bundle J review M-4)", () => {
+    expect(() => parseArgs(["--comparison-set", "saronic", "--evaluation", "--rules", "v2", "--rules", "v3"])).toThrow(/usage/);
+    expect(() => parseArgs(["--comparison-set", "saronic", "--evaluation", "--evaluation", "--rules", "v2"])).toThrow(/usage/);
+    expect(() => parseArgs(["--area", "saronic", "--area", "saronic"])).toThrow(/usage/);
+  });
 });

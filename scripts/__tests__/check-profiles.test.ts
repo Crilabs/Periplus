@@ -82,7 +82,7 @@ describe("check-profiles", () => {
     });
     expect(profileCheckFailures(result)).toEqual([
       "1 object(s) without a profile",
-      "1 profile(s) with an attribute without provenance or rule",
+      "1 profile(s) with an attribute without provenance, rule or cited input",
       "profileAsOf did not return the earlier version for the day before a later version",
     ]);
     // open conflicts and uncertain changes are reported, not failed; no probe means the as-of check passes
@@ -90,11 +90,34 @@ describe("check-profiles", () => {
     expect(assessProfiles(stats()).asOfCheck).toBe(true);
   });
 
+  it("an area without objects fails instead of passing on nothing (bundle J review M-1)", () => {
+    expect(profileCheckFailures(assessProfiles(stats({ objects: [] })))).toEqual(["no objects in the area (gazetteer built? coast tiles assigned?)"]);
+  });
+
   it("attributesWithoutProvenance lists valued attributes without provenance or rule", () => {
-    const prov = { rule: "holding" } as never;
+    const prov = { rule: "holding", origin: "text", factIds: ["f1"], computationIds: [], poiIds: [] } as never;
     expect(
       attributesWithoutProvenance({ holding: "good", "shelter.N": 0.9, seabed: null, contact: { phone: "1" } }, { holding: prov, contact: { rule: "" } as never }),
     ).toEqual(["contact", "shelter.N"]);
+  });
+
+  it("a text, computed or review value must cite a fact, computation or POI; rule, gazetteer and derived values need not (bundle J review M-2)", () => {
+    const entry = (origin: string, ids: { factIds?: string[]; computationIds?: string[]; poiIds?: string[] } = {}) =>
+      ({ rule: "default", origin, factIds: [], computationIds: [], poiIds: [], ...ids }) as never;
+    const attributes = { a: 1, b: 1, c: 1, d: 1, e: 1, f: 1, g: 1, h: 1, i: 1 };
+    expect(
+      attributesWithoutProvenance(attributes, {
+        a: entry("text"),
+        b: entry("computed"),
+        c: entry("review"),
+        d: entry("text", { factIds: ["f"] }),
+        e: entry("computed", { computationIds: ["c"] }),
+        f: entry("text", { poiIds: ["p"] }),
+        g: entry("rule"),
+        h: entry("gazetteer"),
+        i: entry("derived"),
+      }),
+    ).toEqual(["a", "b", "c"]);
   });
 
   it("parseArgs takes exactly --area <key>", () => {

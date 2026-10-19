@@ -25,7 +25,10 @@ export type ProfileObjectStats = {
   level: FactLevel;
   /** Newest profile version, null without a profile. */
   version: number | null;
-  /** Attributes of the newest version with a value but without provenance or without a rule in it. */
+  /**
+   * Attributes of the newest version with a value but without provenance, without a rule, or (origin `text`,
+   * `computed`, `review`) citing no fact, computation or POI.
+   */
   attributesWithoutProvenance: string[];
   /** Summary of the newest version: an `ok` row, else an `empty` row, else none. */
   summary: "ok" | "empty" | null;
@@ -53,7 +56,7 @@ export type ProfilesCheck = {
   objects: number;
   withProfile: number;
   missing: Array<{ geoObjectId: string; name: string | null; level: FactLevel }>;
-  /** Geo object ids whose newest profile has an attribute without provenance or rule. */
+  /** Geo object ids whose newest profile has an attribute without provenance, rule or cited input. */
   withoutProvenance: string[];
   openConflicts: number;
   openUncertain: number;
@@ -86,17 +89,32 @@ export function assessProfiles(stats: ProfileStats): ProfilesCheck {
 /** Why the check fails (empty: it passes). Open conflicts, uncertain changes and empty summaries are counted, not failed. */
 export function profileCheckFailures(check: ProfilesCheck): string[] {
   const failures: string[] = [];
+  // an area without objects (gazetteer not built, no coast tiles) would pass on nothing (bundle J review M-1)
+  if (check.objects === 0) failures.push("no objects in the area (gazetteer built? coast tiles assigned?)");
   if (check.missing.length > 0) failures.push(`${check.missing.length} object(s) without a profile`);
-  if (check.withoutProvenance.length > 0) failures.push(`${check.withoutProvenance.length} profile(s) with an attribute without provenance or rule`);
+  if (check.withoutProvenance.length > 0) failures.push(`${check.withoutProvenance.length} profile(s) with an attribute without provenance, rule or cited input`);
   if (!check.asOfCheck) failures.push("profileAsOf did not return the earlier version for the day before a later version");
   return failures;
 }
 
-/** Attributes with a value whose provenance entry is missing or names no rule. */
+/** Origins whose value must cite an input: a fact (text, review), a computation or a POI. */
+const CITING_ORIGINS: ReadonlySet<AttributeProvenance["origin"]> = new Set(["text", "computed", "review"]);
+
+/** Whether a provenance entry cites at least one fact, computation or POI. */
+const citesInput = (p: AttributeProvenance) => p.factIds.length > 0 || p.computationIds.length > 0 || p.poiIds.length > 0;
+
+/**
+ * Attributes with a value whose provenance entry is missing, names no rule, or has origin `text`, `computed` or
+ * `review` without citing a fact, computation or POI (bundle J review M-2: every built entry has a rule, so the rule
+ * alone proves nothing). `rule`, `gazetteer` and `derived` values cite their rule or `derivedFrom` instead.
+ */
 export function attributesWithoutProvenance(attributes: Record<string, unknown>, provenance: Record<string, AttributeProvenance>): string[] {
   return Object.keys(attributes)
     .filter((key) => attributes[key] !== null && attributes[key] !== undefined)
-    .filter((key) => !provenance[key] || !provenance[key].rule)
+    .filter((key) => {
+      const p = provenance[key];
+      return !p || !p.rule || (CITING_ORIGINS.has(p.origin) && !citesInput(p));
+    })
     .sort();
 }
 
@@ -226,7 +244,7 @@ async function main(): Promise<void> {
     out(`with profile: ${r.withProfile}`);
     out(`without profile: ${r.missing.length}`);
     for (const m of r.missing) out(`  ${m.name ?? "(ohne Namen)"} [${m.geoObjectId}] ${LEVEL_WORDS[m.level]}`);
-    out(`profiles with an attribute without provenance or rule: ${r.withoutProvenance.length}`);
+    out(`profiles with an attribute without provenance, rule or cited input: ${r.withoutProvenance.length}`);
     for (const id of r.withoutProvenance) out(`  ${id}`);
     out(`open conflicts: ${r.openConflicts}, open uncertain changes: ${r.openUncertain}`);
     out(`summaries of the newest versions: ok ${r.summaries.ok}, empty ${r.summaries.empty}`);

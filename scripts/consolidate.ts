@@ -20,14 +20,18 @@ export type ConsolidateArgs = Pick<StartConsolidationInput, "scope" | "evaluatio
 
 /**
  * Exactly one scope flag; `--evaluation` needs `--rules <version>` (the candidate version), and `--rules` is only
- * allowed with `--evaluation` (a regular run always takes the active version).
+ * allowed with `--evaluation` (a regular run always takes the active version). A repeated flag is refused, not
+ * silently overridden by its last value (bundle J review M-4).
  */
 export function parseArgs(argv: string[]): ConsolidateArgs {
   const scopes: ConsolidationScope[] = [];
   let evaluation = false;
   let rulesVersion: string | undefined;
+  const seen = new Set<string>();
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]!;
+    if (seen.has(flag)) throw new Error(USAGE);
+    seen.add(flag);
     if (flag === "--evaluation") {
       evaluation = true;
       continue;
