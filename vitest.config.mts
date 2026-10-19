@@ -43,6 +43,9 @@ export default defineConfig({
       S3_SECRET_ACCESS_KEY: "periplus-dev-secret",
       SESSION_SECRET: "test-session-secret-0123456789-abcdefghijklmnopqrst",
       CONTACT_EMAIL: "test@example.invalid",
+      // Fixture replay ignores request headers; any Basic-Auth pair will do.
+      DATAFORSEO_LOGIN: "test@example.invalid",
+      DATAFORSEO_PASSWORD: "test-password",
     },
   },
 });

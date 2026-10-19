@@ -4,7 +4,7 @@
     "depth": 20,
     "reuseDays": 30,
     "maxQueriesPerRun": 240,
-    "costPerQueryEur": 0.0019,
+    "costPerQueryEur": 0.0035,
     "ratePerMinute": 30,
     "timeoutMs": 120000
   },

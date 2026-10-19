@@ -215,3 +215,52 @@ export const crawlFrontier = pgTable(
   },
   (t) => [uniqueIndex("crawl_frontier_source_id_url_normalized_unique").on(t.sourceId, t.urlNormalized)],
 );
+
+export const serpLevelEnum = pgEnum("serp_level", ["area", "tile"]);
+export type SerpLevel = (typeof serpLevelEnum.enumValues)[number];
+
+/** Working state: one row per SERP search actually made (a reused query writes none); raw answer in S3. */
+export const serpQueries = pgTable(
+  "serp_queries",
+  {
+    id: uuid("id").primaryKey().$defaultFn(newId),
+    keyword: text("keyword").notNull(),
+    languageCode: text("language_code").notNull(),
+    locationCode: integer("location_code").notNull(),
+    depth: integer("depth").notNull(),
+    level: serpLevelEnum("level").notNull(),
+    /** Area key (`level area`) or tile id (`level tile`). */
+    scopeId: text("scope_id").notNull(),
+    /** `serp/<YYYY-MM-DD>/<sha256(keyword|language|location)>.json` */
+    rawKey: text("raw_key").notNull(),
+    runId: uuid("run_id").references(() => runs.id),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index("serp_queries_keyword_language_location_fetched_idx").on(
+      t.keyword,
+      t.languageCode,
+      t.locationCode,
+      t.fetchedAt.desc(),
+    ),
+  ],
+);
+
+/** Working state: the organic results of one SERP search, by absolute rank. */
+export const serpResults = pgTable(
+  "serp_results",
+  {
+    id: uuid("id").primaryKey().$defaultFn(newId),
+    serpQueryId: uuid("serp_query_id")
+      .notNull()
+      .references(() => serpQueries.id),
+    rank: integer("rank").notNull(),
+    url: text("url").notNull(),
+    urlNormalized: text("url_normalized").notNull(),
+    /** Registrable domain (Public Suffix List, private suffixes included). */
+    domain: text("domain").notNull(),
+    title: text("title").notNull(),
+    snippet: text("snippet").notNull(),
+  },
+  (t) => [index("serp_results_domain_idx").on(t.domain), index("serp_results_serp_query_id_idx").on(t.serpQueryId)],
+);

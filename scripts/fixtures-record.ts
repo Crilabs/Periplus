@@ -4,11 +4,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
 import { unzipSync } from "fflate";
+import { searchOrganic } from "../lib/adapters/dataforseo";
 import { createGeonamesSource } from "../lib/adapters/geonames";
 import { fetchTransport, makeResponse, RetryableHttpError, type Transport } from "../lib/adapters/http";
 import { fixtureTransport, recordingTransport } from "../lib/adapters/http-fixtures";
 import type { Archive } from "../lib/adapters/s3";
-import { getConfig, type AreaConfig } from "../lib/config";
+import { getConfig, type AreaConfig, type DiscoveryConfig } from "../lib/config";
 import { areaConfigSchema } from "../lib/config/schemas";
 import { createDb, type Db } from "../lib/db/client";
 import { areaBbox, syncAreas } from "../lib/domain/gazetteer/areas";
@@ -22,30 +23,85 @@ import { importOsm } from "../lib/pipeline/gazetteer/osm";
 import { importWikidata } from "../lib/pipeline/gazetteer/wikidata";
 import { landImportBbox, readShapefile } from "./import-land-polygons";
 
-const USAGE = "usage: fixtures-record.ts --area <key> [--land <path/land_polygons.shp>] [--cache <dir>] [--datasets]";
+const USAGE =
+  "usage: fixtures-record.ts --area <key> [--land <path/land_polygons.shp>] [--cache <dir>] [--datasets | --serp [--limit <1-3>]]";
+/** Real DataForSEO searches one `--serp` recording may make. */
+const MAX_SERP_CALLS = 3;
 const FIXTURES = "test/fixtures";
 const ATTEMPTS = 3;
 const RETRY_WAIT_MS = 90_000;
 
 type LandFeature = GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
 
-/** `--area`, `--land`, `--cache` take a value; `--datasets` (record the dataset imports only) takes none. */
-export function parseArgs(argv: string[]): { area: string; land?: string; cache?: string; datasets: boolean } {
+export type RecordArgs = { area: string; land?: string; cache?: string; datasets: boolean; serp: boolean; limit?: number };
+
+/**
+ * `--area`, `--land`, `--cache`, `--limit` take a value; `--datasets` (record the dataset imports only) and
+ * `--serp` (record at most `--limit` ≤ 3 area SERP searches, default 3) take none.
+ */
+export function parseArgs(argv: string[]): RecordArgs {
   const values = new Map<string, string>();
   let datasets = false;
+  let serp = false;
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]!;
-    if (flag === "--datasets") {
-      datasets = true;
+    if (flag === "--datasets" || flag === "--serp") {
+      if (flag === "--datasets") datasets = true;
+      else serp = true;
       continue;
     }
     const value = argv[++i];
-    if (!["--area", "--land", "--cache"].includes(flag) || value === undefined || value.startsWith("--")) throw new Error(USAGE);
+    if (!["--area", "--land", "--cache", "--limit"].includes(flag) || value === undefined || value.startsWith("--")) {
+      throw new Error(USAGE);
+    }
     values.set(flag, value);
   }
   const area = values.get("--area");
-  if (!area) throw new Error(USAGE);
-  return { area, land: values.get("--land"), cache: values.get("--cache"), datasets };
+  if (!area || (datasets && serp)) throw new Error(USAGE);
+  const rawLimit = values.get("--limit");
+  if (rawLimit !== undefined && !serp) throw new Error(USAGE);
+  let limit: number | undefined;
+  if (serp) {
+    limit = rawLimit === undefined ? MAX_SERP_CALLS : Number(rawLimit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_SERP_CALLS) throw new Error(USAGE);
+  }
+  return { area, land: values.get("--land"), cache: values.get("--cache"), datasets, serp, ...(serp ? { limit } : {}) };
+}
+
+/**
+ * The area SERP searches a `--serp` recording makes, from the area's configured names (no database): each
+ * area template whose language is one of the area's `sourceLanguages` and has a name, the first `limit`.
+ */
+export function serpRecordingQueries(
+  area: AreaConfig,
+  discovery: DiscoveryConfig,
+  limit: number,
+): Array<{ keyword: string; languageCode: string; locationCode: number }> {
+  const names = area.names as Record<string, string | undefined>;
+  return discovery.templates.area
+    .filter((t) => area.sourceLanguages.includes(t.lang) && names[t.lang])
+    .map((t) => ({ keyword: t.template.replaceAll("{name}", names[t.lang]!), languageCode: t.lang, locationCode: t.locationCode }))
+    .slice(0, Math.min(limit, MAX_SERP_CALLS));
+}
+
+/**
+ * Records real DataForSEO answers as fixtures. Calls are booked (budget, `external_calls`) in the database of
+ * `DATABASE_URL`, the development database: they cost real money, so no scratch database hides them.
+ */
+async function recordSerp(area: AreaConfig, limit: number): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is not set");
+  const { discovery } = getConfig();
+  const { db, close } = createDb(url);
+  try {
+    const recording = recordingTransport(fetchTransport);
+    for (const q of serpRecordingQueries(area, discovery, limit)) {
+      const { items } = await searchOrganic(recording, q, { db, stage: "fixtures:record" }, discovery.serp);
+      process.stdout.write(`serp "${q.keyword}" (${q.languageCode}/${q.locationCode}): ${items.length} organic results\n`);
+    }
+  } finally {
+    await close();
+  }
 }
 
 /** Only a throwaway database whose name ends in `_scratch` may be written by the recording. */
@@ -293,6 +349,7 @@ async function writeGeonames(downloads: Map<string, Uint8Array>, countries: stri
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  if (args.serp) return recordSerp(loadArea(args.area), args.limit!);
   const url = assertScratchUrl(process.env.DATABASE_URL);
   const area = loadArea(args.area);
   const { gazetteer } = getConfig();

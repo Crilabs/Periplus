@@ -134,6 +134,13 @@
       "when": 1792383347328,
       "tag": "0018_remarkable_proteus",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792384797650,
+      "tag": "0019_clear_inhumans",
+      "breakpoints": true
     }
   ]
 }
