@@ -131,7 +131,7 @@ describe("review view", () => {
         kind: "source_approval",
         subjectType: "source",
         subjectId: source.id,
-        context: { hits: [hit], linkingSources: 2, languages: ["en", "de"], robots, suggestion },
+        context: { hits: [hit], hitCount: 14, linkingSources: 2, languages: ["en", "de"], robots, suggestion },
       });
 
       const detail = await reviewTaskDetail(tx, id);
@@ -139,6 +139,7 @@ describe("review view", () => {
         type: "source",
         source: { id: source.id, domain, status: "proposed" },
         hits: [hit],
+        hitCount: 14,
         linkingSources: 2,
         languages: ["en", "de"],
         robots,
@@ -155,6 +156,7 @@ describe("review view", () => {
       expect((await reviewTaskDetail(tx, bare))?.subject).toMatchObject({
         type: "source",
         hits: [],
+        hitCount: 0,
         linkingSources: 0,
         robots: null,
         suggestion: { type: "trip_report", weight: 0.6, changeRate: "normal", crawlRules: DEFAULT_CRAWL_RULES },

@@ -142,6 +142,7 @@ describe("proposeSources", () => {
       expect(tasks[0]).toMatchObject({ status: "open", subjectType: "source", priority: 3 });
       const context = tasks[0]!.context as Record<string, unknown>;
       expect(context).toMatchObject({
+        hitCount: 3,
         linkingSources: 0,
         languages: ["de", "en"],
         robots: { status: "parsed", disallowAll: false, blockedStartUrls: [], sitemaps: 1 },

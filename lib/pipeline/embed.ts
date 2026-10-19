@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { CallContext, Transport } from "@/lib/adapters/http";
 import { embedTexts } from "@/lib/adapters/voyage";
 import { getConfig, type EmbeddingsConfig } from "@/lib/config";
@@ -15,7 +15,8 @@ export const EMBED_PLAN_LIMIT = 10_000;
 
 /**
  * Plan of the stage `embed.chunks`: the chunks without an embedding of the versions this run wrote (`params.all`:
- * of all versions, the backfill), at most `EMBED_PLAN_LIMIT`, by id. Carried chunks count like new ones: a chunk
+ * of all versions, the backfill), the newest `EMBED_PLAN_LIMIT` by id (a backfill continues with older ones in the
+ * next run), ordered by id. Carried chunks count like new ones: a chunk
  * carried from an origin without an embedding has none either. One job per source and `cfg.batchSize` chunks
  * (`{ key: <first chunk id>, chunkIds, sourceId }`), so every Voyage call is booked on one source.
  */
@@ -30,10 +31,15 @@ export async function planEmbedChunks(
     .innerJoin(documentVersions, eq(documentVersions.id, chunks.documentVersionId))
     .innerJoin(documents, eq(documents.id, documentVersions.documentId))
     .where(and(isNull(chunks.embedding), run.params.all === true ? undefined : eq(documentVersions.runId, run.id)))
-    .orderBy(asc(chunks.id))
+    .orderBy(desc(chunks.id))
     .limit(EMBED_PLAN_LIMIT);
+  rows.reverse();
   const bySource = new Map<string, string[]>();
-  for (const r of rows) bySource.set(r.sourceId, [...(bySource.get(r.sourceId) ?? []), r.id]);
+  for (const r of rows) {
+    const ids = bySource.get(r.sourceId);
+    if (ids) ids.push(r.id);
+    else bySource.set(r.sourceId, [r.id]);
+  }
   const jobs: JobData[] = [];
   for (const [sourceId, ids] of bySource) {
     for (let i = 0; i < ids.length; i += cfg.batchSize) {

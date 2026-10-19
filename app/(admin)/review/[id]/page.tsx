@@ -325,8 +325,11 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
                 {SOURCE_STATUS_LABELS[subject.source.status]}
                 {subject.source.statusReason ? ` (${subject.source.statusReason})` : ""}
               </dd>
-              <dt>Treffer</dt>
-              <dd>{subject.hits.length}</dd>
+              <dt>Suchtreffer</dt>
+              <dd>
+                {subject.hitCount}
+                {subject.hitCount > subject.hits.length ? ` (die besten ${subject.hits.length} unten)` : ""}
+              </dd>
               <dt>Verlinkt von</dt>
               <dd>
                 {subject.linkingSources} freigegebenen Quelle{subject.linkingSources === 1 ? "" : "n"}

@@ -242,6 +242,7 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   no_approved_sources: "Keine freigegebene Quelle",
   source_not_approved: "Quelle ist nicht freigegeben",
   source_run_active: "Für die Quelle läuft bereits ein Abruf",
+  wikivoyage_source_ended: "Die Wikivoyage-Quelle ist beendet",
   document_not_upload: "Dokument ist keine hochgeladene Datei",
 };
 

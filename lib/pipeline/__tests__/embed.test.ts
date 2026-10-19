@@ -156,10 +156,10 @@ describe("embed.chunks plan", () => {
       ];
       const { id: runId } = await newRun(tx, { all: true });
       const run = { id: runId, params: { all: true } };
-      // The backfill reads the whole table (capped); look only at the jobs of this test's source.
+      // The backfill reads the whole table; the cap takes the newest chunks, so this test's are always planned.
+      // Look only at the jobs of this test's source.
       const own = (await planEmbedChunks(tx, run, cfg())).filter((j) => j.sourceId === sourceId);
-      // Rows of other test files may fill the cap before this test's newest ids; then the source has no job.
-      if (own.length > 0) expect(own.flatMap((j) => j.chunkIds as string[])).toEqual([...ids].sort());
+      expect(own.flatMap((j) => j.chunkIds as string[])).toEqual([...ids].sort());
       expect(await planEmbedChunks(tx, { id: runId, params: {} }, cfg())).toEqual([]);
     });
   });

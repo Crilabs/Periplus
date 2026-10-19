@@ -274,6 +274,16 @@ describe("startWikivoyageRun", () => {
     });
   });
 
+  it("an ended Wikivoyage source has its own refusal", async () => {
+    await withRollback(async (tx) => {
+      const { boss, inserted } = recordingBoss();
+      const sourceId = await wikivoyageSource(tx);
+      await tx.update(sources).set({ validTo: "2026-01-01" }).where(eq(sources.id, sourceId));
+      await expect(startWikivoyageRun(tx, boss, AREA_KEY, "admin")).rejects.toMatchObject({ reason: "wikivoyage_source_ended" });
+      expect(inserted).toEqual([]);
+    });
+  });
+
   it("refuses an unknown area and a paused Wikivoyage source before a run exists", async () => {
     await withRollback(async (tx) => {
       const { boss, inserted } = recordingBoss();

@@ -113,6 +113,8 @@ export type ReviewSubject =
       source: Source;
       /** Best SERP hits by rank (empty for a link graph proposal). */
       hits: SerpHit[];
+      /** All SERP hits of the domain; `hits` holds only the best of them. */
+      hitCount: number;
       /** Approved sources linking to the domain. */
       linkingSources: number;
       languages: string[];
@@ -276,6 +278,8 @@ async function sourceSubject(db: Db, sourceId: string, context: Record<string, u
     type: "source",
     source,
     hits: hits.success ? hits.data : [],
+    hitCount:
+      typeof context.hitCount === "number" ? context.hitCount : hits.success ? hits.data.length : 0,
     linkingSources: typeof context.linkingSources === "number" ? context.linkingSources : 0,
     languages: languages.success ? languages.data : source.languages,
     robots: robots.success ? robots.data : null,

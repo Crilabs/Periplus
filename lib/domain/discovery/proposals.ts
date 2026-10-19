@@ -180,7 +180,7 @@ async function proposalRobots(
  * Proposes every candidate of `domainCandidates`: a `proposed` source (name = domain, suggested type, weight and
  * change rate from `sourceTypes`, crawl rules from the hit URLs, languages = the hits' query languages by
  * frequency, origin `serp` with enough hits, else `linkgraph`) and an open `source_approval` task with the hits
- * (best `maxHitsInContext` by rank), linking sources, languages, robots.txt summary of the most frequent host and
+ * (best `maxHitsInContext` by rank, `hitCount` = all of them), linking sources, languages, robots.txt summary of the most frequent host and
  * the suggestion; priority = hits + 2 × linking sources. A linkgraph-only domain is judged by `https://<domain>/`.
  * A domain that got a valid source meanwhile (domain index conflict) is skipped.
  */
@@ -226,6 +226,7 @@ export async function proposeSources(
         subjectId: row.id,
         context: {
           hits: candidate.hits.slice(0, p.maxHitsInContext),
+          hitCount: candidate.hits.length,
           linkingSources: candidate.linkingSources,
           languages,
           robots,

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createConverters } from "@/lib/adapters/fetch";
 import { createGuardedAgent, createGuardedTransport } from "@/lib/adapters/fetch/guarded";
@@ -14,7 +14,7 @@ import { registrableDomain } from "@/lib/domain/sources/urls";
 import type { JobData } from "@/lib/jobs/worker";
 import type { PgBoss } from "pg-boss";
 import { crawlRenderPage } from "@/lib/jobs/handlers/fetch";
-import { FETCH_RUN_STAGES, startFetchRun, startTestCrawl, startUploadFetchRun } from "@/lib/pipeline/fetch/run";
+import { FETCH_RUN_STAGES, startExclusiveFetchRun, startFetchRun, startTestCrawl, startUploadFetchRun } from "@/lib/pipeline/fetch/run";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { FETCH_SOURCE_STAGE, prepareSourceCrawl } from "@/lib/pipeline/fetch/source";
 import { FETCH_URL_STAGE, fetchUrl, followLinks, planFetchUrls, type FetchUrlDeps } from "@/lib/pipeline/fetch/url";
@@ -518,7 +518,7 @@ describe("crawl stages", () => {
         runId,
         stage: FETCH_SOURCE_STAGE,
       });
-      expect(prepared.status).toBe("paused");
+      expect(prepared.status).toBe("not_approved");
       expect(await getSource(tx, sourceId)).toMatchObject({ status: "rejected", statusReason: "Admin" });
     });
   });
@@ -609,6 +609,68 @@ describe("crawl run starters", () => {
       await expect(startTestCrawl(tx, boss, busy, "admin")).resolves.toMatchObject({ id: expect.any(String) });
     });
   });
+
+  it("\"Alle freigegebenen crawlen\" leaves out busy sources and names them; all busy is refused", async () => {
+    await withRollback(async (tx) => {
+      const busy = await insertSource(tx, newSite(), {});
+      const free = await insertSource(tx, newSite(), {});
+      const { boss } = recordingBoss();
+      await startFetchRun(tx, boss, { sourceIds: [busy], triggeredBy: "admin" });
+      const { id, skipped } = await startFetchRun(tx, boss, { sourceIds: [free, busy], triggeredBy: "admin", skipBusy: true });
+      expect(skipped).toEqual([busy]);
+      const [row] = await tx.select().from(runs).where(eq(runs.id, id));
+      expect(row!.params).toEqual({ sourceIds: [free], skippedSourceIds: [busy] });
+      await expect(startFetchRun(tx, boss, { sourceIds: [free, busy], triggeredBy: "admin", skipBusy: true })).rejects.toMatchObject({
+        reason: "source_run_active",
+      });
+    });
+  });
+
+  it("two concurrent starts for one source create one run", async () => {
+    // Committed rows: two transactions must race. A paused *.test.invalid source never meets other tests' queries;
+    // the exclusive start checks only for other runs (approval is checked before it).
+    const db = testDb();
+    const [row] = await db
+      .insert(sources)
+      .values({ domain: `${newId()}.test.invalid`, name: "Race", type: "forum", weight: 0.4, status: "paused", crawlRules: {}, origin: "manual" })
+      .returning({ id: sources.id });
+    const sourceId = row!.id;
+    const { boss } = recordingBoss();
+    const start = (on: Db) =>
+      startExclusiveFetchRun(on, boss, [sourceId], { skipBusy: false }, (ids) => ({
+        kind: "stage",
+        scope: { type: "source", id: sourceId },
+        params: { sourceIds: ids },
+        stages: FETCH_RUN_STAGES,
+        triggeredBy: "race-test",
+      }));
+    const created: string[] = [];
+    try {
+      // The first start's transaction stays open (its run not yet committed) while the second start runs.
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      let started!: () => void;
+      const isStarted = new Promise<void>((resolve) => (started = resolve));
+      const first = db.transaction(async (tx) => {
+        created.push((await start(tx)).id);
+        started();
+        await held;
+      });
+      await isStarted;
+      const second = start(db).then((r) => {
+        created.push(r.id);
+        return r;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      release();
+      await first;
+      await expect(second).rejects.toMatchObject({ reason: "source_run_active" });
+      expect(created).toHaveLength(1);
+    } finally {
+      // The run never gets a worker: end it so it does not keep the (paused) source busy.
+      if (created.length > 0) await db.update(runs).set({ status: "failed", failureReason: "test" }).where(inArray(runs.id, created));
+    }
+  }, 15_000);
 
   it("the refusal has a German text for the admin", async () => {
     const { RUN_SCOPE_REASON_LABELS } = await import("@/app/(admin)/_components/labels");

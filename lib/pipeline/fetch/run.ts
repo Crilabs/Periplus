@@ -3,9 +3,10 @@ import type { PgBoss } from "pg-boss";
 import { areaByKey } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { documents, runs, sources } from "@/lib/db/schema";
+import { createRun } from "@/lib/domain/runs";
 import { ensureWhitelistSources, sourceIdByDomain } from "@/lib/domain/sources/store";
 import { EMBED_STAGE } from "../embed";
-import { startRun } from "../runs";
+import { enqueueStage, startRun } from "../runs";
 import { WIKIVOYAGE_DOMAIN, WIKIVOYAGE_STAGE } from "../sources/wikivoyage";
 import { RunScopeNotReady } from "../tile-scope";
 import { FETCH_SOURCE_STAGE } from "./source";
@@ -24,13 +25,15 @@ export const TEST_CRAWL_MAX_PAGES = 10;
  * Starts the run "Quellen abrufen" for the given sources or all approved ones (`"approved"`, resolved to the IDs
  * approved now and stored in `params.sourceIds`). Checked before the run exists: at least one source, every given
  * source exists and is approved, and none is fetched by another queued or running run (`RunScopeNotReady`; ruling
- * M3-C-R6: overlapping crawls of one source are prevented). Scope `source` with the only ID, or `"approved"`.
+ * M3-C-R6: overlapping crawls of one source are prevented). With `skipBusy` (ruling M3-D-R3, "Alle freigegebenen
+ * crawlen") busy sources are left out instead: returned in `skipped` and kept in `params.skippedSourceIds`; only
+ * when every source is busy the start is refused. Scope `source` with the only ID, `"approved"` or `"selection"`.
  */
 export async function startFetchRun(
   db: Db,
   boss: PgBoss,
-  input: { sourceIds: string[] | "approved"; triggeredBy: string; maxPages?: number },
-): Promise<{ id: string }> {
+  input: { sourceIds: string[] | "approved"; triggeredBy: string; maxPages?: number; skipBusy?: boolean },
+): Promise<{ id: string; skipped: string[] }> {
   let sourceIds: string[];
   if (input.sourceIds === "approved") {
     sourceIds = (await db.select({ id: sources.id }).from(sources).where(eq(sources.status, "approved"))).map((s) => s.id);
@@ -40,14 +43,51 @@ export async function startFetchRun(
     if (sourceIds.length === 0) throw new RunScopeNotReady("no_approved_sources", "No source given");
     await assertApproved(db, sourceIds);
   }
-  await assertNoActiveFetchRun(db, sourceIds);
-  return startRun(db, boss, {
+  const scopeId = input.sourceIds === "approved" ? "approved" : sourceIds.length === 1 ? sourceIds[0]! : "selection";
+  return startExclusiveFetchRun(db, boss, sourceIds, { skipBusy: input.skipBusy ?? false }, (ids, skipped) => ({
     kind: "stage",
-    scope: { type: "source", id: input.sourceIds === "approved" ? "approved" : sourceIds.length === 1 ? sourceIds[0]! : "selection" },
-    params: { sourceIds, ...(input.maxPages !== undefined ? { maxPages: input.maxPages } : {}) },
+    scope: { type: "source", id: scopeId },
+    params: {
+      sourceIds: ids,
+      ...(input.maxPages !== undefined ? { maxPages: input.maxPages } : {}),
+      ...(skipped.length > 0 ? { skippedSourceIds: skipped } : {}),
+    },
     stages: FETCH_RUN_STAGES,
     triggeredBy: input.triggeredBy,
+  }));
+}
+
+/**
+ * Creates a crawl run of `sourceIds` (the run `build` describes for the sources taken and those skipped) and enqueues
+ * its first stage. The check "no other queued or running run fetches these sources" and the run insert happen in one
+ * transaction under a transaction-scoped advisory lock per source, taken in id order: of two concurrent starts the
+ * second waits and then sees the first run. Busy sources refuse the start (`source_run_active`), or with `skipBusy`
+ * are left out (refused only when all are busy).
+ */
+export async function startExclusiveFetchRun(
+  db: Db,
+  boss: PgBoss,
+  sourceIds: string[],
+  opts: { skipBusy: boolean },
+  build: (ids: string[], skipped: string[]) => Parameters<typeof createRun>[1],
+): Promise<{ id: string; skipped: string[] }> {
+  const created = await db.transaction(async (tx) => {
+    for (const id of [...sourceIds].sort()) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`fetch-run:${id}`}))`);
+    }
+    const busy = await sourcesBeingFetched(tx, sourceIds);
+    if (busy.length > 0 && (!opts.skipBusy || busy.length === sourceIds.length)) {
+      throw new RunScopeNotReady("source_run_active", `Sources already being fetched: ${busy.join(", ")}`);
+    }
+    const input = build(
+      sourceIds.filter((id) => !busy.includes(id)),
+      busy,
+    );
+    const { id } = await createRun(tx, input);
+    return { id, skipped: busy, firstStage: input.stages[0] };
   });
+  if (created.firstStage) await enqueueStage(db, boss, created.id, created.firstStage);
+  return { id: created.id, skipped: created.skipped };
 }
 
 /** Every source of `sourceIds` exists and is approved, else `RunScopeNotReady` `source_not_approved`. */
@@ -83,15 +123,10 @@ export async function sourcesBeingFetched(db: Db, sourceIds: string[]): Promise<
   return sourceIds.filter((id) => busy.has(id));
 }
 
-/** None of `sourceIds` is being fetched by another run, else `RunScopeNotReady` `source_run_active`. */
-async function assertNoActiveFetchRun(db: Db, sourceIds: string[]): Promise<void> {
-  const busy = await sourcesBeingFetched(db, sourceIds);
-  if (busy.length > 0) throw new RunScopeNotReady("source_run_active", `Sources already being fetched: ${busy.join(", ")}`);
-}
-
 /** Test crawl of one approved source: at most `TEST_CRAWL_MAX_PAGES` pages. */
-export function startTestCrawl(db: Db, boss: PgBoss, sourceId: string, triggeredBy: string): Promise<{ id: string }> {
-  return startFetchRun(db, boss, { sourceIds: [sourceId], triggeredBy, maxPages: TEST_CRAWL_MAX_PAGES });
+export async function startTestCrawl(db: Db, boss: PgBoss, sourceId: string, triggeredBy: string): Promise<{ id: string }> {
+  const { id } = await startFetchRun(db, boss, { sourceIds: [sourceId], triggeredBy, maxPages: TEST_CRAWL_MAX_PAGES });
+  return { id };
 }
 
 /** Archives an uploaded PDF (`upload://<sha256>` document): only `fetch.url`, with `params.documentIds`. */
@@ -126,20 +161,26 @@ export function startEmbedBackfillRun(db: Db, boss: PgBoss, triggeredBy: string)
 /**
  * Starts the run "Wikivoyage" for an area: creates the whitelist sources that are missing, then queues the area's
  * Wikivoyage articles (`sources.wikivoyage`) and crawls them like any source (`FETCH_RUN_STAGES`). Checked before the
- * run exists: the area is configured, the Wikivoyage source is approved and not being fetched already.
+ * run exists: the area is configured, the Wikivoyage source is not ended (`wikivoyage_source_ended`), approved and
+ * not being fetched already.
  */
 export async function startWikivoyageRun(db: Db, boss: PgBoss, areaKey: string, triggeredBy: string): Promise<{ id: string }> {
   areaByKey(areaKey);
   await ensureWhitelistSources(db);
   const sourceId = await sourceIdByDomain(db, WIKIVOYAGE_DOMAIN);
-  if (!sourceId) throw new RunScopeNotReady("source_not_approved", `No source for ${WIKIVOYAGE_DOMAIN}`);
+  if (!sourceId) {
+    // ensureWhitelistSources leaves a domain with any row alone: an ended source is not recreated.
+    const [ended] = await db.select({ id: sources.id }).from(sources).where(eq(sources.domain, WIKIVOYAGE_DOMAIN)).limit(1);
+    if (ended) throw new RunScopeNotReady("wikivoyage_source_ended", `The source ${WIKIVOYAGE_DOMAIN} has ended`);
+    throw new RunScopeNotReady("source_not_approved", `No source for ${WIKIVOYAGE_DOMAIN}`);
+  }
   await assertApproved(db, [sourceId]);
-  await assertNoActiveFetchRun(db, [sourceId]);
-  return startRun(db, boss, {
+  const { id } = await startExclusiveFetchRun(db, boss, [sourceId], { skipBusy: false }, () => ({
     kind: "stage",
     scope: { type: "area", id: areaKey },
     params: { areaKey, sourceIds: [sourceId] },
     stages: [WIKIVOYAGE_STAGE, ...FETCH_RUN_STAGES],
     triggeredBy,
-  });
+  }));
+  return { id };
 }

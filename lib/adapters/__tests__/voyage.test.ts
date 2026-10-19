@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
+import { makeResponse, RetryableHttpError, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import { fixtureTransport } from "@/lib/adapters/http-fixtures";
 import { embedTexts } from "@/lib/adapters/voyage";
 import { getConfig } from "@/lib/config";
@@ -43,6 +43,17 @@ describe("embedTexts", () => {
       expect(calls).toHaveLength(1);
       expect(calls[0]).toMatchObject({ operation: "embed", unit: "tokens", units: String(tokens), sourceId });
       expect(Number(calls[0]!.costEur)).toBeCloseTo((tokens * getConfig().embeddings.eurPerMTok) / 1e6, 6);
+    });
+  });
+
+  it("a 429 from Voyage is retryable and costs nothing", async () => {
+    await withRollback(async (tx) => {
+      const stage = `embed-test-${newId()}`;
+      const limited: Transport = async () =>
+        makeResponse(429, new TextEncoder().encode('{"detail":"rate limit"}'), { headers: { "content-type": "application/json" } });
+      await expect(embedTexts(limited, ["a"], { db: tx, stage }, cfg())).rejects.toBeInstanceOf(RetryableHttpError);
+      const calls = await tx.select().from(externalCalls).where(and(eq(externalCalls.service, "voyage"), eq(externalCalls.stage, stage)));
+      expect(calls.map((c) => Number(c.costEur))).toEqual([0]);
     });
   });
 

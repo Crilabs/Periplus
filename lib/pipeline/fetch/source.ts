@@ -21,7 +21,7 @@ export type PreparedCrawl = { status: "ready" | "paused" | "not_approved"; start
 /**
  * Job `fetch.source`: prepares one approved source for the run. robots.txt is read anew for every host of the start
  * URLs (once per run, `robotsForRun`). A host with an explicit ban contributes no start URL; when every host bans,
- * the source is paused with `ROBOTS_BAN_REASON` (only if it is still approved). Otherwise every start URL that
+ * the source is paused with `ROBOTS_BAN_REASON` (only if it is still approved; else the result is `not_approved`). Otherwise every start URL that
  * robots.txt and the crawl rules allow is queued in the frontier at depth 0 (a known row is queued again). A source without start URLs starts at `https://<domain>/`. `robots` summarises the first host.
  */
 export async function prepareSourceCrawl(
@@ -44,9 +44,9 @@ export async function prepareSourceCrawl(
 
   const banned = new Set(origins.filter((origin) => explicitBan(policies.get(origin)!)));
   if (banned.size === origins.length) {
-    // Only a source still approved: an admin's decision made meanwhile stands.
-    await setSourceStatus(db, sourceId, "paused", ROBOTS_BAN_REASON, { from: "approved" });
-    return { status: "paused", startUrls: 0, robots: summary };
+    // Only a source still approved: an admin's decision made meanwhile stands (and is what the result reports).
+    const paused = await setSourceStatus(db, sourceId, "paused", ROBOTS_BAN_REASON, { from: "approved" });
+    return { status: paused ? "paused" : "not_approved", startUrls: 0, robots: summary };
   }
 
   const { trackingParams } = getConfig().fetch;
