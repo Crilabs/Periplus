@@ -277,12 +277,30 @@ export const vesselDensityDatasetSchema = z.strictObject({
   ratePerMinute: z.number().int().positive(),
 });
 
+/**
+ * Submarine cables from OSM (Overpass; EMODnet has no Mediterranean cable layer): stored as restricted
+ * areas of `kind`, each line buffered by `bufferM`.
+ */
+export const cablesDatasetSchema = z.strictObject({
+  kind: z.enum(restrictedKindEnum.enumValues),
+  bufferM: z.number().positive(),
+});
+
+/** Roads from OSM (Overpass) for the distance to the next road; `highways` are the `highway` values kept. */
+export const roadsDatasetSchema = z.strictObject({
+  highways: z.array(z.string().regex(/^[a-z_]+$/)).min(1),
+  /** Margin around the area's box for the road query, in km. */
+  bufferKm: z.number().nonnegative(),
+});
+
 /** `config/datasets.json`: external datasets of the geometry stage. */
 export const datasetsSchema = z.strictObject({
   bathymetry: bathymetryDatasetSchema,
   seabed: seabedDatasetSchema,
   humanActivities: humanActivitiesDatasetSchema,
   vesselDensity: vesselDensityDatasetSchema,
+  cables: cablesDatasetSchema,
+  roads: roadsDatasetSchema,
   /** Margin around an area's box for every dataset request, in km. */
   bufferKm: z.number().nonnegative(),
 });

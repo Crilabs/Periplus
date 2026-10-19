@@ -133,6 +133,8 @@ describe("loadConfig", () => {
     expect(c.datasets.seabed.substrateField).toBe("substrate");
     expect(c.datasets.humanActivities.layers.map((l) => l.kind)).toContain("protected_area");
     expect(c.datasets.vesselDensity.coverageId).toBe("emodnet__vesseldensity_allavg");
+    expect(c.datasets.cables).toEqual({ kind: "cable", bufferM: 200 });
+    expect(c.datasets.roads.highways).toContain("residential");
     expect(c.datasets.bufferKm).toBe(2);
   });
 

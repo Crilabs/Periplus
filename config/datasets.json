@@ -55,5 +55,10 @@
     "timeoutSeconds": 120,
     "ratePerMinute": 20
   },
+  "cables": { "kind": "cable", "bufferM": 200 },
+  "roads": {
+    "highways": ["motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential", "track"],
+    "bufferKm": 5
+  },
   "bufferKm": 2
 }

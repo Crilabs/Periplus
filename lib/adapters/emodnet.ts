@@ -92,7 +92,17 @@ export function wfsPageUrl(input: { url: string; typeName: string; bbox: Bbox; s
   return `${input.url}?${params}`;
 }
 
-function parsePage(text: string, where: string, status: number): Feature[] {
+type WfsPage = { features: Feature[]; numberMatched: number | undefined };
+
+/** The server's count of all matching features: `numberMatched` (WFS 2.0), else GeoServer's `totalFeatures`; undefined when absent or "unknown". */
+function matchedCount(parsed: { numberMatched?: unknown; totalFeatures?: unknown }): number | undefined {
+  for (const value of [parsed.numberMatched, parsed.totalFeatures]) {
+    if (typeof value === "number" && Number.isInteger(value) && value >= 0) return value;
+  }
+  return undefined;
+}
+
+function parsePage(text: string, where: string, status: number): WfsPage {
   if (text.trimStart().startsWith("<") && text.includes("ExceptionReport")) {
     throw new HttpError(`${where} returned an OGC exception: ${snippet(text)}`, status);
   }
@@ -104,16 +114,19 @@ function parsePage(text: string, where: string, status: number): Feature[] {
       cause: error,
     });
   }
-  const features = (parsed as { features?: unknown } | null)?.features;
-  if (!Array.isArray(features)) throw new RetryableHttpError(`${where} answer has no features array`, status);
-  return features as Feature[];
+  const answer = (parsed ?? {}) as { features?: unknown; numberMatched?: unknown; totalFeatures?: unknown };
+  if (!Array.isArray(answer.features)) throw new RetryableHttpError(`${where} answer has no features array`, status);
+  return { features: answer.features as Feature[], numberMatched: matchedCount(answer) };
 }
 
 /**
  * All features of one WFS layer in `bbox`, fetched in pages of `pageSize` until a page comes back
  * short. Returns the raw page texts (for archiving) and the features in order. Invalid JSON is
  * retryable (overloaded servers answer with HTML), an OGC exception report is not; more than
- * 50 pages is an error.
+ * 50 pages is an error. When the first page states how many features match (`numberMatched`, else
+ * `totalFeatures`), a different number of fetched features is a `RetryableHttpError`: a server
+ * capping pages below `pageSize`, or data changing between pages, would otherwise silently drop
+ * features (a missing restriction area allows anchoring).
  */
 export async function fetchWfsFeatures(
   transport: Transport,
@@ -130,6 +143,7 @@ export async function fetchWfsFeatures(
 ): Promise<{ pages: string[]; features: Feature[] }> {
   const pages: string[] = [];
   const features: Feature[] = [];
+  let matched: number | undefined;
   for (let page = 0; page < MAX_WFS_PAGES; page++) {
     const startIndex = page * input.pageSize;
     const res = await httpCall(
@@ -144,10 +158,19 @@ export async function fetchWfsFeatures(
       ctx,
     );
     const text = res.text();
-    const pageFeatures = parsePage(text, `${input.service} GetFeature ${input.typeName} @${startIndex}`, res.status);
+    const parsed = parsePage(text, `${input.service} GetFeature ${input.typeName} @${startIndex}`, res.status);
+    if (page === 0) matched = parsed.numberMatched;
     pages.push(text);
-    features.push(...pageFeatures);
-    if (pageFeatures.length < input.pageSize) return { pages, features };
+    features.push(...parsed.features);
+    if (parsed.features.length < input.pageSize) {
+      if (matched !== undefined && matched !== features.length) {
+        throw new RetryableHttpError(
+          `${input.service} GetFeature ${input.typeName}: fetched ${features.length} features, the server matched ${matched}`,
+          res.status,
+        );
+      }
+      return { pages, features };
+    }
   }
   throw new Error(
     `${input.service} GetFeature ${input.typeName}: more than ${MAX_WFS_PAGES} pages of ${input.pageSize} features in [${input.bbox.join(",")}]`,

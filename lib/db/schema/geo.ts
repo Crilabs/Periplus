@@ -254,6 +254,19 @@ export const seabedPolygons = pgTable("seabed_polygons", {
   createdAt: createdAt(),
 }, (t) => [index("seabed_polygons_geom_gist").using("gist", t.geom), index("seabed_polygons_area_key_idx").on(t.areaKey)]);
 
+/**
+ * Working state: OSM roads (Overpass, `highway` from `config/datasets.json`) for the distance to the next road.
+ * One row per way (`osm_id` `way/…`); an import replaces the rows in its box.
+ */
+export const roads = pgTable("roads", {
+  id: uuid("id").primaryKey().$defaultFn(newId),
+  osmId: text("osm_id").notNull(),
+  highway: text("highway").notNull(),
+  geom: geometry("geom", "LineString").notNull(),
+  datasetVersion: text("dataset_version").notNull(),
+  createdAt: createdAt(),
+}, (t) => [index("roads_geom_gist").using("gist", t.geom), uniqueIndex("roads_osm_id_unique").on(t.osmId)]);
+
 /** Navily comparison set: place IDs only, never Navily values. */
 export const comparisonSet = pgTable("comparison_set", {
   placeId: uuid("place_id")

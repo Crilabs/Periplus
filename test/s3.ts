@@ -19,3 +19,24 @@ export function testArchive(): Archive {
   cached ??= createArchive(testArchiveOptions());
   return cached;
 }
+
+/** In-memory archive with its keys exposed: no persisted object turns a first import into a silent reuse. */
+export function memoryArchive(): Archive & { keys(): string[] } {
+  const store = new Map<string, Uint8Array>();
+  return {
+    async ensureBucket() {},
+    async put(key, body) {
+      store.set(key, typeof body === "string" ? new TextEncoder().encode(body) : body);
+    },
+    async get(key) {
+      return store.get(key) ?? null;
+    },
+    async exists(key) {
+      return store.has(key);
+    },
+    async ping() {
+      return true;
+    },
+    keys: () => [...store.keys()].sort(),
+  };
+}

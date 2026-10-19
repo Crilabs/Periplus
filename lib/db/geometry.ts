@@ -2,7 +2,7 @@ import type { Geometry } from "geojson";
 import { sql, type AnyColumn, type SQL } from "drizzle-orm";
 import { customType } from "drizzle-orm/pg-core";
 
-export type GeometryType = "Geometry" | "Point" | "Polygon" | "MultiPolygon";
+export type GeometryType = "Geometry" | "Point" | "LineString" | "Polygon" | "MultiPolygon";
 
 /**
  * PostGIS column `geometry(<type>,4326)`. The driver value is the raw EWKB hex string and is never

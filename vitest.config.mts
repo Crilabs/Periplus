@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 /** Tests that run whole gazetteer passes over the pilot area in one long transaction. */
-const PILOT_RUN_TESTS = ["lib/pipeline/__tests__/gazetteer-run.test.ts"];
+const PILOT_RUN_TESTS = ["lib/pipeline/__tests__/gazetteer-run.test.ts", "lib/pipeline/__tests__/datasets.test.ts"];
 
 export default defineConfig({
   resolve: {

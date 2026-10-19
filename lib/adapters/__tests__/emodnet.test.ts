@@ -46,9 +46,10 @@ function scriptedTransport(bodies: Array<string | Uint8Array>, seen: HttpRequest
   };
 }
 
-function featureCollection(count: number, offset = 0): string {
+function featureCollection(count: number, offset = 0, totals: { numberMatched?: number; totalFeatures?: number | string } = {}): string {
   return JSON.stringify({
     type: "FeatureCollection",
+    ...totals,
     features: Array.from({ length: count }, (_, i) => ({
       type: "Feature",
       id: `f.${offset + i}`,
@@ -154,6 +155,31 @@ describe("fetchWfsFeatures", () => {
     await expect(fetchWfsFeatures(scriptedTransport(['{"type":"x"}']), wfsInput(2), { db })).rejects.toBeInstanceOf(
       RetryableHttpError,
     );
+  });
+
+  it("numberMatched equal to the fetched features passes", async () => {
+    const pages = [featureCollection(2, 0, { numberMatched: 3 }), featureCollection(1, 2, { numberMatched: 3 })];
+    const res = await fetchWfsFeatures(scriptedTransport(pages), wfsInput(2), { db });
+    expect(res.features).toHaveLength(3);
+  });
+
+  it("fewer features than numberMatched (server caps the page) is retryable", async () => {
+    // The server returns 1 feature per page although 2 were asked for: paging stops after the first page.
+    const error = await fetchWfsFeatures(scriptedTransport([featureCollection(1, 0, { numberMatched: 5 })]), wfsInput(2), {
+      db,
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(RetryableHttpError);
+    expect((error as Error).message).toContain("fetched 1 features, the server matched 5");
+  });
+
+  it("totalFeatures counts when numberMatched is absent; 'unknown' is ignored", async () => {
+    await expect(
+      fetchWfsFeatures(scriptedTransport([featureCollection(1, 0, { totalFeatures: 4 })]), wfsInput(2), { db }),
+    ).rejects.toBeInstanceOf(RetryableHttpError);
+    const res = await fetchWfsFeatures(scriptedTransport([featureCollection(1, 0, { totalFeatures: "unknown" })]), wfsInput(2), {
+      db,
+    });
+    expect(res.features).toHaveLength(1);
   });
 
   it("more than 50 pages is an error", async () => {
