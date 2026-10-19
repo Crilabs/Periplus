@@ -5,6 +5,8 @@ import {
   areaConfigSchema,
   budgetsSchema,
   categoriesSchema,
+  consolidationActiveSchema,
+  consolidationSchema,
   datasetsSchema,
   discoverySchema,
   embeddingsSchema,
@@ -23,6 +25,7 @@ import {
   whitelistSchema,
   type AppConfig,
   type AreaConfig,
+  type VersionedConsolidationConfig,
 } from "./schemas";
 
 export type {
@@ -30,6 +33,7 @@ export type {
   AreaConfig,
   BudgetService,
   CategoriesConfig,
+  ConsolidationConfig,
   DatasetsConfig,
   DiscoveryConfig,
   EmbeddingsConfig,
@@ -46,6 +50,7 @@ export type {
   QueueConfig,
   RestrictionsConfig,
   SourceTypesConfig,
+  VersionedConsolidationConfig,
   WhitelistConfig,
 } from "./schemas";
 
@@ -85,6 +90,12 @@ function readAreas(dir: string): AreaConfig[] {
   });
 }
 
+/** Reads and validates `<dir>/consolidation/<version>.json`; the version is the file name. */
+function readConsolidation(dir: string, version: string): VersionedConsolidationConfig {
+  const { version: valid } = consolidationActiveSchema.parse({ version });
+  return { ...readJson(dir, `consolidation/${valid}`, consolidationSchema), version: valid };
+}
+
 /** Loads and validates all config files; throws on any invalid or missing file. */
 export function loadConfig(dir = "config"): AppConfig {
   return {
@@ -107,6 +118,7 @@ export function loadConfig(dir = "config"): AppConfig {
     mentions: readJson(dir, "mentions", mentionsSchema),
     nameAffixes: readJson(dir, "name-affixes", nameAffixesSchema),
     extraction: readJson(dir, "extraction", extractionSchema),
+    consolidation: readConsolidation(dir, readJson(dir, "consolidation/active", consolidationActiveSchema).version),
   };
 }
 
@@ -115,6 +127,18 @@ let cached: AppConfig | undefined;
 export function getConfig(): AppConfig {
   cached ??= loadConfig();
   return cached;
+}
+
+/**
+ * Parameters of a consolidation rules version (default: the active one), read and validated on demand: an evaluation
+ * run compares a candidate version with the active one (ruling M5-P18). Throws for an unknown or malformed version.
+ */
+export function getConsolidationConfig(version?: string, dir = "config"): VersionedConsolidationConfig {
+  if (version === undefined) return getConfig().consolidation;
+  if (!consolidationActiveSchema.safeParse({ version }).success) {
+    throw new Error(`Unknown consolidation rules version "${version}": must be v<number>`);
+  }
+  return readConsolidation(dir, version);
 }
 
 /** The configured area with this key; throws for an unknown key. */

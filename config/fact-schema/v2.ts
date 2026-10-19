@@ -8,6 +8,13 @@ import { factSchemaV1, SEABED_TYPES } from "./v1";
  * for all five levels (spec 02 key list, spec 06). `textValue` is what the model delivers (language-neutral:
  * enums, numbers, proper names), `fromText` maps it to the stored value. Rule names follow spec 07.
  * A key present on several levels uses one shared definition object (attributeDef returns the first match).
+ *
+ * 2026-10-19 (M5, ruling M5-P3): the list-valued attributes `hazards`, `mooring.types`, `season_notes`, `wind_systems`,
+ * `restricted_zones`, `charter_bases`, `supply_ports` changed their rule from `default`/`area_weighted` to `union` in
+ * place, against the "never edit a version file" convention: rule names are read nowhere before M5 and no profile
+ * exists yet, value schemas are unchanged, and a v3 would deactivate every extraction run (`activeExtractionRun`
+ * requires `fact_schema_version` = active) and re-pay the whole extraction. Spec 07 "Mehrheit (Enum)" cannot take a
+ * list, and `default` would keep one hazard and drop the rest.
  */
 
 /** Shelter and swell words → 0–1 (spec 06: "gut/mäßig/kein Schutz" → 0.9 / 0.5 / 0.1); the prompt's mapping table. */
@@ -116,7 +123,7 @@ const hazards: AttributeDef = {
       }),
     )
     .min(1),
-  rule: "default",
+  rule: "union",
   origins: ["text"],
   description: "Navigational hazards named in the text, with the proper name if given",
   textNames: namedEntries,
@@ -128,7 +135,7 @@ const seasonNotes: AttributeDef = {
     months: months.min(1),
     kind: z.enum(["open", "closed", "crowded", "meltemi", "other"]),
   }),
-  rule: "default",
+  rule: "union",
   origins: ["text"],
   description: "Seasonal note: the months it applies to and what applies (open, closed, crowded, meltemi)",
 };
@@ -150,7 +157,7 @@ const place: AttributeDef[] = [
   textOnly(
     "mooring.types",
     z.array(z.enum(["anchor", "buoy", "lines_ashore", "stern_to", "alongside", "pontoon"])).min(1),
-    "default",
+    "union",
     "Ways to moor at the place",
   ),
   textOnly(
@@ -231,7 +238,7 @@ const region: AttributeDef[] = [
         }),
       )
       .min(1),
-    "area_weighted",
+    "union",
     "Prevailing wind systems and their months",
   ),
   textOnly("ferry_traffic", z.enum(["none", "low", "moderate", "high"]), "area_weighted", "Amount of ferry traffic"),
@@ -239,13 +246,13 @@ const region: AttributeDef[] = [
     ...textOnly(
       "restricted_zones",
       namedZones(["military", "firing", "protected", "other"]),
-      "area_weighted",
+      "union",
       "Restricted zones named in the text, with the proper name if given",
     ),
     textNames: namedEntries,
   },
-  { ...textOnly("charter_bases", z.array(properName).min(1), "area_weighted", "Proper names of charter bases"), textNames: nameList },
-  { ...textOnly("supply_ports", z.array(properName).min(1), "area_weighted", "Proper names of ports for supplies"), textNames: nameList },
+  { ...textOnly("charter_bases", z.array(properName).min(1), "union", "Proper names of charter bases"), textNames: nameList },
+  { ...textOnly("supply_ports", z.array(properName).min(1), "union", "Proper names of ports for supplies"), textNames: nameList },
 ];
 
 const capeStrait: AttributeDef[] = [

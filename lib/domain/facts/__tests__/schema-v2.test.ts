@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import { getConfig } from "@/lib/config";
 import { TEXT_SCALE } from "@/config/fact-schema/v2";
 import { SECTORS } from "../schema-types";
 import { attributeDef, attributesForPrompt, getFactSchema, validateFactValue, validateTextFact } from "../schema";
@@ -146,6 +148,7 @@ describe("fact schema v2", () => {
     expect(attributeDef("occupancy", "v2").rule).toBe("occupancy");
     expect(attributeDef("meltemi_exposure", "v2").rule).toBe("area_weighted");
     expect(attributeDef("quietness", "v2").rule).toBe("default");
+    expect(attributeDef("ferry_traffic", "v2").rule).toBe("area_weighted");
     const rules = new Set(Object.values(getFactSchema("v2").levels).flatMap((defs) => defs.map((d) => d.rule)));
     for (const rule of rules) {
       expect([
@@ -158,11 +161,33 @@ describe("fact schema v2", () => {
         "highlight",
         "prohibitions",
         "area_weighted",
+        "union",
         "default",
         "computed_only",
         "review_over_computed",
       ]).toContain(rule);
     }
+  });
+});
+
+describe("union attributes (ruling M5-P3)", () => {
+  const UNION = ["hazards", "mooring.types", "season_notes", "wind_systems", "restricted_zones", "charter_bases", "supply_ports"];
+
+  it("the list-valued attributes are merged by union, every one with an identity key in the active rules", () => {
+    const defs = Object.values(getFactSchema("v2").levels).flat();
+    const unionKeys = [...new Set(defs.filter((d) => d.rule === "union").map((d) => d.key))].sort();
+    expect(unionKeys).toEqual([...UNION].sort());
+    expect(Object.keys(getConfig().consolidation.rules.union.keys).sort()).toEqual([...UNION].sort());
+  });
+
+  it("no list-valued attribute is left to a single-value rule", () => {
+    // season_notes is one entry per fact, but the profile keeps all of them (ruling M5-P3).
+    const listValued = Object.values(getFactSchema("v2").levels)
+      .flat()
+      .filter((d) => d.value instanceof z.ZodArray && d.rule !== "union")
+      .map((d) => `${d.key}:${d.rule}`);
+    // prohibitions (own rule) and seabed (shares, bathymetry) are lists with a rule of their own.
+    expect([...new Set(listValued)].sort()).toEqual(["prohibitions:prohibitions", "seabed:bathymetry"]);
   });
 });
 
