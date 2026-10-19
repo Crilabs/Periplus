@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { withRollback } from "@/test/db";
 import { insertNamedObject, insertTestTile, insertTestVersion } from "@/test/text";
 import { getConfig, type AppConfig } from "@/lib/config";
-import { unmatchedNames } from "@/lib/db/schema";
+import { ambiguousMatches, mentions, unmatchedNames } from "@/lib/db/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { newId } from "@/lib/domain/ids";
 import { measureTileBorders } from "@/lib/domain/mentions/tile-borders";
-import { assessTexts, textCheckFailures, textStats, type TextStats } from "../check-texts";
+import { assessTexts, matchMentionCounts, textCheckFailures, textStats, type TextStats } from "../check-texts";
 
 const stats = (over: Partial<TextStats> = {}): TextStats => ({
   belegtreue: { facts: 120, verified: 120 },
@@ -19,20 +19,20 @@ const stats = (over: Partial<TextStats> = {}): TextStats => ({
   ...over,
 });
 
-const decided = (): AppConfig => {
+/** The repo configuration with the extraction decision set explicitly (never the live status, which M7 changes). */
+const withDecision = (status: "provisional" | "decided"): AppConfig => {
   const base = getConfig();
   const task = base.models.tasks["extract-facts"]!;
-  return { ...base, models: { ...base.models, tasks: { ...base.models.tasks, "extract-facts": { ...task, decision: { status: "decided", note: "Sonnet nach Vergleich." } } } } };
+  return { ...base, models: { ...base.models, tasks: { ...base.models.tasks, "extract-facts": { ...task, decision: { status, note: "Sonnet nach Vergleich." } } } } };
 };
+const decided = () => withDecision("decided");
 
 /** A unique made-up place name (letters only). */
 const uniqueName = () => `Zor${newId().replace(/-/g, "").slice(-8).replace(/\d/g, (d) => "abcdefghij"[Number(d)]!)}`;
 
 describe("check-texts", () => {
   it("reports a provisional model and a 0.65 deterministic share as failing", () => {
-    const cfg = getConfig();
-    expect(cfg.models.tasks["extract-facts"]!.decision!.status).toBe("provisional");
-    const result = assessTexts(stats({ deterministicMentions: 650 }), cfg);
+    const result = assessTexts(stats({ deterministicMentions: 650 }), withDecision("provisional"));
     expect(result).toMatchObject({ modelDecision: "provisional", deterministicShare: 0.65, costPerMentionEur: 0.0025, belegtreue: { ratio: 1 } });
     expect(textCheckFailures(result)).toEqual([
       "extraction model decision is provisional (config/models.json tasks.extract-facts.decision.status)",
@@ -48,6 +48,7 @@ describe("check-texts", () => {
       modelDecision: "decided",
       costPerMentionEur: 0.0025,
       deterministicShare: 0.8,
+      minDeterministicShare: 0.7,
       mentions: 1000,
       routes: { routes: 3, complete: 2, openStops: 1 },
       tileBorders: { unmatchedNames: 10, matchedWithRing2: 1 },
@@ -62,6 +63,34 @@ describe("check-texts", () => {
     // without mentions there is no cost per mention, and the share fails
     expect(assessTexts(stats({ mentions: 0, deterministicMentions: 0 }), decided())).toMatchObject({ costPerMentionEur: null, deterministicShare: 0 });
   });
+
+  it("the share threshold comes from the configuration", () => {
+    const cfg = decided();
+    const stricter: AppConfig = { ...cfg, extraction: { ...cfg.extraction, acceptance: { minDeterministicShare: 0.85 } } };
+    expect(textCheckFailures(assessTexts(stats(), stricter))).toEqual(["share of mentions without a model call 80.0 % not above 85 %"]);
+  });
+
+  it("the share counts the match's mentions only: a disambiguated one counts, a POI mention of the extraction does not", () =>
+    withRollback(async (tx) => {
+      const tile = await insertTestTile(tx, "q025:804:500");
+      const a = await insertNamedObject(tx, { type: "bay", names: [{ name: uniqueName() }], lon: 21.1, lat: 35.1, tiles: [tile] });
+      const v = await insertTestVersion(tx, ["Kolona Vathy Taverna"]);
+      const mention = (start: number, matchKind: "deterministic" | "model") => ({
+        documentVersionId: v.versionId,
+        chunkId: v.chunkIds[0]!,
+        geoObjectId: a,
+        surface: "x",
+        charStart: start,
+        charEnd: start + 5,
+        observedAt: "2026-10-19",
+        confidence: 1,
+        matchKind,
+      });
+      await tx.insert(mentions).values([mention(0, "deterministic"), mention(7, "model"), mention(13, "model")]);
+      // the span at 7 was ambiguous and the disambiguation chose; the one at 13 is a POI mention of the extraction
+      await tx.insert(ambiguousMatches).values({ documentVersionId: v.versionId, chunkId: v.chunkIds[0]!, surface: "Vathy", charStart: 7, charEnd: 12, candidates: [], status: "resolved" });
+      expect(await matchMentionCounts(tx, { versionIds: [v.versionId] })).toEqual({ mentions: 2, deterministic: 1 });
+    }));
 
   it("the tile border measurement finds an unmatched name in the second ring and writes nothing", () =>
     withRollback(async (tx) => {

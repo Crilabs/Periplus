@@ -115,10 +115,11 @@ export async function checkQuoteFidelity(db: Db, extractionRunId: string, cfg: A
 }
 
 /**
- * Belegtreue of a run (spec 10) over all its extraction runs: the checked items and those that verified, from the
- * recorded control (`quote_check`); an extraction run not checked yet counts its text facts by their stored flag.
+ * Belegtreue of a run (spec 10) over all its extraction runs, or of every extraction run (`runId` null, the acceptance
+ * check): the checked items and those that verified, from the recorded control (`quote_check`); an extraction run not
+ * checked yet counts its text facts and route stops (the items its check would count) by their stored flag.
  */
-export async function belegtreue(db: Db, runId: string): Promise<{ facts: number; verified: number; ratio: number }> {
+export async function belegtreue(db: Db, runId: string | null): Promise<{ facts: number; verified: number; ratio: number }> {
   const { rows } = await db.execute<{ facts: number; verified: number }>(sql`
     select coalesce(sum(n.facts), 0)::int as facts, coalesce(sum(n.verified), 0)::int as verified
     from extraction_runs r
@@ -129,8 +130,12 @@ export async function belegtreue(db: Db, runId: string): Promise<{ facts: number
       select count(*)::int, count(*) filter (where f.quote_verified)::int
       from facts f
       where r.quote_check is null and f.extraction_run_id = r.id and f.mention_id is not null
+      union all
+      select count(*)::int, count(*) filter (where s.quote_verified)::int
+      from route_stops s join routes ro on ro.id = s.route_id
+      where r.quote_check is null and ro.extraction_run_id = r.id
     ) n
-    where r.run_id = ${runId}
+    where ${runId === null ? sql`true` : sql`r.run_id = ${runId}`}
   `);
   const facts = Number(rows[0]!.facts);
   const verified = Number(rows[0]!.verified);

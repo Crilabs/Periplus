@@ -6,14 +6,18 @@ import { ComparisonTooExpensive, createModelComparisonWithinBudget } from "../li
 import { createBoss } from "../lib/jobs/boss";
 import { ensureQueues } from "../lib/jobs/queues";
 import { startModelComparisonRun } from "../lib/pipeline/text/run";
+import { RunScopeNotReady } from "../lib/pipeline/tile-scope";
 
 const USAGE = "usage: compare-models.ts --label <label> [--max-eur <eur>] [--start]";
-/** Default ceiling of the cost estimate (EUR, both models). */
-export const DEFAULT_MAX_EUR = 10;
+/**
+ * Default ceiling of the cost estimate (EUR, both models): the default sample of 200 units estimates at about 13 EUR
+ * (ruling M4-J-R1), so the primary command passes without a flag.
+ */
+export const DEFAULT_MAX_EUR = 15;
 
 export type CompareModelsArgs = { label: string; maxEur: number; start: boolean };
 
-/** `--label` (required, ≤ 80 characters), `--max-eur` (positive, default 10), `--start` (start the run at once). */
+/** `--label` (required, ≤ 80 characters), `--max-eur` (positive, default 15), `--start` (start the run at once). */
 export function parseArgs(argv: string[]): CompareModelsArgs {
   let label: string | undefined;
   let maxEur = DEFAULT_MAX_EUR;
@@ -34,6 +38,28 @@ export function parseArgs(argv: string[]): CompareModelsArgs {
   }
   if (!label || label.length > 80) throw new Error(USAGE);
   return { label, maxEur, start };
+}
+
+/**
+ * `--start` of a created comparison: starts its run and prints where to follow it; a refusal (`RunScopeNotReady`, e.g.
+ * above today's `anthropic` headroom) prints the reason and that the comparison stays, with its id and where to start
+ * it later. Returns whether the run started.
+ */
+export async function startCreatedComparison(
+  comparisonId: string,
+  start: () => Promise<{ id: string }>,
+  out: (line: string) => void,
+): Promise<boolean> {
+  try {
+    const { id } = await start();
+    out(`run ${id} started; follow it on /runs/${id}, then rate the deviations on /compare/models?comparison=${comparisonId}`);
+    return true;
+  } catch (error) {
+    if (!(error instanceof RunScopeNotReady)) throw error;
+    out(`not started (${error.reason}): ${error.message}`);
+    out(`comparison ${comparisonId} stays; start it later on /compare/models?comparison=${comparisonId} ("Lauf starten")`);
+    return false;
+  }
 }
 
 /**
@@ -72,8 +98,12 @@ async function main(): Promise<void> {
     await boss.start();
     try {
       await ensureQueues(boss, config.queues);
-      const { id } = await startModelComparisonRun(db, boss, { comparisonId: created.id, triggeredBy: "compare:models" }, config);
-      out(`run ${id} started; follow it on /runs/${id}, then rate the deviations on /compare/models?comparison=${created.id}`);
+      const started = await startCreatedComparison(
+        created.id,
+        () => startModelComparisonRun(db, boss, { comparisonId: created.id, triggeredBy: "compare:models" }, config),
+        out,
+      );
+      if (!started) process.exitCode = 1;
     } finally {
       await boss.stop({ graceful: true });
     }

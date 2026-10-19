@@ -7,6 +7,7 @@
   "routeSectionWords": 20000,
   "routeMaxStops": 60,
   "routeStop": { "nameMaxChars": 80, "maxBeaufort": 12 },
+  "properNameMaxChars": 80,
   "poiMatchRadiusM": 2000,
   "poiSimilarity": 0.75,
   "geocode": {
@@ -18,6 +19,7 @@
     "ratePerMinute": 60
   },
   "earliestDate": "1990-01-01",
+  "acceptance": { "minDeterministicShare": 0.7 },
   "comparison": {
     "units": 200,
     "minSources": 8,

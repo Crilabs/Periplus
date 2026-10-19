@@ -58,6 +58,7 @@ describe("recorded extract-facts answers", () => {
         level: "place",
         factSchemaVersion: config.factSchema.version,
         maxFacts: config.extraction.maxFactsPerUnit,
+        limits: { quoteMinChars: config.extraction.quote.minChars, quoteMaxChars: config.extraction.quote.maxChars, nameMaxChars: config.extraction.properNameMaxChars },
         object: { name: "Kolona", type: "bay", parents: [] },
         docType: "pilot_guide",
         observedAt: "2026-10-19",

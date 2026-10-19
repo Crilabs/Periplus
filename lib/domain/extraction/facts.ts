@@ -77,8 +77,6 @@ export type ProcessUnit = {
   chunkIds: string[];
 };
 
-/** Longest proper name a highlight may carry (fact schema v2 `properName`). */
-const MAX_POI_NAME = 80;
 const HIGHLIGHT = "highlight.";
 
 type UnitChunk = { id: string; ordinal: number; text: string };
@@ -145,7 +143,7 @@ function nameInQuote(name: string, quote: string): boolean {
  * does not contain (the value is changed accordingly) plus its `poi_name` when the quote contains it, once per
  * normalized name; `rejected` counts the names dropped.
  */
-function highlightNames(k: Kept): { names: string[]; rejected: number } {
+function highlightNames(k: Kept, maxNameChars: number): { names: string[]; rejected: number } {
   const value = k.value as HighlightValue;
   const kept = value.names.filter((name) => nameInQuote(name, k.fact.quote));
   let rejected = value.names.length - kept.length;
@@ -153,7 +151,7 @@ function highlightNames(k: Kept): { names: string[]; rejected: number } {
   const all = [...kept];
   const poiName = k.fact.poi_name?.trim() ?? "";
   if (poiName.length > 0) {
-    if (poiName.length <= MAX_POI_NAME && nameInQuote(poiName, k.fact.quote)) all.push(poiName);
+    if (poiName.length <= maxNameChars && nameInQuote(poiName, k.fact.quote)) all.push(poiName);
     else rejected++;
   }
   const seen = new Set<string>();
@@ -262,7 +260,7 @@ export async function processFactOutput(db: Db, unit: ProcessUnit, output: Extra
   const highlights: Array<{ k: Kept; names: string[] }> = [];
   for (const k of kept.values()) {
     if (!k.fact.attribute.startsWith(HIGHLIGHT)) continue;
-    const { names, rejected } = highlightNames(k);
+    const { names, rejected } = highlightNames(k, cfg.extraction.properNameMaxChars);
     stats.poiNameRejected += rejected;
     if (names.length > 0) highlights.push({ k, names });
   }

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { withRollback } from "@/test/db";
 import { insertNamedObject, insertTestExtractionRun, insertTestTile, insertTestVersion } from "@/test/text";
 import type { ExtractedFact } from "@/lib/ai/tasks/extract-facts";
-import { loadConfig } from "@/lib/config";
+import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { extractionRuns, extractionUnits, facts, mentions, unmatchedNames } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
@@ -328,6 +328,20 @@ describe("processFactOutput", () => {
       expect(await tx.select().from(mentions).where(eq(mentions.geoObjectId, nikos))).toHaveLength(1);
       const unmatched = await tx.select().from(unmatchedNames).where(eq(unmatchedNames.documentVersionId, s.versionId));
       expect(unmatched.map((u) => [u.displayName, u.hint])).toEqual([["Taverna Maria", "poi:food"]]);
+    }));
+
+  it("a poi_name longer than extraction.properNameMaxChars is rejected", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx, "Above the harbour the Taverna Maria serves fresh fish.");
+      const out = {
+        facts: [
+          fact({ attribute: "highlight.food", value: '{"present":true,"names":[]}', quote: "the Taverna Maria serves fresh fish", chunk: 3, poi_name: "Taverna Maria" }),
+        ],
+      };
+      const short: AppConfig = { ...config, extraction: { ...config.extraction, properNameMaxChars: 12 } };
+      expect(await processFactOutput(tx, s.unit, out, short)).toMatchObject({ stored: 1, poiNameRejected: 1 });
+      const unmatched = await tx.select().from(unmatchedNames).where(eq(unmatchedNames.documentVersionId, s.versionId));
+      expect(unmatched).toHaveLength(0);
     }));
 
   it("a beach named like a nearby chapel matches the beach", () =>

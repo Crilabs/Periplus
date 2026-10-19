@@ -11,7 +11,7 @@ import type { ModelTask } from "../types";
  * (the chunks mentioning the object and their neighbours). Every fact carries a verbatim quote and the number of the
  * chunk it comes from; the value is JSON text in the attribute's format (language-neutral: enums, numbers, proper
  * names), checked against the fact schema on receipt. The system prompt holds only what is the same for every unit of
- * a level (level, attribute list, word scales, the fact limit), so it can be cached (ruling M4-P20). The output schema keeps to what
+ * a level (level, attribute list, word scales, the fact, quote and name limits), so it can be cached (ruling M4-P20). The output schema keeps to what
  * structured outputs support; lengths, counts and ranges are enforced when the answer is processed
  * (`lib/domain/extraction/facts.ts`), so one over-long field drops one fact instead of the whole answer.
  */
@@ -22,6 +22,8 @@ export type ExtractFactsInput = {
   factSchemaVersion: string;
   /** At most this many facts are looked at (`extraction.maxFactsPerUnit`); the same for every request. */
   maxFacts: number;
+  /** The limits the answer is checked against (`extraction.quote`, `extraction.properNameMaxChars`), stated in the prompt. */
+  limits: { quoteMinChars: number; quoteMaxChars: number; nameMaxChars: number };
   object: { name: string; type: GeoObjectType; parents: string[] };
   docType: DocType;
   observedAt: string;
@@ -33,7 +35,7 @@ export type ExtractedFact = {
   attribute: string;
   /** JSON text of the value in the attribute's format. */
   value: string;
-  /** Verbatim excerpt of the chunk, at most 300 characters (checked on receipt). */
+  /** Verbatim excerpt of the chunk, within `extraction.quote` (checked on receipt). */
   quote: string;
   /** Number of the chunk the quote comes from. */
   chunk: number;
@@ -41,7 +43,7 @@ export type ExtractedFact = {
   confidence: number;
   /** YYYY-MM-DD or YYYY-MM, only when the text states it. */
   observed_at: string | null;
-  /** For `highlight.*`: the proper name of the highlight, at most 80 characters (checked on receipt). */
+  /** For `highlight.*`: the proper name of the highlight, at most `extraction.properNameMaxChars` (checked on receipt). */
   poi_name: string | null;
 };
 
@@ -111,6 +113,9 @@ export const extractFactsTask: ModelTask<ExtractFactsInput, ExtractFactsOutput> 
     attributes: attributesForPrompt(input.level, input.factSchemaVersion),
     name_values: nameValuesForPrompt(input.level, input.factSchemaVersion),
     max_facts: String(input.maxFacts),
+    quote_min_chars: String(input.limits.quoteMinChars),
+    quote_max_chars: String(input.limits.quoteMaxChars),
+    name_max_chars: String(input.limits.nameMaxChars),
     mappings: mappingTable(input.level),
     object: objectLine(input.object),
     doc_type: input.docType,

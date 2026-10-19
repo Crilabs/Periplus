@@ -661,6 +661,7 @@ export function comparisonShortfallLabel(code: string): string {
 export const MODEL_COMPARE_ERROR_LABELS = {
   invalid_label: "Bitte eine Bezeichnung angeben (höchstens 80 Zeichen)",
   invalid_rating: "Die Bewertung war unvollständig",
+  rating_not_in_sample: "Diese Abweichung gehört nicht zur Stichprobe des Vergleichs – Bewertung nicht gespeichert",
   invalid_models: "In config/models.json stehen nicht zwei verschiedene Vergleichsmodelle",
 } as const;
 

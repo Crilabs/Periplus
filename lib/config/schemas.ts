@@ -527,8 +527,6 @@ export const mentionsSchema = z
     versionsPerJob: positiveInt,
     /** Object types matched against the whole text first, to find the tiles a document touches. */
     prepassTypes: z.array(geoObjectType).min(1),
-    /** Candidate space when a document touches no tile: the areas of its source. */
-    fallbackScope: z.literal("source_areas"),
     /** Normalized words that never form a mention on their own. */
     stopNames: z.array(z.string().min(1).refine((n) => n === normalizeName(n), "must be normalized (normalizeName)")),
     /**
@@ -577,6 +575,11 @@ export const extractionSchema = z.strictObject({
   routeMaxStops: positiveInt,
   /** Limits of a route stop, enforced when it is stored and stated in the prompt: name length, top of the Beaufort scale. */
   routeStop: z.strictObject({ nameMaxChars: positiveInt, maxBeaufort: positiveInt }),
+  /**
+   * Longest proper name a highlight's `poi_name` may carry, enforced when facts are stored and stated in the facts
+   * prompt (the fact schema's `properName` caps every stored name too).
+   */
+  properNameMaxChars: positiveInt,
   /** A highlight POI matches a gazetteer POI within this distance. */
   poiMatchRadiusM: meters,
   poiSimilarity: share,
@@ -590,6 +593,8 @@ export const extractionSchema = z.strictObject({
   }),
   /** Observation dates before this are treated as wrong. */
   earliestDate: z.iso.date(),
+  /** M4 acceptance (`npm run check:texts`): more than this share of the match's mentions without a model call. */
+  acceptance: z.strictObject({ minDeterministicShare: share }),
   comparison: z.strictObject({
     units: positiveInt,
     minSources: positiveInt,

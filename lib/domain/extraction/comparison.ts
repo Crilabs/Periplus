@@ -64,9 +64,13 @@ function roundRobin<T>(queues: T[][]): T[] {
  * mentions whose object takes facts (`levelFor` not null); they are ordered round-robin over the document types
  * (effective type: classification before the fetch type), within a type round-robin over its sources, within a source
  * by `md5(versionId || geoObjectId)` (stable, spread over documents), and the first `units` are taken. `shortfall`
- * reports fewer than `minSources` sources and document types of the candidates the sample misses.
+ * reports fewer than `minSources` sources and document types of the candidates the sample misses. `scope` limits the
+ * candidates to the given sources (tests, ruling M4-P23: a test asserts only on its own rows).
  */
-export async function pickComparisonUnits(db: Db, cfg: ComparisonConfig): Promise<ComparisonPick> {
+export async function pickComparisonUnits(db: Db, cfg: ComparisonConfig, scope?: ComparisonScope): Promise<ComparisonPick> {
+  const sourceFilter = scope
+    ? sql`and d.source_id in (select value::uuid from jsonb_array_elements_text(${JSON.stringify(scope.sourceIds)}::jsonb))`
+    : sql``;
   const { rows } = await db.execute<{
     version_id: string;
     geo_object_id: string;
@@ -81,7 +85,7 @@ export async function pickComparisonUnits(db: Db, cfg: ComparisonConfig): Promis
     from mentions m
     join document_versions v on v.id = m.document_version_id
     join documents d on d.id = v.document_id and d.current_version_id = v.id
-    where d.status = 'active' and d.valid_to is null
+    where d.status = 'active' and d.valid_to is null ${sourceFilter}
     group by m.document_version_id, m.geo_object_id, d.source_id, coalesce(v.classified_doc_type, v.doc_type)
     order by sort_key
   `);
@@ -113,6 +117,9 @@ export async function pickComparisonUnits(db: Db, cfg: ComparisonConfig): Promis
   };
 }
 
+/** Limits a comparison sample to some sources (tests only; the pilot draws from every source). */
+export type ComparisonScope = { sourceIds: string[] };
+
 /** Two distinct comparison models are needed; the same model twice compares nothing. */
 export class ComparisonModelsInvalid extends Error {
   constructor(models: string[]) {
@@ -121,23 +128,28 @@ export class ComparisonModelsInvalid extends Error {
   }
 }
 
-/** "Vergleich anlegen": draws the sample (`pickComparisonUnits`) and stores it with the two comparison models. */
+/**
+ * "Vergleich anlegen": draws the sample (`pickComparisonUnits`) and stores it with the two comparison models, in one
+ * transaction (a comparison never exists without its units).
+ */
 export async function createModelComparison(
   db: Db,
-  input: { label: string; createdBy: string; cfg?: AppConfig },
+  input: { label: string; createdBy: string; cfg?: AppConfig; scope?: ComparisonScope },
 ): Promise<{ id: string; units: number; shortfall: string[] }> {
   const cfg = input.cfg ?? getConfig();
   const models = cfg.models.comparison.models.slice(0, 2);
   if (models.length !== 2 || models[0] === models[1]) throw new ComparisonModelsInvalid(models);
-  const pick = await pickComparisonUnits(db, cfg.extraction.comparison);
-  const [row] = await db
-    .insert(modelComparisons)
-    .values({ label: input.label, models, shortfall: pick.shortfall, createdBy: input.createdBy })
-    .returning({ id: modelComparisons.id });
-  if (pick.units.length > 0) {
-    await db.insert(modelComparisonUnits).values(pick.units.map((u) => ({ comparisonId: row!.id, ...u })));
-  }
-  return { id: row!.id, units: pick.units.length, shortfall: pick.shortfall };
+  return db.transaction(async (tx) => {
+    const pick = await pickComparisonUnits(tx, cfg.extraction.comparison, input.scope);
+    const [row] = await tx
+      .insert(modelComparisons)
+      .values({ label: input.label, models, shortfall: pick.shortfall, createdBy: input.createdBy })
+      .returning({ id: modelComparisons.id });
+    if (pick.units.length > 0) {
+      await tx.insert(modelComparisonUnits).values(pick.units.map((u) => ({ comparisonId: row!.id, ...u })));
+    }
+    return { id: row!.id, units: pick.units.length, shortfall: pick.shortfall };
+  });
 }
 
 /** The comparison row, or null. */
@@ -227,11 +239,11 @@ export async function comparisonOverview(db: Db, comparisonId: string): Promise<
  */
 export async function createModelComparisonWithinBudget(
   db: Db,
-  input: { label: string; createdBy: string; maxEur: number; cfg?: AppConfig },
+  input: { label: string; createdBy: string; maxEur: number; cfg?: AppConfig; scope?: ComparisonScope },
 ): Promise<ComparisonOverview & { id: string; estimateEur: number }> {
   const cfg = input.cfg ?? getConfig();
   return db.transaction(async (tx) => {
-    const { id } = await createModelComparison(tx, { label: input.label, createdBy: input.createdBy, cfg });
+    const { id } = await createModelComparison(tx, { label: input.label, createdBy: input.createdBy, cfg, scope: input.scope });
     const estimateEur = await estimateComparisonCostEur(tx, id, cfg);
     assertComparisonCost(estimateEur, input.maxEur);
     return { id, estimateEur, ...(await comparisonOverview(tx, id)) };
@@ -417,11 +429,28 @@ export async function deviationSample(db: Db, comparisonId: string, size = 50, c
   }));
 }
 
-/** Stores the verdict on one deviation; a second verdict on the same item replaces the first (with a new `rated_at`). */
+/** A verdict for an item that is not in the comparison's rating sample (or a comparison that does not exist). */
+export class DeviationNotInSample extends Error {
+  constructor(comparisonId: string, unitKey: string, attribute: string) {
+    super(`(${unitKey}, ${attribute}) is not in the rating sample of model comparison ${comparisonId}`);
+    this.name = "DeviationNotInSample";
+  }
+}
+
+/**
+ * Stores the verdict on one deviation; a second verdict on the same item replaces the first (with a new `rated_at`).
+ * Only an item of the comparison's rating sample (`deviationSample`, `extraction.comparison.ratingSample`) takes a
+ * verdict, so the summary counts nothing else; otherwise `DeviationNotInSample`.
+ */
 export async function rateDeviation(
   db: Db,
   input: { comparisonId: string; unitKey: string; attribute: string; verdict: ComparisonVerdict; by: string },
+  cfg: AppConfig = getConfig(),
 ): Promise<void> {
+  const notInSample = new DeviationNotInSample(input.comparisonId, input.unitKey, input.attribute);
+  if (!(await getModelComparison(db, input.comparisonId))) throw notInSample;
+  const sample = await deviationSample(db, input.comparisonId, cfg.extraction.comparison.ratingSample, cfg);
+  if (!sample.some((d) => d.unitKey === input.unitKey && d.attribute === input.attribute)) throw notInSample;
   await db
     .insert(modelComparisonRatings)
     .values({

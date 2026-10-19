@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
-import { ComparisonModelsInvalid, COMPARISON_VERDICTS, createModelComparison, rateDeviation } from "@/lib/domain/extraction/comparison";
+import { ComparisonModelsInvalid, COMPARISON_VERDICTS, createModelComparison, DeviationNotInSample, rateDeviation } from "@/lib/domain/extraction/comparison";
 import { getBoss } from "@/lib/jobs/boss";
 import { startModelComparisonRun } from "@/lib/pipeline/text/run";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
@@ -69,7 +69,13 @@ export async function rateDeviationAction(formData: FormData): Promise<void> {
     return redirect(comparison.success ? `${PAGE}?comparison=${comparison.data}&error=invalid_rating` : `${PAGE}?error=invalid_rating`);
   }
   const { comparisonId, unitKey, attribute, verdict, item } = parsed.data;
-  await rateDeviation(getDb(), { comparisonId, unitKey, attribute, verdict, by: admin.email });
+  try {
+    await rateDeviation(getDb(), { comparisonId, unitKey, attribute, verdict, by: admin.email });
+  } catch (e) {
+    // A stale or forged item (not in the sample, or no such comparison) is refused, never counted.
+    if (e instanceof DeviationNotInSample) return redirect(`${PAGE}?comparison=${comparisonId}&error=rating_not_in_sample`);
+    throw e;
+  }
   revalidatePath(PAGE);
   redirect(`${PAGE}?comparison=${comparisonId}&item=${item + 1}`);
 }

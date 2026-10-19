@@ -161,6 +161,23 @@ describe("quote fidelity", () => {
       expect((await runRow(tx, id)).status).toBe("blocked");
     }));
 
+  it("an unchecked run's Belegtreue counts its route stops too, as its check would", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx);
+      const factsRun = await extractionRun(tx, s);
+      await insertFact(tx, s, factsRun, "holding");
+      const routeRun = await insertTestExtractionRun(tx, { runId: s.runId, task: "extract-route" });
+      const [route] = await tx.insert(routes).values({ documentVersionId: s.versionId, extractionRunId: routeRun, stopsCount: 2 }).returning({ id: routes.id });
+      for (const ordinal of [0, 1]) {
+        await tx.insert(routeStops).values({ routeId: route!.id, ordinal, name: "Kolona", quote: "Kolona is a quiet bay", quoteVerified: true, quoteChunkId: s.chunkIds[0]! });
+      }
+      expect(await belegtreue(tx, s.runId)).toEqual({ facts: 3, verified: 3, ratio: 1 });
+      // checked, the numbers are the same
+      await checkQuoteFidelity(tx, factsRun, config);
+      await checkQuoteFidelity(tx, routeRun, config);
+      expect(await belegtreue(tx, s.runId)).toEqual({ facts: 3, verified: 3, ratio: 1 });
+    }));
+
   it("one failure blocks the run even when the rounded share is 1", () => {
     // 1 failure in 2,000,001 rounds to 1.000000: the status follows the failures, not the share (ruling M4-H-R3)
     const ratio = fidelityShare(2_000_000, 2_000_001);

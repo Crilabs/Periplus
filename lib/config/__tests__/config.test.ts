@@ -335,15 +335,21 @@ describe("source configuration", () => {
 describe("text configuration", () => {
   const cfg = repoConfig;
 
-  it("the extraction model starts provisional on sonnet", () => {
-    expect(cfg.models.tasks["extract-facts"]).toMatchObject({
-      model: "claude-sonnet-5-5",
-      promptVersion: 3,
-      effort: "medium",
-      maxTokens: 16000,
-      cacheSystem: true,
-      decision: { status: "provisional" },
-    });
+  it("the extraction model is one of the compared models, with a recorded decision status", () => {
+    // Model and decision status change at the M4 acceptance (Christian decides in config/models.json): not pinned here.
+    const task = cfg.models.tasks["extract-facts"]!;
+    expect(task).toMatchObject({ promptVersion: 3, effort: "medium", maxTokens: 16000, cacheSystem: true });
+    expect(cfg.models.comparison.models).toContain(task.model);
+    expect(["provisional", "decided"]).toContain(task.decision?.status);
+  });
+
+  it("a batch poll job survives a provider outage of at least an hour before it dead-letters", () => {
+    // pg-boss backoff: retry n (from 0) waits retryDelay * 2^n .. retryDelay * 2^(n+1) seconds.
+    const poll = cfg.queues["ai.batch.poll"]!;
+    expect(poll.retryBackoff).toBe(true);
+    let minimumSeconds = 0;
+    for (let n = 0; n < poll.retryLimit; n++) minimumSeconds += poll.retryDelaySeconds * 2 ** n;
+    expect(minimumSeconds).toBeGreaterThanOrEqual(3600);
   });
 
   it("the haiku tasks leave room for thinking and the defaults fill in", () => {
@@ -414,8 +420,9 @@ describe("text configuration", () => {
       maxCandidates: 6,
       versionsPerJob: 50,
       prepassTypes: ["area", "gulf", "archipelago", "island"],
-      fallbackScope: "source_areas",
     });
+    // The fallback to the source's areas is built into `candidateTiles`; no switch for it (it was never read).
+    expect(cfg.mentions).not.toHaveProperty("fallbackScope");
     expect(cfg.mentions.stopNames).toContain("limani");
     expect(cfg.extraction.quote).toEqual({ minChars: 12, maxChars: 300 });
     expect(cfg.extraction.routeStop).toEqual({ nameMaxChars: 80, maxBeaufort: 12 });

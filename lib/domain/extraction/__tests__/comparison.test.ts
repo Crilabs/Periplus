@@ -20,17 +20,19 @@ import {
   mentions,
   modelComparisonRatings,
   modelComparisons,
+  modelComparisonUnits,
   runs,
   sources,
   type DocType,
 } from "@/lib/db/schema";
-import { activeExtractionRun } from "@/lib/domain/extraction/active-run";
+import { activeExtractionRun, mentionsExtractedBefore } from "@/lib/domain/extraction/active-run";
 import {
   comparisonShortfall,
   compareRuns,
   ComparisonTooExpensive,
   createModelComparison,
   createModelComparisonWithinBudget,
+  DeviationNotInSample,
   deviationSample,
   estimateComparisonCostEur,
   pickComparisonUnits,
@@ -52,8 +54,8 @@ import { MODEL_COMPARISON_STAGES, startModelComparisonRun } from "@/lib/pipeline
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 
 /*
- * The model comparison (Task 19) inside withRollback. The sample is drawn over all mentions the transaction sees: only
- * its own (mentions are committed by no test), so its rows are the candidates. Geo objects at 21.0° E / 35.2° N.
+ * The model comparison (Task 19) inside withRollback. Every sample is drawn with `scope` set to the test's own sources
+ * (ruling M4-P23), so a mention another test commits never changes it. Geo objects at 21.0° E / 35.2° N.
  */
 
 const base = loadConfig("config");
@@ -228,12 +230,29 @@ async function insertFact(tx: Db, m: TestMention, extractionRunId: string, attri
   return row!.id;
 }
 
+/** The database, but every insert into `model_comparison_units` (also inside its transactions) throws. */
+function failingUnitInsert(db: Db): Db {
+  return new Proxy(db, {
+    get(target, prop, receiver) {
+      if (prop === "insert") {
+        return (table: unknown) => {
+          if (table === modelComparisonUnits) throw new Error("unit insert failed");
+          return target.insert(table as Parameters<Db["insert"]>[0]);
+        };
+      }
+      if (prop === "transaction") return (fn: (tx: Db) => Promise<unknown>) => target.transaction((tx) => fn(failingUnitInsert(tx as Db)));
+      const value = Reflect.get(target, prop, receiver) as unknown;
+      return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+}
+
 describe("model comparison", () => {
   it("a comparison run writes two extraction runs on the same units and leaves mention status alone", () =>
     withRollback(async (tx) => {
       const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
-      const { versionIds } = await scene(tx, { sources: 2, types: ["trip_report", "pilot_guide"], perSource: 2 });
-      const { id: comparisonId, units } = await createModelComparison(tx, { label: "pilot", createdBy: "test", cfg: config });
+      const { versionIds, sourceIds } = await scene(tx, { sources: 2, types: ["trip_report", "pilot_guide"], perSource: 2 });
+      const { id: comparisonId, units } = await createModelComparison(tx, { label: "pilot", createdBy: "test", cfg: config, scope: { sourceIds } });
       expect(units).toBe(4);
       const rec = recordingBoss();
       const seen: Record<string, number> = { [MODEL_A]: 0, [MODEL_B]: 0 };
@@ -283,30 +302,34 @@ describe("model comparison", () => {
       expect(await activeExtractionRun(tx, unit!.documentVersionId, unit!.geoObjectId, decide(MODEL_A, "provisional"))).toBeNull();
       expect(await activeExtractionRun(tx, unit!.documentVersionId, unit!.geoObjectId, decide(MODEL_B, "decided"))).toEqual({ id: runOfModel(MODEL_B) });
       expect(await activeExtractionRun(tx, unit!.documentVersionId, unit!.geoObjectId, decide(MODEL_A, "decided"))).toEqual({ id: runOfModel(MODEL_A) });
+      // NOTE T19, second half: once decided, a regular run does not pay again for the mentions the chosen run extracted
+      const compared = (await tx.select({ m: mentions.id }).from(mentions).where(inArray(mentions.documentVersionId, versionIds))).map((r) => r.m).sort();
+      expect(await mentionsExtractedBefore(tx, compared, decide(MODEL_A, "provisional"))).toEqual([]);
+      expect(await mentionsExtractedBefore(tx, compared, decide(MODEL_B, "decided"))).toEqual(compared);
     }));
 
   it("the sample spreads 200 units over doc types and sources", () =>
     withRollback(async (tx) => {
       const types: DocType[] = ["trip_report", "pilot_guide", "forum", "marina"];
       const { sourceIds } = await scene(tx, { sources: 10, types, perSource: 30 });
-      const pick = await pickComparisonUnits(tx, config.extraction.comparison);
+      const pick = await pickComparisonUnits(tx, config.extraction.comparison, { sourceIds });
       expect(pick.units.length).toBe(200);
-      const own = pick.units.filter((u) => sourceIds.includes(u.sourceId));
+      const own = pick.units;
       expect(new Set(own.map((u) => u.sourceId)).size).toBe(10);
       expect(new Set(own.map((u) => u.docType))).toEqual(new Set(types));
       // round-robin over types: each type 50 of the 200
       for (const t of types) expect(own.filter((u) => u.docType === t).length).toBe(50);
       expect(pick.shortfall).toEqual([]);
       // stable: the same sample again
-      expect((await pickComparisonUnits(tx, config.extraction.comparison)).units).toEqual(pick.units);
+      expect((await pickComparisonUnits(tx, config.extraction.comparison, { sourceIds })).units).toEqual(pick.units);
     }));
 
   it("fewer than 8 sources is reported as shortfall", () =>
     withRollback(async (tx) => {
-      await scene(tx, { sources: 3, types: ["trip_report", "forum"], perSource: 2 });
-      const pick = await pickComparisonUnits(tx, config.extraction.comparison);
+      const { sourceIds } = await scene(tx, { sources: 3, types: ["trip_report", "forum"], perSource: 2 });
+      const pick = await pickComparisonUnits(tx, config.extraction.comparison, { sourceIds });
       expect(pick.shortfall).toEqual(expect.arrayContaining(["units:6/200", "sources:3/8"]));
-      const { id } = await createModelComparison(tx, { label: "few", createdBy: "test", cfg: config });
+      const { id } = await createModelComparison(tx, { label: "few", createdBy: "test", cfg: config, scope: { sourceIds } });
       const [row] = await tx.select().from(modelComparisons).where(eq(modelComparisons.id, id));
       expect(row!.shortfall).toEqual(pick.shortfall);
       // a document type of the candidates missing from the sample is named
@@ -384,10 +407,10 @@ describe("model comparison", () => {
       const m = await insertTestMention(tx);
       await insertFact(tx, m, runA, "holding", "good");
       const unitKey = unitKeyOf(m.versionId, m.geoObjectId);
-      await rateDeviation(tx, { comparisonId, unitKey, attribute: "holding", verdict: "a_correct", by: "a@example.invalid" });
+      await rateDeviation(tx, { comparisonId, unitKey, attribute: "holding", verdict: "a_correct", by: "a@example.invalid" }, config);
       const read = () => tx.select().from(modelComparisonRatings).where(and(eq(modelComparisonRatings.comparisonId, comparisonId)));
       const [before] = await read();
-      await rateDeviation(tx, { comparisonId, unitKey, attribute: "holding", verdict: "unclear", by: "b@example.invalid" });
+      await rateDeviation(tx, { comparisonId, unitKey, attribute: "holding", verdict: "unclear", by: "b@example.invalid" }, config);
       const after = await read();
       expect(after).toHaveLength(1);
       expect(after[0]).toMatchObject({ unitKey, attribute: "holding", verdict: "unclear", ratedBy: "b@example.invalid" });
@@ -399,10 +422,41 @@ describe("model comparison", () => {
       expect(summary.shares.a_correct).toBe(0);
     }));
 
+  it("a verdict outside the rating sample or for an unknown comparison is refused and not counted", () =>
+    withRollback(async (tx) => {
+      const { comparisonId, runA } = await comparisonWithRuns(tx);
+      const m = await insertTestMention(tx);
+      await insertFact(tx, m, runA, "holding", "good");
+      const unitKey = unitKeyOf(m.versionId, m.geoObjectId);
+      const rate = (input: { comparisonId: string; unitKey: string; attribute: string }) =>
+        rateDeviation(tx, { ...input, verdict: "a_correct", by: "a@example.invalid" }, config);
+      await expect(rate({ comparisonId, unitKey, attribute: "seabed" })).rejects.toBeInstanceOf(DeviationNotInSample);
+      await expect(rate({ comparisonId, unitKey: unitKeyOf(newId(), newId()), attribute: "holding" })).rejects.toBeInstanceOf(DeviationNotInSample);
+      await expect(rate({ comparisonId: newId(), unitKey, attribute: "holding" })).rejects.toBeInstanceOf(DeviationNotInSample);
+      expect((await ratingSummary(tx, comparisonId)).rated).toBe(0);
+      // an item beyond the sample size is outside the sample too
+      const small: AppConfig = { ...config, extraction: { ...config.extraction, comparison: { ...config.extraction.comparison, ratingSample: 1 } } };
+      const m2 = await insertTestMention(tx);
+      await insertFact(tx, m2, runA, "holding", "good");
+      const [inSample] = await deviationSample(tx, comparisonId, 1, config);
+      const other = [unitKey, unitKeyOf(m2.versionId, m2.geoObjectId)].find((k) => k !== inSample!.unitKey)!;
+      await expect(rateDeviation(tx, { comparisonId, unitKey: other, attribute: "holding", verdict: "unclear", by: "a@example.invalid" }, small)).rejects.toBeInstanceOf(DeviationNotInSample);
+      await rateDeviation(tx, { comparisonId, unitKey: inSample!.unitKey, attribute: "holding", verdict: "unclear", by: "a@example.invalid" }, small);
+      expect((await ratingSummary(tx, comparisonId)).rated).toBe(1);
+    }));
+
+  it("a comparison is stored with its units or not at all", () =>
+    withRollback(async (tx) => {
+      const { sourceIds } = await scene(tx, { sources: 1, types: ["trip_report"], perSource: 1 });
+      const label = `broken-${newId()}`;
+      await expect(createModelComparison(failingUnitInsert(tx), { label, createdBy: "test", cfg: config, scope: { sourceIds } })).rejects.toThrow("unit insert failed");
+      expect(await tx.select().from(modelComparisons).where(eq(modelComparisons.label, label))).toEqual([]);
+    }));
+
   it("the cost estimate refuses above max-eur", () =>
     withRollback(async (tx) => {
-      await scene(tx, { sources: 1, types: ["trip_report"], perSource: 1 });
-      const { id } = await createModelComparison(tx, { label: "estimate", createdBy: "test", cfg: config });
+      const { sourceIds } = await scene(tx, { sources: 1, types: ["trip_report"], perSource: 1 });
+      const { id } = await createModelComparison(tx, { label: "estimate", createdBy: "test", cfg: config, scope: { sourceIds } });
       const estimate = await estimateComparisonCostEur(tx, id, config);
       // one unit: chunk characters / 4 + system tokens in, outputTokensPerUnit out, per model, batch discount
       const { systemTokens, outputTokensPerUnit } = config.extraction.comparison;
@@ -413,18 +467,18 @@ describe("model comparison", () => {
       }, 0);
       expect(estimate).toBeCloseTo(expected, 4);
       const label = `too-dear-${newId()}`;
-      await expect(createModelComparisonWithinBudget(tx, { label, createdBy: "test", maxEur: estimate / 2, cfg: config })).rejects.toBeInstanceOf(ComparisonTooExpensive);
+      await expect(createModelComparisonWithinBudget(tx, { label, createdBy: "test", maxEur: estimate / 2, cfg: config, scope: { sourceIds } })).rejects.toBeInstanceOf(ComparisonTooExpensive);
       // the refused comparison left nothing behind
       expect(await tx.select().from(modelComparisons).where(eq(modelComparisons.label, label))).toEqual([]);
-      const ok = await createModelComparisonWithinBudget(tx, { label, createdBy: "test", maxEur: estimate * 2, cfg: config });
+      const ok = await createModelComparisonWithinBudget(tx, { label, createdBy: "test", maxEur: estimate * 2, cfg: config, scope: { sourceIds } });
       expect(ok).toMatchObject({ units: 1, sources: 1, docTypes: ["trip_report"], estimateEur: estimate });
     }));
 
   it("a comparison without units, unknown or above today's budget does not start", () =>
     withRollback(async (tx) => {
       const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
-      await scene(tx, { sources: 1, types: ["trip_report"], perSource: 1 });
-      const { id } = await createModelComparison(tx, { label: "dear", createdBy: "test", cfg: config });
+      const { sourceIds } = await scene(tx, { sources: 1, types: ["trip_report"], perSource: 1 });
+      const { id } = await createModelComparison(tx, { label: "dear", createdBy: "test", cfg: config, scope: { sourceIds } });
       const estimate = await estimateComparisonCostEur(tx, id, config);
       const poor: AppConfig = { ...config, budgets: { ...config.budgets, anthropic: { dailyEur: estimate / 2 } } };
       const refused = await startModelComparisonRun(tx, recordingBoss().boss, { comparisonId: id, triggeredBy: "test", now }, poor).catch((e: unknown) => e);

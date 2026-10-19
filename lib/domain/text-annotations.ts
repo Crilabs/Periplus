@@ -152,10 +152,11 @@ export async function versionAnnotations(db: Db, versionId: string, cfg: AppConf
       spans: [
         ...ms.map((m): Span => ({ start: m.char_start, end: m.char_end, kind: "mention", ref: m.id })),
         // A quote of a fact outside the active run is highlighted apart (dashed, grey), like the fact in the table.
-        ...fs.map((f): Span => ({
+        // `facts[i]` is the fact of `fs[i]` (built in the same order).
+        ...fs.map((f, i): Span => ({
           start: f.quote_start,
           end: f.quote_end,
-          kind: facts.find((x) => x.id === f.id)?.active ? "quote" : "inactive_quote",
+          kind: facts[i]!.active ? "quote" : "inactive_quote",
           ref: f.id,
         })),
       ],

@@ -237,6 +237,7 @@ export async function unitInputs(db: Db, unitIds: string[], config: AppConfig = 
       level: u.level as FactLevel,
       factSchemaVersion: schemaOf.get(u.extractionRunId) ?? config.factSchema.version,
       maxFacts: config.extraction.maxFactsPerUnit,
+      limits: { quoteMinChars: config.extraction.quote.minChars, quoteMaxChars: config.extraction.quote.maxChars, nameMaxChars: config.extraction.properNameMaxChars },
       object: { name: object.name, type: object.type, parents: object.parents },
       docType: meta.docType,
       observedAt: meta.observedAt,

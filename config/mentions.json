@@ -9,7 +9,6 @@
   "neighbourRing": 1,
   "versionsPerJob": 50,
   "prepassTypes": ["area", "gulf", "archipelago", "island"],
-  "fallbackScope": "source_areas",
   "stopNames": ["agios", "agia", "agioi", "ag", "port", "porto", "marina", "kap", "cape", "bay", "nisos", "nisi", "limani"],
   "commonWords": {
     "el": [

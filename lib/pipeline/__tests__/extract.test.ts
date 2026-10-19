@@ -360,6 +360,27 @@ describe("stage extraction.mention", () => {
       expect(unit!.status).toBe("submitted");
     }));
 
+  it("the facts prompt states the quote and name limits from the configuration", () => {
+    const taskConfig = config.models.tasks["extract-facts"]!;
+    const system = (limits: ExtractFactsInput["limits"]) =>
+      (buildParams(extractFactsTask, {
+        level: "place",
+        factSchemaVersion: "v2",
+        maxFacts: 40,
+        limits,
+        object: { name: "X", type: "bay", parents: [] },
+        docType: "trip_report",
+        observedAt: "2026-10-19",
+        chunks: [{ n: 1, text: "t" }],
+      }, taskConfig, "claude-sonnet-5-5").system as Array<{ text: string }>)[0]!.text;
+    const repo = system({ quoteMinChars: config.extraction.quote.minChars, quoteMaxChars: config.extraction.quote.maxChars, nameMaxChars: config.extraction.properNameMaxChars });
+    expect(repo).toContain("at least 12 and at most 300 characters");
+    expect(repo).toContain("(at most 80 characters)");
+    const changed = system({ quoteMinChars: 20, quoteMaxChars: 250, nameMaxChars: 60 });
+    expect(changed).toContain("at least 20 and at most 250 characters");
+    expect(changed).toContain("(at most 60 characters)");
+  });
+
   it("prompt v3 states the name-in-quote rule for every attribute holding proper names", () => {
     const taskConfig = config.models.tasks["extract-facts"]!;
     expect(taskConfig.promptVersion).toBe(3);
@@ -370,6 +391,7 @@ describe("stage extraction.mention", () => {
         level,
         factSchemaVersion: "v2",
         maxFacts: 40,
+        limits: { quoteMinChars: 12, quoteMaxChars: 300, nameMaxChars: 80 },
         object: { name: "X", type: "bay", parents: [] },
         docType: "trip_report",
         observedAt: "2026-10-19",

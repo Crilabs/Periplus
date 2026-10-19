@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { getConfig } from "@/lib/config";
 import type { ComparisonSummary, RatingSummary } from "@/lib/domain/extraction/comparison";
-import { extractionModelDecision } from "@/lib/domain/model-comparison-view";
-import { parseArgs as parseCompareArgs } from "../compare-models";
+import type { ModelDecision } from "@/lib/domain/model-comparison-view";
+import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
+import { parseArgs as parseCompareArgs, startCreatedComparison } from "../compare-models";
 import { parseArgs, renderModelReport, type ModelReportInput } from "../model-report";
 
 const ID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
@@ -20,7 +21,10 @@ const ratings: RatingSummary = {
   shares: { a_correct: 0.5, b_correct: 0, both_ok: 0.5, both_wrong: 0, unclear: 0 },
 };
 
-function input(decision = extractionModelDecision(getConfig())): ModelReportInput {
+/** An explicit provisional decision: never the live `config/models.json`, which the M7 decision changes. */
+const PROVISIONAL: ModelDecision = { model: "claude-sonnet-5-5", status: "provisional", note: "Vorläufig, bis zum Vergleich." };
+
+function input(decision: ModelDecision = PROVISIONAL): ModelReportInput {
   const cfg = getConfig();
   return {
     generatedAt: new Date("2026-10-19T08:00:00Z"),
@@ -67,10 +71,26 @@ describe("model report", () => {
   });
 
   it("compare:models takes a label, a cost ceiling and --start", () => {
-    expect(parseCompareArgs(["--label", "pilot"])).toEqual({ label: "pilot", maxEur: 10, start: false });
+    expect(parseCompareArgs(["--label", "pilot"])).toEqual({ label: "pilot", maxEur: 15, start: false });
     expect(parseCompareArgs(["--label", "pilot", "--max-eur", "4.5", "--start"])).toEqual({ label: "pilot", maxEur: 4.5, start: true });
     for (const argv of [[], ["--start"], ["--label"], ["--label", "--start"], ["--label", "x", "--max-eur", "0"], ["--label", "x", "--max-eur", "abc"], ["--label", "x", "--other", "y"]]) {
       expect(() => parseCompareArgs(argv)).toThrow(/usage/);
     }
+  });
+
+  it("compare:models --start prints the comparison id and where to start it when the start is refused", async () => {
+    const ID2 = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c";
+    const lines: string[] = [];
+    const refused = () => Promise.reject(new RunScopeNotReady("comparison_over_budget", "estimate 13.00 EUR exceeds today's anthropic headroom 5.00 EUR"));
+    expect(await startCreatedComparison(ID2, refused, (l) => lines.push(l))).toBe(false);
+    expect(lines).toEqual([
+      "not started (comparison_over_budget): estimate 13.00 EUR exceeds today's anthropic headroom 5.00 EUR",
+      `comparison ${ID2} stays; start it later on /compare/models?comparison=${ID2} ("Lauf starten")`,
+    ]);
+    lines.length = 0;
+    expect(await startCreatedComparison(ID2, async () => ({ id: "run-1" }), (l) => lines.push(l))).toBe(true);
+    expect(lines).toEqual([`run run-1 started; follow it on /runs/run-1, then rate the deviations on /compare/models?comparison=${ID2}`]);
+    // anything else is not swallowed
+    await expect(startCreatedComparison(ID2, () => Promise.reject(new Error("db down")), () => {})).rejects.toThrow("db down");
   });
 });
