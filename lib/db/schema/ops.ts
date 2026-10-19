@@ -38,6 +38,9 @@ export const runs = pgTable("runs", {
   startedAt: timestamp("started_at", { withTimezone: true }),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
   failureReason: text("failure_reason"),
+  /** Who ended the run by hand ("Lauf beenden") and when; its jobs that still start do nothing. */
+  endedBy: text("ended_by"),
+  endedAt: timestamp("ended_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

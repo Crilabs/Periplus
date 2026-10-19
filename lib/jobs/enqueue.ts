@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { fromDrizzle, type PgBoss } from "pg-boss";
 import { v5 as uuidv5 } from "uuid";
 import type { Db } from "@/lib/db/client";
-import { RUN_ADVANCE_QUEUE, type QueueName } from "./queues";
+import { QUEUES, RUN_ADVANCE_QUEUE, type QueueName } from "./queues";
 import type { JobData } from "./worker";
 
 // Kept apart from lib/pipeline/runs (which reaches the stage registry and thereby every handler), so job
@@ -49,4 +49,26 @@ export async function enqueueRunAdvance(boss: PgBoss, runId: string, nextStage: 
   await boss.insert(RUN_ADVANCE_QUEUE, [{ id: uuidv5(key, JOB_ID_NAMESPACE), singletonKey: key, data }], {
     ...(tx ? { db: fromDrizzle(tx, sql) } : {}),
   });
+}
+
+/**
+ * Cancels every job of the run that has not started yet (created or waiting for a retry) on every queue, including
+ * budget-deferred copies and `run.advance`; returns how many. Jobs already active finish on their own (the worker
+ * skips the handler of a job whose run an admin ended).
+ */
+export async function cancelRunJobs(boss: PgBoss, runId: string): Promise<number> {
+  let cancelled = 0;
+  for (const queue of QUEUES) {
+    for (;;) {
+      const jobs = await boss.findJobs<JobData>(queue, { data: { runId }, queued: true, limit: 1000 });
+      if (jobs.length === 0) break;
+      await boss.cancel(
+        queue,
+        jobs.map((j) => j.id),
+      );
+      cancelled += jobs.length;
+      if (jobs.length < 1000) break;
+    }
+  }
+  return cancelled;
 }

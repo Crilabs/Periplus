@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { testDb } from "@/test/db";
 import { externalCalls } from "@/lib/db/schema";
-import { beginStage, createRun, extendStage, failRun, getRun, listRuns, recordJobOutcome, resumeRun } from "@/lib/domain/runs";
+import {
+  beginStage,
+  createRun,
+  endRun,
+  extendStage,
+  failRun,
+  getRun,
+  listRuns,
+  recordJobOutcome,
+  resumeRun,
+  stageAcceptsJobs,
+} from "@/lib/domain/runs";
 
 const db = testDb();
 
@@ -152,9 +163,15 @@ describe("runs", () => {
     expect((await getRun(db, id))!.stages[0]).toMatchObject({ total: 3, done: 2, failed: 1, status: "finished" });
   });
 
-  it("extendStage refuses a stage that is not running", async () => {
+  it("extendStage refuses a stage that is not running; stageAcceptsJobs only for a running stage of an active run", async () => {
     const { id } = await newRun(["crawl"]);
-    await expect(extendStage(db, id, "crawl", 1)).rejects.toThrow(/not running/);
+    expect(await extendStage(db, id, "crawl", 1)).toBe(false);
+    expect(await stageAcceptsJobs(db, id, "crawl")).toBe(false);
+    await beginStage(db, id, "crawl", 1);
+    expect(await stageAcceptsJobs(db, id, "crawl")).toBe(true);
+    expect(await endRun(db, id, "admin@example.invalid")).toBe(true);
+    expect(await stageAcceptsJobs(db, id, "crawl")).toBe(false);
+    expect((await getRun(db, id))!.stages[0]).toMatchObject({ total: 1, status: "running" });
   });
 
   it("rejects an outcome for a stage that is not running", async () => {

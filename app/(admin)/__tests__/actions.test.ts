@@ -18,6 +18,7 @@ const redirect = vi.fn();
 const pauseQueue = vi.fn();
 const resumeQueue = vi.fn();
 const retryFailedJob = vi.fn();
+const endRunByAdmin = vi.fn();
 
 vi.mock("@/lib/security/require-admin", () => ({ requireAdmin: () => requireAdmin() }));
 vi.mock("@/lib/db/client", async (importOriginal) => ({
@@ -25,7 +26,10 @@ vi.mock("@/lib/db/client", async (importOriginal) => ({
   getDb: () => currentDb,
 }));
 vi.mock("@/lib/jobs/boss", () => ({ getBoss: async () => ({}) }));
-vi.mock("@/lib/pipeline/runs", () => ({ startRun: (...args: unknown[]) => startRun(...args) }));
+vi.mock("@/lib/pipeline/runs", () => ({
+  startRun: (...args: unknown[]) => startRun(...args),
+  endRunByAdmin: (...args: unknown[]) => endRunByAdmin(...args),
+}));
 vi.mock("@/lib/jobs/controls", () => ({
   pauseQueue: (...args: unknown[]) => pauseQueue(...args),
   resumeQueue: (...args: unknown[]) => resumeQueue(...args),
@@ -43,7 +47,7 @@ import {
 } from "../runs/actions";
 import { geometryTileAction, seedTileAction } from "../tiles/[id]/actions";
 import { pauseQueueAction, resumeQueueAction } from "../jobs/actions";
-import { retryJobAction } from "../runs/[id]/actions";
+import { endRunAction, retryJobAction } from "../runs/[id]/actions";
 import { toggleComparisonAction } from "../quality/actions";
 
 const form = (fields: Record<string, string>) => {
@@ -108,6 +112,20 @@ describe("admin server actions", () => {
     requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
     await expect(retryJobAction({ queue: "system.ping", jobId })).rejects.toThrow("NEXT_REDIRECT");
     expect(retryFailedJob).toHaveBeenCalledTimes(1);
+  });
+
+  it("endRunAction ends the run as the admin; a malformed id or no session ends nothing", async () => {
+    const runId = newId();
+    await expect(endRunAction(form({ runId: "not-a-uuid" }))).rejects.toThrow();
+    await expect(endRunAction({ runId: "" })).rejects.toThrow();
+    expect(endRunByAdmin).not.toHaveBeenCalled();
+
+    await endRunAction(form({ runId }));
+    expect(endRunByAdmin).toHaveBeenCalledWith(db, expect.anything(), runId, "admin@example.invalid");
+
+    requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
+    await expect(endRunAction(form({ runId }))).rejects.toThrow("NEXT_REDIRECT");
+    expect(endRunByAdmin).toHaveBeenCalledTimes(1);
   });
 
   it("retryJobAction decides an open failed_job task of the job with retry", async () => {

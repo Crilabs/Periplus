@@ -9,7 +9,7 @@ import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { chunks, crawlFrontier, documents, documentVersions, outlinks, runs, sources } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
-import { beginStage, createRun, getRun } from "@/lib/domain/runs";
+import { beginStage, createRun, getRun, recordJobOutcome } from "@/lib/domain/runs";
 import { registrableDomain } from "@/lib/domain/sources/urls";
 import type { JobData } from "@/lib/jobs/worker";
 import type { PgBoss } from "pg-boss";
@@ -514,6 +514,41 @@ describe("crawl stages", () => {
       expect(await retry(run2.runId, "/c", 1)).toEqual({ outcome: "missing", newUrls: 0 });
       const [, c] = await documentsOf(tx, sourceId);
       expect(c).toMatchObject({ status: "active", consecutiveGone: 1 });
+    });
+  });
+
+  it("a job retried after its stage finished stores the page's new links for the next run and enqueues nothing", async () => {
+    const s = newSite();
+    const url = (p: string) => `${s.origin}${s.path(p)}`;
+    s.set("/a", { status: 503, body: "busy" });
+    await withRollback(async (tx) => {
+      const sourceId = await insertSource(tx, s, { startUrls: [url("/a")] });
+      const d = deps();
+      const params = { sourceIds: [sourceId] };
+      const { id: runId } = await createRun(tx, { kind: "stage", scope: { type: "source", id: sourceId }, stages: FETCH_RUN_STAGES, params, triggeredBy: "test" });
+      await beginStage(tx, runId, FETCH_SOURCE_STAGE, 1);
+      await prepareSourceCrawl(tx, sourceId, d, { db: tx, runId, stage: FETCH_SOURCE_STAGE });
+      await recordJobOutcome(tx, runId, FETCH_SOURCE_STAGE, sourceId, "done");
+      const [job] = await planFetchUrls(tx, { id: runId, params });
+      await beginStage(tx, runId, FETCH_URL_STAGE, 1);
+      const enqueued: JobData[] = [];
+      const run = (j: JobData) =>
+        fetchUrl(tx, j as never, { ...d, enqueue: async (_tx, jobs) => (enqueued.push(...jobs), jobs.length) }, { db: tx, runId, stage: FETCH_URL_STAGE });
+      await expect(run(job!)).rejects.toBeInstanceOf(RetryableHttpError);
+      // The job dead-lettered: its stage finished with every job failed.
+      await recordJobOutcome(tx, runId, FETCH_URL_STAGE, job!.key, "failed");
+      expect((await getRun(tx, runId))!.stages[1]).toMatchObject({ status: "finished", failed: 1 });
+
+      // The admin retries it once the page answers again, with a link to a new page.
+      s.set("/a", page(html("A", `<p>${paragraph("north")}</p>`, [s.path("/b")])));
+      expect(await run(job!)).toEqual({ outcome: "new_version", newUrls: 1 });
+      expect(enqueued).toEqual([]);
+      const b = (await frontierOf(tx, sourceId)).find((f) => f.urlNormalized === url("/b"));
+      expect(b).toMatchObject({ status: "queued", lastRunId: null, depth: 1 });
+
+      // The next run plans it.
+      const next = await createRun(tx, { kind: "stage", scope: { type: "source", id: sourceId }, stages: FETCH_RUN_STAGES, params, triggeredBy: "test" });
+      expect((await planFetchUrls(tx, { id: next.id, params })).map((j) => j.url)).toContain(url("/b"));
     });
   });
 

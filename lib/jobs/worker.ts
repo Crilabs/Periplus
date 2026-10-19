@@ -6,7 +6,7 @@ import type { Db } from "@/lib/db/client";
 import { BudgetExceeded } from "@/lib/domain/costs";
 import { errorText, lockFailedJob } from "@/lib/domain/jobs-view";
 import { createReviewTask } from "@/lib/domain/review";
-import { failRun, recordJobOutcome } from "@/lib/domain/runs";
+import { failRun, isRunEnded, recordJobOutcome } from "@/lib/domain/runs";
 import { createLogger } from "@/lib/logger";
 import { isQueuePaused, pauseForBudget } from "./controls";
 import { enqueueRunAdvance } from "./enqueue";
@@ -34,6 +34,7 @@ const PRIOR_ATTEMPTS = "priorAttempts";
  * job for the next one (so a failing transition never fails the job itself);
  * `BudgetExceeded` pauses the queue and defers the job (the failing attempt is not counted, earlier
  * ones are; no outcome); any other error is rethrown so pg-boss retries and finally dead-letters the job.
+ * A job of a run an admin ended ("Lauf beenden") does nothing and records no outcome.
  */
 export async function startWorkers(
   boss: PgBoss,
@@ -80,6 +81,10 @@ export async function startWorkers(
       jobId: job.id,
       runId: job.data.runId,
     };
+    if (job.data.runId && (await isRunEnded(db, job.data.runId))) {
+      ctx.log.info("run ended by admin, job skipped");
+      return;
+    }
     try {
       await handlers[queue](job.data, ctx);
     } catch (err) {

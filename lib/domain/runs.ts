@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { externalCalls, jobOutcomes, runStages, runs } from "@/lib/db/schema";
 import type { RunKind, RunScopeType, RunStageStatus, RunStatus } from "@/lib/db/schema";
@@ -25,6 +25,9 @@ export type RunView = {
   startedAt: Date | null;
   finishedAt: Date | null;
   failureReason: string | null;
+  /** Who ended the run by hand ("Lauf beenden"), and when; null for a run that ended by itself. */
+  endedBy: string | null;
+  endedAt: Date | null;
   costEur: number;
   stages: RunStageView[];
 };
@@ -111,16 +114,33 @@ export async function beginStage(
 }
 
 /**
+ * Whether `stage` of the run can still take jobs: the stage is running and the run is queued or running (not
+ * finished, failed or ended by an admin). Locks the stage row until the caller's transaction ends, so a caller that
+ * gets `true` can enqueue and `extendStage` in the same transaction. A job retried after its stage finished gets
+ * `false`.
+ */
+export async function stageAcceptsJobs(db: Db, runId: string, stage: string): Promise<boolean> {
+  const [row] = await db
+    .select({ status: runStages.status, runStatus: runs.status })
+    .from(runStages)
+    .innerJoin(runs, eq(runs.id, runStages.runId))
+    .where(and(eq(runStages.runId, runId), eq(runStages.stage, stage)))
+    .for("update", { of: runStages });
+  return row?.status === "running" && (row.runStatus === "queued" || row.runStatus === "running");
+}
+
+/**
  * Adds `by` jobs to a running stage (a crawl job that discovered new pages). Callers extend in the transaction that
  * enqueues the new jobs and before their own job's outcome is recorded, so the stage cannot finish in between.
+ * Returns false (and changes nothing) when the stage is not running.
  */
-export async function extendStage(db: Db, runId: string, stage: string, by: number): Promise<void> {
+export async function extendStage(db: Db, runId: string, stage: string, by: number): Promise<boolean> {
   const [row] = await db
     .update(runStages)
     .set({ total: sql`${runStages.total} + ${by}` })
     .where(and(eq(runStages.runId, runId), eq(runStages.stage, stage), eq(runStages.status, "running")))
     .returning({ id: runStages.id });
-  if (!row) throw new Error(`stage ${stage} of run ${runId} is not running`);
+  return row !== undefined;
 }
 
 export type JobOutcome = "done" | "failed";
@@ -251,9 +271,34 @@ export async function resumeRun(db: Db, runId: string): Promise<boolean> {
   const resumed = await db
     .update(runs)
     .set({ status: "running", failureReason: null, finishedAt: null })
-    .where(and(eq(runs.id, runId), eq(runs.status, "failed")))
+    // A run an admin ended stays ended.
+    .where(and(eq(runs.id, runId), eq(runs.status, "failed"), isNull(runs.endedBy)))
     .returning({ id: runs.id });
   return resumed.length > 0;
+}
+
+/** Failure reason of a run an admin ended ("Lauf beenden"); who and when are in `ended_by`/`ended_at`. */
+export const RUN_ENDED_REASON = "ended by admin";
+
+/**
+ * Ends a queued or running run by hand ("Lauf beenden", e.g. a crawl stuck after a worker crash): status `failed`
+ * with `RUN_ENDED_REASON`, `finished_at` and `ended_at` now, `ended_by` the admin. Returns whether the run was
+ * active; a run that has ended already is left as it is. Its jobs that still start do nothing (the worker checks
+ * `isRunEnded`), and no retry resumes it.
+ */
+export async function endRun(db: Db, runId: string, by: string): Promise<boolean> {
+  const ended = await db
+    .update(runs)
+    .set({ status: "failed", finishedAt: sql`now()`, failureReason: RUN_ENDED_REASON, endedBy: by, endedAt: sql`now()` })
+    .where(and(eq(runs.id, runId), inArray(runs.status, ["queued", "running"])))
+    .returning({ id: runs.id });
+  return ended.length > 0;
+}
+
+/** Whether an admin ended the run by hand. */
+export async function isRunEnded(db: Db, runId: string): Promise<boolean> {
+  const [row] = await db.select({ endedBy: runs.endedBy }).from(runs).where(eq(runs.id, runId));
+  return row?.endedBy != null;
 }
 
 type RunRow = typeof runs.$inferSelect;
@@ -281,6 +326,8 @@ async function toViews(db: Db, rows: RunRow[]): Promise<RunView[]> {
     startedAt: r.startedAt,
     finishedAt: r.finishedAt,
     failureReason: r.failureReason,
+    endedBy: r.endedBy,
+    endedAt: r.endedAt,
     costEur: costs.get(r.id) ?? 0,
     stages: stageRows
       .filter((s) => s.runId === r.id)

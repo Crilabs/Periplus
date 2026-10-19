@@ -2,9 +2,10 @@ import { eq } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import type { Db } from "@/lib/db/client";
 import { runs } from "@/lib/db/schema";
-import { beginStage, createRun } from "@/lib/domain/runs";
+import { beginStage, createRun, endRun } from "@/lib/domain/runs";
 import { STAGES } from "@/lib/jobs/stages";
-import { enqueueRunAdvance, enqueueStageJobs } from "@/lib/jobs/enqueue";
+import { cancelRunJobs, enqueueRunAdvance, enqueueStageJobs } from "@/lib/jobs/enqueue";
+import { createLogger } from "@/lib/logger";
 import type { QueueName } from "@/lib/jobs/queues";
 import type { JobData } from "@/lib/jobs/worker";
 
@@ -49,4 +50,15 @@ export async function enqueueStage(db: Db, boss: PgBoss, runId: string, stageNam
     await enqueueStageJobs(boss, stage.queue, runId, stage.name, jobs, tx);
     if (begun.nextStage) await enqueueRunAdvance(boss, runId, begun.nextStage, tx);
   });
+}
+
+/**
+ * "Lauf beenden": ends a queued or running run by hand (`endRun`, recording who and when) and cancels its jobs that
+ * have not started. Returns whether the run was active; for a run that has ended already nothing happens.
+ */
+export async function endRunByAdmin(db: Db, boss: PgBoss, runId: string, by: string): Promise<{ ended: boolean; cancelledJobs: number }> {
+  if (!(await endRun(db, runId, by))) return { ended: false, cancelledJobs: 0 };
+  const cancelledJobs = await cancelRunJobs(boss, runId);
+  createLogger("runs").info({ runId, by, cancelledJobs }, "run ended by admin");
+  return { ended: true, cancelledJobs };
 }

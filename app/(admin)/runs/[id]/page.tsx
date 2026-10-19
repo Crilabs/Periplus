@@ -7,7 +7,7 @@ import { QUEUES } from "@/lib/jobs/queues";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { AutoRefresh } from "../../_components/auto-refresh";
 import { RUN_KIND_LABELS, RUN_STATUS_LABELS, SCOPE_TYPE_LABELS, STAGE_STATUS_LABELS } from "../../_components/labels";
-import { retryJobAction } from "./actions";
+import { endRunAction, retryJobAction } from "./actions";
 
 const time = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
 const isRetryable = (queue: string) => (QUEUES as readonly string[]).includes(queue);
@@ -38,11 +38,31 @@ export default async function Page({ params }: PageProps<"/runs/[id]">) {
             <dd>{run.failureReason}</dd>
           </>
         )}
+        {run.endedBy && run.endedAt && (
+          <>
+            <dt>Beendet von</dt>
+            <dd>
+              {run.endedBy} am {time(run.endedAt)}
+            </dd>
+          </>
+        )}
         <dt>Gestartet von</dt>
         <dd>{run.triggeredBy}</dd>
         <dt>Kosten</dt>
         <dd>{run.costEur.toFixed(4)} €</dd>
       </dl>
+      {(run.status === "queued" || run.status === "running") && (
+        <form action={endRunAction}>
+          <input type="hidden" name="runId" value={run.id} />
+          <button type="submit" className="rounded border border-red-700 px-2 py-1 text-red-700">
+            Lauf beenden
+          </button>
+          <p className="mt-1 text-xs text-neutral-600">
+            Für einen hängenden Lauf: beendet ihn als fehlgeschlagen und bricht seine wartenden Jobs ab. Offene Seiten
+            nimmt der nächste Lauf mit.
+          </p>
+        </form>
+      )}
       <table className="w-full text-left">
         <thead>
           <tr className="border-b border-neutral-300">

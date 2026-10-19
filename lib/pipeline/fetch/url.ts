@@ -14,7 +14,7 @@ import { extractLinks } from "@/lib/domain/documents/links";
 import { extractPublishedAt } from "@/lib/domain/documents/metadata";
 import { ensureDocument, markChecked, markGone, storeFetched } from "@/lib/domain/documents/store";
 import { structuredToMarkdown } from "@/lib/domain/documents/structured";
-import { extendStage } from "@/lib/domain/runs";
+import { extendStage, stageAcceptsJobs } from "@/lib/domain/runs";
 import { urlAllowed } from "@/lib/domain/sources/crawl-rules";
 import { effectiveRate, robotsForRun } from "@/lib/domain/sources/robots";
 import { getSource, type Source } from "@/lib/domain/sources/store";
@@ -259,7 +259,11 @@ export async function followLinks(
   });
 }
 
-/** New frontier rows of this run for `internal` (the source row is locked by the caller), enqueued in `tx`. */
+/**
+ * New frontier rows of this run for `internal` (the source row is locked by the caller), enqueued in `tx`. When the
+ * stage no longer takes jobs (a job retried after its stage finished, or a run an admin ended), the new rows are
+ * only stored `queued` without a run, enqueue nothing and are planned by the next run.
+ */
 async function addInternal(
   tx: Db,
   sourceId: string,
@@ -286,14 +290,18 @@ async function addInternal(
   );
   const fresh = internal.filter((url) => !known.has(url)).slice(0, room);
   if (fresh.length === 0) return 0;
+  const accepts = await stageAcceptsJobs(tx, runId, FETCH_URL_STAGE);
   const kept = await tx
     .insert(crawlFrontier)
-    .values(fresh.map((url) => ({ sourceId, url, urlNormalized: url, depth, lastRunId: runId })))
+    .values(fresh.map((url) => ({ sourceId, url, urlNormalized: url, depth, lastRunId: accepts ? runId : null })))
     .onConflictDoNothing({ target: [crawlFrontier.sourceId, crawlFrontier.urlNormalized] })
     .returning({ url: crawlFrontier.url });
+  if (!accepts) return kept.length;
   const jobs = kept.map((r) => ({ key: urlJobKey(r.url), sourceId, url: r.url, depth, maxPages }));
   const enqueued = await deps.enqueue(tx, jobs);
-  if (enqueued > 0) await extendStage(tx, runId, FETCH_URL_STAGE, enqueued);
+  if (enqueued > 0 && !(await extendStage(tx, runId, FETCH_URL_STAGE, enqueued))) {
+    throw new Error(`stage ${FETCH_URL_STAGE} of run ${runId} stopped running while locked`);
+  }
   return kept.length;
 }
 

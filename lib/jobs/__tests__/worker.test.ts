@@ -5,7 +5,7 @@ import { testDb } from "@/test/db";
 import { reviewTasks } from "@/lib/db/schema";
 import { BudgetExceeded } from "@/lib/domain/costs";
 import { newId } from "@/lib/domain/ids";
-import { beginStage, createRun, failRun, getRun } from "@/lib/domain/runs";
+import { beginStage, createRun, failRun, getRun, RUN_ENDED_REASON, resumeRun } from "@/lib/domain/runs";
 import { createBoss } from "@/lib/jobs/boss";
 import { isQueuePaused, resumeQueue } from "@/lib/jobs/controls";
 import { createLogger } from "@/lib/logger";
@@ -15,7 +15,7 @@ import { HANDLERS } from "@/lib/jobs/registry";
 import { STAGES } from "@/lib/jobs/stages";
 import { DEAD_LETTER_QUEUE, deadLetterQueueOptions, ensureQueues, QUEUES } from "@/lib/jobs/queues";
 import { startWorkers, type JobData, type JobHandler } from "@/lib/jobs/worker";
-import { enqueueStageJobs, startRun } from "@/lib/pipeline/runs";
+import { endRunByAdmin, enqueueStageJobs, startRun } from "@/lib/pipeline/runs";
 import { jobsFromDb } from "@/lib/domain/queues-view";
 import { failedJobsOfRun, retryFailedJob } from "@/lib/domain/jobs-view";
 
@@ -508,6 +508,31 @@ describe("worker", () => {
       .from(reviewTasks)
       .where(and(eq(reviewTasks.kind, "failed_job"), eq(reviewTasks.subjectId, sourceId)));
     expect(tasks).toHaveLength(1);
+  }, 30_000);
+
+  it("ending a run cancels its waiting jobs; a job of it that still starts does nothing; no retry resumes it", async () => {
+    const { id } = await createRun(db, { kind: "system", scope: scope(), stages: ["ping"], params: {}, triggeredBy: "test" });
+    await beginStage(db, id, "ping", 2);
+    const later = new Date(Date.now() + 3_600_000);
+    const waiting = await boss.send("system.ping", { runId: id, stage: "ping", key: "waiting" }, { startAfter: later });
+
+    expect(await endRunByAdmin(db, boss, id, "admin@example.invalid")).toEqual({ ended: true, cancelledJobs: 1 });
+    expect((await boss.getJobById("system.ping", waiting!))?.state).toBe("cancelled");
+    const run = (await getRun(db, id))!;
+    expect(run).toMatchObject({ status: "failed", failureReason: RUN_ENDED_REASON, endedBy: "admin@example.invalid" });
+    expect(run.endedAt).toBeInstanceOf(Date);
+    expect(run.finishedAt).toBeInstanceOf(Date);
+    // Ending again changes nothing.
+    expect(await endRunByAdmin(db, boss, id, "other@example.invalid")).toEqual({ ended: false, cancelledJobs: 0 });
+
+    // A job a still-active job enqueued after the end: its handler would fail every attempt, but it never runs.
+    const late = await boss.send("system.ping", { runId: id, stage: "ping", key: "late", failUntilFixed: true });
+    await waitFor(async () => (await boss.getJobById("system.ping", late!))?.state === "completed", 20_000);
+    expect((await getRun(db, id))!.stages[0]).toMatchObject({ total: 2, done: 0, failed: 0, status: "running" });
+    expect(await failedJobsOfRun(db, id)).toEqual([]);
+
+    expect(await resumeRun(db, id)).toBe(false);
+    expect((await getRun(db, id))!).toMatchObject({ status: "failed", endedBy: "admin@example.invalid" });
   }, 30_000);
 
   it("enqueueing the same run stage twice does not duplicate jobs", async () => {
