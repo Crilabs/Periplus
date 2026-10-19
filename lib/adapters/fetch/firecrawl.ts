@@ -1,6 +1,7 @@
 import type { FetchConfig } from "@/lib/config";
 import { getEnv } from "@/lib/env";
 import { HttpError, httpCall, RetryableHttpError, type HttpResponse, type Transport } from "../http";
+import { BlockedUrlError, isPublicUrlLiteral } from "./ssrf";
 import type { Converter } from "./types";
 
 type FirecrawlAnswer = {
@@ -40,6 +41,7 @@ export function createFirecrawlConverter(transport: Transport, cfg: FetchConfig[
     name: "firecrawl",
     async convert(input, ctx) {
       const started = performance.now();
+      if (!isPublicUrlLiteral(input.url)) throw new BlockedUrlError(input.url);
       const key = getEnv().FIRECRAWL_API_KEY;
       if (!key) throw new Error("FIRECRAWL_API_KEY is not set");
       const costOf = (res: HttpResponse) => {

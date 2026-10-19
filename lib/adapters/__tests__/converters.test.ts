@@ -6,6 +6,7 @@ import { createConverters, resolveConverter } from "@/lib/adapters/fetch/index";
 import { createJinaConverter } from "@/lib/adapters/fetch/jina";
 import { createLocalConverter, htmlToMarkdown } from "@/lib/adapters/fetch/local";
 import { closeRenderer, createPlaywrightRenderer, getRenderer } from "@/lib/adapters/fetch/browser";
+import { BlockedUrlError } from "@/lib/adapters/fetch/ssrf";
 import type { RenderPage } from "@/lib/adapters/fetch/types";
 import { HttpError, makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import { fixtureTransport } from "@/lib/adapters/http-fixtures";
@@ -168,6 +169,14 @@ describe("jina converter", () => {
     expect(requests[0]!.budget).toBe("jina");
   });
 
+  it("jina and firecrawl refuse a non-public target before any request", async () => {
+    const transport = vi.fn<Transport>();
+    const target = { url: "http://169.254.169.254/latest/meta-data/", html: null, boilerplateSelectors: [], render: "auto" as const };
+    await expect(createJinaConverter(transport, cfg().jina).convert(target, { db })).rejects.toBeInstanceOf(BlockedUrlError);
+    await expect(createFirecrawlConverter(transport, cfg().firecrawl).convert(target, { db })).rejects.toBeInstanceOf(BlockedUrlError);
+    expect(transport).not.toHaveBeenCalled();
+  });
+
   it("an exhausted jina budget throws before any request", async () => {
     const transport = vi.fn<Transport>();
     await withRollback(async (tx) => {
@@ -253,8 +262,47 @@ describe("resolveConverter", () => {
 });
 
 describe("playwright renderer", () => {
-  const renderer = createPlaywrightRenderer();
+  // The site server listens on 127.0.0.1, which the default guard blocks: these tests block "/secret" instead.
+  const renderer = createPlaywrightRenderer({ isAllowed: async (url) => !new URL(url).pathname.startsWith("/secret") });
   afterAll(() => renderer.close());
+
+  it("refuses a non-public address before starting a browser", async () => {
+    const guarded = createPlaywrightRenderer();
+    await expect(guarded.render("http://169.254.169.254/latest/meta-data/", { timeoutMs: 1000 })).rejects.toBeInstanceOf(BlockedUrlError);
+    await expect(guarded.render("file:///etc/passwd", { timeoutMs: 1000 })).rejects.toBeInstanceOf(BlockedUrlError);
+    await guarded.close();
+  });
+
+  it.skipIf(!chromiumInstalled())("a redirect hop to a blocked address is never requested", async () => {
+    const site = await startSiteServer();
+    try {
+      site.set("/hop", { status: 302, body: "", headers: { location: "/secret" } });
+      site.set("/secret", { body: "<p>intern</p>", headers: { "content-type": "text/html" } });
+      site.set("/page", {
+        body: `<!doctype html><html><body><p>Seite</p><script>fetch("/secret-api").catch(() => {});</script></body></html>`,
+        headers: { "content-type": "text/html" },
+      });
+      await expect(renderer.render(`${site.origin}/hop`, { timeoutMs: 15_000 })).rejects.toBeInstanceOf(BlockedUrlError);
+      const r = await renderer.render(`${site.origin}/page`, { timeoutMs: 15_000 });
+      expect(r.html).toContain("<p>Seite</p>");
+      expect(site.requests.map((q) => q.path)).toEqual(["/hop", "/page"]);
+    } finally {
+      await site.close();
+    }
+  }, 60_000);
+
+  it.skipIf(!chromiumInstalled())("follows an allowed redirect", async () => {
+    const site = await startSiteServer();
+    try {
+      site.set("/old", { status: 301, body: "", headers: { location: "/new" } });
+      site.set("/new", { body: "<!doctype html><html><body><p>Neu</p></body></html>", headers: { "content-type": "text/html" } });
+      const r = await renderer.render(`${site.origin}/old`, { timeoutMs: 15_000 });
+      expect(r.finalUrl).toBe(`${site.origin}/new`);
+      expect(r.html).toContain("<p>Neu</p>");
+    } finally {
+      await site.close();
+    }
+  }, 60_000);
 
   it("getRenderer is one renderer per process until closeRenderer", async () => {
     const first = getRenderer();

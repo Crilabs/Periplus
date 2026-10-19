@@ -8,6 +8,7 @@ import type { Converter, ConverterName, RenderPage } from "./types";
 
 export type { Converted, Converter, ConverterName, ConvertInput, RenderPage } from "./types";
 export { htmlToMarkdown } from "./local";
+export { BlockedUrlError, isPublicHttpUrl, isPublicUrlLiteral } from "./ssrf";
 
 /** The source's crawl rule unless `auto`, else the per-source decision in `config/fetch.json`, else its default. */
 export function resolveConverter(rules: CrawlRules, sourceDomain: string, cfg: FetchConfig): ConverterName {

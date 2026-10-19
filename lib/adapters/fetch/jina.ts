@@ -1,6 +1,7 @@
 import type { FetchConfig } from "@/lib/config";
 import { getEnv } from "@/lib/env";
 import { httpCall, RetryableHttpError, type HttpResponse, type Transport } from "../http";
+import { BlockedUrlError, isPublicUrlLiteral } from "./ssrf";
 import type { Converter } from "./types";
 
 type JinaAnswer = {
@@ -35,6 +36,7 @@ export function createJinaConverter(transport: Transport, cfg: FetchConfig["jina
     name: "jina",
     async convert(input, ctx) {
       const started = performance.now();
+      if (!isPublicUrlLiteral(input.url)) throw new BlockedUrlError(input.url);
       const key = getEnv().JINA_API_KEY;
       if (!key) throw new Error("JINA_API_KEY is not set");
       const costOf = (res: HttpResponse) => {
