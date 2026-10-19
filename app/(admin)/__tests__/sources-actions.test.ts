@@ -251,11 +251,20 @@ describe("uploadPdfAction", () => {
       expect(await tx.select().from(documents).where(eq(documents.sourceId, sourceId))).toEqual([]);
     }));
 
-  it("a paused, rejected or ended source takes no upload", () =>
+  it("a paused source takes an upload and starts its run (ruling M3-E-R2)", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const sourceId = await insertSource(tx, "paused");
+      await uploadPdfAction(form({ sourceId, file: new File([pdf(newId())], "guide.pdf", { type: "application/pdf" }) }));
+      expect(String(redirect.mock.lastCall![0])).toMatch(/^\/runs\/[0-9a-f-]{36}$/);
+      expect(await tx.select().from(documents).where(eq(documents.sourceId, sourceId))).toHaveLength(1);
+    }));
+
+  it("a rejected or ended source takes no upload", () =>
     withRollback(async (tx) => {
       currentDb = tx;
       for (const sourceId of [
-        await insertSource(tx, "paused"),
+        await insertSource(tx, "paused", "2026-01-01"),
         await insertSource(tx, "rejected"),
         await insertSource(tx, "approved", "2026-01-01"),
       ]) {

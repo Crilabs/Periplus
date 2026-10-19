@@ -114,7 +114,7 @@ export async function crawlAction(formData: FormData): Promise<void> {
 }
 
 /**
- * "PDF hochladen": stores the file (at most 100 MB, must be a PDF, source approved or proposed) and starts its upload
+ * "PDF hochladen": stores the file (at most 100 MB, must be a PDF, source approved, proposed or paused) and starts its upload
  * run. A file archived for another source already starts no run: the page names that source (`?archived=<document>`).
  */
 export async function uploadPdfAction(formData: FormData): Promise<void> {

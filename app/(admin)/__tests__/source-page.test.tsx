@@ -65,12 +65,13 @@ describe("source page", () => {
       expect(html).toMatch(/<fieldset disabled=""/);
     }));
 
-  it("a paused source takes no upload", () =>
+  it("a paused source takes uploads (ruling M3-E-R2), a rejected one does not", () =>
     withRollback(async (tx) => {
       currentDb = tx;
       const html = await render((await insertSource(tx, "paused")).id);
       expect(html).toContain(">Fortsetzen<");
-      expect(html).not.toContain("Hochladen und archivieren");
+      expect(html).toContain("Hochladen und archivieren");
+      expect(await render((await insertSource(tx, "rejected")).id)).not.toContain("Hochladen und archivieren");
     }));
 
   it("names the source a pdf was archived for first, with a link to the document", () =>

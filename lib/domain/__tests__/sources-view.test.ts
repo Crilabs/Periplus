@@ -320,12 +320,12 @@ describe("uploadPdf", () => {
       expect(await documentOfOtherSource(tx, newId(), second.id)).toBeNull();
     }));
 
-  it("only a current approved or proposed source takes uploads; nothing is stored otherwise", () =>
+  it("only a current approved, proposed or paused source takes uploads; nothing is stored otherwise", () =>
     withRollback(async (tx) => {
       const archive = memoryArchive();
       const refused = [
-        await insertSource(tx, { status: "paused" }),
         await insertSource(tx, { status: "rejected" }),
+        await insertSource(tx, { status: "paused", validTo: "2026-01-01" }),
         await insertSource(tx, { status: "approved", validTo: "2026-01-01" }),
       ];
       for (const source of refused) {
@@ -334,10 +334,12 @@ describe("uploadPdf", () => {
         );
       }
       expect(archive.keys()).toEqual([]);
-      const approved = await insertSource(tx, { status: "approved" });
-      await expect(uploadPdf(tx, archive, { sourceId: approved.id, bytes: pdfBytes(newId()) })).resolves.toMatchObject({
-        created: true,
-      });
+      for (const status of ["approved", "proposed", "paused"] as const) {
+        const source = await insertSource(tx, { status });
+        await expect(uploadPdf(tx, archive, { sourceId: source.id, bytes: pdfBytes(newId()) })).resolves.toMatchObject({
+          created: true,
+        });
+      }
     }));
 
   it("a file that is not a pdf is rejected", () =>

@@ -415,6 +415,34 @@ describe("crawl stages", () => {
     expect(seen).toEqual([]);
   });
 
+  it("a source ended mid-crawl is skipped by fetch.source and fetch.url (uploads too), rows stay queued", async () => {
+    const s = newSite();
+    const seen: string[] = [];
+    const recording: Transport = async (req) => {
+      seen.push(req.url);
+      return siteTransport(req);
+    };
+    await withRollback(async (tx) => {
+      const sourceId = await insertSource(tx, s, { startUrls: [`${s.origin}${s.path("/a")}`] });
+      const url = `${s.origin}${s.path("/a")}`;
+      await tx.insert(crawlFrontier).values({ sourceId, url, urlNormalized: url });
+      const upload = `upload://${"b".repeat(64)}`;
+      const [doc] = await tx.insert(documents).values({ sourceId, url: upload, urlNormalized: upload, docType: "pilot_guide" }).returning({ id: documents.id });
+      const { id: runId } = await newRun(tx, sourceId);
+      await tx.update(sources).set({ validTo: sql`current_date` }).where(eq(sources.id, sourceId));
+      const d = { ...deps(memoryArchive(), { transport: recording }), enqueue: async () => 0 };
+
+      const prepared = await prepareSourceCrawl(tx, sourceId, d, { db: tx, runId, stage: FETCH_SOURCE_STAGE });
+      expect(prepared).toEqual({ status: "not_approved", startUrls: 0, robots: null });
+      expect(await fetchUrl(tx, { sourceId, url, depth: 0 }, d, { db: tx, runId })).toEqual({ outcome: "skipped", newUrls: 0 });
+      expect((await frontierOf(tx, sourceId))[0]).toMatchObject({ status: "queued", reason: "source_ended" });
+      const uploaded = await fetchUrl(tx, { sourceId, url: upload, depth: 0, documentId: doc!.id }, d, { db: tx, runId });
+      expect(uploaded).toEqual({ outcome: "skipped", newUrls: 0 });
+      expect(await versionsOf(tx, doc!.id)).toEqual([]);
+    });
+    expect(seen).toEqual([]);
+  });
+
   it("a page answering 304 still adds its links: a test crawl's frontier grows in the next full run", async () => {
     const s = newSite();
     const url = (p: string) => `${s.origin}${s.path(p)}`;

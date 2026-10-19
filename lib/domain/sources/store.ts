@@ -30,6 +30,8 @@ export type Source = {
   changeRate: ChangeRate;
   languages: string[];
   origin: SourceOrigin;
+  /** Set when the source has ended (never deleted, spec 02); an ended source is neither crawled nor changed. */
+  validTo: string | null;
 };
 
 /** The source `id` with its crawl rules parsed (defaults filled in; invalid stored rules throw); null when unknown. */
@@ -47,6 +49,7 @@ export async function getSource(db: Db, id: string): Promise<Source | null> {
       changeRate: sources.changeRate,
       languages: sources.languages,
       origin: sources.origin,
+      validTo: sources.validTo,
     })
     .from(sources)
     .where(eq(sources.id, id));
@@ -237,7 +240,7 @@ export class NotAPdf extends Error {
   }
 }
 
-/** A PDF can be uploaded only for a current source that is approved or proposed (not paused, rejected or ended). */
+/** A PDF can be uploaded only for a current source that is approved, proposed or paused (not rejected or ended). */
 export class SourceNotUploadable extends Error {
   constructor(id: string) {
     super(`source ${id} takes no uploads`);
@@ -245,8 +248,11 @@ export class SourceNotUploadable extends Error {
   }
 }
 
-/** Statuses of a (current) source that takes PDF uploads. */
-const UPLOAD_STATUSES: readonly SourceStatus[] = ["approved", "proposed"];
+/**
+ * Statuses of a (current) source that takes PDF uploads. A pause stops crawling only (spec 05; a robots.txt ban does
+ * not cover a file the admin bought), so a paused source takes uploads too (ruling M3-E-R2).
+ */
+const UPLOAD_STATUSES: readonly SourceStatus[] = ["approved", "proposed", "paused"];
 
 const PDF_MAGIC = new TextEncoder().encode("%PDF-");
 
@@ -254,8 +260,8 @@ const PDF_MAGIC = new TextEncoder().encode("%PDF-");
  * Stores an uploaded PDF for the source: `uploads/<sha256>.pdf` in the archive and the document `upload://<sha256>`
  * (document type = source type). The same file again is the same document (`created` false); `sourceId` is the
  * source that document belongs to, which is another source when the file was archived there first (URLs are unique
- * across sources). A file not starting with `%PDF-` throws `NotAPdf`, a source that is not current and approved or
- * proposed throws `SourceNotUploadable` (both before anything is stored); an unknown source throws. The archiving
+ * across sources). A file not starting with `%PDF-` throws `NotAPdf`, a source that is not current and approved,
+ * proposed or paused throws `SourceNotUploadable` (both before anything is stored); an unknown source throws. The archiving
  * itself is a run (`startUploadFetchRun`).
  */
 export async function uploadPdf(

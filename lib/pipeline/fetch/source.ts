@@ -19,7 +19,8 @@ export const ROBOTS_BAN_REASON = "robots.txt verbietet das Crawlen";
 export type PreparedCrawl = { status: "ready" | "paused" | "not_approved"; startUrls: number; robots: RobotsSummary | null };
 
 /**
- * Job `fetch.source`: prepares one approved source for the run. robots.txt is read anew for every host of the start
+ * Job `fetch.source`: prepares one approved source for the run (a source no longer current and approved is
+ * `not_approved` and gets no start URLs). robots.txt is read anew for every host of the start
  * URLs (once per run, `robotsForRun`). A host with an explicit ban contributes no start URL; when every host bans,
  * the source is paused with `ROBOTS_BAN_REASON` (only if it is still approved; else the result is `not_approved`). Otherwise every start URL that
  * robots.txt and the crawl rules allow is queued in the frontier at depth 0 (a known row is queued again). A source without start URLs starts at `https://<domain>/`. `robots` summarises the first host.
@@ -31,7 +32,8 @@ export async function prepareSourceCrawl(
   ctx: CallContext & { runId: string },
 ): Promise<PreparedCrawl> {
   const source = await getSource(db, sourceId);
-  if (!source || source.status !== "approved") return { status: "not_approved", startUrls: 0, robots: null };
+  // Re-checked here (ruling M3-E-R2): the source may have been paused or ended since the run started.
+  if (!source || source.validTo !== null || source.status !== "approved") return { status: "not_approved", startUrls: 0, robots: null };
   const rules = source.crawlRules;
   const startUrls = rules.startUrls.length > 0 ? rules.startUrls : [`https://${source.domain}/`];
   const callCtx = { ...ctx, db, sourceId };

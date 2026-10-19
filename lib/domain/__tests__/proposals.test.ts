@@ -348,6 +348,7 @@ describe("source store", () => {
         changeRate: "normal",
         languages: [],
         origin: "manual",
+        validTo: null,
       });
       await setSourceStatus(tx, id, "paused", "robots");
       expect(await getSource(tx, id)).toMatchObject({ status: "paused", statusReason: "robots" });

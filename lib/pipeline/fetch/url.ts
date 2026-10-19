@@ -121,7 +121,7 @@ async function lockFrontierRow(tx: Db, sourceId: string, urlNormalized: string) 
   return row ?? null;
 }
 
-type Fetched =
+export type Fetched =
   | { kind: "response"; res: HttpResponse; finalUrl: string; ratePerMinute: number }
   | { kind: "stop"; outcome: FetchUrlOutcome; status: FrontierStatus; reason: string };
 
@@ -132,12 +132,12 @@ type Fetched =
  * temporary reasons leave the row for the next run (ruling M3-C-R5). Conditional headers go with the first request
  * only.
  */
-async function fetchFollowing(
+export async function fetchFollowing(
   db: Db,
   source: Source,
   url: string,
   validators: { etag: string | null; lastModified: string | null } | null,
-  deps: FetchUrlDeps,
+  deps: Pick<FetchUrlDeps, "transport" | "archive" | "isAllowed">,
   ctx: CallContext & { runId: string },
 ): Promise<Fetched> {
   const cfg = getConfig().fetch;
@@ -181,7 +181,7 @@ async function fetchFollowing(
 
 type Format = { kind: "pdf" } | { kind: "structured"; type: "csv" | "geojson" | "kml" } | { kind: "html" } | { kind: "unsupported" };
 
-function formatOf(contentType: string | null, url: string): Format {
+export function formatOf(contentType: string | null, url: string): Format {
   const mime = (contentType ?? "").split(";")[0]!.trim().toLowerCase();
   const path = url.startsWith(UPLOAD_PREFIX) ? "" : new URL(url).pathname.toLowerCase();
   if (mime === "application/pdf" || path.endsWith(".pdf")) return { kind: "pdf" };
@@ -193,7 +193,7 @@ function formatOf(contentType: string | null, url: string): Format {
 }
 
 /** Text of an HTML answer in its declared charset (UTF-8 when none or unknown). */
-function decodeHtml(body: Uint8Array, contentType: string | null): string {
+export function decodeHtml(body: Uint8Array, contentType: string | null): string {
   const charset = /charset=["']?([\w-]+)/i.exec(contentType ?? "")?.[1];
   try {
     return new TextDecoder(charset ?? "utf-8").decode(body);
@@ -315,8 +315,8 @@ async function archivedLinks(db: Db, archive: Archive, documentId: string, pageU
 
 /**
  * Job `fetch.url`: fetches, converts and archives one URL of a source.
- * 1. The source must still be approved (an upload is exempt), else outcome `skipped`, row left `queued`
- *    (`source_paused`).
+ * 1. The source must still be current (else `source_ended`) and approved (an upload is exempt; else `source_paused`):
+ *    otherwise outcome `skipped`, row left `queued`.
  * 2. `upload://<sha256>` reads `uploads/<sha256>.pdf` from the archive (no robots, no HTTP). Otherwise a conditional
  *    GET (validators of the document) through `fetchFollowing`, rate-limited per registrable domain at the
  *    crawl-delay-adjusted rate.
@@ -342,7 +342,10 @@ export async function fetchUrl(db: Db, job: FetchUrlJob, deps: FetchUrlDeps, ctx
     await setFrontier(db, source.id, urlNormalized, ctx.runId, status, reason);
     return { outcome, newUrls: 0 };
   };
-  // A pause is temporary: the row stays queued for the run after the source is approved again (ruling M3-C-R5).
+  // Re-checked per job (ruling M3-E-R2): a source ended or paused since the run started is not fetched. Both are
+  // temporary verdicts for the row, which stays queued (ruling M3-C-R5); an upload needs no approval, only a
+  // current source.
+  if (source.validTo !== null) return stop("skipped", "queued", "source_ended");
   if (!isUpload && source.status !== "approved") return stop("skipped", "queued", "source_paused");
 
   const [doc] = await db

@@ -50,7 +50,7 @@ export default async function Page({ params, searchParams }: PageProps<"/sources
   const archivedElsewhere = archivedParam && UUID.test(archivedParam) ? await documentOfOtherSource(db, archivedParam, id) : null;
   // An ended source is shown read-only: no crawl, status change, upload or saving.
   const ended = source.validTo !== null;
-  const uploadable = !ended && (source.status === "approved" || source.status === "proposed");
+  const uploadable = !ended && source.status !== "rejected";
   const error = sourcePageError(sp.error);
   const invalid = (param(sp.invalid) ?? "").split(",").filter((f) => f !== "");
   const mark = (field: string) =>
