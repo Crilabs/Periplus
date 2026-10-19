@@ -56,6 +56,26 @@ async function versionsWithRoute(db: Db, extractionRunId: string, versionIds: st
   return new Set(rows.map((r) => r.id));
 }
 
+/**
+ * Of `versionIds`, those with a route of another regular or reprocess extraction run (not `except`) on this model and
+ * prompt version (not a comparison run, not failed).
+ */
+async function versionsRoutedBefore(
+  db: Db,
+  on: { model: string; promptVersion: number; except: string },
+  versionIds: string[],
+): Promise<Set<string>> {
+  if (versionIds.length === 0) return new Set();
+  const { rows } = await db.execute<{ id: string }>(sql`
+    select distinct ro.document_version_id as id from routes ro
+    join extraction_runs r on r.id = ro.extraction_run_id
+    where r.task = ${EXTRACT_ROUTE_TASK} and r.model = ${on.model} and r.prompt_version = ${on.promptVersion}
+      and r.purpose <> 'comparison' and r.status <> 'failed' and r.id <> ${on.except}
+      and ro.document_version_id in ${jsonUuids(versionIds)}
+  `);
+  return new Set(rows.map((r) => r.id));
+}
+
 /** The versions of the run's frozen set whose effective document type is `trip_report`, in the set's order. */
 async function tripReports(db: Db, params: Record<string, unknown>): Promise<string[]> {
   const reports: string[] = [];
@@ -91,6 +111,11 @@ export async function planRoutes(
       config,
     ));
   const done = await versionsWithRoute(db, extractionRunId, reports);
+  // Only a reprocess pays for a route again: a regular, tile or rematch run skips reports routed before with this
+  // model and prompt version.
+  if (!params.reprocess) {
+    for (const id of await versionsRoutedBefore(db, { model, promptVersion: taskConfig.promptVersion, except: extractionRunId }, reports)) done.add(id);
+  }
   const todo = reports.filter((id) => !done.has(id));
   const size = config.extraction.unitsPerBatch;
   const jobs: JobData[] = [];
@@ -222,6 +247,8 @@ export type RouteRunStats = {
   sectionsFailed: number;
   /** Trip report versions of which no section was sent (archived Markdown missing, stage closed first). */
   versionsNotSent: number;
+  /** Trip report versions left out because another run routed them on this model and prompt (not in `versions`). */
+  versionsRoutedBefore: number;
   routes: number;
   /** Versions without a stored route (not sent, a failed section, or no verifiable stop). */
   versionsWithoutRoute: number;
@@ -235,12 +262,17 @@ export type RouteRunStats = {
 /** The counters of an `extract-route` extraction run, written to `extraction_runs.stats`. */
 export async function routeRunStats(db: Db, extractionRunId: string): Promise<RouteRunStats> {
   const [run] = await db
-    .select({ runId: extractionRuns.runId, model: extractionRuns.model, params: runs.params })
+    .select({ runId: extractionRuns.runId, model: extractionRuns.model, promptVersion: extractionRuns.promptVersion, params: runs.params })
     .from(extractionRuns)
     .innerJoin(runs, eq(runs.id, extractionRuns.runId))
     .where(eq(extractionRuns.id, extractionRunId));
   if (!run) throw new Error(`extraction run ${extractionRunId} does not exist`);
-  const reports = await tripReports(db, (run.params ?? {}) as Record<string, unknown>);
+  const params = (run.params ?? {}) as Record<string, unknown>;
+  const allReports = await tripReports(db, params);
+  const routedBefore = textRunParamsSchema.parse(params).reprocess
+    ? new Set<string>()
+    : await versionsRoutedBefore(db, { model: run.model, promptVersion: run.promptVersion, except: extractionRunId }, allReports);
+  const reports = allReports.filter((id) => !routedBefore.has(id));
   const { rows } = await db.execute<{
     sent_versions: string[];
     sections: number;
@@ -284,6 +316,7 @@ export async function routeRunStats(db: Db, extractionRunId: string): Promise<Ro
     sections: Number(r.sections),
     sectionsFailed: Number(r.sections_failed),
     versionsNotSent: reports.filter((id) => !sent.has(id)).length,
+    versionsRoutedBefore: [...routedBefore].filter((id) => !sent.has(id)).length,
     routes: Number(st.routes),
     versionsWithoutRoute: versions - Number(st.routes),
     stops: Number(st.stops),

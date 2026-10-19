@@ -9,6 +9,7 @@ import { decideReviewTask, TaskNotOpen } from "@/lib/domain/review-decisions";
 import { getBoss } from "@/lib/jobs/boss";
 import { QUEUES, type QueueName } from "@/lib/jobs/queues";
 import { endRunByAdmin } from "@/lib/pipeline/runs";
+import { recheckBlockedExtractionRun } from "@/lib/pipeline/text/check";
 import { requireAdmin } from "@/lib/security/require-admin";
 
 const retrySchema = z.object({ queue: z.enum(QUEUES), jobId: z.uuid() });
@@ -51,5 +52,18 @@ export async function endRunAction(input: FormData | { runId: string }): Promise
   const admin = await requireAdmin();
   const { runId } = endRunSchema.parse(input instanceof FormData ? Object.fromEntries(input) : input);
   await endRunByAdmin(getDb(), await getBoss(), runId, admin.email);
+  refresh();
+}
+
+const recheckSchema = z.object({ extractionRunId: z.uuid() });
+
+/**
+ * "Belegtreue neu prüfen": checks the quotes of one blocked extraction run again (after late results, a run ended by
+ * hand or a fixed chunk) and finishes it when every quote holds up; a run that is not blocked stays as it is.
+ */
+export async function recheckExtractionRunAction(input: FormData | { extractionRunId: string }): Promise<void> {
+  await requireAdmin();
+  const { extractionRunId } = recheckSchema.parse(input instanceof FormData ? Object.fromEntries(input) : input);
+  await recheckBlockedExtractionRun(getDb(), extractionRunId);
   refresh();
 }

@@ -1,9 +1,9 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeResponse, type Transport } from "@/lib/adapters/http";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { geoNames, nameCandidates, places, reviewTasks, unmatchedNames } from "@/lib/db/schema";
+import { geoNames, nameCandidates, places, reviewTasks, runs, unmatchedNames } from "@/lib/db/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { newId } from "@/lib/domain/ids";
 import { createRun } from "@/lib/domain/runs";
@@ -27,7 +27,16 @@ vi.mock("@/lib/db/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/client")>()),
   getDb: () => current ?? testDb(),
 }));
-vi.mock("@/lib/jobs/boss", () => ({ getBoss: async () => ({}) }));
+/** Jobs the actions enqueue (the rematch run's first stage); pg-boss itself is not involved. */
+const enqueued: Array<{ queue: string; data: Record<string, unknown> }> = [];
+vi.mock("@/lib/jobs/boss", () => ({
+  getBoss: async () => ({
+    insert: async (queue: string, jobs: Array<{ data: Record<string, unknown> }>) => {
+      for (const job of jobs) enqueued.push({ queue, data: job.data });
+      return jobs.map(() => crypto.randomUUID());
+    },
+  }),
+}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => redirect(url) }));
 
@@ -45,7 +54,7 @@ const form = (fields: Record<string, string>) => {
 };
 
 /** A name in two documents of two sources, geocoded into its review task (one Nominatim hit). */
-async function nameTask(tx: Db): Promise<{ taskId: string; candidateId: string; name: string }> {
+async function nameTask(tx: Db): Promise<{ taskId: string; candidateId: string; name: string; versionIds: string[] }> {
   await insertTestTile(tx, TILE);
   const name = ownName();
   const versionIds: string[] = [];
@@ -69,13 +78,14 @@ async function nameTask(tx: Db): Promise<{ taskId: string; candidateId: string; 
   const transport: Transport = async () => makeResponse(200, new TextEncoder().encode(JSON.stringify(answer)));
   let t = Date.UTC(2031, 0, 1);
   const result = await geocodeCandidate(tx, candidateId!, { transport, http: { now: () => new Date((t += 1000)) } }, { runId, cfg: config });
-  return { taskId: result!.taskId, candidateId: candidateId!, name };
+  return { taskId: result!.taskId, candidateId: candidateId!, name, versionIds };
 }
 
 beforeEach(() => {
   vi.resetAllMocks();
   requireAdmin.mockResolvedValue({ email: "admin@example.invalid" });
   current = undefined;
+  enqueued.length = 0;
 });
 
 describe("review of a new name", () => {
@@ -126,6 +136,34 @@ describe("review of a new name", () => {
 
       await decideAction(form({ taskId, decision: JSON.stringify({ action: "reject" }) }));
       expect(redirect).toHaveBeenLastCalledWith(`/review/${taskId}?stale=1`);
+    }));
+
+  it("the create_place action starts a rematch run for the occurrences", () =>
+    withRollback(async (tx) => {
+      const { taskId, name, versionIds } = await nameTask(tx);
+      current = tx;
+      const decision = { action: "create_place", kind: "anchorage", position: { lon: 21.31, lat: 35.41 }, name, language: "en" };
+      await decideAction(form({ taskId, decision: JSON.stringify(decision) }));
+      const rematch = (await tx.select().from(runs).where(eq(runs.triggeredBy, "admin@example.invalid"))).filter(
+        (r) => (r.params as { rematch?: boolean; documentVersionIds?: string[] }).documentVersionIds?.includes(versionIds[0]!),
+      );
+      expect(rematch).toHaveLength(1);
+      expect(rematch[0]).toMatchObject({ kind: "stage", scopeType: "system", scopeId: "texts" });
+      expect(rematch[0]!.params).toMatchObject({ rematch: true, documentVersionIds: [...versionIds].sort() });
+      // its first stage is planned and enqueued (the classification of the two versions)
+      expect(enqueued.map((j) => j.queue)).toContain("classify.document_version");
+    }));
+
+  it("a rejected name starts no rematch run", () =>
+    withRollback(async (tx) => {
+      const { taskId, versionIds } = await nameTask(tx);
+      current = tx;
+      await decideAction(form({ taskId, decision: JSON.stringify({ action: "reject" }) }));
+      const { rows } = await tx.execute(sql`
+        select id from runs where params -> 'documentVersionIds' ?| ${sql.raw(`array['${versionIds.join("','")}']`)} and params ? 'rematch'
+      `);
+      expect(rows).toEqual([]);
+      expect(enqueued).toEqual([]);
     }));
 
   it("an object outside the candidate space redirects with error=1", () =>

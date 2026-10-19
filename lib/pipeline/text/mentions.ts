@@ -8,8 +8,10 @@ import { linkTextOnly, ngrams } from "@/lib/domain/mentions/ngrams";
 import { candidateObjects, candidateTiles, jsonTexts, jsonUuids } from "@/lib/domain/mentions/scope";
 import {
   MATCH_PASS_STAGE,
+  mentionSpans,
   mentionsConfigKey,
   recordMatchPass,
+  settleCoveredAmbiguous,
   storeAmbiguous,
   storeSureMentions,
   storeUnmatched,
@@ -133,8 +135,21 @@ export async function matchVersion(db: Db, versionId: string, ctx: { runId: stri
         r.sure.map((hit) => ({ hit, surface: r.text.slice(hit.start, hit.end) })),
         meta.observedAt,
       );
-      const drafts: AmbiguousDraft[] = r.ambiguous.map((a) => ({ ...a, surface: r.text.slice(a.start, a.end) }));
+    }
+    // A span is a mention or waits for the disambiguation, never both (a rematch with another configuration may turn
+    // a sure hit ambiguous or an ambiguous one sure): an ambiguous span over an existing mention is not stored, and a
+    // pending ambiguous row a mention now covers is settled as `resolved` (the disambiguation then skips it).
+    const covered = await mentionSpans(tx, versionId);
+    for (const r of results) {
+      const ref = { versionId, chunkId: r.chunkId, runId: ctx.runId };
+      const spans = covered.get(r.chunkId) ?? [];
+      const drafts: AmbiguousDraft[] = r.ambiguous
+        .filter((a) => !spans.some((m) => overlaps(a, m)))
+        .map((a) => ({ ...a, surface: r.text.slice(a.start, a.end) }));
       counts.ambiguous += await storeAmbiguous(tx, ref, drafts);
+    }
+    await settleCoveredAmbiguous(tx, versionId);
+    for (const r of results) {
       for (const h of r.hints) {
         unmatched.push({
           nameNormalized: h.nameNormalized,

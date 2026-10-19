@@ -1,8 +1,8 @@
-import { and, asc, eq, inArray, isNull, notExists, sql } from "drizzle-orm";
+import { asc, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { documents, documentVersions, pipelinePasses } from "@/lib/db/schema";
+import { documentVersions } from "@/lib/db/schema";
 import { MATCH_PASS_STAGE, mentionsConfigKey } from "@/lib/domain/mentions/store";
 
 /*
@@ -10,8 +10,9 @@ import { MATCH_PASS_STAGE, mentionsConfigKey } from "@/lib/domain/mentions/store
  * modules can import it without reaching `lib/pipeline/runs`). A text run freezes its version set when it starts
  * (ruling M4-E-R2): the starter resolves the selection (`pending`, `tileId`, `areaKey`, explicit ids) once into
  * `params.documentVersionIds`, and every stage plans from that frozen list (`frozenRunVersions`). Re-resolving
- * `pending` in a later stage would see nothing, because `mentions.batch` writes the passes that define it. Task 17
- * adds the reprocess, rematch and comparison selections.
+ * `pending` in a later stage would see nothing, because `mentions.batch` writes the passes that define it. `reprocess`
+ * (every mention extracted again into a new extraction run) and `rematch` (new mentions after a review decision) only
+ * change what the stages do with the frozen versions.
  */
 
 export const textRunParamsSchema = z.object({
@@ -31,13 +32,19 @@ export type TextRunParams = z.infer<typeof textRunParamsSchema>;
  * The versions of a text run, in id order and without duplicates:
  * - `documentVersionIds`: exactly these;
  * - `tileId` / `areaKey`: the current versions of active documents with mentions of objects in that tile, or in the
- *   tiles of that area (`tile_geo_objects`);
+ *   tiles of that area (`tile_geo_objects`), plus the pending versions of the sources of that tile or area (ruling
+ *   M4-I-R0: sources found by a SERP search of the tile, of a tile of the area, or of the area itself), so a tile run
+ *   also takes in what was fetched there and never matched; a reprocess or rematch run takes no pending versions (it
+ *   works on what was matched before and ignores the passes);
  * - `pending`: the current versions of active documents the match has not passed with the current configuration
  *   (no `pipeline_passes` row for `mentions.batch` and `mentionsConfigKey(cfg)`).
  */
 export async function textRunVersions(db: Db, params: TextRunParams, cfg: AppConfig): Promise<string[]> {
   const ids = new Set<string>();
-  if (params.tileId || params.areaKey) for (const id of await scopedVersions(db, params)) ids.add(id);
+  if (params.tileId || params.areaKey) {
+    for (const id of await scopedVersions(db, params)) ids.add(id);
+    if (!params.reprocess && !params.rematch) for (const id of await pendingVersions(db, cfg, params)) ids.add(id);
+  }
   if (params.documentVersionIds && params.documentVersionIds.length > 0) {
     // Only versions that exist (a stale id in the params is skipped, not an error of the stage).
     const existing = await db
@@ -46,48 +53,60 @@ export async function textRunVersions(db: Db, params: TextRunParams, cfg: AppCon
       .where(inArray(documentVersions.id, params.documentVersionIds));
     for (const r of existing) ids.add(r.id);
   }
-  if (params.pending) {
-    const rows = await db
-      .select({ id: documentVersions.id })
-      .from(documents)
-      .innerJoin(documentVersions, eq(documentVersions.id, documents.currentVersionId))
-      .where(
-        and(
-          eq(documents.status, "active"),
-          isNull(documents.validTo),
-          notExists(
-            db
-              .select({ one: pipelinePasses.stage })
-              .from(pipelinePasses)
-              .where(
-                and(
-                  eq(pipelinePasses.documentVersionId, documentVersions.id),
-                  eq(pipelinePasses.stage, MATCH_PASS_STAGE),
-                  eq(pipelinePasses.configKey, mentionsConfigKey(cfg)),
-                ),
-              ),
-          ),
-        ),
-      )
-      .orderBy(asc(documentVersions.id));
-    for (const r of rows) ids.add(r.id);
-  }
+  if (params.pending) for (const id of await pendingVersions(db, cfg)) ids.add(id);
   return [...ids].sort();
+}
+
+/** The tiles of a tile or area selection: the tile itself, or the valid tiles labelled with the area. */
+function scopeTiles(params: Pick<TextRunParams, "tileId" | "areaKey">) {
+  return params.tileId
+    ? sql`select ${params.tileId}::text as id`
+    : sql`select t.id from tiles t join geo_objects a on a.id = t.area_id and a.type = 'area'
+          where a.config_key = ${params.areaKey!} and t.valid_from <= current_date and (t.valid_to is null or t.valid_to > current_date)`;
+}
+
+/**
+ * Current versions of active documents not passed by the match with the current configuration; with a tile or area
+ * selection only those of the sources a SERP search of that tile, of a tile of that area or of that area found.
+ */
+async function pendingVersions(db: Db, cfg: AppConfig, scope?: Pick<TextRunParams, "tileId" | "areaKey">): Promise<string[]> {
+  const sourceFilter = scope
+    ? sql`and d.source_id in (
+        with st as (${scopeTiles(scope)}),
+        sa as (
+          select a.config_key as key from tiles t join geo_objects a on a.id = t.area_id and a.type = 'area'
+          where t.id in (select id from st) and a.config_key is not null
+          union select ${scope.areaKey ?? null}::text where ${scope.areaKey ?? null}::text is not null
+        )
+        select s.id from sources s
+        join serp_results r on r.domain = s.domain
+        join serp_queries q on q.id = r.serp_query_id
+        where (q.level = 'tile' and q.scope_id in (select id from st)) or (q.level = 'area' and q.scope_id in (select key from sa))
+      )`
+    : sql``;
+  const { rows } = await db.execute<{ id: string }>(sql`
+    select v.id
+    from documents d
+    join document_versions v on v.id = d.current_version_id
+    where d.status = 'active' and d.valid_to is null ${sourceFilter}
+      and not exists (
+        select 1 from pipeline_passes p
+        where p.document_version_id = v.id and p.stage = ${MATCH_PASS_STAGE} and p.config_key = ${mentionsConfigKey(cfg)}
+      )
+    order by v.id
+  `);
+  return rows.map((r) => r.id);
 }
 
 /** Current versions of active documents with a mention of an object in the tile or in the tiles of the area. */
 async function scopedVersions(db: Db, params: TextRunParams): Promise<string[]> {
-  const tiles = params.tileId
-    ? sql`select ${params.tileId}::text as id`
-    : sql`select t.id from tiles t join geo_objects a on a.id = t.area_id and a.type = 'area'
-          where a.config_key = ${params.areaKey!} and t.valid_from <= current_date and (t.valid_to is null or t.valid_to > current_date)`;
   const { rows } = await db.execute<{ id: string }>(sql`
     select distinct v.id
     from documents d
     join document_versions v on v.id = d.current_version_id
     join mentions m on m.document_version_id = v.id
     join tile_geo_objects tgo on tgo.geo_object_id = m.geo_object_id
-    where d.status = 'active' and d.valid_to is null and tgo.tile_id in (${tiles})
+    where d.status = 'active' and d.valid_to is null and tgo.tile_id in (${scopeTiles(params)})
   `);
   return rows.map((r) => r.id);
 }

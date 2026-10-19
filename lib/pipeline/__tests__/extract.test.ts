@@ -11,6 +11,7 @@ import { buildParams } from "@/lib/ai/anthropic";
 import { MockBatchError, MockModel } from "@/lib/ai/mock";
 import { extractFactsTask, type ExtractedFact, type ExtractFactsInput } from "@/lib/ai/tasks/extract-facts";
 import { ZERO_USAGE } from "@/lib/ai/types";
+import { getFactSchema } from "@/lib/domain/facts/schema";
 import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { aiBatches, aiBatchItems, extractionRuns, extractionUnits, facts, mentions, type GeoObjectType } from "@/lib/db/schema";
@@ -152,7 +153,7 @@ describe("stage extraction.mention", () => {
       const kolona = s.mentions.filter((m) => m.geoObjectId === s.kolona).map((m) => m.id);
       expect(await statusOf(tx, kolona)).toEqual(["done", "done", "done"]);
       const [run] = await tx.select().from(extractionRuns).where(eq(extractionRuns.runId, runId));
-      expect(run).toMatchObject({ task: "extract-facts", model: "claude-sonnet-5-5", promptVersion: 2, factSchemaVersion: "v2", purpose: "regular" });
+      expect(run).toMatchObject({ task: "extract-facts", model: "claude-sonnet-5-5", promptVersion: 3, factSchemaVersion: "v2", purpose: "regular" });
       const units = await tx.select().from(extractionUnits).where(eq(extractionUnits.extractionRunId, run!.id));
       expect(units.map((u) => [u.geoObjectId, u.status, u.mentionIds.length])).toEqual([[s.kolona, "done", 3]]);
       expect(units[0]!.stats).toMatchObject({ proposed: 1, stored: 1 });
@@ -358,6 +359,35 @@ describe("stage extraction.mention", () => {
       const [unit] = await tx.select().from(extractionUnits).where(eq(extractionUnits.id, (job!.unitIds as string[])[0]!));
       expect(unit!.status).toBe("submitted");
     }));
+
+  it("prompt v3 states the name-in-quote rule for every attribute holding proper names", () => {
+    const taskConfig = config.models.tasks["extract-facts"]!;
+    expect(taskConfig.promptVersion).toBe(3);
+    const levels = ["place", "area", "island", "cape_strait", "poi"] as const;
+    const covered = new Set<string>();
+    for (const level of levels) {
+      const input: ExtractFactsInput = {
+        level,
+        factSchemaVersion: "v2",
+        maxFacts: 40,
+        object: { name: "X", type: "bay", parents: [] },
+        docType: "trip_report",
+        observedAt: "2026-10-19",
+        chunks: [{ n: 1, text: "t" }],
+      };
+      const system = (buildParams(extractFactsTask, input, taskConfig, "claude-sonnet-5-5").system as Array<{ text: string }>)[0]!.text;
+      const rule = system.split("\n").find((l) => l.startsWith("- Every proper name must appear in the fact's quote"));
+      expect(rule, level).toBeDefined();
+      expect(rule).toContain("`poi_name`");
+      const named = getFactSchema("v2").levels[level].filter((d) => d.textNames).map((d) => d.key);
+      for (const key of named) {
+        expect(rule, `${level} ${key}`).toContain(`\`${key}\``);
+        covered.add(key);
+      }
+      if (named.length === 0) expect(rule).not.toContain("values of");
+    }
+    expect([...covered].sort()).toEqual(["charter_bases", "hazards", "restricted_zones", "supply_ports"]);
+  });
 
   it("the prompt carries the word scale and keeps unit data out of the system prompt", () =>
     withRollback(async (tx) => {

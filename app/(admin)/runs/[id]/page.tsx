@@ -1,13 +1,23 @@
 import { notFound } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
+import { extractionRunsOfRun, type ExtractionRunRow } from "@/lib/domain/extraction/run-view";
 import { failedJobsOfRun } from "@/lib/domain/jobs-view";
 import { getRun } from "@/lib/domain/runs";
 import { QUEUES } from "@/lib/jobs/queues";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { AutoRefresh } from "../../_components/auto-refresh";
-import { RUN_KIND_LABELS, RUN_STATUS_LABELS, SCOPE_TYPE_LABELS, STAGE_STATUS_LABELS } from "../../_components/labels";
-import { endRunAction, retryJobAction } from "./actions";
+import {
+  EXTRACTION_BLOCK_REASON_LABELS,
+  EXTRACTION_PURPOSE_LABELS,
+  EXTRACTION_RUN_STATUS_LABELS,
+  QUOTE_FAILURE_LABELS,
+  RUN_KIND_LABELS,
+  RUN_STATUS_LABELS,
+  SCOPE_TYPE_LABELS,
+  STAGE_STATUS_LABELS,
+} from "../../_components/labels";
+import { endRunAction, recheckExtractionRunAction, retryJobAction } from "./actions";
 
 const time = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
 const isRetryable = (queue: string) => (QUEUES as readonly string[]).includes(queue);
@@ -17,7 +27,11 @@ export default async function Page({ params }: PageProps<"/runs/[id]">) {
   const id = z.uuid().safeParse((await params).id);
   if (!id.success) notFound();
   const db = getDb();
-  const [run, failedJobs] = await Promise.all([getRun(db, id.data), failedJobsOfRun(db, id.data)]);
+  const [run, failedJobs, extractionRuns] = await Promise.all([
+    getRun(db, id.data),
+    failedJobsOfRun(db, id.data),
+    extractionRunsOfRun(db, id.data),
+  ]);
   if (!run) notFound();
   return (
     <div className="space-y-4 text-sm">
@@ -85,6 +99,7 @@ export default async function Page({ params }: PageProps<"/runs/[id]">) {
           ))}
         </tbody>
       </table>
+      {extractionRuns.length > 0 && <ExtractionRuns rows={extractionRuns} />}
       <section>
         <h2 className="mb-1 font-semibold">Fehlgeschlagene Jobs</h2>
         {failedJobs.length === 0 ? (
@@ -125,5 +140,78 @@ export default async function Page({ params }: PageProps<"/runs/[id]">) {
         )}
       </section>
     </div>
+  );
+}
+
+const pct = (ratio: number) => `${(ratio * 100).toLocaleString("de-DE", { maximumFractionDigits: 4 })} %`;
+const count = (n: number | null) => (n === null ? "–" : String(n));
+
+/** One row per extraction run: model, purpose, facts, rejected quotes, Belegtreue and status (blocked in red). */
+function ExtractionRuns({ rows }: { rows: ExtractionRunRow[] }) {
+  return (
+    <section>
+      <h2 className="mb-1 font-semibold">Extraktionsläufe</h2>
+      <table className="w-full text-left">
+        <thead>
+          <tr className="border-b border-neutral-300">
+            <th className="py-1 pr-4">Aufgabe</th>
+            <th className="pr-4">Modell</th>
+            <th className="pr-4">Zweck</th>
+            <th className="pr-4">Facts</th>
+            <th className="pr-4">Verworfene Zitate</th>
+            <th className="pr-4">Belegtreue</th>
+            <th className="pr-4">Kosten</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.id} className="border-b border-neutral-200 align-top">
+              <td className="py-1 pr-4">{r.task === "extract-route" ? "Routen" : "Facts"}</td>
+              <td className="pr-4">
+                {r.model} <span className="text-neutral-500">(Prompt v{r.promptVersion}, Schema {r.factSchemaVersion})</span>
+              </td>
+              <td className="pr-4">{EXTRACTION_PURPOSE_LABELS[r.purpose]}</td>
+              <td className="pr-4 tabular-nums">
+                {count(r.items)}
+                {r.task === "extract-route" && r.items !== null ? " Stopps" : ""}
+              </td>
+              <td className="pr-4 tabular-nums">{count(r.rejectedQuotes)}</td>
+              <td className="pr-4 tabular-nums">
+                {r.quoteCheck ? (
+                  <>
+                    {pct(r.quoteCheck.ratio)} ({r.quoteCheck.verified}/{r.quoteCheck.facts})
+                    {r.quoteCheck.failures.length > 0 && (
+                      <span className="block text-xs text-red-700">
+                        {r.quoteCheck.failures
+                          .slice(0, 3)
+                          .map((f) => QUOTE_FAILURE_LABELS[f.reason] ?? f.reason)
+                          .join(", ")}
+                        {r.quoteCheck.failures.length > 3 ? ` … (${r.quoteCheck.failures.length})` : ""}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  "noch nicht geprüft"
+                )}
+              </td>
+              <td className="pr-4 tabular-nums">{r.costEur === null ? "–" : `${r.costEur.toFixed(4)} €`}</td>
+              <td className={r.status === "blocked" ? "font-semibold text-red-700" : undefined}>
+                {EXTRACTION_RUN_STATUS_LABELS[r.status]}
+                {r.blockedReason && <span className="block text-xs font-normal">{EXTRACTION_BLOCK_REASON_LABELS[r.blockedReason]}</span>}
+                {r.status === "blocked" && (
+                  <form action={recheckExtractionRunAction} className="mt-1">
+                    <input type="hidden" name="extractionRunId" value={r.id} />
+                    <button type="submit" className="rounded border border-red-700 px-2 py-0.5 text-xs font-normal text-red-700">
+                      Belegtreue neu prüfen
+                    </button>
+                  </form>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
   );
 }

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { eq, sql } from "drizzle-orm";
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { ambiguousMatches, mentions, pipelinePasses, unmatchedNames } from "@/lib/db/schema";
@@ -71,6 +72,34 @@ export async function storeAmbiguous(db: Db, ref: ChunkRef, drafts: AmbiguousDra
     .onConflictDoNothing()
     .returning({ id: ambiguousMatches.id });
   return rows.length;
+}
+
+/** The spans of the version's mentions, by chunk. */
+export async function mentionSpans(db: Db, versionId: string): Promise<Map<string, Array<{ start: number; end: number }>>> {
+  const rows = await db
+    .select({ chunkId: mentions.chunkId, start: mentions.charStart, end: mentions.charEnd })
+    .from(mentions)
+    .where(eq(mentions.documentVersionId, versionId));
+  const out = new Map<string, Array<{ start: number; end: number }>>();
+  for (const r of rows) out.set(r.chunkId, [...(out.get(r.chunkId) ?? []), { start: r.start, end: r.end }]);
+  return out;
+}
+
+/**
+ * Settles the version's pending ambiguous spans that a mention of their chunk overlaps as `resolved`: the span has a
+ * mention, so the disambiguation must not add a second one. Returns their ids.
+ */
+export async function settleCoveredAmbiguous(db: Db, versionId: string): Promise<string[]> {
+  const { rows } = await db.execute<{ id: string }>(sql`
+    update ambiguous_matches am set status = 'resolved', updated_at = now()
+    where am.document_version_id = ${versionId} and am.status = 'pending'
+      and exists (
+        select 1 from mentions m
+        where m.chunk_id = am.chunk_id and m.char_start < am.char_end and am.char_start < m.char_end
+      )
+    returning am.id
+  `);
+  return rows.map((r) => r.id);
 }
 
 export type UnmatchedRow = { nameNormalized: string; displayName: string; hint: Hint; chunkId: string; tileId: string | null };

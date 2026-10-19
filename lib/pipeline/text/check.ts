@@ -51,3 +51,15 @@ export async function checkExtractionRun(db: Db, extractionRunId: string, config
     return fidelity;
   });
 }
+
+/**
+ * "Belegtreue neu prüfen" (ruling M4-H-R3): checks one `blocked` extraction run again (`checkExtractionRun`), which
+ * finishes it when every quote holds up now, or keeps it blocked with the new result. A run that is not blocked is left
+ * alone (a running one is still being filled; a finished one has passed). Returns whether a check ran.
+ */
+export async function recheckBlockedExtractionRun(db: Db, extractionRunId: string, config: AppConfig = getConfig()): Promise<boolean> {
+  const [run] = await db.select({ status: extractionRuns.status }).from(extractionRuns).where(eq(extractionRuns.id, extractionRunId));
+  if (run?.status !== "blocked") return false;
+  await checkExtractionRun(db, extractionRunId, config);
+  return true;
+}

@@ -88,7 +88,7 @@ async function extractionRun(
   const id = await insertTestExtractionRun(tx, {
     runId: s.runId,
     model: values.model ?? "claude-sonnet-5-5",
-    promptVersion: values.promptVersion ?? 2,
+    promptVersion: values.promptVersion ?? config.models.tasks["extract-facts"]!.promptVersion,
     purpose: values.purpose ?? "regular",
     status: values.status ?? "running",
     startedAt: values.startedAt ?? new Date("2026-10-19T10:00:00Z"),

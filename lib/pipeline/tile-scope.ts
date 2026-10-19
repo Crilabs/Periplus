@@ -22,7 +22,11 @@ export type RunScopeReason =
   | "no_converter_samples"
   | "converter_samples_done"
   | "comparison_run_active"
-  | "embed_backfill_active";
+  | "embed_backfill_active"
+  | "unknown_tile"
+  | "unknown_area"
+  | "area_without_tiles"
+  | "versions_not_current";
 
 /** A run start refused before the run exists because its scope lacks an input (an expected, user-facing error). */
 export class RunScopeNotReady extends Error {

@@ -88,6 +88,17 @@ export function attributesForPrompt(level: FactLevel, version?: string): string 
     .join("\n");
 }
 
+/**
+ * The text attributes of `level` whose values hold proper names checked against the quote (`textNames`, ruling
+ * M4-G-R5), as the prompt clause `, and each name in the values of `a`, `b`` (empty when the level has none).
+ */
+export function nameValuesForPrompt(level: FactLevel, version?: string): string {
+  const keys = getFactSchema(version)
+    .levels[level].filter((d) => d.origins.includes("text") && d.textNames)
+    .map((d) => `\`${d.key}\``);
+  return keys.length === 0 ? "" : `, and each name in the values of ${keys.join(", ")}`;
+}
+
 /** JSON with object keys sorted at every depth and no whitespace: equal values give equal strings. */
 export function canonicalJson(v: unknown): string {
   return JSON.stringify(sortKeys(v));

@@ -2,6 +2,11 @@ import type {
   ChangeRate,
   ComputationKind,
   DocType,
+  ExtractionPurpose,
+  ExtractionRunBlockReason,
+  ExtractionRunStatus,
+  ExtractionStatus,
+  MatchKind,
   DocumentStatus,
   ObservedAtBasis,
   FrontierStatus,
@@ -300,6 +305,10 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   converter_samples_done: "Alle Seiten der Stichprobe sind bereits mit allen drei Konvertern umgewandelt",
   comparison_run_active: "Ein Konverter-Vergleich läuft bereits",
   embed_backfill_active: "„Einbettungen nachholen“ läuft bereits",
+  unknown_tile: "Kachel ist unbekannt oder beendet",
+  unknown_area: "Revier ist nicht konfiguriert",
+  area_without_tiles: "Revier hat noch keine Kacheln – zuerst „Gazetteer aufbauen“",
+  versions_not_current: "Eine Dokumentversion gibt es nicht oder sie ist nicht mehr aktuell",
 };
 
 /** The German text of a `?error=<reason>` a run action redirected with; null for none or an unknown reason. */
@@ -344,3 +353,51 @@ export function comparePageError(param: string | string[] | undefined): string |
 }
 
 export const queueStateLabel = (paused: boolean): string => (paused ? "Pausiert" : "Läuft");
+
+/* ---- M4: mentions, extraction runs, facts ---- */
+
+/** The extraction state of a mention (`failed`: its unit failed for good; only a reprocess extracts it again). */
+export const MENTION_EXTRACTION_STATUS_LABELS: Record<ExtractionStatus, string> = {
+  pending: "Offen",
+  done: "Ausgewertet",
+  skipped: "Übersprungen (keine Fact-Ebene)",
+  failed: "Fehlgeschlagen",
+};
+
+export const MATCH_KIND_LABELS: Record<MatchKind, string> = {
+  deterministic: "Namensabgleich",
+  model: "Modell",
+  review: "Prüfung",
+};
+
+export const EXTRACTION_RUN_STATUS_LABELS: Record<ExtractionRunStatus, string> = {
+  running: "Läuft",
+  finished: "Abgeschlossen",
+  blocked: "Gesperrt",
+  failed: "Fehlgeschlagen",
+};
+
+/** Why an extraction run is blocked (it is then never consolidated). */
+export const EXTRACTION_BLOCK_REASON_LABELS: Record<ExtractionRunBlockReason, string> = {
+  quote_fidelity: "Belegtreue unter 100 %",
+  late_results: "Ergebnisse nach der Prüfung eingetroffen – Belegtreue neu prüfen",
+  run_ended: "Lauf von Hand beendet, vor der Prüfung",
+};
+
+export const EXTRACTION_PURPOSE_LABELS: Record<ExtractionPurpose, string> = {
+  regular: "Regulär",
+  reprocess: "Reprozessierung",
+  comparison: "Modellvergleich",
+};
+
+/** Why a quote did not hold up in the quote check (`FidelityFailure.reason`, `QuoteCheck` reasons). */
+export const QUOTE_FAILURE_LABELS: Record<string, string> = {
+  not_verified: "nicht als geprüft gespeichert",
+  no_chunk: "Chunk fehlt",
+  offset_mismatch: "Fundstelle weicht ab",
+  not_found: "nicht im Text",
+  too_long: "zu lang",
+  too_short: "zu kurz",
+  ellipsis: "mit Auslassung",
+  empty: "leer",
+};

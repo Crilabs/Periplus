@@ -26,6 +26,7 @@ import {
   testCrawlAction,
   uploadPdfAction,
 } from "./actions";
+import { pendingTextRunAction } from "../actions";
 
 const BUTTON = "rounded border border-neutral-400 px-3 py-1 hover:bg-neutral-100";
 const INPUT = "rounded border border-neutral-300 px-1 py-0.5";
@@ -155,6 +156,11 @@ export default async function Page({ params, searchParams }: PageProps<"/sources
             </button>
           </form>
         )}
+        <form action={pendingTextRunAction}>
+          <button type="submit" className={BUTTON} title="Alle Quellen: jede aktuelle Version, die der Abgleich noch nicht gesehen hat">
+            Neue Texte auswerten
+          </button>
+        </form>
       </section>
 
       {uploadable && (
