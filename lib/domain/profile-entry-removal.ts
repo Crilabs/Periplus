@@ -1,10 +1,11 @@
-import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { getConfig, getConsolidationConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { facts, reviewDecisions, reviewTasks } from "@/lib/db/schema";
+import type { ProhibitionRemoval } from "@/lib/domain/consolidation/rules/prohibitions";
 import type { UnionRemoval } from "@/lib/domain/consolidation/rules/union";
 import { InvalidFactValue, UnknownAttribute, validateFactValue } from "@/lib/domain/facts/schema";
-import { isRemovableEntry, isTextProhibition, profileEntryKey } from "@/lib/domain/profile-view";
+import { isRemovableEntry, profileEntryKey } from "@/lib/domain/profile-view";
 import { DecisionNotAllowed } from "@/lib/domain/review-decisions";
 import { latestProfile } from "@/lib/domain/timeline";
 
@@ -12,9 +13,11 @@ import { latestProfile } from "@/lib/domain/timeline";
  * „Eintrag entfernen“ on a safety list of the profile (hazards, restricted_zones; the text kinds of prohibitions): an
  * admin correction, written as a review fact on an immediately decided task (the pattern of `setAnchorPosition`).
  * The union lists take the removal decision `{ remove: <entry> }` (`UnionRemoval`, ruling M5-C-R3); `prohibitions`
- * takes the explicit list of its remaining text entries, which supersedes the texts the decision saw (ruling M5-C-R2
- * I-2: a ban is lifted only by a review, never by omission; computed restricted-area entries stay). Never consolidates
- * and never takes the profile lock (ruling M5-F-R4): the caller starts the follow-up run after the commit.
+ * takes `{ remove: { kind } }` (`ProhibitionRemoval`, ruling M5-FIN-R1 I-1: one kind, never a remaining list, so
+ * removals compose without reading each other and texts are never superseded; computed restricted-area entries stay).
+ * Each removal fact stands alone, so concurrent removals on one object need no serialization (final review M-5).
+ * Never consolidates and never takes the profile lock (ruling M5-F-R4): the caller starts the follow-up run after the
+ * commit.
  */
 
 /** The profile has a newer version than the one the admin saw: nothing is written. */
@@ -60,16 +63,11 @@ export async function removeProfileEntry(
     const factSchemaVersion = getConfig().factSchema.version;
     let value: unknown;
     try {
-      if (input.attribute === "prohibitions") {
-        // consecutive removals compose: the list is built from the newest review fact still waiting for
-        // consolidation (ruling M5-I-R2), not from the shown profile, which does not know it yet
-        const pending = await pendingProhibitions(tx, input.geoObjectId, profile.version);
-        const base = pending ?? list.filter(isTextProhibition);
-        value = validateFactValue("prohibitions", base.filter((e) => profileEntryKey("prohibitions", e, cfg) !== input.entryKey), factSchemaVersion);
-      } else {
-        validateFactValue(input.attribute, [entry], factSchemaVersion);
-        value = { remove: entry } satisfies UnionRemoval;
-      }
+      validateFactValue(input.attribute, [entry], factSchemaVersion);
+      value =
+        input.attribute === "prohibitions"
+          ? ({ remove: { kind: String((entry as { kind: unknown }).kind) } } satisfies ProhibitionRemoval)
+          : ({ remove: entry } satisfies UnionRemoval);
     } catch (e) {
       if (e instanceof UnknownAttribute || e instanceof InvalidFactValue) throw new DecisionNotAllowed(e.message);
       throw e;
@@ -98,32 +96,10 @@ export async function removeProfileEntry(
         observedAt: now.toISOString().slice(0, 10),
         confidence: getConsolidationConfig().confidence.review,
         factSchemaVersion,
-        // the transaction's clock, later than the profile row of a consolidation that finished before (see `pendingProhibitions`)
+        // the transaction's clock, later than the profile row of a consolidation that finished before
         createdAt: sql`clock_timestamp()`,
       })
       .returning({ id: facts.id });
     return { factId: fact!.id };
   });
-}
-
-/**
- * The list of the newest review fact for `prohibitions` of the object that is newer than the newest profile row (a
- * decision the follow-up run has not yet consolidated), or null without one.
- */
-async function pendingProhibitions(db: Db, geoObjectId: string, profileVersion: number): Promise<unknown[] | null> {
-  const [row] = await db
-    .select({ value: facts.value })
-    .from(facts)
-    .where(
-      and(
-        eq(facts.geoObjectId, geoObjectId),
-        eq(facts.attribute, "prohibitions"),
-        isNotNull(facts.reviewDecisionId),
-        // compared in SQL: a JS Date would truncate the profile's microseconds
-        sql`${facts.createdAt} > (select p.created_at from profiles p where p.geo_object_id = ${geoObjectId} and p.version = ${profileVersion})`,
-      ),
-    )
-    .orderBy(desc(facts.createdAt), desc(facts.id))
-    .limit(1);
-  return row && Array.isArray(row.value) ? row.value.filter(isTextProhibition) : null;
 }

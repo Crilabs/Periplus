@@ -46,8 +46,8 @@ export function isRuleName(name: string): name is RuleName {
  * `dateKnown false`, ruling M5-C-R1 (2)) never count against it. Otherwise the rule decides, with the review as a
  * non-ageing correction input that supersedes the texts it saw (ruling M5-B-R3). `union` never takes the shortcut: a
  * review on a list only adds entries or removes one explicitly (ruling M5-C-R2 M-3). Neither does `prohibitions`
- * (ruling M5-C-R4): a review never drops a computed restricted-area entry by omission; the rule keeps the youngest
- * computation's entries and lets the review supersede only the text entries it saw.
+ * (ruling M5-C-R4): a review never drops a computed restricted-area entry by omission and never supersedes a text
+ * (ruling M5-FIN-R1 I-1); it adds text kinds or removes one kind explicitly (`ProhibitionRemoval`).
  */
 export function applyRule(rule: RuleName, inputs: ConsolidationInput[], ctx: RuleContext): RuleResult | null {
   if (!isRuleName(rule)) throw new Error(`Unknown consolidation rule ${String(rule)}`);

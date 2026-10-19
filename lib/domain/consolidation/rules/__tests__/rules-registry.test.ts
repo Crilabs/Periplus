@@ -120,13 +120,16 @@ describe("prohibitionsRule", () => {
     expect(both.value).toEqual([{ kind: "fishing", months: null }, entry]);
   });
 
-  it("a kind is removed by a review, a computed entry by a newer computation (M5-C-R2 I-2)", () => {
-    const decision = review({ attribute: "prohibitions", value: [{ kind: "fishing", months: null }], observedAt: "2024-07-01" });
+  it("a kind is removed only by a removal decision, a computed entry by a newer computation (M5-FIN-R1 I-1)", () => {
+    const removal = review({ attribute: "prohibitions", value: { remove: { kind: "anchoring" } }, observedAt: "2024-07-01" });
     const younger = t([{ kind: "swimming", months: [7] }], { observedAt: "2025-07-01", sourceKey: "source:b" });
-    const r = applyRule("prohibitions", [forum(anchoring, "2022-07-01"), decision, younger], ctx)!;
-    expect(r.value).toEqual([
-      { kind: "fishing", months: null },
-      { kind: "swimming", months: [7] },
+    const r = applyRule("prohibitions", [forum(anchoring, "2022-07-01"), removal, younger], ctx)!;
+    expect(r.value).toEqual([{ kind: "swimming", months: [7] }]);
+    expect(r.support).toEqual(expect.arrayContaining([removal, younger]));
+    // a younger text naming the removed kind brings it back, with every mention of it (as union lists do)
+    const again = t([{ kind: "anchoring", months: [8] }], { observedAt: "2025-08-01", sourceKey: "source:c" });
+    expect(applyRule("prohibitions", [t([{ kind: "anchoring", months: [7] }], { observedAt: "2022-07-01" }), removal, again], ctx)!.value).toEqual([
+      { kind: "anchoring", months: [7, 8] },
     ]);
     const entry = { kind: "military", restrictedAreaId: "00000000-0000-4000-8000-000000000001", sourceRef: null, share: 0.4, anchoringBan: true };
     const old = computed({ attribute: "prohibitions", value: [entry], observedAt: "2023-01-01" });
@@ -134,14 +137,40 @@ describe("prohibitionsRule", () => {
     expect(prohibitionsRule([old, recomputed, forum(anchoring, "2022-07-01")], ctx)!.value).toEqual(anchoring);
   });
 
-  it("a review never drops a computed entry by omission: no shortcut for prohibitions (M5-C-R4)", () => {
+  it("a review list never supersedes a text: it only adds kinds (M5-FIN-R1 I-1)", () => {
+    const decision = review({ attribute: "prohibitions", value: [{ kind: "fishing", months: null }], observedAt: "2024-07-01" });
+    const r = applyRule("prohibitions", [forum(anchoring, "2022-07-01"), decision], ctx)!;
+    expect(r.value).toEqual([anchoring[0], { kind: "fishing", months: null }]);
+    expect(r.entryFactIds).toEqual({ anchoring: [expect.any(String)], fishing: [decision.factId] });
+  });
+
+  it("a guide crawled later but dated before a removal adds its ban; the removed kind stays removed (M5-FIN-R1 I-1)", () => {
+    const removal = review({ attribute: "prohibitions", value: { remove: { kind: "anchoring" } }, observedAt: "2026-10-01" });
+    const before = applyRule("prohibitions", [forum(anchoring, "2022-07-01"), removal], ctx)!;
+    expect(before).toMatchObject({ value: [], origin: "review" });
+    // the guide is a new input dated 2025-06, i.e. before the removal; it names fishing and anchoring
+    const guide = t(
+      [
+        { kind: "fishing", months: null },
+        { kind: "anchoring", months: [7] },
+      ],
+      { observedAt: "2025-06-15", sourceKey: "source:guide", sourceType: "pilot_guide", sourceWeight: 0.9 },
+    );
+    const after = applyRule("prohibitions", [forum(anchoring, "2022-07-01"), removal, guide], ctx)!;
+    expect(after.value).toEqual([{ kind: "fishing", months: null }]);
+    expect(after.entryFactIds).toEqual({ fishing: [guide.factId] });
+  });
+
+  it("a review never drops a computed entry: no shortcut for prohibitions (M5-C-R4)", () => {
     const entry = { kind: "military", restrictedAreaId: "00000000-0000-4000-8000-000000000001", sourceRef: null, share: 0.4, anchoringBan: true };
     const c = computed({ attribute: "prohibitions", value: [entry], observedAt: "2023-01-01" });
     const decision = review({ attribute: "prohibitions", value: [{ kind: "fishing", months: null }], observedAt: "2026-09-01" });
-    const r = applyRule("prohibitions", [c, forum(anchoring, "2022-07-01"), decision], ctx)!;
-    // the review supersedes the older text (anchoring), the computed restricted area stays
-    expect(r.value).toEqual([{ kind: "fishing", months: null }, entry]);
+    const removal = review({ attribute: "prohibitions", value: { remove: { kind: "military" } }, observedAt: "2026-09-02" });
+    const r = applyRule("prohibitions", [c, forum(anchoring, "2022-07-01"), decision, removal], ctx)!;
+    // the review adds fishing, the older text (anchoring) and the computed restricted area stay
+    expect(r.value).toEqual([anchoring[0], { kind: "fishing", months: null }, entry]);
     expect(r.support).toEqual(expect.arrayContaining([c, decision]));
+    expect(r.support).not.toContain(removal);
   });
 
   it("the output is sorted, also with only a computation (M5-C-R2 M-4)", () => {

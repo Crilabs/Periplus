@@ -238,12 +238,12 @@ describe("„Eintrag entfernen“", () => {
       expect(rows).toEqual([{ type: "changed", severity: "safety" }]);
     }));
 
-  it("removing a text prohibition writes the remaining kinds; a computed one cannot be removed", () =>
+  it("removing a text prohibition writes the single-kind removal { remove: { kind } } (M5-FIN-R1 I-1)", () =>
     withRollback(async (tx) => {
       const p = await profiledPlace(tx);
       await removeProfileEntry(tx, { geoObjectId: p.objectId, attribute: "prohibitions", entryKey: "fishing", version: 1, decidedBy: "admin@example.invalid" });
       const review = await tx.select({ value: facts.value }).from(facts).where(and(eq(facts.geoObjectId, p.objectId), sql`${facts.reviewDecisionId} is not null`));
-      expect(review.map((r) => r.value)).toEqual([[{ kind: "anchoring", months: [7, 8] }]]);
+      expect(review.map((r) => r.value)).toEqual([{ remove: { kind: "fishing" } }]);
       await consolidateGeo(tx, p.objectId, { today });
       expect((await profileView(tx, p.objectId, { today }))!.snapshot.attributes.prohibitions).toEqual([{ kind: "anchoring", months: [7, 8] }]);
 
@@ -255,7 +255,7 @@ describe("„Eintrag entfernen“", () => {
       ).rejects.toBeInstanceOf(ProfileChanged);
     }));
 
-  it("consecutive prohibition removals on the same shown version compose (ruling M5-I-R2)", () =>
+  it("consecutive prohibition removals on the same shown version compose (M5-FIN-R1 I-1, final review M-5)", () =>
     withRollback(async (tx) => {
       const { objectId } = await insertPlace(tx, { name: "Verbotsbucht" });
       const guide = await insertSource(tx, "pilot_guide", 0.9);
@@ -274,10 +274,41 @@ describe("„Eintrag entfernen“", () => {
         .select({ value: facts.value })
         .from(facts)
         .where(and(eq(facts.geoObjectId, objectId), sql`${facts.reviewDecisionId} is not null`))
-        .orderBy(sql`${facts.createdAt} desc`);
-      expect(review[0]!.value).toEqual([c]);
+        .orderBy(sql`${facts.createdAt} asc`);
+      // each removal stands alone: neither reads nor rewrites the other
+      expect(review.map((r) => r.value)).toEqual([{ remove: { kind: "anchoring" } }, { remove: { kind: "fishing" } }]);
       await consolidateGeo(tx, objectId, { today });
       expect((await profileView(tx, objectId, { today }))!.snapshot.attributes.prohibitions).toEqual([c]);
+    }));
+
+  it("a guide crawled after a removal but dated earlier adds its ban with a safety event (M5-FIN-R1 I-1)", () =>
+    withRollback(async (tx) => {
+      const { objectId } = await insertPlace(tx, { name: "Spätfundbucht" });
+      const forum = await insertSource(tx, "forum", 0.4);
+      await insertTextFact(tx, objectId, forum, { attribute: "prohibitions", value: [{ kind: "anchoring", months: null }], observedAt: "2026-06-03" });
+      await consolidateGeo(tx, objectId, { today });
+      await removeProfileEntry(tx, { geoObjectId: objectId, attribute: "prohibitions", entryKey: "anchoring", version: 1, decidedBy: "admin@example.invalid" });
+      await consolidateGeo(tx, objectId, { today });
+      expect((await profileView(tx, objectId, { today }))!.snapshot.attributes.prohibitions).toEqual([]);
+
+      // a cruising guide published 2025, found only now: dated before the removal, it still adds its own kind
+      const guide = await insertSource(tx, "pilot_guide", 0.9);
+      await insertTextFact(tx, objectId, guide, {
+        attribute: "prohibitions",
+        value: [
+          { kind: "fishing", months: null },
+          { kind: "anchoring", months: [7] },
+        ],
+        observedAt: "2025-06-15",
+        confidence: 0.9,
+      });
+      expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "created", version: 3 });
+      // fishing is new; anchoring stays removed (the guide is older than the removal)
+      expect((await profileView(tx, objectId, { today }))!.snapshot.attributes.prohibitions).toEqual([{ kind: "fishing", months: null }]);
+      const { rows } = await tx.execute<{ severity: string; new_value: unknown }>(
+        sql`select severity::text, new_value from change_events where geo_object_id = ${objectId} and attribute = 'prohibitions' order by seq desc limit 1`,
+      );
+      expect(rows).toEqual([{ severity: "safety", new_value: [{ kind: "fishing", months: null }] }]);
     }));
 
   it("an entry's computation and POI inputs are identified per entry, not only counted", () =>
