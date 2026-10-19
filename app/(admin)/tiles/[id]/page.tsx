@@ -9,9 +9,10 @@ import {
   PLACE_STATUS_LABELS,
   RUN_KIND_LABELS,
   RUN_STATUS_LABELS,
+  runScopeError,
   SCOPE_TYPE_LABELS,
 } from "../../_components/labels";
-import { seedTileAction } from "./actions";
+import { geometryTileAction, seedTileAction } from "./actions";
 
 const TILE_ID = /^q025:\d+:\d+$/;
 const time = (d: Date | null) => (d ? d.toISOString().slice(0, 19).replace("T", " ") : "–");
@@ -27,9 +28,12 @@ function tileIdParam(raw: string): string | null {
   }
 }
 
-export default async function Page({ params }: PageProps<"/tiles/[id]">) {
+const BUTTON = "rounded border border-neutral-400 px-3 py-1 hover:bg-neutral-100";
+
+export default async function Page({ params, searchParams }: PageProps<"/tiles/[id]">) {
   await requireAdmin();
   const id = tileIdParam((await params).id);
+  const error = runScopeError((await searchParams).error);
   if (!id) notFound();
   const detail = await tileDetail(getDb(), id);
   if (!detail) notFound();
@@ -37,6 +41,11 @@ export default async function Page({ params }: PageProps<"/tiles/[id]">) {
   return (
     <div className="space-y-4 text-sm">
       <h1 className="text-lg font-semibold">Kachel {tile.id}</h1>
+      {error && (
+        <p role="alert" className="rounded bg-red-100 px-3 py-2">
+          Lauf nicht gestartet: {error}
+        </p>
+      )}
       <dl className="grid grid-cols-[8rem_1fr] gap-y-1">
         <dt>Revier</dt>
         <dd>
@@ -71,12 +80,20 @@ export default async function Page({ params }: PageProps<"/tiles/[id]">) {
             ` (${detail.costs.map((c) => `${c.service}: ${c.calls} Aufrufe, ${eur(c.costEur)}`).join(" · ")})`}
         </dd>
       </dl>
-      <form action={seedTileAction}>
-        <input type="hidden" name="tileId" value={tile.id} />
-        <button type="submit" className="rounded border border-neutral-400 px-3 py-1 hover:bg-neutral-100">
-          Seed
-        </button>
-      </form>
+      <div className="flex gap-2">
+        <form action={seedTileAction}>
+          <input type="hidden" name="tileId" value={tile.id} />
+          <button type="submit" className={BUTTON}>
+            Seed
+          </button>
+        </form>
+        <form action={geometryTileAction}>
+          <input type="hidden" name="tileId" value={tile.id} />
+          <button type="submit" className={BUTTON}>
+            Geometrie
+          </button>
+        </form>
+      </div>
 
       <section>
         <h2 className="mb-1 font-semibold">Orte</h2>

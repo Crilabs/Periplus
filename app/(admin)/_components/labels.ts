@@ -177,4 +177,11 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   place_not_computable: "Ort wird nicht berechnet (beendet, zusammengeführt, verworfen oder ohne Kachel)",
 };
 
+/** The German text of a `?error=<reason>` a run action redirected with; null for none or an unknown reason. */
+export function runScopeError(param: string | string[] | undefined): string | null {
+  return typeof param === "string" && Object.hasOwn(RUN_SCOPE_REASON_LABELS, param)
+    ? RUN_SCOPE_REASON_LABELS[param as RunScopeReason]
+    : null;
+}
+
 export const queueStateLabel = (paused: boolean): string => (paused ? "Pausiert" : "Läuft");

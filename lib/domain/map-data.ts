@@ -1,15 +1,17 @@
 import { sql, type AnyColumn, type SQL } from "drizzle-orm";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import { z } from "zod";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { asGeoJson } from "@/lib/db/geometry";
-import { geoObjects, places, tiles } from "@/lib/db/schema";
+import { geoObjects, places, restrictedAreas, tiles, type RestrictedKind } from "@/lib/db/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
+import { isAnchoringBan, type AnchoringBanConfig } from "@/lib/domain/geometry/restrictions";
 import type { Bbox } from "@/lib/domain/tiles";
 import { BBOX_TOLERANCE, MAX_BBOX_DEGREES } from "@/lib/domain/map-limits";
 import { validAt } from "@/lib/domain/timeline";
 
-export const MAP_LAYERS = ["areas", "tiles", "geo-objects", "places"] as const;
+export const MAP_LAYERS = ["areas", "tiles", "geo-objects", "places", "restricted-areas"] as const;
 export type MapLayer = (typeof MAP_LAYERS)[number];
 
 /** Default cap per request; beyond ~5,000 objects the map switches to vector tiles (spec 09). */
@@ -97,21 +99,50 @@ function layerQuery(layer: MapLayer, bbox: Bbox, limit: number): SQL {
         where ${validAt(places)} and ${intersects(places.position, bbox)}
         order by ${places.id}
         limit ${limit}`;
+    case "restricted-areas":
+      return sql`
+        select ${asGeoJson(restrictedAreas.geom)} as geometry,
+          json_build_object(
+            'id', ${restrictedAreas.id},
+            'kind', ${restrictedAreas.kind},
+            'sourceRef', ${restrictedAreas.sourceRef}
+          ) as properties
+        from ${restrictedAreas}
+        where ${validAt(restrictedAreas)} and ${intersects(restrictedAreas.geom, bbox)}
+        order by ${restrictedAreas.id}
+        limit ${limit}`;
   }
+}
+
+/** The anchoring-ban rule of the configuration (as the geometry stage applies it). */
+function configuredAnchoringBan(): AnchoringBanConfig {
+  const config = getConfig();
+  return {
+    noAnchoringKinds: config.gazetteer.noAnchoringKinds,
+    protectedAreaAnchoringBan: config.restrictions.protectedAreaAnchoringBan,
+  };
 }
 
 /**
  * One map layer as GeoJSON: valid rows intersecting `bbox`, at most `limit` features (default 5,000).
  * `geo-objects` leaves out areas (own layer). Tile counts: `placeCount` all valid places of the tile,
- * `candidateCount` those still `candidate`.
+ * `candidateCount` those still `candidate`. `restricted-areas` carry `anchoringBan` by `opts.anchoringBan`
+ * (default: the configured rule).
  */
 export async function mapLayer(
   db: Db,
   layer: MapLayer,
   bbox: Bbox,
-  opts: { limit?: number } = {},
+  opts: { limit?: number; anchoringBan?: AnchoringBanConfig } = {},
 ): Promise<FeatureCollection> {
   const { rows } = await db.execute<Row>(layerQuery(layer, bbox, opts.limit ?? MAP_FEATURE_LIMIT));
+  if (layer === "restricted-areas") {
+    const ban = opts.anchoringBan ?? configuredAnchoringBan();
+    for (const r of rows) {
+      const p = r.properties as { kind: RestrictedKind; sourceRef: string | null };
+      r.properties.anchoringBan = isAnchoringBan(p.kind, p.sourceRef, ban);
+    }
+  }
   const features: Feature[] = rows.map((r) => ({ type: "Feature", geometry: r.geometry, properties: r.properties }));
   return { type: "FeatureCollection", features };
 }

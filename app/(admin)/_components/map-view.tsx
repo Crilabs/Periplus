@@ -10,13 +10,13 @@ import {
 } from "maplibre-gl";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import type { GeoObjectType, PlaceStatus } from "@/lib/db/schema";
+import type { GeoObjectType, PlaceStatus, RestrictedKind } from "@/lib/db/schema";
 import type { MapLayer } from "@/lib/domain/map-data";
 import { CLIENT_BBOX_DEGREES } from "@/lib/domain/map-limits";
-import { GEO_OBJECT_TYPE_LABELS, PLACE_KIND_LABELS, PLACE_STATUS_LABELS } from "./labels";
+import { GEO_OBJECT_TYPE_LABELS, PLACE_KIND_LABELS, PLACE_STATUS_LABELS, RESTRICTED_KIND_LABELS } from "./labels";
 import { DEFAULT_CENTER, MAP_STYLE_URL, OSM_ATTRIBUTION } from "./map-style";
 
-const LAYERS: MapLayer[] = ["tiles", "areas", "geo-objects", "places"];
+const LAYERS: MapLayer[] = ["tiles", "restricted-areas", "areas", "geo-objects", "places"];
 const DEBOUNCE_MS = 300;
 /** The map-data route accepts at most 5° × 5°; larger views load the 5° box around the centre. */
 const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
@@ -34,9 +34,24 @@ const PLACE_STATUS_COLORS: Record<PlaceStatus, string> = {
 const AREA_COLOR = "#7c3aed";
 const TILE_COLOR = "#0284c7";
 const GEO_OBJECT_COLOR = "#2563eb";
+const RESTRICTED_KIND_COLORS: Record<RestrictedKind, string> = {
+  military: "#b91c1c",
+  cable: "#ea580c",
+  protected_area: "#15803d",
+  aquaculture: "#0891b2",
+  ferry_lane: "#4f46e5",
+  firing_area: "#be185d",
+};
+const RESTRICTED_KINDS = Object.keys(RESTRICTED_KIND_COLORS) as RestrictedKind[];
 
 type Selection = { layer: MapLayer; properties: Record<string, unknown> };
-type Visibility = { areas: boolean; tiles: boolean; geoTypes: GeoObjectType[]; placeStatuses: PlaceStatus[] };
+type Visibility = {
+  areas: boolean;
+  tiles: boolean;
+  restricted: boolean;
+  geoTypes: GeoObjectType[];
+  placeStatuses: PlaceStatus[];
+};
 
 const POLYGON: ExpressionSpecification = ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]];
 const LINE: ExpressionSpecification = [
@@ -53,9 +68,17 @@ const placeColor = [
   "#525252",
 ] as unknown as ExpressionSpecification;
 
+const restrictedColor = [
+  "match",
+  ["get", "kind"],
+  ...RESTRICTED_KINDS.flatMap((k) => [k, RESTRICTED_KIND_COLORS[k]]),
+  "#525252",
+] as unknown as ExpressionSpecification;
+
 /** Interactive MapLibre layer ids per data layer (for clicks). */
 const CLICK_LAYERS: Record<MapLayer, string[]> = {
   tiles: ["tiles-fill"],
+  "restricted-areas": ["restricted-areas-fill"],
   areas: ["areas-line"],
   "geo-objects": ["geo-objects-fill", "geo-objects-line", "geo-objects-point"],
   places: ["places-point"],
@@ -74,6 +97,21 @@ function addLayers(m: MapLibreMap): void {
     type: "line",
     source: "tiles",
     paint: { "line-color": TILE_COLOR, "line-width": 1, "line-dasharray": [2, 2] },
+  });
+  m.addLayer({
+    id: "restricted-areas-fill",
+    type: "fill",
+    source: "restricted-areas",
+    filter: POLYGON,
+    paint: { "fill-color": restrictedColor, "fill-opacity": 0.15 },
+  });
+  // Areas that ban anchoring get a stronger outline.
+  m.addLayer({
+    id: "restricted-areas-line",
+    type: "line",
+    source: "restricted-areas",
+    filter: LINE,
+    paint: { "line-color": restrictedColor, "line-width": ["case", ["get", "anchoringBan"], 3, 1] },
   });
   m.addLayer({ id: "areas-line", type: "line", source: "areas", paint: { "line-color": AREA_COLOR, "line-width": 3 } });
   m.addLayer({
@@ -111,6 +149,8 @@ function applyVisibility(m: MapLibreMap, v: Visibility): void {
   show("tiles-fill", v.tiles);
   show("tiles-line", v.tiles);
   show("areas-line", v.areas);
+  show("restricted-areas-fill", v.restricted);
+  show("restricted-areas-line", v.restricted);
   const typeFilter: ExpressionSpecification = ["in", ["get", "type"], ["literal", v.geoTypes]];
   m.setFilter("geo-objects-fill", ["all", POLYGON, typeFilter]);
   m.setFilter("geo-objects-line", ["all", LINE, typeFilter]);
@@ -120,8 +160,20 @@ function applyVisibility(m: MapLibreMap, v: Visibility): void {
   show("places-point", v.placeStatuses.length > 0);
 }
 
-const isOn = (layer: MapLayer, v: Visibility): boolean =>
-  layer === "areas" ? v.areas : layer === "tiles" ? v.tiles : layer === "geo-objects" ? v.geoTypes.length > 0 : v.placeStatuses.length > 0;
+function isOn(layer: MapLayer, v: Visibility): boolean {
+  switch (layer) {
+    case "areas":
+      return v.areas;
+    case "tiles":
+      return v.tiles;
+    case "restricted-areas":
+      return v.restricted;
+    case "geo-objects":
+      return v.geoTypes.length > 0;
+    case "places":
+      return v.placeStatuses.length > 0;
+  }
+}
 
 /** The visible bounds as `w,s,e,n`, clamped to 5° × 5° around the centre and to WGS84. */
 function bboxParam(m: MapLibreMap): { bbox: string; clamped: boolean } {
@@ -147,7 +199,7 @@ function toggle<T>(list: T[], item: T): T[] {
 }
 
 /**
- * Admin map: toggleable layers (areas, tiles, geo objects by type, places by status), loaded per layer from
+ * Admin map: toggleable layers (areas, tiles, restricted areas by kind, geo objects by type, places by status), loaded per layer from
  * `/map-data/<layer>` for the visible bounds after each move (debounced). A click opens a sidebar with a link.
  */
 export function MapView() {
@@ -156,6 +208,7 @@ export function MapView() {
   const [visibility, setVisibility] = useState<Visibility>({
     areas: true,
     tiles: true,
+    restricted: true,
     geoTypes: GEO_TYPES,
     placeStatuses: PLACE_STATUSES,
   });
@@ -259,6 +312,7 @@ const LAYER_LABELS: Record<MapLayer, string> = {
   tiles: "Kacheln",
   "geo-objects": "Geo-Objekte",
   places: "Orte",
+  "restricted-areas": "Ausschlussflächen",
 };
 
 function LayerPanel({
@@ -278,7 +332,23 @@ function LayerPanel({
         <legend className="mb-1 font-semibold">Ebenen</legend>
         <Checkbox label="Reviere" color={AREA_COLOR} checked={v.areas} onChange={() => onChange({ ...v, areas: !v.areas })} />
         <Checkbox label="Kacheln" color={TILE_COLOR} checked={v.tiles} onChange={() => onChange({ ...v, tiles: !v.tiles })} />
+        <Checkbox
+          label="Ausschlussflächen"
+          checked={v.restricted}
+          onChange={() => onChange({ ...v, restricted: !v.restricted })}
+        />
       </fieldset>
+      {v.restricted && (
+        <ul aria-label="Ausschlussflächen nach Art" className="space-y-1 pl-5 text-xs text-neutral-600">
+          {RESTRICTED_KINDS.map((k) => (
+            <li key={k} className="flex items-center gap-2">
+              <span aria-hidden className="inline-block size-3 rounded-sm" style={{ background: RESTRICTED_KIND_COLORS[k] }} />
+              {RESTRICTED_KIND_LABELS[k]}
+            </li>
+          ))}
+          <li>Kräftiger Umriss: Ankerverbot</li>
+        </ul>
+      )}
       <fieldset className="space-y-1">
         <legend className="mb-1 font-semibold">Geo-Objekte nach Typ</legend>
         {GEO_TYPES.map((t) => (
@@ -318,7 +388,7 @@ function Sidebar({ selection: { layer, properties: p }, onClose }: { selection: 
   const id = str(p.id);
   let title = str(p.name) || "Ohne Namen";
   let rows: [string, string][] = [];
-  let href: string;
+  let href: string | null = null;
   switch (layer) {
     case "places":
       rows = [
@@ -353,6 +423,14 @@ function Sidebar({ selection: { layer, properties: p }, onClose }: { selection: 
       ];
       href = `/geo/${id}`;
       break;
+    case "restricted-areas":
+      title = "Ausschlussfläche";
+      rows = [
+        ["Art", RESTRICTED_KIND_LABELS[p.kind as RestrictedKind] ?? str(p.kind)],
+        ["Kennung", str(p.sourceRef) || "–"],
+        ["Ankerverbot", p.anchoringBan ? "ja" : "nein"],
+      ];
+      break;
   }
   return (
     <aside aria-label="Auswahl" className="w-72 shrink-0 space-y-3 overflow-y-auto border-l border-neutral-300 pl-3 text-sm">
@@ -370,9 +448,11 @@ function Sidebar({ selection: { layer, properties: p }, onClose }: { selection: 
           </div>
         ))}
       </dl>
-      <Link href={href} className="inline-block text-blue-700 hover:underline">
-        Details öffnen
-      </Link>
+      {href && (
+        <Link href={href} className="inline-block text-blue-700 hover:underline">
+          Details öffnen
+        </Link>
+      )}
     </aside>
   );
 }
