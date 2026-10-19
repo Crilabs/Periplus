@@ -1,8 +1,9 @@
 import { aiBatchPollHandler } from "./handlers/ai-batch";
 import { compareConvertersHandler } from "./handlers/compare";
 import { consolidationSummaryHandler } from "./handlers/consolidation";
+import { consolidationFollowupHandler } from "./handlers/consolidation-followup";
 import { datasetsImportHandler } from "./handlers/datasets";
-import { discoveryAreaHandler, discoveryProposeHandler, discoveryTileHandler } from "./handlers/discovery";
+import { discoveryAreaHandler, discoveryPlaceHandler, discoveryProposeHandler, discoveryTileHandler } from "./handlers/discovery";
 import { embedChunksHandler } from "./handlers/embed";
 import { fetchSourceHandler, fetchUrlHandler } from "./handlers/fetch";
 import { gazetteerHandler } from "./handlers/gazetteer";
@@ -36,6 +37,7 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "discovery.area": discoveryAreaHandler,
   "discovery.tile": discoveryTileHandler,
   "discovery.propose": discoveryProposeHandler,
+  "discovery.place": discoveryPlaceHandler,
   "fetch.source": fetchSourceHandler,
   "fetch.url": fetchUrlHandler,
   "embed.chunks": embedChunksHandler,
@@ -50,4 +52,5 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "extraction.route": extractRoutesHandler,
   "extraction.check": checkExtractionRunHandler,
   "consolidation.summary": consolidationSummaryHandler,
+  "consolidation.followup": consolidationFollowupHandler,
 };

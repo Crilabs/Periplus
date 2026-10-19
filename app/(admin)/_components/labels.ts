@@ -293,6 +293,9 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   comparison_without_units: "Der Modellvergleich hat keine Einheiten – zuerst Texte auswerten",
   comparison_started: "Für diesen Modellvergleich gibt es bereits einen Lauf",
   comparison_over_budget: "Die Kostenschätzung passt heute nicht mehr ins Anthropic-Budget (config/budgets.json) – morgen erneut starten",
+  geo_object_not_consolidatable: "Geo-Objekt ist unbekannt, beendet, zusammengeführt oder hat keine Fact-Ebene",
+  comparison_set_empty: "Der Vergleichssatz des Reviers ist leer",
+  geo_object_without_place: "Geo-Objekt hat keinen gültigen Ort",
 };
 
 /** The German text of a `?error=<reason>` a run action redirected with; null for none or an unknown reason. */

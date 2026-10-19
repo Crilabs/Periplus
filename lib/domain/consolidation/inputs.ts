@@ -86,7 +86,7 @@ const attributeFilterSql = (attributes: string[] | undefined) =>
   !attributes ? sql`` : attributes.length === 0 ? sql`and false` : sql`and f.attribute in (${sql.join(attributes.map((a) => sql`${a}`), sql`, `)})`;
 
 /** Source alias `s` is neither rejected nor ended on `today`. */
-const countingSourceSql = (today: string) =>
+export const countingSourceSql = (today: string) =>
   sql`s.status <> 'rejected' and (s.valid_to is null or s.valid_to > ${today}::date)`;
 
 /**

@@ -1,0 +1,1 @@
+ALTER TYPE "public"."serp_level" ADD VALUE 'place';

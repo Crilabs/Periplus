@@ -1,8 +1,8 @@
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import { compareConvertersStage } from "./handlers/compare";
-import { consolidationSummaryStage } from "./handlers/consolidation";
+import { consolidationFollowupStage, consolidationSummaryStage } from "./handlers/consolidation";
 import { datasetsImportStage } from "./handlers/datasets";
-import { discoveryAreaStage, discoveryProposeStage, discoveryTileStage } from "./handlers/discovery";
+import { discoveryAreaStage, discoveryPlaceStage, discoveryProposeStage, discoveryTileStage } from "./handlers/discovery";
 import { embedChunksStage } from "./handlers/embed";
 import { fetchSourceStage, fetchUrlStage } from "./handlers/fetch";
 import { geometryPlaceStage } from "./handlers/geometry";
@@ -40,6 +40,7 @@ export const STAGES: Record<string, StageDefinition> = {
   [discoveryAreaStage.name]: discoveryAreaStage,
   [discoveryTileStage.name]: discoveryTileStage,
   [discoveryProposeStage.name]: discoveryProposeStage,
+  [discoveryPlaceStage.name]: discoveryPlaceStage,
   [fetchSourceStage.name]: fetchSourceStage,
   [fetchUrlStage.name]: fetchUrlStage,
   [embedChunksStage.name]: embedChunksStage,
@@ -53,4 +54,5 @@ export const STAGES: Record<string, StageDefinition> = {
   [extractionRouteStage.name]: extractionRouteStage,
   [extractionCheckStage.name]: extractionCheckStage,
   [consolidationSummaryStage.name]: consolidationSummaryStage,
+  [consolidationFollowupStage.name]: consolidationFollowupStage,
 };

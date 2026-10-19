@@ -253,6 +253,13 @@
       "when": 1792427539483,
       "tag": "0035_geo_objects_merged_into_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1792434082500,
+      "tag": "0036_serp_level_place",
+      "breakpoints": true
     }
   ]
 }

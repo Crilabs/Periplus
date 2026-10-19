@@ -1,11 +1,12 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { areaByKey, getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { geoObjects, tiles } from "@/lib/db/schema";
+import { geoObjects, placeDiscoveryRequests, tiles } from "@/lib/db/schema";
+import { createRun } from "@/lib/domain/runs";
 import { tileExists } from "@/lib/domain/geo-view";
-import { DISCOVERY_AREA_STAGE, DISCOVERY_PROPOSE_STAGE, DISCOVERY_TILE_STAGE } from "./discovery";
-import { startRun } from "./runs";
+import { DISCOVERY_AREA_STAGE, DISCOVERY_PLACE_STAGE, DISCOVERY_PROPOSE_STAGE, DISCOVERY_TILE_STAGE } from "./discovery";
+import { enqueueStage, startRun } from "./runs";
 import { areaGeoObjectId, RunScopeNotReady, seedTileIds } from "./tile-scope";
 
 // Kept apart from ./discovery: the job handlers import that module, and this one reaches the stage registry
@@ -13,6 +14,12 @@ import { areaGeoObjectId, RunScopeNotReady, seedTileIds } from "./tile-scope";
 
 /** Scope id of a proposal run (scope type `system`). */
 export const PROPOSAL_RUN_SCOPE = "discovery";
+
+/** Scope id of a targeted discovery for places (scope type `system`). */
+export const PLACE_DISCOVERY_RUN_SCOPE = "places";
+
+/** The stages of a targeted discovery for places. */
+export const PLACE_DISCOVERY_STAGES = [DISCOVERY_PLACE_STAGE, DISCOVERY_PROPOSE_STAGE] as const;
 
 /**
  * Starts the run "Quellenfindung" for an area (stages `discovery.area`, `discovery.tile`, `discovery.propose`)
@@ -77,4 +84,48 @@ export async function startProposalRun(db: Db, boss: PgBoss, triggeredBy: string
     stages: [DISCOVERY_PROPOSE_STAGE],
     triggeredBy,
   });
+}
+
+/**
+ * Starts a targeted source discovery for places (spec 07 Folgeaufträge): kind `event`, scope `system` / `places`,
+ * stages `discovery.place` (the tile templates with each place's names) and `discovery.propose`, params
+ * `{ geoObjectIds }`. Every id must be a valid, unmerged geo object with a valid, unmerged place
+ * (`RunScopeNotReady` `geo_object_without_place`, checked before the run exists). The run row and one
+ * `place_discovery_requests` row per object (the cool-down of `thinPlaces`) are written in one transaction, then the
+ * first stage is enqueued.
+ */
+export async function startPlaceDiscoveryRun(
+  db: Db,
+  boss: PgBoss,
+  input: { geoObjectIds: string[]; triggeredBy: string },
+): Promise<{ id: string }> {
+  const ids = [...new Set(input.geoObjectIds)].sort();
+  if (ids.length === 0) throw new RunScopeNotReady("geo_object_without_place", "no geo object given");
+  const { rows } = await db.execute<{ id: string }>(sql`
+    select o.id from geo_objects o
+    where o.id in (select value::uuid from jsonb_array_elements_text(${JSON.stringify(ids)}::jsonb))
+      and o.merged_into_id is null and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
+      and exists (
+        select 1 from places p where p.geo_object_id = o.id and p.merged_into_id is null
+          and p.valid_from <= current_date and (p.valid_to is null or p.valid_to > current_date)
+      )
+  `);
+  const valid = new Set(rows.map((r) => r.id));
+  const missing = ids.filter((id) => !valid.has(id));
+  if (missing.length > 0) {
+    throw new RunScopeNotReady("geo_object_without_place", `geo objects without a valid place: ${missing.join(", ")}`);
+  }
+  const created = await db.transaction(async (tx) => {
+    const run = await createRun(tx, {
+      kind: "event",
+      scope: { type: "system", id: PLACE_DISCOVERY_RUN_SCOPE },
+      stages: [...PLACE_DISCOVERY_STAGES],
+      params: { geoObjectIds: ids },
+      triggeredBy: input.triggeredBy,
+    });
+    await tx.insert(placeDiscoveryRequests).values(ids.map((geoObjectId) => ({ geoObjectId, runId: run.id })));
+    return run;
+  });
+  await enqueueStage(db, boss, created.id, PLACE_DISCOVERY_STAGES[0]);
+  return created;
 }

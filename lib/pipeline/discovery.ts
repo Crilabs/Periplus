@@ -4,6 +4,7 @@ import type { Archive } from "@/lib/adapters/s3";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { serpLevelEnum } from "@/lib/db/schema";
+import { placeQueries } from "@/lib/domain/consolidation/followup";
 import { areaQueries, capQueries, queryKey, tileQueries, type DiscoveryQuery } from "@/lib/domain/discovery/queries";
 import { runQuery } from "@/lib/domain/discovery/serp";
 import { seedTileIds } from "./tile-scope";
@@ -14,6 +15,8 @@ import { seedTileIds } from "./tile-scope";
 export const DISCOVERY_AREA_STAGE = "discovery.area";
 export const DISCOVERY_TILE_STAGE = "discovery.tile";
 export const DISCOVERY_PROPOSE_STAGE = "discovery.propose";
+/** Targeted source discovery for thin places (spec 07 Folgeaufträge, plan Task 15). */
+export const DISCOVERY_PLACE_STAGE = "discovery.place";
 
 type Deps = { transport: Transport; archive: Archive };
 
@@ -24,6 +27,7 @@ export const discoveryQuerySchema = z.strictObject({
   level: z.enum(serpLevelEnum.enumValues),
   scopeId: z.string().min(1),
   priority: z.number().int(),
+  tileId: z.string().min(1).optional(),
 });
 
 export type SearchSummary = { queries: number; searched: number; reused: number };
@@ -77,4 +81,38 @@ export async function planTileDiscovery(
   const budget = Math.max(0, discovery.serp.maxQueriesPerRun - areaPlanned.length);
   const { kept } = capQueries([...byKey.values()], budget);
   return tileIds.map((tileId) => ({ tileId, queries: kept.filter((q) => q.scopeId === tileId) }));
+}
+
+/** The geo object ids of a place discovery run (`params.geoObjectIds`, strings only). */
+export function placeDiscoveryIds(params: Record<string, unknown>): string[] {
+  if (!Array.isArray(params.geoObjectIds)) throw new Error("geoObjectIds is required");
+  for (const id of params.geoObjectIds) if (typeof id !== "string") throw new Error("geoObjectIds must be strings");
+  return [...new Set(params.geoObjectIds as string[])].sort();
+}
+
+/**
+ * Plan of the stage `discovery.place`: one entry per geo object of the run (`params.geoObjectIds`) with its place
+ * queries (`placeQueries`: the tile templates with the place's names). The queries are deduplicated among the objects
+ * (the first object in id order keeps a shared query) and cut to `maxQueriesPerRun`; an object left without queries
+ * gets no entry.
+ */
+export async function planPlaceDiscovery(
+  db: Db,
+  params: Record<string, unknown>,
+): Promise<Array<{ geoObjectId: string; queries: DiscoveryQuery[] }>> {
+  const { discovery } = getConfig();
+  const seen = new Set<string>();
+  const all: DiscoveryQuery[] = [];
+  for (const geoObjectId of placeDiscoveryIds(params)) {
+    for (const q of await placeQueries(db, geoObjectId, discovery)) {
+      const key = queryKey(q);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      all.push(q);
+    }
+  }
+  const { kept } = capQueries(all, discovery.serp.maxQueriesPerRun);
+  const byObject = new Map<string, DiscoveryQuery[]>();
+  for (const q of kept) byObject.set(q.scopeId, [...(byObject.get(q.scopeId) ?? []), q]);
+  return [...byObject.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([geoObjectId, queries]) => ({ geoObjectId, queries }));
 }

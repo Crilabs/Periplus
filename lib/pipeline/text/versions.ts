@@ -67,7 +67,8 @@ function scopeTiles(params: Pick<TextRunParams, "tileId" | "areaKey">) {
 
 /**
  * Current versions of active documents not passed by the match with the current configuration; with a tile or area
- * selection only those of the sources a SERP search of that tile, of a tile of that area or of that area found.
+ * selection only those of the sources a SERP search of that tile, of a tile of that area, of that area or of a place
+ * in one of those tiles (ruling M5-P12) found.
  */
 async function pendingVersions(db: Db, cfg: AppConfig, scope?: Pick<TextRunParams, "tileId" | "areaKey">): Promise<string[]> {
   const sourceFilter = scope
@@ -81,7 +82,13 @@ async function pendingVersions(db: Db, cfg: AppConfig, scope?: Pick<TextRunParam
         select s.id from sources s
         join serp_results r on r.domain = s.domain
         join serp_queries q on q.id = r.serp_query_id
-        where (q.level = 'tile' and q.scope_id in (select id from st)) or (q.level = 'area' and q.scope_id in (select key from sa))
+        where (q.level = 'tile' and q.scope_id in (select id from st))
+          or (q.level = 'area' and q.scope_id in (select key from sa))
+          or (q.level = 'place' and exists (
+            select 1 from places p
+            where p.geo_object_id::text = q.scope_id and p.tile_id in (select id from st)
+              and p.valid_from <= current_date and (p.valid_to is null or p.valid_to > current_date)
+          ))
       )`
     : sql``;
   const { rows } = await db.execute<{ id: string }>(sql`

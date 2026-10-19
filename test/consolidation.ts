@@ -59,32 +59,32 @@ export type TestMention = { versionId: string; chunkId: string; mentionId: strin
 /**
  * A version (new document of `sourceId`, or a new version of `documentId`) whose one chunk mentions the object.
  * `observedAt` dates the mention and the version; `undatedVersion` leaves the version at its fetch date (2026-10-19),
- * so a different `observedAt` of the mention is a stated observation date.
+ * so a different `observedAt` of the mention is a stated observation date. `runId`: the run whose match wrote it.
  */
 export async function insertMention(
   db: Db,
   objectId: string,
-  o: { sourceId?: string; documentId?: string; observedAt?: string; text?: string; undatedVersion?: boolean } = {},
+  o: { sourceId?: string; documentId?: string; observedAt?: string; text?: string; undatedVersion?: boolean; runId?: string } = {},
 ): Promise<TestMention> {
   const text = o.text ?? TEXT;
   const v = await insertTestVersion(db, [text], { sourceId: o.sourceId, documentId: o.documentId, observedAt: o.undatedVersion ? undefined : o.observedAt });
   const [m] = await db
     .insert(mentions)
-    .values({ documentVersionId: v.versionId, chunkId: v.chunkIds[0]!, geoObjectId: objectId, surface: "Kolona", charStart: 0, charEnd: 6, observedAt: o.observedAt ?? "2026-10-19", confidence: 1, matchKind: "deterministic" })
+    .values({ documentVersionId: v.versionId, chunkId: v.chunkIds[0]!, geoObjectId: objectId, surface: "Kolona", charStart: 0, charEnd: 6, observedAt: o.observedAt ?? "2026-10-19", confidence: 1, matchKind: "deterministic", runId: o.runId ?? null })
     .returning({ id: mentions.id });
   return { versionId: v.versionId, chunkId: v.chunkIds[0]!, mentionId: m!.id, documentId: v.documentId, text };
 }
 
-/** An extraction run (default regular, finished: the active one) with a done unit for (version, object). */
+/** An extraction run (default regular, finished: the active one; of run `runId`, else of a new run) with a done unit for (version, object). */
 export async function insertExtraction(
   db: Db,
   objectId: string,
   m: TestMention,
-  o: { purpose?: ExtractionPurpose; status?: "finished" | "blocked"; startedAt?: Date; model?: string } = {},
+  o: { purpose?: ExtractionPurpose; status?: "finished" | "blocked"; startedAt?: Date; model?: string; runId?: string } = {},
 ): Promise<string> {
   const status = o.status ?? "finished";
   const id = await insertTestExtractionRun(db, {
-    runId: await insertTestRun(db),
+    runId: o.runId ?? (await insertTestRun(db)),
     model: o.model ?? extractFacts.model,
     promptVersion: extractFacts.promptVersion,
     purpose: o.purpose ?? "regular",

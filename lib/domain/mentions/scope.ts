@@ -81,7 +81,8 @@ async function historyTiles(db: Db, versionId: string): Promise<string[]> {
 
 /**
  * (c) Tiles of the SERP searches that found the version's source (`serp_results.domain` = `sources.domain`, both
- * registrable): the tile of a tile search, the tiles of the area of an area search.
+ * registrable): the tile of a tile search, the tile of the place of a place search (ruling M5-P12), the tiles of the
+ * area of an area search.
  */
 async function sourceTiles(db: Db, versionId: string): Promise<string[]> {
   const { rows } = await db.execute<{ tile_id: string }>(sql`
@@ -95,6 +96,10 @@ async function sourceTiles(db: Db, versionId: string): Promise<string[]> {
       where v.id = ${versionId}
     )
     select t.id as tile_id from q join tiles t on t.id = q.scope_id where q.level = 'tile'
+    union
+    select p.tile_id from q
+    join places p on p.geo_object_id::text = q.scope_id and p.tile_id is not null and ${validNow("p")}
+    where q.level = 'place'
     union
     select t.id from q
     join geo_objects a on a.type = 'area' and a.config_key = q.scope_id and ${validNow("a")}

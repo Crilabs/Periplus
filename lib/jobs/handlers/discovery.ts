@@ -8,9 +8,11 @@ import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import {
   discoverArea,
   DISCOVERY_AREA_STAGE,
+  DISCOVERY_PLACE_STAGE,
   DISCOVERY_PROPOSE_STAGE,
   DISCOVERY_TILE_STAGE,
   discoveryQuerySchema,
+  planPlaceDiscovery,
   planTileDiscovery,
   runQueries,
 } from "@/lib/pipeline/discovery";
@@ -35,6 +37,16 @@ export const discoveryTileStage: StageDefinition = {
   async plan(db, run) {
     const plan = await planTileDiscovery(db, run.params);
     return plan.map(({ tileId, queries }) => ({ key: tileId, tileId, queries }));
+  },
+};
+
+/** Stage `discovery.place`: one job per geo object of the run with its place queries (`planPlaceDiscovery`). */
+export const discoveryPlaceStage: StageDefinition = {
+  name: DISCOVERY_PLACE_STAGE,
+  queue: "discovery.place",
+  async plan(db, run) {
+    const plan = await planPlaceDiscovery(db, run.params);
+    return plan.map(({ geoObjectId, queries }) => ({ key: geoObjectId, geoObjectId, queries }));
   },
 };
 
@@ -63,6 +75,15 @@ export const discoveryTileHandler: JobHandler<JobData> = async (data, ctx) => {
   const { tileId, queries } = tileJobSchema.parse(data);
   const result = await runQueries(ctx.db, queries, deps(), { db: ctx.db, runId: data.runId, stage: data.stage });
   ctx.log.info({ tileId, ...result }, "tile discovery done");
+};
+
+const placeJobSchema = z.object({ geoObjectId: z.uuid(), queries: z.array(discoveryQuerySchema) });
+
+/** Makes the queries planned for the place of `data.geoObjectId` (each booked on the place's tile). */
+export const discoveryPlaceHandler: JobHandler<JobData> = async (data, ctx) => {
+  const { geoObjectId, queries } = placeJobSchema.parse(data);
+  const result = await runQueries(ctx.db, queries, deps(), { db: ctx.db, runId: data.runId, stage: data.stage });
+  ctx.log.info({ geoObjectId, ...result }, "place discovery done");
 };
 
 /**

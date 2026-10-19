@@ -75,6 +75,7 @@ const queueConfig = {
   "discovery.area": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "discovery.tile": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "discovery.propose": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "discovery.place": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "fetch.source": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "fetch.url": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "embed.chunks": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
@@ -89,6 +90,7 @@ const queueConfig = {
   "extraction.route": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "extraction.check": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "consolidation.summary": { concurrency: 2, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "consolidation.followup": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   [DEAD_LETTER_QUEUE]: { concurrency: 1, retryLimit: 1, retryDelaySeconds: 0, retryBackoff: false },
 };
 
