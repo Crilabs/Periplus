@@ -1,3 +1,4 @@
+import { eq, sql } from "drizzle-orm";
 import type { PgInsertValue } from "drizzle-orm/pg-core";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import {
@@ -9,8 +10,13 @@ import {
   mentions,
   runs,
   sources,
+  tileGeoObjects,
+  tiles,
+  type GeoObjectType,
 } from "@/lib/db/schema";
+import { addNames } from "@/lib/domain/gazetteer/names";
 import { newId } from "@/lib/domain/ids";
+import { tileBbox } from "@/lib/domain/tiles";
 import type { Db } from "@/lib/db/client";
 
 /*
@@ -139,4 +145,101 @@ export async function insertTestMention(
     })
     .returning({ id: mentions.id });
   return { mentionId: row!.id, versionId, chunkId, geoObjectId };
+}
+
+/** A tile of the synthetic test grid around 21.0° E / 35.2° N (`q025:<col>:<row>`), with an optional label area. */
+export async function insertTestTile(tx: Db, id: string, areaId: string | null = null): Promise<string> {
+  const [w, s, e, n] = tileBbox(id);
+  await tx
+    .insert(tiles)
+    .values({ id, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, areaId, hasCoast: true })
+    .onConflictDoNothing();
+  return id;
+}
+
+export type TestNamedObject = {
+  type: GeoObjectType;
+  names: Array<{ name: string; language?: string }>;
+  lon: number;
+  lat: number;
+  /** Tiles the object lies in (`tile_geo_objects`); they must exist. */
+  tiles?: string[];
+  parentId?: string | null;
+  configKey?: string;
+};
+
+/** A geo object with its names (incl. transliterations, via `addNames`) and its tile assignments. */
+export async function insertNamedObject(tx: Db, o: TestNamedObject): Promise<string> {
+  const id = await insertTestGeoObject(tx, {
+    type: o.type,
+    geom: geomFromGeoJson({ type: "Point", coordinates: [o.lon, o.lat] }),
+    parentId: o.parentId ?? null,
+    configKey: o.configKey ?? null,
+  });
+  await addNames(
+    tx,
+    id,
+    o.names.map((n) => ({ name: n.name, language: n.language ?? "en", origin: "osm" as const })),
+  );
+  if (o.tiles && o.tiles.length > 0) {
+    await tx.insert(tileGeoObjects).values(o.tiles.map((tileId) => ({ tileId, geoObjectId: id })));
+  }
+  return id;
+}
+
+/**
+ * A new document version whose chunks hold `texts` (one chunk each, `carried` maps a chunk index to the chunk it is
+ * carried over from). `documentId` adds the version to an existing document; the version becomes current.
+ */
+export async function insertTestVersion(
+  tx: Db,
+  texts: string[],
+  opts: { sourceId?: string; documentId?: string; carried?: Record<number, string>; observedAt?: string } = {},
+): Promise<{ sourceId: string; documentId: string; versionId: string; chunkIds: string[] }> {
+  const sourceId = opts.sourceId ?? (await insertTestSource(tx));
+  let documentId = opts.documentId;
+  if (!documentId) {
+    const url = `https://${newId()}.test.invalid/page`;
+    const [doc] = await tx.insert(documents).values({ sourceId, url, urlNormalized: url, docType: "trip_report" }).returning({ id: documents.id });
+    documentId = doc!.id;
+  }
+  const full = texts.join("\n\n");
+  const [version] = await tx
+    .insert(documentVersions)
+    .values({
+      documentId,
+      fetchedAt: new Date("2026-10-19T10:00:00Z"),
+      contentHash: newId(),
+      rawHash: "r",
+      rawKey: `archive/${documentId}/${newId()}.raw.html`,
+      mdKey: `archive/${documentId}/${newId()}.md`,
+      observedAt: opts.observedAt ?? "2026-10-19",
+      observedAtBasis: "fetched",
+      docType: "trip_report",
+      converter: "local",
+      charCount: full.length,
+    })
+    .returning({ id: documentVersions.id });
+  await tx.update(documents).set({ currentVersionId: version!.id }).where(eq(documents.id, documentId));
+  const chunkIds: string[] = [];
+  let offset = 0;
+  for (const [i, text] of texts.entries()) {
+    const [chunk] = await tx
+      .insert(chunks)
+      .values({
+        documentVersionId: version!.id,
+        ordinal: i,
+        text,
+        textNormalized: text,
+        textHash: `t${i}`,
+        charStart: offset,
+        charEnd: offset + text.length,
+        wordCount: text.split(/\s+/).length,
+        carriedFromChunkId: opts.carried?.[i] ?? null,
+      })
+      .returning({ id: chunks.id });
+    chunkIds.push(chunk!.id);
+    offset += text.length + 2;
+  }
+  return { sourceId, documentId, versionId: version!.id, chunkIds };
 }

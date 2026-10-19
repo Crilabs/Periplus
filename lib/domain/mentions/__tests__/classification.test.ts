@@ -17,6 +17,7 @@ import { effectiveVersionMeta, firstWords, resolveObservedAt, storeClassificatio
 import { pollBatch } from "@/lib/pipeline/batches";
 import { CLASSIFY_STAGE, classificationBatchEntry, classifyVersions, planClassify } from "@/lib/pipeline/text/classify";
 import { textRunVersions } from "@/lib/pipeline/text/versions";
+import { mentionsConfigKey } from "@/lib/domain/mentions/store";
 
 const base = loadConfig("config");
 const config: AppConfig = { ...base, budgets: { ...base.budgets, anthropic: { dailyEur: 1000 } } };
@@ -287,15 +288,22 @@ describe("stage classify.document_version", () => {
     withRollback(async (tx) => {
       const fresh = await insertTestChunk(tx);
       const passed = await insertTestChunk(tx);
+      const passedOldConfig = await insertTestChunk(tx);
       const notCurrent = await insertTestChunk(tx);
-      for (const v of [fresh, passed]) {
+      for (const v of [fresh, passed, passedOldConfig]) {
         const [row] = await tx.select({ documentId: documentVersions.documentId }).from(documentVersions).where(eq(documentVersions.id, v.versionId));
         await tx.update(documents).set({ currentVersionId: v.versionId }).where(eq(documents.id, row!.documentId));
       }
-      await tx.insert(pipelinePasses).values({ documentVersionId: passed.versionId, stage: "mentions.batch", configKey: "test" });
+      await tx.insert(pipelinePasses).values({ documentVersionId: passed.versionId, stage: "mentions.batch", configKey: mentionsConfigKey(config) });
+      // a pass with another match configuration (or of another stage) leaves the version pending
+      await tx.insert(pipelinePasses).values([
+        { documentVersionId: passedOldConfig.versionId, stage: "mentions.batch", configKey: "mentions:000000000000" },
+        { documentVersionId: passedOldConfig.versionId, stage: "other", configKey: mentionsConfigKey(config) },
+      ]);
 
       const pending = await textRunVersions(tx, { pending: true }, config);
       expect(pending).toContain(fresh.versionId);
+      expect(pending).toContain(passedOldConfig.versionId);
       expect(pending).not.toContain(passed.versionId);
       expect(pending).not.toContain(notCurrent.versionId);
       const missing = newId();

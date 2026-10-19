@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { documents, documentVersions, pipelinePasses } from "@/lib/db/schema";
+import { MATCH_PASS_STAGE, mentionsConfigKey } from "@/lib/domain/mentions/store";
 
 /*
  * Which document versions a text run works on (ruling M4-P1: kept apart from the run starters in `./run`, so stage
@@ -26,11 +27,10 @@ export type TextRunParams = z.infer<typeof textRunParamsSchema>;
 /**
  * The versions of a text run, in id order and without duplicates:
  * - `documentVersionIds`: exactly these;
- * - `pending`: the current versions of active documents that no text stage has passed yet. Until the match stage
- *   (Task 9) provides its config key, "passed" means any `pipeline_passes` row of the version.
+ * - `pending`: the current versions of active documents the match has not passed with the current configuration
+ *   (no `pipeline_passes` row for `mentions.batch` and `mentionsConfigKey(cfg)`).
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- `cfg` gives the match pass key from Task 9 on
-export async function textRunVersions(db: Db, params: TextRunParams, _cfg: AppConfig): Promise<string[]> {
+export async function textRunVersions(db: Db, params: TextRunParams, cfg: AppConfig): Promise<string[]> {
   const ids = new Set<string>();
   if (params.documentVersionIds && params.documentVersionIds.length > 0) {
     // Only versions that exist (a stale id in the params is skipped, not an error of the stage).
@@ -50,7 +50,16 @@ export async function textRunVersions(db: Db, params: TextRunParams, _cfg: AppCo
           eq(documents.status, "active"),
           isNull(documents.validTo),
           notExists(
-            db.select({ one: pipelinePasses.stage }).from(pipelinePasses).where(eq(pipelinePasses.documentVersionId, documentVersions.id)),
+            db
+              .select({ one: pipelinePasses.stage })
+              .from(pipelinePasses)
+              .where(
+                and(
+                  eq(pipelinePasses.documentVersionId, documentVersions.id),
+                  eq(pipelinePasses.stage, MATCH_PASS_STAGE),
+                  eq(pipelinePasses.configKey, mentionsConfigKey(cfg)),
+                ),
+              ),
           ),
         ),
       )
