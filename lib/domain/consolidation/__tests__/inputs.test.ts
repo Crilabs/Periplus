@@ -509,6 +509,8 @@ describe("loadContext", () => {
       });
       expect(ctx.resolutions).toEqual(new Map([["seasonal-key", "seasonal"], ["open-key", "left_open"]]));
       expect(ctx.decidedUncertainKeys).toEqual(new Set(["discarded-key"]));
+      // a conflict decided for one value (value_a / value_b) is decided, without a resolution marker
+      expect(ctx.decidedConflictKeys).toEqual(new Set(["picked-key"]));
       expect(ctx.openTasks).toEqual(new Map([["uncertain_change:highlight.food", { taskId: open.taskId, key: "open-uncertain" }]]));
     }));
 

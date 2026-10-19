@@ -212,10 +212,6 @@ export function valueGroups(inputs: ConsolidationInput[], ctx: RuleContext): Val
   return groups.sort((a, b) => b.weight - a.weight || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
 
-function ids(group: ValueGroup): string[] {
-  return group.inputs.map(inputId).filter((id) => id !== "");
-}
-
 function side(group: ValueGroup, cfg: ConsolidationConfig): ConflictSide {
   return {
     value: group.value,
@@ -227,10 +223,14 @@ function side(group: ValueGroup, cfg: ConsolidationConfig): ConflictSide {
   };
 }
 
-/** First 16 hex of sha256 over the sorted input ids of both groups (fact ids; computations and POIs prefixed). */
-export function conflictKey(a: ValueGroup, b: ValueGroup): string {
-  const all = [...new Set([...ids(a), ...ids(b)])].sort();
-  return createHash("sha256").update(canonicalJson(all)).digest("hex").slice(0, 16);
+/**
+ * First 16 hex of sha256 over the attribute and the two values (`ValueGroup.key`, sorted): stable over value groups,
+ * not fact ids, so a new fact on either side or sides swapping by weight keep the key and a decision on it (rulings
+ * M5-B-R2, M5-D-R1 NOTE).
+ */
+export function conflictKey(attribute: string, a: ValueGroup, b: ValueGroup): string {
+  const values = [a.key, b.key].sort();
+  return createHash("sha256").update(canonicalJson([attribute, values])).digest("hex").slice(0, 16);
 }
 
 /** A conflict note: `picked` against the heaviest other group, any further groups in `others` (`rest` heaviest first). */
@@ -243,7 +243,7 @@ export function conflictNote(
   const [second, ...more] = rest;
   return {
     attribute,
-    key: conflictKey(picked, second),
+    key: conflictKey(attribute, picked, second),
     a: side(picked, cfg),
     b: side(second, cfg),
     others: more.map((g) => side(g, cfg)),

@@ -22,6 +22,7 @@ function context(over: Partial<ProfileContext> = {}): ProfileContext {
     computationGaps: { anchor_area: "no_anchor_area" },
     resolutions: new Map(),
     decidedUncertainKeys: new Set(),
+    decidedConflictKeys: new Set(),
     openTasks: new Map(),
     ...over,
   };
@@ -264,6 +265,24 @@ describe("buildProfile", () => {
     const decided = buildProfile({ ...s, inputs, context: context({ resolutions: new Map([[key, "seasonal"]]) }) });
     expect(decided.conflicts[0]?.resolution).toBe("seasonal");
     expect(decided.contentHash).not.toBe(open.contentHash);
+  });
+
+  it("a new fact on one side of a decided conflict keeps the hash and the resolution (M5-B-R2, M5-E)", () => {
+    const s = scenario();
+    const holding = [
+      text({ attribute: "holding", value: "good", sourceKey: "source:a", sourceWeight: 0.6, observedAt: "2026-07-01" }),
+      text({ attribute: "holding", value: "poor", sourceKey: "source:b", sourceWeight: 0.5, observedAt: "2026-07-02" }),
+    ];
+    const base = [...s.inputs.filter((i) => i.attribute !== "holding"), ...holding];
+    const key = buildProfile({ ...s, inputs: base }).conflicts[0]!.key;
+    const resolved = context({ resolutions: new Map([[key, "seasonal"]]) });
+    const before = buildProfile({ ...s, inputs: base, context: resolved });
+    // a weak third source on the losing side: still a conflict between the same two values
+    const more = [...base, text({ attribute: "holding", value: "poor", sourceKey: "source:c", sourceWeight: 0.4, confidence: 0.1, observedAt: "2026-07-03" })];
+    const after = buildProfile({ ...s, inputs: more, context: resolved });
+    expect(after.conflicts).toHaveLength(1);
+    expect(after.conflicts[0]).toMatchObject({ key, resolution: "seasonal", a: { value: "good" }, b: { value: "poor" } });
+    expect(after.contentHash).toBe(before.contentHash);
   });
 
   it("a poi profile has importance, radius and spot ids; a place has quietness", () => {

@@ -353,6 +353,11 @@ export type ProfileContext = {
   resolutions: Map<string, ConflictResolution>;
   /** Keys of decided `uncertain_change` tasks. */
   decidedUncertainKeys: Set<string>;
+  /**
+   * Keys of `conflict` tasks decided for one value (`value_a` / `value_b`): the decision entered as a review fact, the
+   * conflict is not raised again even if the value groups still weigh alike (ruling M5-D-R1 NOTE).
+   */
+  decidedConflictKeys: Set<string>;
   /** Open `conflict` / `uncertain_change` tasks by `"<kind>:<attribute>"`. */
   openTasks: Map<string, { taskId: string; key: string }>;
 };
@@ -455,6 +460,7 @@ export async function loadContext(
   `);
   const resolutions = new Map<string, ConflictResolution>();
   const decidedUncertainKeys = new Set<string>();
+  const decidedConflictKeys = new Set<string>();
   const openTasks = new Map<string, { taskId: string; key: string }>();
   for (const t of tasks) {
     if (t.key === null) continue;
@@ -463,6 +469,7 @@ export async function loadContext(
     else if (t.status !== "decided") continue;
     else if (t.kind === "uncertain_change") decidedUncertainKeys.add(t.key);
     else if (t.action !== null && RESOLUTION_BY_ACTION[t.action]) resolutions.set(t.key, RESOLUTION_BY_ACTION[t.action]!);
+    else decidedConflictKeys.add(t.key);
   }
 
   return {
@@ -476,6 +483,7 @@ export async function loadContext(
     computationGaps,
     resolutions,
     decidedUncertainKeys,
+    decidedConflictKeys,
     openTasks,
   };
 }

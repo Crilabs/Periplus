@@ -174,6 +174,23 @@ describe("value groups and the discrete pick", () => {
     expect(clear.conflict).toBeNull();
   });
 
+  it("the conflict key is over the two value groups: another fact on either side or swapped sides keep it (M5-B-R2)", () => {
+    const date = "2026-07-15";
+    const a = yes({ observedAt: date, sourceWeight: 1 });
+    const b = no({ observedAt: date, sourceKey: "source:b", sourceWeight: 0.8 });
+    const key = pickDiscrete([a, b], ctx).conflict!.key;
+    const moreYes = pickDiscrete([a, b, yes({ observedAt: date, sourceKey: "source:c", sourceWeight: 0.1 })], ctx).conflict!;
+    const moreNo = pickDiscrete([a, b, no({ observedAt: date, sourceKey: "source:d", sourceWeight: 0.15 })], ctx).conflict!;
+    expect(moreYes.key).toBe(key);
+    expect(moreNo.key).toBe(key);
+    // b heavier than a: the sides swap, the key stays
+    const swapped = pickDiscrete([a, no({ observedAt: date, sourceKey: "source:b", sourceWeight: 0.9 }), no({ observedAt: date, sourceKey: "source:e", sourceWeight: 0.2 })], ctx).conflict!;
+    expect(swapped.a.value).toBe(false);
+    expect(swapped.key).toBe(key);
+    // another attribute with the same values has another key
+    expect(pickDiscrete([a, b], { ...ctx, attribute: "services.water" }).conflict!.key).not.toBe(key);
+  });
+
   it("an unknown date (dateKnown false) never counts as time course", () => {
     const later = no({ observedAt: "2026-07-01", sourceKey: "source:b", sourceWeight: 0.6 });
     const unknown = pickDiscrete([yes({ observedAt: "2025-07-01", sourceWeight: 1, dateKnown: false }), later], ctx);
