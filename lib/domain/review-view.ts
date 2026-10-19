@@ -28,7 +28,10 @@ import {
   type ChangeRate,
   type DocType,
 } from "@/lib/db/schema";
+import type { AttributeProvenance, ConflictResolution, ConflictSide } from "@/lib/domain/consolidation/types";
 import type { ProposalRobots, SerpHit } from "@/lib/domain/discovery/proposals";
+import { factAttributeLabel, formatFactValue } from "@/lib/domain/facts/labels";
+import { factViewsByIds, type FactView } from "@/lib/domain/geo-facts";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { candidateObjects, withNeighbours } from "@/lib/domain/mentions/scope";
 import {
@@ -40,6 +43,7 @@ import {
 } from "@/lib/domain/review-decisions";
 import { crawlRulesSchema, type CrawlRules } from "@/lib/domain/sources/crawl-rules";
 import { getSource, type Source } from "@/lib/domain/sources/store";
+import { latestProfile } from "@/lib/domain/timeline";
 
 /** Places offered for "merge into a place". */
 export const NEARBY_PLACES = 5;
@@ -160,7 +164,41 @@ export type ReviewSubject =
       /** Places nearest to the tile centre. */
       nearby: NearbyPlace[];
     }
+  | ProfileAttributeSubject
   | { type: "missing" };
+
+/** One value of a conflict: its summed weight, when it was observed and the facts behind it. */
+export type ProfileSideView = {
+  value: unknown;
+  display: string;
+  weight: number;
+  observedFrom: string;
+  observedTo: string;
+  /** Text, computed or review facts of the side that still exist (newest observation first). */
+  facts: FactView[];
+};
+
+/**
+ * A `conflict` / `uncertain_change` task on one attribute of a geo object's profile: the profile's current value with
+ * its provenance, the two sides of a conflict (`a`, `b`, further value groups in `others`) or the proposed value of an
+ * uncertain change, each with the facts behind it. `key` is the context key the decision must name (ruling M5-F-R2);
+ * `resolution` is the resolution the current profile records for the conflict key (a decided conflict).
+ */
+export type ProfileAttributeSubject = {
+  type: "profile_attribute";
+  geoObjectId: string;
+  /** The object's display name; null when it has none. */
+  name: string | null;
+  attribute: string;
+  label: string;
+  key: string | null;
+  current: { value: unknown; display: string; provenance: AttributeProvenance | null };
+  a?: ProfileSideView;
+  b?: ProfileSideView;
+  others?: ProfileSideView[];
+  proposed?: { value: unknown; display: string; facts: FactView[] };
+  resolution: ConflictResolution | null;
+};
 
 /** Where a new name stands in a text; `start`/`end` index into `snippet`. */
 export type NameOccurrenceView = {
@@ -270,6 +308,9 @@ export async function reviewTaskDetail(db: Db, id: string): Promise<ReviewTaskDe
     case "name_candidate":
       subject = await nameCandidateSubject(db, task.subjectId, context);
       break;
+    case "profile_attribute":
+      subject = await profileAttributeSubject(db, task.subjectId, context);
+      break;
     default:
       subject = { type: "missing" };
   }
@@ -290,6 +331,80 @@ export async function reviewTaskDetail(db: Db, id: string): Promise<ReviewTaskDe
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
 const isUuid = (v: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 
+
+// Lenient readers of a profile task context (written by consolidateGeo): a part that does not parse is left out.
+const conflictSideSchema = z.object({
+  value: z.unknown(),
+  weight: z.number(),
+  factIds: z.array(z.string()),
+  observedFrom: z.string(),
+  observedTo: z.string(),
+});
+
+/** Fact views of the ids that are fact ids (inputs of computations and POIs are cited as `computation:` / `poi:`). */
+async function factsOf(db: Db, ids: string[]): Promise<FactView[]> {
+  const factIds = [...new Set(ids.filter(isUuid))];
+  const views = await factViewsByIds(db, factIds);
+  return factIds
+    .map((id) => views.get(id))
+    .filter((v): v is FactView => v !== undefined)
+    .sort((x, y) => (x.observedAt < y.observedAt ? 1 : x.observedAt > y.observedAt ? -1 : 0));
+}
+
+async function profileAttributeSubject(db: Db, subjectId: string, context: Record<string, unknown>): Promise<ReviewSubject> {
+  const geoObjectId = subjectId.slice(0, 36);
+  const attribute = subjectId.slice(37);
+  if (!isUuid(geoObjectId) || subjectId[36] !== ":" || attribute === "") return { type: "missing" };
+  const { rows } = await db.execute<{ name: string | null }>(sql`
+    select ${displayNameSql(sql`o.id`)} as name from geo_objects o where o.id = ${geoObjectId}`);
+  if (!rows[0]) return { type: "missing" };
+  const profile = await latestProfile(db, geoObjectId);
+  const key = str(context.key);
+
+  const side = async (raw: unknown): Promise<ProfileSideView | undefined> => {
+    const parsed = conflictSideSchema.safeParse(raw);
+    if (!parsed.success) return undefined;
+    const s = parsed.data as Omit<ConflictSide, "sourceKeys">;
+    return {
+      value: s.value,
+      display: formatFactValue(attribute, s.value),
+      weight: s.weight,
+      observedFrom: s.observedFrom,
+      observedTo: s.observedTo,
+      facts: await factsOf(db, s.factIds),
+    };
+  };
+  const current = profile?.attributes[attribute];
+  const subject: ProfileAttributeSubject = {
+    type: "profile_attribute",
+    geoObjectId,
+    name: rows[0].name,
+    attribute,
+    label: factAttributeLabel(attribute),
+    key,
+    current: {
+      value: current ?? null,
+      display: current === undefined ? "–" : formatFactValue(attribute, current),
+      provenance: profile?.provenance[attribute] ?? null,
+    },
+    resolution: (key && profile?.conflicts.find((c) => c.key === key)?.resolution) || null,
+  };
+  if ("a" in context || "b" in context) {
+    subject.a = await side(context.a);
+    subject.b = await side(context.b);
+    const others = Array.isArray(context.others) ? await Promise.all(context.others.map(side)) : [];
+    subject.others = others.filter((o): o is ProfileSideView => o !== undefined);
+  }
+  if ("newValue" in context) {
+    const ids = z.array(z.string()).safeParse(context.factIds);
+    subject.proposed = {
+      value: context.newValue,
+      display: context.newValue === null ? "–" : formatFactValue(attribute, context.newValue),
+      facts: await factsOf(db, ids.success ? ids.data : []),
+    };
+  }
+  return subject;
+}
 
 // Lenient readers of a source_approval context (written by proposeSources): a part that does not parse is left out.
 const serpHitSchema = z.object({

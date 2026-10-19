@@ -9,6 +9,7 @@ import {
   DecisionNotAllowed,
   decideReviewTask,
   reviewDecisionSchema,
+  TaskContextChanged,
   TaskNotOpen,
   type ReviewDecision,
 } from "@/lib/domain/review-decisions";
@@ -25,6 +26,8 @@ import { parseCrawlRulesForm } from "../../_components/crawl-rules-fields";
 const taskFieldsSchema = z.object({
   taskId: z.uuid(),
   openedAt: z.iso.datetime().optional(),
+  /** The context key of a profile task as shown (ruling M5-F-R2). */
+  taskKey: z.string().max(64).optional(),
 });
 
 const fieldsSchema = taskFieldsSchema.extend({
@@ -46,7 +49,11 @@ const approvalFieldsSchema = z.object({
 });
 
 const taskFields = (formData: FormData) =>
-  taskFieldsSchema.parse({ taskId: formData.get("taskId"), openedAt: formData.get("openedAt") || undefined });
+  taskFieldsSchema.parse({
+    taskId: formData.get("taskId"),
+    openedAt: formData.get("openedAt") || undefined,
+    taskKey: formData.get("taskKey") ?? undefined,
+  });
 
 /**
  * The rematch after a "Neuer Name" decision (`create_place`, `assign_name`): a text run over the current versions that
@@ -63,8 +70,10 @@ async function startRematch(db: Db, documentVersionIds: string[], triggeredBy: s
 }
 
 /**
- * Decides the task, starts the rematch run a new name asks for, then redirects to the next open task of the same kind (or `/review`). An already decided
- * task redirects back with `?stale=1`, a decision that does not fit the task with `?error=1`.
+ * Decides the task, starts the rematch run a new name asks for, then redirects to the next open task of the same kind
+ * (or `/review`). An already decided task redirects back with `?stale=1`, a profile task whose value changed since it
+ * was shown with `?changed=1`, a decision that does not fit the task with `?error=1`. The consolidation run a profile
+ * decision asks for (`consolidate`) is started by Task 16, after the commit (ruling M5-P10).
  */
 async function decideAndRedirect(
   decidedBy: string,
@@ -78,13 +87,20 @@ async function decideAndRedirect(
   try {
     const { documentVersionIds } = await decideReviewTask(
       db,
-      { taskId: task.taskId, decision, decidedBy, openedAt: task.openedAt ? new Date(task.openedAt) : undefined },
+      {
+        taskId: task.taskId,
+        decision,
+        decidedBy,
+        openedAt: task.openedAt ? new Date(task.openedAt) : undefined,
+        taskKey: task.taskKey,
+      },
       { retryJob },
     );
     if (documentVersionIds.length > 0) await startRematch(db, documentVersionIds, decidedBy);
     target = await nextTaskHref(db, task.taskId);
   } catch (e) {
     if (e instanceof TaskNotOpen) target = `/review/${task.taskId}?stale=1`;
+    else if (e instanceof TaskContextChanged) target = `/review/${task.taskId}?changed=1`;
     else if (e instanceof DecisionNotAllowed) target = `/review/${task.taskId}?error=1`;
     else throw e;
   }
@@ -97,6 +113,7 @@ export async function decideAction(formData: FormData): Promise<void> {
   const fields = fieldsSchema.parse({
     taskId: formData.get("taskId"),
     openedAt: formData.get("openedAt") || undefined,
+    taskKey: formData.get("taskKey") ?? undefined,
     decision: formData.get("decision"),
   });
   await decideAndRedirect(admin.email, fields, reviewDecisionSchema.parse(fields.decision));

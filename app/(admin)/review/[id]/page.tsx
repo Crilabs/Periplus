@@ -29,6 +29,7 @@ import { approveSourceAction } from "./actions";
 import { DecisionForm } from "./decision-form";
 import { NameCandidateCreate } from "./name-candidate";
 import { PlaceConfirm } from "./place-confirm";
+import { ProfileDecision } from "./profile-decision";
 
 const distance = (m: number) =>
   m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toLocaleString("de-DE", { maximumFractionDigits: 1 })} km`;
@@ -127,10 +128,16 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
         {subject.type === "name_candidate" ? `Neuer Name: ${subject.candidate.name}` : REVIEW_KIND_LABELS[task.kind]}
         {subject.type === "place" && subject.geoObject.names[0] ? `: ${subject.geoObject.names[0].name}` : ""}
         {subject.type === "source" ? `: ${subject.source.domain}` : ""}
+        {subject.type === "profile_attribute" ? `: ${subject.name ?? subject.geoObjectId} – ${subject.label}` : ""}
       </h1>
       {(!open || query.stale) && (
         <p role="status" className="rounded bg-amber-100 px-3 py-2">
           Bereits entschieden
+        </p>
+      )}
+      {query.changed && open && (
+        <p role="alert" className="rounded bg-red-100 px-3 py-2">
+          Der Wert hat sich geändert – bitte neu laden
         </p>
       )}
       {query.error && open && (
@@ -146,6 +153,10 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
       )}
 
       {subject.type === "missing" && <p>Der Gegenstand dieser Aufgabe wurde nicht gefunden.</p>}
+
+      {subject.type === "profile_attribute" && (task.kind === "conflict" || task.kind === "uncertain_change") && (
+        <ProfileDecision kind={task.kind} subject={subject} {...props} open={open} />
+      )}
 
       {subject.type === "place" && (
         <div className="grid gap-6 lg:grid-cols-2">
