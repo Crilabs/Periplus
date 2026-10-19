@@ -1,5 +1,6 @@
 import type { BatchHandlerEntry } from "@/lib/pipeline/batches";
 import { classificationBatchEntry } from "@/lib/pipeline/text/classify";
+import { disambiguationBatchEntry } from "@/lib/pipeline/text/disambiguate";
 
 /**
  * The batch handler of each model task that runs as a message batch, by task name: the task (its output schema is
@@ -9,4 +10,5 @@ import { classificationBatchEntry } from "@/lib/pipeline/text/classify";
  */
 export const BATCH_HANDLERS: Record<string, BatchHandlerEntry> = {
   [classificationBatchEntry.task.name]: classificationBatchEntry,
+  [disambiguationBatchEntry.task.name]: disambiguationBatchEntry,
 };

@@ -19,6 +19,8 @@ export const QUEUES = [
   "compare.converters",
   "ai.batch.poll",
   "classify.document_version",
+  "mentions.batch",
+  "mentions.disambiguate",
 ] as const;
 export type QueueName = (typeof QUEUES)[number];
 

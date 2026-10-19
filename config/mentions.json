@@ -5,6 +5,7 @@
   "uncertainSimilarity": 0.6,
   "maxNgramWords": 4,
   "maxCandidates": 6,
+  "disambiguationContextChars": 4000,
   "neighbourRing": 1,
   "versionsPerJob": 50,
   "prepassTypes": ["area", "gulf", "archipelago", "island"],

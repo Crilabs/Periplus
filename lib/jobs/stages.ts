@@ -13,7 +13,7 @@ import {
 } from "./handlers/gazetteer";
 import { seedTileStage } from "./handlers/seed";
 import { pingStage } from "./handlers/system-ping";
-import { classifyDocumentVersionStage } from "./handlers/text";
+import { classifyDocumentVersionStage, mentionsBatchStage, mentionsDisambiguateStage } from "./handlers/text";
 import { tilesEnsureStage } from "./handlers/tiles";
 import { wikivoyageStage } from "./handlers/wikivoyage";
 
@@ -37,4 +37,6 @@ export const STAGES: Record<string, StageDefinition> = {
   [wikivoyageStage.name]: wikivoyageStage,
   [compareConvertersStage.name]: compareConvertersStage,
   [classifyDocumentVersionStage.name]: classifyDocumentVersionStage,
+  [mentionsBatchStage.name]: mentionsBatchStage,
+  [mentionsDisambiguateStage.name]: mentionsDisambiguateStage,
 };

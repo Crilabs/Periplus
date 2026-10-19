@@ -1,26 +1,15 @@
 import { and, asc, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
-import { estimateBatchItemCostsEur } from "@/lib/ai/cost";
 import { classifyDocumentTask, type ClassifyDocumentInput } from "@/lib/ai/tasks/classify-document";
 import type { ModelTask } from "@/lib/ai/types";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { aiBatches, aiBatchItems, documents, documentVersions } from "@/lib/db/schema";
-import { BudgetExceeded } from "@/lib/domain/costs";
+import { documents, documentVersions } from "@/lib/db/schema";
 import { activeClassifier, firstWords, storeClassification } from "@/lib/domain/mentions/classification";
-import { extendStage, stageAcceptsJobs } from "@/lib/domain/runs";
-import { enqueueStageJobs } from "@/lib/jobs/enqueue";
 import type { JobData } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
-import {
-  anthropicHeadroomEur,
-  batchOutcomeKey,
-  sizeBatch,
-  submitStageBatch,
-  type BatchDeps,
-  type BatchHandlerEntry,
-  type BatchItemInput,
-} from "@/lib/pipeline/batches";
+import type { BatchDeps, BatchHandlerEntry, BatchItemInput } from "@/lib/pipeline/batches";
+import { submitStageJobBatch } from "./stage-batch";
 import { textRunParamsSchema, textRunVersions } from "./versions";
 
 /*
@@ -115,50 +104,11 @@ async function classifyInputs(db: Db, archive: Pick<Archive, "get">, ids: string
   return items;
 }
 
-/** Items of the job's batch unit (a retried job): those of its first batch, and every subject the unit covers. */
-async function unitItems(db: Db, job: ClassifyJob): Promise<{ first: BatchItemInput[]; covered: Set<string> } | null> {
-  const rows = await db
-    .select({ batchId: aiBatches.id, subjectType: aiBatchItems.subjectType, subjectId: aiBatchItems.subjectId, input: aiBatchItems.input })
-    .from(aiBatchItems)
-    .innerJoin(aiBatches, eq(aiBatches.id, aiBatchItems.batchId))
-    .where(and(eq(aiBatches.runId, job.runId), eq(aiBatches.stage, job.stage), eq(aiBatches.outcomeKey, batchOutcomeKey(job.key))))
-    .orderBy(asc(aiBatches.id), asc(aiBatchItems.id));
-  if (rows.length === 0) return null;
-  const firstId = rows[0]!.batchId;
-  return {
-    first: rows.filter((r) => r.batchId === firstId).map((r) => ({ subjectType: r.subjectType, subjectId: r.subjectId, input: r.input })),
-    covered: new Set(rows.map((r) => r.subjectId)),
-  };
-}
-
 /**
- * Hands the remaining versions of a job that did not fit into its batch to one more job of the stage (key
- * `<key>+`), extending the stage by it, once: its job id comes from the key, so a retried job enqueues nothing.
- */
-async function handOnRemainder(db: Db, deps: ClassifyDeps, job: ClassifyJob, remainder: string[]): Promise<void> {
-  if (remainder.length === 0) return;
-  await db.transaction(async (tx) => {
-    if (!(await stageAcceptsJobs(tx, job.runId, job.stage))) return;
-    const added = await enqueueStageJobs(
-      deps.boss,
-      CLASSIFY_QUEUE,
-      job.runId,
-      job.stage,
-      [{ key: `${job.key}+`, documentVersionIds: remainder }],
-      tx,
-    );
-    if (added > 0 && !(await extendStage(tx, job.runId, job.stage, added))) {
-      throw new Error(`stage ${job.stage} of run ${job.runId} stopped running while locked`);
-    }
-  });
-  getLog().info({ runId: job.runId, key: job.key, remainder: remainder.length }, "classification batch sized to the budget, rest handed on");
-}
-
-/**
- * One classification job: its versions still unclassified go out as one message batch (`submitStageBatch`), sized to
- * today's anthropic headroom (ruling M4-C-R2); what does not fit goes to a follow-on job, and no room at all defers
- * the job (`BudgetExceeded`). A retried job reuses its batch. Never call it inside a transaction (the provider call
- * of `submitStageBatch` must not run in one).
+ * One classification job: its versions still unclassified go out as one message batch, sized to today's anthropic
+ * headroom (ruling M4-C-R2); what does not fit goes to a follow-on job, and no room at all defers the job
+ * (`BudgetExceeded`). A retried job reuses its batch. Never call it inside a transaction (the provider call of
+ * `submitStageBatch` must not run in one).
  */
 export async function classifyVersions(
   db: Db,
@@ -166,28 +116,15 @@ export async function classifyVersions(
   job: ClassifyJob,
 ): Promise<{ submitted: number; remainder: number; reused: boolean }> {
   const config = deps.config ?? getConfig();
-  const existing = await unitItems(db, job);
-  if (existing) {
-    await submitStageBatch(db, deps, { task, runId: job.runId, stage: job.stage, key: job.key, items: existing.first });
-    const remainder = job.documentVersionIds.filter((id) => !existing.covered.has(id));
-    await handOnRemainder(db, deps, job, remainder);
-    return { submitted: existing.first.length, remainder: remainder.length, reused: true };
-  }
-
-  const items = await classifyInputs(db, deps.archive, await unclassified(db, job.documentVersionIds, config), config);
-  if (items.length === 0) return { submitted: 0, remainder: 0, reused: false };
-  const now = deps.now?.() ?? new Date();
-  const headroom = await anthropicHeadroomEur(db, config, now, deps.reservationScope);
-  const costs = estimateBatchItemCostsEur(config, task, items.map((i) => i.input));
-  const n = sizeBatch(costs, headroom, config.models.batch.maxRequests);
-  if (n === 0) {
-    const budget = config.budgets.anthropic.dailyEur;
-    throw new BudgetExceeded("anthropic", budget - headroom, budget);
-  }
-  const result = await submitStageBatch(db, deps, { task, runId: job.runId, stage: job.stage, key: job.key, items: items.slice(0, n) });
-  const remainder = items.slice(n).map((i) => i.subjectId);
-  await handOnRemainder(db, deps, job, remainder);
-  return { submitted: result.items, remainder: remainder.length, reused: result.reused };
+  return submitStageJobBatch(db, deps, {
+    task,
+    queue: CLASSIFY_QUEUE,
+    job,
+    subjectIds: job.documentVersionIds,
+    open: (ids) => unclassified(db, ids, config),
+    inputs: (ids) => classifyInputs(db, deps.archive, ids, config),
+    remainderData: (ids) => ({ documentVersionIds: ids }),
+  });
 }
 
 /** Batch handler of `classify-document`: stores one version's classification (ruling M4-P11). */

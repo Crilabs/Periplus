@@ -520,6 +520,8 @@ export const mentionsSchema = z
     maxNgramWords: positiveInt,
     /** At most this many candidate objects go to the disambiguation. */
     maxCandidates: positiveInt,
+    /** The disambiguation sees at most this many characters of the chunk around the name. */
+    disambiguationContextChars: positiveInt,
     /** Tile ring around the tiles a document touches; 2 is a test switch. */
     neighbourRing: z.union([z.literal(1), z.literal(2)]),
     versionsPerJob: positiveInt,
