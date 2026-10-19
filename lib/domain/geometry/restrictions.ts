@@ -1,9 +1,10 @@
 import type { Geometry, MultiPolygon, Polygon } from "geojson";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { places, restrictedAreas, reviewTasks, type RestrictedKind } from "@/lib/db/schema";
 import type { LonLat } from "@/lib/domain/geo-view";
+import { createReviewTask, hasDecidedTask } from "@/lib/domain/review";
 import type { Bbox } from "@/lib/domain/tiles";
 import { validAt } from "@/lib/domain/timeline";
 
@@ -180,24 +181,49 @@ export function exclusionReason(hit: Pick<RestrictionHit, "kind" | "restrictedAr
   return `restricted:${hit.kind}:${hit.restrictedAreaId}`;
 }
 
+export type ExclusionOutcome = "excluded" | "review_opened" | "unchanged";
+
 /**
- * Excludes a `candidate` or `confirmed` place: status `no_anchoring` with reason `restricted:<kind>:<id>`; its open
- * `place_candidate` review task is dismissed. The public id stays. Any other status is left alone (returns false).
+ * Applies a restricted-area hit to a valid, unmerged place (spec 03/04: only candidates are excluded automatically).
+ * - `candidate`: status `no_anchoring`, reason `restricted:<kind>:<id>`, its open `place_candidate` task dismissed
+ *   → `excluded`.
+ * - `confirmed`: left as is; a `place_candidate` review task (`context.reason = "restricted"`) is opened so the admin
+ *   decides → `review_opened`. Not opened again once the admin decided such a task (the decision is sticky), nor
+ *   while a task is already open → `unchanged`.
+ * - anything else → `unchanged`.
+ * Lock order as in `decideReviewTask`: the open task row first, then the place.
  */
-export async function applyExclusion(db: Db, placeId: string, hit: RestrictionHit): Promise<boolean> {
+export async function applyExclusion(db: Db, placeId: string, hit: RestrictionHit): Promise<ExclusionOutcome> {
   return db.transaction(async (tx) => {
-    const [changed] = await tx
-      .update(places)
-      .set({ status: "no_anchoring", statusReason: exclusionReason(hit) })
-      .where(and(eq(places.id, placeId), inArray(places.status, ["candidate", "confirmed"])))
-      .returning({ id: places.id });
-    if (!changed) return false;
-    await tx
-      .update(reviewTasks)
-      .set({ status: "dismissed" })
-      .where(
-        and(eq(reviewTasks.kind, "place_candidate"), eq(reviewTasks.subjectId, placeId), eq(reviewTasks.status, "open")),
-      );
-    return true;
+    const [openTask] = await tx
+      .select({ id: reviewTasks.id })
+      .from(reviewTasks)
+      .where(and(eq(reviewTasks.kind, "place_candidate"), eq(reviewTasks.subjectId, placeId), eq(reviewTasks.status, "open")))
+      .for("update");
+    const [place] = await tx
+      .select({ status: places.status })
+      .from(places)
+      .where(and(eq(places.id, placeId), isNull(places.validTo), isNull(places.mergedIntoId)))
+      .for("update");
+    if (!place) return "unchanged";
+
+    if (place.status === "candidate") {
+      await tx.update(places).set({ status: "no_anchoring", statusReason: exclusionReason(hit) }).where(eq(places.id, placeId));
+      if (openTask) await tx.update(reviewTasks).set({ status: "dismissed" }).where(eq(reviewTasks.id, openTask.id));
+      return "excluded";
+    }
+    if (place.status !== "confirmed" || openTask) return "unchanged";
+    if (await hasDecidedTask(tx, "place_candidate", placeId, { reason: "restricted" })) return "unchanged";
+    const { created } = await createReviewTask(tx, {
+      kind: "place_candidate",
+      subjectType: "place",
+      subjectId: placeId,
+      context: {
+        reason: "restricted",
+        restriction: { kind: hit.kind, id: hit.restrictedAreaId, share: hit.share },
+        previousStatus: "confirmed",
+      },
+    });
+    return created ? "review_opened" : "unchanged";
   });
 }

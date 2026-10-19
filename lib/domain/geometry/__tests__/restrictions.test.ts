@@ -5,6 +5,7 @@ import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoObjects, places, restrictedAreas, reviewTasks, type PlaceStatus, type RestrictedKind } from "@/lib/db/schema";
 import { createReviewTask } from "@/lib/domain/review";
+import { decideReviewTask } from "@/lib/domain/review-decisions";
 import type { Bbox } from "@/lib/domain/tiles";
 import { withRollback } from "@/test/db";
 import { lonLatOf, rect, SYNTHETIC_SRID } from "@/test/geometry/synthetic";
@@ -125,6 +126,27 @@ describe("upsertRestrictedAreas", () => {
       expect(cRows[1]!.id).not.toBe(cRows[0]!.id);
     }));
 
+  it("a kind change under the same sourceRef is an update of the same row", () =>
+    withRollback(async (tx) => {
+      const prefix = `test:kind-${crypto.randomUUID()}/`;
+      const geometry = await utmRect(tx, 0, 0, 500, 500);
+      const f: RestrictedFeature = { kind: "military", sourceRef: `${prefix}a`, geometry };
+      const input = (features: RestrictedFeature[]) => ({ layerPrefix: prefix, box: BOX, features, today: TODAY });
+      await upsertRestrictedAreas(tx, input([f]));
+      const [before] = await rowsWithPrefix(tx, prefix);
+      expect(await upsertRestrictedAreas(tx, input([{ ...f, kind: "aquaculture" }]))).toEqual({
+        inserted: 0,
+        updated: 1,
+        unchanged: 0,
+        ended: 0,
+      });
+      const rows = await rowsWithPrefix(tx, prefix);
+      expect(rows.map((r) => r.id)).toEqual([before!.id]);
+      expect(await historyCount(tx, [before!.id])).toBe(1);
+      const { rows: kind } = await tx.execute<{ kind: string }>(sql`select kind from restricted_areas where id = ${before!.id}::uuid`);
+      expect(kind[0]!.kind).toBe("aquaculture");
+    }));
+
   it("rejects a feature whose sourceRef lacks the layer prefix", () =>
     withRollback(async (tx) => {
       const geometry = await utmRect(tx, 0, 0, 100, 100);
@@ -243,34 +265,109 @@ describe("applyExclusion", () => {
     return rows.map((r) => r.status);
   }
 
-  it("candidate → no_anchoring and its open task dismissed; confirmed keeps public_id; rejected untouched", () =>
-    withRollback(async (tx) => {
-      const hit: RestrictionHit = {
-        restrictedAreaId: "00000000-0000-0000-0000-000000000001",
-        kind: "military",
-        sourceRef: null,
-        share: 0.8,
-        anchoringBan: true,
-      };
-      const reason = `restricted:military:${hit.restrictedAreaId}`;
+  const hit: RestrictionHit = {
+    restrictedAreaId: "00000000-0000-0000-0000-000000000001",
+    kind: "military",
+    sourceRef: null,
+    share: 0.8,
+    anchoringBan: true,
+  };
+  const reason = `restricted:military:${hit.restrictedAreaId}`;
 
+  async function historyOf(tx: Db, id: string) {
+    const { rows } = await tx.execute<{ old_row: { status: string; status_reason: string | null } }>(
+      sql`select old_row from places_history where row_id = ${id}::uuid order by history_id`,
+    );
+    return rows.map((r) => r.old_row);
+  }
+
+  const restrictedTask = (tx: Db, id: string) =>
+    tx
+      .select({ status: reviewTasks.status, context: reviewTasks.context })
+      .from(reviewTasks)
+      .where(and(eq(reviewTasks.subjectId, id), sql`${reviewTasks.context}->>'reason' = 'restricted'`));
+
+  it("candidate → excluded: no_anchoring, history row written, open task dismissed", () =>
+    withRollback(async (tx) => {
       const candidate = await insertPlace(tx, "candidate");
       await createReviewTask(tx, { kind: "place_candidate", subjectType: "place", subjectId: candidate, context: {} });
-      expect(await applyExclusion(tx, candidate, hit)).toBe(true);
+      expect(await applyExclusion(tx, candidate, hit)).toBe("excluded");
       expect(await placeOf(tx, candidate)).toEqual({ status: "no_anchoring", statusReason: reason, publicId: null });
       expect(await taskStatus(tx, candidate)).toEqual(["dismissed"]);
+      const history = await historyOf(tx, candidate);
+      expect(history).toHaveLength(1);
+      expect(history[0]).toMatchObject({ status: "candidate", status_reason: null });
+      // Already excluded: no second change.
+      expect(await applyExclusion(tx, candidate, hit)).toBe("unchanged");
+    }));
 
+  it("confirmed → unchanged place, a restricted review task is opened (once)", () =>
+    withRollback(async (tx) => {
       const publicId = `sp_${crypto.randomUUID().replaceAll("-", "").slice(0, 26).toUpperCase()}`;
       const confirmed = await insertPlace(tx, "confirmed", publicId);
-      expect(await applyExclusion(tx, confirmed, hit)).toBe(true);
-      expect(await placeOf(tx, confirmed)).toEqual({ status: "no_anchoring", statusReason: reason, publicId });
+      expect(await applyExclusion(tx, confirmed, hit)).toBe("review_opened");
+      expect(await placeOf(tx, confirmed)).toEqual({ status: "confirmed", statusReason: null, publicId });
+      expect(await historyOf(tx, confirmed)).toHaveLength(0);
+      expect(await restrictedTask(tx, confirmed)).toEqual([
+        {
+          status: "open",
+          context: {
+            reason: "restricted",
+            restriction: { kind: "military", id: hit.restrictedAreaId, share: 0.8 },
+            previousStatus: "confirmed",
+          },
+        },
+      ]);
+      expect(await applyExclusion(tx, confirmed, hit)).toBe("unchanged");
+      expect(await taskStatus(tx, confirmed)).toEqual(["open"]);
+    }));
 
+  it("the admin's decision on the restricted task is sticky", () =>
+    withRollback(async (tx) => {
+      const confirmed = await insertPlace(tx, "confirmed", `sp_${crypto.randomUUID().replaceAll("-", "").slice(0, 26).toUpperCase()}`);
+      expect(await applyExclusion(tx, confirmed, hit)).toBe("review_opened");
+      const [task] = await tx
+        .select({ id: reviewTasks.id })
+        .from(reviewTasks)
+        .where(and(eq(reviewTasks.subjectId, confirmed), eq(reviewTasks.status, "open")));
+      await decideReviewTask(tx, {
+        taskId: task!.id,
+        decision: { action: "confirm", kind: "anchorage" },
+        decidedBy: "admin@example.invalid",
+      });
+      expect(await applyExclusion(tx, confirmed, hit)).toBe("unchanged");
+      expect((await restrictedTask(tx, confirmed)).map((t) => t.status)).toEqual(["decided"]);
+      expect((await placeOf(tx, confirmed))?.status).toBe("confirmed");
+    }));
+
+  it("an earlier decided non-restricted task does not block the review task", () =>
+    withRollback(async (tx) => {
+      const confirmed = await insertPlace(tx, "confirmed", `sp_${crypto.randomUUID().replaceAll("-", "").slice(0, 26).toUpperCase()}`);
+      const { id } = await createReviewTask(tx, { kind: "place_candidate", subjectType: "place", subjectId: confirmed, context: {} });
+      await tx.update(reviewTasks).set({ status: "decided" }).where(eq(reviewTasks.id, id));
+      expect(await applyExclusion(tx, confirmed, hit)).toBe("review_opened");
+    }));
+
+  it("leaves rejected, review-decided no_anchoring, merged and ended places untouched", () =>
+    withRollback(async (tx) => {
       const rejected = await insertPlace(tx, "rejected");
       await tx.update(places).set({ statusReason: "review" }).where(eq(places.id, rejected));
-      expect(await applyExclusion(tx, rejected, hit)).toBe(false);
+      expect(await applyExclusion(tx, rejected, hit)).toBe("unchanged");
       expect(await placeOf(tx, rejected)).toEqual({ status: "rejected", statusReason: "review", publicId: null });
 
-      // Already excluded: no second change.
-      expect(await applyExclusion(tx, candidate, hit)).toBe(false);
+      const noAnchoring = await insertPlace(tx, "no_anchoring");
+      await tx.update(places).set({ statusReason: "review" }).where(eq(places.id, noAnchoring));
+      expect(await applyExclusion(tx, noAnchoring, hit)).toBe("unchanged");
+      expect(await placeOf(tx, noAnchoring)).toEqual({ status: "no_anchoring", statusReason: "review", publicId: null });
+
+      const merged = await insertPlace(tx, "candidate");
+      await tx.update(places).set({ mergedIntoId: noAnchoring }).where(eq(places.id, merged));
+      expect(await applyExclusion(tx, merged, hit)).toBe("unchanged");
+      expect((await placeOf(tx, merged))?.status).toBe("candidate");
+
+      const ended = await insertPlace(tx, "candidate");
+      await tx.update(places).set({ validTo: "2020-01-01" }).where(eq(places.id, ended));
+      expect(await applyExclusion(tx, ended, hit)).toBe("unchanged");
+      expect((await placeOf(tx, ended))?.status).toBe("candidate");
     }));
 });
