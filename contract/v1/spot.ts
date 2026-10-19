@@ -2,18 +2,21 @@ import { z } from "zod";
 import {
   combinedSource,
   count,
+  googlePlaceId,
   highlightCategory,
   isoDate,
   latitude,
   latLon,
   longitude,
   month,
+  osmId,
   provenanceSource,
   publicId,
   sourceRef,
   textDe,
   unit,
   versionFields,
+  wikidataId,
 } from "./common";
 
 /** Spot (Teil B "Spot"); required fields are the bold ones of Teil B. */
@@ -122,9 +125,9 @@ export const spotSchema = z.strictObject({
   highlightIds: z.array(publicId("hl")).optional(),
   externalRefs: z
     .strictObject({
-      googlePlaceIds: z.partialRecord(highlightCategory, z.array(z.string().min(1))),
-      osmId: z.string().regex(/^(node|way|relation)\/\d+$/).nullable(),
-      wikidataId: z.string().regex(/^Q\d+$/).nullable(),
+      googlePlaceIds: z.partialRecord(highlightCategory, z.array(googlePlaceId)),
+      osmId: osmId.nullable(),
+      wikidataId: wikidataId.nullable(),
     })
     .optional(),
   summary: textDe.optional(),

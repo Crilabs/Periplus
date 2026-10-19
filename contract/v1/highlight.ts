@@ -1,5 +1,19 @@
 import { z } from "zod";
-import { count, highlightCategory, isoDate, latLon, month, publicId, sourceRef, textDe, unit, versionFields } from "./common";
+import {
+  count,
+  googlePlaceId,
+  highlightCategory,
+  isoDate,
+  latLon,
+  month,
+  osmId,
+  publicId,
+  sourceRef,
+  textDe,
+  unit,
+  versionFields,
+  wikidataId,
+} from "./common";
 
 /** Highlight (Teil B "Highlight"): a reason to go somewhere. */
 export const highlightSchema = z.strictObject({
@@ -18,9 +32,9 @@ export const highlightSchema = z.strictObject({
   sources: z.array(sourceRef).optional(),
   externalRefs: z
     .strictObject({
-      googlePlaceId: z.string().min(1).nullable(),
-      osmId: z.string().regex(/^(node|way|relation)\/\d+$/).nullable(),
-      wikidataId: z.string().regex(/^Q\d+$/).nullable(),
+      googlePlaceId: googlePlaceId.nullable(),
+      osmId: osmId.nullable(),
+      wikidataId: wikidataId.nullable(),
     })
     .optional(),
   score: z.strictObject({ confidence: unit, sourcesCount: count, lastObserved: isoDate.nullable() }),

@@ -610,6 +610,15 @@ describe("source decisions", () => {
       expect((await getSource(tx, sourceId))!.status).toBe("proposed");
     }));
 
+  it("a source on a forbidden domain is never approved (ruling M6-D-R2)", () =>
+    withRollback(async (tx) => {
+      const sourceId = await insertSource(tx, "proposed", `${newId()}.navily.com`);
+      const taskId = await approvalTask(tx, sourceId);
+      await expect(tx.transaction((sp) => decide(sp, taskId, approve))).rejects.toThrow(/forbidden domain/);
+      expect((await getSource(tx, sourceId))!.status).toBe("proposed");
+      expect((await taskOf(tx, taskId)).status).toBe("open");
+    }));
+
   it("reject keeps the domain out of later proposals", () =>
     withRollback(async (tx) => {
       const domain = testDomain();

@@ -315,6 +315,7 @@ export const SOURCE_ERROR_LABELS = {
   no_file: "Keine Datei ausgewählt",
   domain_known: "Für diese Domain gibt es bereits eine Quelle",
   invalid_domain: "Das ist keine gültige Domain",
+  forbidden_domain: "Diese Domain ist gesperrt (Navily, Google) und kann keine Quelle sein",
   invalid_source: "Domain, Name und Typ angeben",
   not_approved: "Nur eine freigegebene Quelle kann pausiert werden",
   not_paused: "Nur eine pausierte Quelle kann fortgesetzt werden",

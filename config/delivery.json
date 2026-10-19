@@ -23,6 +23,9 @@
     "maxDraftM": [0.5, 10],
     "maxLengthM": [5, 100],
     "harbourMinShelter": 0.8,
+    "harbourShelterSources": ["text", "observed", "review"],
+    "maxCopiedWords": 15,
+    "copyCheckConcurrency": 4,
     "lowConfidence": 0.3,
     "lowConfidenceNote": "wenig belegt"
   },

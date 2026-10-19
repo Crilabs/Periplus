@@ -64,12 +64,13 @@ export function mapHighlights(
   pois: PoiSource[],
   spots: HighlightSpot[],
   ctx: { radiusNm: number[]; cfg: DeliveryConfig; poiConfidence: number; regionIdFor: (p: LonLat) => string | null },
-): { highlights: HighlightBody[]; dropped: DroppedHighlight[] } {
+): { highlights: HighlightBody[]; dropped: DroppedHighlight[]; forbiddenSources: Array<{ id: string; urls: string[] }> } {
   const counting = spots.filter((s) => s.mergedInto === null && !s.excluded);
   const positions = new Map(counting.map((s) => [s.id, s.position]));
   const max = ctx.cfg.highlights.maxSpotIds;
   const dropped: DroppedHighlight[] = [];
   const candidates: HighlightBody[] = [];
+  const forbiddenById = new Map<string, string[]>();
 
   for (const poi of pois) {
     if (poi.name.trim() === "") {
@@ -98,6 +99,8 @@ export function mapHighlights(
       continue;
     }
     const conf = confidence(poi, ctx.poiConfidence);
+    const sources = mapSources(poi.sources, ctx.cfg);
+    if (sources.forbidden.length > 0) forbiddenById.set(poi.publicId, sources.forbidden);
     candidates.push(
       withoutUndefined({
         id: poi.publicId,
@@ -109,7 +112,7 @@ export function mapHighlights(
         regionId: ctx.regionIdFor(position),
         season: season(a),
         summary: mapSummary(poi.summary, conf, ctx.cfg),
-        sources: mapSources(poi.sources, ctx.cfg),
+        sources: sources.sources,
         externalRefs: { googlePlaceId: null, osmId: poi.osmId, wikidataId: poi.wikidataId },
         score: {
           confidence: conf,
@@ -139,7 +142,9 @@ export function mapHighlights(
     .map((k) => ({ ...k.body, spotIds: sortedSpotIds(k.spotIds, k.body.position, positions, max) }))
     .sort((a, b) => byId(a.id, b.id));
   dropped.sort((a, b) => byId(a.id, b.id));
-  return { highlights, dropped };
+  // only delivered highlights matter: their values must not come from a forbidden domain (ruling M6-D-R2)
+  const forbiddenSources = highlights.flatMap((h) => (forbiddenById.has(h.id) ? [{ id: h.id, urls: forbiddenById.get(h.id)! }] : []));
+  return { highlights, dropped, forbiddenSources };
 }
 
 /**

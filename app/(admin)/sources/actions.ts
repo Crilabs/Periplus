@@ -7,6 +7,7 @@ import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { DOC_TYPES } from "@/lib/db/schema";
 import { tileExists } from "@/lib/domain/geo-view";
+import { ForbiddenSourceDomain } from "@/lib/domain/sources/forbidden-domains";
 import { createManualSource, InvalidSourceDomain, SourceDomainKnown } from "@/lib/domain/sources/store";
 import { getBoss } from "@/lib/jobs/boss";
 import { startDiscoveryRun, startProposalRun } from "@/lib/pipeline/discovery-run";
@@ -28,7 +29,10 @@ const newSourceSchema = z.object({
   type: z.enum(DOC_TYPES),
 });
 
-/** "Neue Quelle": an approved manual source for the registrable domain; a known domain comes back with an error. */
+/**
+ * "Neue Quelle": an approved manual source for the registrable domain; a known or forbidden domain comes back with an
+ * error.
+ */
 export async function createSourceAction(formData: FormData): Promise<void> {
   await requireAdmin();
   const parsed = newSourceSchema.safeParse(fields(formData));
@@ -40,6 +44,7 @@ export async function createSourceAction(formData: FormData): Promise<void> {
   } catch (e) {
     if (e instanceof SourceDomainKnown) target = "/sources?error=domain_known";
     else if (e instanceof InvalidSourceDomain) target = "/sources?error=invalid_domain";
+    else if (e instanceof ForbiddenSourceDomain) target = "/sources?error=forbidden_domain";
     else throw e;
   }
   revalidatePath("/sources");

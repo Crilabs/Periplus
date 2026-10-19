@@ -7,6 +7,7 @@ import { getArchive } from "@/lib/adapters/s3";
 import { getDb } from "@/lib/db/client";
 import { changeRateEnum, DOC_TYPES } from "@/lib/db/schema";
 import type { CrawlRules } from "@/lib/domain/sources/crawl-rules";
+import { ForbiddenSourceDomain } from "@/lib/domain/sources/forbidden-domains";
 import {
   NotAPdf,
   pauseSource,
@@ -86,13 +87,20 @@ export async function pauseSourceAction(formData: FormData): Promise<void> {
   redirect(changed ? sourcePath(sourceId) : `${sourcePath(sourceId)}?error=not_approved`);
 }
 
-/** "Fortsetzen": only a paused source; any other status comes back with an error. */
+/** "Fortsetzen": only a paused source on an allowed domain; anything else comes back with an error. */
 export async function resumeSourceAction(formData: FormData): Promise<void> {
   await requireAdmin();
   const sourceId = sourceIdOf(formData);
-  const changed = await resumeSource(getDb(), sourceId);
+  let target: string;
+  try {
+    const changed = await resumeSource(getDb(), sourceId);
+    target = changed ? sourcePath(sourceId) : `${sourcePath(sourceId)}?error=not_paused`;
+  } catch (e) {
+    if (!(e instanceof ForbiddenSourceDomain)) throw e;
+    target = `${sourcePath(sourceId)}?error=forbidden_domain`;
+  }
   revalidatePath(sourcePath(sourceId));
-  redirect(changed ? sourcePath(sourceId) : `${sourcePath(sourceId)}?error=not_paused`);
+  redirect(target);
 }
 
 /** "Testcrawl 10 Seiten". A refusal (not approved, already being fetched) comes back as a German error. */

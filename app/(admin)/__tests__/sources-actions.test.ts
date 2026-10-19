@@ -210,6 +210,8 @@ describe("createSourceAction", () => {
       expect(redirect).toHaveBeenLastCalledWith("/sources?error=domain_known");
       await createSourceAction(form({ domain: "kein domain", name: "X", type: "forum" }));
       expect(redirect).toHaveBeenLastCalledWith("/sources?error=invalid_domain");
+      await createSourceAction(form({ domain: "https://fr.navily.com/", name: "Navily", type: "forum" }));
+      expect(redirect).toHaveBeenLastCalledWith("/sources?error=forbidden_domain");
     }));
 });
 

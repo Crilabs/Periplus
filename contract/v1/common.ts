@@ -25,6 +25,15 @@ export const publicId = (prefix: "sp" | "hl" | "rg" | "ar") =>
   z.string().regex(new RegExp(`^${prefix}_${ULID}$`), `must be ${prefix}_<ulid>`);
 export const weatherPointId = z.string().regex(new RegExp(`^wp_${ULID}$`), "must be wp_<ulid>");
 
+/** External ids (Teil B "externalRefs nur IDs"): the patterns the contract and the package validation share. */
+export const OSM_ID_PATTERN = /^(node|way|relation)\/\d+$/;
+export const WIKIDATA_ID_PATTERN = /^Q\d+$/;
+/** A Google place id: URL-safe characters only, at least 10 (never a URL, a name or a text). */
+export const GOOGLE_PLACE_ID_PATTERN = /^[A-Za-z0-9_-]{10,}$/;
+export const osmId = z.string().regex(OSM_ID_PATTERN);
+export const wikidataId = z.string().regex(WIKIDATA_ID_PATTERN);
+export const googlePlaceId = z.string().regex(GOOGLE_PLACE_ID_PATTERN);
+
 /** Teil B: "lat/lon als Dezimalgrad mit 5 Nachkommastellen" – at most five. */
 const hasAtMostFiveDecimals = (v: number) => Number(v.toFixed(5)) === v;
 const degrees = (min: number, max: number) =>
@@ -45,7 +54,7 @@ export const isoDateTime = z.iso.datetime();
 export const month = z.number().int().min(1).max(12);
 export const count = z.number().int().min(0);
 
-const PROVENANCE_SOURCES = ["computed", "text", "observed", "review"] as const;
+export const PROVENANCE_SOURCES = ["computed", "text", "observed", "review"] as const;
 export const provenanceSource = z.enum(PROVENANCE_SOURCES);
 /**
  * The origins that made a value, distinct and `+`-joined in contract order, e.g. `computed`, `computed+text`: each

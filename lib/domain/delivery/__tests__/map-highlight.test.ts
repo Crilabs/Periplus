@@ -66,6 +66,15 @@ const spot = (n: number, position: LonLat, patch: Partial<HighlightSpot> = {}): 
 });
 
 describe("mapHighlights", () => {
+  it("reports the forbidden-domain links of delivered highlights only (ruling M6-D-R2)", () => {
+    const navily = { url: "https://fr.navily.com/poi/1", docType: "forum" as const, observedAt: "2026-07-01" };
+    const delivered = { ...poi(1), sources: [navily, { url: "https://example.org/a", docType: "trip_report" as const, observedAt: "2026-06-01" }] };
+    const dropped = { ...poi(2, { profile: null }), sources: [navily] };
+    const out = mapHighlights([delivered, dropped], [spot(1, north(3))], ctx);
+    expect(out.highlights.map((h) => h.sources)).toEqual([[{ url: "https://example.org/a", kind: "tripReport", observedAt: "2026-06-01" }]]);
+    expect(out.forbiddenSources).toEqual([{ id: id("hl", 1), urls: [navily.url] }]);
+  });
+
   it("importance 2 gives radius 10 nm and spots sorted by distance", () => {
     const spots = [spot(1, north(9)), spot(2, north(11)), spot(3, north(3))];
     const { highlights, dropped } = mapHighlights([poi(1, { importance: 2 })], spots, ctx);

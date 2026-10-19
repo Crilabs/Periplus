@@ -85,8 +85,9 @@ describe("validatePackage", () => {
         created(p, "highlight", OTHER_HL);
       },
     ],
-    ["verbatim_text", () => {}, { findCopies: async (text: string) => (text.startsWith("Tiefe Bucht") ? 2 : 0) }],
-    ["foreign_content", (p) => void (spots(p)[0]!.externalRefs!.googlePlaceIds = { food: ["ChIJ..."] })],
+    ["verbatim_text", () => {}, { findCopies: async (text: string) => (text.startsWith("Tiefe Bucht") ? 16 : 0) }],
+    // the spot's values draw on a navily document the mapper kept out of `sources` (ruling M6-D-R2)
+    ["foreign_content", () => {}, { forbiddenSources: [{ file: "spots.json", objectId: SPOT_A, urls: ["https://www.navily.com/port/vathi"] }] }],
     ["data_version", (p) => void (p.files["spots.json"].dataVersion = 3)],
     ["changes_complete", (p) => void p.files["changes.json"]!.changes.pop()],
   ];
@@ -122,6 +123,17 @@ describe("validatePackage", () => {
     ]);
   });
 
+  it("a harbour below the floor passes with review-backed shelter, not with computed (ruling M6-D-R2)", async () => {
+    const withSource = (source: "review" | "computed") =>
+      breakPackage(validPackage(), (p) => {
+        spots(p)[1]!.shelter.sectors.S = 0.5;
+        spots(p)[1]!.provenance["shelter"] = { source, confidence: 0.9, observedAt: "2026-10-01" };
+      });
+    expect(failed(await validate(withSource("review")))).toEqual([]);
+    expect(failed(await validate(withSource("computed")))).toEqual(["shelter"]);
+    expect(cfg.validation.harbourShelterSources).toEqual(["text", "observed", "review"]);
+  });
+
   it("an excluded spot skips the shelter checks, also a harbour below the floor (ruling M6-B-R3)", async () => {
     const excludedHarbour = breakPackage(validPackage(), (p) => {
       spots(p)[1]!.exclude = { excluded: true, reason: "military", detail: "Militärisches Sperrgebiet" };
@@ -140,12 +152,42 @@ describe("validatePackage", () => {
     expect(failed(await validate(excluded))).toEqual(["highlight_radius"]);
   });
 
+  it("an excluded spot is no duplicate of a usable one of the same kind (validation review M-8)", async () => {
+    const excluded = breakPackage(validPackage(), (p) => {
+      spots(p).push({
+        ...spots(p)[0]!,
+        id: OTHER_SP,
+        position: offsetSouth(spots(p)[0]!.position, 100),
+        exclude: { excluded: true, reason: "anchoringProhibited", detail: null },
+        highlightIds: [],
+        profileVersion: 1,
+      });
+      created(p, "spot", OTHER_SP);
+    });
+    expect(failed(await validate(excluded))).toEqual([]);
+  });
+
   it("a merged spot is no duplicate of its target", async () => {
     const merged = breakPackage(validPackage(), (p) => {
       spots(p).push({ ...spots(p)[0]!, id: OTHER_SP, position: offsetSouth(spots(p)[0]!.position, 100), mergedInto: SPOT_A, highlightIds: [], profileVersion: 1 });
       created(p, "spot", OTHER_SP);
     });
     expect(failed(await validate(merged))).toEqual([]);
+  });
+
+  it("references: a removed entry's id must fit its object type (validation review M-5)", async () => {
+    const report = await validate(
+      breakPackage(validPackage(), (p) => void (p.files["changes.json"]!.changes.find((c) => c.objectId === SPOT_X)!.objectType = "highlight")),
+    );
+    expect(findings(report, "references")).toEqual([expect.objectContaining({ objectId: SPOT_X, message: "Kennung passt nicht zur Objektart highlight" })]);
+  });
+
+  it("data_version: the previous version plus 1, not just greater (validation review M-4)", async () => {
+    const skip = breakPackage(validPackage(), (p) => {
+      p.manifest.dataVersion = 3;
+      for (const f of [p.files["spots.json"], p.files["highlights.json"], p.files["regions.json"], p.files["weather-points.json"], p.files["changes.json"]!]) f.dataVersion = 3;
+    });
+    expect(findings(await validate(skip), "data_version")).toEqual([expect.objectContaining({ path: "/dataVersion", message: "Datenversion 3 statt 2 (die vorige plus 1)" })]);
   });
 
   it("references: a removed object needs not be in the package, any other change entry does", async () => {
@@ -195,6 +237,32 @@ describe("validatePackage", () => {
     ]);
   });
 
+  it("forbidden sources block only a delivered object; a trailing-dot host is still forbidden (ruling M6-D-R2, M-1)", async () => {
+    const report = await validate(validPackage(), {
+      forbiddenSources: [
+        { file: "highlights.json", objectId: HIGHLIGHT, urls: ["https://maps.google.com/?q=vathi"] },
+        { file: "spots.json", objectId: OTHER_SP, urls: ["https://www.navily.com/x"] },
+      ],
+    });
+    expect(findings(report, "foreign_content")).toEqual([
+      { file: "highlights.json", objectId: HIGHLIGHT, path: "/highlights/0", message: "Werte aus einer Quelle einer gesperrten Domain (https://maps.google.com/?q=vathi)" },
+    ]);
+    const dot = await validate(
+      breakPackage(validPackage(), (p) => void spots(p)[0]!.sources!.push({ url: "https://navily.com./port/vathi", kind: "other", observedAt: "2025-01-01" })),
+    );
+    expect(findings(dot, "foreign_content")).toEqual([expect.objectContaining({ path: "/spots/0/sources/2/url" })]);
+  });
+
+  it("a bare forbidden domain in a text is foreign content (validation review M-1)", async () => {
+    const report = await validate(breakPackage(validPackage(), (p) => void (spots(p)[0]!.summary = { de: "Laut navily.com/port/vathi gut." })));
+    expect(findings(report, "foreign_content")).toEqual([expect.objectContaining({ path: "/spots/0/summary/de", message: "Text nennt eine gesperrte Domain" })]);
+  });
+
+  it("a Google place id that is no plain id fails the contract schema too (validation review M-7)", async () => {
+    const report = await validate(breakPackage(validPackage(), (p) => void (spots(p)[0]!.externalRefs!.googlePlaceIds = { food: ["ChIJ..."] })));
+    expect(failed(report)).toEqual(["json_schema", "foreign_content"]);
+  });
+
   it("a link in a text field is foreign content", async () => {
     const report = await validate(breakPackage(validPackage(), (p) => void (spots(p)[0]!.summary = { de: "Mehr unter www.navily.com nachlesen." })));
     expect(findings(report, "foreign_content")).toEqual([expect.objectContaining({ path: "/spots/0/summary/de", message: "Text enthält einen Link" })]);
@@ -209,7 +277,7 @@ describe("validatePackage", () => {
     const v = await insertTestVersion(tx, [text]);
     await tx.insert(textShingles).values(shingleHashes(text, 15).map((shingleHash) => ({ shingleHash, chunkId: v.chunkIds[0]! })));
   }
-  const fromArchive = (tx: Db) => async (text: string) => (await findArchiveCopies(tx, text)).hits;
+  const fromArchive = (tx: Db) => async (text: string) => (await findArchiveCopies(tx, text)).longestRun;
 
   it("a summary copying 16 words of a chunk with different accents is a violation", async () => {
     await withRollback(async (tx) => {
@@ -225,6 +293,37 @@ describe("validatePackage", () => {
         expect.objectContaining({ file: "spots.json", objectId: SPOT_A, path: "/spots/0/summary/de" }),
       ]);
     });
+  });
+
+  it("an exact 15-word copy is no violation: Teil B forbids more than 15 words (validation review M-3)", async () => {
+    await withRollback(async (tx) => {
+      const words = saltedWords(30);
+      await archived(tx, words.join(" "));
+      const fifteen = (p: DeliveryPackage) => void (spots(p)[0]!.summary = { de: `Die Bucht: ${words.slice(3, 18).join(" ")}.` });
+      expect(failed(await validate(breakPackage(validPackage(), fifteen), { findCopies: fromArchive(tx) }))).toEqual([]);
+    });
+  });
+
+  it("copy checks run with bounded concurrency; a synchronous throw is rethrown, not a finding (validation review M-6)", async () => {
+    let running = 0;
+    let peak = 0;
+    const findCopies = async () => {
+      running += 1;
+      peak = Math.max(peak, running);
+      await new Promise((r) => setTimeout(r, 1));
+      running -= 1;
+      return 0;
+    };
+    const many = breakPackage(validPackage(), (p) => {
+      for (let i = 0; i < 12; i++) spots(p)[0]!.seasonNote = [...(spots(p)[0]!.seasonNote ?? []), { months: [7], text: `Hinweis ${i}` }];
+    });
+    expect(failed(await validate(many, { findCopies }))).toEqual([]);
+    expect(peak).toBe(cfg.validation.copyCheckConcurrency);
+    const down = new Error("pool exhausted");
+    const throwing = (() => {
+      throw down;
+    }) as unknown as ValidationDeps["findCopies"];
+    await expect(validate(validPackage(), { findCopies: throwing })).rejects.toBe(down);
   });
 
   it("a 15-word own sentence is no violation", async () => {

@@ -442,6 +442,21 @@ describe("mapSpot", () => {
       { url: "https://example.org/bericht", kind: "tripReport", observedAt: "2026-04-01" },
       { url: "https://example.org/reise", kind: "travelGuide", observedAt: "2025-01-01" },
     ]);
+    // the values of such a document must not ship: the mapper reports its links to the validation (ruling M6-D-R2)
+    const result = mapSpot(
+      spotA({
+        src: {
+          sources: [
+            { url: "https://www.navily.com/port/vathi", docType: "forum", observedAt: "2026-07-01" },
+            { url: "https://navily.com./port/vathi", docType: "forum", observedAt: "2026-07-01" },
+            { url: "https://example.org/bericht", docType: "trip_report", observedAt: "2026-04-01" },
+          ],
+        },
+      }),
+      ctx,
+    );
+    expect("spot" in result && result.forbiddenSources).toEqual(["https://navily.com./port/vathi", "https://www.navily.com/port/vathi"]);
+    expect(mapSpot(spotA(), ctx)).toMatchObject({ forbiddenSources: [] });
     const many = Array.from({ length: cfg.spots.maxSources + 5 }, (_, i) => ({ url: `https://example.org/${i}`, docType: "forum" as const, observedAt: "2026-01-01" }));
     expect(mapped(spotA({ src: { sources: many } })).sources).toHaveLength(cfg.spots.maxSources);
     expect(mapped(spotA({ src: { sources: [] } })).sources).toBeUndefined();

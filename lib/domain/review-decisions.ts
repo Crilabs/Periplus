@@ -31,6 +31,7 @@ import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
 import { newPublicId } from "@/lib/domain/ids";
 import { candidateObjects, withNeighbours } from "@/lib/domain/mentions/scope";
 import { crawlRulesSchema } from "@/lib/domain/sources/crawl-rules";
+import { isForbiddenHost } from "@/lib/domain/sources/forbidden-domains";
 import { QUEUES, type QueueName } from "@/lib/jobs/queues";
 import { CONSOLIDATION_SUMMARY_STAGE } from "@/lib/pipeline/consolidation/stages";
 
@@ -271,7 +272,11 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
       return place.geoObjectId;
     }
     case "approve": {
-      await lockSource(tx, task.subjectId, ["proposed"]);
+      const domain = await lockSource(tx, task.subjectId, ["proposed"]);
+      // a forbidden domain (Navily, Google) is never approved (ruling M6-D-R2)
+      if (isForbiddenHost(domain, getConfig().delivery.forbiddenDomains)) {
+        throw new DecisionNotAllowed(`source ${task.subjectId} is on the forbidden domain ${domain}`);
+      }
       await tx
         .update(sources)
         .set({
@@ -584,13 +589,13 @@ async function applyPlaceStatus(tx: Db, task: Task, status: "rejected" | "no_anc
 }
 
 /**
- * The source, locked; `DecisionNotAllowed` when it does not exist, has ended or its status is not one of
- * `statuses` (e.g. a proposal approved or rejected meanwhile).
+ * The source, locked, returning its domain; `DecisionNotAllowed` when it does not exist, has ended or its status is
+ * not one of `statuses` (e.g. a proposal approved or rejected meanwhile).
  */
-async function lockSource(tx: Db, sourceId: string, statuses: readonly SourceStatus[]): Promise<void> {
+async function lockSource(tx: Db, sourceId: string, statuses: readonly SourceStatus[]): Promise<string> {
   const [source] = z.uuid().safeParse(sourceId).success
     ? await tx
-        .select({ status: sources.status })
+        .select({ status: sources.status, domain: sources.domain })
         .from(sources)
         .where(and(eq(sources.id, sourceId), isNull(sources.validTo)))
         .for("update")
@@ -599,6 +604,7 @@ async function lockSource(tx: Db, sourceId: string, statuses: readonly SourceSta
   if (!statuses.includes(source.status)) {
     throw new DecisionNotAllowed(`source ${sourceId} is ${source.status}, not ${statuses.join(" or ")}`);
   }
+  return source.domain;
 }
 
 /** The task's place, locked; `DecisionNotAllowed` when it does not exist, has ended or was merged. */

@@ -49,7 +49,8 @@ export const TEIL_B_EXAMPLE: Spot = {
   seasonNote: [{ months: [6, 7, 8, 9], text: "Taverne am Strand geöffnet, Dinghy-Steg" }],
   score: { confidence: 0.72, popularity: 0.55, quietness: 0.8, sourcesCount: 6, lastObserved: "2026-06-14" },
   highlightIds: ["hl_01J9X4KQ3P2N1M0Z9K8J7H6G5F"],
-  externalRefs: { googlePlaceIds: { food: ["ChIJ..."] }, osmId: "way/123456789", wikidataId: null },
+  // Teil B writes the place id as "ChIJ..."; a real id is URL-safe characters only (contract GOOGLE_PLACE_ID_PATTERN)
+  externalRefs: { googlePlaceIds: { food: ["ChIJN1t_tDeuEmsRUsoyG83frY4"] }, osmId: "way/123456789", wikidataId: null },
   summary: {
     de: "Tiefe Bucht mit gutem Schutz von West bis Nord, offen nach Südost. Sandgrund mit Seegras, 4 bis 8 m. In der Saison Taverne mit Dinghy-Steg; im Hochsommer abends voll.",
   },

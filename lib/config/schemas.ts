@@ -10,6 +10,8 @@ import {
 } from "@/lib/db/schema/geo";
 import { changeRateEnum, DOC_TYPES, type ChangeRate, type DocType } from "@/lib/db/schema/sources";
 import { CONTRACT_FILES, SCHEMA_VERSION } from "@/contract";
+import { PROVENANCE_SOURCES } from "@/contract/v1";
+import { COPY_SHINGLE_WORDS } from "@/lib/domain/documents/shingles";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { CONVERTERS, crawlRulesPatchSchema, regexPattern } from "@/lib/domain/sources/crawl-rules";
 
@@ -803,6 +805,15 @@ export const deliverySchema = z.strictObject({
     maxDraftM: metreRange,
     maxLengthM: metreRange,
     harbourMinShelter: share,
+    /**
+     * Shelter provenance that lets a port or marina below `harbourMinShelter` pass (Teil B "text oder observed"; a
+     * review decision counts too, ruling M6-D-R2).
+     */
+    harbourShelterSources: z.array(z.enum(PROVENANCE_SOURCES)).min(1),
+    /** Teil B "kein Textfeld mit mehr als 15 Wörtern wörtlich aus einer Quelle": the longest copied run allowed. */
+    maxCopiedWords: z.number().int().min(COPY_SHINGLE_WORDS),
+    /** Copy checks (`text_shingles` queries) running at once. */
+    copyCheckConcurrency: positiveInt,
     /** Below this `score.confidence` the summary must carry `lowConfidenceNote`. */
     lowConfidence: confidence,
     lowConfidenceNote: z.string().trim().min(1),

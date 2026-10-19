@@ -4,6 +4,7 @@ import type { PlaceKind } from "@/lib/db/schema/geo";
 import { excludeValue, type ExcludeValue } from "@/lib/domain/consolidation/exclude";
 import type { AttributeProvenance, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
+import { isForbiddenUrl } from "@/lib/domain/sources/forbidden-domains";
 import { round5 } from "./geo";
 import type { SourceRefRow, SpotSource } from "./types";
 import {
@@ -113,7 +114,7 @@ export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
   },
   sources: {
     attributes: [],
-    note: "http(s) documents outside forbiddenDomains, newest first, at most spots.maxSources; kind = SOURCE_KIND",
+    note: "http(s) documents outside forbiddenDomains (those are reported to the validation, which blocks), newest first, at most spots.maxSources; kind = SOURCE_KIND",
   },
   provenance: { attributes: [], note: "aggregateProvenance per contract field group" },
   regionId: { attributes: [], note: "context (assigned region)" },
@@ -139,7 +140,7 @@ export type SpotWarning =
  * excluded (ruling M6-C-R1).
  */
 export type MappedSpot =
-  | { spot: SpotBody; warnings: SpotWarning[] }
+  | { spot: SpotBody; warnings: SpotWarning[]; forbiddenSources: string[] }
   | { omitted: "no_name" | "no_profile" | "shelter_incomplete" };
 
 const round3 = (n: number) => Number(n.toFixed(3));
@@ -221,6 +222,7 @@ export function mapSpot(
   const anchor = isHarbour ? undefined : anchorPosition(a["anchor_position"], p["anchor_position"], warnings);
   const depthValue = depth(a, p, warnings);
 
+  const sources = mapSources(src.sources, ctx.cfg);
   const spot: SpotBody = {
     id: src.publicId,
     kind: SPOT_KIND[placeKind],
@@ -250,7 +252,7 @@ export function mapSpot(
     highlightIds: ctx.highlightIds,
     externalRefs: { googlePlaceIds: {}, osmId: src.osmId, wikidataId: src.wikidataId },
     summary: mapSummary(src.summary, profile?.confidence ?? null, ctx.cfg),
-    sources: mapSources(src.sources, ctx.cfg),
+    sources: sources.sources,
     provenance: provenance(p, has, {
       anchorPosition: anchor !== undefined,
       depth: depthValue !== undefined,
@@ -261,7 +263,7 @@ export function mapSpot(
     regionId: ctx.regionId,
     mergedInto: null,
   };
-  return { spot: withoutUndefined(spot), warnings };
+  return { spot: withoutUndefined(spot), warnings, forbiddenSources: sources.forbidden };
 }
 
 function anchorPosition(
@@ -395,29 +397,21 @@ export function mapSummary(text: string | null, confidence: number | null, cfg: 
   return { de: `${text} (${note})` };
 }
 
-/** A host of a forbidden domain or one of its subdomains. */
-function forbidden(url: string, domains: string[]): boolean {
-  let host: string;
-  try {
-    host = new URL(url).hostname.toLowerCase();
-  } catch {
-    return true;
-  }
-  return domains.some((d) => host === d || host.endsWith(`.${d}`));
-}
-
 /**
  * Contract `sources` (spot and highlight): public http(s) links only (an uploaded document's `upload://` URL never
  * leaves Periplus, ruling M6-A-R2), none of `forbiddenDomains`, newest observation first, at most `spots.maxSources`;
- * omitted when none is left.
+ * omitted when none is left. The links of forbidden domains come back as `forbidden`: values drawn from such a
+ * document must not be delivered, so the validation blocks the package (`foreign_content`, ruling M6-D-R2).
  */
-export function mapSources(rows: SourceRefRow[], cfg: DeliveryConfig): SpotBody["sources"] {
-  const kept = rows
-    .filter((r) => /^https?:\/\//.test(r.url) && !forbidden(r.url, cfg.forbiddenDomains))
+export function mapSources(rows: SourceRefRow[], cfg: DeliveryConfig): { sources: SpotBody["sources"]; forbidden: string[] } {
+  const web = rows.filter((r) => /^https?:\/\//.test(r.url));
+  const forbidden = [...new Set(web.filter((r) => isForbiddenUrl(r.url, cfg.forbiddenDomains)).map((r) => r.url))].sort();
+  const kept = web
+    .filter((r) => !isForbiddenUrl(r.url, cfg.forbiddenDomains))
     .sort((x, y) => (x.observedAt !== y.observedAt ? (x.observedAt < y.observedAt ? 1 : -1) : x.url < y.url ? -1 : x.url > y.url ? 1 : 0))
     .slice(0, cfg.spots.maxSources)
     .map((r) => ({ url: r.url, kind: SOURCE_KIND[r.docType], observedAt: r.observedAt }));
-  return kept.length > 0 ? kept : undefined;
+  return { sources: kept.length > 0 ? kept : undefined, forbidden };
 }
 
 /** Flat contract provenance per field group (`shelter`, `services.taverna` …), each `aggregateProvenance`. */

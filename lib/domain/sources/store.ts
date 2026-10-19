@@ -15,7 +15,9 @@ import {
   type SourceStatus,
 } from "@/lib/db/schema";
 import { ensureDocument } from "@/lib/domain/documents/store";
+import { createLogger } from "@/lib/logger";
 import { crawlRulesSchema, DEFAULT_CRAWL_RULES, type CrawlRules } from "./crawl-rules";
+import { assertAllowedSourceDomain, isForbiddenHost } from "./forbidden-domains";
 import { registrableDomain } from "./urls";
 
 export type Source = {
@@ -81,15 +83,20 @@ export async function setSourceStatus(
 /**
  * Creates every source of `config/sources-whitelist.json` as `approved` (origin `whitelist`, weight of its type from
  * `config/source-types.json`, crawl rules = defaults + the entry's), stored under its registrable domain. A domain
- * that has any source row already is left alone: the admin's changes (a pause, other rules) win.
+ * that has any source row already is left alone: the admin's changes (a pause, other rules) win. An entry on a
+ * forbidden domain (`delivery.forbiddenDomains`) is never created (ruling M6-D-R2).
  */
 export async function ensureWhitelistSources(
   db: Db,
-  cfg: Pick<AppConfig, "whitelist" | "sourceTypes"> = getConfig(),
+  cfg: Pick<AppConfig, "whitelist" | "sourceTypes" | "delivery"> = getConfig(),
 ): Promise<{ created: number }> {
   let created = 0;
   for (const entry of cfg.whitelist) {
     const domain = registrableDomain(`https://${entry.domain}/`);
+    if (isForbiddenHost(domain, cfg.delivery.forbiddenDomains) || isForbiddenHost(entry.domain, cfg.delivery.forbiddenDomains)) {
+      createLogger("sources").warn({ domain }, "whitelist entry on a forbidden domain skipped");
+      continue;
+    }
     const [known] = await db.select({ id: sources.id }).from(sources).where(eq(sources.domain, domain)).limit(1);
     if (known) continue;
     const inserted = await db
@@ -164,8 +171,13 @@ export function pauseSource(db: Db, id: string): Promise<boolean> {
   return setSourceStatus(db, id, "paused", ADMIN_PAUSE_REASON, { from: "approved" });
 }
 
-/** Approves the paused source `id` again; returns whether it changed (a proposed, rejected or ended source never does). */
-export function resumeSource(db: Db, id: string): Promise<boolean> {
+/**
+ * Approves the paused source `id` again; returns whether it changed (a proposed, rejected or ended source never does).
+ * A source on a forbidden domain throws `ForbiddenSourceDomain` (ruling M6-D-R2).
+ */
+export async function resumeSource(db: Db, id: string, cfg: Pick<AppConfig, "delivery"> = getConfig()): Promise<boolean> {
+  const [row] = await db.select({ domain: sources.domain }).from(sources).where(eq(sources.id, id));
+  if (row) assertAllowedSourceDomain(row.domain, cfg.delivery.forbiddenDomains);
   return setSourceStatus(db, id, "approved", null, { from: "paused" });
 }
 
@@ -185,10 +197,15 @@ export class InvalidSourceDomain extends Error {
   }
 }
 
+/** The URL of a domain or URL the admin typed. */
+const typedUrl = (input: string) => {
+  const trimmed = input.trim();
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+};
+
 /** Registrable domain of a domain or URL the admin typed (`www.example.com`, `https://example.com/x`). */
 export function sourceDomainOf(input: string): string {
-  const trimmed = input.trim();
-  const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  const url = typedUrl(input);
   let domain: string;
   try {
     const parsed = new URL(url);
@@ -203,14 +220,18 @@ export function sourceDomainOf(input: string): string {
 /**
  * Creates an approved manual source (`origin manual`) for the registrable domain of `input.domain`, with the weight
  * and change rate of its type (`config/source-types.json`) and the default crawl rules. A domain that has any source
- * row already throws `SourceDomainKnown` (ruling: `sources.domain` is always the registrable domain).
+ * row already throws `SourceDomainKnown` (ruling: `sources.domain` is always the registrable domain); a forbidden domain
+ * (`delivery.forbiddenDomains`) throws `ForbiddenSourceDomain` (ruling M6-D-R2).
  */
 export async function createManualSource(
   db: Db,
   input: { domain: string; name: string; type: DocType },
-  cfg: Pick<AppConfig, "sourceTypes"> = getConfig(),
+  cfg: Pick<AppConfig, "sourceTypes" | "delivery"> = getConfig(),
 ): Promise<{ id: string }> {
   const domain = sourceDomainOf(input.domain);
+  // the registrable domain and the typed host (a forbidden entry may be a subdomain)
+  assertAllowedSourceDomain(domain, cfg.delivery.forbiddenDomains);
+  assertAllowedSourceDomain(new URL(typedUrl(input.domain)).hostname, cfg.delivery.forbiddenDomains);
   const name = z.string().trim().min(1).max(200).parse(input.name);
   const [known] = await db.select({ id: sources.id }).from(sources).where(eq(sources.domain, domain)).limit(1);
   if (known) throw new SourceDomainKnown(domain);

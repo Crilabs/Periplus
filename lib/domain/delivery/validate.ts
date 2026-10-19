@@ -1,9 +1,10 @@
 import { CONTRACT_SCHEMAS, type ContractFile, type Highlight, type Spot } from "@/contract";
-import { highlightCategory } from "@/contract/v1";
+import { GOOGLE_PLACE_ID_PATTERN, highlightCategory, OSM_ID_PATTERN, WIKIDATA_ID_PATTERN } from "@/contract/v1";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { isPublicId, type PublicIdPrefix } from "@/lib/domain/ids";
+import { isForbiddenUrl, mentionsForbiddenDomain } from "@/lib/domain/sources/forbidden-domains";
 import { distanceNm, distanceToLinesNm, pointInPolygon } from "./geo";
 import type { DroppedHighlight } from "./map-highlight";
 import type { SpotWarning } from "./map-spot";
@@ -43,8 +44,13 @@ export type ValidationReport = { ok: boolean; checks: Array<{ name: CheckName; o
 export type ValidationDeps = {
   /** The area's previous valid package: its data version and the contract version of every object in it. */
   previous: { dataVersion: number; versions: Map<string, number> } | null;
-  /** Shingles of the text found in the archive (`findArchiveCopies(db, text).hits`). */
+  /** The longest run of words of the text copied from the archive (`findArchiveCopies(db, text).longestRun`). */
   findCopies: (text: string) => Promise<number>;
+  /**
+   * The links of forbidden domains behind each delivered spot and highlight (`mapSpot` / `mapHighlights`
+   * `forbiddenSources`): such an object's values may come from Navily or Google, so it blocks (ruling M6-D-R2).
+   */
+  forbiddenSources?: Array<{ file: "spots.json" | "highlights.json"; objectId: string; urls: string[] }>;
   cfg: DeliveryConfig;
   /** Radius of meaning per importance 1–5, nautical miles (`consolidation.importance.radiusNm`). */
   radiusNm: number[];
@@ -54,12 +60,9 @@ export type ValidationDeps = {
 
 const METRES_PER_NM = 1852;
 const WEATHER_POINT_ID = /^wp_[0-9A-HJKMNP-TV-Z]{26}$/;
-const OSM_ID = /^(node|way|relation)\/\d+$/;
-const WIKIDATA_ID = /^Q\d+$/;
-const GOOGLE_ID = /^[A-Za-z0-9_-]{10,}$/;
 const URL_IN_TEXT = /\bhttps?:\/\/|\bwww\.[\p{L}\p{N}-]+\.\p{L}/iu;
 const HARBOUR_KINDS = new Set(["port", "marina"]);
-const TEXT_SOURCES = new Set(["text", "observed"]);
+const PREFIX_OF = { spot: "sp", highlight: "hl", region: "rg" } as const;
 
 const SPOTS = "spots.json";
 const HIGHLIGHTS = "highlights.json";
@@ -166,6 +169,10 @@ const references: Check = ({ pkg }) => {
   const byType = { spot: spotIds, highlight: highlightIds, region: regionIds };
   changesOf(pkg).forEach((c, i) => {
     if (c.event !== "removed" && !byType[c.objectType].has(c.objectId)) missing(CHANGES, c.objectId, `/changes/${i}/objectId`, c.objectId, "das Objekt");
+    // a removed object is not in the package: at least its id must fit its type
+    if (c.event === "removed" && !isPublicId(c.objectId, PREFIX_OF[c.objectType])) {
+      out.push(finding(CHANGES, c.objectId, `/changes/${i}/objectId`, `Kennung passt nicht zur Objektart ${c.objectType}`));
+    }
   });
   return out;
 };
@@ -195,11 +202,13 @@ const spotLocation: Check = ({ pkg, deps }) => {
 };
 
 /**
- * Eight sectors 0–1, swell 0–1; a port or marina below `harbourMinShelter` in a sector needs a text or observed
- * shelter source. Excluded spots are skipped (their shelter may be zero-filled, ruling M6-B-R3).
+ * Eight sectors 0–1, swell 0–1; a port or marina below `harbourMinShelter` in a sector needs a shelter source of
+ * `harbourShelterSources` (text, observed or a review decision, ruling M6-D-R2). Excluded spots are skipped (their
+ * shelter may be zero-filled, ruling M6-B-R3).
  */
 const shelter: Check = ({ pkg, deps }) => {
   const min = deps.cfg.validation.harbourMinShelter;
+  const accepted = new Set<string>(deps.cfg.validation.harbourShelterSources);
   const out: Finding[] = [];
   const inUnit = (v: unknown) => typeof v === "number" && v >= 0 && v <= 1;
   spotsOf(pkg).forEach((s, i) => {
@@ -215,9 +224,9 @@ const shelter: Check = ({ pkg, deps }) => {
     if (!HARBOUR_KINDS.has(s.kind)) return;
     const low = SECTORS.filter((k) => typeof sectors[k] === "number" && (sectors[k] as number) < min);
     const source = s.provenance["shelter"]?.source;
-    if (low.length > 0 && (source === undefined || !TEXT_SOURCES.has(source))) {
+    if (low.length > 0 && (source === undefined || !accepted.has(source))) {
       out.push(
-        finding(SPOTS, s.id, `${path}/sectors`, `Hafen mit Schutz unter ${fmt(min)} (${low.join(", ")}) ohne Beleg aus Text oder Beobachtung`),
+        finding(SPOTS, s.id, `${path}/sectors`, `Hafen mit Schutz unter ${fmt(min)} (${low.join(", ")}) ohne Beleg aus Text, Beobachtung oder Review`),
       );
     }
   });
@@ -288,10 +297,18 @@ function closePairs<T extends { id: string; position: LonLat }>(items: T[], limi
   return pairs;
 }
 
-/** Teil B "keine zwei Spots derselben Art näher als 150 m" (merged spots aside); blocks (ruling M6-P15). */
+/**
+ * Teil B "keine zwei Spots derselben Art näher als 150 m" among the spots a boat may use: merged and excluded spots
+ * aside (an excluded place next to a confirmed one is a warning, not a duplicate, ruling M6-D-R2); blocks (ruling
+ * M6-P15).
+ */
 const spotDuplicates: Check = ({ pkg, deps }) =>
-  closePairs(spotsOf(pkg), deps.cfg.validation.spotDuplicateM, (a, b) => a.kind === b.kind && a.mergedInto === null && b.mergedInto === null).map(
-    ({ a, b, index, metres }) => finding(SPOTS, b.id, `/spots/${index}/position`, `Gleiche Art wie ${a.id}, nur ${Math.round(metres)} m entfernt`),
+  closePairs(
+    spotsOf(pkg).filter((s) => s.mergedInto === null && !s.exclude.excluded),
+    deps.cfg.validation.spotDuplicateM,
+    (a, b) => a.kind === b.kind,
+  ).map(
+    ({ a, b, metres }) => finding(SPOTS, b.id, `/spots/${spotsOf(pkg).indexOf(b)}/position`, `Gleiche Art wie ${a.id}, nur ${Math.round(metres)} m entfernt`),
   );
 
 /** Teil B "keine zwei Highlights gleichen Namens näher als 500 m" (normalized names). */
@@ -343,75 +360,91 @@ class DependencyFailed extends Error {
   }
 }
 
-/** Spec 08 "kein Textfeld mit mehr als 15 Wörtern wörtlich aus einer Quelle": any archived 15-word shingle. */
+/**
+ * Spec 08 / Teil B "kein Textfeld mit mehr als 15 Wörtern wörtlich aus einer Quelle": a copied run longer than
+ * `maxCopiedWords` (16 words or more). The copy checks run at most `copyCheckConcurrency` at once; any failure of one,
+ * also a synchronous throw, is the database's, not the package's (rethrown, the build retries).
+ */
 const verbatimText: Check = async ({ pkg, deps }) => {
-  const hits = new Map<string, Promise<number>>();
+  const { maxCopiedWords, copyCheckConcurrency } = deps.cfg.validation;
   const fields = displayTexts(pkg);
-  const counts = await Promise.all(
-    fields.map((f) => {
-      let hit = hits.get(f.text);
-      if (!hit) {
-        hit = deps.findCopies(f.text).catch((e: unknown) => {
-          throw new DependencyFailed(e);
-        });
-        hits.set(f.text, hit);
+  const texts = [...new Set(fields.map((f) => f.text))];
+  const runs = new Map<string, number>();
+  let next = 0;
+  const worker = async () => {
+    while (next < texts.length) {
+      const text = texts[next++]!;
+      try {
+        runs.set(text, await Promise.resolve().then(() => deps.findCopies(text)));
+      } catch (e) {
+        throw new DependencyFailed(e);
       }
-      return hit;
-    }),
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(copyCheckConcurrency, texts.length) }, worker));
+  return fields.flatMap((f) =>
+    runs.get(f.text)! > maxCopiedWords
+      ? [finding(f.file, f.objectId, f.path, `Text enthält eine wörtliche Passage aus einer Quelle (mehr als ${maxCopiedWords} Wörter)`)]
+      : [],
   );
-  return fields.flatMap((f, i) => (counts[i]! > 0 ? [finding(f.file, f.objectId, f.path, "Text enthält eine wörtliche Passage aus einer Quelle (15 Wörter oder mehr)")] : []));
 };
 
-/** A host of a forbidden domain or one of its subdomains; an unparsable URL counts as forbidden. */
-function forbiddenHost(url: string, domains: string[]): boolean {
-  let host: string;
-  try {
-    host = new URL(url).hostname.toLowerCase();
-  } catch {
-    return true;
-  }
-  return domains.some((d) => host === d || host.endsWith(`.${d}`));
-}
-
-/** Teil B "Keine fremden Inhalte": external refs are ids only, no source of a forbidden domain, no link in a text. */
+/**
+ * Teil B "Keine fremden Inhalte": external refs are ids only; no delivered spot or highlight draws on a document of a
+ * forbidden domain (`deps.forbiddenSources`, ruling M6-D-R2) or lists one in `sources`; no text links to a page or
+ * names a forbidden domain.
+ */
 const foreignContent: Check = ({ pkg, deps }) => {
   const out: Finding[] = [];
+  const forbidden = deps.cfg.forbiddenDomains;
   const ref = (file: ContractFile, id: string, path: string, value: string | null | undefined, pattern: RegExp, label: string) => {
     if (value != null && !pattern.test(value)) out.push(finding(file, id, path, `${label} ist keine reine Kennung`));
   };
   const sources = (file: ContractFile, id: string, base: string, list: Array<{ url: string }> | undefined) =>
     (list ?? []).forEach((s, j) => {
-      if (forbiddenHost(s.url, deps.cfg.forbiddenDomains)) out.push(finding(file, id, `${base}/sources/${j}/url`, "Quelle von einer gesperrten Domain"));
+      if (isForbiddenUrl(s.url, forbidden)) out.push(finding(file, id, `${base}/sources/${j}/url`, "Quelle von einer gesperrten Domain"));
     });
   spotsOf(pkg).forEach((s, i) => {
     const base = `/spots/${i}`;
-    ref(SPOTS, s.id, `${base}/externalRefs/osmId`, s.externalRefs?.osmId, OSM_ID, "OSM-Kennung");
-    ref(SPOTS, s.id, `${base}/externalRefs/wikidataId`, s.externalRefs?.wikidataId, WIKIDATA_ID, "Wikidata-Kennung");
+    ref(SPOTS, s.id, `${base}/externalRefs/osmId`, s.externalRefs?.osmId, OSM_ID_PATTERN, "OSM-Kennung");
+    ref(SPOTS, s.id, `${base}/externalRefs/wikidataId`, s.externalRefs?.wikidataId, WIKIDATA_ID_PATTERN, "Wikidata-Kennung");
     for (const [category, list] of Object.entries(s.externalRefs?.googlePlaceIds ?? {})) {
-      (list ?? []).forEach((g, j) => ref(SPOTS, s.id, `${base}/externalRefs/googlePlaceIds/${category}/${j}`, g, GOOGLE_ID, "Google-Kennung"));
+      (list ?? []).forEach((g, j) => ref(SPOTS, s.id, `${base}/externalRefs/googlePlaceIds/${category}/${j}`, g, GOOGLE_PLACE_ID_PATTERN, "Google-Kennung"));
     }
     sources(SPOTS, s.id, base, s.sources);
   });
   highlightsOf(pkg).forEach((h, i) => {
     const base = `/highlights/${i}`;
-    ref(HIGHLIGHTS, h.id, `${base}/externalRefs/osmId`, h.externalRefs?.osmId, OSM_ID, "OSM-Kennung");
-    ref(HIGHLIGHTS, h.id, `${base}/externalRefs/wikidataId`, h.externalRefs?.wikidataId, WIKIDATA_ID, "Wikidata-Kennung");
-    ref(HIGHLIGHTS, h.id, `${base}/externalRefs/googlePlaceId`, h.externalRefs?.googlePlaceId, GOOGLE_ID, "Google-Kennung");
+    ref(HIGHLIGHTS, h.id, `${base}/externalRefs/osmId`, h.externalRefs?.osmId, OSM_ID_PATTERN, "OSM-Kennung");
+    ref(HIGHLIGHTS, h.id, `${base}/externalRefs/wikidataId`, h.externalRefs?.wikidataId, WIKIDATA_ID_PATTERN, "Wikidata-Kennung");
+    ref(HIGHLIGHTS, h.id, `${base}/externalRefs/googlePlaceId`, h.externalRefs?.googlePlaceId, GOOGLE_PLACE_ID_PATTERN, "Google-Kennung");
     sources(HIGHLIGHTS, h.id, base, h.sources);
   });
+  const delivered = { [SPOTS]: spotsOf(pkg).map((s) => s.id), [HIGHLIGHTS]: highlightsOf(pkg).map((h) => h.id) };
+  for (const f of deps.forbiddenSources ?? []) {
+    const i = delivered[f.file].indexOf(f.objectId);
+    if (i < 0) continue; // left out of the package
+    const list = f.file === SPOTS ? "spots" : "highlights";
+    for (const url of f.urls) out.push(finding(f.file, f.objectId, `/${list}/${i}`, `Werte aus einer Quelle einer gesperrten Domain (${url})`));
+  }
   for (const f of [...displayTexts(pkg), ...nameTexts(pkg)]) {
     if (URL_IN_TEXT.test(f.text)) out.push(finding(f.file, f.objectId, f.path, "Text enthält einen Link"));
+    else if (mentionsForbiddenDomain(f.text, forbidden)) out.push(finding(f.file, f.objectId, f.path, "Text nennt eine gesperrte Domain"));
   }
   return out;
 };
 
-/** Teil B "dataVersion ist größer als die vorherige"; every file names the manifest's version, area and schema. */
+/**
+ * Teil B "dataVersion ist größer als die vorherige", "je Revier um 1 steigend": the previous one + 1 (1 for the first
+ * package); every file names the manifest's version, area and schema.
+ */
 const dataVersion: Check = ({ pkg, deps }) => {
   const out: Finding[] = [];
   const m = pkg.manifest;
   const previous = deps.previous?.dataVersion ?? null;
-  if (previous === null ? m.dataVersion < 1 : m.dataVersion <= previous) {
-    out.push(finding(MANIFEST, null, "/dataVersion", `Datenversion ${m.dataVersion} nicht größer als die vorige (${previous ?? 0})`));
+  const expected = (previous ?? 0) + 1;
+  if (m.dataVersion !== expected) {
+    out.push(finding(MANIFEST, null, "/dataVersion", `Datenversion ${m.dataVersion} statt ${expected} (die vorige plus 1)`));
   }
   if (m.previousDataVersion !== previous) {
     out.push(finding(MANIFEST, null, "/previousDataVersion", `Vorige Datenversion ${m.previousDataVersion ?? "keine"} statt ${previous ?? "keine"}`));
