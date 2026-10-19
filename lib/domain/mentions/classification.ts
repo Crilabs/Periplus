@@ -41,9 +41,9 @@ function calendarDate(y: number, m: number, d: number): string | null {
 /**
  * A model date as `YYYY-MM-DD` (a month `YYYY-MM` only when `allowMonth`, placed on day 15, or on the fetch date when
  * that is earlier in the fetch month, ruling M4-D-R3), kept only between `earliest` and the fetch date; anything else
- * is `null`.
+ * is `null`. Also used for the observation dates of extracted facts.
  */
-function plausibleDate(value: string | null, fetchedAt: Date, earliest: string, allowMonth: boolean): string | null {
+export function plausibleDate(value: string | null, fetchedAt: Date, earliest: string, allowMonth: boolean): string | null {
   if (value === null) return null;
   const v = value.trim();
   const fetched = fetchedAt.toISOString().slice(0, 10);

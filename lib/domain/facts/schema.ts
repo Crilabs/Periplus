@@ -73,14 +73,17 @@ export function validateTextFact(level: FactLevel, attribute: string, raw: unkno
   return { ok: true, value: stored.data };
 }
 
-/** The text attributes of `level`, one line each: `key — description — value format (JSON Schema)`. */
+/**
+ * The text attributes of `level`, one line each: `key — description — value format (JSON Schema)`; the description is
+ * the one for texts (`textDescription`) where the attribute has one.
+ */
 export function attributesForPrompt(level: FactLevel, version?: string): string {
   return getFactSchema(version)
     .levels[level].filter((d) => d.origins.includes("text"))
     .map((d) => {
       const format: Record<string, unknown> = z.toJSONSchema(d.textValue ?? d.value, { unrepresentable: "any" });
       delete format.$schema;
-      return `${d.key} — ${d.description} — ${JSON.stringify(format)}`;
+      return `${d.key} — ${d.textDescription ?? d.description} — ${JSON.stringify(format)}`;
     })
     .join("\n");
 }

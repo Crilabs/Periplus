@@ -34,7 +34,15 @@ const v1Def = (key: string): AttributeDef => {
 
 /** Extras for v1 attributes that already allow origin `text`; their value schema stays the v1 one. */
 const textExtras = (key: string): Partial<AttributeDef> => {
-  if (key.startsWith("shelter.") || key === "swell_protection") return scaleWords(TEXT_SCALE);
+  if (key.startsWith("shelter.")) {
+    return {
+      ...scaleWords(TEXT_SCALE),
+      textDescription: `Shelter from wind and sea out of sector ${key.slice("shelter.".length)}, as a word of the shelter scale`,
+    };
+  }
+  if (key === "swell_protection") {
+    return { ...scaleWords(TEXT_SCALE), textDescription: "Protection from swell entering the place, as a word of the shelter scale" };
+  }
   if (["depth.min", "depth.max", "depth.anchoring_min", "depth.anchoring_max"].includes(key)) {
     return { textValue: z.number().min(0).max(200) };
   }
@@ -42,6 +50,7 @@ const textExtras = (key: string): Partial<AttributeDef> => {
     return {
       // Seabed types without shares: equal shares, summing to 1.
       textValue: z.array(z.enum(SEABED_TYPES)).min(1),
+      textDescription: "Seabed types in the anchor area (types only, no shares)",
       fromText: (types: unknown) => {
         const unique = [...new Set(types as string[])];
         return unique.map((type) => ({ type, share: 1 / unique.length }));
@@ -175,6 +184,7 @@ const region: AttributeDef[] = [
     key: "meltemi_exposure",
     value: z.number().min(0).max(1),
     ...scaleWords(EXPOSURE_SCALE),
+    textDescription: "Exposure to the meltemi, as a word of the exposure scale",
     rule: "area_weighted",
     origins: ["text"],
     description: "Exposure to the meltemi, 0 (none) to 1 (fully exposed)",
