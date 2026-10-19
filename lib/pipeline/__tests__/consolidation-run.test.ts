@@ -45,6 +45,12 @@ function recordingBoss() {
   return { boss, inserted };
 }
 
+/** The UTC date of the transaction (the run date of a run created now). */
+async function utcToday(tx: Db): Promise<string> {
+  const { rows } = await tx.execute<{ d: string }>(sql`select (now() at time zone 'UTC')::date::text as d`);
+  return rows[0]!.d;
+}
+
 /** A run row with `params` (a text run when they carry `documentVersionIds`). */
 async function runRow(tx: Db, params: Record<string, unknown>, stages: string[] = [...CONSOLIDATION_STAGES]): Promise<string> {
   const [row] = await tx
@@ -224,7 +230,8 @@ describe("consolidation run", () => {
       await tx.execute(sql`update geo_objects set merged_into_id = ${island} where id = ${merged}`);
       const inlandIsland = await insertNamedObject(tx, { type: "island", names: [{ name: "Binnenziel" }], lon: LON + 0.3, lat: LAT, tiles: [inland] });
 
-      const targets = (params: Record<string, unknown>) => consolidationTargets(tx, { id: newId(), params });
+      const today = await utcToday(tx);
+      const targets = (params: Record<string, unknown>) => consolidationTargets(tx, { id: newId(), params }, today);
       expect(await targets({ tileId: TILE })).toEqual([bay.objectId, island].sort());
       // the area: the objects of its valid coast tiles only (not the inland tile's island, nor the settlement)
       expect(await targets({ areaKey: "saronic" })).toEqual([bay.objectId, island].sort());
@@ -241,6 +248,35 @@ describe("consolidation run", () => {
       await tx.execute(sql`update places set valid_from = '2020-01-01', valid_to = '2021-01-01' where id = ${ended.placeId}`);
       await tx.execute(sql`update geo_objects set merged_into_id = ${bay.objectId} where id = ${gone.objectId}`);
       expect(await targets({ comparisonSetArea: "saronic" })).toEqual([bay.objectId]);
+    }));
+
+  it("targets judge validity on the run date, not the database date (final review M-7)", () =>
+    withRollback(async (tx) => {
+      await insertTestTile(tx, TILE);
+      const bay = await insertPlace(tx, { lon: LON, lat: LAT, name: "Altlaufbucht" });
+      await tx.insert(tileGeoObjects).values({ tileId: TILE, geoObjectId: bay.objectId });
+      // tile and object were valid in 2020 only; the run was created then (e.g. revived much later)
+      await tx.execute(sql`update tiles set valid_from = '2020-01-01', valid_to = '2021-01-01' where id = ${TILE}`);
+      await tx.execute(sql`update geo_objects set valid_from = '2020-01-01', valid_to = '2021-01-01' where id = ${bay.objectId}`);
+      const [run] = await tx
+        .insert(runs)
+        .values({ kind: "stage", scopeType: "tile", scopeId: TILE, stages: [...CONSOLIDATION_STAGES], params: { tileId: TILE }, triggeredBy: "test", createdAt: new Date("2020-06-01T12:00:00Z") })
+        .returning({ id: runs.id });
+      expect(await consolidationTargets(tx, { id: run!.id, params: { tileId: TILE } })).toEqual([bay.objectId]);
+      expect(await consolidationTargets(tx, { id: run!.id, params: { tileId: TILE } }, await utcToday(tx))).toEqual([]);
+    }));
+
+  it("the scope check uses the UTC run date whatever the session time zone (final review M-7)", () =>
+    withRollback(async (tx) => {
+      await insertTestTile(tx, TILE);
+      const today = await utcToday(tx);
+      // valid on the UTC date only: at any hour one of the two zones has another local date
+      await tx.execute(sql`update tiles set valid_from = ${today}::date, valid_to = ${today}::date + 1 where id = ${TILE}`);
+      for (const zone of ["Etc/GMT-14", "Etc/GMT+12"]) {
+        await tx.execute(sql.raw(`set local timezone = '${zone}'`));
+        const rec = recordingBoss();
+        await expect(tx.transaction((t) => startConsolidationRun(t, rec.boss, { scope: { tileId: TILE }, triggeredBy: `tz-${zone}` }))).resolves.toMatchObject({ id: expect.any(String) });
+      }
     }));
 
   it("a text run finds its mentions through its frozen versions; facts of its extraction runs are indexed", () =>

@@ -54,7 +54,7 @@ export async function requestPlaceDiscovery(
     budget -= fresh.length;
     return true;
   };
-  const places = await thinPlaces(db, await consolidationTargets(db, { id: runId, params }), cfg.followup, today, searchable);
+  const places = await thinPlaces(db, await consolidationTargets(db, { id: runId, params }, today), cfg.followup, today, searchable);
   if (places.length === 0) return { places, discoveryRunId: null, skipped: false };
   const { id } = await startPlaceDiscoveryRun(db, boss, { geoObjectIds: places, triggeredBy, on: today });
   return { places, discoveryRunId: id, skipped: false };

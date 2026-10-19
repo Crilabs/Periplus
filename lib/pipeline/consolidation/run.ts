@@ -29,8 +29,14 @@ export type StartConsolidationInput = {
   stagesOnly?: string[];
 };
 
+/**
+ * Valid on the run date: the UTC date of the transaction, as `runDate` reads the run's `created_at` (final review M-7;
+ * `current_date` would follow the session time zone).
+ */
 const validToday = (alias: string) =>
-  sql.raw(`${alias}.valid_from <= current_date and (${alias}.valid_to is null or ${alias}.valid_to > current_date)`);
+  sql.raw(
+    `${alias}.valid_from <= (now() at time zone 'UTC')::date and (${alias}.valid_to is null or ${alias}.valid_to > (now() at time zone 'UTC')::date)`,
+  );
 
 /**
  * Checks the scope before the run exists (`RunScopeNotReady`) and returns the run's scope: a valid tile; a configured
