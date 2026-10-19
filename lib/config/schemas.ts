@@ -7,6 +7,7 @@ import {
   type GeoObjectType,
 } from "@/lib/db/schema/geo";
 import { changeRateEnum, DOC_TYPES, type ChangeRate, type DocType } from "@/lib/db/schema/sources";
+import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { CONVERTERS, crawlRulesPatchSchema, regexPattern } from "@/lib/domain/sources/crawl-rules";
 
 export const queueConfigSchema = z.object({
@@ -32,21 +33,54 @@ export const budgetsSchema = z.strictObject(
   >,
 );
 
-export const modelsSchema = z.object({
-  tasks: z.record(
-    z.string(),
-    z.object({
-      model: z.string().min(1),
-      promptVersion: z.number().int().min(1),
-      /** Longest answer of the task in tokens (`max_tokens`); a page transcription needs far more than a label. */
-      maxTokens: z.number().int().min(1),
-    }),
-  ),
-  pricesEurPerMTok: z.record(
-    z.string(),
-    z.object({ input: z.number().nonnegative(), output: z.number().nonnegative() }),
-  ),
+export const MODEL_EFFORTS = ["low", "medium", "high"] as const;
+export type ModelEffort = (typeof MODEL_EFFORTS)[number];
+
+const modelTaskSchema = z.strictObject({
+  model: z.string().min(1),
+  promptVersion: z.number().int().min(1),
+  /** Output effort (`output_config.effort`); the default differs per model, so text tasks set it explicitly. */
+  effort: z.enum(MODEL_EFFORTS).default("low"),
+  /**
+   * Longest answer of the task in tokens (`max_tokens`), required per task. Thinking is always on for the 5.5
+   * models and counts against it, so a short label still needs room (ruling M4-P7).
+   */
+  maxTokens: z.number().int().min(1),
+  /** Marks the rendered system prompt for prompt caching; only for tasks whose system prompt is identical per request. */
+  cacheSystem: z.boolean().default(false),
+  /** Model decision of the task (e.g. after the model comparison), shown on the settings page. */
+  decision: z.strictObject({ status: z.enum(["provisional", "decided"]), note: z.string().trim().min(1) }).optional(),
 });
+
+export const modelsSchema = z
+  .strictObject({
+    tasks: z.record(z.string(), modelTaskSchema),
+    pricesEurPerMTok: z.record(
+      z.string(),
+      z.strictObject({ input: z.number().nonnegative(), output: z.number().nonnegative() }),
+    ),
+    /** Message Batches: price factor, poll interval, give-up time and requests per batch. */
+    batch: z.strictObject({
+      discount: z.number().positive().max(1),
+      pollSeconds: z.number().int().positive(),
+      maxHours: z.number().positive(),
+      maxRequests: z.number().int().positive(),
+    }),
+    /** Models compared on the same extraction units (spec 06). */
+    comparison: z.strictObject({ models: z.array(z.string().min(1)).min(2) }),
+  })
+  .superRefine((models, ctx) => {
+    for (const [name, task] of Object.entries(models.tasks)) {
+      if (!(task.model in models.pricesEurPerMTok)) {
+        ctx.addIssue({ code: "custom", path: ["tasks", name, "model"], message: `no price for model ${task.model}` });
+      }
+    }
+    models.comparison.models.forEach((model, i) => {
+      if (!(model in models.pricesEurPerMTok)) {
+        ctx.addIssue({ code: "custom", path: ["comparison", "models", i], message: `no price for model ${model}` });
+      }
+    });
+  });
 
 const configKey = z.string().regex(/^[a-z][a-z0-9-]*$/, "must be lower case letters, digits and dashes");
 const wikidataQid = z.string().regex(/^Q[1-9][0-9]*$/, "must be a Wikidata item id (Q…)");
@@ -447,6 +481,91 @@ export const whitelistSchema = z
     if (dup) ctx.addIssue({ code: "custom", message: `duplicate domain ${dup}` });
   });
 
+/** `config/mentions.json`: finding mentions of gazetteer objects in chunks (spec 06). */
+export const mentionsSchema = z
+  .strictObject({
+    /** Exact matches only for names with at least this many characters. */
+    exactMinChars: positiveInt,
+    /** Trigram matches only for names with at least this many characters. */
+    fuzzyMinChars: positiveInt,
+    /** `similarity` at or above this is a sure match. */
+    sureSimilarity: share,
+    /** `similarity` from here up to `sureSimilarity` is ambiguous. */
+    uncertainSimilarity: share,
+    maxNgramWords: positiveInt,
+    /** At most this many candidate objects go to the disambiguation. */
+    maxCandidates: positiveInt,
+    /** Tile ring around the tiles a document touches; 2 is a test switch. */
+    neighbourRing: z.union([z.literal(1), z.literal(2)]),
+    versionsPerJob: positiveInt,
+    /** Object types matched against the whole text first, to find the tiles a document touches. */
+    prepassTypes: z.array(geoObjectType).min(1),
+    /** Candidate space when a document touches no tile: the areas of its source. */
+    fallbackScope: z.literal("source_areas"),
+    /** Normalized words that never form a mention on their own. */
+    stopNames: z.array(z.string().min(1).refine((n) => n === normalizeName(n), "must be normalized (normalizeName)")),
+  })
+  .refine((m) => m.uncertainSimilarity < m.sureSimilarity, "uncertainSimilarity must be below sureSimilarity");
+
+export const NAME_AFFIX_HINTS = ["bay", "harbour", "anchorage", "cape", "island", "marina"] as const;
+
+/** `config/name-affixes.json`: generic name parts (normalized) stripped before matching, with the type they hint at. */
+export const nameAffixesSchema = z
+  .array(
+    z.strictObject({
+      affix: z.string().min(1).refine((a) => a === normalizeName(a), "must be normalized (normalizeName)"),
+      position: z.enum(["prefix", "suffix"]),
+      hint: z.enum(NAME_AFFIX_HINTS),
+    }),
+  )
+  .superRefine((entries, ctx) => {
+    const keys = entries.map((e) => `${e.position}:${e.affix}`);
+    const dup = keys.find((k, i) => keys.indexOf(k) !== i);
+    if (dup) ctx.addIssue({ code: "custom", message: `duplicate affix ${dup}` });
+  });
+
+/** `config/extraction.json`: classification, extraction units, quote check, geocoding and the model comparison. */
+export const extractionSchema = z.strictObject({
+  quote: z
+    .strictObject({ minChars: positiveInt, maxChars: positiveInt })
+    .refine((q) => q.minChars < q.maxChars, "minChars must be below maxChars"),
+  unit: z.strictObject({ neighbourChunks: z.number().int().nonnegative(), maxChunksPerUnit: positiveInt }),
+  maxFactsPerUnit: positiveInt,
+  unitsPerBatch: positiveInt,
+  /** The classification reads title, URL and the first this many words. */
+  classifyWords: positiveInt,
+  /** Documents with more words in sections go to the route extraction. */
+  routeSectionWords: positiveInt,
+  /** A highlight POI matches a gazetteer POI within this distance. */
+  poiMatchRadiusM: meters,
+  poiSimilarity: share,
+  geocode: z.strictObject({
+    minDocuments: positiveInt,
+    minSources: positiveInt,
+    radiusKm: z.number().positive(),
+    limit: positiveInt,
+    endpoint: z.url(),
+    ratePerMinute: z.number().positive(),
+  }),
+  /** Observation dates before this are treated as wrong. */
+  earliestDate: z.iso.date(),
+  comparison: z.strictObject({
+    units: positiveInt,
+    minSources: positiveInt,
+    ratingSample: positiveInt,
+    numericTolerance: share,
+    /** Estimated system prompt tokens per unit (cost estimate before the start). */
+    systemTokens: positiveInt,
+    /** Estimated output tokens per unit incl. thinking (cost estimate before the start). */
+    outputTokensPerUnit: positiveInt,
+  }),
+});
+
+export type ModelsConfig = z.infer<typeof modelsSchema>;
+export type ModelTaskConfig = z.infer<typeof modelTaskSchema>;
+export type MentionsConfig = z.infer<typeof mentionsSchema>;
+export type NameAffixesConfig = z.infer<typeof nameAffixesSchema>;
+export type ExtractionConfig = z.infer<typeof extractionSchema>;
 export type SourceTypesConfig = Record<DocType, { weight: number; changeRate: ChangeRate }>;
 export type DiscoveryConfig = z.infer<typeof discoverySchema>;
 export type FetchConfig = z.infer<typeof fetchSchema>;
@@ -463,7 +582,7 @@ export type GazetteerConfig = z.infer<typeof gazetteerSchema>;
 export type AppConfig = {
   queues: Record<string, QueueConfig>;
   budgets: Record<BudgetService, { dailyEur: number }>;
-  models: z.infer<typeof modelsSchema>;
+  models: ModelsConfig;
   areas: AreaConfig[];
   categories: CategoriesConfig;
   gazetteer: GazetteerConfig;
@@ -477,4 +596,7 @@ export type AppConfig = {
   fetch: FetchConfig;
   embeddings: EmbeddingsConfig;
   whitelist: WhitelistConfig;
+  mentions: MentionsConfig;
+  nameAffixes: NameAffixesConfig;
+  extraction: ExtractionConfig;
 };

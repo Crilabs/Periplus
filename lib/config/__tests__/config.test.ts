@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { areaByKey, loadConfig } from "../index";
 
 const repoConfig = loadConfig("config");
@@ -22,6 +23,9 @@ type Overrides = {
   fetch?: unknown;
   embeddings?: unknown;
   whitelist?: unknown;
+  mentions?: unknown;
+  nameAffixes?: unknown;
+  extraction?: unknown;
   /** File name (without `.json`) to content; replaces all repo area files. */
   areas?: Record<string, unknown>;
 };
@@ -44,6 +48,9 @@ function fixtureDir(overrides: Overrides): string {
     fetch: overrides.fetch ?? repoConfig.fetch,
     embeddings: overrides.embeddings ?? repoConfig.embeddings,
     "sources-whitelist": overrides.whitelist ?? repoConfig.whitelist,
+    mentions: overrides.mentions ?? repoConfig.mentions,
+    "name-affixes": overrides.nameAffixes ?? repoConfig.nameAffixes,
+    extraction: overrides.extraction ?? repoConfig.extraction,
   };
   for (const [name, value] of Object.entries(files)) {
     writeFileSync(join(dir, `${name}.json`), JSON.stringify(value));
@@ -321,6 +328,106 @@ describe("source configuration", () => {
     expect(() => loadConfig(fixtureDir({ embeddings: { ...repoConfig.embeddings, dimension: 0 } }))).toThrow(
       /embeddings\.json.*dimension/,
     );
+  });
+});
+
+describe("text configuration", () => {
+  const cfg = repoConfig;
+
+  it("the extraction model starts provisional on sonnet", () => {
+    expect(cfg.models.tasks["extract-facts"]).toMatchObject({
+      model: "claude-sonnet-5-5",
+      promptVersion: 1,
+      effort: "medium",
+      maxTokens: 16000,
+      cacheSystem: true,
+      decision: { status: "provisional" },
+    });
+  });
+
+  it("the haiku tasks leave room for thinking and the defaults fill in", () => {
+    expect(cfg.models.tasks["classify-document"]).toMatchObject({ model: "claude-haiku-5-5", effort: "low", maxTokens: 4096 });
+    expect(cfg.models.tasks["disambiguate-mention"]).toMatchObject({ model: "claude-haiku-5-5", effort: "low", maxTokens: 4096 });
+    expect(cfg.models.tasks["extract-route"]).toMatchObject({ model: "claude-sonnet-5-5", effort: "medium", maxTokens: 16000 });
+    expect(cfg.models.tasks["system.echo"]).toMatchObject({ effort: "low", cacheSystem: false });
+    expect(cfg.models.batch).toEqual({ discount: 0.5, pollSeconds: 60, maxHours: 26, maxRequests: 1000 });
+    expect(cfg.models.comparison.models).toEqual(["claude-sonnet-5-5", "claude-opus-5-5"]);
+  });
+
+  it("every model named in tasks and comparison has a price", () => {
+    const named = [...Object.values(cfg.models.tasks).map((t) => t.model), ...cfg.models.comparison.models];
+    for (const model of named) expect(cfg.models.pricesEurPerMTok[model], model).toBeDefined();
+    const models = structuredClone(cfg.models);
+    models.comparison.models = ["claude-sonnet-5-5", "claude-mystery-1"];
+    expect(() => loadConfig(fixtureDir({ models }))).toThrow(/models\.json.*claude-mystery-1/);
+    const m2 = structuredClone(cfg.models);
+    m2.tasks["extract-facts"]!.model = "claude-mystery-2";
+    expect(() => loadConfig(fixtureDir({ models: m2 }))).toThrow(/models\.json.*claude-mystery-2/);
+  });
+
+  it("a task needs maxTokens and an effort from the list", () => {
+    const models = structuredClone(cfg.models) as { tasks: Record<string, Record<string, unknown>> };
+    delete models.tasks["classify-document"]!.maxTokens;
+    expect(() => loadConfig(fixtureDir({ models }))).toThrow(/models\.json.*maxTokens/);
+    const m2 = structuredClone(cfg.models) as { tasks: Record<string, Record<string, unknown>> };
+    m2.tasks["classify-document"]!.effort = "max";
+    expect(() => loadConfig(fixtureDir({ models: m2 }))).toThrow(/models\.json.*effort/);
+  });
+
+  it("affixes are stored normalized", () => {
+    expect(cfg.nameAffixes.length).toBeGreaterThan(30);
+    for (const { affix } of cfg.nameAffixes) expect(affix).toBe(normalizeName(affix));
+    expect(cfg.nameAffixes).toContainEqual({ affix: "ορμοσ", position: "prefix", hint: "bay" });
+    expect(cfg.nameAffixes).toContainEqual({ affix: "marina", position: "prefix", hint: "marina" });
+    expect(cfg.nameAffixes).toContainEqual({ affix: "insel", position: "suffix", hint: "island" });
+    const notNormalized = [...cfg.nameAffixes, { affix: "Όρμος", position: "prefix", hint: "bay" }];
+    expect(() => loadConfig(fixtureDir({ nameAffixes: notNormalized }))).toThrow(/name-affixes\.json/);
+  });
+
+  it("an unknown affix hint is rejected", () => {
+    const affixes = [...cfg.nameAffixes, { affix: "kirche", position: "suffix", hint: "church" }];
+    expect(() => loadConfig(fixtureDir({ nameAffixes: affixes }))).toThrow(/name-affixes\.json.*hint/);
+  });
+
+  it("neighbourRing only allows 1 or 2", () => {
+    expect(cfg.mentions.neighbourRing).toBe(1);
+    expect(loadConfig(fixtureDir({ mentions: { ...cfg.mentions, neighbourRing: 2 } })).mentions.neighbourRing).toBe(2);
+    expect(() => loadConfig(fixtureDir({ mentions: { ...cfg.mentions, neighbourRing: 3 } }))).toThrow(
+      /mentions\.json.*neighbourRing/,
+    );
+  });
+
+  it("loads the mention and extraction settings", () => {
+    expect(cfg.mentions).toMatchObject({
+      exactMinChars: 3,
+      fuzzyMinChars: 5,
+      sureSimilarity: 0.75,
+      uncertainSimilarity: 0.6,
+      maxNgramWords: 4,
+      maxCandidates: 6,
+      versionsPerJob: 50,
+      prepassTypes: ["area", "gulf", "archipelago", "island"],
+      fallbackScope: "source_areas",
+    });
+    expect(cfg.mentions.stopNames).toContain("limani");
+    expect(cfg.extraction.quote).toEqual({ minChars: 12, maxChars: 300 });
+    expect(cfg.extraction.geocode).toMatchObject({ minDocuments: 2, minSources: 2, radiusKm: 20, ratePerMinute: 60 });
+    expect(cfg.extraction.comparison).toEqual({
+      units: 200,
+      minSources: 8,
+      ratingSample: 50,
+      numericTolerance: 0.1,
+      systemTokens: 3000,
+      outputTokensPerUnit: 4000,
+    });
+    expect(cfg.extraction.earliestDate).toBe("1990-01-01");
+  });
+
+  it("rejects an uncertain similarity above the sure one and unknown extraction keys", () => {
+    expect(() => loadConfig(fixtureDir({ mentions: { ...cfg.mentions, uncertainSimilarity: 0.8 } }))).toThrow(
+      /mentions\.json/,
+    );
+    expect(() => loadConfig(fixtureDir({ extraction: { ...cfg.extraction, bogus: 1 } }))).toThrow(/extraction\.json/);
   });
 });
 

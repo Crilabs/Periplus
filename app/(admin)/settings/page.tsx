@@ -14,7 +14,8 @@ const LEVEL_LABELS: Record<FactLevel, string> = {
 export default async function Page() {
   await requireAdmin();
   const { areas, gazetteer, ...rest } = getConfig();
-  const { geometry, factSchema, fetch, embeddings } = rest;
+  const { geometry, factSchema, fetch, embeddings, models } = rest;
+  const EFFORT_LABELS = { low: "niedrig", medium: "mittel", high: "hoch" } as const;
   const exceptions = Object.entries(fetch.converterBySource);
   const archiveRows: [string, string][] = [
     [
@@ -144,6 +145,44 @@ export default async function Page() {
           ))}
         </tbody>
       </table>
+
+      <h2 className="font-semibold">Modelle je Aufgabe</h2>
+      <table className="text-left">
+        <thead>
+          <tr className="border-b">
+            <th className="py-1 pr-4">Aufgabe</th>
+            <th className="py-1 pr-4">Modell</th>
+            <th className="py-1 pr-4">Prompt</th>
+            <th className="py-1 pr-4">Aufwand</th>
+            <th className="py-1 pr-4">Max. Token</th>
+            <th className="py-1 pr-4">Entscheidung</th>
+          </tr>
+        </thead>
+        <tbody>
+          {Object.entries(models.tasks).map(([task, t]) => (
+            <tr key={task} className="border-b align-top">
+              <td className="py-1 pr-4 font-mono">{task}</td>
+              <td className="py-1 pr-4 font-mono">{t.model}</td>
+              <td className="py-1 pr-4">v{t.promptVersion}</td>
+              <td className="py-1 pr-4">{EFFORT_LABELS[t.effort]}</td>
+              <td className="py-1 pr-4">
+                {t.maxTokens}
+                {t.cacheSystem ? ", System-Prompt gecacht" : ""}
+              </td>
+              <td className="py-1 pr-4">
+                {t.decision
+                  ? `${t.decision.status === "decided" ? "Entschieden" : "Vorläufig"}: ${t.decision.note}`
+                  : "–"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p>
+        Batch-Rabatt {models.batch.discount}, Abfrage alle {models.batch.pollSeconds} s, Abbruch nach{" "}
+        {models.batch.maxHours} h, höchstens {models.batch.maxRequests} Anfragen je Batch. Modellvergleich:{" "}
+        {models.comparison.models.join(", ")}.
+      </p>
 
       <h2 className="font-semibold">Quellen und Archiv</h2>
       <table className="text-left">

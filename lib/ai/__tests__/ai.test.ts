@@ -29,10 +29,12 @@ const config: AppConfig = {
   },
   models: {
     tasks: {
-      "system.echo": { model: "claude-haiku-5-5", promptVersion: 1, maxTokens: 1024 },
-      "pdf.to_markdown": { model: "claude-haiku-5-5", promptVersion: 1, maxTokens: 16000 },
+      "system.echo": { model: "claude-haiku-5-5", promptVersion: 1, effort: "low", maxTokens: 1024, cacheSystem: false },
+      "pdf.to_markdown": { model: "claude-haiku-5-5", promptVersion: 1, effort: "low", maxTokens: 16000, cacheSystem: false },
     },
     pricesEurPerMTok: { "claude-haiku-5-5": { input: 0.1, output: 0.5 } },
+    batch: { discount: 0.5, pollSeconds: 60, maxHours: 26, maxRequests: 1000 },
+    comparison: { models: ["claude-haiku-5-5", "claude-haiku-5-5"] },
   },
 };
 
