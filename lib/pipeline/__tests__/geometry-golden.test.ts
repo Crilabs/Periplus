@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { sql } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
 import { fixtureTransport } from "@/lib/adapters/http-fixtures";
@@ -16,6 +16,7 @@ import { tileBbox, type Bbox } from "@/lib/domain/tiles";
 import { DATASET_KINDS, importDataset } from "@/lib/pipeline/datasets";
 import { computePlaceGeometry } from "@/lib/pipeline/geometry";
 import { withRollback } from "@/test/db";
+import { writeGoldenFile } from "@/test/geometry/golden-file";
 import { memoryArchive } from "@/test/s3";
 
 // The test area aegina-west (tile q025:813:510, as in the gazetteer run) joins the configured areas.
@@ -121,7 +122,8 @@ async function goldenOf(db: Db, geoObjectId: string): Promise<Golden> {
     return typeof v === "number" ? v : null;
   };
   const sectors = Object.fromEntries(SECTORS.map((s) => [s, round(num(`shelter.${s}`) ?? NaN, 3)])) as Record<Sector, number>;
-  const open = fact("opening_bearing") as { bearingDeg: number | null; widthDeg: number };
+  // A missing fact becomes NaN or undefined: the comparison reports it, and `writeGoldenFile` refuses to store it.
+  const open = fact("opening_bearing") as { bearingDeg: number | null; widthDeg: number } | undefined;
   const approach = (fact("depth.approach") as Record<string, number | null> | undefined) ?? null;
   const min = num("depth.min");
   const max = num("depth.max");
@@ -130,7 +132,9 @@ async function goldenOf(db: Db, geoObjectId: string): Promise<Golden> {
   return {
     sectors,
     swell: round(num("swell_protection") ?? NaN, 3),
-    opening: { bearingDeg: open.bearingDeg === null ? null : round(open.bearingDeg, 1), widthDeg: round(open.widthDeg, 1) },
+    opening: open
+      ? { bearingDeg: open.bearingDeg === null ? null : round(open.bearingDeg, 1), widthDeg: round(open.widthDeg, 1) }
+      : { bearingDeg: null, widthDeg: NaN },
     depth: approach === null && min === null && max === null ? null : { approach, min, max },
     seabed: seabed?.map((s) => ({ type: s.type, share: round(s.share, 3) })) ?? null,
     anchorAreaM2: Math.round(area?.areaM2 ?? 0),
@@ -232,7 +236,7 @@ describe("geometry golden test", () => {
       }
 
       if (process.env.UPDATE_GOLDEN === "1") {
-        writeFileSync(GOLDEN_FILE, `${JSON.stringify(actual, null, 2)}\n`);
+        writeGoldenFile(GOLDEN_FILE, actual);
         return;
       }
       if (!existsSync(GOLDEN_FILE)) throw new Error(`${GOLDEN_FILE} missing: create it with UPDATE_GOLDEN=1`);
