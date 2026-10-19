@@ -669,6 +669,8 @@ it("ownValuesForComparisonSet reads facts of the latest computations", …); // 
 
 ## Bewusste Abweichungen und Entscheidungen dieses Plans
 
+> **Hinweis (nach der Umsetzung):** Einige Punkte unten wurden während der Ausführung per Entscheidung geändert: Strahlen starten am berechneten Anker (M2-P1), Ruhe nutzt auch den Straßenabstand (M2-P4), Schiffsdichte wird geladen und archiviert (M2-P3), bestätigte Orte werden nicht automatisch ausgeschlossen, sondern bekommen eine Review-Aufgabe (M2-T8-R1), Seekabel kommen aus OSM mit 200 m Puffer (M2-T9-R1). Maßgeblich sind diese Entscheidungen; die vollständige Liste steht in der PR-Beschreibung von M2.
+
 - **Raster-Import per `ST_FromGDALRaster` im Job statt `raster2pgsql`.** `raster2pgsql` liegt nur im Postgres-Image, der Worker läuft im Node-Image; der Job lädt das GeoTIFF je Kachel (≈ 240 × 240 Pixel), archiviert es und reicht die Bytes an PostGIS (`ST_Tile` 256×256). Dafür ist der GDAL-Treiber GTiff im Postgres-Image eingeschaltet. Landpolygone bleiben beim CLI aus M1.
 - **Tiefe wird beim Import positiv gespeichert** (Vorzeichen des EMODnet-Höhenmodells umgekehrt), damit jede Leseabfrage dieselbe Regel hat: Wert > 0 = Wassertiefe unter LAT, sonst keine Tiefe.
 - **Nur EMODnet DTM 2024 (~115 m) in M2.** HR-Küsten-DTMs und GEBCO-Fallback kommen erst, wenn der Pilot Lücken zeigt; die Spalten `dataset`/`resolution_m` und `depthConfidence` sind dafür vorbereitet.

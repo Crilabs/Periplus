@@ -29,7 +29,7 @@ Ablauf der Läufe: `docs/runbook.md`, Abschnitt „Geometrie und Ausschlüsse“
 - [ ] **Tiefe oder begründete Lücke** je Kandidat: `depth.approach` oder `depth.min`, sonst Lücke `no_bathymetry` oder `no_anchor_area` (Ausgabe „depth gaps“).
 - [ ] **Stichprobe ≥ 20 Orte** des Vergleichssatzes gegen Navily dokumentiert: Bericht `docs/pilot/<datum>-m2-stichprobe.md` eingecheckt (Schutz je Sektor; Grund und Tiefendeckung als Zusatz).
 - [ ] **Laufzeit und Kosten** für alle Pilotorte dokumentiert (Abschnitte im Stichprobenbericht).
-- [x] **Golden-Test grün** (CI-Job `check`).
+- [x] **Golden-Test grün** (CI-Job `check`) – ohne Meeresboden, siehe offener Punkt zum Seabed-Fixture.
 
 ## Bewusst verschoben
 - Unbenannte Buchten aus Geometrie (`geometry.detect_bays`) → M7; HR-Küsten-DTMs und GEBCO-Fallback, wenn der Pilot Lücken zeigt; Mole-Umriss für Häfen (Hafenbecken = Hafenpolygon oder 250-m-Kreis); Schiffsdichte nur abgelegt (Verbraucher M9).
