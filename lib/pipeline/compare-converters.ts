@@ -1,7 +1,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 import type { Converter, ConverterName } from "@/lib/adapters/fetch";
 import { BlockedUrlError } from "@/lib/adapters/fetch/ssrf";
-import { HttpError, type CallContext, type Transport } from "@/lib/adapters/http";
+import { HttpError, RetryableHttpError, type CallContext, type Transport } from "@/lib/adapters/http";
 import type { Archive } from "@/lib/adapters/s3";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
@@ -58,7 +58,9 @@ async function storeOutput(db: Db, sampleId: string, converter: ConverterName, v
  *    (`Converted.costEur`, the sum the converter booked in `external_calls`); the Markdown goes to
  *    `comparison/converters/<sampleId>/<converter>.md`.
  * 3. A converter's error is stored in its `error` and the others still run; `BudgetExceeded` is thrown (the job
- *    waits for the next budget day), as is a temporary failure of the page fetch (`RetryableHttpError`).
+ *    waits for the next budget day), as is a temporary failure of the page fetch (`RetryableHttpError`). A temporary
+ *    failure of a converter (`RetryableHttpError`, e.g. Jina or Firecrawl answering 429/5xx) is stored too and thrown
+ *    once the other converters ran, so the job's retries convert it again (only what is still missing).
  * Outputs are upserted per (sample, converter): a retry creates no duplicate.
  */
 export async function compareSample(db: Db, sampleId: string, deps: CompareDeps, ctx: CallContext & { runId: string }): Promise<void> {
@@ -105,6 +107,7 @@ export async function compareSample(db: Db, sampleId: string, deps: CompareDeps,
 
   const cfg = getConfig().fetch;
   const rate = { key: `domain:${registrableDomain(pageUrl)}`, perMinute: ratePerMinute, maxWaitMs: cfg.maxRateWaitMs };
+  let temporary: RetryableHttpError | null = null;
   for (const name of pending) {
     const started = performance.now();
     try {
@@ -131,8 +134,10 @@ export async function compareSample(db: Db, sampleId: string, deps: CompareDeps,
       if (error instanceof BudgetExceeded) throw error;
       const message = error instanceof Error ? error.message : String(error);
       await storeOutput(db, sampleId, name, { mdKey: null, chars: 0, durationMs: Math.round(performance.now() - started), costEur: 0, error: message });
+      if (error instanceof RetryableHttpError) temporary ??= error;
     }
   }
+  if (temporary) throw temporary;
 }
 
 /** Plan of the stage `compare.converters`: one job per sample of `params.sampleIds`. */

@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createConverters } from "@/lib/adapters/fetch";
+import { ConverterServiceError, createConverters, type RenderPage } from "@/lib/adapters/fetch";
 import { createGuardedAgent, createGuardedTransport } from "@/lib/adapters/fetch/guarded";
-import { RetryableHttpError, type HttpRequest, type Transport } from "@/lib/adapters/http";
+import { makeResponse, RetryableHttpError, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { chunks, crawlFrontier, documents, documentVersions, outlinks, runs, sources } from "@/lib/db/schema";
@@ -17,7 +17,7 @@ import { crawlRenderPage } from "@/lib/jobs/handlers/fetch";
 import { FETCH_RUN_STAGES, startExclusiveFetchRun, startFetchRun, startTestCrawl, startUploadFetchRun } from "@/lib/pipeline/fetch/run";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { FETCH_SOURCE_STAGE, prepareSourceCrawl } from "@/lib/pipeline/fetch/source";
-import { FETCH_URL_STAGE, fetchUrl, followLinks, planFetchUrls, type FetchUrlDeps } from "@/lib/pipeline/fetch/url";
+import { decodeHtml, FETCH_URL_STAGE, fetchUrl, followLinks, planFetchUrls, type FetchUrlDeps } from "@/lib/pipeline/fetch/url";
 import { getSource } from "@/lib/domain/sources/store";
 import { testDb, withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
@@ -597,6 +597,43 @@ describe("crawl stages", () => {
     });
   });
 
+  it("a converter service refusing (lapsed key) fails the job and leaves the page queued; a page Jina reports 404 is failed", async () => {
+    const s = newSite();
+    const url = (p: string) => `${s.origin}${s.path(p)}`;
+    s.set("/a", page(html("A", `<p>${paragraph("west")}</p>`)));
+    const jinaAnswering = (status: number, body: unknown): Transport => async (req) => {
+      if (!req.url.startsWith(cfg().jina.endpoint)) throw new Error(`unexpected request ${req.url}`);
+      return makeResponse(status, new TextEncoder().encode(JSON.stringify(body)));
+    };
+    await withRollback(async (tx) => {
+      const sourceId = await insertSource(tx, s, { startUrls: [url("/a")], converter: "jina" });
+      const refused = deps(memoryArchive(), { converters: createConverters({ transport: jinaAnswering(401, { code: 401 }), cfg: cfg() }) });
+      await expect(crawl(tx, sourceId, refused)).rejects.toBeInstanceOf(ConverterServiceError);
+      expect((await frontierOf(tx, sourceId))[0]).toMatchObject({ status: "queued" });
+
+      const gone = deps(memoryArchive(), {
+        converters: createConverters({ transport: jinaAnswering(200, { code: 200, data: { httpStatus: 404, content: "" } }), cfg: cfg() }),
+      });
+      const { results } = await crawl(tx, sourceId, gone);
+      expect(results).toEqual([expect.objectContaining({ outcome: "failed" })]);
+      expect((await frontierOf(tx, sourceId))[0]).toMatchObject({ status: "failed", reason: "HTTP 404" });
+    });
+  });
+
+  it("a rendered page that ended on another site is skipped as an offsite redirect", async () => {
+    const s = newSite();
+    const url = (p: string) => `${s.origin}${s.path(p)}`;
+    s.set("/a", page(html("A", `<p>${paragraph("west")}</p>`)));
+    const renderPage: RenderPage = async () => ({ html: html("Elsewhere", `<p>${paragraph("east")}</p>`), finalUrl: "https://elsewhere.example/landing", status: 200 });
+    await withRollback(async (tx) => {
+      const sourceId = await insertSource(tx, s, { startUrls: [url("/a")], render: "always" });
+      const { results } = await crawl(tx, sourceId, deps(memoryArchive(), { converters: createConverters({ transport: noNetwork, renderPage, cfg: cfg() }) }));
+      expect(results).toEqual([expect.objectContaining({ outcome: "skipped" })]);
+      expect((await frontierOf(tx, sourceId))[0]).toMatchObject({ status: "skipped", reason: "redirect_offsite" });
+      expect(await documentsOf(tx, sourceId)).toEqual([]);
+    });
+  });
+
   it("an explicit robots ban on one of two start hosts skips only that host", async () => {
     const s = newSite();
     const banned = `${s.sub("closed")}${s.path("/a")}`;
@@ -647,6 +684,25 @@ describe("crawl stages", () => {
       expect(results).toEqual([expect.objectContaining({ outcome: "skipped" })]);
     });
     expect(seen.some((u) => u.includes(`intern.${s.host}`))).toBe(false);
+  });
+});
+
+describe("decodeHtml", () => {
+  // "Αίγινα" in windows-1253.
+  const aegina = [0xc1, 0xdf, 0xe3, 0xe9, 0xed, 0xe1];
+  const doc = (head: string) =>
+    new Uint8Array([...new TextEncoder().encode(`<!doctype html><html><head>${head}<title>`), ...aegina, ...new TextEncoder().encode("</title>")]);
+
+  it("reads a charset declared only in a meta element", () => {
+    expect(decodeHtml(doc('<meta charset="windows-1253">'), "text/html")).toContain("<title>Αίγινα</title>");
+    expect(decodeHtml(doc('<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-7">'), null)).toContain("Αίγινα");
+  });
+
+  it("the Content-Type header wins over the meta element; none or an unknown one is UTF-8", () => {
+    const utf8 = new TextEncoder().encode('<meta charset="windows-1253"><title>Αίγινα</title>');
+    expect(decodeHtml(utf8, "text/html; charset=utf-8")).toContain("Αίγινα");
+    expect(decodeHtml(new TextEncoder().encode("<title>Αίγινα</title>"), "text/html")).toContain("Αίγινα");
+    expect(decodeHtml(new TextEncoder().encode('<meta charset="x-unknown"><title>Αίγινα</title>'), null)).toContain("Αίγινα");
   });
 });
 

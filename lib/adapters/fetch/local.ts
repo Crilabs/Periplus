@@ -129,6 +129,7 @@ export function createLocalConverter(deps: { renderPage?: RenderPage; cfg: Fetch
         rendered,
         durationMs: Math.round(performance.now() - started),
         costEur: 0,
+        ...(rendered ? { finalUrl: base } : {}),
       };
     },
   };

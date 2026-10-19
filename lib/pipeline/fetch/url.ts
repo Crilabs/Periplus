@@ -213,9 +213,26 @@ export function formatOf(contentType: string | null, url: string): Format {
   return { kind: "unsupported" };
 }
 
-/** Text of an HTML answer in its declared charset (UTF-8 when none or unknown). */
+/** Bytes of an HTML document searched for a `<meta>` charset (the WHATWG prescan looks at the first 1024). */
+const META_PRESCAN_BYTES = 1024;
+
+/**
+ * The charset a `<meta charset>` or `<meta http-equiv="Content-Type" content="…; charset=…">` in the first 1024 bytes
+ * declares (UTF-16 counts as UTF-8: a document that can be read as ASCII here is not UTF-16), or null.
+ */
+function metaCharset(body: Uint8Array): string | null {
+  const head = new TextDecoder("latin1").decode(body.subarray(0, META_PRESCAN_BYTES));
+  const declared = /<meta\b[^>]*?charset\s*=\s*["']?\s*([\w.:-]+)/i.exec(head)?.[1];
+  if (!declared) return null;
+  return /^utf-16/i.test(declared) ? "utf-8" : declared;
+}
+
+/**
+ * Text of an HTML answer in its declared charset: the `Content-Type` header's, else a `<meta>` charset of the
+ * document (older Greek sites declare `windows-1253`/`iso-8859-7` only there), else UTF-8; an unknown one is UTF-8.
+ */
 export function decodeHtml(body: Uint8Array, contentType: string | null): string {
-  const charset = /charset=["']?([\w-]+)/i.exec(contentType ?? "")?.[1];
+  const charset = /charset=["']?([\w-]+)/i.exec(contentType ?? "")?.[1] ?? metaCharset(body) ?? undefined;
   try {
     return new TextDecoder(charset ?? "utf-8").decode(body);
   } catch {
@@ -356,8 +373,10 @@ async function archivedLinks(db: Db, archive: Archive, documentId: string, pageU
  *    HTML → the source's converter.
  * 5. Language, publication date, `storeFetched` (document type = source type).
  * 6. Links of HTML (`followLinks`, none for other formats), which also marks the frontier row `fetched`.
- * 7. A 4xx other than 404/410/429 (`HttpError`) marks the row `failed` with `HTTP <status>` and
- *    is the outcome `failed`, not an exception; `RetryableHttpError` is thrown (retry, then `failed_job`).
+ * 7. A 4xx other than 404/410/429 of the page (`HttpError` of the crawl's own request, or a `TargetHttpError` a
+ *    converter service reports for the page) marks the row `failed` with `HTTP <status>` and is the outcome `failed`,
+ *    not an exception; `RetryableHttpError` is thrown (retry, then `failed_job`), and so is a `ConverterServiceError`
+ *    (the service refused, e.g. a lapsed key: every job fails visibly instead of every page).
  */
 export async function fetchUrl(db: Db, job: FetchUrlJob, deps: FetchUrlDeps, ctx: CallContext & { runId: string }): Promise<FetchUrlResult> {
   const cfg = getConfig().fetch;
@@ -457,6 +476,11 @@ export async function fetchUrl(db: Db, job: FetchUrlJob, deps: FetchUrlDeps, ctx
         { url: pageUrl, html: name === "local" ? html : null, boilerplateSelectors: source.crawlRules.boilerplateSelectors, render: source.crawlRules.render, rate },
         callCtx,
       );
+      // A render that scripts or a meta refresh moved to another site is not this source's page (like an offsite
+      // redirect of the HTTP fetch).
+      if (converted.finalUrl && registrableDomain(converted.finalUrl) !== registrableDomain(pageUrl)) {
+        return stop("skipped", "skipped", "redirect_offsite");
+      }
       markdown = converted.markdown;
       converter = name;
       hint = converted.publishedHint;

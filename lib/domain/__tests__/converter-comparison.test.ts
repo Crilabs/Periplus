@@ -1,7 +1,7 @@
 import { eq, inArray } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Converter, ConverterName, Converted } from "@/lib/adapters/fetch";
-import { makeResponse, type Transport } from "@/lib/adapters/http";
+import { makeResponse, RetryableHttpError, type Transport } from "@/lib/adapters/http";
 import type { Db } from "@/lib/db/client";
 import { converterOutputs, converterSamples, documents, documentVersions, sources } from "@/lib/db/schema";
 import {
@@ -178,6 +178,31 @@ describe("compareSample", () => {
       expect((second.jina as ReturnType<typeof fakeConverter>).inputs).toHaveLength(1);
       expect((second.local as ReturnType<typeof fakeConverter>).inputs).toHaveLength(0);
       expect(await samplesToCompare(tx)).toEqual([]);
+    }));
+
+  it("a temporary converter failure is stored, the others still run, and the job is retried for it", () =>
+    withRollback(async (tx) => {
+      const { sampleId } = await insertSample(tx);
+      const { id: runId } = await comparisonRun(tx);
+      const ctx = { db: tx, runId, stage: COMPARE_STAGE };
+      const isAllowed = async () => true;
+      const archive = memoryArchive();
+      const busy = converters({ jina: fakeConverter("jina", { fail: new RetryableHttpError("HTTP 503 from jina", 503) }) });
+      await expect(compareSample(tx, sampleId, { transport: siteTransport, archive, converters: busy, isAllowed }, ctx)).rejects.toBeInstanceOf(
+        RetryableHttpError,
+      );
+      expect((await outputsOf(tx, sampleId)).map((r) => [r.converter, r.error])).toEqual([
+        ["jina", "HTTP 503 from jina"],
+        ["firecrawl", null],
+        ["local", null],
+      ]);
+
+      // The retry converts only Jina.
+      const retry = converters();
+      await compareSample(tx, sampleId, { transport: siteTransport, archive, converters: retry, isAllowed }, ctx);
+      expect((await outputsOf(tx, sampleId)).every((r) => r.error === null)).toBe(true);
+      expect((retry.local as ReturnType<typeof fakeConverter>).inputs).toHaveLength(0);
+      expect((retry.jina as ReturnType<typeof fakeConverter>).inputs).toHaveLength(1);
     }));
 
   it("an exceeded budget is thrown, a robots ban is stored for every converter", () =>

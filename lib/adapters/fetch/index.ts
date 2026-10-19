@@ -7,6 +7,7 @@ import { createLocalConverter } from "./local";
 import type { Converter, ConverterName, RenderPage } from "./types";
 
 export type { Converted, Converter, ConverterName, ConvertInput, RenderPage } from "./types";
+export { ConverterServiceError, TargetHttpError } from "./types";
 export { htmlToMarkdown } from "./local";
 export { BlockedUrlError, isPublicHttpUrl, isPublicUrlLiteral } from "./ssrf";
 

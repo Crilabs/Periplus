@@ -1,8 +1,8 @@
 import type { FetchConfig } from "@/lib/config";
 import { getEnv } from "@/lib/env";
-import { HttpError, httpCall, RetryableHttpError, type HttpResponse, type Transport } from "../http";
+import { httpCall, RetryableHttpError, type HttpResponse, type Transport } from "../http";
 import { BlockedUrlError, isPublicUrlLiteral } from "./ssrf";
-import type { Converter } from "./types";
+import { ConverterServiceError, serviceCall, TargetHttpError, type Converter } from "./types";
 
 type FirecrawlAnswer = {
   success?: unknown;
@@ -33,8 +33,9 @@ const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ?
 
 /**
  * Firecrawl scrape: POST main-content Markdown for the URL, the boilerplate selectors as `excludeTags`.
- * Charged against the daily `firecrawl` budget at `(creditsUsed ?? 1) × eurPerCredit`. `success: false` is an
- * `HttpError`; so is a target page Firecrawl reports with a 4xx status (5xx: `RetryableHttpError`).
+ * Charged against the daily `firecrawl` budget at `(creditsUsed ?? 1) × eurPerCredit`. `success: false` and
+ * Firecrawl's own 4xx (wrong key, no credit) are a `ConverterServiceError`; a target page Firecrawl reports with a 4xx
+ * status is a `TargetHttpError` (5xx: `RetryableHttpError`).
  */
 export function createFirecrawlConverter(transport: Transport, cfg: FetchConfig["firecrawl"]): Converter {
   return {
@@ -48,32 +49,34 @@ export function createFirecrawlConverter(transport: Transport, cfg: FetchConfig[
         const credits = creditsOf(res);
         return { units: credits, unit: "credits", costEur: credits * cfg.eurPerCredit };
       };
-      const res = await httpCall(
-        transport,
-        {
-          service: "firecrawl",
-          operation: "scrape",
-          url: cfg.endpoint,
-          method: "POST",
-          body: JSON.stringify({ url: input.url, formats: ["markdown"], onlyMainContent: true, excludeTags: input.boilerplateSelectors }),
-          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-          timeoutMs: cfg.timeoutMs,
-          budget: "firecrawl",
-          costOf,
-          meta: { url: input.url },
-        },
-        ctx,
+      const res = await serviceCall("firecrawl", () =>
+        httpCall(
+          transport,
+          {
+            service: "firecrawl",
+            operation: "scrape",
+            url: cfg.endpoint,
+            method: "POST",
+            body: JSON.stringify({ url: input.url, formats: ["markdown"], onlyMainContent: true, excludeTags: input.boilerplateSelectors }),
+            headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+            timeoutMs: cfg.timeoutMs,
+            budget: "firecrawl",
+            costOf,
+            meta: { url: input.url },
+          },
+          ctx,
+        ),
       );
       const answer = parse(res);
       if (answer.success !== true) {
-        throw new HttpError(`firecrawl scrape of ${input.url} failed: ${text(answer.error) ?? "success false"}`, res.status);
+        throw new ConverterServiceError(`firecrawl scrape of ${input.url} failed: ${text(answer.error) ?? "success false"}`);
       }
       const metadata = answer.data?.metadata ?? {};
       const pageStatus = metadata.statusCode;
       if (typeof pageStatus === "number" && pageStatus >= 400) {
         const message = `firecrawl: ${input.url} answered HTTP ${pageStatus}`;
         if (pageStatus === 429 || pageStatus >= 500) throw new RetryableHttpError(message, pageStatus);
-        throw new HttpError(message, pageStatus);
+        throw new TargetHttpError(message, pageStatus);
       }
       if (typeof answer.data?.markdown !== "string") throw new RetryableHttpError(`firecrawl answer for ${input.url} has no markdown`, res.status);
       return {

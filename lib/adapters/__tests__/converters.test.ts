@@ -19,7 +19,7 @@ import {
 } from "@/lib/adapters/fetch/browser";
 import { BlockedAddressError, blockedCause, createGuardedAgent } from "@/lib/adapters/fetch/guarded";
 import { BlockedUrlError } from "@/lib/adapters/fetch/ssrf";
-import type { RenderPage } from "@/lib/adapters/fetch/types";
+import { ConverterServiceError, TargetHttpError, type RenderPage } from "@/lib/adapters/fetch/types";
 import { HttpError, makeResponse, RetryableHttpError, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import { fixtureTransport } from "@/lib/adapters/http-fixtures";
 import { getConfig, type FetchConfig } from "@/lib/config";
@@ -195,19 +195,25 @@ describe("jina converter", () => {
     expect(requests[0]!.budget).toBe("jina");
   });
 
-  it("a target status Jina reports is an HttpError for 4xx and retryable for 5xx", async () => {
+  it("a target status Jina reports is a TargetHttpError for 4xx and retryable for 5xx; Jina's own 4xx is a service error", async () => {
     const answering = (data: Record<string, unknown>): Transport => async () =>
       makeResponse(200, new TextEncoder().encode(JSON.stringify({ code: 200, data: { content: "", usage: { tokens: 10 }, ...data } })));
     const target = { url: "https://x.test.invalid/gone", html: null, boilerplateSelectors: [], render: "auto" as const };
     await withRollback(async (tx) => {
       const gone = await createJinaConverter(answering({ httpStatus: 404 }), cfg().jina).convert(target, { db: tx }).catch((e: unknown) => e);
-      expect(gone).toBeInstanceOf(HttpError);
+      expect(gone).toBeInstanceOf(TargetHttpError);
       expect((gone as HttpError).status).toBe(404);
       await expect(createJinaConverter(answering({ httpStatus: 503 }), cfg().jina).convert(target, { db: tx })).rejects.toBeInstanceOf(
         RetryableHttpError,
       );
       const coded: Transport = async () => makeResponse(200, new TextEncoder().encode(JSON.stringify({ code: 422, data: null })));
-      await expect(createJinaConverter(coded, cfg().jina).convert(target, { db: tx })).rejects.toBeInstanceOf(HttpError);
+      await expect(createJinaConverter(coded, cfg().jina).convert(target, { db: tx })).rejects.toBeInstanceOf(TargetHttpError);
+      for (const status of [401, 402, 403]) {
+        const refused: Transport = async () => makeResponse(status, new TextEncoder().encode(JSON.stringify({ code: status, message: "no" })));
+        const err = await createJinaConverter(refused, cfg().jina).convert(target, { db: tx }).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ConverterServiceError);
+        expect(err).not.toBeInstanceOf(HttpError);
+      }
     });
   });
 
@@ -250,15 +256,22 @@ describe("firecrawl converter", () => {
     });
   });
 
-  it("success false is an HttpError", async () => {
+  it("success false and Firecrawl's own 4xx are service errors, a target 4xx is a TargetHttpError", async () => {
     const transport: Transport = async () =>
       makeResponse(200, new TextEncoder().encode(JSON.stringify({ success: false, error: "blocked" })));
     await withRollback(async (tx) => {
       const err = await createFirecrawlConverter(transport, cfg().firecrawl)
         .convert({ url: "https://x.test.invalid/a", html: null, boilerplateSelectors: [], render: "auto" }, { db: tx })
         .catch((e: unknown) => e);
-      expect(err).toBeInstanceOf(HttpError);
+      expect(err).toBeInstanceOf(ConverterServiceError);
+      expect(err).not.toBeInstanceOf(HttpError);
       expect((err as Error).message).toMatch(/blocked/);
+      const target = { url: "https://x.test.invalid/a", html: null, boilerplateSelectors: [], render: "auto" as const };
+      const noCredit: Transport = async () => makeResponse(402, new TextEncoder().encode(JSON.stringify({ success: false, error: "credits" })));
+      await expect(createFirecrawlConverter(noCredit, cfg().firecrawl).convert(target, { db: tx })).rejects.toBeInstanceOf(ConverterServiceError);
+      const gone: Transport = async () =>
+        makeResponse(200, new TextEncoder().encode(JSON.stringify({ success: true, data: { markdown: "", metadata: { statusCode: 404 } } })));
+      await expect(createFirecrawlConverter(gone, cfg().firecrawl).convert(target, { db: tx })).rejects.toBeInstanceOf(TargetHttpError);
     });
   });
 
