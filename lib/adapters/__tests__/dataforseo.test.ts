@@ -108,7 +108,7 @@ describe("searchOrganic", () => {
     });
   });
 
-  it("a recorded live 40101 task error is not retried", async () => {
+  it("a recorded live 40101 task error is retried", async () => {
     await withRollback(async (tx) => {
       const error = await searchOrganic(
         fixtureTransport(),
@@ -116,7 +116,7 @@ describe("searchOrganic", () => {
         { db: tx },
         cfg(),
       ).catch((e: unknown) => e);
-      expect(error).toBeInstanceOf(HttpError);
+      expect(error).toBeInstanceOf(RetryableHttpError);
       expect((error as Error).message).toMatch(/40101/);
     });
   });

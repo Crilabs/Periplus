@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import { areaByKey, getConfig, type DiscoveryConfig } from "@/lib/config";
+import { areaByKey, type AreaConfig, type DiscoveryConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { facts, geoNames, geoObjects, tileGeoObjects, tiles, type SerpLevel } from "@/lib/db/schema";
 import { validAt } from "@/lib/domain/timeline";
@@ -52,9 +52,9 @@ async function namesByLanguage(db: Db, objectIds: string[], languages: string[])
   return out;
 }
 
-/** Templates whose language the area searches in; all templates for a tile without a configured area. */
-function templatesFor(templates: Template[], sourceLanguages: string[] | null): Template[] {
-  return sourceLanguages ? templates.filter((t) => sourceLanguages.includes(t.lang)) : templates;
+/** Templates whose language the area searches in. */
+function templatesFor(templates: Template[], sourceLanguages: string[]): Template[] {
+  return templates.filter((t) => sourceLanguages.includes(t.lang));
 }
 
 function build(
@@ -105,17 +105,24 @@ export async function areaQueries(db: Db, areaKey: string, cfg: DiscoveryConfig)
  * The tile templates for the valid objects of the tile: islands, islets and archipelagos (priority 1),
  * settlements (2) and named bays (3) whose newest `anchor_area` fact has `areaM2 >= cfg.bay.minAnchorAreaM2` or
  * that have at least `cfg.bay.minWikidataNames` valid Wikidata names. Template languages are limited to the
- * `sourceLanguages` of the tile's area; deduplicated over `(keyword, languageCode, locationCode)`.
+ * `sourceLanguages` of the tile's area (`areas`); throws when the tile has no area or its area is not configured; deduplicated over `(keyword, languageCode, locationCode)`.
  */
-export async function tileQueries(db: Db, tileId: string, cfg: DiscoveryConfig): Promise<DiscoveryQuery[]> {
+export async function tileQueries(
+  db: Db,
+  tileId: string,
+  cfg: DiscoveryConfig,
+  areas: AreaConfig[],
+): Promise<DiscoveryQuery[]> {
   const [tile] = await db
     .select({ areaKey: geoObjects.configKey })
     .from(tiles)
     .leftJoin(geoObjects, eq(geoObjects.id, tiles.areaId))
     .where(eq(tiles.id, tileId));
-  const areaKey = tile?.areaKey ?? null;
-  const area = areaKey ? getConfig().areas.find((a) => a.key === areaKey) : undefined;
-  const templates = templatesFor(cfg.templates.tile, area?.sourceLanguages ?? null);
+  const areaKey = tile?.areaKey;
+  if (!areaKey) throw new Error(`tile ${tileId} has no area: tile queries need the area's source languages`);
+  const area = areas.find((a) => a.key === areaKey);
+  if (!area) throw new Error(`area ${areaKey} of tile ${tileId} is not configured`);
+  const templates = templatesFor(cfg.templates.tile, area.sourceLanguages);
   if (templates.length === 0) return [];
 
   const f = alias(facts, "f");
@@ -158,14 +165,18 @@ export async function tileQueries(db: Db, tileId: string, cfg: DiscoveryConfig):
   );
 }
 
-/** Area queries before tile queries, then by priority, then keyword; keeps the first `max`. */
+const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+/** Area queries before tile queries, then by priority, keyword, language and location; keeps the first `max`. */
 export function capQueries(queries: DiscoveryQuery[], max: number): { kept: DiscoveryQuery[]; dropped: number } {
   const levelRank = (q: DiscoveryQuery) => (q.level === "area" ? 0 : 1);
   const sorted = [...queries].sort(
     (a, b) =>
       levelRank(a) - levelRank(b) ||
       a.priority - b.priority ||
-      (a.keyword < b.keyword ? -1 : a.keyword > b.keyword ? 1 : 0),
+      cmp(a.keyword, b.keyword) ||
+      cmp(a.languageCode, b.languageCode) ||
+      a.locationCode - b.locationCode,
   );
   return { kept: sorted.slice(0, max), dropped: Math.max(0, sorted.length - max) };
 }

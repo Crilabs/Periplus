@@ -24,6 +24,7 @@ const LAT = 33.17;
 const TILE = tileIdFor(LON, LAT);
 
 const cfg = (): DiscoveryConfig => getConfig().discovery;
+const areas = () => getConfig().areas;
 
 type Name = { name: string; language: string; origin?: NameOrigin; isPreferred?: boolean };
 
@@ -100,7 +101,7 @@ describe("tileQueries", () => {
       ]);
       await insertObject(tx, "settlement", [{ name: "Chora", language: "en" }]);
 
-      const qs = await tileQueries(tx, TILE, cfg());
+      const qs = await tileQueries(tx, TILE, cfg(), areas());
       expect(keywords(qs)).toEqual(
         [
           "Ankerplatz Nisos-de|de|2276|1",
@@ -123,7 +124,7 @@ describe("tileQueries", () => {
       await insertAnchorArea(tx, bay, 25_000);
       // Same transaction, same created_at: a later fact must still win by insertion order.
       await insertAnchorArea(tx, bay, 10_000);
-      expect(await tileQueries(tx, TILE, cfg())).toEqual([]);
+      expect(await tileQueries(tx, TILE, cfg(), areas())).toEqual([]);
     });
   });
 
@@ -131,7 +132,7 @@ describe("tileQueries", () => {
     await withRollback(async (tx) => {
       await insertTile(tx, await saronicAreaId(tx));
       await insertObject(tx, "island", [{ name: "Only English", language: "en" }]);
-      const qs = await tileQueries(tx, TILE, cfg());
+      const qs = await tileQueries(tx, TILE, cfg(), areas());
       expect(keywords(qs)).toEqual(["anchorage Only English|en|2826|1"]);
     });
   });
@@ -151,8 +152,25 @@ describe("tileQueries", () => {
         ...cfg(),
         templates: { ...cfg().templates, tile: [...cfg().templates.tile, { template: "mouillage {name}", lang: "fr", locationCode: 2250 }] },
       };
-      const qs = await tileQueries(tx, TILE, withFrench);
+      const qs = await tileQueries(tx, TILE, withFrench, areas());
       expect(keywords(qs)).toEqual(["anchorage Alpha|en|2826|1"]);
+    });
+  });
+});
+
+describe("tileQueries scope", () => {
+  it("throws when the tile has no area", async () => {
+    await withRollback(async (tx) => {
+      await insertTile(tx, null);
+      await insertObject(tx, "island", [{ name: "Nowhere", language: "en" }]);
+      await expect(tileQueries(tx, TILE, cfg(), areas())).rejects.toThrow(/no area/);
+    });
+  });
+
+  it("throws when the tile's area is not configured", async () => {
+    await withRollback(async (tx) => {
+      await insertTile(tx, await saronicAreaId(tx));
+      await expect(tileQueries(tx, TILE, cfg(), [])).rejects.toThrow(/not configured/);
     });
   });
 });
@@ -175,6 +193,15 @@ describe("areaQueries", () => {
 });
 
 describe("capQueries", () => {
+  it("orders equal keywords by language and location, whatever the input order", () => {
+    const q = (languageCode: string, locationCode: number): DiscoveryQuery => ({
+      keyword: "x", languageCode, locationCode, level: "tile", scopeId: "t", priority: 1,
+    });
+    const want = [q("de", 2276), q("en", 2250), q("en", 2826)];
+    expect(capQueries([q("en", 2826), q("de", 2276), q("en", 2250)], 10).kept).toEqual(want);
+    expect(capQueries([q("en", 2250), q("en", 2826), q("de", 2276)], 10).kept).toEqual(want);
+  });
+
   it("capQueries keeps area queries first and reports the rest", () => {
     const q = (level: "area" | "tile", priority: number, keyword: string): DiscoveryQuery => ({
       keyword,
