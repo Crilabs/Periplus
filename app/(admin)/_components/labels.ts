@@ -8,8 +8,10 @@ import type {
   GeoObjectType,
   GeoOrigin,
   NameOrigin,
+  NameCandidateStatus,
   PlaceKind,
   PlaceStatus,
+  PoiCategory,
   ReviewKind,
   RunKind,
   RunScopeType,
@@ -23,6 +25,7 @@ import type {
 import type { Sector } from "@/lib/domain/facts/schema-types";
 import type { GapReason } from "@/lib/domain/geometry/gaps";
 import type { CrawlRules } from "@/lib/domain/sources/crawl-rules";
+import type { NAME_AFFIX_HINTS } from "@/lib/config/schemas";
 import type { OriginSource } from "@/lib/domain/geometry/water";
 import type { RunScopeReason } from "@/lib/pipeline/tile-scope";
 
@@ -98,6 +101,33 @@ export const GEO_OBJECT_TYPE_LABELS: Record<GeoObjectType, string> = {
   harbour: "Hafen",
   settlement: "Siedlung",
   poi: "Highlight",
+};
+
+export const POI_CATEGORY_LABELS: Record<PoiCategory, string> = {
+  food: "Essen",
+  supply: "Versorgung",
+  beach: "Strand",
+  nature: "Natur",
+  active: "Aktiv",
+  culture: "Kultur",
+  town: "Ort",
+};
+
+/** The type hint of a name in a text ("Ormos …", "… Bay"). */
+export const NAME_HINT_LABELS: Record<(typeof NAME_AFFIX_HINTS)[number], string> = {
+  bay: "Bucht",
+  harbour: "Hafen",
+  anchorage: "Ankerplatz",
+  cape: "Kap",
+  island: "Insel",
+  marina: "Marina",
+};
+
+export const NAME_CANDIDATE_STATUS_LABELS: Record<NameCandidateStatus, string> = {
+  collecting: "Wird gesammelt",
+  geocoded: "Geokodiert",
+  review: "Im Review",
+  decided: "Entschieden",
 };
 
 export const GEO_ORIGIN_LABELS: Record<GeoOrigin, string> = {

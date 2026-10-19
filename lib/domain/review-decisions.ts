@@ -6,19 +6,29 @@ import {
   changeRateEnum,
   DOC_TYPES,
   geoObjects,
+  nameCandidates,
   placeKindEnum,
   places,
+  poiCategoryEnum,
   reviewDecisions,
   reviewTasks,
   sources,
   tiles,
+  type GeoObjectType,
+  type PlaceKind,
+  type PoiCategory,
   type ReviewKind,
   type SourceStatus,
 } from "@/lib/db/schema";
 import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
+import { addNames, isGreek, transliterateElot743, type NameDraft } from "@/lib/domain/gazetteer/names";
+import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
 import { newPublicId } from "@/lib/domain/ids";
+import { candidateObjects, withNeighbours } from "@/lib/domain/mentions/scope";
 import { crawlRulesSchema } from "@/lib/domain/sources/crawl-rules";
 import { QUEUES, type QueueName } from "@/lib/jobs/queues";
+
+const lonLatSchema = z.object({ lon: z.number().min(-180).max(180), lat: z.number().min(-90).max(90) });
 
 export const reviewDecisionSchema = z.discriminatedUnion("action", [
   // place_candidate / place
@@ -28,7 +38,16 @@ export const reviewDecisionSchema = z.discriminatedUnion("action", [
     position: z.object({ lon: z.number().min(-180).max(180), lat: z.number().min(-90).max(90) }).optional(),
   }),
   z.object({ action: z.literal("merge"), intoPlaceId: z.uuid() }),
-  // place_candidate / place and source_approval / source
+  // place_candidate / name_candidate
+  z.object({
+    action: z.literal("create_place"),
+    kind: z.enum(placeKindEnum.enumValues),
+    position: lonLatSchema,
+    name: z.string().trim().min(1).max(120),
+    language: z.string().regex(/^[a-z]{2}$/),
+  }),
+  z.object({ action: z.literal("assign_name"), geoObjectId: z.uuid() }),
+  // place_candidate / place, place_candidate / name_candidate and source_approval / source
   z.object({ action: z.literal("reject") }),
   z.object({ action: z.literal("no_anchoring") }),
   // place_candidate / geo_object_pair
@@ -73,6 +92,7 @@ export class DecisionNotAllowed extends Error {
 const ALLOWED: Record<string, readonly Action[]> = {
   "place_candidate/place": ["confirm", "merge", "reject", "no_anchoring"],
   "place_candidate/geo_object_pair": ["same", "distinct"],
+  "place_candidate/name_candidate": ["create_place", "assign_name", "reject"],
   "coast_tile_without_area/tile": ["assign_area", "no_area"],
   "failed_job/job": ["retry", "ignore", "pause_source"],
   "source_approval/source": ["approve", "reject"],
@@ -89,18 +109,22 @@ type Task = typeof reviewTasks.$inferSelect;
  * subject or target is not valid; nothing is written then. A `retry` calls `deps.retryJob` last, so a failed
  * retry rolls the decision back.
  *
- * Global lock order: the review task row first, then the subject row(s) (`lockPlace`, `lockSource`). Every
- * transaction that locks both an open `place_candidate` task and its place (`applyExclusion`, stage
- * `geometry.place`) takes them in this order, so none of them deadlocks with a decision.
+ * A decision on a `name_candidate` (new name from texts) returns the document versions the name was found in
+ * (`documentVersionIds`, for the rematch run of Task 17); every other decision returns none.
+ *
+ * Global lock order: the review task row first, then the subject row(s) (`lockPlace`, `lockSource`,
+ * `lockNameCandidate`). Every transaction that locks both an open `place_candidate` task and its place
+ * (`applyExclusion`, stage `geometry.place`) or its name candidate (`geocodeCandidate`) takes them in this order, so
+ * none of them deadlocks with a decision.
  */
 export async function decideReviewTask(
   db: Db,
   input: { taskId: string; decision: ReviewDecision; decidedBy: string; openedAt?: Date; now?: Date },
   deps: DecideDeps = {},
-): Promise<void> {
+): Promise<{ documentVersionIds: string[] }> {
   const decision = reviewDecisionSchema.parse(input.decision);
   const now = input.now ?? new Date();
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     const [task] = await tx.select().from(reviewTasks).where(eq(reviewTasks.id, input.taskId)).for("update");
     if (!task || task.status !== "open") throw new TaskNotOpen(input.taskId);
     if (!ALLOWED[`${task.kind}/${task.subjectType}`]?.includes(decision.action)) {
@@ -115,7 +139,10 @@ export async function decideReviewTask(
       durationMs: input.openedAt ? now.getTime() - input.openedAt.getTime() : null,
     });
     await tx.update(reviewTasks).set({ status: "decided" }).where(eq(reviewTasks.id, task.id));
+    // Dispatch by `<kind>/<subject_type>` (ruling M4-P13): a name candidate's reject never touches a place.
+    if (task.subjectType === "name_candidate") return { documentVersionIds: await applyNameDecision(tx, task, decision) };
     await apply(tx, task, decision, deps);
+    return { documentVersionIds: [] };
   });
 }
 
@@ -247,7 +274,109 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
     case "no_area":
     case "ignore":
       return;
+    case "create_place":
+    case "assign_name":
+      throw new DecisionNotAllowed(`action ${decision.action} needs a name candidate`);
   }
+}
+
+/** Ring of neighbour tiles around a name candidate's tile that forms its candidate space (spec 06: "plus deren 8 Nachbarn"). */
+export const NAME_CANDIDATE_RING = 1;
+
+/** Geo object types a new name may create. */
+const HINT_TYPES: Record<string, GeoObjectType> = {
+  bay: "bay",
+  anchorage: "bay",
+  harbour: "harbour",
+  marina: "harbour",
+  cape: "cape",
+  island: "islet",
+};
+
+/**
+ * The geo object a new name creates, from the candidate's hint: `bay`/`anchorage` → bay, `harbour`/`marina` → harbour,
+ * `cape` → cape, `island` → islet, `poi:<category>` → poi of that category. Without a known hint, the place kind
+ * decides: a port or marina is a harbour, an anchorage or mooring field a bay.
+ */
+export function newNameObjectType(hint: string | null, kind: PlaceKind): { type: GeoObjectType; category: PoiCategory | null } {
+  if (hint?.startsWith("poi:")) {
+    const category = z.enum(poiCategoryEnum.enumValues).safeParse(hint.slice(4));
+    if (category.success) return { type: "poi", category: category.data };
+  }
+  const type = hint ? HINT_TYPES[hint] : undefined;
+  if (type) return { type, category: null };
+  return { type: kind === "port" || kind === "marina" ? "harbour" : "bay", category: null };
+}
+
+/** Types that get a place when a new name creates them. */
+const PLACE_TYPES: readonly GeoObjectType[] = ["bay", "harbour"];
+
+/**
+ * Applies a decision on a name candidate (after the task row, the candidate row is locked): `create_place` creates the
+ * geo object (type by `newNameObjectType`, origin `text`) with the given name (origin `text`; a missing German name
+ * gets the name, Greek transliterated, as `de` fallback), links it to the tiles it lies in and, for a bay or harbour,
+ * creates a confirmed place with a public id; `assign_name` adds the candidate's name (origin `review`) to a valid
+ * object of the candidate space (the tile and its neighbours); `reject` only decides the candidate. Returns the document
+ * versions the name was found in.
+ */
+async function applyNameDecision(tx: Db, task: Task, decision: ReviewDecision): Promise<string[]> {
+  const candidate = await lockNameCandidate(tx, task.subjectId);
+  switch (decision.action) {
+    case "create_place": {
+      const { type, category } = newNameObjectType(candidate.hint, decision.kind);
+      const names: NameDraft[] = [{ name: decision.name, language: decision.language, origin: "text", isPreferred: true }];
+      if (decision.language !== "de") {
+        const de = isGreek(decision.name) ? transliterateElot743(decision.name) : decision.name;
+        names.push({ name: de, language: "de", origin: "fallback", isPreferred: true });
+      }
+      const point: GeoJSON.Point = { type: "Point", coordinates: [decision.position.lon, decision.position.lat] };
+      const created = await upsertGeoObject(tx, { type, category: category ?? undefined, origin: "text", geometry: point, names });
+      if ("skipped" in created) throw new DecisionNotAllowed(`position of ${candidate.id} is no valid point: ${created.skipped}`);
+      await tx.execute(sql`
+        insert into tile_geo_objects (tile_id, geo_object_id)
+        select t.id, o.id from tiles t join geo_objects o on o.geom && t.bbox and ST_Intersects(t.bbox, o.geom)
+        where o.id = ${created.id} and t.valid_to is null
+        on conflict do nothing`);
+      if (PLACE_TYPES.includes(type)) {
+        await tx.insert(places).values({
+          geoObjectId: created.id,
+          kind: decision.kind,
+          status: "confirmed",
+          statusReason: null,
+          publicId: newPublicId("sp"),
+          position: sql`${geomFromGeoJson(point)}`,
+        });
+      }
+      break;
+    }
+    case "assign_name": {
+      const space = await candidateObjects(tx, withNeighbours([candidate.tileId], NAME_CANDIDATE_RING));
+      if (!space.includes(decision.geoObjectId)) {
+        throw new DecisionNotAllowed(`geo object ${decision.geoObjectId} is not valid or not in the candidate space of ${candidate.tileId}`);
+      }
+      await addNames(tx, decision.geoObjectId, [{ name: candidate.displayName, language: "und", origin: "review" }]);
+      break;
+    }
+    case "reject":
+      break;
+    default:
+      throw new DecisionNotAllowed(`action ${decision.action} does not fit a name candidate`);
+  }
+  await tx.update(nameCandidates).set({ status: "decided" }).where(eq(nameCandidates.id, candidate.id));
+  const { rows } = await tx.execute<{ id: string }>(sql`
+    select distinct document_version_id as id from unmatched_names
+    where name_normalized = ${candidate.nameNormalized} and tile_id = ${candidate.tileId}
+    order by id`);
+  return rows.map((r) => r.id);
+}
+
+/** The task's name candidate, locked; `DecisionNotAllowed` when it does not exist or was decided already. */
+async function lockNameCandidate(tx: Db, candidateId: string) {
+  const [candidate] = z.uuid().safeParse(candidateId).success
+    ? await tx.select().from(nameCandidates).where(eq(nameCandidates.id, candidateId)).for("update")
+    : [];
+  if (!candidate || candidate.status === "decided") throw new DecisionNotAllowed(`name candidate ${candidateId} is not open`);
+  return candidate;
 }
 
 const text = (v: unknown): string => (typeof v === "string" ? v : "?");
