@@ -53,6 +53,27 @@ export function diffVersions(a: ProfileSnapshot, b: ProfileSnapshot): VersionDif
   return diffs;
 }
 
+/** Why a version differs from its predecessor although no value or class changed (`diffVersions` is empty). */
+export type VersionNote = "expired" | "gone_sources" | "conflict" | "other";
+
+/**
+ * What else changed from `a` to `b`: attributes that became expired or only-gone-sources (or stopped being), a conflict
+ * decision or a new or resolved conflict; `other` when none of these (e.g. other provenance). Values and classes are
+ * `diffVersions`' business.
+ */
+export function versionNotes(a: ProfileSnapshot, b: ProfileSnapshot): VersionNote[] {
+  const flag = (s: ProfileSnapshot, key: "expired" | "onlyGoneSources") =>
+    Object.keys(s.provenance)
+      .filter((k) => s.provenance[k]![key])
+      .sort()
+      .join("\n");
+  const notes: VersionNote[] = [];
+  if (flag(a, "expired") !== flag(b, "expired")) notes.push("expired");
+  if (flag(a, "onlyGoneSources") !== flag(b, "onlyGoneSources")) notes.push("gone_sources");
+  if (canonicalJson(a.conflicts) !== canonicalJson(b.conflicts)) notes.push("conflict");
+  return notes.length > 0 ? notes : ["other"];
+}
+
 export type TimelineVersion = { version: number; validFrom: string; createdAt: Date; runId: string | null; events: number };
 
 export type TimelineEvent = {
@@ -107,6 +128,8 @@ export type TimelineView = {
   view: ProfileView | null;
   /** From the version before the shown one (timeline order) to the shown one; null for the first or none shown. */
   diff: VersionDiff[] | null;
+  /** Why the shown version exists although `diff` is empty (`versionNotes`); empty otherwise. */
+  diffNotes: VersionNote[];
   /** The `asOf` that chose the state (a valid date), else null. */
   asOf: string | null;
   /** `asOf` was given but is no valid date (`YYYY-MM-DD` in the calendar): it is ignored, never passed to `profileAsOf`. */
@@ -129,10 +152,12 @@ export async function timelineView(
     ? await profileView(db, geoObjectId, { asOf, today: opts.today })
     : await profileView(db, geoObjectId, { version: opts.version, today: opts.today });
   let diff: VersionDiff[] | null = null;
+  let diffNotes: VersionNote[] = [];
   if (view) {
     const index = versions.findIndex((v) => v.version === view.snapshot.version);
     const previous = index > 0 ? await profileVersion(db, geoObjectId, versions[index - 1]!.version) : null;
     diff = previous ? diffVersions(previous, view.snapshot) : null;
+    if (previous && diff!.length === 0) diffNotes = versionNotes(previous, view.snapshot);
   }
-  return { versions, events, view, diff, asOf, asOfInvalid: parsed !== null && !parsed.success };
+  return { versions, events, view, diff, diffNotes, asOf, asOfInvalid: parsed !== null && !parsed.success };
 }

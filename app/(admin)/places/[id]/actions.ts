@@ -1,6 +1,6 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
@@ -101,7 +101,7 @@ const removeEntrySchema = z.object({
   attribute: z.string().min(1).max(64),
   entryKey: z.string().min(1).max(2000),
   version: z.coerce.number().int().min(1),
-  /** The place page the form is on; without it the geo page. */
+  /** The place page the form is on (it must belong to the geo object); without it the geo page. */
   placeId: z.uuid().optional(),
 });
 
@@ -116,10 +116,14 @@ export async function removeProfileEntryAction(input: FormData | z.input<typeof 
   const admin = await requireAdmin();
   const raw = fields(input) as Record<string, unknown>;
   const f = removeEntrySchema.parse({ ...raw, placeId: raw.placeId || undefined });
+  const db = getDb();
+  if (f.placeId) {
+    const [place] = await db.select({ id: places.id }).from(places).where(and(eq(places.id, f.placeId), eq(places.geoObjectId, f.geoObjectId)));
+    if (!place) throw new Error(`Place ${f.placeId} does not belong to geo object ${f.geoObjectId}`);
+  }
   const back = f.placeId
     ? `/places/${f.placeId}?tab=profile&attr=${encodeURIComponent(f.attribute)}`
     : `/geo/${f.geoObjectId}?attr=${encodeURIComponent(f.attribute)}`;
-  const db = getDb();
   let notice: string;
   try {
     await removeProfileEntry(db, { geoObjectId: f.geoObjectId, attribute: f.attribute, entryKey: f.entryKey, version: f.version, decidedBy: admin.email });

@@ -76,7 +76,7 @@ describe("removeProfileEntryAction", () => {
       expect(redirect).toHaveBeenCalledWith(`/places/${p.placeId}?tab=profile&attr=hazards&notice=entry_removed&run=${run!.id}`);
     }));
 
-  it("a run that fails to start leaves the removal standing (it is started after the commit)", () =>
+  it("a run that fails to start leaves the removal standing and says so", () =>
     withRollback(async (tx) => {
       current = tx;
       const p = await hazardPlace(tx);
@@ -96,6 +96,18 @@ describe("removeProfileEntryAction", () => {
       expect(redirect).toHaveBeenLastCalledWith(`/places/${p.placeId}?tab=profile&attr=hazards&notice=error`);
       expect(await removalFacts(tx, p.objectId)).toHaveLength(0);
       expect(bossInsert).not.toHaveBeenCalled();
+    }));
+
+  it("a place of another geo object is refused and nothing is written", () =>
+    withRollback(async (tx) => {
+      current = tx;
+      const p = await hazardPlace(tx);
+      const other = await insertPlace(tx, { name: "Andere Bucht", lon: 21.01 });
+      await expect(
+        removeProfileEntryAction(form({ geoObjectId: p.objectId, attribute: "hazards", entryKey: profileEntryKey("hazards", rock, cfg), version: "1", placeId: other.placeId })),
+      ).rejects.toThrow("does not belong");
+      expect(await removalFacts(tx, p.objectId)).toHaveLength(0);
+      expect(redirect).not.toHaveBeenCalled();
     }));
 
   it("refuses without an admin session", () =>

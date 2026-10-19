@@ -168,7 +168,7 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
           selected={selected}
           notice={textParam.parse(sp.notice)}
           noticeRunId={uuidParam.parse(sp.run)}
-          links={{ geoObjectId: o.id, attrHref: (a) => href({ attr: a }) }}
+          links={{ geoObjectId: o.id, confirm: textParam.parse(sp.confirm), attrHref: (a) => href({ attr: a }) }}
         />
       </section>
 

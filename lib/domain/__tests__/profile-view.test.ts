@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { facts, profileSummaries, profiles, reviewDecisions, reviewTasks } from "@/lib/db/schema";
 import { getConsolidationConfig } from "@/lib/config";
+import type { AttributeProvenance } from "@/lib/domain/consolidation/types";
 import { ruleLabel } from "@/lib/domain/consolidation/format";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
 import { mapLayer } from "@/lib/domain/map-data";
@@ -183,7 +184,23 @@ describe("profileView", () => {
       expect(own.get(p.placeId)).toMatchObject({ profileClass: "low" });
       expect(own.get(p.placeId)!.profileConfidence).toBeCloseTo(0.3);
       expect(own.get(p.placeId)).not.toHaveProperty("profile");
-      expect(own.get(bare.placeId)).toMatchObject({ profileConfidence: null, profileClass: null });
+      expect(own.get(bare.placeId)).toMatchObject({ profileConfidence: null, profileClass: null, hasProfile: false });
+      expect(own.get(p.placeId)).toMatchObject({ hasProfile: true });
+    }));
+
+  it("a place whose newest profile has no confidence is told apart from one without a profile", () =>
+    withRollback(async (tx) => {
+      const lon = 20.45;
+      const lat = 34.43;
+      const p = await profiledPlace(tx, { lon, lat });
+      await tx.insert(profiles).select(
+        sql`select gen_random_uuid(), geo_object_id, 2, valid_from, attributes, provenance, conflicts, gaps, sources_count,
+                   documents_count, null::real, 'nullconf', fact_schema_version, rules_version, run_id, now()
+            from profiles where geo_object_id = ${p.objectId} and version = 1`,
+      );
+      const layer = await mapLayer(tx, "places", [lon - 0.05, lat - 0.05, lon + 0.05, lat + 0.05]);
+      const own = layer.features.find((f) => f.properties!.id === p.placeId)!.properties!;
+      expect(own).toMatchObject({ profileConfidence: null, profileClass: null, hasProfile: true });
     }));
 
   it("the rule sentence follows the rules version's thresholds", () => {
@@ -238,6 +255,57 @@ describe("„Eintrag entfernen“", () => {
       ).rejects.toBeInstanceOf(ProfileChanged);
     }));
 
+  it("consecutive prohibition removals on the same shown version compose (ruling M5-I-R2)", () =>
+    withRollback(async (tx) => {
+      const { objectId } = await insertPlace(tx, { name: "Verbotsbucht" });
+      const guide = await insertSource(tx, "pilot_guide", 0.9);
+      const [a, b, c] = [
+        { kind: "anchoring", months: [7, 8] },
+        { kind: "fishing", months: null },
+        { kind: "swimming", months: null },
+      ];
+      await insertTextFact(tx, objectId, guide, { attribute: "prohibitions", value: [a, b, c], observedAt: "2026-06-03", confidence: 0.9 });
+      await consolidateGeo(tx, objectId, { today });
+      const by = "admin@example.invalid";
+      await removeProfileEntry(tx, { geoObjectId: objectId, attribute: "prohibitions", entryKey: "anchoring", version: 1, decidedBy: by });
+      // the follow-up run has not written version 2 yet: version 1 is still the one shown
+      await removeProfileEntry(tx, { geoObjectId: objectId, attribute: "prohibitions", entryKey: "fishing", version: 1, decidedBy: by });
+      const review = await tx
+        .select({ value: facts.value })
+        .from(facts)
+        .where(and(eq(facts.geoObjectId, objectId), sql`${facts.reviewDecisionId} is not null`))
+        .orderBy(sql`${facts.createdAt} desc`);
+      expect(review[0]!.value).toEqual([c]);
+      await consolidateGeo(tx, objectId, { today });
+      expect((await profileView(tx, objectId, { today }))!.snapshot.attributes.prohibitions).toEqual([c]);
+    }));
+
+  it("an entry's computation and POI inputs are identified per entry, not only counted", () =>
+    withRollback(async (tx) => {
+      const p = await insertPlace(tx, { name: "Eintragsbucht" });
+      const poi = await insertPlace(tx, { name: "Mole", lon: 21.01 });
+      const computation = await insertComputation(tx, p.objectId, "shelter", { "shelter.N": 0.6 });
+      const key = profileEntryKey("hazards", rock, cfg);
+      const prov: AttributeProvenance = {
+        origin: "text", rule: "union", confidence: 0.6, confidenceClass: "medium", observedAt: null, lastConfirmedAt: null,
+        factIds: [], sourceKeys: [], computationIds: ["not-a-uuid"], poiIds: ["not-a-uuid"], expired: false, onlyGoneSources: false, conflictKey: null, observedMonths: [],
+        entryFactIds: { [key]: [`computation:${computation.computationId}`, `poi:${poi.objectId}`, `computation:${poi.objectId}`] },
+      };
+      await tx.insert(profiles).values({
+        geoObjectId: p.objectId, version: 1, validFrom: today, attributes: { hazards: [rock] }, provenance: { hazards: prov },
+        sourcesCount: 1, documentsCount: 1, contentHash: "entry-inputs", factSchemaVersion: "v2", rulesVersion: "v1",
+      });
+      const detail = (await profileAttributeFacts(tx, p.objectId, 1, "hazards"))!;
+      // ids that are no uuid never reach a query (M-2)
+      expect([detail.computations, detail.pois]).toEqual([[], []]);
+      expect(detail.entries![0]!.otherInputs).toEqual([
+        { type: "computation", id: computation.computationId, kind: "shelter", createdAt: expect.any(Date) },
+        { type: "poi", id: poi.objectId, name: "Mole" },
+        // a reference that no longer resolves stays listed, without kind
+        { type: "computation", id: poi.objectId, kind: null, createdAt: null },
+      ]);
+    }));
+
   it("a computed restricted-area prohibition is not removable", () =>
     withRollback(async (tx) => {
       const { objectId } = await insertPlace(tx, { name: "Sperrbucht" });
@@ -246,6 +314,7 @@ describe("„Eintrag entfernen“", () => {
       await consolidateGeo(tx, objectId, { today });
       const row = (await profileView(tx, objectId, { today }))!.rows.find((r) => r.attribute === "prohibitions")!;
       expect(row.entries).toMatchObject([{ entry, removable: false }]);
+
       await expect(
         removeProfileEntry(tx, { geoObjectId: objectId, attribute: "prohibitions", entryKey: profileEntryKey("prohibitions", entry, cfg), version: 1, decidedBy: "a" }),
       ).rejects.toBeInstanceOf(DecisionNotAllowed);

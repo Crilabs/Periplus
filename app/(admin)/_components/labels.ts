@@ -29,7 +29,7 @@ import type {
 } from "@/lib/db/schema";
 import type { ChangeSeverity, ChangeType, SummaryStatus } from "@/lib/db/schema/profiles";
 import type { ConfidenceClass, ConflictResolution, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
-import type { VersionDiff } from "@/lib/domain/profile-timeline";
+import type { VersionDiff, VersionNote } from "@/lib/domain/profile-timeline";
 import type { GapReason } from "@/lib/domain/geometry/gaps";
 import type { CrawlRules } from "@/lib/domain/sources/crawl-rules";
 import type { NAME_AFFIX_HINTS } from "@/lib/config/schemas";
@@ -476,6 +476,14 @@ export const VERSION_DIFF_LABELS: Record<VersionDiff["kind"], string> = {
   class: "Konfidenzklasse",
 };
 
+/** Why a version without value or class changes exists (`versionNotes`). */
+export const VERSION_NOTE_LABELS: Record<VersionNote, string> = {
+  expired: "Ein Wert ist abgelaufen oder wieder aktuell (Konfidenz angepasst).",
+  gone_sources: "Quellen eines Werts sind verschwunden oder wieder da.",
+  conflict: "Ein Konflikt wurde entschieden, ist neu oder ist entfallen.",
+  other: "Nur Herkunftsangaben haben sich geändert.",
+};
+
 /** Notices of the profile tab (`?notice=`) after „Eintrag entfernen“. */
 export const PROFILE_NOTICE_LABELS: Record<string, string> = {
   entry_removed: "Eintrag entfernt. Das Profil wird neu berechnet.",
@@ -532,4 +540,13 @@ export function modelComparePageError(param: string | string[] | undefined): str
     runScopeError(param) ??
     (Object.hasOwn(MODEL_COMPARE_ERROR_LABELS, param) ? MODEL_COMPARE_ERROR_LABELS[param as keyof typeof MODEL_COMPARE_ERROR_LABELS] : null)
   );
+}
+
+/** The map popup's line „Profil-Konfidenz“ of a place: the value with its class, „Profil ohne Konfidenz“ or „kein Profil“. */
+export function profileConfidenceText(p: { profileConfidence?: unknown; profileClass?: unknown; hasProfile?: unknown }): string {
+  if (typeof p.profileConfidence === "number") {
+    const value = p.profileConfidence.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return `${value} (${CONFIDENCE_CLASS_LABELS[p.profileClass as ConfidenceClass] ?? String(p.profileClass)})`;
+  }
+  return p.hasProfile === true ? "Profil ohne Konfidenz" : "kein Profil";
 }

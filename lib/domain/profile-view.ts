@@ -276,8 +276,15 @@ export async function profileView(
   };
 }
 
+/** An entry's input that is no fact: a computation (`computation:<id>`) or a POI (`poi:<id>`), resolved when it still exists. */
+export type EntryInput =
+  | { type: "computation"; id: string; kind: string | null; createdAt: Date | null }
+  | { type: "poi"; id: string; name: string | null };
+
 /** One entry of a list value with the facts naming it (uuid input ids) and its other inputs (`computation:`, `poi:`). */
-export type EntryFacts = ProfileEntry & { facts: FactView[]; otherInputs: string[] };
+export type EntryFacts = ProfileEntry & { facts: FactView[]; otherInputs: EntryInput[] };
+
+const REF = /^(computation|poi):(.+)$/;
 
 export type AttributeFactsView = {
   row: ProfileRow;
@@ -315,31 +322,49 @@ export async function profileAttributeFacts(
   const byObservation = (a: FactView, b: FactView) => (a.observedAt < b.observedAt ? 1 : a.observedAt > b.observedAt ? -1 : a.id.localeCompare(b.id));
   const facts = p.factIds.flatMap((id) => views.get(id) ?? []).sort(byObservation);
 
-  const computationRows =
-    p.computationIds.length === 0
-      ? []
-      : await db
-          .select({ id: computations.id, kind: computations.kind, createdAt: computations.createdAt })
-          .from(computations)
-          .where(inArray(computations.id, p.computationIds.filter(isUuid)))
-          .orderBy(desc(computations.createdAt), computations.id);
-  const poiIds = p.poiIds.filter(isUuid);
-  const pois =
-    poiIds.length === 0
-      ? []
-      : (
-          await db.execute<{ id: string; name: string | null }>(sql`
-            select o.id, ${displayNameSql(sql`o.id`)} as name from geo_objects o
-            where o.id in (select value::uuid from jsonb_array_elements_text(${JSON.stringify(poiIds)}::jsonb))
-            order by o.id
-          `)
-        ).rows.map((r) => ({ id: r.id, name: r.name ?? r.id }));
+  const computationRows = await computationsByIds(db, p.computationIds);
+  const poiRows = await poisByIds(db, p.poiIds);
+
+  // the entries' own computation / POI inputs, identified per entry (they may differ from the attribute's lists)
+  const refs = (row.entries ?? []).flatMap((e) => e.inputIds.flatMap((id) => (REF.exec(id) ? [REF.exec(id)!] : [])));
+  const refIds = (type: string) => [...new Set(refs.filter((m) => m[1] === type).map((m) => m[2]!))];
+  const refComputations = new Map((await computationsByIds(db, refIds("computation"))).map((c) => [c.id, c]));
+  const refPois = new Map((await poisByIds(db, refIds("poi"))).map((q) => [q.id, q]));
 
   const entries =
     row.entries?.map((e) => ({
       ...e,
       facts: e.inputIds.flatMap((id) => views.get(id) ?? []).sort(byObservation),
-      otherInputs: e.inputIds.filter((id) => !isUuid(id)),
+      otherInputs: e.inputIds.flatMap((id): EntryInput[] => {
+        const m = REF.exec(id);
+        if (!m) return [];
+        if (m[1] === "poi") return [{ type: "poi", id: m[2]!, name: refPois.get(m[2]!)?.name ?? null }];
+        const c = refComputations.get(m[2]!);
+        return [{ type: "computation", id: m[2]!, kind: c?.kind ?? null, createdAt: c?.createdAt ?? null }];
+      }),
     })) ?? null;
-  return { row, facts, computations: computationRows, pois, entries };
+  return { row, facts, computations: computationRows, pois: poiRows, entries };
+}
+
+/** The computations among `ids` (non-uuid ids dropped); no query without a uuid. */
+async function computationsByIds(db: Db, ids: string[]): Promise<Array<{ id: string; kind: string; createdAt: Date }>> {
+  const uuids = ids.filter(isUuid);
+  if (uuids.length === 0) return [];
+  return db
+    .select({ id: computations.id, kind: computations.kind, createdAt: computations.createdAt })
+    .from(computations)
+    .where(inArray(computations.id, uuids))
+    .orderBy(desc(computations.createdAt), computations.id);
+}
+
+/** The geo objects among `ids` (non-uuid ids dropped) with their display name; no query without a uuid. */
+async function poisByIds(db: Db, ids: string[]): Promise<Array<{ id: string; name: string }>> {
+  const uuids = ids.filter(isUuid);
+  if (uuids.length === 0) return [];
+  const { rows } = await db.execute<{ id: string; name: string | null }>(sql`
+    select o.id, ${displayNameSql(sql`o.id`)} as name from geo_objects o
+    where o.id in (select value::uuid from jsonb_array_elements_text(${JSON.stringify(uuids)}::jsonb))
+    order by o.id
+  `);
+  return rows.map((r) => ({ id: r.id, name: r.name ?? r.id }));
 }

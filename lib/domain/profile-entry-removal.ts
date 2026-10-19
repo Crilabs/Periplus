@@ -1,3 +1,4 @@
+import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
 import { getConfig, getConsolidationConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { facts, reviewDecisions, reviewTasks } from "@/lib/db/schema";
@@ -24,7 +25,12 @@ export class ProfileChanged extends Error {
   }
 }
 
-/** Kind and subject type of the decided task a removal writes (consolidation reads only tasks with a `context.key`). */
+/**
+ * Kind and subject type of the decided task a removal writes (consolidation reads only tasks with a `context.key`).
+ * NOTE for readers of `review_tasks` (check scripts, M7 quality metrics, decision-history lists): count decided
+ * `uncertain_change` tasks only with `subject_type = 'profile_attribute'`; this pseudo-task (`profile_entry`, no
+ * `duration_ms`) is no uncertain-change decision.
+ */
 export const ENTRY_REMOVAL_TASK = { kind: "uncertain_change", subjectType: "profile_entry" } as const;
 
 /**
@@ -55,11 +61,11 @@ export async function removeProfileEntry(
     let value: unknown;
     try {
       if (input.attribute === "prohibitions") {
-        value = validateFactValue(
-          "prohibitions",
-          list.filter((e) => isTextProhibition(e) && e !== entry),
-          factSchemaVersion,
-        );
+        // consecutive removals compose: the list is built from the newest review fact still waiting for
+        // consolidation (ruling M5-I-R2), not from the shown profile, which does not know it yet
+        const pending = await pendingProhibitions(tx, input.geoObjectId, profile.version);
+        const base = pending ?? list.filter(isTextProhibition);
+        value = validateFactValue("prohibitions", base.filter((e) => profileEntryKey("prohibitions", e, cfg) !== input.entryKey), factSchemaVersion);
       } else {
         validateFactValue(input.attribute, [entry], factSchemaVersion);
         value = { remove: entry } satisfies UnionRemoval;
@@ -92,8 +98,32 @@ export async function removeProfileEntry(
         observedAt: now.toISOString().slice(0, 10),
         confidence: getConsolidationConfig().confidence.review,
         factSchemaVersion,
+        // the transaction's clock, later than the profile row of a consolidation that finished before (see `pendingProhibitions`)
+        createdAt: sql`clock_timestamp()`,
       })
       .returning({ id: facts.id });
     return { factId: fact!.id };
   });
+}
+
+/**
+ * The list of the newest review fact for `prohibitions` of the object that is newer than the newest profile row (a
+ * decision the follow-up run has not yet consolidated), or null without one.
+ */
+async function pendingProhibitions(db: Db, geoObjectId: string, profileVersion: number): Promise<unknown[] | null> {
+  const [row] = await db
+    .select({ value: facts.value })
+    .from(facts)
+    .where(
+      and(
+        eq(facts.geoObjectId, geoObjectId),
+        eq(facts.attribute, "prohibitions"),
+        isNotNull(facts.reviewDecisionId),
+        // compared in SQL: a JS Date would truncate the profile's microseconds
+        sql`${facts.createdAt} > (select p.created_at from profiles p where p.geo_object_id = ${geoObjectId} and p.version = ${profileVersion})`,
+      ),
+    )
+    .orderBy(desc(facts.createdAt), desc(facts.id))
+    .limit(1);
+  return row && Array.isArray(row.value) ? row.value.filter(isTextProhibition) : null;
 }

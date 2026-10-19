@@ -7,6 +7,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }) }));
 vi.mock("../places/[id]/actions", () => ({ removeProfileEntryAction: vi.fn() }));
 
 import { ProfileTab } from "../places/[id]/profile-tab";
+import { profileConfidenceText } from "../_components/labels";
 import { TimelineTab } from "../places/[id]/timeline-tab";
 
 const GEO = "00000000-0000-4000-8000-000000000001";
@@ -76,7 +77,7 @@ const hazardDetail = (v: ProfileView): AttributeFactsView => ({
   facts: [],
   computations: [],
   pois: [],
-  entries: v.rows[1]!.entries!.map((e) => ({ ...e, facts: [], otherInputs: e.inputIds.filter((id) => id.includes(":")) })),
+  entries: v.rows[1]!.entries!.map((e) => ({ ...e, facts: [], otherInputs: e.inputIds.filter((id) => id.includes(":")).map(() => ({ type: "computation" as const, id: "0190aaaa-0000-7000-8000-000000000001", kind: "shelter", createdAt: new Date("2026-10-01T08:00:00Z") })) })),
 });
 
 describe("ProfileTab", () => {
@@ -95,9 +96,31 @@ describe("ProfileTab", () => {
     expect(html).toContain("abgelaufen");
     expect(html).toContain("Keine Facts");
     expect(html.match(/Eintrag entfernen/g)).toHaveLength(1);
-    expect(html).toContain(`name="geoObjectId" value="${GEO}"`);
-    expect(html).toContain('name="version" value="2"');
+    // the first step is a link, not a form: nothing is removed without the second step
+    expect(html).toContain('href="/places/p1?tab=profile&amp;attr=hazards&amp;confirm=rock"');
+    expect(html).not.toContain("<form");
+    expect(html).not.toContain("Wirklich entfernen?");
     expect(html).toContain("(davon 1 aus Berechnung/POI)");
+    expect(html).toContain("Berechnung: Schutz vom 2026-10-01 08:00");
+  });
+
+  it("the second step is a server-rendered form „Wirklich entfernen?“ with cancel", () => {
+    const v = view();
+    const html = renderToStaticMarkup(<ProfileTab view={v} selected={hazardDetail(v)} links={{ ...links, confirm: "rock" }} />);
+    expect(html).toContain("Wirklich entfernen?");
+    expect(html).toContain(`name="geoObjectId" value="${GEO}"`);
+    expect(html).toContain('name="entryKey" value="rock"');
+    expect(html).toContain('name="version" value="2"');
+    expect(html).toContain("Abbrechen");
+    expect(html.match(/<form/g)).toHaveLength(1);
+    // another entry's confirmation does not arm this one
+    expect(renderToStaticMarkup(<ProfileTab view={v} selected={hazardDetail(v)} links={{ ...links, confirm: "other" }} />)).not.toContain("Wirklich entfernen?");
+  });
+
+  it("the map popup tells „Profil ohne Konfidenz“ from „kein Profil“", () => {
+    expect(profileConfidenceText({ profileConfidence: 0.62, profileClass: "medium", hasProfile: true })).toBe("0,62 (mittel)");
+    expect(profileConfidenceText({ profileConfidence: null, profileClass: null, hasProfile: true })).toBe("Profil ohne Konfidenz");
+    expect(profileConfidenceText({ profileConfidence: null, profileClass: null, hasProfile: false })).toBe("kein Profil");
   });
 
   it("marks an older version and shows a notice", () => {
@@ -139,6 +162,29 @@ describe("TimelineTab", () => {
     expect(html).toContain("Sicherheit");
     expect(html).toContain("Geändert");
     expect(html).toContain('href="/places/p1?tab=timeline&amp;v=2"');
+  });
+
+  it("a version without value changes shows its reason", () => {
+    const html = renderToStaticMarkup(
+      <TimelineTab
+        placeId="p1"
+        baseHref="/places/p1?tab=timeline"
+        versions={[
+          { version: 1, validFrom: "2026-10-01", createdAt: new Date(), runId: null, events: 0 },
+          { version: 2, validFrom: "2026-10-19", createdAt: new Date(), runId: null, events: 1 },
+        ]}
+        events={[]}
+        view={view()}
+        selected={null}
+        diff={[]}
+        diffNotes={["conflict"]}
+        asOf={null}
+        asOfInvalid={false}
+        links={links}
+      />,
+    );
+    expect(html).toContain("Keine Wert- oder Klassenänderungen.");
+    expect(html).toContain("Ein Konflikt wurde entschieden");
   });
 
   it("an asOf before the first version says so", () => {

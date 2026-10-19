@@ -18,7 +18,13 @@ const share = (n: number) => n.toLocaleString("de-DE", { minimumFractionDigits: 
 const time = (d: Date) => d.toISOString().slice(0, 16).replace("T", " ");
 
 /** Where the profile table links to: the attribute's facts (`attr`), and where „Eintrag entfernen“ returns to. */
-export type ProfileLinks = { geoObjectId: string; attrHref: (attribute: string | null) => string; placeId?: string };
+export type ProfileLinks = {
+  geoObjectId: string;
+  attrHref: (attribute: string | null) => string;
+  placeId?: string;
+  /** The entry key whose removal awaits confirmation (`?confirm=`): its button shows „Wirklich entfernen?“. */
+  confirm?: string | null;
+};
 
 /**
  * The profile tab of the place page (`?tab=profile&attr=<key>`) and the profile section of the geo page: head
@@ -260,18 +266,50 @@ function AttributeDetail({ detail: d, links, version }: { detail: AttributeFacts
                   <span className="font-semibold">{e.display}</span> · {e.inputIds.length} {e.inputIds.length === 1 ? "Beleg" : "Belege"}
                   {e.otherInputs.length > 0 && ` (davon ${e.otherInputs.length} aus Berechnung/POI)`}
                 </p>
-                {e.removable && (
-                  <form action={removeProfileEntryAction} className="mt-1">
-                    <input type="hidden" name="geoObjectId" value={links.geoObjectId} />
-                    <input type="hidden" name="attribute" value={r.attribute} />
-                    <input type="hidden" name="entryKey" value={e.key} />
-                    <input type="hidden" name="version" value={version} />
-                    {links.placeId && <input type="hidden" name="placeId" value={links.placeId} />}
-                    <button type="submit" className="rounded border border-red-400 px-2 py-0.5 text-xs hover:bg-red-50">
-                      Eintrag entfernen
-                    </button>
-                  </form>
+                {e.otherInputs.length > 0 && (
+                  <ul className="text-xs">
+                    {e.otherInputs.map((i) => (
+                      <li key={`${i.type}:${i.id}`}>
+                        {i.type === "poi" ? (
+                          <>
+                            POI:{" "}
+                            <Link href={`/geo/${i.id}`} className="underline">
+                              {i.name ?? i.id.slice(0, 8)}
+                            </Link>
+                          </>
+                        ) : (
+                          <>
+                            Berechnung: {(i.kind && COMPUTATION_KIND_LABELS[i.kind as keyof typeof COMPUTATION_KIND_LABELS]) ?? i.kind ?? "unbekannt"}
+                            {i.createdAt && ` vom ${time(i.createdAt)}`} <span className="font-mono text-neutral-500">{i.id.slice(0, 8)}</span>
+                          </>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
                 )}
+                {e.removable &&
+                  (links.confirm === e.key ? (
+                    <form action={removeProfileEntryAction} className="mt-1 flex items-center gap-2">
+                      <input type="hidden" name="geoObjectId" value={links.geoObjectId} />
+                      <input type="hidden" name="attribute" value={r.attribute} />
+                      <input type="hidden" name="entryKey" value={e.key} />
+                      <input type="hidden" name="version" value={version} />
+                      {links.placeId && <input type="hidden" name="placeId" value={links.placeId} />}
+                      <button type="submit" className="rounded border border-red-600 bg-red-50 px-2 py-0.5 text-xs font-semibold">
+                        Wirklich entfernen?
+                      </button>
+                      <Link href={links.attrHref(r.attribute)} className="text-xs underline">
+                        Abbrechen
+                      </Link>
+                    </form>
+                  ) : (
+                    <Link
+                      href={`${links.attrHref(r.attribute)}&confirm=${encodeURIComponent(e.key)}`}
+                      className="mt-1 inline-block rounded border border-red-400 px-2 py-0.5 text-xs hover:bg-red-50"
+                    >
+                      Eintrag entfernen
+                    </Link>
+                  ))}
                 {e.facts.length > 0 && (
                   <ul className="mt-1 space-y-1">
                     {e.facts.map((f) => (

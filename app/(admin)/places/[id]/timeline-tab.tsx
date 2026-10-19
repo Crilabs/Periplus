@@ -1,9 +1,9 @@
 import Link from "next/link";
 import type { ChangeSeverity } from "@/lib/db/schema/profiles";
 import { formatProfileValue, profileAttributeLabel } from "@/lib/domain/consolidation/format";
-import type { VersionDiff, TimelineEvent, TimelineVersion } from "@/lib/domain/profile-timeline";
+import type { VersionDiff, VersionNote, TimelineEvent, TimelineVersion } from "@/lib/domain/profile-timeline";
 import type { AttributeFactsView, ProfileView } from "@/lib/domain/profile-view";
-import { CHANGE_TYPE_LABELS, CONFIDENCE_CLASS_LABELS, SEVERITY_LABELS, VERSION_DIFF_LABELS } from "../../_components/labels";
+import { CHANGE_TYPE_LABELS, CONFIDENCE_CLASS_LABELS, SEVERITY_LABELS, VERSION_DIFF_LABELS, VERSION_NOTE_LABELS } from "../../_components/labels";
 import { ProfileTab, type ProfileLinks } from "./profile-tab";
 import { VersionSlider } from "./version-slider";
 
@@ -27,6 +27,7 @@ export function TimelineTab({
   view,
   selected,
   diff,
+  diffNotes = [],
   asOf,
   asOfInvalid,
   links,
@@ -40,6 +41,8 @@ export function TimelineTab({
   selected: AttributeFactsView | null;
   /** Diff from the previous version to the shown one; null for the first version or without a profile. */
   diff: VersionDiff[] | null;
+  /** Why the version exists although `diff` is empty. */
+  diffNotes?: VersionNote[];
   asOf: string | null;
   asOfInvalid: boolean;
   links: ProfileLinks;
@@ -78,7 +81,10 @@ export function TimelineTab({
             {diff === null ? (
               <p>Erste Version.</p>
             ) : diff.length === 0 ? (
-              <p>Keine Wertänderungen.</p>
+              <p>
+                Keine Wert- oder Klassenänderungen.
+                {diffNotes.map((n) => ` ${VERSION_NOTE_LABELS[n]}`).join("")}
+              </p>
             ) : (
               <table className="w-full text-left">
                 <thead>

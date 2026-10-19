@@ -151,6 +151,7 @@ describe("mapLayer", () => {
           name: "Candidate Cove",
           publicId: null,
           // without a profile (profile-view.test.ts covers places with one)
+          hasProfile: false,
           profileConfidence: null,
           profileClass: null,
         },

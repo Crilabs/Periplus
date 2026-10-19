@@ -73,9 +73,9 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
         ))}
       </nav>
       {tab === "profile" ? (
-        <ProfileTabView placeId={p.id} geoObjectId={p.geoObjectId} version={versionParam.parse(sp.version)} attr={attr} notice={textParam.parse(sp.notice)} runId={uuidParam.parse(sp.run)} />
+        <ProfileTabView placeId={p.id} geoObjectId={p.geoObjectId} version={versionParam.parse(sp.version)} attr={attr} notice={textParam.parse(sp.notice)} runId={uuidParam.parse(sp.run)} confirm={textParam.parse(sp.confirm)} />
       ) : tab === "timeline" ? (
-        <TimelineTabView placeId={p.id} geoObjectId={p.geoObjectId} version={versionParam.parse(sp.v)} asOf={textParam.parse(sp.asOf)} attr={attr} />
+        <TimelineTabView placeId={p.id} geoObjectId={p.geoObjectId} version={versionParam.parse(sp.v)} asOf={textParam.parse(sp.asOf)} attr={attr} confirm={textParam.parse(sp.confirm)} />
       ) : facts ? (
         <FactsTab groups={facts} runs={runs} runsHref={(r) => `/places/${p.id}?tab=facts${r === "all" ? "&runs=all" : ""}`} />
       ) : geometry ? (
@@ -94,7 +94,7 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
 
 type ProfileTabProps = { placeId: string; geoObjectId: string; version: number | undefined; attr: string | undefined };
 
-async function ProfileTabView({ placeId, geoObjectId, version, attr, notice, runId }: ProfileTabProps & { notice?: string; runId?: string }) {
+async function ProfileTabView({ placeId, geoObjectId, version, attr, notice, runId, confirm }: ProfileTabProps & { notice?: string; runId?: string; confirm?: string }) {
   const db = getDb();
   const view = await profileView(db, geoObjectId, { version });
   const selected = view && attr ? await profileAttributeFacts(db, geoObjectId, view.snapshot.version, attr) : null;
@@ -105,12 +105,12 @@ async function ProfileTabView({ placeId, geoObjectId, version, attr, notice, run
       selected={selected}
       notice={notice}
       noticeRunId={runId}
-      links={{ geoObjectId, placeId, attrHref: (a) => (a ? `${base}&attr=${encodeURIComponent(a)}` : base) }}
+      links={{ geoObjectId, placeId, confirm, attrHref: (a) => (a ? `${base}&attr=${encodeURIComponent(a)}` : base) }}
     />
   );
 }
 
-async function TimelineTabView({ placeId, geoObjectId, version, asOf, attr }: ProfileTabProps & { asOf: string | undefined }) {
+async function TimelineTabView({ placeId, geoObjectId, version, asOf, attr, confirm }: ProfileTabProps & { asOf: string | undefined; confirm?: string }) {
   const db = getDb();
   const t = await timelineView(db, geoObjectId, { version, asOf });
   const selected = t.view && attr ? await profileAttributeFacts(db, geoObjectId, t.view.snapshot.version, attr) : null;
@@ -125,9 +125,10 @@ async function TimelineTabView({ placeId, geoObjectId, version, asOf, attr }: Pr
       view={t.view}
       selected={selected}
       diff={t.diff}
+      diffNotes={t.diffNotes}
       asOf={t.asOf}
       asOfInvalid={t.asOfInvalid}
-      links={{ geoObjectId, placeId, attrHref: (a) => `${baseHref}${shown}${a ? `&attr=${encodeURIComponent(a)}` : ""}` }}
+      links={{ geoObjectId, placeId, confirm, attrHref: (a) => `${baseHref}${shown}${a ? `&attr=${encodeURIComponent(a)}` : ""}` }}
     />
   );
 }

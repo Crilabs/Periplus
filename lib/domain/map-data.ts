@@ -135,7 +135,7 @@ function configuredAnchoringBan(): AnchoringBanConfig {
  * `candidateCount` those still `candidate`. `restricted-areas` carry `anchoringBan` by `opts.anchoringBan`
  * (default: the configured rule). `places` carry `profileConfidence` and `profileClass` of the newest profile version
  * of their geo object (its class by that version's rules), both null without a profile (or without a profile
- * confidence).
+ * confidence); `hasProfile` tells those two apart.
  */
 export async function mapLayer(
   db: Db,
@@ -156,6 +156,7 @@ export async function mapLayer(
       const profile = r.properties.profile as { confidence: number | null; rulesVersion: string } | null;
       delete r.properties.profile;
       const confidence = profile?.confidence ?? null;
+      r.properties.hasProfile = profile !== null;
       r.properties.profileConfidence = confidence;
       r.properties.profileClass = confidence === null ? null : confidenceClass(confidence, getConsolidationConfig(profile!.rulesVersion));
     }

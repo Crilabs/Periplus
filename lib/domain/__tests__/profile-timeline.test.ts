@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { AttributeProvenance, ProfileSnapshot } from "@/lib/domain/consolidation/types";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
-import { diffVersions, profileTimeline, timelineView } from "@/lib/domain/profile-timeline";
+import { diffVersions, profileTimeline, timelineView, versionNotes } from "@/lib/domain/profile-timeline";
 import { profileView } from "@/lib/domain/profile-view";
 import { insertComputation, insertPlace, insertSource, insertTextFact } from "@/test/consolidation";
 import { testDb, withRollback } from "@/test/db";
@@ -63,6 +63,21 @@ describe("profile timeline", () => {
       { attribute: "services.water", kind: "changed", before: true, after: false, classBefore: "medium", classAfter: "medium" },
     ]);
     expect(diffVersions(a, a)).toEqual([]);
+  });
+
+  it("versionNotes names why a version without value changes exists", () => {
+    const a = snapshot(1, { holding: ["good", "high"] });
+    const expired = snapshot(2, { holding: ["good", "high"] });
+    expired.provenance.holding!.expired = true;
+    expect(diffVersions(a, expired)).toEqual([]);
+    expect(versionNotes(a, expired)).toEqual(["expired"]);
+    const gone = snapshot(2, { holding: ["good", "high"] });
+    gone.provenance.holding!.onlyGoneSources = true;
+    expect(versionNotes(a, gone)).toEqual(["gone_sources"]);
+    const decided = snapshot(2, { holding: ["good", "high"] });
+    decided.conflicts = [{ attribute: "holding", key: "k", a: { value: "good" }, b: { value: "poor" }, others: [], resolution: "seasonal" } as never];
+    expect(versionNotes(a, decided)).toEqual(["conflict"]);
+    expect(versionNotes(a, snapshot(2, { holding: ["good", "high"] }))).toEqual(["other"]);
   });
 
   it("the timeline lists versions with event counts and events newest first", () =>

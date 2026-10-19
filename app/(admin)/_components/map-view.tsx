@@ -20,6 +20,7 @@ import {
   PLACE_KIND_LABELS,
   PLACE_STATUS_LABELS,
   RESTRICTED_KIND_LABELS,
+  profileConfidenceText,
 } from "./labels";
 import { DEFAULT_CENTER, MAP_STYLE_URL, OSM_ATTRIBUTION } from "./map-style";
 
@@ -426,12 +427,7 @@ function Sidebar({ selection: { layer, properties: p }, onClose }: { selection: 
         ["Art", PLACE_KIND_LABELS[p.kind as keyof typeof PLACE_KIND_LABELS] ?? str(p.kind)],
         ["Status", PLACE_STATUS_LABELS[p.status as PlaceStatus] ?? str(p.status)],
         ["Öffentliche ID", str(p.publicId) || "–"],
-        [
-          "Profil-Konfidenz",
-          typeof p.profileConfidence === "number"
-            ? `${p.profileConfidence.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${CONFIDENCE_CLASS_LABELS[p.profileClass as ConfidenceClass] ?? str(p.profileClass)})`
-            : "kein Profil",
-        ],
+        ["Profil-Konfidenz", profileConfidenceText(p)],
       ];
       href = `/places/${id}`;
       break;
