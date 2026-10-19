@@ -3,7 +3,7 @@ import type { ExtractedFact, ExtractFactsOutput } from "@/lib/ai/tasks/extract-f
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { chunks, extractionRuns, extractionUnits, facts, mentions, unmatchedNames } from "@/lib/db/schema";
-import { validateTextFact } from "@/lib/domain/facts/schema";
+import { getFactSchema, validateTextFact } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { effectiveVersionMeta, plausibleDate } from "@/lib/domain/mentions/classification";
@@ -22,7 +22,9 @@ import { restoreUnitMentions } from "./unit-status";
  * checked against the fact schema version of the extraction run (frozen when it was planned, ruling M4-G-R3), not the
  * one active when the answer arrives. A highlight's proper names (`poi_name` and every entry of `names`) count only
  * when they occur in the quote (normalized like the quote check, ruling M4-G-R4): the others are dropped from the value
- * and counted. Every name that counts becomes a mention of a gazetteer POI of the highlight's category within
+ * and counted. The same holds for every other proper name of a text value (`textNames` in the fact schema: charter
+ * bases, supply ports, named hazards and restricted zones, ruling M4-G-R5); a name list left empty is not stored.
+ * Every highlight name that counts becomes a mention of a gazetteer POI of the highlight's category within
  * `poiMatchRadiusM`, or an unmatched name with hint `poi:<category>` that goes the way of new place names.
  */
 
@@ -37,6 +39,10 @@ export type FactStats = {
   poiUnmatched: number;
   /** Highlight names (`poi_name` or in `names`) dropped because the quote does not contain them. */
   poiNameRejected: number;
+  /** Other proper names (charter bases, supply ports, named hazards and zones) dropped: not in the quote. */
+  nameRejected: number;
+  /** Facts not stored because none of their proper names is in the quote (a name list left empty). */
+  nameEmptied: number;
   /** Facts beyond `maxFactsPerUnit`, not looked at. */
   overLimit: number;
 };
@@ -51,6 +57,8 @@ export const FACT_STAT_KEYS = [
   "poiMentions",
   "poiUnmatched",
   "poiNameRejected",
+  "nameRejected",
+  "nameEmptied",
   "overLimit",
 ] as const satisfies ReadonlyArray<keyof FactStats>;
 
@@ -223,9 +231,22 @@ export async function processFactOutput(db: Db, unit: ProcessUnit, output: Extra
       stats.rejectedQuote++;
       continue;
     }
+    // Proper names outside highlights count only when the quote contains them (ruling M4-G-R5), before the dedupe,
+    // so a fact whose names the quote does not support cannot push out a supported one.
+    let value = checked.value;
+    const textNames = getFactSchema(version).levels[unit.level].find((d) => d.key === fact.attribute)?.textNames;
+    if (textNames) {
+      const supported = textNames(value, (name) => nameInQuote(name, fact.quote));
+      stats.nameRejected += supported.rejected;
+      if (supported.value === null) {
+        stats.nameEmptied++;
+        continue;
+      }
+      value = supported.value;
+    }
     const candidate: Kept = {
       fact,
-      value: checked.value,
+      value,
       located,
       mentionId: nearestMention(located, unitMentions, ordinalOf),
       confidence: clamp01(fact.confidence),

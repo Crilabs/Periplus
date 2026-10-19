@@ -1,14 +1,14 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { withRollback } from "@/test/db";
 import { insertNamedObject, insertTestExtractionRun, insertTestTile, insertTestVersion } from "@/test/text";
 import type { ExtractedFact } from "@/lib/ai/tasks/extract-facts";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { extractionRuns, facts, mentions, unmatchedNames } from "@/lib/db/schema";
+import { extractionRuns, extractionUnits, facts, mentions, unmatchedNames } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { tileIdFor } from "@/lib/domain/tiles";
-import { emptyFactStats, processFactOutput, type ProcessUnit } from "@/lib/domain/extraction/facts";
+import { completeUnit, emptyFactStats, processFactOutput, type ProcessUnit } from "@/lib/domain/extraction/facts";
 
 const config = loadConfig("config");
 
@@ -373,5 +373,60 @@ describe("processFactOutput", () => {
       expect(await processFactOutput(tx, s.unit, out, config)).toMatchObject({ poiUnmatched: 1 });
       const unmatched = await tx.select().from(unmatchedNames).where(eq(unmatchedNames.documentVersionId, s.versionId));
       expect(unmatched.map((u) => [u.nameNormalized, u.hint])).toEqual([["psili ammos", "poi:beach"]]);
+    }));
+  it("a proper name outside highlights counts only when the quote contains it (ruling M4-G-R5)", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx, "Charter boats leave from Kiriacoulis Lavrio; supplies come from Ermioni. Beware of the Vrachos rock off the cape.");
+      const island = { ...s.unit, level: "island" as const };
+      const regional = await processFactOutput(
+        tx,
+        island,
+        {
+          facts: [
+            fact({ attribute: "charter_bases", value: '["Kiriacoulis Lavrio","Sunsail Athens"]', quote: "Charter boats leave from Kiriacoulis Lavrio", chunk: 3 }),
+            fact({ attribute: "supply_ports", value: '["Poros"]', quote: "supplies come from Ermioni", chunk: 3 }),
+            fact({ attribute: "restricted_zones", value: '[{"kind":"military","name":"Zone Alpha"}]', quote: "Beware of the Vrachos rock off the cape", chunk: 3 }),
+          ],
+        },
+        config,
+      );
+      expect(regional).toMatchObject({ proposed: 3, stored: 2, nameRejected: 3, nameEmptied: 1 });
+      const hazards = await processFactOutput(
+        tx,
+        s.unit,
+        { facts: [fact({ attribute: "hazards", value: '[{"kind":"rock","name":"Vrachos"},{"kind":"rock","name":"Mavro"}]', quote: "Beware of the Vrachos rock off the cape", chunk: 3 })] },
+        config,
+      );
+      expect(hazards).toMatchObject({ stored: 1, nameRejected: 1, nameEmptied: 0 });
+      const stored = Object.fromEntries((await factsOf(tx, s.unit.extractionRunId)).map((f) => [f.attribute, f.value]));
+      expect(stored).toEqual({
+        charter_bases: ["Kiriacoulis Lavrio"],
+        restricted_zones: [{ kind: "military", name: null }],
+        hazards: [
+          { kind: "rock", name: "Vrachos" },
+          { kind: "rock", name: null },
+        ],
+      });
+    }));
+  it("a reprocess or comparison unit completing never turns the regular run's failed mentions back to done", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx);
+      await tx.update(mentions).set({ extractionStatus: "failed" }).where(inArray(mentions.id, s.mentionIds));
+      const [run] = await tx.select({ runId: extractionRuns.runId }).from(extractionRuns).where(eq(extractionRuns.id, s.unit.extractionRunId));
+      const unitOf = async (purpose: "regular" | "reprocess" | "comparison") => {
+        const extractionRunId = await insertTestExtractionRun(tx, { runId: run!.runId, purpose, model: `model-${purpose}` });
+        const [u] = await tx
+          .insert(extractionUnits)
+          .values({ extractionRunId, documentVersionId: s.versionId, geoObjectId: s.bay, part: 0, level: "place", mentionIds: s.mentionIds, chunkIds: s.chunkIds })
+          .returning({ id: extractionUnits.id });
+        return u!.id;
+      };
+      const statuses = async () => (await tx.select({ s: mentions.extractionStatus }).from(mentions).where(inArray(mentions.id, s.mentionIds))).map((r) => r.s);
+      for (const purpose of ["reprocess", "comparison"] as const) {
+        expect(await completeUnit(tx, await unitOf(purpose), emptyFactStats(), { inputTokens: 0, outputTokens: 0 }, 0)).toBe(true);
+        expect(await statuses()).toEqual(["failed", "failed"]);
+      }
+      expect(await completeUnit(tx, await unitOf("regular"), emptyFactStats(), { inputTokens: 0, outputTokens: 0 }, 0)).toBe(true);
+      expect(await statuses()).toEqual(["done", "done"]);
     }));
 });

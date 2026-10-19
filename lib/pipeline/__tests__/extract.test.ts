@@ -27,6 +27,7 @@ import {
   unitInput,
 } from "@/lib/pipeline/text/extract";
 import { matchVersion } from "@/lib/pipeline/text/mentions";
+import { endRunByAdmin } from "@/lib/pipeline/runs";
 
 /*
  * Stage extraction.mention end to end inside withRollback: plan → job (message batch via MockModel) → poll (handler).
@@ -271,6 +272,8 @@ describe("stage extraction.mention", () => {
         poiMentions: 0,
         poiUnmatched: 0,
         poiNameRejected: 0,
+        nameRejected: 0,
+        nameEmptied: 0,
         overLimit: 0,
         costEur: 0.006,
         // three mentions (Kolona once, Limnionas twice) went to the model
@@ -500,6 +503,22 @@ describe("stage extraction.mention", () => {
       const [unit] = await tx.select().from(extractionUnits).where(eq(extractionUnits.extractionRunId, job!.extractionRunId as string));
       expect([unit!.status, Number(unit!.costEur)]).toEqual(["failed", 0.004]);
       expect(await tx.select().from(facts).where(eq(facts.extractionRunId, job!.extractionRunId as string))).toHaveLength(0);
+      const kolona = s.mentions.filter((m) => m.geoObjectId === s.kolona).map((m) => m.id);
+      expect(await statusOf(tx, kolona)).toEqual(["failed", "failed", "failed"]);
+    }));
+
+  it("ending a run by hand fails its extraction units that were never sent, with their mentions", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx);
+      const params = { documentVersionIds: [s.versionId] };
+      const runId = await startRun(tx, params);
+      const [job] = await planExtraction(tx, { id: runId, params }, config);
+      await beginStage(tx, runId, EXTRACT_STAGE, 1);
+      // no job ran: the unit is still pending, its mentions claimed (done)
+      const boss = { findJobs: async () => [], cancel: async () => undefined } as unknown as PgBoss;
+      expect(await endRunByAdmin(tx, boss, runId, "admin@example.invalid")).toEqual({ ended: true, cancelledJobs: 0 });
+      const units = await tx.select().from(extractionUnits).where(eq(extractionUnits.extractionRunId, job!.extractionRunId as string));
+      expect(units.map((u) => u.status)).toEqual(["failed"]);
       const kolona = s.mentions.filter((m) => m.geoObjectId === s.kolona).map((m) => m.id);
       expect(await statusOf(tx, kolona)).toEqual(["failed", "failed", "failed"]);
     }));

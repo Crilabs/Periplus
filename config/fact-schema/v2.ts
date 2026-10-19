@@ -25,6 +25,24 @@ const months = z.array(month);
 const properName = z.string().min(1).max(80);
 const MONTH_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"] as const;
 
+/** Entries `{ name }` keep their kind; a proper name the quote does not contain becomes null (ruling M4-G-R5). */
+const namedEntries: AttributeDef["textNames"] = (value, supported) => {
+  let rejected = 0;
+  const entries = (value as Array<{ name: string | null }>).map((entry) => {
+    if (entry.name === null || supported(entry.name)) return entry;
+    rejected++;
+    return { ...entry, name: null };
+  });
+  return { value: entries, rejected };
+};
+
+/** A list of proper names keeps those the quote contains; nothing left, nothing to store (ruling M4-G-R5). */
+const nameList: AttributeDef["textNames"] = (value, supported) => {
+  const names = value as string[];
+  const kept = names.filter(supported);
+  return { value: kept.length > 0 ? kept : null, rejected: names.length - kept.length };
+};
+
 const v1Place = factSchemaV1.levels.place;
 const v1Def = (key: string): AttributeDef => {
   const def = v1Place.find((d) => d.key === key);
@@ -101,6 +119,7 @@ const hazards: AttributeDef = {
   rule: "default",
   origins: ["text"],
   description: "Navigational hazards named in the text, with the proper name if given",
+  textNames: namedEntries,
 };
 
 const seasonNotes: AttributeDef = {
@@ -216,14 +235,17 @@ const region: AttributeDef[] = [
     "Prevailing wind systems and their months",
   ),
   textOnly("ferry_traffic", z.enum(["none", "low", "moderate", "high"]), "area_weighted", "Amount of ferry traffic"),
-  textOnly(
-    "restricted_zones",
-    namedZones(["military", "firing", "protected", "other"]),
-    "area_weighted",
-    "Restricted zones named in the text, with the proper name if given",
-  ),
-  textOnly("charter_bases", z.array(properName).min(1), "area_weighted", "Proper names of charter bases"),
-  textOnly("supply_ports", z.array(properName).min(1), "area_weighted", "Proper names of ports for supplies"),
+  {
+    ...textOnly(
+      "restricted_zones",
+      namedZones(["military", "firing", "protected", "other"]),
+      "area_weighted",
+      "Restricted zones named in the text, with the proper name if given",
+    ),
+    textNames: namedEntries,
+  },
+  { ...textOnly("charter_bases", z.array(properName).min(1), "area_weighted", "Proper names of charter bases"), textNames: nameList },
+  { ...textOnly("supply_ports", z.array(properName).min(1), "area_weighted", "Proper names of ports for supplies"), textNames: nameList },
 ];
 
 const capeStrait: AttributeDef[] = [

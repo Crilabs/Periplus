@@ -39,6 +39,12 @@ export type AttributeDef = {
    * text format contradicts (shelter "0 to 1" while the model delivers a word); defaults to `description`.
    */
   textDescription?: string;
+  /**
+   * For a text value holding proper names (outside `highlight.*`, which has its own check): returns the value with only
+   * the names `supported` accepts (the fact's quote must contain each, ruling M4-G-R5) and how many were dropped;
+   * `value` is null when nothing is left to store.
+   */
+  textNames?: (value: unknown, supported: (name: string) => boolean) => { value: unknown | null; rejected: number };
 };
 
 export type FactSchema = { version: string; levels: Record<FactLevel, AttributeDef[]> };

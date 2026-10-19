@@ -20,12 +20,16 @@ export async function failUnitMentions(db: Db, unitIds: string[]): Promise<void>
   `);
 }
 
-/** Sets the `failed` mentions of a unit that completed after all back to `done`. */
+/**
+ * Sets the `failed` mentions of a unit that completed after all back to `done`, only for a unit of a regular run (the
+ * one that claimed them): a reprocess or comparison unit never decides the status of the regular run's mentions
+ * (ruling M4-G-R5).
+ */
 export async function restoreUnitMentions(db: Db, unitId: string): Promise<void> {
   await db.execute(sql`
     update mentions m set extraction_status = 'done'
-    from extraction_units u
-    where u.id = ${unitId} and m.id = any(u.mention_ids) and m.extraction_status = 'failed'
+    from extraction_units u join extraction_runs r on r.id = u.extraction_run_id
+    where u.id = ${unitId} and r.purpose = 'regular' and m.id = any(u.mention_ids) and m.extraction_status = 'failed'
   `);
 }
 
