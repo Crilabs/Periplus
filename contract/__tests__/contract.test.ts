@@ -50,6 +50,8 @@ describe("Periplus Data Contract v1", () => {
     ["an upper-case scheme", { sources: [{ url: "HTTPS://example.org/a", kind: "forum", observedAt: "2025-06-10" }] }],
     ["a shelter source outside the provenance vocabulary", { shelter: { ...ex.shelter, source: "computed+navily" } }],
     ["a depth source with a trailing +", { depth: { ...ex.depth, source: "text+" } }],
+    ["a shelter source out of contract order", { shelter: { ...ex.shelter, source: "text+computed" } }],
+    ["a depth source with a duplicate", { depth: { ...ex.depth, source: "text+text" } }],
   ])("rejects %s", (_name, patch) => {
     expect(spotSchema.safeParse({ ...ex, ...patch }).success).toBe(false);
   });

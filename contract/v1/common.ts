@@ -47,11 +47,16 @@ export const count = z.number().int().min(0);
 
 const PROVENANCE_SOURCES = ["computed", "text", "observed", "review"] as const;
 export const provenanceSource = z.enum(PROVENANCE_SOURCES);
-/** The origins that made a value, `+`-joined in contract order, e.g. `computed`, `computed+text`. */
-const sourceAlternatives = PROVENANCE_SOURCES.join("|");
+/**
+ * The origins that made a value, distinct and `+`-joined in contract order, e.g. `computed`, `computed+text`: each
+ * source may only be followed by later ones, so `text+computed` and `text+text` are rejected.
+ */
+const canonicalSources = PROVENANCE_SOURCES.map(
+  (first, i) => first + PROVENANCE_SOURCES.slice(i + 1).map((later) => `(?:\\+${later})?`).join(""),
+).join("|");
 export const combinedSource = z
   .string()
-  .regex(new RegExp(`^(${sourceAlternatives})(\\+(${sourceAlternatives}))*$`), "must be provenance sources joined with +");
+  .regex(new RegExp(`^(?:${canonicalSources})$`), "must be distinct provenance sources joined with + in contract order");
 export const sourceKind = z.enum([
   "pilotGuide",
   "tripReport",

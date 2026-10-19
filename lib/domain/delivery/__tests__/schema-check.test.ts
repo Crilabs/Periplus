@@ -41,6 +41,14 @@ describe("checkJsonSchema", () => {
     );
   });
 
+  it("the published schemas take combined sources in contract order only", () => {
+    const paths = (source: string) =>
+      checkJsonSchema("spots.json", spotsFile([{ ...ex, shelter: { ...ex.shelter, source } }])).map((e) => e.path);
+    expect(paths("computed+text")).toEqual([]);
+    expect(paths("text+computed")).toContain("/spots/0/shelter/source");
+    expect(paths("text+text")).toContain("/spots/0/shelter/source");
+  });
+
   it("reports a wrong envelope at the root", () => {
     const errors = checkJsonSchema("spots.json", { ...spotsFile([]), schemaVersion: "2.0" });
     expect(errors).toEqual([expect.objectContaining({ path: "/schemaVersion" })]);
