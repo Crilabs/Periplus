@@ -184,6 +184,29 @@ describe("classification storage", () => {
 });
 
 describe("stage classify.document_version", () => {
+  it("the batch handler judges a result stale by the poll's configuration, not the loaded one", () =>
+    withRollback(async (tx) => {
+      const { versionId } = await insertTestChunk(tx);
+      const runId = await classifyRun(tx, {});
+      const task = config.models.tasks["classify-document"]!;
+      const v2: AppConfig = { ...config, models: { ...config.models, tasks: { ...config.models.tasks, "classify-document": { ...task, promptVersion: 2 } } } };
+      const item = (promptVersion: number) => ({
+        id: newId(),
+        subjectType: "document_version",
+        subjectId: versionId,
+        input: {},
+        output: answer({ doc_type: "forum" }),
+        usage: { inputTokens: 0, outputTokens: 0 },
+        costEur: 0,
+        batch: { id: newId(), model: task.model, promptVersion, runId, stage: CLASSIFY_STAGE },
+      });
+      // prompt version 1 is active in the loaded config, but the poll runs with version 2: the result is stale
+      await classificationBatchEntry.handle(tx, item(1), { config: v2 });
+      expect(await versionRow(tx, versionId)).toMatchObject({ classifiedModel: null, classifiedPromptVersion: null });
+      await classificationBatchEntry.handle(tx, item(2), { config: v2 });
+      expect(await versionRow(tx, versionId)).toMatchObject({ classifiedDocType: "forum", classifiedPromptVersion: 2 });
+    }));
+
   it("the stage plans only unclassified versions and stores one row per version", () =>
     withRollback(async (tx) => {
       const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);

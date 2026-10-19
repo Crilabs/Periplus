@@ -223,6 +223,25 @@ describe("structured output schema (ruling M4-D-R1)", () => {
     expect(schema).toMatchObject({ type: "object", additionalProperties: false });
   });
 
+  it("strips constraints inside unions and $defs; additionalProperties other than false is refused", () => {
+    const code = z.object({ code: z.string().max(3).regex(/^[A-Z]+$/) });
+    const nested = z.object({ maybe: z.string().max(3).nullable(), a: code, b: code, list: z.array(z.number().min(0)).max(2).nullable() });
+    const schema = z.toJSONSchema(nested, { reused: "ref" }) as { $defs?: Record<string, unknown> };
+    expect(Object.keys(schema.$defs ?? {}).length).toBeGreaterThan(0);
+    const stripped = structuredOutputSchema(schema) as {
+      properties: { maybe: unknown; list: unknown };
+      $defs: Record<string, { properties?: { code?: unknown } }>;
+    };
+    expect(JSON.stringify(stripped)).not.toMatch(KEYWORDS);
+    expect(stripped.properties.maybe).toEqual({ anyOf: [{ type: "string" }, { type: "null" }] });
+    expect(stripped.properties.list).toMatchObject({ anyOf: [{ type: "array" }, { type: "null" }] });
+    expect(Object.values(stripped.$defs).find((d) => d.properties?.code)!.properties!.code).toEqual({ type: "string" });
+    expect(() => structuredOutputSchema(z.toJSONSchema(z.object({ r: z.record(z.string(), z.number()) })))).toThrow(
+      /#\/properties\/r allows other properties/,
+    );
+    expect(() => structuredOutputSchema(z.toJSONSchema(z.looseObject({ x: z.string() })))).toThrow(/additionalProperties false/);
+  });
+
   it("the batch and sync params send the stripped schema; the answer is checked against the full one", () =>
     withRollback(async (tx) => {
       const params = buildParams(constrainedTask, { text: "x" }, config.models.tasks["system.echo"]!, "claude-haiku-5-5");

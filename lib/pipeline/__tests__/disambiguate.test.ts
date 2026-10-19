@@ -6,10 +6,11 @@ import { quietDay } from "@/test/external-calls";
 import { insertNamedObject, insertTestRun, insertTestTile, insertTestVersion } from "@/test/text";
 import { MockModel } from "@/lib/ai/mock";
 import { candidateList, disambiguateMentionTask, type DisambiguateMentionInput } from "@/lib/ai/tasks/disambiguate-mention";
+import { disambiguationInputs } from "@/lib/pipeline/text/disambiguate";
 import { buildParams } from "@/lib/ai/anthropic";
 import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { aiBatches, ambiguousMatches, mentions } from "@/lib/db/schema";
+import { aiBatches, ambiguousMatches, geoObjects, mentions, runs } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { beginStage, createRun } from "@/lib/domain/runs";
 import { tileIdFor } from "@/lib/domain/tiles";
@@ -24,6 +25,8 @@ import {
   planDisambiguate,
 } from "@/lib/pipeline/text/disambiguate";
 import { matchVersion } from "@/lib/pipeline/text/mentions";
+import { startTextRun } from "@/lib/pipeline/text/run";
+import { freezeTextRunParams } from "@/lib/pipeline/text/versions";
 
 const base = loadConfig("config");
 const config: AppConfig = { ...base, budgets: { ...base.budgets, anthropic: { dailyEur: 1000 } } };
@@ -121,7 +124,64 @@ describe("applyDisambiguation", () => {
     }));
 });
 
+describe("applyDisambiguation with a changed gazetteer", () => {
+  it("a chosen candidate that was merged or ended since the match gives none", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx);
+      const [first, second] = s.candidates.map((c) => c.geoObjectId);
+      await tx.update(geoObjects).set({ mergedIntoId: second }).where(eq(geoObjects.id, first!));
+      expect(await applyDisambiguation(tx, s.amb.id, { choice: 1, confidence: 0.9 }, { ...META, runId: s.runId })).toBe("none");
+      expect((await mentionsOf(tx, s.versionId)).filter((m) => m.matchKind === "model")).toEqual([]);
+      expect(await status(tx, s.amb.id)).toBe("none");
+
+      // a second match of the same span shape whose chosen candidate has ended
+      const again = await insertTestVersion(tx, [TEXT]);
+      const [t] = await tx
+        .insert(ambiguousMatches)
+        .values({ documentVersionId: again.versionId, chunkId: again.chunkIds[0]!, surface: "Vathy", charStart: s.amb.charStart, charEnd: s.amb.charEnd, candidates: s.candidates })
+        .returning({ id: ambiguousMatches.id });
+      await tx.update(geoObjects).set({ validTo: "2026-01-01" }).where(eq(geoObjects.id, second!));
+      expect(await applyDisambiguation(tx, t!.id, { choice: 2, confidence: 0.9 }, { ...META, runId: s.runId })).toBe("none");
+      expect(await status(tx, t!.id)).toBe("none");
+    }));
+});
+
 describe("disambiguation input", () => {
+  it("coordinates carry their hemisphere", () => {
+    const list = candidateList([
+      { n: 1, name: "West", type: "bay", parents: [], lon: -4.25, lat: -33.5 },
+      { n: 2, name: "Ost", type: "bay", parents: [], lon: 21.1, lat: 35.1 },
+    ]);
+    expect(list).toBe("1. West (bay) – 33.50000 S, 4.25000 W\n2. Ost (bay) – 35.10000 N, 21.10000 E");
+  });
+
+  it("a match whose candidate is missing is left out of the batch, the others go", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      const s = await scene(tx);
+      const broken = await insertTestVersion(tx, ["Nochmal nach Vathy."]);
+      const [bad] = await tx
+        .insert(ambiguousMatches)
+        .values({
+          documentVersionId: broken.versionId,
+          chunkId: broken.chunkIds[0]!,
+          surface: "Vathy",
+          charStart: 13,
+          charEnd: 18,
+          candidates: [{ geoObjectId: newId(), similarity: 1 }, ...s.candidates],
+        })
+        .returning({ id: ambiguousMatches.id });
+      const inputs = await disambiguationInputs(tx, [bad!.id, s.amb.id, newId()], config);
+      expect([...inputs.keys()]).toEqual([s.amb.id]);
+      const model = new MockModel({ "disambiguate-mention": () => ({ choice: 1, confidence: 0.9 }) });
+      const { boss } = recordingBoss();
+      const { id: runId } = await createRun(tx, { kind: "stage", scope: { type: "system", id: `d-${newId()}` }, stages: [DISAMBIGUATE_STAGE], params: {}, triggeredBy: "test" });
+      await beginStage(tx, runId, DISAMBIGUATE_STAGE, 1);
+      const deps = { model, boss, config, now: () => now, reservationScope: { runIds: [runId] } };
+      const job = { runId, stage: DISAMBIGUATE_STAGE, key: "disambiguate:0", ambiguousIds: [bad!.id, s.amb.id] };
+      expect(await disambiguateMatches(tx, deps, job)).toEqual({ submitted: 1, remainder: 0, reused: false });
+    }));
+
   it("the input lists every candidate with type, parents and coordinate", () =>
     withRollback(async (tx) => {
       const s = await scene(tx);
@@ -173,6 +233,8 @@ describe("stage mentions.disambiguate", () => {
         },
       });
       const { boss } = recordingBoss();
+      // the match ran in an earlier run that has ended: the new run claims the pending match
+      await tx.update(runs).set({ status: "finished" }).where(eq(runs.id, s.runId));
       const params = { documentVersionIds: [s.versionId] };
       const { id: runId } = await createRun(tx, {
         kind: "reprocess",
@@ -199,5 +261,75 @@ describe("stage mentions.disambiguate", () => {
       // nothing pending any more: a new plan is empty, and a late job with the decided match sends nothing
       expect(await planDisambiguate(tx, { id: runId, params }, config)).toEqual([]);
       expect(await disambiguateMatches(tx, deps, { ...job, key: "disambiguate:late" })).toEqual({ submitted: 0, remainder: 0, reused: false });
+    }));
+
+  it("a pending run plans the ambiguous matches its own match stage created (frozen version set)", () =>
+    withRollback(async (tx) => {
+      const area = await insertNamedObject(tx, { type: "area", names: [{ name: "Testrevier" }], lon: 21.2, lat: 35.2 });
+      for (const t of [A, B]) await insertTestTile(tx, t, area);
+      const kalonisi = await insertNamedObject(tx, { type: "island", names: [{ name: "Kalonisi" }], lon: 21.12, lat: 35.12, tiles: [A], parentId: area });
+      await insertNamedObject(tx, { type: "bay", names: [{ name: "Vathy" }], lon: 21.1, lat: 35.1, tiles: [A], parentId: kalonisi });
+      await insertNamedObject(tx, { type: "harbour", names: [{ name: "Vathy" }], lon: 21.3, lat: 35.15, tiles: [B] });
+      const v = await insertTestVersion(tx, [TEXT]);
+      // a re-resolved `pending` selection is refused by the stages
+      await expect(planDisambiguate(tx, { id: newId(), params: { pending: true } }, config)).rejects.toThrow(/frozen version set/);
+      const params = await freezeTextRunParams(tx, { pending: true }, config);
+      expect(params.documentVersionIds).toContain(v.versionId);
+      const { id: runId } = await createRun(tx, {
+        kind: "stage",
+        scope: { type: "system", id: `disambiguate-test-${newId()}` },
+        stages: [DISAMBIGUATE_STAGE],
+        params,
+        triggeredBy: "test",
+      });
+      // the match stage writes the pass that makes the version no longer pending
+      await matchVersion(tx, v.versionId, { runId, cfg: config });
+      const [amb] = await tx.select().from(ambiguousMatches).where(eq(ambiguousMatches.documentVersionId, v.versionId));
+      const jobs = await planDisambiguate(tx, { id: runId, params }, config);
+      expect(jobs.flatMap((j) => j.ambiguousIds as string[])).toContain(amb!.id);
+    }));
+
+  it("startTextRun freezes the selection into the run's params", () =>
+    withRollback(async (tx) => {
+      const v = await insertTestVersion(tx, [TEXT]);
+      const { boss } = recordingBoss();
+      const { id } = await startTextRun(tx, boss, { documentVersionIds: [v.versionId], triggeredBy: "test" }, config);
+      const [row] = await tx.select({ params: runs.params, stages: runs.stages }).from(runs).where(eq(runs.id, id));
+      expect(row!.params).toEqual({ documentVersionIds: [v.versionId] });
+      const pending = await startTextRun(tx, boss, { pending: true, triggeredBy: "test" }, config);
+      const [p] = await tx.select({ params: runs.params }).from(runs).where(eq(runs.id, pending.id));
+      expect(p!.params).toMatchObject({ pending: true, documentVersionIds: expect.arrayContaining([v.versionId]) });
+    }));
+
+  it("overlapping runs never both plan the same pending match", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx);
+      const params = { documentVersionIds: [s.versionId] };
+      const other = await createRun(tx, { kind: "stage", scope: { type: "system", id: `d-${newId()}` }, stages: [DISAMBIGUATE_STAGE], params, triggeredBy: "test" });
+      // the match belongs to the (active) run that matched it: another active run leaves it alone
+      expect(await planDisambiguate(tx, { id: other.id, params }, config)).toEqual([]);
+      const own = await planDisambiguate(tx, { id: s.runId, params }, config);
+      expect(own).toEqual([{ key: "disambiguate:0", ambiguousIds: [s.amb.id] }]);
+      // once the owner has ended, the other run claims it, and then the first one no longer plans it
+      await tx.update(runs).set({ status: "failed" }).where(eq(runs.id, s.runId));
+      expect(await planDisambiguate(tx, { id: other.id, params }, config)).toEqual([{ key: "disambiguate:0", ambiguousIds: [s.amb.id] }]);
+      await tx.update(runs).set({ status: "running" }).where(eq(runs.id, s.runId));
+      expect(await planDisambiguate(tx, { id: s.runId, params }, config)).toEqual([]);
+      const [row] = await tx.select({ runId: ambiguousMatches.runId }).from(ambiguousMatches).where(eq(ambiguousMatches.id, s.amb.id));
+      expect(row!.runId).toBe(other.id);
+    }));
+
+  it("a tile or area selection resolves to the current versions mentioning objects there", () =>
+    withRollback(async (tx) => {
+      const key = `test-${newId()}`;
+      const area = await insertNamedObject(tx, { type: "area", names: [{ name: "Testrevier" }], lon: 21.2, lat: 35.2, configKey: key });
+      for (const t of [A, B]) await insertTestTile(tx, t, area);
+      const kalonisi = await insertNamedObject(tx, { type: "island", names: [{ name: "Kalonisi" }], lon: 21.12, lat: 35.12, tiles: [A], parentId: area });
+      const v = await insertTestVersion(tx, ["Rund um Kalonisi."]);
+      await matchVersion(tx, v.versionId, { runId: null, cfg: config });
+      expect((await mentionsOf(tx, v.versionId)).map((m) => m.geoObjectId)).toEqual([kalonisi]);
+      expect((await freezeTextRunParams(tx, { tileId: A }, config)).documentVersionIds).toContain(v.versionId);
+      expect((await freezeTextRunParams(tx, { tileId: B }, config)).documentVersionIds).not.toContain(v.versionId);
+      expect((await freezeTextRunParams(tx, { areaKey: key }, config)).documentVersionIds).toContain(v.versionId);
     }));
 });

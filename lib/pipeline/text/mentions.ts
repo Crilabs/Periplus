@@ -18,7 +18,7 @@ import {
 } from "@/lib/domain/mentions/store";
 import { nameHints, type UnmatchedDraft } from "@/lib/domain/mentions/unmatched";
 import type { JobData } from "@/lib/jobs/worker";
-import { textRunParamsSchema, textRunVersions } from "./versions";
+import { frozenRunVersions } from "./versions";
 
 /*
  * Stage `mentions.batch` (spec 06): the deterministic name match of the text run's versions, `versionsPerJob` per job.
@@ -38,7 +38,7 @@ export async function planMentions(
   run: { id: string; params: Record<string, unknown> },
   config: AppConfig = getConfig(),
 ): Promise<JobData[]> {
-  const ids = await textRunVersions(db, textRunParamsSchema.parse(run.params), config);
+  const ids = await frozenRunVersions(db, run.params);
   const size = config.mentions.versionsPerJob;
   const jobs: JobData[] = [];
   for (let i = 0; i * size < ids.length; i++) jobs.push({ key: `mentions:${i}`, versionIds: ids.slice(i * size, (i + 1) * size) });

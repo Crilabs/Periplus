@@ -10,7 +10,7 @@ import type { JobData } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
 import type { BatchDeps, BatchHandlerEntry, BatchItemInput } from "@/lib/pipeline/batches";
 import { submitStageJobBatch } from "./stage-batch";
-import { textRunParamsSchema, textRunVersions } from "./versions";
+import { frozenRunVersions } from "./versions";
 
 /*
  * Stage `classify.document_version` (spec 06): every version of the text run without a classification by the active
@@ -58,8 +58,7 @@ export async function planClassify(
   run: { id: string; params: Record<string, unknown> },
   config: AppConfig = getConfig(),
 ): Promise<JobData[]> {
-  const params = textRunParamsSchema.parse(run.params);
-  const todo = await unclassified(db, await textRunVersions(db, params, config), config);
+  const todo = await unclassified(db, await frozenRunVersions(db, run.params), config);
   const size = config.extraction.unitsPerBatch;
   const jobs: JobData[] = [];
   for (let i = 0; i * size < todo.length; i++) {
@@ -127,21 +126,35 @@ export async function classifyVersions(
   });
 }
 
-/** Batch handler of `classify-document`: stores one version's classification (ruling M4-P11). */
+/**
+ * Batch handler of `classify-document`: stores one version's classification (ruling M4-P11). Only a result of the
+ * poll's active classifier (`ctx.config`) writes; a stale one (the model or prompt version changed while the batch
+ * ran) is dropped and logged.
+ */
 export const classificationBatchEntry: BatchHandlerEntry = {
   task,
-  handle: async (db, item) => {
+  handle: async (db, item, ctx) => {
     const out = classifyDocumentTask.output.parse(item.output);
+    const active = activeClassifier(ctx.config);
+    if (item.batch.model !== active.model || item.batch.promptVersion !== active.promptVersion) {
+      getLog().warn(
+        { versionId: item.subjectId, model: item.batch.model, promptVersion: item.batch.promptVersion, active },
+        "stale classification result dropped",
+      );
+      return;
+    }
     const [version] = await db
       .select({ fetchedAt: documentVersions.fetchedAt })
       .from(documentVersions)
       .where(eq(documentVersions.id, item.subjectId));
     if (!version) throw new Error(`document version ${item.subjectId} does not exist`);
-    await storeClassification(db, item.subjectId, out, {
-      model: item.batch.model,
-      promptVersion: item.batch.promptVersion,
-      runId: item.batch.runId,
-      fetchedAt: version.fetchedAt,
-    });
+    await storeClassification(
+      db,
+      item.subjectId,
+      out,
+      { model: item.batch.model, promptVersion: item.batch.promptVersion, runId: item.batch.runId, fetchedAt: version.fetchedAt },
+      ctx.config.extraction.earliestDate,
+      active,
+    );
   },
 };

@@ -47,8 +47,11 @@ export type BatchHandlerItem = {
   batch: { id: string; model: string; promptVersion: number; runId: string; stage: string };
 };
 
+/** What a handler may read besides the item: the poll's configuration (`deps.config`, else the loaded one). */
+export type BatchHandlerContext = { config: AppConfig };
+
 /** Stores the result of one item; runs in the transaction that marks the item distributed. */
-export type BatchHandler = (db: Db, item: BatchHandlerItem) => Promise<void>;
+export type BatchHandler = (db: Db, item: BatchHandlerItem, ctx: BatchHandlerContext) => Promise<void>;
 
 /** What `pollBatch` needs per task name: the task (output schema for collecting) and its handler. */
 export type BatchHandlerEntry = { task: ModelTask<unknown, unknown>; handle: BatchHandler };
@@ -583,6 +586,7 @@ async function distribute(db: Db, deps: BatchDeps, batch: BatchRow, handle: Batc
     .where(and(eq(aiBatchItems.batchId, batch.id), eq(aiBatchItems.status, "succeeded"), isNull(aiBatchItems.distributedAt)))
     .orderBy(aiBatchItems.id);
   const failures: Array<{ id: string; error: string }> = [];
+  const handlerCtx: BatchHandlerContext = { config: deps.config ?? getConfig() };
   for (const { id } of ids) {
     try {
       await db.transaction(async (tx) => {
@@ -602,7 +606,7 @@ async function distribute(db: Db, deps: BatchDeps, batch: BatchRow, handle: Batc
           usage: { inputTokens: item.inputTokens ?? 0, outputTokens: item.outputTokens ?? 0 },
           costEur: Number(item.costEur ?? 0),
           batch: { id: batch.id, model: batch.model, promptVersion: batch.promptVersion, runId: batch.runId, stage: batch.stage },
-        });
+        }, handlerCtx);
         await tx
           .update(aiBatchItems)
           .set({ distributedAt: nowOf(deps), distributionError: null })

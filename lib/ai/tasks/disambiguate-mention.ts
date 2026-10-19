@@ -28,12 +28,16 @@ const output: z.ZodType<DisambiguateMentionOutput> = z.object({
   confidence: z.number().min(0).max(1),
 });
 
-/** One candidate per line: `n. name (type) – in parent, grandparent – lat, lon`. */
+/** A latitude or longitude with its hemisphere: 35.10000 N, 4.20000 W. */
+const coordinate = (value: number, positive: string, negative: string) =>
+  `${Math.abs(value).toFixed(5)} ${value < 0 ? negative : positive}`;
+
+/** One candidate per line: `n. name (type) – in parent, grandparent – lat, lon` (with N/S and E/W). */
 export function candidateList(candidates: DisambiguateCandidate[]): string {
   return candidates
     .map((c) => {
       const parents = c.parents.length > 0 ? ` – in ${c.parents.join(", ")}` : "";
-      return `${c.n}. ${c.name} (${c.type})${parents} – ${c.lat.toFixed(5)} N, ${c.lon.toFixed(5)} E`;
+      return `${c.n}. ${c.name} (${c.type})${parents} – ${coordinate(c.lat, "N", "S")}, ${coordinate(c.lon, "E", "W")}`;
     })
     .join("\n");
 }

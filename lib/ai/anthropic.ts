@@ -68,19 +68,26 @@ const UNSUPPORTED_KEYWORDS = new Set([
 /** Keywords whose value is a map of names to subschemas (the names are data, never keywords). */
 const SCHEMA_MAPS = new Set(["properties", "$defs", "definitions", "patternProperties", "dependentSchemas"]);
 
-/** A JSON schema without the keywords structured outputs reject, at every level (property names stay untouched). */
-export function structuredOutputSchema(schema: unknown): unknown {
-  if (Array.isArray(schema)) return schema.map(structuredOutputSchema);
+/**
+ * A JSON schema without the keywords structured outputs reject, at every level (property names stay untouched).
+ * `additionalProperties` other than `false` (a `z.record` or a loose object) cannot be expressed in structured outputs
+ * at all; such a task schema is a programming error and throws here, before anything is sent.
+ */
+export function structuredOutputSchema(schema: unknown, path = "#"): unknown {
+  if (Array.isArray(schema)) return schema.map((s, i) => structuredOutputSchema(s, `${path}/${i}`));
   if (schema === null || typeof schema !== "object") return schema;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(schema)) {
     if (UNSUPPORTED_KEYWORDS.has(key)) continue;
+    if (key === "additionalProperties" && value !== false) {
+      throw new Error(`structured outputs need additionalProperties false; ${path} allows other properties (z.record or a loose object)`);
+    }
     if (SCHEMA_MAPS.has(key) && value !== null && typeof value === "object" && !Array.isArray(value)) {
-      out[key] = Object.fromEntries(Object.entries(value).map(([name, sub]) => [name, structuredOutputSchema(sub)]));
+      out[key] = Object.fromEntries(Object.entries(value).map(([name, sub]) => [name, structuredOutputSchema(sub, `${path}/${key}/${name}`)]));
     } else if (key === "enum" || key === "const" || key === "required" || key === "default" || key === "examples") {
       out[key] = value;
     } else {
-      out[key] = structuredOutputSchema(value);
+      out[key] = structuredOutputSchema(value, `${path}/${key}`);
     }
   }
   return out;

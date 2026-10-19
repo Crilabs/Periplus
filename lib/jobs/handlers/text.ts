@@ -7,6 +7,13 @@ import { DISAMBIGUATE_QUEUE, DISAMBIGUATE_STAGE, disambiguateMatches, planDisamb
 import { MENTIONS_QUEUE, MENTIONS_STAGE, matchVersions, planMentions } from "@/lib/pipeline/text/mentions";
 import { modelClientFor } from "./ai-batch";
 
+/*
+ * Text stages are planned lazily, when each stage starts (`enqueueStage`). They therefore plan from the run's frozen
+ * version set (`frozenRunVersions`, ruling M4-E-R2), never from a re-resolved `pending`/`tileId`/`areaKey`: the
+ * passes written by `mentions.batch` would make `pending` empty for every later stage. The stages added in Task 17
+ * (geocode, extraction, routes, check) must plan from the frozen list too.
+ */
+
 /** Stage `classify.document_version`: one job per `unitsPerBatch` versions of the text run. */
 export const classifyDocumentVersionStage: StageDefinition = {
   name: CLASSIFY_STAGE,
