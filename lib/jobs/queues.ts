@@ -1,7 +1,18 @@
 import type { PgBoss } from "pg-boss";
 import type { QueueConfig } from "@/lib/config";
 
-export const QUEUES = ["system.ping", "run.advance", "tiles.ensure", "gazetteer.build", "seed.tile", "datasets.import", "geometry.compute"] as const;
+export const QUEUES = [
+  "system.ping",
+  "run.advance",
+  "tiles.ensure",
+  "gazetteer.build",
+  "seed.tile",
+  "datasets.import",
+  "geometry.compute",
+  "discovery.area",
+  "discovery.tile",
+  "discovery.propose",
+] as const;
 export type QueueName = (typeof QUEUES)[number];
 
 /** Moves a run to its next stage (plans and enqueues it), decoupled from the job that finished the stage. */

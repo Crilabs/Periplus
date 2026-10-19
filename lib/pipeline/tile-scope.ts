@@ -12,7 +12,8 @@ export type RunScopeReason =
   | "area_without_coast_tiles"
   | "bathymetry_missing"
   | "land_missing"
-  | "place_not_computable";
+  | "place_not_computable"
+  | "tile_without_area";
 
 /** A run start refused before the run exists because its scope lacks an input (an expected, user-facing error). */
 export class RunScopeNotReady extends Error {

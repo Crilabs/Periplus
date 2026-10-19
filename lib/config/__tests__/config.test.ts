@@ -264,7 +264,15 @@ describe("source configuration", () => {
     expect(c.discovery.serp).toMatchObject({ depth: 20, reuseDays: 30, maxQueriesPerRun: 240 });
     expect(c.discovery.templates.tile).toContainEqual({ template: "αγκυροβόλιο {name}", lang: "el", locationCode: 2300 });
     expect(c.discovery.bay).toEqual({ minAnchorAreaM2: 20000, minWikidataNames: 2 });
-    expect(c.discovery.proposals).toMatchObject({ minSerpHits: 3, minLinkingSources: 2, typeHints: [], defaultType: "trip_report" });
+    expect(c.discovery.proposals).toMatchObject({ minSerpHits: 3, minLinkingSources: 2, defaultType: "trip_report" });
+    expect(c.discovery.proposals.typeHints.map((h) => h.type)).toEqual([
+      "forum",
+      "authority",
+      "marina",
+      "pilot_guide",
+      "pilot_guide",
+      "trip_report",
+    ]);
     expect(c.discovery.proposals.ignoreDomains).toContain("navily.com");
     expect(c.embeddings).toMatchObject({ provider: "voyage", model: "voyage-3.5", dimension: 1024 });
     expect(c.whitelist).toHaveLength(1);

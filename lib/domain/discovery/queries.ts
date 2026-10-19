@@ -71,7 +71,8 @@ function build(
   return out;
 }
 
-const queryKey = (q: Pick<DiscoveryQuery, "keyword" | "languageCode" | "locationCode">) =>
+/** Identity of a search: `(keyword, languageCode, locationCode)`. */
+export const queryKey = (q: Pick<DiscoveryQuery, "keyword" | "languageCode" | "locationCode">) =>
   `${q.keyword}\u0000${q.languageCode}\u0000${q.locationCode}`;
 
 /** One query per `(keyword, languageCode, locationCode)`, keeping the lowest priority. */

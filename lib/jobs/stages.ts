@@ -1,5 +1,6 @@
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import { datasetsImportStage } from "./handlers/datasets";
+import { discoveryAreaStage, discoveryProposeStage, discoveryTileStage } from "./handlers/discovery";
 import { geometryPlaceStage } from "./handlers/geometry";
 import {
   gazetteerGeonamesStage,
@@ -22,4 +23,7 @@ export const STAGES: Record<string, StageDefinition> = {
   [seedTileStage.name]: seedTileStage,
   [datasetsImportStage.name]: datasetsImportStage,
   [geometryPlaceStage.name]: geometryPlaceStage,
+  [discoveryAreaStage.name]: discoveryAreaStage,
+  [discoveryTileStage.name]: discoveryTileStage,
+  [discoveryProposeStage.name]: discoveryProposeStage,
 };

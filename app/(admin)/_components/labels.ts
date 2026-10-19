@@ -175,6 +175,7 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   bathymetry_missing: "Bathymetrie fehlt – zuerst „Datensätze laden“",
   land_missing: "Landpolygone fehlen – zuerst die Landpolygone importieren",
   place_not_computable: "Ort wird nicht berechnet (beendet, zusammengeführt, verworfen oder ohne Kachel)",
+  tile_without_area: "Kachel gehört zu keinem konfigurierten Revier – Suchsprachen unbekannt",
 };
 
 /** The German text of a `?error=<reason>` a run action redirected with; null for none or an unknown reason. */

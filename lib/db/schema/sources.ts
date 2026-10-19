@@ -264,3 +264,23 @@ export const serpResults = pgTable(
   },
   (t) => [index("serp_results_domain_idx").on(t.domain), index("serp_results_serp_query_id_idx").on(t.serpQueryId)],
 );
+
+/** Working state: outgoing links per approved source, target registrable domain and crawl run (link graph). */
+export const outlinks = pgTable(
+  "outlinks",
+  {
+    fromSourceId: uuid("from_source_id")
+      .notNull()
+      .references(() => sources.id),
+    /** Registrable domain (Public Suffix List, private suffixes included). */
+    toDomain: text("to_domain").notNull(),
+    count: integer("count").notNull().default(0),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => runs.id),
+  },
+  (t) => [
+    primaryKey({ columns: [t.fromSourceId, t.toDomain, t.runId] }),
+    index("outlinks_to_domain_idx").on(t.toDomain),
+  ],
+);

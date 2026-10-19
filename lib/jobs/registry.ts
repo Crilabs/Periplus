@@ -1,4 +1,5 @@
 import { datasetsImportHandler } from "./handlers/datasets";
+import { discoveryAreaHandler, discoveryProposeHandler, discoveryTileHandler } from "./handlers/discovery";
 import { gazetteerHandler } from "./handlers/gazetteer";
 import { geometryPlaceHandler } from "./handlers/geometry";
 import { advanceHandler } from "./handlers/run-advance";
@@ -17,4 +18,7 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "seed.tile": seedTileHandler,
   "datasets.import": datasetsImportHandler,
   "geometry.compute": geometryPlaceHandler,
+  "discovery.area": discoveryAreaHandler,
+  "discovery.tile": discoveryTileHandler,
+  "discovery.propose": discoveryProposeHandler,
 };

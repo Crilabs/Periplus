@@ -40,7 +40,14 @@
       "amazon.com",
       "amazon.de"
     ],
-    "typeHints": [],
+    "typeHints": [
+      { "pattern": "(forum|viewtopic|showthread|thread|board)", "type": "forum" },
+      { "pattern": "(gov\\.gr|hnhs|hcg\\.gr|ypa\\.gr|limenarxeio)", "type": "authority" },
+      { "pattern": "(marina|harbou?r|port-of)", "type": "marina" },
+      { "pattern": "\\.pdf$", "type": "pilot_guide" },
+      { "pattern": "(pilot|guide|revierf)", "type": "pilot_guide" },
+      { "pattern": "(/20\\d{2}/|blog|log|toern|törn|reise|trip)", "type": "trip_report" }
+    ],
     "defaultType": "trip_report"
   }
 }
