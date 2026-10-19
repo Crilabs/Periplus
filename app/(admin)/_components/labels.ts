@@ -2,6 +2,8 @@ import type {
   ChangeRate,
   ComputationKind,
   DocType,
+  DocumentStatus,
+  ObservedAtBasis,
   FrontierStatus,
   GeoObjectType,
   GeoOrigin,
@@ -15,6 +17,7 @@ import type {
   RestrictedKind,
   RunStatus,
   SeabedType,
+  SourceOrigin,
   SourceStatus,
 } from "@/lib/db/schema";
 import type { Sector } from "@/lib/domain/facts/schema-types";
@@ -191,6 +194,25 @@ export const SOURCE_STATUS_LABELS: Record<SourceStatus, string> = {
   paused: "Pausiert",
 };
 
+export const SOURCE_ORIGIN_LABELS: Record<SourceOrigin, string> = {
+  serp: "Suchtreffer",
+  linkgraph: "Linkgraph",
+  whitelist: "Whitelist",
+  manual: "Manuell",
+};
+
+export const DOCUMENT_STATUS_LABELS: Record<DocumentStatus, string> = {
+  active: "Aktiv",
+  gone: "Verschwunden",
+};
+
+/** Where the observation date of a version comes from. */
+export const OBSERVED_AT_BASIS_LABELS: Record<ObservedAtBasis, string> = {
+  explicit: "Im Text genannt",
+  published: "Veröffentlichungsdatum",
+  fetched: "Abrufdatum",
+};
+
 export const CHANGE_RATE_LABELS: Record<ChangeRate, string> = {
   high: "Hoch (täglich)",
   normal: "Normal",
@@ -251,6 +273,26 @@ export function runScopeError(param: string | string[] | undefined): string | nu
   return typeof param === "string" && Object.hasOwn(RUN_SCOPE_REASON_LABELS, param)
     ? RUN_SCOPE_REASON_LABELS[param as RunScopeReason]
     : null;
+}
+
+/** Errors of the source pages besides refused runs (`?error=<code>`). */
+export const SOURCE_ERROR_LABELS = {
+  not_pdf: "Die Datei ist kein PDF",
+  too_large: "Die Datei ist größer als 100 MB",
+  no_file: "Keine Datei ausgewählt",
+  domain_known: "Für diese Domain gibt es bereits eine Quelle",
+  invalid_domain: "Das ist keine gültige Domain",
+  invalid_source: "Domain, Name und Typ angeben",
+  not_approved: "Nur eine freigegebene Quelle kann pausiert werden",
+  not_paused: "Nur eine pausierte Quelle kann fortgesetzt werden",
+} as const;
+
+export type SourceErrorCode = keyof typeof SOURCE_ERROR_LABELS;
+
+/** The German text of a `?error=` on the source pages: a refused run or a `SOURCE_ERROR_LABELS` code. */
+export function sourcePageError(param: string | string[] | undefined): string | null {
+  if (typeof param !== "string") return null;
+  return runScopeError(param) ?? (Object.hasOwn(SOURCE_ERROR_LABELS, param) ? SOURCE_ERROR_LABELS[param as SourceErrorCode] : null);
 }
 
 export const queueStateLabel = (paused: boolean): string => (paused ? "Pausiert" : "Läuft");

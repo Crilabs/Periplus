@@ -24,6 +24,8 @@ export const ROUTE_POLICY: Record<string, RouteRule> = {
   "/tiles/[id]": { kind: "admin" },
   "/geo/[id]": { kind: "admin" },
   "/places/[id]": { kind: "admin" },
+  "/sources": { kind: "admin" },
+  "/sources/[id]": { kind: "admin" },
   "/api/v1/ping": { kind: "api", scope: "delivery:read" },
 };
 

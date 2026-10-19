@@ -1,0 +1,219 @@
+import { eq, sql } from "drizzle-orm";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Db } from "@/lib/db/client";
+import { documents, runs, sources, tiles, type SourceStatus } from "@/lib/db/schema";
+import { tileIdFor } from "@/lib/domain/tiles";
+import { newId } from "@/lib/domain/ids";
+import { DEFAULT_CRAWL_RULES } from "@/lib/domain/sources/crawl-rules";
+import { getSource } from "@/lib/domain/sources/store";
+import { testDb, withRollback } from "@/test/db";
+import { memoryArchive } from "@/test/s3";
+
+const db = testDb();
+/** What getDb() returns; each test points it at its rollback transaction (no source is ever committed). */
+let currentDb: Db = db;
+const requireAdmin = vi.fn();
+const redirect = vi.fn();
+let archive = memoryArchive();
+
+vi.mock("@/lib/security/require-admin", () => ({ requireAdmin: () => requireAdmin() }));
+vi.mock("@/lib/db/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db/client")>()),
+  getDb: () => currentDb,
+}));
+// Jobs are only collected: no worker runs.
+vi.mock("@/lib/jobs/boss", () => ({
+  getBoss: async () => ({ insert: async (_queue: string, jobs: Array<{ id: string }>) => jobs.map((j) => j.id) }),
+}));
+vi.mock("@/lib/adapters/s3", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/adapters/s3")>()),
+  getArchive: () => archive,
+}));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), refresh: vi.fn() }));
+vi.mock("next/navigation", () => ({ redirect: (url: string) => redirect(url) }));
+
+import { crawlAllApprovedAction, createSourceAction } from "../sources/actions";
+import { discoveryForTileAction } from "../tiles/[id]/actions";
+import { crawlAction, pauseSourceAction, saveSourceAction, testCrawlAction, uploadPdfAction } from "../sources/[id]/actions";
+
+const ADMIN = "admin@example.invalid";
+
+const form = (fields: Record<string, string | Blob>) => {
+  const data = new FormData();
+  for (const [k, v] of Object.entries(fields)) data.set(k, v);
+  return data;
+};
+
+async function insertSource(tx: Db, status: SourceStatus = "approved"): Promise<string> {
+  const domain = `${newId()}.test.invalid`;
+  const [row] = await tx
+    .insert(sources)
+    .values({ domain, name: domain, type: "forum", weight: 0.4, status, crawlRules: DEFAULT_CRAWL_RULES, origin: "manual" })
+    .returning({ id: sources.id });
+  return row!.id;
+}
+
+/** The settings form as the source page renders it. */
+const settingsForm = (sourceId: string, overrides: Record<string, string> = {}) =>
+  form({
+    sourceId,
+    name: "Neuer Name",
+    type: "marina",
+    weight: "0.7",
+    changeRate: "high",
+    startUrls: "",
+    allow: "^/bays/",
+    deny: "",
+    maxDepth: "3",
+    maxPages: "500",
+    ratePerMinute: "20",
+    render: "auto",
+    converter: "auto",
+    pdf: "on",
+    boilerplateSelectors: "",
+    ...overrides,
+  });
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  currentDb = db;
+  archive = memoryArchive();
+  requireAdmin.mockResolvedValue({ email: ADMIN });
+});
+
+describe("saveSourceAction", () => {
+  it("saveSourceAction rejects weight 1.5", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const sourceId = await insertSource(tx);
+      const before = await getSource(tx, sourceId);
+      await saveSourceAction(settingsForm(sourceId, { weight: "1.5", deny: "(unclosed" }));
+      expect(redirect).toHaveBeenCalledWith(`/sources/${sourceId}?invalid=weight,deny`);
+      expect(await getSource(tx, sourceId)).toEqual(before);
+    }));
+
+  it("a blank weight is invalid, not 0", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const sourceId = await insertSource(tx);
+      await saveSourceAction(settingsForm(sourceId, { weight: "  " }));
+      expect(redirect).toHaveBeenCalledWith(`/sources/${sourceId}?invalid=weight`);
+    }));
+
+  it("saves valid settings", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const sourceId = await insertSource(tx);
+      await saveSourceAction(settingsForm(sourceId));
+      expect(redirect).toHaveBeenCalledWith(`/sources/${sourceId}?saved=1`);
+      expect(await getSource(tx, sourceId)).toMatchObject({
+        name: "Neuer Name",
+        type: "marina",
+        weight: expect.closeTo(0.7, 5),
+        changeRate: "high",
+        crawlRules: { allow: ["^/bays/"] },
+      });
+    }));
+
+  it("rejects without admin session", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const sourceId = await insertSource(tx);
+      requireAdmin.mockRejectedValue(new Error("unauthorized"));
+      await expect(saveSourceAction(settingsForm(sourceId))).rejects.toThrow("unauthorized");
+      expect((await getSource(tx, sourceId))!.name).not.toBe("Neuer Name");
+    }));
+});
+
+describe("status and crawl actions", () => {
+  it("pausing a proposed source redirects with an error and changes nothing", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const sourceId = await insertSource(tx, "proposed");
+      await pauseSourceAction(form({ sourceId }));
+      expect(redirect).toHaveBeenCalledWith(`/sources/${sourceId}?error=not_approved`);
+      expect((await getSource(tx, sourceId))!.status).toBe("proposed");
+    }));
+
+  it("a crawl of a source that is being fetched shows the German refusal instead of failing", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const sourceId = await insertSource(tx);
+      await crawlAction(form({ sourceId }));
+      expect(redirect).toHaveBeenLastCalledWith(expect.stringMatching(/^\/runs\/[0-9a-f-]{36}$/));
+      await testCrawlAction(form({ sourceId }));
+      expect(redirect).toHaveBeenLastCalledWith(`/sources/${sourceId}?error=source_run_active`);
+    }));
+
+  it("\"Alle freigegebenen crawlen\" names the sources it skipped", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const busy = await insertSource(tx);
+      await insertSource(tx);
+      await crawlAction(form({ sourceId: busy }));
+      await crawlAllApprovedAction();
+      const target = String(redirect.mock.lastCall![0]);
+      const url = new URL(target, "http://localhost");
+      expect(url.pathname).toBe("/sources");
+      expect(url.searchParams.get("skipped")!.split(",")).toContain(busy);
+      const [run] = await tx.select().from(runs).where(eq(runs.id, url.searchParams.get("run")!));
+      expect((run!.params as { sourceIds: string[] }).sourceIds).not.toContain(busy);
+    }));
+});
+
+describe("createSourceAction", () => {
+  it("creates an approved manual source and refuses its domain a second time", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const domain = `m${newId()}.com`;
+      await createSourceAction(form({ domain: `https://www.${domain}/`, name: "Handbuch", type: "pilot_guide" }));
+      const [row] = await tx.select().from(sources).where(eq(sources.domain, domain));
+      expect(row).toMatchObject({ status: "approved", origin: "manual", name: "Handbuch" });
+      expect(redirect).toHaveBeenLastCalledWith(`/sources/${row!.id}`);
+
+      await createSourceAction(form({ domain, name: "Nochmal", type: "forum" }));
+      expect(redirect).toHaveBeenLastCalledWith("/sources?error=domain_known");
+      await createSourceAction(form({ domain: "kein domain", name: "X", type: "forum" }));
+      expect(redirect).toHaveBeenLastCalledWith("/sources?error=invalid_domain");
+    }));
+});
+
+describe("uploadPdfAction", () => {
+  const pdf = (text: string) => new Blob([`%PDF-1.7\n${text}\n%%EOF\n`], { type: "application/pdf" });
+
+  it("stores the pdf and starts its upload run", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const sourceId = await insertSource(tx, "paused");
+      await uploadPdfAction(form({ sourceId, file: new File([pdf(newId())], "guide.pdf", { type: "application/pdf" }) }));
+      const target = String(redirect.mock.lastCall![0]);
+      expect(target).toMatch(/^\/runs\/[0-9a-f-]{36}$/);
+      const [doc] = await tx.select().from(documents).where(eq(documents.sourceId, sourceId));
+      expect(doc!.url).toMatch(/^upload:\/\/[0-9a-f]{64}$/);
+      const [run] = await tx.select().from(runs).where(eq(runs.id, target.slice("/runs/".length)));
+      expect(run!.params).toEqual({ documentIds: [doc!.id] });
+      expect(archive.keys()).toEqual([`uploads/${doc!.url.slice("upload://".length)}.pdf`]);
+    }));
+
+  it("a file that is not a pdf comes back with an error", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const sourceId = await insertSource(tx);
+      await uploadPdfAction(form({ sourceId, file: new File(["<html></html>"], "page.pdf", { type: "application/pdf" }) }));
+      expect(redirect).toHaveBeenLastCalledWith(`/sources/${sourceId}?error=not_pdf`);
+      expect(archive.keys()).toEqual([]);
+    }));
+});
+
+describe("discovery from the tile page", () => {
+  it("an unknown tile is rejected; a tile outside a configured area comes back with the German refusal", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      await expect(discoveryForTileAction({ tileId: "q025:0:719" })).rejects.toThrow();
+      // Open sea outside the pilot box, at a spot no other test uses; no area.
+      const tileId = tileIdFor(26.61, 31.83);
+      await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(26.5, 31.75, 26.75, 32.0, 4326)` });
+      await discoveryForTileAction(form({ tileId }));
+      expect(redirect).toHaveBeenCalledWith(`/tiles/${encodeURIComponent(tileId)}?error=tile_without_area`);
+    }));
+});
