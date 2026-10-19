@@ -51,6 +51,34 @@ describe("locateQuote", () => {
     );
   });
 
+  it("a closing ***x*** leaves no trailing asterisk", () => {
+    const chunk = "Wir lagen ***hold fast*** then gut geschützt.";
+    const r = locateQuote(chunk, "hold fast then gut geschützt", cfg);
+    expect(r.ok && chunk.slice(r.start, r.end)).toBe("hold fast*** then gut geschützt");
+    expect(normalizeForQuote(chunk).text).toBe("Wir lagen hold fast then gut geschützt.");
+  });
+
+  it("a quote spanning two list bullets matches without the bullets", () => {
+    const chunk = "Ausstattung:\n- Wasser am Steg\n* Strom gegen Gebühr\n1. Diesel nur morgens";
+    const r = locateQuote(chunk, "Wasser am Steg Strom gegen Gebühr Diesel", cfg);
+    expect(r.ok && chunk.slice(r.start, r.end)).toBe("Wasser am Steg\n* Strom gegen Gebühr\n1. Diesel");
+    expect(normalizeForQuote(chunk).text).toBe("Ausstattung: Wasser am Steg Strom gegen Gebühr Diesel nur morgens");
+    // a dash inside a line is not a bullet
+    expect(normalizeForQuote("Die Bucht - gut geschützt").text).toBe("Die Bucht - gut geschützt");
+  });
+
+  it("links with parentheses or a title and images keep only their text", () => {
+    const chunk =
+      'Siehe [Poros (Stadt)](https://de.wikipedia.org/wiki/Poros_(Stadt)) und [Nikos](https://nikos.example "Taverne") ' +
+      "sowie ![Hafen von Poros](img/poros.jpg) am Abend.";
+    const n = normalizeForQuote(chunk);
+    expect(n.text).toBe("Siehe Poros (Stadt) und Nikos sowie Hafen von Poros am Abend.");
+    const r = locateQuote(chunk, "Poros (Stadt) und Nikos sowie Hafen von Poros am Abend", cfg);
+    expect(r.ok && chunk.slice(r.start, r.end)).toBe(chunk.slice(7, chunk.length - 1));
+    const img = locateQuote(chunk, "sowie Hafen von Poros am", cfg);
+    expect(img.ok && chunk.slice(img.start, img.end)).toBe("sowie ![Hafen von Poros](img/poros.jpg) am");
+  });
+
   it("returns the first match", () => {
     const chunk = "Gut haltender Sand. Gut haltender Sand.";
     expect(locateQuote(chunk, "Gut haltender Sand", cfg)).toEqual({ ok: true, start: 0, end: 18 });

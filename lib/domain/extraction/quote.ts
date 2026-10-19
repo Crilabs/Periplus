@@ -2,7 +2,7 @@ import { normalizeText } from "@/lib/domain/documents/normalize";
 
 /*
  * Verbatim quote check (spec 06): a quote counts when its normalized form is a substring of the normalized chunk.
- * Normalization strips inline Markdown, soft hyphens and zero-width characters, then applies the rules of
+ * Normalization strips inline Markdown, list bullets, soft hyphens and zero-width characters, then applies the rules of
  * `normalizeText` (NFC, typographic quotes, dashes, whitespace). Case and accents are kept (ruling M4-P21).
  * Every normalized character keeps the span of original characters it came from, so a match maps back to the chunk.
  */
@@ -20,29 +20,76 @@ const INVISIBLE = new Set(["­", "​", "‌", "‍", "⁠", "﻿"]);
 const WORD_CHAR = /[\p{L}\p{N}]/u;
 const COMBINING = /^\p{M}$/u;
 const WHITESPACE = /^\s$/u;
-/** `[text](url)`: the text stays, brackets and target go. */
-const MARKDOWN_LINK = /\[([^\]\n]+)\]\([^)\s]*\)/g;
+/** A list bullet at a line start (`- `, `* `, `+ `, `1. `, `1) `) with the indentation before it. */
+const LIST_BULLET = /^[ \t]*(?:[-*+]|\d{1,3}[.)])[ \t]+/gm;
 
 type Normalized = { text: string; map: number[]; ends: number[] };
 
-/** Marks the original code units that inline Markdown and invisible characters occupy. */
+/**
+ * Inline links and images: `[text](url)`, `[text](url "title")`, `![alt](url)`, with balanced parentheses inside
+ * the url. Returns the ranges to remove around the kept text (`!`, `[`, and `](…)`).
+ */
+function linkMarkup(s: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] !== "[") continue;
+    const close = s.indexOf("]", i + 1);
+    if (close < 0) break;
+    const text = s.slice(i + 1, close);
+    if (text.length === 0 || text.includes("\n") || text.includes("[") || s[close + 1] !== "(") continue;
+    let depth = 0;
+    let quote: string | null = null;
+    let end = -1;
+    for (let k = close + 2; k < s.length; k++) {
+      const ch = s[k]!;
+      if (ch === "\n") break;
+      if (quote) {
+        if (ch === quote) quote = null;
+      } else if ((ch === '"' || ch === "'") && /\s/.test(s[k - 1]!)) {
+        quote = ch;
+      } else if (ch === "(") {
+        depth++;
+      } else if (ch === ")") {
+        if (depth === 0) {
+          end = k;
+          break;
+        }
+        depth--;
+      }
+    }
+    if (end < 0) continue;
+    const from = i > 0 && s[i - 1] === "!" ? i - 1 : i;
+    ranges.push([from, i + 1], [close, end + 1]);
+    i = end;
+  }
+  return ranges;
+}
+
+/** Marks the original code units that Markdown (inline markup, list bullets) and invisible characters occupy. */
 function strippedUnits(s: string): boolean[] {
   const removed = new Array<boolean>(s.length).fill(false);
-  for (const m of s.matchAll(MARKDOWN_LINK)) {
-    removed[m.index] = true;
-    for (let k = m.index + 1 + m[1]!.length; k < m.index + m[0].length; k++) removed[k] = true;
+  for (const m of s.matchAll(LIST_BULLET)) {
+    for (let k = m.index; k < m.index + m[0].length; k++) removed[k] = true;
+  }
+  for (const [from, to] of linkMarkup(s)) {
+    for (let k = from; k < to; k++) removed[k] = true;
   }
   const isWord = (i: number) => i >= 0 && i < s.length && !removed[i] && WORD_CHAR.test(s[i]!);
   for (let i = 0; i < s.length; i++) {
     if (removed[i]) continue;
     const ch = s[i]!;
-    if ((ch === "*" || ch === "_") && s[i + 1] === ch) {
-      removed[i] = removed[i + 1] = true;
-      i++;
+    if (ch === "*" || ch === "_") {
+      let run = 1;
+      while (s[i + run] === ch && !removed[i + run]) run++;
+      if (run >= 2) {
+        // `**`, `__`, `***`: always markup, the whole run goes (a closing `***x***` leaves no `*`)
+        for (let k = i; k < i + run; k++) removed[k] = true;
+        i += run - 1;
+      } else if (isWord(i - 1) !== isWord(i + 1)) {
+        // emphasis at a word boundary; `snake_case` and `5 * 3` stay
+        removed[i] = true;
+      }
     } else if (ch === "`" || INVISIBLE.has(ch)) {
-      removed[i] = true;
-    } else if ((ch === "*" || ch === "_") && isWord(i - 1) !== isWord(i + 1)) {
-      // emphasis at a word boundary; `snake_case` and `5 * 3` stay
       removed[i] = true;
     }
   }
@@ -98,8 +145,8 @@ function normalizeWithSpans(s: string): Normalized {
 }
 
 /**
- * Comparison form of a chunk or quote: inline Markdown (`[t](u)` → `t`, `**`, `__`, `` ` ``, single `*`/`_` at word
- * boundaries), soft hyphens and zero-width characters removed, then the `normalizeText` rules. `map[i]` is the
+ * Comparison form of a chunk or quote: inline Markdown (`[t](u "title")` → `t`, `![alt](u)` → `alt`, runs of `*`/`_`,
+ * `` ` ``, single `*`/`_` at word boundaries), list bullets at line starts (`- `, `* `, `1. `), soft hyphens and zero-width characters removed, then the `normalizeText` rules. `map[i]` is the
  * offset in `s` of the character the `i`-th character of `text` came from.
  */
 export function normalizeForQuote(s: string): { text: string; map: number[] } {

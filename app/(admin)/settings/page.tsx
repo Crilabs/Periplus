@@ -11,11 +11,12 @@ const LEVEL_LABELS: Record<FactLevel, string> = {
   poi: "POI",
 };
 
+const EFFORT_LABELS = { low: "niedrig", medium: "mittel", high: "hoch" } as const;
+
 export default async function Page() {
   await requireAdmin();
   const { areas, gazetteer, ...rest } = getConfig();
   const { geometry, factSchema, fetch, embeddings, models } = rest;
-  const EFFORT_LABELS = { low: "niedrig", medium: "mittel", high: "hoch" } as const;
   const exceptions = Object.entries(fetch.converterBySource);
   const archiveRows: [string, string][] = [
     [
