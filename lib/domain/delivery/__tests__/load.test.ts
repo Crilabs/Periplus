@@ -2,12 +2,14 @@ import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { places } from "@/lib/db/schema";
+import { documents, geoNames, geoObjects, places, tileGeoObjects } from "@/lib/db/schema";
+import { newPublicId } from "@/lib/domain/ids";
 import { insertMention, insertMentionFact, insertExtraction, insertProfile, provenanceEntry } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { seedDeliveryArea, spotAProvenance, SPOT_A_ATTRIBUTES } from "@/test/fixtures/delivery/area";
 import { spotSchema } from "@/contract/v1";
-import { loadAreaScope } from "../load";
+import { insertNamedObject } from "@/test/text";
+import { AreaNotFound, arrayParam, loadAreaScope } from "../load";
 import { mapSpot } from "../map-spot";
 
 const cfg = loadConfig("config").delivery;
@@ -16,6 +18,11 @@ const cfg = loadConfig("config").delivery;
 async function dbToday(tx: Db): Promise<string> {
   const { rows } = await tx.execute<{ today: string }>(sql`select current_date::text as today`);
   return rows[0]!.today;
+}
+
+async function dbTomorrow(tx: Db): Promise<string> {
+  const { rows } = await tx.execute<{ d: string }>(sql`select (current_date + 1)::text as d`);
+  return rows[0]!.d;
 }
 
 describe("loadAreaScope", () => {
@@ -186,6 +193,144 @@ describe("loadAreaScope", () => {
         { lang: "el", name: "Όρμος Βαθύ", script: "greek" },
         { lang: "en", name: "Vathi Bay", script: "latin" },
       ]);
+    });
+  });
+  it("leaves out rejected and abandoned places (a later step reports them as removed)", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliveryArea(tx);
+      await tx.update(places).set({ status: "rejected" }).where(eq(places.id, f.places.B.placeId));
+      await tx.update(places).set({ status: "abandoned" }).where(eq(places.id, f.places.M.placeId));
+      const scope = await loadAreaScope(tx, f.areaId, cfg, await dbToday(tx));
+      expect(scope.spots.map((s) => s.publicId)).toEqual([f.places.A, f.places.C].map((p) => p.publicId).sort());
+      expect(scope.merged).toEqual([]);
+    });
+  });
+
+  it("throws AreaNotFound for an unknown id, a non-area object and an area without public id", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliveryArea(tx);
+      const today = await dbToday(tx);
+      await expect(loadAreaScope(tx, "01a15602-0000-7000-8000-0000000000ee", cfg, today)).rejects.toBeInstanceOf(AreaNotFound);
+      await expect(loadAreaScope(tx, f.islandId, cfg, today)).rejects.toBeInstanceOf(AreaNotFound);
+      await tx.update(geoObjects).set({ publicId: null }).where(eq(geoObjects.id, f.areaId));
+      await expect(loadAreaScope(tx, f.areaId, cfg, today)).rejects.toBeInstanceOf(AreaNotFound);
+    });
+  });
+
+  it("leaves out a POI whose centroid lies outside the area's tiles", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliveryArea(tx);
+      const outside = await insertNamedObject(tx, { type: "poi", names: [{ name: "Taverna Fern" }], lon: 21.6, lat: 35.1, category: "food", tiles: [f.outsideTileId] });
+      await tx.update(geoObjects).set({ publicId: newPublicId("hl") }).where(eq(geoObjects.id, outside));
+      // assigned to an area tile, but its centroid is in the tile of no area
+      await tx.insert(tileGeoObjects).values({ tileId: f.tileIds[1], geoObjectId: outside });
+      const scope = await loadAreaScope(tx, f.areaId, cfg, await dbToday(tx));
+      expect(scope.pois.map((p) => p.geoObjectId)).toEqual([f.poiId]);
+    });
+  });
+
+  it("follows a merge to a target in another area or one that ended (Task 9 checks it is delivered)", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliveryArea(tx);
+      const { A, B, M, O } = f.places;
+      const merge = (from: string, into: string) =>
+        tx.update(places).set({ mergedIntoId: into, status: "rejected", statusReason: "merged" }).where(eq(places.id, from));
+      await merge(B.placeId, O.placeId);
+      await merge(M.placeId, A.placeId);
+      const today = await dbToday(tx);
+      await tx.update(places).set({ validTo: today }).where(eq(places.id, A.placeId));
+      const scope = await loadAreaScope(tx, f.areaId, cfg, today);
+      expect(scope.merged).toEqual(
+        [
+          { publicId: B.publicId, mergedIntoPublicId: O.publicId },
+          { publicId: M.publicId, mergedIntoPublicId: A.publicId },
+        ].sort((x, y) => (x.publicId! < y.publicId! ? -1 : 1)),
+      );
+      // neither target is delivered in this package
+      expect(scope.spots.map((s) => s.publicId)).toEqual([f.places.C.publicId]);
+    });
+  });
+
+  it("display names are taken on the build date, not the database date", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliveryArea(tx);
+      const tomorrow = await dbTomorrow(tx);
+      await tx.insert(geoNames).values({
+        geoObjectId: f.places.A.geoObjectId,
+        name: "Vathi-Bucht",
+        nameNormalized: "vathi-bucht",
+        language: "de",
+        script: "latin",
+        origin: "manual",
+        isPreferred: true,
+        validFrom: tomorrow,
+      });
+      const a = (await loadAreaScope(tx, f.areaId, cfg, tomorrow)).spots.find((s) => s.publicId === f.places.A.publicId)!;
+      expect(a.name).toBe("Vathi-Bucht");
+      expect(a.names).toContainEqual({ lang: "de", name: "Vathi-Bucht", script: "latin" });
+      const now = (await loadAreaScope(tx, f.areaId, cfg, await dbToday(tx))).spots.find((s) => s.publicId === f.places.A.publicId)!;
+      expect(now.name).toBe("Vathi Bay");
+    });
+  });
+
+  it("list attributes cite the facts of their delivered entries only; gone documents are no source", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliveryArea(tx);
+      const { A } = f.places;
+      const fact = async (observedAt: string) => {
+        const m = await insertMention(tx, A.geoObjectId, { observedAt });
+        return { id: await insertMentionFact(tx, A.geoObjectId, m, await insertExtraction(tx, A.geoObjectId, m), { attribute: "hazards", value: [] }), documentId: m.documentId };
+      };
+      const kept = await fact("2026-03-01");
+      const removed = await fact("2026-04-01");
+      const provenance = spotAProvenance(f.factId);
+      // the flat support still holds the fact of an entry a review removed
+      provenance["hazards"] = provenanceEntry("text", {
+        factIds: [kept.id, removed.id],
+        entryFactIds: { rock: [kept.id, "computation:01a15602-0000-7000-8000-0000000000ff"] },
+      });
+      await insertProfile(tx, A.geoObjectId, SPOT_A_ATTRIBUTES, provenance, { version: 2 });
+      const urls = async () => {
+        const scope = await loadAreaScope(tx, f.areaId, cfg, await dbToday(tx));
+        return scope.spots.find((s) => s.publicId === A.publicId)!.sources.map((s) => s.url).sort();
+      };
+      const urlOf = async (documentId: string) => (await tx.select({ url: documents.url }).from(documents).where(eq(documents.id, documentId)))[0]!.url;
+      expect(await urls()).toEqual([f.documentUrl, await urlOf(kept.documentId)].sort());
+      await tx.update(documents).set({ status: "gone" }).where(eq(documents.id, f.documentId));
+      expect(await urls()).toEqual([await urlOf(kept.documentId)]);
+    });
+  });
+
+  it("radiusNm is measured on the simplified polygon", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliveryArea(tx);
+      const publicId = newPublicId("rg");
+      // A 660 m × 3814 m island (UTM 34N) with a 45 m bump at each end: within the 50 m simplification tolerance, so the
+      // simplified polygon keeps the four corners (1.046 nm from the centre, radius 1.0), while the bumps lie 1.055 nm
+      // out (radius 1.1 on the full geometry). Its east side starts at ±500 m, which centres ST_PointOnSurface.
+      const { rows } = await tx.execute<{ id: string }>(sql`
+        with c as (select ST_Transform(ST_SetSRID(ST_MakePoint(21.4, 35.12), 4326), 32634) as p)
+        insert into geo_objects (id, type, origin, geom, public_id)
+        select gen_random_uuid(), 'island', 'osm', ST_Transform(ST_Translate(ST_GeomFromText(
+          'POLYGON((330 -500, 330 500, 330 1907, 0 1952, -330 1907, -330 -1907, 0 -1952, 330 -1907, 330 -500))', 32634), ST_X(c.p), ST_Y(c.p)), 4326), ${publicId}
+        from c returning id`);
+      const id = rows[0]!.id;
+      await tx.insert(geoNames).values({ geoObjectId: id, name: "Makri", nameNormalized: "makri", language: "en", script: "latin", origin: "osm" });
+      await tx.insert(tileGeoObjects).values({ tileId: f.tileIds[1], geoObjectId: id });
+      const region = (await loadAreaScope(tx, f.areaId, cfg, await dbToday(tx))).regions.find((r) => r.publicId === publicId)!;
+      // the bumps are gone: four corners, the ring start and its closing point
+      expect((region.polygon as GeoJSON.Polygon).coordinates[0]).toHaveLength(6);
+      expect(region.radiusNm).toBe(1);
+    });
+  });
+
+  it("array parameters are bound whole: a comma, brace or quote never splits an element", async () => {
+    await withRollback(async (tx) => {
+      const values = ["a,b", "{c}", 'd"e', "f"];
+      const { rows } = await tx.execute<{ n: number; second: string }>(
+        sql`select array_length(${arrayParam(values, "text")}, 1) as n, (${arrayParam(values, "text")})[2] as second`,
+      );
+      expect(rows[0]).toEqual({ n: 4, second: "{c}" });
     });
   });
 });
