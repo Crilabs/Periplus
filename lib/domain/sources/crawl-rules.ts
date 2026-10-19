@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { registrableDomain } from "./urls";
+import { registrableDomain, safeDecode } from "./urls";
 
 export const CONVERTERS = ["jina", "firecrawl", "local"] as const;
 export type Converter = (typeof CONVERTERS)[number];
@@ -17,9 +17,9 @@ export const regexPattern = z.string().refine((s) => {
 /** Field schemas of the crawl rules (spec 05), without defaults. */
 const fields = {
   startUrls: z.array(z.url({ protocol: /^https?$/ })),
-  /** Regexes against `pathname + search`; empty = everything on the source's domain. */
+  /** Regexes against the decoded `pathname + search`; empty = everything on the source's domain. */
   allow: z.array(regexPattern),
-  /** Regexes against `pathname + search`; a match wins over `allow`. */
+  /** Regexes against the decoded `pathname + search`; a match wins over `allow`. */
   deny: z.array(regexPattern),
   maxDepth: z.number().int().min(0).max(10),
   maxPages: z.number().int().min(1).max(5000),
@@ -66,8 +66,14 @@ export function urlAllowed(url: string, rules: CrawlRules, sourceDomain: string)
   } catch {
     return { ok: false, reason: "other_domain" };
   }
-  if (domain !== sourceDomain.toLowerCase()) return { ok: false, reason: "other_domain" };
-  const target = u.pathname + u.search;
+  let source: string;
+  try {
+    source = new URL("http://" + sourceDomain).hostname;
+  } catch {
+    return { ok: false, reason: "other_domain" };
+  }
+  if (domain !== source) return { ok: false, reason: "other_domain" };
+  const target = safeDecode(u.pathname) + u.search;
   if (rules.deny.some((p) => new RegExp(p).test(target))) return { ok: false, reason: "denied" };
   if (rules.allow.length > 0 && !rules.allow.some((p) => new RegExp(p).test(target))) {
     return { ok: false, reason: "not_allowed" };

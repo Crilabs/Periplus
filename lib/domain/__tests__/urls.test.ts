@@ -3,6 +3,28 @@ import { normalizeUrl, registrableDomain } from "@/lib/domain/sources/urls";
 
 const tp = ["utm_*", "fbclid", "gclid", "msclkid", "mc_cid", "mc_eid"];
 
+describe("registrableDomain private domains", () => {
+  it("treats private suffixes as public", () => {
+    expect(registrableDomain("https://foo.blogspot.com/x")).toBe("foo.blogspot.com");
+  });
+});
+
+describe("normalizeUrl raw query and host handling", () => {
+  it("keeps original query bytes without re-encoding", () => {
+    expect(normalizeUrl("http://x.de/p?b=%E4&a=1", tp)).toBe("http://x.de/p?a=1&b=%E4");
+  });
+  it("keeps ?a and ?a= distinct", () => {
+    expect(normalizeUrl("http://x.de/p?a", tp)).toBe("http://x.de/p?a");
+    expect(normalizeUrl("http://x.de/p?a=", tp)).toBe("http://x.de/p?a=");
+  });
+  it("drops tracking segments by decoded key", () => {
+    expect(normalizeUrl("http://x.de/p?utm%5Fsource=1&a=1", tp)).toBe("http://x.de/p?a=1");
+  });
+  it("clears credentials and the trailing dot of the host", () => {
+    expect(normalizeUrl("http://user:pw@Example.com./a", tp)).toBe("http://example.com/a");
+  });
+});
+
 describe("normalizeUrl", () => {
   it("lower-cases the host, drops default port, fragment and tracking params, sorts the query", () => {
     expect(normalizeUrl("HTTPS://Example.COM:443/a/b?utm_source=x&b=2&a=1#top", tp)).toBe("https://example.com/a/b?a=1&b=2");

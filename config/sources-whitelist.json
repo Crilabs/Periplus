@@ -5,7 +5,7 @@
     "type": "travel_guide",
     "changeRate": "normal",
     "crawlRules": {
-      "allow": ["^/wiki/[^:]+$"],
+      "allow": ["^/wiki/[^:?]+$"],
       "maxDepth": 0,
       "ratePerMinute": 30,
       "render": "never",

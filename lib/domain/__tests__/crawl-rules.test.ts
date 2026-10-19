@@ -68,3 +68,21 @@ describe("urlAllowed", () => {
     expect(urlAllowed("https://example.gr/guide.pdf", DEFAULT_CRAWL_RULES, "example.gr")).toEqual({ ok: true });
   });
 });
+
+describe("urlAllowed hardening", () => {
+  it("separates private-suffix domains", () => {
+    expect(urlAllowed("https://bar.blogspot.com/x", rules({}), "foo.blogspot.com")).toEqual({ ok: false, reason: "other_domain" });
+    expect(urlAllowed("https://foo.blogspot.com/x", rules({}), "foo.blogspot.com")).toEqual({ ok: true });
+  });
+  it("accepts a unicode source domain via punycode", () => {
+    expect(urlAllowed("https://www.bücher.de/x", rules({}), "bücher.de")).toEqual({ ok: true });
+  });
+  it("matches regexes against the decoded path", () => {
+    const r = rules({ allow: ["^/ägina/"] });
+    expect(urlAllowed("https://a.de/%C3%A4gina/x", r, "a.de")).toEqual({ ok: true });
+    expect(urlAllowed("https://a.de/wiki/Foo%3ABar", rules({ allow: ["^/wiki/[^:]+$"] }), "a.de")).toEqual({ ok: false, reason: "not_allowed" });
+  });
+  it("falls back to the raw path on malformed escapes", () => {
+    expect(urlAllowed("https://a.de/wiki/100%", rules({ allow: ["^/wiki/"] }), "a.de")).toEqual({ ok: true });
+  });
+});

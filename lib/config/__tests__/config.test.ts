@@ -269,7 +269,7 @@ describe("source configuration", () => {
     expect(c.embeddings).toMatchObject({ provider: "voyage", model: "voyage-3.5", dimension: 1024 });
     expect(c.whitelist).toHaveLength(1);
     expect(c.whitelist[0]).toMatchObject({ domain: "wikivoyage.org", type: "travel_guide", changeRate: "normal" });
-    expect(c.whitelist[0]!.crawlRules).toMatchObject({ allow: ["^/wiki/[^:]+$"], maxDepth: 0, render: "never", pdf: false });
+    expect(c.whitelist[0]!.crawlRules).toMatchObject({ allow: ["^/wiki/[^:?]+$"], maxDepth: 0, render: "never", pdf: false });
   });
 
   it("rejects a discovery template without {name} and an invalid type hint", () => {
