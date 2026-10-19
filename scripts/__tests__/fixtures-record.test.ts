@@ -65,6 +65,20 @@ describe("fixtures-record CLI", () => {
     expect(() => parseArgs(["--area", "saronic", "--voyage"])).toThrow(/usage/);
   });
 
+  it("--wikivoyage needs an area and excludes the other recordings", () => {
+    expect(parseArgs(["--wikivoyage", "--area", "saronic"])).toEqual({
+      area: "saronic",
+      land: undefined,
+      cache: undefined,
+      datasets: false,
+      serp: false,
+      wikivoyage: true,
+    });
+    expect(() => parseArgs(["--wikivoyage"])).toThrow(/usage/);
+    expect(() => parseArgs(["--wikivoyage", "--serp", "--area", "saronic"])).toThrow(/usage/);
+    expect(() => parseArgs(["--wikivoyage", "--datasets", "--area", "saronic"])).toThrow(/usage/);
+  });
+
   it("rejects missing or unknown arguments", () => {
     expect(() => parseArgs(["--land", "l.shp"])).toThrow(/usage/);
     expect(() => parseArgs(["--area", "a", "--foo", "1"])).toThrow(/usage/);

@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { testDb } from "@/test/db";
+import { testDb, withRollback } from "@/test/db";
 import { newId } from "@/lib/domain/ids";
-import { makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
-import { buildWikidataQuery, wikidataQuery } from "@/lib/adapters/wikidata";
+import { HttpError, makeResponse, RetryableHttpError, type HttpRequest, type Transport } from "@/lib/adapters/http";
+import { buildWikidataQuery, fetchSitelinks, wikidataQuery } from "@/lib/adapters/wikidata";
 
 const db = testDb();
 
 const cfg = () => ({
   endpoint: `https://wdqs.example.invalid/${newId()}/sparql`,
+  apiEndpoint: `https://wikidata.example.invalid/${newId()}/w/api.php`,
   languages: ["de", "en", "el"],
   classes: { Q23442: "island" as const },
   ratePerMinute: 1_000_000,
@@ -73,5 +74,60 @@ describe("wikidataQuery", () => {
       },
       { id: "Q2", classes: ["Q39594"], lon: 23.5, lat: 37.6, labels: [] },
     ]);
+  });
+});
+
+describe("fetchSitelinks", () => {
+  /** Answers each request with `answer(ids)` and keeps the requests. */
+  function api(answer: (ids: string[]) => unknown): Transport & { requests: HttpRequest[] } {
+    const requests: HttpRequest[] = [];
+    const transport = async (req: HttpRequest) => {
+      requests.push(req);
+      const ids = new URL(req.url).searchParams.get("ids")!.split("|");
+      return makeResponse(200, new TextEncoder().encode(JSON.stringify(answer(ids))));
+    };
+    return Object.assign(transport, { requests });
+  }
+
+  const link = (site: string, title: string) => ({ site, title, badges: [], url: `https://${site.slice(0, 2)}.wikivoyage.org/wiki/${title}` });
+
+  it("asks for sorted ids and sites in batches of 50 and keeps only the asked sites", async () => {
+    await withRollback(async (tx) => {
+      const qids = Array.from({ length: 51 }, (_, i) => `Q${100 + i}`).reverse();
+      const transport = api((ids) => ({
+        entities: Object.fromEntries(
+          ids.map((id) => [
+            id,
+            id === "Q100"
+              ? { type: "item", id, sitelinks: { enwikivoyage: link("enwikivoyage", "Alpha"), dewiki: link("dewiki", "Alpha"), dewikivoyage: link("dewikivoyage", "Alpha") } }
+              : { type: "item", id, sitelinks: {} },
+          ]),
+        ),
+      }));
+      const c = cfg();
+      const links = await fetchSitelinks(transport, qids, ["enwikivoyage", "dewikivoyage"], { db: tx }, c);
+
+      expect(transport.requests.map((r) => r.url)).toEqual([
+        `${c.apiEndpoint}?action=wbgetentities&ids=${qids.slice(1).reverse().join("|")}&props=sitelinks/urls&sitefilter=dewikivoyage|enwikivoyage&format=json`,
+        `${c.apiEndpoint}?action=wbgetentities&ids=Q150&props=sitelinks/urls&sitefilter=dewikivoyage|enwikivoyage&format=json`,
+      ]);
+      expect([...links.keys()]).toEqual(["Q100"]);
+      expect(links.get("Q100")).toEqual([
+        { site: "dewikivoyage", title: "Alpha", url: "https://de.wikivoyage.org/wiki/Alpha" },
+        { site: "enwikivoyage", title: "Alpha", url: "https://en.wikivoyage.org/wiki/Alpha" },
+      ]);
+    });
+  });
+
+  it("skips missing items, retries on maxlag and fails on other API errors", async () => {
+    await withRollback(async (tx) => {
+      const missing = api((ids) => ({ entities: { [ids[0]!]: { id: ids[0], missing: "" } } }));
+      expect((await fetchSitelinks(missing, ["Q1"], ["enwikivoyage"], { db: tx }, cfg())).size).toBe(0);
+      const lagging = api(() => ({ error: { code: "maxlag", info: "Waiting for a database server" } }));
+      await expect(fetchSitelinks(lagging, ["Q1"], ["enwikivoyage"], { db: tx }, cfg())).rejects.toBeInstanceOf(RetryableHttpError);
+      const wrong = api(() => ({ error: { code: "no-such-entity", info: "Could not find an entity" } }));
+      await expect(fetchSitelinks(wrong, ["Q1"], ["enwikivoyage"], { db: tx }, cfg())).rejects.toBeInstanceOf(HttpError);
+      await expect(fetchSitelinks(missing, ["P31"], ["enwikivoyage"], { db: tx }, cfg())).rejects.toThrow(/invalid Wikidata item/);
+    });
   });
 });

@@ -125,6 +125,8 @@ export const gazetteerSchema = z.strictObject({
   }),
   wikidata: z.strictObject({
     endpoint: z.url(),
+    /** Wikibase API (`wbgetentities`), e.g. for the Wikivoyage sitelinks of gazetteer objects. */
+    apiEndpoint: z.url(),
     languages: z.array(z.string().regex(/^[a-z]{2,3}$/)).min(1),
     classes: z.record(wikidataQid, geoObjectType),
     ratePerMinute: z.number().positive(),

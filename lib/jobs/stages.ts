@@ -13,6 +13,7 @@ import {
 import { seedTileStage } from "./handlers/seed";
 import { pingStage } from "./handlers/system-ping";
 import { tilesEnsureStage } from "./handlers/tiles";
+import { wikivoyageStage } from "./handlers/wikivoyage";
 
 /** Every stage a run may name, by stage name. Kept apart from HANDLERS so pipeline code can import it without a cycle. */
 export const STAGES: Record<string, StageDefinition> = {
@@ -31,4 +32,5 @@ export const STAGES: Record<string, StageDefinition> = {
   [fetchSourceStage.name]: fetchSourceStage,
   [fetchUrlStage.name]: fetchUrlStage,
   [embedChunksStage.name]: embedChunksStage,
+  [wikivoyageStage.name]: wikivoyageStage,
 };

@@ -15,6 +15,7 @@ export const QUEUES = [
   "fetch.source",
   "fetch.url",
   "embed.chunks",
+  "sources.wikivoyage",
 ] as const;
 export type QueueName = (typeof QUEUES)[number];
 

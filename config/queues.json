@@ -11,5 +11,6 @@
   "discovery.propose": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
   "fetch.source": { "concurrency": 2, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
   "fetch.url": { "concurrency": 8, "retryLimit": 2, "retryDelaySeconds": 120, "retryBackoff": true },
-  "embed.chunks": { "concurrency": 2, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true }
+  "embed.chunks": { "concurrency": 2, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
+  "sources.wikivoyage": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true }
 }

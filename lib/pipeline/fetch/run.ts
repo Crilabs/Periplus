@@ -1,9 +1,12 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
+import { areaByKey } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { documents, runs, sources } from "@/lib/db/schema";
+import { ensureWhitelistSources, sourceIdByDomain } from "@/lib/domain/sources/store";
 import { EMBED_STAGE } from "../embed";
 import { startRun } from "../runs";
+import { WIKIVOYAGE_DOMAIN, WIKIVOYAGE_STAGE } from "../sources/wikivoyage";
 import { RunScopeNotReady } from "../tile-scope";
 import { FETCH_SOURCE_STAGE } from "./source";
 import { FETCH_URL_STAGE } from "./url";
@@ -120,3 +123,23 @@ export function startEmbedBackfillRun(db: Db, boss: PgBoss, triggeredBy: string)
   });
 }
 
+/**
+ * Starts the run "Wikivoyage" for an area: creates the whitelist sources that are missing, then queues the area's
+ * Wikivoyage articles (`sources.wikivoyage`) and crawls them like any source (`FETCH_RUN_STAGES`). Checked before the
+ * run exists: the area is configured, the Wikivoyage source is approved and not being fetched already.
+ */
+export async function startWikivoyageRun(db: Db, boss: PgBoss, areaKey: string, triggeredBy: string): Promise<{ id: string }> {
+  areaByKey(areaKey);
+  await ensureWhitelistSources(db);
+  const sourceId = await sourceIdByDomain(db, WIKIVOYAGE_DOMAIN);
+  if (!sourceId) throw new RunScopeNotReady("source_not_approved", `No source for ${WIKIVOYAGE_DOMAIN}`);
+  await assertApproved(db, [sourceId]);
+  await assertNoActiveFetchRun(db, [sourceId]);
+  return startRun(db, boss, {
+    kind: "stage",
+    scope: { type: "area", id: areaKey },
+    params: { areaKey, sourceIds: [sourceId] },
+    stages: [WIKIVOYAGE_STAGE, ...FETCH_RUN_STAGES],
+    triggeredBy,
+  });
+}

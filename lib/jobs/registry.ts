@@ -8,6 +8,7 @@ import { advanceHandler } from "./handlers/run-advance";
 import { seedTileHandler } from "./handlers/seed";
 import { pingHandler } from "./handlers/system-ping";
 import { tilesEnsureHandler } from "./handlers/tiles";
+import { wikivoyageHandler } from "./handlers/wikivoyage";
 import type { QueueName } from "./queues";
 import type { JobData, JobHandler } from "./worker";
 
@@ -26,4 +27,5 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "fetch.source": fetchSourceHandler,
   "fetch.url": fetchUrlHandler,
   "embed.chunks": embedChunksHandler,
+  "sources.wikivoyage": wikivoyageHandler,
 };
