@@ -22,3 +22,17 @@ export function AnnotatedText({ text, spans, className }: { text: string; spans:
     </span>
   );
 }
+
+/** The legend of `AnnotatedText`'s highlights. */
+export function AnnotationLegend() {
+  return (
+    <p className="flex gap-3 text-xs text-neutral-600">
+      <span>
+        <mark className="rounded-sm bg-amber-200 px-0.5">Erwähnung</mark> eines Geo-Objekts
+      </span>
+      <span>
+        <mark className="rounded-sm bg-sky-200 px-0.5">Zitat</mark> eines Facts
+      </span>
+    </p>
+  );
+}

@@ -2,19 +2,22 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
+import { geoFacts } from "@/lib/domain/geo-facts";
 import { placeDetail } from "@/lib/domain/geo-view";
 import { placeGeometry } from "@/lib/domain/geometry-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { PLACE_KIND_LABELS, PLACE_STATUS_LABELS, REVIEW_KIND_LABELS } from "../../_components/labels";
+import { FactsTab } from "./facts-tab";
 import { GeometryTab } from "./geometry-tab";
 
 const time = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
 const coord = (lat: number, lon: number) => `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
 
 /** Tabs of the place page (`?tab=`); later milestones add theirs. */
-const TABS = { overview: "Übersicht", geometry: "Geometrie" } as const;
+const TABS = { overview: "Übersicht", geometry: "Geometrie", facts: "Facts" } as const;
 type Tab = keyof typeof TABS;
 const tabParam = z.enum(Object.keys(TABS) as [Tab, ...Tab[]]).catch("overview");
+const runsParam = z.enum(["active", "all"]).catch("active");
 
 type Detail = NonNullable<Awaited<ReturnType<typeof placeDetail>>>;
 
@@ -22,12 +25,15 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
   await requireAdmin();
   const id = z.uuid().safeParse((await params).id);
   if (!id.success) notFound();
-  const tab = tabParam.parse((await searchParams).tab);
+  const sp = await searchParams;
+  const tab = tabParam.parse(sp.tab);
+  const runs = runsParam.parse(sp.runs);
   const db = getDb();
   const detail = await placeDetail(db, id.data);
   if (!detail) notFound();
   const { place: p, openReviewTask: task } = detail;
   const geometry = tab === "geometry" ? await placeGeometry(db, p.id) : null;
+  const facts = tab === "facts" ? await geoFacts(db, p.geoObjectId, { runs }) : null;
   return (
     <div className="space-y-4 text-sm">
       <h1 className="text-lg font-semibold">{p.name ?? p.id}</h1>
@@ -51,7 +57,9 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
           </Link>
         ))}
       </nav>
-      {geometry ? (
+      {facts ? (
+        <FactsTab groups={facts} runs={runs} runsHref={(r) => `/places/${p.id}?tab=facts${r === "all" ? "&runs=all" : ""}`} />
+      ) : geometry ? (
         <GeometryTab
           placeId={p.id}
           position={p.position}

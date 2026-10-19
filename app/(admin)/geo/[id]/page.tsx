@@ -2,17 +2,24 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
+import { geoFacts, geoMentions, MENTIONS_PER_PAGE } from "@/lib/domain/geo-facts";
 import { geoObjectDetail, type GeoObjectRef } from "@/lib/domain/geo-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import {
   GEO_OBJECT_TYPE_LABELS,
   GEO_ORIGIN_LABELS,
+  MATCH_KIND_LABELS,
   NAME_ORIGIN_LABELS,
   PLACE_KIND_LABELS,
   PLACE_STATUS_LABELS,
 } from "../../_components/labels";
+import { AnnotatedText } from "../../_components/annotated-text";
+import { FactsTab } from "../../places/[id]/facts-tab";
 
 const SCRIPT_LABELS = { latin: "Lateinisch", greek: "Griechisch" } as const;
+const runsParam = z.enum(["active", "all"]).catch("active");
+const pageParam = z.coerce.number().int().min(1).catch(1);
+const share = (n: number) => n.toLocaleString("de-DE", { maximumFractionDigits: 2 });
 
 function GeoLink({ o }: { o: GeoObjectRef }) {
   return (
@@ -25,12 +32,24 @@ function GeoLink({ o }: { o: GeoObjectRef }) {
   );
 }
 
-export default async function Page({ params }: PageProps<"/geo/[id]">) {
+export default async function Page({ params, searchParams }: PageProps<"/geo/[id]">) {
   await requireAdmin();
   const id = z.uuid().safeParse((await params).id);
   if (!id.success) notFound();
-  const detail = await geoObjectDetail(getDb(), id.data);
+  const db = getDb();
+  const detail = await geoObjectDetail(db, id.data);
   if (!detail) notFound();
+  const sp = await searchParams;
+  const runs = runsParam.parse(sp.runs);
+  const page = pageParam.parse(sp.mp);
+  const [mentionPage, facts] = await Promise.all([geoMentions(db, id.data, page), geoFacts(db, id.data, { runs })]);
+  const pages = Math.max(1, Math.ceil(mentionPage.total / MENTIONS_PER_PAGE));
+  const href = (q: { runs?: "active" | "all"; mp?: number }) => {
+    const r = q.runs ?? runs;
+    const m = q.mp ?? page;
+    const parts = [r === "all" ? "runs=all" : "", m > 1 ? `mp=${m}` : ""].filter(Boolean);
+    return `/geo/${id.data}${parts.length > 0 ? `?${parts.join("&")}` : ""}`;
+  };
   const { object: o } = detail;
   const externalIds = [
     o.osmId && `OSM ${o.osmId}`,
@@ -159,6 +178,54 @@ export default async function Page({ params }: PageProps<"/geo/[id]">) {
             ))}
           </ul>
         )}
+      </section>
+
+      <section>
+        <h2 className="mb-1 font-semibold">Erwähnungen ({mentionPage.total})</h2>
+        {mentionPage.rows.length === 0 ? (
+          <p>Keine Erwähnungen.</p>
+        ) : (
+          <>
+            <ul className="space-y-1">
+              {mentionPage.rows.map((m) => (
+                <li key={m.id} className="max-w-3xl">
+                  <Link href={`/documents/${m.documentId}`} className="underline">
+                    {m.domain}
+                  </Link>{" "}
+                  · {m.observedAt} · {MATCH_KIND_LABELS[m.matchKind]} ({share(m.confidence)}):{" "}
+                  <span className="text-xs">
+                    <AnnotatedText
+                      text={m.snippet.before + m.snippet.quote + m.snippet.after}
+                      spans={[{ start: m.snippet.before.length, end: m.snippet.before.length + m.snippet.quote.length, kind: "mention", ref: m.id }]}
+                    />
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {pages > 1 && (
+              <p className="mt-1 flex gap-3 text-xs">
+                {page > 1 && (
+                  <Link href={href({ mp: page - 1 })} className="underline">
+                    ← zurück
+                  </Link>
+                )}
+                <span>
+                  Seite {page} von {pages}
+                </span>
+                {page < pages && (
+                  <Link href={href({ mp: page + 1 })} className="underline">
+                    weiter →
+                  </Link>
+                )}
+              </p>
+            )}
+          </>
+        )}
+      </section>
+
+      <section>
+        <h2 className="mb-1 font-semibold">Facts</h2>
+        <FactsTab groups={facts} runs={runs} runsHref={(r) => href({ runs: r })} />
       </section>
     </div>
   );
