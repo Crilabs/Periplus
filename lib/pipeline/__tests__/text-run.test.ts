@@ -405,6 +405,41 @@ describe("text run", () => {
       expect(units.map((u) => u.geoObjectId).sort()).toEqual([vathy, xen].sort());
     }));
 
+  it("a rematch run matches the new name in a chunk carried into the current version", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      archiveOf.set(tx, memoryArchive());
+      const { tile } = await islandTile(tx);
+      const kolona = await insertNamedObject(tx, { type: "bay", names: [{ name: "Kolona" }], lon: 21.1, lat: 35.1, tiles: [tile] });
+      const name = `Xen${newId().replace(/-/g, "").slice(-10).replace(/\d/g, (d) => "ghijklmnop"[Number(d)]!)}`;
+      const named = `Von Kolona ging es weiter in die Bucht von ${name}.`;
+      // the first version collected the name; the refetched one changed its first chunk and carried the second
+      const v1 = await insertTestVersion(tx, ["Vor Kalonisi ankerten wir.", named]);
+      await matchVersion(tx, v1.versionId, { runId: null, cfg: config });
+      const v2 = await insertTestVersion(tx, ["Vor Kalonisi ankerten wir lange.", named], {
+        documentId: v1.documentId,
+        carried: { 1: v1.chunkIds[1]! },
+        fetchedAt: new Date("2026-10-20T10:00:00Z"),
+      });
+      for (const v of [v1, v2]) {
+        await tx.update(documentVersions).set({ classifiedDocType: "trip_report", classifiedModel: "claude-haiku-5-5", classifiedPromptVersion: 1 }).where(eq(documentVersions.id, v.versionId));
+      }
+      await matchVersion(tx, v2.versionId, { runId: null, cfg: config });
+      await tx.update(mentions).set({ extractionStatus: "done" }).where(inArray(mentions.documentVersionId, [v1.versionId, v2.versionId]));
+      const xen = await insertNamedObject(tx, { type: "bay", names: [{ name }], lon: 21.12, lat: 35.12, tiles: [tile] });
+
+      const rec = recordingBoss();
+      const { model, seen } = fixtureModel();
+      const { id: runId } = await startTextRun(tx, rec.boss, { documentVersionIds: [v2.versionId], rematch: true, triggeredBy: "test" }, config);
+      expect(await drive(tx, rec, model, runId, now)).toBe("finished");
+      // the carried chunk gets the new object's mention, on the current version; Kolona stays with the original chunk
+      const carried = await tx.select().from(mentions).where(eq(mentions.chunkId, v2.chunkIds[1]!));
+      expect(carried.map((m) => [m.geoObjectId, m.documentVersionId, m.surface])).toEqual([[xen, v2.versionId, expect.stringContaining(name)]]);
+      expect((await tx.select().from(mentions).where(eq(mentions.chunkId, v1.chunkIds[1]!))).map((m) => m.geoObjectId)).toEqual([kolona]);
+      // only the new object is extracted
+      expect(seen.extract.map((i) => i.object.name)).toEqual([name]);
+    }));
+
   it("mentions a reprocess run's match added are not extracted again by the next regular run", () =>
     withRollback(async (tx) => {
       const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);

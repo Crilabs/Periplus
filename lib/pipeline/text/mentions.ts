@@ -26,7 +26,10 @@ import { frozenRunVersions } from "./versions";
  * Stage `mentions.batch` (spec 06): the deterministic name match of the text run's versions, `versionsPerJob` per job.
  * Only chunks not carried over from an earlier version are matched (a carried chunk keeps the mentions of its
  * original). Sure hits become mentions, ambiguous spans wait for `mentions.disambiguate`, place hints without a hit are
- * collected for the new-name review.
+ * collected for the new-name review. A rematch run (after a "Neuer Name" decision, ruling M4-FIN-R1) matches the
+ * carried chunks of the version too, as the name may sit in one: there it adds only what the original chunk does not
+ * have (objects it does not mention, spans it neither mentions nor holds as ambiguous), stored on the version's own
+ * carried chunk, and collects no place hints (the original collected them).
  */
 
 export const MENTIONS_STAGE = MATCH_PASS_STAGE;
@@ -34,7 +37,7 @@ export const MENTIONS_QUEUE = "mentions.batch" as const;
 
 export type MatchCounts = { mentions: number; ambiguous: number; unmatched: number; chunks: number };
 
-/** Plan: the run's versions, `versionsPerJob` per job (`{ key, versionIds }`). */
+/** Plan: the run's versions, `versionsPerJob` per job (`{ key, versionIds }`, plus `rematch` for a rematch run). */
 export async function planMentions(
   db: Db,
   run: { id: string; params: Record<string, unknown> },
@@ -43,7 +46,8 @@ export async function planMentions(
   const ids = await frozenRunVersions(db, run.params);
   const size = config.mentions.versionsPerJob;
   const jobs: JobData[] = [];
-  for (let i = 0; i * size < ids.length; i++) jobs.push({ key: `mentions:${i}`, versionIds: ids.slice(i * size, (i + 1) * size) });
+  const rematch = run.params.rematch === true ? { rematch: true } : {};
+  for (let i = 0; i * size < ids.length; i++) jobs.push({ key: `mentions:${i}`, versionIds: ids.slice(i * size, (i + 1) * size), ...rematch });
   return jobs;
 }
 
@@ -55,7 +59,27 @@ type ChunkResult = {
   hints: UnmatchedDraft[];
 };
 
-const overlaps = (a: { start: number; end: number }, b: { start: number; end: number }) => a.start < b.end && b.start < a.end;
+type Span = { start: number; end: number };
+const overlaps = (a: Span, b: Span) => a.start < b.end && b.start < a.end;
+
+/** What the original chunk of a carried chunk has already: its mentioned objects and its mention and ambiguous spans. */
+type OriginRows = { objects: Set<string>; spans: Span[] };
+
+async function originRows(db: Db, originChunkIds: string[]): Promise<Map<string, OriginRows>> {
+  const out = new Map<string, OriginRows>(originChunkIds.map((id) => [id, { objects: new Set<string>(), spans: [] }]));
+  if (originChunkIds.length === 0) return out;
+  const { rows } = await db.execute<{ chunk_id: string; geo_object_id: string | null; char_start: number; char_end: number }>(sql`
+    select chunk_id, geo_object_id, char_start, char_end from mentions where chunk_id in ${jsonUuids(originChunkIds)}
+    union all
+    select chunk_id, null, char_start, char_end from ambiguous_matches where chunk_id in ${jsonUuids(originChunkIds)}
+  `);
+  for (const r of rows) {
+    const o = out.get(r.chunk_id)!;
+    if (r.geo_object_id) o.objects.add(r.geo_object_id);
+    o.spans.push({ start: r.char_start, end: r.char_end });
+  }
+  return out;
+}
 const spanOf = (r: ResolvedMatch) => (r.kind === "sure" ? r.hit : r);
 const gap = (a: { start: number; end: number }, b: { start: number; end: number }) =>
   a.start >= b.end ? a.start - b.end : b.start >= a.end ? b.start - a.end : 0;
@@ -81,11 +105,15 @@ function hintTile(hint: UnmatchedDraft, sure: MatchHit[], objectTile: Map<string
 }
 
 /**
- * Matches the uncarried chunks of one version against the candidate objects and stores mentions, ambiguous spans,
- * unmatched place hints and the version's pass (`mentionsConfigKey`), in one transaction. Idempotent: a second pass
- * adds nothing. Returns the new rows and the number of chunks matched.
+ * Matches the uncarried chunks of one version (with `rematch`, its carried chunks too) against the candidate objects
+ * and stores mentions, ambiguous spans, unmatched place hints and the version's pass (`mentionsConfigKey`), in one
+ * transaction. Idempotent: a second pass adds nothing. Returns the new rows and the number of chunks matched.
  */
-export async function matchVersion(db: Db, versionId: string, ctx: { runId: string | null; cfg: AppConfig }): Promise<MatchCounts> {
+export async function matchVersion(
+  db: Db,
+  versionId: string,
+  ctx: { runId: string | null; cfg: AppConfig; rematch?: boolean },
+): Promise<MatchCounts> {
   const { cfg } = ctx;
   const matchCfg = { mentions: cfg.mentions, nameAffixes: cfg.nameAffixes };
   return db.transaction(async (tx) => {
@@ -94,10 +122,11 @@ export async function matchVersion(db: Db, versionId: string, ctx: { runId: stri
     const scope = await candidateTiles(tx, versionId, cfg.mentions, { nameAffixes: cfg.nameAffixes, areaKeys: cfg.areas.map((a) => a.key) });
     const objectIds = await candidateObjects(tx, scope.tiles);
     const rows = await tx
-      .select({ id: chunks.id, text: chunks.text })
+      .select({ id: chunks.id, text: chunks.text, origin: chunks.carriedFromChunkId })
       .from(chunks)
-      .where(and(eq(chunks.documentVersionId, versionId), isNull(chunks.carriedFromChunkId)))
+      .where(and(eq(chunks.documentVersionId, versionId), ctx.rematch ? undefined : isNull(chunks.carriedFromChunkId)))
       .orderBy(asc(chunks.ordinal));
+    const origins = await originRows(tx, rows.flatMap((r) => (r.origin ? [r.origin] : [])));
 
     const results: ChunkResult[] = [];
     for (const chunk of rows) {
@@ -105,11 +134,25 @@ export async function matchVersion(db: Db, versionId: string, ctx: { runId: stri
       const text = linkTextOnly(chunk.text);
       const hits = await findNameHits(tx, nameFormsOf(ngrams(text, cfg.mentions.maxNgramWords), matchCfg), objectIds, matchCfg);
       const resolved = resolveHits(hits, matchCfg);
+      const sure = resolved.flatMap((r) => (r.kind === "sure" ? [r.hit] : []));
+      const ambiguous = resolved.flatMap((r) => (r.kind === "ambiguous" ? [r] : []));
+      const origin = chunk.origin ? origins.get(chunk.origin)! : null;
+      if (origin) {
+        // A carried chunk in a rematch: only what its original does not have (the original keeps its own rows).
+        results.push({
+          chunkId: chunk.id,
+          text: chunk.text,
+          sure: sure.filter((h) => !origin.objects.has(h.geoObjectId) && !origin.spans.some((o) => overlaps(h, o))),
+          ambiguous: ambiguous.filter((a) => !origin.spans.some((o) => overlaps(a, o))),
+          hints: [],
+        });
+        continue;
+      }
       results.push({
         chunkId: chunk.id,
         text: chunk.text,
-        sure: resolved.flatMap((r) => (r.kind === "sure" ? [r.hit] : [])),
-        ambiguous: resolved.flatMap((r) => (r.kind === "ambiguous" ? [r] : [])),
+        sure,
+        ambiguous,
         hints: nameHints(text, cfg.nameAffixes, cfg.mentions.nameHintStopWords).filter((h) => !resolved.some((r) => overlaps(h, spanOf(r)))),
       });
     }
@@ -167,10 +210,14 @@ export async function matchVersion(db: Db, versionId: string, ctx: { runId: stri
 }
 
 /** One job of the stage: matches its versions one after another (each in its own transaction). */
-export async function matchVersions(db: Db, job: { runId: string; versionIds: string[] }, cfg: AppConfig = getConfig()): Promise<MatchCounts> {
+export async function matchVersions(
+  db: Db,
+  job: { runId: string; versionIds: string[]; rematch?: boolean },
+  cfg: AppConfig = getConfig(),
+): Promise<MatchCounts> {
   const total: MatchCounts = { mentions: 0, ambiguous: 0, unmatched: 0, chunks: 0 };
   for (const id of job.versionIds) {
-    const c = await matchVersion(db, id, { runId: job.runId, cfg });
+    const c = await matchVersion(db, id, { runId: job.runId, cfg, rematch: job.rematch === true });
     total.mentions += c.mentions;
     total.ambiguous += c.ambiguous;
     total.unmatched += c.unmatched;

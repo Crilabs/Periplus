@@ -53,6 +53,7 @@ const mentionsJobSchema = z.object({
   stage: z.string().min(1),
   key: z.string().min(1),
   versionIds: z.array(z.string().uuid()).min(1),
+  rematch: z.literal(true).optional(),
 });
 
 /** Matches one job's versions (each in its own transaction; a retried job adds nothing twice). */

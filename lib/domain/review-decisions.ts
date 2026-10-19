@@ -375,7 +375,7 @@ async function applyNameDecision(tx: Db, task: Task, decision: ReviewDecision): 
   }
   await tx.update(nameCandidates).set({ status: "decided" }).where(eq(nameCandidates.id, candidate.id));
   // The current version of each active document that carried the name in this tile (a superseded version is no
-  // rematch target).
+  // rematch target; the rematch also matches the chunks carried into it, where the name may sit, ruling M4-FIN-R1).
   const { rows } = await tx.execute<{ id: string }>(sql`
     select distinct d.current_version_id as id
     from unmatched_names u
