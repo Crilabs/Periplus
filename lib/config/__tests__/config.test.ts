@@ -15,6 +15,7 @@ type Overrides = {
   factSchema?: unknown;
   geometry?: unknown;
   restrictions?: unknown;
+  datasets?: unknown;
   /** File name (without `.json`) to content; replaces all repo area files. */
   areas?: Record<string, unknown>;
 };
@@ -30,6 +31,7 @@ function fixtureDir(overrides: Overrides): string {
     gazetteer: overrides.gazetteer ?? repoConfig.gazetteer,
     geometry: overrides.geometry ?? repoConfig.geometry,
     restrictions: overrides.restrictions ?? repoConfig.restrictions,
+    datasets: overrides.datasets ?? repoConfig.datasets,
   };
   for (const [name, value] of Object.entries(files)) {
     writeFileSync(join(dir, `${name}.json`), JSON.stringify(value));
@@ -123,6 +125,21 @@ describe("loadConfig", () => {
     const g2 = structuredClone(repoConfig.geometry);
     g2.shelter.fMinM = 20000;
     expect(() => loadConfig(fixtureDir({ geometry: g2 }))).toThrow(/geometry\.json.*shelter/);
+  });
+
+  it("loads the dataset endpoints", () => {
+    const c = loadConfig("config");
+    expect(c.datasets.bathymetry).toMatchObject({ coverageId: "emodnet__mean", datasetVersion: "2024", valueIsElevation: true });
+    expect(c.datasets.seabed.substrateField).toBe("substrate");
+    expect(c.datasets.humanActivities.layers.map((l) => l.kind)).toContain("protected_area");
+    expect(c.datasets.vesselDensity.coverageId).toBe("emodnet__vesseldensity_allavg");
+    expect(c.datasets.bufferKm).toBe(2);
+  });
+
+  it("rejects a restriction layer with an unknown kind", () => {
+    const datasets = structuredClone(repoConfig.datasets);
+    (datasets.humanActivities.layers[0] as { kind: string }).kind = "wreck";
+    expect(() => loadConfig(fixtureDir({ datasets }))).toThrow(/datasets\.json.*humanActivities\.layers\.0\.kind/);
   });
 
   it("rejects a missing config file", () => {

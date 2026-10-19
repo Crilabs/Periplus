@@ -228,8 +228,64 @@ export const seabedDatasetSchema = z.strictObject({
   ratePerMinute: z.number().int().positive(),
 });
 
-/** `config/datasets.json` (loaded from Task 9 on); so far only the seabed part. */
-export const datasetsSchema = z.strictObject({ seabed: seabedDatasetSchema });
+/** EMODnet Bathymetry WCS (mean depth of the DTM), native grid in EPSG:4326 with axes Long/Lat. */
+export const bathymetryDatasetSchema = z.strictObject({
+  wcsUrl: z.url(),
+  coverageId: z.string().min(1),
+  /** Name stored in `bathymetry.dataset` and in every derivation. */
+  dataset: z.string().min(1),
+  datasetVersion: z.string().min(1),
+  resolutionM: meters,
+  /** True when the source stores elevation (water negative); depths are stored positive. */
+  valueIsElevation: z.boolean(),
+  timeoutSeconds: z.number().int().positive(),
+  ratePerMinute: z.number().int().positive(),
+});
+
+/** EMODnet Human Activities WFS: one layer per source of anchoring restrictions. */
+export const humanActivitiesDatasetSchema = z.strictObject({
+  wfsUrl: z.url(),
+  layers: z
+    .array(
+      z.strictObject({
+        typeName: z.string().min(1),
+        kind: z.enum(restrictedKindEnum.enumValues),
+        /** Buffer around the geometry in metres; needed for lines and points, 0 keeps polygons as they are. */
+        bufferM: z.number().nonnegative(),
+        /** Property holding a stable source id; omitted or missing on a feature = the GeoJSON feature id. */
+        idField: z.string().min(1).optional(),
+      }),
+    )
+    .min(1),
+  pageSize: z.number().int().positive(),
+  timeoutSeconds: z.number().int().positive(),
+  ratePerMinute: z.number().int().positive(),
+});
+
+/**
+ * EMODnet Human Activities WCS vessel density (download and archive only in M2). Its native grid is
+ * EPSG:3857, so the Long/Lat subset needs `subsettingCrs`; `time` picks the annual slice.
+ */
+export const vesselDensityDatasetSchema = z.strictObject({
+  wcsUrl: z.url(),
+  coverageId: z.string().min(1),
+  subsettingCrs: z.url(),
+  time: z.iso.datetime(),
+  dataset: z.string().min(1),
+  datasetVersion: z.string().min(1),
+  timeoutSeconds: z.number().int().positive(),
+  ratePerMinute: z.number().int().positive(),
+});
+
+/** `config/datasets.json`: external datasets of the geometry stage. */
+export const datasetsSchema = z.strictObject({
+  bathymetry: bathymetryDatasetSchema,
+  seabed: seabedDatasetSchema,
+  humanActivities: humanActivitiesDatasetSchema,
+  vesselDensity: vesselDensityDatasetSchema,
+  /** Margin around an area's box for every dataset request, in km. */
+  bufferKm: z.number().nonnegative(),
+});
 
 export type DatasetsConfig = z.infer<typeof datasetsSchema>;
 export type QueueConfig = z.infer<typeof queueConfigSchema>;
@@ -248,4 +304,5 @@ export type AppConfig = {
   factSchema: z.infer<typeof factSchemaConfigSchema>;
   geometry: GeometryConfig;
   restrictions: RestrictionsConfig;
+  datasets: DatasetsConfig;
 };

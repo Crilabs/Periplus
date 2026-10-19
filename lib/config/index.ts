@@ -5,6 +5,7 @@ import {
   areaConfigSchema,
   budgetsSchema,
   categoriesSchema,
+  datasetsSchema,
   factSchemaConfigSchema,
   gazetteerSchema,
   geometrySchema,
@@ -75,6 +76,7 @@ export function loadConfig(dir = "config"): AppConfig {
     factSchema: readJson(dir, "fact-schema/active", factSchemaConfigSchema),
     geometry: readJson(dir, "geometry", geometrySchema),
     restrictions: readJson(dir, "restrictions", restrictionsSchema),
+    datasets: readJson(dir, "datasets", datasetsSchema),
   };
 }
 
