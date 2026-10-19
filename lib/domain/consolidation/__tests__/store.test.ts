@@ -2,7 +2,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { changeEvents, evaluationProfiles, places, profiles, reviewTasks } from "@/lib/db/schema";
+import { changeEvents, evaluationProfiles, places, profiles, reviewDecisions, reviewTasks } from "@/lib/db/schema";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
 import { newId } from "@/lib/domain/ids";
 import { insertComputation, insertPlace, insertSource, insertTextFact } from "@/test/consolidation";
@@ -63,6 +63,63 @@ async function anchorage(db: Db): Promise<string> {
   await insertComputation(db, objectId, "shelter", { "shelter.N": 0.6 });
   await insertComputation(db, objectId, "depth", { "depth.min": 4 }, { confidence: 0.85 });
   return objectId;
+}
+
+/**
+ * A committed synthetic place far from every tile the tests build (a committed place at 21.0° E / 35.2° N joins the
+ * tiles of the geometry scenes and their place counts); `cleanup` ends it and dismisses its open tasks, so area, tile
+ * and review queries never see it. Only its own rows are asserted (ruling M5-P20).
+ */
+async function committedPlace(db: Db): Promise<{ objectId: string; cleanup: () => Promise<void> }> {
+  const lon = -150.1;
+  const lat = -50.1;
+  const objectId = await insertNamedObject(db, { type: "bay", names: [{ name: `Parallel ${newId()}` }], lon, lat });
+  await db.insert(places).values({ geoObjectId: objectId, kind: "anchorage", status: "confirmed", position: geomFromGeoJson({ type: "Point", coordinates: [lon, lat] }) });
+  const cleanup = async () => {
+    await db.execute(sql`update review_tasks set status = 'dismissed' where left(subject_id, 37) = ${`${objectId}:`} and status = 'open'`);
+    await db.execute(sql`update places set valid_to = current_date where geo_object_id = ${objectId} and valid_to is null`);
+    await db.execute(sql`update geo_objects set valid_to = current_date where id = ${objectId} and valid_to is null`);
+  };
+  return { objectId, cleanup };
+}
+
+type Side = { value: unknown; factIds: string[] };
+
+/** Decides a task as a review decision would: one decision row, status `decided`. */
+async function decide(tx: Db, taskId: string): Promise<void> {
+  await tx.insert(reviewDecisions).values({ taskId, decision: { action: "discard_change" }, decidedBy: "test" });
+  await tx.update(reviewTasks).set({ status: "decided" }).where(eq(reviewTasks.id, taskId));
+}
+
+/**
+ * Runs `run` while another connection decides `taskId`: `lock-first` locks the task row, waits until `run` blocks on
+ * it, then decides and commits; `decide-first` decides (uncommitted), waits until `run` blocks, then commits. Waits at
+ * most 5 s for the block.
+ */
+async function decideDuring<T>(db: Db, taskId: string, order: "lock-first" | "decide-first", run: () => Promise<T>): Promise<T> {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let ready!: (pid: number) => void;
+  const isReady = new Promise<number>((resolve) => (ready = resolve));
+  const holder = db.transaction(async (tx) => {
+    const { rows } = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
+    if (order === "lock-first") await tx.execute(sql`select id from review_tasks where id = ${taskId} for update`);
+    else await decide(tx, taskId);
+    ready(rows[0]!.pid);
+    await held;
+    if (order === "lock-first") await decide(tx, taskId);
+  });
+  const pid = await isReady;
+  const running = run();
+  running.catch(() => undefined);
+  for (let n = 0; n < 100; n++) {
+    const { rows } = await db.execute<{ n: number }>(sql`select count(*)::int as n from pg_stat_activity where ${pid} = any(pg_blocking_pids(pid))`);
+    if (rows[0]!.n > 0) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  release();
+  await holder;
+  return running;
 }
 
 describe("consolidateGeo", () => {
@@ -205,6 +262,71 @@ describe("consolidateGeo", () => {
       expect(await tasksOf(tx, objectId, "depth.min")).toEqual([]);
     }));
 
+  it("a stale open task is dismissed when the change becomes supported (ruling M5-F-R3 I-4)", () =>
+    withRollback(async (tx) => {
+      const objectId = await anchorage(tx);
+      await insertTextFact(tx, objectId, await insertSource(tx, "pilot_guide", 0.9), { attribute: "services.water", value: true, observedAt: "2026-06-01", confidence: 0.9 });
+      await consolidateGeo(tx, objectId, { today });
+      await insertTextFact(tx, objectId, await insertSource(tx, "forum", 0.4), { attribute: "services.water", value: false, observedAt: "2026-07-01" });
+      expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "unchanged", tasks: 1 });
+
+      // a second independent forum: the change is supported now, the open task has no draft any more
+      await insertTextFact(tx, objectId, await insertSource(tx, "forum", 0.4), { attribute: "services.water", value: false, observedAt: "2026-07-02" });
+      expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "created", version: 2, tasks: 0 });
+      const [task] = await tasksOf(tx, objectId, "services.water");
+      expect(task).toMatchObject({ status: "dismissed", context: { dismissedReason: "superseded" } });
+      expect((await versionsOf(tx, objectId)).map((v) => v.attributes["services.water"])).toEqual([true, false]);
+    }));
+
+  it("an open conflict task gets the newest sides while its key stays (ruling M5-F-R3 M-3)", () =>
+    withRollback(async (tx) => {
+      const objectId = await anchorage(tx);
+      await insertTextFact(tx, objectId, await insertSource(tx, "trip_report", 0.6), { attribute: "holding", value: "good", observedAt: "2026-07-01" });
+      await insertTextFact(tx, objectId, await insertSource(tx, "trip_report", 0.5), { attribute: "holding", value: "poor", observedAt: "2026-07-02" });
+      await consolidateGeo(tx, objectId, { today });
+      const [before] = await tasksOf(tx, objectId, "holding");
+      const sideOf = (context: unknown, value: string) =>
+        [(context as { a: Side }).a, (context as { b: Side }).b].find((side) => side.value === value)!;
+      expect(sideOf(before!.context, "poor").factIds).toHaveLength(1);
+      expect(before!.context).toMatchObject({ others: [] });
+
+      // a weak third source joins "poor": the same two value groups, the same key
+      const more = await insertTextFact(tx, objectId, await insertSource(tx, "forum", 0.1), { attribute: "holding", value: "poor", observedAt: "2026-07-03" });
+      await consolidateGeo(tx, objectId, { today });
+      const [after] = await tasksOf(tx, objectId, "holding");
+      expect(after!.id).toBe(before!.id);
+      expect((after!.context as { key: string }).key).toBe((before!.context as { key: string }).key);
+      expect(sideOf(after!.context, "poor").factIds).toContain(more);
+    }));
+
+  it("a previous valid_from later than the run date is kept (ruling M5-A-R2)", () =>
+    withRollback(async (tx) => {
+      const objectId = await anchorage(tx);
+      await insertTextFact(tx, objectId, await insertSource(tx, "forum", 0.4), { attribute: "services.water", value: true, observedAt: "2025-07-01" });
+      await consolidateGeo(tx, objectId, { today: tomorrow });
+      await insertTextFact(tx, objectId, await insertSource(tx, "pilot_guide", 0.9), { attribute: "services.water", value: false, observedAt: "2026-07-01", confidence: 0.9 });
+      expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "created", version: 2 });
+      expect((await versionsOf(tx, objectId)).map((v) => [v.version, v.validFrom])).toEqual([
+        [1, tomorrow],
+        [2, tomorrow],
+      ]);
+    }));
+
+  it("an unknown run id is an error, not today (ruling M5-F-R2 M-6)", () =>
+    withRollback(async (tx) => {
+      const objectId = await anchorage(tx);
+      await expect(consolidateGeo(tx, objectId, { runId: newId() })).rejects.toThrow(/run .* not found/);
+    }));
+
+  it("refuses to run outside READ COMMITTED (ruling M5-F-R2 M-2)", () =>
+    withRollback(
+      async (tx) => {
+        const objectId = await anchorage(tx);
+        await expect(consolidateGeo(tx, objectId, { today })).rejects.toThrow(/READ COMMITTED/);
+      },
+      { isolationLevel: "repeatable read" },
+    ));
+
   it("an object without a fact level is skipped", () =>
     withRollback(async (tx) => {
       const objectId = await insertNamedObject(tx, { type: "settlement", names: [{ name: "Chora" }], lon: 21.0, lat: 35.2 });
@@ -213,22 +335,81 @@ describe("consolidateGeo", () => {
     }));
 
   it("two parallel consolidations write one version", async () => {
-    // Committed: a fresh synthetic object with its own uuid and no facts; only its own rows are asserted (ruling
-    // M5-P20). It lies far from every tile the tests build (a committed place at 21.0° E / 35.2° N joins the tiles of
-    // the geometry scenes and their place counts), and is ended afterwards, so area and tile queries never see it.
     const db = testDb();
-    const lon = -150.1;
-    const lat = -50.1;
-    const objectId = await insertNamedObject(db, { type: "bay", names: [{ name: `Parallel ${newId()}` }], lon, lat });
-    await db.insert(places).values({ geoObjectId: objectId, kind: "anchorage", status: "confirmed", position: geomFromGeoJson({ type: "Point", coordinates: [lon, lat] }) });
+    const { objectId, cleanup } = await committedPlace(db);
     try {
       const results = await Promise.all([consolidateGeo(db, objectId, { today }), consolidateGeo(db, objectId, { today })]);
       expect(results.map((r) => r.status).sort()).toEqual(["created", "unchanged"]);
       expect((await versionsOf(db, objectId)).map((v) => v.version)).toEqual([1]);
       expect((await eventsOf(db, objectId)).map((e) => [e.type, e.profileVersion])).toEqual([["place_new", 1]]);
     } finally {
-      await db.execute(sql`update places set valid_to = current_date where geo_object_id = ${objectId} and valid_to is null`);
-      await db.execute(sql`update geo_objects set valid_to = current_date where id = ${objectId} and valid_to is null`);
+      await cleanup();
+    }
+  });
+
+  it("two parallel consolidations open one task and write its event once (ruling M5-F-R2 M-5)", async () => {
+    const db = testDb();
+    const { objectId, cleanup } = await committedPlace(db);
+    try {
+      await insertTextFact(db, objectId, await insertSource(db, "pilot_guide", 0.9), { attribute: "services.water", value: true, observedAt: "2026-06-01", confidence: 0.9 });
+      await consolidateGeo(db, objectId, { today });
+      await insertTextFact(db, objectId, await insertSource(db, "forum", 0.4), { attribute: "services.water", value: false, observedAt: "2026-07-01" });
+
+      const results = await Promise.all([consolidateGeo(db, objectId, { today }), consolidateGeo(db, objectId, { today })]);
+      expect(results.map((r) => r.tasks).sort()).toEqual([0, 1]);
+      expect((await tasksOf(db, objectId, "services.water")).map((t) => [t.kind, t.status])).toEqual([["uncertain_change", "open"]]);
+      expect((await eventsOf(db, objectId)).map((e) => e.type)).toEqual(["place_new", "uncertain"]);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("a task decided between two runs keeps its context (ruling M5-F-R2)", async () => {
+    const db = testDb();
+    const { objectId, cleanup } = await committedPlace(db);
+    try {
+      await insertTextFact(db, objectId, await insertSource(db, "pilot_guide", 0.9), { attribute: "services.water", value: true, observedAt: "2026-06-01", confidence: 0.9 });
+      await consolidateGeo(db, objectId, { today });
+      const forum = await insertSource(db, "forum", 0.4);
+      await insertTextFact(db, objectId, forum, { attribute: "services.water", value: false, observedAt: "2026-07-01" });
+      await consolidateGeo(db, objectId, { today });
+      const [task] = await tasksOf(db, objectId, "services.water");
+      const decidedContext = task!.context as { key: string };
+      // a newer forum document: the next run drafts another key for the same subject
+      await insertTextFact(db, objectId, forum, { attribute: "services.water", value: false, observedAt: "2026-08-01" });
+
+      // the admin decides the open task while the run is about to take it over
+      await decideDuring(db, task!.id, "lock-first", () => consolidateGeo(db, objectId, { today }));
+
+      const tasks = await tasksOf(db, objectId, "services.water");
+      const decided = tasks.find((t) => t.id === task!.id)!;
+      expect(decided.status).toBe("decided");
+      expect(decided.context).toEqual(decidedContext);
+      const open = tasks.filter((t) => t.status === "open");
+      expect(open).toHaveLength(1);
+      expect((open[0]!.context as { key: string }).key).not.toBe(decidedContext.key);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("a key decided while the run waits is not opened again (ruling M5-F-R2 M-3)", async () => {
+    const db = testDb();
+    const { objectId, cleanup } = await committedPlace(db);
+    try {
+      await insertTextFact(db, objectId, await insertSource(db, "pilot_guide", 0.9), { attribute: "services.water", value: true, observedAt: "2026-06-01", confidence: 0.9 });
+      await consolidateGeo(db, objectId, { today });
+      await insertTextFact(db, objectId, await insertSource(db, "forum", 0.4), { attribute: "services.water", value: false, observedAt: "2026-07-01" });
+      await consolidateGeo(db, objectId, { today });
+      const [task] = await tasksOf(db, objectId, "services.water");
+
+      // the decision is written but not committed when the run (which saw the task open) reaches its tasks
+      await decideDuring(db, task!.id, "decide-first", () => consolidateGeo(db, objectId, { today }));
+
+      expect((await tasksOf(db, objectId, "services.water")).map((t) => [t.id, t.status])).toEqual([[task!.id, "decided"]]);
+      expect((await eventsOf(db, objectId)).map((e) => e.type)).toEqual(["place_new", "uncertain"]);
+    } finally {
+      await cleanup();
     }
   });
 });

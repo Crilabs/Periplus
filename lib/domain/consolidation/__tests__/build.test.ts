@@ -109,7 +109,7 @@ describe("buildProfile", () => {
     expect(p.gaps).toContainEqual({ attribute: "anchor_area", reason: "no_anchor_area" });
     expect(p.gaps).toContainEqual({ attribute: "max_draft", reason: "no_facts" });
     expect(p.gaps.map((g) => g.attribute)).not.toContain("holding");
-    expect(p.support["holding"]).toEqual({ independent: 2, maxWeight: 0.9, factIds: p.provenance["holding"]!.factIds });
+    expect(p.support["holding"]).toMatchObject({ independent: 2, maxWeight: 0.9, factIds: p.provenance["holding"]!.factIds });
     expect(p.support["shelter.N"]).toMatchObject({ independent: 1, maxWeight: cfg.weights.computed });
     // 0.4 · shelter 0.6 + 0.25 · depth 0.8 + 0.2 · seabed 0.7 + 0.15 · exclusion (prohibitions) 0.9
     expect(p.confidence).toBe(0.715);
@@ -369,7 +369,7 @@ describe("buildProfile", () => {
     const marina = buildProfile({ ...scenario(), inputs: [], derived: noDerived, context: context({ place: { ...context().place!, kind: "marina" } }) });
     expect(SECTORS.map((s) => marina.attributes[`shelter.${s}`])).toEqual(SECTORS.map(() => 0.8));
     expect(marina.provenance["shelter.N"]).toMatchObject({ origin: "rule", factIds: [], lastConfirmedAt: null, expired: false });
-    expect(marina.support["shelter.N"]).toEqual({ independent: 0, maxWeight: 0, factIds: [] });
+    expect(marina.support["shelter.N"]).toEqual({ independent: 0, maxWeight: 0, factIds: [], confirmedAt: {} });
     expect(marina.attributes["derived.quietness"]).toBeUndefined();
   });
 

@@ -18,7 +18,8 @@ export function prohibitionEntryKey(entry: unknown): string {
   return isTextEntry(entry) ? kindOf(entry) : `${kindOf(entry)}:${String(e.restrictedAreaId)}`;
 }
 
-function byKind(a: unknown, b: unknown): number {
+/** The order of a `prohibitions` list: by kind, then entry. */
+export function compareProhibitions(a: unknown, b: unknown): number {
   const ka = kindOf(a);
   const kb = kindOf(b);
   if (ka !== kb) return ka < kb ? -1 : 1;
@@ -63,7 +64,7 @@ export const prohibitionsRule: ConsolidationRule = (inputs, ctx) => {
     kind,
     months: list.some((m) => m === null) ? null : [...new Set(list.flatMap((m) => m ?? []))].sort((a, b) => a - b),
   }));
-  const value = [...(basis ? (basis.value as unknown[]) : []), ...kept].sort(byKind);
+  const value = [...(basis ? (basis.value as unknown[]) : []), ...kept].sort(compareProhibitions);
 
   // support: the computation, the texts naming a kind and the review decision that superseded older texts
   const decisions = texts.filter((i) => i.origin === "review");

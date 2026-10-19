@@ -260,7 +260,14 @@ describe("diffProfiles", () => {
     const r = diff(prev, build(inputs));
     const conflict = build(inputs).conflicts[0]!;
     expect(r.tasks).toEqual([
-      { kind: "conflict", attribute: "holding", key: conflict.key, context: { key: conflict.key, attribute: "holding", a: conflict.a, b: conflict.b }, priority: 1, event: null },
+      {
+        kind: "conflict",
+        attribute: "holding",
+        key: conflict.key,
+        context: { key: conflict.key, attribute: "holding", a: conflict.a, b: conflict.b, others: conflict.others },
+        priority: 1,
+        event: null,
+      },
     ]);
     expect(r.events).toEqual([]);
     expect(r.versionNeeded).toBe(false);
@@ -281,5 +288,96 @@ describe("diffProfiles", () => {
     ];
     const r = diff(null, build([...basis(), ...depth]));
     expect(r.tasks.map((t) => [t.attribute, t.priority])).toEqual([["max_draft", 2]]);
+  });
+
+  it("a vanished computed value is dropped with its gap reason and emits changed → null (ruling M5-F-R3 I-1)", () => {
+    const prev = stored(build(basis()));
+    const withoutDepth = basis().filter((i) => i.attribute !== "depth.min");
+    const gap = context({ computationGaps: { "depth.min": "no_bathymetry" } });
+    const r = diff(prev, build(withoutDepth, gap), gap);
+    expect(r.profile.attributes).not.toHaveProperty("depth.min");
+    expect(r.profile.provenance).not.toHaveProperty("depth.min");
+    expect(r.profile.gaps).toContainEqual({ attribute: "depth.min", reason: "no_bathymetry" });
+    expect(r.events).toEqual([{ type: "changed", attribute: "depth.min", oldValue: 4, newValue: null, severity: "safety", details: {} }]);
+    expect(r.versionNeeded).toBe(true);
+  });
+
+  it("the harbour floor goes when the kind changes; a vanished shelter value is safety", () => {
+    const marina = context({ place: { ...context().place!, kind: "marina" } });
+    const prev = stored(build(basis(), marina));
+    expect(prev.attributes["shelter.S"]).toBe(0.8);
+    const r = diff(prev, build(basis()));
+    expect(r.profile.attributes).not.toHaveProperty("shelter.S");
+    expect(r.events).toContainEqual({ type: "changed", attribute: "shelter.S", oldValue: 0.8, newValue: null, severity: "safety", details: {} });
+    expect(r.events).toContainEqual({ type: "changed", attribute: "place.kind", oldValue: "marina", newValue: "anchorage", severity: "info", details: {} });
+  });
+
+  it("an uncertain run keeps the previous conflict note of the attribute (ruling M5-F-R3 I-2)", () => {
+    const good = text({ attribute: "holding", value: "good", sourceKey: "source:a", sourceWeight: 0.6, observedAt: "2026-07-01" });
+    const poor = text({ factId: "fact-poor", attribute: "holding", value: "poor", sourceKey: "source:b", sourceWeight: 0.5, observedAt: "2026-07-02" });
+    const prev = stored(build([...basis(), good, poor]));
+    expect(prev.conflicts.map((c) => c.attribute)).toEqual(["holding"]);
+    // source a's statement is no longer among the inputs: no conflict, poor picked, but only one weak source has it
+    const next = build([...basis(), poor]);
+    expect(next.attributes["holding"]).toBe("poor");
+    expect(next.conflicts).toEqual([]);
+
+    const r = diff(prev, next);
+    expect(r.profile.attributes["holding"]).toBe("good");
+    expect(r.profile.conflicts).toEqual(prev.conflicts);
+    expect(r.tasks.map((t) => t.kind).sort()).toEqual(["conflict", "uncertain_change"]);
+    expect(r.versionNeeded).toBe(false);
+  });
+
+  it("an addition to a safety list is changed per entry, never withheld (ruling M5-F-R3 I-3)", () => {
+    const rock = { kind: "rock", name: "Xera" };
+    const shoal = { kind: "shoal", name: null };
+    const forum = (factId: string, value: unknown, observedAt: string) =>
+      text({ factId, attribute: "hazards", value, sourceKey: "source:forum", sourceWeight: 0.4, observedAt });
+    const prev = stored(build([...basis(), forum("fact-rock", [rock], "2026-06-01")]));
+
+    // one more forum document names a shoal: one source only, but an added hazard is never held back
+    const r = diff(prev, build([...basis(), forum("fact-rock", [rock], "2026-06-01"), forum("fact-shoal", [shoal], "2026-07-01")]));
+    expect(r.profile.attributes["hazards"]).toEqual(expect.arrayContaining([rock, shoal]));
+    expect(r.profile.attributes["hazards"]).toHaveLength(2);
+    expect(r.events).toEqual([
+      { type: "changed", attribute: "hazards", oldValue: [rock], newValue: r.profile.attributes["hazards"], severity: "safety", details: {} },
+    ]);
+    expect(r.tasks).toEqual([]);
+    expect(r.versionNeeded).toBe(true);
+
+    // an addition together with a removal: the addition holds, the removal waits for review
+    const swapped = diff(prev, build([...basis(), forum("fact-shoal", [shoal], "2026-07-01")]));
+    expect(swapped.profile.attributes["hazards"]).toEqual([shoal, rock]);
+    expect(swapped.events).toEqual([{ type: "changed", attribute: "hazards", oldValue: [rock], newValue: [shoal, rock], severity: "safety", details: {} }]);
+    expect(swapped.tasks).toHaveLength(1);
+    expect(swapped.tasks[0]).toMatchObject({ kind: "uncertain_change", attribute: "hazards", priority: 2, context: { oldValue: [rock], newValue: [shoal] } });
+    expect(swapped.profile.provenance["hazards"]!.entryFactIds).toEqual({
+      [JSON.stringify(["shoal", null])]: ["fact-shoal"],
+      [JSON.stringify(["rock", "Xera"])]: ["fact-rock"],
+    });
+  });
+
+  it("a kept value still confirmed by its source does not expire (ruling M5-F-R3 M-1)", () => {
+    const prev = stored(build([...basis(), guideWater()]));
+    // the guide is fetched again and still says yes; a newer forum says no (uncertain)
+    const rechecked = { ...guideWater(), lastConfirmedAt: "2026-11-20" };
+    const forum = text({ factId: "fact-forum-water", attribute: "services.water", value: false, sourceKey: "source:forum", sourceWeight: 0.4, observedAt: "2026-07-01", lastConfirmedAt: "2026-11-20" });
+    const later = "2026-12-15";
+    const r = diff(prev, build([...basis(), rechecked, forum], context(), later), context(), later);
+    expect(r.profile.attributes["services.water"]).toBe(true);
+    expect(r.profile.provenance["services.water"]).toMatchObject({ expired: false, lastConfirmedAt: "2026-11-20" });
+    expect(r.events).toEqual([]);
+    expect(r.tasks.map((t) => t.kind)).toEqual(["uncertain_change"]);
+  });
+
+  it("a conflict decided for one value is marked decided (ruling M5-F-R3 M-2)", () => {
+    const holding = [
+      text({ attribute: "holding", value: "good", sourceKey: "source:a", sourceWeight: 0.6, observedAt: "2026-07-01" }),
+      text({ attribute: "holding", value: "poor", sourceKey: "source:b", sourceWeight: 0.5, observedAt: "2026-07-02" }),
+    ];
+    const key = build([...basis(), ...holding]).conflicts[0]!.key;
+    const decided = context({ decidedConflictKeys: new Set([key]) });
+    expect(build([...basis(), ...holding], decided).conflicts.map((c) => [c.key, c.resolution])).toEqual([[key, "decided"]]);
   });
 });

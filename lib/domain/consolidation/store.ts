@@ -2,10 +2,12 @@ import { eq, sql } from "drizzle-orm";
 import { getConfig, getConsolidationConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { changeEvents, evaluationProfiles, profiles, reviewTasks } from "@/lib/db/schema";
-import { createReviewTask } from "@/lib/domain/review";
+import { canonicalJson } from "@/lib/domain/facts/schema";
+import { createReviewTask, OpenTaskVanished } from "@/lib/domain/review";
 import { latestProfile } from "@/lib/domain/timeline";
+import { createLogger } from "@/lib/logger";
 import { buildProfile } from "./build";
-import { diffProfiles, type EventDraft } from "./changes";
+import { diffProfiles, type EventDraft, type TaskDraft } from "./changes";
 import { loadContext, loadDerivedInputs, loadInputs, type LoadInputsOptions } from "./inputs";
 
 /*
@@ -34,15 +36,75 @@ export type ConsolidateResult = {
 
 const SUBJECT_TYPE = "profile_attribute";
 
+/** The run date: `opts.today`, else the UTC date the run was created (an unknown run id is an error), else today (UTC). */
 async function runDate(db: Db, opts: ConsolidateOptions): Promise<string> {
   if (opts.today) return opts.today;
   if (opts.runId) {
     const { rows } = await db.execute<{ day: string }>(
       sql`select (created_at at time zone 'UTC')::date::text as day from runs where id = ${opts.runId}`,
     );
-    if (rows[0]) return rows[0].day;
+    if (!rows[0]) throw new Error(`run ${opts.runId} not found`);
+    return rows[0].day;
   }
   return new Date().toISOString().slice(0, 10);
+}
+
+type OpenTask = { id: string; kind: TaskDraft["kind"]; attribute: string; context: unknown };
+
+const subjectPrefix = (geoObjectId: string) => `${geoObjectId}:`;
+
+/**
+ * Locks the open `conflict` / `uncertain_change` tasks of the object in one statement, by task id (the order a
+ * decision locking several of them must follow). Under READ COMMITTED a row a concurrent decision holds is waited
+ * for and re-checked: a task decided meanwhile is not returned (ruling M5-F-R2).
+ */
+async function lockOpenTasks(tx: Db, geoObjectId: string): Promise<Map<string, OpenTask>> {
+  const prefix = subjectPrefix(geoObjectId);
+  const { rows } = await tx.execute<{ id: string; kind: TaskDraft["kind"]; subject_id: string; context: unknown }>(sql`
+    select id, kind::text as kind, subject_id, context from review_tasks
+    where kind in ('conflict', 'uncertain_change') and left(subject_id, ${prefix.length}) = ${prefix} and status = 'open'
+    order by id
+    for update
+  `);
+  return new Map(rows.map((r) => [`${r.kind}:${r.subject_id.slice(prefix.length)}`, { id: r.id, kind: r.kind, attribute: r.subject_id.slice(prefix.length), context: r.context }]));
+}
+
+/** `"<kind>:<key>"` of the decided `conflict` / `uncertain_change` tasks of the object, read now (after the locks). */
+async function decidedTaskKeys(tx: Db, geoObjectId: string): Promise<Set<string>> {
+  const prefix = subjectPrefix(geoObjectId);
+  const { rows } = await tx.execute<{ kind: string; key: string }>(sql`
+    select kind::text as kind, context->>'key' as key from review_tasks
+    where kind in ('conflict', 'uncertain_change') and left(subject_id, ${prefix.length}) = ${prefix}
+      and status = 'decided' and context ? 'key'
+  `);
+  return new Set(rows.map((r) => `${r.kind}:${r.key}`));
+}
+
+/**
+ * Opens the draft's task. Under the profile lock and with no open task of its kind and subject left locked, the
+ * insert normally creates; should it meet an open task anyway (`created false`) or one that vanished, it is retried
+ * once and then skipped (logged): the next run drafts it again.
+ */
+async function openDraftTask(tx: Db, draft: TaskDraft, subjectId: string, context: Record<string, unknown>): Promise<{ id: string; created: boolean } | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const task = await createReviewTask(tx, { kind: draft.kind, subjectType: SUBJECT_TYPE, subjectId, context, priority: draft.priority });
+      if (task.created) return task;
+      const [open] = await tx
+        .select({ id: reviewTasks.id })
+        .from(reviewTasks)
+        .where(sql`${reviewTasks.id} = ${task.id} and ${reviewTasks.status} = 'open'`)
+        .for("update");
+      if (open) {
+        await tx.update(reviewTasks).set({ context, priority: draft.priority }).where(eq(reviewTasks.id, open.id));
+        return { id: open.id, created: false };
+      }
+    } catch (e) {
+      if (!(e instanceof OpenTaskVanished)) throw e;
+    }
+  }
+  createLogger("consolidation").warn({ kind: draft.kind, subjectId, key: draft.key }, "review task draft skipped: its open task changed during the run");
+  return null;
 }
 
 /**
@@ -51,12 +113,21 @@ async function runDate(db: Db, opts: ConsolidateOptions): Promise<string> {
  * `profiles_valid_from_monotonic`, ruling M5-A-R2). Lock order (ruling M5-P9): the profile lock first, then review
  * task rows; review decisions on `profile_attribute` tasks never take the profile lock.
  *
+ * Must run in READ COMMITTED (asserted): each statement after the lock must see what the previous holder committed;
+ * under REPEATABLE READ the snapshot of the first statement would hide the winner's version, and a caller's outer
+ * `repeatable read` transaction would defeat the lock (ruling M5-F-R2).
+ *
  * Steps: context (`null` → `skipped`), inputs, derived inputs, `buildProfile`, `latestProfile`, `diffProfiles`.
  * - `regular`: on `versionNeeded` a new version (previous + 1, `valid_from` = the later of the run date and the
- *   previous `valid_from`, `run_id`); the events carry the new or else the existing version; each task draft opens an
- *   `uncertain_change` / `conflict` task on `<geoObjectId>:<attribute>` (context with `key` and `geoObjectId`) and
- *   writes its event only when the task is new. An open task of the same kind and subject (one per subject, ruling
- *   M5-P9) is locked and gets the newest draft's context when its key differs, without a second event.
+ *   previous `valid_from`, `run_id`); the events carry the new or else the existing version (an attribute event
+ *   without a new version is an error). Review tasks (ruling M5-P9, M5-F-R2, M5-F-R3 I-4):
+ *   - the object's open `conflict` / `uncertain_change` tasks are locked first (by id), then the decided keys are read
+ *     again, so a decision committed during the run is seen: a draft whose key is decided now is dropped;
+ *   - a draft with an open task of its kind and subject updates that task's context and priority when they differ
+ *     (the newest draft; no second event);
+ *   - otherwise the draft opens a task on `<geoObjectId>:<attribute>` (context with `key` and `geoObjectId`) and
+ *     writes its event;
+ *   - an open task no draft of this run matches is dismissed (`context.dismissedReason` `superseded`).
  * - `evaluation`: upserts `evaluation_profiles (runId, geoObjectId)` with `opts.rulesVersion`: the profile as a regular
  *   run would write it (after the comparison with the valid profile, so uncertain values stay); no profile, event or
  *   task.
@@ -71,6 +142,10 @@ export async function consolidateGeo(db: Db, geoObjectId: string, opts: Consolid
   const schemaVersion = appConfig.factSchema.version;
 
   return db.transaction(async (tx) => {
+    const { rows: isolation } = await tx.execute<{ level: string }>(sql`select current_setting('transaction_isolation') as level`);
+    if (isolation[0]?.level !== "read committed") {
+      throw new Error(`consolidateGeo must run in READ COMMITTED, not ${isolation[0]?.level}`);
+    }
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`profile:${geoObjectId}`}))`);
     const today = await runDate(tx, opts);
     const context = await loadContext(tx, geoObjectId, cfg, today);
@@ -104,6 +179,9 @@ export async function consolidateGeo(db: Db, geoObjectId: string, opts: Consolid
       return { status: "evaluated", version: null, events: 0, tasks: 0 };
     }
 
+    if (!diff.versionNeeded && diff.events.length > 0) {
+      throw new Error(`consolidation of ${geoObjectId}: ${diff.events.length} change events without a new version`);
+    }
     let version = prev?.version ?? null;
     if (diff.versionNeeded) {
       version = (prev?.version ?? 0) + 1;
@@ -127,28 +205,32 @@ export async function consolidateGeo(db: Db, geoObjectId: string, opts: Consolid
 
     const events: EventDraft[] = [...diff.events];
     let opened = 0;
+    const openTasks = await lockOpenTasks(tx, geoObjectId);
+    const decided = await decidedTaskKeys(tx, geoObjectId);
+    const matched = new Set<string>();
     for (const draft of diff.tasks) {
+      if (decided.has(`${draft.kind}:${draft.key}`)) continue;
+      const subjectId = `${geoObjectId}:${draft.attribute}`;
       const taskContext = { ...draft.context, key: draft.key, geoObjectId };
-      const task = await createReviewTask(tx, {
-        kind: draft.kind,
-        subjectType: SUBJECT_TYPE,
-        subjectId: `${geoObjectId}:${draft.attribute}`,
-        context: taskContext,
-        priority: draft.priority,
-      });
-      if (task.created) {
-        opened++;
-        if (draft.event) events.push({ ...draft.event, details: { ...draft.event.details, taskId: task.id } });
+      const open = openTasks.get(`${draft.kind}:${draft.attribute}`);
+      if (open) {
+        matched.add(open.id);
+        if (canonicalJson(open.context) !== canonicalJson(taskContext)) {
+          await tx.update(reviewTasks).set({ context: taskContext, priority: draft.priority }).where(eq(reviewTasks.id, open.id));
+        }
         continue;
       }
-      const [open] = await tx
-        .select({ context: reviewTasks.context })
-        .from(reviewTasks)
-        .where(eq(reviewTasks.id, task.id))
-        .for("update");
-      if ((open?.context as { key?: unknown } | undefined)?.key !== draft.key) {
-        await tx.update(reviewTasks).set({ context: taskContext, priority: draft.priority }).where(eq(reviewTasks.id, task.id));
-      }
+      const task = await openDraftTask(tx, draft, subjectId, taskContext);
+      if (!task?.created) continue;
+      opened++;
+      if (draft.event) events.push({ ...draft.event, details: { ...draft.event.details, taskId: task.id } });
+    }
+    const stale = [...openTasks.values()].filter((t) => !matched.has(t.id)).map((t) => t.id);
+    if (stale.length > 0) {
+      await tx.execute(sql`
+        update review_tasks set status = 'dismissed', context = context || ${JSON.stringify({ dismissedReason: "superseded" })}::jsonb
+        where id in (${sql.join(stale.map((id) => sql`${id}`), sql`, `)})
+      `);
     }
 
     if (events.length > 0) {

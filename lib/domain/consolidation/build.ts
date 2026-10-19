@@ -34,8 +34,13 @@ import {
  * loading is in `inputs.ts`, the comparison and the writes in later steps.
  */
 
-/** What a change needs to count as `changed` (ruling M5-P7): independent sources, the largest source weight, fact ids. */
-export type AttributeSupport = { independent: number; maxWeight: number; factIds: string[] };
+/**
+ * What a change needs to count as `changed` (ruling M5-P7): independent sources, the largest source weight, fact ids.
+ * `confirmedAt`: per value an input of the attribute carries (`canonicalJson`), the latest `lastConfirmedAt` of those
+ * inputs (POI import dates left out), so a value kept from the previous profile is still confirmed by its source
+ * (ruling M5-F-R3 M-1).
+ */
+export type AttributeSupport = { independent: number; maxWeight: number; factIds: string[]; confirmedAt: Record<string, string> };
 
 export type BuiltProfile = Omit<ProfileSnapshot, "version" | "validFrom"> & { support: Record<string, AttributeSupport> };
 
@@ -143,6 +148,25 @@ function ruleProvenance(attribute: string, rule: RuleName, r: RuleResult, cutoff
   return provenance;
 }
 
+/**
+ * The resolution of a conflict key: the admin's `seasonal` / `left_open`, `decided` when a task picked one value
+ * (ruling M5-F-R3 M-2), else null (open).
+ */
+export function conflictResolution(key: string, context: Pick<ProfileContext, "resolutions" | "decidedConflictKeys">): ConflictNote["resolution"] {
+  return context.resolutions.get(key) ?? (context.decidedConflictKeys.has(key) ? "decided" : null);
+}
+
+/** Per value of the inputs, the latest `lastConfirmedAt` (POI import dates are no confirmation, ruling M5-E-R3 M-7). */
+function confirmedAtByValue(inputs: ConsolidationInput[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const i of inputs) {
+    if (i.poiId !== null) continue;
+    const value = canonicalJson(i.value);
+    if (out[value] === undefined || i.lastConfirmedAt > out[value]) out[value] = i.lastConfirmedAt;
+  }
+  return out;
+}
+
 /** The factual citations of the given provenance entries, merged (for derived values built on them). */
 function cite(provenance: Record<string, AttributeProvenance>, keys: string[]) {
   const used = keys.map((k) => provenance[k]).filter((p): p is AttributeProvenance => p !== undefined);
@@ -176,7 +200,7 @@ export function profileContentHash(p: Pick<BuiltProfile, "attributes" | "provena
  * The profile of one geo object (spec 07, plan Task 10):
  * 1. inputs sorted by (attribute, observedAt, fact or POI id), then each attribute of the level through its schema rule;
  * 2. a value ≠ null goes to `attributes` with its provenance; a conflict to `conflicts` with the resolution of a decided
- *    task (`context.resolutions`);
+ *    task (`conflictResolution`: `context.resolutions`, or `decided` for a picked value);
  * 3. expiry of text/observation values last confirmed before `today − cycles × tileCycleDays`;
  * 4. identity (`gazetteer`, rule `identity`, confidence 1): `geo.name`, `geo.parent_id`, `geo.geometry_hash`; places
  *    `place.kind`, `place.status`, `place.position` (6 decimals), `exclude` in the contract's vocabulary
@@ -219,8 +243,9 @@ export function buildProfile(input: BuildProfileInput): BuiltProfile {
       independent: independentCount(r.support),
       maxWeight: r.support.reduce((max, i) => Math.max(max, i.sourceWeight), 0),
       factIds: provenance[def.key].factIds,
+      confirmedAt: confirmedAtByValue(byAttribute.get(def.key) ?? []),
     };
-    if (r.conflict) conflicts.push({ ...r.conflict, resolution: context.resolutions.get(r.conflict.key) ?? null });
+    if (r.conflict) conflicts.push({ ...r.conflict, resolution: conflictResolution(r.conflict.key, context) });
   }
   conflicts.sort((a, b) => cmp(a.attribute, b.attribute) || cmp(a.key, b.key));
 

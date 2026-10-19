@@ -14,7 +14,7 @@
     ]
   },
   "conflict": { "minRatio": 1.5 },
-  "change": { "minIndependent": 2, "strongWeight": 0.8 },
+  "change": { "minIndependent": 2, "strongWeight": 0.8, "additiveLists": ["hazards", "restricted_zones", "prohibitions"] },
   "expiry": { "cycles": 2, "defaultCycleDays": 365 },
   "rules": {
     "shelter": {

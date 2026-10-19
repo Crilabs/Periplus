@@ -657,7 +657,11 @@ export const consolidationSchema = z.strictObject({
     })
     .refine((c) => c.classes[0].min > c.classes[1].min && c.classes[1].min > 0, "class minima must descend to low = 0"),
   conflict: z.strictObject({ minRatio: z.number().gt(1) }),
-  change: z.strictObject({ minIndependent: positiveInt, strongWeight: share }),
+  /**
+   * `additiveLists`: safety lists whose added entries are always `changed`, judged per entry and never held back as
+   * uncertain (ruling M5-F-R3 I-3, "Jede Nennung gilt"); removals and changed entries go through the uncertain gate.
+   */
+  change: z.strictObject({ minIndependent: positiveInt, strongWeight: share, additiveLists: z.array(attributePattern) }),
   expiry: z.strictObject({ cycles: positiveInt, defaultCycleDays: positiveInt }),
   rules: z.strictObject({
     shelter: z.strictObject({

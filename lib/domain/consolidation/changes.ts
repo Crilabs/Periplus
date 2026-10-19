@@ -3,9 +3,11 @@ import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { ChangeSeverity, ChangeType } from "@/lib/db/schema/profiles";
 import { canonicalJson, getFactSchema } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
-import { type BuiltProfile, profileContentHash } from "./build";
+import { type BuiltProfile, conflictResolution, profileContentHash } from "./build";
 import { profileConfidence } from "./derived/confidence";
 import type { ProfileContext } from "./inputs";
+import { compareProhibitions, prohibitionEntryKey } from "./rules/prohibitions";
+import { unionEntryKey } from "./rules/union";
 import type { AttributeProvenance, ProfileSnapshot } from "./types";
 import { attributeIn, classMidpoint, lowerClass, roundTo } from "./weights";
 
@@ -52,6 +54,7 @@ const GEO_FIELDS = ["geo.name", "geo.parent_id", "geo.geometry_hash", "place.pos
 
 const DAY_MS = 86_400_000;
 
+const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const same = (a: unknown, b: unknown) => canonicalJson(a ?? null) === canonicalJson(b ?? null);
 
 /**
@@ -84,36 +87,99 @@ function dateMinusDays(date: string, days: number): string {
 }
 
 /**
- * The provenance of a value kept from the previous profile, with expiry applied on the run date like `buildProfile`
- * does: a text or observation value without computed, POI or review support, last confirmed before `cutoff`, drops
- * one class (its confidence never rises).
+ * Whether a value of this provenance ages (spec 07 "expired"): a text or observation value without computed, POI or
+ * review support. Only such a value stays when its inputs vanish (ruling M5-F-R3 I-1).
  */
-function keptProvenance(p: AttributeProvenance, cutoff: string, cfg: ConsolidationConfig): AttributeProvenance {
-  if (p.expired) return p;
-  const canExpire =
+function canExpire(p: AttributeProvenance): boolean {
+  return (
     (p.origin === "text" || p.origin === "observed") &&
     p.computationIds.length === 0 &&
     p.poiIds.length === 0 &&
-    !p.sourceKeys.includes("review");
-  if (!canExpire || p.lastConfirmedAt === null || p.lastConfirmedAt >= cutoff) return p;
-  const confidenceClass = lowerClass(p.confidenceClass);
-  return { ...p, expired: true, confidenceClass, confidence: Math.min(p.confidence, classMidpoint(confidenceClass, cfg)) };
+    !p.sourceKeys.includes("review")
+  );
 }
 
 /**
- * The new profile against the valid one (`prev`, null before the first version), ruling M5-P7/P8/P9/P23:
+ * The provenance of a value kept from the previous profile, with expiry applied on the run date like `buildProfile`
+ * does: a value that can expire, last confirmed before `cutoff`, drops one class (its confidence never rises).
+ * `confirmedAt`, when later than the stored one, is a current input still carrying the kept value (ruling M5-F-R3
+ * M-1): the value is confirmed again, so it does not expire by its old date. An already expired value stays expired.
+ */
+function keptProvenance(p: AttributeProvenance, cutoff: string, cfg: ConsolidationConfig, confirmedAt: string | undefined): AttributeProvenance {
+  if (p.expired) return p;
+  const refreshed = confirmedAt !== undefined && (p.lastConfirmedAt === null || confirmedAt > p.lastConfirmedAt) ? { ...p, lastConfirmedAt: confirmedAt } : p;
+  if (!canExpire(refreshed) || refreshed.lastConfirmedAt === null || refreshed.lastConfirmedAt >= cutoff) return refreshed;
+  const confidenceClass = lowerClass(refreshed.confidenceClass);
+  return { ...refreshed, expired: true, confidenceClass, confidence: Math.min(refreshed.confidence, classMidpoint(confidenceClass, cfg)) };
+}
+
+/** Severity of a value that is gone: a shelter sector without a value any more is `safety` (no Δ to measure). */
+function removalSeverity(attribute: string, oldValue: unknown, cfg: ConsolidationConfig): ChangeSeverity {
+  return attribute.startsWith("shelter.") ? "safety" : severityFor(attribute, oldValue, null, cfg);
+}
+
+/** The identity key of one entry of a safety list (`prohibitions` by kind or restricted area, else the union key). */
+function listEntryKey(attribute: string, entry: unknown, ctx: DiffContext): string {
+  if (attribute === "prohibitions") return prohibitionEntryKey(entry);
+  return unionEntryKey(entry, { attribute, level: ctx.level, place: null, today: ctx.today, cfg: ctx.cfg });
+}
+
+/**
+ * The old list with the entries the new one adds (ruling M5-F-R3 I-3): kept entries in their old form, added entries
+ * in the new list's order, entries the new list lacks after them (`prohibitions` sorted by kind); `null` when the new
+ * list adds nothing.
+ */
+function withAdditions(attribute: string, oldList: unknown[], newList: unknown[], ctx: DiffContext): unknown[] | null {
+  const oldByKey = new Map(oldList.map((e) => [listEntryKey(attribute, e, ctx), e]));
+  const newKeys = new Set(newList.map((e) => listEntryKey(attribute, e, ctx)));
+  if ([...newKeys].every((k) => oldByKey.has(k))) return null;
+  const merged = [
+    ...newList.map((e) => oldByKey.get(listEntryKey(attribute, e, ctx)) ?? e),
+    ...oldList.filter((e) => !newKeys.has(listEntryKey(attribute, e, ctx))),
+  ];
+  return attribute === "prohibitions" ? merged.sort(compareProhibitions) : merged;
+}
+
+const unique = (values: string[]) => [...new Set(values)].sort();
+
+/** Provenance of a list with accepted additions: the new provenance, citing the kept entries of the old one too. */
+function mergedListProvenance(prev: AttributeProvenance, next: AttributeProvenance, merged: unknown[], attribute: string, ctx: DiffContext): AttributeProvenance {
+  const entryFactIds: Record<string, string[]> = {};
+  for (const entry of merged) {
+    const key = listEntryKey(attribute, entry, ctx);
+    entryFactIds[key] = next.entryFactIds?.[key] ?? prev.entryFactIds?.[key] ?? [];
+  }
+  return {
+    ...next,
+    factIds: unique([...prev.factIds, ...next.factIds]),
+    sourceKeys: unique([...prev.sourceKeys, ...next.sourceKeys]),
+    computationIds: unique([...prev.computationIds, ...next.computationIds]),
+    poiIds: unique([...prev.poiIds, ...next.poiIds]),
+    conflictKey: null,
+    entryFactIds,
+  };
+}
+
+/**
+ * The new profile against the valid one (`prev`, null before the first version), rulings M5-P7/P8/P9/P23, M5-F-R3:
  * - Without a previous profile: no attribute events; a confirmed place → `place_new`.
- * - Per attribute of the fact schema level: no value before → `new_attribute`; another value supported by
- *   `change.minIndependent` independent sources or a source weighing more than `change.strongWeight` (or set by the
- *   rule itself, origin `rule`) → `changed`; otherwise uncertain: the old value and its provenance stay (its conflict
- *   note goes) and, unless its key (`uncertainKey`) was decided, an `uncertain_change` task draft with an `uncertain`
- *   event. A value without inputs any more stays (no event); expiry ages it.
+ * - Per attribute of the fact schema level:
+ *   - no value before → `new_attribute`;
+ *   - another value supported by `change.minIndependent` independent sources or a source weighing more than
+ *     `change.strongWeight` (or set by the rule itself, origin `rule`) → `changed`;
+ *   - otherwise uncertain: the old value, its provenance and its conflict note stay and, unless its key
+ *     (`uncertainKey`) was decided, an `uncertain_change` task draft with an `uncertain` event. On a list of
+ *     `change.additiveLists` (safety lists) the entries the new list adds are accepted anyway, per entry (`changed`);
+ *     only the rest of the change (removed or changed entries) waits as uncertain;
+ *   - a value without inputs any more stays (no event, expiry ages it) if it can expire (text or observation);
+ *     a computed, rule, review or POI value goes, its gap stays, and `changed` → null is emitted (ruling M5-F-R3 I-1).
+ * - A kept value still carried by a current input is confirmed again (`lastConfirmedAt`, ruling M5-F-R3 M-1).
  * - A value newly `expired` → `expired` (severity by attribute, `details.lastConfirmedAt`).
  * - Identity: name, parent, geometry, position → `geo_changed` (`info`); `place.kind` → `changed` (`info`); `exclude`
  *   → `changed` (`safety`); status newly `confirmed` from none or `candidate` → `place_new`, newly `abandoned` →
  *   `place_abandoned`.
- * - Every conflict without resolution whose key no decided task holds → a `conflict` task draft (priority 2 on a
- *   safety attribute, else 1; no event).
+ * - Every conflict without resolution (decided keys are marked `decided` by `buildProfile`) → a `conflict` task draft
+ *   with both sides and the further value groups (`others`); priority 2 on a safety attribute, else 1; no event.
  * - `versionNeeded`: no previous profile, or another content hash after the old values came back (profile confidence
  *   and hash recomputed).
  */
@@ -133,11 +199,16 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
 
   if (prev !== null) {
     const cutoff = dateMinusDays(ctx.today, cfg.expiry.cycles * context.tileCycleDays);
+    /** The old value with its provenance and its conflict note (re-resolved against the decided tasks). */
     const keep = (key: string) => {
+      const confirmedAt = next.support[key]?.confirmedAt[canonicalJson(prev.attributes[key] ?? null)];
       profile.attributes[key] = prev.attributes[key];
-      profile.provenance[key] = keptProvenance(prev.provenance[key]!, cutoff, cfg);
+      profile.provenance[key] = keptProvenance(prev.provenance[key]!, cutoff, cfg, confirmedAt);
       profile.gaps = profile.gaps.filter((g) => g.attribute !== key);
-      profile.conflicts = profile.conflicts.filter((c) => c.attribute !== key);
+      profile.conflicts = [
+        ...profile.conflicts.filter((c) => c.attribute !== key),
+        ...(prev.conflicts ?? []).filter((c) => c.attribute === key).map((c) => ({ ...c, resolution: conflictResolution(c.key, context) })),
+      ].sort((a, b) => cmp(a.attribute, b.attribute) || cmp(a.key, b.key));
     };
 
     for (const def of getFactSchema(next.factSchemaVersion).levels[ctx.level]) {
@@ -150,9 +221,10 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
         continue;
       }
       if (newValue === undefined) {
-        keep(key);
+        if (canExpire(prev.provenance[key]!)) keep(key);
+        else event("changed", key, oldValue, null, removalSeverity(key, oldValue, cfg));
       } else if (!same(oldValue, newValue)) {
-        const support = next.support[key] ?? { independent: 0, maxWeight: 0, factIds: [] };
+        const support = next.support[key] ?? { independent: 0, maxWeight: 0, factIds: [], confirmedAt: {} };
         const severity = severityFor(key, oldValue, newValue, cfg);
         const supported =
           next.provenance[key]?.origin === "rule" ||
@@ -161,18 +233,32 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
         if (supported) {
           event("changed", key, oldValue, newValue, severity);
         } else {
-          keep(key);
-          const factIds = [...support.factIds].sort();
-          const taskKey = uncertainKey(key, newValue, factIds);
-          if (!context.decidedUncertainKeys.has(taskKey)) {
-            tasks.push({
-              kind: "uncertain_change",
-              attribute: key,
-              key: taskKey,
-              context: { key: taskKey, attribute: key, oldValue, newValue, factIds, sources: next.provenance[key]?.sourceKeys ?? [] },
-              priority: priorityOf(severity),
-              event: { type: "uncertain", attribute: key, oldValue, newValue, severity, details: { key: taskKey } },
-            });
+          const merged =
+            attributeIn(key, cfg.change.additiveLists) && Array.isArray(oldValue) && Array.isArray(newValue)
+              ? withAdditions(key, oldValue, newValue, ctx)
+              : null;
+          if (merged !== null) {
+            // added entries of a safety list hold at once (ruling M5-F-R3 I-3)
+            profile.attributes[key] = merged;
+            profile.provenance[key] = mergedListProvenance(prev.provenance[key]!, next.provenance[key]!, merged, key, ctx);
+            profile.conflicts = profile.conflicts.filter((c) => c.attribute !== key);
+            event("changed", key, oldValue, merged, severity);
+          } else {
+            keep(key);
+          }
+          if (merged === null || !same(merged, newValue)) {
+            const factIds = [...support.factIds].sort();
+            const taskKey = uncertainKey(key, newValue, factIds);
+            if (!context.decidedUncertainKeys.has(taskKey)) {
+              tasks.push({
+                kind: "uncertain_change",
+                attribute: key,
+                key: taskKey,
+                context: { key: taskKey, attribute: key, oldValue, newValue, factIds, sources: next.provenance[key]?.sourceKeys ?? [] },
+                priority: priorityOf(severity),
+                event: { type: "uncertain", attribute: key, oldValue, newValue, severity, details: { key: taskKey } },
+              });
+            }
           }
         }
       }
@@ -204,7 +290,7 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
       kind: "conflict",
       attribute: c.attribute,
       key: c.key,
-      context: { key: c.key, attribute: c.attribute, a: c.a, b: c.b },
+      context: { key: c.key, attribute: c.attribute, a: c.a, b: c.b, others: c.others ?? [] },
       priority: priorityOf(severityFor(c.attribute, c.a.value, c.b.value, cfg)),
       event: null,
     });

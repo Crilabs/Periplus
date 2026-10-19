@@ -35,8 +35,11 @@ export type RuleName =
 
 export type ConfidenceClass = "high" | "medium" | "low";
 
-/** An admin's answer to a conflict: both values hold seasonally, or the conflict stays open. */
-export type ConflictResolution = "seasonal" | "left_open";
+/**
+ * An admin's answer to a conflict: both values hold seasonally, the conflict stays open, or one value was picked
+ * (`decided`: a `value_a` / `value_b` decision, which entered as a review fact; ruling M5-F-R3 M-2).
+ */
+export type ConflictResolution = "seasonal" | "left_open" | "decided";
 
 /** One side of a conflict: a value with its summed weight and what supports it. */
 export type ConflictSide = {
