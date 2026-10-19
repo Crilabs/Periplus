@@ -12,58 +12,49 @@ function isTextEntry(entry: unknown): entry is TextEntry {
 
 const kindOf = (entry: unknown) => String((entry as { kind: unknown }).kind);
 
-const entriesOfKind = (i: ConsolidationInput, kind: string) =>
-  (i.value as unknown[]).filter((e): e is TextEntry => isTextEntry(e) && e.kind === kind);
+function byKind(a: unknown, b: unknown): number {
+  const ka = kindOf(a);
+  const kb = kindOf(b);
+  if (ka !== kb) return ka < kb ? -1 : 1;
+  const ca = canonicalJson(a);
+  const cb = canonicalJson(b);
+  return ca < cb ? -1 : ca > cb ? 1 : 0;
+}
 
 /**
- * `prohibitions` (spec 07, ruling M5-P5): the entries of the youngest computation unchanged (restricted areas, never
- * lifted by a text) ∪ the text entries: a `kind` holds until an input of document type `authority` observed after its
- * youngest mention omits it; months per kind united (`null` = all year wins); sorted by kind. Only a computation → its
- * value unchanged.
+ * `prohibitions` (spec 07): the entries of the youngest computation unchanged (restricted areas; a newer computation
+ * without an area removes it, a text never does) ∪ the text entries `{ kind, months }`, months per kind united (`null`
+ * = all year wins); always sorted by kind, then entry (ruling M5-C-R2 M-4).
+ *
+ * Ruling M5-C-R2 I-2 overrides the omission rule of ruling M5-P5 (and the plan): a ban is never lifted by omission.
+ * Text inputs only add kinds and months, also a younger `authority` text naming other kinds. A text kind is removed
+ * only by a review decision (it supersedes the texts it saw, `afterReview`; the youngest decision holds outright in
+ * `applyRule`). Cost if wrong: an outdated ban stays until an admin lifts it.
  */
 export const prohibitionsRule: ConsolidationRule = (inputs, ctx) => {
   const live = afterReview(inputs);
   const basis = youngest(live.filter((i) => i.origin === "computed"));
   const texts = live.filter((i) => i.origin !== "computed");
   if (!basis && texts.length === 0) return null;
-  if (texts.length === 0) return ruleResult(basis!.value, "computed", [basis!], ctx);
 
-  const authorities = texts.filter((i) => i.sourceType === "authority");
-  const mentions = new Map<string, ConsolidationInput[]>();
+  const months = new Map<string, (number[] | null)[]>();
+  const mentioning = new Set<ConsolidationInput>();
   for (const i of texts) {
     for (const entry of (i.value as unknown[]).filter(isTextEntry)) {
-      const list = mentions.get(entry.kind) ?? [];
-      list.push(i);
-      mentions.set(entry.kind, list);
+      months.set(entry.kind, [...(months.get(entry.kind) ?? []), entry.months]);
+      mentioning.add(i);
     }
   }
+  const kept: TextEntry[] = [...months].map(([kind, list]) => ({
+    kind,
+    months: list.some((m) => m === null) ? null : [...new Set(list.flatMap((m) => m ?? []))].sort((a, b) => a - b),
+  }));
+  const value = [...(basis ? (basis.value as unknown[]) : []), ...kept].sort(byKind);
 
-  const kept: TextEntry[] = [];
-  const mentioning = new Set<ConsolidationInput>();
-  const lifted = new Set<ConsolidationInput>();
-  for (const [kind, by] of mentions) {
-    const last = youngest(by)!;
-    const lifting = authorities.filter((a) => a.observedAt > last.observedAt && entriesOfKind(a, kind).length === 0);
-    if (lifting.length > 0) {
-      for (const a of lifting) lifted.add(a);
-      continue;
-    }
-    const months = by.flatMap((i) => entriesOfKind(i, kind).map((e) => e.months));
-    const allYear = months.some((m) => m === null);
-    kept.push({ kind, months: allYear ? null : [...new Set(months.flatMap((m) => m ?? []))].sort((a, b) => a - b) });
-    for (const i of by) mentioning.add(i);
-  }
-
-  const computedEntries = basis ? (basis.value as unknown[]) : [];
-  const value = [...computedEntries, ...kept].sort((a, b) => {
-    const ka = kindOf(a);
-    const kb = kindOf(b);
-    return ka < kb ? -1 : ka > kb ? 1 : canonicalJson(a) < canonicalJson(b) ? -1 : canonicalJson(a) > canonicalJson(b) ? 1 : 0;
-  });
-
-  // support: the computation, the mentions of kept bans and the authorities that lifted the others
-  const support = [...new Set([...(basis ? [basis] : []), ...mentioning, ...lifted])];
+  // support: the computation, the texts naming a kind and the review decision that superseded older texts
+  const decisions = texts.filter((i) => i.origin === "review");
+  const support = [...new Set([...(basis ? [basis] : []), ...mentioning, ...decisions])];
   const origin: InputOrigin =
-    mentioning.size > 0 ? strongest([...mentioning], ctx)!.origin : basis ? "computed" : strongest(support.length > 0 ? support : texts, ctx)!.origin;
+    mentioning.size > 0 ? strongest([...mentioning], ctx)!.origin : basis ? "computed" : strongest(texts, ctx)!.origin;
   return ruleResult(value, origin, support.length > 0 ? support : texts, ctx);
 };

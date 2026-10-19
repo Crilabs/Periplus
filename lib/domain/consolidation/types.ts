@@ -145,6 +145,13 @@ export type RuleResult = {
   observedAt: string | null;
   support: ConsolidationInput[];
   conflict: Omit<ConflictNote, "resolution"> | null;
+  /**
+   * List rules only (`union`, ruling M5-C-R1 (5)): per entry of the value list, the sorted fact ids of the inputs
+   * naming it, by the entry's identity key (`unionEntryKey(entry, ctx)` in `rules/union.ts`). Bundles F/I: store it
+   * as the per-entry provenance of safety lists (`hazards`, `restricted_zones`) and cite an entry's facts from it,
+   * not from the flat `support`, which also holds removal decisions and inputs of other entries.
+   */
+  entryFactIds?: Record<string, string[]>;
 };
 
 /** A pure consolidation rule (spec 07); `null` = no value. */

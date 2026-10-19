@@ -82,8 +82,21 @@ function baseConfidence(i: ConsolidationInput, cfg: ConsolidationConfig): number
 }
 
 /** A stable id of an input for tie-breaks and conflict keys: the fact id, else `computation:<id>` / `poi:<id>`. */
-function inputId(i: ConsolidationInput): string {
+export function inputId(i: ConsolidationInput): string {
   return i.factId ?? (i.computationId ? `computation:${i.computationId}` : i.poiId ? `poi:${i.poiId}` : "");
+}
+
+/** The inputs in a fixed order (input id, then date, then source), whatever order they came in (ruling M5-C-R2 M-5). */
+export function sortInputs(inputs: ConsolidationInput[]): ConsolidationInput[] {
+  const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  return [...inputs].sort(
+    (a, b) => cmp(inputId(a), inputId(b)) || cmp(a.observedAt, b.observedAt) || cmp(a.sourceKey, b.sourceKey),
+  );
+}
+
+/** True when `attribute` is one of `patterns` (an exact key or a `<prefix>.*` pattern). */
+export function attributeIn(attribute: string, patterns: readonly string[]): boolean {
+  return patterns.some((p) => (p.endsWith(".*") ? attribute.startsWith(p.slice(0, -1)) : p === attribute));
 }
 
 /** The youngest input (largest `observedAt`; ties by id), or null. */
@@ -162,6 +175,8 @@ export type ValueGroup = {
   from: string;
   to: string;
   years: number[];
+  /** Observation months `YYYY-MM`, ascending. */
+  months: string[];
   allDatesKnown: boolean;
 };
 
@@ -190,6 +205,7 @@ export function valueGroups(inputs: ConsolidationInput[], ctx: RuleContext): Val
       from: dates[0],
       to: dates[dates.length - 1],
       years: [...new Set(dates.map((d) => Number(d.slice(0, 4))))].sort((a, b) => a - b),
+      months: [...new Set(dates.map((d) => d.slice(0, 7)))].sort(),
       allDatesKnown: list.every((i) => i.dateKnown),
     });
   }
@@ -237,8 +253,10 @@ export function conflictNote(
 /**
  * Picks one value among discrete inputs (spec 07):
  * 1. one group → it;
- * 2. time course (option `timeCourse`, default true): every date known and every year of the youngest group after
- *    every year of the others → the youngest group, no conflict;
+ * 2. time course (option `timeCourse`, default true): every date known and every period of the youngest group after
+ *    every period of the others → the youngest group, no conflict. The period is the season year (`granularity`
+ *    `year`, default) or the month (`month`: `latest_observation`, spec 07 "bei gleichem Monat die stärkere Quelle",
+ *    ruling M5-C-R1 (3));
  * 3. otherwise the heaviest group; when it weighs less than `conflict.minRatio` times the second, with a conflict
  *    note (`a` = picked, `b` = second, `others` = any further groups).
  * Throws on empty inputs.
@@ -246,7 +264,7 @@ export function conflictNote(
 export function pickDiscrete(
   inputs: ConsolidationInput[],
   ctx: RuleContext,
-  opts: { timeCourse?: boolean } = {},
+  opts: { timeCourse?: boolean; granularity?: "year" | "month" } = {},
 ): { group: ValueGroup; conflict: Omit<ConflictNote, "resolution"> | null } {
   const groups = valueGroups(inputs, ctx);
   if (groups.length === 0) throw new Error("pickDiscrete needs at least one input");
@@ -256,9 +274,10 @@ export function pickDiscrete(
     let latest = groups[0];
     for (const g of groups) if (g.to > latest.to || (g.to === latest.to && g.key < latest.key)) latest = g;
     const others = groups.filter((g) => g !== latest);
-    if (groups.every((g) => g.allDatesKnown) && Math.min(...latest.years) > Math.max(...others.flatMap((g) => g.years))) {
-      return { group: latest, conflict: null };
-    }
+    const periods = (g: ValueGroup): string[] => (opts.granularity === "month" ? g.months : g.years.map(String));
+    const first = periods(latest)[0];
+    const lastOther = others.flatMap(periods).sort().at(-1)!;
+    if (groups.every((g) => g.allDatesKnown) && first > lastOther) return { group: latest, conflict: null };
   }
 
   const [top, second] = groups;

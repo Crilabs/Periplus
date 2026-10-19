@@ -663,7 +663,12 @@ export const consolidationSchema = z.strictObject({
     }),
     swell_protection: z.strictObject({ textMinConfidence: confidence }),
     bathymetry: z.strictObject({ textMinConfidence: confidence, weakRasterConfidence: confidence }),
-    default: z.strictObject({ latestMinConfidence: confidence }),
+    /** Object attributes picked on `present` alone, their other fields filled per field (ruling M5-C-R2 I-1). */
+    latest_observation: z.strictObject({ presence: z.array(attributePattern) }),
+    /** `fieldwise`: object attributes merged field by field, each field the latest input carrying it (M5-C-R2 I-1). */
+    default: z.strictObject({ latestMinConfidence: confidence, fieldwise: z.array(attributePattern) }),
+    /** An input confirms a weighted mean when it lies closer than `agreeWithin` to it (ruling M5-C-R1 (4)). */
+    area_weighted: z.strictObject({ agreeWithin: share }),
     highlight: z.strictObject({ maxNames: positiveInt, poiRadiusM: meters }),
     /** Identity key of a list entry per attribute merged by `union`; [] = the element itself (ruling M5-P3). */
     union: z.strictObject({ keys: z.record(attributePattern, z.array(z.string().min(1))) }),

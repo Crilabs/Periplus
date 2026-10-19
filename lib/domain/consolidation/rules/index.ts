@@ -37,14 +37,17 @@ export function isRuleName(name: string): name is RuleName {
 }
 
 /**
- * Applies the rule `rule`. Empty inputs still go through the rule (a harbour's shelter floor). When the youngest
- * review decision is not older than every other input, its value holds (origin `review`, confidence
- * `confidence.review`, no conflict); otherwise the rule decides, with the review as a non-ageing correction input that
- * supersedes the texts it saw (ruling M5-B-R3).
+ * Applies the rule `rule`; an unknown name throws (ruling M5-C-R2 M-2). Empty inputs still go through the rule (a
+ * harbour's shelter floor). When the youngest review decision is not older than every other dated input, its value
+ * holds (origin `review`, confidence `confidence.review`, no conflict); inputs without an observation date (POIs,
+ * `dateKnown false`, ruling M5-C-R1 (2)) never count against it. Otherwise the rule decides, with the review as a
+ * non-ageing correction input that supersedes the texts it saw (ruling M5-B-R3). `union` never takes the shortcut: a
+ * review on a list only adds entries or removes one explicitly (ruling M5-C-R2 M-3).
  */
 export function applyRule(rule: RuleName, inputs: ConsolidationInput[], ctx: RuleContext): RuleResult | null {
-  const decision = youngest(inputs.filter((i) => i.origin === "review"));
-  if (decision && inputs.every((i) => i === decision || i.observedAt <= decision.observedAt)) {
+  if (!isRuleName(rule)) throw new Error(`Unknown consolidation rule ${String(rule)}`);
+  const decision = rule === "union" ? null : youngest(inputs.filter((i) => i.origin === "review"));
+  if (decision && inputs.every((i) => i === decision || !i.dateKnown || i.observedAt <= decision.observedAt)) {
     return {
       value: roundValue(decision.value, ctx.cfg),
       origin: "review",

@@ -17,6 +17,13 @@ describe("RULES", () => {
         for (const d of defs) expect(RULES[d.rule as RuleName], `${v} ${d.key} ${d.rule}`).toBeTypeOf("function");
   });
 
+  it("presence-picked and field-wise attributes are object attributes of fact schema v2 with that rule", () => {
+    const cfg = ruleCtx().cfg;
+    const defs = Object.values(getFactSchema("v2").levels).flat();
+    for (const key of cfg.rules.latest_observation.presence) expect(defs.find((d) => d.key === key)?.rule, key).toBe("latest_observation");
+    for (const key of cfg.rules.default.fieldwise) expect(defs.find((d) => d.key === key)?.rule, key).toBe("default");
+  });
+
   it("every union attribute of fact schema v2 has a configured identity key", () => {
     const ctx = ruleCtx();
     for (const defs of Object.values(getFactSchema("v2").levels))
@@ -61,6 +68,14 @@ describe("occupancyRule", () => {
     )!;
     expect((r.value as Record<string, string>)["7"]).toBe("full");
   });
+
+  it("a tie goes to the fuller level, not the alphabetically first (M5-C-R2 M-6)", () => {
+    const r = occupancyRule(
+      [t({ "7": "empty", "8": "full" }, { sourceWeight: 0.8 }), t({ "7": "moderate", "8": "empty" }, { sourceKey: "source:b", sourceWeight: 0.8 })],
+      ctx,
+    )!;
+    expect(r.value).toMatchObject({ "7": "moderate", "8": "full" });
+  });
 });
 
 describe("prohibitionsRule", () => {
@@ -70,9 +85,10 @@ describe("prohibitionsRule", () => {
   const authority = (value: unknown, observedAt: string) =>
     t(value, { observedAt, sourceKey: "source:port", sourceType: "authority", sourceWeight: 0.9 });
 
-  it("an anchoring ban holds until a younger authority source omits it", () => {
-    expect(prohibitionsRule([forum(anchoring, "2022-07-01"), authority([], "2024-07-01")], ctx)!.value).toEqual([]);
-    expect(prohibitionsRule([authority([], "2021-07-01"), forum(anchoring, "2022-07-01")], ctx)!.value).toEqual(anchoring);
+  it("a ban is never lifted by omission, not even by a younger authority naming another kind (M5-C-R2 I-2)", () => {
+    const r = prohibitionsRule([forum(anchoring, "2022-07-01"), authority([{ kind: "fishing", months: null }], "2024-07-01")], ctx)!;
+    expect(r.value).toEqual([anchoring[0], { kind: "fishing", months: null }]);
+    expect(prohibitionsRule([forum(anchoring, "2022-07-01"), authority([], "2024-07-01")], ctx)!.value).toEqual(anchoring);
     // a younger non-authority text does not lift it
     expect(prohibitionsRule([forum(anchoring, "2022-07-01"), t([{ kind: "fire", months: [7] }], { observedAt: "2024-07-01", sourceKey: "source:b" })], ctx)!.value).toEqual(
       [anchoring[0], { kind: "fire", months: [7] }],
@@ -98,10 +114,32 @@ describe("prohibitionsRule", () => {
     const entry = { kind: "military", restrictedAreaId: "00000000-0000-4000-8000-000000000001", sourceRef: null, share: 0.4, anchoringBan: true };
     const c = computed({ attribute: "prohibitions", value: [entry], observedAt: "2023-01-01" });
     expect(prohibitionsRule([c], ctx)).toMatchObject({ value: [entry], origin: "computed" });
-    const r = prohibitionsRule([c, forum(anchoring, "2022-07-01"), authority([], "2024-07-01")], ctx)!;
-    expect(r).toMatchObject({ value: [entry], origin: "computed" });
+    const r = prohibitionsRule([c, forum(anchoring, "2022-07-01"), authority([{ kind: "fire", months: [8] }], "2024-07-01")], ctx)!;
+    expect(r.value).toEqual([anchoring[0], { kind: "fire", months: [8] }, entry]);
     const both = prohibitionsRule([c, forum([{ kind: "fishing", months: null }], "2025-07-01")], ctx)!;
     expect(both.value).toEqual([{ kind: "fishing", months: null }, entry]);
+  });
+
+  it("a kind is removed by a review, a computed entry by a newer computation (M5-C-R2 I-2)", () => {
+    const decision = review({ attribute: "prohibitions", value: [{ kind: "fishing", months: null }], observedAt: "2024-07-01" });
+    const younger = t([{ kind: "swimming", months: [7] }], { observedAt: "2025-07-01", sourceKey: "source:b" });
+    const r = applyRule("prohibitions", [forum(anchoring, "2022-07-01"), decision, younger], ctx)!;
+    expect(r.value).toEqual([
+      { kind: "fishing", months: null },
+      { kind: "swimming", months: [7] },
+    ]);
+    const entry = { kind: "military", restrictedAreaId: "00000000-0000-4000-8000-000000000001", sourceRef: null, share: 0.4, anchoringBan: true };
+    const old = computed({ attribute: "prohibitions", value: [entry], observedAt: "2023-01-01" });
+    const recomputed = computed({ attribute: "prohibitions", value: [], observedAt: "2025-01-01" });
+    expect(prohibitionsRule([old, recomputed, forum(anchoring, "2022-07-01")], ctx)!.value).toEqual(anchoring);
+  });
+
+  it("the output is sorted, also with only a computation (M5-C-R2 M-4)", () => {
+    const area = (kind: string, id: string) => ({ kind, restrictedAreaId: id, sourceRef: null, share: 0.4, anchoringBan: true });
+    const military = area("military", "00000000-0000-4000-8000-000000000001");
+    const reserve = area("protected_area", "00000000-0000-4000-8000-000000000002");
+    const c = computed({ attribute: "prohibitions", value: [reserve, military], observedAt: "2023-01-01" });
+    expect(prohibitionsRule([c], ctx)!.value).toEqual([military, reserve]);
   });
 });
 
@@ -124,6 +162,36 @@ describe("applyRule", () => {
     // time course: the 2026 text changes the value
     expect(r).toMatchObject({ value: true, origin: "text", conflict: null });
     expect(r.support).toEqual([newer]);
+  });
+
+  it("an input without observation date (POI import) never disables the review shortcut (M5-C-R1 (2))", () => {
+    const food = ruleCtx({ attribute: "highlight.food" });
+    const decision = review({ attribute: "highlight.food", value: { present: false, names: [] }, observedAt: "2026-05-01" });
+    const poi = computed({
+      attribute: "highlight.food",
+      value: { present: true, names: ["Nikos"] },
+      computationId: null,
+      poiId: "poi-1",
+      sourceKey: "gazetteer:osm",
+      confidence: 1,
+      dateKnown: false,
+      observedAt: "2026-09-01",
+    });
+    expect(applyRule("highlight", [decision, poi], food)).toMatchObject({ value: { present: false, names: [] }, origin: "review", conflict: null });
+  });
+
+  it("union attributes never take the shortcut: a review adds to the list (M5-C-R2 M-3)", () => {
+    const hazards = ruleCtx({ attribute: "hazards" });
+    const decision = review({ attribute: "hazards", value: [{ kind: "shoal", name: null }], observedAt: "2026-09-01" });
+    const r = applyRule("union", [t([{ kind: "rock", name: "Xera" }], { observedAt: "2025-07-01" }), decision], hazards)!;
+    expect(r.value).toEqual([
+      { kind: "rock", name: "Xera" },
+      { kind: "shoal", name: null },
+    ]);
+  });
+
+  it("an unknown rule name fails loudly (M5-C-R2 M-2)", () => {
+    expect(() => applyRule("no_such_rule" as RuleName, [t(1)], ctx)).toThrow("Unknown consolidation rule no_such_rule");
   });
 
   it("empty inputs still go through the rule (harbour floor)", () => {

@@ -27,7 +27,9 @@
     },
     "swell_protection": { "textMinConfidence": 0.7 },
     "bathymetry": { "textMinConfidence": 0.8, "weakRasterConfidence": 0.4 },
-    "default": { "latestMinConfidence": 0.5 },
+    "latest_observation": { "presence": ["mooring.buoys"] },
+    "default": { "latestMinConfidence": 0.5, "fieldwise": ["contact"] },
+    "area_weighted": { "agreeWithin": 0.2 },
     "highlight": { "maxNames": 10, "poiRadiusM": 2000 },
     "union": {
       "keys": {
