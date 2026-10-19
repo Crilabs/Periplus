@@ -11,4 +11,8 @@ RUN apt-get update \
        postgresql-17-pgvector \
   && rm -rf /var/lib/apt/lists/*
 
+# ST_FromGDALRaster / ST_AsGDALRaster (bathymetry import) need the GTiff driver; PostGIS disables all
+# GDAL drivers by default.
+ENV POSTGIS_GDAL_ENABLED_DRIVERS=GTiff
+
 COPY init/ /docker-entrypoint-initdb.d/

@@ -15,7 +15,7 @@ import {
   uuid,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
-import { geometry } from "@/lib/db/geometry";
+import { geometry, raster } from "@/lib/db/geometry";
 import { newId } from "@/lib/domain/ids";
 
 /*
@@ -220,6 +220,22 @@ export const landPolygons = pgTable("land_polygons", {
   datasetVersion: text("dataset_version").notNull(),
   createdAt: createdAt(),
 }, (t) => [index("land_polygons_geom_gist").using("gist", t.geom)]);
+
+/**
+ * Working state: bathymetry rasters per dataset and Periplus tile (256×256 raster tiles), replaced per
+ * (dataset, tile_id) on import. Values are depth below LAT in metres, positive in water; ≤ 0 is land/dry.
+ * GIST on ST_ConvexHull(rast): drizzle/0013_bathymetry_gist.sql.
+ */
+export const bathymetry = pgTable("bathymetry", {
+  id: uuid("id").primaryKey().$defaultFn(newId),
+  dataset: text("dataset").notNull(),
+  datasetVersion: text("dataset_version").notNull(),
+  resolutionM: real("resolution_m").notNull(),
+  /** Periplus tile the raster was fetched for (no FK: datasets may cover tiles not yet in `tiles`). */
+  tileId: text("tile_id").notNull(),
+  rast: raster("rast").notNull(),
+  createdAt: createdAt(),
+}, (t) => [index("bathymetry_dataset_tile_id_idx").on(t.dataset, t.tileId)]);
 
 /** Navily comparison set: place IDs only, never Navily values. */
 export const comparisonSet = pgTable("comparison_set", {

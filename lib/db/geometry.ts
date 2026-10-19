@@ -23,3 +23,13 @@ export function geomFromGeoJson(g: Geometry): SQL {
 export function asGeoJson(col: AnyColumn | SQL): SQL<Geometry> {
   return sql<Geometry>`ST_AsGeoJSON(${col})::json`;
 }
+
+/**
+ * PostGIS raster column `raster` (postgis_raster). The driver value is the raw hex WKB and is never
+ * used directly; read values with ST_Value / ST_Clip in SQL.
+ */
+export function raster(name: string) {
+  return customType<{ data: string; driverData: string }>({
+    dataType: () => "raster",
+  })(name);
+}
