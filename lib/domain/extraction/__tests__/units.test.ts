@@ -63,13 +63,28 @@ describe("planUnits", () => {
       const s = await scene(tx, 12);
       const ids = await mentionAt(tx, s, [1, 3, 5, 7, 9]);
       const { units } = await planUnits(tx, ids, UNIT);
-      // chunks 0..10 (11 chunks) → parts of at most 6
-      expect(units.map((u) => u.part)).toEqual([0, 1]);
+      // chunks 0..10 (11 chunks) → parts of at most 6 that share two boundary chunks (ruling M4-G-R4)
+      expect(units.map((u) => u.part)).toEqual([0, 1, 2]);
       expect(units[0]!.chunkIds).toEqual(s.chunkIds.slice(0, 6));
-      expect(units[0]!.mentionIds).toEqual(ids.slice(0, 3));
-      expect(units[1]!.chunkIds).toEqual(s.chunkIds.slice(6, 11));
-      expect(units[1]!.mentionIds).toEqual(ids.slice(3));
+      expect(units[0]!.mentionIds).toEqual(ids.slice(0, 2));
+      expect(units[1]!.chunkIds).toEqual(s.chunkIds.slice(4, 10));
+      expect(units[1]!.mentionIds).toEqual(ids.slice(2, 4));
+      expect(units[2]!.chunkIds).toEqual(s.chunkIds.slice(8, 11));
+      expect(units[2]!.mentionIds).toEqual(ids.slice(4));
       for (const u of units) expect(u.chunkIds.length).toBeLessThanOrEqual(UNIT.maxChunksPerUnit);
+    }));
+
+  it("a mention at a part boundary keeps its neighbour chunks in its part", () =>
+    withRollback(async (tx) => {
+      // chunks 0..8: mentions at 1 and 7 span ordinals 0..8; a plain cut after 6 chunks would part 6 from 5 or 7
+      const s = await scene(tx, 9);
+      const ids = await mentionAt(tx, s, [1, 5, 7]);
+      const { units } = await planUnits(tx, ids, UNIT);
+      expect(units.flatMap((u) => u.mentionIds).sort()).toEqual([...ids].sort());
+      for (const [i, o] of [1, 5, 7].entries()) {
+        const unit = units.find((u) => u.mentionIds.includes(ids[i]!))!;
+        for (const n of [o - 1, o, o + 1]) expect(unit.chunkIds, `mention at ${o}, chunk ${n}`).toContain(s.chunkIds[n]);
+      }
     }));
 
   it("a mention of a settlement without place is skipped", () =>

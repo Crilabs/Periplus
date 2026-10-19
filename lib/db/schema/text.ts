@@ -32,7 +32,11 @@ import { chunks, documentVersions, sources } from "./sources";
  */
 
 export const matchKindEnum = pgEnum("match_kind", ["deterministic", "model", "review"]);
-export const extractionStatusEnum = pgEnum("extraction_status", ["pending", "done", "skipped"]);
+/**
+ * Extraction state of a mention: `pending` until a run claims it (`done`, ruling M4-P17), `skipped` for objects without
+ * facts, `failed` when its extraction unit failed for good; only an explicit reprocess extracts it again (M4-G-R3).
+ */
+export const extractionStatusEnum = pgEnum("extraction_status", ["pending", "done", "skipped", "failed"]);
 export const ambiguousStatusEnum = pgEnum("ambiguous_status", ["pending", "resolved", "none"]);
 export const nameCandidateStatusEnum = pgEnum("name_candidate_status", ["collecting", "geocoded", "review", "decided"]);
 export const extractionPurposeEnum = pgEnum("extraction_purpose", ["regular", "reprocess", "comparison"]);

@@ -12,7 +12,6 @@
       "ambiguous": [["Vathy", ["vathy-bay", "vathy-harbour"]]],
       "unmatched": [["Fengari", "bay", "q025:805:500"]],
       "facts": [
-        ["kolona", "depth.anchoring_min", 6, "fiel der Anker auf 6 m Sand"],
         ["kolona", "seabed", [{ "type": "sand", "share": 1 }], "In der Bucht Kolona fiel der Anker auf 6 m Sand"]
       ]
     },
@@ -31,8 +30,7 @@
       "facts": [
         ["kolona", "holding", "good", "Holding is good in sand."],
         ["kolona", "seabed", [{ "type": "sand", "share": 1 }], "Holding is good in sand"],
-        ["limnionas", "quietness", "quiet", "Limnionas is quiet in the evening"],
-        ["vathy-bay", "shelter.N", 0.9, "Vathy Bay offers shelter from the meltemi"]
+        ["limnionas", "quietness", "quiet", "Limnionas is quiet in the evening"]
       ]
     },
     "el-forum.md": {

@@ -5,6 +5,7 @@ import type { ModelTask } from "@/lib/ai/types";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { chunks, extractionRuns, extractionUnits, facts, type ExtractionPurpose } from "@/lib/db/schema";
+import { failUnitMentions } from "@/lib/domain/extraction/unit-status";
 import { completeUnit, emptyFactStats, FACT_STAT_KEYS, processFactOutput, type FactStats } from "@/lib/domain/extraction/facts";
 import { planUnits } from "@/lib/domain/extraction/units";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
@@ -22,7 +23,9 @@ import { frozenRunVersions, textRunParamsSchema } from "./versions";
  * version and geo object, with neighbour chunks), which go to the `extract-facts` task as message batches of
  * `unitsPerBatch` units per job. All units of a run and model belong to one extraction run (`extraction_runs`), whose
  * facts carry its id. The batch handler stores the verified facts of a unit and marks it done with its counters,
- * tokens and cost (ruling M4-P9); a unit whose request failed for good is marked failed.
+ * tokens and cost (ruling M4-P9); a unit whose request failed for good is marked failed, and so are its mentions
+ * (ruling M4-G-R3). Model, prompt version and fact schema version are those of the extraction run, frozen when it was
+ * planned: a config change in the middle of a run does not split it.
  */
 
 export const EXTRACT_STAGE = "extraction.mention";
@@ -39,7 +42,12 @@ export type ExtractJob = { runId: string; stage: string; key: string; extraction
 
 /**
  * The extraction run of a text run for a task and model, created once: unique per `(runId, task, model)`, so a
- * repeated plan finds the same one. Its fact schema version is the active one.
+ * repeated plan finds the same one. Its fact schema version is the active one; model, prompt version and fact schema
+ * version stay frozen on the row, and every request and fact of the run takes them from there.
+ *
+ * Lifecycle (ruling M4-G-R3 f, for Tasks 15 and 17): the row is created `running` here; finishing it (`finished` or
+ * `blocked` with `finished_at`, after the quote check) and writing `extractionRunStats` belong to the stage
+ * `extraction.check`, which must also run for a comparison run's extraction runs.
  */
 export async function ensureExtractionRun(
   db: Db,
@@ -148,14 +156,21 @@ async function allMentions(db: Db, versions: string[]): Promise<string[]> {
 }
 
 /**
- * The task inputs of extraction units: level, the object (name, type, parents), the version's effective document type
- * and observation date, and the unit's chunks numbered from 1. A unit that does not exist, or whose object or chunks
+ * The task inputs of extraction units: level, the fact schema version of the unit's extraction run, the fact limit
+ * from config, the object (name, type, parents), the version's effective document type and observation date, and the
+ * unit's chunks numbered from 1. A unit that does not exist, or whose object or chunks
  * are gone, is left out and logged.
  */
-export async function unitInputs(db: Db, unitIds: string[]): Promise<Map<string, ExtractFactsInput>> {
+export async function unitInputs(db: Db, unitIds: string[], config: AppConfig = getConfig()): Promise<Map<string, ExtractFactsInput>> {
   const out = new Map<string, ExtractFactsInput>();
   if (unitIds.length === 0) return out;
   const units = await db.select().from(extractionUnits).where(inArray(extractionUnits.id, unitIds));
+  const runIds = [...new Set(units.map((u) => u.extractionRunId))];
+  const runRows =
+    runIds.length === 0
+      ? []
+      : await db.select({ id: extractionRuns.id, factSchemaVersion: extractionRuns.factSchemaVersion }).from(extractionRuns).where(inArray(extractionRuns.id, runIds));
+  const schemaOf = new Map(runRows.map((r) => [r.id, r.factSchemaVersion]));
   const chunkIds = [...new Set(units.flatMap((u) => u.chunkIds))];
   const chunkRows = chunkIds.length === 0 ? [] : await db.select({ id: chunks.id, text: chunks.text }).from(chunks).where(inArray(chunks.id, chunkIds));
   const texts = new Map(chunkRows.map((c) => [c.id, c.text]));
@@ -172,6 +187,8 @@ export async function unitInputs(db: Db, unitIds: string[]): Promise<Map<string,
     const meta = metas.get(u.documentVersionId)!;
     out.set(u.id, {
       level: u.level as FactLevel,
+      factSchemaVersion: schemaOf.get(u.extractionRunId) ?? config.factSchema.version,
+      maxFacts: config.extraction.maxFactsPerUnit,
       object: { name: object.name, type: object.type, parents: object.parents },
       docType: meta.docType,
       observedAt: meta.observedAt,
@@ -183,8 +200,8 @@ export async function unitInputs(db: Db, unitIds: string[]): Promise<Map<string,
 }
 
 /** The task input of one extraction unit (`unitInputs`); throws when it cannot be built. */
-export async function unitInput(db: Db, unitId: string): Promise<ExtractFactsInput> {
-  const input = (await unitInputs(db, [unitId])).get(unitId);
+export async function unitInput(db: Db, unitId: string, config: AppConfig = getConfig()): Promise<ExtractFactsInput> {
+  const input = (await unitInputs(db, [unitId], config)).get(unitId);
   if (!input) throw new Error(`extraction unit ${unitId}, its object or its chunks do not exist`);
   return input;
 }
@@ -201,7 +218,8 @@ async function pendingUnits(db: Db, ids: string[]): Promise<string[]> {
 }
 
 /**
- * One extraction job: its pending units go out as one message batch on the extraction run's model, sized to the
+ * One extraction job: its pending units go out as one message batch on the extraction run's model and prompt version,
+ * sized to the
  * budget headroom (`submitStageJobBatch`; the rest goes to one follow-on job); the units in the batch become
  * `submitted`. A retried job reuses its batch. Never call it inside a transaction.
  */
@@ -210,7 +228,10 @@ export async function extractUnits(
   deps: BatchDeps,
   job: ExtractJob,
 ): Promise<{ submitted: number; remainder: number; reused: boolean }> {
-  const [run] = await db.select({ model: extractionRuns.model }).from(extractionRuns).where(eq(extractionRuns.id, job.extractionRunId));
+  const [run] = await db
+    .select({ model: extractionRuns.model, promptVersion: extractionRuns.promptVersion })
+    .from(extractionRuns)
+    .where(eq(extractionRuns.id, job.extractionRunId));
   if (!run) throw new Error(`extraction run ${job.extractionRunId} does not exist`);
   const result = await submitStageJobBatch(db, deps, {
     task,
@@ -218,9 +239,10 @@ export async function extractUnits(
     job,
     subjectIds: job.unitIds,
     modelOverride: run.model,
+    promptVersionOverride: run.promptVersion,
     open: (ids) => pendingUnits(db, ids),
     inputs: async (ids) => {
-      const inputs = await unitInputs(db, ids);
+      const inputs = await unitInputs(db, ids, deps.config);
       const items: BatchItemInput[] = [];
       for (const id of ids) {
         const input = inputs.get(id);
@@ -241,10 +263,45 @@ export async function extractUnits(
   return result;
 }
 
+/** Tokens and cost billed for a unit over all its batch attempts (a retried first attempt is billed too). */
+async function billedOfUnit(db: Db, unitId: string): Promise<{ usage: { inputTokens: number; outputTokens: number }; costEur: number }> {
+  const { rows } = await db.execute<{ input_tokens: number; output_tokens: number; cost_eur: number }>(sql`
+    select coalesce(sum(input_tokens), 0)::int as input_tokens, coalesce(sum(output_tokens), 0)::int as output_tokens,
+      coalesce(sum(cost_eur), 0)::float8 as cost_eur
+    from ai_batch_items where subject_type = ${SUBJECT} and subject_id = ${unitId}
+  `);
+  const row = rows[0]!;
+  return { usage: { inputTokens: Number(row.input_tokens), outputTokens: Number(row.output_tokens) }, costEur: Number(row.cost_eur) };
+}
+
 /**
- * Batch handler of `extract-facts`: stores the verified facts of one unit and marks it done with its counters, tokens
- * and cost, in the distribution transaction (ruling M4-P9); a unit already done is left alone. An item that failed for
- * good marks its unit failed (with what it was billed).
+ * Marks a unit failed with what it was billed and its claimed mentions `failed`; a done unit stays done. Idempotent,
+ * so a fail reported more than once changes nothing more.
+ */
+async function failUnit(db: Db, unitId: string, error: string | null): Promise<void> {
+  const billed = await billedOfUnit(db, unitId);
+  const rows = await db
+    .update(extractionUnits)
+    .set({
+      status: "failed",
+      inputTokens: billed.usage.inputTokens,
+      outputTokens: billed.usage.outputTokens,
+      costEur: billed.costEur.toFixed(6),
+      updatedAt: sql`now()`,
+    })
+    .where(and(eq(extractionUnits.id, unitId), sql`${extractionUnits.status} <> 'done'`))
+    .returning({ id: extractionUnits.id });
+  if (rows.length === 0) return;
+  await failUnitMentions(db, [unitId]);
+  getLog().warn({ unitId, error }, "extraction unit failed");
+}
+
+/**
+ * Batch handler of `extract-facts`: stores the verified facts of one unit and marks it done with its counters and the
+ * tokens and cost of all its attempts, in the distribution transaction (ruling M4-P9); a unit already done is left
+ * alone. An answer that does not fit the output schema fails only its own unit (no retry: the same answer would fail
+ * again; the other items are distributed as usual). An item that failed for good, or that is given up undistributed,
+ * marks its unit failed (at least once, idempotent).
  */
 export const extractFactsBatchEntry: BatchHandlerEntry = {
   task,
@@ -252,7 +309,8 @@ export const extractFactsBatchEntry: BatchHandlerEntry = {
     const [unit] = await db.select().from(extractionUnits).where(eq(extractionUnits.id, item.subjectId)).for("update");
     if (!unit) throw new Error(`extraction unit ${item.subjectId} does not exist`);
     if (unit.status === "done") return;
-    const out = extractFactsTask.output.parse(item.output);
+    const parsed = extractFactsTask.output.safeParse(item.output);
+    if (!parsed.success) return failUnit(db, unit.id, `answer does not fit the output schema: ${parsed.error.message}`);
     const stats = await processFactOutput(
       db,
       {
@@ -264,24 +322,13 @@ export const extractFactsBatchEntry: BatchHandlerEntry = {
         mentionIds: unit.mentionIds,
         chunkIds: unit.chunkIds,
       },
-      out,
+      parsed.data,
       ctx.config,
     );
-    await completeUnit(db, unit.id, stats, item.usage, item.costEur);
+    const billed = await billedOfUnit(db, unit.id);
+    await completeUnit(db, unit.id, stats, billed.usage, billed.costEur);
   },
-  fail: async (db, item) => {
-    await db
-      .update(extractionUnits)
-      .set({
-        status: "failed",
-        inputTokens: item.usage.inputTokens,
-        outputTokens: item.usage.outputTokens,
-        costEur: item.costEur.toFixed(6),
-        updatedAt: sql`now()`,
-      })
-      .where(and(eq(extractionUnits.id, item.subjectId), sql`${extractionUnits.status} <> 'done'`));
-    getLog().warn({ unitId: item.subjectId, error: item.error }, "extraction unit failed");
-  },
+  fail: (db, item) => failUnit(db, item.subjectId, item.error),
 };
 
 export type ExtractionRunStats = { units: number; done: number; failed: number; facts: number } & FactStats & {
@@ -291,8 +338,8 @@ export type ExtractionRunStats = { units: number; done: number; failed: number; 
 
 /**
  * The counters of an extraction run, written to `extraction_runs.stats`: units (all, done, failed), stored facts, the
- * summed fact counters of its units, its cost (tokens billed for done and failed units) and the cost per mention sent
- * to the model (null without any).
+ * summed fact counters of its units, its cost (every billed batch item of its units, all attempts) and the cost per
+ * mention sent to the model (null without any).
  */
 export async function extractionRunStats(db: Db, extractionRunId: string): Promise<ExtractionRunStats> {
   const units = await db
@@ -303,13 +350,19 @@ export async function extractionRunStats(db: Db, extractionRunId: string): Promi
     .select({ n: sql<number>`count(*)::int` })
     .from(facts)
     .where(eq(facts.extractionRunId, extractionRunId));
+  // Every billed attempt of every unit, also a retried first attempt and what the booking of an expired batch wrote
+  // onto its failed items (ruling M4-G-R3), so the cost per mention is not understated.
+  const { rows: billed } = await db.execute<{ cost_eur: number }>(sql`
+    select coalesce(sum(i.cost_eur), 0)::float8 as cost_eur
+    from ai_batch_items i join extraction_units u on i.subject_type = ${SUBJECT} and i.subject_id = u.id::text
+    where u.extraction_run_id = ${extractionRunId}
+  `);
+  const costEur = Number(billed[0]!.cost_eur);
   const sums = emptyFactStats();
-  let costEur = 0;
   const mentionIds = new Set<string>();
   for (const u of units) {
     const s = (u.stats ?? {}) as Partial<FactStats>;
     for (const k of FACT_STAT_KEYS) sums[k] += Number(s[k] ?? 0);
-    costEur += Number(u.costEur ?? 0);
     for (const id of u.mentionIds) mentionIds.add(id);
   }
   const stats: ExtractionRunStats = {

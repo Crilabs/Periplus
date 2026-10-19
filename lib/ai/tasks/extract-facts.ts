@@ -11,13 +11,17 @@ import type { ModelTask } from "../types";
  * (the chunks mentioning the object and their neighbours). Every fact carries a verbatim quote and the number of the
  * chunk it comes from; the value is JSON text in the attribute's format (language-neutral: enums, numbers, proper
  * names), checked against the fact schema on receipt. The system prompt holds only what is the same for every unit of
- * a level (level, attribute list, word scales), so it can be cached (ruling M4-P20). The output schema keeps to what
+ * a level (level, attribute list, word scales, the fact limit), so it can be cached (ruling M4-P20). The output schema keeps to what
  * structured outputs support; lengths, counts and ranges are enforced when the answer is processed
  * (`lib/domain/extraction/facts.ts`), so one over-long field drops one fact instead of the whole answer.
  */
 
 export type ExtractFactsInput = {
   level: FactLevel;
+  /** The fact schema version of the extraction run (frozen at plan time): the attribute list comes from it. */
+  factSchemaVersion: string;
+  /** At most this many facts are looked at (`extraction.maxFactsPerUnit`); the same for every request. */
+  maxFacts: number;
   object: { name: string; type: GeoObjectType; parents: string[] };
   docType: DocType;
   observedAt: string;
@@ -104,7 +108,8 @@ export const extractFactsTask: ModelTask<ExtractFactsInput, ExtractFactsOutput> 
   output,
   variables: (input) => ({
     level: input.level,
-    attributes: attributesForPrompt(input.level),
+    attributes: attributesForPrompt(input.level, input.factSchemaVersion),
+    max_facts: String(input.maxFacts),
     mappings: mappingTable(input.level),
     object: objectLine(input.object),
     doc_type: input.docType,

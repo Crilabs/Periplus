@@ -1,0 +1,1 @@
+ALTER TYPE "public"."extraction_status" ADD VALUE 'failed';

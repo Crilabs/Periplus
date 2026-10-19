@@ -44,7 +44,20 @@ const textExtras = (key: string): Partial<AttributeDef> => {
     return { ...scaleWords(TEXT_SCALE), textDescription: "Protection from swell entering the place, as a word of the shelter scale" };
   }
   if (["depth.min", "depth.max", "depth.anchoring_min", "depth.anchoring_max"].includes(key)) {
-    return { textValue: z.number().min(0).max(200) };
+    // A text cannot know the chart datum (v1 says "below LAT"): the number as the text states it (ruling M4-G-R4).
+    const what = {
+      "depth.min": "Minimum depth in the water area",
+      "depth.max": "Maximum depth in the water area",
+      "depth.anchoring_min": "Minimum depth in the anchor area",
+      "depth.anchoring_max": "Maximum depth in the anchor area",
+    }[key];
+    return { textValue: z.number().min(0).max(200), textDescription: `${what}, metres as stated in the text` };
+  }
+  if (key === "depth.approach") {
+    return {
+      textDescription:
+        "Depths 50, 100 and 200 m out from the entrance, metres as stated in the text; only when the text gives these numbers explicitly",
+    };
   }
   if (key === "seabed") {
     return {

@@ -8,7 +8,7 @@ import { errorText, lockFailedJob } from "@/lib/domain/jobs-view";
 import { createReviewTask } from "@/lib/domain/review";
 import { failRun, isRunEnded, recordJobOutcome } from "@/lib/domain/runs";
 import { createLogger } from "@/lib/logger";
-import { failBatchUnit, failSubmitUnit } from "@/lib/pipeline/batches";
+import { failBatchUnit, failSubmitUnit, type BatchHandlerEntry } from "@/lib/pipeline/batches";
 import { isQueuePaused, pauseForBudget } from "./controls";
 import { enqueueRunAdvance } from "./enqueue";
 import { BATCH_POLL_QUEUE, DEAD_LETTER_QUEUE, QUEUES, RUN_ADVANCE_QUEUE, type QueueName } from "./queues";
@@ -22,6 +22,12 @@ export type WorkerOptions = {
   pollingIntervalSeconds?: number;
   /** How often queue_controls is checked (default 30 s). */
   controlPollMs?: number;
+  /**
+   * The batch handler table (`BATCH_HANDLERS`), passed in by the composition root (`worker/index.ts`) so this module
+   * never imports it (ruling M4-P1): a dead-lettered batch or stage job hands the items it gives up to their task's
+   * fail handler (ruling M4-G-R3). Without it nothing is reported.
+   */
+  batchHandlers?: Record<string, BatchHandlerEntry>;
 };
 
 /** Marks a job re-sent after a budget pause, so a manual resume can release it early. */
@@ -133,9 +139,9 @@ export async function startWorkers(
         if (!task.created) return;
         await settle(tx, job.data, "failed");
         // A poll job carries no stage: its batch's unit fails instead, so the stage does not wait for it forever.
-        if (queue === BATCH_POLL_QUEUE && typeof job.data.batchId === "string") await failBatchUnit(tx, boss, job.data.batchId);
+        if (queue === BATCH_POLL_QUEUE && typeof job.data.batchId === "string") await failBatchUnit(tx, boss, job.data.batchId, options.batchHandlers);
         // A stage job that stored a batch but never got it sent: that batch and its unit fail too (ruling M4-C-R6).
-        if (runId && job.data.stage) await failSubmitUnit(tx, boss, { runId, stage: job.data.stage, key: job.data.key });
+        if (runId && job.data.stage) await failSubmitUnit(tx, boss, { runId, stage: job.data.stage, key: job.data.key }, options.batchHandlers);
       });
     } catch (err) {
       log.error({ err, jobId, runId, deadLetterJobId: job.id, attempt: job.retryCount + 1 }, "dead-letter handling failed");

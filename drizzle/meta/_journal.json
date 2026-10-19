@@ -190,6 +190,13 @@
       "when": 1792401575457,
       "tag": "0026_batch_claims",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1792410236027,
+      "tag": "0027_mention_extraction_failed",
+      "breakpoints": true
     }
   ]
 }

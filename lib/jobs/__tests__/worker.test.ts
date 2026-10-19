@@ -2,7 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { testDb } from "@/test/db";
-import { aiBatches, reviewTasks } from "@/lib/db/schema";
+import { aiBatches, aiBatchItems, reviewTasks } from "@/lib/db/schema";
 import { BudgetExceeded } from "@/lib/domain/costs";
 import { newId } from "@/lib/domain/ids";
 import { beginStage, createRun, failRun, getRun, recordJobOutcome, RUN_ENDED_REASON, resumeRun } from "@/lib/domain/runs";
@@ -205,6 +205,8 @@ beforeAll(async () => {
   workers = await startWorkers(boss, db, { ...HANDLERS, "system.ping": testPing, "run.advance": advanceHandler }, queueConfig, {
     pollingIntervalSeconds: 0.5,
     controlPollMs: 200,
+    // as the composition root (worker/index.ts) passes it
+    batchHandlers: BATCH_HANDLERS,
   });
 }, 30_000);
 
@@ -635,32 +637,47 @@ describe("worker", () => {
     expect(probe.workerErrors.some((e) => e.msg === "job failed permanently" && e.obj.jobId === id)).toBe(false);
   }, 30_000);
 
-  it("a dead-lettered batch poll fails its batch and records the unit as failed", async () => {
-    const { id: runId } = await createRun(db, { kind: "system", scope: scope(), stages: ["batchpoll"], triggeredBy: "test" });
-    // One submit job (done) plus the batch unit it added.
-    await beginStage(db, runId, "batchpoll", 2);
-    await recordJobOutcome(db, runId, "batchpoll", "k", "done");
-    const [batch] = await db
-      .insert(aiBatches)
-      .values({
-        providerBatchId: `mock-${newId()}`,
-        task: "system.echo",
-        model: "claude-haiku-5-5",
-        promptVersion: 1,
-        status: "submitted",
-        runId,
-        stage: "batchpoll",
-        outcomeKey: "batch:k",
-        requestCount: 1,
-      })
-      .returning();
-    // No model client is configured in this process, so every attempt of the poll fails.
-    await boss.send("ai.batch.poll", { key: `poll:${batch!.id}:0`, batchId: batch!.id });
+  it("a dead-lettered batch poll fails its batch, records the unit as failed and reports its items", async () => {
+    const reported: string[] = [];
+    BATCH_HANDLERS["system.echo"] = {
+      task: echoTask as ModelTask<unknown, unknown>,
+      handle: async () => {},
+      fail: async (_db, item) => {
+        reported.push(item.subjectId);
+      },
+    };
+    try {
+      const { id: runId } = await createRun(db, { kind: "system", scope: scope(), stages: ["batchpoll"], triggeredBy: "test" });
+      // One submit job (done) plus the batch unit it added.
+      await beginStage(db, runId, "batchpoll", 2);
+      await recordJobOutcome(db, runId, "batchpoll", "k", "done");
+      const [batch] = await db
+        .insert(aiBatches)
+        .values({
+          providerBatchId: `mock-${newId()}`,
+          task: "system.echo",
+          model: "claude-haiku-5-5",
+          promptVersion: 1,
+          status: "submitted",
+          runId,
+          stage: "batchpoll",
+          outcomeKey: "batch:k",
+          requestCount: 1,
+        })
+        .returning();
+      await db.insert(aiBatchItems).values({ batchId: batch!.id, subjectType: "test", subjectId: `${runId}:s0`, input: {} });
+      // No model client is configured in this process, so every attempt of the poll fails.
+      await boss.send("ai.batch.poll", { key: `poll:${batch!.id}:0`, batchId: batch!.id });
 
-    await waitFor(async () => (await getRun(db, runId))!.status === "finished", 20_000);
-    expect((await getRun(db, runId))!.stages[0]).toMatchObject({ total: 2, done: 1, failed: 1 });
-    const [after] = await db.select().from(aiBatches).where(eq(aiBatches.id, batch!.id));
-    expect(after!.status).toBe("failed");
+      await waitFor(async () => (await getRun(db, runId))!.status === "finished", 20_000);
+      expect((await getRun(db, runId))!.stages[0]).toMatchObject({ total: 2, done: 1, failed: 1 });
+      const [after] = await db.select().from(aiBatches).where(eq(aiBatches.id, batch!.id));
+      expect(after!.status).toBe("failed");
+      // the item never distributed went to the task's fail handler
+      expect(reported).toEqual([`${runId}:s0`]);
+    } finally {
+      delete BATCH_HANDLERS["system.echo"];
+    }
   }, 30_000);
 
   it("a dead-lettered batch submit job fails its unit; a manual retry sends it and the real poll job finishes the run", async () => {

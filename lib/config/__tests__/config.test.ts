@@ -338,7 +338,7 @@ describe("text configuration", () => {
   it("the extraction model starts provisional on sonnet", () => {
     expect(cfg.models.tasks["extract-facts"]).toMatchObject({
       model: "claude-sonnet-5-5",
-      promptVersion: 1,
+      promptVersion: 2,
       effort: "medium",
       maxTokens: 16000,
       cacheSystem: true,

@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import type { PgInsertValue } from "drizzle-orm/pg-core";
 import { geomFromGeoJson } from "@/lib/db/geometry";
+import type { PoiCategory } from "@/lib/db/schema/geo";
 import {
   chunks,
   documents,
@@ -171,6 +172,8 @@ export type TestNamedObject = {
   tiles?: string[];
   parentId?: string | null;
   configKey?: string;
+  /** The POI category (`poi` objects only). */
+  category?: PoiCategory | null;
 };
 
 /** A geo object with its names (incl. transliterations, via `addNames`) and its tile assignments. */
@@ -180,6 +183,7 @@ export async function insertNamedObject(tx: Db, o: TestNamedObject): Promise<str
     geom: geomFromGeoJson({ type: "Point", coordinates: [o.lon, o.lat] }),
     parentId: o.parentId ?? null,
     configKey: o.configKey ?? null,
+    category: o.category ?? null,
   });
   await addNames(
     tx,

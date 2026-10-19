@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { externalCalls, jobOutcomes, runStages, runs } from "@/lib/db/schema";
 import type { RunKind, RunScopeType, RunStageStatus, RunStatus } from "@/lib/db/schema";
+import { failOpenUnits } from "@/lib/domain/extraction/unit-status";
 
 export type { RunKind, RunStatus };
 
@@ -65,12 +66,15 @@ export function stageFailedReason(stage: string): string {
 /**
  * Follows up a stage the caller just finished (it won the transition). A stage whose jobs all failed fails
  * the run with `stageFailedReason` and plans nothing further (ruling F-R1), so later stages never run on
- * missing data; otherwise it reports the next stage or, after the last one, finishes the run.
+ * missing data; otherwise it reports the next stage or, after the last one, finishes the run. First it fails the
+ * run's extraction units that are still open (`failOpenUnits`).
  */
 async function afterStageFinished(
   db: Db,
   stageRow: { runId: string; stage: string; ordinal: number; total: number; failed: number },
 ): Promise<{ nextStage: string | null; runFinished: boolean }> {
+  // Units of this run that are still open now can never be sent or distributed (ruling M4-G-R3).
+  await failOpenUnits(db, stageRow.runId);
   if (stageRow.total > 0 && stageRow.failed === stageRow.total) {
     await db
       .update(runs)

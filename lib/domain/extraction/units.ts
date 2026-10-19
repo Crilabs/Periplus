@@ -9,7 +9,8 @@ import { jsonUuids } from "@/lib/domain/mentions/scope";
  * Extraction units (spec 06): "Einheit je (Dokumentversion, Geo-Objekt) mit Nachbar-Chunks". A unit holds the chunks
  * of the object's mentions in one version plus `neighbourChunks` chunks on each side (by ordinal, same version); a
  * group of more than `maxChunksPerUnit` chunks is cut into parts of at most that many chunks, so a model request stays
- * bounded. A mention of an object that takes no facts (`levelFor` null: a settlement without a place) is skipped.
+ * bounded. Neighbouring parts share the chunks at their boundary (2 × `neighbourChunks`), so no mention loses its
+ * neighbour context to a cut. A mention of an object that takes no facts (`levelFor` null: a settlement without a place) is skipped.
  */
 
 export type ExtractionUnitDraft = {
@@ -84,19 +85,35 @@ export async function planUnits(
       }
     }
     const sorted = [...ordinals].sort((a, b) => a - b);
+    // Consecutive parts overlap by the neighbour ring on both sides (ruling M4-G-R4), so each mention lies in a part
+    // that also holds its neighbour chunks; it belongs to the first such part only.
+    const overlap = Math.min(2 * cfg.neighbourChunks, cfg.maxChunksPerUnit - 1);
+    const step = cfg.maxChunksPerUnit - overlap;
+    const assigned = new Set<string>();
     let part = 0;
-    for (let i = 0; i < sorted.length; i += cfg.maxChunksPerUnit) {
-      const slice = new Set(sorted.slice(i, i + cfg.maxChunksPerUnit));
-      const own = group.filter((m) => slice.has(m.ordinal));
-      if (own.length === 0) continue;
-      units.push({
-        documentVersionId: versionId,
-        geoObjectId,
-        part: part++,
-        level,
-        mentionIds: own.map((m) => m.id),
-        chunkIds: [...slice].map((o) => byOrdinal.get(o)!),
+    for (let i = 0; i < sorted.length; i += step) {
+      const from = i;
+      const to = Math.min(i + cfg.maxChunksPerUnit, sorted.length) - 1;
+      const own = group.filter((m) => {
+        if (assigned.has(m.id)) return false;
+        // Positions of its chunk and its neighbours that exist in the version (all of them are in `sorted`).
+        const lo = sorted.findIndex((o) => o >= m.ordinal - cfg.neighbourChunks);
+        const hi = sorted.findLastIndex((o) => o <= m.ordinal + cfg.neighbourChunks);
+        // The last part takes whatever is left (a ring wider than a part can never fit whole).
+        return (lo >= from && hi <= to) || to === sorted.length - 1;
       });
+      for (const m of own) assigned.add(m.id);
+      if (own.length > 0) {
+        units.push({
+          documentVersionId: versionId,
+          geoObjectId,
+          part: part++,
+          level,
+          mentionIds: own.map((m) => m.id),
+          chunkIds: sorted.slice(from, to + 1).map((o) => byOrdinal.get(o)!),
+        });
+      }
+      if (to === sorted.length - 1) break;
     }
   }
   return { units, skipped };

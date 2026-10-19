@@ -4,14 +4,19 @@ import type { ModelTask, ModelUsage } from "./types";
 
 export type ModelPrice = AppConfig["models"]["pricesEurPerMTok"][string];
 
-/** The configuration of a task and the model it runs on (`override` replaces the configured one). */
+/**
+ * The configuration of a task and the model it runs on (`override` replaces the configured model, `promptVersion` the
+ * configured prompt version).
+ */
 export function resolveTaskModel(
   config: AppConfig,
   taskName: string,
   override?: string,
+  promptVersion?: number,
 ): { taskConfig: ModelTaskConfig; model: string; price: ModelPrice } {
-  const taskConfig = config.models.tasks[taskName];
-  if (!taskConfig) throw new Error(`No model configured for task ${taskName} in config/models.json`);
+  const configured = config.models.tasks[taskName];
+  if (!configured) throw new Error(`No model configured for task ${taskName} in config/models.json`);
+  const taskConfig = promptVersion === undefined ? configured : { ...configured, promptVersion };
   const model = override ?? taskConfig.model;
   const price = config.models.pricesEurPerMTok[model];
   if (!price) throw new Error(`No price configured for model ${model} (task ${taskName}) in config/models.json`);
@@ -40,8 +45,9 @@ export function estimateBatchItemCostsEur<I>(
   task: ModelTask<I, unknown>,
   inputs: I[],
   modelOverride?: string,
+  promptVersion?: number,
 ): number[] {
-  const { taskConfig, price } = resolveTaskModel(config, task.name, modelOverride);
+  const { taskConfig, price } = resolveTaskModel(config, task.name, modelOverride, promptVersion);
   const prompt = loadPrompt(task.name, taskConfig.promptVersion);
   const perOutput = (taskConfig.maxTokens / 1e6) * price.output;
   return inputs.map((input) => {
@@ -60,6 +66,7 @@ export function estimateBatchCostEur<I>(
   task: ModelTask<I, unknown>,
   inputs: I[],
   modelOverride?: string,
+  promptVersion?: number,
 ): number {
-  return estimateBatchItemCostsEur(config, task, inputs, modelOverride).reduce((sum, cost) => sum + cost, 0);
+  return estimateBatchItemCostsEur(config, task, inputs, modelOverride, promptVersion).reduce((sum, cost) => sum + cost, 0);
 }

@@ -196,7 +196,7 @@ export function createAnthropicClient(db: Db, config: AppConfig = getConfig(), o
 
   return {
     async call<I, O>(task: ModelTask<I, O>, input: I, ctx?: ModelCallContext): Promise<ModelResult<O>> {
-      const { taskConfig, model, price } = resolveTaskModel(config, task.name, ctx?.model);
+      const { taskConfig, model, price } = resolveTaskModel(config, task.name, ctx?.model, ctx?.promptVersion);
       const { promptVersion } = taskConfig;
       const params = buildParams(task, input, taskConfig, model);
 
@@ -238,7 +238,7 @@ export function createAnthropicClient(db: Db, config: AppConfig = getConfig(), o
 
     async submitBatch<I, O>(task: ModelTask<I, O>, requests: BatchRequest<I>[], ctx?: ModelCallContext): Promise<SubmittedBatch> {
       if (requests.length === 0) throw new Error(`Batch of task ${task.name} has no requests`);
-      const { taskConfig, model } = resolveTaskModel(config, task.name, ctx?.model);
+      const { taskConfig, model } = resolveTaskModel(config, task.name, ctx?.model, ctx?.promptVersion);
       const batchRequests = requests.map((r) => ({ custom_id: r.customId, params: buildParams(task, r.input, taskConfig, model) }));
 
       // Booked spend only: the caller has reserved this batch's estimate already (ruling M4-P6).

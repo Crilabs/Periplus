@@ -5,7 +5,7 @@ import { insertNamedObject, insertTestExtractionRun, insertTestTile, insertTestV
 import type { ExtractedFact } from "@/lib/ai/tasks/extract-facts";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { facts, mentions, unmatchedNames } from "@/lib/db/schema";
+import { extractionRuns, facts, mentions, unmatchedNames } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { tileIdFor } from "@/lib/domain/tiles";
 import { emptyFactStats, processFactOutput, type ProcessUnit } from "@/lib/domain/extraction/facts";
@@ -18,11 +18,14 @@ const CHUNKS = [
   "In May 2024 the Taverna Nikos above the beach was open; the beach Psili Ammos is lovely.",
 ];
 
-/** A bay "Kolona" at 21.0 E / 35.2 N with mentions in chunks 0 and 1 of a 3-chunk version, and its unit. */
-async function scene(tx: Db) {
+/**
+ * A bay "Kolona" at 21.0 E / 35.2 N with mentions in chunks 0 and 1 of a 3-chunk version, and its unit; `third`
+ * replaces the text of the third chunk.
+ */
+async function scene(tx: Db, third?: string) {
   const tile = await insertTestTile(tx, tileIdFor(21.0, 35.2));
   const bay = await insertNamedObject(tx, { type: "bay", names: [{ name: "Kolona" }], lon: 21.0, lat: 35.2, tiles: [tile] });
-  const v = await insertTestVersion(tx, CHUNKS);
+  const v = await insertTestVersion(tx, third === undefined ? CHUNKS : [CHUNKS[0]!, CHUNKS[1]!, third]);
   const mentionIds: string[] = [];
   for (const [i, start] of [
     [0, CHUNKS[0]!.indexOf("Kolona Bay")],
@@ -250,9 +253,10 @@ describe("processFactOutput", () => {
           fact({ attribute: "highlight.beach", value: '{"present":true,"names":["Psili Ammos"]}', quote: "the beach Psili Ammos is lovely", chunk: 3, poi_name: "Psili Ammos" }),
         ],
       };
-      expect((await processFactOutput(tx, s.unit, out, config)).stored).toBe(4);
+      expect(await processFactOutput(tx, s.unit, out, config)).toMatchObject({ stored: 4, poiMentions: 1, poiUnmatched: 1 });
       const again = await processFactOutput(tx, s.unit, out, config);
-      expect(again.stored).toBe(0);
+      // the counters count rows actually written
+      expect(again).toMatchObject({ stored: 0, poiMentions: 0, poiUnmatched: 0 });
       expect(await factsOf(tx, s.unit.extractionRunId)).toHaveLength(4);
       expect(await tx.select().from(mentions).where(eq(mentions.geoObjectId, taverna))).toHaveLength(1);
       expect(await tx.select().from(unmatchedNames).where(eq(unmatchedNames.documentVersionId, s.versionId))).toHaveLength(1);
@@ -264,5 +268,110 @@ describe("processFactOutput", () => {
       const out = { facts: [fact({}), fact({ attribute: "seabed", value: '["sand"]' })] };
       const stats = await processFactOutput(tx, s.unit, out, { ...config, extraction: { ...config.extraction, maxFactsPerUnit: 1 } });
       expect(stats).toMatchObject({ proposed: 2, stored: 1, overLimit: 1 });
+    }));
+  it("facts are checked against and stored with the extraction run's fact schema version", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx);
+      // planned while v1 was active: `holding` (v2 only) was not in its prompt
+      await tx.update(extractionRuns).set({ factSchemaVersion: "v1" }).where(eq(extractionRuns.id, s.unit.extractionRunId));
+      const out = { facts: [fact({}), fact({ attribute: "depth.anchoring_min", value: "6", quote: "Holding is good in sand, depth 6 m" })] };
+      const stats = await processFactOutput(tx, s.unit, out, config);
+      expect(stats).toMatchObject({ stored: 1, unknownAttribute: 1 });
+      const rows = await factsOf(tx, s.unit.extractionRunId);
+      expect(rows.map((r) => [r.attribute, r.factSchemaVersion])).toEqual([["depth.anchoring_min", "v1"]]);
+    }));
+
+  it("a highlight name that is not in the quote creates neither a mention nor an unmatched name", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx);
+      const nikos = await insertNamedObject(tx, { type: "poi", category: "food", names: [{ name: "Taverna Nikos" }], lon: 21.0, lat: 35.2108 });
+      const yannis = await insertNamedObject(tx, { type: "poi", category: "food", names: [{ name: "Taverna Yannis" }], lon: 21.0, lat: 35.2109 });
+      const out = {
+        facts: [
+          fact({
+            attribute: "highlight.food",
+            value: '{"present":true,"names":["Taverna Nikos","Taverna Yannis","Taverna Maria"]}',
+            quote: "the Taverna Nikos above the beach was open",
+            chunk: 3,
+            poi_name: "Taverna Yannis",
+          }),
+        ],
+      };
+      const stats = await processFactOutput(tx, s.unit, out, config);
+      // two names of `names` and the poi_name are not in the quote
+      expect(stats).toMatchObject({ stored: 1, poiMentions: 1, poiUnmatched: 0, poiNameRejected: 3 });
+      expect(await tx.select().from(mentions).where(eq(mentions.geoObjectId, yannis))).toHaveLength(0);
+      expect(await tx.select().from(mentions).where(eq(mentions.geoObjectId, nikos))).toHaveLength(1);
+      expect(await tx.select().from(unmatchedNames).where(eq(unmatchedNames.documentVersionId, s.versionId))).toHaveLength(0);
+      // the stored value keeps only the names the quote supports
+      const [row] = await factsOf(tx, s.unit.extractionRunId);
+      expect(row!.value).toEqual({ present: true, names: ["Taverna Nikos"] });
+    }));
+
+  it("every name of a highlight in its quote reaches the gazetteer", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx, "Above the harbour the Taverna Nikos and the Taverna Maria serve fresh fish.");
+      const nikos = await insertNamedObject(tx, { type: "poi", category: "food", names: [{ name: "Taverna Nikos" }], lon: 21.0, lat: 35.2108 });
+      const out = {
+        facts: [
+          fact({
+            attribute: "highlight.food",
+            value: '{"present":true,"names":["Taverna Nikos","Taverna Maria"]}',
+            quote: "the Taverna Nikos and the Taverna Maria serve fresh fish",
+            chunk: 3,
+            poi_name: null,
+          }),
+        ],
+      };
+      const stats = await processFactOutput(tx, s.unit, out, config);
+      expect(stats).toMatchObject({ stored: 1, poiMentions: 1, poiUnmatched: 1, poiNameRejected: 0 });
+      expect(await tx.select().from(mentions).where(eq(mentions.geoObjectId, nikos))).toHaveLength(1);
+      const unmatched = await tx.select().from(unmatchedNames).where(eq(unmatchedNames.documentVersionId, s.versionId));
+      expect(unmatched.map((u) => [u.displayName, u.hint])).toEqual([["Taverna Maria", "poi:food"]]);
+    }));
+
+  it("a beach named like a nearby chapel matches the beach", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx, "The beach of Agios Nikolaos below the chapel is sandy and shallow.");
+      // created first, so without the category it would win the tie on the id
+      const chapel = await insertNamedObject(tx, { type: "poi", category: "culture", names: [{ name: "Agios Nikolaos" }], lon: 21.0, lat: 35.2105 });
+      const beach = await insertNamedObject(tx, { type: "poi", category: "beach", names: [{ name: "Agios Nikolaos" }], lon: 21.0, lat: 35.2106 });
+      const out = {
+        facts: [
+          fact({
+            attribute: "highlight.beach",
+            value: '{"present":true,"names":["Agios Nikolaos"]}',
+            quote: "The beach of Agios Nikolaos below the chapel is sandy",
+            chunk: 3,
+            poi_name: "Agios Nikolaos",
+          }),
+        ],
+      };
+      expect(await processFactOutput(tx, s.unit, out, config)).toMatchObject({ poiMentions: 1 });
+      expect(await tx.select().from(mentions).where(eq(mentions.geoObjectId, beach))).toHaveLength(1);
+      expect(await tx.select().from(mentions).where(eq(mentions.geoObjectId, chapel))).toHaveLength(0);
+    }));
+
+  it("an unmatched POI name keeps its poi hint where the matcher left the name unmatched already", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx);
+      // the matcher's row for the same name in the same chunk, without a hint
+      await tx.insert(unmatchedNames).values({
+        nameNormalized: "psili ammos",
+        displayName: "Psili Ammos",
+        hint: null,
+        documentVersionId: s.versionId,
+        chunkId: s.chunkIds[2]!,
+        sourceId: s.sourceId,
+        tileId: s.tile,
+      });
+      const out = {
+        facts: [
+          fact({ attribute: "highlight.beach", value: '{"present":true,"names":["Psili Ammos"]}', quote: "the beach Psili Ammos is lovely", chunk: 3, poi_name: "Psili Ammos" }),
+        ],
+      };
+      expect(await processFactOutput(tx, s.unit, out, config)).toMatchObject({ poiUnmatched: 1 });
+      const unmatched = await tx.select().from(unmatchedNames).where(eq(unmatchedNames.documentVersionId, s.versionId));
+      expect(unmatched.map((u) => [u.nameNormalized, u.hint])).toEqual([["psili ammos", "poi:beach"]]);
     }));
 });

@@ -64,7 +64,12 @@ export type BatchFailedItem = {
   batch: BatchHandlerItem["batch"];
 };
 
-/** Records that an item failed for good; runs once, in the transaction that closes or expires its batch. */
+/**
+ * Records that an item failed for good or will never be distributed, in the transaction of the batch transition that
+ * gives it up: close, expiry, a run an admin ended, or a dead letter. Called at least once per item, not exactly once
+ * (a manual retry revives a batch, which may report its items again, and a revived batch may still distribute an item
+ * reported before), so it must be idempotent and must not undo a later success (ruling M4-G-R3).
+ */
 export type BatchFailHandler = (db: Db, item: BatchFailedItem) => Promise<void>;
 
 /**
@@ -90,6 +95,8 @@ export type SubmitStageBatchRequest = {
   key: string;
   items: BatchItemInput[];
   modelOverride?: string;
+  /** A prompt version replacing the task's configured one (an extraction run's, ruling M4-G-R3). */
+  promptVersionOverride?: number;
 };
 
 export type PollResult = "waiting" | "distributed" | "resubmitted" | "failed";
@@ -103,6 +110,8 @@ type SendResult = "sent" | "adopted" | "busy" | "none";
 const UNSENT_STATUSES = ["submitting", "sending"] as const;
 const ERROR_MAX_HOURS = "batch exceeded maxHours";
 const ERROR_NO_RESULT = "no result for this request";
+const ERROR_RUN_ENDED = "run ended by admin";
+const ERROR_DEAD_LETTER = "batch job failed permanently";
 /** Advisory lock key that serialises every anthropic reservation check with the insert it guards. */
 const BUDGET_LOCK = "periplus:anthropic-budget";
 
@@ -344,7 +353,7 @@ async function sendBatch(db: Db, deps: BatchDeps, batchId: string, task: ModelTa
     submitted = await deps.model.submitBatch(
       task,
       items.map((i) => ({ customId: i.id, input: i.input })),
-      { runId: batch.runId, stage: batch.stage, model: batch.model },
+      { runId: batch.runId, stage: batch.stage, model: batch.model, promptVersion: batch.promptVersion },
     );
   } catch (err) {
     const mine = and(eq(aiBatches.id, batch.id), eq(aiBatches.status, "sending"), eq(aiBatches.claimId, claimId));
@@ -397,8 +406,8 @@ export async function submitStageBatch(
   const existing = await latestBatchOfUnit(db, req.runId, req.stage, outcomeKey);
   if (existing) return reuseBatch(db, deps, req.task, existing);
 
-  const { model, taskConfig } = resolveTaskModel(config, req.task.name, req.modelOverride);
-  const estimate = estimateBatchCostEur(config, req.task, req.items.map((i) => i.input), req.modelOverride);
+  const { model, taskConfig } = resolveTaskModel(config, req.task.name, req.modelOverride, req.promptVersionOverride);
+  const estimate = estimateBatchCostEur(config, req.task, req.items.map((i) => i.input), req.modelOverride, req.promptVersionOverride);
   const now = nowOf(deps);
 
   const created = await db.transaction(async (tx) => {
@@ -528,7 +537,8 @@ async function settleUnit(tx: Db, boss: PgBoss, batch: BatchRow, outcome: "done"
  * conditional transition (ruling M4-P4): `submitted → ended`, or for a failed batch the provider may still bill
  * (`from` `failed`) setting `ended_at` while it stays failed. Only the call that wins the transition books it, and the
  * same transition ends its reservation. Only still pending items take a result: a retryable failure on the first
- * attempt becomes `retried` (resent later), any other failure `failed`.
+ * attempt becomes `retried` (resent later), any other failure `failed`. Booking a failed batch also writes the tokens
+ * and cost onto items its expiry failed, without changing their status.
  */
 async function storeResults(
   db: Db,
@@ -547,9 +557,16 @@ async function storeResults(
     if (!won) return;
     const results = new Map(collected.results.map((r) => [r.customId, r]));
     const items = await tx
-      .select({ id: aiBatchItems.id, attempt: aiBatchItems.attempt })
+      .select({ id: aiBatchItems.id, attempt: aiBatchItems.attempt, status: aiBatchItems.status })
       .from(aiBatchItems)
-      .where(and(eq(aiBatchItems.batchId, batch.id), eq(aiBatchItems.status, "pending")));
+      .where(
+        and(
+          eq(aiBatchItems.batchId, batch.id),
+          from === "failed"
+            ? sql`(${aiBatchItems.status} = 'pending' or (${aiBatchItems.status} = 'failed' and ${aiBatchItems.costEur} is null))`
+            : eq(aiBatchItems.status, "pending"),
+        ),
+      );
     for (const item of items) {
       const r = results.get(item.id) ?? { customId: item.id, ok: false as const, error: ERROR_NO_RESULT, retryable: true };
       // Input tokens of an item: uncached, cache-written and cache-read input together.
@@ -557,6 +574,12 @@ async function storeResults(
         ? { inputTokens: r.usage.inputTokens + r.usage.cacheReadTokens + r.usage.cacheWriteTokens, outputTokens: r.usage.outputTokens }
         : {};
       const costEur = r.costEur !== undefined ? { costEur: r.costEur.toFixed(6) } : {};
+      if (item.status === "failed") {
+        // Failed already (its batch expired): it keeps its status and error, but carries what it was billed, so the
+        // cost per subject sums every billed attempt (ruling M4-G-R3).
+        if (r.usage || r.costEur !== undefined) await tx.update(aiBatchItems).set({ ...tokens, ...costEur }).where(eq(aiBatchItems.id, item.id));
+        continue;
+      }
       await tx
         .update(aiBatchItems)
         .set(
@@ -700,22 +723,35 @@ async function closeBatch(db: Db, deps: BatchDeps, batch: BatchRow, entry: Batch
 }
 
 /**
- * Hands every item of the batch that failed for good to the entry's fail handler, in the caller's transaction; only
- * called by the transaction that wins the batch's close or expiry, so once per item.
+ * Hands items of the batch to the entry's fail handler, in the caller's transaction; only called by the transaction
+ * that wins the batch's transition (at least once per item, see `BatchFailHandler`):
+ * - `failed`: the items that failed for good (close, expiry);
+ * - `undistributed`: every item that will not be distributed any more because the batch is given up (run ended by an
+ *   admin, dead letter): failed, retried or pending ones and successful ones not yet distributed (billed all the same).
  */
-async function reportFailedItems(tx: Db, batch: BatchRow, entry: BatchHandlerEntry | undefined): Promise<void> {
+async function reportFailedItems(
+  tx: Db,
+  batch: BatchRow,
+  entry: BatchHandlerEntry | undefined,
+  scope: "failed" | "undistributed" = "failed",
+  reason?: string,
+): Promise<void> {
   if (!entry?.fail) return;
+  const which =
+    scope === "failed"
+      ? eq(aiBatchItems.status, "failed")
+      : sql`(${aiBatchItems.status} <> 'succeeded' or ${aiBatchItems.distributedAt} is null)`;
   const failed = await tx
     .select()
     .from(aiBatchItems)
-    .where(and(eq(aiBatchItems.batchId, batch.id), eq(aiBatchItems.status, "failed")))
+    .where(and(eq(aiBatchItems.batchId, batch.id), which))
     .orderBy(aiBatchItems.id);
   for (const item of failed) {
     await entry.fail(tx, {
       id: item.id,
       subjectType: item.subjectType,
       subjectId: item.subjectId,
-      error: item.error,
+      error: item.error ?? item.distributionError ?? reason ?? null,
       usage: { inputTokens: item.inputTokens ?? 0, outputTokens: item.outputTokens ?? 0 },
       costEur: Number(item.costEur ?? 0),
       batch: { id: batch.id, model: batch.model, promptVersion: batch.promptVersion, runId: batch.runId, stage: batch.stage },
@@ -920,7 +956,7 @@ async function bookFailedBatch(db: Db, deps: BatchDeps, batch: BatchRow, entry: 
 /**
  * A poll of a run an admin ended (ruling M4-C-R6): nothing is sent or distributed any more. An unsent batch fails; a
  * running one is cancelled at the provider and polled until it ended, then booked (what the provider billed) and
- * failed; a collected one fails.
+ * failed; a collected one fails. The items of a batch it fails go to the fail handler (`undistributed`).
  */
 async function pollEndedRun(db: Db, deps: BatchDeps, batch: BatchRow, entry: BatchHandlerEntry, n: number | undefined): Promise<PollResult> {
   if (batch.status === "submitted") {
@@ -930,11 +966,16 @@ async function pollEndedRun(db: Db, deps: BatchDeps, batch: BatchRow, entry: Bat
     if (collected.status === "in_progress") return scheduleNextPoll(db, deps, batch, n, "poll", entry);
     await storeResults(db, deps, batch, collected, "submitted");
   }
-  const failed = await db
-    .update(aiBatches)
-    .set({ status: "failed" })
-    .where(and(eq(aiBatches.id, batch.id), inArray(aiBatches.status, ["submitting", "sending", "ended"])))
-    .returning({ id: aiBatches.id });
+  const failed = await db.transaction(async (tx) => {
+    const rows = await tx
+      .update(aiBatches)
+      .set({ status: "failed" })
+      .where(and(eq(aiBatches.id, batch.id), inArray(aiBatches.status, ["submitting", "sending", "ended"])))
+      .returning();
+    // Nothing of it is distributed any more: every item that is not goes to the fail handler (ruling M4-G-R3).
+    if (rows[0]) await reportFailedItems(tx, rows[0], entry, "undistributed", ERROR_RUN_ENDED);
+    return rows;
+  });
   if (failed.length > 0) getLog().info({ batchId: batch.id, runId: batch.runId }, "run ended by admin, batch not distributed");
   return "failed";
 }
@@ -1017,9 +1058,11 @@ async function pollOnce(
  * Dead-letter branch for an `ai.batch.poll` job (ruling M4-P2), in the dead-letter transaction: fails the open batch
  * of the job's unit (the batch itself or its follow-up) and records the unit as failed, so the stage can finish.
  * A failed batch the provider may still bill keeps its reservation and gets a booking poll (ruling M4-C-R5).
- * A manual retry of the poll job revives the batch and, once distributed, turns the outcome into `done`.
+ * A manual retry of the poll job revives the batch and, once distributed, turns the outcome into `done`. With the
+ * handler table (passed in by the worker's composition root, ruling M4-P1), every item of a batch it fails that is not
+ * distributed goes to its task's fail handler (ruling M4-G-R3).
  */
-export async function failBatchUnit(tx: Db, boss: PgBoss, batchId: string): Promise<boolean> {
+export async function failBatchUnit(tx: Db, boss: PgBoss, batchId: string, handlers?: Record<string, BatchHandlerEntry>): Promise<boolean> {
   const [batch] = await tx.select().from(aiBatches).where(eq(aiBatches.id, batchId));
   if (!batch) return false;
   const failed = await tx
@@ -1038,6 +1081,7 @@ export async function failBatchUnit(tx: Db, boss: PgBoss, batchId: string): Prom
   if (failed.length === 0) return false;
   for (const f of failed) {
     if (f.providerBatchId !== null && f.endedAt === null) await enqueueBooking(boss, f.id, f.pollCount, 0, tx);
+    await reportFailedItems(tx, f, handlers?.[f.task], "undistributed", ERROR_DEAD_LETTER);
   }
   await settleUnit(tx, boss, batch, "failed");
   return true;
@@ -1047,9 +1091,14 @@ export async function failBatchUnit(tx: Db, boss: PgBoss, batchId: string): Prom
  * Dead-letter branch for a stage job (ruling M4-C-R6), in the dead-letter transaction: a batch of its unit
  * `batch:<key>` that was never sent (`submitting`, `sending`) fails, which ends its reservation, and the unit is
  * recorded as failed, so the stage can finish. A manual retry of the job revives and sends it. Returns whether a batch
- * failed.
+ * failed. With the handler table, its items go to their task's fail handler (as in `failBatchUnit`).
  */
-export async function failSubmitUnit(tx: Db, boss: PgBoss, job: { runId: string; stage: string; key: string }): Promise<boolean> {
+export async function failSubmitUnit(
+  tx: Db,
+  boss: PgBoss,
+  job: { runId: string; stage: string; key: string },
+  handlers?: Record<string, BatchHandlerEntry>,
+): Promise<boolean> {
   const failed = await tx
     .update(aiBatches)
     .set({ status: "failed" })
@@ -1063,6 +1112,7 @@ export async function failSubmitUnit(tx: Db, boss: PgBoss, job: { runId: string;
     )
     .returning();
   if (failed.length === 0) return false;
+  for (const f of failed) await reportFailedItems(tx, f, handlers?.[f.task], "undistributed", ERROR_DEAD_LETTER);
   await settleUnit(tx, boss, failed[0]!, "failed");
   getLog().warn({ runId: job.runId, stage: job.stage, key: job.key, batchId: failed[0]!.id }, "submit job failed, its unsent batch failed");
   return true;

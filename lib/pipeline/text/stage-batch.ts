@@ -36,6 +36,8 @@ export type StageBatchRequest = {
   remainderData: (ids: string[]) => Record<string, unknown>;
   /** A model replacing the task's configured one (an extraction run's model). */
   modelOverride?: string;
+  /** A prompt version replacing the task's configured one (an extraction run's). */
+  promptVersionOverride?: number;
 };
 
 /** Items of the job's batch unit (a retried job): those of its first batch, and every subject the unit covers. */
@@ -84,7 +86,15 @@ export async function submitStageJobBatch(
   const { job, task } = req;
   const existing = await unitItems(db, job);
   if (existing) {
-    await submitStageBatch(db, deps, { task, runId: job.runId, stage: job.stage, key: job.key, items: existing.first, modelOverride: req.modelOverride });
+    await submitStageBatch(db, deps, {
+      task,
+      runId: job.runId,
+      stage: job.stage,
+      key: job.key,
+      items: existing.first,
+      modelOverride: req.modelOverride,
+      promptVersionOverride: req.promptVersionOverride,
+    });
     const remainder = req.subjectIds.filter((id) => !existing.covered.has(id));
     await handOnRemainder(db, deps, req, remainder);
     return { submitted: existing.first.length, remainder: remainder.length, reused: true };
@@ -94,7 +104,7 @@ export async function submitStageJobBatch(
   if (items.length === 0) return { submitted: 0, remainder: 0, reused: false };
   const now = deps.now?.() ?? new Date();
   const headroom = await anthropicHeadroomEur(db, config, now, deps.reservationScope);
-  const costs = estimateBatchItemCostsEur(config, task, items.map((i) => i.input), req.modelOverride);
+  const costs = estimateBatchItemCostsEur(config, task, items.map((i) => i.input), req.modelOverride, req.promptVersionOverride);
   const n = sizeBatch(costs, headroom, config.models.batch.maxRequests);
   if (n === 0) {
     const budget = config.budgets.anthropic.dailyEur;
@@ -107,6 +117,7 @@ export async function submitStageJobBatch(
     key: job.key,
     items: items.slice(0, n),
     modelOverride: req.modelOverride,
+    promptVersionOverride: req.promptVersionOverride,
   });
   const remainder = items.slice(n).map((i) => i.subjectId);
   await handOnRemainder(db, deps, req, remainder);

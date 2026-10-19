@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { z } from "zod";
 import { join } from "node:path";
 import { and, eq, inArray } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
@@ -14,9 +15,9 @@ import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { aiBatches, aiBatchItems, extractionRuns, extractionUnits, facts, mentions, type GeoObjectType } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
-import { beginStage, createRun } from "@/lib/domain/runs";
+import { beginStage, createRun, endRun, recordJobOutcome } from "@/lib/domain/runs";
 import { tileIdFor } from "@/lib/domain/tiles";
-import { pollBatch, type BatchHandlerEntry } from "@/lib/pipeline/batches";
+import { failBatchUnit, pollBatch, type BatchHandlerEntry } from "@/lib/pipeline/batches";
 import {
   EXTRACT_STAGE,
   extractFactsBatchEntry,
@@ -149,7 +150,7 @@ describe("stage extraction.mention", () => {
       const kolona = s.mentions.filter((m) => m.geoObjectId === s.kolona).map((m) => m.id);
       expect(await statusOf(tx, kolona)).toEqual(["done", "done", "done"]);
       const [run] = await tx.select().from(extractionRuns).where(eq(extractionRuns.runId, runId));
-      expect(run).toMatchObject({ task: "extract-facts", model: "claude-sonnet-5-5", promptVersion: 1, factSchemaVersion: "v2", purpose: "regular" });
+      expect(run).toMatchObject({ task: "extract-facts", model: "claude-sonnet-5-5", promptVersion: 2, factSchemaVersion: "v2", purpose: "regular" });
       const units = await tx.select().from(extractionUnits).where(eq(extractionUnits.extractionRunId, run!.id));
       expect(units.map((u) => [u.geoObjectId, u.status, u.mentionIds.length])).toEqual([[s.kolona, "done", 3]]);
       expect(units[0]!.stats).toMatchObject({ proposed: 1, stored: 1 });
@@ -269,6 +270,7 @@ describe("stage extraction.mention", () => {
         duplicate: 0,
         poiMentions: 0,
         poiUnmatched: 0,
+        poiNameRejected: 0,
         overLimit: 0,
         costEur: 0.006,
         // three mentions (Kolona once, Limnionas twice) went to the model
@@ -300,6 +302,10 @@ describe("stage extraction.mention", () => {
       const [run] = await tx.select().from(extractionRuns).where(eq(extractionRuns.runId, runId));
       const stats = await extractionRunStats(tx, run!.id);
       expect([stats.units, stats.done, stats.failed]).toEqual([2, 1, 1]);
+      // the failed unit's mentions are failed, not done (ruling M4-G-R3): only a reprocess extracts them again
+      const byObject = await tx.select({ o: mentions.geoObjectId, s: mentions.extractionStatus }).from(mentions).where(eq(mentions.documentVersionId, v.versionId));
+      expect(byObject.filter((m) => m.o === limnionas).map((m) => m.s)).toEqual(["failed"]);
+      expect(byObject.filter((m) => m.o === kolona).map((m) => m.s)).toEqual(["done"]);
     }));
 
   it("a reprocess run extracts done mentions again into a new extraction run", () =>
@@ -320,13 +326,17 @@ describe("stage extraction.mention", () => {
       expect(await statusOf(tx, s.mentions.filter((m) => m.geoObjectId === s.ermioni).map((m) => m.id))).toEqual(["skipped"]);
     }));
 
-  it("the batch runs on the extraction run's model, not on the one configured when the job runs", () =>
+  it("the batch runs on the extraction run's model and prompt version, not on those configured when the job runs", () =>
     withRollback(async (tx) => {
       const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
       const s = await scene(tx);
+      // planned on opus with prompt v1; when the job runs, sonnet and prompt v2 are configured
       const opus: AppConfig = {
         ...config,
-        models: { ...config.models, tasks: { ...config.models.tasks, "extract-facts": { ...config.models.tasks["extract-facts"]!, model: "claude-opus-5-5" } } },
+        models: {
+          ...config.models,
+          tasks: { ...config.models.tasks, "extract-facts": { ...config.models.tasks["extract-facts"]!, model: "claude-opus-5-5", promptVersion: 1 } },
+        },
       };
       const params = { documentVersionIds: [s.versionId] };
       const runId = await startRun(tx, params);
@@ -340,7 +350,7 @@ describe("stage extraction.mention", () => {
         { runId, stage: EXTRACT_STAGE, key: job!.key, extractionRunId: job!.extractionRunId as string, unitIds: job!.unitIds as string[] },
       );
       const [batch] = await tx.select().from(aiBatches).where(eq(aiBatches.runId, runId));
-      expect(batch!.model).toBe("claude-opus-5-5");
+      expect([batch!.model, batch!.promptVersion]).toEqual(["claude-opus-5-5", 1]);
       const [unit] = await tx.select().from(extractionUnits).where(eq(extractionUnits.id, (job!.unitIds as string[])[0]!));
       expect(unit!.status).toBe("submitted");
     }));
@@ -411,5 +421,205 @@ describe("stage extraction.mention", () => {
           .where(and(eq(mentions.documentVersionId, v.versionId), eq(mentions.extractionStatus, "pending")));
         expect(open, file).toEqual([]);
       }
+    }));
+  it("the cost of a unit and its run counts every billed attempt, also a retried first one", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      const s = await scene(tx);
+      let calls = 0;
+      const model = new MockModel(
+        {
+          "extract-facts": () => {
+            // the first answer is cut off at max_tokens: retryable, but billed
+            if (calls++ === 0) throw new MockBatchError("max_tokens", true, { usage: { ...ZERO_USAGE, inputTokens: 800, outputTokens: 16000 }, costEur: 0.002 });
+            return { facts: [holding] };
+          },
+        },
+        { itemCost: { usage: { ...ZERO_USAGE, inputTokens: 1000, outputTokens: 200 }, costEur: 0.003 } },
+      );
+      const params = { documentVersionIds: [s.versionId] };
+      const runId = await startRun(tx, params);
+      const { deps } = await runStage(tx, model, runId, now, params);
+      const all = await tx.select().from(aiBatches).where(eq(aiBatches.runId, runId)).orderBy(aiBatches.id);
+      expect(all.map((b) => b.status)).toEqual(["distributed", "submitted"]);
+      await pollBatch(tx, { ...deps, handlers: HANDLERS }, all[1]!.id);
+      const [run] = await tx.select().from(extractionRuns).where(eq(extractionRuns.runId, runId));
+      const [unit] = await tx.select().from(extractionUnits).where(eq(extractionUnits.extractionRunId, run!.id));
+      expect([unit!.status, unit!.inputTokens, unit!.outputTokens, Number(unit!.costEur)]).toEqual(["done", 1800, 16200, 0.005]);
+      const stats = await extractionRunStats(tx, run!.id);
+      expect([stats.costEur, stats.costPerMentionEur]).toEqual([0.005, 0.001667]);
+    }));
+
+  it("what the provider billed for an expired batch counts for its run", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      const s = await scene(tx);
+      const model = new MockModel(
+        { "extract-facts": () => ({ facts: [holding] }) },
+        { batchRounds: 1, itemCost: { usage: { ...ZERO_USAGE, inputTokens: 1000, outputTokens: 200 }, costEur: 0.004 } },
+      );
+      const params = { documentVersionIds: [s.versionId] };
+      const runId = await startRun(tx, params);
+      const { boss } = recordingBoss();
+      const [job] = await planExtraction(tx, { id: runId, params }, config);
+      await beginStage(tx, runId, EXTRACT_STAGE, 1);
+      const deps = { model, boss, config, now: () => now, reservationScope: { runIds: [runId] } };
+      await extractUnits(tx, deps, { runId, stage: EXTRACT_STAGE, key: job!.key, extractionRunId: job!.extractionRunId as string, unitIds: job!.unitIds as string[] });
+      const [batch] = await tx.select().from(aiBatches).where(eq(aiBatches.runId, runId));
+      // still running past maxHours: the batch expires and its unit fails, then the booking poll books what it billed
+      const late = new Date(now.getTime() + (config.models.batch.maxHours + 1) * 3_600_000);
+      const lateDeps = { ...deps, now: () => late, handlers: HANDLERS };
+      expect(await pollBatch(tx, lateDeps, batch!.id)).toBe("failed");
+      await pollBatch(tx, lateDeps, batch!.id, { mode: "book" });
+      const [item] = await tx.select().from(aiBatchItems).where(eq(aiBatchItems.batchId, batch!.id));
+      expect([item!.status, Number(item!.costEur)]).toEqual(["failed", 0.004]);
+      const stats = await extractionRunStats(tx, job!.extractionRunId as string);
+      expect([stats.failed, stats.costEur]).toEqual([1, 0.004]);
+      const kolona = s.mentions.filter((m) => m.geoObjectId === s.kolona).map((m) => m.id);
+      expect(await statusOf(tx, kolona)).toEqual(["failed", "failed", "failed"]);
+    }));
+
+  it("a batch of a run an admin ended fails its units with what they were billed", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      const s = await scene(tx);
+      const model = new MockModel(
+        { "extract-facts": () => ({ facts: [holding] }) },
+        { itemCost: { usage: { ...ZERO_USAGE, inputTokens: 1000, outputTokens: 200 }, costEur: 0.004 } },
+      );
+      const params = { documentVersionIds: [s.versionId] };
+      const runId = await startRun(tx, params);
+      const { boss } = recordingBoss();
+      const [job] = await planExtraction(tx, { id: runId, params }, config);
+      await beginStage(tx, runId, EXTRACT_STAGE, 1);
+      const deps = { model, boss, config, now: () => now, reservationScope: { runIds: [runId] } };
+      await extractUnits(tx, deps, { runId, stage: EXTRACT_STAGE, key: job!.key, extractionRunId: job!.extractionRunId as string, unitIds: job!.unitIds as string[] });
+      expect(await endRun(tx, runId, "admin")).toBe(true);
+      const [batch] = await tx.select().from(aiBatches).where(eq(aiBatches.runId, runId));
+      expect(await pollBatch(tx, { ...deps, handlers: HANDLERS }, batch!.id)).toBe("failed");
+      const [unit] = await tx.select().from(extractionUnits).where(eq(extractionUnits.extractionRunId, job!.extractionRunId as string));
+      expect([unit!.status, Number(unit!.costEur)]).toEqual(["failed", 0.004]);
+      expect(await tx.select().from(facts).where(eq(facts.extractionRunId, job!.extractionRunId as string))).toHaveLength(0);
+      const kolona = s.mentions.filter((m) => m.geoObjectId === s.kolona).map((m) => m.id);
+      expect(await statusOf(tx, kolona)).toEqual(["failed", "failed", "failed"]);
+    }));
+
+  it("a dead-lettered poll fails its units; a manual retry still completes them", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      const s = await scene(tx);
+      const model = new MockModel({ "extract-facts": () => ({ facts: [holding] }) });
+      const params = { documentVersionIds: [s.versionId] };
+      const runId = await startRun(tx, params);
+      const { boss } = recordingBoss();
+      const [job] = await planExtraction(tx, { id: runId, params }, config);
+      await beginStage(tx, runId, EXTRACT_STAGE, 1);
+      const deps = { model, boss, config, now: () => now, reservationScope: { runIds: [runId] } };
+      await extractUnits(tx, deps, { runId, stage: EXTRACT_STAGE, key: job!.key, extractionRunId: job!.extractionRunId as string, unitIds: job!.unitIds as string[] });
+      const [batch] = await tx.select().from(aiBatches).where(eq(aiBatches.runId, runId));
+      const unitStatus = async () => (await tx.select().from(extractionUnits).where(eq(extractionUnits.extractionRunId, job!.extractionRunId as string)))[0]!.status;
+      const kolona = s.mentions.filter((m) => m.geoObjectId === s.kolona).map((m) => m.id);
+      // the dead-letter branch gets the handler table from the worker's composition root
+      expect(await failBatchUnit(tx, boss, batch!.id, HANDLERS)).toBe(true);
+      expect(await unitStatus()).toBe("failed");
+      expect(await statusOf(tx, kolona)).toEqual(["failed", "failed", "failed"]);
+      // a manual retry of the poll revives the batch and distributes it: the unit and its mentions are done after all
+      expect(await pollBatch(tx, { ...deps, handlers: HANDLERS }, batch!.id)).toBe("distributed");
+      expect(await unitStatus()).toBe("done");
+      expect(await statusOf(tx, kolona)).toEqual(["done", "done", "done"]);
+    }));
+
+  it("units still open when the stage finishes fail with their mentions", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      const tile = await insertTestTile(tx, tileIdFor(21.0, 35.2));
+      const kolona = await insertNamedObject(tx, { type: "bay", names: [{ name: "Kolona" }], lon: 21.0, lat: 35.2, tiles: [tile] });
+      const limnionas = await insertNamedObject(tx, { type: "bay", names: [{ name: "Limnionas" }], lon: 21.02, lat: 35.2, tiles: [tile] });
+      const texts = ["Kolona has good holding in sand.", "x", "y", "Limnionas is quiet in the evening."];
+      const v = await insertTestVersion(tx, texts);
+      await mentionAll(tx, v, texts, kolona, "Kolona");
+      await mentionAll(tx, v, texts, limnionas, "Limnionas");
+      const model = new MockModel({ "extract-facts": () => ({ facts: [] }) });
+      const params = { documentVersionIds: [v.versionId] };
+      const runId = await startRun(tx, params);
+      const { boss } = recordingBoss();
+      const [job] = await planExtraction(tx, { id: runId, params }, config);
+      const units = await tx.select().from(extractionUnits).where(eq(extractionUnits.extractionRunId, job!.extractionRunId as string));
+      const lost = units.find((u) => u.geoObjectId === limnionas)!;
+      // its input cannot be built (a chunk is gone): the job leaves it out of its batch, it stays pending
+      await tx.update(extractionUnits).set({ chunkIds: [newId()] }).where(eq(extractionUnits.id, lost.id));
+      await beginStage(tx, runId, EXTRACT_STAGE, 1);
+      const deps = { model, boss, config, now: () => now, reservationScope: { runIds: [runId] } };
+      await extractUnits(tx, deps, { runId, stage: EXTRACT_STAGE, key: job!.key, extractionRunId: job!.extractionRunId as string, unitIds: job!.unitIds as string[] });
+      await recordJobOutcome(tx, runId, EXTRACT_STAGE, job!.key, "done");
+      const [batch] = await tx.select().from(aiBatches).where(eq(aiBatches.runId, runId));
+      await pollBatch(tx, { ...deps, handlers: HANDLERS }, batch!.id);
+      const after = await tx.select().from(extractionUnits).where(eq(extractionUnits.extractionRunId, job!.extractionRunId as string));
+      expect(Object.fromEntries(after.map((u) => [u.geoObjectId, u.status]))).toEqual({ [kolona]: "done", [limnionas]: "failed" });
+      expect(await statusOf(tx, lost.mentionIds)).toEqual(["failed"]);
+    }));
+
+  it("an answer that does not fit the output schema fails only its own unit", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      const tile = await insertTestTile(tx, tileIdFor(21.0, 35.2));
+      const kolona = await insertNamedObject(tx, { type: "bay", names: [{ name: "Kolona" }], lon: 21.0, lat: 35.2, tiles: [tile] });
+      const limnionas = await insertNamedObject(tx, { type: "bay", names: [{ name: "Limnionas" }], lon: 21.02, lat: 35.2, tiles: [tile] });
+      const texts = ["Kolona has good holding in sand.", "x", "y", "Limnionas is quiet in the evening."];
+      const v = await insertTestVersion(tx, texts);
+      await mentionAll(tx, v, texts, kolona, "Kolona");
+      await mentionAll(tx, v, texts, limnionas, "Limnionas");
+      const model = new MockModel({
+        "extract-facts": (input) =>
+          (input as ExtractFactsInput).object.name === "Limnionas"
+            ? { facts: "none" }
+            : { facts: [{ ...holding, quote: "Kolona has good holding in sand", chunk: 1 }] },
+      });
+      // collected without the schema check, so the stored output reaches the handler as it came
+      const loose: Record<string, BatchHandlerEntry> = {
+        "extract-facts": { ...extractFactsBatchEntry, task: { ...extractFactsBatchEntry.task, output: z.unknown() } },
+      };
+      const params = { documentVersionIds: [v.versionId] };
+      const runId = await startRun(tx, params);
+      const { boss } = recordingBoss();
+      const [job] = await planExtraction(tx, { id: runId, params }, config);
+      await beginStage(tx, runId, EXTRACT_STAGE, 1);
+      const deps = { model, boss, config, now: () => now, reservationScope: { runIds: [runId] } };
+      await extractUnits(tx, deps, { runId, stage: EXTRACT_STAGE, key: job!.key, extractionRunId: job!.extractionRunId as string, unitIds: job!.unitIds as string[] });
+      const [batch] = await tx.select().from(aiBatches).where(eq(aiBatches.runId, runId));
+      expect(await pollBatch(tx, { ...deps, handlers: loose }, batch!.id)).toBe("distributed");
+      const units = await tx.select().from(extractionUnits).where(eq(extractionUnits.extractionRunId, job!.extractionRunId as string));
+      expect(Object.fromEntries(units.map((u) => [u.geoObjectId, u.status]))).toEqual({ [kolona]: "done", [limnionas]: "failed" });
+      expect(await tx.select().from(facts).where(eq(facts.extractionRunId, job!.extractionRunId as string))).toHaveLength(1);
+      const items = await tx.select().from(aiBatchItems).where(eq(aiBatchItems.batchId, batch!.id));
+      expect(items.every((i) => i.distributedAt !== null && i.distributionError === null)).toBe(true);
+    }));
+
+  it("the prompt takes the fact limit from config and the attributes from the extraction run's schema version", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx);
+      const params = { documentVersionIds: [s.versionId] };
+      const runId = await startRun(tx, params);
+      const [job] = await planExtraction(tx, { id: runId, params }, config);
+      const unitId = (job!.unitIds as string[])[0]!;
+      const seven: AppConfig = { ...config, extraction: { ...config.extraction, maxFactsPerUnit: 7 } };
+      const taskConfig = config.models.tasks["extract-facts"]!;
+      const systemOf = async () => {
+        const p = buildParams(extractFactsTask, await unitInput(tx, unitId, seven), taskConfig, "claude-sonnet-5-5");
+        return (p.system as Array<{ text: string }>)[0]!.text;
+      };
+      const v2 = await systemOf();
+      expect(v2).toContain("At most 7 facts.");
+      expect(v2).not.toContain("At most 40");
+      expect(v2).toMatch(/^holding — /m);
+      // the rules of ruling M4-G-R4: names in the quote, no sector from a wind name, depths as stated
+      expect(v2).toContain("must appear in the fact's quote");
+      expect(v2).toContain("never turn it into a `shelter.<sector>` value");
+      expect(v2).toMatch(/^depth\.anchoring_min — Minimum depth in the anchor area, metres as stated in the text — /m);
+      expect(v2).toMatch(/^depth\.approach — [^\n]*only when the text gives these numbers explicitly/m);
+      expect(v2).not.toContain("below LAT");
+      // an extraction run planned on v1 keeps v1's attribute list, whatever is active now
+      await tx.update(extractionRuns).set({ factSchemaVersion: "v1" }).where(eq(extractionRuns.id, job!.extractionRunId as string));
+      expect(await systemOf()).not.toMatch(/^holding — /m);
     }));
 });

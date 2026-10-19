@@ -10,16 +10,20 @@ import { effectiveVersionMeta, plausibleDate } from "@/lib/domain/mentions/class
 import { findNameHits, type MatchHit, type NameForm } from "@/lib/domain/mentions/match";
 import { nameForms } from "@/lib/domain/mentions/ngrams";
 import { tileIdFor } from "@/lib/domain/tiles";
-import { locateQuote } from "./quote";
+import { locateQuote, normalizeForQuote } from "./quote";
+import { restoreUnitMentions } from "./unit-status";
 
 /*
  * Processing of an `extract-facts` answer (spec 06): "Ein Fact ohne wörtliches Zitat existiert nicht." Each proposed
  * fact is checked in order — value is JSON in the attribute's text format (`validateTextFact`), the quote is found
  * verbatim in a chunk of the unit (`locateQuote`, the stated chunk first) — and gets the unit's mention nearest to the
  * quote. Of an attribute proposed twice the more confident one stays. The kept facts are stored with the located quote
- * span (append-only, unique per mention, attribute and extraction run: a repeated answer adds nothing). A highlight
- * with a proper name becomes a mention of a gazetteer POI within `poiMatchRadiusM`, or an unmatched name with hint
- * `poi:<category>` that goes the way of new place names.
+ * span (append-only, unique per mention, attribute and extraction run: a repeated answer adds nothing). Values are
+ * checked against the fact schema version of the extraction run (frozen when it was planned, ruling M4-G-R3), not the
+ * one active when the answer arrives. A highlight's proper names (`poi_name` and every entry of `names`) count only
+ * when they occur in the quote (normalized like the quote check, ruling M4-G-R4): the others are dropped from the value
+ * and counted. Every name that counts becomes a mention of a gazetteer POI of the highlight's category within
+ * `poiMatchRadiusM`, or an unmatched name with hint `poi:<category>` that goes the way of new place names.
  */
 
 export type FactStats = {
@@ -31,6 +35,8 @@ export type FactStats = {
   duplicate: number;
   poiMentions: number;
   poiUnmatched: number;
+  /** Highlight names (`poi_name` or in `names`) dropped because the quote does not contain them. */
+  poiNameRejected: number;
   /** Facts beyond `maxFactsPerUnit`, not looked at. */
   overLimit: number;
 };
@@ -44,6 +50,7 @@ export const FACT_STAT_KEYS = [
   "duplicate",
   "poiMentions",
   "poiUnmatched",
+  "poiNameRejected",
   "overLimit",
 ] as const satisfies ReadonlyArray<keyof FactStats>;
 
@@ -75,8 +82,9 @@ type Kept = {
   mentionId: string;
   confidence: number;
   observedAt: string;
-  poiName: string | null;
 };
+
+type HighlightValue = { present: boolean; names: string[] };
 
 /** The quote in the stated chunk, else in the unit's other chunks in order; null when it is in none. */
 function locateInUnit(fact: ExtractedFact, unitChunks: UnitChunk[], cfg: AppConfig["extraction"]["quote"]): Located | null {
@@ -117,6 +125,43 @@ function nearestMention(located: Located, unitMentions: UnitMention[], ordinalOf
 
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
 
+/** Whether `name` occurs in `quote`, both normalized like the quote check (case kept, ruling M4-P21). */
+function nameInQuote(name: string, quote: string): boolean {
+  const n = normalizeForQuote(name).text.trim();
+  return n.length > 0 && normalizeForQuote(quote).text.includes(n);
+}
+
+/**
+ * The proper names of a kept highlight that the quote supports (ruling M4-G-R4): its `names` without those the quote
+ * does not contain (the value is changed accordingly) plus its `poi_name` when the quote contains it, once per
+ * normalized name; `rejected` counts the names dropped.
+ */
+function highlightNames(k: Kept): { names: string[]; rejected: number } {
+  const value = k.value as HighlightValue;
+  const kept = value.names.filter((name) => nameInQuote(name, k.fact.quote));
+  let rejected = value.names.length - kept.length;
+  if (rejected > 0) k.value = { ...value, names: kept };
+  const all = [...kept];
+  const poiName = k.fact.poi_name?.trim() ?? "";
+  if (poiName.length > 0) {
+    if (poiName.length <= MAX_POI_NAME && nameInQuote(poiName, k.fact.quote)) all.push(poiName);
+    else rejected++;
+  }
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const name of all) {
+    const key = normalizeName(name);
+    if (key.length === 0) {
+      rejected++;
+      continue;
+    }
+    if (seen.has(key)) continue;
+    seen.add(key);
+    names.push(name);
+  }
+  return { names, rejected };
+}
+
 /**
  * Validates, quote-checks and stores the facts of one answer for one extraction unit; returns its counters. Runs in the
  * caller's transaction (the batch handler's, which also marks the unit done). Storing is idempotent: the same answer
@@ -145,7 +190,18 @@ export async function processFactOutput(db: Db, unit: ProcessUnit, output: Extra
   if (unitMentions.length === 0) throw new Error(`extraction unit ${unit.id} has no mentions`);
   const ordinalOf = new Map(unitChunks.map((c) => [c.id, c.ordinal]));
   const meta = await effectiveVersionMeta(db, unit.documentVersionId);
-  const version = cfg.factSchema.version;
+  const [run] = await db
+    .select({
+      model: extractionRuns.model,
+      promptVersion: extractionRuns.promptVersion,
+      runId: extractionRuns.runId,
+      factSchemaVersion: extractionRuns.factSchemaVersion,
+    })
+    .from(extractionRuns)
+    .where(eq(extractionRuns.id, unit.extractionRunId));
+  if (!run) throw new Error(`extraction run ${unit.extractionRunId} does not exist`);
+  // The schema the prompt showed: the extraction run's, frozen at plan time (ruling M4-G-R3).
+  const version = run.factSchemaVersion;
 
   const kept = new Map<string, Kept>();
   for (const fact of considered) {
@@ -167,7 +223,6 @@ export async function processFactOutput(db: Db, unit: ProcessUnit, output: Extra
       stats.rejectedQuote++;
       continue;
     }
-    const poiName = fact.poi_name?.trim() ?? "";
     const candidate: Kept = {
       fact,
       value: checked.value,
@@ -175,13 +230,20 @@ export async function processFactOutput(db: Db, unit: ProcessUnit, output: Extra
       mentionId: nearestMention(located, unitMentions, ordinalOf),
       confidence: clamp01(fact.confidence),
       observedAt: plausibleDate(fact.observed_at, meta.fetchedAt, cfg.extraction.earliestDate, true) ?? meta.observedAt,
-      poiName: fact.attribute.startsWith(HIGHLIGHT) && poiName.length > 0 && poiName.length <= MAX_POI_NAME ? poiName : null,
     };
     const prev = kept.get(fact.attribute);
     if (prev) stats.duplicate++;
     if (!prev || candidate.confidence > prev.confidence) kept.set(fact.attribute, candidate);
   }
   if (kept.size === 0) return stats;
+
+  const highlights: Array<{ k: Kept; names: string[] }> = [];
+  for (const k of kept.values()) {
+    if (!k.fact.attribute.startsWith(HIGHLIGHT)) continue;
+    const { names, rejected } = highlightNames(k);
+    stats.poiNameRejected += rejected;
+    if (names.length > 0) highlights.push({ k, names });
+  }
 
   const stored = await db
     .insert(facts)
@@ -206,17 +268,12 @@ export async function processFactOutput(db: Db, unit: ProcessUnit, output: Extra
     .returning({ id: facts.id });
   stats.stored = stored.length;
 
-  const highlights = [...kept.values()].filter((k) => k.poiName !== null);
-  if (highlights.length > 0) {
-    const [run] = await db
-      .select({ model: extractionRuns.model, promptVersion: extractionRuns.promptVersion, runId: extractionRuns.runId })
-      .from(extractionRuns)
-      .where(eq(extractionRuns.id, unit.extractionRunId));
-    if (!run) throw new Error(`extraction run ${unit.extractionRunId} does not exist`);
-    for (const k of highlights) {
-      const poi = await matchPoi(db, unit.geoObjectId, k.poiName!, cfg);
+  for (const { k, names } of highlights) {
+    const category = k.fact.attribute.slice(HIGHLIGHT.length);
+    for (const name of names) {
+      const poi = await matchPoi(db, unit.geoObjectId, name, category, cfg);
       if (poi) {
-        await db
+        const inserted = await db
           .insert(mentions)
           .values({
             documentVersionId: unit.documentVersionId,
@@ -234,24 +291,30 @@ export async function processFactOutput(db: Db, unit: ProcessUnit, output: Extra
             extractionStatus: "done",
             runId: run.runId,
           })
-          .onConflictDoNothing();
-        stats.poiMentions++;
+          .onConflictDoNothing()
+          .returning({ id: mentions.id });
+        stats.poiMentions += inserted.length;
       } else {
-        const nameNormalized = normalizeName(k.poiName!);
-        if (nameNormalized.length === 0) continue;
-        await db
+        const hint = `poi:${category}`;
+        // The name may be unmatched in this chunk already (the matcher's row, hint null or a place word): it is a POI.
+        const written = await db
           .insert(unmatchedNames)
           .values({
-            nameNormalized,
-            displayName: k.poiName!,
-            hint: `poi:${k.fact.attribute.slice(HIGHLIGHT.length)}`,
+            nameNormalized: normalizeName(name),
+            displayName: name,
+            hint,
             documentVersionId: unit.documentVersionId,
             chunkId: k.located.chunk.id,
             sourceId: meta.sourceId,
             tileId: await objectTile(db, unit.geoObjectId),
           })
-          .onConflictDoNothing();
-        stats.poiUnmatched++;
+          .onConflictDoUpdate({
+            target: [unmatchedNames.nameNormalized, unmatchedNames.chunkId],
+            set: { hint },
+            setWhere: sql`${unmatchedNames.hint} is null or ${unmatchedNames.hint} not like 'poi:%'`,
+          })
+          .returning({ id: unmatchedNames.id });
+        stats.poiUnmatched += written.length;
       }
     }
   }
@@ -259,14 +322,16 @@ export async function processFactOutput(db: Db, unit: ProcessUnit, output: Extra
 }
 
 /**
- * The gazetteer POI a highlight's proper name means: a valid, unmerged `poi` object within `poiMatchRadiusM` of the
- * unit's object whose name matches exactly or with `similarity ≥ poiSimilarity` (`findNameHits`, so Greek names are
- * compared transliterated too); the best hit, or null.
+ * The gazetteer POI a highlight's proper name means: a valid, unmerged `poi` object of the highlight's category (or
+ * without a category) within `poiMatchRadiusM` of the unit's object whose name matches exactly or with
+ * `similarity ≥ poiSimilarity` (`findNameHits`, so Greek names are compared transliterated too); the best hit, or null.
+ * The highlight categories are the `poi_category` values, so a beach named like a nearby chapel finds the beach.
  */
 export async function matchPoi(
   db: Db,
   geoObjectId: string,
   name: string,
+  category: string,
   cfg: AppConfig,
 ): Promise<{ geoObjectId: string; similarity: number } | null> {
   const radius = cfg.extraction.poiMatchRadiusM;
@@ -277,6 +342,7 @@ export async function matchPoi(
       and ST_DWithin(o.geom::geography, a.geom::geography, ${radius})
     where a.id = ${geoObjectId}
       and o.merged_into_id is null
+      and (o.category::text = ${category} or o.category is null)
       and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
   `);
   if (rows.length === 0) return null;
@@ -315,8 +381,9 @@ async function objectTile(db: Db, geoObjectId: string): Promise<string | null> {
 }
 
 /**
- * Marks a unit done with its counters and the tokens and cost of its batch item (ruling M4-P9), in the transaction
- * that stored its facts; a unit already done keeps its first result. Returns whether it was marked.
+ * Marks a unit done with its counters and the tokens and cost billed for it (ruling M4-P9: every attempt, M4-G-R3),
+ * in the transaction that stored its facts; a unit already done keeps its first result. A unit that had failed before
+ * (completed by a revived batch) turns its mentions back to `done`. Returns whether it was marked.
  */
 export async function completeUnit(
   db: Db,
@@ -337,5 +404,6 @@ export async function completeUnit(
     })
     .where(sql`${extractionUnits.id} = ${unitId} and ${extractionUnits.status} <> 'done'`)
     .returning({ id: extractionUnits.id });
+  if (rows.length > 0) await restoreUnitMentions(db, unitId);
   return rows.length > 0;
 }

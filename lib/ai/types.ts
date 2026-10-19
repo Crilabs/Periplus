@@ -12,9 +12,10 @@ export type ModelTask<I, O> = {
 
 /**
  * Bookkeeping of a model call (the `external_calls` row gets `runId`, `stage`, `sourceId`) and an optional model
- * that replaces the configured one of the task (model comparison, ruling M4-P8).
+ * that replaces the configured one of the task (model comparison, ruling M4-P8), and likewise a prompt version (an
+ * extraction run keeps the one it was planned with, ruling M4-G-R3).
  */
-export type ModelCallContext = { runId?: string; stage?: string; sourceId?: string; model?: string };
+export type ModelCallContext = { runId?: string; stage?: string; sourceId?: string; model?: string; promptVersion?: number };
 
 /** Tokens of one answer; the cache counts are billed apart from `inputTokens` (ruling M4-P5). */
 export type ModelUsage = {

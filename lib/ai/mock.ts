@@ -14,11 +14,15 @@ import type {
 } from "./types";
 import { addUsage, ModelOutputInvalid, ZERO_USAGE } from "./types";
 
-/** Thrown by a registered response to make that batch item fail; `retryable` as the provider would report it. */
+/**
+ * Thrown by a registered response to make that batch item fail; `retryable` as the provider would report it, `billed`
+ * when the provider bills the failed answer (cut off at `max_tokens`, or not matching the schema).
+ */
 export class MockBatchError extends Error {
   constructor(
     message: string,
     readonly retryable: boolean,
+    readonly billed?: { usage: ModelUsage; costEur: number },
   ) {
     super(message);
     this.name = "MockBatchError";
@@ -70,7 +74,7 @@ export class MockModel implements ModelClient {
 
   private meta(taskName: string, ctx?: ModelCallContext): { model: string; promptVersion: number } {
     const cfg = getConfig().models.tasks[taskName];
-    return { model: ctx?.model ?? cfg?.model ?? "mock", promptVersion: cfg?.promptVersion ?? 1 };
+    return { model: ctx?.model ?? cfg?.model ?? "mock", promptVersion: ctx?.promptVersion ?? cfg?.promptVersion ?? 1 };
   }
 
   async call<I, O>(task: ModelTask<I, O>, input: I, ctx?: ModelCallContext): Promise<ModelResult<O>> {
@@ -117,7 +121,7 @@ export class MockModel implements ModelClient {
       try {
         answer = respond(input);
       } catch (error) {
-        if (error instanceof MockBatchError) return { customId, ok: false, error: error.message, retryable: error.retryable };
+        if (error instanceof MockBatchError) return { customId, ok: false, error: error.message, retryable: error.retryable, ...error.billed };
         return { customId, ok: false, error: (error as Error).message, retryable: false };
       }
       const parsed = task.output.safeParse(answer);
