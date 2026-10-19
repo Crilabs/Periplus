@@ -37,7 +37,8 @@ const fieldsSchema = taskFieldsSchema.extend({
 
 const approvalFieldsSchema = z.object({
   type: z.enum(DOC_TYPES),
-  weight: z.coerce.number().min(0).max(1),
+  // A blank field is invalid, never 0 (as on the source page).
+  weight: z.string().trim().min(1).pipe(z.coerce.number<string>().min(0).max(1)),
   changeRate: z.enum(changeRateEnum.enumValues),
 });
 
@@ -92,7 +93,7 @@ export async function approveSourceAction(formData: FormData): Promise<void> {
   const task = taskFields(formData);
   const values = approvalFieldsSchema.safeParse({
     type: formData.get("type"),
-    weight: formData.get("weight") || undefined,
+    weight: formData.get("weight") ?? "",
     changeRate: formData.get("changeRate"),
   });
   const invalid = values.success ? [] : values.error.issues.map((i) => String(i.path[0]));

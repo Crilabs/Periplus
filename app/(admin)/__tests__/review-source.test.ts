@@ -157,6 +157,15 @@ describe("approveSourceAction", () => {
       expect(task!.status).toBe("open");
     }));
 
+  it("a blank weight is invalid, not 0", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const { sourceId, taskId } = await proposal(tx);
+      await approveSourceAction(approveForm(taskId, { weight: "  " }));
+      expect(redirect).toHaveBeenCalledWith(`/review/${taskId}?invalid=weight`);
+      expect((await getSource(tx, sourceId))!.status).toBe("proposed");
+    }));
+
   it("a source that is no longer proposed redirects with an error", () =>
     withRollback(async (tx) => {
       currentDb = tx;
