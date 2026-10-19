@@ -8,7 +8,7 @@ import { segmentText, type Span } from "@/lib/domain/extraction/quote";
 export function AnnotatedText({ text, spans, className }: { text: string; spans: Span[]; className?: string }) {
   return (
     <span
-      className={`whitespace-pre-wrap [&_mark]:rounded-sm [&_mark]:px-0.5 [&_mark[data-kind~=mention]]:bg-amber-200 [&_mark[data-kind~=quote]]:bg-sky-200 [&_mark[data-kind=inactive_quote]]:bg-neutral-100 [&_mark[data-kind~=inactive_quote]]:border [&_mark[data-kind~=inactive_quote]]:border-dashed [&_mark[data-kind~=inactive_quote]]:border-neutral-400 [&_mark[data-kind=inactive_quote]]:text-neutral-500 ${className ?? ""}`}
+      className={`whitespace-pre-wrap [&_mark]:rounded-sm [&_mark]:px-0.5 [&_mark[data-kind~=mention]]:bg-amber-200 [&_mark[data-kind~=quote]]:bg-sky-200 [&_mark[data-kind~=inactive-quote]]:bg-neutral-100 [&_mark[data-kind~=inactive-quote]]:border [&_mark[data-kind~=inactive-quote]]:border-dashed [&_mark[data-kind~=inactive-quote]]:border-neutral-400 [&_mark[data-kind~=inactive-quote]]:text-neutral-500 ${className ?? ""}`}
     >
       {segmentText(text, spans).map((segment, i) =>
         segment.kinds.length === 0 ? (

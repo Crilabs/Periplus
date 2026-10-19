@@ -156,7 +156,7 @@ export async function versionAnnotations(db: Db, versionId: string, cfg: AppConf
         ...fs.map((f, i): Span => ({
           start: f.quote_start,
           end: f.quote_end,
-          kind: facts[i]!.active ? "quote" : "inactive_quote",
+          kind: facts[i]!.active ? "quote" : "inactive-quote",
           ref: f.id,
         })),
       ],
