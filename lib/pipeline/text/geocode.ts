@@ -72,8 +72,9 @@ async function knownNames(db: Db, names: string[], cfg: AppConfig): Promise<Set<
 
 /**
  * The name groups of the run: every (name, tile) of `unmatched_names` with a hint in one of the run's frozen versions,
- * counted over all its hints (documents and sources distinct), with ≥ `minDocuments` documents from ≥ `minSources`
- * sources. A name the gazetteer knows anywhere (outside the version's candidate space, or added since) is logged and
+ * counted over all its hints (documents and source domains distinct), with ≥ `minDocuments` documents from ≥
+ * `minSources` sources ("verschiedener Quellen": registrable domains, so an ended and re-created source of one domain
+ * counts once). A name the gazetteer knows anywhere (outside the version's candidate space, or added since) is logged and
  * left out. The groups are upserted into `name_candidates` (counters updated); returned are the candidates still
  * `collecting` without a decided task. Touches no review task while it holds candidate rows (ruling M4-P14).
  */
@@ -93,12 +94,13 @@ export async function collectNameCandidates(db: Db, runId: string, cfg: AppConfi
            mode() within group (order by u.display_name) as display_name,
            mode() within group (order by u.hint) filter (where u.hint is not null) as hint,
            count(distinct v.document_id)::int as documents,
-           count(distinct u.source_id)::int as sources
+           count(distinct s.domain)::int as sources
     from unmatched_names u
     join own on own.name_normalized = u.name_normalized and own.tile_id = u.tile_id
     join document_versions v on v.id = u.document_version_id
+    join sources s on s.id = u.source_id
     group by u.name_normalized, u.tile_id
-    having count(distinct v.document_id) >= ${minDocuments} and count(distinct u.source_id) >= ${minSources}
+    having count(distinct v.document_id) >= ${minDocuments} and count(distinct s.domain) >= ${minSources}
     order by u.name_normalized, u.tile_id
   `);
   const known = await knownNames(db, [...new Set(groups.map((g) => g.name_normalized))], cfg);

@@ -33,7 +33,7 @@ import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { candidateObjects, withNeighbours } from "@/lib/domain/mentions/scope";
 import {
   afterInQueue,
-  NAME_CANDIDATE_RING,
+  nameCandidateRing,
   newNameObjectType,
   nextOpenTask,
   QUEUE_ORDER,
@@ -392,7 +392,7 @@ async function nameCandidateSubject(db: Db, candidateId: string, context: Record
     : new Map<string, string>();
 
   // Same candidate space as a valid assign_name target in decideReviewTask.
-  const space = await candidateObjects(db, withNeighbours([candidate.tileId], NAME_CANDIDATE_RING));
+  const space = await candidateObjects(db, withNeighbours([candidate.tileId], nameCandidateRing()));
   const centre = sql`ST_Centroid(t.bbox)`;
   const { rows: objects } = space.length
     ? await db.execute<{ id: string; name: string | null; type: GeoObjectType; distance_m: number }>(sql`

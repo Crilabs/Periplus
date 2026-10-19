@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import {
@@ -20,6 +21,7 @@ import {
   type ReviewKind,
   type SourceStatus,
 } from "@/lib/db/schema";
+import { assignParentOf } from "@/lib/domain/gazetteer/hierarchy";
 import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
 import { addNames, isGreek, transliterateElot743, type NameDraft } from "@/lib/domain/gazetteer/names";
 import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
@@ -109,8 +111,9 @@ type Task = typeof reviewTasks.$inferSelect;
  * subject or target is not valid; nothing is written then. A `retry` calls `deps.retryJob` last, so a failed
  * retry rolls the decision back.
  *
- * A decision on a `name_candidate` (new name from texts) returns the document versions the name was found in
- * (`documentVersionIds`, for the rematch run of Task 17); every other decision returns none.
+ * A `create_place` or `assign_name` decision on a `name_candidate` (new name from texts) returns the current versions
+ * of the documents the name was found in (`documentVersionIds`, for the rematch run of Task 17); every other decision,
+ * including `reject`, returns none.
  *
  * Global lock order: the review task row first, then the subject row(s) (`lockPlace`, `lockSource`,
  * `lockNameCandidate`). Every transaction that locks both an open `place_candidate` task and its place
@@ -280,8 +283,12 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
   }
 }
 
-/** Ring of neighbour tiles around a name candidate's tile that forms its candidate space (spec 06: "plus deren 8 Nachbarn"). */
-export const NAME_CANDIDATE_RING = 1;
+/**
+ * Ring of neighbour tiles around a name candidate's tile that forms its candidate space (spec 06: "plus deren 8
+ * Nachbarn"): the matcher's `neighbourRing` from `config/mentions.json`, so the decision, the review view and the
+ * matcher share one candidate space.
+ */
+export const nameCandidateRing = (): 1 | 2 => getConfig().mentions.neighbourRing;
 
 /** Geo object types a new name may create. */
 const HINT_TYPES: Record<string, GeoObjectType> = {
@@ -314,10 +321,12 @@ const PLACE_TYPES: readonly GeoObjectType[] = ["bay", "harbour"];
 /**
  * Applies a decision on a name candidate (after the task row, the candidate row is locked): `create_place` creates the
  * geo object (type by `newNameObjectType`, origin `text`) with the given name (origin `text`; a missing German name
- * gets the name, Greek transliterated, as `de` fallback), links it to the tiles it lies in and, for a bay or harbour,
- * creates a confirmed place with a public id; `assign_name` adds the candidate's name (origin `review`) to a valid
- * object of the candidate space (the tile and its neighbours); `reject` only decides the candidate. Returns the document
- * versions the name was found in.
+ * gets the name, Greek transliterated, as `de` fallback), links it to the tiles it lies in, gives it its parent by
+ * the gazetteer's hierarchy rule (`assignParentOf`, after the task and candidate locks) and, for a bay or harbour,
+ * creates a confirmed place with a public id (its geometry and restriction check follow in the next geometry run of
+ * its area); `assign_name` adds the candidate's name (origin `review`) to a valid object of the candidate space (the
+ * tile and its neighbours); `reject` only decides the candidate. After `create_place` or `assign_name`, returns the
+ * current versions of the active documents the name was found in (for the rematch); after `reject`, none.
  */
 async function applyNameDecision(tx: Db, task: Task, decision: ReviewDecision): Promise<string[]> {
   const candidate = await lockNameCandidate(tx, task.subjectId);
@@ -337,6 +346,7 @@ async function applyNameDecision(tx: Db, task: Task, decision: ReviewDecision): 
         select t.id, o.id from tiles t join geo_objects o on o.geom && t.bbox and ST_Intersects(t.bbox, o.geom)
         where o.id = ${created.id} and t.valid_to is null
         on conflict do nothing`);
+      await assignParentOf(tx, created.id);
       if (PLACE_TYPES.includes(type)) {
         await tx.insert(places).values({
           geoObjectId: created.id,
@@ -350,7 +360,7 @@ async function applyNameDecision(tx: Db, task: Task, decision: ReviewDecision): 
       break;
     }
     case "assign_name": {
-      const space = await candidateObjects(tx, withNeighbours([candidate.tileId], NAME_CANDIDATE_RING));
+      const space = await candidateObjects(tx, withNeighbours([candidate.tileId], nameCandidateRing()));
       if (!space.includes(decision.geoObjectId)) {
         throw new DecisionNotAllowed(`geo object ${decision.geoObjectId} is not valid or not in the candidate space of ${candidate.tileId}`);
       }
@@ -358,14 +368,21 @@ async function applyNameDecision(tx: Db, task: Task, decision: ReviewDecision): 
       break;
     }
     case "reject":
-      break;
+      await tx.update(nameCandidates).set({ status: "decided" }).where(eq(nameCandidates.id, candidate.id));
+      return [];
     default:
       throw new DecisionNotAllowed(`action ${decision.action} does not fit a name candidate`);
   }
   await tx.update(nameCandidates).set({ status: "decided" }).where(eq(nameCandidates.id, candidate.id));
+  // The current version of each active document that carried the name in this tile (a superseded version is no
+  // rematch target).
   const { rows } = await tx.execute<{ id: string }>(sql`
-    select distinct document_version_id as id from unmatched_names
-    where name_normalized = ${candidate.nameNormalized} and tile_id = ${candidate.tileId}
+    select distinct d.current_version_id as id
+    from unmatched_names u
+    join document_versions v on v.id = u.document_version_id
+    join documents d on d.id = v.document_id
+    where u.name_normalized = ${candidate.nameNormalized} and u.tile_id = ${candidate.tileId}
+      and d.status = 'active' and d.valid_to is null and d.current_version_id is not null
     order by id`);
   return rows.map((r) => r.id);
 }

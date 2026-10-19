@@ -166,6 +166,7 @@ Reihenfolge je Revier (Pilot: `saronic`, danach `argolic`), nach Gazetteer und S
 
 Neu rechnen:
 - **Neue Datensatzversion** (erneutes „Datensätze laden“ mit geänderten Daten, neuer Landpolygon-Import) oder **geänderte `config/geometry.json`** (dabei immer `rulesVersion` erhöhen, sonst gelten die alten Zeilen weiter): „Geometrie für Revier“ erneut starten. Nur Rechnungen mit geänderten Eingängen schreiben neue `computations`-Zeilen und Facts; Unverändertes bleibt stehen.
+- **Neuer Name aus Texten** (Review-Aufgabe „Neuer Name: …“, Entscheidung „Ort anlegen“): Der Ort entsteht bestätigt, aber ohne Geometrie; Geometrie und Ausschluss-Prüfung bekommt er erst im nächsten Lauf „Geometrie für Revier“ seines Reviers (liegt er in einem Ausschlussgebiet, entsteht dann eine Prüfaufgabe „Ortskandidat“).
 - Nach einer Änderung der Rechenlogik den Golden-Test lokal neu erzeugen und die Abweichungen prüfen: `UPDATE_GOLDEN=1 npx vitest run lib/pipeline/__tests__/geometry-golden.test.ts` (unter CI abgelehnt), dann `git diff test/fixtures/geometry/golden.json`.
 
 Ankerverbots-Gebiete pflegen:

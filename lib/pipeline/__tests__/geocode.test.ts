@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { externalCalls, nameCandidates, reviewTasks, unmatchedNames } from "@/lib/db/schema";
+import { externalCalls, nameCandidates, reviewTasks, sources, unmatchedNames } from "@/lib/db/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { newId } from "@/lib/domain/ids";
 import { createRun } from "@/lib/domain/runs";
@@ -115,6 +115,23 @@ describe("collectNameCandidates", () => {
       const runId = await textRun(tx, versions);
 
       expect(await collectNameCandidates(tx, runId, config)).toEqual([]);
+      expect(await candidateOf(tx, name)).toBeUndefined();
+    }));
+
+  it("an ended and re-created source of one domain counts as one source", () =>
+    withRollback(async (tx) => {
+      await insertTestTile(tx, TILE);
+      const name = ownName();
+      const ended = await insertTestSource(tx);
+      const [{ domain }] = (await tx.select({ domain: sources.domain }).from(sources).where(eq(sources.id, ended))) as [{ domain: string }];
+      await tx.update(sources).set({ validTo: "2026-10-01" }).where(eq(sources.id, ended));
+      const [recreated] = await tx
+        .insert(sources)
+        .values({ domain, name: "Test source again", type: "trip_report", weight: 0.6, crawlRules: { startUrls: [] }, origin: "manual" })
+        .returning({ id: sources.id });
+      const versions = await namedIn(tx, name, [ended, recreated!.id]);
+
+      expect(await collectNameCandidates(tx, await textRun(tx, versions), config)).toEqual([]);
       expect(await candidateOf(tx, name)).toBeUndefined();
     }));
 
