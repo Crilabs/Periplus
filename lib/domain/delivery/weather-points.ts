@@ -69,8 +69,9 @@ async function regionPoint(
     with r as (select ST_Transform(${geomFromGeoJson(polygon)}, ${srid}::int) as g),
     buf as (select b.g, ST_Transform(b.g, 4326) as g4326 from (select ST_Buffer(r.g, ${cfg.regionBufferNm * METRES_PER_NM}::float8) as g from r) b),
     land as (
-      -- cut in UTM, where the buffer's edges are straight: a cut in WGS84 would leave slivers of false water
-      select ST_Union(ST_Intersection(ST_Transform(l.geom, ${srid}::int), buf.g)) as g
+      -- cut in UTM, where the buffer's edges are straight: a cut in WGS84 would leave slivers of false water; only the
+      -- polygonal part of each cut (a row touching the buffer edge yields a line), so the union is never mixed
+      select ST_Union(ST_CollectionExtract(ST_Intersection(ST_Transform(l.geom, ${srid}::int), buf.g), 3)) as g
       from land_polygons l, buf
       where l.geom && buf.g4326 and ST_Intersects(l.geom, buf.g4326)
     ),

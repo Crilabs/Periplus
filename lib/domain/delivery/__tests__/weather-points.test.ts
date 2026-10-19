@@ -154,6 +154,21 @@ describe("buildWeatherPoints", () => {
     });
   });
 
+  it("a land row whose cut with the buffer is a line does not change the region point (polygonal parts only)", async () => {
+    await withRollback(async (tx) => {
+      const { input, result } = await build(tx);
+      const before = result.points.find((p) => p.kind === "region")!;
+      // a zero-area ring 1 nm off the island: its cut with the buffer is a line, the union a mixed collection
+      const flat = "POLYGON((21.05 35.13, 21.07 35.13, 21.05 35.13, 21.05 35.13))";
+      await tx.insert(landPolygons).values({ geom: sql`ST_GeomFromText(${flat}, 4326)`, datasetVersion: "test" });
+      const { rows } = await tx.execute<{ kind: string }>(sql`
+        select GeometryType(ST_Intersection(ST_GeomFromText(${flat}, 4326), ST_Buffer(ST_MakePoint(21.06, 35.13)::geography, 5000)::geometry)) as kind`);
+      expect(rows[0]!.kind).toBe("LINESTRING");
+      const after = (await buildWeatherPoints(tx, input)).points.find((p) => p.kind === "region")!;
+      expect(after).toEqual(before);
+    });
+  });
+
   it("points without water or without a name are left out", async () => {
     await withRollback(async (tx) => {
       const { f, input } = await build(tx);
