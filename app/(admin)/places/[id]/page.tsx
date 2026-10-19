@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
+import type { PlaceStatus } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 import { geoFacts } from "@/lib/domain/geo-facts";
 import { placeDetail } from "@/lib/domain/geo-view";
@@ -9,14 +10,36 @@ import { timelineView } from "@/lib/domain/profile-timeline";
 import { profileAttributeFacts, profileView } from "@/lib/domain/profile-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { PLACE_KIND_LABELS, PLACE_STATUS_LABELS, REVIEW_KIND_LABELS, runScopeError } from "../../_components/labels";
+import { MiniMap } from "../../_components/mini-map";
+import {
+  Badge,
+  Button,
+  DescriptionList,
+  EmptyState,
+  fmt,
+  Mono,
+  Notice,
+  PageHeader,
+  Panel,
+  TabNav,
+  TextLink,
+  type Tone,
+} from "../../_components/ui";
 import { recomputePlaceProfileAction } from "./actions";
 import { FactsTab } from "./facts-tab";
 import { GeometryTab } from "./geometry-tab";
 import { ProfileTab } from "./profile-tab";
 import { TimelineTab } from "./timeline-tab";
 
-const time = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
 const coord = (lat: number, lon: number) => `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+
+const PLACE_STATUS_TONES: Record<PlaceStatus, Tone> = {
+  candidate: "warn",
+  confirmed: "ok",
+  rejected: "neutral",
+  abandoned: "neutral",
+  no_anchoring: "danger",
+};
 
 /** Tabs of the place page (`?tab=`); later milestones add theirs. */
 const TABS = { overview: "Übersicht", geometry: "Geometrie", facts: "Facts", profile: "Profil", timeline: "Zeitachse" } as const;
@@ -44,34 +67,54 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
   const geometry = tab === "geometry" ? await placeGeometry(db, p.id) : null;
   const facts = tab === "facts" ? await geoFacts(db, p.geoObjectId, { runs }) : null;
   const attr = textParam.parse(sp.attr);
+  const active = !p.validTo && !p.mergedIntoId;
   return (
-    <div className="space-y-4 text-sm">
-      <h1 className="text-lg font-semibold">{p.name ?? p.id}</h1>
+    <>
+      <PageHeader
+        title={p.name ?? p.id}
+        back={p.tileId ? { href: `/tiles/${encodeURIComponent(p.tileId)}`, label: `Kachel ${p.tileId}` } : { href: "/map", label: "Karte" }}
+        meta={
+          <>
+            <Badge>{PLACE_KIND_LABELS[p.kind]}</Badge>
+            <Badge tone={PLACE_STATUS_TONES[p.status]} title={p.statusReason ?? undefined}>
+              {PLACE_STATUS_LABELS[p.status]}
+            </Badge>
+            {!active && <Badge tone="neutral">{p.mergedIntoId ? "Zusammengeführt" : "Nicht mehr gültig"}</Badge>}
+            <Mono title="Breite, Länge (WGS84)">{coord(p.position.lat, p.position.lon)}</Mono>
+            {task && (
+              <Link
+                href={`/review/${task.id}`}
+                className="inline-flex items-center gap-1 rounded-full bg-warn-soft px-2 py-0.5 text-xs font-medium text-warn ring-1 ring-warn/25 ring-inset hover:brightness-95"
+              >
+                Offene Prüfung: {REVIEW_KIND_LABELS[task.kind]}
+              </Link>
+            )}
+          </>
+        }
+        description="Ein Ankerplatz mit seinem Profil, den Facts, aus denen es entsteht, und der berechneten Geometrie."
+        actions={
+          active && (
+            <form action={recomputePlaceProfileAction}>
+              <input type="hidden" name="placeId" value={p.id} />
+              <Button title="Startet einen Konsolidierungslauf für diesen Ort: das Profil wird aus den aktuellen Facts neu gebildet.">
+                Profil neu berechnen
+              </Button>
+            </form>
+          )
+        }
+      />
       {error && (
-        <p role="alert" className="rounded bg-red-100 px-3 py-2">
+        <Notice tone="danger" className="mb-6">
           Lauf nicht gestartet: {error}
-        </p>
+        </Notice>
       )}
-      {task && (
-        <p className="rounded bg-amber-100 px-3 py-2">
-          Offene Prüfung:{" "}
-          <Link href={`/review/${task.id}`} className="underline">
-            {REVIEW_KIND_LABELS[task.kind]}
-          </Link>
-        </p>
-      )}
-      <nav aria-label="Reiter" className="flex gap-1 border-b border-neutral-300">
-        {(Object.keys(TABS) as Tab[]).map((t) => (
-          <Link
-            key={t}
-            href={t === "overview" ? `/places/${p.id}` : `/places/${p.id}?tab=${t}`}
-            aria-current={t === tab ? "page" : undefined}
-            className={`-mb-px border-b-2 px-3 py-1 ${t === tab ? "border-neutral-800 font-semibold" : "border-transparent hover:border-neutral-400"}`}
-          >
-            {TABS[t]}
-          </Link>
-        ))}
-      </nav>
+      <TabNav
+        items={(Object.keys(TABS) as Tab[]).map((t) => ({
+          href: t === "overview" ? `/places/${p.id}` : `/places/${p.id}?tab=${t}`,
+          label: TABS[t],
+          current: t === tab,
+        }))}
+      />
       {tab === "profile" ? (
         <ProfileTabView placeId={p.id} geoObjectId={p.geoObjectId} version={versionParam.parse(sp.version)} attr={attr} notice={textParam.parse(sp.notice)} runId={uuidParam.parse(sp.run)} confirm={textParam.parse(sp.confirm)} />
       ) : tab === "timeline" ? (
@@ -79,16 +122,11 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
       ) : facts ? (
         <FactsTab groups={facts} runs={runs} runsHref={(r) => `/places/${p.id}?tab=facts${r === "all" ? "&runs=all" : ""}`} />
       ) : geometry ? (
-        <GeometryTab
-          placeId={p.id}
-          position={p.position}
-          view={geometry}
-          editable={!p.validTo && !p.mergedIntoId}
-        />
+        <GeometryTab placeId={p.id} position={p.position} view={geometry} editable={active} />
       ) : (
         <Overview detail={detail} />
       )}
-    </div>
+    </>
   );
 }
 
@@ -135,75 +173,71 @@ async function TimelineTabView({ placeId, geoObjectId, version, asOf, attr, conf
 
 function Overview({ detail }: { detail: Detail }) {
   const p = detail.place;
+  const point: GeoJSON.FeatureCollection = {
+    type: "FeatureCollection",
+    features: [{ type: "Feature", geometry: { type: "Point", coordinates: [p.position.lon, p.position.lat] }, properties: { role: "subject" } }],
+  };
   return (
-    <>
-      <dl className="grid grid-cols-[8rem_1fr] gap-y-1">
-        <dt>Art</dt>
-        <dd>{PLACE_KIND_LABELS[p.kind]}</dd>
-        <dt>Status</dt>
-        <dd>{PLACE_STATUS_LABELS[p.status]}</dd>
-        <dt>Grund</dt>
-        <dd>{p.statusReason ?? "–"}</dd>
-        <dt>Position</dt>
-        <dd>{coord(p.position.lat, p.position.lon)}</dd>
-        <dt>Öffentliche ID</dt>
-        <dd className="font-mono text-xs">{p.publicId ?? "–"}</dd>
-        <dt>Kachel</dt>
-        <dd>
-          {p.tileId ? (
-            <Link href={`/tiles/${encodeURIComponent(p.tileId)}`} className="underline">
-              {p.tileId}
-            </Link>
-          ) : (
-            "–"
-          )}
-        </dd>
-        <dt>Geo-Objekt</dt>
-        <dd>
-          <Link href={`/geo/${p.geoObjectId}`} className="font-mono text-xs underline">
-            {p.geoObjectId}
-          </Link>
-        </dd>
-        {p.mergedIntoId && (
-          <>
-            <dt>Zusammengeführt in</dt>
-            <dd>
-              <Link href={`/places/${p.mergedIntoId}`} className="font-mono text-xs underline">
-                {p.mergedIntoId}
-              </Link>
-            </dd>
-          </>
-        )}
-        {p.validTo && (
-          <>
-            <dt>Gültig bis</dt>
-            <dd>{p.validTo}</dd>
-          </>
-        )}
-      </dl>
-      {!p.validTo && !p.mergedIntoId && (
-        <form action={recomputePlaceProfileAction}>
-          <input type="hidden" name="placeId" value={p.id} />
-          <button type="submit" className="rounded border border-neutral-400 px-3 py-1 hover:bg-neutral-100">
-            Profil neu berechnen
-          </button>
-        </form>
-      )}
+    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+      <Panel flush className="overflow-hidden [&_[aria-label=Kartenausschnitt]]:h-[24rem] lg:[&_[aria-label=Kartenausschnitt]]:h-[32rem]">
+        <MiniMap features={point} />
+      </Panel>
 
-      <section>
-        <h2 className="mb-1 font-semibold">Statusverlauf</h2>
-        {detail.statusHistory.length === 0 ? (
-          <p>Keine Statusänderungen.</p>
-        ) : (
-          <ul>
-            {detail.statusHistory.map((h) => (
-              <li key={h.changedAt.toISOString() + h.status}>
-                {PLACE_STATUS_LABELS[h.status]} → geändert am {time(h.changedAt)}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-    </>
+      <div className="space-y-6">
+        <Panel title="Eckdaten">
+          <DescriptionList
+            columns={1}
+            items={[
+              { label: "Statusgrund", value: p.statusReason ?? "–", hint: "Warum der Ort diesen Status hat" },
+              { label: "Position", value: <Mono>{coord(p.position.lat, p.position.lon)}</Mono> },
+              {
+                label: "Öffentliche ID",
+                value: p.publicId ? <Mono>{p.publicId}</Mono> : "–",
+                hint: "Kennung, unter der der Ort geliefert wird",
+              },
+              {
+                label: "Kachel",
+                value: p.tileId ? <TextLink href={`/tiles/${encodeURIComponent(p.tileId)}`}>{p.tileId}</TextLink> : "–",
+              },
+              {
+                label: "Geo-Objekt",
+                value: (
+                  <TextLink href={`/geo/${p.geoObjectId}`} title={p.geoObjectId} className="font-mono text-[0.8125rem]">
+                    {p.geoObjectId.slice(0, 8)}
+                  </TextLink>
+                ),
+                hint: "Namen, Erwähnungen und Hierarchie des Orts",
+              },
+              p.mergedIntoId && {
+                label: "Zusammengeführt in",
+                value: (
+                  <TextLink href={`/places/${p.mergedIntoId}`} title={p.mergedIntoId} className="font-mono text-[0.8125rem]">
+                    {p.mergedIntoId.slice(0, 8)}
+                  </TextLink>
+                ),
+              },
+              p.validTo && { label: "Gültig bis", value: p.validTo },
+            ]}
+          />
+        </Panel>
+
+        <Panel title="Statusverlauf" flush>
+          {detail.statusHistory.length === 0 ? (
+            <EmptyState title="Keine Statusänderungen.">Der Ort hat seinen Status seit der Anlage behalten.</EmptyState>
+          ) : (
+            <ol className="divide-y divide-line text-sm">
+              {detail.statusHistory.map((h) => (
+                <li key={h.changedAt.toISOString() + h.status} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                  <Badge tone={PLACE_STATUS_TONES[h.status]}>{PLACE_STATUS_LABELS[h.status]}</Badge>
+                  <span className="text-xs text-muted" title={fmt.dateTime(h.changedAt)}>
+                    {fmt.dateTime(h.changedAt)}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </Panel>
+      </div>
+    </div>
   );
 }

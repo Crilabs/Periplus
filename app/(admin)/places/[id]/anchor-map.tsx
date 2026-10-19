@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import { MiniMap } from "../../_components/mini-map";
+import { Button, cx } from "../../_components/ui";
 import { setAnchorAction, type SetAnchorResult } from "./actions";
 
 /**
@@ -45,47 +46,47 @@ export function AnchorMap({
   };
 
   return (
-    <div className="space-y-2">
-      <MiniMap
-        features={shown}
-        onPick={
-          editable
-            ? (lon, lat) => {
-                setPicked({ lon, lat });
-                setResult(null);
-              }
-            : undefined
-        }
-      />
+    <div className="space-y-3">
+      <div className="overflow-hidden rounded-md border border-line [&_[aria-label=Kartenausschnitt]]:h-[28rem] lg:[&_[aria-label=Kartenausschnitt]]:h-[36rem]">
+        <MiniMap
+          features={shown}
+          onPick={
+            editable
+              ? (lon, lat) => {
+                  setPicked({ lon, lat });
+                  setResult(null);
+                }
+              : undefined
+          }
+        />
+      </div>
       {editable && (
         <div className="flex flex-wrap items-center gap-3">
-          <span className="text-neutral-600">
+          <span className="text-sm text-muted">
             {picked
               ? `Vorschlag ${picked.lat.toFixed(5)}, ${picked.lon.toFixed(5)}`
               : "Klick in die Karte schlägt eine Ankerposition vor"}
           </span>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={!picked || pending}
-            className="rounded border border-neutral-400 px-3 py-1 hover:bg-neutral-100 disabled:opacity-50"
-          >
+          <Button type="button" variant="primary" size="sm" onClick={submit} disabled={!picked || pending}>
             Ankerposition übernehmen
-          </button>
+          </Button>
           {picked && (
-            <button type="button" onClick={() => setPicked(null)} className="underline">
+            <Button type="button" variant="ghost" size="sm" onClick={() => setPicked(null)}>
               Zurücksetzen
-            </button>
+            </Button>
           )}
         </div>
       )}
       {result && (
-        <p role={result.ok ? "status" : "alert"} className={result.ok ? "text-green-800" : "text-red-700"}>
+        <p
+          role={result.ok ? "status" : "alert"}
+          className={cx("rounded-md border px-3 py-2 text-sm", result.ok ? "border-ok/30 bg-ok-soft" : "border-danger/30 bg-danger-soft")}
+        >
           {result.ok ? result.message : result.error}
           {result.ok && result.runId && (
             <>
               {" "}
-              <Link href={`/runs/${result.runId}`} className="underline">
+              <Link href={`/runs/${result.runId}`} className="text-accent underline-offset-2 hover:underline">
                 Lauf ansehen
               </Link>
             </>

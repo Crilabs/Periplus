@@ -4,7 +4,7 @@
  */
 export function QuoteContext({ before, quote, after }: { before: string; quote: string; after: string }) {
   return (
-    <span className="whitespace-pre-wrap [&_mark]:rounded-sm [&_mark]:bg-sky-200 [&_mark]:px-0.5">
+    <span className="whitespace-pre-wrap [&_mark]:rounded-sm [&_mark]:bg-accent-soft [&_mark]:px-0.5 [&_mark]:text-ink [&_mark]:ring-1 [&_mark]:ring-accent/30">
       {before}
       <mark data-kind="quote">{quote}</mark>
       {after}

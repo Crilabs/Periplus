@@ -1,39 +1,69 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
+import type { RunStatus } from "@/lib/db/schema";
 import type { RunView } from "@/lib/domain/runs";
-import { RUN_KIND_LABELS, RUN_STATUS_LABELS } from "./labels";
+import { RUN_KIND_LABELS, RUN_STATUS_LABELS, SCOPE_TYPE_LABELS } from "./labels";
+import { Badge, EmptyState, fmt, Mono, numClass, Table, tdClass, thClass, trClass, type Tone } from "./ui";
 
-const date = (d: Date | null) => (d ? d.toISOString().slice(0, 19).replace("T", " ") : "–");
+export const RUN_STATUS_TONES: Record<RunStatus, Tone> = {
+  queued: "neutral",
+  running: "accent",
+  finished: "ok",
+  failed: "danger",
+};
 
-export function RunsTable({ runs }: { runs: RunView[] }) {
-  if (runs.length === 0) return <p>Keine Läufe.</p>;
+export function RunStatusBadge({ status }: { status: RunStatus }) {
+  return <Badge tone={RUN_STATUS_TONES[status]}>{RUN_STATUS_LABELS[status]}</Badge>;
+}
+
+const duration = (run: RunView, now: Date) => {
+  if (!run.startedAt) return "–";
+  const end = run.finishedAt ?? (run.status === "running" ? now : null);
+  return end ? fmt.duration(Math.max(0, Math.round((end.getTime() - run.startedAt.getTime()) / 1000))) : "–";
+};
+
+export function RunsTable({ runs, empty }: { runs: RunView[]; empty?: ReactNode }) {
+  if (runs.length === 0)
+    return (
+      <EmptyState title="Noch keine Läufe">
+        {empty ?? "Läufe entstehen, wenn eine Verarbeitung gestartet wird oder der Zeitplan sie anstößt."}
+      </EmptyState>
+    );
+  const now = new Date();
   return (
-    <table className="w-full text-left">
+    <Table>
       <thead>
-        <tr className="border-b border-neutral-300">
-          <th className="py-1 pr-4">Lauf</th>
-          <th className="pr-4">Art</th>
-          <th className="pr-4">Status</th>
-          <th className="pr-4">Gestartet</th>
-          <th className="pr-4">Von</th>
-          <th className="text-right">Kosten</th>
+        <tr>
+          <th className={thClass}>Lauf</th>
+          <th className={thClass}>Bereich</th>
+          <th className={thClass}>Status</th>
+          <th className={thClass}>Gestartet</th>
+          <th className={`${thClass} text-right`}>Dauer</th>
+          <th className={`${thClass} text-right`}>Kosten</th>
         </tr>
       </thead>
       <tbody>
         {runs.map((run) => (
-          <tr key={run.id} className="border-b border-neutral-200">
-            <td className="py-1 pr-4">
-              <Link href={`/runs/${run.id}`} className="underline">
-                {run.id.slice(0, 8)}
-              </Link>
+          <tr key={run.id} className={trClass}>
+            <td className={tdClass}>
+              <Link href={`/runs/${run.id}`} className="font-medium text-accent hover:underline">
+                {RUN_KIND_LABELS[run.kind]}
+              </Link>{" "}
+              <Mono title={run.id}>{run.id.slice(0, 8)}</Mono>
+              <div className="text-xs text-muted">von {run.triggeredBy}</div>
             </td>
-            <td className="pr-4">{RUN_KIND_LABELS[run.kind]}</td>
-            <td className="pr-4">{RUN_STATUS_LABELS[run.status]}</td>
-            <td className="pr-4">{date(run.startedAt)}</td>
-            <td className="pr-4">{run.triggeredBy}</td>
-            <td className="text-right">{run.costEur.toFixed(4)} €</td>
+            <td className={tdClass}>{SCOPE_TYPE_LABELS[run.scope.type]}</td>
+            <td className={tdClass}>
+              <RunStatusBadge status={run.status} />
+            </td>
+            <td className={`${tdClass} whitespace-nowrap`} title={fmt.dateTime(run.startedAt)}>
+              {fmt.ago(run.startedAt, now)}
+            </td>
+            <td className={`${tdClass} ${numClass}`}>{duration(run, now)}</td>
+            <td className={`${tdClass} ${numClass}`}>{fmt.eur(run.costEur, run.costEur > 0 && run.costEur < 0.01 ? 4 : 2)}</td>
           </tr>
         ))}
       </tbody>
-    </table>
+    </Table>
   );
 }

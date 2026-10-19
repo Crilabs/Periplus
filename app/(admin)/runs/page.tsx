@@ -3,8 +3,10 @@ import { getDb } from "@/lib/db/client";
 import { listRuns } from "@/lib/domain/runs";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { AutoRefresh } from "../_components/auto-refresh";
+import { Dialog } from "../_components/dialog";
 import { runScopeError } from "../_components/labels";
 import { RunsTable } from "../_components/runs-table";
+import { Button, cx, inputClass, Notice, PageHeader, Panel } from "../_components/ui";
 import {
   startDatasetImportAction,
   startGazetteerAction,
@@ -15,8 +17,65 @@ import {
   startTextRunAction,
 } from "./actions";
 
-const BUTTON = "rounded border border-neutral-400 px-3 py-1 hover:bg-neutral-100";
-const SELECT = "rounded border border-neutral-400 px-2 py-1";
+type AreaRun = {
+  id: string;
+  name: string;
+  description: string;
+  action: (input: FormData) => Promise<void>;
+  button: string;
+};
+
+/** The area runs of the start dialog, in pipeline order; each says what it does and what it needs first. */
+const AREA_RUNS: AreaRun[] = [
+  {
+    id: "gazetteer",
+    name: "Gazetteer",
+    description:
+      "Legt die Kacheln des Reviers an und sammelt Inseln, Buchten, Häfen, Orte und POIs aus OSM, Wikidata und GeoNames. Erster Lauf für ein neues Revier.",
+    action: startGazetteerAction,
+    button: "Gazetteer aufbauen",
+  },
+  {
+    id: "seed",
+    name: "Seed",
+    description:
+      "Legt aus Buchten, Häfen und Marinas der Küstenkacheln Ortskandidaten an. Braucht einen Gazetteer-Lauf für das Revier.",
+    action: startSeedAction,
+    button: "Seed für Revier",
+  },
+  {
+    id: "datasets",
+    name: "Datensätze",
+    description:
+      "Lädt Tiefendaten, Meeresboden, Sperrgebiete, Schiffsdichte, Straßen und Wikipedia-Verweise für das Revier. Braucht die Küstenkacheln aus dem Gazetteer-Lauf.",
+    action: startDatasetImportAction,
+    button: "Datensätze laden",
+  },
+  {
+    id: "geometry",
+    name: "Geometrie",
+    description:
+      "Berechnet je Ort Fetch, Schutz je Sektor, Öffnung zur See und Schwell und aktualisiert danach Profil und Zusammenfassung. Braucht Tiefendaten und Landpolygone (Datensätze laden).",
+    action: startGeometryAction,
+    button: "Geometrie für Revier",
+  },
+  {
+    id: "texts",
+    name: "Texte",
+    description:
+      "Wertet die Texte aus, die Objekte des Reviers erwähnen, dazu die noch offenen Versionen ihrer Quellen: Erwähnungen zuordnen, Facts mit Zitat extrahieren, Belegtreue prüfen, konsolidieren. Nach neuen oder geänderten Quellen.",
+    action: startTextRunAction,
+    button: "Texte auswerten für Revier",
+  },
+  {
+    id: "reprocess",
+    name: "Reprozessieren",
+    description:
+      "Extrahiert jede Erwähnung im Revier erneut mit dem aktuell konfigurierten Modell, Prompt und Fact-Schema in einen neuen Extraktionslauf; die alten Facts bleiben. Nach einer Änderung an Modell, Prompt oder Schema.",
+    action: startReprocessAction,
+    button: "Reprozessieren für Revier (Stufen 6–7)",
+  },
+];
 
 export default async function Page({ searchParams }: PageProps<"/runs">) {
   await requireAdmin();
@@ -29,85 +88,79 @@ export default async function Page({ searchParams }: PageProps<"/runs">) {
     </option>
   ));
   return (
-    <div className="space-y-4 text-sm">
+    <>
       <AutoRefresh intervalMs={5000} />
-      <h1 className="text-lg font-semibold">Läufe</h1>
+      <PageHeader
+        title="Läufe"
+        description="Jede Verarbeitung ist ein Lauf aus Stufen. Hier lassen sich Läufe für ein Revier starten und die letzten 50 verfolgen; die Seite aktualisiert sich alle fünf Sekunden."
+        actions={
+          <>
+            <form
+              action={startPingRun}
+              className="flex items-center gap-2"
+              title="Testlauf ohne externe Dienste: prüft, ob der Worker Jobs annimmt und abschließt."
+            >
+              <label htmlFor="count" className="text-xs text-muted">
+                Anzahl Pings
+              </label>
+              <input
+                id="count"
+                name="count"
+                type="number"
+                min={1}
+                max={50}
+                defaultValue={3}
+                required
+                className={cx(inputClass, "w-16")}
+              />
+              <Button type="submit">Ping-Lauf starten</Button>
+            </form>
+            <Dialog
+              trigger="Lauf starten …"
+              triggerVariant="primary"
+              title="Lauf starten"
+              description="Die Läufe bauen in dieser Reihenfolge aufeinander auf. Fehlt eine Voraussetzung, startet der Lauf nicht und die Seite sagt, was fehlt."
+              wide
+            >
+              <ol className="divide-y divide-line">
+                {AREA_RUNS.map((run, i) => (
+                  <li key={run.id} className="grid gap-3 py-4 first:pt-0 last:pb-0 md:grid-cols-[1fr_auto] md:items-end">
+                    <div className="min-w-0">
+                      <h3 className="font-medium">
+                        <span className="mr-1.5 text-muted tabular-nums">{i + 1}.</span>
+                        {run.name}
+                      </h3>
+                      <p className="mt-0.5 leading-relaxed text-muted text-pretty">{run.description}</p>
+                    </div>
+                    <form action={run.action} className="flex flex-wrap items-end gap-2">
+                      <label htmlFor={`${run.id}-area`} className="sr-only">
+                        Revier
+                      </label>
+                      <select id={`${run.id}-area`} name="areaKey" required className={cx(inputClass, "min-w-40")}>
+                        {areaOptions}
+                      </select>
+                      <Button type="submit" variant="primary">
+                        {run.button}
+                      </Button>
+                    </form>
+                  </li>
+                ))}
+              </ol>
+            </Dialog>
+          </>
+        }
+      />
       {error && (
-        <p role="alert" className="rounded bg-red-100 px-3 py-2">
-          Lauf nicht gestartet: {error}
-        </p>
+        <Notice tone="danger" title="Lauf nicht gestartet" className="mb-6">
+          {error}.
+        </Notice>
       )}
-      <form action={startPingRun} className="flex items-center gap-2">
-        <label htmlFor="count">Anzahl Pings</label>
-        <input
-          id="count"
-          name="count"
-          type="number"
-          min={1}
-          max={50}
-          defaultValue={3}
-          required
-          className="w-20 rounded border border-neutral-400 px-2 py-1"
+      <Panel title="Letzte Läufe" description="Die 50 neuesten Läufe, neueste zuerst. Ein Klick auf einen Lauf zeigt Stufen, Fehler und Kosten." flush>
+        <RunsTable
+          runs={runs}
+          empty="Läufe entstehen über „Lauf starten …“ oder wenn eine Prüfung einen Folgelauf anstößt."
         />
-        <button type="submit" className={BUTTON}>
-          Ping-Lauf starten
-        </button>
-      </form>
-      <form action={startGazetteerAction} className="flex items-center gap-2">
-        <label htmlFor="gazetteer-area">Revier</label>
-        <select id="gazetteer-area" name="areaKey" required className={SELECT}>
-          {areaOptions}
-        </select>
-        <button type="submit" className={BUTTON}>
-          Gazetteer aufbauen
-        </button>
-      </form>
-      <form action={startSeedAction} className="flex items-center gap-2">
-        <label htmlFor="seed-area">Revier</label>
-        <select id="seed-area" name="areaKey" required className={SELECT}>
-          {areaOptions}
-        </select>
-        <button type="submit" className={BUTTON}>
-          Seed für Revier
-        </button>
-      </form>
-      <form action={startDatasetImportAction} className="flex items-center gap-2">
-        <label htmlFor="datasets-area">Revier</label>
-        <select id="datasets-area" name="areaKey" required className={SELECT}>
-          {areaOptions}
-        </select>
-        <button type="submit" className={BUTTON}>
-          Datensätze laden
-        </button>
-      </form>
-      <form action={startGeometryAction} className="flex items-center gap-2">
-        <label htmlFor="geometry-area">Revier</label>
-        <select id="geometry-area" name="areaKey" required className={SELECT}>
-          {areaOptions}
-        </select>
-        <button type="submit" className={BUTTON}>
-          Geometrie für Revier
-        </button>
-      </form>
-      <form action={startTextRunAction} className="flex items-center gap-2">
-        <label htmlFor="texts-area">Revier</label>
-        <select id="texts-area" name="areaKey" required className={SELECT}>
-          {areaOptions}
-        </select>
-        <button type="submit" className={BUTTON}>
-          Texte auswerten für Revier
-        </button>
-      </form>
-      <form action={startReprocessAction} className="flex items-center gap-2">
-        <label htmlFor="reprocess-area">Revier</label>
-        <select id="reprocess-area" name="areaKey" required className={SELECT}>
-          {areaOptions}
-        </select>
-        <button type="submit" className={BUTTON}>
-          Reprozessieren für Revier (Stufen 6–7)
-        </button>
-      </form>
-      <RunsTable runs={runs} />
-    </div>
+      </Panel>
+    </>
   );
 }

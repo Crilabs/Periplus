@@ -5,6 +5,22 @@ import { reviewKindEnum } from "@/lib/db/schema";
 import { listOpenTasks, reviewCounts } from "@/lib/domain/review-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { REVIEW_KIND_LABELS, RUN_NOT_STARTED_NOTICE } from "../_components/labels";
+import {
+  Badge,
+  ButtonLink,
+  cx,
+  EmptyState,
+  fmt,
+  Notice,
+  numClass,
+  PageHeader,
+  Panel,
+  Table,
+  tdClass,
+  thClass,
+  trClass,
+} from "../_components/ui";
+import { REVIEW_KIND_HELP } from "./kinds";
 
 const PAGE_SIZE = 50;
 const querySchema = z.object({
@@ -12,7 +28,36 @@ const querySchema = z.object({
   before: z.uuid().optional().catch(undefined),
   notice: z.literal("run_not_started").optional().catch(undefined),
 });
-const time = (d: Date) => d.toISOString().slice(0, 16).replace("T", " ");
+
+/** Like FilterChips, but each chip's accessible name is "<Art>: <Zahl>" and the count keeps its test id. */
+function KindChips({ items }: { items: Array<{ href: string; label: string; count: number; current: boolean; testId?: string }> }) {
+  return (
+    <ul aria-label="Offene Aufgaben je Art" className="flex flex-wrap gap-2">
+      {items.map((item) => (
+        <li key={item.href}>
+          <Link
+            href={item.href}
+            aria-label={`${item.label}: ${item.count}`}
+            aria-current={item.current ? "true" : undefined}
+            className={cx(
+              "inline-flex h-8 items-center gap-2 rounded-full border px-3 text-sm transition-colors",
+              item.current
+                ? "border-accent bg-accent-soft font-medium text-accent"
+                : item.count === 0
+                  ? "border-line bg-surface text-muted hover:border-line-strong"
+                  : "border-line bg-surface text-ink hover:border-line-strong",
+            )}
+          >
+            {item.label}
+            <span data-testid={item.testId} className={cx("tabular-nums", item.current ? "" : "text-muted")}>
+              {item.count}
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export default async function Page({ searchParams }: PageProps<"/review">) {
   await requireAdmin();
@@ -25,72 +70,107 @@ export default async function Page({ searchParams }: PageProps<"/review">) {
     tasks.length === PAGE_SIZE
       ? `/review?${new URLSearchParams({ ...(kind ? { kind } : {}), before: tasks.at(-1)!.id })}`
       : null;
+  const now = new Date();
 
   return (
-    <div className="space-y-4 text-sm">
-      <h1 className="text-lg font-semibold">Prüfen</h1>
-      {notice && (
-        <p role="status" className="rounded bg-amber-100 px-3 py-2">
-          {RUN_NOT_STARTED_NOTICE}
-        </p>
-      )}
-      <ul aria-label="Offene Aufgaben je Art" className="flex flex-wrap gap-x-4 gap-y-1">
-        <li>
-          <Link href={filter()} className={kind ? "hover:underline" : "font-semibold"}>
-            Alle: {total}
-          </Link>
-        </li>
-        {reviewKindEnum.enumValues.map((k) => (
-          <li key={k}>
-            <Link href={filter(k)} className={kind === k ? "font-semibold" : "hover:underline"}>
-              {REVIEW_KIND_LABELS[k]}: <span data-testid={`count-${k}`}>{counts[k]}</span>
-            </Link>
-          </li>
-        ))}
-      </ul>
-
-      {tasks.length === 0 ? (
-        <p>Keine offenen Aufgaben.</p>
-      ) : (
-        <>
-          <p>
-            <Link href={`/review/${tasks[0]!.id}`} className="underline">
+    <>
+      <PageHeader
+        title="Prüfen"
+        description="Aufgaben, die die Pipeline nicht allein entscheiden darf. Jede Aufgabe zeigt oben die Entscheidung und darunter die Belege; auf der Aufgabe entscheiden die Tasten 1–4, n springt zur nächsten."
+        actions={
+          tasks.length > 0 && (
+            <ButtonLink href={`/review/${tasks[0]!.id}`} variant="primary">
               Erste Aufgabe bearbeiten
-            </Link>
-          </p>
-          <table className="w-full text-left">
-            <thead>
-              <tr className="border-b border-neutral-300">
-                <th className="py-1 pr-4">Art</th>
-                <th className="pr-4">Gegenstand</th>
-                <th className="pr-4">Priorität</th>
-                <th>Erstellt</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.map((t) => (
-                <tr key={t.id} className="border-b border-neutral-200">
-                  <td className="py-1 pr-4">{REVIEW_KIND_LABELS[t.kind]}</td>
-                  <td className="pr-4">
-                    <Link href={`/review/${t.id}`} className="underline">
-                      {t.name ?? t.subjectId}
-                    </Link>
-                  </td>
-                  <td className="pr-4">{t.priority}</td>
-                  <td className="whitespace-nowrap">{time(t.createdAt)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {more && (
-            <p>
-              <Link href={more} className="underline">
-                Weitere
-              </Link>
-            </p>
-          )}
-        </>
+            </ButtonLink>
+          )
+        }
+      />
+
+      {notice && (
+        <Notice tone="warn" className="mb-4">
+          {RUN_NOT_STARTED_NOTICE}
+        </Notice>
       )}
-    </div>
+
+      <div className="mb-4">
+        <KindChips
+          items={[
+            { href: filter(), label: "Alle", count: total, current: !kind },
+            ...reviewKindEnum.enumValues.map((k) => ({
+              href: filter(k),
+              label: REVIEW_KIND_LABELS[k],
+              count: counts[k],
+              current: kind === k,
+              testId: `count-${k}`,
+            })),
+          ]}
+        />
+      </div>
+
+      <Panel
+        title={kind ? REVIEW_KIND_LABELS[kind] : "Offene Aufgaben"}
+        description={
+          kind ? REVIEW_KIND_HELP[kind] : "Höchste Priorität zuerst, bei gleicher Priorität die älteste Aufgabe."
+        }
+        flush
+      >
+        {tasks.length === 0 ? (
+          <EmptyState title="Keine offenen Aufgaben.">
+            {before
+              ? "Nach dieser Stelle der Liste kommt nichts mehr."
+              : "Neue Aufgaben entstehen, sobald ein Lauf etwas findet, das er nicht allein entscheiden darf."}
+          </EmptyState>
+        ) : (
+          <>
+            <Table>
+              <thead>
+                <tr>
+                  <th className={thClass}>Gegenstand</th>
+                  {!kind && <th className={thClass}>Art</th>}
+                  <th className={cx(thClass, "text-right")} title="Höhere Priorität kommt früher in der Warteschlange">
+                    Priorität
+                  </th>
+                  <th className={cx(thClass, "text-right")}>Erstellt</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tasks.map((t) => (
+                  <tr key={t.id} className={trClass}>
+                    <td className={tdClass}>
+                      <Link
+                        href={`/review/${t.id}`}
+                        className={cx(
+                          "text-accent underline-offset-2 hover:underline",
+                          t.name === null ? "font-mono text-[0.8125rem] break-all" : "font-medium",
+                        )}
+                      >
+                        {t.name ?? t.subjectId}
+                      </Link>
+                    </td>
+                    {!kind && (
+                      <td className={tdClass}>
+                        <Badge>{REVIEW_KIND_LABELS[t.kind]}</Badge>
+                      </td>
+                    )}
+                    <td className={cx(tdClass, numClass)}>{t.priority}</td>
+                    <td className={cx(tdClass, numClass, "text-muted")}>
+                      <span title={fmt.dateTime(t.createdAt)}>{fmt.ago(t.createdAt, now)}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+            {more && (
+              <div className="flex items-center justify-between gap-3 border-t border-line px-4 py-3 text-sm text-muted">
+                <span>Die ersten {PAGE_SIZE} Aufgaben ab dieser Stelle.</span>
+                <ButtonLink href={more} size="sm">
+                  Weitere
+                </ButtonLink>
+              </div>
+            )}
+          </>
+        )}
+      </Panel>
+    </>
   );
 }

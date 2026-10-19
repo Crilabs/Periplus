@@ -5,9 +5,11 @@ export default function AdminLayout({ children }: LayoutProps<"/">) {
   return (
     <>
       <Nav />
-      <div className="flex-1 p-6">
-        <Suspense>{children}</Suspense>
-      </div>
+      <main className="min-w-0 lg:pl-56">
+        <div className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
+          <Suspense>{children}</Suspense>
+        </div>
+      </main>
     </>
   );
 }
