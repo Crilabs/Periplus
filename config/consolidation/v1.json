@@ -44,6 +44,12 @@
     }
   },
   "profileConfidence": { "shelter": 0.4, "depth": 0.25, "seabed": 0.2, "exclude": 0.15 },
+  "profileConfidenceGroups": {
+    "shelter": ["shelter.*"],
+    "depth": ["depth.min", "depth.max", "depth.anchoring_min", "depth.anchoring_max"],
+    "seabed": ["seabed"],
+    "exclude": ["prohibitions"]
+  },
   "quietness": {
     "settlementFullM": 2000,
     "roadFullM": 1000,
@@ -65,7 +71,7 @@
     "maxSpotIds": 50
   },
   "severity": {
-    "safety": ["exclude", "max_draft", "max_length", "hazards", "prohibitions", "depth.*"],
+    "safety": ["exclude", "max_draft", "max_length", "hazards", "restricted_zones", "prohibitions", "depth.*"],
     "shelterDelta": 0.2,
     "notable": ["services.*", "highlight.*", "occupancy", "mooring.buoys"]
   },

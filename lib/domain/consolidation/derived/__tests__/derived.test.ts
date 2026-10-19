@@ -130,6 +130,13 @@ describe("profileConfidence", () => {
     expect(profileConfidence({ "shelter.N": prov(0.8), "shelter.S": prov(0.6), seabed: prov(0.4) }, cfg)).toBe(0.6);
     expect(profileConfidence({ holding: prov(0.9) }, cfg)).toBeNull();
   });
+
+  it("the attributes of each group come from the config (final review M-3)", () => {
+    const provenance = { "depth.min": prov(0.5), "depth.approach": prov(0.1) };
+    expect(profileConfidence(provenance, cfg)).toBe(0.5);
+    const wider = { ...cfg, profileConfidenceGroups: { ...cfg.profileConfidenceGroups, depth: ["depth.*"] } };
+    expect(profileConfidence(provenance, wider)).toBe(0.3);
+  });
 });
 
 describe("popularity", () => {

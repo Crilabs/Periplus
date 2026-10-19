@@ -685,6 +685,13 @@ export const consolidationSchema = z.strictObject({
     union: z.strictObject({ keys: z.record(attributePattern, z.array(z.string().min(1))) }),
   }),
   profileConfidence: weightSet(["shelter", "depth", "seabed", "exclude"]),
+  /** The attributes (keys or `<prefix>.*`) whose confidences each group of `profileConfidence` averages. */
+  profileConfidenceGroups: z.strictObject({
+    shelter: z.array(attributePattern).min(1),
+    depth: z.array(attributePattern).min(1),
+    seabed: z.array(attributePattern).min(1),
+    exclude: z.array(attributePattern).min(1),
+  }),
   quietness: z.strictObject({
     settlementFullM: meters,
     roadFullM: meters,

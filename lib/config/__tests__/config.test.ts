@@ -506,7 +506,15 @@ describe("consolidation rules", () => {
     expect(c.quietness.weights).toEqual({ settlement: 0.3, road: 0.2, occupancy: 0.2, text: 0.2, ferry: 0.1 });
     expect(c.profileConfidence).toEqual({ shelter: 0.4, depth: 0.25, seabed: 0.2, exclude: 0.15 });
     // Ruling M5-P5: the safety patterns name attributes; there is no attribute `restriction`.
-    expect(c.severity.safety).toEqual(["exclude", "max_draft", "max_length", "hazards", "prohibitions", "depth.*"]);
+    expect(c.severity.safety).toEqual(["exclude", "max_draft", "max_length", "hazards", "restricted_zones", "prohibitions", "depth.*"]);
+    // every safety list is a safety attribute: its changes and uncertain tasks rank as safety (final review M-2)
+    for (const list of c.change.additiveLists) expect(c.severity.safety, list).toContain(list);
+    expect(c.profileConfidenceGroups).toEqual({
+      shelter: ["shelter.*"],
+      depth: ["depth.min", "depth.max", "depth.anchoring_min", "depth.anchoring_max"],
+      seabed: ["seabed"],
+      exclude: ["prohibitions"],
+    });
     // Ruling M5-P3: identity keys of the list attributes merged by `union`; [] = the element itself.
     expect(c.rules.union.keys).toEqual({
       hazards: ["kind", "name"],

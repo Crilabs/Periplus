@@ -63,6 +63,7 @@ describe("severityFor", () => {
     ["max_draft", 2.5, 2.0, "safety"],
     ["holding", "good", "poor", "info"],
     ["hazards", [], [{ kind: "rock", name: "Xera" }], "safety"],
+    ["restricted_zones", [], [{ kind: "military", name: "Zone A" }], "safety"],
     ["highlight.food", { present: true, names: [] }, { present: false, names: [] }, "notable"],
     ["occupancy", { "7": "full" }, { "7": "moderate" }, "notable"],
   ])("severity of %s %j → %j is %s", (a, o, n, s) => expect(severityFor(a, o, n, cfg)).toBe(s));
