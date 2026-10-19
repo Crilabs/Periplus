@@ -18,6 +18,7 @@ export const QUEUES = [
   "sources.wikivoyage",
   "compare.converters",
   "ai.batch.poll",
+  "classify.document_version",
 ] as const;
 export type QueueName = (typeof QUEUES)[number];
 

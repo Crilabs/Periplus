@@ -81,6 +81,7 @@ const queueConfig = {
   "sources.wikivoyage": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "compare.converters": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "ai.batch.poll": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "classify.document_version": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   [DEAD_LETTER_QUEUE]: { concurrency: 1, retryLimit: 1, retryDelaySeconds: 0, retryBackoff: false },
 };
 
