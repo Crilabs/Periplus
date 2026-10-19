@@ -6,14 +6,14 @@ export function sha256Hex(text: string): string {
 }
 
 /**
- * Canonical Markdown of a version (its `content_hash` is taken over this): LF line ends, NFC, no zero-width
- * characters (U+200B–U+200D, U+FEFF), no whitespace at line ends, at most one blank line in a row, exactly one final LF.
+ * Canonical Markdown of a version (its `content_hash` is taken over this): LF line ends, no zero-width
+ * characters (U+200B–U+200D, U+FEFF; removed before NFC so that the result is idempotent), NFC, no whitespace at line ends, at most one blank line in a row, exactly one final LF.
  */
 export function normalizeMarkdown(md: string): string {
   return md
     .replace(/\r\n?/g, "\n")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
     .normalize("NFC")
-    .replace(/[​-‍﻿]/g, "")
     .replace(/[^\S\n]+$/gm, "")
     .replace(/\n{3,}/g, "\n\n")
     .replace(/\n*$/, "\n");

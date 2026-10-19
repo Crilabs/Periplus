@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { chunkMarkdown } from "@/lib/domain/documents/chunker";
 import { detectLanguage } from "@/lib/domain/documents/language";
 import { extractLinks } from "@/lib/domain/documents/links";
 import { extractPublishedAt, observedFrom } from "@/lib/domain/documents/metadata";
@@ -25,6 +26,14 @@ describe("normalizeMarkdown", () => {
   it("is idempotent", () => {
     const once = normalizeMarkdown("# T \r\n\r\n\r\n\r\ntext​  \n\n\n\n");
     expect(normalizeMarkdown(once)).toBe(once);
+  });
+  it("is idempotent when a zero-width character separates a base letter and its combining mark", () => {
+    const once = normalizeMarkdown("e\u200B\u0301 text");
+    expect(once).toBe("\u00e9 text\n");
+    expect(normalizeMarkdown(once)).toBe(once);
+    for (const c of chunkMarkdown(once, { targetWords: 500, maxWords: 800, maxOverlapWords: 200 })) {
+      expect(once.slice(c.charStart, c.charEnd)).toBe(c.text);
+    }
   });
 });
 

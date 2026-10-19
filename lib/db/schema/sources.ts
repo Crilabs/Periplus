@@ -167,6 +167,7 @@ export const chunks = pgTable(
     textNormalized: text("text_normalized").notNull(),
     textHash: text("text_hash").notNull(),
     heading: text("heading"),
+    // UTF-16 code unit offsets (JS string indices) into the normalized Markdown: slice in JS, never in SQL.
     charStart: integer("char_start").notNull(),
     charEnd: integer("char_end").notNull(),
     wordCount: integer("word_count").notNull(),

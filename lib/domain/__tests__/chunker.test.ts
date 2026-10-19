@@ -143,4 +143,11 @@ describe("matchCarried", () => {
   it("returns null for every chunk without a previous version", () => {
     expect(matchCarried([], chunkMarkdown(paragraphs(2, 10), cfg))).toEqual([null]);
   });
+
+  it("recognises setext headings as section starts", () => {
+    const md = `Title\n=====\n\n${paragraph(1)}\n\nSub\n---\n\n${paragraph(2)}\n\nlist\n\n---\n\n${paragraph(3)}`;
+    const c = chunkMarkdown(md, cfg);
+    expect(c.map((x) => x.heading)).toEqual(["Title", "Sub"]);
+    expect(c[0].text.startsWith("Title\n=====")).toBe(true);
+  });
 });

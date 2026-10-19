@@ -10,6 +10,7 @@ export type ChunkDraft = {
   textHash: string;
   /** Text of the level 1–3 heading whose section the chunk belongs to. */
   heading: string | null;
+  /** UTF-16 code unit offsets (JS string indices) into the normalized Markdown: slice in JS, never in SQL. */
   charStart: number;
   charEnd: number;
   /** Words split at whitespace. */
@@ -24,6 +25,7 @@ type Block = { start: number; end: number; heading: { level: number; text: strin
 type Section = { heading: string | null; units: Unit[] };
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+const SETEXT_UNDERLINE = /^ {0,3}(=+|-+)\s*$/;
 const ATX_HEADING = /^ {0,3}(#{1,6})(?:\s|$)/;
 const SENTENCE_GAP = /(?<=[.!?;·])\s+/g;
 
@@ -41,7 +43,8 @@ function headingText(line: string): string {
 
 /**
  * Blocks of the Markdown: line runs separated by blank lines; a fenced code block (up to its closing fence or
- * the end) is one block; an ATX heading line is a block of its own.
+ * the end) is one block; an ATX heading line is a block of its own; a paragraph followed directly by a `===` / `---`
+ * line is a setext heading block (level 1 / 2).
  */
 function parseBlocks(md: string): Block[] {
   const blocks: Block[] = [];
@@ -74,6 +77,13 @@ function parseBlocks(md: string): Block[] {
       close();
       current = { start, end, heading: null };
       fence = fenceOpen[1];
+      continue;
+    }
+    const setext = current ? line.match(SETEXT_UNDERLINE) : null;
+    if (setext && current && current.heading === null) {
+      const text = md.slice(current.start, current.end).split("\n").map((l) => l.trim()).join(" ");
+      blocks.push({ start: current.start, end, heading: { level: setext[1][0] === "=" ? 1 : 2, text } });
+      current = null;
       continue;
     }
     const heading = line.match(ATX_HEADING);
