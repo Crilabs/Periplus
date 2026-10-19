@@ -40,7 +40,18 @@ import {
  * inputs (POI import dates left out), so a value kept from the previous profile is still confirmed by its source
  * (ruling M5-F-R3 M-1).
  */
-export type AttributeSupport = { independent: number; maxWeight: number; factIds: string[]; confirmedAt: Record<string, string> };
+export type AttributeSupport = {
+  independent: number;
+  maxWeight: number;
+  factIds: string[];
+  confirmedAt: Record<string, string>;
+  /**
+   * Per input of the attribute (`inputId`, POIs left out), its `lastConfirmedAt`: a kept value no single input carries
+   * (a weighted mean, a united list) is confirmed again while the inputs it was made of are still current (ruling
+   * M5-F-R3 N-2).
+   */
+  confirmedByInput: Record<string, string>;
+};
 
 export type BuiltProfile = Omit<ProfileSnapshot, "version" | "validFrom"> & { support: Record<string, AttributeSupport> };
 
@@ -167,6 +178,17 @@ function confirmedAtByValue(inputs: ConsolidationInput[]): Record<string, string
   return out;
 }
 
+/** Per input (`inputId`), its latest `lastConfirmedAt`; POI import dates are no confirmation. */
+function confirmedAtByInput(inputs: ConsolidationInput[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const i of inputs) {
+    if (i.poiId !== null) continue;
+    const id = inputId(i);
+    if (out[id] === undefined || i.lastConfirmedAt > out[id]) out[id] = i.lastConfirmedAt;
+  }
+  return out;
+}
+
 /** The factual citations of the given provenance entries, merged (for derived values built on them). */
 function cite(provenance: Record<string, AttributeProvenance>, keys: string[]) {
   const used = keys.map((k) => provenance[k]).filter((p): p is AttributeProvenance => p !== undefined);
@@ -244,6 +266,7 @@ export function buildProfile(input: BuildProfileInput): BuiltProfile {
       maxWeight: r.support.reduce((max, i) => Math.max(max, i.sourceWeight), 0),
       factIds: provenance[def.key].factIds,
       confirmedAt: confirmedAtByValue(byAttribute.get(def.key) ?? []),
+      confirmedByInput: confirmedAtByInput(byAttribute.get(def.key) ?? []),
     };
     if (r.conflict) conflicts.push({ ...r.conflict, resolution: conflictResolution(r.conflict.key, context) });
   }

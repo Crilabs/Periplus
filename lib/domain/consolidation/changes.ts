@@ -3,7 +3,7 @@ import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { ChangeSeverity, ChangeType } from "@/lib/db/schema/profiles";
 import { canonicalJson, getFactSchema } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
-import { type BuiltProfile, conflictResolution, profileContentHash } from "./build";
+import { type AttributeSupport, type BuiltProfile, conflictResolution, profileContentHash } from "./build";
 import { profileConfidence } from "./derived/confidence";
 import type { ProfileContext } from "./inputs";
 import { compareProhibitions, prohibitionEntryKey } from "./rules/prohibitions";
@@ -113,6 +113,24 @@ function keptProvenance(p: AttributeProvenance, cutoff: string, cfg: Consolidati
   return { ...refreshed, expired: true, confidenceClass, confidence: Math.min(refreshed.confidence, classMidpoint(confidenceClass, cfg)) };
 }
 
+/**
+ * When the current inputs still make the kept value although no single input carries it (ruling M5-F-R3 N-2): a list
+ * whose every entry is still named by a current input (`entryFactIds`), or another value whose every supporting fact is
+ * still an input. Then the latest confirmation of those inputs, as `buildProfile` dates a value; otherwise undefined.
+ */
+function producedConfirmation(p: AttributeProvenance, support: AttributeSupport | undefined): string | undefined {
+  if (!support) return undefined;
+  const latest = (ids: string[]) => ids.map((id) => support.confirmedByInput[id]).filter((d): d is string => d !== undefined).sort().at(-1);
+  if (p.entryFactIds) {
+    const entries = Object.values(p.entryFactIds);
+    if (entries.length === 0) return undefined;
+    const dates = entries.map(latest);
+    return dates.every((d) => d !== undefined) ? dates.sort().at(-1) : undefined;
+  }
+  if (p.factIds.length === 0 || !p.factIds.every((id) => support.confirmedByInput[id] !== undefined)) return undefined;
+  return latest(p.factIds);
+}
+
 /** Severity of a value that is gone: a shelter sector without a value any more is `safety` (no Δ to measure). */
 function removalSeverity(attribute: string, oldValue: unknown, cfg: ConsolidationConfig): ChangeSeverity {
   return attribute.startsWith("shelter.") ? "safety" : severityFor(attribute, oldValue, null, cfg);
@@ -126,17 +144,16 @@ function listEntryKey(attribute: string, entry: unknown, ctx: DiffContext): stri
 
 /**
  * The old list with the entries the new one adds (ruling M5-F-R3 I-3): kept entries in their old form, added entries
- * in the new list's order, entries the new list lacks after them (`prohibitions` sorted by kind); `null` when the new
- * list adds nothing.
+ * in the new list's order, entries the new list lacks after them in the union rule's order for entries no current
+ * source names, i.e. by entry key (ruling M5-F-R3 N-3; `prohibitions` sorted by kind); `null` when the new list adds
+ * nothing.
  */
 function withAdditions(attribute: string, oldList: unknown[], newList: unknown[], ctx: DiffContext): unknown[] | null {
   const oldByKey = new Map(oldList.map((e) => [listEntryKey(attribute, e, ctx), e]));
   const newKeys = new Set(newList.map((e) => listEntryKey(attribute, e, ctx)));
   if ([...newKeys].every((k) => oldByKey.has(k))) return null;
-  const merged = [
-    ...newList.map((e) => oldByKey.get(listEntryKey(attribute, e, ctx)) ?? e),
-    ...oldList.filter((e) => !newKeys.has(listEntryKey(attribute, e, ctx))),
-  ];
+  const carried = [...oldByKey].filter(([k]) => !newKeys.has(k)).sort(([a], [b]) => cmp(a, b)).map(([, e]) => e);
+  const merged = [...newList.map((e) => oldByKey.get(listEntryKey(attribute, e, ctx)) ?? e), ...carried];
   return attribute === "prohibitions" ? merged.sort(compareProhibitions) : merged;
 }
 
@@ -201,7 +218,8 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
     const cutoff = dateMinusDays(ctx.today, cfg.expiry.cycles * context.tileCycleDays);
     /** The old value with its provenance and its conflict note (re-resolved against the decided tasks). */
     const keep = (key: string) => {
-      const confirmedAt = next.support[key]?.confirmedAt[canonicalJson(prev.attributes[key] ?? null)];
+      const support = next.support[key];
+      const confirmedAt = support?.confirmedAt[canonicalJson(prev.attributes[key] ?? null)] ?? producedConfirmation(prev.provenance[key]!, support);
       profile.attributes[key] = prev.attributes[key];
       profile.provenance[key] = keptProvenance(prev.provenance[key]!, cutoff, cfg, confirmedAt);
       profile.gaps = profile.gaps.filter((g) => g.attribute !== key);
@@ -254,9 +272,10 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
                 kind: "uncertain_change",
                 attribute: key,
                 key: taskKey,
-                context: { key: taskKey, attribute: key, oldValue, newValue, factIds, sources: next.provenance[key]?.sourceKeys ?? [] },
+                // the profile's value while the change waits: the merged list after accepted additions (ruling M5-F-R3 N-1)
+                context: { key: taskKey, attribute: key, oldValue: merged ?? oldValue, newValue, factIds, sources: next.provenance[key]?.sourceKeys ?? [] },
                 priority: priorityOf(severity),
-                event: { type: "uncertain", attribute: key, oldValue, newValue, severity, details: { key: taskKey } },
+                event: { type: "uncertain", attribute: key, oldValue: merged ?? oldValue, newValue, severity, details: { key: taskKey } },
               });
             }
           }

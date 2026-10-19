@@ -351,7 +351,9 @@ describe("diffProfiles", () => {
     expect(swapped.profile.attributes["hazards"]).toEqual([shoal, rock]);
     expect(swapped.events).toEqual([{ type: "changed", attribute: "hazards", oldValue: [rock], newValue: [shoal, rock], severity: "safety", details: {} }]);
     expect(swapped.tasks).toHaveLength(1);
-    expect(swapped.tasks[0]).toMatchObject({ kind: "uncertain_change", attribute: "hazards", priority: 2, context: { oldValue: [rock], newValue: [shoal] } });
+    expect(swapped.tasks[0]).toMatchObject({ kind: "uncertain_change", attribute: "hazards", priority: 2, context: { oldValue: [shoal, rock], newValue: [shoal] } });
+    // the task and its event show the profile's list after the accepted addition (ruling M5-F-R3 N-1)
+    expect(swapped.tasks[0]!.event).toMatchObject({ type: "uncertain", oldValue: [shoal, rock], newValue: [shoal] });
     expect(swapped.profile.provenance["hazards"]!.entryFactIds).toEqual({
       [JSON.stringify(["shoal", null])]: ["fact-shoal"],
       [JSON.stringify(["rock", "Xera"])]: ["fact-rock"],
@@ -369,6 +371,45 @@ describe("diffProfiles", () => {
     expect(r.profile.provenance["services.water"]).toMatchObject({ expired: false, lastConfirmedAt: "2026-11-20" });
     expect(r.events).toEqual([]);
     expect(r.tasks.map((t) => t.kind)).toEqual(["uncertain_change"]);
+  });
+
+  it("carried entries of a merged safety list follow the rule's order, not the history (ruling M5-F-R3 N-3)", () => {
+    const wreck = { kind: "wreck", name: null };
+    const rock = { kind: "rock", name: null };
+    const shoal = { kind: "shoal", name: null };
+    const forum = (source: string, value: unknown) =>
+      text({ attribute: "hazards", value, sourceKey: `source:${source}`, sourceWeight: 0.4, observedAt: "2026-06-01" });
+    // two sources name the wreck, one the rock: the union puts the wreck first
+    const prev = stored(build([...basis(), forum("a", [wreck]), forum("b", [wreck]), forum("c", [rock])]));
+    expect(prev.attributes["hazards"]).toEqual([wreck, rock]);
+
+    // all three vanish, one forum names a shoal: the addition holds, the carried entries come by key
+    const r = diff(prev, build([...basis(), forum("d", [shoal])]));
+    expect(r.profile.attributes["hazards"]).toEqual([shoal, rock, wreck]);
+  });
+
+  it("a kept list no single input carries is confirmed again by its current inputs (ruling M5-F-R3 N-2)", () => {
+    const doc = (factId: string, value: unknown, lastConfirmedAt: string) =>
+      text({ factId, attribute: "mooring.types", value, sourceKey: "source:forum", sourceWeight: 0.4, observedAt: "2026-06-01", lastConfirmedAt });
+    // two documents of one forum: the list [anchor, buoy] is carried by no single input
+    const prev = stored(build([...basis(), doc("fact-anchor", ["anchor"], "2026-10-01"), doc("fact-buoy", ["buoy"], "2026-10-01")]));
+    expect(prev.attributes["mooring.types"]).toEqual(["anchor", "buoy"]);
+
+    // both are fetched again; a third document of the same forum adds a pontoon (one source: uncertain, kept)
+    const later = "2026-12-15";
+    const next = build(
+      [...basis(), doc("fact-anchor", ["anchor"], "2026-11-20"), doc("fact-buoy", ["buoy"], "2026-11-20"), doc("fact-pontoon", ["pontoon"], "2026-11-20")],
+      context(),
+      later,
+    );
+    const r = diff(prev, next, context(), later);
+    expect(r.profile.attributes["mooring.types"]).toEqual(["anchor", "buoy"]);
+    expect(r.profile.provenance["mooring.types"]).toMatchObject({ expired: false, lastConfirmedAt: "2026-11-20" });
+    expect(r.events).toEqual([]);
+
+    // with one of its entries no longer named, the kept list is not refreshed and expires
+    const partial = build([...basis(), doc("fact-anchor", ["anchor"], "2026-11-20"), doc("fact-pontoon", ["pontoon"], "2026-11-20")], context(), later);
+    expect(diff(prev, partial, context(), later).profile.provenance["mooring.types"]).toMatchObject({ expired: true, lastConfirmedAt: "2026-10-01" });
   });
 
   it("a conflict decided for one value is marked decided (ruling M5-F-R3 M-2)", () => {

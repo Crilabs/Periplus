@@ -369,7 +369,7 @@ describe("buildProfile", () => {
     const marina = buildProfile({ ...scenario(), inputs: [], derived: noDerived, context: context({ place: { ...context().place!, kind: "marina" } }) });
     expect(SECTORS.map((s) => marina.attributes[`shelter.${s}`])).toEqual(SECTORS.map(() => 0.8));
     expect(marina.provenance["shelter.N"]).toMatchObject({ origin: "rule", factIds: [], lastConfirmedAt: null, expired: false });
-    expect(marina.support["shelter.N"]).toEqual({ independent: 0, maxWeight: 0, factIds: [], confirmedAt: {} });
+    expect(marina.support["shelter.N"]).toEqual({ independent: 0, maxWeight: 0, factIds: [], confirmedAt: {}, confirmedByInput: {} });
     expect(marina.attributes["derived.quietness"]).toBeUndefined();
   });
 
