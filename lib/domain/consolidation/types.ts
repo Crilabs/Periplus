@@ -1,3 +1,8 @@
+import type { ConsolidationConfig } from "@/lib/config/schemas";
+import type { PlaceKind, PlaceStatus } from "@/lib/db/schema/geo";
+import type { DocType } from "@/lib/db/schema/sources";
+import type { FactLevel } from "@/lib/domain/facts/schema-types";
+
 /*
  * Types of the consolidated profile (spec 07). Types only: the rules live in `lib/domain/consolidation/rules/`,
  * their parameters in `config/consolidation/<version>.json`.
@@ -91,3 +96,48 @@ export type ProfileSnapshot = {
   rulesVersion: string;
   factSchemaVersion: string;
 };
+
+/**
+ * One input of a rule: a fact (text, review, observation), a computation output or a POI. `sourceKey` identifies the
+ * independent source (documents of one source count once); `sourceWeight` is the source's weight (`sources.weight`,
+ * or `weights.computed`/`review`/`observed`/`poi`); `dateKnown false` means `observedAt` is no observation date.
+ */
+export type ConsolidationInput = {
+  factId: string | null;
+  attribute: string;
+  value: unknown;
+  origin: InputOrigin;
+  confidence: number;
+  observedAt: string;
+  dateKnown: boolean;
+  sourceKey: string;
+  sourceWeight: number;
+  sourceType: DocType | null;
+  documentId: string | null;
+  gone: boolean;
+  lastConfirmedAt: string;
+  computationId: string | null;
+  poiId: string | null;
+};
+
+/** What a rule knows beside its inputs; `today` is the run date (`YYYY-MM-DD`). */
+export type RuleContext = {
+  attribute: string;
+  level: FactLevel;
+  place: { kind: PlaceKind; status: PlaceStatus } | null;
+  today: string;
+  cfg: ConsolidationConfig;
+};
+
+/** A rule's answer for one attribute: the value, where it comes from and the inputs supporting it. */
+export type RuleResult = {
+  value: unknown;
+  origin: InputOrigin;
+  confidence: number;
+  observedAt: string | null;
+  support: ConsolidationInput[];
+  conflict: Omit<ConflictNote, "resolution"> | null;
+};
+
+/** A pure consolidation rule (spec 07); `null` = no value. */
+export type ConsolidationRule = (inputs: ConsolidationInput[], ctx: RuleContext) => RuleResult | null;
