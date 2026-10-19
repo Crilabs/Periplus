@@ -1,0 +1,288 @@
+import { readFileSync } from "node:fs";
+import { eq } from "drizzle-orm";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { createFirecrawlConverter } from "@/lib/adapters/fetch/firecrawl";
+import { createConverters, resolveConverter } from "@/lib/adapters/fetch/index";
+import { createJinaConverter } from "@/lib/adapters/fetch/jina";
+import { createLocalConverter, htmlToMarkdown } from "@/lib/adapters/fetch/local";
+import { closeRenderer, createPlaywrightRenderer, getRenderer } from "@/lib/adapters/fetch/browser";
+import type { RenderPage } from "@/lib/adapters/fetch/types";
+import { HttpError, makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
+import { fixtureTransport } from "@/lib/adapters/http-fixtures";
+import { getConfig, type FetchConfig } from "@/lib/config";
+import { DEFAULT_CRAWL_RULES } from "@/lib/domain/sources/crawl-rules";
+import { externalCalls } from "@/lib/db/schema";
+import { BudgetExceeded, recordExternalCall } from "@/lib/domain/costs";
+import { newId } from "@/lib/domain/ids";
+import { testDb, withRollback } from "@/test/db";
+import { chromiumInstalled } from "@/test/browser";
+import { startSiteServer } from "@/test/site-server";
+
+const boilerplateHtml = readFileSync("test/fixtures/html/boilerplate.html", "utf8");
+const db = testDb();
+const cfg = (): FetchConfig => getConfig().fetch;
+/** First of the pilot URLs recorded with `fixtures:record -- --converters`. */
+const PILOT_URL = "https://en.wikivoyage.org/wiki/Aegina";
+
+const shortHtml = `<!doctype html><html><head><title>Kurz</title></head><body><div id="app">Lädt …</div></body></html>`;
+const longText = "Der Ankerplatz liegt geschützt in einer tiefen Bucht mit Sandgrund und guter Haltekraft. ".repeat(12);
+const renderedHtml = `<!doctype html><html><head><title>Lang</title></head><body><article><h1>Lang</h1><p>${longText}</p></article></body></html>`;
+
+function fakeRenderer(html = renderedHtml): RenderPage & { calls: string[] } {
+  const calls: string[] = [];
+  const render = async (url: string) => {
+    calls.push(url);
+    return { html, finalUrl: url, status: 200 };
+  };
+  return Object.assign(render, { calls });
+}
+
+const input = (over: Partial<Parameters<ReturnType<typeof createLocalConverter>["convert"]>[0]> = {}) => ({
+  url: "https://x.test.invalid/a",
+  html: shortHtml,
+  boilerplateSelectors: [],
+  render: "auto" as const,
+  ...over,
+});
+
+describe("htmlToMarkdown", () => {
+  it("htmlToMarkdown keeps the table and drops boilerplate", () => {
+    const r = htmlToMarkdown(boilerplateHtml, "https://x.gr/a", [".cookie-banner"]);
+    expect(r.markdown).toContain("| Tiefe | Plätze |");
+    expect(r.markdown).not.toMatch(/Cookie|Newsletter/);
+    expect(r.markdown).toMatch(/^# Ankern vor Perdika/m);
+    expect(r.markdown).toMatch(/^## Tiefen und Plätze$/m);
+    expect(r.markdown).toContain("```\nN 37°41.3' E 023°27.5'\n```");
+    expect(r.markdown).not.toMatch(/analytics|JavaScript aktivieren|maps\.example/);
+    expect(r.title).toBe("Ankern vor Perdika");
+    expect(r.mainChars).toBeGreaterThan(400);
+  });
+
+  it("resolves relative links against the page url", () => {
+    const html = `<html><head><title>T</title></head><body><article><p>${longText} <a href="/b">weiter</a></p></article></body></html>`;
+    expect(htmlToMarkdown(html, "https://x.gr/a/c", []).markdown).toContain("[weiter](https://x.gr/b)");
+  });
+
+  it("an invalid boilerplate selector is an error naming the selector", () => {
+    expect(() => htmlToMarkdown(boilerplateHtml, "https://x.gr/a", ["div[["])).toThrow(/div\[\[/);
+  });
+});
+
+describe("local converter", () => {
+  it("auto renders once when the main text has fewer than 500 characters", async () => {
+    const renderPage = fakeRenderer();
+    const converter = createLocalConverter({ renderPage, cfg: cfg() });
+    await withRollback(async (tx) => {
+      const r = await converter.convert(input(), { db: tx });
+      expect(renderPage.calls).toEqual(["https://x.test.invalid/a"]);
+      expect(r.rendered).toBe(true);
+      expect(r.markdown).toContain("Ankerplatz liegt geschützt");
+      expect(r.costEur).toBe(0);
+    });
+  });
+
+  it("auto does not render a page with enough main text", async () => {
+    const renderPage = fakeRenderer();
+    const r = await createLocalConverter({ renderPage, cfg: cfg() }).convert(input({ html: renderedHtml }), { db });
+    expect(renderPage.calls).toEqual([]);
+    expect(r.rendered).toBe(false);
+  });
+
+  it("never does not render", async () => {
+    const renderPage = fakeRenderer();
+    const r = await createLocalConverter({ renderPage, cfg: cfg() }).convert(input({ render: "never" }), { db });
+    expect(renderPage.calls).toEqual([]);
+    expect(r.rendered).toBe(false);
+    expect(r.title).toBe("Kurz");
+  });
+
+  it("always renders even a long page", async () => {
+    const renderPage = fakeRenderer();
+    await withRollback(async (tx) => {
+      const r = await createLocalConverter({ renderPage, cfg: cfg() }).convert(input({ html: renderedHtml, render: "always" }), { db: tx });
+      expect(renderPage.calls).toHaveLength(1);
+      expect(r.rendered).toBe(true);
+    });
+  });
+
+  it("without a renderer it never renders", async () => {
+    const r = await createLocalConverter({ cfg: cfg() }).convert(input({ render: "always" }), { db });
+    expect(r.rendered).toBe(false);
+    expect(r.title).toBe("Kurz");
+  });
+
+  it("records a render as a free external call", async () => {
+    const renderPage = fakeRenderer();
+    await withRollback(async (tx) => {
+      const stage = `render-${newId()}`;
+      await createLocalConverter({ renderPage, cfg: cfg() }).convert(input(), { db: tx, stage });
+      const rows = await tx.select().from(externalCalls).where(eq(externalCalls.stage, stage));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ service: "playwright", operation: "render", unit: "request" });
+      expect(Number(rows[0]!.costEur)).toBe(0);
+    });
+  });
+});
+
+describe("jina converter", () => {
+  it("jina returns markdown and records its token cost", async () => {
+    await withRollback(async (tx) => {
+      const stage = `jina-${newId()}`;
+      const r = await createJinaConverter(fixtureTransport(), cfg().jina).convert(
+        { url: PILOT_URL, html: null, boilerplateSelectors: [], render: "auto" },
+        { db: tx, stage },
+      );
+      expect(r.markdown).toContain("Aegina");
+      expect(r.title).toMatch(/Aegina/);
+      expect(r.rendered).toBe(false);
+      const rows = await tx.select().from(externalCalls).where(eq(externalCalls.stage, stage));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ service: "jina", unit: "tokens" });
+      expect(Number(rows[0]!.costEur)).toBeGreaterThan(0);
+      expect(r.costEur).toBeCloseTo(Number(rows[0]!.costEur), 6);
+    });
+  });
+
+  it("sends the key, markdown format and the boilerplate selectors", async () => {
+    const requests: HttpRequest[] = [];
+    const transport: Transport = async (req) => {
+      requests.push(req);
+      const body = { code: 200, data: { title: "T", content: "# T\n\nText", publishedTime: "2024-01-01", usage: { tokens: 1000 } } };
+      return makeResponse(200, new TextEncoder().encode(JSON.stringify(body)));
+    };
+    await withRollback(async (tx) => {
+      const r = await createJinaConverter(transport, cfg().jina).convert(
+        { url: "https://x.test.invalid/a?b=1", html: null, boilerplateSelectors: [".nav", "#footer"], render: "auto" },
+        { db: tx },
+      );
+      expect(r).toMatchObject({ markdown: "# T\n\nText", title: "T", publishedHint: "2024-01-01" });
+      expect(r.costEur).toBeCloseTo((1000 * cfg().jina.eurPerMTok) / 1e6, 10);
+    });
+    expect(requests[0]!.url).toBe(`${cfg().jina.endpoint}https://x.test.invalid/a?b=1`);
+    expect(requests[0]!.headers).toMatchObject({
+      Authorization: "Bearer test-jina-key",
+      Accept: "application/json",
+      "X-Return-Format": "markdown",
+      "X-Remove-Selector": ".nav, #footer",
+    });
+    expect(requests[0]!.budget).toBe("jina");
+  });
+
+  it("an exhausted jina budget throws before any request", async () => {
+    const transport = vi.fn<Transport>();
+    await withRollback(async (tx) => {
+      await recordExternalCall(tx, { service: "jina", operation: "seed", units: 1, unit: "tokens", costEur: 10_000 });
+      const err = await createJinaConverter(transport, cfg().jina)
+        .convert({ url: PILOT_URL, html: null, boilerplateSelectors: [], render: "auto" }, { db: tx })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BudgetExceeded);
+    });
+    expect(transport).not.toHaveBeenCalled();
+  });
+});
+
+describe("firecrawl converter", () => {
+  it("firecrawl returns markdown and records credits", async () => {
+    await withRollback(async (tx) => {
+      const stage = `firecrawl-${newId()}`;
+      const r = await createFirecrawlConverter(fixtureTransport(), cfg().firecrawl).convert(
+        { url: PILOT_URL, html: null, boilerplateSelectors: [], render: "auto" },
+        { db: tx, stage },
+      );
+      expect(r.markdown).toContain("Aegina");
+      const rows = await tx.select().from(externalCalls).where(eq(externalCalls.stage, stage));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ service: "firecrawl", unit: "credits" });
+      expect(Number(rows[0]!.units)).toBeGreaterThanOrEqual(1);
+      expect(Number(rows[0]!.costEur)).toBeCloseTo(Number(rows[0]!.units) * cfg().firecrawl.eurPerCredit, 6);
+      expect(r.costEur).toBeCloseTo(Number(rows[0]!.costEur), 6);
+    });
+  });
+
+  it("success false is an HttpError", async () => {
+    const transport: Transport = async () =>
+      makeResponse(200, new TextEncoder().encode(JSON.stringify({ success: false, error: "blocked" })));
+    await withRollback(async (tx) => {
+      const err = await createFirecrawlConverter(transport, cfg().firecrawl)
+        .convert({ url: "https://x.test.invalid/a", html: null, boilerplateSelectors: [], render: "auto" }, { db: tx })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(HttpError);
+      expect((err as Error).message).toMatch(/blocked/);
+    });
+  });
+
+  it("posts main-content markdown with the boilerplate selectors as excluded tags", async () => {
+    const requests: HttpRequest[] = [];
+    const transport: Transport = async (req) => {
+      requests.push(req);
+      const body = { success: true, data: { markdown: "Text", metadata: { title: "T", creditsUsed: 2, statusCode: 200 } } };
+      return makeResponse(200, new TextEncoder().encode(JSON.stringify(body)));
+    };
+    await withRollback(async (tx) => {
+      const r = await createFirecrawlConverter(transport, cfg().firecrawl).convert(
+        { url: "https://x.test.invalid/a", html: null, boilerplateSelectors: [".nav"], render: "auto" },
+        { db: tx },
+      );
+      expect(r.costEur).toBeCloseTo(2 * cfg().firecrawl.eurPerCredit, 10);
+      expect(r.title).toBe("T");
+    });
+    expect(JSON.parse(requests[0]!.body!)).toEqual({
+      url: "https://x.test.invalid/a",
+      formats: ["markdown"],
+      onlyMainContent: true,
+      excludeTags: [".nav"],
+    });
+    expect(requests[0]!.method).toBe("POST");
+    expect(requests[0]!.headers?.Authorization).toBe("Bearer test-firecrawl-key");
+  });
+});
+
+describe("resolveConverter", () => {
+  it("resolveConverter prefers the rule, then the per-source decision, then the default", () => {
+    const base: FetchConfig = { ...cfg(), defaultConverter: "local", converterBySource: { "boat.example": "jina" } };
+    expect(resolveConverter({ ...DEFAULT_CRAWL_RULES, converter: "firecrawl" }, "boat.example", base)).toBe("firecrawl");
+    expect(resolveConverter(DEFAULT_CRAWL_RULES, "boat.example", base)).toBe("jina");
+    expect(resolveConverter(DEFAULT_CRAWL_RULES, "other.example", base)).toBe("local");
+  });
+
+  it("createConverters builds all three", () => {
+    const converters = createConverters({ transport: fixtureTransport(), cfg: cfg() });
+    expect(Object.keys(converters).sort()).toEqual(["firecrawl", "jina", "local"]);
+    expect(converters.local.name).toBe("local");
+  });
+});
+
+describe("playwright renderer", () => {
+  const renderer = createPlaywrightRenderer();
+  afterAll(() => renderer.close());
+
+  it("getRenderer is one renderer per process until closeRenderer", async () => {
+    const first = getRenderer();
+    expect(getRenderer()).toBe(first);
+    // Nothing was rendered: closing launches no browser.
+    await closeRenderer();
+    expect(getRenderer()).not.toBe(first);
+    await closeRenderer();
+  });
+
+  it.skipIf(!chromiumInstalled())("the playwright renderer returns script-built html from the site server", async () => {
+    const site = await startSiteServer();
+    try {
+      site.set("/app", {
+        body: `<!doctype html><html><body><div id="app"></div><img src="/pic.png">
+          <script>document.getElementById("app").innerHTML = "<p>Gebaut vom Skript</p>";</script></body></html>`,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+      const r = await renderer.render(`${site.origin}/app`, { timeoutMs: 15_000 });
+      expect(r.status).toBe(200);
+      expect(r.finalUrl).toBe(`${site.origin}/app`);
+      expect(r.html).toContain("<p>Gebaut vom Skript</p>");
+      const page = site.requests.find((q) => q.path === "/app");
+      expect(page?.headers["user-agent"]).toBe("Periplus/0.1 (+mailto:test@example.invalid)");
+      // Images are blocked: the browser never asks for them.
+      expect(site.requests.some((q) => q.path === "/pic.png")).toBe(false);
+    } finally {
+      await site.close();
+    }
+  }, 60_000);
+});

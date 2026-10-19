@@ -378,8 +378,11 @@ export const discoverySchema = z.strictObject({
 /** `config/fetch.json`: fetching, conversion, chunking and the converter decision. */
 export const fetchSchema = z.strictObject({
   defaultConverter: z.enum(CONVERTERS),
-  /** Source id → converter, overriding `defaultConverter`. */
-  converterBySource: z.record(z.uuid(), z.enum(CONVERTERS)),
+  /**
+   * Source domain (registrable, lower case, as in `sources.domain`) → converter, overriding `defaultConverter`.
+   * Keyed by domain, not source id: this file is shared by all environments, whose source ids differ.
+   */
+  converterBySource: z.record(z.string().regex(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/, "must be a lower-case domain"), z.enum(CONVERTERS)),
   decision: z.strictObject({ status: z.enum(["provisional", "final"]), note: z.string().trim().min(1) }),
   /** `render: auto` renders a page whose HTTP text has less main content than this many characters. */
   renderMinMainChars: positiveInt,

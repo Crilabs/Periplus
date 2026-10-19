@@ -259,6 +259,13 @@ describe("source configuration", () => {
     expect(fetch.renderMinMainChars).toBe(500);
   });
 
+  it("converterBySource is keyed by lower-case source domain", () => {
+    const byDomain = { ...repoConfig.fetch, converterBySource: { "sailing.example": "jina" } };
+    expect(loadConfig(fixtureDir({ fetch: byDomain })).fetch.converterBySource).toEqual({ "sailing.example": "jina" });
+    const byId = { ...repoConfig.fetch, converterBySource: { "0b9e4c1e-6f0a-4c39-9a52-4c0f4f1f2a10": "jina" } };
+    expect(() => loadConfig(fixtureDir({ fetch: byId }))).toThrow(/fetch\.json.*converterBySource/);
+  });
+
   it("loads discovery, embeddings and the whitelist", () => {
     const c = loadConfig("config");
     expect(c.discovery.serp).toMatchObject({ depth: 20, reuseDays: 30, maxQueriesPerRun: 240 });

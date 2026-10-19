@@ -46,6 +46,8 @@ export default defineConfig({
       // Fixture replay ignores request headers; any Basic-Auth pair will do.
       DATAFORSEO_LOGIN: "test@example.invalid",
       DATAFORSEO_PASSWORD: "test-password",
+      JINA_API_KEY: "test-jina-key",
+      FIRECRAWL_API_KEY: "test-firecrawl-key",
     },
   },
 });

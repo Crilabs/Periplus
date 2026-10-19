@@ -79,7 +79,8 @@ export function makeResponse(
   return { status, body, headers, finalUrl: init.finalUrl ?? "", text: () => new TextDecoder().decode(body) };
 }
 
-function userAgent(): string {
+/** The contact User-Agent of every request Periplus makes (HTTP calls and the rendering browser). */
+export function userAgent(): string {
   return `Periplus/0.1 (+mailto:${getEnv().CONTACT_EMAIL})`;
 }
 

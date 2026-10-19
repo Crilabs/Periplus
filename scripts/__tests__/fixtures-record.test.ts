@@ -48,6 +48,17 @@ describe("fixtures-record CLI", () => {
     ]);
   });
 
+  it("--converters takes 1 to 3 page urls and no area", () => {
+    expect(parseArgs(["--converters", "https://a.example/x", "http://b.example/"])).toEqual({
+      converters: ["https://a.example/x", "http://b.example/"],
+    });
+    expect(() => parseArgs(["--converters"])).toThrow(/usage/);
+    expect(() => parseArgs(["--converters", "https://a.example/1", "https://a.example/2", "https://a.example/3", "https://a.example/4"])).toThrow(/usage/);
+    expect(() => parseArgs(["--converters", "ftp://a.example/x"])).toThrow(/usage/);
+    expect(() => parseArgs(["--converters", "https://a.example/x", "--area", "saronic"])).toThrow(/usage/);
+    expect(() => parseArgs(["--area", "saronic", "--converters", "https://a.example/x"])).toThrow(/usage/);
+  });
+
   it("rejects missing or unknown arguments", () => {
     expect(() => parseArgs(["--land", "l.shp"])).toThrow(/usage/);
     expect(() => parseArgs(["--area", "a", "--foo", "1"])).toThrow(/usage/);

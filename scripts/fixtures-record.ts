@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
 import { unzipSync } from "fflate";
 import { searchOrganic } from "../lib/adapters/dataforseo";
+import { createFirecrawlConverter } from "../lib/adapters/fetch/firecrawl";
+import { createJinaConverter } from "../lib/adapters/fetch/jina";
 import { createGeonamesSource } from "../lib/adapters/geonames";
 import { fetchTransport, makeResponse, RetryableHttpError, type Transport } from "../lib/adapters/http";
 import { fixtureTransport, recordingTransport } from "../lib/adapters/http-fixtures";
@@ -24,27 +26,46 @@ import { importWikidata } from "../lib/pipeline/gazetteer/wikidata";
 import { landImportBbox, readShapefile } from "./import-land-polygons";
 
 const USAGE =
-  "usage: fixtures-record.ts --area <key> [--land <path/land_polygons.shp>] [--cache <dir>] [--datasets | --serp [--limit <1-3>]]";
+  "usage: fixtures-record.ts --area <key> [--land <path/land_polygons.shp>] [--cache <dir>] [--datasets | --serp [--limit <1-3>]]\n" +
+  "       fixtures-record.ts --converters <url> [<url> <url>]";
 /** Real DataForSEO searches one `--serp` recording may make. */
 const MAX_SERP_CALLS = 3;
+/** Pages one `--converters` recording sends to each paid converter (Jina, Firecrawl). */
+const MAX_CONVERTER_URLS = 3;
 const FIXTURES = "test/fixtures";
 const ATTEMPTS = 3;
 const RETRY_WAIT_MS = 90_000;
 
 type LandFeature = GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
 
-export type RecordArgs = { area: string; land?: string; cache?: string; datasets: boolean; serp: boolean; limit?: number };
+export type AreaRecordArgs = { area: string; land?: string; cache?: string; datasets: boolean; serp: boolean; limit?: number };
+export type RecordArgs = AreaRecordArgs | { converters: string[] };
+
+function isHttpUrl(value: string): boolean {
+  try {
+    return ["http:", "https:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * `--area`, `--land`, `--cache`, `--limit` take a value; `--datasets` (record the dataset imports only) and
- * `--serp` (record at most `--limit` ≤ 3 area SERP searches, default 3) take none.
+ * `--serp` (record at most `--limit` ≤ 3 area SERP searches, default 3) take none. `--converters` takes 1–3
+ * page URLs and stands alone (no area).
  */
 export function parseArgs(argv: string[]): RecordArgs {
+  if (argv[0] === "--converters") {
+    const urls = argv.slice(1);
+    if (urls.length < 1 || urls.length > MAX_CONVERTER_URLS || !urls.every(isHttpUrl)) throw new Error(USAGE);
+    return { converters: urls };
+  }
   const values = new Map<string, string>();
   let datasets = false;
   let serp = false;
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]!;
+    if (flag === "--converters") throw new Error(USAGE);
     if (flag === "--datasets" || flag === "--serp") {
       if (flag === "--datasets") datasets = true;
       else serp = true;
@@ -102,6 +123,41 @@ async function recordSerp(area: AreaConfig, limit: number): Promise<void> {
   } finally {
     await close();
   }
+}
+
+/**
+ * Records real Jina and Firecrawl answers for each URL (one call per service and URL) as fixtures. Like
+ * `--serp`, the calls are booked in the database of `DATABASE_URL` (budgets, `external_calls`).
+ */
+async function recordConverters(urls: string[]): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is not set");
+  const { fetch } = getConfig();
+  const { db, close } = createDb(url);
+  const recording = recordingTransport(fetchTransport);
+  const converters = [createJinaConverter(recording, fetch.jina), createFirecrawlConverter(recording, fetch.firecrawl)];
+  let failed = 0;
+  try {
+    for (const page of urls) {
+      for (const converter of converters) {
+        try {
+          const r = await converter.convert(
+            { url: page, html: null, boilerplateSelectors: [], render: "auto" },
+            { db, stage: "fixtures:record" },
+          );
+          process.stdout.write(
+            `${converter.name} ${page}: ${r.markdown.length} chars, title ${JSON.stringify(r.title)}, ${r.costEur.toFixed(6)} EUR, ${r.durationMs} ms\n`,
+          );
+        } catch (error) {
+          failed++;
+          process.stdout.write(`${converter.name} ${page}: failed: ${(error as Error).message}\n`);
+        }
+      }
+    }
+  } finally {
+    await close();
+  }
+  if (failed > 0) throw new Error(`${failed} converter call(s) failed`);
 }
 
 /** Only a throwaway database whose name ends in `_scratch` may be written by the recording. */
@@ -349,6 +405,7 @@ async function writeGeonames(downloads: Map<string, Uint8Array>, countries: stri
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  if ("converters" in args) return recordConverters(args.converters);
   if (args.serp) return recordSerp(loadArea(args.area), args.limit!);
   const url = assertScratchUrl(process.env.DATABASE_URL);
   const area = loadArea(args.area);

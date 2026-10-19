@@ -6,6 +6,8 @@ const nextConfig: NextConfig = {
     agentFeedback: true,
   },
   output: "standalone",
+  // The rendering browser runs only in the worker; never bundle it into the web server.
+  serverExternalPackages: ["playwright", "playwright-core"],
   cacheComponents: true,
   partialPrefetching: true,
   turbopack: {

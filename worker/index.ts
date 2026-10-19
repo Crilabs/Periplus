@@ -3,6 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { workerHeartbeats } from "@/lib/db/schema";
+import { closeRenderer } from "@/lib/adapters/fetch/browser";
 import { getArchive } from "@/lib/adapters/s3";
 import { getEnv } from "@/lib/env";
 import { createBoss } from "@/lib/jobs/boss";
@@ -50,6 +51,8 @@ async function main(): Promise<void> {
     try {
       await workers.stop();
       await boss.stop({ graceful: true });
+      // After the last job: a page render may still have been running until then.
+      await closeRenderer();
       // Remove our heartbeat so the overview does not list this worker as alive; wait for an
       // in-flight beat first so it cannot re-insert the row afterwards.
       await beating;

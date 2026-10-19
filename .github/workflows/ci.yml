@@ -37,9 +37,10 @@ jobs:
           exit 1
       - run: npm run lint
       - run: npm run typecheck
+      # Before the unit tests: the converter tests render pages in Chromium.
+      - run: npx playwright install --with-deps chromium
       - run: npm test
       - run: npm run build
-      - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - name: Service logs on failure
         if: failure()
