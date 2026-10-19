@@ -3,12 +3,13 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { getConsolidationConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { computations, facts, mentions, places, restrictedAreas, reviewDecisions, reviewTasks, sources, wikidataSitelinks } from "@/lib/db/schema";
+import { computations, facts, mentions, places, profiles, restrictedAreas, reviewDecisions, reviewTasks, sources, wikidataSitelinks } from "@/lib/db/schema";
 import type { GeoObjectType, PlaceStatus } from "@/lib/db/schema/geo";
+import { popularityForArea } from "@/lib/domain/consolidation/derived/popularity";
 import { loadContext, loadDerivedInputs } from "@/lib/domain/consolidation/inputs";
 import { newId } from "@/lib/domain/ids";
 import { testDb, withRollback } from "@/test/db";
-import { insertNamedObject, insertTestVersion } from "@/test/text";
+import { insertNamedObject, insertTestTile, insertTestVersion } from "@/test/text";
 
 /*
  * Inputs of the derived values (quietness, POI importance and spot candidates), inside withRollback around 21.0° E /
@@ -154,5 +155,43 @@ describe("loadDerivedInputs", () => {
 
       const orphan = await placeAt(tx, 21.4, LAT + 0.02);
       expect((await derived(tx, orphan.id)).quietness?.ferry).toBeNull();
+    }));
+});
+
+describe("popularityForArea", () => {
+  async function profile(tx: Db, objectId: string, version: number, sourcesCount: number) {
+    await tx.insert(profiles).values({
+      geoObjectId: objectId,
+      version,
+      validFrom: "2026-10-19",
+      attributes: {},
+      provenance: {},
+      sourcesCount,
+      documentsCount: sourcesCount,
+      contentHash: newId(),
+      factSchemaVersion: "v2",
+      rulesVersion: "v1",
+    });
+  }
+
+  it("normalizes the newest sources_count of the area's places by the area maximum", () =>
+    withRollback(async (tx) => {
+      const area = await object(tx, "area", { lon: 22.1 });
+      // an own tile of the synthetic grid, labelled with the test area
+      await insertTestTile(tx, "q025:808:500", area);
+      const a = await placeAt(tx, 22.1, LAT);
+      const b = await placeAt(tx, 22.11, LAT);
+      const none = await placeAt(tx, 22.12, LAT);
+      await profile(tx, a.id, 1, 1);
+      await profile(tx, a.id, 2, 15);
+      await profile(tx, b.id, 1, 3);
+      const rejected = await placeAt(tx, 22.13, LAT, { status: "rejected" });
+      await profile(tx, rejected.id, 1, 99);
+
+      const p = await popularityForArea(tx, area);
+      expect([...p.keys()].sort()).toEqual([a.id, b.id].sort());
+      expect(p.get(a.id)).toBe(1);
+      expect(p.get(b.id)).toBeCloseTo(0.5, 3);
+      expect(p.has(none.id)).toBe(false);
     }));
 });
