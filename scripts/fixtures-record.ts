@@ -11,6 +11,7 @@ import { createGeonamesSource } from "../lib/adapters/geonames";
 import { fetchTransport, makeResponse, RetryableHttpError, type Transport } from "../lib/adapters/http";
 import { fixtureTransport, recordingTransport } from "../lib/adapters/http-fixtures";
 import type { Archive } from "../lib/adapters/s3";
+import { embedTexts } from "../lib/adapters/voyage";
 import { getConfig, type AreaConfig, type DiscoveryConfig } from "../lib/config";
 import { areaConfigSchema } from "../lib/config/schemas";
 import { createDb, type Db } from "../lib/db/client";
@@ -27,7 +28,8 @@ import { landImportBbox, readShapefile } from "./import-land-polygons";
 
 const USAGE =
   "usage: fixtures-record.ts --area <key> [--land <path/land_polygons.shp>] [--cache <dir>] [--datasets | --serp [--limit <1-3>]]\n" +
-  "       fixtures-record.ts --converters <url> [<url> <url>]";
+  "       fixtures-record.ts --converters <url> [<url> <url>]\n" +
+  "       fixtures-record.ts --voyage";
 /** Real DataForSEO searches one `--serp` recording may make. */
 const MAX_SERP_CALLS = 3;
 /** Pages one `--converters` recording sends to each paid converter (Jina, Firecrawl). */
@@ -39,7 +41,13 @@ const RETRY_WAIT_MS = 90_000;
 type LandFeature = GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
 
 export type AreaRecordArgs = { area: string; land?: string; cache?: string; datasets: boolean; serp: boolean; limit?: number };
-export type RecordArgs = AreaRecordArgs | { converters: string[] };
+export type RecordArgs = AreaRecordArgs | { converters: string[] } | { voyage: true };
+
+/** The two texts of the recorded Voyage answer (`--voyage`); the embedding tests send exactly these. */
+export const VOYAGE_RECORDING_TEXTS = [
+  "Aegina harbour gives good shelter from the meltemi; anchor in sand at five metres off the town quay.",
+  "Die Bucht von Perdika ist bei Nordwind gut geschützt, Ankergrund Sand und Seegras auf sechs Metern.",
+] as const;
 
 function isHttpUrl(value: string): boolean {
   try {
@@ -52,9 +60,13 @@ function isHttpUrl(value: string): boolean {
 /**
  * `--area`, `--land`, `--cache`, `--limit` take a value; `--datasets` (record the dataset imports only) and
  * `--serp` (record at most `--limit` ≤ 3 area SERP searches, default 3) take none. `--converters` takes 1–3
- * page URLs and stands alone (no area).
+ * page URLs and stands alone (no area), as does `--voyage` (one embedding call).
  */
 export function parseArgs(argv: string[]): RecordArgs {
+  if (argv[0] === "--voyage") {
+    if (argv.length !== 1) throw new Error(USAGE);
+    return { voyage: true };
+  }
   if (argv[0] === "--converters") {
     const urls = argv.slice(1);
     if (urls.length < 1 || urls.length > MAX_CONVERTER_URLS || !urls.every(isHttpUrl)) throw new Error(USAGE);
@@ -65,7 +77,7 @@ export function parseArgs(argv: string[]): RecordArgs {
   let serp = false;
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]!;
-    if (flag === "--converters") throw new Error(USAGE);
+    if (flag === "--converters" || flag === "--voyage") throw new Error(USAGE);
     if (flag === "--datasets" || flag === "--serp") {
       if (flag === "--datasets") datasets = true;
       else serp = true;
@@ -158,6 +170,27 @@ async function recordConverters(urls: string[]): Promise<void> {
     await close();
   }
   if (failed > 0) throw new Error(`${failed} converter call(s) failed`);
+}
+
+/**
+ * Records one real Voyage answer embedding `VOYAGE_RECORDING_TEXTS`, booked in the database of `DATABASE_URL`
+ * (budget `voyage`, `external_calls`).
+ */
+async function recordVoyage(): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is not set");
+  const { db, close } = createDb(url);
+  try {
+    const { vectors, tokens } = await embedTexts(
+      recordingTransport(fetchTransport),
+      [...VOYAGE_RECORDING_TEXTS],
+      { db, stage: "fixtures:record" },
+      getConfig().embeddings,
+    );
+    process.stdout.write(`voyage: ${vectors.length} vectors of ${vectors[0]?.length} dimensions, ${tokens} tokens\n`);
+  } finally {
+    await close();
+  }
 }
 
 /** Only a throwaway database whose name ends in `_scratch` may be written by the recording. */
@@ -405,6 +438,7 @@ async function writeGeonames(downloads: Map<string, Uint8Array>, countries: stri
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  if ("voyage" in args) return recordVoyage();
   if ("converters" in args) return recordConverters(args.converters);
   if (args.serp) return recordSerp(loadArea(args.area), args.limit!);
   const url = assertScratchUrl(process.env.DATABASE_URL);

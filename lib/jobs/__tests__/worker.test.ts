@@ -70,6 +70,7 @@ const queueConfig = {
   "discovery.propose": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "fetch.source": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "fetch.url": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "embed.chunks": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   [DEAD_LETTER_QUEUE]: { concurrency: 1, retryLimit: 1, retryDelaySeconds: 0, retryBackoff: false },
 };
 

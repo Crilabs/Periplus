@@ -241,6 +241,7 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   tile_without_area: "Kachel gehört zu keinem konfigurierten Revier – Suchsprachen unbekannt",
   no_approved_sources: "Keine freigegebene Quelle",
   source_not_approved: "Quelle ist nicht freigegeben",
+  source_run_active: "Für die Quelle läuft bereits ein Abruf",
   document_not_upload: "Dokument ist keine hochgeladene Datei",
 };
 

@@ -14,6 +14,7 @@ export const QUEUES = [
   "discovery.propose",
   "fetch.source",
   "fetch.url",
+  "embed.chunks",
 ] as const;
 export type QueueName = (typeof QUEUES)[number];
 

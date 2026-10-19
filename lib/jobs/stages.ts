@@ -1,6 +1,7 @@
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import { datasetsImportStage } from "./handlers/datasets";
 import { discoveryAreaStage, discoveryProposeStage, discoveryTileStage } from "./handlers/discovery";
+import { embedChunksStage } from "./handlers/embed";
 import { fetchSourceStage, fetchUrlStage } from "./handlers/fetch";
 import { geometryPlaceStage } from "./handlers/geometry";
 import {
@@ -29,4 +30,5 @@ export const STAGES: Record<string, StageDefinition> = {
   [discoveryProposeStage.name]: discoveryProposeStage,
   [fetchSourceStage.name]: fetchSourceStage,
   [fetchUrlStage.name]: fetchUrlStage,
+  [embedChunksStage.name]: embedChunksStage,
 };

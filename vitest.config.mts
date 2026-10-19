@@ -48,6 +48,7 @@ export default defineConfig({
       DATAFORSEO_PASSWORD: "test-password",
       JINA_API_KEY: "test-jina-key",
       FIRECRAWL_API_KEY: "test-firecrawl-key",
+      VOYAGE_API_KEY: "test-voyage-key",
     },
   },
 });

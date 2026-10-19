@@ -1,5 +1,6 @@
 import { datasetsImportHandler } from "./handlers/datasets";
 import { discoveryAreaHandler, discoveryProposeHandler, discoveryTileHandler } from "./handlers/discovery";
+import { embedChunksHandler } from "./handlers/embed";
 import { fetchSourceHandler, fetchUrlHandler } from "./handlers/fetch";
 import { gazetteerHandler } from "./handlers/gazetteer";
 import { geometryPlaceHandler } from "./handlers/geometry";
@@ -24,4 +25,5 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "discovery.propose": discoveryProposeHandler,
   "fetch.source": fetchSourceHandler,
   "fetch.url": fetchUrlHandler,
+  "embed.chunks": embedChunksHandler,
 };

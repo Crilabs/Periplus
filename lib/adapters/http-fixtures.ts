@@ -20,8 +20,11 @@ type FixtureFile = {
   finalUrl?: string;
 };
 
-/** Headers never written into a fixture: cookies a site hands out are no test data. */
-const UNRECORDED_HEADERS = new Set(["set-cookie"]);
+/**
+ * Headers never written into a fixture: cookies a site hands out are no test data, and some servers echo the
+ * recording machine's public address back (Wikimedia: `x-client-ip`, inside `x-analytics`).
+ */
+const UNRECORDED_HEADERS = new Set(["set-cookie", "x-client-ip", "x-analytics"]);
 
 /**
  * sha256 hex of `method + " " + url + "\n" + body`, plus `"\nredirect: manual"` for a request that follows no

@@ -561,7 +561,7 @@ describe("crawl run starters", () => {
       const { id } = await startTestCrawl(tx, boss, sourceId, "admin");
       const run = (await getRun(tx, id))!;
       expect(run.scope).toEqual({ type: "source", id: sourceId });
-      expect(run.stages.map((st) => st.stage)).toEqual(["fetch.source", "fetch.url"]);
+      expect(run.stages.map((st) => st.stage)).toEqual(["fetch.source", "fetch.url", "embed.chunks"]);
       expect(inserted).toEqual([{ queue: "fetch.source", data: expect.objectContaining({ key: sourceId, sourceId, runId: id }) }]);
       const [row] = await tx.select().from(runs).where(eq(runs.id, id));
       expect(row!.params).toEqual({ sourceIds: [sourceId], maxPages: 10 });
@@ -593,6 +593,28 @@ describe("crawl run starters", () => {
     });
   });
 
+  it("refuses a source that a queued or running run is fetching already, until that run ends", async () => {
+    await withRollback(async (tx) => {
+      const busy = await insertSource(tx, newSite(), {});
+      const free = await insertSource(tx, newSite(), {});
+      const { boss } = recordingBoss();
+      const first = await startFetchRun(tx, boss, { sourceIds: [busy], triggeredBy: "admin" });
+      const refused = startFetchRun(tx, boss, { sourceIds: [free, busy], triggeredBy: "admin" });
+      await expect(refused).rejects.toBeInstanceOf(RunScopeNotReady);
+      await expect(refused).rejects.toMatchObject({ reason: "source_run_active" });
+      await expect(startTestCrawl(tx, boss, busy, "admin")).rejects.toMatchObject({ reason: "source_run_active" });
+      // Another source is not affected; and once the first run has ended, the source may be fetched again.
+      await expect(startTestCrawl(tx, boss, free, "admin")).resolves.toMatchObject({ id: expect.any(String) });
+      await tx.update(runs).set({ status: "finished" }).where(eq(runs.id, first.id));
+      await expect(startTestCrawl(tx, boss, busy, "admin")).resolves.toMatchObject({ id: expect.any(String) });
+    });
+  });
+
+  it("the refusal has a German text for the admin", async () => {
+    const { RUN_SCOPE_REASON_LABELS } = await import("@/app/(admin)/_components/labels");
+    expect(RUN_SCOPE_REASON_LABELS.source_run_active).toBe("Für die Quelle läuft bereits ein Abruf");
+  });
+
   it("an upload run has only fetch.url with the document", async () => {
     await withRollback(async (tx) => {
       const sourceId = await insertSource(tx, newSite(), {}, "paused");
@@ -600,7 +622,7 @@ describe("crawl run starters", () => {
       const [doc] = await tx.insert(documents).values({ sourceId, url, urlNormalized: url, docType: "pilot_guide" }).returning({ id: documents.id });
       const { boss, inserted } = recordingBoss();
       const { id } = await startUploadFetchRun(tx, boss, doc!.id, "admin");
-      expect((await getRun(tx, id))!.stages.map((st) => st.stage)).toEqual(["fetch.url"]);
+      expect((await getRun(tx, id))!.stages.map((st) => st.stage)).toEqual(["fetch.url", "embed.chunks"]);
       expect(inserted).toEqual([{ queue: "fetch.url", data: expect.objectContaining({ url, documentId: doc!.id, sourceId }) }]);
     });
   });

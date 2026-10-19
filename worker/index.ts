@@ -5,6 +5,7 @@ import { getDb } from "@/lib/db/client";
 import { workerHeartbeats } from "@/lib/db/schema";
 import { closeRenderer } from "@/lib/adapters/fetch/browser";
 import { getArchive } from "@/lib/adapters/s3";
+import { assertEmbeddingDimension } from "@/lib/pipeline/embed";
 import { getEnv } from "@/lib/env";
 import { createBoss } from "@/lib/jobs/boss";
 import { DEAD_LETTER_QUEUE, ensureQueues, QUEUES } from "@/lib/jobs/queues";
@@ -18,6 +19,8 @@ const log = createLogger("worker-main");
 async function main(): Promise<void> {
   const config = getConfig();
   const db = getDb();
+  // A model with another dimension needs a migration of chunks.embedding first: refuse to start without it.
+  await assertEmbeddingDimension(db, config.embeddings);
   await getArchive().ensureBucket();
   log.info("archive bucket ready");
   const boss = createBoss(getEnv().DATABASE_URL);

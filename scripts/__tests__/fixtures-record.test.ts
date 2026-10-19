@@ -59,6 +59,12 @@ describe("fixtures-record CLI", () => {
     expect(() => parseArgs(["--area", "saronic", "--converters", "https://a.example/x"])).toThrow(/usage/);
   });
 
+  it("--voyage stands alone", () => {
+    expect(parseArgs(["--voyage"])).toEqual({ voyage: true });
+    expect(() => parseArgs(["--voyage", "--area", "saronic"])).toThrow(/usage/);
+    expect(() => parseArgs(["--area", "saronic", "--voyage"])).toThrow(/usage/);
+  });
+
   it("rejects missing or unknown arguments", () => {
     expect(() => parseArgs(["--land", "l.shp"])).toThrow(/usage/);
     expect(() => parseArgs(["--area", "a", "--foo", "1"])).toThrow(/usage/);

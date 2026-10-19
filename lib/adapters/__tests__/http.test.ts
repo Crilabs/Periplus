@@ -412,7 +412,13 @@ describe("fixtures", () => {
     const req: HttpRequest = { service: "svc", operation: "op", url: "https://example.invalid/old", timeoutMs: 1 };
     const inner: Transport = async () =>
       makeResponse(200, new TextEncoder().encode("<p>hi</p>"), {
-        headers: { "content-type": "text/html", etag: '"v1"', "set-cookie": "sid=secret" },
+        headers: {
+          "content-type": "text/html",
+          etag: '"v1"',
+          "set-cookie": "sid=secret",
+          "x-client-ip": "203.0.113.7",
+          "x-analytics": "ip=203.0.113.7",
+        },
         finalUrl: "https://example.invalid/new",
       });
     await recordingTransport(inner, dir)(req);
