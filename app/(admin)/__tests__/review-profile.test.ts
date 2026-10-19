@@ -1,12 +1,14 @@
 import { and, eq, sql } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { facts, reviewTasks } from "@/lib/db/schema";
+import { facts, reviewTasks, runs } from "@/lib/db/schema";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
 import { valueFingerprint } from "@/lib/domain/review-decisions";
 import { reviewTaskDetail } from "@/lib/domain/review-view";
+import { CONSOLIDATION_STAGES, CONSOLIDATION_SUMMARY_STAGE } from "@/lib/pipeline/consolidation/stages";
 import { insertComputation, insertPlace, insertSource, insertTextFact } from "@/test/consolidation";
 import { testDb, withRollback } from "@/test/db";
+import { insertNamedObject } from "@/test/text";
 
 /*
  * The review of a profile attribute (conflict, uncertain change): the page data (`reviewTaskDetail`) and the decision
@@ -138,6 +140,53 @@ describe("review of a profile attribute", () => {
       const [task] = await tx.select({ status: reviewTasks.status }).from(reviewTasks).where(eq(reviewTasks.id, t.taskId));
       expect(task!.status).toBe("open");
       expect(await tx.select().from(facts).where(and(eq(facts.geoObjectId, t.objectId), sql`${facts.reviewDecisionId} is not null`))).toEqual([]);
+    }));
+
+  it("deciding a conflict starts a consolidation run for the object", () =>
+    withRollback(async (tx) => {
+      current = tx;
+      const t = await conflictTask(tx);
+      const [{ id: placeId }] = (await tx.execute<{ id: string }>(sql`select id from places where geo_object_id = ${t.objectId}`)).rows as [{ id: string }];
+      await decideAction(form({ taskId: t.taskId, taskKey: t.key, valueKey: valueFingerprint("good"), decision: JSON.stringify({ action: "value_a" }) }));
+      const started = await tx.select().from(runs).where(eq(runs.triggeredBy, "admin@example.invalid"));
+      expect(started).toHaveLength(1);
+      expect(started[0]).toMatchObject({ kind: "stage", scopeType: "place", scopeId: placeId, stages: [...CONSOLIDATION_STAGES], params: { geoObjectIds: [t.objectId] } });
+      const [task] = await tx.select({ status: reviewTasks.status }).from(reviewTasks).where(eq(reviewTasks.id, t.taskId));
+      expect(task!.status).toBe("decided");
+    }));
+
+  it("a refused decision starts no consolidation run", () =>
+    withRollback(async (tx) => {
+      current = tx;
+      const t = await conflictTask(tx);
+      await decideAction(form({ taskId: t.taskId, taskKey: "0000000000000000", decision: JSON.stringify({ action: "value_a" }) }));
+      expect(redirect).toHaveBeenCalledWith(`/review/${t.taskId}?changed=1`);
+      expect(await tx.select().from(runs).where(eq(runs.triggeredBy, "admin@example.invalid"))).toEqual([]);
+    }));
+
+  it("„Neu erzeugen“ on a failed summary starts a summary-only run; an object that cannot be consolidated is only logged", () =>
+    withRollback(async (tx) => {
+      current = tx;
+      const { objectId } = await insertPlace(tx, { name: "Summarybucht" });
+      const failedTask = async (geoObjectId: string) => {
+        const [row] = await tx
+          .insert(reviewTasks)
+          .values({ kind: "failed_job", subjectType: "profile_summary", subjectId: `${geoObjectId}:1`, context: { geoObjectId, version: 1 } })
+          .returning({ id: reviewTasks.id });
+        return row!.id;
+      };
+      await decideAction(form({ taskId: await failedTask(objectId), decision: JSON.stringify({ action: "regenerate_summary" }) }));
+      const started = await tx.select().from(runs).where(eq(runs.triggeredBy, "admin@example.invalid"));
+      expect(started.map((r) => [r.stages, r.params])).toEqual([[[CONSOLIDATION_SUMMARY_STAGE], { geoObjectIds: [objectId], stagesOnly: [CONSOLIDATION_SUMMARY_STAGE] }]]);
+
+      // a settlement takes no facts: the decision stands, no run starts, the action still redirects onwards
+      const settlement = await insertNamedObject(tx, { type: "settlement", names: [{ name: "Summarydorf" }], lon: 21.0, lat: 35.2 });
+      const taskId = await failedTask(settlement);
+      await decideAction(form({ taskId, decision: JSON.stringify({ action: "regenerate_summary" }) }));
+      expect(redirect.mock.lastCall![0]).not.toContain(taskId);
+      const [task] = await tx.select({ status: reviewTasks.status }).from(reviewTasks).where(eq(reviewTasks.id, taskId));
+      expect(task!.status).toBe("decided");
+      expect(await tx.select().from(runs).where(eq(runs.triggeredBy, "admin@example.invalid"))).toHaveLength(1);
     }));
 
   it("a decided conflict shows its resolution from the current profile", () =>

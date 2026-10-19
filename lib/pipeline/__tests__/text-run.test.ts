@@ -22,6 +22,8 @@ import {
   extractionUnits,
   facts,
   mentions,
+  profiles,
+  profileSummaries,
   routes,
   runs,
   serpQueries,
@@ -38,6 +40,9 @@ import { enqueueRunAdvance } from "@/lib/jobs/enqueue";
 import { BATCH_POLL_QUEUE, RUN_ADVANCE_QUEUE } from "@/lib/jobs/queues";
 import type { JobData } from "@/lib/jobs/worker";
 import { pollBatch, type BatchDeps, type PollOptions } from "@/lib/pipeline/batches";
+import { requestPlaceDiscovery } from "@/lib/pipeline/consolidation/followup";
+import { consolidateGeoJob } from "@/lib/pipeline/consolidation/geo";
+import { summarizeProfile } from "@/lib/pipeline/consolidation/summary";
 import { enqueueStage } from "@/lib/pipeline/runs";
 import { CHECK_QUEUE, checkExtractionRun, recheckBlockedExtractionRun } from "@/lib/pipeline/text/check";
 import { CLASSIFY_QUEUE, classifyVersions } from "@/lib/pipeline/text/classify";
@@ -121,6 +126,7 @@ function fixtureModel(seen: { extract: ExtractFactsInput[]; disambiguate: number
       seen.route++;
       return routeAnswer(input as ExtractRouteInput);
     },
+    "summarize-profile": () => ({ text: "Eine ruhige Bucht im Testrevier. Der Ankergrund hält gut." }),
   }, { batchIdPrefix: `mock-${newId()}-` });
   return { model, seen };
 }
@@ -153,9 +159,14 @@ async function drive(tx: Db, rec: ReturnType<typeof recordingBoss>, model: MockM
     [EXTRACT_QUEUE]: (job) => extractUnits(tx, deps, job as Job & { extractionRunId: string; unitIds: string[] }),
     [ROUTE_QUEUE]: (job) => extractRoutes(tx, { ...deps, archive: archive! }, job as Parameters<typeof extractRoutes>[2]),
     [CHECK_QUEUE]: (job) => checkExtractionRun(tx, job.extractionRunId as string, config),
+    "consolidation.geo": (job) => consolidateGeoJob(tx, job),
+    "consolidation.summary": (job) => summarizeProfile(tx, { geoObjectId: job.geoObjectId as string, version: job.version as number, runId: job.runId }, { model }),
+    "consolidation.followup": (job) => requestPlaceDiscovery(tx, rec.boss, job.runId, now),
   };
   for (let i = 0; i < rec.inserted.length; i++) {
     const { queue, data } = rec.inserted[i]!;
+    // Jobs of other runs (the place discovery the follow-up starts) are not driven here.
+    if (queue !== BATCH_POLL_QUEUE && String(data.runId) !== runId) continue;
     if (queue === RUN_ADVANCE_QUEUE) {
       await enqueueStage(tx, rec.boss, String(data.runId), String(data.nextStage));
     } else if (queue === BATCH_POLL_QUEUE) {
@@ -298,6 +309,13 @@ describe("text run", () => {
       // no mention is left pending
       const left = await tx.select().from(mentions).where(and(inArray(mentions.documentVersionId, r.versionIds), eq(mentions.extractionStatus, "pending")));
       expect(left).toEqual([]);
+      // the consolidation stages ran last: every object with a fact of the run has a profile version of the run
+      const factObjects = [...new Set(stored.map((f) => f.geoObjectId))].sort();
+      const profiled = await tx.selectDistinct({ id: profiles.geoObjectId }).from(profiles).where(eq(profiles.runId, r.runId));
+      expect(factObjects.every((id) => profiled.some((p) => p.id === id))).toBe(true);
+      const summaries = await tx.select().from(profileSummaries).where(eq(profileSummaries.runId, r.runId));
+      expect(summaries.length).toBeGreaterThan(0);
+      expect(summaries.every((x) => x.status === "ok")).toBe(true);
     }));
 
   it("a run whose route stage fails completely blocks its unchecked extraction runs; the recheck finishes them", () =>

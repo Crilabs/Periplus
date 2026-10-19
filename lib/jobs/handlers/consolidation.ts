@@ -1,9 +1,23 @@
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import { consolidationBlocked } from "@/lib/domain/consolidation/targets";
-import { CONSOLIDATION_FOLLOWUP_STAGE, CONSOLIDATION_SUMMARY_STAGE } from "@/lib/pipeline/consolidation/stages";
+import { consolidateGeoJob, consolidationGeoJobs } from "@/lib/pipeline/consolidation/geo";
+import { CONSOLIDATION_FOLLOWUP_STAGE, CONSOLIDATION_GEO_STAGE, CONSOLIDATION_SUMMARY_STAGE } from "@/lib/pipeline/consolidation/stages";
 import { summarizeProfile, summaryJobs } from "@/lib/pipeline/consolidation/summary";
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import { modelClientFor } from "./ai-batch";
+
+/** Stage `consolidation.geo`: one job per geo object of the run (`consolidationTargets`); none when quote fidelity blocks it. */
+export const consolidationGeoStage: StageDefinition = {
+  name: CONSOLIDATION_GEO_STAGE,
+  queue: "consolidation.geo",
+  plan: consolidationGeoJobs,
+};
+
+/** Consolidates `data.geoObjectId` for the run (`consolidateGeo`, regular or evaluation). */
+export const consolidationGeoHandler: JobHandler<JobData> = async (data, ctx) => {
+  const result = await consolidateGeoJob(ctx.db, data);
+  ctx.log.info({ geoObjectId: data.geoObjectId, ...result }, "geo object consolidated");
+};
 
 /** Stage `consolidation.summary`: one job per profile version to summarize (`summaryTargets`). */
 export const consolidationSummaryStage: StageDefinition = {

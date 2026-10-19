@@ -12,7 +12,14 @@ import {
   runScopeError,
   SCOPE_TYPE_LABELS,
 } from "../../_components/labels";
-import { discoveryForTileAction, geometryTileAction, reprocessTileAction, seedTileAction, textRunTileAction } from "./actions";
+import {
+  consolidateTileAction,
+  discoveryForTileAction,
+  geometryTileAction,
+  reprocessTileAction,
+  seedTileAction,
+  textRunTileAction,
+} from "./actions";
 
 const TILE_ID = /^q025:\d+:\d+$/;
 const time = (d: Date | null) => (d ? d.toISOString().slice(0, 19).replace("T", " ") : "–");
@@ -109,6 +116,12 @@ export default async function Page({ params, searchParams }: PageProps<"/tiles/[
           <input type="hidden" name="tileId" value={tile.id} />
           <button type="submit" className={BUTTON}>
             Reprozessieren (Stufen 6–7)
+          </button>
+        </form>
+        <form action={consolidateTileAction}>
+          <input type="hidden" name="tileId" value={tile.id} />
+          <button type="submit" className={BUTTON}>
+            Konsolidieren
           </button>
         </form>
       </div>

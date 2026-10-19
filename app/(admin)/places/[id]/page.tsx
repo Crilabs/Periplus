@@ -6,7 +6,8 @@ import { geoFacts } from "@/lib/domain/geo-facts";
 import { placeDetail } from "@/lib/domain/geo-view";
 import { placeGeometry } from "@/lib/domain/geometry-view";
 import { requireAdmin } from "@/lib/security/require-admin";
-import { PLACE_KIND_LABELS, PLACE_STATUS_LABELS, REVIEW_KIND_LABELS } from "../../_components/labels";
+import { PLACE_KIND_LABELS, PLACE_STATUS_LABELS, REVIEW_KIND_LABELS, runScopeError } from "../../_components/labels";
+import { recomputePlaceProfileAction } from "./actions";
 import { FactsTab } from "./facts-tab";
 import { GeometryTab } from "./geometry-tab";
 
@@ -28,6 +29,7 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
   const sp = await searchParams;
   const tab = tabParam.parse(sp.tab);
   const runs = runsParam.parse(sp.runs);
+  const error = runScopeError(sp.error);
   const db = getDb();
   const detail = await placeDetail(db, id.data);
   if (!detail) notFound();
@@ -37,6 +39,11 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
   return (
     <div className="space-y-4 text-sm">
       <h1 className="text-lg font-semibold">{p.name ?? p.id}</h1>
+      {error && (
+        <p role="alert" className="rounded bg-red-100 px-3 py-2">
+          Lauf nicht gestartet: {error}
+        </p>
+      )}
       {task && (
         <p className="rounded bg-amber-100 px-3 py-2">
           Offene Prüfung:{" "}
@@ -121,6 +128,14 @@ function Overview({ detail }: { detail: Detail }) {
           </>
         )}
       </dl>
+      {!p.validTo && !p.mergedIntoId && (
+        <form action={recomputePlaceProfileAction}>
+          <input type="hidden" name="placeId" value={p.id} />
+          <button type="submit" className="rounded border border-neutral-400 px-3 py-1 hover:bg-neutral-100">
+            Profil neu berechnen
+          </button>
+        </form>
+      )}
 
       <section>
         <h2 className="mb-1 font-semibold">Statusverlauf</h2>

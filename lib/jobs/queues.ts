@@ -26,6 +26,7 @@ export const QUEUES = [
   "extraction.mention",
   "extraction.route",
   "extraction.check",
+  "consolidation.geo",
   "consolidation.summary",
   "consolidation.followup",
 ] as const;

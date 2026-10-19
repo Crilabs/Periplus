@@ -17,6 +17,7 @@ import { nextTaskHref } from "@/lib/domain/review-view";
 import { getBoss } from "@/lib/jobs/boss";
 import type { QueueName } from "@/lib/jobs/queues";
 import { createLogger } from "@/lib/logger";
+import { startConsolidationRun } from "@/lib/pipeline/consolidation/run";
 import { startTextRun } from "@/lib/pipeline/text/run";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { requireAdmin } from "@/lib/security/require-admin";
@@ -73,10 +74,28 @@ async function startRematch(db: Db, documentVersionIds: string[], triggeredBy: s
 }
 
 /**
- * Decides the task, starts the rematch run a new name asks for, then redirects to the next open task of the same kind
- * (or `/review`). An already decided task redirects back with `?stale=1`, a profile task whose value changed since it
- * was shown with `?changed=1`, a decision that does not fit the task with `?error=1`. The consolidation run a profile
- * decision asks for (`consolidate`) is started by Task 16, after the commit (ruling M5-P10).
+ * The consolidation run a decision asks for (`consolidate`, ruling M5-P10): the object again after a profile decision,
+ * or only its summary after „Neu erzeugen“. Started after the decision committed, never inside it (ruling M5-F-R4).
+ * The decision stands without it: an object that cannot be consolidated any more is logged.
+ */
+async function startConsolidation(db: Db, consolidate: { geoObjectId: string; stagesOnly?: string[] }, triggeredBy: string): Promise<void> {
+  try {
+    await startConsolidationRun(db, await getBoss(), {
+      scope: { geoObjectIds: [consolidate.geoObjectId] },
+      triggeredBy,
+      ...(consolidate.stagesOnly ? { stagesOnly: consolidate.stagesOnly } : {}),
+    });
+  } catch (e) {
+    if (!(e instanceof RunScopeNotReady)) throw e;
+    createLogger("review").warn({ geoObjectId: consolidate.geoObjectId, reason: e.reason }, "consolidation run not started");
+  }
+}
+
+/**
+ * Decides the task, then starts the rematch run a new name asks for and the consolidation run a profile or summary
+ * decision asks for (both after the decision committed), then redirects to the next open task of the same kind (or
+ * `/review`). An already decided task redirects back with `?stale=1`, a profile task whose value changed since it was
+ * shown with `?changed=1`, a decision that does not fit the task with `?error=1`.
  */
 async function decideAndRedirect(
   decidedBy: string,
@@ -88,7 +107,7 @@ async function decideAndRedirect(
 
   let target: string;
   try {
-    const { documentVersionIds } = await decideReviewTask(
+    const { documentVersionIds, consolidate } = await decideReviewTask(
       db,
       {
         taskId: task.taskId,
@@ -101,6 +120,7 @@ async function decideAndRedirect(
       { retryJob },
     );
     if (documentVersionIds.length > 0) await startRematch(db, documentVersionIds, decidedBy);
+    if (consolidate) await startConsolidation(db, consolidate, decidedBy);
     target = await nextTaskHref(db, task.taskId);
   } catch (e) {
     if (e instanceof TaskNotOpen) target = `/review/${task.taskId}?stale=1`;

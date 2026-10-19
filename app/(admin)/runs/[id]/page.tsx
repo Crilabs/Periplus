@@ -1,10 +1,12 @@
 import { notFound } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
+import { consolidationBlocked } from "@/lib/domain/consolidation/targets";
 import { extractionRunsOfRun, type ExtractionRunRow } from "@/lib/domain/extraction/run-view";
 import { failedJobsOfRun } from "@/lib/domain/jobs-view";
 import { getRun } from "@/lib/domain/runs";
 import { QUEUES } from "@/lib/jobs/queues";
+import { CONSOLIDATION_GEO_STAGE } from "@/lib/pipeline/consolidation/stages";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { AutoRefresh } from "../../_components/auto-refresh";
 import {
@@ -33,10 +35,16 @@ export default async function Page({ params }: PageProps<"/runs/[id]">) {
     extractionRunsOfRun(db, id.data),
   ]);
   if (!run) notFound();
+  const blocked = run.stages.some((s) => s.stage === CONSOLIDATION_GEO_STAGE) && (await consolidationBlocked(db, run.id));
   return (
     <div className="space-y-4 text-sm">
       <AutoRefresh intervalMs={5000} />
       <h1 className="text-lg font-semibold">Lauf {run.id}</h1>
+      {blocked && (
+        <p role="alert" className="rounded bg-red-100 px-3 py-2 font-semibold text-red-800">
+          Konsolidierung gesperrt: Belegtreue unter 100 %
+        </p>
+      )}
       <dl className="grid grid-cols-[8rem_1fr] gap-y-1">
         <dt>Art</dt>
         <dd>{RUN_KIND_LABELS[run.kind]}</dd>

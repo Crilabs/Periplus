@@ -5,6 +5,7 @@ import { getConfig, getConsolidationConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { profiles, profileSummaries, reviewTasks } from "@/lib/db/schema";
 import { checkSummary, summaryInput } from "@/lib/domain/consolidation/summary";
+import { consolidationTargets } from "@/lib/domain/consolidation/targets";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 import { levelFor } from "@/lib/domain/facts/levels";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
@@ -31,14 +32,14 @@ type Target = { geoObjectId: string; version: number };
 /**
  * The profile versions to summarize for a run: the versions this run created (newest per object), or with
  * `params.stagesOnly` (a summary run started for given objects, e.g. "Neu erzeugen" after a failed summary) the newest
- * version of each `params.geoObjectIds`. Kept: objects whose fact level is in `summary.levels` and versions without an
+ * version of each target of the run (`consolidationTargets`: its `geoObjectIds`, tile, area or comparison set). Kept: objects whose fact level is in `summary.levels` and versions without an
  * `ok` summary of the current prompt version.
  */
 export async function summaryTargets(db: Db, run: { id: string; params: Record<string, unknown> }): Promise<Target[]> {
   const cfg = getConsolidationConfig();
   let candidates: Target[];
   if (Array.isArray(run.params.stagesOnly)) {
-    const ids = Array.isArray(run.params.geoObjectIds) ? run.params.geoObjectIds.filter((v): v is string => typeof v === "string") : [];
+    const ids = await consolidationTargets(db, run);
     if (ids.length === 0) return [];
     candidates = await db
       .selectDistinctOn([profiles.geoObjectId], { geoObjectId: profiles.geoObjectId, version: profiles.version })

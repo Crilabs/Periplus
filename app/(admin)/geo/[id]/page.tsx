@@ -12,8 +12,10 @@ import {
   NAME_ORIGIN_LABELS,
   PLACE_KIND_LABELS,
   PLACE_STATUS_LABELS,
+  runScopeError,
 } from "../../_components/labels";
 import { AnnotatedText } from "../../_components/annotated-text";
+import { recomputeGeoProfileAction } from "../../places/[id]/actions";
 import { FactsTab } from "../../places/[id]/facts-tab";
 
 const SCRIPT_LABELS = { latin: "Lateinisch", greek: "Griechisch" } as const;
@@ -42,6 +44,7 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
   const sp = await searchParams;
   const runs = runsParam.parse(sp.runs);
   const page = pageParam.parse(sp.mp);
+  const error = runScopeError(sp.error);
   const [mentionPage, facts] = await Promise.all([geoMentions(db, id.data, page), geoFacts(db, id.data, { runs })]);
   const pages = Math.max(1, Math.ceil(mentionPage.total / MENTIONS_PER_PAGE));
   const href = (q: { runs?: "active" | "all"; mp?: number }) => {
@@ -61,6 +64,11 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
       <h1 className="text-lg font-semibold">
         {o.name ?? o.id} ({GEO_OBJECT_TYPE_LABELS[o.type]})
       </h1>
+      {error && (
+        <p role="alert" className="rounded bg-red-100 px-3 py-2">
+          Lauf nicht gestartet: {error}
+        </p>
+      )}
       <dl className="grid grid-cols-[8rem_1fr] gap-y-1">
         <dt>Eltern-Kette</dt>
         <dd>
@@ -133,6 +141,14 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
         <dt>Geo-Objekt</dt>
         <dd className="font-mono text-xs">{o.id}</dd>
       </dl>
+      {!o.validTo && !o.mergedIntoId && (
+        <form action={recomputeGeoProfileAction}>
+          <input type="hidden" name="geoObjectId" value={o.id} />
+          <button type="submit" className="rounded border border-neutral-400 px-3 py-1 hover:bg-neutral-100">
+            Profil neu berechnen
+          </button>
+        </form>
+      )}
 
       <section>
         <h2 className="mb-1 font-semibold">Namen</h2>
