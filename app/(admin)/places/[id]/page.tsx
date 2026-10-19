@@ -3,19 +3,31 @@ import { notFound } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { placeDetail } from "@/lib/domain/geo-view";
+import { placeGeometry } from "@/lib/domain/geometry-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { PLACE_KIND_LABELS, PLACE_STATUS_LABELS, REVIEW_KIND_LABELS } from "../../_components/labels";
+import { GeometryTab } from "./geometry-tab";
 
 const time = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
 const coord = (lat: number, lon: number) => `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
 
-export default async function Page({ params }: PageProps<"/places/[id]">) {
+/** Tabs of the place page (`?tab=`); later milestones add theirs. */
+const TABS = { overview: "Übersicht", geometry: "Geometrie" } as const;
+type Tab = keyof typeof TABS;
+const tabParam = z.enum(Object.keys(TABS) as [Tab, ...Tab[]]).catch("overview");
+
+type Detail = NonNullable<Awaited<ReturnType<typeof placeDetail>>>;
+
+export default async function Page({ params, searchParams }: PageProps<"/places/[id]">) {
   await requireAdmin();
   const id = z.uuid().safeParse((await params).id);
   if (!id.success) notFound();
-  const detail = await placeDetail(getDb(), id.data);
+  const tab = tabParam.parse((await searchParams).tab);
+  const db = getDb();
+  const detail = await placeDetail(db, id.data);
   if (!detail) notFound();
   const { place: p, openReviewTask: task } = detail;
+  const geometry = tab === "geometry" ? await placeGeometry(db, p.id) : null;
   return (
     <div className="space-y-4 text-sm">
       <h1 className="text-lg font-semibold">{p.name ?? p.id}</h1>
@@ -27,6 +39,36 @@ export default async function Page({ params }: PageProps<"/places/[id]">) {
           </Link>
         </p>
       )}
+      <nav aria-label="Reiter" className="flex gap-1 border-b border-neutral-300">
+        {(Object.keys(TABS) as Tab[]).map((t) => (
+          <Link
+            key={t}
+            href={t === "overview" ? `/places/${p.id}` : `/places/${p.id}?tab=${t}`}
+            aria-current={t === tab ? "page" : undefined}
+            className={`-mb-px border-b-2 px-3 py-1 ${t === tab ? "border-neutral-800 font-semibold" : "border-transparent hover:border-neutral-400"}`}
+          >
+            {TABS[t]}
+          </Link>
+        ))}
+      </nav>
+      {geometry ? (
+        <GeometryTab
+          placeId={p.id}
+          position={p.position}
+          view={geometry}
+          editable={!p.validTo && !p.mergedIntoId}
+        />
+      ) : (
+        <Overview detail={detail} />
+      )}
+    </div>
+  );
+}
+
+function Overview({ detail }: { detail: Detail }) {
+  const p = detail.place;
+  return (
+    <>
       <dl className="grid grid-cols-[8rem_1fr] gap-y-1">
         <dt>Art</dt>
         <dd>{PLACE_KIND_LABELS[p.kind]}</dd>
@@ -86,6 +128,6 @@ export default async function Page({ params }: PageProps<"/places/[id]">) {
           </ul>
         )}
       </section>
-    </div>
+    </>
   );
 }

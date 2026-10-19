@@ -18,6 +18,7 @@ import { STAGES } from "@/lib/jobs/stages";
 import { createLogger } from "@/lib/logger";
 import { computePlaceGeometry, GEOMETRY_STAGE, geometryPlaceIds, storeComputedAnchor } from "@/lib/pipeline/geometry";
 import { startGeometryRun } from "@/lib/pipeline/geometry-run";
+import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { testDb, withRollback } from "@/test/db";
 import { insertTestRaster } from "@/test/geometry/raster";
 import { buildBayScene, insertScenePlace, SCENE_LAND_VERSION } from "@/test/geometry/scene";
@@ -342,6 +343,34 @@ describe("startGeometryRun", () => {
       });
     }));
 
+  it("creates a place run that enqueues only that place", () =>
+    withRollback(async (tx) => {
+      const scene = await buildBayScene(tx);
+      const other = await insertScenePlace(tx, 200, 100);
+      const { boss, inserted } = recordingBoss();
+      const { id } = await startGeometryRun(tx, boss, { placeId: scene.placeId }, "test");
+      const [run] = await tx.select().from(runs).where(eq(runs.id, id));
+      expect(run).toMatchObject({ scopeType: "place", scopeId: scene.placeId, stages: [GEOMETRY_STAGE], params: { placeIds: [scene.placeId] } });
+      expect(inserted).toEqual([
+        { queue: "geometry.compute", data: { key: scene.placeId, placeId: scene.placeId, runId: id, stage: GEOMETRY_STAGE } },
+      ]);
+      expect(await geometryPlaceIds(tx, { placeIds: [scene.placeId, other.placeId] })).toEqual(
+        [scene.placeId, other.placeId].sort(),
+      );
+    }));
+
+  it("rejects a place the stage does not compute before creating a run", () =>
+    withRollback(async (tx) => {
+      await buildBayScene(tx);
+      const ended = await insertScenePlace(tx, 200, 100, { ended: true });
+      const { boss, inserted } = recordingBoss();
+      const error = await startGeometryRun(tx, boss, { placeId: ended.placeId }, "test").catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(RunScopeNotReady);
+      expect((error as RunScopeNotReady).reason).toBe("place_not_computable");
+      expect(await tx.select().from(runs).where(eq(runs.scopeId, ended.placeId))).toEqual([]);
+      expect(inserted).toEqual([]);
+    }));
+
   it("rejects a tile without bathymetry before creating a run", () =>
     withRollback(async (tx) => {
       const scene = await buildBayScene(tx, { raster: false });
@@ -350,6 +379,9 @@ describe("startGeometryRun", () => {
       await expect(startGeometryRun(tx, boss, { tileId: scene.tileId }, "test")).rejects.toThrow(
         /bathymetry not imported for tile/,
       );
+      await expect(startGeometryRun(tx, boss, { placeId: scene.placeId }, "test")).rejects.toMatchObject({
+        reason: "bathymetry_missing",
+      });
       expect(await tx.select().from(runs).where(eq(runs.scopeId, scene.tileId))).toEqual([]);
       expect(inserted).toEqual([]);
     }));

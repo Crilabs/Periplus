@@ -58,6 +58,9 @@ describe("placeGeometry", () => {
       expect(view.depth.anchoringMin).toBeGreaterThanOrEqual(3);
       expect(view.depth.anchoringMax).toBeLessThanOrEqual(12);
       expect(view.depth.confidence).not.toBeNull();
+      expect(view.depthSamples.map((d) => d.distanceM)).toEqual([50, 100, 200]);
+      expect(view.depthSamples[0]!.depthM).toBe(view.depth.approach!.at50m);
+      expect(await distanceM(tx, view.origin!, view.depthSamples[2]!.position)).toBeCloseTo(200, -1);
 
       expect(view.seabed!.map((s) => s.type).sort()).toEqual(["mud", "sand"]);
       expect(view.water?.type).toMatch(/Polygon/);
@@ -99,6 +102,7 @@ describe("placeGeometry", () => {
         opening: null,
         rays: [],
         depth: { approach: null, min: null, max: null, anchoringMin: null, anchoringMax: null, confidence: null },
+        depthSamples: [],
         seabed: null,
         water: null,
         anchorArea: null,

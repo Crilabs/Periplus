@@ -1,4 +1,5 @@
 import type {
+  ComputationKind,
   GeoObjectType,
   GeoOrigin,
   NameOrigin,
@@ -8,8 +9,14 @@ import type {
   RunKind,
   RunScopeType,
   RunStageStatus,
+  RestrictedKind,
   RunStatus,
+  SeabedType,
 } from "@/lib/db/schema";
+import type { Sector } from "@/lib/domain/facts/schema-types";
+import type { GapReason } from "@/lib/domain/geometry/gaps";
+import type { OriginSource } from "@/lib/domain/geometry/water";
+import type { RunScopeReason } from "@/lib/pipeline/tile-scope";
 
 /** German display labels for English enum values. Typed as complete records, so a new enum value fails typecheck. */
 
@@ -104,6 +111,70 @@ export const NAME_ORIGIN_LABELS: Record<NameOrigin, string> = {
   manual: "Manuell",
   transliteration: "Transliteration",
   fallback: "Ersatz",
+};
+
+export const SECTOR_LABELS: Record<Sector, string> = {
+  N: "N",
+  NE: "NO",
+  E: "O",
+  SE: "SO",
+  S: "S",
+  SW: "SW",
+  W: "W",
+  NW: "NW",
+};
+
+export const SEABED_TYPE_LABELS: Record<SeabedType, string> = {
+  sand: "Sand",
+  mud: "Schlamm",
+  gravel: "Kies",
+  rock: "Fels",
+  mixed: "Gemischt",
+  weed: "Seegras/Algen",
+};
+
+export const GAP_REASON_LABELS: Record<GapReason, string> = {
+  no_water: "Keine Wasserfläche",
+  origin_unresolved: "Kein Ausgangspunkt im Wasser",
+  no_bathymetry: "Keine Bathymetrie",
+  no_anchor_area: "Keine Fläche mit 3–12 m",
+  no_seabed_coverage: "Grund nicht abgedeckt",
+};
+
+export const COMPUTATION_KIND_LABELS: Record<ComputationKind, string> = {
+  shelter: "Schutz",
+  fetch: "Fetch",
+  depth: "Tiefe",
+  seabed: "Grund",
+  anchor_area: "Ankerfläche",
+  quietness: "Ruhe",
+  restriction: "Ausschluss",
+};
+
+export const RESTRICTED_KIND_LABELS: Record<RestrictedKind, string> = {
+  military: "Militärgebiet",
+  cable: "Kabel",
+  protected_area: "Schutzgebiet",
+  aquaculture: "Aquakultur",
+  ferry_lane: "Fährkorridor",
+  firing_area: "Schießgebiet",
+};
+
+/** Where the rays and depth samples of a place start. */
+export const ORIGIN_SOURCE_LABELS: Record<OriginSource, string> = {
+  position: "Position des Orts",
+  review_anchor: "Ankerposition (Review)",
+  computed_anchor: "Ankerposition (berechnet)",
+  moved_off_land: "Position, vom Land ins Wasser verschoben",
+};
+
+/** Why a run did not start (`RunScopeNotReady`). */
+export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
+  area_without_geo_object: "Revier hat noch kein Geo-Objekt – zuerst „Gazetteer aufbauen“",
+  area_without_coast_tiles: "Revier hat noch keine Küstenkacheln – zuerst „Gazetteer aufbauen“",
+  bathymetry_missing: "Bathymetrie fehlt – zuerst „Datensätze laden“",
+  land_missing: "Landpolygone fehlen – zuerst die Landpolygone importieren",
+  place_not_computable: "Ort wird nicht berechnet (beendet, zusammengeführt, verworfen oder ohne Kachel)",
 };
 
 export const queueStateLabel = (paused: boolean): string => (paused ? "Pausiert" : "Läuft");

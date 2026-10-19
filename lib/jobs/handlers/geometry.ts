@@ -2,7 +2,7 @@ import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import { computePlaceGeometry, GEOMETRY_STAGE, geometryPlaceIds } from "@/lib/pipeline/geometry";
 import type { StageDefinition } from "@/lib/pipeline/runs";
 
-/** Stage `geometry.place`: one job per place of `run.params.tileIds` or of the coast tiles of `run.params.areaKey`. */
+/** Stage `geometry.place`: one job per place of `run.params.placeIds`, of `run.params.tileIds` or of the coast tiles of `run.params.areaKey`. */
 export const geometryPlaceStage: StageDefinition = {
   name: GEOMETRY_STAGE,
   queue: "geometry.compute",

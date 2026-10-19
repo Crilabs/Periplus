@@ -6,17 +6,11 @@ import { useEffect, useRef } from "react";
 import { DEFAULT_CENTER, MAP_STYLE_URL } from "./map-style";
 
 const SOURCE = "review";
-/** Colour per feature property `role`. */
+/** Colour per feature: property `color` when set, else by property `role`. */
 const ROLE_COLOR = [
-  "match",
-  ["get", "role"],
-  "subject",
-  "#dc2626",
-  "nearby",
-  "#2563eb",
-  "picked",
-  "#16a34a",
-  "#525252",
+  "coalesce",
+  ["get", "color"],
+  ["match", ["get", "role"], "subject", "#dc2626", "nearby", "#2563eb", "picked", "#16a34a", "#525252"],
 ];
 
 function extend(bounds: LngLatBounds, coords: unknown): void {
@@ -36,7 +30,7 @@ function boundsOf(features: GeoJSON.FeatureCollection): LngLatBounds | null {
 
 /**
  * Small MapLibre map of a review task's features (property `role`: subject red, nearby blue, picked green,
- * others grey). With `onPick`, a click reports its position.
+ * others grey; a property `color` overrides the role colour). With `onPick`, a click reports its position.
  */
 export function MiniMap({
   features,

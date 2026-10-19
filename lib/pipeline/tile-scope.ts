@@ -6,6 +6,25 @@ import { validAt } from "@/lib/domain/timeline";
 
 // No import of ./runs here: modules a job handler imports must not reach the stage registry (import cycle).
 
+/** Why a run's scope is not ready for its stage; the admin UI shows a German text per reason. */
+export type RunScopeReason =
+  | "area_without_geo_object"
+  | "area_without_coast_tiles"
+  | "bathymetry_missing"
+  | "land_missing"
+  | "place_not_computable";
+
+/** A run start refused before the run exists because its scope lacks an input (an expected, user-facing error). */
+export class RunScopeNotReady extends Error {
+  constructor(
+    readonly reason: RunScopeReason,
+    message: string,
+  ) {
+    super(message);
+    this.name = "RunScopeNotReady";
+  }
+}
+
 /** Stage of the seed run; here rather than in ./seed, which imports ./runs. */
 export const SEED_STAGE = "seed.tile";
 

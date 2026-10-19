@@ -16,7 +16,7 @@ import { opening, sectorFetch, shelterFromFetch, swellProtection } from "@/lib/d
 import { resolveOrigin, waterArea, type LonLat } from "@/lib/domain/geometry/water";
 import { tileBbox } from "@/lib/domain/tiles";
 import { validAt } from "@/lib/domain/timeline";
-import { seedTileIds } from "@/lib/pipeline/tile-scope";
+import { RunScopeNotReady, seedTileIds } from "@/lib/pipeline/tile-scope";
 
 // No import of ./runs here: the job handler imports this module (import cycle through the stage registry).
 
@@ -70,12 +70,14 @@ async function assertBathymetry(db: Db, tileIds: string[]): Promise<void> {
     select distinct tile_id from bathymetry where tile_id in (select unnest(${`{${tileIds.join(",")}}`}::text[]))`);
   const imported = new Set(rows.map((r) => r.tile_id));
   const missing = tileIds.filter((id) => !imported.has(id));
-  if (missing.length > 0) throw new Error(`bathymetry not imported for tile ${missing.join(", ")} – run Datensätze laden`);
+  if (missing.length > 0) {
+    throw new RunScopeNotReady("bathymetry_missing", `bathymetry not imported for tile ${missing.join(", ")} – run Datensätze laden`);
+  }
 }
 
 /**
  * Checks the inputs the geometry stage needs for `tileIds` (before a run exists): bathymetry rows for every
- * tile and land polygons within the ray length of every tile. Throws naming the tiles that lack them.
+ * tile and land polygons within the ray length of every tile. Throws `RunScopeNotReady` naming the tiles that lack them.
  */
 export async function checkGeometryTiles(db: Db, tileIds: string[]): Promise<void> {
   if (tileIds.length === 0) return;
@@ -88,28 +90,36 @@ export async function checkGeometryTiles(db: Db, tileIds: string[]): Promise<voi
     if (!(await hasLandWithin(db, box, maxRayM, Math.max(Math.abs(s), Math.abs(n))))) withoutLand.push(id);
   }
   if (withoutLand.length > 0) {
-    throw new Error(`land polygons missing within ${maxRayM / 1000} km of tile ${withoutLand.join(", ")} – import the land polygons`);
+    throw new RunScopeNotReady(
+      "land_missing",
+      `land polygons missing within ${maxRayM / 1000} km of tile ${withoutLand.join(", ")} – import the land polygons`,
+    );
   }
 }
 
 /**
  * Places the geometry stage computes: valid, unmerged places with status candidate, confirmed or no_anchoring
- * whose tile is one of `params.tileIds`, else one of the coast tiles of the area `params.areaKey`; ordered by id.
+ * among `params.placeIds`, else whose tile is one of `params.tileIds`, else one of the coast tiles of the area
+ * `params.areaKey`; ordered by id.
  */
-export async function geometryPlaceIds(db: Db, params: { tileIds?: string[]; areaKey?: string }): Promise<string[]> {
-  const tileIds = await seedTileIds(db, params);
-  if (tileIds.length === 0) return [];
+export async function geometryPlaceIds(
+  db: Db,
+  params: { placeIds?: string[]; tileIds?: string[]; areaKey?: string },
+): Promise<string[]> {
+  let scope: SQL;
+  if (Array.isArray(params.placeIds)) {
+    if (!params.placeIds.every((id) => typeof id === "string")) throw new Error("placeIds must be strings");
+    if (params.placeIds.length === 0) return [];
+    scope = inArray(places.id, params.placeIds);
+  } else {
+    const tileIds = await seedTileIds(db, params);
+    if (tileIds.length === 0) return [];
+    scope = inArray(places.tileId, tileIds);
+  }
   const rows = await db
     .select({ id: places.id })
     .from(places)
-    .where(
-      and(
-        inArray(places.tileId, tileIds),
-        validAt(places),
-        isNull(places.mergedIntoId),
-        inArray(places.status, COMPUTED_STATUSES),
-      ),
-    )
+    .where(and(scope, validAt(places), isNull(places.mergedIntoId), inArray(places.status, COMPUTED_STATUSES)))
     .orderBy(asc(places.id));
   return rows.map((r) => r.id);
 }

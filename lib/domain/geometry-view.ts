@@ -33,6 +33,8 @@ export type PlaceGeometryView = {
     anchoringMax: number | null;
     confidence: number | null;
   };
+  /** Approach samples (50/100/200 m along the opening) with their positions, from the depth computation. */
+  depthSamples: Array<{ distanceM: number; depthM: number | null; position: LonLat }>;
   seabed: Array<{ type: SeabedType; share: number }> | null;
   water: Geometry | null;
   anchorArea: { areaM2: number; geometry: Geometry | null } | null;
@@ -85,6 +87,18 @@ async function raysOf(db: Db, stored: Stored, origin: LonLat | null): Promise<Pl
     fetchM,
     shelter: rayShelter(fetchM, shelterParams),
     end: { lon: Number(rows[i]!.lon), lat: Number(rows[i]!.lat) },
+  }));
+}
+
+type StoredSample = { distanceM: number; lon: number; lat: number; depthM: number | null };
+
+function depthSamplesOf(stored: Stored): PlaceGeometryView["depthSamples"] {
+  const samples = stored.get("depth")?.outputs.samples;
+  if (!Array.isArray(samples)) return [];
+  return (samples as StoredSample[]).map((s) => ({
+    distanceM: Number(s.distanceM),
+    depthM: s.depthM === null ? null : Number(s.depthM),
+    position: { lon: Number(s.lon), lat: Number(s.lat) },
   }));
 }
 
@@ -153,6 +167,7 @@ export async function placeGeometry(db: Db, placeId: string): Promise<PlaceGeome
       anchoringMax: value<number>(stored, "depth", "depth.anchoring_max"),
       confidence: depthConfidenceFact?.confidence ?? null,
     },
+    depthSamples: depthSamplesOf(stored),
     seabed: value(stored, "seabed", "seabed"),
     water: (anchorAreaRow?.outputs.water as Geometry | null | undefined) ?? null,
     anchorArea: areaValue
