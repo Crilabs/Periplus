@@ -7,6 +7,7 @@ import {
   facts,
   mentions,
   places,
+  profiles,
   reviewDecisions,
   reviewTasks,
   sources,
@@ -16,6 +17,7 @@ import {
   type PlaceStatus,
 } from "@/lib/db/schema";
 import type { GeoObjectType } from "@/lib/db/schema/geo";
+import type { AttributeProvenance, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
 import { newId } from "@/lib/domain/ids";
 import { insertNamedObject, insertTestExtractionRun, insertTestRun, insertTestVersion } from "@/test/text";
 
@@ -185,4 +187,55 @@ export async function insertProfileTask(
   if (!o.action) return { taskId: t!.id, decisionId: null };
   const [d] = await db.insert(reviewDecisions).values({ taskId: t!.id, decision: { action: o.action }, decidedBy: "test" }).returning({ id: reviewDecisions.id });
   return { taskId: t!.id, decisionId: d!.id };
+}
+
+/** A provenance entry of `origin` (confidence 0.8, class medium, nothing cited) with `patch` applied. */
+export function provenanceEntry(origin: ProvenanceOrigin, patch: Partial<AttributeProvenance> = {}): AttributeProvenance {
+  return {
+    origin,
+    rule: origin === "gazetteer" ? "identity" : origin === "derived" ? "derived" : "default",
+    confidence: 0.8,
+    confidenceClass: "medium",
+    observedAt: null,
+    lastConfirmedAt: null,
+    factIds: [],
+    sourceKeys: [],
+    computationIds: [],
+    poiIds: [],
+    expired: false,
+    onlyGoneSources: false,
+    conflictKey: null,
+    observedMonths: [],
+    ...patch,
+  };
+}
+
+/**
+ * A profile version of the object with the M5 columns (`content_hash` arbitrary): version 1 from 2026-10-19 unless
+ * `opts` say otherwise; `valid_from` must not precede the object's latest version (trigger, drizzle/0034).
+ */
+export async function insertProfile(
+  db: Db,
+  geoObjectId: string,
+  attributes: Record<string, unknown>,
+  provenance: Record<string, AttributeProvenance>,
+  opts: { version?: number; validFrom?: string; sourcesCount?: number; documentsCount?: number; confidence?: number | null } = {},
+): Promise<string> {
+  const [row] = await db
+    .insert(profiles)
+    .values({
+      geoObjectId,
+      version: opts.version ?? 1,
+      validFrom: opts.validFrom ?? "2026-10-19",
+      attributes,
+      provenance,
+      sourcesCount: opts.sourcesCount ?? 0,
+      documentsCount: opts.documentsCount ?? 0,
+      confidence: opts.confidence === undefined ? 0.8 : opts.confidence,
+      contentHash: newId(),
+      factSchemaVersion: "v2",
+      rulesVersion: "test",
+    })
+    .returning({ id: profiles.id });
+  return row!.id;
 }
