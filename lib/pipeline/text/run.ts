@@ -9,6 +9,7 @@ import { DISAMBIGUATE_STAGE } from "./disambiguate";
 import { EXTRACT_STAGE } from "./extract";
 import { GEOCODE_STAGE } from "./geocode";
 import { MENTIONS_STAGE } from "./mentions";
+import { ROUTE_STAGE } from "./routes";
 import { freezeTextRunParams, type TextRunParams } from "./versions";
 
 /*
@@ -17,7 +18,7 @@ import { freezeTextRunParams, type TextRunParams } from "./versions";
  */
 
 /** The stages of a text run, in order; the quote check (`extraction.check`) comes last. */
-export const TEXT_RUN_STAGES = [CLASSIFY_STAGE, MENTIONS_STAGE, DISAMBIGUATE_STAGE, GEOCODE_STAGE, EXTRACT_STAGE, CHECK_STAGE] as const;
+export const TEXT_RUN_STAGES = [CLASSIFY_STAGE, MENTIONS_STAGE, DISAMBIGUATE_STAGE, GEOCODE_STAGE, EXTRACT_STAGE, ROUTE_STAGE, CHECK_STAGE] as const;
 
 function scopeOf(params: TextRunParams): RunScope {
   if (params.tileId) return { type: "tile", id: params.tileId };

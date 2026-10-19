@@ -6,6 +6,7 @@ import { checkQuoteFidelity, type QuoteFidelity } from "@/lib/domain/extraction/
 import type { JobData } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
 import { EXTRACT_FACTS_TASK, extractionRunStats } from "./extract";
+import { EXTRACT_ROUTE_TASK, routeRunStats } from "./routes";
 
 /*
  * Stage `extraction.check` (spec 06, Belegtreue), the last stage of a text run: one job per extraction run of the run
@@ -39,6 +40,7 @@ export async function checkExtractionRun(db: Db, extractionRunId: string, config
     const [run] = await tx.select({ task: extractionRuns.task }).from(extractionRuns).where(eq(extractionRuns.id, extractionRunId)).for("update");
     if (!run) throw new Error(`extraction run ${extractionRunId} does not exist`);
     if (run.task === EXTRACT_FACTS_TASK) await extractionRunStats(tx, extractionRunId);
+    else if (run.task === EXTRACT_ROUTE_TASK) await routeRunStats(tx, extractionRunId);
     const fidelity = await checkQuoteFidelity(tx, extractionRunId, config);
     const log = getLog();
     const entry = { extractionRunId, task: run.task, facts: fidelity.facts, verified: fidelity.verified, ratio: fidelity.ratio };

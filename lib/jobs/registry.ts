@@ -14,6 +14,7 @@ import {
   disambiguateMentionsHandler,
   checkExtractionRunHandler,
   extractMentionsHandler,
+  extractRoutesHandler,
   geocodeNameCandidateHandler,
   mentionsBatchHandler,
 } from "./handlers/text";
@@ -45,5 +46,6 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "mentions.disambiguate": disambiguateMentionsHandler,
   "mentions.geocode": geocodeNameCandidateHandler,
   "extraction.mention": extractMentionsHandler,
+  "extraction.route": extractRoutesHandler,
   "extraction.check": checkExtractionRunHandler,
 };

@@ -17,6 +17,7 @@ import {
   classifyDocumentVersionStage,
   extractionCheckStage,
   extractionMentionStage,
+  extractionRouteStage,
   mentionsBatchStage,
   mentionsDisambiguateStage,
   mentionsGeocodeStage,
@@ -48,5 +49,6 @@ export const STAGES: Record<string, StageDefinition> = {
   [mentionsDisambiguateStage.name]: mentionsDisambiguateStage,
   [mentionsGeocodeStage.name]: mentionsGeocodeStage,
   [extractionMentionStage.name]: extractionMentionStage,
+  [extractionRouteStage.name]: extractionRouteStage,
   [extractionCheckStage.name]: extractionCheckStage,
 };

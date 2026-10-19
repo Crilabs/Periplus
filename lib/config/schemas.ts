@@ -573,6 +573,8 @@ export const extractionSchema = z.strictObject({
   classifyWords: positiveInt,
   /** Documents with more words in sections go to the route extraction. */
   routeSectionWords: positiveInt,
+  /** At most this many stops of a route section are looked at (the prompt says so too). */
+  routeMaxStops: positiveInt,
   /** A highlight POI matches a gazetteer POI within this distance. */
   poiMatchRadiusM: meters,
   poiSimilarity: share,

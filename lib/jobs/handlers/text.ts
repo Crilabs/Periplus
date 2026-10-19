@@ -8,6 +8,7 @@ import { CLASSIFY_QUEUE, CLASSIFY_STAGE, classifyVersions, planClassify } from "
 import { DISAMBIGUATE_QUEUE, DISAMBIGUATE_STAGE, disambiguateMatches, planDisambiguate } from "@/lib/pipeline/text/disambiguate";
 import { EXTRACT_QUEUE, EXTRACT_STAGE, extractUnits, planExtraction } from "@/lib/pipeline/text/extract";
 import { GEOCODE_QUEUE, GEOCODE_STAGE, geocodeCandidate, planGeocode } from "@/lib/pipeline/text/geocode";
+import { ROUTE_QUEUE, ROUTE_STAGE, extractRoutes, planRoutes } from "@/lib/pipeline/text/routes";
 import { MENTIONS_QUEUE, MENTIONS_STAGE, matchVersions, planMentions } from "@/lib/pipeline/text/mentions";
 import { modelClientFor } from "./ai-batch";
 
@@ -15,7 +16,7 @@ import { modelClientFor } from "./ai-batch";
  * Text stages are planned lazily, when each stage starts (`enqueueStage`). They therefore plan from the run's frozen
  * version set (`frozenRunVersions`, ruling M4-E-R2), never from a re-resolved `pending`/`tileId`/`areaKey`: the
  * passes written by `mentions.batch` would make `pending` empty for every later stage. `mentions.geocode` plans from it
- * as well, and so does `extraction.mention`. `extraction.check` plans from the run's extraction runs, which come from
+ * as well, and so do `extraction.mention` and `extraction.route`. `extraction.check` plans from the run's extraction runs, which come from
  * that set.
  */
 
@@ -123,6 +124,31 @@ export const extractMentionsHandler: JobHandler<JobData> = async (data, ctx) => 
   const job = extractJobSchema.parse(data);
   const result = await extractUnits(ctx.db, { model: modelClientFor(ctx.db), boss: ctx.boss }, job);
   ctx.log.info({ units: job.unitIds.length, ...result }, "extraction batch submitted");
+};
+
+/** Stage `extraction.route`: the run's trip reports without a route, `unitsPerBatch` versions per job. */
+export const extractionRouteStage: StageDefinition = {
+  name: ROUTE_STAGE,
+  queue: ROUTE_QUEUE,
+  plan: (db, run) => planRoutes(db, run),
+};
+
+const routeJobSchema = z
+  .object({
+    runId: z.string().uuid(),
+    stage: z.string().min(1),
+    key: z.string().min(1),
+    extractionRunId: z.string().uuid(),
+    versionIds: z.array(z.string().uuid()).optional(),
+    sectionIds: z.array(z.string().min(1)).optional(),
+  })
+  .refine((j) => (j.versionIds?.length ?? 0) + (j.sectionIds?.length ?? 0) > 0, "a route job needs versions or sections");
+
+/** Sends one job's report sections to `extract-route` as a message batch; the poll job stores the routes. */
+export const extractRoutesHandler: JobHandler<JobData> = async (data, ctx) => {
+  const job = routeJobSchema.parse(data);
+  const result = await extractRoutes(ctx.db, { model: modelClientFor(ctx.db), boss: ctx.boss, archive: getArchive() }, job);
+  ctx.log.info({ versions: job.versionIds?.length ?? 0, sections: job.sectionIds?.length ?? 0, ...result }, "route batch submitted");
 };
 
 /** Stage `extraction.check`: one job per extraction run of the run (stats, quote check, finished or blocked). */
