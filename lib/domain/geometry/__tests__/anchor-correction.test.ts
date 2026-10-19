@@ -104,4 +104,60 @@ describe("setAnchorPosition", () => {
         setAnchorPosition(tx, { placeId: ended.placeId, position: ended.position, decidedBy: "admin@example.org" }),
       ).rejects.toBeInstanceOf(DecisionNotAllowed);
     }));
+
+  it("a place without a previous anchor records previous null and no origin", () =>
+    withRollback(async (tx) => {
+      const place = await insertScenePlace(tx, 0, 100, { status: "confirmed" });
+      const position = await lonLatOf(tx, 20, 150);
+
+      await setAnchorPosition(tx, { placeId: place.placeId, position, decidedBy: "admin@example.org", now: NOW });
+
+      const [task] = await anchorTasks(tx, place.placeId);
+      expect(task!.context).toEqual({ previous: null, previousOrigin: null });
+      expect(await anchorOf(tx, place.placeId)).toMatchObject({ confidence: 0.9, origin: "review" });
+    }));
+
+  it("accepts a position just inside 2000 m and rejects one just outside", () =>
+    withRollback(async (tx) => {
+      const place = await insertScenePlace(tx, 0, 100, { status: "confirmed" });
+      const at = async (distanceM: number) => {
+        const { rows } = await tx.execute<{ lon: number; lat: number }>(sql`
+          select ST_X(p) as lon, ST_Y(p) as lat
+          from (select ST_Project(position::geography, ${distanceM}::float8, radians(90))::geometry as p from places where id = ${place.placeId}) t`);
+        return { lon: Number(rows[0]!.lon), lat: Number(rows[0]!.lat) };
+      };
+
+      await expect(
+        setAnchorPosition(tx, { placeId: place.placeId, position: await at(2000.5), decidedBy: "admin@example.org", now: NOW }),
+      ).rejects.toBeInstanceOf(DecisionNotAllowed);
+      expect(await anchorTasks(tx, place.placeId)).toHaveLength(0);
+
+      await setAnchorPosition(tx, { placeId: place.placeId, position: await at(1999.5), decidedBy: "admin@example.org", now: NOW });
+      expect(await anchorTasks(tx, place.placeId)).toHaveLength(1);
+    }));
+
+  it("a second correction on a place already at origin review keeps both decisions and the latest anchor", () =>
+    withRollback(async (tx) => {
+      const place = await placeWithComputedAnchor(tx);
+      const first = await lonLatOf(tx, 40, 300);
+      const second = await lonLatOf(tx, -60, 400);
+
+      const a = await setAnchorPosition(tx, { placeId: place.placeId, position: first, decidedBy: "a@example.org", now: NOW });
+      const b = await setAnchorPosition(tx, { placeId: place.placeId, position: second, decidedBy: "b@example.org", now: NOW });
+      expect(b.factId).not.toBe(a.factId);
+
+      const tasks = await anchorTasks(tx, place.placeId);
+      expect(tasks).toHaveLength(2);
+      const contexts = tasks.map((t) => t.context as { previous: { lon: number; lat: number } | null; previousOrigin: string | null });
+      const latest = contexts.find((c) => c.previousOrigin === "review")!;
+      expect(latest.previous!.lon).toBeCloseTo(first.lon, 9);
+      expect(latest.previous!.lat).toBeCloseTo(first.lat, 9);
+      expect(contexts.some((c) => c.previousOrigin === "computed")).toBe(true);
+      expect(await tx.select().from(facts).where(eq(facts.geoObjectId, place.geoObjectId))).toHaveLength(2);
+
+      const anchor = await anchorOf(tx, place.placeId);
+      expect(Number(anchor.lon)).toBeCloseTo(second.lon, 9);
+      expect(Number(anchor.lat)).toBeCloseTo(second.lat, 9);
+      expect(anchor.origin).toBe("review");
+    }));
 });

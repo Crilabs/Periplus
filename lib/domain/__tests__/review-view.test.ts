@@ -2,7 +2,8 @@ import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { geoNames, geoObjects, places, reviewKindEnum, type PlaceStatus } from "@/lib/db/schema";
+import { geoNames, geoObjects, places, reviewDecisions, reviewKindEnum, type PlaceStatus } from "@/lib/db/schema";
+import { setAnchorPosition } from "@/lib/domain/geometry/anchor-correction";
 import { createReviewTask } from "@/lib/domain/review";
 import { listOpenTasks, reviewCounts, reviewTaskDetail } from "@/lib/domain/review-view";
 import { withRollback } from "@/test/db";
@@ -79,6 +80,20 @@ describe("review view", () => {
       expect([...distances].sort((a, b) => a - b)).toEqual(distances);
 
       expect(await reviewTaskDetail(tx, "0190a6c2-7a1b-7c3d-8e4f-0123456789ab")).toBeNull();
+    }));
+
+  it("reviewTaskDetail renders a decided place_anchor task from an anchor correction without error", () =>
+    withRollback(async (tx) => {
+      const placeId = await insertPlace(tx, "Anchor Bay", 0, "confirmed");
+      await setAnchorPosition(tx, { placeId, position: { lon: LON + 0.0005, lat: LAT }, decidedBy: "admin@example.org" });
+      const { rows } = await tx.execute<{ id: string }>(sql`
+        select id from review_tasks where subject_type = 'place_anchor' and subject_id = ${placeId}`);
+      expect(rows).toHaveLength(1);
+
+      const detail = await reviewTaskDetail(tx, rows[0]!.id);
+      expect(detail?.task).toMatchObject({ kind: "place_candidate", status: "decided", subjectType: "place_anchor" });
+      expect(detail?.subject).toEqual({ type: "missing" });
+      expect(await tx.select().from(reviewDecisions)).not.toHaveLength(0);
     }));
 
   // A kind no pipeline code creates yet, so concurrent test files cannot change its count.

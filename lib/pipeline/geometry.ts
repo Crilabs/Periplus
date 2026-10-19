@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import type { Geometry } from "geojson";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
@@ -126,6 +126,22 @@ type PlaceInput = {
   anchor: { position: LonLat; origin: string | null } | null;
 };
 
+/**
+ * Writes the computed anchor (or clears it) unless a review anchor is there: the guard is part of the update itself,
+ * so a correction committed after the stage read the place is never overwritten.
+ */
+export async function storeComputedAnchor(db: Db, placeId: string, anchor: LonLat | null, confidence: number): Promise<void> {
+  await db
+    .update(places)
+    .set(
+      anchor
+        ? { anchorPosition: sql`${pointSql(anchor)}`, anchorConfidence: confidence, anchorOrigin: "computed" }
+        : { anchorPosition: null, anchorConfidence: null, anchorOrigin: null },
+    )
+    .where(and(eq(places.id, placeId), or(isNull(places.anchorOrigin), ne(places.anchorOrigin, "review"))));
+}
+
+/** Loads the place and locks its row, so an admin anchor correction cannot commit between this read and the write. */
 async function loadPlace(db: Db, placeId: string): Promise<PlaceInput | null> {
   const { rows } = await db.execute<{
     geo_object_id: string;
@@ -146,7 +162,8 @@ async function loadPlace(db: Db, placeId: string): Promise<PlaceInput | null> {
            ST_X(places.position) as lon, ST_Y(places.position) as lat,
            ST_X(places.anchor_position) as anchor_lon, ST_Y(places.anchor_position) as anchor_lat, places.anchor_origin
     from places join geo_objects g on g.id = places.geo_object_id
-    where places.id = ${placeId}`);
+    where places.id = ${placeId}
+    for update of places`);
   const r = rows[0];
   if (!r) return null;
   return {
@@ -337,18 +354,7 @@ export async function computePlaceGeometry(
     if (place.anchor === null || place.anchor.origin === null || place.anchor.origin === "computed") {
       const stored = place.anchor?.position ?? null;
       if (!sameAnchor(stored, computedAnchor)) {
-        await tx
-          .update(places)
-          .set(
-            computedAnchor
-              ? {
-                  anchorPosition: sql`${pointSql(computedAnchor)}`,
-                  anchorConfidence: cfg.anchorArea.positionConfidence,
-                  anchorOrigin: "computed",
-                }
-              : { anchorPosition: null, anchorConfidence: null, anchorOrigin: null },
-          )
-          .where(eq(places.id, placeId));
+        await storeComputedAnchor(tx, placeId, computedAnchor, cfg.anchorArea.positionConfidence);
       }
     }
 

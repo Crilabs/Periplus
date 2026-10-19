@@ -7,13 +7,14 @@ import { computations, facts, places, restrictedAreas, reviewTasks, runs, tiles,
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { latestComputations } from "@/lib/domain/facts/computations";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
+import { setAnchorPosition } from "@/lib/domain/geometry/anchor-correction";
 import { newId } from "@/lib/domain/ids";
 import { createRun } from "@/lib/domain/runs";
 import { tileBbox } from "@/lib/domain/tiles";
 import { HANDLERS } from "@/lib/jobs/registry";
 import { STAGES } from "@/lib/jobs/stages";
 import { createLogger } from "@/lib/logger";
-import { computePlaceGeometry, GEOMETRY_STAGE, geometryPlaceIds } from "@/lib/pipeline/geometry";
+import { computePlaceGeometry, GEOMETRY_STAGE, geometryPlaceIds, storeComputedAnchor } from "@/lib/pipeline/geometry";
 import { startGeometryRun } from "@/lib/pipeline/geometry-run";
 import { withRollback } from "@/test/db";
 import { insertTestRaster } from "@/test/geometry/raster";
@@ -362,5 +363,34 @@ describe("startGeometryRun", () => {
         retryDelaySeconds: 60,
         retryBackoff: true,
       });
+    }));
+});
+
+describe("storeComputedAnchor", () => {
+  it("leaves a review anchor intact when it is written after the stage read the place", () =>
+    withRollback(async (tx) => {
+      const place = await insertScenePlace(tx, 0, 100, { status: "confirmed" });
+      const computed = await lonLatOf(tx, 0, 200);
+      const review = await lonLatOf(tx, 100, 300);
+      // The stage read the place without an anchor; the review anchor commits before the stage's write.
+      await setAnchorPosition(tx, { placeId: place.placeId, position: review, decidedBy: "admin@example.org" });
+
+      await storeComputedAnchor(tx, place.placeId, computed, 0.3);
+      await storeComputedAnchor(tx, place.placeId, null, 0.3);
+
+      const row = await placeRow(tx, place.placeId);
+      expect(row).toMatchObject({ anchor_confidence: 0.9, anchor_origin: "review" });
+      expect(Number(row.lon)).toBeCloseTo(review.lon, 9);
+      expect(Number(row.lat)).toBeCloseTo(review.lat, 9);
+    }));
+
+  it("writes and clears a computed anchor", () =>
+    withRollback(async (tx) => {
+      const place = await insertScenePlace(tx, 0, 100, { status: "confirmed" });
+      const computed = await lonLatOf(tx, 0, 200);
+      await storeComputedAnchor(tx, place.placeId, computed, 0.3);
+      expect(await placeRow(tx, place.placeId)).toMatchObject({ anchor_confidence: 0.3, anchor_origin: "computed" });
+      await storeComputedAnchor(tx, place.placeId, null, 0.3);
+      expect(await placeRow(tx, place.placeId)).toMatchObject({ lon: null, anchor_confidence: null, anchor_origin: null });
     }));
 });

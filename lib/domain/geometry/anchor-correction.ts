@@ -16,6 +16,7 @@ const pointSql = (p: LonLat) => sql`ST_SetSRID(ST_MakePoint(${p.lon}::float8, ${
  * decision (confidence `correctionConfidence`, observed on `now`'s date) and the place's anchor (origin `review`,
  * which the geometry stage never overwrites). `DecisionNotAllowed` when the place is not valid (unknown, ended,
  * merged) or the position lies more than `correctionMaxDistanceM` from the place position; nothing is written then.
+ * `InvalidFactValue` when the coordinates are out of range (lon -180..180, lat -90..90).
  */
 export async function setAnchorPosition(
   db: Db,
