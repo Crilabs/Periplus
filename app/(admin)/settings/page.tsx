@@ -24,6 +24,7 @@ const CONSOLIDATION_GROUPS: Record<Exclude<keyof AppConfig["consolidation"], "ve
   change: "Änderung",
   expiry: "Ablauf",
   profileConfidence: "Profil-Konfidenz",
+  profileConfidenceGroups: "Profil-Konfidenz: Attribute je Gruppe",
   quietness: "Ruhe",
   importance: "Bedeutung",
   severity: "Schwere",
