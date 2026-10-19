@@ -24,6 +24,7 @@ import {
   REVIEW_KIND_LABELS,
   SOURCE_STATUS_LABELS,
   SUMMARY_FAILURE_LABELS,
+  RUN_NOT_STARTED_NOTICE,
 } from "../../_components/labels";
 import { MiniMap } from "../../_components/mini-map";
 import { approveSourceAction } from "./actions";
@@ -132,6 +133,11 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
         {subject.type === "profile_attribute" ? `: ${subject.name ?? subject.geoObjectId} – ${subject.label}` : ""}
         {subject.type === "profile_summary" ? `: Zusammenfassung von ${subject.name ?? subject.geoObjectId}` : ""}
       </h1>
+      {query.notice === "run_not_started" && (
+        <p role="status" className="rounded bg-amber-100 px-3 py-2">
+          {RUN_NOT_STARTED_NOTICE}
+        </p>
+      )}
       {(!open || query.stale) && (
         <p role="status" className="rounded bg-amber-100 px-3 py-2">
           Bereits entschieden

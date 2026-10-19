@@ -86,7 +86,7 @@ async function pendingVersions(db: Db, cfg: AppConfig, scope?: Pick<TextRunParam
           or (q.level = 'area' and q.scope_id in (select key from sa))
           or (q.level = 'place' and exists (
             select 1 from places p
-            where p.geo_object_id::text = q.scope_id and p.tile_id in (select id from st)
+            where p.geo_object_id::text = q.scope_id and p.tile_id in (select id from st) and p.merged_into_id is null
               and p.valid_from <= current_date and (p.valid_to is null or p.valid_to > current_date)
           ))
       )`

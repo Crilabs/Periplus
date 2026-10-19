@@ -21,6 +21,18 @@ const LEVEL_BY_TYPE: Record<GeoObjectType, FactLevel | null> = {
   settlement: null,
 };
 
+/** Types that take no facts without a place (`LEVEL_BY_TYPE` null). */
+const NO_FACT_TYPES = (Object.keys(LEVEL_BY_TYPE) as GeoObjectType[]).filter((t) => LEVEL_BY_TYPE[t] === null);
+
+/** SQL condition: the geo object (alias `o`) takes facts, as `levelFor` decides (a non-null level). */
+export const takesFactsSql = sql`(o.type::text not in (${sql.join(
+  NO_FACT_TYPES.map((t) => sql`${t}`),
+  sql`, `,
+)}) or exists (
+  select 1 from places p
+  where p.geo_object_id = o.id and p.status <> 'rejected' and p.valid_to is null and p.merged_into_id is null
+))`;
+
 /**
  * The fact level of a geo object: `place` if it has a valid, unmerged place that is not rejected; otherwise by
  * type. `null` for an unknown object or one that takes no facts.

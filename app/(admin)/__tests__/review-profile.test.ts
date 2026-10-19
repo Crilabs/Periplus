@@ -24,7 +24,8 @@ vi.mock("@/lib/db/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/client")>()),
   getDb: () => current ?? testDb(),
 }));
-vi.mock("@/lib/jobs/boss", () => ({ getBoss: async () => ({ insert: async () => [] }) }));
+const bossInsert = vi.fn();
+vi.mock("@/lib/jobs/boss", () => ({ getBoss: async () => ({ insert: (...args: unknown[]) => bossInsert(...args) }) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => redirect(url) }));
 
@@ -40,6 +41,7 @@ beforeAll(async () => {
 beforeEach(() => {
   vi.resetAllMocks();
   requireAdmin.mockResolvedValue({ email: "admin@example.invalid" });
+  bossInsert.mockResolvedValue([]);
   current = undefined;
 });
 
@@ -151,6 +153,17 @@ describe("review of a profile attribute", () => {
       const started = await tx.select().from(runs).where(eq(runs.triggeredBy, "admin@example.invalid"));
       expect(started).toHaveLength(1);
       expect(started[0]).toMatchObject({ kind: "stage", scopeType: "place", scopeId: placeId, stages: [...CONSOLIDATION_STAGES], params: { geoObjectIds: [t.objectId] } });
+      const [task] = await tx.select({ status: reviewTasks.status }).from(reviewTasks).where(eq(reviewTasks.id, t.taskId));
+      expect(task!.status).toBe("decided");
+    }));
+
+  it("a consolidation start failing after the decision committed gives a notice, not an error page", () =>
+    withRollback(async (tx) => {
+      current = tx;
+      const t = await conflictTask(tx);
+      bossInsert.mockRejectedValue(new Error("queue down"));
+      await decideAction(form({ taskId: t.taskId, taskKey: t.key, valueKey: valueFingerprint("good"), decision: JSON.stringify({ action: "value_a" }) }));
+      expect(redirect.mock.lastCall![0]).toMatch(/^\/review(\/[0-9a-f-]+)?\?notice=run_not_started$/);
       const [task] = await tx.select({ status: reviewTasks.status }).from(reviewTasks).where(eq(reviewTasks.id, t.taskId));
       expect(task!.status).toBe("decided");
     }));

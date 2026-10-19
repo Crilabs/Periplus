@@ -29,9 +29,12 @@ vi.mock("@/lib/db/client", async (importOriginal) => ({
 }));
 /** Jobs the actions enqueue (the rematch run's first stage); pg-boss itself is not involved. */
 const enqueued: Array<{ queue: string; data: Record<string, unknown> }> = [];
+/** Set to make the job queue fail (a follow-up start after the committed decision). */
+const jobQueue = vi.hoisted(() => ({ down: false }));
 vi.mock("@/lib/jobs/boss", () => ({
   getBoss: async () => ({
     insert: async (queue: string, jobs: Array<{ data: Record<string, unknown> }>) => {
+      if (jobQueue.down) throw new Error("queue down");
       for (const job of jobs) enqueued.push({ queue, data: job.data });
       return jobs.map(() => crypto.randomUUID());
     },
@@ -152,6 +155,21 @@ describe("review of a new name", () => {
       expect(rematch[0]!.params).toMatchObject({ rematch: true, documentVersionIds: [...versionIds].sort() });
       // its first stage is planned and enqueued (the classification of the two versions)
       expect(enqueued.map((j) => j.queue)).toContain("classify.document_version");
+    }));
+
+  it("a rematch start failing after the decision committed gives a notice, not an error page", () =>
+    withRollback(async (tx) => {
+      const { taskId, name } = await nameTask(tx);
+      current = tx;
+      jobQueue.down = true;
+      try {
+        const decision = { action: "create_place", kind: "anchorage", position: { lon: 21.31, lat: 35.41 }, name, language: "en" };
+        await decideAction(form({ taskId, decision: JSON.stringify(decision) }));
+      } finally {
+        jobQueue.down = false;
+      }
+      expect(redirect.mock.lastCall![0]).toMatch(/\?notice=run_not_started$/);
+      expect((await tx.select().from(reviewTasks).where(eq(reviewTasks.id, taskId)))[0]!.status).toBe("decided");
     }));
 
   it("a rejected name starts no rematch run", () =>

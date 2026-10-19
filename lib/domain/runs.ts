@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { externalCalls, jobOutcomes, runStages, runs } from "@/lib/db/schema";
 import type { RunKind, RunScopeType, RunStageStatus, RunStatus } from "@/lib/db/schema";
+import { consolidationSkipOf, markConsolidationSkipped, type ConsolidationSkip } from "@/lib/domain/consolidation/skipped";
 import { blockUncheckedRuns } from "@/lib/domain/extraction/run-status";
 import { failOpenUnits } from "@/lib/domain/extraction/unit-status";
 
@@ -32,6 +33,8 @@ export type RunView = {
   endedAt: Date | null;
   costEur: number;
   stages: RunStageView[];
+  /** The stored marker of a consolidation the run skipped (ruling M5-H-R2); null when it did not skip one. */
+  consolidationSkip: ConsolidationSkip | null;
 };
 
 export async function createRun(
@@ -69,7 +72,8 @@ export function stageFailedReason(stage: string): string {
  * the run with `stageFailedReason` and plans nothing further (ruling F-R1), so later stages never run on
  * missing data; otherwise it reports the next stage or, after the last one, finishes the run. First it fails the
  * run's extraction units that are still open (`failOpenUnits`). A failed run never reaches its quote check, so its
- * unchecked extraction runs are blocked (`run_failed`, ruling M4-FIN-R1) for "Belegtreue neu prüfen".
+ * unchecked extraction runs are blocked (`run_failed`, ruling M4-FIN-R1) for "Belegtreue neu prüfen", and a
+ * consolidation it has not reached is marked skipped (`markConsolidationSkipped`, ruling M5-H-R2).
  */
 async function afterStageFinished(
   db: Db,
@@ -83,6 +87,8 @@ async function afterStageFinished(
       .set({ status: "failed", finishedAt: sql`now()`, failureReason: stageFailedReason(stageRow.stage) })
       .where(and(eq(runs.id, stageRow.runId), eq(runs.status, "running")));
     await blockUncheckedRuns(db, stageRow.runId, "run_failed");
+    // Nor its consolidation: stored for „Konsolidierung nachholen“ (ruling M5-H-R2).
+    await markConsolidationSkipped(db, stageRow.runId, "run_failed");
     return { nextStage: null, runFinished: true };
   }
   const [next] = await db
@@ -263,7 +269,8 @@ async function reviveRun(db: Db, runId: string, stage: string): Promise<string |
 
 /**
  * Ends a run as failed, e.g. when moving to its next stage failed for good. Keeps the first reason. Its unchecked
- * extraction runs are blocked (`run_failed`, ruling M4-FIN-R1), as the run never reaches its quote check.
+ * extraction runs are blocked (`run_failed`, ruling M4-FIN-R1), as the run never reaches its quote check, and a
+ * consolidation not begun is marked skipped (ruling M5-H-R2).
  */
 export async function failRun(db: Db, runId: string, reason: string): Promise<void> {
   await db
@@ -271,6 +278,7 @@ export async function failRun(db: Db, runId: string, reason: string): Promise<vo
     .set({ status: "failed", finishedAt: sql`coalesce(${runs.finishedAt}, now())`, failureReason: reason })
     .where(and(eq(runs.id, runId), sql`${runs.failureReason} is null`));
   await blockUncheckedRuns(db, runId, "run_failed");
+  await markConsolidationSkipped(db, runId, "run_failed");
 }
 
 /**
@@ -304,6 +312,13 @@ export async function endRun(db: Db, runId: string, by: string): Promise<boolean
     .where(and(eq(runs.id, runId), inArray(runs.status, ["queued", "running"])))
     .returning({ id: runs.id });
   return ended.length > 0;
+}
+
+/** The run date `YYYY-MM-DD`: the UTC date the run was created (an unknown run is an error). */
+export async function runDate(db: Db, runId: string): Promise<string> {
+  const { rows } = await db.execute<{ day: string }>(sql`select (created_at at time zone 'UTC')::date::text as day from runs where id = ${runId}`);
+  if (!rows[0]) throw new Error(`run ${runId} not found`);
+  return rows[0].day;
 }
 
 /** Whether an admin ended the run by hand. */
@@ -343,6 +358,7 @@ async function toViews(db: Db, rows: RunRow[]): Promise<RunView[]> {
     stages: stageRows
       .filter((s) => s.runId === r.id)
       .map((s) => ({ stage: s.stage, ordinal: s.ordinal, total: s.total, done: s.done, failed: s.failed, status: s.status })),
+    consolidationSkip: consolidationSkipOf((r.params ?? {}) as Record<string, unknown>),
   }));
 }
 

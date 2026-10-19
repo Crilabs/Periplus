@@ -1,11 +1,10 @@
 import { z } from "zod";
 import type { CallContext, Transport } from "@/lib/adapters/http";
 import type { Archive } from "@/lib/adapters/s3";
-import { getConfig } from "@/lib/config";
+import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { serpLevelEnum } from "@/lib/db/schema";
-import { placeQueries } from "@/lib/domain/consolidation/followup";
-import { areaQueries, capQueries, queryKey, tileQueries, type DiscoveryQuery } from "@/lib/domain/discovery/queries";
+import { areaQueries, capQueries, placeQueries, queryKey, tileQueries, type DiscoveryQuery } from "@/lib/domain/discovery/queries";
 import { runQuery } from "@/lib/domain/discovery/serp";
 import { seedTileIds } from "./tile-scope";
 
@@ -83,36 +82,39 @@ export async function planTileDiscovery(
   return tileIds.map((tileId) => ({ tileId, queries: kept.filter((q) => q.scopeId === tileId) }));
 }
 
-/** The geo object ids of a place discovery run (`params.geoObjectIds`, strings only). */
+/** The geo object ids of a place discovery run (`params.geoObjectIds`, strings only), in their order, without repeats. */
 export function placeDiscoveryIds(params: Record<string, unknown>): string[] {
   if (!Array.isArray(params.geoObjectIds)) throw new Error("geoObjectIds is required");
   for (const id of params.geoObjectIds) if (typeof id !== "string") throw new Error("geoObjectIds must be strings");
-  return [...new Set(params.geoObjectIds as string[])].sort();
+  return [...new Set(params.geoObjectIds as string[])];
 }
 
 /**
- * Plan of the stage `discovery.place`: one entry per geo object of the run (`params.geoObjectIds`) with its place
- * queries (`placeQueries`: the tile templates with the place's names). The queries are deduplicated among the objects
- * (the first object in id order keeps a shared query) and cut to `maxQueriesPerRun`; an object left without queries
+ * Plan of the stage `discovery.place`: one entry per geo object of the run (`params.geoObjectIds`, in their order) with
+ * its place queries (`placeQueries`: the tile templates with the place's names). The queries are deduplicated among
+ * the objects (the earlier object keeps a shared query) and cut to `maxQueriesPerRun` in that order, so the places
+ * with the fewest documents (first in the run, `requestPlaceDiscovery`) keep theirs; an object left without queries
  * gets no entry.
  */
 export async function planPlaceDiscovery(
   db: Db,
   params: Record<string, unknown>,
+  config: AppConfig = getConfig(),
 ): Promise<Array<{ geoObjectId: string; queries: DiscoveryQuery[] }>> {
-  const { discovery } = getConfig();
+  const { discovery, areas } = config;
   const seen = new Set<string>();
-  const all: DiscoveryQuery[] = [];
+  let budget = discovery.serp.maxQueriesPerRun;
+  const out: Array<{ geoObjectId: string; queries: DiscoveryQuery[] }> = [];
   for (const geoObjectId of placeDiscoveryIds(params)) {
-    for (const q of await placeQueries(db, geoObjectId, discovery)) {
+    const queries: DiscoveryQuery[] = [];
+    for (const q of await placeQueries(db, geoObjectId, discovery, { areas })) {
       const key = queryKey(q);
-      if (seen.has(key)) continue;
+      if (seen.has(key) || budget === 0) continue;
       seen.add(key);
-      all.push(q);
+      queries.push(q);
+      budget--;
     }
+    if (queries.length > 0) out.push({ geoObjectId, queries });
   }
-  const { kept } = capQueries(all, discovery.serp.maxQueriesPerRun);
-  const byObject = new Map<string, DiscoveryQuery[]>();
-  for (const q of kept) byObject.set(q.scopeId, [...(byObject.get(q.scopeId) ?? []), q]);
-  return [...byObject.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([geoObjectId, queries]) => ({ geoObjectId, queries }));
+  return out;
 }

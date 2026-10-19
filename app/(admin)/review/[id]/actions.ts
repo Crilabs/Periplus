@@ -60,17 +60,33 @@ const taskFields = (formData: FormData) =>
   });
 
 /**
+ * Runs a follow-up start after the decision committed: a scope that is not ready (`RunScopeNotReady`) is logged as a
+ * warning; any other failure (e.g. the job queue is down) is logged as an error and reported (false), so the admin gets
+ * a notice instead of an error page for a decision that stands (ruling M5-H-R2 M-6).
+ */
+async function startFollowUp(what: string, context: Record<string, unknown>, start: () => Promise<unknown>): Promise<boolean> {
+  try {
+    await start();
+    return true;
+  } catch (e) {
+    if (e instanceof RunScopeNotReady) {
+      createLogger("review").warn({ ...context, reason: e.reason }, `${what} run not started`);
+      return true;
+    }
+    createLogger("review").error({ ...context, err: e }, `${what} run failed to start after the decision`);
+    return false;
+  }
+}
+
+/**
  * The rematch after a "Neuer Name" decision (`create_place`, `assign_name`): a text run over the current versions that
  * named it, which matches them again and extracts only the mentions this creates. The decision stands without it: a
  * version that is no longer current by now is logged, and the next text run of its tile takes it in.
  */
-async function startRematch(db: Db, documentVersionIds: string[], triggeredBy: string): Promise<void> {
-  try {
-    await startTextRun(db, await getBoss(), { documentVersionIds, rematch: true, triggeredBy });
-  } catch (e) {
-    if (!(e instanceof RunScopeNotReady)) throw e;
-    createLogger("review").warn({ documentVersionIds, reason: e.reason }, "rematch run not started");
-  }
+async function startRematch(db: Db, documentVersionIds: string[], triggeredBy: string): Promise<boolean> {
+  return startFollowUp("rematch", { documentVersionIds }, async () =>
+    startTextRun(db, await getBoss(), { documentVersionIds, rematch: true, triggeredBy }),
+  );
 }
 
 /**
@@ -78,24 +94,25 @@ async function startRematch(db: Db, documentVersionIds: string[], triggeredBy: s
  * or only its summary after „Neu erzeugen“. Started after the decision committed, never inside it (ruling M5-F-R4).
  * The decision stands without it: an object that cannot be consolidated any more is logged.
  */
-async function startConsolidation(db: Db, consolidate: { geoObjectId: string; stagesOnly?: string[] }, triggeredBy: string): Promise<void> {
-  try {
-    await startConsolidationRun(db, await getBoss(), {
+async function startConsolidation(db: Db, consolidate: { geoObjectId: string; stagesOnly?: string[] }, triggeredBy: string): Promise<boolean> {
+  return startFollowUp("consolidation", { geoObjectId: consolidate.geoObjectId }, async () =>
+    startConsolidationRun(db, await getBoss(), {
       scope: { geoObjectIds: [consolidate.geoObjectId] },
       triggeredBy,
       ...(consolidate.stagesOnly ? { stagesOnly: consolidate.stagesOnly } : {}),
-    });
-  } catch (e) {
-    if (!(e instanceof RunScopeNotReady)) throw e;
-    createLogger("review").warn({ geoObjectId: consolidate.geoObjectId, reason: e.reason }, "consolidation run not started");
-  }
+    }),
+  );
 }
+
+/** `href` with `?notice=run_not_started` (the review pages show it): the decision stands, a follow-up run did not start. */
+const withRunNotice = (href: string) => `${href}${href.includes("?") ? "&" : "?"}notice=run_not_started`;
 
 /**
  * Decides the task, then starts the rematch run a new name asks for and the consolidation run a profile or summary
  * decision asks for (both after the decision committed), then redirects to the next open task of the same kind (or
- * `/review`). An already decided task redirects back with `?stale=1`, a profile task whose value changed since it was
- * shown with `?changed=1`, a decision that does not fit the task with `?error=1`.
+ * `/review`), with `?notice=run_not_started` when a follow-up run failed to start. An already decided task redirects
+ * back with `?stale=1`, a profile task whose value changed since it was shown with `?changed=1`, a decision that does
+ * not fit the task with `?error=1`.
  */
 async function decideAndRedirect(
   decidedBy: string,
@@ -119,9 +136,11 @@ async function decideAndRedirect(
       },
       { retryJob },
     );
-    if (documentVersionIds.length > 0) await startRematch(db, documentVersionIds, decidedBy);
-    if (consolidate) await startConsolidation(db, consolidate, decidedBy);
+    let started = true;
+    if (documentVersionIds.length > 0) started = (await startRematch(db, documentVersionIds, decidedBy)) && started;
+    if (consolidate) started = (await startConsolidation(db, consolidate, decidedBy)) && started;
     target = await nextTaskHref(db, task.taskId);
+    if (!started) target = withRunNotice(target);
   } catch (e) {
     if (e instanceof TaskNotOpen) target = `/review/${task.taskId}?stale=1`;
     else if (e instanceof TaskContextChanged) target = `/review/${task.taskId}?changed=1`;

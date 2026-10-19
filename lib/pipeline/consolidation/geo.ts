@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Db } from "@/lib/db/client";
 import { consolidateGeo, type ConsolidateResult } from "@/lib/domain/consolidation/store";
+import { clearConsolidationSkipped, markConsolidationSkipped } from "@/lib/domain/consolidation/skipped";
 import { consolidationBlocked, consolidationTargets } from "@/lib/domain/consolidation/targets";
 import type { JobData } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
@@ -13,14 +14,18 @@ import { createLogger } from "@/lib/logger";
 
 /**
  * Plan of `consolidation.geo`: nothing when the run's quote fidelity is below 100 % (`consolidationBlocked`, logged
- * `consolidation blocked by quote fidelity`), else one job per target carrying the mode (`evaluation` for an evaluation
- * run) and the rules version of the run.
+ * `consolidation blocked by quote fidelity` and stored as the run's skip marker, `markConsolidationSkipped`), else one
+ * job per target carrying the mode (`evaluation` for an evaluation run) and the rules version of the run.
  */
 export async function consolidationGeoJobs(db: Db, run: { id: string; params: Record<string, unknown> }): Promise<JobData[]> {
   if (await consolidationBlocked(db, run.id)) {
     createLogger("consolidation").warn({ runId: run.id }, "consolidation blocked by quote fidelity");
+    // Stored, so the run page keeps „Konsolidierung nachholen“ once a recheck lifts the block (ruling M5-H-R2).
+    await markConsolidationSkipped(db, run.id, "quote_fidelity");
     return [];
   }
+  // A failed run revived after all consolidates now: no marker (ruling M5-H-R2).
+  await clearConsolidationSkipped(db, run.id);
   const mode = run.params.evaluation === true ? "evaluation" : "regular";
   const rulesVersion = typeof run.params.rulesVersion === "string" ? run.params.rulesVersion : undefined;
   return (await consolidationTargets(db, run)).map((geoObjectId) => ({

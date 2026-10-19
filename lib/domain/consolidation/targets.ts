@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { belegtreue } from "@/lib/domain/extraction/fidelity";
+import { takesFactsSql } from "@/lib/domain/facts/levels";
 
 /*
  * What a run consolidates (plan Task 16): the geo objects of its scope, and whether its quote fidelity blocks it.
@@ -31,15 +32,19 @@ const validTile = sql`t.valid_from <= current_date and (t.valid_to is null or t.
 const areaObject = (areaKey: string) =>
   sql`a.type = 'area' and a.config_key = ${areaKey} and a.valid_from <= current_date and (a.valid_to is null or a.valid_to > current_date)`;
 
+/** Keeps the valid, unmerged geo objects (alias `o`) that take facts (ruling M5-H-R2 M-2). */
+const consolidatable = sql`${validObject} and ${takesFactsSql}`;
+
 /**
  * The geo objects a run consolidates, sorted and without duplicates:
  * - a text run (its params carry the frozen `documentVersionIds`): the objects with facts of its extraction runs and
- *   the objects with mentions it wrote; its own `tileId` / `areaKey` only selected its versions;
- * - `geoObjectIds`: exactly these;
- * - `tileId`: the valid objects of the tile (`tile_geo_objects`);
- * - `areaKey`: the valid objects of every valid coast tile of the area;
+ *   the objects with mentions it wrote in its frozen versions; its own `tileId` / `areaKey` only selected its versions;
+ * - `geoObjectIds`: exactly these (the starter checked them);
+ * - `tileId`: the objects of the tile (`tile_geo_objects`);
+ * - `areaKey`: the objects of every valid coast tile of the area;
  * - `comparisonSetArea`: the geo objects of the places in the area's comparison set;
  * - otherwise as a text run.
+ * Except for `geoObjectIds`, only valid, unmerged objects that take facts (a settlement would only be skipped).
  */
 export async function consolidationTargets(db: Db, run: { id: string; params: Record<string, unknown> }): Promise<string[]> {
   const p = run.params;
@@ -48,7 +53,7 @@ export async function consolidationTargets(db: Db, run: { id: string; params: Re
     if (typeof p.tileId === "string") {
       const { rows } = await db.execute<{ id: string }>(sql`
         select o.id from tile_geo_objects tgo join geo_objects o on o.id = tgo.geo_object_id
-        where tgo.tile_id = ${p.tileId} and ${validObject}
+        where tgo.tile_id = ${p.tileId} and ${consolidatable}
       `);
       return ids(rows);
     }
@@ -58,37 +63,54 @@ export async function consolidationTargets(db: Db, run: { id: string; params: Re
         from geo_objects a
         join tiles t on t.area_id = a.id and t.has_coast and ${validTile}
         join tile_geo_objects tgo on tgo.tile_id = t.id
-        join geo_objects o on o.id = tgo.geo_object_id and ${validObject}
+        join geo_objects o on o.id = tgo.geo_object_id and ${consolidatable}
         where ${areaObject(p.areaKey)}
       `);
       return ids(rows);
     }
     if (typeof p.comparisonSetArea === "string") {
       const { rows } = await db.execute<{ id: string }>(sql`
-        select distinct p.geo_object_id as id
+        select distinct o.id
         from geo_objects a
         join comparison_set c on c.area_id = a.id
-        join places p on p.id = c.place_id
+        join places pl on pl.id = c.place_id and pl.merged_into_id is null
+          and pl.valid_from <= current_date and (pl.valid_to is null or pl.valid_to > current_date)
+        join geo_objects o on o.id = pl.geo_object_id and ${consolidatable}
         where ${areaObject(p.comparisonSetArea)}
       `);
       return ids(rows);
     }
   }
+  // Mentions only through the frozen versions (indexed), facts through the run's extraction runs (ruling M5-H-R2 M-1).
+  const versions = JSON.stringify(strings(p.documentVersionIds));
   const { rows } = await db.execute<{ id: string }>(sql`
-    select f.geo_object_id as id from facts f join extraction_runs r on r.id = f.extraction_run_id where r.run_id = ${run.id}
-    union
-    select m.geo_object_id from mentions m where m.run_id = ${run.id}
+    select o.id
+    from (
+      select f.geo_object_id as id from extraction_runs r join facts f on f.extraction_run_id = r.id where r.run_id = ${run.id}
+      union
+      select m.geo_object_id from mentions m
+      where m.document_version_id in (select value::uuid from jsonb_array_elements_text(${versions}::jsonb))
+        and m.run_id = ${run.id}
+    ) t
+    join geo_objects o on o.id = t.id
+    where ${consolidatable}
   `);
   return ids(rows);
 }
 
 /**
  * Whether the run's quote fidelity blocks its consolidation (spec 10, ruling M5-P15): it has extraction runs and not
- * every checked item verified (`belegtreue.verified < belegtreue.facts`, not the rounded ratio).
+ * every checked item verified (`belegtreue.verified < belegtreue.facts`, not the rounded ratio), or one of them is
+ * blocked for another reason or not checked yet (a failed or ended run, late results: its facts are not active, so a
+ * catch-up waits for „Belegtreue neu prüfen“, ruling M5-H-R2).
  */
 export async function consolidationBlocked(db: Db, runId: string): Promise<boolean> {
-  const { rows } = await db.execute<{ n: number }>(sql`select count(*)::int as n from extraction_runs where run_id = ${runId}`);
+  const { rows } = await db.execute<{ n: number; open: number }>(sql`
+    select count(*)::int as n, count(*) filter (where status in ('blocked', 'running'))::int as open
+    from extraction_runs where run_id = ${runId}
+  `);
   if (Number(rows[0]?.n ?? 0) === 0) return false;
+  if (Number(rows[0]?.open ?? 0) > 0) return true;
   const fidelity = await belegtreue(db, runId);
   return fidelity.verified < fidelity.facts;
 }

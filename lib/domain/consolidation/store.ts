@@ -4,6 +4,7 @@ import type { Db } from "@/lib/db/client";
 import { changeEvents, evaluationProfiles, profiles, reviewTasks } from "@/lib/db/schema";
 import { canonicalJson } from "@/lib/domain/facts/schema";
 import { createReviewTask, OpenTaskVanished } from "@/lib/domain/review";
+import { runDate as runDateOf } from "@/lib/domain/runs";
 import { latestProfile } from "@/lib/domain/timeline";
 import { createLogger } from "@/lib/logger";
 import { buildProfile } from "./build";
@@ -39,13 +40,7 @@ const SUBJECT_TYPE = "profile_attribute";
 /** The run date: `opts.today`, else the UTC date the run was created (an unknown run id is an error), else today (UTC). */
 async function runDate(db: Db, opts: ConsolidateOptions): Promise<string> {
   if (opts.today) return opts.today;
-  if (opts.runId) {
-    const { rows } = await db.execute<{ day: string }>(
-      sql`select (created_at at time zone 'UTC')::date::text as day from runs where id = ${opts.runId}`,
-    );
-    if (!rows[0]) throw new Error(`run ${opts.runId} not found`);
-    return rows[0].day;
-  }
+  if (opts.runId) return runDateOf(db, opts.runId);
   return new Date().toISOString().slice(0, 10);
 }
 

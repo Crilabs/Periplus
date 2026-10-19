@@ -161,7 +161,7 @@ async function drive(tx: Db, rec: ReturnType<typeof recordingBoss>, model: MockM
     [CHECK_QUEUE]: (job) => checkExtractionRun(tx, job.extractionRunId as string, config),
     "consolidation.geo": (job) => consolidateGeoJob(tx, job),
     "consolidation.summary": (job) => summarizeProfile(tx, { geoObjectId: job.geoObjectId as string, version: job.version as number, runId: job.runId }, { model }),
-    "consolidation.followup": (job) => requestPlaceDiscovery(tx, rec.boss, job.runId, now),
+    "consolidation.followup": (job) => requestPlaceDiscovery(tx, rec.boss, job.runId),
   };
   for (let i = 0; i < rec.inserted.length; i++) {
     const { queue, data } = rec.inserted[i]!;

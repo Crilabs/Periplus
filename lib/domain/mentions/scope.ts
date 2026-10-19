@@ -98,7 +98,7 @@ async function sourceTiles(db: Db, versionId: string): Promise<string[]> {
     select t.id as tile_id from q join tiles t on t.id = q.scope_id where q.level = 'tile'
     union
     select p.tile_id from q
-    join places p on p.geo_object_id::text = q.scope_id and p.tile_id is not null and ${validNow("p")}
+    join places p on p.geo_object_id::text = q.scope_id and p.tile_id is not null and p.merged_into_id is null and ${validNow("p")}
     where q.level = 'place'
     union
     select t.id from q

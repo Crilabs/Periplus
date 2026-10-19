@@ -1,9 +1,10 @@
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import { areaByKey, type AreaConfig, type DiscoveryConfig } from "@/lib/config";
+import { areaByKey, getConfig, type AreaConfig, type DiscoveryConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { facts, geoNames, geoObjects, tileGeoObjects, tiles, type SerpLevel } from "@/lib/db/schema";
 import { validAt } from "@/lib/domain/timeline";
+import { createLogger } from "@/lib/logger";
 
 /**
  * One SERP search to make: `priority` orders tile queries (1 islands, 2 settlements, 3 bays; area queries 0; place
@@ -89,6 +90,54 @@ export function dedupeQueries(queries: DiscoveryQuery[]): DiscoveryQuery[] {
     if (!prior || q.priority < prior.priority) byKey.set(queryKey(q), q);
   }
   return [...byKey.values()];
+}
+
+/** Priority of a place query (as islands among the tile queries). */
+const PLACE_PRIORITY = 1;
+
+type PlaceRow = { tile_id: string | null; area_key: string | null };
+
+/**
+ * The SERP queries of a targeted discovery for the place of `geoObjectId`: per tile template the preferred valid name
+ * of the object in the template's language (no name, no query), `level "place"`, `scopeId` = the geo object id,
+ * priority 1 and `tileId` = the place's tile, so the cost is booked there. As `tileQueries`, the templates are limited
+ * to the `sourceLanguages` of the area of the place's tile (ruling M5-P12); without a valid place, a tile with a
+ * configured area there are no queries (logged). The place is valid on `opts.on` (the run date; default the database's
+ * date). Deduplicated over `(keyword, languageCode, locationCode)`.
+ */
+export async function placeQueries(
+  db: Db,
+  geoObjectId: string,
+  cfg: DiscoveryConfig,
+  opts: { areas?: AreaConfig[]; on?: string } = {},
+): Promise<DiscoveryQuery[]> {
+  const areas = opts.areas ?? getConfig().areas;
+  const on = opts.on ? sql`${opts.on}::date` : sql`current_date`;
+  const { rows } = await db.execute<PlaceRow>(sql`
+    select p.tile_id, a.config_key as area_key
+    from places p
+    left join tiles t on t.id = p.tile_id
+    left join geo_objects a on a.id = t.area_id and a.type = 'area'
+    where p.geo_object_id = ${geoObjectId} and p.merged_into_id is null
+      and p.valid_from <= ${on} and (p.valid_to is null or p.valid_to > ${on})
+    order by p.created_at, p.id
+    limit 1
+  `);
+  const place = rows[0];
+  const area = place?.area_key ? areas.find((a) => a.key === place.area_key) : undefined;
+  if (!place?.tile_id || !area) {
+    createLogger("discovery").warn(
+      { geoObjectId, tileId: place?.tile_id ?? null, areaKey: place?.area_key ?? null },
+      "no place queries: the object has no valid place in a tile of a configured area",
+    );
+    return [];
+  }
+  const templates = templatesFor(cfg.templates.tile, area.sourceLanguages);
+  if (templates.length === 0) return [];
+  const names = await namesByLanguage(db, [geoObjectId], [...new Set(templates.map((t) => t.lang))]);
+  return dedupeQueries(
+    buildQueries(templates, names.get(geoObjectId), { level: "place", scopeId: geoObjectId, priority: PLACE_PRIORITY, tileId: place.tile_id }),
+  );
 }
 
 /**

@@ -5,12 +5,15 @@ import { areaByKey } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { changeEvents, comparisonSet, evaluationProfiles, extractionRuns, extractionUnits, profiles, runs, tileGeoObjects } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
+import { createRun, failRun, getRun } from "@/lib/domain/runs";
 import { consolidationBlocked, consolidationTargets } from "@/lib/domain/consolidation/targets";
 import { syncAreas } from "@/lib/domain/gazetteer/areas";
 import { tileIdFor } from "@/lib/domain/tiles";
 import { STAGES } from "@/lib/jobs/stages";
 import { consolidateGeoJob } from "@/lib/pipeline/consolidation/geo";
-import { startConsolidationRun } from "@/lib/pipeline/consolidation/run";
+import { catchUpConsolidation, startConsolidationRun } from "@/lib/pipeline/consolidation/run";
+import { endRunByAdmin } from "@/lib/pipeline/runs";
+import { CHECK_STAGE, recheckBlockedExtractionRun } from "@/lib/pipeline/text/check";
 import {
   CONSOLIDATION_FOLLOWUP_STAGE,
   CONSOLIDATION_GEO_STAGE,
@@ -89,9 +92,9 @@ describe("consolidation run", () => {
       const foreign = await placeWithFact(tx, "Fremdbucht", otherRun);
       // an object the run only mentioned (its mention stage wrote the mention) is consolidated too
       const mentioned = await insertPlace(tx, { lon: LON, lat: LAT, name: "Erwähntbucht" });
-      await insertMention(tx, mentioned.objectId, { sourceId: await insertSource(tx), runId: textRun });
-      // the run's own tile in its params only selected its versions
-      await tx.update(runs).set({ params: { documentVersionIds: [own.versionId], tileId: TILE } }).where(eq(runs.id, textRun));
+      const seen = await insertMention(tx, mentioned.objectId, { sourceId: await insertSource(tx), runId: textRun });
+      // the run's own tile in its params only selected its versions (its mentions are found through them)
+      await tx.update(runs).set({ params: { documentVersionIds: [own.versionId, seen.versionId], tileId: TILE } }).where(eq(runs.id, textRun));
 
       expect(await consolidateRun(tx, textRun)).toEqual([own.objectId, mentioned.objectId].sort());
       const written = await profileRuns(tx, [own.objectId, foreign.objectId, mentioned.objectId]);
@@ -162,7 +165,7 @@ describe("consolidation run", () => {
       expect(await tx.select().from(changeEvents).where(eq(changeEvents.geoObjectId, inSet.objectId))).toEqual([]);
     }));
 
-  it("the place action starts a place-scoped run", () =>
+  it("the starter gives one object with a place scope place, several objects scope system and a summary-only run its stage", () =>
     withRollback(async (tx) => {
       const { objectId, placeId } = await insertPlace(tx, { lon: LON, lat: LAT, name: "Ortsbucht" });
       const island = await insertNamedObject(tx, { type: "island", names: [{ name: "Ortsinsel" }], lon: LON, lat: LAT });
@@ -195,5 +198,155 @@ describe("consolidation run", () => {
       await syncAreas(tx, [areaByKey("saronic")]);
       expect(await refused({ comparisonSetArea: "saronic" })).toBe("comparison_set_empty");
       expect(await tx.select().from(runs).where(eq(runs.triggeredBy, "refused"))).toEqual([]);
+    }));
+  it("an evaluation run refuses stagesOnly instead of dropping it", () =>
+    withRollback(async (tx) => {
+      const { objectId } = await insertPlace(tx, { lon: LON, lat: LAT, name: "Bewertungsbucht" });
+      const rec = recordingBoss();
+      const input = { scope: { geoObjectIds: [objectId] }, evaluation: true as const, stagesOnly: [CONSOLIDATION_GEO_STAGE], triggeredBy: "refused-eval" };
+      await expect(tx.transaction((t) => startConsolidationRun(t, rec.boss, input))).rejects.toThrow("an evaluation run takes no stagesOnly");
+      expect(await tx.select().from(runs).where(eq(runs.triggeredBy, "refused-eval"))).toEqual([]);
+    }));
+
+  it("tile, area and comparison-set targets skip objects that take no facts, ended and merged ones", () =>
+    withRollback(async (tx) => {
+      const areaId = (await syncAreas(tx, [areaByKey("saronic")])).get("saronic")!;
+      await insertTestTile(tx, TILE, areaId);
+      await tx.execute(sql`update tiles set has_coast = true where id = ${TILE}`);
+      const inland = tileIdFor(LON + 0.25, LAT);
+      await insertTestTile(tx, inland, areaId);
+      await tx.execute(sql`update tiles set has_coast = false where id = ${inland}`);
+      const bay = await insertPlace(tx, { lon: LON, lat: LAT, name: "Zielbucht" });
+      await tx.insert(tileGeoObjects).values({ tileId: TILE, geoObjectId: bay.objectId });
+      const island = await insertNamedObject(tx, { type: "island", names: [{ name: "Zielinsel" }], lon: LON, lat: LAT, tiles: [TILE] });
+      const village = await insertNamedObject(tx, { type: "settlement", names: [{ name: "Zieldorf" }], lon: LON, lat: LAT, tiles: [TILE] });
+      const merged = await insertNamedObject(tx, { type: "island", names: [{ name: "Altziel" }], lon: LON, lat: LAT, tiles: [TILE] });
+      await tx.execute(sql`update geo_objects set merged_into_id = ${island} where id = ${merged}`);
+      const inlandIsland = await insertNamedObject(tx, { type: "island", names: [{ name: "Binnenziel" }], lon: LON + 0.3, lat: LAT, tiles: [inland] });
+
+      const targets = (params: Record<string, unknown>) => consolidationTargets(tx, { id: newId(), params });
+      expect(await targets({ tileId: TILE })).toEqual([bay.objectId, island].sort());
+      // the area: the objects of its valid coast tiles only (not the inland tile's island, nor the settlement)
+      expect(await targets({ areaKey: "saronic" })).toEqual([bay.objectId, island].sort());
+      await tx.execute(sql`update tiles set has_coast = true where id = ${inland}`);
+      expect(await targets({ areaKey: "saronic" })).toEqual([bay.objectId, island, inlandIsland].sort());
+      await tx.execute(sql`update tiles set valid_from = '2020-01-01', valid_to = '2021-01-01' where id = ${inland}`);
+      expect(await targets({ areaKey: "saronic" })).toEqual([bay.objectId, island].sort());
+      expect(await targets({ areaKey: "saronic" })).not.toContain(village);
+
+      // the comparison set: an ended place and a merged object drop out
+      const ended = await insertPlace(tx, { lon: LON, lat: LAT, name: "Endbucht" });
+      const gone = await insertPlace(tx, { lon: LON, lat: LAT, name: "Weg" });
+      for (const placeId of [bay.placeId, ended.placeId, gone.placeId]) await tx.insert(comparisonSet).values({ placeId, areaId, addedBy: "test" });
+      await tx.execute(sql`update places set valid_from = '2020-01-01', valid_to = '2021-01-01' where id = ${ended.placeId}`);
+      await tx.execute(sql`update geo_objects set merged_into_id = ${bay.objectId} where id = ${gone.objectId}`);
+      expect(await targets({ comparisonSetArea: "saronic" })).toEqual([bay.objectId]);
+    }));
+
+  it("a text run finds its mentions through its frozen versions; facts of its extraction runs are indexed", () =>
+    withRollback(async (tx) => {
+      const textRun = await runRow(tx, { documentVersionIds: [] });
+      const outside = await insertPlace(tx, { lon: LON, lat: LAT, name: "Außenbucht" });
+      // a mention with the run's id in a version the run did not freeze is no target (and never read by run id alone)
+      await insertMention(tx, outside.objectId, { sourceId: await insertSource(tx), runId: textRun });
+      expect(await consolidationTargets(tx, { id: textRun, params: { documentVersionIds: [] } })).toEqual([]);
+      const { rows } = await tx.execute<{ indexdef: string }>(sql`select indexdef from pg_indexes where indexname = 'facts_extraction_run_id_idx'`);
+      expect(rows[0]?.indexdef).toContain("(extraction_run_id)");
+    }));
+
+  it("a blocked plan stores the skip marker; „Konsolidierung nachholen“ starts one run once the block is lifted", () =>
+    withRollback(async (tx) => {
+      const { id: textRun } = await createRun(tx, { kind: "stage", scope: { type: "system", id: "texts" }, stages: [CHECK_STAGE, ...CONSOLIDATION_STAGES], params: { documentVersionIds: [] }, triggeredBy: "test" });
+      const a = await placeWithFact(tx, "Sperrbucht", textRun);
+      await tx.update(runs).set({ params: { documentVersionIds: [a.versionId] } }).where(eq(runs.id, textRun));
+      const failure = { factId: newId(), kind: "fact", reason: "not_found" };
+      await tx
+        .update(extractionRuns)
+        .set({ status: "blocked", blockedReason: "quote_fidelity", quoteCheck: { facts: 1, verified: 0, ratio: 0, failures: [failure] } })
+        .where(eq(extractionRuns.runId, textRun));
+      expect(await consolidateRun(tx, textRun)).toEqual([]);
+      expect((await getRun(tx, textRun))!.consolidationSkip).toMatchObject({ reason: "quote_fidelity", catchUpRunId: null });
+
+      const rec = recordingBoss();
+      expect(await catchUpConsolidation(tx, rec.boss, textRun, "admin")).toEqual({ status: "blocked" });
+      // "Belegtreue neu prüfen" finishes the extraction run (its quote holds up): the marker stays, unlike the live check
+      const [er] = await tx.select({ id: extractionRuns.id }).from(extractionRuns).where(eq(extractionRuns.runId, textRun));
+      expect(await recheckBlockedExtractionRun(tx, er!.id)).toBe(true);
+      expect(await consolidationBlocked(tx, textRun)).toBe(false);
+      expect((await getRun(tx, textRun))!.consolidationSkip).toMatchObject({ reason: "quote_fidelity", catchUpRunId: null });
+
+      const started = await catchUpConsolidation(tx, rec.boss, textRun, "admin");
+      expect(started.status).toBe("started");
+      const catchUpId = (started as { consolidationRunId: string }).consolidationRunId;
+      const [catchUp] = await tx.select().from(runs).where(eq(runs.id, catchUpId));
+      expect(catchUp).toMatchObject({ kind: "stage", scopeType: "place", stages: [...CONSOLIDATION_STAGES], params: { geoObjectIds: [a.objectId] }, triggeredBy: "admin" });
+      expect(rec.inserted.filter((j) => j.queue === "consolidation.geo").map((j) => [j.data.runId, j.data.geoObjectId])).toEqual([[catchUpId, a.objectId]]);
+      expect((await getRun(tx, textRun))!.consolidationSkip).toMatchObject({ reason: "quote_fidelity", catchUpRunId: catchUpId });
+      // a second click starts nothing
+      expect(await catchUpConsolidation(tx, rec.boss, textRun, "admin")).toEqual({ status: "already", consolidationRunId: catchUpId });
+      expect(await tx.select().from(runs).where(eq(runs.triggeredBy, "admin"))).toHaveLength(1);
+    }));
+
+  it("a failed run's consolidation is marked skipped and caught up right after the recheck that lifts its block", () =>
+    withRollback(async (tx) => {
+      const { id: textRun } = await createRun(tx, { kind: "stage", scope: { type: "system", id: "texts" }, stages: [CHECK_STAGE, ...CONSOLIDATION_STAGES], params: { documentVersionIds: [] }, triggeredBy: "test" });
+      const a = await placeWithFact(tx, "Fehlbucht", textRun);
+      await tx.update(runs).set({ status: "running", params: { documentVersionIds: [a.versionId] } }).where(eq(runs.id, textRun));
+      await tx.update(extractionRuns).set({ status: "running", finishedAt: null }).where(eq(extractionRuns.runId, textRun));
+      await failRun(tx, textRun, "stage transition failed: test");
+      expect((await getRun(tx, textRun))!.consolidationSkip).toMatchObject({ reason: "run_failed", catchUpRunId: null });
+
+      const rec = recordingBoss();
+      const [er] = await tx.select({ id: extractionRuns.id, status: extractionRuns.status }).from(extractionRuns).where(eq(extractionRuns.runId, textRun));
+      expect(er!.status).toBe("blocked");
+      expect(await recheckBlockedExtractionRun(tx, er!.id)).toBe(true);
+      const started = await catchUpConsolidation(tx, rec.boss, textRun, "admin", { afterRecheck: true });
+      expect(started.status).toBe("started");
+      const [catchUp] = await tx.select().from(runs).where(eq(runs.id, (started as { consolidationRunId: string }).consolidationRunId));
+      expect(catchUp!.params).toEqual({ geoObjectIds: [a.objectId] });
+    }));
+
+  it("after a recheck a run that consolidated before its late block consolidates again; one still to consolidate is left alone", () =>
+    withRollback(async (tx) => {
+      const rec = recordingBoss();
+      const textRun = async (name: string) => {
+        const { id } = await createRun(tx, { kind: "stage", scope: { type: "system", id: "texts" }, stages: [CHECK_STAGE, ...CONSOLIDATION_STAGES], params: { documentVersionIds: [] }, triggeredBy: "test" });
+        const place = await placeWithFact(tx, name, id);
+        await tx.update(runs).set({ params: { documentVersionIds: [place.versionId] } }).where(eq(runs.id, id));
+        return { id, place };
+      };
+      const late = await textRun("Spätbucht");
+      await tx.execute(sql`update run_stages set status = 'finished' where run_id = ${late.id}`);
+      const pending = await textRun("Wartebucht");
+      // no marker: a run still to consolidate is left alone, one that consolidated before consolidates again
+      expect(await catchUpConsolidation(tx, rec.boss, pending.id, "admin", { afterRecheck: true })).toEqual({ status: "not_skipped" });
+      expect(await catchUpConsolidation(tx, rec.boss, late.id, "admin")).toEqual({ status: "not_skipped" });
+      expect((await catchUpConsolidation(tx, rec.boss, late.id, "admin", { afterRecheck: true })).status).toBe("started");
+      // a model comparison (no consolidation stage) is never caught up on
+      const { id: comparison } = await createRun(tx, { kind: "reprocess", scope: { type: "system", id: "texts" }, stages: [CHECK_STAGE], params: {}, triggeredBy: "test" });
+      expect(await catchUpConsolidation(tx, rec.boss, comparison, "admin", { afterRecheck: true })).toEqual({ status: "not_skipped" });
+    }));
+
+  it("a run ended by hand before its consolidation is marked skipped; one that consolidated already is not", () =>
+    withRollback(async (tx) => {
+      const boss = { findJobs: async () => [], cancel: async () => undefined } as unknown as PgBoss;
+      const stages = [CHECK_STAGE, ...CONSOLIDATION_STAGES];
+      const { id: early } = await createRun(tx, { kind: "stage", scope: { type: "system", id: "texts" }, stages, params: { documentVersionIds: [] }, triggeredBy: "test" });
+      await endRunByAdmin(tx, boss, early, "admin@example.invalid");
+      expect((await getRun(tx, early))!.consolidationSkip?.reason).toBe("run_ended");
+      const { id: late } = await createRun(tx, { kind: "stage", scope: { type: "system", id: "texts" }, stages, params: { documentVersionIds: [] }, triggeredBy: "test" });
+      await tx.execute(sql`update run_stages set status = 'finished' where run_id = ${late} and stage = ${CONSOLIDATION_GEO_STAGE}`);
+      await endRunByAdmin(tx, boss, late, "admin@example.invalid");
+      expect((await getRun(tx, late))!.consolidationSkip).toBeNull();
+    }));
+
+  it("a revived run that consolidates after all loses its skip marker", () =>
+    withRollback(async (tx) => {
+      const { id: textRun } = await createRun(tx, { kind: "stage", scope: { type: "system", id: "texts" }, stages: [CHECK_STAGE, ...CONSOLIDATION_STAGES], params: { documentVersionIds: [] }, triggeredBy: "test" });
+      await placeWithFact(tx, "Wiederbucht", textRun);
+      await failRun(tx, textRun, "stage transition failed: test");
+      expect((await getRun(tx, textRun))!.consolidationSkip?.reason).toBe("run_failed");
+      await consolidateRun(tx, textRun);
+      expect((await getRun(tx, textRun))!.consolidationSkip).toBeNull();
     }));
 });

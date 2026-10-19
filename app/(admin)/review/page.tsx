@@ -4,18 +4,19 @@ import { getDb } from "@/lib/db/client";
 import { reviewKindEnum } from "@/lib/db/schema";
 import { listOpenTasks, reviewCounts } from "@/lib/domain/review-view";
 import { requireAdmin } from "@/lib/security/require-admin";
-import { REVIEW_KIND_LABELS } from "../_components/labels";
+import { REVIEW_KIND_LABELS, RUN_NOT_STARTED_NOTICE } from "../_components/labels";
 
 const PAGE_SIZE = 50;
 const querySchema = z.object({
   kind: z.enum(reviewKindEnum.enumValues).optional().catch(undefined),
   before: z.uuid().optional().catch(undefined),
+  notice: z.literal("run_not_started").optional().catch(undefined),
 });
 const time = (d: Date) => d.toISOString().slice(0, 16).replace("T", " ");
 
 export default async function Page({ searchParams }: PageProps<"/review">) {
   await requireAdmin();
-  const { kind, before } = querySchema.parse(await searchParams);
+  const { kind, before, notice } = querySchema.parse(await searchParams);
   const db = getDb();
   const [counts, tasks] = await Promise.all([reviewCounts(db), listOpenTasks(db, { kind, limit: PAGE_SIZE, before })]);
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
@@ -28,6 +29,11 @@ export default async function Page({ searchParams }: PageProps<"/review">) {
   return (
     <div className="space-y-4 text-sm">
       <h1 className="text-lg font-semibold">Prüfen</h1>
+      {notice && (
+        <p role="status" className="rounded bg-amber-100 px-3 py-2">
+          {RUN_NOT_STARTED_NOTICE}
+        </p>
+      )}
       <ul aria-label="Offene Aufgaben je Art" className="flex flex-wrap gap-x-4 gap-y-1">
         <li>
           <Link href={filter()} className={kind ? "hover:underline" : "font-semibold"}>

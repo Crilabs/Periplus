@@ -89,25 +89,27 @@ export async function startProposalRun(db: Db, boss: PgBoss, triggeredBy: string
 /**
  * Starts a targeted source discovery for places (spec 07 Folgeaufträge): kind `event`, scope `system` / `places`,
  * stages `discovery.place` (the tile templates with each place's names) and `discovery.propose`, params
- * `{ geoObjectIds }`. Every id must be a valid, unmerged geo object with a valid, unmerged place
- * (`RunScopeNotReady` `geo_object_without_place`, checked before the run exists). The run row and one
+ * `{ geoObjectIds }` in the given order (fewest documents first: the order the query cap keeps). Every id must be a
+ * geo object valid and unmerged on `input.on` (the requesting run's date; default the database's date) with such a
+ * place (`RunScopeNotReady` `geo_object_without_place`, checked before the run exists). The run row and one
  * `place_discovery_requests` row per object (the cool-down of `thinPlaces`) are written in one transaction, then the
  * first stage is enqueued.
  */
 export async function startPlaceDiscoveryRun(
   db: Db,
   boss: PgBoss,
-  input: { geoObjectIds: string[]; triggeredBy: string },
+  input: { geoObjectIds: string[]; triggeredBy: string; on?: string },
 ): Promise<{ id: string }> {
-  const ids = [...new Set(input.geoObjectIds)].sort();
+  const ids = [...new Set(input.geoObjectIds)];
   if (ids.length === 0) throw new RunScopeNotReady("geo_object_without_place", "no geo object given");
+  const on = input.on ? sql`${input.on}::date` : sql`current_date`;
   const { rows } = await db.execute<{ id: string }>(sql`
     select o.id from geo_objects o
     where o.id in (select value::uuid from jsonb_array_elements_text(${JSON.stringify(ids)}::jsonb))
-      and o.merged_into_id is null and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
+      and o.merged_into_id is null and o.valid_from <= ${on} and (o.valid_to is null or o.valid_to > ${on})
       and exists (
         select 1 from places p where p.geo_object_id = o.id and p.merged_into_id is null
-          and p.valid_from <= current_date and (p.valid_to is null or p.valid_to > current_date)
+          and p.valid_from <= ${on} and (p.valid_to is null or p.valid_to > ${on})
       )
   `);
   const valid = new Set(rows.map((r) => r.id));

@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import type { Db } from "@/lib/db/client";
 import { runs } from "@/lib/db/schema";
+import { markConsolidationSkipped } from "@/lib/domain/consolidation/skipped";
 import { blockUncheckedRuns } from "@/lib/domain/extraction/run-status";
 import { failOpenUnits } from "@/lib/domain/extraction/unit-status";
 import { beginStage, createRun, endRun } from "@/lib/domain/runs";
@@ -70,6 +71,8 @@ export async function endRunByAdmin(db: Db, boss: PgBoss, runId: string, by: str
   const failedUnits = (await failOpenUnits(db, runId)).length;
   // Nor does its check stage: its unchecked extraction runs are blocked, never left running (ruling M4-H-R3).
   const blockedExtractionRuns = (await blockUncheckedRuns(db, runId, "run_ended")).length;
+  // Nor its consolidation, if it has not begun: stored for „Konsolidierung nachholen“ (ruling M5-H-R2).
+  await markConsolidationSkipped(db, runId, "run_ended");
   createLogger("runs").info({ runId, by, cancelledJobs, batches, failedUnits, blockedExtractionRuns }, "run ended by admin");
   return { ended: true, cancelledJobs };
 }

@@ -1,3 +1,4 @@
+import type { ConsolidationSkipReason } from "@/lib/domain/consolidation/skipped";
 import type {
   ChangeRate,
   ComparisonVerdict,
@@ -370,6 +371,24 @@ export const EXTRACTION_BLOCK_REASON_LABELS: Record<ExtractionRunBlockReason, st
   late_results: "Ergebnisse nach der Prüfung eingetroffen – Belegtreue neu prüfen",
   run_ended: "Lauf von Hand beendet, vor der Prüfung",
   run_failed: "Lauf fehlgeschlagen, vor der Prüfung – Belegtreue neu prüfen",
+};
+
+/** Why a run skipped its consolidation (the stored marker, ruling M5-H-R2). */
+export const CONSOLIDATION_SKIP_REASON_LABELS: Record<ConsolidationSkipReason, string> = {
+  quote_fidelity: "Belegtreue unter 100 %",
+  run_failed: "Lauf vor der Konsolidierung fehlgeschlagen",
+  run_ended: "Lauf vor der Konsolidierung beendet",
+};
+
+/** Notice of the review pages (`?notice=run_not_started`): the decision stands, a follow-up run did not start. */
+export const RUN_NOT_STARTED_NOTICE =
+  "Entscheidung gespeichert. Der Folgelauf konnte nicht gestartet werden (Fehler protokolliert) – bitte später von Hand starten.";
+
+/** Notices of the run page (`?notice=`) after „Belegtreue neu prüfen“ or „Konsolidierung nachholen“. */
+export const RUN_NOTICE_LABELS: Record<string, string> = {
+  consolidation_blocked: "Konsolidierung nicht nachgeholt: Belegtreue weiter unter 100 % – zuerst „Belegtreue neu prüfen“.",
+  consolidation_no_targets: "Konsolidierung nicht nachgeholt: kein Geo-Objekt des Laufs lässt sich konsolidieren.",
+  consolidation_not_started: "Die Konsolidierung konnte nicht gestartet werden (Fehler protokolliert). Bitte später erneut versuchen.",
 };
 
 export const EXTRACTION_PURPOSE_LABELS: Record<ExtractionPurpose, string> = {

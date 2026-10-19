@@ -260,6 +260,13 @@
       "when": 1792434082500,
       "tag": "0036_serp_level_place",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1792435768494,
+      "tag": "0037_facts_extraction_run_id_idx",
+      "breakpoints": true
     }
   ]
 }
