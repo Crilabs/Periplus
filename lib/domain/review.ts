@@ -10,9 +10,18 @@ export type ReviewTaskInput = {
   priority?: number;
 };
 
+/** The open task an insert conflicted with was decided or dismissed before it could be read (a concurrent decision). */
+export class OpenTaskVanished extends Error {
+  constructor(kind: ReviewKind, subjectId: string) {
+    super(`open review task for ${kind}/${subjectId} vanished during insert`);
+    this.name = "OpenTaskVanished";
+  }
+}
+
 /**
  * Opens a review task unless an open one for the same (kind, subjectId) exists; then returns that one.
- * Backed by the partial unique index `review_tasks_open_subject_unique`, so it is safe under concurrency.
+ * Backed by the partial unique index `review_tasks_open_subject_unique`, so it is safe under concurrency;
+ * `OpenTaskVanished` when the conflicting open task was decided before it could be read (callers may retry).
  */
 export async function createReviewTask(db: Db, input: ReviewTaskInput): Promise<{ id: string; created: boolean }> {
   const [inserted] = await db
@@ -37,7 +46,7 @@ export async function createReviewTask(db: Db, input: ReviewTaskInput): Promise<
     .where(
       and(eq(reviewTasks.kind, input.kind), eq(reviewTasks.subjectId, input.subjectId), eq(reviewTasks.status, "open")),
     );
-  if (!existing) throw new Error(`open review task for ${input.kind}/${input.subjectId} vanished during insert`);
+  if (!existing) throw new OpenTaskVanished(input.kind, input.subjectId);
   return { id: existing.id, created: false };
 }
 

@@ -6,6 +6,7 @@ import { geomFromGeoJson } from "@/lib/db/geometry";
 import { newId } from "@/lib/domain/ids";
 import { createReviewTask } from "@/lib/domain/review";
 import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
+import { GEOMETRY_CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
 import { testDb, withRollback } from "@/test/db";
 import { buildBayScene } from "@/test/geometry/scene";
 
@@ -45,7 +46,7 @@ import {
   startPingRun,
   startSeedAction,
 } from "../runs/actions";
-import { geometryTileAction, seedTileAction } from "../tiles/[id]/actions";
+import { consolidateTileAction, geometryTileAction, seedTileAction } from "../tiles/[id]/actions";
 import { pauseQueueAction, resumeQueueAction } from "../jobs/actions";
 import { endRunAction, retryJobAction } from "../runs/[id]/actions";
 import { toggleComparisonAction } from "../quality/actions";
@@ -229,6 +230,32 @@ describe("admin server actions", () => {
       await expect(startGazetteerAction({ areaKey: "saronic" })).rejects.toThrow("NEXT_REDIRECT");
       expect(startRun).toHaveBeenCalledTimes(2);
     }));
+  it("„Konsolidieren“ on the tile page starts a tile-scoped consolidation run; an unknown tile is refused", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      // Open sea outside the pilot box, at a spot no other test uses.
+      const tileId = tileIdFor(24.61, 32.83);
+      await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(24.5, 32.75, 24.75, 33.0, 4326)` });
+      await consolidateTileAction(form({ tileId }));
+      expect(startRun).toHaveBeenCalledWith(
+        tx,
+        expect.anything(),
+        expect.objectContaining({
+          kind: "stage",
+          scope: { type: "tile", id: tileId },
+          stages: ["consolidation.geo", "consolidation.summary", "consolidation.followup"],
+          params: { tileId },
+          triggeredBy: "admin@example.invalid",
+        }),
+      );
+      expect(redirect).toHaveBeenLastCalledWith("/runs/run-1");
+      await expect(consolidateTileAction({ tileId: "q025:0:719" })).rejects.toThrow();
+      await expect(consolidateTileAction({ tileId: "q025:813" })).rejects.toThrow();
+      requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
+      await expect(consolidateTileAction({ tileId })).rejects.toThrow("NEXT_REDIRECT");
+      expect(startRun).toHaveBeenCalledTimes(1);
+    }));
+
   it("startSeedAction rejects a payload with both fields or an unknown tile next to a valid area", () =>
     withRollback(async (tx) => {
       currentDb = tx;
@@ -290,7 +317,7 @@ describe("admin server actions", () => {
       const expected = expect.objectContaining({
         kind: "stage",
         scope: { type: "tile", id: scene.tileId },
-        stages: ["geometry.place"],
+        stages: ["geometry.place", ...GEOMETRY_CONSOLIDATION_STAGES],
         params: { tileIds: [scene.tileId] },
         triggeredBy: "admin@example.invalid",
       });

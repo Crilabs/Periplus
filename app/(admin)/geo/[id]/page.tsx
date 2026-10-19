@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { geoFacts, geoMentions, MENTIONS_PER_PAGE } from "@/lib/domain/geo-facts";
 import { geoObjectDetail, type GeoObjectRef } from "@/lib/domain/geo-view";
+import { profileAttributeFacts, profileView } from "@/lib/domain/profile-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import {
   GEO_OBJECT_TYPE_LABELS,
@@ -12,13 +13,18 @@ import {
   NAME_ORIGIN_LABELS,
   PLACE_KIND_LABELS,
   PLACE_STATUS_LABELS,
+  runScopeError,
 } from "../../_components/labels";
 import { AnnotatedText } from "../../_components/annotated-text";
+import { recomputeGeoProfileAction } from "../../places/[id]/actions";
 import { FactsTab } from "../../places/[id]/facts-tab";
+import { ProfileTab } from "../../places/[id]/profile-tab";
 
 const SCRIPT_LABELS = { latin: "Lateinisch", greek: "Griechisch" } as const;
 const runsParam = z.enum(["active", "all"]).catch("active");
 const pageParam = z.coerce.number().int().min(1).catch(1);
+const textParam = z.string().max(200).optional().catch(undefined);
+const uuidParam = z.uuid().optional().catch(undefined);
 const share = (n: number) => n.toLocaleString("de-DE", { maximumFractionDigits: 2 });
 
 function GeoLink({ o }: { o: GeoObjectRef }) {
@@ -42,12 +48,20 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
   const sp = await searchParams;
   const runs = runsParam.parse(sp.runs);
   const page = pageParam.parse(sp.mp);
-  const [mentionPage, facts] = await Promise.all([geoMentions(db, id.data, page), geoFacts(db, id.data, { runs })]);
+  const error = runScopeError(sp.error);
+  const attr = textParam.parse(sp.attr);
+  const [mentionPage, facts, profile] = await Promise.all([
+    geoMentions(db, id.data, page),
+    geoFacts(db, id.data, { runs }),
+    profileView(db, id.data),
+  ]);
+  const selected = profile && attr ? await profileAttributeFacts(db, id.data, profile.snapshot.version, attr) : null;
   const pages = Math.max(1, Math.ceil(mentionPage.total / MENTIONS_PER_PAGE));
-  const href = (q: { runs?: "active" | "all"; mp?: number }) => {
+  const href = (q: { runs?: "active" | "all"; mp?: number; attr?: string | null }) => {
     const r = q.runs ?? runs;
     const m = q.mp ?? page;
-    const parts = [r === "all" ? "runs=all" : "", m > 1 ? `mp=${m}` : ""].filter(Boolean);
+    const a = q.attr === undefined ? attr : q.attr;
+    const parts = [r === "all" ? "runs=all" : "", m > 1 ? `mp=${m}` : "", a ? `attr=${encodeURIComponent(a)}` : ""].filter(Boolean);
     return `/geo/${id.data}${parts.length > 0 ? `?${parts.join("&")}` : ""}`;
   };
   const { object: o } = detail;
@@ -61,6 +75,11 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
       <h1 className="text-lg font-semibold">
         {o.name ?? o.id} ({GEO_OBJECT_TYPE_LABELS[o.type]})
       </h1>
+      {error && (
+        <p role="alert" className="rounded bg-red-100 px-3 py-2">
+          Lauf nicht gestartet: {error}
+        </p>
+      )}
       <dl className="grid grid-cols-[8rem_1fr] gap-y-1">
         <dt>Eltern-Kette</dt>
         <dd>
@@ -133,6 +152,25 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
         <dt>Geo-Objekt</dt>
         <dd className="font-mono text-xs">{o.id}</dd>
       </dl>
+      {!o.validTo && !o.mergedIntoId && (
+        <form action={recomputeGeoProfileAction}>
+          <input type="hidden" name="geoObjectId" value={o.id} />
+          <button type="submit" className="rounded border border-neutral-400 px-3 py-1 hover:bg-neutral-100">
+            Profil neu berechnen
+          </button>
+        </form>
+      )}
+
+      <section>
+        <h2 className="mb-1 font-semibold">Profil</h2>
+        <ProfileTab
+          view={profile}
+          selected={selected}
+          notice={textParam.parse(sp.notice)}
+          noticeRunId={uuidParam.parse(sp.run)}
+          links={{ geoObjectId: o.id, confirm: textParam.parse(sp.confirm), attrHref: (a) => href({ attr: a }) }}
+        />
+      </section>
 
       <section>
         <h2 className="mb-1 font-semibold">Namen</h2>

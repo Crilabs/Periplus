@@ -3,7 +3,7 @@ import type { PgBoss } from "pg-boss";
 import { describe, expect, it } from "vitest";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { computations, facts, geoObjects, places, restrictedAreas, reviewTasks, runs, tiles, type ComputationKind } from "@/lib/db/schema";
+import { computations, facts, geoObjects, places, profiles, restrictedAreas, reviewTasks, runs, tiles, type ComputationKind } from "@/lib/db/schema";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { latestComputations } from "@/lib/domain/facts/computations";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
@@ -11,11 +11,14 @@ import { setAnchorPosition } from "@/lib/domain/geometry/anchor-correction";
 import { newId } from "@/lib/domain/ids";
 import { createReviewTask } from "@/lib/domain/review";
 import { decideReviewTask } from "@/lib/domain/review-decisions";
+import { consolidationTargets } from "@/lib/domain/consolidation/targets";
 import { createRun } from "@/lib/domain/runs";
 import { tileBbox } from "@/lib/domain/tiles";
 import { HANDLERS } from "@/lib/jobs/registry";
 import { STAGES } from "@/lib/jobs/stages";
 import { createLogger } from "@/lib/logger";
+import { consolidateGeoJob } from "@/lib/pipeline/consolidation/geo";
+import { CONSOLIDATION_FOLLOWUP_STAGE, CONSOLIDATION_GEO_STAGE, CONSOLIDATION_STAGES, GEOMETRY_CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
 import { computePlaceGeometry, GEOMETRY_STAGE, geometryPlaceIds, storeComputedAnchor } from "@/lib/pipeline/geometry";
 import { startGeometryRun } from "@/lib/pipeline/geometry-run";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
@@ -263,6 +266,30 @@ describe("computePlaceGeometry", () => {
       ]);
     }));
 
+  it("a geometry run's consolidation stage carries a new exclusion into the profile (final review I-2)", () =>
+    withRollback(async (tx) => {
+      const scene = await buildBayScene(tx);
+      await tx.insert(restrictedAreas).values({
+        kind: "military",
+        sourceRef: `test:scene-${crypto.randomUUID()}`,
+        geom: sql`ST_Transform(ST_GeomFromText(${rect(-1000, -1000, 1000, 1000)}, ${SYNTHETIC_SRID}::int), 4326)`,
+      });
+      const { id: runId } = await createRun(tx, {
+        kind: "stage",
+        scope: { type: "place", id: scene.placeId },
+        stages: [GEOMETRY_STAGE, ...CONSOLIDATION_STAGES],
+        params: { placeIds: [scene.placeId] },
+        triggeredBy: "test",
+      });
+      await computePlaceGeometry(tx, scene.placeId, { today: TODAY, runId });
+      const [run] = await tx.select({ params: runs.params }).from(runs).where(eq(runs.id, runId));
+      const jobs = await STAGES[CONSOLIDATION_GEO_STAGE]!.plan(tx, { id: runId, params: run!.params as Record<string, unknown> });
+      expect(jobs.map((j) => j.geoObjectId)).toEqual([scene.geoObjectId]);
+      for (const job of jobs) await consolidateGeoJob(tx, { ...job, runId, stage: CONSOLIDATION_GEO_STAGE });
+      const [profile] = await tx.select({ attributes: profiles.attributes }).from(profiles).where(eq(profiles.geoObjectId, scene.geoObjectId));
+      expect(profile!.attributes.exclude).toEqual({ excluded: true, reason: "military", detail: null });
+    }));
+
   it("missing bathymetry for the tile fails with a clear message", () =>
     withRollback(async (tx) => {
       const scene = await buildBayScene(tx, { raster: false });
@@ -357,7 +384,10 @@ describe("startGeometryRun", () => {
       const { boss, inserted } = recordingBoss();
       const { id } = await startGeometryRun(tx, boss, { tileId: scene.tileId }, "test");
       const [run] = await tx.select().from(runs).where(eq(runs.id, id));
-      expect(run).toMatchObject({ scopeType: "tile", scopeId: scene.tileId, stages: [GEOMETRY_STAGE], params: { tileIds: [scene.tileId] } });
+      // the consolidation stages follow for the run's places (final review I-2)
+      expect(run).toMatchObject({ scopeType: "tile", scopeId: scene.tileId, stages: [GEOMETRY_STAGE, ...GEOMETRY_CONSOLIDATION_STAGES], params: { tileIds: [scene.tileId] } });
+      expect(run!.stages).not.toContain(CONSOLIDATION_FOLLOWUP_STAGE);
+      expect(await consolidationTargets(tx, { id, params: run!.params as Record<string, unknown> })).toContain(scene.geoObjectId);
       expect(inserted).toContainEqual({
         queue: "geometry.compute",
         data: { key: scene.placeId, placeId: scene.placeId, runId: id, stage: GEOMETRY_STAGE },
@@ -371,7 +401,9 @@ describe("startGeometryRun", () => {
       const { boss, inserted } = recordingBoss();
       const { id } = await startGeometryRun(tx, boss, { placeId: scene.placeId }, "test");
       const [run] = await tx.select().from(runs).where(eq(runs.id, id));
-      expect(run).toMatchObject({ scopeType: "place", scopeId: scene.placeId, stages: [GEOMETRY_STAGE], params: { placeIds: [scene.placeId] } });
+      expect(run).toMatchObject({ scopeType: "place", scopeId: scene.placeId, stages: [GEOMETRY_STAGE, ...GEOMETRY_CONSOLIDATION_STAGES], params: { placeIds: [scene.placeId] } });
+      // the consolidation of this run takes exactly the place's object
+      expect(await consolidationTargets(tx, { id, params: run!.params as Record<string, unknown> })).toEqual([scene.geoObjectId]);
       expect(inserted).toEqual([
         { queue: "geometry.compute", data: { key: scene.placeId, placeId: scene.placeId, runId: id, stage: GEOMETRY_STAGE } },
       ]);

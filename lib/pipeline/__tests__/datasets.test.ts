@@ -3,11 +3,14 @@ import { eq, like, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { describe, expect, it, vi } from "vitest";
 import { makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
+import { fixtureTransport } from "@/lib/adapters/http-fixtures";
 import { areaByKey, getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { externalCalls, runs } from "@/lib/db/schema";
+import { externalCalls, geoObjects, runs, tileGeoObjects, wikidataSitelinks } from "@/lib/db/schema";
+import { geomFromGeoJson } from "@/lib/db/geometry";
 import { areaBbox, syncAreas } from "@/lib/domain/gazetteer/areas";
 import { bufferBbox, importLandPolygons } from "@/lib/domain/gazetteer/land";
+import { assignTiles } from "@/lib/domain/gazetteer/hierarchy";
 import { ensureTiles } from "@/lib/domain/gazetteer/tiles-ensure";
 import { sampleDepths } from "@/lib/domain/geometry/depth";
 import { newId } from "@/lib/domain/ids";
@@ -20,9 +23,12 @@ import {
   importRestrictions,
   importRoads,
   importSeabed,
+  importSitelinks,
   importVesselDensity,
 } from "@/lib/pipeline/datasets";
 import { startDatasetImportRun } from "@/lib/pipeline/datasets-run";
+import { importOsm } from "@/lib/pipeline/gazetteer/osm";
+import { importWikidata } from "@/lib/pipeline/gazetteer/wikidata";
 import { withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
 
@@ -132,7 +138,7 @@ const rect = (w: number, s: number, e: number, n: number): GeoJSON.Polygon => ({
 /** Scripted services: DTM tiles from the DB, WFS layers by type name, Overpass answers by query kind. */
 function scriptedServices(
   db: Db,
-  answers: { seabed?: Fc; layers?: Record<string, Fc>; cables?: unknown[]; roads?: unknown[] } = {},
+  answers: { seabed?: Fc; layers?: Record<string, Fc>; cables?: unknown[]; roads?: unknown[]; sitelinks?: Record<string, number> } = {},
 ) {
   const seen: HttpRequest[] = [];
   const json = (value: unknown) => makeResponse(200, new TextEncoder().encode(JSON.stringify(value)));
@@ -149,6 +155,11 @@ function scriptedServices(
       case "overpass": {
         const ql = decodeURIComponent(req.body!.replace(/^data=/, ""));
         return json({ elements: (ql.includes("cable_submarine") ? answers.cables : answers.roads) ?? [] });
+      }
+      case "wikidata": {
+        const ids = new URL(req.url).searchParams.get("ids")!.split("|");
+        const links = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`wiki${i}`, { site: `wiki${i}`, title: "T" }]));
+        return json({ entities: Object.fromEntries(ids.map((id) => [id, { type: "item", id, sitelinks: links(answers.sitelinks?.[id] ?? 0) }])) });
       }
       default:
         throw new Error(`unexpected service ${req.service}`);
@@ -391,6 +402,92 @@ describe("importVesselDensity and importRoads", () => {
         sql`select osm_id, highway from roads where osm_id in ('way/201', 'way/202', 'way/203') order by osm_id`,
       );
       expect(stored.rows).toEqual([{ osm_id: "way/202", highway: "track" }]);
+    }));
+});
+
+describe("importSitelinks", () => {
+  /** A valid object with the Wikidata id `qid` (fixed per test, in a range no other test uses) in the area's tile. */
+  async function itemInTile(db: Db, qid: string, type: "island" | "bay" = "bay"): Promise<string> {
+    const [o] = await db
+      .insert(geoObjects)
+      .values({ type, origin: "wikidata", wikidataId: qid, geom: geomFromGeoJson({ type: "Point", coordinates: [SEA.lon, SEA.lat] }) })
+      .returning({ id: geoObjects.id });
+    await db.insert(tileGeoObjects).values({ tileId: TILE, geoObjectId: o!.id });
+    return qid;
+  }
+
+  it("sitelinks fetched within 30 days are reused without a call", () =>
+    withRollback(async (db) => {
+      await prepareArea(db);
+      const [fresh, stale, unknown] = [await itemInTile(db, "Q930000001"), await itemInTile(db, "Q930000002"), await itemInTile(db, "Q930000003", "island")];
+      const now = new Date("2026-10-19T12:00:00Z");
+      await db.insert(wikidataSitelinks).values([
+        { wikidataId: fresh, sitelinks: 4, fetchedAt: new Date("2026-09-25T12:00:00Z") },
+        { wikidataId: stale, sitelinks: 1, fetchedAt: new Date("2026-09-18T12:00:00Z") },
+      ]);
+      const { transport, seen } = scriptedServices(db, { sitelinks: { [stale]: 12, [unknown]: 3 } });
+      const runId = newId();
+
+      expect(await importSitelinks(db, { area: areaByKey(AREA), runId, now }, { transport })).toEqual({ fetched: 2, reused: 1 });
+      expect(seen.map((r) => new URL(r.url).searchParams.get("ids"))).toEqual([[stale, unknown].sort().join("|")]);
+      const stored = await db
+        .select({ id: wikidataSitelinks.wikidataId, n: wikidataSitelinks.sitelinks, at: wikidataSitelinks.fetchedAt })
+        .from(wikidataSitelinks)
+        .where(sql`${wikidataSitelinks.wikidataId} in (${fresh}, ${stale}, ${unknown})`)
+        .orderBy(wikidataSitelinks.wikidataId);
+      expect(new Map(stored.map((r) => [r.id, [r.n, r.at.toISOString()]]))).toEqual(
+        new Map([
+          [fresh, [4, "2026-09-25T12:00:00.000Z"]],
+          [stale, [12, now.toISOString()]],
+          [unknown, [3, now.toISOString()]],
+        ]),
+      );
+      const calls = await db.select().from(externalCalls).where(eq(externalCalls.runId, runId));
+      expect(calls.map((c) => [c.service, c.operation, c.stage])).toEqual([["wikidata", "sitelink_counts", DATASETS_STAGE]]);
+
+      // a day later everything is fresh: no call at all
+      const again = scriptedServices(db);
+      expect(await importSitelinks(db, { area: areaByKey(AREA), now: new Date("2026-10-20T12:00:00Z") }, { transport: again.transport })).toEqual({
+        fetched: 0,
+        reused: 3,
+      });
+      expect(again.seen).toHaveLength(0);
+    }));
+
+  it("the recorded counts of the area's gazetteer objects (fixtures:record --datasets sitelinks)", () =>
+    withRollback(async (db) => {
+      // the gazetteer as the recording built it: OSM and Wikidata from their fixtures, objects linked to the tile
+      await prepareArea(db);
+      const replay = fixtureTransport();
+      const runId = newId();
+      await importOsm(db, { area: areaByKey(AREA), runId }, { transport: replay, archive: memoryArchive() });
+      await importWikidata(db, { area: areaByKey(AREA), runId }, { transport: replay });
+      await assignTiles(db, AREA);
+
+      expect(await importSitelinks(db, { area: areaByKey(AREA), runId }, { transport: replay })).toEqual({ fetched: 123, reused: 0 });
+      const rows = await db
+        .select({ id: wikidataSitelinks.wikidataId, n: wikidataSitelinks.sitelinks })
+        .from(wikidataSitelinks)
+        .where(sql`${wikidataSitelinks.wikidataId} in ('Q191082', 'Q539983')`)
+        .orderBy(wikidataSitelinks.wikidataId);
+      // Aegina and Agistri, as Wikidata counted them on 2026-10-19
+      expect(rows).toEqual([
+        { id: "Q191082", n: 69 },
+        { id: "Q539983", n: 39 },
+      ]);
+      const calls = await db.select().from(externalCalls).where(eq(externalCalls.runId, runId));
+      expect(calls.filter((c) => c.operation === "sitelink_counts")).toHaveLength(3);
+    }));
+
+  it("an ended object or one outside the area's tiles is not asked for", () =>
+    withRollback(async (db) => {
+      await prepareArea(db);
+      const ended = await itemInTile(db, "Q930000011");
+      await db.execute(sql`update geo_objects set valid_to = current_date where wikidata_id = ${ended}`);
+      await db.insert(geoObjects).values({ type: "bay", origin: "wikidata", wikidataId: "Q930000012", geom: geomFromGeoJson({ type: "Point", coordinates: [SEA.lon, SEA.lat] }) });
+      const { transport, seen } = scriptedServices(db);
+      expect(await importSitelinks(db, { area: areaByKey(AREA) }, { transport })).toEqual({ fetched: 0, reused: 0 });
+      expect(seen).toHaveLength(0);
     }));
 });
 

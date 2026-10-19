@@ -23,12 +23,15 @@ import {
   POI_CATEGORY_LABELS,
   REVIEW_KIND_LABELS,
   SOURCE_STATUS_LABELS,
+  SUMMARY_FAILURE_LABELS,
+  RUN_NOT_STARTED_NOTICE,
 } from "../../_components/labels";
 import { MiniMap } from "../../_components/mini-map";
 import { approveSourceAction } from "./actions";
 import { DecisionForm } from "./decision-form";
 import { NameCandidateCreate } from "./name-candidate";
 import { PlaceConfirm } from "./place-confirm";
+import { ProfileDecision } from "./profile-decision";
 
 const distance = (m: number) =>
   m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toLocaleString("de-DE", { maximumFractionDigits: 1 })} km`;
@@ -127,10 +130,22 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
         {subject.type === "name_candidate" ? `Neuer Name: ${subject.candidate.name}` : REVIEW_KIND_LABELS[task.kind]}
         {subject.type === "place" && subject.geoObject.names[0] ? `: ${subject.geoObject.names[0].name}` : ""}
         {subject.type === "source" ? `: ${subject.source.domain}` : ""}
+        {subject.type === "profile_attribute" ? `: ${subject.name ?? subject.geoObjectId} – ${subject.label}` : ""}
+        {subject.type === "profile_summary" ? `: Zusammenfassung von ${subject.name ?? subject.geoObjectId}` : ""}
       </h1>
+      {query.notice === "run_not_started" && (
+        <p role="status" className="rounded bg-amber-100 px-3 py-2">
+          {RUN_NOT_STARTED_NOTICE}
+        </p>
+      )}
       {(!open || query.stale) && (
         <p role="status" className="rounded bg-amber-100 px-3 py-2">
           Bereits entschieden
+        </p>
+      )}
+      {query.changed && open && (
+        <p role="alert" className="rounded bg-red-100 px-3 py-2">
+          Der Wert hat sich geändert – bitte neu laden
         </p>
       )}
       {query.error && open && (
@@ -146,6 +161,10 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
       )}
 
       {subject.type === "missing" && <p>Der Gegenstand dieser Aufgabe wurde nicht gefunden.</p>}
+
+      {subject.type === "profile_attribute" && (task.kind === "conflict" || task.kind === "uncertain_change") && (
+        <ProfileDecision kind={task.kind} subject={subject} {...props} open={open} />
+      )}
 
       {subject.type === "place" && (
         <div className="grid gap-6 lg:grid-cols-2">
@@ -373,6 +392,32 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
             )}
           </section>
         </div>
+      )}
+
+      {subject.type === "profile_summary" && (
+        <section className="space-y-4">
+          <dl className="grid grid-cols-[8rem_1fr] gap-y-1">
+            <dt>Objekt</dt>
+            <dd>
+              <Link href={`/geo/${subject.geoObjectId}`} className="underline">
+                {subject.name ?? subject.geoObjectId}
+              </Link>
+            </dd>
+            <dt>Profilversion</dt>
+            <dd>{subject.version}</dd>
+            <dt>Versuche</dt>
+            <dd>{subject.attempts ?? "–"}</dd>
+            <dt>Gründe</dt>
+            <dd>{subject.reasons.map((r) => SUMMARY_FAILURE_LABELS[r] ?? r).join(" · ") || "–"}</dd>
+          </dl>
+          <p>Die Zusammenfassung dieser Profilversion ist leer geblieben.</p>
+          {open && (
+            <div className="space-y-2">
+              <DecisionForm {...props} n={1} label="Neu erzeugen" decision={{ action: "regenerate_summary" }} />
+              <DecisionForm {...props} n={2} label="Ignorieren" decision={{ action: "ignore" }} />
+            </div>
+          )}
+        </section>
       )}
 
       {subject.type === "job" && (

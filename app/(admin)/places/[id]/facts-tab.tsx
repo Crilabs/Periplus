@@ -1,13 +1,10 @@
 import Link from "next/link";
 import type { AttributeFacts, FactView } from "@/lib/domain/geo-facts";
 import { factAttributeLabel, FACT_ORIGIN_LABELS, formatFactValue } from "../../_components/labels";
+import { documentHref } from "../../_components/document-href";
 import { QuoteContext } from "../../_components/quote-context";
 
 const share = (n: number) => n.toLocaleString("de-DE", { maximumFractionDigits: 2 });
-
-/** The document page of a fact's quote: its version, tab "Erwähnungen und Zitate", where the quote is highlighted. */
-export const documentHref = (f: Pick<FactView, "documentId" | "documentVersionId">) =>
-  `/documents/${f.documentId}${f.documentVersionId ? `?v=${f.documentVersionId}&tab=annotations` : "?tab=annotations"}`;
 
 /**
  * The facts of a geo object by attribute (tab "Facts" of the place page, section "Facts" of the geo page): value,
@@ -43,48 +40,55 @@ export function FactsTab({
             </h3>
             <ul className="space-y-2">
               {g.facts.map((f) => (
-                <li key={f.id} className={`max-w-3xl rounded border border-neutral-200 p-2 ${f.active ? "" : "text-neutral-400"}`}>
-                  <p>
-                    <span className="font-semibold">{formatFactValue(g.attribute, f.value)}</span> · {FACT_ORIGIN_LABELS[f.origin]} · beobachtet{" "}
-                    {f.observedAt} · Konfidenz {share(f.confidence)}
-                    {f.model ? ` · ${f.model}` : ""}
-                    {f.runId && (
-                      <>
-                        {" "}
-                        · Lauf{" "}
-                        <Link href={`/runs/${f.runId}`} className="font-mono underline">
-                          {f.runId.slice(0, 8)}
-                        </Link>
-                      </>
-                    )}
-                    {!f.active && " · nicht aktiver Lauf"}
-                  </p>
-                  {f.context ? (
-                    <p className="mt-1 text-xs">
-                      <QuoteContext before={f.context.before} quote={f.context.quote} after={f.context.after} />
-                    </p>
-                  ) : (
-                    f.quote && <p className="mt-1 text-xs">„{f.quote}“</p>
-                  )}
-                  {f.source && (
-                    <p className="mt-1 text-xs">
-                      Quelle:{" "}
-                      {f.documentId ? (
-                        <Link href={documentHref(f)} className="underline">
-                          {f.source.domain}
-                        </Link>
-                      ) : (
-                        f.source.domain
-                      )}{" "}
-                      (Gewicht {share(f.source.weight)})
-                    </p>
-                  )}
-                </li>
+                <FactCard key={f.id} fact={f} />
               ))}
             </ul>
           </section>
         ))
       )}
     </div>
+  );
+}
+
+/** One fact: value, origin, date, confidence, model and run, the quote highlighted in its context, the source. */
+export function FactCard({ fact: f }: { fact: FactView }) {
+  return (
+    <li className={`max-w-3xl rounded border border-neutral-200 p-2 ${f.active ? "" : "text-neutral-400"}`}>
+      <p>
+        <span className="font-semibold">{formatFactValue(f.attribute, f.value)}</span> · {FACT_ORIGIN_LABELS[f.origin]} · beobachtet{" "}
+        {f.observedAt} · Konfidenz {share(f.confidence)}
+        {f.model ? ` · ${f.model}` : ""}
+        {f.runId && (
+          <>
+            {" "}
+            · Lauf{" "}
+            <Link href={`/runs/${f.runId}`} className="font-mono underline">
+              {f.runId.slice(0, 8)}
+            </Link>
+          </>
+        )}
+        {!f.active && " · nicht aktiver Lauf"}
+      </p>
+      {f.context ? (
+        <p className="mt-1 text-xs">
+          <QuoteContext before={f.context.before} quote={f.context.quote} after={f.context.after} />
+        </p>
+      ) : (
+        f.quote && <p className="mt-1 text-xs">„{f.quote}“</p>
+      )}
+      {f.source && (
+        <p className="mt-1 text-xs">
+          Quelle:{" "}
+          {f.documentId ? (
+            <Link href={documentHref(f)} className="underline">
+              {f.source.domain}
+            </Link>
+          ) : (
+            f.source.domain
+          )}{" "}
+          (Gewicht {share(f.source.weight)})
+        </p>
+      )}
+    </li>
   );
 }

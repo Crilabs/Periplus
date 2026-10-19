@@ -1,28 +1,33 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
+import { consolidationBlocked } from "@/lib/domain/consolidation/targets";
 import { extractionRunsOfRun, type ExtractionRunRow } from "@/lib/domain/extraction/run-view";
 import { failedJobsOfRun } from "@/lib/domain/jobs-view";
 import { getRun } from "@/lib/domain/runs";
 import { QUEUES } from "@/lib/jobs/queues";
+import { CONSOLIDATION_GEO_STAGE } from "@/lib/pipeline/consolidation/stages";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { AutoRefresh } from "../../_components/auto-refresh";
 import {
+  CONSOLIDATION_SKIP_REASON_LABELS,
   EXTRACTION_BLOCK_REASON_LABELS,
   EXTRACTION_PURPOSE_LABELS,
   EXTRACTION_RUN_STATUS_LABELS,
   QUOTE_FAILURE_LABELS,
   RUN_KIND_LABELS,
+  RUN_NOTICE_LABELS,
   RUN_STATUS_LABELS,
   SCOPE_TYPE_LABELS,
   STAGE_STATUS_LABELS,
 } from "../../_components/labels";
-import { endRunAction, recheckExtractionRunAction, retryJobAction } from "./actions";
+import { catchUpConsolidationAction, endRunAction, recheckExtractionRunAction, retryJobAction } from "./actions";
 
 const time = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
 const isRetryable = (queue: string) => (QUEUES as readonly string[]).includes(queue);
 
-export default async function Page({ params }: PageProps<"/runs/[id]">) {
+export default async function Page({ params, searchParams }: PageProps<"/runs/[id]">) {
   await requireAdmin();
   const id = z.uuid().safeParse((await params).id);
   if (!id.success) notFound();
@@ -33,10 +38,48 @@ export default async function Page({ params }: PageProps<"/runs/[id]">) {
     extractionRunsOfRun(db, id.data),
   ]);
   if (!run) notFound();
+  const { notice } = await searchParams;
+  const noticeText = typeof notice === "string" && Object.hasOwn(RUN_NOTICE_LABELS, notice) ? RUN_NOTICE_LABELS[notice] : null;
+  const skip = run.consolidationSkip;
+  // While the run is still extracting its extraction runs are open, which is no block yet; a stored skip is one.
+  const settled = skip !== null || (run.status !== "queued" && run.status !== "running");
+  const blocked = settled && run.stages.some((s) => s.stage === CONSOLIDATION_GEO_STAGE) && (await consolidationBlocked(db, run.id));
   return (
     <div className="space-y-4 text-sm">
       <AutoRefresh intervalMs={5000} />
       <h1 className="text-lg font-semibold">Lauf {run.id}</h1>
+      {blocked && (
+        <p role="alert" className="rounded bg-red-100 px-3 py-2 font-semibold text-red-800">
+          Konsolidierung gesperrt: Belegtreue unter 100 %
+        </p>
+      )}
+      {noticeText && (
+        <p role="status" className="rounded bg-amber-100 px-3 py-2">
+          {noticeText}
+        </p>
+      )}
+      {skip && (
+        <div className="rounded border border-amber-400 px-3 py-2">
+          <p>
+            Konsolidierung übersprungen: {CONSOLIDATION_SKIP_REASON_LABELS[skip.reason]} (am {time(new Date(skip.at))})
+          </p>
+          {skip.catchUpRunId ? (
+            <p>
+              Nachgeholt in{" "}
+              <Link href={`/runs/${skip.catchUpRunId}`} className="underline">
+                Lauf {skip.catchUpRunId}
+              </Link>
+            </p>
+          ) : (
+            <form action={catchUpConsolidationAction} className="mt-1">
+              <input type="hidden" name="runId" value={run.id} />
+              <button type="submit" className="rounded border border-amber-700 px-2 py-1 text-amber-800">
+                Konsolidierung nachholen
+              </button>
+            </form>
+          )}
+        </div>
+      )}
       <dl className="grid grid-cols-[8rem_1fr] gap-y-1">
         <dt>Art</dt>
         <dd>{RUN_KIND_LABELS[run.kind]}</dd>

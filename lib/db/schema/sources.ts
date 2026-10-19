@@ -233,7 +233,7 @@ export const crawlFrontier = pgTable(
   (t) => [uniqueIndex("crawl_frontier_source_id_url_normalized_unique").on(t.sourceId, t.urlNormalized)],
 );
 
-export const serpLevelEnum = pgEnum("serp_level", ["area", "tile"]);
+export const serpLevelEnum = pgEnum("serp_level", ["area", "tile", "place"]);
 export type SerpLevel = (typeof serpLevelEnum.enumValues)[number];
 
 /** Working state: one row per SERP search actually made (a reused query writes none); raw answer in S3. */
@@ -246,7 +246,7 @@ export const serpQueries = pgTable(
     locationCode: integer("location_code").notNull(),
     depth: integer("depth").notNull(),
     level: serpLevelEnum("level").notNull(),
-    /** Area key (`level area`) or tile id (`level tile`). */
+    /** Area key (`level area`), tile id (`level tile`) or geo object id (`level place`, ruling M5-P12). */
     scopeId: text("scope_id").notNull(),
     /** `serp/<YYYY-MM-DD>/<sha256(keyword|language|location)>.json` */
     rawKey: text("raw_key").notNull(),

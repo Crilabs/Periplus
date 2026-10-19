@@ -15,7 +15,8 @@
         "note": "Vorläufig Sonnet bis zur Auswertung des Vergleichs an 200 Erwähnungen."
       }
     },
-    "extract-route": { "model": "claude-sonnet-5-5", "promptVersion": 1, "effort": "medium", "maxTokens": 16000 }
+    "extract-route": { "model": "claude-sonnet-5-5", "promptVersion": 1, "effort": "medium", "maxTokens": 16000 },
+    "summarize-profile": { "model": "claude-sonnet-5-5", "promptVersion": 1, "effort": "low", "maxTokens": 4096 }
   },
   "pricesEurPerMTok": {
     "claude-haiku-5-5": { "input": 0.0889, "output": 0.4443, "cacheReadFactor": 0.1 },

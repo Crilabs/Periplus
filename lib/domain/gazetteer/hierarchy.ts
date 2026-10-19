@@ -1,5 +1,5 @@
 import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
-import { areaByKey, getConfig } from "@/lib/config";
+import { areaByKey, getConfig, type AreaConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geoObjects, type GeoObjectType } from "@/lib/db/schema";
 import type { Bbox } from "@/lib/domain/tiles";
@@ -127,7 +127,12 @@ export async function assignParentOf(db: Db, objectId: string): Promise<string |
  * geometries alone, so the result is the same whichever area's run writes it.
  */
 export async function assignTiles(db: Db, areaKey: string): Promise<{ links: number }> {
-  const tileIds = areaTileIds(areaByKey(areaKey));
+  return assignAreaTiles(db, areaByKey(areaKey));
+}
+
+/** `assignTiles` for an area given as configuration (e.g. one that exists only as a test file, not by key). */
+export async function assignAreaTiles(db: Db, area: AreaConfig): Promise<{ links: number }> {
+  const tileIds = areaTileIds(area);
   await db.execute(sql`delete from tile_geo_objects where tile_id in ${tileIds}`);
   const res = await db.execute(sql`
     insert into tile_geo_objects (tile_id, geo_object_id)

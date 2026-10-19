@@ -14,9 +14,13 @@ import {
   geoObjects,
   mentions,
   places,
+  profiles,
   runs,
   sources,
 } from "../lib/db/schema";
+import { consolidateGeo } from "../lib/domain/consolidation/store";
+import type { AttributeProvenance } from "../lib/domain/consolidation/types";
+import { profileEntryKey } from "../lib/domain/profile-view";
 import { createReviewTask } from "../lib/domain/review";
 import { createUser } from "../lib/domain/users";
 
@@ -58,25 +62,41 @@ async function createReviewCandidate(db: Db): Promise<string> {
   return name;
 }
 
-/** The text of the e2e fact scene; the fact quotes `FACT_QUOTE` from it. */
-const FACT_TEXT = "The bay is calm in the evening. Holding is good in sand at five metres, well sheltered from the north.";
+/**
+ * The text of the e2e fact scene; the holding fact quotes `FACT_QUOTE` from it, the two `shelter.N` facts
+ * `SHELTER_QUOTE` (version 1 of the profile) and `SHELTER_LATER_QUOTE` (version 2).
+ */
+const FACT_TEXT =
+  "The bay is calm in the evening. Holding is good in sand at five metres, well sheltered from the north. In strong northerlies a swell works in.";
 const FACT_QUOTE = "Holding is good in sand at five metres";
+const SHELTER_QUOTE = "well sheltered from the north";
+const SHELTER_LATER_QUOTE = "In strong northerlies a swell works in";
+
+/** Today (UTC) plus `n` days, `YYYY-MM-DD`. */
+const day = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+/** The run date of the scene's profile version 1; version 2 is consolidated today. */
+const PROFILE_V1_DATE = day(-10);
 
 /**
- * A bay with a place and one verified text fact of a finished, active extraction run, quoted from a document of a
- * proposed `*.e2e.test.invalid` source, unique per run (all these rows are append-only or stable, so every run adds
- * one). Open sea outside the pilot box. The document is `gone`, so no text run, pending selection or model comparison
- * sample of another test ever takes it in. Returns the place id.
+ * A bay with a place and verified text facts (holding, `shelter.N` „gut geschützt“) of a finished, active extraction
+ * run, quoted from a document of a proposed `*.e2e.test.invalid` source, unique per run (all these rows are
+ * append-only or stable, so every run adds one). Open sea outside the pilot box. The geo object is valid from 30 days
+ * ago, so a profile version can be dated before today. The document is `gone`, so no text run, pending selection or
+ * model comparison sample of another test ever takes it in. Returns the place id, the geo object id and `later`,
+ * which adds the second `shelter.N` fact.
  */
-async function createFactScene(db: Db): Promise<string> {
+async function createFactScene(db: Db): Promise<{ placeId: string; geoObjectId: string; later: () => Promise<unknown> }> {
   const cfg = loadConfig("config");
   const task = cfg.models.tasks["extract-facts"]!;
   const name = `E2E Fact Bay ${new Date().toISOString()}`;
   const geom = sql`${geomFromGeoJson({ type: "Point", coordinates: [27.93, 34.93] })}`;
   return db.transaction(async (tx) => {
-    const [object] = await tx.insert(geoObjects).values({ type: "bay", origin: "manual", geom }).returning({ id: geoObjects.id });
-    await tx.insert(geoNames).values({ geoObjectId: object!.id, name, nameNormalized: name.toLowerCase(), language: "en", script: "latin", origin: "manual" });
-    const [place] = await tx.insert(places).values({ geoObjectId: object!.id, kind: "anchorage", position: geom }).returning({ id: places.id });
+    const validFrom = day(-30);
+    const [object] = await tx.insert(geoObjects).values({ type: "bay", origin: "manual", geom, validFrom }).returning({ id: geoObjects.id });
+    await tx
+      .insert(geoNames)
+      .values({ geoObjectId: object!.id, name, nameNormalized: name.toLowerCase(), language: "en", script: "latin", origin: "manual", validFrom });
+    const [place] = await tx.insert(places).values({ geoObjectId: object!.id, kind: "anchorage", position: geom, validFrom }).returning({ id: places.id });
     const domain = `${Date.now()}.facts${E2E_SOURCE_SUFFIX}`;
     const [source] = await tx
       .insert(sources)
@@ -120,26 +140,83 @@ async function createFactScene(db: Db): Promise<string> {
         purpose: "regular",
         runId: run!.id,
         status: "finished",
-        quoteCheck: { facts: 1, verified: 1, ratio: 1, failures: [] },
+        quoteCheck: { facts: 3, verified: 3, ratio: 1, failures: [] },
         finishedAt: new Date(),
       })
       .returning({ id: extractionRuns.id });
     await tx.insert(extractionUnits).values({ extractionRunId: er!.id, documentVersionId: version!.id, geoObjectId: object!.id, part: 0, level: "place", mentionIds: [mention!.id], chunkIds: [chunk!.id], status: "done" });
-    const start = FACT_TEXT.indexOf(FACT_QUOTE);
-    await tx.insert(facts).values({
+    const fact = (attribute: string, value: unknown, quote: string, observedAt: string, mentionId = mention!.id) => {
+      const start = FACT_TEXT.indexOf(quote);
+      return {
+        geoObjectId: object!.id,
+        attribute,
+        value,
+        mentionId,
+        quote,
+        quoteVerified: true,
+        quoteChunkId: chunk!.id,
+        quoteStart: start,
+        quoteEnd: start + quote.length,
+        observedAt,
+        confidence: 0.9,
+        extractionRunId: er!.id,
+        factSchemaVersion: cfg.factSchema.version,
+      };
+    };
+    await tx.insert(facts).values([
+      fact("holding", "good", FACT_QUOTE, new Date().toISOString().slice(0, 10)),
+      fact("shelter.N", 0.9, SHELTER_QUOTE, PROFILE_V1_DATE),
+    ]);
+    // inserted after profile version 1: the worse text value lowers shelter.N from 0.9 to 0.5 in version 2; a second
+    // mention of the same chunk and run (one fact per mention, attribute and run) in a second unit of the run
+    const later = () =>
+      db.transaction(async (t2) => {
+        const today = new Date().toISOString().slice(0, 10);
+        const at = FACT_TEXT.indexOf(SHELTER_LATER_QUOTE);
+        const [second] = await t2
+          .insert(mentions)
+          .values({ documentVersionId: version!.id, chunkId: chunk!.id, geoObjectId: object!.id, surface: "northerlies", charStart: at + 10, charEnd: at + 21, observedAt: today, confidence: 1, matchKind: "deterministic", extractionStatus: "done" })
+          .returning({ id: mentions.id });
+        await t2.insert(extractionUnits).values({ extractionRunId: er!.id, documentVersionId: version!.id, geoObjectId: object!.id, part: 1, level: "place", mentionIds: [second!.id], chunkIds: [chunk!.id], status: "done" });
+        await t2.insert(facts).values(fact("shelter.N", 0.5, SHELTER_LATER_QUOTE, today, second!.id));
+      });
+    return { placeId: place!.id, geoObjectId: object!.id, later };
+  });
+}
+
+/** The hazard of the removal scene: a profile entry „Eintrag entfernen“ can remove. */
+const REMOVAL_HAZARD = { kind: "rock", name: "E2E Xera" };
+
+/**
+ * A confirmed bay whose profile (version 1, written directly: no fact is needed to show an entry) lists one hazard,
+ * for the two-step „Eintrag entfernen“. Its own object per run, at the e2e coordinate of the fact scene (outside the
+ * pilot box), so the fact scene's versions stay untouched. Returns the place id.
+ */
+async function createRemovalScene(db: Db): Promise<string> {
+  const cfg = loadConfig("config").consolidation;
+  const name = `E2E Removal Bay ${new Date().toISOString()}`;
+  const geom = sql`${geomFromGeoJson({ type: "Point", coordinates: [27.93, 34.93] })}`;
+  const key = profileEntryKey("hazards", REMOVAL_HAZARD, cfg);
+  const hazards: AttributeProvenance = {
+    origin: "text", rule: "union", confidence: 0.6, confidenceClass: "medium", observedAt: null, lastConfirmedAt: null,
+    factIds: [], sourceKeys: [], computationIds: [], poiIds: [], expired: false, onlyGoneSources: false, conflictKey: null,
+    observedMonths: [], entryFactIds: { [key]: [] },
+  };
+  return db.transaction(async (tx) => {
+    const [object] = await tx.insert(geoObjects).values({ type: "bay", origin: "manual", geom }).returning({ id: geoObjects.id });
+    await tx.insert(geoNames).values({ geoObjectId: object!.id, name, nameNormalized: name.toLowerCase(), language: "en", script: "latin", origin: "manual" });
+    const [place] = await tx.insert(places).values({ geoObjectId: object!.id, kind: "anchorage", status: "confirmed", position: geom }).returning({ id: places.id });
+    await tx.insert(profiles).values({
       geoObjectId: object!.id,
-      attribute: "holding",
-      value: "good",
-      mentionId: mention!.id,
-      quote: FACT_QUOTE,
-      quoteVerified: true,
-      quoteChunkId: chunk!.id,
-      quoteStart: start,
-      quoteEnd: start + FACT_QUOTE.length,
-      observedAt: new Date().toISOString().slice(0, 10),
-      confidence: 0.9,
-      extractionRunId: er!.id,
-      factSchemaVersion: cfg.factSchema.version,
+      version: 1,
+      validFrom: new Date().toISOString().slice(0, 10),
+      attributes: { hazards: [REMOVAL_HAZARD] },
+      provenance: { hazards },
+      sourcesCount: 1,
+      documentsCount: 1,
+      contentHash: `e2e-removal-${object!.id}`,
+      factSchemaVersion: loadConfig("config").factSchema.version,
+      rulesVersion: cfg.version,
     });
     return place!.id;
   });
@@ -198,8 +275,19 @@ export default async function globalSetup(): Promise<void> {
     const proposal = await createSourceProposal(db);
     process.env.E2E_SOURCE_DOMAIN = proposal.domain;
     process.env.E2E_SOURCE_TASK = proposal.taskId;
-    process.env.E2E_FACT_PLACE = await createFactScene(db);
+    const scene = await createFactScene(db);
+    process.env.E2E_FACT_PLACE = scene.placeId;
+    // the fact scene's profile for the profile and timeline tabs (append-only, one scene per run): version 1 ten days
+    // ago with shelter.N 0.9, version 2 today with shelter.N 0.5 after a worse text fact
+    const v1 = await consolidateGeo(db, scene.geoObjectId, { today: PROFILE_V1_DATE });
+    await scene.later();
+    const v2 = await consolidateGeo(db, scene.geoObjectId);
+    if (v1.version !== 1 || v2.status !== "created" || v2.version !== 2) {
+      throw new Error(`e2e fact scene: expected profile versions 1 and 2, got ${JSON.stringify([v1, v2])}`);
+    }
+    process.env.E2E_REMOVAL_PLACE = await createRemovalScene(db);
     process.env.E2E_FACT_QUOTE = FACT_QUOTE;
+    process.env.E2E_SHELTER_QUOTE = SHELTER_LATER_QUOTE;
     // Pilot-area tests roll back, so the test database normally has no saronic area object (like a fresh
     // installation before its first gazetteer run); the quality spec checks the page for either state.
     const { rows } = await db.execute(

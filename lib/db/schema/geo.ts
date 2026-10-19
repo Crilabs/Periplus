@@ -118,6 +118,8 @@ export const geoObjects = pgTable("geo_objects", {
   uniqueIndex("geo_objects_geonames_id_valid_unique").on(t.geonamesId).where(sql`${t.validTo} is null`),
   uniqueIndex("geo_objects_config_key_valid_unique").on(t.configKey).where(sql`${t.validTo} is null`),
   index("geo_objects_parent_id_idx").on(t.parentId),
+  // the merge chain of a consolidated object (loadInputs, loadContext) walks merged_into_id
+  index("geo_objects_merged_into_id_idx").on(t.mergedIntoId).where(sql`${t.mergedIntoId} is not null`),
   index("geo_objects_geom_gist").using("gist", t.geom),
   index("geo_objects_centroid_gist").using("gist", t.centroid),
 ]);

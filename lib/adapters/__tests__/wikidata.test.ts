@@ -1,8 +1,10 @@
+import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { testDb, withRollback } from "@/test/db";
+import { externalCalls } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { HttpError, makeResponse, RetryableHttpError, type HttpRequest, type Transport } from "@/lib/adapters/http";
-import { buildWikidataQuery, fetchSitelinks, wikidataQuery } from "@/lib/adapters/wikidata";
+import { buildWikidataQuery, fetchSitelinks, sitelinkCounts, wikidataQuery } from "@/lib/adapters/wikidata";
 
 const db = testDb();
 
@@ -130,4 +132,65 @@ describe("fetchSitelinks", () => {
       await expect(fetchSitelinks(missing, ["P31"], ["enwikivoyage"], { db: tx }, cfg())).rejects.toThrow(/invalid Wikidata item/);
     });
   });
+});
+
+describe("sitelinkCounts", () => {
+  function api(answer: (ids: string[]) => unknown): Transport & { requests: HttpRequest[] } {
+    const requests: HttpRequest[] = [];
+    const transport = async (req: HttpRequest) => {
+      requests.push(req);
+      const ids = new URL(req.url).searchParams.get("ids")!.split("|");
+      return makeResponse(200, new TextEncoder().encode(JSON.stringify(answer(ids))));
+    };
+    return Object.assign(transport, { requests });
+  }
+  const links = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`wiki${i}`, { site: `wiki${i}`, title: "T", badges: [] }]));
+
+  it("sitelinks are batched by 50 ids, counting every wiki, one external call per request (ruling M5-P1)", () =>
+    withRollback(async (tx) => {
+      const qids = Array.from({ length: 120 }, (_, i) => `Q${1000 + i}`).reverse();
+      const transport = api((ids) => ({
+        entities: Object.fromEntries(ids.map((id) => [id, { type: "item", id, sitelinks: links(Number(id.slice(1)) % 7) }])),
+      }));
+      const c = cfg();
+      const runId = newId();
+      const counts = await sitelinkCounts(transport, [...qids, "Q1000"], { db: tx, runId, stage: "datasets.import" }, c);
+
+      const sorted = [...qids].sort();
+      expect(transport.requests.map((r) => r.url)).toEqual(
+        [sorted.slice(0, 50), sorted.slice(50, 100), sorted.slice(100)].map(
+          (batch) => `${c.apiEndpoint}?action=wbgetentities&ids=${batch.join("|")}&props=sitelinks&format=json`,
+        ),
+      );
+      expect(counts.size).toBe(120);
+      expect(counts.get("Q1000")).toBe(1000 % 7);
+      expect(counts.get("Q1119")).toBe(1119 % 7);
+      const calls = await tx.select().from(externalCalls).where(eq(externalCalls.runId, runId));
+      expect(calls.map((r) => [r.service, r.operation, r.stage])).toEqual(Array(3).fill(["wikidata", "sitelink_counts", "datasets.import"]));
+    }));
+
+  it("a missing item is absent, a redirected one counts under the asked id, an item without links counts 0", () =>
+    withRollback(async (tx) => {
+      const transport = api(() => ({
+        entities: {
+          Q1: { id: "Q1", missing: "" },
+          Q20: { type: "item", id: "Q20", redirects: { from: "Q2", to: "Q20" }, sitelinks: links(3) },
+          Q3: { type: "item", id: "Q3" },
+        },
+      }));
+      const counts = await sitelinkCounts(transport, ["Q1", "Q2", "Q3"], { db: tx }, cfg());
+      expect([...counts.entries()].sort()).toEqual([["Q2", 3], ["Q3", 0]]);
+      await expect(sitelinkCounts(transport, ["P31"], { db: tx }, cfg())).rejects.toThrow(/invalid Wikidata item/);
+      const lagging = api(() => ({ error: { code: "maxlag", info: "lag" } }));
+      await expect(sitelinkCounts(lagging, ["Q1"], { db: tx }, cfg())).rejects.toBeInstanceOf(RetryableHttpError);
+      expect(await sitelinkCounts(transport, [], { db: tx }, cfg())).toEqual(new Map());
+    }));
+
+  it("a redirect and its target asked in one batch both get the target's count", () =>
+    withRollback(async (tx) => {
+      // Wikidata answers a redirect and its target with the one target entity
+      const transport = api(() => ({ entities: { Q20: { type: "item", id: "Q20", redirects: { from: "Q2", to: "Q20" }, sitelinks: links(3) } } }));
+      const counts = await sitelinkCounts(transport, ["Q2", "Q20"], { db: tx }, cfg());
+      expect([...counts.entries()].sort()).toEqual([["Q2", 3], ["Q20", 3]]);
+    }));
 });

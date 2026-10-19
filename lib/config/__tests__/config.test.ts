@@ -2,8 +2,10 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { FACT_SCHEMAS } from "@/config/fact-schema";
+import { getFactSchema } from "@/lib/domain/facts/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
-import { areaByKey, loadConfig } from "../index";
+import { areaByKey, getConfig, getConsolidationConfig, loadConfig } from "../index";
 import { modelsSchema } from "../schemas";
 
 const repoConfig = loadConfig("config");
@@ -27,6 +29,10 @@ type Overrides = {
   mentions?: unknown;
   nameAffixes?: unknown;
   extraction?: unknown;
+  /** `consolidation/active.json`. */
+  consolidationActive?: unknown;
+  /** Rules version file name (without `.json`) to content; replaces the repo's `consolidation/v*.json`. */
+  consolidation?: Record<string, unknown>;
   /** File name (without `.json`) to content; replaces all repo area files. */
   areas?: Record<string, unknown>;
 };
@@ -58,6 +64,15 @@ function fixtureDir(overrides: Overrides): string {
   }
   mkdirSync(join(dir, "fact-schema"));
   writeFileSync(join(dir, "fact-schema", "active.json"), JSON.stringify(overrides.factSchema ?? repoConfig.factSchema));
+  mkdirSync(join(dir, "consolidation"));
+  const { version: activeRules, ...activeRulesConfig } = repoConfig.consolidation;
+  writeFileSync(
+    join(dir, "consolidation", "active.json"),
+    JSON.stringify(overrides.consolidationActive ?? { version: activeRules }),
+  );
+  for (const [name, value] of Object.entries(overrides.consolidation ?? { [activeRules]: activeRulesConfig })) {
+    writeFileSync(join(dir, "consolidation", `${name}.json`), JSON.stringify(value));
+  }
   mkdirSync(join(dir, "areas"));
   const areas = overrides.areas ?? Object.fromEntries(repoConfig.areas.map((a) => [a.key, a]));
   for (const [name, value] of Object.entries(areas)) {
@@ -117,6 +132,18 @@ describe("loadConfig", () => {
 
   it("loads the active fact schema version", () => {
     expect(loadConfig("config").factSchema).toEqual({ version: "v2" });
+  });
+
+  it("the config loader and the fact-schema access know the same fact schema versions", () => {
+    expect(Object.keys(FACT_SCHEMAS).sort()).toEqual(["v1", "v2"]);
+    for (const [version, schema] of Object.entries(FACT_SCHEMAS)) {
+      expect(getFactSchema(version)).toBe(schema);
+      expect(schema.version).toBe(version);
+    }
+    // the active one loads; a version outside the map is unknown to both
+    expect(loadConfig(fixtureDir({ factSchema: { version: "v2" } })).factSchema).toEqual({ version: "v2" });
+    expect(() => loadConfig(fixtureDir({ factSchema: { version: "v3" } }))).toThrow(/unknown fact schema version v3/);
+    expect(() => getFactSchema("v3")).toThrow(/Unknown fact schema version v3/);
   });
 
   it("rejects a malformed fact schema version", () => {
@@ -447,6 +474,127 @@ describe("text configuration", () => {
     expect(() => routeStop({ nameMaxChars: 80, maxBeaufort: 12, bogus: 1 })).toThrow(/extraction\.json/);
     expect(() => routeStop({ nameMaxChars: 80 })).toThrow(/extraction\.json/);
     expect(() => routeStop({ nameMaxChars: 0, maxBeaufort: 12 })).toThrow(/extraction\.json/);
+  });
+});
+
+describe("consolidation rules", () => {
+  /** The repo's active rules version as its file holds it (without the `version`, which is the file name). */
+  const rulesFile = () => {
+    const rules: Omit<typeof repoConfig.consolidation, "version"> & { version?: string } = structuredClone(
+      repoConfig.consolidation,
+    );
+    delete rules.version;
+    return rules;
+  };
+
+  it("the active rules version is v1 with the spec values", () => {
+    const c = getConfig().consolidation;
+    expect(c.version).toBe("v1");
+    expect(c).toMatchObject({
+      recency: { halfLifeYears: 3 },
+      precision: 3,
+      conflict: { minRatio: 1.5 },
+      confidence: { secondSourceBonus: 0.15, cap: 0.95, review: 0.95 },
+      change: { minIndependent: 2, strongWeight: 0.8 },
+      expiry: { cycles: 2, defaultCycleDays: 365 },
+      weights: { computed: 1, review: 1, observed: 0.8, poi: 0.6 },
+    });
+    expect(c.rules.shelter).toMatchObject({ maxCorrection: 0.3, harbourFloor: 0.8, openSideMinConfidence: 0.7 });
+    expect(c.rules.shelter.harbourKinds).toEqual(["port", "marina"]);
+    expect(c.importance.radiusNm).toEqual([5, 10, 20, 35, 50]);
+    expect(c.confidence.classes.map((k) => k.name)).toEqual(["high", "medium", "low"]);
+    expect(c.quietness.weights).toEqual({ settlement: 0.3, road: 0.2, occupancy: 0.2, text: 0.2, ferry: 0.1 });
+    expect(c.profileConfidence).toEqual({ shelter: 0.4, depth: 0.25, seabed: 0.2, exclude: 0.15 });
+    // Ruling M5-P5: the safety patterns name attributes; there is no attribute `restriction`.
+    expect(c.severity.safety).toEqual(["exclude", "max_draft", "max_length", "hazards", "restricted_zones", "prohibitions", "depth.*"]);
+    // every safety list is a safety attribute: its changes and uncertain tasks rank as safety (final review M-2)
+    for (const list of c.change.additiveLists) expect(c.severity.safety, list).toContain(list);
+    expect(c.profileConfidenceGroups).toEqual({
+      shelter: ["shelter.*"],
+      depth: ["depth.min", "depth.max", "depth.anchoring_min", "depth.anchoring_max"],
+      seabed: ["seabed"],
+      exclude: ["prohibitions"],
+    });
+    // Ruling M5-P3: identity keys of the list attributes merged by `union`; [] = the element itself.
+    expect(c.rules.union.keys).toEqual({
+      hazards: ["kind", "name"],
+      restricted_zones: ["kind", "name"],
+      wind_systems: ["name"],
+      season_notes: ["kind"],
+      "mooring.types": [],
+      charter_bases: [],
+      supply_ports: [],
+    });
+    expect(c.followup).toEqual({ minDocuments: 2, cooldownDays: 90, maxPlacesPerRun: 30 });
+    expect(c.summary).toEqual({
+      levels: ["place", "poi"],
+      sentences: { place: [2, 4], poi: [1, 2] },
+      maxAttempts: 3,
+      lowConfidence: 0.3,
+    });
+  });
+
+  it("getConsolidationConfig reads the active version by default and a named one on demand", () => {
+    expect(getConsolidationConfig()).toEqual(getConfig().consolidation);
+    const v2 = { ...rulesFile(), conflict: { minRatio: 2 } };
+    const dir = fixtureDir({ consolidation: { v1: rulesFile(), v2 } });
+    expect(loadConfig(dir).consolidation.version).toBe("v1");
+    expect(getConsolidationConfig("v2", dir)).toMatchObject({ version: "v2", conflict: { minRatio: 2 } });
+  });
+
+  it("quietness weights must be positive and importance thresholds ascending", () => {
+    const withRules = (patch: (c: ReturnType<typeof rulesFile>) => void) => {
+      const c = rulesFile();
+      patch(c);
+      return () => loadConfig(fixtureDir({ consolidation: { v1: c } }));
+    };
+    expect(withRules((c) => (c.quietness.weights.ferry = 0))).toThrow(/consolidation\/v1\.json.*quietness\.weights/);
+    expect(withRules((c) => (c.quietness.weights.ferry = 0.2))).toThrow(/quietness\.weights.*sum to 1/);
+    expect(withRules((c) => delete (c.quietness.weights as Partial<typeof c.quietness.weights>).ferry)).toThrow(
+      /quietness\.weights/,
+    );
+    expect(withRules((c) => Object.assign(c.profileConfidence, { bogus: 0 }))).toThrow(/profileConfidence/);
+    expect(withRules((c) => (c.importance.thresholds = [2, 1, 3.5, 5]))).toThrow(
+      /consolidation\/v1\.json.*importance/,
+    );
+    // One radius per importance level: four thresholds separate five levels.
+    expect(withRules((c) => (c.importance.radiusNm = [5, 10, 20, 35]))).toThrow(/consolidation\/v1\.json.*importance/);
+    expect(withRules((c) => ((c.confidence.classes[2] as { min: number }).min = 0.1))).toThrow(/consolidation\/v1\.json.*confidence/);
+    expect(withRules((c) => (c.summary.sentences.place = [4, 2]))).toThrow(/consolidation\/v1\.json.*summary/);
+    expect(withRules((c) => Object.assign(c, { bogus: 1 }))).toThrow(/consolidation\/v1\.json/);
+    expect(withRules(() => {})).not.toThrow();
+  });
+
+  it("union keys must be fields of the list entries in the fact schema", () => {
+    const withKeys = (keys: Record<string, string[]>) => () => {
+      const c = rulesFile();
+      c.rules.union.keys = keys;
+      return loadConfig(fixtureDir({ consolidation: { v1: c } }));
+    };
+    expect(withKeys({ hazards: ["kind", "nmae"] })).toThrow(/consolidation\/v1\.json.*"hazards".*"nmae"/);
+    // A key on an entry that is no object (a list of enum values) cannot identify anything.
+    expect(withKeys({ "mooring.types": ["kind"] })).toThrow(/"mooring\.types".*"kind"/);
+    expect(withKeys({ no_such_attribute: [] })).toThrow(/no_such_attribute.*fact schema v2/);
+    expect(withKeys({ hazards: ["kind", "name"] })).not.toThrow();
+  });
+
+  it("getConsolidationConfig caches per (version, dir)", () => {
+    const dir = fixtureDir({ consolidation: { v1: rulesFile(), v2: { ...rulesFile(), conflict: { minRatio: 2 } } } });
+    const other = fixtureDir({ consolidation: { v1: rulesFile(), v2: { ...rulesFile(), conflict: { minRatio: 3 } } } });
+    const first = getConsolidationConfig("v2", dir);
+    expect(getConsolidationConfig("v2", dir)).toBe(first);
+    expect(getConsolidationConfig("v2", other)).not.toBe(first);
+    expect(getConsolidationConfig("v2", other).conflict.minRatio).toBe(3);
+    expect(first.conflict.minRatio).toBe(2);
+  });
+
+  it("an unknown rules version throws", () => {
+    expect(() => getConsolidationConfig("v99")).toThrow(/v99/);
+    expect(() => getConsolidationConfig("../models")).toThrow(/rules version/);
+    expect(() => loadConfig(fixtureDir({ consolidationActive: { version: "v7" } }))).toThrow(/consolidation\/v7\.json/);
+    expect(() => loadConfig(fixtureDir({ consolidationActive: { version: "1" } }))).toThrow(
+      /consolidation\/active\.json/,
+    );
   });
 });
 

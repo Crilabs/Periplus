@@ -1,9 +1,12 @@
-import { and, eq, sql } from "drizzle-orm";
-import { describe, expect, it, vi } from "vitest";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import {
+  changeEvents,
   documentVersions,
+  facts,
+  profiles,
   geoNames,
   geoObjects,
   nameCandidates,
@@ -20,6 +23,7 @@ import {
   type PlaceStatus,
   type SourceStatus,
 } from "@/lib/db/schema";
+import { consolidateGeo } from "@/lib/domain/consolidation/store";
 import { domainCandidates } from "@/lib/domain/discovery/proposals";
 import { isPublicId, newId } from "@/lib/domain/ids";
 import { createReviewTask } from "@/lib/domain/review";
@@ -28,6 +32,8 @@ import {
   decideReviewTask,
   nextOpenTask,
   reviewDecisionSchema,
+  TaskContextChanged,
+  valueFingerprint,
   TaskNotOpen,
   type ReviewDecision,
 } from "@/lib/domain/review-decisions";
@@ -35,7 +41,8 @@ import { DEFAULT_CRAWL_RULES } from "@/lib/domain/sources/crawl-rules";
 import { getSource } from "@/lib/domain/sources/store";
 import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
 import { getConfig } from "@/lib/config";
-import { testDb, withRollback } from "@/test/db";
+import { insertComputation, insertPlace as insertProfilePlace, insertSource as insertProfileSource, insertTextFact } from "@/test/consolidation";
+import { startWhileLocked, testDb, withRollback } from "@/test/db";
 import { insertNamedObject, insertTestSource, insertTestVersion } from "@/test/text";
 
 // `config/mentions.json` neighbourRing as the test switch sets it (undefined: as configured).
@@ -257,6 +264,39 @@ describe("place decisions", () => {
       const taskId = await placeTask(tx, place.id);
       await decide(tx, taskId, { action: "no_anchoring" });
       expect(await placeOf(tx, place.id)).toMatchObject({ status: "no_anchoring", statusReason: "review" });
+    }));
+
+  it("confirm, merge, reject and no_anchoring return the place's object to consolidate after the commit (final review I-2)", () =>
+    withRollback(async (tx) => {
+      const target = await insertPlace(tx, { lon: 28.13 });
+      const cases: ReviewDecision[] = [
+        { action: "confirm", kind: "anchorage" },
+        { action: "merge", intoPlaceId: target.id },
+        { action: "reject" },
+        { action: "no_anchoring" },
+      ];
+      for (const decision of cases) {
+        const place = await insertPlace(tx);
+        const result = await decide(tx, await placeTask(tx, place.id), decision);
+        expect(result, decision.action).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: place.geoObjectId } });
+        // the decision itself never consolidates (ruling M5-F-R4)
+        expect(await tx.select().from(profiles).where(eq(profiles.geoObjectId, place.geoObjectId))).toEqual([]);
+      }
+    }));
+
+  it("the consolidation after no_anchoring carries the exclusion into the profile as a safety change (final review I-2)", () =>
+    withRollback(async (tx) => {
+      const { rows } = await tx.execute<{ today: string }>(sql`select current_date::text as today`);
+      const today = rows[0]!.today;
+      const place = await insertPlace(tx, { status: "confirmed" });
+      await consolidateGeo(tx, place.geoObjectId, { today });
+      const { consolidate } = await decide(tx, await placeTask(tx, place.id), { action: "no_anchoring" });
+      expect(await consolidateGeo(tx, consolidate!.geoObjectId, { today })).toMatchObject({ status: "created", version: 2 });
+      const events = await tx
+        .select({ newValue: changeEvents.newValue, severity: changeEvents.severity })
+        .from(changeEvents)
+        .where(and(eq(changeEvents.geoObjectId, place.geoObjectId), eq(changeEvents.attribute, "exclude")));
+      expect(events).toEqual([{ newValue: { excluded: true, reason: "anchoringProhibited", detail: null }, severity: "safety" }]);
     }));
 
   it("an action of another kind is DecisionNotAllowed", () =>
@@ -738,7 +778,7 @@ describe("name candidate decisions", () => {
       const t = await nameTask(tx);
       const result = await decide(tx, t.taskId, createPlace(t.name));
 
-      expect(result).toEqual({ documentVersionIds: t.versionIds });
+      expect(result).toEqual({ documentVersionIds: t.versionIds, consolidate: null });
       const object = await createdObject(tx, t.name);
       expect(object).toMatchObject({ type: "bay", origin: "text", category: null, parentId: islandId });
       const names = await tx
@@ -819,7 +859,7 @@ describe("name candidate decisions", () => {
       const objectId = await insertNamedObject(tx, { type: "bay", names: [{ name: "Other Bay" }], lon: LON + 0.26, lat: LAT, tiles: [neighbour] });
       const result = await decide(tx, t.taskId, { action: "assign_name", geoObjectId: objectId });
 
-      expect(result).toEqual({ documentVersionIds: t.versionIds });
+      expect(result).toEqual({ documentVersionIds: t.versionIds, consolidate: null });
       const names = await tx
         .select({ name: geoNames.name, language: geoNames.language, origin: geoNames.origin })
         .from(geoNames)
@@ -847,7 +887,7 @@ describe("name candidate decisions", () => {
   it("reject only decides the candidate", () =>
     withRollback(async (tx) => {
       const t = await nameTask(tx);
-      expect(await decide(tx, t.taskId, { action: "reject" })).toEqual({ documentVersionIds: [] });
+      expect(await decide(tx, t.taskId, { action: "reject" })).toEqual({ documentVersionIds: [], consolidate: null });
       expect(await candidateStatus(tx, t.candidateId)).toBe("decided");
       expect(await createdObject(tx, t.name)).toBeUndefined();
     }));
@@ -861,7 +901,7 @@ describe("name candidate decisions", () => {
       const objectId = await insertNamedObject(tx, { type: "bay", names: [{ name: "Own Bay" }], lon: LON + 0.01, lat: LAT, tiles: [t.tileId] });
       const result = await decide(tx, t.taskId, { action: "assign_name", geoObjectId: objectId });
 
-      expect(result).toEqual({ documentVersionIds: [newer.versionId, t.versionIds[1]!].sort() });
+      expect(result).toEqual({ documentVersionIds: [newer.versionId, t.versionIds[1]!].sort(), consolidate: null });
     }));
 
   it("assign_name offers the candidate space of the configured neighbourRing", () =>
@@ -900,7 +940,7 @@ describe("name candidate decisions", () => {
   it("other decisions return no document versions", () =>
     withRollback(async (tx) => {
       const place = await insertPlace(tx);
-      expect(await decide(tx, await placeTask(tx, place.id), { action: "reject" })).toEqual({ documentVersionIds: [] });
+      expect(await decide(tx, await placeTask(tx, place.id), { action: "reject" })).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: place.geoObjectId } });
     }));
 
   it("the schema bounds name, language and position", () => {
@@ -934,5 +974,243 @@ describe("nextOpenTask", () => {
       expect(await nextOpenTask(tx, "failed_job", highNew)).toEqual({ id: low });
       expect(await nextOpenTask(tx, "failed_job", low)).toBeNull();
       expect(await nextOpenTask(tx, "failed_job", decided)).toEqual({ id: highOld });
+    }));
+});
+
+describe("profile attribute decisions (conflict, uncertain_change)", () => {
+  /** The database's date: the run date of the consolidations and the decision date. */
+  let today = "";
+  beforeAll(async () => {
+    const { rows } = await db.execute<{ today: string }>(sql`select current_date::text as today`);
+    today = rows[0]!.today;
+  });
+  const noon = () => new Date(`${today}T12:00:00Z`);
+
+  /** A confirmed anchorage (computed shelter and depth) whose holding conflicts: good (0.6) against poor (0.5). */
+  async function holdingConflict(tx: Db): Promise<{ objectId: string; taskId: string; key: string }> {
+    const { objectId } = await insertProfilePlace(tx);
+    await insertComputation(tx, objectId, "shelter", { "shelter.N": 0.6 });
+    await insertComputation(tx, objectId, "depth", { "depth.min": 4 }, { confidence: 0.85 });
+    await insertTextFact(tx, objectId, await insertProfileSource(tx, "trip_report", 0.6), { attribute: "holding", value: "good", observedAt: "2026-07-01" });
+    await insertTextFact(tx, objectId, await insertProfileSource(tx, "trip_report", 0.5), { attribute: "holding", value: "poor", observedAt: "2026-07-02" });
+    expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "created", tasks: 1 });
+    const [task] = await profileTasks(tx, objectId, "holding");
+    return { objectId, taskId: task!.id, key: (task!.context as { key: string }).key };
+  }
+
+  /** A pilot guide says there is water, a newer single forum says there is none: one open uncertain_change task. */
+  async function uncertainWater(tx: Db): Promise<{ objectId: string; taskId: string; key: string; forum: string }> {
+    const { objectId } = await insertProfilePlace(tx);
+    await insertComputation(tx, objectId, "shelter", { "shelter.N": 0.6 });
+    await insertTextFact(tx, objectId, await insertProfileSource(tx, "pilot_guide", 0.9), { attribute: "services.water", value: true, observedAt: "2026-06-01", confidence: 0.9 });
+    await consolidateGeo(tx, objectId, { today });
+    const forum = await insertProfileSource(tx, "forum", 0.4);
+    await insertTextFact(tx, objectId, forum, { attribute: "services.water", value: false, observedAt: "2026-07-01" });
+    expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "unchanged", tasks: 1 });
+    const [task] = await profileTasks(tx, objectId, "services.water");
+    return { objectId, taskId: task!.id, key: (task!.context as { key: string }).key, forum };
+  }
+
+  const profileTasks = (tx: Db, objectId: string, attribute: string) =>
+    tx
+      .select({ id: reviewTasks.id, kind: reviewTasks.kind, status: reviewTasks.status, context: reviewTasks.context })
+      .from(reviewTasks)
+      .where(and(eq(reviewTasks.subjectType, "profile_attribute"), eq(reviewTasks.subjectId, `${objectId}:${attribute}`)));
+
+  const latest = async (tx: Db, objectId: string) => {
+    const rows = await tx.select().from(profiles).where(eq(profiles.geoObjectId, objectId)).orderBy(sql`${profiles.version} desc`).limit(1);
+    return rows[0]!;
+  };
+
+  const decideProfile = (tx: Db, taskId: string, key: string, action: ReviewDecision, valueKey?: string) =>
+    decideReviewTask(tx, { taskId, decision: action, decidedBy: ADMIN, now: noon(), taskKey: key, valueKey });
+
+  it("value_b writes one review fact with confidence 0.95 and the next consolidation shows it without conflict", () =>
+    withRollback(async (tx) => {
+      const { objectId, taskId, key } = await holdingConflict(tx);
+      expect((await latest(tx, objectId)).attributes["holding"]).toBe("good");
+
+      expect(await decideProfile(tx, taskId, key, { action: "value_b" }, valueFingerprint("poor"))).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: objectId } });
+      const [decision] = await tx.select({ id: reviewDecisions.id }).from(reviewDecisions).where(eq(reviewDecisions.taskId, taskId));
+      const reviewFacts = await tx.select().from(facts).where(eq(facts.reviewDecisionId, decision!.id));
+      expect(reviewFacts).toHaveLength(1);
+      expect(reviewFacts[0]).toMatchObject({ geoObjectId: objectId, attribute: "holding", value: "poor", confidence: 0.95, observedAt: today, factSchemaVersion: "v2" });
+
+      expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "created", tasks: 0 });
+      const profile = await latest(tx, objectId);
+      expect(profile.attributes["holding"]).toBe("poor");
+      expect(profile.conflicts.filter((c) => c.attribute === "holding")).toEqual([]);
+      expect(profile.provenance["holding"]).toMatchObject({ origin: "review", factIds: [reviewFacts[0]!.id] });
+      expect(await profileTasks(tx, objectId, "holding")).toEqual([expect.objectContaining({ id: taskId, status: "decided" })]);
+    }));
+
+  it("value_a / value_b name the value shown: sides swapped by a run under the same key are refused (ruling M5-G-R2)", () =>
+    withRollback(async (tx) => {
+      const { objectId, taskId, key } = await holdingConflict(tx);
+      const sides = async () => {
+        const [task] = await profileTasks(tx, objectId, "holding");
+        const c = task!.context as { key: string; a: { value: unknown }; b: { value: unknown } };
+        return { key: c.key, a: c.a.value, b: c.b.value };
+      };
+      expect(await sides()).toEqual({ key, a: "good", b: "poor" });
+      const shownA = valueFingerprint("good");
+
+      // a third source for "poor" makes it the heavier side: the run swaps a and b, the key stays
+      await insertTextFact(tx, objectId, await insertProfileSource(tx, "forum", 0.2), { attribute: "holding", value: "poor", observedAt: "2026-07-03" });
+      await consolidateGeo(tx, objectId, { today });
+      expect(await sides()).toEqual({ key, a: "poor", b: "good" });
+
+      // "Wert A" was clicked for "good"; the decision would now write "poor"
+      await expect(decideProfile(tx, taskId, key, { action: "value_a" }, shownA)).rejects.toThrow(TaskContextChanged);
+      await expect(decideProfile(tx, taskId, key, { action: "value_a" })).rejects.toThrow(TaskContextChanged);
+      expect(await tx.select().from(reviewDecisions).where(eq(reviewDecisions.taskId, taskId))).toEqual([]);
+      expect(await tx.select().from(facts).where(and(eq(facts.geoObjectId, objectId), sql`${facts.reviewDecisionId} is not null`))).toEqual([]);
+
+      // the value as shown now goes through, on either side
+      await decideProfile(tx, taskId, key, { action: "value_b" }, shownA);
+      const [fact] = await tx.select().from(facts).where(and(eq(facts.geoObjectId, objectId), sql`${facts.reviewDecisionId} is not null`));
+      expect(fact).toMatchObject({ attribute: "holding", value: "good" });
+    }));
+
+  it("seasonal resolves the conflict marker; no new conflict task for the same key", () =>
+    withRollback(async (tx) => {
+      const { objectId, taskId, key } = await holdingConflict(tx);
+      expect(await decideProfile(tx, taskId, key, { action: "seasonal" })).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: objectId } });
+      expect(await tx.select().from(facts).where(and(eq(facts.geoObjectId, objectId), sql`${facts.reviewDecisionId} is not null`))).toEqual([]);
+
+      expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "created", tasks: 0, events: 0 });
+      const profile = await latest(tx, objectId);
+      expect(profile.conflicts.map((c) => [c.attribute, c.key, c.resolution])).toEqual([["holding", key, "seasonal"]]);
+      expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "unchanged", tasks: 0 });
+      expect(await profileTasks(tx, objectId, "holding")).toHaveLength(1);
+    }));
+
+  it("leave_open keeps the marker and opens no new task", () =>
+    withRollback(async (tx) => {
+      const { objectId, taskId, key } = await holdingConflict(tx);
+      await decideProfile(tx, taskId, key, { action: "leave_open" });
+
+      expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ tasks: 0, events: 0 });
+      const profile = await latest(tx, objectId);
+      expect(profile.attributes["holding"]).toBe("good");
+      expect(profile.conflicts.map((c) => [c.key, c.resolution])).toEqual([[key, "left_open"]]);
+      expect(await profileTasks(tx, objectId, "holding")).toHaveLength(1);
+    }));
+
+  it("accept_change writes the proposed value; the next run emits changed", () =>
+    withRollback(async (tx) => {
+      const { objectId, taskId, key } = await uncertainWater(tx);
+      expect(await decideProfile(tx, taskId, key, { action: "accept_change" })).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: objectId } });
+      const [fact] = await tx.select().from(facts).where(and(eq(facts.geoObjectId, objectId), sql`${facts.reviewDecisionId} is not null`));
+      expect(fact).toMatchObject({ attribute: "services.water", value: false, confidence: 0.95, observedAt: today });
+
+      expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "created", version: 2, tasks: 0 });
+      expect((await latest(tx, objectId)).attributes["services.water"]).toBe(false);
+      const events = await tx.select().from(changeEvents).where(and(eq(changeEvents.geoObjectId, objectId), eq(changeEvents.attribute, "services.water")));
+      expect(events.map((e) => [e.type, e.oldValue, e.newValue, e.profileVersion])).toEqual([
+        ["uncertain", true, false, 1],
+        ["changed", true, false, 2],
+      ]);
+    }));
+
+  it("discard keeps the old value on the next run", () =>
+    withRollback(async (tx) => {
+      const { objectId, taskId, key } = await uncertainWater(tx);
+      await decideProfile(tx, taskId, key, { action: "discard_change" });
+      expect(await tx.select().from(facts).where(and(eq(facts.geoObjectId, objectId), sql`${facts.reviewDecisionId} is not null`))).toEqual([]);
+
+      expect(await consolidateGeo(tx, objectId, { today })).toEqual({ status: "unchanged", version: 1, events: 0, tasks: 0 });
+      expect((await latest(tx, objectId)).attributes["services.water"]).toBe(true);
+      expect(await profileTasks(tx, objectId, "services.water")).toEqual([expect.objectContaining({ id: taskId, status: "decided" })]);
+    }));
+
+  it("a conflict action on an uncertain_change task is not allowed", () =>
+    withRollback(async (tx) => {
+      const { taskId, key } = await uncertainWater(tx);
+      await expect(decideProfile(tx, taskId, key, { action: "value_a" })).rejects.toThrow(DecisionNotAllowed);
+      const holding = await holdingConflict(tx);
+      await expect(decideProfile(tx, holding.taskId, holding.key, { action: "accept_change" })).rejects.toThrow(DecisionNotAllowed);
+      await expect(decideProfile(tx, holding.taskId, holding.key, { action: "confirm", kind: "marina" })).rejects.toThrow(DecisionNotAllowed);
+      expect(await tx.select().from(reviewDecisions).where(inArray(reviewDecisions.taskId, [taskId, holding.taskId]))).toEqual([]);
+    }));
+
+  it("a decision on a task whose key changed since it was shown is refused (ruling M5-F-R2)", () =>
+    withRollback(async (tx) => {
+      const { objectId, taskId, key, forum } = await uncertainWater(tx);
+      // a newer document of the same forum: the next run replaces the open task's context with another key
+      await insertTextFact(tx, objectId, forum, { attribute: "services.water", value: false, observedAt: "2026-08-01" });
+      await consolidateGeo(tx, objectId, { today });
+      const [task] = await profileTasks(tx, objectId, "services.water");
+      const newKey = (task!.context as { key: string }).key;
+      expect(task).toMatchObject({ id: taskId, status: "open" });
+      expect(newKey).not.toBe(key);
+
+      await expect(decideProfile(tx, taskId, key, { action: "accept_change" })).rejects.toThrow(TaskContextChanged);
+      await expect(decideReviewTask(tx, { taskId, decision: { action: "accept_change" }, decidedBy: ADMIN })).rejects.toThrow(TaskContextChanged);
+      expect(await tx.select().from(reviewDecisions).where(eq(reviewDecisions.taskId, taskId))).toEqual([]);
+      expect(await decideProfile(tx, taskId, newKey, { action: "accept_change" })).toMatchObject({ consolidate: { geoObjectId: objectId } });
+    }));
+
+  it("regenerate_summary on a summary task of a missing geo object is not allowed (M5-G-M5)", () =>
+    withRollback(async (tx) => {
+      const missing = newId();
+      const [task] = await tx
+        .insert(reviewTasks)
+        .values({ kind: "failed_job", subjectType: "profile_summary", subjectId: `${missing}:1`, context: {} })
+        .returning({ id: reviewTasks.id });
+      await expect(decideReviewTask(tx, { taskId: task!.id, decision: { action: "regenerate_summary" }, decidedBy: ADMIN })).rejects.toThrow(DecisionNotAllowed);
+      expect(await tx.select().from(reviewDecisions).where(eq(reviewDecisions.taskId, task!.id))).toEqual([]);
+    }));
+
+  it("a decision never takes the profile lock (ruling M5-F-R4)", async () => {
+    // a consolidation holding `profile:<id>` does not block the decision (lock_timeout 300 ms would fail it)
+    const objectId = newId();
+    const result = await startWhileLocked(db, `profile:${objectId}`, async (tx) => {
+      const [object] = await tx.insert(geoObjects).values({ id: objectId, type: "bay", origin: "geonames", geom: sql`${geomFromGeoJson(point(LON, LAT))}` }).returning({ id: geoObjects.id });
+      const [task] = await tx
+        .insert(reviewTasks)
+        .values({ kind: "uncertain_change", subjectType: "profile_attribute", subjectId: `${object!.id}:services.water`, context: { key: "k1", attribute: "services.water", oldValue: true, newValue: false } })
+        .returning({ id: reviewTasks.id });
+      return decideReviewTask(tx, { taskId: task!.id, decision: { action: "accept_change" }, decidedBy: ADMIN, taskKey: "k1" });
+    });
+    expect(result).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: objectId } });
+  });
+
+  it("a union list with single-entry facts stores the accepted list, every entry validated", () =>
+    withRollback(async (tx) => {
+      const { objectId } = await insertProfilePlace(tx);
+      const notes = [{ kind: "crowded", months: [7, 8] }, { kind: "closed", months: [1] }];
+      const [task] = await tx
+        .insert(reviewTasks)
+        .values({ kind: "uncertain_change", subjectType: "profile_attribute", subjectId: `${objectId}:season_notes`, context: { key: "k", newValue: notes } })
+        .returning({ id: reviewTasks.id });
+      await decideProfile(tx, task!.id, "k", { action: "accept_change" });
+      const [fact] = await tx.select().from(facts).where(and(eq(facts.geoObjectId, objectId), eq(facts.attribute, "season_notes")));
+      expect(fact!.value).toEqual(notes);
+
+      const [bad] = await tx
+        .insert(reviewTasks)
+        .values({ kind: "uncertain_change", subjectType: "profile_attribute", subjectId: `${objectId}:services.fuel`, context: { key: "k", newValue: "yes" } })
+        .returning({ id: reviewTasks.id });
+      await expect(decideProfile(tx, bad!.id, "k", { action: "accept_change" })).rejects.toThrow(DecisionNotAllowed);
+    }));
+
+  it("a failed summary is ignored, or generated again by a summary-only run (ruling M5-P10)", () =>
+    withRollback(async (tx) => {
+      const { objectId } = await insertProfilePlace(tx);
+      const task = async () => {
+        const [t] = await tx
+          .insert(reviewTasks)
+          .values({ kind: "failed_job", subjectType: "profile_summary", subjectId: `${objectId}:1`, context: { geoObjectId: objectId, version: 1 } })
+          .returning({ id: reviewTasks.id });
+        return t!.id;
+      };
+      await expect(decide(tx, await task(), { action: "retry" })).rejects.toThrow(DecisionNotAllowed);
+      await tx.update(reviewTasks).set({ status: "dismissed" }).where(eq(reviewTasks.subjectId, `${objectId}:1`));
+      expect(await decide(tx, await task(), { action: "ignore" })).toEqual({ documentVersionIds: [], consolidate: null });
+      expect(await decide(tx, await task(), { action: "regenerate_summary" })).toEqual({
+        documentVersionIds: [],
+        consolidate: { geoObjectId: objectId, stagesOnly: ["consolidation.summary"] },
+      });
     }));
 });

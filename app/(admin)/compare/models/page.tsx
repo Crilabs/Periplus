@@ -16,7 +16,7 @@ import {
   RUN_STATUS_LABELS,
 } from "../../_components/labels";
 import { QuoteContext } from "../../_components/quote-context";
-import { documentHref } from "../../places/[id]/facts-tab";
+import { documentHref } from "../../_components/document-href";
 import { createComparisonAction, rateDeviationAction, startComparisonRunAction } from "./actions";
 
 const BUTTON = "rounded border border-neutral-400 px-3 py-1 hover:bg-neutral-100";

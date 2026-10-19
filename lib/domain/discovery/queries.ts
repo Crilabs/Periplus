@@ -1,19 +1,25 @@
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import { areaByKey, type AreaConfig, type DiscoveryConfig } from "@/lib/config";
+import { areaByKey, getConfig, type AreaConfig, type DiscoveryConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { facts, geoNames, geoObjects, tileGeoObjects, tiles, type SerpLevel } from "@/lib/db/schema";
 import { validAt } from "@/lib/domain/timeline";
+import { createLogger } from "@/lib/logger";
 
-/** One SERP search to make: `priority` orders tile queries (1 islands, 2 settlements, 3 bays; area queries 0). */
+/**
+ * One SERP search to make: `priority` orders tile queries (1 islands, 2 settlements, 3 bays; area queries 0; place
+ * queries 1).
+ */
 export type DiscoveryQuery = {
   keyword: string;
   languageCode: string;
   locationCode: number;
   level: SerpLevel;
-  /** Area key (`area`) or tile id (`tile`). */
+  /** Area key (`area`), tile id (`tile`) or geo object id (`place`). */
   scopeId: string;
   priority: number;
+  /** The tile a `place` query's cost is booked on (the place's tile, ruling M5-P12); unset for other levels. */
+  tileId?: string;
 };
 
 type Template = DiscoveryConfig["templates"]["area"][number];
@@ -25,7 +31,7 @@ const TILE_PRIORITY: Record<string, number> = { island: 1, islet: 1, archipelago
  * The preferred valid name per language of each object: preferred first, then real names before fallbacks
  * and transliterations, then alphabetical.
  */
-async function namesByLanguage(db: Db, objectIds: string[], languages: string[]): Promise<Map<string, Map<string, string>>> {
+export async function namesByLanguage(db: Db, objectIds: string[], languages: string[]): Promise<Map<string, Map<string, string>>> {
   const out = new Map<string, Map<string, string>>();
   if (objectIds.length === 0 || languages.length === 0) return out;
   const rows = await db
@@ -53,14 +59,15 @@ async function namesByLanguage(db: Db, objectIds: string[], languages: string[])
 }
 
 /** Templates whose language the area searches in. */
-function templatesFor(templates: Template[], sourceLanguages: string[]): Template[] {
+export function templatesFor(templates: Template[], sourceLanguages: string[]): Template[] {
   return templates.filter((t) => sourceLanguages.includes(t.lang));
 }
 
-function build(
+/** One query per template whose language has a name in `names` (`{name}` replaced); a language without a name yields none. */
+export function buildQueries(
   templates: Template[],
   names: Map<string, string> | undefined,
-  base: Pick<DiscoveryQuery, "level" | "scopeId" | "priority">,
+  base: Pick<DiscoveryQuery, "level" | "scopeId" | "priority" | "tileId">,
 ): DiscoveryQuery[] {
   const out: DiscoveryQuery[] = [];
   for (const t of templates) {
@@ -76,13 +83,61 @@ export const queryKey = (q: Pick<DiscoveryQuery, "keyword" | "languageCode" | "l
   `${q.keyword}\u0000${q.languageCode}\u0000${q.locationCode}`;
 
 /** One query per `(keyword, languageCode, locationCode)`, keeping the lowest priority. */
-function dedupe(queries: DiscoveryQuery[]): DiscoveryQuery[] {
+export function dedupeQueries(queries: DiscoveryQuery[]): DiscoveryQuery[] {
   const byKey = new Map<string, DiscoveryQuery>();
   for (const q of queries) {
     const prior = byKey.get(queryKey(q));
     if (!prior || q.priority < prior.priority) byKey.set(queryKey(q), q);
   }
   return [...byKey.values()];
+}
+
+/** Priority of a place query (as islands among the tile queries). */
+const PLACE_PRIORITY = 1;
+
+type PlaceRow = { tile_id: string | null; area_key: string | null };
+
+/**
+ * The SERP queries of a targeted discovery for the place of `geoObjectId`: per tile template the preferred valid name
+ * of the object in the template's language (no name, no query), `level "place"`, `scopeId` = the geo object id,
+ * priority 1 and `tileId` = the place's tile, so the cost is booked there. As `tileQueries`, the templates are limited
+ * to the `sourceLanguages` of the area of the place's tile (ruling M5-P12); without a valid place, a tile with a
+ * configured area there are no queries (logged). The place is valid on `opts.on` (the run date; default the database's
+ * date). Deduplicated over `(keyword, languageCode, locationCode)`.
+ */
+export async function placeQueries(
+  db: Db,
+  geoObjectId: string,
+  cfg: DiscoveryConfig,
+  opts: { areas?: AreaConfig[]; on?: string } = {},
+): Promise<DiscoveryQuery[]> {
+  const areas = opts.areas ?? getConfig().areas;
+  const on = opts.on ? sql`${opts.on}::date` : sql`current_date`;
+  const { rows } = await db.execute<PlaceRow>(sql`
+    select p.tile_id, a.config_key as area_key
+    from places p
+    left join tiles t on t.id = p.tile_id
+    left join geo_objects a on a.id = t.area_id and a.type = 'area'
+    where p.geo_object_id = ${geoObjectId} and p.merged_into_id is null
+      and p.valid_from <= ${on} and (p.valid_to is null or p.valid_to > ${on})
+    order by p.created_at, p.id
+    limit 1
+  `);
+  const place = rows[0];
+  const area = place?.area_key ? areas.find((a) => a.key === place.area_key) : undefined;
+  if (!place?.tile_id || !area) {
+    createLogger("discovery").warn(
+      { geoObjectId, tileId: place?.tile_id ?? null, areaKey: place?.area_key ?? null },
+      "no place queries: the object has no valid place in a tile of a configured area",
+    );
+    return [];
+  }
+  const templates = templatesFor(cfg.templates.tile, area.sourceLanguages);
+  if (templates.length === 0) return [];
+  const names = await namesByLanguage(db, [geoObjectId], [...new Set(templates.map((t) => t.lang))]);
+  return dedupeQueries(
+    buildQueries(templates, names.get(geoObjectId), { level: "place", scopeId: geoObjectId, priority: PLACE_PRIORITY, tileId: place.tile_id }),
+  );
 }
 
 /**
@@ -99,7 +154,7 @@ export async function areaQueries(db: Db, areaKey: string, cfg: DiscoveryConfig)
   const areaId = rows[0]?.id;
   if (!areaId) return [];
   const names = await namesByLanguage(db, [areaId], [...new Set(templates.map((t) => t.lang))]);
-  return dedupe(build(templates, names.get(areaId), { level: "area", scopeId: areaKey, priority: AREA_PRIORITY }));
+  return dedupeQueries(buildQueries(templates, names.get(areaId), { level: "area", scopeId: areaKey, priority: AREA_PRIORITY }));
 }
 
 /**
@@ -159,16 +214,16 @@ export async function tileQueries(
     objects.map((o) => o.id),
     [...new Set(templates.map((t) => t.lang))],
   );
-  return dedupe(
+  return dedupeQueries(
     objects.flatMap((o) =>
-      build(templates, names.get(o.id), { level: "tile", scopeId: tileId, priority: TILE_PRIORITY[o.type]! }),
+      buildQueries(templates, names.get(o.id), { level: "tile", scopeId: tileId, priority: TILE_PRIORITY[o.type]! }),
     ),
   );
 }
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-/** Area queries before tile queries, then by priority, keyword, language and location; keeps the first `max`. */
+/** Area queries before tile and place queries, then by priority, keyword, language and location; keeps the first `max`. */
 export function capQueries(queries: DiscoveryQuery[], max: number): { kept: DiscoveryQuery[]; dropped: number } {
   const levelRank = (q: DiscoveryQuery) => (q.level === "area" ? 0 : 1);
   const sorted = [...queries].sort(

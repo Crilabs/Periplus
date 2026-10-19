@@ -2,6 +2,7 @@ import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { facts, reviewDecisions } from "@/lib/db/schema";
+import { GEOMETRY_CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
 import { testDb, withRollback } from "@/test/db";
 import { buildBayScene } from "@/test/geometry/scene";
 import { lonLatOf } from "@/test/geometry/synthetic";
@@ -21,8 +22,10 @@ vi.mock("@/lib/db/client", async (importOriginal) => ({
 vi.mock("@/lib/jobs/boss", () => ({ getBoss: async () => ({}) }));
 vi.mock("@/lib/pipeline/runs", () => ({ startRun: (...args: unknown[]) => startRun(...args) }));
 vi.mock("next/cache", () => ({ revalidatePath: (path: string) => revalidatePath(path), refresh: vi.fn() }));
+const redirect = vi.fn();
+vi.mock("next/navigation", () => ({ redirect: (url: string) => redirect(url) }));
 
-import { setAnchorAction } from "../places/[id]/actions";
+import { recomputeGeoProfileAction, recomputePlaceProfileAction, setAnchorAction } from "../places/[id]/actions";
 
 const ADMIN = "admin@example.invalid";
 
@@ -95,7 +98,7 @@ describe("setAnchorAction", () => {
         expect.objectContaining({
           kind: "stage",
           scope: { type: "place", id: scene.placeId },
-          stages: ["geometry.place"],
+          stages: ["geometry.place", ...GEOMETRY_CONSOLIDATION_STAGES],
           params: { placeIds: [scene.placeId] },
           triggeredBy: ADMIN,
         }),
@@ -127,6 +130,45 @@ describe("setAnchorAction", () => {
       expect(result).toEqual({ ok: false, error: "Ankerposition zu weit vom Ort entfernt (max. 2 km)" });
       expect(await reviewAnchorFacts(tx, scene.geoObjectId)).toEqual([]);
       expect(await anchorOrigin(tx, scene.placeId)).not.toBe("review");
+      expect(startRun).not.toHaveBeenCalled();
+    }));
+});
+
+describe("„Profil neu berechnen“", () => {
+  it("the place action starts a place-scoped consolidation run and goes to it", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const scene = await buildBayScene(tx);
+      await recomputePlaceProfileAction(form({ placeId: scene.placeId }));
+      expect(startRun).toHaveBeenCalledTimes(1);
+      expect(startRun.mock.calls[0]![2]).toMatchObject({
+        kind: "stage",
+        scope: { type: "place", id: scene.placeId },
+        stages: ["consolidation.geo", "consolidation.summary", "consolidation.followup"],
+        params: { geoObjectIds: [scene.geoObjectId] },
+        triggeredBy: ADMIN,
+      });
+      expect(redirect).toHaveBeenCalledWith("/runs/run-1");
+    }));
+
+  it("the geo action starts a run for the object; an object without facts returns with the reason", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const scene = await buildBayScene(tx);
+      await recomputeGeoProfileAction({ geoObjectId: scene.geoObjectId });
+      expect(startRun.mock.calls[0]![2]).toMatchObject({ scope: { type: "place", id: scene.placeId }, params: { geoObjectIds: [scene.geoObjectId] } });
+      await recomputeGeoProfileAction({ geoObjectId: "01a1556d-0000-7000-8000-000000000000" });
+      expect(redirect).toHaveBeenLastCalledWith("/geo/01a1556d-0000-7000-8000-000000000000?error=geo_object_not_consolidatable");
+      expect(startRun).toHaveBeenCalledTimes(1);
+    }));
+
+  it("rejects without admin session", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const scene = await buildBayScene(tx);
+      requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
+      await expect(recomputePlaceProfileAction({ placeId: scene.placeId })).rejects.toThrow("NEXT_REDIRECT");
+      await expect(recomputeGeoProfileAction({ geoObjectId: scene.geoObjectId })).rejects.toThrow("NEXT_REDIRECT");
       expect(startRun).not.toHaveBeenCalled();
     }));
 });

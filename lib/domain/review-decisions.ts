@@ -1,11 +1,13 @@
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { z } from "zod";
-import { getConfig } from "@/lib/config";
+import { getConfig, getConsolidationConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import {
   changeRateEnum,
   DOC_TYPES,
+  facts,
   geoObjects,
   nameCandidates,
   placeKindEnum,
@@ -21,6 +23,7 @@ import {
   type ReviewKind,
   type SourceStatus,
 } from "@/lib/db/schema";
+import { attributeDef, canonicalJson, InvalidFactValue, UnknownAttribute, validateFactValue } from "@/lib/domain/facts/schema";
 import { assignParentOf } from "@/lib/domain/gazetteer/hierarchy";
 import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
 import { addNames, isGreek, transliterateElot743, type NameDraft } from "@/lib/domain/gazetteer/names";
@@ -29,6 +32,7 @@ import { newPublicId } from "@/lib/domain/ids";
 import { candidateObjects, withNeighbours } from "@/lib/domain/mentions/scope";
 import { crawlRulesSchema } from "@/lib/domain/sources/crawl-rules";
 import { QUEUES, type QueueName } from "@/lib/jobs/queues";
+import { CONSOLIDATION_SUMMARY_STAGE } from "@/lib/pipeline/consolidation/stages";
 
 const lonLatSchema = z.object({ lon: z.number().min(-180).max(180), lat: z.number().min(-90).max(90) });
 
@@ -62,6 +66,16 @@ export const reviewDecisionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("retry") }),
   z.object({ action: z.literal("ignore") }),
   z.object({ action: z.literal("pause_source") }),
+  // failed_job / profile_summary: run the summary stage again for the object
+  z.object({ action: z.literal("regenerate_summary") }),
+  // conflict / profile_attribute: one of the two values, both seasonally, or leave the conflict open
+  z.object({ action: z.literal("value_a") }),
+  z.object({ action: z.literal("value_b") }),
+  z.object({ action: z.literal("seasonal") }),
+  z.object({ action: z.literal("leave_open") }),
+  // uncertain_change / profile_attribute
+  z.object({ action: z.literal("accept_change") }),
+  z.object({ action: z.literal("discard_change") }),
   // source_approval / source
   z.object({
     action: z.literal("approve"),
@@ -90,17 +104,49 @@ export class DecisionNotAllowed extends Error {
   }
 }
 
+/**
+ * The task changed since it was shown (a later consolidation run replaced its context with another key, ruling
+ * M5-F-R2): the admin decided on a value that is no longer the one in question. Nothing is written.
+ */
+export class TaskContextChanged extends Error {
+  constructor(taskId: string) {
+    super(`review task ${taskId} changed since it was shown`);
+    this.name = "TaskContextChanged";
+  }
+}
+
+/**
+ * A stable fingerprint of a value (first 16 hex characters of the SHA-256 of its canonical JSON). The decision form of
+ * a conflict posts the fingerprint of the side the admin chose; the server compares it with the side's current value,
+ * so a run that swapped the sides under the same (swap-stable) key cannot make the decision write the other value
+ * (ruling M5-G-R2).
+ */
+export function valueFingerprint(value: unknown): string {
+  return createHash("sha256").update(canonicalJson(value === undefined ? null : value)).digest("hex").slice(0, 16);
+}
+
 /** Allowed actions per `<kind>/<subject_type>`. */
 const ALLOWED: Record<string, readonly Action[]> = {
+  "conflict/profile_attribute": ["value_a", "value_b", "seasonal", "leave_open"],
+  "uncertain_change/profile_attribute": ["accept_change", "discard_change"],
   "place_candidate/place": ["confirm", "merge", "reject", "no_anchoring"],
   "place_candidate/geo_object_pair": ["same", "distinct"],
   "place_candidate/name_candidate": ["create_place", "assign_name", "reject"],
   "coast_tile_without_area/tile": ["assign_area", "no_area"],
   "failed_job/job": ["retry", "ignore", "pause_source"],
+  "failed_job/profile_summary": ["ignore", "regenerate_summary"],
   "source_approval/source": ["approve", "reject"],
 };
 
 export type DecideDeps = { retryJob?: (queue: QueueName, jobId: string) => Promise<void> };
+
+/**
+ * What a decision asks for after its commit (ruling M5-P10): `documentVersionIds` for the rematch of a new name;
+ * `consolidate` for a consolidation run of one geo object (after a `conflict` / `uncertain_change` decision or a
+ * `place_candidate` decision on a place), never started inside the decision's transaction, which could roll back under
+ * a started run.
+ */
+export type DecideResult = { documentVersionIds: string[]; consolidate: { geoObjectId: string; stagesOnly?: string[] } | null };
 
 type Task = typeof reviewTasks.$inferSelect;
 
@@ -113,18 +159,25 @@ type Task = typeof reviewTasks.$inferSelect;
  *
  * A `create_place` or `assign_name` decision on a `name_candidate` (new name from texts) returns the current versions
  * of the documents the name was found in (`documentVersionIds`, for the rematch run of Task 17); every other decision,
- * including `reject`, returns none.
+ * including `reject`, returns none. A decision on a `profile_attribute` task (`applyProfileDecision`) and a
+ * `confirm` / `merge` / `reject` / `no_anchoring` on a place return the geo object to consolidate again (`consolidate`); `regenerate_summary` on a `failed_job` / `profile_summary` task returns
+ * it with `stagesOnly ["consolidation.summary"]`; the caller starts that run after the commit (ruling M5-P10). It needs
+ * `taskKey`, the `context.key` the admin saw: another key means a later run replaced the question
+ * (`TaskContextChanged`, ruling M5-F-R2); `value_a` / `value_b` also need `valueKey`, the `valueFingerprint` of the
+ * chosen side's value as shown (ruling M5-G-R2).
  *
  * Global lock order: the review task row first, then the subject row(s) (`lockPlace`, `lockSource`,
  * `lockNameCandidate`). Every transaction that locks both an open `place_candidate` task and its place
  * (`applyExclusion`, stage `geometry.place`) or its name candidate (`geocodeCandidate`) takes them in this order, so
- * none of them deadlocks with a decision.
+ * none of them deadlocks with a decision. Profiles (ruling M5-P9): only `consolidateGeo` takes the per-object profile
+ * lock (`pg_advisory_xact_lock(hashtext('profile:' || id))`), before any review task row; a decision on a
+ * `profile_attribute` task never takes that lock, so the two cannot wait on each other.
  */
 export async function decideReviewTask(
   db: Db,
-  input: { taskId: string; decision: ReviewDecision; decidedBy: string; openedAt?: Date; now?: Date },
+  input: { taskId: string; decision: ReviewDecision; decidedBy: string; openedAt?: Date; now?: Date; taskKey?: string; valueKey?: string },
   deps: DecideDeps = {},
-): Promise<{ documentVersionIds: string[] }> {
+): Promise<DecideResult> {
   const decision = reviewDecisionSchema.parse(input.decision);
   const now = input.now ?? new Date();
   return db.transaction(async (tx) => {
@@ -133,23 +186,49 @@ export async function decideReviewTask(
     if (!ALLOWED[`${task.kind}/${task.subjectType}`]?.includes(decision.action)) {
       throw new DecisionNotAllowed(`action ${decision.action} does not fit a ${task.kind} task on a ${task.subjectType}`);
     }
+    if (task.subjectType === PROFILE_SUBJECT && (input.taskKey === undefined || (task.context as { key?: unknown } | null)?.key !== input.taskKey)) {
+      throw new TaskContextChanged(task.id);
+    }
 
-    await tx.insert(reviewDecisions).values({
-      taskId: task.id,
-      decision,
-      decidedBy: input.decidedBy,
-      decidedAt: now,
-      durationMs: input.openedAt ? now.getTime() - input.openedAt.getTime() : null,
-    });
+    const [decisionRow] = await tx
+      .insert(reviewDecisions)
+      .values({
+        taskId: task.id,
+        decision,
+        decidedBy: input.decidedBy,
+        decidedAt: now,
+        durationMs: input.openedAt ? now.getTime() - input.openedAt.getTime() : null,
+      })
+      .returning({ id: reviewDecisions.id });
     await tx.update(reviewTasks).set({ status: "decided" }).where(eq(reviewTasks.id, task.id));
     // Dispatch by `<kind>/<subject_type>` (ruling M4-P13): a name candidate's reject never touches a place.
-    if (task.subjectType === "name_candidate") return { documentVersionIds: await applyNameDecision(tx, task, decision) };
-    await apply(tx, task, decision, deps);
-    return { documentVersionIds: [] };
+    if (task.subjectType === "name_candidate") {
+      return { documentVersionIds: await applyNameDecision(tx, task, decision), consolidate: null };
+    }
+    if (task.subjectType === PROFILE_SUBJECT) {
+      const geoObjectId = await applyProfileDecision(tx, task, decision, decisionRow!.id, now, input.valueKey);
+      return { documentVersionIds: [], consolidate: { geoObjectId } };
+    }
+    if (decision.action === "regenerate_summary") {
+      // `<geoObjectId>:<version>` of a summary that stayed empty: the summary stage runs again after the commit
+      const geoObjectId = task.subjectId.slice(0, 36);
+      if (!z.uuid().safeParse(geoObjectId).success) throw new DecisionNotAllowed(`subject ${task.subjectId} is no profile summary`);
+      const [object] = await tx.select({ id: geoObjects.id }).from(geoObjects).where(eq(geoObjects.id, geoObjectId));
+      if (!object) throw new DecisionNotAllowed(`geo object ${geoObjectId} does not exist`);
+      return { documentVersionIds: [], consolidate: { geoObjectId, stagesOnly: [CONSOLIDATION_SUMMARY_STAGE] } };
+    }
+    const placeObject = await apply(tx, task, decision, deps);
+    return { documentVersionIds: [], consolidate: placeObject ? { geoObjectId: placeObject } : null };
   });
 }
 
-async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideDeps): Promise<void> {
+/**
+ * Applies a decision that is no name or profile decision. Returns the geo object of the place a `place_candidate`
+ * decision changed (`confirm`, `merge`, `reject`, `no_anchoring`): its status, exclusion and `place_new` /
+ * `place_abandoned` reach the profile only through a consolidation, which the caller starts after the commit (final
+ * review I-2, ruling M5-FIN-R1); null otherwise.
+ */
+async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideDeps): Promise<string | null> {
   switch (decision.action) {
     case "confirm": {
       const place = await lockPlace(tx, task.subjectId);
@@ -165,7 +244,7 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
             : {}),
         })
         .where(eq(places.id, place.id));
-      return;
+      return place.geoObjectId;
     }
     case "merge": {
       const place = await lockPlace(tx, task.subjectId);
@@ -189,7 +268,7 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
         .update(places)
         .set({ status: "rejected", statusReason: "merged", mergedIntoId: target.id })
         .where(eq(places.id, place.id));
-      return;
+      return place.geoObjectId;
     }
     case "approve": {
       await lockSource(tx, task.subjectId, ["proposed"]);
@@ -204,7 +283,7 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
           statusReason: null,
         })
         .where(eq(sources.id, task.subjectId));
-      return;
+      return null;
     }
     case "reject":
       if (task.kind === "source_approval") {
@@ -213,7 +292,7 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
           .update(sources)
           .set({ status: "rejected", statusReason: "review" })
           .where(eq(sources.id, task.subjectId));
-        return;
+        return null;
       }
       return applyPlaceStatus(tx, task, "rejected");
     case "no_anchoring":
@@ -227,7 +306,7 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
         .update(sources)
         .set({ status: "paused", statusReason: `Job fehlgeschlagen: ${text(context.queue)}/${text(context.key)}` })
         .where(eq(sources.id, sourceId.data));
-      return;
+      return null;
     }
     case "same": {
       const ids = task.subjectId.split(":");
@@ -243,7 +322,7 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
       const [older, newer] = objects as [(typeof objects)[0], (typeof objects)[0]];
       const [keep, drop] = newer.osmId !== null && older.osmId === null ? [newer, older] : [older, newer];
       await mergeGeoObjects(tx, keep.id, drop.id);
-      return;
+      return null;
     }
     case "assign_area": {
       const [area] = await tx
@@ -264,23 +343,122 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
         .where(and(eq(tiles.id, task.subjectId), isNull(tiles.validTo)))
         .returning({ id: tiles.id });
       if (updated.length === 0) throw new DecisionNotAllowed(`tile ${task.subjectId} is not valid`);
-      return;
+      return null;
     }
     case "retry": {
       if (!deps.retryJob) throw new Error("retry decision needs deps.retryJob");
       const queue = z.enum(QUEUES).safeParse((task.context as { queue?: unknown }).queue);
       if (!queue.success) throw new DecisionNotAllowed(`failed_job task ${task.id} has no retryable queue`);
       await deps.retryJob(queue.data, task.subjectId);
-      return;
+      return null;
     }
     case "distinct":
     case "no_area":
     case "ignore":
-      return;
+      return null;
     case "create_place":
     case "assign_name":
       throw new DecisionNotAllowed(`action ${decision.action} needs a name candidate`);
+    case "value_a":
+    case "value_b":
+    case "seasonal":
+    case "leave_open":
+    case "accept_change":
+    case "discard_change":
+      throw new DecisionNotAllowed(`action ${decision.action} needs a profile attribute`);
+    case "regenerate_summary":
+      throw new DecisionNotAllowed(`action ${decision.action} needs a profile summary`);
   }
+}
+
+const PROFILE_SUBJECT = "profile_attribute";
+
+/** `<geoObjectId>:<attribute>` of a profile task; `DecisionNotAllowed` for another shape. */
+function profileSubject(subjectId: string): { geoObjectId: string; attribute: string } {
+  const geoObjectId = subjectId.slice(0, 36);
+  const attribute = subjectId.slice(37);
+  if (!z.uuid().safeParse(geoObjectId).success || subjectId[36] !== ":" || attribute === "") {
+    throw new DecisionNotAllowed(`subject ${subjectId} is no profile attribute`);
+  }
+  return { geoObjectId, attribute };
+}
+
+/**
+ * The value a review fact on `attribute` stores, validated against the fact schema `version`. A list-valued profile
+ * attribute whose single fact is one entry (`season_notes`, rule `union`) stores the list, every entry validated: the
+ * union rule reads a list or a single entry alike. `DecisionNotAllowed` for an unknown attribute or an invalid value.
+ */
+function reviewFactValue(attribute: string, value: unknown, version: string): unknown {
+  try {
+    const def = attributeDef(attribute, version);
+    if (Array.isArray(value) && def.rule === "union" && !def.value.safeParse(value).success && value.length > 0) {
+      return value.map((entry) => validateFactValue(attribute, entry, version));
+    }
+    return validateFactValue(attribute, value, version);
+  } catch (e) {
+    if (e instanceof UnknownAttribute || e instanceof InvalidFactValue) throw new DecisionNotAllowed(e.message);
+    throw e;
+  }
+}
+
+/**
+ * Applies a decision on a profile attribute (spec 07; ruling M5-P10). `value_a` / `value_b` / `accept_change` write
+ * one review fact on the decision row (`review_decision_id`): the attribute and the value of the task's context (side
+ * `a` / `b` of the conflict, the proposed `newValue`), validated against the active fact schema, confidence
+ * `confidence.review`, observed on the decision date, the active fact schema version. `seasonal`, `leave_open` and
+ * `discard_change` are the decision row only: consolidation reads them from the decided task (`loadContext`) — a
+ * resolution `seasonal` / `left_open` for the conflict key, a decided uncertain key that keeps the old value. Never
+ * consolidates and never takes the profile lock (ruling M5-F-R4): the caller starts the follow-up run after the commit.
+ * Returns the geo object.
+ */
+async function applyProfileDecision(
+  tx: Db,
+  task: Task,
+  decision: ReviewDecision,
+  decisionId: string,
+  now: Date,
+  valueKey: string | undefined,
+): Promise<string> {
+  const { geoObjectId, attribute } = profileSubject(task.subjectId);
+  const [object] = await tx.select({ id: geoObjects.id }).from(geoObjects).where(eq(geoObjects.id, geoObjectId));
+  if (!object) throw new DecisionNotAllowed(`geo object ${geoObjectId} does not exist`);
+  const context = (task.context ?? {}) as Record<string, unknown>;
+  const sideValue = (side: unknown): unknown => {
+    if (side === null || typeof side !== "object" || !("value" in side)) {
+      throw new DecisionNotAllowed(`conflict task ${task.id} has no such side`);
+    }
+    return (side as { value: unknown }).value;
+  };
+  let value: unknown;
+  switch (decision.action) {
+    case "value_a":
+    case "value_b":
+      // the chosen side must still hold the value the admin saw: sides can swap under one key (ruling M5-G-R2)
+      value = sideValue(decision.action === "value_a" ? context.a : context.b);
+      if (valueKey === undefined || valueKey !== valueFingerprint(value)) throw new TaskContextChanged(task.id);
+      break;
+    case "accept_change":
+      value = context.newValue;
+      break;
+    case "seasonal":
+    case "leave_open":
+    case "discard_change":
+      return geoObjectId;
+    default:
+      throw new DecisionNotAllowed(`action ${decision.action} does not fit a profile attribute`);
+  }
+  if (value === null || value === undefined) throw new DecisionNotAllowed(`task ${task.id} proposes no value for ${attribute}`);
+  const factSchemaVersion = getConfig().factSchema.version;
+  await tx.insert(facts).values({
+    geoObjectId,
+    attribute,
+    value: reviewFactValue(attribute, value, factSchemaVersion),
+    reviewDecisionId: decisionId,
+    observedAt: now.toISOString().slice(0, 10),
+    confidence: getConsolidationConfig().confidence.review,
+    factSchemaVersion,
+  });
+  return geoObjectId;
 }
 
 /**
@@ -398,9 +576,11 @@ async function lockNameCandidate(tx: Db, candidateId: string) {
 
 const text = (v: unknown): string => (typeof v === "string" ? v : "?");
 
-async function applyPlaceStatus(tx: Db, task: Task, status: "rejected" | "no_anchoring"): Promise<void> {
+/** Sets the status of the task's place; returns its geo object. */
+async function applyPlaceStatus(tx: Db, task: Task, status: "rejected" | "no_anchoring"): Promise<string> {
   const place = await lockPlace(tx, task.subjectId);
   await tx.update(places).set({ status, statusReason: "review" }).where(eq(places.id, place.id));
+  return place.geoObjectId;
 }
 
 /**

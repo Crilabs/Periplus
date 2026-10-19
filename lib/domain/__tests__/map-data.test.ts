@@ -144,7 +144,17 @@ describe("mapLayer", () => {
       expect(fc.features.find((f) => f.properties!.id === candidate)).toEqual({
         type: "Feature",
         geometry: point(LON, LAT),
-        properties: { id: candidate, kind: "anchorage", status: "candidate", name: "Candidate Cove", publicId: null },
+        properties: {
+          id: candidate,
+          kind: "anchorage",
+          status: "candidate",
+          name: "Candidate Cove",
+          publicId: null,
+          // without a profile (profile-view.test.ts covers places with one)
+          hasProfile: false,
+          profileConfidence: null,
+          profileClass: null,
+        },
       });
       expect(fc.features.find((f) => f.properties!.id === rejected)!.properties!.status).toBe("rejected");
     }));

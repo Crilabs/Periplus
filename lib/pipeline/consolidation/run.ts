@@ -1,0 +1,210 @@
+import { and, eq, sql } from "drizzle-orm";
+import type { PgBoss } from "pg-boss";
+import { getConfig, getConsolidationConfig, type AppConfig } from "@/lib/config";
+import type { Db } from "@/lib/db/client";
+import { runStages, runs } from "@/lib/db/schema";
+import { clearConsolidationCatchUp, consolidationSkipOf, recordConsolidationCatchUp } from "@/lib/domain/consolidation/skipped";
+import { consolidationBlocked, consolidationTargets, type ConsolidationParams } from "@/lib/domain/consolidation/targets";
+import { levelFor } from "@/lib/domain/facts/levels";
+import { createRun, failRun, type RunScope } from "@/lib/domain/runs";
+import { createLogger } from "@/lib/logger";
+import { enqueueStage, startRun } from "@/lib/pipeline/runs";
+import { areaGeoObjectId, RunScopeNotReady } from "@/lib/pipeline/tile-scope";
+import { CONSOLIDATION_GEO_STAGE, CONSOLIDATION_STAGES } from "./stages";
+
+/*
+ * Starter of consolidation runs (ruling M5-P16: only the starter lives here; no stage or handler imports this module).
+ */
+
+/** Scope id of a consolidation run over given objects or a comparison set (scope type `system`). */
+export const CONSOLIDATION_RUN_SCOPE = "consolidation";
+
+export type ConsolidationScope = { tileId: string } | { areaKey: string } | { geoObjectIds: string[] } | { comparisonSetArea: string };
+
+export type StartConsolidationInput = {
+  scope: ConsolidationScope;
+  triggeredBy: string;
+  evaluation?: true;
+  rulesVersion?: string;
+  stagesOnly?: string[];
+};
+
+/**
+ * Valid on the run date: the UTC date of the transaction, as `runDate` reads the run's `created_at` (final review M-7;
+ * `current_date` would follow the session time zone).
+ */
+const validToday = (alias: string) =>
+  sql.raw(
+    `${alias}.valid_from <= (now() at time zone 'UTC')::date and (${alias}.valid_to is null or ${alias}.valid_to > (now() at time zone 'UTC')::date)`,
+  );
+
+/**
+ * Checks the scope before the run exists (`RunScopeNotReady`) and returns the run's scope: a valid tile; a configured
+ * area with valid tiles; geo objects that are valid, unmerged and have a fact level (scope `place` with the place id for
+ * exactly one object with a valid place, else `system`); an area whose comparison set is not empty (`system`).
+ */
+async function checkedScope(db: Db, scope: ConsolidationScope, config: AppConfig): Promise<RunScope> {
+  if ("tileId" in scope) {
+    const { rows } = await db.execute(sql`select 1 from tiles t where t.id = ${scope.tileId} and ${validToday("t")}`);
+    if (rows.length === 0) throw new RunScopeNotReady("unknown_tile", `tile ${scope.tileId} is not a valid tile`);
+    return { type: "tile", id: scope.tileId };
+  }
+  if ("areaKey" in scope) {
+    if (!config.areas.some((a) => a.key === scope.areaKey)) throw new RunScopeNotReady("unknown_area", `area ${scope.areaKey} is not configured`);
+    const { rows } = await db.execute(sql`
+      select 1 from tiles t join geo_objects a on a.id = t.area_id and a.type = 'area'
+      where a.config_key = ${scope.areaKey} and ${validToday("t")} limit 1
+    `);
+    if (rows.length === 0) throw new RunScopeNotReady("area_without_tiles", `area ${scope.areaKey} has no tiles yet`);
+    return { type: "area", id: scope.areaKey };
+  }
+  if ("geoObjectIds" in scope) {
+    const ids = [...new Set(scope.geoObjectIds)].sort();
+    if (ids.length === 0) throw new RunScopeNotReady("geo_object_not_consolidatable", "no geo object given");
+    const { rows } = await db.execute<{ id: string; place_id: string | null }>(sql`
+      select o.id, (
+        select p.id from places p
+        where p.geo_object_id = o.id and p.merged_into_id is null and ${validToday("p")}
+        order by p.created_at, p.id limit 1
+      ) as place_id
+      from geo_objects o
+      where o.id in (select value::uuid from jsonb_array_elements_text(${JSON.stringify(ids)}::jsonb))
+        and o.merged_into_id is null and ${validToday("o")}
+    `);
+    const valid = new Map(rows.map((r) => [r.id, r.place_id]));
+    for (const id of ids) {
+      if (!valid.has(id) || (await levelFor(db, id)) === null) {
+        throw new RunScopeNotReady("geo_object_not_consolidatable", `geo object ${id} is unknown, ended, merged or takes no facts`);
+      }
+    }
+    const placeId = ids.length === 1 ? valid.get(ids[0]!) : null;
+    return placeId ? { type: "place", id: placeId } : { type: "system", id: CONSOLIDATION_RUN_SCOPE };
+  }
+  if (!config.areas.some((a) => a.key === scope.comparisonSetArea)) {
+    throw new RunScopeNotReady("unknown_area", `area ${scope.comparisonSetArea} is not configured`);
+  }
+  const areaId = await areaGeoObjectId(db, scope.comparisonSetArea);
+  const { rows } = areaId
+    ? await db.execute(sql`select 1 from comparison_set where area_id = ${areaId}::uuid limit 1`)
+    : { rows: [] };
+  if (rows.length === 0) throw new RunScopeNotReady("comparison_set_empty", `the comparison set of area ${scope.comparisonSetArea} is empty`);
+  return { type: "system", id: CONSOLIDATION_RUN_SCOPE };
+}
+
+/** The run `startConsolidationRun` creates, checked (scope, stages, rules version) before anything is written. */
+async function consolidationRunInput(
+  db: Db,
+  input: StartConsolidationInput,
+  config: AppConfig,
+): Promise<Parameters<typeof createRun>[1]> {
+  if (input.evaluation && input.stagesOnly) {
+    // An evaluation run only ever has `consolidation.geo` (ruling M5-H-R2 M-5): refused, not silently dropped.
+    throw new Error("an evaluation run takes no stagesOnly");
+  }
+  if (input.stagesOnly) {
+    for (const stage of input.stagesOnly) {
+      if (!(CONSOLIDATION_STAGES as readonly string[]).includes(stage)) throw new Error(`${stage} is no consolidation stage`);
+    }
+  }
+  const rulesVersion = input.rulesVersion ?? (input.evaluation ? getConsolidationConfig().version : undefined);
+  if (rulesVersion !== undefined) getConsolidationConfig(rulesVersion);
+  const scope = await checkedScope(db, input.scope, config);
+  const stages = input.evaluation
+    ? [CONSOLIDATION_GEO_STAGE]
+    : input.stagesOnly
+      ? CONSOLIDATION_STAGES.filter((s) => input.stagesOnly!.includes(s))
+      : [...CONSOLIDATION_STAGES];
+  const params: ConsolidationParams = {
+    ...("geoObjectIds" in input.scope ? { geoObjectIds: [...new Set(input.scope.geoObjectIds)].sort() } : input.scope),
+    ...(input.evaluation ? { evaluation: true as const } : {}),
+    ...(rulesVersion !== undefined ? { rulesVersion } : {}),
+    ...(input.stagesOnly ? { stagesOnly: stages } : {}),
+  };
+  return { kind: input.evaluation ? "reprocess" : "stage", scope, stages, params, triggeredBy: input.triggeredBy };
+}
+
+/**
+ * Starts a consolidation run ("Konsolidieren", "Profil neu berechnen", the follow-up of a profile decision). Kind
+ * `stage` with every consolidation stage (`CONSOLIDATION_STAGES`), or only `stagesOnly` (a subset, in stage order);
+ * an evaluation run is kind `reprocess` with `params.evaluation`, only `consolidation.geo` and the rules version to
+ * evaluate (default the active one; an unknown version throws; `stagesOnly` with it throws). The scope is checked before
+ * the run exists (`RunScopeNotReady`, see `checkedScope`); the params carry the scope (`ConsolidationParams`).
+ */
+export async function startConsolidationRun(
+  db: Db,
+  boss: PgBoss,
+  input: StartConsolidationInput,
+  config: AppConfig = getConfig(),
+): Promise<{ id: string }> {
+  return startRun(db, boss, await consolidationRunInput(db, input, config));
+}
+
+export type CatchUpResult =
+  | { status: "started"; consolidationRunId: string }
+  /** The run's consolidation was not skipped (it ran, or has not been reached yet). */
+  | { status: "not_skipped" }
+  /** Caught up on already, by `consolidationRunId`. */
+  | { status: "already"; consolidationRunId: string }
+  /** Its quote fidelity still blocks it. */
+  | { status: "blocked" }
+  /** None of its targets can be consolidated (any more). */
+  | { status: "no_targets" };
+
+/**
+ * „Konsolidierung nachholen“ (ruling M5-H-R2): starts the consolidation a run skipped (its stored marker,
+ * `consolidationSkipOf`), as a consolidation run over the run's targets (`consolidationTargets`), once its quote
+ * fidelity no longer blocks it. With `afterRecheck` (a „Belegtreue neu prüfen“ that just committed, ruling M5-H-R2 I-1)
+ * it also consolidates a run that had consolidated before a later block (late results) and one caught up on already,
+ * since the recheck made facts active that no profile has seen; it leaves alone a run whose `consolidation.geo` is
+ * still to come (it consolidates on its own). Only runs with a `consolidation.geo` stage (text and consolidation runs,
+ * not model comparisons) are ever caught up on.
+ *
+ * The run row of the consolidation run and the record of it on the skipped run are written in one transaction that
+ * locks the skipped run (a double click starts one run); its first stage is enqueued after that commit (when that
+ * fails, the new run fails and the record is removed, so the button comes back). Never called
+ * inside a decision or recheck transaction (ruling M5-F-R4).
+ */
+export async function catchUpConsolidation(
+  db: Db,
+  boss: PgBoss,
+  runId: string,
+  triggeredBy: string,
+  opts: { afterRecheck?: boolean; config?: AppConfig } = {},
+): Promise<CatchUpResult> {
+  const config = opts.config ?? getConfig();
+  const outcome = await db.transaction(async (tx): Promise<CatchUpResult & { stage?: string }> => {
+    const [run] = await tx.select({ params: runs.params }).from(runs).where(eq(runs.id, runId)).for("update");
+    if (!run) throw new Error(`run ${runId} not found`);
+    const params = (run.params ?? {}) as Record<string, unknown>;
+    const [geo] = await tx
+      .select({ status: runStages.status })
+      .from(runStages)
+      .where(and(eq(runStages.runId, runId), eq(runStages.stage, CONSOLIDATION_GEO_STAGE)));
+    if (!geo || params.evaluation === true) return { status: "not_skipped" };
+    const skip = consolidationSkipOf(params);
+    if (opts.afterRecheck) {
+      if (!skip && geo.status === "pending") return { status: "not_skipped" };
+    } else {
+      if (!skip) return { status: "not_skipped" };
+      if (skip.catchUpRunId) return { status: "already", consolidationRunId: skip.catchUpRunId };
+    }
+    if (await consolidationBlocked(tx, runId)) return { status: "blocked" };
+    const targets = await consolidationTargets(tx, { id: runId, params });
+    if (targets.length === 0) return { status: "no_targets" };
+    const input = await consolidationRunInput(tx, { scope: { geoObjectIds: targets }, triggeredBy }, config);
+    const { id } = await createRun(tx, input);
+    await recordConsolidationCatchUp(tx, runId, id);
+    return { status: "started", consolidationRunId: id, stage: input.stages[0] };
+  });
+  if (outcome.status !== "started") return outcome;
+  try {
+    await enqueueStage(db, boss, outcome.consolidationRunId, outcome.stage!);
+  } catch (e) {
+    // The run never started: it fails, and the skipped run offers „Konsolidierung nachholen“ again.
+    await failRun(db, outcome.consolidationRunId, "start failed: first stage not enqueued");
+    await clearConsolidationCatchUp(db, runId, outcome.consolidationRunId);
+    throw e;
+  }
+  createLogger("consolidation").info({ runId, consolidationRunId: outcome.consolidationRunId }, "skipped consolidation caught up");
+  return { status: "started", consolidationRunId: outcome.consolidationRunId };
+}

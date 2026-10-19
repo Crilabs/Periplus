@@ -6,6 +6,7 @@ import { modelComparisons, modelComparisonUnits, runs } from "@/lib/db/schema";
 import { createRun, type RunScope } from "@/lib/domain/runs";
 import { estimateComparisonCostEur } from "@/lib/domain/extraction/comparison";
 import { anthropicHeadroomEur } from "@/lib/pipeline/batches";
+import { CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
 import { enqueueStage, startRun } from "@/lib/pipeline/runs";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { CHECK_STAGE } from "./check";
@@ -23,8 +24,21 @@ import { freezeTextRunParams, type TextRunParams } from "./versions";
  * decision), "Reprozessieren" (`startReprocessRun`) and the model comparison run (`startModelComparisonRun`).
  */
 
-/** The stages of a text run, in order; the quote check (`extraction.check`) comes last. */
-export const TEXT_RUN_STAGES = [CLASSIFY_STAGE, MENTIONS_STAGE, DISAMBIGUATE_STAGE, GEOCODE_STAGE, EXTRACT_STAGE, ROUTE_STAGE, CHECK_STAGE] as const;
+/**
+ * The stages of a text run, in order: the quote check (`extraction.check`) comes after the extraction of facts and
+ * routes, and the consolidation of the objects the run extracted for after it (ruling M5-P16), so a run whose quote
+ * fidelity is below 100 % consolidates nothing.
+ */
+export const TEXT_RUN_STAGES = [
+  CLASSIFY_STAGE,
+  MENTIONS_STAGE,
+  DISAMBIGUATE_STAGE,
+  GEOCODE_STAGE,
+  EXTRACT_STAGE,
+  ROUTE_STAGE,
+  CHECK_STAGE,
+  ...CONSOLIDATION_STAGES,
+] as const;
 
 function scopeOf(params: TextRunParams): RunScope {
   if (params.tileId) return { type: "tile", id: params.tileId };

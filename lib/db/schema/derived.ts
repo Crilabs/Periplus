@@ -111,5 +111,7 @@ export const facts = pgTable(
       .on(t.reviewDecisionId, t.attribute)
       .where(sql`${t.reviewDecisionId} is not null`),
     index("facts_geo_object_attribute_observed_idx").on(t.geoObjectId, t.attribute, t.observedAt),
+    // The facts of an extraction run (the targets of a text run's consolidation, ruling M5-H-R2).
+    index("facts_extraction_run_id_idx").on(t.extractionRunId),
   ],
 );

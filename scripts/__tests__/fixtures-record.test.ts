@@ -30,6 +30,14 @@ describe("fixtures-record CLI", () => {
   it("--datasets is a flag without value, anywhere in the arguments", () => {
     expect(parseArgs(["--area", "aegina-west", "--datasets"])).toMatchObject({ area: "aegina-west", datasets: true });
     expect(parseArgs(["--datasets", "--area", "a", "--cache", "/tmp/c"])).toMatchObject({ area: "a", cache: "/tmp/c", datasets: true });
+    expect(parseArgs(["--area", "a", "--datasets"])).not.toHaveProperty("datasetKinds");
+  });
+
+  it("--datasets takes an optional list of dataset kinds", () => {
+    expect(parseArgs(["--area", "aegina-west", "--datasets", "sitelinks"])).toMatchObject({ datasets: true, datasetKinds: ["sitelinks"] });
+    expect(parseArgs(["--datasets", "roads,sitelinks", "--area", "a"])).toMatchObject({ area: "a", datasetKinds: ["roads", "sitelinks"] });
+    expect(() => parseArgs(["--area", "a", "--datasets", "tides"])).toThrow(/usage/);
+    expect(() => parseArgs(["--area", "a", "--datasets", "roads,roads"])).toThrow(/usage/);
   });
 
   it("--serp records at most 3 searches and needs an area", () => {

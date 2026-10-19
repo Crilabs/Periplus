@@ -218,6 +218,55 @@
       "when": 1792419601262,
       "tag": "0030_run_failed_block_reason",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1792421487737,
+      "tag": "0031_profiles_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1792421494409,
+      "tag": "0032_profile_triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1792422338531,
+      "tag": "0033_change_events_xact_summary_checks",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1792422344829,
+      "tag": "0034_profiles_valid_from_monotonic",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1792427539483,
+      "tag": "0035_geo_objects_merged_into_idx",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1792434082500,
+      "tag": "0036_serp_level_place",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1792435768494,
+      "tag": "0037_facts_extraction_run_id_idx",
+      "breakpoints": true
     }
   ]
 }

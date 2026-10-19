@@ -13,6 +13,7 @@ import { storeRoute } from "@/lib/domain/extraction/routes";
 import { failRun } from "@/lib/domain/runs";
 import { checkExtractionRun, CHECK_STAGE, planCheck } from "@/lib/pipeline/text/check";
 import { ROUTE_STAGE } from "@/lib/pipeline/text/routes";
+import { CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
 import { TEXT_RUN_STAGES } from "@/lib/pipeline/text/run";
 
 /*
@@ -289,8 +290,10 @@ describe("quote fidelity", () => {
       expect(await runRow(tx, id)).toMatchObject({ status: "finished", blockedReason: null });
     }));
 
-  it("the route and check stages are the last two text stages, so the check covers routes", () => {
-    expect(TEXT_RUN_STAGES.slice(-2)).toEqual([ROUTE_STAGE, CHECK_STAGE]);
+  it("the check stage follows the route stage and comes right before the consolidation stages", () => {
+    const check = TEXT_RUN_STAGES.indexOf(CHECK_STAGE);
+    expect(TEXT_RUN_STAGES[check - 1]).toBe(ROUTE_STAGE);
+    expect(TEXT_RUN_STAGES.slice(check + 1)).toEqual([...CONSOLIDATION_STAGES]);
   });
 
   it("the check stage plans one job per extraction run and writes the run's stats", () =>

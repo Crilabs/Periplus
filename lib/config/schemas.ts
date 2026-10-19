@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   geoObjectTypeEnum,
+  placeKindEnum,
   poiCategoryEnum,
   restrictedKindEnum,
   seabedTypeEnum,
@@ -381,6 +382,12 @@ export const roadsDatasetSchema = z.strictObject({
   bufferKm: z.number().nonnegative(),
 });
 
+/** Wikidata sitelink counts (importance signal, ruling M5-P1). */
+export const sitelinksDatasetSchema = z.strictObject({
+  /** A count fetched within this many days is reused without a call. */
+  reuseDays: z.number().int().positive(),
+});
+
 /** `config/datasets.json`: external datasets of the geometry stage. */
 export const datasetsSchema = z.strictObject({
   bathymetry: bathymetryDatasetSchema,
@@ -389,6 +396,7 @@ export const datasetsSchema = z.strictObject({
   vesselDensity: vesselDensityDatasetSchema,
   cables: cablesDatasetSchema,
   roads: roadsDatasetSchema,
+  sitelinks: sitelinksDatasetSchema,
   /** Margin around an area's box for every dataset request, in km. */
   bufferKm: z.number().nonnegative(),
 });
@@ -607,6 +615,133 @@ export const extractionSchema = z.strictObject({
   }),
 });
 
+/** `config/consolidation/active.json`: the rules version `AppConfig.consolidation` holds. */
+export const consolidationActiveSchema = z.strictObject({
+  version: z.string().regex(/^v[1-9][0-9]*$/, "must be v<number>"),
+});
+
+const positive = z.number().positive();
+const ascending = (values: number[]) => values.every((v, i) => i === 0 || v > values[i - 1]!);
+/** Positive weights summing to 1 (a weighted mean that needs no normalisation). */
+const weightSet = <K extends string>(keys: readonly K[]) =>
+  z
+    .record(z.enum(keys as readonly [K, ...K[]]), positive)
+    .refine((w) => Math.abs(Object.values<number>(w).reduce((a, b) => a + b, 0) - 1) < 1e-9, "weights must sum to 1");
+const sentenceRange = z
+  .tuple([positiveInt, positiveInt])
+  .refine(([min, max]) => min <= max, "minimum sentences must not exceed the maximum");
+const month = z.number().int().min(1).max(12);
+const attributePattern = z.string().regex(/^[a-z_]+(\.([A-Za-z_]+|\*))?$/, "must be an attribute key or <prefix>.*");
+
+/**
+ * `config/consolidation/<version>.json`: parameters of the consolidation rules (spec 07); the file name is the
+ * rules version (`rules_version` of every profile). A changed parameter is a new version file.
+ */
+export const consolidationSchema = z.strictObject({
+  recency: z.strictObject({ halfLifeYears: positive }),
+  /** Decimal places of every computed number in a profile. */
+  precision: z.number().int().min(0).max(10),
+  /** Source weight of inputs that have no source. */
+  weights: z.strictObject({ computed: share, review: share, observed: share, poi: share }),
+  poiConfidence: confidence,
+  confidence: z
+    .strictObject({
+      secondSourceBonus: share,
+      cap: confidence,
+      review: confidence,
+      classes: z.tuple([
+        z.strictObject({ name: z.literal("high"), min: confidence }),
+        z.strictObject({ name: z.literal("medium"), min: confidence }),
+        z.strictObject({ name: z.literal("low"), min: z.literal(0) }),
+      ]),
+    })
+    .refine((c) => c.classes[0].min > c.classes[1].min && c.classes[1].min > 0, "class minima must descend to low = 0"),
+  conflict: z.strictObject({ minRatio: z.number().gt(1) }),
+  /**
+   * `additiveLists`: safety lists whose added entries are always `changed`, judged per entry and never held back as
+   * uncertain (ruling M5-F-R3 I-3, "Jede Nennung gilt"); removals and changed entries go through the uncertain gate.
+   */
+  change: z.strictObject({ minIndependent: positiveInt, strongWeight: share, additiveLists: z.array(attributePattern) }),
+  expiry: z.strictObject({ cycles: positiveInt, defaultCycleDays: positiveInt }),
+  rules: z.strictObject({
+    shelter: z.strictObject({
+      maxCorrection: share,
+      harbourFloor: share,
+      harbourKinds: z.array(z.enum(placeKindEnum.enumValues)).min(1),
+      openSideMinConfidence: confidence,
+      openSideMaxValue: share,
+      harbourDefaultConfidence: confidence,
+    }),
+    swell_protection: z.strictObject({ textMinConfidence: confidence }),
+    bathymetry: z.strictObject({ textMinConfidence: confidence, weakRasterConfidence: confidence }),
+    /** Object attributes picked on `present` alone, their other fields filled per field (ruling M5-C-R2 I-1). */
+    latest_observation: z.strictObject({ presence: z.array(attributePattern) }),
+    /** `fieldwise`: object attributes merged field by field, each field the latest input carrying it (M5-C-R2 I-1). */
+    default: z.strictObject({ latestMinConfidence: confidence, fieldwise: z.array(attributePattern) }),
+    /** An input confirms a weighted mean when it lies closer than `agreeWithin` to it (ruling M5-C-R1 (4)). */
+    area_weighted: z.strictObject({ agreeWithin: share }),
+    highlight: z.strictObject({ maxNames: positiveInt, poiRadiusM: meters }),
+    /** Identity key of a list entry per attribute merged by `union`; [] = the element itself (ruling M5-P3). */
+    union: z.strictObject({ keys: z.record(attributePattern, z.array(z.string().min(1))) }),
+  }),
+  profileConfidence: weightSet(["shelter", "depth", "seabed", "exclude"]),
+  /** The attributes (keys or `<prefix>.*`) whose confidences each group of `profileConfidence` averages. */
+  profileConfidenceGroups: z.strictObject({
+    shelter: z.array(attributePattern).min(1),
+    depth: z.array(attributePattern).min(1),
+    seabed: z.array(attributePattern).min(1),
+    exclude: z.array(attributePattern).min(1),
+  }),
+  quietness: z.strictObject({
+    settlementFullM: meters,
+    roadFullM: meters,
+    ferryLaneRadiusM: meters,
+    ferryLaneValue: share,
+    occupancyMonths: z.array(month).min(1),
+    occupancy: z.strictObject({ empty: share, moderate: share, full: share }),
+    text: z.strictObject({ quiet: share, moderate: share, busy: share, noisy: share }),
+    ferryTraffic: z.strictObject({ none: share, low: share, moderate: share, high: share }),
+    weights: weightSet(["settlement", "road", "occupancy", "text", "ferry"]),
+    /** Known parts a quietness value needs (ruling M5-E-R2); fewer → no value, a gap. */
+    minParts: z.number().int().min(1).max(5),
+  }),
+  importance: z
+    .strictObject({
+      sitelinksPerPoint: positive,
+      maxSitelinkPoints: z.number().nonnegative(),
+      categoryBonus: z.strictObject(
+        Object.fromEntries(poiCategoryEnum.enumValues.map((c) => [c, z.number().nonnegative()])) as Record<
+          (typeof poiCategoryEnum.enumValues)[number],
+          z.ZodNumber
+        >,
+      ),
+      /** Score limits between the importance levels 1–5. */
+      thresholds: z.array(z.number()).length(4),
+      /** Radius of meaning per importance level, nautical miles. */
+      radiusNm: z.array(positive).length(5),
+      maxSpotIds: positiveInt,
+    })
+    .refine((i) => ascending(i.thresholds), "importance thresholds must ascend")
+    .refine((i) => ascending(i.radiusNm), "importance radii must ascend"),
+  severity: z.strictObject({
+    safety: z.array(attributePattern),
+    /** A shelter sector changing by more than this is a safety change. */
+    shelterDelta: share,
+    notable: z.array(attributePattern),
+  }),
+  gaps: z.strictObject({
+    /** Attributes whose absence is no gap, per place kind. */
+    ignore: z.partialRecord(z.enum(placeKindEnum.enumValues), z.array(attributePattern)),
+  }),
+  followup: z.strictObject({ minDocuments: positiveInt, cooldownDays: positiveInt, maxPlacesPerRun: positiveInt }),
+  summary: z.strictObject({
+    levels: z.array(z.enum(["place", "poi"])).min(1),
+    sentences: z.strictObject({ place: sentenceRange, poi: sentenceRange }),
+    maxAttempts: positiveInt,
+    lowConfidence: confidence,
+  }),
+});
+
 export type ModelsConfig = z.infer<typeof modelsSchema>;
 export type ModelTaskConfig = z.infer<typeof modelTaskSchema>;
 export type MentionsConfig = z.infer<typeof mentionsSchema>;
@@ -625,6 +760,9 @@ export type RestrictionsConfig = z.infer<typeof restrictionsSchema>;
 export type AreaConfig = z.infer<typeof areaConfigSchema>;
 export type CategoriesConfig = z.infer<typeof categoriesSchema>;
 export type GazetteerConfig = z.infer<typeof gazetteerSchema>;
+export type ConsolidationConfig = z.infer<typeof consolidationSchema>;
+/** A rules version's parameters with its version (the file name). */
+export type VersionedConsolidationConfig = ConsolidationConfig & { version: string };
 export type AppConfig = {
   queues: Record<string, QueueConfig>;
   budgets: Record<BudgetService, { dailyEur: number }>;
@@ -645,4 +783,6 @@ export type AppConfig = {
   mentions: MentionsConfig;
   nameAffixes: NameAffixesConfig;
   extraction: ExtractionConfig;
+  /** The active consolidation rules version (`config/consolidation/active.json`). */
+  consolidation: VersionedConsolidationConfig;
 };

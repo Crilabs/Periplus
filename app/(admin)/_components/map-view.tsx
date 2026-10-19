@@ -13,7 +13,15 @@ import { useEffect, useRef, useState } from "react";
 import type { GeoObjectType, PlaceStatus, RestrictedKind } from "@/lib/db/schema";
 import type { MapLayer } from "@/lib/domain/map-data";
 import { CLIENT_BBOX_DEGREES } from "@/lib/domain/map-limits";
-import { GEO_OBJECT_TYPE_LABELS, PLACE_KIND_LABELS, PLACE_STATUS_LABELS, RESTRICTED_KIND_LABELS } from "./labels";
+import type { ConfidenceClass } from "@/lib/domain/consolidation/types";
+import {
+  CONFIDENCE_CLASS_LABELS,
+  GEO_OBJECT_TYPE_LABELS,
+  PLACE_KIND_LABELS,
+  PLACE_STATUS_LABELS,
+  RESTRICTED_KIND_LABELS,
+  profileConfidenceText,
+} from "./labels";
 import { DEFAULT_CENTER, MAP_STYLE_URL, OSM_ATTRIBUTION } from "./map-style";
 
 const LAYERS: MapLayer[] = ["tiles", "restricted-areas", "areas", "geo-objects", "places"];
@@ -31,6 +39,10 @@ const PLACE_STATUS_COLORS: Record<PlaceStatus, string> = {
   abandoned: "#525252",
   no_anchoring: "#dc2626",
 };
+/** Fill of a place by the confidence class of its newest profile (grey without a profile); the outline shows the status. */
+const PROFILE_CLASS_COLORS: Record<ConfidenceClass, string> = { high: "#15803d", medium: "#f59e0b", low: "#dc2626" };
+const NO_PROFILE_COLOR = "#9ca3af";
+const PROFILE_CLASSES = Object.keys(PROFILE_CLASS_COLORS) as ConfidenceClass[];
 const AREA_COLOR = "#7c3aed";
 const TILE_COLOR = "#0284c7";
 const GEO_OBJECT_COLOR = "#2563eb";
@@ -61,11 +73,18 @@ const LINE: ExpressionSpecification = [
 ];
 const POINT: ExpressionSpecification = ["in", ["geometry-type"], ["literal", ["Point", "MultiPoint"]]];
 
-const placeColor = [
+const placeStatusColor = [
   "match",
   ["get", "status"],
   ...PLACE_STATUSES.flatMap((s) => [s, PLACE_STATUS_COLORS[s]]),
   "#525252",
+] as unknown as ExpressionSpecification;
+
+const placeProfileColor = [
+  "match",
+  ["coalesce", ["get", "profileClass"], "none"],
+  ...PROFILE_CLASSES.flatMap((c) => [c, PROFILE_CLASS_COLORS[c]]),
+  NO_PROFILE_COLOR,
 ] as unknown as ExpressionSpecification;
 
 const restrictedColor = [
@@ -139,7 +158,7 @@ function addLayers(m: MapLibreMap): void {
     id: "places-point",
     type: "circle",
     source: "places",
-    paint: { "circle-color": placeColor, "circle-radius": 6, "circle-stroke-color": "#fff", "circle-stroke-width": 2 },
+    paint: { "circle-color": placeProfileColor, "circle-radius": 6, "circle-stroke-color": placeStatusColor, "circle-stroke-width": 3 },
   });
 }
 
@@ -372,6 +391,19 @@ function LayerPanel({
           />
         ))}
       </fieldset>
+      <ul aria-label="Profil-Konfidenz" className="space-y-1 text-xs text-neutral-600">
+        <li className="font-semibold text-neutral-800">Orte: Füllung = Profil-Konfidenz, Rand = Status</li>
+        {PROFILE_CLASSES.map((c) => (
+          <li key={c} className="flex items-center gap-2">
+            <span aria-hidden className="inline-block size-3 rounded-full" style={{ background: PROFILE_CLASS_COLORS[c] }} />
+            {CONFIDENCE_CLASS_LABELS[c]}
+          </li>
+        ))}
+        <li className="flex items-center gap-2">
+          <span aria-hidden className="inline-block size-3 rounded-full" style={{ background: NO_PROFILE_COLOR }} />
+          ohne Profil
+        </li>
+      </ul>
       {clamped && <p className="text-neutral-600">Ausschnitt größer als 5° × 5°: Daten nur um die Kartenmitte.</p>}
       {failed.length > 0 && (
         <p role="alert" className="text-red-700">
@@ -395,6 +427,7 @@ function Sidebar({ selection: { layer, properties: p }, onClose }: { selection: 
         ["Art", PLACE_KIND_LABELS[p.kind as keyof typeof PLACE_KIND_LABELS] ?? str(p.kind)],
         ["Status", PLACE_STATUS_LABELS[p.status as PlaceStatus] ?? str(p.status)],
         ["Öffentliche ID", str(p.publicId) || "–"],
+        ["Profil-Konfidenz", profileConfidenceText(p)],
       ];
       href = `/places/${id}`;
       break;

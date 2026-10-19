@@ -1,0 +1,1 @@
+CREATE INDEX "facts_extraction_run_id_idx" ON "facts" USING btree ("extraction_run_id");

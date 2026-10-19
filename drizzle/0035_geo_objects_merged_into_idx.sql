@@ -1,0 +1,1 @@
+CREATE INDEX "geo_objects_merged_into_id_idx" ON "geo_objects" USING btree ("merged_into_id") WHERE "geo_objects"."merged_into_id" is not null;

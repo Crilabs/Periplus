@@ -1,4 +1,4 @@
-import { getConfig } from "@/lib/config";
+import { getConfig, type AppConfig } from "@/lib/config";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { requireAdmin } from "@/lib/security/require-admin";
@@ -13,10 +13,39 @@ const LEVEL_LABELS: Record<FactLevel, string> = {
 
 const EFFORT_LABELS = { low: "niedrig", medium: "mittel", high: "hoch" } as const;
 
+/** Parameter groups of the consolidation rules version, in display order. */
+const CONSOLIDATION_GROUPS: Record<Exclude<keyof AppConfig["consolidation"], "version" | "rules">, string> = {
+  recency: "Aktualität",
+  precision: "Nachkommastellen",
+  weights: "Gewichte ohne Quelle",
+  poiConfidence: "Konfidenz POI",
+  confidence: "Konfidenz",
+  conflict: "Konflikt",
+  change: "Änderung",
+  expiry: "Ablauf",
+  profileConfidence: "Profil-Konfidenz",
+  profileConfidenceGroups: "Profil-Konfidenz: Attribute je Gruppe",
+  quietness: "Ruhe",
+  importance: "Bedeutung",
+  severity: "Schwere",
+  gaps: "Lücken",
+  followup: "Folgeaufträge",
+  summary: "Zusammenfassung",
+};
+
+/** Flattens parameters to `a.b: value` pairs for a read-only table cell. */
+function parameterText(value: unknown, prefix = ""): string[] {
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    return Object.entries(value).flatMap(([k, v]) => parameterText(v, prefix ? `${prefix}.${k}` : k));
+  }
+  const shown = Array.isArray(value) ? `[${value.map((v) => JSON.stringify(v)).join(", ")}]` : String(value);
+  return [prefix ? `${prefix}: ${shown}` : shown];
+}
+
 export default async function Page() {
   await requireAdmin();
   const { areas, gazetteer, ...rest } = getConfig();
-  const { geometry, factSchema, fetch, embeddings, models } = rest;
+  const { geometry, factSchema, fetch, embeddings, models, consolidation } = rest;
   const exceptions = Object.entries(fetch.converterBySource);
   const archiveRows: [string, string][] = [
     [
@@ -56,6 +85,17 @@ export default async function Page() {
       const fromText = defs.filter((d) => d.origins.includes("text")).length;
       return [LEVEL_LABELS[level], `${defs.length} Attribute, davon ${fromText} aus Texten`];
     }),
+  ];
+  const consolidationRows: [string, string][] = [
+    ["Regelversion", consolidation.version],
+    ...Object.entries(consolidation.rules).map(([rule, params]): [string, string] => [
+      `Regel ${rule}`,
+      parameterText(params).join("; "),
+    ]),
+    ...(Object.keys(CONSOLIDATION_GROUPS) as (keyof typeof CONSOLIDATION_GROUPS)[]).map((group): [string, string] => [
+      CONSOLIDATION_GROUPS[group],
+      parameterText(consolidation[group]).join("; "),
+    ]),
   ];
   const thresholds: [string, string][] = [
     ["Puffer Kachelbox", `${gazetteer.bboxBufferKm} km`],
@@ -142,6 +182,18 @@ export default async function Page() {
             <tr key={label} className="border-b">
               <th className="py-1 pr-4 font-normal">{label}</th>
               <td className="py-1 pr-4">{value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <h2 className="font-semibold">Konsolidierung</h2>
+      <table className="text-left">
+        <tbody>
+          {consolidationRows.map(([label, value]) => (
+            <tr key={label} className="border-b align-top">
+              <th className="py-1 pr-4 font-normal">{label}</th>
+              <td className="py-1 pr-4 font-mono">{value}</td>
             </tr>
           ))}
         </tbody>
