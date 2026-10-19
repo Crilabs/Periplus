@@ -42,12 +42,16 @@ export function summaryInput(
   };
 }
 
+/** German abbreviations that stand before a noun ("z. B. Ankern", "ca. Ankerplatz") and never end a sentence. */
+const GERMAN_ABBREVIATIONS = /(?<![\p{L}])(?:z\. ?B|d\. ?h|u\. ?a|bzw|ca|nr|vgl|ggf|evtl)\./giu;
+
 /**
  * Sentences of a text: runs ending in `.`, `!`, `?` or `…` that are followed by an upper-case start or the end, plus a
- * last sentence without a full stop. Numbers ("0,62", "4 m") and lower-case continuations ("ca. 4 m") do not split.
+ * last sentence without a full stop. Numbers ("0,62", "4 m"), lower-case continuations ("ca. 4 m") and common German abbreviations ("z. B.", "d. h.",
+ * "ca.", "Nr.") do not split.
  */
 export function sentenceCount(text: string): number {
-  const trimmed = text.trim();
+  const trimmed = text.trim().replace(GERMAN_ABBREVIATIONS, (abbreviation) => abbreviation.replaceAll(".", ""));
   if (trimmed === "") return 0;
   const ends = trimmed.match(/[.!?…]+(?=\s+[A-ZÄÖÜ„"(]|\s*$)/g)?.length ?? 0;
   return /[.!?…]\s*$/.test(trimmed) ? ends : ends + 1;

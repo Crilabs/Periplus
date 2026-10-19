@@ -33,6 +33,7 @@ import {
   nextOpenTask,
   reviewDecisionSchema,
   TaskContextChanged,
+  valueFingerprint,
   TaskNotOpen,
   type ReviewDecision,
 } from "@/lib/domain/review-decisions";
@@ -988,15 +989,15 @@ describe("profile attribute decisions (conflict, uncertain_change)", () => {
     return rows[0]!;
   };
 
-  const decideProfile = (tx: Db, taskId: string, key: string, action: ReviewDecision) =>
-    decideReviewTask(tx, { taskId, decision: action, decidedBy: ADMIN, now: noon(), taskKey: key });
+  const decideProfile = (tx: Db, taskId: string, key: string, action: ReviewDecision, valueKey?: string) =>
+    decideReviewTask(tx, { taskId, decision: action, decidedBy: ADMIN, now: noon(), taskKey: key, valueKey });
 
   it("value_b writes one review fact with confidence 0.95 and the next consolidation shows it without conflict", () =>
     withRollback(async (tx) => {
       const { objectId, taskId, key } = await holdingConflict(tx);
       expect((await latest(tx, objectId)).attributes["holding"]).toBe("good");
 
-      expect(await decideProfile(tx, taskId, key, { action: "value_b" })).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: objectId } });
+      expect(await decideProfile(tx, taskId, key, { action: "value_b" }, valueFingerprint("poor"))).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: objectId } });
       const [decision] = await tx.select({ id: reviewDecisions.id }).from(reviewDecisions).where(eq(reviewDecisions.taskId, taskId));
       const reviewFacts = await tx.select().from(facts).where(eq(facts.reviewDecisionId, decision!.id));
       expect(reviewFacts).toHaveLength(1);
@@ -1008,6 +1009,34 @@ describe("profile attribute decisions (conflict, uncertain_change)", () => {
       expect(profile.conflicts.filter((c) => c.attribute === "holding")).toEqual([]);
       expect(profile.provenance["holding"]).toMatchObject({ origin: "review", factIds: [reviewFacts[0]!.id] });
       expect(await profileTasks(tx, objectId, "holding")).toEqual([expect.objectContaining({ id: taskId, status: "decided" })]);
+    }));
+
+  it("value_a / value_b name the value shown: sides swapped by a run under the same key are refused (ruling M5-G-R2)", () =>
+    withRollback(async (tx) => {
+      const { objectId, taskId, key } = await holdingConflict(tx);
+      const sides = async () => {
+        const [task] = await profileTasks(tx, objectId, "holding");
+        const c = task!.context as { key: string; a: { value: unknown }; b: { value: unknown } };
+        return { key: c.key, a: c.a.value, b: c.b.value };
+      };
+      expect(await sides()).toEqual({ key, a: "good", b: "poor" });
+      const shownA = valueFingerprint("good");
+
+      // a third source for "poor" makes it the heavier side: the run swaps a and b, the key stays
+      await insertTextFact(tx, objectId, await insertProfileSource(tx, "forum", 0.2), { attribute: "holding", value: "poor", observedAt: "2026-07-03" });
+      await consolidateGeo(tx, objectId, { today });
+      expect(await sides()).toEqual({ key, a: "poor", b: "good" });
+
+      // "Wert A" was clicked for "good"; the decision would now write "poor"
+      await expect(decideProfile(tx, taskId, key, { action: "value_a" }, shownA)).rejects.toThrow(TaskContextChanged);
+      await expect(decideProfile(tx, taskId, key, { action: "value_a" })).rejects.toThrow(TaskContextChanged);
+      expect(await tx.select().from(reviewDecisions).where(eq(reviewDecisions.taskId, taskId))).toEqual([]);
+      expect(await tx.select().from(facts).where(and(eq(facts.geoObjectId, objectId), sql`${facts.reviewDecisionId} is not null`))).toEqual([]);
+
+      // the value as shown now goes through, on either side
+      await decideProfile(tx, taskId, key, { action: "value_b" }, shownA);
+      const [fact] = await tx.select().from(facts).where(and(eq(facts.geoObjectId, objectId), sql`${facts.reviewDecisionId} is not null`));
+      expect(fact).toMatchObject({ attribute: "holding", value: "good" });
     }));
 
   it("seasonal resolves the conflict marker; no new conflict task for the same key", () =>
@@ -1087,6 +1116,17 @@ describe("profile attribute decisions (conflict, uncertain_change)", () => {
       await expect(decideReviewTask(tx, { taskId, decision: { action: "accept_change" }, decidedBy: ADMIN })).rejects.toThrow(TaskContextChanged);
       expect(await tx.select().from(reviewDecisions).where(eq(reviewDecisions.taskId, taskId))).toEqual([]);
       expect(await decideProfile(tx, taskId, newKey, { action: "accept_change" })).toMatchObject({ consolidate: { geoObjectId: objectId } });
+    }));
+
+  it("regenerate_summary on a summary task of a missing geo object is not allowed (M5-G-M5)", () =>
+    withRollback(async (tx) => {
+      const missing = newId();
+      const [task] = await tx
+        .insert(reviewTasks)
+        .values({ kind: "failed_job", subjectType: "profile_summary", subjectId: `${missing}:1`, context: {} })
+        .returning({ id: reviewTasks.id });
+      await expect(decideReviewTask(tx, { taskId: task!.id, decision: { action: "regenerate_summary" }, decidedBy: ADMIN })).rejects.toThrow(DecisionNotAllowed);
+      expect(await tx.select().from(reviewDecisions).where(eq(reviewDecisions.taskId, task!.id))).toEqual([]);
     }));
 
   it("a decision never takes the profile lock (ruling M5-F-R4)", async () => {

@@ -1,4 +1,4 @@
-import { FACT_ATTRIBUTE_LABELS, formatFactValue } from "@/lib/domain/facts/labels";
+import { FACT_ATTRIBUTE_LABELS, formatFactValue, MONTHS, scaleWord } from "@/lib/domain/facts/labels";
 import type { ExcludeReason } from "./exclude";
 
 /*
@@ -37,7 +37,6 @@ export const EXCLUDE_REASON_LABELS: Record<ExcludeReason, string> = {
   aquaculture: "Aquakultur",
 };
 
-const MONTHS = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
 
 /** Values on the scale 0–1 (shelter, swell protection, exposure, the quietness index): two decimals, "0,62". */
 function isUnitScale(attribute: string): boolean {
@@ -97,4 +96,13 @@ export function formatProfileValue(attribute: string, value: unknown): string {
   if (attribute === "derived.importance" && typeof value === "number") return `${value} von 5`;
   if (Array.isArray(value) && attribute !== "seabed") return value.map((entry) => listEntry(attribute, entry)).join(", ");
   return formatFactValue(attribute, value);
+}
+
+/**
+ * A profile value for the review card: as `formatProfileValue`, but a number on a text scale keeps its word
+ * ("gut geschützt (0,9)"), as the fact list shows it. The summary input keeps the plain number.
+ */
+export function formatReviewValue(attribute: string, value: unknown): string {
+  if (typeof value === "number" && scaleWord(attribute, value) !== undefined) return formatFactValue(attribute, value);
+  return formatProfileValue(attribute, value);
 }

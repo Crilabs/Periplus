@@ -26,6 +26,13 @@ async function archived(tx: Db, text: string): Promise<void> {
 }
 
 describe("findArchiveCopies", () => {
+  it("exactly 15 copied words are a hit (spec 08: a 15-word shingle)", () =>
+    withRollback(async (tx) => {
+      const words = saltedWords(30);
+      await archived(tx, words.join(" "));
+      expect(await findArchiveCopies(tx, `Die Bucht ist schön. ${words.slice(5, 20).join(" ")} Mehr nicht.`)).toMatchObject({ hits: 1 });
+    }));
+
   it("a 16-word sequence copied from a chunk is found, a 14-word one is not", () =>
     withRollback(async (tx) => {
       const words = saltedWords(30);

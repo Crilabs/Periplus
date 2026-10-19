@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { getConfig, getConsolidationConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
@@ -22,7 +23,7 @@ import {
   type ReviewKind,
   type SourceStatus,
 } from "@/lib/db/schema";
-import { attributeDef, InvalidFactValue, UnknownAttribute, validateFactValue } from "@/lib/domain/facts/schema";
+import { attributeDef, canonicalJson, InvalidFactValue, UnknownAttribute, validateFactValue } from "@/lib/domain/facts/schema";
 import { assignParentOf } from "@/lib/domain/gazetteer/hierarchy";
 import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
 import { addNames, isGreek, transliterateElot743, type NameDraft } from "@/lib/domain/gazetteer/names";
@@ -114,6 +115,16 @@ export class TaskContextChanged extends Error {
   }
 }
 
+/**
+ * A stable fingerprint of a value (first 16 hex characters of the SHA-256 of its canonical JSON). The decision form of
+ * a conflict posts the fingerprint of the side the admin chose; the server compares it with the side's current value,
+ * so a run that swapped the sides under the same (swap-stable) key cannot make the decision write the other value
+ * (ruling M5-G-R2).
+ */
+export function valueFingerprint(value: unknown): string {
+  return createHash("sha256").update(canonicalJson(value === undefined ? null : value)).digest("hex").slice(0, 16);
+}
+
 /** Allowed actions per `<kind>/<subject_type>`. */
 const ALLOWED: Record<string, readonly Action[]> = {
   "conflict/profile_attribute": ["value_a", "value_b", "seasonal", "leave_open"],
@@ -151,7 +162,8 @@ type Task = typeof reviewTasks.$inferSelect;
  * object to consolidate again (`consolidate`); `regenerate_summary` on a `failed_job` / `profile_summary` task returns
  * it with `stagesOnly ["consolidation.summary"]`; the caller starts that run after the commit (ruling M5-P10). It needs
  * `taskKey`, the `context.key` the admin saw: another key means a later run replaced the question
- * (`TaskContextChanged`, ruling M5-F-R2).
+ * (`TaskContextChanged`, ruling M5-F-R2); `value_a` / `value_b` also need `valueKey`, the `valueFingerprint` of the
+ * chosen side's value as shown (ruling M5-G-R2).
  *
  * Global lock order: the review task row first, then the subject row(s) (`lockPlace`, `lockSource`,
  * `lockNameCandidate`). Every transaction that locks both an open `place_candidate` task and its place
@@ -162,7 +174,7 @@ type Task = typeof reviewTasks.$inferSelect;
  */
 export async function decideReviewTask(
   db: Db,
-  input: { taskId: string; decision: ReviewDecision; decidedBy: string; openedAt?: Date; now?: Date; taskKey?: string },
+  input: { taskId: string; decision: ReviewDecision; decidedBy: string; openedAt?: Date; now?: Date; taskKey?: string; valueKey?: string },
   deps: DecideDeps = {},
 ): Promise<DecideResult> {
   const decision = reviewDecisionSchema.parse(input.decision);
@@ -193,13 +205,15 @@ export async function decideReviewTask(
       return { documentVersionIds: await applyNameDecision(tx, task, decision), consolidate: null };
     }
     if (task.subjectType === PROFILE_SUBJECT) {
-      const geoObjectId = await applyProfileDecision(tx, task, decision, decisionRow!.id, now);
+      const geoObjectId = await applyProfileDecision(tx, task, decision, decisionRow!.id, now, input.valueKey);
       return { documentVersionIds: [], consolidate: { geoObjectId } };
     }
     if (decision.action === "regenerate_summary") {
       // `<geoObjectId>:<version>` of a summary that stayed empty: the summary stage runs again after the commit
       const geoObjectId = task.subjectId.slice(0, 36);
       if (!z.uuid().safeParse(geoObjectId).success) throw new DecisionNotAllowed(`subject ${task.subjectId} is no profile summary`);
+      const [object] = await tx.select({ id: geoObjects.id }).from(geoObjects).where(eq(geoObjects.id, geoObjectId));
+      if (!object) throw new DecisionNotAllowed(`geo object ${geoObjectId} does not exist`);
       return { documentVersionIds: [], consolidate: { geoObjectId, stagesOnly: [CONSOLIDATION_SUMMARY_STAGE] } };
     }
     await apply(tx, task, decision, deps);
@@ -390,7 +404,14 @@ function reviewFactValue(attribute: string, value: unknown, version: string): un
  * consolidates and never takes the profile lock (ruling M5-F-R4): the caller starts the follow-up run after the commit.
  * Returns the geo object.
  */
-async function applyProfileDecision(tx: Db, task: Task, decision: ReviewDecision, decisionId: string, now: Date): Promise<string> {
+async function applyProfileDecision(
+  tx: Db,
+  task: Task,
+  decision: ReviewDecision,
+  decisionId: string,
+  now: Date,
+  valueKey: string | undefined,
+): Promise<string> {
   const { geoObjectId, attribute } = profileSubject(task.subjectId);
   const [object] = await tx.select({ id: geoObjects.id }).from(geoObjects).where(eq(geoObjects.id, geoObjectId));
   if (!object) throw new DecisionNotAllowed(`geo object ${geoObjectId} does not exist`);
@@ -404,10 +425,10 @@ async function applyProfileDecision(tx: Db, task: Task, decision: ReviewDecision
   let value: unknown;
   switch (decision.action) {
     case "value_a":
-      value = sideValue(context.a);
-      break;
     case "value_b":
-      value = sideValue(context.b);
+      // the chosen side must still hold the value the admin saw: sides can swap under one key (ruling M5-G-R2)
+      value = sideValue(decision.action === "value_a" ? context.a : context.b);
+      if (valueKey === undefined || valueKey !== valueFingerprint(value)) throw new TaskContextChanged(task.id);
       break;
     case "accept_change":
       value = context.newValue;

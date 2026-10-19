@@ -3,7 +3,7 @@ import { summarizeProfileTask, type SummarizeInput } from "@/lib/ai/tasks/summar
 import { ModelOutputInvalid, type ModelClient } from "@/lib/ai/types";
 import { getConfig, getConsolidationConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { profiles, profileSummaries } from "@/lib/db/schema";
+import { profiles, profileSummaries, reviewTasks } from "@/lib/db/schema";
 import { checkSummary, summaryInput } from "@/lib/domain/consolidation/summary";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 import { levelFor } from "@/lib/domain/facts/levels";
@@ -85,7 +85,7 @@ export type SummaryResult = { status: "ok" | "empty" | "skipped"; attempts: numb
  * Summarizes one profile version: up to `summary.maxAttempts` model calls, from the second on with `avoid` ("formuliere
  * ganz eigenständig"). An answer that copies 15 words from the archive, misses the sentence range, or is cut off,
  * refused or invalid (`ModelOutputInvalid`, ruling M5-P14) is a failed attempt. The first good answer is stored as
- * `ok` (attempts, model, prompt version). After the last failed attempt an `empty` summary is stored and one
+ * `ok` (attempts, model, prompt version) and closes the object's open `failed_job` task on a `profile_summary`. After the last failed attempt an `empty` summary is stored and one
  * `failed_job` task opened on subject `profile_summary` `<geoObjectId>:<version>`, in one transaction. Skipped: an
  * unknown version, a level without summaries, an existing `ok` summary of the prompt version, or an `empty` one this
  * run already stored (a retried job). Other errors (budget, provider) propagate, so the job is retried.
@@ -135,10 +135,24 @@ export async function summarizeProfile(
     }
     const verdict = await checkSummary(db, text, base.sentences);
     if (verdict === "ok") {
-      await db
-        .insert(profileSummaries)
-        .values({ geoObjectId: input.geoObjectId, profileVersion: input.version, text, status: "ok", attempts: attempt, model, promptVersion: prompt, runId: input.runId ?? null })
-        .onConflictDoNothing();
+      // an ok summary closes the open "summary stayed empty" task of the object (a regeneration, or a later version)
+      await db.transaction(async (tx) => {
+        await tx
+          .insert(profileSummaries)
+          .values({ geoObjectId: input.geoObjectId, profileVersion: input.version, text, status: "ok", attempts: attempt, model, promptVersion: prompt, runId: input.runId ?? null })
+          .onConflictDoNothing();
+        await tx
+          .update(reviewTasks)
+          .set({ status: "dismissed", context: sql`${reviewTasks.context} || '{"dismissedReason":"summary_stored"}'::jsonb` })
+          .where(
+            and(
+              eq(reviewTasks.kind, "failed_job"),
+              eq(reviewTasks.subjectType, "profile_summary"),
+              eq(reviewTasks.status, "open"),
+              sql`${reviewTasks.subjectId} like ${`${input.geoObjectId}:%`}`,
+            ),
+          );
+      });
       return { status: "ok", attempts: attempt };
     }
     reasons.push(verdict);

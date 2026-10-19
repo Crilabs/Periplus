@@ -28,6 +28,8 @@ const taskFieldsSchema = z.object({
   openedAt: z.iso.datetime().optional(),
   /** The context key of a profile task as shown (ruling M5-F-R2). */
   taskKey: z.string().max(64).optional(),
+  /** The fingerprint of the chosen side's value of a conflict as shown (ruling M5-G-R2). */
+  valueKey: z.string().max(64).optional(),
 });
 
 const fieldsSchema = taskFieldsSchema.extend({
@@ -53,6 +55,7 @@ const taskFields = (formData: FormData) =>
     taskId: formData.get("taskId"),
     openedAt: formData.get("openedAt") || undefined,
     taskKey: formData.get("taskKey") ?? undefined,
+    valueKey: formData.get("valueKey") ?? undefined,
   });
 
 /**
@@ -93,6 +96,7 @@ async function decideAndRedirect(
         decidedBy,
         openedAt: task.openedAt ? new Date(task.openedAt) : undefined,
         taskKey: task.taskKey,
+        valueKey: task.valueKey,
       },
       { retryJob },
     );
@@ -114,6 +118,7 @@ export async function decideAction(formData: FormData): Promise<void> {
     taskId: formData.get("taskId"),
     openedAt: formData.get("openedAt") || undefined,
     taskKey: formData.get("taskKey") ?? undefined,
+    valueKey: formData.get("valueKey") ?? undefined,
     decision: formData.get("decision"),
   });
   await decideAndRedirect(admin.email, fields, reviewDecisionSchema.parse(fields.decision));

@@ -184,7 +184,7 @@ const FIELD_WORDS: Record<string, string> = {
   type: "Art",
 };
 
-const MONTHS = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
+export const MONTHS = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
 const METRE_ATTRIBUTES = new Set(["depth.min", "depth.max", "depth.anchoring_min", "depth.anchoring_max", "max_draft", "max_length"]);
 const de = (n: number) => n.toLocaleString("de-DE", { maximumFractionDigits: 2 });
 
@@ -221,7 +221,7 @@ const ATTRIBUTE_VALUE_WORDS: Record<string, Record<string, string>> = {
 export const SHELTER_SCALE_WORDS: Record<string, string> = { "0.9": "gut geschützt", "0.5": "mäßig geschützt", "0.1": "kein Schutz" };
 export const EXPOSURE_SCALE_WORDS: Record<string, string> = { "0.1": "gering", "0.5": "mäßig", "0.9": "stark" };
 
-function scaleWord(attribute: string, value: number): string | undefined {
+export function scaleWord(attribute: string, value: number): string | undefined {
   if (attribute.startsWith("shelter.") || attribute === "swell_protection") return SHELTER_SCALE_WORDS[String(value)];
   if (attribute === "meltemi_exposure") return EXPOSURE_SCALE_WORDS[String(value)];
   return undefined;

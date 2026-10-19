@@ -9,7 +9,7 @@ import {
   PROVENANCE_ORIGIN_LABELS,
 } from "../../_components/labels";
 import { QuoteContext } from "../../_components/quote-context";
-import { documentHref } from "../../places/[id]/facts-tab";
+import { documentHref } from "../../_components/document-href";
 import { DecisionForm } from "./decision-form";
 
 const share = (n: number) => n.toLocaleString("de-DE", { maximumFractionDigits: 2 });
@@ -147,8 +147,8 @@ export function ProfileDecision({
           )}
           {open && (
             <div className="space-y-2">
-              <DecisionForm {...props} n={1} label="Wert A" decision={{ action: "value_a" }} disabled={!subject.a} />
-              <DecisionForm {...props} n={2} label="Wert B" decision={{ action: "value_b" }} disabled={!subject.b} />
+              <DecisionForm {...props} n={1} label="Wert A" decision={{ action: "value_a" }} valueKey={subject.a?.fingerprint} disabled={!subject.a} />
+              <DecisionForm {...props} n={2} label="Wert B" decision={{ action: "value_b" }} valueKey={subject.b?.fingerprint} disabled={!subject.b} />
               <DecisionForm {...props} n={3} label="Beide (saisonal)" decision={{ action: "seasonal" }} />
               <DecisionForm {...props} n={4} label="Offen lassen" decision={{ action: "leave_open" }} />
               <p className="text-xs text-neutral-600">
@@ -175,7 +175,7 @@ export function ProfileDecision({
           </section>
           {open && (
             <div className="space-y-2">
-              <DecisionForm {...props} n={1} label="Übernehmen" decision={{ action: "accept_change" }} disabled={!subject.proposed} />
+              <DecisionForm {...props} n={1} label="Übernehmen" decision={{ action: "accept_change" }} disabled={!subject.proposed || subject.proposed.value === null || subject.proposed.value === undefined} />
               <DecisionForm {...props} n={2} label="Verwerfen" decision={{ action: "discard_change" }} />
               <p className="text-xs text-neutral-600">
                 „Übernehmen“ geht als Prüfung in das Profil ein; „Verwerfen“ behält den bisherigen Wert,

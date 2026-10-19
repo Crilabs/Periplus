@@ -97,6 +97,12 @@ describe("profile summaries", () => {
     expect(sentenceCount("")).toBe(0);
   });
 
+  it("does not split at German abbreviations before a capitalised noun", () => {
+    expect(sentenceCount("Geeignet für Boote, z. B. Ankerlieger. Ca. Ankerplatz weiter nördlich, d. h. Schutz vor Meltemi.")).toBe(2);
+    expect(sentenceCount("Siehe Nr. Fünf, bzw. Ankerplatz zwei u. a. Fels. Gut geschützt.")).toBe(2);
+    expect(sentenceCount("Die Bucht ist ruhig. Das Wasser ist klar.")).toBe(2);
+  });
+
   it("a copied first answer is regenerated with avoid and stored", () =>
     withRollback(async (tx) => {
       const { objectId, runId } = await consolidated(tx);
@@ -156,5 +162,23 @@ describe("profile summaries", () => {
       // a summary-only run for the object finds its version summarized already
       expect(await summaryTargets(tx, { id: next, params: { geoObjectIds: [objectId], stagesOnly: ["consolidation.summary"] } })).toEqual([]);
       expect(await tx.select().from(profileSummaries).where(eq(profileSummaries.geoObjectId, objectId))).toHaveLength(1);
+    }));
+});
+
+describe("an ok summary closes the open summary task", () => {
+  it("storing an ok summary dismisses the object's open failed_job task (regeneration after an empty one)", () =>
+    withRollback(async (tx) => {
+      const { objectId, runId } = await consolidated(tx);
+      await summarizeProfile(tx, { geoObjectId: objectId, version: 1, runId }, { model: scripted(["Nur ein Satz."]).model });
+      const openTasks = () =>
+        tx
+          .select({ status: reviewTasks.status })
+          .from(reviewTasks)
+          .where(and(eq(reviewTasks.kind, "failed_job"), eq(reviewTasks.subjectType, "profile_summary"), eq(reviewTasks.subjectId, `${objectId}:1`)));
+      expect(await openTasks()).toEqual([{ status: "open" }]);
+
+      const again = await insertTestRun(tx);
+      expect(await summarizeProfile(tx, { geoObjectId: objectId, version: 1, runId: again }, { model: scripted([GOOD]).model })).toEqual({ status: "ok", attempts: 1 });
+      expect(await openTasks()).toEqual([{ status: "dismissed" }]);
     }));
 });

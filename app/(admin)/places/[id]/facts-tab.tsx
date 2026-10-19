@@ -1,13 +1,10 @@
 import Link from "next/link";
-import type { AttributeFacts, FactView } from "@/lib/domain/geo-facts";
+import type { AttributeFacts } from "@/lib/domain/geo-facts";
 import { factAttributeLabel, FACT_ORIGIN_LABELS, formatFactValue } from "../../_components/labels";
+import { documentHref } from "../../_components/document-href";
 import { QuoteContext } from "../../_components/quote-context";
 
 const share = (n: number) => n.toLocaleString("de-DE", { maximumFractionDigits: 2 });
-
-/** The document page of a fact's quote: its version, tab "Erwähnungen und Zitate", where the quote is highlighted. */
-export const documentHref = (f: Pick<FactView, "documentId" | "documentVersionId">) =>
-  `/documents/${f.documentId}${f.documentVersionId ? `?v=${f.documentVersionId}&tab=annotations` : "?tab=annotations"}`;
 
 /**
  * The facts of a geo object by attribute (tab "Facts" of the place page, section "Facts" of the geo page): value,

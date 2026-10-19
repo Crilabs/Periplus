@@ -3,6 +3,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { facts, reviewTasks } from "@/lib/db/schema";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
+import { valueFingerprint } from "@/lib/domain/review-decisions";
 import { reviewTaskDetail } from "@/lib/domain/review-view";
 import { insertComputation, insertPlace, insertSource, insertTextFact } from "@/test/consolidation";
 import { testDb, withRollback } from "@/test/db";
@@ -82,7 +83,7 @@ describe("review of a profile attribute", () => {
     withRollback(async (tx) => {
       current = tx;
       const t = await conflictTask(tx);
-      await decideAction(form({ taskId: t.taskId, taskKey: t.key, decision: JSON.stringify({ action: "value_b" }) }));
+      await decideAction(form({ taskId: t.taskId, taskKey: t.key, valueKey: valueFingerprint("poor"), decision: JSON.stringify({ action: "value_b" }) }));
       expect(redirect).toHaveBeenCalledTimes(1);
       expect(redirect.mock.calls[0]![0]).not.toContain(t.taskId);
       const [task] = await tx.select({ status: reviewTasks.status }).from(reviewTasks).where(eq(reviewTasks.id, t.taskId));
@@ -103,6 +104,40 @@ describe("review of a profile attribute", () => {
       // a conflict action that does not fit an uncertain change is an error, not a decision
       await decideAction(form({ taskId: t.taskId, taskKey: t.key, decision: JSON.stringify({ action: "accept_change" }) }));
       expect(redirect).toHaveBeenLastCalledWith(`/review/${t.taskId}?error=1`);
+    }));
+
+  it("shows a text-scale value with its word on the card (shelter 0,9 = gut geschützt)", () =>
+    withRollback(async (tx) => {
+      const { objectId } = await insertPlace(tx, { name: "Skalabucht" });
+      await insertTextFact(tx, objectId, await insertSource(tx, "trip_report", 0.6), { attribute: "shelter.N", value: 0.9, observedAt: "2026-07-01" });
+      const [task] = await tx
+        .insert(reviewTasks)
+        .values({ kind: "uncertain_change", subjectType: "profile_attribute", subjectId: `${objectId}:shelter.N`, context: { key: "k", newValue: 0.9 } })
+        .returning({ id: reviewTasks.id });
+      const s = (await reviewTaskDetail(tx, task!.id))!.subject;
+      if (s.type !== "profile_attribute") throw new Error(`subject ${s.type}`);
+      expect(s.proposed!.display).toBe("gut geschützt (0,9)");
+    }));
+
+  it("a run that swaps the sides between load and click makes the action redirect with the notice and write nothing", () =>
+    withRollback(async (tx) => {
+      current = tx;
+      const t = await conflictTask(tx);
+      const shown = (await reviewTaskDetail(tx, t.taskId))!.subject;
+      if (shown.type !== "profile_attribute") throw new Error(`subject ${shown.type}`);
+      expect(shown.a!.fingerprint).toBe(valueFingerprint("good"));
+
+      await insertTextFact(tx, t.objectId, await insertSource(tx, "forum", 0.2), { attribute: "holding", value: "poor", observedAt: "2026-07-03" });
+      await consolidateGeo(tx, t.objectId, { today });
+      const now = (await reviewTaskDetail(tx, t.taskId))!.subject;
+      if (now.type !== "profile_attribute") throw new Error(`subject ${now.type}`);
+      expect([now.key, now.a!.value]).toEqual([t.key, "poor"]);
+
+      await decideAction(form({ taskId: t.taskId, taskKey: t.key, valueKey: shown.a!.fingerprint, decision: JSON.stringify({ action: "value_a" }) }));
+      expect(redirect).toHaveBeenCalledWith(`/review/${t.taskId}?changed=1`);
+      const [task] = await tx.select({ status: reviewTasks.status }).from(reviewTasks).where(eq(reviewTasks.id, t.taskId));
+      expect(task!.status).toBe("open");
+      expect(await tx.select().from(facts).where(and(eq(facts.geoObjectId, t.objectId), sql`${facts.reviewDecisionId} is not null`))).toEqual([]);
     }));
 
   it("a decided conflict shows its resolution from the current profile", () =>

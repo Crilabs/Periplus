@@ -30,7 +30,7 @@ import {
 } from "@/lib/db/schema";
 import type { AttributeProvenance, ConflictResolution, ConflictSide } from "@/lib/domain/consolidation/types";
 import type { ProposalRobots, SerpHit } from "@/lib/domain/discovery/proposals";
-import { formatProfileValue, profileAttributeLabel } from "@/lib/domain/consolidation/format";
+import { formatReviewValue, profileAttributeLabel } from "@/lib/domain/consolidation/format";
 import { factViewsByIds, type FactView } from "@/lib/domain/geo-facts";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { candidateObjects, withNeighbours } from "@/lib/domain/mentions/scope";
@@ -40,6 +40,7 @@ import {
   newNameObjectType,
   nextOpenTask,
   QUEUE_ORDER,
+  valueFingerprint,
 } from "@/lib/domain/review-decisions";
 import { crawlRulesSchema, type CrawlRules } from "@/lib/domain/sources/crawl-rules";
 import { getSource, type Source } from "@/lib/domain/sources/store";
@@ -179,6 +180,8 @@ export type ReviewSubject =
 /** One value of a conflict: its summed weight, when it was observed and the facts behind it. */
 export type ProfileSideView = {
   value: unknown;
+  /** `valueFingerprint` of `value`: what a decision for this side posts (ruling M5-G-R2). */
+  fingerprint: string;
   display: string;
   weight: number;
   observedFrom: string;
@@ -379,7 +382,8 @@ async function profileAttributeSubject(db: Db, subjectId: string, context: Recor
     const s = parsed.data as Omit<ConflictSide, "sourceKeys">;
     return {
       value: s.value,
-      display: formatProfileValue(attribute, s.value),
+      fingerprint: valueFingerprint(s.value),
+      display: formatReviewValue(attribute, s.value),
       weight: s.weight,
       observedFrom: s.observedFrom,
       observedTo: s.observedTo,
@@ -396,7 +400,7 @@ async function profileAttributeSubject(db: Db, subjectId: string, context: Recor
     key,
     current: {
       value: current ?? null,
-      display: current === undefined ? "–" : formatProfileValue(attribute, current),
+      display: current === undefined ? "–" : formatReviewValue(attribute, current),
       provenance: profile?.provenance[attribute] ?? null,
     },
     resolution: (key && profile?.conflicts.find((c) => c.key === key)?.resolution) || null,
@@ -411,7 +415,7 @@ async function profileAttributeSubject(db: Db, subjectId: string, context: Recor
     const ids = z.array(z.string()).safeParse(context.factIds);
     subject.proposed = {
       value: context.newValue,
-      display: context.newValue === null ? "–" : formatProfileValue(attribute, context.newValue),
+      display: context.newValue === null ? "–" : formatReviewValue(attribute, context.newValue),
       facts: await factsOf(db, ids.success ? ids.data : []),
     };
   }
