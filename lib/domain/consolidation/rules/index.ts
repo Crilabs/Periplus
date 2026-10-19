@@ -31,6 +31,9 @@ export const RULES: Record<RuleName, ConsolidationRule> = {
   review_over_computed: reviewOverComputedRule,
 };
 
+/** Rules whose review decisions never hold outright (rulings M5-C-R2 M-3, M5-C-R4). */
+const NO_SHORTCUT: ReadonlySet<RuleName> = new Set<RuleName>(["union", "prohibitions"]);
+
 /** True for a name `RULES` implements. */
 export function isRuleName(name: string): name is RuleName {
   return Object.hasOwn(RULES, name);
@@ -42,11 +45,13 @@ export function isRuleName(name: string): name is RuleName {
  * holds (origin `review`, confidence `confidence.review`, no conflict); inputs without an observation date (POIs,
  * `dateKnown false`, ruling M5-C-R1 (2)) never count against it. Otherwise the rule decides, with the review as a
  * non-ageing correction input that supersedes the texts it saw (ruling M5-B-R3). `union` never takes the shortcut: a
- * review on a list only adds entries or removes one explicitly (ruling M5-C-R2 M-3).
+ * review on a list only adds entries or removes one explicitly (ruling M5-C-R2 M-3). Neither does `prohibitions`
+ * (ruling M5-C-R4): a review never drops a computed restricted-area entry by omission; the rule keeps the youngest
+ * computation's entries and lets the review supersede only the text entries it saw.
  */
 export function applyRule(rule: RuleName, inputs: ConsolidationInput[], ctx: RuleContext): RuleResult | null {
   if (!isRuleName(rule)) throw new Error(`Unknown consolidation rule ${String(rule)}`);
-  const decision = rule === "union" ? null : youngest(inputs.filter((i) => i.origin === "review"));
+  const decision = NO_SHORTCUT.has(rule) ? null : youngest(inputs.filter((i) => i.origin === "review"));
   if (decision && inputs.every((i) => i === decision || !i.dateKnown || i.observedAt <= decision.observedAt)) {
     return {
       value: roundValue(decision.value, ctx.cfg),

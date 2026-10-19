@@ -134,6 +134,16 @@ describe("prohibitionsRule", () => {
     expect(prohibitionsRule([old, recomputed, forum(anchoring, "2022-07-01")], ctx)!.value).toEqual(anchoring);
   });
 
+  it("a review never drops a computed entry by omission: no shortcut for prohibitions (M5-C-R4)", () => {
+    const entry = { kind: "military", restrictedAreaId: "00000000-0000-4000-8000-000000000001", sourceRef: null, share: 0.4, anchoringBan: true };
+    const c = computed({ attribute: "prohibitions", value: [entry], observedAt: "2023-01-01" });
+    const decision = review({ attribute: "prohibitions", value: [{ kind: "fishing", months: null }], observedAt: "2026-09-01" });
+    const r = applyRule("prohibitions", [c, forum(anchoring, "2022-07-01"), decision], ctx)!;
+    // the review supersedes the older text (anchoring), the computed restricted area stays
+    expect(r.value).toEqual([{ kind: "fishing", months: null }, entry]);
+    expect(r.support).toEqual(expect.arrayContaining([c, decision]));
+  });
+
   it("the output is sorted, also with only a computation (M5-C-R2 M-4)", () => {
     const area = (kind: string, id: string) => ({ kind, restrictedAreaId: id, sourceRef: null, share: 0.4, anchoringBan: true });
     const military = area("military", "00000000-0000-4000-8000-000000000001");
