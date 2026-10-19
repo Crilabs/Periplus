@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/lib/db/client";
 import { changeRateEnum, DOC_TYPES, frontierStatusEnum } from "@/lib/db/schema";
-import { SOURCES_PAGE_SIZE, sourceDetail } from "@/lib/domain/sources-view";
+import { documentOfOtherSource, SOURCES_PAGE_SIZE, sourceDetail } from "@/lib/domain/sources-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { AutoRefresh } from "../../_components/auto-refresh";
 import { CrawlRulesFields } from "../../_components/crawl-rules-fields";
@@ -42,9 +42,15 @@ export default async function Page({ params, searchParams }: PageProps<"/sources
   if (!UUID.test(id)) notFound();
   const sp = await searchParams;
   const docPage = Math.max(1, Number.parseInt(param(sp.docPage) ?? "1", 10) || 1);
-  const detail = await sourceDetail(getDb(), id, { docPage });
+  const db = getDb();
+  const detail = await sourceDetail(db, id, { docPage });
   if (!detail) notFound();
   const { source, frontier, costs } = detail;
+  const archivedParam = param(sp.archived);
+  const archivedElsewhere = archivedParam && UUID.test(archivedParam) ? await documentOfOtherSource(db, archivedParam, id) : null;
+  // An ended source is shown read-only: no crawl, status change, upload or saving.
+  const ended = source.validTo !== null;
+  const uploadable = !ended && (source.status === "approved" || source.status === "proposed");
   const error = sourcePageError(sp.error);
   const invalid = (param(sp.invalid) ?? "").split(",").filter((f) => f !== "");
   const mark = (field: string) =>
@@ -79,6 +85,14 @@ export default async function Page({ params, searchParams }: PageProps<"/sources
           Nicht gespeichert: ungültige Felder sind markiert.
         </p>
       )}
+      {archivedElsewhere && (
+        <p role="status" className="rounded bg-amber-100 px-3 py-2">
+          <Link href={`/documents/${archivedElsewhere.documentId}`} className="underline">
+            Dieses Dokument
+          </Link>{" "}
+          ist bereits bei Quelle {archivedElsewhere.sourceDomain} archiviert.
+        </p>
+      )}
       {param(sp.saved) === "1" && (
         <p role="status" className="rounded bg-green-100 px-3 py-2">
           Gespeichert.
@@ -111,7 +125,7 @@ export default async function Page({ params, searchParams }: PageProps<"/sources
       </dl>
 
       <section className="flex flex-wrap gap-2">
-        {source.status === "approved" && (
+        {!ended && source.status === "approved" && (
           <>
             <form action={testCrawlAction}>
               {hidden}
@@ -133,7 +147,7 @@ export default async function Page({ params, searchParams }: PageProps<"/sources
             </form>
           </>
         )}
-        {source.status === "paused" && (
+        {!ended && source.status === "paused" && (
           <form action={resumeSourceAction}>
             {hidden}
             <button type="submit" className={BUTTON}>
@@ -143,70 +157,76 @@ export default async function Page({ params, searchParams }: PageProps<"/sources
         )}
       </section>
 
-      <form action={uploadPdfAction} className="flex flex-wrap items-center gap-2">
-        {hidden}
-        <label className="flex items-center gap-2">
-          PDF hochladen (höchstens 100 MB)
-          <input type="file" name="file" accept="application/pdf,.pdf" required />
-        </label>
-        <button type="submit" className={BUTTON}>
-          Hochladen und archivieren
-        </button>
-      </form>
+      {uploadable && (
+        <form action={uploadPdfAction} className="flex flex-wrap items-center gap-2">
+          {hidden}
+          <label className="flex items-center gap-2">
+            PDF hochladen (höchstens 100 MB)
+            <input type="file" name="file" accept="application/pdf,.pdf" required />
+          </label>
+          <button type="submit" className={BUTTON}>
+            Hochladen und archivieren
+          </button>
+        </form>
+      )}
 
       <section>
         <h2 className="mb-2 font-semibold">Einstellungen</h2>
         <form action={saveSourceAction} className="grid max-w-3xl gap-3">
           {hidden}
-          <div className="flex flex-wrap gap-4">
-            <label className="flex items-center gap-1">
-              Name
-              <input name="name" required maxLength={200} defaultValue={source.name} className={INPUT} />
-              {mark("name")}
-            </label>
-            <label className="flex items-center gap-1">
-              Typ
-              <select name="type" defaultValue={source.type} className={INPUT}>
-                {DOC_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {DOC_TYPE_LABELS[t]}
-                  </option>
-                ))}
-              </select>
-              {mark("type")}
-            </label>
-            <label className="flex items-center gap-1">
-              Gewicht
-              <input
-                type="number"
-                name="weight"
-                required
-                min={0}
-                max={1}
-                step={0.05}
-                defaultValue={source.weight}
-                className={`${INPUT} w-20`}
-              />
-              {mark("weight")}
-            </label>
-            <label className="flex items-center gap-1">
-              Änderungsrate
-              <select name="changeRate" defaultValue={source.changeRate} className={INPUT}>
-                {changeRateEnum.enumValues.map((c) => (
-                  <option key={c} value={c}>
-                    {CHANGE_RATE_LABELS[c]}
-                  </option>
-                ))}
-              </select>
-              {mark("changeRate")}
-            </label>
-          </div>
-          <CrawlRulesFields defaults={source.crawlRules} invalid={invalid.filter((f) => !SETTINGS_FIELDS.has(f))} />
-          <div>
-            <button type="submit" className={BUTTON}>
-              Speichern
-            </button>
-          </div>
+          <fieldset disabled={ended} className="contents">
+            <div className="flex flex-wrap gap-4">
+              <label className="flex items-center gap-1">
+                Name
+                <input name="name" required maxLength={200} defaultValue={source.name} className={INPUT} />
+                {mark("name")}
+              </label>
+              <label className="flex items-center gap-1">
+                Typ
+                <select name="type" defaultValue={source.type} className={INPUT}>
+                  {DOC_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {DOC_TYPE_LABELS[t]}
+                    </option>
+                  ))}
+                </select>
+                {mark("type")}
+              </label>
+              <label className="flex items-center gap-1">
+                Gewicht
+                <input
+                  type="number"
+                  name="weight"
+                  required
+                  min={0}
+                  max={1}
+                  step="any"
+                  defaultValue={source.weight}
+                  className={`${INPUT} w-20`}
+                />
+                {mark("weight")}
+              </label>
+              <label className="flex items-center gap-1">
+                Änderungsrate
+                <select name="changeRate" defaultValue={source.changeRate} className={INPUT}>
+                  {changeRateEnum.enumValues.map((c) => (
+                    <option key={c} value={c}>
+                      {CHANGE_RATE_LABELS[c]}
+                    </option>
+                  ))}
+                </select>
+                {mark("changeRate")}
+              </label>
+            </div>
+            <CrawlRulesFields defaults={source.crawlRules} invalid={invalid.filter((f) => !SETTINGS_FIELDS.has(f))} />
+          </fieldset>
+          {!ended && (
+            <div>
+              <button type="submit" className={BUTTON}>
+                Speichern
+              </button>
+            </div>
+          )}
         </form>
       </section>
 

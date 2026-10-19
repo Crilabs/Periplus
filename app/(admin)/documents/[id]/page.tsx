@@ -5,11 +5,10 @@ import { getDb } from "@/lib/db/client";
 import { documentDetail, versionContent, versionDiff } from "@/lib/domain/document-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { ArchiveMarkdown } from "../../_components/archive-markdown";
+import { DiffView } from "../../_components/diff-view";
 import { DOC_TYPE_LABELS, DOCUMENT_STATUS_LABELS, OBSERVED_AT_BASIS_LABELS } from "../../_components/labels";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const DIFF_STYLE = { same: "text-neutral-600", added: "bg-green-100", removed: "bg-red-100" } as const;
-const DIFF_MARK = { same: " ", added: "+", removed: "-" } as const;
 
 const param = (v: string | string[] | undefined): string | undefined => (typeof v === "string" ? v : undefined);
 const time = (d: Date | null) => (d ? d.toISOString().slice(0, 16).replace("T", " ") : "–");
@@ -122,13 +121,7 @@ export default async function Page({ params, searchParams }: PageProps<"/documen
           <h2 className="mb-1 font-semibold">
             Änderungen seit {time(versions.find((v) => v.id === compareId)!.fetchedAt)}
           </h2>
-          <pre className="overflow-x-auto rounded border border-neutral-300 p-2 text-xs whitespace-pre-wrap">
-            {diff.map((line, i) => (
-              <div key={i} className={DIFF_STYLE[line.kind]}>
-                {DIFF_MARK[line.kind]} {line.text}
-              </div>
-            ))}
-          </pre>
+          <DiffView lines={diff} />
         </section>
       )}
 

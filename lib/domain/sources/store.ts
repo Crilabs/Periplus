@@ -7,6 +7,7 @@ import type { Db } from "@/lib/db/client";
 import {
   changeRateEnum,
   DOC_TYPES,
+  documents,
   sources,
   type ChangeRate,
   type DocType,
@@ -55,7 +56,7 @@ export async function getSource(db: Db, id: string): Promise<Source | null> {
 
 /**
  * Sets status and reason of the source `id` (the history trigger records the change); throws for an unknown id.
- * With `from`, only a source still in that status changes; returns whether it changed.
+ * With `from`, only a source still in that status and not ended changes; returns whether it changed.
  */
 export async function setSourceStatus(
   db: Db,
@@ -67,7 +68,7 @@ export async function setSourceStatus(
   const updated = await db
     .update(sources)
     .set({ status, statusReason: reason })
-    .where(opts.from ? and(eq(sources.id, id), eq(sources.status, opts.from)) : eq(sources.id, id))
+    .where(opts.from ? and(eq(sources.id, id), eq(sources.status, opts.from), isNull(sources.validTo)) : eq(sources.id, id))
     .returning({ id: sources.id });
   if (updated.length > 0) return true;
   if (opts.from) return false;
@@ -127,25 +128,40 @@ export const sourceSettingsSchema = z.object({
 
 export type SourceSettings = z.input<typeof sourceSettingsSchema>;
 
+/** The source has ended (`valid_to` set): it is shown read-only and nothing on it changes any more. */
+export class SourceEnded extends Error {
+  constructor(id: string) {
+    super(`source ${id} has ended`);
+    this.name = "SourceEnded";
+  }
+}
+
 /**
  * Saves name, type, weight, change rate and crawl rules of the source `id`. Everything is validated first
- * (`ZodError`, nothing written); throws for an unknown id.
+ * (`ZodError`, nothing written); an ended source throws `SourceEnded`, an unknown id throws.
  */
 export async function updateSourceSettings(db: Db, id: string, input: SourceSettings): Promise<void> {
   const settings = sourceSettingsSchema.parse(input);
-  const updated = await db.update(sources).set(settings).where(eq(sources.id, id)).returning({ id: sources.id });
-  if (updated.length === 0) throw new Error(`source ${id} not found`);
+  const updated = await db
+    .update(sources)
+    .set(settings)
+    .where(and(eq(sources.id, id), isNull(sources.validTo)))
+    .returning({ id: sources.id });
+  if (updated.length > 0) return;
+  const [known] = await db.select({ id: sources.id }).from(sources).where(eq(sources.id, id));
+  if (known) throw new SourceEnded(id);
+  throw new Error(`source ${id} not found`);
 }
 
 /** Status reason of a source the admin paused on the source page. */
 export const ADMIN_PAUSE_REASON = "vom Admin pausiert";
 
-/** Pauses the source `id` if it is approved (the only pause the source page offers); returns whether it changed. */
+/** Pauses the source `id` if it is approved and not ended (the only pause the source page offers); returns whether it changed. */
 export function pauseSource(db: Db, id: string): Promise<boolean> {
   return setSourceStatus(db, id, "paused", ADMIN_PAUSE_REASON, { from: "approved" });
 }
 
-/** Approves the paused source `id` again; returns whether it changed (a proposed or rejected source never does). */
+/** Approves the paused source `id` again; returns whether it changed (a proposed, rejected or ended source never does). */
 export function resumeSource(db: Db, id: string): Promise<boolean> {
   return setSourceStatus(db, id, "approved", null, { from: "paused" });
 }
@@ -221,25 +237,45 @@ export class NotAPdf extends Error {
   }
 }
 
+/** A PDF can be uploaded only for a current source that is approved or proposed (not paused, rejected or ended). */
+export class SourceNotUploadable extends Error {
+  constructor(id: string) {
+    super(`source ${id} takes no uploads`);
+    this.name = "SourceNotUploadable";
+  }
+}
+
+/** Statuses of a (current) source that takes PDF uploads. */
+const UPLOAD_STATUSES: readonly SourceStatus[] = ["approved", "proposed"];
+
 const PDF_MAGIC = new TextEncoder().encode("%PDF-");
 
 /**
  * Stores an uploaded PDF for the source: `uploads/<sha256>.pdf` in the archive and the document `upload://<sha256>`
- * (document type = source type). The same file again is the same document (`created` false). A file not starting
- * with `%PDF-` throws `NotAPdf`; an unknown source throws. The archiving itself is a run (`startUploadFetchRun`).
+ * (document type = source type). The same file again is the same document (`created` false); `sourceId` is the
+ * source that document belongs to, which is another source when the file was archived there first (URLs are unique
+ * across sources). A file not starting with `%PDF-` throws `NotAPdf`, a source that is not current and approved or
+ * proposed throws `SourceNotUploadable` (both before anything is stored); an unknown source throws. The archiving
+ * itself is a run (`startUploadFetchRun`).
  */
 export async function uploadPdf(
   db: Db,
   archive: Archive,
   input: { sourceId: string; bytes: Uint8Array },
-): Promise<{ documentId: string; created: boolean }> {
+): Promise<{ documentId: string; sourceId: string; created: boolean }> {
   if (!PDF_MAGIC.every((b, i) => input.bytes[i] === b)) throw new NotAPdf();
-  const source = await getSource(db, input.sourceId);
+  const [source] = await db
+    .select({ id: sources.id, type: sources.type, status: sources.status, validTo: sources.validTo })
+    .from(sources)
+    .where(eq(sources.id, input.sourceId));
   if (!source) throw new Error(`source ${input.sourceId} not found`);
+  if (source.validTo !== null || !UPLOAD_STATUSES.includes(source.status)) throw new SourceNotUploadable(source.id);
   const sha = createHash("sha256").update(input.bytes).digest("hex");
   const key = `uploads/${sha}.pdf`;
   if (!(await archive.exists(key))) await archive.put(key, input.bytes, "application/pdf");
   const url = `upload://${sha}`;
   const doc = await ensureDocument(db, { sourceId: source.id, url, urlNormalized: url, docType: source.type });
-  return { documentId: doc.id, created: doc.created };
+  if (doc.created) return { documentId: doc.id, sourceId: source.id, created: true };
+  const [existing] = await db.select({ sourceId: documents.sourceId }).from(documents).where(eq(documents.id, doc.id));
+  return { documentId: doc.id, sourceId: existing!.sourceId, created: false };
 }

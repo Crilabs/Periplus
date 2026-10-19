@@ -238,3 +238,21 @@ export async function sourceDetail(db: Db, id: string, opts: { docPage: number }
     costs: { totalEur: byService.reduce((sum, c) => sum + c.costEur, 0), byService },
   };
 }
+
+/**
+ * The document `documentId` when it belongs to another source than `sourceId` (an upload of a PDF archived there
+ * first): its id and the domain of its source, for the notice on the uploading source's page; null otherwise.
+ */
+export async function documentOfOtherSource(
+  db: Db,
+  documentId: string,
+  sourceId: string,
+): Promise<{ documentId: string; sourceDomain: string } | null> {
+  const [row] = await db
+    .select({ sourceId: documents.sourceId, domain: sources.domain })
+    .from(documents)
+    .innerJoin(sources, eq(sources.id, documents.sourceId))
+    .where(eq(documents.id, documentId));
+  if (!row || row.sourceId === sourceId) return null;
+  return { documentId, sourceDomain: row.domain };
+}

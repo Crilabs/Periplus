@@ -30,11 +30,19 @@ vi.mock("@/lib/adapters/s3", async (importOriginal) => ({
   getArchive: () => archive,
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), refresh: vi.fn() }));
-vi.mock("next/navigation", () => ({ redirect: (url: string) => redirect(url) }));
+vi.mock("next/navigation", () => ({
+  redirect: (url: string) => redirect(url),
+  // Like the real one, it ends the action.
+  notFound: () => {
+    throw new Error("NEXT_NOT_FOUND");
+  },
+}));
 
 import { crawlAllApprovedAction, createSourceAction } from "../sources/actions";
 import { discoveryForTileAction } from "../tiles/[id]/actions";
 import { crawlAction, pauseSourceAction, saveSourceAction, testCrawlAction, uploadPdfAction } from "../sources/[id]/actions";
+
+import nextConfig from "@/next.config";
 
 const ADMIN = "admin@example.invalid";
 
@@ -44,11 +52,11 @@ const form = (fields: Record<string, string | Blob>) => {
   return data;
 };
 
-async function insertSource(tx: Db, status: SourceStatus = "approved"): Promise<string> {
+async function insertSource(tx: Db, status: SourceStatus = "approved", validTo: string | null = null): Promise<string> {
   const domain = `${newId()}.test.invalid`;
   const [row] = await tx
     .insert(sources)
-    .values({ domain, name: domain, type: "forum", weight: 0.4, status, crawlRules: DEFAULT_CRAWL_RULES, origin: "manual" })
+    .values({ domain, name: domain, type: "forum", weight: 0.4, status, crawlRules: DEFAULT_CRAWL_RULES, origin: "manual", validTo })
     .returning({ id: sources.id });
   return row!.id;
 }
@@ -115,6 +123,23 @@ describe("saveSourceAction", () => {
       });
     }));
 
+  it("an ended source is not saved", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const sourceId = await insertSource(tx, "approved", "2026-01-01");
+      const before = await getSource(tx, sourceId);
+      await saveSourceAction(settingsForm(sourceId));
+      expect(redirect).toHaveBeenCalledWith(`/sources/${sourceId}?error=source_ended`);
+      expect(await getSource(tx, sourceId)).toEqual(before);
+    }));
+
+  it("a malformed source id is a 404, not a server error", async () => {
+    await expect(saveSourceAction(settingsForm("not-a-uuid"))).rejects.toThrow("NEXT_NOT_FOUND");
+    await expect(crawlAction(form({ sourceId: "1; drop" }))).rejects.toThrow("NEXT_NOT_FOUND");
+    await expect(uploadPdfAction(form({}))).rejects.toThrow("NEXT_NOT_FOUND");
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
   it("rejects without admin session", () =>
     withRollback(async (tx) => {
       currentDb = tx;
@@ -179,12 +204,18 @@ describe("createSourceAction", () => {
 });
 
 describe("uploadPdfAction", () => {
+  it("the body limits leave room for the multipart overhead of a pdf just under 100 MB", () => {
+    // The action refuses files over 100 MB itself; the request around such a file is a few KB larger.
+    expect(nextConfig.experimental?.serverActions?.bodySizeLimit).toBe("101mb");
+    expect(nextConfig.experimental?.proxyClientMaxBodySize).toBe("101mb");
+  });
+
   const pdf = (text: string) => new Blob([`%PDF-1.7\n${text}\n%%EOF\n`], { type: "application/pdf" });
 
   it("stores the pdf and starts its upload run", () =>
     withRollback(async (tx) => {
       currentDb = tx;
-      const sourceId = await insertSource(tx, "paused");
+      const sourceId = await insertSource(tx, "proposed");
       await uploadPdfAction(form({ sourceId, file: new File([pdf(newId())], "guide.pdf", { type: "application/pdf" }) }));
       const target = String(redirect.mock.lastCall![0]);
       expect(target).toMatch(/^\/runs\/[0-9a-f-]{36}$/);
@@ -202,6 +233,52 @@ describe("uploadPdfAction", () => {
       await uploadPdfAction(form({ sourceId, file: new File(["<html></html>"], "page.pdf", { type: "application/pdf" }) }));
       expect(redirect).toHaveBeenLastCalledWith(`/sources/${sourceId}?error=not_pdf`);
       expect(archive.keys()).toEqual([]);
+    }));
+
+  it("no file and a file over 100 MB come back with an error and store nothing", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const sourceId = await insertSource(tx);
+      await uploadPdfAction(form({ sourceId }));
+      expect(redirect).toHaveBeenLastCalledWith(`/sources/${sourceId}?error=no_file`);
+      await uploadPdfAction(form({ sourceId, file: new File([], "empty.pdf", { type: "application/pdf" }) }));
+      expect(redirect).toHaveBeenLastCalledWith(`/sources/${sourceId}?error=no_file`);
+      const big = new Uint8Array(100 * 1024 * 1024 + 1);
+      big.set(new TextEncoder().encode("%PDF-1.7\n"));
+      await uploadPdfAction(form({ sourceId, file: new File([big], "big.pdf", { type: "application/pdf" }) }));
+      expect(redirect).toHaveBeenLastCalledWith(`/sources/${sourceId}?error=too_large`);
+      expect(archive.keys()).toEqual([]);
+      expect(await tx.select().from(documents).where(eq(documents.sourceId, sourceId))).toEqual([]);
+    }));
+
+  it("a paused, rejected or ended source takes no upload", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      for (const sourceId of [
+        await insertSource(tx, "paused"),
+        await insertSource(tx, "rejected"),
+        await insertSource(tx, "approved", "2026-01-01"),
+      ]) {
+        await uploadPdfAction(form({ sourceId, file: new File([pdf(newId())], "guide.pdf", { type: "application/pdf" }) }));
+        expect(redirect).toHaveBeenLastCalledWith(`/sources/${sourceId}?error=upload_not_allowed`);
+      }
+      expect(archive.keys()).toEqual([]);
+    }));
+
+  it("a pdf archived for another source starts no run and names that source", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const first = await insertSource(tx);
+      const second = await insertSource(tx);
+      const text = newId();
+      await uploadPdfAction(form({ sourceId: first, file: new File([pdf(text)], "guide.pdf", { type: "application/pdf" }) }));
+      const [doc] = await tx.select().from(documents).where(eq(documents.sourceId, first));
+      const runsBefore = await tx.select({ id: runs.id }).from(runs);
+
+      await uploadPdfAction(form({ sourceId: second, file: new File([pdf(text)], "copy.pdf", { type: "application/pdf" }) }));
+      expect(redirect).toHaveBeenLastCalledWith(`/sources/${second}?archived=${doc!.id}`);
+      expect(await tx.select({ id: runs.id }).from(runs)).toEqual(runsBefore);
+      expect(await tx.select().from(documents).where(eq(documents.sourceId, second))).toEqual([]);
     }));
 });
 

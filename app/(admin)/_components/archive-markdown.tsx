@@ -1,8 +1,15 @@
 import Markdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-/** Links of archived content open outside the admin, without referrer or opener, and earn no ranking. */
+/**
+ * Links of archived content open outside the admin, without referrer or opener, and earn no ranking. Images load
+ * only when scrolled into view and never tell their host which admin page shows them.
+ */
 const components: Components = {
+  img: ({ src, alt, title }) => (
+    // eslint-disable-next-line @next/next/no-img-element -- archived third-party images, not optimised app assets
+    <img src={typeof src === "string" ? src : undefined} alt={alt ?? ""} title={title} referrerPolicy="no-referrer" loading="lazy" />
+  ),
   a: ({ href, title, children }) => (
     <a href={href} title={title} target="_blank" rel="noopener noreferrer nofollow">
       {children}

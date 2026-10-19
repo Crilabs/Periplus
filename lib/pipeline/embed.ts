@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { CallContext, Transport } from "@/lib/adapters/http";
 import { embedTexts } from "@/lib/adapters/voyage";
 import { getConfig, type EmbeddingsConfig } from "@/lib/config";
@@ -15,8 +15,8 @@ export const EMBED_PLAN_LIMIT = 10_000;
 
 /**
  * Plan of the stage `embed.chunks`: the chunks without an embedding of the versions this run wrote (`params.all`:
- * of all versions, the backfill), the newest `EMBED_PLAN_LIMIT` by id (a backfill continues with older ones in the
- * next run), ordered by id. Carried chunks count like new ones: a chunk
+ * of all versions, the backfill), the oldest `limit` (default `EMBED_PLAN_LIMIT`) by id, so a backfill works through
+ * the table from the start and continues with newer ones in the next run. Carried chunks count like new ones: a chunk
  * carried from an origin without an embedding has none either. One job per source and `cfg.batchSize` chunks
  * (`{ key: <first chunk id>, chunkIds, sourceId }`), so every Voyage call is booked on one source.
  */
@@ -24,6 +24,7 @@ export async function planEmbedChunks(
   db: Db,
   run: { id: string; params: Record<string, unknown> },
   cfg: EmbeddingsConfig = getConfig().embeddings,
+  limit: number = EMBED_PLAN_LIMIT,
 ): Promise<JobData[]> {
   const rows = await db
     .select({ id: chunks.id, sourceId: documents.sourceId })
@@ -31,9 +32,8 @@ export async function planEmbedChunks(
     .innerJoin(documentVersions, eq(documentVersions.id, chunks.documentVersionId))
     .innerJoin(documents, eq(documents.id, documentVersions.documentId))
     .where(and(isNull(chunks.embedding), run.params.all === true ? undefined : eq(documentVersions.runId, run.id)))
-    .orderBy(desc(chunks.id))
-    .limit(EMBED_PLAN_LIMIT);
-  rows.reverse();
+    .orderBy(asc(chunks.id))
+    .limit(limit);
   const bySource = new Map<string, string[]>();
   for (const r of rows) {
     const ids = bySource.get(r.sourceId);

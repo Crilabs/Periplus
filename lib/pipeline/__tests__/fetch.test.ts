@@ -579,6 +579,23 @@ describe("crawl run starters", () => {
     });
   });
 
+  it("an ended source is not crawled, even when its status is still approved", async () => {
+    await withRollback(async (tx) => {
+      const current = await insertSource(tx, newSite(), {});
+      const ended = await insertSource(tx, newSite(), {});
+      await tx.update(sources).set({ validTo: "2026-01-01" }).where(eq(sources.id, ended));
+      const { boss } = recordingBoss();
+      const { id } = await startFetchRun(tx, boss, { sourceIds: "approved", triggeredBy: "admin" });
+      const [row] = await tx.select().from(runs).where(eq(runs.id, id));
+      const planned = (row!.params as { sourceIds: string[] }).sourceIds;
+      expect(planned).toContain(current);
+      expect(planned).not.toContain(ended);
+      await expect(startFetchRun(tx, boss, { sourceIds: [ended], triggeredBy: "admin" })).rejects.toMatchObject({
+        reason: "source_not_approved",
+      });
+    });
+  });
+
   it("refuses sources that are not approved and documents that are no upload, before a run exists", async () => {
     await withRollback(async (tx) => {
       const paused = await insertSource(tx, newSite(), {}, "paused");

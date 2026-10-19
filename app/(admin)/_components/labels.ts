@@ -285,6 +285,8 @@ export const SOURCE_ERROR_LABELS = {
   invalid_source: "Domain, Name und Typ angeben",
   not_approved: "Nur eine freigegebene Quelle kann pausiert werden",
   not_paused: "Nur eine pausierte Quelle kann fortgesetzt werden",
+  source_ended: "Die Quelle ist beendet",
+  upload_not_allowed: "PDFs lassen sich nur bei freigegebenen oder vorgeschlagenen Quellen hochladen",
 } as const;
 
 export type SourceErrorCode = keyof typeof SOURCE_ERROR_LABELS;

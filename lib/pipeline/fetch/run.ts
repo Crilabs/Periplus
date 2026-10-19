@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { areaByKey } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
@@ -22,9 +22,9 @@ export const FETCH_RUN_STAGES = [FETCH_SOURCE_STAGE, FETCH_URL_STAGE, EMBED_STAG
 export const TEST_CRAWL_MAX_PAGES = 10;
 
 /**
- * Starts the run "Quellen abrufen" for the given sources or all approved ones (`"approved"`, resolved to the IDs
- * approved now and stored in `params.sourceIds`). Checked before the run exists: at least one source, every given
- * source exists and is approved, and none is fetched by another queued or running run (`RunScopeNotReady`; ruling
+ * Starts the run "Quellen abrufen" for the given sources or all approved ones (`"approved"`, resolved to the IDs of
+ * the current sources approved now and stored in `params.sourceIds`). Checked before the run exists: at least one
+ * source, every given source exists, is not ended and is approved, and none is fetched by another queued or running run (`RunScopeNotReady`; ruling
  * M3-C-R6: overlapping crawls of one source are prevented). With `skipBusy` (ruling M3-D-R3, "Alle freigegebenen
  * crawlen") busy sources are left out instead: returned in `skipped` and kept in `params.skippedSourceIds`; only
  * when every source is busy the start is refused. Scope `source` with the only ID, `"approved"` or `"selection"`.
@@ -36,7 +36,12 @@ export async function startFetchRun(
 ): Promise<{ id: string; skipped: string[] }> {
   let sourceIds: string[];
   if (input.sourceIds === "approved") {
-    sourceIds = (await db.select({ id: sources.id }).from(sources).where(eq(sources.status, "approved"))).map((s) => s.id);
+    sourceIds = (
+      await db
+        .select({ id: sources.id })
+        .from(sources)
+        .where(and(eq(sources.status, "approved"), isNull(sources.validTo)))
+    ).map((s) => s.id);
     if (sourceIds.length === 0) throw new RunScopeNotReady("no_approved_sources", "No source is approved yet");
   } else {
     sourceIds = [...new Set(input.sourceIds)];
@@ -90,12 +95,12 @@ export async function startExclusiveFetchRun(
   return { id: created.id, skipped: created.skipped };
 }
 
-/** Every source of `sourceIds` exists and is approved, else `RunScopeNotReady` `source_not_approved`. */
+/** Every source of `sourceIds` exists, is current (not ended) and approved, else `RunScopeNotReady` `source_not_approved`. */
 async function assertApproved(db: Db, sourceIds: string[]): Promise<void> {
   const approved = await db
     .select({ id: sources.id })
     .from(sources)
-    .where(and(inArray(sources.id, sourceIds), eq(sources.status, "approved")));
+    .where(and(inArray(sources.id, sourceIds), eq(sources.status, "approved"), isNull(sources.validTo)));
   if (approved.length !== sourceIds.length) {
     const ok = new Set(approved.map((s) => s.id));
     throw new RunScopeNotReady("source_not_approved", `Sources not approved: ${sourceIds.filter((id) => !ok.has(id)).join(", ")}`);

@@ -20,4 +20,12 @@ describe("ArchiveMarkdown", () => {
     expect(html).toContain('rel="noopener noreferrer nofollow"');
     expect(html).not.toContain("onerror");
   });
+
+  it("images load lazily and send no referrer to their host", () => {
+    const html = renderToStaticMarkup(<ArchiveMarkdown markdown={"![Bucht](https://example.invalid/bay.jpg)"} />);
+    expect(html).toMatch(/<img [^>]*src="https:\/\/example.invalid\/bay.jpg"/);
+    expect(html).toMatch(/<img [^>]*referrerPolicy="no-referrer"/i);
+    expect(html).toMatch(/<img [^>]*loading="lazy"/);
+    expect(html).toMatch(/<img [^>]*alt="Bucht"/);
+  });
 });

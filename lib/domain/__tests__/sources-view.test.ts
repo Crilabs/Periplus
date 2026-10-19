@@ -7,7 +7,7 @@ import { crawlFrontier, documents, documentVersions, sources, type DocType, type
 import { recordExternalCall } from "@/lib/domain/costs";
 import { newId } from "@/lib/domain/ids";
 import { createRun } from "@/lib/domain/runs";
-import { listSources, sourceDetail } from "@/lib/domain/sources-view";
+import { documentOfOtherSource, listSources, sourceDetail } from "@/lib/domain/sources-view";
 import { DEFAULT_CRAWL_RULES } from "@/lib/domain/sources/crawl-rules";
 import {
   createManualSource,
@@ -16,6 +16,8 @@ import {
   pauseSource,
   resumeSource,
   SourceDomainKnown,
+  SourceEnded,
+  SourceNotUploadable,
   updateSourceSettings,
   uploadPdf,
 } from "@/lib/domain/sources/store";
@@ -117,6 +119,16 @@ describe("listSources", () => {
       expect((await listSources(tx, { q: tag, page: 2 })).rows).toEqual([]);
     }));
 
+  it("listSources leaves out ended sources", () =>
+    withRollback(async (tx) => {
+      const tag = newId();
+      const current = await insertSource(tx, { domain: `a-${tag}.test.invalid` });
+      await insertSource(tx, { domain: `e-${tag}.test.invalid`, validTo: "2026-01-01" });
+      const list = await listSources(tx, { q: tag, page: 1 });
+      expect(list.total).toBe(1);
+      expect(list.rows.map((r) => r.id)).toEqual([current.id]);
+    }));
+
   it("costs per source come from external_calls.source_id", () =>
     withRollback(async (tx) => {
       const source = await insertSource(tx);
@@ -214,6 +226,26 @@ describe("source settings", () => {
       });
     }));
 
+  it("an ended source is read-only: settings, pause and resume change nothing", () =>
+    withRollback(async (tx) => {
+      const ended = await insertSource(tx, { status: "approved", validTo: "2026-01-01" });
+      const endedPaused = await insertSource(tx, { status: "paused", validTo: "2026-01-01" });
+      const before = await getSource(tx, ended.id);
+      await expect(
+        updateSourceSettings(tx, ended.id, {
+          name: "Neu",
+          type: "marina",
+          weight: 0.8,
+          changeRate: "high",
+          crawlRules: DEFAULT_CRAWL_RULES,
+        }),
+      ).rejects.toBeInstanceOf(SourceEnded);
+      expect(await pauseSource(tx, ended.id)).toBe(false);
+      expect(await resumeSource(tx, endedPaused.id)).toBe(false);
+      expect(await getSource(tx, ended.id)).toEqual(before);
+      expect((await getSource(tx, endedPaused.id))!.status).toBe("paused");
+    }));
+
   it("a proposed source cannot be paused from the source page", () =>
     withRollback(async (tx) => {
       const proposed = await insertSource(tx, { status: "proposed" });
@@ -256,18 +288,56 @@ describe("uploadPdf", () => {
   it("the same pdf uploaded twice is one document", () =>
     withRollback(async (tx) => {
       const archive = memoryArchive();
-      const source = await insertSource(tx, { type: "pilot_guide", status: "paused" });
+      const source = await insertSource(tx, { type: "pilot_guide", status: "proposed" });
       const bytes = pdfBytes(newId());
       const sha = createHash("sha256").update(bytes).digest("hex");
 
       const first = await uploadPdf(tx, archive, { sourceId: source.id, bytes });
-      expect(first.created).toBe(true);
+      expect(first).toMatchObject({ sourceId: source.id, created: true });
       expect(archive.keys()).toEqual([`uploads/${sha}.pdf`]);
       const [doc] = await tx.select().from(documents).where(eq(documents.id, first.documentId));
       expect(doc).toMatchObject({ sourceId: source.id, url: `upload://${sha}`, urlNormalized: `upload://${sha}`, docType: "pilot_guide" });
 
       const second = await uploadPdf(tx, archive, { sourceId: source.id, bytes });
-      expect(second).toEqual({ documentId: first.documentId, created: false });
+      expect(second).toEqual({ documentId: first.documentId, sourceId: source.id, created: false });
+    }));
+
+  it("the same pdf on a second source returns the document and source it was archived for first", () =>
+    withRollback(async (tx) => {
+      const archive = memoryArchive();
+      const first = await insertSource(tx);
+      const second = await insertSource(tx);
+      const bytes = pdfBytes(newId());
+      const upload = await uploadPdf(tx, archive, { sourceId: first.id, bytes });
+
+      const again = await uploadPdf(tx, archive, { sourceId: second.id, bytes });
+      expect(again).toEqual({ documentId: upload.documentId, sourceId: first.id, created: false });
+      expect(await documentOfOtherSource(tx, upload.documentId, second.id)).toEqual({
+        documentId: upload.documentId,
+        sourceDomain: first.domain,
+      });
+      expect(await documentOfOtherSource(tx, upload.documentId, first.id)).toBeNull();
+      expect(await documentOfOtherSource(tx, newId(), second.id)).toBeNull();
+    }));
+
+  it("only a current approved or proposed source takes uploads; nothing is stored otherwise", () =>
+    withRollback(async (tx) => {
+      const archive = memoryArchive();
+      const refused = [
+        await insertSource(tx, { status: "paused" }),
+        await insertSource(tx, { status: "rejected" }),
+        await insertSource(tx, { status: "approved", validTo: "2026-01-01" }),
+      ];
+      for (const source of refused) {
+        await expect(uploadPdf(tx, archive, { sourceId: source.id, bytes: pdfBytes(newId()) })).rejects.toBeInstanceOf(
+          SourceNotUploadable,
+        );
+      }
+      expect(archive.keys()).toEqual([]);
+      const approved = await insertSource(tx, { status: "approved" });
+      await expect(uploadPdf(tx, archive, { sourceId: approved.id, bytes: pdfBytes(newId()) })).resolves.toMatchObject({
+        created: true,
+      });
     }));
 
   it("a file that is not a pdf is rejected", () =>
