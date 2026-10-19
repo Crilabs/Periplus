@@ -138,6 +138,11 @@ export const gazetteerSchema = z.strictObject({
   noAnchoringKinds: z.array(z.enum(restrictedKindEnum.enumValues)),
 });
 
+/** `config/fact-schema/active.json`: the fact schema version new facts are written with. */
+export const factSchemaConfigSchema = z.strictObject({
+  version: z.string().regex(/^v[1-9][0-9]*$/, "must be v<number>"),
+});
+
 export type QueueConfig = z.infer<typeof queueConfigSchema>;
 export type AreaConfig = z.infer<typeof areaConfigSchema>;
 export type CategoriesConfig = z.infer<typeof categoriesSchema>;
@@ -149,4 +154,5 @@ export type AppConfig = {
   areas: AreaConfig[];
   categories: CategoriesConfig;
   gazetteer: GazetteerConfig;
+  factSchema: z.infer<typeof factSchemaConfigSchema>;
 };

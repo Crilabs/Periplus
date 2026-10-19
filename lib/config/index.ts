@@ -5,6 +5,7 @@ import {
   areaConfigSchema,
   budgetsSchema,
   categoriesSchema,
+  factSchemaConfigSchema,
   gazetteerSchema,
   modelsSchema,
   queuesSchema,
@@ -66,6 +67,7 @@ export function loadConfig(dir = "config"): AppConfig {
     areas: readAreas(dir),
     categories: readJson(dir, "categories", categoriesSchema),
     gazetteer: readJson(dir, "gazetteer", gazetteerSchema),
+    factSchema: readJson(dir, "fact-schema/active", factSchemaConfigSchema),
   };
 }
 

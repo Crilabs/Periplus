@@ -12,6 +12,7 @@ type Overrides = {
   models?: unknown;
   categories?: unknown;
   gazetteer?: unknown;
+  factSchema?: unknown;
   /** File name (without `.json`) to content; replaces all repo area files. */
   areas?: Record<string, unknown>;
 };
@@ -29,6 +30,8 @@ function fixtureDir(overrides: Overrides): string {
   for (const [name, value] of Object.entries(files)) {
     writeFileSync(join(dir, `${name}.json`), JSON.stringify(value));
   }
+  mkdirSync(join(dir, "fact-schema"));
+  writeFileSync(join(dir, "fact-schema", "active.json"), JSON.stringify(overrides.factSchema ?? repoConfig.factSchema));
   mkdirSync(join(dir, "areas"));
   const areas = overrides.areas ?? Object.fromEntries(repoConfig.areas.map((a) => [a.key, a]));
   for (const [name, value] of Object.entries(areas)) {
@@ -70,6 +73,14 @@ describe("loadConfig", () => {
     const dir = fixtureDir({});
     writeFileSync(join(dir, "budgets.json"), "{ not json");
     expect(() => loadConfig(dir)).toThrow(/budgets\.json/);
+  });
+
+  it("loads the active fact schema version", () => {
+    expect(loadConfig("config").factSchema).toEqual({ version: "v1" });
+  });
+
+  it("rejects a malformed fact schema version", () => {
+    expect(() => loadConfig(fixtureDir({ factSchema: { version: "1" } }))).toThrow(/fact-schema\/active\.json/);
   });
 
   it("rejects a missing config file", () => {
