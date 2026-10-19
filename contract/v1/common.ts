@@ -82,7 +82,16 @@ export const textDe = z.strictObject({ de: z.string().min(1) });
 export const highlightCategory = z.enum(["food", "supply", "beach", "nature", "active", "culture", "town", "quiet"]);
 
 /** Version of the contract object (not of the internal profile) and the date it holds from. */
-export const versionFields = { profileVersion: z.number().int().min(1), validFrom: isoDate };
+export const versionFields = {
+  profileVersion: z
+    .number()
+    .int()
+    .min(1)
+    .describe(
+      "Version of the contract object; rises only when the delivered object changes. Compare versions within one area's feed only: an object moved to another area keeps counting there, and the old area's removal may carry a higher version than the new area's live object",
+    ),
+  validFrom: isoDate,
+};
 
 /** GeoJSON position `[lon, lat]`. */
 const position = z.tuple([longitude, latitude]);

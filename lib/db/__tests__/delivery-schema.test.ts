@@ -37,6 +37,7 @@ const deliveryValues = (areaId: string, patch: Partial<typeof deliveries.$inferI
   storagePrefix: `deliveries/${areaId}/1/`,
   objectCounts: { spots: 0 },
   validationReport: { checks: [] },
+  changeSnapshot: sql`pg_current_snapshot()`,
   changeXmin: sql`pg_snapshot_xmin(pg_current_snapshot())`,
   ...patch,
 });
@@ -87,7 +88,16 @@ describe("deliveries and delivered objects", () => {
       const row = await insertDelivery(tx, areaId, { fileHashes: undefined });
       expect(row.fileHashes).toEqual({});
       expect(row.changeXmin).toMatch(/^\d+$/);
+      expect(row.changeSnapshot).toMatch(new RegExp(`^${row.changeXmin}:\\d+:`));
       expect(row.createdAt).toBeInstanceOf(Date);
+    });
+  });
+
+  it("change_xmin must be the xmin of change_snapshot", async () => {
+    await withRollback(async (tx) => {
+      const areaId = await insertArea(tx);
+      const message = await rejectionMessage(tx, (sp) => insertDelivery(sp, areaId, { changeSnapshot: "10:20:", changeXmin: "11" }));
+      expect(message).toMatch(/deliveries_change_xmin_of_snapshot/);
     });
   });
 

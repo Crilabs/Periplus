@@ -1,19 +1,18 @@
-import { and, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, inArray, sql } from "drizzle-orm";
 import type { ChangeEntry, HighlightBody, RegionBody, SpotBody } from "@/contract";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { changeEvents, type ChangeSeverity, type ChangeType } from "@/lib/db/schema";
 import type { DeliveredObjectType } from "@/lib/db/schema/deliveries";
-import { visibleChangeEventsFilter } from "@/lib/domain/change-feed";
 import { canonicalJson } from "@/lib/domain/facts/schema";
 import { SPOT_FIELDS } from "./map-spot";
-import type { RemovedObject, VersionedObject } from "./versioning";
+import { withoutNulls, type RemovedObject, type VersionedObject } from "./versioning";
 import { EXCLUDE_REASON_DE, type ContractExcludeReason } from "./vocab";
 
 /*
  * `changes.json` (spec 08, Teil B "Versionierung und Change-Feed"): the entries come from the contract diff of two
- * packages (ruling M6-P26), the change events of the window between them only raise the severity (rulings M6-P1,
- * M6-P2). Pure apart from `eventSeverities`.
+ * packages (ruling M6-P26), the change events of the snapshot window between them only raise the severity (rulings
+ * M6-D-R3, M6-P2). Pure apart from `eventSeverities`.
  */
 
 const SEVERITY_RANK: Record<ChangeSeverity, number> = { info: 0, notable: 1, safety: 2 };
@@ -27,7 +26,8 @@ const MAX_DEPTH = 3;
 
 /**
  * The changed leaf paths between two contract objects, dot-joined down to depth 3 (`shelter.sectors.N`,
- * `services.taverna`, `limits.maxDraft`); arrays are leaves, the version fields are ignored; sorted.
+ * `services.taverna`, `limits.maxDraft`); arrays are leaves, the version fields are ignored, `null` equals absent (as in
+ * `contentHash`); sorted.
  */
 export function changedFields(before: object, after: object): string[] {
   const out: string[] = [];
@@ -39,7 +39,7 @@ export function changedFields(before: object, after: object): string[] {
       }
       return;
     }
-    if (canonicalJson(a ?? null) !== canonicalJson(b ?? null)) out.push(path.join("."));
+    if (canonicalJson(withoutNulls(a ?? null)) !== canonicalJson(withoutNulls(b ?? null))) out.push(path.join("."));
   };
   walk(before, after, []);
   return out.sort(cmp);
@@ -94,17 +94,19 @@ const OBJECT_TYPES: ChangeType[] = ["place_new", "place_abandoned", "geo_changed
 export type ObjectEvents = { object: ChangeSeverity | null; attributes: Map<string, ChangeSeverity> };
 
 /**
- * The change events of the objects in the package window (ruling M6-P1): `fromXmin <= xact_id < toXmin`, read only
- * through `visibleChangeEventsFilter` (every row below the snapshot's xmin is settled). `fromXmin` null = the first
- * package of the area, which uses no events. Only applied event types count (ruling M6-P2).
+ * The change events of the objects in the package window (ruling M6-D-R3): visible in the package's snapshot and not in
+ * the previous valid package's (`BuildSnapshot.snapshot`, stored as `deliveries.change_snapshot`). So the window holds
+ * exactly the transactions the build saw and its predecessor did not; one in flight at the build belongs to the next
+ * window. `fromSnapshot` null = the first package of the area, which uses no events. Only applied event types count
+ * (ruling M6-P2). The snapshots replace the live readers' xmin guard (`visibleChangeEventsFilter`).
  */
 export async function eventSeverities(
   db: Db,
   geoObjectIds: string[],
-  window: { fromXmin: string | null; toXmin: string },
+  window: { fromSnapshot: string | null; toSnapshot: string },
 ): Promise<Map<string, ObjectEvents>> {
   const out = new Map<string, ObjectEvents>();
-  if (window.fromXmin === null || geoObjectIds.length === 0) return out;
+  if (window.fromSnapshot === null || geoObjectIds.length === 0) return out;
   const rows = await db
     .select({ geoObjectId: changeEvents.geoObjectId, type: changeEvents.type, attribute: changeEvents.attribute, severity: changeEvents.severity })
     .from(changeEvents)
@@ -112,9 +114,8 @@ export async function eventSeverities(
       and(
         inArray(changeEvents.geoObjectId, [...new Set(geoObjectIds)]),
         inArray(changeEvents.type, APPLIED_TYPES),
-        gte(changeEvents.xactId, sql`${window.fromXmin}::xid8`),
-        lt(changeEvents.xactId, sql`${window.toXmin}::xid8`),
-        visibleChangeEventsFilter(),
+        sql`pg_visible_in_snapshot(${changeEvents.xactId}, ${window.toSnapshot}::pg_snapshot)`,
+        sql`not pg_visible_in_snapshot(${changeEvents.xactId}, ${window.fromSnapshot}::pg_snapshot)`,
       ),
     );
   for (const r of rows) {
@@ -231,7 +232,7 @@ const SUMMARY = {
       : "Ausgeschlossen.",
   updated: (fields: string[]) => {
     const labels = [...new Set(fields.map((f) => f.split(".")[0]!))].map((top) => FIELD_LABELS_DE[top as keyof typeof FIELD_LABELS_DE] ?? top);
-    return `Geändert: ${labels.join(", ")}.`;
+    return labels.length === 0 ? "Geändert." : `Geändert: ${labels.join(", ")}.`;
   },
 };
 
@@ -240,8 +241,10 @@ type Contract = { mergedInto?: unknown; exclude?: { excluded?: unknown; reason?:
 /**
  * The entries of `changes.json`: one per `created`, `updated` and removed object (an unchanged one has none). Event:
  * `created`; `removed`; `merged` when `mergedInto` is newly set; `excluded` when `exclude.excluded` turns true; else
- * `updated` with its `fields`. Severity = the highest of the contract severity and the applied events of the window
- * (`removed`, `merged`, `excluded` at least `notable`); `summary.de` from fixed phrases. Sorted by type and id.
+ * `updated` with its `fields` (so clearing `mergedInto` is an `updated`, `info` unless other fields say more).
+ * Severity = the highest of the contract severity and the applied events of the window (`removed`, `merged`,
+ * `excluded` at least `notable`, a spot created already excluded `safety`); `summary.de` from fixed phrases. Sorted
+ * by type and id.
  */
 export function buildChanges(input: {
   objects: VersionedObject[];
@@ -256,7 +259,10 @@ export function buildChanges(input: {
     if (o.status === "same") continue;
     const base = { objectType: o.type, objectId: o.id, profileVersion: o.profileVersion };
     if (o.status === "created") {
-      entries.push({ ...base, event: "created", fields: [], severity: eventSeverity(o.type, [], events(o.geoObjectId)), summary: { de: SUMMARY.created } });
+      // a spot that arrives already excluded is a safety change for an app that knows the place from elsewhere
+      const excluded = (o.body as Contract).exclude?.excluded === true;
+      const severity = maxSeverity(eventSeverity(o.type, [], events(o.geoObjectId)), excluded ? "safety" : "info");
+      entries.push({ ...base, event: "created", fields: [], severity, summary: { de: SUMMARY.created } });
       continue;
     }
     const before = input.previousBodies.get(o.id);
@@ -293,10 +299,13 @@ function sortEntries(entries: ChangeEntry[]): ChangeEntry[] {
 }
 
 /**
- * The changes of several packages as one list (`/changes?since=`, lists in ascending `dataVersion`), per object: first
- * `created` and last not `removed` → `created`; `created` … `removed` → no entry; else the last event. `fields` united
- * (only for `updated`), severity the highest, `profileVersion` of the last entry; `summary` of the last entry, of the
- * first for a `created` result (whose last entry may be an update).
+ * The changes of several packages as one list (`/changes?since=`, lists in ascending `dataVersion`), per object:
+ * - last event `removed`: no entry if the client did not have the object at the start (first entry `created`), else
+ *   `removed`;
+ * - else, any `created` in the history (the client did not have it, or it was removed and created again in between)
+ *   → `created`, with the summary of the last `created`;
+ * - else the last event.
+ * `fields` united (only for `updated`), severity the highest, `profileVersion` of the last entry.
  */
 export function mergeChanges(lists: ChangeEntry[][]): ChangeEntry[] {
   const byObject = new Map<string, ChangeEntry[]>();
@@ -311,9 +320,13 @@ export function mergeChanges(lists: ChangeEntry[][]): ChangeEntry[] {
     const first = history[0]!;
     const last = history[history.length - 1]!;
     const severity = maxSeverity(...history.map((e) => e.severity));
-    if (first.event === "created") {
-      if (last.event === "removed") continue;
-      out.push({ ...last, event: "created", fields: [], severity, summary: first.summary });
+    if (last.event === "removed") {
+      if (first.event !== "created") out.push({ ...last, fields: [], severity });
+      continue;
+    }
+    const lastCreated = history.findLast((e) => e.event === "created");
+    if (lastCreated !== undefined) {
+      out.push({ ...last, event: "created", fields: [], severity, summary: lastCreated.summary });
       continue;
     }
     const fields = last.event === "updated" ? [...new Set(history.flatMap((e) => (e.event === "updated" ? e.fields : [])))].sort(cmp) : [];

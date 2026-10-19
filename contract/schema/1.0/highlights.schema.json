@@ -248,7 +248,8 @@
           "profileVersion": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "Version of the contract object; rises only when the delivered object changes. Compare versions within one area's feed only: an object moved to another area keeps counting there, and the old area's removal may carry a higher version than the new area's live object"
           },
           "validFrom": {
             "type": "string",

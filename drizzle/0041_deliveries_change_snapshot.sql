@@ -1,0 +1,2 @@
+ALTER TABLE "deliveries" ADD COLUMN "change_snapshot" "pg_snapshot" NOT NULL;--> statement-breakpoint
+ALTER TABLE "deliveries" ADD CONSTRAINT "deliveries_change_xmin_of_snapshot" CHECK ("deliveries"."change_xmin" = pg_snapshot_xmin("deliveries"."change_snapshot"));

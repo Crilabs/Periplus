@@ -33,6 +33,9 @@ export type DeliveredObjectType = (typeof deliveredObjectTypeEnum.enumValues)[nu
 /** Postgres `xid8` (transaction id); the driver returns it as a decimal string. */
 const xid8 = customType<{ data: string; driverData: string }>({ dataType: () => "xid8" });
 
+/** Postgres `pg_snapshot` (`xmin:xmax:xip,…`); the driver returns it as text. */
+const pgSnapshot = customType<{ data: string; driverData: string }>({ dataType: () => "pg_snapshot" });
+
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 
 /**
@@ -58,9 +61,11 @@ export const deliveries = pgTable(
     validationReport: jsonb("validation_report").notNull(),
     previousDeliveryId: uuid("previous_delivery_id").references((): AnyPgColumn => deliveries.id),
     /**
-     * Change-feed window end (ruling M6-P1): `pg_snapshot_xmin(pg_current_snapshot())` right after the build took its
-     * area lock. The package covers the change events with `xact_id` below it and at or above its predecessor's.
+     * The snapshot the build read the package from (ruling M6-D-R3, `openBuildSnapshot`): the change events of this
+     * package are those visible in it and not in the previous valid package's snapshot.
      */
+    changeSnapshot: pgSnapshot("change_snapshot").notNull(),
+    /** `pg_snapshot_xmin(change_snapshot)`, kept for display and ordering (ruling M6-P1). */
     changeXmin: xid8("change_xmin").notNull(),
     runId: uuid("run_id").references(() => runs.id),
     triggeredBy: text("triggered_by"),
@@ -69,6 +74,7 @@ export const deliveries = pgTable(
   (t) => [
     check("deliveries_data_version_iff_valid", sql`(${t.status} = 'valid') = (${t.dataVersion} IS NOT NULL)`),
     check("deliveries_data_version_positive", sql`${t.dataVersion} >= 1`),
+    check("deliveries_change_xmin_of_snapshot", sql`${t.changeXmin} = pg_snapshot_xmin(${t.changeSnapshot})`),
     check("deliveries_storage_prefix_iff_stored", sql`(${t.status} = 'unchanged') = (${t.storagePrefix} IS NULL)`),
     uniqueIndex("deliveries_area_data_version_unique")
       .on(t.areaId, t.dataVersion)

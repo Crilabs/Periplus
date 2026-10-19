@@ -7,7 +7,7 @@ import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { changeEvents, geoObjects, type ChangeSeverity, type ChangeType } from "@/lib/db/schema";
-import { withRollback } from "@/test/db";
+import { testDb, withRollback } from "@/test/db";
 import {
   buildChanges,
   changedFields,
@@ -17,6 +17,7 @@ import {
   mergeChanges,
   type ObjectEvents,
 } from "../changes";
+import { openBuildSnapshot, type BuildSnapshot } from "../snapshot";
 import { assignVersions, contentHash, type DeliveredEntry } from "../versioning";
 
 const cfg = loadConfig("config").delivery;
@@ -68,6 +69,16 @@ describe("changedFields", () => {
       "services.taverna",
       "shelter.sectors.N",
     ]);
+  });
+
+  it("null and an absent field are the same: no field, no new version (feed review M-1)", () => {
+    const withNull = { ...BODY, mergedInto: null, limits: { ...BODY.limits, maxLength: null } } as unknown as SpotBody;
+    const withoutBoth = { ...BODY, limits: { ...BODY.limits } } as SpotBody;
+    delete (withoutBoth as { mergedInto?: unknown }).mergedInto;
+    delete (withoutBoth.limits as { maxLength?: unknown }).maxLength;
+    expect(changedFields(withNull, withoutBoth)).toEqual([]);
+    expect(contentHash(withNull)).toBe(contentHash(withoutBoth));
+    expect(changesOf(withNull, withoutBoth)).toEqual([]);
   });
 
   it("a field present on one side only is one leaf", () => {
@@ -163,6 +174,15 @@ describe("buildChanges", () => {
     ]);
   });
 
+  it("a spot created already excluded is safety; clearing mergedInto is an info update (feed review M-6)", () => {
+    const excluded: SpotBody = { ...BODY, exclude: { excluded: true, reason: "military", detail: null } };
+    expect(changesOf(null, excluded)[0]).toMatchObject({ event: "created", severity: "safety" });
+    const merged: SpotBody = { ...BODY, mergedInto: "sp_01J9X4K2M7Q8R5T6V7W8X9Y0Z9" };
+    expect(changesOf(merged, BODY)).toEqual([
+      expect.objectContaining({ event: "updated", fields: ["mergedInto"], severity: "info", summary: { de: "Geändert: Zusammenlegung." } }),
+    ]);
+  });
+
   it("entries are sorted by object type and id", () => {
     const hl = "hl_01J9X4KQ3P2N1M0Z9K8J7H6G5F";
     const spots = ["sp_01J9X4K2M7Q8R5T6V7W8X9Y0Z5", "sp_01J9X4K2M7Q8R5T6V7W8X9Y0Z1"];
@@ -217,6 +237,21 @@ describe("mergeChanges", () => {
     ]);
   });
 
+  it("removed then created again is created for a client that had the object; removed at the end stays removed (feed review M-2)", () => {
+    expect(
+      mergeChanges([
+        [e(A, "updated", 2, { fields: ["holding"] })],
+        [e(A, "removed", 3, { severity: "notable" })],
+        [e(A, "created", 4, { summary: { de: "Neu im Paket." } })],
+        [e(A, "updated", 5, { fields: ["depth.min"], summary: { de: "Geändert: Tiefe." } })],
+      ]),
+    ).toEqual([e(A, "created", 5, { severity: "notable", summary: { de: "Neu im Paket." } })]);
+    expect(mergeChanges([[e(A, "removed", 3)], [e(A, "created", 4)], [e(A, "removed", 5, { severity: "notable" })]])).toEqual([
+      e(A, "removed", 5, { severity: "notable" }),
+    ]);
+    expect(mergeChanges([[e(A, "created", 1)], [e(A, "removed", 2)], [e(A, "created", 3)], [e(A, "removed", 4)]])).toEqual([]);
+  });
+
   it("the last event wins otherwise, with the highest severity and the last version", () => {
     expect(mergeChanges([[e(A, "updated", 2, { fields: ["exclude"], severity: "safety" })], [e(A, "excluded", 3, { severity: "notable" })]])).toEqual([
       e(A, "excluded", 3, { severity: "safety" }),
@@ -235,47 +270,120 @@ describe("eventSeverities", () => {
       .returning({ id: geoObjects.id });
     return row!.id;
   }
-  /** An event of a long-settled transaction `xid` (far below every snapshot's xmin), or of this one. */
-  const event = (geoObjectId: string, type: ChangeType, attribute: string | null, severity: ChangeSeverity, xid?: number) => ({
+  /** An event written by transaction `xid` (or by this one). */
+  const event = (geoObjectId: string, type: ChangeType, attribute: string | null, severity: ChangeSeverity, xid?: bigint) => ({
     geoObjectId,
     type,
     attribute,
     severity,
     ...(xid === undefined ? {} : { xactId: sql`${String(xid)}::xid8` as unknown as string }),
   });
+  /** A transaction id taken from the database, so no test depends on how far the xid counter is. */
+  async function baseXid(tx: Db): Promise<bigint> {
+    const { rows } = await tx.execute<{ xmax: string }>(sql`select pg_snapshot_xmax(pg_current_snapshot())::text as xmax`);
+    return BigInt(rows[0]!.xmax);
+  }
+  const snap = (xmin: bigint, xmax: bigint, xip: bigint[] = []) => `${xmin}:${xmax}:${xip.join(",")}`;
 
-  it("reads the window fromXmin ≤ xact_id < toXmin, applied event types only, the highest severity per attribute", async () => {
+  it("reads the events visible in this snapshot and not in the previous one, applied types only, the highest severity per attribute", async () => {
     await withRollback(async (tx) => {
       const a = await insertObject(tx);
       const b = await insertObject(tx);
+      const x = await baseXid(tx);
       await tx.insert(changeEvents).values([
-        event(a, "changed", "depth.min", "notable", 1000),
-        event(a, "changed", "depth.min", "safety", 1001),
-        event(a, "new_attribute", "holding", "info", 1002),
-        event(a, "geo_changed", "geo.name", "info", 1003),
-        event(a, "place_new", null, "notable", 1004),
+        event(a, "changed", "depth.min", "notable", x + 10n),
+        event(a, "changed", "depth.min", "safety", x + 15n),
+        event(a, "new_attribute", "holding", "info", x + 16n),
+        event(a, "geo_changed", "geo.name", "info", x + 17n),
+        event(a, "place_new", null, "notable", x + 19n),
         // uncertain and expired keep the delivered value (ruling M6-P2)
-        event(a, "uncertain", "hazards", "safety", 1005),
-        event(a, "expired", "limits", "safety", 1006),
-        // outside the window
-        event(a, "changed", "exclude", "safety", 999),
-        event(a, "changed", "exclude", "safety", 1100),
-        event(b, "changed", "hazards", "safety", 1050),
+        event(a, "uncertain", "hazards", "safety", x + 18n),
+        event(a, "expired", "limits", "safety", x + 18n),
+        // seen by the previous package, in flight at this one, after this one
+        event(a, "changed", "exclude", "safety", x + 9n),
+        event(a, "changed", "exclude", "safety", x + 21n),
+        event(a, "changed", "exclude", "safety", x + 25n),
+        // committed after the previous package although above this one's xmin: visible here
+        event(a, "changed", "seabed", "notable", x + 22n),
+        event(b, "changed", "hazards", "safety", x + 15n),
       ]);
-      const out = await eventSeverities(tx, [a], { fromXmin: "1000", toXmin: "1100" });
+      const out = await eventSeverities(tx, [a], { fromSnapshot: snap(x + 10n, x + 10n), toSnapshot: snap(x + 20n, x + 25n, [x + 21n]) });
       expect([...out.keys()]).toEqual([a]);
       expect(out.get(a)!.object).toBe("notable");
-      expect(Object.fromEntries(out.get(a)!.attributes)).toEqual({ "depth.min": "safety", holding: "info" });
+      expect(Object.fromEntries(out.get(a)!.attributes)).toEqual({ "depth.min": "safety", holding: "info", seabed: "notable" });
     });
   });
 
-  it("an event of a transaction still in flight is not counted, the first package uses no events (ruling M6-P1)", async () => {
+  it("the first package uses no events", async () => {
     await withRollback(async (tx) => {
       const a = await insertObject(tx);
-      await tx.insert(changeEvents).values([event(a, "changed", "hazards", "safety"), event(a, "changed", "holding", "info", 1000)]);
-      const out = await eventSeverities(tx, [a], { fromXmin: "1", toXmin: "18446744073709551615" });
-      expect(Object.fromEntries(out.get(a)!.attributes)).toEqual({ holding: "info" });
-      expect((await eventSeverities(tx, [a], { fromXmin: null, toXmin: "18446744073709551615" })).size).toBe(0);
+      const x = await baseXid(tx);
+      await tx.insert(changeEvents).values([event(a, "changed", "holding", "info", x - 1n)]);
+      expect((await eventSeverities(tx, [a], { fromSnapshot: null, toSnapshot: snap(x, x) })).size).toBe(0);
+    });
+  });
+
+  it("a transaction above the build's xmin that committed before the build lands in that package's window (ruling M6-D-R3)", async () => {
+    const db = testDb();
+    const xid = async (tx: Db) => BigInt((await tx.execute<{ x: string }>(sql`select pg_current_xact_id()::text as x`)).rows[0]!.x);
+    const { snapshot: previous } = await openBuildSnapshot(db, async () => null);
+
+    // A long transaction A holds the xmin down; B starts after it and commits before the build. Neither writes a row.
+    let releaseA!: () => void;
+    const held = new Promise<void>((resolve) => (releaseA = resolve));
+    let startedA!: (x: bigint) => void;
+    const xidA = new Promise<bigint>((resolve) => (startedA = resolve));
+    const a = db.transaction(async (tx) => {
+      startedA(await xid(tx));
+      await held;
+    });
+    let xidB: bigint;
+    let build: BuildSnapshot;
+    try {
+      await xidA;
+      xidB = await db.transaction(xid);
+      build = (await openBuildSnapshot(db, async () => null)).snapshot;
+    } finally {
+      releaseA();
+      await a;
+    }
+    const { snapshot: next } = await openBuildSnapshot(db, async () => null);
+    // The race the xmin window got wrong: B is at or above the build's xmin, yet the build sees it.
+    expect(BigInt(build.xmin)).toBeLessThanOrEqual(await xidA);
+    expect(xidB).toBeGreaterThanOrEqual(BigInt(build.xmin));
+
+    await withRollback(async (tx) => {
+      const geo = await insertObject(tx);
+      await tx.insert(changeEvents).values([event(geo, "changed", "hazards", "safety", xidB), event(geo, "changed", "holding", "notable", await xidA)]);
+      const windowN = await eventSeverities(tx, [geo], { fromSnapshot: previous.snapshot, toSnapshot: build.snapshot });
+      expect(Object.fromEntries(windowN.get(geo)!.attributes)).toEqual({ hazards: "safety" });
+      const windowNext = await eventSeverities(tx, [geo], { fromSnapshot: build.snapshot, toSnapshot: next.snapshot });
+      expect(Object.fromEntries(windowNext.get(geo)!.attributes)).toEqual({ holding: "notable" });
+    });
+  });
+});
+
+describe("openBuildSnapshot", () => {
+  it("reads in one REPEATABLE READ read-only transaction whose snapshot it returns", async () => {
+    const db = testDb();
+    const { snapshot, result } = await openBuildSnapshot(db, async (tx, s) => {
+      // a transaction committing meanwhile does not move the snapshot
+      await db.transaction(async (other) => {
+        await other.execute(sql`select pg_current_xact_id()`);
+      });
+      const { rows } = await tx.execute<{ iso: string; ro: string; snap: string; xmin: string }>(
+        sql`select current_setting('transaction_isolation') as iso, current_setting('transaction_read_only') as ro,
+                   pg_current_snapshot()::text as snap, pg_snapshot_xmin(pg_current_snapshot())::text as xmin`,
+      );
+      return { ...rows[0]!, passed: s };
+    });
+    expect(result).toEqual({ iso: "repeatable read", ro: "on", snap: snapshot.snapshot, xmin: snapshot.xmin, passed: snapshot });
+    expect(snapshot.snapshot).toMatch(/^\d+:\d+:[\d,]*$/);
+  });
+
+  it("refuses a transaction handle", async () => {
+    await withRollback(async (tx) => {
+      await expect(openBuildSnapshot(tx, async () => null)).rejects.toThrow(/pool handle/);
     });
   });
 });

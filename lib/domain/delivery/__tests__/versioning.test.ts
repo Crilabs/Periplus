@@ -108,6 +108,7 @@ async function insertDelivery(tx: Db, areaId: string, dataVersion: number): Prom
       storagePrefix: `deliveries/${areaId}/${dataVersion}/`,
       objectCounts: {},
       validationReport: {},
+      changeSnapshot: sql`pg_current_snapshot()`,
       changeXmin: sql`pg_snapshot_xmin(pg_current_snapshot())`,
     })
     .returning({ id: deliveries.id });

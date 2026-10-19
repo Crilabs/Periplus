@@ -43,9 +43,28 @@ export type VersionedObject = ObjectDraft & {
 
 export type RemovedObject = { type: DeliveredObjectType; id: string; geoObjectId: string | null; profileVersion: number };
 
-/** sha256 hex of the canonical JSON of a contract body (the version fields are never part of it). */
+/**
+ * A contract value with every object key whose value is `null` or absent dropped (recursively, array elements kept):
+ * the contract does not tell `null` from an absent field, so neither may the hash or the diff.
+ */
+export function withoutNulls(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(withoutNulls);
+  if (v !== null && typeof v === "object" && !(v instanceof Date)) {
+    return Object.fromEntries(
+      Object.entries(v as Record<string, unknown>)
+        .filter(([, x]) => x !== null && x !== undefined)
+        .map(([k, x]) => [k, withoutNulls(x)]),
+    );
+  }
+  return v;
+}
+
+/**
+ * sha256 hex of the canonical JSON of a contract body (the version fields are never part of it), `null` and absent
+ * fields alike.
+ */
 export function contentHash(body: object): string {
-  return createHash("sha256").update(canonicalJson(body), "utf8").digest("hex");
+  return createHash("sha256").update(canonicalJson(withoutNulls(body)), "utf8").digest("hex");
 }
 
 type LatestRow = {
