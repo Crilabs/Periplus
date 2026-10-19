@@ -108,7 +108,7 @@ describe("loadConfig", () => {
   });
 
   it("loads the active fact schema version", () => {
-    expect(loadConfig("config").factSchema).toEqual({ version: "v1" });
+    expect(loadConfig("config").factSchema).toEqual({ version: "v2" });
   });
 
   it("rejects a malformed fact schema version", () => {

@@ -37,7 +37,7 @@ async function rowsOf(tx: Db, geoObjectId: string) {
 }
 
 describe("recordComputation", () => {
-  it("first call writes the computation and its facts with fact_schema_version v1", async () => {
+  it("first call writes the computation and its facts with the active fact_schema_version", async () => {
     await withRollback(async (tx) => {
       const id = await insertBay(tx);
       const r = await recordComputation(tx, base(id));
@@ -47,8 +47,8 @@ describe("recordComputation", () => {
       expect(comps[0]).toMatchObject({ id: r.id, kind: "shelter", rulesVersion: "geometry-1", outputs: { rays: [1, 2, 3] } });
       expect(comps[0]!.inputsHash).toMatch(/^[0-9a-f]{64}$/);
       expect(fs.map((f) => [f.attribute, f.value, f.confidence, f.factSchemaVersion, f.geoObjectId, f.observedAt]).sort()).toEqual([
-        ["shelter.N", 0.8, 0.5, "v1", id, "2026-10-19"],
-        ["swell_protection", 0.3, 0.4, "v1", id, "2026-10-19"],
+        ["shelter.N", 0.8, 0.5, "v2", id, "2026-10-19"],
+        ["swell_protection", 0.3, 0.4, "v2", id, "2026-10-19"],
       ]);
       expect(fs.every((f) => f.computationId === r.id && f.mentionId === null && f.reviewDecisionId === null)).toBe(true);
     });

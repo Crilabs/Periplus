@@ -1,5 +1,15 @@
 import { getConfig } from "@/lib/config";
+import { getFactSchema } from "@/lib/domain/facts/schema";
+import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { requireAdmin } from "@/lib/security/require-admin";
+
+const LEVEL_LABELS: Record<FactLevel, string> = {
+  place: "Ort",
+  area: "Revier",
+  island: "Insel",
+  cape_strait: "Kap/Enge",
+  poi: "POI",
+};
 
 export default async function Page() {
   await requireAdmin();
@@ -35,6 +45,15 @@ export default async function Page() {
       "Konfidenz",
       `Fetch ${geometry.fetch.confidence}, Schutz ${geometry.shelter.confidence}, Öffnung ${geometry.opening.confidence}, Schwell ${geometry.swell.confidence}`,
     ],
+  ];
+  const factSchemaLevels = getFactSchema(factSchema.version).levels;
+  const factSchemaRows: [string, string][] = [
+    ["Aktive Version", factSchema.version],
+    ...(Object.keys(LEVEL_LABELS) as FactLevel[]).map((level): [string, string] => {
+      const defs = factSchemaLevels[level];
+      const fromText = defs.filter((d) => d.origins.includes("text")).length;
+      return [LEVEL_LABELS[level], `${defs.length} Attribute, davon ${fromText} aus Texten`];
+    }),
   ];
   const thresholds: [string, string][] = [
     ["Puffer Kachelbox", `${gazetteer.bboxBufferKm} km`],
@@ -106,6 +125,18 @@ export default async function Page() {
       <table className="text-left">
         <tbody>
           {geometryRows.map(([label, value]) => (
+            <tr key={label} className="border-b">
+              <th className="py-1 pr-4 font-normal">{label}</th>
+              <td className="py-1 pr-4">{value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <h2 className="font-semibold">Fact-Schema</h2>
+      <table className="text-left">
+        <tbody>
+          {factSchemaRows.map(([label, value]) => (
             <tr key={label} className="border-b">
               <th className="py-1 pr-4 font-normal">{label}</th>
               <td className="py-1 pr-4">{value}</td>

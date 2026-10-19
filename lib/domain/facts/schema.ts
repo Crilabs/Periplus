@@ -1,9 +1,13 @@
-import type { z } from "zod";
+import { z } from "zod";
 import { factSchemaV1 } from "@/config/fact-schema/v1";
+import { factSchemaV2 } from "@/config/fact-schema/v2";
 import { getConfig } from "@/lib/config";
-import type { AttributeDef, FactSchema } from "./schema-types";
+import type { AttributeDef, FactLevel, FactSchema } from "./schema-types";
 
-const SCHEMAS: Record<string, FactSchema> = { [factSchemaV1.version]: factSchemaV1 };
+const SCHEMAS: Record<string, FactSchema> = {
+  [factSchemaV1.version]: factSchemaV1,
+  [factSchemaV2.version]: factSchemaV2,
+};
 
 export class UnknownAttribute extends Error {
   constructor(
@@ -48,6 +52,37 @@ export function validateFactValue(key: string, value: unknown, version?: string)
   const parsed = attributeDef(key, version).value.safeParse(value);
   if (!parsed.success) throw new InvalidFactValue(key, parsed.error.issues);
   return parsed.data;
+}
+
+export type TextFactResult =
+  | { ok: true; value: unknown }
+  | { ok: false; reason: "unknown_attribute" | "not_text" | "invalid_value" };
+
+/**
+ * Checks a value a model extracted from a text: the attribute must exist on `level` and allow origin `text`;
+ * `raw` is parsed against `textValue` (or `value`), mapped by `fromText` and parsed against `value`.
+ */
+export function validateTextFact(level: FactLevel, attribute: string, raw: unknown, version?: string): TextFactResult {
+  const def = getFactSchema(version).levels[level].find((d) => d.key === attribute);
+  if (!def) return { ok: false, reason: "unknown_attribute" };
+  if (!def.origins.includes("text")) return { ok: false, reason: "not_text" };
+  const text = (def.textValue ?? def.value).safeParse(raw);
+  if (!text.success) return { ok: false, reason: "invalid_value" };
+  const stored = def.value.safeParse(def.fromText ? def.fromText(text.data) : text.data);
+  if (!stored.success) return { ok: false, reason: "invalid_value" };
+  return { ok: true, value: stored.data };
+}
+
+/** The text attributes of `level`, one line each: `key — description — value format (JSON Schema)`. */
+export function attributesForPrompt(level: FactLevel, version?: string): string {
+  return getFactSchema(version)
+    .levels[level].filter((d) => d.origins.includes("text"))
+    .map((d) => {
+      const format: Record<string, unknown> = z.toJSONSchema(d.textValue ?? d.value, { unrepresentable: "any" });
+      delete format.$schema;
+      return `${d.key} — ${d.description} — ${JSON.stringify(format)}`;
+    })
+    .join("\n");
 }
 
 /** JSON with object keys sorted at every depth and no whitespace: equal values give equal strings. */

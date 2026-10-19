@@ -27,6 +27,13 @@ export type AttributeDef = {
   rule: string;
   origins: FactOrigin[];
   description: string;
+  /**
+   * What a model may deliver for this attribute from a text (origin `text` only); defaults to `value`.
+   * Values stay language-neutral: enums, numbers, proper names.
+   */
+  textValue?: z.ZodType;
+  /** Maps a parsed `textValue` to the stored value (e.g. shelter words to the 0–1 scale); identity if absent. */
+  fromText?: (v: unknown) => unknown;
 };
 
 export type FactSchema = { version: string; levels: Record<FactLevel, AttributeDef[]> };
