@@ -58,6 +58,21 @@ export type StoreResult = { outcome: StoreOutcome; versionId: string; chunks: { 
 const SHINGLE_BATCH = 5000;
 const CHUNK_BATCH = 500;
 const VERSIONS_UNIQUE = "document_versions_document_id_content_hash_unique";
+/** Attempts of a new version whose current version another store replaced meanwhile. */
+const MAX_STORE_ATTEMPTS = 3;
+
+/** The document's current version changed between the diff and the write: diff and carry again. */
+class CurrentVersionMoved extends Error {
+  constructor(documentId: string) {
+    super(`current version of document ${documentId} changed during the store`);
+    this.name = "CurrentVersionMoved";
+  }
+}
+
+function hasCause(error: unknown, match: (e: unknown) => boolean): boolean {
+  for (let e = error as { cause?: unknown } | undefined; e; e = e.cause as typeof e) if (match(e)) return true;
+  return false;
+}
 
 function isUniqueViolation(error: unknown, constraint: string): boolean {
   for (let e = error as { code?: string; constraint?: string; cause?: unknown } | undefined; e; e = e.cause as typeof e) {
@@ -108,9 +123,14 @@ async function versionWithHash(db: Db, documentId: string, hash: string): Promis
  * only marks the document checked (`unchanged`), one equal to an older version makes that one current again
  * (`reverted`). A new content is written to S3 first (`raw`, `md`, and a unified `diff` against the current
  * version's Markdown, none for a first version), then in one transaction the version, its chunks (unchanged ones
- * carried over with the origin's embedding), the shingles of the chunks not carried, and the document. Losing a
- * race on `(document_id, content_hash)` reads the winner and reports it like a known content; S3 objects of the
- * lost attempt stay behind as harmless orphans.
+ * carried over with the origin's embedding), the shingles of the chunks not carried, and the document. The
+ * transaction locks the document row and checks that the version diffed against is still current; when another
+ * store replaced it meanwhile, the whole store runs again against the new one (at most `MAX_STORE_ATTEMPTS`).
+ * Losing a race on `(document_id, content_hash)` reads the winner and reports it like a known content; S3 objects of
+ * a lost attempt stay behind as harmless orphans.
+ *
+ * A carried chunk takes the origin's embedding as it is at this moment: an origin not embedded yet leaves the
+ * carried chunk without one (the embedding stage fills it like any other).
  */
 export async function storeFetched(
   db: Db,
@@ -121,6 +141,24 @@ export async function storeFetched(
 ): Promise<StoreResult> {
   const md = normalizeMarkdown(content.markdown);
   const hash = contentHash(md);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await storeOnce(db, archive, documentId, content, md, hash, cfg);
+    } catch (error) {
+      if (!hasCause(error, (e) => e instanceof CurrentVersionMoved) || attempt >= MAX_STORE_ATTEMPTS) throw error;
+    }
+  }
+}
+
+async function storeOnce(
+  db: Db,
+  archive: Archive,
+  documentId: string,
+  content: FetchedContent,
+  md: string,
+  hash: string,
+  cfg: FetchConfig["chunk"],
+): Promise<StoreResult> {
   const known = await versionWithHash(db, documentId, hash);
   if (known) return settleKnown(db, documentId, known, content);
 
@@ -149,6 +187,12 @@ export async function storeFetched(
   const observed = observedFrom(content.publishedAt, content.fetchedAt);
   try {
     return await db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select({ currentVersionId: documents.currentVersionId })
+        .from(documents)
+        .where(eq(documents.id, documentId))
+        .for("update");
+      if ((locked?.currentVersionId ?? null) !== (doc.currentVersionId ?? null)) throw new CurrentVersionMoved(documentId);
       const versionId = newId();
       await tx.insert(documentVersions).values({
         id: versionId,

@@ -163,7 +163,7 @@ export const chunks = pgTable(
       .references(() => documentVersions.id),
     ordinal: integer("ordinal").notNull(),
     text: text("text").notNull(),
-    /** Lower case, without accents; search key (trigram index). */
+    /** The chunker's `textNormalized`: case and accents kept (ruling M3-C-R4), folded at comparison time; search key (trigram index). */
     textNormalized: text("text_normalized").notNull(),
     textHash: text("text_hash").notNull(),
     heading: text("heading"),

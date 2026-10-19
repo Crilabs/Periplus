@@ -182,6 +182,40 @@ describe("storeFetched", () => {
     });
   });
 
+  it("a store whose current version is replaced meanwhile diffs and carries against the new current version", async () => {
+    const base = memoryArchive();
+    let interleave: (() => Promise<unknown>) | null = null;
+    // The first diff write of the slow store lets another store of different content finish in between.
+    const archive = {
+      ...base,
+      async put(key: string, body: Uint8Array | string, contentType: string) {
+        await base.put(key, body, contentType);
+        if (key.endsWith(".diff") && interleave) {
+          const run = interleave;
+          interleave = null;
+          await run();
+        }
+      },
+    };
+    await withRollback(async (tx) => {
+      const { documentId } = await newDocument(tx);
+      await storeFetched(tx, archive, documentId, content(page(), at(0)), cfg);
+      let middle: Awaited<ReturnType<typeof storeFetched>> | undefined;
+      interleave = async () => (middle = await storeFetched(tx, archive, documentId, content(page(true), at(5)), cfg));
+      const last = await storeFetched(tx, archive, documentId, content(`${page(true)}\n\nA closing note.`, at(10)), cfg);
+
+      const versions = await versionsOf(tx, documentId);
+      expect(versions.map((v) => v.id)).toEqual([versions[0]!.id, middle!.versionId, last.versionId]);
+      const diff = new TextDecoder().decode((await archive.get(versions[2]!.diffKey!))!);
+      expect(diff).toContain(versions[1]!.mdKey);
+      expect(diff).not.toContain("-The east anchorage");
+      // The section only the middle version has is carried from it.
+      const changedIn = async (versionId: string) => (await chunksOf(tx, versionId)).find((c) => c.text.includes("changed east"))!;
+      expect((await changedIn(last.versionId)).carriedFromChunkId).toBe((await changedIn(middle!.versionId)).id);
+      expect((await documentRow(tx, documentId)).currentVersionId).toBe(last.versionId);
+    });
+  });
+
   it("A → B → A reports reverted and points back to version A", async () => {
     const archive = memoryArchive();
     await withRollback(async (tx) => {

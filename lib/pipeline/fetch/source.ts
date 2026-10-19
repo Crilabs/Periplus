@@ -20,9 +20,9 @@ export type PreparedCrawl = { status: "ready" | "paused" | "not_approved"; start
 
 /**
  * Job `fetch.source`: prepares one approved source for the run. robots.txt is read anew for every host of the start
- * URLs (once per run, `robotsForRun`); an explicit ban on any of them pauses the source with `ROBOTS_BAN_REASON`.
- * Otherwise every start URL that robots.txt and the crawl rules allow is queued in the frontier at depth 0 (a known
- * row is queued again). A source without start URLs starts at `https://<domain>/`. `robots` summarises the first host.
+ * URLs (once per run, `robotsForRun`). A host with an explicit ban contributes no start URL; when every host bans,
+ * the source is paused with `ROBOTS_BAN_REASON` (only if it is still approved). Otherwise every start URL that
+ * robots.txt and the crawl rules allow is queued in the frontier at depth 0 (a known row is queued again). A source without start URLs starts at `https://<domain>/`. `robots` summarises the first host.
  */
 export async function prepareSourceCrawl(
   db: Db,
@@ -42,16 +42,19 @@ export async function prepareSourceCrawl(
   const first = policies.get(origins[0]!)!;
   const summary = robotsSummary(first, startUrls.filter((u) => new URL(u).origin === first.origin));
 
-  if ([...policies.values()].some((p) => explicitBan(p))) {
-    await setSourceStatus(db, sourceId, "paused", ROBOTS_BAN_REASON);
+  const banned = new Set(origins.filter((origin) => explicitBan(policies.get(origin)!)));
+  if (banned.size === origins.length) {
+    // Only a source still approved: an admin's decision made meanwhile stands.
+    await setSourceStatus(db, sourceId, "paused", ROBOTS_BAN_REASON, { from: "approved" });
     return { status: "paused", startUrls: 0, robots: summary };
   }
 
   const { trackingParams } = getConfig().fetch;
   const rows = startUrls.flatMap((url) => {
     const normalized = normalizeUrl(url, trackingParams);
-    const policy = policies.get(new URL(url).origin)!;
-    if (!normalized || !policy.isAllowed(normalized) || !urlAllowed(normalized, rules, source.domain).ok) return [];
+    const origin = new URL(url).origin;
+    const policy = policies.get(origin)!;
+    if (!normalized || banned.has(origin) || !policy.isAllowed(normalized) || !urlAllowed(normalized, rules, source.domain).ok) return [];
     return [{ sourceId, url: normalized, urlNormalized: normalized, depth: 0, status: "queued" as const }];
   });
   const unique = [...new Map(rows.map((r) => [r.urlNormalized, r])).values()];

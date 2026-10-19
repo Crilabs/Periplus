@@ -525,6 +525,19 @@ describe("worker", () => {
     expect((await getRun(db, id))!.stages[0]).toMatchObject({ total: 2, done: 2, failed: 0 });
   }, 30_000);
 
+  it("enqueueing in a transaction counts only the jobs pg-boss newly inserted", async () => {
+    const { id } = await createRun(db, { kind: "system", scope: scope(), stages: ["ping"], params: {}, triggeredBy: "test" });
+    await beginStage(db, id, "ping", 3);
+    expect(await enqueueStageJobs(boss, "system.ping", id, "ping", [{ key: "a" }, { key: "b" }])).toBe(2);
+    // One known job and one new one, in the caller's transaction (as fetch.url extends its stage by the count).
+    const added = await db.transaction((tx) => enqueueStageJobs(boss, "system.ping", id, "ping", [{ key: "b" }, { key: "c" }], tx));
+    expect(added).toBe(1);
+
+    await waitFor(async () => (await getRun(db, id))!.status === "finished", 20_000);
+    expect(await boss.findJobs("system.ping", { data: { runId: id } })).toHaveLength(3);
+    expect((await getRun(db, id))!.stages[0]).toMatchObject({ total: 3, done: 3, failed: 0 });
+  }, 30_000);
+
   it("a dead-letter job whose review task creation throws is logged and ends failed in the jobs view", async () => {
     const key = `dl-boom-${newId()}`;
     probe.failReviewFor.add(key);

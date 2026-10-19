@@ -7,8 +7,11 @@ export type SiteResponse = { status?: number; body: string | Uint8Array; headers
 export type SiteServer = {
   /** `http://127.0.0.1:<port>` */
   origin: string;
-  /** Sets the answer for `path` (without query; the query is ignored); `null` removes it (404). */
-  set(path: string, res: SiteResponse | null): void;
+  /**
+   * Sets the answer for `path` (without query; the query is ignored); `null` removes it (404). With `host` (name
+   * without port) the answer is for that host only and wins over one set without host.
+   */
+  set(path: string, res: SiteResponse | null, host?: string): void;
   /** Every request in order: path with query, lower-cased headers. */
   requests: Array<{ path: string; headers: Record<string, string> }>;
   close(): Promise<void>;
@@ -32,7 +35,9 @@ export async function startSiteServer(): Promise<SiteServer> {
     const path = req.url ?? "/";
     const headers = flatHeaders(req);
     requests.push({ path, headers });
-    const page = pages.get(path.split("?")[0]!);
+    const bare = path.split("?")[0]!;
+    const hostname = (headers.host ?? "").replace(/:\d+$/, "").toLowerCase();
+    const page = pages.get(`//${hostname}${bare}`) ?? pages.get(bare);
     if (!page) {
       res.writeHead(404, { "content-type": "text/plain" }).end("not found");
       return;
@@ -54,9 +59,10 @@ export async function startSiteServer(): Promise<SiteServer> {
 
   return {
     origin: `http://127.0.0.1:${port}`,
-    set(path, res) {
-      if (res) pages.set(path, res);
-      else pages.delete(path);
+    set(path, res, host) {
+      const key = host ? `//${host.toLowerCase()}${path}` : path;
+      if (res) pages.set(key, res);
+      else pages.delete(key);
     },
     requests,
     close: () =>

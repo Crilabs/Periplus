@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { chunkMarkdown } from "@/lib/domain/documents/chunker";
 import { detectLanguage } from "@/lib/domain/documents/language";
 import { extractLinks } from "@/lib/domain/documents/links";
+import { normalizeUrl } from "@/lib/domain/sources/urls";
 import { extractPublishedAt, observedFrom } from "@/lib/domain/documents/metadata";
 import { contentHash, normalizeMarkdown, normalizeText } from "@/lib/domain/documents/normalize";
 import { shingleHashes, shingleWords } from "@/lib/domain/documents/shingles";
@@ -136,6 +137,20 @@ describe("extractLinks", () => {
   it("resolves against <base href>", () => {
     const page = `<html><head><base href="https://x.gr/docs/"></head><body><a href="c">c</a></body></html>`;
     expect(extractLinks(page, "https://x.gr/blog/a", tp)).toEqual(["https://x.gr/docs/c"]);
+  });
+  it("yields links in the frontier's form: normalizeUrl with the same tracking parameters leaves each unchanged", () => {
+    const hrefs = [
+      "HTTP://X.GR.:80/a/../b?z=1&a=%20x&utm_source=n&a=b#top",
+      "https://xn--bcher-kva.de/ä ö?q=\"<>\"&ü=1",
+      "/c?a+b=1&a%20b=0&&fbclid=1",
+      "https://user:pw@Y.example/%7Euser/?",
+      "d?b",
+    ];
+    const page = hrefs.map((h) => `<a href='${h}'>x</a>`).join("");
+    const links = extractLinks(page, "https://x.gr/blog/a", tp);
+    expect(links).toHaveLength(hrefs.length);
+    for (const link of links) expect(normalizeUrl(link, tp)).toBe(link);
+    expect(links[0]).toBe("http://x.gr/b?a=%20x&a=b&z=1");
   });
 });
 

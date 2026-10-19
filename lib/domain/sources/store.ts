@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { sources, type ChangeRate, type DocType, type SourceOrigin, type SourceStatus } from "@/lib/db/schema";
 import { crawlRulesSchema, type CrawlRules } from "./crawl-rules";
@@ -39,12 +39,23 @@ export async function getSource(db: Db, id: string): Promise<Source | null> {
   return { ...row, crawlRules: crawlRulesSchema.parse(row.crawlRules) };
 }
 
-/** Sets status and reason of the source `id` (the history trigger records the change); throws for an unknown id. */
-export async function setSourceStatus(db: Db, id: string, status: SourceStatus, reason: string | null): Promise<void> {
+/**
+ * Sets status and reason of the source `id` (the history trigger records the change); throws for an unknown id.
+ * With `from`, only a source still in that status changes; returns whether it changed.
+ */
+export async function setSourceStatus(
+  db: Db,
+  id: string,
+  status: SourceStatus,
+  reason: string | null,
+  opts: { from?: SourceStatus } = {},
+): Promise<boolean> {
   const updated = await db
     .update(sources)
     .set({ status, statusReason: reason })
-    .where(eq(sources.id, id))
+    .where(opts.from ? and(eq(sources.id, id), eq(sources.status, opts.from)) : eq(sources.id, id))
     .returning({ id: sources.id });
-  if (updated.length === 0) throw new Error(`source ${id} not found`);
+  if (updated.length > 0) return true;
+  if (opts.from) return false;
+  throw new Error(`source ${id} not found`);
 }

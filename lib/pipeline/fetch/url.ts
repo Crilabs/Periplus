@@ -8,7 +8,7 @@ import type { Archive } from "@/lib/adapters/s3";
 import type { ModelClient } from "@/lib/ai/types";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { crawlFrontier, documents, outlinks, sources, type FrontierStatus } from "@/lib/db/schema";
+import { crawlFrontier, documents, documentVersions, outlinks, sources, type FrontierStatus } from "@/lib/db/schema";
 import { detectLanguage } from "@/lib/domain/documents/language";
 import { extractLinks } from "@/lib/domain/documents/links";
 import { extractPublishedAt } from "@/lib/domain/documents/metadata";
@@ -68,8 +68,10 @@ function stringList(value: unknown): string[] {
 
 /**
  * Plan of the stage `fetch.url`: for every approved source of `params.sourceIds`, its frontier rows except `skipped`
- * by depth and discovery, at most `params.maxPages ?? rules.maxPages`; the planned rows are stamped with the run
- * (ruling M3-P2: the per-run cap counts them). Plus one job per uploaded document of `params.documentIds`.
+ * (final verdicts only, ruling M3-C-R5) by depth and discovery, at most `params.maxPages ?? rules.maxPages`. The
+ * planned rows are stamped with the run (ruling M3-P2: the per-run cap counts them) and queued again, so a row
+ * `fetched`/`failed` with this run's id is one a job of this run has finished (retries check it). Plus one job per
+ * uploaded document of `params.documentIds`.
  */
 export async function planFetchUrls(db: Db, run: { id: string; params: Record<string, unknown> }): Promise<JobData[]> {
   const jobs: JobData[] = [];
@@ -87,7 +89,7 @@ export async function planFetchUrls(db: Db, run: { id: string; params: Record<st
     if (rows.length === 0) continue;
     await db
       .update(crawlFrontier)
-      .set({ lastRunId: run.id, updatedAt: sql`now()` })
+      .set({ lastRunId: run.id, status: "queued", reason: null, updatedAt: sql`now()` })
       .where(inArray(crawlFrontier.id, rows.map((r) => r.id)));
     for (const r of rows) jobs.push({ key: urlJobKey(r.urlNormalized), sourceId, url: r.url, depth: r.depth, maxPages });
   }
@@ -109,14 +111,26 @@ async function setFrontier(db: Db, sourceId: string, urlNormalized: string, runI
     .where(and(eq(crawlFrontier.sourceId, sourceId), eq(crawlFrontier.urlNormalized, urlNormalized)));
 }
 
+/** The page's frontier row, locked until `tx` ends. */
+async function lockFrontierRow(tx: Db, sourceId: string, urlNormalized: string) {
+  const [row] = await tx
+    .select({ status: crawlFrontier.status, reason: crawlFrontier.reason, lastRunId: crawlFrontier.lastRunId })
+    .from(crawlFrontier)
+    .where(and(eq(crawlFrontier.sourceId, sourceId), eq(crawlFrontier.urlNormalized, urlNormalized)))
+    .for("update");
+  return row ?? null;
+}
+
 type Fetched =
   | { kind: "response"; res: HttpResponse; finalUrl: string; ratePerMinute: number }
   | { kind: "stop"; outcome: FetchUrlOutcome; status: FrontierStatus; reason: string };
 
 /**
  * GETs the page with redirects followed here, at most `MAX_REDIRECTS` hops: before every hop the target must be on
- * the source's registrable domain (else `redirect_offsite`), pass the address check (`blocked_address`) and the
- * robots.txt of its host, read once per run (`robots`). Conditional headers go with the first request only.
+ * the source's registrable domain (else `skipped`/`redirect_offsite`, final), pass the address check (else
+ * `queued`/`blocked_address`) and then the robots.txt of its host, read once per run (else `queued`/`robots`). The
+ * temporary reasons leave the row for the next run (ruling M3-C-R5). Conditional headers go with the first request
+ * only.
  */
 async function fetchFollowing(
   db: Db,
@@ -132,9 +146,9 @@ async function fetchFollowing(
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     if (hop > 0 && registrableDomain(current) !== domain) return { kind: "stop", outcome: "skipped", status: "skipped", reason: "redirect_offsite" };
+    if (!(await isAllowed(current))) return { kind: "stop", outcome: "skipped", status: "queued", reason: "blocked_address" };
     const robots = await robotsForRun(db, deps.archive, deps.transport, new URL(current).origin, ctx.runId, ctx);
-    if (!robots.isAllowed(current)) return { kind: "stop", outcome: "disallowed", status: "skipped", reason: "robots" };
-    if (!(await isAllowed(current))) return { kind: "stop", outcome: "skipped", status: "skipped", reason: "blocked_address" };
+    if (!robots.isAllowed(current)) return { kind: "stop", outcome: "disallowed", status: "queued", reason: "robots" };
     const ratePerMinute = effectiveRate(source.crawlRules.ratePerMinute, robots.crawlDelaySec);
     const headers: Record<string, string> = {};
     if (hop === 0 && validators?.etag) headers["If-None-Match"] = validators.etag;
@@ -189,24 +203,27 @@ function decodeHtml(body: Uint8Array, contentType: string | null): string {
 }
 
 /**
- * Adds the page's links: internal ones the crawl rules allow within `maxDepth` become frontier rows of this run while
- * the source's rows of this run stay below `maxPages` (the source row is locked, so concurrent jobs count in turn);
- * their jobs are enqueued and the stage extended in the same transaction. External links count per registrable
- * domain in `outlinks` for (source, domain, run). Returns the number of new URLs.
+ * Adds the page's links and marks its frontier row `fetched`, all in one transaction. Locks are taken in a fixed
+ * order (source row, page row, outlinks by domain), so concurrent jobs of one source wait in turn instead of
+ * deadlocking. Internal links the crawl rules allow within `maxDepth` become frontier rows of this run while the
+ * source's rows of this run stay below `maxPages`; their jobs are enqueued and the stage extended in the same
+ * transaction. External links count per registrable domain in `outlinks` for (source, domain, run), once per page and
+ * run: a page row already `fetched` in this run (a retried job) adds nothing (ruling M3-C-R2). Returns the number of
+ * new URLs.
  */
-async function followLinks(
+export async function followLinks(
   db: Db,
   source: Source,
-  links: string[],
-  depth: number,
+  page: { urlNormalized: string; depth: number; links: string[] },
   maxPages: number,
-  deps: FetchUrlDeps,
+  deps: Pick<FetchUrlDeps, "enqueue">,
   runId: string,
 ): Promise<number> {
   const rules = source.crawlRules;
+  const { depth } = page;
   const internal: string[] = [];
   const external = new Map<string, number>();
-  for (const link of links) {
+  for (const link of page.links) {
     let domain: string;
     try {
       domain = registrableDomain(link);
@@ -221,58 +238,96 @@ async function followLinks(
   }
 
   return db.transaction(async (tx) => {
-    for (const [toDomain, n] of external) {
-      await tx
-        .insert(outlinks)
-        .values({ fromSourceId: source.id, toDomain, count: n, runId })
-        .onConflictDoUpdate({
-          target: [outlinks.fromSourceId, outlinks.toDomain, outlinks.runId],
-          set: { count: sql`${outlinks.count} + ${n}` },
-        });
-    }
-    if (internal.length === 0) return 0;
-    await tx.select({ id: sources.id }).from(sources).where(eq(sources.id, source.id)).for("update");
-    const [row] = await tx
-      .select({ n: count() })
-      .from(crawlFrontier)
-      .where(and(eq(crawlFrontier.sourceId, source.id), eq(crawlFrontier.lastRunId, runId)));
-    const room = maxPages - (row?.n ?? 0);
-    if (room <= 0) return 0;
-    const known = new Set(
-      (
+    // `no key update`: jobs of the source wait for each other, inserts referencing the source do not.
+    await tx.select({ id: sources.id }).from(sources).where(eq(sources.id, source.id)).for("no key update");
+    const row = await lockFrontierRow(tx, source.id, page.urlNormalized);
+    const counted = row?.status === "fetched" && row.lastRunId === runId;
+    if (!counted) {
+      for (const [toDomain, n] of [...external].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
         await tx
-          .select({ url: crawlFrontier.urlNormalized })
-          .from(crawlFrontier)
-          .where(and(eq(crawlFrontier.sourceId, source.id), inArray(crawlFrontier.urlNormalized, internal)))
-      ).map((r) => r.url),
-    );
-    const fresh = internal.filter((url) => !known.has(url)).slice(0, room);
-    if (fresh.length === 0) return 0;
-    const kept = await tx
-      .insert(crawlFrontier)
-      .values(fresh.map((url) => ({ sourceId: source.id, url, urlNormalized: url, depth: depth + 1, lastRunId: runId })))
-      .onConflictDoNothing({ target: [crawlFrontier.sourceId, crawlFrontier.urlNormalized] })
-      .returning({ url: crawlFrontier.url });
-    const jobs = kept.map((r) => ({ key: urlJobKey(r.url), sourceId: source.id, url: r.url, depth: depth + 1, maxPages }));
-    const enqueued = await deps.enqueue(tx, jobs);
-    if (enqueued > 0) await extendStage(tx, runId, FETCH_URL_STAGE, enqueued);
-    return kept.length;
+          .insert(outlinks)
+          .values({ fromSourceId: source.id, toDomain, count: n, runId })
+          .onConflictDoUpdate({
+            target: [outlinks.fromSourceId, outlinks.toDomain, outlinks.runId],
+            set: { count: sql`${outlinks.count} + ${n}` },
+          });
+      }
+    }
+    const added = await addInternal(tx, source.id, internal, depth + 1, maxPages, deps, runId);
+    await setFrontier(tx, source.id, page.urlNormalized, runId, "fetched", null);
+    return added;
   });
+}
+
+/** New frontier rows of this run for `internal` (the source row is locked by the caller), enqueued in `tx`. */
+async function addInternal(
+  tx: Db,
+  sourceId: string,
+  internal: string[],
+  depth: number,
+  maxPages: number,
+  deps: Pick<FetchUrlDeps, "enqueue">,
+  runId: string,
+): Promise<number> {
+  if (internal.length === 0) return 0;
+  const [row] = await tx
+    .select({ n: count() })
+    .from(crawlFrontier)
+    .where(and(eq(crawlFrontier.sourceId, sourceId), eq(crawlFrontier.lastRunId, runId)));
+  const room = maxPages - (row?.n ?? 0);
+  if (room <= 0) return 0;
+  const known = new Set(
+    (
+      await tx
+        .select({ url: crawlFrontier.urlNormalized })
+        .from(crawlFrontier)
+        .where(and(eq(crawlFrontier.sourceId, sourceId), inArray(crawlFrontier.urlNormalized, internal)))
+    ).map((r) => r.url),
+  );
+  const fresh = internal.filter((url) => !known.has(url)).slice(0, room);
+  if (fresh.length === 0) return 0;
+  const kept = await tx
+    .insert(crawlFrontier)
+    .values(fresh.map((url) => ({ sourceId, url, urlNormalized: url, depth, lastRunId: runId })))
+    .onConflictDoNothing({ target: [crawlFrontier.sourceId, crawlFrontier.urlNormalized] })
+    .returning({ url: crawlFrontier.url });
+  const jobs = kept.map((r) => ({ key: urlJobKey(r.url), sourceId, url: r.url, depth, maxPages }));
+  const enqueued = await deps.enqueue(tx, jobs);
+  if (enqueued > 0) await extendStage(tx, runId, FETCH_URL_STAGE, enqueued);
+  return kept.length;
+}
+
+/**
+ * Links of the document's current version, read from its archived raw HTML (a 304 carries no body): the frontier
+ * still grows behind pages that did not change. None when the current version is not HTML.
+ */
+async function archivedLinks(db: Db, archive: Archive, documentId: string, pageUrl: string, trackingParams: string[]): Promise<string[]> {
+  const [version] = await db
+    .select({ rawKey: documentVersions.rawKey, contentType: documentVersions.contentType, finalUrl: documentVersions.finalUrl })
+    .from(documents)
+    .innerJoin(documentVersions, eq(documentVersions.id, documents.currentVersionId))
+    .where(eq(documents.id, documentId));
+  if (!version || !version.rawKey.endsWith(".raw.html")) return [];
+  const raw = await archive.get(version.rawKey);
+  if (!raw) throw new Error(`archived raw content ${version.rawKey} is missing`);
+  return extractLinks(decodeHtml(raw, version.contentType), version.finalUrl ?? pageUrl, trackingParams);
 }
 
 /**
  * Job `fetch.url`: fetches, converts and archives one URL of a source.
- * 1. The source must still be approved (an upload is exempt), else `skipped` (`source_paused`).
+ * 1. The source must still be approved (an upload is exempt), else outcome `skipped`, row left `queued`
+ *    (`source_paused`).
  * 2. `upload://<sha256>` reads `uploads/<sha256>.pdf` from the archive (no robots, no HTTP). Otherwise a conditional
  *    GET (validators of the document) through `fetchFollowing`, rate-limited per registrable domain at the
  *    crawl-delay-adjusted rate.
- * 3. 304 → `markChecked` (`not_modified`); 404/410 → `markGone` (`gone` when it turns gone now, else `missing`; a URL
- *    without document is `missing` and creates none); more than `maxRawBytes` → `skipped` (`too_large`).
+ * 3. 304 → `markChecked` (`not_modified`), links from the archived current version; 404/410 → `markGone` once per
+ *    run (`gone` when it turns gone now, else `missing`; a URL without document is `missing` and creates none); more
+ *    than `maxRawBytes` → `skipped` (`too_large`).
  * 4. PDF (content type or `.pdf`, only with `rules.pdf`) → `convertPdf`; CSV/GeoJSON/KML → `structuredToMarkdown`;
  *    HTML → the source's converter.
  * 5. Language, publication date, `storeFetched` (document type = source type).
- * 6. HTML only: links (`followLinks`).
- * 7. Frontier `fetched`. A 4xx other than 404/410/429 (`HttpError`) marks the row `failed` with `HTTP <status>` and
+ * 6. Links of HTML (`followLinks`, none for other formats), which also marks the frontier row `fetched`.
+ * 7. A 4xx other than 404/410/429 (`HttpError`) marks the row `failed` with `HTTP <status>` and
  *    is the outcome `failed`, not an exception; `RetryableHttpError` is thrown (retry, then `failed_job`).
  */
 export async function fetchUrl(db: Db, job: FetchUrlJob, deps: FetchUrlDeps, ctx: CallContext & { runId: string }): Promise<FetchUrlResult> {
@@ -287,7 +342,8 @@ export async function fetchUrl(db: Db, job: FetchUrlJob, deps: FetchUrlDeps, ctx
     await setFrontier(db, source.id, urlNormalized, ctx.runId, status, reason);
     return { outcome, newUrls: 0 };
   };
-  if (!isUpload && source.status !== "approved") return stop("skipped", "skipped", "source_paused");
+  // A pause is temporary: the row stays queued for the run after the source is approved again (ruling M3-C-R5).
+  if (!isUpload && source.status !== "approved") return stop("skipped", "queued", "source_paused");
 
   const [doc] = await db
     .select({ id: documents.id, status: documents.status, etag: documents.etag, lastModified: documents.lastModified })
@@ -315,12 +371,23 @@ export async function fetchUrl(db: Db, job: FetchUrlJob, deps: FetchUrlDeps, ctx
       if (res.status === 304) {
         if (!doc) return stop("failed", "failed", "HTTP 304");
         await markChecked(db, doc.id, { at: fetchedAt, etag: res.headers.etag, lastModified: res.headers["last-modified"] });
-        return stop("not_modified", "fetched", null);
+        const links = await archivedLinks(db, deps.archive, doc.id, job.url, cfg.trackingParams);
+        const maxPages = job.maxPages ?? source.crawlRules.maxPages;
+        const newUrls = await followLinks(db, source, { urlNormalized, depth: job.depth, links }, maxPages, deps, ctx.runId);
+        return { outcome: "not_modified", newUrls };
       }
       if (res.status === 404 || res.status === 410) {
         if (!doc) return stop("missing", "failed", `HTTP ${res.status}`);
-        const marked = await markGone(db, doc.id, fetchedAt, cfg.goneAfter);
-        return stop(marked.gone && doc.status === "active" ? "gone" : "missing", "failed", `HTTP ${res.status}`);
+        const reason = `HTTP ${res.status}`;
+        const gone = await db.transaction(async (tx) => {
+          // A retried job of this run finds its row already failed: the miss is counted once per run.
+          const row = await lockFrontierRow(tx, source.id, urlNormalized);
+          if (row?.status === "failed" && row.reason === reason && row.lastRunId === ctx.runId) return false;
+          const marked = await markGone(tx, doc.id, fetchedAt, cfg.goneAfter);
+          await setFrontier(tx, source.id, urlNormalized, ctx.runId, "failed", reason);
+          return marked.gone && doc.status === "active";
+        });
+        return { outcome: gone ? "gone" : "missing", newUrls: 0 };
       }
       const declared = Number(res.headers["content-length"]);
       if (res.truncated || res.body.byteLength > cfg.maxRawBytes || declared > cfg.maxRawBytes) return stop("skipped", "skipped", "too_large");
@@ -390,15 +457,14 @@ export async function fetchUrl(db: Db, job: FetchUrlJob, deps: FetchUrlDeps, ctx
       cfg.chunk,
     );
 
-    let newUrls = 0;
-    if (html !== null) {
-      const maxPages = job.maxPages ?? source.crawlRules.maxPages;
-      newUrls = await followLinks(db, source, extractLinks(html, pageUrl, cfg.trackingParams), job.depth, maxPages, deps, ctx.runId);
-    }
-    await setFrontier(db, source.id, urlNormalized, ctx.runId, "fetched", null);
+    // Links are followed for every HTML fetch, also when the content is unchanged or reverted.
+    const links = html !== null ? extractLinks(html, pageUrl, cfg.trackingParams) : [];
+    const maxPages = job.maxPages ?? source.crawlRules.maxPages;
+    const newUrls = await followLinks(db, source, { urlNormalized, depth: job.depth, links }, maxPages, deps, ctx.runId);
     return { outcome: stored.outcome, newUrls };
   } catch (error) {
-    if (error instanceof BlockedUrlError) return stop("skipped", "skipped", "blocked_address");
+    // A blocked address may be a passing DNS answer: the row stays queued (ruling M3-C-R5).
+    if (error instanceof BlockedUrlError) return stop("skipped", "queued", "blocked_address");
     if (error instanceof HttpError) return stop("failed", "failed", `HTTP ${error.status}`);
     throw error;
   }
