@@ -24,7 +24,9 @@ export type ProposalRobots = RobotsSummary | { status: "unavailable" };
 const SUGGESTED_DENY = ["/tag/", "/comment", "\\?replytocom=", "/wp-login", "/feed/?$"];
 const MAX_SUGGESTED_SEGMENTS = 5;
 
-const log = createLogger("discovery.proposals");
+// Created on first use so importing this module reads no env (the build collects pages without one).
+let logger: ReturnType<typeof createLogger> | undefined;
+const getLog = () => (logger ??= createLogger("discovery.proposals"));
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -171,7 +173,7 @@ async function proposalRobots(
     return robotsSummary(policy, startUrls);
   } catch (error) {
     if (!(error instanceof RetryableHttpError || error instanceof HttpError || error instanceof BlockedUrlError)) throw error;
-    log.warn({ origin, err: error }, "robots.txt unavailable for a source proposal");
+    getLog().warn({ origin, err: error }, "robots.txt unavailable for a source proposal");
     return { status: "unavailable" };
   }
 }
