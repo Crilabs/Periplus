@@ -118,9 +118,9 @@ export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
 };
 
 /**
- * A delivered value the spot carries without it: a field whose contract value names its own source and confidence
- * (`anchorPosition`, `depth`) is dropped when the profile has the value but no provenance for it (ruling M6-B-R2 M-6);
- * `shelter` is filled from the present sectors only on an excluded spot. Reported as validation warnings (Task 9).
+ * A profile value delivered without its provenance (ruling M6-B-R2 M-6): `anchorPosition` and `depth`, whose contract
+ * values name their own source and confidence, are dropped; `shelter` (only on an excluded spot, any other is omitted)
+ * keeps its values. The build reports them as validation warnings (Task 9).
  */
 export type SpotWarning = { code: "missing_provenance"; field: "anchorPosition" | "depth" | "shelter" };
 
