@@ -75,6 +75,15 @@ async function decidedTaskKeys(tx: Db, geoObjectId: string): Promise<Set<string>
   return new Set(rows.map((r) => `${r.kind}:${r.key}`));
 }
 
+/** Dismisses the (locked) tasks `ids` with `context.dismissedReason` `reason`. */
+async function dismissTasks(tx: Db, ids: string[], reason: "superseded" | "object_ended"): Promise<void> {
+  if (ids.length === 0) return;
+  await tx.execute(sql`
+    update review_tasks set status = 'dismissed', context = context || ${JSON.stringify({ dismissedReason: reason })}::jsonb
+    where id in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
+  `);
+}
+
 /**
  * Opens the draft's task. Under the profile lock and with no open task of its kind and subject left locked, the
  * insert normally creates; should it meet an open task anyway (`created false`) or one that vanished, it is retried
@@ -112,7 +121,9 @@ async function openDraftTask(tx: Db, draft: TaskDraft, subjectId: string, contex
  * under REPEATABLE READ the snapshot of the first statement would hide the winner's version, and a caller's outer
  * `repeatable read` transaction would defeat the lock (ruling M5-F-R2).
  *
- * Steps: context (`null` → `skipped`), inputs, derived inputs, `buildProfile`, `latestProfile`, `diffProfiles`.
+ * Steps: context (`null` → `skipped`; a regular run then dismisses the object's open `conflict` / `uncertain_change`
+ * tasks with `context.dismissedReason` `object_ended`: a merged or rejected object keeps its last profile as history,
+ * never delivered, final review M-6), inputs, derived inputs, `buildProfile`, `latestProfile`, `diffProfiles`.
  * - `regular`: on `versionNeeded` a new version (previous + 1, `valid_from` = the later of the run date and the
  *   previous `valid_from`, `run_id`); the events carry the new or else the existing version (an attribute event
  *   without a new version is an error). Review tasks (ruling M5-P9, M5-F-R2, M5-F-R3 I-4):
@@ -144,7 +155,11 @@ export async function consolidateGeo(db: Db, geoObjectId: string, opts: Consolid
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`profile:${geoObjectId}`}))`);
     const today = await runDate(tx, opts);
     const context = await loadContext(tx, geoObjectId, cfg, today);
-    if (context === null) return { status: "skipped", version: null, events: 0, tasks: 0 };
+    if (context === null) {
+      // an ended, merged or rejected object: its open profile tasks are moot, its last profile stays as history
+      if (mode === "regular") await dismissTasks(tx, [...(await lockOpenTasks(tx, geoObjectId)).values()].map((t) => t.id), "object_ended");
+      return { status: "skipped", version: null, events: 0, tasks: 0 };
+    }
 
     const loadOpts: LoadInputsOptions = { cfg, schemaVersion, appConfig, today };
     const { inputs } = await loadInputs(tx, geoObjectId, loadOpts);
@@ -220,13 +235,7 @@ export async function consolidateGeo(db: Db, geoObjectId: string, opts: Consolid
       opened++;
       if (draft.event) events.push({ ...draft.event, details: { ...draft.event.details, taskId: task.id } });
     }
-    const stale = [...openTasks.values()].filter((t) => !matched.has(t.id)).map((t) => t.id);
-    if (stale.length > 0) {
-      await tx.execute(sql`
-        update review_tasks set status = 'dismissed', context = context || ${JSON.stringify({ dismissedReason: "superseded" })}::jsonb
-        where id in (${sql.join(stale.map((id) => sql`${id}`), sql`, `)})
-      `);
-    }
+    await dismissTasks(tx, [...openTasks.values()].filter((t) => !matched.has(t.id)).map((t) => t.id), "superseded");
 
     if (events.length > 0) {
       await tx.insert(changeEvents).values(

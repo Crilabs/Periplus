@@ -231,6 +231,26 @@ describe("consolidateGeo", () => {
       expect(v1!.conflicts[0]!.key).toBe((tasks[0]!.context as { key: string }).key);
     }));
 
+  it("a rejected or merged place's open profile tasks are dismissed as object_ended; its profile stays (final review M-6)", () =>
+    withRollback(async (tx) => {
+      for (const end of ["rejected", "merged"] as const) {
+        const { objectId, placeId } = await insertPlace(tx);
+        await insertComputation(tx, objectId, "shelter", { "shelter.N": 0.6 });
+        await insertTextFact(tx, objectId, await insertSource(tx, "trip_report", 0.6), { attribute: "holding", value: "good", observedAt: "2026-07-01" });
+        await insertTextFact(tx, objectId, await insertSource(tx, "trip_report", 0.5), { attribute: "holding", value: "poor", observedAt: "2026-07-02" });
+        expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "created", tasks: 1 });
+        if (end === "rejected") await tx.update(places).set({ status: "rejected", statusReason: "review" }).where(eq(places.id, placeId));
+        else {
+          const target = await insertPlace(tx, { name: "Ziel" });
+          await tx.update(places).set({ status: "rejected", statusReason: "merged", mergedIntoId: target.placeId }).where(eq(places.id, placeId));
+        }
+        expect(await consolidateGeo(tx, objectId, { today })).toEqual({ status: "skipped", version: null, events: 0, tasks: 0 });
+        const tasks = await tasksOf(tx, objectId, "holding");
+        expect(tasks, end).toMatchObject([{ kind: "conflict", status: "dismissed", context: { dismissedReason: "object_ended" } }]);
+        expect((await versionsOf(tx, objectId)).map((v) => v.version), end).toEqual([1]);
+      }
+    }));
+
   it("an evaluation run writes no profile, no event and no task", () =>
     withRollback(async (tx) => {
       const objectId = await anchorage(tx);
