@@ -5,7 +5,8 @@ import { rateLimits } from "@/lib/db/schema";
 export type TakeTokenResult = { ok: true } | { ok: false; retryAfterMs: number };
 
 /**
- * Token bucket in Postgres: capacity = ratePerMinute, refilling ratePerMinute per 60 s.
+ * Token bucket in Postgres: capacity `burst` (default ratePerMinute), refilling ratePerMinute per 60 s; a burst of 1
+ * spaces the calls evenly (60 per minute and burst 1 = at most one per second).
  * The bucket row is locked with SELECT ... FOR UPDATE so concurrent callers serialise.
  */
 export async function takeToken(
@@ -13,11 +14,12 @@ export async function takeToken(
   key: string,
   ratePerMinute: number,
   now: Date = new Date(),
+  burst: number = ratePerMinute,
 ): Promise<TakeTokenResult> {
   return db.transaction(async (tx) => {
     await tx
       .insert(rateLimits)
-      .values({ key, tokens: ratePerMinute, updatedAt: now })
+      .values({ key, tokens: burst, updatedAt: now })
       .onConflictDoNothing({ target: rateLimits.key });
     const [row] = await tx
       .select()
@@ -28,7 +30,7 @@ export async function takeToken(
 
     const perMs = ratePerMinute / 60_000;
     const elapsedMs = Math.max(0, now.getTime() - row.updatedAt.getTime());
-    const available = Math.min(ratePerMinute, row.tokens + elapsedMs * perMs);
+    const available = Math.min(burst, row.tokens + elapsedMs * perMs);
 
     if (available >= 1) {
       await tx.update(rateLimits).set({ tokens: available - 1, updatedAt: now }).where(eq(rateLimits.key, key));

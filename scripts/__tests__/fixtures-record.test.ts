@@ -65,6 +65,15 @@ describe("fixtures-record CLI", () => {
     expect(() => parseArgs(["--area", "saronic", "--voyage"])).toThrow(/usage/);
   });
 
+  it("--nominatim takes a query and a tile id and stands alone", () => {
+    expect(parseArgs(["--nominatim", "Kolona", "q025:813:510"])).toEqual({ nominatim: { query: "Kolona", tileId: "q025:813:510" } });
+    expect(() => parseArgs(["--nominatim", "Kolona"])).toThrow(/usage/);
+    expect(() => parseArgs(["--nominatim", "Kolona", "813:510"])).toThrow(/usage/);
+    expect(() => parseArgs(["--nominatim", " ", "q025:813:510"])).toThrow(/usage/);
+    expect(() => parseArgs(["--nominatim", "Kolona", "q025:813:510", "--area", "saronic"])).toThrow(/usage/);
+    expect(() => parseArgs(["--area", "saronic", "--nominatim", "Kolona", "q025:813:510"])).toThrow(/usage/);
+  });
+
   it("--wikivoyage needs an area and excludes the other recordings", () => {
     expect(parseArgs(["--wikivoyage", "--area", "saronic"])).toEqual({
       area: "saronic",

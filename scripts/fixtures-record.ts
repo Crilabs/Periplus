@@ -12,6 +12,7 @@ import { createJinaConverter } from "../lib/adapters/fetch/jina";
 import { createGeonamesSource } from "../lib/adapters/geonames";
 import { fetchTransport, makeResponse, RetryableHttpError, type Transport } from "../lib/adapters/http";
 import { fixtureTransport, recordingTransport } from "../lib/adapters/http-fixtures";
+import { searchNominatim } from "../lib/adapters/nominatim";
 import { runPdftotext } from "../lib/adapters/pdf";
 import type { Archive } from "../lib/adapters/s3";
 import { embedTexts } from "../lib/adapters/voyage";
@@ -24,7 +25,7 @@ import { ensureTiles } from "../lib/domain/gazetteer/tiles-ensure";
 import { bufferBbox, importLandPolygons } from "../lib/domain/gazetteer/land";
 import { createRun } from "../lib/domain/runs";
 import { ensureWhitelistSources, getSource, sourceIdByDomain } from "../lib/domain/sources/store";
-import type { Bbox } from "../lib/domain/tiles";
+import { parseTileId, type Bbox } from "../lib/domain/tiles";
 import { DATASET_KINDS, DATASETS_STAGE, importDataset } from "../lib/pipeline/datasets";
 import { GEONAMES_STAGE, importGeonames } from "../lib/pipeline/gazetteer/geonames";
 import { importOsm } from "../lib/pipeline/gazetteer/osm";
@@ -36,7 +37,8 @@ import { landImportBbox, readShapefile } from "./import-land-polygons";
 const USAGE =
   "usage: fixtures-record.ts --area <key> [--land <path/land_polygons.shp>] [--cache <dir>] [--datasets | --serp [--limit <1-3>] | --wikivoyage]\n" +
   "       fixtures-record.ts --converters <url> [<url> <url>]\n" +
-  "       fixtures-record.ts --voyage";
+  "       fixtures-record.ts --voyage\n" +
+  "       fixtures-record.ts --nominatim <query> <tileId>";
 /** Real DataForSEO searches one `--serp` recording may make. */
 const MAX_SERP_CALLS = 3;
 /** Pages one `--converters` recording sends to each paid converter (Jina, Firecrawl). */
@@ -57,7 +59,11 @@ export type AreaRecordArgs = {
   /** Record the Wikivoyage sitelinks and articles. */
   wikivoyage?: true;
 };
-export type RecordArgs = AreaRecordArgs | { converters: string[] } | { voyage: true };
+export type RecordArgs =
+  | AreaRecordArgs
+  | { converters: string[] }
+  | { voyage: true }
+  | { nominatim: { query: string; tileId: string } };
 
 /** The two texts of the recorded Voyage answer (`--voyage`); the embedding tests send exactly these. */
 export const VOYAGE_RECORDING_TEXTS = [
@@ -73,6 +79,14 @@ export const WIKIVOYAGE_RECORDING_ITEMS = ["Q191082"];
 /** Articles `--wikivoyage` fetches (robots.txt and HTML) for the crawl test. */
 const MAX_WIKIVOYAGE_ARTICLES = 3;
 
+function isTileId(value: string | undefined): boolean {
+  try {
+    return value !== undefined && parseTileId(value) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 function isHttpUrl(value: string): boolean {
   try {
     return ["http:", "https:"].includes(new URL(value).protocol);
@@ -85,9 +99,14 @@ function isHttpUrl(value: string): boolean {
  * `--area`, `--land`, `--cache`, `--limit` take a value; `--datasets` (record the dataset imports only),
  * `--serp` (record at most `--limit` ≤ 3 area SERP searches, default 3) and `--wikivoyage` (the Wikivoyage sitelinks
  * and articles) take none. `--converters` takes 1–3 page URLs and stands alone (no area), as does `--voyage` (one
- * embedding call).
+ * embedding call), as does `--nominatim <query> <tileId>` (one Nominatim radius search).
  */
 export function parseArgs(argv: string[]): RecordArgs {
+  if (argv[0] === "--nominatim") {
+    const [query, tileId] = [argv[1]?.trim(), argv[2]];
+    if (argv.length !== 3 || !query || query.startsWith("--") || !isTileId(tileId)) throw new Error(USAGE);
+    return { nominatim: { query, tileId: tileId! } };
+  }
   if (argv[0] === "--voyage") {
     if (argv.length !== 1) throw new Error(USAGE);
     return { voyage: true };
@@ -103,7 +122,7 @@ export function parseArgs(argv: string[]): RecordArgs {
   let wikivoyage = false;
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]!;
-    if (flag === "--converters" || flag === "--voyage") throw new Error(USAGE);
+    if (flag === "--converters" || flag === "--voyage" || flag === "--nominatim") throw new Error(USAGE);
     if (flag === "--datasets" || flag === "--serp" || flag === "--wikivoyage") {
       if (flag === "--datasets") datasets = true;
       else if (flag === "--serp") serp = true;
@@ -223,6 +242,29 @@ async function recordVoyage(): Promise<void> {
       getConfig().embeddings,
     );
     process.stdout.write(`voyage: ${vectors.length} vectors of ${vectors[0]?.length} dimensions, ${tokens} tokens\n`);
+  } finally {
+    await close();
+  }
+}
+
+/**
+ * Records one real Nominatim radius search (`query` within `geocode.radiusKm` around the tile), booked in the database
+ * of `DATABASE_URL` (`external_calls`, the shared rate bucket of at most one request per second). Free of charge.
+ */
+async function recordNominatim(query: string, tileId: string): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is not set");
+  const { geocode } = getConfig().extraction;
+  const { db, close } = createDb(url);
+  try {
+    const hits = await searchNominatim(
+      recordingTransport(fetchTransport),
+      { query, tileId, radiusKm: geocode.radiusKm, limit: geocode.limit },
+      { db, stage: "fixtures:record" },
+      geocode,
+    );
+    process.stdout.write(`nominatim "${query}" around ${tileId}: ${hits.length} hits\n`);
+    for (const h of hits) process.stdout.write(`  ${h.osmId} ${h.name} (${h.category}/${h.type}) ${h.distanceM} m\n`);
   } finally {
     await close();
   }
@@ -530,6 +572,7 @@ async function writeGeonames(downloads: Map<string, Uint8Array>, countries: stri
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  if ("nominatim" in args) return recordNominatim(args.nominatim.query, args.nominatim.tileId);
   if ("voyage" in args) return recordVoyage();
   if ("converters" in args) return recordConverters(args.converters);
   if (args.serp) return recordSerp(loadArea(args.area), args.limit!);

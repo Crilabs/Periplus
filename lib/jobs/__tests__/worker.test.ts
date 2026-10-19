@@ -84,6 +84,7 @@ const queueConfig = {
   "classify.document_version": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "mentions.batch": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "mentions.disambiguate": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "mentions.geocode": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   [DEAD_LETTER_QUEUE]: { concurrency: 1, retryLimit: 1, retryDelaySeconds: 0, retryBackoff: false },
 };
 
