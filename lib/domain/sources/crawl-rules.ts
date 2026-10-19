@@ -4,8 +4,11 @@ import { registrableDomain, safeDecode } from "./urls";
 export const CONVERTERS = ["jina", "firecrawl", "local"] as const;
 export type Converter = (typeof CONVERTERS)[number];
 
-/** A string that compiles as a JavaScript regular expression. */
-export const regexPattern = z.string().refine((s) => {
+/** Longest crawl-rule pattern: every URL of a crawl is tested against every pattern (ReDoS guard). */
+export const MAX_PATTERN_LENGTH = 200;
+
+/** A string of at most `MAX_PATTERN_LENGTH` characters that compiles as a JavaScript regular expression. */
+export const regexPattern = z.string().max(MAX_PATTERN_LENGTH).refine((s) => {
   try {
     new RegExp(s);
     return true;

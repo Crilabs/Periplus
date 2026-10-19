@@ -1,5 +1,5 @@
 import type { CrawlRules } from "@/lib/domain/sources/crawl-rules";
-import type { CallContext } from "../http";
+import type { CallContext, RateLimit } from "../http";
 
 export type ConverterName = "jina" | "firecrawl" | "local";
 
@@ -10,6 +10,8 @@ export type ConvertInput = {
   /** CSS selectors removed before conversion (crawl rule `boilerplateSelectors`). */
   boilerplateSelectors: string[];
   render: CrawlRules["render"];
+  /** Rate bucket a page render waits for (the crawl's per-domain bucket), so renders count like requests. */
+  rate?: RateLimit;
 };
 
 export type Converted = {

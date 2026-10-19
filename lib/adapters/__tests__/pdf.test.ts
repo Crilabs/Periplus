@@ -5,6 +5,7 @@ import { convertPdf } from "@/lib/adapters/pdf";
 import { hasPdftotext, runPdftotext } from "@/lib/adapters/pdf/pdftotext";
 import { splitPdfPages } from "@/lib/adapters/pdf/split";
 import { MockModel } from "@/lib/ai/mock";
+import { BudgetExceeded } from "@/lib/domain/costs";
 import { getConfig } from "@/lib/config";
 
 const twoPages = new Uint8Array(readFileSync("test/fixtures/pdf/two-pages.pdf"));
@@ -71,6 +72,29 @@ describe("convertPdf", () => {
     expect(r.unreadablePages).toEqual([1, 2]);
   });
 
+  it("a budget running out midway keeps the pages already transcribed and lists the rest as unreadable", async () => {
+    const calls: number[] = [];
+    const model = {
+      call: async (_task: unknown, input: unknown) => {
+        const page = (input as { page: number }).page;
+        calls.push(page);
+        if (calls.length > 1) throw new BudgetExceeded("anthropic", 5, 5);
+        return { output: { markdown: `Seite ${page}` }, model: "m", promptVersion: 1, usage: { inputTokens: 0, outputTokens: 0 }, costEur: 0 };
+      },
+    };
+    const allGarbled = `${"� ".repeat(80)}\f${"� ".repeat(80)}\f`;
+    const r = await convertPdf(twoPages, { pdftotext: async () => allGarbled, model: model as never, cfg: cfg() }, {});
+    expect(calls).toEqual([1, 2]);
+    expect(r).toMatchObject({ converter: "pdftotext+claude", modelPages: [1], unreadablePages: [2] });
+    expect(r.markdown).toContain("<!-- page 1 -->\n\nSeite 1");
+    expect(r.markdown).toContain("<!-- page 2 -->");
+
+    // The budget already spent before the first page: pdftotext only.
+    const broke = { call: async () => Promise.reject(new BudgetExceeded("anthropic", 5, 5)) };
+    const none = await convertPdf(twoPages, { pdftotext: async () => allGarbled, model: broke as never, cfg: cfg() }, {});
+    expect(none).toMatchObject({ converter: "pdftotext", modelPages: [], unreadablePages: [1, 2] });
+  });
+
   it("readable pages need no model", async () => {
     const r = await convertPdf(twoPages, { pdftotext: async () => sample, cfg: cfg() }, {});
     expect(r).toMatchObject({ converter: "pdftotext", modelPages: [], unreadablePages: [] });
@@ -92,6 +116,10 @@ describe("pdftotext", () => {
     const pages = text.split("\f");
     expect(pages[0]).toContain("ANKERPLAETZE AEGINA");
     expect(pages[1]).toMatch(/Perdika\s{2,}3-8 m\s{2,}40/);
+  });
+
+  it.skipIf(!pdftotextHere)("output beyond the cap is an error", async () => {
+    await expect(runPdftotext(twoPages, { maxOutputBytes: 10 })).rejects.toThrow(/exceeds 10 bytes/);
   });
 
   it.skipIf(!pdftotextHere)("a broken file is an error", async () => {

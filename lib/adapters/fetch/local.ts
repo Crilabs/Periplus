@@ -4,7 +4,7 @@ import { parseHTML } from "linkedom";
 import TurndownService from "turndown";
 import type { FetchConfig } from "@/lib/config";
 import { recordExternalCall } from "@/lib/domain/costs";
-import type { CallContext } from "../http";
+import { waitForRateToken, type CallContext, type RateLimit } from "../http";
 import type { Converter, ConvertInput, RenderPage } from "./types";
 
 /** Elements that never carry page content. */
@@ -78,12 +78,14 @@ function convertHtml(html: string, url: string, selectors: string[]) {
  * Converts locally (Readability + Turndown, no cost). With a `renderPage`, the page is rendered in the browser
  * when `render` is `always`, when no HTML was fetched, or when `render` is `auto` and the fetched HTML has less
  * main text than `cfg.renderMinMainChars`; `never` never renders. Without `renderPage` it never renders (the
- * web process has no browser). Each render is recorded as a free `playwright` call.
+ * web process has no browser). A render first waits for a token of `input.rate` (the domain's crawl bucket) and is
+ * recorded as a free `playwright` call.
  */
 export function createLocalConverter(deps: { renderPage?: RenderPage; cfg: FetchConfig }): Converter {
   const { renderPage, cfg } = deps;
 
-  async function render(url: string, ctx: CallContext): Promise<{ html: string; finalUrl: string }> {
+  async function render(url: string, rate: RateLimit | undefined, ctx: CallContext): Promise<{ html: string; finalUrl: string }> {
+    if (rate) await waitForRateToken(ctx.db, rate);
     const page = await renderPage!(url, { timeoutMs: cfg.timeoutMs });
     await recordExternalCall(ctx.db, {
       service: "playwright",
@@ -109,14 +111,14 @@ export function createLocalConverter(deps: { renderPage?: RenderPage; cfg: Fetch
       let base = input.url;
       let rendered = false;
       if (mayRender && (input.render === "always" || html === null)) {
-        ({ html, finalUrl: base } = await render(input.url, ctx));
+        ({ html, finalUrl: base } = await render(input.url, input.rate, ctx));
         rendered = true;
       }
       if (html === null) throw new Error(`local converter got no HTML for ${input.url} and may not render it`);
 
       let result = convertHtml(html, base, input.boilerplateSelectors);
       if (mayRender && !rendered && input.render === "auto" && result.mainChars < cfg.renderMinMainChars) {
-        ({ html, finalUrl: base } = await render(input.url, ctx));
+        ({ html, finalUrl: base } = await render(input.url, input.rate, ctx));
         rendered = true;
         result = convertHtml(html, base, input.boilerplateSelectors);
       }

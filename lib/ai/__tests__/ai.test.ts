@@ -29,8 +29,8 @@ const config: AppConfig = {
   },
   models: {
     tasks: {
-      "system.echo": { model: "claude-haiku-5-5", promptVersion: 1 },
-      "pdf.to_markdown": { model: "claude-haiku-5-5", promptVersion: 1 },
+      "system.echo": { model: "claude-haiku-5-5", promptVersion: 1, maxTokens: 1024 },
+      "pdf.to_markdown": { model: "claude-haiku-5-5", promptVersion: 1, maxTokens: 16000 },
     },
     pricesEurPerMTok: { "claude-haiku-5-5": { input: 0.1, output: 0.5 } },
   },
@@ -86,6 +86,12 @@ describe("MockModel", () => {
   });
 });
 
+describe("model config", () => {
+  it("gives the pdf page transcription room for a full page", () => {
+    expect(loadConfig("config").models.tasks["pdf.to_markdown"]!.maxTokens).toBeGreaterThanOrEqual(16000);
+  });
+});
+
 describe("anthropic client", () => {
   // Budget checks sum a whole day: each test writes inside a rollback transaction on a day nothing else spent on.
   it("refuses to call when the budget is exhausted", () =>
@@ -109,8 +115,9 @@ describe("anthropic client", () => {
       expect(r.output).toEqual({ echo: "hello", language: "en" });
       expect(r.usage).toEqual({ inputTokens: 1000, outputTokens: 200 });
       expect(r.costEur).toBeCloseTo(expected, 10);
-      const params = create.mock.calls[0]![0] as { model: string; output_config: { format: { type: string } } };
+      const params = create.mock.calls[0]![0] as { model: string; max_tokens: number; output_config: { format: { type: string } } };
       expect(params.model).toBe("claude-haiku-5-5");
+      expect(params.max_tokens).toBe(1024);
       expect(params.output_config.format.type).toBe("json_schema");
       const [row] = await tx.select().from(externalCalls).where(eq(externalCalls.stage, stage)).orderBy(desc(externalCalls.at));
       expect(row).toMatchObject({ service: "anthropic", operation: "system.echo", unit: "tokens" });

@@ -11,8 +11,6 @@ import { ModelOutputInvalid, type ModelCallContext, type ModelClient, type Model
 let logger: ReturnType<typeof createLogger> | undefined;
 const getLog = () => (logger ??= createLogger("ai.anthropic"));
 
-const MAX_TOKENS = 4096;
-
 /** The slice of the Anthropic SDK this client uses; tests inject a fake. */
 export type AnthropicMessagesApi = Pick<Anthropic, "messages">;
 
@@ -33,7 +31,7 @@ export function createAnthropicClient(db: Db, config: AppConfig = getConfig(), o
     async call<I, O>(task: ModelTask<I, O>, input: I, ctx?: ModelCallContext): Promise<ModelResult<O>> {
       const taskConfig = config.models.tasks[task.name];
       if (!taskConfig) throw new Error(`No model configured for task ${task.name} in config/models.json`);
-      const { model, promptVersion } = taskConfig;
+      const { model, promptVersion, maxTokens } = taskConfig;
       const price = config.models.pricesEurPerMTok[model];
       if (!price) throw new Error(`No price configured for model ${model} (task ${task.name}) in config/models.json`);
 
@@ -59,7 +57,7 @@ export function createAnthropicClient(db: Db, config: AppConfig = getConfig(), o
       sdk ??= defaultSdk();
       const response = await sdk.messages.create({
         model,
-        max_tokens: MAX_TOKENS,
+        max_tokens: maxTokens,
         system,
         messages: [{ role: "user", content }],
         output_config: { effort: "low", format: { type: "json_schema", schema: z.toJSONSchema(task.output) } },

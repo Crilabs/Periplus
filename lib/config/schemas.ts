@@ -33,7 +33,12 @@ export const budgetsSchema = z.strictObject(
 export const modelsSchema = z.object({
   tasks: z.record(
     z.string(),
-    z.object({ model: z.string().min(1), promptVersion: z.number().int().min(1) }),
+    z.object({
+      model: z.string().min(1),
+      promptVersion: z.number().int().min(1),
+      /** Longest answer of the task in tokens (`max_tokens`); a page transcription needs far more than a label. */
+      maxTokens: z.number().int().min(1),
+    }),
   ),
   pricesEurPerMTok: z.record(
     z.string(),

@@ -16,6 +16,8 @@ const envSchema = z.object({
   JINA_API_KEY: z.string().min(1).optional(),
   FIRECRAWL_API_KEY: z.string().min(1).optional(),
   CONTACT_EMAIL: z.string().min(1),
+  /** `playwright`: the worker renders pages in headless Chromium when a crawl rule asks for it; `off`: never. */
+  PERIPLUS_RENDERER: z.enum(["playwright", "off"]).default("playwright"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error", "silent"]).default("info"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 });

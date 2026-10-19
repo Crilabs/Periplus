@@ -51,8 +51,13 @@ async function main(): Promise<void> {
     try {
       await workers.stop();
       await boss.stop({ graceful: true });
-      // After the last job: a page render may still have been running until then.
-      await closeRenderer();
+      // After the last job: a page render may still have been running until then. A browser that will not close
+      // must not keep the heartbeat row alive.
+      try {
+        await closeRenderer();
+      } catch (err) {
+        log.error({ err }, "closing the renderer failed");
+      }
       // Remove our heartbeat so the overview does not list this worker as alive; wait for an
       // in-flight beat first so it cannot re-insert the row afterwards.
       await beating;

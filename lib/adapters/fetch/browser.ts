@@ -1,5 +1,7 @@
-import type { APIResponse, Browser, Route } from "playwright";
+import type { Browser, BrowserContext, LaunchOptions, Request } from "playwright";
+import type { Dispatcher } from "undici";
 import { userAgent } from "../http";
+import { blockedCause, getGuardedAgent, guardedFetch } from "./guarded";
 import { BlockedUrlError, isPublicHttpUrl } from "./ssrf";
 import type { RenderPage } from "./types";
 
@@ -11,25 +13,68 @@ const NETWORK_IDLE_MS = 5_000;
 /** Redirect hops followed per request, like a browser's limit. */
 const MAX_REDIRECTS = 10;
 
+/** Headers the browser sends that a fetch sets itself or must not forward. */
+const UNFORWARDED_REQUEST_HEADERS = new Set(["host", "connection", "content-length", "keep-alive", "transfer-encoding", "upgrade"]);
+/** Headers of an answer that no longer describe the body handed to the browser (fetch decoded it). */
+const UNFORWARDED_RESPONSE_HEADERS = new Set(["content-encoding", "content-length", "transfer-encoding", "connection"]);
+
+/** Chromium launch options: headless, and WebRTC never uses UDP outside a proxy (no ICE requests past the route guard). */
+export function chromiumLaunchOptions(): LaunchOptions {
+  return { headless: true, args: ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"] };
+}
+
+export type FetchedAnswer = { status: number; headers: Record<string, string>; body: Buffer; url: string };
+
+export type OutgoingRequest = { url: string; method: string; headers: Record<string, string>; body: Buffer | null };
+
 /**
- * The answer to a routed request, redirects followed hop by hop, every hop's URL checked with `isAllowed`
- * before it is requested; `null` when a hop is not allowed.
+ * Fetches a request through `dispatcher` with redirects followed hop by hop, every hop's URL checked with
+ * `isAllowed` before it is requested; `null` when a hop is not allowed. 301/302 turn a POST into a GET and 303
+ * every method but HEAD; 307/308 keep method and body. The answer's headers lose those that described the encoded
+ * body (fetch decodes it).
  */
-async function fetchChecked(
-  route: Route,
+export async function fetchFollowingRedirects(
+  request: OutgoingRequest,
   isAllowed: (url: string) => Promise<boolean>,
+  dispatcher: Dispatcher,
   timeoutMs: number,
-): Promise<{ response: APIResponse; url: string } | null> {
-  let url = route.request().url();
+): Promise<FetchedAnswer | null> {
+  let { url, method, body } = request;
+  const headers = { ...request.headers };
   for (let hop = 0; ; hop++) {
     if (!(await isAllowed(url))) return null;
-    // After a redirect the browser asks with GET and no body.
-    const response = await route.fetch({ url, maxRedirects: 0, timeout: timeoutMs, ...(hop > 0 ? { method: "GET", postData: undefined } : {}) });
-    const location = response.headers()["location"];
-    if (response.status() < 300 || response.status() > 399 || !location) return { response, url };
-    if (hop >= MAX_REDIRECTS) throw new Error(`more than ${MAX_REDIRECTS} redirects from ${route.request().url()}`);
+    const res = await guardedFetch(url, {
+      method,
+      headers,
+      body: method === "GET" || method === "HEAD" ? undefined : (body ?? undefined),
+      redirect: "manual",
+      signal: AbortSignal.timeout(timeoutMs),
+      dispatcher,
+    });
+    const location = res.headers.get("location");
+    if (res.status < 300 || res.status > 399 || !location) {
+      const answerHeaders: Record<string, string> = {};
+      for (const [name, value] of res.headers) if (!UNFORWARDED_RESPONSE_HEADERS.has(name)) answerHeaders[name] = value;
+      return { status: res.status, headers: answerHeaders, body: Buffer.from(await res.arrayBuffer()), url };
+    }
+    await res.body?.cancel();
+    if (hop >= MAX_REDIRECTS) throw new Error(`more than ${MAX_REDIRECTS} redirects from ${request.url}`);
+    if ((res.status === 303 && method !== "HEAD") || ((res.status === 301 || res.status === 302) && method === "POST")) {
+      method = "GET";
+      body = null;
+      delete headers["content-type"];
+    }
     url = new URL(location, url).href;
   }
+}
+
+/** A routed browser request as Periplus sends it: the browser's headers minus hop-by-hop ones, our User-Agent. */
+async function outgoing(request: Request): Promise<OutgoingRequest> {
+  const headers = Object.fromEntries(
+    Object.entries(await request.allHeaders()).filter(([name]) => !UNFORWARDED_REQUEST_HEADERS.has(name.toLowerCase()) && !name.startsWith(":")),
+  );
+  headers["user-agent"] = userAgent();
+  return { url: request.url(), method: request.method(), headers, body: request.postDataBuffer() };
 }
 
 /** The HTML with `<base href>` set to `url`, unless it has one. */
@@ -41,56 +86,94 @@ function withBase(html: string, url: string): string {
 
 export type Renderer = { render: RenderPage; close(): Promise<void> };
 
+export type RendererOptions = {
+  /** URL check before every request and hop (default `isPublicHttpUrl`). */
+  isAllowed?: (url: string) => Promise<boolean>;
+  /** Dispatcher of the renderer's own fetches (default: the process-wide guarded agent). */
+  dispatcher?: Dispatcher;
+  /** Starts the browser (default: Chromium via a lazy `import("playwright")` with `chromiumLaunchOptions`). */
+  launchBrowser?: () => Promise<Browser>;
+};
+
+async function launchChromium(): Promise<Browser> {
+  const { chromium } = await import("playwright");
+  return chromium.launch(chromiumLaunchOptions());
+}
+
+/** Closes the context after dropping its routes, so a late route callback finds no handler instead of a closed context. */
+async function closeContext(context: BrowserContext): Promise<void> {
+  await context.unrouteAll({ behavior: "ignoreErrors" });
+  await context.close();
+}
+
 /**
- * Headless Chromium: one browser per renderer, launched on the first render (`playwright` is imported only
- * then), a fresh context per page with the contact User-Agent; images, fonts and media are blocked. A page
- * counts as loaded when its DOM is ready and the network was quiet (at most `NETWORK_IDLE_MS` more).
+ * Headless Chromium: one browser per renderer, launched on the first render and again after it crashed or was
+ * closed; a fresh context per page with the contact User-Agent and service workers blocked; images, fonts and
+ * media are blocked, WebSockets closed. A page counts as loaded when its DOM is ready and the network was quiet
+ * (at most `NETWORK_IDLE_MS` more).
  *
- * Every request of the page (the page itself, each redirect hop, every sub-request) must pass `isAllowed`
- * (default: `isPublicHttpUrl`), else it is aborted; a page that is or ends on a blocked URL is a
- * `BlockedUrlError`.
+ * The browser itself requests nothing: every request of the page (the page itself, each redirect hop, every
+ * sub-request) is fetched by Periplus through the guarded dispatcher after passing `isAllowed`, else aborted, and
+ * handed to the browser with `route.fulfill`. A page that is or ends on a blocked URL is a `BlockedUrlError`.
  */
-export function createPlaywrightRenderer(opts: { isAllowed?: (url: string) => Promise<boolean> } = {}): Renderer {
+export function createPlaywrightRenderer(opts: RendererOptions = {}): Renderer {
   const isAllowed = opts.isAllowed ?? ((url: string) => isPublicHttpUrl(url));
+  const launchBrowser = opts.launchBrowser ?? launchChromium;
   let browser: Promise<Browser> | undefined;
 
   function launch(): Promise<Browser> {
-    browser ??= import("playwright")
-      .then(({ chromium }) => chromium.launch({ headless: true }))
-      .catch((error: unknown) => {
-        browser = undefined;
+    if (browser) return browser;
+    const launching: Promise<Browser> = launchBrowser().then(
+      (b) => {
+        // A crashed or closed browser is launched again on the next render.
+        b.on("disconnected", () => {
+          if (browser === launching) browser = undefined;
+        });
+        return b;
+      },
+      (error: unknown) => {
+        if (browser === launching) browser = undefined;
         throw error;
-      });
-    return browser;
+      },
+    );
+    browser = launching;
+    return launching;
+  }
+
+  async function connectedBrowser(): Promise<Browser> {
+    const current = launch();
+    const b = await current;
+    if (b.isConnected()) return b;
+    if (browser === current) browser = undefined;
+    return launch();
   }
 
   return {
     async render(url, { timeoutMs }) {
       if (!(await isAllowed(url))) throw new BlockedUrlError(url);
-      const context = await (await launch()).newContext({ userAgent: userAgent() });
+      const dispatcher = opts.dispatcher ?? getGuardedAgent();
+      const context = await (await connectedBrowser()).newContext({ userAgent: userAgent(), serviceWorkers: "block" });
       try {
-        // Chromium follows redirects without routing them again, so redirects are followed here hop by hop.
+        await context.routeWebSocket("**/*", (ws) => ws.close());
         let documentUrl: string | undefined;
         await context.route("**/*", async (route) => {
           const request = route.request();
           if (BLOCKED_RESOURCES.has(request.resourceType())) return route.abort();
-          let answer;
+          let answer: FetchedAnswer | null;
           try {
-            answer = await fetchChecked(route, isAllowed, timeoutMs);
-          } catch {
-            return route.abort("failed");
+            answer = await fetchFollowingRedirects(await outgoing(request), isAllowed, dispatcher, timeoutMs);
+          } catch (error) {
+            return route.abort(blockedCause(error) ? "blockedbyclient" : "failed");
           }
           if (!answer) return route.abort("blockedbyclient");
-          const { response, url: answerUrl } = answer;
           const isMainDocument = request.isNavigationRequest() && request.frame().parentFrame() === null;
-          if (isMainDocument) documentUrl = answerUrl;
-          if (answerUrl === request.url() || !isMainDocument) return route.fulfill({ response });
+          if (isMainDocument) documentUrl = answer.url;
+          if (answer.url === request.url() || !isMainDocument) {
+            return route.fulfill({ status: answer.status, headers: answer.headers, body: answer.body });
+          }
           // The page keeps the requested URL in the browser: a <base> makes its relative links resolve
           // against the URL the content came from.
-          const headers = { ...response.headers() };
-          delete headers["content-length"];
-          delete headers["content-encoding"];
-          return route.fulfill({ status: response.status(), headers, body: withBase(await response.text(), answerUrl) });
+          return route.fulfill({ status: answer.status, headers: answer.headers, body: withBase(answer.body.toString("utf8"), answer.url) });
         });
         const page = await context.newPage();
         let response;
@@ -108,7 +191,7 @@ export function createPlaywrightRenderer(opts: { isAllowed?: (url: string) => Pr
         if (!(await isAllowed(finalUrl))) throw new BlockedUrlError(finalUrl);
         return { html: await page.content(), finalUrl, status: response?.status() ?? 0 };
       } finally {
-        await context.close();
+        await closeContext(context);
       }
     },
     async close() {

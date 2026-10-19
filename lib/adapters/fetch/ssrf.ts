@@ -11,7 +11,11 @@ export class BlockedUrlError extends Error {
 
 export type ResolveHost = (host: string) => Promise<string[]>;
 
-/** Networks no crawl may reach: this host, private networks, cloud metadata (169.254.169.254), CGNAT. */
+/**
+ * Networks no crawl may reach: this host, private networks, cloud metadata (169.254.169.254), CGNAT, IETF protocol
+ * assignments, benchmarking, multicast, reserved and broadcast. IPv6 forms that embed an IPv4 address are judged by
+ * that address (`isPublicAddress`).
+ */
 const BLOCKED = new BlockList();
 for (const [net, prefix] of [
   ["0.0.0.0", 8],
@@ -20,7 +24,11 @@ for (const [net, prefix] of [
   ["127.0.0.0", 8],
   ["169.254.0.0", 16],
   ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
   ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["224.0.0.0", 4],
+  ["240.0.0.0", 4],
 ] as const) {
   BLOCKED.addSubnet(net, prefix, "ipv4");
 }
@@ -28,6 +36,10 @@ BLOCKED.addAddress("::", "ipv6");
 BLOCKED.addAddress("::1", "ipv6");
 BLOCKED.addSubnet("fc00::", 7, "ipv6");
 BLOCKED.addSubnet("fe80::", 10, "ipv6");
+BLOCKED.addSubnet("ff00::", 8, "ipv6");
+// Teredo tunnels reach any IPv4 host; local-use NAT64 (RFC 8215) has no fixed place for the IPv4 address.
+BLOCKED.addSubnet("2001::", 32, "ipv6");
+BLOCKED.addSubnet("64:ff9b:1::", 48, "ipv6");
 
 /** The eight 16-bit groups of an IPv6 address (a trailing dotted IPv4 counts as two). */
 function ipv6Groups(ipv6: string): number[] {
@@ -44,21 +56,32 @@ function ipv6Groups(ipv6: string): number[] {
   return tail === undefined ? front : [...front, ...Array<number>(8 - front.length - back.length).fill(0), ...back];
 }
 
-/** The IPv4 address inside an IPv4-mapped IPv6 address (`::ffff:10.0.0.1`, `::ffff:a00:1`), else null. */
-function mappedIpv4(ipv6: string): string | null {
+const v4 = (hi: number, lo: number) => [hi >> 8, hi & 255, lo >> 8, lo & 255].join(".");
+
+/**
+ * The IPv4 address an IPv6 address carries: IPv4-mapped `::ffff:a.b.c.d`, IPv4-compatible `::a.b.c.d`, NAT64
+ * `64:ff9b::a.b.c.d` (RFC 6052) or 6to4 `2002:aabb:ccdd::`; else null.
+ */
+function embeddedIpv4(ipv6: string): string | null {
   const g = ipv6Groups(ipv6);
-  if (g.length !== 8 || g.slice(0, 5).some((x) => x !== 0) || g[5] !== 0xffff) return null;
-  return [g[6]! >> 8, g[6]! & 255, g[7]! >> 8, g[7]! & 255].join(".");
+  if (g.length !== 8) return null;
+  const zeros = (from: number, to: number) => g.slice(from, to).every((x) => x === 0);
+  if (zeros(0, 5) && g[5] === 0xffff) return v4(g[6]!, g[7]!);
+  if (zeros(0, 6)) return v4(g[6]!, g[7]!);
+  if (g[0] === 0x64 && g[1] === 0xff9b && zeros(2, 6)) return v4(g[6]!, g[7]!);
+  if (g[0] === 0x2002) return v4(g[1]!, g[2]!);
+  return null;
 }
 
-/** Whether an IP address lies outside every blocked network (IPv4-mapped IPv6 judged by its IPv4). */
+/** Whether an IP address lies outside every blocked network (an IPv6 address with an embedded IPv4 judged by both). */
 export function isPublicAddress(address: string): boolean {
   const ip = address.replace(/^\[|\]$/g, "").split("%")[0]!;
   const family = isIP(ip);
   if (family === 4) return !BLOCKED.check(ip, "ipv4");
   if (family === 6) {
-    const v4 = mappedIpv4(ip);
-    if (v4) return !BLOCKED.check(v4, "ipv4");
+    const embedded = embeddedIpv4(ip);
+    if (embedded && BLOCKED.check(embedded, "ipv4")) return false;
+    // `::a.b.c.d` lies in `::/96`, which is only blocked for `::` and `::1`: its IPv4 decides.
     return !BLOCKED.check(ip, "ipv6");
   }
   return false;
@@ -77,8 +100,8 @@ function parseHttpUrl(url: string): URL | null {
 
 /**
  * Whether Periplus may request `url` from its own network: http(s) only, and every A/AAAA address of the host
- * (an IP literal is checked directly) is public. A host that does not resolve is not public. Chromium resolves
- * again when it connects, so this does not stop DNS rebinding between the check and the request.
+ * (an IP literal is checked directly) is public. A host that does not resolve is not public. The connection
+ * resolves again, so this alone does not stop DNS rebinding: requests go through `createGuardedAgent` too.
  */
 export async function isPublicHttpUrl(url: string, resolve: ResolveHost = systemResolve): Promise<boolean> {
   const parsed = parseHttpUrl(url);

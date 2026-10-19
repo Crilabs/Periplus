@@ -31,6 +31,11 @@ describe("crawlRulesSchema", () => {
     expect((error as ZodError).issues.map((i) => i.path.join("."))).toContain("allow.0");
   });
 
+  it("rejects a pattern longer than 200 characters", () => {
+    expect(() => crawlRulesSchema.parse({ deny: ["a".repeat(201)] })).toThrow(ZodError);
+    expect(crawlRulesSchema.parse({ deny: ["a".repeat(200)] }).deny).toHaveLength(1);
+  });
+
   it("rejects unknown keys and out-of-range limits", () => {
     expect(() => crawlRulesSchema.parse({ bogus: 1 })).toThrow(ZodError);
     expect(() => crawlRulesSchema.parse({ maxDepth: 11 })).toThrow(ZodError);

@@ -120,6 +120,7 @@ Ergebnis der letzten Prüfung (nach Abnahme eintragen): _Datum: offen, restore-c
 ## Hinweise
 - Caddy darf **kein** `trusted_proxies` setzen. Das Login-Rate-Limit nutzt den ersten `X-Forwarded-For`-Eintrag; das ist nur korrekt, solange Caddy diesen Header mit der echten Client-Adresse überschreibt.
 - Compose-Layout auf dem Server: `.env` neben `docker/`; `compose.prod.yml` liest `../.env`.
+- `PERIPLUS_RENDERER` (Standard `playwright`): Der Worker rendert Seiten mit `render: auto`/`always` in Headless-Chromium. `PERIPLUS_RENDERER=off` in `.env` schaltet das Rendern ab (z. B. wenn Chromium abstürzt oder zu viel Speicher braucht); Seiten werden dann nur aus dem HTTP-Text konvertiert. Danach `dc up -d worker`.
 
 ## Reviere (`config/areas/*.json`)
 - Je Revier eine Datei; `key` muss dem Dateinamen entsprechen. Die Datei wird beim Start mit zod geprüft (Namen `de`, `en`, `el` Pflicht).

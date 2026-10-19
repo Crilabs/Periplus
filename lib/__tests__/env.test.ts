@@ -36,6 +36,12 @@ describe("parseEnv", () => {
     }
   });
 
+  it("defaults PERIPLUS_RENDERER to playwright and accepts off only besides it", () => {
+    expect(parseEnv(validSource).PERIPLUS_RENDERER).toBe("playwright");
+    expect(parseEnv({ ...validSource, PERIPLUS_RENDERER: "off" }).PERIPLUS_RENDERER).toBe("off");
+    expect(() => parseEnv({ ...validSource, PERIPLUS_RENDERER: "chrome" })).toThrow(/PERIPLUS_RENDERER/);
+  });
+
   it("names missing variables", () => {
     const { DATABASE_URL: _omit, ...rest } = validSource;
     void _omit;

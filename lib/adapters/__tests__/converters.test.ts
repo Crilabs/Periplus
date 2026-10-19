@@ -5,10 +5,20 @@ import { createFirecrawlConverter } from "@/lib/adapters/fetch/firecrawl";
 import { createConverters, resolveConverter } from "@/lib/adapters/fetch/index";
 import { createJinaConverter } from "@/lib/adapters/fetch/jina";
 import { createLocalConverter, htmlToMarkdown } from "@/lib/adapters/fetch/local";
-import { closeRenderer, createPlaywrightRenderer, getRenderer } from "@/lib/adapters/fetch/browser";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import type { Browser } from "playwright";
+import {
+  chromiumLaunchOptions,
+  closeRenderer,
+  createPlaywrightRenderer,
+  fetchFollowingRedirects,
+  getRenderer,
+} from "@/lib/adapters/fetch/browser";
+import { BlockedAddressError, blockedCause, createGuardedAgent } from "@/lib/adapters/fetch/guarded";
 import { BlockedUrlError } from "@/lib/adapters/fetch/ssrf";
 import type { RenderPage } from "@/lib/adapters/fetch/types";
-import { HttpError, makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
+import { HttpError, makeResponse, RetryableHttpError, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import { fixtureTransport } from "@/lib/adapters/http-fixtures";
 import { getConfig, type FetchConfig } from "@/lib/config";
 import { DEFAULT_CRAWL_RULES } from "@/lib/domain/sources/crawl-rules";
@@ -123,6 +133,20 @@ describe("local converter", () => {
       expect(Number(rows[0]!.costEur)).toBe(0);
     });
   });
+
+  it("a render draws a token from the domain's rate bucket", async () => {
+    const renderPage = fakeRenderer();
+    const converter = createLocalConverter({ renderPage, cfg: cfg() });
+    await withRollback(async (tx) => {
+      const rate = { key: `domain:${newId()}.test.invalid`, perMinute: 1, maxWaitMs: 0 };
+      await converter.convert(input({ rate }), { db: tx });
+      // The bucket is empty now: the next render of the domain must wait, and may not wait here.
+      await expect(converter.convert(input({ rate }), { db: tx })).rejects.toBeInstanceOf(RetryableHttpError);
+      expect(renderPage.calls).toHaveLength(1);
+      // Without rendering no token is needed.
+      await converter.convert(input({ rate, render: "never" }), { db: tx });
+    });
+  });
 });
 
 describe("jina converter", () => {
@@ -167,6 +191,22 @@ describe("jina converter", () => {
       "X-Remove-Selector": ".nav, #footer",
     });
     expect(requests[0]!.budget).toBe("jina");
+  });
+
+  it("a target status Jina reports is an HttpError for 4xx and retryable for 5xx", async () => {
+    const answering = (data: Record<string, unknown>): Transport => async () =>
+      makeResponse(200, new TextEncoder().encode(JSON.stringify({ code: 200, data: { content: "", usage: { tokens: 10 }, ...data } })));
+    const target = { url: "https://x.test.invalid/gone", html: null, boilerplateSelectors: [], render: "auto" as const };
+    await withRollback(async (tx) => {
+      const gone = await createJinaConverter(answering({ httpStatus: 404 }), cfg().jina).convert(target, { db: tx }).catch((e: unknown) => e);
+      expect(gone).toBeInstanceOf(HttpError);
+      expect((gone as HttpError).status).toBe(404);
+      await expect(createJinaConverter(answering({ httpStatus: 503 }), cfg().jina).convert(target, { db: tx })).rejects.toBeInstanceOf(
+        RetryableHttpError,
+      );
+      const coded: Transport = async () => makeResponse(200, new TextEncoder().encode(JSON.stringify({ code: 422, data: null })));
+      await expect(createJinaConverter(coded, cfg().jina).convert(target, { db: tx })).rejects.toBeInstanceOf(HttpError);
+    });
   });
 
   it("jina and firecrawl refuse a non-public target before any request", async () => {
@@ -262,9 +302,17 @@ describe("resolveConverter", () => {
 });
 
 describe("playwright renderer", () => {
-  // The site server listens on 127.0.0.1, which the default guard blocks: these tests block "/secret" instead.
-  const renderer = createPlaywrightRenderer({ isAllowed: async (url) => !new URL(url).pathname.startsWith("/secret") });
-  afterAll(() => renderer.close());
+  // The site server listens on 127.0.0.1, which the default guard blocks: these tests block "/secret" instead and
+  // connect through an agent that allows every address.
+  const openAgent = createGuardedAgent({ isAllowedAddress: () => true });
+  const renderer = createPlaywrightRenderer({
+    isAllowed: async (url) => !new URL(url).pathname.startsWith("/secret"),
+    dispatcher: openAgent,
+  });
+  afterAll(async () => {
+    await renderer.close();
+    await openAgent.close();
+  });
 
   it("refuses a non-public address before starting a browser", async () => {
     const guarded = createPlaywrightRenderer();
@@ -301,6 +349,144 @@ describe("playwright renderer", () => {
       expect(r.html).toContain("<p>Neu</p>");
     } finally {
       await site.close();
+    }
+  }, 60_000);
+
+  it("chromium is launched without non-proxied WebRTC UDP", () => {
+    expect(chromiumLaunchOptions()).toEqual({ headless: true, args: ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"] });
+  });
+
+  it("a context blocks service workers, closes websockets, drops its routes before closing; a crashed browser is relaunched", async () => {
+    const calls: string[] = [];
+    const launched: Array<{ connected: boolean; emit(): void }> = [];
+    const launchBrowser = async () => {
+      const listeners: Array<() => void> = [];
+      const state = { connected: true, emit: () => listeners.forEach((l) => l()) };
+      launched.push(state);
+      const context = {
+        routeWebSocket: async (_url: string, handler: (ws: { close(): void }) => void) => {
+          calls.push("routeWebSocket");
+          handler({ close: () => calls.push("ws.close") });
+        },
+        route: async () => void calls.push("route"),
+        newPage: async () => {
+          throw new Error("stop after setup");
+        },
+        unrouteAll: async (o: unknown) => void calls.push(`unrouteAll ${JSON.stringify(o)}`),
+        close: async () => void calls.push("close"),
+      };
+      return {
+        on: (event: string, listener: () => void) => {
+          if (event === "disconnected") listeners.push(listener);
+        },
+        isConnected: () => state.connected,
+        newContext: async (options: unknown) => {
+          calls.push(`newContext ${JSON.stringify(options)}`);
+          return context;
+        },
+        close: async () => undefined,
+      } as unknown as Browser;
+    };
+    const fake = createPlaywrightRenderer({ isAllowed: async () => true, launchBrowser });
+    await expect(fake.render("https://x.test.invalid/", { timeoutMs: 1000 })).rejects.toThrow("stop after setup");
+    expect(calls).toEqual([
+      `newContext ${JSON.stringify({ userAgent: "Periplus/0.1 (+mailto:test@example.invalid)", serviceWorkers: "block" })}`,
+      "routeWebSocket",
+      "ws.close",
+      "route",
+      `unrouteAll ${JSON.stringify({ behavior: "ignoreErrors" })}`,
+      "close",
+    ]);
+    expect(launched).toHaveLength(1);
+
+    // Crash: the disconnected event drops the browser, the next render launches a new one.
+    launched[0]!.connected = false;
+    launched[0]!.emit();
+    await expect(fake.render("https://x.test.invalid/", { timeoutMs: 1000 })).rejects.toThrow("stop after setup");
+    expect(launched).toHaveLength(2);
+
+    // A browser that died without the event is noticed before its next context.
+    launched[1]!.connected = false;
+    await expect(fake.render("https://x.test.invalid/", { timeoutMs: 1000 })).rejects.toThrow("stop after setup");
+    expect(launched).toHaveLength(3);
+    await fake.close();
+  });
+
+  it("307 and 308 keep method and body, 303 turns them into a GET", async () => {
+    const seen: Array<{ method: string; path: string; body: string }> = [];
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c: Buffer) => (body += c.toString()));
+      req.on("end", () => {
+        seen.push({ method: req.method ?? "", path: req.url ?? "", body });
+        const redirects: Record<string, [number, string]> = { "/a": [307, "/b"], "/b": [308, "/c"], "/c": [303, "/d"] };
+        const hop = redirects[req.url ?? ""];
+        if (hop) res.writeHead(hop[0], { location: hop[1] }).end();
+        else res.writeHead(200, { "content-type": "text/plain" }).end("ok");
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const answer = await fetchFollowingRedirects(
+        { url: `${origin}/a`, method: "POST", headers: { "content-type": "text/plain" }, body: Buffer.from("payload") },
+        async () => true,
+        openAgent,
+        5000,
+      );
+      expect(answer).toMatchObject({ status: 200, url: `${origin}/d` });
+      expect(seen).toEqual([
+        { method: "POST", path: "/a", body: "payload" },
+        { method: "POST", path: "/b", body: "payload" },
+        { method: "POST", path: "/c", body: "payload" },
+        { method: "GET", path: "/d", body: "" },
+      ]);
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it("refuses a sub-request whose host resolves to a private address at connect time", async () => {
+    const guarded = createGuardedAgent({ resolveAll: async () => [{ address: "127.0.0.1", family: 4 }] });
+    try {
+      const error = await fetchFollowingRedirects(
+        { url: "http://rebind.test.invalid:8080/", method: "GET", headers: {}, body: null },
+        async () => true,
+        guarded,
+        5000,
+      ).catch((e: unknown) => e);
+      expect(blockedCause(error)).toBeInstanceOf(BlockedAddressError);
+    } finally {
+      await guarded.close();
+    }
+  });
+
+  it.skipIf(!chromiumInstalled())("a page's websocket is closed without reaching the server", async () => {
+    const site = await startSiteServer();
+    let upgraded = false;
+    const ws = createServer();
+    ws.on("upgrade", (_req, socket) => {
+      upgraded = true;
+      socket.destroy();
+    });
+    await new Promise<void>((resolve) => ws.listen(0, "127.0.0.1", resolve));
+    const wsPort = (ws.address() as AddressInfo).port;
+    try {
+      site.set("/socket", {
+        body: `<!doctype html><html><body><p id="s">offen</p><script>
+          const s = new WebSocket("ws://127.0.0.1:${wsPort}/");
+          s.onclose = () => { document.getElementById("s").textContent = "geschlossen"; };
+          </script></body></html>`,
+        headers: { "content-type": "text/html" },
+      });
+      const r = await renderer.render(`${site.origin}/socket`, { timeoutMs: 15_000 });
+      expect(r.html).toContain("geschlossen");
+      expect(upgraded).toBe(false);
+    } finally {
+      await site.close();
+      ws.closeAllConnections();
+      await new Promise((resolve) => ws.close(resolve));
     }
   }, 60_000);
 

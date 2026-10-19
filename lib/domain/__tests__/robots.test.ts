@@ -37,7 +37,7 @@ describe("parseRobots", () => {
     expect(policy.isAllowed(`${o}/`)).toBe(true);
     expect(policy.isAllowed(`${o}/harbours/aegina`)).toBe(true);
     expect(policy.isAllowed(`${o}/drafts/x`)).toBe(false);
-    expect(explicitBan(policy, [])).toBe(false);
+    expect(explicitBan(policy)).toBe(false);
   });
 
   it("the longest matching rule wins", () => {
@@ -51,8 +51,7 @@ describe("parseRobots", () => {
   it("Disallow: / for * is an explicit ban", () => {
     const o = origin();
     const policy = parseRobots(o, fixture("disallow-all.txt"));
-    expect(explicitBan(policy, [])).toBe(true);
-    expect(explicitBan(policy, [`${o}/guide`])).toBe(true);
+    expect(explicitBan(policy)).toBe(true);
     const summary = robotsSummary(policy, [`${o}/guide`]);
     expect(summary).toEqual({
       status: "parsed",
@@ -70,8 +69,7 @@ describe("parseRobots", () => {
     const summary = robotsSummary(policy, startUrls);
     expect(summary.blockedStartUrls).toEqual([`${o}/a/x`]);
     expect(summary.disallowAll).toBe(false);
-    expect(explicitBan(policy, startUrls)).toBe(false);
-    expect(explicitBan(policy, [`${o}/a/x`, `${o}/a/y`])).toBe(true);
+    expect(explicitBan(policy)).toBe(false);
   });
 
   it("crawl-delay 10 is read and limits the rate", () => {
@@ -112,6 +110,60 @@ describe("parseRobots", () => {
     expect(new TextEncoder().encode(policy.text!).byteLength).toBeLessThanOrEqual(500 * 1024);
   });
 
+  it("disallowing the root with an Allow rule in the group is no explicit ban", () => {
+    const o = origin();
+    const policy = parseRobots(o, "User-agent: *\nDisallow: /\nAllow: /public\n");
+    expect(policy.hasAllowRule).toBe(true);
+    expect(policy.isAllowed(`${o}/`)).toBe(false);
+    expect(policy.isAllowed(`${o}/public/x`)).toBe(true);
+    expect(explicitBan(policy)).toBe(false);
+  });
+
+  it("an Allow rule of another group does not lift the ban of ours", () => {
+    const o = origin();
+    const policy = parseRobots(o, "User-agent: Googlebot\nAllow: /public\n\nUser-agent: periplus\nDisallow: /\n");
+    expect(policy.hasAllowRule).toBe(false);
+    expect(explicitBan(policy)).toBe(true);
+    // An empty Allow is no rule.
+    expect(explicitBan(parseRobots(o, "User-agent: *\nAllow:\nDisallow: /\n"))).toBe(true);
+  });
+
+  it("matches group names case-insensitively", () => {
+    const o = origin();
+    const policy = parseRobots(o, "User-agent: *\nDisallow:\n\nUser-agent: PERIPLUS\nDisallow: /x\n");
+    expect(policy.isAllowed(`${o}/x`)).toBe(false);
+    expect(policy.isAllowed(`${o}/y`)).toBe(true);
+  });
+
+  it("supports * wildcards and the $ end anchor", () => {
+    const o = origin();
+    const policy = parseRobots(o, "User-agent: *\nDisallow: /private*.html$\nDisallow: /end$\n");
+    expect(policy.isAllowed(`${o}/private-a.html`)).toBe(false);
+    expect(policy.isAllowed(`${o}/private/b/c.html`)).toBe(false);
+    expect(policy.isAllowed(`${o}/private-a.htmlx`)).toBe(true);
+    expect(policy.isAllowed(`${o}/end`)).toBe(false);
+    expect(policy.isAllowed(`${o}/end/more`)).toBe(true);
+  });
+
+  it("treats %7E and ~ as the same character, in rules and urls", () => {
+    const o = origin();
+    const tilde = parseRobots(o, "User-agent: *\nDisallow: /~joe/\n");
+    expect(tilde.isAllowed(`${o}/~joe/a`)).toBe(false);
+    expect(tilde.isAllowed(`${o}/%7Ejoe/a`)).toBe(false);
+    expect(tilde.isAllowed(`${o}/%7ejoe/a`)).toBe(false);
+    const encoded = parseRobots(o, "User-agent: *\nDisallow: /%7Ejoe/\n");
+    expect(encoded.isAllowed(`${o}/~joe/a`)).toBe(false);
+    // Reserved characters stay encoded: /a%2Fb is not /a/b.
+    const slash = parseRobots(o, "User-agent: *\nDisallow: /a/b\n");
+    expect(slash.isAllowed(`${o}/a%2Fb`)).toBe(true);
+  });
+
+  it("an Allow and a Disallow of equal length: Allow wins", () => {
+    const o = origin();
+    const policy = parseRobots(o, "User-agent: *\nDisallow: /tie\nAllow: /tie\n");
+    expect(policy.isAllowed(`${o}/tie`)).toBe(true);
+  });
+
   it("a URL of another origin is not allowed", () => {
     const policy = parseRobots(origin(), fixture("longest-match.txt"));
     expect(policy.isAllowed(`${origin()}/b`)).toBe(false);
@@ -143,6 +195,21 @@ describe("fetchRobots", () => {
     );
   });
 
+  it("a redirect or informational answer is unavailable, not empty rules", async () => {
+    for (const status of [304, 302, 199]) {
+      await expect(withRollback((db) => fetchRobots(stubTransport(status, "User-agent: *\nDisallow: /"), origin(), { db }))).rejects.toBeInstanceOf(
+        RetryableHttpError,
+      );
+    }
+  });
+
+  it("reads at most 500 KiB of the body", async () => {
+    const o = origin();
+    const transport = stubTransport(200, "User-agent: *\nDisallow: /x\n");
+    await withRollback((db) => fetchRobots(transport, o, { db }));
+    expect(transport.seen[0]!.maxBodyBytes).toBe(500 * 1024);
+  });
+
   it("429 is retryable, not allow all", async () => {
     await expect(withRollback((db) => fetchRobots(stubTransport(429), origin(), { db }))).rejects.toBeInstanceOf(
       RetryableHttpError,
@@ -169,6 +236,19 @@ describe("robotsForRun", () => {
 
       await robotsForRun(db, archive, transport, o, newId(), { db });
       expect(transport.seen).toHaveLength(2);
+    });
+  });
+
+  it("a corrupt cached record is fetched again", async () => {
+    const o = origin();
+    const archive = memoryArchive();
+    const transport = stubTransport(200, fixture("longest-match.txt"));
+    const runId = newId();
+    await archive.put(`robots/${new URL(o).host}/${runId}.json`, "{not json", "application/json");
+    await withRollback(async (db) => {
+      const policy = await robotsForRun(db, archive, transport, o, runId, { db, runId });
+      expect(transport.seen).toHaveLength(1);
+      expect(policy.isAllowed(`${o}/a/x`)).toBe(false);
     });
   });
 

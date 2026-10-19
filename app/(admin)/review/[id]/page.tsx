@@ -126,7 +126,7 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
 
       {invalid.length > 0 && open && (
         <p role="alert" className="rounded bg-red-100 px-3 py-2">
-          Ungültige Eingaben: {invalid.map((f) => APPROVAL_FIELD_LABELS[f] ?? f).join(", ")}
+          Ungültige Eingaben: {invalid.map((f) => (Object.hasOwn(APPROVAL_FIELD_LABELS, f) ? APPROVAL_FIELD_LABELS[f] : f)).join(", ")}
         </p>
       )}
 

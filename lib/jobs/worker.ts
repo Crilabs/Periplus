@@ -8,8 +8,8 @@ import { errorText, lockFailedJob } from "@/lib/domain/jobs-view";
 import { createReviewTask } from "@/lib/domain/review";
 import { failRun, recordJobOutcome } from "@/lib/domain/runs";
 import { createLogger } from "@/lib/logger";
-import { enqueueRunAdvance } from "@/lib/pipeline/runs";
 import { isQueuePaused, pauseForBudget } from "./controls";
+import { enqueueRunAdvance } from "./enqueue";
 import { DEAD_LETTER_QUEUE, QUEUES, RUN_ADVANCE_QUEUE, type QueueName } from "./queues";
 
 export type JobContext = { db: Db; boss: PgBoss; log: Logger; jobId: string; runId?: string };

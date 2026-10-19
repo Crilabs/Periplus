@@ -8,6 +8,7 @@ import { quietDay } from "@/test/external-calls";
 import { externalCalls, rateLimits } from "@/lib/db/schema";
 import { BudgetExceeded, recordExternalCall } from "@/lib/domain/costs";
 import { newId } from "@/lib/domain/ids";
+import { takeToken } from "@/lib/domain/rate-limit";
 import {
   HttpError,
   RetryableHttpError,
@@ -229,6 +230,28 @@ describe("httpCall", () => {
       expect(await tx.select().from(rateLimits).where(eq(rateLimits.key, `http:${rateKey}`))).toEqual([]);
     }));
 
+  it("a budget spent while waiting for the rate token stops the call after the wait", () =>
+    withRollback(async (tx) => {
+      const day = await quietDay(tx);
+      let t = day.getTime() + 3_600_000;
+      const rateKey = `budget-wait-${newId()}`;
+      await takeToken(tx, `http:${rateKey}`, 1, new Date(t));
+      const transport = stubTransport(200);
+      const sleep = async (ms: number) => {
+        // Meanwhile another call spends the whole day's budget.
+        await recordExternalCall(tx, { service: "voyage", operation: "test", units: 1, unit: "call", costEur: 1000, at: new Date(t) });
+        t += ms;
+      };
+      const err = await httpCall(
+        transport,
+        { service: "voyage", operation: "embed", url: "https://example.invalid/v", timeoutMs: 1000, budget: "voyage", ratePerMinute: 1, rateKey },
+        { db: tx },
+        { now: () => new Date(t), sleep },
+      ).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BudgetExceeded);
+      expect(transport.calls).toHaveLength(0);
+    }));
+
   it("rateKey separates the buckets of two domains of the same service", async () => {
     const service = uniqueService();
     const frozen = new Date("2030-01-01T00:00:00Z");
@@ -332,6 +355,8 @@ describe("fixtures", () => {
       fixtureKey({ method: "GET", url: "https://example.invalid/x" }),
     );
     expect(fixtureKey({ url: "https://example.invalid/x" })).toMatch(/^[0-9a-f]{64}$/);
+    expect(fixtureKey({ url: "https://example.invalid/x", redirect: "follow" })).toBe(fixtureKey({ url: "https://example.invalid/x" }));
+    expect(fixtureKey({ url: "https://example.invalid/x", redirect: "manual" })).not.toBe(fixtureKey({ url: "https://example.invalid/x" }));
     expect(fixtureKey({ method: "POST", url: "https://example.invalid/x", body: "a" })).not.toBe(
       fixtureKey({ method: "POST", url: "https://example.invalid/x", body: "b" }),
     );
