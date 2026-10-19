@@ -56,6 +56,13 @@ export function distanceToLinesNm(p: LonLat, lines: Array<GeoJSON.LineString | G
   return best;
 }
 
+/** Distance from the point to the polygon, nautical miles: 0 inside, else to the nearest ring (as `distanceToLinesNm`). */
+export function distanceToPolygonNm(p: LonLat, g: GeoJSON.Polygon | GeoJSON.MultiPolygon): number {
+  if (pointInPolygon(p, g)) return 0;
+  const rings = (g.type === "Polygon" ? [g.coordinates] : g.coordinates).flat();
+  return distanceToLinesNm(p, [{ type: "MultiLineString", coordinates: rings }]);
+}
+
 /** Distance from the origin to the segment a–b (plane). */
 function distanceToSegment([ax, ay]: [number, number], [bx, by]: [number, number]): number {
   const dx = bx - ax;

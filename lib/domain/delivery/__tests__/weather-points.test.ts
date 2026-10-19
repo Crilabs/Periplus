@@ -35,7 +35,7 @@ async function build(tx: Db) {
   await tx.update(geoObjects).set({ geom: geomFromGeoJson(square(21.21, 35.17, 21.23, 35.19)) }).where(sql`${geoObjects.id} = ${straitId}`);
   const scope = await loadAreaScope(tx, f.areaId, cfg, await today(tx));
   const { regions } = namedRegions(scope.regions);
-  const input = { regions, passages: scope.passages, regionIdFor: regionIdAt(regions), cfg: cfg.weather };
+  const input = { regions, passages: scope.passages, regionIdFor: regionIdAt(regions, cfg.regions.memberMarginNm), cfg: cfg.weather };
   return { f, straitId, scope, input, result: await buildWeatherPoints(tx, input) };
 }
 
@@ -80,6 +80,41 @@ describe("buildWeatherPoints", () => {
       // no sampled water point is clearly farther from land and the buffer edge (grid ≈ 250 m, MIC tolerance)
       expect(Number(r.clearance)).toBeGreaterThan(Number(r.best_sample) - 30);
       expect(Number(r.clearance)).toBeGreaterThan(bufferM / 2 - 50);
+    });
+  });
+
+  it("a gulf's weather point lies inside the gulf, not on the open sea past its mouth (ruling M6-C-R2)", async () => {
+    await withRollback(async (tx) => {
+      const { f, input } = await build(tx);
+      // a gulf ≈ 1.75 nm wide and 12 nm deep between two land blocks, closed to the south, open to the north
+      await tx.insert(landPolygons).values([
+        { geom: geomFromGeoJson(square(22.0, 36.0, 22.1, 36.2)), datasetVersion: "test" },
+        { geom: geomFromGeoJson(square(22.136, 36.0, 22.25, 36.2)), datasetVersion: "test" },
+        { geom: geomFromGeoJson(square(22.0, 35.95, 22.25, 36.0)), datasetVersion: "test" },
+      ]);
+      const gulfPolygon = square(22.1, 36.0, 22.136, 36.2);
+      const gulf: RegionSource = {
+        ...input.regions.find((r) => r.geoObjectId === f.islandId)!,
+        geoObjectId: "01a15602-0000-7000-8000-0000000000ab",
+        publicId: "rg_01J9ZD00000000000000000098",
+        type: "gulf",
+        name: "Kolpos Test",
+        polygon: gulfPolygon,
+        center: { lon: 22.118, lat: 36.1 },
+      };
+      const { points } = await buildWeatherPoints(tx, { ...input, regions: [gulf], passages: [] });
+      expect(points).toHaveLength(1);
+      const wp = points[0]!;
+      expect(wp.regionId).toBe(gulf.publicId);
+      const { rows } = await tx.execute<{ inside: boolean; clearance: number }>(sql`
+        with g as (select ${geomFromGeoJson(gulfPolygon)} as g),
+             p as (select ST_SetSRID(ST_MakePoint(${wp.position.lon}::float8, ${wp.position.lat}::float8), 4326) as g)
+        select ST_Within(p.g, g.g) as inside,
+               ST_Distance(ST_Transform(p.g, ${UTM}::int), ST_Transform(ST_Boundary(g.g), ${UTM}::int)) as clearance
+        from g, p`);
+      expect(rows[0]!.inside).toBe(true);
+      // about half the gulf's width (≈ 1.6 km) from its shores
+      expect(Number(rows[0]!.clearance)).toBeGreaterThan(1400);
     });
   });
 

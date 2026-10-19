@@ -761,6 +761,8 @@ export const deliverySchema = z.strictObject({
     /** Place statuses delivered as spots (excluded spots are delivered with `exclude.excluded`). */
     statuses: z.array(z.enum(placeStatusEnum.enumValues)).min(1),
     maxSources: positiveInt,
+    /** Name of an excluded spot without a valid name: it is still delivered, so the app knows (ruling M6-C-R1). */
+    excludedFallbackName: z.string().trim().min(1),
   }),
   coast: z.strictObject({
     /** Margin around the area box, nautical miles. */
@@ -776,12 +778,23 @@ export const deliverySchema = z.strictObject({
     types: z.array(geoObjectType).min(1),
     /** Radius of a region known only as a point, nautical miles. */
     pointRadiusNm: positive,
+    /** A spot this close to a region polygon belongs to it (bays of an island), nautical miles (ruling M6-C-R1). */
+    memberMarginNm: positive,
     simplifyToleranceM: positive,
     character: z
       .strictObject({ meltemiHigh: share, meltemiLow: share })
       .refine((c) => c.meltemiLow < c.meltemiHigh, "meltemiLow must be below meltemiHigh"),
   }),
-  weather: z.strictObject({ regionBufferNm: positive, capeOffsetNm: positive, capeLandRadiusM: positive }),
+  weather: z.strictObject({
+    regionBufferNm: positive,
+    /**
+     * A region polygon holds water when at least this share of its area is not land: its point then lies inside it,
+     * otherwise (an island) in its buffer (ruling M6-C-R2).
+     */
+    regionMinWaterShare: share,
+    capeOffsetNm: positive,
+    capeLandRadiusM: positive,
+  }),
   highlights: z.strictObject({ maxSpotIds: positiveInt }),
   validation: z.strictObject({
     maxWaterDistanceNm: positive,

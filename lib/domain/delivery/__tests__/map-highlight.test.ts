@@ -179,6 +179,17 @@ describe("mapHighlights", () => {
     ]);
   });
 
+  it("a POI with exists: false is not delivered (ruling M6-C-R1); exists: true or unknown is", () => {
+    const spots = [spot(1, north(1))];
+    const { highlights, dropped } = mapHighlights(
+      [poi(1, { attributes: { exists: false } }), poi(2, { attributes: { exists: true }, position: north(0, { lon: 21.2, lat: 35.1 }) }), poi(3, { name: "Kafeneio" })],
+      spots,
+      ctx,
+    );
+    expect(dropped).toEqual([{ id: id("hl", 1), reason: "not_existing" }]);
+    expect(highlights.map((h) => h.id)).toEqual([id("hl", 2), id("hl", 3)]);
+  });
+
   it("maps fields to the contract: category, region, refs, sources without upload://, summary", () => {
     const src = poi(1, { position: { lon: 21.1000049, lat: 35.1000051 }, profile: { confidence: 0.2 } });
     src.wikidataId = "Q42";

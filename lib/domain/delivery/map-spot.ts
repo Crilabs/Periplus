@@ -54,7 +54,10 @@ type FieldRule = { attributes: string[]; note: string };
 export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
   id: { attributes: [], note: "places.public_id" },
   kind: { attributes: ["place.kind"], note: "SPOT_KIND; without the identity key the place's kind" },
-  name: { attributes: ["geo.name"], note: "display name (de, en, any); without a valid name the spot is omitted (no_name)" },
+  name: {
+    attributes: ["geo.name"],
+    note: "display name (de, en, any); without a valid name the spot is omitted (no_name), an excluded one is delivered with spots.excludedFallbackName (ruling M6-C-R1)",
+  },
   names: { attributes: ["geo.name"], note: "valid names without transliterations and fallbacks; omitted when none" },
   position: { attributes: ["place.position"], note: "places.position, round5" },
   anchorPosition: {
@@ -120,16 +123,20 @@ export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
 /**
  * A profile value delivered without its provenance (ruling M6-B-R2 M-6): `anchorPosition` and `depth`, whose contract
  * values name their own source and confidence, are dropped; `shelter` (only on an excluded spot, any other is omitted)
- * keeps its values. The build reports them as validation warnings (Task 9).
+ * keeps its values. An excluded spot without a valid name carries `spots.excludedFallbackName` (`fallback_name`). The
+ * build reports them as validation warnings (Task 9).
  */
-export type SpotWarning = { code: "missing_provenance"; field: "anchorPosition" | "depth" | "shelter" };
+export type SpotWarning =
+  | { code: "missing_provenance"; field: "anchorPosition" | "depth" | "shelter" }
+  | { code: "fallback_name" };
 
 /**
  * An excluded spot is always delivered (Teil B "Ausgeschlossene Spots werden mit `exclude.excluded = true` und Grund
  * geliefert", ruling M6-B-R2 I-2); any other spot without a profile or without all eight sectors (each with its
  * provenance) is omitted, which the build reports as a warning (`no_profile`, `shelter_incomplete`, ruling M6-P31).
- * A spot without a valid name is omitted (`no_name`, ruling M6-B-R1): the contract has no spot without a name, and an
- * invented one would be worse.
+ * A spot without a valid name is omitted (`no_name`, ruling M6-B-R1): the contract has no spot without a name. An
+ * excluded one is delivered with the fallback name `spots.excludedFallbackName` instead, so the app learns it is
+ * excluded (ruling M6-C-R1).
  */
 export type MappedSpot =
   | { spot: SpotBody; warnings: SpotWarning[] }
@@ -181,7 +188,9 @@ export function mapSpot(
   const excluded = reason !== null;
   const banExcludes = excluded && !profileExclude?.excluded && !statusExclude.excluded;
 
-  if (src.name.trim() === "") return { omitted: "no_name" };
+  const nameless = src.name.trim() === "";
+  if (nameless && !excluded) return { omitted: "no_name" };
+  if (nameless) warnings.push({ code: "fallback_name" });
   if (!profile && !excluded) return { omitted: "no_profile" };
 
   // shelter: all eight sectors, each with its provenance, or no spot; an excluded spot is delivered anyway, a missing
@@ -215,7 +224,7 @@ export function mapSpot(
   const spot: SpotBody = {
     id: src.publicId,
     kind: SPOT_KIND[placeKind],
-    name: src.name,
+    name: nameless ? ctx.cfg.spots.excludedFallbackName : src.name,
     names: src.names.length > 0 ? src.names : undefined,
     position: { lat: round5(src.position.lat), lon: round5(src.position.lon) },
     anchorPosition: anchor,

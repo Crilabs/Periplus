@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "spots": { "statuses": ["confirmed", "no_anchoring"], "maxSources": 20 },
+  "spots": { "statuses": ["confirmed", "no_anchoring"], "maxSources": 20, "excludedFallbackName": "Ankerplatz ohne Namen" },
   "coast": {
     "marginNm": 2,
     "simplifyToleranceM": 10,
@@ -10,10 +10,11 @@
   "regions": {
     "types": ["island", "archipelago", "coast_section", "gulf", "channel"],
     "pointRadiusNm": 2,
+    "memberMarginNm": 0.5,
     "simplifyToleranceM": 50,
     "character": { "meltemiHigh": 0.6, "meltemiLow": 0.3 }
   },
-  "weather": { "regionBufferNm": 3, "capeOffsetNm": 1, "capeLandRadiusM": 2000 },
+  "weather": { "regionBufferNm": 3, "regionMinWaterShare": 0.05, "capeOffsetNm": 1, "capeLandRadiusM": 2000 },
   "highlights": { "maxSpotIds": 50 },
   "validation": {
     "maxWaterDistanceNm": 1.5,

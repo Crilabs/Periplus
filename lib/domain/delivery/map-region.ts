@@ -2,7 +2,7 @@ import type { RegionBody } from "@/contract";
 import type { z } from "zod";
 import type { regionType } from "@/contract/v1";
 import type { DeliveryConfig } from "@/lib/config/schemas";
-import { distanceNm, pointInPolygon, round5 } from "./geo";
+import { distanceNm, distanceToPolygonNm, round5 } from "./geo";
 import type { LonLat, RegionSource } from "./types";
 
 /*
@@ -49,32 +49,39 @@ export function namedRegions(regions: RegionSource[]): {
   };
 }
 
-/** Inside the polygon; a region known as a point: within `radiusNm` of its centre. */
-function contains(r: RegionSource, p: LonLat): boolean {
-  return r.polygon ? pointInPolygon(p, r.polygon) : distanceNm(r.center, p) <= r.radiusNm;
+/**
+ * Inside the polygon or within `marginNm` of it (the bays of an island, whose polygon is land; ruling M6-C-R1); a
+ * region known as a point: within `radiusNm` of its centre.
+ */
+function contains(r: RegionSource, p: LonLat, marginNm: number): boolean {
+  return r.polygon ? distanceToPolygonNm(p, r.polygon) <= marginNm : distanceNm(r.center, p) <= r.radiusNm;
 }
 
 /** Size for "the smallest region": `areaKm2`, a point region the circle of its radius. */
 const sizeKm2 = (r: RegionSource) => r.areaKm2 ?? Math.PI * (r.radiusNm * KM_PER_NM) ** 2;
 
-/** The public id of the smallest region containing a point (then the smaller id), null outside all. */
-export function regionIdAt(regions: RegionSource[]): (p: LonLat) => string | null {
+/**
+ * The public id of the smallest region containing a point (then the smaller id), null outside all. A polygon region
+ * contains what lies within `marginNm` (`regions.memberMarginNm`) of its polygon; the size is the unbuffered one.
+ */
+export function regionIdAt(regions: RegionSource[], marginNm: number): (p: LonLat) => string | null {
   const bySize = [...regions].sort((a, b) => sizeKm2(a) - sizeKm2(b) || byId(a.publicId, b.publicId));
-  return (p) => bySize.find((r) => contains(r, p))?.publicId ?? null;
+  return (p) => bySize.find((r) => contains(r, p, marginNm))?.publicId ?? null;
 }
 
 /**
  * `spot.regionId` = the smallest region containing the spot; `region.spotIds` = every spot inside the region (also
- * those of smaller regions within it), sorted.
+ * those of smaller regions within it), sorted; containment as in `regionIdAt`.
  */
 export function assignRegions(
   spots: Array<{ id: string; position: LonLat }>,
   regions: RegionSource[],
+  marginNm: number,
 ): { regionIdBySpot: Map<string, string | null>; spotIdsByRegion: Map<string, string[]> } {
-  const regionIdFor = regionIdAt(regions);
+  const regionIdFor = regionIdAt(regions, marginNm);
   const regionIdBySpot = new Map(spots.map((s) => [s.id, regionIdFor(s.position)]));
   const spotIdsByRegion = new Map(
-    regions.map((r) => [r.publicId, spots.filter((s) => contains(r, s.position)).map((s) => s.id).sort(byId)]),
+    regions.map((r) => [r.publicId, spots.filter((s) => contains(r, s.position, marginNm)).map((s) => s.id).sort(byId)]),
   );
   return { regionIdBySpot, spotIdsByRegion };
 }

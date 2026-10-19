@@ -222,9 +222,20 @@ describe("mapSpot", () => {
     expect(mapSpot({ ...spotA(), profile: null }, ctx)).toEqual({ omitted: "no_profile" });
   });
 
-  it("a spot without a valid name is omitted as no_name, even when excluded (ruling M6-B-R1)", () => {
+  it("a spot without a valid name is omitted as no_name (ruling M6-B-R1)", () => {
     expect(mapSpot(spotA({ src: { name: "" } }), ctx)).toEqual({ omitted: "no_name" });
-    expect(mapSpot(spotA({ src: { name: "  ", status: "no_anchoring", statusReason: MILITARY } }), ctx)).toEqual({ omitted: "no_name" });
+    expect(mapSpot(spotA({ src: { name: "  " } }), ctx)).toEqual({ omitted: "no_name" });
+  });
+
+  it("an excluded spot without a valid name is delivered as 'Ankerplatz ohne Namen' with a warning (ruling M6-C-R1)", () => {
+    const { spot, warnings } = mappedWithWarnings(spotA({ src: { name: "  ", status: "no_anchoring", statusReason: MILITARY } }));
+    expect(spot.name).toBe("Ankerplatz ohne Namen");
+    expect(spot.exclude).toMatchObject({ excluded: true, reason: "military" });
+    expect(warnings).toContainEqual({ code: "fallback_name" });
+    expect(parses(spot)).toBeUndefined();
+    // also without a profile
+    const bare = mappedWithWarnings({ ...spotA({ src: { name: "", status: "no_anchoring", statusReason: MILITARY } }), profile: null });
+    expect(bare.spot.name).toBe("Ankerplatz ohne Namen");
   });
 
   it("a zero-filled excluded spot names the rule's origin as its shelter source (ruling M6-B-R3)", () => {

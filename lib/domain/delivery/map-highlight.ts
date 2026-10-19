@@ -21,7 +21,8 @@ export type HighlightSpot = { id: string; position: LonLat; mergedInto: string |
 export type DroppedHighlight = {
   id: string;
   /** `no_name`: the contract has no highlight without a name (ruling M6-B-R1); the build reports every drop. */
-  reason: "no_name" | "no_profile" | "no_importance" | "no_spot_in_radius" | "duplicate";
+  /** `not_existing`: the profile says the place no longer exists (`exists: false`, ruling M6-C-R1). */
+  reason: "no_name" | "no_profile" | "not_existing" | "no_importance" | "no_spot_in_radius" | "duplicate";
   /** The highlight a duplicate was merged into. */
   into?: string;
 };
@@ -80,6 +81,10 @@ export function mapHighlights(
       continue;
     }
     const a = poi.profile.attributes;
+    if (a["exists"] === false) {
+      dropped.push({ id: poi.publicId, reason: "not_existing" });
+      continue;
+    }
     const importance = a["derived.importance"];
     if (typeof importance !== "number" || !Number.isInteger(importance) || importance < 1 || importance > ctx.radiusNm.length) {
       dropped.push({ id: poi.publicId, reason: "no_importance" });

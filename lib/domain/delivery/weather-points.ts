@@ -10,8 +10,8 @@ import type { LonLat, PassageSource, RegionSource } from "./types";
 
 /*
  * `weather-points.json` (spec 08, Teil B): points on open water the app may query for weather. Region (with a
- * polygon): the centre of the largest circle in the water of the polygon buffered by `weather.regionBufferNm`, land
- * subtracted, in the UTM zone; strait or channel: the point of its geometry nearest its centroid; cape: `capeOffsetNm`
+ * polygon): the centre of the largest circle in the water of the polygon, land subtracted, in the UTM zone; an island
+ * (no water in its polygon) in its polygon buffered by `weather.regionBufferNm`; strait or channel: the point of its geometry nearest its centroid; cape: `capeOffsetNm`
  * seaward of the cape, on the bearing from the centroid of the land within `capeLandRadiusM` to the cape. A point
  * without water is left out, as is an object without a name; both are reported in `dropped`.
  */
@@ -52,17 +52,34 @@ type Row = { lon: number | null; lat: number | null };
 const toPoint = (r: Row | undefined): LonLat | null =>
   r && r.lon !== null && r.lat !== null ? { lon: round5(Number(r.lon)), lat: round5(Number(r.lat)) } : null;
 
-/** The centre of the largest circle in the buffered region minus land; null when no water is left. */
-async function regionPoint(db: Db, polygon: NonNullable<RegionSource["polygon"]>, center: LonLat, bufferNm: number): Promise<LonLat | null> {
+/**
+ * The centre of the largest circle in the water of the region (spec 08 "im Regionspolygon", ruling M6-C-R2): the
+ * polygon minus land when at least `minWaterShare` of it is water (gulf, archipelago, coast section), else (an island,
+ * whose polygon is land) the polygon buffered by `bufferNm` minus land; null when no water is left. Land is cut to
+ * the buffer before the union, so a mainland next to the region stays small.
+ */
+async function regionPoint(
+  db: Db,
+  polygon: NonNullable<RegionSource["polygon"]>,
+  center: LonLat,
+  cfg: Pick<DeliveryConfig["weather"], "regionBufferNm" | "regionMinWaterShare">,
+): Promise<LonLat | null> {
   const srid = utmSridFor(center.lon, center.lat);
   const { rows } = await db.execute<Row>(sql`
-    with buf as (select ST_Buffer(ST_Transform(${geomFromGeoJson(polygon)}, ${srid}::int), ${bufferNm * METRES_PER_NM}::float8) as g),
+    with r as (select ST_Transform(${geomFromGeoJson(polygon)}, ${srid}::int) as g),
+    buf as (select b.g, ST_Transform(b.g, 4326) as g4326 from (select ST_Buffer(r.g, ${cfg.regionBufferNm * METRES_PER_NM}::float8) as g from r) b),
     land as (
-      select ST_Union(ST_Transform(l.geom, ${srid}::int)) as g
+      -- cut in UTM, where the buffer's edges are straight: a cut in WGS84 would leave slivers of false water
+      select ST_Union(ST_Intersection(ST_Transform(l.geom, ${srid}::int), buf.g)) as g
       from land_polygons l, buf
-      where l.geom && ST_Transform(buf.g, 4326) and ST_Intersects(l.geom, ST_Transform(buf.g, 4326))
+      where l.geom && buf.g4326 and ST_Intersects(l.geom, buf.g4326)
     ),
-    water as (select ST_CollectionExtract(coalesce(ST_Difference(buf.g, land.g), buf.g), 3) as g from buf, land),
+    inside as (select ST_CollectionExtract(coalesce(ST_Difference(r.g, land.g), r.g), 3) as g, ST_Area(r.g) as area from r, land),
+    water as (
+      select case when ST_Area(inside.g) >= ${cfg.regionMinWaterShare}::float8 * inside.area and not ST_IsEmpty(inside.g) then inside.g
+                  else ST_CollectionExtract(coalesce(ST_Difference(buf.g, land.g), buf.g), 3) end as g
+      from inside, buf, land
+    ),
     c as (select ST_Transform((ST_MaximumInscribedCircle(water.g)).center, 4326) as p from water where not ST_IsEmpty(water.g))
     select ST_X(p) as lon, ST_Y(p) as lat from c
   `);
@@ -120,8 +137,8 @@ export async function buildWeatherPoints(
       dropped.push({ geoObjectId: r.geoObjectId, kind: "region", reason: "no_name" });
       continue;
     }
-    // the point stands for its region, wherever in the buffer it lies
-    add(r.geoObjectId, "region", r.name, await regionPoint(db, r.polygon, r.center, input.cfg.regionBufferNm), () => r.publicId);
+    // the point stands for its region, also when it lies in an island's buffer
+    add(r.geoObjectId, "region", r.name, await regionPoint(db, r.polygon, r.center, input.cfg), () => r.publicId);
   }
   for (const p of input.passages) {
     const kind: Kind = p.type === "cape" ? "cape" : "channel";

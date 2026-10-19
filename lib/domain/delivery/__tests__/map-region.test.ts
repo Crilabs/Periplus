@@ -12,6 +12,7 @@ import type { RegionSource } from "../types";
 
 const cfg = loadConfig("config").delivery;
 const AR = "ar_01J9ZD00000000000000000001";
+const MARGIN = cfg.regions.memberMarginNm;
 const id = (prefix: "sp" | "rg", n: number) => `${prefix}_01J9ZD${String(n).padStart(20, "0")}`;
 
 const square = (w: number, s: number, e: number, n: number): GeoJSON.Polygon => ({
@@ -62,7 +63,7 @@ const outside = { id: id("sp", 3), position: { lon: 22, lat: 36 } };
 
 describe("assignRegions", () => {
   it("a spot inside an island inside an archipelago belongs to the island; the archipelago lists both", () => {
-    const { regionIdBySpot, spotIdsByRegion } = assignRegions([onArchipelago, onIsland, outside], [archipelago, island]);
+    const { regionIdBySpot, spotIdsByRegion } = assignRegions([onArchipelago, onIsland, outside], [archipelago, island], MARGIN);
     expect(regionIdBySpot.get(onIsland.id)).toBe(island.publicId);
     expect(regionIdBySpot.get(onArchipelago.id)).toBe(archipelago.publicId);
     expect(regionIdBySpot.get(outside.id)).toBeNull();
@@ -72,11 +73,34 @@ describe("assignRegions", () => {
 
   it("a region known as a point contains what lies within its radius; its size is that circle", () => {
     const point = region(3, { type: "gulf", center: { lon: 21.3, lat: 35.25 }, radiusNm: 2 });
-    const { regionIdBySpot, spotIdsByRegion } = assignRegions([onArchipelago, onIsland], [archipelago, point]);
+    const { regionIdBySpot, spotIdsByRegion } = assignRegions([onArchipelago, onIsland], [archipelago, point], MARGIN);
     // the circle (π · 3.7² ≈ 43 km²) is smaller than the archipelago
     expect(regionIdBySpot.get(onArchipelago.id)).toBe(point.publicId);
     expect(spotIdsByRegion.get(point.publicId)).toEqual([onArchipelago.id]);
-    expect(regionIdAt([archipelago, point])({ lon: 21.1, lat: 35.1 })).toBe(archipelago.publicId);
+    expect(regionIdAt([archipelago, point], MARGIN)({ lon: 21.1, lat: 35.1 })).toBe(archipelago.publicId);
+  });
+
+  it("a spot in an island's bay, within memberMarginNm of its land polygon, belongs to the island (ruling M6-C-R1)", () => {
+    expect(MARGIN).toBe(0.5);
+    // 0.3 nm north of the island's north coast (35.15): in the water of its bay, inside the archipelago
+    const inBay = { id: id("sp", 4), position: { lon: 21.1, lat: 35.155 } };
+    // 0.9 nm north of it: in the archipelago only
+    const offshore = { id: id("sp", 5), position: { lon: 21.1, lat: 35.165 } };
+    // 0.4 nm east of a lone rock outside the archipelago
+    const rock = region(7, { polygon: square(21.6, 35.5, 21.61, 35.51), areaKm2: 1, radiusNm: 0.5 });
+    const nearRock = { id: id("sp", 6), position: { lon: 21.618, lat: 35.505 } };
+    const { regionIdBySpot, spotIdsByRegion } = assignRegions([inBay, offshore, nearRock], [archipelago, island, rock], MARGIN);
+    expect(regionIdBySpot.get(inBay.id)).toBe(island.publicId);
+    expect(regionIdBySpot.get(offshore.id)).toBe(archipelago.publicId);
+    expect(regionIdBySpot.get(nearRock.id)).toBe(rock.publicId);
+    expect(spotIdsByRegion.get(island.publicId)).toEqual([inBay.id]);
+    expect(spotIdsByRegion.get(archipelago.publicId)).toEqual([inBay.id, offshore.id]);
+    // two islands within the margin: the smaller one wins
+    const islet = region(8, { polygon: square(21.1, 35.156, 21.101, 35.157), areaKm2: 0.01, radiusNm: 0.1 });
+    expect(regionIdAt([archipelago, island, islet], MARGIN)(inBay.position)).toBe(islet.publicId);
+    // a point region takes no margin: only its radius
+    const point = region(9, { type: "gulf", polygon: null, center: { lon: 22, lat: 36 }, radiusNm: 1 });
+    expect(regionIdAt([point], MARGIN)({ lon: 22, lat: 36 + 1.2 / 60 })).toBeNull();
   });
 });
 
@@ -172,7 +196,7 @@ describe("regions of the delivery fixture", () => {
       const scope = await loadAreaScope(tx, f.areaId, cfg, await dbToday(tx));
       const { regions } = namedRegions(scope.regions);
       const spots = scope.spots.map((s) => ({ id: s.publicId, position: s.position }));
-      const { regionIdBySpot, spotIdsByRegion } = assignRegions(spots, regions);
+      const { regionIdBySpot, spotIdsByRegion } = assignRegions(spots, regions, MARGIN);
       const publicIds = new Map(regions.map((r) => [r.geoObjectId, r.publicId]));
       const bodies = regions.map((r) =>
         mapRegion(r, { areaPublicId: f.areaPublicId, regionPublicIds: publicIds, spotIds: spotIdsByRegion.get(r.publicId) ?? [], cfg }),
@@ -185,10 +209,9 @@ describe("regions of the delivery fixture", () => {
         facts: { meltemiExposure: 0.7, ferryTraffic: "heavy", charterBase: true, supplyPort: null },
         character: { de: "Meltemi-exponiert, starker Fährverkehr, Charterbasis." },
       });
-      // A lies in the bay notch, outside the island's land polygon and outside the archipelago's 2 nm circle: by the
-      // containment rule it belongs to no region (see the bundle C report, concern on region membership)
-      expect(regionIdBySpot.get(f.places.A.publicId!)).toBeNull();
-      expect(islandBody.spotIds).toEqual([]);
+      // A lies in the bay notch, outside the island's land polygon but within memberMarginNm of it (ruling M6-C-R1)
+      expect(regionIdBySpot.get(f.places.A.publicId!)).toBe(f.islandPublicId);
+      expect(islandBody.spotIds).toContain(f.places.A.publicId!);
       expect(archipelagoBody.parentId).toBe(f.areaPublicId);
       for (const b of bodies) expect(regionSchema.safeParse({ ...b, profileVersion: 1, validFrom: "2026-10-19" }).error?.issues).toBeUndefined();
     });
