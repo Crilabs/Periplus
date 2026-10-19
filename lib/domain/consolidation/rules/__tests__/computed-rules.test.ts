@@ -42,14 +42,55 @@ describe("shelterRule", () => {
 
   it("confidence over the support: computed alone, confirmed by a text", () => {
     expect(shelterRule([c(0.6, { confidence: 0.6 })], ctx)!.confidence).toBe(0.6);
-    // base max(0.6, 0.8 × 1), second independent source +0.15, cap 0.95
-    expect(shelterRule([c(0.6, { confidence: 0.6 }), t(0.9)], ctx)!.confidence).toBe(0.95);
+    // the text carries the result 0.9, the computation (0.6) does not: base max(0.6, 0.8 × 1), no bonus
+    expect(shelterRule([c(0.6, { confidence: 0.6 }), t(0.9)], ctx)!.confidence).toBe(0.8);
+    // both carry 0.6: second independent source +0.15, cap 0.95
+    expect(shelterRule([c(0.6, { confidence: 0.6 }), t(0.6)], ctx)!.confidence).toBe(0.95);
+  });
+
+  it("no bonus for a clamped value no input states (ruling M5-B-R2)", () => {
+    const r = shelterRule([c(0.6, { confidence: 0.6 }), t(0.1, { confidence: 0.8 })], ctx)!;
+    expect(r).toMatchObject({ value: 0.3, origin: "text", confidence: 0.8 });
+  });
+
+  it("an older review is a non-ageing correction input: a newer computation or a better text cannot override it", () => {
+    const rev = review({ value: 0.3, observedAt: "2025-01-01", confidence: 0.5 });
+    expect(shelterRule([rev, c(0.6, { observedAt: "2026-10-19" })], ctx)).toMatchObject({ value: 0.3, origin: "review", confidence: 0.95 });
+    expect(shelterRule([rev, c(0.6), t(0.9, { observedAt: "2026-06-01" })], ctx)).toMatchObject({ value: 0.3, origin: "review" });
+  });
+
+  it("a newer worse text overrides a review; texts the review saw drop out", () => {
+    const rev = review({ value: 0.6, observedAt: "2025-01-01" });
+    expect(shelterRule([rev, c(0.6), t(0.2, { observedAt: "2026-06-01" })], ctx)).toMatchObject({ value: 0.3, origin: "text" });
+    expect(shelterRule([t(0.2, { observedAt: "2024-06-01" }), rev, c(0.6)], ctx)).toMatchObject({ value: 0.6, origin: "review", confidence: 0.95 });
   });
 
   it("a duplicated mention of one source changes nothing (ruling M5-P4)", () => {
     const once = shelterRule([c(0.6), t(0.5, { factId: "f1" })], ctx)!;
     const twice = shelterRule([c(0.6), t(0.5, { factId: "f1" }), t(0.5, { factId: "f2" })], ctx)!;
     expect({ value: twice.value, confidence: twice.confidence }).toEqual({ value: once.value, confidence: once.confidence });
+  });
+
+  it("the harbour floor has origin 'rule' and cites no fact (ruling M5-B-R2)", () => {
+    expect(shelterRule([c(0.4), t(0.1, { confidence: 0.6 })], marinaCtx)).toEqual({
+      value: 0.8,
+      origin: "rule",
+      confidence: 0.3,
+      observedAt: null,
+      support: [],
+      conflict: null,
+    });
+  });
+
+  it("the open side is proven by the text that sets the value, not by another one", () => {
+    // the weak 0.2 text sets nothing below the floor; the proving 0.5 text sets the value
+    expect(shelterRule([t(0.5, { confidence: 0.7 }), t(0.2, { confidence: 0.3, sourceKey: "source:b" })], marinaCtx)).toMatchObject({
+      value: 0.5,
+      origin: "text",
+    });
+    expect(shelterRule([c(0.4), t(0.5, { confidence: 0.7 }), t(0.1, { confidence: 0.3, sourceKey: "source:b" })], marinaCtx)!.value).toBe(0.5);
+    // a review (0.95) proves an open side
+    expect(shelterRule([c(0.4, { observedAt: "2026-10-19" }), review({ value: 0.3, observedAt: "2025-01-01" })], marinaCtx)!.value).toBe(0.3);
   });
 
   it("a marina keeps the 0.8 floor without proof of an open side", () => {
@@ -65,7 +106,7 @@ describe("shelterRule", () => {
   });
 
   it("a marina without any input gets 0.8 with confidence 0.3", () => {
-    expect(shelterRule([], marinaCtx)).toEqual({ value: 0.8, origin: "computed", confidence: 0.3, observedAt: null, support: [], conflict: null });
+    expect(shelterRule([], marinaCtx)).toEqual({ value: 0.8, origin: "rule", confidence: 0.3, observedAt: null, support: [], conflict: null });
   });
 
   it("an anchorage without any input has no value", () => {
@@ -91,6 +132,15 @@ describe("swellProtectionRule", () => {
     ).toMatchObject({ value: 0.1, origin: "text" });
   });
 
+  it("an older review enters with 0.95 and beats a newer computation or a weaker newer text", () => {
+    const rev = review({ value: 0.9, observedAt: "2025-01-01", confidence: 0.5 });
+    expect(swellProtectionRule([rev, c(0.3, { observedAt: "2026-10-19" })], swellCtx)).toMatchObject({ value: 0.9, origin: "review", confidence: 0.95 });
+    expect(swellProtectionRule([rev, c(0.3), t(0.5, { confidence: 0.7, sourceWeight: 0.8, observedAt: "2026-06-01" })], swellCtx)).toMatchObject({
+      value: 0.9,
+      origin: "review",
+    });
+  });
+
   it("the youngest computation without good texts; no input no value", () => {
     expect(swellProtectionRule([c(0.3, { observedAt: "2025-01-01" }), c(0.7, { observedAt: "2026-01-01" })], swellCtx)!.value).toBe(0.7);
     expect(swellProtectionRule([], swellCtx)).toBeNull();
@@ -111,17 +161,51 @@ describe("bathymetryRule", () => {
     expect(bathymetryRule([c(4.0, { confidence: 0.3 })], depthCtx)).toMatchObject({ value: 4, origin: "computed" });
   });
 
-  it("equal weights: the pick does not depend on input order", () => {
+  it("contradicting strong depth texts: the shallower value wins with a conflict, the third value in the note", () => {
     const inputs = [
       c(4.0, { confidence: 0.6 }),
-      t(2.5, { confidence: 0.9, observedAt: "2026-05-01", sourceKey: "source:a" }),
-      t(3.0, { confidence: 0.9, observedAt: "2026-05-01", sourceKey: "source:b" }),
-      t(3.5, { confidence: 0.9, observedAt: "2026-05-01", sourceWeight: 0.5, sourceKey: "source:c" }),
+      t(3.0, { confidence: 0.9, observedAt: "2026-05-01", sourceKey: "source:a", factId: "fact-a" }),
+      t(2.5, { confidence: 0.85, observedAt: "2026-05-01", sourceWeight: 0.5, sourceKey: "source:b", factId: "fact-b" }),
+      t(3.5, { confidence: 0.9, observedAt: "2026-05-01", sourceWeight: 0.4, sourceKey: "source:c", factId: "fact-c" }),
     ];
     const forward = bathymetryRule(inputs, depthCtx)!;
-    expect(forward.origin).toBe("text");
-    expect([2.5, 3]).toContain(forward.value);
-    expect(bathymetryRule([...inputs].reverse(), depthCtx)!.value).toBe(forward.value);
+    expect(forward).toMatchObject({ value: 2.5, origin: "text" });
+    expect(forward.conflict).toMatchObject({
+      attribute: "depth.anchoring_min",
+      a: { value: 2.5, factIds: ["fact-b"] },
+      b: { value: 3, factIds: ["fact-a"] },
+      others: [{ value: 3.5, factIds: ["fact-c"] }],
+    });
+    expect(bathymetryRule([...inputs].reverse(), depthCtx)).toEqual(forward);
+  });
+
+  it("an older review is a strong correction: a newer computation keeps it, a newer shallower text wins with a conflict", () => {
+    const rev = review({ value: 3.0, observedAt: "2025-01-01", confidence: 0.5 });
+    expect(bathymetryRule([rev, c(4.0, { confidence: 0.6, observedAt: "2026-10-19" })], depthCtx)).toMatchObject({
+      value: 3,
+      origin: "review",
+      confidence: 0.95,
+      conflict: null,
+    });
+    const deeper = bathymetryRule([rev, c(4.0), t(5.0, { confidence: 0.9, observedAt: "2026-06-01" })], depthCtx)!;
+    expect(deeper).toMatchObject({ value: 3, origin: "review" });
+    expect(deeper.conflict).not.toBeNull();
+    expect(bathymetryRule([rev, c(4.0), t(2.0, { confidence: 0.9, observedAt: "2026-06-01" })], depthCtx)).toMatchObject({
+      value: 2,
+      origin: "text",
+    });
+  });
+
+  it("equal weights on a non-numeric value: the tie goes to the larger id, independent of input order", () => {
+    const sand = [{ type: "sand", share: 1 }];
+    const mud = [{ type: "mud", share: 1 }];
+    const inputs = [
+      t(sand, { confidence: 0.9, observedAt: "2026-05-01", sourceKey: "source:a", factId: "fact-1" }),
+      t(mud, { confidence: 0.9, observedAt: "2026-05-01", sourceKey: "source:b", factId: "fact-2" }),
+    ];
+    const seabedCtx = ruleCtx({ attribute: "seabed" });
+    expect(bathymetryRule(inputs, seabedCtx)).toMatchObject({ value: mud, origin: "text", conflict: null });
+    expect(bathymetryRule([...inputs].reverse(), seabedCtx)!.value).toEqual(mud);
   });
 
   it("enum-like values (seabed) pass unchanged; no input no value", () => {
@@ -158,5 +242,15 @@ describe("computedOnlyRule and reviewOverComputedRule", () => {
     expect(
       reviewOverComputedRule([review({ value: pos(23.2), observedAt: "2025-01-01" }), review({ value: pos(23.4), observedAt: "2026-01-01" })], actx)!.value,
     ).toEqual(pos(23.4));
+  });
+});
+
+describe("test fixtures", () => {
+  it("ids restart in every test (first)", () => {
+    expect([text().factId, computed().computationId]).toEqual(["fact-0001", "comp-0003"]);
+  });
+
+  it("ids restart in every test (second)", () => {
+    expect([text().factId, computed().computationId]).toEqual(["fact-0001", "comp-0003"]);
   });
 });

@@ -2,13 +2,22 @@ import { canonicalJson } from "@/lib/domain/facts/schema";
 import type { ConsolidationInput, InputOrigin, RuleContext, RuleResult } from "../types";
 import { attributeConfidence, roundValue } from "../weights";
 
-/** A rule result without conflict: the value rounded, confidence over the support, `observedAt` its youngest date. */
-export function ruleResult(value: unknown, origin: InputOrigin, support: ConsolidationInput[], ctx: RuleContext): RuleResult {
+/**
+ * A rule result without conflict: the value rounded, confidence over the support (the second-source bonus only from
+ * `confirming`, default the support), `observedAt` its youngest date.
+ */
+export function ruleResult(
+  value: unknown,
+  origin: InputOrigin,
+  support: ConsolidationInput[],
+  ctx: RuleContext,
+  confirming: ConsolidationInput[] = support,
+): RuleResult {
   const observedAt = support.reduce<string | null>((max, i) => (max === null || i.observedAt > max ? i.observedAt : max), null);
   return {
     value: roundValue(value, ctx.cfg),
     origin,
-    confidence: attributeConfidence(support, ctx, origin),
+    confidence: attributeConfidence(support, ctx, origin, confirming),
     observedAt,
     support,
     conflict: null,

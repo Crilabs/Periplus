@@ -37,10 +37,31 @@ export function isTextual(origin: InputOrigin): boolean {
   return origin === "text" || origin === "observed";
 }
 
-/** `sourceWeight × confidence × recency` (recency only for text and observations). */
+/** Inputs that correct a computation: text, observations and review decisions. */
+export function isCorrection(origin: InputOrigin): boolean {
+  return isTextual(origin) || origin === "review";
+}
+
+/** An input's confidence; a review decision enters with `confidence.review` (spec 07: "künftig mit Konfidenz 0,95"). */
+export function inputConfidence(i: ConsolidationInput, cfg: ConsolidationConfig): number {
+  return i.origin === "review" ? cfg.confidence.review : i.confidence;
+}
+
+/** `sourceWeight × confidence × recency` (recency only for text and observations; a review with `confidence.review`). */
 export function inputWeight(i: ConsolidationInput, ctx: RuleContext): number {
   const age = isTextual(i.origin) ? recency(i.observedAt, ctx.today, ctx.cfg.recency.halfLifeYears) : 1;
-  return i.sourceWeight * i.confidence * age;
+  return i.sourceWeight * inputConfidence(i, ctx.cfg) * age;
+}
+
+/**
+ * The correction inputs a rule weighs (text, observations, reviews). The youngest review decision supersedes what it
+ * saw: older reviews and texts/observations not younger than it drop out; younger ones stay and compete with it.
+ */
+export function corrections(inputs: ConsolidationInput[]): ConsolidationInput[] {
+  const decision = youngest(inputs.filter((i) => i.origin === "review"));
+  return inputs.filter(
+    (i) => isCorrection(i.origin) && (!decision || i === decision || (i.origin !== "review" && i.observedAt > decision.observedAt)),
+  );
 }
 
 /** Independent sources: documents of one source count once. */
@@ -54,7 +75,7 @@ function baseConfidence(i: ConsolidationInput, cfg: ConsolidationConfig): number
   return i.confidence * i.sourceWeight;
 }
 
-/** The input that comes first by a stable order: youngest `observedAt`, then its id. */
+/** A stable id of an input for tie-breaks and conflict keys: the fact id, else `computation:<id>` / `poi:<id>`. */
 function inputId(i: ConsolidationInput): string {
   return i.factId ?? (i.computationId ? `computation:${i.computationId}` : i.poiId ? `poi:${i.poiId}` : "");
 }
@@ -84,17 +105,23 @@ export function strongest(inputs: ConsolidationInput[], ctx: RuleContext): Conso
 
 /**
  * Confidence of an attribute from its supporting inputs: the largest base (computed: its confidence; review:
- * `confidence.review`; text/observation: confidence × source weight), plus `secondSourceBonus` with two independent
- * sources, capped, then aged with the recency of the youngest text/observation when the value comes from
- * text/observation. `origin` is the result's origin; without it, the origin of the input with the largest base counts.
+ * `confidence.review`; text/observation: confidence × source weight), plus `secondSourceBonus` when two independent
+ * sources among `confirming` (default: the support) carry the value, capped, then aged with the recency of the
+ * youngest text/observation when the value comes from text/observation. `origin` is the result's origin; without it,
+ * the origin of the input with the largest base counts.
  */
-export function attributeConfidence(support: ConsolidationInput[], ctx: RuleContext, origin?: InputOrigin): number {
+export function attributeConfidence(
+  support: ConsolidationInput[],
+  ctx: RuleContext,
+  origin?: InputOrigin,
+  confirming: ConsolidationInput[] = support,
+): number {
   const { cfg } = ctx;
   if (support.length === 0) return 0;
   let top = support[0];
   for (const i of support) if (baseConfidence(i, cfg) > baseConfidence(top, cfg)) top = i;
   let c = baseConfidence(top, cfg);
-  if (independentCount(support) >= 2) c += cfg.confidence.secondSourceBonus;
+  if (independentCount(confirming) >= 2) c += cfg.confidence.secondSourceBonus;
   c = Math.min(c, cfg.confidence.cap);
   if (isTextual(origin ?? top.origin)) {
     const latest = youngest(support.filter((i) => isTextual(i.origin)));
@@ -184,13 +211,30 @@ export function conflictKey(a: ValueGroup, b: ValueGroup): string {
   return createHash("sha256").update(canonicalJson(all)).digest("hex").slice(0, 16);
 }
 
+/** A conflict note: `picked` against the heaviest other group, any further groups in `others` (`rest` heaviest first). */
+export function conflictNote(
+  attribute: string,
+  picked: ValueGroup,
+  rest: ValueGroup[],
+  cfg: ConsolidationConfig,
+): Omit<ConflictNote, "resolution"> {
+  const [second, ...more] = rest;
+  return {
+    attribute,
+    key: conflictKey(picked, second),
+    a: side(picked, cfg),
+    b: side(second, cfg),
+    others: more.map((g) => side(g, cfg)),
+  };
+}
+
 /**
  * Picks one value among discrete inputs (spec 07):
  * 1. one group → it;
  * 2. time course (option `timeCourse`, default true): every date known and every year of the youngest group after
  *    every year of the others → the youngest group, no conflict;
  * 3. otherwise the heaviest group; when it weighs less than `conflict.minRatio` times the second, with a conflict
- *    note (`a` = picked, `b` = second).
+ *    note (`a` = picked, `b` = second, `others` = any further groups).
  * Throws on empty inputs.
  */
 export function pickDiscrete(
@@ -213,10 +257,7 @@ export function pickDiscrete(
 
   const [top, second] = groups;
   if (second.weight > 0 && top.weight / second.weight < ctx.cfg.conflict.minRatio) {
-    return {
-      group: top,
-      conflict: { attribute: ctx.attribute, key: conflictKey(top, second), a: side(top, ctx.cfg), b: side(second, ctx.cfg) },
-    };
+    return { group: top, conflict: conflictNote(ctx.attribute, top, groups.slice(1), ctx.cfg) };
   }
   return { group: top, conflict: null };
 }

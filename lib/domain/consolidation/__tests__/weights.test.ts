@@ -30,6 +30,8 @@ describe("recency and weights", () => {
     expect(inputWeight(text({ origin: "observed", sourceWeight: 1, confidence: 1, observedAt: "2023-10-19" }), ctx)).toBeCloseTo(0.5, 3);
     expect(inputWeight(computed({ confidence: 0.6, observedAt: "2016-01-01" }), ctx)).toBeCloseTo(0.6, 9);
     expect(inputWeight(review({ confidence: 0.95, observedAt: "2016-01-01" }), ctx)).toBeCloseTo(0.95, 9);
+    // a review enters with confidence.review (0.95), whatever its stored confidence
+    expect(inputWeight(review({ confidence: 0.5, observedAt: "2016-01-01" }), ctx)).toBeCloseTo(0.95, 9);
   });
 
   it("two documents of one source count once", () => {
@@ -204,6 +206,15 @@ describe("value groups and the discrete pick", () => {
     const backward = pickDiscrete([...inputs].reverse(), ctx).conflict;
     expect(forward).not.toBeNull();
     expect(backward).toEqual(forward);
+  });
+
+  it("a third value group is recorded in the conflict note", () => {
+    const r = pickDiscrete(
+      [yes({ sourceWeight: 1 }), no({ sourceKey: "source:b", sourceWeight: 0.9 }), text({ value: "seasonal", confidence: 1, sourceKey: "source:c", sourceWeight: 0.8 })],
+      ctx,
+    );
+    expect(r.conflict).toMatchObject({ a: { value: true }, b: { value: false }, others: [{ value: "seasonal", sourceKeys: ["source:c"] }] });
+    expect(pickDiscrete([yes(), no({ sourceKey: "source:b", sourceWeight: 0.9 })], ctx).conflict!.others).toEqual([]);
   });
 
   it("an empty input list is an error", () => {

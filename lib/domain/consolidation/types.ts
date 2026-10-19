@@ -11,8 +11,11 @@ import type { FactLevel } from "@/lib/domain/facts/schema-types";
 /** Where a consolidation input comes from. */
 export type InputOrigin = "computed" | "text" | "review" | "observed";
 
-/** Where a profile value comes from: an input origin, the gazetteer (identity fields) or a derived value. */
-export type ProvenanceOrigin = InputOrigin | "gazetteer" | "derived";
+/** Where a rule's value comes from: an input origin, or `rule` when the rule itself sets it (the harbour floor). */
+export type RuleOrigin = InputOrigin | "rule";
+
+/** Where a profile value comes from: a rule origin, the gazetteer (identity fields) or a derived value. */
+export type ProvenanceOrigin = RuleOrigin | "gazetteer" | "derived";
 
 /** Consolidation rule names, as the fact schema's `rule` field names them (`union`: ruling M5-P3). */
 export type RuleName =
@@ -45,13 +48,18 @@ export type ConflictSide = {
   observedTo: string;
 };
 
-/** Two values that cannot be ordered over time and weigh within the conflict ratio; the profile shows the heavier one. */
+/**
+ * Two values that cannot be ordered over time and weigh within the conflict ratio; the profile shows the picked one
+ * (`a`). Spec 07 names two values; further value groups are recorded in `others` (heaviest first) so the admin sees
+ * them, but the key and the decision refer to `a` and `b`.
+ */
 export type ConflictNote = {
   attribute: string;
   /** Stable key of the two values (decisions refer to it). */
   key: string;
   a: ConflictSide;
   b: ConflictSide;
+  others: ConflictSide[];
   resolution: ConflictResolution | null;
 };
 
@@ -132,7 +140,7 @@ export type RuleContext = {
 /** A rule's answer for one attribute: the value, where it comes from and the inputs supporting it. */
 export type RuleResult = {
   value: unknown;
-  origin: InputOrigin;
+  origin: RuleOrigin;
   confidence: number;
   observedAt: string | null;
   support: ConsolidationInput[];

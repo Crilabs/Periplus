@@ -1,14 +1,15 @@
 import type { ConsolidationRule } from "../types";
-import { isTextual, strongest, youngest } from "../weights";
+import { corrections, inputConfidence, strongest, youngest } from "../weights";
 import { ruleResult, sameValue } from "./result";
 
 /**
- * `swell_protection` (spec 07): text before computation when a text (or observation) with confidence ≥
- * `textMinConfidence` exists — the heaviest of them; otherwise the youngest computation; otherwise the heaviest text.
+ * `swell_protection` (spec 07): text before computation when a correction (text, observation or review decision, the
+ * review with `confidence.review`) with confidence ≥ `textMinConfidence` exists — the heaviest of them; otherwise the
+ * youngest computation; otherwise the heaviest correction.
  */
 export const swellProtectionRule: ConsolidationRule = (inputs, ctx) => {
-  const texts = inputs.filter((i) => isTextual(i.origin));
-  const good = texts.filter((i) => i.confidence >= ctx.cfg.rules.swell_protection.textMinConfidence);
+  const texts = corrections(inputs);
+  const good = texts.filter((i) => inputConfidence(i, ctx.cfg) >= ctx.cfg.rules.swell_protection.textMinConfidence);
   const strongText = strongest(good, ctx);
   if (strongText) return ruleResult(strongText.value, strongText.origin, sameValue(strongText, good), ctx);
   const basis = youngest(inputs.filter((i) => i.origin === "computed"));

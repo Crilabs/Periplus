@@ -1,3 +1,4 @@
+import { beforeEach } from "vitest";
 import { getConsolidationConfig } from "@/lib/config";
 import type { ConsolidationInput, RuleContext } from "@/lib/domain/consolidation/types";
 
@@ -9,6 +10,10 @@ import type { ConsolidationInput, RuleContext } from "@/lib/domain/consolidation
 export const TODAY = "2026-10-19";
 
 let seq = 0;
+// ids restart in every test, so id-based tie-breaks do not depend on test order
+beforeEach(() => {
+  seq = 0;
+});
 const nextId = (prefix: string) => `${prefix}-${String(++seq).padStart(4, "0")}`;
 
 function input(origin: ConsolidationInput["origin"], over: Partial<ConsolidationInput>): ConsolidationInput {
