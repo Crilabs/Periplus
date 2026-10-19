@@ -164,6 +164,23 @@ describe("deliveries and delivered objects", () => {
     });
   });
 
+  it("the public id prefix matches the object type", async () => {
+    await withRollback(async (tx) => {
+      const areaId = await insertArea(tx);
+      const delivery = await insertDelivery(tx, areaId);
+      for (const [objectType, publicId] of [
+        ["spot", "hl_01J9X4KQ3P2N1M0Z9K8J7H6G5F"],
+        ["highlight", "sp_01J9X4K2M7Q8R5T6V7W8X9Y0Z1"],
+        ["region", "sp_01J9X4K2M7Q8R5T6V7W8X9Y0Z1"],
+      ] as const) {
+        const message = await rejectionMessage(tx, (sp) =>
+          sp.insert(deliveredObjects).values(objectValues(areaId, delivery.id, { objectType, publicId })),
+        );
+        expect(message, objectType).toMatch(/delivered_objects_public_id_prefix/);
+      }
+    });
+  });
+
   it("a removed object carries the content hash 'removed' and nothing else does", async () => {
     await withRollback(async (tx) => {
       const areaId = await insertArea(tx);

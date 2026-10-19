@@ -281,6 +281,13 @@
       "when": 1792442980982,
       "tag": "0039_delivery_triggers",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1792443719497,
+      "tag": "0040_delivered_objects_prefix_check",
+      "breakpoints": true
     }
   ]
 }

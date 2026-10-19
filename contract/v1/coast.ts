@@ -5,7 +5,8 @@ import { geoLineString, geoMultiLineString, geoMultiPolygon, geoPolygon, isoDate
  * `coast.geojson`: land polygons and coastline of the area box plus margin (OSM, ODbL) and the restricted areas the
  * routing must avoid.
  */
-export const restrictedAreaReason = z.enum(["military", "cable", "protectedArea", "aquaculture", "ferryLane", "firingArea"]);
+/** Same vocabulary as `spot.exclude.reason`: a firing area is `military`. */
+export const restrictedAreaReason = z.enum(["military", "cable", "protectedArea", "aquaculture", "ferryLane"]);
 
 const coastProperties = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("land"), source: z.string().min(1), extractedAt: isoDate }),

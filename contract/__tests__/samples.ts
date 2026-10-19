@@ -123,7 +123,7 @@ export const SAMPLE_FILES: {
       {
         type: "Feature",
         geometry: { type: "MultiPolygon", coordinates: [square] },
-        properties: { kind: "restrictedArea", reason: "firingArea", source: "EMODnet Human Activities" },
+        properties: { kind: "restrictedArea", reason: "military", source: "EMODnet Human Activities" },
       },
     ],
   },

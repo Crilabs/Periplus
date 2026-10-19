@@ -9,7 +9,7 @@ import {
   SCHEMA_VERSION,
   type Spot,
 } from "@/contract";
-import { highlightSchema, regionSchema, spotSchema } from "@/contract/v1";
+import { changeEntrySchema, coastFeatureSchema, highlightSchema, manifestSchema, regionSchema, spotSchema } from "@/contract/v1";
 import { TEIL_B_EXAMPLE } from "./fixtures";
 import { SAMPLE_FILES } from "./samples";
 
@@ -45,8 +45,32 @@ describe("Periplus Data Contract v1", () => {
     ["a source kind in snake case", { sources: [{ url: "https://example.org/a", kind: "trip_report", observedAt: "2025-06-10" }] }],
     ["month 13 in a season note", { seasonNote: [{ months: [13], text: "x" }] }],
     ["a merged spot pointing at a highlight", { mergedInto: "hl_01J9X4KQ3P2N1M0Z9K8J7H6G5F" }],
+    ["an upload:// source", { sources: [{ url: "upload://" + "a".repeat(64), kind: "pilotGuide", observedAt: "2025-06-10" }] }],
+    ["a javascript: source", { sources: [{ url: "javascript:alert(1)", kind: "forum", observedAt: "2025-06-10" }] }],
+    ["an upper-case scheme", { sources: [{ url: "HTTPS://example.org/a", kind: "forum", observedAt: "2025-06-10" }] }],
+    ["a shelter source outside the provenance vocabulary", { shelter: { ...ex.shelter, source: "computed+navily" } }],
+    ["a depth source with a trailing +", { depth: { ...ex.depth, source: "text+" } }],
   ])("rejects %s", (_name, patch) => {
     expect(spotSchema.safeParse({ ...ex, ...patch }).success).toBe(false);
+  });
+
+  it("manifest licences take http(s) links only; coast reasons know no firingArea", () => {
+    const manifest = SAMPLE_FILES["manifest.json"];
+    const withUrl = (url: string) => ({ ...manifest, licenses: [{ ...manifest.licenses[0]!, url }] });
+    expect(manifestSchema.safeParse(withUrl("http://example.org/odbl")).success).toBe(true);
+    expect(manifestSchema.safeParse(withUrl("upload://abc")).success).toBe(false);
+    expect(manifestSchema.safeParse(withUrl("javascript:alert(1)")).success).toBe(false);
+    const coast = SAMPLE_FILES["coast.geojson"];
+    const restricted = coast.features.find((f) => f.properties.kind === "restrictedArea")!;
+    const firing = { ...restricted, properties: { ...restricted.properties, reason: "firingArea" } };
+    expect(coastFeatureSchema.safeParse(firing).success).toBe(false);
+  });
+
+  it("a change entry's id prefix matches its object type", () => {
+    const entry = SAMPLE_FILES["changes.json"].changes[0]!;
+    expect(changeEntrySchema.safeParse(entry).success).toBe(true);
+    expect(changeEntrySchema.safeParse({ ...entry, objectType: "highlight" }).success).toBe(false);
+    expect(changeEntrySchema.safeParse({ ...entry, objectType: "region" }).success).toBe(false);
   });
 
   it("accepts a spot with only the required fields", () => {

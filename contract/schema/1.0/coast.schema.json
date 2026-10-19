@@ -38,12 +38,14 @@
                           {
                             "type": "number",
                             "minimum": -180,
-                            "maximum": 180
+                            "maximum": 180,
+                            "description": "Decimal degrees (WGS84) with at most 5 decimals"
                           },
                           {
                             "type": "number",
                             "minimum": -90,
-                            "maximum": 90
+                            "maximum": 90,
+                            "description": "Decimal degrees (WGS84) with at most 5 decimals"
                           }
                         ],
                         "items": false,
@@ -81,12 +83,14 @@
                             {
                               "type": "number",
                               "minimum": -180,
-                              "maximum": 180
+                              "maximum": 180,
+                              "description": "Decimal degrees (WGS84) with at most 5 decimals"
                             },
                             {
                               "type": "number",
                               "minimum": -90,
-                              "maximum": 90
+                              "maximum": 90,
+                              "description": "Decimal degrees (WGS84) with at most 5 decimals"
                             }
                           ],
                           "items": false,
@@ -119,12 +123,14 @@
                         {
                           "type": "number",
                           "minimum": -180,
-                          "maximum": 180
+                          "maximum": 180,
+                          "description": "Decimal degrees (WGS84) with at most 5 decimals"
                         },
                         {
                           "type": "number",
                           "minimum": -90,
-                          "maximum": 90
+                          "maximum": 90,
+                          "description": "Decimal degrees (WGS84) with at most 5 decimals"
                         }
                       ],
                       "items": false,
@@ -158,12 +164,14 @@
                           {
                             "type": "number",
                             "minimum": -180,
-                            "maximum": 180
+                            "maximum": 180,
+                            "description": "Decimal degrees (WGS84) with at most 5 decimals"
                           },
                           {
                             "type": "number",
                             "minimum": -90,
-                            "maximum": 90
+                            "maximum": 90,
+                            "description": "Decimal degrees (WGS84) with at most 5 decimals"
                           }
                         ],
                         "items": false,
@@ -245,8 +253,7 @@
                       "cable",
                       "protectedArea",
                       "aquaculture",
-                      "ferryLane",
-                      "firingArea"
+                      "ferryLane"
                     ]
                   },
                   "source": {

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { areal, CONTRACT_FILES, count, isoDate, isoDateTime, latitude, longitude, publicId } from "./common";
+import { areal, CONTRACT_FILES, count, httpUrl, isoDate, isoDateTime, latitude, longitude, publicId } from "./common";
 
 /** `manifest.json`: what the package is, for which area, with which files and licences. */
 export const manifestSchema = z.strictObject({
@@ -35,7 +35,7 @@ export const manifestSchema = z.strictObject({
     z.strictObject({
       name: z.string().min(1),
       attribution: z.string().min(1),
-      url: z.url(),
+      url: httpUrl,
       files: z.array(z.enum(CONTRACT_FILES)),
       // JSON pointers with `*` for every list entry, e.g. `spots.json#/spots/*/name`.
       fields: z.array(z.string().min(1)),

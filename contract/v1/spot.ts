@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  combinedSource,
   count,
   highlightCategory,
   isoDate,
@@ -58,7 +59,7 @@ export const spotSchema = z.strictObject({
     sectors: z.strictObject({ N: unit, NE: unit, E: unit, SE: unit, S: unit, SW: unit, W: unit, NW: unit }),
     swell: unit,
     /** Origins that made the value, e.g. `computed`, `computed+text`. */
-    source: z.string().min(1),
+    source: combinedSource,
   }),
   depth: z
     .strictObject({
@@ -66,7 +67,7 @@ export const spotSchema = z.strictObject({
       max: nullableMetres,
       anchoring: z.strictObject({ min: nullableMetres, max: nullableMetres }),
       confidence: unit,
-      source: z.string().min(1),
+      source: combinedSource,
     })
     .optional(),
   seabed: z

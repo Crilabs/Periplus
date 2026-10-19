@@ -105,6 +105,10 @@ export const deliveredObjects = pgTable(
   (t) => [
     check("delivered_objects_profile_version_positive", sql`${t.profileVersion} >= 1`),
     check("delivered_objects_removed_hash", sql`${t.removed} = (${t.contentHash} = 'removed')`),
+    check(
+      "delivered_objects_public_id_prefix",
+      sql`${t.publicId} ~ ('^' || CASE ${t.objectType} WHEN 'spot' THEN 'sp' WHEN 'highlight' THEN 'hl' ELSE 'rg' END || '_')`,
+    ),
     uniqueIndex("delivered_objects_public_version_unique")
       .on(t.publicId, t.profileVersion)
       .where(sql`${t.objectType} IN ('spot', 'highlight')`),

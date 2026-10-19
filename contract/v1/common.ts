@@ -28,7 +28,12 @@ export const weatherPointId = z.string().regex(new RegExp(`^wp_${ULID}$`), "must
 /** Teil B: "lat/lon als Dezimalgrad mit 5 Nachkommastellen" – at most five. */
 const hasAtMostFiveDecimals = (v: number) => Number(v.toFixed(5)) === v;
 const degrees = (min: number, max: number) =>
-  z.number().min(min).max(max).refine(hasAtMostFiveDecimals, "at most 5 decimals");
+  z
+    .number()
+    .min(min)
+    .max(max)
+    .refine(hasAtMostFiveDecimals, "at most 5 decimals")
+    .describe("Decimal degrees (WGS84) with at most 5 decimals");
 export const latitude = degrees(-90, 90);
 export const longitude = degrees(-180, 180);
 
@@ -40,7 +45,13 @@ export const isoDateTime = z.iso.datetime();
 export const month = z.number().int().min(1).max(12);
 export const count = z.number().int().min(0);
 
-export const provenanceSource = z.enum(["computed", "text", "observed", "review"]);
+const PROVENANCE_SOURCES = ["computed", "text", "observed", "review"] as const;
+export const provenanceSource = z.enum(PROVENANCE_SOURCES);
+/** The origins that made a value, `+`-joined in contract order, e.g. `computed`, `computed+text`. */
+const sourceAlternatives = PROVENANCE_SOURCES.join("|");
+export const combinedSource = z
+  .string()
+  .regex(new RegExp(`^(${sourceAlternatives})(\\+(${sourceAlternatives}))*$`), "must be provenance sources joined with +");
 export const sourceKind = z.enum([
   "pilotGuide",
   "tripReport",
@@ -51,8 +62,17 @@ export const sourceKind = z.enum([
   "travelGuide",
   "other",
 ]);
+/**
+ * A public web link: http or https only (an internal `upload://` document or a `javascript:` link never leaves
+ * Periplus). The pattern carries the rule into the JSON schema; the refine applies it to the raw string in zod too,
+ * since `z.url` also accepts an upper-case scheme.
+ */
+export const httpUrl = z
+  .url({ protocol: /^https?$/ })
+  .refine((v) => /^https?:\/\//.test(v), "must be an http(s) URL")
+  .meta({ pattern: "^https?://" });
 /** A source for display: URL and kind only, never a passage. */
-export const sourceRef = z.strictObject({ url: z.url(), kind: sourceKind, observedAt: isoDate });
+export const sourceRef = z.strictObject({ url: httpUrl, kind: sourceKind, observedAt: isoDate });
 export const textDe = z.strictObject({ de: z.string().min(1) });
 export const highlightCategory = z.enum(["food", "supply", "beach", "nature", "active", "culture", "town", "quiet"]);
 

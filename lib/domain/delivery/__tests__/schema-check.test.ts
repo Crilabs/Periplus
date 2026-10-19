@@ -26,6 +26,21 @@ describe("checkJsonSchema", () => {
     expect(errors.find((e) => e.path === "/spots/0")!.message).toMatch(/additional properties/);
   });
 
+  it("the published schemas reject non-http source links and foreign provenance sources", () => {
+    const bad = {
+      ...ex,
+      shelter: { ...ex.shelter, source: "navily" },
+      sources: [
+        { url: "upload://" + "a".repeat(64), kind: "pilotGuide", observedAt: "2025-06-10" },
+        { url: "javascript:alert(1)", kind: "forum", observedAt: "2025-06-10" },
+      ],
+    };
+    const paths = checkJsonSchema("spots.json", spotsFile([bad])).map((e) => e.path);
+    expect(paths).toEqual(
+      expect.arrayContaining(["/spots/0/shelter/source", "/spots/0/sources/0/url", "/spots/0/sources/1/url"]),
+    );
+  });
+
   it("reports a wrong envelope at the root", () => {
     const errors = checkJsonSchema("spots.json", { ...spotsFile([]), schemaVersion: "2.0" });
     expect(errors).toEqual([expect.objectContaining({ path: "/schemaVersion" })]);
