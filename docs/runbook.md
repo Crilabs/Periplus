@@ -145,6 +145,32 @@ Aufnahme neuer Testdaten (Entwicklung): `npm run fixtures:record -- --area saron
 
 Deploy: Solange `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS` und `DEPLOY_HOST` (Abschnitt 5) und der Server fehlen, schlägt der CI-Job `deploy` fehl; der Job `check` ist davon unabhängig.
 
+## Geometrie und Ausschlüsse
+Reihenfolge je Revier (Pilot: `saronic`, danach `argolic`), nach Gazetteer und Seed:
+1. **Landpolygone neu importieren** (Abschnitt „Landpolygone“): `landBufferKm` ist seit M2 55 km, weil die Fetch-Strahlen bis 50 km reichen; ein Import aus M1 (10 km) reicht nicht. Je Revier einmal.
+2. **Läufe → „Datensätze laden“** (Revier wählen): Bathymetrie (EMODnet DTM, je Küstenkachel), Meeresboden (EMODnet Seabed, WFS), Ausschlussflächen (EMODnet Human Activities, Kabel aus OSM), Straßen (Overpass), Schiffsdichte (nur Ablage). Rohdaten liegen in S3 unter `datasets/<name>/<version>/…`; ein unveränderter Re-Import erzeugt keine neue Version.
+3. **Läufe → „Geometrie für Revier“**: ein Job je Ort (Kandidat, bestätigt, `no_anchoring`). Der Start wird abgelehnt, solange Bathymetrie oder Landpolygone für eine Küstenkachel fehlen (Meldung nennt die Kacheln). Einzelne Orte: Ort-Detail, Reiter „Geometrie“.
+4. **Abnahme-Prüfung**: `npm run check:geometry -- --area saronic` (auf dem Server: `dc run --rm worker node --import tsx scripts/check-geometry.ts --area saronic`). Ausgabe: Orte, vollständige Orte, Orte mit begründeter Tiefenlücke (`no_bathymetry`, `no_anchor_area`; zählen als vollständig) und Orte mit fehlenden Werten (8 × `shelter.*`, `opening_bearing`, `depth`). Exit 1, solange ein Ort Werte vermisst.
+5. **Stichprobe gegen Navily**: Vergleichssatz (Seite „Qualität“) muss mindestens 20 Orte mit Geometrie enthalten. Die Navily-Datei bleibt lokal bzw. nur für den Lauf auf dem Server; sie wird nie eingecheckt oder gespeichert, der Bericht enthält keine Navily-Werte.
+   ```bash
+   # lokal gegen eine Datenbank mit den Ergebnissen
+   NAVILY_SPOTS_PATH=<pfad>/navily-spots.json npm run compare:navily -- --area saronic
+   # auf dem Server: Datei nur für den Lauf hochladen, Bericht in ein gemountetes Verzeichnis
+   scp navily-spots.json <server>:/tmp/navily/
+   dc run --rm -v /tmp/navily:/data/navily:ro -v /tmp/pilot:/out -e NAVILY_SPOTS_PATH=/data/navily/navily-spots.json \
+     worker node --import tsx scripts/compare-navily.ts --area saronic --out /out/<datum>-m2-stichprobe.md
+   rm -r /tmp/navily   # danach sofort löschen
+   ```
+   Den Bericht nach `docs/pilot/` holen und einchecken. Exit 1, wenn weniger als `minPlaces` (`config/quality.json`) Orte mit Geometrie verglichen wurden. Laufzeit und Kosten stehen im Bericht (letzter beendeter Geometrie-Lauf, Kosten der Datensatz-Importe).
+
+Neu rechnen:
+- **Neue Datensatzversion** (erneutes „Datensätze laden“ mit geänderten Daten, neuer Landpolygon-Import) oder **geänderte `config/geometry.json`** (dabei immer `rulesVersion` erhöhen, sonst gelten die alten Zeilen weiter): „Geometrie für Revier“ erneut starten. Nur Rechnungen mit geänderten Eingängen schreiben neue `computations`-Zeilen und Facts; Unverändertes bleibt stehen.
+- Nach einer Änderung der Rechenlogik den Golden-Test lokal neu erzeugen und die Abweichungen prüfen: `UPDATE_GOLDEN=1 npx vitest run lib/pipeline/__tests__/geometry-golden.test.ts` (unter CI abgelehnt), dann `git diff test/fixtures/geometry/golden.json`.
+
+Ankerverbots-Gebiete pflegen:
+- Militär, Kabel, Schießgebiete und Aquakultur schließen immer aus (`noAnchoringKinds` in `config/gazetteer.json`). Natura-2000-Gebiete schließen nur aus, wenn ihr Gebietscode (`sitecode`, z. B. `GR2540001`) in `config/restrictions.json` unter `protectedAreaAnchoringBan` steht; die WFS-Daten sagen nicht, wo Ankern verboten ist.
+- Nach einer Änderung: deployen, dann „Geometrie für Revier“ erneut starten. Ein Kandidat wird `no_anchoring`; für einen bestätigten Ort entsteht eine Prüfaufgabe „Ortskandidat“. Eine Rücknahme (Gebiet entfernt) geschieht nicht automatisch, sondern per Review-Entscheidung.
+
 ## Landpolygone
 OSM-Landpolygone (Küstenlinie) bestimmen, welche Kacheln Küste haben und welche Orte küstennah liegen. Sie werden je Revier auf dessen Box (Revier-Polygon ∪ `tileBbox`, erweitert um `landBufferKm`) zugeschnitten importiert.
 1. Herunterladen und entpacken: `https://osmdata.openstreetmap.de/download/land-polygons-split-4326.zip` (enthält `land-polygons-split-4326/land_polygons.shp`).
