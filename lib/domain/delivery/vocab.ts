@@ -1,6 +1,14 @@
 import type { z } from "zod";
-import type { excludeReason, hazardKind, provenanceSource, sourceKind, spotKind } from "@/contract/v1";
-import type { PlaceKind } from "@/lib/db/schema/geo";
+import type {
+  excludeReason,
+  hazardKind,
+  highlightCategory,
+  provenanceSource,
+  restrictedAreaReason,
+  sourceKind,
+  spotKind,
+} from "@/contract/v1";
+import type { PlaceKind, PoiCategory, RestrictedKind } from "@/lib/db/schema/geo";
 import type { DocType } from "@/lib/db/schema/sources";
 import type { AttributeProvenance, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
 
@@ -15,6 +23,8 @@ export type ContractSourceKind = z.infer<typeof sourceKind>;
 export type ContractExcludeReason = z.infer<typeof excludeReason>;
 export type ContractHazardKind = z.infer<typeof hazardKind>;
 export type ContractSource = z.infer<typeof provenanceSource>;
+export type ContractHighlightCategory = z.infer<typeof highlightCategory>;
+export type ContractRestrictedReason = z.infer<typeof restrictedAreaReason>;
 
 type MooringType = "anchor" | "buoy" | "lines_ashore" | "stern_to" | "alongside" | "pontoon";
 type HazardKindInternal = "rock" | "shoal" | "wreck" | "cable" | "current" | "swell" | "fish_farm" | "other";
@@ -58,6 +68,27 @@ export const HAZARD_KIND: Record<HazardKindInternal, ContractHazardKind> = {
   swell: "swellEntry",
   fish_farm: "fishFarm",
   other: "other",
+};
+
+/** POI category → highlight category; `quiet` has no POI (Teil B: it is the spot's `score.quietness`). */
+export const HIGHLIGHT_CATEGORY: Record<PoiCategory, ContractHighlightCategory> = {
+  food: "food",
+  supply: "supply",
+  beach: "beach",
+  nature: "nature",
+  active: "active",
+  culture: "culture",
+  town: "town",
+};
+
+/** Restricted area kind → `coast.geojson` reason; a firing area is `military`, as in `spot.exclude` (M6-A-R2). */
+export const RESTRICTED_REASON: Record<RestrictedKind, ContractRestrictedReason> = {
+  military: "military",
+  cable: "cable",
+  protected_area: "protectedArea",
+  aquaculture: "aquaculture",
+  ferry_lane: "ferryLane",
+  firing_area: "military",
 };
 
 export const HOLDING: Record<Holding, "good" | "fair" | "poor"> = { good: "good", moderate: "fair", poor: "poor" };

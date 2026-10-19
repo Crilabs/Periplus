@@ -54,7 +54,7 @@ type FieldRule = { attributes: string[]; note: string };
 export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
   id: { attributes: [], note: "places.public_id" },
   kind: { attributes: ["place.kind"], note: "SPOT_KIND; without the identity key the place's kind" },
-  name: { attributes: ["geo.name"], note: "display name (de, en, any)" },
+  name: { attributes: ["geo.name"], note: "display name (de, en, any); without a valid name the spot is omitted (no_name)" },
   names: { attributes: ["geo.name"], note: "valid names without transliterations and fallbacks; omitted when none" },
   position: { attributes: ["place.position"], note: "places.position, round5" },
   anchorPosition: {
@@ -64,7 +64,7 @@ export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
   shelter: {
     attributes: SHELTER_ATTRIBUTES,
     note:
-      "a sector missing or without provenance omits the spot (shelter_incomplete); an excluded spot is delivered with a missing sector (or no profile) as 0 and 'ausgeschlossen – keine Schutzwerte' in exclude.detail; swell = swell_protection, else the sectors' minimum; source = combineSource, computed without any provenance",
+      "a sector missing or without provenance omits the spot (shelter_incomplete); an excluded spot is delivered with a missing sector (or no profile) as 0 and 'ausgeschlossen – keine Schutzwerte' in exclude.detail; swell = swell_protection, else the sectors' minimum; source = combineSource, without any provenance ORIGIN.rule (computed, ruling M6-B-R3)",
   },
   depth: {
     attributes: DEPTH_ATTRIBUTES,
@@ -128,8 +128,12 @@ export type SpotWarning = { code: "missing_provenance"; field: "anchorPosition" 
  * An excluded spot is always delivered (Teil B "Ausgeschlossene Spots werden mit `exclude.excluded = true` und Grund
  * geliefert", ruling M6-B-R2 I-2); any other spot without a profile or without all eight sectors (each with its
  * provenance) is omitted, which the build reports as a warning (`no_profile`, `shelter_incomplete`, ruling M6-P31).
+ * A spot without a valid name is omitted (`no_name`, ruling M6-B-R1): the contract has no spot without a name, and an
+ * invented one would be worse.
  */
-export type MappedSpot = { spot: SpotBody; warnings: SpotWarning[] } | { omitted: "no_profile" | "shelter_incomplete" };
+export type MappedSpot =
+  | { spot: SpotBody; warnings: SpotWarning[] }
+  | { omitted: "no_name" | "no_profile" | "shelter_incomplete" };
 
 const round3 = (n: number) => Number(n.toFixed(3));
 const isRecord = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -177,6 +181,7 @@ export function mapSpot(
   const excluded = reason !== null;
   const banExcludes = excluded && !profileExclude?.excluded && !statusExclude.excluded;
 
+  if (src.name.trim() === "") return { omitted: "no_name" };
   if (!profile && !excluded) return { omitted: "no_profile" };
 
   // shelter: all eight sectors, each with its provenance, or no spot; an excluded spot is delivered anyway, a missing
@@ -191,7 +196,8 @@ export function mapSpot(
   const shelter: SpotBody["shelter"] = {
     sectors: Object.fromEntries(SECTORS.map((s, i) => [s, filled[i]!])) as SpotBody["shelter"]["sectors"],
     swell: num(a["swell_protection"]) ?? Math.min(...filled),
-    source: shelterOrigins.length > 0 ? combineSource(shelterOrigins) : "computed",
+    // no sector with provenance (a zero-filled excluded spot): the source of the rule that filled it (ruling M6-B-R3)
+    source: shelterOrigins.length > 0 ? combineSource(shelterOrigins) : ORIGIN.rule,
   };
 
   const exclude: SpotBody["exclude"] = {
@@ -234,7 +240,7 @@ export function mapSpot(
     },
     highlightIds: ctx.highlightIds,
     externalRefs: { googlePlaceIds: {}, osmId: src.osmId, wikidataId: src.wikidataId },
-    summary: summary(src.summary, profile?.confidence ?? null, ctx.cfg),
+    summary: mapSummary(src.summary, profile?.confidence ?? null, ctx.cfg),
     sources: mapSources(src.sources, ctx.cfg),
     provenance: provenance(p, has, {
       anchorPosition: anchor !== undefined,
@@ -358,8 +364,8 @@ function seasonNotes(hints: Array<{ kind: string; months: number[] }>, seasonalB
   return notes.length > 0 ? notes : undefined;
 }
 
-/** The newest observation date of a text or observed value (Teil B `score.lastObserved`). */
-function lastObserved(entries: AttributeProvenance[]): string | null {
+/** The newest observation date of a text or observed value (Teil B `score.lastObserved`; spot and highlight). */
+export function lastObserved(entries: AttributeProvenance[]): string | null {
   const dates = entries
     .filter((e) => e.origin === "text" || e.origin === "observed")
     .map((e) => e.observedAt?.slice(0, 10) ?? null)
@@ -370,9 +376,9 @@ function lastObserved(entries: AttributeProvenance[]): string | null {
 /**
  * Teil B "score.confidence unter 0,3 … summary.de mit dem Hinweis 'wenig belegt'": below `validation.lowConfidence`
  * (a profile without confidence counts as low, ruling M6-P9) the note is appended unless the text has it; without a
- * summary a low-confidence spot gets the note as its summary, any other spot none.
+ * summary a low-confidence spot gets the note as its summary, any other spot none. Highlights use the same rule.
  */
-function summary(text: string | null, confidence: number | null, cfg: DeliveryConfig): SpotBody["summary"] {
+export function mapSummary(text: string | null, confidence: number | null, cfg: DeliveryConfig): SpotBody["summary"] {
   const note = cfg.validation.lowConfidenceNote;
   const low = round3(confidence ?? 0) < cfg.validation.lowConfidence;
   if (text === null || text.trim() === "") return low ? { de: `${note.charAt(0).toUpperCase()}${note.slice(1)}.` } : undefined;

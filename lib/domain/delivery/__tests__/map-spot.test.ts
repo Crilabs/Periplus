@@ -222,6 +222,19 @@ describe("mapSpot", () => {
     expect(mapSpot({ ...spotA(), profile: null }, ctx)).toEqual({ omitted: "no_profile" });
   });
 
+  it("a spot without a valid name is omitted as no_name, even when excluded (ruling M6-B-R1)", () => {
+    expect(mapSpot(spotA({ src: { name: "" } }), ctx)).toEqual({ omitted: "no_name" });
+    expect(mapSpot(spotA({ src: { name: "  ", status: "no_anchoring", statusReason: MILITARY } }), ctx)).toEqual({ omitted: "no_name" });
+  });
+
+  it("a zero-filled excluded spot names the rule's origin as its shelter source (ruling M6-B-R3)", () => {
+    const { spot } = mappedWithWarnings({ ...spotA({ src: { status: "no_anchoring", statusReason: MILITARY } }), profile: null });
+    expect(spot.shelter.source).toBe(ORIGIN.rule);
+    // a sector of its own provenance names that one
+    const gap = mapped(spotA({ drop: ["shelter.W"], src: { status: "no_anchoring", statusReason: MILITARY } }));
+    expect(gap.shelter.source).toBe("computed+text");
+  });
+
   it("a profile exclude false with place status no_anchoring is excluded, reason from the status (I-1)", () => {
     // the admin's no_anchoring decision is newer than the last consolidation
     const military = mapped(spotA({ src: { status: "no_anchoring", statusReason: MILITARY } }));
