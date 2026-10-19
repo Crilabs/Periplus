@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getConfig } from "@/lib/config";
 import type { ConverterSummary } from "@/lib/domain/converter-comparison";
-import { renderConverterReport } from "../converter-report";
+import { parseArgs, renderConverterReport } from "../converter-report";
 
 const summary: ConverterSummary[] = [
   { converter: "jina", pages: 50, errors: 2, rated: 48, mainContentPct: 93.8, boilerplatePct: 87.5, tablesPct: 80, avgCostEur: 0.00031, avgDurationMs: 2400, avgChars: 5120 },
@@ -10,6 +10,12 @@ const summary: ConverterSummary[] = [
 ];
 
 describe("converter report", () => {
+  it("writes to docs/pilot by default or to --out", () => {
+    expect(parseArgs([])).toEqual({ out: "docs/pilot/m3-konverter-vergleich.md" });
+    expect(parseArgs(["--out", "/out/report.md"])).toEqual({ out: "/out/report.md" });
+    for (const argv of [["--out"], ["--out", "--x"], ["x.md"], ["--out", "a", "b"]]) expect(() => parseArgs(argv)).toThrow(/usage/);
+  });
+
   it("the report marks a provisional decision", () => {
     const { fetch } = getConfig();
     const report = renderConverterReport({

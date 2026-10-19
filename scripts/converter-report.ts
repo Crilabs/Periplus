@@ -14,6 +14,14 @@ import {
 import { CONVERTERS } from "../lib/domain/sources/crawl-rules";
 
 const OUT = "docs/pilot/m3-konverter-vergleich.md";
+const USAGE = "usage: converter-report.ts [--out <file.md>]";
+
+/** `--out <file>` (on the server: a mounted directory); default `docs/pilot/m3-konverter-vergleich.md`. */
+export function parseArgs(argv: string[]): { out: string } {
+  if (argv.length === 0) return { out: OUT };
+  if (argv.length !== 2 || argv[0] !== "--out" || !argv[1] || argv[1].startsWith("--")) throw new Error(USAGE);
+  return { out: argv[1] };
+}
 
 export type ReportSample = {
   url: string;
@@ -111,6 +119,7 @@ export function renderConverterReport(input: {
 
 /** Reads the comparison from the database of `DATABASE_URL` and writes the report. */
 async function main(): Promise<void> {
+  const { out } = parseArgs(process.argv.slice(2));
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
   const { fetch } = getConfig();
@@ -129,9 +138,9 @@ async function main(): Promise<void> {
       samples,
       decision: { ...fetch.decision, defaultConverter: fetch.defaultConverter, converterBySource: fetch.converterBySource },
     });
-    await mkdir(path.dirname(OUT), { recursive: true });
-    await writeFile(OUT, report);
-    process.stdout.write(`${samples.length} pages, written to ${OUT}\n`);
+    await mkdir(path.dirname(out), { recursive: true });
+    await writeFile(out, report);
+    process.stdout.write(`${samples.length} pages, written to ${out}\n`);
   } finally {
     await close();
   }

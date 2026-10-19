@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { sql } from "drizzle-orm";
+import { and, eq, like, sql } from "drizzle-orm";
 import { createDb, type Db } from "../lib/db/client";
 import { geomFromGeoJson } from "../lib/db/geometry";
-import { geoNames, geoObjects, places } from "../lib/db/schema";
+import { geoNames, geoObjects, places, sources } from "../lib/db/schema";
 import { createReviewTask } from "../lib/domain/review";
 import { createUser } from "../lib/domain/users";
 
@@ -44,9 +44,40 @@ async function createReviewCandidate(db: Db): Promise<string> {
   return name;
 }
 
+/** Domain suffix of the sources the e2e run proposes (never a real domain). */
+const E2E_SOURCE_SUFFIX = ".e2e.test.invalid";
+
+/**
+ * A proposed source with an open `source_approval` task, unique per run (sources are never deleted). Sources an
+ * earlier, aborted run left approved are paused first: committed test sources must never stay approved (ruling
+ * M3-P11). Returns the domain and the task id.
+ */
+async function createSourceProposal(db: Db): Promise<{ domain: string; taskId: string }> {
+  const domain = `${Date.now()}${E2E_SOURCE_SUFFIX}`;
+  return db.transaction(async (tx) => {
+    await tx
+      .update(sources)
+      .set({ status: "paused", statusReason: "e2e" })
+      .where(and(eq(sources.status, "approved"), like(sources.domain, `%${E2E_SOURCE_SUFFIX}`)));
+    const [source] = await tx
+      .insert(sources)
+      .values({ domain, name: domain, type: "trip_report", weight: 0.6, status: "proposed", crawlRules: {}, origin: "serp" })
+      .returning({ id: sources.id });
+    const task = await createReviewTask(tx, {
+      kind: "source_approval",
+      subjectType: "source",
+      subjectId: source!.id,
+      context: { hits: [], hitCount: 0, linkingSources: 0, languages: ["de"], robots: null },
+      priority: REVIEW_PRIORITY,
+    });
+    return { domain, taskId: task.id };
+  });
+}
+
 /**
  * Creates the e2e admin in the TEST database unless it already exists (idempotent) and a fresh place candidate
- * for the review test; its name is passed to the tests as E2E_REVIEW_PLACE.
+ * for the review test; its name is passed to the tests as E2E_REVIEW_PLACE. A proposed source for the sources test
+ * (E2E_SOURCE_DOMAIN, task E2E_SOURCE_TASK).
  */
 export default async function globalSetup(): Promise<void> {
   const url = process.env.TEST_DATABASE_URL ?? "postgres://periplus:periplus@localhost:5434/periplus_test";
@@ -63,6 +94,9 @@ export default async function globalSetup(): Promise<void> {
       if (!/duplicate key|unique/i.test(String(error) + String((error as { cause?: unknown }).cause))) throw error;
     }
     process.env.E2E_REVIEW_PLACE = await createReviewCandidate(db);
+    const proposal = await createSourceProposal(db);
+    process.env.E2E_SOURCE_DOMAIN = proposal.domain;
+    process.env.E2E_SOURCE_TASK = proposal.taskId;
     // Pilot-area tests roll back, so the test database normally has no saronic area object (like a fresh
     // installation before its first gazetteer run); the quality spec checks the page for either state.
     const { rows } = await db.execute(

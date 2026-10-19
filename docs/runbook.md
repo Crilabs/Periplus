@@ -184,3 +184,62 @@ OSM-Landpolygone (Küstenlinie) bestimmen, welche Kacheln Küste haben und welch
    ```bash
    docker compose run --rm -v /data/land:/data/land:ro web npm run import:land-polygons -- --shp /data/land/land_polygons.shp --area saronic
    ```
+
+## Quellen und Archiv
+Quellenfindung, Freigabe, Crawl, Archiv und Embeddings (M3). Checkliste der Abnahme: `docs/pilot/m3-abnahme.md`.
+
+### Schlüssel und Schalter in `.env`
+- `VOYAGE_API_KEY` (Embeddings), `DATAFORSEO_LOGIN` und `DATAFORSEO_PASSWORD` (SERP), `JINA_API_KEY` und `FIRECRAWL_API_KEY` (Konverter), `ANTHROPIC_API_KEY` (PDF-Seiten, die `pdftotext` nicht lesen kann). Ohne Schlüssel scheitert nur der jeweilige Dienst; die Tagesbudgets stehen in `config/budgets.json`.
+- **Voyage braucht eine hinterlegte Zahlungsmethode**: ohne sie gelten 3 Anfragen und 10 000 Token je Minute; die Embedding-Jobs laufen dann mit 429 in Wiederholungen. Vor dem vollen Crawl im Voyage-Dashboard eintragen.
+- `PERIPLUS_RENDERER` (`playwright` Standard, `off`): siehe „Hinweise“ oben. Der Renderer startet Chromium mit dem Proxy `http://127.0.0.1:9` (toter Port): jede Anfrage, die nicht über die geprüfte Weiterleitung des Workers läuft (WebRTC, Worker-WebSockets), stirbt dort. Zusätzlich sollte die Server-Firewall ausgehende Verbindungen des Workers in private Netze (RFC 1918, 169.254/16, 100.64/10, ::1, fc00::/7) sperren (Verteidigung in der Tiefe; die Adressprüfung im Code bleibt die erste Linie).
+
+### Worker-Image: Chromium und Poppler
+`docker/worker.Dockerfile` baut auf `mcr.microsoft.com/playwright:v1.64.1-noble` (Chromium passend zu `playwright@1.64`) und installiert `poppler-utils` (`pdftotext`). Das Web-Image hat beides nicht: Rendern und PDF-Umwandlung laufen nur im Worker, Server Actions reihen dafür Jobs ein. Prüfen nach einem Deploy:
+```bash
+dc exec worker pdftotext -v
+dc exec worker node -e "require('playwright').chromium.launch().then(b => b.close()).then(() => console.log('chromium ok'))"
+```
+Wird `playwright` in `package.json` angehoben, muss das Basis-Image dieselbe Version tragen.
+
+### Reihenfolge im Pilot
+1. **Quellenfindung je Revier** (Quellen → „Quellenfindung“, Revier wählen): SERP-Suchen (höchstens 240 je Lauf, `config/discovery.json`), danach Vorschläge mit Prüfaufgabe „Quellenfreigabe“.
+2. **Vorschläge prüfen** (Prüfen → Quellenfreigabe): Typ, Gewicht, Änderungsrate und Crawl-Regeln setzen, freigeben oder ablehnen. Ziel: 20–40 freigegebene Quellen.
+3. **Wikivoyage** (Quellen → „Wikivoyage“, je Revier): legt die Whitelist-Quelle an und archiviert die Artikel der Gazetteer-Objekte.
+4. **Testcrawl je Quelle** (Quelle → „Testcrawl 10 Seiten“): Archiv und Dokumentansicht stichprobenartig ansehen, Crawl-Regeln (`allow`, `deny`, `boilerplateSelectors`, `render`) nachschärfen.
+5. **Konverter-Vergleich** (Navigation „Konverter“ → „Vergleich starten“): wählt 50 Seiten der 10 freigegebenen Quellen mit den meisten HTML-Dokumenten und wandelt jede mit Jina, Firecrawl und lokal um (Kosten etwa 0,25 € für Firecrawl und wenige Cent für Jina je 50 Seiten). Jede Seite in drei Spalten bewerten (Hauptinhalt vollständig, Boilerplate entfernt, Tabellen) und je Spalte „Speichern“. „Vergleich starten“ erneut wandelt nur fehlende oder fehlgeschlagene Umwandlungen um; Bewertetes bleibt.
+6. **Bericht und Entscheidung**: `npm run report:converters` schreibt `docs/pilot/m3-konverter-vergleich.md` (auf dem Server: `dc run --rm -v /tmp/pilot:/out worker node --import tsx scripts/converter-report.ts --out /out/m3-konverter-vergleich.md`, Datei nach `docs/pilot/` holen). Entscheidung in `config/fetch.json`: `defaultConverter`, Ausnahmen in `converterBySource` (registrierbare Domain → Konverter), `decision.status` auf `"decided"` und `decision.note` mit Begründung; einchecken und deployen. Ein Wechsel des Konverters erzeugt beim nächsten Crawl je Seite einmal eine neue Version, deshalb kommt der volle Crawl erst danach.
+7. **PDF-Revierführer**: die zwei gekauften Führer je als PDF an ihrer Quelle hochladen (Quelle → „PDF hochladen“; fehlt die Quelle, „Neue Quelle“ mit Typ „Revierführer“). Lokal `npm run pdf:compare -- <führer>.pdf --model-pages <von>-<bis>` schreibt `docs/pilot/m3-pdf-vergleich.md`; Prüflisten ausfüllen und `config/fetch.json` `pdf` entscheiden (`modelFallback`, `unreadableMinChars`, `maxModelPagesPerDocument`), einchecken, deployen.
+8. **Voller Crawl**: Quellen → „Alle freigegebenen crawlen“. Quellen, die gerade ein anderer Lauf abruft, werden übersprungen und genannt.
+9. **Linkgraph-Vorschläge** (Quellen → „Linkgraph-Vorschläge“): neue Domains, auf die mindestens zwei freigegebene Quellen verlinken; wie Schritt 2 prüfen.
+10. **Abnahme-Prüfung**: `npm run check:sources` (auf dem Server: `dc run --rm worker node --import tsx scripts/check-sources.ts`). Ausgabe: freigegebene Quellen (Soll 20–40), je Quelle Dokumente, Versionen, offene und fehlgeschlagene Frontier-URLs und Kosten, offene fehlgeschlagene Jobs der Queues `fetch.*` und `embed.chunks`, Konverter-Entscheidung, PDF-Extraktor. Exit 1, solange die Zahl außerhalb 20–40 liegt, ein solcher Job offen ist oder die Konverter-Entscheidung vorläufig ist.
+
+### Budget-Stopp
+Erreicht ein Dienst sein Tagesbudget (`config/budgets.json`), pausiert der Worker die betroffene Queue bis zum nächsten Tag (UTC) und stellt den Job zurück, ohne ihn als Fehlversuch zu zählen. Unter „Jobs“ steht die Queue auf „Pausiert“. Nach einer Budget-Erhöhung (Deploy) oder am Folgetag dort „Fortsetzen“; der Lauf macht dort weiter, wo er stand.
+
+### Quelle pausieren und fortsetzen
+- **Beschwerde eines Betreibers** oder offensichtliche Fehlfunktion: Quelle öffnen → „Pausieren“. Laufende Jobs der Quelle prüfen vor jedem Abruf erneut, ob sie freigegeben ist, und überspringen ihre Seiten (sie bleiben „offen“ für später). Hochgeladene PDFs bleiben bei pausierten Quellen möglich.
+- Fehlgeschlagener Job einer Quelle unter „Prüfen“: Entscheidung „Quelle pausieren“.
+- Ein ausdrückliches Crawl-Verbot in robots.txt pausiert die Quelle automatisch („robots.txt verbietet das Crawlen“).
+- **Fortsetzen**: Quelle öffnen → „Fortsetzen“, danach „Crawlen“. Eine endgültig zu entfernende Quelle wird abgelehnt bzw. über `valid_to` beendet (Archiv bleibt).
+
+### Hängender Lauf
+Ein Crawl-Lauf im Status „Wartend“ oder „Läuft“ sperrt seine Quellen für neue Abrufe („Für die Quelle läuft bereits ein Abruf“), bis er endet. Endet er nicht, weil der Worker abgestürzt ist und seine Jobs verloren sind (unter „Jobs“ keine aktiven oder wartenden Jobs der Queues `fetch.*`/`embed.chunks` für den Lauf), wird er von Hand beendet; eine Schaltfläche dafür gibt es noch nicht:
+```bash
+dc exec postgres psql -U periplus periplus -c \
+  "update runs set status = 'failed', finished_at = coalesce(finished_at, now()), failure_reason = 'manuell beendet' where id = '<run-id>' and status in ('queued', 'running');"
+```
+Danach lässt sich die Quelle wieder crawlen; offene Frontier-URLs nimmt der nächste Lauf mit.
+
+### Embeddings neu berechnen
+- Fehlende Embeddings (Voyage-Ausfall, Budget-Stopp, Zahlungsmethode fehlte): Quellen → „Einbettungen nachholen“. Der Lauf bettet jeden Chunk ohne Embedding ein (älteste zuerst, höchstens 10 000 je Lauf; bei mehr Chunks erneut starten).
+- Neues Modell oder neue Dimension (`config/embeddings.json`): die Spalte `chunks.embedding` hat eine feste Dimension (1024) und der Worker prüft sie beim Start. Ein Modellwechsel mit anderer Dimension braucht eine Migration; mit gleicher Dimension werden bestehende Embeddings nicht automatisch ersetzt (eigene Aufgabe, nicht Teil von M3).
+
+### Testdaten aufnehmen (Entwicklung)
+`npm run fixtures:record` ruft echte Dienste und schreibt nach `test/fixtures`:
+- `-- --area <key> [--land …] [--cache …]`: Gazetteer (nur gegen eine Datenbank mit Namen `*_scratch`).
+- `-- --area <key> --datasets`: Datensatz-Importe.
+- `-- --area <key> --serp [--limit 1-3]`: höchstens 3 echte SERP-Suchen aus den Reviernamen (kostet je etwa 0,0035 €).
+- `-- --area <key> --wikivoyage`: Wikidata-Sitelinks und Wikivoyage-Artikel (Aegina).
+- `-- --converters <url> [<url> <url>]`: 1–3 Seiten über Jina und Firecrawl (kostet je Seite etwa 0,005 €), ohne Revier.
+- `-- --voyage`: die zwei Test-Texte über Voyage, ohne Revier.
+Aufgezeichnet werden keine Cookies und keine Client-IP-Header (`x-client-ip`, `x-analytics`); Fixtures vor dem Einchecken ansehen.

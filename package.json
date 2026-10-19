@@ -29,7 +29,8 @@
     "smoke:ai": "tsx --env-file-if-exists=.env.local scripts/smoke-ai.ts",
     "compare:navily": "tsx --env-file-if-exists=.env.local scripts/compare-navily.ts",
     "pdf:compare": "tsx --env-file-if-exists=.env.local scripts/pdf-compare.ts",
-    "report:converters": "tsx --env-file-if-exists=.env.local scripts/converter-report.ts"
+    "report:converters": "tsx --env-file-if-exists=.env.local scripts/converter-report.ts",
+    "check:sources": "tsx --env-file-if-exists=.env.local scripts/check-sources.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
