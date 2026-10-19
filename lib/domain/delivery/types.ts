@@ -1,3 +1,12 @@
+import type {
+  ChangesFile,
+  CoastCollection,
+  HighlightsFile,
+  Manifest,
+  RegionsFile,
+  SpotsFile,
+  WeatherPointsFile,
+} from "@/contract";
 import type { GeoObjectType, PlaceKind, PlaceStatus, PoiCategory } from "@/lib/db/schema/geo";
 import type { DocType } from "@/lib/db/schema/sources";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
@@ -87,4 +96,17 @@ export type AreaScope = {
   pois: PoiSource[];
   regions: RegionSource[];
   passages: PassageSource[];
+};
+
+/** A package as built and validated (spec 08): the manifest and its files; `changes.json` from the second delivery on. */
+export type DeliveryPackage = {
+  manifest: Manifest;
+  files: {
+    "spots.json": SpotsFile;
+    "highlights.json": HighlightsFile;
+    "regions.json": RegionsFile;
+    "coast.geojson": CoastCollection;
+    "weather-points.json": WeatherPointsFile;
+    "changes.json"?: ChangesFile;
+  };
 };
