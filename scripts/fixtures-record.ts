@@ -32,7 +32,8 @@ import { extractionUnits } from "../lib/db/schema";
 import { planUnits } from "../lib/domain/extraction/units";
 import { effectiveVersionMeta } from "../lib/domain/mentions/classification";
 import { areaBbox, syncAreas } from "../lib/domain/gazetteer/areas";
-import { areaTileIds, ensureTiles } from "../lib/domain/gazetteer/tiles-ensure";
+import { assignAreaTiles } from "../lib/domain/gazetteer/hierarchy";
+import { ensureTiles } from "../lib/domain/gazetteer/tiles-ensure";
 import { bufferBbox, importLandPolygons } from "../lib/domain/gazetteer/land";
 import { createRun } from "../lib/domain/runs";
 import { ensureWhitelistSources, getSource, sourceIdByDomain } from "../lib/domain/sources/store";
@@ -696,21 +697,6 @@ export function compactOverpass(raw: string): string {
 }
 
 /** Thins successful Overpass answers and minifies Wikidata's before they are recorded and imported. */
-/**
- * Links the valid objects to the area's tiles as `assignTiles` does, for an area that may exist only as a test file
- * (`assignTiles` resolves configured areas by key).
- */
-async function linkAreaTiles(db: Db, area: AreaConfig): Promise<number> {
-  const tileIds = areaTileIds(area);
-  await db.execute(sql`delete from tile_geo_objects where tile_id in ${tileIds}`);
-  const res = await db.execute(sql`
-    insert into tile_geo_objects (tile_id, geo_object_id)
-    select t.id, o.id from tiles t
-    join geo_objects o on o.geom && t.bbox and ST_Intersects(t.bbox, o.geom)
-    where t.id in ${tileIds} and t.valid_to is null and o.valid_to is null and o.merged_into_id is null`);
-  return res.rowCount ?? 0;
-}
-
 function compacting(inner: Transport): Transport {
   return async (req) => {
     const res = await inner(req);
@@ -824,7 +810,7 @@ async function main(): Promise<void> {
         const replay = fixtureTransport();
         await importOsm(db, { area, runId }, { transport: replay, archive });
         await importWikidata(db, { area, runId }, { transport: replay });
-        out(`tile links: ${await linkAreaTiles(db, area)}`);
+        out(`tile links: ${(await assignAreaTiles(db, area)).links}`);
       }
       for (const dataset of kinds) {
         const result = await withRetry(dataset, () =>

@@ -406,9 +406,8 @@ describe("importVesselDensity and importRoads", () => {
 });
 
 describe("importSitelinks", () => {
-  /** A valid object with a fresh Wikidata id in the area's tile; returns the id. */
-  async function itemInTile(db: Db, type: "island" | "bay" = "bay"): Promise<string> {
-    const qid = `Q${900_000_000 + Math.floor(Math.random() * 99_000_000)}`;
+  /** A valid object with the Wikidata id `qid` (fixed per test, in a range no other test uses) in the area's tile. */
+  async function itemInTile(db: Db, qid: string, type: "island" | "bay" = "bay"): Promise<string> {
     const [o] = await db
       .insert(geoObjects)
       .values({ type, origin: "wikidata", wikidataId: qid, geom: geomFromGeoJson({ type: "Point", coordinates: [SEA.lon, SEA.lat] }) })
@@ -420,7 +419,7 @@ describe("importSitelinks", () => {
   it("sitelinks fetched within 30 days are reused without a call", () =>
     withRollback(async (db) => {
       await prepareArea(db);
-      const [fresh, stale, unknown] = [await itemInTile(db), await itemInTile(db), await itemInTile(db, "island")];
+      const [fresh, stale, unknown] = [await itemInTile(db, "Q930000001"), await itemInTile(db, "Q930000002"), await itemInTile(db, "Q930000003", "island")];
       const now = new Date("2026-10-19T12:00:00Z");
       await db.insert(wikidataSitelinks).values([
         { wikidataId: fresh, sitelinks: 4, fetchedAt: new Date("2026-09-25T12:00:00Z") },
@@ -483,9 +482,9 @@ describe("importSitelinks", () => {
   it("an ended object or one outside the area's tiles is not asked for", () =>
     withRollback(async (db) => {
       await prepareArea(db);
-      const ended = await itemInTile(db);
+      const ended = await itemInTile(db, "Q930000011");
       await db.execute(sql`update geo_objects set valid_to = current_date where wikidata_id = ${ended}`);
-      await db.insert(geoObjects).values({ type: "bay", origin: "wikidata", wikidataId: `Q${800_000_000 + Math.floor(Math.random() * 99_000_000)}`, geom: geomFromGeoJson({ type: "Point", coordinates: [SEA.lon, SEA.lat] }) });
+      await db.insert(geoObjects).values({ type: "bay", origin: "wikidata", wikidataId: "Q930000012", geom: geomFromGeoJson({ type: "Point", coordinates: [SEA.lon, SEA.lat] }) });
       const { transport, seen } = scriptedServices(db);
       expect(await importSitelinks(db, { area: areaByKey(AREA) }, { transport })).toEqual({ fetched: 0, reused: 0 });
       expect(seen).toHaveLength(0);

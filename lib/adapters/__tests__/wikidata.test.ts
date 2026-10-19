@@ -185,4 +185,12 @@ describe("sitelinkCounts", () => {
       await expect(sitelinkCounts(lagging, ["Q1"], { db: tx }, cfg())).rejects.toBeInstanceOf(RetryableHttpError);
       expect(await sitelinkCounts(transport, [], { db: tx }, cfg())).toEqual(new Map());
     }));
+
+  it("a redirect and its target asked in one batch both get the target's count", () =>
+    withRollback(async (tx) => {
+      // Wikidata answers a redirect and its target with the one target entity
+      const transport = api(() => ({ entities: { Q20: { type: "item", id: "Q20", redirects: { from: "Q2", to: "Q20" }, sitelinks: links(3) } } }));
+      const counts = await sitelinkCounts(transport, ["Q2", "Q20"], { db: tx }, cfg());
+      expect([...counts.entries()].sort()).toEqual([["Q2", 3], ["Q20", 3]]);
+    }));
 });

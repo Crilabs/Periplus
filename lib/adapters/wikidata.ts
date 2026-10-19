@@ -217,8 +217,8 @@ export async function fetchSitelinks(
 /**
  * The number of sitelinks (all wikis, as `wikibase:sitelinks` counts them) of the items `qids`, an importance signal
  * (spec 07): one `wbgetentities` call (`props=sitelinks`, no site filter) per 50 items, ids sorted, in the bucket of
- * all Wikidata calls (ruling M5-P1). A redirected item counts under the asked id; a missing (deleted) item is absent
- * from the map. Errors as `fetchSitelinks`.
+ * all Wikidata calls (ruling M5-P1). A redirected item counts under the asked id (and its target under its own id when
+ * both were asked); a missing (deleted) item is absent from the map. Errors as `fetchSitelinks`.
  */
 export async function sitelinkCounts(
   transport: Transport,
@@ -233,9 +233,11 @@ export async function sitelinkCounts(
     const entities = await getEntities(transport, batch, "props=sitelinks", "sitelink_counts", ctx, cfg);
     for (const [key, entity] of Object.entries(entities)) {
       if (entity.missing !== undefined) continue;
-      const id = entity.redirects?.from ?? entity.id ?? key;
-      if (!batch.includes(id)) continue;
-      result.set(id, Object.keys(entity.sitelinks ?? {}).length);
+      // a redirect answers under its target: count it for each asked id (the redirect, and the target if asked too)
+      const count = Object.keys(entity.sitelinks ?? {}).length;
+      for (const id of new Set([entity.redirects?.from, entity.id ?? key])) {
+        if (id !== undefined && batch.includes(id)) result.set(id, count);
+      }
     }
   }
   return result;
