@@ -84,6 +84,11 @@ export type AttributeProvenance = {
   onlyGoneSources: boolean;
   conflictKey: string | null;
   observedMonths: number[];
+  /**
+   * Union lists only (`hazards`, `restricted_zones` …, ruling M5-C-R1 (5)): entry identity key → the sorted fact ids
+   * naming the entry; an entry a review added cites the review fact.
+   */
+  entryFactIds?: Record<string, string[]>;
 };
 
 /** An attribute without a value, and why (e.g. `no_facts`, or a computation gap's reason). */
