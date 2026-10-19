@@ -213,6 +213,22 @@ export const restrictionsSchema = z.strictObject({
   ),
 });
 
+/** `config/quality.json`: parameters of the quality tools (spot check against the comparison set). */
+export const qualitySchema = z.strictObject({
+  navilySample: z.strictObject({
+    /** A Navily spot counts as the same place within this distance. */
+    radiusM: meters,
+    /** Own shelter at or above this value counts as a protected sector. */
+    protectedThreshold: share,
+    /** Own seabed types below this share do not count as the place's seabed. */
+    seabedMinShare: share,
+    /** Spec 04: the sample covers 20 places. */
+    minPlaces: z.number().int().positive(),
+    /** Per-sector rates are only reported from this many matched places on (no reconstruction of single spots). */
+    minMatchedForSectorRates: z.number().int().positive(),
+  }),
+});
+
 /** EMODnet Seabed Habitats WFS (EUSeaMap substrate layer) and the mapping of its classes to `seabed_type`. */
 export const seabedDatasetSchema = z.strictObject({
   wfsUrl: z.url(),
@@ -310,6 +326,7 @@ export const datasetsSchema = z.strictObject({
 export type DatasetsConfig = z.infer<typeof datasetsSchema>;
 export type QueueConfig = z.infer<typeof queueConfigSchema>;
 export type GeometryConfig = z.infer<typeof geometrySchema>;
+export type QualityConfig = z.infer<typeof qualitySchema>;
 export type RestrictionsConfig = z.infer<typeof restrictionsSchema>;
 export type AreaConfig = z.infer<typeof areaConfigSchema>;
 export type CategoriesConfig = z.infer<typeof categoriesSchema>;
@@ -325,4 +342,5 @@ export type AppConfig = {
   geometry: GeometryConfig;
   restrictions: RestrictionsConfig;
   datasets: DatasetsConfig;
+  quality: QualityConfig;
 };

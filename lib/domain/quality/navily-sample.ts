@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { comparisonSet, externalCalls, places, runs, runStages, type SeabedType } from "@/lib/db/schema";
 import { latestComputations, type StoredComputation } from "@/lib/domain/facts/computations";
@@ -15,15 +16,8 @@ import { areaGeoObjectId } from "@/lib/pipeline/tile-scope";
 // Grundprinzip 9: Navily values are read at runtime only. Nothing in this module writes them anywhere; the report
 // carries Periplus names and ids plus aggregated agreement, never a Navily name, id, url or value.
 
-/** Defaults of the spot check (spec 04: Stichprobe gegen Navily). */
-export const NAVILY_SAMPLE_DEFAULTS = {
-  radiusM: 500,
-  protectedThreshold: 0.5,
-  /** Own seabed types below this share do not count as the place's seabed. */
-  seabedMinShare: 0.3,
-  /** Spec 04: the sample covers 20 places. */
-  minPlaces: 20,
-} as const;
+/** Parameters of the spot check (radius, thresholds, minimum sample): `config/quality.json`. */
+export const navilySampleConfig = () => getConfig().quality.navilySample;
 
 /** The only fields read from a Navily spot; zod drops all others. */
 export type NavilySpot = { lat: number; lon: number; prot: string[] | null; seabeds: string[] | null };
@@ -37,8 +31,13 @@ const spotSchema = z.object({
 
 /** Reads the Navily spot file; never writes anything. */
 export async function loadNavilySpots(path: string): Promise<NavilySpot[]> {
-  const raw: unknown = JSON.parse(await readFile(path, "utf8"));
-  return z.array(spotSchema).parse(raw);
+  // JSON and zod errors quote parts of the input; they must not reach logs or stderr (Grundprinzip 9).
+  const text = await readFile(path, "utf8");
+  try {
+    return z.array(spotSchema).parse(JSON.parse(text));
+  } catch {
+    throw new Error("Navily file is not a valid spot array");
+  }
 }
 
 export type OwnPlaceValues = {
@@ -117,7 +116,7 @@ export async function ownValuesForComparisonSet(
     .where(inArray(places.id, ids));
   rows.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "") || a.placeId.localeCompare(b.placeId));
 
-  const minShare = opts.seabedMinShare ?? NAVILY_SAMPLE_DEFAULTS.seabedMinShare;
+  const minShare = opts.seabedMinShare ?? navilySampleConfig().seabedMinShare;
   const result: OwnPlaceValues[] = [];
   for (const r of rows) {
     const stored = await latestComputations(db, r.geoObjectId);
@@ -226,12 +225,14 @@ export async function geometryRunStats(db: Db, areaKey: string): Promise<Geometr
   return { runId: run.id, places: run.total, durationS, perPlaceS: run.total > 0 ? durationS / run.total : 0 };
 }
 
-/** External calls and costs of the newest `datasets.import` run of this area; zeros when there is none. */
+/** External calls and costs of the newest finished `datasets.import` run of this area; zeros when there is none. */
 export async function datasetImportCosts(db: Db, areaKey: string): Promise<DatasetImportCosts> {
   const [run] = await db
     .select({ id: runs.id })
     .from(runs)
-    .where(and(eq(runs.scopeType, "area"), eq(runs.scopeId, areaKey), sql`${DATASETS_STAGE} = any(${runs.stages})`))
+    .where(
+      and(eq(runs.status, "finished"), eq(runs.scopeType, "area"), eq(runs.scopeId, areaKey), sql`${DATASETS_STAGE} = any(${runs.stages})`),
+    )
     .orderBy(desc(runs.createdAt), desc(runs.id))
     .limit(1);
   if (!run) return { calls: 0, costEur: 0, byService: {} };
@@ -283,7 +284,10 @@ export function renderReport(input: {
   verdicts: PlaceVerdict[];
   runtime: GeometryRunStats | null;
   costs: DatasetImportCosts;
+  /** Per-sector rates need at least this many matched places; default from config. */
+  minMatchedForSectorRates?: number;
 }): string {
+  const minMatched = input.minMatchedForSectorRates ?? navilySampleConfig().minMatchedForSectorRates;
   const { verdicts } = input;
   const withGeometry = verdicts.filter((v) => v.verdict !== "ohne Geometrie");
   const matched = withGeometry.filter((v) => v.matched);
@@ -307,12 +311,16 @@ export function renderReport(input: {
     `| Verglichene Orte (mit Geometrie) | ${withGeometry.length} |`,
     `| Bei Navily gefunden | ${matched.length} |`,
     `| Sektor-Übereinstimmung gesamt | ${pct(agreeTotal, matched.length * SECTORS.length)} |`,
-    ...SECTORS.map((s) => `| Sektor ${s} | ${pct(matched.filter((v) => v.sectorResults?.[s] === "match").length, matched.length)} |`),
+    ...(matched.length >= minMatched
+      ? SECTORS.map((s) => `| Sektor ${s} | ${pct(matched.filter((v) => v.sectorResults?.[s] === "match").length, matched.length)} |`)
+      : []),
     `| Grund-Übereinstimmung | ${pct(seabedCompared.filter((v) => v.seabed === "match").length, seabedCompared.length)} |`,
     `| Tiefen-Deckung | ${pct(withDepth.length, withGeometry.length)} |`,
     "",
     "Urteil je Ort aus den übereinstimmenden Sektoren: ab 6/8 „stimmt“, 4–5 „teilweise“, bis 3 „weicht ab“. " +
-      "Navily kennt keine Tiefe; die Tiefe zeigt nur, ob ein eigener Wert vorliegt.",
+      "Navily kennt keine Tiefe; die Tiefe zeigt nur, ob ein eigener Wert vorliegt. " +
+      "Ein eigener Grund „mixed“ stimmt nie mit Navily überein. Mehrere Orte können demselben Navily-Spot zugeordnet sein. " +
+      `Sektor-Raten je Sektor erscheinen erst ab ${minMatched} bei Navily gefundenen Orten.`,
     "",
     "## Orte",
     "",

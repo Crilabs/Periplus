@@ -10,6 +10,7 @@ import {
   gazetteerSchema,
   geometrySchema,
   modelsSchema,
+  qualitySchema,
   queuesSchema,
   restrictionsSchema,
   type AppConfig,
@@ -24,6 +25,7 @@ export type {
   DatasetsConfig,
   GazetteerConfig,
   GeometryConfig,
+  QualityConfig,
   QueueConfig,
   RestrictionsConfig,
 } from "./schemas";
@@ -77,6 +79,7 @@ export function loadConfig(dir = "config"): AppConfig {
     geometry: readJson(dir, "geometry", geometrySchema),
     restrictions: readJson(dir, "restrictions", restrictionsSchema),
     datasets: readJson(dir, "datasets", datasetsSchema),
+    quality: readJson(dir, "quality", qualitySchema),
   };
 }
 

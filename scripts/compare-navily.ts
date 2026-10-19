@@ -8,7 +8,7 @@ import {
   datasetImportCosts,
   geometryRunStats,
   loadNavilySpots,
-  NAVILY_SAMPLE_DEFAULTS,
+  navilySampleConfig,
   ownValuesForComparisonSet,
   renderReport,
 } from "../lib/domain/quality/navily-sample";
@@ -43,12 +43,13 @@ async function main(): Promise<void> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
   areaByKey(args.area);
+  const cfg = navilySampleConfig();
   const spots = await loadNavilySpots(args.navily);
   const { db, close } = createDb(url);
   try {
     const own = await ownValuesForComparisonSet(db, args.area);
     const verdicts = own.map((o) =>
-      comparePlace(o, spots, { radiusM: NAVILY_SAMPLE_DEFAULTS.radiusM, protectedThreshold: NAVILY_SAMPLE_DEFAULTS.protectedThreshold }),
+      comparePlace(o, spots, { radiusM: cfg.radiusM, protectedThreshold: cfg.protectedThreshold }),
     );
     const report = renderReport({
       areaKey: args.area,
@@ -63,8 +64,8 @@ async function main(): Promise<void> {
     const compared = verdicts.filter((v) => v.verdict !== "ohne Geometrie").length;
     process.stdout.write(`report: ${args.out}\n`);
     process.stdout.write(`places in comparison set: ${verdicts.length}, compared with geometry: ${compared}\n`);
-    if (compared < NAVILY_SAMPLE_DEFAULTS.minPlaces) {
-      process.stderr.write(`only ${compared} places with geometry compared, ${NAVILY_SAMPLE_DEFAULTS.minPlaces} required\n`);
+    if (compared < cfg.minPlaces) {
+      process.stderr.write(`only ${compared} places with geometry compared, ${cfg.minPlaces} required\n`);
       process.exitCode = 1;
     }
   } finally {

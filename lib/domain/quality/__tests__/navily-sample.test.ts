@@ -103,6 +103,24 @@ describe("loadNavilySpots", () => {
   });
 });
 
+describe("loadNavilySpots errors", () => {
+  it("a malformed file rejects with a generic message that quotes no file content", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "navily-bad-"));
+    try {
+      for (const content of ["NAVILY-ONLY-NAME garbage", '[{"lat":"NAVILY-ONLY-NAME","lon":1}]']) {
+        const bad = path.join(dir, "bad.json");
+        await writeFile(bad, content);
+        const err = await loadNavilySpots(bad).then(() => null, (e: unknown) => e as Error);
+        expect(err?.message).toBe("Navily file is not a valid spot array");
+        expect(err?.message).not.toContain("NAVILY-ONLY");
+        expect(err?.cause).toBeUndefined();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("comparePlace", () => {
   it("prot [n, ne, nw] vs own N .9, NE .8, NW .7, rest .1 → 8/8 'stimmt'", async () => {
     const spots = await loadNavilySpots(file);
@@ -199,7 +217,25 @@ describe("renderReport", () => {
     expect(md).toMatch(/Verglichene Orte \(mit Geometrie\) \| 2/);
     expect(md).toMatch(/Bei Navily gefunden \| 1/);
     expect(md).toMatch(/Sektor-Übereinstimmung gesamt \| 100 %/);
+    expect(md).not.toMatch(/\| Sektor N \|/);
     expect(md).toMatch(/Tiefen-Deckung \| 100 %/);
+  });
+
+  it("reports per-sector rates only from 5 matched places on, and explains mixed and shared spots", () => {
+    const spots: NavilySpot[] = [{ ...AT, prot: ["n"], seabeds: ["sand"] }];
+    const render = (n: number) =>
+      renderReport({
+        areaKey: "saronic",
+        generatedAt: new Date("2026-10-19T08:00:00Z"),
+        verdicts: Array.from({ length: n }, (_, i) => comparePlace(own({ placeId: `p-${i}` }), spots, OPTS)),
+        runtime: null,
+        costs: { calls: 0, costEur: 0, byService: {} },
+      });
+    expect(render(4)).not.toMatch(/\| Sektor N \|/);
+    expect(render(5)).toMatch(/\| Sektor N \| 100 %/);
+    const md = render(5);
+    expect(md).toContain("mixed");
+    expect(md).toMatch(/Mehrere Orte/);
   });
 
   it("says so when no run or no costs exist", () => {
@@ -296,15 +332,16 @@ describe("run statistics", () => {
     withRollback(async (tx) => {
       const areaKey = `test-${newId()}`;
       expect(await datasetImportCosts(tx, areaKey)).toEqual({ calls: 0, costEur: 0, byService: {} });
-      const insertRun = async (createdAt: string) => {
+      const insertRun = async (createdAt: string, status: "finished" | "failed" | "running" = "finished") => {
         const [r] = await tx
           .insert(runs)
-          .values({ kind: "stage", scopeType: "area", scopeId: areaKey, stages: ["datasets.import"], triggeredBy: "test", createdAt: new Date(createdAt) })
+          .values({ kind: "stage", scopeType: "area", scopeId: areaKey, stages: ["datasets.import"], triggeredBy: "test", status, createdAt: new Date(createdAt) })
           .returning({ id: runs.id });
         return r!.id;
       };
       const older = await insertRun("2026-10-01T10:00:00Z");
       const newest = await insertRun("2026-10-02T10:00:00Z");
+      const running = await insertRun("2026-10-03T10:00:00Z", "running");
       const call = (runId: string, service: string, costEur: string) => ({
         service,
         operation: "test",
@@ -319,6 +356,7 @@ describe("run statistics", () => {
         call(newest, "emodnet", "0"),
         call(newest, "emodnet", "0"),
         call(newest, "overpass", "0.5"),
+        call(running, "emodnet", "7"),
       ]);
       expect(await datasetImportCosts(tx, areaKey)).toEqual({ calls: 3, costEur: 0.5, byService: { emodnet: 2, overpass: 1 } });
     }));

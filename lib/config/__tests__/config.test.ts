@@ -16,6 +16,7 @@ type Overrides = {
   geometry?: unknown;
   restrictions?: unknown;
   datasets?: unknown;
+  quality?: unknown;
   /** File name (without `.json`) to content; replaces all repo area files. */
   areas?: Record<string, unknown>;
 };
@@ -32,6 +33,7 @@ function fixtureDir(overrides: Overrides): string {
     geometry: overrides.geometry ?? repoConfig.geometry,
     restrictions: overrides.restrictions ?? repoConfig.restrictions,
     datasets: overrides.datasets ?? repoConfig.datasets,
+    quality: overrides.quality ?? repoConfig.quality,
   };
   for (const [name, value] of Object.entries(files)) {
     writeFileSync(join(dir, `${name}.json`), JSON.stringify(value));
@@ -99,6 +101,18 @@ describe("loadConfig", () => {
     expect(c.geometry.anchorArea).toMatchObject({ minDepthM: 3, maxDepthM: 12, landClearanceM: 30 });
     expect(c.geometry.restriction).toEqual({ minShare: 0.5, confidence: 0.9 });
     expect(c.restrictions).toEqual({ protectedAreaAnchoringBan: [] });
+  });
+
+  it("loads the navily sample parameters and rejects an out-of-range threshold", () => {
+    expect(loadConfig("config").quality.navilySample).toEqual({
+      radiusM: 500,
+      protectedThreshold: 0.5,
+      seabedMinShare: 0.3,
+      minPlaces: 20,
+      minMatchedForSectorRates: 5,
+    });
+    const bad = { navilySample: { ...repoConfig.quality.navilySample, protectedThreshold: 1.5 } };
+    expect(() => loadConfig(fixtureDir({ quality: bad }))).toThrow(/quality\.json.*protectedThreshold/);
   });
 
   it("config rejects a malformed Natura 2000 code", () => {
