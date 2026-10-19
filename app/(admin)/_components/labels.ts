@@ -1,5 +1,8 @@
 import type {
+  ChangeRate,
   ComputationKind,
+  DocType,
+  FrontierStatus,
   GeoObjectType,
   GeoOrigin,
   NameOrigin,
@@ -12,9 +15,11 @@ import type {
   RestrictedKind,
   RunStatus,
   SeabedType,
+  SourceStatus,
 } from "@/lib/db/schema";
 import type { Sector } from "@/lib/domain/facts/schema-types";
 import type { GapReason } from "@/lib/domain/geometry/gaps";
+import type { CrawlRules } from "@/lib/domain/sources/crawl-rules";
 import type { OriginSource } from "@/lib/domain/geometry/water";
 import type { RunScopeReason } from "@/lib/pipeline/tile-scope";
 
@@ -166,6 +171,64 @@ export const ORIGIN_SOURCE_LABELS: Record<OriginSource, string> = {
   review_anchor: "Ankerposition (Review)",
   computed_anchor: "Ankerposition (berechnet)",
   moved_off_land: "Position, vom Land ins Wasser verschoben",
+};
+
+export const DOC_TYPE_LABELS: Record<DocType, string> = {
+  pilot_guide: "Revierführer",
+  trip_report: "Törnbericht",
+  forum: "Forum",
+  marina: "Marina",
+  authority: "Behörde",
+  dataset: "Datensatz",
+  travel_guide: "Reiseführer",
+  other: "Sonstiges",
+};
+
+export const SOURCE_STATUS_LABELS: Record<SourceStatus, string> = {
+  proposed: "Vorgeschlagen",
+  approved: "Freigegeben",
+  rejected: "Abgelehnt",
+  paused: "Pausiert",
+};
+
+export const CHANGE_RATE_LABELS: Record<ChangeRate, string> = {
+  high: "Hoch (täglich)",
+  normal: "Normal",
+  static: "Statisch",
+};
+
+export const FRONTIER_STATUS_LABELS: Record<FrontierStatus, string> = {
+  queued: "Offen",
+  fetched: "Abgerufen",
+  skipped: "Übersprungen",
+  failed: "Fehlgeschlagen",
+};
+
+/** Field names of the crawl rules (spec 05). */
+export const CRAWL_RULE_LABELS: Record<keyof CrawlRules, string> = {
+  startUrls: "Start-URLs",
+  allow: "Erlaubte Pfade",
+  deny: "Gesperrte Pfade",
+  maxDepth: "Maximale Tiefe",
+  maxPages: "Maximale Seiten",
+  ratePerMinute: "Abrufe pro Minute",
+  render: "Rendern",
+  converter: "Konverter",
+  pdf: "PDFs abrufen",
+  boilerplateSelectors: "Boilerplate-Selektoren",
+};
+
+export const RENDER_MODE_LABELS: Record<CrawlRules["render"], string> = {
+  auto: "Automatisch",
+  never: "Nie",
+  always: "Immer",
+};
+
+export const CONVERTER_LABELS: Record<CrawlRules["converter"], string> = {
+  auto: "Automatisch",
+  jina: "Jina",
+  firecrawl: "Firecrawl",
+  local: "Lokal",
 };
 
 /** Why a run did not start (`RunScopeNotReady`). */

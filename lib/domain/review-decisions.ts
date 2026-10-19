@@ -3,16 +3,21 @@ import { z } from "zod";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import {
+  changeRateEnum,
+  DOC_TYPES,
   geoObjects,
   placeKindEnum,
   places,
   reviewDecisions,
   reviewTasks,
+  sources,
   tiles,
   type ReviewKind,
+  type SourceStatus,
 } from "@/lib/db/schema";
 import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
 import { newPublicId } from "@/lib/domain/ids";
+import { crawlRulesSchema } from "@/lib/domain/sources/crawl-rules";
 import { QUEUES, type QueueName } from "@/lib/jobs/queues";
 
 export const reviewDecisionSchema = z.discriminatedUnion("action", [
@@ -23,6 +28,7 @@ export const reviewDecisionSchema = z.discriminatedUnion("action", [
     position: z.object({ lon: z.number().min(-180).max(180), lat: z.number().min(-90).max(90) }).optional(),
   }),
   z.object({ action: z.literal("merge"), intoPlaceId: z.uuid() }),
+  // place_candidate / place and source_approval / source
   z.object({ action: z.literal("reject") }),
   z.object({ action: z.literal("no_anchoring") }),
   // place_candidate / geo_object_pair
@@ -34,6 +40,15 @@ export const reviewDecisionSchema = z.discriminatedUnion("action", [
   // failed_job
   z.object({ action: z.literal("retry") }),
   z.object({ action: z.literal("ignore") }),
+  z.object({ action: z.literal("pause_source") }),
+  // source_approval / source
+  z.object({
+    action: z.literal("approve"),
+    type: z.enum(DOC_TYPES),
+    weight: z.number().min(0).max(1),
+    changeRate: z.enum(changeRateEnum.enumValues),
+    crawlRules: crawlRulesSchema,
+  }),
 ]);
 
 export type ReviewDecision = z.infer<typeof reviewDecisionSchema>;
@@ -59,7 +74,8 @@ const ALLOWED: Record<string, readonly Action[]> = {
   "place_candidate/place": ["confirm", "merge", "reject", "no_anchoring"],
   "place_candidate/geo_object_pair": ["same", "distinct"],
   "coast_tile_without_area/tile": ["assign_area", "no_area"],
-  "failed_job/job": ["retry", "ignore"],
+  "failed_job/job": ["retry", "ignore", "pause_source"],
+  "source_approval/source": ["approve", "reject"],
 };
 
 export type DecideDeps = { retryJob?: (queue: QueueName, jobId: string) => Promise<void> };
@@ -73,9 +89,9 @@ type Task = typeof reviewTasks.$inferSelect;
  * subject or target is not valid; nothing is written then. A `retry` calls `deps.retryJob` last, so a failed
  * retry rolls the decision back.
  *
- * Global lock order: the review task row first, then the place row(s) (`lockPlace`). Every transaction that
- * locks both an open `place_candidate` task and its place (`applyExclusion`, stage `geometry.place`) takes them
- * in this order, so none of them deadlocks with a decision.
+ * Global lock order: the review task row first, then the subject row(s) (`lockPlace`, `lockSource`). Every
+ * transaction that locks both an open `place_candidate` task and its place (`applyExclusion`, stage
+ * `geometry.place`) takes them in this order, so none of them deadlocks with a decision.
  */
 export async function decideReviewTask(
   db: Db,
@@ -145,13 +161,42 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
         .where(eq(places.id, place.id));
       return;
     }
-    case "reject":
-    case "no_anchoring": {
-      const place = await lockPlace(tx, task.subjectId);
+    case "approve": {
+      await lockSource(tx, task.subjectId, ["proposed"]);
       await tx
-        .update(places)
-        .set({ status: decision.action === "reject" ? "rejected" : "no_anchoring", statusReason: "review" })
-        .where(eq(places.id, place.id));
+        .update(sources)
+        .set({
+          type: decision.type,
+          weight: decision.weight,
+          changeRate: decision.changeRate,
+          crawlRules: decision.crawlRules,
+          status: "approved",
+          statusReason: null,
+        })
+        .where(eq(sources.id, task.subjectId));
+      return;
+    }
+    case "reject":
+      if (task.kind === "source_approval") {
+        await lockSource(tx, task.subjectId, ["proposed"]);
+        await tx
+          .update(sources)
+          .set({ status: "rejected", statusReason: "review" })
+          .where(eq(sources.id, task.subjectId));
+        return;
+      }
+      return applyPlaceStatus(tx, task, "rejected");
+    case "no_anchoring":
+      return applyPlaceStatus(tx, task, "no_anchoring");
+    case "pause_source": {
+      const context = (task.context ?? {}) as { sourceId?: unknown; queue?: unknown; key?: unknown };
+      const sourceId = z.uuid().safeParse(context.sourceId);
+      if (!sourceId.success) throw new DecisionNotAllowed(`failed_job task ${task.id} names no source`);
+      await lockSource(tx, sourceId.data, ["approved", "paused"]);
+      await tx
+        .update(sources)
+        .set({ status: "paused", statusReason: `Job fehlgeschlagen: ${text(context.queue)}/${text(context.key)}` })
+        .where(eq(sources.id, sourceId.data));
       return;
     }
     case "same": {
@@ -202,6 +247,31 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
     case "no_area":
     case "ignore":
       return;
+  }
+}
+
+const text = (v: unknown): string => (typeof v === "string" ? v : "?");
+
+async function applyPlaceStatus(tx: Db, task: Task, status: "rejected" | "no_anchoring"): Promise<void> {
+  const place = await lockPlace(tx, task.subjectId);
+  await tx.update(places).set({ status, statusReason: "review" }).where(eq(places.id, place.id));
+}
+
+/**
+ * The source, locked; `DecisionNotAllowed` when it does not exist, has ended or its status is not one of
+ * `statuses` (e.g. a proposal approved or rejected meanwhile).
+ */
+async function lockSource(tx: Db, sourceId: string, statuses: readonly SourceStatus[]): Promise<void> {
+  const [source] = z.uuid().safeParse(sourceId).success
+    ? await tx
+        .select({ status: sources.status })
+        .from(sources)
+        .where(and(eq(sources.id, sourceId), isNull(sources.validTo)))
+        .for("update")
+    : [];
+  if (!source) throw new DecisionNotAllowed(`source ${sourceId} is not valid`);
+  if (!statuses.includes(source.status)) {
+    throw new DecisionNotAllowed(`source ${sourceId} is ${source.status}, not ${statuses.join(" or ")}`);
   }
 }
 

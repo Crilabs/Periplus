@@ -541,6 +541,26 @@ describe("worker", () => {
     expect(probe.workerErrors.some((e) => e.msg === "job failed permanently" && e.obj.jobId === id)).toBe(false);
   }, 30_000);
 
+  it("a dead-letter job with a sourceId puts it into the failed_job context", async () => {
+    const key = `dl-source-${newId()}`;
+    const sourceId = newId();
+    const id = await boss.send(DEAD_LETTER_QUEUE, { key, sourceId });
+    await waitFor(async () => (await boss.getJobById(DEAD_LETTER_QUEUE, id!))?.state === "completed", 20_000);
+    const [task] = await db
+      .select()
+      .from(reviewTasks)
+      .where(and(eq(reviewTasks.kind, "failed_job"), eq(reviewTasks.subjectId, id!)));
+    expect(task!.context).toMatchObject({ key, sourceId });
+
+    const other = await boss.send(DEAD_LETTER_QUEUE, { key: `dl-nosource-${newId()}`, sourceId: 7 });
+    await waitFor(async () => (await boss.getJobById(DEAD_LETTER_QUEUE, other!))?.state === "completed", 20_000);
+    const [plain] = await db
+      .select()
+      .from(reviewTasks)
+      .where(and(eq(reviewTasks.kind, "failed_job"), eq(reviewTasks.subjectId, other!)));
+    expect(plain!.context).not.toHaveProperty("sourceId");
+  }, 30_000);
+
   it("the dead-letter queue gets explicit retry settings", async () => {
     expect(deadLetterQueueOptions({})).toEqual({ retryLimit: 5, retryDelay: 60, retryBackoff: true });
     const queue = await boss.getQueue(DEAD_LETTER_QUEUE);

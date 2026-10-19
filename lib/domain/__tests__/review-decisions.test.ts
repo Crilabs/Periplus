@@ -8,10 +8,15 @@ import {
   places,
   reviewDecisions,
   reviewTasks,
+  serpQueries,
+  serpResults,
+  sources,
   tiles,
   type GeoObjectType,
   type PlaceStatus,
+  type SourceStatus,
 } from "@/lib/db/schema";
+import { domainCandidates } from "@/lib/domain/discovery/proposals";
 import { isPublicId, newId } from "@/lib/domain/ids";
 import { createReviewTask } from "@/lib/domain/review";
 import {
@@ -22,7 +27,10 @@ import {
   TaskNotOpen,
   type ReviewDecision,
 } from "@/lib/domain/review-decisions";
+import { DEFAULT_CRAWL_RULES } from "@/lib/domain/sources/crawl-rules";
+import { getSource } from "@/lib/domain/sources/store";
 import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
+import { getConfig } from "@/lib/config";
 import { testDb, withRollback } from "@/test/db";
 
 // Synthetic data in open sea outside the pilot box 23.0-23.75 E x 37.0-38.0 N (around 28.1 E, 35.1 N).
@@ -422,6 +430,208 @@ describe("failed job decisions", () => {
       expect(retryJob).not.toHaveBeenCalled();
       expect((await taskOf(tx, taskId)).status).toBe("decided");
       expect(await decisionsOf(tx, taskId)).toHaveLength(1);
+    }));
+});
+
+describe("source decisions", () => {
+  const testDomain = () => `${newId()}.test.invalid`;
+
+  async function insertSource(tx: Db, status: SourceStatus = "proposed", domain = testDomain()): Promise<string> {
+    const [row] = await tx
+      .insert(sources)
+      .values({
+        domain,
+        name: domain,
+        type: "trip_report",
+        weight: 0.6,
+        status,
+        crawlRules: DEFAULT_CRAWL_RULES,
+        origin: "serp",
+      })
+      .returning({ id: sources.id });
+    return row!.id;
+  }
+
+  async function approvalTask(tx: Db, sourceId: string): Promise<string> {
+    const { id } = await createReviewTask(tx, {
+      kind: "source_approval",
+      subjectType: "source",
+      subjectId: sourceId,
+      context: {},
+    });
+    return id;
+  }
+
+  async function jobTask(tx: Db, context: Record<string, unknown>): Promise<string> {
+    const { id } = await createReviewTask(tx, {
+      kind: "failed_job",
+      subjectType: "job",
+      subjectId: newId(),
+      context,
+    });
+    return id;
+  }
+
+  const historyRows = async (tx: Db, sourceId: string) =>
+    (await tx.execute<{ n: number }>(sql`select count(*)::int as n from sources_history where row_id = ${sourceId}`))
+      .rows[0]!.n;
+
+  const approve = {
+    action: "approve",
+    type: "pilot_guide",
+    weight: 0.85,
+    changeRate: "static",
+    crawlRules: { ...DEFAULT_CRAWL_RULES, startUrls: ["https://example.test.invalid/guide/"], allow: ["^/guide/"] },
+  } as const satisfies ReviewDecision;
+
+  it("accepts approve and pause_source in the schema", () => {
+    expect(reviewDecisionSchema.parse({ action: "pause_source" })).toEqual({ action: "pause_source" });
+    expect(() => reviewDecisionSchema.parse({ ...approve, weight: 1.5 })).toThrow();
+    expect(() => reviewDecisionSchema.parse({ ...approve, type: "castle" })).toThrow();
+  });
+
+  it("approve sets type, weight, rules and status in one decision", () =>
+    withRollback(async (tx) => {
+      const sourceId = await insertSource(tx);
+      const taskId = await approvalTask(tx, sourceId);
+      await decide(tx, taskId, approve);
+
+      expect(await getSource(tx, sourceId)).toMatchObject({
+        status: "approved",
+        statusReason: null,
+        type: "pilot_guide",
+        weight: 0.85,
+        changeRate: "static",
+        crawlRules: approve.crawlRules,
+      });
+      expect((await taskOf(tx, taskId)).status).toBe("decided");
+      const decisions = await decisionsOf(tx, taskId);
+      expect(decisions).toHaveLength(1);
+      expect(decisions[0]!.decision).toMatchObject({ action: "approve", type: "pilot_guide" });
+      expect(await historyRows(tx, sourceId)).toBeGreaterThanOrEqual(1);
+    }));
+
+  it("approving a source that is not proposed is not allowed", () =>
+    withRollback(async (tx) => {
+      for (const status of ["approved", "rejected", "paused"] as const) {
+        const sourceId = await insertSource(tx, status);
+        const taskId = await approvalTask(tx, sourceId);
+        await expect(tx.transaction((sp) => decide(sp, taskId, approve))).rejects.toThrow(DecisionNotAllowed);
+        expect((await taskOf(tx, taskId)).status).toBe("open");
+        expect(await decisionsOf(tx, taskId)).toHaveLength(0);
+        expect((await getSource(tx, sourceId))!).toMatchObject({ status, type: "trip_report", weight: 0.6 });
+      }
+      // A task whose source does not exist.
+      const taskId = await approvalTask(tx, newId());
+      await expect(tx.transaction((sp) => decide(sp, taskId, approve))).rejects.toThrow(DecisionNotAllowed);
+    }));
+
+  it("an invalid regex in the rules is rejected before anything is written", () =>
+    withRollback(async (tx) => {
+      const sourceId = await insertSource(tx);
+      const taskId = await approvalTask(tx, sourceId);
+      const invalid = { ...approve, crawlRules: { ...approve.crawlRules, deny: ["(unclosed"] } };
+      await expect(tx.transaction((sp) => decide(sp, taskId, invalid))).rejects.toThrow(/regular expression/);
+      expect((await taskOf(tx, taskId)).status).toBe("open");
+      expect(await decisionsOf(tx, taskId)).toHaveLength(0);
+      expect((await getSource(tx, sourceId))!.status).toBe("proposed");
+    }));
+
+  it("reject keeps the domain out of later proposals", () =>
+    withRollback(async (tx) => {
+      const domain = testDomain();
+      for (let i = 0; i < 3; i++) {
+        const [q] = await tx
+          .insert(serpQueries)
+          .values({
+            keyword: `kw ${i} ${domain}`,
+            languageCode: "en",
+            locationCode: 2826,
+            depth: 20,
+            level: "area",
+            scopeId: "saronic",
+            rawKey: `serp/2026-10-19/${newId()}.json`,
+            fetchedAt: new Date(),
+          })
+          .returning({ id: serpQueries.id });
+        const url = `https://${domain}/blog/p${i}`;
+        await tx
+          .insert(serpResults)
+          .values({ serpQueryId: q!.id, rank: 1, url, urlNormalized: url, domain, title: "t", snippet: "s" });
+      }
+      const proposals = getConfig().discovery.proposals;
+      const sourceId = await insertSource(tx, "proposed", domain);
+      const taskId = await approvalTask(tx, sourceId);
+      await decide(tx, taskId, { action: "reject" });
+
+      expect((await getSource(tx, sourceId))!).toMatchObject({ status: "rejected", statusReason: "review" });
+      expect((await taskOf(tx, taskId)).status).toBe("decided");
+      expect(await decisionsOf(tx, taskId)).toHaveLength(1);
+      expect((await domainCandidates(tx, proposals)).map((c) => c.domain)).not.toContain(domain);
+    }));
+
+  it("place actions do not fit a source approval and approve does not fit a place", () =>
+    withRollback(async (tx) => {
+      const sourceTask = await approvalTask(tx, await insertSource(tx));
+      await expect(tx.transaction((sp) => decide(sp, sourceTask, { action: "no_anchoring" }))).rejects.toThrow(
+        DecisionNotAllowed,
+      );
+      const place = await insertPlace(tx);
+      const placeTaskId = await placeTask(tx, place.id);
+      await expect(tx.transaction((sp) => decide(sp, placeTaskId, approve))).rejects.toThrow(DecisionNotAllowed);
+    }));
+
+  it("pause_source pauses the failed job's source", () =>
+    withRollback(async (tx) => {
+      const sourceId = await insertSource(tx, "approved");
+      const taskId = await jobTask(tx, { queue: "seed.tile", key: "k-1", sourceId });
+      const retryJob = vi.fn();
+      await decideReviewTask(tx, { taskId, decision: { action: "pause_source" }, decidedBy: ADMIN }, { retryJob });
+
+      expect((await getSource(tx, sourceId))!).toMatchObject({
+        status: "paused",
+        statusReason: "Job fehlgeschlagen: seed.tile/k-1",
+      });
+      expect(retryJob).not.toHaveBeenCalled();
+      expect((await taskOf(tx, taskId)).status).toBe("decided");
+      expect(await decisionsOf(tx, taskId)).toHaveLength(1);
+    }));
+
+  it("pause_source without sourceId in the context is not allowed", () =>
+    withRollback(async (tx) => {
+      for (const context of [{ queue: "seed.tile", key: "k" }, { queue: "seed.tile", key: "k", sourceId: 42 }, {
+        queue: "seed.tile",
+        key: "k",
+        sourceId: newId(),
+      }]) {
+        const taskId = await jobTask(tx, context);
+        await expect(tx.transaction((sp) => decide(sp, taskId, { action: "pause_source" }))).rejects.toThrow(
+          DecisionNotAllowed,
+        );
+        expect((await taskOf(tx, taskId)).status).toBe("open");
+        expect(await decisionsOf(tx, taskId)).toHaveLength(0);
+      }
+    }));
+
+  it("pause_source of a source that is proposed or rejected is not allowed", () =>
+    withRollback(async (tx) => {
+      for (const status of ["proposed", "rejected"] as const) {
+        const sourceId = await insertSource(tx, status);
+        const taskId = await jobTask(tx, { queue: "seed.tile", key: "k", sourceId });
+        await expect(tx.transaction((sp) => decide(sp, taskId, { action: "pause_source" }))).rejects.toThrow(
+          DecisionNotAllowed,
+        );
+        expect((await getSource(tx, sourceId))!.status).toBe(status);
+      }
+    }));
+
+  it("pause_source does not fit a source approval task", () =>
+    withRollback(async (tx) => {
+      const sourceId = await insertSource(tx);
+      const taskId = await approvalTask(tx, sourceId);
+      await expect(tx.transaction((sp) => decide(sp, taskId, { action: "pause_source" }))).rejects.toThrow(
+        DecisionNotAllowed,
+      );
     }));
 });
 

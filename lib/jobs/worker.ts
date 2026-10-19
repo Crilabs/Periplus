@@ -91,8 +91,8 @@ export async function startWorkers(
   }
 
   /**
-   * Opens the failed_job review task and records the failure; a `run.advance` job that is still failed
-   * fails its run.
+   * Opens the failed_job review task (context with `sourceId` when the job data names one) and records the
+   * failure; a `run.advance` job that is still failed fails its run.
    * Errors are logged and rethrown, so system.dead retries the job and, once its attempts are used up,
    * keeps it as `failed` where the overview and jobs views count it.
    */
@@ -107,7 +107,15 @@ export async function startWorkers(
           kind: "failed_job",
           subjectType: "job",
           subjectId: jobId,
-          context: { queue, key: job.data.key, runId, stage: job.data.stage, error },
+          context: {
+            queue,
+            key: job.data.key,
+            runId,
+            stage: job.data.stage,
+            error,
+            // Offers "pause source" in the review of a job that worked on one source.
+            ...(typeof job.data.sourceId === "string" ? { sourceId: job.data.sourceId } : {}),
+          },
         });
         // A failed transition fails its run every time: after a manual retry resumed the run, the task of
         // the first failure may still be open. Only while the source job is still failed, though: a late or
