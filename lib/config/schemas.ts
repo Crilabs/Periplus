@@ -531,6 +531,14 @@ export const mentionsSchema = z
     fallbackScope: z.literal("source_areas"),
     /** Normalized words that never form a mention on their own. */
     stopNames: z.array(z.string().min(1).refine((n) => n === normalizeName(n), "must be normalized (normalizeName)")),
+    /**
+     * Ordinary words that are also place names (normalized, per language; ruling M4-E-R3): a one-word hit on one of
+     * them is never sure without an affix and goes to the disambiguation.
+     */
+    commonWords: z.record(
+      z.string().regex(/^[a-z]{2}$/, "ISO 639-1 language code"),
+      z.array(z.string().min(1).refine((n) => n === normalizeName(n), "must be normalized (normalizeName)")),
+    ),
     /** Normalized capitalised words that never belong to a new-name hint (sentence starts, common nouns). */
     nameHintStopWords: z.array(z.string().min(1).refine((n) => n === normalizeName(n), "must be normalized (normalizeName)")),
   })

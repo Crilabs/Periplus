@@ -17,8 +17,8 @@ const WORD = /[\p{L}\p{N}\p{M}]+(?:['’\-‐‑][\p{L}\p{N}\p{M}]+)*/gu;
 const SENTENCE_END = /[.!?;\n\r\u037e\u0387\u00b7]/u;
 const GREEK = /\p{Script=Greek}/u;
 
-/** Bare web addresses and `<…>` autolinks. */
-const BARE_URL = /<?\b(?:https?:\/\/|www\.)[^\s<>]+>?/giu;
+/** Bare web addresses and `<…>` autolinks; trailing sentence punctuation stays text (a sentence end after a URL). */
+const BARE_URL = /<\b(?:https?:\/\/|www\.)[^\s<>]+>|\b(?:https?:\/\/|www\.)[^\s<>]*[^\s<>.,;:!?)]/giu;
 
 /**
  * The text with Markdown links reduced to their link text (images to their alt text) and bare web addresses removed,

@@ -8,8 +8,9 @@ import { linkTextOnly, nameForms, ngrams, type Ngram } from "./ngrams";
 /*
  * Candidate space of the name match (spec 06): "Kacheln, die das Dokument bereits berührt … plus deren 8 Nachbarn;
  * bei unbekanntem Bezug das Revier der Quelle". The tiles a document touches come from a prepass over its text (names
- * of large objects: areas, gulfs, archipelagos, islands, and the area hints of its classification), from the mentions
- * of its earlier versions and from the SERP searches that found its source; `neighbourRing` 2 is a test switch.
+ * of large objects: areas, gulfs, archipelagos, islands, and the area hints of its classification), else from the
+ * mentions of its earlier versions; only without either, the SERP searches that found its source give its area;
+ * `neighbourRing` 2 is a test switch.
  */
 
 export type CandidateBasis = "prepass" | "history" | "source" | "fallback";
@@ -65,12 +66,12 @@ async function prepassTiles(db: Db, versionId: string, cfg: MentionsConfig, affi
   return rows.map((r) => r.tile_id);
 }
 
-/** (b) Tiles of the objects mentioned in earlier versions of the same document. */
+/** (b) Tiles of the objects mentioned in earlier versions (fetched before this one) of the same document. */
 async function historyTiles(db: Db, versionId: string): Promise<string[]> {
   const { rows } = await db.execute<{ tile_id: string }>(sql`
     select distinct tgo.tile_id
     from document_versions v
-    join document_versions w on w.document_id = v.document_id and w.id <> v.id
+    join document_versions w on w.document_id = v.document_id and w.fetched_at < v.fetched_at
     join mentions m on m.document_version_id = w.id
     join tile_geo_objects tgo on tgo.geo_object_id = m.geo_object_id
     where v.id = ${versionId}
@@ -126,9 +127,10 @@ export function withNeighbours(tiles: Iterable<string>, ring: number): string[] 
 }
 
 /**
- * The tiles whose objects a version's names are compared with: the union of (a) the prepass, (b) its document's
- * history and (c) its source's SERP searches, each tile with `neighbourRing` rings of neighbours; when all three are
- * empty, every tile of the configured areas (`fallback`). `basis` names the first of (a)–(c) that gave tiles.
+ * The tiles whose objects a version's names are compared with (spec 06 over the plan, ruling M4-E-R4): the tiles the
+ * document touches, (a) from the prepass; only when it touches none, (b) the tiles of its document's history; only when
+ * both are empty, "bei unbekanntem Bezug", (c) its source's SERP area; each with `neighbourRing` rings of neighbours.
+ * When all three are empty, every tile of the configured areas (`fallback`). `basis` names the step that gave tiles.
  */
 export async function candidateTiles(
   db: Db,
@@ -136,14 +138,16 @@ export async function candidateTiles(
   cfg: MentionsConfig,
   ctx: { nameAffixes: NameAffixesConfig; areaKeys: readonly string[] },
 ): Promise<{ tiles: string[]; basis: CandidateBasis }> {
-  const found: Array<[CandidateBasis, string[]]> = [
-    ["prepass", await prepassTiles(db, versionId, cfg, ctx.nameAffixes)],
-    ["history", await historyTiles(db, versionId)],
-    ["source", await sourceTiles(db, versionId)],
+  const steps: Array<[CandidateBasis, () => Promise<string[]>]> = [
+    ["prepass", () => prepassTiles(db, versionId, cfg, ctx.nameAffixes)],
+    ["history", () => historyTiles(db, versionId)],
+    ["source", () => sourceTiles(db, versionId)],
   ];
-  const touched = found.flatMap(([, tiles]) => tiles);
-  if (touched.length === 0) return { tiles: [...new Set(await fallbackTiles(db, ctx.areaKeys))].sort(), basis: "fallback" };
-  return { tiles: withNeighbours(touched, cfg.neighbourRing), basis: found.find(([, tiles]) => tiles.length > 0)![0] };
+  for (const [basis, tilesOf] of steps) {
+    const tiles = await tilesOf();
+    if (tiles.length > 0) return { tiles: withNeighbours(tiles, cfg.neighbourRing), basis };
+  }
+  return { tiles: [...new Set(await fallbackTiles(db, ctx.areaKeys))].sort(), basis: "fallback" };
 }
 
 /**

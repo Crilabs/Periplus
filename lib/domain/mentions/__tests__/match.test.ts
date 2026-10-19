@@ -1,10 +1,11 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { withRollback } from "@/test/db";
-import { insertNamedObject, insertTestRun, insertTestTile, insertTestVersion, type TestNamedObject } from "@/test/text";
+import { insertNamedObject, insertTestRun, insertTestSource, insertTestTile, insertTestVersion, type TestNamedObject } from "@/test/text";
 import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { ambiguousMatches, mentions, unmatchedNames } from "@/lib/db/schema";
+import { ambiguousMatches, geoObjects, mentions, serpQueries, serpResults, sources, unmatchedNames } from "@/lib/db/schema";
+import { newId } from "@/lib/domain/ids";
 import { tileIdFor } from "@/lib/domain/tiles";
 import { matchVersion } from "@/lib/pipeline/text/mentions";
 import { candidateObjects, candidateTiles, withNeighbours } from "../scope";
@@ -44,6 +45,20 @@ async function run(tx: Db, texts: string[], cfg: AppConfig = config) {
 }
 
 describe("name match", () => {
+  it("ordinary words in greek and german texts never become sure mentions", () =>
+    withRollback(async (tx) => {
+      await grid(tx);
+      await island(tx);
+      const ammos = await insertNamedObject(tx, { type: "bay", names: [{ name: "Ammos" }], ...at(A) });
+      const strand = await insertNamedObject(tx, { type: "bay", names: [{ name: "Strand" }], ...at(A) });
+      const el = await run(tx, ["Στο Kalonisi ο βυθός είναι άμμος."]);
+      expect(el.ms.map((m) => m.surface)).toEqual(["Kalonisi"]);
+      expect(el.amb.map((a) => [a.surface, (a.candidates as Array<{ geoObjectId: string }>).map((c) => c.geoObjectId)])).toEqual([["άμμος", [ammos]]]);
+      const de = await run(tx, ["Vor Kalonisi lagen wir am Strand."]);
+      expect(de.ms.map((m) => m.surface)).toEqual(["Kalonisi"]);
+      expect(de.amb.map((a) => [a.surface, (a.candidates as Array<{ geoObjectId: string }>).map((c) => c.geoObjectId)])).toEqual([["Strand", [strand]]]);
+    }));
+
   it("an exact unique name is a deterministic mention with confidence 1", () =>
     withRollback(async (tx) => {
       await grid(tx);
@@ -178,8 +193,76 @@ describe("candidate space", () => {
       expect(await candidateTiles(tx, named.versionId, config.mentions, ctx)).toEqual({ tiles: withNeighbours([A], 1), basis: "prepass" });
       // the next version of the named document knows its tiles from the mentions of the first
       await matchVersion(tx, named.versionId, { runId: null, cfg: config });
-      const next = await insertTestVersion(tx, ["Wieder hier."], { documentId: named.documentId, sourceId: named.sourceId });
+      const next = await insertTestVersion(tx, ["Wieder hier."], {
+        documentId: named.documentId,
+        sourceId: named.sourceId,
+        fetchedAt: new Date("2026-10-20T10:00:00Z"),
+      });
       expect(await candidateTiles(tx, next.versionId, config.mentions, ctx)).toEqual({ tiles: withNeighbours([A], 1), basis: "history" });
+    }));
+
+  it("history comes only from earlier versions of the document", () =>
+    withRollback(async (tx) => {
+      await grid(tx);
+      await island(tx);
+      const ctx = { nameAffixes: config.nameAffixes, areaKeys: [] as string[] };
+      const early = await insertTestVersion(tx, ["Nichts Bekanntes hier."], { fetchedAt: new Date("2026-10-01T10:00:00Z") });
+      const later = await insertTestVersion(tx, ["Rund um Kalonisi."], {
+        documentId: early.documentId,
+        sourceId: early.sourceId,
+        fetchedAt: new Date("2026-10-19T10:00:00Z"),
+      });
+      await matchVersion(tx, later.versionId, { runId: null, cfg: config });
+      expect(await candidateTiles(tx, early.versionId, config.mentions, ctx)).toEqual({ tiles: [], basis: "fallback" });
+    }));
+
+  it("the document's own tiles win; history and the source's area count only without them (spec 06)", () =>
+    withRollback(async (tx) => {
+      const area = await insertNamedObject(tx, { type: "area", names: [{ name: "Testrevier" }], lon: 21.2, lat: 35.2, configKey: `test-${newId()}` });
+      await grid(tx, area);
+      await island(tx);
+      const farBay = await insertNamedObject(tx, { type: "bay", names: [{ name: "Fernbucht" }], ...at(C) });
+      const ctx = { nameAffixes: config.nameAffixes, areaKeys: [] as string[] };
+      // the source was found by a search for the whole area
+      const sourceId = await insertTestSource(tx);
+      const [src] = await tx.select({ domain: sources.domain }).from(sources).where(eq(sources.id, sourceId));
+      const [areaRow] = await tx.select({ key: geoObjects.configKey }).from(geoObjects).where(eq(geoObjects.id, area));
+      const [q] = await tx
+        .insert(serpQueries)
+        .values({ keyword: "testrevier ankern", languageCode: "de", locationCode: 1, depth: 20, level: "area", scopeId: areaRow!.key!, rawKey: "serp/x.json", fetchedAt: new Date() })
+        .returning({ id: serpQueries.id });
+      await tx.insert(serpResults).values({ serpQueryId: q!.id, rank: 1, url: `https://${src!.domain}/a`, urlNormalized: `https://${src!.domain}/a`, domain: src!.domain, title: "t", snippet: "s" });
+      // a document naming Kalonisi touches tile A only (its ring), not the whole area
+      const named = await insertTestVersion(tx, ["Rund um Kalonisi."], { sourceId, fetchedAt: new Date("2026-10-01T10:00:00Z") });
+      expect(await candidateTiles(tx, named.versionId, config.mentions, ctx)).toEqual({ tiles: withNeighbours([A], 1), basis: "prepass" });
+      // an earlier mention of the far bay is history; a later version naming Kalonisi still keeps to its own tiles
+      await tx.insert(mentions).values({
+        documentVersionId: named.versionId,
+        chunkId: named.chunkIds[0]!,
+        geoObjectId: farBay,
+        surface: "Rund",
+        charStart: 0,
+        charEnd: 4,
+        observedAt: "2026-10-01",
+        confidence: 1,
+        matchKind: "deterministic",
+        matchScore: 1,
+      });
+      const next = await insertTestVersion(tx, ["Wieder um Kalonisi."], { documentId: named.documentId, sourceId });
+      expect(await candidateTiles(tx, next.versionId, config.mentions, ctx)).toEqual({ tiles: withNeighbours([A], 1), basis: "prepass" });
+      const plain = await insertTestVersion(tx, ["Wieder hier."], { documentId: named.documentId, sourceId, fetchedAt: new Date("2026-10-25T10:00:00Z") });
+      expect(await candidateTiles(tx, plain.versionId, config.mentions, ctx)).toEqual({ tiles: withNeighbours([C], 1), basis: "history" });
+      // a document of the source without any reference falls back to the source's area
+      const other = await insertTestVersion(tx, ["Nichts Bekanntes hier."], { sourceId });
+      expect(await candidateTiles(tx, other.versionId, config.mentions, ctx)).toEqual({ tiles: withNeighbours([A, B, C], 1), basis: "source" });
+    }));
+
+  it("a test tile that exists with another label area fails instead of skewing the test", () =>
+    withRollback(async (tx) => {
+      const area = await insertNamedObject(tx, { type: "area", names: [{ name: "Testrevier" }], lon: 21.2, lat: 35.2 });
+      await insertTestTile(tx, A, area);
+      expect(await insertTestTile(tx, A, area)).toBe(A);
+      await expect(insertTestTile(tx, A, null)).rejects.toThrow(/exists with area/);
     }));
 
   it("candidate objects are the tiles' objects plus their ancestors and label areas", () =>
@@ -233,5 +316,42 @@ describe("resolveHits", () => {
     const short = hit({ start: 5, end: 11, surface: "Marina", geoObjectId: "m" });
     const later = hit({ start: 20, end: 25, surface: "Vathy", geoObjectId: "v" });
     expect(resolveHits([short, later, long], cfg).map((r) => (r.kind === "sure" ? r.hit.geoObjectId : r.kind))).toEqual(["am", "v"]);
+  });
+
+  it("a band-only outer span offers the exact name inside it as a candidate too", () => {
+    const cfg = { mentions: config.mentions, nameAffixes: config.nameAffixes };
+    const outer = hit({ start: 0, end: 12, surface: "Kolona Beach", geoObjectId: "kalona-beach", exact: false, similarity: 0.65 });
+    const inner = hit({ start: 0, end: 6, surface: "Kolona", geoObjectId: "kolona" });
+    expect(resolveHits([inner, outer], cfg)).toEqual([
+      {
+        kind: "ambiguous",
+        start: 0,
+        end: 12,
+        surface: "Kolona Beach",
+        hint: null,
+        candidates: [
+          { geoObjectId: "kolona", similarity: 1 },
+          { geoObjectId: "kalona-beach", similarity: 0.65 },
+        ],
+      },
+    ]);
+    // an outer span with a sure hit of its own keeps only its own objects
+    const sureOuter = hit({ start: 0, end: 12, surface: "Kolona Beach", geoObjectId: "kolona-beach" });
+    expect(resolveHits([inner, sureOuter], cfg)).toEqual([{ kind: "sure", hit: sureOuter }]);
+  });
+
+  it("a lowercase or common one-word hit is never sure without an affix", () => {
+    const cfg = { mentions: config.mentions, nameAffixes: config.nameAffixes };
+    const ambiguousIds = (h: MatchHit) => {
+      const [r] = resolveHits([h], cfg);
+      return r!.kind === "ambiguous" ? r!.candidates.map((c) => c.geoObjectId) : r!.kind;
+    };
+    expect(ambiguousIds(hit({ surface: "άμμος", end: 5 }))).toEqual(["a"]);
+    expect(ambiguousIds(hit({ surface: "Ammos" }))).toEqual(["a"]);
+    expect(ambiguousIds(hit({ surface: "Strand", end: 6 }))).toEqual(["a"]);
+    expect(ambiguousIds(hit({ surface: "vathy" }))).toEqual(["a"]);
+    expect(ambiguousIds(hit({ surface: "Vathy" }))).toBe("sure");
+    // two words with an affix are backed by it
+    expect(ambiguousIds(hit({ surface: "Ammos Bay", end: 9, hint: "bay" }))).toBe("sure");
   });
 });

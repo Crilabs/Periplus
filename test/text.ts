@@ -147,13 +147,18 @@ export async function insertTestMention(
   return { mentionId: row!.id, versionId, chunkId, geoObjectId };
 }
 
-/** A tile of the synthetic test grid around 21.0° E / 35.2° N (`q025:<col>:<row>`), with an optional label area. */
+/**
+ * A tile of the synthetic test grid around 21.0° E / 35.2° N (`q025:<col>:<row>`), with an optional label area. A tile
+ * that already exists (committed by some other test) with another label area fails loudly instead of skewing the test.
+ */
 export async function insertTestTile(tx: Db, id: string, areaId: string | null = null): Promise<string> {
   const [w, s, e, n] = tileBbox(id);
   await tx
     .insert(tiles)
     .values({ id, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, areaId, hasCoast: true })
     .onConflictDoNothing();
+  const [row] = await tx.select({ areaId: tiles.areaId }).from(tiles).where(eq(tiles.id, id));
+  if (row?.areaId !== areaId) throw new Error(`test tile ${id} exists with area ${row?.areaId ?? "none"}, expected ${areaId ?? "none"}`);
   return id;
 }
 
@@ -194,7 +199,7 @@ export async function insertNamedObject(tx: Db, o: TestNamedObject): Promise<str
 export async function insertTestVersion(
   tx: Db,
   texts: string[],
-  opts: { sourceId?: string; documentId?: string; carried?: Record<number, string>; observedAt?: string } = {},
+  opts: { sourceId?: string; documentId?: string; carried?: Record<number, string>; observedAt?: string; fetchedAt?: Date } = {},
 ): Promise<{ sourceId: string; documentId: string; versionId: string; chunkIds: string[] }> {
   const sourceId = opts.sourceId ?? (await insertTestSource(tx));
   let documentId = opts.documentId;
@@ -208,7 +213,7 @@ export async function insertTestVersion(
     .insert(documentVersions)
     .values({
       documentId,
-      fetchedAt: new Date("2026-10-19T10:00:00Z"),
+      fetchedAt: opts.fetchedAt ?? new Date("2026-10-19T10:00:00Z"),
       contentHash: newId(),
       rawHash: "r",
       rawKey: `archive/${documentId}/${newId()}.raw.html`,

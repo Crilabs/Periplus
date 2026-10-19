@@ -3,7 +3,7 @@ import type { MentionsConfig, NameAffixesConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import type { GeoObjectType } from "@/lib/db/schema";
 import { isStopName, stripAffix, type Hint } from "./affixes";
-import type { Ngram } from "./ngrams";
+import { nameForms, type Ngram } from "./ngrams";
 
 /*
  * Deterministic name match (spec 06): "exakter Treffer oder `similarity ≥ 0,75` (pg_trgm) bei Namen ≥ 5 Zeichen";
@@ -189,14 +189,54 @@ export async function setTrigramThreshold(db: Db, threshold: number): Promise<vo
   await db.execute(sql`select set_config('pg_trgm.similarity_threshold', ${String(threshold)}, true)`);
 }
 
-type Span = { start: number; end: number; surface: string; hint: Hint | null; words: number; best: number; hits: MatchHit[] };
+type Span = {
+  start: number;
+  end: number;
+  surface: string;
+  hint: Hint | null;
+  words: number;
+  best: number;
+  hits: MatchHit[];
+  /** Exact or sure hits of shorter spans inside this band-only span: offered to the model as further candidates. */
+  inner: MatchHit[];
+};
+
+const LOWERCASE_START = /^\p{Ll}/u;
+
+/** All configured common words (every language), normalized. */
+function commonWordsOf(cfg: MatchConfig): Set<string> {
+  return new Set(Object.values(cfg.mentions.commonWords).flat());
+}
+
+/**
+ * A one-word span that may be an ordinary word rather than a name (ruling M4-E-R3): written lowercase in the text, or
+ * a configured common word (άμμος/ammos, petra, skala, strand, bay …), and not backed by an affix. Such a span is never
+ * sure; it goes to the disambiguation ("im Zweifel weglassen").
+ */
+function maybeCommonWord(span: Span, common: Set<string>): boolean {
+  if (span.words !== 1 || span.hint !== null) return false;
+  return LOWERCASE_START.test(span.surface) || nameForms(span.surface).some((f) => common.has(f));
+}
+
+/** The best hit per object, best first. */
+function bestPerObject(hits: MatchHit[]): MatchHit[] {
+  const best = new Map<string, MatchHit>();
+  for (const h of hits) {
+    const prev = best.get(h.geoObjectId);
+    if (!prev || byScore(h, prev) < 0) best.set(h.geoObjectId, h);
+  }
+  return [...best.values()].sort(byScore);
+}
 
 /**
  * Decides the hits of a chunk: per text span its objects; spans are taken by (words descending, best similarity
  * descending, start), and a span overlapping one already taken is dropped. A span is sure when one object stands out:
  * the only object with an exact hit, else the only one with `similarity ≥ sureSimilarity`; among several such objects
  * an affix hint picks the one object of its type. Otherwise the span is ambiguous with at most `maxCandidates`
- * objects by similarity, also when its only object lies in the uncertain band.
+ * objects by similarity, also when its only object lies in the uncertain band. Two refinements (rulings M4-E-R3,
+ * M4-E-R5): a one-word span written lowercase or listed in `commonWords` is never sure without an affix; and a
+ * band-only span (no exact or sure hit of its own) that swallows a shorter span with an exact or sure hit offers that
+ * inner span's objects as candidates too, so the right object reaches the model.
  */
 export function resolveHits(hits: MatchHit[], cfg: MatchConfig): ResolvedMatch[] {
   const spans = new Map<string, Span>();
@@ -205,25 +245,33 @@ export function resolveHits(hits: MatchHit[], cfg: MatchConfig): ResolvedMatch[]
     let span = spans.get(key);
     if (!span) {
       const words = hit.surface.match(WORD)?.length ?? 1;
-      span = { start: hit.start, end: hit.end, surface: hit.surface, hint: hit.hint, words, best: 0, hits: [] };
+      span = { start: hit.start, end: hit.end, surface: hit.surface, hint: hit.hint, words, best: 0, hits: [], inner: [] };
       spans.set(key, span);
     }
     span.hits.push(hit);
     span.best = Math.max(span.best, hit.similarity);
   }
+  const sureLevel = cfg.mentions.sureSimilarity;
+  const strongOf = (span: Span) => span.hits.some((h) => h.exact || h.similarity >= sureLevel);
   const ordered = [...spans.values()].sort((a, b) => b.words - a.words || b.best - a.best || a.start - b.start);
   const taken: Span[] = [];
   for (const span of ordered) {
-    if (taken.some((t) => span.start < t.end && t.start < span.end)) continue;
-    taken.push(span);
+    const over = taken.find((t) => span.start < t.end && t.start < span.end);
+    if (!over) {
+      taken.push(span);
+      continue;
+    }
+    const inside = over.start <= span.start && span.end <= over.end;
+    if (inside && !strongOf(over) && strongOf(span)) over.inner.push(...span.hits.filter((h) => h.exact || h.similarity >= sureLevel));
   }
   taken.sort((a, b) => a.start - b.start);
 
+  const common = commonWordsOf(cfg);
   const out: ResolvedMatch[] = [];
   for (const span of taken) {
     const all = [...span.hits].sort(byScore);
     const exact = all.filter((h) => h.exact);
-    const strong = exact.length > 0 ? exact : all.filter((h) => h.similarity >= cfg.mentions.sureSimilarity);
+    const strong = exact.length > 0 ? exact : all.filter((h) => h.similarity >= sureLevel);
     let sure: MatchHit | null = null;
     if (strong.length === 1) sure = strong[0]!;
     else if (strong.length > 1 && span.hint) {
@@ -231,7 +279,7 @@ export function resolveHits(hits: MatchHit[], cfg: MatchConfig): ResolvedMatch[]
       const ofType = strong.filter((h) => types.includes(h.objectType));
       if (ofType.length === 1) sure = ofType[0]!;
     }
-    if (sure) {
+    if (sure && !maybeCommonWord(span, common)) {
       out.push({ kind: "sure", hit: sure });
       continue;
     }
@@ -241,7 +289,9 @@ export function resolveHits(hits: MatchHit[], cfg: MatchConfig): ResolvedMatch[]
       end: span.end,
       surface: span.surface,
       hint: span.hint,
-      candidates: all.slice(0, cfg.mentions.maxCandidates).map((h) => ({ geoObjectId: h.geoObjectId, similarity: h.similarity })),
+      candidates: bestPerObject([...all, ...span.inner])
+        .slice(0, cfg.mentions.maxCandidates)
+        .map((h) => ({ geoObjectId: h.geoObjectId, similarity: h.similarity })),
     });
   }
   return out;

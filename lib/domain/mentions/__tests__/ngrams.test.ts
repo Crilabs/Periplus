@@ -50,6 +50,18 @@ describe("linkTextOnly", () => {
     expect(forms).toEqual(expect.arrayContaining(["poros stadt", "vathy", "ende"]));
     for (const url of ["https", "example", "poros stadt und", "img", "jpg", "kolona", "test"]) expect(forms).not.toContain(url);
   });
+
+  it("a bare URL keeps the sentence end after it, and an autolink is removed whole", () => {
+    const text = "Mehr unter https://x.test/a. Danach Vathy, siehe <https://y.test/b>; Ende";
+    const reduced = linkTextOnly(text);
+    expect(reduced).toHaveLength(text.length);
+    expect(reduced).toContain(". Danach Vathy");
+    expect(reduced).toContain("; Ende");
+    const forms = ngrams(reduced, 4).map((n) => n.forms[0]);
+    expect(forms).toContain("danach vathy");
+    expect(forms).not.toContain("unter danach");
+    expect(forms).not.toContain("siehe ende");
+  });
 });
 
 describe("affixes", () => {

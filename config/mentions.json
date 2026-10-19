@@ -11,6 +11,14 @@
   "prepassTypes": ["area", "gulf", "archipelago", "island"],
   "fallbackScope": "source_areas",
   "stopNames": ["agios", "agia", "agioi", "ag", "port", "porto", "marina", "kap", "cape", "bay", "nisos", "nisi", "limani"],
+  "commonWords": {
+    "el": [
+      "αμμοσ", "πετρα", "σκαλα", "πλακα", "καβοσ", "παραλια", "καστρο", "λιμανι", "ορμοσ", "νησι", "ακρα", "μυλοσ", "βιγλα",
+      "ammos", "petra", "skala", "plaka", "kavos", "paralia", "kastro", "limani", "ormos", "nisi", "akra", "mylos", "vigla"
+    ],
+    "de": ["strand", "hafen", "bucht", "insel", "kap", "felsen"],
+    "en": ["bay", "beach", "harbour", "harbor", "cape", "rock", "island"]
+  },
   "nameHintStopWords": [
     "in", "im", "am", "an", "auf", "bei", "vor", "nach", "von", "vom", "zur", "zum", "aus", "die", "der", "das", "den", "dem",
     "ein", "eine", "einer", "wir", "dann", "danach", "hier", "dort", "unsere", "unser",
