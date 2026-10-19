@@ -14,6 +14,8 @@ export const queueConfigSchema = z.object({
   retryLimit: z.number().int().min(0),
   retryDelaySeconds: z.number().int().min(0),
   retryBackoff: z.boolean(),
+  /** Seconds a job may stay active before pg-boss expires and retries it (pg-boss default 900 when omitted). */
+  expireInSeconds: z.number().int().min(1).optional(),
 });
 
 export const BUDGET_SERVICES = ["anthropic", "voyage", "dataforseo", "firecrawl", "jina"] as const;

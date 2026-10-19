@@ -39,7 +39,7 @@ export function deadLetterQueueOptions(config: Record<string, QueueConfig>) {
 }
 
 /**
- * Creates the dead-letter queue and every queue in QUEUES, and (re)applies the retry settings
+ * Creates the dead-letter queue and every queue in QUEUES, and (re)applies the retry and expiry settings
  * so changed settings take effect on existing queues too.
  */
 export async function ensureQueues(boss: PgBoss, config: Record<string, QueueConfig>): Promise<void> {
@@ -54,6 +54,8 @@ export async function ensureQueues(boss: PgBoss, config: Record<string, QueueCon
       retryDelay: queueConfig.retryDelaySeconds,
       retryBackoff: queueConfig.retryBackoff,
       deadLetter: DEAD_LETTER_QUEUE,
+      // Long jobs (a crawled PDF transcribed page by page) must not expire mid-way and run twice.
+      ...(queueConfig.expireInSeconds !== undefined ? { expireInSeconds: queueConfig.expireInSeconds } : {}),
     };
     if (await boss.getQueue(name)) await boss.updateQueue(name, options);
     else await boss.createQueue(name, options);

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { PDFDocument } from "pdf-lib";
 import { describe, expect, it, vi } from "vitest";
@@ -5,6 +6,8 @@ import { convertPdf } from "@/lib/adapters/pdf";
 import { hasPdftotext, runPdftotext } from "@/lib/adapters/pdf/pdftotext";
 import { splitPdfPages } from "@/lib/adapters/pdf/split";
 import { MockModel } from "@/lib/ai/mock";
+import { ModelOutputInvalid } from "@/lib/ai/types";
+import { memoryArchive } from "@/test/s3";
 import { BudgetExceeded } from "@/lib/domain/costs";
 import { getConfig } from "@/lib/config";
 
@@ -93,6 +96,52 @@ describe("convertPdf", () => {
     const broke = { call: async () => Promise.reject(new BudgetExceeded("anthropic", 5, 5)) };
     const none = await convertPdf(twoPages, { pdftotext: async () => allGarbled, model: broke as never, cfg: cfg() }, {});
     expect(none).toMatchObject({ converter: "pdftotext", modelPages: [], unreadablePages: [1, 2] });
+  });
+
+  it("a retry pays only for the pages not transcribed yet: transcribed pages stay in the archive", async () => {
+    const allGarbled = `${"� ".repeat(80)}\f${"� ".repeat(80)}\f`;
+    const archive = memoryArchive();
+    const calls: number[] = [];
+    const answer = (page: number) => ({ output: { markdown: `Seite ${page}` }, model: "m", promptVersion: 1, usage: { inputTokens: 0, outputTokens: 0 }, costEur: 0 });
+    const flaky = {
+      call: async (_task: unknown, input: unknown) => {
+        const page = (input as { page: number }).page;
+        calls.push(page);
+        if (page === 2) throw new Error("overloaded");
+        return answer(page);
+      },
+    };
+    await expect(convertPdf(twoPages, { pdftotext: async () => allGarbled, model: flaky as never, cfg: cfg(), archive }, {})).rejects.toThrow(
+      "overloaded",
+    );
+    const { model, promptVersion } = getConfig().models.tasks["pdf.to_markdown"]!;
+    const sha = createHash("sha256").update(twoPages).digest("hex");
+    expect(archive.keys()).toEqual([`pdf-pages/${sha}/${model}/v${promptVersion}/1.md`]);
+
+    const steady = {
+      call: async (_task: unknown, input: unknown) => {
+        calls.push((input as { page: number }).page);
+        return answer((input as { page: number }).page);
+      },
+    };
+    const r = await convertPdf(twoPages, { pdftotext: async () => allGarbled, model: steady as never, cfg: cfg(), archive }, {});
+    expect(calls).toEqual([1, 2, 2]);
+    expect(r).toMatchObject({ converter: "pdftotext+claude", modelPages: [1, 2], unreadablePages: [] });
+    expect(r.markdown).toContain("<!-- page 1 -->\n\nSeite 1");
+    expect(r.markdown).toContain("<!-- page 2 -->\n\nSeite 2");
+  });
+
+  it("an invalid model answer leaves its page unreadable and keeps the others", async () => {
+    const allGarbled = `${"� ".repeat(80)}\f${"� ".repeat(80)}\f`;
+    const model = {
+      call: async (_task: unknown, input: unknown) => {
+        const page = (input as { page: number }).page;
+        if (page === 1) throw new ModelOutputInvalid("pdf.to_markdown", "stop_reason max_tokens");
+        return { output: { markdown: `Seite ${page}` }, model: "m", promptVersion: 1, usage: { inputTokens: 0, outputTokens: 0 }, costEur: 0 };
+      },
+    };
+    const r = await convertPdf(twoPages, { pdftotext: async () => allGarbled, model: model as never, cfg: cfg(), archive: memoryArchive() }, {});
+    expect(r).toMatchObject({ converter: "pdftotext+claude", modelPages: [2], unreadablePages: [1] });
   });
 
   it("readable pages need no model", async () => {

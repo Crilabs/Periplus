@@ -64,6 +64,8 @@ describe("loadConfig", () => {
   it("loads the repo config", () => {
     const c = loadConfig("config");
     expect(c.queues["system.ping"].retryLimit).toBe(2);
+    // A crawled PDF is transcribed page by page in one job: it must not expire after pg-boss's default 15 minutes.
+    expect(c.queues["fetch.url"].expireInSeconds).toBeGreaterThanOrEqual(3600);
     expect(c.budgets.anthropic.dailyEur).toBeGreaterThan(0);
     expect(c.models.tasks["system.echo"].model).toBe("claude-haiku-5-5");
     expect(c.models.pricesEurPerMTok["claude-haiku-5-5"].input).toBeGreaterThan(0);
@@ -79,6 +81,18 @@ describe("loadConfig", () => {
         }),
       ),
     ).toThrow(/concurrency/);
+  });
+
+  it("rejects a queue expiry below one second", () => {
+    expect(() =>
+      loadConfig(
+        fixtureDir({
+          queues: {
+            "system.ping": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 60, retryBackoff: true, expireInSeconds: 0 },
+          },
+        }),
+      ),
+    ).toThrow(/expireInSeconds/);
   });
 
   it("rejects an unknown budget service", () => {

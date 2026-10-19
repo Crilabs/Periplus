@@ -459,7 +459,7 @@ export async function fetchUrl(db: Db, job: FetchUrlJob, deps: FetchUrlDeps, ctx
     let hint: string | null = null;
     if (format.kind === "pdf") {
       if (!source.crawlRules.pdf && !isUpload) return stop("skipped", "skipped", "pdf_disabled");
-      const pdf = await convertPdf(raw, { ...deps.pdf, cfg: cfg.pdf }, { runId: ctx.runId, stage: ctx.stage, sourceId: source.id });
+      const pdf = await convertPdf(raw, { ...deps.pdf, cfg: cfg.pdf, archive: deps.archive }, { runId: ctx.runId, stage: ctx.stage, sourceId: source.id });
       markdown = pdf.markdown;
       converter = pdf.converter;
       rawExt = "pdf";

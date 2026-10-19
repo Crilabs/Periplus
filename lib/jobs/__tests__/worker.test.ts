@@ -604,6 +604,13 @@ describe("worker", () => {
     expect(plain!.context).not.toHaveProperty("sourceId");
   }, 30_000);
 
+  it("a queue's expiry from the config is applied", async () => {
+    const before = await boss.getQueue("fetch.url");
+    await ensureQueues(boss, { ...queueConfig, "fetch.url": { ...queueConfig["fetch.url"], expireInSeconds: 3600 } });
+    expect(await boss.getQueue("fetch.url")).toMatchObject({ expireInSeconds: 3600 });
+    await ensureQueues(boss, { ...queueConfig, "fetch.url": { ...queueConfig["fetch.url"], expireInSeconds: before!.expireInSeconds } });
+  });
+
   it("the dead-letter queue gets explicit retry settings", async () => {
     expect(deadLetterQueueOptions({})).toEqual({ retryLimit: 5, retryDelay: 60, retryBackoff: true });
     const queue = await boss.getQueue(DEAD_LETTER_QUEUE);
