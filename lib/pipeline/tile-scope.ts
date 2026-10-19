@@ -6,6 +6,9 @@ import { validAt } from "@/lib/domain/timeline";
 
 // No import of ./runs here: modules a job handler imports must not reach the stage registry (import cycle).
 
+/** Stage of the seed run; here rather than in ./seed, which imports ./runs. */
+export const SEED_STAGE = "seed.tile";
+
 /**
  * The tiles a seed run covers: `params.tileIds` exactly as given, else every valid coast tile labelled with
  * the area `params.areaKey` (ordered by id). Throws for invalid params or an unknown area.

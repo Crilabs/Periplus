@@ -3,12 +3,10 @@ import { areaByKey } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { tileExists } from "@/lib/domain/geo-view";
 import { startRun } from "@/lib/pipeline/runs";
-import { areaGeoObjectId } from "@/lib/pipeline/tile-scope";
+import { areaGeoObjectId, SEED_STAGE } from "@/lib/pipeline/tile-scope";
 
 // Re-exported for existing callers; the scope lives apart so job pipelines can use it without importing ./runs.
-export { areaGeoObjectId, seedTileIds } from "@/lib/pipeline/tile-scope";
-
-export const SEED_STAGE = "seed.tile";
+export { areaGeoObjectId, SEED_STAGE, seedTileIds } from "@/lib/pipeline/tile-scope";
 
 /**
  * Starts a seed run for one tile (scope `tile`) or for the coast tiles of an area (scope `area`). The scope
