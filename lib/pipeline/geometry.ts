@@ -336,14 +336,13 @@ export async function computePlaceGeometry(
     );
     const origin = resolved ? roundPoint(resolved.origin, 6) : null;
 
+    // Gaps of the kinds that get no computation of their own in this run (M2-P13): without water no fetch, shelter,
+    // depth and seabed; with water but without an origin no fetch, shelter and depth (seabed needs only the water).
     const areaGaps: Gap[] = [];
     if (!water.geometry) {
-      areaGaps.push({ attribute: "shelter.*", reason: "no_water" }, { attribute: "fetch.*", reason: "no_water" });
+      areaGaps.push(...["shelter.*", "fetch.*", "depth.*", "seabed"].map((attribute) => ({ attribute, reason: "no_water" as const })));
     } else if (!origin) {
-      areaGaps.push(
-        { attribute: "shelter.*", reason: "origin_unresolved" },
-        { attribute: "fetch.*", reason: "origin_unresolved" },
-      );
+      areaGaps.push(...["shelter.*", "fetch.*", "depth.*"].map((attribute) => ({ attribute, reason: "origin_unresolved" as const })));
     }
     if (!area.geometry) {
       areaGaps.push({ attribute: "anchor_area", reason: "no_anchor_area" }, { attribute: "anchor_position", reason: "no_anchor_area" });

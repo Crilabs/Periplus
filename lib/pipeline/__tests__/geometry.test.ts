@@ -211,6 +211,27 @@ describe("computePlaceGeometry", () => {
       expect(await placeRow(tx, outside.placeId)).toMatchObject({ lon: null, anchor_origin: null });
     }));
 
+  it("place without water gets gaps no_water for shelter, fetch, depth and seabed on the anchor area", () =>
+    withRollback(async (tx) => {
+      const scene = await buildBayScene(tx);
+      // 3 km east of the bay, 400 m inland: the 250 m harbour circle lies entirely on land.
+      const inland = await insertScenePlace(tx, 3000, 400, { type: "harbour" });
+      if (inland.tileId !== scene.tileId) {
+        await insertTestRaster(tx, { origin: await lonLatOf(tx, 15000, -15000), tileId: inland.tileId });
+      }
+      const result = await computePlaceGeometry(tx, inland.placeId, { today: TODAY });
+      const noWater = ["shelter.*", "fetch.*", "depth.*", "seabed"].map((attribute) => ({ attribute, reason: "no_water" }));
+      expect(result.gaps).toEqual([
+        ...noWater,
+        { attribute: "anchor_area", reason: "no_anchor_area" },
+        { attribute: "anchor_position", reason: "no_anchor_area" },
+      ]);
+
+      const stored = await latestComputations(tx, inland.geoObjectId);
+      expect([...stored.keys()].sort()).toEqual(["anchor_area", "quietness", "restriction"]);
+      expect(stored.get("anchor_area")!.outputs.gaps).toEqual(result.gaps);
+    }));
+
   it("anchor area > 50 % in a military area → no_anchoring, task dismissed", () =>
     withRollback(async (tx) => {
       const scene = await buildBayScene(tx);
