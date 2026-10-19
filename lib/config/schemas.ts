@@ -691,6 +691,8 @@ export const consolidationSchema = z.strictObject({
     text: z.strictObject({ quiet: share, moderate: share, busy: share, noisy: share }),
     ferryTraffic: z.strictObject({ none: share, low: share, moderate: share, high: share }),
     weights: weightSet(["settlement", "road", "occupancy", "text", "ferry"]),
+    /** Known parts a quietness value needs (ruling M5-E-R2); fewer → no value, a gap. */
+    minParts: z.number().int().min(1).max(5),
   }),
   importance: z
     .strictObject({

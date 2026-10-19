@@ -5,6 +5,7 @@ import { profileConfidence } from "./derived/confidence";
 import { importanceOf, spotIdsWithin } from "./derived/importance";
 import { type OccupancyWord, quietnessScore, type QuietnessWord } from "./derived/quietness";
 import { hasObservedMonths, observedMonths, seasonHints } from "./derived/season";
+import { excludeValue, restrictionOf } from "./exclude";
 import type { DerivedInputs, ProfileContext } from "./inputs";
 import { applyRule } from "./rules";
 import type {
@@ -74,8 +75,9 @@ function dateMinusDays(date: string, days: number): string {
 function fixedProvenance(
   origin: "gazetteer" | "derived",
   cites: Partial<Pick<AttributeProvenance, "factIds" | "sourceKeys" | "computationIds" | "poiIds">> = {},
+  derivedFrom?: Record<string, unknown>,
 ): AttributeProvenance {
-  return {
+  const provenance: AttributeProvenance = {
     origin,
     rule: origin === "gazetteer" ? "identity" : "derived",
     confidence: 1,
@@ -91,26 +93,35 @@ function fixedProvenance(
     conflictKey: null,
     observedMonths: [],
   };
+  if (derivedFrom) provenance.derivedFrom = derivedFrom;
+  return provenance;
 }
 
 /**
- * Provenance of a rule result. `lastConfirmedAt` = the latest of the supporting inputs. Expiry (spec 07): a value from
- * text or observation whose supporting inputs all can expire (text/observation with a known date, ruling M5-D-R2 —
- * computations, reviews and POIs never do) and were last confirmed before `cutoff` keeps its value, its confidence
- * drops to the middle of the next lower class.
+ * Provenance of a rule result.
+ * - `lastConfirmedAt` = the latest of the supporting inputs, POI import dates left out (an import is no confirmation,
+ *   ruling M5-E-R3 M-7); only POIs → null.
+ * - Expiry (spec 07): a value from text or observation whose supporting inputs are all text or observation inputs
+ *   (computations, reviews and POIs never expire) last confirmed before `cutoff` keeps its value and drops one class:
+ *   its confidence becomes the middle of the lower class, but never rises (spec 07 "Konfidenz sinkt"). An undated
+ *   text expires too: its `lastConfirmedAt` is a real confirmation date (ruling M5-E-R3 I-1, I-2).
+ * - `onlyGoneSources`: documents support the value, all of them are gone, and no other input (computation, review,
+ *   observation, POI) carries it (ruling M5-E-R3 M-2).
  */
 function ruleProvenance(attribute: string, rule: RuleName, r: RuleResult, cutoff: string, cfg: ConsolidationConfig): AttributeProvenance {
   const support = r.support;
-  const lastConfirmedAt = support.reduce<string | null>((max, i) => (max === null || i.lastConfirmedAt > max ? i.lastConfirmedAt : max), null);
+  const lastConfirmedAt = support
+    .filter((i) => i.poiId === null)
+    .reduce<string | null>((max, i) => (max === null || i.lastConfirmedAt > max ? i.lastConfirmedAt : max), null);
   const documents = support.filter((i) => i.documentId !== null);
   const textual = r.origin === "text" || r.origin === "observed";
-  const canExpire = support.length > 0 && support.every((i) => (i.origin === "text" || i.origin === "observed") && i.dateKnown);
+  const canExpire = support.length > 0 && support.every((i) => i.origin === "text" || i.origin === "observed");
   const expired = textual && canExpire && lastConfirmedAt !== null && lastConfirmedAt < cutoff;
   let confidence = r.confidence;
   let klass = confidenceClass(confidence, cfg);
   if (expired) {
     klass = lowerClass(klass);
-    confidence = classMidpoint(klass, cfg);
+    confidence = Math.min(confidence, classMidpoint(klass, cfg));
   }
   const provenance: AttributeProvenance = {
     origin: r.origin,
@@ -124,7 +135,7 @@ function ruleProvenance(attribute: string, rule: RuleName, r: RuleResult, cutoff
     computationIds: sortedUnique(support.map((i) => i.computationId)),
     poiIds: sortedUnique(support.map((i) => i.poiId)),
     expired,
-    onlyGoneSources: documents.length > 0 && documents.every((i) => i.gone),
+    onlyGoneSources: documents.length > 0 && documents.length === support.length && documents.every((i) => i.gone),
     conflictKey: r.conflict?.key ?? null,
     observedMonths: hasObservedMonths(attribute) ? observedMonths(r) : [],
   };
@@ -144,8 +155,10 @@ function cite(provenance: Record<string, AttributeProvenance>, keys: string[]) {
 }
 
 /**
- * The content hash (sha256): values, confidence classes, conflict keys with their resolution and the expired keys —
- * not confidences, fact ids or other provenance, so the same values and classes give the same hash.
+ * The content hash (sha256): values, confidence classes, conflict keys with their resolution, the expired keys and
+ * the keys only gone documents support (ruling M5-E-R3 M-1: the "no longer confirmed" flag of a stored version stays
+ * current) — not confidences, fact ids, `derivedFrom` or other provenance, so the same values and classes give the
+ * same hash.
  */
 export function profileContentHash(p: Pick<BuiltProfile, "attributes" | "provenance" | "conflicts">): string {
   const keys = Object.keys(p.provenance).sort();
@@ -154,6 +167,7 @@ export function profileContentHash(p: Pick<BuiltProfile, "attributes" | "provena
     classes: Object.fromEntries(keys.map((k) => [k, p.provenance[k].confidenceClass])),
     conflicts: p.conflicts.map((c) => ({ key: c.key, resolution: c.resolution })),
     expired: keys.filter((k) => p.provenance[k].expired),
+    onlyGoneSources: keys.filter((k) => p.provenance[k].onlyGoneSources),
   };
   return createHash("sha256").update(canonicalJson(payload)).digest("hex");
 }
@@ -165,11 +179,13 @@ export function profileContentHash(p: Pick<BuiltProfile, "attributes" | "provena
  *    task (`context.resolutions`);
  * 3. expiry of text/observation values last confirmed before `today − cycles × tileCycleDays`;
  * 4. identity (`gazetteer`, rule `identity`, confidence 1): `geo.name`, `geo.parent_id`, `geo.geometry_hash`; places
- *    `place.kind`, `place.status`, `place.position` (6 decimals), `exclude`;
- * 5. derived values (`derived`): places `derived.quietness`, `derived.season`; POIs `derived.importance`,
- *    `derived.radius_nm`, `derived.spot_ids`;
+ *    `place.kind`, `place.status`, `place.position` (6 decimals), `exclude` in the contract's vocabulary
+ *    (`exclude.ts`), citing the restricted area and the `prohibitions` entry that excluded the place;
+ * 5. derived values (`derived`, the deciding inputs in `derivedFrom`): places `derived.quietness`, `derived.season`;
+ *    POIs `derived.importance`, `derived.radius_nm`, `derived.spot_ids`;
  * 6. gaps: level attributes without a value, except `gaps.ignore[place.kind]`, with the computation's reason or
- *    `no_facts`;
+ *    `no_facts`; then the missing derived values (`derived.quietness` `too_few_parts`, `derived.importance`
+ *    `no_category`, ruling M5-E-R3 M-6);
  * 7. profile confidence and the counts of the context; 8. the content hash.
  */
 export function buildProfile(input: BuildProfileInput): BuiltProfile {
@@ -228,7 +244,17 @@ export function buildProfile(input: BuildProfileInput): BuiltProfile {
     identity("place.kind", p.kind);
     identity("place.status", p.status);
     identity("place.position", { lon: roundTo(p.position.lon, POSITION_DIGITS), lat: roundTo(p.position.lat, POSITION_DIGITS) });
-    identity("exclude", { excluded: p.status === "no_anchoring", reason: p.statusReason });
+    const exclude = excludeValue(p.status, p.statusReason);
+    attributes["exclude"] = exclude;
+    const restriction = exclude.excluded ? restrictionOf(p.statusReason) : null;
+    const entryIds = restriction
+      ? (provenance["prohibitions"]?.entryFactIds?.[`${restriction.kind}:${restriction.restrictedAreaId}`] ?? [])
+      : [];
+    provenance["exclude"] = fixedProvenance(
+      "gazetteer",
+      { factIds: entryIds.filter((id) => !id.includes(":")) },
+      { statusReason: p.statusReason, restrictedAreaId: restriction?.restrictedAreaId ?? null },
+    );
   }
 
   // 5: derived values
@@ -240,7 +266,7 @@ export function buildProfile(input: BuildProfileInput): BuiltProfile {
     const occupancy = attributes["occupancy"] as Record<string, OccupancyWord> | undefined;
     const text = (attributes["quietness"] as QuietnessWord | undefined) ?? null;
     const distances = derived.quietness;
-    const { value } = quietnessScore(
+    const { value, parts } = quietnessScore(
       {
         settlementDistanceM: distances?.settlementDistanceM ?? null,
         roadDistanceM: distances?.roadDistanceM ?? null,
@@ -253,21 +279,41 @@ export function buildProfile(input: BuildProfileInput): BuiltProfile {
     if (value !== null) {
       const cited = cite(provenance, ["occupancy", "quietness"]);
       const computationIds = sortedUnique([...cited.computationIds, distances?.computationId ?? null]);
-      setDerived("derived.quietness", value, fixedProvenance("derived", { ...cited, computationIds }));
+      const ferryBasis = parts.ferry === undefined ? null : (distances?.ferryBasis ?? null);
+      const ferryFacts = ferryBasis?.kind === "parent" ? ferryBasis.inputIds.filter((id) => !id.includes(":")) : [];
+      setDerived(
+        "derived.quietness",
+        value,
+        fixedProvenance("derived", { ...cited, factIds: sortedUnique([...cited.factIds, ...ferryFacts]), computationIds }, { parts, ferryBasis }),
+      );
+    } else {
+      gaps.push({ attribute: "derived.quietness", reason: "too_few_parts" });
     }
     const hints = seasonHints(results);
     if (hints.length > 0) setDerived("derived.season", hints, fixedProvenance("derived", cite(provenance, ["season_notes"])));
   }
   if (context.level === "poi" && derived.importance) {
-    const imp = importanceOf(derived.importance, cfg);
-    const sourceKeys = sortedUnique(derived.importance.sources.map((s) => s.key));
-    setDerived("derived.importance", imp.importance, fixedProvenance("derived", { sourceKeys }));
-    setDerived("derived.radius_nm", imp.radiusNm, fixedProvenance("derived", { sourceKeys }));
+    const d = derived.importance;
+    const imp = importanceOf(d, cfg);
+    const sourceKeys = sortedUnique(d.sources.map((s) => s.key));
+    const sources = [...new Map([...d.sources].sort((a, b) => cmp(a.key, b.key) || a.weight - b.weight).map((s) => [s.key, s.weight]))]
+      .map(([key, weight]) => ({ key, weight }));
+    const decided = { score: imp.score, sources, sitelinks: d.sitelinks, category: d.category };
+    setDerived("derived.importance", imp.importance, fixedProvenance("derived", { sourceKeys }, decided));
+    setDerived("derived.radius_nm", imp.radiusNm, fixedProvenance("derived", { sourceKeys }, { importance: imp.importance, ...decided }));
+    const spotIds = spotIdsWithin(d.spotCandidates, imp.radiusNm, cfg.importance.maxSpotIds);
+    const distanceOf = new Map(d.spotCandidates.map((c) => [c.placeId, c.distanceNm]));
     setDerived(
       "derived.spot_ids",
-      spotIdsWithin(derived.importance.spotCandidates, imp.radiusNm, cfg.importance.maxSpotIds),
-      fixedProvenance("derived"),
+      spotIds,
+      fixedProvenance("derived", {}, {
+        radiusNm: imp.radiusNm,
+        spots: spotIds.map((placeId) => ({ placeId, distanceNm: distanceOf.get(placeId)! })),
+        candidates: d.spotCandidates.filter((c) => c.distanceNm <= imp.radiusNm).length,
+      }),
     );
+  } else if (context.level === "poi") {
+    gaps.push({ attribute: "derived.importance", reason: "no_category" });
   }
 
   // 7–8

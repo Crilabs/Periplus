@@ -56,7 +56,7 @@ function scenario(): BuildProfileInput {
   return {
     inputs,
     context: context(),
-    derived: { quietness: { settlementDistanceM: 2000, roadDistanceM: 500, ferry: null, computationId: "comp-quiet" }, importance: null },
+    derived: { quietness: { settlementDistanceM: 2000, roadDistanceM: 500, ferry: null, computationId: "comp-quiet", ferryBasis: null }, importance: null },
     today: TODAY,
     cfg,
     schemaVersion: "v2",
@@ -125,14 +125,31 @@ describe("buildProfile", () => {
       "place.kind": "anchorage",
       "place.status": "confirmed",
       "place.position": { lon: 21.123457, lat: 35.2 },
-      exclude: { excluded: false, reason: null },
+      exclude: { excluded: false, reason: null, detail: null },
     });
     expect(p.provenance["geo.name"]).toMatchObject({ origin: "gazetteer", rule: "identity", confidence: 1, confidenceClass: "high" });
-    const banned = buildProfile({
-      ...scenario(),
-      context: context({ place: { ...context().place!, status: "no_anchoring", statusReason: "military" } }),
+  });
+
+  it("exclude uses the contract's reason enum, always has a reason when excluded and cites the restricted area (M5-E-R3)", () => {
+    const areaId = "00000000-0000-4000-8000-0000000000aa";
+    const entry = { kind: "protected_area", restrictedAreaId: areaId, sourceRef: null, share: 0.6, anchoringBan: true };
+    const ban = computed({ attribute: "prohibitions", value: [entry], factId: "fact-ban", computationId: "comp-restriction" });
+    const excluded = (statusReason: string | null, inputs: ConsolidationInput[] = []) =>
+      buildProfile({ ...scenario(), inputs, context: context({ place: { ...context().place!, status: "no_anchoring", statusReason } }) });
+
+    const byArea = excluded(`restricted:protected_area:${areaId}`, [ban]);
+    expect(byArea.attributes["exclude"]).toEqual({ excluded: true, reason: "protectedArea", detail: null });
+    expect(byArea.provenance["exclude"]).toMatchObject({
+      origin: "gazetteer",
+      factIds: ["fact-ban"],
+      derivedFrom: { statusReason: `restricted:protected_area:${areaId}`, restrictedAreaId: areaId },
     });
-    expect(banned.attributes["exclude"]).toEqual({ excluded: true, reason: "military" });
+    expect(excluded(`restricted:ferry_lane:${areaId}`).attributes["exclude"]).toMatchObject({ reason: "ferryLane" });
+    expect(excluded(`restricted:firing_area:${areaId}`).attributes["exclude"]).toMatchObject({ reason: "military" });
+    // an admin's decision, a missing or unknown reason: excluded needs a reason
+    for (const reason of ["review", null, "military"]) {
+      expect(excluded(reason).attributes["exclude"], String(reason)).toEqual({ excluded: true, reason: "anchoringProhibited", detail: null });
+    }
   });
 
   it("shuffled inputs give the same content hash", () => {
@@ -173,6 +190,47 @@ describe("buildProfile", () => {
     expect(old.attributes["holding"]).toBe("good");
     expect(old.provenance["holding"]).toMatchObject({ expired: true, confidenceClass: "medium", confidence: 0.55, lastConfirmedAt: daysAgo(61) });
     expect(old.contentHash).not.toBe(fresh.contentHash);
+  });
+
+  it("an undated text of a gone document last confirmed 61 days ago in a 30-day tile expires (M5-E-R3 I-1)", () => {
+    const at = (days: number) =>
+      buildProfile({
+        ...scenario(),
+        inputs: [
+          text({ attribute: "holding", value: "good", sourceWeight: 0.9, confidence: 0.9, dateKnown: false, gone: true, observedAt: daysAgo(days), lastConfirmedAt: daysAgo(days) }),
+        ],
+      });
+    expect(at(60).provenance["holding"]).toMatchObject({ expired: false, confidenceClass: "high" });
+    expect(at(61).attributes["holding"]).toBe("good");
+    expect(at(61).provenance["holding"]).toMatchObject({ expired: true, confidenceClass: "medium" });
+  });
+
+  it("expiry never raises a low confidence (M5-E-R3 I-2)", () => {
+    const old = daysAgo(400);
+    const p = buildProfile({
+      ...scenario(),
+      inputs: [text({ attribute: "holding", value: "good", sourceWeight: 0.4, confidence: 0.6, observedAt: old, lastConfirmedAt: old })],
+    });
+    const prov = p.provenance["holding"]!;
+    expect(prov).toMatchObject({ expired: true, confidenceClass: "low" });
+    // the midpoint of "low" (0.2) would raise it
+    expect(prov.confidence).toBeLessThan(0.2);
+    const fresh = buildProfile({
+      ...scenario(),
+      inputs: [text({ attribute: "holding", value: "good", sourceWeight: 0.4, confidence: 0.6, observedAt: old, lastConfirmedAt: TODAY })],
+    });
+    expect(prov.confidence).toBe(fresh.provenance["holding"]!.confidence);
+  });
+
+  it("the last confirmation ignores POI import dates (M5-E-R3 M-7)", () => {
+    const poi = (attribute: string) =>
+      computed({ attribute, value: { present: true, names: [] }, computationId: null, poiId: `poi-${attribute}`, sourceKey: "gazetteer:osm", dateKnown: false, observedAt: "2024-05-01", lastConfirmedAt: "2024-05-01" });
+    const p = buildProfile({
+      ...scenario(),
+      inputs: [poi("highlight.food"), poi("highlight.beach"), text({ attribute: "highlight.beach", value: { present: true, names: [] }, lastConfirmedAt: "2023-01-01" })],
+    });
+    expect(p.provenance["highlight.food"]?.lastConfirmedAt).toBeNull();
+    expect(p.provenance["highlight.beach"]?.lastConfirmedAt).toBe("2023-01-01");
   });
 
   it("computed attributes never expire, nor POI support or review decisions", () => {
@@ -238,10 +296,46 @@ describe("buildProfile", () => {
       rulesVersion: "v1",
     });
     expect(poi.attributes).toMatchObject({ "derived.importance": 3, "derived.radius_nm": 20, "derived.spot_ids": ["sp_a", "sp_b"], exists: true });
-    expect(poi.provenance["derived.importance"]).toMatchObject({ origin: "derived", sourceKeys: ["source:a", "source:b"] });
+    expect(poi.provenance["derived.importance"]).toMatchObject({
+      origin: "derived",
+      sourceKeys: ["source:a", "source:b"],
+      derivedFrom: { score: 2, sources: [{ key: "source:a", weight: 1 }, { key: "source:b", weight: 1 }], sitelinks: null, category: "food" },
+    });
+    expect(poi.provenance["derived.radius_nm"]?.derivedFrom).toMatchObject({ importance: 3, score: 2 });
+    expect(poi.provenance["derived.spot_ids"]?.derivedFrom).toEqual({
+      radiusNm: 20,
+      spots: [
+        { placeId: "sp_a", distanceNm: 8 },
+        { placeId: "sp_b", distanceNm: 8 },
+      ],
+      candidates: 2,
+    });
+    expect(poi.gaps.map((g) => g.attribute)).not.toContain("derived.importance");
     expect(poi.attributes["derived.quietness"]).toBeUndefined();
     expect(poi.attributes["place.kind"]).toBeUndefined();
     expect(poi.confidence).toBeNull();
+  });
+
+  it("a poi without importance inputs lists it as a gap; shuffled candidates and sources keep the profile (M5-E-R3 M-6)", () => {
+    const exists = text({ attribute: "exists", value: true });
+    const poiInput = (importance: DerivedInputs["importance"]): BuildProfileInput => ({
+      inputs: [exists],
+      context: context({ level: "poi", place: null, computationGaps: {} }),
+      derived: { quietness: null, importance },
+      today: TODAY,
+      cfg,
+      schemaVersion: "v2",
+      rulesVersion: "v1",
+    });
+    expect(buildProfile(poiInput(null)).gaps).toContainEqual({ attribute: "derived.importance", reason: "no_category" });
+
+    const sources = [{ key: "source:b", weight: 0.4 }, { key: "source:a", weight: 1 }, { key: "source:a", weight: 0.5 }];
+    const spots = [{ placeId: "sp_c", distanceNm: 3 }, { placeId: "sp_a", distanceNm: 3 }, { placeId: "sp_b", distanceNm: 1 }, { placeId: "sp_far", distanceNm: 40 }];
+    const base = buildProfile(poiInput({ sources, sitelinks: 12, category: "beach", spotCandidates: spots }));
+    for (let seed = 1; seed <= 10; seed++) {
+      const shuffled = buildProfile(poiInput({ sources: shuffle(sources, seed), sitelinks: 12, category: "beach", spotCandidates: shuffle(spots, seed) }));
+      expect(shuffled, `seed ${seed}`).toEqual(base);
+    }
   });
 
   it("an anchorage does not list contact as a gap", () => {
@@ -281,5 +375,76 @@ describe("buildProfile", () => {
       inputs: [text({ attribute: "holding", value: "good", gone: true }), text({ attribute: "holding", value: "good", sourceKey: "source:b" })],
     });
     expect(mixed.provenance["holding"]?.onlyGoneSources).toBe(false);
+  });
+
+  it("a computation carrying the value means it is still confirmed, though its documents are gone (M5-E-R3 M-2)", () => {
+    const p = buildProfile({
+      ...scenario(),
+      inputs: [computed({ attribute: "shelter.N", value: 0.5 }), text({ attribute: "shelter.N", value: 0.5, gone: true })],
+    });
+    expect(p.provenance["shelter.N"]?.onlyGoneSources).toBe(false);
+  });
+
+  it("documents going gone change the content hash (M5-E-R3 M-1)", () => {
+    const s = scenario();
+    const base = buildProfile(s);
+    const gone = buildProfile({ ...s, inputs: s.inputs.map((i) => (i.attribute === "holding" ? { ...i, gone: true } : i)) });
+    expect(gone.provenance["holding"]?.onlyGoneSources).toBe(true);
+    expect(gone.attributes).toEqual(base.attributes);
+    expect(gone.contentHash).not.toBe(base.contentHash);
+  });
+
+  it("prohibition entries cite the inputs naming them (M5-E-R3 I-3)", () => {
+    const areaId = "00000000-0000-4000-8000-0000000000bb";
+    const ban = computed({ attribute: "prohibitions", value: [{ kind: "military", restrictedAreaId: areaId, sourceRef: null, share: 1, anchoringBan: true }], factId: "fact-area" });
+    const t1 = text({ attribute: "prohibitions", value: [{ kind: "anchoring", months: null }] });
+    const t2 = text({ attribute: "prohibitions", value: [{ kind: "anchoring", months: [7] }, { kind: "fishing", months: null }], sourceKey: "source:b" });
+    const p = buildProfile({ ...scenario(), inputs: [ban, t1, t2] });
+    expect(p.provenance["prohibitions"]?.entryFactIds).toEqual({
+      anchoring: [t1.factId, t2.factId].sort(),
+      fishing: [t2.factId],
+      [`military:${areaId}`]: ["fact-area"],
+    });
+  });
+
+  it("a union entry from an input without a fact id cites the input (M5-E-R3 M-3)", () => {
+    const c = computed({ attribute: "hazards", value: [{ kind: "rock", name: null }], factId: null, computationId: "comp-x" });
+    const p = buildProfile({ ...scenario(), inputs: [c] });
+    expect(Object.values(p.provenance["hazards"]!.entryFactIds!)).toEqual([["computation:comp-x"]]);
+  });
+
+  it("derived quietness records its parts and the ferry basis; with fewer than two parts it is a gap (M5-E-R2, M5-E-R3)", () => {
+    const s = scenario();
+    const withFerry = buildProfile({
+      ...s,
+      derived: {
+        quietness: { settlementDistanceM: 2000, roadDistanceM: null, ferry: 0.2, computationId: "comp-quiet", ferryBasis: { kind: "parent", geoObjectId: "island-1", inputIds: ["fact-ferry"] } },
+        importance: null,
+      },
+    });
+    expect(withFerry.provenance["derived.quietness"]).toMatchObject({
+      factIds: expect.arrayContaining(["fact-ferry"]),
+      derivedFrom: {
+        parts: { settlement: 1, occupancy: 0.25, text: 1, ferry: 0.2 },
+        ferryBasis: { kind: "parent", geoObjectId: "island-1", inputIds: ["fact-ferry"] },
+      },
+    });
+    const lane = buildProfile({
+      ...s,
+      inputs: [],
+      derived: { quietness: { settlementDistanceM: 100, roadDistanceM: 100, ferry: 0.3, computationId: null, ferryBasis: { kind: "lane", restrictedAreaId: "lane-1" } }, importance: null },
+    });
+    expect(lane.provenance["derived.quietness"]?.derivedFrom).toMatchObject({ ferryBasis: { kind: "lane", restrictedAreaId: "lane-1" } });
+
+    // only the ferry part (10 % of the formula): no value, a gap
+    const ferryOnly = buildProfile({
+      ...s,
+      inputs: [],
+      derived: { quietness: { settlementDistanceM: null, roadDistanceM: null, ferry: 0.2, computationId: null, ferryBasis: { kind: "lane", restrictedAreaId: "lane-1" } }, importance: null },
+    });
+    expect(ferryOnly.attributes["derived.quietness"]).toBeUndefined();
+    expect(ferryOnly.gaps).toContainEqual({ attribute: "derived.quietness", reason: "too_few_parts" });
+    expect(buildProfile({ ...s, inputs: [], derived: noDerived }).gaps).toContainEqual({ attribute: "derived.quietness", reason: "too_few_parts" });
+    expect(buildProfile(s).gaps.map((g) => g.attribute)).not.toContain("derived.quietness");
   });
 });

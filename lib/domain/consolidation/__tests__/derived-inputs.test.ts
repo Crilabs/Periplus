@@ -6,7 +6,7 @@ import { geomFromGeoJson } from "@/lib/db/geometry";
 import { computations, facts, mentions, places, profiles, restrictedAreas, reviewDecisions, reviewTasks, sources, wikidataSitelinks } from "@/lib/db/schema";
 import type { GeoObjectType, PlaceStatus } from "@/lib/db/schema/geo";
 import { popularityForArea } from "@/lib/domain/consolidation/derived/popularity";
-import { loadContext, loadDerivedInputs } from "@/lib/domain/consolidation/inputs";
+import { loadContext, loadDerivedInputs, loadInputs } from "@/lib/domain/consolidation/inputs";
 import { newId } from "@/lib/domain/ids";
 import { testDb, withRollback } from "@/test/db";
 import { insertNamedObject, insertTestTile, insertTestVersion } from "@/test/text";
@@ -72,10 +72,22 @@ async function reviewFact(tx: Db, objectId: string, attribute: string, value: un
   await tx.insert(facts).values({ geoObjectId: objectId, attribute, value, reviewDecisionId: d!.id, observedAt: "2026-09-01", confidence: 0.95, factSchemaVersion: "v2" });
 }
 
-async function derived(tx: Db, objectId: string) {
-  const ctx = await loadContext(tx, objectId, cfg, opts.today);
+async function derived(tx: Db, objectId: string, o: typeof opts = opts) {
+  const ctx = await loadContext(tx, objectId, o.cfg, o.today);
   expect(ctx).not.toBeNull();
-  return loadDerivedInputs(tx, objectId, ctx!, opts);
+  return loadDerivedInputs(tx, objectId, ctx!, o);
+}
+
+/** True when a valid ferry lane lies within `ferryLaneRadiusM` of (lon, lat): the ferry tests need none. */
+async function laneNear(tx: Db, lon: number, lat: number): Promise<boolean> {
+  const { rows } = await tx.execute<{ found: boolean }>(sql`
+    select exists (
+      select 1 from restricted_areas r
+      where r.kind = 'ferry_lane' and (r.valid_to is null or r.valid_to > current_date)
+        and ST_DWithin(r.geom::geography, ST_SetSRID(ST_MakePoint(${lon}, ${lat}), 4326)::geography, ${cfg.quietness.ferryLaneRadiusM}::float8)
+    ) as found
+  `);
+  return rows[0]!.found;
 }
 
 describe("loadDerivedInputs", () => {
@@ -113,6 +125,16 @@ describe("loadDerivedInputs", () => {
       });
     }));
 
+  it("the spot search radius is the largest configured radius of meaning (M5-E-R2)", () =>
+    withRollback(async (tx) => {
+      const poi = await object(tx, "poi", { category: "culture" });
+      const at55 = await placeAt(tx, LON, LAT + 55 * NM_LAT);
+      const wide = { ...opts, cfg: { ...cfg, importance: { ...cfg.importance, radiusNm: [5, 10, 20, 35, 60] } } };
+      const ids = async (o: typeof opts) => (await derived(tx, poi, o)).importance!.spotCandidates.map((c) => c.placeId);
+      expect(await ids(opts)).not.toContain(at55.publicId);
+      expect(await ids(wide)).toContain(at55.publicId);
+    }));
+
   it("a poi without a sitelink count has sitelinks null, one without a category no importance", () =>
     withRollback(async (tx) => {
       const poi = await object(tx, "poi", { category: "culture" });
@@ -132,8 +154,25 @@ describe("loadDerivedInputs", () => {
       const east = LON + 1000 / (111_320 * Math.cos((LAT * Math.PI) / 180));
       await tx.insert(restrictedAreas).values({ kind: "ferry_lane", geom: geomFromGeoJson({ type: "LineString", coordinates: [[east, LAT - 0.05], [east, LAT + 0.05]] }) });
 
+      const [lane] = await tx
+        .insert(restrictedAreas)
+        .values({ kind: "ferry_lane", geom: geomFromGeoJson({ type: "LineString", coordinates: [[east + 0.001, LAT - 0.05], [east + 0.001, LAT + 0.05]] }) })
+        .returning({ id: restrictedAreas.id });
+      const nearest = (
+        await tx.execute<{ id: string }>(sql`
+          select r.id from restricted_areas r where r.kind = 'ferry_lane' and (r.valid_to is null or r.valid_to > current_date)
+          order by ST_Distance(r.geom::geography, ST_SetSRID(ST_MakePoint(${LON}, ${LAT}), 4326)::geography), r.id limit 1`)
+      ).rows[0]!.id;
+      expect(nearest).not.toBe(lane!.id);
+
       expect(await derived(tx, id)).toEqual({
-        quietness: { settlementDistanceM: 1500, roadDistanceM: 420, ferry: cfg.quietness.ferryLaneValue, computationId: c!.id },
+        quietness: {
+          settlementDistanceM: 1500,
+          roadDistanceM: 420,
+          ferry: cfg.quietness.ferryLaneValue,
+          computationId: c!.id,
+          ferryBasis: { kind: "lane", restrictedAreaId: nearest },
+        },
         importance: null,
       });
     }));
@@ -141,12 +180,20 @@ describe("loadDerivedInputs", () => {
   it("without a lane the ferry part is the nearest parent's ferry traffic under its rule, without one null (ruling M5-P17)", () =>
     withRollback(async (tx) => {
       // far from the lanes of other tests: 21.4° E
+      for (const dLat of [0, 0.01, 0.02]) expect(await laneNear(tx, 21.4, LAT + dLat), `lane near 21.4/${LAT + dLat}`).toBe(false);
       const area = await object(tx, "area", { lon: 21.4 });
       const island = await object(tx, "island", { lon: 21.4, parentId: area });
       await reviewFact(tx, area, "ferry_traffic", "none");
       await reviewFact(tx, island, "ferry_traffic", "high");
+      const islandFact = (await loadInputs(tx, island, { ...opts, attributes: ["ferry_traffic"] })).inputs[0]!.factId!;
       const { id } = await placeAt(tx, 21.4, LAT, { parentId: island });
-      expect((await derived(tx, id)).quietness).toEqual({ settlementDistanceM: null, roadDistanceM: null, ferry: cfg.quietness.ferryTraffic.high, computationId: null });
+      expect((await derived(tx, id)).quietness).toEqual({
+        settlementDistanceM: null,
+        roadDistanceM: null,
+        ferry: cfg.quietness.ferryTraffic.high,
+        computationId: null,
+        ferryBasis: { kind: "parent", geoObjectId: island, inputIds: [islandFact] },
+      });
 
       // an island without ferry facts passes on to the area
       const bare = await object(tx, "island", { lon: 21.4, parentId: area });
@@ -154,7 +201,19 @@ describe("loadDerivedInputs", () => {
       expect((await derived(tx, other.id)).quietness?.ferry).toBe(cfg.quietness.ferryTraffic.none);
 
       const orphan = await placeAt(tx, 21.4, LAT + 0.02);
-      expect((await derived(tx, orphan.id)).quietness?.ferry).toBeNull();
+      expect((await derived(tx, orphan.id)).quietness).toMatchObject({ ferry: null, ferryBasis: null });
+    }));
+
+  it("loadInputs with an attribute filter loads only those attributes (M5-E-R2)", () =>
+    withRollback(async (tx) => {
+      const area = await object(tx, "area", { lon: 21.4 });
+      await reviewFact(tx, area, "ferry_traffic", "low");
+      await reviewFact(tx, area, "wind_systems", [{ name: "meltemi", months: [7, 8] }]);
+      const all = await loadInputs(tx, area, opts);
+      expect(new Set(all.inputs.map((i) => i.attribute))).toEqual(new Set(["ferry_traffic", "wind_systems"]));
+      const filtered = await loadInputs(tx, area, { ...opts, attributes: ["ferry_traffic"] });
+      expect(filtered.inputs.map((i) => i.attribute)).toEqual(["ferry_traffic"]);
+      expect(filtered.ignored).toEqual({ inactiveRun: 0, unknownAttribute: 0 });
     }));
 });
 
@@ -187,8 +246,17 @@ describe("popularityForArea", () => {
       await profile(tx, b.id, 1, 3);
       const rejected = await placeAt(tx, 22.13, LAT, { status: "rejected" });
       await profile(tx, rejected.id, 1, 99);
+      // neither a candidate, nor an ended geo object, nor a place valid only from tomorrow count (M5-E-R2)
+      const candidate = await placeAt(tx, 22.14, LAT, { status: "candidate" });
+      await profile(tx, candidate.id, 1, 50);
+      const endedObject = await placeAt(tx, 22.15, LAT);
+      await profile(tx, endedObject.id, 1, 60);
+      await tx.execute(sql`update geo_objects set valid_from = '2000-01-01', valid_to = ${opts.today}::date where id = ${endedObject.id}`);
+      const future = await placeAt(tx, 22.16, LAT);
+      await profile(tx, future.id, 1, 70);
+      await tx.execute(sql`update places set valid_from = ${opts.today}::date + 1 where geo_object_id = ${future.id}`);
 
-      const p = await popularityForArea(tx, area);
+      const p = await popularityForArea(tx, area, opts.today);
       expect([...p.keys()].sort()).toEqual([a.id, b.id].sort());
       expect(p.get(a.id)).toBe(1);
       expect(p.get(b.id)).toBeCloseTo(0.5, 3);

@@ -53,7 +53,8 @@
     "occupancy": { "empty": 1, "moderate": 0.5, "full": 0 },
     "text": { "quiet": 1, "moderate": 0.6, "busy": 0.3, "noisy": 0 },
     "ferryTraffic": { "none": 1, "low": 0.8, "moderate": 0.5, "high": 0.2 },
-    "weights": { "settlement": 0.3, "road": 0.2, "occupancy": 0.2, "text": 0.2, "ferry": 0.1 }
+    "weights": { "settlement": 0.3, "road": 0.2, "occupancy": 0.2, "text": 0.2, "ferry": 0.1 },
+    "minParts": 2
   },
   "importance": {
     "sitelinksPerPoint": 10,

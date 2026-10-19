@@ -1,6 +1,6 @@
 import { canonicalJson } from "@/lib/domain/facts/schema";
 import type { ConsolidationInput, ConsolidationRule, RuleContext, RuleResult } from "../types";
-import { inputWeight, strongest } from "../weights";
+import { inputId, inputWeight, strongest } from "../weights";
 import { ruleResult } from "./result";
 
 type Entry = Record<string, unknown>;
@@ -49,8 +49,8 @@ function uniteMonths(values: unknown[]): number[] | null {
  * united, other fields from the strongest input naming it), counted once per independent source (ruling M5-P4),
  * sorted by that count descending, then key. Never a conflict, and no entry is lost behind a review (ruling M5-C-R2
  * M-3): a review adds its entries like a text; only a removal decision `{ remove: <entry> }` drops one entry, and an
- * input observed after the decision naming it brings it back. `entryFactIds` maps each entry key to the sorted fact
- * ids naming it (ruling M5-C-R1 (5)). The second-source bonus only when two independent sources name one entry
+ * input observed after the decision naming it brings it back. `entryFactIds` maps each entry key to the sorted input
+ * ids (`inputId`) naming it (ruling M5-C-R1 (5)). The second-source bonus only when two independent sources name one entry
  * (ruling M5-C-R2 M-1). Callers that apply `afterReview` first (`area_weighted` lists) keep that supersession.
  */
 export function unite(inputs: ConsolidationInput[], keyOf: (entry: unknown) => string, ctx: RuleContext): RuleResult | null {
@@ -90,7 +90,8 @@ export function unite(inputs: ConsolidationInput[], keyOf: (entry: unknown) => s
 
   const entryFactIds: Record<string, string[]> = {};
   for (const m of merged) {
-    entryFactIds[m.key] = [...new Set(m.slot.entries.flatMap((e) => (e.input.factId ? [e.input.factId] : [])))].sort();
+    // every input naming the entry, also one without a fact id (`computation:`/`poi:`), so no entry is uncited
+    entryFactIds[m.key] = [...new Set(m.slot.entries.map((e) => inputId(e.input)).filter((id) => id !== ""))].sort();
   }
   const naming = [...new Set(merged.flatMap((m) => m.slot.entries.map((e) => e.input)))];
   // inputs of entries named by two independent sources: only they give the second-source bonus

@@ -80,15 +80,24 @@ export type AttributeProvenance = {
   poiIds: string[];
   /** Older than two cycles of the tile: the value stays, its confidence drops one class. */
   expired: boolean;
-  /** Every supporting document is gone: the value is no longer "currently confirmed". */
+  /**
+   * Every supporting document is gone and no input outside documents (computation, review, observation, POI) carries
+   * the value: it is no longer "currently confirmed" (part of the content hash, ruling M5-E-R3 M-1/M-2).
+   */
   onlyGoneSources: boolean;
   conflictKey: string | null;
   observedMonths: number[];
   /**
-   * Union lists only (`hazards`, `restricted_zones` …, ruling M5-C-R1 (5)): entry identity key → the sorted fact ids
-   * naming the entry; an entry a review added cites the review fact.
+   * List rules only (union lists `hazards`, `restricted_zones` …, ruling M5-C-R1 (5); `prohibitions`, ruling M5-E-R3):
+   * entry identity key → the sorted input ids (`inputId`) naming the entry; an entry a review added cites the review
+   * fact.
    */
   entryFactIds?: Record<string, string[]>;
+  /**
+   * Derived and identity values only (ruling M5-E-R3 I-3, M-5): the inputs that decided the value, which cannot be
+   * reconstructed later (spatial candidates, sitelinks, the ferry basis). Provenance, not part of the content hash.
+   */
+  derivedFrom?: Record<string, unknown>;
 };
 
 /** An attribute without a value, and why (e.g. `no_facts`, or a computation gap's reason). */
@@ -114,8 +123,9 @@ export type ProfileSnapshot = {
  * One input of a rule: a fact (text, review, observation), a computation output or a POI. `sourceKey` identifies the
  * independent source (documents of one source count once); `sourceWeight` is the source's weight (`sources.weight`,
  * or `weights.computed`/`review`/`observed`/`poi`); `dateKnown false` means `observedAt` is no observation date.
- * Expiry (`lastConfirmedAt` older than two tile cycles) applies to text and observation inputs only: inputs with
- * `dateKnown false` (POIs), computed inputs and review inputs never expire (ruling M5-D-R2).
+ * Expiry (`lastConfirmedAt` older than two tile cycles) applies to text and observation inputs only, whether their
+ * observation date is known or not (`lastConfirmedAt` of a text is always a real confirmation date); POI import
+ * dates (origin `computed`), computed inputs and review inputs never expire (rulings M5-D-R2, M5-E-R3 I-1).
  */
 export type ConsolidationInput = {
   factId: string | null;
@@ -153,8 +163,10 @@ export type RuleResult = {
   support: ConsolidationInput[];
   conflict: Omit<ConflictNote, "resolution"> | null;
   /**
-   * List rules only (`union`, ruling M5-C-R1 (5)): per entry of the value list, the sorted fact ids of the inputs
-   * naming it, by the entry's identity key (`unionEntryKey(entry, ctx)` in `rules/union.ts`). Bundles F/I: store it
+   * List rules only (`union`, ruling M5-C-R1 (5); `prohibitions` by `kind`, computed entries by
+   * `<kind>:<restrictedAreaId>`, ruling M5-E-R3): per entry of the value list, the sorted input ids (`inputId`: the
+   * fact id, else `computation:`/`poi:`) of the inputs naming it, by the entry's identity key (`unionEntryKey(entry,
+   * ctx)` in `rules/union.ts`). Bundles F/I: store it
    * as the per-entry provenance of safety lists (`hazards`, `restricted_zones`) and cite an entry's facts from it,
    * not from the flat `support`, which also holds removal decisions and inputs of other entries.
    */

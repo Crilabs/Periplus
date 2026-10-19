@@ -22,7 +22,8 @@ export type QuietnessParts = {
 /**
  * The parts `min(settlement / settlementFullM, 1)`, `min(road / roadFullM, 1)`, the mean of the known occupancy
  * levels, the text level and the ferry part; missing parts drop out and the weights of the others are renormalized.
- * No part → `value` null. `parts` holds the known parts, rounded.
+ * Fewer than `quietness.minParts` known parts → `value` null (ruling M5-E-R2: no value from one part alone, e.g. only
+ * the ferry part with 10 % of the formula; the profile lists it as a gap). `parts` holds the known parts, rounded.
  */
 export function quietnessScore(
   p: QuietnessParts,
@@ -48,5 +49,6 @@ export function quietnessScore(
     weighted += q.weights[key] * v;
     weights += q.weights[key];
   }
-  return { value: weights > 0 ? roundTo(weighted / weights, cfg.precision) : null, parts };
+  const enough = Object.keys(parts).length >= q.minParts && weights > 0;
+  return { value: enough ? roundTo(weighted / weights, cfg.precision) : null, parts };
 }

@@ -13,6 +13,7 @@ import { effectiveVersionMeta, type EffectiveVersionMeta } from "@/lib/domain/me
 import type { QuietnessParts } from "./derived/quietness";
 import { applyRule } from "./rules";
 import type { ConflictResolution, ConsolidationInput, RuleName } from "./types";
+import { inputId } from "./weights";
 
 /*
  * The inputs of a geo object's consolidation (spec 07 "Eingänge") and what the profile build knows beside them.
@@ -37,6 +38,8 @@ export type LoadInputsOptions = {
   appConfig?: AppConfig;
   /** The run date (`YYYY-MM-DD`): validity of sources and POIs. */
   today: string;
+  /** Load only these attributes (filtered in the queries; the ferry part of quietness, ruling M5-E-R2). */
+  attributes?: string[];
 };
 
 export type LoadedInputs = {
@@ -78,6 +81,10 @@ function mergedChainSql(geoObjectId: string) {
   )`;
 }
 
+/** Fact alias `f` has one of `attributes` (no filter without). */
+const attributeFilterSql = (attributes: string[] | undefined) =>
+  !attributes ? sql`` : attributes.length === 0 ? sql`and false` : sql`and f.attribute in (${sql.join(attributes.map((a) => sql`${a}`), sql`, `)})`;
+
 /** Source alias `s` is neither rejected nor ended on `today`. */
 const countingSourceSql = (today: string) =>
   sql`s.status <> 'rejected' and (s.valid_to is null or s.valid_to > ${today}::date)`;
@@ -86,7 +93,9 @@ const countingSourceSql = (today: string) =>
  * Every input of the geo object's consolidation: text facts of the active runs, the facts of the newest computation
  * per kind, review facts, observation facts and (places only) POI support for `highlight.<category>`. Attributes the
  * object's level does not know in `schemaVersion` are dropped and counted. Empty for an object without a fact level.
- * Sorted by attribute, source and id.
+ * With `opts.attributes`, only those attributes are loaded (text and basis facts filtered in SQL, so the active-run
+ * resolution only runs for their versions; other attributes are not counted as ignored). Sorted by attribute, source
+ * and id.
  */
 export async function loadInputs(db: Db, geoObjectId: string, opts: LoadInputsOptions): Promise<LoadedInputs> {
   const ignored = { inactiveRun: 0, unknownAttribute: 0 };
@@ -94,16 +103,19 @@ export async function loadInputs(db: Db, geoObjectId: string, opts: LoadInputsOp
   if (level === null) return { inputs: [], ignored };
   const { cfg } = opts;
 
+  const wantsHighlights = !opts.attributes || opts.attributes.some((a) => a.startsWith("highlight."));
   const all: ConsolidationInput[] = [
     ...(await textInputs(db, geoObjectId, opts, ignored)),
     ...(await computedInputs(db, geoObjectId, cfg)),
-    ...(await basisInputs(db, geoObjectId, cfg, "review")),
-    ...(await basisInputs(db, geoObjectId, cfg, "observed")),
-    ...(level === "place" ? await poiInputs(db, geoObjectId, cfg, opts.today) : []),
+    ...(await basisInputs(db, geoObjectId, cfg, "review", opts.attributes)),
+    ...(await basisInputs(db, geoObjectId, cfg, "observed", opts.attributes)),
+    ...(level === "place" && wantsHighlights ? await poiInputs(db, geoObjectId, cfg, opts.today) : []),
   ];
 
   const known = new Set(getFactSchema(opts.schemaVersion).levels[level].map((d) => d.key));
+  const wanted = opts.attributes ? new Set(opts.attributes) : null;
   const inputs = all.filter((i) => {
+    if (wanted && !wanted.has(i.attribute)) return false;
     if (known.has(i.attribute)) return true;
     ignored.unknownAttribute++;
     return false;
@@ -169,6 +181,7 @@ async function textInputs(
              or exists (select 1 from chunks c where c.document_version_id = hv.id and c.carried_from_chunk_id = oc.id))
     ) seen
     where f.geo_object_id in ${mergedChainSql(geoObjectId)} and f.mention_id is not null and ${countingSourceSql(opts.today)}
+      ${attributeFilterSql(opts.attributes)}
     order by f.id
   `);
 
@@ -248,12 +261,13 @@ async function basisInputs(
   geoObjectId: string,
   cfg: ConsolidationConfig,
   origin: "review" | "observed",
+  attributes?: string[],
 ): Promise<ConsolidationInput[]> {
   const basis = origin === "review" ? sql`f.review_decision_id` : sql`f.observation_id`;
   const { rows } = await db.execute<BasisFactRow>(sql`
     select f.id, f.attribute, f.value, f.confidence, f.observed_at::text as observed_at, ${basis}::text as basis_id
     from facts f
-    where f.geo_object_id in ${mergedChainSql(geoObjectId)} and ${basis} is not null
+    where f.geo_object_id in ${mergedChainSql(geoObjectId)} and ${basis} is not null ${attributeFilterSql(attributes)}
     order by f.id
   `);
   return rows.map((r) => ({
@@ -466,18 +480,23 @@ export async function loadContext(
   };
 }
 
-/** Spot candidates of a POI lie within the largest radius of meaning (50 nm). */
-const SPOT_SEARCH_NM = 50;
 const METRES_PER_NM = 1852;
 /** Parent levels walked for the ferry part; a deeper chain is a data error. */
 const MAX_PARENT_DEPTH = 10;
 
 /** What the derived values of a profile need beside the inputs (places: quietness; POIs: importance and spot ids). */
+/** Where the ferry part of quietness comes from (provenance, ruling M5-E-R3 I-3). */
+export type FerryBasis =
+  | { kind: "lane"; restrictedAreaId: string }
+  | { kind: "parent"; geoObjectId: string; inputIds: string[] };
+
 export type DerivedInputs = {
   quietness:
     | (Omit<QuietnessParts, "occupancy" | "text"> & {
         /** The quietness computation the distances come from (provenance). */
         computationId: string | null;
+        /** The ferry lane or the parent's `ferry_traffic` inputs behind `ferry`; null without a ferry part. */
+        ferryBasis: FerryBasis | null;
       })
     | null;
   importance: {
@@ -493,14 +512,15 @@ export type DerivedInputs = {
  *
  * - Place: settlement and road distance from the newest `quietness` computation (null without one); the ferry part is
  *   `quietness.ferryLaneValue` when a valid `ferry_lane` restricted area lies within `quietness.ferryLaneRadiusM` of
- *   the place position, otherwise the `ferry_traffic` of the nearest parent that has inputs for it, evaluated with its
- *   schema rule on the same run date (ruling M5-P17: not the parent's stored profile, which may be built later in the
- *   same run) and mapped by `quietness.ferryTraffic`; otherwise null.
+ *   the place position (the nearest lane cited), otherwise the `ferry_traffic` of the nearest parent that has inputs
+ *   for it, loaded with an attribute filter and evaluated with its schema rule on the same run date (ruling M5-P17:
+ *   not the parent's stored profile, which may be built later in the same run) and mapped by
+ *   `quietness.ferryTraffic` (the parent and its supporting input ids cited); otherwise null.
  * - POI: the independent sources with a mention of it or of an object merged into it (`source:<id>`, weight
  *   `sources.weight`; rejected and ended sources left out), its Wikidata sitelink count (null without an item or a
  *   loaded count), its category (no category → no importance) and the spot candidates: confirmed, valid, unmerged
- *   places with a public id within 50 nm, by their public id (`sp_…`), distance over `::geography` / 1852, rounded to
- *   3 decimals.
+ *   places with a public id within the largest radius of meaning (`max(importance.radiusNm)`, ruling M5-E-R2), by
+ *   their public id (`sp_…`), distance over `::geography` / 1852, rounded to 3 decimals.
  * - Any other level: nothing.
  */
 export async function loadDerivedInputs(
@@ -510,7 +530,7 @@ export async function loadDerivedInputs(
   opts: LoadInputsOptions,
 ): Promise<DerivedInputs> {
   if (ctx.level === "place" && ctx.place) return { quietness: await quietnessInputs(db, geoObjectId, ctx.place.position, opts), importance: null };
-  if (ctx.level === "poi") return { quietness: null, importance: await importanceInputs(db, geoObjectId, opts.today) };
+  if (ctx.level === "poi") return { quietness: null, importance: await importanceInputs(db, geoObjectId, opts) };
   return { quietness: null, importance: null };
 }
 
@@ -528,25 +548,39 @@ async function quietnessInputs(
   };
 
   const radiusM = cfg.quietness.ferryLaneRadiusM;
-  const { rows: lanes } = await db.execute<{ found: boolean }>(sql`
-    select exists (
-      select 1 from restricted_areas r
-      where r.kind = 'ferry_lane' and r.valid_from <= ${today}::date and (r.valid_to is null or r.valid_to > ${today}::date)
-        and ST_DWithin(r.geom::geography, ST_SetSRID(ST_MakePoint(${position.lon}, ${position.lat}), 4326)::geography, ${radiusM}::float8)
-    ) as found
+  const point = sql`ST_SetSRID(ST_MakePoint(${position.lon}, ${position.lat}), 4326)::geography`;
+  const { rows: lanes } = await db.execute<{ id: string }>(sql`
+    select r.id from restricted_areas r
+    where r.kind = 'ferry_lane' and r.valid_from <= ${today}::date and (r.valid_to is null or r.valid_to > ${today}::date)
+      and ST_DWithin(r.geom::geography, ${point}, ${radiusM}::float8)
+    order by ST_Distance(r.geom::geography, ${point}), r.id
+    limit 1
   `);
-  const ferry = lanes[0]?.found ? cfg.quietness.ferryLaneValue : await parentFerryTraffic(db, geoObjectId, opts);
+  const lane = lanes[0];
+  const parent = lane ? null : await parentFerryTraffic(db, geoObjectId, opts);
 
   return {
     settlementDistanceM: distance("settlementDistanceM"),
     roadDistanceM: distance("roadDistanceM"),
-    ferry,
+    ferry: lane ? cfg.quietness.ferryLaneValue : (parent?.value ?? null),
     computationId: computation?.id ?? null,
+    ferryBasis: lane
+      ? { kind: "lane", restrictedAreaId: lane.id }
+      : parent
+        ? { kind: "parent", geoObjectId: parent.geoObjectId, inputIds: parent.inputIds }
+        : null,
   };
 }
 
-/** The mapped `ferry_traffic` of the nearest parent with inputs for it (its schema rule, run date), or null. */
-async function parentFerryTraffic(db: Db, geoObjectId: string, opts: LoadInputsOptions): Promise<number | null> {
+/**
+ * The mapped `ferry_traffic` of the nearest parent with inputs for it (its schema rule, run date), with the parent
+ * and the ids of the inputs supporting it; or null.
+ */
+async function parentFerryTraffic(
+  db: Db,
+  geoObjectId: string,
+  opts: LoadInputsOptions,
+): Promise<{ value: number; geoObjectId: string; inputIds: string[] } | null> {
   const seen = new Set([geoObjectId]);
   let id: string | null = await parentOf(db, geoObjectId);
   for (let depth = 0; id !== null && !seen.has(id) && depth < MAX_PARENT_DEPTH; depth++) {
@@ -554,10 +588,13 @@ async function parentFerryTraffic(db: Db, geoObjectId: string, opts: LoadInputsO
     const level = await levelFor(db, id);
     const def = level === null ? undefined : getFactSchema(opts.schemaVersion).levels[level].find((d) => d.key === "ferry_traffic");
     if (level !== null && def) {
-      const inputs = (await loadInputs(db, id, opts)).inputs.filter((i) => i.attribute === "ferry_traffic");
+      const { inputs } = await loadInputs(db, id, { ...opts, attributes: ["ferry_traffic"] });
       const result = applyRule(def.rule as RuleName, inputs, { attribute: "ferry_traffic", level, place: null, today: opts.today, cfg: opts.cfg });
       const mapped = result === null ? undefined : opts.cfg.quietness.ferryTraffic[result.value as keyof typeof opts.cfg.quietness.ferryTraffic];
-      if (mapped !== undefined) return mapped;
+      if (mapped !== undefined) {
+        const inputIds = [...new Set(result!.support.map(inputId).filter((x) => x !== ""))].sort();
+        return { value: mapped, geoObjectId: id, inputIds };
+      }
     }
     id = await parentOf(db, id);
   }
@@ -569,7 +606,8 @@ async function parentOf(db: Db, geoObjectId: string): Promise<string | null> {
   return rows[0]?.parent_id ?? null;
 }
 
-async function importanceInputs(db: Db, geoObjectId: string, today: string): Promise<DerivedInputs["importance"]> {
+async function importanceInputs(db: Db, geoObjectId: string, opts: LoadInputsOptions): Promise<DerivedInputs["importance"]> {
+  const { today, cfg } = opts;
   const { rows: poi } = await db.execute<{ category: PoiCategory | null; sitelinks: number | null }>(sql`
     select o.category::text as category, w.sitelinks
     from geo_objects o
@@ -589,7 +627,8 @@ async function importanceInputs(db: Db, geoObjectId: string, today: string): Pro
     order by s.id
   `);
 
-  const radiusM = SPOT_SEARCH_NM * METRES_PER_NM;
+  // the largest radius of meaning of the rules version (ruling M5-E-R2), not a constant
+  const radiusM = Math.max(...cfg.importance.radiusNm) * METRES_PER_NM;
   const { rows: spots } = await db.execute<{ public_id: string; distance_nm: number }>(sql`
     select p.public_id, round((ST_Distance(p.position::geography, o.geom::geography) / ${METRES_PER_NM})::numeric, 3)::float8 as distance_nm
     from geo_objects o

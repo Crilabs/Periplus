@@ -25,6 +25,17 @@ describe("quietnessScore", () => {
   });
 });
 
+describe("quietnessScore minParts (M5-E-R2)", () => {
+  it("one known part alone gives no value, two do", () => {
+    const one = quietnessScore({ settlementDistanceM: null, roadDistanceM: null, occupancy: [], text: null, ferry: 0.2 }, cfg);
+    expect(cfg.quietness.minParts).toBe(2);
+    expect(one).toEqual({ value: null, parts: { ferry: 0.2 } });
+    expect(quietnessScore({ settlementDistanceM: null, roadDistanceM: null, occupancy: [], text: "busy", ferry: null }, cfg).value).toBeNull();
+    // (0.2·0.3 + 0.1·0.2) / 0.3
+    expect(quietnessScore({ settlementDistanceM: null, roadDistanceM: null, occupancy: [], text: "busy", ferry: 0.2 }, cfg).value).toBe(0.267);
+  });
+});
+
 describe("importanceOf", () => {
   const five = Array.from({ length: 5 }, (_, n) => ({ key: `source:${n}`, weight: 0.7 }));
   it.each([

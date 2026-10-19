@@ -1,6 +1,6 @@
 import { canonicalJson } from "@/lib/domain/facts/schema";
 import type { ConsolidationInput, ConsolidationRule, InputOrigin } from "../types";
-import { afterReview, strongest, youngest } from "../weights";
+import { afterReview, inputId, strongest, youngest } from "../weights";
 import { ruleResult } from "./result";
 
 type TextEntry = { kind: string; months: number[] | null };
@@ -11,6 +11,12 @@ function isTextEntry(entry: unknown): entry is TextEntry {
 }
 
 const kindOf = (entry: unknown) => String((entry as { kind: unknown }).kind);
+
+/** The identity key of one entry: a text entry by `kind`, a computed one by `<kind>:<restrictedAreaId>`. */
+export function prohibitionEntryKey(entry: unknown): string {
+  const e = entry as { kind: unknown; restrictedAreaId?: unknown };
+  return isTextEntry(entry) ? kindOf(entry) : `${kindOf(entry)}:${String(e.restrictedAreaId)}`;
+}
 
 function byKind(a: unknown, b: unknown): number {
   const ka = kindOf(a);
@@ -30,6 +36,10 @@ function byKind(a: unknown, b: unknown): number {
  * Text inputs only add kinds and months, also a younger `authority` text naming other kinds. A text kind is removed
  * only by a review decision (it supersedes the texts it saw, `afterReview`; the youngest decision holds outright in
  * `applyRule`). Cost if wrong: an outdated ban stays until an admin lifts it.
+ *
+ * `entryFactIds` (ruling M5-E-R3 I-3): per entry (`prohibitionEntryKey`), the input ids naming it. The support also
+ * holds the basis and the superseding reviews whether they carry an entry or not, so a stale text-only entry never
+ * expires (ruling M5-E-R3 M-4, accepted for a safety list that is never lifted by omission).
  */
 export const prohibitionsRule: ConsolidationRule = (inputs, ctx) => {
   const live = afterReview(inputs);
@@ -39,12 +49,16 @@ export const prohibitionsRule: ConsolidationRule = (inputs, ctx) => {
 
   const months = new Map<string, (number[] | null)[]>();
   const mentioning = new Set<ConsolidationInput>();
+  const naming = new Map<string, Set<string>>();
+  const cite = (key: string, i: ConsolidationInput) => naming.set(key, (naming.get(key) ?? new Set<string>()).add(inputId(i)));
   for (const i of texts) {
     for (const entry of (i.value as unknown[]).filter(isTextEntry)) {
       months.set(entry.kind, [...(months.get(entry.kind) ?? []), entry.months]);
       mentioning.add(i);
+      cite(entry.kind, i);
     }
   }
+  for (const entry of basis ? (basis.value as unknown[]) : []) cite(prohibitionEntryKey(entry), basis!);
   const kept: TextEntry[] = [...months].map(([kind, list]) => ({
     kind,
     months: list.some((m) => m === null) ? null : [...new Set(list.flatMap((m) => m ?? []))].sort((a, b) => a - b),
@@ -56,5 +70,12 @@ export const prohibitionsRule: ConsolidationRule = (inputs, ctx) => {
   const support = [...new Set([...(basis ? [basis] : []), ...mentioning, ...decisions])];
   const origin: InputOrigin =
     mentioning.size > 0 ? strongest([...mentioning], ctx)!.origin : basis ? "computed" : strongest(texts, ctx)!.origin;
-  return ruleResult(value, origin, support.length > 0 ? support : texts, ctx);
+  // per-entry provenance of the safety list (ruling M5-E-R3 I-3): which input names which ban
+  const entryFactIds = Object.fromEntries(
+    value.map((entry) => {
+      const key = prohibitionEntryKey(entry);
+      return [key, [...(naming.get(key) ?? [])].sort()];
+    }),
+  );
+  return { ...ruleResult(value, origin, support.length > 0 ? support : texts, ctx), entryFactIds };
 };
