@@ -6,7 +6,7 @@ import { getEnv } from "@/lib/env";
 import { assertWithinBudget, recordExternalCall } from "@/lib/domain/costs";
 import { createLogger } from "@/lib/logger";
 import { loadPrompt, renderPrompt } from "./prompts";
-import { ModelOutputInvalid, type ModelClient, type ModelResult, type ModelTask } from "./types";
+import { ModelOutputInvalid, type ModelCallContext, type ModelClient, type ModelResult, type ModelTask } from "./types";
 
 let logger: ReturnType<typeof createLogger> | undefined;
 const getLog = () => (logger ??= createLogger("ai.anthropic"));
@@ -30,7 +30,7 @@ function defaultSdk(): AnthropicMessagesApi {
 export function createAnthropicClient(db: Db, config: AppConfig = getConfig(), options: AnthropicClientOptions = {}): ModelClient {
   let sdk = options.sdk;
   return {
-    async call<I, O>(task: ModelTask<I, O>, input: I, ctx?: { runId?: string; stage?: string }): Promise<ModelResult<O>> {
+    async call<I, O>(task: ModelTask<I, O>, input: I, ctx?: ModelCallContext): Promise<ModelResult<O>> {
       const taskConfig = config.models.tasks[task.name];
       if (!taskConfig) throw new Error(`No model configured for task ${task.name} in config/models.json`);
       const { model, promptVersion } = taskConfig;
@@ -41,6 +41,18 @@ export function createAnthropicClient(db: Db, config: AppConfig = getConfig(), o
       const vars = task.variables(input);
       const system = renderPrompt(prompt.system, vars);
       const user = renderPrompt(prompt.user, vars);
+      const attachments = task.attachments?.(input) ?? [];
+      // Files go before the text that refers to them; without files the prompt stays a plain string.
+      const content: Anthropic.MessageParam["content"] =
+        attachments.length === 0
+          ? user
+          : [
+              ...attachments.map((a) => ({
+                type: "document" as const,
+                source: { type: "base64" as const, media_type: "application/pdf" as const, data: Buffer.from(a.data).toString("base64") },
+              })),
+              { type: "text" as const, text: user },
+            ];
 
       await assertWithinBudget(db, "anthropic", config.budgets, options.now?.());
 
@@ -49,7 +61,7 @@ export function createAnthropicClient(db: Db, config: AppConfig = getConfig(), o
         model,
         max_tokens: MAX_TOKENS,
         system,
-        messages: [{ role: "user", content: user }],
+        messages: [{ role: "user", content }],
         output_config: { effort: "low", format: { type: "json_schema", schema: z.toJSONSchema(task.output) } },
       });
 
@@ -64,6 +76,7 @@ export function createAnthropicClient(db: Db, config: AppConfig = getConfig(), o
         costEur,
         runId: ctx?.runId,
         stage: ctx?.stage,
+        sourceId: ctx?.sourceId,
         meta: { model, promptVersion, inputTokens, outputTokens },
         ...(options.now ? { at: options.now() } : {}),
       });

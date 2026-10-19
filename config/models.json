@@ -1,6 +1,7 @@
 {
   "tasks": {
-    "system.echo": { "model": "claude-haiku-5-5", "promptVersion": 1 }
+    "system.echo": { "model": "claude-haiku-5-5", "promptVersion": 1 },
+    "pdf.to_markdown": { "model": "claude-sonnet-5-5", "promptVersion": 1 }
   },
   "pricesEurPerMTok": {
     "claude-haiku-5-5": { "input": 0.0889, "output": 0.4443 },

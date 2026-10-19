@@ -1,5 +1,7 @@
 # Production image for the pg-boss worker and one-off scripts (migrate). Chromium comes with the base image.
 FROM mcr.microsoft.com/playwright:v1.64.1-noble
+# pdftotext (Poppler) extracts PDF text with its layout.
+RUN apt-get update && apt-get install -y --no-install-recommends poppler-utils && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package.json package-lock.json ./

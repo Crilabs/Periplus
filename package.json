@@ -27,7 +27,8 @@
     "check:geometry": "tsx --env-file-if-exists=.env.local scripts/check-geometry.ts",
     "fixtures:record": "tsx --env-file-if-exists=.env.local scripts/fixtures-record.ts",
     "smoke:ai": "tsx --env-file-if-exists=.env.local scripts/smoke-ai.ts",
-    "compare:navily": "tsx --env-file-if-exists=.env.local scripts/compare-navily.ts"
+    "compare:navily": "tsx --env-file-if-exists=.env.local scripts/compare-navily.ts",
+    "pdf:compare": "tsx --env-file-if-exists=.env.local scripts/pdf-compare.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

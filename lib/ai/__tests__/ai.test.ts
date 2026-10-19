@@ -10,6 +10,10 @@ import { MockModel } from "@/lib/ai/mock";
 import { createAnthropicClient, type AnthropicMessagesApi } from "@/lib/ai/anthropic";
 import { ModelOutputInvalid } from "@/lib/ai/types";
 import { echoTask } from "@/lib/ai/tasks/system-echo";
+import { pdfToMarkdownTask } from "@/lib/ai/tasks/pdf-to-markdown";
+import { sources } from "@/lib/db/schema";
+import { newId } from "@/lib/domain/ids";
+import { DEFAULT_CRAWL_RULES } from "@/lib/domain/sources/crawl-rules";
 
 const db = testDb();
 
@@ -24,7 +28,10 @@ const config: AppConfig = {
     jina: { dailyEur: 1 },
   },
   models: {
-    tasks: { "system.echo": { model: "claude-haiku-5-5", promptVersion: 1 } },
+    tasks: {
+      "system.echo": { model: "claude-haiku-5-5", promptVersion: 1 },
+      "pdf.to_markdown": { model: "claude-haiku-5-5", promptVersion: 1 },
+    },
     pricesEurPerMTok: { "claude-haiku-5-5": { input: 0.1, output: 0.5 } },
   },
 };
@@ -120,6 +127,53 @@ describe("anthropic client", () => {
       await expect(client.call(echoTask, { text: "x" }, { stage })).rejects.toBeInstanceOf(ModelOutputInvalid);
       const rows = await tx.select().from(externalCalls).where(eq(externalCalls.stage, stage));
       expect(rows).toHaveLength(1);
+    }));
+
+  it("attachments are sent as document blocks", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      const { api, create } = fakeSdk('{"markdown":"# Seite"}');
+      const client = createAnthropicClient(tx, config, { sdk: api, now: () => now });
+      const pdf = new Uint8Array([37, 80, 68, 70]);
+      const r = await client.call(pdfToMarkdownTask, { pdf, page: 3 });
+      expect(r.output).toEqual({ markdown: "# Seite" });
+      const params = create.mock.calls[0]![0] as { messages: Array<{ content: Array<Record<string, unknown>> }> };
+      const content = params.messages[0]!.content;
+      expect(content[0]!.type).toBe("document");
+      expect(content[0]!.source).toEqual({ type: "base64", media_type: "application/pdf", data: Buffer.from(pdf).toString("base64") });
+      expect(content[1]).toMatchObject({ type: "text" });
+      expect(content[1]!.text).toContain("3");
+    }));
+
+  it("a call without attachments sends the prompt as plain text", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      const { api, create } = fakeSdk('{"echo":"x","language":"en"}');
+      await createAnthropicClient(tx, config, { sdk: api, now: () => now }).call(echoTask, { text: "x" });
+      const params = create.mock.calls[0]![0] as { messages: Array<{ content: unknown }> };
+      expect(typeof params.messages[0]!.content).toBe("string");
+    }));
+
+  it("records the source of a call", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      const stage = `ai-test-${Math.random()}`;
+      const [source] = await tx
+        .insert(sources)
+        .values({
+          domain: `${newId()}.test.invalid`,
+          name: "AI test",
+          type: "forum",
+          weight: 0.4,
+          status: "paused",
+          crawlRules: DEFAULT_CRAWL_RULES,
+          origin: "serp",
+        })
+        .returning({ id: sources.id });
+      const { api } = fakeSdk('{"echo":"x","language":"en"}');
+      await createAnthropicClient(tx, config, { sdk: api, now: () => now }).call(echoTask, { text: "x" }, { stage, sourceId: source!.id });
+      const [row] = await tx.select().from(externalCalls).where(eq(externalCalls.stage, stage));
+      expect(row!.sourceId).toBe(source!.id);
     }));
 
   it("throws a config error before calling when the model has no price", async () => {
