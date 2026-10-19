@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import type { AppConfig } from "@/lib/config";
 import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
-import type { PlaceKind, PlaceStatus } from "@/lib/db/schema/geo";
+import type { PlaceKind, PlaceStatus, PoiCategory } from "@/lib/db/schema/geo";
 import { activeExtractionRun } from "@/lib/domain/extraction/active-run";
 import { latestComputations } from "@/lib/domain/facts/computations";
 import { levelFor } from "@/lib/domain/facts/levels";
@@ -10,7 +10,9 @@ import { getFactSchema } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { effectiveVersionMeta, type EffectiveVersionMeta } from "@/lib/domain/mentions/classification";
-import type { ConflictResolution, ConsolidationInput } from "./types";
+import type { QuietnessParts } from "./derived/quietness";
+import { applyRule } from "./rules";
+import type { ConflictResolution, ConsolidationInput, RuleName } from "./types";
 
 /*
  * The inputs of a geo object's consolidation (spec 07 "Eingänge") and what the profile build knows beside them.
@@ -461,5 +463,153 @@ export async function loadContext(
     resolutions,
     decidedUncertainKeys,
     openTasks,
+  };
+}
+
+/** Spot candidates of a POI lie within the largest radius of meaning (50 nm). */
+const SPOT_SEARCH_NM = 50;
+const METRES_PER_NM = 1852;
+/** Parent levels walked for the ferry part; a deeper chain is a data error. */
+const MAX_PARENT_DEPTH = 10;
+
+/** What the derived values of a profile need beside the inputs (places: quietness; POIs: importance and spot ids). */
+export type DerivedInputs = {
+  quietness:
+    | (Omit<QuietnessParts, "occupancy" | "text"> & {
+        /** The quietness computation the distances come from (provenance). */
+        computationId: string | null;
+      })
+    | null;
+  importance: {
+    sources: Array<{ key: string; weight: number }>;
+    sitelinks: number | null;
+    category: PoiCategory;
+    spotCandidates: Array<{ placeId: string; distanceNm: number }>;
+  } | null;
+};
+
+/**
+ * The derived-value inputs of the geo object on the run date `opts.today`.
+ *
+ * - Place: settlement and road distance from the newest `quietness` computation (null without one); the ferry part is
+ *   `quietness.ferryLaneValue` when a valid `ferry_lane` restricted area lies within `quietness.ferryLaneRadiusM` of
+ *   the place position, otherwise the `ferry_traffic` of the nearest parent that has inputs for it, evaluated with its
+ *   schema rule on the same run date (ruling M5-P17: not the parent's stored profile, which may be built later in the
+ *   same run) and mapped by `quietness.ferryTraffic`; otherwise null.
+ * - POI: the independent sources with a mention of it or of an object merged into it (`source:<id>`, weight
+ *   `sources.weight`; rejected and ended sources left out), its Wikidata sitelink count (null without an item or a
+ *   loaded count), its category (no category → no importance) and the spot candidates: confirmed, valid, unmerged
+ *   places with a public id within 50 nm, by their public id (`sp_…`), distance over `::geography` / 1852, rounded to
+ *   3 decimals.
+ * - Any other level: nothing.
+ */
+export async function loadDerivedInputs(
+  db: Db,
+  geoObjectId: string,
+  ctx: ProfileContext,
+  opts: LoadInputsOptions,
+): Promise<DerivedInputs> {
+  if (ctx.level === "place" && ctx.place) return { quietness: await quietnessInputs(db, geoObjectId, ctx.place.position, opts), importance: null };
+  if (ctx.level === "poi") return { quietness: null, importance: await importanceInputs(db, geoObjectId, opts.today) };
+  return { quietness: null, importance: null };
+}
+
+async function quietnessInputs(
+  db: Db,
+  geoObjectId: string,
+  position: LonLat,
+  opts: LoadInputsOptions,
+): Promise<NonNullable<DerivedInputs["quietness"]>> {
+  const { cfg, today } = opts;
+  const computation = (await latestComputations(db, geoObjectId)).get("quietness");
+  const distance = (key: string) => {
+    const v = computation?.outputs[key];
+    return typeof v === "number" ? v : null;
+  };
+
+  const radiusM = cfg.quietness.ferryLaneRadiusM;
+  const { rows: lanes } = await db.execute<{ found: boolean }>(sql`
+    select exists (
+      select 1 from restricted_areas r
+      where r.kind = 'ferry_lane' and r.valid_from <= ${today}::date and (r.valid_to is null or r.valid_to > ${today}::date)
+        and ST_DWithin(r.geom::geography, ST_SetSRID(ST_MakePoint(${position.lon}, ${position.lat}), 4326)::geography, ${radiusM}::float8)
+    ) as found
+  `);
+  const ferry = lanes[0]?.found ? cfg.quietness.ferryLaneValue : await parentFerryTraffic(db, geoObjectId, opts);
+
+  return {
+    settlementDistanceM: distance("settlementDistanceM"),
+    roadDistanceM: distance("roadDistanceM"),
+    ferry,
+    computationId: computation?.id ?? null,
+  };
+}
+
+/** The mapped `ferry_traffic` of the nearest parent with inputs for it (its schema rule, run date), or null. */
+async function parentFerryTraffic(db: Db, geoObjectId: string, opts: LoadInputsOptions): Promise<number | null> {
+  const seen = new Set([geoObjectId]);
+  let id: string | null = await parentOf(db, geoObjectId);
+  for (let depth = 0; id !== null && !seen.has(id) && depth < MAX_PARENT_DEPTH; depth++) {
+    seen.add(id);
+    const level = await levelFor(db, id);
+    const def = level === null ? undefined : getFactSchema(opts.schemaVersion).levels[level].find((d) => d.key === "ferry_traffic");
+    if (level !== null && def) {
+      const inputs = (await loadInputs(db, id, opts)).inputs.filter((i) => i.attribute === "ferry_traffic");
+      const result = applyRule(def.rule as RuleName, inputs, { attribute: "ferry_traffic", level, place: null, today: opts.today, cfg: opts.cfg });
+      const mapped = result === null ? undefined : opts.cfg.quietness.ferryTraffic[result.value as keyof typeof opts.cfg.quietness.ferryTraffic];
+      if (mapped !== undefined) return mapped;
+    }
+    id = await parentOf(db, id);
+  }
+  return null;
+}
+
+async function parentOf(db: Db, geoObjectId: string): Promise<string | null> {
+  const { rows } = await db.execute<{ parent_id: string | null }>(sql`select parent_id from geo_objects where id = ${geoObjectId}`);
+  return rows[0]?.parent_id ?? null;
+}
+
+async function importanceInputs(db: Db, geoObjectId: string, today: string): Promise<DerivedInputs["importance"]> {
+  const { rows: poi } = await db.execute<{ category: PoiCategory | null; sitelinks: number | null }>(sql`
+    select o.category::text as category, w.sitelinks
+    from geo_objects o
+    left join wikidata_sitelinks w on w.wikidata_id = o.wikidata_id
+    where o.id = ${geoObjectId}
+  `);
+  const category = poi[0]?.category ?? null;
+  if (category === null) return null;
+
+  const { rows: sourceRows } = await db.execute<{ id: string; weight: number }>(sql`
+    select distinct s.id, s.weight
+    from mentions m
+    join document_versions v on v.id = m.document_version_id
+    join documents d on d.id = v.document_id
+    join sources s on s.id = d.source_id
+    where m.geo_object_id in ${mergedChainSql(geoObjectId)} and ${countingSourceSql(today)}
+    order by s.id
+  `);
+
+  const radiusM = SPOT_SEARCH_NM * METRES_PER_NM;
+  const { rows: spots } = await db.execute<{ public_id: string; distance_nm: number }>(sql`
+    select p.public_id, round((ST_Distance(p.position::geography, o.geom::geography) / ${METRES_PER_NM})::numeric, 3)::float8 as distance_nm
+    from geo_objects o
+    join places p
+      on p.status = 'confirmed' and p.public_id is not null and p.merged_into_id is null
+     and p.valid_from <= ${today}::date and (p.valid_to is null or p.valid_to > ${today}::date)
+     -- box prefilter (index), then the exact distance in metres
+     and p.position && ST_Expand(o.geom, ${radiusM}::float8 / (111320 * cos(radians(ST_Y(o.centroid)))))
+     and ST_DWithin(p.position::geography, o.geom::geography, ${radiusM}::float8)
+    join geo_objects po
+      on po.id = p.geo_object_id and po.merged_into_id is null
+     and po.valid_from <= ${today}::date and (po.valid_to is null or po.valid_to > ${today}::date)
+    where o.id = ${geoObjectId}
+    order by distance_nm, p.public_id
+  `);
+
+  return {
+    sources: sourceRows.map((r) => ({ key: `source:${r.id}`, weight: Number(r.weight) })),
+    sitelinks: poi[0]!.sitelinks === null ? null : Number(poi[0]!.sitelinks),
+    category,
+    spotCandidates: spots.map((r) => ({ placeId: r.public_id, distanceNm: Number(r.distance_nm) })),
   };
 }
