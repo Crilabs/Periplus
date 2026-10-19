@@ -51,7 +51,7 @@
     "refreshDays": 30
   },
   "bboxBufferKm": 5,
-  "landBufferKm": 10,
+  "landBufferKm": 55,
   "coastDistanceM": 2000,
   "islandParentBufferM": 200,
   "coastSectionMaxAreaKm2": 1000,
@@ -63,5 +63,5 @@
     "wikidataLinkDistanceM": 1000,
     "geonamesNewObjectRadiusM": 500
   },
-  "noAnchoringKinds": ["military", "cable", "firing_area"]
+  "noAnchoringKinds": ["military", "cable", "firing_area", "aquaculture"]
 }

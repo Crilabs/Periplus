@@ -143,7 +143,73 @@ export const factSchemaConfigSchema = z.strictObject({
   version: z.string().regex(/^v[1-9][0-9]*$/, "must be v<number>"),
 });
 
+const share = z.number().min(0).max(1);
+const confidence = share;
+const meters = z.number().positive();
+
+/** `config/geometry.json`: parameters of the geometric computations; any change raises `rulesVersion`. */
+export const geometrySchema = z.strictObject({
+  rulesVersion: z.string().regex(/^geometry-[1-9][0-9]*$/, "must be geometry-<number>"),
+  fetch: z
+    .strictObject({
+      rayCount: z.number().int().positive(),
+      rayStepDeg: z.number().positive(),
+      maxRayM: meters,
+      confidence,
+    })
+    .refine((f) => f.rayCount * f.rayStepDeg === 360, "rayCount × rayStepDeg must be 360")
+    .refine((f) => Number.isInteger(45 / f.rayStepDeg), "rayStepDeg must divide 45 so every sector centre is a ray"),
+  shelter: z
+    .strictObject({ fMinM: meters, fMaxM: meters, meanWeight: share, minWeight: share, confidence })
+    .refine((s) => s.fMinM < s.fMaxM, "fMinM must be below fMaxM")
+    .refine((s) => Math.abs(s.meanWeight + s.minWeight - 1) < 1e-9, "meanWeight + minWeight must be 1"),
+  opening: z.strictObject({ openFetchM: meters, minResultant: share, confidence }),
+  swell: z.strictObject({
+    longFetchM: meters,
+    openFetchM: meters,
+    maxOpeningDeg: z.number().positive().max(360),
+    wideOpeningFactor: share,
+    noSourceValue: share,
+    confidence,
+  }),
+  water: z.strictObject({
+    bayRadiusM: meters,
+    harbourRadiusM: meters,
+    maxPolygonAreaM2: z.number().positive(),
+    originCoastOffsetM: z.number().nonnegative(),
+  }),
+  depth: z.strictObject({
+    sampleDistancesM: z.array(meters).min(1),
+    hrResolutionM: meters,
+    confidenceHr: confidence,
+    confidenceCoarseWide: confidence,
+    confidenceCoarseNarrow: confidence,
+    minBayWidthM: meters,
+  }),
+  anchorArea: z
+    .strictObject({
+      minDepthM: z.number().nonnegative(),
+      maxDepthM: meters,
+      landClearanceM: z.number().nonnegative(),
+      positionConfidence: confidence,
+      correctionConfidence: confidence,
+      correctionMaxDistanceM: meters,
+    })
+    .refine((a) => a.minDepthM < a.maxDepthM, "minDepthM must be below maxDepthM"),
+  seabed: z.strictObject({ minCoverage: share, confidence }),
+  restriction: z.strictObject({ minShare: share, confidence }),
+});
+
+/** `config/restrictions.json`: Natura 2000 sites (site codes) where anchoring is banned. */
+export const restrictionsSchema = z.strictObject({
+  protectedAreaAnchoringBan: z.array(
+    z.string().regex(/^[A-Z]{2}[0-9A-Z]{7}$/, "must be a Natura 2000 site code (two letters, seven characters)"),
+  ),
+});
+
 export type QueueConfig = z.infer<typeof queueConfigSchema>;
+export type GeometryConfig = z.infer<typeof geometrySchema>;
+export type RestrictionsConfig = z.infer<typeof restrictionsSchema>;
 export type AreaConfig = z.infer<typeof areaConfigSchema>;
 export type CategoriesConfig = z.infer<typeof categoriesSchema>;
 export type GazetteerConfig = z.infer<typeof gazetteerSchema>;
@@ -155,4 +221,6 @@ export type AppConfig = {
   categories: CategoriesConfig;
   gazetteer: GazetteerConfig;
   factSchema: z.infer<typeof factSchemaConfigSchema>;
+  geometry: GeometryConfig;
+  restrictions: RestrictionsConfig;
 };
