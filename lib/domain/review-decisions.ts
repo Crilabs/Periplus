@@ -118,7 +118,9 @@ type Task = typeof reviewTasks.$inferSelect;
  * Global lock order: the review task row first, then the subject row(s) (`lockPlace`, `lockSource`,
  * `lockNameCandidate`). Every transaction that locks both an open `place_candidate` task and its place
  * (`applyExclusion`, stage `geometry.place`) or its name candidate (`geocodeCandidate`) takes them in this order, so
- * none of them deadlocks with a decision.
+ * none of them deadlocks with a decision. Profiles (ruling M5-P9): only `consolidateGeo` takes the per-object profile
+ * lock (`pg_advisory_xact_lock(hashtext('profile:' || id))`), before any review task row; a decision on a
+ * `profile_attribute` task never takes that lock, so the two cannot wait on each other.
  */
 export async function decideReviewTask(
   db: Db,
