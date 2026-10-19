@@ -2,6 +2,8 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { FACT_SCHEMAS } from "@/config/fact-schema";
+import { getFactSchema } from "@/lib/domain/facts/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { areaByKey, getConfig, getConsolidationConfig, loadConfig } from "../index";
 import { modelsSchema } from "../schemas";
@@ -130,6 +132,18 @@ describe("loadConfig", () => {
 
   it("loads the active fact schema version", () => {
     expect(loadConfig("config").factSchema).toEqual({ version: "v2" });
+  });
+
+  it("the config loader and the fact-schema access know the same fact schema versions", () => {
+    expect(Object.keys(FACT_SCHEMAS).sort()).toEqual(["v1", "v2"]);
+    for (const [version, schema] of Object.entries(FACT_SCHEMAS)) {
+      expect(getFactSchema(version)).toBe(schema);
+      expect(schema.version).toBe(version);
+    }
+    // the active one loads; a version outside the map is unknown to both
+    expect(loadConfig(fixtureDir({ factSchema: { version: "v2" } })).factSchema).toEqual({ version: "v2" });
+    expect(() => loadConfig(fixtureDir({ factSchema: { version: "v3" } }))).toThrow(/unknown fact schema version v3/);
+    expect(() => getFactSchema("v3")).toThrow(/Unknown fact schema version v3/);
   });
 
   it("rejects a malformed fact schema version", () => {

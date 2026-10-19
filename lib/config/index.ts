@@ -1,8 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { ZodType } from "zod";
-import { factSchemaV1 } from "@/config/fact-schema/v1";
-import { factSchemaV2 } from "@/config/fact-schema/v2";
+import { FACT_SCHEMAS } from "@/config/fact-schema";
 import type { FactSchema } from "@/lib/domain/facts/schema-types";
 import {
   areaConfigSchema,
@@ -92,8 +91,6 @@ function readAreas(dir: string): AreaConfig[] {
     return area;
   });
 }
-
-const FACT_SCHEMAS: Record<string, FactSchema> = { [factSchemaV1.version]: factSchemaV1, [factSchemaV2.version]: factSchemaV2 };
 
 /** The keys of the object an attribute's value (or its list entries) is made of; null when it is not an object. */
 function entryShapeKeys(value: ZodType): string[] | null {

@@ -1,13 +1,7 @@
 import { z } from "zod";
-import { factSchemaV1 } from "@/config/fact-schema/v1";
-import { factSchemaV2 } from "@/config/fact-schema/v2";
+import { FACT_SCHEMAS } from "@/config/fact-schema";
 import { getConfig } from "@/lib/config";
 import type { AttributeDef, FactLevel, FactSchema } from "./schema-types";
-
-const SCHEMAS: Record<string, FactSchema> = {
-  [factSchemaV1.version]: factSchemaV1,
-  [factSchemaV2.version]: factSchemaV2,
-};
 
 export class UnknownAttribute extends Error {
   constructor(
@@ -32,7 +26,7 @@ export class InvalidFactValue extends Error {
 
 /** The fact schema of `version`, by default the active one (`config/fact-schema/active.json`). */
 export function getFactSchema(version: string = getConfig().factSchema.version): FactSchema {
-  const schema = SCHEMAS[version];
+  const schema = FACT_SCHEMAS[version];
   if (!schema) throw new Error(`Unknown fact schema version ${version}`);
   return schema;
 }
