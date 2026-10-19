@@ -246,6 +246,13 @@
       "when": 1792422344829,
       "tag": "0034_profiles_valid_from_monotonic",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1792427539483,
+      "tag": "0035_geo_objects_merged_into_idx",
+      "breakpoints": true
     }
   ]
 }
