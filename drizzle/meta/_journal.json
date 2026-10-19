@@ -127,6 +127,13 @@
       "when": 1792383148043,
       "tag": "0017_sources_triggers",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792383347328,
+      "tag": "0018_remarkable_proteus",
+      "breakpoints": true
     }
   ]
 }

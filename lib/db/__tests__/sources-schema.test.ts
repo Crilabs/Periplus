@@ -110,6 +110,17 @@ describe("archive schema", () => {
     });
   });
 
+  it("document_versions accepts null content_type and final_url", async () => {
+    await withRollback(async (tx) => {
+      const documentId = await insertDocument(tx);
+      const [row] = await tx
+        .insert(documentVersions)
+        .values(versionValues(documentId, { contentType: null, finalUrl: null }))
+        .returning({ contentType: documentVersions.contentType, finalUrl: documentVersions.finalUrl });
+      expect(row).toEqual({ contentType: null, finalUrl: null });
+    });
+  });
+
   it("document_versions rejects UPDATE", async () => {
     await withRollback(async (tx) => {
       const id = await insertVersion(tx);
