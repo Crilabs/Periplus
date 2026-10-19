@@ -1,5 +1,6 @@
 import type {
   ChangeRate,
+  ComparisonVerdict,
   ComputationKind,
   DocType,
   ExtractionPurpose,
@@ -309,6 +310,9 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   unknown_area: "Revier ist nicht konfiguriert",
   area_without_tiles: "Revier hat noch keine Kacheln – zuerst „Gazetteer aufbauen“",
   versions_not_current: "Eine Dokumentversion gibt es nicht oder sie ist nicht mehr aktuell",
+  unknown_comparison: "Diesen Modellvergleich gibt es nicht",
+  comparison_without_units: "Der Modellvergleich hat keine Einheiten – zuerst Texte auswerten",
+  comparison_started: "Für diesen Modellvergleich gibt es bereits einen Lauf",
 };
 
 /** The German text of a `?error=<reason>` a run action redirected with; null for none or an unknown reason. */
@@ -477,7 +481,7 @@ const VALUE_WORDS: Record<string, string> = {
   quiet: "ruhig",
   busy: "belebt",
   noisy: "laut",
-  none: "keiner",
+  none: "keine",
   low: "gering",
   high: "hoch",
   calm: "ruhig",
@@ -501,7 +505,7 @@ const VALUE_WORDS: Record<string, string> = {
   other: "sonstiges",
   open: "offen",
   closed: "geschlossen",
-  crowded: "voll",
+  crowded: "überfüllt",
   meltemi: "Meltemi",
   sirocco: "Schirokko",
   bora: "Bora",
@@ -580,9 +584,34 @@ function formatPart(value: unknown, field?: string): string {
   return String(value);
 }
 
+/** Enum words that read differently for one attribute (the generic word does not fit its noun). */
+const ATTRIBUTE_VALUE_WORDS: Record<string, Record<string, string>> = {
+  ferry_traffic: { none: "kein Fährverkehr", low: "wenig", moderate: "mäßig", high: "viel" },
+  quietness: { moderate: "mittel" },
+};
+
+/**
+ * The words of the text scales (fact schema v2 `TEXT_SCALE`, `EXPOSURE_SCALE`; spec 06 "gut/mäßig/kein Schutz" →
+ * 0,9 / 0,5 / 0,1): a text fact stores the number, the page shows the word with it. Kept here, not imported, because
+ * client components import this module; a test checks it against the fact schema.
+ */
+export const SHELTER_SCALE_WORDS: Record<string, string> = { "0.9": "gut geschützt", "0.5": "mäßig geschützt", "0.1": "kein Schutz" };
+export const EXPOSURE_SCALE_WORDS: Record<string, string> = { "0.1": "gering", "0.5": "mäßig", "0.9": "stark" };
+
+function scaleWord(attribute: string, value: number): string | undefined {
+  if (attribute.startsWith("shelter.") || attribute === "swell_protection") return SHELTER_SCALE_WORDS[String(value)];
+  if (attribute === "meltemi_exposure") return EXPOSURE_SCALE_WORDS[String(value)];
+  return undefined;
+}
+
 /** A fact value for display, in German (units for depths and lengths, month names, labelled fields). */
 export function formatFactValue(attribute: string, value: unknown): string {
   if (typeof value === "number" && METRE_ATTRIBUTES.has(attribute)) return `${de(value)} m`;
+  if (typeof value === "number") {
+    const word = scaleWord(attribute, value);
+    if (word) return `${word} (${de(value)})`;
+  }
+  if (typeof value === "string" && ATTRIBUTE_VALUE_WORDS[attribute]?.[value]) return ATTRIBUTE_VALUE_WORDS[attribute][value];
   if (attribute === "depth.approach" && value && typeof value === "object") {
     return Object.entries(value as Record<string, number | null>)
       .map(([k, v]) => `${FIELD_WORDS[k] ?? k}: ${v === null ? "–" : `${de(v)} m`}`)
@@ -598,4 +627,46 @@ export function formatFactValue(attribute: string, value: unknown): string {
       .join(", ");
   }
   return formatPart(value);
+}
+
+/* ---- M4: model comparison ---- */
+
+/** Verdicts on a deviation of the model comparison, in button order (keys 1–5). */
+export const COMPARISON_VERDICT_LABELS: Record<ComparisonVerdict, string> = {
+  a_correct: "A richtig",
+  b_correct: "B richtig",
+  both_ok: "Beide richtig",
+  both_wrong: "Beide falsch",
+  unclear: "Unklar",
+};
+
+/** A shortfall code of a comparison sample (`comparisonShortfall`) in German. */
+export function comparisonShortfallLabel(code: string): string {
+  const [kind, rest = ""] = code.split(/:(.*)/s);
+  if (kind === "units") {
+    const [n, target] = rest.split("/");
+    return `Nur ${n} von ${target} Einheiten – es gibt nicht mehr Erwähnungen von Objekten mit Facts`;
+  }
+  if (kind === "sources") {
+    const [n, min] = rest.split("/");
+    return `Nur ${n} Quellen, die Spezifikation verlangt mindestens ${min}`;
+  }
+  if (kind === "doc_type") return `Dokumenttyp „${DOC_TYPE_LABELS[rest as DocType] ?? rest}“ fehlt in der Stichprobe`;
+  return code;
+}
+
+/** Errors of the model comparison page besides refused runs (`?error=<code>`). */
+export const MODEL_COMPARE_ERROR_LABELS = {
+  invalid_label: "Bitte eine Bezeichnung angeben (höchstens 80 Zeichen)",
+  invalid_rating: "Die Bewertung war unvollständig",
+  invalid_models: "In config/models.json stehen nicht zwei verschiedene Vergleichsmodelle",
+} as const;
+
+/** The German text of a `?error=` on the model comparison page; null for none or an unknown code. */
+export function modelComparePageError(param: string | string[] | undefined): string | null {
+  if (typeof param !== "string") return null;
+  return (
+    runScopeError(param) ??
+    (Object.hasOwn(MODEL_COMPARE_ERROR_LABELS, param) ? MODEL_COMPARE_ERROR_LABELS[param as keyof typeof MODEL_COMPARE_ERROR_LABELS] : null)
+  );
 }

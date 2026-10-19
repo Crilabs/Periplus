@@ -26,7 +26,10 @@ export type RunScopeReason =
   | "unknown_tile"
   | "unknown_area"
   | "area_without_tiles"
-  | "versions_not_current";
+  | "versions_not_current"
+  | "unknown_comparison"
+  | "comparison_without_units"
+  | "comparison_started";
 
 /** A run start refused before the run exists because its scope lacks an input (an expected, user-facing error). */
 export class RunScopeNotReady extends Error {

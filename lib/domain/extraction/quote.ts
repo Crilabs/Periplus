@@ -11,7 +11,8 @@ export type QuoteCheck =
   | { ok: true; start: number; end: number }
   | { ok: false; reason: "empty" | "too_long" | "too_short" | "ellipsis" | "not_found" };
 
-export type SpanKind = "mention" | "quote";
+/** `inactive_quote`: the quote of a fact that is not from the active extraction run of its (version, object). */
+export type SpanKind = "mention" | "quote" | "inactive_quote";
 export type Span = { start: number; end: number; kind: SpanKind; ref: string };
 export type TextSegment = { text: string; kinds: SpanKind[]; refs: string[] };
 

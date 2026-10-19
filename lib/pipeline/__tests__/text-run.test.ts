@@ -379,6 +379,34 @@ describe("text run", () => {
       expect(units.map((u) => u.geoObjectId).sort()).toEqual([vathy, xen].sort());
     }));
 
+  it("mentions a reprocess run's match added are not extracted again by the next regular run", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      archiveOf.set(tx, memoryArchive());
+      const { tile } = await islandTile(tx);
+      await insertNamedObject(tx, { type: "bay", names: [{ name: "Kolona" }], lon: 21.1, lat: 35.1, tiles: [tile] });
+      const name = `Xen${newId().replace(/-/g, "").slice(-10).replace(/\d/g, (d) => "ghijklmnop"[Number(d)]!)}`;
+      const v = await insertTestVersion(tx, [`Vor Kalonisi ankerten wir in Kolona. Danach in der Bucht von ${name}.`]);
+      await tx.update(documentVersions).set({ classifiedDocType: "pilot_guide", classifiedModel: "claude-haiku-5-5", classifiedPromptVersion: 1 }).where(eq(documentVersions.id, v.versionId));
+      const run = async (start: (rec: ReturnType<typeof recordingBoss>) => Promise<{ id: string }>) => {
+        const rec = recordingBoss();
+        const { model, seen } = fixtureModel();
+        const { id } = await start(rec);
+        expect(await drive(tx, rec, model, id, now)).toBe("finished");
+        return seen.extract.map((i) => i.object.name);
+      };
+      expect(await run((rec) => startTextRun(tx, rec.boss, { documentVersionIds: [v.versionId], triggeredBy: "test" }, config))).toEqual(["Kalonisi", "Kolona"]);
+      // the gazetteer grows; a reprocess of the tile matches the version again and extracts the new mention too
+      const xen = await insertNamedObject(tx, { type: "bay", names: [{ name }], lon: 21.12, lat: 35.12, tiles: [tile] });
+      expect((await run((rec) => startReprocessRun(tx, rec.boss, { scope: { tileId: tile }, triggeredBy: "test" }, config))).sort()).toEqual(["Kalonisi", "Kolona", name].sort());
+      const statusOfXen = async () =>
+        (await tx.select({ s: mentions.extractionStatus }).from(mentions).where(and(eq(mentions.documentVersionId, v.versionId), eq(mentions.geoObjectId, xen))))[0]!.s;
+      expect(await statusOfXen()).toBe("pending");
+      // the next regular run claims it, but its reprocess extraction is active already: nothing is paid again
+      expect(await run((rec) => startTextRun(tx, rec.boss, { documentVersionIds: [v.versionId], triggeredBy: "test" }, config))).toEqual([]);
+      expect(await statusOfXen()).toBe("done");
+    }));
+
   it("a rematch with a configuration that makes a matched span ambiguous adds no waiting row over the mention", () =>
     withRollback(async (tx) => {
       const { tile } = await islandTile(tx);

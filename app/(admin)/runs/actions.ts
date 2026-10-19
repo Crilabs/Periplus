@@ -97,14 +97,6 @@ export async function startTextRunAction(input: FormData | { areaKey: string } |
   await startAndRedirect(() => startTextRun(db, boss, { ...scope, triggeredBy: admin.email }), textRunErrorPath(scope));
 }
 
-/** "Neue Texte auswerten": a text run over every version the match has not passed with the current configuration. */
-export async function startPendingTextRunAction(): Promise<void> {
-  const admin = await requireAdmin();
-  const db = getDb();
-  const boss = await getBoss();
-  await startAndRedirect(() => startTextRun(db, boss, { pending: true, triggeredBy: admin.email }), "/runs");
-}
-
 /**
  * "Reprozessieren (Stufen 6–7)" for a configured area or one existing tile: every mention there is extracted again
  * into a new extraction run (the old facts stay); refusals return to the calling page.

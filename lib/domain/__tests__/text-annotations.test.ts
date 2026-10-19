@@ -63,6 +63,38 @@ describe("versionAnnotations", () => {
       ]);
     }));
 
+  it("quotes of facts outside the active run are highlighted apart", () =>
+    withRollback(async (tx) => {
+      const a = await annotated(tx);
+      // a comparison run quoting the same chunk: its fact stays, but is not active
+      const comparison = await insertTestExtractionRun(tx, { runId: a.runId, model: "claude-opus-5-5", promptVersion: 3, status: "finished", purpose: "comparison" });
+      const start = TEXT.indexOf("Kolona is a quiet bay");
+      const [f] = await tx
+        .insert(facts)
+        .values({
+          geoObjectId: a.kolona,
+          attribute: "quietness",
+          value: "quiet",
+          mentionId: a.mentionId,
+          quote: "Kolona is a quiet bay",
+          quoteVerified: true,
+          quoteChunkId: a.chunkIds[0]!,
+          quoteStart: start,
+          quoteEnd: start + "Kolona is a quiet bay".length,
+          observedAt: "2026-10-19",
+          confidence: 0.8,
+          extractionRunId: comparison,
+          factSchemaVersion: "v2",
+        })
+        .returning({ id: facts.id });
+      const [chunk] = await versionAnnotations(tx, a.versionId, config);
+      expect(chunk!.spans.filter((s) => s.kind !== "mention").map((s) => [s.kind, s.ref])).toEqual([
+        ["inactive_quote", f!.id],
+        ["quote", a.factId],
+      ]);
+      expect(chunk!.facts.find((x) => x.id === f!.id)!.active).toBe(false);
+    }));
+
   it("annotations of a carried chunk come from its origin chunk", () =>
     withRollback(async (tx) => {
       const a = await annotated(tx);

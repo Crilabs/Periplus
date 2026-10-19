@@ -8,6 +8,7 @@ import { extractionRuns, extractionUnits, facts, mentions, routes, routeStops, r
 import { activeExtractionRun } from "@/lib/domain/extraction/active-run";
 import { belegtreue, checkQuoteFidelity, fidelityOutcome, fidelityShare } from "@/lib/domain/extraction/fidelity";
 import { completeUnit, emptyFactStats } from "@/lib/domain/extraction/facts";
+import { blockLateResults, blockUncheckedRuns } from "@/lib/domain/extraction/run-status";
 import { storeRoute } from "@/lib/domain/extraction/routes";
 import { checkExtractionRun, CHECK_STAGE, planCheck } from "@/lib/pipeline/text/check";
 import { ROUTE_STAGE } from "@/lib/pipeline/text/routes";
@@ -199,6 +200,34 @@ describe("quote fidelity", () => {
       expect(await activeExtractionRun(tx, s.versionId, s.geoObjectId, config)).toEqual({ id });
     }));
 
+  it("the check lifts every block reason it can and keeps quote_fidelity while failures remain", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx);
+      // run_ended: the run was ended by hand before its check stage
+      const ended = await extractionRun(tx, s);
+      await insertFact(tx, s, ended, "holding");
+      expect(await blockUncheckedRuns(tx, s.runId)).toEqual([ended]);
+      expect(await runRow(tx, ended)).toMatchObject({ status: "blocked", blockedReason: "run_ended" });
+      await checkExtractionRun(tx, ended, config);
+      expect(await runRow(tx, ended)).toMatchObject({ status: "finished", blockedReason: null });
+      // late_results on a finished run: checked again, finished
+      expect(await blockLateResults(tx, ended)).toBe(true);
+      expect(await runRow(tx, ended)).toMatchObject({ status: "blocked", blockedReason: "late_results" });
+      await checkExtractionRun(tx, ended, config);
+      expect(await runRow(tx, ended)).toMatchObject({ status: "finished", blockedReason: null });
+      // quote_fidelity: a check with a failure keeps it blocked, also over late results and repeated checks
+      const failing = await extractionRun(tx, s, { model: "claude-opus-5-5" });
+      await insertFact(tx, s, failing, "holding", START + 2);
+      await checkExtractionRun(tx, failing, config);
+      expect(await runRow(tx, failing)).toMatchObject({ status: "blocked", blockedReason: "quote_fidelity" });
+      await checkExtractionRun(tx, failing, config);
+      expect(await runRow(tx, failing)).toMatchObject({ status: "blocked", blockedReason: "quote_fidelity" });
+      await blockLateResults(tx, failing);
+      expect(await runRow(tx, failing)).toMatchObject({ status: "blocked", blockedReason: "late_results" });
+      await checkExtractionRun(tx, failing, config);
+      expect(await runRow(tx, failing)).toMatchObject({ status: "blocked", blockedReason: "quote_fidelity" });
+    }));
+
   it("a unit completed while the run is still running does not block it", () =>
     withRollback(async (tx) => {
       const s = await scene(tx);
@@ -256,7 +285,7 @@ describe("active extraction run", () => {
       expect(await activeExtractionRun(tx, s.versionId, s.geoObjectId, config)).toBeNull();
     }));
 
-  it("the active run follows the configured model; a comparison run is ignored", () =>
+  it("the active run follows the configured model; a comparison run is ignored while the decision is provisional", () =>
     withRollback(async (tx) => {
       const s = await scene(tx);
       const sonnet = await extractionRun(tx, s, { status: "finished" });
@@ -266,7 +295,7 @@ describe("active extraction run", () => {
         ...config,
         models: { ...config.models, tasks: { ...config.models.tasks, "extract-facts": { ...config.models.tasks["extract-facts"]!, model: "claude-opus-5-5" } } },
       };
-      // the comparison run has the configured model now, but is never active
+      // the comparison run has the configured model now, but is not active while the decision is provisional
       expect(await activeExtractionRun(tx, s.versionId, s.geoObjectId, opusConfig)).toBeNull();
       expect(opus).not.toBe(sonnet);
       // another prompt version is not the active configuration either

@@ -5,6 +5,8 @@ import type { ModelTask } from "@/lib/ai/types";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { chunks, extractionRuns, extractionUnits, facts, type ExtractionPurpose } from "@/lib/db/schema";
+import { mentionsExtractedBefore } from "@/lib/domain/extraction/active-run";
+import { comparisonMentionIds } from "@/lib/domain/extraction/comparison";
 import { failUnitMentions } from "@/lib/domain/extraction/unit-status";
 import { completeUnit, emptyFactStats, FACT_STAT_KEYS, processFactOutput, type FactStats } from "@/lib/domain/extraction/facts";
 import { planUnits } from "@/lib/domain/extraction/units";
@@ -78,8 +80,10 @@ export async function ensureExtractionRun(
  * Plan (in the stage's plan transaction), from the run's frozen version set (ruling M4-E-R2):
  * - regular and rematch runs claim the pending mentions of the versions (`pending → done`, conditional, ruling
  *   M4-P17), so two overlapping runs never extract the same mention; claimed mentions of objects without a fact level
- *   become `skipped` and cost nothing;
- * - a reprocess run (`params.reprocess`) takes every mention of the versions, whatever its status, and claims nothing.
+ *   become `skipped` and cost nothing; claimed mentions an eligible extraction run has extracted already (a reprocess
+ *   run's match added them, `mentionsExtractedBefore`) stay `done` and are not paid for again;
+ * - a reprocess run (`params.reprocess`) takes every mention of the versions, whatever its status, and claims nothing;
+ * - a model comparison run (`params.comparisonId`) plans `planComparisonExtraction` instead.
  * The units go into the extraction run of the configured model (purpose `regular` or `reprocess`); one job per
  * `unitsPerBatch` of the run's pending units, in id order (a repeated plan plans the same jobs).
  */
@@ -89,10 +93,17 @@ export async function planExtraction(
   config: AppConfig = getConfig(),
 ): Promise<JobData[]> {
   const params = textRunParamsSchema.parse(run.params);
+  if (params.comparisonId) return planComparisonExtraction(db, run.id, params.comparisonId, params.models ?? config.models.comparison.models, config);
   const versions = await frozenRunVersions(db, run.params);
   if (versions.length === 0) return [];
   const reprocess = params.reprocess === true;
-  const mentionIds = reprocess ? await allMentions(db, versions) : await claimPendingMentions(db, versions);
+  let mentionIds: string[];
+  if (reprocess) mentionIds = await allMentions(db, versions);
+  else {
+    const claimed = await claimPendingMentions(db, versions);
+    const before = new Set(await mentionsExtractedBefore(db, claimed, config));
+    mentionIds = claimed.filter((id) => !before.has(id));
+  }
   const { units, skipped } = await planUnits(db, mentionIds, config.extraction.unit);
   if (!reprocess && skipped.length > 0) {
     await db.execute(sql`update mentions set extraction_status = 'skipped' where id in ${jsonUuids(skipped)} and extraction_status = 'done'`);
@@ -137,6 +148,43 @@ export async function planExtraction(
     jobs.push({ key: `extract:${i}`, extractionRunId, unitIds: ids.slice(i * size, (i + 1) * size) });
   }
   getLog().info({ runId: run.id, extractionRunId, units: units.length, skipped: skipped.length, jobs: jobs.length }, "extraction planned");
+  return jobs;
+}
+
+/**
+ * Plan of a model comparison run (spec 06, Task 19): the comparison's units (`model_comparison_units`) are planned like
+ * regular units and go into one extraction run per comparison model (purpose `comparison`, with the comparison's id,
+ * the configured prompt version and the active fact schema), each with its own jobs (`compare:<model index>:<n>`). No
+ * mention is claimed or changes status: the regular extraction of these mentions is not touched.
+ */
+async function planComparisonExtraction(db: Db, runId: string, comparisonId: string, models: string[], config: AppConfig): Promise<JobData[]> {
+  const { units } = await planUnits(db, await comparisonMentionIds(db, comparisonId), config.extraction.unit);
+  const { taskConfig } = resolveTaskModel(config, EXTRACT_FACTS_TASK);
+  const jobs: JobData[] = [];
+  for (const [index, model] of models.entries()) {
+    const { id: extractionRunId } = await ensureExtractionRun(
+      db,
+      { runId, task: EXTRACT_FACTS_TASK, model, promptVersion: taskConfig.promptVersion, purpose: "comparison", comparisonId },
+      config,
+    );
+    if (units.length > 0) {
+      await db
+        .insert(extractionUnits)
+        .values(units.map((u) => ({ extractionRunId, documentVersionId: u.documentVersionId, geoObjectId: u.geoObjectId, part: u.part, level: u.level, mentionIds: u.mentionIds, chunkIds: u.chunkIds })))
+        .onConflictDoNothing();
+    }
+    const pending = await db
+      .select({ id: extractionUnits.id })
+      .from(extractionUnits)
+      .where(and(eq(extractionUnits.extractionRunId, extractionRunId), eq(extractionUnits.status, "pending")))
+      .orderBy(asc(extractionUnits.id));
+    const ids = pending.map((r) => r.id);
+    const size = config.extraction.unitsPerBatch;
+    for (let i = 0; i * size < ids.length; i++) {
+      jobs.push({ key: `compare:${index}:${i}`, extractionRunId, unitIds: ids.slice(i * size, (i + 1) * size) });
+    }
+  }
+  getLog().info({ runId, comparisonId, models, units: units.length, jobs: jobs.length }, "comparison extraction planned");
   return jobs;
 }
 

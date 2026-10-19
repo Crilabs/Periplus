@@ -19,13 +19,13 @@ import {
 import { newId } from "@/lib/domain/ids";
 import { geoObjects, tiles } from "./geo";
 import { runs } from "./ops";
-import { chunks, documentVersions, sources } from "./sources";
+import { chunks, docTypeEnum, documentVersions, sources } from "./sources";
 
 /*
  * Mentions, extraction and AI batches (spec 06).
  * - mentions (only extraction_status may change), routes, route_stops are append-only (forbid_mutation).
  * - ambiguous_matches, unmatched_names, name_candidates, extraction_runs, extraction_units, ai_batches,
- *   ai_batch_items, pipeline_passes are working state. Only ambiguous_matches, name_candidates and
+ *   ai_batch_items, pipeline_passes, model_comparisons, model_comparison_units, model_comparison_ratings are working state. Only ambiguous_matches, name_candidates and
  *   extraction_units have updated_at, maintained by set_updated_at.
  * - The document classification lives on document_versions (classified_* columns, ruling M4-P11).
  * Triggers: drizzle/0024_text_triggers.sql.
@@ -189,6 +189,64 @@ export const nameCandidates = pgTable(
   (t) => [uniqueIndex("name_candidates_name_tile_unique").on(t.nameNormalized, t.tileId)],
 );
 
+/**
+ * Working state: a model comparison (spec 06, "200 Erwähnungen aus mindestens 8 Quellen und allen Dokumenttypen"): the
+ * two models, the sampled units (`model_comparison_units`) and, once started, the run that extracts them with both.
+ */
+export const modelComparisons = pgTable(
+  "model_comparisons",
+  {
+    id: uuid("id").primaryKey().$defaultFn(newId),
+    label: text("label").notNull(),
+    /** Model A and model B, in this order. */
+    models: text("models").array().notNull(),
+    runId: uuid("run_id").references(() => runs.id),
+    /** What the sample lacks against the spec when it was drawn (`pickComparisonUnits`), e.g. `sources:5/8`. */
+    shortfall: text("shortfall").array().notNull().default([]),
+    createdBy: text("created_by").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [check("model_comparisons_two_models", sql`cardinality(${t.models}) = 2`)],
+);
+
+/** Working state: one sampled (document version, geo object) of a model comparison, with its mentions. */
+export const modelComparisonUnits = pgTable(
+  "model_comparison_units",
+  {
+    comparisonId: uuid("comparison_id")
+      .notNull()
+      .references(() => modelComparisons.id),
+    documentVersionId: uuid("document_version_id")
+      .notNull()
+      .references(() => documentVersions.id),
+    geoObjectId: uuid("geo_object_id")
+      .notNull()
+      .references(() => geoObjects.id),
+    mentionIds: uuid("mention_ids").array().notNull(),
+    sourceId: uuid("source_id")
+      .notNull()
+      .references(() => sources.id),
+    docType: docTypeEnum("doc_type").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.comparisonId, t.documentVersionId, t.geoObjectId] })],
+);
+
+/** Working state: the verdict on one deviation (`unit_key` = `<versionId>:<geoObjectId>`, attribute); last one counts. */
+export const modelComparisonRatings = pgTable(
+  "model_comparison_ratings",
+  {
+    comparisonId: uuid("comparison_id")
+      .notNull()
+      .references(() => modelComparisons.id),
+    unitKey: text("unit_key").notNull(),
+    attribute: text("attribute").notNull(),
+    verdict: comparisonVerdictEnum("verdict").notNull(),
+    ratedBy: text("rated_by").notNull(),
+    ratedAt: timestamp("rated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.comparisonId, t.unitKey, t.attribute] })],
+);
+
 /** Working state: one extraction pass of a model over the units of a run (`task` extract-facts | extract-route). */
 export const extractionRuns = pgTable(
   "extraction_runs",
@@ -199,8 +257,8 @@ export const extractionRuns = pgTable(
     promptVersion: integer("prompt_version").notNull(),
     factSchemaVersion: text("fact_schema_version").notNull(),
     purpose: extractionPurposeEnum("purpose").notNull().default("regular"),
-    /** No foreign key yet: model_comparisons arrives with Task 19. */
-    comparisonId: uuid("comparison_id"),
+    /** The model comparison of a `comparison` run. */
+    comparisonId: uuid("comparison_id").references(() => modelComparisons.id),
     runId: uuid("run_id")
       .notNull()
       .references(() => runs.id),

@@ -29,6 +29,7 @@ export const ROUTE_POLICY: Record<string, RouteRule> = {
   "/documents/[id]": { kind: "admin" },
   "/documents/[id]/raw/[versionId]": { kind: "admin" },
   "/compare/converters": { kind: "admin" },
+  "/compare/models": { kind: "admin" },
   "/api/v1/ping": { kind: "api", scope: "delivery:read" },
 };
 

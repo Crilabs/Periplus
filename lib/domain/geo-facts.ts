@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import type { MatchKind } from "@/lib/db/schema";
@@ -44,40 +44,35 @@ function schemaOrder(cfg: AppConfig): Map<string, number> {
   return order;
 }
 
-/**
- * The facts of a geo object grouped by attribute (fact schema order, unknown keys after them by name), each group
- * newest observation first. `runs: "active"` keeps only active facts, `"all"` shows every fact with its `active` flag.
- */
-export async function geoFacts(
-  db: Db,
-  geoObjectId: string,
-  opts: { runs: "active" | "all" },
-  cfg: AppConfig = getConfig(),
-): Promise<AttributeFacts[]> {
-  const { rows } = await db.execute<{
-    id: string;
-    attribute: string;
-    value: unknown;
-    confidence: number;
-    observed_at: string;
-    mention_id: string | null;
-    computation_id: string | null;
-    review_decision_id: string | null;
-    quote: string | null;
-    quote_start: number | null;
-    quote_end: number | null;
-    chunk_text: string | null;
-    version_id: string | null;
-    document_id: string | null;
-    domain: string | null;
-    weight: number | null;
-    model: string | null;
-    extraction_run_id: string | null;
-    run_id: string | null;
-  }>(sql`
-    select f.id, f.attribute, f.value, f.confidence, f.observed_at::text as observed_at, f.mention_id, f.computation_id,
-      f.review_decision_id, f.quote, f.quote_start, f.quote_end, c.text as chunk_text, m.document_version_id as version_id,
-      v.document_id, s.domain, s.weight, r.model, f.extraction_run_id, r.run_id
+type FactRow = {
+  id: string;
+  geo_object_id: string;
+  attribute: string;
+  value: unknown;
+  confidence: number;
+  observed_at: string;
+  mention_id: string | null;
+  computation_id: string | null;
+  review_decision_id: string | null;
+  quote: string | null;
+  quote_start: number | null;
+  quote_end: number | null;
+  chunk_text: string | null;
+  version_id: string | null;
+  document_id: string | null;
+  domain: string | null;
+  weight: number | null;
+  model: string | null;
+  extraction_run_id: string | null;
+  run_id: string | null;
+};
+
+/** The facts matching `where` (on `facts f`) as `FactView`s, newest observation first. */
+async function loadFactViews(db: Db, where: SQL, cfg: AppConfig): Promise<FactView[]> {
+  const { rows } = await db.execute<FactRow>(sql`
+    select f.id, f.geo_object_id, f.attribute, f.value, f.confidence, f.observed_at::text as observed_at, f.mention_id,
+      f.computation_id, f.review_decision_id, f.quote, f.quote_start, f.quote_end, c.text as chunk_text,
+      m.document_version_id as version_id, v.document_id, s.domain, s.weight, r.model, f.extraction_run_id, r.run_id
     from facts f
     left join chunks c on c.id = f.quote_chunk_id
     left join mentions m on m.id = f.mention_id
@@ -85,20 +80,19 @@ export async function geoFacts(
     left join documents d on d.id = v.document_id
     left join sources s on s.id = d.source_id
     left join extraction_runs r on r.id = f.extraction_run_id
-    where f.geo_object_id = ${geoObjectId}
+    where ${where}
     order by f.observed_at desc, f.created_at desc, f.id
   `);
   const isActive = activeRunCache(db, cfg);
-  const groups = new Map<string, FactView[]>();
+  const views: FactView[] = [];
   for (const f of rows) {
     const origin: FactView["origin"] = f.mention_id ? "text" : f.computation_id ? "computed" : f.review_decision_id ? "review" : "observed";
-    const active = origin === "text" ? await isActive(f.version_id!, geoObjectId, f.extraction_run_id) : true;
-    if (opts.runs === "active" && !active) continue;
+    const active = origin === "text" ? await isActive(f.version_id!, f.geo_object_id, f.extraction_run_id) : true;
     const context =
       origin === "text" && f.chunk_text !== null && f.quote_start !== null && f.quote_end !== null
         ? quoteContext(f.chunk_text, f.quote_start, f.quote_end, QUOTE_CONTEXT_CHARS)
         : null;
-    const view: FactView = {
+    views.push({
       id: f.id,
       attribute: f.attribute,
       value: f.value,
@@ -113,8 +107,32 @@ export async function geoFacts(
       extractionRunId: f.extraction_run_id,
       runId: f.run_id,
       active,
-    };
-    groups.set(f.attribute, [...(groups.get(f.attribute) ?? []), view]);
+    });
+  }
+  return views;
+}
+
+/** The facts with the given ids as `FactView`s, keyed by id (a missing id is left out). */
+export async function factViewsByIds(db: Db, ids: string[], cfg: AppConfig = getConfig()): Promise<Map<string, FactView>> {
+  if (ids.length === 0) return new Map();
+  const views = await loadFactViews(db, sql`f.id in (select value::uuid from jsonb_array_elements_text(${JSON.stringify(ids)}::jsonb))`, cfg);
+  return new Map(views.map((v) => [v.id, v]));
+}
+
+/**
+ * The facts of a geo object grouped by attribute (fact schema order, unknown keys after them by name), each group
+ * newest observation first. `runs: "active"` keeps only active facts, `"all"` shows every fact with its `active` flag.
+ */
+export async function geoFacts(
+  db: Db,
+  geoObjectId: string,
+  opts: { runs: "active" | "all" },
+  cfg: AppConfig = getConfig(),
+): Promise<AttributeFacts[]> {
+  const groups = new Map<string, FactView[]>();
+  for (const view of await loadFactViews(db, sql`f.geo_object_id = ${geoObjectId}`, cfg)) {
+    if (opts.runs === "active" && !view.active) continue;
+    groups.set(view.attribute, [...(groups.get(view.attribute) ?? []), view]);
   }
   const order = schemaOrder(cfg);
   const rank = (key: string) => order.get(key) ?? Number.MAX_SAFE_INTEGER;

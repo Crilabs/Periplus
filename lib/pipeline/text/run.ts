@@ -1,9 +1,10 @@
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import type { RunScope } from "@/lib/domain/runs";
-import { startRun } from "@/lib/pipeline/runs";
+import { modelComparisons, modelComparisonUnits, runs } from "@/lib/db/schema";
+import { createRun, type RunScope } from "@/lib/domain/runs";
+import { enqueueStage, startRun } from "@/lib/pipeline/runs";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { CHECK_STAGE } from "./check";
 import { CLASSIFY_STAGE } from "./classify";
@@ -17,7 +18,7 @@ import { freezeTextRunParams, type TextRunParams } from "./versions";
 /*
  * Starters of text runs (ruling M4-P1: only starters live here, no stage or handler imports this module): "Texte
  * auswerten" (`startTextRun`: pending versions, a tile or area, or given versions, also the rematch after a review
- * decision) and "Reprozessieren" (`startReprocessRun`). Task 19 adds the model comparison starter.
+ * decision), "Reprozessieren" (`startReprocessRun`) and the model comparison run (`startModelComparisonRun`).
  */
 
 /** The stages of a text run, in order; the quote check (`extraction.check`) comes last. */
@@ -100,4 +101,49 @@ export async function startReprocessRun(
   await assertSelectionReady(db, selection, config);
   const params = await freezeTextRunParams(db, selection, config);
   return startRun(db, boss, { kind: "reprocess", scope: scopeOf(selection), stages: [...TEXT_RUN_STAGES], params, triggeredBy: input.triggeredBy });
+}
+
+/** The stages of a model comparison run: the extraction with both models, then the quote check of both runs. */
+export const MODEL_COMPARISON_STAGES = [EXTRACT_STAGE, CHECK_STAGE] as const;
+/** Scope id of model comparison runs (scope type `system`). */
+export const MODEL_COMPARISON_SCOPE = "model-comparison";
+
+/**
+ * "Lauf starten" of a model comparison (Task 19): a run of kind `stage` with `MODEL_COMPARISON_STAGES` and params
+ * `{ comparisonId, models, documentVersionIds }` (the versions of its units, for the record); the extraction stage
+ * plans one comparison extraction run per model from the comparison's units. Refused before the run exists
+ * (`RunScopeNotReady`) for an unknown comparison, one without units, and one whose run is queued, running or finished
+ * (a failed or ended run may be started again: a new run gets new extraction runs). Comparison row and run are written
+ * in one transaction under a row lock, so two starts never create two runs.
+ */
+export async function startModelComparisonRun(
+  db: Db,
+  boss: PgBoss,
+  input: { comparisonId: string; triggeredBy: string },
+): Promise<{ id: string }> {
+  const created = await db.transaction(async (tx) => {
+    const [comparison] = await tx.select().from(modelComparisons).where(eq(modelComparisons.id, input.comparisonId)).for("update");
+    if (!comparison) throw new RunScopeNotReady("unknown_comparison", `model comparison ${input.comparisonId} does not exist`);
+    if (comparison.runId) {
+      const [run] = await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, comparison.runId));
+      if (run && run.status !== "failed") throw new RunScopeNotReady("comparison_started", `model comparison ${comparison.id} has run ${comparison.runId}`);
+    }
+    const units = await tx
+      .select({ versionId: modelComparisonUnits.documentVersionId })
+      .from(modelComparisonUnits)
+      .where(eq(modelComparisonUnits.comparisonId, comparison.id));
+    if (units.length === 0) throw new RunScopeNotReady("comparison_without_units", `model comparison ${comparison.id} has no units`);
+    const documentVersionIds = [...new Set(units.map((u) => u.versionId))].sort();
+    const { id } = await createRun(tx, {
+      kind: "stage",
+      scope: { type: "system", id: MODEL_COMPARISON_SCOPE },
+      stages: [...MODEL_COMPARISON_STAGES],
+      params: { comparisonId: comparison.id, models: comparison.models, documentVersionIds },
+      triggeredBy: input.triggeredBy,
+    });
+    await tx.update(modelComparisons).set({ runId: id }).where(eq(modelComparisons.id, comparison.id));
+    return { id };
+  });
+  await enqueueStage(db, boss, created.id, MODEL_COMPARISON_STAGES[0]);
+  return created;
 }
