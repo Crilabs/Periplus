@@ -12,6 +12,7 @@ import { pingHandler } from "./handlers/system-ping";
 import {
   classifyDocumentVersionHandler,
   disambiguateMentionsHandler,
+  checkExtractionRunHandler,
   extractMentionsHandler,
   geocodeNameCandidateHandler,
   mentionsBatchHandler,
@@ -44,4 +45,5 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "mentions.disambiguate": disambiguateMentionsHandler,
   "mentions.geocode": geocodeNameCandidateHandler,
   "extraction.mention": extractMentionsHandler,
+  "extraction.check": checkExtractionRunHandler,
 };

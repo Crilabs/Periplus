@@ -15,6 +15,7 @@ import { seedTileStage } from "./handlers/seed";
 import { pingStage } from "./handlers/system-ping";
 import {
   classifyDocumentVersionStage,
+  extractionCheckStage,
   extractionMentionStage,
   mentionsBatchStage,
   mentionsDisambiguateStage,
@@ -47,4 +48,5 @@ export const STAGES: Record<string, StageDefinition> = {
   [mentionsDisambiguateStage.name]: mentionsDisambiguateStage,
   [mentionsGeocodeStage.name]: mentionsGeocodeStage,
   [extractionMentionStage.name]: extractionMentionStage,
+  [extractionCheckStage.name]: extractionCheckStage,
 };

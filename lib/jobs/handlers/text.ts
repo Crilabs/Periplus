@@ -3,6 +3,7 @@ import { getTransport } from "@/lib/adapters/http";
 import { getArchive } from "@/lib/adapters/s3";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import type { StageDefinition } from "@/lib/pipeline/runs";
+import { CHECK_QUEUE, CHECK_STAGE, checkExtractionRun, planCheck } from "@/lib/pipeline/text/check";
 import { CLASSIFY_QUEUE, CLASSIFY_STAGE, classifyVersions, planClassify } from "@/lib/pipeline/text/classify";
 import { DISAMBIGUATE_QUEUE, DISAMBIGUATE_STAGE, disambiguateMatches, planDisambiguate } from "@/lib/pipeline/text/disambiguate";
 import { EXTRACT_QUEUE, EXTRACT_STAGE, extractUnits, planExtraction } from "@/lib/pipeline/text/extract";
@@ -14,7 +15,8 @@ import { modelClientFor } from "./ai-batch";
  * Text stages are planned lazily, when each stage starts (`enqueueStage`). They therefore plan from the run's frozen
  * version set (`frozenRunVersions`, ruling M4-E-R2), never from a re-resolved `pending`/`tileId`/`areaKey`: the
  * passes written by `mentions.batch` would make `pending` empty for every later stage. `mentions.geocode` plans from it
- * as well, and so does `extraction.mention`; the stages added later (routes, check) must too.
+ * as well, and so does `extraction.mention`. `extraction.check` plans from the run's extraction runs, which come from
+ * that set.
  */
 
 /** Stage `classify.document_version`: one job per `unitsPerBatch` versions of the text run. */
@@ -121,4 +123,25 @@ export const extractMentionsHandler: JobHandler<JobData> = async (data, ctx) => 
   const job = extractJobSchema.parse(data);
   const result = await extractUnits(ctx.db, { model: modelClientFor(ctx.db), boss: ctx.boss }, job);
   ctx.log.info({ units: job.unitIds.length, ...result }, "extraction batch submitted");
+};
+
+/** Stage `extraction.check`: one job per extraction run of the run (stats, quote check, finished or blocked). */
+export const extractionCheckStage: StageDefinition = {
+  name: CHECK_STAGE,
+  queue: CHECK_QUEUE,
+  plan: (db, run) => planCheck(db, run),
+};
+
+const checkJobSchema = z.object({
+  runId: z.string().uuid(),
+  stage: z.string().min(1),
+  key: z.string().min(1),
+  extractionRunId: z.string().uuid(),
+});
+
+/** Checks the quotes of one extraction run again and finishes or blocks it. */
+export const checkExtractionRunHandler: JobHandler<JobData> = async (data, ctx) => {
+  const job = checkJobSchema.parse(data);
+  const result = await checkExtractionRun(ctx.db, job.extractionRunId);
+  ctx.log.info({ extractionRunId: job.extractionRunId, facts: result.facts, verified: result.verified, ratio: result.ratio }, "extraction run checked");
 };

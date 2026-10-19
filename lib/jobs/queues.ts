@@ -23,6 +23,7 @@ export const QUEUES = [
   "mentions.disambiguate",
   "mentions.geocode",
   "extraction.mention",
+  "extraction.check",
 ] as const;
 export type QueueName = (typeof QUEUES)[number];
 
