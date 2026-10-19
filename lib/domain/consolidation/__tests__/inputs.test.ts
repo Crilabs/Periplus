@@ -1,5 +1,5 @@
 import { eq, sql } from "drizzle-orm";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { getConsolidationConfig, loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
@@ -19,7 +19,7 @@ import {
 import type { GeoObjectType } from "@/lib/db/schema/geo";
 import { loadContext, loadInputs } from "@/lib/domain/consolidation/inputs";
 import { newId } from "@/lib/domain/ids";
-import { withRollback } from "@/test/db";
+import { testDb, withRollback } from "@/test/db";
 import { insertNamedObject, insertTestExtractionRun, insertTestRun, insertTestTile, insertTestVersion } from "@/test/text";
 
 /*
@@ -30,7 +30,12 @@ import { insertNamedObject, insertTestExtractionRun, insertTestRun, insertTestTi
 const config = loadConfig("config");
 const taskConfig = config.models.tasks["extract-facts"]!;
 const cfg = getConsolidationConfig();
-const opts = { cfg, schemaVersion: "v2", appConfig: config };
+/** The run date is the database's date: test objects are valid from it (set before the tests run). */
+const opts = { cfg, schemaVersion: "v2", appConfig: config, today: "" };
+beforeAll(async () => {
+  const { rows } = await testDb().execute<{ today: string }>(sql`select current_date::text as today`);
+  opts.today = rows[0]!.today;
+});
 
 const LON = 21.0;
 const LAT = 35.2;
@@ -247,6 +252,140 @@ describe("loadInputs", () => {
       expect(byFact.get(uncheckedFact)).toMatchObject({ gone: false, lastConfirmedAt: "2026-10-19", dateKnown: false });
     }));
 
+  it("text a later version no longer contains is confirmed last by the newest version that still had it (ruling M5-D-R2)", () =>
+    withRollback(async (tx) => {
+      const { objectId } = await placeObject(tx);
+      const sourceId = await source(tx);
+      const text = "Kolona: good holding in sand.";
+      const checked = new Date("2026-10-15T10:00:00Z");
+
+      /** A first version holding `text`, the mention and the fact on its chunk; then `next` later versions. */
+      async function document(next: Array<{ fetchedAt: string; carry: boolean }>) {
+        const v1 = await insertTestVersion(tx, [text], { sourceId, fetchedAt: new Date("2026-08-01T10:00:00Z") });
+        const [m] = await tx
+          .insert(mentions)
+          .values({ documentVersionId: v1.versionId, chunkId: v1.chunkIds[0]!, geoObjectId: objectId, surface: "Kolona", charStart: 0, charEnd: 6, observedAt: "2026-08-01", confidence: 1, matchKind: "deterministic" })
+          .returning({ id: mentions.id });
+        const mention: Mention = { versionId: v1.versionId, chunkId: v1.chunkIds[0]!, mentionId: m!.id, documentId: v1.documentId, text };
+        const factId = await textFact(tx, objectId, mention, await extractionRun(tx, objectId, mention), { observedAt: "2026-08-01" });
+        for (const n of next) {
+          await insertTestVersion(tx, [n.carry ? text : "Kolona: the taverna is closed."], {
+            sourceId,
+            documentId: v1.documentId,
+            fetchedAt: new Date(n.fetchedAt),
+            carried: n.carry ? { 0: v1.chunkIds[0]! } : {},
+          });
+        }
+        await tx.update(documents).set({ lastCheckedAt: checked }).where(eq(documents.id, v1.documentId));
+        return factId;
+      }
+
+      const dropped = await document([{ fetchedAt: "2026-09-01T10:00:00Z", carry: false }]);
+      const carried = await document([{ fetchedAt: "2026-09-01T10:00:00Z", carry: true }]);
+      const carriedThenDropped = await document([
+        { fetchedAt: "2026-09-01T10:00:00Z", carry: true },
+        { fetchedAt: "2026-10-01T10:00:00Z", carry: false },
+      ]);
+
+      const { inputs } = await loadInputs(tx, objectId, opts);
+      const confirmed = new Map(inputs.map((i) => [i.factId, i.lastConfirmedAt]));
+      // the second version dropped the text: last seen in the first version
+      expect(confirmed.get(dropped)).toBe("2026-08-01");
+      // carried into the current version: the document's last check confirms it
+      expect(confirmed.get(carried)).toBe("2026-10-15");
+      // carried once, then dropped: last seen in the second version
+      expect(confirmed.get(carriedThenDropped)).toBe("2026-09-01");
+      expect(inputs.every((i) => i.observedAt === "2026-08-01" && !i.gone)).toBe(true);
+    }));
+
+  it("two facts of a duplicated mention enter as two inputs of one source", () =>
+    withRollback(async (tx) => {
+      const { objectId } = await placeObject(tx);
+      const sourceId = await source(tx);
+      const matcher = await mention(tx, objectId, { sourceId });
+      // the model found the place again next to the matcher's span (mentions can duplicate)
+      const [dup] = await tx
+        .insert(mentions)
+        .values({ documentVersionId: matcher.versionId, chunkId: matcher.chunkId, geoObjectId: objectId, surface: "olona", charStart: 1, charEnd: 6, observedAt: "2026-10-19", confidence: 0.9, matchKind: "model" })
+        .returning({ id: mentions.id });
+      const run = await extractionRun(tx, objectId, matcher);
+      const a = await textFact(tx, objectId, matcher, run);
+      const b = await textFact(tx, objectId, { ...matcher, mentionId: dup!.id }, run);
+
+      const { inputs, ignored } = await loadInputs(tx, objectId, opts);
+      expect(inputs.map((i) => [i.factId, i.sourceKey, i.documentId])).toEqual(
+        [a, b].sort().map((id) => [id, `source:${sourceId}`, matcher.documentId]),
+      );
+      expect(ignored).toEqual({ inactiveRun: 0, unknownAttribute: 0 });
+    }));
+
+  it("the survivor of a merge loads the facts of the objects merged into it, not their computations", () =>
+    withRollback(async (tx) => {
+      const { objectId: survivor } = await placeObject(tx);
+      const { objectId: merged } = await placeObject(tx, { name: "Kolona Bay" });
+      const { objectId: mergedEarlier } = await placeObject(tx, { name: "Ormos Kolona" });
+      const own = await mention(tx, survivor, { sourceId: await source(tx) });
+      const ownFact = await textFact(tx, survivor, own, await extractionRun(tx, survivor, own));
+      // facts of the merged objects: from their own runs (units are per object), a review fact, a computation
+      const m = await mention(tx, merged, { sourceId: await source(tx) });
+      const mergedFact = await textFact(tx, merged, m, await extractionRun(tx, merged, m), { value: "moderate" });
+      const e = await mention(tx, mergedEarlier, { sourceId: await source(tx) });
+      const earlierFact = await textFact(tx, mergedEarlier, e, await extractionRun(tx, mergedEarlier, e), { value: "poor" });
+      const { decisionId } = await reviewTask(tx, merged, { kind: "conflict", attribute: "holding", key: "k", status: "decided", action: "value_a" });
+      const [review] = await tx
+        .insert(facts)
+        .values({ geoObjectId: merged, attribute: "holding", value: "good", reviewDecisionId: decisionId, observedAt: "2026-10-12", confidence: 0.95, factSchemaVersion: "v2" })
+        .returning({ id: facts.id });
+      await computation(tx, merged, new Date("2026-10-01T10:00:00Z"), 0.4);
+      // mergedEarlier was merged into merged, which was then merged into the survivor
+      await tx.execute(sql`update geo_objects set merged_into_id = ${merged}, valid_to = current_date where id = ${mergedEarlier}`);
+      await tx.execute(sql`update geo_objects set merged_into_id = ${survivor}, valid_to = current_date where id = ${merged}`);
+
+      const { inputs, ignored } = await loadInputs(tx, survivor, opts);
+      expect(inputs.map((i) => i.factId).sort()).toEqual([ownFact, mergedFact, earlierFact, review!.id].sort());
+      expect(inputs.some((i) => i.origin === "computed")).toBe(false);
+      expect(ignored).toEqual({ inactiveRun: 0, unknownAttribute: 0 });
+      // the merged object itself is consolidated only as part of its survivor
+      expect(await loadContext(tx, merged, cfg, opts.today)).toBeNull();
+      expect(await loadContext(tx, survivor, cfg, opts.today)).toMatchObject({ documentsCount: 3, sourcesCount: 3 });
+    }));
+
+  it("facts of a rejected or ended source do not count, a paused source still counts", () =>
+    withRollback(async (tx) => {
+      const { objectId } = await placeObject(tx);
+      const factOf: Record<string, string> = {};
+      const ids: Record<string, string> = {};
+      for (const name of ["approved", "paused", "rejected", "ended", "endsLater"]) {
+        ids[name] = await source(tx);
+        const m = await mention(tx, objectId, { sourceId: ids[name] });
+        factOf[name] = await textFact(tx, objectId, m, await extractionRun(tx, objectId, m));
+      }
+      await tx.update(sources).set({ status: "approved" }).where(eq(sources.id, ids.approved!));
+      await tx.update(sources).set({ status: "paused" }).where(eq(sources.id, ids.paused!));
+      await tx.update(sources).set({ status: "rejected" }).where(eq(sources.id, ids.rejected!));
+      await tx.execute(sql`update sources set valid_to = ${opts.today}::date where id = ${ids.ended!}`);
+      await tx.execute(sql`update sources set valid_to = ${opts.today}::date + 1 where id = ${ids.endsLater!}`);
+
+      const { inputs } = await loadInputs(tx, objectId, opts);
+      expect(inputs.map((i) => i.factId).sort()).toEqual([factOf.approved, factOf.paused, factOf.endsLater].sort());
+      expect(await loadContext(tx, objectId, cfg, opts.today)).toMatchObject({ documentsCount: 3, sourcesCount: 3 });
+    }));
+
+  it("validity is judged on the run date, not the database date", () =>
+    withRollback(async (tx) => {
+      const { objectId } = await placeObject(tx);
+      const poi = await insertNamedObject(tx, { type: "poi", category: "food", names: [{ name: "Taverna Nea" }], lon: LON + 300 * LON_PER_M, lat: LAT });
+      const { rows } = await tx.execute<{ yesterday: string }>(sql`select (${opts.today}::date - 1)::text as yesterday`);
+      const yesterday = rows[0]!.yesterday;
+
+      // objects created today were not valid yesterday
+      const before = await loadInputs(tx, objectId, { ...opts, today: yesterday });
+      expect(before.inputs.some((i) => i.poiId === poi)).toBe(false);
+      expect(await loadContext(tx, objectId, cfg, yesterday)).toBeNull();
+      expect((await loadInputs(tx, objectId, opts)).inputs.some((i) => i.poiId === poi)).toBe(true);
+      expect(await loadContext(tx, objectId, cfg, opts.today)).not.toBeNull();
+    }));
+
   it("a review fact enters with weight 1 and its stored confidence", () =>
     withRollback(async (tx) => {
       const { objectId } = await placeObject(tx);
@@ -311,20 +450,20 @@ describe("loadContext", () => {
   it("a rejected place has no context; an islet has level island", () =>
     withRollback(async (tx) => {
       const rejected = await placeObject(tx, { status: "rejected" });
-      expect(await loadContext(tx, rejected.objectId, cfg)).toBeNull();
+      expect(await loadContext(tx, rejected.objectId, cfg, opts.today)).toBeNull();
 
       const merged = await placeObject(tx);
       await tx.execute(sql`update places set merged_into_id = ${rejected.placeId} where id = ${merged.placeId}`);
-      expect(await loadContext(tx, merged.objectId, cfg)).toBeNull();
+      expect(await loadContext(tx, merged.objectId, cfg, opts.today)).toBeNull();
 
       const settlement = await insertNamedObject(tx, { type: "settlement", names: [{ name: "Chora" }], lon: LON, lat: LAT });
-      expect(await loadContext(tx, settlement, cfg)).toBeNull();
-      expect(await loadContext(tx, newId(), cfg)).toBeNull();
+      expect(await loadContext(tx, settlement, cfg, opts.today)).toBeNull();
+      expect(await loadContext(tx, newId(), cfg, opts.today)).toBeNull();
 
       const islet = await insertNamedObject(tx, { type: "islet", names: [{ name: "Nisida" }], lon: LON, lat: LAT });
-      expect(await loadContext(tx, islet, cfg)).toMatchObject({ level: "island", place: null, identity: { name: "Nisida", parentId: null } });
+      expect(await loadContext(tx, islet, cfg, opts.today)).toMatchObject({ level: "island", place: null, identity: { name: "Nisida", parentId: null } });
       await tx.execute(sql`update geo_objects set valid_to = current_date where id = ${islet}`);
-      expect(await loadContext(tx, islet, cfg)).toBeNull();
+      expect(await loadContext(tx, islet, cfg, opts.today)).toBeNull();
     }));
 
   it("documents and sources count distinct documents with mentions", () =>
@@ -338,7 +477,7 @@ describe("loadContext", () => {
       await mention(tx, objectId, { sourceId });
       await mention(tx, (await placeObject(tx, { name: "Other" })).objectId, { sourceId: await source(tx) });
 
-      expect(await loadContext(tx, objectId, cfg)).toMatchObject({ documentsCount: 2, sourcesCount: 1 });
+      expect(await loadContext(tx, objectId, cfg, opts.today)).toMatchObject({ documentsCount: 2, sourcesCount: 1 });
     }));
 
   it("place, identity, tile cycle, computation gaps and review tasks", () =>
@@ -356,7 +495,7 @@ describe("loadContext", () => {
       // another object's task with a similar subject never counts
       await reviewTask(tx, (await placeObject(tx, { name: "Other" })).objectId, { kind: "conflict", attribute: "holding", key: "foreign", status: "decided", action: "seasonal" });
 
-      const ctx = (await loadContext(tx, objectId, cfg))!;
+      const ctx = (await loadContext(tx, objectId, cfg, opts.today))!;
       const { rows } = await tx.execute<{ h: string }>(
         sql`select md5(ST_AsEWKB(ST_SnapToGrid(geom, 1e-6))) as h from geo_objects where id = ${objectId}`,
       );
@@ -377,6 +516,6 @@ describe("loadContext", () => {
     withRollback(async (tx) => {
       // far outside every grid the tests create
       const objectId = await insertNamedObject(tx, { type: "cape", names: [{ name: "Akra" }], lon: -170.1, lat: -60.1 });
-      expect(await loadContext(tx, objectId, cfg)).toMatchObject({ level: "cape_strait", tileCycleDays: cfg.expiry.defaultCycleDays, areaId: null });
+      expect(await loadContext(tx, objectId, cfg, opts.today)).toMatchObject({ level: "cape_strait", tileCycleDays: cfg.expiry.defaultCycleDays, areaId: null });
     }));
 });

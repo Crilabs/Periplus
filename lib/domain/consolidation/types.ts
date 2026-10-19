@@ -109,6 +109,8 @@ export type ProfileSnapshot = {
  * One input of a rule: a fact (text, review, observation), a computation output or a POI. `sourceKey` identifies the
  * independent source (documents of one source count once); `sourceWeight` is the source's weight (`sources.weight`,
  * or `weights.computed`/`review`/`observed`/`poi`); `dateKnown false` means `observedAt` is no observation date.
+ * Expiry (`lastConfirmedAt` older than two tile cycles) applies to text and observation inputs only: inputs with
+ * `dateKnown false` (POIs), computed inputs and review inputs never expire (ruling M5-D-R2).
  */
 export type ConsolidationInput = {
   factId: string | null;

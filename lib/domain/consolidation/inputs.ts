@@ -21,6 +21,10 @@ import type { ConflictResolution, ConsolidationInput } from "./types";
  * - One source is one `sourceKey` (documents of one source count once, spec 07 Unabhängigkeit); duplicated mentions
  *   of one span enter as several inputs of one source, which every rule aggregates per source (ruling M5-P4).
  * - POIs near a place support `highlight.<category>` as inputs only, never as fact rows (ruling M5-P6).
+ * - A gazetteer merge means "same place": the facts of objects merged into the consolidated one (the `merged_into_id`
+ *   chain) count for it (ruling M5-D-R2); their computations do not (they describe the ended geometry).
+ * - Facts of a rejected or ended source do not count; a paused one still counts (a pause only stops crawling).
+ * - Validity (objects, POIs, tiles, sources) is judged on the run date `today`, not the database clock.
  */
 
 export type LoadInputsOptions = {
@@ -29,6 +33,8 @@ export type LoadInputsOptions = {
   schemaVersion: string;
   /** The configuration whose extraction model, prompt and fact schema decide the active run (ruling M5-P2, P22). */
   appConfig?: AppConfig;
+  /** The run date (`YYYY-MM-DD`): validity of sources and POIs. */
+  today: string;
 };
 
 export type LoadedInputs = {
@@ -38,6 +44,7 @@ export type LoadedInputs = {
 
 type TextFactRow = {
   id: string;
+  geo_object_id: string;
   attribute: string;
   value: unknown;
   confidence: number;
@@ -57,6 +64,22 @@ type PoiRow = { id: string; category: string; origin: string; valid_from: string
 
 const utcDate = (d: Date) => d.toISOString().slice(0, 10);
 
+/** The ids of the object and of every object merged into it, transitively (the `merged_into_id` chain). */
+function mergedChainSql(geoObjectId: string) {
+  return sql`(
+    with recursive chain(id) as (
+      select ${geoObjectId}::uuid
+      union
+      select o.id from geo_objects o join chain on o.merged_into_id = chain.id
+    )
+    select id from chain
+  )`;
+}
+
+/** Source alias `s` is neither rejected nor ended on `today`. */
+const countingSourceSql = (today: string) =>
+  sql`s.status <> 'rejected' and (s.valid_to is null or s.valid_to > ${today}::date)`;
+
 /**
  * Every input of the geo object's consolidation: text facts of the active runs, the facts of the newest computation
  * per kind, review facts, observation facts and (places only) POI support for `highlight.<category>`. Attributes the
@@ -74,7 +97,7 @@ export async function loadInputs(db: Db, geoObjectId: string, opts: LoadInputsOp
     ...(await computedInputs(db, geoObjectId, cfg)),
     ...(await basisInputs(db, geoObjectId, cfg, "review")),
     ...(await basisInputs(db, geoObjectId, cfg, "observed")),
-    ...(level === "place" ? await poiInputs(db, geoObjectId, cfg) : []),
+    ...(level === "place" ? await poiInputs(db, geoObjectId, cfg, opts.today) : []),
   ];
 
   const known = new Set(getFactSchema(opts.schemaVersion).levels[level].map((d) => d.key));
@@ -101,12 +124,17 @@ function byAttributeSourceId(a: ConsolidationInput, b: ConsolidationInput): numb
 }
 
 /**
- * Text facts (basis `mention_id`) of the active extraction run of their (version, object), in one query joined to
- * version, document and source; the active run and the effective version meta are resolved once per version.
+ * Text facts (basis `mention_id`) of the object and the objects merged into it, from the active extraction run of
+ * their (version, fact object), in one query joined to version, document and source (rejected and ended sources left
+ * out); the active run is resolved once per (version, object), the effective version meta once per version.
  * `sourceType` is the version's effective document type (classification first, ruling M5-P24). `dateKnown` is false
  * only when the observation date is the version's fetch date (basis `fetched`) and the fact did not state another.
- * A gone document keeps its `observedAt` but is confirmed last on that date; an active one on its last check, else
- * on the version's fetch date (ruling M5-P21).
+ *
+ * `lastConfirmedAt` (rulings M5-P21, M5-D-R2): a gone document keeps its `observedAt` and is confirmed last on that
+ * date. The text of an active document is current when the fact's chunk (its origin chunk, if carried) is in the
+ * document's current version or carried into it; then it is confirmed on the document's last check, else on the
+ * current version's fetch date. Text the document no longer contains was confirmed last on the fetch date of the
+ * newest version that still contained it.
  */
 async function textInputs(
   db: Db,
@@ -115,31 +143,47 @@ async function textInputs(
   ignored: LoadedInputs["ignored"],
 ): Promise<ConsolidationInput[]> {
   const { rows } = await db.execute<TextFactRow>(sql`
-    select f.id, f.attribute, f.value, f.confidence, f.observed_at::text as observed_at, f.extraction_run_id,
-           v.id as version_id, d.id as document_id, d.source_id, s.weight as source_weight, d.status = 'gone' as gone,
+    select f.id, f.geo_object_id, f.attribute, f.value, f.confidence, f.observed_at::text as observed_at,
+           f.extraction_run_id, v.id as version_id, d.id as document_id, d.source_id, s.weight as source_weight,
+           d.status = 'gone' as gone,
            case when d.status = 'gone' then f.observed_at::text
-                else coalesce((d.last_checked_at at time zone 'UTC')::date, (v.fetched_at at time zone 'UTC')::date)::text
+                when seen.current then coalesce((d.last_checked_at at time zone 'UTC')::date, (seen.last_fetched at time zone 'UTC')::date)::text
+                else (seen.last_fetched at time zone 'UTC')::date::text
            end as last_confirmed
     from facts f
     join mentions m on m.id = f.mention_id
     join document_versions v on v.id = m.document_version_id
     join documents d on d.id = v.document_id
     join sources s on s.id = d.source_id
-    where f.geo_object_id = ${geoObjectId} and f.mention_id is not null
+    join chunks mc on mc.id = m.chunk_id
+    join chunks oc on oc.id = coalesce(mc.carried_from_chunk_id, mc.id)
+    -- the versions of the document holding the text: the origin chunk's version and those carrying the origin chunk
+    -- (carried_from_chunk_id always names the origin, one level)
+    cross join lateral (
+      select bool_or(hv.id = d.current_version_id) as current, max(hv.fetched_at) as last_fetched
+      from document_versions hv
+      where hv.document_id = d.id
+        and (hv.id = oc.document_version_id
+             or exists (select 1 from chunks c where c.document_version_id = hv.id and c.carried_from_chunk_id = oc.id))
+    ) seen
+    where f.geo_object_id in ${mergedChainSql(geoObjectId)} and f.mention_id is not null and ${countingSourceSql(opts.today)}
     order by f.id
   `);
 
+  const unitKey = (versionId: string, objectId: string) => `${versionId}:${objectId}`;
   const active = new Map<string, string | null>();
   const meta = new Map<string, EffectiveVersionMeta>();
-  for (const versionId of [...new Set(rows.map((r) => r.version_id))].sort()) {
-    const run = await activeExtractionRun(db, versionId, geoObjectId, opts.appConfig);
-    active.set(versionId, run?.id ?? null);
-    if (run) meta.set(versionId, await effectiveVersionMeta(db, versionId));
+  const units = new Map(rows.map((r) => [unitKey(r.version_id, r.geo_object_id), r]));
+  for (const key of [...units.keys()].sort()) {
+    const { version_id: versionId, geo_object_id: objectId } = units.get(key)!;
+    const run = await activeExtractionRun(db, versionId, objectId, opts.appConfig);
+    active.set(key, run?.id ?? null);
+    if (run && !meta.has(versionId)) meta.set(versionId, await effectiveVersionMeta(db, versionId));
   }
 
   const inputs: ConsolidationInput[] = [];
   for (const r of rows) {
-    if (r.extraction_run_id !== active.get(r.version_id)) {
+    if (r.extraction_run_id !== active.get(unitKey(r.version_id, r.geo_object_id))) {
       ignored.inactiveRun++;
       continue;
     }
@@ -194,7 +238,8 @@ async function computedInputs(db: Db, geoObjectId: string, cfg: ConsolidationCon
 
 /**
  * Review facts (`review_decision_id`, source `review`, `weights.review`) or observation facts (`observation_id`,
- * source `observation:<id>`, `weights.observed`; none before M8), with their stored confidence.
+ * source `observation:<id>`, `weights.observed`; none before M8) of the object and the objects merged into it, with
+ * their stored confidence.
  */
 async function basisInputs(
   db: Db,
@@ -206,7 +251,7 @@ async function basisInputs(
   const { rows } = await db.execute<BasisFactRow>(sql`
     select f.id, f.attribute, f.value, f.confidence, f.observed_at::text as observed_at, ${basis}::text as basis_id
     from facts f
-    where f.geo_object_id = ${geoObjectId} and ${basis} is not null
+    where f.geo_object_id in ${mergedChainSql(geoObjectId)} and ${basis} is not null
     order by f.id
   `);
   return rows.map((r) => ({
@@ -234,7 +279,7 @@ async function basisInputs(
  * (`gazetteer:<origin>`, all OSM POIs are one source), `weights.poi`, `poiConfidence`, `observedAt` = `valid_from`
  * with `dateKnown false` (an import date is no observation: no time course, no expiry).
  */
-async function poiInputs(db: Db, geoObjectId: string, cfg: ConsolidationConfig): Promise<ConsolidationInput[]> {
+async function poiInputs(db: Db, geoObjectId: string, cfg: ConsolidationConfig, today: string): Promise<ConsolidationInput[]> {
   const radiusM = cfg.rules.highlight.poiRadiusM;
   const { rows } = await db.execute<PoiRow>(sql`
     select o.id, o.category::text as category, o.origin::text as origin, o.valid_from::text as valid_from,
@@ -242,7 +287,7 @@ async function poiInputs(db: Db, geoObjectId: string, cfg: ConsolidationConfig):
     from places p
     join geo_objects o
       on o.type = 'poi' and o.category is not null and o.merged_into_id is null
-     and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
+     and o.valid_from <= ${today}::date and (o.valid_to is null or o.valid_to > ${today}::date)
      -- box prefilter (index), then the exact distance in metres
      and o.geom && ST_Expand(p.position, ${radiusM}::float8 / (111320 * cos(radians(ST_Y(p.position)))))
      and ST_DWithin(o.geom::geography, p.position::geography, ${radiusM}::float8)
@@ -319,14 +364,20 @@ type TaskRow = { id: string; kind: "conflict" | "uncertain_change"; status: stri
 const RESOLUTION_BY_ACTION: Record<string, ConflictResolution> = { seasonal: "seasonal", leave_open: "left_open" };
 
 /**
- * The profile context of a geo object; null for an unknown or invalid (ended, merged) object, one without a fact
- * level, or one whose place is rejected or merged. The tile is the place's tile, else the tile of the object's
- * centroid; without a valid tile the cycle is `expiry.defaultCycleDays` and there is no area. Documents and sources
- * count the distinct ones with a mention of the object.
+ * The profile context of a geo object on the run date `today`; null for an unknown or invalid (ended, merged) object,
+ * one without a fact level, or one whose place is rejected or merged (a merged object is consolidated as part of its
+ * survivor). The tile is the place's tile, else the tile of the object's centroid; without a valid tile the cycle is
+ * `expiry.defaultCycleDays` and there is no area. Documents and sources count the distinct ones with a mention of the
+ * object or of an object merged into it, from sources that are neither rejected nor ended (as `loadInputs`).
  */
-export async function loadContext(db: Db, geoObjectId: string, cfg: ConsolidationConfig): Promise<ProfileContext | null> {
+export async function loadContext(
+  db: Db,
+  geoObjectId: string,
+  cfg: ConsolidationConfig,
+  today: string,
+): Promise<ProfileContext | null> {
   const { rows } = await db.execute<ObjectRow>(sql`
-    select o.merged_into_id is null and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date) as valid,
+    select o.merged_into_id is null and o.valid_from <= ${today}::date and (o.valid_to is null or o.valid_to > ${today}::date) as valid,
            o.parent_id, ${displayNameSql(sql`o.id`)} as name,
            md5(ST_AsEWKB(ST_SnapToGrid(o.geom, 1e-6))) as geometry_hash,
            p.id as place_id, p.kind as place_kind, p.status as place_status, p.status_reason as place_status_reason,
@@ -336,7 +387,7 @@ export async function loadContext(db: Db, geoObjectId: string, cfg: Consolidatio
     from geo_objects o
     left join places p on p.geo_object_id = o.id
     left join tiles t on t.id = coalesce(p.tile_id, tile_id_for(o.centroid))
-      and t.valid_from <= current_date and (t.valid_to is null or t.valid_to > current_date)
+      and t.valid_from <= ${today}::date and (t.valid_to is null or t.valid_to > ${today}::date)
     where o.id = ${geoObjectId}
   `);
   const o = rows[0];
@@ -362,7 +413,8 @@ export async function loadContext(db: Db, geoObjectId: string, cfg: Consolidatio
     from mentions m
     join document_versions v on v.id = m.document_version_id
     join documents d on d.id = v.document_id
-    where m.geo_object_id = ${geoObjectId}
+    join sources s on s.id = d.source_id
+    where m.geo_object_id in ${mergedChainSql(geoObjectId)} and ${countingSourceSql(today)}
   `);
 
   const computationGaps: Record<string, string> = {};
