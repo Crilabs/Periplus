@@ -53,6 +53,15 @@ describe("shelterRule", () => {
     expect(r).toMatchObject({ value: 0.3, origin: "text", confidence: 0.8 });
   });
 
+  it("a clamped basis whose value the result does not carry leaves the support (bundle B re-review)", () => {
+    const r = shelterRule([c(0.6, { confidence: 0.9 }), t(0.1, { confidence: 0.5 })], ctx)!;
+    // the base confidence comes from the text setting the value, not from the stronger computation the clamp moved
+    expect(r).toMatchObject({ value: 0.3, origin: "text", confidence: 0.5 });
+    expect(r.support.map((i) => i.origin)).toEqual(["text"]);
+    // an unclamped basis carrying the result stays in the support
+    expect(shelterRule([c(0.6, { confidence: 0.9 }), t(0.6)], ctx)!.support.map((i) => i.origin).sort()).toEqual(["computed", "text"]);
+  });
+
   it("an older review is a non-ageing correction input: a newer computation or a better text cannot override it", () => {
     const rev = review({ value: 0.3, observedAt: "2025-01-01", confidence: 0.5 });
     expect(shelterRule([rev, c(0.6, { observedAt: "2026-10-19" })], ctx)).toMatchObject({ value: 0.3, origin: "review", confidence: 0.95 });

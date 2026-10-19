@@ -38,7 +38,8 @@ function harbourFloor(ctx: RuleContext): RuleResult {
 
 /**
  * The basis corrected by the worst correction (clamped to ±`maxCorrection`). `setters` carry the worse value. The
- * second-source bonus counts only inputs carrying the result value: the basis only when the clamp left it unchanged.
+ * support (base confidence and second-source bonus) holds the setters and the inputs carrying the result value: the
+ * basis only when the clamp left it unchanged.
  */
 function correct(
   basis: ConsolidationInput | null,
@@ -61,6 +62,7 @@ function correct(
 
   const carries = (i: ConsolidationInput) => roundTo(i.value as number, ctx.cfg.precision) === roundTo(value, ctx.cfg.precision);
   const confirming = (basis ? [basis, ...texts] : texts).filter(carries);
-  const support = [...new Set([...(basis ? [basis] : []), ...setters, ...confirming])];
+  // a basis the clamp moved is not the value: it neither confirms nor gives the base confidence (bundle B re-review)
+  const support = [...new Set([...setters, ...confirming])];
   return { result: ruleResult(value, origin, support, ctx, confirming), setters };
 }
