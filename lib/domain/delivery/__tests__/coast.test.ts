@@ -1,14 +1,13 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { coastCollectionSchema, type CoastCollection } from "@/contract/v1";
+import { coastCollectionSchema, type CoastCollection, type CoastFeature } from "@/contract/v1";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { landPolygons, restrictedAreas } from "@/lib/db/schema";
 import { withRollback } from "@/test/db";
 import { seedDeliveryArea } from "@/test/fixtures/delivery/area";
-import { buildCoast, coastBox } from "../coast";
-import { distanceNm } from "../geo";
+import { buildCoast, coastBox, preClipPadDeg } from "../coast";
 
 const cfg = loadConfig("config").delivery;
 /** The fixture area's tiles. */
@@ -36,6 +35,11 @@ async function seedCoast(tx: Db) {
   return { f, asOf, coast };
 }
 
+/** Twice the signed area of a ring (shoelace, lon/lat): positive for counter-clockwise. */
+const signedArea = (ring: number[][]) => ring.slice(1).reduce((sum, [x, y], i) => sum + (ring[i]![0]! * y! - x! * ring[i]![1]!), 0);
+const polygonsOf = (g: CoastFeature["geometry"]): number[][][][] =>
+  g.type === "Polygon" ? [g.coordinates] : g.type === "MultiPolygon" ? g.coordinates : [];
+
 const features = (c: CoastCollection, kind: string) => c.features.filter((x) => x.properties.kind === kind);
 const asSql = (g: unknown) => sql`ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(g)}), 4326)`;
 
@@ -44,12 +48,20 @@ describe("buildCoast", () => {
     await withRollback(async (tx) => {
       const { f, coast } = await seedCoast(tx);
       const [west, south, east, north] = coastBox(BBOX, cfg.coast.marginNm);
-      // at least 2 nm on every side, at the poleward edge too
-      expect(distanceNm({ lon: west, lat: north }, { lon: BBOX[0], lat: north })).toBeGreaterThanOrEqual(2);
-      expect(distanceNm({ lon: east, lat: north }, { lon: BBOX[2], lat: north })).toBeGreaterThanOrEqual(2);
-      expect(distanceNm({ lon: west, lat: south }, { lon: west, lat: BBOX[1] })).toBeGreaterThanOrEqual(2);
-      expect(distanceNm({ lon: west, lat: north }, { lon: west, lat: BBOX[3] })).toBeGreaterThanOrEqual(2);
-      expect(distanceNm({ lon: west, lat: north }, { lon: BBOX[0], lat: north })).toBeLessThan(2.01);
+      // at least 2 nm of 1852 m (on the WGS84 ellipsoid) on every side, at the poleward edge too (review M-7)
+      const metres = async (a: [number, number], b: [number, number]) => {
+        const { rows } = await tx.execute<{ d: number }>(sql`
+          select ST_Distance(ST_SetSRID(ST_MakePoint(${a[0]}::float8, ${a[1]}::float8), 4326)::geography,
+                             ST_SetSRID(ST_MakePoint(${b[0]}::float8, ${b[1]}::float8), 4326)::geography, true) as d`);
+        return Number(rows[0]!.d);
+      };
+      const twoNm = 2 * 1852;
+      expect(await metres([west, north], [BBOX[0], north])).toBeGreaterThanOrEqual(twoNm);
+      expect(await metres([east, north], [BBOX[2], north])).toBeGreaterThanOrEqual(twoNm);
+      expect(await metres([west, south], [west, BBOX[1]])).toBeGreaterThanOrEqual(twoNm);
+      expect(await metres([west, north], [west, BBOX[3]])).toBeGreaterThanOrEqual(twoNm);
+      expect(await metres([west, north], [BBOX[0], north])).toBeLessThan(twoNm + 5);
+      expect(await metres([west, north], [west, BBOX[3]])).toBeLessThan(twoNm + 5);
 
       const land = features(coast, "land");
       // the island and the mainland cut at the west edge of the box plus margin
@@ -161,5 +173,87 @@ describe("buildCoast", () => {
       const { coast, asOf } = await seedCoast(tx);
       expect(await buildCoast(tx, { bbox: BBOX, cfg: cfg.coast, asOf })).toEqual(coast);
     });
+  });
+
+  it("restricted areas with equal geometry are ordered by reason, then source, not by row order (review M-1)", async () => {
+    await withRollback(async (tx) => {
+      await seedDeliveryArea(tx);
+      const g = geomFromGeoJson(square(21.3, 35.05, 21.32, 35.07));
+      await tx.insert(restrictedAreas).values({ kind: "military", geom: g, sourceRef: "zeta" });
+      await tx.insert(restrictedAreas).values({ kind: "protected_area", geom: g, sourceRef: "alpha" });
+      await tx.insert(restrictedAreas).values({ kind: "military", geom: g, sourceRef: "alpha" });
+      const coast = await buildCoast(tx, { bbox: BBOX, cfg: cfg.coast, asOf: await today(tx) });
+      const same = features(coast, "restrictedArea").filter((x) => (x.geometry as GeoJSON.Polygon).coordinates[0]![0]![0] === 21.3);
+      expect(same.map((x) => x.properties)).toEqual([
+        { kind: "restrictedArea", reason: "military", source: "alpha" },
+        { kind: "restrictedArea", reason: "military", source: "zeta" },
+        { kind: "restrictedArea", reason: "protectedArea", source: "alpha" },
+      ]);
+    });
+  });
+
+  it("polygons have counter-clockwise outer rings and clockwise holes (RFC 7946, review M-2)", async () => {
+    await withRollback(async (tx) => {
+      await seedDeliveryArea(tx);
+      // a clockwise area with a counter-clockwise hole, inside the box
+      const clockwise: GeoJSON.Polygon = {
+        type: "Polygon",
+        coordinates: [
+          [[21.3, 35.05], [21.3, 35.09], [21.34, 35.09], [21.34, 35.05], [21.3, 35.05]],
+          [[21.31, 35.06], [21.33, 35.06], [21.33, 35.08], [21.31, 35.08], [21.31, 35.06]],
+        ],
+      };
+      await tx.insert(restrictedAreas).values({ kind: "protected_area", geom: geomFromGeoJson(clockwise), sourceRef: "cw" });
+      const coast = await buildCoast(tx, { bbox: BBOX, cfg: cfg.coast, asOf: await today(tx) });
+      const polygons = coast.features.flatMap((x) => polygonsOf(x.geometry));
+      expect(polygons.some((p) => p.length === 2)).toBe(true);
+      for (const [outer, ...holes] of polygons) {
+        expect(signedArea(outer!)).toBeGreaterThan(0);
+        for (const h of holes) expect(signedArea(h)).toBeLessThan(0);
+      }
+    });
+  });
+
+  it("an invalid land polygon and an invalid area crossing the box edge do not fail the build; the output is valid (review M-3)", async () => {
+    await withRollback(async (tx) => {
+      await seedDeliveryArea(tx);
+      const [, , east] = coastBox(BBOX, cfg.coast.marginNm);
+      // self-intersecting bowties: GEOS refuses to intersect them as they are
+      const bowtie = (w: number, s: number, e: number, n: number) => sql`ST_GeomFromText(${`POLYGON((${w} ${s},${e} ${n},${e} ${s},${w} ${n},${w} ${s}))`}, 4326)`;
+      await tx.insert(landPolygons).values({ geom: bowtie(21.3, 35.02, 21.34, 35.04), datasetVersion: "test" });
+      await tx.insert(restrictedAreas).values({ kind: "military", geom: bowtie(east - 0.02, 35.1, east + 0.02, 35.14), sourceRef: "bowtie" });
+      const coast = await buildCoast(tx, { bbox: BBOX, cfg: cfg.coast, asOf: await today(tx) });
+      const bowtieArea = features(coast, "restrictedArea").find((x) => x.properties.kind === "restrictedArea" && x.properties.source === "bowtie");
+      expect(bowtieArea).toBeDefined();
+      const polygons = coast.features.filter((x) => x.geometry.type === "Polygon" || x.geometry.type === "MultiPolygon");
+      const { rows } = await tx.execute<{ valid: boolean }>(sql`
+        select ST_IsValid(g) as valid from unnest(array[${sql.join(polygons.map((x) => asSql(x.geometry)), sql`, `)}]) g`);
+      expect(rows.length).toBeGreaterThan(2);
+      expect(rows.every((r) => r.valid)).toBe(true);
+    });
+  });
+
+  it("a restricted area stored as a geometry collection is reduced to its polygons (review M-5)", async () => {
+    await withRollback(async (tx) => {
+      await seedDeliveryArea(tx);
+      const collection = "GEOMETRYCOLLECTION(POLYGON((21.3 35.05,21.32 35.05,21.32 35.07,21.3 35.07,21.3 35.05)),LINESTRING(21.33 35.05,21.34 35.06),POINT(21.35 35.05))";
+      await tx.insert(restrictedAreas).values({ kind: "aquaculture", geom: sql`ST_GeomFromText(${collection}, 4326)`, sourceRef: "mixed" });
+      const coast = await buildCoast(tx, { bbox: BBOX, cfg: cfg.coast, asOf: await today(tx) });
+      const mixed = features(coast, "restrictedArea").filter((x) => x.properties.kind === "restrictedArea" && x.properties.source === "mixed");
+      expect(mixed.map((x) => x.geometry)).toEqual([
+        { type: "Polygon", coordinates: [[[21.3, 35.05], [21.32, 35.05], [21.32, 35.07], [21.3, 35.07], [21.3, 35.05]]] },
+      ]);
+      expect(coastCollectionSchema.safeParse(coast).error?.issues).toBeUndefined();
+    });
+  });
+});
+
+describe("preClipPadDeg", () => {
+  it("is at least 0.01° and three tolerances at the poleward edge (review M-4)", () => {
+    expect(preClipPadDeg(10, 35)).toBe(0.01);
+    const pad = preClipPadDeg(1000, 35);
+    // 3 km in longitude degrees at 35° N (≈ 91.3 km per degree)
+    expect(pad * 91_290).toBeGreaterThanOrEqual(3000);
+    expect(pad * 91_290).toBeLessThan(3010);
   });
 });
