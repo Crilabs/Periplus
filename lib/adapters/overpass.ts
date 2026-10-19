@@ -60,6 +60,37 @@ export function buildGazetteerQuery(bbox: Bbox, categories: CategoriesConfig, ti
   ].join("\n");
 }
 
+/** `[out:json]` query for `statements`, each limited to `bbox`, answered with full geometry. */
+function boxQuery(statements: string[], bbox: Bbox, timeoutSeconds: number): string {
+  const [west, south, east, north] = bbox;
+  const box = `(${south},${west},${north},${east})`;
+  return [`[out:json][timeout:${timeoutSeconds}];`, "(", ...statements.map((s) => `  ${s}${box};`), ");", "out geom;", ""].join(
+    "\n",
+  );
+}
+
+/** Overpass QL for the road ways of `highways` in a box. */
+export function buildRoadsQuery(bbox: Bbox, highways: string[], timeoutSeconds: number): string {
+  const values = highways.map((h) => qlString(regexLiteral(h))).join("|");
+  return boxQuery([`way["highway"~"^(${values})$"]`], bbox, timeoutSeconds);
+}
+
+/**
+ * Overpass QL for submarine cables in a box: seamark cables, power cables under water or under ground
+ * (the caller drops those on land) and telecom lines under water.
+ */
+export function buildCablesQuery(bbox: Bbox, timeoutSeconds: number): string {
+  return boxQuery(
+    [
+      'way["seamark:type"="cable_submarine"]',
+      'way["power"="cable"]["location"~"^(underwater|underground)$"]',
+      'way["telecom"="line"]["location"="underwater"]',
+    ],
+    bbox,
+    timeoutSeconds,
+  );
+}
+
 /** Client-side margin over the server-side `[timeout:…]`, so Overpass can answer with its own remark. */
 const CLIENT_TIMEOUT_MARGIN_MS = 30_000;
 

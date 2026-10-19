@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { geoObjectTypeEnum, poiCategoryEnum, restrictedKindEnum, type GeoObjectType } from "@/lib/db/schema/geo";
+import {
+  geoObjectTypeEnum,
+  poiCategoryEnum,
+  restrictedKindEnum,
+  seabedTypeEnum,
+  type GeoObjectType,
+} from "@/lib/db/schema/geo";
 
 export const queueConfigSchema = z.object({
   concurrency: z.number().int().min(1),
@@ -138,7 +144,190 @@ export const gazetteerSchema = z.strictObject({
   noAnchoringKinds: z.array(z.enum(restrictedKindEnum.enumValues)),
 });
 
+/** `config/fact-schema/active.json`: the fact schema version new facts are written with. */
+export const factSchemaConfigSchema = z.strictObject({
+  version: z.string().regex(/^v[1-9][0-9]*$/, "must be v<number>"),
+});
+
+const share = z.number().min(0).max(1);
+const confidence = share;
+const meters = z.number().positive();
+
+/** `config/geometry.json`: parameters of the geometric computations; any change raises `rulesVersion`. */
+export const geometrySchema = z.strictObject({
+  rulesVersion: z.string().regex(/^geometry-[1-9][0-9]*$/, "must be geometry-<number>"),
+  fetch: z
+    .strictObject({
+      rayCount: z.number().int().positive(),
+      rayStepDeg: z.number().positive(),
+      maxRayM: meters,
+      confidence,
+    })
+    .refine((f) => f.rayCount * f.rayStepDeg === 360, "rayCount × rayStepDeg must be 360")
+    .refine((f) => Number.isInteger(45 / f.rayStepDeg), "rayStepDeg must divide 45 so every sector centre is a ray"),
+  shelter: z
+    .strictObject({ fMinM: meters, fMaxM: meters, meanWeight: share, minWeight: share, confidence })
+    .refine((s) => s.fMinM < s.fMaxM, "fMinM must be below fMaxM")
+    .refine((s) => Math.abs(s.meanWeight + s.minWeight - 1) < 1e-9, "meanWeight + minWeight must be 1"),
+  opening: z.strictObject({ openFetchM: meters, minResultant: share, confidence }),
+  swell: z.strictObject({
+    longFetchM: meters,
+    openFetchM: meters,
+    maxOpeningDeg: z.number().positive().max(360),
+    wideOpeningFactor: share,
+    noSourceValue: share,
+    confidence,
+  }),
+  water: z.strictObject({
+    bayRadiusM: meters,
+    harbourRadiusM: meters,
+    maxPolygonAreaM2: z.number().positive(),
+    originCoastOffsetM: z.number().nonnegative(),
+  }),
+  depth: z.strictObject({
+    sampleDistancesM: z.array(meters).min(1),
+    hrResolutionM: meters,
+    confidenceHr: confidence,
+    confidenceCoarseWide: confidence,
+    confidenceCoarseNarrow: confidence,
+    minBayWidthM: meters,
+  }),
+  anchorArea: z
+    .strictObject({
+      minDepthM: z.number().nonnegative(),
+      maxDepthM: meters,
+      landClearanceM: z.number().nonnegative(),
+      positionConfidence: confidence,
+      correctionConfidence: confidence,
+      correctionMaxDistanceM: meters,
+    })
+    .refine((a) => a.minDepthM < a.maxDepthM, "minDepthM must be below maxDepthM"),
+  seabed: z.strictObject({ minCoverage: share, confidence }),
+  restriction: z.strictObject({ minShare: share, confidence }),
+});
+
+/** `config/restrictions.json`: Natura 2000 sites (site codes) where anchoring is banned. */
+export const restrictionsSchema = z.strictObject({
+  protectedAreaAnchoringBan: z.array(
+    z.string().regex(/^[A-Z]{2}[0-9A-Z]{7}$/, "must be a Natura 2000 site code (two letters, seven characters)"),
+  ),
+});
+
+/** `config/quality.json`: parameters of the quality tools (spot check against the comparison set). */
+export const qualitySchema = z.strictObject({
+  navilySample: z.strictObject({
+    /** A Navily spot counts as the same place within this distance. */
+    radiusM: meters,
+    /** Own shelter at or above this value counts as a protected sector. */
+    protectedThreshold: share,
+    /** Own seabed types below this share do not count as the place's seabed. */
+    seabedMinShare: share,
+    /** Spec 04: the sample covers 20 places. */
+    minPlaces: z.number().int().positive(),
+    /** Per-sector rates are only reported from this many matched places on (no reconstruction of single spots). */
+    minMatchedForSectorRates: z.number().int().positive(),
+  }),
+});
+
+/** EMODnet Seabed Habitats WFS (EUSeaMap substrate layer) and the mapping of its classes to `seabed_type`. */
+export const seabedDatasetSchema = z.strictObject({
+  wfsUrl: z.url(),
+  typeName: z.string().min(1),
+  substrateField: z.string().min(1),
+  /** Fields searched for `weedPatterns` (case-insensitive substring). */
+  habitatFields: z.array(z.string().min(1)),
+  /** Source substrate class → seabed type; unmapped classes are skipped. */
+  substrateMap: z.record(z.string().min(1), z.enum(seabedTypeEnum.enumValues)),
+  weedPatterns: z.array(z.string().trim().min(1)),
+  /** Attribute the WFS pages are sorted by (the layer has no primary key GeoServer could page by). */
+  sortBy: z.string().min(1),
+  pageSize: z.number().int().positive(),
+  timeoutSeconds: z.number().int().positive(),
+  ratePerMinute: z.number().int().positive(),
+});
+
+/** EMODnet Bathymetry WCS (mean depth of the DTM), native grid in EPSG:4326 with axes Long/Lat. */
+export const bathymetryDatasetSchema = z.strictObject({
+  wcsUrl: z.url(),
+  coverageId: z.string().min(1),
+  /** Name stored in `bathymetry.dataset` and in every derivation. */
+  dataset: z.string().min(1),
+  datasetVersion: z.string().min(1),
+  resolutionM: meters,
+  /** True when the source stores elevation (water negative); depths are stored positive. */
+  valueIsElevation: z.boolean(),
+  timeoutSeconds: z.number().int().positive(),
+  ratePerMinute: z.number().int().positive(),
+});
+
+/** EMODnet Human Activities WFS: one layer per source of anchoring restrictions. */
+export const humanActivitiesDatasetSchema = z.strictObject({
+  wfsUrl: z.url(),
+  layers: z
+    .array(
+      z.strictObject({
+        typeName: z.string().min(1),
+        kind: z.enum(restrictedKindEnum.enumValues),
+        /** Buffer around the geometry in metres; needed for lines and points, 0 keeps polygons as they are. */
+        bufferM: z.number().nonnegative(),
+        /** Property holding a stable source id; omitted or missing on a feature = the GeoJSON feature id. */
+        idField: z.string().min(1).optional(),
+      }),
+    )
+    .min(1),
+  pageSize: z.number().int().positive(),
+  timeoutSeconds: z.number().int().positive(),
+  ratePerMinute: z.number().int().positive(),
+});
+
+/**
+ * EMODnet Human Activities WCS vessel density (download and archive only in M2). Its native grid is
+ * EPSG:3857, so the Long/Lat subset needs `subsettingCrs`; `time` picks the annual slice.
+ */
+export const vesselDensityDatasetSchema = z.strictObject({
+  wcsUrl: z.url(),
+  coverageId: z.string().min(1),
+  subsettingCrs: z.url(),
+  time: z.iso.datetime(),
+  dataset: z.string().min(1),
+  datasetVersion: z.string().min(1),
+  timeoutSeconds: z.number().int().positive(),
+  ratePerMinute: z.number().int().positive(),
+});
+
+/**
+ * Submarine cables from OSM (Overpass; EMODnet has no Mediterranean cable layer): stored as restricted
+ * areas of `kind`, each line buffered by `bufferM`.
+ */
+export const cablesDatasetSchema = z.strictObject({
+  kind: z.enum(restrictedKindEnum.enumValues),
+  bufferM: z.number().positive(),
+});
+
+/** Roads from OSM (Overpass) for the distance to the next road; `highways` are the `highway` values kept. */
+export const roadsDatasetSchema = z.strictObject({
+  highways: z.array(z.string().regex(/^[a-z_]+$/)).min(1),
+  /** Margin around the area's box for the road query, in km. */
+  bufferKm: z.number().nonnegative(),
+});
+
+/** `config/datasets.json`: external datasets of the geometry stage. */
+export const datasetsSchema = z.strictObject({
+  bathymetry: bathymetryDatasetSchema,
+  seabed: seabedDatasetSchema,
+  humanActivities: humanActivitiesDatasetSchema,
+  vesselDensity: vesselDensityDatasetSchema,
+  cables: cablesDatasetSchema,
+  roads: roadsDatasetSchema,
+  /** Margin around an area's box for every dataset request, in km. */
+  bufferKm: z.number().nonnegative(),
+});
+
+export type DatasetsConfig = z.infer<typeof datasetsSchema>;
 export type QueueConfig = z.infer<typeof queueConfigSchema>;
+export type GeometryConfig = z.infer<typeof geometrySchema>;
+export type QualityConfig = z.infer<typeof qualitySchema>;
+export type RestrictionsConfig = z.infer<typeof restrictionsSchema>;
 export type AreaConfig = z.infer<typeof areaConfigSchema>;
 export type CategoriesConfig = z.infer<typeof categoriesSchema>;
 export type GazetteerConfig = z.infer<typeof gazetteerSchema>;
@@ -149,4 +338,9 @@ export type AppConfig = {
   areas: AreaConfig[];
   categories: CategoriesConfig;
   gazetteer: GazetteerConfig;
+  factSchema: z.infer<typeof factSchemaConfigSchema>;
+  geometry: GeometryConfig;
+  restrictions: RestrictionsConfig;
+  datasets: DatasetsConfig;
+  quality: QualityConfig;
 };

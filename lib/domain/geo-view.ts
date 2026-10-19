@@ -146,53 +146,52 @@ export async function tileDetail(db: Db, id: string): Promise<TileDetail | null>
 
   const objectName = displayNameSql(geoObjects.id);
   const placeName = displayNameSql(places.geoObjectId);
-  const [area, objects, placeRows, runRows, costRows] = await Promise.all([
-    tile.areaId
-      ? db
-          .select({ id: geoObjects.id, name: objectName, configKey: geoObjects.configKey })
-          .from(geoObjects)
-          .where(eq(geoObjects.id, tile.areaId))
-          .then((rows) => rows[0] ?? null)
-      : null,
-    db
-      .select({ id: geoObjects.id, type: geoObjects.type, name: objectName })
-      .from(tileGeoObjects)
-      .innerJoin(geoObjects, eq(geoObjects.id, tileGeoObjects.geoObjectId))
-      .where(and(eq(tileGeoObjects.tileId, id), validAt(geoObjects)))
-      .orderBy(sql`${objectName} nulls last`, asc(geoObjects.id)),
-    db
-      .select({ id: places.id, name: placeName, kind: places.kind, status: places.status })
-      .from(places)
-      .where(and(eq(places.tileId, id), validAt(places)))
-      .orderBy(sql`${placeName} nulls last`, asc(places.id)),
-    db
-      .select({
-        id: runs.id,
-        kind: runs.kind,
-        scopeType: runs.scopeType,
-        scopeId: runs.scopeId,
-        status: runs.status,
-        stages: runs.stages,
-        createdAt: runs.createdAt,
-        finishedAt: runs.finishedAt,
-      })
-      .from(runs)
-      .where(
-        sql`(${runs.scopeType} = 'tile' and ${runs.scopeId} = ${id}) or ${runs.params}->'tileIds' @> ${JSON.stringify([id])}::jsonb`,
-      )
-      .orderBy(desc(runs.id))
-      .limit(TILE_RUNS),
-    db
-      .select({
-        service: externalCalls.service,
-        calls: sql<number>`count(*)::int`,
-        costEur: sql<string>`coalesce(sum(${externalCalls.costEur}), 0)`,
-      })
-      .from(externalCalls)
-      .where(eq(externalCalls.tileId, id))
-      .groupBy(externalCalls.service)
-      .orderBy(externalCalls.service),
-  ]);
+  // One query after the other: `db` may be a transaction (one connection), where parallel queries are not allowed.
+  const area = tile.areaId
+    ? await db
+        .select({ id: geoObjects.id, name: objectName, configKey: geoObjects.configKey })
+        .from(geoObjects)
+        .where(eq(geoObjects.id, tile.areaId))
+        .then((rows) => rows[0] ?? null)
+    : null;
+  const objects = await db
+    .select({ id: geoObjects.id, type: geoObjects.type, name: objectName })
+    .from(tileGeoObjects)
+    .innerJoin(geoObjects, eq(geoObjects.id, tileGeoObjects.geoObjectId))
+    .where(and(eq(tileGeoObjects.tileId, id), validAt(geoObjects)))
+    .orderBy(sql`${objectName} nulls last`, asc(geoObjects.id));
+  const placeRows = await db
+    .select({ id: places.id, name: placeName, kind: places.kind, status: places.status })
+    .from(places)
+    .where(and(eq(places.tileId, id), validAt(places)))
+    .orderBy(sql`${placeName} nulls last`, asc(places.id));
+  const runRows = await db
+    .select({
+      id: runs.id,
+      kind: runs.kind,
+      scopeType: runs.scopeType,
+      scopeId: runs.scopeId,
+      status: runs.status,
+      stages: runs.stages,
+      createdAt: runs.createdAt,
+      finishedAt: runs.finishedAt,
+    })
+    .from(runs)
+    .where(
+      sql`(${runs.scopeType} = 'tile' and ${runs.scopeId} = ${id}) or ${runs.params}->'tileIds' @> ${JSON.stringify([id])}::jsonb`,
+    )
+    .orderBy(desc(runs.id))
+    .limit(TILE_RUNS);
+  const costRows = await db
+    .select({
+      service: externalCalls.service,
+      calls: sql<number>`count(*)::int`,
+      costEur: sql<string>`coalesce(sum(${externalCalls.costEur}), 0)`,
+    })
+    .from(externalCalls)
+    .where(eq(externalCalls.tileId, id))
+    .groupBy(externalCalls.service)
+    .orderBy(externalCalls.service);
   const costs = costRows.map((r) => ({ service: r.service, calls: r.calls, costEur: Number(r.costEur) }));
   return {
     tile: { ...tile, bbox: tile.bbox as Polygon },
@@ -228,51 +227,50 @@ export async function geoObjectDetail(db: Db, id: string): Promise<GeoObjectDeta
   if (!object) return null;
 
   const objectName = displayNameSql(geoObjects.id);
-  const [names, ancestors, children, place, tileRows] = await Promise.all([
-    db
-      .select({
-        name: geoNames.name,
-        language: geoNames.language,
-        script: geoNames.script,
-        origin: geoNames.origin,
-        isPreferred: geoNames.isPreferred,
-        valid: sql<boolean>`${validAt(geoNames)}`,
-        validFrom: geoNames.validFrom,
-        validTo: geoNames.validTo,
-      })
-      .from(geoNames)
-      .where(eq(geoNames.geoObjectId, id))
-      .orderBy(desc(validAt(geoNames)), geoNames.language, desc(geoNames.isPreferred), geoNames.name),
-    db
-      .execute<{ id: string; type: GeoObjectType; name: string | null }>(
-        sql`
-        with recursive chain (id, depth) as (
-          select o.parent_id, 1 from geo_objects o where o.id = ${id} and o.parent_id is not null
-          union all
-          select o.parent_id, c.depth + 1 from chain c join geo_objects o on o.id = c.id
-          where o.parent_id is not null and c.depth < ${MAX_DEPTH}
-        )
-        select o.id, o.type, ${displayNameSql(sql`o.id`)} as name
-        from chain c join geo_objects o on o.id = c.id
-        order by c.depth`,
+  // One query after the other: `db` may be a transaction (one connection), where parallel queries are not allowed.
+  const names = await db
+    .select({
+      name: geoNames.name,
+      language: geoNames.language,
+      script: geoNames.script,
+      origin: geoNames.origin,
+      isPreferred: geoNames.isPreferred,
+      valid: sql<boolean>`${validAt(geoNames)}`,
+      validFrom: geoNames.validFrom,
+      validTo: geoNames.validTo,
+    })
+    .from(geoNames)
+    .where(eq(geoNames.geoObjectId, id))
+    .orderBy(desc(validAt(geoNames)), geoNames.language, desc(geoNames.isPreferred), geoNames.name);
+  const ancestors = await db
+    .execute<{ id: string; type: GeoObjectType; name: string | null }>(
+      sql`
+      with recursive chain (id, depth) as (
+        select o.parent_id, 1 from geo_objects o where o.id = ${id} and o.parent_id is not null
+        union all
+        select o.parent_id, c.depth + 1 from chain c join geo_objects o on o.id = c.id
+        where o.parent_id is not null and c.depth < ${MAX_DEPTH}
       )
-      .then((r) => r.rows.map(({ id, type, name }) => ({ id, type, name }))),
-    db
-      .select({ id: geoObjects.id, type: geoObjects.type, name: objectName })
-      .from(geoObjects)
-      .where(and(eq(geoObjects.parentId, id), validAt(geoObjects)))
-      .orderBy(sql`${objectName} nulls last`, asc(geoObjects.id)),
-    db
-      .select({ id: places.id, kind: places.kind, status: places.status })
-      .from(places)
-      .where(eq(places.geoObjectId, id))
-      .then((rows) => rows[0] ?? null),
-    db
-      .select({ tileId: tileGeoObjects.tileId })
-      .from(tileGeoObjects)
-      .where(eq(tileGeoObjects.geoObjectId, id))
-      .orderBy(tileGeoObjects.tileId),
-  ]);
+      select o.id, o.type, ${displayNameSql(sql`o.id`)} as name
+      from chain c join geo_objects o on o.id = c.id
+      order by c.depth`,
+    )
+    .then((r) => r.rows.map(({ id, type, name }) => ({ id, type, name })));
+  const children = await db
+    .select({ id: geoObjects.id, type: geoObjects.type, name: objectName })
+    .from(geoObjects)
+    .where(and(eq(geoObjects.parentId, id), validAt(geoObjects)))
+    .orderBy(sql`${objectName} nulls last`, asc(geoObjects.id));
+  const place = await db
+    .select({ id: places.id, kind: places.kind, status: places.status })
+    .from(places)
+    .where(eq(places.geoObjectId, id))
+    .then((rows) => rows[0] ?? null);
+  const tileRows = await db
+    .select({ tileId: tileGeoObjects.tileId })
+    .from(tileGeoObjects)
+    .where(eq(tileGeoObjects.geoObjectId, id))
+    .orderBy(tileGeoObjects.tileId);
   return { object, names, ancestors, children, place, tileIds: tileRows.map((r) => r.tileId) };
 }
 
@@ -296,24 +294,23 @@ export async function placeDetail(db: Db, id: string): Promise<PlaceDetail | nul
     .where(eq(places.id, id));
   if (!place) return null;
 
-  const [task, history] = await Promise.all([
-    db
-      .select({ id: reviewTasks.id, kind: reviewTasks.kind })
-      .from(reviewTasks)
-      .where(and(eq(reviewTasks.subjectType, "place"), eq(reviewTasks.subjectId, id), eq(reviewTasks.status, "open")))
-      .orderBy(reviewTasks.createdAt, reviewTasks.id)
-      .limit(1)
-      .then((rows) => rows[0] ?? null),
-    // A history row holds the row before a core-column change; keep only rows whose status differs from the next state.
-    db.execute<{ status: PlaceStatus; changed_at: Date | string }>(sql`
-      select status, changed_at from (
-        select h.history_id, h.old_row->>'status' as status, h.changed_at,
-               coalesce(lead(h.old_row->>'status') over (order by h.changed_at, h.history_id), ${place.status}) as next_status
-        from places_history h where h.row_id = ${id}
-      ) s
-      where status is distinct from next_status
-      order by changed_at desc, history_id desc`),
-  ]);
+  // One query after the other: `db` may be a transaction (one connection), where parallel queries are not allowed.
+  const task = await db
+    .select({ id: reviewTasks.id, kind: reviewTasks.kind })
+    .from(reviewTasks)
+    .where(and(eq(reviewTasks.subjectType, "place"), eq(reviewTasks.subjectId, id), eq(reviewTasks.status, "open")))
+    .orderBy(reviewTasks.createdAt, reviewTasks.id)
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+  // A history row holds the row before a core-column change; keep only rows whose status differs from the next state.
+  const history = await db.execute<{ status: PlaceStatus; changed_at: Date | string }>(sql`
+    select status, changed_at from (
+      select h.history_id, h.old_row->>'status' as status, h.changed_at,
+             coalesce(lead(h.old_row->>'status') over (order by h.changed_at, h.history_id), ${place.status}) as next_status
+      from places_history h where h.row_id = ${id}
+    ) s
+    where status is distinct from next_status
+    order by changed_at desc, history_id desc`);
   const [lon, lat] = (place.position as Point).coordinates;
   return {
     place: { ...place, position: { lon: lon!, lat: lat! } },

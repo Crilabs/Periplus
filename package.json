@@ -24,8 +24,10 @@
     "apikey:create": "tsx --env-file-if-exists=.env.local scripts/apikey.ts create",
     "import:land-polygons": "tsx --env-file-if-exists=.env.local scripts/import-land-polygons.ts",
     "check:gazetteer": "tsx --env-file-if-exists=.env.local scripts/check-gazetteer.ts",
+    "check:geometry": "tsx --env-file-if-exists=.env.local scripts/check-geometry.ts",
     "fixtures:record": "tsx --env-file-if-exists=.env.local scripts/fixtures-record.ts",
-    "smoke:ai": "tsx --env-file-if-exists=.env.local scripts/smoke-ai.ts"
+    "smoke:ai": "tsx --env-file-if-exists=.env.local scripts/smoke-ai.ts",
+    "compare:navily": "tsx --env-file-if-exists=.env.local scripts/compare-navily.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

@@ -176,7 +176,7 @@ describe("fixtures", () => {
     };
     const bytes = new Uint8Array([0, 1, 2, 250, 255]);
     const inner: Transport = async () => makeResponse(418, bytes);
-    const recorded = await recordingTransport(inner, dir)(req);
+    const recorded = await recordingTransport(inner, dir, { recordErrors: true })(req);
     expect(recorded.status).toBe(418);
 
     const files = await readdir(join(dir, "svc"));
@@ -187,6 +187,19 @@ describe("fixtures", () => {
     const replayed = await fixtureTransport(dir)(req);
     expect(replayed.status).toBe(418);
     expect(Array.from(replayed.body)).toEqual(Array.from(bytes));
+  });
+
+  it("recordingTransport passes a non-2xx answer through without recording it", async () => {
+    const dir = await tempDir();
+    const req: HttpRequest = { service: "svc", operation: "op", url: "https://example.invalid/busy", timeoutMs: 1 };
+    for (const status of [429, 503, 302]) {
+      const res = await recordingTransport(async () => makeResponse(status, new Uint8Array([1])), dir)(req);
+      expect(res.status).toBe(status);
+    }
+    await expect(readdir(join(dir, "svc"))).rejects.toThrow(/ENOENT/);
+
+    await recordingTransport(async () => makeResponse(204, new Uint8Array()), dir)(req);
+    expect((await fixtureTransport(dir)(req)).status).toBe(204);
   });
 });
 

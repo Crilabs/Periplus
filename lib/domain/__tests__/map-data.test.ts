@@ -2,7 +2,16 @@ import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { geoNames, geoObjects, places, tiles, type GeoObjectType, type PlaceStatus } from "@/lib/db/schema";
+import {
+  geoNames,
+  geoObjects,
+  places,
+  restrictedAreas,
+  tiles,
+  type GeoObjectType,
+  type PlaceStatus,
+  type RestrictedKind,
+} from "@/lib/db/schema";
 import { tileBbox, tileIdFor, type Bbox } from "@/lib/domain/tiles";
 import { mapLayer } from "@/lib/domain/map-data";
 import { withRollback } from "@/test/db";
@@ -145,5 +154,53 @@ describe("mapLayer", () => {
       for (let i = 0; i < 4; i++) await insertPlace(tx, `Cove ${i}`, LON + i * 0.001, LAT, "candidate");
       expect((await mapLayer(tx, "places", BOX, { limit: 2 })).features).toHaveLength(2);
       expect((await mapLayer(tx, "places", BOX)).features).toHaveLength(4);
+    }));
+
+  it("restricted-areas layer returns only valid areas in the bbox with anchoringBan", () =>
+    withRollback(async (tx) => {
+      const insertArea = async (kind: RestrictedKind, sourceRef: string, geom: GeoJSON.Polygon, validTo?: string) => {
+        const [row] = await tx
+          .insert(restrictedAreas)
+          .values({ kind, sourceRef, geom: sql`${geomFromGeoJson(geom)}`, validFrom: "2020-01-01", validTo })
+          .returning({ id: restrictedAreas.id });
+        return row!.id;
+      };
+      const military = await insertArea("military", "test-military:1", square(LON - 0.01, LAT - 0.01, 0.02));
+      const park = await insertArea("protected_area", "test-natura/GR0000000", square(LON + 0.03, LAT, 0.05));
+      await insertArea("cable", "test-cable:far", square(LON + 0.3, LAT, 0.01));
+
+      const fc = await mapLayer(tx, "restricted-areas", BOX);
+      expect(ids(fc)).toEqual([military, park].sort());
+      const militaryFeature = fc.features.find((f) => f.properties!.id === military)!;
+      expect(militaryFeature.geometry.type).toBe("Polygon");
+      expect(militaryFeature.properties).toEqual({ id: military, kind: "military", sourceRef: "test-military:1", anchoringBan: true });
+      expect(fc.features.find((f) => f.properties!.id === park)!.properties).toEqual({
+        id: park,
+        kind: "protected_area",
+        sourceRef: "test-natura/GR0000000",
+        anchoringBan: false,
+      });
+      // A protected area listed in the ban config bans anchoring.
+      const banned = await mapLayer(tx, "restricted-areas", BOX, {
+        anchoringBan: { noAnchoringKinds: [], protectedAreaAnchoringBan: ["GR0000000"] },
+      });
+      expect(banned.features.find((f) => f.properties!.id === park)!.properties!.anchoringBan).toBe(true);
+      expect(banned.features.find((f) => f.properties!.id === military)!.properties!.anchoringBan).toBe(false);
+    }));
+
+  it("an ended area is not on the map", () =>
+    withRollback(async (tx) => {
+      const [ended] = await tx
+        .insert(restrictedAreas)
+        .values({
+          kind: "aquaculture",
+          sourceRef: "test-aquaculture:ended",
+          geom: sql`${geomFromGeoJson(square(LON, LAT, 0.01))}`,
+          validFrom: "2020-01-01",
+          validTo: "2021-01-01",
+        })
+        .returning({ id: restrictedAreas.id });
+      const fc = await mapLayer(tx, "restricted-areas", BOX);
+      expect(ids(fc)).not.toContain(ended!.id);
     }));
 });

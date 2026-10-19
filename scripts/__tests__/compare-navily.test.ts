@@ -1,0 +1,33 @@
+import { describe, expect, it } from "vitest";
+import { parseArgs } from "../compare-navily";
+
+const TODAY = new Date("2026-10-19T08:00:00Z");
+
+describe("compare-navily parseArgs", () => {
+  it("reads area, path and output", () => {
+    expect(parseArgs(["--area", "saronic", "--navily", "/tmp/s.json", "--out", "x.md"], {}, TODAY)).toEqual({
+      area: "saronic",
+      navily: "/tmp/s.json",
+      out: "x.md",
+    });
+  });
+
+  it("takes the path from NAVILY_SPOTS_PATH and defaults the output to the dated pilot report", () => {
+    expect(parseArgs(["--area", "saronic"], { NAVILY_SPOTS_PATH: "/tmp/env.json" }, TODAY)).toEqual({
+      area: "saronic",
+      navily: "/tmp/env.json",
+      out: "docs/pilot/2026-10-19-m2-stichprobe.md",
+    });
+  });
+
+  it("the flag beats the environment", () => {
+    expect(parseArgs(["--area", "a", "--navily", "/flag.json"], { NAVILY_SPOTS_PATH: "/env.json" }, TODAY).navily).toBe("/flag.json");
+  });
+
+  it("aborts without a Navily path, without an area or on unknown flags", () => {
+    expect(() => parseArgs(["--area", "saronic"], {}, TODAY)).toThrow(/NAVILY_SPOTS_PATH/);
+    expect(() => parseArgs(["--navily", "/x.json"], {}, TODAY)).toThrow(/usage/);
+    expect(() => parseArgs(["--area", "a", "--bogus", "b"], { NAVILY_SPOTS_PATH: "/x" }, TODAY)).toThrow(/usage/);
+    expect(() => parseArgs(["--area"], { NAVILY_SPOTS_PATH: "/x" }, TODAY)).toThrow(/usage/);
+  });
+});

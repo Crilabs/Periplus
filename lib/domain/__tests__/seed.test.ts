@@ -91,10 +91,15 @@ async function tasksFor(db: Db, placeIds: string[]) {
     .where(and(eq(reviewTasks.kind, "place_candidate"), inArray(reviewTasks.subjectId, placeIds)));
 }
 
-async function insertRestricted(db: Db, kind: RestrictedKind, geometry: GeoJSON.Geometry): Promise<string> {
+async function insertRestricted(
+  db: Db,
+  kind: RestrictedKind,
+  geometry: GeoJSON.Geometry,
+  sourceRef: string | null = null,
+): Promise<string> {
   const [row] = await db
     .insert(restrictedAreas)
-    .values({ kind, geom: sql`${geomFromGeoJson(geometry)}` })
+    .values({ kind, geom: sql`${geomFromGeoJson(geometry)}`, sourceRef })
     .returning({ id: restrictedAreas.id });
   return row!.id;
 }
@@ -221,6 +226,27 @@ describe("seedTile", () => {
       expect(protectedPlace).toMatchObject({ status: "candidate", statusReason: null });
       const tasks = await tasksFor(db, [blockedPlace!.id, protectedPlace!.id]);
       expect(tasks.map((t) => t.subjectId)).toEqual([protectedPlace!.id]);
+    }));
+
+  it("a new place inside a configured protected area becomes no_anchoring", () =>
+    withRollback(async (db) => {
+      const banned = await insertRestricted(db, "protected_area", box(27.0, 34.0, 27.05, 34.05), "natura2000/GR4210001");
+      await insertRestricted(db, "protected_area", box(27.05, 34.05, 27.1, 34.1), "natura2000/GR4210002");
+      const inBanned = await insertObject(db, { type: "bay", geometry: point(27.02, 34.02) });
+      const inOther = await insertObject(db, { type: "bay", geometry: point(27.07, 34.07) });
+
+      const opts = { restrictions: { protectedAreaAnchoringBan: ["GR4210001"] }, minShare: 0.5 };
+      expect(await seedTile(db, T1, cfg(), opts)).toEqual({
+        created: 2,
+        existing: 0,
+        skippedOtherTile: 0,
+        noAnchoring: 1,
+      });
+      expect(await placeOf(db, inBanned)).toMatchObject({
+        status: "no_anchoring",
+        statusReason: `restricted:protected_area:${banned}`,
+      });
+      expect(await placeOf(db, inOther)).toMatchObject({ status: "candidate", statusReason: null });
     }));
 
   it("second run creates no places or tasks and keeps a confirmed status", () =>

@@ -12,32 +12,40 @@ import { getConfig, type AreaConfig } from "../lib/config";
 import { areaConfigSchema } from "../lib/config/schemas";
 import { createDb, type Db } from "../lib/db/client";
 import { areaBbox, syncAreas } from "../lib/domain/gazetteer/areas";
+import { ensureTiles } from "../lib/domain/gazetteer/tiles-ensure";
 import { bufferBbox, importLandPolygons } from "../lib/domain/gazetteer/land";
 import { createRun } from "../lib/domain/runs";
 import type { Bbox } from "../lib/domain/tiles";
+import { DATASET_KINDS, DATASETS_STAGE, importDataset } from "../lib/pipeline/datasets";
 import { GEONAMES_STAGE, importGeonames } from "../lib/pipeline/gazetteer/geonames";
 import { importOsm } from "../lib/pipeline/gazetteer/osm";
 import { importWikidata } from "../lib/pipeline/gazetteer/wikidata";
-import { readShapefile } from "./import-land-polygons";
+import { landImportBbox, readShapefile } from "./import-land-polygons";
 
-const USAGE = "usage: fixtures-record.ts --area <key> [--land <path/land_polygons.shp>] [--cache <dir>]";
+const USAGE = "usage: fixtures-record.ts --area <key> [--land <path/land_polygons.shp>] [--cache <dir>] [--datasets]";
 const FIXTURES = "test/fixtures";
 const ATTEMPTS = 3;
 const RETRY_WAIT_MS = 90_000;
 
 type LandFeature = GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
 
-export function parseArgs(argv: string[]): { area: string; land?: string; cache?: string } {
+/** `--area`, `--land`, `--cache` take a value; `--datasets` (record the dataset imports only) takes none. */
+export function parseArgs(argv: string[]): { area: string; land?: string; cache?: string; datasets: boolean } {
   const values = new Map<string, string>();
-  for (let i = 0; i < argv.length; i += 2) {
-    const flag = argv[i];
-    const value = argv[i + 1];
+  let datasets = false;
+  for (let i = 0; i < argv.length; i++) {
+    const flag = argv[i]!;
+    if (flag === "--datasets") {
+      datasets = true;
+      continue;
+    }
+    const value = argv[++i];
     if (!["--area", "--land", "--cache"].includes(flag) || value === undefined || value.startsWith("--")) throw new Error(USAGE);
     values.set(flag, value);
   }
   const area = values.get("--area");
   if (!area) throw new Error(USAGE);
-  return { area, land: values.get("--land"), cache: values.get("--cache") };
+  return { area, land: values.get("--land"), cache: values.get("--cache"), datasets };
 }
 
 /** Only a throwaway database whose name ends in `_scratch` may be written by the recording. */
@@ -288,7 +296,8 @@ async function main(): Promise<void> {
   const url = assertScratchUrl(process.env.DATABASE_URL);
   const area = loadArea(args.area);
   const { gazetteer } = getConfig();
-  const landBox = bufferBbox(areaBbox(area), gazetteer.landBufferKm);
+  // The land import box (area box plus `landBufferKm`, snapped to the tile grid): 50 km fetch rays need it.
+  const landBox = landImportBbox(area, gazetteer.landBufferKm);
   const queryBox = bufferBbox(areaBbox(area), gazetteer.bboxBufferKm);
   const out = (line: string) => process.stdout.write(`${line}\n`);
 
@@ -304,7 +313,7 @@ async function main(): Promise<void> {
     const land = JSON.parse(await readFile(landFile, "utf8")) as GeoJSON.FeatureCollection;
     await importLandPolygons(db, featuresOf(land), landBox, "fixture");
 
-    await syncAreas(db, [area]);
+    const areaIds = await syncAreas(db, [area]);
     const { id: runId } = await createRun(db, {
       kind: "stage",
       scope: { type: "area", id: area.key },
@@ -314,6 +323,19 @@ async function main(): Promise<void> {
     });
 
     const source = sourceTransport(args.cache);
+    if (args.datasets) {
+      // Dataset imports only: they need the tiles (coast tiles for bathymetry), not the gazetteer.
+      out(`tiles: ${JSON.stringify(await ensureTiles(db, area, areaIds))}`);
+      const recordingSource = recordingTransport(source);
+      const archive = memoryArchive();
+      for (const dataset of DATASET_KINDS) {
+        const result = await withRetry(dataset, () =>
+          importDataset(db, dataset, { area, runId }, { transport: recordingSource, archive }),
+        );
+        out(`${DATASETS_STAGE} ${dataset}: ${JSON.stringify(result)}`);
+      }
+      return;
+    }
     const recording = recordingTransport(compacting(source));
     const osm = await withRetry("overpass", () =>
       importOsm(db, { area, runId }, { transport: recording, archive: memoryArchive() }),

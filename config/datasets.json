@@ -1,0 +1,65 @@
+{
+  "bathymetry": {
+    "wcsUrl": "https://ows.emodnet-bathymetry.eu/wcs",
+    "coverageId": "emodnet__mean",
+    "dataset": "emodnet-dtm",
+    "datasetVersion": "2024",
+    "resolutionM": 115,
+    "valueIsElevation": true,
+    "timeoutSeconds": 120,
+    "ratePerMinute": 20
+  },
+  "seabed": {
+    "wfsUrl": "https://ows.emodnet-seabedhabitats.eu/geoserver/emodnet_open/wfs",
+    "typeName": "emodnet_open:eusm2025_eunis2019_full",
+    "substrateField": "substrate",
+    "habitatFields": ["eunis2019d", "all2019d"],
+    "substrateMap": {
+      "Mud": "mud",
+      "Sandy mud": "mud",
+      "Fine mud": "mud",
+      "Sandy mud or Muddy sand": "mud",
+      "Fine mud or Sandy mud or Muddy sand": "mud",
+      "Muddy sand": "sand",
+      "Sand": "sand",
+      "SAND": "sand",
+      "Coarse substrate": "gravel",
+      "Mixed sediment": "mixed",
+      "Coarse & mixed sediment": "mixed",
+      "Rock or other hard substrata": "rock"
+    },
+    "weedPatterns": ["posidonia", "seagrass", "cymodocea", "zostera"],
+    "sortBy": "objectid",
+    "pageSize": 500,
+    "timeoutSeconds": 180,
+    "ratePerMinute": 20
+  },
+  "humanActivities": {
+    "wfsUrl": "https://ows.emodnet-humanactivities.eu/wfs",
+    "layers": [
+      { "typeName": "emodnet:militaryareaspoly", "kind": "military", "bufferM": 0 },
+      { "typeName": "emodnet:natura2000areas", "kind": "protected_area", "bufferM": 0, "idField": "sitecode" },
+      { "typeName": "emodnet:finfish", "kind": "aquaculture", "bufferM": 250, "idField": "gid" },
+      { "typeName": "emodnet:shellfish", "kind": "aquaculture", "bufferM": 250, "idField": "id" }
+    ],
+    "pageSize": 1000,
+    "timeoutSeconds": 180,
+    "ratePerMinute": 20
+  },
+  "vesselDensity": {
+    "wcsUrl": "https://ows.emodnet-humanactivities.eu/wcs",
+    "coverageId": "emodnet__vesseldensity_allavg",
+    "subsettingCrs": "http://www.opengis.net/def/crs/EPSG/0/4326",
+    "time": "2024-01-01T00:00:00.000Z",
+    "dataset": "emodnet-vessel-density",
+    "datasetVersion": "2024",
+    "timeoutSeconds": 120,
+    "ratePerMinute": 20
+  },
+  "cables": { "kind": "cable", "bufferM": 200 },
+  "roads": {
+    "highways": ["motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential", "track"],
+    "bufferKm": 5
+  },
+  "bufferKm": 2
+}

@@ -5,9 +5,14 @@ import {
   areaConfigSchema,
   budgetsSchema,
   categoriesSchema,
+  datasetsSchema,
+  factSchemaConfigSchema,
   gazetteerSchema,
+  geometrySchema,
   modelsSchema,
+  qualitySchema,
   queuesSchema,
+  restrictionsSchema,
   type AppConfig,
   type AreaConfig,
 } from "./schemas";
@@ -17,8 +22,12 @@ export type {
   AreaConfig,
   BudgetService,
   CategoriesConfig,
+  DatasetsConfig,
   GazetteerConfig,
+  GeometryConfig,
+  QualityConfig,
   QueueConfig,
+  RestrictionsConfig,
 } from "./schemas";
 
 function readJson<T>(dir: string, name: string, schema: ZodType<T>): T {
@@ -66,6 +75,11 @@ export function loadConfig(dir = "config"): AppConfig {
     areas: readAreas(dir),
     categories: readJson(dir, "categories", categoriesSchema),
     gazetteer: readJson(dir, "gazetteer", gazetteerSchema),
+    factSchema: readJson(dir, "fact-schema/active", factSchemaConfigSchema),
+    geometry: readJson(dir, "geometry", geometrySchema),
+    restrictions: readJson(dir, "restrictions", restrictionsSchema),
+    datasets: readJson(dir, "datasets", datasetsSchema),
+    quality: readJson(dir, "quality", qualitySchema),
   };
 }
 

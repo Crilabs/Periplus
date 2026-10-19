@@ -42,10 +42,19 @@ export function fixtureTransport(dir: string = DEFAULT_FIXTURE_DIR): Transport {
   };
 }
 
-/** Passes requests to `inner` and writes every response as a fixture that `fixtureTransport` replays. */
-export function recordingTransport(inner: Transport, dir: string = DEFAULT_FIXTURE_DIR): Transport {
+/**
+ * Passes requests to `inner` and writes every 2xx response as a fixture that `fixtureTransport` replays. Other
+ * answers (a 429, a 5xx of a service that is down) pass through unrecorded, so a failed recording run never leaves
+ * an error behind as the "recorded" answer; `opts.recordErrors` records them too (for tests of error handling).
+ */
+export function recordingTransport(
+  inner: Transport,
+  dir: string = DEFAULT_FIXTURE_DIR,
+  opts: { recordErrors?: boolean } = {},
+): Transport {
   return async (req) => {
     const res = await inner(req);
+    if ((res.status < 200 || res.status > 299) && !opts.recordErrors) return res;
     const fixture: FixtureFile = {
       request: { method: req.method ?? "GET", url: req.url, body: req.body ?? null },
       status: res.status,

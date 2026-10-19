@@ -5,8 +5,9 @@ import { comparisonSet, geoObjects, places, reviewDecisions, reviewTasks, tiles 
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { newId } from "@/lib/domain/ids";
 import { createReviewTask } from "@/lib/domain/review";
-import { tileIdFor } from "@/lib/domain/tiles";
+import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
 import { testDb, withRollback } from "@/test/db";
+import { buildBayScene } from "@/test/geometry/scene";
 
 const db = testDb();
 /** What getDb() returns; a test may point it at a rollback transaction. */
@@ -33,8 +34,14 @@ vi.mock("@/lib/domain/jobs-view", () => ({ retryFailedJob: (...args: unknown[]) 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: (url: string) => redirect(url) }));
 
-import { startGazetteerAction, startPingRun, startSeedAction } from "../runs/actions";
-import { seedTileAction } from "../tiles/[id]/actions";
+import {
+  startDatasetImportAction,
+  startGazetteerAction,
+  startGeometryAction,
+  startPingRun,
+  startSeedAction,
+} from "../runs/actions";
+import { geometryTileAction, seedTileAction } from "../tiles/[id]/actions";
 import { pauseQueueAction, resumeQueueAction } from "../jobs/actions";
 import { retryJobAction } from "../runs/[id]/actions";
 import { toggleComparisonAction } from "../quality/actions";
@@ -254,5 +261,85 @@ describe("admin server actions", () => {
       requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
       await expect(toggleComparisonAction({ placeId, areaKey: "saronic", include: true })).rejects.toThrow("NEXT_REDIRECT");
       expect(await rows()).toHaveLength(0);
+    }));
+
+  it("startGeometryAction for a tile starts a tile-scoped run with stage geometry.place", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const scene = await buildBayScene(tx);
+      const [w, s, e, n] = tileBbox(scene.tileId);
+      await tx.insert(tiles).values({ id: scene.tileId, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, hasCoast: true });
+      const expected = expect.objectContaining({
+        kind: "stage",
+        scope: { type: "tile", id: scene.tileId },
+        stages: ["geometry.place"],
+        params: { tileIds: [scene.tileId] },
+        triggeredBy: "admin@example.invalid",
+      });
+
+      await startGeometryAction(form({ tileId: scene.tileId }));
+      expect(startRun).toHaveBeenLastCalledWith(tx, expect.anything(), expected);
+      await geometryTileAction(form({ tileId: scene.tileId }));
+      expect(startRun).toHaveBeenLastCalledWith(tx, expect.anything(), expected);
+      expect(redirect).toHaveBeenLastCalledWith("/runs/run-1");
+
+      await expect(startGeometryAction({ tileId: "q025:0:719" })).rejects.toThrow();
+      await expect(startGeometryAction(form({ tileId: scene.tileId, areaKey: "saronic" }))).rejects.toThrow();
+      requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
+      await expect(geometryTileAction({ tileId: scene.tileId })).rejects.toThrow("NEXT_REDIRECT");
+      expect(startRun).toHaveBeenCalledTimes(2);
+    }));
+
+  it("startGeometryAction returns to the tile page when the tile lacks bathymetry", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const scene = await buildBayScene(tx, { raster: false });
+      const [w, s, e, n] = tileBbox(scene.tileId);
+      await tx.insert(tiles).values({ id: scene.tileId, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, hasCoast: true });
+      await geometryTileAction(form({ tileId: scene.tileId }));
+      expect(startRun).not.toHaveBeenCalled();
+      expect(redirect).toHaveBeenCalledWith(`/tiles/${encodeURIComponent(scene.tileId)}?error=bathymetry_missing`);
+    }));
+
+  it("startDatasetImportAction rejects an unknown area", async () => {
+    await expect(startDatasetImportAction(form({ areaKey: "atlantis" }))).rejects.toThrow();
+    await expect(startDatasetImportAction({ areaKey: "" })).rejects.toThrow();
+    await expect(startGeometryAction(form({ areaKey: "atlantis" }))).rejects.toThrow();
+    expect(startRun).not.toHaveBeenCalled();
+    requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
+    await expect(startDatasetImportAction({ areaKey: "saronic" })).rejects.toThrow("NEXT_REDIRECT");
+    expect(startRun).not.toHaveBeenCalled();
+  });
+
+  it("startDatasetImportAction starts an area run once the area has coast tiles", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      let [area] = await tx
+        .select({ id: geoObjects.id })
+        .from(geoObjects)
+        .where(sql`${geoObjects.type} = 'area' and ${geoObjects.configKey} = 'saronic' and ${geoObjects.validTo} is null`);
+      area ??= (
+        await tx
+          .insert(geoObjects)
+          .values({ type: "area", origin: "manual", configKey: "saronic", geom: sql`${geomFromGeoJson({ type: "Point", coordinates: [24.61, 32.83] })}` })
+          .returning({ id: geoObjects.id })
+      )[0]!;
+      // Open sea outside the pilot box, at a spot no other test uses.
+      const tileId = tileIdFor(24.61, 32.83);
+      await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(24.5, 32.75, 24.75, 33.0, 4326)`, areaId: area.id, hasCoast: true });
+
+      await startDatasetImportAction(form({ areaKey: "saronic" }));
+      expect(startRun).toHaveBeenCalledWith(
+        tx,
+        expect.anything(),
+        expect.objectContaining({
+          kind: "stage",
+          scope: { type: "area", id: "saronic" },
+          stages: ["datasets.import"],
+          params: { areaKey: "saronic" },
+          triggeredBy: "admin@example.invalid",
+        }),
+      );
+      expect(redirect).toHaveBeenCalledWith("/runs/run-1");
     }));
 });

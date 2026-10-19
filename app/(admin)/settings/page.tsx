@@ -4,6 +4,24 @@ import { requireAdmin } from "@/lib/security/require-admin";
 export default async function Page() {
   await requireAdmin();
   const { areas, gazetteer, ...rest } = getConfig();
+  const { geometry, factSchema } = rest;
+  const geometryRows: [string, string][] = [
+    ["Regelversion", geometry.rulesVersion],
+    ["Fact-Schema-Version", factSchema.version],
+    ["Strahlen", `${geometry.fetch.rayCount} im ${geometry.fetch.rayStepDeg}°-Abstand, bis ${geometry.fetch.maxRayM} m`],
+    ["Schutz voll bis Fetch", `${geometry.shelter.fMinM} m`],
+    ["Kein Schutz ab Fetch", `${geometry.shelter.fMaxM} m`],
+    ["Sektor-Schutz", `${geometry.shelter.meanWeight} × Mittelwert + ${geometry.shelter.minWeight} × Minimum`],
+    ["Öffnung zur See ab Fetch", `${geometry.opening.openFetchM} m`],
+    [
+      "Schwell",
+      `Quelle ab ${geometry.swell.longFetchM} m Fetch; Öffnung (Fetch > ${geometry.swell.openFetchM} m) breiter als ${geometry.swell.maxOpeningDeg}° → × ${geometry.swell.wideOpeningFactor}; ohne Quelle ${geometry.swell.noSourceValue}`,
+    ],
+    [
+      "Konfidenz",
+      `Fetch ${geometry.fetch.confidence}, Schutz ${geometry.shelter.confidence}, Öffnung ${geometry.opening.confidence}, Schwell ${geometry.swell.confidence}`,
+    ],
+  ];
   const thresholds: [string, string][] = [
     ["Puffer Kachelbox", `${gazetteer.bboxBufferKm} km`],
     ["Puffer Land", `${gazetteer.landBufferKm} km`],
@@ -62,6 +80,18 @@ export default async function Page() {
       <table className="text-left">
         <tbody>
           {thresholds.map(([label, value]) => (
+            <tr key={label} className="border-b">
+              <th className="py-1 pr-4 font-normal">{label}</th>
+              <td className="py-1 pr-4">{value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <h2 className="font-semibold">Geometrie und Schutz</h2>
+      <table className="text-left">
+        <tbody>
+          {geometryRows.map(([label, value]) => (
             <tr key={label} className="border-b">
               <th className="py-1 pr-4 font-normal">{label}</th>
               <td className="py-1 pr-4">{value}</td>

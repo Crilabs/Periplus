@@ -3,7 +3,7 @@ import { seedTile } from "@/lib/domain/seed";
 import { parseTileId } from "@/lib/domain/tiles";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import type { StageDefinition } from "@/lib/pipeline/runs";
-import { SEED_STAGE, seedTileIds } from "@/lib/pipeline/seed";
+import { SEED_STAGE, seedTileIds } from "@/lib/pipeline/tile-scope";
 
 /** Seeds places per tile: one job per tile of `run.params.tileIds` or of the coast tiles of `run.params.areaKey`. */
 export const seedTileStage: StageDefinition = {

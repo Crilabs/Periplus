@@ -71,6 +71,48 @@
       "when": 1792363424019,
       "tag": "0009_fuzzy_lionheart",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792367932412,
+      "tag": "0010_derived_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792367938774,
+      "tag": "0011_derived_triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792369333045,
+      "tag": "0012_bathymetry_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792369338256,
+      "tag": "0013_bathymetry_gist",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792369795908,
+      "tag": "0014_seabed_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1792371352685,
+      "tag": "0015_roads_schema",
+      "breakpoints": true
     }
   ]
 }

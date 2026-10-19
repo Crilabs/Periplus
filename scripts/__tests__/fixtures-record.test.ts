@@ -3,13 +3,29 @@ import { assertScratchUrl, compactOverpass, parseArgs } from "../fixtures-record
 
 describe("fixtures-record CLI", () => {
   it("parses flags", () => {
-    expect(parseArgs(["--area", "aegina-west"])).toEqual({ area: "aegina-west", land: undefined, cache: undefined });
-    expect(parseArgs(["--area", "a", "--land", "l.shp", "--cache", "/tmp/c"])).toEqual({ area: "a", land: "l.shp", cache: "/tmp/c" });
+    expect(parseArgs(["--area", "aegina-west"])).toEqual({
+      area: "aegina-west",
+      land: undefined,
+      cache: undefined,
+      datasets: false,
+    });
+    expect(parseArgs(["--area", "a", "--land", "l.shp", "--cache", "/tmp/c"])).toEqual({
+      area: "a",
+      land: "l.shp",
+      cache: "/tmp/c",
+      datasets: false,
+    });
+  });
+
+  it("--datasets is a flag without value, anywhere in the arguments", () => {
+    expect(parseArgs(["--area", "aegina-west", "--datasets"])).toMatchObject({ area: "aegina-west", datasets: true });
+    expect(parseArgs(["--datasets", "--area", "a", "--cache", "/tmp/c"])).toMatchObject({ area: "a", cache: "/tmp/c", datasets: true });
   });
 
   it("rejects missing or unknown arguments", () => {
     expect(() => parseArgs(["--land", "l.shp"])).toThrow(/usage/);
     expect(() => parseArgs(["--area", "a", "--foo", "1"])).toThrow(/usage/);
+    expect(() => parseArgs(["--area", "--datasets"])).toThrow(/usage/);
   });
 
   it("only writes to a *_scratch database", () => {

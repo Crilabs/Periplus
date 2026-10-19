@@ -1,0 +1,5 @@
+[
+  { "name": "Perdika", "kind": "marina", "lon": 23.452683, "lat": 37.690775 },
+  { "name": "Aponisos", "kind": "anchorage", "lon": 23.321777, "lat": 37.684732 },
+  { "name": "Aegina harbour", "kind": "marina", "lon": 23.42627, "lat": 37.745389 }
+]

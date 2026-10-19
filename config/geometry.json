@@ -1,0 +1,33 @@
+{
+  "rulesVersion": "geometry-1",
+  "fetch": { "rayCount": 72, "rayStepDeg": 5, "maxRayM": 50000, "confidence": 0.7 },
+  "shelter": { "fMinM": 300, "fMaxM": 20000, "meanWeight": 0.7, "minWeight": 0.3, "confidence": 0.6 },
+  "opening": { "openFetchM": 2000, "minResultant": 0.25, "confidence": 0.6 },
+  "swell": {
+    "longFetchM": 30000,
+    "openFetchM": 10000,
+    "maxOpeningDeg": 60,
+    "wideOpeningFactor": 0.5,
+    "noSourceValue": 0.9,
+    "confidence": 0.4
+  },
+  "water": { "bayRadiusM": 600, "harbourRadiusM": 250, "maxPolygonAreaM2": 4000000, "originCoastOffsetM": 20 },
+  "depth": {
+    "sampleDistancesM": [50, 100, 200],
+    "hrResolutionM": 30,
+    "confidenceHr": 0.8,
+    "confidenceCoarseWide": 0.6,
+    "confidenceCoarseNarrow": 0.3,
+    "minBayWidthM": 300
+  },
+  "anchorArea": {
+    "minDepthM": 3,
+    "maxDepthM": 12,
+    "landClearanceM": 30,
+    "positionConfidence": 0.3,
+    "correctionConfidence": 0.9,
+    "correctionMaxDistanceM": 2000
+  },
+  "seabed": { "minCoverage": 0.5, "confidence": 0.5 },
+  "restriction": { "minShare": 0.5, "confidence": 0.9 }
+}

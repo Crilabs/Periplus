@@ -2,7 +2,7 @@ import type { Geometry } from "geojson";
 import { sql, type AnyColumn, type SQL } from "drizzle-orm";
 import { customType } from "drizzle-orm/pg-core";
 
-export type GeometryType = "Geometry" | "Point" | "Polygon" | "MultiPolygon";
+export type GeometryType = "Geometry" | "Point" | "LineString" | "Polygon" | "MultiPolygon";
 
 /**
  * PostGIS column `geometry(<type>,4326)`. The driver value is the raw EWKB hex string and is never
@@ -22,4 +22,14 @@ export function geomFromGeoJson(g: Geometry): SQL {
 /** PostGIS geometry to GeoJSON. */
 export function asGeoJson(col: AnyColumn | SQL): SQL<Geometry> {
   return sql<Geometry>`ST_AsGeoJSON(${col})::json`;
+}
+
+/**
+ * PostGIS raster column `raster` (postgis_raster). The driver value is the raw hex WKB and is never
+ * used directly; read values with ST_Value / ST_Clip in SQL.
+ */
+export function raster(name: string) {
+  return customType<{ data: string; driverData: string }>({
+    dataType: () => "raster",
+  })(name);
 }

@@ -1,0 +1,9 @@
+{
+  "navilySample": {
+    "radiusM": 500,
+    "protectedThreshold": 0.5,
+    "seabedMinShare": 0.3,
+    "minPlaces": 20,
+    "minMatchedForSectorRates": 5
+  }
+}

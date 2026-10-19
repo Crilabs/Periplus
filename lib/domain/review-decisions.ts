@@ -72,6 +72,10 @@ type Task = typeof reviewTasks.$inferSelect;
  * decision and marks the task `decided`. `DecisionNotAllowed` when the action does not fit the task or its
  * subject or target is not valid; nothing is written then. A `retry` calls `deps.retryJob` last, so a failed
  * retry rolls the decision back.
+ *
+ * Global lock order: the review task row first, then the place row(s) (`lockPlace`). Every transaction that
+ * locks both an open `place_candidate` task and its place (`applyExclusion`, stage `geometry.place`) takes them
+ * in this order, so none of them deadlocks with a decision.
  */
 export async function decideReviewTask(
   db: Db,

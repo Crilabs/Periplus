@@ -12,6 +12,11 @@ type Overrides = {
   models?: unknown;
   categories?: unknown;
   gazetteer?: unknown;
+  factSchema?: unknown;
+  geometry?: unknown;
+  restrictions?: unknown;
+  datasets?: unknown;
+  quality?: unknown;
   /** File name (without `.json`) to content; replaces all repo area files. */
   areas?: Record<string, unknown>;
 };
@@ -25,10 +30,16 @@ function fixtureDir(overrides: Overrides): string {
     models: overrides.models ?? repoConfig.models,
     categories: overrides.categories ?? repoConfig.categories,
     gazetteer: overrides.gazetteer ?? repoConfig.gazetteer,
+    geometry: overrides.geometry ?? repoConfig.geometry,
+    restrictions: overrides.restrictions ?? repoConfig.restrictions,
+    datasets: overrides.datasets ?? repoConfig.datasets,
+    quality: overrides.quality ?? repoConfig.quality,
   };
   for (const [name, value] of Object.entries(files)) {
     writeFileSync(join(dir, `${name}.json`), JSON.stringify(value));
   }
+  mkdirSync(join(dir, "fact-schema"));
+  writeFileSync(join(dir, "fact-schema", "active.json"), JSON.stringify(overrides.factSchema ?? repoConfig.factSchema));
   mkdirSync(join(dir, "areas"));
   const areas = overrides.areas ?? Object.fromEntries(repoConfig.areas.map((a) => [a.key, a]));
   for (const [name, value] of Object.entries(areas)) {
@@ -72,6 +83,81 @@ describe("loadConfig", () => {
     expect(() => loadConfig(dir)).toThrow(/budgets\.json/);
   });
 
+  it("loads the active fact schema version", () => {
+    expect(loadConfig("config").factSchema).toEqual({ version: "v1" });
+  });
+
+  it("rejects a malformed fact schema version", () => {
+    expect(() => loadConfig(fixtureDir({ factSchema: { version: "1" } }))).toThrow(/fact-schema\/active\.json/);
+  });
+
+  it("loads the geometry rules and the restrictions", () => {
+    const c = loadConfig("config");
+    expect(c.geometry.rulesVersion).toBe("geometry-1");
+    expect(c.geometry.fetch).toEqual({ rayCount: 72, rayStepDeg: 5, maxRayM: 50000, confidence: 0.7 });
+    expect(c.geometry.shelter).toEqual({ fMinM: 300, fMaxM: 20000, meanWeight: 0.7, minWeight: 0.3, confidence: 0.6 });
+    expect(c.geometry.swell.noSourceValue).toBe(0.9);
+    expect(c.geometry.depth.sampleDistancesM).toEqual([50, 100, 200]);
+    expect(c.geometry.anchorArea).toMatchObject({ minDepthM: 3, maxDepthM: 12, landClearanceM: 30 });
+    expect(c.geometry.restriction).toEqual({ minShare: 0.5, confidence: 0.9 });
+    expect(c.restrictions).toEqual({ protectedAreaAnchoringBan: [] });
+  });
+
+  it("loads the navily sample parameters and rejects an out-of-range threshold", () => {
+    expect(loadConfig("config").quality.navilySample).toEqual({
+      radiusM: 500,
+      protectedThreshold: 0.5,
+      seabedMinShare: 0.3,
+      minPlaces: 20,
+      minMatchedForSectorRates: 5,
+    });
+    const bad = { navilySample: { ...repoConfig.quality.navilySample, protectedThreshold: 1.5 } };
+    expect(() => loadConfig(fixtureDir({ quality: bad }))).toThrow(/quality\.json.*protectedThreshold/);
+  });
+
+  it("config rejects a malformed Natura 2000 code", () => {
+    expect(() => loadConfig(fixtureDir({ restrictions: { protectedAreaAnchoringBan: ["GR300001"] } }))).toThrow(
+      /restrictions\.json.*protectedAreaAnchoringBan/,
+    );
+    expect(loadConfig(fixtureDir({ restrictions: { protectedAreaAnchoringBan: ["GR3000001"] } })).restrictions)
+      .toEqual({ protectedAreaAnchoringBan: ["GR3000001"] });
+  });
+
+  it("rejects unknown geometry keys and rays that do not cover the circle", () => {
+    const geometry = structuredClone(repoConfig.geometry);
+    expect(() => loadConfig(fixtureDir({ geometry: { ...geometry, bogus: 1 } }))).toThrow(/geometry\.json/);
+    geometry.fetch.rayStepDeg = 4;
+    expect(() => loadConfig(fixtureDir({ geometry }))).toThrow(/geometry\.json.*fetch/);
+    geometry.fetch = { ...geometry.fetch, rayCount: 50, rayStepDeg: 7.2 };
+    expect(() => loadConfig(fixtureDir({ geometry }))).toThrow(/geometry\.json.*sector centre/);
+  });
+
+  it("rejects shelter weights that do not sum to 1 and fMin not below fMax", () => {
+    const geometry = structuredClone(repoConfig.geometry);
+    geometry.shelter.minWeight = 0.4;
+    expect(() => loadConfig(fixtureDir({ geometry }))).toThrow(/geometry\.json.*shelter/);
+    const g2 = structuredClone(repoConfig.geometry);
+    g2.shelter.fMinM = 20000;
+    expect(() => loadConfig(fixtureDir({ geometry: g2 }))).toThrow(/geometry\.json.*shelter/);
+  });
+
+  it("loads the dataset endpoints", () => {
+    const c = loadConfig("config");
+    expect(c.datasets.bathymetry).toMatchObject({ coverageId: "emodnet__mean", datasetVersion: "2024", valueIsElevation: true });
+    expect(c.datasets.seabed.substrateField).toBe("substrate");
+    expect(c.datasets.humanActivities.layers.map((l) => l.kind)).toContain("protected_area");
+    expect(c.datasets.vesselDensity.coverageId).toBe("emodnet__vesseldensity_allavg");
+    expect(c.datasets.cables).toEqual({ kind: "cable", bufferM: 200 });
+    expect(c.datasets.roads.highways).toContain("residential");
+    expect(c.datasets.bufferKm).toBe(2);
+  });
+
+  it("rejects a restriction layer with an unknown kind", () => {
+    const datasets = structuredClone(repoConfig.datasets);
+    (datasets.humanActivities.layers[0] as { kind: string }).kind = "wreck";
+    expect(() => loadConfig(fixtureDir({ datasets }))).toThrow(/datasets\.json.*humanActivities\.layers\.0\.kind/);
+  });
+
   it("rejects a missing config file", () => {
     expect(() => loadConfig(join(tmpdir(), "periplus-does-not-exist"))).toThrow();
   });
@@ -94,7 +180,8 @@ describe("loadConfig", () => {
     expect(c.gazetteer.wikidata.classes.Q23442).toBe("island");
     expect(c.gazetteer.geonames.featureCodes.PPLA2).toBe("settlement");
     expect(c.gazetteer.merge.distanceM.default).toBe(500);
-    expect(c.gazetteer.noAnchoringKinds).toEqual(["military", "cable", "firing_area"]);
+    expect(c.gazetteer.landBufferKm).toBe(55);
+    expect(c.gazetteer.noAnchoringKinds).toEqual(["military", "cable", "firing_area", "aquaculture"]);
   });
 
   it("area without an el name is rejected", () => {

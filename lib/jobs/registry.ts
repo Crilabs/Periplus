@@ -1,4 +1,6 @@
+import { datasetsImportHandler } from "./handlers/datasets";
 import { gazetteerHandler } from "./handlers/gazetteer";
+import { geometryPlaceHandler } from "./handlers/geometry";
 import { advanceHandler } from "./handlers/run-advance";
 import { seedTileHandler } from "./handlers/seed";
 import { pingHandler } from "./handlers/system-ping";
@@ -13,4 +15,6 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "tiles.ensure": tilesEnsureHandler,
   "gazetteer.build": gazetteerHandler,
   "seed.tile": seedTileHandler,
+  "datasets.import": datasetsImportHandler,
+  "geometry.compute": geometryPlaceHandler,
 };

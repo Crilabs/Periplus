@@ -23,6 +23,8 @@ async function addObject(tx: Db, type: GeoObjectType, lon: number, lat: number, 
 }
 
 describe("checkGazetteer", () => {
+  // Repeatable read: the open-task count is database-wide, and other test files commit and decide place_candidate
+  // tasks meanwhile (review decisions, the geometry lock-order test).
   it("reports an island without an el name and counts coast tiles", () =>
     withRollback(async (tx) => {
       const before = await checkGazetteer(tx, BOX);
@@ -52,7 +54,7 @@ describe("checkGazetteer", () => {
       expect(r.missing[0]).toEqual({ id: incomplete, type: "island", name: expect.any(String), languages: ["de", "en"] });
       expect(r.tilesWithCoast).toBeGreaterThanOrEqual(1);
       expect(r.openCandidateTasks).toBe(before.openCandidateTasks + 1);
-    }));
+    }, { isolationLevel: "repeatable read" }));
 
   it("treats a fallback de name as valid", () =>
     withRollback(async (tx) => {

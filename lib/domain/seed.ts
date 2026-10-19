@@ -1,7 +1,8 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import type { GazetteerConfig } from "@/lib/config";
+import { getConfig, type GazetteerConfig, type RestrictionsConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { geoNames, geoObjects, places, restrictedAreas, type GeoObjectType, type PlaceKind } from "@/lib/db/schema";
+import { geoNames, geoObjects, places, type GeoObjectType, type PlaceKind } from "@/lib/db/schema";
+import { exclusionFor, exclusionReason, restrictionHits } from "@/lib/domain/geometry/restrictions";
 import { createReviewTask } from "@/lib/domain/review";
 import { validAt } from "@/lib/domain/timeline";
 
@@ -40,6 +41,8 @@ type Candidate = {
   tags: Record<string, string>;
   /** EWKB hex of the position. */
   position: string;
+  lon: number;
+  lat: number;
   positionTileId: string;
 };
 
@@ -81,28 +84,11 @@ async function candidatesOf(db: Db, tileId: string): Promise<Candidate[]> {
         select case when land.land is null then c.geom else ST_Difference(c.geom, land.land) end as water
       ) w
     )
-    select id, type, tags, position::text as position, tile_id_for(position) as "positionTileId"
+    select id, type, tags, position::text as position, ST_X(position) as lon, ST_Y(position) as lat,
+      tile_id_for(position) as "positionTileId"
     from positioned
     order by id`);
   return rows;
-}
-
-/** The first valid no-anchoring restricted area containing the position (EWKB hex), as `restricted:<kind>:<id>`. */
-async function restrictionAt(db: Db, position: string, cfg: GazetteerConfig): Promise<string | null> {
-  if (cfg.noAnchoringKinds.length === 0) return null;
-  const [row] = await db
-    .select({ id: restrictedAreas.id, kind: restrictedAreas.kind })
-    .from(restrictedAreas)
-    .where(
-      and(
-        validAt(restrictedAreas),
-        inArray(restrictedAreas.kind, cfg.noAnchoringKinds),
-        sql`ST_Intersects(${restrictedAreas.geom}, ${position}::geometry)`,
-      ),
-    )
-    .orderBy(asc(restrictedAreas.kind), asc(restrictedAreas.id))
-    .limit(1);
-  return row ? `restricted:${row.kind}:${row.id}` : null;
 }
 
 /** The display name of a geo object for the review list: German, else English, else any valid name. */
@@ -122,12 +108,25 @@ async function displayName(db: Db, geoObjectId: string): Promise<string | null> 
 
 /**
  * Stage `seed.tile`, in one transaction: creates a place for every candidate of the tile whose position lies in
- * this tile (a candidate spanning several tiles is seeded once, by the tile of its position). A new place in a
- * valid restricted area of a `noAnchoringKinds` kind starts as `no_anchoring` with reason
- * `restricted:<kind>:<id>`; any other new place starts as `candidate` with a `place_candidate` review task.
- * Existing places (any status) stay untouched, so a rerun creates nothing.
+ * this tile (a candidate spanning several tiles is seeded once, by the tile of its position). A new place whose
+ * position lies in a valid restricted area that bans anchoring (`exclusionFor` over `restrictionHits` of the
+ * position, share 1) starts as `no_anchoring` with reason `restricted:<kind>:<id>`; any other new place starts as
+ * `candidate` with a `place_candidate` review task. Existing places (any status) stay untouched, so a rerun
+ * creates nothing.
  */
-export async function seedTile(db: Db, tileId: string, cfg: GazetteerConfig): Promise<SeedResult> {
+export async function seedTile(
+  db: Db,
+  tileId: string,
+  cfg: GazetteerConfig,
+  opts: { restrictions: RestrictionsConfig; minShare: number } = {
+    restrictions: getConfig().restrictions,
+    minShare: getConfig().geometry.restriction.minShare,
+  },
+): Promise<SeedResult> {
+  const banConfig = {
+    noAnchoringKinds: cfg.noAnchoringKinds,
+    protectedAreaAnchoringBan: opts.restrictions.protectedAreaAnchoringBan,
+  };
   return db.transaction(async (tx) => {
     const result: SeedResult = { created: 0, existing: 0, skippedOtherTile: 0, noAnchoring: 0 };
     const candidates = await candidatesOf(tx, tileId);
@@ -147,7 +146,9 @@ export async function seedTile(db: Db, tileId: string, cfg: GazetteerConfig): Pr
         continue;
       }
       const kind = placeKindFromTags(c.type, c.tags);
-      const restriction = await restrictionAt(tx, c.position, cfg);
+      const hits = await restrictionHits(tx, { area: null, position: { lon: Number(c.lon), lat: Number(c.lat) } }, banConfig);
+      const exclusion = exclusionFor(hits, opts.minShare);
+      const restriction = exclusion ? exclusionReason(exclusion) : null;
       const [place] = await tx
         .insert(places)
         .values({
