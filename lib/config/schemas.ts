@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { geoObjectTypeEnum, poiCategoryEnum, restrictedKindEnum, type GeoObjectType } from "@/lib/db/schema/geo";
+import {
+  geoObjectTypeEnum,
+  poiCategoryEnum,
+  restrictedKindEnum,
+  seabedTypeEnum,
+  type GeoObjectType,
+} from "@/lib/db/schema/geo";
 
 export const queueConfigSchema = z.object({
   concurrency: z.number().int().min(1),
@@ -207,6 +213,25 @@ export const restrictionsSchema = z.strictObject({
   ),
 });
 
+/** EMODnet Seabed Habitats WFS (EUSeaMap substrate layer) and the mapping of its classes to `seabed_type`. */
+export const seabedDatasetSchema = z.strictObject({
+  wfsUrl: z.url(),
+  typeName: z.string().min(1),
+  substrateField: z.string().min(1),
+  /** Fields searched for `weedPatterns` (case-insensitive substring). */
+  habitatFields: z.array(z.string().min(1)),
+  /** Source substrate class → seabed type; unmapped classes are skipped. */
+  substrateMap: z.record(z.string().min(1), z.enum(seabedTypeEnum.enumValues)),
+  weedPatterns: z.array(z.string().trim().min(1)),
+  pageSize: z.number().int().positive(),
+  timeoutSeconds: z.number().int().positive(),
+  ratePerMinute: z.number().int().positive(),
+});
+
+/** `config/datasets.json` (loaded from Task 9 on); so far only the seabed part. */
+export const datasetsSchema = z.strictObject({ seabed: seabedDatasetSchema });
+
+export type DatasetsConfig = z.infer<typeof datasetsSchema>;
 export type QueueConfig = z.infer<typeof queueConfigSchema>;
 export type GeometryConfig = z.infer<typeof geometrySchema>;
 export type RestrictionsConfig = z.infer<typeof restrictionsSchema>;

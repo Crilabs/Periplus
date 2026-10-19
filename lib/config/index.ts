@@ -20,6 +20,7 @@ export type {
   AreaConfig,
   BudgetService,
   CategoriesConfig,
+  DatasetsConfig,
   GazetteerConfig,
   GeometryConfig,
   QueueConfig,
