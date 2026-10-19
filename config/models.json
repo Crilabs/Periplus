@@ -23,6 +23,16 @@
     "claude-opus-5-5": { "input": 3.5546, "output": 17.773, "cacheReadFactor": 0.05 }
   },
   "cacheWriteFactor": 1.25,
-  "batch": { "discount": 0.5, "pollSeconds": 60, "maxHours": 26, "maxRequests": 1000 },
+  "batch": {
+    "discount": 0.5,
+    "pollSeconds": 60,
+    "maxHours": 26,
+    "maxRequests": 1000,
+    "providerTimeoutSeconds": 120,
+    "leaseSeconds": 600,
+    "clockSkewSeconds": 120,
+    "reservationHours": 48,
+    "budgetRetrySeconds": 900
+  },
   "comparison": { "models": ["claude-sonnet-5-5", "claude-opus-5-5"] }
 }

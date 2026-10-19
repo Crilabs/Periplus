@@ -183,6 +183,13 @@
       "when": 1792398936852,
       "tag": "0025_facts_text_checks",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1792401575457,
+      "tag": "0026_batch_claims",
+      "breakpoints": true
     }
   ]
 }

@@ -20,11 +20,15 @@ export function modelClientFor(db: Db): ModelClient {
   return modelClientFactory(db);
 }
 
-const pollJobSchema = z.object({ batchId: z.string().uuid() });
+const pollJobSchema = z.object({
+  batchId: z.string().uuid(),
+  n: z.number().int().nonnegative().optional(),
+  mode: z.enum(["send", "book"]).optional(),
+});
 
 /** Queue `ai.batch.poll`: one poll of one batch; schedules the next poll itself while the batch runs. */
 export const aiBatchPollHandler: JobHandler<JobData> = async (data, ctx) => {
-  const { batchId } = pollJobSchema.parse(data);
-  const result = await pollBatch(ctx.db, { model: modelClientFor(ctx.db), boss: ctx.boss, handlers: BATCH_HANDLERS }, batchId);
-  ctx.log.info({ batchId, result }, "batch polled");
+  const { batchId, n, mode } = pollJobSchema.parse(data);
+  const result = await pollBatch(ctx.db, { model: modelClientFor(ctx.db), boss: ctx.boss, handlers: BATCH_HANDLERS }, batchId, { n, mode });
+  ctx.log.info({ batchId, n, mode, result }, "batch polled");
 };

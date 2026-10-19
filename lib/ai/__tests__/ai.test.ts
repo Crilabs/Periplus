@@ -34,7 +34,7 @@ const config: AppConfig = {
     },
     pricesEurPerMTok: { "claude-haiku-5-5": { input: 0.1, output: 0.5, cacheReadFactor: 0.1 } },
     cacheWriteFactor: 1.25,
-    batch: { discount: 0.5, pollSeconds: 60, maxHours: 26, maxRequests: 1000 },
+    batch: { discount: 0.5, pollSeconds: 60, maxHours: 26, maxRequests: 1000, providerTimeoutSeconds: 120, leaseSeconds: 600, clockSkewSeconds: 120, reservationHours: 48, budgetRetrySeconds: 900 },
     comparison: { models: ["claude-haiku-5-5", "claude-haiku-5-5"] },
   },
 };

@@ -39,7 +39,12 @@ export const extractionPurposeEnum = pgEnum("extraction_purpose", ["regular", "r
 export const extractionRunStatusEnum = pgEnum("extraction_run_status", ["running", "finished", "blocked", "failed"]);
 export const unitStatusEnum = pgEnum("unit_status", ["pending", "submitted", "done", "failed"]);
 export const mooringKindEnum = pgEnum("mooring_kind", ["anchor", "buoy", "quay", "marina", "unknown"]);
-export const batchStatusEnum = pgEnum("batch_status", ["submitting", "submitted", "ended", "distributed", "failed"]);
+/**
+ * Batch lifecycle: `submitting` (stored, not yet claimed) → `sending` (claimed under a lease, provider call running or
+ * its outcome unknown) → `submitted` (provider id recorded) → `ended` (results stored and booked) → `distributed`;
+ * `failed` from any state (ruling M4-C-R6).
+ */
+export const batchStatusEnum = pgEnum("batch_status", ["submitting", "sending", "submitted", "ended", "distributed", "failed"]);
 export const batchItemStatusEnum = pgEnum("batch_item_status", ["pending", "succeeded", "failed", "retried"]);
 export const comparisonVerdictEnum = pgEnum("comparison_verdict", [
   "a_correct",
@@ -299,6 +304,13 @@ export const aiBatches = pgTable(
     /** Budget reservation until the batch is booked (ruling M4-P6). */
     estimatedCostEur: numeric("estimated_cost_eur", { precision: 12, scale: 6 }),
     costEur: costEur(),
+    /** The claim of the sender that may call the provider: only this claim can record the provider id. */
+    claimId: uuid("claim_id"),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    /** Until then the claim's sender may still be talking to the provider; afterwards the claim is stale. */
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
+    /** When the provider was asked to cancel the batch (run ended, poll dead-lettered, maxHours). */
+    cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
     submittedAt: timestamp("submitted_at", { withTimezone: true }),
     endedAt: timestamp("ended_at", { withTimezone: true }),
     createdAt: createdAt(),
@@ -308,6 +320,11 @@ export const aiBatches = pgTable(
     uniqueIndex("ai_batches_open_outcome_unique")
       .on(t.runId, t.stage, t.outcomeKey)
       .where(sql`${t.status} not in ('distributed', 'failed')`),
+    // A claimed batch always has its claim and lease (text comparison: the enum value is new in this migration).
+    check(
+      "ai_batches_sending_claim",
+      sql`${t.status}::text <> 'sending' or (${t.claimId} is not null and ${t.claimedAt} is not null and ${t.leaseUntil} is not null)`,
+    ),
   ],
 );
 
@@ -330,6 +347,8 @@ export const aiBatchItems = pgTable(
     outputTokens: integer("output_tokens"),
     costEur: costEur(),
     distributedAt: timestamp("distributed_at", { withTimezone: true }),
+    /** Why handing the item to its batch handler failed last time; cleared once it is distributed. */
+    distributionError: text("distribution_error"),
     createdAt: createdAt(),
   },
   (t) => [index("ai_batch_items_batch_id_idx").on(t.batchId)],

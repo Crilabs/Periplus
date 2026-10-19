@@ -5,11 +5,13 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { withRollback } from "@/test/db";
 import { quietDay } from "@/test/external-calls";
-import { externalCalls } from "@/lib/db/schema";
+import { aiBatches, externalCalls } from "@/lib/db/schema";
+import { createRun } from "@/lib/domain/runs";
+import { newId } from "@/lib/domain/ids";
 import { BudgetExceeded, recordExternalCall } from "@/lib/domain/costs";
 import { loadConfig, type AppConfig } from "@/lib/config";
 import { createAnthropicClient, type AnthropicMessagesApi } from "@/lib/ai/anthropic";
-import { estimateBatchCostEur, usageCostEur } from "@/lib/ai/cost";
+import { estimateBatchCostEur, estimateBatchItemCostsEur, usageCostEur } from "@/lib/ai/cost";
 import { fixtureKey } from "@/lib/ai/fixtures";
 import { MockBatchError, MockModel } from "@/lib/ai/mock";
 import { echoTask } from "@/lib/ai/tasks/system-echo";
@@ -39,18 +41,33 @@ const errored = (customId: string, type: string): Line => ({
   result: { type: "errored", error: { type: "error", error: { type, message: `${type} happened` }, request_id: null } },
 });
 
-function fakeBatchSdk(lines: Line[] = [], status: "in_progress" | "ended" = "ended") {
-  const create = vi.fn(async (body: unknown) => ({ id: "msgbatch_test", processing_status: "in_progress", body }));
+type ListedBatch = { id: string; created_at: string; request_counts: Record<string, number> };
+
+function fakeBatchSdk(lines: Line[] = [], status: "in_progress" | "ended" = "ended", listed: ListedBatch[] = []) {
+  const create = vi.fn(async (...args: unknown[]) => ({ id: "msgbatch_test", processing_status: "in_progress", body: args[0] }));
   const retrieve = vi.fn(async (id: string) => ({ id, processing_status: status }));
   const results = vi.fn(async () =>
     (async function* () {
       for (const line of lines) yield line;
     })(),
   );
+  const cancel = vi.fn(async (id: string) => ({ id, processing_status: "canceling" }));
+  const listedPages: ListedBatch[] = [];
+  // Newest first, as the API lists them; counts how far the client read.
+  const list = vi.fn(() =>
+    (async function* () {
+      for (const batch of listed) {
+        listedPages.push(batch);
+        yield batch;
+      }
+    })(),
+  );
   const messagesCreate = vi.fn();
-  const api = { messages: { create: messagesCreate, batches: { create, retrieve, results } } } as unknown as AnthropicMessagesApi;
-  return { api, create, retrieve, results };
+  const api = { messages: { create: messagesCreate, batches: { create, retrieve, results, cancel, list } } } as unknown as AnthropicMessagesApi;
+  return { api, create, retrieve, results, cancel, list, listedPages };
 }
+
+const counts = (processing: number) => ({ processing, succeeded: 0, errored: 0, canceled: 0, expired: 0 });
 
 const echo = (text: string) => JSON.stringify({ echo: text, language: "en" });
 
@@ -81,6 +98,59 @@ describe("anthropic batches", () => {
       expect(params.system[0]!.cache_control).toEqual({ type: "ephemeral" });
       expect(params.messages[0]!.content).toContain("one");
       expect((body.requests[1]!.params as { messages: Array<{ content: string }> }).messages[0]!.content).toContain("two");
+    }));
+
+  it("batches.create is sent once, without SDK retries and with the configured timeout", () =>
+    withRollback(async (tx) => {
+      const { api, create } = fakeBatchSdk();
+      await createAnthropicClient(tx, config, { sdk: api }).submitBatch(echoTask, [{ customId: "a", input: { text: "x" } }]);
+      expect(create.mock.calls[0]![1]).toEqual({ maxRetries: 0, timeout: config.models.batch.providerTimeoutSeconds * 1000 });
+    }));
+
+  it("cancelBatch asks the provider to cancel", () =>
+    withRollback(async (tx) => {
+      const { api, cancel } = fakeBatchSdk();
+      await createAnthropicClient(tx, config, { sdk: api }).cancelBatch("msgbatch_x");
+      expect(cancel).toHaveBeenCalledWith("msgbatch_x", null, { timeout: config.models.batch.providerTimeoutSeconds * 1000 });
+    }));
+
+  it("listBatches returns the batches created in the window and stops reading at its start", () =>
+    withRollback(async (tx) => {
+      const { api, listedPages } = fakeBatchSdk([], "ended", [
+        { id: "b4", created_at: "2026-10-19T12:10:00Z", request_counts: counts(1) },
+        { id: "b3", created_at: "2026-10-19T12:05:00Z", request_counts: { ...counts(1), succeeded: 2 } },
+        { id: "b2", created_at: "2026-10-19T11:50:00Z", request_counts: counts(5) },
+        { id: "b1", created_at: "2026-10-19T11:00:00Z", request_counts: counts(1) },
+      ]);
+      const found = await createAnthropicClient(tx, config, { sdk: api }).listBatches({
+        from: new Date("2026-10-19T12:00:00Z"),
+        to: new Date("2026-10-19T12:06:00Z"),
+      });
+      expect(found).toEqual([{ batchId: "b3", createdAt: new Date("2026-10-19T12:05:00Z"), requestCount: 3 }]);
+      expect(listedPages.map((b) => b.id)).toEqual(["b4", "b3", "b2"]);
+    }));
+
+  it("a synchronous call counts the open batch reservations against the budget", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      const { id: runId } = await createRun(tx, { kind: "reprocess", scope: { type: "system", id: `res-${newId()}` }, stages: ["s"], triggeredBy: "test" });
+      const tight: AppConfig = { ...config, budgets: { ...config.budgets, anthropic: { dailyEur: 5 } } };
+      await tx.insert(aiBatches).values({
+        task: "system.echo",
+        model: "claude-sonnet-5-5",
+        promptVersion: 1,
+        status: "submitted",
+        providerBatchId: `msgbatch_${newId()}`,
+        runId,
+        stage: "s",
+        outcomeKey: "batch:k",
+        requestCount: 1,
+        estimatedCostEur: "5",
+        createdAt: now,
+      });
+      const { api } = fakeBatchSdk();
+      await expect(createAnthropicClient(tx, tight, { sdk: api, now: () => now }).call(echoTask, { text: "x" })).rejects.toBeInstanceOf(BudgetExceeded);
+      expect(api.messages.create).not.toHaveBeenCalled();
     }));
 
   it("without cacheSystem the system prompt stays a plain string", () =>
@@ -198,6 +268,16 @@ describe("anthropic batches", () => {
     // At least the output reservation: 2048 tokens of sonnet output at half price.
     expect(one).toBeGreaterThan((2048 / 1e6) * 8.8865 * 0.5);
     expect(estimateBatchCostEur(config, echoTask, [{ text: "x" }], "claude-opus-5-5")).toBeGreaterThan(one);
+    // Per item: longer prompts reserve more; the batch estimate is their sum.
+    const perItem = estimateBatchItemCostsEur(config, echoTask, [{ text: "x" }, { text: "x".repeat(4000) }]);
+    expect(perItem[0]).toBeCloseTo(one, 10);
+    expect(perItem[1]! - perItem[0]!).toBeCloseTo((3999 / 4 / 1e6) * 1.7773 * 0.5, 8);
+    expect(estimateBatchCostEur(config, echoTask, [{ text: "x" }, { text: "x".repeat(4000) }])).toBeCloseTo(perItem[0]! + perItem[1]!, 10);
+  });
+
+  it("the estimate refuses tasks with attachments it cannot count", () => {
+    const withPdf = { ...echoTask, attachments: () => [{ kind: "pdf" as const, data: new Uint8Array([1]) }] };
+    expect(() => estimateBatchItemCostsEur(config, withPdf, [{ text: "x" }])).toThrow(/attachments/);
   });
 });
 
@@ -226,6 +306,20 @@ describe("MockModel batches", () => {
     expect(byId.get("r")).toMatchObject({ ok: false, retryable: true, error: "overloaded" });
     expect(byId.get("b")).toMatchObject({ ok: false, retryable: false });
     expect(byId.get("s")).toMatchObject({ ok: false, retryable: true });
+  });
+
+  it("reports the configured cost per answered item and ends a cancelled batch at once", async () => {
+    const usage = { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 };
+    const model = new MockModel({ "system.echo": () => ({ echo: "x", language: "en" }) }, { batchRounds: 5, itemCost: { usage, costEur: 0.25 } });
+    const { batchId } = await model.submitBatch(echoTask, [
+      { customId: "a", input: { text: "x" } },
+      { customId: "b", input: { text: "y" } },
+    ]);
+    expect((await model.listBatches({ from: new Date(Date.now() - 60_000), to: new Date(Date.now() + 60_000) })).map((b) => b.batchId)).toEqual([batchId]);
+    await model.cancelBatch(batchId);
+    const collected = await model.collectBatch(echoTask, batchId);
+    expect(collected).toMatchObject({ status: "ended", costEur: 0.5, usage: { inputTokens: 20, outputTokens: 10 } });
+    expect(collected.results[0]).toMatchObject({ ok: true, costEur: 0.25 });
   });
 
   it("stays in progress for the configured rounds", async () => {

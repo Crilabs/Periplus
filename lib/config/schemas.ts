@@ -68,13 +68,29 @@ export const modelsSchema = z
       }),
     ),
     cacheWriteFactor: z.number().nonnegative(),
-    /** Message Batches: price factor, poll interval, give-up time and requests per batch. */
-    batch: z.strictObject({
-      discount: z.number().positive().max(1),
-      pollSeconds: z.number().int().positive(),
-      maxHours: z.number().positive(),
-      maxRequests: z.number().int().positive(),
-    }),
+    /** Message Batches: price factor, poll interval, give-up time and requests per batch, and the send protocol. */
+    batch: z
+      .strictObject({
+        discount: z.number().positive().max(1),
+        pollSeconds: z.number().int().positive(),
+        maxHours: z.number().positive(),
+        maxRequests: z.number().int().positive(),
+        /** Longest provider call (submit, cancel, list); the SDK never retries a submit (ruling M4-C-R6). */
+        providerTimeoutSeconds: z.number().int().positive(),
+        /** How long a claimed batch belongs to its sender; must outlast the provider call. */
+        leaseSeconds: z.number().int().positive(),
+        /** Clock difference allowed between the provider's `created_at` and ours when adopting a batch. */
+        clockSkewSeconds: z.number().int().nonnegative(),
+        /** Reservations count only for batches younger than this (provider expiry 24 h plus collection lag). */
+        reservationHours: z.number().positive(),
+        /** Delay before a batch send that hit the budget is tried again. */
+        budgetRetrySeconds: z.number().int().positive(),
+      })
+      .refine((b) => b.leaseSeconds > b.providerTimeoutSeconds, {
+        path: ["leaseSeconds"],
+        message: "must be longer than providerTimeoutSeconds",
+      })
+      .refine((b) => b.reservationHours > b.maxHours, { path: ["reservationHours"], message: "must be longer than maxHours" }),
     /** Models compared on the same extraction units (spec 06). */
     comparison: z.strictObject({ models: z.array(z.string().min(1)).min(2) }),
   })

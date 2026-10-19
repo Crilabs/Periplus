@@ -6,6 +6,7 @@ import { beginStage, createRun, endRun } from "@/lib/domain/runs";
 import { STAGES } from "@/lib/jobs/stages";
 import { cancelRunJobs, enqueueRunAdvance, enqueueStageJobs } from "@/lib/jobs/enqueue";
 import { createLogger } from "@/lib/logger";
+import { endRunBatches } from "@/lib/pipeline/batches";
 import type { QueueName } from "@/lib/jobs/queues";
 import type { JobData } from "@/lib/jobs/worker";
 
@@ -53,12 +54,15 @@ export async function enqueueStage(db: Db, boss: PgBoss, runId: string, stageNam
 }
 
 /**
- * "Lauf beenden": ends a queued or running run by hand (`endRun`, recording who and when) and cancels its jobs that
- * have not started. Returns whether the run was active; for a run that has ended already nothing happens.
+ * "Lauf beenden": ends a queued or running run by hand (`endRun`, recording who and when), cancels its jobs that
+ * have not started and, after that commit, ends its message batches (`endRunBatches`: unsent ones fail, running ones
+ * are cancelled at the provider by their next poll and booked). Returns whether the run was active; for a run that has
+ * ended already nothing happens.
  */
 export async function endRunByAdmin(db: Db, boss: PgBoss, runId: string, by: string): Promise<{ ended: boolean; cancelledJobs: number }> {
   if (!(await endRun(db, runId, by))) return { ended: false, cancelledJobs: 0 };
   const cancelledJobs = await cancelRunJobs(boss, runId);
-  createLogger("runs").info({ runId, by, cancelledJobs }, "run ended by admin");
+  const batches = await endRunBatches(db, boss, runId);
+  createLogger("runs").info({ runId, by, cancelledJobs, batches }, "run ended by admin");
   return { ended: true, cancelledJobs };
 }

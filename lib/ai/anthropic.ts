@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { Db } from "@/lib/db/client";
 import { getConfig, type AppConfig, type ModelTaskConfig } from "@/lib/config";
 import { getEnv } from "@/lib/env";
-import { assertWithinBudget, recordExternalCall } from "@/lib/domain/costs";
+import { assertWithinBudget, recordExternalCall, reservedBatchEur } from "@/lib/domain/costs";
 import { createLogger } from "@/lib/logger";
 import { resolveTaskModel, usageCostEur } from "./cost";
 import { loadPrompt, renderPrompt } from "./prompts";
@@ -20,6 +20,7 @@ import {
   type ModelResult,
   type ModelTask,
   type ModelUsage,
+  type ProviderBatch,
   type SubmittedBatch,
 } from "./types";
 
@@ -139,6 +140,7 @@ function batchItemResult<O>(
 export function createAnthropicClient(db: Db, config: AppConfig = getConfig(), options: AnthropicClientOptions = {}): ModelClient {
   let sdk = options.sdk;
   const getSdk = () => (sdk ??= defaultSdk());
+  const timeout = config.models.batch.providerTimeoutSeconds * 1000;
 
   return {
     async call<I, O>(task: ModelTask<I, O>, input: I, ctx?: ModelCallContext): Promise<ModelResult<O>> {
@@ -146,7 +148,10 @@ export function createAnthropicClient(db: Db, config: AppConfig = getConfig(), o
       const { promptVersion } = taskConfig;
       const params = buildParams(task, input, taskConfig, model);
 
-      await assertWithinBudget(db, "anthropic", config.budgets, options.now?.());
+      // Open message batches have promised part of the budget already (ruling M4-C-R5).
+      const now = options.now?.() ?? new Date();
+      const reserved = await reservedBatchEur(db, { now, hours: config.models.batch.reservationHours });
+      await assertWithinBudget(db, "anthropic", config.budgets, now, reserved);
 
       const response = await getSdk().messages.create(params);
 
@@ -184,16 +189,19 @@ export function createAnthropicClient(db: Db, config: AppConfig = getConfig(), o
       const { taskConfig, model } = resolveTaskModel(config, task.name, ctx?.model);
       const batchRequests = requests.map((r) => ({ custom_id: r.customId, params: buildParams(task, r.input, taskConfig, model) }));
 
+      // Booked spend only: the caller has reserved this batch's estimate already (ruling M4-P6).
       await assertWithinBudget(db, "anthropic", config.budgets, options.now?.());
 
-      const batch = await getSdk().messages.batches.create({ requests: batchRequests });
+      // No SDK retry: the API has no idempotency key, so a retried create after a lost response starts a second,
+      // paid batch. The job retry resends, after checking the provider's batch list (ruling M4-C-R6).
+      const batch = await getSdk().messages.batches.create({ requests: batchRequests }, { maxRetries: 0, timeout });
       getLog().info({ task: task.name, model, batchId: batch.id, requests: requests.length, runId: ctx?.runId }, "batch submitted");
       return { batchId: batch.id, model, promptVersion: taskConfig.promptVersion };
     },
 
     async collectBatch<I, O>(task: ModelTask<I, O>, batchId: string, ctx?: ModelCallContext): Promise<CollectedBatch<O>> {
       const { price } = resolveTaskModel(config, task.name, ctx?.model);
-      const batch = await getSdk().messages.batches.retrieve(batchId);
+      const batch = await getSdk().messages.batches.retrieve(batchId, null, { timeout });
       if (batch.processing_status !== "ended") return { status: "in_progress", results: [], usage: ZERO_USAGE, costEur: 0 };
 
       const results: BatchItemResult<O>[] = [];
@@ -206,6 +214,24 @@ export function createAnthropicClient(db: Db, config: AppConfig = getConfig(), o
         results.push(item);
       }
       return { status: "ended", results, usage, costEur };
+    },
+
+    async cancelBatch(batchId: string): Promise<void> {
+      await getSdk().messages.batches.cancel(batchId, null, { timeout });
+      getLog().info({ batchId }, "batch cancel requested");
+    },
+
+    async listBatches(window: { from: Date; to: Date }): Promise<ProviderBatch[]> {
+      const found: ProviderBatch[] = [];
+      // Newest first: stop at the first batch created before the window.
+      for await (const batch of getSdk().messages.batches.list({ limit: 100 }, { timeout })) {
+        const createdAt = new Date(batch.created_at);
+        if (createdAt < window.from) break;
+        if (createdAt > window.to) continue;
+        const requestCount = Object.values(batch.request_counts).reduce((sum, n) => sum + n, 0);
+        found.push({ batchId: batch.id, createdAt, requestCount });
+      }
+      return found;
     },
   };
 }

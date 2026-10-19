@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { areaByKey, loadConfig } from "../index";
+import { modelsSchema } from "../schemas";
 
 const repoConfig = loadConfig("config");
 
@@ -350,8 +351,14 @@ describe("text configuration", () => {
     expect(cfg.models.tasks["disambiguate-mention"]).toMatchObject({ model: "claude-haiku-5-5", effort: "low", maxTokens: 4096 });
     expect(cfg.models.tasks["extract-route"]).toMatchObject({ model: "claude-sonnet-5-5", effort: "medium", maxTokens: 16000 });
     expect(cfg.models.tasks["system.echo"]).toMatchObject({ effort: "low", cacheSystem: false });
-    expect(cfg.models.batch).toEqual({ discount: 0.5, pollSeconds: 60, maxHours: 26, maxRequests: 1000 });
+    expect(cfg.models.batch).toEqual({ discount: 0.5, pollSeconds: 60, maxHours: 26, maxRequests: 1000, providerTimeoutSeconds: 120, leaseSeconds: 600, clockSkewSeconds: 120, reservationHours: 48, budgetRetrySeconds: 900 });
     expect(cfg.models.comparison.models).toEqual(["claude-sonnet-5-5", "claude-opus-5-5"]);
+  });
+
+  it("a batch lease must outlast the provider call", () => {
+    const models = JSON.parse(readFileSync("config/models.json", "utf8"));
+    models.batch.leaseSeconds = models.batch.providerTimeoutSeconds;
+    expect(() => modelsSchema.parse(models)).toThrow(/longer than providerTimeoutSeconds/);
   });
 
   it("every model named in tasks and comparison has a price", () => {

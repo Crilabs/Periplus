@@ -57,12 +57,22 @@ export type CollectedBatch<O> = {
   costEur: number;
 };
 
+/** A message batch as the provider lists it: no metadata, only when it was created and how many requests it has. */
+export type ProviderBatch = { batchId: string; createdAt: Date; requestCount: number };
+
 export interface ModelClient {
   call<I, O>(task: ModelTask<I, O>, input: I, ctx?: ModelCallContext): Promise<ModelResult<O>>;
-  /** Sends one request per item as a provider message batch; checks the budget first. */
+  /**
+   * Sends one request per item as a provider message batch, exactly once: no client-side retry, a bounded timeout (a
+   * retried create could start a second, paid batch). Checks the booked spend first.
+   */
   submitBatch<I, O>(task: ModelTask<I, O>, requests: BatchRequest<I>[], ctx?: ModelCallContext): Promise<SubmittedBatch>;
   /** Reads the state and, once ended, the results of a batch, keyed by `customId` (never by position). */
   collectBatch<I, O>(task: ModelTask<I, O>, batchId: string, ctx?: ModelCallContext): Promise<CollectedBatch<O>>;
+  /** Asks the provider to stop a batch; requests it already answered stay billed and come back with the results. */
+  cancelBatch(batchId: string): Promise<void>;
+  /** The provider's batches created in [from, to], to find one whose submit outcome is unknown (ruling M4-C-R6). */
+  listBatches(window: { from: Date; to: Date }): Promise<ProviderBatch[]>;
 }
 
 export const ZERO_USAGE: ModelUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
