@@ -55,10 +55,19 @@ const modelTaskSchema = z.strictObject({
 export const modelsSchema = z
   .strictObject({
     tasks: z.record(z.string(), modelTaskSchema),
+    /**
+     * Prices per million tokens. A cache read costs `cacheReadFactor` x input price (per model), a cache write
+     * `cacheWriteFactor` x input price (ruling M4-P5).
+     */
     pricesEurPerMTok: z.record(
       z.string(),
-      z.strictObject({ input: z.number().nonnegative(), output: z.number().nonnegative() }),
+      z.strictObject({
+        input: z.number().nonnegative(),
+        output: z.number().nonnegative(),
+        cacheReadFactor: z.number().nonnegative(),
+      }),
     ),
+    cacheWriteFactor: z.number().nonnegative(),
     /** Message Batches: price factor, poll interval, give-up time and requests per batch. */
     batch: z.strictObject({
       discount: z.number().positive().max(1),

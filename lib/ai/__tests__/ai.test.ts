@@ -32,7 +32,8 @@ const config: AppConfig = {
       "system.echo": { model: "claude-haiku-5-5", promptVersion: 1, effort: "low", maxTokens: 1024, cacheSystem: false },
       "pdf.to_markdown": { model: "claude-haiku-5-5", promptVersion: 1, effort: "low", maxTokens: 16000, cacheSystem: false },
     },
-    pricesEurPerMTok: { "claude-haiku-5-5": { input: 0.1, output: 0.5 } },
+    pricesEurPerMTok: { "claude-haiku-5-5": { input: 0.1, output: 0.5, cacheReadFactor: 0.1 } },
+    cacheWriteFactor: 1.25,
     batch: { discount: 0.5, pollSeconds: 60, maxHours: 26, maxRequests: 1000 },
     comparison: { models: ["claude-haiku-5-5", "claude-haiku-5-5"] },
   },
@@ -192,4 +193,37 @@ describe("anthropic client", () => {
     await expect(client.call(echoTask, { text: "x" })).rejects.toThrow(/claude-haiku-5-5/);
     expect(create).not.toHaveBeenCalled();
   });
+});
+
+describe("anthropic client options", () => {
+  it("ctx.model overrides the configured model and cache tokens are booked", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      const stage = `ai-test-${Math.random()}`;
+      const withSonnet: AppConfig = {
+        ...config,
+        budgets: { ...config.budgets, anthropic: { dailyEur: 100 } },
+        models: {
+          ...config.models,
+          pricesEurPerMTok: { ...config.models.pricesEurPerMTok, "claude-sonnet-5-5": { input: 2, output: 10, cacheReadFactor: 0.1 } },
+        },
+      };
+      const { api, create } = fakeSdk('{"echo":"x","language":"en"}', {
+        input_tokens: 1000,
+        output_tokens: 0,
+        cache_read_input_tokens: 1000,
+        cache_creation_input_tokens: 1000,
+      } as { input_tokens: number; output_tokens: number });
+      const r = await createAnthropicClient(tx, withSonnet, { sdk: api, now: () => now }).call(
+        echoTask,
+        { text: "x" },
+        { stage, model: "claude-sonnet-5-5" },
+      );
+      expect(r.model).toBe("claude-sonnet-5-5");
+      expect((create.mock.calls[0]![0] as { model: string }).model).toBe("claude-sonnet-5-5");
+      expect(r.costEur).toBeCloseTo((1000 * 2 + 1000 * 2 * 1.25 + 1000 * 2 * 0.1) / 1e6, 10);
+      const [row] = await tx.select().from(externalCalls).where(eq(externalCalls.stage, stage));
+      expect(Number(row!.units)).toBe(3000);
+      expect(row!.meta).toMatchObject({ cacheRead: 1000, cacheWrite: 1000 });
+    }));
 });
