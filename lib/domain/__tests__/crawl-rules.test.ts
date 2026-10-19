@@ -31,6 +31,15 @@ describe("crawlRulesSchema", () => {
     expect((error as ZodError).issues.map((i) => i.path.join("."))).toContain("allow.0");
   });
 
+  it("an invalid boilerplate selector is rejected when saved, valid ones pass", () => {
+    const issues = (selectors: string[]) => {
+      const parsed = crawlRulesSchema.safeParse({ boilerplateSelectors: selectors });
+      return parsed.success ? [] : parsed.error.issues.map((i) => i.path.join("."));
+    };
+    expect(issues([".nav", "div >> p", "#x["])).toEqual(["boilerplateSelectors.1", "boilerplateSelectors.2"]);
+    expect(issues([".cookie-banner", "nav, footer", '[data-ad="1"]', "aside:has(form)"])).toEqual([]);
+  });
+
   it("rejects a pattern longer than 200 characters", () => {
     expect(() => crawlRulesSchema.parse({ deny: ["a".repeat(201)] })).toThrow(ZodError);
     expect(crawlRulesSchema.parse({ deny: ["a".repeat(200)] }).deny).toHaveLength(1);

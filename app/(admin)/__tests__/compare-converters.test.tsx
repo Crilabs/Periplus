@@ -97,7 +97,10 @@ describe("converter comparison page", () => {
 
       await rateOutputAction(form({ sampleId, converter: "firecrawl", mainContent: "on", tablesKept: "" }));
       expect(redirect).toHaveBeenLastCalledWith(`/compare/converters?sample=${sampleId}&error=not_rateable`);
+      // An invalid rating returns to the open page when its sample id is valid, else to the list.
       await rateOutputAction(form({ sampleId, converter: "other", tablesKept: "" }));
+      expect(redirect).toHaveBeenLastCalledWith(`/compare/converters?sample=${sampleId}&error=invalid_rating`);
+      await rateOutputAction(form({ sampleId: "not-a-uuid", converter: "local", tablesKept: "" }));
       expect(redirect).toHaveBeenLastCalledWith("/compare/converters?error=invalid_rating");
       const after = await render({ sample: sampleId, error: "not_rateable" });
       expect(after).toContain("lässt sich nicht bewerten");

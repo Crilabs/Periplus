@@ -16,8 +16,8 @@ import { BudgetExceeded } from "@/lib/domain/costs";
 import { newId } from "@/lib/domain/ids";
 import { createRun } from "@/lib/domain/runs";
 import { COMPARE_STAGE, compareSample } from "@/lib/pipeline/compare-converters";
-import { startConverterComparison } from "@/lib/pipeline/compare-converters-run";
-import { withRollback } from "@/test/db";
+import { COMPARISON_LOCK, startConverterComparison } from "@/lib/pipeline/compare-converters-run";
+import { startWhileLocked, testDb, withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
 import type { PgBoss } from "pg-boss";
 
@@ -294,4 +294,12 @@ describe("startConverterComparison", () => {
       await expect(startConverterComparison(tx, boss, "admin")).rejects.toMatchObject({ reason: "comparison_run_active" });
       expect(await tx.select().from(converterSamples).where(inArray(converterSamples.id, [done.sampleId]))).toHaveLength(1);
     }));
+
+  it("a start waits for another start's lock, so two concurrent starts cannot both pass the check", async () => {
+    const { boss, inserted } = recordingBoss();
+    await expect(startWhileLocked(testDb(), COMPARISON_LOCK, (tx) => startConverterComparison(tx, boss, "admin"))).rejects.toMatchObject({
+      cause: expect.objectContaining({ code: "55P03" }),
+    });
+    expect(inserted).toEqual([]);
+  });
 });

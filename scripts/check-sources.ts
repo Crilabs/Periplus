@@ -15,6 +15,8 @@ export type SourceStats = {
 
 export type SourcesCheck = SourceStats & {
   inRange: boolean;
+  /** Approved sources without any archived document: never crawled (or every page failed). */
+  withoutDocuments: string[];
   converterDecision: "provisional" | "decided";
   pdfExtractor: string;
 };
@@ -25,6 +27,7 @@ export function assessSources(stats: SourceStats, cfg: Pick<AppConfig, "fetch"> 
     approved: stats.approved,
     inRange: stats.approved >= APPROVED_RANGE.min && stats.approved <= APPROVED_RANGE.max,
     perSource: stats.perSource,
+    withoutDocuments: stats.perSource.filter((s) => s.documents === 0).map((s) => s.domain),
     openFailedFetchJobs: stats.openFailedFetchJobs,
     converterDecision: cfg.fetch.decision.status,
     pdfExtractor: cfg.fetch.pdf.extractor,
@@ -35,6 +38,9 @@ export function assessSources(stats: SourceStats, cfg: Pick<AppConfig, "fetch"> 
 export function checkFailures(check: SourcesCheck): string[] {
   const failures: string[] = [];
   if (!check.inRange) failures.push(`approved sources ${check.approved} outside ${APPROVED_RANGE.min}–${APPROVED_RANGE.max}`);
+  if (check.withoutDocuments.length > 0) {
+    failures.push(`approved sources without documents (not crawled yet?): ${check.withoutDocuments.join(", ")}`);
+  }
   if (check.openFailedFetchJobs > 0) failures.push(`${check.openFailedFetchJobs} open failed fetch/embed jobs in /review`);
   if (check.converterDecision === "provisional") failures.push("converter decision is provisional (config/fetch.json decision.status)");
   return failures;
@@ -42,8 +48,9 @@ export function checkFailures(check: SourcesCheck): string[] {
 
 /**
  * M3 acceptance check of the sources: the current approved sources with their documents, versions, queued and
- * failed frontier rows and costs (`external_calls.source_id`, all time), and the open `failed_job` review tasks of
- * the queues `fetch.*` and `embed.chunks`.
+ * failed frontier rows and costs (`external_calls.source_id`, all time, comparison calls included; `/sources` shows
+ * 30 days), and the open `failed_job` review tasks of the queues `fetch.*` and `embed.chunks`. An approved source
+ * without documents fails the check (the full crawl has not archived it).
  */
 export async function checkSources(db: Db, cfg: Pick<AppConfig, "fetch"> = getConfig()): Promise<SourcesCheck> {
   const { rows } = await db.execute<{ domain: string; documents: number; versions: number; queued: number; failed: number; cost_eur: string }>(sql`
@@ -91,6 +98,7 @@ async function main(): Promise<void> {
     for (const s of r.perSource) {
       process.stdout.write(`${s.domain}\t${s.documents}\t${s.versions}\t${s.queued}\t${s.failed}\t${s.costEur.toFixed(4)}\n`);
     }
+    process.stdout.write(`approved sources without documents: ${r.withoutDocuments.length}\n`);
     process.stdout.write(`open failed fetch/embed jobs: ${r.openFailedFetchJobs}\n`);
     process.stdout.write(`converter decision: ${r.converterDecision}\n`);
     process.stdout.write(`pdf extractor: ${r.pdfExtractor}\n`);

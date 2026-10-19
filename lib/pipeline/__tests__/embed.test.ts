@@ -10,7 +10,7 @@ import { createRun } from "@/lib/domain/runs";
 import { STAGES } from "@/lib/jobs/stages";
 import { assertEmbeddingDimension, EMBED_STAGE, embedChunks, planEmbedChunks } from "@/lib/pipeline/embed";
 import { FETCH_RUN_STAGES, startEmbedBackfillRun } from "@/lib/pipeline/fetch/run";
-import { withRollback } from "@/test/db";
+import { startWhileLocked, testDb, withRollback } from "@/test/db";
 import { VOYAGE_RECORDING_TEXTS } from "@/scripts/fixtures-record";
 
 const cfg = () => ({ ...getConfig().embeddings, ratePerMinute: 1_000_000 });
@@ -233,6 +233,20 @@ describe("startEmbedBackfillRun", () => {
       const [run] = await tx.select().from(runs).where(eq(runs.id, id));
       expect(run).toMatchObject({ stages: [EMBED_STAGE], params: { all: true }, scopeType: "system", scopeId: "embeddings" });
       expect(inserted.every((q) => q === "embed.chunks" || q === "run.advance")).toBe(true);
+      await expect(startEmbedBackfillRun(tx, boss, "embed-test")).rejects.toMatchObject({ reason: "embed_backfill_active" });
     });
+  });
+
+  it("a start waits for another start's lock, so two concurrent starts cannot both pass the check", async () => {
+    const db = testDb();
+    const boss = { insert: async (_q: string, jobs: Array<{ id: string }>) => jobs.map((j) => j.id) } as unknown as PgBoss;
+    await expect(startWhileLocked(db, "embed-backfill-run", (tx) => startEmbedBackfillRun(tx, boss, "embed-test"))).rejects.toMatchObject({
+      cause: expect.objectContaining({ code: "55P03" }),
+    });
+  });
+
+  it("the refusal of a second backfill has a German text for the admin", async () => {
+    const { RUN_SCOPE_REASON_LABELS } = await import("@/app/(admin)/_components/labels");
+    expect(RUN_SCOPE_REASON_LABELS.embed_backfill_active).toBe("„Einbettungen nachholen“ läuft bereits");
   });
 });

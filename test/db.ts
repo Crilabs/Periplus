@@ -1,4 +1,5 @@
 import { afterAll } from "vitest";
+import { sql } from "drizzle-orm";
 import { createDb, type Db } from "@/lib/db/client";
 
 let handle: ReturnType<typeof createDb> | undefined;
@@ -47,4 +48,32 @@ export async function withRollback<T>(
     if (!(e instanceof Rollback)) throw e;
   }
   return result!;
+}
+
+/**
+ * Runs `start` in a rolled-back transaction while another connection holds the transaction-scoped advisory lock
+ * `pg_advisory_xact_lock(hashtext(key))`, with `lock_timeout` 300 ms: a start that takes the same lock fails with
+ * `lock_not_available` (55P03) instead of waiting; a start that takes none runs through. Returns start's result or
+ * rethrows its error. Commits nothing, so it never meets other tests' rows.
+ */
+export async function startWhileLocked<T>(db: Db, key: string, start: (tx: Db) => Promise<T>): Promise<T> {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let locked!: () => void;
+  const isLocked = new Promise<void>((resolve) => (locked = resolve));
+  const holder = db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${key}))`);
+    locked();
+    await held;
+  });
+  await isLocked;
+  try {
+    return await withRollback(async (tx) => {
+      await tx.execute(sql`set local lock_timeout = '300ms'`);
+      return start(tx);
+    });
+  } finally {
+    release();
+    await holder;
+  }
 }

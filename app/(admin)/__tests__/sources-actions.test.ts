@@ -100,6 +100,16 @@ describe("saveSourceAction", () => {
       expect(await getSource(tx, sourceId)).toEqual(before);
     }));
 
+  it("an invalid boilerplate selector comes back as invalid and saves nothing", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const sourceId = await insertSource(tx);
+      const before = await getSource(tx, sourceId);
+      await saveSourceAction(settingsForm(sourceId, { boilerplateSelectors: ".nav\ndiv >> p" }));
+      expect(redirect).toHaveBeenCalledWith(`/sources/${sourceId}?invalid=boilerplateSelectors`);
+      expect(await getSource(tx, sourceId)).toEqual(before);
+    }));
+
   it("a blank weight is invalid, not 0", () =>
     withRollback(async (tx) => {
       currentDb = tx;

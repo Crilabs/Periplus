@@ -152,16 +152,42 @@ export async function startUploadFetchRun(db: Db, boss: PgBoss, documentId: stri
 /** Scope id of an embedding backfill run (scope type `system`). */
 export const EMBED_BACKFILL_SCOPE = "embeddings";
 
-/** Embeds every chunk still without an embedding (`params.all`; a plan takes at most `EMBED_PLAN_LIMIT`). */
-export function startEmbedBackfillRun(db: Db, boss: PgBoss, triggeredBy: string): Promise<{ id: string }> {
-  return startRun(db, boss, {
-    kind: "stage",
-    scope: { type: "system", id: EMBED_BACKFILL_SCOPE },
-    params: { all: true },
-    stages: [EMBED_STAGE],
-    triggeredBy,
+/**
+ * Embeds every chunk still without an embedding (`params.all`; a plan takes at most `EMBED_PLAN_LIMIT`). Refused
+ * (`embed_backfill_active`) while another backfill is queued or running: both would plan, and pay for, the same
+ * chunks. The check and the run insert happen in one transaction under an advisory lock, so of two concurrent starts
+ * the second waits and then sees the first run.
+ */
+export async function startEmbedBackfillRun(db: Db, boss: PgBoss, triggeredBy: string): Promise<{ id: string }> {
+  const { id } = await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${EMBED_BACKFILL_LOCK}))`);
+    const [active] = await tx
+      .select({ id: runs.id })
+      .from(runs)
+      .where(
+        and(
+          inArray(runs.status, ["queued", "running"]),
+          eq(runs.scopeType, "system"),
+          eq(runs.scopeId, EMBED_BACKFILL_SCOPE),
+          sql`${EMBED_STAGE} = any(${runs.stages})`,
+        ),
+      )
+      .limit(1);
+    if (active) throw new RunScopeNotReady("embed_backfill_active", `Embedding backfill run ${active.id} is still active`);
+    return createRun(tx, {
+      kind: "stage",
+      scope: { type: "system", id: EMBED_BACKFILL_SCOPE },
+      params: { all: true },
+      stages: [EMBED_STAGE],
+      triggeredBy,
+    });
   });
+  await enqueueStage(db, boss, id, EMBED_STAGE);
+  return { id };
 }
+
+/** Advisory lock key of the backfill start. */
+const EMBED_BACKFILL_LOCK = "embed-backfill-run";
 
 /**
  * Starts the run "Wikivoyage" for an area: creates the whitelist sources that are missing, then queues the area's

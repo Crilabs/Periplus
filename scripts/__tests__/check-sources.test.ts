@@ -16,6 +16,7 @@ describe("check-sources", () => {
       approved: 19,
       inRange: false,
       perSource: [],
+      withoutDocuments: [],
       openFailedFetchJobs: 0,
       converterDecision: "provisional",
       pdfExtractor: "pdftotext",
@@ -38,6 +39,15 @@ describe("check-sources", () => {
       "approved sources 41 outside 20–40",
       "2 open failed fetch/embed jobs in /review",
     ]);
+
+    // An approved source the crawl never archived fails the check.
+    const perSource = [
+      { domain: "crawled.example", documents: 3, versions: 3, queued: 0, failed: 0, costEur: 0 },
+      { domain: "never.example", documents: 0, versions: 0, queued: 1, failed: 0, costEur: 0 },
+    ];
+    const uncrawled = assessSources({ approved: 20, perSource, openFailedFetchJobs: 0 }, cfg);
+    expect(uncrawled.withoutDocuments).toEqual(["never.example"]);
+    expect(checkFailures(uncrawled)).toEqual(["approved sources without documents (not crawled yet?): never.example"]);
   });
 
   it("counts documents, versions, frontier rows, costs per approved source and open failed fetch jobs", () =>

@@ -1,3 +1,4 @@
+import { parseHTML } from "linkedom";
 import { z } from "zod";
 import { registrableDomain, safeDecode } from "./urls";
 
@@ -17,6 +18,19 @@ export const regexPattern = z.string().max(MAX_PATTERN_LENGTH).refine((s) => {
   }
 }, "must be a valid regular expression");
 
+let selectorProbe: ReturnType<typeof parseHTML>["document"] | undefined;
+
+/** Whether the converter can use `selector`: it runs against an empty document as `htmlToMarkdown` runs it. */
+function isValidSelector(selector: string): boolean {
+  selectorProbe ??= parseHTML("<!doctype html><html><body></body></html>").document;
+  try {
+    selectorProbe.querySelectorAll(selector);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Field schemas of the crawl rules (spec 05), without defaults. */
 const fields = {
   startUrls: z.array(z.url({ protocol: /^https?$/ })),
@@ -31,7 +45,7 @@ const fields = {
   converter: z.enum(["auto", ...CONVERTERS]),
   pdf: z.boolean(),
   /** CSS selectors removed before conversion (boilerplate per source). */
-  boilerplateSelectors: z.array(z.string().trim().min(1)),
+  boilerplateSelectors: z.array(z.string().trim().min(1).refine(isValidSelector, "must be a valid CSS selector")),
 };
 
 export const crawlRulesSchema = z.strictObject({

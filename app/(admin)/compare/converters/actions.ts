@@ -35,7 +35,11 @@ const ratingFormSchema = z.object({
 export async function rateOutputAction(formData: FormData): Promise<void> {
   const admin = await requireAdmin();
   const parsed = ratingFormSchema.safeParse(Object.fromEntries(formData));
-  if (!parsed.success) return redirect(`${PAGE}?error=invalid_rating`);
+  if (!parsed.success) {
+    // Back to the open page when its id is valid (only a tampered form gets here at all).
+    const sample = z.uuid().safeParse(formData.get("sampleId"));
+    return redirect(sample.success ? `${PAGE}?sample=${sample.data}&error=invalid_rating` : `${PAGE}?error=invalid_rating`);
+  }
   const { sampleId, converter, ...rating } = parsed.data;
   try {
     await rateConverterOutput(getDb(), { sampleId, converter, rating, by: admin.email });

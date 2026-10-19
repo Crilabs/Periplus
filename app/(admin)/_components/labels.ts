@@ -269,6 +269,7 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   no_converter_samples: "Keine Seiten für den Vergleich – zuerst Quellen freigeben und crawlen",
   converter_samples_done: "Alle Seiten der Stichprobe sind bereits mit allen drei Konvertern umgewandelt",
   comparison_run_active: "Ein Konverter-Vergleich läuft bereits",
+  embed_backfill_active: "„Einbettungen nachholen“ läuft bereits",
 };
 
 /** The German text of a `?error=<reason>` a run action redirected with; null for none or an unknown reason. */
