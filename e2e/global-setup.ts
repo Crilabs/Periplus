@@ -14,10 +14,13 @@ import {
   geoObjects,
   mentions,
   places,
+  profiles,
   runs,
   sources,
 } from "../lib/db/schema";
 import { consolidateGeo } from "../lib/domain/consolidation/store";
+import type { AttributeProvenance } from "../lib/domain/consolidation/types";
+import { profileEntryKey } from "../lib/domain/profile-view";
 import { createReviewTask } from "../lib/domain/review";
 import { createUser } from "../lib/domain/users";
 
@@ -181,6 +184,44 @@ async function createFactScene(db: Db): Promise<{ placeId: string; geoObjectId: 
   });
 }
 
+/** The hazard of the removal scene: a profile entry „Eintrag entfernen“ can remove. */
+const REMOVAL_HAZARD = { kind: "rock", name: "E2E Xera" };
+
+/**
+ * A confirmed bay whose profile (version 1, written directly: no fact is needed to show an entry) lists one hazard,
+ * for the two-step „Eintrag entfernen“. Its own object per run, at the e2e coordinate of the fact scene (outside the
+ * pilot box), so the fact scene's versions stay untouched. Returns the place id.
+ */
+async function createRemovalScene(db: Db): Promise<string> {
+  const cfg = loadConfig("config").consolidation;
+  const name = `E2E Removal Bay ${new Date().toISOString()}`;
+  const geom = sql`${geomFromGeoJson({ type: "Point", coordinates: [27.93, 34.93] })}`;
+  const key = profileEntryKey("hazards", REMOVAL_HAZARD, cfg);
+  const hazards: AttributeProvenance = {
+    origin: "text", rule: "union", confidence: 0.6, confidenceClass: "medium", observedAt: null, lastConfirmedAt: null,
+    factIds: [], sourceKeys: [], computationIds: [], poiIds: [], expired: false, onlyGoneSources: false, conflictKey: null,
+    observedMonths: [], entryFactIds: { [key]: [] },
+  };
+  return db.transaction(async (tx) => {
+    const [object] = await tx.insert(geoObjects).values({ type: "bay", origin: "manual", geom }).returning({ id: geoObjects.id });
+    await tx.insert(geoNames).values({ geoObjectId: object!.id, name, nameNormalized: name.toLowerCase(), language: "en", script: "latin", origin: "manual" });
+    const [place] = await tx.insert(places).values({ geoObjectId: object!.id, kind: "anchorage", status: "confirmed", position: geom }).returning({ id: places.id });
+    await tx.insert(profiles).values({
+      geoObjectId: object!.id,
+      version: 1,
+      validFrom: new Date().toISOString().slice(0, 10),
+      attributes: { hazards: [REMOVAL_HAZARD] },
+      provenance: { hazards },
+      sourcesCount: 1,
+      documentsCount: 1,
+      contentHash: `e2e-removal-${object!.id}`,
+      factSchemaVersion: loadConfig("config").factSchema.version,
+      rulesVersion: cfg.version,
+    });
+    return place!.id;
+  });
+}
+
 /** Domain suffix of the sources the e2e run proposes (never a real domain). */
 const E2E_SOURCE_SUFFIX = ".e2e.test.invalid";
 
@@ -244,6 +285,7 @@ export default async function globalSetup(): Promise<void> {
     if (v1.version !== 1 || v2.status !== "created" || v2.version !== 2) {
       throw new Error(`e2e fact scene: expected profile versions 1 and 2, got ${JSON.stringify([v1, v2])}`);
     }
+    process.env.E2E_REMOVAL_PLACE = await createRemovalScene(db);
     process.env.E2E_FACT_QUOTE = FACT_QUOTE;
     process.env.E2E_SHELTER_QUOTE = SHELTER_LATER_QUOTE;
     // Pilot-area tests roll back, so the test database normally has no saronic area object (like a fresh

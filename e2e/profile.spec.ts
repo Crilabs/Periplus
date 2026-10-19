@@ -10,6 +10,8 @@ const PLACE = process.env.E2E_FACT_PLACE!;
 const QUOTE = process.env.E2E_FACT_QUOTE!;
 /** The quote of the shelter.N text fact that sets the current value (version 2). */
 const SHELTER_QUOTE = process.env.E2E_SHELTER_QUOTE!;
+/** Created by global-setup: a confirmed bay whose profile (version 1) lists the hazard „E2E Xera“. */
+const REMOVAL_PLACE = process.env.E2E_REMOVAL_PLACE!;
 
 async function login(page: import("@playwright/test").Page) {
   await page.goto("/login");
@@ -63,4 +65,24 @@ test("shelter.N shows origin Text with its quoted fact; the version slider at ve
   await expect(page.getByRole("slider")).toHaveAttribute("aria-valuetext", "Version 1 von 2");
   await expect(shelterRow()).toContainText("0,90");
   await expect(page.getByText("Erste Version.")).toBeVisible();
+});
+
+test("„Eintrag entfernen“ asks „Wirklich entfernen?“ first; Abbrechen keeps the entry, confirming removes it", async ({ page }) => {
+  await login(page);
+  await page.goto(`/places/${REMOVAL_PLACE}?tab=profile&attr=hazards`);
+  await expect(page.getByText("E2E Xera").first()).toBeVisible();
+
+  // step one only asks; nothing is removed yet
+  await page.getByRole("link", { name: "Eintrag entfernen" }).click();
+  await expect(page).toHaveURL(/tab=profile&attr=hazards&confirm=/);
+  await expect(page.getByRole("button", { name: "Wirklich entfernen?" })).toBeVisible();
+  await page.getByRole("link", { name: "Abbrechen" }).click();
+  await expect(page).toHaveURL(/tab=profile&attr=hazards$/);
+  await expect(page.getByRole("button", { name: "Wirklich entfernen?" })).toHaveCount(0);
+
+  // step two removes it: the review fact is written and the follow-up run started
+  await page.getByRole("link", { name: "Eintrag entfernen" }).click();
+  await page.getByRole("button", { name: "Wirklich entfernen?" }).click();
+  await expect(page).toHaveURL(/tab=profile&attr=hazards&notice=entry_removed(&run=[0-9a-f-]{36}|_no_run)$/);
+  await expect(page.getByRole("status")).toContainText("Eintrag entfernt.");
 });
