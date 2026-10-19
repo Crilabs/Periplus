@@ -19,6 +19,7 @@ import {
   failBatchUnit,
   failSubmitUnit,
   pollBatch,
+  reviveBatch,
   sizeBatch,
   submitStageBatch,
   type BatchHandlerEntry,
@@ -710,6 +711,123 @@ describe("stage batches", () => {
 
       expect(await pollBatch(tx, { model, boss, config, handlers }, batchId!, { n: 0 })).toBe("resubmitted");
       expect((await batchesOf(tx, runId))[1]).toMatchObject({ status: "submitted", providerBatchId: "mock-batch-2" });
+      expect(await pollBatch(tx, { model, boss, config, handlers }, followUp.id)).toBe("distributed");
+      expect(seen.map((s) => s.subjectId)).toEqual(["s0", "s1"]);
+      expect(await stageRow(tx, runId)).toMatchObject({ done: 2, failed: 0 });
+    }));
+
+  it("a manual retry racing a booking poll never revives a collected batch as running; a later retry distributes it", () =>
+    withRollback(async (tx) => {
+      const runId = await stageRun(tx);
+      const model = new MockModel({ "system.echo": echoBack }, { batchRounds: 100 });
+      const collect = vi.spyOn(model, "collectBatch");
+      const { boss } = recordingBoss();
+      const { handlers, seen } = countingHandlers();
+      const { batchId } = await submitStageBatch(tx, { model, boss, config }, { task, runId, stage: STAGE, key: "k", items: items("a", "b") });
+      await recordJobOutcome(tx, runId, STAGE, "k", "done");
+      expect(await failBatchUnit(tx, boss, batchId!)).toBe(true);
+      // What the manual retry read before the booking poll committed: failed, sent, not collected.
+      const stale = (await batchesOf(tx, runId))[0]!;
+      expect(stale).toMatchObject({ status: "failed", endedAt: null });
+
+      // The booking poll commits between the retry's read of pending items and its revive update: at that point the
+      // row has `ended_at`, the retry still believes it running. Its revive must lose.
+      await tx.update(aiBatches).set({ endedAt: new Date() }).where(eq(aiBatches.id, batchId!));
+      expect(await reviveBatch(tx, stale)).toBeUndefined();
+      expect((await batchesOf(tx, runId))[0]!.status).toBe("failed");
+      await tx.update(aiBatches).set({ endedAt: null }).where(eq(aiBatches.id, batchId!));
+
+      // The real booking poll books it while it stays failed; the stale revive still loses.
+      expect(await pollBatch(tx, { model, boss, config, handlers }, batchId!, { mode: "book" })).toBe("failed");
+      expect((await batchesOf(tx, runId))[0]).toMatchObject({ status: "failed" });
+      expect(await reviveBatch(tx, stale)).toBeUndefined();
+
+      const calls = collect.mock.calls.length;
+      expect(await pollBatch(tx, { model, boss, config, handlers }, batchId!)).toBe("distributed");
+      expect(collect.mock.calls.length).toBe(calls);
+      expect(seen).toHaveLength(2);
+      expect(await stageRow(tx, runId)).toMatchObject({ done: 2, failed: 0 });
+    }));
+
+  it("a poll that finds its batch still submitted after collecting fails once instead of recursing", () =>
+    withRollback(async (tx) => {
+      const runId = await stageRun(tx);
+      const model = new MockModel({ "system.echo": echoBack });
+      const collect = vi.spyOn(model, "collectBatch");
+      const { boss } = recordingBoss();
+      const { handlers } = countingHandlers();
+      const { batchId } = await submitStageBatch(tx, { model, boss, config }, { task, runId, stage: STAGE, key: "k", items: items("a") });
+      // The state the old revive race could leave behind: submitted, but its results already collected.
+      await tx.update(aiBatches).set({ endedAt: new Date() }).where(eq(aiBatches.id, batchId!));
+      await expect(pollBatch(tx, { model, boss, config, handlers }, batchId!)).rejects.toThrow("after its results were collected");
+      expect(collect).toHaveBeenCalledTimes(1);
+    }));
+
+  it("an adapter budget refusal of a follow-up send defers only that batch", () =>
+    withRollback(async (tx) => {
+      const runId = await stageRun(tx);
+      const model = new MockModel({
+        "system.echo": (input) => {
+          if ((input as { text: string }).text === "busy" && !retriedOnce.has("busy")) {
+            retriedOnce.add("busy");
+            throw new MockBatchError("overloaded", true);
+          }
+          return echoBack(input);
+        },
+      });
+      const retriedOnce = new Set<string>();
+      const submit = vi.spyOn(model, "submitBatch");
+      const { boss, inserted } = recordingBoss();
+      const { handlers } = countingHandlers();
+      const deps = { model, boss, config, handlers, reservationScope: { runIds: [runId] } };
+      const { batchId } = await submitStageBatch(tx, deps, { task, runId, stage: STAGE, key: "k", items: items("a", "busy") });
+      await recordJobOutcome(tx, runId, STAGE, "k", "done");
+      // Spend booked between our reservation check and the adapter's own check.
+      submit.mockRejectedValueOnce(new BudgetExceeded("anthropic", 1000, 1000));
+
+      expect(await pollBatch(tx, deps, batchId!)).toBe("waiting");
+      const followUp = (await batchesOf(tx, runId))[1]!;
+      expect(followUp).toMatchObject({ status: "submitting", claimId: null });
+      const send = inserted.find((j) => j.queue === "ai.batch.poll" && j.data.batchId === followUp.id && j.data.mode === "send");
+      expect(send?.startAfter).toBe(`${config.models.batch.budgetRetrySeconds} seconds`);
+
+      expect(await pollBatch(tx, deps, followUp.id, { mode: "send" })).toBe("waiting");
+      expect((await batchesOf(tx, runId))[1]!.status).toBe("submitted");
+    }));
+
+  it("a failed follow-up revived as sent gets a poll of its own", () =>
+    withRollback(async (tx) => {
+      const runId = await stageRun(tx);
+      const model = new MockModel(
+        {
+          "system.echo": (input) => {
+            if ((input as { text: string }).text === "busy" && !retriedOnce.has("busy")) {
+              retriedOnce.add("busy");
+              throw new MockBatchError("overloaded", true);
+            }
+            return echoBack(input);
+          },
+        },
+        { batchRounds: 0 },
+      );
+      const retriedOnce = new Set<string>();
+      const { boss, inserted } = recordingBoss();
+      const { handlers, seen } = countingHandlers();
+      const { batchId } = await submitStageBatch(tx, { model, boss, config }, { task, runId, stage: STAGE, key: "k", items: items("a", "busy") });
+      await recordJobOutcome(tx, runId, STAGE, "k", "done");
+      expect(await pollBatch(tx, { model, boss, config, handlers }, batchId!)).toBe("resubmitted");
+      const followUp = (await batchesOf(tx, runId))[1]!;
+      expect(followUp.status).toBe("submitted");
+      // The follow-up's own poll dead-letters: it fails while sent and not collected.
+      expect(await failBatchUnit(tx, boss, followUp.id)).toBe(true);
+      expect((await batchesOf(tx, runId))[1]).toMatchObject({ status: "failed", endedAt: null });
+
+      // A manual retry of the parent's poll revives the follow-up as sent and schedules its poll.
+      const before = inserted.length;
+      expect(await pollBatch(tx, { model, boss, config, handlers }, batchId!, { n: 0 })).toBe("resubmitted");
+      expect((await batchesOf(tx, runId))[1]!.status).toBe("submitted");
+      const poll = inserted.slice(before).find((j) => j.queue === "ai.batch.poll" && j.data.batchId === followUp.id && j.data.mode === undefined);
+      expect(poll?.data).toMatchObject({ key: `revive:${followUp.id}:${followUp.pollCount}`, batchId: followUp.id });
       expect(await pollBatch(tx, { model, boss, config, handlers }, followUp.id)).toBe("distributed");
       expect(seen.map((s) => s.subjectId)).toEqual(["s0", "s1"]);
       expect(await stageRow(tx, runId)).toMatchObject({ done: 2, failed: 0 });

@@ -479,7 +479,16 @@ async function sendFromPoll(db: Db, deps: BatchDeps, batch: BatchRow, task: Mode
     getLog().warn({ batchId: batch.id, spentEur: err.spentEur, budgetEur: err.budgetEur }, "batch send put off: anthropic budget reached");
     return defer(delay, String(Math.floor(now.getTime() / (delay * 1000))));
   }
-  const result = await sendBatch(db, deps, batch.id, task);
+  let result: SendResult;
+  try {
+    result = await sendBatch(db, deps, batch.id, task);
+  } catch (err) {
+    // The adapter's own budget check (spend booked since ours): `sendBatch` gave the claim back, only this batch waits.
+    if (!(err instanceof BudgetExceeded)) throw err;
+    const delay = config.models.batch.budgetRetrySeconds;
+    getLog().warn({ batchId: batch.id, spentEur: err.spentEur, budgetEur: err.budgetEur }, "batch send refused by the adapter budget check, put off");
+    return defer(delay, String(Math.floor(now.getTime() / (delay * 1000))));
+  }
   if (result === "busy") {
     const [row] = await db.select({ leaseUntil: aiBatches.leaseUntil }).from(aiBatches).where(eq(aiBatches.id, batch.id));
     const leaseUntil = row?.leaseUntil ?? now;
@@ -699,9 +708,10 @@ async function expireBatch(db: Db, deps: BatchDeps, batch: BatchRow): Promise<vo
  * Puts a batch the dead-letter handler failed back into the state it failed in, so a manual retry continues it: not
  * yet sent (`submitting`, or `sending` with its stale claim when a send was attempted, so the provider list is checked
  * first), sent but not collected (`submitted`, items still pending) or collected (`ended`). A batch failed for
- * running past `maxHours` (its items failed) stays failed. Returns the revived row.
+ * running past `maxHours` (its items failed) stays failed. Returns the revived row, or nothing when the row changed
+ * since `batch` was read. Exported for tests.
  */
-async function reviveBatch(db: Db, batch: BatchRow): Promise<BatchRow | undefined> {
+export async function reviveBatch(db: Db, batch: BatchRow): Promise<BatchRow | undefined> {
   let status: "submitting" | "sending" | "submitted" | "ended";
   if (batch.endedAt !== null) status = "ended";
   else {
@@ -714,10 +724,18 @@ async function reviveBatch(db: Db, batch: BatchRow): Promise<BatchRow | undefine
     if (batch.providerBatchId !== null) status = "submitted";
     else status = batch.claimId === null ? "submitting" : "sending";
   }
+  // Guarded on `ended_at` as read: a booking poll that collected the batch meanwhile wins (the batch stays failed, a
+  // later retry revives it as collected), so a revived running batch never carries results already stored.
   const [revived] = await db
     .update(aiBatches)
     .set({ status })
-    .where(and(eq(aiBatches.id, batch.id), eq(aiBatches.status, "failed")))
+    .where(
+      and(
+        eq(aiBatches.id, batch.id),
+        eq(aiBatches.status, "failed"),
+        status === "ended" ? sql`${aiBatches.endedAt} is not null` : isNull(aiBatches.endedAt),
+      ),
+    )
     .returning();
   if (revived) getLog().info({ batchId: batch.id, status }, "failed batch revived");
   return revived;
@@ -744,6 +762,12 @@ async function continueUnit(db: Db, deps: BatchDeps, batch: BatchRow, entry: Bat
     .limit(1);
   if (!followUp) return "distributed";
   const current = followUp.status === "failed" ? await reviveBatch(db, followUp) : followUp;
+  if (current && followUp.status === "failed" && current.status === "submitted") {
+    // Revived as sent: its own poll chain ended with the dead letter (whose job id the chain id would collide with),
+    // so it gets a poll of its own, which continues the chain from the batch's poll count.
+    const config = deps.config ?? getConfig();
+    await enqueueBatchJob(deps.boss, { key: `revive:${current.id}:${current.pollCount}`, batchId: current.id }, config.models.batch.pollSeconds);
+  }
   if (current && isUnsent(current.status) && (await sendFromPoll(db, deps, current, entry.task)) === "deferred") return "waiting";
   return "resubmitted";
 }
@@ -865,6 +889,17 @@ export async function pollBatch(
   batchId: string,
   opts: PollOptions = {},
 ): Promise<PollResult> {
+  return pollOnce(db, deps, batchId, opts, 0);
+}
+
+/** `pollBatch`; `depth` counts the re-reads after another actor changed the batch mid-poll (at most one). */
+async function pollOnce(
+  db: Db,
+  deps: BatchDeps & { handlers: Record<string, BatchHandlerEntry> },
+  batchId: string,
+  opts: PollOptions,
+  depth: number,
+): Promise<PollResult> {
   let batch: BatchRow | undefined = (await db.select().from(aiBatches).where(eq(aiBatches.id, batchId)))[0];
   if (!batch) throw new Error(`ai batch ${batchId} does not exist`);
   const entry = deps.handlers[batch.task];
@@ -899,7 +934,11 @@ export async function pollBatch(
     if (collected.status === "in_progress") return scheduleNextPoll(db, deps, batch, n, "poll");
     await storeResults(db, deps, batch, collected, "submitted");
     [batch] = await db.select().from(aiBatches).where(eq(aiBatches.id, batchId));
-    if (batch!.status !== "ended") return pollBatch(db, deps, batchId);
+    if (batch!.status !== "ended") {
+      // Another actor (a concurrent poll, a run end, a dead letter) moved the batch: continue from its new state once.
+      if (depth === 0 && batch!.status !== "submitted") return pollOnce(db, deps, batchId, {}, depth + 1);
+      throw new Error(`ai batch ${batchId} is ${batch!.status} after its results were collected; poll retried later`);
+    }
   }
 
   await distribute(db, deps, batch!, entry.handle);
