@@ -522,7 +522,7 @@ describe("text configuration", () => {
       maxNgramWords: 4,
       maxCandidates: 6,
       versionsPerJob: 50,
-      prepassTypes: ["area", "gulf", "archipelago", "island"],
+      prepassTypes: ["area", "gulf", "archipelago", "island", "country", "admin_region", "sea"],
     });
     // The fallback to the source's areas is built into `candidateTiles`; no switch for it (it was never read).
     expect(cfg.mentions).not.toHaveProperty("fallbackScope");

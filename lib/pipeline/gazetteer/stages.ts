@@ -17,8 +17,7 @@ export const GAZETTEER_STAGES = [
  * exists.
  */
 export async function startGazetteerRun(db: Db, boss: PgBoss, subdivisionKey: string, triggeredBy: string): Promise<{ id: string }> {
-  const sub = await requireSubdivision(db, subdivisionKey);
-  if (sub.status === "excluded") throw new Error(`Landesteil ${subdivisionKey} ist ausgeschlossen`);
+  await requireSubdivision(db, subdivisionKey);
   return startRun(db, boss, {
     kind: "stage",
     scope: { type: "subdivision", id: subdivisionKey },

@@ -1,8 +1,10 @@
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import { areaByKey, getConfig, type AreaConfig, type DiscoveryConfig } from "@/lib/config";
+import { countryConfig, getConfig, type DiscoveryConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { facts, geoNames, geoObjects, tileGeoObjects, tiles, type SerpLevel } from "@/lib/db/schema";
+import { facts, geoNames, geoObjects, subdivisions, tileGeoObjects, tiles, type SerpLevel } from "@/lib/db/schema";
+import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
+import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import { validAt } from "@/lib/domain/timeline";
 import { createLogger } from "@/lib/logger";
 
@@ -15,7 +17,7 @@ export type DiscoveryQuery = {
   languageCode: string;
   locationCode: number;
   level: SerpLevel;
-  /** Area key (`area`), tile id (`tile`) or geo object id (`place`). */
+  /** Area `config_key` (`area`; plan 14b moves it to the id), tile id (`tile`) or geo object id (`place`). */
   scopeId: string;
   priority: number;
   /** The tile a `place` query's cost is booked on (the place's tile, ruling M5-P12); unset for other levels. */
@@ -58,7 +60,7 @@ export async function namesByLanguage(db: Db, objectIds: string[], languages: st
   return out;
 }
 
-/** Templates whose language the area searches in. */
+/** Templates whose language the subdivision searches in. */
 export function templatesFor(templates: Template[], sourceLanguages: string[]): Template[] {
   return templates.filter((t) => sourceLanguages.includes(t.lang));
 }
@@ -95,44 +97,55 @@ export function dedupeQueries(queries: DiscoveryQuery[]): DiscoveryQuery[] {
 /** Priority of a place query (as islands among the tile queries). */
 const PLACE_PRIORITY = 1;
 
-type PlaceRow = { tile_id: string | null; area_key: string | null };
+/**
+ * The source languages of the subdivision a tile is labelled with: its override, else its country's default
+ * (`config/subdivisions.json`). Throws `Kachel <id> hat keinen Landesteil` for a tile without label.
+ */
+export async function sourceLanguagesOfTile(db: Db, tileId: string): Promise<string[]> {
+  const [row] = await db
+    .select({ key: subdivisions.key, country: subdivisions.country })
+    .from(tiles)
+    .leftJoin(subdivisions, eq(subdivisions.id, tiles.subdivisionId))
+    .where(eq(tiles.id, tileId));
+  if (!row?.key) throw new Error(`Kachel ${tileId} hat keinen Landesteil`);
+  return getConfig().subdivisions.overrides[row.key]?.sourceLanguages ?? countryConfig(row.country!).sourceLanguages;
+}
+
+type PlaceRow = { tile_id: string | null; subdivision_id: string | null };
 
 /**
  * The SERP queries of a targeted discovery for the place of `geoObjectId`: per tile template the preferred valid name
  * of the object in the template's language (no name, no query), `level "place"`, `scopeId` = the geo object id,
  * priority 1 and `tileId` = the place's tile, so the cost is booked there. As `tileQueries`, the templates are limited
- * to the `sourceLanguages` of the area of the place's tile (ruling M5-P12); without a valid place, a tile with a
- * configured area there are no queries (logged). The place is valid on `opts.on` (the run date; default the database's
- * date). Deduplicated over `(keyword, languageCode, locationCode)`.
+ * to the source languages of the subdivision of the place's tile (`sourceLanguagesOfTile`, ruling M5-P12); without a
+ * valid place, or in a tile without subdivision, there are no queries (logged). The place is valid on `opts.on` (the
+ * run date; default the database's date). Deduplicated over `(keyword, languageCode, locationCode)`.
  */
 export async function placeQueries(
   db: Db,
   geoObjectId: string,
   cfg: DiscoveryConfig,
-  opts: { areas?: AreaConfig[]; on?: string } = {},
+  opts: { on?: string } = {},
 ): Promise<DiscoveryQuery[]> {
-  const areas = opts.areas ?? getConfig().areas;
   const on = opts.on ? sql`${opts.on}::date` : sql`current_date`;
   const { rows } = await db.execute<PlaceRow>(sql`
-    select p.tile_id, a.config_key as area_key
+    select p.tile_id, t.subdivision_id
     from places p
     left join tiles t on t.id = p.tile_id
-    left join geo_objects a on a.id = t.area_id and a.type = 'area'
     where p.geo_object_id = ${geoObjectId} and p.merged_into_id is null
       and p.valid_from <= ${on} and (p.valid_to is null or p.valid_to > ${on})
     order by p.created_at, p.id
     limit 1
   `);
   const place = rows[0];
-  const area = place?.area_key ? areas.find((a) => a.key === place.area_key) : undefined;
-  if (!place?.tile_id || !area) {
+  if (!place?.tile_id || !place.subdivision_id) {
     createLogger("discovery").warn(
-      { geoObjectId, tileId: place?.tile_id ?? null, areaKey: place?.area_key ?? null },
-      "no place queries: the object has no valid place in a tile of a configured area",
+      { geoObjectId, tileId: place?.tile_id ?? null },
+      "no place queries: the object has no valid place in a tile with a subdivision",
     );
     return [];
   }
-  const templates = templatesFor(cfg.templates.tile, area.sourceLanguages);
+  const templates = templatesFor(cfg.templates.tile, await sourceLanguagesOfTile(db, place.tile_id));
   if (templates.length === 0) return [];
   const names = await namesByLanguage(db, [geoObjectId], [...new Set(templates.map((t) => t.lang))]);
   return dedupeQueries(
@@ -141,44 +154,41 @@ export async function placeQueries(
 }
 
 /**
- * The area templates applied to the preferred valid name of the area object (`config_key = areaKey`) in each
- * template language that is one of the area's `sourceLanguages`; a language without a name yields no query.
- * Empty while the area object does not exist.
+ * The area templates for every valid `area` object that touches the subdivision's scope tiles (`tile_geo_objects` of
+ * `subdivisionTileIds`): the object's preferred valid name in each template language that is one of the subdivision's
+ * source languages; a language without a name yields no query. `scopeId` is the area's `config_key` (plan 14b moves it
+ * to the id); an area without one is skipped. An area touching two subdivisions yields the same queries for both, which
+ * the SERP reuse (`serp.reuseDays`) searches once. Empty for a subdivision without tiles.
  */
-export async function areaQueries(db: Db, areaKey: string, cfg: DiscoveryConfig): Promise<DiscoveryQuery[]> {
-  const templates = templatesFor(cfg.templates.area, areaByKey(areaKey).sourceLanguages);
-  const rows = await db
-    .select({ id: geoObjects.id })
-    .from(geoObjects)
-    .where(and(eq(geoObjects.type, "area"), eq(geoObjects.configKey, areaKey), validAt(geoObjects)));
-  const areaId = rows[0]?.id;
-  if (!areaId) return [];
-  const names = await namesByLanguage(db, [areaId], [...new Set(templates.map((t) => t.lang))]);
-  return dedupeQueries(buildQueries(templates, names.get(areaId), { level: "area", scopeId: areaKey, priority: AREA_PRIORITY }));
+export async function areaQueries(db: Db, subdivisionKey: string, cfg: DiscoveryConfig): Promise<DiscoveryQuery[]> {
+  const sub = await subdivisionByKey(db, subdivisionKey);
+  if (!sub) throw new Error(`Unbekannter Landesteil ${subdivisionKey}`);
+  const tileIds = await subdivisionTileIds(db, sub.id);
+  if (tileIds.length === 0) return [];
+  const languages = getConfig().subdivisions.overrides[sub.key]?.sourceLanguages ?? countryConfig(sub.country).sourceLanguages;
+  const templates = templatesFor(cfg.templates.area, languages);
+  const areas = await db
+    .selectDistinct({ id: geoObjects.id, configKey: geoObjects.configKey })
+    .from(tileGeoObjects)
+    .innerJoin(geoObjects, eq(geoObjects.id, tileGeoObjects.geoObjectId))
+    .where(and(inArray(tileGeoObjects.tileId, tileIds), eq(geoObjects.type, "area"), validAt(geoObjects)))
+    .orderBy(geoObjects.configKey);
+  const withKey = areas.filter((a): a is { id: string; configKey: string } => a.configKey !== null);
+  const names = await namesByLanguage(db, withKey.map((a) => a.id), [...new Set(templates.map((t) => t.lang))]);
+  return dedupeQueries(
+    withKey.flatMap((a) => buildQueries(templates, names.get(a.id), { level: "area", scopeId: a.configKey, priority: AREA_PRIORITY })),
+  );
 }
 
 /**
  * The tile templates for the valid objects of the tile: islands, islets and archipelagos (priority 1),
  * settlements (2) and named bays (3) whose newest `anchor_area` fact has `areaM2 >= cfg.bay.minAnchorAreaM2` or
- * that have at least `cfg.bay.minWikidataNames` valid Wikidata names. Template languages are limited to the
- * `sourceLanguages` of the tile's area (`areas`); throws when the tile has no area or its area is not configured; deduplicated over `(keyword, languageCode, locationCode)`.
+ * that have at least `cfg.bay.minWikidataNames` valid Wikidata names. Template languages are limited to the source
+ * languages of the tile's subdivision (`sourceLanguagesOfTile`, throws for a tile without one); deduplicated over
+ * `(keyword, languageCode, locationCode)`.
  */
-export async function tileQueries(
-  db: Db,
-  tileId: string,
-  cfg: DiscoveryConfig,
-  areas: AreaConfig[],
-): Promise<DiscoveryQuery[]> {
-  const [tile] = await db
-    .select({ areaKey: geoObjects.configKey })
-    .from(tiles)
-    .leftJoin(geoObjects, eq(geoObjects.id, tiles.areaId))
-    .where(eq(tiles.id, tileId));
-  const areaKey = tile?.areaKey;
-  if (!areaKey) throw new Error(`tile ${tileId} has no area: tile queries need the area's source languages`);
-  const area = areas.find((a) => a.key === areaKey);
-  if (!area) throw new Error(`area ${areaKey} of tile ${tileId} is not configured`);
-  const templates = templatesFor(cfg.templates.tile, area.sourceLanguages);
+export async function tileQueries(db: Db, tileId: string, cfg: DiscoveryConfig): Promise<DiscoveryQuery[]> {
+  const templates = templatesFor(cfg.templates.tile, await sourceLanguagesOfTile(db, tileId));
   if (templates.length === 0) return [];
 
   const f = alias(facts, "f");

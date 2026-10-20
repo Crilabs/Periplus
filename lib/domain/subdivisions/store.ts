@@ -264,15 +264,29 @@ export async function subdivisionByKey(db: Db, key: string): Promise<Subdivision
 
 /**
  * The valid subdivision `key`; throws `Unbekannter Landesteil <key>` for an unknown one, and names the replacement for
- * a leftover configured area key (`saronic`): a run is scoped by a subdivision now.
+ * a leftover configured area key (`saronic`): a run is scoped by a subdivision now. An excluded subdivision is refused
+ * with `Landesteil <key> ist ausgeschlossen`, unless the caller reads it on purpose (`allowExcluded`, e.g. labels).
  */
-export async function requireSubdivision(db: Db, key: string): Promise<SubdivisionRef> {
+export async function requireSubdivision(db: Db, key: string, opts: { allowExcluded?: boolean } = {}): Promise<SubdivisionRef> {
   const sub = await subdivisionByKey(db, key);
-  if (sub) return sub;
+  if (sub) {
+    if (sub.status === "excluded" && !opts.allowExcluded) throw new Error(`Landesteil ${key} ist ausgeschlossen`);
+    return sub;
+  }
   if (getConfig().areas.some((a) => a.key === key)) {
     throw new Error(`Revier-Schlüssel ${key} ist kein Laufumfang mehr; Landesteil angeben (z. B. GR-I)`);
   }
   throw new Error(`Unbekannter Landesteil ${key}`);
+}
+
+/** Keys of the valid, active subdivisions that have at least one valid tile labelled with them, in key order. */
+export async function activeSubdivisionKeys(db: Db): Promise<string[]> {
+  const { rows } = await db.execute<{ key: string }>(sql`
+    SELECT s.key FROM subdivisions s
+    WHERE s.valid_to IS NULL AND s.status = 'active'
+      AND EXISTS (SELECT 1 FROM tiles t WHERE t.subdivision_id = s.id AND t.valid_to IS NULL)
+    ORDER BY s.key`);
+  return rows.map((r) => r.key);
 }
 
 export type SubdivisionOption = { key: string; country: string; name: string };

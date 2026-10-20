@@ -8,7 +8,7 @@
   "disambiguationContextChars": 4000,
   "neighbourRing": 1,
   "versionsPerJob": 50,
-  "prepassTypes": ["area", "gulf", "archipelago", "island"],
+  "prepassTypes": ["area", "gulf", "archipelago", "island", "country", "admin_region", "sea"],
   "stopNames": ["agios", "agia", "agioi", "ag", "port", "porto", "marina", "kap", "cape", "bay", "nisos", "nisi", "limani"],
   "commonWords": {
     "el": [

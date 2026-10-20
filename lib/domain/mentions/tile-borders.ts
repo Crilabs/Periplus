@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
+import { activeSubdivisionKeys } from "@/lib/domain/subdivisions/store";
 import { candidateObjects, candidateTiles, jsonUuids } from "./scope";
 
 /*
@@ -31,7 +32,7 @@ export async function measureTileBorders(
     where u.created_at >= ${since} ${versionFilter}
     order by u.document_version_id, u.name_normalized, u.id
   `);
-  const ctx = { nameAffixes: cfg.nameAffixes, areaKeys: cfg.areas.map((a) => a.key) };
+  const ctx = { nameAffixes: cfg.nameAffixes, subdivisionKeys: await activeSubdivisionKeys(db) };
   const byVersion = new Map<string, string[]>();
   for (const r of rows) byVersion.set(r.version_id, [...(byVersion.get(r.version_id) ?? []), r.name_normalized]);
   let matched = 0;

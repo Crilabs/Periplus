@@ -20,7 +20,6 @@ import { startAndRedirect } from "../_components/run-start";
 const pingSchema = z.object({ count: z.coerce.number().int().min(1).max(50) });
 const areaKeySchema = z.string().refine((key) => getConfig().areas.some((a) => a.key === key), "unknown area");
 const tileIdSchema = z.string().regex(/^q025:\d+:\d+$/);
-const areaSchema = z.object({ areaKey: areaKeySchema });
 const subdivisionKeySchema = z.string().min(1);
 /** Exactly one of tileId and subdivisionKey: a payload with both, or a rejected tile next to a subdivision, never falls back. */
 const tileOrSubdivisionSchema = (db: Db) =>
@@ -28,13 +27,8 @@ const tileOrSubdivisionSchema = (db: Db) =>
     z.object({ tileId: tileIdSchema.refine((id) => tileExists(db, id), "unknown tile"), subdivisionKey: z.undefined().optional() }),
     z.object({ subdivisionKey: subdivisionKeySchema, tileId: z.undefined().optional() }),
   ]);
-// TODO(plan 14a task 9): text, reprocess and revisit runs still take an area key; they take a subdivision there
-/** Exactly one of tileId and areaKey: a payload with both, or a rejected tile next to an area, never falls back. */
-const tileOrAreaSchema = (db: Db) =>
-  z.union([
-    z.object({ tileId: tileIdSchema.refine((id) => tileExists(db, id), "unknown tile"), areaKey: z.undefined().optional() }),
-    z.object({ areaKey: areaKeySchema, tileId: z.undefined().optional() }),
-  ]);
+// TODO(plan 14a task 9): the revisit run still takes an area key; it takes a subdivision there
+const areaSchema = z.object({ areaKey: areaKeySchema });
 
 const fields = (input: FormData | object) => (input instanceof FormData ? Object.fromEntries(input) : input);
 
@@ -93,30 +87,30 @@ export async function startGeometryAction(input: FormData | { subdivisionKey: st
 }
 
 /** Where a refused text run of this scope returns to (the tile page for a tile, else the runs page). */
-const textRunErrorPath = (scope: { tileId?: string; areaKey?: string }) =>
+const textRunErrorPath = (scope: { tileId?: string; subdivisionKey?: string }) =>
   scope.tileId ? `/tiles/${encodeURIComponent(scope.tileId)}` : "/runs";
 
 /**
- * "Texte auswerten" for a configured area or one existing tile: a text run over the versions mentioning objects there
+ * "Texte auswerten" for a subdivision or one existing tile: a text run over the versions mentioning objects there
  * plus the pending versions of its sources; refusals return to the calling page.
  */
-export async function startTextRunAction(input: FormData | { areaKey: string } | { tileId: string }): Promise<void> {
+export async function startTextRunAction(input: FormData | { subdivisionKey: string } | { tileId: string }): Promise<void> {
   const admin = await requireAdmin();
   const db = getDb();
-  const scope = await tileOrAreaSchema(db).parseAsync(fields(input));
+  const scope = await tileOrSubdivisionSchema(db).parseAsync(fields(input));
   const boss = await getBoss();
   await startAndRedirect(() => startTextRun(db, boss, { ...scope, triggeredBy: admin.email }), textRunErrorPath(scope));
 }
 
 /**
- * "Reprozessieren (Stufen 6–7)" for a configured area or one existing tile: every mention there is extracted again
+ * "Reprozessieren (Stufen 6–7)" for a subdivision or one existing tile: every mention there is extracted again
  * into a new extraction run (the old facts stay); refusals return to the calling page.
  */
-export async function startReprocessAction(input: FormData | { areaKey: string } | { tileId: string }): Promise<void> {
+export async function startReprocessAction(input: FormData | { subdivisionKey: string } | { tileId: string }): Promise<void> {
   const admin = await requireAdmin();
   const db = getDb();
-  const parsed = await tileOrAreaSchema(db).parseAsync(fields(input));
-  const scope = parsed.tileId ? { tileId: parsed.tileId } : { areaKey: parsed.areaKey! };
+  const parsed = await tileOrSubdivisionSchema(db).parseAsync(fields(input));
+  const scope = parsed.tileId ? { tileId: parsed.tileId } : { subdivisionKey: parsed.subdivisionKey! };
   const boss = await getBoss();
   await startAndRedirect(() => startReprocessRun(db, boss, { scope, triggeredBy: admin.email }), textRunErrorPath(parsed));
 }

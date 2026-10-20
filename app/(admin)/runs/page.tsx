@@ -75,19 +75,19 @@ const RUNS: ScopedRun[] = [
     id: "texts",
     name: "Texte",
     description:
-      "Wertet die Texte aus, die Objekte des Reviers erwähnen, dazu die noch offenen Versionen ihrer Quellen: Erwähnungen zuordnen, Facts mit Zitat extrahieren, Belegtreue prüfen, konsolidieren. Nach neuen oder geänderten Quellen.",
+      "Wertet die Texte aus, die Objekte des Landesteils erwähnen, dazu die noch offenen Versionen ihrer Quellen: Erwähnungen zuordnen, Facts mit Zitat extrahieren, Belegtreue prüfen, konsolidieren. Nach neuen oder geänderten Quellen.",
     action: startTextRunAction,
-    button: "Texte auswerten für Revier",
-    scope: "area",
+    button: "Texte auswerten für Landesteil",
+    scope: "subdivision",
   },
   {
     id: "reprocess",
     name: "Reprozessieren",
     description:
-      "Extrahiert jede Erwähnung im Revier erneut mit dem aktuell konfigurierten Modell, Prompt und Fact-Schema in einen neuen Extraktionslauf; die alten Facts bleiben. Nach einer Änderung an Modell, Prompt oder Schema.",
+      "Extrahiert jede Erwähnung im Landesteil erneut mit dem aktuell konfigurierten Modell, Prompt und Fact-Schema in einen neuen Extraktionslauf; die alten Facts bleiben. Nach einer Änderung an Modell, Prompt oder Schema.",
     action: startReprocessAction,
-    button: "Reprozessieren für Revier (Stufen 6–7)",
-    scope: "area",
+    button: "Reprozessieren für Landesteil (Stufen 6–7)",
+    scope: "subdivision",
   },
   {
     id: "revisit",

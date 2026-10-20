@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, sql, type SQL } from "drizzle-orm";
 import { countryConfig, getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { subdivisions, tiles } from "@/lib/db/schema";
@@ -86,14 +86,16 @@ export async function ensureSubdivisionTiles(db: Db, subdivisionId: string): Pro
 }
 
 /**
- * The run scope of a subdivision: valid coast tiles whose box meets its polygon, ordered by id. A tile on a border
- * is in the scope of both neighbours, whatever its label says.
+ * The query (one column, `id`) of the run scope of the subdivision a SQL expression names: valid coast tiles whose box
+ * meets its polygon, ordered by id. A tile on a border is in the scope of both neighbours, whatever its label says.
  */
+export const subdivisionTilesSql = (subdivisionId: SQL) =>
+  sql`SELECT t.id FROM tiles t JOIN subdivisions s ON s.id = ${subdivisionId}
+      WHERE t.has_coast AND t.valid_to IS NULL AND ST_Intersects(t.bbox, s.geom) AND NOT ST_Touches(t.bbox, s.geom)
+      ORDER BY t.id`;
+
+/** The run scope of a subdivision (`subdivisionTilesSql`): coast tile ids, ordered. */
 export async function subdivisionTileIds(db: Db, subdivisionId: string): Promise<string[]> {
-  const { rows } = await db.execute<{ id: string }>(
-    sql`SELECT t.id FROM tiles t JOIN subdivisions s ON s.id = ${subdivisionId}
-        WHERE t.has_coast AND t.valid_to IS NULL AND ST_Intersects(t.bbox, s.geom) AND NOT ST_Touches(t.bbox, s.geom)
-        ORDER BY t.id`,
-  );
+  const { rows } = await db.execute<{ id: string }>(subdivisionTilesSql(sql`${subdivisionId}::uuid`));
   return rows.map((r) => r.id);
 }

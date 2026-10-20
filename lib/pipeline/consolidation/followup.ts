@@ -49,12 +49,12 @@ export async function requestPlaceDiscovery(
   const params = (run.params ?? {}) as Record<string, unknown>;
   const today = opts.today ?? (await runDate(db, runId));
   const cfg = await consolidationConfigFor(db, params.rulesVersion);
-  const { discovery, areas } = opts.config ?? getConfig();
+  const { discovery } = opts.config ?? getConfig();
   const seen = new Set<string>();
   let budget = discovery.serp.maxQueriesPerRun;
   // A place is requested only with queries of its own that still fit the run's query budget.
   const searchable = async (geoObjectId: string) => {
-    const fresh = (await placeQueries(db, geoObjectId, discovery, { areas, on: today })).filter((q) => !seen.has(queryKey(q)));
+    const fresh = (await placeQueries(db, geoObjectId, discovery, { on: today })).filter((q) => !seen.has(queryKey(q)));
     if (fresh.length === 0 || fresh.length > budget) return false;
     for (const q of fresh) seen.add(queryKey(q));
     budget -= fresh.length;

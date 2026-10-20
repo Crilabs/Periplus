@@ -3,12 +3,13 @@ import { z } from "zod";
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { documentVersions } from "@/lib/db/schema";
+import { subdivisionTilesSql } from "@/lib/domain/gazetteer/tiles-ensure";
 import { MATCH_PASS_STAGE, mentionsConfigKey } from "@/lib/domain/mentions/store";
 
 /*
  * Which document versions a text run works on (ruling M4-P1: kept apart from the run starters in `./run`, so stage
  * modules can import it without reaching `lib/pipeline/runs`). A text run freezes its version set when it starts
- * (ruling M4-E-R2): the starter resolves the selection (`pending`, `tileId`, `areaKey`, explicit ids) once into
+ * (ruling M4-E-R2): the starter resolves the selection (`pending`, `tileId`, `subdivisionKey`, explicit ids) once into
  * `params.documentVersionIds`, and every stage plans from that frozen list (`frozenRunVersions`). Re-resolving
  * `pending` in a later stage would see nothing, because `mentions.batch` writes the passes that define it. `reprocess`
  * (every mention extracted again into a new extraction run) and `rematch` (new mentions after a review decision) only
@@ -21,6 +22,9 @@ export const textRunParamsSchema = z.object({
   /** With `pending`: only the pending versions of these sources („Neue Texte auswerten“ on a source page, UI-10). */
   sourceIds: z.array(z.string().uuid()).optional(),
   tileId: z.string().optional(),
+  /** The scope tiles of this subdivision (`subdivisionTileIds`); a run start with it must name a valid one. */
+  subdivisionKey: z.string().optional(),
+  /** Legacy: only the revisit run (`revisit-stages`) still selects by area until plan 14a task 9; text run starters refuse it. */
   areaKey: z.string().optional(),
   reprocess: z.literal(true).optional(),
   rematch: z.literal(true).optional(),
@@ -35,9 +39,10 @@ export type TextRunParams = z.infer<typeof textRunParamsSchema>;
 /**
  * The versions of a text run, in id order and without duplicates:
  * - `documentVersionIds`: exactly these;
- * - `tileId` / `areaKey`: the current versions of active documents with mentions of objects in that tile, or in the
- *   tiles of that area (`tile_geo_objects`), plus the pending versions of the sources of that tile or area (ruling
- *   M4-I-R0: sources found by a SERP search of the tile, of a tile of the area, or of the area itself), so a tile run
+ * - `tileId` / `subdivisionKey`: the current versions of active documents with mentions of objects in that tile, or in
+ *   the scope tiles of that subdivision (`tile_geo_objects`), plus the pending versions of the sources of that tile or
+ *   subdivision (ruling M4-I-R0: sources found by a SERP search of the tile, of a scope tile, of an area touching one,
+ *   or of a place in one), so a tile run
  *   also takes in what was fetched there and never matched; a reprocess or rematch run takes no pending versions (it
  *   works on what was matched before and ignores the passes);
  * - `pending`: the current versions of active documents the match has not passed with the current configuration
@@ -46,7 +51,7 @@ export type TextRunParams = z.infer<typeof textRunParamsSchema>;
  */
 export async function textRunVersions(db: Db, params: TextRunParams, cfg: AppConfig): Promise<string[]> {
   const ids = new Set<string>();
-  if (params.tileId || params.areaKey) {
+  if (params.tileId || params.subdivisionKey || params.areaKey) {
     for (const id of await scopedVersions(db, params)) ids.add(id);
     if (!params.reprocess && !params.rematch) for (const id of await pendingVersions(db, cfg, params)) ids.add(id);
   }
@@ -62,23 +67,30 @@ export async function textRunVersions(db: Db, params: TextRunParams, cfg: AppCon
   return [...ids].sort();
 }
 
-/** The tiles of a tile or area selection: the tile itself, or the valid tiles labelled with the area. */
-export function scopeTiles(params: Pick<TextRunParams, "tileId" | "areaKey">) {
-  return params.tileId
-    ? sql`select ${params.tileId}::text as id`
-    : sql`select t.id from tiles t join geo_objects a on a.id = t.area_id and a.type = 'area'
+type Scope = Pick<TextRunParams, "tileId" | "subdivisionKey" | "areaKey">;
+
+/**
+ * The tiles of a tile or subdivision selection (a query with one column): the tile itself, or the scope tiles of the
+ * subdivision. The legacy `areaKey` (revisit run) selects the valid tiles labelled with the area.
+ */
+export function scopeTiles(params: Scope) {
+  if (params.tileId) return sql`select ${params.tileId}::text as id`;
+  if (params.subdivisionKey) {
+    return subdivisionTilesSql(sql`(select id from subdivisions where key = ${params.subdivisionKey} and valid_to is null)`);
+  }
+  return sql`select t.id from tiles t join geo_objects a on a.id = t.area_id and a.type = 'area'
           where a.config_key = ${params.areaKey!} and t.valid_from <= current_date and (t.valid_to is null or t.valid_to > current_date)`;
 }
 
 /**
- * Current versions of active documents not passed by the match with the current configuration; with a tile or area
- * selection only those of the sources a SERP search of that tile, of a tile of that area, of that area or of a place
- * in one of those tiles (ruling M5-P12) found; with `sourceIds` only those of these sources.
+ * Current versions of active documents not passed by the match with the current configuration; with a tile or
+ * subdivision selection only those of the sources a SERP search of that tile, of a scope tile, of an area touching one
+ * or of a place in one of those tiles (ruling M5-P12) found; with `sourceIds` only those of these sources.
  */
 async function pendingVersions(
   db: Db,
   cfg: AppConfig,
-  scope?: Pick<TextRunParams, "tileId" | "areaKey">,
+  scope?: Scope,
   sourceIds?: string[],
 ): Promise<string[]> {
   const sourceFilter = scope
@@ -101,15 +113,17 @@ async function pendingVersions(
 }
 
 /**
- * The ids of the sources of a tile or area selection (a query with one column): those a SERP search of that tile, of a
- * tile of that area, of that area or of a place in one of those tiles found (rulings M4-I-R0, M5-P12).
+ * The ids of the sources of a tile or subdivision selection (a query with one column): those a SERP search of that tile,
+ * of a scope tile, of an area touching one (`tile_geo_objects`) or of a place in one of those tiles found (rulings
+ * M4-I-R0, M5-P12).
  */
-export function scopeSources(scope: Pick<TextRunParams, "tileId" | "areaKey">) {
+export function scopeSources(scope: Scope) {
   return sql`
         with st as (${scopeTiles(scope)}),
         sa as (
-          select a.config_key as key from tiles t join geo_objects a on a.id = t.area_id and a.type = 'area'
-          where t.id in (select id from st) and a.config_key is not null
+          select a.config_key as key from tile_geo_objects tgo join geo_objects a on a.id = tgo.geo_object_id and a.type = 'area'
+          where tgo.tile_id in (select id from st) and a.config_key is not null
+            and a.valid_from <= current_date and (a.valid_to is null or a.valid_to > current_date)
           union select ${scope.areaKey ?? null}::text where ${scope.areaKey ?? null}::text is not null
         )
         select s.id from sources s
@@ -124,7 +138,7 @@ export function scopeSources(scope: Pick<TextRunParams, "tileId" | "areaKey">) {
           ))`;
 }
 
-/** Current versions of active documents with a mention of an object in the tile or in the tiles of the area. */
+/** Current versions of active documents with a mention of an object in the tile or in the scope tiles of the subdivision. */
 async function scopedVersions(db: Db, params: TextRunParams): Promise<string[]> {
   const { rows } = await db.execute<{ id: string }>(sql`
     select distinct v.id
@@ -150,7 +164,7 @@ export async function freezeTextRunParams(db: Db, params: TextRunParams, cfg: Ap
 
 /**
  * The frozen version set of a text run, for stage planning (ruling M4-E-R2). Every text stage (Task 17 too: geocode,
- * extraction, routes, check) must plan from this list and never re-resolve `pending`/`tileId`/`areaKey`. A run
+ * extraction, routes, check) must plan from this list and never re-resolve `pending`/`tileId`/`subdivisionKey`. A run
  * without a frozen list was not started by `freezeTextRunParams` and is an error of its starter.
  */
 export async function frozenRunVersions(db: Db, params: Record<string, unknown>): Promise<string[]> {
