@@ -136,6 +136,16 @@ export function valueFingerprint(value: unknown): string {
   return createHash("sha256").update(canonicalJson(value === undefined ? null : value)).digest("hex").slice(0, 16);
 }
 
+/**
+ * The fingerprint of a source's settings as an approval form shows them (`type`, `weight`, `changeRate`, `crawlRules`).
+ * The form posts it; `approve` compares it with the locked row and refuses with `TaskContextChanged` when the source
+ * was edited since (another tab, a history navigation), so a stale form never undoes an edit (W4-1, pattern of ruling
+ * M5-G-R2).
+ */
+export function sourceSettingsKey(source: { type: string; weight: number; changeRate: string; crawlRules: unknown }): string {
+  return valueFingerprint({ type: source.type, weight: source.weight, changeRate: source.changeRate, crawlRules: source.crawlRules });
+}
+
 /** Allowed actions per `<kind>/<subject_type>`. */
 const ALLOWED: Record<string, readonly Action[]> = {
   "conflict/profile_attribute": ["value_a", "value_b", "seasonal", "leave_open"],
@@ -176,7 +186,8 @@ type Task = typeof reviewTasks.$inferSelect;
  * it with `stagesOnly ["consolidation.summary"]`; the caller starts that run after the commit (ruling M5-P10). A
  * profile decision needs `taskKey`, the `context.key` the admin saw: another key means a later run replaced the question
  * (`TaskContextChanged`, ruling M5-F-R2); `value_a` / `value_b` also need `valueKey`, the `valueFingerprint` of the
- * chosen side's value as shown (ruling M5-G-R2). A decision on a `comparison_deviation` task appends its outcome to
+ * chosen side's value as shown (ruling M5-G-R2). `approve` needs `valueKey` too, the `sourceSettingsKey` of the source
+ * as the approval form showed it; another key means the source was edited since (`TaskContextChanged`, W4-1). A decision on a `comparison_deviation` task appends its outcome to
  * `comparison_results` (`deviation_confirmed_own` / `deviation_confirmed_navily` / `unclear`, method `review`) and
  * returns nothing to do.
  *
@@ -239,7 +250,7 @@ export async function decideReviewTask(
       if (!object) throw new DecisionNotAllowed(`geo object ${geoObjectId} does not exist`);
       return { documentVersionIds: [], consolidate: { geoObjectId, stagesOnly: [CONSOLIDATION_SUMMARY_STAGE] } };
     }
-    const placeObject = await apply(tx, task, decision, deps);
+    const placeObject = await apply(tx, task, decision, deps, input.valueKey);
     return { documentVersionIds: [], consolidate: placeObject ? { geoObjectId: placeObject } : null };
   });
 }
@@ -250,7 +261,7 @@ export async function decideReviewTask(
  * `same` pair: its status, exclusion, merged facts and `place_new` / `place_abandoned` reach the profile only through a
  * consolidation, which the caller starts after the commit (final review I-2, ruling M5-FIN-R1); null otherwise.
  */
-async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideDeps): Promise<string | null> {
+async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideDeps, valueKey?: string): Promise<string | null> {
   switch (decision.action) {
     case "confirm": {
       const place = await lockPlace(tx, task.subjectId);
@@ -315,10 +326,14 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
       return keepObject;
     }
     case "approve": {
-      const domain = await lockSource(tx, task.subjectId, ["proposed"]);
+      const source = await lockSource(tx, task.subjectId, ["proposed"]);
       // a forbidden domain (Navily, Google) is never approved (ruling M6-D-R2)
-      if (isForbiddenHost(domain, getConfig().delivery.forbiddenDomains)) {
-        throw new DecisionNotAllowed(`source ${task.subjectId} is on the forbidden domain ${domain}`);
+      if (isForbiddenHost(source.domain, getConfig().delivery.forbiddenDomains)) {
+        throw new DecisionNotAllowed(`source ${task.subjectId} is on the forbidden domain ${source.domain}`);
+      }
+      // the form was built from other settings than the row has now: a stale form never undoes an edit (W4-1)
+      if (valueKey === undefined || valueKey !== sourceSettingsKey({ ...source, crawlRules: crawlRulesSchema.parse(source.crawlRules) })) {
+        throw new TaskContextChanged(task.id);
       }
       await tx
         .update(sources)
@@ -666,13 +681,20 @@ async function applyPlaceStatus(tx: Db, task: Task, status: "rejected" | "no_anc
 }
 
 /**
- * The source, locked, returning its domain; `DecisionNotAllowed` when it does not exist, has ended or its status is
+ * The source, locked, returning its domain, status and settings; `DecisionNotAllowed` when it does not exist, has ended or its status is
  * not one of `statuses` (e.g. a proposal approved or rejected meanwhile).
  */
-async function lockSource(tx: Db, sourceId: string, statuses: readonly SourceStatus[]): Promise<string> {
+async function lockSource(tx: Db, sourceId: string, statuses: readonly SourceStatus[]) {
   const [source] = z.uuid().safeParse(sourceId).success
     ? await tx
-        .select({ status: sources.status, domain: sources.domain })
+        .select({
+          status: sources.status,
+          domain: sources.domain,
+          type: sources.type,
+          weight: sources.weight,
+          changeRate: sources.changeRate,
+          crawlRules: sources.crawlRules,
+        })
         .from(sources)
         .where(and(eq(sources.id, sourceId), isNull(sources.validTo)))
         .for("update")
@@ -681,7 +703,7 @@ async function lockSource(tx: Db, sourceId: string, statuses: readonly SourceSta
   if (!statuses.includes(source.status)) {
     throw new DecisionNotAllowed(`source ${sourceId} is ${source.status}, not ${statuses.join(" or ")}`);
   }
-  return source.domain;
+  return source;
 }
 
 /** The task's place, locked; `DecisionNotAllowed` when it does not exist, has ended or was merged. */

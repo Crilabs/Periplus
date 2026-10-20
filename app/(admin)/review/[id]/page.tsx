@@ -269,7 +269,9 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
             )}
             {query.changed && open && (
               <Notice tone="danger" title="Der Wert hat sich geändert – bitte neu laden">
-                Ein späterer Lauf hat die Frage dieser Aufgabe ersetzt. Es wurde nichts gespeichert.
+                {subject.type === "source"
+                  ? "Die Werte der Quelle wurden inzwischen geändert (z. B. auf der Quellenseite). Es wurde nichts gespeichert."
+                  : "Ein späterer Lauf hat die Frage dieser Aufgabe ersetzt. Es wurde nichts gespeichert."}
               </Notice>
             )}
             {query.error && open && (
@@ -796,6 +798,7 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
                     n={1}
                     label="Freigeben"
                     action={approveSourceAction}
+                    valueKey={subject.settingsKey}
                     variant="primary"
                     hint="Übernimmt die Werte und setzt die Quelle auf „Freigegeben“."
                   >

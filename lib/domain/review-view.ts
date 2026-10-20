@@ -45,6 +45,7 @@ import {
   suggestedKindForHint,
   nextOpenTask,
   QUEUE_ORDER,
+  sourceSettingsKey,
   valueFingerprint,
 } from "@/lib/domain/review-decisions";
 import { crawlRulesSchema, type CrawlRules } from "@/lib/domain/sources/crawl-rules";
@@ -184,6 +185,8 @@ export type ReviewSubject =
       originalSuggestion: SourceSuggestion | null;
       /** The source's values differ from `originalSuggestion` (edited on the source page). */
       editedSinceProposal: boolean;
+      /** `sourceSettingsKey` of `suggestion`: the approval form posts it, so a stale form is refused (W4-1). */
+      settingsKey: string;
     }
   | {
       type: "name_candidate";
@@ -650,6 +653,7 @@ async function sourceSubject(db: Db, sourceId: string, context: Record<string, u
     suggestion: current,
     originalSuggestion: suggestion.success ? suggestion.data : null,
     editedSinceProposal: suggestion.success && canonicalJson(suggestion.data) !== canonicalJson(current),
+    settingsKey: sourceSettingsKey(current),
   };
 }
 
