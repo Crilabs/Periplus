@@ -316,6 +316,13 @@ export const gazetteerSchema = z.strictObject({
   bboxBufferKm: z.number().nonnegative(),
   landBufferKm: z.number().nonnegative(),
   coastDistanceM: z.number().positive(),
+  /** The coarse gazetteer's features per country (plan 14b): OSM place values kept as towns, minimum areas, coast distance. */
+  coarse: z.strictObject({
+    placeTypes: z.array(z.string().regex(/^[a-z_]+$/)).min(1),
+    islandMinAreaKm2: z.number().nonnegative(),
+    gulfMinAreaKm2: z.number().nonnegative(),
+    coastDistanceKm: z.number().positive(),
+  }),
   /** Radius around an object's centroid within which a subdivision's land counts for the assignment (spec 14). */
   subdivisionRadiusM: z.number().positive(),
   islandParentBufferM: z.number().nonnegative(),

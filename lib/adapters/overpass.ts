@@ -113,6 +113,32 @@ export function buildBoundaryQuery(country: string, levels: number[], timeoutSec
   ].join("\n");
 }
 
+/**
+ * Overpass QL for the coarse gazetteer features of one country (plan 14b): islands and archipelagos, named bays (the
+ * caller keeps the large ones as gulfs) and the towns of `cfg.placeTypes`, all inside the country's `admin_level=2`
+ * area, with full geometry. `country` is an ISO 3166-1 alpha-2 code.
+ */
+export function buildCoarseFeatureQuery(country: string, cfg: GazetteerConfig["coarse"], timeoutSeconds: number): string {
+  const cc = qlString(country);
+  const places = cfg.placeTypes.map((t) => qlString(regexLiteral(t))).join("|");
+  const statements = [
+    'way[place~"^(island|archipelago)$"](area.c);',
+    'relation[place~"^(island|archipelago)$"](area.c);',
+    "way[natural=bay][name](area.c);",
+    "relation[natural=bay][name](area.c);",
+    `node[place~"^(${places})$"](area.c);`,
+  ];
+  return [
+    `[out:json][timeout:${timeoutSeconds}];`,
+    `area["ISO3166-1"="${cc}"][admin_level=2]->.c;`,
+    "(",
+    ...statements.map((s) => `  ${s}`),
+    ");",
+    "out geom;",
+    "",
+  ].join("\n");
+}
+
 /** Overpass QL for single relations by OSM id (the `extra` entries of the subdivision config), full geometry. */
 export function buildRelationQuery(relationIds: number[], timeoutSeconds: number): string {
   return [`[out:json][timeout:${timeoutSeconds}];`, `relation(id:${relationIds.join(",")});`, "out geom;", ""].join("\n");

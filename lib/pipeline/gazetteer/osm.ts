@@ -19,7 +19,7 @@ const getLog = () => (logger ??= createLogger("gazetteer.osm"));
 /** OSM tag keys kept in `geo_objects.tags`; `seamark:*` by prefix. */
 const KEPT_TAGS = new Set(["place", "natural", "leisure", "harbour", "mooring", "historic", "tourism", "amenity", "shop", "wikidata"]);
 
-function keptTags(tags: Record<string, string>): Record<string, string> {
+export function keptTags(tags: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(tags).filter(([k]) => KEPT_TAGS.has(k) || k.startsWith("seamark:")));
 }
 
@@ -56,7 +56,7 @@ export function elementGeometry(el: OverpassElement): GeoObjectDraft["geometry"]
  * covered by the union of the land polygons around it. Cut lines between land pieces (the split
  * dataset, clipping at box edges) therefore do not count as coast.
  */
-async function nearCoast(db: Db, geometry: GeoObjectDraft["geometry"], distanceM: number): Promise<boolean> {
+export async function nearCoast(db: Db, geometry: GeoObjectDraft["geometry"], distanceM: number): Promise<boolean> {
   const g = geomFromGeoJson(
     "lines" in geometry ? { type: "MultiLineString", coordinates: geometry.lines.map((l) => l.coordinates) } : geometry,
   );

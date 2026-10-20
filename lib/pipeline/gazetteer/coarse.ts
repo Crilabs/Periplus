@@ -1,7 +1,7 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { Transport } from "@/lib/adapters/http";
 import { fetchSeas } from "@/lib/adapters/marine-regions";
-import { buildBoundaryQuery, buildRelationQuery, overpassQuery, type OverpassElement } from "@/lib/adapters/overpass";
+import { buildBoundaryQuery, buildCoarseFeatureQuery, buildRelationQuery, overpassQuery, type OverpassElement } from "@/lib/adapters/overpass";
 import type { Archive } from "@/lib/adapters/s3";
 import { countryConfig, getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
@@ -10,7 +10,10 @@ import { geoObjects } from "@/lib/db/schema";
 import { classifyOsm, osmNames } from "@/lib/domain/gazetteer/osm-classify";
 import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
 import { createLogger } from "@/lib/logger";
-import { elementGeometry } from "./osm";
+import type { Bbox } from "@/lib/domain/tiles";
+import { assignParents, assignSeas, assignSubdivisions } from "@/lib/domain/gazetteer/hierarchy";
+import { landCoverage } from "@/lib/domain/gazetteer/land";
+import { elementGeometry, keptTags, nearCoast } from "./osm";
 
 export const COARSE_STAGE = "gazetteer.coarse";
 
@@ -189,4 +192,91 @@ export async function importCoarse(
     }
     return result;
   });
+}
+
+/** Area in km2 of the polygon (or assembled ring lines) of `geometry`; 0 for a point or lines that enclose nothing. */
+async function areaKm2(db: Db, geometry: NonNullable<ReturnType<typeof elementGeometry>>): Promise<number> {
+  const g = "lines" in geometry ? sql`ST_BuildArea(ST_Collect(ARRAY[${sql.join(geometry.lines.map((l) => geomFromGeoJson(l)), sql`, `)}]))` : geomFromGeoJson(geometry);
+  const { rows } = await db.execute<{ km2: number | null }>(sql`
+    SELECT CASE WHEN ST_Dimension(${g}) = 2 THEN ST_Area(ST_MakeValid(${g})::geography) / 1e6 ELSE 0 END AS km2`);
+  return rows[0]?.km2 ?? 0;
+}
+
+/** Bounding box of the valid country object of `country`, or null when it is not stored. */
+async function countryBbox(db: Db, country: string): Promise<Bbox | null> {
+  const { rows } = await db.execute<{ w: number | null; s: number; e: number; n: number }>(sql`
+    SELECT ST_XMin(ext) AS w, ST_YMin(ext) AS s, ST_XMax(ext) AS e, ST_YMax(ext) AS n
+    FROM (SELECT ST_Extent(geom) AS ext FROM geo_objects
+          WHERE type = 'country' AND valid_to IS NULL AND tags->>'country' = ${country}) x`);
+  const r = rows[0];
+  return r && r.w !== null ? [r.w, r.s, r.e, r.n] : null;
+}
+
+/**
+ * Coarse features of one country (plan 14b), run after `importCoarse` so the country polygon exists: islands from
+ * `islandMinAreaKm2` (smaller ones are left to the fine gazetteer), archipelagos, named bays from `gulfMinAreaKm2`
+ * (stored as `gulf`), and towns (`coarse.placeTypes`) within `coastDistanceKm` of the water. Stored by `osm_id` through
+ * the gazetteer store with the fine gazetteer's classifier, so a feature the fine run imported is updated, not
+ * duplicated. Then subdivisions, seas and parents are assigned over the country's bbox. Returns the stored counts.
+ */
+export async function importCoarseFeatures(
+  db: Db,
+  country: string,
+  deps: Deps,
+): Promise<{ islands: number; archipelagos: number; gulfs: number; towns: number }> {
+  const { gazetteer, categories } = getConfig();
+  const cfg = gazetteer.coarse;
+  countryConfig(country);
+  const bbox = await countryBbox(db, country);
+  if (!bbox) throw new Error(`gazetteer.coarse ${country}: no country object – run the boundary import first`);
+  const ctx = { db, runId: deps.runId, stage: COARSE_STAGE };
+  const date = (deps.now ?? new Date()).toISOString().slice(0, 10);
+  const ql = buildCoarseFeatureQuery(country, cfg, gazetteer.overpass.timeoutSeconds);
+  const { raw, elements } = await overpassQuery(deps.transport, ql, ctx, gazetteer.overpass);
+  await deps.archive?.put(`datasets/overpass/features/${country}/${date}.json`, raw, "application/json");
+
+  const result = await db.transaction(async (tx) => {
+    const counts = { islands: 0, archipelagos: 0, gulfs: 0, towns: 0 };
+    const seen = new Set<string>();
+    let landChecked: boolean | undefined;
+    for (const el of elements) {
+      const osmId = `${el.type}/${el.id}`;
+      if (seen.has(osmId)) continue;
+      seen.add(osmId);
+      const tags = el.tags ?? {};
+      const classified = classifyOsm(tags, categories, el.type);
+      const geometry = classified && elementGeometry(el);
+      if (!classified || !geometry) continue;
+      let type = classified.type;
+      let key: keyof typeof counts;
+      if (type === "island") {
+        if ((await areaKm2(tx, geometry)) < cfg.islandMinAreaKm2) continue;
+        key = "islands";
+      } else if (type === "archipelago") {
+        key = "archipelagos";
+      } else if (type === "gulf" || type === "bay") {
+        if ((await areaKm2(tx, geometry)) < cfg.gulfMinAreaKm2) continue;
+        type = "gulf";
+        key = "gulfs";
+      } else if (type === "settlement" && tags.place && cfg.placeTypes.includes(tags.place)) {
+        landChecked ??= (await landCoverage(tx, bbox)) > 0;
+        if (!landChecked) throw new Error(`land polygons missing for ${country} – run npm run import:land-polygons`);
+        if (!(await nearCoast(tx, geometry, cfg.coastDistanceKm * 1000))) continue;
+        key = "towns";
+      } else {
+        continue;
+      }
+      const r = await upsertGeoObject(tx, { ...classified, type, origin: "osm", osmId, tags: keptTags(tags), geometry, names: osmNames(tags) });
+      if ("skipped" in r) {
+        getLog().warn({ osmId, reason: r.skipped }, "skipped coarse feature with unusable geometry");
+        continue;
+      }
+      counts[key]++;
+    }
+    await assignSubdivisions(tx, bbox);
+    await assignSeas(tx, bbox);
+    await assignParents(tx, bbox);
+    return counts;
+  });
+  return result;
 }

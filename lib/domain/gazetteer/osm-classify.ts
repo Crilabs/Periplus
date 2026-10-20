@@ -9,7 +9,7 @@ export type OsmElementType = "node" | "way" | "relation";
 const LANGUAGE_NAME_KEY = /^name:([a-z]{2})$/;
 const ALTERNATE_NAME_KEYS = ["int_name", "alt_name", "old_name"] as const;
 const ISLAND_PLACES = new Set(["island", "islet", "archipelago"]);
-const SETTLEMENT_PLACES = new Set(["town", "village", "hamlet"]);
+const SETTLEMENT_PLACES = new Set(["city", "town", "village", "hamlet"]);
 const HARBOUR_SEAMARKS = new Set(["harbour", "small_craft_facility"]);
 const ANCHORAGE_SEAMARKS = new Set(["anchorage", "mooring"]);
 /** Normalized (see `normalizeName`) words that make a bay relation a gulf. */
@@ -30,7 +30,7 @@ function namedGulf(tags: Record<string, string>): boolean {
  * Gazetteer type of an OSM object by its tags, first match wins: administrative boundary relation (spec 14:
  * `admin_level=2` country, other levels admin_region, carrying `adminLevel`), sea, gulf (also a bay relation named
  * "Gulf"/"Κόλπος"), island/islet/archipelago, cape, strait, peninsula (coast section), bay, harbour
- * (marina, harbour seamark, `harbour=*`), anchorage/mooring seamark (bay), town/village/hamlet
+ * (marina, harbour seamark, `harbour=*`), anchorage/mooring seamark (bay), city/town/village/hamlet
  * (settlement), then the first category rule (poi). Objects without a non-empty `name`/`name:<lang>` are null.
  */
 export function classifyOsm(
