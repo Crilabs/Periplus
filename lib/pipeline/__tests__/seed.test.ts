@@ -99,7 +99,7 @@ describe("stage seed.tile", () => {
   });
 
   it("rejects params without tileIds or areaKey", async () => {
-    await expect(STAGES[SEED_STAGE]!.plan({} as Db, { id: newId(), params: {} })).rejects.toThrow(/tileIds or areaKey/);
+    await expect(STAGES[SEED_STAGE]!.plan({} as Db, { id: newId(), params: {} })).rejects.toThrow(/tileIds or subdivisionKey/);
     await expect(
       STAGES[SEED_STAGE]!.plan({} as Db, { id: newId(), params: { tileIds: ["nope"] } }),
     ).rejects.toThrow(/invalid tile id/);

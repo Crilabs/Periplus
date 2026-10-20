@@ -1,6 +1,7 @@
 import { areaByKey, getConfig } from "@/lib/config";
 import { endUnconfiguredAreas, syncAreas } from "@/lib/domain/gazetteer/areas";
-import { ensureTiles } from "@/lib/domain/gazetteer/tiles-ensure";
+import { ensureSubdivisionTiles, ensureTiles } from "@/lib/domain/gazetteer/tiles-ensure";
+import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 
@@ -10,11 +11,16 @@ export function areaKeyOf(params: Record<string, unknown>): string {
   return params.areaKey;
 }
 
-/** Creates and labels the tiles of `run.params.areaKey`: one job per run. */
+/** Creates and labels the tiles of `run.params.subdivisionKey` (legacy `areaKey` until the starters switch): one job per run. */
 export const tilesEnsureStage: StageDefinition = {
   name: "tiles.ensure",
   queue: "tiles.ensure",
-  async plan(_db, run) {
+  async plan(db, run) {
+    if (typeof run.params.subdivisionKey === "string" && run.params.subdivisionKey !== "") {
+      const key = run.params.subdivisionKey;
+      if (!(await subdivisionByKey(db, key))) throw new Error(`Unknown subdivision ${key}`);
+      return [{ key, subdivisionKey: key }];
+    }
     const areaKey = areaKeyOf(run.params);
     areaByKey(areaKey); // fail planning for an unknown area
     return [{ key: areaKey, areaKey }];
@@ -22,6 +28,13 @@ export const tilesEnsureStage: StageDefinition = {
 };
 
 export const tilesEnsureHandler: JobHandler<JobData> = async (data, ctx) => {
+  if (typeof data.subdivisionKey === "string" && data.subdivisionKey !== "") {
+    const sub = await subdivisionByKey(ctx.db, data.subdivisionKey);
+    if (!sub) throw new Error(`Unknown subdivision ${data.subdivisionKey}`);
+    const result = await ensureSubdivisionTiles(ctx.db, sub.id);
+    ctx.log.info({ subdivisionKey: sub.key, ...result }, "tiles ensured");
+    return;
+  }
   const area = areaByKey(areaKeyOf(data));
   const areas = getConfig().areas;
   const areaIds = await syncAreas(ctx.db, areas);

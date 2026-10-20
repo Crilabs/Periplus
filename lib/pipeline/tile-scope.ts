@@ -1,6 +1,8 @@
 import { and, asc, eq } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { geoObjects, tiles } from "@/lib/db/schema";
+import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
+import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import { parseTileId } from "@/lib/domain/tiles";
 import { validAt } from "@/lib/domain/timeline";
 
@@ -57,8 +59,9 @@ export class RunScopeNotReady extends Error {
 export const SEED_STAGE = "seed.tile";
 
 /**
- * The tiles a seed run covers: `params.tileIds` exactly as given, else every valid coast tile labelled with
- * the area `params.areaKey` (ordered by id). Throws for invalid params or an unknown area.
+ * The tiles a seed run covers: `params.tileIds` exactly as given, else every valid coast tile whose box meets the
+ * subdivision `params.subdivisionKey` (ordered by id; border tiles belong to both neighbours). Throws for invalid
+ * params, an unknown subdivision, or a leftover area key.
  */
 export async function seedTileIds(db: Db, params: Record<string, unknown>): Promise<string[]> {
   if (Array.isArray(params.tileIds)) {
@@ -68,15 +71,26 @@ export async function seedTileIds(db: Db, params: Record<string, unknown>): Prom
     }
     return params.tileIds as string[];
   }
-  if (typeof params.areaKey !== "string" || params.areaKey === "") throw new Error("tileIds or areaKey is required");
-  const areaId = await areaGeoObjectId(db, params.areaKey);
-  if (!areaId) throw new Error(`Unknown area ${params.areaKey}`);
-  const rows = await db
-    .select({ id: tiles.id })
-    .from(tiles)
-    .where(and(eq(tiles.areaId, areaId), eq(tiles.hasCoast, true), validAt(tiles)))
-    .orderBy(asc(tiles.id));
-  return rows.map((r) => r.id);
+  if (typeof params.areaKey === "string" && params.areaKey !== "") {
+    // TODO(plan 14a task 7): remove with the area-based run starters; until then a configured area that still
+    // has a geo object keeps its label-based scope so the unconverted starters keep working.
+    const areaId = await areaGeoObjectId(db, params.areaKey);
+    if (areaId) {
+      const rows = await db
+        .select({ id: tiles.id })
+        .from(tiles)
+        .where(and(eq(tiles.areaId, areaId), eq(tiles.hasCoast, true), validAt(tiles)))
+        .orderBy(asc(tiles.id));
+      return rows.map((r) => r.id);
+    }
+    throw new Error(`Revier-Schlüssel ${params.areaKey} ist kein Laufumfang mehr; Landesteil angeben (z. B. GR-I)`);
+  }
+  if (typeof params.subdivisionKey !== "string" || params.subdivisionKey === "") {
+    throw new Error("tileIds or subdivisionKey is required");
+  }
+  const sub = await subdivisionByKey(db, params.subdivisionKey);
+  if (!sub) throw new Error(`Unknown subdivision ${params.subdivisionKey}`);
+  return subdivisionTileIds(db, sub.id);
 }
 
 /** The valid geo object of the area `areaKey` (written by `tiles.ensure`); null before it exists. */

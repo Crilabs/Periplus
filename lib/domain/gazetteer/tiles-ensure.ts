@@ -1,10 +1,11 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { AreaConfig } from "@/lib/config";
-import { getConfig } from "@/lib/config";
+import { countryConfig, getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { tiles } from "@/lib/db/schema";
+import { subdivisions, tiles } from "@/lib/db/schema";
 import { polygonBbox } from "./areas";
 import { createReviewTask, hasDecidedTask } from "@/lib/domain/review";
+import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import { tileBbox, tilesInBbox, type Bbox } from "@/lib/domain/tiles";
 
 function envelope([west, south, east, north]: Bbox) {
@@ -106,4 +107,77 @@ export async function ensureTiles(
     }
     return { tiles: tileIds.length, coast, withoutArea };
   });
+}
+
+/** Cycle days of a subdivision: the override for its key, else its country's default. */
+function subdivisionCycleDays(key: string, country: string): number {
+  return getConfig().subdivisions.overrides[key]?.cycleDays ?? countryConfig(country).cycleDays;
+}
+
+/**
+ * Creates or updates the tiles of a subdivision: every tile of the polygon's bbox whose box meets the polygon
+ * (not just along an edge).
+ * - `has_coast`: the tile box intersects a land polygon.
+ * - `subdivision_id`: the label, the valid subdivision whose land boundary has the largest length inside the tile box
+ *   (ties by key); null when no subdivision has land there. Same result whichever subdivision ensures the tile.
+ * - New tiles take `cycle_days` from config (override per key, else the country). Rows only change when a value changed.
+ * Throws for an excluded subdivision. `tiles.area_id` is not written.
+ */
+export async function ensureSubdivisionTiles(db: Db, subdivisionId: string): Promise<{ tiles: number; coast: number }> {
+  const [sub] = await db
+    .select({ id: subdivisions.id, key: subdivisions.key, country: subdivisions.country, status: subdivisions.status })
+    .from(subdivisions)
+    .where(and(eq(subdivisions.id, subdivisionId), sql`${subdivisions.validTo} IS NULL`));
+  if (!sub) throw new Error(`Unknown subdivision ${subdivisionId}`);
+  if (sub.status === "excluded") throw new Error(`Landesteil ${sub.key} ist ausgeschlossen`);
+  const cycleDays = subdivisionCycleDays(sub.key, sub.country);
+  const ref = await subdivisionByKey(db, sub.key);
+
+  return db.transaction(async (tx) => {
+    let tileCount = 0;
+    let coast = 0;
+    for (const tileId of tilesInBbox(ref!.bbox)) {
+      const box = envelope(tileBbox(tileId));
+      const [geo] = await tx
+        .execute<{ meets: boolean; hasCoast: boolean; label: string | null }>(
+          sql`WITH box AS (SELECT ${box} AS g)
+              SELECT
+                EXISTS (SELECT 1 FROM subdivisions s, box WHERE s.id = ${sub.id} AND ST_Intersects(s.geom, box.g)
+                        AND NOT ST_Touches(s.geom, box.g)) AS meets,
+                EXISTS (SELECT 1 FROM land_polygons l, box WHERE ST_Intersects(l.geom, box.g)) AS "hasCoast",
+                (SELECT s.id FROM subdivisions s, box
+                 WHERE s.valid_to IS NULL AND s.land_geom IS NOT NULL AND s.land_geom && box.g
+                 ORDER BY ST_Length(ST_Intersection(ST_Boundary(s.land_geom), box.g)::geography) DESC, s.key
+                 LIMIT 1) AS label`,
+        )
+        .then((r) => r.rows);
+      if (!geo!.meets) continue;
+      tileCount++;
+      if (geo!.hasCoast) coast++;
+      const label = geo!.label;
+      const [existing] = await tx
+        .select({ subdivisionId: tiles.subdivisionId, hasCoast: tiles.hasCoast })
+        .from(tiles)
+        .where(eq(tiles.id, tileId));
+      if (!existing) {
+        await tx.insert(tiles).values({ id: tileId, bbox: sql`${box}`, subdivisionId: label, hasCoast: geo!.hasCoast, cycleDays });
+      } else if (existing.subdivisionId !== label || existing.hasCoast !== geo!.hasCoast) {
+        await tx.update(tiles).set({ subdivisionId: label, hasCoast: geo!.hasCoast }).where(eq(tiles.id, tileId));
+      }
+    }
+    return { tiles: tileCount, coast };
+  });
+}
+
+/**
+ * The run scope of a subdivision: valid coast tiles whose box meets its polygon, ordered by id. A tile on a border
+ * is in the scope of both neighbours, whatever its label says.
+ */
+export async function subdivisionTileIds(db: Db, subdivisionId: string): Promise<string[]> {
+  const { rows } = await db.execute<{ id: string }>(
+    sql`SELECT t.id FROM tiles t JOIN subdivisions s ON s.id = ${subdivisionId}
+        WHERE t.has_coast AND t.valid_to IS NULL AND ST_Intersects(t.bbox, s.geom) AND NOT ST_Touches(t.bbox, s.geom)
+        ORDER BY t.id`,
+  );
+  return rows.map((r) => r.id);
 }

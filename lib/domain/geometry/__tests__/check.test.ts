@@ -116,6 +116,6 @@ describe("checkGeometry", () => {
 
   it("throws for an unknown area", () =>
     withRollback(async (tx) => {
-      await expect(checkGeometry(tx, `test-${newId()}`)).rejects.toThrow(/Unknown area/);
+      await expect(checkGeometry(tx, `test-${newId()}`)).rejects.toThrow(/Revier-Schlüssel/);
     }));
 });

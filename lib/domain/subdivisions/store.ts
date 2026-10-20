@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { geoObjects, subdivisions } from "@/lib/db/schema";
+import { geoObjects, subdivisions, type SubdivisionStatus } from "@/lib/db/schema";
+import type { Bbox } from "@/lib/domain/tiles";
 import { addNames } from "@/lib/domain/gazetteer/names";
 import { newPublicId } from "@/lib/domain/ids";
 import type { AdminUnit, PlannedSubdivision } from "./plan";
@@ -228,4 +229,34 @@ export async function applySubdivisionPlan(db: Db, plan: PlannedSubdivision[], t
     result.ended = endable.length;
   }
   return result;
+}
+
+export type SubdivisionRef = {
+  id: string;
+  publicId: string;
+  key: string;
+  country: string;
+  status: SubdivisionStatus;
+  bbox: Bbox;
+};
+
+/** The valid subdivision with this key and the bounding box of its polygon; null when there is none. */
+export async function subdivisionByKey(db: Db, key: string): Promise<SubdivisionRef | null> {
+  const { rows } = await db.execute<{
+    id: string;
+    publicId: string;
+    key: string;
+    country: string;
+    status: SubdivisionStatus;
+    w: number;
+    s: number;
+    e: number;
+    n: number;
+  }>(sql`
+    SELECT id, public_id AS "publicId", key, country, status,
+           ST_XMin(geom) AS w, ST_YMin(geom) AS s, ST_XMax(geom) AS e, ST_YMax(geom) AS n
+    FROM subdivisions WHERE key = ${key} AND valid_to IS NULL`);
+  const r = rows[0];
+  if (!r) return null;
+  return { id: r.id, publicId: r.publicId, key: r.key, country: r.country, status: r.status, bbox: [r.w, r.s, r.e, r.n] };
 }
