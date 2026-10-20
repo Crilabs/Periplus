@@ -45,9 +45,26 @@ export async function loadAdminUnits(db: Db, mrgids: number[]): Promise<AdminUni
 
 const ids = (list: string[]) => sql.join(list.map((id) => sql`${id}::uuid`), sql`, `);
 
+/**
+ * Keys of the planned active subdivisions whose members' polygon meets no land polygon, so they would be stored
+ * without `land_geom` (the land import is missing or covers only part of the Mediterranean).
+ */
+export async function subdivisionsWithoutLand(db: Db, plan: PlannedSubdivision[]): Promise<string[]> {
+  const missing: string[] = [];
+  for (const entry of plan.filter((p) => p.status === "active")) {
+    const { rows } = await db.execute<{ hit: boolean }>(sql`
+      SELECT EXISTS (
+        SELECT 1 FROM land_polygons l
+        WHERE l.geom && ${unionOf(entry.memberGeoObjectIds)} AND ST_Intersects(l.geom, ${unionOf(entry.memberGeoObjectIds)})
+      ) AS hit`);
+    if (!rows[0]!.hit) missing.push(entry.key);
+  }
+  return missing;
+}
+
 /** Union of the geometries of geo objects, polygons only; null when none has area. */
 const unionOf = (list: string[]) =>
-  sql`(SELECT ST_CollectionExtract(ST_UnaryUnion(ST_Collect(ST_MakeValid(geom))), 3) FROM geo_objects WHERE id IN (${ids(list)}))`;
+  sql`(SELECT ST_CollectionExtract(ST_UnaryUnion(ST_Collect(ST_MakeValid(geom) ORDER BY id)), 3) FROM geo_objects WHERE id IN (${ids(list)}))`;
 
 type Candidate = { geom: string; landGeom: string | null };
 
@@ -65,7 +82,7 @@ async function candidate(db: Db, entry: PlannedSubdivision): Promise<Candidate> 
       SELECT CASE WHEN c.g IS NULL THEN m.g ELSE ST_CollectionExtract(ST_Difference(m.g, c.g), 3) END AS g
       FROM (SELECT ${unionOf(entry.memberGeoObjectIds)} AS g) m, (SELECT ${cut} AS g) c
     ), land AS (
-      SELECT ST_CollectionExtract(ST_Intersection(u.g, ST_MakeValid(ST_UnaryUnion(ST_Collect(l.geom)))), 3) AS g
+      SELECT ST_CollectionExtract(ST_Intersection(u.g, ST_MakeValid(ST_UnaryUnion(ST_Collect(l.geom ORDER BY l.id)))), 3) AS g
       FROM u JOIN land_polygons l ON l.geom && u.g AND ST_Intersects(l.geom, u.g)
       GROUP BY u.g
     )
@@ -82,16 +99,22 @@ async function candidate(db: Db, entry: PlannedSubdivision): Promise<Candidate> 
 
 /**
  * The geo object of a split group or merge: valid `admin_region` with `config_key = key` and the union of its members as
- * geometry; created or updated when members or geometry changed. Returns its id.
+ * geometry; created or updated when members or geometry changed. Returns its id. With `readOnly` (the subdivision is
+ * built) nothing is written; `drifted` tells that the members' union no longer equals the geo object's geometry.
  */
-async function ensureMadeGeoObject(db: Db, entry: PlannedSubdivision): Promise<string> {
-  const union = sql`ST_Multi(ST_CollectionExtract(ST_UnaryUnion(ST_Collect(ST_MakeValid(geom))), 3))`;
+async function ensureMadeGeoObject(
+  db: Db,
+  entry: PlannedSubdivision,
+  readOnly = false,
+): Promise<{ id: string; drifted: boolean }> {
+  const union = sql`ST_Multi(ST_CollectionExtract(ST_UnaryUnion(ST_Collect(ST_MakeValid(geom) ORDER BY id)), 3))`;
   const [existing] = await db
     .select({ id: geoObjects.id, same: sql<boolean>`ST_OrderingEquals(${geoObjects.geom}, (SELECT ${union} FROM geo_objects WHERE id IN (${ids(entry.memberGeoObjectIds)})))` })
     .from(geoObjects)
     .where(and(eq(geoObjects.configKey, entry.key), isNull(geoObjects.validTo)))
     .for("update");
   let id: string;
+  if (readOnly && existing) return { id: existing.id, drifted: !existing.same };
   if (!existing) {
     const [row] = await db
       .insert(geoObjects)
@@ -119,7 +142,7 @@ async function ensureMadeGeoObject(db: Db, entry: PlannedSubdivision): Promise<s
     id,
     Object.entries(entry.names).map(([language, name]) => ({ name, language, origin: "manual" as const, isPreferred: true })),
   );
-  return id;
+  return { id, drifted: false };
 }
 
 export type SubdivisionApplyResult = {
@@ -145,9 +168,11 @@ export async function applySubdivisionPlan(db: Db, plan: PlannedSubdivision[], t
   const byKey = new Map(valid.map((r) => [r.key, r]));
 
   for (const entry of plan) {
-    const geoObjectId = entry.geoObjectId ?? (await ensureMadeGeoObject(db, entry));
-    const cand = await candidate(db, entry);
     const existing = byKey.get(entry.key);
+    // A built subdivision keeps its geo object as it is; a change of its members is a deviation.
+    const made = entry.geoObjectId ? null : await ensureMadeGeoObject(db, entry, !!existing?.builtAt);
+    const geoObjectId = entry.geoObjectId ?? made!.id;
+    const cand = await candidate(db, entry);
     const insert = () =>
       db.insert(subdivisions).values({
         publicId: newPublicId("sd"),
@@ -174,6 +199,7 @@ export async function applySubdivisionPlan(db: Db, plan: PlannedSubdivision[], t
     ).rows;
     const differences = [
       existing.geoObjectId !== geoObjectId && "geo object",
+      made?.drifted && "geo object geometry",
       existing.country !== entry.country && "country",
       existing.status !== entry.status && `status ${existing.status} -> ${entry.status}`,
       (existing.statusReason ?? null) !== entry.statusReason && "status reason",

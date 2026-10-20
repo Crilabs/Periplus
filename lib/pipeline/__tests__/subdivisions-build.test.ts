@@ -169,6 +169,25 @@ describe("applySubdivisionPlan", () => {
     });
   });
 
+  it("does not change the geo object of a built split group or merge, it reports a deviation", async () => {
+    await withRollback(async (tx) => {
+      const a = await insertUnit(tx, [10, 45, 11, 46]);
+      const b = await insertUnit(tx, [11, 45, 12, 46]);
+      const group = entry("HR-GRPB", null, { memberGeoObjectIds: [a, b], names: { en: "Group" } });
+      await applySubdivisionPlan(tx, [group], TODAY);
+      await tx.update(subdivisions).set({ builtAt: new Date() }).where(eq(subdivisions.key, "HR-GRPB"));
+      const area = async () =>
+        (await tx.execute<{ g: string }>(sql`SELECT ST_AsEWKT(geom) AS g FROM geo_objects WHERE config_key = 'HR-GRPB' AND valid_to IS NULL`)).rows[0]!.g;
+      const before = await area();
+      const c = await insertUnit(tx, [12, 45, 13, 46]);
+      const result = await applySubdivisionPlan(tx, [{ ...group, memberGeoObjectIds: [a, b, c] }], LATER);
+      expect(await area()).toBe(before);
+      expect(result).toMatchObject({ replaced: 0, unchanged: 0 });
+      expect(result.deviations.map((d) => d.key)).toEqual(["HR-GRPB"]);
+      expect(result.deviations[0]!.reason).toContain("geo object geometry");
+    });
+  });
+
   it("a split group or merge gets its own admin_region geo object from the union of its members", async () => {
     await withRollback(async (tx) => {
       const a = await insertUnit(tx, [10, 45, 11, 46]);
@@ -265,6 +284,7 @@ describe("buildSubdivisions", () => {
       await insertUnit(tx, [11, 45.01, 12, 46], { tags: { country: "HR", wikidata: "Q4242" } });
       await insertUnit(tx, [10, 47, 11, 48], { tags: { country: "HR", "ISO3166-2": "HR-92" } });
       await insertLand(tx, [10.2, 45.2, 10.8, 45.8]);
+      await insertLand(tx, [11.2, 45.2, 11.8, 45.8]);
 
       const result = await buildSubdivisions(tx, new Date("2026-10-20T10:00:00Z"));
       expect(result.planned).toBe(2);
@@ -272,6 +292,20 @@ describe("buildSubdivisions", () => {
       const rows = await tx.select().from(subdivisions).where(and(isNull(subdivisions.validTo), eq(subdivisions.country, "HR")));
       expect(rows.map((r) => r.key).sort()).toEqual(["HR-91", "HR-Q4242"]);
       expect(result.warnings.join("\n")).toContain("GR-L");
+    });
+  });
+
+  it("fails when a unit touching the Mediterranean has no land polygon, naming it and the import command", async () => {
+    await withRollback(async (tx) => {
+      await tx.execute(sql`UPDATE geo_objects SET valid_to = current_date WHERE type IN ('sea', 'country', 'admin_region') AND valid_to IS NULL AND origin IN ('marine_regions', 'osm') AND tags ? 'country'`);
+      const sea = String(mrgids[0]);
+      await tx.execute(sql.raw(`
+        INSERT INTO geo_objects (id, type, origin, tags, geom)
+        VALUES (gen_random_uuid(), 'sea', 'marine_regions', '{"mrgid":"${sea}"}'::jsonb, ST_Multi(${square(11, 44, 12, 45)}))`));
+      await insertUnit(tx, [11, 45.01, 12, 46], { tags: { country: "HR", "ISO3166-2": "HR-93" } });
+      // Land exists, but elsewhere (like the Saronic pilot land): the check is per unit, not "any land".
+      await insertLand(tx, [10.2, 47.2, 10.8, 47.8]);
+      await expect(buildSubdivisions(tx)).rejects.toThrow(/HR-93.*npx tsx scripts\/import-land-polygons\.ts --shp <land_polygons\.shp> --mediterranean/s);
     });
   });
 

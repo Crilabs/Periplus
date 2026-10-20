@@ -101,7 +101,13 @@ describe("subdivisions config", () => {
     expect(c.wholeCountry).toEqual(expect.arrayContaining(["LB", "IL", "CY"]));
     expect(c.split[0]!.parentKey).toBe("GR-L");
     expect(c.split[0]!.groups.map((g) => g.key)).toEqual(["GR-CYC", "GR-DOD"]);
-    expect(c.extra[0]!.osmRelationId).toBe(2514541);
+    expect(c.extra.map((e) => [e.key, e.country, e.osmRelationId, e.cutFrom])).toEqual(
+      expect.arrayContaining([
+        ["CY-NC", "CY", 2514541, "CY"],
+        ["GB-SBA", "GB", 3263728, "CY"],
+      ]),
+    );
+    expect(c.keyOverrides["3263728"]).toBeUndefined();
     expect(c.countries.LY!.status).toBe("excluded");
     expect(c.mediterranean.marineRegionsMrgids).not.toContain(3369);
     expect(c.overrides["GR-J"]!.coastSections!.map((s) => s.key)).toEqual(["ermioni", "porto-cheli", "epidavros"]);

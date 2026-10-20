@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { planSubdivisions, planWarnings } from "@/lib/domain/subdivisions/plan";
-import { applySubdivisionPlan, loadAdminUnits, type SubdivisionApplyResult } from "@/lib/domain/subdivisions/store";
+import { applySubdivisionPlan, loadAdminUnits, subdivisionsWithoutLand, type SubdivisionApplyResult } from "@/lib/domain/subdivisions/store";
 import { createLogger } from "@/lib/logger";
 
 export const SUBDIVISIONS_STAGE = "subdivisions.build";
@@ -24,6 +24,12 @@ export async function buildSubdivisions(db: Db, now: Date = new Date()): Promise
     const units = await loadAdminUnits(tx, cfg.mediterranean.marineRegionsMrgids);
     if (units.length === 0) throw new Error("coarse gazetteer is empty – run the stage gazetteer.coarse first");
     const plan = planSubdivisions(units, cfg);
+    const withoutLand = await subdivisionsWithoutLand(tx, plan);
+    if (withoutLand.length > 0) {
+      throw new Error(
+        `no land polygon intersects ${withoutLand.join(", ")} – run npx tsx scripts/import-land-polygons.ts --shp <land_polygons.shp> --mediterranean`,
+      );
+    }
     const warnings = planWarnings(units, cfg, plan);
     for (const w of warnings) log.warn({ warning: w }, "subdivisions config matches nothing");
     const applied = await applySubdivisionPlan(tx, plan, now.toISOString().slice(0, 10));

@@ -53,13 +53,25 @@ function isWhole(country: string, cfg: SubdivisionsConfig): boolean {
 
 /**
  * The Landesteile of the coarse gazetteer (spec 14), sorted by key. Rules in order: a country with status
- * `excluded` is one excluded row; a whole country (`wholeCountry`, `firstLevel: "whole"`) is its country unit; else
+ * `excluded` is one excluded row; a whole country (`wholeCountry`, `firstLevel: "whole"`) is its country unit if that touches the Mediterranean; else
  * the first-level units touching the Mediterranean minus `notMediterranean`. Then `split` replaces a parent by its
  * groups (union of the second-level units named by Wikidata id), `merge` replaces its members by one row, `extra`
  * adds a unit and cuts it out of the rows of its `cutFrom` country. `overrides` set status and reason. A duplicate
  * key keeps the first row. Nothing throws on missing ISO tags or unmatched configuration.
  */
 export function planSubdivisions(units: AdminUnit[], cfg: SubdivisionsConfig): PlannedSubdivision[] {
+  return dedupe(planRows(units, cfg));
+}
+
+function dedupe(rows: PlannedSubdivision[]): PlannedSubdivision[] {
+  const seen = new Set<string>();
+  return rows
+    .filter((r) => !seen.has(r.key) && !!seen.add(r.key))
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+
+function planRows(units: AdminUnit[], cfg: SubdivisionsConfig): PlannedSubdivision[] {
+  const extraIds = new Set(cfg.extra.map((e) => e.osmRelationId));
   const rows: PlannedSubdivision[] = [];
   const row = (u: AdminUnit, key: string, status: SubdivisionStatus, statusReason: string | null): PlannedSubdivision => ({
     key,
@@ -74,13 +86,16 @@ export function planSubdivisions(units: AdminUnit[], cfg: SubdivisionsConfig): P
   });
 
   for (const [country, c] of Object.entries(cfg.countries)) {
-    const own = units.filter((u) => u.country === country);
+    // Extra units (e.g. the British bases on Cyprus) are rows of their own, never the country's or a first-level unit.
+    const own = units.filter((u) => u.country === country && !extraIds.has(u.osmRelationId));
     if (c.status === "excluded") {
       for (const u of own.filter((x) => x.adminLevel === COUNTRY_LEVEL)) {
         rows.push(row(u, unitKey(u, cfg), "excluded", c.statusReason ?? null));
       }
     } else if (isWhole(country, cfg)) {
-      for (const u of own.filter((x) => x.adminLevel === COUNTRY_LEVEL)) rows.push(row(u, unitKey(u, cfg), "active", null));
+      for (const u of own.filter((x) => x.adminLevel === COUNTRY_LEVEL && x.touchesMediterranean)) {
+        rows.push(row(u, unitKey(u, cfg), "active", null));
+      }
     } else if (c.firstLevel !== "whole") {
       const firstLevel = c.firstLevel;
       for (const u of own.filter((x) => x.adminLevel === firstLevel && x.touchesMediterranean)) {
@@ -144,10 +159,7 @@ export function planSubdivisions(units: AdminUnit[], cfg: SubdivisionsConfig): P
     else if (o?.status === "active") r.statusReason = null;
   }
 
-  const seen = new Set<string>();
-  return rows
-    .filter((r) => !seen.has(r.key) && !!seen.add(r.key))
-    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  return rows;
 }
 
 function unitFirstLevel(country: string, cfg: SubdivisionsConfig): number | null {
@@ -157,7 +169,7 @@ function unitFirstLevel(country: string, cfg: SubdivisionsConfig): number | null
 
 /**
  * Configuration that matches nothing in the imported units or the plan: split parents and groups, merge members,
- * `notMediterranean`, `extra` relations, `overrides` keys. Reported by the
+ * `notMediterranean`, `extra` relations, `keyOverrides` relations, `overrides` keys, duplicate keys. Reported by the
  * build, never thrown (a config key may refer to a unit of a country that is not imported yet).
  */
 export function planWarnings(units: AdminUnit[], cfg: SubdivisionsConfig, plan: PlannedSubdivision[]): string[] {
@@ -176,6 +188,15 @@ export function planWarnings(units: AdminUnit[], cfg: SubdivisionsConfig, plan: 
   for (const k of cfg.notMediterranean) if (!unitKeys.has(k)) out.push(`notMediterranean ${k} matches no unit`);
   for (const e of cfg.extra) {
     if (!units.some((u) => u.osmRelationId === e.osmRelationId)) out.push(`extra ${e.key}: relation ${e.osmRelationId} not imported`);
+  }
+  const unitRelations = new Set(units.map((u) => u.osmRelationId));
+  for (const id of Object.keys(cfg.keyOverrides)) {
+    if (!unitRelations.has(Number(id))) out.push(`keyOverrides ${id} matches no unit`);
+  }
+  const keys = new Set<string>();
+  for (const r of planRows(units, cfg)) {
+    if (keys.has(r.key)) out.push(`duplicate key ${r.key} dropped (country ${r.country})`);
+    keys.add(r.key);
   }
   for (const k of Object.keys(cfg.overrides)) {
     if (!planKeys.has(k) && !unitKeys.has(k)) out.push(`overrides ${k} matches no unit`);

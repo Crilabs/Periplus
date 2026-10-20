@@ -151,6 +151,27 @@ describe("planSubdivisions", () => {
   });
 });
 
+describe("whole country far from the sea and extra bases", () => {
+  it("a whole country that does not touch the Mediterranean yields no row", () => {
+    const cfg = config({ countries: { GB: whole } });
+    expect(planSubdivisions([unit("GB", 2, { iso: null, touchesMediterranean: false })], cfg)).toEqual([]);
+  });
+
+  it("an extra of a whole country becomes its own row cut out of CY and the country unit never becomes one", () => {
+    const cfg = config({
+      countries: { GB: whole, CY: whole },
+      extra: [{ key: "GB-SBA", country: "GB", osmRelationId: 3263728, cutFrom: "CY", names: { en: "Akrotiri and Dhekelia" } }],
+    });
+    const uk = unit("GB", 2, { touchesMediterranean: false });
+    const sba = unit("GB", 2, { osmRelationId: 3263728 });
+    const cy = unit("CY", 2);
+    const plan = planSubdivisions([uk, sba, cy], cfg);
+    expect(plan.map((p) => p.key)).toEqual(["CY", "GB-SBA"]);
+    expect(plan[0]!.cutGeoObjectIds).toEqual([sba.geoObjectId]);
+    expect(plan[1]).toMatchObject({ country: "GB", geoObjectId: sba.geoObjectId });
+  });
+});
+
 describe("planWarnings", () => {
   it("reports configuration that matches nothing", () => {
     const cfg = config({
@@ -177,5 +198,19 @@ describe("planWarnings", () => {
     const cfg = config({ countries: { HR: lvl4 } });
     const units = [unit("HR", 4, { iso: "HR-17" })];
     expect(planWarnings(units, cfg, planSubdivisions(units, cfg))).toEqual([]);
+  });
+
+  it("reports keyOverrides that match no unit", () => {
+    const cfg = config({ countries: { HR: lvl4 }, keyOverrides: { "999": "HR-ZZ" } });
+    const units = [unit("HR", 4, { iso: "HR-17" })];
+    expect(planWarnings(units, cfg, planSubdivisions(units, cfg)).join("\n")).toContain("keyOverrides 999");
+  });
+
+  it("reports a duplicate key that was dropped", () => {
+    const cfg = config({ countries: { HR: lvl4 } });
+    const units = [unit("HR", 4, { iso: "HR-17" }), unit("HR", 4, { iso: "HR-17" })];
+    const plan = planSubdivisions(units, cfg);
+    expect(plan).toHaveLength(1);
+    expect(planWarnings(units, cfg, plan).join("\n")).toContain("duplicate key HR-17");
   });
 });
