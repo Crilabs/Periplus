@@ -175,6 +175,58 @@ describe("processFactOutput", () => {
       expect([row!.confidence, row!.quote]).toEqual([0.95, "Holding is good in sand"]);
     }));
 
+  it("two prohibitions facts in one unit are both stored, each with its own quote (ruling M7-G-R2)", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx, "Swimming is prohibited near the quay. Anchoring is prohibited in the harbour basin.");
+      const out = {
+        facts: [
+          fact({ attribute: "prohibitions", value: '[{"kind":"swimming","months":null}]', quote: "Swimming is prohibited near the quay", chunk: 3, confidence: 0.9 }),
+          fact({ attribute: "prohibitions", value: '[{"kind":"anchoring","months":null}]', quote: "Anchoring is prohibited in the harbour basin", chunk: 3, confidence: 0.6 }),
+        ],
+      };
+      const stats = await processFactOutput(tx, s.unit, out, config);
+      expect(stats).toMatchObject({ proposed: 2, stored: 2, duplicate: 0, merged: 0 });
+      const rows = (await factsOf(tx, s.unit.extractionRunId)).sort((a, b) => a.quoteStart! - b.quoteStart!);
+      const third = "Swimming is prohibited near the quay. Anchoring is prohibited in the harbour basin.";
+      expect(rows.map((r) => [r.value, r.quote, third.slice(r.quoteStart!, r.quoteEnd!), r.confidence])).toEqual([
+        [[{ kind: "swimming", months: null }], "Swimming is prohibited near the quay", "Swimming is prohibited near the quay", 0.9],
+        [[{ kind: "anchoring", months: null }], "Anchoring is prohibited in the harbour basin", "Anchoring is prohibited in the harbour basin", 0.6],
+      ]);
+      // a repeated answer adds nothing
+      expect(await processFactOutput(tx, s.unit, out, config)).toMatchObject({ stored: 0 });
+      expect(await factsOf(tx, s.unit.extractionRunId)).toHaveLength(2);
+    }));
+
+  it("two hazards facts in one unit are both stored; two on one quote merge into one fact (ruling M7-G-R2)", () =>
+    withRollback(async (tx) => {
+      const third = "Beware of the Vrachos rock off the cape. A wreck lies in the entrance. Strong current.";
+      const s = await scene(tx, third);
+      const stats = await processFactOutput(
+        tx,
+        s.unit,
+        {
+          facts: [
+            fact({ attribute: "hazards", value: '[{"kind":"rock","name":"Vrachos"}]', quote: "Beware of the Vrachos rock off the cape", chunk: 3, confidence: 0.7 }),
+            fact({ attribute: "hazards", value: '[{"kind":"wreck","name":null}]', quote: "A wreck lies in the entrance", chunk: 3, confidence: 0.8 }),
+            // the same quote twice: one fact with the entries of both, the higher confidence
+            fact({ attribute: "hazards", value: '[{"kind":"wreck","name":null},{"kind":"shoal","name":null}]', quote: "A wreck lies in the entrance", chunk: 3, confidence: 0.9 }),
+            // a scalar attribute proposed twice still keeps one fact
+            fact({ attribute: "holding", value: '"good"', confidence: 0.5 }),
+            fact({ attribute: "holding", value: '"poor"', confidence: 0.4 }),
+          ],
+        },
+        config,
+      );
+      expect(stats).toMatchObject({ proposed: 5, stored: 3, merged: 1, duplicate: 1 });
+      const rows = await factsOf(tx, s.unit.extractionRunId);
+      const hazards = rows.filter((r) => r.attribute === "hazards").sort((a, b) => a.quoteStart! - b.quoteStart!);
+      expect(hazards.map((r) => [r.value, third.slice(r.quoteStart!, r.quoteEnd!), r.confidence])).toEqual([
+        [[{ kind: "rock", name: "Vrachos" }], "Beware of the Vrachos rock off the cape", 0.7],
+        [[{ kind: "wreck", name: null }, { kind: "shoal", name: null }], "A wreck lies in the entrance", 0.9],
+      ]);
+      expect(rows.filter((r) => r.attribute === "holding").map((r) => r.value)).toEqual(["good"]);
+    }));
+
   it("'2024-05' becomes 2024-05-15, a future date falls back to the version date", () =>
     withRollback(async (tx) => {
       const s = await scene(tx);

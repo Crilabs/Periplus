@@ -1,0 +1,2 @@
+DROP INDEX "facts_mention_attribute_run_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX "facts_mention_attribute_run_span_unique" ON "facts" USING btree ("mention_id","attribute","extraction_run_id","quote_chunk_id","quote_start","quote_end");

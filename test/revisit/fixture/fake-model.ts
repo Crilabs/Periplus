@@ -40,33 +40,18 @@ const RULES: Rule[] = [
 const PLACE_TYPES = new Set(["bay", "harbour", "cove", "anchorage"]);
 
 /**
- * The facts the rules find in the unit's chunks, each quoting its sentence. Like a real answer, one fact per attribute
- * (the extraction keeps one of an attribute proposed twice): the bans of one chunk become one `prohibitions` list
- * quoting the span from the first to the last ban sentence.
+ * The facts the rules find in the unit's chunks, one per sentence, each quoting its sentence: two bans are two
+ * `prohibitions` facts, as a real answer gives them (the extraction stores both, ruling M7-G-R2).
  */
 export function revisitFacts(input: ExtractFactsInput): ExtractedFact[] {
   if (!PLACE_TYPES.has(input.object.type)) return [];
   const facts: ExtractedFact[] = [];
   for (const chunk of input.chunks) {
-    const found: Array<{ fact: ExtractedFact; start: number; end: number }> = [];
     for (const sentence of chunk.text.split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim())) {
       for (const rule of RULES) {
         const m = sentence.match(rule.pattern);
-        if (!m) continue;
-        const start = chunk.text.indexOf(sentence);
-        found.push({ fact: { ...rule.fact(m), quote: sentence, chunk: chunk.n, confidence: 0.9, observed_at: null }, start, end: start + sentence.length });
+        if (m) facts.push({ ...rule.fact(m), quote: sentence, chunk: chunk.n, confidence: 0.9, observed_at: null });
       }
-    }
-    for (const attribute of [...new Set(found.map((f) => f.fact.attribute))]) {
-      const same = found.filter((f) => f.fact.attribute === attribute);
-      if (same.length === 1 || attribute !== "prohibitions") {
-        facts.push(same[0]!.fact);
-        continue;
-      }
-      const start = Math.min(...same.map((f) => f.start));
-      const end = Math.max(...same.map((f) => f.end));
-      const value = JSON.stringify(same.flatMap((f) => JSON.parse(f.fact.value) as unknown[]));
-      facts.push({ ...same[0]!.fact, value, quote: chunk.text.slice(start, end) });
     }
   }
   return facts;

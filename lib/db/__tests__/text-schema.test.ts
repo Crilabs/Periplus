@@ -220,14 +220,16 @@ describe("text schema", () => {
     });
   });
 
-  it("(mention_id, attribute, extraction_run_id) is unique for facts", async () => {
+  it("(mention_id, attribute, extraction_run_id, quote span) is unique for facts", async () => {
     await withRollback(async (tx) => {
       const m = await insertTestMention(tx);
       const runId = await insertTestExtractionRun(tx);
       await tx.insert(facts).values(textFact(m, runId));
 
       const message = await rejectionMessage(tx, (sp) => sp.insert(facts).values(textFact(m, runId)));
-      expect(message).toMatch(/facts_mention_attribute_run_unique/);
+      expect(message).toMatch(/facts_mention_attribute_run_span_unique/);
+      // another quote span of the same attribute is another fact (ruling M7-G-R2)
+      await expect(tx.insert(facts).values(textFact(m, runId, { quoteStart: 0, quoteEnd: 1 }))).resolves.toBeTruthy();
       // another run may state the same attribute again
       const otherRun = await insertTestExtractionRun(tx, { model: "claude-opus-5-5" });
       await expect(tx.insert(facts).values(textFact(m, otherRun))).resolves.toBeTruthy();
