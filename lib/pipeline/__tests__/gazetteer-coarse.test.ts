@@ -1,31 +1,34 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { makeResponse, type Transport } from "@/lib/adapters/http";
 import { fixtureTransport } from "@/lib/adapters/http-fixtures";
 import type { Db } from "@/lib/db/client";
-import { geoObjects, subdivisions } from "@/lib/db/schema";
+import { subdivisions } from "@/lib/db/schema";
+import { newPublicId } from "@/lib/domain/ids";
 import { applySubdivisionPlan } from "@/lib/domain/subdivisions/store";
-import { importCoarse, importCoarseFeatures } from "@/lib/pipeline/gazetteer/coarse";
+import { importCoarseFeatures } from "@/lib/pipeline/gazetteer/coarse";
 import { withRollback } from "@/test/db";
 
-// Rate limiting is covered by the http tests; its bucket rows would stay locked by the test transaction.
-vi.mock("@/lib/domain/rate-limit", () => ({ takeToken: async () => ({ ok: true }) }));
-
-/** Land at Malta's longitudes with its east edge 2 km east of Valletta: Valletta lies at the coast, inland towns do not. */
+/**
+ * A synthetic MT country polygon (not the real relation: its unique osm_id would make parallel test files wait for each
+ * other) and land at Malta's longitudes with its east edge 2 km east of Valletta: Valletta lies at the coast, inland
+ * towns do not. Every Overpass call takes a token of the shared `http:overpass` bucket (2 per minute, burst 2; a mock of
+ * `takeToken` does not reach the module the test setup already loaded), so a test makes at most two feature imports and no boundary call:
+ * a third call would sleep 30 s holding the bucket row and make other files' Overpass tests time out.
+ */
 async function setUpMalta(tx: Db): Promise<string> {
-  await importCoarse(tx, "MT", { transport: fixtureTransport() });
+  const inserted = await tx.execute<{ id: string }>(sql`INSERT INTO geo_objects (id, type, origin, admin_level, tags, geom)
+    VALUES (gen_random_uuid(), 'country', 'osm', 2, '{"country":"MT","ISO3166-1":"MT"}'::jsonb,
+            ST_Multi(ST_GeomFromText('POLYGON((14.0 35.7, 15.1 35.7, 15.1 36.2, 14.0 36.2, 14.0 35.7))', 4326))) RETURNING id`);
   await tx.execute(sql`INSERT INTO land_polygons (id, geom, dataset_version)
     VALUES (gen_random_uuid(), ST_GeomFromText('POLYGON((14.15 35.8, 14.53 35.8, 14.53 36.1, 14.15 36.1, 14.15 35.8))', 4326), 'test')`);
-  const [country] = await tx
-    .select({ id: geoObjects.id })
-    .from(geoObjects)
-    .where(and(eq(geoObjects.type, "country"), sql`${geoObjects.tags}->>'country' = 'MT'`, isNull(geoObjects.validTo)));
+  const country = { id: inserted.rows[0]!.id };
   await applySubdivisionPlan(
     tx,
-    [{ key: "MT-T", country: "MT", geoObjectId: country!.id, memberGeoObjectIds: [country!.id], cutGeoObjectIds: [], adminLevel: 2, status: "active", statusReason: null, names: {} }],
+    [{ key: "MT-T", country: "MT", geoObjectId: country.id, memberGeoObjectIds: [country.id], cutGeoObjectIds: [], adminLevel: 2, status: "active", statusReason: null, names: {} }],
     "2026-10-21",
   );
-  return country!.id;
+  return country.id;
 }
 
 async function malta(tx: Db, name: string, type?: string) {
@@ -54,6 +57,10 @@ describe("importCoarseFeatures", () => {
         expect(rows, name).toHaveLength(1);
         expect(rows[0]).toMatchObject({ type, subdivision_id: sd!.id });
       }
+      // relation/20354542 "MALTA" is a place=island multipolygon of two rings of 6 and 7 points (a few metres wide):
+      // below islandMinAreaKm2, so it stays with the fine gazetteer.
+      const { rows: tiny } = await tx.execute(sql`SELECT 1 FROM geo_objects WHERE osm_id = 'relation/20354542'`);
+      expect(tiny).toHaveLength(0);
       const [gozo] = await malta(tx, "Għawdex");
       const { rows: names } = await tx.execute<{ name: string }>(sql`SELECT name FROM geo_names WHERE geo_object_id = ${gozo!.id}`);
       expect(names.map((n) => n.name)).toContain("Gozo");
@@ -90,15 +97,16 @@ describe("importCoarseFeatures", () => {
   it("updates a feature the fine gazetteer imported instead of duplicating it", async () => {
     await withRollback(async (tx) => {
       await setUpMalta(tx);
+      const publicId = newPublicId("rg");
       await tx.execute(sql`INSERT INTO geo_objects (id, type, origin, osm_id, public_id, tags, geom)
-        VALUES (gen_random_uuid(), 'island', 'osm', 'relation/9353903', 'rg_01M5DS068B25WGVHSN363A5NBV', '{}'::jsonb,
+        VALUES (gen_random_uuid(), 'island', 'osm', 'relation/9353903', ${publicId}, '{}'::jsonb,
                 ST_Multi(ST_GeomFromText('POLYGON((14.2 36.0, 14.3 36.0, 14.3 36.1, 14.2 36.0))', 4326)))
         ON CONFLICT DO NOTHING`);
       await importCoarseFeatures(tx, "MT", { transport: fixtureTransport() });
       const { rows } = await tx.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM geo_objects WHERE osm_id = 'relation/9353903' AND valid_to IS NULL`);
       expect(rows[0]!.n).toBe(1);
       const { rows: ids } = await tx.execute<{ public_id: string }>(sql`SELECT public_id FROM geo_objects WHERE osm_id = 'relation/9353903' AND valid_to IS NULL`);
-      expect(ids[0]!.public_id).toBe('rg_01M5DS068B25WGVHSN363A5NBV');
+      expect(ids[0]!.public_id).toBe(publicId);
       expect(await malta(tx, "Għawdex", "island")).toHaveLength(1);
     });
   }, 120_000);
