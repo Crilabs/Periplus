@@ -50,7 +50,9 @@ export const hazardKind = z.enum([
 export const spotSchema = z.strictObject({
   id: publicId("sp"),
   kind: spotKind,
+  /** Display name, Latin script preferred (Teil B): for a Greek-only object the ELOT 743 transliteration. */
   name: z.string().min(1),
+  /** `lang` is a BCP 47 tag (`el`, `en`, `de`, …); the transliteration of a Greek name is `el-Latn`, script `latin`. */
   names: z
     .array(z.strictObject({ lang: z.string().min(2), name: z.string().min(1), script: z.enum(["latin", "greek"]) }))
     .optional(),

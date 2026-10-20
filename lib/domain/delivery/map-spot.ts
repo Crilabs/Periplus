@@ -59,7 +59,7 @@ export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
     attributes: ["geo.name"],
     note: "display name (de, en, any); without a valid name the spot is omitted (no_name), an excluded one is delivered with spots.excludedFallbackName (ruling M6-C-R1)",
   },
-  names: { attributes: ["geo.name"], note: "valid names without transliterations and fallbacks; omitted when none" },
+  names: { attributes: ["geo.name"], note: "valid names without fallbacks, the transliteration as el-Latn; omitted when none" },
   position: { attributes: ["place.position"], note: "places.position, round5" },
   anchorPosition: {
     attributes: ["anchor_position"],

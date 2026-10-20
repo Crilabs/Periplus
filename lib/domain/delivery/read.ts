@@ -5,7 +5,7 @@ import { CONTRACT_FILES, type ChangeEntry, type ChangesFile, type ContractFile, 
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { deliveries } from "@/lib/db/schema/deliveries";
-import { displayNameSql } from "@/lib/domain/gazetteer/names";
+import { deliveryNameSql } from "@/lib/domain/gazetteer/names";
 import type { DeliveryRow } from "./build";
 import { mergeChanges } from "./changes";
 import { sha256Hex } from "./serialize";
@@ -32,7 +32,7 @@ export type AreaListEntry = {
 /** A valid area (geo object of type `area` with a public id, valid today), by public id (`ar_…`) or config key. */
 export async function resolveArea(db: Db, ref: string): Promise<ResolvedArea | null> {
   const { rows } = await db.execute<{ id: string; public_id: string; config_key: string | null; name: string | null }>(sql`
-    select o.id, o.public_id, o.config_key, ${displayNameSql(sql`o.id`)} as name
+    select o.id, o.public_id, o.config_key, ${deliveryNameSql(sql`o.id`)} as name
     from geo_objects o
     where o.type = 'area' and o.public_id is not null
       and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
@@ -59,7 +59,7 @@ export async function listAreas(db: Db): Promise<AreaListEntry[]> {
     generated_at: string | Date | null;
     bbox: [number, number, number, number] | null;
   }>(sql`
-    select o.public_id, o.config_key, ${displayNameSql(sql`o.id`)} as name, d.data_version, d.generated_at, d.bbox
+    select o.public_id, o.config_key, ${deliveryNameSql(sql`o.id`)} as name, d.data_version, d.generated_at, d.bbox
     from geo_objects o
     left join lateral (
       select d.data_version, d.generated_at, d.bbox from deliveries d

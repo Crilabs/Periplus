@@ -5,7 +5,7 @@ import type { GeoObjectType, PlaceKind, PlaceStatus, PoiCategory } from "@/lib/d
 import type { DocType } from "@/lib/db/schema/sources";
 import { popularityForArea } from "@/lib/domain/consolidation/derived/popularity";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
-import { displayNameSql } from "@/lib/domain/gazetteer/names";
+import { deliveryNameSql } from "@/lib/domain/gazetteer/names";
 import { utmSridFor } from "@/lib/domain/geometry/projection";
 import { latestProfiles } from "@/lib/domain/timeline";
 import type {
@@ -27,6 +27,9 @@ import type {
  */
 
 const METRES_PER_NM = 1852;
+
+/** Language tag of a delivered transliteration: Greek in Latin script (BCP 47). */
+export const TRANSLITERATION_LANG = "el-Latn";
 
 export class AreaNotFound extends Error {
   constructor(readonly areaGeoObjectId: string) {
@@ -122,7 +125,7 @@ async function loadArea(db: Db, areaId: string, today: string): Promise<Omit<Are
     east: number;
     north: number;
   }>(sql`
-    select o.public_id, o.config_key, ${displayNameSql(sql`o.id`, today)} as name,
+    select o.public_id, o.config_key, ${deliveryNameSql(sql`o.id`, today)} as name,
            ST_AsGeoJSON(o.geom, 5)::json as polygon,
            ext.west, ext.south, ext.east, ext.north
     from geo_objects o
@@ -200,7 +203,7 @@ async function loadSpotRows(db: Db, areaId: string, cfg: DeliveryConfig, today: 
   }>(sql`
     select p.id as place_id, p.geo_object_id, p.public_id, p.kind, p.status, p.status_reason,
            ST_X(p.position) as lon, ST_Y(p.position) as lat,
-           ${displayNameSql(sql`p.geo_object_id`, today)} as name, g.osm_id, g.wikidata_id
+           ${deliveryNameSql(sql`p.geo_object_id`, today)} as name, g.osm_id, g.wikidata_id
     from places p
     join geo_objects g on g.id = p.geo_object_id
     where ${spotFilter(areaId, cfg, today)}
@@ -260,7 +263,7 @@ async function loadPoiRows(db: Db, tileArray: SQL, today: string): Promise<PoiRo
     osm_id: string | null;
     wikidata_id: string | null;
   }>(sql`
-    select o.id as geo_object_id, o.public_id, o.category, ${displayNameSql(sql`o.id`, today)} as name,
+    select o.id as geo_object_id, o.public_id, o.category, ${deliveryNameSql(sql`o.id`, today)} as name,
            ST_X(o.centroid) as lon, ST_Y(o.centroid) as lat, o.osm_id, o.wikidata_id
     from geo_objects o
     where o.type = 'poi' and o.public_id is not null and o.category is not null and o.merged_into_id is null
@@ -292,7 +295,7 @@ async function loadRegionRows(db: Db, tileArray: SQL, cfg: DeliveryConfig, today
     area_m2: number | null;
     ancestors: string[];
   }>(sql`
-    select o.id as geo_object_id, o.public_id, o.type, ${displayNameSql(sql`o.id`, today)} as name,
+    select o.id as geo_object_id, o.public_id, o.type, ${deliveryNameSql(sql`o.id`, today)} as name,
            ST_X(o.centroid) as lon, ST_Y(o.centroid) as lat,
            GeometryType(o.geom) in ('POLYGON', 'MULTIPOLYGON') as areal,
            case when GeometryType(o.geom) in ('POLYGON', 'MULTIPOLYGON') then ST_Area(o.geom::geography) end as area_m2,
@@ -357,7 +360,7 @@ async function simplifiedPolygons(
 
 async function loadPassages(db: Db, tileArray: SQL, today: string): Promise<Array<Omit<PassageSource, "profile">>> {
   const { rows } = await db.execute<{ geo_object_id: string; type: PassageSource["type"]; name: string | null; lon: number; lat: number }>(sql`
-    select o.id as geo_object_id, o.type, ${displayNameSql(sql`o.id`, today)} as name, ST_X(o.centroid) as lon, ST_Y(o.centroid) as lat
+    select o.id as geo_object_id, o.type, ${deliveryNameSql(sql`o.id`, today)} as name, ST_X(o.centroid) as lon, ST_Y(o.centroid) as lat
     from geo_objects o
     where o.type in ('cape', 'strait', 'channel') and o.merged_into_id is null and ${validOn("o", today)}
       and exists (select 1 from tile_geo_objects tg where tg.geo_object_id = o.id and tg.tile_id = any(${tileArray}))
@@ -366,14 +369,26 @@ async function loadPassages(db: Db, tileArray: SQL, today: string): Promise<Arra
   return rows.map((r) => ({ geoObjectId: r.geo_object_id, type: r.type, name: r.name ?? "", point: point(r.lon, r.lat) }));
 }
 
-/** Valid names without transliterations and fallbacks, sorted by language and name, one per (language, name). */
+/**
+ * Valid names without fallbacks (copies of the English name), sorted by language and name, one per (language, name).
+ * The ELOT 743 transliteration of a Greek name is delivered as `el-Latn` (BCP 47: Greek in Latin script), unless the
+ * object has the same name already from a source (gesamt-review DAT-1).
+ */
 async function loadNames(db: Db, geoObjectIds: string[], today: string): Promise<Map<string, SpotName[]>> {
   const { rows } = await db.execute<{ geo_object_id: string; language: string; name: string; script: SpotName["script"] }>(sql`
-    select distinct on (n.geo_object_id, n.language, n.name) n.geo_object_id, n.language, n.name, n.script
+    select distinct on (n.geo_object_id, x.language, n.name) n.geo_object_id, x.language, n.name, n.script
     from geo_names n
+    cross join lateral (
+      select case when n.origin = 'transliteration' then ${TRANSLITERATION_LANG}::text else n.language end as language
+    ) x
     where n.geo_object_id = any(${arrayParam(geoObjectIds, "uuid")}) and ${validOn("n", today)}
-      and n.origin not in ('transliteration', 'fallback')
-    order by n.geo_object_id, n.language, n.name, n.script
+      and n.origin <> 'fallback'
+      and not (n.origin = 'transliteration' and exists (
+        select 1 from geo_names s
+        where s.geo_object_id = n.geo_object_id and s.name = n.name and s.origin not in ('transliteration', 'fallback')
+          and ${validOn("s", today)}
+      ))
+    order by n.geo_object_id, x.language, n.name, n.script
   `);
   const names = new Map<string, SpotName[]>();
   for (const r of rows) {

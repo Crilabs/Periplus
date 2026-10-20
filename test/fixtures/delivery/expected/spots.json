@@ -15,6 +15,11 @@
           "script": "greek"
         },
         {
+          "lang": "el-Latn",
+          "name": "Ormos Vathy",
+          "script": "latin"
+        },
+        {
           "lang": "en",
           "name": "Vathi Bay",
           "script": "latin"

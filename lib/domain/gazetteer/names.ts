@@ -281,3 +281,21 @@ export function displayNameSql(geoObjectId: SQL | AnyColumn, date?: string): SQL
     limit 1
   )`;
 }
+
+/**
+ * Name of a geo object as delivered (contract `name`, spec Teil B: „Anzeigename, bevorzugt lateinische Schreibweise“;
+ * a region's „Deutscher Anzeigename“): a valid Latin-script name first, then German, English, the local Greek
+ * (the ELOT 743 transliteration is `el` in Latin script), any other language; within that the preferred name, then
+ * alphabetical. A Greek-only object is delivered with its transliteration, never in Greek script while a Latin
+ * form exists (gesamt-review DAT-1). `displayNameSql` stays the admin and prompt ordering.
+ */
+export function deliveryNameSql(geoObjectId: SQL | AnyColumn, date?: string): SQL<string | null> {
+  const outerId = is(geoObjectId, SQL) ? geoObjectId : qualified(geoObjectId);
+  return sql<string | null>`(
+    select gn.name from geo_names gn
+    where gn.geo_object_id = ${outerId} and ${validAt(gn, date)}
+    order by gn.script = 'latin' desc, case gn.language when 'de' then 0 when 'en' then 1 when 'el' then 2 else 3 end,
+      gn.is_preferred desc, gn.name
+    limit 1
+  )`;
+}
