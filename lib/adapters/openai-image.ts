@@ -25,8 +25,6 @@ export const OPENAI_IMAGE_EDITS_URL = "https://api.openai.com/v1/images/edits";
 export const MULTIPART_BOUNDARY = "----periplus-image";
 const WIDTH = 1536;
 const HEIGHT = 1024;
-/** An edit of a 1536 x 1024 image takes minutes; one explicit ceiling, independent of the text-model timeout. */
-const TIMEOUT_MS = 600_000;
 
 function multipart(fields: Record<string, string>, image: Uint8Array): Uint8Array {
   const enc = new TextEncoder();
@@ -79,7 +77,8 @@ export function createOpenAiImageModel(transport: Transport, config: Pick<AppCon
           method: "POST",
           body,
           headers: { Authorization: `Bearer ${key}`, "Content-Type": `multipart/form-data; boundary=${MULTIPART_BOUNDARY}` },
-          timeoutMs: TIMEOUT_MS,
+          // an edit of a 1536 x 1024 image takes minutes: its own ceiling (`imageTasks.<task>.timeoutSeconds`), not the text-model timeout
+          timeoutMs: task.timeoutSeconds * 1000,
           budget: "openai",
           // an answered call is billed even when its image turns out unusable
           costOf: () => ({ units: 1, unit: "image", costEur: price }),

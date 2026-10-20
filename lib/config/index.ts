@@ -127,9 +127,35 @@ function readConsolidation(dir: string, version: string): VersionedConsolidation
   return { ...config, version: valid };
 }
 
+/** Seconds a job may stay active before pg-boss expires it when the queue sets no `expireInSeconds`. */
+const PG_BOSS_DEFAULT_EXPIRE_SECONDS = 900;
+/** Seconds an image job needs beyond the render and the edits: water and watermark checks, the task write. */
+const IMAGE_JOB_MARGIN_SECONDS = 120;
+const IMAGE_TASK = "generate-place-image";
+
+/**
+ * pg-boss must not expire an `images.place` job (and hand it out again beside the one still running) before its worst
+ * case ends: the render at `images.render.timeoutSeconds`, `images.check.maxAttempts` image edits at the task's
+ * `timeoutSeconds`, and the checks. The three values live in three files, so the check is here, not in a schema.
+ */
+function checkImageJobExpiry(dir: string, config: Pick<AppConfig, "queues" | "images" | "models">): void {
+  const task = config.models.imageTasks[IMAGE_TASK];
+  if (!task) throw new Error(`Invalid config ${join(dir, "models.json")}: imageTasks has no ${IMAGE_TASK}`);
+  const expire = config.queues["images.place"]?.expireInSeconds ?? PG_BOSS_DEFAULT_EXPIRE_SECONDS;
+  const render = config.images.render.timeoutSeconds;
+  const edits = config.images.check.maxAttempts * task.timeoutSeconds;
+  const needed = render + edits + IMAGE_JOB_MARGIN_SECONDS;
+  if (expire < needed) {
+    throw new Error(
+      `Invalid config ${join(dir, "queues.json")}: images.place.expireInSeconds ${expire} is below the worst case of an image job, ` +
+        `${needed} s (render ${render} + ${config.images.check.maxAttempts} edits × ${task.timeoutSeconds} + ${IMAGE_JOB_MARGIN_SECONDS} for the checks)`,
+    );
+  }
+}
+
 /** Loads and validates all config files; throws on any invalid or missing file. */
 export function loadConfig(dir = "config"): AppConfig {
-  return {
+  const config: AppConfig = {
     queues: readJson(dir, "queues", queuesSchema),
     budgets: readJson(dir, "budgets", budgetsSchema),
     models: readJson(dir, "models", modelsSchema),
@@ -153,6 +179,8 @@ export function loadConfig(dir = "config"): AppConfig {
     delivery: readJson(dir, "delivery", deliverySchema),
     images: readJson(dir, "images", imagesSchema),
   };
+  checkImageJobExpiry(dir, config);
+  return config;
 }
 
 let cached: AppConfig | undefined;

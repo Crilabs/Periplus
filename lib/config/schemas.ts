@@ -63,6 +63,8 @@ const imageTaskSchema = z.strictObject({
   promptVersion: z.number().int().min(1),
   size: z.literal("1536x1024"),
   quality: z.enum(["low", "medium", "high"]),
+  /** Longest image edit call (an edit of 1536 x 1024 takes minutes); the job expiry of `images.place` must cover it. */
+  timeoutSeconds: z.number().int().positive(),
 });
 
 export const modelsSchema = z
