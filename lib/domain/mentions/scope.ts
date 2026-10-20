@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { MentionsConfig, NameAffixesConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
+import { areaOfSerpScopeSql } from "@/lib/domain/areas/store";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import { tileNeighbours } from "@/lib/domain/tiles";
@@ -118,8 +119,7 @@ async function sourceTiles(db: Db, versionId: string): Promise<string[]> {
     where q.level = 'place'
     union
     select t.id from q
-    join geo_objects a on a.type = 'area' and a.config_key = q.scope_id and ${validNow("a")}
-    join tile_geo_objects tgo on tgo.geo_object_id = a.id
+    join tile_geo_objects tgo on tgo.geo_object_id = ${areaOfSerpScopeSql(sql`q.scope_id`)}
     join tiles t on t.id = tgo.tile_id and ${validNow("t")}
     where q.level = 'area'
   `);

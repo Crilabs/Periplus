@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { geoObjects, subdivisions } from "@/lib/db/schema";
+import { areaMembers, geoObjects, subdivisions } from "@/lib/db/schema";
 import { addNames } from "@/lib/domain/gazetteer/names";
 import { createRun } from "@/lib/domain/runs";
 import { countrySummaryText, subdivisionDetail, subdivisionStatus, subdivisionTree } from "@/lib/domain/subdivisions/view";
@@ -63,6 +63,8 @@ describe("subdivisionDetail", () => {
       const sub = await insertTestSubdivision(tx, "XQ-D", [40.0, 30.0, 40.25, 30.25], { country: "XQ" });
       const tile = await insertTestTile(tx, tileIdFor(40.1, 30.1), null, sub.id);
       await insertNamedObject(tx, { type: "area", names: [{ name: "Testrevier", language: "de" }], lon: 40.1, lat: 30.1, tiles: [tile] });
+      await insertNamedObject(tx, { type: "area", names: [{ name: "Ended", language: "de" }], lon: 40.1, lat: 30.1, tiles: [tile], configKey: "xq-ended" }).then((id) =>
+        tx.execute(sql`update geo_objects set valid_from = current_date - 5, valid_to = current_date - 1 where id = ${id}`));
       await createRun(tx, { kind: "stage", scope: { type: "subdivision", id: "XQ-D" }, stages: ["tiles.ensure"], params: {}, triggeredBy: "test" });
       const detail = (await subdivisionDetail(tx, "XQ-D"))!;
       expect(detail.tiles).toEqual([{ id: tile, lastRunAt: null, label: true }]);
@@ -73,5 +75,22 @@ describe("subdivisionDetail", () => {
       await insertTestSubdivision(tx, "XQ-G", [40.25, 30.0, 40.5, 30.25], { country: "GR" });
       expect((await subdivisionDetail(tx, "XQ-G"))!.coreImagery).toBe(true);
       expect(await subdivisionDetail(tx, "XQ-NONE")).toBeNull();
+    }));
+});
+
+describe("subdivisionDetail areas", () => {
+  it("detail lists area key and member count", () =>
+    withRollback(async (tx) => {
+      const sub = await insertTestSubdivision(tx, "XQ-M", [41.0, 30.0, 41.25, 30.25], { country: "XQ" });
+      const tile = await insertTestTile(tx, tileIdFor(41.1, 30.1), null, sub.id);
+      const areaId = await insertNamedObject(tx, { type: "area", names: [{ name: "Mitgliedrevier", language: "de" }], lon: 41.1, lat: 30.1, configKey: "xq-members", tiles: [tile] });
+      const m1 = await insertNamedObject(tx, { type: "harbour", names: [{ name: "Hafen Eins" }], lon: 41.11, lat: 30.1 });
+      const m2 = await insertNamedObject(tx, { type: "harbour", names: [{ name: "Hafen Zwei" }], lon: 41.12, lat: 30.1 });
+      await tx.insert(areaMembers).values([
+        { areaId, geoObjectId: m1, role: "member", name: "Hafen Eins" },
+        { areaId, geoObjectId: m2, role: "member", name: "Hafen Zwei" },
+      ]);
+      const detail = (await subdivisionDetail(tx, "XQ-M"))!;
+      expect(detail.areas).toMatchObject([{ id: areaId, key: "xq-members", members: 2, name: "Mitgliedrevier" }]);
     }));
 });

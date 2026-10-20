@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { documentVersions } from "@/lib/db/schema";
+import { areaOfSerpScopeSql } from "@/lib/domain/areas/store";
 import { subdivisionTilesSql } from "@/lib/domain/gazetteer/tiles-ensure";
 import { MATCH_PASS_STAGE, mentionsConfigKey } from "@/lib/domain/mentions/store";
 
@@ -117,15 +118,13 @@ export function scopeSources(scope: Scope) {
   return sql`
         with st as (${scopeTiles(scope)}),
         sa as (
-          select a.config_key as key from tile_geo_objects tgo join geo_objects a on a.id = tgo.geo_object_id and a.type = 'area'
-          where tgo.tile_id in (select id from st) and a.config_key is not null
-            and a.valid_from <= current_date and (a.valid_to is null or a.valid_to > current_date)
+          select tgo.geo_object_id as id from tile_geo_objects tgo where tgo.tile_id in (select id from st)
         )
         select s.id from sources s
         join serp_results r on r.domain = s.domain
         join serp_queries q on q.id = r.serp_query_id
         where (q.level = 'tile' and q.scope_id in (select id from st))
-          or (q.level = 'area' and q.scope_id in (select key from sa))
+          or (q.level = 'area' and ${areaOfSerpScopeSql(sql`q.scope_id`)} in (select id from sa))
           or (q.level = 'place' and exists (
             select 1 from places p
             where p.geo_object_id::text = q.scope_id and p.tile_id in (select id from st) and p.merged_into_id is null

@@ -1,4 +1,5 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { areaEvidence, areaMembers, geoNames, geoObjects } from "@/lib/db/schema";
 import { addNames, isGreek, transliterateElot743 } from "@/lib/domain/gazetteer/names";
@@ -223,4 +224,21 @@ export async function endMissingAreas(db: Db, country: string, keys: string[], t
   if (rows.length === 0) return [];
   await db.execute(sql`delete from tile_geo_objects where geo_object_id in ${jsonUuids(rows.map((r) => r.id))}`);
   return rows.map((r) => r.config_key).sort();
+}
+
+/**
+ * The id of the valid, unmerged area a level-`area` `serp_queries.scope_id` stands for (a scalar subquery, null when
+ * none): the area with `id::text = scope_id`, or `config_key = scope_id`, or `config_key = aliases[scope_id]` (legacy
+ * keys, `config/areas.json`). `scopeIdSql` is the SQL expression of the scope id, e.g. `sql\`q.scope_id\``.
+ */
+export function areaOfSerpScopeSql(scopeIdSql: SQL) {
+  const aliases = JSON.stringify(getConfig().areas.aliases);
+  return sql`(
+    select a.id from geo_objects a
+    where a.type = 'area' and a.merged_into_id is null
+      and a.valid_from <= current_date and (a.valid_to is null or a.valid_to > current_date)
+      and (a.id::text = ${scopeIdSql} or a.config_key = ${scopeIdSql} or a.config_key = (${aliases}::jsonb ->> (${scopeIdSql})))
+    order by (a.id::text = ${scopeIdSql}) desc, a.id
+    limit 1
+  )`;
 }

@@ -200,7 +200,7 @@ describe("tileQueries scope", () => {
 
 describe("areaQueries", () => {
   /** An `area` object (with `config_key`) named in de, en linked to the test tile and a Greek subdivision there. */
-  async function areaObject(tx: Db, configKey: string, names: Name[]): Promise<string> {
+  async function areaObject(tx: Db, configKey: string | null, names: Name[]): Promise<string> {
     const [o] = await tx
       .insert(geoObjects)
       .values({
@@ -228,7 +228,7 @@ describe("areaQueries", () => {
   it("builds the area templates from the names of the areas touching the subdivision's tiles", async () => {
     await withRollback(async (tx) => {
       const subId = await subdivisionTile(tx, "XT-Q2");
-      await areaObject(tx, "xt-gulf", [
+      const gulfId = await areaObject(tx, "xt-gulf", [
         { name: "Testgolf", language: "de" },
         { name: "Test Gulf", language: "en" },
         { name: "Francais", language: "fr" },
@@ -238,7 +238,31 @@ describe("areaQueries", () => {
       expect(keywords(qs)).toEqual(
         ["Törnbericht Testgolf|de|2276|0", "Revierführer Testgolf|de|2276|0", "Test Gulf anchorages|en|2826|0"].sort(),
       );
-      expect(qs.every((q) => q.level === "area" && q.scopeId === "xt-gulf")).toBe(true);
+      expect(qs.every((q) => q.level === "area" && q.scopeId === gulfId)).toBe(true);
+    });
+  });
+
+  it("area query scope_id is the area id; an area without config key is searched", async () => {
+    await withRollback(async (tx) => {
+      await subdivisionTile(tx, "XT-Q4");
+      const keyed = await areaObject(tx, "xt-keyed", [{ name: "Keyedgolf", language: "de" }]);
+      const keyless = await areaObject(tx, null, [{ name: "Keylosgolf", language: "de" }]);
+      const qs = await areaQueries(tx, "XT-Q4", cfg());
+      expect(new Set(qs.map((q) => q.scopeId))).toEqual(new Set([keyed, keyless]));
+      expect(qs.some((q) => q.keyword.includes("Keylosgolf"))).toBe(true);
+    });
+  });
+
+  it("an ended or merged area is not searched", async () => {
+    await withRollback(async (tx) => {
+      await subdivisionTile(tx, "XT-Q5");
+      const ended = await areaObject(tx, "xt-ended", [{ name: "Endegolf", language: "de" }]);
+      const merged = await areaObject(tx, "xt-merged", [{ name: "Mergegolf", language: "de" }]);
+      const live = await areaObject(tx, "xt-live", [{ name: "Livegolf", language: "de" }]);
+      await tx.execute(sql`update geo_objects set valid_from = current_date - 5, valid_to = current_date - 1 where id = ${ended}`);
+      await tx.execute(sql`update geo_objects set merged_into_id = ${live} where id = ${merged}`);
+      const qs = await areaQueries(tx, "XT-Q5", cfg());
+      expect(new Set(qs.map((q) => q.scopeId))).toEqual(new Set([live]));
     });
   });
 

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { countryConfig, getConfig, type DiscoveryConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
@@ -156,8 +156,8 @@ export async function placeQueries(
 /**
  * The area templates for every valid `area` object that touches the subdivision's scope tiles (`tile_geo_objects` of
  * `subdivisionTileIds`): the object's preferred valid name in each template language that is one of the subdivision's
- * source languages; a language without a name yields no query. `scopeId` is the area's `config_key` (plan 14b moves it
- * to the id); an area without one is skipped. An area touching two subdivisions yields the same queries for both, which
+ * source languages; a language without a name yields no query. `scopeId` is the area's id (a SERP stored under a legacy
+ * `config_key` still maps to it, `areaOfSerpScopeSql`); an area without a config key is searched too. An area touching two subdivisions yields the same queries for both, which
  * the SERP reuse (`serp.reuseDays`) searches once. Empty for a subdivision without tiles.
  */
 export async function areaQueries(db: Db, subdivisionKey: string, cfg: DiscoveryConfig): Promise<DiscoveryQuery[]> {
@@ -168,15 +168,21 @@ export async function areaQueries(db: Db, subdivisionKey: string, cfg: Discovery
   const languages = getConfig().subdivisions.overrides[sub.key]?.sourceLanguages ?? countryConfig(sub.country).sourceLanguages;
   const templates = templatesFor(cfg.templates.area, languages);
   const areas = await db
-    .selectDistinct({ id: geoObjects.id, configKey: geoObjects.configKey })
+    .selectDistinct({ id: geoObjects.id })
     .from(tileGeoObjects)
     .innerJoin(geoObjects, eq(geoObjects.id, tileGeoObjects.geoObjectId))
-    .where(and(inArray(tileGeoObjects.tileId, tileIds), eq(geoObjects.type, "area"), validAt(geoObjects)))
-    .orderBy(geoObjects.configKey);
-  const withKey = areas.filter((a): a is { id: string; configKey: string } => a.configKey !== null);
-  const names = await namesByLanguage(db, withKey.map((a) => a.id), [...new Set(templates.map((t) => t.lang))]);
+    .where(
+      and(
+        inArray(tileGeoObjects.tileId, tileIds),
+        eq(geoObjects.type, "area"),
+        isNull(geoObjects.mergedIntoId),
+        validAt(geoObjects),
+      ),
+    )
+    .orderBy(geoObjects.id);
+  const names = await namesByLanguage(db, areas.map((a) => a.id), [...new Set(templates.map((t) => t.lang))]);
   return dedupeQueries(
-    withKey.flatMap((a) => buildQueries(templates, names.get(a.id), { level: "area", scopeId: a.configKey, priority: AREA_PRIORITY })),
+    areas.flatMap((a) => buildQueries(templates, names.get(a.id), { level: "area", scopeId: a.id, priority: AREA_PRIORITY })),
   );
 }
 

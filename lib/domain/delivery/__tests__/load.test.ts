@@ -28,6 +28,15 @@ async function dbTomorrow(tx: Db): Promise<string> {
 }
 
 describe("loadSubdivisionScope", () => {
+  it("ended area is neither searched nor delivered", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliverySubdivision(tx);
+      await tx.execute(sql`update geo_objects set valid_from = current_date - 5, valid_to = current_date - 1 where id = ${f.areaId}`);
+      const scope = await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx));
+      expect(scope.areas).toEqual([]);
+    });
+  });
+
   it("loads the delivered places of the subdivision and leaves out candidates and places of no subdivision", async () => {
     await withRollback(async (tx) => {
       const f = await seedDeliverySubdivision(tx);

@@ -153,7 +153,7 @@ export type SubdivisionDetail = SubdivisionRow & {
   countryName: string;
   whole: boolean;
   tiles: Array<{ id: string; lastRunAt: string | null; label: boolean }>;
-  areas: Array<{ id: string; publicId: string | null; name: string }>;
+  areas: Array<{ id: string; publicId: string | null; key: string | null; members: number; name: string }>;
   counts: { confirmedPlaces: number; candidates: number; geoObjects: number };
   runs: Array<{ id: string; kind: string; status: string; stages: string[]; createdAt: string; triggeredBy: string }>;
   /** Title image coverage of its spots (spec 13). */
@@ -177,12 +177,13 @@ export async function subdivisionDetail(db: Db, key: string): Promise<Subdivisio
     where s.key = ${key} and s.valid_to is null
     order by t.id
   `);
-  const { rows: areaRows } = await db.execute<{ id: string; public_id: string | null; name: string | null }>(sql`
-    select distinct o.id, o.public_id, ${displayNameSql(sql`o.id`)} as name
+  const { rows: areaRows } = await db.execute<{ id: string; public_id: string | null; config_key: string | null; members: number; name: string | null }>(sql`
+    select distinct o.id, o.public_id, o.config_key, (select count(*)::int from area_members m where m.area_id = o.id) as members,
+      ${displayNameSql(sql`o.id`)} as name
     from subdivisions s
     join tiles t on t.has_coast and t.valid_to is null and ST_Intersects(t.bbox, s.geom) and not ST_Touches(t.bbox, s.geom)
     join tile_geo_objects tg on tg.tile_id = t.id
-    join geo_objects o on o.id = tg.geo_object_id and o.type = 'area' and o.valid_to is null
+    join geo_objects o on o.id = tg.geo_object_id and o.type = 'area' and o.valid_to is null and o.merged_into_id is null
     where s.key = ${key} and s.valid_to is null
   `);
   const { rows: countRows } = await db.execute<{ confirmed: number; candidates: number; objects: number }>(sql`
@@ -210,7 +211,7 @@ export async function subdivisionDetail(db: Db, key: string): Promise<Subdivisio
     countryName: countryName(country),
     tiles: tileRows.map((t) => ({ id: t.id, lastRunAt: t.last_run_at === null ? null : new Date(t.last_run_at).toISOString(), label: t.label })),
     areas: areaRows
-      .map((a) => ({ id: a.id, publicId: a.public_id, name: a.name ?? a.public_id ?? a.id }))
+      .map((a) => ({ id: a.id, publicId: a.public_id, key: a.config_key, members: a.members, name: a.name ?? a.public_id ?? a.id }))
       .sort((a, b) => collator.compare(a.name, b.name)),
     counts: { confirmedPlaces: countRows[0]?.confirmed ?? 0, candidates: countRows[0]?.candidates ?? 0, geoObjects: countRows[0]?.objects ?? 0 },
     runs: runRows.map((r) => ({ id: r.id, kind: r.kind, status: r.status, stages: r.stages, createdAt: new Date(r.created_at).toISOString(), triggeredBy: r.triggered_by })),
