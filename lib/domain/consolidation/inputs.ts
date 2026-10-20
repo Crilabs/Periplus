@@ -10,6 +10,7 @@ import { getFactSchema } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { effectiveVersionMeta, type EffectiveVersionMeta } from "@/lib/domain/mentions/classification";
+import { validAtAlias } from "@/lib/domain/timeline";
 import type { QuietnessParts } from "./derived/quietness";
 import { applyRule } from "./rules";
 import type { ConflictResolution, ConsolidationInput, RuleName } from "./types";
@@ -337,15 +338,15 @@ async function poiInputs(db: Db, geoObjectId: string, cfg: ConsolidationConfig, 
   const radiusM = cfg.rules.highlight.poiRadiusM;
   const { rows } = await db.execute<PoiRow>(sql`
     select o.id, o.category::text as category, o.origin::text as origin, o.valid_from::text as valid_from,
-           ${displayNameSql(sql`o.id`)} as name
+           ${displayNameSql(sql`o.id`, today)} as name
     from places p
     join geo_objects o
       on o.type = 'poi' and o.category is not null and o.merged_into_id is null
-     and o.valid_from <= ${today}::date and (o.valid_to is null or o.valid_to > ${today}::date)
+     and ${validAtAlias("o", today)}
      -- box prefilter (index), then the exact distance in metres
      and o.geom && ST_Expand(p.position, ${radiusM}::float8 / (111320 * cos(radians(ST_Y(p.position)))))
      and ST_DWithin(o.geom::geography, p.position::geography, ${radiusM}::float8)
-    where p.geo_object_id = ${geoObjectId} and p.valid_to is null and p.merged_into_id is null and p.status <> 'rejected'
+    where p.geo_object_id = ${geoObjectId} and ${validAtAlias("p", today)} and p.merged_into_id is null and p.status <> 'rejected'
     order by o.id
   `);
   return rows.map((r) => ({
@@ -449,17 +450,17 @@ export async function loadContext(
   today: string,
 ): Promise<ProfileContext | null> {
   const { rows } = await db.execute<ObjectRow>(sql`
-    select o.merged_into_id is null and o.valid_from <= ${today}::date and (o.valid_to is null or o.valid_to > ${today}::date) as valid,
+    select o.merged_into_id is null and ${validAtAlias("o", today)} as valid,
            o.parent_id, ${displayNameSql(sql`o.id`)} as name,
            md5(ST_AsEWKB(ST_SnapToGrid(o.geom, 1e-6))) as geometry_hash,
            p.id as place_id, p.kind as place_kind, p.status as place_status, p.status_reason as place_status_reason,
-           p.merged_into_id is not null as place_merged, coalesce(p.valid_to is null, false) as place_valid,
+           p.merged_into_id is not null as place_merged, coalesce(${validAtAlias("p", today)}, false) as place_valid,
            p.public_id as place_public_id, ST_X(p.position) as place_lon, ST_Y(p.position) as place_lat,
            t.cycle_days, t.area_id
     from geo_objects o
     left join places p on p.geo_object_id = o.id
     left join tiles t on t.id = coalesce(p.tile_id, tile_id_for(o.centroid))
-      and t.valid_from <= ${today}::date and (t.valid_to is null or t.valid_to > ${today}::date)
+      and ${validAtAlias("t", today)}
     where o.id = ${geoObjectId}
   `);
   const o = rows[0];
@@ -629,7 +630,7 @@ async function quietnessInputs(
   const point = sql`ST_SetSRID(ST_MakePoint(${position.lon}, ${position.lat}), 4326)::geography`;
   const { rows: lanes } = await db.execute<{ id: string }>(sql`
     select r.id from restricted_areas r
-    where r.kind = 'ferry_lane' and r.valid_from <= ${today}::date and (r.valid_to is null or r.valid_to > ${today}::date)
+    where r.kind = 'ferry_lane' and ${validAtAlias("r", today)}
       -- bbox prefilter on the GIST index (a geography cast cannot use it); the longitude degree is the wider one
       and r.geom && ST_Expand(ST_SetSRID(ST_MakePoint(${position.lon}, ${position.lat}), 4326), ${radiusM}::float8 / (111320 * cos(radians(${position.lat}::float8))))
       and ST_DWithin(r.geom::geography, ${point}, ${radiusM}::float8)
@@ -714,13 +715,13 @@ async function importanceInputs(db: Db, geoObjectId: string, opts: LoadInputsOpt
     from geo_objects o
     join places p
       on p.status = 'confirmed' and p.public_id is not null and p.merged_into_id is null
-     and p.valid_from <= ${today}::date and (p.valid_to is null or p.valid_to > ${today}::date)
+     and ${validAtAlias("p", today)}
      -- box prefilter (index), then the exact distance in metres
      and p.position && ST_Expand(o.geom, ${radiusM}::float8 / (111320 * cos(radians(ST_Y(o.centroid)))))
      and ST_DWithin(p.position::geography, o.geom::geography, ${radiusM}::float8)
     join geo_objects po
       on po.id = p.geo_object_id and po.merged_into_id is null
-     and po.valid_from <= ${today}::date and (po.valid_to is null or po.valid_to > ${today}::date)
+     and ${validAtAlias("po", today)}
     where o.id = ${geoObjectId}
     order by distance_nm, p.public_id
   `);

@@ -7,7 +7,7 @@ import { popularityForArea } from "@/lib/domain/consolidation/derived/popularity
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 import { deliveryNameSql } from "@/lib/domain/gazetteer/names";
 import { utmSridFor } from "@/lib/domain/geometry/projection";
-import { latestProfiles } from "@/lib/domain/timeline";
+import { latestProfiles, validAtAlias } from "@/lib/domain/timeline";
 import type {
   AreaScope,
   LonLat,
@@ -36,12 +36,6 @@ export class AreaNotFound extends Error {
     super(`area ${areaGeoObjectId} is no valid area with a public id`);
     this.name = "AreaNotFound";
   }
-}
-
-/** `<alias>` is valid on `today`: `valid_from <= today < valid_to` (as `validAt`, for raw-SQL aliases). */
-function validOn(alias: string, today: string): SQL {
-  const a = sql.raw(alias);
-  return sql`(${a}.valid_from <= ${today}::date and (${a}.valid_to is null or ${a}.valid_to > ${today}::date))`;
 }
 
 /**
@@ -134,12 +128,12 @@ async function loadArea(db: Db, areaId: string, today: string): Promise<Omit<Are
       -- the area's tiles; an area without tiles falls back to its own box
       from (
         select coalesce(
-          (select ST_Extent(t.bbox)::geometry from tiles t where t.area_id = o.id and ${validOn("t", today)}),
+          (select ST_Extent(t.bbox)::geometry from tiles t where t.area_id = o.id and ${validAtAlias("t", today)}),
           ST_Envelope(o.geom)
         ) as e
       ) x
     ) ext
-    where o.id = ${areaId} and o.type = 'area' and o.public_id is not null and ${validOn("o", today)}
+    where o.id = ${areaId} and o.type = 'area' and o.public_id is not null and ${validAtAlias("o", today)}
   `);
   const row = rows[0];
   if (!row) throw new AreaNotFound(areaId);
@@ -159,10 +153,10 @@ async function loadArea(db: Db, areaId: string, today: string): Promise<Omit<Are
 
 /** Places delivered as spots: valid, a delivered status, a public id, unmerged, in a valid tile of the area. */
 function spotFilter(areaId: string, cfg: DeliveryConfig, today: string): SQL {
-  return sql`${validOn("p", today)} and p.public_id is not null and p.merged_into_id is null
+  return sql`${validAtAlias("p", today)} and p.public_id is not null and p.merged_into_id is null
     and p.status::text = any(${arrayParam(cfg.spots.statuses, "text")})
-    and exists (select 1 from tiles t where t.id = p.tile_id and t.area_id = ${areaId} and ${validOn("t", today)})
-    and exists (select 1 from geo_objects o where o.id = p.geo_object_id and o.merged_into_id is null and ${validOn("o", today)})`;
+    and exists (select 1 from tiles t where t.id = p.tile_id and t.area_id = ${areaId} and ${validAtAlias("t", today)})
+    and exists (select 1 from geo_objects o where o.id = p.geo_object_id and o.merged_into_id is null and ${validAtAlias("o", today)})`;
 }
 
 async function loadTiles(db: Db, areaId: string, cfg: DeliveryConfig, today: string): Promise<AreaScope["tiles"]> {
@@ -175,7 +169,7 @@ async function loadTiles(db: Db, areaId: string, cfg: DeliveryConfig, today: str
          ) lp
          where p.tile_id = t.id and ${spotFilter(areaId, cfg, today)})::text as profiles_as_of
     from tiles t
-    where t.area_id = ${areaId} and ${validOn("t", today)}
+    where t.area_id = ${areaId} and ${validAtAlias("t", today)}
     order by t.id
   `);
   return rows.map((r) => ({
@@ -232,7 +226,7 @@ async function loadMerged(db: Db, areaId: string, today: string): Promise<AreaSc
     with recursive chain(start_id, target_id, depth) as (
       select p.id, p.merged_into_id, 1
       from places p
-      join tiles t on t.id = p.tile_id and t.area_id = ${areaId} and ${validOn("t", today)}
+      join tiles t on t.id = p.tile_id and t.area_id = ${areaId} and ${validAtAlias("t", today)}
       where p.public_id is not null and p.merged_into_id is not null
       union all
       select c.start_id, n.merged_into_id, c.depth + 1
@@ -267,7 +261,7 @@ async function loadPoiRows(db: Db, tileArray: SQL, today: string): Promise<PoiRo
            ST_X(o.centroid) as lon, ST_Y(o.centroid) as lat, o.osm_id, o.wikidata_id
     from geo_objects o
     where o.type = 'poi' and o.public_id is not null and o.category is not null and o.merged_into_id is null
-      and ${validOn("o", today)} and tile_id_for(o.centroid) = any(${tileArray})
+      and ${validAtAlias("o", today)} and tile_id_for(o.centroid) = any(${tileArray})
     order by o.public_id
   `);
   return rows.map((r) => ({
@@ -309,7 +303,7 @@ async function loadRegionRows(db: Db, tileArray: SQL, cfg: DeliveryConfig, today
            ) as ancestors
     from geo_objects o
     where o.type::text = any(${arrayParam(cfg.regions.types, "text")}) and o.public_id is not null
-      and o.merged_into_id is null and ${validOn("o", today)}
+      and o.merged_into_id is null and ${validAtAlias("o", today)}
       and exists (select 1 from tile_geo_objects tg where tg.geo_object_id = o.id and tg.tile_id = any(${tileArray}))
     order by o.public_id
   `);
@@ -362,7 +356,7 @@ async function loadPassages(db: Db, tileArray: SQL, today: string): Promise<Arra
   const { rows } = await db.execute<{ geo_object_id: string; type: PassageSource["type"]; name: string | null; lon: number; lat: number }>(sql`
     select o.id as geo_object_id, o.type, ${deliveryNameSql(sql`o.id`, today)} as name, ST_X(o.centroid) as lon, ST_Y(o.centroid) as lat
     from geo_objects o
-    where o.type in ('cape', 'strait', 'channel') and o.merged_into_id is null and ${validOn("o", today)}
+    where o.type in ('cape', 'strait', 'channel') and o.merged_into_id is null and ${validAtAlias("o", today)}
       and exists (select 1 from tile_geo_objects tg where tg.geo_object_id = o.id and tg.tile_id = any(${tileArray}))
     order by o.id
   `);
@@ -381,12 +375,12 @@ async function loadNames(db: Db, geoObjectIds: string[], today: string): Promise
     cross join lateral (
       select case when n.origin = 'transliteration' then ${TRANSLITERATION_LANG}::text else n.language end as language
     ) x
-    where n.geo_object_id = any(${arrayParam(geoObjectIds, "uuid")}) and ${validOn("n", today)}
+    where n.geo_object_id = any(${arrayParam(geoObjectIds, "uuid")}) and ${validAtAlias("n", today)}
       and n.origin <> 'fallback'
       and not (n.origin = 'transliteration' and exists (
         select 1 from geo_names s
         where s.geo_object_id = n.geo_object_id and s.name = n.name and s.origin not in ('transliteration', 'fallback')
-          and ${validOn("s", today)}
+          and ${validAtAlias("s", today)}
       ))
     order by n.geo_object_id, x.language, n.name, n.script
   `);

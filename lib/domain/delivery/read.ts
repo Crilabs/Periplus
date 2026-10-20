@@ -6,6 +6,7 @@ import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { deliveries } from "@/lib/db/schema/deliveries";
 import { deliveryNameSql } from "@/lib/domain/gazetteer/names";
+import { validAtAlias } from "@/lib/domain/timeline";
 import type { DeliveryRow } from "./build";
 import { mergeChanges } from "./changes";
 import { sha256Hex } from "./serialize";
@@ -35,7 +36,7 @@ export async function resolveArea(db: Db, ref: string): Promise<ResolvedArea | n
     select o.id, o.public_id, o.config_key, ${deliveryNameSql(sql`o.id`)} as name
     from geo_objects o
     where o.type = 'area' and o.public_id is not null
-      and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
+      and ${validAtAlias("o")}
       and (o.public_id = ${ref} or o.config_key = ${ref})
     order by (o.public_id = ${ref}) desc, o.id
     limit 1
@@ -68,7 +69,7 @@ export async function listAreas(db: Db): Promise<AreaListEntry[]> {
       limit 1
     ) d on true
     where o.type = 'area' and o.public_id is not null
-      and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
+      and ${validAtAlias("o")}
     order by o.public_id
   `);
   return rows.map((r) => ({
@@ -267,7 +268,7 @@ export async function spotAsOf(
     from latest l
     join geo_objects a on a.id = l.area_id
     where not l.removed and a.public_id is not null
-      and a.valid_from <= current_date and (a.valid_to is null or a.valid_to > current_date)
+      and ${validAtAlias("a")}
     order by l.profile_version desc
     limit 1
   `);

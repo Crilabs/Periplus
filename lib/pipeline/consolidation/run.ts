@@ -8,6 +8,7 @@ import type { ExtractionCandidate } from "@/lib/domain/consolidation/inputs";
 import { clearConsolidationCatchUp, consolidationSkipOf, recordConsolidationCatchUp } from "@/lib/domain/consolidation/skipped";
 import { consolidationBlocked, consolidationTargets, type ConsolidationParams } from "@/lib/domain/consolidation/targets";
 import { levelFor } from "@/lib/domain/facts/levels";
+import { validAtAlias } from "@/lib/domain/timeline";
 import { createRun, failRun, type RunScope } from "@/lib/domain/runs";
 import { createLogger } from "@/lib/logger";
 import { enqueueStage, startRun } from "@/lib/pipeline/runs";
@@ -40,10 +41,7 @@ export type StartConsolidationInput = {
  * Valid on the run date: the UTC date of the transaction, as `runDate` reads the run's `created_at` (final review M-7;
  * `current_date` would follow the session time zone).
  */
-const validToday = (alias: string) =>
-  sql.raw(
-    `${alias}.valid_from <= (now() at time zone 'UTC')::date and (${alias}.valid_to is null or ${alias}.valid_to > (now() at time zone 'UTC')::date)`,
-  );
+const validToday = (alias: string) => validAtAlias(alias, sql`(now() at time zone 'UTC')::date`);
 
 /**
  * Checks the scope before the run exists (`RunScopeNotReady`) and returns the run's scope: a valid tile; a configured
