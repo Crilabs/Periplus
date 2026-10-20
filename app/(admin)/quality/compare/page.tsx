@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { z } from "zod";
 import { getConfig } from "@/lib/config";
@@ -7,8 +8,9 @@ import { COMPARISON_TARGET } from "@/lib/domain/comparison";
 import { SEABED_TYPE_LABELS } from "@/lib/domain/facts/labels";
 import type { ComparisonAttribute } from "@/lib/domain/quality/comparison-values";
 import { loadNavilyFromEnv } from "@/lib/domain/quality/navily-assistant";
-import { areaComparisonView, type PlaceComparison } from "@/lib/domain/quality/navily-compare";
-import { NAVILY_SEABED, type NavilySpot } from "@/lib/domain/quality/navily-sample";
+import { areaComparisonView, isEvaluationRun, type PlaceComparison } from "@/lib/domain/quality/navily-compare";
+import { navilySeabedTypes, type NavilySpot } from "@/lib/domain/quality/navily-sample";
+import { createLogger } from "@/lib/logger";
 import { requireAdmin } from "@/lib/security/require-admin";
 import {
   COMPARISON_ATTRIBUTE_LABELS,
@@ -38,7 +40,8 @@ const querySchema = z.object({
   area: z.string().optional().catch(undefined),
   place: z.uuid().optional().catch(undefined),
   filter: z.enum(["open", "all"]).default("open").catch("open"),
-  evaluation: z.uuid().optional().catch(undefined),
+  /** Checked below: an id that is no evaluation run is a 404, never a page of empty values. */
+  evaluation: z.string().optional().catch(undefined),
 });
 
 const metres = (m: number) => (m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toLocaleString("de-DE", { maximumFractionDigits: 1 })} km`);
@@ -55,7 +58,7 @@ function navilyText(attribute: ComparisonAttribute, spot: NavilySpot | null, pos
     case "depth":
       return "keine Tiefe bei Navily";
     case "seabed": {
-      const types = [...new Set((spot.seabeds ?? []).flatMap((s) => NAVILY_SEABED[s.toLowerCase()] ?? []))];
+      const types = [...new Set(navilySeabedTypes(spot.seabeds))];
       return types.length > 0 ? types.map((t) => SEABED_TYPE_LABELS[t]).join(", ") : "keine Angabe";
     }
     case "mooring.buoys":
@@ -97,6 +100,8 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
   await connection();
   const config = getConfig();
   const query = querySchema.parse(await searchParams);
+  if (query.evaluation !== undefined && !(z.uuid().safeParse(query.evaluation).success && (await isEvaluationRun(getDb(), query.evaluation))))
+    notFound();
   const area = config.areas.find((a) => a.key === query.area) ?? config.areas[0];
   const back = { href: "/quality", label: "Qualität" };
   if (!area)
@@ -108,11 +113,13 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
     );
 
   let spots: NavilySpot[] | null = null;
-  let navilyError: string | null = null;
+  let navilyUnreadable = false;
   try {
     spots = await loadNavilyFromEnv();
   } catch (e) {
-    navilyError = (e as Error).message;
+    // the message names the server's file path (never its content): server log only, not the page
+    createLogger("quality-compare").warn({ reason: (e as Error).message }, "navily file unreadable");
+    navilyUnreadable = true;
   }
   const view = await areaComparisonView(getDb(), {
     areaKey: area.key,
@@ -123,9 +130,9 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
   });
   const shown = query.filter === "open" ? view.places.filter((p) => p.open > 0) : view.places;
   const selected = view.places.find((p) => p.subject.placeId === query.place) ?? shown[0] ?? null;
-  const href = (o: { place?: string; filter?: string }) =>
+  const href = (o: { place?: string; filter?: string; area?: string }) =>
     `/quality/compare?${new URLSearchParams({
-      area: area.key,
+      area: o.area ?? area.key,
       filter: o.filter ?? query.filter,
       ...(o.place ? { place: o.place } : {}),
       ...(query.evaluation ? { evaluation: query.evaluation } : {}),
@@ -144,15 +151,15 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
         <div className="mb-6">
           <FilterChips
             label="Revier"
-            items={config.areas.map((a) => ({ href: `/quality/compare?area=${a.key}`, label: a.names.de, current: a.key === area.key }))}
+            items={config.areas.map((a) => ({ href: href({ area: a.key }), label: a.names.de, current: a.key === area.key }))}
           />
         </div>
       )}
 
       <div className="mb-6 space-y-3">
-        {navilyError ? (
-          <Notice tone="danger" title="Navily-Datei nicht lesbar">
-            {navilyError}
+        {navilyUnreadable ? (
+          <Notice tone="danger" title="Navily-Datei nicht lesbar" data-testid="navily-status">
+            Die Datei aus NAVILY_SPOTS_PATH fehlt oder ist keine gültige Spot-Liste. Details stehen im Server-Log. Vergleich nur von Hand.
           </Notice>
         ) : spots ? (
           <Notice tone="ok" data-testid="navily-status">
@@ -265,7 +272,7 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
               .filter(Boolean)
               .join(" · ")}
             rows={compareRows(selected, spots !== null)}
-            canAccept={spots !== null}
+            digest={selected.digest}
           />
         ) : (
           <Panel title="Ort">

@@ -39,13 +39,27 @@ const key = (placeId: string, attribute: string, valueHash: string) => `${placeI
 export const comparisonSubjectId = (placeId: string, attribute: ComparisonAttribute, valueHash: string) =>
   `${placeId}:${attribute}:${valueHash}`;
 
-/** An outcome was given for an own value that is no longer the place's current one: nothing is written. */
+/**
+ * An outcome was given for an own value that is no longer the place's current one, or proposals were confirmed that
+ * are no longer the ones shown (`"proposals"`): nothing is written.
+ */
 export class StaleComparison extends Error {
-  constructor(placeId: string, attribute: ComparisonAttribute) {
-    super(`the compared value of ${attribute} at place ${placeId} has changed`);
+  constructor(placeId: string, what: ComparisonAttribute | "proposals") {
+    super(what === "proposals" ? `the proposals for place ${placeId} have changed` : `the compared value of ${what} at place ${placeId} has changed`);
     this.name = "StaleComparison";
   }
 }
+
+/**
+ * The transaction-scoped lock of a place's comparison outcomes: concurrent recordings of the same place see each
+ * other's rows (the skip rule needs them). Re-entrant within one transaction.
+ */
+export async function lockComparisonPlace(tx: Db, placeId: string): Promise<void> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`comparison:${placeId}`}))`);
+}
+
+/** Why a written outcome closed the open deviation tasks of its place and attribute. */
+const DISMISS_REASONS = { match: "resolved_by_match", not_at_navily: "resolved_by_not_at_navily" } as const;
 
 const recordInputSchema = z.strictObject({
   subject: z.custom<ComparisonSubject>((v) => typeof v === "object" && v !== null),
@@ -65,8 +79,10 @@ const recordInputSchema = z.strictObject({
  * Every written `deviation` opens a `comparison_deviation` task whose context holds only Periplus data: place,
  * attribute, value hash, profile version, evaluation run, the result row and `ownDisplay`, which is always
  * `comparisonValues(subject).display` (Grundprinzip 9: no caller-given text reaches the context). An open task for the
- * same value is reused and its context refreshed to the newest deviation; a written `match` dismisses the open task of
- * the same value (`dismissedReason` `resolved_by_match`; ruling M7-A-R1). `tasks` counts tasks newly opened.
+ * same value is reused and its context refreshed to the newest deviation (ruling M7-A-R1); a written `match` or
+ * `not_at_navily` dismisses every open deviation task of the place and attribute, of any value hash (`dismissedReason`
+ * `resolved_by_match` / `resolved_by_not_at_navily`; ruling M7-B-R1 item 5, M7-B-R2). `tasks` counts tasks newly
+ * opened.
  */
 export async function recordComparisonResults(
   db: Db,
@@ -100,8 +116,7 @@ export async function recordComparisonResults(
   const evaluationRunId = parsed.evaluationRunId ?? null;
 
   return db.transaction(async (tx) => {
-    // concurrent recordings of the same place see each other's rows (the skip rule needs them)
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`comparison:${placeId}`}))`);
+    await lockComparisonPlace(tx, placeId);
     const latest = await latestComparisonResults(tx, [placeId]);
     let written = 0;
     let tasks = 0;
@@ -123,14 +138,22 @@ export async function recordComparisonResults(
         })
         .returning({ id: comparisonResults.id });
       written++;
-      const subjectId = comparisonSubjectId(placeId, e.attribute, e.valueHash);
-      if (e.result === "match") {
+      if (e.result !== "deviation") {
+        // the place's attribute is settled for now: every open deviation task of it closes, whatever own value it was
+        // opened for (an older value's task would otherwise append a decision over this newer outcome)
         await tx
           .update(reviewTasks)
-          .set({ status: "dismissed", context: sql`${reviewTasks.context} || ${JSON.stringify({ dismissedReason: "resolved_by_match" })}::jsonb` })
-          .where(and(eq(reviewTasks.kind, "comparison_deviation"), eq(reviewTasks.subjectId, subjectId), eq(reviewTasks.status, "open")));
+          .set({ status: "dismissed", context: sql`${reviewTasks.context} || ${JSON.stringify({ dismissedReason: DISMISS_REASONS[e.result] })}::jsonb` })
+          .where(
+            and(
+              eq(reviewTasks.kind, "comparison_deviation"),
+              sql`${reviewTasks.subjectId} like ${`${placeId}:${e.attribute}:%`}`,
+              eq(reviewTasks.status, "open"),
+            ),
+          );
+        continue;
       }
-      if (e.result !== "deviation") continue;
+      const subjectId = comparisonSubjectId(placeId, e.attribute, e.valueHash);
       const context: ComparisonTaskContext = {
         placeId,
         attribute: e.attribute,
@@ -205,8 +228,8 @@ export const comparisonTaskContextSchema = z.strictObject({
   evaluationRunId: z.uuid().nullable(),
   resultId: z.uuid(),
   ownDisplay: z.string().nullable(),
-  /** Set when a later match dismissed the task. */
-  dismissedReason: z.literal("resolved_by_match").optional(),
+  /** Set when a later match or not_at_navily dismissed the task. */
+  dismissedReason: z.enum(["resolved_by_match", "resolved_by_not_at_navily"]).optional(),
 });
 
 export type ComparisonTaskContext = z.infer<typeof comparisonTaskContextSchema>;

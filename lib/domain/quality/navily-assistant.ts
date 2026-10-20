@@ -5,8 +5,14 @@ import { getEnv, type Env } from "@/lib/env";
 import { normalizeName, transliterateElot743 } from "@/lib/domain/gazetteer/names";
 import type { LonLat } from "@/lib/domain/geometry/water";
 import { stripAffix } from "@/lib/domain/mentions/affixes";
-import { COMPARISON_ATTRIBUTES, type ComparisonAttribute, type ComparisonSubject, type ComparisonValue } from "./comparison-values";
-import { distanceM, loadNavilySpots, NAVILY_SEABED, type NavilySpot } from "./navily-sample";
+import {
+  COMPARISON_ATTRIBUTES,
+  comparedPosition,
+  type ComparisonAttribute,
+  type ComparisonSubject,
+  type ComparisonValue,
+} from "./comparison-values";
+import { distanceM, loadNavilySpots, navilySeabedTypes, type NavilySpot } from "./navily-sample";
 import { similarityOfSets, trigrams } from "./trigram";
 
 /*
@@ -17,23 +23,38 @@ import { similarityOfSets, trigrams } from "./trigram";
  */
 
 type NavilyConfig = QualityConfig["navily"];
-type MatchPlace = Pick<ComparisonSubject, "placeId" | "kind" | "position" | "names">;
+/** A place as matched: its delivered point (`comparedPosition`) and names; confirmed places match before all others. */
+export type MatchPlace = Pick<ComparisonSubject, "placeId" | "kind" | "status" | "position" | "anchorPosition" | "names">;
 export type ProposedResult = "match" | "deviation" | "not_at_navily";
 
 /** A place and the spot matched to it; `spotIndex` indexes the loaded spot list (runtime only), null without a match. */
 export type NavilyMatch = { placeId: string; spotIndex: number | null; distanceM: number | null; nameSimilarity: number | null };
 
-/** The core of a name: transliterated (ELOT 743), normalised, a generic affix („Ormos“, „Bay“) stripped when one is. */
-function nameCore(name: string, affixes: NameAffixesConfig): string {
+/** The forms a name is compared in: the full form (transliterated per ELOT 743, normalised) and its core. */
+type NameForms = { full: Set<string>; core: Set<string> | null };
+
+/** The core of a name is the full form with a generic affix („Ormos“, „Bay“, „Porto“) stripped, when it has one. */
+function nameForms(name: string, affixes: NameAffixesConfig): NameForms {
   const form = normalizeName(transliterateElot743(name));
-  return stripAffix(form, affixes)?.core ?? form;
+  const core = stripAffix(form, affixes)?.core;
+  return { full: trigrams(form), core: core && core !== form ? trigrams(core) : null };
 }
 
-/** Best trigram similarity between the cores of the own names and the spot's name; 0 without a spot name. */
+/**
+ * Similarity of two names: the better of the full forms and the cores (ruling M7-B-R2). The cores alone lose the
+ * shared affix trigrams, so a short core with a spelling variant falls below `nameMin` („Porto Cheli“ vs „Porto Heli“
+ * 0.375 on the cores, 0.643 on the full forms); the full forms alone miss a differing affix („Ormos Vathy“ vs
+ * „Vathy Bay“).
+ */
+function formsSimilarity(a: NameForms, b: NameForms): number {
+  return Math.max(similarityOfSets(a.full, b.full), similarityOfSets(a.core ?? a.full, b.core ?? b.full));
+}
+
+/** Best similarity between the own names and the spot's name; 0 without a spot name. */
 export function nameSimilarity(ownNames: string[], spotName: string | null, affixes: NameAffixesConfig): number {
   if (spotName === null) return 0;
-  const spot = trigrams(nameCore(spotName, affixes));
-  return Math.max(0, ...ownNames.map((n) => similarityOfSets(trigrams(nameCore(n, affixes)), spot)));
+  const spot = nameForms(spotName, affixes);
+  return Math.max(0, ...ownNames.map((n) => formsSimilarity(nameForms(n, affixes), spot)));
 }
 
 /** Harbours (`port`, `marina`) pair with a Navily `port`, all other kinds with a Navily `mooring`. */
@@ -45,10 +66,14 @@ function kindCompatible(kind: MatchPlace["kind"], navilyKind: NavilySpot["kind"]
 const METRES_PER_DEGREE_LAT = 111_000;
 
 /**
- * Matches places to spots. A spot is a candidate of a place within `maxRadiusM` when its name is strongly similar
+ * Matches places to spots on each place's delivered point (`comparedPosition`: the anchor position of a bay, the
+ * place point of a harbour). A spot is a candidate of a place within `maxRadiusM` when its name is strongly similar
  * (≥ `nameStrongMin`), similar (≥ `nameMin`) within `nameRadiusM`, or it lies within `nearRadiusM` whatever its name.
- * Candidates are taken greedily over all places by name similarity (descending), kind compatibility, then distance
- * (ascending); each spot and each place is matched at most once. One match per place, in input order.
+ *
+ * Two passes (ruling M7-B-R2): the confirmed places first, then all others against the spots left over, so a
+ * rejected or candidate duplicate never takes the spot of a confirmed place. Within a pass candidates are taken
+ * greedily by similarity class (strong, named, none), kind compatibility, distance (ascending), then place and spot
+ * index; each spot and each place is matched at most once. One match per place, in input order.
  */
 export function matchPlacesToSpots(
   places: MatchPlace[],
@@ -56,49 +81,60 @@ export function matchPlacesToSpots(
   cfg: NavilyConfig,
   affixes: NameAffixesConfig,
 ): NavilyMatch[] {
-  const spotTrigrams = new Map<number, Set<string> | null>();
-  const trigramsOfSpot = (i: number) => {
-    if (!spotTrigrams.has(i)) {
+  const spotForms = new Map<number, NameForms | null>();
+  const formsOfSpot = (i: number) => {
+    if (!spotForms.has(i)) {
       const name = spots[i]!.name;
-      spotTrigrams.set(i, name === null ? null : trigrams(nameCore(name, affixes)));
+      spotForms.set(i, name === null ? null : nameForms(name, affixes));
     }
-    return spotTrigrams.get(i)!;
+    return spotForms.get(i)!;
   };
   const maxLatDelta = cfg.maxRadiusM / METRES_PER_DEGREE_LAT;
+  const classOf = (similarity: number) => (similarity >= cfg.nameStrongMin ? 2 : similarity >= cfg.nameMin ? 1 : 0);
 
   type Candidate = { place: number; spot: number; distance: number; similarity: number; compatible: boolean };
-  const candidates: Candidate[] = [];
-  places.forEach((p, pi) => {
-    const own = p.names.map((n) => trigrams(nameCore(n, affixes)));
+  const candidatesOf = (pi: number): Candidate[] => {
+    const p = places[pi]!;
+    const at = comparedPosition(p);
+    const own = p.names.map((n) => nameForms(n, affixes));
+    const out: Candidate[] = [];
     spots.forEach((s, si) => {
-      if (Math.abs(s.lat - p.position.lat) > maxLatDelta) return;
-      const distance = distanceM(p.position, s);
+      if (Math.abs(s.lat - at.lat) > maxLatDelta) return;
+      const distance = distanceM(at, s);
       if (distance > cfg.maxRadiusM) return;
-      const spotSet = trigramsOfSpot(si);
-      const similarity = spotSet === null ? 0 : Math.max(0, ...own.map((o) => similarityOfSets(o, spotSet)));
+      const forms = formsOfSpot(si);
+      const similarity = forms === null ? 0 : Math.max(0, ...own.map((o) => formsSimilarity(o, forms)));
       const candidate =
         similarity >= cfg.nameStrongMin ||
         (similarity >= cfg.nameMin && distance <= cfg.nameRadiusM) ||
         distance <= cfg.nearRadiusM;
-      if (candidate) candidates.push({ place: pi, spot: si, distance, similarity, compatible: kindCompatible(p.kind, s.kind) });
+      if (candidate) out.push({ place: pi, spot: si, distance, similarity, compatible: kindCompatible(p.kind, s.kind) });
     });
-  });
-  candidates.sort(
-    (a, b) =>
-      b.similarity - a.similarity ||
-      Number(b.compatible) - Number(a.compatible) ||
-      a.distance - b.distance ||
-      a.place - b.place ||
-      a.spot - b.spot,
-  );
+    return out;
+  };
 
   const matched = new Map<number, Candidate>();
   const taken = new Set<number>();
-  for (const c of candidates) {
-    if (matched.has(c.place) || taken.has(c.spot)) continue;
-    matched.set(c.place, c);
-    taken.add(c.spot);
-  }
+  const pass = (indexes: number[]) => {
+    const candidates = indexes.flatMap(candidatesOf);
+    candidates.sort(
+      (a, b) =>
+        classOf(b.similarity) - classOf(a.similarity) ||
+        Number(b.compatible) - Number(a.compatible) ||
+        a.distance - b.distance ||
+        a.place - b.place ||
+        a.spot - b.spot,
+    );
+    for (const c of candidates) {
+      if (matched.has(c.place) || taken.has(c.spot)) continue;
+      matched.set(c.place, c);
+      taken.add(c.spot);
+    }
+  };
+  const indexes = places.map((_, i) => i);
+  pass(indexes.filter((i) => places[i]!.status === "confirmed"));
+  pass(indexes.filter((i) => places[i]!.status !== "confirmed"));
+
   return places.map((p, pi) => {
     const c = matched.get(pi);
     return c
@@ -149,7 +185,7 @@ export function proposeResults(
     }
   }
 
-  const navilySeabed = new Set((spot.seabeds ?? []).flatMap((s) => NAVILY_SEABED[s.toLowerCase()] ?? []));
+  const navilySeabed = new Set(navilySeabedTypes(spot.seabeds));
   if (navilySeabed.size > 0) {
     const ownSeabed = (values.seabed.value as SeabedType[] | null) ?? [];
     out.seabed = ownSeabed.some((t) => navilySeabed.has(t)) ? "match" : "deviation";
@@ -161,9 +197,35 @@ export function proposeResults(
   return out;
 }
 
+export type NavilyCoverage = { spots: number; matched: number; ratio: number | null; unmatchedSpotIndexes: number[] };
+
 /**
- * Navily coverage of an area: the spots inside the area (`inArea`) matched against all given places (the area's
- * confirmed places, not only the comparison set). `unmatchedSpotIndexes` index the given spot list (runtime only).
+ * Navily coverage from a matching (`matches` of `matchPlacesToSpots(places, spots)`, same order as `places`): the spots
+ * inside the area (`inArea`) that a confirmed place matched. `unmatchedSpotIndexes` index `spots` (runtime only).
+ */
+export function coverageOfMatches(
+  places: MatchPlace[],
+  matches: NavilyMatch[],
+  spots: NavilySpot[],
+  inArea: (p: LonLat) => boolean,
+): NavilyCoverage {
+  const confirmedSpots = new Set(
+    matches.flatMap((m, i) => (m.spotIndex !== null && places[i]!.status === "confirmed" ? [m.spotIndex] : [])),
+  );
+  const inside = spots.flatMap((s, i) => (inArea(s) ? [i] : []));
+  const matched = inside.filter((i) => confirmedSpots.has(i)).length;
+  return {
+    spots: inside.length,
+    matched,
+    ratio: inside.length === 0 ? null : matched / inside.length,
+    unmatchedSpotIndexes: inside.filter((i) => !confirmedSpots.has(i)),
+  };
+}
+
+/**
+ * Navily coverage of an area: the spots inside the area (`inArea`) matched to a confirmed place, where `places` are
+ * the area's confirmed places (not only the comparison set). The matching is the one the proposals use
+ * (`matchPlacesToSpots` over all spots), so a place near the area's edge keeps its own spot outside the area.
  */
 export function navilyCoverage(
   places: MatchPlace[],
@@ -171,16 +233,8 @@ export function navilyCoverage(
   inArea: (p: LonLat) => boolean,
   cfg: NavilyConfig,
   affixes: NameAffixesConfig,
-): { spots: number; matched: number; ratio: number | null; unmatchedSpotIndexes: number[] } {
-  const inside = spots.flatMap((s, i) => (inArea(s) ? [i] : []));
-  const matches = matchPlacesToSpots(places, inside.map((i) => spots[i]!), cfg, affixes);
-  const matchedLocal = new Set(matches.flatMap((m) => (m.spotIndex === null ? [] : [m.spotIndex])));
-  return {
-    spots: inside.length,
-    matched: matchedLocal.size,
-    ratio: inside.length === 0 ? null : matchedLocal.size / inside.length,
-    unmatchedSpotIndexes: inside.filter((_, local) => !matchedLocal.has(local)),
-  };
+): NavilyCoverage {
+  return coverageOfMatches(places, matchPlacesToSpots(places, spots, cfg, affixes), spots, inArea);
 }
 
 /**

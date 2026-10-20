@@ -24,13 +24,14 @@ const AT: LonLat = { lon: 21.0, lat: 35.2 };
 /** A point `m` metres north of `AT` (1° latitude = 111 195 m on the haversine sphere). */
 const north = (m: number): LonLat => ({ lon: AT.lon, lat: AT.lat + m / 111_195 });
 
-type Place = Pick<ComparisonSubject, "placeId" | "kind" | "position" | "names">;
-const place = (placeId: string, names: string[], position: LonLat = AT, kind: Place["kind"] = "anchorage"): Place => ({
-  placeId,
-  kind,
-  position,
-  names,
-});
+type Place = Pick<ComparisonSubject, "placeId" | "kind" | "status" | "position" | "anchorPosition" | "names">;
+const place = (
+  placeId: string,
+  names: string[],
+  position: LonLat = AT,
+  kind: Place["kind"] = "anchorage",
+  patch: Partial<Pick<Place, "status" | "anchorPosition">> = {},
+): Place => ({ placeId, kind, status: "confirmed", position, anchorPosition: null, names, ...patch });
 
 function spot(over: Partial<NavilySpot> = {}): NavilySpot {
   return { lat: AT.lat, lon: AT.lon, prot: null, seabeds: null, name: null, kind: "mooring", type: null, water: null, shop: null, ...over };
@@ -61,6 +62,14 @@ describe("nameSimilarity", () => {
     expect(nameSimilarity(["Kolona", "Vathi"], "Vathi", affixes)).toBe(1);
     expect(nameSimilarity(["Vathi"], null, affixes)).toBe(0);
     expect(nameSimilarity([], "Vathi", affixes)).toBe(0);
+  });
+
+  it("takes the better of the full forms and the cores: Πόρτο Χέλι ↔ Porto Heli (ruling M7-B-R2)", () => {
+    // cores only („cheli“ vs „heli“) give 0.375, below nameMin; the full forms give 9/14 (ruling T7-R1)
+    expect(nameSimilarity(["Πόρτο Χέλι"], "Porto Heli", affixes)).toBeCloseTo(9 / 14, 6);
+    expect(nameSimilarity(["Porto Cheli"], "Porto Heli", affixes)).toBeCloseTo(9 / 14, 6);
+    // the core still wins where the affix differs
+    expect(nameSimilarity(["Όρμος Βαθύ"], "Vathy Bay", affixes)).toBe(1);
   });
 });
 
@@ -99,6 +108,71 @@ describe("matchPlacesToSpots", () => {
     const spots = [spot({ name: "Vathi", ...north(300) }), spot({ name: "Vathi", ...north(100) })];
     const [m] = matchPlacesToSpots([place("p1", ["Vathi"])], spots, cfg, affixes);
     expect(m!.spotIndex).toBe(1);
+  });
+
+  it("Πόρτο Χέλι marina matches the Navily port Porto Heli 300 m away (ruling M7-B-R2)", () => {
+    const [m] = matchPlacesToSpots(
+      [place("ph", ["Πόρτο Χέλι"], AT, "marina")],
+      [spot({ name: "Porto Heli", kind: "port", ...north(300) })],
+      cfg,
+      affixes,
+    );
+    expect(m).toMatchObject({ spotIndex: 0 });
+    expect(m!.nameSimilarity).toBeCloseTo(9 / 14, 6);
+  });
+
+  it("similarity class before kind and distance: bay Vathi takes the mooring Vathy 50 m away, not the port Vathia 300 m away", () => {
+    // both names are in the class „named“ (≥ nameMin, < nameStrongMin): Vathy 0.5, Vathia 0.625
+    expect(nameSimilarity(["Vathi"], "Vathia", affixes)).toBe(0.625);
+    const spots = [spot({ name: "Vathia", kind: "port", ...north(300) }), spot({ name: "Vathy", kind: "mooring", ...north(50) })];
+    const [m] = matchPlacesToSpots([place("bay", ["Vathi"])], spots, cfg, affixes);
+    expect(m!.spotIndex).toBe(1);
+    // a strong name still outranks a merely similar one
+    const strong = [spot({ name: "Vathi", kind: "mooring", ...north(400) }), spot({ name: "Vathy", kind: "mooring", ...north(50) })];
+    expect(matchPlacesToSpots([place("bay", ["Vathi"])], strong, cfg, affixes)[0]!.spotIndex).toBe(0);
+  });
+
+  it("confirmed places match first: a rejected duplicate never takes the spot of a confirmed place (ruling M7-B-R2)", () => {
+    const places = [
+      place("dup", ["Kolona"], north(10), "anchorage", { status: "rejected" }),
+      place("real", ["Kolona"], north(80)),
+    ];
+    const spots = [spot({ name: "Kolona" }), spot({ ...north(15) })];
+    // pass 1: the confirmed place takes the named spot (the duplicate is nearer to it); pass 2: the duplicate gets the leftover
+    expect(matchPlacesToSpots(places, spots, cfg, affixes).map((m) => [m.placeId, m.spotIndex])).toEqual([
+      ["dup", 1],
+      ["real", 0],
+    ]);
+    expect(matchPlacesToSpots(places, spots.slice(0, 1), cfg, affixes).map((m) => [m.placeId, m.spotIndex])).toEqual([
+      ["dup", null],
+      ["real", 0],
+    ]);
+  });
+
+  it("matches on the delivered point: the anchor position of a bay, the place point of a harbour", () => {
+    const anchor = north(300);
+    const bay = place("bay", ["Kolona"], AT, "anchorage", { anchorPosition: anchor });
+    const [m] = matchPlacesToSpots([bay], [spot({ ...anchor })], cfg, affixes);
+    expect(m).toMatchObject({ spotIndex: 0, distanceM: 0 });
+    const port = place("port", ["Kolona"], AT, "port", { anchorPosition: anchor });
+    expect(matchPlacesToSpots([port], [spot({ ...anchor, kind: "port" })], cfg, affixes)[0]!.spotIndex).toBeNull();
+  });
+
+  it("greedy: a place whose best spot goes to another place falls back to its next candidate", () => {
+    const places = [place("a", ["Kolona"], north(60)), place("b", ["Vathi"], north(40))];
+    const spots = [spot({ name: "Kolona", ...north(50) }), spot({ ...north(140) })];
+    // a takes the named spot 10 m away (strong); b, 10 m from it too, falls back to the nameless spot 100 m away
+    expect(matchPlacesToSpots(places, spots, cfg, affixes).map((m) => [m.placeId, m.spotIndex])).toEqual([
+      ["a", 0],
+      ["b", 1],
+    ]);
+  });
+
+  it("ties on class, kind and distance go to the lower place index, then the lower spot index", () => {
+    const twins = [place("first", ["Kolona"]), place("second", ["Kolona"])];
+    expect(matchPlacesToSpots(twins, [spot({ name: "Kolona" })], cfg, affixes).map((m) => m.spotIndex)).toEqual([0, null]);
+    const [m] = matchPlacesToSpots([place("p", ["Kolona"])], [spot({ name: "Kolona" }), spot({ name: "Kolona" })], cfg, affixes);
+    expect(m!.spotIndex).toBe(0);
   });
 
   it("a nameless spot 120 m away matches by distance alone", () => {
@@ -172,6 +246,9 @@ describe("proposeResults", () => {
     expect(withSeabed(["rock"])).toBe("deviation");
     expect(withSeabed(null)).toBe("not_at_navily");
     expect(withSeabed([])).toBe("not_at_navily");
+    // prototype members are no seabed names
+    expect(withSeabed(["constructor"])).toBe("not_at_navily");
+    expect(withSeabed(["__proto__", "toString"])).toBe("not_at_navily");
     expect(proposeResults(valuesOf({}), own, spot({ seabeds: ["algae"] }), cfg).seabed).toBe("deviation");
   });
 
@@ -232,6 +309,12 @@ describe("navilyCoverage", () => {
     ];
     expect(navilyCoverage(places, spots, inArea, cfg, affixes)).toEqual({ spots: 3, matched: 2, ratio: 2 / 3, unmatchedSpotIndexes: [1] });
     expect(navilyCoverage(places, [], inArea, cfg, affixes)).toEqual({ spots: 0, matched: 0, ratio: null, unmatchedSpotIndexes: [] });
+  });
+
+  it("a spot only a non-confirmed place matched has no confirmed place", () => {
+    const places = [place("a", ["Vathi"]), place("dup", ["Kolona"], north(3000), "anchorage", { status: "candidate" })];
+    const spots = [spot({ name: "Vathi", ...north(50) }), spot({ name: "Kolona", ...north(3000) })];
+    expect(navilyCoverage(places, spots, () => true, cfg, affixes)).toEqual({ spots: 2, matched: 1, ratio: 0.5, unmatchedSpotIndexes: [1] });
   });
 });
 

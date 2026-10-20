@@ -8,6 +8,7 @@ import { decideReviewTask, DecisionNotAllowed } from "@/lib/domain/review-decisi
 import { detailFeatures, reviewTaskDetail } from "@/lib/domain/review-view";
 import { insertPlace, insertProfile, provenanceEntry } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
+import { rowsWrittenInTransaction } from "@/test/quality";
 import { insertNamedObject, insertTestRun } from "@/test/text";
 import { getConfig } from "@/lib/config";
 import { comparisonTaskContextSchema, latestComparisonResults, recordComparisonResults, StaleComparison } from "../comparison-results";
@@ -232,41 +233,73 @@ describe("comparison results", () => {
     });
   });
 
-  it("a repeated deviation refreshes the open task to the newest result; a match dismisses it (ruling M7-A-R1)", async () => {
+  it("a deviation on a value with an open task refreshes that task to the newest result (ruling M7-A-R1)", async () => {
     await withRollback(async (tx) => {
       const { placeId } = await insertPlace(tx);
       const runId = await insertTestRun(tx);
       const subject = subjectOf(placeId);
-      const record = (result: "match" | "deviation" | "not_at_navily", minute: number, evaluationRunId?: string) =>
+      const H = hashOf(subject, "shelter.N");
+      // an open task without a deviation row of its own (e.g. a recording that raced it)
+      await tx.insert(reviewTasks).values({
+        kind: "comparison_deviation",
+        subjectType: "comparison",
+        subjectId: `${placeId}:shelter.N:${H}`,
+        context: { placeId, attribute: "shelter.N", valueHash: H, profileVersion: 3, evaluationRunId: null, resultId: placeId, ownDisplay: "alt" },
+      });
+      const out = await recordComparisonResults(tx, {
+        subject,
+        entries: [{ attribute: "shelter.N", result: "deviation", valueHash: H, profileVersion: null }],
+        evaluationRunId: runId,
+        method: "manual",
+        checkedBy: "admin@test",
+      });
+      expect(out).toEqual({ written: 1, tasks: 0 });
+      const [task, ...more] = await tasksOf(tx, placeId);
+      expect(more).toEqual([]);
+      const [row] = await resultsOf(tx, placeId);
+      expect(task!.context).toEqual({
+        placeId,
+        attribute: "shelter.N",
+        valueHash: H,
+        profileVersion: null,
+        evaluationRunId: runId,
+        resultId: row!.id,
+        ownDisplay: "0,6 (geschützt)",
+      });
+    });
+  });
+
+  it.each([
+    ["match", "resolved_by_match"],
+    ["not_at_navily", "resolved_by_not_at_navily"],
+  ] as const)("a written %s dismisses every open deviation task of the place and attribute, of any value (%s)", async (result, reason) => {
+    await withRollback(async (tx) => {
+      const { placeId } = await insertPlace(tx);
+      const record = (subject: ComparisonSubject, attribute: ComparisonAttribute, r: "match" | "deviation" | "not_at_navily", minute: number) =>
         recordComparisonResults(tx, {
           subject,
-          entries: [{ attribute: "shelter.N", result, valueHash: hashOf(subject, "shelter.N"), profileVersion: evaluationRunId ? null : 3 }],
-          evaluationRunId,
+          entries: [{ attribute, result: r, valueHash: hashOf(subject, attribute), profileVersion: subject.profileVersion }],
           method: "manual",
           checkedBy: "admin@test",
           now: new Date(Date.UTC(2026, 9, 1, 10, minute)),
         });
-      const newestDeviation = async () => (await resultsOf(tx, placeId)).filter((r) => r.result === "deviation").at(-1)!;
+      const v1 = subjectOf(placeId, { "shelter.N": 0.6, "shelter.NE": 0.6 });
+      const v2 = subjectOf(placeId, { "shelter.N": 0.3, "shelter.NE": 0.6 }, { profileVersion: 4 });
+      // deviations on shelter.N for two own values, and one on shelter.NE
+      expect(await record(v1, "shelter.N", "deviation", 0)).toEqual({ written: 1, tasks: 1 });
+      expect(await record(v2, "shelter.N", "deviation", 1)).toEqual({ written: 1, tasks: 1 });
+      expect(await record(v1, "shelter.NE", "deviation", 2)).toEqual({ written: 1, tasks: 1 });
 
-      expect(await record("deviation", 0)).toEqual({ written: 1, tasks: 1 });
-      expect(await record("not_at_navily", 1)).toEqual({ written: 1, tasks: 0 });
-      // the deviation comes back: the open task is reused (not counted) and points at the newest result
-      expect(await record("deviation", 2, runId)).toEqual({ written: 1, tasks: 0 });
-      let tasks = await tasksOf(tx, placeId);
-      expect(tasks).toHaveLength(1);
-      expect(tasks[0]!.status).toBe("open");
-      expect(tasks[0]!.context).toMatchObject({ resultId: (await newestDeviation()).id, profileVersion: null, evaluationRunId: runId });
-
-      // a later match dismisses the open task
-      expect(await record("match", 3)).toEqual({ written: 1, tasks: 0 });
-      tasks = await tasksOf(tx, placeId);
-      expect(tasks[0]!.status).toBe("dismissed");
-      expect(comparisonTaskContextSchema.parse(tasks[0]!.context).dismissedReason).toBe("resolved_by_match");
+      // the newest value of shelter.N is settled: both shelter.N tasks close, shelter.NE stays open
+      expect(await record(v2, "shelter.N", result, 3)).toEqual({ written: 1, tasks: 0 });
+      const tasks = await tasksOf(tx, placeId);
+      const byAttribute = (attribute: string) => tasks.filter((t) => (t.context as { attribute: string }).attribute === attribute);
+      expect(byAttribute("shelter.N").map((t) => t.status)).toEqual(["dismissed", "dismissed"]);
+      for (const t of byAttribute("shelter.N")) expect(comparisonTaskContextSchema.parse(t.context).dismissedReason).toBe(reason);
+      expect(byAttribute("shelter.NE").map((t) => t.status)).toEqual(["open"]);
 
       // a deviation after that opens a new task
-      expect(await record("deviation", 4)).toEqual({ written: 1, tasks: 1 });
-      tasks = await tasksOf(tx, placeId);
-      expect(tasks.map((t) => t.status).sort()).toEqual(["dismissed", "open"]);
+      expect(await record(v2, "shelter.N", "deviation", 4)).toEqual({ written: 1, tasks: 1 });
     });
   });
 
@@ -288,8 +321,9 @@ describe("comparison results", () => {
       await recordComparisonResults(tx, { subject, entries, method: "manual", checkedBy: "admin@test" });
       const [task] = await tasksOf(tx, placeId);
       expect((task!.context as { ownDisplay: string }).ownDisplay).toBe(comparisonValues(subject, cfg)["shelter.N"].display);
-      const stored = JSON.stringify([await resultsOf(tx, placeId), await tasksOf(tx, placeId)]);
-      expect(stored).not.toMatch(/NAVILY-ONLY-NAME/);
+      expect(await resultsOf(tx, placeId)).toHaveLength(1);
+      // every row this transaction wrote, of any place or subject
+      expect((await rowsWrittenInTransaction(tx)).join("\n")).not.toMatch(/NAVILY-ONLY-NAME/);
       // the context schema is strict: an extra key (a navily value smuggled in) is refused
       expect(comparisonTaskContextSchema.safeParse({ ...(task!.context as object), navilyName: "NAVILY-ONLY-NAME" }).success).toBe(false);
     });

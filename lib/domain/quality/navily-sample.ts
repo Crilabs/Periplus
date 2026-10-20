@@ -178,8 +178,19 @@ export function distanceM(a: LonLat, b: LonLat): number {
   return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
-/** Navily seabed names in the Periplus vocabulary; unknown names are ignored. */
-export const NAVILY_SEABED: Readonly<Record<string, SeabedType>> = { algae: "weed", sand: "sand", mud: "mud", rock: "rock", gravel: "gravel" };
+/** Navily seabed names in the Periplus vocabulary; unknown names are ignored. A Map: no prototype member resolves. */
+const NAVILY_SEABED: ReadonlyMap<string, SeabedType> = new Map([
+  ["algae", "weed"],
+  ["sand", "sand"],
+  ["mud", "mud"],
+  ["rock", "rock"],
+  ["gravel", "gravel"],
+]);
+
+/** The Periplus seabed types of Navily seabed names (case-insensitive); unknown names are dropped. */
+export function navilySeabedTypes(seabeds: string[] | null): SeabedType[] {
+  return (seabeds ?? []).flatMap((s) => NAVILY_SEABED.get(s.toLowerCase()) ?? []);
+}
 
 /**
  * Compares a place with the nearest Navily spot within `radiusM`. A sector is protected at Periplus when its
@@ -206,7 +217,7 @@ export function comparePlace(
   const base = { placeId: own.placeId, publicId: own.publicId, name: own.name, matched: nearest !== null, depth };
 
   let seabed: PlaceVerdict["seabed"] = "not_at_navily";
-  const navilySeabed = (nearest?.seabeds ?? []).flatMap((s) => NAVILY_SEABED[s.toLowerCase()] ?? []);
+  const navilySeabed = navilySeabedTypes(nearest?.seabeds ?? null);
   if (nearest && navilySeabed.length > 0) {
     if (!own.seabed || own.seabed.length === 0) seabed = "no_own_value";
     else seabed = own.seabed.some((t) => navilySeabed.includes(t)) ? "match" : "deviation";

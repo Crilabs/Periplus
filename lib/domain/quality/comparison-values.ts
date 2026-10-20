@@ -77,7 +77,8 @@ const fixed = (v: number, digits: number) =>
 const yesNo = (present: boolean, detail: string[] = []) =>
   present ? (detail.length > 0 ? `ja (${detail.join(", ")})` : "ja") : "nein";
 
-function lonLatOf(v: unknown): LonLat | null {
+/** A `{ lon, lat }` profile value (`place.position`, `anchor_position`); null for anything else. */
+export function lonLatOf(v: unknown): LonLat | null {
   if (!isRecord(v)) return null;
   const lon = num(v.lon);
   const lat = num(v.lat);

@@ -1,14 +1,18 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { and, eq, sql } from "drizzle-orm";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { comparisonResults, comparisonSet, geoObjects, places, reviewTasks } from "@/lib/db/schema";
-import { StaleComparison } from "@/lib/domain/quality/comparison-results";
 import { comparisonValues, loadComparisonSubjects } from "@/lib/domain/quality/comparison-values";
+import { areaComparisonView } from "@/lib/domain/quality/navily-compare";
+import { loadNavilySpots } from "@/lib/domain/quality/navily-sample";
 import { getConfig } from "@/lib/config";
 import { insertProfile, provenanceEntry } from "@/test/consolidation";
 import { testDb, withRollback } from "@/test/db";
+import { NAVILY_MARKERS, rowsWrittenInTransaction } from "@/test/quality";
 import { insertNamedObject } from "@/test/text";
 
 const db = testDb();
@@ -27,23 +31,53 @@ vi.mock("@/lib/domain/quality/navily-assistant", async (importOriginal) => {
   return { ...actual, loadNavilyFromEnv: () => actual.loadNavilyFromEnv({ NAVILY_SPOTS_PATH: navilyPath ?? undefined }) };
 });
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), refresh: vi.fn() }));
+/** The database handles the comparison set was loaded with (the write transaction must be one of its own). */
+const subjectLoads: Db[] = [];
+vi.mock("@/lib/domain/quality/comparison-values", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/domain/quality/comparison-values")>();
+  return {
+    ...actual,
+    loadComparisonSubjects: (db: Db, ...rest: Parameters<typeof actual.loadComparisonSubjects> extends [Db, ...infer R] ? R : never) => {
+      subjectLoads.push(db);
+      return actual.loadComparisonSubjects(db, ...rest);
+    },
+  };
+});
 
 import { acceptProposalsAction, recordComparisonAction } from "../quality/compare/actions";
 
 const FIXTURE = path.join(process.cwd(), "test/fixtures/navily/sample.json");
 const ADMIN = "admin@example.invalid";
-const NAVILY_MARKERS = /NAVILY-ONLY-NAME|NAVILY-PORT|987654321|123456789|navily\.com/;
+/** The coordinates of the fixture's first spot, about 43 m off the place, in every form a leak could take. */
+const SPOT_COORDINATES = /35[.,]2003|21[.,]0003/;
+/** The keys a typed action result may carry: codes and counts only. */
+const RESULT_KEYS = new Set(["ok", "code", "written", "tasks", "skippedManual"]);
+
+function expectCodesAndCounts(result: object) {
+  expect(Object.keys(result).every((k) => RESULT_KEYS.has(k))).toBe(true);
+  expect(Object.values(result).every((v) => typeof v === "boolean" || typeof v === "number" || /^[a-z_]+$/.test(String(v)))).toBe(true);
+  expect(JSON.stringify(result)).not.toMatch(NAVILY_MARKERS);
+}
+
+let dir: string;
+beforeAll(async () => {
+  dir = await mkdtemp(path.join(tmpdir(), "navily-actions-"));
+});
+afterAll(async () => {
+  await rm(dir, { recursive: true, force: true });
+});
 
 beforeEach(() => {
   vi.resetAllMocks();
   currentDb = db;
   navilyPath = FIXTURE;
+  subjectLoads.length = 0;
   requireAdmin.mockResolvedValue({ email: ADMIN });
 });
 
 /**
- * A confirmed anchorage at 21.0° E / 35.2° N (on the fixture's first spot, outside the pilot box) in the saronic
- * comparison set, rolled back. Its values agree with the spot except `services.water` (own false, Navily true).
+ * A confirmed anchorage at 21.0° E / 35.2° N (about 43 m from the fixture's first spot, outside the pilot box) in the
+ * saronic comparison set, rolled back. Its values agree with the spot except `services.water` (own false, Navily true).
  */
 async function setUp(tx: Db) {
   currentDb = tx;
@@ -92,6 +126,22 @@ const tasksOf = (tx: Db, placeId: string) =>
     .from(reviewTasks)
     .where(and(eq(reviewTasks.kind, "comparison_deviation"), sql`${reviewTasks.subjectId} like ${`${placeId}:%`}`));
 
+/** The digest of the proposals the page shows for the place. */
+async function shownDigest(tx: Db, placeId: string): Promise<string> {
+  const config = getConfig();
+  const view = await areaComparisonView(tx, {
+    areaKey: "saronic",
+    spots: await loadNavilySpots(FIXTURE),
+    cfg: config.quality.navily,
+    affixes: config.nameAffixes,
+  });
+  return view.places.find((p) => p.subject.placeId === placeId)!.digest!;
+}
+
+async function accept(tx: Db, placeId: string) {
+  return acceptProposalsAction({ placeId, areaKey: "saronic", digest: await shownDigest(tx, placeId) });
+}
+
 async function currentHash(tx: Db, placeId: string, attribute: "services.water" | "depth") {
   const subject = (await loadComparisonSubjects(tx, "saronic")).find((s) => s.placeId === placeId)!;
   return comparisonValues(subject, getConfig().quality.navily)[attribute].hash;
@@ -101,8 +151,9 @@ describe("/quality/compare actions", () => {
   it("acceptProposalsAction writes one result per attribute with method proposal_confirmed", () =>
     withRollback(async (tx) => {
       const { placeId } = await setUp(tx);
-      const r = await acceptProposalsAction({ placeId, areaKey: "saronic" });
-      expect(r.written).toBe(16);
+      const r = await accept(tx, placeId);
+      expect(r).toEqual({ ok: true, written: 16, tasks: 1, skippedManual: 0 });
+      expectCodesAndCounts(r);
       const rows = await resultsOf(tx, placeId);
       expect(rows).toHaveLength(16);
       expect(rows.every((x) => x.method === "proposal_confirmed" && x.checkedBy === ADMIN)).toBe(true);
@@ -125,39 +176,96 @@ describe("/quality/compare actions", () => {
   it("a second accept writes nothing", () =>
     withRollback(async (tx) => {
       const { placeId } = await setUp(tx);
-      await acceptProposalsAction({ placeId, areaKey: "saronic" });
-      expect(await acceptProposalsAction({ placeId, areaKey: "saronic" })).toEqual({ written: 0, tasks: 0 });
+      await accept(tx, placeId);
+      expect(await accept(tx, placeId)).toEqual({ ok: true, written: 0, tasks: 0, skippedManual: 0 });
       expect(await resultsOf(tx, placeId)).toHaveLength(16);
     }));
 
-  it("a deviation proposal opens one review task", () =>
+  it("a deviation proposal opens one review task; no navily value or coordinate reaches any row the transaction wrote", () =>
     withRollback(async (tx) => {
       const { placeId } = await setUp(tx);
-      const r = await acceptProposalsAction({ placeId, areaKey: "saronic" });
-      expect(r.tasks).toBe(1);
+      const r = await accept(tx, placeId);
+      expect(r).toMatchObject({ ok: true, tasks: 1 });
       const tasks = await tasksOf(tx, placeId);
       expect(tasks).toHaveLength(1);
       expect(tasks[0]!.context).toMatchObject({ attribute: "services.water", ownDisplay: "nein", profileVersion: 2 });
-      // Grundprinzip 9: no navily name, id or url in any stored row
-      expect(JSON.stringify([await resultsOf(tx, placeId), tasks])).not.toMatch(NAVILY_MARKERS);
+      // Grundprinzip 9: every row this transaction wrote, of any place or subject
+      const written = await rowsWrittenInTransaction(tx);
+      expect(written.length).toBeGreaterThanOrEqual(17);
+      expect(written.join("\n")).not.toMatch(NAVILY_MARKERS);
+      expect(written.join("\n")).not.toMatch(SPOT_COORDINATES);
+    }));
+
+  it("accepting proposals that changed since the page showed them is refused as stale, nothing written (ruling M7-B-R2)", () =>
+    withRollback(async (tx) => {
+      const { placeId } = await setUp(tx);
+      const shown = await shownDigest(tx, placeId);
+      // another digest: the proposals the admin saw are not the ones the server computes now
+      const r = await acceptProposalsAction({ placeId, areaKey: "saronic", digest: "0123456789abcdef" });
+      expect(r).toEqual({ ok: false, code: "stale" });
+      expectCodesAndCounts(r);
+      expect(await resultsOf(tx, placeId)).toEqual([]);
+      // the profile changes after the page was rendered: the shown digest is stale too
+      const [place] = await tx.select({ objectId: places.geoObjectId }).from(places).where(eq(places.id, placeId));
+      await insertProfile(tx, place!.objectId, { "services.water": true }, {}, { version: 3, validFrom: "2026-10-20" });
+      expect(await acceptProposalsAction({ placeId, areaKey: "saronic", digest: shown })).toEqual({ ok: false, code: "stale" });
+      expect(await resultsOf(tx, placeId)).toEqual([]);
+      // a missing digest is invalid input
+      // @ts-expect-error the digest is required
+      await expect(acceptProposalsAction({ placeId, areaKey: "saronic" })).rejects.toThrow();
+    }));
+
+  it("accepting never overwrites an outcome set by hand; the result counts what it kept (ruling M7-B-R2)", () =>
+    withRollback(async (tx) => {
+      const { placeId } = await setUp(tx);
+      const valueHash = await currentHash(tx, placeId, "services.water");
+      // the admin decided by hand that water matches; the proposal says deviation
+      expect(await recordComparisonAction({ placeId, areaKey: "saronic", attribute: "services.water", result: "match", valueHash })).toEqual({
+        ok: true,
+        written: 1,
+        tasks: 0,
+      });
+      const r = await accept(tx, placeId);
+      expect(r).toEqual({ ok: true, written: 15, tasks: 0, skippedManual: 1 });
+      const water = (await resultsOf(tx, placeId)).filter((x) => x.attribute === "services.water");
+      expect(water.map((x) => [x.result, x.method])).toEqual([["match", "manual"]]);
+      expect(await tasksOf(tx, placeId)).toEqual([]);
+    }));
+
+  it("loads the comparison subject inside the write transaction (ruling M7-B-R2)", () =>
+    withRollback(async (tx) => {
+      const { placeId } = await setUp(tx);
+      const digest = await shownDigest(tx, placeId);
+      subjectLoads.length = 0;
+      await acceptProposalsAction({ placeId, areaKey: "saronic", digest });
+      expect(subjectLoads).toHaveLength(1);
+      const valueHash = await currentHash(tx, placeId, "depth"); // the test's own load, on `tx`
+      await recordComparisonAction({ placeId, areaKey: "saronic", attribute: "depth", result: "deviation", valueHash });
+      expect(subjectLoads).toHaveLength(3);
+      expect(subjectLoads[1]).toBe(tx);
+      // each action loaded on a transaction of its own (a savepoint of the test transaction), never on `tx` itself
+      expect(subjectLoads[0]).not.toBe(tx);
+      expect(subjectLoads[2]).not.toBe(tx);
     }));
 
   it("recordComparisonAction writes a manual result for the current value", () =>
     withRollback(async (tx) => {
       const { placeId } = await setUp(tx);
       const valueHash = await currentHash(tx, placeId, "depth");
-      await recordComparisonAction({ placeId, areaKey: "saronic", attribute: "depth", result: "deviation", valueHash });
+      const r = await recordComparisonAction({ placeId, areaKey: "saronic", attribute: "depth", result: "deviation", valueHash });
+      expect(r).toEqual({ ok: true, written: 1, tasks: 1 });
+      expectCodesAndCounts(r);
       const rows = await resultsOf(tx, placeId);
       expect(rows).toMatchObject([{ attribute: "depth", result: "deviation", method: "manual", checkedBy: ADMIN, valueHash, profileVersion: 2 }]);
       expect(await tasksOf(tx, placeId)).toHaveLength(1);
     }));
 
-  it("a stale value hash is rejected and writes nothing", () =>
+  it("a stale value hash gives the code stale and writes nothing", () =>
     withRollback(async (tx) => {
       const { placeId } = await setUp(tx);
-      await expect(
-        recordComparisonAction({ placeId, areaKey: "saronic", attribute: "services.water", result: "match", valueHash: "0123456789abcdef" }),
-      ).rejects.toBeInstanceOf(StaleComparison);
+      const r = await recordComparisonAction({ placeId, areaKey: "saronic", attribute: "services.water", result: "match", valueHash: "0123456789abcdef" });
+      expect(r).toEqual({ ok: false, code: "stale" });
+      expectCodesAndCounts(r);
       expect(await resultsOf(tx, placeId)).toEqual([]);
     }));
 
@@ -170,18 +278,27 @@ describe("/quality/compare actions", () => {
       // @ts-expect-error a review outcome is never recorded from the page
       await expect(recordComparisonAction({ ...ok, result: "deviation_confirmed_own" })).rejects.toThrow();
       await expect(recordComparisonAction({ ...ok, placeId: "0190a1b2-0000-7000-8000-000000000001" })).rejects.toThrow(/comparison set/);
-      await expect(acceptProposalsAction({ placeId: "nope", areaKey: "saronic" })).rejects.toThrow();
+      await expect(acceptProposalsAction({ placeId: "nope", areaKey: "saronic", digest: "0123456789abcdef" })).rejects.toThrow();
       requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
       await expect(recordComparisonAction(ok)).rejects.toThrow("NEXT_REDIRECT");
-      await expect(acceptProposalsAction({ placeId, areaKey: "saronic" })).rejects.toThrow("NEXT_REDIRECT");
+      await expect(acceptProposalsAction({ placeId, areaKey: "saronic", digest: "0123456789abcdef" })).rejects.toThrow("NEXT_REDIRECT");
       expect(await resultsOf(tx, placeId)).toEqual([]);
     }));
 
-  it("accepting without a navily file fails with a clear message", () =>
+  it("without a navily file or with an unreadable one accepting gives a code, never the path or the content", () =>
     withRollback(async (tx) => {
       const { placeId } = await setUp(tx);
+      const digest = await shownDigest(tx, placeId);
       navilyPath = null;
-      await expect(acceptProposalsAction({ placeId, areaKey: "saronic" })).rejects.toThrow("Navily-Datei nicht geladen");
+      const missing = await acceptProposalsAction({ placeId, areaKey: "saronic", digest });
+      expect(missing).toEqual({ ok: false, code: "navily_missing" });
+      expectCodesAndCounts(missing);
+      navilyPath = path.join(dir, "broken.json");
+      await writeFile(navilyPath, '[{"lat": "NAVILY-ONLY-NAME"}]');
+      const unreadable = await acceptProposalsAction({ placeId, areaKey: "saronic", digest });
+      expect(unreadable).toEqual({ ok: false, code: "navily_unreadable" });
+      expectCodesAndCounts(unreadable);
+      expect(JSON.stringify(unreadable)).not.toContain("broken.json");
       expect(await resultsOf(tx, placeId)).toEqual([]);
     }));
 });

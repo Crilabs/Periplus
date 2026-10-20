@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import type { ComparisonAttribute } from "@/lib/domain/quality/comparison-values";
 import { Badge, Button, cx, Notice, Panel, Table, tdClass, thClass, trClass } from "../../_components/ui";
-import { acceptProposalsAction, recordComparisonAction } from "./actions";
+import { acceptProposalsAction, recordComparisonAction, type AcceptProposalsResult } from "./actions";
 
 type Outcome = "match" | "deviation" | "not_at_navily";
 
@@ -27,10 +27,20 @@ const OUTCOME_BUTTONS: Array<[Outcome, string]> = [
 
 const PROPOSAL_TONE: Record<Outcome, "ok" | "warn" | "neutral"> = { match: "ok", deviation: "warn", not_at_navily: "neutral" };
 
+/** German notices for the failure codes of the actions. */
+const FAILURES: Record<Extract<AcceptProposalsResult, { ok: false }>["code"], string> = {
+  stale: "Nicht gespeichert: Der eigene Wert oder der Vorschlag hat sich inzwischen geändert. Bitte die Seite neu laden und erneut prüfen.",
+  navily_missing: "Nicht gespeichert: Es ist keine Navily-Datei geladen (NAVILY_SPOTS_PATH nicht gesetzt).",
+  navily_unreadable: "Nicht gespeichert: Die Navily-Datei ist nicht lesbar. Details stehen im Server-Log.",
+};
+
+type ActionNotice = { notice: string } | { error: string };
+
 /**
  * The comparison table of one place: own value, Navily at request time, proposal, stored outcome and the three
- * outcome buttons; „Alle Vorschläge übernehmen“ when a Navily file is loaded. The server recomputes values and
- * proposals on every click; a click on a value that changed meanwhile is refused (reload the page).
+ * outcome buttons; „Alle Vorschläge übernehmen“ (with the digest of the shown proposals) when a Navily file is loaded.
+ * The server recomputes values and proposals on every click; a click on a value or proposal that changed meanwhile is
+ * refused (reload the page).
  */
 export function ComparePlace({
   placeId,
@@ -39,7 +49,7 @@ export function ComparePlace({
   title,
   description,
   rows,
-  canAccept,
+  digest,
 }: {
   placeId: string;
   areaKey: string;
@@ -47,35 +57,43 @@ export function ComparePlace({
   title: string;
   description: string;
   rows: CompareRow[];
-  canAccept: boolean;
+  /** Digest of the shown proposals; null without a Navily file (then no „Alle Vorschläge übernehmen“). */
+  digest: string | null;
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const base = { placeId, areaKey, ...(evaluationRunId ? { evaluationRunId } : {}) };
 
-  const run = (work: () => Promise<string | null>) => {
+  const run = (work: () => Promise<ActionNotice | null>) => {
     setError(null);
     setNotice(null);
     startTransition(async () => {
       try {
-        setNotice(await work());
+        const out = await work();
+        if (out && "error" in out) setError(out.error);
+        else setNotice(out?.notice ?? null);
       } catch {
-        setError("Nicht gespeichert: Der eigene Wert hat sich geändert oder die Navily-Datei ist nicht mehr lesbar. Bitte die Seite neu laden.");
+        setError("Nicht gespeichert: Ein unerwarteter Fehler ist aufgetreten. Bitte die Seite neu laden.");
       }
     });
   };
   const record = (row: CompareRow, result: Outcome) =>
     run(async () => {
-      await recordComparisonAction({ ...base, attribute: row.attribute, result, valueHash: row.valueHash });
-      return null;
+      const r = await recordComparisonAction({ ...base, attribute: row.attribute, result, valueHash: row.valueHash });
+      return r.ok ? null : { error: FAILURES[r.code] };
     });
-  const acceptAll = () =>
+  const acceptAll = (shown: string) =>
     run(async () => {
-      const r = await acceptProposalsAction(base);
-      return r.written === 0
-        ? "Alle Vorschläge waren schon übernommen."
-        : `${r.written} Ergebnisse gespeichert${r.tasks > 0 ? `, ${r.tasks} neue Prüfaufgaben` : ""}.`;
+      const r = await acceptProposalsAction({ ...base, digest: shown });
+      if (!r.ok) return { error: FAILURES[r.code] };
+      const kept = r.skippedManual > 0 ? ` ${r.skippedManual} von Hand gesetzte Ergebnisse beibehalten.` : "";
+      return {
+        notice:
+          (r.written === 0
+            ? "Alle Vorschläge waren schon übernommen."
+            : `${r.written} Ergebnisse gespeichert${r.tasks > 0 ? `, ${r.tasks} neue Prüfaufgaben` : ""}.`) + kept,
+      };
     });
 
   return (
@@ -84,8 +102,8 @@ export function ComparePlace({
       description={description}
       flush
       actions={
-        canAccept && (
-          <Button type="button" size="sm" variant="primary" disabled={pending} onClick={acceptAll}>
+        digest !== null && (
+          <Button type="button" size="sm" variant="primary" disabled={pending} onClick={() => acceptAll(digest)}>
             Alle Vorschläge übernehmen
           </Button>
         )

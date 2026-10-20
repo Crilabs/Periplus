@@ -1,10 +1,12 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { sql } from "drizzle-orm";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { comparisonSet, geoObjects, places } from "@/lib/db/schema";
+import { comparisonSet, geoObjects, places, runs } from "@/lib/db/schema";
 import { insertProfile, provenanceEntry } from "@/test/consolidation";
 import { testDb, withRollback } from "@/test/db";
 import { insertNamedObject } from "@/test/text";
@@ -27,6 +29,14 @@ vi.mock("@/lib/domain/quality/navily-assistant", async (importOriginal) => {
 import Page from "../quality/compare/page";
 
 const FIXTURE = path.join(process.cwd(), "test/fixtures/navily/sample.json");
+
+let dir: string;
+beforeAll(async () => {
+  dir = await mkdtemp(path.join(tmpdir(), "navily-page-"));
+});
+afterAll(async () => {
+  await rm(dir, { recursive: true, force: true });
+});
 
 beforeEach(() => {
   currentDb = testDb();
@@ -85,12 +95,45 @@ describe("/quality/compare page", () => {
       expect(html).toContain("wird nicht gespeichert");
     }));
 
-  it("a broken navily file shows its path, never its content", () =>
+  it("an unreadable navily file shows a generic notice: neither the server's path nor the file's content", () =>
     withRollback(async (tx) => {
       await setUp(tx);
-      navilyPath = path.join(process.cwd(), "test/fixtures/navily/missing.json");
-      const html = await render({ area: "saronic" });
-      expect(html).toContain("Navily-Datei nicht lesbar");
-      expect(html).toContain("missing.json");
+      for (const [file, content] of [
+        ["missing-navily.json", null],
+        ["broken-navily.json", '[{"lat": "NAVILY-ONLY-NAME", "lon": 1}]'],
+      ] as const) {
+        navilyPath = path.join(dir, file);
+        if (content !== null) await writeFile(navilyPath, content);
+        const html = await render({ area: "saronic" });
+        expect(html).toContain("Navily-Datei nicht lesbar");
+        expect(html).toContain("Details stehen im Server-Log");
+        expect(html).not.toContain(file);
+        expect(html).not.toContain(dir);
+        expect(html).not.toContain("NAVILY-ONLY-NAME");
+        expect(html).not.toContain("Alle Vorschläge übernehmen");
+      }
+    }));
+
+  it("the area chips keep the filter and the evaluation run", () =>
+    withRollback(async (tx) => {
+      await setUp(tx);
+      const [run] = await tx
+        .insert(runs)
+        .values({ kind: "reprocess", scopeType: "system", scopeId: "test", triggeredBy: "test", params: { evaluation: true } })
+        .returning({ id: runs.id });
+      const html = await render({ area: "saronic", filter: "all", evaluation: run!.id });
+      expect(html).toContain(`href="/quality/compare?area=argolic&amp;filter=all&amp;evaluation=${run!.id}"`);
+    }));
+
+  it("an unknown evaluation run is a 404", () =>
+    withRollback(async (tx) => {
+      await setUp(tx);
+      const [plain] = await tx
+        .insert(runs)
+        .values({ kind: "reprocess", scopeType: "system", scopeId: "test", triggeredBy: "test" })
+        .returning({ id: runs.id });
+      for (const evaluation of ["0190a1b2-0000-7000-8000-00000000abcd", plain!.id, "not-a-uuid"]) {
+        await expect(render({ area: "saronic", evaluation })).rejects.toThrow("NEXT_HTTP_ERROR_FALLBACK;404");
+      }
     }));
 });
