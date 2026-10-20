@@ -181,9 +181,9 @@ OSM-Landpolygone (Küstenlinie) bestimmen, welche Kacheln Küste haben und welch
    npm run import:land-polygons -- --shp <pfad>/land_polygons.shp --area saronic [--version 2026-10-18]
    ```
    `--version` (Standard: heutiges Datum) benennt den Datenstand. Ein erneuter Import ersetzt alle Polygone in der Box des Reviers; Polygone außerhalb bleiben.
-3. Auf dem Server mit gemountetem Verzeichnis (hier `/data/land`):
+3. Auf dem Server mit gemountetem Verzeichnis (hier `/data/land`), über den Worker-Container (das Web-Image ist standalone, ohne `scripts/` und tsx) und mit dem `dc`-Alias vom Anfang dieses Runbooks:
    ```bash
-   docker compose run --rm -v /data/land:/data/land:ro web npm run import:land-polygons -- --shp /data/land/land_polygons.shp --area saronic
+   dc run --rm -v /data/land:/data/land:ro worker node --import tsx scripts/import-land-polygons.ts --shp /data/land/land_polygons.shp --area saronic
    ```
 
 ## Quellen und Archiv
