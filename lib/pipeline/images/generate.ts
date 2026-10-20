@@ -15,6 +15,7 @@ import { allowedZooms, cameraDetails, planRender, type CameraDetails, type Rende
 import { createReviewTask, hasDecidedTask } from "@/lib/domain/review";
 import { dismissTasks } from "@/lib/domain/consolidation/task-locks";
 import { valueFingerprint } from "@/lib/domain/review-decisions";
+import { createLogger } from "@/lib/logger";
 import { ensureImagery, type ImagerySet } from "./imagery";
 import { renderAndStore } from "./render";
 import { IMAGES_STAGE } from "./stage-name";
@@ -26,6 +27,10 @@ import { IMAGES_STAGE } from "./stage-name";
  */
 
 const TASK = "generate-place-image";
+const log = createLogger("images.place");
+
+/** `<name>: <message>` of an error (anything else as text), for a task context. */
+const errorMessage = (e: unknown): string => (e instanceof Error ? `${e.name}: ${e.message}` : String(e));
 
 /** The configuration the image stage reads (tests pass a changed copy). */
 export type ImageStageConfig = Pick<AppConfig, "images" | "models" | "delivery">;
@@ -59,6 +64,11 @@ export type PlaceImageTaskContext = {
   allowedZooms: ZoomLevel[];
   /** `no_water_view`: no camera over water; `no_valid_output`: every attempt failed without an image (no candidate). */
   reason?: "no_water_view" | "no_valid_output";
+  /**
+   * An attempt after the first paid image ended in an error (budget, provider, network, the watermark check): the
+   * attempts made until then went up for review instead of being thrown away with a failing job.
+   */
+  interrupted?: { attempt: number; error: string };
 };
 
 /**
@@ -209,12 +219,14 @@ export type GenerateResult = { status: "review" | "no_water_view" | "skipped"; a
  * 3. the render (`renderAndStore`, recording the key);
  * 4. up to `check.maxAttempts` image edits: water IoU against the render mask, and, when the core imagery is
  *    watermarked (the cadastre), the watermark check on the JPEG. `ImageOutputInvalid`, `ModelOutputInvalid`, a low
- *    IoU or a visible watermark make a failed attempt; the first passing one ends the loop;
+ *    IoU or a visible watermark make a failed attempt; the first passing one ends the loop. Any other error (budget,
+ *    provider, network, a failing check) propagates, so the job is retried, only while no attempt has produced an
+ *    image yet; once one has (and is paid for), the error ends the attempts instead, the image of a failed check stays
+ *    an unchecked attempt, and the task notes it as `interrupted`;
  * 5. the best attempt (passed, watermark-free, highest IoU) as JPEG under
  *    `imagery/candidates/<geoObjectId>/<renderId>-<n>.jpg`, and the `place_image` task (`putUpForReview`); when no
  *    attempt gave a usable image, the task has no candidate and `reason: "no_valid_output"`.
- * Other errors (budget, provider, network) propagate so the job is retried. Nothing runs inside a transaction except
- * the task write.
+ * Nothing runs inside a transaction except the task write.
  */
 export async function generatePlaceImage(
   db: Db,
@@ -275,15 +287,24 @@ export async function generatePlaceImage(
   const prompt = buildPlacePrompt(place, light, watermarked, cfg).text;
   const attempts: Attempt[] = [];
   let made = 0;
+  let interrupted: PlaceImageTaskContext["interrupted"];
+  /** An error after the first paid image ends the attempts instead of the job; the attempts so far go up for review. */
+  const interrupt = (n: number, step: string, e: unknown) => {
+    interrupted = { attempt: n, error: errorMessage(e) };
+    log.warn({ geoObjectId: place.geoObjectId, slot: view.slot, attempt: n, step, err: e }, "image attempt interrupted, earlier attempts go up for review");
+  };
   for (let n = 1; n <= icfg.check.maxAttempts; n++) {
     made = n;
     let image: Uint8Array;
     try {
       image = (await deps.imageModel.edit({ task: TASK, image: photo, prompt }, { db, runId: input.runId, stage: IMAGES_STAGE })).image;
     } catch (e) {
-      if (!(e instanceof ImageOutputInvalid)) throw e;
-      continue;
+      if (e instanceof ImageOutputInvalid) continue;
+      if (attempts.length === 0) throw e;
+      interrupt(n, "edit", e);
+      break;
     }
+    // the image is paid for from here on: a failing check keeps it as an unchecked attempt
     const iou = await waterIoU(mask, image, icfg.check);
     let watermarkVisible: boolean | null = null;
     let checked = !watermarked;
@@ -293,13 +314,13 @@ export async function generatePlaceImage(
         watermarkVisible = (await deps.model.call(checkPlaceImageTask, { image: jpeg }, { runId: input.runId, stage: IMAGES_STAGE })).output.watermarkVisible;
         checked = true;
       } catch (e) {
-        if (!(e instanceof ModelOutputInvalid)) throw e;
+        if (!(e instanceof ModelOutputInvalid)) interrupt(n, "watermark check", e);
       }
     }
     const watermarkFree = checked && watermarkVisible !== true;
     const passed = passesGeometry(iou, light, icfg.check) && watermarkFree;
     attempts.push({ n, image, iou, watermarkVisible, watermarkFree, passed });
-    if (passed) break;
+    if (passed || interrupted) break;
   }
 
   const chosen = best(attempts);
@@ -320,6 +341,7 @@ export async function generatePlaceImage(
     watermarkVisible: chosen?.watermarkVisible ?? null,
     allowedZooms: allowedZooms(finestResolution(imagery), icfg),
     ...(chosen ? {} : { reason: "no_valid_output" as const }),
+    ...(interrupted ? { interrupted } : {}),
   });
   return { status: "review", attempts: made, waterIoU: chosen?.iou ?? null };
 }

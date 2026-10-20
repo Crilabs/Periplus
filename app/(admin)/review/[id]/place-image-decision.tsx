@@ -68,6 +68,11 @@ export function PlaceImageDecision({
   return (
     <>
       {c.reason && <Notice tone="warn">{REASON_TEXT[c.reason]}</Notice>}
+      {c.interrupted && (
+        <Notice tone="warn">
+          Versuch {c.interrupted.attempt} ist abgebrochen ({c.interrupted.error}); die Versuche davor stehen hier zur Prüfung. Neu erzeugen holt den Rest nach.
+        </Notice>
+      )}
       <div className="grid gap-6 lg:grid-cols-5">
         {open && (
           <DecisionPanel question={`${slot} freigeben, neu erzeugen oder ohne Bild lassen?`} className="lg:col-span-2">

@@ -1,14 +1,16 @@
 import { sql } from "drizzle-orm";
 import type { Polygon } from "geojson";
 import { describe, expect, it } from "vitest";
+import { RetryableHttpError } from "@/lib/adapters/http";
 import { ImageOutputInvalid } from "@/lib/adapters/openai-image";
 import type { Archive } from "@/lib/adapters/s3";
 import type { MockImageModel } from "@/lib/ai/mock-image";
-import type { MockModel } from "@/lib/ai/mock";
+import { MockModel } from "@/lib/ai/mock";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { landPolygons, reviewTasks } from "@/lib/db/schema";
+import { BudgetExceeded } from "@/lib/domain/costs";
 import { createRun } from "@/lib/domain/runs";
 import { generatePlaceImage, generationKey } from "@/lib/pipeline/images/generate";
 import { IMAGES_STAGE } from "@/lib/pipeline/images/stage-name";
@@ -126,6 +128,53 @@ describe("generatePlaceImage", () => {
         await deps(memoryArchive(), await imageModel(new ImageOutputInvalid("no b64_json"), GOOD), checker(false)),
       );
       expect(result).toEqual({ status: "review", attempts: 2, waterIoU: 1 });
+    });
+  });
+
+  it("an error after a paid attempt ends the attempts and puts the paid one up for review (no rethrow)", async () => {
+    await withRollback(async (tx) => {
+      const f = await fixture(tx);
+      const archive = memoryArchive();
+      // attempt 1: an image with IoU 0 (paid); attempt 2: the provider fails
+      const images = await imageModel(DRY, new RetryableHttpError("openai images.edit POST: 503", 503));
+      const result = await generatePlaceImage(tx, { geoObjectId: f.objectId, view: TITLE, runId: f.runId }, await deps(archive, images, checker(false)));
+      expect(result).toEqual({ status: "review", attempts: 2, waterIoU: 0 });
+      // two calls were made, only the first answered with an image: that one is the candidate
+      expect(images.calls).toHaveLength(2);
+      const [task] = await taskOf(tx, `${f.objectId}:title`);
+      expect(task!.context).toMatchObject({ passed: false, attempts: 2, waterIoU: 0, interrupted: { attempt: 2, error: "RetryableHttpError: openai images.edit POST: 503" } });
+      expect(task!.context.reason).toBeUndefined();
+      expect(task!.context.candidateKey).toBe(`imagery/candidates/${f.objectId}/${task!.context.renderId}-1.jpg`);
+      expect(archive.contentType(task!.context.candidateKey!)).toBe("image/jpeg");
+    });
+  });
+
+  it("an error before any paid attempt propagates, so the job is retried", async () => {
+    await withRollback(async (tx) => {
+      const f = await fixture(tx);
+      const images = await imageModel(new BudgetExceeded("openai", 10, 10));
+      await expect(generatePlaceImage(tx, { geoObjectId: f.objectId, view: TITLE, runId: f.runId }, await deps(memoryArchive(), images, checker(false)))).rejects.toBeInstanceOf(BudgetExceeded);
+      expect(images.calls).toHaveLength(1);
+      expect(await taskOf(tx, `${f.objectId}:title`)).toEqual([]);
+    });
+  });
+
+  it("a failing watermark check keeps the paid image as an unchecked attempt and ends the attempts", async () => {
+    await withRollback(async (tx) => {
+      const f = await fixture(tx);
+      const archive = memoryArchive();
+      const images = await imageModel(GOOD);
+      const failingChecker = new MockModel({
+        "check-place-image": () => {
+          throw new BudgetExceeded("anthropic", 20, 20);
+        },
+      });
+      const result = await generatePlaceImage(tx, { geoObjectId: f.objectId, view: TITLE, runId: f.runId }, await deps(archive, images, failingChecker));
+      expect(result).toEqual({ status: "review", attempts: 1, waterIoU: 1 });
+      expect(images.calls).toHaveLength(1);
+      const [task] = await taskOf(tx, `${f.objectId}:title`);
+      expect(task!.context).toMatchObject({ passed: false, attempts: 1, waterIoU: 1, watermarkVisible: null, interrupted: { attempt: 1, error: "BudgetExceeded: Daily budget for anthropic exceeded: 20 of 20 EUR" } });
+      expect(task!.context.candidateKey).toBe(`imagery/candidates/${f.objectId}/${task!.context.renderId}-1.jpg`);
     });
   });
 
