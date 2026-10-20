@@ -293,6 +293,11 @@ export const gazetteerSchema = z.strictObject({
     timeoutSeconds: z.number().int().positive(),
     ratePerMinute: z.number().positive(),
   }),
+  /** Marine Regions WFS (IHO sea areas, spec 14). */
+  marineRegions: z.strictObject({
+    endpoint: z.url(),
+    timeoutMs: z.number().int().positive(),
+  }),
   wikidata: z.strictObject({
     endpoint: z.url(),
     /** Wikibase API (`wbgetentities`), e.g. for the Wikivoyage sitelinks of gazetteer objects. */

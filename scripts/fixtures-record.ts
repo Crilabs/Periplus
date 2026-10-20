@@ -12,7 +12,9 @@ import { createJinaConverter } from "../lib/adapters/fetch/jina";
 import { createGeonamesSource } from "../lib/adapters/geonames";
 import { fetchTransport, makeResponse, RetryableHttpError, type Transport } from "../lib/adapters/http";
 import { fixtureTransport, recordingTransport } from "../lib/adapters/http-fixtures";
+import { fetchSeas } from "../lib/adapters/marine-regions";
 import { searchNominatim } from "../lib/adapters/nominatim";
+import { buildBoundaryQuery, buildRelationQuery, overpassQuery } from "../lib/adapters/overpass";
 import { runPdftotext } from "../lib/adapters/pdf";
 import { getArchive, type Archive } from "../lib/adapters/s3";
 import { createAnthropicClient } from "../lib/ai/anthropic";
@@ -54,6 +56,7 @@ import { landImportBbox, readShapefile } from "./import-land-polygons";
 const USAGE =
   "usage: fixtures-record.ts --area <key> [--land <path/land_polygons.shp>] [--cache <dir>] [--datasets [<kind,…>] | --serp [--limit <1-3>] | --wikivoyage]\n" +
   "       fixtures-record.ts --converters <url> [<url> <url>]\n" +
+  "       fixtures-record.ts --coarse <ISO2,…>\n" +
   "       fixtures-record.ts --voyage\n" +
   "       fixtures-record.ts --nominatim <query> <tileId>\n" +
   "       fixtures-record.ts --ai <classify-document|disambiguate-mention|extract-facts|extract-route> [--limit <1-5>] [--max-eur <eur>]";
@@ -88,6 +91,7 @@ export type RecordArgs =
   | AreaRecordArgs
   | { converters: string[] }
   | { voyage: true }
+  | { coarse: string[] }
   | { nominatim: { query: string; tileId: string } }
   | { ai: { task: AiRecordingTask; limit: number; maxEur: number } };
 
@@ -151,6 +155,11 @@ export function parseArgs(argv: string[]): RecordArgs {
     if (argv.length !== 3 || !query || query.startsWith("--") || !isTileId(tileId)) throw new Error(USAGE);
     return { nominatim: { query, tileId: tileId! } };
   }
+  if (argv[0] === "--coarse") {
+    const countries = argv[1]?.split(",") ?? [];
+    if (argv.length !== 2 || countries.length === 0 || !countries.every((c) => /^[A-Z]{2}$/.test(c))) throw new Error(USAGE);
+    return { coarse: countries };
+  }
   if (argv[0] === "--voyage") {
     if (argv.length !== 1) throw new Error(USAGE);
     return { voyage: true };
@@ -167,7 +176,7 @@ export function parseArgs(argv: string[]): RecordArgs {
   let wikivoyage = false;
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]!;
-    if (flag === "--converters" || flag === "--voyage" || flag === "--nominatim" || flag === "--ai") throw new Error(USAGE);
+    if (flag === "--converters" || flag === "--voyage" || flag === "--nominatim" || flag === "--ai" || flag === "--coarse") throw new Error(USAGE);
     if (flag === "--datasets" || flag === "--serp" || flag === "--wikivoyage") {
       if (flag === "--datasets") {
         datasets = true;
@@ -321,6 +330,44 @@ async function recordNominatim(query: string, tileId: string): Promise<void> {
     );
     process.stdout.write(`nominatim "${query}" around ${tileId}: ${hits.length} hits\n`);
     for (const h of hits) process.stdout.write(`  ${h.osmId} ${h.name} (${h.category}/${h.type}) ${h.distanceM} m\n`);
+  } finally {
+    await close();
+  }
+}
+
+/**
+ * Records the coarse boundary fixtures of spec 14: per country the Overpass boundary query (the configured levels
+ * plus the country relation; whole-country entries the country relation only), the `extra` relations of that
+ * country, and the Marine Regions IHO seas of `mediterranean.marineRegionsMrgids`. Calls are booked in the
+ * `*_scratch` database of `DATABASE_URL`.
+ */
+async function recordCoarse(countries: string[]): Promise<void> {
+  const url = assertScratchUrl(process.env.DATABASE_URL);
+  const { gazetteer, subdivisions } = getConfig();
+  const { db, close } = createDb(url);
+  const ctx = { db, stage: "fixtures:record" };
+  const out = (line: string) => process.stdout.write(`${line}\n`);
+  try {
+    const recording = recordingTransport(compacting(fetchTransport));
+    for (const country of countries) {
+      const entry = subdivisions.countries[country];
+      if (!entry) throw new Error(`no subdivision config for country ${country}`);
+      const levels = [entry.firstLevel, entry.secondLevel].filter((l): l is number => typeof l === "number");
+      const { elements } = await withRetry(`overpass ${country}`, () =>
+        overpassQuery(recording, buildBoundaryQuery(country, levels, gazetteer.overpass.timeoutSeconds), ctx, gazetteer.overpass),
+      );
+      out(`boundaries ${country} (levels ${levels.join(",") || "none"}): ${elements.length} relations`);
+      const extra = subdivisions.extra.filter((e) => e.country === country).map((e) => e.osmRelationId);
+      if (extra.length > 0) {
+        const res = await withRetry(`overpass ${country} extra`, () =>
+          overpassQuery(recording, buildRelationQuery(extra, gazetteer.overpass.timeoutSeconds), ctx, gazetteer.overpass),
+        );
+        out(`extra ${country}: ${res.elements.length} relations`);
+      }
+    }
+    const mrgids = subdivisions.mediterranean.marineRegionsMrgids;
+    const seas = await withRetry("marine regions", () => fetchSeas(recording, mrgids, ctx, gazetteer.marineRegions));
+    for (const sea of seas) out(`sea ${sea.mrgid} ${sea.name}: ${sea.geometry.coordinates.length} polygons`);
   } finally {
     await close();
   }
@@ -697,11 +744,41 @@ export function compactOverpass(raw: string): string {
   return JSON.stringify(answer);
 }
 
-/** Thins successful Overpass answers and minifies Wikidata's before they are recorded and imported. */
+/** Douglas-Peucker tolerance for the IHO sea rings in degrees (~200 m; the seas span hundreds of km). */
+const SEA_TOLERANCE_DEG = 0.002;
+
+/**
+ * The IHO sea polygons come with 8 decimals and ~14 MB for the configured Mediterranean seas. Every ring is thinned
+ * (Douglas-Peucker, end points kept so rings stay closed) and its coordinates rounded to 4 decimals; a ring that
+ * collapses below 4 points is dropped, as is a polygon without an exterior ring.
+ */
+export function compactMarineRegions(raw: string): string {
+  const answer = JSON.parse(raw) as { features?: Array<{ geometry?: { type?: string; coordinates?: number[][][][] } | null }> };
+  for (const feature of answer.features ?? []) {
+    const geometry = feature.geometry;
+    if (geometry?.type !== "MultiPolygon" || !geometry.coordinates) continue;
+    geometry.coordinates = geometry.coordinates
+      .map((polygon) =>
+        polygon
+          .map((ring) =>
+            simplifyLine(
+              ring.map(([lon, lat]) => ({ lon: lon!, lat: lat! })),
+              SEA_TOLERANCE_DEG,
+            ).map((p) => [Math.round(p.lon * 1e4) / 1e4, Math.round(p.lat * 1e4) / 1e4]),
+          )
+          .filter((ring) => ring.length >= 4),
+      )
+      .filter((polygon) => polygon.length > 0);
+  }
+  return JSON.stringify(answer);
+}
+
+/** Thins successful Overpass and Marine Regions answers and minifies Wikidata's before they are recorded and imported. */
 function compacting(inner: Transport): Transport {
   return async (req) => {
     const res = await inner(req);
     if (res.status !== 200) return res;
+    if (req.service === "marine-regions") return makeResponse(200, new TextEncoder().encode(compactMarineRegions(res.text())));
     if (req.service === "overpass") return makeResponse(200, new TextEncoder().encode(compactOverpass(res.text())));
     if (req.service === "wikidata") {
       return makeResponse(200, new TextEncoder().encode(JSON.stringify(JSON.parse(res.text()))));
@@ -769,6 +846,7 @@ async function main(): Promise<void> {
   if ("ai" in args) return recordAi(args.ai);
   if ("nominatim" in args) return recordNominatim(args.nominatim.query, args.nominatim.tileId);
   if ("voyage" in args) return recordVoyage();
+  if ("coarse" in args) return recordCoarse(args.coarse);
   if ("converters" in args) return recordConverters(args.converters);
   if (args.serp) return recordSerp(loadArea(args.area), args.limit!);
   if (args.wikivoyage) return recordWikivoyage(loadArea(args.area));

@@ -4,6 +4,10 @@
     "timeoutSeconds": 180,
     "ratePerMinute": 2
   },
+  "marineRegions": {
+    "endpoint": "https://geo.vliz.be/geoserver/MarineRegions/wfs",
+    "timeoutMs": 120000
+  },
   "wikidata": {
     "endpoint": "https://query.wikidata.org/sparql",
     "apiEndpoint": "https://www.wikidata.org/w/api.php",
