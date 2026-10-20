@@ -31,6 +31,7 @@ type Overrides = {
   nameAffixes?: unknown;
   extraction?: unknown;
   delivery?: unknown;
+  images?: unknown;
   subdivisions?: unknown;
   /** `consolidation/active.json`. */
   consolidationActive?: unknown;
@@ -60,6 +61,7 @@ function fixtureDir(overrides: Overrides): string {
     "name-affixes": overrides.nameAffixes ?? repoConfig.nameAffixes,
     extraction: overrides.extraction ?? repoConfig.extraction,
     delivery: overrides.delivery ?? repoConfig.delivery,
+    images: overrides.images ?? repoConfig.images,
     subdivisions: overrides.subdivisions ?? repoConfig.subdivisions,
   };
   for (const [name, value] of Object.entries(files)) {

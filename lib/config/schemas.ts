@@ -7,6 +7,7 @@ import {
   restrictedKindEnum,
   seabedTypeEnum,
   type GeoObjectType,
+  type PlaceKind,
 } from "@/lib/db/schema/geo";
 import { changeRateEnum, DOC_TYPES, type ChangeRate, type DocType } from "@/lib/db/schema/sources";
 import { CONTRACT_FILES, SCHEMA_VERSION } from "@/contract";
@@ -24,7 +25,7 @@ export const queueConfigSchema = z.strictObject({
   expireInSeconds: z.number().int().min(1).optional(),
 });
 
-export const BUDGET_SERVICES = ["anthropic", "voyage", "dataforseo", "firecrawl", "jina"] as const;
+export const BUDGET_SERVICES = ["anthropic", "voyage", "dataforseo", "firecrawl", "jina", "openai"] as const;
 export type BudgetService = (typeof BUDGET_SERVICES)[number];
 
 export const queuesSchema = z.record(z.string(), queueConfigSchema);
@@ -57,6 +58,13 @@ const modelTaskSchema = z.strictObject({
   decision: z.strictObject({ status: z.enum(["provisional", "decided"]), note: z.string().trim().min(1) }).optional(),
 });
 
+const imageTaskSchema = z.strictObject({
+  model: z.string().min(1),
+  promptVersion: z.number().int().min(1),
+  size: z.literal("1536x1024"),
+  quality: z.enum(["low", "medium", "high"]),
+});
+
 export const modelsSchema = z
   .strictObject({
     tasks: z.record(z.string(), modelTaskSchema),
@@ -71,6 +79,12 @@ export const modelsSchema = z
         output: z.number().nonnegative(),
         cacheReadFactor: z.number().nonnegative(),
       }),
+    ),
+    /** Image generation tasks (OpenAI `v1/images/edits`), priced per image and quality. */
+    imageTasks: z.record(z.string(), imageTaskSchema),
+    pricesEurPerImage: z.record(
+      z.string(),
+      z.strictObject({ high: z.number().nonnegative(), medium: z.number().nonnegative(), low: z.number().nonnegative() }),
     ),
     cacheWriteFactor: z.number().nonnegative(),
     /** Timeout of one real-time model call (no SDK retry; the job retry resends, SEC-2). */
@@ -105,6 +119,11 @@ export const modelsSchema = z
     for (const [name, task] of Object.entries(models.tasks)) {
       if (!(task.model in models.pricesEurPerMTok)) {
         ctx.addIssue({ code: "custom", path: ["tasks", name, "model"], message: `no price for model ${task.model}` });
+      }
+    }
+    for (const [name, task] of Object.entries(models.imageTasks)) {
+      if (!(task.model in models.pricesEurPerImage)) {
+        ctx.addIssue({ code: "custom", path: ["imageTasks", name, "model"], message: `no price for model ${task.model}` });
       }
     }
     models.comparison.models.forEach((model, i) => {
@@ -1052,6 +1071,10 @@ export type CategoriesConfig = z.infer<typeof categoriesSchema>;
 export type GazetteerConfig = z.infer<typeof gazetteerSchema>;
 export type ConsolidationConfig = z.infer<typeof consolidationSchema>;
 export type DeliveryConfig = z.infer<typeof deliverySchema>;
+export type ImagesConfig = z.infer<typeof imagesSchema>;
+export type ImagerySource = keyof ImagesConfig["sources"];
+export type ImageryLight = z.infer<typeof imageryLightSchema>;
+export type ZoomLevel = keyof ImagesConfig["camera"]["zooms"];
 /** A rules version's parameters with its version (the file name). */
 export type VersionedConsolidationConfig = ConsolidationConfig & { version: string };
 export type AppConfig = {
@@ -1077,4 +1100,89 @@ export type AppConfig = {
   /** The active consolidation rules version (`config/consolidation/active.json`). */
   consolidation: VersionedConsolidationConfig;
   delivery: DeliveryConfig;
+  images: ImagesConfig;
 };
+
+const imageryLightSchema = z.enum(["midday", "evening"]);
+const imageCountries = z.array(z.string().length(2)).or(z.literal("*"));
+const imageWmsSourceSchema = z.strictObject({
+  kind: z.literal("wms"),
+  countries: imageCountries,
+  url: z.url(),
+  layer: z.string().min(1),
+  format: z.string().min(1),
+  resolutionM: z.number().positive(),
+  maxRequestPx: z.number().int().positive(),
+  watermarked: z.boolean(),
+  license: z.string().min(1),
+  attribution: z.string().min(1),
+  acquiredAt: z.iso.date().nullable(),
+  timeoutSeconds: z.number().int().positive(),
+  ratePerMinute: z.number().int().positive(),
+});
+const imageCogSourceSchema = z.strictObject({
+  kind: z.literal("cog"),
+  countries: imageCountries,
+  urlTemplate: z.string().includes("{name}"),
+  resolutionM: z.number().positive(),
+  license: z.string().min(1),
+  attribution: z.string().min(1),
+  acquiredAt: z.iso.date().nullable(),
+  timeoutSeconds: z.number().int().positive(),
+  ratePerMinute: z.number().int().positive(),
+  maxBytes: z.number().int().positive(),
+});
+const zoomSchema = z.strictObject({ heightM: z.number().positive() });
+const perKind = <T extends z.ZodType>(value: T) =>
+  z.strictObject(Object.fromEntries(placeKindEnum.enumValues.map((k) => [k, value])) as Record<PlaceKind, T>);
+
+/** Title images of places (spec 13): imagery sources, terrain window, camera, light, scene wording and checks. */
+export const imagesSchema = z.strictObject({
+  sources: z.strictObject({
+    ktimatologio: imageWmsSourceSchema,
+    sentinel2: imageWmsSourceSchema,
+    copernicus_dem: imageCogSourceSchema,
+  }),
+  /** Whether images built on a source are delivered; one switch per source (the cadastre licence is unconfirmed). */
+  delivery: z.strictObject({ ktimatologio: z.boolean(), sentinel2: z.boolean(), copernicus_dem: z.boolean() }),
+  window: z.strictObject({
+    coreSizeM: z.number().positive(),
+    wideMarginDeg: z.number().positive(),
+    coreGridM: z.number().positive(),
+    wideGridM: z.number().positive(),
+    wideSinkM: z.number().nonnegative(),
+    whiteThreshold: z.number().int().min(0).max(255),
+  }),
+  camera: z.strictObject({
+    tiltDeg: z.number().positive().max(89),
+    fovDeg: z.number().positive().max(179),
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+    rotateStepDeg: z.number().int().min(1).max(180),
+    defaultZoom: z.enum(["z1", "z2", "z3"]),
+    zooms: z.strictObject({ z1: zoomSchema, z2: zoomSchema, z3: zoomSchema }),
+  }),
+  render: z.strictObject({
+    maxSourcePixelOnScreen: z.number().positive(),
+    rendererVersion: z.string().min(1),
+    timeoutSeconds: z.number().int().positive(),
+  }),
+  light: z.strictObject({
+    townRadiusM: z.number().positive(),
+    townPlaces: z.array(z.string().min(1)),
+    byKind: perKind(imageryLightSchema),
+  }),
+  scene: perKind(z.strictObject({ en: z.string().min(1), de: z.string().min(1) })),
+  check: z.strictObject({
+    minWaterIoU: z.strictObject({ midday: z.number().min(0).max(1), evening: z.number().min(0).max(1) }),
+    maxAttempts: z.number().int().min(1),
+    waterColour: z.strictObject({ blueOverRedMin: z.number().nonnegative(), greenTolerance: z.number().nonnegative() }),
+  }),
+  pipeline: z.strictObject({ maxGenerationsPerRun: z.number().int().positive() }),
+  output: z.strictObject({
+    jpegQuality: z.number().int().min(1).max(100),
+    license: z.string().min(1),
+    credit: z.string().min(1),
+    altPrefix: z.string().min(1),
+  }),
+});

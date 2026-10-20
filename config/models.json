@@ -16,7 +16,14 @@
       }
     },
     "extract-route": { "model": "claude-sonnet-5-5", "promptVersion": 1, "effort": "medium", "maxTokens": 16000 },
-    "summarize-profile": { "model": "claude-sonnet-5-5", "promptVersion": 1, "effort": "low", "maxTokens": 4096 }
+    "summarize-profile": { "model": "claude-sonnet-5-5", "promptVersion": 1, "effort": "low", "maxTokens": 4096 },
+    "check-place-image": { "model": "claude-haiku-5-5", "promptVersion": 1, "effort": "low", "maxTokens": 512 }
+  },
+  "imageTasks": {
+    "generate-place-image": { "model": "gpt-image-2.5-sunburst", "promptVersion": 1, "size": "1536x1024", "quality": "high" }
+  },
+  "pricesEurPerImage": {
+    "gpt-image-2.5-sunburst": { "low": 0.02, "medium": 0.07, "high": 0.25 }
   },
   "pricesEurPerMTok": {
     "claude-haiku-5-5": { "input": 0.0889, "output": 0.4443, "cacheReadFactor": 0.1 },

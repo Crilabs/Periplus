@@ -3,5 +3,6 @@
   "voyage": { "dailyEur": 5 },
   "dataforseo": { "dailyEur": 10 },
   "firecrawl": { "dailyEur": 5 },
-  "jina": { "dailyEur": 5 }
+  "jina": { "dailyEur": 5 },
+  "openai": { "dailyEur": 10 }
 }

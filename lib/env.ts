@@ -13,6 +13,7 @@ const envSchema = z.object({
   S3_ACCESS_KEY_ID: z.string().min(1),
   S3_SECRET_ACCESS_KEY: z.string().min(1),
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  OPENAI_API_KEY: z.string().min(1).optional(),
   VOYAGE_API_KEY: z.string().min(1).optional(),
   DATAFORSEO_LOGIN: z.string().min(1).optional(),
   DATAFORSEO_PASSWORD: z.string().min(1).optional(),

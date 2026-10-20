@@ -17,6 +17,7 @@ import {
   fetchSchema,
   gazetteerSchema,
   geometrySchema,
+  imagesSchema,
   mentionsSchema,
   modelsSchema,
   nameAffixesSchema,
@@ -44,6 +45,9 @@ export type {
   FetchConfig,
   GazetteerConfig,
   GeometryConfig,
+  ImageryLight,
+  ImagesConfig,
+  ImagerySource,
   MentionsConfig,
   ModelEffort,
   ModelsConfig,
@@ -56,6 +60,7 @@ export type {
   SubdivisionsConfig,
   VersionedConsolidationConfig,
   WhitelistConfig,
+  ZoomLevel,
 } from "./schemas";
 
 function readJson<T>(dir: string, name: string, schema: ZodType<T>): T {
@@ -146,6 +151,7 @@ export function loadConfig(dir = "config"): AppConfig {
     extraction: readJson(dir, "extraction", extractionSchema),
     consolidation: readConsolidation(dir, readJson(dir, "consolidation/active", consolidationActiveSchema).version),
     delivery: readJson(dir, "delivery", deliverySchema),
+    images: readJson(dir, "images", imagesSchema),
   };
 }
 

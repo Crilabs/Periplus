@@ -27,6 +27,7 @@ const config: AppConfig = {
     dataforseo: { dailyEur: 1 },
     firecrawl: { dailyEur: 1 },
     jina: { dailyEur: 1 },
+    openai: { dailyEur: 1 },
   },
   models: {
     tasks: {
@@ -34,6 +35,8 @@ const config: AppConfig = {
       "pdf.to_markdown": { model: "claude-haiku-5-5", promptVersion: 1, effort: "low", maxTokens: 16000, cacheSystem: false },
     },
     pricesEurPerMTok: { "claude-haiku-5-5": { input: 0.1, output: 0.5, cacheReadFactor: 0.1 } },
+    imageTasks: {},
+    pricesEurPerImage: {},
     cacheWriteFactor: 1.25,
     callTimeoutSeconds: 600,
     batch: { discount: 0.5, pollSeconds: 60, maxHours: 26, maxRequests: 1000, providerTimeoutSeconds: 120, leaseSeconds: 600, clockSkewSeconds: 120, reservationHours: 48, budgetRetrySeconds: 900 },
