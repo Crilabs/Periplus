@@ -101,6 +101,22 @@ before="$FAILURES"
 grep -q "compose -f $WORK/elsewhere/ops/compose.yml exec -T db " "$LOG" || fail "compose file not resolved from the caller's cwd: $(head -1 "$LOG")"
 [ "$FAILURES" -eq "$before" ] && pass
 
+# OPS-3: on the server compose needs the .env of /opt/periplus (the compose file interpolates ${POSTGRES_PASSWORD:?})
+: > "$WORK/elsewhere/.env"
+CASE_CWD="$WORK/elsewhere" run_case "the env file goes to every compose call" "" --env-file .env --compose-file ops/compose.yml --service postgres
+before="$FAILURES"
+[ "$RC" -eq 0 ] || fail "expected exit 0, got $RC: $(cat "$OUT")"
+[ "$(grep -c "^compose --env-file $WORK/elsewhere/.env -f $WORK/elsewhere/ops/compose.yml exec -T postgres " "$LOG")" -eq "$(wc -l < "$LOG" | tr -d ' ')" ] \
+  || fail "not every compose call has the env file: $(cat "$LOG")"
+[ "$FAILURES" -eq "$before" ] && pass
+
+CASE_CWD="$WORK/elsewhere" run_case "a missing env file is refused" "" --env-file missing.env --compose-file ops/compose.yml
+before="$FAILURES"
+[ "$RC" -ne 0 ] || fail "expected a refusal, got exit 0"
+grep -q "Env-Datei" "$OUT" || fail "refusal does not name the env file"
+[ -s "$LOG" ] && fail "called docker: $(cat "$LOG")"
+[ "$FAILURES" -eq "$before" ] && pass
+
 CASE_CWD="$WORK/elsewhere" run_case "a missing compose file is refused" "" --compose-file docker/compose.dev.yml
 before="$FAILURES"
 [ "$RC" -ne 0 ] || fail "expected a refusal, got exit 0"

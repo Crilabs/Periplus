@@ -142,7 +142,7 @@ Ruling M7-P27, Runbook-Abschnitt „Simulierter Revisit“ in `docs/runbook.md`.
 2. **Klonen:** `npm run sim:clone` (lokal: Compose-Dienst `db`; `-- --force` ersetzt einen vorhandenen Klon).
    - Der Klon `periplus_sim` behält die Queue-Definitionen. Alle Jobs werden gelöscht.
    - `sim_meta` hält `from_seq` fest, die Grenze „vor dem Revisit“.
-   - Server: `bash scripts/sim/clone.sh --compose-file docker/compose.prod.yml --service postgres --db-user <POSTGRES_USER>`.
+   - Server: Skript zuerst auf den Server kopieren (`scp scripts/sim/clone.sh deploy@<host>:/opt/periplus/scripts/sim/`, Verzeichnis vorher anlegen), dann in `/opt/periplus`: `bash scripts/sim/clone.sh --env-file .env --compose-file docker/compose.prod.yml --service postgres --db-user <POSTGRES_USER>`.
 3. **`.env.sim`:**
    - `cp .env.sim.example .env.sim`.
    - Die übrigen Werte aus `.env.local` übernehmen.
