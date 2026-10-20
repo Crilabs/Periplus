@@ -271,6 +271,7 @@ describe("stage extraction.mention", () => {
         invalidValue: 1,
         unknownAttribute: 0,
         duplicate: 0,
+        merged: 0,
         poiMentions: 0,
         poiUnmatched: 0,
         poiNameRejected: 0,
