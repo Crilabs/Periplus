@@ -76,6 +76,11 @@ describe("comparisonValues", () => {
     expect(v.display).toBe("35,21000° N, 21,13000° O");
   });
 
+  it.each(["port", "marina"] as const)("a %s is compared on its place point, not an anchor position", (kind) => {
+    const v = comparisonValues(subject({}, { kind, anchorPosition: { lon: 21.13, lat: 35.21 } }), cfg).position;
+    expect(v.value).toEqual({ lon: 21.1234, lat: 35.2 });
+  });
+
   it("missing attributes give value null and display '–'", () => {
     const values = comparisonValues(subject({}), cfg);
     for (const a of COMPARISON_ATTRIBUTES.filter((k) => k !== "existence" && k !== "position")) {

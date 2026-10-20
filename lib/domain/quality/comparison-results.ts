@@ -1,18 +1,22 @@
-import { desc, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
+import { getConfig } from "@/lib/config";
+import type { QualityConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import {
   COMPARISON_ATTRIBUTES,
   comparisonResults,
+  reviewTasks,
   type ComparisonAttribute,
   type ComparisonMethod,
   type ComparisonResultValue,
 } from "@/lib/db/schema";
 import { createReviewTask } from "@/lib/domain/review";
+import { comparisonValues, type ComparisonSubject } from "./comparison-values";
 
 /*
  * Outcomes of the comparison against Navily (spec 10), append-only. Grundprinzip 9: an outcome, the hash of the own
- * value and its display are all that is written; a Navily value never reaches a row or a review context.
+ * value and its own display are all that is written; a Navily value never reaches a row or a review context.
  */
 
 /** Outcomes a person decided on a `comparison_deviation` task; a later machine or manual outcome never replaces one. */
@@ -35,17 +39,39 @@ const key = (placeId: string, attribute: string, valueHash: string) => `${placeI
 export const comparisonSubjectId = (placeId: string, attribute: ComparisonAttribute, valueHash: string) =>
   `${placeId}:${attribute}:${valueHash}`;
 
+/** An outcome was given for an own value that is no longer the place's current one: nothing is written. */
+export class StaleComparison extends Error {
+  constructor(placeId: string, attribute: ComparisonAttribute) {
+    super(`the compared value of ${attribute} at place ${placeId} has changed`);
+    this.name = "StaleComparison";
+  }
+}
+
+const recordInputSchema = z.strictObject({
+  subject: z.custom<ComparisonSubject>((v) => typeof v === "object" && v !== null),
+  entries: z.array(entrySchema),
+  evaluationRunId: z.uuid().optional(),
+  method: z.enum(["proposal_auto", "proposal_confirmed", "manual"]),
+  checkedBy: z.string().min(1),
+  cfg: z.custom<QualityConfig["navily"]>((v) => typeof v === "object" && v !== null).optional(),
+  now: z.date().optional(),
+});
+
 /**
- * Writes the outcomes of one place in one transaction. An entry whose newest outcome for `(place, attribute,
- * valueHash)` is the same result or a review outcome is skipped (ruling M7-P16). Every written `deviation` opens a
- * `comparison_deviation` task (or finds the open one) whose context holds only Periplus data: place, attribute, value
- * hash, profile version, evaluation run, the result row and the own value's display; the result row keeps
- * `review_task_id` empty (it is written first). `tasks` counts tasks newly opened.
+ * Writes the outcomes of one place in one transaction. Each entry's `valueHash` must be the hash of the subject's
+ * current own value (else `StaleComparison`, nothing written). An entry whose newest outcome for `(place, attribute,
+ * valueHash)` is the same result or a review outcome is skipped (ruling M7-P16).
+ *
+ * Every written `deviation` opens a `comparison_deviation` task whose context holds only Periplus data: place,
+ * attribute, value hash, profile version, evaluation run, the result row and `ownDisplay`, which is always
+ * `comparisonValues(subject).display` (Grundprinzip 9: no caller-given text reaches the context). An open task for the
+ * same value is reused and its context refreshed to the newest deviation; a written `match` dismisses the open task of
+ * the same value (`dismissedReason` `resolved_by_match`; ruling M7-A-R1). `tasks` counts tasks newly opened.
  */
 export async function recordComparisonResults(
   db: Db,
   input: {
-    placeId: string;
+    subject: ComparisonSubject;
     entries: Array<{
       attribute: ComparisonAttribute;
       result: "match" | "deviation" | "not_at_navily";
@@ -53,62 +79,76 @@ export async function recordComparisonResults(
       profileVersion: number | null;
     }>;
     evaluationRunId?: string;
-    method: ComparisonMethod;
+    method: Exclude<ComparisonMethod, "review">;
     checkedBy: string;
-    display?: Partial<Record<ComparisonAttribute, string>>;
+    cfg?: QualityConfig["navily"];
     now?: Date;
   },
 ): Promise<{ written: number; tasks: number }> {
-  const entries = z.array(entrySchema).parse(input.entries);
+  const parsed = recordInputSchema.parse(input);
+  const { subject, entries } = parsed;
+  const placeId = subject.placeId;
   const seen = new Set<string>();
   for (const e of entries) {
     if (seen.has(e.attribute)) throw new Error(`attribute ${e.attribute} is given twice`);
     seen.add(e.attribute);
   }
+  const values = comparisonValues(subject, parsed.cfg ?? getConfig().quality.navily);
+  for (const e of entries) if (values[e.attribute].hash !== e.valueHash) throw new StaleComparison(placeId, e.attribute);
   if (entries.length === 0) return { written: 0, tasks: 0 };
-  const now = input.now ?? new Date();
-  const evaluationRunId = input.evaluationRunId ?? null;
+  const now = parsed.now ?? new Date();
+  const evaluationRunId = parsed.evaluationRunId ?? null;
 
   return db.transaction(async (tx) => {
     // concurrent recordings of the same place see each other's rows (the skip rule needs them)
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`comparison:${input.placeId}`}))`);
-    const latest = await latestComparisonResults(tx, [input.placeId]);
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`comparison:${placeId}`}))`);
+    const latest = await latestComparisonResults(tx, [placeId]);
     let written = 0;
     let tasks = 0;
     for (const e of entries) {
-      const previous = latest.get(key(input.placeId, e.attribute, e.valueHash));
+      const previous = latest.get(key(placeId, e.attribute, e.valueHash));
       if (previous && (previous.result === e.result || REVIEW_OUTCOMES.has(previous.result))) continue;
       const [row] = await tx
         .insert(comparisonResults)
         .values({
-          placeId: input.placeId,
+          placeId,
           attribute: e.attribute,
           profileVersion: e.profileVersion,
           evaluationRunId,
           valueHash: e.valueHash,
           result: e.result,
-          method: input.method,
-          checkedBy: input.checkedBy,
+          method: parsed.method,
+          checkedBy: parsed.checkedBy,
           checkedAt: now,
         })
         .returning({ id: comparisonResults.id });
       written++;
+      const subjectId = comparisonSubjectId(placeId, e.attribute, e.valueHash);
+      if (e.result === "match") {
+        await tx
+          .update(reviewTasks)
+          .set({ status: "dismissed", context: sql`${reviewTasks.context} || ${JSON.stringify({ dismissedReason: "resolved_by_match" })}::jsonb` })
+          .where(and(eq(reviewTasks.kind, "comparison_deviation"), eq(reviewTasks.subjectId, subjectId), eq(reviewTasks.status, "open")));
+      }
       if (e.result !== "deviation") continue;
-      const task = await createReviewTask(tx, {
-        kind: "comparison_deviation",
-        subjectType: "comparison",
-        subjectId: comparisonSubjectId(input.placeId, e.attribute, e.valueHash),
-        context: {
-          placeId: input.placeId,
-          attribute: e.attribute,
-          valueHash: e.valueHash,
-          profileVersion: e.profileVersion,
-          evaluationRunId,
-          resultId: row!.id,
-          ownDisplay: input.display?.[e.attribute] ?? null,
-        },
-      });
+      const context: ComparisonTaskContext = {
+        placeId,
+        attribute: e.attribute,
+        valueHash: e.valueHash,
+        profileVersion: e.profileVersion,
+        evaluationRunId,
+        resultId: row!.id,
+        ownDisplay: values[e.attribute].display,
+      };
+      const task = await createReviewTask(tx, { kind: "comparison_deviation", subjectType: "comparison", subjectId, context });
       if (task.created) tasks++;
+      else {
+        // a repeated deviation (deviation → match → deviation) points the open task at the newest result
+        await tx
+          .update(reviewTasks)
+          .set({ context })
+          .where(and(eq(reviewTasks.id, task.id), eq(reviewTasks.status, "open")));
+      }
     }
     return { written, tasks };
   });
@@ -153,7 +193,7 @@ export async function latestComparisonResults(db: Db, placeIds: string[]): Promi
 }
 
 /** The context of a `comparison_deviation` task as `recordComparisonResults` writes it. */
-export const comparisonTaskContextSchema = z.object({
+export const comparisonTaskContextSchema = z.strictObject({
   placeId: z.uuid(),
   attribute: z.enum(COMPARISON_ATTRIBUTES),
   valueHash: z.string().regex(VALUE_HASH),
@@ -161,6 +201,8 @@ export const comparisonTaskContextSchema = z.object({
   evaluationRunId: z.uuid().nullable(),
   resultId: z.uuid(),
   ownDisplay: z.string().nullable(),
+  /** Set when a later match dismissed the task. */
+  dismissedReason: z.literal("resolved_by_match").optional(),
 });
 
 export type ComparisonTaskContext = z.infer<typeof comparisonTaskContextSchema>;

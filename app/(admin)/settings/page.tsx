@@ -68,8 +68,7 @@ const DELIVERY_GROUPS: Record<Exclude<keyof AppConfig["delivery"], "schemaVersio
 };
 
 /** A target of `config/quality.json` in German: shares as percent, cost in euro, review effort in minutes. */
-function targetText(metric: keyof AppConfig["quality"]["targets"], value: number | null): string {
-  if (value === null) return "–";
+function targetText(metric: keyof AppConfig["quality"]["targets"], value: number): string {
   if (metric === "cost_per_place") return value.toLocaleString("de-DE", { style: "currency", currency: "EUR" });
   if (metric === "review_minutes_per_100") return `${value.toLocaleString("de-DE")} Min.`;
   return value.toLocaleString("de-DE", { style: "percent", maximumFractionDigits: 1 });
@@ -156,10 +155,12 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
   const qualityRows: [string, string][] = [
     ...(Object.keys(quality.targets) as (keyof typeof quality.targets)[]).map((metric): [string, string] => {
       const t = quality.targets[metric];
-      return [
-        METRIC_LABELS[metric],
-        `${t.direction === "min" ? "mindestens" : "höchstens"} ${targetText(metric, t.pilot)} im Pilot, ${targetText(metric, t.full)} im Vollbetrieb`,
+      const bound = t.direction === "min" ? "mindestens" : "höchstens";
+      const parts = [
+        t.pilot === null ? "kein Pilotziel" : `${bound} ${targetText(metric, t.pilot)} im Pilot`,
+        t.full === null ? "kein Ziel im Vollbetrieb" : `${bound} ${targetText(metric, t.full)} im Vollbetrieb`,
       ];
+      return [METRIC_LABELS[metric], parts.join(", ")];
     }),
     ["Review-Aufwand zweiter Lauf (Pilot)", `unter ${quality.secondRunReviewMinutesMax} Min.`],
     ["Orte je Kachel", `${quality.placesPerTile.min}–${quality.placesPerTile.max}`],

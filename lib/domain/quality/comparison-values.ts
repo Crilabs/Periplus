@@ -42,7 +42,7 @@ export type ComparisonSubject = {
   status: PlaceStatus;
   /** Profile attribute `place.position` (else `places.position`). */
   position: LonLat;
-  /** Profile attribute `anchor_position` (consolidated, incl. the admin's anchor); null without one. */
+  /** Profile attribute `anchor_position` (consolidated, incl. the admin's anchor); null without one. Ignored for ports and marinas. */
   anchorPosition: LonLat | null;
   attributes: Record<string, unknown>;
   /** The profile version compared; null for an evaluation profile or without a profile. */
@@ -55,6 +55,8 @@ export type ComparisonValue = { value: unknown; display: string; hash: string };
 type NavilyConfig = QualityConfig["navily"];
 
 const NONE = "–";
+/** Kinds compared (and delivered) on the place point, never on an anchor position (ruling M7-P17). */
+const HARBOUR_KINDS: ReadonlySet<PlaceKind> = new Set(["port", "marina"]);
 const POSITION_DIGITS = 4;
 
 /** First 16 hex characters of the SHA-256 of the canonical JSON of attribute and value (recipe of `valueFingerprint`). */
@@ -108,7 +110,8 @@ function normalise(attribute: ComparisonAttribute, s: ComparisonSubject, cfg: Na
     case "existence":
       return [s.status === "confirmed", s.status === "confirmed" ? "bestätigter Ort" : "kein bestätigter Ort"];
     case "position": {
-      const p = s.anchorPosition ?? s.position;
+      // the point the contract delivers (`mapSpot`): a harbour has no anchor position, only its place point
+      const p = (HARBOUR_KINDS.has(s.kind) ? null : s.anchorPosition) ?? s.position;
       return [
         { lon: round(p.lon, POSITION_DIGITS), lat: round(p.lat, POSITION_DIGITS) },
         `${fixed(p.lat, 5)}° N, ${fixed(p.lon, 5)}° O`,
