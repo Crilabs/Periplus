@@ -85,14 +85,25 @@ async function subdivisionRun(tx: Db, subdivisionKey: string) {
 }
 
 /** Generates the title image of `objectId` once (stub renderer), so its imagery and task exist. */
-async function generateTitle(tx: Db, objectId: string, runId: string) {
+async function generateTitle(tx: Db, objectId: string, runId: string, force?: boolean) {
   await generatePlaceImage(
     tx,
-    { geoObjectId: objectId, view: TITLE, runId },
+    { geoObjectId: objectId, view: TITLE, runId, force },
     { archive: memoryArchive(), transport: await syntheticImageryTransport(), imageModel: await imageModel(GOOD), model: checker(false), render: stubRender },
   );
   const [task] = await imageTasksOf(tx, `${objectId}:title`);
   return task!;
+}
+
+/** The approved image of `task` as the current title image of the spot (what `approvePlaceImage` writes, reduced). */
+async function insertApprovedTitle(tx: Db, objectId: string, task: Awaited<ReturnType<typeof generateTitle>>) {
+  const c = task.context;
+  await tx.insert(placeImages).values({
+    geoObjectId: objectId, kind: "ai_illustration", slot: "title",
+    cameraPosition: geomFromGeoJson({ type: "Point", coordinates: c.camera!.position }),
+    cameraHeightM: c.camera!.heightM, viewBearingDeg: c.camera!.viewBearingDeg, cameraTiltDeg: c.camera!.tiltDeg, cameraFovDeg: c.camera!.fovDeg,
+    renderId: c.renderId, fileKey: c.candidateKey!, width: 1536, height: 1024, alt: c.alt, generationKey: c.key,
+  });
 }
 
 describe("imageTargets", () => {
@@ -161,17 +172,36 @@ describe("imageTargets", () => {
       const task = await generateTitle(tx, spot.objectId, run.id);
       await decide(tx, task.id, "approve_image");
       // the approval's image is current: done
-      const c = task.context;
-      await tx.insert(placeImages).values({
-        geoObjectId: spot.objectId, kind: "ai_illustration", slot: "title",
-        cameraPosition: geomFromGeoJson({ type: "Point", coordinates: c.camera!.position }),
-        cameraHeightM: c.camera!.heightM, viewBearingDeg: c.camera!.viewBearingDeg, cameraTiltDeg: c.camera!.tiltDeg, cameraFovDeg: c.camera!.fovDeg,
-        renderId: c.renderId, fileKey: c.candidateKey!, width: 1536, height: 1024, alt: c.alt, generationKey: c.key,
-      });
+      await insertApprovedTitle(tx, spot.objectId, task);
       expect(await imageTargets(tx, run)).toEqual([]);
       // „Bild entfernen“ ends it
       await tx.execute(sql`update place_images set valid_to = current_date where geo_object_id = ${spot.objectId}`);
       expect(await imageTargets(tx, run)).toEqual([{ geoObjectId: spot.objectId, view: TITLE }]);
+    });
+  });
+
+  it("removed title image is a target again after „Neu erzeugen“ at the same zoom, approval and removal (R19)", async () => {
+    await withRollback(async (tx) => {
+      const sd = await insertImageSubdivision(tx);
+      const spot = await insertSpot(tx, sd.id);
+      const run = await subdivisionRun(tx, sd.key);
+      // „Neu erzeugen“ at the same zoom: the first task is decided with the key, the forced run makes a second one
+      const first = await generateTitle(tx, spot.objectId, run.id);
+      await decide(tx, first.id, "regenerate_image");
+      const second = await generateTitle(tx, spot.objectId, run.id, true);
+      expect(second.id).not.toBe(first.id);
+      expect(second.context.key).toBe(first.context.key);
+      await decide(tx, second.id, "approve_image");
+      await insertApprovedTitle(tx, spot.objectId, second);
+      expect(await imageTargets(tx, run)).toEqual([]);
+      // „Bild entfernen“: only the latest decision (the approval) counts, not the earlier „Neu erzeugen“
+      await tx.execute(sql`update place_images set valid_to = current_date where geo_object_id = ${spot.objectId}`);
+      expect(await keyDone(tx, spot.objectId, "title", second.context.key)).toBe(false);
+      expect(await imageTargets(tx, run)).toEqual([{ geoObjectId: spot.objectId, view: TITLE }]);
+      // a later „Kein Bild“ on a third task of the key makes it done again
+      const third = await generateTitle(tx, spot.objectId, run.id);
+      await decide(tx, third.id, "no_image");
+      expect(await imageTargets(tx, run)).toEqual([]);
     });
   });
 
