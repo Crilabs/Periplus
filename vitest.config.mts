@@ -54,7 +54,7 @@ export default defineConfig({
         test: {
           name: "default",
           include: ["**/__tests__/**/*.test.{ts,tsx}", "test/**/*.test.ts"],
-          exclude: ["node_modules/**", ".next/**", ...PILOT_RUN_TESTS, ...DELIVERY_FIXTURE_TESTS, ...REVISIT_FIXTURE_TESTS],
+          exclude: ["node_modules/**", ".next/**", ".claude/**", ...PILOT_RUN_TESTS, ...DELIVERY_FIXTURE_TESTS, ...REVISIT_FIXTURE_TESTS],
         },
       },
       {
