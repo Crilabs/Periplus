@@ -95,6 +95,7 @@ export const REVIEW_KIND_LABELS: Record<ReviewKind, string> = {
   coast_tile_without_area: "Küstenkachel ohne Revier",
   uncertain_change: "Unsichere Änderung",
   comparison_deviation: "Vergleichsabweichung",
+  place_image: "Titelbild",
 };
 
 export const PLACE_KIND_LABELS: Record<PlaceKind, string> = {

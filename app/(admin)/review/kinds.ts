@@ -16,6 +16,7 @@ export const REVIEW_KIND_HELP: Record<ReviewKind, string> = {
   uncertain_change:
     "Ein neuer Wert weicht vom Profil ab, ist aber zu schwach belegt (zu wenige unabhängige Quellen, keine besonders gewichtige). Das Profil behält bis zur Entscheidung den bisherigen Wert.",
   comparison_deviation: "Ein eigener Wert wich beim Qualitätsvergleich von der Vergleichsquelle ab.",
+  place_image: "KI-Titelbild eines Orts prüfen: Rendering und Illustration vergleichen, freigeben, neu erzeugen oder kein Bild.",
 };
 
 export const REVIEW_STATUS_LABELS: Record<ReviewStatus, string> = {

@@ -1,0 +1,127 @@
+import { sql } from "drizzle-orm";
+import {
+  boolean,
+  date,
+  index,
+  integer,
+  jsonb,
+  numeric,
+  pgEnum,
+  pgTable,
+  real,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
+import { geometry } from "@/lib/db/geometry";
+import { newId } from "@/lib/domain/ids";
+import { geoObjects } from "./geo";
+import { runs } from "./ops";
+import { reviewDecisions } from "./review";
+
+/*
+ * imagery_tiles and place_images are stable tables (forbid_delete, history in <table>_history), place_renders is
+ * append-only (forbid_mutation). Triggers: drizzle/0058_images_triggers.sql.
+ */
+
+export const imagerySourceEnum = pgEnum("imagery_source", [
+  "ktimatologio",
+  "sentinel2",
+  "copernicus_dem",
+  "pnoa",
+  "ign_fr",
+  "dgu_hr",
+  "vantor",
+]);
+export const placeImageKindEnum = pgEnum("place_image_kind", ["photo", "ai_illustration"]);
+export const imageLightEnum = pgEnum("image_light", ["midday", "evening"]);
+
+export type ImagerySource = (typeof imagerySourceEnum.enumValues)[number];
+export type PlaceImageKind = (typeof placeImageKindEnum.enumValues)[number];
+export type ImageLight = (typeof imageLightEnum.enumValues)[number];
+
+const validFrom = () => date("valid_from").notNull().default(sql`current_date`);
+const validTo = () => date("valid_to");
+const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
+const updatedAt = () => timestamp("updated_at", { withTimezone: true }).notNull().defaultNow();
+
+/** Aerial image or DEM tile (stable with validity; DELETE refused, history on valid_to, file_key, blank). */
+export const imageryTiles = pgTable("imagery_tiles", {
+  id: uuid("id").primaryKey().$defaultFn(newId),
+  source: imagerySourceEnum("source").notNull(),
+  tileKey: text("tile_key").notNull(),
+  bbox: geometry("bbox", "Polygon").notNull(),
+  resolutionM: real("resolution_m").notNull(),
+  acquiredAt: date("acquired_at"),
+  license: text("license").notNull(),
+  attribution: text("attribution").notNull(),
+  fileKey: text("file_key").notNull(),
+  bytes: integer("bytes").notNull(),
+  watermarked: boolean("watermarked").notNull().default(false),
+  /** All-white WMS answer (no coverage). */
+  blank: boolean("blank").notNull().default(false),
+  costEur: numeric("cost_eur", { precision: 12, scale: 6 }).notNull().default("0"),
+  validFrom: validFrom(),
+  validTo: validTo(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex("imagery_tiles_source_key_valid_unique").on(t.source, t.tileKey).where(sql`${t.validTo} is null`),
+  index("imagery_tiles_bbox_gist").using("gist", t.bbox),
+]);
+
+/** Append-only (forbid_mutation trigger). */
+export const placeRenders = pgTable("place_renders", {
+  id: uuid("id").primaryKey().$defaultFn(newId),
+  geoObjectId: uuid("geo_object_id")
+    .notNull()
+    .references(() => geoObjects.id),
+  /** `RenderCamera`: target, azimuth, height, tilt, field of view. */
+  camera: jsonb("camera").notNull(),
+  zoom: text("zoom").notNull(),
+  imageryTileIds: uuid("imagery_tile_ids").array().notNull(),
+  demTileIds: uuid("dem_tile_ids").array().notNull(),
+  photoKey: text("photo_key").notNull(),
+  maskKey: text("mask_key").notNull(),
+  depthKey: text("depth_key"),
+  rendererVersion: text("renderer_version").notNull(),
+  generationKey: text("generation_key").notNull(),
+  runId: uuid("run_id")
+    .notNull()
+    .references(() => runs.id),
+  createdAt: createdAt(),
+}, (t) => [
+  index("place_renders_geo_object_id_idx").on(t.geoObjectId),
+]);
+
+/** Approved title image of a place (stable with validity; DELETE refused, history on valid_to). */
+export const placeImages = pgTable("place_images", {
+  id: uuid("id").primaryKey().$defaultFn(newId),
+  geoObjectId: uuid("geo_object_id")
+    .notNull()
+    .references(() => geoObjects.id),
+  kind: placeImageKindEnum("kind").notNull(),
+  rank: integer("rank").notNull().default(0),
+  renderId: uuid("render_id").references(() => placeRenders.id),
+  light: imageLightEnum("light"),
+  model: text("model"),
+  promptVersion: text("prompt_version"),
+  waterIou: real("water_iou"),
+  fileKey: text("file_key").notNull(),
+  width: integer("width").notNull(),
+  height: integer("height").notNull(),
+  /** German alt text; starts with „KI-Illustration:“ for `ai_illustration`. */
+  alt: text("alt").notNull(),
+  generationKey: text("generation_key").notNull(),
+  attribution: text("attribution"),
+  license: text("license"),
+  observedAt: date("observed_at"),
+  reviewDecisionId: uuid("review_decision_id").references(() => reviewDecisions.id),
+  validFrom: validFrom(),
+  validTo: validTo(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex("place_images_current_unique").on(t.geoObjectId, t.kind).where(sql`${t.validTo} is null`),
+]);

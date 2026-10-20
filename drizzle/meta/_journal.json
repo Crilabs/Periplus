@@ -407,6 +407,20 @@
       "when": 1792533399406,
       "tag": "0057_dismiss_coast_tile_tasks",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1792532330648,
+      "tag": "0058_images_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1792532336625,
+      "tag": "0059_images_triggers",
+      "breakpoints": true
     }
   ]
 }
