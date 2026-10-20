@@ -97,14 +97,14 @@ describe("spotAsOf", () => {
       await insertVersion(tx, { areaId: west.id, publicId: id, version: 3, validFrom: "2040-06-06", deliveryId: w2, removed: true });
 
       expect(await spotAsOf(tx, archive, id, "2040-05-31")).toBeNull();
-      expect(await spotAsOf(tx, archive, id, "2040-06-02")).toEqual({ spot: spot(1, "west"), dataVersion: 1, area: west.publicId });
-      expect(await spotAsOf(tx, archive, id, "2040-06-05")).toEqual({ spot: spot(2, "east"), dataVersion: 1, area: east.publicId });
-      expect(await spotAsOf(tx, archive, id, "2040-06-07")).toEqual({ spot: spot(2, "east"), dataVersion: 1, area: east.publicId });
-      expect(await spotAsOf(tx, archive, id)).toEqual({ spot: spot(2, "east"), dataVersion: 1, area: east.publicId });
+      expect(await spotAsOf(tx, archive, id, "2040-06-02")).toEqual({ spot: spot(1, "west"), dataVersion: 1, area: west.publicId, deliveryId: w1 });
+      expect(await spotAsOf(tx, archive, id, "2040-06-05")).toEqual({ spot: spot(2, "east"), dataVersion: 1, area: east.publicId, deliveryId: e1 });
+      expect(await spotAsOf(tx, archive, id, "2040-06-07")).toEqual({ spot: spot(2, "east"), dataVersion: 1, area: east.publicId, deliveryId: e1 });
+      expect(await spotAsOf(tx, archive, id)).toEqual({ spot: spot(2, "east"), dataVersion: 1, area: east.publicId, deliveryId: e1 });
 
       const e2 = await insertDelivery(tx, archive, east, 2, { "spots.json": { spots: [] } });
       await insertVersion(tx, { areaId: east.id, publicId: id, version: 4, validFrom: "2040-06-10", deliveryId: e2, removed: true });
-      expect(await spotAsOf(tx, archive, id, "2040-06-09")).toEqual({ spot: spot(2, "east"), dataVersion: 1, area: east.publicId });
+      expect(await spotAsOf(tx, archive, id, "2040-06-09")).toEqual({ spot: spot(2, "east"), dataVersion: 1, area: east.publicId, deliveryId: e1 });
       expect(await spotAsOf(tx, archive, id, "2040-06-10")).toBeNull();
       expect(await spotAsOf(tx, archive, id)).toBeNull();
     }));

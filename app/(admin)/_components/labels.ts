@@ -28,6 +28,9 @@ import type {
   SourceStatus,
 } from "@/lib/db/schema";
 import type { ChangeSeverity, ChangeType, SummaryStatus } from "@/lib/db/schema/profiles";
+import type { DeliveryStatus } from "@/lib/db/schema/deliveries";
+import type { ChangeEntry, ContractFile } from "@/contract";
+import type { CheckName } from "@/lib/domain/delivery/validate";
 import type { ConfidenceClass, ConflictResolution, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
 import type { VersionDiff, VersionNote } from "@/lib/domain/profile-timeline";
 import type { GapReason } from "@/lib/domain/geometry/gaps";
@@ -551,3 +554,57 @@ export function profileConfidenceText(p: { profileConfidence?: unknown; profileC
   }
   return p.hasProfile === true ? "Profil ohne Konfidenz" : "kein Profil";
 }
+
+/** Status of a package build (`deliveries.status`). */
+export const DELIVERY_STATUS_LABELS: Record<DeliveryStatus, string> = {
+  valid: "Gültig",
+  rejected: "Abgelehnt",
+  unchanged: "Unverändert",
+};
+
+/** The validation checks of a package (spec 08, Teil B „Validierung“), in report order. */
+export const CHECK_LABELS: Record<CheckName, string> = {
+  json_schema: "Jede Datei entspricht ihrem JSON-Schema",
+  ids: "IDs eindeutig und mit richtigem Präfix",
+  references: "Jede referenzierte ID ist in derselben Lieferung",
+  spot_location: "Spot in der Bounding Box und höchstens 1,5 sm von Wasser",
+  shelter: "Schutz: acht Sektoren 0–1, Häfen und Marinas belegt",
+  limits: "Tiefgang und Länge im erlaubten Bereich",
+  exclude_reason: "Ausgeschlossener Spot mit Grund",
+  berth_months: "„Saisonal voll“ mit mindestens einem Monat",
+  low_confidence_note: "Geringe Konfidenz mit Hinweis „wenig belegt“",
+  highlight_radius: "Highlight mit Spot im Bedeutungsradius",
+  spot_duplicates: "Keine zwei Spots derselben Art näher als 150 m",
+  highlight_duplicates: "Keine zwei Highlights gleichen Namens näher als 500 m",
+  verbatim_text: "Kein Text länger als 15 Wörter aus einer Quelle",
+  foreign_content: "Keine fremden Inhalte",
+  data_version: "Datenversion größer als die vorherige",
+  changes_complete: "changes.json enthält genau die geänderten Objekte",
+};
+
+/** Events of `changes.json`. */
+export const CHANGE_EVENT_LABELS: Record<ChangeEntry["event"], string> = {
+  created: "Neu",
+  updated: "Geändert",
+  excluded: "Ausgeschlossen",
+  merged: "Zusammengelegt",
+  removed: "Entfernt",
+};
+
+/** Object types of `changes.json`. */
+export const CHANGE_OBJECT_TYPE_LABELS: Record<ChangeEntry["objectType"], string> = {
+  spot: "Spot",
+  highlight: "Highlight",
+  region: "Region",
+};
+
+/** What the files of a package hold. */
+export const CONTRACT_FILE_LABELS: Record<ContractFile, string> = {
+  "manifest.json": "Manifest",
+  "spots.json": "Spots",
+  "highlights.json": "Highlights",
+  "regions.json": "Regionen",
+  "coast.geojson": "Küste",
+  "weather-points.json": "Wetterpunkte",
+  "changes.json": "Änderungen",
+};

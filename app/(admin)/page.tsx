@@ -3,9 +3,10 @@ import { getDb } from "@/lib/db/client";
 import { overview, REVIEW_KINDS } from "@/lib/domain/overview";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { AutoRefresh } from "./_components/auto-refresh";
-import { REVIEW_KIND_LABELS } from "./_components/labels";
+import { DELIVERY_STATUS_LABELS, REVIEW_KIND_LABELS } from "./_components/labels";
 import { RunsTable } from "./_components/runs-table";
-import { ButtonLink, EmptyState, fmt, Meter, Mono, PageHeader, Panel, Stat, StatusDot, TextLink } from "./_components/ui";
+import { Badge, ButtonLink, EmptyState, fmt, Meter, Mono, PageHeader, Panel, Stat, StatusDot, TextLink } from "./_components/ui";
+import { DELIVERY_STATUS_TONES } from "./deliveries/status";
 
 export default async function Page() {
   await requireAdmin();
@@ -113,6 +114,33 @@ export default async function Page() {
         </div>
 
         <div className="space-y-6">
+          <Panel
+            title="Letzte Lieferungen"
+            actions={<TextLink href="/deliveries" className="text-sm">Lieferungen</TextLink>}
+            flush
+          >
+            {data.recentDeliveries.length === 0 ? (
+              <p className="px-4 py-4 text-sm text-muted">Noch kein Paket gebaut.</p>
+            ) : (
+              <ul className="divide-y divide-line text-sm">
+                {data.recentDeliveries.map((d) => (
+                  <li key={d.id}>
+                    <Link href={`/deliveries/${d.id}`} className="flex items-center justify-between gap-3 px-4 py-2 hover:bg-sunken/50">
+                      <span className="min-w-0 truncate">
+                        {d.areaName ?? "Revier"}
+                        {d.dataVersion !== null && <span className="text-muted tabular-nums"> · Version {d.dataVersion}</span>}
+                      </span>
+                      <span className="flex shrink-0 items-center gap-2">
+                        <Badge tone={DELIVERY_STATUS_TONES[d.status]}>{DELIVERY_STATUS_LABELS[d.status]}</Badge>
+                        <span className="text-xs whitespace-nowrap text-muted">{fmt.dateTime(d.generatedAt)}</span>
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
+
           <Panel
             title="Warteschlangen"
             description={

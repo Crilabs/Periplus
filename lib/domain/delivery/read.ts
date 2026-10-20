@@ -112,7 +112,16 @@ export function deliveryFiles(row: DeliveryRow): ContractFile[] {
  * not match its recorded sha256 throws: the API never serves bytes other than the manifest describes.
  */
 export async function readDeliveryFile(archive: Archive, row: DeliveryRow, file: ContractFile): Promise<Uint8Array | null> {
-  if (row.status !== "valid" || row.storagePrefix === null || !Object.hasOwn(row.fileHashes, file)) return null;
+  return row.status === "valid" ? readStoredFile(archive, row, file) : null;
+}
+
+/**
+ * The stored bytes of one file of any stored delivery, a rejected one too (admin diagnosis, never the API): null for an
+ * `unchanged` row or a file the row does not list; a missing object or bytes that do not match the recorded sha256
+ * throw.
+ */
+export async function readStoredFile(archive: Archive, row: DeliveryRow, file: ContractFile): Promise<Uint8Array | null> {
+  if (row.storagePrefix === null || !Object.hasOwn(row.fileHashes, file)) return null;
   const key = `${row.storagePrefix}${file}`;
   const bytes = await archive.get(key);
   if (bytes === null) throw new Error(`package file ${key} of delivery ${row.id} is missing`);
@@ -230,7 +239,7 @@ export async function changesSince(
 
 /**
  * The spot `publicId` as delivered on `asOf` (`YYYY-MM-DD`; without it the latest), with the data version and area
- * (`ar_…`) of the package that introduced that version; null when no package delivered it then.
+ * (`ar_…`) and the id of the delivery that introduced that version; null when no package delivered it then.
  *
  * Spot versions count per public id across areas (ruling M6-P13): a spot that moves to another area continues its
  * versions there, and its old area later reports it `removed` with a higher version. So per area only the area's
@@ -245,7 +254,7 @@ export async function spotAsOf(
   archive: Archive,
   publicId: string,
   asOf?: string,
-): Promise<{ spot: Spot; dataVersion: number; area: string } | null> {
+): Promise<{ spot: Spot; dataVersion: number; area: string; deliveryId: string } | null> {
   const { rows } = await db.execute<{ first_delivery_id: string; area_public_id: string }>(sql`
     with latest as (
       select distinct on (o.area_id) o.area_id, o.profile_version, o.removed, o.first_delivery_id
@@ -267,7 +276,7 @@ export async function spotAsOf(
   const [row] = await db.select().from(deliveries).where(eq(deliveries.id, found.first_delivery_id));
   const spot = (await readJsonFile<SpotsFile>(archive, row!, "spots.json")).spots.find((s) => s.id === publicId);
   if (!spot) throw new Error(`spot ${publicId} is not in spots.json of delivery ${row!.id}`);
-  return { spot, dataVersion: row!.dataVersion!, area: found.area_public_id };
+  return { spot, dataVersion: row!.dataVersion!, area: found.area_public_id, deliveryId: row!.id };
 }
 
 const isoDate = z.iso.date();

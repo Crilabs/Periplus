@@ -15,6 +15,7 @@ const ICONS: Record<string, ReactNode> = {
   map: <path d="M3 5.5 7.5 4l5 1.5L17 4v10.5L12.5 16l-5-1.5L3 16V5.5ZM7.5 4v10.5M12.5 5.5V16" />,
   sources: <path d="M5 3.5h7l3 3V16.5H5v-13ZM12 3.5v3h3M7.5 10h5M7.5 13h5" />,
   runs: <path d="M6 4.5v11l9-5.5-9-5.5Z" />,
+  deliveries: <path d="M3.5 6.5 10 3.5l6.5 3v7L10 16.5l-6.5-3v-7ZM3.5 6.5 10 9.5l6.5-3M10 9.5v7" />,
   jobs: <path d="M3.5 6h13M3.5 10h13M3.5 14h8" />,
   costs: <path d="M14.5 5.5A5.5 5.5 0 1 0 14.5 14.5M4 8.5h7M4 11.5h7" />,
   quality: <path d="M10 3 4.5 5v4.5c0 3.5 2.4 6 5.5 7.5 3.1-1.5 5.5-4 5.5-7.5V5L10 3ZM7.5 10l2 2 3-3.5" />,
@@ -39,6 +40,7 @@ const GROUPS: Array<{ label?: string; items: Array<{ href: string; label: string
       { href: "/sources", label: "Quellen", icon: "sources" },
       { href: "/runs", label: "Läufe", icon: "runs" },
       { href: "/quality", label: "Qualität", icon: "quality" },
+      { href: "/deliveries", label: "Lieferungen", icon: "deliveries" },
     ],
   },
   {

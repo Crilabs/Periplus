@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { testDb } from "@/test/db";
 import { newId } from "@/lib/domain/ids";
-import { authenticateApiClient, createApiClient, revokeApiClient, revokeApiClientByName } from "@/lib/domain/api-clients";
+import { authenticateApiClient, createApiClient, listApiClients, revokeApiClient, revokeApiClientByName } from "@/lib/domain/api-clients";
+import { withRollback } from "@/test/db";
 import { generateApiKey, hashApiKey } from "@/lib/security/api-keys";
 
 const db = testDb();
@@ -17,6 +18,28 @@ describe("api keys", () => {
 });
 
 describe("api clients", () => {
+  it("revoking an api client makes its key fail", () =>
+    withRollback(async (tx) => {
+      const active = await createApiClient(tx, { name: `test-${newId()}`, scopes: ["delivery:read"], rateLimitPerMin: 7 });
+      const gone = await createApiClient(tx, { name: `test-${newId()}`, scopes: ["delivery:read"] });
+      await revokeApiClient(tx, gone.id);
+      const listed = await listApiClients(tx);
+      expect(listed.find((c) => c.id === active.id)).toEqual({
+        id: active.id,
+        name: expect.stringMatching(/^test-/),
+        scopes: ["delivery:read"],
+        rateLimitPerMin: 7,
+        createdAt: expect.any(Date),
+        revokedAt: null,
+      });
+      expect(listed.find((c) => c.id === gone.id)!.revokedAt).toBeInstanceOf(Date);
+      // active clients first, never a key or its hash
+      expect(listed.findIndex((c) => c.id === active.id)).toBeLessThan(listed.findIndex((c) => c.id === gone.id));
+      expect(Object.keys(listed[0]!)).not.toContain("keyHash");
+      expect(await authenticateApiClient(tx, `Bearer ${gone.key}`)).toBeNull();
+      expect(await authenticateApiClient(tx, `Bearer ${active.key}`)).not.toBeNull();
+    }));
+
   it("authenticates a created key and rejects a revoked one", async () => {
     const { id, key } = await createApiClient(db, { name: `test-${newId()}`, scopes: ["delivery:read"], rateLimitPerMin: 5 });
     const client = await authenticateApiClient(db, `Bearer ${key}`);

@@ -66,6 +66,7 @@ describe("overview", () => {
     });
     expect(result.budgets).toHaveLength(5);
     expect(result.recentRuns.length).toBeLessThanOrEqual(5);
+    expect(result.recentDeliveries.length).toBeLessThanOrEqual(5);
   });
 
   it("counts a real queued job identically in overview and queuesView", async () => {

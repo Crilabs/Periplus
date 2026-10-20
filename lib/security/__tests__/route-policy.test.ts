@@ -33,6 +33,13 @@ describe("ROUTE_POLICY", () => {
     expect(Object.keys(ROUTE_POLICY).sort()).toEqual(routes.sort());
   });
 
+  it("the delivery admin pages and the file download need an admin session", () => {
+    for (const route of ["/deliveries", "/deliveries/[id]", "/deliveries/[id]/files/[file]"]) {
+      expect(ROUTE_POLICY[route], route).toEqual({ kind: "admin" });
+    }
+    expect(matchRoute("/deliveries/0199f0a0-0000-7000-8000-000000000001/files/spots.json")?.pattern).toBe("/deliveries/[id]/files/[file]");
+  });
+
   it("gives /api/v1/ping the delivery:read scope", () => {
     expect(ROUTE_POLICY["/api/v1/ping"]).toEqual({ kind: "api", scope: "delivery:read" });
   });

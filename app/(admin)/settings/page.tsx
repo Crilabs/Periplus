@@ -1,12 +1,19 @@
 import { getConfig, type AppConfig } from "@/lib/config";
+import { getDb } from "@/lib/db/client";
+import { listApiClients } from "@/lib/domain/api-clients";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { Dialog } from "../_components/dialog";
 import {
+  Badge,
+  Button,
   cx,
   DescriptionList,
+  EmptyState,
+  fmt,
   Mono,
+  Notice,
   PageHeader,
   Panel,
   Table,
@@ -14,6 +21,7 @@ import {
   thClass,
   trClass,
 } from "../_components/ui";
+import { revokeApiClientAction } from "./actions";
 
 const LEVEL_LABELS: Record<FactLevel, string> = {
   place: "Ort",
@@ -67,8 +75,10 @@ function parameterText(value: unknown, prefix = ""): string[] {
   return [prefix ? `${prefix}: ${shown}` : shown];
 }
 
-export default async function Page() {
+export default async function Page({ searchParams }: PageProps<"/settings">) {
   await requireAdmin();
+  const revoked = (await searchParams).notice === "api_client_revoked";
+  const apiClients = await listApiClients(getDb());
   const { areas, gazetteer, ...rest } = getConfig();
   const { geometry, factSchema, fetch, embeddings, models, consolidation, delivery } = rest;
   const exceptions = Object.entries(fetch.converterBySource);
@@ -288,6 +298,69 @@ export default async function Page() {
           />
         </Panel>
       </div>
+
+      <Panel
+        id="api-clients"
+        title="API-Clients"
+        description="Abnehmer, die Pakete über die Liefer-API abrufen. Anlegen per CLI (npm run apikey:create -- <name> --scope delivery:read); der Schlüssel wird nur dabei einmal angezeigt. „Sperren“ wirkt sofort und lässt sich nicht zurücknehmen."
+        className="mt-6"
+        flush
+      >
+        {revoked && (
+          <div className="border-b border-line p-4">
+            <Notice tone="ok">API-Client gesperrt. Sein Schlüssel wird ab sofort abgewiesen.</Notice>
+          </div>
+        )}
+        {apiClients.length === 0 ? (
+          <EmptyState title="Noch kein API-Client">Mit npm run apikey:create -- &lt;name&gt; --scope delivery:read anlegen.</EmptyState>
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <th className={thClass}>Name</th>
+                <th className={thClass}>Rechte</th>
+                <th className={`${thClass} text-right`}>Anfragen/Min.</th>
+                <th className={thClass}>Angelegt</th>
+                <th className={thClass}>Status</th>
+                <th className={thClass}>
+                  <span className="sr-only">Aktion</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {apiClients.map((c) => (
+                <tr key={c.id} className={trClass}>
+                  <td className={cx(tdClass, "font-medium")}>{c.name}</td>
+                  <td className={tdClass}>
+                    <Mono>{c.scopes.join(", ") || "keine"}</Mono>
+                  </td>
+                  <td className={cx(tdClass, "text-right tabular-nums")}>{c.rateLimitPerMin}</td>
+                  <td className={cx(tdClass, "whitespace-nowrap")}>{fmt.date(c.createdAt)}</td>
+                  <td className={tdClass}>
+                    {c.revokedAt ? <Badge>Gesperrt seit {fmt.date(c.revokedAt)}</Badge> : <Badge tone="ok">Aktiv</Badge>}
+                  </td>
+                  <td className={cx(tdClass, "text-right")}>
+                    {!c.revokedAt && (
+                      <Dialog
+                        trigger="Sperren"
+                        triggerVariant="danger"
+                        triggerSize="sm"
+                        title={`API-Client „${c.name}“ sperren?`}
+                        description="Sein Schlüssel wird ab sofort abgewiesen. Für den Abnehmer muss danach per CLI ein neuer Client angelegt werden."
+                      >
+                        <form action={revokeApiClientAction} className="flex justify-end">
+                          <input type="hidden" name="id" value={c.id} />
+                          <Button variant="danger">Endgültig sperren</Button>
+                        </form>
+                      </Dialog>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Panel>
 
       <Panel
         title="Modelle je Aufgabe"
