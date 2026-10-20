@@ -73,6 +73,8 @@ export const modelsSchema = z
       }),
     ),
     cacheWriteFactor: z.number().nonnegative(),
+    /** Timeout of one real-time model call (no SDK retry; the job retry resends, SEC-2). */
+    callTimeoutSeconds: z.number().int().positive(),
     /** Message Batches: price factor, poll interval, give-up time and requests per batch, and the send protocol. */
     batch: z
       .strictObject({

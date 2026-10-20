@@ -6,7 +6,7 @@ import { createSimulatedFetcher, simulatedTransport, type SimulatedFetcher } fro
 import { getTransport, type Transport } from "@/lib/adapters/http";
 import { runPdftotext } from "@/lib/adapters/pdf";
 import { getArchive } from "@/lib/adapters/s3";
-import { createAnthropicClient } from "@/lib/ai/anthropic";
+import { modelClientFor } from "./ai-batch";
 import { getConfig } from "@/lib/config";
 import { parseScenario, readScenarioFile } from "@/lib/domain/revisit/scenario";
 import { getEnv, type Env } from "@/lib/env";
@@ -117,7 +117,8 @@ export const fetchUrlHandler: JobHandler<JobData> = async (data, ctx) => {
     : {
         transport: getCrawlTransport(),
         converters: createConverters({ transport: getTransport(), renderPage: crawlRenderPage(), cfg }),
-        pdf: { pdftotext: runPdftotext, model: getEnv().ANTHROPIC_API_KEY ? createAnthropicClient(ctx.db) : undefined },
+        // The model client of the worker (`setModelClientFactory`), like every other AI stage (OPS-7).
+        pdf: { pdftotext: runPdftotext, model: getEnv().ANTHROPIC_API_KEY ? modelClientFor(ctx.db) : undefined },
       };
   const result = await fetchUrl(
     ctx.db,
