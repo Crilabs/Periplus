@@ -20,24 +20,26 @@ function Picture({ fileKey, alt }: { fileKey: string; alt: string }) {
   return <img src={imageFileHref(fileKey)} alt={alt} className="w-full rounded-md border border-line bg-sunken" />;
 }
 
-function ImagePanel({ placeId, image }: { placeId: string; image: CurrentImage }) {
+function ImagePanel({ placeId, image, editable }: { placeId: string; image: CurrentImage; editable: boolean }) {
   return (
     <Panel
       title={slotLabel(image.slot)}
       actions={
-        <Dialog
-          trigger="Bild entfernen …"
-          triggerVariant="danger"
-          triggerSize="sm"
-          title="Bild entfernen"
-          description="Das Bild wird beendet und nicht mehr geliefert. Es bleibt als Verlauf erhalten; ein neues lässt sich über „Weitere Ansicht erzeugen“ oder einen Lauf anlegen."
-        >
-          <form action={removePlaceImageAction} className="flex justify-end">
-            <input type="hidden" name="placeId" value={placeId} />
-            <input type="hidden" name="imageId" value={image.id} />
-            <Button variant="danger">Entfernen</Button>
-          </form>
-        </Dialog>
+        editable && (
+          <Dialog
+            trigger="Bild entfernen …"
+            triggerVariant="danger"
+            triggerSize="sm"
+            title="Bild entfernen"
+            description="Das Bild wird beendet und nicht mehr geliefert. Es bleibt als Verlauf erhalten; ein neues lässt sich über „Weitere Ansicht erzeugen“ oder einen Lauf anlegen."
+          >
+            <form action={removePlaceImageAction} className="flex justify-end">
+              <input type="hidden" name="placeId" value={placeId} />
+              <input type="hidden" name="imageId" value={image.id} />
+              <Button variant="danger">Entfernen</Button>
+            </form>
+          </Dialog>
+        )
       }
     >
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
@@ -77,7 +79,7 @@ function ImagePanel({ placeId, image }: { placeId: string; image: CurrentImage }
 }
 
 /**
- * Tab „Titelbild“ of the place page (spec 13): every current image of the place (title image and further views) with
+ * Tab „Bilder“ of the place page (spec 13): every current image of the place (title image and further views) with
  * its kind, light, sources, imagery date and camera, the render and mask behind it, the draft waiting for approval, and
  * the form for a further view.
  */
@@ -106,7 +108,7 @@ export function ImageTab({
       )}
       {view.blockedBy.length > 0 && (
         <Notice tone="warn" title="Nicht geliefert">
-          Nicht geliefert: Freigabe Luftbildquelle {view.blockedBy.join(", ")} fehlt
+          {view.blockedBy.map((source) => `Freigabe Luftbildquelle ${source} fehlt`).join(". ")}
         </Notice>
       )}
 
@@ -125,14 +127,14 @@ export function ImageTab({
 
       {images.length === 0 && candidates.length === 0 && (
         <Panel>
-          <EmptyState title="Noch kein Titelbild">
-            Ein Titelbild entsteht mit dem Lauf „Titelbilder erzeugen“ des Landesteils oder über „Weitere Ansicht erzeugen“.
+          <EmptyState title="Noch keine Bilder">
+            Das Titelbild entsteht mit dem Lauf „Titelbilder erzeugen“ des Landesteils oder über „Weitere Ansicht erzeugen“.
           </EmptyState>
         </Panel>
       )}
 
       {images.map((image) => (
-        <ImagePanel key={image.id} placeId={placeId} image={image} />
+        <ImagePanel key={image.id} placeId={placeId} image={image} editable={editable} />
       ))}
 
       {editable && (

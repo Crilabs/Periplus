@@ -5,7 +5,7 @@ const E2E_PASSWORD = process.env.E2E_PASSWORD!;
 /** Created by global-setup: a place with an approved title image built on the cadastre imagery. */
 const PLACE = process.env.E2E_IMAGE_PLACE!;
 
-test("the Titelbild tab shows the approved image, its camera and why it is not delivered", async ({ page }, testInfo) => {
+test("the Bilder tab shows the approved image, its camera and why it is not delivered", async ({ page }, testInfo) => {
   await page.goto("/login");
   await page.getByLabel("E-Mail").fill(E2E_EMAIL);
   await page.getByLabel("Passwort").fill(E2E_PASSWORD);
@@ -13,12 +13,12 @@ test("the Titelbild tab shows the approved image, its camera and why it is not d
   await expect(page.getByRole("heading", { name: "Übersicht" })).toBeVisible();
 
   await page.goto(`/places/${PLACE}`);
-  await page.getByRole("link", { name: "Titelbild" }).click();
+  await page.getByRole("link", { name: "Bilder", exact: true }).click();
   await expect(page).toHaveURL(/tab=image/);
 
   await expect(page.getByText("KI-Illustration", { exact: true })).toBeVisible();
   await expect(page.getByText("Mittag")).toBeVisible();
-  await expect(page.getByText("Nicht geliefert: Freigabe Luftbildquelle ktimatologio fehlt")).toBeVisible();
+  await expect(page.getByText("Freigabe Luftbildquelle ktimatologio fehlt")).toBeVisible();
   await expect(page.getByText("Aufnahme von S, Blick nach N (0°), 260 m Höhe, Neigung 30°")).toBeVisible();
 
   // the pictures come from the archive through the admin route

@@ -5,7 +5,7 @@ import { imageBlockedBy, imageSources } from "./delivery-gate";
 import { allowedZooms } from "./render-plan";
 
 /*
- * What the admin shows of a place's images (tab „Titelbild“) and of a Landesteil's image coverage (spec 13, UI-Anteil).
+ * What the admin shows of a place's images (tab „Bilder“) and of a Landesteil's image coverage (spec 13, UI-Anteil).
  */
 
 export type ImageCamera = { position: { lon: number; lat: number }; heightM: number; viewBearingDeg: number; tiltDeg: number; fovDeg: number };

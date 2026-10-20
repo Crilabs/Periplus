@@ -181,10 +181,10 @@ Fachlogik in `lib/domain/images/`, Ablauf in `lib/pipeline/images/`, Adapter in 
 
 ## UI-Anteil (Teil-Spec 09)
 
-- Ortsseite: Titelbild mit Art, Licht und Quellen; Rendering und Maske aufklappbar.
+- Ortsseite: Bilder mit Art, Licht und Quellen; Rendering und Maske aufklappbar.
 - Review `place_image` wie in Teil D.
 - Seite des Landesteils (`/subdivisions/<Schlüssel>`): Abdeckung (Orte, mit Luftbild, mit freigegebenem Bild, lieferbar, Median der Wasser-IoU, Anteil abgelehnt, Kosten der Luftbilder und der Bilderzeugung) und die Schaltfläche „Titelbilder erzeugen“.
-- Ortsseite, Reiter „Titelbild“: alle aktuellen Bilder mit Kamera, der Entwurf aus der offenen Prüfung, „Weitere Ansicht erzeugen“ und „Bild entfernen“.
+- Ortsseite, Reiter „Bilder“ (ein Spot hat mehrere Bilder; das Titelbild heißt darin „Titelbild“): alle aktuellen Bilder mit Kamera, der Entwurf aus der offenen Prüfung, „Weitere Ansicht erzeugen“ und „Bild entfernen“.
 
 ## Kennzahlen (je Landesteil)
 

@@ -345,7 +345,7 @@ async function createPlaceImageScene(db: Db): Promise<{ taskId: string; name: st
 /**
 
 /**
- * A place whose title image is approved (tab „Titelbild“): a render of the cadastre imagery (source `ktimatologio`, not
+ * A place whose title image is approved (tab „Bilder“): a render of the cadastre imagery (source `ktimatologio`, not
  * delivered while `images.delivery.ktimatologio` is false) and the current image, files in the test archive. Returns
  * the place id.
  */

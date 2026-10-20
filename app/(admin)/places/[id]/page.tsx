@@ -72,7 +72,7 @@ const TABS = {
   geometry: "Geometrie",
   facts: "Facts",
   profile: "Profil",
-  image: "Titelbild",
+  image: "Bilder",
   timeline: "Zeitachse",
   sources: "Quellen",
   delivery: "Lieferung",
