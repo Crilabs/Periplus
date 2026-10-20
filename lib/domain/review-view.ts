@@ -35,13 +35,14 @@ import { formatReviewValue, profileAttributeLabel } from "@/lib/domain/consolida
 import { comparisonTaskContextSchema } from "@/lib/domain/quality/comparison-results";
 import type { ComparisonAttribute } from "@/lib/db/schema/quality";
 import { canonicalJson } from "@/lib/domain/facts/schema";
-import { factViewsByIds, type FactView } from "@/lib/domain/geo-facts";
+import { factViewsByIds, geoFacts, type FactView } from "@/lib/domain/geo-facts";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { candidateObjects, withNeighbours } from "@/lib/domain/mentions/scope";
 import {
   afterInQueue,
   nameCandidateRing,
   newNameObjectType,
+  suggestedKindForHint,
   nextOpenTask,
   QUEUE_ORDER,
   valueFingerprint,
@@ -127,6 +128,11 @@ export type ReviewSubject =
       helperName: string | null;
       /** The restricted areas of a restricted-area review (`context.reason = "restricted"`); null for another task. */
       restrictions: RestrictionView[] | null;
+      /**
+       * The object's facts so far, newest active fact per attribute with the number of facts (spec 09 „bisherige Facts,
+       * Quelle mit Gewicht“, UI-13): computed shelter and depth, text facts with their source.
+       */
+      facts: Array<{ attribute: string; newest: FactView; count: number }>;
     }
   | {
       type: "geo_object_pair";
@@ -194,6 +200,8 @@ export type ReviewSubject =
       tile: { id: string; bbox: Polygon } | null;
       /** The geo object "create place" makes for each place kind (from the hint, else the kind). */
       objectTypes: Record<PlaceKind, { type: GeoObjectType; category: PoiCategory | null }>;
+      /** The kind the form starts with, from the name's hint (`suggestedKindForHint`). */
+      suggestedKind: PlaceKind;
       hits: NominatimHit[];
       occurrences: NameOccurrenceView[];
       /** Valid objects of the candidate space (tile and neighbours), nearest to the tile centre first. */
@@ -715,6 +723,7 @@ async function nameCandidateSubject(db: Db, candidateId: string, context: Record
       PlaceKind,
       { type: GeoObjectType; category: PoiCategory | null }
     >,
+    suggestedKind: suggestedKindForHint(candidate.hint),
     hits: lenientArray(hitSchema, context.hits),
     occurrences: found.map((o) => ({ ...o, url: urls.get(o.documentId) ?? null })),
     objects: objects.map((o) => ({ id: o.id, name: o.name, type: o.type, distanceM: Number(o.distance_m) })),
@@ -841,6 +850,9 @@ async function placeSubject(db: Db, placeId: string, helperName: string | null, 
     })),
     helperName,
     restrictions: await restrictionViews(db, context),
+    facts: (await geoFacts(db, place.geoObjectId, { runs: "active" }))
+      .filter((g) => g.facts.length > 0)
+      .map((g) => ({ attribute: g.attribute, newest: g.facts[0]!, count: g.facts.length })),
   };
 }
 

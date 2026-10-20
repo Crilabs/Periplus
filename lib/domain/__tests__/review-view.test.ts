@@ -18,6 +18,8 @@ import { newId } from "@/lib/domain/ids";
 import { createReviewTask } from "@/lib/domain/review";
 import { DEFAULT_CRAWL_RULES } from "@/lib/domain/sources/crawl-rules";
 import { listOpenTasks, nextTaskHref, reviewCounts, reviewTaskDetail } from "@/lib/domain/review-view";
+import { suggestedKindForHint } from "@/lib/domain/review-decisions";
+import { insertComputation, insertPlace as insertTestPlace } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 
 // Synthetic data in open sea outside the pilot box 23.0-23.75 E x 37.0-38.0 N, at a spot no other test uses.
@@ -323,4 +325,23 @@ describe("review view", () => {
       const afterRegular = await nextTaskHref(tx, ids[5]!);
       expect(afterRegular).not.toBe(`/review/${ids[6]}`);
     }, { isolationLevel: "repeatable read" }));
+
+  it("a place candidate's task shows the object's facts so far, newest per attribute with source and count (UI-13)", () =>
+    withRollback(async (tx) => {
+      const place = await insertTestPlace(tx, { lon: 26.36, lat: 34.36, name: "Facts Bay", status: "candidate" });
+      await insertComputation(tx, place.objectId, "depth", { depth: { min: 4, max: 8 } }, { createdAt: new Date("2026-09-01T10:00:00Z") });
+      await insertComputation(tx, place.objectId, "depth", { depth: { min: 5, max: 9 } }, { createdAt: new Date("2026-10-01T10:00:00Z") });
+      const { id } = await createReviewTask(tx, { kind: "place_candidate", subjectType: "place", subjectId: place.placeId, context: {} });
+      const subject = (await reviewTaskDetail(tx, id))!.subject;
+      if (subject.type !== "place") throw new Error(subject.type);
+      const depth = subject.facts.find((f) => f.attribute === "depth");
+      expect(depth).toMatchObject({ count: 2, newest: { value: { min: 5, max: 9 }, origin: "computed", source: null } });
+    }));
+
+  it("„Ort anlegen“ of a new name starts with the kind its hint suggests (UI-13)", () => {
+    expect(suggestedKindForHint("harbour")).toBe("port");
+    expect(suggestedKindForHint("marina")).toBe("marina");
+    expect(suggestedKindForHint("bay")).toBe("anchorage");
+    expect(suggestedKindForHint(null)).toBe("anchorage");
+  });
 });

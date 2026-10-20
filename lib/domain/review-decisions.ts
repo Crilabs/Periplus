@@ -568,6 +568,13 @@ export function newNameObjectType(hint: string | null, kind: PlaceKind): { type:
   return { type: kind === "port" || kind === "marina" ? "harbour" : "bay", category: null };
 }
 
+/** The place kind „Ort anlegen“ suggests for a name's hint (UI-13): a harbour a port, a marina a marina, else an anchorage. */
+export function suggestedKindForHint(hint: string | null): PlaceKind {
+  if (hint === "harbour") return "port";
+  if (hint === "marina") return "marina";
+  return "anchorage";
+}
+
 /** Types that get a place when a new name creates them. */
 const PLACE_TYPES: readonly GeoObjectType[] = ["bay", "harbour"];
 

@@ -32,6 +32,7 @@ export function NameCandidateCreate({
   features,
   hits,
   objectTypes,
+  suggestedKind,
   open,
   question,
   children,
@@ -42,11 +43,13 @@ export function NameCandidateCreate({
   features: GeoJSON.FeatureCollection;
   hits: Hit[];
   objectTypes: Record<PlaceKind, { type: GeoObjectType; category: PoiCategory | null }>;
+  /** The kind the form starts with (from the name's hint). */
+  suggestedKind: PlaceKind;
   open: boolean;
   question?: ReactNode;
   children?: ReactNode;
 }) {
-  const [kind, setKind] = useState<PlaceKind>("anchorage");
+  const [kind, setKind] = useState<PlaceKind>(suggestedKind);
   const [position, setPosition] = useState<{ lon: number; lat: number } | null>(
     hits[0] ? { lon: hits[0].lon, lat: hits[0].lat } : null,
   );

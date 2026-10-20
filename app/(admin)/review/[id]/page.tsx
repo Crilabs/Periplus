@@ -22,6 +22,9 @@ import {
   COMPARISON_ATTRIBUTE_LABELS,
   CRAWL_RULE_LABELS,
   DOC_TYPE_LABELS,
+  FACT_ORIGIN_LABELS,
+  factAttributeLabel,
+  formatFactValue,
   GEO_OBJECT_TYPE_LABELS,
   GEO_ORIGIN_LABELS,
   NAME_CANDIDATE_STATUS_LABELS,
@@ -395,6 +398,49 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
                 <NearbyList nearby={subject.nearby} />
               </Panel>
             </div>
+            <Panel
+              title="Bisherige Facts"
+              description="Je Attribut der neueste Fact: berechnet (Schutz, Tiefe) oder aus Texten mit Quelle und Gewicht."
+              actions={
+                subject.facts.length > 0 && (
+                  <TextLink href={`/places/${subject.place.id}?tab=facts`} className="text-sm">
+                    Alle Facts
+                  </TextLink>
+                )
+              }
+              flush
+            >
+              {subject.facts.length === 0 ? (
+                <EmptyState title="Noch keine Facts">Facts entstehen mit dem Geometrie-Lauf und der Auswertung der Texte.</EmptyState>
+              ) : (
+                <Table>
+                  <thead>
+                    <tr>
+                      <th className={thClass}>Attribut</th>
+                      <th className={thClass}>Wert</th>
+                      <th className={thClass}>Herkunft</th>
+                      <th className={thClass}>Quelle (Gewicht)</th>
+                      <th className={cx(thClass, "text-right")}>Facts</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {subject.facts.map(({ attribute, newest, count }) => (
+                      <tr key={attribute} className={trClass}>
+                        <td className={tdClass}>{factAttributeLabel(attribute)}</td>
+                        <td className={tdClass}>{formatFactValue(attribute, newest.value)}</td>
+                        <td className={tdClass}>{FACT_ORIGIN_LABELS[newest.origin]}</td>
+                        <td className={tdClass}>
+                          {newest.source
+                            ? `${newest.source.domain} (${newest.source.weight.toLocaleString("de-DE", { maximumFractionDigits: 2 })})`
+                            : "–"}
+                        </td>
+                        <td className={cx(tdClass, numClass)}>{count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              )}
+            </Panel>
           </>
         )}
 
@@ -520,6 +566,7 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
               features={features}
               hits={subject.hits}
               objectTypes={subject.objectTypes}
+              suggestedKind={subject.suggestedKind}
               open={open}
               question="Wofür steht der Name? Neu anlegen, einem bekannten Objekt zuordnen oder verwerfen."
             >
