@@ -1,8 +1,9 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geoObjects, subdivisions, type SubdivisionStatus } from "@/lib/db/schema";
 import type { Bbox } from "@/lib/domain/tiles";
-import { addNames } from "@/lib/domain/gazetteer/names";
+import { addNames, displayNameSql } from "@/lib/domain/gazetteer/names";
 import { newPublicId } from "@/lib/domain/ids";
 import type { AdminUnit, PlannedSubdivision } from "./plan";
 
@@ -259,4 +260,33 @@ export async function subdivisionByKey(db: Db, key: string): Promise<Subdivision
   const r = rows[0];
   if (!r) return null;
   return { id: r.id, publicId: r.publicId, key: r.key, country: r.country, status: r.status, bbox: [r.w, r.s, r.e, r.n] };
+}
+
+/**
+ * The valid subdivision `key`; throws `Unbekannter Landesteil <key>` for an unknown one, and names the replacement for
+ * a leftover configured area key (`saronic`): a run is scoped by a subdivision now.
+ */
+export async function requireSubdivision(db: Db, key: string): Promise<SubdivisionRef> {
+  const sub = await subdivisionByKey(db, key);
+  if (sub) return sub;
+  if (getConfig().areas.some((a) => a.key === key)) {
+    throw new Error(`Revier-Schlüssel ${key} ist kein Laufumfang mehr; Landesteil angeben (z. B. GR-I)`);
+  }
+  throw new Error(`Unbekannter Landesteil ${key}`);
+}
+
+export type SubdivisionOption = { key: string; country: string; name: string };
+
+/**
+ * The valid, not excluded subdivisions for a run start dialog: the German name of the admin region (else the key),
+ * ordered by country, then name.
+ */
+export async function listSubdivisionOptions(db: Db): Promise<SubdivisionOption[]> {
+  const rows = await db
+    .select({ key: subdivisions.key, country: subdivisions.country, name: displayNameSql(subdivisions.geoObjectId) })
+    .from(subdivisions)
+    .where(and(isNull(subdivisions.validTo), ne(subdivisions.status, "excluded")));
+  return rows
+    .map((r) => ({ key: r.key, country: r.country, name: r.name ?? r.key }))
+    .sort((a, b) => a.country.localeCompare(b.country) || a.name.localeCompare(b.name, "de") || a.key.localeCompare(b.key));
 }

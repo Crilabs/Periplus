@@ -2,11 +2,13 @@ import type { Metadata } from "next";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { listRuns } from "@/lib/domain/runs";
+import { listSubdivisionOptions } from "@/lib/domain/subdivisions/store";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { AutoRefresh } from "../_components/auto-refresh";
 import { Dialog } from "../_components/dialog";
 import { runScopeError } from "../_components/labels";
 import { RunsTable } from "../_components/runs-table";
+import { SubdivisionOptions } from "../_components/subdivision-options";
 import { Button, cx, inputClass, Notice, PageHeader, Panel } from "../_components/ui";
 import {
   startDatasetImportAction,
@@ -21,39 +23,44 @@ import {
 
 export const metadata: Metadata = { title: "Läufe" };
 
-type AreaRun = {
+type ScopedRun = {
   id: string;
   name: string;
   description: string;
   action: (input: FormData) => Promise<void>;
   button: string;
+  /** What the run is scoped by: a subdivision (Landesteil) or, until plan 14a task 9, a configured area (Revier). */
+  scope: "subdivision" | "area";
 };
 
-/** The area runs of the start dialog, in pipeline order; each says what it does and what it needs first. */
-const AREA_RUNS: AreaRun[] = [
+/** The runs of the start dialog, in pipeline order; each says what it does and what it needs first. */
+const RUNS: ScopedRun[] = [
   {
     id: "gazetteer",
     name: "Gazetteer",
     description:
-      "Legt die Kacheln des Reviers an und sammelt Inseln, Buchten, Häfen, Orte und Highlights aus OSM, Wikidata und GeoNames. Erster Lauf für ein neues Revier.",
+      "Legt die Kacheln des Landesteils an und sammelt Inseln, Buchten, Häfen, Orte und Highlights aus OSM, Wikidata und GeoNames. Erster Lauf für einen neuen Landesteil.",
     action: startGazetteerAction,
     button: "Gazetteer aufbauen",
+    scope: "subdivision",
   },
   {
     id: "seed",
     name: "Seed",
     description:
-      "Legt aus Buchten, Häfen und Marinas der Küstenkacheln Ortskandidaten an. Braucht einen Gazetteer-Lauf für das Revier.",
+      "Legt aus Buchten, Häfen und Marinas der Küstenkacheln Ortskandidaten an. Braucht einen Gazetteer-Lauf für den Landesteil.",
     action: startSeedAction,
-    button: "Seed für Revier",
+    button: "Seed für Landesteil",
+    scope: "subdivision",
   },
   {
     id: "datasets",
     name: "Datensätze",
     description:
-      "Lädt Tiefendaten, Meeresboden, Sperrgebiete, Schiffsdichte, Straßen und Wikipedia-Verweise für das Revier. Braucht die Küstenkacheln aus dem Gazetteer-Lauf.",
+      "Lädt Tiefendaten, Meeresboden, Sperrgebiete, Schiffsdichte, Straßen und Wikipedia-Verweise für den Landesteil. Braucht die Küstenkacheln aus dem Gazetteer-Lauf.",
     action: startDatasetImportAction,
     button: "Datensätze laden",
+    scope: "subdivision",
   },
   {
     id: "geometry",
@@ -61,7 +68,8 @@ const AREA_RUNS: AreaRun[] = [
     description:
       "Sucht zuerst unbenannte Buchten an der Küste (neue Ortskandidaten fürs Review), berechnet dann je Ort Fetch, Schutz je Sektor, Öffnung zur See und Schwell und aktualisiert danach Profil und Zusammenfassung. Braucht Tiefendaten und Landpolygone (Datensätze laden).",
     action: startGeometryAction,
-    button: "Geometrie für Revier",
+    button: "Geometrie für Landesteil",
+    scope: "subdivision",
   },
   {
     id: "texts",
@@ -70,6 +78,7 @@ const AREA_RUNS: AreaRun[] = [
       "Wertet die Texte aus, die Objekte des Reviers erwähnen, dazu die noch offenen Versionen ihrer Quellen: Erwähnungen zuordnen, Facts mit Zitat extrahieren, Belegtreue prüfen, konsolidieren. Nach neuen oder geänderten Quellen.",
     action: startTextRunAction,
     button: "Texte auswerten für Revier",
+    scope: "area",
   },
   {
     id: "reprocess",
@@ -78,6 +87,7 @@ const AREA_RUNS: AreaRun[] = [
       "Extrahiert jede Erwähnung im Revier erneut mit dem aktuell konfigurierten Modell, Prompt und Fact-Schema in einen neuen Extraktionslauf; die alten Facts bleiben. Nach einer Änderung an Modell, Prompt oder Schema.",
     action: startReprocessAction,
     button: "Reprozessieren für Revier (Stufen 6–7)",
+    scope: "area",
   },
   {
     id: "revisit",
@@ -86,6 +96,7 @@ const AREA_RUNS: AreaRun[] = [
       "Ruft alle freigegebenen Quellen erneut ab und wertet aus, was sich geändert hat: neue Fassungen, verschwundene Seiten, Facts, Konsolidierung und Änderungsereignisse des Reviers. Der zweite Durchgang nach dem ersten vollen Lauf. Solange er läuft, startet kein Crawl dieser Quellen.",
     action: startRevisitAction,
     button: "Revisit für Revier",
+    scope: "area",
   },
 ];
 
@@ -99,12 +110,13 @@ export default async function Page({ searchParams }: PageProps<"/runs">) {
       {a.name}
     </option>
   ));
+  const subdivisionOptions = <SubdivisionOptions options={await listSubdivisionOptions(getDb())} />;
   return (
     <>
       <AutoRefresh intervalMs={5000} />
       <PageHeader
         title="Läufe"
-        description="Jede Verarbeitung ist ein Lauf aus Stufen. Hier lassen sich Läufe für ein Revier starten und die letzten 50 verfolgen; die Seite aktualisiert sich alle fünf Sekunden."
+        description="Jede Verarbeitung ist ein Lauf aus Stufen. Hier lassen sich Läufe für einen Landesteil starten und die letzten 50 verfolgen; die Seite aktualisiert sich alle fünf Sekunden."
         actions={
           <>
             <form
@@ -135,7 +147,7 @@ export default async function Page({ searchParams }: PageProps<"/runs">) {
               wide
             >
               <ol className="divide-y divide-line">
-                {AREA_RUNS.map((run, i) => (
+                {RUNS.map((run, i) => (
                   <li key={run.id} className="grid gap-3 py-4 first:pt-0 last:pb-0 md:grid-cols-[1fr_auto] md:items-end">
                     <div className="min-w-0">
                       <h3 className="font-medium">
@@ -145,11 +157,16 @@ export default async function Page({ searchParams }: PageProps<"/runs">) {
                       <p className="mt-0.5 leading-relaxed text-muted text-pretty">{run.description}</p>
                     </div>
                     <form action={run.action} className="flex flex-wrap items-end gap-2">
-                      <label htmlFor={`${run.id}-area`} className="sr-only">
-                        Revier
+                      <label htmlFor={`${run.id}-scope`} className="sr-only">
+                        {run.scope === "subdivision" ? "Landesteil" : "Revier"}
                       </label>
-                      <select id={`${run.id}-area`} name="areaKey" required className={cx(inputClass, "min-w-40")}>
-                        {areaOptions}
+                      <select
+                        id={`${run.id}-scope`}
+                        name={run.scope === "subdivision" ? "subdivisionKey" : "areaKey"}
+                        required
+                        className={cx(inputClass, "min-w-40")}
+                      >
+                        {run.scope === "subdivision" ? subdivisionOptions : areaOptions}
                       </select>
                       <Button type="submit" variant="primary">
                         {run.button}

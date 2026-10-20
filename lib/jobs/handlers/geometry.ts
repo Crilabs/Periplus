@@ -6,7 +6,7 @@ import { computePlaceGeometry, DETECT_BAYS_STAGE, GEOMETRY_STAGE, geometryPlaceI
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import { seedTileIds } from "@/lib/pipeline/tile-scope";
 
-/** Stage `geometry.detect_bays`: one job per tile of `run.params.tileIds` or per coast tile of `run.params.areaKey`; none for a place run. */
+/** Stage `geometry.detect_bays`: one job per tile of `run.params.tileIds` or per coast tile of `run.params.subdivisionKey`; none for a place run. */
 export const detectBaysStage: StageDefinition = {
   name: DETECT_BAYS_STAGE,
   queue: "geometry.detect_bays",
@@ -25,7 +25,7 @@ export const detectBaysHandler: JobHandler<JobData> = async (data, ctx) => {
   ctx.log.info({ tileId: data.tileId, ...result }, "unnamed bays detected");
 };
 
-/** Stage `geometry.place`: one job per place of `run.params.placeIds`, of `run.params.tileIds` or of the coast tiles of `run.params.areaKey`. */
+/** Stage `geometry.place`: one job per place of `run.params.placeIds`, of `run.params.tileIds` or of the coast tiles of `run.params.subdivisionKey`. */
 export const geometryPlaceStage: StageDefinition = {
   name: GEOMETRY_STAGE,
   queue: "geometry.compute",

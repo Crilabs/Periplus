@@ -1,10 +1,11 @@
 import { eq, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { geoObjects, places, runs, runStages, tileGeoObjects, tiles } from "@/lib/db/schema";
-import { newId } from "@/lib/domain/ids";
+import { geoObjects, places, runs, runStages, subdivisions, tileGeoObjects, tiles } from "@/lib/db/schema";
+import { newId, newPublicId } from "@/lib/domain/ids";
 import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
 import { HANDLERS } from "@/lib/jobs/registry";
 import { STAGES } from "@/lib/jobs/stages";
@@ -12,51 +13,27 @@ import { createLogger } from "@/lib/logger";
 import { SEED_STAGE, startSeedRun } from "@/lib/pipeline/seed";
 import { withRollback } from "@/test/db";
 
-// The synthetic area "seed-test" joins the configured areas; everything else is the real config.
-vi.mock("@/lib/config", async (importOriginal) => {
-  const original = await importOriginal<typeof import("@/lib/config")>();
-  const testArea = {
-    ...original.getConfig().areas[0]!,
-    key: "seed-test",
-    polygon: { type: "Polygon" as const, coordinates: [[[27, 34], [28, 34], [28, 34.25], [27, 34.25], [27, 34]]] },
-    tileBbox: [27, 34, 28, 34.25] as [number, number, number, number],
-    coastSections: [],
-  };
-  const getConfig = () => ({ ...original.getConfig(), areas: [...original.getConfig().areas, testArea] });
-  return {
-    ...original,
-    getConfig,
-    areaByKey: (key: string) => {
-      const found = getConfig().areas.find((a) => a.key === key);
-      if (!found) throw new Error(`Unknown area ${key}`);
-      return found;
-    },
-  };
-});
-
-// Synthetic area "seed-test" outside the pilot box 23.0-23.75 E x 37.0-38.0 N (open sea, 27-28 E x 34 N).
-const AREA_KEY = "seed-test";
+// Synthetic subdivision "XS-SEED" outside the pilot box 23.0-23.75 E x 37.0-38.0 N (open sea, 27-27.75 E x 34 N).
+const SUB_KEY = "XS-SEED";
 const COAST_1 = tileIdFor(27.1, 34.1);
 const COAST_2 = tileIdFor(27.6, 34.1);
 const OPEN_SEA = tileIdFor(27.35, 34.1);
-const OTHER_AREA = tileIdFor(27.85, 34.1);
+const OUTSIDE = tileIdFor(27.85, 34.1);
 
-async function insertTile(db: Db, id: string, areaId: string | null, hasCoast: boolean): Promise<void> {
+async function insertTile(db: Db, id: string, hasCoast: boolean): Promise<void> {
   const [w, s, e, n] = tileBbox(id);
-  await db.insert(tiles).values({ id, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, areaId, hasCoast });
+  await db.insert(tiles).values({ id, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, hasCoast });
 }
 
-async function insertArea(db: Db, configKey: string): Promise<string> {
-  const [row] = await db
+async function insertSubdivision(db: Db, key: string): Promise<void> {
+  const envelope = sql`ST_Multi(ST_MakeEnvelope(27, 34, 27.75, 34.25, 4326))`;
+  const [obj] = await db
     .insert(geoObjects)
-    .values({
-      type: "area",
-      origin: "manual",
-      configKey,
-      geom: sql`${geomFromGeoJson({ type: "Point", coordinates: [27.5, 34.1] })}`,
-    })
+    .values({ type: "admin_region", origin: "manual", configKey: key, geom: envelope })
     .returning({ id: geoObjects.id });
-  return row!.id;
+  await db
+    .insert(subdivisions)
+    .values({ publicId: newPublicId("sd"), key, country: "GR", geoObjectId: obj!.id, geom: envelope, landGeom: envelope });
 }
 
 function recordingBoss() {
@@ -76,16 +53,15 @@ describe("stage seed.tile", () => {
     expect(STAGES[SEED_STAGE]?.queue).toBe("seed.tile");
   });
 
-  it("plans one job per coast tile of the area", () =>
+  it("plans one job per coast tile of the subdivision", () =>
     withRollback(async (db) => {
-      const areaId = await insertArea(db, AREA_KEY);
-      const otherId = await insertArea(db, `${AREA_KEY}-other`);
-      await insertTile(db, COAST_1, areaId, true);
-      await insertTile(db, COAST_2, areaId, true);
-      await insertTile(db, OPEN_SEA, areaId, false);
-      await insertTile(db, OTHER_AREA, otherId, true);
+      await insertSubdivision(db, SUB_KEY);
+      await insertTile(db, COAST_1, true);
+      await insertTile(db, COAST_2, true);
+      await insertTile(db, OPEN_SEA, false);
+      await insertTile(db, OUTSIDE, true);
 
-      const jobs = await STAGES[SEED_STAGE]!.plan(db, { id: newId(), params: { areaKey: AREA_KEY } });
+      const jobs = await STAGES[SEED_STAGE]!.plan(db, { id: newId(), params: { subdivisionKey: SUB_KEY } });
       expect(jobs).toEqual([COAST_1, COAST_2].sort().map((tileId) => ({ key: tileId, tileId })));
     }));
 
@@ -98,7 +74,7 @@ describe("stage seed.tile", () => {
     ]);
   });
 
-  it("rejects params without tileIds or areaKey", async () => {
+  it("rejects params without tileIds or subdivisionKey", async () => {
     await expect(STAGES[SEED_STAGE]!.plan({} as Db, { id: newId(), params: {} })).rejects.toThrow(/tileIds or subdivisionKey/);
     await expect(
       STAGES[SEED_STAGE]!.plan({} as Db, { id: newId(), params: { tileIds: ["nope"] } }),
@@ -107,7 +83,7 @@ describe("stage seed.tile", () => {
 
   it("the handler seeds the job's tile", () =>
     withRollback(async (db) => {
-      await insertTile(db, COAST_1, null, true);
+      await insertTile(db, COAST_1, true);
       const [bay] = await db
         .insert(geoObjects)
         .values({ type: "bay", origin: "osm", geom: sql`${geomFromGeoJson({ type: "Point", coordinates: [27.1, 34.1] })}` })
@@ -127,7 +103,7 @@ describe("stage seed.tile", () => {
 describe("startSeedRun", () => {
   it("creates a tile run and enqueues its seed job", () =>
     withRollback(async (db) => {
-      await insertTile(db, COAST_1, null, true);
+      await insertTile(db, COAST_1, true);
       const { boss, inserted } = recordingBoss();
       const { id } = await startSeedRun(db, boss, { tileId: COAST_1 }, "test");
 
@@ -147,15 +123,15 @@ describe("startSeedRun", () => {
       ]);
     }));
 
-  it("creates an area run over the area's coast tiles", () =>
+  it("creates a subdivision run over the subdivision's coast tiles", () =>
     withRollback(async (db) => {
-      const areaId = await insertArea(db, AREA_KEY);
-      await insertTile(db, COAST_1, areaId, true);
+      await insertSubdivision(db, SUB_KEY);
+      await insertTile(db, COAST_1, true);
       const { boss, inserted } = recordingBoss();
-      const { id } = await startSeedRun(db, boss, { areaKey: AREA_KEY }, "test");
+      const { id } = await startSeedRun(db, boss, { subdivisionKey: SUB_KEY }, "test");
 
       const [run] = await db.select().from(runs).where(eq(runs.id, id));
-      expect(run).toMatchObject({ scopeType: "area", scopeId: AREA_KEY, params: { areaKey: AREA_KEY } });
+      expect(run).toMatchObject({ scopeType: "subdivision", scopeId: SUB_KEY, params: { subdivisionKey: SUB_KEY } });
       expect(inserted).toEqual([
         { queue: "seed.tile", data: { key: COAST_1, tileId: COAST_1, runId: id, stage: "seed.tile" } },
       ]);
@@ -169,24 +145,33 @@ describe("startSeedRun", () => {
       expect(inserted).toEqual([]);
     }));
 
-  it("rejects an area that is not configured before creating a run", () =>
+  it("rejects an unknown subdivision before creating a run", () =>
     withRollback(async (db) => {
-      await insertArea(db, "seed-unconfigured");
       const { boss, inserted } = recordingBoss();
-      await expect(startSeedRun(db, boss, { areaKey: "seed-unconfigured" }, "test")).rejects.toThrow(
-        "Unknown area seed-unconfigured",
-      );
-      expect(await db.select().from(runs).where(eq(runs.scopeId, "seed-unconfigured"))).toEqual([]);
+      await expect(startSeedRun(db, boss, { subdivisionKey: "XS-NOPE" }, "test")).rejects.toThrow("Unbekannter Landesteil XS-NOPE");
+      expect(await db.select().from(runs).where(eq(runs.scopeId, "XS-NOPE"))).toEqual([]);
       expect(inserted).toEqual([]);
     }));
 
-  it("rejects a configured area without its geo object before creating a run", () =>
+  it("startSeedRun with an area key fails with the replacement hint", () =>
     withRollback(async (db) => {
       const { boss, inserted } = recordingBoss();
-      await expect(startSeedRun(db, boss, { areaKey: AREA_KEY }, "test")).rejects.toThrow(
-        `Area ${AREA_KEY} has no geo object yet`,
+      const areaKey = getConfig().areas[0]!.key;
+      await expect(startSeedRun(db, boss, { subdivisionKey: areaKey }, "test")).rejects.toThrow(
+        `Revier-Schlüssel ${areaKey} ist kein Laufumfang mehr; Landesteil angeben (z. B. GR-I)`,
       );
-      expect(await db.select().from(runs).where(eq(runs.scopeId, AREA_KEY))).toEqual([]);
+      expect(await db.select().from(runs).where(eq(runs.scopeId, areaKey))).toEqual([]);
+      expect(inserted).toEqual([]);
+    }));
+
+  it("rejects a subdivision without coast tiles before creating a run", () =>
+    withRollback(async (db) => {
+      await insertSubdivision(db, SUB_KEY);
+      const { boss, inserted } = recordingBoss();
+      await expect(startSeedRun(db, boss, { subdivisionKey: SUB_KEY }, "test")).rejects.toThrow(
+        `Subdivision ${SUB_KEY} has no coast tiles yet`,
+      );
+      expect(await db.select().from(runs).where(eq(runs.scopeId, SUB_KEY))).toEqual([]);
       expect(inserted).toEqual([]);
     }));
 });

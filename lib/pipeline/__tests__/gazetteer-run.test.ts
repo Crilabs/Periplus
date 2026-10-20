@@ -223,7 +223,7 @@ describe("startGazetteerRun", () => {
   it("rejects an unknown or excluded subdivision before creating a run", () =>
     withRollback(async (db) => {
       const boss = { insert: async () => [] } as unknown as PgBoss;
-      await expect(startGazetteerRun(db, boss, "XX-NOWHERE", "test")).rejects.toThrow("Unknown subdivision XX-NOWHERE");
+      await expect(startGazetteerRun(db, boss, "XX-NOWHERE", "test")).rejects.toThrow("Unbekannter Landesteil XX-NOWHERE");
       await insertAeginaWest(db, { status: "excluded", statusReason: "test" });
       await expect(startGazetteerRun(db, boss, KEY, "test")).rejects.toThrow(`Landesteil ${KEY} ist ausgeschlossen`);
       expect(await db.select().from(runs).where(eq(runs.scopeId, KEY))).toEqual([]);

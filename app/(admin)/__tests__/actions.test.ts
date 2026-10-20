@@ -151,7 +151,7 @@ describe("admin server actions", () => {
   it("startGazetteerAction: unknown subdivisionKey rejected, a subdivision starts a gazetteer run", () =>
     withRollback(async (tx) => {
       currentDb = tx;
-      await expect(startGazetteerAction(form({ subdivisionKey: "XX-ATLANTIS" }))).rejects.toThrow("Unknown subdivision XX-ATLANTIS");
+      await expect(startGazetteerAction(form({ subdivisionKey: "XX-ATLANTIS" }))).rejects.toThrow("Unbekannter Landesteil XX-ATLANTIS");
       await expect(startGazetteerAction({ subdivisionKey: "" })).rejects.toThrow();
       expect(startRun).not.toHaveBeenCalled();
 
@@ -171,8 +171,7 @@ describe("admin server actions", () => {
       expect(redirect).toHaveBeenCalledWith("/runs/run-1");
     }));
 
-  it("startSeedAction: unknown areaKey, malformed or unknown tileId rejected without a run", async () => {
-    await expect(startSeedAction(form({ areaKey: "atlantis" }))).rejects.toThrow();
+  it("startSeedAction: malformed or unknown tileId rejected without a run", async () => {
     await expect(startSeedAction({ tileId: "q025:813" })).rejects.toThrow();
     await expect(startSeedAction({ tileId: "q025:813:510; drop" })).rejects.toThrow();
     // Well-formed but no such tile (north pole row, never created).
@@ -181,27 +180,31 @@ describe("admin server actions", () => {
     expect(startRun).not.toHaveBeenCalled();
   });
 
-  it("startSeedAction for an area starts an area-scoped seed run", () =>
+  it("runs action rejects an unknown subdivision and names the subdivision for an area key", async () => {
+    await expect(startSeedAction(form({ subdivisionKey: "XX-ATLANTIS" }))).rejects.toThrow("Unbekannter Landesteil XX-ATLANTIS");
+    await expect(startDatasetImportAction(form({ subdivisionKey: "XX-ATLANTIS" }))).rejects.toThrow("Unbekannter Landesteil XX-ATLANTIS");
+    await expect(startGeometryAction(form({ subdivisionKey: "XX-ATLANTIS" }))).rejects.toThrow("Unbekannter Landesteil XX-ATLANTIS");
+    await expect(startSeedAction(form({ subdivisionKey: "saronic" }))).rejects.toThrow("Revier-Schlüssel saronic ist kein Laufumfang mehr");
+    await expect(startSeedAction(form({ areaKey: "saronic" }))).rejects.toThrow();
+    expect(startRun).not.toHaveBeenCalled();
+  });
+
+  it("startSeedAction for a subdivision starts a subdivision-scoped seed run", () =>
     withRollback(async (tx) => {
       currentDb = tx;
-      // The area needs its geo object (normally written by tiles.ensure) before a seed run may start.
-      const [area] = await tx
-        .select({ id: geoObjects.id })
-        .from(geoObjects)
-        .where(sql`${geoObjects.type} = 'area' and ${geoObjects.configKey} = 'saronic' and ${geoObjects.validTo} is null`);
-      if (!area) {
-        const geom = sql`${geomFromGeoJson({ type: "Point", coordinates: [24.61, 32.83] })}`;
-        await tx.insert(geoObjects).values({ type: "area", origin: "manual", configKey: "saronic", geom });
-      }
-      await startSeedAction(form({ areaKey: "saronic" }));
+      await insertAeginaWest(tx);
+      const tileId = "q025:813:510";
+      const [w, s, e, n] = tileBbox(tileId);
+      await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, hasCoast: true });
+      await startSeedAction(form({ subdivisionKey: AEGINA_WEST_KEY }));
       expect(startRun).toHaveBeenCalledWith(
         tx,
         expect.anything(),
         expect.objectContaining({
           kind: "stage",
-          scope: { type: "area", id: "saronic" },
+          scope: { type: "subdivision", id: AEGINA_WEST_KEY },
           stages: ["seed.tile"],
-          params: { areaKey: "saronic" },
+          params: { subdivisionKey: AEGINA_WEST_KEY },
           triggeredBy: "admin@example.invalid",
         }),
       );
@@ -260,15 +263,15 @@ describe("admin server actions", () => {
       expect(startRun).toHaveBeenCalledTimes(1);
     }));
 
-  it("startSeedAction rejects a payload with both fields or an unknown tile next to a valid area", () =>
+  it("startSeedAction rejects a payload with both fields or an unknown tile next to a subdivision", () =>
     withRollback(async (tx) => {
       currentDb = tx;
       // Open sea outside the pilot box, at a spot no other test uses.
       const tileId = tileIdFor(24.61, 32.83);
       await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(24.5, 32.75, 24.75, 33.0, 4326)` });
-      await expect(startSeedAction(form({ tileId, areaKey: "saronic" }))).rejects.toThrow();
-      await expect(startSeedAction({ tileId: "q025:0:719", areaKey: "saronic" })).rejects.toThrow();
-      await expect(startSeedAction(form({ tileId: "q025:813", areaKey: "saronic" }))).rejects.toThrow();
+      await expect(startSeedAction(form({ tileId, subdivisionKey: AEGINA_WEST_KEY }))).rejects.toThrow();
+      await expect(startSeedAction({ tileId: "q025:0:719", subdivisionKey: AEGINA_WEST_KEY })).rejects.toThrow();
+      await expect(startSeedAction(form({ tileId: "q025:813", subdivisionKey: AEGINA_WEST_KEY }))).rejects.toThrow();
       expect(startRun).not.toHaveBeenCalled();
       expect(redirect).not.toHaveBeenCalled();
     }));
@@ -347,7 +350,7 @@ describe("admin server actions", () => {
       expect(redirect).toHaveBeenLastCalledWith("/runs/run-1");
 
       await expect(startGeometryAction({ tileId: "q025:0:719" })).rejects.toThrow();
-      await expect(startGeometryAction(form({ tileId: scene.tileId, areaKey: "saronic" }))).rejects.toThrow();
+      await expect(startGeometryAction(form({ tileId: scene.tileId, subdivisionKey: AEGINA_WEST_KEY }))).rejects.toThrow();
       requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
       await expect(geometryTileAction({ tileId: scene.tileId })).rejects.toThrow("NEXT_REDIRECT");
       expect(startRun).toHaveBeenCalledTimes(2);
@@ -364,42 +367,33 @@ describe("admin server actions", () => {
       expect(redirect).toHaveBeenCalledWith(`/tiles/${encodeURIComponent(scene.tileId)}?error=bathymetry_missing`);
     }));
 
-  it("startDatasetImportAction rejects an unknown area", async () => {
-    await expect(startDatasetImportAction(form({ areaKey: "atlantis" }))).rejects.toThrow();
-    await expect(startDatasetImportAction({ areaKey: "" })).rejects.toThrow();
-    await expect(startGeometryAction(form({ areaKey: "atlantis" }))).rejects.toThrow();
+  it("startDatasetImportAction rejects an unknown subdivision", async () => {
+    await expect(startDatasetImportAction(form({ subdivisionKey: "XX-ATLANTIS" }))).rejects.toThrow();
+    await expect(startDatasetImportAction({ subdivisionKey: "" })).rejects.toThrow();
+    await expect(startGeometryAction(form({ subdivisionKey: "XX-ATLANTIS" }))).rejects.toThrow();
     expect(startRun).not.toHaveBeenCalled();
     requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
-    await expect(startDatasetImportAction({ areaKey: "saronic" })).rejects.toThrow("NEXT_REDIRECT");
+    await expect(startDatasetImportAction({ subdivisionKey: AEGINA_WEST_KEY })).rejects.toThrow("NEXT_REDIRECT");
     expect(startRun).not.toHaveBeenCalled();
   });
 
-  it("startDatasetImportAction starts an area run once the area has coast tiles", () =>
+  it("startDatasetImportAction starts a subdivision run once the subdivision has coast tiles", () =>
     withRollback(async (tx) => {
       currentDb = tx;
-      let [area] = await tx
-        .select({ id: geoObjects.id })
-        .from(geoObjects)
-        .where(sql`${geoObjects.type} = 'area' and ${geoObjects.configKey} = 'saronic' and ${geoObjects.validTo} is null`);
-      area ??= (
-        await tx
-          .insert(geoObjects)
-          .values({ type: "area", origin: "manual", configKey: "saronic", geom: sql`${geomFromGeoJson({ type: "Point", coordinates: [24.61, 32.83] })}` })
-          .returning({ id: geoObjects.id })
-      )[0]!;
-      // Open sea outside the pilot box, at a spot no other test uses.
-      const tileId = tileIdFor(24.61, 32.83);
-      await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(24.5, 32.75, 24.75, 33.0, 4326)`, areaId: area.id, hasCoast: true });
+      await insertAeginaWest(tx);
+      const tileId = "q025:813:510";
+      const [w, s, e, n] = tileBbox(tileId);
+      await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, hasCoast: true });
 
-      await startDatasetImportAction(form({ areaKey: "saronic" }));
+      await startDatasetImportAction(form({ subdivisionKey: AEGINA_WEST_KEY }));
       expect(startRun).toHaveBeenCalledWith(
         tx,
         expect.anything(),
         expect.objectContaining({
           kind: "stage",
-          scope: { type: "area", id: "saronic" },
+          scope: { type: "subdivision", id: AEGINA_WEST_KEY },
           stages: ["datasets.import"],
-          params: { areaKey: "saronic" },
+          params: { subdivisionKey: AEGINA_WEST_KEY },
           triggeredBy: "admin@example.invalid",
         }),
       );

@@ -2,40 +2,23 @@ import { existsSync, readFileSync } from "node:fs";
 import { sql } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
 import { fixtureTransport } from "@/lib/adapters/http-fixtures";
-import { areaByKey, getConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoObjects, places, type GeoObjectType, type PlaceKind } from "@/lib/db/schema";
 import { latestComputations } from "@/lib/domain/facts/computations";
 import { SECTORS, type Sector } from "@/lib/domain/facts/schema-types";
-import { areaBbox, syncAreas } from "@/lib/domain/gazetteer/areas";
 import { bufferBbox, importLandPolygons } from "@/lib/domain/gazetteer/land";
-import { ensureTiles } from "@/lib/domain/gazetteer/tiles-ensure";
+import { gazetteerScope } from "@/lib/domain/gazetteer/scope";
+import { ensureSubdivisionTiles } from "@/lib/domain/gazetteer/tiles-ensure";
 import { sampleDepths } from "@/lib/domain/geometry/depth";
 import { tileBbox, type Bbox } from "@/lib/domain/tiles";
 import { DATASET_KINDS, importDataset } from "@/lib/pipeline/datasets";
 import { computePlaceGeometry } from "@/lib/pipeline/geometry";
 import { withRollback } from "@/test/db";
 import { writeGoldenFile } from "@/test/geometry/golden-file";
+import { AEGINA_WEST_BOX, AEGINA_WEST_KEY, insertAeginaWest } from "@/test/fixtures/subdivisions/aegina-west";
 import { memoryArchive } from "@/test/s3";
-
-// The test area aegina-west (tile q025:813:510, as in the gazetteer run) joins the configured areas.
-vi.mock("@/lib/config", async (importOriginal) => {
-  const original = await importOriginal<typeof import("@/lib/config")>();
-  const { areaConfigSchema } = await import("@/lib/config/schemas");
-  const { readFileSync: read } = await import("node:fs");
-  const testArea = areaConfigSchema.parse(JSON.parse(read("test/fixtures/areas/aegina-west.json", "utf8")));
-  const getConfig = () => ({ ...original.getConfig(), areas: [...original.getConfig().areas, testArea] });
-  return {
-    ...original,
-    getConfig,
-    areaByKey: (key: string) => {
-      const found = getConfig().areas.find((a) => a.key === key);
-      if (!found) throw new Error(`Unknown area ${key}`);
-      return found;
-    },
-  };
-});
 
 // Rate limiting is covered by the http tests; its bucket rows would stay locked by the long test transaction.
 vi.mock("@/lib/domain/rate-limit", () => ({ takeToken: async () => ({ ok: true }) }));
@@ -43,7 +26,7 @@ vi.mock("@/lib/domain/rate-limit", () => ({ takeToken: async () => ({ ok: true }
 // Land for 55 km around the area, the recorded datasets and 50 km rays per place.
 vi.setConfig({ testTimeout: 300_000 });
 
-const AREA = "aegina-west";
+const AREA = "aegina-west"; // name of the land fixture
 const TILE = "q025:813:510";
 const TODAY = "2026-10-19";
 const PLACES_FILE = "test/fixtures/geometry/golden-places.json";
@@ -86,14 +69,14 @@ async function* landFixture(): AsyncGenerator<LandFeature> {
   for (const f of collection.features) yield f as LandFeature;
 }
 
-/** Land, area, tiles and every dataset of the area from the recorded fixtures (never the network). */
+/** Land, subdivision, tiles and every dataset of the subdivision from the recorded fixtures (never the network). */
 async function prepareArea(db: Db): Promise<void> {
-  const area = areaByKey(AREA);
-  await importLandPolygons(db, landFixture(), bufferBbox(areaBbox(area), getConfig().gazetteer.landBufferKm), "fixture");
-  const ids = await syncAreas(db, [area]);
-  await ensureTiles(db, area, ids);
+  await importLandPolygons(db, landFixture(), bufferBbox(AEGINA_WEST_BOX, getConfig().gazetteer.landBufferKm), "fixture");
+  const { subdivisionId } = await insertAeginaWest(db);
+  await ensureSubdivisionTiles(db, subdivisionId);
+  const scope = await gazetteerScope(db, AEGINA_WEST_KEY);
   const deps = { transport: fixtureTransport(), archive: memoryArchive() };
-  for (const kind of RECORDED_DATASETS) await importDataset(db, kind, { area, now: new Date(`${TODAY}T12:00:00Z`) }, deps);
+  for (const kind of RECORDED_DATASETS) await importDataset(db, kind, { scope, now: new Date(`${TODAY}T12:00:00Z`) }, deps);
 }
 
 const point = (lon: number, lat: number): GeoJSON.Point => ({ type: "Point", coordinates: [lon, lat] });
@@ -202,7 +185,7 @@ describe("recorded dataset fixtures (aegina-west)", () => {
       expect(sea).toBeGreaterThan(20);
       expect(await sampleDepths(db, LAND, 0, [0])).toEqual([null]);
 
-      const box: Bbox = bufferBbox(areaBbox(areaByKey(AREA)), getConfig().datasets.bufferKm);
+      const box: Bbox = bufferBbox(AEGINA_WEST_BOX, getConfig().datasets.bufferKm);
       const env = sql`ST_MakeEnvelope(${box[0]}::float8, ${box[1]}::float8, ${box[2]}::float8, ${box[3]}::float8, 4326)`;
       // Restricted areas and roads: the dataset box (widened by the buffer of cables and aquaculture) holds them;
       // roads run on land.

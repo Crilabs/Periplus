@@ -67,9 +67,10 @@ describe("checkGazetteer", () => {
 });
 
 describe("check-gazetteer CLI", () => {
-  it("parses --area and rejects anything else", () => {
-    expect(parseArgs(["--area", "saronic"])).toEqual({ area: "saronic" });
+  it("parses --subdivision and rejects anything else", () => {
+    expect(parseArgs(["--subdivision", "GR-I"])).toEqual({ subdivision: "GR-I" });
     expect(() => parseArgs([])).toThrow(/usage/);
-    expect(() => parseArgs(["--area"])).toThrow(/usage/);
+    expect(() => parseArgs(["--subdivision"])).toThrow(/usage/);
+    expect(() => parseArgs(["--area", "saronic"])).toThrow(/usage/);
   });
 });

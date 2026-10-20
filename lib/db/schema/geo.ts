@@ -300,19 +300,19 @@ export const bathymetry = pgTable("bathymetry", {
 }, (t) => [index("bathymetry_dataset_tile_id_idx").on(t.dataset, t.tileId)]);
 
 /**
- * Working state: seabed polygons (EMODnet EUSeaMap) per configured area, replaced per `area_key` on import.
- * Neighbouring areas may import the same polygon; shares union the geometries so overlaps count once.
+ * Working state: seabed polygons (EMODnet EUSeaMap) per subdivision, replaced per `subdivision_key` on import.
+ * Neighbouring subdivisions may import the same polygon; shares union the geometries so overlaps count once.
  */
 export const seabedPolygons = pgTable("seabed_polygons", {
   id: uuid("id").primaryKey().$defaultFn(newId),
   substrate: seabedTypeEnum("substrate").notNull(),
   habitat: text("habitat"),
   sourceRef: text("source_ref"),
-  areaKey: text("area_key").notNull(),
+  subdivisionKey: text("subdivision_key").notNull(),
   datasetVersion: text("dataset_version").notNull(),
   geom: geometry("geom", "Polygon").notNull(),
   createdAt: createdAt(),
-}, (t) => [index("seabed_polygons_geom_gist").using("gist", t.geom), index("seabed_polygons_area_key_idx").on(t.areaKey)]);
+}, (t) => [index("seabed_polygons_geom_gist").using("gist", t.geom), index("seabed_polygons_subdivision_key_idx").on(t.subdivisionKey)]);
 
 /**
  * Working state: OSM roads (Overpass, `highway` from `config/datasets.json`) for the distance to the next road.

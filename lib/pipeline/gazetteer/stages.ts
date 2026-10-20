@@ -1,6 +1,6 @@
 import type { PgBoss } from "pg-boss";
 import type { Db } from "@/lib/db/client";
-import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
+import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { startRun } from "@/lib/pipeline/runs";
 
 /** The stages of a gazetteer run for one subdivision, in order (one job each). */
@@ -17,8 +17,7 @@ export const GAZETTEER_STAGES = [
  * exists.
  */
 export async function startGazetteerRun(db: Db, boss: PgBoss, subdivisionKey: string, triggeredBy: string): Promise<{ id: string }> {
-  const sub = await subdivisionByKey(db, subdivisionKey);
-  if (!sub) throw new Error(`Unknown subdivision ${subdivisionKey}`);
+  const sub = await requireSubdivision(db, subdivisionKey);
   if (sub.status === "excluded") throw new Error(`Landesteil ${subdivisionKey} ist ausgeschlossen`);
   return startRun(db, boss, {
     kind: "stage",

@@ -308,7 +308,6 @@ export const gazetteerSchema = z.strictObject({
   }),
   geonames: z.strictObject({
     baseUrl: z.url(),
-    countries: z.array(z.string().regex(/^[A-Z]{2}$/)).min(1),
     featureCodes: z.record(z.string().regex(/^[A-Z0-9]+$/), geoObjectType),
     refreshDays: z.number().int().positive(),
   }),

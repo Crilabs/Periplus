@@ -56,7 +56,7 @@ export async function discoverArea(db: Db, areaKey: string, deps: Deps, ctx: Cal
 
 /**
  * Plan of the stage `discovery.tile`: one entry per coast tile of the run (`params.tileIds` or the coast tiles of
- * `params.areaKey`) with the tile's queries. The queries of all tiles are deduplicated among each other (lowest
+ * the subdivision `params.subdivisionKey`) with the tile's queries. The queries of all tiles are deduplicated among each other (lowest
  * priority wins, then the first tile) and against the run's area queries (recomputed: an area run made them in
  * `discovery.area`), then cut to what is left of `maxQueriesPerRun` after the area queries.
  */
@@ -66,7 +66,8 @@ export async function planTileDiscovery(
 ): Promise<Array<{ tileId: string; queries: DiscoveryQuery[] }>> {
   const { discovery, areas } = getConfig();
   const tileIds = await seedTileIds(db, params);
-  const areaPlanned = typeof params.areaKey === "string" ? await plannedAreaQueries(db, params.areaKey) : [];
+  // TODO(plan 14a task 8): area queries of a subdivision (still looked up by an area of that key)
+  const areaPlanned = typeof params.subdivisionKey === "string" ? await plannedAreaQueries(db, params.subdivisionKey) : [];
   const areaKeys = new Set(areaPlanned.map(queryKey));
   const byKey = new Map<string, DiscoveryQuery>();
   for (const tileId of tileIds) {

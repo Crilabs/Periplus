@@ -31,7 +31,6 @@
   },
   "geonames": {
     "baseUrl": "https://download.geonames.org/export/dump",
-    "countries": ["GR"],
     "featureCodes": {
       "BAY": "bay",
       "BAYS": "bay",

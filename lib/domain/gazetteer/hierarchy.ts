@@ -1,10 +1,10 @@
 import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
-import { getConfig, type AreaConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geoObjects, type GeoObjectType } from "@/lib/db/schema";
 import type { Bbox } from "@/lib/domain/tiles";
 import { bufferBbox } from "./land";
-import { areaTileIds, subdivisionTileIds } from "./tiles-ensure";
+import { subdivisionTileIds } from "./tiles-ensure";
 
 /** Types whose parent is the island or coast section around them, else their subdivision (Spec 03, step 6; spec 14). */
 const LOCAL_TYPES: GeoObjectType[] = ["bay", "harbour", "settlement", "poi", "cape", "strait", "channel"];
@@ -248,10 +248,4 @@ export async function assignTiles(db: Db, tileIds: string[]): Promise<{ links: n
 /** `assignTiles` for the run scope of a subdivision (`subdivisionTileIds`). */
 export async function assignSubdivisionTiles(db: Db, subdivisionId: string): Promise<{ links: number }> {
   return assignTiles(db, await subdivisionTileIds(db, subdivisionId));
-}
-
-// TODO(plan 14a task 7): remove with the area run path
-/** `assignTiles` for an area given as configuration. */
-export async function assignAreaTiles(db: Db, area: AreaConfig): Promise<{ links: number }> {
-  return assignTiles(db, areaTileIds(area));
 }

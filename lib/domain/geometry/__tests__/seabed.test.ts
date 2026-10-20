@@ -46,11 +46,11 @@ const feature = (substrate: SeabedFeature["substrate"], geometry: SeabedFeature[
   geometry,
 });
 
-async function rowsOf(tx: Db, areaKey: string): Promise<Array<{ substrate: string; valid: boolean; type: string; inBox: boolean }>> {
+async function rowsOf(tx: Db, subdivisionKey: string): Promise<Array<{ substrate: string; valid: boolean; type: string; inBox: boolean }>> {
   const { rows } = await tx.execute<{ substrate: string; valid: boolean; type: string; in_box: boolean }>(sql`
     select substrate, ST_IsValid(geom) as valid, GeometryType(geom) as type,
            ST_CoveredBy(geom, ST_MakeEnvelope(${BOX[0]}::float8, ${BOX[1]}::float8, ${BOX[2]}::float8, ${BOX[3]}::float8, 4326)) as in_box
-    from seabed_polygons where area_key = ${areaKey} order by substrate`);
+    from seabed_polygons where subdivision_key = ${subdivisionKey} order by substrate`);
   return rows.map((r) => ({ substrate: r.substrate, valid: r.valid, type: r.type, inBox: r.in_box }));
 }
 
@@ -70,16 +70,16 @@ describe("classifySeabed", () => {
 });
 
 describe("replaceSeabed", () => {
-  it("replaces the rows of the area key only, clipped to the box, made valid and split into polygons", () =>
+  it("replaces the rows of the subdivision key only, clipped to the box, made valid and split into polygons", () =>
     withRollback(async (tx) => {
       await replaceSeabed(tx, {
-        areaKey: "test-other",
+        subdivisionKey: "test-other",
         datasetVersion: "v1",
         box: BOX,
         features: [feature("mud", await utmRect(tx, 0, 0, 100, 100))],
       });
       await replaceSeabed(tx, {
-        areaKey: "test-a",
+        subdivisionKey: "test-a",
         datasetVersion: "v1",
         box: BOX,
         features: [feature("sand", await utmRect(tx, 0, 0, 100, 100))],
@@ -89,7 +89,7 @@ describe("replaceSeabed", () => {
       const crossesBox: Polygon = { type: "Polygon", coordinates: [[[21.05, 35.25], [21.2, 35.25], [21.2, 35.28], [21.05, 35.28], [21.05, 35.25]]] };
       const outside: Polygon = { type: "Polygon", coordinates: [[[22.0, 36.0], [22.1, 36.0], [22.1, 36.1], [22.0, 36.0]]] };
       const result = await replaceSeabed(tx, {
-        areaKey: "test-a",
+        subdivisionKey: "test-a",
         datasetVersion: "v2",
         box: BOX,
         features: [feature("rock", bowtie), feature("gravel", crossesBox), feature("weed", outside)],
@@ -106,13 +106,13 @@ describe("replaceSeabed", () => {
   it("keeps habitat and source reference", () =>
     withRollback(async (tx) => {
       await replaceSeabed(tx, {
-        areaKey: "test-a",
+        subdivisionKey: "test-a",
         datasetVersion: "v1",
         box: BOX,
         features: [{ substrate: "weed", habitat: "Posidonia oceanica meadows", sourceRef: "eusm.42", geometry: await utmRect(tx, 0, 0, 100, 100) }],
       });
       const { rows } = await tx.execute<{ habitat: string; source_ref: string; dataset_version: string }>(
-        sql`select habitat, source_ref, dataset_version from seabed_polygons where area_key = 'test-a'`,
+        sql`select habitat, source_ref, dataset_version from seabed_polygons where subdivision_key = 'test-a'`,
       );
       expect(rows).toEqual([{ habitat: "Posidonia oceanica meadows", source_ref: "eusm.42", dataset_version: "v1" }]);
     }));
@@ -122,7 +122,7 @@ describe("seabedShares", () => {
   it("1 km² split 70/30 sand/rock → [{sand,0.7},{rock,0.3}], coverage 1", () =>
     withRollback(async (tx) => {
       await replaceSeabed(tx, {
-        areaKey: "test-a",
+        subdivisionKey: "test-a",
         datasetVersion: "v1",
         box: BOX,
         features: [feature("sand", await utmRect(tx, 0, 0, 700, 1000)), feature("rock", await utmRect(tx, 700, 0, 1000, 1000))],
@@ -136,12 +136,12 @@ describe("seabedShares", () => {
       expect(result.versions).toEqual(["v1"]);
     }));
 
-  it("the same polygon imported for two areas is not counted twice", () =>
+  it("the same polygon imported for two subdivisions is not counted twice", () =>
     withRollback(async (tx) => {
       const sand = await utmRect(tx, 0, 0, 500, 1000);
       const rock = await utmRect(tx, 500, 0, 1000, 1000);
-      await replaceSeabed(tx, { areaKey: "test-a", datasetVersion: "v1", box: BOX, features: [feature("sand", sand), feature("rock", rock)] });
-      await replaceSeabed(tx, { areaKey: "test-b", datasetVersion: "v2", box: BOX, features: [feature("sand", sand)] });
+      await replaceSeabed(tx, { subdivisionKey: "test-a", datasetVersion: "v1", box: BOX, features: [feature("sand", sand), feature("rock", rock)] });
+      await replaceSeabed(tx, { subdivisionKey: "test-b", datasetVersion: "v2", box: BOX, features: [feature("sand", sand)] });
       const result = await seabedShares(tx, await utmRect(tx, 0, 0, 1000, 1000));
       expect(result.shares).toEqual([
         { type: "rock", share: 0.5 },
@@ -153,7 +153,7 @@ describe("seabedShares", () => {
 
   it("only 40 % covered → coverage 0.4", () =>
     withRollback(async (tx) => {
-      await replaceSeabed(tx, { areaKey: "test-a", datasetVersion: "v1", box: BOX, features: [feature("mud", await utmRect(tx, 0, 0, 400, 1000))] });
+      await replaceSeabed(tx, { subdivisionKey: "test-a", datasetVersion: "v1", box: BOX, features: [feature("mud", await utmRect(tx, 0, 0, 400, 1000))] });
       const result = await seabedShares(tx, await utmRect(tx, 0, 0, 1000, 1000));
       expect(result.shares).toEqual([{ type: "mud", share: 1 }]);
       expect(result.coverage).toBeCloseTo(0.4, 3);
@@ -163,7 +163,7 @@ describe("seabedShares", () => {
     withRollback(async (tx) => {
       // 1/3 + 1/3 + 0.329 + 0.004 of 1 km²: rounding gives 0.33 + 0.33 + 0.33 + 0 = 0.99.
       await replaceSeabed(tx, {
-        areaKey: "test-a",
+        subdivisionKey: "test-a",
         datasetVersion: "v1",
         box: BOX,
         features: [

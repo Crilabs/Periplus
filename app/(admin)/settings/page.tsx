@@ -205,7 +205,7 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
     ["GeoNames neues Objekt ab", `${gazetteer.merge.geonamesNewObjectRadiusM} m`],
     ["Overpass", `${gazetteer.overpass.timeoutSeconds} s Timeout, ${gazetteer.overpass.ratePerMinute}/min`],
     ["Wikidata", `${gazetteer.wikidata.ratePerMinute}/min, Sprachen ${gazetteer.wikidata.languages.join(", ")}`],
-    ["GeoNames", `${gazetteer.geonames.countries.join(", ")}, alle ${gazetteer.geonames.refreshDays} Tage`],
+    ["GeoNames", `Land des Landesteils, alle ${gazetteer.geonames.refreshDays} Tage`],
     ["Kein Ankern bei", gazetteer.noAnchoringKinds.join(", ")],
   ];
   return (

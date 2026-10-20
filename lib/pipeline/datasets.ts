@@ -6,10 +6,11 @@ import type { CallContext, Transport } from "@/lib/adapters/http";
 import { buildCablesQuery, buildRoadsQuery, overpassQuery, type OverpassElement } from "@/lib/adapters/overpass";
 import type { Archive } from "@/lib/adapters/s3";
 import { sitelinkCounts } from "@/lib/adapters/wikidata";
-import { getConfig, type AreaConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { wikidataSitelinks } from "@/lib/db/schema";
-import { areaBbox } from "@/lib/domain/gazetteer/areas";
+import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
+import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { bufferBbox } from "@/lib/domain/gazetteer/land";
 import { importBathymetryRaster } from "@/lib/domain/geometry/bathymetry";
 import {
@@ -22,15 +23,15 @@ import { replaceRoads, type RoadFeature } from "@/lib/domain/geometry/roads";
 import { classifySeabed, replaceSeabed, type SeabedFeature } from "@/lib/domain/geometry/seabed";
 import { tileBbox, tileNeighbours, type Bbox } from "@/lib/domain/tiles";
 import { createLogger } from "@/lib/logger";
-import { areaGeoObjectId, seedTileIds } from "@/lib/pipeline/tile-scope";
+import { seedTileIds } from "@/lib/pipeline/tile-scope";
 
 export const DATASETS_STAGE = "datasets.import";
 
-/** The datasets of the run "Datensätze laden", one job each per area. */
+/** The datasets of the run "Datensätze laden", one job each per subdivision. */
 export const DATASET_KINDS = ["bathymetry", "seabed", "restrictions", "vessel_density", "roads", "sitelinks"] as const;
 export type DatasetKind = (typeof DATASET_KINDS)[number];
 
-export type DatasetImportInput = { area: AreaConfig; runId?: string; now?: Date };
+export type DatasetImportInput = { scope: GazetteerScope; runId?: string; now?: Date };
 export type DatasetImportDeps = { transport: Transport; archive: Archive };
 
 let logger: ReturnType<typeof createLogger> | undefined;
@@ -45,9 +46,9 @@ function contentVersion(parts: string[]): string {
   return hash.digest("hex").slice(0, 12);
 }
 
-/** Box of every area dataset request: the area's box plus `datasets.bufferKm`. */
-function datasetBox(area: AreaConfig): Bbox {
-  return bufferBbox(areaBbox(area), getConfig().datasets.bufferKm);
+/** Box of every dataset request: the subdivision's box plus `datasets.bufferKm`. */
+function datasetBox(scope: GazetteerScope): Bbox {
+  return bufferBbox(scope.bbox, getConfig().datasets.bufferKm);
 }
 
 const callContext = (db: Db, input: DatasetImportInput, tileId?: string): CallContext => ({
@@ -70,7 +71,7 @@ export function datasetKindsOf(params: Record<string, unknown>): DatasetKind[] {
 }
 
 /**
- * Bathymetry for the coast tiles of the area and their 8 neighbours: per tile exactly its box from the
+ * Bathymetry for the coast tiles of the subdivision and their 8 neighbours: per tile exactly its box from the
  * EMODnet WCS, archived as `datasets/emodnet-bathymetry/<datasetVersion>/<tileId>.tif`. An archived tile is
  * reused without HTTP. All downloads happen before the first raster import (one transaction per tile); a
  * downloaded tile is archived only after its import succeeded, so a body that cannot be imported is never
@@ -82,8 +83,8 @@ export async function importBathymetry(
   deps: DatasetImportDeps,
 ): Promise<{ tiles: number; rasterTiles: number; reused: number }> {
   const cfg = getConfig().datasets.bathymetry;
-  const coast = await seedTileIds(db, { areaKey: input.area.key });
-  if (coast.length === 0) throw new Error(`area ${input.area.key} has no coast tiles; build its gazetteer first`);
+  const coast = await seedTileIds(db, { subdivisionKey: input.scope.key });
+  if (coast.length === 0) throw new Error(`subdivision ${input.scope.key} has no coast tiles; build its gazetteer first`);
   const tileIds = [...new Set(coast.flatMap((id) => [id, ...tileNeighbours(id)]))].sort();
 
   const rasters: Array<{ tileId: string; key: string; bytes: Uint8Array; downloaded: boolean }> = [];
@@ -113,10 +114,10 @@ export async function importBathymetry(
 const isPolygonal = (g: Geometry | null): g is Polygon | MultiPolygon => g?.type === "Polygon" || g?.type === "MultiPolygon";
 
 /**
- * EMODnet EUSeaMap seabed in the area's dataset box. Version = first 12 hex digits of the sha256 over all
- * pages; pages archived as `datasets/emodnet-seabed/<version>/<areaKey>/<n>.json`. Features without a
+ * EMODnet EUSeaMap seabed in the subdivision's dataset box. Version = first 12 hex digits of the sha256 over all
+ * pages; pages archived as `datasets/emodnet-seabed/<version>/<subdivisionKey>/<n>.json`. Features without a
  * mapped substrate (or without polygon geometry) count as `unmapped`; their values are logged. Then the
- * area's seabed polygons are replaced.
+ * subdivision's seabed polygons are replaced.
  */
 export async function importSeabed(
   db: Db,
@@ -124,7 +125,7 @@ export async function importSeabed(
   deps: DatasetImportDeps,
 ): Promise<{ features: number; unmapped: number; version: string }> {
   const cfg = getConfig().datasets.seabed;
-  const box = datasetBox(input.area);
+  const box = datasetBox(input.scope);
   const { pages, features } = await fetchWfsFeatures(
     deps.transport,
     {
@@ -141,7 +142,7 @@ export async function importSeabed(
   );
   const version = contentVersion(pages);
   for (const [n, page] of pages.entries()) {
-    await deps.archive.put(`datasets/emodnet-seabed/${version}/${input.area.key}/${n}.json`, page, "application/json");
+    await deps.archive.put(`datasets/emodnet-seabed/${version}/${input.scope.key}/${n}.json`, page, "application/json");
   }
 
   const mapped: SeabedFeature[] = [];
@@ -159,10 +160,10 @@ export async function importSeabed(
   }
   const unmapped = features.length - mapped.length;
   if (unmapped > 0) {
-    getLog().info({ areaKey: input.area.key, unmapped, values: Object.fromEntries(unmappedValues) }, "unmapped seabed features skipped");
+    getLog().info({ subdivisionKey: input.scope.key, unmapped, values: Object.fromEntries(unmappedValues) }, "unmapped seabed features skipped");
   }
 
-  await replaceSeabed(db, { areaKey: input.area.key, datasetVersion: version, box, features: mapped });
+  await replaceSeabed(db, { subdivisionKey: input.scope.key, datasetVersion: version, box, features: mapped });
   return { features: mapped.length, unmapped, version };
 }
 
@@ -220,10 +221,10 @@ function featureId(f: Feature, idField: string | undefined): string | null {
 }
 
 /**
- * Restricted areas in the area's dataset box: every EMODnet Human Activities layer (pages archived as
- * `datasets/emodnet-human-activities/<YYYY-MM-DD>/<areaKey>/<typeName>-<n>.json`, `sourceRef`
+ * Restricted areas in the subdivision's dataset box: every EMODnet Human Activities layer (pages archived as
+ * `datasets/emodnet-human-activities/<YYYY-MM-DD>/<subdivisionKey>/<typeName>-<n>.json`, `sourceRef`
  * `<typeName>/<props[idField] ?? feature.id>`) and OSM submarine cables (archived as
- * `datasets/osm-cables/<YYYY-MM-DD>/<areaKey>.json`, `sourceRef` `osm-cable:way/<id>`, power cables on land
+ * `datasets/osm-cables/<YYYY-MM-DD>/<subdivisionKey>.json`, `sourceRef` `osm-cable:way/<id>`, power cables on land
  * dropped). A buffered layer is requested for the box widened by its buffer, so a buffer reaching into the
  * box from outside is found; rows of a layer end only when they intersect the box itself. All requests run
  * before the first write. Returns the upsert counts summed per kind.
@@ -235,7 +236,7 @@ export async function importRestrictions(
 ): Promise<Partial<Record<RestrictedKind, UpsertResult>>> {
   const { datasets, gazetteer } = getConfig();
   const ha = datasets.humanActivities;
-  const box = datasetBox(input.area);
+  const box = datasetBox(input.scope);
   const date = isoDate(input.now);
   const ctx = callContext(db, input);
 
@@ -255,7 +256,7 @@ export async function importRestrictions(
       ctx,
     );
     for (const [n, page] of pages.entries()) {
-      const key = `datasets/emodnet-human-activities/${date}/${input.area.key}/${layer.typeName}-${n}.json`;
+      const key = `datasets/emodnet-human-activities/${date}/${input.scope.key}/${layer.typeName}-${n}.json`;
       await deps.archive.put(key, page, "application/json");
     }
     const sources: RestrictionLayer["sources"] = [];
@@ -277,7 +278,7 @@ export async function importRestrictions(
     ctx,
     gazetteer.overpass,
   );
-  await deps.archive.put(`datasets/osm-cables/${date}/${input.area.key}.json`, raw, "application/json");
+  await deps.archive.put(`datasets/osm-cables/${date}/${input.scope.key}.json`, raw, "application/json");
   const cableSources: RestrictionLayer["sources"] = [];
   for (const el of elements) {
     const line = wayLine(el);
@@ -299,8 +300,8 @@ export async function importRestrictions(
 }
 
 /**
- * EMODnet vessel density for the area's dataset box (spec 04: download and archive only in M2), archived as
- * `datasets/emodnet-vessel-density/<datasetVersion>/<areaKey>.tif`; an archived file is not downloaded again.
+ * EMODnet vessel density for the subdivision's dataset box (spec 04: download and archive only in M2), archived as
+ * `datasets/emodnet-vessel-density/<datasetVersion>/<subdivisionKey>.tif`; an archived file is not downloaded again.
  */
 export async function importVesselDensity(
   db: Db,
@@ -308,17 +309,17 @@ export async function importVesselDensity(
   deps: DatasetImportDeps,
 ): Promise<{ key: string; reused: boolean }> {
   const cfg = getConfig().datasets.vesselDensity;
-  const key = `datasets/emodnet-vessel-density/${cfg.datasetVersion}/${input.area.key}.tif`;
+  const key = `datasets/emodnet-vessel-density/${cfg.datasetVersion}/${input.scope.key}.tif`;
   if (await deps.archive.exists(key)) return { key, reused: true };
-  const bytes = await fetchCoverage(deps.transport, datasetBox(input.area), callContext(db, input), cfg, "emodnet-vessel-density");
+  const bytes = await fetchCoverage(deps.transport, datasetBox(input.scope), callContext(db, input), cfg, "emodnet-vessel-density");
   await deps.archive.put(key, bytes, "image/tiff");
   return { key, reused: false };
 }
 
 /**
- * OSM roads (`datasets.roads.highways`) in the area's box plus `roads.bufferKm`. Version = first 12 hex digits
+ * OSM roads (`datasets.roads.highways`) in the subdivision's box plus `roads.bufferKm`. Version = first 12 hex digits
  * of the sha256 over the sorted roads (stable while OSM is unchanged); the raw answer is archived as
- * `datasets/osm-roads/<version>/<areaKey>.json`. Then the roads of the box are replaced.
+ * `datasets/osm-roads/<version>/<subdivisionKey>.json`. Then the roads of the box are replaced.
  */
 export async function importRoads(
   db: Db,
@@ -326,7 +327,7 @@ export async function importRoads(
   deps: DatasetImportDeps,
 ): Promise<{ roads: number; removed: number; version: string }> {
   const { datasets, gazetteer } = getConfig();
-  const box = bufferBbox(areaBbox(input.area), datasets.roads.bufferKm);
+  const box = bufferBbox(input.scope.bbox, datasets.roads.bufferKm);
   const { raw, elements } = await overpassQuery(
     deps.transport,
     buildRoadsQuery(box, datasets.roads.highways, gazetteer.overpass.timeoutSeconds),
@@ -341,7 +342,7 @@ export async function importRoads(
   }
   roads.sort((a, b) => a.osmId.localeCompare(b.osmId));
   const version = contentVersion([JSON.stringify(roads)]);
-  await deps.archive.put(`datasets/osm-roads/${version}/${input.area.key}.json`, raw, "application/json");
+  await deps.archive.put(`datasets/osm-roads/${version}/${input.scope.key}.json`, raw, "application/json");
   const { stored, removed } = await replaceRoads(db, { box, datasetVersion: version, roads });
   return { roads: stored, removed, version };
 }
@@ -351,7 +352,7 @@ const SITELINK_UPSERT_ROWS = 1000;
 
 /**
  * Wikidata sitelink counts (importance signal, ruling M5-P1) of the valid, unmerged objects with a `wikidata_id` in
- * the area's tiles: a count fetched within `datasets.sitelinks.reuseDays` is reused without a call, the others are
+ * the subdivision's tiles: a count fetched within `datasets.sitelinks.reuseDays` is reused without a call, the others are
  * fetched (50 per request) and upserted with `fetched_at` = now; an item Wikidata no longer knows counts 0.
  */
 export async function importSitelinks(
@@ -360,8 +361,8 @@ export async function importSitelinks(
   deps: Pick<DatasetImportDeps, "transport">,
 ): Promise<{ fetched: number; reused: number }> {
   const { datasets, gazetteer } = getConfig();
-  const areaId = await areaGeoObjectId(db, input.area.key);
-  if (!areaId) throw new Error(`area ${input.area.key} has no geo object; build its gazetteer first`);
+  const tileIds = await subdivisionTileIds(db, input.scope.subdivisionId);
+  if (tileIds.length === 0) throw new Error(`subdivision ${input.scope.key} has no tiles; build its gazetteer first`);
   const now = input.now ?? new Date();
   const { rows } = await db.execute<{ qid: string; fresh: boolean }>(sql`
     select o.wikidata_id as qid,
@@ -370,7 +371,7 @@ export async function importSitelinks(
     join tile_geo_objects tg on tg.geo_object_id = o.id
     join tiles t on t.id = tg.tile_id
     left join wikidata_sitelinks s on s.wikidata_id = o.wikidata_id
-    where t.area_id = ${areaId} and t.valid_from <= current_date and (t.valid_to is null or t.valid_to > current_date)
+    where t.id in (select value from jsonb_array_elements_text(${JSON.stringify(tileIds)}::jsonb)) and t.valid_from <= current_date and (t.valid_to is null or t.valid_to > current_date)
       and o.wikidata_id is not null and o.merged_into_id is null
       and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
     group by o.wikidata_id
@@ -391,7 +392,7 @@ export async function importSitelinks(
   return { fetched: stale.length, reused: rows.length - stale.length };
 }
 
-/** Runs the import of one dataset kind for one area. */
+/** Runs the import of one dataset kind for one subdivision. */
 export async function importDataset(
   db: Db,
   dataset: DatasetKind,

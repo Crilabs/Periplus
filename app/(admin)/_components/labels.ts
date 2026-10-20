@@ -286,10 +286,11 @@ export const CONVERTER_LABELS: Record<CrawlRules["converter"], string> = {
 export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   area_without_geo_object: "Revier hat noch kein Geo-Objekt – zuerst „Gazetteer aufbauen“",
   area_without_coast_tiles: "Revier hat noch keine Küstenkacheln – zuerst „Gazetteer aufbauen“",
+  subdivision_without_coast_tiles: "Landesteil hat noch keine Küstenkacheln – zuerst „Gazetteer aufbauen“",
+  tile_without_subdivision: "Kachel gehört zu keinem Landesteil – Suchsprachen unbekannt",
   bathymetry_missing: "Bathymetrie fehlt – zuerst „Datensätze laden“",
   land_missing: "Landpolygone fehlen – zuerst die Landpolygone importieren",
   place_not_computable: "Ort wird nicht berechnet (beendet, zusammengeführt, verworfen oder ohne Kachel)",
-  tile_without_area: "Kachel gehört zu keinem konfigurierten Revier – Suchsprachen unbekannt",
   no_approved_sources: "Keine freigegebene Quelle",
   source_not_approved: "Quelle ist nicht freigegeben",
   source_run_active: "Für die Quelle läuft bereits ein Abruf",

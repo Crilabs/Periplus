@@ -1,31 +1,31 @@
 import { getTransport } from "@/lib/adapters/http";
 import { getArchive } from "@/lib/adapters/s3";
-import { areaByKey } from "@/lib/config";
+import { gazetteerScope } from "@/lib/domain/gazetteer/scope";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import { DATASETS_STAGE, datasetKindsOf, importDataset } from "@/lib/pipeline/datasets";
 import type { StageDefinition } from "@/lib/pipeline/runs";
-import { areaKeyOf } from "./tiles";
+import { subdivisionKeyOf } from "./tiles";
 
-/** Stage `datasets.import`: one job per requested dataset (`run.params.datasets`, default all) of `run.params.areaKey`. */
+/** Stage `datasets.import`: one job per requested dataset (`run.params.datasets`, default all) of `run.params.subdivisionKey`. */
 export const datasetsImportStage: StageDefinition = {
   name: DATASETS_STAGE,
   queue: "datasets.import",
-  async plan(_db, run) {
-    const areaKey = areaKeyOf(run.params);
-    areaByKey(areaKey); // fail planning for an unknown area
-    return datasetKindsOf(run.params).map((dataset) => ({ key: `${dataset}:${areaKey}`, dataset, areaKey }));
+  async plan(db, run) {
+    const subdivisionKey = subdivisionKeyOf(run.params);
+    await gazetteerScope(db, subdivisionKey); // fail planning for an unknown subdivision
+    return datasetKindsOf(run.params).map((dataset) => ({ key: `${dataset}:${subdivisionKey}`, dataset, subdivisionKey }));
   },
 };
 
-/** Imports `data.dataset` for `data.areaKey`. */
+/** Imports `data.dataset` for `data.subdivisionKey`. */
 export const datasetsImportHandler: JobHandler<JobData> = async (data, ctx) => {
-  const area = areaByKey(areaKeyOf(data));
+  const scope = await gazetteerScope(ctx.db, subdivisionKeyOf(data));
   const [dataset] = datasetKindsOf({ datasets: [data.dataset] });
   const result = await importDataset(
     ctx.db,
     dataset!,
-    { area, runId: data.runId },
+    { scope, runId: data.runId },
     { transport: getTransport(), archive: getArchive() },
   );
-  ctx.log.info({ areaKey: area.key, dataset, ...result }, "dataset imported");
+  ctx.log.info({ subdivisionKey: scope.key, dataset, ...result }, "dataset imported");
 };

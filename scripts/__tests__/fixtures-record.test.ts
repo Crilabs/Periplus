@@ -6,20 +6,20 @@ import { fixtureKey, loadAiFixtures } from "@/lib/ai/fixtures";
 import { MockModel } from "@/lib/ai/mock";
 import { echoTask } from "@/lib/ai/tasks/system-echo";
 import type { ModelTask } from "@/lib/ai/types";
-import { areaByKey, getConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
 import { assertScratchUrl, compactOverpass, parseArgs, recordAiAnswers, serpRecordingQueries } from "../fixtures-record";
 
 describe("fixtures-record CLI", () => {
   it("parses flags", () => {
-    expect(parseArgs(["--area", "aegina-west"])).toEqual({
-      area: "aegina-west",
+    expect(parseArgs(["--subdivision", "aegina-west"])).toEqual({
+      subdivision: "aegina-west",
       land: undefined,
       cache: undefined,
       datasets: false,
       serp: false,
     });
-    expect(parseArgs(["--area", "a", "--land", "l.shp", "--cache", "/tmp/c"])).toEqual({
-      area: "a",
+    expect(parseArgs(["--subdivision", "a", "--land", "l.shp", "--cache", "/tmp/c"])).toEqual({
+      subdivision: "a",
       land: "l.shp",
       cache: "/tmp/c",
       datasets: false,
@@ -28,56 +28,57 @@ describe("fixtures-record CLI", () => {
   });
 
   it("--datasets is a flag without value, anywhere in the arguments", () => {
-    expect(parseArgs(["--area", "aegina-west", "--datasets"])).toMatchObject({ area: "aegina-west", datasets: true });
-    expect(parseArgs(["--datasets", "--area", "a", "--cache", "/tmp/c"])).toMatchObject({ area: "a", cache: "/tmp/c", datasets: true });
-    expect(parseArgs(["--area", "a", "--datasets"])).not.toHaveProperty("datasetKinds");
+    expect(parseArgs(["--subdivision", "aegina-west", "--datasets"])).toMatchObject({ subdivision: "aegina-west", datasets: true });
+    expect(parseArgs(["--datasets", "--subdivision", "a", "--cache", "/tmp/c"])).toMatchObject({ subdivision: "a", cache: "/tmp/c", datasets: true });
+    expect(parseArgs(["--subdivision", "a", "--datasets"])).not.toHaveProperty("datasetKinds");
   });
 
   it("--datasets takes an optional list of dataset kinds", () => {
-    expect(parseArgs(["--area", "aegina-west", "--datasets", "sitelinks"])).toMatchObject({ datasets: true, datasetKinds: ["sitelinks"] });
-    expect(parseArgs(["--datasets", "roads,sitelinks", "--area", "a"])).toMatchObject({ area: "a", datasetKinds: ["roads", "sitelinks"] });
-    expect(() => parseArgs(["--area", "a", "--datasets", "tides"])).toThrow(/usage/);
-    expect(() => parseArgs(["--area", "a", "--datasets", "roads,roads"])).toThrow(/usage/);
+    expect(parseArgs(["--subdivision", "aegina-west", "--datasets", "sitelinks"])).toMatchObject({ datasets: true, datasetKinds: ["sitelinks"] });
+    expect(parseArgs(["--datasets", "roads,sitelinks", "--subdivision", "a"])).toMatchObject({ subdivision: "a", datasetKinds: ["roads", "sitelinks"] });
+    expect(() => parseArgs(["--subdivision", "a", "--datasets", "tides"])).toThrow(/usage/);
+    expect(() => parseArgs(["--subdivision", "a", "--datasets", "roads,roads"])).toThrow(/usage/);
   });
 
-  it("--serp records at most 3 searches and needs an area", () => {
-    expect(parseArgs(["--serp", "--area", "saronic"])).toMatchObject({ area: "saronic", serp: true, limit: 3 });
-    expect(parseArgs(["--serp", "--area", "saronic", "--limit", "1"])).toMatchObject({ serp: true, limit: 1 });
-    expect(() => parseArgs(["--serp", "--area", "saronic", "--limit", "4"])).toThrow(/usage/);
-    expect(() => parseArgs(["--serp", "--area", "saronic", "--limit", "0"])).toThrow(/usage/);
+  it("--serp records at most 3 searches and needs a subdivision", () => {
+    expect(parseArgs(["--serp", "--subdivision", "saronic"])).toMatchObject({ subdivision: "saronic", serp: true, limit: 3 });
+    expect(parseArgs(["--serp", "--subdivision", "saronic", "--limit", "1"])).toMatchObject({ serp: true, limit: 1 });
+    expect(() => parseArgs(["--serp", "--subdivision", "saronic", "--limit", "4"])).toThrow(/usage/);
+    expect(() => parseArgs(["--serp", "--subdivision", "saronic", "--limit", "0"])).toThrow(/usage/);
     expect(() => parseArgs(["--serp"])).toThrow(/usage/);
-    expect(() => parseArgs(["--area", "saronic", "--limit", "2"])).toThrow(/usage/);
-    expect(() => parseArgs(["--serp", "--datasets", "--area", "saronic"])).toThrow(/usage/);
+    expect(() => parseArgs(["--subdivision", "saronic", "--limit", "2"])).toThrow(/usage/);
+    expect(() => parseArgs(["--serp", "--datasets", "--subdivision", "saronic"])).toThrow(/usage/);
   });
 
-  it("--serp builds the area searches from the configured names", () => {
-    const qs = serpRecordingQueries(areaByKey("saronic"), getConfig().discovery, 3);
+  it("--serp builds the area searches from the names of the subdivision's region", () => {
+    const saronic = { names: { de: "Saronischer Golf", en: "Saronic Gulf", el: "Σαρωνικός" }, sourceLanguages: ["de", "en", "el"] };
+    const qs = serpRecordingQueries(saronic, getConfig().discovery, 3);
     expect(qs).toEqual([
       { keyword: "Törnbericht Saronischer Golf", languageCode: "de", locationCode: 2276 },
       { keyword: "Revierführer Saronischer Golf", languageCode: "de", locationCode: 2276 },
       { keyword: "Saronic Gulf anchorages", languageCode: "en", locationCode: 2826 },
     ]);
-    expect(serpRecordingQueries(areaByKey("saronic"), getConfig().discovery, 1)).toHaveLength(1);
-    expect(serpRecordingQueries({ ...areaByKey("saronic"), sourceLanguages: ["en"] }, getConfig().discovery, 3)).toEqual([
+    expect(serpRecordingQueries(saronic, getConfig().discovery, 1)).toHaveLength(1);
+    expect(serpRecordingQueries({ ...saronic, sourceLanguages: ["en"] }, getConfig().discovery, 3)).toEqual([
       { keyword: "Saronic Gulf anchorages", languageCode: "en", locationCode: 2826 },
     ]);
   });
 
-  it("--converters takes 1 to 3 page urls and no area", () => {
+  it("--converters takes 1 to 3 page urls and no subdivision", () => {
     expect(parseArgs(["--converters", "https://a.example/x", "http://b.example/"])).toEqual({
       converters: ["https://a.example/x", "http://b.example/"],
     });
     expect(() => parseArgs(["--converters"])).toThrow(/usage/);
     expect(() => parseArgs(["--converters", "https://a.example/1", "https://a.example/2", "https://a.example/3", "https://a.example/4"])).toThrow(/usage/);
     expect(() => parseArgs(["--converters", "ftp://a.example/x"])).toThrow(/usage/);
-    expect(() => parseArgs(["--converters", "https://a.example/x", "--area", "saronic"])).toThrow(/usage/);
-    expect(() => parseArgs(["--area", "saronic", "--converters", "https://a.example/x"])).toThrow(/usage/);
+    expect(() => parseArgs(["--converters", "https://a.example/x", "--subdivision", "saronic"])).toThrow(/usage/);
+    expect(() => parseArgs(["--subdivision", "saronic", "--converters", "https://a.example/x"])).toThrow(/usage/);
   });
 
   it("--voyage stands alone", () => {
     expect(parseArgs(["--voyage"])).toEqual({ voyage: true });
-    expect(() => parseArgs(["--voyage", "--area", "saronic"])).toThrow(/usage/);
-    expect(() => parseArgs(["--area", "saronic", "--voyage"])).toThrow(/usage/);
+    expect(() => parseArgs(["--voyage", "--subdivision", "saronic"])).toThrow(/usage/);
+    expect(() => parseArgs(["--subdivision", "saronic", "--voyage"])).toThrow(/usage/);
   });
 
   it("--nominatim takes a query and a tile id and stands alone", () => {
@@ -85,8 +86,8 @@ describe("fixtures-record CLI", () => {
     expect(() => parseArgs(["--nominatim", "Kolona"])).toThrow(/usage/);
     expect(() => parseArgs(["--nominatim", "Kolona", "813:510"])).toThrow(/usage/);
     expect(() => parseArgs(["--nominatim", " ", "q025:813:510"])).toThrow(/usage/);
-    expect(() => parseArgs(["--nominatim", "Kolona", "q025:813:510", "--area", "saronic"])).toThrow(/usage/);
-    expect(() => parseArgs(["--area", "saronic", "--nominatim", "Kolona", "q025:813:510"])).toThrow(/usage/);
+    expect(() => parseArgs(["--nominatim", "Kolona", "q025:813:510", "--subdivision", "saronic"])).toThrow(/usage/);
+    expect(() => parseArgs(["--subdivision", "saronic", "--nominatim", "Kolona", "q025:813:510"])).toThrow(/usage/);
   });
 
   it("--ai takes a model task, at most 5 answers and a cost ceiling, and stands alone", () => {
@@ -102,8 +103,8 @@ describe("fixtures-record CLI", () => {
       ["--ai", "extract-facts", "--max-eur", "0"],
       ["--ai", "extract-facts", "--max-eur"],
       ["--ai", "extract-facts", "--limit", "2", "--limit", "3"],
-      ["--ai", "extract-facts", "--area", "saronic"],
-      ["--area", "saronic", "--ai", "extract-facts"],
+      ["--ai", "extract-facts", "--subdivision", "saronic"],
+      ["--subdivision", "saronic", "--ai", "extract-facts"],
     ]) {
       expect(() => parseArgs(argv)).toThrow(/usage/);
     }
@@ -133,9 +134,9 @@ describe("fixtures-record CLI", () => {
     }
   });
 
-  it("--wikivoyage needs an area and excludes the other recordings", () => {
-    expect(parseArgs(["--wikivoyage", "--area", "saronic"])).toEqual({
-      area: "saronic",
+  it("--wikivoyage needs a subdivision and excludes the other recordings", () => {
+    expect(parseArgs(["--wikivoyage", "--subdivision", "saronic"])).toEqual({
+      subdivision: "saronic",
       land: undefined,
       cache: undefined,
       datasets: false,
@@ -143,14 +144,14 @@ describe("fixtures-record CLI", () => {
       wikivoyage: true,
     });
     expect(() => parseArgs(["--wikivoyage"])).toThrow(/usage/);
-    expect(() => parseArgs(["--wikivoyage", "--serp", "--area", "saronic"])).toThrow(/usage/);
-    expect(() => parseArgs(["--wikivoyage", "--datasets", "--area", "saronic"])).toThrow(/usage/);
+    expect(() => parseArgs(["--wikivoyage", "--serp", "--subdivision", "saronic"])).toThrow(/usage/);
+    expect(() => parseArgs(["--wikivoyage", "--datasets", "--subdivision", "saronic"])).toThrow(/usage/);
   });
 
   it("rejects missing or unknown arguments", () => {
     expect(() => parseArgs(["--land", "l.shp"])).toThrow(/usage/);
-    expect(() => parseArgs(["--area", "a", "--foo", "1"])).toThrow(/usage/);
-    expect(() => parseArgs(["--area", "--datasets"])).toThrow(/usage/);
+    expect(() => parseArgs(["--subdivision", "a", "--foo", "1"])).toThrow(/usage/);
+    expect(() => parseArgs(["--subdivision", "--datasets"])).toThrow(/usage/);
   });
 
   it("only writes to a *_scratch database", () => {

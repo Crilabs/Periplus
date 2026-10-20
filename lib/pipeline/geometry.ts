@@ -102,12 +102,12 @@ export async function checkGeometryTiles(db: Db, tileIds: string[]): Promise<voi
 
 /**
  * Places the geometry stage computes: valid, unmerged places with status candidate, confirmed or no_anchoring
- * among `params.placeIds`, else whose tile is one of `params.tileIds`, else one of the coast tiles of the area
- * `params.areaKey`; ordered by id.
+ * among `params.placeIds`, else whose tile is one of `params.tileIds`, else one of the coast tiles of the subdivision
+ * `params.subdivisionKey`; ordered by id.
  */
 export async function geometryPlaceIds(
   db: Db,
-  params: { placeIds?: string[]; tileIds?: string[]; areaKey?: string },
+  params: { placeIds?: string[]; tileIds?: string[]; subdivisionKey?: string },
 ): Promise<string[]> {
   let scope: SQL;
   if (Array.isArray(params.placeIds)) {

@@ -1,15 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { DOC_TYPES, sourceStatusEnum, type DocType, type SourceStatus } from "@/lib/db/schema";
+import { listSubdivisionOptions } from "@/lib/domain/subdivisions/store";
 import { listSources, SOURCES_PAGE_SIZE, sourceDomains, sourceStatusCounts } from "@/lib/domain/sources-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { AutoRefresh } from "../_components/auto-refresh";
 import { Dialog } from "../_components/dialog";
 import { DOC_TYPE_LABELS, SOURCE_STATUS_LABELS, sourcePageError } from "../_components/labels";
 import { RunStatusBadge } from "../_components/runs-table";
+import { SubdivisionOptions } from "../_components/subdivision-options";
 import {
   Badge,
   Button,
@@ -78,12 +79,7 @@ export default async function Page({ searchParams }: PageProps<"/sources">) {
   ]);
   const pages = Math.max(1, Math.ceil(list.total / SOURCES_PAGE_SIZE));
   const active = list.rows.some((r) => r.lastRun && (r.lastRun.status === "queued" || r.lastRun.status === "running"));
-  const areas = getConfig().areas.map((a) => ({ key: a.key, name: a.names.de ?? a.key }));
-  const areaOptions = areas.map((a) => (
-    <option key={a.key} value={a.key}>
-      {a.name}
-    </option>
-  ));
+  const subdivisionOptions = <SubdivisionOptions options={await listSubdivisionOptions(db)} />;
   const href = (over: Record<string, string | undefined>) => {
     const query = new URLSearchParams();
     for (const [k, v] of Object.entries({ status, type, q: q || undefined, page: undefined, ...over })) if (v) query.set(k, v);
@@ -105,29 +101,29 @@ export default async function Page({ searchParams }: PageProps<"/sources">) {
         <RunOption
           form={
             <form action={discoveryAreaAction} className="flex flex-wrap items-center gap-2">
-              <select name="areaKey" required aria-label="Revier für die Quellenfindung" className={inputClass}>
-                {areaOptions}
+              <select name="subdivisionKey" required aria-label="Landesteil für die Quellenfindung" className={inputClass}>
+                {subdivisionOptions}
               </select>
               <Button>Quellenfindung</Button>
             </form>
           }
         >
-          <span className="font-medium text-ink">Quellenfindung:</span> stellt die Suchanfragen des Reviers und
+          <span className="font-medium text-ink">Quellenfindung:</span> stellt die Suchanfragen des Landesteils und
           seiner Küstenkacheln (Treffer der letzten 30 Tage werden wiederverwendet) und macht aus den Treffern
           Quellenvorschläge zur Prüfung. Neue Suchanfragen kosten Geld.
         </RunOption>
         <RunOption
           form={
             <form action={wikivoyageRunAction} className="flex flex-wrap items-center gap-2">
-              <select name="areaKey" required aria-label="Revier für Wikivoyage" className={inputClass}>
-                {areaOptions}
+              <select name="subdivisionKey" required aria-label="Landesteil für Wikivoyage" className={inputClass}>
+                {subdivisionOptions}
               </select>
               <Button>Wikivoyage</Button>
             </form>
           }
         >
           <span className="font-medium text-ink">Wikivoyage:</span> legt fehlende Whitelist-Quellen an und ruft die
-          Wikivoyage-Artikel des Reviers ab wie jede andere Quelle. Abgelehnt, wenn die Wikivoyage-Quelle nicht
+          Wikivoyage-Artikel des Landesteils ab wie jede andere Quelle. Abgelehnt, wenn die Wikivoyage-Quelle nicht
           freigegeben ist oder gerade abgerufen wird.
         </RunOption>
         <RunOption

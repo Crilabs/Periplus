@@ -64,7 +64,7 @@ describe("seedTileIds", () => {
 
   it("unknown subdivision and missing params fail clearly", () =>
     withRollback(async (db) => {
-      await expect(seedTileIds(db, { subdivisionKey: "XA-NOPE" })).rejects.toThrow("Unknown subdivision XA-NOPE");
+      await expect(seedTileIds(db, { subdivisionKey: "XA-NOPE" })).rejects.toThrow("Unbekannter Landesteil XA-NOPE");
       await expect(seedTileIds(db, {})).rejects.toThrow("tileIds or subdivisionKey is required");
     }));
 });

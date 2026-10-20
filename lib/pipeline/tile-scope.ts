@@ -1,8 +1,8 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { geoObjects, tiles } from "@/lib/db/schema";
+import { geoObjects } from "@/lib/db/schema";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
-import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
+import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { parseTileId } from "@/lib/domain/tiles";
 import { validAt } from "@/lib/domain/timeline";
 
@@ -12,10 +12,11 @@ import { validAt } from "@/lib/domain/timeline";
 export type RunScopeReason =
   | "area_without_geo_object"
   | "area_without_coast_tiles"
+  | "subdivision_without_coast_tiles"
+  | "tile_without_subdivision"
   | "bathymetry_missing"
   | "land_missing"
   | "place_not_computable"
-  | "tile_without_area"
   | "no_approved_sources"
   | "source_not_approved"
   | "source_run_active"
@@ -72,24 +73,12 @@ export async function seedTileIds(db: Db, params: Record<string, unknown>): Prom
     return params.tileIds as string[];
   }
   if (typeof params.areaKey === "string" && params.areaKey !== "") {
-    // TODO(plan 14a task 7): remove with the area-based run starters; until then a configured area that still
-    // has a geo object keeps its label-based scope so the unconverted starters keep working.
-    const areaId = await areaGeoObjectId(db, params.areaKey);
-    if (areaId) {
-      const rows = await db
-        .select({ id: tiles.id })
-        .from(tiles)
-        .where(and(eq(tiles.areaId, areaId), eq(tiles.hasCoast, true), validAt(tiles)))
-        .orderBy(asc(tiles.id));
-      return rows.map((r) => r.id);
-    }
     throw new Error(`Revier-Schlüssel ${params.areaKey} ist kein Laufumfang mehr; Landesteil angeben (z. B. GR-I)`);
   }
   if (typeof params.subdivisionKey !== "string" || params.subdivisionKey === "") {
     throw new Error("tileIds or subdivisionKey is required");
   }
-  const sub = await subdivisionByKey(db, params.subdivisionKey);
-  if (!sub) throw new Error(`Unknown subdivision ${params.subdivisionKey}`);
+  const sub = await requireSubdivision(db, params.subdivisionKey);
   return subdivisionTileIds(db, sub.id);
 }
 
