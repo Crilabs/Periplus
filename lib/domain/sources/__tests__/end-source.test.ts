@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { geoObjects, reviewTasks, sources } from "@/lib/db/schema";
+import { changeEvents, geoObjects, reviewTasks, sources } from "@/lib/db/schema";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
 import { decideReviewTask } from "@/lib/domain/review-decisions";
 import { endSource, getSource, resumeSource } from "@/lib/domain/sources/store";
@@ -105,5 +105,48 @@ describe("endSource", () => {
       await decideReviewTask(tx, { taskId: task!.id, decision: { action: "accept_change" }, decidedBy: "admin@example.invalid", taskKey });
       await consolidateGeo(tx, objectId, { today });
       expect((await latestProfile(tx, objectId))!.attributes["shelter.S"]).toBe(0.9);
+    }));
+  it("after a discard, a second weak post stays null and opens a new task; a strong source ends the hold (ruling M6-FIN-R3)", () =>
+    withRollback(async (tx) => {
+      const navily = await insertSource(tx, "travel_guide", 0.9);
+      await tx.update(sources).set({ status: "approved" }).where(eq(sources.id, navily));
+      const forum = await approvedSource(tx);
+      const { objectId } = await insertPlace(tx, { name: "Haltebucht" });
+      await insertTextFact(tx, objectId, navily, { attribute: "shelter.S", value: 0.4, observedAt: "2026-07-01", confidence: 0.9 });
+      const today = await utcToday(tx);
+      await consolidateGeo(tx, objectId, { today });
+      await endSource(tx, navily);
+      await insertTextFact(tx, objectId, forum, { attribute: "shelter.S", value: 0.9, observedAt: "2026-08-01" });
+      await consolidateGeo(tx, objectId, { today });
+      const tasks = () =>
+        tx.select().from(reviewTasks).where(and(eq(reviewTasks.kind, "uncertain_change"), eq(reviewTasks.subjectId, `${objectId}:shelter.S`)));
+      const [first] = await tasks();
+      await decideReviewTask(tx, { taskId: first!.id, decision: { action: "discard_change" }, decidedBy: "admin@example.invalid", taskKey: (first!.context as { key: string }).key });
+
+      // the same post after the discard: still null, no task
+      expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "unchanged", events: 0, tasks: 0 });
+      const held = await latestProfile(tx, objectId);
+      expect(held!.attributes["shelter.S"]).toBeUndefined();
+
+      // a second post of the same forum (a new key): still null, a new open task with its uncertain event on the same version
+      await insertTextFact(tx, objectId, forum, { attribute: "shelter.S", value: 0.9, observedAt: "2026-09-01" });
+      expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "unchanged", version: held!.version, events: 1, tasks: 1 });
+      expect((await latestProfile(tx, objectId))!.attributes["shelter.S"]).toBeUndefined();
+      const open = (await tasks()).filter((t) => t.status === "open");
+      expect(open).toEqual([expect.objectContaining({ priority: 2, context: expect.objectContaining({ oldValue: null, newValue: 0.9 }) })]);
+      const events = await tx.select().from(changeEvents).where(and(eq(changeEvents.geoObjectId, objectId), eq(changeEvents.type, "uncertain")));
+      expect(events.filter((e) => (e.details as { taskId?: string }).taskId === open[0]!.id)).toEqual([
+        expect.objectContaining({ attribute: "shelter.S", profileVersion: held!.version, severity: "safety" }),
+      ]);
+
+      // a strong source ends the hold: the value enters, the open task goes as superseded
+      const guide = await insertSource(tx, "pilot_guide", 0.9);
+      await tx.update(sources).set({ status: "approved" }).where(eq(sources.id, guide));
+      await insertTextFact(tx, objectId, guide, { attribute: "shelter.S", value: 0.7, observedAt: "2026-09-15", confidence: 0.9 });
+      expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "created" });
+      const after = await latestProfile(tx, objectId);
+      expect(after!.attributes["shelter.S"]).toBe(0.7);
+      expect(after!.gaps.filter((g) => g.attribute === "shelter.S")).toEqual([]);
+      expect((await tasks()).filter((t) => t.status === "open")).toEqual([]);
     }));
 });

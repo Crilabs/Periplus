@@ -375,6 +375,9 @@ function AttributeDetail({ detail: d, links, version }: { detail: AttributeFacts
                       · {e.inputIds.length} {e.inputIds.length === 1 ? "Beleg" : "Belege"}
                       {e.otherInputs.length > 0 && ` (davon ${e.otherInputs.length} aus Berechnung/POI)`}
                     </span>
+                    {e.inReview && (
+                      <span className="mt-1 block text-xs text-warn">ohne Beleg, bleibt bis zur Prüfung der Änderung</span>
+                    )}
                   </p>
                   {e.removable &&
                     (links.confirm === e.key ? (

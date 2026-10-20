@@ -97,6 +97,12 @@ export type AttributeProvenance = {
    */
   entryFactIds?: Record<string, string[]>;
   /**
+   * Safety lists only (ruling M6-FIN-R3): entry identity key → `in_review` for a kept entry that cites no fact any
+   * more (its source ended or was rejected) while the change removing it waits in an `uncertain_change` task. The
+   * entry stays (safe direction) until the task is decided. Provenance, not part of the content hash.
+   */
+  entryMarkers?: Record<string, "in_review">;
+  /**
    * Derived and identity values only (ruling M5-E-R3 I-3, M-5): the inputs that decided the value, which cannot be
    * reconstructed later (spatial candidates, sitelinks, the ferry basis). Provenance, not part of the content hash.
    */

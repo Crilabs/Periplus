@@ -150,7 +150,8 @@ function producedConfirmation(p: AttributeProvenance, support: AttributeSupport 
 
 /**
  * A safety attribute (ruling M6-FIN-R2): a shelter sector or an attribute matching `severity.safety`. A weak text
- * never sets such a value in place of a withdrawn one or past an open `uncertain_change` task.
+ * never sets such a value in place of a withdrawn one, past an open `uncertain_change` task or past the profile's
+ * `in_review` gap (rulings M6-FIN-R2/R3).
  */
 function safetyAttribute(attribute: string, cfg: ConsolidationConfig): boolean {
   return attribute.startsWith("shelter.") || attributeIn(attribute, cfg.severity.safety);
@@ -170,6 +171,27 @@ function withoutWithdrawn(p: AttributeProvenance, context: ProfileContext): Attr
   const entryFactIds = p.entryFactIds ? Object.fromEntries(Object.entries(p.entryFactIds).map(([k, ids]) => [k, facts(ids)])) : p.entryFactIds;
   if (factIds.length === p.factIds.length && sourceKeys.length === p.sourceKeys.length && same(entryFactIds, p.entryFactIds)) return p;
   return { ...p, factIds, sourceKeys, ...(entryFactIds ? { entryFactIds } : {}) };
+}
+
+/** What a provenance cites: facts, sources, the entries' inputs and their markers (not part of the content hash). */
+const citations = (p: AttributeProvenance | undefined) =>
+  canonicalJson(p ? [p.factIds, p.sourceKeys, p.entryFactIds ?? null, p.entryMarkers ?? null] : null);
+
+/** A provenance without entry markers: a marker holds only for the run that drafts the entry's task. */
+function withoutMarkers(p: AttributeProvenance): AttributeProvenance {
+  if (p.entryMarkers === undefined) return p;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { entryMarkers, ...rest } = p;
+  return rest;
+}
+
+/**
+ * A kept safety list whose removal waits for review (ruling M6-FIN-R3): each entry citing no fact any more is marked
+ * `in_review` (it stays, safe direction, until the task is decided).
+ */
+function markUncitedEntries(p: AttributeProvenance): AttributeProvenance {
+  const uncited = Object.entries(p.entryFactIds ?? {}).filter(([, ids]) => ids.length === 0).map(([k]) => k);
+  return uncited.length === 0 ? p : { ...p, entryMarkers: Object.fromEntries(uncited.map((k) => [k, IN_REVIEW_GAP] as const)) };
 }
 
 /** Severity of a value that is gone: a shelter sector without a value any more is `safety` (no Δ to measure). */
@@ -223,15 +245,19 @@ function mergedListProvenance(prev: AttributeProvenance, next: AttributeProvenan
  * - Without a previous profile: no attribute events; a confirmed place → `place_new`.
  * - Per attribute of the fact schema level:
  *   - no value before → `new_attribute`; but an unsupported value of a safety attribute (shelter sectors,
- *     `severity.safety`, not the additive lists) whose `uncertain_change` task is open, or whose key was decided
- *     (discarded: an accepted value has review support), stays without a value (gap `in_review`) and keeps its task
- *     (ruling M6-FIN-R2);
+ *     `severity.safety`, not the additive lists) stays without a value (gap `in_review`) while the previous profile
+ *     carries the gap `in_review` for it, its `uncertain_change` task is open, or its key was decided (rulings
+ *     M6-FIN-R2/R3). Without an open task a task for the new key opens with its `uncertain` event (on the existing
+ *     version when nothing else changed), unless that key was discarded. The gap ends only with a supported value
+ *     (independent sources, a strong source, a computation, a review fact: an accepted change); a run without a value
+ *     carries it over. A held task shows the attribute's conflict note (both weak values) in `context.conflict`;
  *   - another value supported by `change.minIndependent` independent sources or a source weighing more than
  *     `change.strongWeight` (or set by the rule itself, origin `rule`) → `changed`;
  *   - otherwise uncertain: the old value, its provenance and its conflict note stay and, unless its key
  *     (`uncertainKey`) was decided, an `uncertain_change` task draft with an `uncertain` event. On a list of
  *     `change.additiveLists` (safety lists) the entries the new list adds are accepted anyway, per entry (`changed`);
- *     only the rest of the change (removed or changed entries) waits as uncertain;
+ *     only the rest of the change (removed or changed entries) waits as uncertain; a kept entry citing no fact any
+ *     more (withdrawn source) stays, marked `in_review` in `entryMarkers` while its task is drafted (ruling M6-FIN-R3);
  *   - a value without inputs any more stays (no event, expiry ages it) if it can expire (text or observation);
  *     a computed, rule, review or POI value goes, its gap stays, and `changed` → null is emitted (ruling M5-F-R3 I-1);
  *   - a text or observed value resting only on facts of rejected or ended sources (`withdrawn`, ruling M6-H-R1) goes
@@ -248,7 +274,8 @@ function mergedListProvenance(prev: AttributeProvenance, next: AttributeProvenan
  * - Every conflict without resolution (decided keys are marked `decided` by `buildProfile`) → a `conflict` task draft
  *   with both sides and the further value groups (`others`); priority 2 on a safety attribute, else 1; no event.
  * - `versionNeeded`: no previous profile, or another content hash after the old values came back (profile confidence
- *   and hash recomputed).
+ *   and hash recomputed), or a kept value whose citations changed (a withdrawn source no longer cited, an entry
+ *   marker set or gone; rulings M6-FIN-R2/R3), without an event.
  */
 export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, ctx: DiffContext): ProfileDiff {
   const { cfg, context } = ctx;
@@ -261,6 +288,8 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
   };
   const events: EventDraft[] = [];
   const tasks: TaskDraft[] = [];
+  /** Attributes whose old value stays (`keep`): a version is written when their citations changed. */
+  const kept = new Set<string>();
   const event = (type: ChangeType, attribute: string | null, oldValue: unknown, newValue: unknown, severity: ChangeSeverity, details: Record<string, unknown> = {}) =>
     events.push({ type, attribute, oldValue: oldValue ?? null, newValue: newValue ?? null, severity, details });
 
@@ -271,10 +300,11 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
      * against the decided tasks).
      */
     const keep = (key: string) => {
+      kept.add(key);
       const support = next.support[key];
       const confirmedAt = support?.confirmedAt[canonicalJson(prev.attributes[key] ?? null)] ?? producedConfirmation(prev.provenance[key]!, support);
       profile.attributes[key] = prev.attributes[key];
-      profile.provenance[key] = withoutWithdrawn(keptProvenance(prev.provenance[key]!, cutoff, cfg, confirmedAt), context);
+      profile.provenance[key] = withoutMarkers(withoutWithdrawn(keptProvenance(prev.provenance[key]!, cutoff, cfg, confirmedAt), context));
       profile.gaps = profile.gaps.filter((g) => g.attribute !== key);
       profile.conflicts = [
         ...profile.conflicts.filter((c) => c.attribute !== key),
@@ -282,24 +312,32 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
       ].sort((a, b) => cmp(a.attribute, b.attribute) || cmp(a.key, b.key));
     };
 
-    /**
-     * A safety value held back for review (ruling M6-FIN-R2): the attribute stays without a value (gap `in_review`)
-     * and, unless its key was decided, an `uncertain_change` task (priority 2, old value null) proposes the value;
-     * `withEvent` false when the task already waits (its `uncertain` event was written when it was opened).
-     */
-    const holdForReview = (key: string, newValue: unknown, support: AttributeSupport, withEvent: boolean) => {
+    /** The attribute without a value, its gap `in_review`: the profile's marker of a held safety value. */
+    const markInReview = (key: string) => {
       delete profile.attributes[key];
       delete profile.provenance[key];
       profile.conflicts = profile.conflicts.filter((c) => c.attribute !== key);
       profile.gaps = [...profile.gaps.filter((g) => g.attribute !== key), { attribute: key, reason: IN_REVIEW_GAP }];
+    };
+
+    /**
+     * A safety value held back for review (rulings M6-FIN-R2/R3): the attribute stays without a value (gap
+     * `in_review`) and, unless its key was decided, an `uncertain_change` task (priority 2, old value null) proposes
+     * the value, with the attribute's conflict note (both weak values) in `context.conflict`; `withEvent` false when a
+     * task already waits (the store keeps it and writes no event).
+     */
+    const holdForReview = (key: string, newValue: unknown, support: AttributeSupport, withEvent: boolean) => {
+      const note = profile.conflicts.find((c) => c.attribute === key);
+      markInReview(key);
       const factIds = [...support.factIds].sort();
       const taskKey = uncertainKey(key, newValue, factIds);
       if (context.decidedUncertainKeys.has(taskKey)) return;
+      const conflict = note ? { conflict: { key: note.key, a: note.a, b: note.b, others: note.others ?? [] } } : {};
       tasks.push({
         kind: "uncertain_change",
         attribute: key,
         key: taskKey,
-        context: { key: taskKey, attribute: key, oldValue: null, newValue, factIds, sources: next.provenance[key]?.sourceKeys ?? [] },
+        context: { key: taskKey, attribute: key, oldValue: null, newValue, factIds, sources: next.provenance[key]?.sourceKeys ?? [], ...conflict },
         priority: priorityOf("safety"),
         event: withEvent ? { type: "uncertain", attribute: key, oldValue: null, newValue, severity: "safety", details: { key: taskKey } } : null,
       });
@@ -318,14 +356,20 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
       const safety = safetyAttribute(key, cfg);
       const additive = attributeIn(key, cfg.change.additiveLists);
       if (!had) {
-        if (newValue === undefined) continue;
-        // an unsupported safety value waits for its open or discarded uncertain_change task (ruling M6-FIN-R2)
+        // the profile's in_review gap holds the attribute until a supported value or a review decision (ruling M6-FIN-R3)
+        const inReview = (prev.gaps ?? []).some((g) => g.attribute === key && g.reason === IN_REVIEW_GAP);
+        if (newValue === undefined) {
+          if (inReview) markInReview(key);
+          continue;
+        }
+        const openTask = context.openTasks.has(`uncertain_change:${key}`);
+        // an unsupported safety value waits: held by the gap, an open task or its discarded key (rulings M6-FIN-R2/R3)
         const held =
           safety &&
           !additive &&
           !supported &&
-          (context.openTasks.has(`uncertain_change:${key}`) || context.decidedUncertainKeys.has(uncertainKey(key, newValue, [...support.factIds].sort())));
-        if (held) holdForReview(key, newValue, support, false);
+          (inReview || openTask || context.decidedUncertainKeys.has(uncertainKey(key, newValue, [...support.factIds].sort())));
+        if (held) holdForReview(key, newValue, support, !openTask);
         else event("new_attribute", key, null, newValue, severityFor(key, undefined, newValue, cfg));
         continue;
       }
@@ -360,6 +404,8 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
             const factIds = [...support.factIds].sort();
             const taskKey = uncertainKey(key, newValue, factIds);
             if (!context.decidedUncertainKeys.has(taskKey)) {
+              // a kept entry citing no fact any more stays while its removal waits (ruling M6-FIN-R3)
+              if (additive) profile.provenance[key] = markUncitedEntries(profile.provenance[key]!);
               tasks.push({
                 kind: "uncertain_change",
                 attribute: key,
@@ -409,5 +455,9 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
 
   profile.confidence = profileConfidence(profile.provenance, cfg);
   profile.contentHash = profileContentHash(profile);
-  return { profile, events, tasks, versionNeeded: prev === null || prev.contentHash !== profile.contentHash };
+  // a kept value that stops citing a withdrawn source, or gains or loses an entry marker, is a new version without
+  // an event (rulings M6-FIN-R2/R3): the package's sources follow the profile version (ruling M5-P25 allows versions
+  // without events)
+  const citationsChanged = prev !== null && [...kept].some((k) => citations(profile.provenance[k]) !== citations(prev.provenance[k]));
+  return { profile, events, tasks, versionNeeded: prev === null || prev.contentHash !== profile.contentHash || citationsChanged };
 }

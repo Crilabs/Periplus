@@ -95,7 +95,8 @@ function SideCard({ title, attribute, side }: { title: string; attribute: string
 /**
  * A `conflict` or `uncertain_change` task on one profile attribute (spec 07): the object, the attribute, the profile's
  * current value with its origin, and per side (conflict) or for the proposed value (uncertain change) the value, the
- * period, the weight and the facts with their quotes and sources. Decisions: "Wert A", "Wert B", "Beide (saisonal)",
+ * period, the weight and the facts with their quotes and sources; an uncertain change of a held safety value also
+ * shows the two sides of its conflict note (ruling M6-FIN-R3). Decisions: "Wert A", "Wert B", "Beide (saisonal)",
  * "Offen lassen" (keys 1–4) or "Übernehmen", "Verwerfen" (keys 1–2); each names the task's context key, so a decision
  * on a value that changed meanwhile is refused.
  */
@@ -251,6 +252,31 @@ export function ProfileDecision({
           <p className="text-sm text-muted">Der Aufgabenkontext nennt keinen neuen Wert.</p>
         )}
       </Panel>
+      {(subject.a || subject.b) && (
+        <>
+          <p className="text-sm text-muted">
+            Die schwachen Quellen widersprechen sich: vorgeschlagen ist Wert A, Wert B und weitere Werte stehen zum Vergleich.
+          </p>
+          <div className="grid gap-6 lg:grid-cols-2">
+            <SideCard title="Wert A" attribute={subject.attribute} side={subject.a} />
+            <SideCard title="Wert B" attribute={subject.attribute} side={subject.b} />
+          </div>
+          {subject.others && subject.others.length > 0 && (
+            <Panel title="Weitere Werte" description="Weitere Wertgruppen, schwerste zuerst.">
+              <ul className="divide-y divide-line text-sm">
+                {subject.others.map((o, i) => (
+                  <li key={i} className="flex flex-wrap justify-between gap-2 py-2 first:pt-0 last:pb-0">
+                    <span className="font-medium">{o.display}</span>
+                    <span className="text-muted">
+                      Gewicht {share(o.weight)}, {period(o.observedFrom, o.observedTo)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          )}
+        </>
+      )}
     </div>
   );
 }

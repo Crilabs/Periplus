@@ -123,6 +123,29 @@ describe("review of a profile attribute", () => {
       expect(s.proposed!.display).toBe("gut geschützt (0,9)");
     }));
 
+  it("an uncertain change with a conflict note shows both sides with their facts (ruling M6-FIN-R3)", () =>
+    withRollback(async (tx) => {
+      const { objectId } = await insertPlace(tx, { name: "Haltebucht" });
+      const deep = await insertTextFact(tx, objectId, await insertSource(tx, "forum", 0.4), { attribute: "max_draft", value: 4, observedAt: "2026-07-01" });
+      const shallow = await insertTextFact(tx, objectId, await insertSource(tx, "forum", 0.4), { attribute: "max_draft", value: 2, observedAt: "2026-07-01" });
+      const sideOf = (value: number, factId: string) => ({ value, weight: 0.4, factIds: [factId], sourceKeys: [], observedFrom: "2026-07-01", observedTo: "2026-07-01" });
+      const [task] = await tx
+        .insert(reviewTasks)
+        .values({
+          kind: "uncertain_change",
+          subjectType: "profile_attribute",
+          subjectId: `${objectId}:max_draft`,
+          context: { key: "k", oldValue: null, newValue: 4, factIds: [deep], conflict: { key: "c", a: sideOf(4, deep), b: sideOf(2, shallow), others: [] } },
+        })
+        .returning({ id: reviewTasks.id });
+      const s = (await reviewTaskDetail(tx, task!.id))!.subject;
+      if (s.type !== "profile_attribute") throw new Error(`subject ${s.type}`);
+      expect(s.proposed!.value).toBe(4);
+      expect(s.a).toMatchObject({ value: 4, facts: [expect.objectContaining({ id: deep })] });
+      expect(s.b).toMatchObject({ value: 2, facts: [expect.objectContaining({ id: shallow })] });
+      expect(s.others).toEqual([]);
+    }));
+
   it("a run that swaps the sides between load and click makes the action redirect with the notice and write nothing", () =>
     withRollback(async (tx) => {
       current = tx;

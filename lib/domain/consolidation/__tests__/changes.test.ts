@@ -292,6 +292,119 @@ describe("diffProfiles", () => {
     ]);
   });
 
+  describe("the profile's in_review gap holds a weak safety value until support or a decision (ruling M6-FIN-R3)", () => {
+    const navily = () => text({ factId: "fact-navily-s", attribute: "shelter.S", value: 0.4, sourceKey: "source:navily", sourceWeight: 0.9, confidence: 0.9, observedAt: "2026-06-01" });
+    const post = () => text({ factId: "fact-forum-s", attribute: "shelter.S", value: 0.9, sourceKey: "source:forum", sourceWeight: 0.4, observedAt: "2026-07-01" });
+    const ended = { withdrawnFactIds: new Set(["fact-navily-s"]), withdrawnSourceKeys: new Set(["source:navily"]) };
+    /** The held profile after run 1 (Navily ended, one forum post) and the key of its task. */
+    function held() {
+      const ctx = context(ended);
+      const r = diff(stored(build([...basis(), navily()])), build([...basis(), post()], ctx), ctx);
+      expect(r.profile.gaps).toContainEqual({ attribute: "shelter.S", reason: "in_review" });
+      return { prev: stored(r.profile, 2), key: r.tasks[0]!.key };
+    }
+
+    it("after a discard, a second weak post (a new key) stays null and opens a new task with its event", () => {
+      const { prev, key } = held();
+      const ctx = context({ ...ended, decidedUncertainKeys: new Set([key]) });
+      const second = text({ factId: "fact-forum-s2", attribute: "shelter.S", value: 0.9, sourceKey: "source:forum", sourceWeight: 0.4, observedAt: "2026-08-01" });
+      const r = diff(prev, build([...basis(), post(), second], ctx), ctx);
+      expect(r.profile.attributes["shelter.S"]).toBeUndefined();
+      expect(r.profile.gaps).toContainEqual({ attribute: "shelter.S", reason: "in_review" });
+      expect(r.events).toEqual([]);
+      expect(r.versionNeeded).toBe(false);
+      expect(r.tasks).toHaveLength(1);
+      expect(r.tasks[0]!.key).not.toBe(key);
+      expect(r.tasks[0]).toMatchObject({
+        kind: "uncertain_change",
+        priority: 2,
+        context: { oldValue: null, newValue: 0.9, factIds: ["fact-forum-s", "fact-forum-s2"] },
+        event: { type: "uncertain", attribute: "shelter.S", oldValue: null, newValue: 0.9, severity: "safety" },
+      });
+
+      // the same discarded key alone stays null without a task
+      const same = diff(prev, build([...basis(), post()], ctx), ctx);
+      expect(same.profile.attributes["shelter.S"]).toBeUndefined();
+      expect(same.tasks).toEqual([]);
+    });
+
+    it("a run without the fact keeps the gap; the fact returning after a superseded dismissal stays null and opens a task", () => {
+      const { prev, key } = held();
+      const ctx = context(ended);
+      const without = diff(prev, build(basis(), ctx), ctx);
+      expect(without.profile.attributes["shelter.S"]).toBeUndefined();
+      expect(without.profile.gaps).toContainEqual({ attribute: "shelter.S", reason: "in_review" });
+      expect(without.tasks).toEqual([]);
+      expect(without.events).toEqual([]);
+
+      // the store dismissed the open task as superseded (not decided): the fact returns with no open task
+      const back = diff(stored(without.profile, 2), build([...basis(), post()], ctx), ctx);
+      expect(back.profile.attributes["shelter.S"]).toBeUndefined();
+      expect(back.events).toEqual([]);
+      expect(back.tasks).toEqual([expect.objectContaining({ kind: "uncertain_change", key, priority: 2, event: expect.objectContaining({ type: "uncertain" }) })]);
+    });
+
+    it("an accepted change and a strong value end the gap", () => {
+      const { prev, key } = held();
+      const decided = context({ ...ended, decidedUncertainKeys: new Set([key]) });
+      const accepted = review({ attribute: "shelter.S", value: 0.9, observedAt: TODAY });
+      const applied = diff(prev, build([...basis(), post(), accepted], decided), decided);
+      expect(applied.profile.attributes["shelter.S"]).toBe(0.9);
+      expect(applied.profile.gaps.filter((g) => g.attribute === "shelter.S")).toEqual([]);
+      expect(applied.tasks).toEqual([]);
+
+      const ctx = context({ ...ended, openTasks: new Map([["uncertain_change:shelter.S", { taskId: "task-1", key }]]) });
+      const guide = text({ factId: "fact-guide-s", attribute: "shelter.S", value: 0.7, sourceKey: "source:guide", sourceWeight: 0.9, confidence: 0.9, observedAt: "2026-08-01" });
+      const strong = diff(prev, build([...basis(), post(), guide], ctx), ctx);
+      expect(strong.profile.attributes["shelter.S"]).toBeDefined();
+      expect(strong.profile.gaps.filter((g) => g.attribute === "shelter.S")).toEqual([]);
+      expect(strong.events).toEqual([expect.objectContaining({ type: "new_attribute", attribute: "shelter.S" })]);
+      expect(strong.tasks).toEqual([]);
+      expect(strong.versionNeeded).toBe(true);
+    });
+
+    it("the held task shows both weak values of a conflict", () => {
+      const guide = text({ factId: "fact-navily-draft", attribute: "max_draft", value: 3, sourceKey: "source:navily", sourceWeight: 0.9, confidence: 0.9, observedAt: "2026-06-01" });
+      const ctx = context({ withdrawnFactIds: new Set(["fact-navily-draft"]), withdrawnSourceKeys: new Set(["source:navily"]) });
+      const forum = text({ factId: "fact-forum-draft", attribute: "max_draft", value: 4, sourceKey: "source:forum", sourceWeight: 0.4, observedAt: "2026-07-01" });
+      const trip = text({ factId: "fact-trip-draft", attribute: "max_draft", value: 2, sourceKey: "source:trip", sourceWeight: 0.4, observedAt: "2026-07-01" });
+      const next = build([...basis(), forum, trip], ctx);
+      const note = next.conflicts.find((c) => c.attribute === "max_draft");
+      expect(note).toBeDefined();
+      const r = diff(stored(build([...basis(), guide])), next, ctx);
+      expect(r.profile.attributes["max_draft"]).toBeUndefined();
+      expect(r.profile.gaps).toContainEqual({ attribute: "max_draft", reason: "in_review" });
+      expect(r.tasks.filter((t) => t.kind === "conflict")).toEqual([]);
+      const task = r.tasks.find((t) => t.kind === "uncertain_change")!;
+      expect(task.context.conflict).toEqual({ key: note!.key, a: note!.a, b: note!.b, others: note!.others });
+    });
+  });
+
+  it("a kept safety-list entry citing no fact while its removal waits is marked in_review (ruling M6-FIN-R3)", () => {
+    const rock = { kind: "rock", name: "Xera" };
+    const shoal = { kind: "shoal", name: null };
+    const navily = text({ factId: "fact-navily-hz", attribute: "hazards", value: [rock], sourceKey: "source:navily", sourceWeight: 0.9, confidence: 0.9, observedAt: "2026-06-01" });
+    const report = text({ factId: "fact-report-hz", attribute: "hazards", value: [shoal], sourceKey: "source:report", sourceWeight: 0.6, observedAt: "2026-06-01" });
+    const prev = stored(build([...basis(), navily, report]));
+    const ctx = context({ withdrawnFactIds: new Set(["fact-navily-hz"]), withdrawnSourceKeys: new Set(["source:navily"]) });
+    const r = diff(prev, build([...basis(), report], ctx), ctx);
+    expect(r.profile.attributes["hazards"]).toEqual(prev.attributes["hazards"]);
+    const p = r.profile.provenance["hazards"]!;
+    const [rockKey] = Object.entries(p.entryFactIds!).find(([, ids]) => ids.length === 0)!;
+    expect(p.entryMarkers).toEqual({ [rockKey]: "in_review" });
+    expect(r.versionNeeded).toBe(true);
+    expect(Object.values(p.entryFactIds!).flat()).toEqual(["fact-report-hz"]);
+    expect(r.tasks).toEqual([expect.objectContaining({ kind: "uncertain_change", attribute: "hazards", context: expect.objectContaining({ newValue: [shoal] }) })]);
+
+    // once the change is decided the entry still stays (safe direction), without the marker
+    const decided = context({ ...ctx, decidedUncertainKeys: new Set([r.tasks[0]!.key]) });
+    const after = diff(stored(r.profile, 2), build([...basis(), report], decided), decided);
+    expect(after.profile.attributes["hazards"]).toEqual(prev.attributes["hazards"]);
+    expect(after.profile.provenance["hazards"]!.entryMarkers).toBeUndefined();
+    expect(after.versionNeeded).toBe(true);
+    expect(after.events).toEqual([]);
+  });
+
   it("a kept value stops citing facts and sources that are withdrawn now (ruling M6-FIN-R2)", () => {
     const guide = guideWater();
     const report = text({ factId: "fact-report-water", attribute: "services.water", value: true, sourceKey: "source:report", sourceWeight: 0.6, observedAt: "2026-07-01", lastConfirmedAt: "2026-10-01" });
@@ -304,6 +417,10 @@ describe("diffProfiles", () => {
     expect(r.profile.attributes["services.water"]).toBe(true);
     expect(r.profile.provenance["services.water"]).toMatchObject({ factIds: ["fact-report-water"], sourceKeys: ["source:report"] });
     expect(r.tasks).toEqual([expect.objectContaining({ kind: "uncertain_change", attribute: "services.water" })]);
+    // the citations changed: a new version without an event, so the package stops naming the ended source (ruling M6-FIN-R3)
+    expect(r.events).toEqual([]);
+    expect(r.versionNeeded).toBe(true);
+    expect(diff(stored(r.profile, 2), build([...basis(), forum], ctx), ctx).versionNeeded).toBe(false);
   });
 
   it("a newly expired value emits expired with its severity and last confirmation", () => {

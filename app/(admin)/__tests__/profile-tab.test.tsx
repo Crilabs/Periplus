@@ -58,8 +58,8 @@ const view = (over: Partial<ProfileView> = {}): ProfileView => ({
       expired: true,
       rule: "union",
       entries: [
-        { key: "rock", entry: { kind: "rock", name: "Xera" }, display: "Fels (Xera)", inputIds: ["f1"], removable: true },
-        { key: "shoal", entry: { kind: "shoal", name: null }, display: "Untiefe", inputIds: ["computation:c1"], removable: false },
+        { key: "rock", entry: { kind: "rock", name: "Xera" }, display: "Fels (Xera)", inputIds: ["f1"], removable: true, inReview: false },
+        { key: "shoal", entry: { kind: "shoal", name: null }, display: "Untiefe", inputIds: ["computation:c1"], removable: false, inReview: false },
       ],
     }),
   ],
@@ -102,6 +102,15 @@ describe("ProfileTab", () => {
     expect(html).not.toContain("Wirklich entfernen?");
     expect(html).toContain("(davon 1 aus Berechnung/POI)");
     expect(html).toContain("Berechnung: Schutz vom 2026-10-01 08:00");
+    expect(html).not.toContain("ohne Beleg");
+  });
+
+  it("marks a kept entry without a fact while its removal waits for review (ruling M6-FIN-R3)", () => {
+    const v = view();
+    const detail = hazardDetail(v);
+    detail.entries = detail.entries!.map((e) => (e.key === "rock" ? { ...e, inputIds: [], inReview: true } : e));
+    const html = renderToStaticMarkup(<ProfileTab view={v} selected={detail} links={links} />);
+    expect(html.match(/ohne Beleg, bleibt bis zur Prüfung der Änderung/g)).toHaveLength(1);
   });
 
   it("the second step is a server-rendered form „Wirklich entfernen?“ with cancel", () => {
