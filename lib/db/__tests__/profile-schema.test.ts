@@ -5,6 +5,7 @@ import { visibleChangeEventsFilter } from "@/lib/domain/change-feed";
 import { changeEvents, geoObjects, profileSummaries, profiles } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/client";
 import { withRollback } from "@/test/db";
+import { insertTestRun } from "@/test/text";
 
 /** drizzle wraps driver errors ("Failed query"); the Postgres message lives on `cause`. */
 async function rejectionMessage(tx: Db, run: (tx: Db) => Promise<unknown>): Promise<string> {
@@ -125,7 +126,7 @@ describe("profiles, change events and summaries", () => {
     });
   });
 
-  it("only one ok summary per (geo object, profile version, prompt version); an empty one may be redone", async () => {
+  it("only one ok summary per (geo object, profile version, prompt version, run); an empty one may be redone", async () => {
     await withRollback(async (tx) => {
       const geoObjectId = await insertGeoObject(tx);
       const base = { geoObjectId, profileVersion: 1, attempts: 3, model: "m", promptVersion: 1 };
@@ -136,7 +137,13 @@ describe("profiles, change events and summaries", () => {
       const message = await rejectionMessage(tx, (sp) =>
         sp.insert(profileSummaries).values({ ...base, text: "Noch eine.", status: "ok" }),
       );
-      expect(message).toMatch(/profile_summaries_ok_unique/);
+      expect(message).toMatch(/profile_summaries_ok_run_unique/);
+      // „Summary neu erzeugen“ (ruling M6-H-R1): another run adds one beside it, but only one per run
+      const runId = await insertTestRun(tx);
+      await tx.insert(profileSummaries).values({ ...base, text: "Neu geschrieben.", status: "ok", runId });
+      expect(
+        await rejectionMessage(tx, (sp) => sp.insert(profileSummaries).values({ ...base, text: "Und noch eine.", status: "ok", runId })),
+      ).toMatch(/profile_summaries_ok_run_unique/);
       // Another prompt version may summarise the same profile version.
       await expect(
         tx.insert(profileSummaries).values({ ...base, promptVersion: 2, text: "Eine Bucht.", status: "ok" }),

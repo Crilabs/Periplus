@@ -2,13 +2,13 @@ import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { documents, geoNames, geoObjects, places, tileGeoObjects } from "@/lib/db/schema";
+import { documents, geoNames, geoObjects, places, profileSummaries, tileGeoObjects } from "@/lib/db/schema";
 import { newPublicId } from "@/lib/domain/ids";
 import { insertMention, insertMentionFact, insertExtraction, insertProfile, provenanceEntry } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { seedDeliveryArea, spotAProvenance, SPOT_A_ATTRIBUTES } from "@/test/fixtures/delivery/area";
 import { spotSchema } from "@/contract/v1";
-import { insertNamedObject } from "@/test/text";
+import { insertNamedObject, insertTestRun } from "@/test/text";
 import { AreaNotFound, arrayParam, loadAreaScope } from "../load";
 import { mapSpot } from "../map-spot";
 
@@ -153,6 +153,27 @@ describe("loadAreaScope", () => {
       expect(JSON.stringify(a.sources)).not.toMatch(/good holding in sand/);
       // the summary belongs to version 1, not to the latest version 2 (ruling M6-P9)
       expect(a.summary).toBeNull();
+    });
+  });
+
+  it("a regenerated ok summary of the same prompt version replaces the older one (ruling M6-H-R1)", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliveryArea(tx);
+      const { A } = f.places;
+      const [old] = await tx.select().from(profileSummaries).where(eq(profileSummaries.geoObjectId, A.geoObjectId));
+      await tx.insert(profileSummaries).values({
+        geoObjectId: A.geoObjectId,
+        profileVersion: 1,
+        text: "Neu geschriebene Zusammenfassung der Bucht.",
+        status: "ok",
+        attempts: 1,
+        model: "test",
+        promptVersion: old!.promptVersion,
+        runId: await insertTestRun(tx),
+        createdAt: new Date(old!.createdAt.getTime() + 60_000),
+      });
+      const scope = await loadAreaScope(tx, f.areaId, cfg, await dbToday(tx));
+      expect(scope.spots.find((s) => s.publicId === A.publicId)!.summary).toBe("Neu geschriebene Zusammenfassung der Bucht.");
     });
   });
 

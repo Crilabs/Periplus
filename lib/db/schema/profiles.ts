@@ -130,9 +130,10 @@ export const profileSummaries = pgTable(
     // An ok summary has its text and the prompt version the partial unique index below keys on; an empty one has no text.
     check("profile_summaries_ok_complete", sql`${t.status} <> 'ok' OR (${t.promptVersion} IS NOT NULL AND ${t.text} IS NOT NULL)`),
     check("profile_summaries_empty_no_text", sql`${t.status} <> 'empty' OR ${t.text} IS NULL`),
-    // An empty summary may be generated again later; an ok one exists once per prompt version.
-    uniqueIndex("profile_summaries_ok_unique")
-      .on(t.geoObjectId, t.profileVersion, t.promptVersion)
+    // An empty summary may be generated again later; an ok one exists once per prompt version and run („Summary neu
+    // erzeugen“ adds one beside it, ruling M6-H-R1; the newest is current). A summary without run counts as one run.
+    uniqueIndex("profile_summaries_ok_run_unique")
+      .on(t.geoObjectId, t.profileVersion, t.promptVersion, sql`coalesce(${t.runId}, '00000000-0000-0000-0000-000000000000'::uuid)`)
       .where(sql`${t.status} = 'ok'`),
   ],
 );

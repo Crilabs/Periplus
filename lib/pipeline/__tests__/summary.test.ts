@@ -182,3 +182,33 @@ describe("an ok summary closes the open summary task", () => {
       expect(await openTasks()).toEqual([{ status: "dismissed" }]);
     }));
 });
+
+describe("„Summary neu erzeugen“ (ruling M6-H-R1)", () => {
+  const OTHER = "Die Summarybucht hat guten Ankergrund aus Sand. Nach Norden bietet sie mäßigen Schutz bei mindestens 4 m Tiefe.";
+  const regenerateParams = (objectId: string) => ({ geoObjectIds: [objectId], stagesOnly: ["consolidation.summary"], regenerateSummary: true as const });
+
+  it("a regenerate run targets a version that has an ok summary and stores a new one beside it, once per run", () =>
+    withRollback(async (tx) => {
+      const { objectId, runId } = await consolidated(tx);
+      await summarizeProfile(tx, { geoObjectId: objectId, version: 1, runId }, scripted([GOOD]));
+
+      const again = await insertTestRun(tx);
+      expect(await summaryTargets(tx, { id: again, params: regenerateParams(objectId) })).toEqual([{ geoObjectId: objectId, version: 1 }]);
+      expect(await summaryJobs(tx, { id: again, params: regenerateParams(objectId) })).toEqual([
+        { key: `${objectId}:1`, geoObjectId: objectId, version: 1, regenerate: true },
+      ]);
+      expect(await summarizeProfile(tx, { geoObjectId: objectId, version: 1, runId: again, regenerate: true }, scripted([OTHER]))).toEqual({ status: "ok", attempts: 1 });
+      // a retried job of the same run does not write a third one
+      expect(await summarizeProfile(tx, { geoObjectId: objectId, version: 1, runId: again, regenerate: true }, scripted([OTHER]))).toEqual({ status: "skipped", attempts: 0 });
+      const rows = await tx.select({ text: profileSummaries.text, runId: profileSummaries.runId }).from(profileSummaries).where(eq(profileSummaries.geoObjectId, objectId));
+      expect(rows.map((r) => [r.runId, r.text]).sort()).toEqual([[runId, GOOD], [again, OTHER]].sort());
+      // without the flag the ok summary still counts as done
+      expect(await summaryTargets(tx, { id: again, params: { geoObjectIds: [objectId], stagesOnly: ["consolidation.summary"] } })).toEqual([]);
+    }));
+
+  it("regenerating needs the run id", () =>
+    withRollback(async (tx) => {
+      const { objectId } = await consolidated(tx);
+      await expect(summarizeProfile(tx, { geoObjectId: objectId, version: 1, regenerate: true }, scripted([GOOD]))).rejects.toThrow(/run id/);
+    }));
+});

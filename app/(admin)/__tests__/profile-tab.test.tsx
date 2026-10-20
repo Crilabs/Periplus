@@ -4,7 +4,7 @@ import type { ConflictSide, ProfileSnapshot } from "@/lib/domain/consolidation/t
 import type { AttributeFactsView, ProfileRow, ProfileView } from "@/lib/domain/profile-view";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }) }));
-vi.mock("../places/[id]/actions", () => ({ removeProfileEntryAction: vi.fn() }));
+vi.mock("../places/[id]/actions", () => ({ removeProfileEntryAction: vi.fn(), regenerateSummaryAction: vi.fn() }));
 
 import { ProfileTab } from "../places/[id]/profile-tab";
 import { profileConfidenceText } from "../_components/labels";
@@ -98,7 +98,7 @@ describe("ProfileTab", () => {
     expect(html.match(/Eintrag entfernen/g)).toHaveLength(1);
     // the first step is a link, not a form: nothing is removed without the second step
     expect(html).toContain('href="/places/p1?tab=profile&amp;attr=hazards&amp;confirm=rock"');
-    expect(html).not.toContain("<form");
+    expect(html).not.toContain('name="entryKey"');
     expect(html).not.toContain("Wirklich entfernen?");
     expect(html).toContain("(davon 1 aus Berechnung/POI)");
     expect(html).toContain("Berechnung: Schutz vom 2026-10-01 08:00");
@@ -112,7 +112,7 @@ describe("ProfileTab", () => {
     expect(html).toContain('name="entryKey" value="rock"');
     expect(html).toContain('name="version" value="2"');
     expect(html).toContain("Abbrechen");
-    expect(html.match(/<form/g)).toHaveLength(1);
+    expect(html.match(/name="entryKey"/g)).toHaveLength(1);
     // another entry's confirmation does not arm this one
     expect(renderToStaticMarkup(<ProfileTab view={v} selected={hazardDetail(v)} links={{ ...links, confirm: "other" }} />)).not.toContain("Wirklich entfernen?");
   });
@@ -121,6 +121,15 @@ describe("ProfileTab", () => {
     expect(profileConfidenceText({ profileConfidence: 0.62, profileClass: "medium", hasProfile: true })).toBe("0,62 (mittel)");
     expect(profileConfidenceText({ profileConfidence: null, profileClass: null, hasProfile: true })).toBe("Profil ohne Konfidenz");
     expect(profileConfidenceText({ profileConfidence: null, profileClass: null, hasProfile: false })).toBe("kein Profil");
+  });
+
+  it("„Summary neu erzeugen“ is a form on the newest version only (ruling M6-H-R1)", () => {
+    const html = renderToStaticMarkup(<ProfileTab view={view()} selected={null} links={links} />);
+    expect(html).toContain("Summary neu erzeugen");
+    expect(html.match(/<form/g)).toHaveLength(1);
+    expect(html).toContain(`name="geoObjectId" value="${GEO}"`);
+    expect(html).toContain('name="placeId" value="p1"');
+    expect(renderToStaticMarkup(<ProfileTab view={view({ latest: false })} selected={null} links={links} />)).not.toContain("Summary neu erzeugen");
   });
 
   it("marks an older version and shows a notice", () => {

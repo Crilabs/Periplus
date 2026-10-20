@@ -32,7 +32,7 @@ import {
   trClass,
   type Tone,
 } from "../../_components/ui";
-import { removeProfileEntryAction } from "./actions";
+import { regenerateSummaryAction, removeProfileEntryAction } from "./actions";
 import { FactCard } from "./facts-tab";
 
 const share = (n: number) => n.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -131,33 +131,44 @@ function ProfileBody({ view, selected, links }: { view: ProfileView; selected: A
       <Panel
         title="Zusammenfassung"
         actions={
-          <Dialog trigger="Details zur Version" triggerSize="sm" title={`Profilversion ${s.version}`} description="Technische Angaben zu dieser Version des Profils.">
-            <DescriptionList
-              columns={1}
-              items={[
-                { label: "Gültig ab", value: s.validFrom },
-                { label: "Regelversion", value: `${s.rulesVersion} · Fact-Schema ${s.factSchemaVersion}` },
-                {
-                  label: "Erstellt",
-                  value: (
-                    <>
-                      {time(view.createdAt)}
-                      {view.runId && (
-                        <>
-                          {" "}
-                          · Lauf{" "}
-                          <TextLink href={`/runs/${view.runId}`} className="font-mono">
-                            {view.runId.slice(0, 8)}
-                          </TextLink>
-                        </>
-                      )}
-                    </>
-                  ),
-                },
-                ...view.identity.map((i) => ({ label: i.label, value: i.display })),
-              ]}
-            />
-          </Dialog>
+          <div className="flex flex-wrap items-center gap-2">
+            {view.latest && (
+              <form action={regenerateSummaryAction}>
+                <input type="hidden" name="geoObjectId" value={links.geoObjectId} />
+                {links.placeId && <input type="hidden" name="placeId" value={links.placeId} />}
+                <Button size="sm" title="Startet einen Lauf, der die Zusammenfassung der neuesten Version neu schreibt (auch eine vorhandene).">
+                  Summary neu erzeugen
+                </Button>
+              </form>
+            )}
+            <Dialog trigger="Details zur Version" triggerSize="sm" title={`Profilversion ${s.version}`} description="Technische Angaben zu dieser Version des Profils.">
+              <DescriptionList
+                columns={1}
+                items={[
+                  { label: "Gültig ab", value: s.validFrom },
+                  { label: "Regelversion", value: `${s.rulesVersion} · Fact-Schema ${s.factSchemaVersion}` },
+                  {
+                    label: "Erstellt",
+                    value: (
+                      <>
+                        {time(view.createdAt)}
+                        {view.runId && (
+                          <>
+                            {" "}
+                            · Lauf{" "}
+                            <TextLink href={`/runs/${view.runId}`} className="font-mono">
+                              {view.runId.slice(0, 8)}
+                            </TextLink>
+                          </>
+                        )}
+                      </>
+                    ),
+                  },
+                  ...view.identity.map((i) => ({ label: i.label, value: i.display })),
+                ]}
+              />
+            </Dialog>
+          </div>
         }
       >
         <p className={cx("max-w-3xl leading-relaxed text-pretty", (view.summary === null || view.summary.text === null) && "text-muted")}>

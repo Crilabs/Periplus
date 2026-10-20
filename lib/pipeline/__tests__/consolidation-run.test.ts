@@ -205,6 +205,26 @@ describe("consolidation run", () => {
       expect(await refused({ comparisonSetArea: "saronic" })).toBe("comparison_set_empty");
       expect(await tx.select().from(runs).where(eq(runs.triggeredBy, "refused"))).toEqual([]);
     }));
+  it("„Summary neu erzeugen“ is a summary-only run with regenerateSummary; any other stage set is refused (ruling M6-H-R1)", () =>
+    withRollback(async (tx) => {
+      const { objectId } = await insertPlace(tx, { lon: LON, lat: LAT, name: "Neuschreibbucht" });
+      const rec = recordingBoss();
+      const run = await startConsolidationRun(tx, rec.boss, {
+        scope: { geoObjectIds: [objectId] },
+        stagesOnly: [CONSOLIDATION_SUMMARY_STAGE],
+        regenerateSummary: true,
+        triggeredBy: "test",
+      });
+      const [row] = await tx.select().from(runs).where(eq(runs.id, run.id));
+      expect(row).toMatchObject({ stages: [CONSOLIDATION_SUMMARY_STAGE], params: { geoObjectIds: [objectId], stagesOnly: [CONSOLIDATION_SUMMARY_STAGE], regenerateSummary: true } });
+      const refused = { scope: { geoObjectIds: [objectId] }, regenerateSummary: true as const, triggeredBy: "refused-regenerate" };
+      await expect(tx.transaction((t) => startConsolidationRun(t, rec.boss, refused))).rejects.toThrow(/regenerateSummary needs stagesOnly/);
+      await expect(
+        tx.transaction((t) => startConsolidationRun(t, rec.boss, { ...refused, stagesOnly: [CONSOLIDATION_GEO_STAGE, CONSOLIDATION_SUMMARY_STAGE] })),
+      ).rejects.toThrow(/regenerateSummary needs stagesOnly/);
+      expect(await tx.select().from(runs).where(eq(runs.triggeredBy, "refused-regenerate"))).toEqual([]);
+    }));
+
   it("an evaluation run refuses stagesOnly instead of dropping it", () =>
     withRollback(async (tx) => {
       const { objectId } = await insertPlace(tx, { lon: LON, lat: LAT, name: "Bewertungsbucht" });

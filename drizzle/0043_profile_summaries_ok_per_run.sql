@@ -1,0 +1,2 @@
+DROP INDEX "profile_summaries_ok_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX "profile_summaries_ok_run_unique" ON "profile_summaries" USING btree ("geo_object_id","profile_version","prompt_version",coalesce("run_id", '00000000-0000-0000-0000-000000000000'::uuid)) WHERE "profile_summaries"."status" = 'ok';

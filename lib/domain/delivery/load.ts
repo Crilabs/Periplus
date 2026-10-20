@@ -384,7 +384,10 @@ async function loadNames(db: Db, geoObjectIds: string[], today: string): Promise
   return names;
 }
 
-/** The `ok` summary of each object's latest profile version, highest prompt version first (ruling M6-P9). */
+/**
+ * The `ok` summary of each object's latest profile version, highest prompt version first (ruling M6-P9), then the newest
+ * (a „Summary neu erzeugen“ adds one beside the old, ruling M6-H-R1).
+ */
 async function loadSummaries(
   db: Db,
   geoObjectIds: string[],
@@ -397,7 +400,7 @@ async function loadSummaries(
     from unnest(${arrayParam(geoObjectIds, "uuid")}, ${arrayParam(versions, "int")}) as x(geo_object_id, version)
     join profile_summaries s on s.geo_object_id = x.geo_object_id and s.profile_version = x.version
     where s.status = 'ok'
-    order by s.geo_object_id, s.prompt_version desc
+    order by s.geo_object_id, s.prompt_version desc, s.created_at desc, s.id desc
   `);
   return new Map(rows.map((r) => [r.geo_object_id, r.text]));
 }

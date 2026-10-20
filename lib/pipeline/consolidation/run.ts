@@ -10,7 +10,7 @@ import { createRun, failRun, type RunScope } from "@/lib/domain/runs";
 import { createLogger } from "@/lib/logger";
 import { enqueueStage, startRun } from "@/lib/pipeline/runs";
 import { areaGeoObjectId, RunScopeNotReady } from "@/lib/pipeline/tile-scope";
-import { CONSOLIDATION_GEO_STAGE, CONSOLIDATION_STAGES } from "./stages";
+import { CONSOLIDATION_GEO_STAGE, CONSOLIDATION_STAGES, CONSOLIDATION_SUMMARY_STAGE } from "./stages";
 
 /*
  * Starter of consolidation runs (ruling M5-P16: only the starter lives here; no stage or handler imports this module).
@@ -27,6 +27,8 @@ export type StartConsolidationInput = {
   evaluation?: true;
   rulesVersion?: string;
   stagesOnly?: string[];
+  /** „Summary neu erzeugen“: only with `stagesOnly` = the summary stage (`ConsolidationParams.regenerateSummary`). */
+  regenerateSummary?: true;
 };
 
 /**
@@ -101,6 +103,9 @@ async function consolidationRunInput(
     // An evaluation run only ever has `consolidation.geo` (ruling M5-H-R2 M-5): refused, not silently dropped.
     throw new Error("an evaluation run takes no stagesOnly");
   }
+  if (input.regenerateSummary && (input.stagesOnly?.length !== 1 || input.stagesOnly[0] !== CONSOLIDATION_SUMMARY_STAGE)) {
+    throw new Error(`regenerateSummary needs stagesOnly = [${CONSOLIDATION_SUMMARY_STAGE}]`);
+  }
   if (input.stagesOnly) {
     for (const stage of input.stagesOnly) {
       if (!(CONSOLIDATION_STAGES as readonly string[]).includes(stage)) throw new Error(`${stage} is no consolidation stage`);
@@ -119,6 +124,7 @@ async function consolidationRunInput(
     ...(input.evaluation ? { evaluation: true as const } : {}),
     ...(rulesVersion !== undefined ? { rulesVersion } : {}),
     ...(input.stagesOnly ? { stagesOnly: stages } : {}),
+    ...(input.regenerateSummary ? { regenerateSummary: true as const } : {}),
   };
   return { kind: input.evaluation ? "reprocess" : "stage", scope, stages, params, triggeredBy: input.triggeredBy };
 }

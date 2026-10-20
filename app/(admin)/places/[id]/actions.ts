@@ -15,6 +15,7 @@ import { DecisionNotAllowed } from "@/lib/domain/review-decisions";
 import { getBoss } from "@/lib/jobs/boss";
 import { createLogger } from "@/lib/logger";
 import { startConsolidationRun } from "@/lib/pipeline/consolidation/run";
+import { CONSOLIDATION_SUMMARY_STAGE } from "@/lib/pipeline/consolidation/stages";
 import { startGeometryRun } from "@/lib/pipeline/geometry-run";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { requireAdmin } from "@/lib/security/require-admin";
@@ -95,6 +96,40 @@ export async function recomputeGeoProfileAction(input: FormData | { geoObjectId:
   await startAndRedirect(
     () => startConsolidationRun(db, boss, { scope: { geoObjectIds: [geoObjectId] }, triggeredBy: admin.email }),
     `/geo/${geoObjectId}`,
+  );
+}
+
+const regenerateSummarySchema = z.object({
+  geoObjectId: z.uuid(),
+  /** The place page the form is on (it must belong to the geo object); without it the geo page. */
+  placeId: z.uuid().optional(),
+});
+
+/**
+ * „Summary neu erzeugen“ on the profile tab (ruling M6-H-R1): a consolidation run of only the summary stage for the
+ * object that writes a new summary of its newest profile version even when an `ok` one exists (e.g. one the package
+ * check `verbatim_text` rejects); the run page follows. Nothing is decided or written before the run starts. A refusal
+ * returns to the page with `?error=<reason>`.
+ */
+export async function regenerateSummaryAction(input: FormData | z.input<typeof regenerateSummarySchema>): Promise<void> {
+  const admin = await requireAdmin();
+  const raw = fields(input) as Record<string, unknown>;
+  const f = regenerateSummarySchema.parse({ ...raw, placeId: raw.placeId || undefined });
+  const db = getDb();
+  if (f.placeId) {
+    const [place] = await db.select({ id: places.id }).from(places).where(and(eq(places.id, f.placeId), eq(places.geoObjectId, f.geoObjectId)));
+    if (!place) throw new Error(`Place ${f.placeId} does not belong to geo object ${f.geoObjectId}`);
+  }
+  const boss = await getBoss();
+  await startAndRedirect(
+    () =>
+      startConsolidationRun(db, boss, {
+        scope: { geoObjectIds: [f.geoObjectId] },
+        triggeredBy: admin.email,
+        stagesOnly: [CONSOLIDATION_SUMMARY_STAGE],
+        regenerateSummary: true,
+      }),
+    f.placeId ? `/places/${f.placeId}` : `/geo/${f.geoObjectId}`,
   );
 }
 
