@@ -787,7 +787,12 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
                     label="Ablehnen"
                     decision={{ action: "reject" }}
                     variant="danger"
-                    hint="Setzt die Quelle auf „Abgelehnt“."
+                    hint="Setzt die Quelle auf „Abgelehnt“: die Domain wird dauerhaft ignoriert."
+                    confirm={{
+                      title: "Quelle ablehnen",
+                      description: `${subject.source.domain} wird dauerhaft ignoriert: nie gecrawlt und nie wieder vorgeschlagen. Das lässt sich nicht zurücknehmen.`,
+                      confirmLabel: "Endgültig ablehnen",
+                    }}
                   />
                 </DecisionPanel>
               )}

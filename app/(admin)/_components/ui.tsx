@@ -1,49 +1,17 @@
 import Link from "next/link";
 import type { ComponentProps, ReactNode } from "react";
+import { buttonClass, cx, type Size, type Variant } from "./button-class";
 
 /*
  * The admin's building blocks. Pages compose these instead of styling raw elements, so spacing,
  * colour and wording patterns stay the same everywhere. Server-safe: no hooks, no client code.
  */
 
-export const cx = (...parts: Array<string | false | null | undefined>) => parts.filter(Boolean).join(" ");
-
 // ---------------------------------------------------------------------------------------------
 // Buttons and form controls
 
-type Variant = "primary" | "secondary" | "ghost" | "danger";
-type Size = "sm" | "md";
-
-const VARIANTS: Record<Variant, string> = {
-  primary: "bg-accent text-accent-ink hover:brightness-110 border border-transparent",
-  secondary: "bg-surface text-ink border border-line-strong hover:bg-sunken",
-  ghost: "text-accent border border-transparent hover:bg-accent-soft",
-  danger: "bg-surface text-danger border border-danger/40 hover:bg-danger-soft",
-};
-
-const SIZES: Record<Size, string> = {
-  sm: "h-7 px-2.5 text-xs gap-1.5",
-  md: "h-9 px-3.5 text-sm gap-2",
-};
-
-export function buttonClass(variant: Variant = "secondary", size: Size = "md") {
-  return cx(
-    "inline-flex shrink-0 items-center justify-center rounded-md font-medium whitespace-nowrap transition-colors",
-    "disabled:cursor-not-allowed disabled:opacity-50",
-    VARIANTS[variant],
-    SIZES[size],
-  );
-}
-
-export function Button({
-  variant = "secondary",
-  size = "md",
-  className,
-  type = "submit",
-  ...rest
-}: ComponentProps<"button"> & { variant?: Variant; size?: Size }) {
-  return <button type={type} className={cx(buttonClass(variant, size), className)} {...rest} />;
-}
+export { Button } from "./button";
+export { buttonClass, cx };
 
 export function ButtonLink({
   variant = "secondary",
