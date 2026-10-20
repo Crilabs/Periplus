@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { areaByKey } from "../lib/config";
+import { areaByKey, getConfig } from "../lib/config";
 import { createDb } from "../lib/db/client";
 import {
   comparePlace,
@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   try {
     const own = await ownValuesForComparisonSet(db, args.area);
     const verdicts = own.map((o) =>
-      comparePlace(o, spots, { radiusM: cfg.radiusM, protectedThreshold: cfg.protectedThreshold }),
+      comparePlace(o, spots, { radiusM: cfg.radiusM, protectedThreshold: getConfig().quality.navily.protectedThreshold }),
     );
     const report = renderReport({
       areaKey: args.area,

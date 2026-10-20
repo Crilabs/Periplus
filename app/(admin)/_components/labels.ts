@@ -29,6 +29,7 @@ import type {
 } from "@/lib/db/schema";
 import type { ChangeSeverity, ChangeType, SummaryStatus } from "@/lib/db/schema/profiles";
 import type { DeliveryStatus } from "@/lib/db/schema/deliveries";
+import type { ComparisonAttribute, MetricKey } from "@/lib/db/schema/quality";
 import type { ChangeEntry, ContractFile } from "@/contract";
 import type { CheckName } from "@/lib/domain/delivery/validate";
 import type { PreviewOmission } from "@/lib/domain/delivery/view";
@@ -636,3 +637,49 @@ export const MERGE_ERROR_LABELS: Record<MergeRefusal, string> = {
 export function mergeError(param: string | string[] | undefined): string | null {
   return typeof param === "string" && Object.hasOwn(MERGE_ERROR_LABELS, param) ? MERGE_ERROR_LABELS[param as MergeRefusal] : null;
 }
+
+/* ---- M7: quality measurement ---- */
+
+/** The compared attributes (spec 10 „Existenz, Position, Schutz je Sektor, Tiefe, Grund, Bojen, Versorgung, Taverne“). */
+export const COMPARISON_ATTRIBUTE_LABELS: Record<ComparisonAttribute, string> = {
+  existence: "Existenz",
+  position: "Position",
+  "shelter.N": "Schutz N",
+  "shelter.NE": "Schutz NO",
+  "shelter.E": "Schutz O",
+  "shelter.SE": "Schutz SO",
+  "shelter.S": "Schutz S",
+  "shelter.SW": "Schutz SW",
+  "shelter.W": "Schutz W",
+  "shelter.NW": "Schutz NW",
+  depth: "Tiefe",
+  seabed: "Grund",
+  "mooring.buoys": "Bojen",
+  "services.water": "Versorgung: Wasser",
+  "highlight.supply": "Versorgung: Einkauf",
+  "highlight.food": "Taverne",
+};
+
+/** Decisions on a `comparison_deviation` task, in button order (keys 1–3). */
+export const COMPARISON_DECISION_LABELS = {
+  own_correct: "Eigener Wert stimmt",
+  navily_correct: "Navily stimmt (eigener Wert falsch)",
+  unclear: "Unklar",
+} as const;
+
+/** The metrics of a quality snapshot. */
+export const METRIC_LABELS: Record<MetricKey, string> = {
+  coverage: "Abdeckung",
+  coverage_navily: "Abdeckung (Navily-Vergleichssatz)",
+  multi_source: "Mehrbefund (≥ 2 Quellen)",
+  fact_precision: "Fact-Präzision",
+  quote_fidelity: "Belegtreue",
+  shelter_confidence: "Schutz-Konfidenz",
+  route_reconstruction: "Routen-Rekonstruktion",
+  cost_per_place: "Kosten je Ort",
+  review_minutes: "Review-Aufwand",
+  review_minutes_per_100: "Review-Aufwand je 100 Orte",
+  highlight_share: "Anteil Orte mit Highlight",
+  recent_observation_share: "Anteil Orte mit aktueller Beobachtung",
+  places_per_tile: "Orte je Kachel",
+};

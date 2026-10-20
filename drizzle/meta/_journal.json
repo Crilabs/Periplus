@@ -309,6 +309,20 @@
       "when": 1792463751936,
       "tag": "0043_profile_summaries_ok_per_run",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1792467292744,
+      "tag": "0044_quality_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1792467296627,
+      "tag": "0045_quality_triggers",
+      "breakpoints": true
     }
   ]
 }

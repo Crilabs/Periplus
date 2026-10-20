@@ -16,7 +16,7 @@ import { areaGeoObjectId } from "@/lib/pipeline/tile-scope";
 // Grundprinzip 9: Navily values are read at runtime only. Nothing in this module writes them anywhere; the report
 // carries Periplus names and ids plus aggregated agreement, never a Navily name, id, url or value.
 
-/** Parameters of the spot check (radius, thresholds, minimum sample): `config/quality.json`. */
+/** Parameters of the spot check (radius, minimum sample): `config/quality.json`; thresholds from `quality.navily` (ruling M7-P1). */
 export const navilySampleConfig = () => getConfig().quality.navilySample;
 
 /** The only fields read from a Navily spot; zod drops all others. */
@@ -116,7 +116,7 @@ export async function ownValuesForComparisonSet(
     .where(inArray(places.id, ids));
   rows.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "") || a.placeId.localeCompare(b.placeId));
 
-  const minShare = opts.seabedMinShare ?? navilySampleConfig().seabedMinShare;
+  const minShare = opts.seabedMinShare ?? getConfig().quality.navily.seabedShareMin;
   const result: OwnPlaceValues[] = [];
   for (const r of rows) {
     const stored = await latestComputations(db, r.geoObjectId);

@@ -5,6 +5,7 @@ import { getFactSchema } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { Dialog } from "../_components/dialog";
+import { METRIC_LABELS } from "../_components/labels";
 import {
   Badge,
   Button,
@@ -66,6 +67,14 @@ const DELIVERY_GROUPS: Record<Exclude<keyof AppConfig["delivery"], "schemaVersio
   api: "API",
 };
 
+/** A target of `config/quality.json` in German: shares as percent, cost in euro, review effort in minutes. */
+function targetText(metric: keyof AppConfig["quality"]["targets"], value: number | null): string {
+  if (value === null) return "–";
+  if (metric === "cost_per_place") return value.toLocaleString("de-DE", { style: "currency", currency: "EUR" });
+  if (metric === "review_minutes_per_100") return `${value.toLocaleString("de-DE")} Min.`;
+  return value.toLocaleString("de-DE", { style: "percent", maximumFractionDigits: 1 });
+}
+
 /** Flattens parameters to `a.b: value` pairs for a read-only table cell. */
 function parameterText(value: unknown, prefix = ""): string[] {
   if (value !== null && typeof value === "object" && !Array.isArray(value)) {
@@ -80,7 +89,7 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
   const revoked = (await searchParams).notice === "api_client_revoked";
   const apiClients = await listApiClients(getDb());
   const { areas, gazetteer, ...rest } = getConfig();
-  const { geometry, factSchema, fetch, embeddings, models, consolidation, delivery } = rest;
+  const { geometry, factSchema, fetch, embeddings, models, consolidation, delivery, quality } = rest;
   const exceptions = Object.entries(fetch.converterBySource);
   const archiveRows: [string, string][] = [
     [
@@ -143,6 +152,21 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
       `Lizenz ${l.name}`,
       `${l.attribution} (${l.url}); Dateien: ${l.files.join(", ") || "keine"}; Felder: ${l.fields.join(", ") || "keine"}`,
     ]),
+  ];
+  const qualityRows: [string, string][] = [
+    ...(Object.keys(quality.targets) as (keyof typeof quality.targets)[]).map((metric): [string, string] => {
+      const t = quality.targets[metric];
+      return [
+        METRIC_LABELS[metric],
+        `${t.direction === "min" ? "mindestens" : "höchstens"} ${targetText(metric, t.pilot)} im Pilot, ${targetText(metric, t.full)} im Vollbetrieb`,
+      ];
+    }),
+    ["Review-Aufwand zweiter Lauf (Pilot)", `unter ${quality.secondRunReviewMinutesMax} Min.`],
+    ["Orte je Kachel", `${quality.placesPerTile.min}–${quality.placesPerTile.max}`],
+    [
+      "Vergleichssatz",
+      `${quality.comparisonSet.pilotSize} Orte im Pilot, ${quality.comparisonSet.perAreaMin}–${quality.comparisonSet.perAreaMax} je weiterem Revier`,
+    ],
   ];
   const thresholds: [string, string][] = [
     ["Puffer Kachelbox", `${gazetteer.bboxBufferKm} km`],
@@ -279,6 +303,13 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
               ["Regeln", Object.keys(consolidation.rules).join(", ")],
             ]}
           />
+        </Panel>
+
+        <Panel
+          title="Qualitätsziele"
+          description="Zielwerte der Qualitätskennzahlen für Pilot und Vollbetrieb (config/quality.json)."
+        >
+          <Pairs rows={qualityRows} />
         </Panel>
 
         <Panel

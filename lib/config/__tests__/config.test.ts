@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { FACT_SCHEMAS } from "@/config/fact-schema";
+import { METRIC_KEYS } from "@/lib/db/schema/quality";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { areaByKey, getConfig, getConsolidationConfig, loadConfig } from "../index";
@@ -167,15 +168,34 @@ describe("loadConfig", () => {
   });
 
   it("loads the navily sample parameters and rejects an out-of-range threshold", () => {
-    expect(loadConfig("config").quality.navilySample).toEqual({
-      radiusM: 500,
-      protectedThreshold: 0.5,
-      seabedMinShare: 0.3,
-      minPlaces: 20,
-      minMatchedForSectorRates: 5,
-    });
-    const bad = { navilySample: { ...repoConfig.quality.navilySample, protectedThreshold: 1.5 } };
+    expect(loadConfig("config").quality.navilySample).toEqual({ radiusM: 500, minPlaces: 20, minMatchedForSectorRates: 5 });
+    // one source per threshold (ruling M7-P1): the spot check reads them from `navily`
+    expect(loadConfig("config").quality.navily).toMatchObject({ protectedThreshold: 0.5, seabedShareMin: 0.3 });
+    const bad = { ...repoConfig.quality, navily: { ...repoConfig.quality.navily, protectedThreshold: 1.5 } };
     expect(() => loadConfig(fixtureDir({ quality: bad }))).toThrow(/quality\.json.*protectedThreshold/);
+    const duplicate = { ...repoConfig.quality, navilySample: { ...repoConfig.quality.navilySample, protectedThreshold: 0.5 } };
+    expect(() => loadConfig(fixtureDir({ quality: duplicate }))).toThrow(/quality\.json/);
+  });
+
+  it("quality config loads pilot targets", () => {
+    const q = getConfig().quality;
+    expect(q.targets.coverage.pilot).toBe(0.85);
+    expect(q.targets.cost_per_place).toEqual({ pilot: 2.0, full: 0.5, direction: "max" });
+    expect(q.targets.review_minutes_per_100).toEqual({ pilot: null, full: 30, direction: "max" });
+    expect(q.secondRunReviewMinutesMax).toBe(60);
+    expect(q.placesPerTile).toEqual({ min: 10, max: 40 });
+    expect(q.comparisonSet).toEqual({ pilotSize: 50, perAreaMin: 20, perAreaMax: 30 });
+    expect(q.navily.proposalVersion).toBe("navily-assistant/1");
+    expect(q.extrapolation).toEqual({ areasMin: 60, areasMax: 100, placesPerArea: null });
+  });
+
+  it("quality config targets only name metric keys and reject an inverted tile range", () => {
+    const targets = Object.keys(repoConfig.quality.targets);
+    expect(targets.every((k) => (METRIC_KEYS as readonly string[]).includes(k))).toBe(true);
+    const unknown = { ...repoConfig.quality, targets: { ...repoConfig.quality.targets, rating: { pilot: 1, full: 1, direction: "min" } } };
+    expect(() => loadConfig(fixtureDir({ quality: unknown }))).toThrow(/quality\.json/);
+    const inverted = { ...repoConfig.quality, placesPerTile: { min: 50, max: 40 } };
+    expect(() => loadConfig(fixtureDir({ quality: inverted }))).toThrow(/quality\.json.*placesPerTile/);
   });
 
   it("config rejects a malformed Natura 2000 code", () => {
