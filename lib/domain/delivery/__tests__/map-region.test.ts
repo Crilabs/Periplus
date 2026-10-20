@@ -71,13 +71,27 @@ describe("assignRegions", () => {
     expect(spotIdsByRegion.get(island.publicId)).toEqual([onIsland.id]);
   });
 
-  it("a region known as a point contains what lies within its radius; its size is that circle", () => {
+  it("a region known as a point contains what lies within its radius but never wins over a polygon region (ruling M6-E-R2)", () => {
     const point = region(3, { type: "gulf", center: { lon: 21.3, lat: 35.25 }, radiusNm: 2 });
     const { regionIdBySpot, spotIdsByRegion } = assignRegions([onArchipelago, onIsland], [archipelago, point], MARGIN);
-    // the circle (π · 3.7² ≈ 43 km²) is smaller than the archipelago
-    expect(regionIdBySpot.get(onArchipelago.id)).toBe(point.publicId);
+    // its circle (π · 3.7² ≈ 43 km²) is smaller than the archipelago, but a point has no area to compare
+    expect(regionIdBySpot.get(onArchipelago.id)).toBe(archipelago.publicId);
     expect(spotIdsByRegion.get(point.publicId)).toEqual([onArchipelago.id]);
     expect(regionIdAt([archipelago, point], MARGIN)({ lon: 21.1, lat: 35.1 })).toBe(archipelago.publicId);
+    // a point archipelago around an island polygon: the island
+    const pointArchipelago = region(4, { type: "archipelago", center: { lon: 21.1, lat: 35.1 }, radiusNm: 2 });
+    expect(regionIdAt([pointArchipelago, island], MARGIN)(onIsland.position)).toBe(island.publicId);
+    // outside every polygon: the smallest point region holding it, then the smaller id
+    const wide = region(5, { type: "gulf", center: { lon: 21.3, lat: 35.25 }, radiusNm: 5 });
+    const twin = region(6, { type: "gulf", center: { lon: 21.3, lat: 35.25 }, radiusNm: 2 });
+    expect(regionIdAt([wide, twin, point], MARGIN)({ lon: 21.3, lat: 35.25 })).toBe(point.publicId);
+    expect(regionIdAt([wide, twin], MARGIN)({ lon: 21.3, lat: 35.25 })).toBe(twin.publicId);
+  });
+
+  it("a polygon region without area (0 km²) does not compete by size either", () => {
+    const flat = region(7, { type: "channel", polygon: square(21.29, 35.24, 21.31, 35.26), areaKm2: 0, radiusNm: 0.1 });
+    expect(regionIdAt([flat, archipelago], MARGIN)(onArchipelago.position)).toBe(archipelago.publicId);
+    expect(regionIdAt([flat], MARGIN)(onArchipelago.position)).toBe(flat.publicId);
   });
 
   it("a spot in an island's bay, within memberMarginNm of its land polygon, belongs to the island (ruling M6-C-R1)", () => {

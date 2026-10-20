@@ -34,7 +34,6 @@ type RegionFacts = NonNullable<RegionBody["facts"]>;
 
 /** The smallest radius the contract takes (`radiusNm` > 0): a tiny polygon never rounds to 0 (ruling M6-B-R1). */
 const MIN_RADIUS_NM = 0.1;
-const KM_PER_NM = 1.852;
 const byId = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const round3 = (n: number) => Number(n.toFixed(3));
 
@@ -57,16 +56,27 @@ function contains(r: RegionSource, p: LonLat, marginNm: number): boolean {
   return r.polygon ? distanceToPolygonNm(p, r.polygon) <= marginNm : distanceNm(r.center, p) <= r.radiusNm;
 }
 
-/** Size for "the smallest region": `areaKm2`, a point region the circle of its radius. */
-const sizeKm2 = (r: RegionSource) => r.areaKm2 ?? Math.PI * (r.radiusNm * KM_PER_NM) ** 2;
+/** A region with a polygonal area; one known as a point (or a polygon of 0 km²) has none (ruling M6-E-R2). */
+const hasArea = (r: RegionSource) => r.polygon !== null && (r.areaKm2 ?? 0) > 0;
 
 /**
- * The public id of the smallest region containing a point (then the smaller id), null outside all. A polygon region
- * contains what lies within `marginNm` (`regions.memberMarginNm`) of its polygon; the size is the unbuffered one.
+ * Order for "the smallest region": regions with an area by `areaKm2`, then those without one by radius, each tie by
+ * id. A region without an area never wins over one with an area (its radius circle is a guess, not its size): a point
+ * archipelago would otherwise take the spots of its own islands (ruling M6-E-R2).
+ */
+const bySize = (a: RegionSource, b: RegionSource) =>
+  Number(!hasArea(a)) - Number(!hasArea(b)) ||
+  (hasArea(a) ? a.areaKm2! - b.areaKm2! : a.radiusNm - b.radiusNm) ||
+  byId(a.publicId, b.publicId);
+
+/**
+ * The public id of the smallest region containing a point (then the smaller id), null outside all; regions without an
+ * area only when no region with one contains it. A polygon region contains what lies within `marginNm`
+ * (`regions.memberMarginNm`) of its polygon; the size is the unbuffered one.
  */
 export function regionIdAt(regions: RegionSource[], marginNm: number): (p: LonLat) => string | null {
-  const bySize = [...regions].sort((a, b) => sizeKm2(a) - sizeKm2(b) || byId(a.publicId, b.publicId));
-  return (p) => bySize.find((r) => contains(r, p, marginNm))?.publicId ?? null;
+  const bySizeOrder = [...regions].sort(bySize);
+  return (p) => bySizeOrder.find((r) => contains(r, p, marginNm))?.publicId ?? null;
 }
 
 /**
