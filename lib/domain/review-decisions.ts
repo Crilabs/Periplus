@@ -1,7 +1,8 @@
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { getConfig, getConsolidationConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
+import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import {
@@ -482,7 +483,7 @@ async function applyProfileDecision(
     value: reviewFactValue(attribute, value, factSchemaVersion),
     reviewDecisionId: decisionId,
     observedAt: now.toISOString().slice(0, 10),
-    confidence: getConsolidationConfig().confidence.review,
+    confidence: (await consolidationConfigFor(tx)).confidence.review,
     factSchemaVersion,
   });
   return geoObjectId;

@@ -1,7 +1,8 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { summarizeProfileTask, type SummarizeInput } from "@/lib/ai/tasks/summarize-profile";
 import { ModelOutputInvalid, type ModelClient } from "@/lib/ai/types";
-import { getConfig, getConsolidationConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
+import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
 import type { Db } from "@/lib/db/client";
 import { profiles, profileSummaries, reviewTasks } from "@/lib/db/schema";
 import { checkSummary, summaryInput } from "@/lib/domain/consolidation/summary";
@@ -37,7 +38,7 @@ type Target = { geoObjectId: string; version: number };
  * also versions with one.
  */
 export async function summaryTargets(db: Db, run: { id: string; params: Record<string, unknown> }): Promise<Target[]> {
-  const cfg = getConsolidationConfig();
+  const cfg = await consolidationConfigFor(db, run.params.rulesVersion);
   let candidates: Target[];
   if (Array.isArray(run.params.stagesOnly)) {
     const ids = await consolidationTargets(db, run);
@@ -106,7 +107,7 @@ export async function summarizeProfile(
   input: { geoObjectId: string; version: number; runId?: string; regenerate?: boolean },
   deps: { model: ModelClient },
 ): Promise<SummaryResult> {
-  const cfg = getConsolidationConfig();
+  const cfg = await consolidationConfigFor(db);
   const prompt = promptVersion();
   const [row] = await db
     .select({ attributes: profiles.attributes, provenance: profiles.provenance, confidence: profiles.confidence })

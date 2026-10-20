@@ -85,7 +85,7 @@ describe("startMeasurement", () => {
       expect(new Date(params.to).getTime()).toBeLessThanOrEqual(Date.now());
     }));
 
-  it("from skips failed and unfinished measurements and follows the latest window end, not the latest start (ruling M7-D-R2)", () =>
+  it("from skips failed measurements and follows the latest window end, not the latest start (ruling M7-D-R2)", () =>
     withRollback(async (tx) => {
       const { boss } = recordingBoss();
       const { areaKey } = await insertQualityArea(tx, [{ lon: 21.01, lat: 35.2 }]);
@@ -96,10 +96,36 @@ describe("startMeasurement", () => {
       };
       await start("Lauf 1", 1, 10, "finished");
       await start("Lauf 2", 10, 15, "failed"); // its window must be measured again
-      await start("Lauf 3", 10, 16, "queued"); // owns no finished window yet
       await start("Nachmessung", 2, 5, "finished"); // started later for an earlier window
       const { id } = await startMeasurement(tx, boss, { areaKey, label: "Lauf 4", to: at(20), triggeredBy: someone() });
       expect(((await runOf(tx, id)).params as { from: string }).from).toBe(at(10).toISOString());
+    }));
+
+  it("a start while a measurement of the area is queued or running is refused; another area is not affected", () =>
+    withRollback(async (tx) => {
+      const { boss, inserted } = recordingBoss();
+      const { areaKey } = await insertQualityArea(tx, [{ lon: 21.01, lat: 35.2 }]);
+      const other = await insertQualityArea(tx, [{ lon: 21.51, lat: 35.2 }]);
+      const window = { from: new Date("2026-10-01T00:00:00Z"), to: new Date("2026-10-20T00:00:00Z") };
+      const later = { from: new Date("2026-10-20T00:00:00Z"), to: new Date("2026-10-25T00:00:00Z") };
+      const first = await startMeasurement(tx, boss, { areaKey, label: "Lauf 1", ...window, triggeredBy: someone() });
+      const triggeredBy = someone();
+      for (const status of ["queued", "running"] as const) {
+        await tx.update(runs).set({ status }).where(eq(runs.id, first.id));
+        await expect(startMeasurement(tx, boss, { areaKey, label: "Lauf 2", ...later, triggeredBy })).rejects.toMatchObject({
+          constructor: RunScopeNotReady,
+          reason: "measurement_running",
+        });
+      }
+      expect(await tx.select().from(runs).where(eq(runs.triggeredBy, triggeredBy))).toEqual([]);
+      expect(RUN_SCOPE_REASON_LABELS.measurement_running).toMatch(/Messung/);
+      await expect(startMeasurement(tx, boss, { areaKey: other.areaKey, label: "Lauf 2", ...later, triggeredBy })).resolves.toMatchObject({ id: expect.any(String) });
+      for (const status of ["finished", "failed"] as const) {
+        await setStatus(tx, first.id, status);
+        const next = await startMeasurement(tx, boss, { areaKey, label: `Lauf ${status}`, ...later, triggeredBy: someone() });
+        await setStatus(tx, next.id, "failed");
+      }
+      expect(inserted).toHaveLength(4);
     }));
 
   it("a failed measurement frees its label (ruling M7-D-R1)", () =>

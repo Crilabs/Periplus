@@ -309,6 +309,9 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   measurement_label_invalid: "Bezeichnung fehlt oder ist länger als 40 Zeichen",
   measurement_window_empty: "Der Zeitraum ist leer – „von“ muss vor „bis“ liegen",
   measurement_without_runs: "Noch kein Lauf, ab dem gemessen werden kann – für die erste Messung „von“ angeben",
+  measurement_running: "Für das Revier wartet oder läuft schon eine Messung – erst ihr Ende abwarten",
+  evaluation_candidate_missing: "Regelversion oder Modell mit Prompt-Version angeben",
+  evaluation_candidate_unknown: "Diese Regelversion, dieses Modell oder diese Prompt-Version gibt es in config/ nicht",
 };
 
 /** The German text of a `?error=<reason>` a run action redirected with; null for none or an unknown reason. */
@@ -352,6 +355,17 @@ export const COMPARE_ERROR_LABELS = {
 export function comparePageError(param: string | string[] | undefined): string | null {
   if (typeof param !== "string") return null;
   return runScopeError(param) ?? (Object.hasOwn(COMPARE_ERROR_LABELS, param) ? COMPARE_ERROR_LABELS[param as keyof typeof COMPARE_ERROR_LABELS] : null);
+}
+
+/** Errors of the quality page besides refused runs (`?error=<code>`). */
+export const QUALITY_ERROR_LABELS = {
+  regression_gate_closed: "Nicht aktiviert – der Vergleich alt/neu besteht nicht (Gründe bei der Bewertung)",
+} as const;
+
+/** The German text of a `?error=` on the quality page: a refused run or a `QUALITY_ERROR_LABELS` code. */
+export function qualityPageError(param: string | string[] | undefined): string | null {
+  if (typeof param !== "string") return null;
+  return runScopeError(param) ?? (Object.hasOwn(QUALITY_ERROR_LABELS, param) ? QUALITY_ERROR_LABELS[param as keyof typeof QUALITY_ERROR_LABELS] : null);
 }
 
 export const queueStateLabel = (paused: boolean): string => (paused ? "Pausiert" : "Läuft");

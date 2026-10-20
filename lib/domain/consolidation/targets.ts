@@ -8,6 +8,9 @@ import { runDate } from "@/lib/domain/runs";
  * What a run consolidates (plan Task 16): the geo objects of its scope, and whether its quote fidelity blocks it.
  */
 
+/** A configuration to evaluate against the active one (at least one part; spec 10 „Regression“, ruling M7-P11). */
+export type EvaluationCandidate = { rulesVersion?: string; extraction?: { model: string; promptVersion: number } };
+
 /** Params of a consolidation run (`startConsolidationRun`); a text run's params carry `documentVersionIds` instead. */
 export type ConsolidationParams = {
   tileId?: string;
@@ -16,7 +19,12 @@ export type ConsolidationParams = {
   comparisonSetArea?: string;
   /** An evaluation run: profiles into `evaluation_profiles`, nothing into profiles, the change feed or tasks. */
   evaluation?: true;
+  /** The rules version the run consolidates with (set at the start: the given or the active one, ruling M7-P10). */
   rulesVersion?: string;
+  /** An evaluation run's extraction candidate (ruling M7-P11): the extraction runs of this model and prompt are the active ones. */
+  extraction?: { model: string; promptVersion: number };
+  /** What an evaluation run evaluates (spec 10 regression): the rules version, the extraction candidate or both. */
+  candidate?: EvaluationCandidate;
   /** Only these consolidation stages ran (e.g. `["consolidation.summary"]` for "Neu erzeugen"). */
   stagesOnly?: string[];
   /**

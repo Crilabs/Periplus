@@ -191,6 +191,17 @@ export function getConsolidationConfig(version?: string, dir = "config"): Versio
   return config;
 }
 
+/**
+ * The released consolidation rules versions: the `v<number>.json` files in `<dir>/consolidation`, oldest first. Not
+ * validated here (`getConsolidationConfig` validates a version when it is read).
+ */
+export function consolidationVersions(dir = "config"): string[] {
+  return readdirSync(join(dir, "consolidation"))
+    .map((f) => basename(f, ".json"))
+    .filter((v) => consolidationActiveSchema.safeParse({ version: v }).success)
+    .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+}
+
 /** The configured area with this key; throws for an unknown key. */
 export function areaByKey(key: string): AreaConfig {
   const area = getConfig().areas.find((a) => a.key === key);

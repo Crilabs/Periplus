@@ -30,6 +30,35 @@ import { inputId } from "./weights";
  * - Validity (objects, POIs, tiles, sources) is judged on the run date `today`, not the database clock.
  */
 
+/** An extraction configuration to evaluate (ruling M7-P11): the model and prompt version of `extract-facts`. */
+export type ExtractionCandidate = { model: string; promptVersion: number };
+
+/**
+ * A copy of `config` in which only the model and prompt version of `extract-facts` are the candidate's (ruling M7-P11,
+ * M5-P22): passed as `LoadInputsOptions.appConfig`, it makes the candidate's extraction runs the active ones. The
+ * candidate's runs are comparison runs (as the M4 model comparison), so the copy marks the decision `decided`: for this
+ * evaluation the candidate is the chosen configuration. The running configuration is never changed.
+ */
+export function candidateAppConfig(config: AppConfig, candidate: ExtractionCandidate): AppConfig {
+  const task = config.models.tasks["extract-facts"];
+  if (!task) throw new Error("config/models.json has no task extract-facts");
+  return {
+    ...config,
+    models: {
+      ...config.models,
+      tasks: {
+        ...config.models.tasks,
+        "extract-facts": {
+          ...task,
+          model: candidate.model,
+          promptVersion: candidate.promptVersion,
+          decision: { status: "decided", note: `Bewertung des Kandidaten ${candidate.model}@p${candidate.promptVersion}` },
+        },
+      },
+    },
+  };
+}
+
 export type LoadInputsOptions = {
   cfg: ConsolidationConfig;
   /** The fact schema version whose level attributes are consolidated. */

@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
-import { getConfig, getConsolidationConfig, type AppConfig } from "@/lib/config";
+import { getConfig, type AppConfig } from "@/lib/config";
+import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
 import type { Db } from "@/lib/db/client";
 import { runs } from "@/lib/db/schema";
 import { thinPlaces } from "@/lib/domain/consolidation/followup";
@@ -42,7 +43,7 @@ export async function requestPlaceDiscovery(
   if (!run) throw new Error(`run ${runId} not found`);
   const params = (run.params ?? {}) as Record<string, unknown>;
   const today = opts.today ?? (await runDate(db, runId));
-  const cfg = getConsolidationConfig(typeof params.rulesVersion === "string" ? params.rulesVersion : undefined);
+  const cfg = await consolidationConfigFor(db, params.rulesVersion);
   const { discovery, areas } = opts.config ?? getConfig();
   const seen = new Set<string>();
   let budget = discovery.serp.maxQueriesPerRun;

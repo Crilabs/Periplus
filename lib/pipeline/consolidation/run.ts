@@ -3,6 +3,8 @@ import type { PgBoss } from "pg-boss";
 import { getConfig, getConsolidationConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { runStages, runs } from "@/lib/db/schema";
+import { activeRulesVersion } from "@/lib/domain/consolidation/active-rules";
+import type { ExtractionCandidate } from "@/lib/domain/consolidation/inputs";
 import { clearConsolidationCatchUp, consolidationSkipOf, recordConsolidationCatchUp } from "@/lib/domain/consolidation/skipped";
 import { consolidationBlocked, consolidationTargets, type ConsolidationParams } from "@/lib/domain/consolidation/targets";
 import { levelFor } from "@/lib/domain/facts/levels";
@@ -25,7 +27,10 @@ export type StartConsolidationInput = {
   scope: ConsolidationScope;
   triggeredBy: string;
   evaluation?: true;
+  /** Default: the active version (`activeRulesVersion`), stored in the params so the whole run uses one version. */
   rulesVersion?: string;
+  /** An extraction candidate to evaluate (only with `evaluation`, ruling M7-P11). */
+  extraction?: ExtractionCandidate;
   stagesOnly?: string[];
   /** „Summary neu erzeugen“: only with `stagesOnly` = the summary stage (`ConsolidationParams.regenerateSummary`). */
   regenerateSummary?: true;
@@ -111,8 +116,10 @@ async function consolidationRunInput(
       if (!(CONSOLIDATION_STAGES as readonly string[]).includes(stage)) throw new Error(`${stage} is no consolidation stage`);
     }
   }
-  const rulesVersion = input.rulesVersion ?? (input.evaluation ? getConsolidationConfig().version : undefined);
-  if (rulesVersion !== undefined) getConsolidationConfig(rulesVersion);
+  if (input.extraction && !input.evaluation) throw new Error("an extraction candidate is evaluated in an evaluation run only");
+  const rulesVersion = input.rulesVersion ?? (await activeRulesVersion(db));
+  const extraction = input.extraction && { model: input.extraction.model, promptVersion: input.extraction.promptVersion };
+  getConsolidationConfig(rulesVersion);
   const scope = await checkedScope(db, input.scope, config);
   const stages = input.evaluation
     ? [CONSOLIDATION_GEO_STAGE]
@@ -122,7 +129,9 @@ async function consolidationRunInput(
   const params: ConsolidationParams = {
     ...("geoObjectIds" in input.scope ? { geoObjectIds: [...new Set(input.scope.geoObjectIds)].sort() } : input.scope),
     ...(input.evaluation ? { evaluation: true as const } : {}),
-    ...(rulesVersion !== undefined ? { rulesVersion } : {}),
+    rulesVersion,
+    ...(extraction ? { extraction } : {}),
+    ...(input.evaluation ? { candidate: { ...(input.rulesVersion !== undefined || !extraction ? { rulesVersion } : {}), ...(extraction ? { extraction } : {}) } } : {}),
     ...(input.stagesOnly ? { stagesOnly: stages } : {}),
     ...(input.regenerateSummary ? { regenerateSummary: true as const } : {}),
   };
@@ -133,7 +142,9 @@ async function consolidationRunInput(
  * Starts a consolidation run ("Konsolidieren", "Profil neu berechnen", the follow-up of a profile decision). Kind
  * `stage` with every consolidation stage (`CONSOLIDATION_STAGES`), or only `stagesOnly` (a subset, in stage order);
  * an evaluation run is kind `reprocess` with `params.evaluation`, only `consolidation.geo` and the rules version to
- * evaluate (default the active one; an unknown version throws; `stagesOnly` with it throws). The scope is checked before
+ * evaluate, optionally with an extraction candidate (`params.extraction`; `stagesOnly` with it throws). Every run
+ * stores its rules version in `params.rulesVersion`: the given one, else the active one (`activeRulesVersion`, ruling
+ * M7-P10); an unknown version throws. The scope is checked before
  * the run exists (`RunScopeNotReady`, see `checkedScope`); the params carry the scope (`ConsolidationParams`).
  */
 export async function startConsolidationRun(

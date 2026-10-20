@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { getConfig, getConsolidationConfig } from "@/lib/config";
+import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
 import type { Db } from "@/lib/db/client";
 import { facts, reviewDecisions, reviewTasks } from "@/lib/db/schema";
 import type { ProhibitionRemoval } from "@/lib/domain/consolidation/rules/prohibitions";
@@ -94,7 +95,7 @@ export async function removeProfileEntry(
         value,
         reviewDecisionId: decision!.id,
         observedAt: now.toISOString().slice(0, 10),
-        confidence: getConsolidationConfig().confidence.review,
+        confidence: (await consolidationConfigFor(tx)).confidence.review,
         factSchemaVersion,
         // the transaction's clock, later than the profile row of a consolidation that finished before
         createdAt: sql`clock_timestamp()`,

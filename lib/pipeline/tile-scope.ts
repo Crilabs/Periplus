@@ -37,7 +37,10 @@ export type RunScopeReason =
   | "measurement_label_taken"
   | "measurement_label_invalid"
   | "measurement_window_empty"
-  | "measurement_without_runs";
+  | "measurement_without_runs"
+  | "measurement_running"
+  | "evaluation_candidate_missing"
+  | "evaluation_candidate_unknown";
 
 /** A run start refused before the run exists because its scope lacks an input (an expected, user-facing error). */
 export class RunScopeNotReady extends Error {

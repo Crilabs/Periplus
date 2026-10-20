@@ -244,7 +244,7 @@ describe("admin server actions", () => {
           kind: "stage",
           scope: { type: "tile", id: tileId },
           stages: ["consolidation.geo", "consolidation.summary", "consolidation.followup"],
-          params: { tileId },
+          params: { tileId, rulesVersion: "v1" },
           triggeredBy: "admin@example.invalid",
         }),
       );
