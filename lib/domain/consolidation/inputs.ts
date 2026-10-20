@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import type { AppConfig } from "@/lib/config";
 import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
@@ -69,16 +69,25 @@ type PoiRow = { id: string; category: string; origin: string; valid_from: string
 
 const utcDate = (d: Date) => d.toISOString().slice(0, 10);
 
-/** The ids of the object and of every object merged into it, transitively (the `merged_into_id` chain). */
-function mergedChainSql(geoObjectId: string) {
+/**
+ * For each root object (`roots`: a query with one uuid column `id`), the root and every object merged into it,
+ * transitively (the `merged_into_id` chain): rows `(root_id, id)`. Set-based form of `mergedChainSql`, for the quality
+ * metrics that count text the way consolidation does (ruling M7-C-R2).
+ */
+export function mergedChainsSql(roots: SQL) {
   return sql`(
-    with recursive chain(id) as (
-      select ${geoObjectId}::uuid
+    with recursive chain(root_id, id) as (
+      select r.id, r.id from (${roots}) r
       union
-      select o.id from geo_objects o join chain on o.merged_into_id = chain.id
+      select chain.root_id, o.id from geo_objects o join chain on o.merged_into_id = chain.id
     )
-    select id from chain
+    select root_id, id from chain
   )`;
+}
+
+/** The ids of the object and of every object merged into it, transitively (the `merged_into_id` chain). */
+export function mergedChainSql(geoObjectId: string) {
+  return sql`(select c.id from ${mergedChainsSql(sql`select ${geoObjectId}::uuid as id`)} c)`;
 }
 
 /** Fact alias `f` has one of `attributes` (no filter without). */

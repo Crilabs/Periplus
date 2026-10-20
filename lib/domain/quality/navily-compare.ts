@@ -334,7 +334,7 @@ export async function areaComparisonView(
   if (input.spots && matching) {
     const spots = input.spots;
     const inArea = await areaTilePredicate(db, input.areaKey);
-    const c = coverageOfMatches(matching.places, matching.matches, spots, inArea);
+    const c = coverageOfMatches(matching.places, matching.matches, spots, inArea, new Set(areaPlaces.map((p) => p.placeId)));
     coverage = { spots: c.spots, matched: c.matched, ratio: c.ratio };
     unmatchedSpots = c.unmatchedSpotIndexes.map((i) => {
       const spot = spots[i]!;

@@ -1,5 +1,8 @@
+import { eq } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
+import { comparisonSet, type ComparisonMethod } from "@/lib/db/schema";
+import { areaGeoObjectId } from "@/lib/pipeline/tile-scope";
 import { latestComparisonResults, lockComparisonPlace, recordComparisonResults } from "./comparison-results";
 import { COMPARISON_ATTRIBUTES, loadComparisonSubjects } from "./comparison-values";
 import { coverageOfMatches } from "./navily-assistant";
@@ -22,18 +25,33 @@ export type NavilyRunResult = {
   written: number;
   /** Review tasks newly opened. */
   tasks: number;
-  /** Attributes whose newest outcome for the current value was set by hand and differs from the proposal (kept). */
+  /**
+   * Attributes whose newest outcome for the current value a person set (`manual`, or a proposal confirmed by a click)
+   * and that differs from the proposal (kept).
+   */
   skippedManual: number;
   /** Spots inside the area matched to a confirmed place of the area. */
   coverage: { spots: number; matched: number; ratio: number | null };
 };
 
+/** Outcomes a person gave: a machine proposal never supersedes them (bundle C review: `proposal_confirmed` like `manual`). */
+const PERSON_METHODS: ReadonlySet<ComparisonMethod> = new Set(["manual", "proposal_confirmed"]);
+
+/** The place ids of the area's comparison set, sorted (the lock order). */
+async function comparisonSetPlaceIds(db: Db, areaKey: string): Promise<string[]> {
+  const areaId = await areaGeoObjectId(db, areaKey);
+  if (!areaId) return [];
+  const rows = await db.select({ id: comparisonSet.placeId }).from(comparisonSet).where(eq(comparisonSet.areaId, areaId));
+  return rows.map((r) => r.id).sort();
+}
+
 /**
  * Compares the area's comparison set with the spots. Without `acceptProposals` nothing is written; with it, all set
  * places are locked and loaded in one transaction and each gets its proposals recorded with method `proposal_auto` and
- * `checkedBy = quality.navily.proposalVersion` („navily-assistant/1“, machine-recognisable). As on the page, an outcome
- * set by hand that differs from the proposal is kept (`skippedManual`), and review outcomes are kept by
- * `recordComparisonResults` (ruling M7-P16), so a rerun writes nothing new. The coverage is always computed.
+ * `checkedBy = quality.navily.proposalVersion` („navily-assistant/1“, machine-recognisable). An outcome a person set
+ * (by hand or by confirming a proposal) that differs from the proposal is kept (`skippedManual`), and review outcomes
+ * are kept by `recordComparisonResults` (ruling M7-P16), so a rerun writes nothing new. The coverage is always computed
+ * and counts only matches to the area's confirmed, valid places.
  */
 export async function runNavilyComparison(
   db: Db,
@@ -43,11 +61,13 @@ export async function runNavilyComparison(
   const settings = { cfg, affixes: getConfig().nameAffixes };
 
   const pass = async (tx: Db, write: boolean): Promise<NavilyRunResult> => {
+    // the set's places are locked before their subjects are loaded, so no profile changes in between (bundle C review)
+    if (write) for (const id of await comparisonSetPlaceIds(tx, input.areaKey)) await lockComparisonPlace(tx, id);
     const subjects = await loadComparisonSubjects(tx, input.areaKey);
-    if (write) for (const id of subjects.map((s) => s.placeId).sort()) await lockComparisonPlace(tx, id);
     const areaPlaces = await confirmedAreaPlaces(tx, input.areaKey);
     const { proposals, places, matches } = proposalsFor(subjects, areaPlaces, input.spots, settings);
-    const c = coverageOfMatches(places, matches, input.spots, await areaTilePredicate(tx, input.areaKey));
+    const inArea = await areaTilePredicate(tx, input.areaKey);
+    const c = coverageOfMatches(places, matches, input.spots, inArea, new Set(areaPlaces.map((p) => p.placeId)));
     const result: NavilyRunResult = {
       places: subjects.length,
       matched: subjects.filter((s) => proposals.get(s.placeId)!.match.spotIndex !== null).length,
@@ -65,7 +85,7 @@ export async function runNavilyComparison(
         const valueHash = p.values[attribute].hash;
         const proposed = p.proposals[attribute];
         const previous = latest.get(`${subject.placeId}|${attribute}|${valueHash}`);
-        if (previous?.method === "manual" && previous.result !== proposed) {
+        if (previous && PERSON_METHODS.has(previous.method) && previous.result !== proposed) {
           result.skippedManual++;
           return [];
         }

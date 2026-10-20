@@ -202,17 +202,19 @@ export type NavilyCoverage = { spots: number; matched: number; ratio: number | n
 
 /**
  * Navily coverage from a matching (`matches` of `matchPlacesToSpots(places, spots)`, same order as `places`): the spots
- * inside the area (`inArea`) that a confirmed place matched. `unmatchedSpotIndexes` index `spots` (runtime only).
+ * inside the area (`inArea`) that a confirmed place matched. With `areaPlaceIds` (the area's confirmed, valid places),
+ * only a match to one of those counts: a set member that is ended or lies in a tile of another area does not cover a
+ * spot (bundle C review). `unmatchedSpotIndexes` index `spots` (runtime only).
  */
 export function coverageOfMatches(
   places: MatchPlace[],
   matches: NavilyMatch[],
   spots: NavilySpot[],
   inArea: (p: LonLat) => boolean,
+  areaPlaceIds?: ReadonlySet<string>,
 ): NavilyCoverage {
-  const confirmedSpots = new Set(
-    matches.flatMap((m, i) => (m.spotIndex !== null && places[i]!.status === "confirmed" ? [m.spotIndex] : [])),
-  );
+  const counts = (p: MatchPlace) => p.status === "confirmed" && (!areaPlaceIds || areaPlaceIds.has(p.placeId));
+  const confirmedSpots = new Set(matches.flatMap((m, i) => (m.spotIndex !== null && counts(places[i]!) ? [m.spotIndex] : [])));
   const inside = spots.flatMap((s, i) => (inArea(s) ? [i] : []));
   const matched = inside.filter((i) => confirmedSpots.has(i)).length;
   return {

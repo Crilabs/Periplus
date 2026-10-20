@@ -26,7 +26,8 @@ const SPOT_COORDINATES = /35[.,]2003|21[.,]0003|35[.,]25(?!\d)|21[.,]05(?!\d)/;
 /** Three set places: Kolona (spot 0 ≈ 43 m away), Poros harbour (spot 1 ≈ 60 m away), Agios (no spot nearby). */
 async function scene(tx: Db) {
   const areaKey = `test-${newId()}`;
-  const areaId = await insertNamedObject(tx, { type: "area", names: [{ name: "Test area" }], lon: 21.05, lat: 35.25, configKey: areaKey });
+  // the area's own point lies away from every fixture spot (no test row at a spot coordinate)
+  const areaId = await insertNamedObject(tx, { type: "area", names: [{ name: "Test area" }], lon: 21.07, lat: 35.23, configKey: areaKey });
   for (const [lon, lat] of [
     [21.0, 35.2],
     [21.05, 35.25],
@@ -131,6 +132,38 @@ describe("runNavilyComparison", () => {
       expect([r.written, r.skippedManual]).toEqual([47, 1]);
       const existence = (await resultRows(tx, placeIds)).filter((x) => x.placeId === kolona.placeId && x.attribute === "existence");
       expect(existence.map((x) => [x.method, x.result])).toEqual([["manual", "deviation"]]);
+    }));
+
+  it("an outcome a person confirmed on the page is kept like one set by hand", () =>
+    withRollback(async (tx) => {
+      const { areaKey, kolona, placeIds } = await scene(tx);
+      const spots = await loadNavilySpots(FIXTURE);
+      const subject = (await loadComparisonSubjects(tx, areaKey)).find((s) => s.placeId === kolona.placeId)!;
+      const valueHash = comparisonValues(subject, getConfig().quality.navily).existence.hash;
+      await tx.insert(comparisonResults).values({
+        placeId: kolona.placeId,
+        attribute: "existence",
+        profileVersion: subject.profileVersion,
+        valueHash,
+        result: "deviation",
+        method: "proposal_confirmed",
+        checkedBy: "admin@test",
+      });
+
+      const r = await runNavilyComparison(tx, { areaKey, spots, acceptProposals: true, now: NOW });
+      expect([r.written, r.skippedManual]).toEqual([47, 1]);
+      const existence = (await resultRows(tx, placeIds)).filter((x) => x.placeId === kolona.placeId && x.attribute === "existence");
+      expect(existence.map((x) => [x.method, x.result])).toEqual([["proposal_confirmed", "deviation"]]);
+    }));
+
+  it("the coverage counts only matches to the area's confirmed, valid places", () =>
+    withRollback(async (tx) => {
+      const { areaKey, kolona } = await scene(tx);
+      const spots = await loadNavilySpots(FIXTURE);
+      // Kolona stays in the set with status confirmed, but has ended: it no longer covers its spot
+      await tx.update(places).set({ validTo: sql`current_date` }).where(eq(places.id, kolona.placeId));
+      const r = await runNavilyComparison(tx, { areaKey, spots, acceptProposals: false, now: NOW });
+      expect(r.coverage).toEqual({ spots: 3, matched: 1, ratio: 1 / 3 });
     }));
 
   it("no navily name, id, url or coordinate appears in any written row", () =>

@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { getConfig, loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
@@ -10,6 +10,7 @@ import {
   places,
   routes,
   routeStops,
+  sources,
   tiles,
   type ComparisonAttribute,
   type ComparisonResultValue,
@@ -80,6 +81,15 @@ async function area(tx: Db) {
   return { areaKey, areaId, westTile: tileIds[0]!, eastTile: tileIds[1]!, addPlace };
 }
 
+/** A duplicate geo object merged into `survivorId` (as the gazetteer merge leaves it: ended, `merged_into_id` set). */
+async function mergedDuplicate(tx: Db, survivorId: string): Promise<string> {
+  const id = await insertNamedObject(tx, { type: "bay", names: [{ name: "Duplicate" }], lon: 21.002, lat: 35.2 });
+  await tx.execute(sql`update geo_objects set merged_into_id = ${survivorId}, valid_to = current_date where id = ${id}`);
+  return id;
+}
+
+const rejectSource = (tx: Db, sourceId: string) => tx.update(sources).set({ status: "rejected" }).where(eq(sources.id, sourceId));
+
 /** Appends a comparison outcome for the place's current own value (or `valueHash`). */
 async function addResult(
   tx: Db,
@@ -143,6 +153,37 @@ describe("multiSourceMetric", () => {
       expect(r.value).toBeCloseTo(1 / 3);
       // ≥ 2 documents (datendienst, ruling M7-P12) is reported beside it
       expect(r.details).toEqual({ places: 3, multi: 1, multiDocument: 2 });
+    }));
+});
+
+describe("multiSourceMetric counts text as consolidation does (ruling M7-C-R2)", () => {
+  it("a mention on a duplicate merged into the place counts for it", () =>
+    withRollback(async (tx) => {
+      const { areaKey, addPlace } = await area(tx);
+      const [s1, s2] = [await insertSource(tx), await insertSource(tx)];
+      const place = await addPlace();
+      await insertMention(tx, place.objectId, { sourceId: s1 });
+      const duplicate = await mergedDuplicate(tx, place.objectId);
+      // a chain of two merges: the older duplicate was merged into the first
+      const older = await mergedDuplicate(tx, duplicate);
+      await insertMention(tx, older, { sourceId: s2 });
+      expect((await multiSourceMetric(tx, { areaKey })).details).toEqual({ places: 1, multi: 1, multiDocument: 1 });
+    }));
+
+  it("a mention from a rejected or ended source does not count", () =>
+    withRollback(async (tx) => {
+      const { areaKey, addPlace } = await area(tx);
+      const [s1, rejected, ended] = [await insertSource(tx), await insertSource(tx), await insertSource(tx)];
+      const place = await addPlace();
+      await insertMention(tx, place.objectId, { sourceId: s1 });
+      await insertMention(tx, place.objectId, { sourceId: rejected });
+      await insertMention(tx, place.objectId, { sourceId: ended });
+      expect((await multiSourceMetric(tx, { areaKey })).details).toEqual({ places: 1, multi: 1, multiDocument: 1 });
+      await rejectSource(tx, rejected);
+      await tx.update(sources).set({ validTo: "2026-10-01" }).where(eq(sources.id, ended));
+      expect((await multiSourceMetric(tx, { areaKey }, { today: "2026-10-20" })).details).toEqual({ places: 1, multi: 0, multiDocument: 0 });
+      // before the source ended, it still counts
+      expect((await multiSourceMetric(tx, { areaKey }, { today: "2026-09-30" })).details).toEqual({ places: 1, multi: 1, multiDocument: 1 });
     }));
 });
 
@@ -261,20 +302,48 @@ describe("shelterConfidenceMetric", () => {
       const r = await shelterConfidenceMetric(tx, { areaKey }, quality);
       expect(r.metric).toBe("shelter_confidence");
       expect(r.value).toBe(0.5);
-      expect(r.details).toMatchObject({ places: 2, complete: 1, confirmed: 14, corrected: 1 });
-      const bySector = r.details.bySector as Record<string, { withText: number; confirmed: number; corrected: number }>;
-      expect(bySector.S).toEqual({ withText: 2, confirmed: 1, corrected: 1 });
-      expect(bySector.NW).toEqual({ withText: 1, confirmed: 1, corrected: 0 });
+      expect(r.details).toMatchObject({ places: 2, complete: 1, confirmed: 14, corrected: 1, textOnly: 0 });
+      const bySector = r.details.bySector as Record<string, { withText: number; confirmed: number; corrected: number; textOnly: number }>;
+      expect(bySector.S).toEqual({ withText: 2, confirmed: 1, corrected: 1, textOnly: 0 });
+      expect(bySector.NW).toEqual({ withText: 1, confirmed: 1, corrected: 0, textOnly: 0 });
     }));
 
-  it("a text fact without a computed value corrects; no places is null", () =>
+  it("a text fact without a computed value is text only, never corrected (ruling M7-C-R1); no places is null", () =>
     withRollback(async (tx) => {
       const { areaKey, addPlace } = await area(tx);
       const place = await addPlace();
       await shelterFacts(tx, place.objectId, all(0.9));
       const r = await shelterConfidenceMetric(tx, { areaKey }, quality);
-      expect([r.value, r.details.confirmed, r.details.corrected]).toEqual([1, 0, 8]);
+      expect([r.value, r.details.confirmed, r.details.corrected, r.details.textOnly]).toEqual([1, 0, 0, 8]);
+      expect((r.details.bySector as Record<string, unknown>).E).toEqual({ withText: 1, confirmed: 0, corrected: 0, textOnly: 1 });
       expect((await shelterConfidenceMetric(tx, { areaKey: `test-${newId()}` }, quality)).value).toBeNull();
+    }));
+
+  it("facts on a merged duplicate count for the place, facts of a rejected source do not (ruling M7-C-R2)", () =>
+    withRollback(async (tx) => {
+      const { areaKey, addPlace } = await area(tx);
+      const place = await addPlace();
+      await insertComputation(tx, place.objectId, "shelter", Object.fromEntries(SECTORS.map((x) => [`shelter.${x}`, 0.5])));
+      // four sectors on the place's own object, four on a duplicate merged into it
+      await shelterFacts(tx, place.objectId, { N: 0.5, NE: 0.5, E: 0.5, SE: 0.5 });
+      const duplicate = await mergedDuplicate(tx, place.objectId);
+      // the duplicate's own computation describes ended geometry: it is not compared with
+      await insertComputation(tx, duplicate, "shelter", Object.fromEntries(SECTORS.map((x) => [`shelter.${x}`, 0.0])));
+      await shelterFacts(tx, duplicate, { S: 0.5, SW: 0.5, W: 0.5, NW: 0.5 });
+      const r = await shelterConfidenceMetric(tx, { areaKey }, quality);
+      expect(r.value).toBe(1);
+      expect(r.details).toMatchObject({ places: 1, complete: 1, confirmed: 8, corrected: 0, textOnly: 0 });
+
+      // the same text from a rejected source: the place loses those four sectors
+      const sourceOfDuplicate = (
+        await tx.execute<{ source_id: string }>(sql`
+          select d.source_id from facts f join mentions m on m.id = f.mention_id join document_versions v on v.id = m.document_version_id
+          join documents d on d.id = v.document_id where f.geo_object_id = ${duplicate} limit 1`)
+      ).rows[0]!.source_id;
+      await rejectSource(tx, sourceOfDuplicate);
+      const after = await shelterConfidenceMetric(tx, { areaKey }, quality);
+      expect(after.value).toBe(0);
+      expect(after.details).toMatchObject({ complete: 0, confirmed: 4 });
     }));
 });
 
@@ -342,6 +411,23 @@ describe("routeReconstructionMetric", () => {
       );
     }));
 
+  it("a stop at a duplicate merged into a confirmed place is at that place; a rejected source's report does not count (ruling M7-C-R2)", () =>
+    withRollback(async (tx) => {
+      const { areaKey, addPlace } = await area(tx);
+      const [a, b] = [await addPlace(), await addPlace()];
+      const duplicate = await mergedDuplicate(tx, b.objectId);
+      const report = await tripReport(tx, [a.objectId, duplicate]);
+      expect((await routeReconstructionMetric(tx, { areaKey })).details).toMatchObject({ routes: 1, complete: 1, openStops: 0 });
+      // a report whose only in-scope stop is the merged duplicate is still in the scope
+      await tripReport(tx, [duplicate, null]);
+      expect((await routeReconstructionMetric(tx, { areaKey })).details).toMatchObject({ routes: 2, complete: 1, openStops: 1 });
+
+      const [doc] = (await tx.execute<{ source_id: string }>(sql`select source_id from documents where id = ${report.documentId}`)).rows;
+      await rejectSource(tx, doc!.source_id);
+      const r = await routeReconstructionMetric(tx, { areaKey });
+      expect((r.details.reports as Array<{ documentId: string }>).map((x) => x.documentId)).not.toContain(report.documentId);
+    }));
+
   it("only the current version of a trip report counts; without routes it is null", () =>
     withRollback(async (tx) => {
       const { areaKey, addPlace } = await area(tx);
@@ -373,5 +459,8 @@ describe("tile scope", () => {
       expect((await multiSourceMetric(tx, { areaKey, tileId: westTile })).details).toEqual({ places: 3, multi: 0, multiDocument: 0 });
       // a tile of another area is out of the scope
       expect((await coverageMetric(tx, { areaKey, tileId: tileIdFor(22.0, 35.2) })).details).toEqual({ set: 0, confirmed: 0 });
+      // a set member whose tile is not labelled with the area does not count for the area (ruling M7-C-R1)
+      await addPlace({ inSet: true, at: { lon: 22.0, lat: 35.2 } });
+      expect((await coverageMetric(tx, { areaKey })).details).toEqual({ set: 5, confirmed: 4 });
     }));
 });

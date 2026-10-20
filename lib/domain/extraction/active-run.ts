@@ -48,7 +48,18 @@ export async function activeExtractionRun(
   geoObjectId: string,
   cfg: AppConfig = getConfig(),
 ): Promise<{ id: string } | null> {
-  const { rows } = await db.execute<{ id: string }>(sql`
+  const { rows } = await db.execute<{ id: string | null }>(
+    sql`select ${activeExtractionRunIdSql(cfg, sql`${documentVersionId}::uuid`, sql`${geoObjectId}::uuid`)} as id`,
+  );
+  return rows[0]?.id ? { id: rows[0].id } : null;
+}
+
+/**
+ * The id of the active run (`activeExtractionRun`) of the (version, object) given as SQL expressions, null without
+ * one: a scalar subquery for set-based queries (the shelter metric, ruling M7-C-R2).
+ */
+export function activeExtractionRunIdSql(cfg: AppConfig, documentVersionId: SQL, geoObjectId: SQL): SQL {
+  return sql`(
     select r.id from extraction_runs r
     where ${eligibleRunSql(cfg)}
       and exists (
@@ -58,8 +69,7 @@ export async function activeExtractionRun(
       )
     order by r.started_at desc, r.id desc
     limit 1
-  `);
-  return rows[0] ? { id: rows[0].id } : null;
+  )`;
 }
 
 /**
