@@ -48,6 +48,8 @@ import {
 import { crawlRulesSchema, type CrawlRules } from "@/lib/domain/sources/crawl-rules";
 import { getSource, type Source } from "@/lib/domain/sources/store";
 import { latestProfile } from "@/lib/domain/timeline";
+import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
+import { droppedSafetyEntries } from "@/lib/domain/profile-view";
 
 /** Places offered for "merge into a place". */
 export const NEARBY_PLACES = 5;
@@ -253,7 +255,11 @@ export type ProfileAttributeSubject = {
   a?: ProfileSideView;
   b?: ProfileSideView;
   others?: ProfileSideView[];
-  proposed?: { value: unknown; display: string; facts: FactView[] };
+  /**
+   * `removes`: the entries „Übernehmen“ takes out of a safety list (`droppedSafetyEntries` of the context's old and
+   * new value), one display each; empty for any other change (wave-1 review M-3).
+   */
+  proposed?: { value: unknown; display: string; facts: FactView[]; removes: string[] };
   resolution: ConflictResolution | null;
 };
 
@@ -464,10 +470,12 @@ async function profileAttributeSubject(db: Db, subjectId: string, context: Recor
   }
   if ("newValue" in context) {
     const ids = z.array(z.string()).safeParse(context.factIds);
+    const cfg = await consolidationConfigFor(db);
     subject.proposed = {
       value: context.newValue,
       display: context.newValue === null ? "–" : formatReviewValue(attribute, context.newValue),
       facts: await factsOf(db, ids.success ? ids.data : []),
+      removes: droppedSafetyEntries(attribute, context.oldValue, context.newValue, cfg).map((e) => formatReviewValue(attribute, [e])),
     };
   }
   return subject;

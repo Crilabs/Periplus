@@ -3,8 +3,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { getConfig } from "@/lib/config";
 import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
-import { attributeIn } from "@/lib/domain/consolidation/weights";
-import { isTextProhibition, profileEntryKey } from "@/lib/domain/profile-view";
+import { droppedSafetyEntries } from "@/lib/domain/profile-view";
 import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
@@ -519,10 +518,7 @@ async function applyProfileDecision(
  * when the attribute is no safety list or nothing is dropped (the proposed list is stored as before).
  */
 function safetyListRemoval(attribute: string, oldValue: unknown, newValue: unknown, cfg: ConsolidationConfig, version: string): unknown {
-  if (!attributeIn(attribute, cfg.change.additiveLists) || !Array.isArray(oldValue) || !Array.isArray(newValue)) return null;
-  const keyOf = (e: unknown) => profileEntryKey(attribute, e, cfg);
-  const kept = new Set(newValue.map(keyOf));
-  const dropped = oldValue.filter((e) => !kept.has(keyOf(e)) && (attribute !== "prohibitions" || isTextProhibition(e)));
+  const dropped = droppedSafetyEntries(attribute, oldValue, newValue, cfg);
   if (dropped.length === 0) return null;
   try {
     validateFactValue(attribute, dropped, version);

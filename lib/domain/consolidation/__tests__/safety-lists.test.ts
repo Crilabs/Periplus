@@ -5,6 +5,8 @@ import { reviewTasks, sources } from "@/lib/db/schema";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
 import { newId } from "@/lib/domain/ids";
 import { decideReviewTask } from "@/lib/domain/review-decisions";
+import { reviewTaskDetail } from "@/lib/domain/review-view";
+import { formatReviewValue } from "@/lib/domain/consolidation/format";
 import { latestProfile } from "@/lib/domain/timeline";
 import { insertComputation, insertExtraction, insertMention, insertMentionFact, insertPlace, insertSource } from "@/test/consolidation";
 import { testDb, withRollback } from "@/test/db";
@@ -72,6 +74,9 @@ describe("safety lists are never lifted by omission (GR-1, SAF-1)", () => {
       expect((await eventsOf(tx, a.objectId)).filter((e) => e.type === "changed" && e.attribute === "prohibitions")).toEqual([]);
       const task = await openTask(tx, a.objectId, "prohibitions");
       expect(task).toMatchObject({ priority: 2, context: { oldValue: [ban], newValue: [] } });
+      // the review page names what „Übernehmen“ removes (wave-1 review M-3)
+      const detail = await reviewTaskDetail(tx, task!.id);
+      expect(detail?.subject).toMatchObject({ type: "profile_attribute", proposed: { removes: [formatReviewValue("prohibitions", [ban])] } });
     });
   });
 

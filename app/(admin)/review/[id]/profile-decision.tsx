@@ -222,7 +222,11 @@ export function ProfileDecision({
           <DecisionPanel
             question="Den neuen Wert ins Profil übernehmen?"
             className="lg:col-span-2"
-            note="„Übernehmen“ geht als Prüfung in das Profil ein; „Verwerfen“ behält den bisherigen Wert, diese Änderung wird nicht erneut vorgelegt."
+            note={
+              subject.proposed && subject.proposed.removes.length > 0
+                ? `„Übernehmen“ entfernt aus dem Profil: ${subject.proposed.removes.join("; ")}. Nach einem Modell- oder Prompt-Wechsel erst nach dem Reprozessieren entscheiden. „Verwerfen“ behält die Einträge, diese Änderung wird nicht erneut vorgelegt.`
+                : "„Übernehmen“ geht als Prüfung in das Profil ein; „Verwerfen“ behält den bisherigen Wert, diese Änderung wird nicht erneut vorgelegt."
+            }
           >
             <DecisionForm
               {...props}
