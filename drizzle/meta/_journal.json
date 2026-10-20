@@ -372,6 +372,20 @@
       "when": 1792513179046,
       "tag": "0052_merged_place_tasks_dismiss",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1792521635878,
+      "tag": "0053_subdivisions_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1792521641066,
+      "tag": "0054_subdivisions_triggers",
+      "breakpoints": true
     }
   ]
 }

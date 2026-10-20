@@ -81,6 +81,7 @@ export const STAGE_STATUS_LABELS: Record<RunStageStatus, string> = {
 export const SCOPE_TYPE_LABELS: Record<RunScopeType, string> = {
   tile: "Kachel",
   area: "Gebiet",
+  subdivision: "Landesteil",
   place: "Ort",
   source: "Quelle",
   system: "System",
@@ -126,6 +127,8 @@ export const GEO_OBJECT_TYPE_LABELS: Record<GeoObjectType, string> = {
   harbour: "Hafen",
   settlement: "Siedlung",
   poi: "Highlight",
+  country: "Land",
+  admin_region: "Verwaltungsregion",
 };
 
 /** The type hint of a name in a text ("Ormos …", "… Bay"). */
@@ -153,6 +156,7 @@ export const GEO_ORIGIN_LABELS: Record<GeoOrigin, string> = {
   review: "Review",
   computed: "Berechnet",
   manual: "Manuell",
+  marine_regions: "Marine Regions",
 };
 
 export const NAME_ORIGIN_LABELS: Record<NameOrigin, string> = {

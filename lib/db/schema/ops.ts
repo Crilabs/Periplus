@@ -17,7 +17,7 @@ import {
 import { newId } from "@/lib/domain/ids";
 
 export const runKindEnum = pgEnum("run_kind", ["full", "stage", "revisit", "event", "reprocess", "system"]);
-export const runScopeTypeEnum = pgEnum("run_scope_type", ["tile", "area", "place", "source", "system"]);
+export const runScopeTypeEnum = pgEnum("run_scope_type", ["tile", "area", "subdivision", "place", "source", "system"]);
 export const runStatusEnum = pgEnum("run_status", ["queued", "running", "finished", "failed"]);
 export const runStageStatusEnum = pgEnum("run_stage_status", ["pending", "running", "finished"]);
 

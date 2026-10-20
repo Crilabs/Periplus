@@ -109,7 +109,7 @@ describe("comparison set", () => {
         sql`select column_name from information_schema.columns where table_name = 'comparison_set' order by column_name`,
       );
       const names = (res.rows as { column_name: string }[]).map((r) => r.column_name);
-      expect(names).toEqual(["added_at", "added_by", "area_id", "place_id"]);
+      expect(names).toEqual(["added_at", "added_by", "area_id", "place_id", "subdivision_id"]);
     }));
 });
 

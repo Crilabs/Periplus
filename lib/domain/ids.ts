@@ -1,7 +1,7 @@
 import { ulid } from "ulid";
 import { v7 } from "uuid";
 
-export type PublicIdPrefix = "sp" | "hl" | "rg" | "ar";
+export type PublicIdPrefix = "sp" | "hl" | "rg" | "ar" | "sd";
 
 /** UUIDv7: time-ordered primary key. */
 export function newId(): string {

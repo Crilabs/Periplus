@@ -121,7 +121,7 @@ export const qualitySnapshots = pgTable(
     runId: uuid("run_id")
       .notNull()
       .references(() => runs.id),
-    scopeType: text("scope_type").$type<"area" | "tile">().notNull(),
+    scopeType: text("scope_type").$type<"area" | "subdivision" | "tile">().notNull(),
     scopeId: text("scope_id").notNull(),
     metric: text("metric").$type<MetricKey>().notNull(),
     value: doublePrecision("value"),
@@ -129,7 +129,7 @@ export const qualitySnapshots = pgTable(
     createdAt: createdAt(),
   },
   (t) => [
-    check("quality_snapshots_scope_type", sql`${t.scopeType} in ('area', 'tile')`),
+    check("quality_snapshots_scope_type", sql`${t.scopeType} in ('area', 'subdivision', 'tile')`),
     uniqueIndex("quality_snapshots_run_scope_metric_unique").on(t.runId, t.scopeType, t.scopeId, t.metric),
     index("quality_snapshots_scope_metric_created_idx").on(t.scopeType, t.scopeId, t.metric, t.createdAt.desc()),
   ],
