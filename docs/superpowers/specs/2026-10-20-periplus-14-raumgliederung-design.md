@@ -130,6 +130,19 @@ Kartenebene „Reviere“ auf `/map`: Polygone nach Bahn eingefärbt, überlappe
 
 Nichts im Ablauf wartet auf diese Aktionen.
 
+### Änderung 21.10.2026: Reviere kommen aus dem Revier-Bot
+
+Entscheidung Christian: Ein eigener KI-Bot außerhalb von Periplus findet die Reviere und liefert sie je Land als Datei (erste Lieferung Griechenland, 36 Reviere). Periplus sucht und extrahiert Reviere nicht selbst. Damit entfallen die Abschnitte „Finden (je Landesteil)“ Schritte 1–3, „Bahnen“, die Bearbeitungsaktionen unter „Freigabe in der Karte“, die Review-Art `area_candidate`, `area_status`/`approval_kind`, die Templates `subdivisionArea`, der Prompt `area-extract` und das Budget der Revier-Findung. Korrekturen an Revieren macht der Bot; Periplus übernimmt seinen Stand.
+
+- **Lieferung:** `config/area-imports/<Land>.json` (eingecheckt, Format des Bots: `country`, `generatedAt`, `areas[]` mit `key`, `names[]` (`lang`, `name`, `preferred`), `subdivisions[]`, `members[]` und `boundaryPoints[]` (`name`, `type`), `boundary`, `related[]` (`key`, `relation`: `contains`|`within`|`overlaps`), `evidence[]` (`url`, `publisher`, `lang`, `quote`), `notes`). Die Datei hat keine Polygone.
+- **Import** (`areas.import`): je Revier ein Geo-Objekt `area`, Schlüssel `config_key` = Bot-Schlüssel, Namen mit Herkunft `import`, Belege in `area_evidence` (Zitat, URL, Herausgeber, Sprache, Stand der Datei; nur anfügend), `boundary`, `related` und `notes` in `tags`. Ein Revier, das aus der Datei verschwindet, endet über `valid_to`.
+- **Mitglieder auflösen:** Mitglieds- und Grenzpunktnamen gegen den Gazetteer (grob und fein) mit dem Namensabgleich aus Teil-Spec 06, beschränkt auf die genannten Landesteile (ein Schlüssel, den `split` ersetzt hat, steht für seine Gruppen, z. B. `GR-L` → Kykladen und Dodekanes) und ihre Nachbarkacheln; der Typ aus der Datei schränkt die Kandidaten ein. Nicht aufgelöste Namen bleiben am Revier vermerkt und werden bei jedem Import neu versucht.
+- **Polygon:** wie Schritt 6 oben (konkave Hülle der aufgelösten Mitglieder und Grenzpunkte, gepuffert, Land landeinwärts abgeschnitten; ein Golf als Mitglied, der die übrigen deckt, ist das Polygon). Ein Revier entsteht erst, wenn mindestens `minMembers` Mitglieder aufgelöst sind; bis dahin meldet der Import es als „wartet auf Gazetteer“.
+- **Wann:** von Hand per Skript aus der Entwicklungsumgebung, wenn eine neue Datei des Bots eingecheckt ist (`npm run areas:import`, auf dem Server `scripts/import-areas.ts`; keine Oberfläche, Entscheidung Christian), und im Landesteil-Lauf nach der Geometrie und vor der Quellenfindung (neue Gazetteer-Objekte lösen weitere Mitglieder auf). Weitere Länder kommen im selben Format.
+- **Pilotreviere:** `saronic` wird zu `saronic-gulf`, `argolic` zu `argolic-gulf` (Zuordnung in `config/areas.json`); das Geo-Objekt mit `ar_`-ID und Revier-Facts bleibt, alte SERP-Suchen unter dem alten Schlüssel zählen weiter.
+- **Karte:** Ebene „Reviere“ zur Ansicht mit Filter nach Landesteil; Klick zeigt Namen je Sprache, Mitglieder (aufgelöst und offen), Abgrenzung, Beziehungen, Belege mit Zitat und Quelle.
+- Alles Übrige dieser Spec (Datenmodell `area_members`/`area_evidence`, Quellenfindung, Erwähnungen, Nachlesen, Lieferung) gilt unverändert für die importierten Reviere.
+
 ## Quellenfindung (ändert Teil-Spec 05)
 
 - **Revier-Ebene:** je Landesteil für alle Reviere mit `approved`, deren Kacheln den Landesteil berühren (auch teilweise), alle Namen in den Sprachen des Landesteils × `templates.area`. Ein Revier wird höchstens einmal je `serp.reuseDays` gesucht, egal wie viele Landesteile es berührt; `serp_results.scope_id` ist die Revier-ID.
