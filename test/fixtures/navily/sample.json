@@ -1,0 +1,50 @@
+[
+  {
+    "id": 987654321,
+    "kind": "mooring",
+    "type": "buoy",
+    "name": "NAVILY-ONLY-NAME",
+    "lat": 35.2,
+    "lon": 21.0,
+    "prot": ["n", "ne", "nw"],
+    "seabeds": ["algae", "sand"],
+    "rating": 4.5,
+    "maxDraft": 3,
+    "maxLength": 20,
+    "water": true,
+    "shop": false,
+    "url": "https://www.navily.com/spot/987654321"
+  },
+  {
+    "id": 123456789,
+    "kind": "port",
+    "type": "marina",
+    "name": "NAVILY-PORT",
+    "lat": 35.25,
+    "lon": 21.05,
+    "prot": null,
+    "seabeds": null,
+    "rating": 3.0,
+    "maxDraft": null,
+    "maxLength": null,
+    "water": null,
+    "shop": null,
+    "url": "https://www.navily.com/spot/123456789"
+  },
+  {
+    "id": 555000111,
+    "kind": "mooring",
+    "type": "bay",
+    "name": null,
+    "lat": 35.3,
+    "lon": 21.1,
+    "prot": ["S", "SW"],
+    "seabeds": [],
+    "rating": null,
+    "maxDraft": 2.5,
+    "maxLength": 15,
+    "water": false,
+    "shop": true,
+    "url": "https://www.navily.com/spot/555000111"
+  }
+]

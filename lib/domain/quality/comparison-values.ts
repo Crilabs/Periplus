@@ -103,6 +103,14 @@ function presence(v: unknown): { present: boolean; detail: string[] } | null {
   return { present: v.present as boolean, detail };
 }
 
+/**
+ * The position a place is compared on: the point the contract delivers (`mapSpot`), i.e. the anchor position, else the
+ * place point; a harbour has no anchor position, only its place point.
+ */
+export function comparedPosition(s: Pick<ComparisonSubject, "kind" | "position" | "anchorPosition">): LonLat {
+  return (HARBOUR_KINDS.has(s.kind) ? null : s.anchorPosition) ?? s.position;
+}
+
 /** The normalised value and its display of one attribute; `[null, "–"]` without an own value. */
 function normalise(attribute: ComparisonAttribute, s: ComparisonSubject, cfg: NavilyConfig): [unknown, string] {
   const a = s.attributes;
@@ -110,8 +118,7 @@ function normalise(attribute: ComparisonAttribute, s: ComparisonSubject, cfg: Na
     case "existence":
       return [s.status === "confirmed", s.status === "confirmed" ? "bestätigter Ort" : "kein bestätigter Ort"];
     case "position": {
-      // the point the contract delivers (`mapSpot`): a harbour has no anchor position, only its place point
-      const p = (HARBOUR_KINDS.has(s.kind) ? null : s.anchorPosition) ?? s.position;
+      const p = comparedPosition(s);
       return [
         { lon: round(p.lon, POSITION_DIGITS), lat: round(p.lat, POSITION_DIGITS) },
         `${fixed(p.lat, 5)}° N, ${fixed(p.lon, 5)}° O`,

@@ -16,6 +16,8 @@ const envSchema = z.object({
   JINA_API_KEY: z.string().min(1).optional(),
   FIRECRAWL_API_KEY: z.string().min(1).optional(),
   CONTACT_EMAIL: z.string().min(1),
+  /** The Navily spot file, read at runtime only (Grundprinzip 9); unset: comparisons by hand only. */
+  NAVILY_SPOTS_PATH: z.string().min(1).optional(),
   /** `playwright`: the worker renders pages in headless Chromium when a crawl rule asks for it; `off`: never. */
   PERIPLUS_RENDERER: z.enum(["playwright", "off"]).default("playwright"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error", "silent"]).default("info"),

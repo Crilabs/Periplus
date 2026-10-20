@@ -25,6 +25,12 @@ describe("parseEnv", () => {
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   });
 
+  it("keeps NAVILY_SPOTS_PATH optional and treats an empty value as unset", () => {
+    expect(parseEnv(validSource).NAVILY_SPOTS_PATH).toBeUndefined();
+    expect(parseEnv({ ...validSource, NAVILY_SPOTS_PATH: "" }).NAVILY_SPOTS_PATH).toBeUndefined();
+    expect(parseEnv({ ...validSource, NAVILY_SPOTS_PATH: "/data/spots.json" }).NAVILY_SPOTS_PATH).toBe("/data/spots.json");
+  });
+
   it("rejects a SESSION_SECRET shorter than 32 chars without echoing the value", () => {
     expect(() => parseEnv({ ...validSource, SESSION_SECRET: "short-secret-value" })).toThrow(
       /SESSION_SECRET/,
