@@ -44,8 +44,10 @@ vi.mock("@/lib/adapters/s3", async (importOriginal) => ({
 const LON = 20.13;
 const LAT = 34.13;
 const TILE = tileIdFor(LON, LAT);
-const NOW = new Date("2026-10-19T12:00:00Z");
-const TODAY = "2026-10-19";
+// Fixture rows are valid from the test database's current_date (UTC) and requests are stamped with now(), so the
+// test runs on today's UTC date.
+const TODAY = new Date().toISOString().slice(0, 10);
+const NOW = new Date(`${TODAY}T12:00:00Z`);
 const DAY_MS = 86_400_000;
 const followup = () => getConsolidationConfig().followup;
 
