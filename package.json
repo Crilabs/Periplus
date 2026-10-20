@@ -46,7 +46,8 @@
     "sim:revisit": "tsx --env-file=.env.sim scripts/sim/revisit.ts",
     "sim:verify": "tsx --env-file=.env.sim scripts/sim/verify.ts",
     "migrate:subdivisions": "tsx --env-file-if-exists=.env.local scripts/migrate-subdivisions.ts",
-    "check:subdivision-migration": "tsx scripts/check-subdivision-migration.ts"
+    "check:subdivision-migration": "tsx scripts/check-subdivision-migration.ts",
+    "images:scene": "tsx scripts/build-render-scene.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
@@ -98,6 +99,7 @@
     "@types/three": "^0.186.0",
     "@types/turndown": "^5.0.6",
     "drizzle-kit": "^0.31.11",
+    "esbuild": "0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.4.2",
     "pino-pretty": "^13.2.0",
