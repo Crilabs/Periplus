@@ -77,10 +77,10 @@ const BASE: Array<Record<string, unknown>> = [{ "services.water": true, "depth.a
  * depth match; place 2: existence match, water confirmed own) and a finished evaluation run of `rulesVersion` v2 whose
  * evaluation profiles hold `next` (default: the same attributes).
  */
-async function scene(tx: Db, next: Array<Record<string, unknown>> = BASE) {
+async function scene(tx: Db, next: Array<Record<string, unknown>> = BASE, current: Array<Record<string, unknown>> = BASE) {
   const area = await insertQualityArea(tx, [{ lon: 21.01, lat: 35.2 }]);
   const places = [await area.addPlace({ inSet: true }), await area.addPlace({ inSet: true })];
-  for (const [i, p] of places.entries()) await insertProfile(tx, p.geoObjectId, BASE[i]!, {});
+  for (const [i, p] of places.entries()) await insertProfile(tx, p.geoObjectId, current[i]!, {});
   const outcomes: Array<[number, ComparisonAttribute, ComparisonResultValue]> = [
     [0, "existence", "match"],
     [0, "position", "match"],
@@ -163,6 +163,25 @@ describe("compareEvaluation and activateCandidate", () => {
       // a checked change that holds the precision passes
       await addResult(tx, areaKey, places[0]!.placeId, "depth", "match", runId);
       expect(await compareEvaluation(tx, runId)).toMatchObject({ pending: 0, passes: true });
+    }));
+
+  it("a candidate that drops a ban, a hazard or lifts an exclusion fails the gate (GR-2)", () =>
+    withRollback(async (tx) => {
+      const ban = { kind: "anchoring", months: null };
+      const rock = { kind: "rock", name: "Xera" };
+      const exclude = { excluded: true, reason: "anchoringBan", detail: null };
+      const safe = { ...BASE[0]!, prohibitions: [ban], hazards: [rock], exclude };
+      const { runId } = await scene(tx, [{ ...BASE[0]!, prohibitions: [], hazards: [], exclude: { excluded: false, reason: null, detail: null } }, BASE[1]!], [safe, BASE[1]!]);
+      const c = await compareEvaluation(tx, runId);
+      expect(c.changed).toEqual([]);
+      expect(c.safetyLosses.map((l) => l.attribute)).toEqual(["hazards", "prohibitions", "exclude"]);
+      expect(c.passes).toBe(false);
+      expect(c.reasons).toHaveLength(3);
+      expect(c.reasons[0]).toMatch(/^Sicherheitswert entfällt: /);
+      await expect(activateCandidate(tx, { evaluationRunId: runId, activatedBy: "a" })).rejects.toThrow(RegressionGateClosed);
+      // the same safety values on both sides pass
+      const { runId: same } = await scene(tx, [safe, BASE[1]!], [safe, BASE[1]!]);
+      expect(await compareEvaluation(tx, same)).toMatchObject({ safetyLosses: [], passes: true });
     }));
 
   it("an empty comparison set never passes (ruling M7-E-R2)", () =>

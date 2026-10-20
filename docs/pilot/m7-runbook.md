@@ -119,7 +119,7 @@ Stand 2026-10-20, nach M7 Teil (a) (Code). Er ersetzt den Entwurf aus dem M7-Pre
 1. `config/consolidation/v<n>.json` anlegen (nie die aktive ändern) und deployen.
 2. „Qualität“ → „Regression“: Regelversion wählen → „Bewertung starten“. Das ist ein Bewertungslauf über den Vergleichssatz: nur Bewertungsprofile, keine Ereignisse, keine Lieferung.
 3. Geänderte Werte prüfen: Vergleich alt/neu auf der Seite. Neue Abweichungen erscheinen als Aufgaben „Bewertung“ im Review.
-4. „Aktivieren“ → „Jetzt aktivieren“. Der Knopf erscheint nur, wenn Übereinstimmung und Abdeckung nicht sinken und mindestens ein Wert verglichen wurde.
+4. „Aktivieren“ → „Jetzt aktivieren“. Der Knopf erscheint nur, wenn Übereinstimmung und Abdeckung nicht sinken, mindestens ein Wert verglichen wurde und an keinem Ort des Vergleichssatzes ein Verbot, eine Gefahr, ein Sperrgebiet oder ein Ausschluss entfällt (Grund „Sicherheitswert entfällt: …“).
    - Die Aktivierung gilt sofort für alle Reviere: jede neue Konsolidierung, Lieferung und Summary.
    - Sie wird verweigert, wenn ein Ort des Vergleichssatzes nach der Bewertung ein neues Profil bekam. Dann neu bewerten.
 
