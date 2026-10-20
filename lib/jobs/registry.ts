@@ -3,6 +3,7 @@ import { compareConvertersHandler } from "./handlers/compare";
 import { consolidationGeoHandler, consolidationSummaryHandler } from "./handlers/consolidation";
 import { consolidationFollowupHandler } from "./handlers/consolidation-followup";
 import { datasetsImportHandler } from "./handlers/datasets";
+import { deliveryBuildHandler } from "./handlers/delivery";
 import { discoveryAreaHandler, discoveryPlaceHandler, discoveryProposeHandler, discoveryTileHandler } from "./handlers/discovery";
 import { embedChunksHandler } from "./handlers/embed";
 import { fetchSourceHandler, fetchUrlHandler } from "./handlers/fetch";
@@ -54,4 +55,5 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "consolidation.geo": consolidationGeoHandler,
   "consolidation.summary": consolidationSummaryHandler,
   "consolidation.followup": consolidationFollowupHandler,
+  "delivery.build": deliveryBuildHandler,
 };

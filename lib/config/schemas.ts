@@ -2,12 +2,16 @@ import { z } from "zod";
 import {
   geoObjectTypeEnum,
   placeKindEnum,
+  placeStatusEnum,
   poiCategoryEnum,
   restrictedKindEnum,
   seabedTypeEnum,
   type GeoObjectType,
 } from "@/lib/db/schema/geo";
 import { changeRateEnum, DOC_TYPES, type ChangeRate, type DocType } from "@/lib/db/schema/sources";
+import { CONTRACT_FILES, SCHEMA_VERSION } from "@/contract";
+import { PROVENANCE_SOURCES } from "@/contract/v1";
+import { COPY_SHINGLE_WORDS } from "@/lib/domain/documents/shingles";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { CONVERTERS, crawlRulesPatchSchema, regexPattern } from "@/lib/domain/sources/crawl-rules";
 
@@ -742,6 +746,100 @@ export const consolidationSchema = z.strictObject({
   }),
 });
 
+const metreRange = z
+  .tuple([positive, positive])
+  .refine(([min, max]) => min < max, "range must be [min, max] with min < max");
+// `<file>#<JSON pointer>` with `*` for every list entry, e.g. `spots.json#/spots/*/name`.
+const contractField = z
+  .string()
+  .regex(/^[a-z-]+\.(json|geojson)#\/\S*$/, "must be <contract file>#<JSON pointer>")
+  .refine((f) => (CONTRACT_FILES as readonly string[]).includes(f.split("#")[0]!), "must name a contract file");
+
+/** `config/delivery.json`: package build, validation thresholds, licences and API caching (spec 08). */
+export const deliverySchema = z.strictObject({
+  /** Contract version the build writes. */
+  schemaVersion: z.literal(SCHEMA_VERSION),
+  build: z.strictObject({
+    /**
+     * `lock_timeout` while a build waits for its area lock, milliseconds: a build waiting longer fails and its job is
+     * retried, so waiters never hold their pool connections for good (see docs/runbook.md, "Pakete bauen").
+     */
+    lockTimeoutMs: positiveInt,
+  }),
+  spots: z.strictObject({
+    /** Place statuses delivered as spots (excluded spots are delivered with `exclude.excluded`). */
+    statuses: z.array(z.enum(placeStatusEnum.enumValues)).min(1),
+    maxSources: positiveInt,
+    /** Name of an excluded spot without a valid name: it is still delivered, so the app knows (ruling M6-C-R1). */
+    excludedFallbackName: z.string().trim().min(1),
+  }),
+  coast: z.strictObject({
+    /** Margin around the area box, nautical miles. */
+    marginNm: positive,
+    simplifyToleranceM: positive,
+    /** `source` of land and coastline features. */
+    source: z.string().trim().min(1),
+    /** `source` of a restricted-area feature without its own `source_ref` (ruling M6-P25). */
+    restrictedSourceDefault: z.string().trim().min(1),
+  }),
+  regions: z.strictObject({
+    /** Geo object types delivered as regions. */
+    types: z.array(geoObjectType).min(1),
+    /** Radius of a region known only as a point, nautical miles. */
+    pointRadiusNm: positive,
+    /** A spot this close to a region polygon belongs to it (bays of an island), nautical miles (ruling M6-C-R1). */
+    memberMarginNm: positive,
+    simplifyToleranceM: positive,
+    character: z
+      .strictObject({ meltemiHigh: share, meltemiLow: share })
+      .refine((c) => c.meltemiLow < c.meltemiHigh, "meltemiLow must be below meltemiHigh"),
+  }),
+  weather: z.strictObject({
+    regionBufferNm: positive,
+    /**
+     * A region polygon holds water when at least this share of its area is not land: its point then lies inside it,
+     * otherwise (an island) in its buffer (ruling M6-C-R2).
+     */
+    regionMinWaterShare: share,
+    capeOffsetNm: positive,
+    capeLandRadiusM: positive,
+  }),
+  highlights: z.strictObject({ maxSpotIds: positiveInt }),
+  validation: z.strictObject({
+    maxWaterDistanceNm: positive,
+    spotDuplicateM: positive,
+    highlightDuplicateM: positive,
+    maxDraftM: metreRange,
+    maxLengthM: metreRange,
+    harbourMinShelter: share,
+    /**
+     * Shelter provenance that lets a port or marina below `harbourMinShelter` pass (Teil B "text oder observed"; a
+     * review decision counts too, ruling M6-D-R2).
+     */
+    harbourShelterSources: z.array(z.enum(PROVENANCE_SOURCES)).min(1),
+    /** Teil B "kein Textfeld mit mehr als 15 Wörtern wörtlich aus einer Quelle": the longest copied run allowed. */
+    maxCopiedWords: z.number().int().min(COPY_SHINGLE_WORDS),
+    /** Copy checks (`text_shingles` queries) running at once. */
+    copyCheckConcurrency: positiveInt,
+    /** Below this `score.confidence` the summary must carry `lowConfidenceNote`. */
+    lowConfidence: confidence,
+    lowConfidenceNote: z.string().trim().min(1),
+  }),
+  severity: z.strictObject({ shelterDelta: share }),
+  /** Domains whose content never leaves Periplus (Navily, Google). */
+  forbiddenDomains: z.array(domainName).min(1),
+  licenses: z.array(
+    z.strictObject({
+      name: z.string().trim().min(1),
+      attribution: z.string().trim().min(1),
+      url: z.url(),
+      files: z.array(z.enum(CONTRACT_FILES)),
+      fields: z.array(contractField),
+    }),
+  ),
+  api: z.strictObject({ cacheMaxAgeSeconds: z.number().int().nonnegative() }),
+});
+
 export type ModelsConfig = z.infer<typeof modelsSchema>;
 export type ModelTaskConfig = z.infer<typeof modelTaskSchema>;
 export type MentionsConfig = z.infer<typeof mentionsSchema>;
@@ -761,6 +859,7 @@ export type AreaConfig = z.infer<typeof areaConfigSchema>;
 export type CategoriesConfig = z.infer<typeof categoriesSchema>;
 export type GazetteerConfig = z.infer<typeof gazetteerSchema>;
 export type ConsolidationConfig = z.infer<typeof consolidationSchema>;
+export type DeliveryConfig = z.infer<typeof deliverySchema>;
 /** A rules version's parameters with its version (the file name). */
 export type VersionedConsolidationConfig = ConsolidationConfig & { version: string };
 export type AppConfig = {
@@ -785,4 +884,5 @@ export type AppConfig = {
   extraction: ExtractionConfig;
   /** The active consolidation rules version (`config/consolidation/active.json`). */
   consolidation: VersionedConsolidationConfig;
+  delivery: DeliveryConfig;
 };

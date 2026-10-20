@@ -3,6 +3,16 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { matchRoute, normalizePath, ROUTE_POLICY } from "../route-policy";
 
+/** The delivery API routes (spec 08). */
+const DELIVERY_ROUTES = [
+  "/api/v1/areas",
+  "/api/v1/areas/[area]/package",
+  "/api/v1/areas/[area]/package/[file]",
+  "/api/v1/schema/[version]/[file]",
+  "/api/v1/areas/[area]/changes",
+  "/api/v1/spots/[id]",
+];
+
 const ROUTE_FILES = /^(page|route)\.(tsx?|jsx?)$/;
 
 /** URL patterns of every page/route file under `dir`: strips (groups), keeps [params], skips _private folders. */
@@ -23,8 +33,31 @@ describe("ROUTE_POLICY", () => {
     expect(Object.keys(ROUTE_POLICY).sort()).toEqual(routes.sort());
   });
 
+  it("the delivery admin pages and the file download need an admin session", () => {
+    for (const route of ["/deliveries", "/deliveries/[id]", "/deliveries/[id]/files/[file]"]) {
+      expect(ROUTE_POLICY[route], route).toEqual({ kind: "admin" });
+    }
+    expect(matchRoute("/deliveries/0199f0a0-0000-7000-8000-000000000001/files/spots.json")?.pattern).toBe("/deliveries/[id]/files/[file]");
+  });
+
   it("gives /api/v1/ping the delivery:read scope", () => {
     expect(ROUTE_POLICY["/api/v1/ping"]).toEqual({ kind: "api", scope: "delivery:read" });
+  });
+
+  it("every new api route is in the route policy with the delivery:read scope", () => {
+    for (const route of DELIVERY_ROUTES) {
+      expect(ROUTE_POLICY[route], route).toEqual({ kind: "api", scope: "delivery:read" });
+    }
+    for (const [path, pattern] of [
+      ["/api/v1/areas", "/api/v1/areas"],
+      ["/api/v1/areas/ar_X/package", "/api/v1/areas/[area]/package"],
+      ["/api/v1/areas/saronic/package/spots.json", "/api/v1/areas/[area]/package/[file]"],
+      ["/api/v1/schema/1.0/spots.schema.json", "/api/v1/schema/[version]/[file]"],
+      ["/api/v1/areas/ar_X/changes", "/api/v1/areas/[area]/changes"],
+      ["/api/v1/spots/sp_X", "/api/v1/spots/[id]"],
+    ] as const) {
+      expect(matchRoute(path)?.pattern, path).toBe(pattern);
+    }
   });
 });
 

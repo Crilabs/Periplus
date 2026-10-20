@@ -1,6 +1,7 @@
 "use client";
 
 import "maplibre-gl/dist/maplibre-gl.css";
+import "./maplibre-worker";
 import {
   type ExpressionSpecification,
   type GeoJSONSource,
@@ -9,7 +10,7 @@ import {
   NavigationControl,
 } from "maplibre-gl";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { GeoObjectType, PlaceStatus, RestrictedKind } from "@/lib/db/schema";
 import type { MapLayer } from "@/lib/domain/map-data";
 import { CLIENT_BBOX_DEGREES } from "@/lib/domain/map-limits";
@@ -22,7 +23,8 @@ import {
   RESTRICTED_KIND_LABELS,
   profileConfidenceText,
 } from "./labels";
-import { DEFAULT_CENTER, MAP_STYLE_URL, OSM_ATTRIBUTION } from "./map-style";
+import { DEFAULT_CENTER, MAP_SEA_COLOR, MAP_STYLE, OSM_ATTRIBUTION } from "./map-style";
+import { buttonClass, cx } from "./ui";
 
 const LAYERS: MapLayer[] = ["tiles", "restricted-areas", "areas", "geo-objects", "places"];
 const DEBOUNCE_MS = 300;
@@ -32,27 +34,28 @@ const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: 
 const GEO_TYPES = (Object.keys(GEO_OBJECT_TYPE_LABELS) as GeoObjectType[]).filter((t) => t !== "area");
 const PLACE_STATUSES = Object.keys(PLACE_STATUS_LABELS) as PlaceStatus[];
 
+// Overlay colours are tuned for the dark base map: light enough to read on the sea, distinct from each other.
 const PLACE_STATUS_COLORS: Record<PlaceStatus, string> = {
-  candidate: "#eab308",
-  confirmed: "#16a34a",
-  rejected: "#9ca3af",
-  abandoned: "#525252",
-  no_anchoring: "#dc2626",
+  candidate: "#facc15",
+  confirmed: "#4ade80",
+  rejected: "#94a3b8",
+  abandoned: "#64748b",
+  no_anchoring: "#f87171",
 };
 /** Fill of a place by the confidence class of its newest profile (grey without a profile); the outline shows the status. */
-const PROFILE_CLASS_COLORS: Record<ConfidenceClass, string> = { high: "#15803d", medium: "#f59e0b", low: "#dc2626" };
-const NO_PROFILE_COLOR = "#9ca3af";
+const PROFILE_CLASS_COLORS: Record<ConfidenceClass, string> = { high: "#22c55e", medium: "#fbbf24", low: "#f87171" };
+const NO_PROFILE_COLOR = "#64748b";
 const PROFILE_CLASSES = Object.keys(PROFILE_CLASS_COLORS) as ConfidenceClass[];
-const AREA_COLOR = "#7c3aed";
-const TILE_COLOR = "#0284c7";
-const GEO_OBJECT_COLOR = "#2563eb";
+const AREA_COLOR = "#a78bfa";
+const TILE_COLOR = "#38bdf8";
+const GEO_OBJECT_COLOR = "#60a5fa";
 const RESTRICTED_KIND_COLORS: Record<RestrictedKind, string> = {
-  military: "#b91c1c",
-  cable: "#ea580c",
-  protected_area: "#15803d",
-  aquaculture: "#0891b2",
-  ferry_lane: "#4f46e5",
-  firing_area: "#be185d",
+  military: "#f87171",
+  cable: "#fb923c",
+  protected_area: "#4ade80",
+  aquaculture: "#22d3ee",
+  ferry_lane: "#818cf8",
+  firing_area: "#f472b6",
 };
 const RESTRICTED_KINDS = Object.keys(RESTRICTED_KIND_COLORS) as RestrictedKind[];
 
@@ -109,20 +112,20 @@ function addLayers(m: MapLibreMap): void {
     id: "tiles-fill",
     type: "fill",
     source: "tiles",
-    paint: { "fill-color": TILE_COLOR, "fill-opacity": ["case", ["get", "hasCoast"], 0.08, 0.01] },
+    paint: { "fill-color": TILE_COLOR, "fill-opacity": ["case", ["get", "hasCoast"], 0.06, 0] },
   });
   m.addLayer({
     id: "tiles-line",
     type: "line",
     source: "tiles",
-    paint: { "line-color": TILE_COLOR, "line-width": 1, "line-dasharray": [2, 2] },
+    paint: { "line-color": TILE_COLOR, "line-width": 0.75, "line-opacity": 0.5, "line-dasharray": [2, 2] },
   });
   m.addLayer({
     id: "restricted-areas-fill",
     type: "fill",
     source: "restricted-areas",
     filter: POLYGON,
-    paint: { "fill-color": restrictedColor, "fill-opacity": 0.15 },
+    paint: { "fill-color": restrictedColor, "fill-opacity": 0.14 },
   });
   // Areas that ban anchoring get a stronger outline.
   m.addLayer({
@@ -132,33 +135,38 @@ function addLayers(m: MapLibreMap): void {
     filter: LINE,
     paint: { "line-color": restrictedColor, "line-width": ["case", ["get", "anchoringBan"], 3, 1] },
   });
-  m.addLayer({ id: "areas-line", type: "line", source: "areas", paint: { "line-color": AREA_COLOR, "line-width": 3 } });
+  m.addLayer({ id: "areas-line", type: "line", source: "areas", paint: { "line-color": AREA_COLOR, "line-width": 2, "line-opacity": 0.9 } });
   m.addLayer({
     id: "geo-objects-fill",
     type: "fill",
     source: "geo-objects",
     filter: POLYGON,
-    paint: { "fill-color": GEO_OBJECT_COLOR, "fill-opacity": 0.08 },
+    paint: { "fill-color": GEO_OBJECT_COLOR, "fill-opacity": 0.06 },
   });
   m.addLayer({
     id: "geo-objects-line",
     type: "line",
     source: "geo-objects",
     filter: LINE,
-    paint: { "line-color": GEO_OBJECT_COLOR, "line-width": 1 },
+    paint: { "line-color": GEO_OBJECT_COLOR, "line-width": 1, "line-opacity": 0.7 },
   });
   m.addLayer({
     id: "geo-objects-point",
     type: "circle",
     source: "geo-objects",
     filter: POINT,
-    paint: { "circle-color": GEO_OBJECT_COLOR, "circle-radius": 4, "circle-stroke-color": "#fff", "circle-stroke-width": 1 },
+    paint: { "circle-color": GEO_OBJECT_COLOR, "circle-radius": 4, "circle-stroke-color": MAP_SEA_COLOR, "circle-stroke-width": 1.5 },
   });
   m.addLayer({
     id: "places-point",
     type: "circle",
     source: "places",
-    paint: { "circle-color": placeProfileColor, "circle-radius": 6, "circle-stroke-color": placeStatusColor, "circle-stroke-width": 3 },
+    paint: {
+      "circle-color": placeProfileColor,
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 6, 4, 12, 7],
+      "circle-stroke-color": placeStatusColor,
+      "circle-stroke-width": 2.5,
+    },
   });
 }
 
@@ -219,7 +227,7 @@ function toggle<T>(list: T[], item: T): T[] {
 
 /**
  * Admin map: toggleable layers (areas, tiles, restricted areas by kind, geo objects by type, places by status), loaded per layer from
- * `/map-data/<layer>` for the visible bounds after each move (debounced). A click opens a sidebar with a link.
+ * `/map-data/<layer>` for the visible bounds after each move (debounced). A click opens a floating panel with a link.
  */
 export function MapView() {
   const container = useRef<HTMLDivElement>(null);
@@ -241,12 +249,12 @@ export function MapView() {
     if (!container.current) return;
     const m = new MapLibreMap({
       container: container.current,
-      style: MAP_STYLE_URL,
+      style: MAP_STYLE,
       center: DEFAULT_CENTER,
       zoom: 8,
-      attributionControl: { compact: false, customAttribution: OSM_ATTRIBUTION },
+      attributionControl: { compact: true, customAttribution: OSM_ATTRIBUTION },
     });
-    m.addControl(new NavigationControl(), "top-right");
+    m.addControl(new NavigationControl({ visualizePitch: false }), "bottom-right");
     let timer: ReturnType<typeof setTimeout> | undefined;
     let abort: AbortController | undefined;
 
@@ -308,21 +316,104 @@ export function MapView() {
   }, [visibility]);
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] gap-3">
+    <div
+      className="map-night relative h-[calc(100dvh-13rem)] min-h-[26rem] overflow-hidden rounded-xl border border-line"
+      style={{ background: MAP_SEA_COLOR }}
+    >
+      {/* MapLibre forces position:relative on its container, so the absolute frame sits around it. */}
+      <div className="absolute inset-0">
+        <div ref={container} role="region" aria-label="Karte" className="h-full w-full" />
+      </div>
       <LayerPanel visibility={visibility} onChange={setVisibility} failed={failed} clamped={clamped} />
-      <div ref={container} role="region" aria-label="Karte" className="h-full flex-1" />
       {selection && <Sidebar selection={selection} onClose={() => setSelection(null)} />}
     </div>
   );
 }
 
-function Checkbox({ label, checked, onChange, color }: { label: string; checked: boolean; onChange: () => void; color?: string }) {
+/** Floating panels over the map, frosted so the chart shows through a little. */
+const FLOAT = "absolute z-10 rounded-xl border border-line bg-surface/90 text-ink shadow-[0_8px_30px_rgb(0_0_0/0.35)] backdrop-blur-md";
+
+/** A main layer: colour mark, name, switch. */
+function LayerSwitch({
+  label,
+  checked,
+  onChange,
+  mark,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: () => void;
+  mark: ReactNode;
+}) {
   return (
-    <label className="flex items-center gap-2">
-      <input type="checkbox" checked={checked} onChange={onChange} />
-      {color && <span aria-hidden className="inline-block size-3 rounded-full" style={{ background: color }} />}
-      {label}
+    <label className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-white/5">
+      <span aria-hidden className={cx("flex w-4 justify-center transition-opacity", !checked && "opacity-35")}>
+        {mark}
+      </span>
+      <span className={cx("flex-1", !checked && "text-muted")}>{label}</span>
+      <input type="checkbox" role="switch" checked={checked} onChange={onChange} className="peer sr-only" />
+      <span
+        aria-hidden
+        className="relative h-4 w-7 rounded-full bg-line-strong transition-colors peer-checked:bg-accent peer-focus-visible:ring-2 peer-focus-visible:ring-accent/50 after:absolute after:top-0.5 after:left-0.5 after:size-3 after:rounded-full after:bg-ink after:transition-transform peer-checked:after:translate-x-3 peer-checked:after:bg-accent-ink"
+      />
     </label>
+  );
+}
+
+/** A filter value inside a group (place status, geo-object type), toggled by click. */
+function Chip({ label, pressed, onClick, color }: { label: string; pressed: boolean; onClick: () => void; color?: string }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      onClick={onClick}
+      className={cx(
+        "inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors",
+        pressed ? "border-line-strong bg-white/8 text-ink" : "border-transparent text-muted/70 hover:text-muted",
+      )}
+    >
+      {color && (
+        <span
+          aria-hidden
+          className={cx("size-2 shrink-0 rounded-full", !pressed && "opacity-40")}
+          style={{ background: color }}
+        />
+      )}
+      {label}
+    </button>
+  );
+}
+
+function Group<T>({
+  title,
+  all,
+  selected,
+  onChange,
+  children,
+}: {
+  title: string;
+  all: T[];
+  selected: T[];
+  onChange: (next: T[]) => void;
+  children: ReactNode;
+}) {
+  const allOn = selected.length === all.length;
+  return (
+    <section className="space-y-2">
+      <div className="flex items-center justify-between px-2">
+        <h3 className="text-xs font-medium text-muted">
+          {title} <span className="tabular-nums text-muted/60">{selected.length}/{all.length}</span>
+        </h3>
+        <button
+          type="button"
+          onClick={() => onChange(allOn ? [] : all)}
+          className="text-xs text-accent hover:underline"
+        >
+          {allOn ? "Keine" : "Alle"}
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-1 px-1">{children}</div>
+    </section>
   );
 }
 
@@ -345,71 +436,140 @@ function LayerPanel({
   failed: MapLayer[];
   clamped: boolean;
 }) {
+  const [open, setOpen] = useState(true);
   return (
-    <aside aria-label="Ebenen" className="w-52 shrink-0 space-y-4 overflow-y-auto text-sm">
-      <fieldset className="space-y-1">
-        <legend className="mb-1 font-semibold">Ebenen</legend>
-        <Checkbox label="Reviere" color={AREA_COLOR} checked={v.areas} onChange={() => onChange({ ...v, areas: !v.areas })} />
-        <Checkbox label="Kacheln" color={TILE_COLOR} checked={v.tiles} onChange={() => onChange({ ...v, tiles: !v.tiles })} />
-        <Checkbox
-          label="Ausschlussflächen"
-          checked={v.restricted}
-          onChange={() => onChange({ ...v, restricted: !v.restricted })}
-        />
-      </fieldset>
-      {v.restricted && (
-        <ul aria-label="Ausschlussflächen nach Art" className="space-y-1 pl-5 text-xs text-neutral-600">
-          {RESTRICTED_KINDS.map((k) => (
-            <li key={k} className="flex items-center gap-2">
-              <span aria-hidden className="inline-block size-3 rounded-sm" style={{ background: RESTRICTED_KIND_COLORS[k] }} />
-              {RESTRICTED_KIND_LABELS[k]}
-            </li>
-          ))}
-          <li>Kräftiger Umriss: Ankerverbot</li>
-        </ul>
-      )}
-      <fieldset className="space-y-1">
-        <legend className="mb-1 font-semibold">Geo-Objekte nach Typ</legend>
-        {GEO_TYPES.map((t) => (
-          <Checkbox
-            key={t}
-            label={GEO_OBJECT_TYPE_LABELS[t]}
-            checked={v.geoTypes.includes(t)}
-            onChange={() => onChange({ ...v, geoTypes: toggle(v.geoTypes, t) })}
-          />
-        ))}
-      </fieldset>
-      <fieldset className="space-y-1">
-        <legend className="mb-1 font-semibold">Orte nach Status</legend>
-        {PLACE_STATUSES.map((s) => (
-          <Checkbox
-            key={s}
-            label={PLACE_STATUS_LABELS[s]}
-            color={PLACE_STATUS_COLORS[s]}
-            checked={v.placeStatuses.includes(s)}
-            onChange={() => onChange({ ...v, placeStatuses: toggle(v.placeStatuses, s) })}
-          />
-        ))}
-      </fieldset>
-      <ul aria-label="Profil-Konfidenz" className="space-y-1 text-xs text-neutral-600">
-        <li className="font-semibold text-neutral-800">Orte: Füllung = Profil-Konfidenz, Rand = Status</li>
-        {PROFILE_CLASSES.map((c) => (
-          <li key={c} className="flex items-center gap-2">
-            <span aria-hidden className="inline-block size-3 rounded-full" style={{ background: PROFILE_CLASS_COLORS[c] }} />
-            {CONFIDENCE_CLASS_LABELS[c]}
-          </li>
-        ))}
-        <li className="flex items-center gap-2">
-          <span aria-hidden className="inline-block size-3 rounded-full" style={{ background: NO_PROFILE_COLOR }} />
-          ohne Profil
-        </li>
-      </ul>
-      {clamped && <p className="text-neutral-600">Ausschnitt größer als 5° × 5°: Daten nur um die Kartenmitte.</p>}
+    <aside
+      aria-label="Ebenen"
+      className={`${FLOAT} top-3 left-3 flex max-h-[calc(100%-1.5rem)] w-64 flex-col overflow-hidden text-sm`}
+    >
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-2 px-3.5 py-2.5 font-medium hover:bg-white/5"
+      >
+        <svg viewBox="0 0 20 20" className="size-4 text-muted" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+          <path d="m10 3 7 3.5-7 3.5-7-3.5L10 3ZM3 10l7 3.5 7-3.5M3 13.5 10 17l7-3.5" strokeLinejoin="round" />
+        </svg>
+        <span className="flex-1 text-left">Ebenen</span>
+        <svg
+          viewBox="0 0 20 20"
+          className={cx("size-4 text-muted transition-transform", open && "rotate-180")}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          aria-hidden
+        >
+          <path d="m6 8 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
       {failed.length > 0 && (
-        <p role="alert" className="text-red-700">
+        <p role="alert" className="mx-3 mb-2 rounded-md bg-danger-soft px-2.5 py-1.5 text-xs text-danger">
           Nicht geladen: {failed.map((l) => LAYER_LABELS[l]).join(", ")}
         </p>
       )}
+      {clamped && (
+        <p className="mx-3 mb-2 rounded-md bg-warn-soft px-2.5 py-1.5 text-xs text-warn">
+          Ausschnitt größer als 5° × 5°: Daten nur um die Kartenmitte. Hineinzoomen zeigt alles.
+        </p>
+      )}
+      <div className={cx("space-y-4 overflow-y-auto border-t border-line px-2 pt-2 pb-3", !open && "hidden")}>
+        <div className="space-y-0.5">
+          <LayerSwitch
+            label="Reviere"
+            checked={v.areas}
+            onChange={() => onChange({ ...v, areas: !v.areas })}
+            mark={<span className="h-0.5 w-4 rounded-full" style={{ background: AREA_COLOR }} />}
+          />
+          <LayerSwitch
+            label="Kacheln"
+            checked={v.tiles}
+            onChange={() => onChange({ ...v, tiles: !v.tiles })}
+            mark={<span className="size-3 rounded-[2px] border border-dashed" style={{ borderColor: TILE_COLOR }} />}
+          />
+          <LayerSwitch
+            label="Ausschlussflächen"
+            checked={v.restricted}
+            onChange={() => onChange({ ...v, restricted: !v.restricted })}
+            mark={
+              <span
+                className="size-3 rounded-[2px]"
+                style={{ background: `linear-gradient(135deg, ${RESTRICTED_KIND_COLORS.military} 50%, ${RESTRICTED_KIND_COLORS.protected_area} 50%)` }}
+              />
+            }
+          />
+        </div>
+
+        <Group
+          title="Orte nach Status"
+          all={PLACE_STATUSES}
+          selected={v.placeStatuses}
+          onChange={(placeStatuses) => onChange({ ...v, placeStatuses })}
+        >
+          {PLACE_STATUSES.map((s) => (
+            <Chip
+              key={s}
+              label={PLACE_STATUS_LABELS[s]}
+              color={PLACE_STATUS_COLORS[s]}
+              pressed={v.placeStatuses.includes(s)}
+              onClick={() => onChange({ ...v, placeStatuses: toggle(v.placeStatuses, s) })}
+            />
+          ))}
+        </Group>
+
+        <Group
+          title="Geo-Objekte"
+          all={GEO_TYPES}
+          selected={v.geoTypes}
+          onChange={(geoTypes) => onChange({ ...v, geoTypes })}
+        >
+          {GEO_TYPES.map((t) => (
+            <Chip
+              key={t}
+              label={GEO_OBJECT_TYPE_LABELS[t]}
+              pressed={v.geoTypes.includes(t)}
+              onClick={() => onChange({ ...v, geoTypes: toggle(v.geoTypes, t) })}
+            />
+          ))}
+        </Group>
+
+        <details className="group px-2 text-xs text-muted">
+          <summary className="flex cursor-pointer list-none items-center justify-between font-medium hover:text-ink">
+            Legende
+            <svg viewBox="0 0 20 20" className="size-3.5 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden>
+              <path d="m6 8 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </summary>
+          <div className="mt-2.5 space-y-3">
+            <div>
+              <p className="mb-1.5 text-ink">Orte: Füllung = Profil-Konfidenz, Rand = Status</p>
+              <ul aria-label="Profil-Konfidenz" className="flex flex-wrap gap-x-3 gap-y-1">
+                {PROFILE_CLASSES.map((c) => (
+                  <li key={c} className="flex items-center gap-1.5">
+                    <span aria-hidden className="size-2 rounded-full" style={{ background: PROFILE_CLASS_COLORS[c] }} />
+                    {CONFIDENCE_CLASS_LABELS[c]}
+                  </li>
+                ))}
+                <li className="flex items-center gap-1.5">
+                  <span aria-hidden className="size-2 rounded-full" style={{ background: NO_PROFILE_COLOR }} />
+                  ohne Profil
+                </li>
+              </ul>
+            </div>
+            <div>
+              <p className="mb-1.5 text-ink">Ausschlussflächen: kräftiger Umriss = Ankerverbot</p>
+              <ul aria-label="Ausschlussflächen nach Art" className="grid grid-cols-2 gap-x-3 gap-y-1">
+                {RESTRICTED_KINDS.map((k) => (
+                  <li key={k} className="flex items-center gap-1.5">
+                    <span aria-hidden className="size-2 rounded-[2px]" style={{ background: RESTRICTED_KIND_COLORS[k] }} />
+                    {RESTRICTED_KIND_LABELS[k]}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </details>
+      </div>
     </aside>
   );
 }
@@ -466,23 +626,33 @@ function Sidebar({ selection: { layer, properties: p }, onClose }: { selection: 
       break;
   }
   return (
-    <aside aria-label="Auswahl" className="w-72 shrink-0 space-y-3 overflow-y-auto border-l border-neutral-300 pl-3 text-sm">
+    <aside
+      aria-label="Auswahl"
+      className={`${FLOAT} right-3 bottom-3 left-3 max-h-[60%] space-y-3 overflow-y-auto p-4 text-sm sm:bottom-auto sm:left-auto sm:top-3 sm:right-3 sm:max-h-[calc(100%-6rem)] sm:w-72`}
+    >
       <div className="flex items-start justify-between gap-2">
         <h2 className="font-semibold">{title}</h2>
-        <button type="button" onClick={onClose} aria-label="Schließen" className="hover:underline">
-          ×
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Schließen"
+          className="-mt-1 -mr-1 rounded-md p-1 text-muted hover:bg-white/5 hover:text-ink"
+        >
+          <svg viewBox="0 0 20 20" className="size-4" aria-hidden>
+            <path d="M5 5l10 10M15 5L5 15" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
         </button>
       </div>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
         {rows.map(([k, v]) => (
           <div key={k} className="contents">
-            <dt className="text-neutral-600">{k}</dt>
-            <dd>{v}</dd>
+            <dt className="text-muted">{k}</dt>
+            <dd className="min-w-0 break-words">{v}</dd>
           </div>
         ))}
       </dl>
       {href && (
-        <Link href={href} className="inline-block text-blue-700 hover:underline">
+        <Link href={href} className={buttonClass("primary", "sm")}>
           Details öffnen
         </Link>
       )}

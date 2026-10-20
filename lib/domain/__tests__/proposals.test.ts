@@ -187,6 +187,29 @@ describe("proposeSources", () => {
       expect(candidates.map((c) => c.domain)).not.toContain("fr.navily.com");
     }));
 
+  it("a forbidden domain is never proposed, nor its subdomains, even outside ignoreDomains (ruling M6-D-R2)", () =>
+    withRollback(async (tx) => {
+      const forbidden = testDomain();
+      await insertHits(tx, forbidden, pages(forbidden, 5));
+      await insertHits(tx, `fr.${forbidden}`, pages(`fr.${forbidden}`, 5));
+      await insertHits(tx, "goo.gl", pages("goo.gl", 5));
+      const domains = (await domainCandidates(tx, proposals(), [forbidden])).map((c) => c.domain);
+      expect(domains).not.toContain(forbidden);
+      expect(domains).not.toContain(`fr.${forbidden}`);
+      // the configured forbiddenDomains by default
+      expect((await domainCandidates(tx, proposals())).map((c) => c.domain)).not.toContain("goo.gl");
+
+      const cfg = getConfig();
+      const runId = await testRun(tx);
+      await proposeSources(
+        tx,
+        { transport: robotsTransport(), archive: memoryArchive() },
+        { db: tx, runId, stage: "discovery.propose" },
+        { ...cfg, delivery: { ...cfg.delivery, forbiddenDomains: [forbidden] } },
+      );
+      expect(await sourceOf(tx, forbidden)).toBeUndefined();
+    }));
+
   it("a rejected domain is not proposed again", () =>
     withRollback(async (tx) => {
       const rejected = testDomain();

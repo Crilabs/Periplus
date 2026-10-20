@@ -25,5 +25,6 @@
   "extraction.check": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
   "consolidation.geo": { "concurrency": 4, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
   "consolidation.summary": { "concurrency": 2, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
-  "consolidation.followup": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true }
+  "consolidation.followup": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
+  "delivery.build": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true, "expireInSeconds": 3600 }
 }

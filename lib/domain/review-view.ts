@@ -193,7 +193,8 @@ export type ProfileSideView = {
 /**
  * A `conflict` / `uncertain_change` task on one attribute of a geo object's profile: the profile's current value with
  * its provenance, the two sides of a conflict (`a`, `b`, further value groups in `others`) or the proposed value of an
- * uncertain change, each with the facts behind it. `key` is the context key the decision must name (ruling M5-F-R2);
+ * uncertain change (with the sides of the conflict note when a held safety value's weak values disagree, ruling
+ * M6-FIN-R3), each with the facts behind it. `key` is the context key the decision must name (ruling M5-F-R2);
  * `resolution` is the resolution the current profile records for the conflict key (a decided conflict).
  */
 export type ProfileAttributeSubject = {
@@ -405,10 +406,12 @@ async function profileAttributeSubject(db: Db, subjectId: string, context: Recor
     },
     resolution: (key && profile?.conflicts.find((c) => c.key === key)?.resolution) || null,
   };
-  if ("a" in context || "b" in context) {
-    subject.a = await side(context.a);
-    subject.b = await side(context.b);
-    const others = Array.isArray(context.others) ? await Promise.all(context.others.map(side)) : [];
+  // a conflict's sides; an uncertain change of a held safety value carries its conflict note in `conflict` (ruling M6-FIN-R3)
+  const sides = "a" in context || "b" in context ? context : context.conflict !== null && typeof context.conflict === "object" ? (context.conflict as Record<string, unknown>) : null;
+  if (sides) {
+    subject.a = await side(sides.a);
+    subject.b = await side(sides.b);
+    const others = Array.isArray(sides.others) ? await Promise.all(sides.others.map(side)) : [];
     subject.others = others.filter((o): o is ProfileSideView => o !== undefined);
   }
   if ("newValue" in context) {

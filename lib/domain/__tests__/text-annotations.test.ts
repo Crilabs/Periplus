@@ -89,7 +89,7 @@ describe("versionAnnotations", () => {
         .returning({ id: facts.id });
       const [chunk] = await versionAnnotations(tx, a.versionId, config);
       expect(chunk!.spans.filter((s) => s.kind !== "mention").map((s) => [s.kind, s.ref])).toEqual([
-        ["inactive_quote", f!.id],
+        ["inactive-quote", f!.id],
         ["quote", a.factId],
       ]);
       expect(chunk!.facts.find((x) => x.id === f!.id)!.active).toBe(false);

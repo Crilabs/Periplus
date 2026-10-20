@@ -35,9 +35,10 @@ export type PendingChange = { taskId: string; key: string; newValue: unknown; di
 /**
  * One entry of a list value with the input ids naming it (`entryFactIds`: fact ids, `computation:<id>`, `poi:<id>`);
  * `removable` for the text entries of a safety list (`change.additiveLists`) in the newest version („Eintrag
- * entfernen“).
+ * entfernen“); `inReview` for a kept entry citing no fact any more while its removal waits for review (ruling
+ * M6-FIN-R3, `entryMarkers`).
  */
-export type ProfileEntry = { key: string; entry: unknown; display: string; inputIds: string[]; removable: boolean };
+export type ProfileEntry = { key: string; entry: unknown; display: string; inputIds: string[]; removable: boolean; inReview: boolean };
 
 export type ProfileRow = {
   attribute: string;
@@ -129,6 +130,7 @@ function entriesOf(attribute: string, value: unknown, p: AttributeProvenance, cf
       display: formatProfileValue(attribute, [entry]),
       inputIds: p.entryFactIds?.[key] ?? [],
       removable: latest && isRemovableEntry(attribute, entry, cfg),
+      inReview: p.entryMarkers?.[key] === "in_review",
     };
   });
 }
@@ -258,7 +260,13 @@ export async function profileView(
     .select({ text: profileSummaries.text, status: profileSummaries.status })
     .from(profileSummaries)
     .where(and(eq(profileSummaries.geoObjectId, geoObjectId), eq(profileSummaries.profileVersion, snapshot.version)))
-    .orderBy(sql`(${profileSummaries.status} = 'ok') desc`, desc(profileSummaries.createdAt), desc(profileSummaries.id))
+    // an ok summary first, then like the delivery loader: highest prompt version, newest (ruling M6-FIN-R2)
+    .orderBy(
+      sql`(${profileSummaries.status} = 'ok') desc`,
+      sql`${profileSummaries.promptVersion} desc nulls last`,
+      desc(profileSummaries.createdAt),
+      desc(profileSummaries.id),
+    )
     .limit(1);
 
   return {

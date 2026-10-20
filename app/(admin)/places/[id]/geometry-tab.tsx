@@ -10,8 +10,27 @@ import {
   SEABED_TYPE_LABELS,
   SECTOR_LABELS,
 } from "../../_components/labels";
+import { Dialog } from "../../_components/dialog";
+import {
+  Badge,
+  Button,
+  ButtonLink,
+  DescriptionList,
+  EmptyState,
+  Field,
+  inputClass,
+  Mono,
+  Notice,
+  numClass,
+  Panel,
+  Table,
+  tdClass,
+  thClass,
+  trClass,
+} from "../../_components/ui";
 import { WindRose } from "../../_components/wind-rose";
 import { shelterColor } from "../../_components/wind-rose-math";
+import { setPlacePositionAction } from "./actions";
 import { AnchorMap } from "./anchor-map";
 
 const de = (n: number, digits = 0) => n.toLocaleString("de-DE", { maximumFractionDigits: digits });
@@ -73,196 +92,301 @@ function Legend() {
     ["Ankerposition", COLORS.anchor],
   ];
   return (
-    <p className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-600">
+    <ul aria-label="Legende" className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
       {items.map(([label, color]) => (
-        <span key={label} className="flex items-center gap-1">
-          <span aria-hidden className="inline-block size-3 rounded-full" style={{ background: color }} />
+        <li key={label} className="flex items-center gap-1.5">
+          <span aria-hidden className="inline-block size-2.5 rounded-full ring-1 ring-line" style={{ background: color }} />
           {label}
-        </span>
+        </li>
       ))}
-      <span>Strahlen: Farbe nach Schutz (rot offen, grün geschützt)</span>
-    </p>
+      <li>Strahlen: Farbe nach Schutz (rot offen, grün geschützt)</li>
+    </ul>
   );
 }
 
-/** Tab "Geometrie" of a place: wind rose, sector table, depths, seabed, anchor area, exclusions, gaps, inputs, map. */
+/**
+ * Tab "Geometrie" of a place: map with anchor correction, wind rose, depths, seabed and anchor area, exclusions, gaps;
+ * the sector table and the raw inputs of each computation open in dialogs.
+ */
+/** Result of „Position korrigieren“ (`?position=`), with the run it started. */
+export type PositionNotice = { status: "moved" | "moved_no_run" | "too_far"; runId?: string };
+
+const POSITION_NOTICES = {
+  moved: { tone: "ok", text: "Position korrigiert. Geometrie und Profil werden neu berechnet." },
+  moved_no_run: { tone: "warn", text: "Position korrigiert, aber kein Lauf gestartet: „Profil neu berechnen“ in der Übersicht." },
+  too_far: { tone: "danger", text: "Nicht übernommen: Die neue Position liegt zu weit vom bisherigen Ort entfernt." },
+} as const;
+
 export function GeometryTab({
   placeId,
   position,
   view,
   editable,
+  positionNotice,
 }: {
   placeId: string;
   position: LonLat;
   view: PlaceGeometryView;
   editable: boolean;
+  positionNotice?: PositionNotice;
 }) {
   const shelter = view.sectors
     ? (Object.fromEntries(SECTORS.map((s) => [s, view.sectors![s].shelter])) as Record<Sector, number>)
     : null;
   const anchor = view.anchorPosition;
+  const notice = positionNotice ? POSITION_NOTICES[positionNotice.status] : null;
   return (
     <div className="space-y-6">
-      {view.computations.length === 0 && <p>Noch keine Geometrie berechnet.</p>}
-      <dl className="grid grid-cols-[10rem_1fr] gap-y-1">
-        <dt>Berechnet am</dt>
-        <dd>{time(view.computedAt)}</dd>
-        <dt>Regelversion</dt>
-        <dd>{view.rulesVersion ?? "–"}</dd>
-        <dt>Ausgangspunkt</dt>
-        <dd>
-          {view.origin ? coord(view.origin) : "–"}
-          {view.originSource && ` (${ORIGIN_SOURCE_LABELS[view.originSource as keyof typeof ORIGIN_SOURCE_LABELS] ?? view.originSource})`}
-        </dd>
-        <dt>Ankerposition</dt>
-        <dd>
-          {anchor
-            ? `${coord(anchor)} – ${originLabel(anchor.origin)}, Konfidenz ${anchor.confidence === null ? "–" : de(anchor.confidence, 2)}`
-            : "–"}
-        </dd>
-      </dl>
+      {notice && (
+        <Notice
+          tone={notice.tone}
+          actions={
+            positionNotice?.runId && (
+              <ButtonLink href={`/runs/${positionNotice.runId}`} size="sm">
+                Lauf ansehen
+              </ButtonLink>
+            )
+          }
+        >
+          {notice.text}
+        </Notice>
+      )}
+      {view.computations.length === 0 && (
+        <Notice tone="neutral" title="Noch keine Geometrie berechnet.">
+          Schutz, Tiefen und Ankerfläche erscheinen nach dem ersten Geometrie-Lauf für diesen Ort.
+        </Notice>
+      )}
 
-      <section className="space-y-2">
-        <h2 className="font-semibold">Schutz und Fetch</h2>
-        <div className="flex flex-wrap items-start gap-6">
-          {shelter ? <WindRose sectors={shelter} size={260} /> : <p>Keine Sektorwerte.</p>}
-          {view.sectors && (
-            <table className="text-left">
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <Panel
+          title="Karte"
+          description={editable ? "Ein Klick in die Karte schlägt eine Ankerposition vor; übernommen wird sie erst per Button." : undefined}
+        >
+          <div className="space-y-3">
+            <Legend />
+            <AnchorMap placeId={placeId} features={mapFeatures(view, position)} editable={editable} />
+          </div>
+        </Panel>
+
+        <div className="space-y-6">
+          <Panel
+            title="Ort"
+            description="Der Punkt des Orts, im Paket die Spot-Position (Prüfung „spot_location“)."
+            actions={
+              editable && (
+                <Dialog
+                  trigger="Position korrigieren …"
+                  triggerSize="sm"
+                  title="Position korrigieren"
+                  description="Setzt den Punkt des Orts, etwa wenn er an Land liegt. Danach werden Geometrie und Profil neu berechnet."
+                >
+                  <form action={setPlacePositionAction} className="grid gap-4">
+                    <input type="hidden" name="placeId" value={placeId} />
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Field label="Breite (lat)">
+                        <input type="number" name="lat" required min={-90} max={90} step="any" defaultValue={position.lat} className={inputClass} />
+                      </Field>
+                      <Field label="Länge (lon)">
+                        <input type="number" name="lon" required min={-180} max={180} step="any" defaultValue={position.lon} className={inputClass} />
+                      </Field>
+                    </div>
+                    <div className="flex justify-end">
+                      <Button variant="primary">Position korrigieren</Button>
+                    </div>
+                  </form>
+                </Dialog>
+              )
+            }
+          >
+            <Mono>{coord(position)}</Mono>
+          </Panel>
+
+          <Panel title="Berechnung">
+            <DescriptionList
+              columns={1}
+              items={[
+                { label: "Berechnet am", value: time(view.computedAt) },
+                { label: "Regelversion", value: view.rulesVersion ?? "–" },
+                {
+                  label: "Ausgangspunkt",
+                  hint: "Punkt, von dem aus die Strahlen für Schutz und Fetch ausgehen",
+                  value: (
+                    <>
+                      {view.origin ? <Mono>{coord(view.origin)}</Mono> : "–"}
+                      {view.originSource && (
+                        <span className="block text-xs text-muted">
+                          {ORIGIN_SOURCE_LABELS[view.originSource as keyof typeof ORIGIN_SOURCE_LABELS] ?? view.originSource}
+                        </span>
+                      )}
+                    </>
+                  ),
+                },
+                {
+                  label: "Ankerposition",
+                  value: anchor ? (
+                    <>
+                      <Mono>{coord(anchor)}</Mono>
+                      <span className="block text-xs text-muted">
+                        {originLabel(anchor.origin)}, Konfidenz {anchor.confidence === null ? "–" : de(anchor.confidence, 2)}
+                      </span>
+                    </>
+                  ) : (
+                    "–"
+                  ),
+                },
+              ]}
+            />
+          </Panel>
+
+          <Panel
+            title="Schutz und Fetch"
+            description="Schutz je Windsektor (0 offen, 100 % geschützt), aus dem Fetch: der freien Wasserstrecke bis zum Land."
+            actions={
+              view.sectors && (
+                <Dialog trigger="Tabelle" triggerSize="sm" title="Schutz und Fetch je Sektor">
+                  <Table>
+                    <thead>
+                      <tr>
+                        <th className={thClass}>Sektor</th>
+                        <th className={`${thClass} text-right`}>Schutz</th>
+                        <th className={`${thClass} text-right`}>Fetch</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {SECTORS.map((s) => (
+                        <tr key={s} className={trClass}>
+                          <td className={tdClass}>{SECTOR_LABELS[s]}</td>
+                          <td className={`${tdClass} ${numClass}`}>{pct(view.sectors![s].shelter)}</td>
+                          <td className={`${tdClass} ${numClass}`}>{distance(view.sectors![s].fetchM)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                </Dialog>
+              )
+            }
+          >
+            <div className="space-y-4">
+              {shelter ? (
+                <div className="flex justify-center">
+                  <WindRose sectors={shelter} size={260} />
+                </div>
+              ) : (
+                <p className="text-sm text-muted">Keine Sektorwerte.</p>
+              )}
+              <DescriptionList
+                items={[
+                  { label: "Schwell", value: pct(view.swell), hint: "Schutz vor Schwell, 0–100 % (100 % = geschützt)" },
+                  {
+                    label: "Öffnung",
+                    hint: "Richtung und Breite der offenen Seite",
+                    value: view.opening
+                      ? `${view.opening.bearingDeg === null ? "–" : `${de(view.opening.bearingDeg)}°`}, Breite ${de(view.opening.widthDeg)}°`
+                      : "–",
+                  },
+                ]}
+              />
+            </div>
+          </Panel>
+        </div>
+      </div>
+
+      <div className="grid items-start gap-6 lg:grid-cols-2">
+        <Panel title="Tiefen">
+          <DescriptionList
+            items={[
+              {
+                label: "Anfahrt 50/100/200 m",
+                value: view.depth.approach
+                  ? [view.depth.approach.at50m, view.depth.approach.at100m, view.depth.approach.at200m].map((v) => metres(v, 1)).join(" / ")
+                  : "–",
+              },
+              { label: "Wasserfläche", value: `${metres(view.depth.min, 1)} bis ${metres(view.depth.max, 1)}` },
+              { label: "Ankertiefe", value: `${metres(view.depth.anchoringMin, 1)} bis ${metres(view.depth.anchoringMax, 1)}` },
+              { label: "Konfidenz", value: view.depth.confidence === null ? "–" : de(view.depth.confidence, 2) },
+            ]}
+          />
+        </Panel>
+
+        <Panel title="Grund und Ankerfläche">
+          <DescriptionList
+            items={[
+              {
+                label: "Grund",
+                value:
+                  view.seabed && view.seabed.length > 0
+                    ? view.seabed.map((s) => `${SEABED_TYPE_LABELS[s.type]} ${pct(s.share)}`).join(" · ")
+                    : "–",
+              },
+              { label: "Ankerfläche", value: view.anchorArea ? `${de(view.anchorArea.areaM2)} m²` : "–" },
+            ]}
+          />
+        </Panel>
+
+        <Panel title="Ausschlussflächen" description="Flächen wie Sperrgebiete, Kabel oder Schutzgebiete am Ort. Anteil: wie viel der Ankerfläche darin liegt." flush>
+          {view.restriction.length === 0 ? (
+            <EmptyState title="Keine Treffer.">Keine bekannte Ausschlussfläche betrifft diesen Ort.</EmptyState>
+          ) : (
+            <Table>
               <thead>
-                <tr className="border-b border-neutral-300">
-                  <th className="py-1 pr-4">Sektor</th>
-                  <th className="pr-4">Schutz</th>
-                  <th>Fetch</th>
+                <tr>
+                  <th className={thClass}>Art</th>
+                  <th className={thClass}>Kennung</th>
+                  <th className={`${thClass} text-right`}>Anteil</th>
+                  <th className={thClass}>Ankerverbot</th>
                 </tr>
               </thead>
               <tbody>
-                {SECTORS.map((s) => (
-                  <tr key={s} className="border-b border-neutral-200">
-                    <td className="py-1 pr-4">{SECTOR_LABELS[s]}</td>
-                    <td className="pr-4">{pct(view.sectors![s].shelter)}</td>
-                    <td>{distance(view.sectors![s].fetchM)}</td>
+                {view.restriction.map((h) => (
+                  <tr key={h.restrictedAreaId} className={trClass}>
+                    <td className={tdClass}>{RESTRICTED_KIND_LABELS[h.kind]}</td>
+                    <td className={tdClass}>{h.sourceRef ? <Mono>{h.sourceRef}</Mono> : "–"}</td>
+                    <td className={`${tdClass} ${numClass}`}>{pct(h.share)}</td>
+                    <td className={tdClass}>{h.anchoringBan ? <Badge tone="danger">ja</Badge> : "nein"}</td>
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </Table>
           )}
-          <dl className="grid grid-cols-[8rem_1fr] gap-y-1">
-            <dt>Schwell</dt>
-            <dd>{pct(view.swell)}</dd>
-            <dt>Öffnung</dt>
-            <dd>
-              {view.opening
-                ? `${view.opening.bearingDeg === null ? "–" : `${de(view.opening.bearingDeg)}°`}, Breite ${de(view.opening.widthDeg)}°`
-                : "–"}
-            </dd>
-          </dl>
-        </div>
-      </section>
+        </Panel>
 
-      <section>
-        <h2 className="mb-1 font-semibold">Tiefen</h2>
-        <dl className="grid grid-cols-[10rem_1fr] gap-y-1">
-          <dt>Anfahrt 50/100/200 m</dt>
-          <dd>
-            {view.depth.approach
-              ? [view.depth.approach.at50m, view.depth.approach.at100m, view.depth.approach.at200m]
-                  .map((v) => metres(v, 1))
-                  .join(" / ")
-              : "–"}
-          </dd>
-          <dt>Wasserfläche</dt>
-          <dd>
-            {metres(view.depth.min, 1)} bis {metres(view.depth.max, 1)}
-          </dd>
-          <dt>Ankertiefe</dt>
-          <dd>
-            {metres(view.depth.anchoringMin, 1)} bis {metres(view.depth.anchoringMax, 1)}
-          </dd>
-          <dt>Konfidenz</dt>
-          <dd>{view.depth.confidence === null ? "–" : de(view.depth.confidence, 2)}</dd>
-        </dl>
-      </section>
-
-      <section>
-        <h2 className="mb-1 font-semibold">Grund und Ankerfläche</h2>
-        <dl className="grid grid-cols-[10rem_1fr] gap-y-1">
-          <dt>Grund</dt>
-          <dd>
-            {view.seabed && view.seabed.length > 0
-              ? view.seabed.map((s) => `${SEABED_TYPE_LABELS[s.type]} ${pct(s.share)}`).join(" · ")
-              : "–"}
-          </dd>
-          <dt>Ankerfläche</dt>
-          <dd>{view.anchorArea ? `${de(view.anchorArea.areaM2)} m²` : "–"}</dd>
-        </dl>
-      </section>
-
-      <section>
-        <h2 className="mb-1 font-semibold">Ausschlussflächen</h2>
-        {view.restriction.length === 0 ? (
-          <p>Keine Treffer.</p>
-        ) : (
-          <table className="text-left">
-            <thead>
-              <tr className="border-b border-neutral-300">
-                <th className="py-1 pr-4">Art</th>
-                <th className="pr-4">Kennung</th>
-                <th className="pr-4">Anteil</th>
-                <th>Ankerverbot</th>
-              </tr>
-            </thead>
-            <tbody>
-              {view.restriction.map((h) => (
-                <tr key={h.restrictedAreaId} className="border-b border-neutral-200">
-                  <td className="py-1 pr-4">{RESTRICTED_KIND_LABELS[h.kind]}</td>
-                  <td className="pr-4 font-mono text-xs">{h.sourceRef ?? "–"}</td>
-                  <td className="pr-4">{pct(h.share)}</td>
-                  <td>{h.anchoringBan ? "ja" : "nein"}</td>
-                </tr>
+        <Panel title="Lücken" description="Geometriewerte, die nicht berechnet werden konnten." flush>
+          {view.gaps.length === 0 ? (
+            <EmptyState title="Keine Lücken." />
+          ) : (
+            <ul className="divide-y divide-line text-sm">
+              {view.gaps.map((g) => (
+                <li key={`${g.attribute}:${g.reason}`} className="flex flex-wrap items-baseline justify-between gap-x-3 px-4 py-2.5">
+                  <Mono>{g.attribute}</Mono>
+                  <span className="text-muted">{GAP_REASON_LABELS[g.reason] ?? g.reason}</span>
+                </li>
               ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+            </ul>
+          )}
+        </Panel>
+      </div>
 
-      <section>
-        <h2 className="mb-1 font-semibold">Lücken</h2>
-        {view.gaps.length === 0 ? (
-          <p>Keine Lücken.</p>
+      <Panel title="Eingangsdaten" description="Die gespeicherten Eingaben jeder Berechnung, aus denen die Werte oben stammen." flush>
+        {view.computations.length === 0 ? (
+          <EmptyState title="Keine Berechnungen." />
         ) : (
-          <ul>
-            {view.gaps.map((g) => (
-              <li key={`${g.attribute}:${g.reason}`}>
-                <span className="font-mono text-xs">{g.attribute}</span> – {GAP_REASON_LABELS[g.reason] ?? g.reason}
+          <ul className="divide-y divide-line text-sm">
+            {view.computations.map((c) => (
+              <li key={c.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
+                <span>
+                  {COMPUTATION_KIND_LABELS[c.kind]}{" "}
+                  <span className="text-xs text-muted">
+                    · {c.rulesVersion} · {time(c.createdAt)}
+                  </span>
+                </span>
+                <Dialog trigger="Eingaben anzeigen" triggerSize="sm" title={COMPUTATION_KIND_LABELS[c.kind]} description={`${c.rulesVersion}, ${time(c.createdAt)}`} wide>
+                  <pre className="overflow-auto rounded-md bg-sunken p-3 font-mono text-xs">{JSON.stringify(c.inputs, null, 2)}</pre>
+                </Dialog>
               </li>
             ))}
           </ul>
         )}
-      </section>
-
-      <section className="space-y-2">
-        <h2 className="font-semibold">Karte</h2>
-        <Legend />
-        <AnchorMap placeId={placeId} features={mapFeatures(view, position)} editable={editable} />
-      </section>
-
-      <section>
-        <h2 className="mb-1 font-semibold">Eingangsdaten</h2>
-        {view.computations.length === 0 ? (
-          <p>Keine Berechnungen.</p>
-        ) : (
-          <div className="space-y-1">
-            {view.computations.map((c) => (
-              <details key={c.id} className="rounded border border-neutral-200 px-2 py-1">
-                <summary className="cursor-pointer">
-                  {COMPUTATION_KIND_LABELS[c.kind]} – {c.rulesVersion}, {time(c.createdAt)}
-                </summary>
-                <pre className="mt-1 max-h-96 overflow-auto bg-neutral-50 p-2 text-xs">{JSON.stringify(c.inputs, null, 2)}</pre>
-              </details>
-            ))}
-          </div>
-        )}
-      </section>
+      </Panel>
     </div>
   );
 }

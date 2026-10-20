@@ -1,11 +1,33 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { DOC_TYPES, sourceStatusEnum, type DocType, type SourceStatus } from "@/lib/db/schema";
 import { listSources, SOURCES_PAGE_SIZE, sourceDomains, sourceStatusCounts } from "@/lib/domain/sources-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { AutoRefresh } from "../_components/auto-refresh";
-import { DOC_TYPE_LABELS, RUN_STATUS_LABELS, SOURCE_STATUS_LABELS, sourcePageError } from "../_components/labels";
+import { Dialog } from "../_components/dialog";
+import { DOC_TYPE_LABELS, SOURCE_STATUS_LABELS, sourcePageError } from "../_components/labels";
+import { RunStatusBadge } from "../_components/runs-table";
+import {
+  Badge,
+  Button,
+  EmptyState,
+  Field,
+  FilterChips,
+  fmt,
+  inputClass,
+  Mono,
+  Notice,
+  numClass,
+  PageHeader,
+  Pagination,
+  Panel,
+  Table,
+  tdClass,
+  thClass,
+  trClass,
+} from "../_components/ui";
 import {
   crawlAllApprovedAction,
   createSourceAction,
@@ -15,15 +37,22 @@ import {
   proposalRunAction,
   wikivoyageRunAction,
 } from "./actions";
+import { SOURCE_STATUS_TONES } from "./tones";
 
-const BUTTON = "rounded border border-neutral-400 px-3 py-1 hover:bg-neutral-100";
-const INPUT = "rounded border border-neutral-400 px-2 py-1";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const param = (v: string | string[] | undefined): string | undefined => (typeof v === "string" ? v : undefined);
-const time = (d: Date | null) => (d ? d.toISOString().slice(0, 16).replace("T", " ") : "–");
-const eur = (n: number) => `${n.toFixed(2)} €`;
 const weight = (n: number) => n.toLocaleString("de-DE", { maximumFractionDigits: 2 });
+
+/** One option of the "Lauf starten …" dialog: what it does on the left, the form that starts it on the right. */
+function RunOption({ children, form }: { children: ReactNode; form: ReactNode }) {
+  return (
+    <li className="grid gap-3 py-3.5 first:pt-0 last:pb-0 sm:grid-cols-[1fr_auto] sm:items-center">
+      <p className="leading-relaxed text-muted text-pretty">{children}</p>
+      {form}
+    </li>
+  );
+}
 
 export default async function Page({ searchParams }: PageProps<"/sources">) {
   await requireAdmin();
@@ -58,169 +87,258 @@ export default async function Page({ searchParams }: PageProps<"/sources">) {
     const s = query.toString();
     return s ? `/sources?${s}` : "/sources";
   };
+  const allCount = sourceStatusEnum.enumValues.reduce((n, s) => n + counts[s], 0);
+  const filtered = Boolean(status || type || q);
+  const now = new Date();
+
+  const runDialog = (
+    <Dialog
+      trigger="Lauf starten …"
+      title="Lauf starten"
+      description="Läufe arbeiten im Hintergrund. Nach dem Start erscheint hier ein Link zum Lauf; Fortschritt und Kosten stehen unter Läufe."
+      wide
+    >
+      <ul className="divide-y divide-line">
+        <RunOption
+          form={
+            <form action={discoveryAreaAction} className="flex flex-wrap items-center gap-2">
+              <select name="areaKey" required aria-label="Revier für die Quellenfindung" className={inputClass}>
+                {areaOptions}
+              </select>
+              <Button>Quellenfindung</Button>
+            </form>
+          }
+        >
+          <span className="font-medium text-ink">Quellenfindung:</span> stellt die Suchanfragen des Reviers und
+          seiner Küstenkacheln (Treffer der letzten 30 Tage werden wiederverwendet) und macht aus den Treffern
+          Quellenvorschläge zur Prüfung. Neue Suchanfragen kosten Geld.
+        </RunOption>
+        <RunOption
+          form={
+            <form action={wikivoyageRunAction} className="flex flex-wrap items-center gap-2">
+              <select name="areaKey" required aria-label="Revier für Wikivoyage" className={inputClass}>
+                {areaOptions}
+              </select>
+              <Button>Wikivoyage</Button>
+            </form>
+          }
+        >
+          <span className="font-medium text-ink">Wikivoyage:</span> legt fehlende Whitelist-Quellen an und ruft die
+          Wikivoyage-Artikel des Reviers ab wie jede andere Quelle. Abgelehnt, wenn die Wikivoyage-Quelle nicht
+          freigegeben ist oder gerade abgerufen wird.
+        </RunOption>
+        <RunOption
+          form={
+            <form action={proposalRunAction}>
+              <Button>Linkgraph-Vorschläge</Button>
+            </form>
+          }
+        >
+          <span className="font-medium text-ink">Linkgraph-Vorschläge:</span> nur der Vorschlagsschritt, ohne neue
+          Suche. Macht aus vorhandenen Suchtreffern und den Links freigegebener Quellen neue Quellenvorschläge, etwa
+          nach einem Crawl.
+        </RunOption>
+        <RunOption
+          form={
+            <form action={crawlAllApprovedAction}>
+              <Button>Alle freigegebenen crawlen</Button>
+            </form>
+          }
+        >
+          <span className="font-medium text-ink">Alle freigegebenen crawlen:</span> ein Abruf-Lauf über alle
+          freigegebenen Quellen. Quellen, die ein anderer Lauf gerade abruft, werden übersprungen und genannt.
+        </RunOption>
+        <RunOption
+          form={
+            <form action={embedBackfillAction}>
+              <Button>Einbettungen nachholen</Button>
+            </form>
+          }
+        >
+          <span className="font-medium text-ink">Einbettungen nachholen:</span> berechnet Embeddings für alle Chunks,
+          die noch keins haben. Läuft schon ein solcher Lauf, wird der Start abgelehnt.
+        </RunOption>
+        <RunOption
+          form={
+            <form action={pendingTextRunAction}>
+              <Button>Neue Texte auswerten</Button>
+            </form>
+          }
+        >
+          <span className="font-medium text-ink">Neue Texte auswerten:</span> wertet jede aktuelle Version aller
+          Quellen aus, die der Abgleich mit der aktuellen Konfiguration noch nicht durchlaufen hat (Erwähnungen, Facts,
+          Zitatprüfung, Konsolidierung). Ohne neue Texte endet der Lauf sofort.
+        </RunOption>
+      </ul>
+    </Dialog>
+  );
+
+  const createDialog = (
+    <Dialog
+      trigger="Quelle anlegen"
+      triggerVariant="primary"
+      title="Quelle anlegen"
+      description="Eine manuell angelegte Quelle ist sofort freigegeben und bekommt die Standard-Crawl-Regeln. Gewicht und Änderungsrate kommen vom Typ."
+    >
+      <form action={createSourceAction} className="grid gap-4">
+        <Field label="Domain" hint="Domain oder eine URL der Website; gespeichert wird die registrierbare Domain (z. B. example.org).">
+          <input name="domain" required placeholder="Domain oder URL" aria-label="Domain" className={inputClass} />
+        </Field>
+        <Field label="Name" hint="Anzeigename in Listen und Prüfungen.">
+          <input name="name" required placeholder="Name" aria-label="Name" className={inputClass} />
+        </Field>
+        <Field label="Typ" hint="Art der Texte; bestimmt Gewicht und Änderungsrate der neuen Quelle.">
+          <select name="type" required aria-label="Typ" className={inputClass}>
+            {DOC_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {DOC_TYPE_LABELS[t]}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <div className="flex justify-end">
+          <Button variant="primary">Anlegen (freigegeben)</Button>
+        </div>
+      </form>
+    </Dialog>
+  );
 
   return (
-    <div className="space-y-4 text-sm">
+    <>
       {active && <AutoRefresh intervalMs={5000} />}
-      <h1 className="text-lg font-semibold">Quellen</h1>
-      {error && (
-        <p role="alert" className="rounded bg-red-100 px-3 py-2">
-          Nicht ausgeführt: {error}
-        </p>
-      )}
-      {startedRun && (
-        <p role="status" className="rounded bg-green-100 px-3 py-2">
-          Lauf gestartet:{" "}
-          <Link href={`/runs/${startedRun}`} className="font-mono text-xs underline">
-            {startedRun.slice(0, 8)}
-          </Link>
-          {skipped.length > 0 && <> – übersprungen, läuft bereits: {skipped.map((s) => s.domain).join(", ")}</>}
-        </p>
-      )}
+      <PageHeader
+        title="Quellen"
+        description="Websites, aus denen Periplus Texte sammelt. Vorgeschlagene Quellen warten auf eine Prüfung, nur freigegebene werden gecrawlt."
+        actions={
+          <>
+            {runDialog}
+            {createDialog}
+          </>
+        }
+      />
 
-      <ul className="flex flex-wrap gap-3" aria-label="Quellen je Status">
-        {sourceStatusEnum.enumValues.map((s) => (
-          <li key={s}>
-            <Link href={href({ status: s })} className={status === s ? "font-semibold underline" : "underline"}>
-              {SOURCE_STATUS_LABELS[s]}: <span className="tabular-nums">{counts[s]}</span>
+      <div className="space-y-4">
+        {error && (
+          <Notice tone="danger" title="Nicht ausgeführt">
+            {error}
+          </Notice>
+        )}
+        {startedRun && (
+          <Notice tone="ok" title="Lauf gestartet">
+            <Link href={`/runs/${startedRun}`} className="text-accent hover:underline">
+              Lauf <Mono>{startedRun.slice(0, 8)}</Mono> ansehen
             </Link>
-          </li>
-        ))}
-      </ul>
+            {skipped.length > 0 && <> – übersprungen, läuft bereits: {skipped.map((s) => s.domain).join(", ")}</>}
+          </Notice>
+        )}
 
-      <section className="flex flex-wrap items-center gap-x-6 gap-y-2">
-        <form action={discoveryAreaAction} className="flex items-center gap-2">
-          <select name="areaKey" required aria-label="Revier für die Quellenfindung" className={INPUT}>
-            {areaOptions}
-          </select>
-          <button type="submit" className={BUTTON}>
-            Quellenfindung
-          </button>
-        </form>
-        <form action={wikivoyageRunAction} className="flex items-center gap-2">
-          <select name="areaKey" required aria-label="Revier für Wikivoyage" className={INPUT}>
-            {areaOptions}
-          </select>
-          <button type="submit" className={BUTTON}>
-            Wikivoyage
-          </button>
-        </form>
-        <form action={proposalRunAction}>
-          <button type="submit" className={BUTTON}>
-            Linkgraph-Vorschläge
-          </button>
-        </form>
-        <form action={crawlAllApprovedAction}>
-          <button type="submit" className={BUTTON}>
-            Alle freigegebenen crawlen
-          </button>
-        </form>
-        <form action={embedBackfillAction}>
-          <button type="submit" className={BUTTON}>
-            Einbettungen nachholen
-          </button>
-        </form>
-        <form action={pendingTextRunAction}>
-          <button type="submit" className={BUTTON}>
-            Neue Texte auswerten
-          </button>
-        </form>
-      </section>
-
-      <form action={createSourceAction} className="flex flex-wrap items-center gap-2">
-        <span className="font-semibold">Neue Quelle</span>
-        <input name="domain" required placeholder="Domain oder URL" aria-label="Domain" className={INPUT} />
-        <input name="name" required placeholder="Name" aria-label="Name" className={INPUT} />
-        <select name="type" required aria-label="Typ" className={INPUT}>
-          {DOC_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {DOC_TYPE_LABELS[t]}
-            </option>
-          ))}
-        </select>
-        <button type="submit" className={BUTTON}>
-          Anlegen (freigegeben)
-        </button>
-      </form>
-
-      <form method="get" className="flex flex-wrap items-center gap-2">
-        <select name="status" defaultValue={status ?? ""} aria-label="Status" className={INPUT}>
-          <option value="">Alle Status</option>
-          {sourceStatusEnum.enumValues.map((s) => (
-            <option key={s} value={s}>
-              {SOURCE_STATUS_LABELS[s]}
-            </option>
-          ))}
-        </select>
-        <select name="type" defaultValue={type ?? ""} aria-label="Typ" className={INPUT}>
-          <option value="">Alle Typen</option>
-          {DOC_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {DOC_TYPE_LABELS[t]}
-            </option>
-          ))}
-        </select>
-        <input name="q" defaultValue={q} placeholder="Domain oder Name" aria-label="Suche" className={INPUT} />
-        <button type="submit" className={BUTTON}>
-          Filtern
-        </button>
-      </form>
-
-      {list.rows.length === 0 ? (
-        <p>Keine Quellen.</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="border-b border-neutral-300">
-                <th className="py-1 pr-4">Domain</th>
-                <th className="pr-4">Name</th>
-                <th className="pr-4">Status</th>
-                <th className="pr-4">Typ</th>
-                <th className="pr-4">Gewicht</th>
-                <th className="pr-4">Dokumente</th>
-                <th className="pr-4">Versionen</th>
-                <th className="pr-4">Letzter Lauf</th>
-                <th>Kosten 30 Tage</th>
-              </tr>
-            </thead>
-            <tbody>
-              {list.rows.map((r) => (
-                <tr key={r.id} className="border-b border-neutral-200">
-                  <td className="py-1 pr-4">
-                    <Link href={`/sources/${r.id}`} className="underline">
-                      {r.domain}
-                    </Link>
-                  </td>
-                  <td className="pr-4">{r.name}</td>
-                  <td className="pr-4">{SOURCE_STATUS_LABELS[r.status]}</td>
-                  <td className="pr-4">{DOC_TYPE_LABELS[r.type]}</td>
-                  <td className="pr-4 tabular-nums">{weight(r.weight)}</td>
-                  <td className="pr-4 tabular-nums">{r.documents}</td>
-                  <td className="pr-4 tabular-nums">{r.versions}</td>
-                  <td className="pr-4 whitespace-nowrap">
-                    {r.lastRun ? (
-                      <Link href={`/runs/${r.lastRun.id}`} className="underline">
-                        {RUN_STATUS_LABELS[r.lastRun.status]} {time(r.lastRun.finishedAt)}
-                      </Link>
-                    ) : (
-                      "–"
-                    )}
-                  </td>
-                  <td className="tabular-nums">{eur(r.costEur30d)}</td>
-                </tr>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <FilterChips
+            label="Quellen je Status"
+            items={[
+              { href: href({ status: undefined }), label: "Alle", count: allCount, current: !status },
+              ...sourceStatusEnum.enumValues.map((s) => ({
+                href: href({ status: s }),
+                label: SOURCE_STATUS_LABELS[s],
+                count: counts[s],
+                current: status === s,
+              })),
+            ]}
+          />
+          <form method="get" role="search" className="flex flex-wrap items-center gap-2">
+            {status && <input type="hidden" name="status" value={status} />}
+            <select name="type" defaultValue={type ?? ""} aria-label="Typ" className={inputClass}>
+              <option value="">Alle Typen</option>
+              {DOC_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {DOC_TYPE_LABELS[t]}
+                </option>
               ))}
-            </tbody>
-          </table>
+            </select>
+            <input
+              type="search"
+              name="q"
+              defaultValue={q}
+              placeholder="Domain oder Name"
+              aria-label="Suche"
+              className={`${inputClass} w-48`}
+            />
+            <Button>Filtern</Button>
+          </form>
         </div>
-      )}
-      <nav aria-label="Seiten" className="flex items-center gap-3">
-        {page > 1 && <Link href={href({ page: String(page - 1) })}>← Zurück</Link>}
-        <span>
-          Seite {page} von {pages} ({list.total} Quellen)
-        </span>
-        {page < pages && <Link href={href({ page: String(page + 1) })}>Weiter →</Link>}
-      </nav>
-    </div>
+
+        <Panel flush>
+          {list.rows.length === 0 ? (
+            <EmptyState title={filtered ? "Keine Quelle passt zum Filter" : "Noch keine Quellen"}>
+              {filtered
+                ? "Filter ändern oder zurücksetzen."
+                : "Quellen entstehen durch die Quellenfindung (als Vorschläge zur Prüfung), durch Wikivoyage oder manuell über „Quelle anlegen“."}
+            </EmptyState>
+          ) : (
+            <>
+              <Table>
+                <thead>
+                  <tr>
+                    <th className={thClass}>Domain</th>
+                    <th className={thClass}>Status</th>
+                    <th className={thClass}>Typ</th>
+                    <th className={`${thClass} text-right`} title="Gewicht der Quelle (0 bis 1) in der Konsolidierung">
+                      Gewicht
+                    </th>
+                    <th className={`${thClass} text-right`}>Dokumente</th>
+                    <th className={`${thClass} text-right`}>Versionen</th>
+                    <th className={thClass}>Letzter Lauf</th>
+                    <th className={`${thClass} text-right`}>Kosten 30 Tage</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {list.rows.map((r) => (
+                    <tr key={r.id} className={trClass}>
+                      <td className={tdClass}>
+                        <Link href={`/sources/${r.id}`} className="font-medium text-accent hover:underline">
+                          {r.domain}
+                        </Link>
+                        {r.name !== r.domain && <div className="text-xs text-muted">{r.name}</div>}
+                      </td>
+                      <td className={tdClass}>
+                        <Badge tone={SOURCE_STATUS_TONES[r.status]}>{SOURCE_STATUS_LABELS[r.status]}</Badge>
+                      </td>
+                      <td className={`${tdClass} whitespace-nowrap`}>{DOC_TYPE_LABELS[r.type]}</td>
+                      <td className={`${tdClass} ${numClass}`}>{weight(r.weight)}</td>
+                      <td className={`${tdClass} ${numClass}`}>{fmt.int(r.documents)}</td>
+                      <td className={`${tdClass} ${numClass}`}>{fmt.int(r.versions)}</td>
+                      <td className={`${tdClass} whitespace-nowrap`}>
+                        {r.lastRun ? (
+                          <Link
+                            href={`/runs/${r.lastRun.id}`}
+                            className="inline-flex items-center gap-2 hover:underline"
+                            title={fmt.dateTime(r.lastRun.finishedAt)}
+                          >
+                            <RunStatusBadge status={r.lastRun.status} />
+                            {r.lastRun.finishedAt && <span className="text-xs text-muted">{fmt.ago(r.lastRun.finishedAt, now)}</span>}
+                          </Link>
+                        ) : (
+                          <span className="text-muted">–</span>
+                        )}
+                      </td>
+                      <td className={`${tdClass} ${numClass}`}>{fmt.eur(r.costEur30d)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+              <div className="border-t border-line">
+                <Pagination
+                  page={page}
+                  pages={pages}
+                  total={list.total}
+                  noun="Quellen"
+                  href={(p) => href({ page: String(p) })}
+                />
+              </div>
+            </>
+          )}
+        </Panel>
+      </div>
+    </>
   );
 }

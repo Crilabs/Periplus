@@ -35,7 +35,9 @@
     "report:models": "tsx --env-file-if-exists=.env.local scripts/model-report.ts",
     "check:texts": "tsx --env-file-if-exists=.env.local scripts/check-texts.ts",
     "check:profiles": "tsx --env-file-if-exists=.env.local scripts/check-profiles.ts",
-    "consolidate": "tsx --env-file-if-exists=.env.local scripts/consolidate.ts"
+    "consolidate": "tsx --env-file-if-exists=.env.local scripts/consolidate.ts",
+    "contract:generate": "tsx scripts/contract-generate.ts",
+    "delivery:consume": "tsx --env-file-if-exists=.env.local scripts/delivery-consume.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
@@ -43,6 +45,8 @@
     "@joplin/turndown-plugin-gfm": "^1.0.68",
     "@mozilla/readability": "^0.6.0",
     "@node-rs/argon2": "^2.2.2",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "diff": "^9.0.0",
     "drizzle-orm": "^0.45.4",
     "fflate": "^0.8.3",

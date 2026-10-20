@@ -30,7 +30,7 @@ describe("findArchiveCopies", () => {
     withRollback(async (tx) => {
       const words = saltedWords(30);
       await archived(tx, words.join(" "));
-      expect(await findArchiveCopies(tx, `Die Bucht ist schön. ${words.slice(5, 20).join(" ")} Mehr nicht.`)).toMatchObject({ hits: 1 });
+      expect(await findArchiveCopies(tx, `Die Bucht ist schön. ${words.slice(5, 20).join(" ")} Mehr nicht.`)).toMatchObject({ hits: 1, longestRun: 15 });
     }));
 
   it("a 16-word sequence copied from a chunk is found, a 14-word one is not", () =>
@@ -39,11 +39,22 @@ describe("findArchiveCopies", () => {
       await archived(tx, words.join(" "));
 
       const sixteen = `Die Bucht ist schön. ${words.slice(5, 21).join(" ")} Mehr nicht.`;
-      expect(await findArchiveCopies(tx, sixteen)).toMatchObject({ hits: 2 });
+      expect(await findArchiveCopies(tx, sixteen)).toMatchObject({ hits: 2, longestRun: 16 });
       const fourteen = `Die Bucht ist schön. ${words.slice(5, 19).join(" ")} Mehr nicht.`;
       const r = await findArchiveCopies(tx, fourteen);
       expect(r.hits).toBe(0);
       expect(r.shingles).toBeGreaterThan(0);
-      expect(await findArchiveCopies(tx, "zu kurz")).toEqual({ shingles: 0, hits: 0 });
+      expect(r.longestRun).toBe(0);
+      expect(await findArchiveCopies(tx, "zu kurz")).toEqual({ shingles: 0, hits: 0, longestRun: 0 });
+    }));
+
+  it("longestRun is the longest copied run of consecutive words, not the sum of separate copies", () =>
+    withRollback(async (tx) => {
+      const words = saltedWords(60);
+      await archived(tx, words.join(" "));
+      // two separate 15-word copies (2 hits) are no 16-word copy; an 18-word copy is
+      const twice = `${words.slice(0, 15).join(" ")} und dann ${words.slice(30, 45).join(" ")}`;
+      expect(await findArchiveCopies(tx, twice)).toMatchObject({ hits: 2, longestRun: 15 });
+      expect(await findArchiveCopies(tx, `Erst ${words.slice(40, 58).join(" ")} dann`)).toMatchObject({ hits: 4, longestRun: 18 });
     }));
 });

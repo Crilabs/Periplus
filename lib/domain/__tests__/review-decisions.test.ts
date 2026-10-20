@@ -610,6 +610,15 @@ describe("source decisions", () => {
       expect((await getSource(tx, sourceId))!.status).toBe("proposed");
     }));
 
+  it("a source on a forbidden domain is never approved (ruling M6-D-R2)", () =>
+    withRollback(async (tx) => {
+      const sourceId = await insertSource(tx, "proposed", `${newId()}.navily.com`);
+      const taskId = await approvalTask(tx, sourceId);
+      await expect(tx.transaction((sp) => decide(sp, taskId, approve))).rejects.toThrow(/forbidden domain/);
+      expect((await getSource(tx, sourceId))!.status).toBe("proposed");
+      expect((await taskOf(tx, taskId)).status).toBe("open");
+    }));
+
   it("reject keeps the domain out of later proposals", () =>
     withRollback(async (tx) => {
       const domain = testDomain();
@@ -957,22 +966,24 @@ describe("name candidate decisions", () => {
 describe("nextOpenTask", () => {
   it("returns the open task with the highest priority, oldest first, after afterId", () =>
     withRollback(async (tx) => {
-      // Shadow every other open task so the test sees only its own.
-      await tx.update(reviewTasks).set({ status: "dismissed" }).where(eq(reviewTasks.status, "open"));
+      // Open tasks of other test files (committed at any time, priorities 0 … 1.5e9) never rank among the test's own:
+      // those lie above 1.9e9, `last` below every other task. No shadowing update: it cannot hide rows committed
+      // after it.
       const mk = async (priority: number, kind: "failed_job" | "coast_tile_without_area" = "failed_job") =>
         (await createReviewTask(tx, { kind, subjectType: "job", subjectId: newId(), context: {}, priority })).id;
-      const low = await mk(0);
-      const highOld = await mk(5);
-      const highNew = await mk(5);
-      const tile = await mk(9, "coast_tile_without_area");
-      const decided = await mk(10);
+      const low = await mk(1_999_999_999);
+      const highOld = await mk(2_000_000_000);
+      const highNew = await mk(2_000_000_000);
+      const tile = await mk(2_000_000_001, "coast_tile_without_area");
+      const decided = await mk(2_000_000_002);
+      const last = await mk(-2_000_000_000);
       await tx.update(reviewTasks).set({ status: "decided" }).where(eq(reviewTasks.id, decided));
 
       expect(await nextOpenTask(tx)).toEqual({ id: tile });
       expect(await nextOpenTask(tx, "failed_job")).toEqual({ id: highOld });
       expect(await nextOpenTask(tx, "failed_job", highOld)).toEqual({ id: highNew });
       expect(await nextOpenTask(tx, "failed_job", highNew)).toEqual({ id: low });
-      expect(await nextOpenTask(tx, "failed_job", low)).toBeNull();
+      expect(await nextOpenTask(tx, "failed_job", last)).toBeNull();
       expect(await nextOpenTask(tx, "failed_job", decided)).toEqual({ id: highOld });
     }));
 });

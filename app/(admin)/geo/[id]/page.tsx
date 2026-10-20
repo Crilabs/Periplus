@@ -1,4 +1,4 @@
-import Link from "next/link";
+import type { ReactNode } from "react";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
@@ -16,6 +16,24 @@ import {
   runScopeError,
 } from "../../_components/labels";
 import { AnnotatedText } from "../../_components/annotated-text";
+import {
+  Badge,
+  Button,
+  DescriptionList,
+  EmptyState,
+  Mono,
+  Notice,
+  PageHeader,
+  Pagination,
+  Panel,
+  Table,
+  tdClass,
+  TextLink,
+  thClass,
+  trClass,
+  cx,
+} from "../../_components/ui";
+import { Dialog } from "../../_components/dialog";
 import { recomputeGeoProfileAction } from "../../places/[id]/actions";
 import { FactsTab } from "../../places/[id]/facts-tab";
 import { ProfileTab } from "../../places/[id]/profile-tab";
@@ -30,11 +48,18 @@ const share = (n: number) => n.toLocaleString("de-DE", { maximumFractionDigits: 
 function GeoLink({ o }: { o: GeoObjectRef }) {
   return (
     <>
-      <Link href={`/geo/${o.id}`} className="underline">
-        {o.name ?? o.id}
-      </Link>{" "}
-      ({GEO_OBJECT_TYPE_LABELS[o.type]})
+      <TextLink href={`/geo/${o.id}`}>{o.name ?? o.id.slice(0, 8)}</TextLink>{" "}
+      <span className="text-xs text-muted">({GEO_OBJECT_TYPE_LABELS[o.type]})</span>
     </>
+  );
+}
+
+function SectionHeading({ children, description }: { children: ReactNode; description?: string }) {
+  return (
+    <div className="mb-3">
+      <h2 className="text-base font-semibold">{children}</h2>
+      {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
+    </div>
   );
 }
 
@@ -70,201 +95,238 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
     o.wikidataId && `Wikidata ${o.wikidataId}`,
     o.geonamesId && `GeoNames ${o.geonamesId}`,
   ].filter(Boolean);
+  const active = !o.validTo && !o.mergedIntoId;
+  const shownNames = detail.names.filter((n) => n.valid);
   return (
-    <div className="space-y-4 text-sm">
-      <h1 className="text-lg font-semibold">
-        {o.name ?? o.id} ({GEO_OBJECT_TYPE_LABELS[o.type]})
-      </h1>
-      {error && (
-        <p role="alert" className="rounded bg-red-100 px-3 py-2">
-          Lauf nicht gestartet: {error}
-        </p>
-      )}
-      <dl className="grid grid-cols-[8rem_1fr] gap-y-1">
-        <dt>Eltern-Kette</dt>
-        <dd>
-          {detail.ancestors.length === 0
-            ? "–"
-            : detail.ancestors.map((a, i) => (
-                <span key={a.id}>
-                  {i > 0 && " → "}
-                  <GeoLink o={a} />
-                </span>
-              ))}
-        </dd>
-        <dt>Herkunft</dt>
-        <dd>{GEO_ORIGIN_LABELS[o.origin]}</dd>
-        <dt>Externe IDs</dt>
-        <dd>{externalIds.length === 0 ? "–" : externalIds.join(" · ")}</dd>
-        {o.publicId && (
+    <>
+      <PageHeader
+        title={
           <>
-            <dt>Öffentliche ID</dt>
-            <dd className="font-mono text-xs">{o.publicId}</dd>
+            {o.name ?? o.id} <span className="font-normal text-muted">({GEO_OBJECT_TYPE_LABELS[o.type]})</span>
           </>
-        )}
-        {o.configKey && (
+        }
+        back={{ href: "/map", label: "Karte" }}
+        meta={
           <>
-            <dt>Konfiguration</dt>
-            <dd>{o.configKey}</dd>
-          </>
-        )}
-        <dt>Ort</dt>
-        <dd>
-          {detail.place ? (
-            <>
-              <Link href={`/places/${detail.place.id}`} className="underline">
-                {PLACE_KIND_LABELS[detail.place.kind]}
-              </Link>{" "}
-              ({PLACE_STATUS_LABELS[detail.place.status]})
-            </>
-          ) : (
-            "–"
-          )}
-        </dd>
-        <dt>Kacheln</dt>
-        <dd>
-          {detail.tileIds.length === 0
-            ? "–"
-            : detail.tileIds.map((t, i) => (
-                <span key={t}>
-                  {i > 0 && ", "}
-                  <Link href={`/tiles/${encodeURIComponent(t)}`} className="underline">
-                    {t}
-                  </Link>
-                </span>
-              ))}
-        </dd>
-        <dt>Gültig</dt>
-        <dd>
-          ab {o.validFrom}
-          {o.validTo && ` bis ${o.validTo}`}
-        </dd>
-        {o.mergedIntoId && (
-          <>
-            <dt>Zusammengeführt in</dt>
-            <dd>
-              <Link href={`/geo/${o.mergedIntoId}`} className="font-mono text-xs underline">
-                {o.mergedIntoId}
-              </Link>
-            </dd>
-          </>
-        )}
-        <dt>Geo-Objekt</dt>
-        <dd className="font-mono text-xs">{o.id}</dd>
-      </dl>
-      {!o.validTo && !o.mergedIntoId && (
-        <form action={recomputeGeoProfileAction}>
-          <input type="hidden" name="geoObjectId" value={o.id} />
-          <button type="submit" className="rounded border border-neutral-400 px-3 py-1 hover:bg-neutral-100">
-            Profil neu berechnen
-          </button>
-        </form>
-      )}
-
-      <section>
-        <h2 className="mb-1 font-semibold">Profil</h2>
-        <ProfileTab
-          view={profile}
-          selected={selected}
-          notice={textParam.parse(sp.notice)}
-          noticeRunId={uuidParam.parse(sp.run)}
-          links={{ geoObjectId: o.id, confirm: textParam.parse(sp.confirm), attrHref: (a) => href({ attr: a }) }}
-        />
-      </section>
-
-      <section>
-        <h2 className="mb-1 font-semibold">Namen</h2>
-        <table className="w-full text-left">
-          <thead>
-            <tr className="border-b border-neutral-300">
-              <th className="py-1 pr-4">Name</th>
-              <th className="pr-4">Sprache</th>
-              <th className="pr-4">Schrift</th>
-              <th className="pr-4">Herkunft</th>
-              <th className="pr-4">Bevorzugt</th>
-              <th>Gültig</th>
-            </tr>
-          </thead>
-          <tbody>
-            {detail.names.map((n) => (
-              <tr
-                key={`${n.name}|${n.language}|${n.origin}|${n.validFrom}`}
-                className={`border-b border-neutral-200 ${n.valid ? "" : "text-neutral-500"}`}
-              >
-                <td className="py-1 pr-4">{n.name}</td>
-                <td className="pr-4">{n.language}</td>
-                <td className="pr-4">{SCRIPT_LABELS[n.script]}</td>
-                <td className="pr-4">{NAME_ORIGIN_LABELS[n.origin]}</td>
-                <td className="pr-4">{n.isPreferred ? "Ja" : "Nein"}</td>
-                <td>{n.valid ? "Ja" : `Nein (bis ${n.validTo ?? "–"})`}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
-
-      <section>
-        <h2 className="mb-1 font-semibold">Kinder</h2>
-        {detail.children.length === 0 ? (
-          <p>Keine Kinder.</p>
-        ) : (
-          <ul>
-            {detail.children.map((c) => (
-              <li key={c.id}>
-                <GeoLink o={c} />
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section>
-        <h2 className="mb-1 font-semibold">Erwähnungen ({mentionPage.total})</h2>
-        {mentionPage.rows.length === 0 ? (
-          <p>Keine Erwähnungen.</p>
-        ) : (
-          <>
-            <ul className="space-y-1">
-              {mentionPage.rows.map((m) => (
-                <li key={m.id} className="max-w-3xl">
-                  <Link href={`/documents/${m.documentId}`} className="underline">
-                    {m.domain}
-                  </Link>{" "}
-                  · {m.observedAt} · {MATCH_KIND_LABELS[m.matchKind]} ({share(m.confidence)}):{" "}
-                  <span className="text-xs">
-                    <AnnotatedText
-                      text={m.snippet.before + m.snippet.quote + m.snippet.after}
-                      spans={[{ start: m.snippet.before.length, end: m.snippet.before.length + m.snippet.quote.length, kind: "mention", ref: m.id }]}
-                    />
-                  </span>
-                </li>
-              ))}
-            </ul>
-            {pages > 1 && (
-              <p className="mt-1 flex gap-3 text-xs">
-                {page > 1 && (
-                  <Link href={href({ mp: page - 1 })} className="underline">
-                    ← zurück
-                  </Link>
-                )}
-                <span>
-                  Seite {page} von {pages}
-                </span>
-                {page < pages && (
-                  <Link href={href({ mp: page + 1 })} className="underline">
-                    weiter →
-                  </Link>
-                )}
-              </p>
+            <Badge>{GEO_OBJECT_TYPE_LABELS[o.type]}</Badge>
+            <Badge tone="neutral" title="Herkunft">
+              {GEO_ORIGIN_LABELS[o.origin]}
+            </Badge>
+            {!active && <Badge tone="warn">{o.mergedIntoId ? "Zusammengeführt" : "Nicht mehr gültig"}</Badge>}
+            {detail.place && (
+              <TextLink href={`/places/${detail.place.id}`} className="text-sm">
+                {PLACE_KIND_LABELS[detail.place.kind]} ({PLACE_STATUS_LABELS[detail.place.status]})
+              </TextLink>
             )}
           </>
-        )}
-      </section>
+        }
+        description="Ein Geo-Objekt mit Namen, Hierarchie, Erwähnungen in Dokumenten, den Facts daraus und dem Profil."
+        actions={
+          active && (
+            <form action={recomputeGeoProfileAction}>
+              <input type="hidden" name="geoObjectId" value={o.id} />
+              <Button title="Startet einen Konsolidierungslauf für dieses Geo-Objekt: das Profil wird aus den aktuellen Facts neu gebildet.">
+                Profil neu berechnen
+              </Button>
+            </form>
+          )
+        }
+      />
+      {error && (
+        <Notice tone="danger" className="mb-6">
+          Lauf nicht gestartet: {error}
+        </Notice>
+      )}
 
-      <section>
-        <h2 className="mb-1 font-semibold">Facts</h2>
-        <FactsTab groups={facts} runs={runs} runsHref={(r) => href({ runs: r })} />
-      </section>
-    </div>
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="min-w-0 space-y-10">
+          <section>
+            <SectionHeading>Profil</SectionHeading>
+            <ProfileTab
+              view={profile}
+              selected={selected}
+              notice={textParam.parse(sp.notice)}
+              noticeRunId={uuidParam.parse(sp.run)}
+              links={{ geoObjectId: o.id, confirm: textParam.parse(sp.confirm), attrHref: (a) => href({ attr: a }) }}
+            />
+          </section>
+
+          <Panel
+            title={`Erwähnungen (${mentionPage.total})`}
+            description="Textstellen in Dokumenten, die diesem Geo-Objekt zugeordnet wurden."
+            flush
+          >
+            {mentionPage.rows.length === 0 ? (
+              <EmptyState title="Keine Erwähnungen.">
+                Erwähnungen entstehen, wenn ein Lauf ein Dokument liest, das dieses Geo-Objekt nennt.
+              </EmptyState>
+            ) : (
+              <>
+                <ul className="divide-y divide-line">
+                  {mentionPage.rows.map((m) => (
+                    <li key={m.id} className="space-y-1 px-4 py-3 text-sm">
+                      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+                        <TextLink href={`/documents/${m.documentId}`} className="text-sm">
+                          {m.domain}
+                        </TextLink>
+                        <span>{m.observedAt}</span>
+                        <Badge>
+                          {MATCH_KIND_LABELS[m.matchKind]} {share(m.confidence)}
+                        </Badge>
+                      </p>
+                      <p className="max-w-3xl text-xs leading-relaxed text-muted">
+                        <AnnotatedText
+                          text={m.snippet.before + m.snippet.quote + m.snippet.after}
+                          spans={[{ start: m.snippet.before.length, end: m.snippet.before.length + m.snippet.quote.length, kind: "mention", ref: m.id }]}
+                        />
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+                {pages > 1 && (
+                  <div className="border-t border-line">
+                    <Pagination page={page} pages={pages} total={mentionPage.total} noun="Erwähnungen" href={(mp) => href({ mp })} />
+                  </div>
+                )}
+              </>
+            )}
+          </Panel>
+
+          <section>
+            <SectionHeading>Facts</SectionHeading>
+            <FactsTab groups={facts} runs={runs} runsHref={(r) => href({ runs: r })} />
+          </section>
+        </div>
+
+        <div className="space-y-6">
+          <Panel title="Eckdaten">
+            <DescriptionList
+              columns={1}
+              items={[
+                {
+                  label: "Eltern-Kette",
+                  value:
+                    detail.ancestors.length === 0
+                      ? "–"
+                      : detail.ancestors.map((a, i) => (
+                          <span key={a.id}>
+                            {i > 0 && " → "}
+                            <GeoLink o={a} />
+                          </span>
+                        )),
+                },
+                {
+                  label: "Ort",
+                  value: detail.place ? (
+                    <>
+                      <TextLink href={`/places/${detail.place.id}`}>{PLACE_KIND_LABELS[detail.place.kind]}</TextLink>{" "}
+                      <span className="text-muted">({PLACE_STATUS_LABELS[detail.place.status]})</span>
+                    </>
+                  ) : (
+                    "–"
+                  ),
+                },
+                {
+                  label: "Kacheln",
+                  value:
+                    detail.tileIds.length === 0
+                      ? "–"
+                      : detail.tileIds.map((t, i) => (
+                          <span key={t}>
+                            {i > 0 && ", "}
+                            <TextLink href={`/tiles/${encodeURIComponent(t)}`}>{t}</TextLink>
+                          </span>
+                        )),
+                },
+                {
+                  label: "Gültig",
+                  value: (
+                    <>
+                      ab {o.validFrom}
+                      {o.validTo && ` bis ${o.validTo}`}
+                    </>
+                  ),
+                },
+                o.mergedIntoId && {
+                  label: "Zusammengeführt in",
+                  value: (
+                    <TextLink href={`/geo/${o.mergedIntoId}`} title={o.mergedIntoId} className="font-mono text-[0.8125rem]">
+                      {o.mergedIntoId.slice(0, 8)}
+                    </TextLink>
+                  ),
+                },
+                { label: "Externe IDs", value: externalIds.length === 0 ? "–" : <Mono>{externalIds.join(" · ")}</Mono> },
+                o.publicId && { label: "Öffentliche ID", value: <Mono>{o.publicId}</Mono> },
+                o.configKey && { label: "Konfiguration", value: <Mono>{o.configKey}</Mono> },
+                { label: "Geo-Objekt", value: <Mono>{o.id}</Mono> },
+              ]}
+            />
+          </Panel>
+
+          <Panel
+            title="Namen"
+            description="Die heute gültigen Namen; frühere stehen unter „Alle Namen“."
+            actions={
+              <Dialog trigger="Alle Namen" triggerSize="sm" title="Namen" description="Alle Namen mit Sprache, Schrift, Herkunft und Gültigkeit." wide>
+                <Table>
+                  <thead>
+                    <tr>
+                      <th className={thClass}>Name</th>
+                      <th className={thClass}>Sprache</th>
+                      <th className={thClass}>Schrift</th>
+                      <th className={thClass}>Herkunft</th>
+                      <th className={thClass}>Bevorzugt</th>
+                      <th className={thClass}>Gültig</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detail.names.map((n) => (
+                      <tr key={`${n.name}|${n.language}|${n.origin}|${n.validFrom}`} className={cx(trClass, !n.valid && "text-muted")}>
+                        <td className={tdClass}>{n.name}</td>
+                        <td className={tdClass}>{n.language}</td>
+                        <td className={tdClass}>{SCRIPT_LABELS[n.script]}</td>
+                        <td className={tdClass}>{NAME_ORIGIN_LABELS[n.origin]}</td>
+                        <td className={tdClass}>{n.isPreferred ? "Ja" : "Nein"}</td>
+                        <td className={tdClass}>{n.valid ? "Ja" : `Nein (bis ${n.validTo ?? "–"})`}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              </Dialog>
+            }
+            flush
+          >
+            {shownNames.length === 0 ? (
+              <EmptyState title="Keine gültigen Namen." />
+            ) : (
+              <ul className="divide-y divide-line text-sm">
+                {shownNames.map((n) => (
+                  <li key={`${n.name}|${n.language}|${n.origin}|${n.validFrom}`} className="flex items-center justify-between gap-3 px-4 py-2">
+                    <span className="min-w-0 break-words">
+                      {n.name} <span className="text-xs text-muted">{n.language}</span>
+                    </span>
+                    {n.isPreferred && <Badge tone="accent">bevorzugt</Badge>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
+
+          <Panel title="Kinder" description="Geo-Objekte, die zu diesem gehören." flush>
+            {detail.children.length === 0 ? (
+              <EmptyState title="Keine Kinder." />
+            ) : (
+              <ul className="max-h-96 divide-y divide-line overflow-y-auto text-sm">
+                {detail.children.map((c) => (
+                  <li key={c.id} className="px-4 py-2">
+                    <GeoLink o={c} />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
+        </div>
+      </div>
+    </>
   );
 }

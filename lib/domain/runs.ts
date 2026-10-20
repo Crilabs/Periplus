@@ -362,6 +362,12 @@ async function toViews(db: Db, rows: RunRow[]): Promise<RunView[]> {
   }));
 }
 
+/** Who started the run (`runs.triggered_by`); null for an unknown run. */
+export async function runTriggeredBy(db: Db, id: string): Promise<string | null> {
+  const [run] = await db.select({ triggeredBy: runs.triggeredBy }).from(runs).where(eq(runs.id, id));
+  return run?.triggeredBy ?? null;
+}
+
 export async function getRun(db: Db, id: string): Promise<RunView | null> {
   const rows = await db.select().from(runs).where(eq(runs.id, id));
   return (await toViews(db, rows))[0] ?? null;

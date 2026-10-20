@@ -14,7 +14,7 @@ test("admin logs in, sees the overview, logs out", async ({ page }) => {
   await expect(page).toHaveURL(/\/login\?next=%2Fruns/);
   await signIn(page);
   await expect(page).toHaveURL(/\/runs$/);
-  await expect(page.getByRole("heading", { name: "Läufe" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Läufe", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Abmelden" }).click();
   await expect(page).toHaveURL(/\/login/);
   await page.goto("/runs");
@@ -25,7 +25,7 @@ test("admin starts a ping run and sees it listed; all admin pages render", async
   await page.goto("/login");
   await signIn(page);
   await expect(page.getByRole("heading", { name: "Übersicht" })).toBeVisible();
-  await expect(page.getByText("Offene Prüfungen")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Offene Prüfungen", exact: true })).toBeVisible();
   await page.goto("/runs");
   const before = await page.locator("tbody tr").count();
   await page.getByRole("button", { name: "Ping-Lauf starten" }).click();
@@ -37,6 +37,7 @@ test("admin starts a ping run and sees it listed; all admin pages render", async
     ["/jobs", "Jobs"],
     ["/costs", "Kosten"],
     ["/settings", "Einstellungen"],
+    ["/deliveries", "Lieferungen"],
     ["/map", "Karte"],
     ["/sources", "Quellen"],
     ["/compare/converters", "Konverter-Vergleich"],

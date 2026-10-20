@@ -269,13 +269,14 @@ function qualified(column: AnyColumn): SQL {
  * within a language the preferred name first, then alphabetical. Null when the object has no valid name.
  *
  * `geoObjectId` is the outer query's id: a column (rendered table-qualified, so it can never resolve to
- * a column of the inner `geo_names gn`) or an SQL expression such as an alias column (`sql\`o.id\``).
+ * a column of the inner `geo_names gn`) or an SQL expression such as an alias column (`sql\`o.id\``). Names are valid
+ * on `date` (`YYYY-MM-DD`, e.g. a delivery's build date), by default on the database's `current_date`.
  */
-export function displayNameSql(geoObjectId: SQL | AnyColumn): SQL<string | null> {
+export function displayNameSql(geoObjectId: SQL | AnyColumn, date?: string): SQL<string | null> {
   const outerId = is(geoObjectId, SQL) ? geoObjectId : qualified(geoObjectId);
   return sql<string | null>`(
     select gn.name from geo_names gn
-    where gn.geo_object_id = ${outerId} and ${validAt(gn)}
+    where gn.geo_object_id = ${outerId} and ${validAt(gn, date)}
     order by case gn.language when 'de' then 0 when 'en' then 1 else 2 end, gn.is_preferred desc, gn.name
     limit 1
   )`;

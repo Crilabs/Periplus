@@ -1,0 +1,132 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              21.12,
+              35.15
+            ],
+            [
+              21.05,
+              35.15
+            ],
+            [
+              21.05,
+              35.05
+            ],
+            [
+              21.2,
+              35.05
+            ],
+            [
+              21.2,
+              35.15
+            ],
+            [
+              21.14,
+              35.15
+            ],
+            [
+              21.13,
+              35.13
+            ],
+            [
+              21.12,
+              35.15
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "land",
+        "source": "OpenStreetMap, ODbL",
+        "extractedAt": "2026-10-01"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            21.12,
+            35.15
+          ],
+          [
+            21.13,
+            35.13
+          ],
+          [
+            21.14,
+            35.15
+          ],
+          [
+            21.2,
+            35.15
+          ],
+          [
+            21.2,
+            35.05
+          ],
+          [
+            21.05,
+            35.05
+          ],
+          [
+            21.05,
+            35.15
+          ],
+          [
+            21.12,
+            35.15
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "coastline",
+        "source": "OpenStreetMap, ODbL",
+        "extractedAt": "2026-10-01"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              21.38,
+              35.18
+            ],
+            [
+              21.42,
+              35.18
+            ],
+            [
+              21.42,
+              35.22
+            ],
+            [
+              21.38,
+              35.22
+            ],
+            [
+              21.38,
+              35.18
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "kind": "restrictedArea",
+        "reason": "military",
+        "source": "test"
+      }
+    }
+  ]
+}

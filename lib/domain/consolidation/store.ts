@@ -10,6 +10,7 @@ import { createLogger } from "@/lib/logger";
 import { buildProfile } from "./build";
 import { diffProfiles, type EventDraft, type TaskDraft } from "./changes";
 import { loadContext, loadDerivedInputs, loadInputs, type LoadInputsOptions } from "./inputs";
+import { dismissTasks, lockOpenTasks, subjectPrefix } from "./task-locks";
 
 /*
  * Consolidation of one geo object (spec 07 "Ablauf"): load, build, compare with the valid profile, and write a new
@@ -44,26 +45,6 @@ async function runDate(db: Db, opts: ConsolidateOptions): Promise<string> {
   return new Date().toISOString().slice(0, 10);
 }
 
-type OpenTask = { id: string; kind: TaskDraft["kind"]; attribute: string; context: unknown };
-
-const subjectPrefix = (geoObjectId: string) => `${geoObjectId}:`;
-
-/**
- * Locks the open `conflict` / `uncertain_change` tasks of the object in one statement, by task id (the order a
- * decision locking several of them must follow). Under READ COMMITTED a row a concurrent decision holds is waited
- * for and re-checked: a task decided meanwhile is not returned (ruling M5-F-R2).
- */
-async function lockOpenTasks(tx: Db, geoObjectId: string): Promise<Map<string, OpenTask>> {
-  const prefix = subjectPrefix(geoObjectId);
-  const { rows } = await tx.execute<{ id: string; kind: TaskDraft["kind"]; subject_id: string; context: unknown }>(sql`
-    select id, kind::text as kind, subject_id, context from review_tasks
-    where kind in ('conflict', 'uncertain_change') and left(subject_id, ${prefix.length}) = ${prefix} and status = 'open'
-    order by id
-    for update
-  `);
-  return new Map(rows.map((r) => [`${r.kind}:${r.subject_id.slice(prefix.length)}`, { id: r.id, kind: r.kind, attribute: r.subject_id.slice(prefix.length), context: r.context }]));
-}
-
 /** `"<kind>:<key>"` of the decided `conflict` / `uncertain_change` tasks of the object, read now (after the locks). */
 async function decidedTaskKeys(tx: Db, geoObjectId: string): Promise<Set<string>> {
   const prefix = subjectPrefix(geoObjectId);
@@ -73,15 +54,6 @@ async function decidedTaskKeys(tx: Db, geoObjectId: string): Promise<Set<string>
       and status = 'decided' and context ? 'key'
   `);
   return new Set(rows.map((r) => `${r.kind}:${r.key}`));
-}
-
-/** Dismisses the (locked) tasks `ids` with `context.dismissedReason` `reason`. */
-async function dismissTasks(tx: Db, ids: string[], reason: "superseded" | "object_ended"): Promise<void> {
-  if (ids.length === 0) return;
-  await tx.execute(sql`
-    update review_tasks set status = 'dismissed', context = context || ${JSON.stringify({ dismissedReason: reason })}::jsonb
-    where id in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
-  `);
 }
 
 /**

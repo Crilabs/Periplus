@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { apiClients } from "@/lib/db/schema/auth";
 import { generateApiKey, hashApiKey } from "@/lib/security/api-keys";
@@ -51,4 +51,22 @@ export async function revokeApiClient(db: Db, id: string): Promise<void> {
     .update(apiClients)
     .set({ revokedAt: new Date() })
     .where(and(eq(apiClients.id, id), isNull(apiClients.revokedAt)));
+}
+
+export type ApiClientRow = ApiClient & { createdAt: Date; revokedAt: Date | null };
+
+/** Every API client for the admin (never the key hash): active ones first, then by name. */
+export async function listApiClients(db: Db): Promise<ApiClientRow[]> {
+  const rows = await db
+    .select({
+      id: apiClients.id,
+      name: apiClients.name,
+      scopes: apiClients.scopes,
+      rateLimitPerMin: apiClients.rateLimitPerMin,
+      createdAt: apiClients.createdAt,
+      revokedAt: apiClients.revokedAt,
+    })
+    .from(apiClients)
+    .orderBy(sql`${apiClients.revokedAt} is not null`, asc(apiClients.name));
+  return rows.map((r) => ({ ...r, scopes: r.scopes as ApiScope[] }));
 }

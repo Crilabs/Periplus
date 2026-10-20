@@ -1,9 +1,10 @@
 "use client";
 
 import "maplibre-gl/dist/maplibre-gl.css";
+import "./maplibre-worker";
 import { type GeoJSONSource, LngLatBounds, Map as MapLibreMap, NavigationControl } from "maplibre-gl";
 import { useEffect, useRef } from "react";
-import { DEFAULT_CENTER, MAP_STYLE_URL } from "./map-style";
+import { DEFAULT_CENTER, MAP_SEA_COLOR, MAP_STYLE } from "./map-style";
 
 const SOURCE = "review";
 /** Colour per feature: property `color` when set, else by property `role`. */
@@ -53,7 +54,7 @@ export function MiniMap({
     const bounds = boundsOf(initial);
     const m = new MapLibreMap({
       container: container.current,
-      style: MAP_STYLE_URL,
+      style: MAP_STYLE,
       ...(bounds ? { bounds, fitBoundsOptions: { padding: 40, maxZoom: 15 } } : { center: DEFAULT_CENTER, zoom: 8 }),
       attributionControl: { compact: true },
     });
@@ -82,7 +83,7 @@ export function MiniMap({
         paint: {
           "circle-color": ROLE_COLOR as never,
           "circle-radius": 6,
-          "circle-stroke-color": "#fff",
+          "circle-stroke-color": MAP_SEA_COLOR,
           "circle-stroke-width": 2,
         },
       });
@@ -105,7 +106,8 @@ export function MiniMap({
       ref={container}
       role="region"
       aria-label="Kartenausschnitt"
-      className={`h-80 w-full ${onPick ? "[&_canvas]:cursor-crosshair" : ""}`}
+      className={`map-night h-80 w-full overflow-hidden rounded-md border border-line ${onPick ? "[&_canvas]:cursor-crosshair" : ""}`}
+      style={{ background: MAP_SEA_COLOR }}
     />
   );
 }

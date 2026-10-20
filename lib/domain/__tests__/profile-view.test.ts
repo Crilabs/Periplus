@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { facts, profileSummaries, profiles, reviewDecisions, reviewTasks } from "@/lib/db/schema";
+import { facts, profileSummaries, profiles, reviewDecisions, reviewTasks, sources } from "@/lib/db/schema";
 import { getConsolidationConfig } from "@/lib/config";
 import type { AttributeProvenance } from "@/lib/domain/consolidation/types";
 import { ruleLabel } from "@/lib/domain/consolidation/format";
@@ -10,8 +10,10 @@ import { mapLayer } from "@/lib/domain/map-data";
 import { ENTRY_REMOVAL_TASK, ProfileChanged, removeProfileEntry } from "@/lib/domain/profile-entry-removal";
 import { profileAttributeFacts, profileEntryKey, profileView } from "@/lib/domain/profile-view";
 import { DecisionNotAllowed } from "@/lib/domain/review-decisions";
+import { endSource } from "@/lib/domain/sources/store";
 import { insertComputation, insertPlace, insertSource, insertTextFact } from "@/test/consolidation";
 import { testDb, withRollback } from "@/test/db";
+import { insertTestRun } from "@/test/text";
 
 /*
  * The profile tab's data (Task 17): rows with provenance, the facts of one attribute, older versions, the map colour
@@ -61,6 +63,28 @@ async function profiledPlace(tx: Db, o: { lon?: number; lat?: number } = {}) {
 }
 
 describe("profileView", () => {
+  it("profileView shows the summary the delivery takes: highest prompt version, then newest (ruling M6-FIN-R2)", () =>
+    withRollback(async (tx) => {
+      const p = await profiledPlace(tx);
+      const summary = async (text: string, promptVersion: number, createdAt: string) =>
+        tx.insert(profileSummaries).values({
+          geoObjectId: p.objectId,
+          profileVersion: 1,
+          text,
+          status: "ok",
+          attempts: 1,
+          model: "m",
+          promptVersion,
+          runId: await insertTestRun(tx),
+          createdAt: new Date(createdAt),
+        });
+      await summary("Neuer Prompt.", 2, "2026-10-01T00:00:00Z");
+      await summary("Alter Prompt, neu erzeugt.", 1, "2026-10-10T00:00:00Z");
+      expect((await profileView(tx, p.objectId, { today }))!.summary).toMatchObject({ text: "Neuer Prompt." });
+      await summary("Neuer Prompt, neu erzeugt.", 2, "2026-10-11T00:00:00Z");
+      expect((await profileView(tx, p.objectId, { today }))!.summary).toMatchObject({ text: "Neuer Prompt, neu erzeugt." });
+    }));
+
   it("profileView lists rows in schema order with provenance and gaps", () =>
     withRollback(async (tx) => {
       const p = await profiledPlace(tx);
@@ -107,8 +131,8 @@ describe("profileView", () => {
       });
       const hazards = view.rows.find((r) => r.attribute === "hazards")!;
       expect(hazards.entries).toEqual([
-        { key: profileEntryKey("hazards", { kind: "rock", name: "Xera" }, cfg), entry: { kind: "rock", name: "Xera" }, display: "Fels (Xera)", inputIds: [p.hazardFact], removable: true },
-        { key: profileEntryKey("hazards", { kind: "shoal", name: null }, cfg), entry: { kind: "shoal", name: null }, display: "Untiefe", inputIds: [p.hazardFact], removable: true },
+        { key: profileEntryKey("hazards", { kind: "rock", name: "Xera" }, cfg), entry: { kind: "rock", name: "Xera" }, display: "Fels (Xera)", inputIds: [p.hazardFact], removable: true, inReview: false },
+        { key: profileEntryKey("hazards", { kind: "shoal", name: null }, cfg), entry: { kind: "shoal", name: null }, display: "Untiefe", inputIds: [p.hazardFact], removable: true, inReview: false },
       ]);
       // gaps with their reason: no seabed fact and no computation gap for it
       expect(view.gaps).toContainEqual({ attribute: "seabed", label: "Grund", reason: "no_facts" });
@@ -335,6 +359,30 @@ describe("„Eintrag entfernen“", () => {
         // a reference that no longer resolves stays listed, without kind
         { type: "computation", id: poi.objectId, kind: null, createdAt: null },
       ]);
+    }));
+
+  it("a kept hazard whose only source ended is marked in review while its removal waits (ruling M6-FIN-R3)", () =>
+    withRollback(async (tx) => {
+      const { objectId } = await insertPlace(tx, { name: "Markierbucht" });
+      const navily = await insertSource(tx, "travel_guide", 0.9);
+      await tx.update(sources).set({ status: "approved" }).where(eq(sources.id, navily));
+      const report = await insertSource(tx, "trip_report", 0.6);
+      const rock = { kind: "rock", name: "Xera" };
+      const shoal = { kind: "shoal", name: null };
+      await insertTextFact(tx, objectId, navily, { attribute: "hazards", value: [rock], observedAt: "2026-07-01", confidence: 0.9 });
+      await insertTextFact(tx, objectId, report, { attribute: "hazards", value: [shoal], observedAt: "2026-07-01" });
+      // endSource ends on the UTC date; consolidate on that date
+      const { rows } = await tx.execute<{ d: string }>(sql`select (now() at time zone 'UTC')::date::text as d`);
+      const utc = rows[0]!.d;
+      await consolidateGeo(tx, objectId, { today: utc });
+      await endSource(tx, navily);
+      await consolidateGeo(tx, objectId, { today: utc });
+      const row = (await profileView(tx, objectId, { today: utc }))!.rows.find((r) => r.attribute === "hazards")!;
+      expect(row.entries).toMatchObject([
+        { entry: rock, inputIds: [], inReview: true },
+        { entry: shoal, inReview: false },
+      ]);
+      expect(row.pending).not.toBeNull();
     }));
 
   it("a computed restricted-area prohibition is not removable", () =>

@@ -222,7 +222,8 @@ Erreicht ein Dienst sein Tagesbudget (`config/budgets.json`), pausiert der Worke
 - **Beschwerde eines Betreibers** oder offensichtliche Fehlfunktion: Quelle öffnen → „Pausieren“. Laufende Jobs der Quelle prüfen vor jedem Abruf erneut, ob sie freigegeben ist, und überspringen ihre Seiten (sie bleiben „offen“ für später). Hochgeladene PDFs bleiben bei pausierten Quellen möglich.
 - Fehlgeschlagener Job einer Quelle unter „Prüfen“: Entscheidung „Quelle pausieren“.
 - Ein ausdrückliches Crawl-Verbot in robots.txt pausiert die Quelle automatisch („robots.txt verbietet das Crawlen“).
-- **Fortsetzen**: Quelle öffnen → „Fortsetzen“, danach „Crawlen“. Eine endgültig zu entfernende Quelle wird abgelehnt bzw. über `valid_to` beendet (Archiv bleibt).
+- **Fortsetzen**: Quelle öffnen → „Fortsetzen“, danach „Crawlen“.
+- **Quelle beenden** (endgültig, z. B. eine Quelle, deren Inhalte nicht geliefert werden dürfen): Quelle öffnen → „Quelle beenden …“ → „Quelle beenden“ (nur freigegebene oder pausierte Quellen). Setzt `valid_to` auf heute (UTC); das Archiv bleibt, die Quelle wird nie mehr gecrawlt oder fortgesetzt, und ihre Facts zählen in keiner Konsolidierung mehr. Ein Text-Wert, der nur auf Facts beendeter (oder abgelehnter) Quellen beruht, fällt mit der nächsten Konsolidierung weg, statt bis zum Ablauf stehen zu bleiben; gibt es einen anderen Wert, ersetzt er ihn. Nach dem Beenden startet ein Konsolidierungslauf für alle Objekte mit Facts aus der Quelle (die Seite meldet ihre Zahl und verlinkt den Lauf; startet er nicht, steht das Beenden trotzdem: dann „Profil neu berechnen“ auf den Orten).
 
 ### Hängender Lauf
 Ein Crawl-Lauf im Status „Wartend“ oder „Läuft“ sperrt seine Quellen für neue Abrufe („Für die Quelle läuft bereits ein Abruf“), bis er endet; ebenso sperrt ein laufender Konverter-Vergleich bzw. „Einbettungen nachholen“ einen zweiten Start. Endet er nicht, weil der Worker abgestürzt ist und seine Jobs verloren sind (unter „Jobs“ keine aktiven oder wartenden Jobs der Queues `fetch.*`/`embed.chunks` für den Lauf), auf der Laufseite (Läufe → Lauf) **„Lauf beenden“** wählen. Der Lauf steht danach auf „Fehlgeschlagen“ mit „Beendet von <Admin> am <Zeit>“; seine noch wartenden Jobs werden abgebrochen, Jobs, die gerade laufen, enden ohne Wirkung auf den Lauf, und „Erneut versuchen“ setzt ihn nicht fort. Danach lässt sich die Quelle wieder crawlen; offene Frontier-URLs nimmt der nächste Lauf mit.
@@ -301,8 +302,81 @@ Stufe 8 (M5): aus allen Facts eines Geo-Objekts ein versioniertes Profil mit Wer
 
 ### Summaries
 - Die Kurzbeschreibung entsteht nur bei geändertem Profil, ausschließlich aus Profilwerten. Übernimmt sie 15 Wörter am Stück aus einem Zitat, wird sie mit Hinweis neu erzeugt (höchstens 2-mal); danach bleibt sie leer und öffnet unter „Prüfen“ eine Aufgabe (fehlgeschlagener Job) mit **„Neu erzeugen“** (startet einen Lauf nur mit `consolidation.summary` für das Objekt) oder **„Ignorieren“**. Eine später gelungene Summary schließt die Aufgabe.
+- **„Summary neu erzeugen“** im Reiter „Profil“ (Ort-Seite und Profil-Abschnitt der Geo-Seite, nur bei der neuesten Version): startet einen Lauf nur mit `consolidation.summary`, der die Summary der neuesten Profilversion neu schreibt, auch wenn schon eine `ok`-Summary existiert (z. B. eine, die die Paket-Prüfung `verbatim_text` ablehnt, weil sie Text aus einem anderen Dokument des Archivs übernimmt). Die neue Summary steht neben der alten (je Prompt-Version und Lauf eine `ok`-Summary, Migration 0043); angezeigt und geliefert wird die neueste. Scheitern alle Versuche, bleibt die alte stehen und eine Aufgabe „fehlgeschlagener Job“ öffnet sich.
 
 ### Regeln ändern
 1. Neue Datei `config/consolidation/v2.json` (Kopie der aktiven Version, Änderungen, `version: "v2"`); die aktive Datei nie ändern, sobald Profile mit ihr existieren.
 2. Bewertungslauf über den Vergleichssatz: `npm run consolidate -- --comparison-set saronic --evaluation --rules v2` (Server: `dc run --rm worker node --import tsx scripts/consolidate.ts --comparison-set saronic --evaluation --rules v2`; im Code `startConsolidationRun({ scope: { comparisonSetArea }, evaluation: true, rulesVersion: "v2" })`). Er schreibt nur `evaluation_profiles`, keine Profile, Ereignisse, Aufgaben, Summaries oder Folgeaufträge. Vergleich alt/neu und Aktivieren auf „Qualität“ kommen mit M7; bis dahin die Tabelle `evaluation_profiles` des Laufs gegen die jüngsten `profiles` derselben Objekte vergleichen.
 3. `config/consolidation/active.json` auf `v2` umstellen, einchecken, deployen, dann je Revier `npm run consolidate -- --area <key>`. Jedes Objekt mit geänderten Werten oder Klassen bekommt eine neue Version mit `rules_version` v2.
+
+## Lieferung
+Stufe 9 (M6): je Revier ein Paket nach dem „Periplus Data Contract“ (`contract/v1/`, JSON-Schemas unter `contract/schema/1.0/`), gebaut, geprüft und in S3 abgelegt (`deliveries/<ar_…>/<dataVersion>/<datei>`), abrufbar über die Liefer-API `/api/v1`. Checkliste der Abnahme: `docs/pilot/m6-abnahme.md`.
+
+> **ODbL:** `coast.geojson`, OSM-Namen und Regionspolygone stehen unter ODbL (im Manifest unter `licenses` ausgewiesen). Bis die ODbL-Trennung (Teil-Spec 08 „Lizenz und ODbL“) rechtlich geprüft ist, gehen Pakete **nur an interne Abnehmer**: keinen API-Schlüssel an Dritte ausgeben.
+
+### Reihenfolge je Revier (Pilot: `saronic`, danach `argolic`)
+1. **Voraussetzung Profile** (M5, Abschnitt „Konsolidierung“): `npm run check:profiles -- --area saronic` (Server: `dc run --rm worker node --import tsx scripts/check-profiles.ts --area saronic`) endet mit Exit 0.
+2. **„Lieferungen“ → „Paket bauen“** beim Revier: startet einen Lauf mit der Stufe `delivery.build` und öffnet seine Laufseite.
+3. **Bericht prüfen**: „Lieferungen“ → Zeile des Baus. Status „Gültig“ (neue Version, Dateien gespeichert, über die API abrufbar), „Unverändert“ (gültig, aber nichts geändert: keine neue Version, keine Dateien) oder „Abgelehnt“ (mindestens eine der 16 Prüfungen mit Verstoß; die Dateien bleiben unter `deliveries/<ar_…>/rejected/<id>/` zur Diagnose, das Revier liefert weiter das letzte gültige Paket). Die Detailseite zeigt jede Prüfung mit Fundstellen (Objekt-IDs verlinken auf Ort- oder Geo-Seite), die Warnungen (was ausgelassen wurde; sie blockieren nicht), die Änderungen (`changes.json`, ab dem zweiten Paket) und die Dateien zum Herunterladen. Der Reiter „Lieferung“ einer Ort-Seite zeigt das gelieferte Vertragsobjekt und eine Vorschau des nächsten Pakets.
+4. **Verstöße beheben** (unten), dann erneut „Paket bauen“.
+5. **Abnehmer-Prüfung** (unten): `delivery:consume` gegen den Server endet mit `OK`.
+
+### Verstöße beheben
+| Prüfung | Abhilfe |
+| --- | --- |
+| Keine zwei Spots derselben Art näher als 150 m (`spot_duplicates`) | Ort-Seite → **„Mit Ort zusammenlegen“**: der Ort wird Teil des gewählten bestätigten Orts (Status abgelehnt, Grund zusammengelegt; seine Facts gehen an den Ziel-Ort, der danach konsolidiert wird). Im nächsten Paket steht der alte Spot mit `mergedInto`. Ausgeschlossene Spots zählen nicht. |
+| Kein Text länger als 15 Wörter aus einer Quelle (`verbatim_text`) | Betrifft fast immer eine Summary (Fundstelle `/spots/<i>/summary/de` bzw. `/highlights/<i>/summary/de`): Ort- bzw. Geo-Seite → Reiter „Profil“ → **„Summary neu erzeugen“** (Abschnitt „Summaries“ oben), Lauf abwarten, dann erneut „Paket bauen“. Bleibt die neue Summary leer (Aufgabe „fehlgeschlagener Job“), geht der Befund an Christian. |
+| Spot in der Bounding Box und höchstens 1,5 sm von Wasser (`spot_location`) | Geprüft wird der **Punkt des Orts** (`spot.position` = `places.position`), nicht die Ankerposition. Ort-Seite → Reiter „Geometrie“ → Abschnitt „Ort“ → **„Position korrigieren …“**: Breite und Länge eintragen (höchstens `geometry.anchorArea.correctionMaxDistanceM`, 2000 m, vom bisherigen Punkt; die Entscheidung wird als Review-Aufgabe `place_position` festgehalten), danach startet ein Geometrie-Lauf (oder, ohne Geometrie-Eingaben, ein Konsolidierungslauf). Die Ankerposition korrigiert die Karte desselben Reiters („Ankerposition übernehmen“); sie ändert `spot_location` nicht. Ist der Ort eine Dublette: „Mit Ort zusammenlegen“. |
+| Keine fremden Inhalte (`foreign_content`) | Ein gelieferter Wert eines Spots, Highlights oder einer Region zitiert ein Dokument auf einer verbotenen Domain (`forbiddenDomains` in `config/delivery.json`, auch ein nicht mehr erreichbares), oder ein Text nennt eine solche Domain. Quellen auf diesen Domains lassen sich seit M6 nicht freigeben; ein Treffer heißt, eine wurde vorher freigegeben. Abhilfe: Quelle öffnen (die Fundstelle nennt die URL, die Dokumentseite die Quelle) → **„Quelle beenden …“** (Abschnitt „Quelle pausieren und fortsetzen“): ihre Facts zählen nicht mehr, und ein Konsolidierungslauf für die betroffenen Objekte startet; ein Wert, der nur auf ihr beruht, fällt weg. Nennt eine Summary die Domain: „Summary neu erzeugen“. Bleibt ein Wert als „unsicher“ stehen (eine andere Quelle sagt etwas anderes, die alte Herkunft hängt noch an einer offenen Aufgabe), die Aufgabe unter „Prüfen“ entscheiden. |
+| Schutz (`shelter`) bei Häfen und Marinas | Ein Hafen oder eine Marina braucht mindestens 0,8 je Sektor, sonst muss die Herkunft des Schutzes Text, Beobachtung oder Review sein (`harbourShelterSources` in `config/delivery.json`). Ein Wert darunter aus Rechnung allein: Befund an Christian. |
+| übrige Prüfungen (Schema, IDs, Referenzen, Grenzen, Saison, Datenversion, `changes.json`) | Fehler im Bau, nicht in den Daten: Bericht und Log (`delivery rejected`) an Christian. |
+
+Warnungen (nicht blockierend) nennen u. a. Spots ohne Profil oder mit unvollständigem Schutz (nicht geliefert; „Profil neu berechnen“), Objekte ohne Namen, Highlights ohne Spot im Radius und zusammengelegte Spots, deren Ziel nicht im Paket ist. Dazu zwei Sicherheits-Warnungen:
+- **„Sperrgebiet laut Text nicht geliefert: …“** (Region) bzw. **„Gefahr laut Text nicht geliefert (<Kap/Enge>): …“** (Wetterpunkt): Sperrzonen eines Reviers oder einer Insel und Gefahren eines Kaps oder einer Enge, die nur aus Text bekannt sind, haben in Teil B kein Feld und stehen weder in `regions.json` noch in `coast.geojson`. Ist die Zone für die Routenplanung wichtig, als Ausschlussfläche erfassen („Ankerverbots-Gebiete pflegen“), dann erscheint sie als `restrictedArea`.
+- **„Liegt in einem militärischen Sperrgebiet des Pakets …, ist aber nicht ausgeschlossen“** (Spot): der Spot liegt in einer `restrictedArea` mit Grund `military` des eigenen `coast.geojson`. Profil und Status des Orts prüfen („Profil neu berechnen“, Reiter „Geometrie“ → Ausschlussflächen).
+
+### Bau (Technik)
+Stufe 9 (M6): Lauf „Paket bauen“ je Revier (Stufe `delivery.build`, ein Job). Der Bau nimmt die Revier-Sperre (`pg_advisory_xact_lock`), liest alles aus einem Snapshot (eigene Transaktion, REPEATABLE READ, nur lesend), legt die Dateien in S3 ab und schreibt dann die Zeile `deliveries`. Ein abgelehntes Paket (eine Prüfung schlägt fehl, auch bei unverändertem Inhalt) steht im Log als Warnung „delivery rejected“ mit den fehlgeschlagenen Prüfungen und unter `deliveries/<ar_…>/rejected/<id>/`; das Revier liefert weiter das letzte gültige Paket.
+- **Pool und Nebenläufigkeit**: ein Bau hält zwei Verbindungen des Pools (Sperr-Transaktion und Lese-Snapshot); der Pool hat 10 Verbindungen (`pg`-Standard), die sich alle Queues eines Workers teilen. `concurrency` von `delivery.build` (`config/queues.json`, Pilot 1) mal Anzahl der Worker bleibt deutlich unter der Poolgröße. Wartet ein Bau länger als `build.lockTimeoutMs` (`config/delivery.json`, 5 min) auf die Revier-Sperre, bricht er mit `lock_not_available` ab und der Job wird wiederholt; so halten wartende Bauvorgänge ihre Verbindungen nie dauerhaft. Ein Job läuft höchstens `expireInSeconds` 3600 s.
+
+### API-Schlüssel für Abnehmer
+```bash
+npm run apikey:create -- <abnehmer> --scope delivery:read
+# Server:
+dc run --rm worker node --import tsx scripts/apikey.ts create <abnehmer> --scope delivery:read
+```
+Der Schlüssel (`pk_…`) wird nur einmal ausgegeben. Sperren: „Einstellungen“ → „API-Clients“ → „Sperren“ (wirkt sofort, nicht umkehrbar) oder `npm run apikey:revoke -- <abnehmer>`. Rate-Limit je Schlüssel: `api_clients.rate_limit_per_min` (Standard 60 je Minute, darüber 429).
+
+### Liefer-API
+Alle Endpunkte unter `/api/v1` brauchen `Authorization: Bearer pk_…` mit Scope `delivery:read`. Antworten tragen `ETag` (mit `If-None-Match` → 304), `Cache-Control: private, max-age=60`, `Periplus-Schema-Version` und, wo es eine gibt, `Periplus-Data-Version`. Fehler kommen als `{ "error": { "code", "message" } }` mit 400/401/403/404/429/500. `<area>` ist der Revier-Schlüssel (`saronic`) oder die öffentliche ID (`ar_…`). Nur gültige Pakete werden ausgeliefert.
+
+```bash
+read -rs PERIPLUS_API_KEY && export PERIPLUS_API_KEY   # pk_… einfügen, Enter: nicht in der Shell-History; nie in Dateien oder Tickets schreiben
+H="Authorization: Bearer $PERIPLUS_API_KEY"
+curl -sH "$H" https://<domain>/api/v1/areas                                        # Reviere mit aktueller dataVersion, bbox, Bauzeit
+curl -sH "$H" https://<domain>/api/v1/areas/saronic/package                        # Manifest des aktuellen Pakets mit links je Datei
+curl -sH "$H" https://<domain>/api/v1/areas/saronic/package/spots.json             # eine Datei des aktuellen Pakets
+curl -sH "$H" "https://<domain>/api/v1/areas/saronic/package/spots.json?dataVersion=1"   # Datei eines älteren Pakets (Archiv)
+curl -sH "$H" "https://<domain>/api/v1/areas/saronic/changes?since=1"              # Änderungen nach Version 1 bis heute, je Objekt zusammengefasst
+curl -sH "$H" "https://<domain>/api/v1/spots/sp_…?asOf=2026-11-01"                 # ein Spot, wie er an diesem Tag geliefert war
+curl -sH "$H" https://<domain>/api/v1/schema/1.0/spots.schema.json                 # JSON-Schema einer Datei
+```
+- **`changes?since=<n>`**: `n` von 1 bis zur aktuellen Version (`n` = aktuelle Version → leere Liste); sonst 400 `invalid_since`. Eine App, die Version `n` hat, holt damit alles bis zur aktuellen.
+- **`spots/<id>?asOf=YYYY-MM-DD`**: liest das Paketarchiv (die Spot-Version des Pakets, das an diesem Tag galt), keine Neuberechnung; ohne `asOf` die zuletzt gelieferte Version. Ein gespeicherter Törn bekommt so genau die Fassung zurück, auf die er verweist. Vor einem simulierten Revisit (M7) deshalb ein Paket bauen.
+- Herunterladen in der Oberfläche: Detailseite eines Pakets → Dateien (Admin-Sitzung, kein Schlüssel nötig).
+
+### Abnehmer-Prüfung
+`delivery:consume` prüft ein Paket so, wie ein fremder Abnehmer es sieht, nur über die API: Manifest holen, jede verlinkte Datei laden, ihren SHA-256 mit dem Manifest vergleichen und sie mit eigenem Ajv (Draft 2020-12) gegen das Schema von `/api/v1/schema/<version>/<datei>` prüfen.
+```bash
+read -rs PERIPLUS_API_KEY && export PERIPLUS_API_KEY   # Schlüssel einfügen, Enter; erscheint weder am Bildschirm noch in der Shell-History
+npm run delivery:consume -- --base-url https://<domain> --area saronic
+unset PERIPLUS_API_KEY
+```
+Ein Schlüssel in der Befehlszeile (`--key pk_…` oder `PERIPLUS_API_KEY=pk_… npm run …`) landet in der Shell-History. Die Basis-URL darf einen Pfad haben (`https://<domain>/periplus`); Links des Manifests auf einen anderen Host ruft die Prüfung nicht ab (der Schlüssel geht nur an die Basis-URL), und bei `http://` außer `localhost` warnt sie, dass der Schlüssel unverschlüsselt übertragen wird.
+Ausgabe je Datei `sha256 ok|MISMATCH  schema ok|<n> error(s)` mit den ersten Fehlern (JSON-Pointer), am Ende `OK` oder `FAILED` (Exit 1). Ein falscher Schlüssel, ein unbekanntes Revier oder ein Revier ohne gültiges Paket enden mit der Fehlermeldung der API und Exit 1.
+
+### Neue Vertragsversion
+Schritte für eine neue Version (z. B. `2.0`); die laufenden Pakete bleiben bis zum nächsten Bau bei ihrer Version:
+1. Neues Verzeichnis `contract/v2/` (Kopie von `v1`, Änderungen), `CONTRACT_SCHEMAS` in `contract/index.ts` darauf umstellen, `SCHEMA_VERSION` in `contract/index.ts` und `schemaVersion` in `config/delivery.json` auf die neue Version.
+2. `npm run contract:generate` schreibt die JSON-Schemas nach `contract/schema/<version>/` (ein Test vergleicht sie mit den zod-Schemas); einchecken.
+3. Die API liefert nur die aktuelle Version aus (`/schema/<version>/…` kennt nur sie): Abnehmer vorher informieren, danach je Revier „Paket bauen“.

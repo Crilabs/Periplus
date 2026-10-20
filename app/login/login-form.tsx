@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import { Button, Field, inputClass, Notice } from "../(admin)/_components/ui";
 import { login, type LoginState } from "./actions";
 
 const MESSAGES = {
@@ -11,40 +12,18 @@ const MESSAGES = {
 export function LoginForm({ next }: { next: string }) {
   const [state, action, pending] = useActionState<LoginState, FormData>(login, { error: null });
   return (
-    <form action={action} className="flex w-full max-w-sm flex-col gap-4">
+    <form action={action} className="flex flex-col gap-4">
       <input type="hidden" name="next" value={next} />
-      <label className="flex flex-col gap-1 text-sm">
-        E-Mail
-        <input
-          name="email"
-          type="email"
-          autoComplete="username"
-          required
-          className="rounded border border-neutral-400 bg-transparent px-3 py-2"
-        />
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        Passwort
-        <input
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          required
-          className="rounded border border-neutral-400 bg-transparent px-3 py-2"
-        />
-      </label>
-      {state.error && (
-        <p role="alert" className="text-sm text-red-600">
-          {MESSAGES[state.error]}
-        </p>
-      )}
-      <button
-        type="submit"
-        disabled={pending}
-        className="rounded bg-neutral-900 px-3 py-2 text-white disabled:opacity-60 dark:bg-neutral-100 dark:text-neutral-900"
-      >
+      <Field label="E-Mail">
+        <input name="email" type="email" autoComplete="username" required className={inputClass} />
+      </Field>
+      <Field label="Passwort">
+        <input name="password" type="password" autoComplete="current-password" required className={inputClass} />
+      </Field>
+      {state.error && <Notice tone="danger">{MESSAGES[state.error]}</Notice>}
+      <Button type="submit" variant="primary" disabled={pending} className="mt-1 w-full">
         Anmelden
-      </button>
+      </Button>
     </form>
   );
 }

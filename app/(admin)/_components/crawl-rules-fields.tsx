@@ -1,5 +1,6 @@
 import { crawlRulesSchema, type CrawlRules } from "@/lib/domain/sources/crawl-rules";
 import { CONVERTER_LABELS, CRAWL_RULE_LABELS, RENDER_MODE_LABELS } from "./labels";
+import { inputClass, textareaClass } from "./ui";
 
 /** Crawl rules entered one entry per line. */
 const LIST_FIELDS = ["startUrls", "allow", "deny", "boilerplateSelectors"] as const;
@@ -12,13 +13,18 @@ const LIST_HINTS: Record<(typeof LIST_FIELDS)[number], string> = {
   boilerplateSelectors: "ein CSS-Selektor je Zeile",
 };
 
+const NUMBER_HINTS: Record<(typeof NUMBER_FIELDS)[number], string> = {
+  maxDepth: "Link-Schritte ab den Start-URLs",
+  maxPages: "Obergrenze je Crawl-Lauf",
+  ratePerMinute: "Obergrenze, schont den Server der Quelle",
+};
+
 const NUMBER_LIMITS: Record<(typeof NUMBER_FIELDS)[number], { min: number; max: number }> = {
   maxDepth: { min: 0, max: 10 },
   maxPages: { min: 1, max: 5000 },
   ratePerMinute: { min: 1, max: 120 },
 };
 
-const INPUT = "rounded border border-neutral-300 px-1 py-0.5";
 
 const lines = (value: FormDataEntryValue | null): string[] =>
   typeof value === "string"
@@ -53,33 +59,40 @@ export function parseCrawlRulesForm(form: FormData): CrawlRules {
 export function CrawlRulesFields({ defaults, invalid = [] }: { defaults: CrawlRules; invalid?: readonly string[] }) {
   const mark = (field: keyof CrawlRules) =>
     invalid.includes(field) ? (
-      <span role="alert" className="text-red-700">
+      <span role="alert" className="text-xs font-medium text-danger">
         {" "}
         – ungültig
       </span>
     ) : null;
+  const label = "flex flex-col gap-1.5 text-sm";
   return (
-    <fieldset className="grid w-full gap-2">
-      <legend className="mb-1 font-semibold">Crawl-Regeln</legend>
-      {LIST_FIELDS.map((f) => (
-        <label key={f} className="grid gap-0.5">
-          <span>
-            {CRAWL_RULE_LABELS[f]} <span className="text-neutral-500">({LIST_HINTS[f]})</span>
-            {mark(f)}
-          </span>
-          <textarea
-            name={f}
-            rows={Math.max(2, defaults[f].length + 1)}
-            defaultValue={defaults[f].join("\n")}
-            spellCheck={false}
-            className={`${INPUT} font-mono text-xs`}
-          />
-        </label>
-      ))}
-      <div className="flex flex-wrap gap-4">
+    <fieldset className="grid w-full gap-4">
+      <legend className="mb-3 text-sm font-semibold">Crawl-Regeln</legend>
+      <div className="grid gap-4 sm:grid-cols-2">
+        {LIST_FIELDS.map((f) => (
+          <label key={f} className={label}>
+            <span className="font-medium">
+              {CRAWL_RULE_LABELS[f]}
+              {mark(f)}
+            </span>
+            <textarea
+              name={f}
+              rows={Math.max(2, defaults[f].length + 1)}
+              defaultValue={defaults[f].join("\n")}
+              spellCheck={false}
+              className={`${textareaClass} min-h-16 font-mono text-xs`}
+            />
+            <span className="text-xs leading-snug text-muted">{LIST_HINTS[f]}</span>
+          </label>
+        ))}
+      </div>
+      <div className="grid gap-4 sm:grid-cols-3">
         {NUMBER_FIELDS.map((f) => (
-          <label key={f} className="flex items-center gap-1">
-            {CRAWL_RULE_LABELS[f]}
+          <label key={f} className={label}>
+            <span className="font-medium">
+              {CRAWL_RULE_LABELS[f]}
+              {mark(f)}
+            </span>
             <input
               type="number"
               name={f}
@@ -87,37 +100,43 @@ export function CrawlRulesFields({ defaults, invalid = [] }: { defaults: CrawlRu
               step={f === "ratePerMinute" ? "any" : 1}
               {...NUMBER_LIMITS[f]}
               defaultValue={defaults[f]}
-              className={`${INPUT} w-20`}
+              className={inputClass}
             />
-            {mark(f)}
+            <span className="text-xs leading-snug text-muted">
+              {NUMBER_HINTS[f]} ({NUMBER_LIMITS[f].min}–{NUMBER_LIMITS[f].max})
+            </span>
           </label>
         ))}
       </div>
-      <div className="flex flex-wrap gap-4">
-        <label className="flex items-center gap-1">
-          {CRAWL_RULE_LABELS.render}
-          <select name="render" defaultValue={defaults.render} className={INPUT}>
+      <div className="grid gap-4 sm:grid-cols-3 sm:items-end">
+        <label className={label}>
+          <span className="font-medium">
+            {CRAWL_RULE_LABELS.render}
+            {mark("render")}
+          </span>
+          <select name="render" defaultValue={defaults.render} className={inputClass}>
             {Object.entries(RENDER_MODE_LABELS).map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
               </option>
             ))}
           </select>
-          {mark("render")}
         </label>
-        <label className="flex items-center gap-1">
-          {CRAWL_RULE_LABELS.converter}
-          <select name="converter" defaultValue={defaults.converter} className={INPUT}>
+        <label className={label}>
+          <span className="font-medium">
+            {CRAWL_RULE_LABELS.converter}
+            {mark("converter")}
+          </span>
+          <select name="converter" defaultValue={defaults.converter} className={inputClass}>
             {Object.entries(CONVERTER_LABELS).map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
               </option>
             ))}
           </select>
-          {mark("converter")}
         </label>
-        <label className="flex items-center gap-1">
-          <input type="checkbox" name="pdf" defaultChecked={defaults.pdf} />
+        <label className="flex h-9 items-center gap-2 text-sm">
+          <input type="checkbox" name="pdf" defaultChecked={defaults.pdf} className="size-4 accent-accent" />
           {CRAWL_RULE_LABELS.pdf}
         </label>
       </div>

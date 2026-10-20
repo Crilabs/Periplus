@@ -77,3 +77,28 @@ describe("proxy session refresh", () => {
     },
   );
 });
+
+describe("proxy denials", () => {
+  it("answers an API request without a key with 401 in the API error format", async () => {
+    const response = await proxy(new NextRequest("http://localhost:3000/api/v1/areas"));
+    expect(response.status).toBe(401);
+    expect(response.headers.get("www-authenticate")).toBe("Bearer");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({ error: { code: "unauthorized", message: "Missing or invalid API key." } });
+  });
+
+  it("answers an encoded traversal with 404 in the API error format", async () => {
+    const response = await proxy(
+      new NextRequest("http://localhost:3000/api/v1/areas/ar_x/package/..%2fspots.json", { headers: { authorization: "Bearer pk_x" } }),
+    );
+    expect(response.status).toBe(404);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({ error: { code: "not_found", message: "Not found." } });
+  });
+
+  it("answers an unknown API path with a key with 404", async () => {
+    const response = await proxy(new NextRequest("http://localhost:3000/api/v1/secrets", { headers: { authorization: "Bearer pk_x" } }));
+    expect(response.status).toBe(404);
+    expect((await response.json()).error).toEqual({ code: "not_found", message: "Not found." });
+  });
+});

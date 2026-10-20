@@ -1,0 +1,1 @@
+ALTER TABLE "delivered_objects" ADD CONSTRAINT "delivered_objects_public_id_prefix" CHECK ("delivered_objects"."public_id" ~ ('^' || CASE "delivered_objects"."object_type" WHEN 'spot' THEN 'sp' WHEN 'highlight' THEN 'hl' ELSE 'rg' END || '_'));

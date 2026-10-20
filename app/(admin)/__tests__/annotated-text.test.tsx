@@ -71,7 +71,7 @@ describe("FactsTab", () => {
     // the document link opens the quote's version on the tab that highlights it
     expect(html).toContain('href="/documents/d1?v=v1&amp;tab=annotations"');
     expect(html).toContain('href="/runs/r1234567-0000"');
-    expect(html).toMatch(/text-neutral-400[^>]*><p><span class="font-semibold">mäßig/);
+    expect(html).toMatch(/opacity-60[^>]*><p[^>]*><span class="font-semibold">mäßig/);
     expect(html).toContain("nicht aktiver Lauf");
     expect(html).toContain('href="/x?runs=active"');
   });

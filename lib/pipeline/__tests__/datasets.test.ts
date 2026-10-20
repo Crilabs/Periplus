@@ -280,6 +280,13 @@ describe("importRestrictions", () => {
       const layers = {
         "emodnet:militaryareaspoly": fc([
           { type: "Feature", id: "militaryareaspoly.7", properties: { name: "Firing area" }, geometry: rect(23.27, 37.52, 23.29, 37.54) },
+          // self-intersecting (a bowtie): stored made valid, as two triangles
+          {
+            type: "Feature",
+            id: "militaryareaspoly.8",
+            properties: {},
+            geometry: { type: "Polygon", coordinates: [[[23.3, 37.52], [23.32, 37.54], [23.32, 37.52], [23.3, 37.54], [23.3, 37.52]]] },
+          },
         ]),
         "emodnet:natura2000areas": fc([
           { type: "Feature", id: "natura.1", properties: { sitecode: "GR3000005" }, geometry: rect(23.4, 37.52, 23.42, 37.54) },
@@ -300,7 +307,7 @@ describe("importRestrictions", () => {
       const result = await importRestrictions(db, { area: areaByKey(AREA), now: today }, { transport: first.transport, archive });
 
       const counts = (inserted: number) => ({ inserted, updated: 0, unchanged: 0, ended: 0 });
-      expect(result).toEqual({ military: counts(1), protected_area: counts(1), aquaculture: counts(1), cable: counts(2) });
+      expect(result).toEqual({ military: counts(2), protected_area: counts(1), aquaculture: counts(1), cable: counts(2) });
       // Buffered layers are requested for the box widened by their buffer.
       const finfish = first.seen.find((r) => r.url.includes("finfish"))!;
       expect(wfsBox(finfish.url)).toEqual(bufferBbox(box, 0.25));
@@ -319,8 +326,8 @@ describe("importRestrictions", () => {
         ].sort(),
       );
 
-      const { rows } = await db.execute<{ kind: string; source_ref: string; type: string; area_m2: number }>(sql`
-        select kind::text, source_ref, ST_GeometryType(geom) as type, ST_Area(geom::geography) as area_m2
+      const { rows } = await db.execute<{ kind: string; source_ref: string; type: string; area_m2: number; valid: boolean }>(sql`
+        select kind::text, source_ref, ST_GeometryType(geom) as type, ST_Area(geom::geography) as area_m2, ST_IsValid(geom) as valid
         from restricted_areas
         where valid_to is null and valid_from = '2026-10-19'
           and (source_ref like 'emodnet:%' or source_ref like 'osm-cable:%')
@@ -329,10 +336,13 @@ describe("importRestrictions", () => {
       expect(rows.map((r) => [r.kind, r.source_ref, r.type])).toEqual([
         ["aquaculture", "emodnet:finfish/42", "ST_Polygon"],
         ["military", "emodnet:militaryareaspoly/militaryareaspoly.7", "ST_Polygon"],
+        ["military", "emodnet:militaryareaspoly/militaryareaspoly.8", "ST_MultiPolygon"],
         ["protected_area", "emodnet:natura2000areas/GR3000005", "ST_Polygon"],
         ["cable", "osm-cable:way/101", "ST_Polygon"],
         ["cable", "osm-cable:way/103", "ST_Polygon"],
       ]);
+      // restricted areas are made valid at import (coast.geojson cuts them at the box)
+      expect(rows.every((r) => r.valid)).toBe(true);
       const finfishArea = Number(rows[0]!.area_m2);
       expect(finfishArea / (Math.PI * 250 ** 2)).toBeCloseTo(1, 1);
 
@@ -350,7 +360,7 @@ describe("importRestrictions", () => {
         { transport: scriptedServices(db, { layers, cables }).transport, archive },
       );
       const same = (unchanged: number) => ({ inserted: 0, updated: 0, unchanged, ended: 0 });
-      expect(again).toEqual({ military: same(1), protected_area: same(1), aquaculture: same(1), cable: same(2) });
+      expect(again).toEqual({ military: same(2), protected_area: same(1), aquaculture: same(1), cable: same(2) });
     }));
 });
 

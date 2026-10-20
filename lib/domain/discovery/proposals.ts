@@ -7,6 +7,7 @@ import type { Db } from "@/lib/db/client";
 import { sources, type DocType, type SourceOrigin } from "@/lib/db/schema";
 import { createReviewTask } from "@/lib/domain/review";
 import { DEFAULT_CRAWL_RULES, type CrawlRules } from "@/lib/domain/sources/crawl-rules";
+import { isForbiddenHost } from "@/lib/domain/sources/forbidden-domains";
 import { robotsForRun, robotsSummary, type RobotsSummary } from "@/lib/domain/sources/robots";
 import { safeDecode } from "@/lib/domain/sources/urls";
 import { createLogger } from "@/lib/logger";
@@ -98,10 +99,15 @@ const ignored = (domain: string, ignoreDomains: string[]) =>
 /**
  * Domains to propose: at least `minSerpHits` SERP hits (a URL found again by a later search of the same query
  * counts once), or linked from at least `minLinkingSources` distinct approved sources in each one's newest
- * crawl run. Without `ignoreDomains` (equal or subdomain) and without every domain that has a `sources` row
- * (any status, ended ones too). Ordered by domain; hits by rank, then URL.
+ * crawl run. Without `ignoreDomains` and `forbiddenDomains` (equal or subdomain; a forbidden domain is never proposed,
+ * ruling M6-D-R2) and without every domain that has a `sources` row (any status, ended ones too). Ordered by domain;
+ * hits by rank, then URL.
  */
-export async function domainCandidates(db: Db, cfg: ProposalsConfig): Promise<DomainCandidate[]> {
+export async function domainCandidates(
+  db: Db,
+  cfg: ProposalsConfig,
+  forbiddenDomains: readonly string[] = getConfig().delivery.forbiddenDomains,
+): Promise<DomainCandidate[]> {
   const serp = await db.execute<{ domain: string }>(sql`
     with hits as (
       select distinct r.domain, q.keyword, q.language_code, q.location_code, r.url_normalized
@@ -126,7 +132,7 @@ export async function domainCandidates(db: Db, cfg: ProposalsConfig): Promise<Do
 
   const linkingSources = new Map(linked.rows.map((r) => [r.domain, r.n]));
   let domains = [...new Set([...serp.rows.map((r) => r.domain), ...linkingSources.keys()])].filter(
-    (d) => !ignored(d, cfg.ignoreDomains),
+    (d) => !ignored(d, cfg.ignoreDomains) && !isForbiddenHost(d, forbiddenDomains),
   );
   if (domains.length === 0) return [];
   const known = await db.select({ domain: sources.domain }).from(sources).where(inArray(sources.domain, domains));
@@ -195,7 +201,7 @@ export async function proposeSources(
   const p = cfg.discovery.proposals;
   let proposed = 0;
   let skipped = 0;
-  for (const candidate of await domainCandidates(db, p)) {
+  for (const candidate of await domainCandidates(db, p, cfg.delivery.forbiddenDomains)) {
     const urls = candidate.hits.length > 0 ? candidate.hits.map((h) => h.url) : [`https://${candidate.domain}/`];
     const type = suggestType(urls, p);
     const crawlRules = suggestCrawlRules(urls);

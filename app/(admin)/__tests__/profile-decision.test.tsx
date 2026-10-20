@@ -31,4 +31,14 @@ describe("ProfileDecision (uncertain change)", () => {
     expect(isDisabled(render(subject({ value: false, display: "nein", facts: [] })), "Übernehmen")).toBe(false);
     expect(isDisabled(render(subject({ value: null, display: "–", facts: [] })), "Verwerfen")).toBe(false);
   });
+
+  it("shows both weak values of a held safety value's conflict, without conflict decisions (ruling M6-FIN-R3)", () => {
+    const side = (value: number, display: string) => ({ value, fingerprint: String(value), display, weight: 0.4, observedFrom: "2026-07-01", observedTo: "2026-07-01", facts: [] });
+    const html = render({ ...subject({ value: 4, display: "4 m", facts: [] }), a: side(4, "4 m"), b: side(2, "2 m"), others: [] });
+    expect(html).toContain("Wert A");
+    expect(html).toContain("Wert B");
+    expect(html).toContain("2 m");
+    expect(html).not.toContain("Beide (saisonal)");
+    expect(render(subject({ value: 4, display: "4 m", facts: [] }))).not.toContain("Wert B");
+  });
 });

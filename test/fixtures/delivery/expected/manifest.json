@@ -1,0 +1,120 @@
+{
+  "schemaVersion": "1.0",
+  "area": {
+    "id": "ar_01J9ZD00000000000000000001",
+    "key": "delivery-test",
+    "name": "Testrevier",
+    "names": [
+      {
+        "lang": "de",
+        "name": "Testrevier"
+      },
+      {
+        "lang": "en",
+        "name": "Test Waters"
+      }
+    ],
+    "polygon": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            21,
+            35
+          ],
+          [
+            21.5,
+            35
+          ],
+          [
+            21.5,
+            35.25
+          ],
+          [
+            21,
+            35.25
+          ],
+          [
+            21,
+            35
+          ]
+        ]
+      ]
+    }
+  },
+  "dataVersion": 1,
+  "previousDataVersion": null,
+  "generatedAt": "2040-06-01T08:00:00.000Z",
+  "bbox": [
+    21,
+    35,
+    21.5,
+    35.25
+  ],
+  "tiles": [
+    {
+      "id": "q025:804:500",
+      "lastRunAt": null,
+      "profilesAsOf": "2026-10-19"
+    },
+    {
+      "id": "q025:805:500",
+      "lastRunAt": null,
+      "profilesAsOf": "2026-10-19"
+    }
+  ],
+  "objectCounts": {
+    "spots": 3,
+    "highlights": 1,
+    "regions": 2,
+    "weatherPoints": 2,
+    "coastFeatures": 3,
+    "changes": 0
+  },
+  "licenses": [
+    {
+      "name": "ODbL-1.0",
+      "attribution": "© OpenStreetMap contributors",
+      "url": "https://opendatacommons.org/licenses/odbl/1-0/",
+      "files": [
+        "coast.geojson"
+      ],
+      "fields": [
+        "spots.json#/spots/*/name",
+        "spots.json#/spots/*/names",
+        "spots.json#/spots/*/externalRefs/osmId",
+        "highlights.json#/highlights/*/name",
+        "regions.json#/regions/*/name",
+        "regions.json#/regions/*/names",
+        "regions.json#/regions/*/polygon"
+      ]
+    }
+  ],
+  "files": [
+    {
+      "name": "spots.json",
+      "sha256": "c04cf8ae76698805f12140933916e873dbbb0dd76cd85bcc8b1945ab4e1ba955",
+      "bytes": 9485
+    },
+    {
+      "name": "highlights.json",
+      "sha256": "bfbf8e7b67f208f48912eef9b6e6e1fa277999535fbd58a2cbc4a86fbce89b5a",
+      "bytes": 836
+    },
+    {
+      "name": "regions.json",
+      "sha256": "f65236193d9323ae98290bd772e140b4cfc4c63be4516d569d175bf112cb23fe",
+      "bytes": 1991
+    },
+    {
+      "name": "coast.geojson",
+      "sha256": "701cb7849a89802cbe36e7526d014504bad2dc53818398c04d812cfa388524a6",
+      "bytes": 2277
+    },
+    {
+      "name": "weather-points.json",
+      "sha256": "95d8048265c3c867eb8a8fc4800bc1b7ba2f7d5bbb550e88d63f97f4404997d1",
+      "bytes": 596
+    }
+  ]
+}

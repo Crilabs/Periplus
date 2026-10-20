@@ -1,0 +1,98 @@
+{
+  "schemaVersion": "1.0",
+  "area": "ar_01J9ZD00000000000000000001",
+  "dataVersion": 1,
+  "generatedAt": "2040-06-01T08:00:00.000Z",
+  "regions": [
+    {
+      "id": "rg_01J9ZD00000000000000000001",
+      "name": "Nisida",
+      "names": [
+        {
+          "lang": "en",
+          "name": "Nisida"
+        }
+      ],
+      "type": "island",
+      "center": {
+        "lat": 35.09,
+        "lon": 21.125
+      },
+      "radiusNm": 5.2,
+      "polygon": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              21.05,
+              35.05
+            ],
+            [
+              21.2,
+              35.05
+            ],
+            [
+              21.2,
+              35.15
+            ],
+            [
+              21.14,
+              35.15
+            ],
+            [
+              21.13,
+              35.13
+            ],
+            [
+              21.12,
+              35.15
+            ],
+            [
+              21.05,
+              35.15
+            ],
+            [
+              21.05,
+              35.05
+            ]
+          ]
+        ]
+      },
+      "parentId": "rg_01J9ZD00000000000000000002",
+      "spotIds": [
+        "sp_01J9ZD00000000000000000001"
+      ],
+      "character": {
+        "de": "Meltemi-exponiert, starker Fährverkehr, Charterbasis."
+      },
+      "facts": {
+        "meltemiExposure": 0.7,
+        "ferryTraffic": "heavy",
+        "charterBase": true,
+        "supplyPort": null
+      },
+      "profileVersion": 1,
+      "validFrom": "2040-06-01"
+    },
+    {
+      "id": "rg_01J9ZD00000000000000000002",
+      "name": "Test Islands",
+      "names": [
+        {
+          "lang": "en",
+          "name": "Test Islands"
+        }
+      ],
+      "type": "archipelago",
+      "center": {
+        "lat": 35.1,
+        "lon": 21.15
+      },
+      "radiusNm": 2,
+      "parentId": "ar_01J9ZD00000000000000000001",
+      "spotIds": [],
+      "profileVersion": 1,
+      "validFrom": "2040-06-01"
+    }
+  ]
+}

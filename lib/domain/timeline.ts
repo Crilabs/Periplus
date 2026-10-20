@@ -1,4 +1,4 @@
-import { and, desc, eq, lte, sql, type AnyColumn, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, lte, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { profiles } from "@/lib/db/schema";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
@@ -51,6 +51,17 @@ export async function latestProfile(db: Db, geoObjectId: string): Promise<Profil
     .orderBy(desc(profiles.version))
     .limit(1);
   return row ?? null;
+}
+
+/** The newest profile version of each of the geo objects (as `latestProfile`), by geo object id; none → no entry. */
+export async function latestProfiles(db: Db, geoObjectIds: string[]): Promise<Map<string, ProfileSnapshot>> {
+  if (geoObjectIds.length === 0) return new Map();
+  const rows = await db
+    .selectDistinctOn([profiles.geoObjectId], { geoObjectId: profiles.geoObjectId, ...snapshotColumns })
+    .from(profiles)
+    .where(inArray(profiles.geoObjectId, geoObjectIds))
+    .orderBy(profiles.geoObjectId, desc(profiles.version));
+  return new Map(rows.map(({ geoObjectId, ...snapshot }) => [geoObjectId, snapshot]));
 }
 
 /** Version `version` of the geo object's profile, or null when it has no such version. */

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -29,6 +29,7 @@ type Overrides = {
   mentions?: unknown;
   nameAffixes?: unknown;
   extraction?: unknown;
+  delivery?: unknown;
   /** `consolidation/active.json`. */
   consolidationActive?: unknown;
   /** Rules version file name (without `.json`) to content; replaces the repo's `consolidation/v*.json`. */
@@ -58,6 +59,7 @@ function fixtureDir(overrides: Overrides): string {
     mentions: overrides.mentions ?? repoConfig.mentions,
     "name-affixes": overrides.nameAffixes ?? repoConfig.nameAffixes,
     extraction: overrides.extraction ?? repoConfig.extraction,
+    delivery: overrides.delivery ?? repoConfig.delivery,
   };
   for (const [name, value] of Object.entries(files)) {
     writeFileSync(join(dir, `${name}.json`), JSON.stringify(value));
@@ -89,6 +91,8 @@ describe("loadConfig", () => {
     expect(c.queues["system.ping"].retryLimit).toBe(2);
     // A crawled PDF is transcribed page by page in one job: it must not expire after pg-boss's default 15 minutes.
     expect(c.queues["fetch.url"].expireInSeconds).toBeGreaterThanOrEqual(3600);
+    // A package build holds its area lock and two pool connections; it must not expire and be retried meanwhile.
+    expect(c.queues["delivery.build"].expireInSeconds).toBe(3600);
     expect(c.budgets.anthropic.dailyEur).toBeGreaterThan(0);
     expect(c.models.tasks["system.echo"].model).toBe("claude-haiku-5-5");
     expect(c.models.pricesEurPerMTok["claude-haiku-5-5"].input).toBeGreaterThan(0);
@@ -595,6 +599,65 @@ describe("consolidation rules", () => {
     expect(() => loadConfig(fixtureDir({ consolidationActive: { version: "1" } }))).toThrow(
       /consolidation\/active\.json/,
     );
+  });
+});
+
+describe("delivery configuration", () => {
+  it("the delivery config carries the spec values", () => {
+    expect(getConfig().delivery).toMatchObject({
+      schemaVersion: "1.0",
+      coast: { marginNm: 2, simplifyToleranceM: 10 },
+      validation: {
+        maxWaterDistanceNm: 1.5,
+        spotDuplicateM: 150,
+        highlightDuplicateM: 500,
+        maxDraftM: [0.5, 10],
+        maxLengthM: [5, 100],
+        lowConfidence: 0.3,
+      },
+    });
+    expect(repoConfig.delivery).toMatchObject({
+      spots: { statuses: ["confirmed", "no_anchoring"], maxSources: 20 },
+      coast: { source: "OpenStreetMap, ODbL", restrictedSourceDefault: "EMODnet Human Activities" },
+      regions: { types: ["island", "archipelago", "coast_section", "gulf", "channel"], pointRadiusNm: 2 },
+      weather: { regionBufferNm: 3, capeOffsetNm: 1, capeLandRadiusM: 2000 },
+      highlights: { maxSpotIds: 50 },
+      validation: { harbourMinShelter: 0.8, lowConfidenceNote: "wenig belegt" },
+      severity: { shelterDelta: 0.2 },
+      api: { cacheMaxAgeSeconds: 60 },
+      build: { lockTimeoutMs: 300000 },
+    });
+    expect(repoConfig.delivery.forbiddenDomains).toContain("navily.com");
+    expect(repoConfig.delivery.licenses).toEqual([
+      expect.objectContaining({ name: "ODbL-1.0", attribution: "© OpenStreetMap contributors", files: ["coast.geojson"] }),
+    ]);
+    expect(repoConfig.delivery.licenses[0]!.fields).toContain("regions.json#/regions/*/polygon");
+  });
+
+  it("the low-confidence threshold of the delivery equals the summary's (ruling M6-P9)", () => {
+    expect(repoConfig.delivery.validation.lowConfidence).toBe(repoConfig.consolidation.summary.lowConfidence);
+  });
+
+  it("rejects a missing or invalid delivery config", () => {
+    const dir = fixtureDir({});
+    rmSync(join(dir, "delivery.json"));
+    expect(() => loadConfig(dir)).toThrow(/delivery\.json/);
+    const withDelivery = (patch: (d: typeof repoConfig.delivery) => void) => {
+      const delivery = structuredClone(repoConfig.delivery);
+      patch(delivery);
+      return () => loadConfig(fixtureDir({ delivery }));
+    };
+    expect(withDelivery(() => {})).not.toThrow();
+    expect(withDelivery((d) => ((d as { schemaVersion: string }).schemaVersion = "2.0"))).toThrow(/delivery\.json.*schemaVersion/);
+    expect(withDelivery((d) => (d.validation.maxDraftM = [10, 0.5]))).toThrow(/delivery\.json.*maxDraftM/);
+    expect(withDelivery((d) => (d.spots.statuses = ["bogus" as never]))).toThrow(/delivery\.json.*statuses/);
+    expect(withDelivery((d) => (d.regions.types = ["volcano" as never]))).toThrow(/delivery\.json.*types/);
+    expect(withDelivery((d) => (d.regions.character.meltemiLow = 0.7))).toThrow(/delivery\.json.*character/);
+    expect(withDelivery((d) => (d.forbiddenDomains = ["https://navily.com"]))).toThrow(/delivery\.json.*forbiddenDomains/);
+    expect(withDelivery((d) => (d.licenses[0]!.files = ["land.json" as never]))).toThrow(/delivery\.json.*files/);
+    expect(withDelivery((d) => (d.licenses[0]!.fields = ["land.json#/name"]))).toThrow(/delivery\.json.*fields/);
+    expect(withDelivery((d) => (d.build.lockTimeoutMs = 0))).toThrow(/delivery\.json.*lockTimeoutMs/);
+    expect(withDelivery((d) => Object.assign(d, { bogus: 1 }))).toThrow(/delivery\.json/);
   });
 });
 

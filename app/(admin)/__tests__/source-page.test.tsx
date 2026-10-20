@@ -74,6 +74,25 @@ describe("source page", () => {
       expect(await render((await insertSource(tx, "rejected")).id)).not.toContain("Hochladen und archivieren");
     }));
 
+  it("„Quelle beenden“ for an approved or paused source, with the notice after it (ruling M6-H-R1)", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const approved = await insertSource(tx, "approved");
+      const html = await render(approved.id);
+      expect(html).toContain("Quelle beenden …");
+      expect(html).toContain(">Quelle beenden</button>");
+      expect(await render((await insertSource(tx, "paused")).id)).toContain("Quelle beenden …");
+      for (const [status, validTo] of [["proposed", null], ["rejected", null], ["approved", "2026-01-01"]] as const) {
+        expect(await render((await insertSource(tx, status, validTo)).id)).not.toContain("Quelle beenden");
+      }
+      const run = "01a15602-0000-7000-8000-000000000001";
+      const notice = await render(approved.id, { ended: "3", run });
+      expect(notice).toContain("3 Objekte werden neu konsolidiert.");
+      expect(notice).toContain(`href="/runs/${run}"`);
+      expect(await render(approved.id, { ended: "3", endedNoRun: "1" })).toContain("ist nicht gestartet");
+      expect(await render(approved.id, { ended: "0" })).toContain("Kein Objekt hatte Facts aus ihr.");
+    }));
+
   it("names the source a pdf was archived for first, with a link to the document", () =>
     withRollback(async (tx) => {
       currentDb = tx;

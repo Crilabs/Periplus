@@ -360,6 +360,13 @@ export type ProfileContext = {
   decidedConflictKeys: Set<string>;
   /** Open `conflict` / `uncertain_change` tasks by `"<kind>:<attribute>"`. */
   openTasks: Map<string, { taskId: string; key: string }>;
+  /**
+   * Text facts of the object (and of objects merged into it) whose source is rejected or ended on the run date: a
+   * value resting only on them is withdrawn, not kept to expire („Quelle beenden“, ruling M6-H-R1).
+   */
+  withdrawnFactIds: Set<string>;
+  /** `source:<id>` keys of the sources of `withdrawnFactIds`: a kept value stops citing them (ruling M6-FIN-R2). */
+  withdrawnSourceKeys: Set<string>;
 };
 
 type ObjectRow = {
@@ -438,6 +445,16 @@ export async function loadContext(
     where m.geo_object_id in ${mergedChainSql(geoObjectId)} and ${countingSourceSql(today)}
   `);
 
+  const { rows: withdrawn } = await db.execute<{ id: string; source_id: string }>(sql`
+    select f.id, s.id as source_id
+    from facts f
+    join mentions m on m.id = f.mention_id
+    join document_versions v on v.id = m.document_version_id
+    join documents d on d.id = v.document_id
+    join sources s on s.id = d.source_id
+    where f.geo_object_id in ${mergedChainSql(geoObjectId)} and not (${countingSourceSql(today)})
+  `);
+
   const computationGaps: Record<string, string> = {};
   for (const c of (await latestComputations(db, geoObjectId)).values()) {
     const gaps = c.outputs.gaps;
@@ -485,6 +502,8 @@ export async function loadContext(
     decidedUncertainKeys,
     decidedConflictKeys,
     openTasks,
+    withdrawnFactIds: new Set(withdrawn.map((r) => r.id)),
+    withdrawnSourceKeys: new Set(withdrawn.map((r) => `source:${r.source_id}`)),
   };
 }
 

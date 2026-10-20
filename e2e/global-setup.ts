@@ -1,10 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { and, eq, like, sql } from "drizzle-orm";
+import { and, desc, eq, like, sql } from "drizzle-orm";
+import { createArchive } from "../lib/adapters/s3";
 import { createDb, type Db } from "../lib/db/client";
 import { geomFromGeoJson } from "../lib/db/geometry";
 import { loadConfig } from "../lib/config";
 import {
   chunks,
+  deliveries,
   documents,
   documentVersions,
   extractionRuns,
@@ -19,10 +21,14 @@ import {
   sources,
 } from "../lib/db/schema";
 import { consolidateGeo } from "../lib/domain/consolidation/store";
+import { buildDelivery } from "../lib/domain/delivery/build";
+import { failedChecksSummary } from "../lib/domain/delivery/validate";
+import { deliveryFiles, readStoredFile } from "../lib/domain/delivery/read";
 import type { AttributeProvenance } from "../lib/domain/consolidation/types";
 import { profileEntryKey } from "../lib/domain/profile-view";
 import { createReviewTask } from "../lib/domain/review";
 import { createUser } from "../lib/domain/users";
+import { E2E_DELIVERY_KEY, endE2eDeliveryArea, seedE2eDeliveryArea } from "../test/fixtures/delivery/area";
 
 /** Above the pipeline's priorities, so the e2e candidate is listed first on /review. */
 const REVIEW_PRIORITY = 1_000_000_000;
@@ -253,9 +259,56 @@ async function createSourceProposal(db: Db): Promise<{ domain: string; taskId: s
 }
 
 /**
+ * The synthetic delivery area of the deliveries spec (ruling M6-P29): the delivery fixture's layout committed once
+ * under config key `e2e-delivery` (`E2E_SHIFT`, away from every other test box) and its package built here, only when
+ * the area has no valid delivery yet; later runs find it with version 1 („Gültig“). Places are never deleted. A valid
+ * package whose files are gone from the test bucket (e.g. a wiped S3 volume) cannot be rebuilt (the same content is
+ * „unverändert“ and stores nothing), so its area is ended and seeded afresh. Returns the area's geo object id.
+ */
+async function ensureDeliveryArea(db: Db): Promise<string> {
+  const archive = createArchive({
+    endpoint: process.env.S3_ENDPOINT!,
+    region: process.env.S3_REGION!,
+    bucket: process.env.S3_BUCKET!,
+    accessKeyId: process.env.S3_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!,
+  });
+  await archive.ensureBucket();
+  const area = async () =>
+    (
+      await db.execute<{ id: string }>(
+        sql`select id from geo_objects where type = 'area' and config_key = ${E2E_DELIVERY_KEY} and valid_to is null`,
+      )
+    ).rows[0]?.id;
+  let areaId: string | undefined = await area();
+  if (areaId) {
+    const [row] = await db.select().from(deliveries).where(and(eq(deliveries.areaId, areaId), eq(deliveries.status, "valid")))
+      .orderBy(desc(deliveries.dataVersion))
+      .limit(1);
+    if (row) {
+      const stored = await Promise.all(
+        deliveryFiles(row).map((f) => readStoredFile(archive, row, f).then(() => true, () => false)),
+      );
+      if (stored.every(Boolean)) return areaId;
+      await endE2eDeliveryArea(db);
+      areaId = undefined;
+    }
+  }
+  areaId ??= (await db.transaction((tx) => seedE2eDeliveryArea(tx))).areaId;
+  const built = await buildDelivery(db, archive, areaId);
+  if (built.status !== "valid") {
+    throw new Error(
+      `e2e delivery area: package ${built.status} (delivery ${built.deliveryId}), failed checks: ${failedChecksSummary(built.report)}. ` +
+        "Fix the fixture (test/fixtures/delivery/area.ts) or end the area e2e-delivery in the test database.",
+    );
+  }
+  return areaId;
+}
+
+/**
  * Creates the e2e admin in the TEST database unless it already exists (idempotent) and a fresh place candidate
  * for the review test; its name is passed to the tests as E2E_REVIEW_PLACE. A proposed source for the sources test
- * (E2E_SOURCE_DOMAIN, task E2E_SOURCE_TASK).
+ * (E2E_SOURCE_DOMAIN, task E2E_SOURCE_TASK). The synthetic delivery area with its valid package (E2E_DELIVERY_AREA).
  */
 export default async function globalSetup(): Promise<void> {
   const url = process.env.TEST_DATABASE_URL ?? "postgres://periplus:periplus@localhost:5434/periplus_test";
@@ -294,6 +347,7 @@ export default async function globalSetup(): Promise<void> {
       sql`select 1 from geo_objects where type = 'area' and config_key = 'saronic' and valid_to is null`,
     );
     process.env.E2E_SARONIC_AREA = rows.length > 0 ? "created" : "missing";
+    process.env.E2E_DELIVERY_AREA = await ensureDeliveryArea(db);
   } finally {
     await close();
   }

@@ -19,6 +19,11 @@ export type ConsolidationParams = {
   rulesVersion?: string;
   /** Only these consolidation stages ran (e.g. `["consolidation.summary"]` for "Neu erzeugen"). */
   stagesOnly?: string[];
+  /**
+   * „Summary neu erzeugen“ (ruling M6-H-R1): the summary stage writes a new summary of each target's newest version even
+   * when an `ok` one exists (only with `stagesOnly` = the summary stage).
+   */
+  regenerateSummary?: true;
 };
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);

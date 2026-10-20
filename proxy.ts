@@ -1,11 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { API_MESSAGES, apiError } from "@/lib/api/respond";
 import { decideAccess } from "@/lib/security/access";
 import { refreshSessionToken, SESSION_COOKIE, sessionCookieOptions, verifySessionToken } from "@/lib/security/session";
 
 const BEARER = /^Bearer\s+\S+/i;
 
 /** Default-deny gate for every request (see lib/security/route-policy.ts). Never touches the DB. */
-export async function proxy(request: NextRequest): Promise<NextResponse> {
+export async function proxy(request: NextRequest): Promise<Response> {
   const session = await verifySessionToken(request.cookies.get(SESSION_COOKIE)?.value);
   const decision = decideAccess({
     pathname: request.nextUrl.pathname,
@@ -17,11 +18,11 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   // same-host one to a relative path, so the client-controlled Host never reaches the browser.
   // Asserted end-to-end in e2e/login.spec.ts ("redirect Location is relative …").
   if (decision.action === "redirect") return NextResponse.redirect(new URL(decision.to, request.url));
+  // the API error format (ruling M6-P20): `{ error: { code, message } }`, never cached
   if (decision.action === "deny") {
-    const code = decision.status === 401 ? "unauthorized" : "not_found";
-    const headers: Record<string, string> = { "Cache-Control": "no-store" };
-    if (decision.status === 401) headers["WWW-Authenticate"] = "Bearer";
-    return NextResponse.json({ error: { code } }, { status: decision.status, headers });
+    return decision.status === 401
+      ? apiError(401, "unauthorized", API_MESSAGES.unauthorized, { "WWW-Authenticate": "Bearer" })
+      : apiError(404, "not_found", API_MESSAGES.not_found);
   }
 
   const requestHeaders = new Headers(request.headers);

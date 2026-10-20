@@ -7,7 +7,9 @@ import { getArchive } from "@/lib/adapters/s3";
 import { getDb } from "@/lib/db/client";
 import { changeRateEnum, DOC_TYPES } from "@/lib/db/schema";
 import type { CrawlRules } from "@/lib/domain/sources/crawl-rules";
+import { ForbiddenSourceDomain } from "@/lib/domain/sources/forbidden-domains";
 import {
+  endSource,
   NotAPdf,
   pauseSource,
   resumeSource,
@@ -17,6 +19,8 @@ import {
   uploadPdf,
 } from "@/lib/domain/sources/store";
 import { getBoss } from "@/lib/jobs/boss";
+import { createLogger } from "@/lib/logger";
+import { startConsolidationRun } from "@/lib/pipeline/consolidation/run";
 import { startFetchRun, startTestCrawl, startUploadFetchRun } from "@/lib/pipeline/fetch/run";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { parseCrawlRulesForm } from "../../_components/crawl-rules-fields";
@@ -86,13 +90,46 @@ export async function pauseSourceAction(formData: FormData): Promise<void> {
   redirect(changed ? sourcePath(sourceId) : `${sourcePath(sourceId)}?error=not_approved`);
 }
 
-/** "Fortsetzen": only a paused source; any other status comes back with an error. */
+/** "Fortsetzen": only a paused source on an allowed domain; anything else comes back with an error. */
 export async function resumeSourceAction(formData: FormData): Promise<void> {
   await requireAdmin();
   const sourceId = sourceIdOf(formData);
-  const changed = await resumeSource(getDb(), sourceId);
+  let target: string;
+  try {
+    const changed = await resumeSource(getDb(), sourceId);
+    target = changed ? sourcePath(sourceId) : `${sourcePath(sourceId)}?error=not_paused`;
+  } catch (e) {
+    if (!(e instanceof ForbiddenSourceDomain)) throw e;
+    target = `${sourcePath(sourceId)}?error=forbidden_domain`;
+  }
   revalidatePath(sourcePath(sourceId));
-  redirect(changed ? sourcePath(sourceId) : `${sourcePath(sourceId)}?error=not_paused`);
+  redirect(target);
+}
+
+/**
+ * „Quelle beenden“ (ruling M6-H-R1): ends an approved or paused source (`endSource`), then, after that commit (never
+ * inside it, ruling M5-F-R4), starts one consolidation run for the objects that had facts from it, so its values leave
+ * their profiles. Back to the source with `?ended=<n objects>` and `&run=<id>`, or `&endedNoRun=1` when the run did not
+ * start (the end stands); `?error=not_endable` for any other status.
+ */
+export async function endSourceAction(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+  const sourceId = sourceIdOf(formData);
+  const db = getDb();
+  const result = await endSource(db, sourceId);
+  revalidatePath(sourcePath(sourceId));
+  if (!result.ended) return redirect(`${sourcePath(sourceId)}?error=not_endable`);
+  let target = `${sourcePath(sourceId)}?ended=${result.geoObjectIds.length}`;
+  if (result.geoObjectIds.length > 0) {
+    try {
+      const run = await startConsolidationRun(db, await getBoss(), { scope: { geoObjectIds: result.geoObjectIds }, triggeredBy: admin.email });
+      target += `&run=${run.id}`;
+    } catch (e) {
+      createLogger("sources").error({ sourceId, objects: result.geoObjectIds.length, err: e }, "consolidation run not started after ending a source");
+      target += "&endedNoRun=1";
+    }
+  }
+  redirect(target);
 }
 
 /** "Testcrawl 10 Seiten". A refusal (not approved, already being fetched) comes back as a German error. */

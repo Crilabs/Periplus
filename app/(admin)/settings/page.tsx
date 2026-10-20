@@ -1,7 +1,27 @@
 import { getConfig, type AppConfig } from "@/lib/config";
+import { getDb } from "@/lib/db/client";
+import { listApiClients } from "@/lib/domain/api-clients";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { requireAdmin } from "@/lib/security/require-admin";
+import { Dialog } from "../_components/dialog";
+import {
+  Badge,
+  Button,
+  cx,
+  DescriptionList,
+  EmptyState,
+  fmt,
+  Mono,
+  Notice,
+  PageHeader,
+  Panel,
+  Table,
+  tdClass,
+  thClass,
+  trClass,
+} from "../_components/ui";
+import { revokeApiClientAction } from "./actions";
 
 const LEVEL_LABELS: Record<FactLevel, string> = {
   place: "Ort",
@@ -33,6 +53,19 @@ const CONSOLIDATION_GROUPS: Record<Exclude<keyof AppConfig["consolidation"], "ve
   summary: "Zusammenfassung",
 };
 
+/** Parameter groups of the delivery configuration, in display order. */
+const DELIVERY_GROUPS: Record<Exclude<keyof AppConfig["delivery"], "schemaVersion" | "forbiddenDomains" | "licenses">, string> = {
+  build: "Paketbau",
+  spots: "Spots",
+  coast: "Küste",
+  regions: "Regionen",
+  weather: "Wetterpunkte",
+  highlights: "Highlights",
+  validation: "Validierung",
+  severity: "Schwere",
+  api: "API",
+};
+
 /** Flattens parameters to `a.b: value` pairs for a read-only table cell. */
 function parameterText(value: unknown, prefix = ""): string[] {
   if (value !== null && typeof value === "object" && !Array.isArray(value)) {
@@ -42,10 +75,12 @@ function parameterText(value: unknown, prefix = ""): string[] {
   return [prefix ? `${prefix}: ${shown}` : shown];
 }
 
-export default async function Page() {
+export default async function Page({ searchParams }: PageProps<"/settings">) {
   await requireAdmin();
+  const revoked = (await searchParams).notice === "api_client_revoked";
+  const apiClients = await listApiClients(getDb());
   const { areas, gazetteer, ...rest } = getConfig();
-  const { geometry, factSchema, fetch, embeddings, models, consolidation } = rest;
+  const { geometry, factSchema, fetch, embeddings, models, consolidation, delivery } = rest;
   const exceptions = Object.entries(fetch.converterBySource);
   const archiveRows: [string, string][] = [
     [
@@ -97,6 +132,18 @@ export default async function Page() {
       parameterText(consolidation[group]).join("; "),
     ]),
   ];
+  const deliveryRows: [string, string][] = [
+    ["Vertragsversion", delivery.schemaVersion],
+    ...(Object.keys(DELIVERY_GROUPS) as (keyof typeof DELIVERY_GROUPS)[]).map((group): [string, string] => [
+      DELIVERY_GROUPS[group],
+      parameterText(delivery[group]).join("; "),
+    ]),
+    ["Verbotene Domains", delivery.forbiddenDomains.join(", ")],
+    ...delivery.licenses.map((l): [string, string] => [
+      `Lizenz ${l.name}`,
+      `${l.attribution} (${l.url}); Dateien: ${l.files.join(", ") || "keine"}; Felder: ${l.fields.join(", ") || "keine"}`,
+    ]),
+  ];
   const thresholds: [string, string][] = [
     ["Puffer Kachelbox", `${gazetteer.bboxBufferKm} km`],
     ["Puffer Land", `${gazetteer.landBufferKm} km`],
@@ -120,142 +167,256 @@ export default async function Page() {
     ["Kein Ankern bei", gazetteer.noAnchoringKinds.join(", ")],
   ];
   return (
-    <div className="space-y-4 text-sm">
-      <h1 className="text-lg font-semibold">Einstellungen</h1>
+    <>
+      <PageHeader
+        title="Einstellungen"
+        description="Die aktive Konfiguration aus config/, nur zum Lesen. Änderungen laufen über die Dateien im Repository und einen Deploy."
+        actions={
+          <Dialog
+            trigger="Aktive Konfiguration (JSON)"
+            title="Aktive Konfiguration"
+            description="Alle geladenen Konfigurationsbereiche außer Revieren und Gazetteer, so wie die Pipeline sie sieht."
+            wide
+          >
+            <div className="space-y-2">
+              {Object.entries(rest).map(([name, value]) => (
+                <details key={name} className="rounded-md border border-line">
+                  <summary className="cursor-pointer px-3 py-2 font-mono text-[0.8125rem] hover:bg-sunken/50">{name}</summary>
+                  <pre className="overflow-x-auto border-t border-line bg-sunken p-3 text-xs leading-relaxed">
+                    {JSON.stringify(value, null, 2)}
+                  </pre>
+                </details>
+              ))}
+            </div>
+          </Dialog>
+        }
+      />
 
-      <h2 className="font-semibold">Reviere</h2>
-      <table className="w-full text-left">
-        <thead>
-          <tr className="border-b">
-            <th className="py-1 pr-4">Key</th>
-            <th className="py-1 pr-4">Namen</th>
-            <th className="py-1 pr-4">Kachelbox</th>
-            <th className="py-1 pr-4">Zyklus</th>
-            <th className="py-1 pr-4">Küstenabschnitte</th>
-          </tr>
-        </thead>
-        <tbody>
-          {areas.map((area) => (
-            <tr key={area.key} className="border-b align-top">
-              <td className="py-1 pr-4 font-mono">{area.key}</td>
-              <td className="py-1 pr-4">
-                {Object.entries(area.names)
-                  .map(([lang, name]) => `${lang}: ${name}`)
-                  .join(" · ")}
-              </td>
-              <td className="py-1 pr-4 font-mono">{area.tileBbox ? area.tileBbox.join(", ") : "keine"}</td>
-              <td className="py-1 pr-4">{area.cycleDays} Tage</td>
-              <td className="py-1 pr-4">{area.coastSections.map((s) => s.names.de).join(", ") || "keine"}</td>
+      <Panel
+        title="Reviere"
+        description="Ein Revier ist ein Seegebiet mit eigener Konfigurationsdatei in config/areas/. Zyklus: Abstand, in dem seine Kacheln neu bearbeitet werden."
+        flush
+      >
+        <Table>
+          <thead>
+            <tr>
+              <th className={thClass}>Key</th>
+              <th className={thClass}>Namen</th>
+              <th className={thClass}>Kachelbox</th>
+              <th className={`${thClass} text-right`}>Zyklus</th>
+              <th className={thClass}>Küstenabschnitte</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {areas.map((area) => (
+              <tr key={area.key} className={trClass}>
+                <td className={tdClass}>
+                  <Mono>{area.key}</Mono>
+                </td>
+                <td className={tdClass}>
+                  <span className="font-medium">{area.names.de ?? area.key}</span>
+                  <div className="text-xs text-muted">
+                    {Object.entries(area.names)
+                      .filter(([lang]) => lang !== "de")
+                      .map(([lang, name]) => `${lang}: ${name}`)
+                      .join(" · ")}
+                  </div>
+                </td>
+                <td className={cx(tdClass, "whitespace-nowrap")}>
+                  {area.tileBbox ? <Mono>{area.tileBbox.join(", ")}</Mono> : <span className="text-muted">keine</span>}
+                </td>
+                <td className={cx(tdClass, "text-right whitespace-nowrap tabular-nums")}>{area.cycleDays} Tage</td>
+                <td className={tdClass}>
+                  {area.coastSections.map((s) => s.names.de).join(", ") || <span className="text-muted">keine</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      </Panel>
 
-      <h2 className="font-semibold">Gazetteer-Schwellen</h2>
-      <table className="text-left">
-        <tbody>
-          {thresholds.map(([label, value]) => (
-            <tr key={label} className="border-b">
-              <th className="py-1 pr-4 font-normal">{label}</th>
-              <td className="py-1 pr-4">{value}</td>
+      <div className="mt-6 grid gap-6 xl:grid-cols-2">
+        <Panel
+          title="Gazetteer-Schwellen"
+          description="Wie der Gazetteer-Lauf Objekte aus OSM, Wikidata und GeoNames sammelt und gleiche Objekte zusammenführt (config/gazetteer.json)."
+        >
+          <Pairs rows={thresholds} />
+        </Panel>
+
+        <Panel
+          title="Geometrie und Schutz"
+          description="Wie der Geometrie-Lauf je Ort Fetch, Schutz, Öffnung zur See und Schwell aus Tiefen- und Landdaten berechnet (config/geometry.json)."
+        >
+          <Pairs rows={geometryRows} />
+        </Panel>
+
+        <Panel
+          title="Fact-Schema"
+          description="Welche Attribute je Ebene erfasst werden. „Aus Texten“: Attribute, die aus Quellentexten extrahiert werden können."
+        >
+          <Pairs rows={factSchemaRows} />
+        </Panel>
+
+        <Panel
+          title="Quellen und Archiv"
+          description="Wie Quellseiten in Text umgewandelt und für die Suche eingebettet werden."
+        >
+          <Pairs rows={archiveRows} />
+        </Panel>
+
+        <Panel
+          title="Konsolidierung"
+          description="Regeln, nach denen aus einzelnen Facts die Profile der Orte werden: Aktualität, Gewichte, Konfidenz, Konflikte, Lücken."
+          actions={
+            <Dialog trigger="Alle Parameter" triggerSize="sm" title="Konsolidierung" description={`Regelversion ${consolidation.version}`} wide>
+              <Pairs rows={consolidationRows} mono />
+            </Dialog>
+          }
+        >
+          <Pairs
+            rows={[
+              ["Regelversion", consolidation.version],
+              ["Regeln", Object.keys(consolidation.rules).join(", ")],
+            ]}
+          />
+        </Panel>
+
+        <Panel
+          title="Lieferung"
+          description="Parameter des Liefervertrags: was an Spots, Küste, Regionen, Wetterpunkten und Highlights ausgeliefert wird, mit Lizenzen."
+          actions={
+            <Dialog trigger="Alle Parameter" triggerSize="sm" title="Lieferung" description={`Vertragsversion ${delivery.schemaVersion}`} wide>
+              <Pairs rows={deliveryRows} mono />
+            </Dialog>
+          }
+        >
+          <Pairs
+            rows={[
+              ["Vertragsversion", delivery.schemaVersion],
+              ["Lizenzen", delivery.licenses.map((l) => l.name).join(", ") || "keine"],
+            ]}
+          />
+        </Panel>
+      </div>
+
+      <Panel
+        id="api-clients"
+        title="API-Clients"
+        description="Abnehmer, die Pakete über die Liefer-API abrufen. Anlegen per CLI (npm run apikey:create -- <name> --scope delivery:read); der Schlüssel wird nur dabei einmal angezeigt. „Sperren“ wirkt sofort und lässt sich nicht zurücknehmen."
+        className="mt-6"
+        flush
+      >
+        {revoked && (
+          <div className="border-b border-line p-4">
+            <Notice tone="ok">API-Client gesperrt. Sein Schlüssel wird ab sofort abgewiesen.</Notice>
+          </div>
+        )}
+        {apiClients.length === 0 ? (
+          <EmptyState title="Noch kein API-Client">Mit npm run apikey:create -- &lt;name&gt; --scope delivery:read anlegen.</EmptyState>
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <th className={thClass}>Name</th>
+                <th className={thClass}>Rechte</th>
+                <th className={`${thClass} text-right`}>Anfragen/Min.</th>
+                <th className={thClass}>Angelegt</th>
+                <th className={thClass}>Status</th>
+                <th className={thClass}>
+                  <span className="sr-only">Aktion</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {apiClients.map((c) => (
+                <tr key={c.id} className={trClass}>
+                  <td className={cx(tdClass, "font-medium")}>{c.name}</td>
+                  <td className={tdClass}>
+                    <Mono>{c.scopes.join(", ") || "keine"}</Mono>
+                  </td>
+                  <td className={cx(tdClass, "text-right tabular-nums")}>{c.rateLimitPerMin}</td>
+                  <td className={cx(tdClass, "whitespace-nowrap")}>{fmt.date(c.createdAt)}</td>
+                  <td className={tdClass}>
+                    {c.revokedAt ? <Badge>Gesperrt seit {fmt.date(c.revokedAt)}</Badge> : <Badge tone="ok">Aktiv</Badge>}
+                  </td>
+                  <td className={cx(tdClass, "text-right")}>
+                    {!c.revokedAt && (
+                      <Dialog
+                        trigger="Sperren"
+                        triggerVariant="danger"
+                        triggerSize="sm"
+                        title={`API-Client „${c.name}“ sperren?`}
+                        description="Sein Schlüssel wird ab sofort abgewiesen. Für den Abnehmer muss danach per CLI ein neuer Client angelegt werden."
+                      >
+                        <form action={revokeApiClientAction} className="flex justify-end">
+                          <input type="hidden" name="id" value={c.id} />
+                          <Button variant="danger">Endgültig sperren</Button>
+                        </form>
+                      </Dialog>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Panel>
+
+      <Panel
+        title="Modelle je Aufgabe"
+        description={`Welches Modell und welche Prompt-Version jede KI-Aufgabe nutzt. Batches: Rabatt ${models.batch.discount}, Abfrage alle ${models.batch.pollSeconds} s, Abbruch nach ${models.batch.maxHours} h, höchstens ${models.batch.maxRequests} Anfragen je Batch. Modellvergleich: ${models.comparison.models.join(", ")}.`}
+        className="mt-6"
+        flush
+      >
+        <Table>
+          <thead>
+            <tr>
+              <th className={thClass}>Aufgabe</th>
+              <th className={thClass}>Modell</th>
+              <th className={thClass}>Prompt</th>
+              <th className={thClass}>Aufwand</th>
+              <th className={`${thClass} text-right`}>Max. Token</th>
+              <th className={thClass}>Entscheidung</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {Object.entries(models.tasks).map(([task, t]) => (
+              <tr key={task} className={trClass}>
+                <td className={tdClass}>
+                  <Mono>{task}</Mono>
+                </td>
+                <td className={tdClass}>
+                  <Mono>{t.model}</Mono>
+                </td>
+                <td className={cx(tdClass, "tabular-nums")}>v{t.promptVersion}</td>
+                <td className={tdClass}>{EFFORT_LABELS[t.effort]}</td>
+                <td className={cx(tdClass, "text-right tabular-nums")}>
+                  {t.maxTokens.toLocaleString("de-DE")}
+                  {t.cacheSystem && <div className="text-xs text-muted">System-Prompt gecacht</div>}
+                </td>
+                <td className={cx(tdClass, "min-w-64 text-muted")}>
+                  {t.decision
+                    ? `${t.decision.status === "decided" ? "Entschieden" : "Vorläufig"}: ${t.decision.note}`
+                    : "–"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      </Panel>
+    </>
+  );
+}
 
-      <h2 className="font-semibold">Geometrie und Schutz</h2>
-      <table className="text-left">
-        <tbody>
-          {geometryRows.map(([label, value]) => (
-            <tr key={label} className="border-b">
-              <th className="py-1 pr-4 font-normal">{label}</th>
-              <td className="py-1 pr-4">{value}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <h2 className="font-semibold">Fact-Schema</h2>
-      <table className="text-left">
-        <tbody>
-          {factSchemaRows.map(([label, value]) => (
-            <tr key={label} className="border-b">
-              <th className="py-1 pr-4 font-normal">{label}</th>
-              <td className="py-1 pr-4">{value}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <h2 className="font-semibold">Konsolidierung</h2>
-      <table className="text-left">
-        <tbody>
-          {consolidationRows.map(([label, value]) => (
-            <tr key={label} className="border-b align-top">
-              <th className="py-1 pr-4 font-normal">{label}</th>
-              <td className="py-1 pr-4 font-mono">{value}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <h2 className="font-semibold">Modelle je Aufgabe</h2>
-      <table className="text-left">
-        <thead>
-          <tr className="border-b">
-            <th className="py-1 pr-4">Aufgabe</th>
-            <th className="py-1 pr-4">Modell</th>
-            <th className="py-1 pr-4">Prompt</th>
-            <th className="py-1 pr-4">Aufwand</th>
-            <th className="py-1 pr-4">Max. Token</th>
-            <th className="py-1 pr-4">Entscheidung</th>
-          </tr>
-        </thead>
-        <tbody>
-          {Object.entries(models.tasks).map(([task, t]) => (
-            <tr key={task} className="border-b align-top">
-              <td className="py-1 pr-4 font-mono">{task}</td>
-              <td className="py-1 pr-4 font-mono">{t.model}</td>
-              <td className="py-1 pr-4">v{t.promptVersion}</td>
-              <td className="py-1 pr-4">{EFFORT_LABELS[t.effort]}</td>
-              <td className="py-1 pr-4">
-                {t.maxTokens}
-                {t.cacheSystem ? ", System-Prompt gecacht" : ""}
-              </td>
-              <td className="py-1 pr-4">
-                {t.decision
-                  ? `${t.decision.status === "decided" ? "Entschieden" : "Vorläufig"}: ${t.decision.note}`
-                  : "–"}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <p>
-        Batch-Rabatt {models.batch.discount}, Abfrage alle {models.batch.pollSeconds} s, Abbruch nach{" "}
-        {models.batch.maxHours} h, höchstens {models.batch.maxRequests} Anfragen je Batch. Modellvergleich:{" "}
-        {models.comparison.models.join(", ")}.
-      </p>
-
-      <h2 className="font-semibold">Quellen und Archiv</h2>
-      <table className="text-left">
-        <tbody>
-          {archiveRows.map(([label, value]) => (
-            <tr key={label} className="border-b">
-              <th className="py-1 pr-4 font-normal">{label}</th>
-              <td className="py-1 pr-4">{value}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <h2 className="font-semibold">Aktive Konfiguration</h2>
-      {Object.entries(rest).map(([name, value]) => (
-        <section key={name}>
-          <h3 className="mb-1 font-mono">{name}</h3>
-          <pre className="overflow-x-auto rounded bg-neutral-100 p-3">{JSON.stringify(value, null, 2)}</pre>
-        </section>
-      ))}
-    </div>
+/** Read-only label/value pairs; `mono` for raw parameter strings. */
+function Pairs({ rows, mono = false }: { rows: [string, string][]; mono?: boolean }) {
+  return (
+    <DescriptionList
+      columns={1}
+      items={rows.map(([label, value]) => ({
+        label,
+        value: mono ? <span className="font-mono text-xs leading-relaxed break-words">{value}</span> : value,
+      }))}
+    />
   );
 }

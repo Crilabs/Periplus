@@ -33,7 +33,8 @@ type Target = { geoObjectId: string; version: number };
  * The profile versions to summarize for a run: the versions this run created (newest per object), or with
  * `params.stagesOnly` (a summary run started for given objects, e.g. "Neu erzeugen" after a failed summary) the newest
  * version of each target of the run (`consolidationTargets`: its `geoObjectIds`, tile, area or comparison set). Kept: objects whose fact level is in `summary.levels` and versions without an
- * `ok` summary of the current prompt version.
+ * `ok` summary of the current prompt version; with `params.regenerateSummary` („Summary neu erzeugen“, ruling M6-H-R1)
+ * also versions with one.
  */
 export async function summaryTargets(db: Db, run: { id: string; params: Record<string, unknown> }): Promise<Target[]> {
   const cfg = getConsolidationConfig();
@@ -54,10 +55,15 @@ export async function summaryTargets(db: Db, run: { id: string; params: Record<s
       .orderBy(profiles.geoObjectId, desc(profiles.version));
   }
   const prompt = promptVersion();
+  const regenerate = run.params.regenerateSummary === true;
   const targets: Target[] = [];
   for (const c of candidates) {
     const level = await levelFor(db, c.geoObjectId);
     if (level === null || !(cfg.summary.levels as readonly string[]).includes(level)) continue;
+    if (regenerate) {
+      targets.push(c);
+      continue;
+    }
     const [done] = await db
       .select({ id: profileSummaries.id })
       .from(profileSummaries)
@@ -75,9 +81,10 @@ export async function summaryTargets(db: Db, run: { id: string; params: Record<s
   return targets;
 }
 
-/** One job per target (`key` `<geoObjectId>:<version>`). */
+/** One job per target (`key` `<geoObjectId>:<version>`), with `regenerate` for „Summary neu erzeugen“. */
 export async function summaryJobs(db: Db, run: { id: string; params: Record<string, unknown> }): Promise<JobData[]> {
-  return (await summaryTargets(db, run)).map((t) => ({ key: `${t.geoObjectId}:${t.version}`, geoObjectId: t.geoObjectId, version: t.version }));
+  const regenerate = run.params.regenerateSummary === true ? { regenerate: true } : {};
+  return (await summaryTargets(db, run)).map((t) => ({ key: `${t.geoObjectId}:${t.version}`, geoObjectId: t.geoObjectId, version: t.version, ...regenerate }));
 }
 
 export type SummaryResult = { status: "ok" | "empty" | "skipped"; attempts: number };
@@ -89,11 +96,14 @@ export type SummaryResult = { status: "ok" | "empty" | "skipped"; attempts: numb
  * `ok` (attempts, model, prompt version) and closes the object's open `failed_job` task on a `profile_summary`. After the last failed attempt an `empty` summary is stored and one
  * `failed_job` task opened on subject `profile_summary` `<geoObjectId>:<version>`, in one transaction. Skipped: an
  * unknown version, a level without summaries, an existing `ok` summary of the prompt version, or an `empty` one this
- * run already stored (a retried job). Other errors (budget, provider) propagate, so the job is retried.
+ * run already stored (a retried job). With `regenerate` („Summary neu erzeugen“, ruling M6-H-R1, needs `runId`) an
+ * existing `ok` summary is no reason to skip, only one this run already stored: the new one is stored beside it and
+ * the newest `ok` summary is the one shown and delivered; when every attempt fails, the old one stays. Other errors
+ * (budget, provider) propagate, so the job is retried.
  */
 export async function summarizeProfile(
   db: Db,
-  input: { geoObjectId: string; version: number; runId?: string },
+  input: { geoObjectId: string; version: number; runId?: string; regenerate?: boolean },
   deps: { model: ModelClient },
 ): Promise<SummaryResult> {
   const cfg = getConsolidationConfig();
@@ -106,10 +116,12 @@ export async function summarizeProfile(
   const level = await levelFor(db, input.geoObjectId);
   if (level !== "place" && level !== "poi") return { status: "skipped", attempts: 0 };
   if (!cfg.summary.levels.includes(level)) return { status: "skipped", attempts: 0 };
+  if (input.regenerate && !input.runId) throw new Error("regenerating a summary needs the run id");
+  const regenerate = input.regenerate === true;
   const { rows: existing } = await db.execute<{ n: number }>(sql`
     select count(*)::int as n from profile_summaries
     where geo_object_id = ${input.geoObjectId} and profile_version = ${input.version}
-      and ((status = 'ok' and prompt_version = ${prompt})
+      and ((status = 'ok' and prompt_version = ${prompt} and (not ${regenerate} or run_id = ${input.runId ?? null}::uuid))
            or (status = 'empty' and ${input.runId ?? null}::uuid is not null and run_id = ${input.runId ?? null}::uuid))
   `);
   if (Number(existing[0]?.n ?? 0) > 0) return { status: "skipped", attempts: 0 };

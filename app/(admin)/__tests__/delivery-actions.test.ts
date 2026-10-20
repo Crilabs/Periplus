@@ -1,0 +1,166 @@
+import { eq } from "drizzle-orm";
+import { NextRequest } from "next/server";
+import type { PgBoss } from "pg-boss";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Db } from "@/lib/db/client";
+import { profileSummaries, runs, textShingles } from "@/lib/db/schema";
+import { authenticateApiClient, createApiClient, listApiClients } from "@/lib/domain/api-clients";
+import { setDeliveryArchive } from "@/lib/domain/delivery/archive";
+import { buildDelivery } from "@/lib/domain/delivery/build";
+import { shingleHashes } from "@/lib/domain/documents/shingles";
+import { newId } from "@/lib/domain/ids";
+import { DELIVERY_STAGE } from "@/lib/pipeline/delivery";
+import { testDb, withRollback } from "@/test/db";
+import { seedDeliveryArea } from "@/test/fixtures/delivery/area";
+import { memoryArchive } from "@/test/s3";
+import { insertTestVersion } from "@/test/text";
+
+/*
+ * The admin's delivery actions (plan Task 13): „Paket bauen“, the file download (a rejected package's too) and
+ * „Sperren“ of an API client, against the rolled-back test transaction; the session, the queue and the navigation are
+ * stubs.
+ */
+
+let currentDb: Db = testDb();
+const requireAdmin = vi.fn();
+const adminSession = vi.fn();
+const redirect = vi.fn();
+const inserted: Array<{ queue: string; data: Record<string, unknown> }> = [];
+const boss = {
+  insert: async (queue: string, jobs: Array<{ id: string; data: Record<string, unknown> }>) => {
+    inserted.push(...jobs.map((j) => ({ queue, data: j.data })));
+    return jobs.map((j) => j.id);
+  },
+} as unknown as PgBoss;
+
+vi.mock("@/lib/security/require-admin", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/security/require-admin")>()),
+  requireAdmin: () => requireAdmin(),
+  adminSession: () => adminSession(),
+}));
+vi.mock("@/lib/db/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db/client")>()),
+  getDb: () => currentDb,
+}));
+vi.mock("@/lib/jobs/boss", () => ({ getBoss: async () => boss }));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), refresh: vi.fn() }));
+vi.mock("next/navigation", () => ({ redirect: (url: string) => redirect(url) }));
+
+const { buildDeliveryAction } = await import("../deliveries/actions");
+const { revokeApiClientAction } = await import("../settings/actions");
+const { GET: download } = await import("../deliveries/[id]/files/[file]/route");
+
+const ADMIN = `${newId()}@test.invalid`;
+
+const form = (fields: Record<string, string>) => {
+  const data = new FormData();
+  for (const [k, v] of Object.entries(fields)) data.set(k, v);
+  return data;
+};
+const getFile = (id: string, file: string) =>
+  download(new NextRequest(`http://localhost/deliveries/${id}/files/${file}`), { params: Promise.resolve({ id, file }) });
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  inserted.length = 0;
+  currentDb = testDb();
+  requireAdmin.mockResolvedValue({ email: ADMIN });
+  adminSession.mockResolvedValue({ sub: newId(), email: ADMIN });
+});
+afterEach(() => setDeliveryArchive(null));
+
+describe("buildDeliveryAction", () => {
+  it("buildDeliveryAction starts a delivery run for the area", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const f = await seedDeliveryArea(tx);
+      await buildDeliveryAction(form({ areaId: f.areaId }));
+      const [run] = await tx.select().from(runs).where(eq(runs.triggeredBy, ADMIN));
+      expect(run).toMatchObject({ kind: "stage", scopeType: "area", scopeId: f.areaKey, stages: [DELIVERY_STAGE], params: { areaId: f.areaId, areaKey: f.areaKey } });
+      expect(inserted).toEqual([{ queue: "delivery.build", data: expect.objectContaining({ areaId: f.areaId, runId: run!.id }) }]);
+      expect(redirect).toHaveBeenCalledWith(`/runs/${run!.id}`);
+    }));
+
+  it("buildDeliveryAction rejects an unknown area id", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const f = await seedDeliveryArea(tx);
+      // an id that is no area (an island) or none at all: back to the list with the reason
+      for (const areaId of [newId(), f.islandId]) {
+        await buildDeliveryAction({ areaId });
+        expect(redirect).toHaveBeenLastCalledWith("/deliveries?error=area_without_geo_object");
+      }
+      await expect(buildDeliveryAction({ areaId: "not-a-uuid" })).rejects.toThrow();
+      expect(await tx.select().from(runs).where(eq(runs.triggeredBy, ADMIN))).toEqual([]);
+      expect(inserted).toEqual([]);
+    }));
+
+  it("needs an admin session", async () => {
+    requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
+    await expect(buildDeliveryAction({ areaId: newId() })).rejects.toThrow("NEXT_REDIRECT");
+    await expect(revokeApiClientAction({ id: newId() })).rejects.toThrow("NEXT_REDIRECT");
+    expect(inserted).toEqual([]);
+  });
+});
+
+describe("GET /deliveries/[id]/files/[file]", () => {
+  it("the download route needs a session and serves a rejected package's file", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const archive = memoryArchive();
+      setDeliveryArchive(archive);
+      const f = await seedDeliveryArea(tx);
+      // A's summary is a 16-word copy of an archived text: the package is rejected
+      const salt = newId().replace(/-/g, "").replace(/\d/g, (d) => "ghijklmnop"[Number(d)]!);
+      const words = Array.from({ length: 30 }, (_, i) => `${salt}${"abcdefghijklmnopqrstuvwxyz"[i % 26]}`);
+      const v = await insertTestVersion(tx, [words.join(" ")]);
+      await tx.insert(textShingles).values(shingleHashes(words.join(" "), 15).map((shingleHash) => ({ shingleHash, chunkId: v.chunkIds[0]! })));
+      await tx.insert(profileSummaries).values({
+        geoObjectId: f.places.A.geoObjectId,
+        profileVersion: 1,
+        text: `Die Bucht: ${words.slice(2, 18).join(" ")}.`,
+        status: "ok",
+        attempts: 1,
+        model: "test",
+        promptVersion: 9,
+      });
+      const rejected = await buildDelivery(tx, archive, f.areaId, { now: new Date("2040-06-01T08:00:00Z"), inCallerTransaction: true });
+      expect(rejected.status).toBe("rejected");
+
+      adminSession.mockResolvedValue(null);
+      const denied = await getFile(rejected.deliveryId, "spots.json");
+      expect(denied.status).toBe(401);
+      expect(await denied.text()).not.toContain(f.places.A.publicId!);
+
+      adminSession.mockResolvedValue({ sub: newId(), email: ADMIN });
+      const res = await getFile(rejected.deliveryId, "spots.json");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-disposition")).toBe(`attachment; filename="${f.areaPublicId}-rejected-spots.json"`);
+      expect(res.headers.get("cache-control")).toBe("private, no-store");
+      expect(res.headers.get("content-type")).toBe("application/json");
+      expect(new Uint8Array(await res.arrayBuffer())).toEqual(await archive.get(`deliveries/${f.areaPublicId}/rejected/${rejected.deliveryId}/spots.json`));
+      const coast = await getFile(rejected.deliveryId, "coast.geojson");
+      expect(coast.headers.get("content-type")).toBe("application/geo+json");
+
+      // unknown delivery, a file it does not have, a name that is no contract file, an id that is no uuid
+      for (const [id, file] of [[newId(), "spots.json"], [rejected.deliveryId, "changes.json"], [rejected.deliveryId, "secrets.json"], ["x", "spots.json"]] as const) {
+        const missing = await getFile(id, file);
+        expect(missing.status, `${id}/${file}`).toBe(404);
+        expect(missing.headers.get("cache-control")).toBe("private, no-store");
+      }
+    }));
+});
+
+describe("revokeApiClientAction", () => {
+  it("revoking an api client makes its key fail", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const { id, key } = await createApiClient(tx, { name: `test-${newId()}`, scopes: ["delivery:read"] });
+      expect((await listApiClients(tx)).find((c) => c.id === id)).toMatchObject({ revokedAt: null, scopes: ["delivery:read"] });
+      await revokeApiClientAction(form({ id }));
+      expect(redirect).toHaveBeenCalledWith("/settings?notice=api_client_revoked#api-clients");
+      expect((await listApiClients(tx)).find((c) => c.id === id)!.revokedAt).toBeInstanceOf(Date);
+      expect(await authenticateApiClient(tx, `Bearer ${key}`)).toBeNull();
+      await expect(revokeApiClientAction({ id: "not-a-uuid" })).rejects.toThrow();
+    }));
+});

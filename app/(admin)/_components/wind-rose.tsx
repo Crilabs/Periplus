@@ -13,21 +13,21 @@ export function WindRose({ sectors, size }: { sectors: Record<Sector, number>; s
   const radius = size / 2 - 28;
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="Windrose Schutz je Sektor">
-      <circle cx={c} cy={c} r={radius} fill="none" stroke="#d4d4d4" />
-      <circle cx={c} cy={c} r={radius / 2} fill="none" stroke="#e5e5e5" strokeDasharray="2 2" />
+      <circle cx={c} cy={c} r={radius} fill="none" className="stroke-line-strong" />
+      <circle cx={c} cy={c} r={radius / 2} fill="none" strokeDasharray="2 2" className="stroke-line" />
       {SECTORS.map((s) => (
-        <path key={s} d={wedgePath(s, sectors[s], radius, c, c)} fill={shelterColor(sectors[s])} fillOpacity={0.8} stroke="#fff">
+        <path key={s} d={wedgePath(s, sectors[s], radius, c, c)} fill={shelterColor(sectors[s])} fillOpacity={0.8} className="stroke-surface">
           <title>{`${SECTOR_LABELS[s]}: ${pct(sectors[s])}`}</title>
         </path>
       ))}
       {SECTORS.map((s) => {
         const [x, y] = labelPosition(c, c, radius + 14, SECTOR_CENTER_DEG[s]);
         return (
-          <text key={s} x={x} y={y} textAnchor="middle" dominantBaseline="middle" fontSize={10} fill="#404040">
+          <text key={s} x={x} y={y} textAnchor="middle" dominantBaseline="middle" fontSize={10} className="fill-ink">
             <tspan x={x} dy="-0.4em" fontWeight={600}>
               {SECTOR_LABELS[s]}
             </tspan>
-            <tspan x={x} dy="1.1em">
+            <tspan x={x} dy="1.1em" className="fill-muted">
               {pct(sectors[s])}
             </tspan>
           </text>

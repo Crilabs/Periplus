@@ -267,6 +267,48 @@
       "when": 1792435768494,
       "tag": "0037_facts_extraction_run_id_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1792442968162,
+      "tag": "0038_deliveries_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1792442980982,
+      "tag": "0039_delivery_triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1792443719497,
+      "tag": "0040_delivered_objects_prefix_check",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1792452000513,
+      "tag": "0041_deliveries_change_snapshot",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1792457475542,
+      "tag": "0042_deliveries_bbox",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1792463751936,
+      "tag": "0043_profile_summaries_ok_per_run",
+      "breakpoints": true
     }
   ]
 }
