@@ -26,8 +26,12 @@ export type BayHit = {
   landRays: number;
 };
 
-/** One merged group of probe hits: its representative probe (the most enclosed one) in WGS84. */
+/** One merged group of probe hits: its representative probe (the most enclosed one), in UTM and in WGS84. */
 export type BayCluster = {
+  /** Key of the representative probe. */
+  k: number;
+  x: number;
+  y: number;
   position: LonLat;
   /** Angle (degrees) of the representative's rays that meet land within `rayLengthM`. */
   landDeg: number;
@@ -44,9 +48,13 @@ export type DetectBaysResult = {
   hits: number;
   /** Hits with a place or a known object (`knownObjectTypes`) within `knownPlaceDistanceM`, dropped before clustering. */
   knownHits: number;
+  /** Further hits claimed by a known place's own bay (`claimedHitKeys`), dropped before clustering too. */
+  claimedHits: number;
   /** Clusters of the remaining hits. */
   clusters: number;
   created: number;
+  /** Clusters within `knownPlaceDistanceM` of a candidate created before in the same pass, skipped. */
+  duplicates: number;
   /** Clusters whose anchor area is below `minAnchorAreaM2`. */
   noAnchorArea: number;
 };
@@ -147,6 +155,73 @@ export async function bayHits(db: Db, tileId: string, cfg: GeometryConfig["bays"
 
 const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
 
+/** Single-linkage groups of hits at most `mergeDistanceM` apart, in the order of their first hit. */
+function linkGroups(hits: BayHit[], mergeDistanceM: number): BayHit[][] {
+  const parent = hits.map((_, i) => i);
+  const find = (i: number): number => {
+    while (parent[i] !== i) i = parent[i] = parent[parent[i]!]!;
+    return i;
+  };
+  const byX = hits.map((_, i) => i).sort((a, b) => hits[a]!.x - hits[b]!.x);
+  for (let a = 0; a < byX.length; a++) {
+    const ha = hits[byX[a]!]!;
+    for (let b = a + 1; b < byX.length; b++) {
+      const hb = hits[byX[b]!]!;
+      if (hb.x - ha.x > mergeDistanceM) break;
+      if (dist(ha, hb) <= mergeDistanceM) parent[find(byX[a]!)] = find(byX[b]!);
+    }
+  }
+  const groups = new Map<number, BayHit[]>();
+  hits.forEach((h, i) => {
+    const root = find(i);
+    groups.set(root, [...(groups.get(root) ?? []), h]);
+  });
+  return [...groups.values()];
+}
+
+/**
+ * Keys of the hits a known place's own bay claims (pure, ruling M7-I-R2): a hit that is not known itself, lies within
+ * `knownBayDistanceM` of a place or known object (`near`) and is single-linked (`mergeDistanceM`, over all hits) to a
+ * known hit. The wings of a 1–2 km bay with a known place at its head so stay with that place, while a side cove further
+ * down a gulf (beyond `knownBayDistanceM`) or a separate bay (not linked) stays free.
+ */
+export function claimedHitKeys(
+  hits: BayHit[],
+  known: ReadonlySet<number>,
+  near: ReadonlySet<number>,
+  mergeDistanceM: number,
+): Set<number> {
+  const claimed = new Set<number>();
+  for (const group of linkGroups(hits, mergeDistanceM)) {
+    if (!group.some((h) => known.has(h.k))) continue;
+    for (const h of group) if (!known.has(h.k) && near.has(h.k)) claimed.add(h.k);
+  }
+  return claimed;
+}
+
+/**
+ * Creation order of the clusters with the same-pass dedupe (pure): the most enclosed first (most land, then lowest `k`);
+ * a cluster within `knownPlaceDistanceM` of one kept before is dropped, so two groups 300–500 m apart (e.g. the two
+ * walls of a narrow gulf) give one candidate. `each` creates a cluster and says whether it was created (it had an
+ * anchor area); only created clusters suppress later ones.
+ */
+export async function inCreationOrder(
+  clusters: BayCluster[],
+  knownPlaceDistanceM: number,
+  each: (c: BayCluster) => Promise<boolean>,
+): Promise<{ duplicates: number }> {
+  const kept: BayCluster[] = [];
+  let duplicates = 0;
+  for (const c of [...clusters].sort((a, b) => b.landDeg - a.landDeg || a.k - b.k)) {
+    if (kept.some((o) => dist(o, c) < knownPlaceDistanceM)) {
+      duplicates++;
+      continue;
+    }
+    if (await each(c)) kept.push(c);
+  }
+  return { duplicates };
+}
+
 /**
  * Merges hits (pure): hits at most `mergeDistanceM` apart form one group (single linkage); each group is then cut into
  * pieces greedily — the hit with the most land rays (then the one nearest the group's centre, then the lowest `k`)
@@ -158,25 +233,7 @@ export function clusterHits(
   hits: BayHit[],
   cfg: Pick<GeometryConfig["bays"], "mergeDistanceM" | "maxClusterSpanM" | "rayCount">,
 ): BayCluster[] {
-  const parent = hits.map((_, i) => i);
-  const find = (i: number): number => {
-    while (parent[i] !== i) i = parent[i] = parent[parent[i]!]!;
-    return i;
-  };
-  const byX = hits.map((_, i) => i).sort((a, b) => hits[a]!.x - hits[b]!.x);
-  for (let a = 0; a < byX.length; a++) {
-    const ha = hits[byX[a]!]!;
-    for (let b = a + 1; b < byX.length; b++) {
-      const hb = hits[byX[b]!]!;
-      if (hb.x - ha.x > cfg.mergeDistanceM) break;
-      if (dist(ha, hb) <= cfg.mergeDistanceM) parent[find(byX[a]!)] = find(byX[b]!);
-    }
-  }
-  const groups = new Map<number, BayHit[]>();
-  hits.forEach((h, i) => {
-    const root = find(i);
-    groups.set(root, [...(groups.get(root) ?? []), h]);
-  });
+  const groups = linkGroups(hits, cfg.mergeDistanceM);
 
   const radius = cfg.maxClusterSpanM / 2;
   const stepDeg = 360 / cfg.rayCount;
@@ -192,7 +249,10 @@ export function clusterHits(
       if (taken.has(rep.k)) continue;
       const piece = ranked.filter((h) => !taken.has(h.k) && dist(h, rep) <= radius);
       for (const h of piece) taken.add(h.k);
-      out.push({ k: rep.k, cluster: { position: rep.position, landDeg: rep.landRays * stepDeg, hits: piece.length } });
+      out.push({
+        k: rep.k,
+        cluster: { k: rep.k, x: rep.x, y: rep.y, position: rep.position, landDeg: rep.landRays * stepDeg, hits: piece.length },
+      });
     }
   }
   return out.sort((a, b) => a.k - b.k).map((c) => c.cluster);
@@ -212,13 +272,13 @@ const pointSql = (p: LonLat) => sql`ST_SetSRID(ST_MakePoint(${p.lon}::float8, ${
 
 /**
  * Keys (`k`) of the hits with a place (any status, also ended or merged, so also every bay detected earlier) or a valid
- * object of `knownObjectTypes` within `knownPlaceDistanceM`.
+ * object of `knownObjectTypes` within `distanceM`.
  */
-async function knownHitKeys(db: Db, hits: BayHit[], cfg: GeometryConfig["bays"]): Promise<Set<number>> {
+async function hitKeysNearKnown(db: Db, hits: BayHit[], distanceM: number, cfg: GeometryConfig["bays"]): Promise<Set<number>> {
   if (hits.length === 0) return new Set();
   const points = JSON.stringify(hits.map((h) => ({ k: h.k, lon: h.position.lon, lat: h.position.lat })));
   // bbox prefilter in degrees: metres / 50 km per degree over-covers longitude up to ~60°
-  const deg = cfg.knownPlaceDistanceM / 50_000;
+  const deg = distanceM / 50_000;
   const { rows } = await db.execute<{ k: number }>(sql`
     with h as (
       select (e->>'k')::int as k, ST_SetSRID(ST_MakePoint((e->>'lon')::float8, (e->>'lat')::float8), 4326) as p
@@ -228,12 +288,12 @@ async function knownHitKeys(db: Db, hits: BayHit[], cfg: GeometryConfig["bays"])
     where exists (
       select 1 from places pl
       where pl.position && ST_Expand(h.p, ${deg}::float8)
-        and ST_DWithin(pl.position::geography, h.p::geography, ${cfg.knownPlaceDistanceM}::float8)
+        and ST_DWithin(pl.position::geography, h.p::geography, ${distanceM}::float8)
     ) or exists (
       select 1 from geo_objects g
       where g.type::text in ${cfg.knownObjectTypes} and g.valid_to is null and g.merged_into_id is null
         and g.geom && ST_Expand(h.p, ${deg}::float8)
-        and ST_DWithin(g.geom::geography, h.p::geography, ${cfg.knownPlaceDistanceM}::float8)
+        and ST_DWithin(g.geom::geography, h.p::geography, ${distanceM}::float8)
     )`);
   return new Set(rows.map((r) => Number(r.k)));
 }
@@ -266,7 +326,9 @@ export async function bayHelperName(db: Db, p: LonLat, maxM: number, tiers: stri
  * Stage `geometry.detect_bays` for one tile: finds the probe hits (`bayHits`, read only), then in one transaction
  * serialised against the same stage of other tiles (advisory lock, so the known check sees every bay a neighbouring
  * tile detected before) drops the hits that are known — a place of any status or a `knownObjectTypes` object within
- * `knownPlaceDistanceM` — merges the rest (`clusterHits`) and creates for every cluster with an anchor area (water
+ * `knownPlaceDistanceM` — and the hits a known place's own bay claims (`claimedHitKeys`, `knownBayDistanceM`), merges
+ * the rest (`clusterHits`) and creates, most enclosed first and skipping a cluster within `knownPlaceDistanceM` of one
+ * created before in the same pass (`inCreationOrder`), for every cluster with an anchor area (water
  * circle of `water.bayRadiusM` minus land, `anchorArea`) of at least `minAnchorAreaM2`: a geo object (type `bay`,
  * origin `computed`, a point, no names, its parent by the hierarchy rule), its tile link, a place (`anchorage`, status
  * `candidate`) and an open `place_candidate` review task whose context carries the helper name („Bucht bei …“, `name`
@@ -281,28 +343,33 @@ export async function detectTileBays(db: Db, tileId: string, cfg: GeometryConfig
     probes: found.probes,
     hits: found.hits.length,
     knownHits: 0,
+    claimedHits: 0,
     clusters: 0,
     created: 0,
+    duplicates: 0,
     noAnchorArea: 0,
   };
   if (found.hits.length === 0) return result;
   return db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('geometry.detect_bays'))`);
-    const known = await knownHitKeys(tx, found.hits, cfg.bays);
+    const known = await hitKeysNearKnown(tx, found.hits, cfg.bays.knownPlaceDistanceM, cfg.bays);
+    const near = await hitKeysNearKnown(tx, found.hits, cfg.bays.knownBayDistanceM, cfg.bays);
+    const claimed = claimedHitKeys(found.hits, known, near, cfg.bays.mergeDistanceM);
     result.knownHits = known.size;
+    result.claimedHits = claimed.size;
     const clusters = clusterHits(
-      found.hits.filter((h) => !known.has(h.k)),
+      found.hits.filter((h) => !known.has(h.k) && !claimed.has(h.k)),
       cfg.bays,
     );
     result.clusters = clusters.length;
-    for (const c of clusters) {
+    const { duplicates } = await inCreationOrder(clusters, cfg.bays.knownPlaceDistanceM, async (c) => {
       const geom = geomFromGeoJson({ type: "Point", coordinates: [c.position.lon, c.position.lat] });
       const water = await waterArea(tx, { geom: { type: "Point", coordinates: [c.position.lon, c.position.lat] }, center: c.position, isHarbour: false }, cfg.water);
       const area = water.geometry ? await anchorArea(tx, water.geometry, cfg.anchorArea) : null;
       const anchorAreaM2 = area?.areaM2 ?? 0;
       if (anchorAreaM2 < cfg.bays.minAnchorAreaM2) {
         result.noAnchorArea++;
-        continue;
+        return false;
       }
       const helperName = await bayHelperName(tx, c.position, cfg.bays.helperNameMaxDistanceM, cfg.bays.helperNameTypes);
       const [object] = await tx
@@ -332,7 +399,9 @@ export async function detectTileBays(db: Db, tileId: string, cfg: GeometryConfig
         },
       });
       result.created++;
-    }
+      return true;
+    });
+    result.duplicates = duplicates;
     return result;
   });
 }

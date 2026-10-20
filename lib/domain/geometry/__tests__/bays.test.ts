@@ -12,7 +12,16 @@ import { withRollback } from "@/test/db";
 import { insertTestRaster } from "@/test/geometry/raster";
 import { insertScenePlace } from "@/test/geometry/scene";
 import { circle, difference, insertLand, lonLatOf, rect, utmOf } from "@/test/geometry/synthetic";
-import { bayClusters, bayHelperName, clusterHits, detectTileBays, type BayHit } from "../bays";
+import {
+  bayClusters,
+  bayHelperName,
+  claimedHitKeys,
+  clusterHits,
+  detectTileBays,
+  inCreationOrder,
+  type BayCluster,
+  type BayHit,
+} from "../bays";
 
 const cfg = loadConfig("config").geometry;
 
@@ -34,9 +43,9 @@ async function bayScene(tx: Db, opts: { bay?: boolean; raster?: boolean; x?: num
   return tileId;
 }
 
-/** Tile of (x, 100) metres from the reference point. */
-async function tileAt(tx: Db, x: number): Promise<string> {
-  const p = await lonLatOf(tx, x, 100);
+/** Tile of (x, y) metres from the reference point (default y = 100). */
+async function tileAt(tx: Db, x: number, y = 100): Promise<string> {
+  const p = await lonLatOf(tx, x, y);
   return tileIdFor(p.lon, p.lat);
 }
 
@@ -82,7 +91,9 @@ describe("clusterHits", () => {
   it("merges hits up to mergeDistanceM apart (single linkage) and represents them by the most land rays", () => {
     const step = cfg.bays.mergeDistanceM;
     const clusters = clusterHits([hit(1, 0, 0, 36), hit(2, step, 0, 44), hit(3, 2 * step, 0, 40)], cfg.bays);
-    expect(clusters).toEqual([{ position: { lon: step, lat: 0 }, landDeg: 44 * (360 / cfg.bays.rayCount), hits: 3 }]);
+    expect(clusters).toEqual([
+      { k: 2, x: step, y: 0, position: { lon: step, lat: 0 }, landDeg: 44 * (360 / cfg.bays.rayCount), hits: 3 },
+    ]);
   });
 
   it("cuts a chain longer than maxClusterSpanM into pieces of at most that span, each hit in exactly one", () => {
@@ -94,6 +105,43 @@ describe("clusterHits", () => {
     // representatives lie more than half the span apart; every hit lies within half the span of one
     for (let i = 1; i < reps.length; i++) expect(reps[i]! - reps[i - 1]!).toBeGreaterThan(cfg.bays.maxClusterSpanM / 2);
     for (const h of chain) expect(Math.min(...reps.map((r) => Math.abs(r - h.x)))).toBeLessThanOrEqual(cfg.bays.maxClusterSpanM / 2);
+  });
+});
+
+describe("claimedHitKeys", () => {
+  it("claims the free hits near a known feature that are single-linked to a known hit, not a separate group", () => {
+    const step = cfg.bays.mergeDistanceM;
+    // chain 1…4 linked to the known hit 1; hit 9 is near a known feature too, but in a group of its own
+    const hits = [hit(1, 0, 0, 40), hit(2, step, 0, 40), hit(3, 2 * step, 0, 40), hit(4, 3 * step, 0, 40), hit(9, 0, 2 * step, 40)];
+    const near = new Set([1, 2, 3, 9]);
+    expect([...claimedHitKeys(hits, new Set([1]), near, step)].sort()).toEqual([2, 3]);
+    expect([...claimedHitKeys(hits, new Set(), near, step)]).toEqual([]);
+  });
+});
+
+describe("inCreationOrder", () => {
+  const cluster = (k: number, x: number, landDeg: number): BayCluster => ({ k, x, y: 0, position: { lon: x, lat: 0 }, landDeg, hits: 1 });
+  const d = cfg.bays.knownPlaceDistanceM;
+
+  it("creates the most enclosed first and skips a cluster closer than knownPlaceDistanceM to a created one", async () => {
+    const seen: number[] = [];
+    const clusters = [cluster(1, 0, 200), cluster(2, d - 100, 250), cluster(3, 2 * d, 190)];
+    const { duplicates } = await inCreationOrder(clusters, d, async (c) => {
+      seen.push(c.k);
+      return true;
+    });
+    expect(seen).toEqual([2, 3]);
+    expect(duplicates).toBe(1);
+  });
+
+  it("lets a cluster without an anchor area not suppress its neighbour", async () => {
+    const seen: number[] = [];
+    const { duplicates } = await inCreationOrder([cluster(1, 0, 200), cluster(2, 100, 250)], d, async (c) => {
+      seen.push(c.k);
+      return c.k !== 2;
+    });
+    expect(seen).toEqual([2, 1]);
+    expect(duplicates).toBe(0);
   });
 });
 
@@ -146,6 +194,19 @@ describe("bayClusters", () => {
       }
     }));
 });
+
+/**
+ * Synthetic rasters (`insertTestRaster`, ≈ 910 m × 1110 m each, 4–12 m in rows 1–5) tiled over x0…x1 × y0…y1 metres,
+ * each under the tile of its top-left corner. Only inside `withRollback`.
+ */
+async function rasterGrid(tx: Db, x0: number, y0: number, x1: number, y1: number): Promise<void> {
+  for (let x = x0; x < x1; x += 910) {
+    for (let y = y1; y > y0; y -= 1110) {
+      const origin = await lonLatOf(tx, x, y);
+      await insertTestRaster(tx, { origin, tileId: tileIdFor(origin.lon, origin.lat) });
+    }
+  }
+}
 
 /** Gulf 1.2 km wide and 4 km deep (head at y = 4000) around x = BAY_X, with a cove of radius 300 m on its west wall at y = 2000. */
 const COVE = { x: BAY_X - 600, y: 2000, r: 300 };
@@ -261,6 +322,45 @@ describe("detectTileBays", () => {
       await detectTileBays(tx, tileId, cfg);
       expect((await candidatePositions(tx)).filter((p) => Math.hypot(p.x - COVE.x, p.y - COVE.y) < COVE.r)).toHaveLength(1);
     }));
+
+  it("lets a confirmed place claim the wings of its own 1.6 km bay: no candidate (ruling M7-I-R2, N-1)", () =>
+    withRollback(async (tx) => {
+      // half-circle bay of radius 800 m, bathymetry under all of it, a confirmed place at its head
+      await insertLand(tx, [await difference(tx, rect(-20000, 0, 20000, 20000), await circle(tx, BAY_X, 0, 800))]);
+      await rasterGrid(tx, BAY_X - 1000, -400, BAY_X + 1000, 900);
+      await insertScenePlace(tx, BAY_X, 400, { status: "confirmed" });
+      const result = await detectTileBays(tx, await tileAt(tx, BAY_X), cfg);
+      // the wing hits lie more than knownPlaceDistanceM from the place: only the claim drops them
+      expect(result.knownHits).toBeLessThan(result.hits);
+      expect(result.claimedHits).toBe(result.hits - result.knownHits);
+      expect(result).toMatchObject({ clusters: 0, created: 0 });
+      expect(await candidatePositions(tx)).toEqual([]);
+    }));
+
+  it("keeps the side cove and drops the head's wings of a gulf with bathymetry everywhere; no two candidates within 500 m", () =>
+    withRollback(async (tx) => {
+      let land = await difference(tx, rect(-20000, 0, 20000, 20000), rect(BAY_X - 600, -10, BAY_X + 600, 4000));
+      land = await difference(tx, land, await circle(tx, COVE.x, COVE.y, COVE.r));
+      await insertLand(tx, [land]);
+      await rasterGrid(tx, BAY_X - 1000, -400, BAY_X + 1000, 4100);
+      const head = { x: BAY_X, y: 3900 };
+      await insertScenePlace(tx, head.x, head.y, { status: "confirmed" });
+      const gulfTiles = [...new Set(await Promise.all([100, 2000, 3900].map((y) => tileAt(tx, BAY_X, y))))];
+      let duplicates = 0;
+      for (const tileId of gulfTiles) duplicates += (await detectTileBays(tx, tileId, cfg)).duplicates;
+      // the walls lie 400 m apart: a candidate on one wall makes its counterpart a same-pass duplicate
+      expect(duplicates).toBeGreaterThan(0);
+      const positions = await candidatePositions(tx);
+      expect(positions.filter((p) => Math.hypot(p.x - COVE.x, p.y - COVE.y) < COVE.r)).toHaveLength(1);
+      for (const p of positions) expect(Math.hypot(p.x - head.x, p.y - head.y)).toBeGreaterThan(cfg.bays.knownBayDistanceM);
+      for (const a of positions) {
+        for (const b of positions) {
+          if (a !== b) expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThanOrEqual(cfg.bays.knownPlaceDistanceM);
+        }
+      }
+      // a rerun adds nothing
+      for (const tileId of gulfTiles) expect((await detectTileBays(tx, tileId, cfg)).created).toBe(0);
+    }), 60_000);
 
   for (const westFirst of [true, false]) {
     it(`creates one candidate for a bay on the tile edge, ${westFirst ? "western" : "eastern"} tile first (M-1)`, () =>

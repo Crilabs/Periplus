@@ -295,6 +295,11 @@ export const geometrySchema = z.strictObject({
       /** A merged cluster wider than this (largest distance between two hits) is split into pieces of at most this span. */
       maxClusterSpanM: meters,
       knownPlaceDistanceM: meters,
+      /**
+       * A hit single-linked to a known hit and within this distance of a place or known object belongs to that place's
+       * own bay and is dropped too (ruling M7-I-R2).
+       */
+      knownBayDistanceM: meters,
       /** Valid geo objects of these types within `knownPlaceDistanceM` make a hit known (besides places of any status). */
       knownObjectTypes: z.array(geoObjectType).min(1),
       helperNameMaxDistanceM: meters,
@@ -306,6 +311,10 @@ export const geometrySchema = z.strictObject({
     .refine(
       (b) => b.maxClusterSpanM <= 2 * b.knownPlaceDistanceM,
       "maxClusterSpanM must be at most twice knownPlaceDistanceM (a created bay must make its whole piece known on a rerun)",
+    )
+    .refine(
+      (b) => b.knownBayDistanceM >= b.knownPlaceDistanceM + b.maxClusterSpanM / 2,
+      "knownBayDistanceM must be at least knownPlaceDistanceM + maxClusterSpanM / 2 (a same-pass duplicate's piece must be claimed on a rerun)",
     ),
 });
 

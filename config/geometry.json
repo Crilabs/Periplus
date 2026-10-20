@@ -40,6 +40,7 @@
     "mergeDistanceM": 300,
     "maxClusterSpanM": 1000,
     "knownPlaceDistanceM": 500,
+    "knownBayDistanceM": 1000,
     "knownObjectTypes": ["bay", "harbour"],
     "helperNameMaxDistanceM": 5000,
     "helperNameTypes": [["cape", "bay", "harbour", "settlement", "islet"], ["island"]]
