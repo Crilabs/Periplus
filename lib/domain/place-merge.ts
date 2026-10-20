@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { reviewDecisions, reviewTasks, type PlaceKind } from "@/lib/db/schema";
-import { dismissTasks, lockOpenTasks } from "@/lib/domain/consolidation/task-locks";
+import { dismissTasks, lockOpenPlaceTasks, lockOpenTasks } from "@/lib/domain/consolidation/task-locks";
 import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 
@@ -97,8 +97,9 @@ export type MergeResult = { keepGeoObjectId: string; dropGeoObjectId: string; di
  *
  * Lock order (ruling M5-F-R4, global order of `decideReviewTask`; the gazetteer merge `mergeGeoObjects` and the
  * review decision `same` lock geo objects before places): the merged object's open `conflict` / `uncertain_change`
- * tasks first, in one statement ordered by id (`lockOpenTasks`), then both geo objects ordered by id, then both place
- * rows ordered by id. Those tasks are dismissed (`context.dismissedReason` `object_ended`, M5-FIN-R1 M-6): the merged
+ * tasks first, in one statement ordered by id (`lockOpenTasks`), then the open tasks on the merged place itself
+ * (`lockOpenPlaceTasks`), then both geo objects ordered by id, then both place rows ordered by id. Those tasks are
+ * dismissed (the place tasks by `mergeGeoObjects`) (`context.dismissedReason` `object_ended`, M5-FIN-R1 M-6): the merged
  * object's profile stays history and is never delivered again. One immediately decided `place_candidate` task on
  * subject `place_merge` with one `review_decisions` row `{ action: "merge_place", intoPlaceId }` records who merged.
  * Never consolidates and never takes the profile lock.
@@ -121,6 +122,8 @@ export async function mergePlaceInto(
     if (keepGeoObjectId === dropGeoObjectId) throw new PlaceMergeNotAllowed("self", `places ${input.placeId} and ${input.intoPlaceId} share a geo object`);
 
     const tasks = [...(await lockOpenTasks(tx, dropGeoObjectId)).values()];
+    // the drop place's own open tasks (e.g. a restricted-area review): dismissed by mergeGeoObjects below (UI-5)
+    const placeTaskIds = await lockOpenPlaceTasks(tx, input.placeId);
 
     const { rows: objects } = await tx.execute<{ id: string }>(sql`
       select id from geo_objects
@@ -151,8 +154,8 @@ export async function mergePlaceInto(
       throw new PlaceMergeNotAllowed("across_areas", `places ${drop.id} and ${keep.id} lie in different areas`);
     }
 
-    const dismissedTaskIds = tasks.map((t) => t.id);
-    await dismissTasks(tx, dismissedTaskIds, "object_ended");
+    const dismissedTaskIds = [...tasks.map((t) => t.id), ...placeTaskIds];
+    await dismissTasks(tx, tasks.map((t) => t.id), "object_ended");
 
     const [task] = await tx
       .insert(reviewTasks)

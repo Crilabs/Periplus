@@ -29,7 +29,7 @@ import {
 } from "@/lib/db/schema";
 import { attributeDef, canonicalJson, InvalidFactValue, UnknownAttribute, validateFactValue } from "@/lib/domain/facts/schema";
 import { assignParentOf } from "@/lib/domain/gazetteer/hierarchy";
-import { dismissTasks, lockOpenTasks } from "@/lib/domain/consolidation/task-locks";
+import { dismissTasks, lockOpenPlaceTasks, lockOpenTasks } from "@/lib/domain/consolidation/task-locks";
 import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
 import { addNames, isGreek, transliterateElot743, type NameDraft } from "@/lib/domain/gazetteer/names";
 import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
@@ -284,6 +284,8 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
       if (!dropObject) throw new DecisionNotAllowed(`place ${task.subjectId} is not valid`);
       if (!keepObject || keepObject === dropObject) throw new DecisionNotAllowed(`place ${decision.intoPlaceId} is no valid merge target for ${task.subjectId}`);
       const openTasks = [...(await lockOpenTasks(tx, dropObject)).values()];
+      // the place's other open tasks, before the geo objects: `mergeGeoObjects` dismisses them (UI-5)
+      await lockOpenPlaceTasks(tx, task.subjectId);
       const { rows: objects } = await tx.execute<{ id: string }>(sql`
         select id from geo_objects
         where id in (${dropObject}, ${keepObject}) and valid_to is null and merged_into_id is null

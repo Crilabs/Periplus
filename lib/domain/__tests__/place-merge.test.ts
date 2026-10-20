@@ -54,9 +54,19 @@ describe("mergePlaceInto", () => {
       const conflict = await openTask(tx, "conflict", A.geoObjectId, "holding");
       const uncertain = await openTask(tx, "uncertain_change", A.geoObjectId, "capacity");
       const keepTask = await openTask(tx, "conflict", M.geoObjectId, "holding");
+      // a restricted-area review on the confirmed place itself (UI-5): no decision could close it after the merge
+      const placeTask = await createReviewTask(tx, { kind: "place_candidate", subjectType: "place", subjectId: A.placeId, context: { reason: "restricted" } });
 
       const result = await mergePlaceInto(tx, { placeId: A.placeId, intoPlaceId: M.placeId, decidedBy: ADMIN });
-      expect(result).toEqual({ keepGeoObjectId: M.geoObjectId, dropGeoObjectId: A.geoObjectId, dismissedTaskIds: [conflict.id, uncertain.id].sort() });
+      expect(result).toEqual({
+        keepGeoObjectId: M.geoObjectId,
+        dropGeoObjectId: A.geoObjectId,
+        dismissedTaskIds: [...[conflict.id, uncertain.id].sort(), placeTask.id],
+      });
+      expect((await tx.select().from(reviewTasks).where(eq(reviewTasks.id, placeTask.id)))[0]).toMatchObject({
+        status: "dismissed",
+        context: expect.objectContaining({ dismissedReason: "object_ended" }),
+      });
 
       expect(await placeRow(tx, A.placeId)).toMatchObject({ status: "rejected", statusReason: "merged", mergedIntoId: M.placeId, publicId: A.publicId });
       expect(await placeRow(tx, M.placeId)).toMatchObject({ status: "confirmed", mergedIntoId: null });
