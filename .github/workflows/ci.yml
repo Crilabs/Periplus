@@ -1,8 +1,10 @@
 name: ci
 
+# Pull requests run on pull_request; push only for main (a PR branch would otherwise run twice).
 on:
   pull_request:
   push:
+    branches: [main]
 
 # Least privilege by default; only the deploy job may push images.
 permissions:
@@ -42,7 +44,10 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - run: npm test
       - run: npm run build
+      # Against the build above (no second build), served standalone like the web image.
       - run: npm run test:e2e
+        env:
+          E2E_SKIP_BUILD: "1"
       - name: Service logs on failure
         if: failure()
         run: docker compose -f docker/compose.dev.yml logs --no-color --tail 200
