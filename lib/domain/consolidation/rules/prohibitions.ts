@@ -83,20 +83,21 @@ export const prohibitionsRule: ConsolidationRule = (inputs, ctx) => {
     }
   }
   const effective = new Set<ConsolidationInput>();
-  // kinds a removal decision took out, also those no current input names any more (GR-1: change detection lets a
-  // text entry leave the profile only through such a decision)
-  const removedEntryKeys = new Set<string>();
+  // kinds a removal decision took out, also those no current input names any more, with the youngest removal's date
+  // (GR-1: change detection lets a text entry leave the profile only through such a decision; GR-12: and only while
+  // no fact the previous profile cites for it is younger)
+  const removedEntries: Record<string, string> = {};
   for (const r of removals) {
     for (const kind of removedKinds(r)) {
       const naming = named.get(kind);
       if (naming?.some((n) => n.input.observedAt > r.observedAt)) continue;
-      removedEntryKeys.add(kind);
+      if (!(kind in removedEntries) || r.observedAt > removedEntries[kind]!) removedEntries[kind] = r.observedAt;
       if (!naming) continue;
       named.delete(kind);
       effective.add(r);
     }
   }
-  if (!basis && texts.length === 0) return { ...ruleResult(null, "review", removals, ctx), removedEntryKeys: [...removedEntryKeys].sort() };
+  if (!basis && texts.length === 0) return { ...ruleResult(null, "review", removals, ctx), removedEntries };
 
   const naming = new Map<string, Set<string>>();
   const cite = (key: string, i: ConsolidationInput) => naming.set(key, (naming.get(key) ?? new Set<string>()).add(inputId(i)));
@@ -126,5 +127,5 @@ export const prohibitionsRule: ConsolidationRule = (inputs, ctx) => {
       return [key, [...(naming.get(key) ?? [])].sort()];
     }),
   );
-  return { ...ruleResult(value, origin, support.length > 0 ? support : texts, ctx), entryFactIds, removedEntryKeys: [...removedEntryKeys].sort() };
+  return { ...ruleResult(value, origin, support.length > 0 ? support : texts, ctx), entryFactIds, removedEntries };
 };

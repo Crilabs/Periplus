@@ -405,6 +405,12 @@ export type ProfileContext = {
   withdrawnFactIds: Set<string>;
   /** `source:<id>` keys of the sources of `withdrawnFactIds`: a kept value stops citing them (ruling M6-FIN-R2). */
   withdrawnSourceKeys: Set<string>;
+  /**
+   * Text facts of the object (and of objects merged into it) → their observation date, also those that no longer
+   * count (an ineligible run): a removal decision no longer lifts a safety list entry the previous profile cites a
+   * younger fact for (GR-12).
+   */
+  factObservedAt: Map<string, string>;
 };
 
 type ObjectRow = {
@@ -493,6 +499,12 @@ export async function loadContext(
     where f.geo_object_id in ${mergedChainSql(geoObjectId)} and not (${countingSourceSql(today)})
   `);
 
+  const { rows: observed } = await db.execute<{ id: string; observed_at: string }>(sql`
+    select f.id, f.observed_at::text as observed_at
+    from facts f
+    where f.geo_object_id in ${mergedChainSql(geoObjectId)} and f.mention_id is not null
+  `);
+
   const computationGaps: Record<string, string> = {};
   for (const c of (await latestComputations(db, geoObjectId)).values()) {
     const gaps = c.outputs.gaps;
@@ -542,6 +554,7 @@ export async function loadContext(
     openTasks,
     withdrawnFactIds: new Set(withdrawn.map((r) => r.id)),
     withdrawnSourceKeys: new Set(withdrawn.map((r) => `source:${r.source_id}`)),
+    factObservedAt: new Map(observed.map((r) => [r.id, r.observed_at])),
   };
 }
 

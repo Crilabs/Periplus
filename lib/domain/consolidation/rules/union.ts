@@ -77,21 +77,22 @@ export function unite(inputs: ConsolidationInput[], keyOf: (entry: unknown) => s
   if (byKey.size === 0 && removals.length === 0) return null;
 
   const effective = new Set<ConsolidationInput>();
-  // entries a removal decision took out, also those no current input names any more (GR-1: change detection lets a
-  // text entry of a safety list leave the profile only through such a decision)
-  const removedEntryKeys = new Set<string>();
+  // entries a removal decision took out, also those no current input names any more, with the youngest removal's date
+  // (GR-1: change detection lets a text entry of a safety list leave the profile only through such a decision; GR-12:
+  // and only while no fact the previous profile cites for it is younger)
+  const removed: Record<string, string> = {};
   for (const r of removals) {
     for (const entry of removedEntries(r)) {
       const key = keyOf(entry);
       const slot = byKey.get(key);
       if (slot?.entries.some((e) => e.input.observedAt > r.observedAt)) continue;
-      removedEntryKeys.add(key);
+      if (!(key in removed) || r.observedAt > removed[key]!) removed[key] = r.observedAt;
       if (!slot) continue;
       byKey.delete(key);
       effective.add(r);
     }
   }
-  if (byKey.size === 0 && effective.size === 0) return { ...ruleResult(null, "review", removals, ctx), removedEntryKeys: [...removedEntryKeys].sort() };
+  if (byKey.size === 0 && effective.size === 0) return { ...ruleResult(null, "review", removals, ctx), removedEntries: removed };
 
   const merged = [...byKey.entries()]
     .map(([key, slot]) => {
@@ -121,7 +122,7 @@ export function unite(inputs: ConsolidationInput[], keyOf: (entry: unknown) => s
     ctx,
     confirming,
   );
-  return { ...result, entryFactIds, removedEntryKeys: [...removedEntryKeys].sort() };
+  return { ...result, entryFactIds, removedEntries: removed };
 }
 
 function strongestEntry(entries: { entry: unknown; input: ConsolidationInput }[], ctx: RuleContext): unknown {

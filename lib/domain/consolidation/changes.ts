@@ -332,8 +332,10 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
      * A safety list (`change.additiveLists`) against its previous value (`newList` null: the rule has no value now),
      * rulings M5-F-R3 I-3, M6-FIN-R2/R3 and GR-1. Entries the new list adds hold at once (`changed`). An entry of the
      * old list the new one lacks leaves only when
-     * - a review removal decision took it out (`support.removedEntryKeys`, „Eintrag entfernen“ or an accepted
-     *   `uncertain_change`),
+     * - a review removal decision took it out (`support.removedEntries`, „Eintrag entfernen“ or an accepted
+     *   `uncertain_change`) and no fact the previous profile cites for the entry is younger than that removal (GR-12:
+     *   a younger source naming the entry again consumes the removal for it, also once that fact stops counting;
+     *   a withdrawn fact does not count),
      * - it is a computed entry (a restricted area of `prohibitions`, or an entry cited by `computation:`/`poi:` inputs
      *   alone): the newer computation no longer has it, or
      * - every text fact of the old list is withdrawn now (a rejected or ended source, ruling M6-H-R1).
@@ -345,8 +347,12 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
     const safetyListDiff = (key: string, oldList: unknown[], newList: unknown[] | null, support: AttributeSupport, supported: boolean) => {
       const prevP = prev.provenance[key]!;
       const entryKey = (e: unknown) => listEntryKey(key, e, ctx);
-      const removed = new Set(support.removedEntryKeys ?? []);
       const idsOf = (k: string) => prevP.entryFactIds?.[k] ?? [];
+      const removedAt = support.removedEntries ?? {};
+      // the facts the previous profile cites for a removed entry that are younger than the removal (GR-12)
+      const consuming = (k: string) =>
+        k in removedAt ? idsOf(k).filter((id) => !context.withdrawnFactIds.has(id) && (context.factObservedAt.get(id) ?? "") > removedAt[k]!) : [];
+      const removed = (k: string) => k in removedAt && consuming(k).length === 0;
       // a computed entry: a restricted area of `prohibitions`, or one cited by computation/POI inputs alone
       const computedEntry = (k: string, e: unknown) => {
         if (key === "prohibitions") return isComputedProhibition(e);
@@ -358,7 +364,7 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
       const listWithdrawn = allText.length > 0 && allText.every((id) => context.withdrawnFactIds.has(id));
       const proposed = newList ?? [];
       const newKeys = new Set(proposed.map(entryKey));
-      const mayGo = (k: string, e: unknown) => removed.has(k) || computedEntry(k, e) || (listWithdrawn && textIds(k, e).length > 0);
+      const mayGo = (k: string, e: unknown) => removed(k) || computedEntry(k, e) || (listWithdrawn && textIds(k, e).length > 0);
       const carried = oldList
         .map((e) => [entryKey(e), e] as const)
         .filter(([k, e]) => !newKeys.has(k) && !mayGo(k, e))
@@ -387,7 +393,8 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
         event("changed", key, oldList, merged, severity);
       }
       if (same(merged, proposed)) return;
-      const factIds = [...support.factIds].sort();
+      // a consumed removal: the younger facts join the task, so the key the old accept decided does not hide it (GR-12)
+      const factIds = [...new Set([...support.factIds, ...carried.flatMap(([k]) => consuming(k))])].sort();
       const taskKey = uncertainKey(key, proposed, factIds);
       if (context.decidedUncertainKeys.has(taskKey)) return;
       // the entries held back and those citing no fact any more stay, marked, while their removal waits (GR-1, M6-FIN-R3)

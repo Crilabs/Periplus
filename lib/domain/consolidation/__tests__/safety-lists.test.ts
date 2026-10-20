@@ -151,3 +151,59 @@ describe("safety lists are never lifted by omission (GR-1, SAF-1)", () => {
     });
   });
 });
+
+describe("a removal is consumed once a younger source names the entry again (GR-12, wave-1 review I-1)", () => {
+  /**
+   * The admin removes the entry (accepted proposal after a prompt switch), a source observed after the removal names
+   * it again, then that fact stops counting too (the next prompt switch). The old removal must not lift the entry:
+   * it stays in its old form, marked in_review, with a task (GR-1).
+   */
+  async function removedThenRenamed(tx: Db, attribute: "prohibitions" | "hazards", entry: unknown, lon: number, lat: number) {
+    const a = await bannedPlace(tx, lon, lat);
+    await tx.execute(sql`update extraction_runs set prompt_version = prompt_version - 1 where id = ${a.run}`);
+    await consolidateGeo(tx, a.objectId, { today });
+    const task = (await openTask(tx, a.objectId, attribute))!;
+    await decideReviewTask(tx, { taskId: task.id, decision: { action: "accept_change" }, decidedBy: "test", taskKey: (task.context as { key: string }).key });
+    await consolidateGeo(tx, a.objectId, { today });
+    expect((await latestProfile(tx, a.objectId))?.attributes[attribute] ?? []).toEqual([]);
+    // a source observed after the removal names the entry again
+    const s2 = await insertSource(tx, "pilot_guide", 0.9);
+    const m2 = await insertMention(tx, a.objectId, { sourceId: s2, observedAt: tomorrow });
+    const r2 = await insertExtraction(tx, a.objectId, m2, { startedAt: new Date("2026-10-19T10:00:00Z") });
+    await insertMentionFact(tx, a.objectId, m2, r2, { attribute, value: [entry], observedAt: tomorrow, confidence: 0.9 });
+    await consolidateGeo(tx, a.objectId, { today: tomorrow });
+    expect((await latestProfile(tx, a.objectId))?.attributes[attribute]).toEqual([entry]);
+    // the next prompt switch: the re-mention stops counting
+    await tx.execute(sql`update extraction_runs set prompt_version = prompt_version - 1 where id = ${r2}`);
+    await consolidateGeo(tx, a.objectId, { today: tomorrow });
+    return a;
+  }
+
+  it("prohibitions: the re-named ban stays, marked in_review, with a task", async () => {
+    await withRollback(async (tx) => {
+      const a = await removedThenRenamed(tx, "prohibitions", ban, 19.761, 34.661);
+      const p = await latestProfile(tx, a.objectId);
+      expect(p?.attributes["prohibitions"]).toEqual([ban]);
+      expect(p?.provenance["prohibitions"]?.entryMarkers).toEqual({ anchoring: "in_review" });
+      const task = await openTask(tx, a.objectId, "prohibitions");
+      expect(task).toMatchObject({ priority: 2, context: { oldValue: [ban], newValue: [] } });
+      // discarding the new proposal holds: the ban stays without the marker and no further task opens
+      await decideReviewTask(tx, { taskId: task!.id, decision: { action: "discard_change" }, decidedBy: "test", taskKey: (task!.context as { key: string }).key });
+      await consolidateGeo(tx, a.objectId, { today: tomorrow });
+      const p2 = await latestProfile(tx, a.objectId);
+      expect(p2?.attributes["prohibitions"]).toEqual([ban]);
+      expect(p2?.provenance["prohibitions"]?.entryMarkers).toBeUndefined();
+      expect(await openTask(tx, a.objectId, "prohibitions")).toBeUndefined();
+    });
+  });
+
+  it("hazards (a union list): the re-named hazard stays, marked in_review, with a task", async () => {
+    await withRollback(async (tx) => {
+      const a = await removedThenRenamed(tx, "hazards", rock, 19.762, 34.662);
+      const p = await latestProfile(tx, a.objectId);
+      expect(p?.attributes["hazards"]).toEqual([rock]);
+      expect(Object.values(p?.provenance["hazards"]?.entryMarkers ?? {})).toEqual(["in_review"]);
+      expect(await openTask(tx, a.objectId, "hazards")).toMatchObject({ priority: 2, context: { oldValue: [rock], newValue: [] } });
+    });
+  });
+});
