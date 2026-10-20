@@ -17,25 +17,53 @@ import type { ResolvedMember } from "./resolve";
 export type StoredArea = { id: string; configKey: string; publicId: string | null; tags: Record<string, unknown> };
 
 /**
- * The valid area of a bot key: by `config_key = key`, else by a legacy key whose alias (`aliases[legacy] = key`) is
- * this key (`viaAlias`).
+ * The area of a bot key: the valid one by `config_key = key`, else by a legacy key whose alias (`aliases[legacy] =
+ * key`) is this key (`viaAlias`). Without a valid one, the most recently ended area of these keys imported for
+ * `country` (`tags.importCountry`), marked `ended`: a key the bot dropped and lists again gets its area, `ar_` id
+ * included, back (`reviveArea`).
  */
 export async function findArea(
   db: Db,
   key: string,
   aliases: Record<string, string>,
-): Promise<(StoredArea & { viaAlias: boolean }) | null> {
+  country: string,
+): Promise<(StoredArea & { viaAlias: boolean; ended: boolean }) | null> {
   const legacy = Object.entries(aliases).filter(([, to]) => to === key).map(([from]) => from);
-  const { rows } = await db.execute<{ id: string; config_key: string; public_id: string | null; tags: Record<string, unknown> }>(sql`
-    select id, config_key, public_id, tags from geo_objects
-    where type = 'area' and valid_to is null and merged_into_id is null
+  const { rows } = await db.execute<{
+    id: string;
+    config_key: string;
+    public_id: string | null;
+    tags: Record<string, unknown>;
+    ended: boolean;
+  }>(sql`
+    select id, config_key, public_id, tags, valid_to is not null as ended from geo_objects
+    where type = 'area' and merged_into_id is null
       and config_key in ${jsonTexts([key, ...legacy])}
-    order by (config_key = ${key}) desc, id
+      and (valid_to is null or tags->>'importCountry' = ${country})
+    order by (valid_to is null) desc, (config_key = ${key}) desc, valid_to desc, id desc
     limit 1
     for update`);
   const r = rows[0];
   if (!r) return null;
-  return { id: r.id, configKey: r.config_key, publicId: r.public_id, tags: r.tags ?? {}, viaAlias: r.config_key !== key };
+  return {
+    id: r.id,
+    configKey: r.config_key,
+    publicId: r.public_id,
+    tags: r.tags ?? {},
+    viaAlias: r.config_key !== key,
+    ended: r.ended,
+  };
+}
+
+/** Makes an ended area valid again (`valid_to = null`); `linkTiles` rebuilds its tile links after the update. */
+export async function reviveArea(db: Db, areaId: string): Promise<void> {
+  await db.execute(sql`update geo_objects set valid_to = null, updated_at = now() where id = ${areaId}`);
+}
+
+/** Rewrites the links of the tiles the area's current polygon meets. */
+export async function linkTiles(db: Db, areaId: string): Promise<void> {
+  const { rows } = await db.execute<{ g: string }>(sql`select geom::text as g from geo_objects where id = ${areaId}`);
+  await assignTiles(db, await tilesMeeting(db, [rows[0]!.g]));
 }
 
 /** Valid tiles whose box meets any of the geometries (hex EWKB or null). */

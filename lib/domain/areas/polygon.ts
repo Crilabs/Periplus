@@ -26,8 +26,8 @@ export type AreaPolygon = {
  * - Gulf rule: a `gulf`/`bay` member with an area whose polygon covers (the point on surface of) at least
  *   `gulfCoverShare` of the other members; among several, the one covering most, then the largest.
  * - Else `ST_ConcaveHull(ST_Collect(geoms), concaveRatio)` (a point or line for single or collinear members),
- *   buffered by `bufferNm` nautical miles as geography, minus the land polygons meeting the buffer's box shrunk by
- *   `inlandCutM` (geography), made valid and reduced to its polygons.
+ *   buffered by `bufferNm` nautical miles as geography, minus the land polygons (clipped to the buffer's box widened by
+ *   more than `inlandCutM`) shrunk by `inlandCutM` (geography), made valid and reduced to its polygons.
  */
 export async function computeAreaPolygon(db: Db, memberIds: string[], cfg: AppConfig): Promise<AreaPolygon | null> {
   const ids = [...new Set(memberIds)];
@@ -56,9 +56,18 @@ export async function computeAreaPolygon(db: Db, memberIds: string[], cfg: AppCo
                        ${p.bufferNm * NM_M}::float8)::geometry as b
       from m
     ),
+    -- The buffer's box widened by twice inlandCutM (plus 1 km) in degrees of longitude at its pole-most latitude, the
+    -- larger of both axes: land is clipped to it before the union, so neither a whole mainland is merged nor the
+    -- clip edge (which the inward buffer also shrinks from) comes within inlandCutM of the buffer.
+    clip as (
+      select ST_Expand(ST_Envelope(buf.b),
+               (${2 * p.inlandCutM + 1000}::float8 / 111320)
+               / greatest(cos(radians(greatest(abs(ST_YMin(buf.b)), abs(ST_YMax(buf.b))))), 0.01)) as c
+      from buf
+    ),
     inland as (
-      select ST_Buffer(ST_Union(l.geom)::geography, ${-p.inlandCutM}::float8)::geometry as g
-      from land_polygons l, buf where l.geom && buf.b
+      select ST_Buffer(ST_Union(ST_Intersection(l.geom, clip.c))::geography, ${-p.inlandCutM}::float8)::geometry as g
+      from land_polygons l, clip where l.geom && clip.c and ST_Intersects(l.geom, clip.c)
     ),
     hull as (
       select ST_Multi(ST_CollectionExtract(ST_MakeValid(

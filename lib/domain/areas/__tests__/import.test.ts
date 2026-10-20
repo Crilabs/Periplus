@@ -240,4 +240,48 @@ describe("importAreaFile", () => {
       expect(all).toContainEqual({ name: "Saronischer Golf", language: "de", origin: "import", is_preferred: true, valid: true });
       expect(all).toContainEqual({ name: "Saronischer Golf", language: "de", origin: "manual", is_preferred: false, valid: true });
     }));
+
+  it("gives a dropped and re-added key its ended area back: same id and public id, valid, linked to tiles", () =>
+    withRollback(async (db) => {
+      await insertScene(db);
+      const day = await today(db);
+      await importAreaFile(db, sceneFile(), cfg, day);
+      const before = (await area(db, "vrachos"))!;
+      const dropped = { ...sceneFile(), areas: sceneFile().areas.filter((a) => a.key !== "vrachos") };
+      expect((await importAreaFile(db, dropped, cfg, day)).ended).toEqual(["vrachos"]);
+      expect(await links(db, before.id)).toBe(0);
+
+      const report = await importAreaFile(db, sceneFile(), cfg, day);
+      expect(report.created).toEqual([]);
+      expect(report.updated).toEqual(["vrachos"]);
+      const after = (await area(db, "vrachos"))!;
+      expect(after.id).toBe(before.id);
+      expect(after.public_id).toBe(before.public_id);
+      expect(after.valid_to).toBeNull();
+      expect(await links(db, after.id)).toBeGreaterThan(0);
+    }));
+
+  it("keeps polygon and members of an area whose members no longer give a polygon", () =>
+    withRollback(async (db) => {
+      await insertScene(db);
+      const day = await today(db);
+      await importAreaFile(db, sceneFile(), cfg, day);
+      const velani = (await area(db, "velani-coast"))!;
+      const membersBefore = await members(db, velani.id);
+      const before = await counts(db, [velani.id]);
+      const file = sceneFile();
+      const v = file.areas.find((a) => a.key === "velani-coast")!;
+      v.members = [{ name: "Velani", type: "harbour" }];
+      v.boundaryPoints = [{ name: "Nowhere", type: "cape" }];
+      const report = await importAreaFile(db, file, cfg, day);
+      expect(report.updated).toEqual(["velani-coast"]);
+      expect(report.waiting).toEqual([]);
+      expect(await members(db, velani.id)).toEqual(membersBefore);
+      expect((await counts(db, [velani.id])).history).toBe(before.history);
+      const after = (await area(db, "velani-coast"))!;
+      expect(after.tags).toMatchObject({
+        polygonOrigin: "computed",
+        unresolvedMembers: [{ name: "Nowhere", type: "cape", role: "boundary" }],
+      });
+    }));
 });

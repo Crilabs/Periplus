@@ -87,4 +87,30 @@ describe("resolveAreaMembers", () => {
       expect(res.resolved).toEqual([{ geoObjectId: scene.objects.plakari, name: "Plakari", role: "member" }]);
       expect(res.unresolved).toEqual([{ name: "Xerolimni", type: "harbour", role: "member" }]);
     }));
+
+  it("prefers the bot type's own object type when a harbour and its town share the name", () =>
+    withRollback(async (db) => {
+      const scene = await insertScene(db);
+      const res = await resolveAreaMembers(
+        db,
+        [
+          { name: "Kalidona", type: "harbour", role: "member" },
+          { name: "Kalidona", type: "settlement", role: "boundary" },
+        ],
+        [scene.subdivisions.a],
+        cfg,
+      );
+      expect(res.resolved).toEqual([
+        { geoObjectId: scene.objects.kalidonaHarbour, name: "Kalidona", role: "member" },
+        { geoObjectId: scene.objects.kalidonaTown, name: "Kalidona", role: "boundary" },
+      ]);
+    }));
+
+  it("resolves a member whose name is a configured common word", () =>
+    withRollback(async (db) => {
+      const scene = await insertScene(db);
+      expect(cfg.mentions.commonWords.el).toContain("skala");
+      const res = await resolveAreaMembers(db, [{ name: "Skala", type: "harbour", role: "member" }], [scene.subdivisions.a], cfg);
+      expect(res.resolved).toEqual([{ geoObjectId: scene.objects.skala, name: "Skala", role: "member" }]);
+    }));
 });

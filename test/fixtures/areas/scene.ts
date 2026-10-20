@@ -17,7 +17,8 @@ import { tileBbox, tilesInBbox, type Bbox } from "@/lib/domain/tiles";
  * - harbours Velani and Dorkasi on both sides of the peninsula, Myrtidi (Greek name only), the cape Sarandi at the
  *   peninsula's tip, the island Vrachonisi, the settlement Kastelani, the Teranos Gulf (polygon over most of ZT-B)
  *   with the harbours Lefkori and Petrili inside;
- * - two harbours „Agios Stefanos“, one in ZT-A, one in ZT-B (inside the gulf);
+ * - two harbours „Agios Stefanos“, one in ZT-A, one in ZT-B (inside the gulf); the harbour and the settlement
+ *   Kalidona at the same place; the harbour Skala (a configured common word);
  * - Plakari without subdivision one tile ring east of ZT-A's tiles, Xerolimni without subdivision two rings east.
  *
  * Every tile of `SCENE_BOX` is a coast tile, linked through `assignTiles`. Run inside `withRollback`.
@@ -119,6 +120,15 @@ const OBJECTS: ObjectSpec[] = [
     names: [{ name: "Agios Stefanos", language: "und" }],
     subdivision: "b",
   },
+  { key: "kalidonaHarbour", type: "harbour", geom: point(10.42, 40.22), names: [{ name: "Kalidona", language: "und" }], subdivision: "a" },
+  {
+    key: "kalidonaTown",
+    type: "settlement",
+    geom: point(10.421, 40.221),
+    names: [{ name: "Kalidona", language: "und" }],
+    subdivision: "a",
+  },
+  { key: "skala", type: "harbour", geom: point(10.12, 40.05), names: [{ name: "Skala", language: "und" }], subdivision: "a" },
   { key: "plakari", type: "harbour", geom: point(10.6, 40.6), names: [{ name: "Plakari", language: "und" }], subdivision: null },
   { key: "xerolimni", type: "harbour", geom: point(10.85, 40.6), names: [{ name: "Xerolimni", language: "und" }], subdivision: null },
 ];

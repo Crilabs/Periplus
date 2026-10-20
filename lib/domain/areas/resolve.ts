@@ -69,10 +69,45 @@ async function ofTypes(db: Db, ids: string[], types: readonly GeoObjectType[]): 
 }
 
 /**
+ * One preference level: the entries `indexes` against `candidates`, each entry as one n-gram on disjoint offsets so
+ * `resolveHits` decides it as its own span. Returns the entries with any hit: the object of a sure hit, null for an
+ * ambiguous one. Entries without a hit are missing from the map.
+ */
+async function matchLevel(
+  db: Db,
+  entries: MemberEntry[],
+  indexes: number[],
+  candidates: string[],
+  match: MatchConfig,
+): Promise<Map<number, string | null>> {
+  const decided = new Map<number, string | null>();
+  if (candidates.length === 0) return decided;
+  const grams: Ngram[] = [];
+  const entryAt = new Map<number, number>();
+  let offset = 0;
+  for (const i of indexes) {
+    const name = entries[i]!.name;
+    const forms = nameForms(name);
+    if (forms.length === 0) continue;
+    grams.push({ start: offset, end: offset + name.length, surface: name, forms, words: forms[0]!.split(" ").length });
+    entryAt.set(offset, i);
+    offset += name.length + 1;
+  }
+  const hits = await findNameHits(db, nameFormsOf(grams, match), candidates, match);
+  // Bot member names are typed names, never words of a running text: no common-word refinement.
+  for (const r of resolveHits(hits, match, { commonWords: false })) {
+    const i = entryAt.get(r.kind === "sure" ? r.hit.start : r.start)!;
+    decided.set(i, r.kind === "sure" ? r.hit.geoObjectId : null);
+  }
+  return decided;
+}
+
+/**
  * Resolves the entries (member and boundary-point names with their bot type) among the scope objects of
- * `subdivisionIds` whose type `cfg.areas.memberTypes[type]` allows. Every entry is one span of the spec-06 match
- * (`nameForms` → `findNameHits` → `resolveHits`); only a `sure` result resolves. Runs in one transaction (a savepoint
- * inside the caller's) so the trigram threshold holds. Both lists keep the order of `entries`.
+ * `subdivisionIds` whose type `cfg.areas.memberTypes[type]` allows, type by type in that order (`matchLevel`). Every
+ * entry is one span of the spec-06 match (`nameForms` → `findNameHits` → `resolveHits`); only a `sure` result
+ * resolves. Runs in one transaction (a savepoint inside the caller's) so the trigram threshold holds. Both lists keep
+ * the order of `entries`.
  */
 export async function resolveAreaMembers(
   db: Db,
@@ -83,28 +118,22 @@ export async function resolveAreaMembers(
   const match: MatchConfig = { mentions: cfg.mentions, nameAffixes: cfg.nameAffixes };
   const sure = new Map<number, string>();
   await db.transaction(async (tx) => {
+    // `set_config(…, true)` is transaction-local: inside the caller's transaction the threshold stays in effect for the
+    // rest of that outer transaction, not just this savepoint.
     await setTrigramThreshold(tx, cfg.mentions.uncertainSimilarity);
     const scope = await scopeObjects(tx, subdivisionIds, cfg.areas.neighbourRing);
     const byType = new Map<string, number[]>();
     entries.forEach((e, i) => byType.set(e.type, [...(byType.get(e.type) ?? []), i]));
     for (const [type, indexes] of byType) {
-      const candidates = await ofTypes(tx, scope, cfg.areas.memberTypes[type] ?? []);
-      if (candidates.length === 0) continue;
-      // One n-gram per entry on disjoint offsets, so `resolveHits` decides every entry as its own span.
-      const grams: Ngram[] = [];
-      const entryAt = new Map<number, number>();
-      let offset = 0;
-      for (const i of indexes) {
-        const name = entries[i]!.name;
-        const forms = nameForms(name);
-        if (forms.length === 0) continue;
-        grams.push({ start: offset, end: offset + name.length, surface: name, forms, words: forms[0]!.split(" ").length });
-        entryAt.set(offset, i);
-        offset += name.length + 1;
-      }
-      const hits = await findNameHits(tx, nameFormsOf(grams, match), candidates, match);
-      for (const r of resolveHits(hits, match)) {
-        if (r.kind === "sure") sure.set(entryAt.get(r.hit.start)!, r.hit.geoObjectId);
+      // `memberTypes[type]` is an order of preference: a harbour and its town share their name (Poros, Hydra), so a
+      // `harbour` entry is matched among harbours first and only an entry without any hit there among settlements.
+      // An ambiguous result at one level is final (Review Focus 1): it never falls through to a lower preference.
+      let pending = indexes;
+      for (const objectType of cfg.areas.memberTypes[type] ?? []) {
+        if (pending.length === 0) break;
+        const decided = await matchLevel(tx, entries, pending, await ofTypes(tx, scope, [objectType]), match);
+        for (const [i, id] of decided) if (id) sure.set(i, id);
+        pending = pending.filter((i) => !decided.has(i));
       }
     }
   });

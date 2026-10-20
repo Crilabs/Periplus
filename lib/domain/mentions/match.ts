@@ -237,8 +237,10 @@ function bestPerObject(hits: MatchHit[]): MatchHit[] {
  * M4-E-R5): a one-word span written lowercase or listed in `commonWords` is never sure without an affix; and a
  * band-only span (no exact or sure hit of its own) that swallows a shorter span with an exact or sure hit offers that
  * inner span's objects as candidates too, so the right object reaches the model.
+ * `commonWords: false` skips the common-word refinement, for names that are known to be names (the typed member names
+ * of a bot area, spec 14) rather than words of a running text.
  */
-export function resolveHits(hits: MatchHit[], cfg: MatchConfig): ResolvedMatch[] {
+export function resolveHits(hits: MatchHit[], cfg: MatchConfig, opts: { commonWords?: boolean } = {}): ResolvedMatch[] {
   const spans = new Map<string, Span>();
   for (const hit of hits) {
     const key = `${hit.start}:${hit.end}`;
@@ -279,7 +281,7 @@ export function resolveHits(hits: MatchHit[], cfg: MatchConfig): ResolvedMatch[]
       const ofType = strong.filter((h) => types.includes(h.objectType));
       if (ofType.length === 1) sure = ofType[0]!;
     }
-    if (sure && !maybeCommonWord(span, common)) {
+    if (sure && (opts.commonWords === false || !maybeCommonWord(span, common))) {
       out.push({ kind: "sure", hit: sure });
       continue;
     }
