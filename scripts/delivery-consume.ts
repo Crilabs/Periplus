@@ -38,6 +38,29 @@ async function failure(res: Response, what: string): Promise<string> {
 }
 
 /**
+ * The URL of an API link under `base` (no trailing slash): a root-relative link (`/api/v1/…`) is appended to the base
+ * URL, so a path prefix (`https://host/periplus`) is kept (final review M-4); an absolute link must have the base URL's
+ * origin, else null — the key is never sent to another host (bundle H review).
+ */
+export function resolveLink(base: string, link: string): string | null {
+  if (link.startsWith("/") && !link.startsWith("//")) return `${base}${link}`;
+  let url: URL;
+  try {
+    url = new URL(link);
+  } catch {
+    return null;
+  }
+  return url.origin === new URL(base).origin ? url.toString() : null;
+}
+
+/** A warning for a base URL that sends the key in clear text: `http://` to a host other than localhost. */
+export function baseUrlWarning(baseUrl: string): string | null {
+  const url = new URL(baseUrl);
+  if (url.protocol !== "http:" || ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) return null;
+  return `warning: ${url.origin} is plain http, the API key travels unencrypted; use https://`;
+}
+
+/**
  * Consumes the current package of `area` (config key or `ar_…`) from `baseUrl`. Throws when the manifest cannot be
  * fetched (wrong key, unknown area, no valid package); every file problem is a finding of that file instead.
  * `manifest.json` has no hash in the manifest itself: it must equal the manifest `GET /package` answered.
@@ -50,11 +73,10 @@ export async function consumePackage(input: {
 }): Promise<ConsumeResult> {
   const doFetch = input.fetch ?? fetch;
   const base = input.baseUrl.replace(/\/+$/, "");
-  const get = (pathOrUrl: string) =>
-    doFetch(new URL(pathOrUrl, `${base}/`).toString(), { headers: { authorization: `Bearer ${input.key}`, accept: "application/json" } });
+  const get = (url: string) => doFetch(url, { headers: { authorization: `Bearer ${input.key}`, accept: "application/json" } });
 
   const packagePath = `/api/v1/areas/${encodeURIComponent(input.area)}/package`;
-  const res = await get(packagePath);
+  const res = await get(resolveLink(base, packagePath)!);
   if (res.status !== 200) throw new Error(await failure(res, packagePath));
   const { links, ...manifest } = (await res.json()) as PackageBody;
 
@@ -63,7 +85,13 @@ export async function consumePackage(input: {
   const files: ConsumedFile[] = [];
 
   for (const [name, link] of Object.entries(links) as Array<[ContractFile, string]>) {
-    const fileRes = await get(link);
+    const url = resolveLink(base, link);
+    if (url === null) {
+      // the key goes to the base URL's origin only
+      files.push({ name, sha256Ok: false, schemaErrors: [`link to another origin, not fetched: ${link}`] });
+      continue;
+    }
+    const fileRes = await get(url);
     if (fileRes.status !== 200) {
       files.push({ name, sha256Ok: false, schemaErrors: [await failure(fileRes, link)] });
       continue;
@@ -79,7 +107,7 @@ export async function consumePackage(input: {
     const sha256Ok = name === "manifest.json" ? isDeepStrictEqual(data, manifest) : expected.get(name) === sha256(bytes);
 
     const schemaPath = `/api/v1/schema/${encodeURIComponent(manifest.schemaVersion)}/${schemaName(name)}`;
-    const schemaRes = await get(schemaPath);
+    const schemaRes = await get(resolveLink(base, schemaPath)!);
     if (schemaRes.status !== 200) {
       files.push({ name, sha256Ok, schemaErrors: [await failure(schemaRes, schemaPath)] });
       continue;
@@ -122,6 +150,8 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2), process.env);
   const out = (line: string) => process.stdout.write(`${line}\n`);
+  const warning = baseUrlWarning(args.baseUrl);
+  if (warning !== null) process.stderr.write(`${warning}\n`);
   const result = await consumePackage(args);
   out(`area ${args.area}, data version ${result.dataVersion}`);
   for (const f of result.files) {

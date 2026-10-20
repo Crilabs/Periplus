@@ -7,7 +7,7 @@ import { newId } from "@/lib/domain/ids";
 import { testDb, withRollback } from "@/test/db";
 import { seedDeliveryArea } from "@/test/fixtures/delivery/area";
 import { memoryArchive } from "@/test/s3";
-import { consumePackage, parseArgs } from "../delivery-consume";
+import { baseUrlWarning, consumePackage, parseArgs, resolveLink } from "../delivery-consume";
 
 /*
  * The consumer check against the real route handlers: a `fetch` stub maps the URLs `consumePackage` calls onto the
@@ -33,13 +33,17 @@ const schemaRoute = await import("@/app/api/v1/schema/[version]/[file]/route");
 const BASE = "https://periplus.test.invalid";
 const NOW = new Date("2040-06-01T08:00:00Z");
 
-/** `fetch` onto the route handlers; `tamper` may rewrite a response body by path. */
-function routeFetch(tamper?: (path: string, bytes: Uint8Array) => Uint8Array): typeof fetch {
+/**
+ * `fetch` onto the route handlers; `tamper` may rewrite a response body by path; `prefix` is the path the server is
+ * mounted under (a reverse proxy strips it, the handlers' links do not carry it).
+ */
+function routeFetch(tamper?: (path: string, bytes: Uint8Array) => Uint8Array, prefix = ""): typeof fetch {
   return (async (input: string | URL | Request, init?: RequestInit) => {
     const req = new Request(input, init);
     const url = new URL(req.url);
     if (url.origin !== BASE) throw new Error(`unexpected origin ${url.origin}`);
-    const parts = url.pathname.split("/").map(decodeURIComponent);
+    if (!url.pathname.startsWith(`${prefix}/`)) return new Response(null, { status: 404 });
+    const parts = url.pathname.slice(prefix.length).split("/").map(decodeURIComponent);
     // "", "api", "v1", …
     const [, api, v1, kind, a, b, c] = parts;
     if (api !== "api" || v1 !== "v1") return new Response(null, { status: 404 });
@@ -119,6 +123,33 @@ describe("consumePackage", () => {
       expect(result.ok).toBe(false);
     }));
 
+  it("a base URL with a path prefix keeps it for every request (final review M-4)", () =>
+    withRollback(async (tx) => {
+      const { f, key } = await builtArea(tx);
+      const result = await consumePackage({ baseUrl: `${BASE}/periplus/`, key, area: f.areaKey, fetch: routeFetch(undefined, "/periplus") });
+      expect(result.ok).toBe(true);
+      expect(result.files).toHaveLength(6);
+    }));
+
+  it("a manifest link to another origin is not fetched, so the key never leaves the base URL's host (bundle H review)", () =>
+    withRollback(async (tx) => {
+      const { f, key } = await builtArea(tx);
+      const tamper = (path: string, bytes: Uint8Array) => {
+        if (!path.endsWith("/package")) return bytes;
+        const body = JSON.parse(new TextDecoder().decode(bytes)) as { links: Record<string, string> };
+        body.links["spots.json"] = "https://elsewhere.test.invalid/api/v1/areas/x/package/spots.json";
+        return new TextEncoder().encode(JSON.stringify(body));
+      };
+      // routeFetch throws on any other origin: the run completes, so nothing was sent there
+      const result = await consumePackage({ baseUrl: BASE, key, area: f.areaKey, fetch: routeFetch(tamper) });
+      expect(result.files.find((x) => x.name === "spots.json")).toEqual({
+        name: "spots.json",
+        sha256Ok: false,
+        schemaErrors: ["link to another origin, not fetched: https://elsewhere.test.invalid/api/v1/areas/x/package/spots.json"],
+      });
+      expect(result.ok).toBe(false);
+    }));
+
   it("a wrong key or an area without package throws with the API's error", () =>
     withRollback(async (tx) => {
       const { f, key } = await builtArea(tx);
@@ -127,6 +158,23 @@ describe("consumePackage", () => {
       );
       await expect(consumePackage({ baseUrl: BASE, key, area: "no-such-area", fetch: routeFetch() })).rejects.toThrow(/404/);
     }));
+});
+
+describe("resolveLink and baseUrlWarning", () => {
+  it("appends root-relative links to the base, accepts absolute links of the same origin only", () => {
+    expect(resolveLink("https://h.example/periplus", "/api/v1/areas")).toBe("https://h.example/periplus/api/v1/areas");
+    expect(resolveLink("https://h.example", "https://h.example/api/v1/x")).toBe("https://h.example/api/v1/x");
+    expect(resolveLink("https://h.example", "https://other.example/api/v1/x")).toBeNull();
+    expect(resolveLink("https://h.example", "//other.example/api/v1/x")).toBeNull();
+    expect(resolveLink("https://h.example", "http://h.example/api/v1/x")).toBeNull();
+  });
+
+  it("warns on plain http except to localhost", () => {
+    expect(baseUrlWarning("http://periplus.example.org")).toMatch(/plain http/);
+    expect(baseUrlWarning("http://localhost:3000")).toBeNull();
+    expect(baseUrlWarning("http://127.0.0.1:3200")).toBeNull();
+    expect(baseUrlWarning("https://periplus.example.org")).toBeNull();
+  });
 });
 
 describe("parseArgs", () => {
