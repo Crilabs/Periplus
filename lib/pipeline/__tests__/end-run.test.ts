@@ -1,0 +1,100 @@
+import { eq } from "drizzle-orm";
+import type { PgBoss } from "pg-boss";
+import { describe, expect, it } from "vitest";
+import { withRollback } from "@/test/db";
+import { insertNamedObject, insertTestTile, insertTestVersion } from "@/test/text";
+import { loadConfig, type AppConfig } from "@/lib/config";
+import type { Db } from "@/lib/db/client";
+import { aiBatches, extractionRuns, extractionUnits, mentions, runStages, runs } from "@/lib/db/schema";
+import { newId } from "@/lib/domain/ids";
+import { beginStage, createRun, getRun } from "@/lib/domain/runs";
+import { tileIdFor } from "@/lib/domain/tiles";
+import { EXTRACT_STAGE, planExtraction } from "@/lib/pipeline/text/extract";
+import { endRunByAdmin, enqueueStage } from "@/lib/pipeline/runs";
+
+/*
+ * „Lauf beenden“ is repeatable until its cleanup completed, and a stage planned after (or racing) the end plans
+ * nothing (rulings GR-8, CON-1/CON-2). Own tiles, far outside the pilot box, in withRollback.
+ */
+
+const base = loadConfig("config");
+const config: AppConfig = { ...base, budgets: { ...base.budgets, anthropic: { dailyEur: 1000 } } };
+const ADMIN = "admin@example.invalid";
+
+async function scene(tx: Db, name: string, lon: number, lat: number) {
+  const texts = [`## ${name}`, `${name} is a quiet bay. Holding is good in sand, depth 6 m.`];
+  const tile = await insertTestTile(tx, tileIdFor(lon, lat));
+  const object = await insertNamedObject(tx, { type: "bay", names: [{ name }], lon, lat, tiles: [tile] });
+  const v = await insertTestVersion(tx, texts);
+  for (const [i, text] of texts.entries()) {
+    const at = text.indexOf(name);
+    await tx.insert(mentions).values({ documentVersionId: v.versionId, chunkId: v.chunkIds[i]!, geoObjectId: object, surface: name,
+      charStart: at, charEnd: at + name.length, observedAt: "2026-10-19", confidence: 1, matchKind: "deterministic" });
+  }
+  return v;
+}
+
+const stubBoss = () =>
+  ({
+    findJobs: async () => [],
+    cancel: async () => undefined,
+    insert: async (_q: string, jobs: Array<{ id?: string }>) => jobs.map((j) => j.id ?? newId()),
+  }) as unknown as PgBoss;
+
+describe("Lauf beenden", () => {
+  it("a cleanup that failed after the end committed is repeated by the next call, and then recorded", () =>
+    withRollback(async (tx) => {
+      const v = await scene(tx, "Kolonax", -150.3, -50.3);
+      const params = { documentVersionIds: [v.versionId] };
+      const { id: runId } = await createRun(tx, { kind: "stage", scope: { type: "system", id: `end-${newId()}` }, stages: [EXTRACT_STAGE], params, triggeredBy: "test" });
+      const [job] = await planExtraction(tx, { id: runId, params }, config);
+      await beginStage(tx, runId, EXTRACT_STAGE, 1);
+      const [batch] = await tx
+        .insert(aiBatches)
+        .values({ runId, stage: EXTRACT_STAGE, task: "extract-facts", model: "mock", promptVersion: 1, status: "submitting",
+          outcomeKey: `end-${newId()}`, requestCount: 1, estimatedCostEur: "1.0" })
+        .returning({ id: aiBatches.id });
+
+      const flaky = { findJobs: async () => { throw new Error("connection terminated"); }, cancel: async () => undefined } as unknown as PgBoss;
+      await expect(endRunByAdmin(tx, flaky, runId, ADMIN)).rejects.toThrow("connection terminated");
+      const pending = (await getRun(tx, runId))!;
+
+      const second = await endRunByAdmin(tx, stubBoss(), runId, ADMIN);
+      const units = await tx.select().from(extractionUnits).where(eq(extractionUnits.extractionRunId, job!.extractionRunId as string));
+      expect(units.map((u) => u.status)).toEqual(["failed"]);
+      const [er] = await tx.select().from(extractionRuns).where(eq(extractionRuns.id, job!.extractionRunId as string));
+      expect(er).toMatchObject({ status: "blocked", blockedReason: "run_ended" });
+      const [b] = await tx.select().from(aiBatches).where(eq(aiBatches.id, batch!.id));
+      expect(b!.status).toBe("failed");
+      expect(pending).toMatchObject({ status: "failed", endedBy: ADMIN, endCleanupPending: true });
+      expect(second).toEqual({ ended: false, cleanedUp: true, cancelledJobs: 0 });
+      expect((await getRun(tx, runId))!.endCleanupPending).toBe(false);
+
+      // Once cleaned up, another click changes nothing.
+      expect(await endRunByAdmin(tx, flaky, runId, ADMIN)).toEqual({ ended: false, cleanedUp: false, cancelledJobs: 0 });
+    }));
+
+  it("a run that ended by itself is never cleaned up as an admin end", () =>
+    withRollback(async (tx) => {
+      const { id: runId } = await createRun(tx, { kind: "stage", scope: { type: "system", id: `end-${newId()}` }, stages: [EXTRACT_STAGE], params: {}, triggeredBy: "test" });
+      await tx.update(runs).set({ status: "finished" }).where(eq(runs.id, runId));
+      expect(await endRunByAdmin(tx, stubBoss(), runId, ADMIN)).toEqual({ ended: false, cleanedUp: false, cancelledJobs: 0 });
+      expect((await getRun(tx, runId))!).toMatchObject({ status: "finished", endedBy: null, endCleanupPending: false });
+    }));
+
+  it("a stage transition that runs after the end plans nothing: no extraction run, no units, no claimed mentions", () =>
+    withRollback(async (tx) => {
+      const v = await scene(tx, "Kolonay", -150.4, -50.4);
+      const { id: runId } = await createRun(tx, { kind: "stage", scope: { type: "system", id: `end-${newId()}` }, stages: [EXTRACT_STAGE], params: { documentVersionIds: [v.versionId] }, triggeredBy: "test" });
+      // the run.advance handler read the run (queued, stage pending) just before the admin's click
+      const boss = stubBoss();
+      expect((await endRunByAdmin(tx, boss, runId, ADMIN)).ended).toBe(true);
+      const planned = await enqueueStage(tx, boss, runId, EXTRACT_STAGE);
+      expect(await tx.select().from(extractionRuns).where(eq(extractionRuns.runId, runId))).toEqual([]);
+      expect(planned).toBe(false);
+      const [stage] = await tx.select().from(runStages).where(eq(runStages.runId, runId));
+      expect(stage).toMatchObject({ status: "pending", total: 0 });
+      const claims = await tx.select({ s: mentions.extractionStatus }).from(mentions).where(eq(mentions.documentVersionId, v.versionId));
+      expect(claims.map((m) => m.s)).toEqual(["pending", "pending"]);
+    }));
+});

@@ -190,6 +190,21 @@ export default async function Page({ params, searchParams }: PageProps<"/runs/[i
                 </form>
               </Dialog>
             )}
+            {run.endCleanupPending && (
+              <Dialog
+                trigger="Aufräumen wiederholen …"
+                triggerVariant="danger"
+                title="Aufräumen wiederholen"
+                description="Das Beenden dieses Laufs wurde nicht vollständig abgeschlossen. Bricht seine wartenden Jobs ab, beendet ungesendete Batches, schließt offene Extraktionseinheiten und sperrt ungeprüfte Extraktionsläufe."
+              >
+                <form action={endRunAction} className="flex justify-end">
+                  <input type="hidden" name="runId" value={run.id} />
+                  <Button type="submit" variant="danger">
+                    Aufräumen wiederholen
+                  </Button>
+                </form>
+              </Dialog>
+            )}
           </>
         }
       />

@@ -636,7 +636,7 @@ describe("stage extraction.mention", () => {
       await beginStage(tx, runId, EXTRACT_STAGE, 1);
       // no job ran: the unit is still pending, its mentions claimed (done)
       const boss = { findJobs: async () => [], cancel: async () => undefined } as unknown as PgBoss;
-      expect(await endRunByAdmin(tx, boss, runId, "admin@example.invalid")).toEqual({ ended: true, cancelledJobs: 0 });
+      expect(await endRunByAdmin(tx, boss, runId, "admin@example.invalid")).toEqual({ ended: true, cleanedUp: true, cancelledJobs: 0 });
       const units = await tx.select().from(extractionUnits).where(eq(extractionUnits.extractionRunId, job!.extractionRunId as string));
       expect(units.map((u) => u.status)).toEqual(["failed"]);
       const kolona = s.mentions.filter((m) => m.geoObjectId === s.kolona).map((m) => m.id);

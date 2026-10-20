@@ -51,8 +51,8 @@ const endRunSchema = z.object({ runId: z.uuid() });
 
 /**
  * "Lauf beenden": ends a queued or running run (e.g. one stuck after a worker crash, which keeps its sources locked)
- * and cancels its jobs that have not started; records the admin and the time on the run. A run that has ended
- * already stays as it is.
+ * and cancels its jobs that have not started; records the admin and the time on the run. For a run an admin ended
+ * whose cleanup did not complete, „Aufräumen wiederholen“ runs the cleanup again; any other ended run stays as it is.
  */
 export async function endRunAction(input: FormData | { runId: string }): Promise<void> {
   const admin = await requireAdmin();
