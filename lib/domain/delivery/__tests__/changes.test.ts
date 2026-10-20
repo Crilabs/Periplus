@@ -232,7 +232,7 @@ describe("mergeChanges", () => {
     ]);
     expect(merged).toEqual([
       e(A, "created", 2, { severity: "safety", summary: { de: "Neu im Paket." } }),
-      e(C, "updated", 5, { fields: ["depth.min", "holding"], severity: "notable" }),
+      e(C, "updated", 5, { fields: ["depth.min", "holding"], severity: "notable", summary: { de: "Geändert: Tiefe, Halt." } }),
       e(D, "created", 4),
     ]);
   });
@@ -259,6 +259,40 @@ describe("mergeChanges", () => {
     expect(mergeChanges([[e(A, "updated", 2, { fields: ["holding"] })], [e(A, "removed", 3, { severity: "notable" })]])).toEqual([
       e(A, "removed", 3, { severity: "notable" }),
     ]);
+  });
+
+  it("an exclusion survives a later update and the summary names the exclusion (final review I-1)", () => {
+    const excluded = e(A, "excluded", 2, { severity: "safety", summary: { de: "Ausgeschlossen: Militärisches Sperrgebiet." } });
+    expect(mergeChanges([[excluded], [e(A, "updated", 3, { fields: ["services.water"], severity: "notable", summary: { de: "Geändert: Versorgung." } })]])).toEqual([
+      e(A, "excluded", 3, { severity: "safety", summary: { de: "Ausgeschlossen: Militärisches Sperrgebiet." } }),
+    ]);
+    // a later change of exclude.excluded reverses it: updated with the united fields
+    expect(
+      mergeChanges([[excluded], [e(A, "updated", 3, { fields: ["exclude.excluded", "exclude.reason"], severity: "safety" })]]),
+    ).toEqual([e(A, "updated", 3, { fields: ["exclude.excluded", "exclude.reason"], severity: "safety", summary: { de: "Geändert: Ausschluss." } })]);
+  });
+
+  it("a merge survives a later update unless mergedInto changes again (final review I-1)", () => {
+    const merged = e(A, "merged", 2, { severity: "notable", summary: { de: `Zusammengelegt mit ${B}.` } });
+    expect(mergeChanges([[merged], [e(A, "updated", 3, { fields: ["holding"] })]])).toEqual([
+      e(A, "merged", 3, { severity: "notable", summary: { de: `Zusammengelegt mit ${B}.` } }),
+    ]);
+    expect(mergeChanges([[merged], [e(A, "updated", 3, { fields: ["mergedInto"] })]])).toEqual([
+      e(A, "updated", 3, { fields: ["mergedInto"], severity: "notable", summary: { de: "Geändert: Zusammenlegung." } }),
+    ]);
+    // excluded is stronger than merged
+    expect(mergeChanges([[merged], [e(A, "excluded", 3, { severity: "safety", summary: { de: "Ausgeschlossen." } })]])).toEqual([
+      e(A, "excluded", 3, { severity: "safety", summary: { de: "Ausgeschlossen." } }),
+    ]);
+  });
+
+  it("two updates name the fields of both in the summary with the highest severity (final review I-1)", () => {
+    expect(
+      mergeChanges([
+        [e(A, "updated", 2, { fields: ["shelter.sectors.N"], severity: "safety", summary: { de: "Geändert: Schutz." } })],
+        [e(A, "updated", 3, { fields: ["services.water"], severity: "notable", summary: { de: "Geändert: Versorgung." } })],
+      ]),
+    ).toEqual([e(A, "updated", 3, { fields: ["services.water", "shelter.sectors.N"], severity: "safety", summary: { de: "Geändert: Versorgung, Schutz." } })]);
   });
 });
 

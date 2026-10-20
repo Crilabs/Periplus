@@ -298,14 +298,20 @@ function sortEntries(entries: ChangeEntry[]): ChangeEntry[] {
   return entries.sort((a, b) => cmp(a.objectType, b.objectType) || cmp(a.objectId, b.objectId));
 }
 
+/** A later `updated` entry with one of these fields reverses an earlier `excluded` resp. `merged` event. */
+const REVERSING_FIELD = { excluded: "exclude.excluded", merged: "mergedInto" } as const;
+
 /**
  * The changes of several packages as one list (`/changes?since=`, lists in ascending `dataVersion`), per object:
  * - last event `removed`: no entry if the client did not have the object at the start (first entry `created`), else
  *   `removed`;
  * - else, any `created` in the history (the client did not have it, or it was removed and created again in between)
  *   → `created`, with the summary of the last `created`;
- * - else the last event.
- * `fields` united (only for `updated`), severity the highest, `profileVersion` of the last entry.
+ * - else the strongest sticky event of the history that no later `updated` entry reversed (final review I-1):
+ *   `excluded` (reversed by a change of `exclude.excluded`) before `merged` (reversed by a change of `mergedInto`),
+ *   with that entry's summary and no fields — so a later services change never hides an exclusion;
+ * - else `updated` with the united fields of the `updated` entries and the summary rebuilt from them.
+ * Severity the highest of the history, `profileVersion` of the last entry.
  */
 export function mergeChanges(lists: ChangeEntry[][]): ChangeEntry[] {
   const byObject = new Map<string, ChangeEntry[]>();
@@ -329,8 +335,19 @@ export function mergeChanges(lists: ChangeEntry[][]): ChangeEntry[] {
       out.push({ ...last, event: "created", fields: [], severity, summary: lastCreated.summary });
       continue;
     }
-    const fields = last.event === "updated" ? [...new Set(history.flatMap((e) => (e.event === "updated" ? e.fields : [])))].sort(cmp) : [];
-    out.push({ ...last, fields, severity });
+    const sticky: { excluded: ChangeEntry | null; merged: ChangeEntry | null } = { excluded: null, merged: null };
+    for (const e of history) {
+      if (e.event === "excluded" || e.event === "merged") sticky[e.event] = e;
+      if (e.event !== "updated") continue;
+      for (const event of ["excluded", "merged"] as const) if (e.fields.includes(REVERSING_FIELD[event])) sticky[event] = null;
+    }
+    const kept = sticky.excluded ?? sticky.merged;
+    if (kept !== null) {
+      out.push({ ...last, event: kept.event, fields: [], severity, summary: kept.summary });
+      continue;
+    }
+    const fields = [...new Set(history.flatMap((e) => (e.event === "updated" ? e.fields : [])))].sort(cmp);
+    out.push({ ...last, event: "updated", fields, severity, summary: { de: SUMMARY.updated(fields) } });
   }
   return sortEntries(out);
 }
