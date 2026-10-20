@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { runs } from "@/lib/db/schema";
-import { textRunVersions } from "@/lib/pipeline/text/versions";
+import { scopeSources, scopeTiles, textRunVersions } from "@/lib/pipeline/text/versions";
 
 // No import of ./runs here: the job handler reads this module, which must not reach the stage registry (import cycle,
 // rulings M6-P17, M7-P5); the starter and the stage list live in ./revisit-run.
@@ -18,8 +18,9 @@ export type RevisitFreeze = { documentVersionIds: string[]; goneGeoObjectIds: st
 
 /**
  * Freezes a revisit run once its crawl has finished (rulings M7-P6, M7-P7, M4-E-R2): `params.documentVersionIds` =
- * `textRunVersions({ areaKey, documentVersionIds: <the current versions this run's crawl wrote> })`, i.e. those new
- * versions plus what an area text run takes (the current versions mentioning objects of the area and the pending
+ * `textRunVersions({ areaKey, documentVersionIds: <the current versions this run's crawl wrote of the area's pages> })`
+ * (a page of a source of the area, or of a document that mentioned an object of the area's tiles before, ruling
+ * M7-G-R4), i.e. those new versions plus what an area text run takes (the current versions mentioning objects of the area and the pending
  * versions of its sources); and `params.goneGeoObjectIds` = the objects with facts of finished extraction runs on
  * documents this run's crawl marked `gone` (`goneGeoObjectsOfRun`), which `consolidationTargets` adds to the run's
  * targets, so a value only a vanished page supported is judged again (spec 10). The crawl's versions are taken by
@@ -40,9 +41,21 @@ export async function freezeRevisitRun(db: Db, runId: string, cfg: AppConfig = g
       };
     }
     if (typeof params.areaKey !== "string" || params.areaKey === "") throw new Error(`revisit run ${runId} has no areaKey`);
+    // Only the area's pages (ruling M7-G-R4): a source of the area, or a document an earlier version of which mentions
+    // an object of the area's tiles; the other areas' pages the crawl wrote wait for their own run.
+    const scope = { areaKey: params.areaKey };
     const { rows } = await tx.execute<{ id: string }>(sql`
       select v.id from document_versions v join documents d on d.current_version_id = v.id
       where v.run_id = ${runId} and d.status = 'active' and d.valid_to is null
+        and (
+          d.source_id in (${scopeSources(scope)})
+          or exists (
+            select 1 from document_versions dv
+            join mentions m on m.document_version_id = dv.id
+            join tile_geo_objects tgo on tgo.geo_object_id = m.geo_object_id
+            where dv.document_id = d.id and tgo.tile_id in (${scopeTiles(scope)})
+          )
+        )
     `);
     const documentVersionIds = await textRunVersions(tx, { areaKey: params.areaKey, documentVersionIds: rows.map((r) => r.id) }, cfg);
     const goneGeoObjectIds = await goneGeoObjectsOfRun(tx, runId, cfg);

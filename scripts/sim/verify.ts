@@ -5,7 +5,7 @@ import { sql } from "drizzle-orm";
 import type { Archive } from "../../lib/adapters/s3";
 import { createDb, type Db } from "../../lib/db/client";
 import { deliveryArchive, spotAsOf } from "../../lib/domain/delivery/read";
-import { assertSimulationEnv } from "../../lib/domain/revisit/guard";
+import { requireSimulationEnv } from "../../lib/domain/revisit/guard";
 import { loadScenario, type RevisitScenario } from "../../lib/domain/revisit/scenario";
 import { asOfPlan, checkAsOf, readSimMeta, verifyRevisit, type AsOfCheck, type RevisitVerification } from "../../lib/domain/revisit/verify";
 import { getEnv } from "../../lib/env";
@@ -82,9 +82,18 @@ async function asOfReport(
   if (!spot) return { ok: false, reason: "Kein Spot mit erkannter Änderung – --spot angeben" };
   const before = await spotAsOf(db, archive, spot, plan.asOf);
   if (!before) return { ok: false, reason: `Spot ${spot} war am ${plan.asOf} nicht geliefert` };
+  // the expectation is bound to the plan: the spot as a package before the revisit delivered it (ruling M7-G-R3)
+  if (before.dataVersion > plan.before.dataVersion) return { ok: false, reason: `asOf ${plan.asOf} liefert für ${spot} einen Stand nach dem Revisit` };
   const after = await spotAsOf(db, archive, spot);
   if (!after || after.dataVersion === before.dataVersion) return { ok: false, reason: `Spot ${spot} hat sich im Revisit nicht geändert` };
-  const check = await checkAsOf({ baseUrl: args.baseUrl, key: args.key, spotId: spot, asOf: plan.asOf, expectBefore: { dataVersion: before.dataVersion }, fetch: doFetch });
+  const check = await checkAsOf({
+    baseUrl: args.baseUrl,
+    key: args.key,
+    spotId: spot,
+    asOf: plan.asOf,
+    expectBefore: { dataVersion: before.dataVersion, spot: before.spot },
+    fetch: doFetch,
+  });
   return { ok: check.ok, asOf: plan.asOf, spot, before: { dataVersion: before.dataVersion }, after: { dataVersion: after.dataVersion }, check };
 }
 
@@ -123,14 +132,22 @@ export function renderReport(r: SimVerifyReport): string[] {
 }
 
 /**
- * The verification of a simulated revisit: `sim_meta` (else refused: no simulation clone), `verifyRevisit` from its
- * `from_seq`, with `--base-url` the asOf check (`asOfPlan`, the spot of `--spot` or the first changed one, ruling M7-P18:
- * a spot whose data version did not change is refused), the clone's external costs. Passes when the verification
+ * The verification of a simulated revisit: `sim_meta` (else refused: no simulation clone), refused while a revisit run
+ * of the area is queued or running, `verifyRevisit` from its `from_seq`, with `--base-url` the asOf check (`asOfPlan`,
+ * the spot of `--spot` or the first changed one, ruling M7-P18: a spot whose data version did not change is refused;
+ * the spot as of `asOf` must come from a package before the revisit, and the API must answer that spot, ruling
+ * M7-G-R3), the clone's external costs. Passes when the verification
  * passes and the asOf check, if asked for, is ok.
  */
 export async function simVerify(db: Db, archive: Archive, args: SimVerifyArgs, opts: { fetch?: typeof fetch; scenario?: RevisitScenario } = {}): Promise<SimVerifyReport> {
   const meta = await readSimMeta(db);
   if (!meta) throw new Error("keine Sim-Datenbank – scripts/sim/clone.sh");
+  // a revisit still at work writes more events: a pass now could be premature (ruling M7-G-R3)
+  const { rows: live } = await db.execute<{ id: string }>(sql`
+    select id from runs where kind = 'revisit' and scope_type = 'area' and scope_id = ${args.area} and status in ('queued', 'running')
+    order by created_at limit 1
+  `);
+  if (live[0]) throw new Error(`Revisit-Lauf ${live[0].id} läuft noch – erst abwarten (/runs)`);
   const scenario = opts.scenario ?? (await loadScenario(args.scenario));
   const verification = await verifyRevisit(db, scenario, { fromSeq: meta.fromSeq, areaKey: args.area });
   const asOf =
@@ -152,8 +169,8 @@ export async function simVerify(db: Db, archive: Archive, args: SimVerifyArgs, o
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const env = getEnv();
-  // First of all: a process on the simulation clone must be a simulation (reverse check, ruling M7-F-R2).
-  assertSimulationEnv(env);
+  // First of all: only in a simulation (reverse check, ruling M7-F-R2), never against the real database (M7-G-R4).
+  requireSimulationEnv(env, "sim:verify");
   const { db, close } = createDb(env.DATABASE_URL);
   try {
     const report = await simVerify(db, deliveryArchive(), args);

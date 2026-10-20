@@ -1,10 +1,13 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { changeEvents, documents, externalCalls } from "@/lib/db/schema";
+import type { Archive } from "@/lib/adapters/s3";
+import { changeEvents, deliveredObjects, deliveries, documents, externalCalls } from "@/lib/db/schema";
+import { serializeFile, sha256Hex } from "@/lib/domain/delivery/serialize";
+import { createRun } from "@/lib/domain/runs";
 import { newId, newPublicId } from "@/lib/domain/ids";
 import type { RevisitScenario } from "@/lib/domain/revisit/scenario";
-import { parseArgs as parseRevisitArgs } from "@/scripts/sim/revisit";
+import { parseArgs as parseRevisitArgs, scenarioMismatch, waitForRun } from "@/scripts/sim/revisit";
 import { parseArgs, renderReport, simVerify } from "@/scripts/sim/verify";
 import { withRollback } from "@/test/db";
 import { insertQualityArea } from "@/test/quality";
@@ -42,6 +45,31 @@ describe("sim:revisit parseArgs", () => {
     expect(() => parseRevisitArgs(["--area", "a", "--scenario", "s", "--max-pages", "0"])).toThrow(/usage/);
     expect(() => parseRevisitArgs(["--scenario", "s"])).toThrow(/usage/);
     expect(() => parseRevisitArgs(["--area", "a", "--scenario", "s", "--scenario", "t"])).toThrow(/usage/);
+  });
+});
+
+describe("sim:revisit scenario and polling", () => {
+  const sim = { scenarioPath: "data/sim/s.json", writePrefix: "sim/x/", database: "periplus_sim" };
+
+  it("takes only the scenario of PERIPLUS_SIMULATION of its own call and says so (ruling M7-G-R4)", () => {
+    expect(scenarioMismatch("data/sim/s.json", sim)).toBeNull();
+    expect(scenarioMismatch("./data/sim/../sim/s.json", sim)).toBeNull();
+    expect(scenarioMismatch("data/sim/t.json", sim)).toBe(
+      "--scenario data/sim/t.json ist nicht das Szenario aus PERIPLUS_SIMULATION dieses Aufrufs (data/sim/s.json); Sim-Worker und sim:revisit aus derselben Env-Datei starten",
+    );
+  });
+
+  it("stops polling a stuck run at the timeout, and on finished, failed or a missing run", async () => {
+    let clock = 0;
+    const lines: string[] = [];
+    const opts = { pollMs: 5, timeoutMs: 20, sleep: async (ms: number) => void (clock += ms), now: () => clock };
+    const stuck = await waitForRun(async () => ({ status: "running", running: { stage: "fetch.url", done: 1, total: 3 } }), (l) => lines.push(l), opts);
+    expect(stuck).toBe("timeout");
+    expect(lines).toEqual(Array(4).fill("  running – fetch.url 1/3"));
+    const states = ["queued", "running", "finished"];
+    expect(await waitForRun(async () => ({ status: states.shift()! }), () => {}, { ...opts, timeoutMs: 1_000 })).toBe("finished");
+    expect(await waitForRun(async () => ({ status: "failed" }), () => {}, opts)).toBe("failed");
+    expect(await waitForRun(async () => null, () => {}, opts)).toBe("missing");
   });
 });
 
@@ -126,5 +154,126 @@ describe("simVerify", () => {
       expect(calls).toEqual([]);
       expect(JSON.stringify(report) + renderReport(report).join("\n")).not.toContain("pk_secret");
       expect(renderReport(report)).toContain("asOf: FEHLER – Kein Revisit-Lauf für das Revier");
+    }));
+});
+
+/** A valid package of the area built at `generatedAt` whose spots.json holds `spots` (stored in `archive`). */
+async function packageAt(tx: Db, archive: Archive, areaId: string, dataVersion: number, generatedAt: string, spots: unknown[]): Promise<string> {
+  const prefix = `deliveries/${areaId}/${dataVersion}/`;
+  const bytes = serializeFile({ spots });
+  await archive.put(`${prefix}spots.json`, bytes, "application/json");
+  const [row] = await tx
+    .insert(deliveries)
+    .values({
+      areaId,
+      dataVersion,
+      schemaVersion: "1.0",
+      generatedAt: new Date(generatedAt),
+      status: "valid",
+      storagePrefix: prefix,
+      fileHashes: { "spots.json": { sha256: sha256Hex(bytes), bytes: bytes.byteLength } },
+      objectCounts: {},
+      validationReport: {},
+      changeSnapshot: sql`pg_current_snapshot()`,
+      changeXmin: sql`pg_snapshot_xmin(pg_current_snapshot())`,
+    })
+    .returning({ id: deliveries.id });
+  return row!.id;
+}
+
+/** Spot version `version` of `publicId`, delivered from `validFrom` by package `deliveryId`. */
+async function spotVersion(tx: Db, areaId: string, publicId: string, version: number, validFrom: string, deliveryId: string) {
+  await tx.insert(deliveredObjects).values({ areaId, objectType: "spot", publicId, profileVersion: version, contentHash: `hash-${version}`, validFrom, firstDeliveryId: deliveryId });
+}
+
+/**
+ * The clone of `simClone` with packages around a finished revisit run on 2026-06-01 (ruling M7-P18 path): v1 before
+ * it (2026-05-01), then TWO packages after it, v2 on 2026-06-08 and v3 on 2026-06-20; the spot changes in each.
+ */
+async function framedClone(tx: Db, o: { secondVersionFrom?: string; unchanged?: boolean } = {}) {
+  const c = await simClone(tx);
+  await tx.execute(sql`update geo_objects set public_id = ${newPublicId("ar")} where id = ${c.areaId}`);
+  // cloned between the first package and the revisit (the costs are not looked at here)
+  await tx.execute(sql`update sim_meta set cloned_at = '2026-05-15T00:00:00Z'`);
+  await tx.insert(changeEvents).values({ geoObjectId: c.geoObjectId, attribute: "mooring.buoys", type: "uncertain", severity: "notable", profileVersion: 2 });
+  const archive = memoryArchive();
+  const spot = (v: number) => ({ id: c.publicId, profileVersion: v, name: `Stand ${v}` });
+  const p1 = await packageAt(tx, archive, c.areaId, 1, "2026-05-01T08:00:00Z", [spot(1)]);
+  await spotVersion(tx, c.areaId, c.publicId, 1, "2026-05-01", p1);
+  const { id: runId } = await createRun(tx, { kind: "revisit", scope: { type: "area", id: c.areaKey }, stages: [], params: {}, triggeredBy: "sim:revisit" });
+  await tx.execute(sql`update runs set created_at = '2026-06-01T07:00:00Z', status = 'finished' where id = ${runId}`);
+  const p2 = await packageAt(tx, archive, c.areaId, 2, "2026-06-08T08:00:00Z", o.unchanged ? [] : [spot(2)]);
+  const p3 = await packageAt(tx, archive, c.areaId, 3, "2026-06-20T08:00:00Z", o.unchanged ? [] : [spot(3)]);
+  if (!o.unchanged) {
+    await spotVersion(tx, c.areaId, c.publicId, 2, o.secondVersionFrom ?? "2026-06-08", p2);
+    await spotVersion(tx, c.areaId, c.publicId, 3, "2026-06-20", p3);
+  }
+  return { ...c, archive, runId, spot };
+}
+
+/** A fetch stub answering `body` and recording the URLs asked for. */
+function apiStub(body: unknown) {
+  const calls: string[] = [];
+  const fetch = (async (u: string) => (calls.push(String(u)), new Response(JSON.stringify(body), { status: 200 }))) as unknown as typeof globalThis.fetch;
+  return { calls, fetch };
+}
+
+describe("simVerify asOf (ruling M7-P18, M7-G-R3)", () => {
+  const withApi = (areaKey: string) => ({ area: areaKey, scenario: "unused", baseUrl: "http://localhost:3001", key: "pk_secret" });
+
+  it("picks the changed spot, asks for the day before the FIRST package after the revisit and expects the old spot", () =>
+    withRollback(async (tx) => {
+      const c = await framedClone(tx);
+      const api = apiStub({ schemaVersion: "1.0", area: "ar_x", dataVersion: 1, spot: c.spot(1) });
+      const report = await simVerify(tx, c.archive, withApi(c.areaKey), { scenario: c.scenario, fetch: api.fetch });
+      expect(api.calls).toEqual([`http://localhost:3001/api/v1/spots/${c.publicId}?asOf=2026-06-07`]);
+      expect(report.asOf).toEqual({
+        ok: true,
+        asOf: "2026-06-07",
+        spot: c.publicId,
+        before: { dataVersion: 1 },
+        after: { dataVersion: 3 },
+        check: { ok: true, status: 200, dataVersion: 1 },
+      });
+      expect(report.passes).toBe(true);
+      expect(JSON.stringify(report) + renderReport(report).join("\n")).not.toContain("pk_secret");
+
+      // the right data version with another spot is not the old value
+      const wrong = apiStub({ dataVersion: 1, spot: c.spot(2) });
+      const failed = await simVerify(tx, c.archive, withApi(c.areaKey), { scenario: c.scenario, fetch: wrong.fetch });
+      expect(failed.asOf).toMatchObject({ ok: false, check: { ok: false, reason: "Spot weicht vom Stand vor dem Revisit ab" } });
+      expect(failed.passes).toBe(false);
+    }));
+
+  it("refuses a spot not delivered before the revisit and one the revisit did not change", () =>
+    withRollback(async (tx) => {
+      const c = await framedClone(tx, { unchanged: true });
+      const api = apiStub({});
+      const unchanged = await simVerify(tx, c.archive, withApi(c.areaKey), { scenario: c.scenario, fetch: api.fetch });
+      expect(unchanged.asOf).toEqual({ ok: false, reason: `Spot ${c.publicId} hat sich im Revisit nicht geändert` });
+      const later = newPublicId("sp");
+      const notThen = await simVerify(tx, c.archive, { ...withApi(c.areaKey), spot: later }, { scenario: c.scenario, fetch: api.fetch });
+      expect(notThen.asOf).toEqual({ ok: false, reason: `Spot ${later} war am 2026-06-07 nicht geliefert` });
+      expect(api.calls).toEqual([]);
+    }));
+
+  it("refuses when asOf yields a state after the revisit instead of passing on it", () =>
+    withRollback(async (tx) => {
+      // v2 claims validity from before the first post-revisit package: asOf would return it
+      const c = await framedClone(tx, { secondVersionFrom: "2026-06-02" });
+      const api = apiStub({ dataVersion: 2, spot: c.spot(2) });
+      const report = await simVerify(tx, c.archive, withApi(c.areaKey), { scenario: c.scenario, fetch: api.fetch });
+      expect(report.asOf).toEqual({ ok: false, reason: `asOf 2026-06-07 liefert für ${c.publicId} einen Stand nach dem Revisit` });
+      expect(api.calls).toEqual([]);
+      expect(report.passes).toBe(false);
+    }));
+
+  it("is refused while a revisit run of the area is still queued or running", () =>
+    withRollback(async (tx) => {
+      const c = await framedClone(tx);
+      await tx.execute(sql`update runs set status = 'running' where id = ${c.runId}`);
+      await expect(simVerify(tx, c.archive, { area: c.areaKey, scenario: "unused" }, { scenario: c.scenario })).rejects.toThrow(
+        `Revisit-Lauf ${c.runId} läuft noch – erst abwarten (/runs)`,
+      );
     }));
 });

@@ -1,9 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { eq, inArray, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createConverters } from "@/lib/adapters/fetch";
 import { createSimulatedFetcher, simulatedTransport } from "@/lib/adapters/fetch/simulated";
 import type { HttpResponse, Transport } from "@/lib/adapters/http";
 import { setSimulationMode } from "@/lib/adapters/simulation";
@@ -19,6 +18,7 @@ import { verifyRevisit } from "@/lib/domain/revisit/verify";
 import { recordJobOutcome } from "@/lib/domain/runs";
 import { BATCH_HANDLERS } from "@/lib/jobs/batch-handlers";
 import { enqueueRunAdvance, enqueueStageJobs } from "@/lib/jobs/enqueue";
+import { simulatedFetchDeps } from "@/lib/jobs/handlers/fetch";
 import { BATCH_POLL_QUEUE, RUN_ADVANCE_QUEUE } from "@/lib/jobs/queues";
 import type { JobData } from "@/lib/jobs/worker";
 import { pollBatch, type BatchDeps, type PollOptions } from "@/lib/pipeline/batches";
@@ -92,8 +92,9 @@ type Job = JobData & { runId: string; stage: string; key: string };
 /**
  * Executes every job the run enqueued, in order, like the worker: stage jobs call their stage function, then record
  * their outcome (enqueueing `run.advance` when the stage is done); `run.advance` plans the next stage, `ai.batch.poll`
- * polls the batch. A queue without a driver fails the test (e.g. `mentions.geocode` or `consolidation.followup` in a
- * simulated revisit). Returns the run's status.
+ * polls the batch. A queue without a driver fails the test (e.g. `mentions.geocode`); `consolidation.followup` has a
+ * driver for „Lauf 1“, its absence from a simulated revisit is asserted on the run's stages and queues. Returns the
+ * run's status.
  */
 async function drive(tx: Db, archive: ReturnType<typeof memoryArchive>, rec: ReturnType<typeof recordingBoss>, model: MockModel, runId: string, day: string) {
   const now = new Date(`${day}T12:00:00Z`);
@@ -106,13 +107,10 @@ async function drive(tx: Db, archive: ReturnType<typeof memoryArchive>, rec: Ret
         tx,
         job as Job & { sourceId: string; url: string; depth: number },
         {
-          // as the worker's fetch.url handler in a simulation: every page from the scenario, no converter service or renderer
-          transport: simulatedTransport,
-          converters: createConverters({ transport: simulatedTransport, cfg }),
-          pdf: { pdftotext: async () => "" },
+          // the worker's fetch.url wiring in a simulation, shared (every page from the scenario, no converter service or renderer)
+          ...simulatedFetchDeps(createSimulatedFetcher(scenario), cfg),
           archive,
           enqueue: (t, jobs) => enqueueStageJobs(rec.boss, "fetch.url", runId, FETCH_URL_STAGE, jobs, t),
-          simulated: createSimulatedFetcher(scenario),
           now: () => new Date(`${day}T06:00:00Z`),
         },
         { db: tx, runId, stage: job.stage, sourceId: job.sourceId as string },
@@ -196,6 +194,8 @@ describe("simulated revisit on the fixture area", () => {
     () =>
       withRollback(async (tx) => {
         const { archive, fx, fromSeq } = await recordedState(tx);
+        // the call rows that exist before the revisits (visible to this transaction): the rest is the test window's
+        const callsBefore = new Set((await tx.select({ id: externalCalls.id }).from(externalCalls)).map((c) => c.id));
         setSimulationMode(true);
         const revisits: Array<Awaited<ReturnType<typeof revisit>>> = [];
         for (const day of ["2026-06-01", "2026-06-08"]) revisits.push(await revisit(tx, archive, day));
@@ -226,27 +226,25 @@ describe("simulated revisit on the fixture area", () => {
           expect(row!.stages).toEqual(REVISIT_STAGES.filter((s) => s !== "consolidation.followup"));
           expect(r.queues.filter((q) => ["mentions.geocode", "consolidation.followup", "discovery.place", "discovery.tile"].includes(q))).toEqual([]);
         }
-        // nothing reached a blocked service (ruling M7-P8): the only booked calls are the simulated robots.txt (answered
-        // in process), the fake embeddings and the MockModel's batches — the two services a simulation may use
-        const calls = await tx
-          .selectDistinct({ service: externalCalls.service, operation: externalCalls.operation })
-          .from(externalCalls)
-          .where(inArray(externalCalls.runId, revisits.map((r) => r.id)));
-        expect(calls.filter((c) => !["robots", "voyage", "anthropic"].includes(c.service))).toEqual([]);
-        expect(calls.filter((c) => c.service === "robots").map((c) => c.operation)).toEqual(["robots.txt"]);
-        const [cost] = await tx
-          .select({ eur: sql<string>`coalesce(sum(${externalCalls.costEur}), 0)::text` })
-          .from(externalCalls)
-          .where(inArray(externalCalls.runId, revisits.map((r) => r.id)));
-        expect(Number(cost!.eur)).toBe(0);
+        // nothing reached a blocked service (ruling M7-P8): every call row written during the revisits — with or
+        // without a run id — is the simulated robots.txt (answered in process), a fake embedding or a MockModel batch,
+        // the two services a simulation may use, and nothing cost anything
+        const calls = (await tx.select().from(externalCalls)).filter((c) => !callsBefore.has(c.id));
+        expect(calls.length).toBeGreaterThan(0);
+        expect([...new Set(calls.filter((c) => !["robots", "voyage", "anthropic"].includes(c.service)).map((c) => c.service))]).toEqual([]);
+        expect([...new Set(calls.filter((c) => c.service === "robots").map((c) => c.operation))]).toEqual(["robots.txt"]);
+        expect(calls.reduce((sum, c) => sum + Number(c.costEur), 0)).toBe(0);
         // the simulated versions carry the first revisit run
         const simulated = await tx.select({ runId: documentVersions.runId }).from(documentVersions).where(eq(documentVersions.simulated, true));
         expect(new Set(simulated.filter((s) => s.runId !== null && revisits.some((r) => r.id === s.runId)).map((s) => s.runId))).toEqual(new Set([revisits[0]!.id]));
 
         const after = await buildDelivery(tx, archive, fx.areaId, { now: new Date("2026-06-08T08:00:00Z"), inCallerTransaction: true });
         expect(after).toMatchObject({ status: "valid", dataVersion: 2 });
-        expect((await spotAsOf(tx, archive, fx.publicIds.A, "2026-05-15"))!.dataVersion).toBe(1);
-        expect((await spotAsOf(tx, archive, fx.publicIds.A, "2026-06-09"))!.dataVersion).toBe(2);
+        // the old version is the old value: the taverna open before the revisit, closed after it
+        const old = (await spotAsOf(tx, archive, fx.publicIds.A, "2026-05-15"))!;
+        const now = (await spotAsOf(tx, archive, fx.publicIds.A, "2026-06-09"))!;
+        expect([old.dataVersion, now.dataVersion]).toEqual([1, 2]);
+        expect([old.spot.services?.taverna, now.spot.services?.taverna]).toEqual(["yes", "no"]);
       }),
     TIMEOUT,
   );

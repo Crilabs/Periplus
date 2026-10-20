@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseEnv } from "@/lib/env";
-import { assertSimulationEnv, assertSimulationTarget, databaseNameOf, SimulationTargetError } from "../guard";
+import { assertSimulationEnv, assertSimulationTarget, databaseNameOf, requireSimulationEnv, SimulationTargetError } from "../guard";
 
 const baseEnv = {
   DATABASE_URL: "postgres://u:secret@h:5432/periplus_sim",
@@ -79,5 +79,15 @@ describe("assertSimulationEnv", () => {
   it("returns the scenario path and prefix of a valid simulation", () => {
     const env = parseEnv({ ...baseEnv, PERIPLUS_SIMULATION: "test/revisit/scenario.json", S3_WRITE_PREFIX: "sim/t1/" });
     expect(assertSimulationEnv(env)).toEqual({ scenarioPath: "test/revisit/scenario.json", writePrefix: "sim/t1/", database: "periplus_sim" });
+  });
+});
+
+describe("requireSimulationEnv", () => {
+  it("refuses a sim CLI outside a simulation and names the CLI's own environment (ruling M7-G-R4)", () => {
+    const real = parseEnv({ ...baseEnv, DATABASE_URL: "postgres://u:p@h/periplus" });
+    expect(() => requireSimulationEnv(real, "sim:verify")).toThrow(SimulationTargetError);
+    expect(() => requireSimulationEnv(real, "sim:verify")).toThrow(/^sim:verify läuft nur in einer Simulation: in der Umgebung dieses Aufrufs PERIPLUS_SIMULATION/);
+    const sim = parseEnv({ ...baseEnv, DATABASE_URL: "postgres://u:p@h/periplus_sim", PERIPLUS_SIMULATION: "data/sim/s.json", S3_WRITE_PREFIX: "sim/x/" });
+    expect(requireSimulationEnv(sim, "sim:verify")).toEqual({ scenarioPath: "data/sim/s.json", writePrefix: "sim/x/", database: "periplus_sim" });
   });
 });

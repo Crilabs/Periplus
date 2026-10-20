@@ -27,6 +27,16 @@ test("admin starts a ping run and sees it listed; all admin pages render", async
   await expect(page.getByRole("heading", { name: "Übersicht" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Offene Prüfungen", exact: true })).toBeVisible();
   await page.goto("/runs");
+  // every area run, the revisit too, starts only from the "Lauf starten" dialog (ruling M7-G-R4)
+  const revisit = page.getByRole("button", { name: "Revisit für Revier" });
+  await expect(revisit).toBeHidden();
+  await page.getByRole("button", { name: "Lauf starten …" }).click();
+  const dialog = page.locator("dialog[open]");
+  await expect(dialog.getByRole("heading", { name: "Lauf starten" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Revisit für Revier" })).toBeVisible();
+  await expect(dialog.getByText("Solange er läuft, startet kein Crawl dieser Quellen.", { exact: false })).toBeVisible();
+  await dialog.getByRole("button", { name: "Schließen" }).click();
+  await expect(revisit).toBeHidden();
   const before = await page.locator("tbody tr").count();
   await page.getByRole("button", { name: "Ping-Lauf starten" }).click();
   await expect(page).toHaveURL(/\/runs$/);

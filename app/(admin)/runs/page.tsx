@@ -80,7 +80,7 @@ const AREA_RUNS: AreaRun[] = [
     id: "revisit",
     name: "Revisit",
     description:
-      "Ruft alle freigegebenen Quellen erneut ab und wertet aus, was sich geändert hat: neue Fassungen, verschwundene Seiten, Facts, Konsolidierung und Änderungsereignisse des Reviers. Der zweite Durchgang nach dem ersten vollen Lauf.",
+      "Ruft alle freigegebenen Quellen erneut ab und wertet aus, was sich geändert hat: neue Fassungen, verschwundene Seiten, Facts, Konsolidierung und Änderungsereignisse des Reviers. Der zweite Durchgang nach dem ersten vollen Lauf. Solange er läuft, startet kein Crawl dieser Quellen.",
     action: startRevisitAction,
     button: "Revisit für Revier",
   },

@@ -71,6 +71,21 @@ export function assertSimulationEnv(env: Pick<Env, "PERIPLUS_SIMULATION" | "DATA
   return { scenarioPath: env.PERIPLUS_SIMULATION, writePrefix: env.S3_WRITE_PREFIX, database: databaseNameOf(env.DATABASE_URL) };
 }
 
+/**
+ * `assertSimulationEnv` for a sim CLI (`sim:revisit`, `sim:verify`): refused also outside a simulation (null), so its
+ * options never run against the real database (rulings M7-F-R2, M7-G-R4). The message names what this CLI's own
+ * environment must set; the worker must be started from the same env file.
+ */
+export function requireSimulationEnv(env: Pick<Env, "PERIPLUS_SIMULATION" | "DATABASE_URL" | "S3_WRITE_PREFIX">, cli: string): SimulationSettings {
+  const sim = assertSimulationEnv(env);
+  if (!sim) {
+    throw new SimulationTargetError(
+      `${cli} läuft nur in einer Simulation: in der Umgebung dieses Aufrufs PERIPLUS_SIMULATION, DATABASE_URL auf ${SIMULATION_DATABASE} und S3_WRITE_PREFIX setzen (dieselbe Env-Datei wie der Sim-Worker).`,
+    );
+  }
+  return sim;
+}
+
 /** The database name, or null when the URL does not parse (a non-simulation process then fails at connect, not here). */
 function databaseNameOrNull(url: string): string | null {
   try {

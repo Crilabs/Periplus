@@ -55,7 +55,8 @@ const consolidatable = (day: string) => sql`${validObject(day)} and ${takesFacts
  * - a text run (its params carry the frozen `documentVersionIds`): the objects with facts of its extraction runs and
  *   the objects with mentions it wrote in its frozen versions; its own `tileId` / `areaKey` only selected its versions;
  *   a revisit run also the objects its freeze stage found on documents gone in its crawl (`goneGeoObjectIds`, ruling
- *   M7-P7);
+ *   M7-P7); a revisit run not frozen (failed or ended before `revisit.freeze`): only its `goneGeoObjectIds`, i.e.
+ *   none (ruling M7-G-R4), never the area of its `areaKey`;
  * - `geoObjectIds`: exactly these (the starter checked them);
  * - `tileId`: the objects of the tile (`tile_geo_objects`);
  * - `areaKey`: the objects of every valid coast tile of the area;
@@ -71,6 +72,16 @@ export async function consolidationTargets(db: Db, run: { id: string; params: Re
   const p = run.params;
   if (!Array.isArray(p.documentVersionIds) && Array.isArray(p.geoObjectIds)) return sorted(strings(p.geoObjectIds));
   const day = today ?? (await runDate(db, run.id));
+  if (!Array.isArray(p.documentVersionIds) && (await isRevisitRun(db, run.id))) {
+    // A revisit stopped before `revisit.freeze` evaluated nothing: only the objects of pages its crawl found gone,
+    // never the area its `areaKey` names (ruling M7-G-R4).
+    const gone = JSON.stringify(strings(p.goneGeoObjectIds));
+    const { rows } = await db.execute<{ id: string }>(sql`
+      select o.id from geo_objects o
+      where o.id in (select value::uuid from jsonb_array_elements_text(${gone}::jsonb)) and ${consolidatable(day)}
+    `);
+    return ids(rows);
+  }
   if (!Array.isArray(p.documentVersionIds)) {
     if (typeof p.tileId === "string") {
       const { rows } = await db.execute<{ id: string }>(sql`
@@ -137,6 +148,11 @@ export async function consolidationTargets(db: Db, run: { id: string; params: Re
     where ${consolidatable(day)}
   `);
   return ids(rows);
+}
+
+async function isRevisitRun(db: Db, runId: string): Promise<boolean> {
+  const { rows } = await db.execute<{ kind: string }>(sql`select kind from runs where id = ${runId}`);
+  return rows[0]?.kind === "revisit";
 }
 
 /**

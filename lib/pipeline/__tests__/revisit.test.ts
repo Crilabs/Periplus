@@ -4,16 +4,18 @@ import { afterEach, describe, expect, it } from "vitest";
 import { setSimulationMode } from "@/lib/adapters/simulation";
 import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { crawlFrontier, documents, documentVersions, runs, sources } from "@/lib/db/schema";
+import { crawlFrontier, documents, documentVersions, runs, sources, tileGeoObjects } from "@/lib/db/schema";
 import { activeRulesVersion } from "@/lib/domain/consolidation/active-rules";
 import { consolidationTargets } from "@/lib/domain/consolidation/targets";
 import { newId } from "@/lib/domain/ids";
-import { createRun } from "@/lib/domain/runs";
+import { markConsolidationSkipped } from "@/lib/domain/consolidation/skipped";
+import { createRun, endRun } from "@/lib/domain/runs";
 import { consolidationFollowupStage } from "@/lib/jobs/handlers/consolidation";
 import { revisitFreezeStage } from "@/lib/jobs/handlers/revisit";
 import { QUEUES } from "@/lib/jobs/queues";
 import { HANDLERS } from "@/lib/jobs/registry";
 import { STAGES } from "@/lib/jobs/stages";
+import { catchUpConsolidation } from "@/lib/pipeline/consolidation/run";
 import { CONSOLIDATION_FOLLOWUP_STAGE } from "@/lib/pipeline/consolidation/stages";
 import { FETCH_RUN_STAGES } from "@/lib/pipeline/fetch/run";
 import { REVISIT_STAGES, startRevisitRun } from "@/lib/pipeline/revisit-run";
@@ -60,9 +62,11 @@ async function revisitArea(tx: Db) {
 afterEach(() => setSimulationMode(undefined));
 
 /** A new document of the source with one current version, written by run `runId` (a crawl) or by none. */
-async function crawledVersion(tx: Db, sourceId: string, runId: string | null): Promise<{ versionId: string }> {
+async function crawledVersion(tx: Db, sourceId: string, runId: string | null, documentId?: string): Promise<{ versionId: string }> {
   const url = `https://${newId()}.test.invalid/page`;
-  const [doc] = await tx.insert(documents).values({ sourceId, url, urlNormalized: url, docType: "trip_report" }).returning({ id: documents.id });
+  const [doc] = documentId
+    ? [{ id: documentId }]
+    : await tx.insert(documents).values({ sourceId, url, urlNormalized: url, docType: "trip_report" }).returning({ id: documents.id });
   const [version] = await tx
     .insert(documentVersions)
     .values({
@@ -169,15 +173,21 @@ describe("revisit.freeze", () => {
       await insertMentionFact(tx, missedObject, missed, await insertExtraction(tx, missedObject, missed));
       const [missedDoc] = await tx.update(documents).set({ consecutiveGone: 1 }).where(eq(documents.id, missed.documentId)).returning();
       await tx.insert(crawlFrontier).values({ sourceId: a.sourceId, url: missedDoc!.url, urlNormalized: missedDoc!.urlNormalized, status: "failed", reason: "HTTP 404", lastRunId: runId });
-      // a version the crawl just wrote, and one of another run (not matched either: never taken in by the database-wide
-      // pending set)
-      const fresh = await crawledVersion(tx, a.sourceId, runId);
+      // a version the crawl just wrote of a page that mentioned a place of the area before, and one of another run
+      // (not matched either: never taken in by the database-wide pending set)
+      const { geoObjectId: areaPlace } = await a.addPlace();
+      await tx.insert(tileGeoObjects).values({ tileId: a.tileIds[0]!, geoObjectId: areaPlace });
+      const earlier = await insertMention(tx, areaPlace, { sourceId: a.sourceId });
+      const fresh = await crawledVersion(tx, a.sourceId, runId, earlier.documentId);
       const elsewhere = await crawledVersion(tx, a.sourceId, null);
+      // a page of another area the same crawl wrote: neither a source of this area nor a mention of it (ruling M7-G-R4)
+      const otherArea = await crawledVersion(tx, a.sourceId, runId);
 
       const frozen = await freezeRevisitRun(tx, runId, base);
       expect(frozen.frozenBefore).toBe(false);
       expect(frozen.documentVersionIds).toContain(fresh.versionId);
       expect(frozen.documentVersionIds).not.toContain(elsewhere.versionId);
+      expect(frozen.documentVersionIds).not.toContain(otherArea.versionId);
       expect(frozen.goneGeoObjectIds).toEqual([goneObject]);
       const [run] = await tx.select({ params: runs.params }).from(runs).where(eq(runs.id, runId));
       expect(run!.params).toMatchObject({ documentVersionIds: frozen.documentVersionIds, goneGeoObjectIds: [goneObject], areaKey: a.areaKey });
@@ -189,6 +199,35 @@ describe("revisit.freeze", () => {
       const again = await freezeRevisitRun(tx, runId, base);
       expect(again).toEqual({ ...frozen, frozenBefore: true });
       expect(again.documentVersionIds).not.toContain(later.versionId);
+    }));
+});
+
+describe("revisit catch-up", () => {
+  it("a revisit ended before its freeze consolidates nothing of the area on catch-up (ruling M7-G-R4)", () =>
+    withRollback(async (tx) => {
+      setSimulationMode(false);
+      const { boss, inserted } = recordingBoss();
+      const a = await revisitArea(tx);
+      // an object of the area's coast tile: the area-wide consolidation would take it
+      const { geoObjectId } = await a.addPlace();
+      await tx.insert(tileGeoObjects).values({ tileId: a.tileIds[0]!, geoObjectId });
+      expect(await consolidationTargets(tx, { id: newId(), params: { areaKey: a.areaKey } }, new Date().toISOString().slice(0, 10))).toContain(geoObjectId);
+
+      const { id } = await startRevisitRun(tx, boss, { areaKey: a.areaKey, triggeredBy: "test" }, a.config);
+      // ended by the admin during the crawl: the consolidation is stored as skipped
+      expect(await endRun(tx, id, "test")).toBe(true);
+      expect(await markConsolidationSkipped(tx, id, "run_ended")).toBe(true);
+      const [run] = await tx.select({ params: runs.params }).from(runs).where(eq(runs.id, id));
+      expect(await consolidationTargets(tx, { id, params: run!.params as Record<string, unknown> })).toEqual([]);
+      const runCount = async () => Number((await tx.execute<{ n: number }>(sql`select count(*)::int as n from runs`)).rows[0]!.n);
+      const before = await runCount();
+      expect(await catchUpConsolidation(tx, boss, id, "test", { config: a.config })).toEqual({ status: "no_targets" });
+      expect(await runCount()).toBe(before);
+      expect(inserted.filter((j) => j.queue.startsWith("consolidation."))).toEqual([]);
+
+      // frozen with a gone page only: just that page's object (ruling M7-P7)
+      const params = { ...(run!.params as Record<string, unknown>), goneGeoObjectIds: [geoObjectId] };
+      expect(await consolidationTargets(tx, { id, params })).toEqual([geoObjectId]);
     }));
 });
 
@@ -207,6 +246,13 @@ describe("sim:revisit preflight", () => {
         const other = await createRun(tx, { kind: "system", scope: { type: "system", id: "ping" }, stages: [], params: {}, triggeredBy: someone() });
         await insertJob(other.id);
         expect(await foreignJobs(tx)).toBe(before + 1);
+        // a leftover job of an earlier sim run that failed is foreign: only a live sim run owns its jobs (ruling M7-G-R4)
+        const failed = await createRun(tx, { kind: "revisit", scope: { type: "area", id: a.areaKey }, stages: [], params: {}, triggeredBy: SIM_TRIGGERED_BY });
+        await insertJob(failed.id);
+        expect(await foreignJobs(tx)).toBe(before + 1);
+        await tx.update(runs).set({ status: "failed" }).where(eq(runs.id, failed.id));
+        expect(await foreignJobs(tx)).toBe(before + 2);
+        await tx.update(runs).set({ status: "running" }).where(eq(runs.id, failed.id));
 
         const scenario = {
           name: "t",

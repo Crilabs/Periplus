@@ -11,15 +11,16 @@ import { withRollback } from "@/test/db";
 import { insertNamedObject, insertTestSource, insertTestTile } from "@/test/text";
 
 /*
- * verifyRevisit, asOfPlan and checkAsOf on rows inserted directly (withRollback): a one-tile area on a random tile of
- * the synthetic grid far from every other test box (−150…−145° E, −60…−55° N), its change events written by hand.
+ * verifyRevisit, asOfPlan and checkAsOf on rows inserted directly (withRollback): a one-tile area on a fixed tile of
+ * the synthetic grid far from every other test box (−147.5° E, −57.5° N), its change events written by hand.
  */
 
 type Area = { areaKey: string; areaId: string; tileId: string; spot: { geoObjectId: string; publicId: string }; other: { geoObjectId: string; publicId: string } };
 
 async function seedArea(tx: Db): Promise<Area> {
-  const col = 120 + Math.floor(Math.random() * 20);
-  const row = 120 + Math.floor(Math.random() * 20);
+  // one fixed tile: the tests of this file run one after the other, each rolled back
+  const col = 130;
+  const row = 130;
   const lon = col * 0.25 - 180 + 0.125;
   const lat = row * 0.25 - 90 + 0.125;
   const areaKey = `verify-${newId()}`;
@@ -174,6 +175,26 @@ describe("verifyRevisit", () => {
       expect(v.unexpected.map((e) => e.attribute)).toEqual(["max_draft"]);
     }));
 
+  it("an exact attribute is matched before a prefix of an earlier entry (ruling M7-G-R3)", () =>
+    withRollback(async (tx) => {
+      const a = await seedArea(tx);
+      const fromSeq = await maxSeq(tx);
+      const first = await page(tx, "new_version");
+      const second = await page(tx, "new_version");
+      await event(tx, a.spot.geoObjectId, "depth.min", "changed", "safety");
+      await event(tx, a.spot.geoObjectId, "depth.max", "changed", "safety");
+      const depth = (attribute: string) => ({ subject: a.spot.publicId, attribute, type: "changed" as const, severity: "safety" as const });
+      const v = await verifyRevisit(
+        tx,
+        scenario([
+          { id: "e1", url: first, edit: replace, expect: { document: "new_version", events: [depth("depth.*")] } },
+          { id: "e2", url: second, edit: replace, expect: { document: "new_version", events: [depth("depth.min")] } },
+        ]),
+        { fromSeq, areaKey: a.areaKey },
+      );
+      expect(v).toMatchObject({ correct: 2, unexpected: [], passes: true });
+    }));
+
   it("a duplicate event for the same expectation counts as unexpected", () =>
     withRollback(async (tx) => {
       const a = await seedArea(tx);
@@ -255,7 +276,7 @@ describe("asOfPlan", () => {
       expect(await asOfPlan(tx, a.areaKey)).toEqual({ reason: "Nach dem Revisit kein Paket gebaut" });
     }));
 
-  it("takes the latest valid packages around the first revisit and the day before the later one", () =>
+  it("takes the latest valid package before the first revisit, the FIRST after it and the day before that one", () =>
     withRollback(async (tx) => {
       const a = await seedArea(tx);
       await delivery(tx, a.areaId, 1, "2026-04-20T08:00:00Z");
@@ -263,6 +284,8 @@ describe("asOfPlan", () => {
       await revisitRun(tx, a.areaKey, "2026-06-01T07:00:00Z");
       await revisitRun(tx, a.areaKey, "2026-06-08T07:00:00Z");
       await delivery(tx, a.areaId, 3, "2026-06-08T08:00:00Z");
+      // a second package after the revisit never moves asOf onto a post-revisit state (ruling M7-G-R3)
+      await delivery(tx, a.areaId, 4, "2026-06-20T08:00:00Z");
       expect(await asOfPlan(tx, a.areaKey)).toEqual({
         asOf: "2026-06-07",
         before: { dataVersion: 2, generatedAt: new Date("2026-05-01T08:00:00Z") },
@@ -284,6 +307,19 @@ describe("checkAsOf", () => {
     const result = await checkAsOf({ baseUrl: "http://localhost:3001/", key: "pk_test", spotId: "sp_01ABC", asOf: "2026-06-07", expectBefore: { dataVersion: 1 }, fetch: stub });
     expect(result).toEqual({ ok: true, status: 200, dataVersion: 1 });
     expect(seen).toEqual([{ url: "http://localhost:3001/api/v1/spots/sp_01ABC?asOf=2026-06-07", auth: "Bearer pk_test" }]);
+  });
+
+  it("compares the old spot when given, not only its data version (ruling M7-G-R3)", async () => {
+    const old = { id: "sp_1", name: "Alt", tags: ["a"] };
+    const input = { baseUrl: "http://x", key: "pk_secret", spotId: "sp_1", asOf: "2026-06-07", expectBefore: { dataVersion: 1, spot: old } };
+    expect(await checkAsOf({ ...input, fetch: ok({ dataVersion: 1, spot: { tags: ["a"], name: "Alt", id: "sp_1" } }) })).toEqual({ ok: true, status: 200, dataVersion: 1 });
+    expect(await checkAsOf({ ...input, fetch: ok({ dataVersion: 1, spot: { ...old, name: "Neu" } }) })).toEqual({
+      ok: false,
+      status: 200,
+      dataVersion: 1,
+      reason: "Spot weicht vom Stand vor dem Revisit ab",
+    });
+    expect(await checkAsOf({ ...input, fetch: ok({ dataVersion: 1 }) })).toMatchObject({ ok: false, reason: "Spot weicht vom Stand vor dem Revisit ab" });
   });
 
   it("fails on the newer version, a 404 and an unreachable API, never echoing the key", async () => {

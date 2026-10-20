@@ -91,6 +91,20 @@ const urlJobSchema = z.object({
   maxPages: z.number().int().min(1).optional(),
 });
 
+/**
+ * The fetch dependencies of a simulation (ruling M7-P8): every page from the scenario's fetcher, the simulated
+ * transport for robots.txt and the converters, no converter service, renderer or model. Shared with the revisit
+ * integration test, so it drives exactly this wiring (ruling M7-G-R3).
+ */
+export function simulatedFetchDeps(simulated: SimulatedFetcher, cfg: ReturnType<typeof getConfig>["fetch"]) {
+  return {
+    transport: simulatedTransport,
+    converters: createConverters({ transport: simulatedTransport, cfg }),
+    pdf: { pdftotext: runPdftotext },
+    simulated,
+  };
+}
+
 /** Fetches, converts and archives one URL; new links become jobs of the same stage. */
 export const fetchUrlHandler: JobHandler<JobData> = async (data, ctx) => {
   const job = urlJobSchema.parse(data);
@@ -99,12 +113,7 @@ export const fetchUrlHandler: JobHandler<JobData> = async (data, ctx) => {
   const simulated = await simulatedFetcherFor(getEnv(), (loaded) => ctx.log.info(loaded, "simulation scenario loaded"));
   // A simulation answers every page from its scenario: no converter service, renderer or model is ever asked.
   const deps = simulated
-    ? {
-        transport: simulatedTransport,
-        converters: createConverters({ transport: simulatedTransport, cfg }),
-        pdf: { pdftotext: runPdftotext },
-        simulated,
-      }
+    ? simulatedFetchDeps(simulated, cfg)
     : {
         transport: getCrawlTransport(),
         converters: createConverters({ transport: getTransport(), renderPage: crawlRenderPage(), cfg }),

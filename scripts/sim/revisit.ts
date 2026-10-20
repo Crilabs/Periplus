@@ -4,7 +4,7 @@ import { sql } from "drizzle-orm";
 import { getArchive, type Archive } from "../../lib/adapters/s3";
 import { getConfig } from "../../lib/config";
 import { createDb, type Db } from "../../lib/db/client";
-import { assertSimulationEnv } from "../../lib/domain/revisit/guard";
+import { requireSimulationEnv, type SimulationSettings } from "../../lib/domain/revisit/guard";
 import { loadScenario, preflightScenario, type RevisitScenario } from "../../lib/domain/revisit/scenario";
 import { readSimMeta } from "../../lib/domain/revisit/verify";
 import { getRun } from "../../lib/domain/runs";
@@ -17,8 +17,8 @@ import { RunScopeNotReady } from "../../lib/pipeline/tile-scope";
 /*
  * `npm run sim:revisit -- --area <key> --scenario <path> [--max-pages <n>]` (spec 10, plan Task 13): starts a simulated
  * revisit of the area in the simulation clone and waits for it. A second call is the second fetch (a `gone` page turns
- * gone at its second miss). Refused before anything is written: no simulation environment (`assertSimulationEnv`, first
- * of all), a scenario other than the worker's (`PERIPLUS_SIMULATION`), no clone (`sim_meta`), foreign jobs in the
+ * gone at its second miss). Refused before anything is written: no simulation environment (`requireSimulationEnv`, first
+ * of all), a scenario other than `PERIPLUS_SIMULATION` of this call (the worker's when both use one env file), no clone (`sim_meta`), foreign jobs in the
  * queue, a scenario entry the revisit cannot apply, no valid package of the area to compare against. A real pilot
  * scenario quotes third-party pages and lives under the git-ignored `data/sim/` (ruling M7-F-R3), never in the repo.
  */
@@ -50,17 +50,30 @@ export function parseArgs(argv: string[]): SimRevisitArgs {
 }
 
 /**
- * pg-boss jobs waiting, retrying or running (`created`, `retry`, `active`) that belong to no run this CLI started
- * (`SIM_TRIGGERED_BY`): work cloned mid-flight or started by hand would mix into the revisit's change events
- * (rulings M7-P27, M7-P30).
+ * pg-boss jobs waiting, retrying or running (`created`, `retry`, `active`) that belong to no queued or running run this
+ * CLI started (`SIM_TRIGGERED_BY`): work cloned mid-flight or started by hand would mix into the revisit's change
+ * events (rulings M7-P27, M7-P30). Leftover jobs of an earlier sim run that has failed or finished are foreign too
+ * (ruling M7-G-R4): only a live sim run owns its jobs.
  */
 export async function foreignJobs(db: Db): Promise<number> {
   const { rows } = await db.execute<{ n: number }>(sql`
     select count(*)::int as n from pgboss.job j
     where j.state in ('created', 'retry', 'active')
-      and not exists (select 1 from runs r where r.id::text = j.data ->> 'runId' and r.triggered_by = ${SIM_TRIGGERED_BY})
+      and not exists (
+        select 1 from runs r
+        where r.id::text = j.data ->> 'runId' and r.triggered_by = ${SIM_TRIGGERED_BY} and r.status in ('queued', 'running')
+      )
   `);
   return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * Why `--scenario` cannot run (null: it can): it must be the scenario of `PERIPLUS_SIMULATION` in this call's
+ * environment, which is the worker's only when both start from the same env file (the run book says so).
+ */
+export function scenarioMismatch(scenarioArg: string, sim: SimulationSettings): string | null {
+  if (path.resolve(scenarioArg) === path.resolve(sim.scenarioPath)) return null;
+  return `--scenario ${scenarioArg} ist nicht das Szenario aus PERIPLUS_SIMULATION dieses Aufrufs (${sim.scenarioPath}); Sim-Worker und sim:revisit aus derselben Env-Datei starten`;
 }
 
 /**
@@ -89,15 +102,41 @@ export async function revisitPreflight(
 }
 
 const POLL_MS = 5_000;
+/** How long `sim:revisit` waits for its run (a stuck run is left to `/runs`). */
+export const POLL_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+
+type RunStatus = { status: string; running?: { stage: string; done: number; total: number } } | null;
+
+/**
+ * Polls the run until it is finished or failed, or `timeoutMs` passed: `finished`, `failed`, `missing` (the run is
+ * gone) or `timeout` (still running: watch it on /runs). Every poll writes a progress line.
+ */
+export async function waitForRun(
+  status: () => Promise<RunStatus>,
+  out: (line: string) => void,
+  opts: { pollMs?: number; timeoutMs?: number; sleep?: (ms: number) => Promise<void>; now?: () => number } = {},
+): Promise<"finished" | "failed" | "missing" | "timeout"> {
+  const pollMs = opts.pollMs ?? POLL_MS;
+  const timeoutMs = opts.timeoutMs ?? POLL_TIMEOUT_MS;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const now = opts.now ?? Date.now;
+  const deadline = now() + timeoutMs;
+  for (;;) {
+    await sleep(pollMs);
+    const run = await status();
+    out(`  ${run?.status ?? "?"}${run?.running ? ` – ${run.running.stage} ${run.running.done}/${run.running.total}` : ""}`);
+    if (!run) return "missing";
+    if (run.status === "finished" || run.status === "failed") return run.status;
+    if (now() >= deadline) return "timeout";
+  }
+}
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const env = getEnv();
-  const sim = assertSimulationEnv(env);
-  if (!sim) throw new Error("sim:revisit läuft nur in einer Simulation: PERIPLUS_SIMULATION, DATABASE_URL auf periplus_sim und S3_WRITE_PREFIX setzen");
-  if (path.resolve(args.scenario) !== path.resolve(sim.scenarioPath)) {
-    throw new Error(`--scenario ${args.scenario} ist nicht das Szenario des Workers (PERIPLUS_SIMULATION=${sim.scenarioPath})`);
-  }
+  const sim = requireSimulationEnv(env, "sim:revisit");
+  const mismatch = scenarioMismatch(args.scenario, sim);
+  if (mismatch) throw new Error(mismatch);
   const out = (line: string) => process.stdout.write(`${line}\n`);
   const config = getConfig();
   const scenario = await loadScenario(args.scenario);
@@ -127,17 +166,15 @@ async function main(): Promise<void> {
       await boss.stop({ graceful: true });
     }
     out(`Revisit-Lauf ${runId} gestartet (Szenario ${scenario.name}, Datenbank ${sim.database}, Präfix ${sim.writePrefix})`);
-    for (;;) {
-      await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    const end = await waitForRun(async () => {
       const run = await getRun(db, runId);
-      const running = run?.stages.find((s) => s.status === "running");
-      out(`  ${run?.status ?? "?"}${running ? ` – ${running.stage} ${running.done}/${running.total}` : ""}`);
-      if (!run || run.status === "finished" || run.status === "failed") {
-        out(`Revisit-Lauf ${runId}: ${run?.status ?? "nicht gefunden"}`);
-        if (run?.status !== "finished") process.exitCode = 1;
-        return;
-      }
-    }
+      if (!run) return null;
+      const running = run.stages.find((s) => s.status === "running");
+      return { status: run.status, ...(running ? { running: { stage: running.stage, done: running.done, total: running.total } } : {}) };
+    }, out);
+    const said = { finished: "finished", failed: "failed", missing: "nicht gefunden", timeout: `läuft nach ${POLL_TIMEOUT_MS / 3_600_000} h noch – auf /runs weiter beobachten` }[end];
+    out(`Revisit-Lauf ${runId}: ${said}`);
+    if (end !== "finished") process.exitCode = 1;
   } finally {
     await close();
   }
