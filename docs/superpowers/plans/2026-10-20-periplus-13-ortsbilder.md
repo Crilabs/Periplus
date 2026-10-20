@@ -22,6 +22,12 @@
 - Stufe 1: only Greece (`images.sources.ktimatologio.countries = ["GR"]`), only free data, and `images.delivery.ktimatologio = false` until the cadastre confirms the licence in writing. Images are generated and reviewed, but none is delivered.
 - Camera: tilt 30°, vertical field of view 50°, 1536 × 1024. Zoom heights are z1 260 m, z2 160 m and z3 100 m, and the horizontal distance is `height / tan(30°)`. Rotation step is 10°, and `render.maxSourcePixelOnScreen = 5`.
 - Model: `gpt-image-2.5-sunburst` via `v1/images/edits`, size `1536x1024`, quality `high`, task `generate-place-image`.
+- Image rules (Christian, 20.10.2026), one per place type:
+  - **Anchorage/mooring field:** no boats, midday.
+  - **Marina/port:** boats as in the render and evening life, evening.
+  - **Anchorage within 500 m of a town** (`settlement` with `place=town|village`): midday, with boats, the anchorage in front and the town behind. The camera sits over water on the side of the anchorage facing away from the town and looks across the anchorage at the town.
+
+  Anchorages and marinas are always viewed from the water towards land. The focus (camera target) is always the centre of the place: `anchor_position`, else `position`.
 - Water IoU thresholds are midday 0.80 and evening 0.60. Generation runs at most twice (one retry), then the task goes to review.
 - `kind = "ai_illustration"`, and alt text starts with „KI-Illustration:“. A new image is generated only when the aerial image, prompt version, model or place kind changes, never per run.
 - Before touching routes, `proxy.ts` or `next.config.ts`, read the Next 16 docs in `node_modules/next/dist/docs/`.
@@ -61,13 +67,14 @@
   "camera": { "tiltDeg": 30, "fovDeg": 50, "width": 1536, "height": 1024, "rotateStepDeg": 10, "defaultZoom": "z1",
               "zooms": { "z1": { "heightM": 260 }, "z2": { "heightM": 160 }, "z3": { "heightM": 100 } } },
   "render": { "maxSourcePixelOnScreen": 5, "rendererVersion": "render-1", "timeoutSeconds": 120 },
-  "light": { "townRadiusM": 1000, "townPlaces": ["town", "village"],
+  "light": { "townRadiusM": 500, "townPlaces": ["town", "village"], "nearTown": "midday",
              "byKind": { "anchorage": "midday", "mooring_field": "midday", "marina": "evening", "port": "evening" } },
   "scene": {
     "anchorage": { "en": "a sheltered bay with its shore, beach or rocks and the slopes behind", "de": "Bucht mit Ufer und Hängen" },
     "mooring_field": { "en": "a bay with a mooring buoy field, its shore and the slopes behind", "de": "Bucht mit Bojenfeld" },
     "marina": { "en": "a marina with harbour basins, breakwaters and floating pontoons", "de": "Marina mit Becken und Stegen" },
-    "port": { "en": "a harbour town with its quay, waterfront promenade and houses", "de": "Hafenort mit Kai und Promenade" }
+    "port": { "en": "a harbour town with its quay, waterfront promenade and houses", "de": "Hafenort mit Kai und Promenade" },
+    "near_town": { "en": "a sheltered anchorage with yachts at anchor in front of a town", "de": "Ankerplatz vor einem Ort" }
   },
   "check": { "minWaterIoU": { "midday": 0.8, "evening": 0.6 }, "maxAttempts": 2, "waterColour": { "blueOverRedMin": 25, "greenTolerance": 10 } },
   "pipeline": { "maxGenerationsPerRun": 50 },
@@ -97,6 +104,14 @@ Remove all boats and people.
 ## boats_keep
 The boats: wherever the render shows boats or yachts, keep them in the same places, same sizes and density, and render them as real
 boats; moored boats stay moored along their pontoons and quays. No additional boats in places where the render shows none.
+
+## boats_near_town
+Boats: keep every boat the render shows, same places and sizes. Add a few sailing yachts and motor boats lying at anchor on the open
+water of the anchorage in the foreground, well spaced; no boats on land, on beaches or in the streets of the town.
+
+## composition_near_town
+The anchorage fills the foreground; the town rises in the background behind it, its houses, quay and streets exactly where the render
+shows them.
 
 ## do_not_add
 Do not add anything that is not in the render: no new buildings, piers, breakwaters, roads, islands or rocks.
@@ -202,9 +217,11 @@ Archive-first: a current `imagery_tiles` row with the same `(source, tile_key)` 
   - `foregroundPixelSize(resolutionM, zoom, cfg): number`: `resolutionM * f / d` with `f = (height/2) / tan(fov/2)` and `d = heightM / sin(tilt + fov/2)`
   - `allowedZooms(resolutionM, cfg): ZoomLevel[]`: the levels with `foregroundPixelSize ≤ maxSourcePixelOnScreen`; z1 is always included
   - `planRender(db, input: PlaceImageInput, zoom: ZoomLevel, cfg): Promise<{ ok: true; camera: RenderCamera } | { ok: false; reason: "no_water_view" }>`: tries `candidateAzimuths` in order and takes the first whose camera ground point is not in `land_polygons` (one SQL query over all candidates; `ST_Project` from the target)
-  - `lightFor(input: PlaceImageInput, cfg): ImageryLight`: `byKind[kind]`, except that an anchorage or mooring field with `nearTown` gets `evening`
-  - `type PlaceImageInput = { geoObjectId; publicId; kind: PlaceKind; lon; lat; country; subdivisionKey; openingBearing: number | null; rays: number[] | null; nearTown: boolean }`
-  - `loadPlaceImageInput(db, geoObjectId, cfg): Promise<PlaceImageInput | null>`: anchor position (`anchor_position` if set, else `position`), latest facts, `nearTown`. `nearTown` is true when a current `settlement` with `tags->>'place'` in `townPlaces` lies within `townRadiusM` and inside the ground footprint of the default camera (the four image corners projected to height 0). The footprint polygon comes from `cameraFootprint(camera): Array<[lon, lat]>` in `render-plan.ts`.
+  - `lightFor(input: PlaceImageInput, cfg): ImageryLight`: `light.nearTown` (midday) when `input.town` is set, else `byKind[kind]`
+  - `type Composition = "open_water" | "near_town"` and `compositionFor(input): Composition`: `near_town` when `input.town` is set and the kind is `anchorage` or `mooring_field`
+  - `baseAzimuthFor(input, cfg): number | null`. For `near_town` it returns the bearing from the town to the target, so the camera is on the far side of the anchorage and the town is in the background. Otherwise it returns `baseAzimuth(openingBearing, rays, …)`. The rotation in 10° steps until the camera is over water applies to both.
+  - `type PlaceImageInput = { geoObjectId; publicId; kind: PlaceKind; lon; lat; country; subdivisionKey; openingBearing: number | null; rays: number[] | null; town: { geoObjectId: string; lon: number; lat: number } | null }`. `lon`/`lat` is the centre of the place, which is the camera target.
+  - `loadPlaceImageInput(db, geoObjectId, cfg): Promise<PlaceImageInput | null>` reads the centre (`anchor_position` if set, else `position`) and the latest facts. `town` is the nearest current `settlement` with `tags->>'place'` in `townPlaces` within `light.townRadiusM` (500 m), and is set only for anchorages and mooring fields.
 
 - [ ] **Step 1: Write the failing tests:**
   - `distance for z1 is 450 m and z2 277 m` (±1 m)
@@ -213,7 +230,8 @@ Archive-first: a current `imagery_tiles` row with the same `(source, tile_key)` 
   - `null opening falls back to the longest ray`
   - `rotates until the camera is over water` (fixture land polygon covering the first two candidates)
   - `enclosed place yields no_water_view` (land on all sides; Review Focus 1)
-  - `anchorage → midday; marina → evening; anchorage with village in footprint within 1000 m → evening; hamlet does not count; village behind the camera does not count`
+  - `anchorage → midday, open_water; marina → evening; anchorage with a town at 400 m → midday, near_town; town at 600 m does not count; hamlet does not count; marina near a town stays evening, open_water`
+  - `near_town camera lies on the far side of the anchorage from the town` (azimuth = bearing town→target ± rotation)
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement** (pure functions without DB except `planRender`/`loadPlaceImageInput`). **Step 4: Run** → PASS.
 - [ ] **Step 5: Commit** `feat(images): render plan with camera over water, zoom limit from resolution and light rule (spec 13)`
 
@@ -262,14 +280,14 @@ Scene rules (in `scene.ts`, as in the tests):
   - `type ImageEditResult = { image: Uint8Array; model: string; promptVersion: number; costEur: number }`
   - `createOpenAiImageModel(transport, config = getConfig()): ImageModel`: multipart body built by hand with the fixed boundary `----periplus-image`, fields `model`, `prompt`, `size`, `quality`, `n=1`, `image` (`render.png`, `image/png`). The response is `data[0].b64_json`. The call uses `budget: "openai"` and `costOf` = `pricesEurPerImage[model][quality]`, and calls `assertNotSimulated("openai","images.edit")`. A missing `b64_json` or a different size throws `ImageOutputInvalid` (exported).
   - `class MockImageModel implements ImageModel`: `constructor(respond: (req) => Uint8Array | Error)`, `calls: ImageEditRequest[]`
-  - `buildPlacePrompt(input: PlaceImageInput, light: ImageryLight, watermarked: boolean, cfg): { text: string; promptVersion: number }`: blocks in order `scene, preserve, boats_remove|boats_keep, do_not_add, artefacts, [artefacts_watermark], regenerate, light_<light>`, joined by a blank line. `boats_keep` applies when the kind is `marina`/`port`, or the light is `evening` because of `nearTown`.
+  - `buildPlacePrompt(input: PlaceImageInput, light: ImageryLight, watermarked: boolean, cfg): { text: string; promptVersion: number }`: blocks in order `scene, preserve, <boats>, [composition_near_town], do_not_add, artefacts, [artefacts_watermark], regenerate, light_<light>`, joined by a blank line. `<boats>` is `boats_remove` for anchorage/mooring_field, `boats_keep` for marina/port, and `boats_near_town` for composition `near_town`. The scene uses `scene.near_town` for `near_town`, else `scene[kind]`.
   - `loadPromptBlocks(task: string, version: number, dir?): Record<string, string>` in `prompt.ts`. It parses `## <name>` sections and throws for a missing block name.
-  - `altText(input, light, cfg): string`: `"KI-Illustration: " + scene[kind].de + ", Blick vom Wasser" + (light === "evening" ? ", am Abend" : "")`. Keep it at ≤ 15 words.
+  - `altText(input, light, cfg): string`: `"KI-Illustration: " + (near_town ? scene.near_town.de : scene[kind].de) + ", Blick vom Wasser" + (light === "evening" ? ", am Abend" : "")`. Keep it at ≤ 15 words.
 
 - [ ] **Step 1: Write the failing tests:**
   - `prompt for anchorage removes boats` (snapshot)
   - `prompt for marina keeps boats in evening light` (snapshot)
-  - `anchorage near a town keeps boats and uses evening light`
+  - `anchorage near a town adds anchored boats, puts the town behind and uses midday light` (snapshot)
   - `watermark block only for watermarked core imagery`
   - `missing block throws with its name`
   - `alt text starts with KI-Illustration:`
