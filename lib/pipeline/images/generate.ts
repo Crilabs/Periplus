@@ -185,6 +185,26 @@ async function putUpForReview(db: Db, geoObjectId: string, context: PlaceImageTa
   });
 }
 
+/** The advisory lock key of a place's slot (`hashtext` of it): one image generation of the slot at a time. */
+export const slotLockKey = (geoObjectId: string, slot: string): string => `place-image:${geoObjectId}:${slot}`;
+
+/**
+ * Runs `fn` while holding the advisory lock of the place's slot (`pg_try_advisory_xact_lock` on `slotLockKey`), or
+ * returns null at once when another session holds it: two jobs of the same
+ * slot (the title image of a consolidation run and of „Titelbilder erzeugen“, a retry of a job pg-boss expired while
+ * it was still running) never render and pay for the same image twice. The lock lives in its own transaction on
+ * `lockDb`, which writes nothing: with the pool (the worker's `ctx.db`) that is a connection of its own, idle while
+ * `fn` runs on `db` (minutes: render and edits; READ COMMITTED holds no snapshot between statements, so vacuum is
+ * not held up). Inside one transaction (`lockDb` a `tx`) the lock is reentrant and never refused.
+ */
+async function withSlotLock<T>(lockDb: Db, geoObjectId: string, slot: string, fn: () => Promise<T>): Promise<T | null> {
+  return lockDb.transaction(async (lock) => {
+    const { rows } = await lock.execute<{ locked: boolean }>(sql`select pg_try_advisory_xact_lock(hashtext(${slotLockKey(geoObjectId, slot)})) as locked`);
+    if (!rows[0]!.locked) return null;
+    return fn();
+  });
+}
+
 type Attempt = { n: number; image: Uint8Array; iou: number; watermarkVisible: boolean | null; watermarkFree: boolean; passed: boolean };
 
 /** Best first: passed, then free of watermarks, then the higher IoU, then the earlier attempt. */
@@ -205,6 +225,11 @@ export type GenerateDeps = {
   render?: typeof renderAndStore;
   /** Default `getConfig()`. */
   config?: ImageStageConfig;
+  /**
+   * Where the slot lock is taken (`withSlotLock`; default `db`). The worker's `db` is the pool, so the lock gets a
+   * session of its own; a test inside one transaction passes the pool to make two calls compete.
+   */
+  lockDb?: Db;
 };
 
 export type GenerateResult = { status: "review" | "no_water_view" | "skipped"; attempts: number; waterIoU: number | null };
@@ -213,9 +238,11 @@ export type GenerateResult = { status: "review" | "no_water_view" | "skipped"; a
  * Generates one image of a place and puts it up for review:
  * 1. the place's input (`loadPlaceImageInput`) and camera (`planRender` at `view.zoom`, rotation from
  *    `view.azimuthDeg`); `no_water_view` → a task without candidate, no imagery, no render;
- * 2. the imagery around the camera target (`ensureImagery`; a near-town target lies between the anchorage and the
- *    town, so the town is in the core window) and the generation key from the tiles it returned; a key already done
- *    (`keyDone`: a retried job, or a decision taken meanwhile; with `force` a decided task does not count) → `skipped`;
+ * 2. under the slot lock (`withSlotLock`; held by another job → `skipped`, that job makes the task): the imagery
+ *    around the camera target (`ensureImagery`; a near-town target lies between the anchorage and the town, so the
+ *    town is in the core window) and the generation key from the tiles it returned; a key already done (`keyDone`,
+ *    checked again under the lock: a retried job, or a decision taken meanwhile; with `force` a decided task does
+ *    not count) → `skipped`;
  * 3. the render (`renderAndStore`, recording the key);
  * 4. up to `check.maxAttempts` image edits: water IoU against the render mask, and, when the core imagery is
  *    watermarked (the cadastre), the watermark check on the JPEG. `ImageOutputInvalid`, `ModelOutputInvalid`, a low
@@ -238,6 +265,7 @@ export async function generatePlaceImage(
   const { view } = input;
   const place = await loadPlaceImageInput(db, input.geoObjectId, icfg);
   if (!place || !place.country) return { status: "skipped", attempts: 0, waterIoU: null };
+  const country = place.country;
   const light = lightFor(place, icfg);
   const { model, promptVersion } = imageTaskOf(cfg);
   const azimuthOverride = view.azimuthDeg ?? null;
@@ -264,86 +292,95 @@ export async function generatePlaceImage(
   }
 
   if (!input.runId) throw new Error("generating a place image needs the run id (place_renders.run_id)");
+  const runId = input.runId;
   const { camera } = plan;
-  const target = atTarget(place, camera);
-  const imagery = await ensureImagery(
-    db,
-    deps.archive,
-    deps.transport,
-    { geoObjectId: place.geoObjectId, lon: target.lon, lat: target.lat, country: place.country },
-    { db, runId: input.runId, stage: IMAGES_STAGE },
-    icfg,
-  );
-  const key = keyFor(place, view, aerialIds(imagery), cfg);
-  if (await keyDone(db, input.geoObjectId, view.slot, key, input.force)) return { status: "skipped", attempts: 0, waterIoU: null };
+  // steps 2 to 5 under the slot lock: a second job of the same slot (another run, a retry of an expired job) skips
+  const generated = await withSlotLock(deps.lockDb ?? db, input.geoObjectId, view.slot, async (): Promise<GenerateResult> => {
+    const target = atTarget(place, camera);
+    const imagery = await ensureImagery(
+      db,
+      deps.archive,
+      deps.transport,
+      { geoObjectId: place.geoObjectId, lon: target.lon, lat: target.lat, country },
+      { db, runId, stage: IMAGES_STAGE },
+      icfg,
+    );
+    const key = keyFor(place, view, aerialIds(imagery), cfg);
+    if (await keyDone(db, input.geoObjectId, view.slot, key, input.force)) return { status: "skipped", attempts: 0, waterIoU: null };
 
-  const render = await (deps.render ?? renderAndStore)(db, deps.archive, target, camera, imagery, { runId: input.runId, generationKey: key, cfg: icfg });
-  const photo = await deps.archive.get(render.photoKey);
-  const mask = await deps.archive.get(render.maskKey);
-  if (!photo || !mask) throw new Error(`render ${render.renderId} is missing in the archive`);
+    const render = await (deps.render ?? renderAndStore)(db, deps.archive, target, camera, imagery, { runId, generationKey: key, cfg: icfg });
+    const photo = await deps.archive.get(render.photoKey);
+    const mask = await deps.archive.get(render.maskKey);
+    if (!photo || !mask) throw new Error(`render ${render.renderId} is missing in the archive`);
 
-  // only the cadastre is a core source, and only it can carry a watermark into the render
-  const watermarked = imagery.coreSource !== null && icfg.sources[imagery.coreSource].watermarked;
-  const prompt = buildPlacePrompt(place, light, watermarked, cfg).text;
-  const attempts: Attempt[] = [];
-  let made = 0;
-  let interrupted: PlaceImageTaskContext["interrupted"];
-  /** An error after the first paid image ends the attempts instead of the job; the attempts so far go up for review. */
-  const interrupt = (n: number, step: string, e: unknown) => {
-    interrupted = { attempt: n, error: errorMessage(e) };
-    log.warn({ geoObjectId: place.geoObjectId, slot: view.slot, attempt: n, step, err: e }, "image attempt interrupted, earlier attempts go up for review");
-  };
-  for (let n = 1; n <= icfg.check.maxAttempts; n++) {
-    made = n;
-    let image: Uint8Array;
-    try {
-      image = (await deps.imageModel.edit({ task: TASK, image: photo, prompt }, { db, runId: input.runId, stage: IMAGES_STAGE })).image;
-    } catch (e) {
-      if (e instanceof ImageOutputInvalid) continue;
-      if (attempts.length === 0) throw e;
-      interrupt(n, "edit", e);
-      break;
-    }
-    // the image is paid for from here on: a failing check keeps it as an unchecked attempt
-    const iou = await waterIoU(mask, image, icfg.check);
-    let watermarkVisible: boolean | null = null;
-    let checked = !watermarked;
-    if (watermarked) {
+    // only the cadastre is a core source, and only it can carry a watermark into the render
+    const watermarked = imagery.coreSource !== null && icfg.sources[imagery.coreSource].watermarked;
+    const prompt = buildPlacePrompt(place, light, watermarked, cfg).text;
+    const attempts: Attempt[] = [];
+    let made = 0;
+    let interrupted: PlaceImageTaskContext["interrupted"];
+    /** An error after the first paid image ends the attempts instead of the job; the attempts so far go up for review. */
+    const interrupt = (n: number, step: string, e: unknown) => {
+      interrupted = { attempt: n, error: errorMessage(e) };
+      log.warn({ geoObjectId: place.geoObjectId, slot: view.slot, attempt: n, step, err: e }, "image attempt interrupted, earlier attempts go up for review");
+    };
+    for (let n = 1; n <= icfg.check.maxAttempts; n++) {
+      made = n;
+      let image: Uint8Array;
       try {
-        const jpeg = await toJpeg(image, icfg.output.jpegQuality);
-        watermarkVisible = (await deps.model.call(checkPlaceImageTask, { image: jpeg }, { runId: input.runId, stage: IMAGES_STAGE })).output.watermarkVisible;
-        checked = true;
+        image = (await deps.imageModel.edit({ task: TASK, image: photo, prompt }, { db, runId, stage: IMAGES_STAGE })).image;
       } catch (e) {
-        if (!(e instanceof ModelOutputInvalid)) interrupt(n, "watermark check", e);
+        if (e instanceof ImageOutputInvalid) continue;
+        if (attempts.length === 0) throw e;
+        interrupt(n, "edit", e);
+        break;
       }
+      // the image is paid for from here on: a failing check keeps it as an unchecked attempt
+      const iou = await waterIoU(mask, image, icfg.check);
+      let watermarkVisible: boolean | null = null;
+      let checked = !watermarked;
+      if (watermarked) {
+        try {
+          const jpeg = await toJpeg(image, icfg.output.jpegQuality);
+          watermarkVisible = (await deps.model.call(checkPlaceImageTask, { image: jpeg }, { runId, stage: IMAGES_STAGE })).output.watermarkVisible;
+          checked = true;
+        } catch (e) {
+          if (!(e instanceof ModelOutputInvalid)) interrupt(n, "watermark check", e);
+        }
+      }
+      const watermarkFree = checked && watermarkVisible !== true;
+      const passed = passesGeometry(iou, light, icfg.check) && watermarkFree;
+      attempts.push({ n, image, iou, watermarkVisible, watermarkFree, passed });
+      if (passed || interrupted) break;
     }
-    const watermarkFree = checked && watermarkVisible !== true;
-    const passed = passesGeometry(iou, light, icfg.check) && watermarkFree;
-    attempts.push({ n, image, iou, watermarkVisible, watermarkFree, passed });
-    if (passed || interrupted) break;
-  }
 
-  const chosen = best(attempts);
-  let candidateKey: string | null = null;
-  if (chosen) {
-    candidateKey = `imagery/candidates/${place.geoObjectId}/${render.renderId}-${chosen.n}.jpg`;
-    await deps.archive.put(candidateKey, await toJpeg(chosen.image, icfg.output.jpegQuality), "image/jpeg");
-  }
-  await putUpForReview(db, input.geoObjectId, {
-    ...base,
-    key,
-    camera: cameraDetails(camera),
-    renderId: render.renderId,
-    candidateKey,
-    waterIoU: chosen?.iou ?? null,
-    passed: chosen?.passed ?? false,
-    attempts: made,
-    watermarkVisible: chosen?.watermarkVisible ?? null,
-    allowedZooms: allowedZooms(finestResolution(imagery), icfg),
-    ...(chosen ? {} : { reason: "no_valid_output" as const }),
-    ...(interrupted ? { interrupted } : {}),
+    const chosen = best(attempts);
+    let candidateKey: string | null = null;
+    if (chosen) {
+      candidateKey = `imagery/candidates/${place.geoObjectId}/${render.renderId}-${chosen.n}.jpg`;
+      await deps.archive.put(candidateKey, await toJpeg(chosen.image, icfg.output.jpegQuality), "image/jpeg");
+    }
+    await putUpForReview(db, input.geoObjectId, {
+      ...base,
+      key,
+      camera: cameraDetails(camera),
+      renderId: render.renderId,
+      candidateKey,
+      waterIoU: chosen?.iou ?? null,
+      passed: chosen?.passed ?? false,
+      attempts: made,
+      watermarkVisible: chosen?.watermarkVisible ?? null,
+      allowedZooms: allowedZooms(finestResolution(imagery), icfg),
+      ...(chosen ? {} : { reason: "no_valid_output" as const }),
+      ...(interrupted ? { interrupted } : {}),
+    });
+    return { status: "review", attempts: made, waterIoU: chosen?.iou ?? null };
   });
-  return { status: "review", attempts: made, waterIoU: chosen?.iou ?? null };
+  if (generated === null) {
+    log.info({ geoObjectId: input.geoObjectId, slot: view.slot }, "another job holds the slot lock, skipped");
+    return { status: "skipped", attempts: 0, waterIoU: null };
+  }
+  return generated;
 }
 
 /** Ids of the aerial tiles (core and wide) of an imagery set: the tiles of the generation key. */

@@ -12,9 +12,9 @@ import { geomFromGeoJson } from "@/lib/db/geometry";
 import { landPolygons, reviewTasks } from "@/lib/db/schema";
 import { BudgetExceeded } from "@/lib/domain/costs";
 import { createRun } from "@/lib/domain/runs";
-import { generatePlaceImage, generationKey } from "@/lib/pipeline/images/generate";
+import { generatePlaceImage, generationKey, slotLockKey } from "@/lib/pipeline/images/generate";
 import { IMAGES_STAGE } from "@/lib/pipeline/images/stage-name";
-import { withRollback } from "@/test/db";
+import { testDb, withRollback } from "@/test/db";
 import {
   checker,
   DRY,
@@ -227,6 +227,53 @@ describe("generatePlaceImage", () => {
       expect(extra!.context).toMatchObject({ slot: "view-2", azimuthOverride: 90 });
       expect(extra!.context.camera!.viewBearingDeg).toBeCloseTo(270, 6);
       expect(extra!.context.key).not.toBe(title!.context.key);
+    });
+  });
+
+  it("two concurrent jobs of the same slot generate one image: the other is skipped by the slot lock", async () => {
+    await withRollback(async (tx) => {
+      const f = await fixture(tx);
+      const archive = memoryArchive();
+      const images = await imageModel(GOOD);
+      // the lock on the pool: each call gets a session of its own, as the worker's jobs do
+      const d = { ...(await deps(archive, images, checker(false))), lockDb: testDb() };
+      const input = { geoObjectId: f.objectId, view: TITLE, runId: f.runId };
+      const results = await Promise.all([generatePlaceImage(tx, input, d), generatePlaceImage(tx, input, d)]);
+      expect(results.map((r) => r.status).sort()).toEqual(["review", "skipped"]);
+      expect(images.calls).toHaveLength(1);
+      expect(await taskOf(tx, `${f.objectId}:title`)).toHaveLength(1);
+      // the lock is released with the job: a third call finds the open task with its key
+      expect((await generatePlaceImage(tx, input, d)).status).toBe("skipped");
+    });
+  });
+
+  it("a slot locked by another job is skipped before any imagery, render or edit", async () => {
+    await withRollback(async (tx) => {
+      const f = await fixture(tx);
+      const images = await imageModel(GOOD);
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      let locked!: () => void;
+      const isLocked = new Promise<void>((resolve) => (locked = resolve));
+      const holder = testDb().transaction(async (other) => {
+        await other.execute(sql`select pg_advisory_xact_lock(hashtext(${slotLockKey(f.objectId, "title")}))`);
+        locked();
+        await held;
+      });
+      await isLocked;
+      try {
+        const result = await generatePlaceImage(
+          tx,
+          { geoObjectId: f.objectId, view: TITLE, runId: f.runId },
+          { archive: memoryArchive(), transport: refusingTransport, imageModel: images, model: checker(false), render: stubRender, lockDb: testDb() },
+        );
+        expect(result).toEqual({ status: "skipped", attempts: 0, waterIoU: null });
+        expect(images.calls).toHaveLength(0);
+        expect(await taskOf(tx, `${f.objectId}:title`)).toEqual([]);
+      } finally {
+        release();
+        await holder;
+      }
     });
   });
 
