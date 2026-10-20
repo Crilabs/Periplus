@@ -4,6 +4,7 @@ import type { ZodType } from "zod";
 import { FACT_SCHEMAS } from "@/config/fact-schema";
 import type { FactSchema } from "@/lib/domain/facts/schema-types";
 import {
+  areasConfigSchema,
   budgetsSchema,
   categoriesSchema,
   consolidationActiveSchema,
@@ -34,6 +35,7 @@ import {
 
 export type {
   AppConfig,
+  AreasConfig,
   BudgetService,
   CategoriesConfig,
   ConsolidationConfig,
@@ -165,6 +167,7 @@ export function loadConfig(dir = "config"): AppConfig {
     budgets: readJson(dir, "budgets", budgetsSchema),
     models: readJson(dir, "models", modelsSchema),
     subdivisions: readJson(dir, "subdivisions", subdivisionsConfigSchema),
+    areas: readJson(dir, "areas", areasConfigSchema),
     categories: readJson(dir, "categories", categoriesSchema),
     gazetteer: readJson(dir, "gazetteer", gazetteerSchema),
     factSchema: readJson(dir, "fact-schema/active", factSchemaConfigSchema),

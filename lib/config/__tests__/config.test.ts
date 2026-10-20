@@ -33,6 +33,7 @@ type Overrides = {
   delivery?: unknown;
   images?: unknown;
   subdivisions?: unknown;
+  areas?: unknown;
   /** `consolidation/active.json`. */
   consolidationActive?: unknown;
   /** Rules version file name (without `.json`) to content; replaces the repo's `consolidation/v*.json`. */
@@ -63,6 +64,7 @@ function fixtureDir(overrides: Overrides): string {
     delivery: overrides.delivery ?? repoConfig.delivery,
     images: overrides.images ?? repoConfig.images,
     subdivisions: overrides.subdivisions ?? repoConfig.subdivisions,
+    areas: overrides.areas ?? repoConfig.areas,
   };
   for (const [name, value] of Object.entries(files)) {
     writeFileSync(join(dir, `${name}.json`), JSON.stringify(value));
@@ -719,5 +721,21 @@ describe("queue configuration", () => {
     const entry = { concurrency: 8, retryLimit: 2, retryDelaySeconds: 120, retryBackoff: true };
     expect(queuesSchema.safeParse({ "fetch.url": { ...entry, expireInSeconds: 3600 } }).success).toBe(true);
     expect(queuesSchema.safeParse({ "fetch.url": { ...entry, expireInSecond: 3600 } }).success).toBe(false);
+  });
+});
+
+describe("areas config", () => {
+  it("loads areas.json with aliases saronic → saronic-gulf", () => {
+    const c = getConfig().areas;
+    expect(c.aliases.saronic).toBe("saronic-gulf");
+    expect(c.aliases.argolic).toBe("argolic-gulf");
+    expect(c.minMembers).toBe(2);
+    expect(c.memberTypes.island).toEqual(expect.arrayContaining(["island", "islet"]));
+  });
+
+  it("rejects a member type that is no geo object type", () => {
+    const c = structuredClone(repoConfig.areas);
+    (c.memberTypes as Record<string, string[]>).cape = ["nonsense"];
+    expect(() => loadConfig(fixtureDir({ areas: c }))).toThrow(/areas/);
   });
 });

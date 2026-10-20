@@ -1070,7 +1070,26 @@ export type QueueConfig = z.infer<typeof queueConfigSchema>;
 export type GeometryConfig = z.infer<typeof geometrySchema>;
 export type QualityConfig = z.infer<typeof qualitySchema>;
 export type RestrictionsConfig = z.infer<typeof restrictionsSchema>;
+const geoObjectTypeSchema = z.enum(geoObjectTypeEnum.enumValues);
+
+/** `config/areas.json`: import of the Revier-Bot delivery (spec 14). */
+export const areasConfigSchema = z.strictObject({
+  minMembers: z.number().int().min(1),
+  polygon: z.strictObject({
+    bufferNm: z.number().positive(),
+    concaveRatio: z.number().min(0).max(1),
+    inlandCutM: z.number().min(0),
+    gulfCoverShare: z.number().min(0).max(1),
+  }),
+  neighbourRing: z.number().int().min(0),
+  /** Bot member type to the geo object types it may resolve to. */
+  memberTypes: z.record(z.string().min(1), z.array(geoObjectTypeSchema).min(1)),
+  /** Legacy area key to bot key. */
+  aliases: z.record(z.string().min(1), z.string().min(1)),
+});
+
 export type SubdivisionsConfig = z.infer<typeof subdivisionsConfigSchema>;
+export type AreasConfig = z.infer<typeof areasConfigSchema>;
 export type CategoriesConfig = z.infer<typeof categoriesSchema>;
 export type GazetteerConfig = z.infer<typeof gazetteerSchema>;
 export type ConsolidationConfig = z.infer<typeof consolidationSchema>;
@@ -1086,6 +1105,7 @@ export type AppConfig = {
   budgets: Record<BudgetService, { dailyEur: number }>;
   models: ModelsConfig;
   subdivisions: SubdivisionsConfig;
+  areas: AreasConfig;
   categories: CategoriesConfig;
   gazetteer: GazetteerConfig;
   factSchema: z.infer<typeof factSchemaConfigSchema>;
@@ -1203,3 +1223,43 @@ export const imagesSchema = z.strictObject({
     altPrefix: z.string().min(1),
   }),
 });
+
+const nonEmpty = z.string().trim().min(1);
+const botType = z.enum(["harbour", "island", "islet", "settlement", "bay", "gulf", "cape", "strait", "channel", "archipelago"]);
+const botMember = z.object({ name: nonEmpty, type: botType });
+
+/** One area of a bot delivery file `config/area-imports/<CC>.json`; unknown keys (e.g. `countries`) are ignored. */
+export const importedAreaSchema = z.object({
+  key: nonEmpty,
+  names: z.array(z.object({ lang: nonEmpty, name: nonEmpty, preferred: z.boolean() })).min(1),
+  subdivisions: z.array(nonEmpty),
+  members: z.array(botMember),
+  boundaryPoints: z.array(botMember),
+  boundary: z.string(),
+  related: z.array(z.object({ key: nonEmpty, relation: z.enum(["contains", "within", "overlaps"]) })),
+  evidence: z
+    .array(z.object({ url: nonEmpty, publisher: z.string(), lang: nonEmpty, quote: nonEmpty }))
+    .min(1),
+  notes: z.string(),
+});
+
+export const areaImportFileSchema = z
+  .object({
+    country: z.string().regex(/^[A-Z]{2}$/),
+    generatedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    areas: z.array(importedAreaSchema),
+  })
+  .superRefine((file, ctx) => {
+    const keys = new Set<string>();
+    for (const [i, area] of file.areas.entries()) {
+      if (keys.has(area.key)) ctx.addIssue({ code: "custom", path: ["areas", i, "key"], message: `duplicate key ${area.key}` });
+      keys.add(area.key);
+    }
+    for (const [i, area] of file.areas.entries()) {
+      for (const [j, rel] of area.related.entries()) {
+        if (!keys.has(rel.key)) {
+          ctx.addIssue({ code: "custom", path: ["areas", i, "related", j], message: `related points to unknown key ${rel.key}` });
+        }
+      }
+    }
+  });

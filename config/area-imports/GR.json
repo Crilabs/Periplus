@@ -1,0 +1,5430 @@
+{
+  "country": "GR",
+  "generatedAt": "2026-10-20",
+  "areas": [
+    {
+      "key": "crete",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Kreta",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Crete",
+          "preferred": true
+        },
+        {
+          "lang": "el",
+          "name": "Κρήτη",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Krete",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Kriti",
+          "preferred": false
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-M"
+      ],
+      "members": [
+        {
+          "name": "Chania",
+          "type": "harbour"
+        },
+        {
+          "name": "Kissamos",
+          "type": "harbour"
+        },
+        {
+          "name": "Souda Bay",
+          "type": "bay"
+        },
+        {
+          "name": "Rethymno",
+          "type": "harbour"
+        },
+        {
+          "name": "Heraklion",
+          "type": "harbour"
+        },
+        {
+          "name": "Dia",
+          "type": "island"
+        },
+        {
+          "name": "Agios Nikolaos",
+          "type": "harbour"
+        },
+        {
+          "name": "Elounda",
+          "type": "settlement"
+        },
+        {
+          "name": "Spinalonga",
+          "type": "islet"
+        },
+        {
+          "name": "Mirabello Gulf",
+          "type": "gulf"
+        },
+        {
+          "name": "Sitia",
+          "type": "harbour"
+        },
+        {
+          "name": "Ierapetra",
+          "type": "harbour"
+        },
+        {
+          "name": "Chora Sfakion",
+          "type": "harbour"
+        },
+        {
+          "name": "Loutro",
+          "type": "bay"
+        },
+        {
+          "name": "Paleochora",
+          "type": "harbour"
+        },
+        {
+          "name": "Agia Galini",
+          "type": "harbour"
+        },
+        {
+          "name": "Gavdos",
+          "type": "island"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Cape Gramvousa",
+          "type": "cape"
+        },
+        {
+          "name": "Cape Sideros",
+          "type": "cape"
+        },
+        {
+          "name": "Cape Lithino",
+          "type": "cape"
+        }
+      ],
+      "boundary": "Die ganze Insel Kreta mit ihren Küsten und vorgelagerten Inseln (Dia, Spinalonga, Gavdos), vom Kap Gramvousa im Westen bis Kap Sideros im Osten.",
+      "related": [
+        {
+          "key": "crete-north-coast",
+          "relation": "contains"
+        },
+        {
+          "key": "crete-south-coast",
+          "relation": "contains"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.yacht.de/reisen-chartern/griechenland/griechenland-anspruchsvolles-toernziel-in-griechenland-kreta/",
+          "publisher": "YACHT (Delius Klasing)",
+          "lang": "de",
+          "quote": "Anspruchsvolles Törnziel in Griechenland: Kreta"
+        },
+        {
+          "url": "https://www.boatcrowd.com/de/yacht-charter-crete/guide",
+          "publisher": "Boatcrowd",
+          "lang": "de",
+          "quote": "Keine andere griechische Insel bietet eine solche Vielfalt im Rahmen eines einzigen Törns."
+        },
+        {
+          "url": "https://sailingissues.com/greekislands/crete.html",
+          "publisher": "Sailingissues",
+          "lang": "en",
+          "quote": "Relatively few yacht charters are available in Crete"
+        },
+        {
+          "url": "https://en.1a-yachtcharter.de/destinations/greece/crete/l-530",
+          "publisher": "1a Yachtcharter",
+          "lang": "en",
+          "quote": "A yacht charter Crete will take you to the largest of the Greek islands …"
+        }
+      ],
+      "notes": "Kreta gilt in den Quellen als anspruchsvolles, wenig befahrenes Revier (Meltemi-Schwell im Norden, Fallböen im Süden). Charterbasen vor allem an der Nordküste (Heraklion, Agios Nikolaos, Chania, Rethymno). Gavdos wird als südlichster Punkt Europas zum Revier gerechnet."
+    },
+    {
+      "key": "crete-north-coast",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Nordküste Kretas",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "North coast of Crete",
+          "preferred": true
+        },
+        {
+          "lang": "el",
+          "name": "Βόρεια ακτή Κρήτης",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Northern Crete",
+          "preferred": false
+        },
+        {
+          "lang": "de",
+          "name": "Nordkreta",
+          "preferred": false
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-M"
+      ],
+      "members": [
+        {
+          "name": "Kissamos",
+          "type": "harbour"
+        },
+        {
+          "name": "Chania",
+          "type": "harbour"
+        },
+        {
+          "name": "Souda Bay",
+          "type": "bay"
+        },
+        {
+          "name": "Rethymno",
+          "type": "harbour"
+        },
+        {
+          "name": "Heraklion",
+          "type": "harbour"
+        },
+        {
+          "name": "Dia",
+          "type": "island"
+        },
+        {
+          "name": "Agios Nikolaos",
+          "type": "harbour"
+        },
+        {
+          "name": "Elounda",
+          "type": "settlement"
+        },
+        {
+          "name": "Spinalonga",
+          "type": "islet"
+        },
+        {
+          "name": "Mirabello Gulf",
+          "type": "gulf"
+        },
+        {
+          "name": "Sitia",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Cape Gramvousa",
+          "type": "cape"
+        },
+        {
+          "name": "Cape Sideros",
+          "type": "cape"
+        }
+      ],
+      "boundary": "Die Nordküste Kretas von Kap Gramvousa (Kissamos) im Westen über Chania, Rethymno, Heraklion und Agios Nikolaos bis Sitia und Kap Sideros im Osten, mit Dia und Spinalonga.",
+      "related": [
+        {
+          "key": "crete",
+          "relation": "within"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.boatcrowd.com/yacht-charter-crete/itineraries",
+          "publisher": "Boatcrowd",
+          "lang": "en",
+          "quote": "… the northern coast from Chania to Agios Nikolaos"
+        },
+        {
+          "url": "https://sailingissues.com/greekislands/crete.html",
+          "publisher": "Sailingissues",
+          "lang": "en",
+          "quote": "the North coast is flatter and more indented, with natural ports and anchorages …"
+        },
+        {
+          "url": "https://www.yachtico.com/ROUTE-SUGGESTIONS-CRETE-GREECE-ITINERARIES-MEDITERRANEAN-SEA",
+          "publisher": "Yachtico",
+          "lang": "en",
+          "quote": "… explore the northern coast of Crete."
+        },
+        {
+          "url": "https://www.boatcrowd.com/de/yacht-charter-crete/guide",
+          "publisher": "Boatcrowd",
+          "lang": "de",
+          "quote": "An der geschützten Nordküste ist er in der Regel gut zu bewältigen …"
+        }
+      ],
+      "notes": "Name wird in den Quellen beschreibend („northern coast“, „Nordküste“) verwendet, nicht als feststehender Revierbegriff; die Charterbasen und Marinas Kretas liegen praktisch alle hier. Westgrenze (Kissamos/Gramvousa) in den Quellen nicht ausdrücklich benannt."
+    },
+    {
+      "key": "crete-south-coast",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Südküste Kretas",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "South coast of Crete",
+          "preferred": true
+        },
+        {
+          "lang": "el",
+          "name": "Νότια ακτή Κρήτης",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Südkreta",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Southern Crete",
+          "preferred": false
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-M"
+      ],
+      "members": [
+        {
+          "name": "Paleochora",
+          "type": "harbour"
+        },
+        {
+          "name": "Sougia",
+          "type": "settlement"
+        },
+        {
+          "name": "Loutro",
+          "type": "bay"
+        },
+        {
+          "name": "Chora Sfakion",
+          "type": "harbour"
+        },
+        {
+          "name": "Plakias",
+          "type": "bay"
+        },
+        {
+          "name": "Agia Galini",
+          "type": "harbour"
+        },
+        {
+          "name": "Ierapetra",
+          "type": "harbour"
+        },
+        {
+          "name": "Gavdos",
+          "type": "island"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Cape Krios",
+          "type": "cape"
+        },
+        {
+          "name": "Cape Lithino",
+          "type": "cape"
+        },
+        {
+          "name": "Ierapetra",
+          "type": "settlement"
+        }
+      ],
+      "boundary": "Die Südküste Kretas von Paleochora bzw. Kap Krios im Westen über Loutro, Chora Sfakion, Plakias und Agia Galini bis Ierapetra im Osten, mit der vorgelagerten Insel Gavdos.",
+      "related": [
+        {
+          "key": "crete",
+          "relation": "within"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.boatcrowd.com/de/yacht-charter-crete/guide",
+          "publisher": "Boatcrowd",
+          "lang": "de",
+          "quote": "Die Fahrt entlang der Südküste Kretas, von Hora Sfakion im Westen bis nach Ierapetra im Osten,"
+        },
+        {
+          "url": "https://www.cruiserswiki.org/wiki/Loutro",
+          "publisher": "CruisersWiki",
+          "lang": "en",
+          "quote": "Loutro … is the only natural harbour on the south coast of Crete."
+        },
+        {
+          "url": "https://sailingissues.com/greekislands/crete.html",
+          "publisher": "Sailingissues",
+          "lang": "en",
+          "quote": "The Southern coast is notorious during summer winds"
+        },
+        {
+          "url": "https://www.yacht.de/reisen-chartern/griechenland/griechenland-anspruchsvolles-toernziel-in-griechenland-kreta/",
+          "publisher": "YACHT (Delius Klasing)",
+          "lang": "de",
+          "quote": "… der Meltemi an vielen Stellen in Sturmstärke herab und macht die Südküste unsicher."
+        }
+      ],
+      "notes": "Von Fallböen geprägt, wenig Infrastruktur; Boatcrowd grenzt das Gebiet Hora Sfakion–Ierapetra ab, andere Routen beginnen weiter westlich in Paleochora. Ostgrenze (Ierapetra vs. Kap Sideros) in den Quellen uneinheitlich."
+    },
+    {
+      "key": "messinian-gulf",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Messenischer Golf",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Messinischer Golf",
+          "preferred": false
+        },
+        {
+          "lang": "de",
+          "name": "Golf von Messinia",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Messinian Gulf",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Messenian Gulf",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Gulf of Messinia",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Μεσσηνιακός Κόλπος",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-J"
+      ],
+      "members": [
+        {
+          "name": "Kalamata",
+          "type": "harbour"
+        },
+        {
+          "name": "Petalidi",
+          "type": "harbour"
+        },
+        {
+          "name": "Koroni",
+          "type": "harbour"
+        },
+        {
+          "name": "Kardamyli",
+          "type": "harbour"
+        },
+        {
+          "name": "Stoupa",
+          "type": "settlement"
+        },
+        {
+          "name": "Agios Nikolaos (Messinia)",
+          "type": "harbour"
+        },
+        {
+          "name": "Limeni",
+          "type": "bay"
+        },
+        {
+          "name": "Mezapo",
+          "type": "bay"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Koroni",
+          "type": "settlement"
+        },
+        {
+          "name": "Cape Akritas",
+          "type": "cape"
+        },
+        {
+          "name": "Cavo Grosso",
+          "type": "cape"
+        },
+        {
+          "name": "Cape Tainaron",
+          "type": "cape"
+        }
+      ],
+      "boundary": "Der Golf zwischen der Messenischen Halbinsel (Koroni, Kap Akritas) im Westen und der Mani-Halbinsel (bis Cavo Grosso bzw. Kap Tainaron) im Osten, mit Kalamata am Nordende.",
+      "related": [
+        {
+          "key": "mani-coast",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.cruiserswiki.org/wiki/Diros",
+          "publisher": "CruisersWiki",
+          "lang": "en",
+          "quote": "the constant swell of the Messinian gulf especially in the afternoon …"
+        },
+        {
+          "url": "https://noonsite.com/?p=34958",
+          "publisher": "Noonsite",
+          "lang": "en",
+          "quote": "… Koroni sits on the southwest peninsula of the Peloponnese on the Gulf of Messinia …"
+        },
+        {
+          "url": "https://www.noforeignland.com/guides/countries/gr/areas/peloponnese",
+          "publisher": "noforeignland",
+          "lang": "en",
+          "quote": "enclosing the Laconian Gulf to the east and the Messinian Gulf to the west."
+        },
+        {
+          "url": "https://www.discovergreece.com/en/yachting/sailing-by-the-peloponnese",
+          "publisher": "Discover Greece",
+          "lang": "en",
+          "quote": "… on the other side of Mani in the Gulf of Messinia, there are superb beaches"
+        },
+        {
+          "url": "https://www.borrowaboat.com/m/?p=60064",
+          "publisher": "Borrow a Boat",
+          "lang": "de",
+          "quote": "Kalamata, Koroni, Methoni, Insel Sapientza, Pylos und zurück."
+        }
+      ],
+      "notes": "Charterbasis Kalamata (Marina). Die Südgrenze (Kap Akritas–Cavo Grosso oder –Kap Tainaron) wird in den Quellen nicht einheitlich gezogen; Charterrouten ab Kalamata erweitern das Gebiet oft um Methoni, Sapientza und Pylos (Westküste)."
+    },
+    {
+      "key": "laconian-gulf",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Lakonischer Golf",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Golf von Lakonien",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Laconian Gulf",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Gulf of Laconia",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Λακωνικός Κόλπος",
+          "preferred": true
+        },
+        {
+          "lang": "el",
+          "name": "Lakonikos Kolpos",
+          "preferred": false
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-J"
+      ],
+      "members": [
+        {
+          "name": "Gytheio",
+          "type": "harbour"
+        },
+        {
+          "name": "Porto Kagio",
+          "type": "bay"
+        },
+        {
+          "name": "Kotronas",
+          "type": "harbour"
+        },
+        {
+          "name": "Skoutari",
+          "type": "bay"
+        },
+        {
+          "name": "Plytra",
+          "type": "harbour"
+        },
+        {
+          "name": "Elafonisos",
+          "type": "island"
+        },
+        {
+          "name": "Neapoli Voion",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Cape Tainaron",
+          "type": "cape"
+        },
+        {
+          "name": "Cape Maleas",
+          "type": "cape"
+        }
+      ],
+      "boundary": "Der Golf zwischen Kap Tainaron (Mani-Halbinsel) im Westen und Kap Maleas (Halbinsel Epidavros Limira) im Osten, mit Gytheio am Nordende und Elafonisos im Südosten; Kythira südlich außerhalb.",
+      "related": [
+        {
+          "key": "mani-coast",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.bednblue.com/travel/greece/boat-rentals-gytheio",
+          "publisher": "BednBlue",
+          "lang": "en",
+          "quote": "Because the winds of the Laconian Gulf can be very strong,"
+        },
+        {
+          "url": "https://www.noforeignland.com/guides/countries/gr/areas/peloponnese",
+          "publisher": "noforeignland",
+          "lang": "en",
+          "quote": "enclosing the Laconian Gulf to the east and the Messinian Gulf to the west."
+        },
+        {
+          "url": "https://www.discovergreece.com/en/yachting/sailing-by-the-peloponnese",
+          "publisher": "Discover Greece",
+          "lang": "en",
+          "quote": "in the Gulf of Laconia you’ll find Gytheio and Plytra"
+        },
+        {
+          "url": "https://en.wikipedia.org/wiki/Laconian_Gulf",
+          "publisher": "Wikipedia",
+          "lang": "en",
+          "quote": "The main ports and settlements on the gulf are Gytheio and Neapolis."
+        }
+      ],
+      "notes": "Wenig Yachtverkehr; starke Winde im Golf. Deutscher Name „Lakonischer Golf“ in Segelquellen nicht wörtlich belegt (nur allgemein gebräuchlich). Ob Kythira zum Revier zählt, ist unklar – die Quellen nennen es als südlich vorgelagert."
+    },
+    {
+      "key": "mani-coast",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Mani",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Mani-Halbinsel",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "The Mani",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Mani Peninsula",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Μάνη",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-J"
+      ],
+      "members": [
+        {
+          "name": "Kardamyli",
+          "type": "harbour"
+        },
+        {
+          "name": "Stoupa",
+          "type": "settlement"
+        },
+        {
+          "name": "Limeni",
+          "type": "bay"
+        },
+        {
+          "name": "Diros",
+          "type": "bay"
+        },
+        {
+          "name": "Mezapo",
+          "type": "bay"
+        },
+        {
+          "name": "Gerolimenas",
+          "type": "harbour"
+        },
+        {
+          "name": "Porto Kagio",
+          "type": "bay"
+        },
+        {
+          "name": "Kotronas",
+          "type": "harbour"
+        },
+        {
+          "name": "Gytheio",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Kardamyli",
+          "type": "settlement"
+        },
+        {
+          "name": "Cavo Grosso",
+          "type": "cape"
+        },
+        {
+          "name": "Cape Tainaron",
+          "type": "cape"
+        },
+        {
+          "name": "Gytheio",
+          "type": "settlement"
+        }
+      ],
+      "boundary": "Beide Küsten der Mani-Halbinsel von Kardamyli (Westseite, Messenischer Golf) um Cavo Grosso und Kap Tainaron bis Gytheio (Ostseite, Lakonischer Golf).",
+      "related": [
+        {
+          "key": "messinian-gulf",
+          "relation": "overlaps"
+        },
+        {
+          "key": "laconian-gulf",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://sailwithus.de/en/blog/sailing-the-peloponnese/",
+          "publisher": "sailwithus",
+          "lang": "en",
+          "quote": "The Mani – wild, rugged and studded with stone tower-houses, the southernmost tip …"
+        },
+        {
+          "url": "https://www.yachting.com/en-gb/blog/sailing-around-peloponnese-an-unforgettable-sailing-trip",
+          "publisher": "yachting.com",
+          "lang": "en",
+          "quote": "A popular sailing route around Peloponnese runs from Porto Kagio to the Mani region."
+        },
+        {
+          "url": "https://www.sailblogs.com/member/freyaofwight/435319/",
+          "publisher": "SailBlogs (Freya of Wight)",
+          "lang": "en",
+          "quote": "… heading north along the east coast of the Mani peninsula stopping at Porto Kagio."
+        },
+        {
+          "url": "https://www.borrowaboat.com/m/?p=60064",
+          "publisher": "Borrow a Boat",
+          "lang": "de",
+          "quote": "Die Mani-Halbinsel bietet Windschutz."
+        },
+        {
+          "url": "https://www.cruiserswiki.org/wiki/Diros",
+          "publisher": "CruisersWiki",
+          "lang": "en",
+          "quote": "Mani ending into the capes Cavo Grosso and Tainaron"
+        }
+      ],
+      "notes": "Die Mani ist primär eine Landschaftsbezeichnung, wird aber in Törnberichten und Charterrouten als Küstenabschnitt mit eigener Kette von Ankerplätzen (Limeni, Mezapo, Gerolimenas, Porto Kagio) behandelt. Nordgrenze auf beiden Seiten (Kardamyli bzw. Gytheio) nicht fest; Übergang zu Messenischem und Lakonischem Golf fließend."
+    },
+    {
+      "key": "cyclades",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Kykladen",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Kykladeninseln",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Cyclades",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Cyclades Islands",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Κυκλάδες",
+          "preferred": true
+        },
+        {
+          "lang": "el",
+          "name": "Kyklades",
+          "preferred": false
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-L"
+      ],
+      "members": [
+        {
+          "name": "Kea",
+          "type": "island"
+        },
+        {
+          "name": "Kythnos",
+          "type": "island"
+        },
+        {
+          "name": "Andros",
+          "type": "island"
+        },
+        {
+          "name": "Tinos",
+          "type": "island"
+        },
+        {
+          "name": "Syros",
+          "type": "island"
+        },
+        {
+          "name": "Mykonos",
+          "type": "island"
+        },
+        {
+          "name": "Delos",
+          "type": "island"
+        },
+        {
+          "name": "Serifos",
+          "type": "island"
+        },
+        {
+          "name": "Sifnos",
+          "type": "island"
+        },
+        {
+          "name": "Milos",
+          "type": "island"
+        },
+        {
+          "name": "Kimolos",
+          "type": "island"
+        },
+        {
+          "name": "Paros",
+          "type": "island"
+        },
+        {
+          "name": "Antiparos",
+          "type": "island"
+        },
+        {
+          "name": "Naxos",
+          "type": "island"
+        },
+        {
+          "name": "Ios",
+          "type": "island"
+        },
+        {
+          "name": "Folegandros",
+          "type": "island"
+        },
+        {
+          "name": "Sikinos",
+          "type": "island"
+        },
+        {
+          "name": "Amorgos",
+          "type": "island"
+        },
+        {
+          "name": "Santorini",
+          "type": "island"
+        },
+        {
+          "name": "Anafi",
+          "type": "island"
+        },
+        {
+          "name": "Ermoupoli",
+          "type": "harbour"
+        },
+        {
+          "name": "Naousa",
+          "type": "harbour"
+        },
+        {
+          "name": "Kamares",
+          "type": "harbour"
+        },
+        {
+          "name": "Adamantas",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Cape Sounion",
+          "type": "cape"
+        },
+        {
+          "name": "Lavrio",
+          "type": "settlement"
+        },
+        {
+          "name": "Kafireas Strait",
+          "type": "strait"
+        },
+        {
+          "name": "Anafi",
+          "type": "cape"
+        },
+        {
+          "name": "Milos",
+          "type": "cape"
+        }
+      ],
+      "boundary": "Die Inselgruppe der mittleren Ägäis südöstlich von Attika und Euböa: im Westen Kea/Kythnos/Milos, im Norden Andros/Tinos, im Osten Amorgos, im Süden Santorin und Anafi; ohne Dodekanes, Nördliche Sporaden und Kreta.",
+      "related": [
+        {
+          "key": "northern-cyclades",
+          "relation": "contains"
+        },
+        {
+          "key": "western-cyclades",
+          "relation": "contains"
+        },
+        {
+          "key": "southern-cyclades",
+          "relation": "contains"
+        },
+        {
+          "key": "small-cyclades",
+          "relation": "contains"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.yacht.de/reisen-chartern/griechenland/revier-info-yachtcharter-griechenland-die-kykladen/",
+          "publisher": "YACHT (Delius Klasing)",
+          "lang": "de",
+          "quote": "…sind die Kykladen ein Traumrevier auch für Crews…"
+        },
+        {
+          "url": "https://sailingissues.com/yachting-guide/cyclades-itineraries.html",
+          "publisher": "Sailing Issues",
+          "lang": "en",
+          "quote": "There are several one-way routes possible in the Cyclades"
+        },
+        {
+          "url": "https://bootsschule1.de/?p=56382",
+          "publisher": "Bootsschule1",
+          "lang": "de",
+          "quote": "Die Kykladen sind das ultimative Ziel für Segler"
+        },
+        {
+          "url": "https://www.moorings.com/de/blog/toernvorschlag/kykladen-7-tage-tornvorschlag",
+          "publisher": "The Moorings",
+          "lang": "de",
+          "quote": "Segeln Sie von Athen aus durch die berühmten Kykladen auf einem 7-tägigen Segeltörn"
+        }
+      ],
+      "notes": "Charterbasen liegen meist außerhalb des Reviers (Athen/Alimos, Lavrio). Die Quellen grenzen das Revier nicht formal ab; yacht.de beschreibt es als die Inseln südlich von Athen bis Santorin."
+    },
+    {
+      "key": "northern-cyclades",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Nördliche Kykladen",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Northern Cyclades",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "North Cyclades",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Βόρειες Κυκλάδες",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-L"
+      ],
+      "members": [
+        {
+          "name": "Kea",
+          "type": "island"
+        },
+        {
+          "name": "Kythnos",
+          "type": "island"
+        },
+        {
+          "name": "Andros",
+          "type": "island"
+        },
+        {
+          "name": "Tinos",
+          "type": "island"
+        },
+        {
+          "name": "Syros",
+          "type": "island"
+        },
+        {
+          "name": "Mykonos",
+          "type": "island"
+        },
+        {
+          "name": "Delos",
+          "type": "island"
+        },
+        {
+          "name": "Rineia",
+          "type": "island"
+        },
+        {
+          "name": "Ermoupoli",
+          "type": "harbour"
+        },
+        {
+          "name": "Vourkari",
+          "type": "harbour"
+        },
+        {
+          "name": "Loutra",
+          "type": "harbour"
+        },
+        {
+          "name": "Gavrio",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Cape Sounion",
+          "type": "cape"
+        },
+        {
+          "name": "Lavrio",
+          "type": "settlement"
+        },
+        {
+          "name": "Kafireas Strait",
+          "type": "strait"
+        },
+        {
+          "name": "Mykonos",
+          "type": "settlement"
+        }
+      ],
+      "boundary": "Der nördliche Teil der Kykladen zwischen Attika/Euböa und Mykonos: Kea, Kythnos, Andros, Tinos, Syros, Mykonos und Delos; ohne Paros/Naxos und die westliche Kette südlich von Kythnos.",
+      "related": [
+        {
+          "key": "cyclades",
+          "relation": "within"
+        },
+        {
+          "key": "western-cyclades",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://cyclegreece.com/tours/sail-cycle/north-cyclades/",
+          "publisher": "CycleGreece",
+          "lang": "en",
+          "quote": "The North Cyclades Sail & Cycle adventure stops in the main harbors…"
+        },
+        {
+          "url": "https://yachtwarriors.com/itineraries/greece-yacht-charter-northern-cyclades-7-days",
+          "publisher": "Yacht Warriors",
+          "lang": "en",
+          "quote": "A 7-day Northern Cyclades sailing itinerary, crewed end to end."
+        },
+        {
+          "url": "https://sailingissues.com/yachting-guide/cyclades-itineraries.html",
+          "publisher": "Sailing Issues",
+          "lang": "en",
+          "quote": "…you can only reach the Northern Cyclades in a single week from Athens."
+        },
+        {
+          "url": "https://www.yacht.de/reisen-chartern/griechenland/revier-info-yachtcharter-griechenland-die-kykladen/",
+          "publisher": "YACHT (Delius Klasing)",
+          "lang": "de",
+          "quote": "Er weht zu ca. 80 Prozent aus Nordost in den nördlichen Kykladen…"
+        }
+      ],
+      "notes": "Zugehörigkeit von Kea und Kythnos uneinheitlich: Charteranbieter zählen sie teils zu den nördlichen, teils zu den westlichen Kykladen. Yacht Warriors zählt auch Paros/Naxos zur Nördlichen-Kykladen-Route."
+    },
+    {
+      "key": "western-cyclades",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Westliche Kykladen",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Westkykladen",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Western Cyclades",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "West Cyclades",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Δυτικές Κυκλάδες",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-L"
+      ],
+      "members": [
+        {
+          "name": "Kea",
+          "type": "island"
+        },
+        {
+          "name": "Kythnos",
+          "type": "island"
+        },
+        {
+          "name": "Serifos",
+          "type": "island"
+        },
+        {
+          "name": "Sifnos",
+          "type": "island"
+        },
+        {
+          "name": "Milos",
+          "type": "island"
+        },
+        {
+          "name": "Kimolos",
+          "type": "island"
+        },
+        {
+          "name": "Polyaigos",
+          "type": "island"
+        },
+        {
+          "name": "Korissia",
+          "type": "harbour"
+        },
+        {
+          "name": "Loutra",
+          "type": "harbour"
+        },
+        {
+          "name": "Livadi",
+          "type": "harbour"
+        },
+        {
+          "name": "Kamares",
+          "type": "harbour"
+        },
+        {
+          "name": "Adamantas",
+          "type": "harbour"
+        },
+        {
+          "name": "Kolona",
+          "type": "bay"
+        },
+        {
+          "name": "Kleftiko",
+          "type": "bay"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Cape Sounion",
+          "type": "cape"
+        },
+        {
+          "name": "Lavrio",
+          "type": "settlement"
+        },
+        {
+          "name": "Milos",
+          "type": "settlement"
+        },
+        {
+          "name": "Polyaigos",
+          "type": "cape"
+        }
+      ],
+      "boundary": "Die westliche Inselkette der Kykladen von Kea und Kythnos über Serifos und Sifnos bis Milos, Kimolos und Polyaigos; östlich begrenzt durch Syros und Paros, die nicht dazugehören.",
+      "related": [
+        {
+          "key": "cyclades",
+          "relation": "within"
+        },
+        {
+          "key": "northern-cyclades",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.boatbookings.com/yachting_content/western_cyclades_luxury_crewed_catamaran_itinerary.php",
+          "publisher": "Boatbookings",
+          "lang": "en",
+          "quote": "The Western Cyclades are a unique cluster of Greek islands…"
+        },
+        {
+          "url": "https://www.sailsquare.com/en/xp/milos-and-the-majestic-west-cyclades-on-a-54-feet-sailing-yacht-7yPcifOu",
+          "publisher": "Sailsquare",
+          "lang": "en",
+          "quote": "Our journey through the Western Cyclades continues, and our next stop is…"
+        },
+        {
+          "url": "https://12knots.com/de/cabin-charters/destinations/mediterranean-sea/greece/cyclades-sailing-trip-147/",
+          "publisher": "12 Knots",
+          "lang": "de",
+          "quote": "…bevor Sie die Segel für Ihr Abenteuer auf den westlichen Kykladen setzen."
+        },
+        {
+          "url": "https://sailwithus.de/en/?p=69490",
+          "publisher": "Sail With Us",
+          "lang": "en",
+          "quote": "…you will sail on to Serifos, another island in the western Cyclades."
+        }
+      ],
+      "notes": "Klassisches Einwochenrevier ab Athen/Lavrio. Kea und Kythnos gehören je nach Quelle auch zu den Nördlichen Kykladen."
+    },
+    {
+      "key": "southern-cyclades",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Südliche Kykladen",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Southern Cyclades",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "South Cyclades",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Νότιες Κυκλάδες",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-L"
+      ],
+      "members": [
+        {
+          "name": "Paros",
+          "type": "island"
+        },
+        {
+          "name": "Antiparos",
+          "type": "island"
+        },
+        {
+          "name": "Naxos",
+          "type": "island"
+        },
+        {
+          "name": "Ios",
+          "type": "island"
+        },
+        {
+          "name": "Sikinos",
+          "type": "island"
+        },
+        {
+          "name": "Folegandros",
+          "type": "island"
+        },
+        {
+          "name": "Santorini",
+          "type": "island"
+        },
+        {
+          "name": "Amorgos",
+          "type": "island"
+        },
+        {
+          "name": "Anafi",
+          "type": "island"
+        },
+        {
+          "name": "Small Cyclades",
+          "type": "archipelago"
+        },
+        {
+          "name": "Naousa",
+          "type": "harbour"
+        },
+        {
+          "name": "Parikia",
+          "type": "harbour"
+        },
+        {
+          "name": "Naxos",
+          "type": "harbour"
+        },
+        {
+          "name": "Katapola",
+          "type": "harbour"
+        },
+        {
+          "name": "Vlychada",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Paros",
+          "type": "settlement"
+        },
+        {
+          "name": "Amorgos",
+          "type": "cape"
+        },
+        {
+          "name": "Anafi",
+          "type": "cape"
+        },
+        {
+          "name": "Santorini",
+          "type": "settlement"
+        },
+        {
+          "name": "Folegandros",
+          "type": "cape"
+        }
+      ],
+      "boundary": "Der südliche und östliche Teil der Kykladen von Paros und Naxos über Ios und Folegandros bis Santorin, Anafi und Amorgos, einschließlich der Kleinen Kykladen; ohne die westliche Kette (Milos, Sifnos) und ohne Mykonos/Syros.",
+      "related": [
+        {
+          "key": "cyclades",
+          "relation": "within"
+        },
+        {
+          "key": "small-cyclades",
+          "relation": "contains"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://cyclegreece.com/tours/sail-cycle/south-cyclades/",
+          "publisher": "CycleGreece",
+          "lang": "en",
+          "quote": "The South Cyclades are the most popular islands in all Greece."
+        },
+        {
+          "url": "https://sailingissues.com/yachting-guide/cyclades-itineraries.html",
+          "publisher": "Sailing Issues",
+          "lang": "en",
+          "quote": "…in order to visit the Southern Cyclades in “just” seven days…"
+        },
+        {
+          "url": "https://yachtwarriors.com/itineraries/greece-yacht-charter-northern-cyclades-7-days",
+          "publisher": "Yacht Warriors",
+          "lang": "en",
+          "quote": "If you want Santorini in the lineup, that's the Southern Cyclades route…"
+        },
+        {
+          "url": "https://www.kimkim.com/c/luxury-sailing-in-the-cyclades-7-days",
+          "publisher": "kimkim",
+          "lang": "en",
+          "quote": "…a day trip to Ios, a dream of an island in the southern Cyclades."
+        }
+      ],
+      "notes": "Abgrenzung nach Norden (Paros/Naxos, Syros) in den Quellen uneinheitlich; CycleGreece nimmt Mykonos, Tinos und Syros in die South-Cyclades-Route auf. Kein deutscher Beleg für 'Südliche Kykladen' im Segelkontext gefunden; Name nur als Übersetzung."
+    },
+    {
+      "key": "small-cyclades",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Kleine Kykladen",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Small Cyclades",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Lesser Cyclades",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Minor Cyclades",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Little Cyclades",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Μικρές Κυκλάδες",
+          "preferred": true
+        },
+        {
+          "lang": "el",
+          "name": "Mikres Kyklades",
+          "preferred": false
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-L"
+      ],
+      "members": [
+        {
+          "name": "Iraklia",
+          "type": "island"
+        },
+        {
+          "name": "Schinoussa",
+          "type": "island"
+        },
+        {
+          "name": "Ano Koufonisi",
+          "type": "island"
+        },
+        {
+          "name": "Kato Koufonisi",
+          "type": "island"
+        },
+        {
+          "name": "Keros",
+          "type": "island"
+        },
+        {
+          "name": "Donoussa",
+          "type": "island"
+        },
+        {
+          "name": "Antikeros",
+          "type": "islet"
+        },
+        {
+          "name": "Glaronisi",
+          "type": "islet"
+        },
+        {
+          "name": "Livadi",
+          "type": "bay"
+        },
+        {
+          "name": "Pori",
+          "type": "bay"
+        },
+        {
+          "name": "Alimia",
+          "type": "bay"
+        },
+        {
+          "name": "Stavros",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Naxos",
+          "type": "cape"
+        },
+        {
+          "name": "Amorgos",
+          "type": "cape"
+        },
+        {
+          "name": "Donoussa",
+          "type": "cape"
+        }
+      ],
+      "boundary": "Die kleinen Inseln zwischen Naxos und Amorgos: Iraklia, Schinoussa, Ano und Kato Koufonisi, Keros und Donoussa mit ihren Eilanden; Naxos und Amorgos selbst gehören nicht dazu.",
+      "related": [
+        {
+          "key": "cyclades",
+          "relation": "within"
+        },
+        {
+          "key": "southern-cyclades",
+          "relation": "within"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://travel.gr/en/experiences-ee/sailing-at-the-small-cyclades-aegeans-most-impressive-waters-sea-caves-secluded-bays",
+          "publisher": "travel.gr",
+          "lang": "en",
+          "quote": "Schinoussa, one of the most popular islands of the Small Cyclades, attracts many boats…"
+        },
+        {
+          "url": "https://greekislandssailing.com/?p=2438",
+          "publisher": "Greek Islands Sailing",
+          "lang": "en",
+          "quote": "Iraklia is part of the \"Small Cyclades\" which is worth visiting."
+        },
+        {
+          "url": "https://sailingissues.com/yachting-guide/cyclades-itineraries.html",
+          "publisher": "Sailing Issues",
+          "lang": "en",
+          "quote": "Kato Koufonisi, Glaronisi, Drima-Antikeros, Alimia, which are all in the Lesser Cyclades."
+        },
+        {
+          "url": "https://www.ferryhopper.com/de/blog/featured/island-hopping-in-small-cyclades",
+          "publisher": "Ferryhopper",
+          "lang": "de",
+          "quote": "Inselhopping auf den Kleinen Kykladen"
+        }
+      ],
+      "notes": "Donoussa liegt abseits nordöstlich von Naxos und wird nicht in allen Törnbeschreibungen mitgezählt. Der deutsche Beleg (Ferryhopper) stammt aus einem Fähren-Reiseblog, nicht aus dem Segelkontext."
+    },
+    {
+      "key": "dodecanese",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Dodekanes",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Dodekanes-Inseln",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Dodecanese",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Dodecanese Islands",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Southern Sporades",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Δωδεκάνησα",
+          "preferred": true
+        },
+        {
+          "lang": "el",
+          "name": "Dodekanisa",
+          "preferred": false
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-L"
+      ],
+      "members": [
+        {
+          "name": "Rhodes",
+          "type": "island"
+        },
+        {
+          "name": "Kos",
+          "type": "island"
+        },
+        {
+          "name": "Kalymnos",
+          "type": "island"
+        },
+        {
+          "name": "Leros",
+          "type": "island"
+        },
+        {
+          "name": "Patmos",
+          "type": "island"
+        },
+        {
+          "name": "Lipsi",
+          "type": "island"
+        },
+        {
+          "name": "Symi",
+          "type": "island"
+        },
+        {
+          "name": "Tilos",
+          "type": "island"
+        },
+        {
+          "name": "Nisyros",
+          "type": "island"
+        },
+        {
+          "name": "Chalki",
+          "type": "island"
+        },
+        {
+          "name": "Astypalaia",
+          "type": "island"
+        },
+        {
+          "name": "Karpathos",
+          "type": "island"
+        },
+        {
+          "name": "Kasos",
+          "type": "island"
+        },
+        {
+          "name": "Agathonisi",
+          "type": "island"
+        },
+        {
+          "name": "Arkoi",
+          "type": "island"
+        },
+        {
+          "name": "Pserimos",
+          "type": "island"
+        },
+        {
+          "name": "Kastellorizo",
+          "type": "island"
+        },
+        {
+          "name": "Kos Marina",
+          "type": "harbour"
+        },
+        {
+          "name": "Lakki",
+          "type": "harbour"
+        },
+        {
+          "name": "Mandraki",
+          "type": "harbour"
+        },
+        {
+          "name": "Skala",
+          "type": "harbour"
+        },
+        {
+          "name": "Pothia",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Agathonisi",
+          "type": "settlement"
+        },
+        {
+          "name": "Prasonisi",
+          "type": "cape"
+        },
+        {
+          "name": "Kasos Strait",
+          "type": "strait"
+        },
+        {
+          "name": "Astypalaia",
+          "type": "settlement"
+        },
+        {
+          "name": "Bodrum",
+          "type": "settlement"
+        }
+      ],
+      "boundary": "Die griechische Inselkette vor der türkischen Südwestküste von Agathonisi und Patmos im Norden über Kos und Rhodos bis Karpathos und Kasos im Süden, westlich bis Astypalaia; ohne Samos, Ikaria und Fourni (Nördliche Ägäis).",
+      "related": [
+        {
+          "key": "northern-dodecanese",
+          "relation": "contains"
+        },
+        {
+          "key": "southern-dodecanese",
+          "relation": "contains"
+        },
+        {
+          "key": "samos-ikaria-fourni",
+          "relation": "overlaps"
+        },
+        {
+          "key": "cyclades",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.yacht.de/reisen-chartern/griechenland/revier-info-yachtcharter-griechenland-der-dodekanes/",
+          "publisher": "YACHT (Delius Klasing)",
+          "lang": "de",
+          "quote": "Wichtigste Startorte für den Dodekanes sind Kos und Rhodos."
+        },
+        {
+          "url": "https://sailingissues.com/yachting-guide/dodecanese-itineraries.html",
+          "publisher": "Sailing Issues",
+          "lang": "en",
+          "quote": "The Dodecanese include a wealth of must-see ports and anchorages"
+        },
+        {
+          "url": "https://en.1a-yachtcharter.de/destinations/dodecanese/a-43",
+          "publisher": "1a Yachtcharter",
+          "lang": "en",
+          "quote": "Lined up like pearls on a string are the Greek Dodecanese off the Turkish coast."
+        },
+        {
+          "url": "https://www.yachtico.com/route-suggestion-dodecanese",
+          "publisher": "Yachtico",
+          "lang": "en",
+          "quote": "The Dodecanese is lively sailing area that can be challenging at times."
+        }
+      ],
+      "notes": "Überschneidung mit Samos/Ikaria/Fourni: sailingissues ordnet Samos den Eastern Sporades nördlich des Dodekanes zu, 1a-yachtcharter nimmt die Samos-Inseln in zweiwöchige Nord-Törns auf. Astypalaia liegt am westlichen Rand und wird in manchen Routen mit Amorgos (Kykladen) verbunden. Kastellorizo liegt abseits und wird in Törnvorschlägen selten genannt."
+    },
+    {
+      "key": "northern-dodecanese",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Nördlicher Dodekanes",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Norddodekanes",
+          "preferred": false
+        },
+        {
+          "lang": "de",
+          "name": "Nord-Dodekanes",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Northern Dodecanese",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "North Dodecanese",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Βόρεια Δωδεκάνησα",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-L"
+      ],
+      "members": [
+        {
+          "name": "Kos",
+          "type": "island"
+        },
+        {
+          "name": "Pserimos",
+          "type": "island"
+        },
+        {
+          "name": "Kalymnos",
+          "type": "island"
+        },
+        {
+          "name": "Leros",
+          "type": "island"
+        },
+        {
+          "name": "Lipsi",
+          "type": "island"
+        },
+        {
+          "name": "Patmos",
+          "type": "island"
+        },
+        {
+          "name": "Arkoi",
+          "type": "island"
+        },
+        {
+          "name": "Marathi",
+          "type": "islet"
+        },
+        {
+          "name": "Agathonisi",
+          "type": "island"
+        },
+        {
+          "name": "Kos Marina",
+          "type": "harbour"
+        },
+        {
+          "name": "Pothia",
+          "type": "harbour"
+        },
+        {
+          "name": "Lakki",
+          "type": "harbour"
+        },
+        {
+          "name": "Panteli",
+          "type": "harbour"
+        },
+        {
+          "name": "Skala",
+          "type": "harbour"
+        },
+        {
+          "name": "Vathys",
+          "type": "bay"
+        },
+        {
+          "name": "Palionisos",
+          "type": "bay"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Kos",
+          "type": "settlement"
+        },
+        {
+          "name": "Agathonisi",
+          "type": "settlement"
+        },
+        {
+          "name": "Bodrum",
+          "type": "settlement"
+        }
+      ],
+      "boundary": "Von Kos nach Norden über Pserimos, Kalymnos, Leros, Lipsi und Patmos bis Arkoi und Agathonisi, östlich bis zur türkischen Küste bei Bodrum; ohne Nisyros, Tilos, Symi und Rhodos.",
+      "related": [
+        {
+          "key": "dodecanese",
+          "relation": "within"
+        },
+        {
+          "key": "samos-ikaria-fourni",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.yacht.de/en/greece/journey-on-a-voyage-of-discovery-in-the-northern-dodecanese/",
+          "publisher": "YACHT (Delius Klasing)",
+          "lang": "en",
+          "quote": "The northern Dodecanese is one of Greece's top holiday destinations."
+        },
+        {
+          "url": "https://en.1a-yachtcharter.de/destinations/dodecanese/a-43",
+          "publisher": "1a Yachtcharter",
+          "lang": "en",
+          "quote": "Yacht charter cruise in Northern Dodecanese"
+        },
+        {
+          "url": "https://www.sailwiz.com/de/urlaub/gulet-kreuzfahrt-durch-den-norddodekanes/a/1181",
+          "publisher": "Sailwiz",
+          "lang": "de",
+          "quote": "Erleben Sie das Leben im nördlichen Dodekanes, während Sie … durch die Inseln segeln."
+        },
+        {
+          "url": "https://www.sailsquare.com/en/xp/sailing-in-the-northern-dodecanese-from-kos-to-samos-Sg7laZPr",
+          "publisher": "Sailsquare",
+          "lang": "en",
+          "quote": "Sailing in the Northern Dodecanese from Kos to Samos"
+        }
+      ],
+      "notes": "Astypalaia wird von 1a-yachtcharter und yacht.de in Nord-Törns genannt, liegt aber westlich abseits; hier nicht als Member aufgenommen. Kos ist Startbasis und zugleich Südgrenze; manche Routen beziehen Samos als Endpunkt ein."
+    },
+    {
+      "key": "southern-dodecanese",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Südlicher Dodekanes",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Süddodekanes",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Southern Dodecanese",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "South Dodecanese",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Νότια Δωδεκάνησα",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-L"
+      ],
+      "members": [
+        {
+          "name": "Rhodes",
+          "type": "island"
+        },
+        {
+          "name": "Symi",
+          "type": "island"
+        },
+        {
+          "name": "Tilos",
+          "type": "island"
+        },
+        {
+          "name": "Nisyros",
+          "type": "island"
+        },
+        {
+          "name": "Chalki",
+          "type": "island"
+        },
+        {
+          "name": "Alimia",
+          "type": "islet"
+        },
+        {
+          "name": "Gyali",
+          "type": "islet"
+        },
+        {
+          "name": "Karpathos",
+          "type": "island"
+        },
+        {
+          "name": "Kasos",
+          "type": "island"
+        },
+        {
+          "name": "Mandraki",
+          "type": "harbour"
+        },
+        {
+          "name": "Rhodes Marina",
+          "type": "harbour"
+        },
+        {
+          "name": "Lindos",
+          "type": "harbour"
+        },
+        {
+          "name": "Gialos",
+          "type": "harbour"
+        },
+        {
+          "name": "Panormitis",
+          "type": "bay"
+        },
+        {
+          "name": "Livadia",
+          "type": "harbour"
+        },
+        {
+          "name": "Paloi",
+          "type": "harbour"
+        },
+        {
+          "name": "Emporeio",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Kos",
+          "type": "settlement"
+        },
+        {
+          "name": "Prasonisi",
+          "type": "cape"
+        },
+        {
+          "name": "Kasos Strait",
+          "type": "strait"
+        },
+        {
+          "name": "Datça",
+          "type": "settlement"
+        }
+      ],
+      "boundary": "Südlich von Kos: Nisyros, Tilos, Chalki, Symi und Rhodos, nach Süden bis Karpathos und Kasos, östlich bis zur türkischen Datça-Halbinsel.",
+      "related": [
+        {
+          "key": "dodecanese",
+          "relation": "within"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://sailingissues.com/yachting-guide/dodecanese-itineraries.html",
+          "publisher": "Sailing Issues",
+          "lang": "en",
+          "quote": "focus on the must-sees of the southern Dodecanese"
+        },
+        {
+          "url": "https://en.1a-yachtcharter.de/destinations/dodecanese/a-43",
+          "publisher": "1a Yachtcharter",
+          "lang": "en",
+          "quote": "Yacht charter trip through the southern Dodecanese Islands"
+        },
+        {
+          "url": "https://www.sailsquare.com/en/xp/highlights-of-the-southern-dodecanese-yJpefrkF",
+          "publisher": "Sailsquare",
+          "lang": "en",
+          "quote": "we set sail towards the Southern Dodecanese islands, based on weather conditions."
+        },
+        {
+          "url": "https://www.sailsquare.com/de/xp/von-kos-bis-rhodos-die-fantastischen-suddodekanes-jkuVeH1G",
+          "publisher": "Sailsquare",
+          "lang": "de",
+          "quote": "Von Kos bis Rhodos, die fantastischen Süddodekanes"
+        }
+      ],
+      "notes": "Karpathos und Kasos gehören geografisch dazu, werden in Wochentörns aber meist ausgelassen (lange, bei Meltemi raue Passage ab Rhodos). Die meisten Routen laufen zwischen Kos und Rhodos; Kos selbst wird teils zum Nord-, teils zum Südrevier gezählt. Deutscher Beleg nur als Seitentitel (Sailsquare, gleiche Domain wie EN-Beleg)."
+    },
+    {
+      "key": "samos-ikaria-fourni",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Samos, Ikaria und Fourni",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Samos, Ikaria and Fourni",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Samos Sea",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Eastern Sporades",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Σάμος, Ικαρία και Φούρνοι",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Fournoi",
+          "preferred": false
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-K",
+        "GR-L"
+      ],
+      "members": [
+        {
+          "name": "Samos",
+          "type": "island"
+        },
+        {
+          "name": "Ikaria",
+          "type": "island"
+        },
+        {
+          "name": "Fournoi Korseon",
+          "type": "archipelago"
+        },
+        {
+          "name": "Thymaina",
+          "type": "islet"
+        },
+        {
+          "name": "Patmos",
+          "type": "island"
+        },
+        {
+          "name": "Arkoi",
+          "type": "island"
+        },
+        {
+          "name": "Agathonisi",
+          "type": "island"
+        },
+        {
+          "name": "Pythagoreio",
+          "type": "harbour"
+        },
+        {
+          "name": "Vathy",
+          "type": "harbour"
+        },
+        {
+          "name": "Karlovasi",
+          "type": "harbour"
+        },
+        {
+          "name": "Agios Kirykos",
+          "type": "harbour"
+        },
+        {
+          "name": "Evdilos",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Samos Strait",
+          "type": "strait"
+        },
+        {
+          "name": "Kuşadası",
+          "type": "settlement"
+        },
+        {
+          "name": "Leros",
+          "type": "settlement"
+        }
+      ],
+      "boundary": "Samos, Ikaria und die Fourni-Inseln, nach Süden bis Patmos, Arkoi und Agathonisi (Grenze zum Nördlichen Dodekanes bei Leros), östlich bis zur türkischen Küste bei Kuşadası.",
+      "related": [
+        {
+          "key": "dodecanese",
+          "relation": "overlaps"
+        },
+        {
+          "key": "northern-dodecanese",
+          "relation": "overlaps"
+        },
+        {
+          "key": "north-aegean",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.sailsquare.com/en/xp/samos-fourni-ikaria-and-north-dodecanese-off-the-beaten-track-Sz4MKtQx",
+          "publisher": "Sailsquare",
+          "lang": "en",
+          "quote": "The islands of the Eastern Sporades (Ikaria, Fourni and Samos)"
+        },
+        {
+          "url": "https://en.1a-yachtcharter.de/destinations/southern-sporades/a-46",
+          "publisher": "1a Yachtcharter",
+          "lang": "en",
+          "quote": "the islands of the prefecture of Samos, including Samos, Ikaria and Fourni."
+        },
+        {
+          "url": "https://www.cruiserswiki.org/wiki/Cruising_the_Samos_Sea_Islands",
+          "publisher": "CruisersWiki",
+          "lang": "en",
+          "quote": "Samos Sea or the Sea of Samos is the area bounded by Samos in the N"
+        },
+        {
+          "url": "https://www.yacht.de/reisen-chartern/griechenland/revieruebersicht-griechenland-fuer-einsteiger-und-koenner/",
+          "publisher": "YACHT (Delius Klasing)",
+          "lang": "de",
+          "quote": "Das Revier um Samos und Lesbos"
+        },
+        {
+          "url": "https://barbarosyachting.com/destinations/greece/north-aegean/fourni",
+          "publisher": "Barbaros Yachting",
+          "lang": "en",
+          "quote": "Fourni sits between Ikaria and Samos in the North Aegean, … part of a sailing itinerary linking those neighbouring islands."
+        },
+        {
+          "url": "https://blog.medgulets.com/greece/fourni",
+          "publisher": "MedGulets (Sailing Guide)",
+          "lang": "en",
+          "quote": "the channel between Fourni and Samos usually runs a full Beaufort force stronger"
+        }
+      ],
+      "notes": "Kein einheitlicher Reviername: Quellen schreiben 'Samos, Fourni, Ikaria', 'Samos Sea' (CruisersWiki) oder zählen die Gruppe zu den Eastern Sporades, die bei sailingissues auch Chios, Lesbos und Limnos umfassen (Nachbarrevier north-aegean). yacht.de fasst Samos mit Lesbos zusammen. Patmos/Arkoi/Agathonisi werden sowohl hier als auch im Nördlichen Dodekanes geführt. Wenige Charterbasen (Pythagoreio)."
+    },
+    {
+      "key": "ionian-islands",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Ionische Inseln",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Ionisches Meer",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Ionian Islands",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Ionian Sea",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Ionian",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Ιόνια Νησιά",
+          "preferred": true
+        },
+        {
+          "lang": "el",
+          "name": "Επτάνησα",
+          "preferred": false
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-F",
+        "GR-D",
+        "GR-G"
+      ],
+      "members": [
+        {
+          "name": "Corfu",
+          "type": "island"
+        },
+        {
+          "name": "Paxos",
+          "type": "island"
+        },
+        {
+          "name": "Antipaxos",
+          "type": "island"
+        },
+        {
+          "name": "Lefkada",
+          "type": "island"
+        },
+        {
+          "name": "Meganisi",
+          "type": "island"
+        },
+        {
+          "name": "Kalamos",
+          "type": "island"
+        },
+        {
+          "name": "Kastos",
+          "type": "island"
+        },
+        {
+          "name": "Ithaca",
+          "type": "island"
+        },
+        {
+          "name": "Kefalonia",
+          "type": "island"
+        },
+        {
+          "name": "Zakynthos",
+          "type": "island"
+        },
+        {
+          "name": "Gouvia",
+          "type": "harbour"
+        },
+        {
+          "name": "Preveza",
+          "type": "harbour"
+        },
+        {
+          "name": "Lefkada",
+          "type": "harbour"
+        },
+        {
+          "name": "Vathy",
+          "type": "harbour"
+        },
+        {
+          "name": "Sami",
+          "type": "harbour"
+        },
+        {
+          "name": "Sivota",
+          "type": "harbour"
+        },
+        {
+          "name": "Parga",
+          "type": "settlement"
+        },
+        {
+          "name": "Palairos",
+          "type": "settlement"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Othonoi",
+          "type": "cape"
+        },
+        {
+          "name": "Zakynthos",
+          "type": "cape"
+        },
+        {
+          "name": "Cape Araxos",
+          "type": "cape"
+        }
+      ],
+      "boundary": "Die Inselkette und die gegenüberliegende Festlandküste von Korfu (mit Othonoi/Erikoussa) im Norden bis Zakynthos im Süden, einschließlich Paxos, Lefkada, Meganisi, Kalamos, Kastos, Ithaka und Kefalonia sowie der Festlandküste von Epirus und Akarnanien; im Osten bis zum Eingang des Golfs von Patras.",
+      "related": [
+        {
+          "key": "north-ionian",
+          "relation": "contains"
+        },
+        {
+          "key": "south-ionian",
+          "relation": "contains"
+        },
+        {
+          "key": "lefkas-inland-sea",
+          "relation": "contains"
+        },
+        {
+          "key": "ambracian-gulf",
+          "relation": "overlaps"
+        },
+        {
+          "key": "gulf-of-patras",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://sailingissues.com/yachting-guide/ionian-itineraries.html",
+          "publisher": "Sailing Issues",
+          "lang": "en",
+          "quote": "the Maistro wind blows down onto the Ionian Islands from the NW"
+        },
+        {
+          "url": "https://www.filovent.com/de/magazine/navigation-ionische-inseln",
+          "publisher": "Filovent",
+          "lang": "de",
+          "quote": "Bestehend aus sieben Hauptinseln, sind die Ionische Inseln berühmt …"
+        },
+        {
+          "url": "https://www.yacht.de/reisen-chartern/griechenland/revier-info-yachtcharter-griechenland-das-ionische-meer/",
+          "publisher": "YACHT (Delius Klasing)",
+          "lang": "de",
+          "quote": "Das Inselmeer zwischen Korfu und Zakynthos im Süden gilt als klassisches Thermikrevier"
+        },
+        {
+          "url": "https://plainsailing.com/destinations/greece/corfu",
+          "publisher": "PlainSailing",
+          "lang": "en",
+          "quote": "In the Ionian islands, from May to September, there are prevailing winds"
+        },
+        {
+          "url": "https://www.yachtingmonthly.com/cruising-life/zhik-spirit-of-adventure-its-a-little-bit-of-heaven-two-miles-of-sand-backed-by-dunes-held-together-by-ancient-and-gnarled-juniper-trees-101519",
+          "publisher": "Yachting Monthly",
+          "lang": "en",
+          "quote": "cruising the Ionian Islands, one of the great sailing areas of the Mediterranean"
+        }
+      ],
+      "notes": "Deutsche Quellen (YACHT) schreiben meist „Ionisches Meer“ und meinen damit das Küsten-/Inselrevier zwischen Korfu und Zakynthos, nicht das offene Meer. Südgrenze (Zakynthos vs. Westpeloponnes) in den Quellen uneinheitlich."
+    },
+    {
+      "key": "north-ionian",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Nördliche Ionische Inseln",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Nördliches Ionisches Meer",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "North Ionian",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Northern Ionian",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "North Ionian Sea",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Βόρειο Ιόνιο",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-F",
+        "GR-D"
+      ],
+      "members": [
+        {
+          "name": "Corfu",
+          "type": "island"
+        },
+        {
+          "name": "Paxos",
+          "type": "island"
+        },
+        {
+          "name": "Antipaxos",
+          "type": "island"
+        },
+        {
+          "name": "Erikoussa",
+          "type": "islet"
+        },
+        {
+          "name": "Othonoi",
+          "type": "islet"
+        },
+        {
+          "name": "Gouvia",
+          "type": "harbour"
+        },
+        {
+          "name": "Corfu Town",
+          "type": "harbour"
+        },
+        {
+          "name": "Kalami",
+          "type": "bay"
+        },
+        {
+          "name": "Petriti",
+          "type": "harbour"
+        },
+        {
+          "name": "Lakka",
+          "type": "harbour"
+        },
+        {
+          "name": "Gaios",
+          "type": "harbour"
+        },
+        {
+          "name": "Sivota",
+          "type": "harbour"
+        },
+        {
+          "name": "Parga",
+          "type": "settlement"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Othonoi",
+          "type": "cape"
+        },
+        {
+          "name": "Corfu Strait",
+          "type": "strait"
+        },
+        {
+          "name": "Preveza",
+          "type": "settlement"
+        }
+      ],
+      "boundary": "Korfu mit den Diapontischen Inseln, Paxos und Antipaxos sowie die Festlandküste von Epirus (Sivota/Mourtos, Parga) südwärts bis etwa Preveza; die albanische Küste gegenüber Korfu gehört nicht dazu.",
+      "related": [
+        {
+          "key": "ionian-islands",
+          "relation": "within"
+        },
+        {
+          "key": "south-ionian",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://sailingissues.com/yachting-guide/ionian-itineraries.html",
+          "publisher": "Sailing Issues",
+          "lang": "en",
+          "quote": "The North Ionian itineraries start out of Corfu's Gouvia marina or nearby."
+        },
+        {
+          "url": "https://www.moorings.com/uk/destinations/mediterranean/greece/corfu-yacht-charters/itinerary/7-day-northern-ionian-sail-itinerary",
+          "publisher": "The Moorings",
+          "lang": "en",
+          "quote": "7 Day Northern Ionian SAIL Itinerary"
+        },
+        {
+          "url": "https://plainsailing.com/destinations/greece/corfu",
+          "publisher": "PlainSailing",
+          "lang": "en",
+          "quote": "From Corfu, you'd usually explore the North Ionian"
+        }
+      ],
+      "notes": "Südgrenze zum South Ionian uneinheitlich; Preveza/Lefkas-Kanal werden je nach Quelle beiden Teilrevieren zugeordnet. Deutscher Name nicht wörtlich belegt, nur als Übersetzung."
+    },
+    {
+      "key": "south-ionian",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Südliche Ionische Inseln",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Südliches Ionisches Meer",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "South Ionian",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Southern Ionian",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Southern Ionian Islands",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Νότιο Ιόνιο",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-F",
+        "GR-G",
+        "GR-D"
+      ],
+      "members": [
+        {
+          "name": "Lefkada",
+          "type": "island"
+        },
+        {
+          "name": "Meganisi",
+          "type": "island"
+        },
+        {
+          "name": "Kalamos",
+          "type": "island"
+        },
+        {
+          "name": "Kastos",
+          "type": "island"
+        },
+        {
+          "name": "Atokos",
+          "type": "islet"
+        },
+        {
+          "name": "Ithaca",
+          "type": "island"
+        },
+        {
+          "name": "Kefalonia",
+          "type": "island"
+        },
+        {
+          "name": "Zakynthos",
+          "type": "island"
+        },
+        {
+          "name": "Lefkada",
+          "type": "harbour"
+        },
+        {
+          "name": "Preveza",
+          "type": "harbour"
+        },
+        {
+          "name": "Nydri",
+          "type": "harbour"
+        },
+        {
+          "name": "Vasiliki",
+          "type": "harbour"
+        },
+        {
+          "name": "Vathy",
+          "type": "harbour"
+        },
+        {
+          "name": "Kioni",
+          "type": "harbour"
+        },
+        {
+          "name": "Fiskardo",
+          "type": "harbour"
+        },
+        {
+          "name": "Sami",
+          "type": "harbour"
+        },
+        {
+          "name": "Agia Efimia",
+          "type": "harbour"
+        },
+        {
+          "name": "Palairos",
+          "type": "settlement"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Preveza",
+          "type": "settlement"
+        },
+        {
+          "name": "Lefkada Canal",
+          "type": "channel"
+        },
+        {
+          "name": "Zakynthos",
+          "type": "cape"
+        },
+        {
+          "name": "Oxia",
+          "type": "cape"
+        }
+      ],
+      "boundary": "Von Preveza und dem Lefkas-Kanal im Norden über Lefkada, Meganisi, Kalamos, Kastos, Ithaka und Kefalonia bis Zakynthos im Süden, mit der akarnanischen Festlandküste (Palairos, Mytikas, Astakos) im Osten.",
+      "related": [
+        {
+          "key": "ionian-islands",
+          "relation": "within"
+        },
+        {
+          "key": "lefkas-inland-sea",
+          "relation": "contains"
+        },
+        {
+          "key": "north-ionian",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://sailingissues.com/yachting-guide/ionian-itineraries.html",
+          "publisher": "Sailing Issues",
+          "lang": "en",
+          "quote": "All the highlights of the South Ionian while keeping the medium / long legs …"
+        },
+        {
+          "url": "https://www.boatbookings.com/yacht_charter/destinations/Southern Ionian Sea",
+          "publisher": "Boatbookings",
+          "lang": "en",
+          "quote": "7 Day Southern Ionian Bareboat Sailing Itinerary"
+        },
+        {
+          "url": "https://www.moorings.com/uk/destinations/mediterranean/greece/corfu-yacht-charters/itinerary/7-day-south-ionian-islands-power-itinerary-longer-distances",
+          "publisher": "The Moorings",
+          "lang": "en",
+          "quote": "a real pleasure in the southern Ionian Islands"
+        },
+        {
+          "url": "https://www.helm.yt/itinerary/lefkas-yacht-charter",
+          "publisher": "Helm",
+          "lang": "en",
+          "quote": "Sail the South Ionian"
+        }
+      ],
+      "notes": "Zakynthos wird nicht in allen Quellen zum Törnrevier gezählt (lange Schläge). Deutscher Name nicht wörtlich belegt, nur als Übersetzung."
+    },
+    {
+      "key": "lefkas-inland-sea",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Binnenmeer von Lefkas",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Inland Sea",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Lefkas Inland Sea",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Εσωτερικό Ιόνιο",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-F",
+        "GR-G"
+      ],
+      "members": [
+        {
+          "name": "Lefkada",
+          "type": "island"
+        },
+        {
+          "name": "Meganisi",
+          "type": "island"
+        },
+        {
+          "name": "Kalamos",
+          "type": "island"
+        },
+        {
+          "name": "Kastos",
+          "type": "island"
+        },
+        {
+          "name": "Atokos",
+          "type": "islet"
+        },
+        {
+          "name": "Skorpios",
+          "type": "islet"
+        },
+        {
+          "name": "Arkoudi",
+          "type": "islet"
+        },
+        {
+          "name": "Nydri",
+          "type": "harbour"
+        },
+        {
+          "name": "Vathy",
+          "type": "harbour"
+        },
+        {
+          "name": "Spartochori",
+          "type": "harbour"
+        },
+        {
+          "name": "Sivota",
+          "type": "harbour"
+        },
+        {
+          "name": "Palairos",
+          "type": "harbour"
+        },
+        {
+          "name": "Mytikas",
+          "type": "harbour"
+        },
+        {
+          "name": "Astakos",
+          "type": "harbour"
+        },
+        {
+          "name": "Kioni",
+          "type": "harbour"
+        },
+        {
+          "name": "Frikes",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Lefkada Canal",
+          "type": "channel"
+        },
+        {
+          "name": "Cape Doukato",
+          "type": "cape"
+        },
+        {
+          "name": "Ithaca",
+          "type": "settlement"
+        },
+        {
+          "name": "Oxia",
+          "type": "cape"
+        }
+      ],
+      "boundary": "Das von Lefkada im Westen, der akarnanischen Festlandküste im Osten und Ithaka/Kefalonia im Süden eingeschlossene Gewässer mit Meganisi, Kalamos, Kastos und Atokos; nördlich bis zum Lefkas-Kanal.",
+      "related": [
+        {
+          "key": "south-ionian",
+          "relation": "within"
+        },
+        {
+          "key": "ionian-islands",
+          "relation": "within"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://sailingissues.com/sailing-greece-lp/sailing-ionian-2.html",
+          "publisher": "Sailing Issues",
+          "lang": "en",
+          "quote": "form its own archipelago here, called the Inland Sea"
+        },
+        {
+          "url": "https://sailingissues.com/yachting-guide/ionian-itineraries.html",
+          "publisher": "Sailing Issues",
+          "lang": "en",
+          "quote": "East coast Corfu, mainland, Lefkas' Inland Sea, Ithaca"
+        },
+        {
+          "url": "https://golden-duck.co.uk/archive/ionian-10th-edition",
+          "publisher": "Golden Duck (Rezension Imray „Ionian“, Heikell)",
+          "lang": "en",
+          "quote": "kindled on his arrival in the Inland Sea more than 40 years ago"
+        },
+        {
+          "url": "https://www.sailsquare.com/en/xp/south-of-lefkas-between-pristine-nature-bays-of-meganisi-and-myths-of-ithaca-9ddvOuoj",
+          "publisher": "Sailsquare",
+          "lang": "en",
+          "quote": "the inland sea between the Lefkas coast, Ithaca , Kastos and Kalamos , Meganisi"
+        },
+        {
+          "url": "https://www.yacht.de/reisen-chartern/griechenland/revieruebersicht-griechenland-fuer-einsteiger-und-koenner/",
+          "publisher": "YACHT (Delius Klasing)",
+          "lang": "de",
+          "quote": "im Leeschutz von Lefkas, Kefalonia und Ithaka liegen perfekt geschützt die kleineren Eilande"
+        }
+      ],
+      "notes": "Begriff stammt aus dem Imray-Revierführer (Heikell). Deutscher und griechischer Name nicht wörtlich belegt (Übersetzung); der YACHT-Beleg beschreibt das Gebiet ohne den Namen. Südgrenze (ob Ithaka-Ostküste und Kefalonia-Nordspitze dazugehören) uneinheitlich."
+    },
+    {
+      "key": "ambracian-gulf",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Ambrakischer Golf",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Golf von Ambrakia",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Ambracian Gulf",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Gulf of Amvrakia",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Ambrakikos Gulf",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Amvrakikos Gulf",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Αμβρακικός Κόλπος",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-D",
+        "GR-G"
+      ],
+      "members": [
+        {
+          "name": "Preveza",
+          "type": "harbour"
+        },
+        {
+          "name": "Aktio",
+          "type": "harbour"
+        },
+        {
+          "name": "Vonitsa",
+          "type": "harbour"
+        },
+        {
+          "name": "Menidi",
+          "type": "harbour"
+        },
+        {
+          "name": "Amfilochia",
+          "type": "harbour"
+        },
+        {
+          "name": "Koronisia",
+          "type": "settlement"
+        },
+        {
+          "name": "Vouvalos",
+          "type": "islet"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Preveza",
+          "type": "strait"
+        },
+        {
+          "name": "Aktio",
+          "type": "cape"
+        },
+        {
+          "name": "Amfilochia",
+          "type": "settlement"
+        }
+      ],
+      "boundary": "Der abgeschlossene Golf östlich der Enge von Preveza/Aktio bis Amfilochia im Osten und Menidi/Koronisia im Norden, mit Vonitsa an der Südküste.",
+      "related": [
+        {
+          "key": "ionian-islands",
+          "relation": "overlaps"
+        },
+        {
+          "key": "north-ionian",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://sailingissues.com/yachting-guide/ionian-itineraries.html",
+          "publisher": "Sailing Issues",
+          "lang": "en",
+          "quote": "or discover the Ambracian Gulf: Preveza Menidi Votsina"
+        },
+        {
+          "url": "https://www.noonsite.com/?p=31123",
+          "publisher": "Noonsite",
+          "lang": "en",
+          "quote": "sailing friends at Vonitsa, in the Gulf of Amvrakia, some 10nm from Preveza"
+        },
+        {
+          "url": "https://www.CruisersWiki.org/wiki/Vonitsa",
+          "publisher": "CruisersWiki",
+          "lang": "en",
+          "quote": "lies on the SW side of the Ambrakikos Gulf in the Ionian Sea"
+        },
+        {
+          "url": "https://blog.mailasail.com/serafina/posts/2008/8/22/65-gulf-of-amvrakia",
+          "publisher": "Mailasail (Blog Serafina)",
+          "lang": "en",
+          "quote": "left the marina to explore the Gulf of Amvrakia"
+        },
+        {
+          "url": "https://www.shark24.de/de/wp-content/uploads/2021/01/Fahrtensegler-Bericht_Odysseus_Inselwelt.pdf",
+          "publisher": "shark24.de (Fahrtensegler-Bericht)",
+          "lang": "de",
+          "quote": "Als Ausgangshafen wählten wir Preveza am Eingang zum Ambrakischen Golf."
+        },
+        {
+          "url": "https://zacherl-charter.de/en/destinations/greece/ionian-sea/preveza",
+          "publisher": "Zacherl Charter",
+          "lang": "en",
+          "quote": "A cruise in the Ambracian Gulf is also recommended."
+        },
+        {
+          "url": "https://www.yachtbooker.com/countries/greece/preveza",
+          "publisher": "YachtBooker",
+          "lang": "en",
+          "quote": "The Ambracian Gulf is also dotted with tranquil anchorages."
+        }
+      ],
+      "notes": "Deutscher Name nicht wörtlich in Segelquellen belegt (nur in nicht-segelbezogenen Quellen „Golf von Ambrakia“). Kleines Nebenrevier, meist als Abstecher vom Ionischen Meer beschrieben."
+    },
+    {
+      "key": "gulf-of-corinth",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Golf von Korinth",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Korinthischer Golf",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Gulf of Corinth",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Corinthian Gulf",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Korinthiakos Kolpos",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Κορινθιακός Κόλπος",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-G",
+        "GR-H",
+        "GR-J"
+      ],
+      "members": [
+        {
+          "name": "Nafpaktos",
+          "type": "harbour"
+        },
+        {
+          "name": "Trizonia",
+          "type": "island"
+        },
+        {
+          "name": "Galaxidi",
+          "type": "harbour"
+        },
+        {
+          "name": "Itea",
+          "type": "harbour"
+        },
+        {
+          "name": "Antikyra",
+          "type": "harbour"
+        },
+        {
+          "name": "Kiato",
+          "type": "harbour"
+        },
+        {
+          "name": "Corinth",
+          "type": "harbour"
+        },
+        {
+          "name": "Loutraki",
+          "type": "settlement"
+        },
+        {
+          "name": "Aigio",
+          "type": "harbour"
+        },
+        {
+          "name": "Gulf of Itea",
+          "type": "bay"
+        },
+        {
+          "name": "Alkyonides Islands",
+          "type": "archipelago"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Rio-Antirio Bridge",
+          "type": "strait"
+        },
+        {
+          "name": "Corinth Canal",
+          "type": "channel"
+        }
+      ],
+      "boundary": "Von der Enge Rio–Antirrio (Charilaos-Trikoupis-Brücke) im Westen bis zum Kanal von Korinth im Osten, mit beiden Ufern (Nordpeloponnes und Mittelgriechenland) und der Insel Trizonia.",
+      "related": [
+        {
+          "key": "gulf-of-patras",
+          "relation": "overlaps"
+        },
+        {
+          "key": "saronic-gulf",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.yacht.de/reisen-chartern/griechenland/griechenland-golf-von-korinth-von-patras-bis-trizonia/",
+          "publisher": "YACHT (Delius Klasing)",
+          "lang": "de",
+          "quote": "Der Golf von Korinth gilt vielen Crews eher als Durchgangsrevier"
+        },
+        {
+          "url": "https://www.yacht.de/en/travel-and-charter/greece/greece-gulf-of-corinth-from-patras-to-trizonia/",
+          "publisher": "YACHT (Delius Klasing)",
+          "lang": "en",
+          "quote": "Many crews tend to regard the Gulf of Corinth merely as a stopover"
+        },
+        {
+          "url": "https://www.cruiserswiki.org/wiki/Itea",
+          "publisher": "CruisersWiki",
+          "lang": "en",
+          "quote": "Korinthiakos Kolpos (Κορινθιακός Κόλπος) or Gulf of Corinth is dominated by …"
+        },
+        {
+          "url": "https://sailingissues.com/yachting-guide/ionian-itineraries.html",
+          "publisher": "Sailing Issues",
+          "lang": "en",
+          "quote": "explore the Gulf of Patras (and Corinthian Gulf) by going east"
+        }
+      ],
+      "notes": "Die Überschneidung mit saronic-gulf betrifft nur den Kanal von Korinth als Übergang. Westgrenze (Rio–Antirrio) in den Quellen einheitlich."
+    },
+    {
+      "key": "gulf-of-patras",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Golf von Patras",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Gulf of Patras",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Patraikos Kolpos",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Πατραϊκός Κόλπος",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-G",
+        "GR-J"
+      ],
+      "members": [
+        {
+          "name": "Patras",
+          "type": "harbour"
+        },
+        {
+          "name": "Rio",
+          "type": "harbour"
+        },
+        {
+          "name": "Mesolongi",
+          "type": "harbour"
+        },
+        {
+          "name": "Kryoneri",
+          "type": "harbour"
+        },
+        {
+          "name": "Oxia",
+          "type": "islet"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Cape Araxos",
+          "type": "cape"
+        },
+        {
+          "name": "Oxia",
+          "type": "cape"
+        },
+        {
+          "name": "Rio-Antirio Bridge",
+          "type": "strait"
+        }
+      ],
+      "boundary": "Vom Eingang zwischen Kap Araxos (Peloponnes) und der Insel Oxia (Akarnanien) im Westen bis zur Enge Rio–Antirrio im Osten, mit Patras und Mesolongi.",
+      "related": [
+        {
+          "key": "gulf-of-corinth",
+          "relation": "overlaps"
+        },
+        {
+          "key": "ionian-islands",
+          "relation": "overlaps"
+        },
+        {
+          "key": "peloponnese-west-coast",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://sailingissues.com/yachting-guide/ionian-itineraries.html",
+          "publisher": "Sailing Issues",
+          "lang": "en",
+          "quote": "you can explore the Gulf of Patras (and Corinthian Gulf) by going east"
+        },
+        {
+          "url": "https://www.cruiserswiki.org/wiki/Itea",
+          "publisher": "CruisersWiki",
+          "lang": "en",
+          "quote": "enter the gulf from the Gulf of Patras via the Rio-Antirio Strait"
+        },
+        {
+          "url": "https://www.discovergreece.com/en/yachting/sailing-by-the-peloponnese",
+          "publisher": "Discover Greece",
+          "lang": "en",
+          "quote": "the Gulf of Patras to the north and the Mediterranean to the south"
+        },
+        {
+          "url": "https://www.yacht.de/toernfuehrer-griechenland-1-p-2001649/",
+          "publisher": "yacht.de / Delius Klasing (Törnführer Griechenland 1)",
+          "lang": "de",
+          "quote": "Ionische Inseln, Golf von Patras und Korinth, Peloponnes, Argolischer und Saronischer Golf"
+        },
+        {
+          "url": "https://www.sailblogs.com/member/distantdrummer/515653",
+          "publisher": "SailBlogs (Törnbericht Distant Drummer)",
+          "lang": "en",
+          "quote": "Messolonghi is located on the north side of the Gulf of Patras …"
+        }
+      ],
+      "notes": "Schwach als eigenständiges Törnrevier belegt; wird meist als Durchgang zum Golf von Korinth beschrieben. Wenige Liegeplätze (Patras, Mesolongi, Rio). Deutscher Name nicht wörtlich in Segelquellen belegt."
+    },
+    {
+      "key": "peloponnese-west-coast",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Westküste des Peloponnes",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Westpeloponnes",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Western Peloponnese",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Peloponnese West Coast",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Δυτική Πελοπόννησος",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-G",
+        "GR-J"
+      ],
+      "members": [
+        {
+          "name": "Katakolo",
+          "type": "harbour"
+        },
+        {
+          "name": "Kyllini",
+          "type": "harbour"
+        },
+        {
+          "name": "Kyparissia",
+          "type": "harbour"
+        },
+        {
+          "name": "Pylos",
+          "type": "harbour"
+        },
+        {
+          "name": "Navarino Bay",
+          "type": "bay"
+        },
+        {
+          "name": "Voidokilia",
+          "type": "bay"
+        },
+        {
+          "name": "Methoni",
+          "type": "harbour"
+        },
+        {
+          "name": "Finikounda",
+          "type": "harbour"
+        },
+        {
+          "name": "Koroni",
+          "type": "harbour"
+        },
+        {
+          "name": "Zakynthos",
+          "type": "island"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Cape Araxos",
+          "type": "cape"
+        },
+        {
+          "name": "Cape Akritas",
+          "type": "cape"
+        },
+        {
+          "name": "Methoni",
+          "type": "settlement"
+        }
+      ],
+      "boundary": "Die Festlandküste von Kap Araxos (Eingang Golf von Patras) über Kyllini, Katakolo, Kyparissia und Pylos bis Methoni/Kap Akritas im Süden; Zakynthos als vorgelagerte Insel wird teils einbezogen.",
+      "related": [
+        {
+          "key": "gulf-of-patras",
+          "relation": "overlaps"
+        },
+        {
+          "key": "ionian-islands",
+          "relation": "overlaps"
+        },
+        {
+          "key": "south-ionian",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.discovergreece.com/en/yachting/sailing-by-the-peloponnese",
+          "publisher": "Discover Greece",
+          "lang": "en",
+          "quote": "Sailing up the western coast of the Peloponnese, you'll see endless sandy beaches."
+        },
+        {
+          "url": "https://www.sailsquare.com/en/xp/southern-greece-trip-from-kalamata-to-zakynthos-uxnf66NP",
+          "publisher": "Sailsquare",
+          "lang": "en",
+          "quote": "sail north along the western Peloponnese via Navarino Bay, Pylos, Voidokilia"
+        },
+        {
+          "url": "https://sailingissues.com/yachting-guide/ionian-itineraries.html",
+          "publisher": "Sailing Issues",
+          "lang": "en",
+          "quote": "from Lefkas reach Olympia and the Peloponnese south coasts"
+        },
+        {
+          "url": "https://kart.no/en/?p=52594",
+          "publisher": "kart.no (Imray-Karte G16 Western Pelopónnisos)",
+          "lang": "en",
+          "quote": "Overview map covering the west coast of the Peloponnese from Kíllini to Kalamáta."
+        },
+        {
+          "url": "https://www.noonsite.com/?p=34910",
+          "publisher": "Noonsite (Katakolon)",
+          "lang": "en",
+          "quote": "this port is on the west coast of the Peloponnese mainland."
+        }
+      ],
+      "notes": "Name ist richtungsbasiert, wird aber so in Segelquellen verwendet („western Peloponnese“). Südgrenze (Kap Akritas oder Koroni) und Zugehörigkeit von Zakynthos uneinheitlich; deutscher Name nicht wörtlich belegt. Lange Schläge, wenige Häfen; eher Durchgangs- als Charterrevier."
+    },
+    {
+      "key": "saronic-gulf",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Saronischer Golf",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Saronic Gulf",
+          "preferred": true
+        },
+        {
+          "lang": "el",
+          "name": "Σαρωνικός Κόλπος",
+          "preferred": true
+        },
+        {
+          "lang": "el",
+          "name": "Σαρωνικός",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Saronic",
+          "preferred": false
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-I",
+        "GR-J"
+      ],
+      "members": [
+        {
+          "name": "Salamina",
+          "type": "island"
+        },
+        {
+          "name": "Aegina",
+          "type": "island"
+        },
+        {
+          "name": "Agistri",
+          "type": "island"
+        },
+        {
+          "name": "Moni",
+          "type": "islet"
+        },
+        {
+          "name": "Poros",
+          "type": "island"
+        },
+        {
+          "name": "Hydra",
+          "type": "island"
+        },
+        {
+          "name": "Dokos",
+          "type": "island"
+        },
+        {
+          "name": "Spetses",
+          "type": "island"
+        },
+        {
+          "name": "Methana",
+          "type": "settlement"
+        },
+        {
+          "name": "Palaia Epidavros",
+          "type": "harbour"
+        },
+        {
+          "name": "Korfos",
+          "type": "harbour"
+        },
+        {
+          "name": "Perdika",
+          "type": "harbour"
+        },
+        {
+          "name": "Ermioni",
+          "type": "harbour"
+        },
+        {
+          "name": "Porto Cheli",
+          "type": "harbour"
+        },
+        {
+          "name": "Piraeus",
+          "type": "harbour"
+        },
+        {
+          "name": "Alimos",
+          "type": "harbour"
+        },
+        {
+          "name": "Lavrio",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Cape Sounion",
+          "type": "cape"
+        },
+        {
+          "name": "Isthmus of Corinth",
+          "type": "settlement"
+        },
+        {
+          "name": "Spetses",
+          "type": "channel"
+        }
+      ],
+      "boundary": "Vom Kap Sounion und der Küste Attikas über Piräus und den Isthmus von Korinth entlang der Nordost-Küste des Peloponnes (Korfos, Epidavros, Methana, Poros, Ermioni) bis Spetses, mit Salamina, Ägina, Agistri, Poros, Hydra und Spetses; ohne Argolischen Golf.",
+      "related": [
+        {
+          "key": "saronic-islands",
+          "relation": "contains"
+        },
+        {
+          "key": "argo-saronic",
+          "relation": "within"
+        },
+        {
+          "key": "peloponnese-east-coast",
+          "relation": "overlaps"
+        },
+        {
+          "key": "argolic-gulf",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.yacht.de/reisen-chartern/griechenland/revier-info-yachtcharter-griechenland-saronischer-und-argolischer-golf/",
+          "publisher": "YACHT (Delius Klasing)",
+          "lang": "de",
+          "quote": "Der Saronische Golf mit den Inseln Ägina, Poros, Hydra oder Spetses"
+        },
+        {
+          "url": "https://www.merian.de/europa/griechenland/athen-poros-epidauros-segeltoern-durch-den-saronischen-golf",
+          "publisher": "MERIAN",
+          "lang": "de",
+          "quote": "Beim Segeltörn durch den Saronischen Golf warten paradiesisch schöne und ruhige Inseln"
+        },
+        {
+          "url": "https://www.moorings.com/destinations/mediterranean/greece/athens-zea-yacht-charters/itinerary/14-day-saronic-argolic-gulf-sailing-itinerary",
+          "publisher": "The Moorings",
+          "lang": "en",
+          "quote": "Aegina is one of the most famous islands in the Saronic Gulf"
+        },
+        {
+          "url": "https://www.yacht-rent.com/greece/central-greece-and-argosaronic-gulf",
+          "publisher": "Yacht-Rent",
+          "lang": "en",
+          "quote": "The islands of the Saronic Gulf are a quick sail from …"
+        }
+      ],
+      "notes": "Südgrenze in den Quellen uneinheitlich: Hydra und Spetses werden von Charterfirmen meist zum Saronischen Golf gezählt, geografisch liegen sie bereits am Übergang zum Argolischen Golf bzw. Myrtoischen Meer. Die Nordküste (Salamina, Elefsina) wird selten angelaufen."
+    },
+    {
+      "key": "saronic-islands",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Saronische Inseln",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Saronic Islands",
+          "preferred": true
+        },
+        {
+          "lang": "el",
+          "name": "Νησιά Σαρωνικού",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Argo-Saronic Islands",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Αργοσαρωνικά νησιά",
+          "preferred": false
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-I",
+        "GR-J"
+      ],
+      "members": [
+        {
+          "name": "Salamina",
+          "type": "island"
+        },
+        {
+          "name": "Aegina",
+          "type": "island"
+        },
+        {
+          "name": "Agistri",
+          "type": "island"
+        },
+        {
+          "name": "Moni",
+          "type": "islet"
+        },
+        {
+          "name": "Poros",
+          "type": "island"
+        },
+        {
+          "name": "Hydra",
+          "type": "island"
+        },
+        {
+          "name": "Dokos",
+          "type": "island"
+        },
+        {
+          "name": "Spetses",
+          "type": "island"
+        },
+        {
+          "name": "Spetsopoula",
+          "type": "islet"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Salamina",
+          "type": "settlement"
+        },
+        {
+          "name": "Spetses",
+          "type": "settlement"
+        }
+      ],
+      "boundary": "Die Inselkette im Saronischen Golf und an dessen Ausgang von Salamina im Norden über Ägina, Agistri und Poros bis Hydra und Spetses im Süden; die Halbinsel Methana wird oft dazugezählt.",
+      "related": [
+        {
+          "key": "saronic-gulf",
+          "relation": "within"
+        },
+        {
+          "key": "argo-saronic",
+          "relation": "within"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.yachtcharterfleet.com/saronic-islands/guide",
+          "publisher": "YachtCharterFleet",
+          "lang": "en",
+          "quote": "The Saronic Islands are an idyllic yacht charter destination …"
+        },
+        {
+          "url": "https://www.boatbookings.com/yachting_content/athens_saronic_islands_greece_charter.php",
+          "publisher": "Boatbookings",
+          "lang": "en",
+          "quote": "The Saronic Islands are the perfect destination … to charter a luxury …"
+        },
+        {
+          "url": "https://blog.nautal.com/de/saronische-inseln",
+          "publisher": "Nautal",
+          "lang": "de",
+          "quote": "Ein beliebtes Reiseziel für Segler sind die Saronischen Inseln."
+        },
+        {
+          "url": "https://www.merian.de/europa/griechenland/athen-poros-epidauros-segeltoern-durch-den-saronischen-golf",
+          "publisher": "MERIAN",
+          "lang": "de",
+          "quote": "Der Saronische Golf und die Saronischen Inseln sind eine ruhige und idyllische Alternative …"
+        }
+      ],
+      "notes": "Ob Salamina und die Halbinsel Methana dazugehören, ist je Quelle unterschiedlich. YachtCharterFleet: „Sometimes referred to as the Argo-Saronic Islands“. Griechischer Name aus Allgemeinwissen, nicht aus Segelquelle belegt."
+    },
+    {
+      "key": "argolic-gulf",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Argolischer Golf",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Argolic Gulf",
+          "preferred": true
+        },
+        {
+          "lang": "el",
+          "name": "Αργολικός Κόλπος",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Gulf of Argolis",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Argolikos Gulf",
+          "preferred": false
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-J"
+      ],
+      "members": [
+        {
+          "name": "Nafplio",
+          "type": "harbour"
+        },
+        {
+          "name": "Tolo",
+          "type": "harbour"
+        },
+        {
+          "name": "Drepano",
+          "type": "bay"
+        },
+        {
+          "name": "Kilada",
+          "type": "harbour"
+        },
+        {
+          "name": "Porto Cheli",
+          "type": "harbour"
+        },
+        {
+          "name": "Spetses",
+          "type": "island"
+        },
+        {
+          "name": "Astros",
+          "type": "harbour"
+        },
+        {
+          "name": "Tyros",
+          "type": "harbour"
+        },
+        {
+          "name": "Plaka Leonidiou",
+          "type": "harbour"
+        },
+        {
+          "name": "Bourtzi",
+          "type": "islet"
+        },
+        {
+          "name": "Plateia",
+          "type": "islet"
+        },
+        {
+          "name": "Psili",
+          "type": "islet"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Spetses",
+          "type": "settlement"
+        },
+        {
+          "name": "Porto Cheli",
+          "type": "settlement"
+        },
+        {
+          "name": "Leonidio",
+          "type": "settlement"
+        },
+        {
+          "name": "Nafplio",
+          "type": "settlement"
+        }
+      ],
+      "boundary": "Der Golf zwischen der Argolis-Halbinsel (Porto Cheli, Spetses) im Osten und der Küste Arkadiens (Astros, Tyros, Leonidio) im Westen bis Nafplio am Nordende; Südgrenze die Linie Spetses–Leonidio.",
+      "related": [
+        {
+          "key": "argo-saronic",
+          "relation": "within"
+        },
+        {
+          "key": "peloponnese-east-coast",
+          "relation": "within"
+        },
+        {
+          "key": "saronic-gulf",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://sailingissues.com/greekislands/argolic.html",
+          "publisher": "Sailing Issues",
+          "lang": "en",
+          "quote": "make the Argolic Gulf a popular yacht charter area"
+        },
+        {
+          "url": "https://preview.kollective.agency/sailgreece2025/saronic-gulf-eastern-peloponnese/",
+          "publisher": "Sail Greece",
+          "lang": "en",
+          "quote": "… historically important city on the northern shores of the Argolic Gulf"
+        },
+        {
+          "url": "https://www.yacht.de/reisen-chartern/griechenland/revier-info-yachtcharter-griechenland-saronischer-und-argolischer-golf/",
+          "publisher": "YACHT (Delius Klasing)",
+          "lang": "de",
+          "quote": "in den Argolischen Golf und zum Beispiel bis zu dessen größtem Ort, Navplion"
+        },
+        {
+          "url": "https://www.discovergreece.com/de/travel-ideas/best-of/6-sailing-destinations-around-peloponnese",
+          "publisher": "Discover Greece",
+          "lang": "de",
+          "quote": "An Hydra und Spetses vorbei, segeln Sie in den Argolischen Golf."
+        },
+        {
+          "url": "https://en.wikipedia.org/wiki/Argolic_Gulf",
+          "publisher": "Wikipedia",
+          "lang": "en",
+          "quote": "a gulf of the Aegean Sea off the east coast of the Peloponnese"
+        }
+      ],
+      "notes": "Hydra und Spetses werden von Charterführern teils dem Argolischen Golf zugeordnet (YACHT: „Argolischer Golf mit den Inseln Hydra, Dokos und Spetses“), geografisch liegt nur Spetses an dessen Eingang. Sailing Issues setzt „the east Peloponese“ mit dem Argolischen Golf gleich."
+    },
+    {
+      "key": "argo-saronic",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Argosaronischer Golf",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Argo-Saronic Gulf",
+          "preferred": true
+        },
+        {
+          "lang": "el",
+          "name": "Αργοσαρωνικός",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Argosaronic Gulf",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Argosaronikos",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Argo-Saronic",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Αργοσαρωνικός Κόλπος",
+          "preferred": false
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-I",
+        "GR-J"
+      ],
+      "members": [
+        {
+          "name": "Saronic Gulf",
+          "type": "gulf"
+        },
+        {
+          "name": "Argolic Gulf",
+          "type": "gulf"
+        },
+        {
+          "name": "Salamina",
+          "type": "island"
+        },
+        {
+          "name": "Aegina",
+          "type": "island"
+        },
+        {
+          "name": "Agistri",
+          "type": "island"
+        },
+        {
+          "name": "Poros",
+          "type": "island"
+        },
+        {
+          "name": "Hydra",
+          "type": "island"
+        },
+        {
+          "name": "Dokos",
+          "type": "island"
+        },
+        {
+          "name": "Spetses",
+          "type": "island"
+        },
+        {
+          "name": "Methana",
+          "type": "settlement"
+        },
+        {
+          "name": "Palaia Epidavros",
+          "type": "harbour"
+        },
+        {
+          "name": "Ermioni",
+          "type": "harbour"
+        },
+        {
+          "name": "Porto Cheli",
+          "type": "harbour"
+        },
+        {
+          "name": "Nafplio",
+          "type": "harbour"
+        },
+        {
+          "name": "Alimos",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Cape Sounion",
+          "type": "cape"
+        },
+        {
+          "name": "Isthmus of Corinth",
+          "type": "settlement"
+        },
+        {
+          "name": "Leonidio",
+          "type": "settlement"
+        }
+      ],
+      "boundary": "Sammelrevier aus Saronischem und Argolischem Golf: von Kap Sounion und Athen über die Saronischen Inseln bis Spetses und in den Argolischen Golf bis Nafplio und Leonidio.",
+      "related": [
+        {
+          "key": "saronic-gulf",
+          "relation": "contains"
+        },
+        {
+          "key": "saronic-islands",
+          "relation": "contains"
+        },
+        {
+          "key": "argolic-gulf",
+          "relation": "contains"
+        },
+        {
+          "key": "peloponnese-east-coast",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://sailingissues.com/yachting-guide/saronic-itineraries.html",
+          "publisher": "Sailing Issues",
+          "lang": "en",
+          "quote": "… always end up cruising the Argo-saronic gulf for two or three weeks …"
+        },
+        {
+          "url": "https://www.boatbookings.com/yachting_content/athens_saronic_islands_greece_charter.php",
+          "publisher": "Boatbookings",
+          "lang": "en",
+          "quote": "… Greece's luxury charter world is the Argo-Saronic island complex"
+        },
+        {
+          "url": "https://www.yacht-rent.com/greece/central-greece-and-argosaronic-gulf",
+          "publisher": "Yacht-Rent",
+          "lang": "en",
+          "quote": "Yacht charter Argosaronic gulf: 1081 rental boats and charter yachts …"
+        },
+        {
+          "url": "https://greekislandssailing.com/greece-sailing-trips/sailing-argosaronikos-islands",
+          "publisher": "Greek Islands Sailing",
+          "lang": "en",
+          "quote": "Discover the most popular sailing destinations in the Argosaronikos"
+        }
+      ],
+      "notes": "Schreibweisen stark uneinheitlich (Argo-Saronic, Argosaronic, Argosaronikos, Argosaronicos). Deutscher Name „Argosaronischer Golf“ nicht in einer Segelquelle belegt; deutsche Quellen schreiben „Saronischer und Argolischer Golf“. Teils als Inselgruppe (Argo-Saronic Islands), teils als Golf-Sammelbegriff verwendet; Ausdehnung im Süden (bis Leonidio oder nur bis Spetses) nicht einheitlich."
+    },
+    {
+      "key": "peloponnese-east-coast",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Ostpeloponnes",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Ostküste des Peloponnes",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Eastern Peloponnese",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "East coast of the Peloponnese",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Ανατολική Πελοπόννησος",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-J",
+        "GR-I"
+      ],
+      "members": [
+        {
+          "name": "Saronic Gulf",
+          "type": "gulf"
+        },
+        {
+          "name": "Argolic Gulf",
+          "type": "gulf"
+        },
+        {
+          "name": "Palaia Epidavros",
+          "type": "harbour"
+        },
+        {
+          "name": "Methana",
+          "type": "settlement"
+        },
+        {
+          "name": "Poros",
+          "type": "island"
+        },
+        {
+          "name": "Hydra",
+          "type": "island"
+        },
+        {
+          "name": "Dokos",
+          "type": "island"
+        },
+        {
+          "name": "Spetses",
+          "type": "island"
+        },
+        {
+          "name": "Ermioni",
+          "type": "harbour"
+        },
+        {
+          "name": "Porto Cheli",
+          "type": "harbour"
+        },
+        {
+          "name": "Nafplio",
+          "type": "harbour"
+        },
+        {
+          "name": "Astros",
+          "type": "harbour"
+        },
+        {
+          "name": "Plaka Leonidiou",
+          "type": "harbour"
+        },
+        {
+          "name": "Kyparissi",
+          "type": "harbour"
+        },
+        {
+          "name": "Gerakas",
+          "type": "harbour"
+        },
+        {
+          "name": "Monemvasia",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Isthmus of Corinth",
+          "type": "settlement"
+        },
+        {
+          "name": "Athens",
+          "type": "settlement"
+        },
+        {
+          "name": "Monemvasia",
+          "type": "settlement"
+        },
+        {
+          "name": "Cape Maleas",
+          "type": "cape"
+        }
+      ],
+      "boundary": "Die Ostküste des Peloponnes von Athen bzw. vom Isthmus von Korinth über Saronischen und Argolischen Golf und die Küste Lakoniens (Kyparissi, Gerakas) bis Monemvasia und Kap Maleas.",
+      "related": [
+        {
+          "key": "saronic-gulf",
+          "relation": "overlaps"
+        },
+        {
+          "key": "argolic-gulf",
+          "relation": "contains"
+        },
+        {
+          "key": "argo-saronic",
+          "relation": "overlaps"
+        },
+        {
+          "key": "peloponnese-west-coast",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.yacht.de/charterfuehrer-ostpeloponnes-p-1022370/",
+          "publisher": "YACHT / Delius Klasing",
+          "lang": "de",
+          "quote": "Saronischer & Argolischer Golf von Athen bis Monemvasia"
+        },
+        {
+          "url": "https://www.yacht.de/charterfuehrer-ostpeloponnes-p-1022370/",
+          "publisher": "YACHT / Delius Klasing",
+          "lang": "de",
+          "quote": "… enthält der Charterführer Ostpeloponnes noch diverse Tipps"
+        },
+        {
+          "url": "https://preview.kollective.agency/sailgreece2025/saronic-gulf-eastern-peloponnese/",
+          "publisher": "Sail Greece",
+          "lang": "en",
+          "quote": "The Eastern Peloponnese in detail"
+        },
+        {
+          "url": "https://www.moorings.com/destinations/mediterranean/greece/athens-zea-yacht-charters/itinerary/14-day-saronic-argolic-gulf-sailing-itinerary",
+          "publisher": "The Moorings",
+          "lang": "en",
+          "quote": "… a serene bay on the east coast of the Peloponnese"
+        },
+        {
+          "url": "https://sailingissues.com/sailing-greece-lp/sailing-peloponese.html",
+          "publisher": "Sailing Issues",
+          "lang": "en",
+          "quote": "Especially the eastern coast of the Peloponese abounds with ancient archaeological sites"
+        }
+      ],
+      "notes": "Als Reviername vor allem durch den „Charterführer Ostpeloponnes“ (Delius Klasing) eingeführt; englische Quellen verwenden „Eastern Peloponnese“ bzw. „east coast of the Peloponnese“ eher beschreibend. Nordgrenze (Athen oder Isthmus) und Südgrenze (Monemvasia oder Kap Maleas) uneinheitlich. Griechischer Name aus Allgemeinwissen."
+    },
+    {
+      "key": "northern-sporades",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Nördliche Sporaden",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Sporaden",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Northern Sporades",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Sporades",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "North Sporades",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Βόρειες Σποράδες",
+          "preferred": true
+        },
+        {
+          "lang": "el",
+          "name": "Σποράδες",
+          "preferred": false
+        },
+        {
+          "lang": "de",
+          "name": "Magnisische Inseln",
+          "preferred": false
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-E",
+        "GR-H"
+      ],
+      "members": [
+        {
+          "name": "Skiathos",
+          "type": "island"
+        },
+        {
+          "name": "Skopelos",
+          "type": "island"
+        },
+        {
+          "name": "Alonnisos",
+          "type": "island"
+        },
+        {
+          "name": "Skyros",
+          "type": "island"
+        },
+        {
+          "name": "Peristera",
+          "type": "island"
+        },
+        {
+          "name": "Kyra Panagia",
+          "type": "island"
+        },
+        {
+          "name": "Gioura",
+          "type": "island"
+        },
+        {
+          "name": "Skantzoura",
+          "type": "island"
+        },
+        {
+          "name": "Piperi",
+          "type": "islet"
+        },
+        {
+          "name": "Skiathos (town)",
+          "type": "harbour"
+        },
+        {
+          "name": "Skopelos (town)",
+          "type": "harbour"
+        },
+        {
+          "name": "Agnontas",
+          "type": "harbour"
+        },
+        {
+          "name": "Loutraki (Skopelos)",
+          "type": "harbour"
+        },
+        {
+          "name": "Patitiri",
+          "type": "harbour"
+        },
+        {
+          "name": "Steni Vala",
+          "type": "harbour"
+        },
+        {
+          "name": "Ormos Planitis",
+          "type": "bay"
+        },
+        {
+          "name": "Linaria",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Steno Skiathou",
+          "type": "strait"
+        },
+        {
+          "name": "Trikeri Channel",
+          "type": "channel"
+        },
+        {
+          "name": "Skyros",
+          "type": "settlement"
+        },
+        {
+          "name": "Piperi",
+          "type": "cape"
+        }
+      ],
+      "boundary": "Die Inselgruppe östlich der Halbinsel Pilion/Trikeri von Skiathos über Skopelos und Alonnisos bis zu den unbewohnten Inseln des Meeresparks (Kyra Panagia, Gioura, Piperi, Skantzoura); Skyros wird je nach Quelle hinzugezählt. Volos im Pagasitischen Golf ist häufiger Ausgangshafen, gehört aber zum Nachbarrevier.",
+      "related": [
+        {
+          "key": "pagasitic-gulf",
+          "relation": "overlaps"
+        },
+        {
+          "key": "north-aegean",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.yacht.de/reisen-chartern/griechenland/geheimtipp-in-griechenland-segelrevier-sporaden-mamma-mia-auf-griechisch/",
+          "publisher": "YACHT (Delius Klasing)",
+          "lang": "de",
+          "quote": "Die Nördlichen Sporaden gelten unter Ägäisseglern immer noch als Geheimtipp"
+        },
+        {
+          "url": "https://www.tubber.com/en/blog/holiday-destinations/island-hopping-in-the-sporades/",
+          "publisher": "Tubber",
+          "lang": "en",
+          "quote": "Welcome to the Sporades - a paradise for sailors seeking unforgettable adventures …"
+        },
+        {
+          "url": "https://pitter-yachting.com/en/destinations/greece/volos",
+          "publisher": "Pitter Yachting",
+          "lang": "en",
+          "quote": "The Gulf of Volos and the Northern Sporades form a sheltered sailing area …"
+        },
+        {
+          "url": "https://www.bavariayachts.com/we-are-bavaria/stories/volos-a-wonderful-sailingarea-in-greece/",
+          "publisher": "Bavaria Yachts",
+          "lang": "en",
+          "quote": "the sailing area of Volos in the Northern Sporades"
+        },
+        {
+          "url": "https://www.filovent.com/de/magazine/segelboot-sporaden-griechenland",
+          "publisher": "Filovent",
+          "lang": "de",
+          "quote": "Die Sporaden Inseln, die weiter nördlich liegen, sind … besser vor dem Meltemi geschützt"
+        }
+      ],
+      "notes": "Skyros wird von Charterfirmen (Pitter, Tubber) zu den Nördlichen Sporaden gezählt, liegt aber abseits und verwaltungstechnisch bei Euböa (GR-H); YACHT-Törnbericht behandelt nur Skiathos–Skopelos–Alonnisos und Meerespark-Inseln. Ohne Zusatz „Nördliche“ meint „Sporaden“ im Segelkontext praktisch immer dieses Revier."
+    },
+    {
+      "key": "pagasitic-gulf",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Pagasitischer Golf",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Golf von Volos",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Pagasitic Gulf",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Gulf of Volos",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Pagasetic Gulf",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Pagasitikos Gulf",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Παγασητικός Κόλπος",
+          "preferred": true
+        },
+        {
+          "lang": "el",
+          "name": "Παγασιτικός Κόλπος",
+          "preferred": false
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-E"
+      ],
+      "members": [
+        {
+          "name": "Volos",
+          "type": "harbour"
+        },
+        {
+          "name": "Agria",
+          "type": "settlement"
+        },
+        {
+          "name": "Afissos",
+          "type": "harbour"
+        },
+        {
+          "name": "Milina",
+          "type": "harbour"
+        },
+        {
+          "name": "Palaio Trikeri",
+          "type": "island"
+        },
+        {
+          "name": "Agia Kyriaki",
+          "type": "harbour"
+        },
+        {
+          "name": "Trikeri",
+          "type": "settlement"
+        },
+        {
+          "name": "Ormos Vathoudi",
+          "type": "bay"
+        },
+        {
+          "name": "Amaliapoli",
+          "type": "harbour"
+        },
+        {
+          "name": "Achilleio",
+          "type": "harbour"
+        },
+        {
+          "name": "Nea Anchialos",
+          "type": "settlement"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Trikeri",
+          "type": "cape"
+        },
+        {
+          "name": "Achilleio",
+          "type": "settlement"
+        },
+        {
+          "name": "Trikeri Channel",
+          "type": "channel"
+        }
+      ],
+      "boundary": "Der nahezu geschlossene Golf nördlich des Trikeri-Kanals mit Volos im Norden, der Pilion-Küste im Osten, der Halbinsel Trikeri mit der Insel Palaio Trikeri im Süden und Amaliapoli/Achilleio an der Westseite der Einfahrt.",
+      "related": [
+        {
+          "key": "northern-sporades",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.cruiserswiki.org/wiki/Orei",
+          "publisher": "CruisersWiki",
+          "lang": "en",
+          "quote": "Pagasitikos Gulf (Παγασιτικός Κόλπος) or the Gulf of Volos and the Trikeri Peninsula"
+        },
+        {
+          "url": "https://pitter-yachting.com/en/destinations/greece/volos",
+          "publisher": "Pitter Yachting",
+          "lang": "en",
+          "quote": "a perfect sailing holiday in the Gulf of Volos"
+        },
+        {
+          "url": "https://en.1a-yachtcharter.de/destinations/greece/volos/l-139",
+          "publisher": "1a Yachtcharter",
+          "lang": "en",
+          "quote": "it's worth exploring the Pagasitic Gulf area as well."
+        },
+        {
+          "url": "https://www.bavariayachts.com/we-are-bavaria/stories/volos-a-wonderful-sailingarea-in-greece/",
+          "publisher": "Bavaria Yachts",
+          "lang": "en",
+          "quote": "The sheltered location of the Pagasitic Gulf ensures consistent and predictable weather conditions"
+        }
+      ],
+      "notes": "Englische Schreibweise uneinheitlich (Pagasitic/Pagasetic/Pagasitikos). Kein deutschsprachiger Beleg mit dem Namen gefunden; deutsche Quellen fassen den Golf meist unter dem Charterstützpunkt Volos mit den Sporaden zusammen. Die Mitgliederliste folgt CruisersWiki, Pitter und 1a Yachtcharter."
+    },
+    {
+      "key": "chalkidiki",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Chalkidiki",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Chalkidiki",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Halkidiki",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Χαλκιδική",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-B"
+      ],
+      "members": [
+        {
+          "name": "Kassandra",
+          "type": "archipelago"
+        },
+        {
+          "name": "Sithonia",
+          "type": "archipelago"
+        },
+        {
+          "name": "Athos",
+          "type": "archipelago"
+        },
+        {
+          "name": "Toronaios Gulf",
+          "type": "gulf"
+        },
+        {
+          "name": "Singitic Gulf",
+          "type": "gulf"
+        },
+        {
+          "name": "Nikiti",
+          "type": "harbour"
+        },
+        {
+          "name": "Nea Moudania",
+          "type": "harbour"
+        },
+        {
+          "name": "Sani Marina",
+          "type": "harbour"
+        },
+        {
+          "name": "Porto Carras",
+          "type": "harbour"
+        },
+        {
+          "name": "Porto Koufo",
+          "type": "harbour"
+        },
+        {
+          "name": "Ormos Panagias",
+          "type": "harbour"
+        },
+        {
+          "name": "Vourvourou",
+          "type": "bay"
+        },
+        {
+          "name": "Diaporos",
+          "type": "island"
+        },
+        {
+          "name": "Ammouliani",
+          "type": "island"
+        },
+        {
+          "name": "Ouranoupoli",
+          "type": "harbour"
+        },
+        {
+          "name": "Pyrgadikia",
+          "type": "settlement"
+        },
+        {
+          "name": "Sarti",
+          "type": "settlement"
+        },
+        {
+          "name": "Kelyfos",
+          "type": "islet"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Nea Moudania",
+          "type": "settlement"
+        },
+        {
+          "name": "Akrotirio Kassandras",
+          "type": "cape"
+        },
+        {
+          "name": "Akrotirio Drepano",
+          "type": "cape"
+        },
+        {
+          "name": "Ouranoupoli",
+          "type": "settlement"
+        },
+        {
+          "name": "Athos",
+          "type": "cape"
+        }
+      ],
+      "boundary": "Die drei Halbinseln Kassandra, Sithonia und Athos mit dem Toronäischen und dem Singitischen Golf dazwischen, von Nea Moudania im Westen bis Ouranoupoli/Ammouliani im Osten; die Küste der Mönchsrepublik Athos ist Grenze (Anlaufen nur mit Genehmigung).",
+      "related": [
+        {
+          "key": "north-aegean",
+          "relation": "overlaps"
+        },
+        {
+          "key": "thermaic-gulf",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.tubber.com/en/blog/sailing-itineraries/sailing-route-chalkidiki/",
+          "publisher": "Tubber",
+          "lang": "en",
+          "quote": "a wonderful itinerary for you to discover the beautiful Chalkidiki area"
+        },
+        {
+          "url": "https://www.oceans-evasion.com/en/boat-rental/greece/halkidiki",
+          "publisher": "Oceans Evasion",
+          "lang": "en",
+          "quote": "Halkidiki promises unforgettable sailing adventures and timeless memories for yacht rentals."
+        },
+        {
+          "url": "https://najachty.pl/en/destinations/yacht-charter-greece/yacht-charter-in-northern-greece",
+          "publisher": "Na Jachty",
+          "lang": "en",
+          "quote": "Northern Greece offers a wide range of sailing spots, from the idyllic Halkidiki Peninsula"
+        },
+        {
+          "url": "https://en.1a-yachtcharter.de/destinations/greece/chalkidiki/l-237",
+          "publisher": "1a Yachtcharter",
+          "lang": "de",
+          "quote": "Unter Segelnden ist Chalkidiki noch ein Geheimtipp."
+        },
+        {
+          "url": "https://bednblue.com/travel/greece/sailboat-rentals-halkidiki",
+          "publisher": "BednBlue",
+          "lang": "en",
+          "quote": "If you are sailing in Halkidiki make a stop at Diaporos islands."
+        }
+      ],
+      "notes": "Kein deutschsprachiger Segelbeleg gefunden (Nautal-Blog startet in Nikiti, nennt aber nur „nördliche Ägäis“). Die Golfe Toronaios und Singitikos tauchen in den Quellen nicht namentlich auf; sie sind hier nur als geographische Mitglieder aufgeführt. Westlich anschließender Thermaischer Golf/Thessaloniki nicht ausreichend belegt."
+    },
+    {
+      "key": "gulf-of-evia",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Golf von Euböa",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Euböa-Golf",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Gulf of Evia",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Euboean Gulf",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Evoikos Gulf",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Ευβοϊκός Κόλπος",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-H"
+      ],
+      "members": [
+        {
+          "name": "Vorios Evvoikos Kolpos",
+          "type": "gulf"
+        },
+        {
+          "name": "Notios Evvoikos Kolpos",
+          "type": "gulf"
+        },
+        {
+          "name": "Chalkida",
+          "type": "harbour"
+        },
+        {
+          "name": "Eretria",
+          "type": "harbour"
+        },
+        {
+          "name": "Limni",
+          "type": "harbour"
+        },
+        {
+          "name": "Aidipsos",
+          "type": "harbour"
+        },
+        {
+          "name": "Oreoi",
+          "type": "harbour"
+        },
+        {
+          "name": "Skala Atalantis",
+          "type": "harbour"
+        },
+        {
+          "name": "Atalanti (island)",
+          "type": "islet"
+        },
+        {
+          "name": "Vasiliko",
+          "type": "settlement"
+        },
+        {
+          "name": "Karystos",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Euripus",
+          "type": "strait"
+        },
+        {
+          "name": "Oreoi",
+          "type": "settlement"
+        },
+        {
+          "name": "Trikeri Channel",
+          "type": "channel"
+        },
+        {
+          "name": "Karystos",
+          "type": "settlement"
+        },
+        {
+          "name": "Akrotirio Kafireas",
+          "type": "cape"
+        }
+      ],
+      "boundary": "Das Gewässer zwischen Euböa und dem Festland, vom Südausgang bei Karystos/Petalischem Golf über die Euripus-Enge und Brücke von Chalkida bis zum Nordausgang bei Oreoi in den Trikeri-Kanal; Nord- und Südteil werden als Nord- bzw. Südeuböischer Golf unterschieden.",
+      "related": [
+        {
+          "key": "northern-sporades",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.cruiserswiki.org/wiki/Halkis",
+          "publisher": "CruisersWiki",
+          "lang": "en",
+          "quote": "The major port in the Gulf of Evia is Halkis."
+        },
+        {
+          "url": "https://blog.medgulets.com/greece/greek-islands/evia-island",
+          "publisher": "MedGulets",
+          "lang": "en",
+          "quote": "the protected inner waters of the North and South Euboean Gulfs"
+        },
+        {
+          "url": "https://www.yacht.de/toernfuehrer-griechenland-2-p-2004361/",
+          "publisher": "YACHT (Delius Klasing)",
+          "lang": "de",
+          "quote": "einen Segeltörn durch den Golf von Euböa"
+        }
+      ],
+      "notes": "CruisersWiki nennt den Golf ausdrücklich „not a popular cruising ground“, aber als Transitroute Athen–Sporaden mit Häfen; der Name ist in Revierführern eingeführt (Delius-Klasing-Törnführer Griechenland 2 deckt den Südteil ab). Südgrenze unscharf: der Südeuböische Golf geht in den Petalischen Golf über, der vermutlich beim Nachbarrevier attica-coast liegt."
+    },
+    {
+      "key": "north-aegean",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Nordägäis",
+          "preferred": true
+        },
+        {
+          "lang": "de",
+          "name": "Nördliche Ägäis",
+          "preferred": false
+        },
+        {
+          "lang": "de",
+          "name": "Nordägäische Inseln",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "North Aegean",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "North East Aegean",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "NE Aegean",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Eastern Sporades",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Βόρειο Αιγαίο",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-K",
+        "GR-A"
+      ],
+      "members": [
+        {
+          "name": "Thasos",
+          "type": "island"
+        },
+        {
+          "name": "Samothraki",
+          "type": "island"
+        },
+        {
+          "name": "Limnos",
+          "type": "island"
+        },
+        {
+          "name": "Agios Efstratios",
+          "type": "island"
+        },
+        {
+          "name": "Lesvos",
+          "type": "island"
+        },
+        {
+          "name": "Chios",
+          "type": "island"
+        },
+        {
+          "name": "Oinousses",
+          "type": "island"
+        },
+        {
+          "name": "Psara",
+          "type": "island"
+        },
+        {
+          "name": "Ikaria",
+          "type": "island"
+        },
+        {
+          "name": "Samos",
+          "type": "island"
+        },
+        {
+          "name": "Fourni",
+          "type": "archipelago"
+        },
+        {
+          "name": "Myrina",
+          "type": "harbour"
+        },
+        {
+          "name": "Mytilini",
+          "type": "harbour"
+        },
+        {
+          "name": "Molyvos",
+          "type": "harbour"
+        },
+        {
+          "name": "Limenaria",
+          "type": "harbour"
+        },
+        {
+          "name": "Kavala",
+          "type": "harbour"
+        },
+        {
+          "name": "Keramoti",
+          "type": "harbour"
+        },
+        {
+          "name": "Pythagoreio",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Thasos",
+          "type": "settlement"
+        },
+        {
+          "name": "Samothraki",
+          "type": "settlement"
+        },
+        {
+          "name": "Samos Strait",
+          "type": "strait"
+        },
+        {
+          "name": "Kavala",
+          "type": "settlement"
+        }
+      ],
+      "boundary": "Die Inseln des nordöstlichen Ägäis von Thasos und Samothraki im Norden über Limnos, Agios Efstratios, Lesbos, Psara, Chios und Oinousses bis Ikaria, Fourni und Samos im Süden, einschließlich der thrakischen Küste um Kavala; weite Schläge, kein geschlossenes Inselrevier.",
+      "related": [
+        {
+          "key": "northern-sporades",
+          "relation": "overlaps"
+        },
+        {
+          "key": "chalkidiki",
+          "relation": "overlaps"
+        },
+        {
+          "key": "dodecanese",
+          "relation": "overlaps"
+        },
+        {
+          "key": "lesbos",
+          "relation": "contains"
+        },
+        {
+          "key": "chios",
+          "relation": "contains"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.noforeignland.com/guides/countries/gr/areas/north-aegean",
+          "publisher": "noforeignland",
+          "lang": "en",
+          "quote": "The North Aegean spans a large sweep of islands from Thasos and Samothraki …"
+        },
+        {
+          "url": "https://www.CruisersWiki.org/wiki/NE_Aegean",
+          "publisher": "CruisersWiki",
+          "lang": "en",
+          "quote": "An online cruising guide for yachts sailing around the North East Aegean."
+        },
+        {
+          "url": "https://blog.nautal.com/de/alternative-segelziele-griechenland",
+          "publisher": "Nautal",
+          "lang": "de",
+          "quote": "Schon einige Tage konnten wir in der nördlichen Ägäis Griechenlands verbringen"
+        }
+      ],
+      "notes": "Sehr großes, lose definiertes Revier; die Südgrenze (Samos, Ikaria, Fourni) überschneidet sich mit dem Nachbarschlüssel dodecanese bzw. einem möglichen Revier „Ostägäis/Eastern Sporades“. Der Nautal-Törn (Nikiti–Thasos–Limnos–Agios Efstratios–Skyros) zeigt, dass Segler Chalkidiki und Sporaden teilweise mit zur nördlichen Ägäis rechnen. Wikivoyage: „Die Nordägäischen Inseln bilden keine klar definierte Inselgruppe.“"
+    },
+    {
+      "key": "lesbos",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Lesbos",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Lesvos",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Lesbos",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Λέσβος",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Mytilene",
+          "preferred": false
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-K"
+      ],
+      "members": [
+        {
+          "name": "Lesbos",
+          "type": "island"
+        },
+        {
+          "name": "Mytilini",
+          "type": "harbour"
+        },
+        {
+          "name": "Molyvos",
+          "type": "harbour"
+        },
+        {
+          "name": "Petra",
+          "type": "harbour"
+        },
+        {
+          "name": "Gulf of Kalloni",
+          "type": "gulf"
+        },
+        {
+          "name": "Skala Kallonis",
+          "type": "harbour"
+        },
+        {
+          "name": "Skala Polichnitou",
+          "type": "harbour"
+        },
+        {
+          "name": "Gulf of Gera",
+          "type": "gulf"
+        },
+        {
+          "name": "Perama",
+          "type": "harbour"
+        },
+        {
+          "name": "Plomari",
+          "type": "harbour"
+        },
+        {
+          "name": "Sigri",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Mytilini",
+          "type": "settlement"
+        },
+        {
+          "name": "Sigri",
+          "type": "settlement"
+        },
+        {
+          "name": "Molyvos",
+          "type": "settlement"
+        }
+      ],
+      "boundary": "Die Insel Lesbos mit ihren Küstenhäfen und den beiden Binnengolfen Kalloni und Gera; ohne türkische Küste.",
+      "related": [
+        {
+          "key": "north-aegean",
+          "relation": "within"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://noonsite.com/place/greece/eastern-sporades/lesvos/view/docking",
+          "publisher": "Noonsite",
+          "lang": "en",
+          "quote": "On the remote western coast of Lesvos, Sigri is a typical Greek fishing village"
+        },
+        {
+          "url": "https://barbarosyachting.com/destinations/greece/north-aegean/lesbos",
+          "publisher": "Barbaros Yachting",
+          "lang": "en",
+          "quote": "A blue cruise to Lesbos allows travelers to witness … Molyvos"
+        }
+      ],
+      "notes": "Als Inselrevier belegt (mehrere Häfen und zwei Binnengolfe); deutscher Segelbeleg fehlt, Name nur Standardform. Noonsite führt Lesbos unter 'Eastern Sporades'."
+    },
+    {
+      "key": "chios",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Chios",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Chios",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Hios",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Khios",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Χίος",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-K"
+      ],
+      "members": [
+        {
+          "name": "Chios",
+          "type": "island"
+        },
+        {
+          "name": "Oinousses",
+          "type": "island"
+        },
+        {
+          "name": "Psara",
+          "type": "island"
+        },
+        {
+          "name": "Chios Town",
+          "type": "harbour"
+        },
+        {
+          "name": "Lagkada",
+          "type": "harbour"
+        },
+        {
+          "name": "Kardamyla",
+          "type": "harbour"
+        },
+        {
+          "name": "Limenas Meston",
+          "type": "harbour"
+        },
+        {
+          "name": "Lithi",
+          "type": "harbour"
+        },
+        {
+          "name": "Oinousses",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Chios Strait",
+          "type": "strait"
+        },
+        {
+          "name": "Psara",
+          "type": "settlement"
+        }
+      ],
+      "boundary": "Die Insel Chios mit Oinousses im Nordosten und Psara im Westen; östlich begrenzt durch die Chios-Straße zur türkischen Küste (Çeşme).",
+      "related": [
+        {
+          "key": "north-aegean",
+          "relation": "within"
+        },
+        {
+          "key": "samos-ikaria-fourni",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://sailingissues.com/greekislands/chios-yacht-charters.html",
+          "publisher": "Sailing Issues",
+          "lang": "en",
+          "quote": "Chios … is a massive island, worth circumnavigating."
+        },
+        {
+          "url": "https://www.bednblue.com/travel/greece/yacht-rentals-chios",
+          "publisher": "BednBlue",
+          "lang": "en",
+          "quote": "rent a yacht from Chios Marina and tour the coastline"
+        }
+      ],
+      "notes": "In Törnvorschlägen meist nördlicher Wendepunkt von Samos/Kos aus; Nordostküste laut Sailing Issues ohne brauchbare Häfen. Deutscher Segelbeleg fehlt."
+    },
+    {
+      "key": "thermaic-gulf",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Thermaischer Golf",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Thermaic Gulf",
+          "preferred": true
+        },
+        {
+          "lang": "en",
+          "name": "Thermaikos Gulf",
+          "preferred": false
+        },
+        {
+          "lang": "en",
+          "name": "Gulf of Thessaloniki",
+          "preferred": false
+        },
+        {
+          "lang": "el",
+          "name": "Θερμαϊκός Κόλπος",
+          "preferred": true
+        }
+      ],
+      "countries": [
+        "GR"
+      ],
+      "subdivisions": [
+        "GR-B"
+      ],
+      "members": [
+        {
+          "name": "Thessaloniki",
+          "type": "harbour"
+        },
+        {
+          "name": "Kalamaria",
+          "type": "harbour"
+        },
+        {
+          "name": "Nea Michaniona",
+          "type": "harbour"
+        },
+        {
+          "name": "Epanomi",
+          "type": "settlement"
+        },
+        {
+          "name": "Nea Kallikrateia",
+          "type": "harbour"
+        },
+        {
+          "name": "Methoni",
+          "type": "harbour"
+        },
+        {
+          "name": "Platamonas",
+          "type": "harbour"
+        },
+        {
+          "name": "Litochoro",
+          "type": "harbour"
+        }
+      ],
+      "boundaryPoints": [
+        {
+          "name": "Cape Epanomi",
+          "type": "cape"
+        },
+        {
+          "name": "Platamonas",
+          "type": "settlement"
+        }
+      ],
+      "boundary": "Der Golf vor Thessaloniki von Platamonas im Südwesten bis Kap Epanomi/Nea Kallikrateia im Südosten; ohne Chalkidiki-Halbinseln.",
+      "related": [
+        {
+          "key": "chalkidiki",
+          "relation": "overlaps"
+        }
+      ],
+      "evidence": [
+        {
+          "url": "https://www.tubber.com/en/destinations/thessaloniki/",
+          "publisher": "Tubber",
+          "lang": "en",
+          "quote": "is located the sailing destination Thermaic Gulf"
+        },
+        {
+          "url": "https://najachty.pl/en/destinations/yacht-charter-greece/yacht-charter-in-northern-greece",
+          "publisher": "NaJachty",
+          "lang": "en",
+          "quote": "Located on the Thermaic Gulf, Thessaloniki offers … stable wind conditions"
+        },
+        {
+          "url": "https://www.greeka.com/macedonia/thessaloniki/sailing/",
+          "publisher": "Greeka",
+          "lang": "en",
+          "quote": "weekend cruises to Thermaikos Gulf"
+        }
+      ],
+      "notes": "Nur Charter- und Tourismusbelege; in den Quellen ist einzig Marina Thessaloniki (Kalamaria) als Liegeplatz namentlich genannt, die übrigen members stammen nicht aus den Belegen. Status als eigenständiges Törnrevier schwach; Quellen beschreiben Thessaloniki eher als Basis für Chalkidiki/Sporaden."
+    }
+  ]
+}

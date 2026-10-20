@@ -53,6 +53,7 @@ export const geoOriginEnum = pgEnum("geo_origin", [
   "computed",
   "manual",
   "marine_regions",
+  "import",
 ]);
 export const subdivisionStatusEnum = pgEnum("subdivision_status", ["active", "excluded"]);
 export const poiCategoryEnum = pgEnum("poi_category", ["food", "supply", "beach", "nature", "active", "culture", "town"]);
@@ -65,7 +66,9 @@ export const nameOriginEnum = pgEnum("name_origin", [
   "manual",
   "transliteration",
   "fallback",
+  "import",
 ]);
+export const areaMemberRoleEnum = pgEnum("area_member_role", ["member", "boundary"]);
 export const nameScriptEnum = pgEnum("name_script", ["latin", "greek"]);
 export const placeKindEnum = pgEnum("place_kind", ["anchorage", "port", "marina", "mooring_field"]);
 export const placeStatusEnum = pgEnum("place_status", ["candidate", "confirmed", "rejected", "abandoned", "no_anchoring"]);
@@ -338,3 +341,41 @@ export const comparisonSet = pgTable("comparison_set", {
   addedBy: text("added_by").notNull(),
   addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Members of an area (type `area`) delivered by the Revier-Bot (spec 14): the geo objects the file's member and
+ * boundary-point names resolved to. Re-derived on every import, so DELETE is allowed.
+ */
+export const areaMembers = pgTable("area_members", {
+  areaId: uuid("area_id")
+    .notNull()
+    .references(() => geoObjects.id),
+  geoObjectId: uuid("geo_object_id")
+    .notNull()
+    .references(() => geoObjects.id),
+  role: areaMemberRoleEnum("role").notNull(),
+  /** The name in the file this member was resolved from. */
+  name: text("name").notNull(),
+  createdAt: createdAt(),
+}, (t) => [
+  primaryKey({ columns: [t.areaId, t.geoObjectId, t.role] }),
+  index("area_members_geo_object_id_idx").on(t.geoObjectId),
+]);
+
+/** Literal quotes of the bot file backing an area; append-only, only `area_id` may move (area merge). */
+export const areaEvidence = pgTable("area_evidence", {
+  id: uuid("id").primaryKey().$defaultFn(newId),
+  areaId: uuid("area_id")
+    .notNull()
+    .references(() => geoObjects.id),
+  url: text("url").notNull(),
+  publisher: text("publisher").notNull().default(""),
+  language: text("language").notNull(),
+  quote: text("quote").notNull(),
+  fileGeneratedAt: date("file_generated_at").notNull(),
+  createdAt: createdAt(),
+}, (t) => [
+  uniqueIndex("area_evidence_unique").on(t.areaId, t.url, t.quote),
+  index("area_evidence_area_id_idx").on(t.areaId),
+  check("area_evidence_quote_not_empty", sql`length(${t.quote}) > 0`),
+]);
