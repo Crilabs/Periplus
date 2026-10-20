@@ -10,6 +10,7 @@ import type { DeliveryPackage } from "@/lib/domain/delivery/types";
  * X, which is gone now; A rose to version 2. `validPackage()` passes every check with `PREVIOUS` as predecessor.
  */
 
+export const SUBDIVISION_ID = "sd_01J9ZD00000000000000000001";
 export const AREA_ID = "ar_01J9ZD00000000000000000001";
 export const SPOT_A = "sp_01J9ZD00000000000000000001";
 export const SPOT_M = "sp_01J9ZD00000000000000000002";
@@ -24,7 +25,7 @@ export const WEATHER_POINT = "wp_01J9ZD00000000000000000001";
 export const INLAND_2NM = { lat: 35.23333, lon: 21.05 };
 
 const GENERATED_AT = "2026-10-20T06:00:00.000Z";
-const envelope = { schemaVersion: "1.0" as const, area: AREA_ID, dataVersion: 2, generatedAt: GENERATED_AT };
+const envelope = { schemaVersion: "2.0" as const, subdivision: SUBDIVISION_ID, dataVersion: 2, generatedAt: GENERATED_AT };
 const island: [number, number][] = [
   [21.0, 35.2],
   [21.1, 35.2],
@@ -104,7 +105,7 @@ const region: Region = {
   center: { lat: 35.25, lon: 21.05 },
   radiusNm: 3.5,
   polygon: { type: "Polygon", coordinates: [island] },
-  parentId: AREA_ID,
+  parentId: null,
   spotIds: [SPOT_A],
   character: { de: "Vor dem Meltemi geschützt." },
   profileVersion: 1,
@@ -122,14 +123,15 @@ const weatherPoint: WeatherPoint = {
 export function validPackage(): DeliveryPackage {
   return structuredClone({
     manifest: {
-      schemaVersion: "1.0",
-      area: {
-        id: AREA_ID,
-        key: "nisida-test",
-        name: "Testrevier",
+      schemaVersion: "2.0",
+      subdivision: {
+        id: SUBDIVISION_ID,
+        key: "XT-NISIDA",
+        name: "Testlandesteil",
         names: [],
         polygon: { type: "Polygon", coordinates: [[[20.9, 35.1], [21.3, 35.1], [21.3, 35.4], [20.9, 35.4], [20.9, 35.1]]] },
       },
+      areas: [{ id: AREA_ID, key: "nisida-test", names: [{ lang: "de", name: "Testrevier" }] }],
       dataVersion: 2,
       previousDataVersion: 1,
       generatedAt: GENERATED_AT,

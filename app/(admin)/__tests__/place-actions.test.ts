@@ -6,13 +6,13 @@ import { newId } from "@/lib/domain/ids";
 import { createReviewTask } from "@/lib/domain/review";
 import { GEOMETRY_CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
 import { testDb, withRollback } from "@/test/db";
-import { seedDeliveryArea as seedFixture } from "@/test/fixtures/delivery/area";
+import { seedDeliverySubdivision as seedFixture } from "@/test/fixtures/delivery/subdivision";
 import { buildBayScene } from "@/test/geometry/scene";
 import { lonLatOf } from "@/test/geometry/synthetic";
 import { insertTestSubdivision } from "@/test/text";
 
 /** The delivery fixture with its places A, M, B, C and K on the land of one subdivision; O belongs to none (spec 14). */
-async function seedDeliveryArea(tx: Db) {
+async function seedDeliverySubdivision(tx: Db) {
   const f = await seedFixture(tx);
   const { id } = await insertTestSubdivision(tx, `XT-${newId()}`, [21.0, 35.0, 21.75, 35.25]);
   const { A, M, B, C, K } = f.places;
@@ -233,7 +233,7 @@ describe("„Mit Ort zusammenlegen“", () => {
   it("merges, then starts the consolidation of the surviving object after the commit and goes to it", () =>
     withRollback(async (tx) => {
       currentDb = tx;
-      const f = await seedDeliveryArea(tx);
+      const f = await seedDeliverySubdivision(tx);
       const { A, M } = f.places;
       await mergePlaceAction(form({ placeId: A.placeId, intoPlaceId: M.placeId }));
       const [a] = await tx.select().from(places).where(eq(places.id, A.placeId));
@@ -246,7 +246,7 @@ describe("„Mit Ort zusammenlegen“", () => {
   it("dismisses a task a consolidation of the merged object opened after the merge locked its tasks (review minor 1)", () =>
     withRollback(async (tx) => {
       currentDb = tx;
-      const f = await seedDeliveryArea(tx);
+      const f = await seedDeliverySubdivision(tx);
       const { A, M } = f.places;
       let late: string | undefined;
       afterMerge = async (dropGeoObjectId) => {
@@ -262,7 +262,7 @@ describe("„Mit Ort zusammenlegen“", () => {
   it("a refusal returns to the place with the reason; the checkbox confirms a merge across subdivisions", () =>
     withRollback(async (tx) => {
       currentDb = tx;
-      const f = await seedDeliveryArea(tx);
+      const f = await seedDeliverySubdivision(tx);
       const { A, O, K } = f.places;
       await mergePlaceAction(form({ placeId: A.placeId, intoPlaceId: O.placeId }));
       expect(redirect).toHaveBeenLastCalledWith(`/places/${A.placeId}?mergeError=across_subdivisions`);
@@ -280,7 +280,7 @@ describe("„Mit Ort zusammenlegen“", () => {
   it("the merge stands when the follow-up run does not start", () =>
     withRollback(async (tx) => {
       currentDb = tx;
-      const f = await seedDeliveryArea(tx);
+      const f = await seedDeliverySubdivision(tx);
       startRun.mockRejectedValue(new Error("queue down"));
       await mergePlaceAction({ placeId: f.places.A.placeId, intoPlaceId: f.places.M.placeId });
       expect(redirect).toHaveBeenCalledWith(`/places/${f.places.M.placeId}?merged=${f.places.A.placeId}&mergedNoRun=1`);
@@ -299,7 +299,7 @@ describe("„Bestätigen“ / „Verwerfen“ / „Kein Ankerplatz“ in the pla
   it("sets the status, then starts the consolidation of the place's object after the commit", () =>
     withRollback(async (tx) => {
       currentDb = tx;
-      const f = await seedDeliveryArea(tx);
+      const f = await seedDeliverySubdivision(tx);
       const { A } = f.places;
       await setPlaceStatusAction(form({ placeId: A.placeId, status: "no_anchoring", from: "confirmed" }));
       const [a] = await tx.select().from(places).where(eq(places.id, A.placeId));
@@ -312,7 +312,7 @@ describe("„Bestätigen“ / „Verwerfen“ / „Kein Ankerplatz“ in the pla
   it("the status stands when the follow-up run does not start; a refusal returns with the reason", () =>
     withRollback(async (tx) => {
       currentDb = tx;
-      const f = await seedDeliveryArea(tx);
+      const f = await seedDeliverySubdivision(tx);
       startRun.mockRejectedValue(new Error("queue down"));
       await setPlaceStatusAction({ placeId: f.places.M.placeId, status: "rejected", from: "confirmed" });
       expect(redirect).toHaveBeenLastCalledWith(`/places/${f.places.M.placeId}?status=rejected&statusNoRun=1`);
@@ -327,7 +327,7 @@ describe("„Bestätigen“ / „Verwerfen“ / „Kein Ankerplatz“ in the pla
   it("a stale tab (the status changed since the page showed it) returns with ?statusError=changed and writes nothing (W4-2)", () =>
     withRollback(async (tx) => {
       currentDb = tx;
-      const f = await seedDeliveryArea(tx);
+      const f = await seedDeliverySubdivision(tx);
       const { K } = f.places;
       await setPlaceStatusAction(form({ placeId: K.placeId, status: "confirmed", from: "candidate" }));
       expect(redirect).toHaveBeenLastCalledWith(expect.stringMatching(new RegExp(`^/places/${K.placeId}\\?status=confirmed`)));

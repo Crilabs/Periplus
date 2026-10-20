@@ -5,14 +5,13 @@ import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects, places, reviewDecisions, reviewTasks } from "@/lib/db/schema";
 import { buildDelivery } from "@/lib/domain/delivery/build";
-import { addNames } from "@/lib/domain/gazetteer/names";
-import { newId, newPublicId } from "@/lib/domain/ids";
+import { newPublicId } from "@/lib/domain/ids";
 import { mergeCandidates, mergePlaceInto, PlaceMergeNotAllowed, type MergeResult } from "@/lib/domain/place-merge";
 import { createReviewTask } from "@/lib/domain/review";
 import { testDb, withRollback } from "@/test/db";
-import { seedDeliveryArea, type DeliveryFixture } from "@/test/fixtures/delivery/area";
+import { seedDeliverySubdivision, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
 import { memoryArchive } from "@/test/s3";
-import { insertNamedObject, insertTestSubdivision } from "@/test/text";
+import { insertNamedObject } from "@/test/text";
 
 /*
  * „Mit Ort zusammenlegen“ (ruling M6-P15) on the delivery fixture (rolled back): A and M are confirmed spots of one
@@ -23,17 +22,10 @@ import { insertNamedObject, insertTestSubdivision } from "@/test/text";
 const ADMIN = "admin@test.invalid";
 
 /**
- * The delivery fixture with the geo objects of A, M, B, C and K assigned to one subdivision (nearest land, spec 14);
- * O (a tile without area) belongs to none.
+ * The delivery fixture: the geo objects of A, M, B, C and K belong to its subdivision „Testlandesteil“ (nearest land,
+ * spec 14); O (the third tile) belongs to none.
  */
-async function seed(tx: Db): Promise<DeliveryFixture> {
-  const fixture = await seedDeliveryArea(tx);
-  const { id, geoObjectId } = await insertTestSubdivision(tx, `XT-${newId()}`, [21.0, 35.0, 21.75, 35.25]);
-  await addNames(tx, geoObjectId, [{ name: "Testlandesteil", language: "de", origin: "manual", isPreferred: true }]);
-  const { A, M, B, C, K } = fixture.places;
-  await tx.update(geoObjects).set({ subdivisionId: id }).where(inArray(geoObjects.id, [A, M, B, C, K].map((p) => p.geoObjectId)));
-  return fixture;
-}
+const seed = (tx: Db): Promise<DeliveryFixture> => seedDeliverySubdivision(tx);
 
 const openTask = (tx: Db, kind: "conflict" | "uncertain_change", geoObjectId: string, attribute: string) =>
   createReviewTask(tx, { kind, subjectType: "profile_attribute", subjectId: `${geoObjectId}:${attribute}`, context: { key: `${attribute}:k`, geoObjectId } });
@@ -257,11 +249,11 @@ describe("the next package after a merge", () => {
     withRollback(async (tx) => {
       const archive = memoryArchive();
       const f = await seed(tx);
-      const build = (date: string) => buildDelivery(tx, archive, f.areaId, { now: new Date(`${date}T08:00:00Z`), inCallerTransaction: true });
+      const build = (date: string) => buildDelivery(tx, archive, f.subdivisionId, { now: new Date(`${date}T08:00:00Z`), inCallerTransaction: true });
       expect(await build("2040-06-01")).toMatchObject({ status: "valid", dataVersion: 1 });
       await mergePlaceInto(tx, { placeId: f.places.A.placeId, intoPlaceId: f.places.M.placeId, decidedBy: ADMIN });
       expect(await build("2040-06-02")).toMatchObject({ status: "valid", dataVersion: 2 });
-      const spots = JSON.parse(new TextDecoder().decode((await archive.get(`deliveries/${f.areaPublicId}/2/spots.json`))!)) as SpotsFile;
+      const spots = JSON.parse(new TextDecoder().decode((await archive.get(`deliveries/${f.subdivisionKey}/2/spots.json`))!)) as SpotsFile;
       expect(spots.spots.find((s) => s.id === f.places.A.publicId)).toMatchObject({ mergedInto: f.places.M.publicId });
     }));
 });

@@ -1,18 +1,17 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { regionSchema } from "@/contract/v1";
+import { regionSchema } from "@/contract/v2";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 import { withRollback } from "@/test/db";
-import { seedDeliveryArea } from "@/test/fixtures/delivery/area";
-import { loadAreaScope } from "../load";
+import { seedDeliverySubdivision } from "@/test/fixtures/delivery/subdivision";
+import { loadSubdivisionScope } from "../load";
 import { assignRegions, mapRegion, namedRegions, REGION_TYPE, regionCharacter, regionIdAt, undeliveredSafety } from "../map-region";
 import { weatherPointId } from "../weather-points";
 import type { RegionSource } from "../types";
 
 const cfg = loadConfig("config").delivery;
-const AR = "ar_01J9ZD00000000000000000001";
 const MARGIN = cfg.regions.memberMarginNm;
 const id = (prefix: "sp" | "rg", n: number) => `${prefix}_01J9ZD${String(n).padStart(20, "0")}`;
 
@@ -126,19 +125,19 @@ describe("mapRegion", () => {
     ["g2", archipelago.publicId],
   ]);
 
-  it("region parent is the nearest delivered ancestor, else the area id", () => {
-    expect(mapRegion(island, { areaPublicId: AR, regionPublicIds: publicIds, spotIds: [], cfg }).parentId).toBe(archipelago.publicId);
-    // an ancestor not in the package (ended, no region kind, the area itself) is skipped
-    const deep = region(4, { parentGeoObjectIds: ["ended", "g2", "area"] });
-    expect(mapRegion(deep, { areaPublicId: AR, regionPublicIds: publicIds, spotIds: [], cfg }).parentId).toBe(archipelago.publicId);
-    expect(mapRegion(archipelago, { areaPublicId: AR, regionPublicIds: publicIds, spotIds: [], cfg }).parentId).toBe(AR);
-    expect(mapRegion(region(5, { parentGeoObjectIds: ["ended", "area"] }), { areaPublicId: AR, regionPublicIds: publicIds, spotIds: [], cfg }).parentId).toBe(AR);
+  it("region parent is the nearest delivered ancestor, else null", () => {
+    expect(mapRegion(island, { regionPublicIds: publicIds, spotIds: [], cfg }).parentId).toBe(archipelago.publicId);
+    // an ancestor not in the package (ended, no region kind, an administrative unit) is skipped
+    const deep = region(4, { parentGeoObjectIds: ["ended", "g2", "admin"] });
+    expect(mapRegion(deep, { regionPublicIds: publicIds, spotIds: [], cfg }).parentId).toBe(archipelago.publicId);
+    expect(mapRegion(archipelago, { regionPublicIds: publicIds, spotIds: [], cfg }).parentId).toBeNull();
+    expect(mapRegion(region(5, { parentGeoObjectIds: ["ended", "admin"] }), { regionPublicIds: publicIds, spotIds: [], cfg }).parentId).toBeNull();
   });
 
   it("coast_section maps to type coast", () => {
     expect(REGION_TYPE.coast_section).toBe("coast");
     expect(REGION_TYPE.island).toBe("island");
-    expect(mapRegion(region(6, { type: "coast_section" }), { areaPublicId: AR, regionPublicIds: publicIds, spotIds: [], cfg }).type).toBe("coast");
+    expect(mapRegion(region(6, { type: "coast_section" }), { regionPublicIds: publicIds, spotIds: [], cfg }).type).toBe("coast");
   });
 
   it("maps facts, character, rounding, sorted spot ids and a radius of at least 0.1 nm", () => {
@@ -149,7 +148,7 @@ describe("mapRegion", () => {
       names: [{ lang: "en", name: "Nisida" }],
       profile: profile({ meltemi_exposure: 0.7, ferry_traffic: "moderate", charter_bases: ["X"], supply_ports: [] }),
     });
-    const body = mapRegion(src, { areaPublicId: AR, regionPublicIds: publicIds, spotIds: [id("sp", 9), id("sp", 1)], cfg });
+    const body = mapRegion(src, { regionPublicIds: publicIds, spotIds: [id("sp", 9), id("sp", 1)], cfg });
     expect(body).toMatchObject({
       id: id("rg", 1),
       name: "Region 1",
@@ -166,11 +165,11 @@ describe("mapRegion", () => {
 
   it("ferry traffic none/low/high maps to none/light/heavy; missing facts are null, no facts omit the field", () => {
     const ferry = (v: string) =>
-      mapRegion(region(1, { profile: profile({ ferry_traffic: v }) }), { areaPublicId: AR, regionPublicIds: publicIds, spotIds: [], cfg }).facts;
+      mapRegion(region(1, { profile: profile({ ferry_traffic: v }) }), { regionPublicIds: publicIds, spotIds: [], cfg }).facts;
     expect(ferry("none")).toEqual({ meltemiExposure: null, ferryTraffic: "none", charterBase: null, supplyPort: null });
     expect(ferry("low")?.ferryTraffic).toBe("light");
     expect(ferry("high")?.ferryTraffic).toBe("heavy");
-    const bare = mapRegion(region(1), { areaPublicId: AR, regionPublicIds: publicIds, spotIds: [], cfg });
+    const bare = mapRegion(region(1), { regionPublicIds: publicIds, spotIds: [], cfg });
     expect(bare).not.toHaveProperty("facts");
     expect(bare).not.toHaveProperty("character");
     expect(bare).not.toHaveProperty("polygon");
@@ -227,16 +226,16 @@ describe("undeliveredSafety (final review I-3)", () => {
 });
 
 describe("regions of the delivery fixture", () => {
-  it("map from the loader to contract regions: the island under the archipelago, the archipelago under the area", async () => {
+  it("map from the loader to contract regions: the island under the archipelago, the archipelago at the top (its parent is the admin region)", async () => {
     await withRollback(async (tx) => {
-      const f = await seedDeliveryArea(tx);
-      const scope = await loadAreaScope(tx, f.areaId, cfg, await dbToday(tx));
+      const f = await seedDeliverySubdivision(tx);
+      const scope = await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx));
       const { regions } = namedRegions(scope.regions);
       const spots = scope.spots.map((s) => ({ id: s.publicId, position: s.position }));
       const { regionIdBySpot, spotIdsByRegion } = assignRegions(spots, regions, MARGIN);
       const publicIds = new Map(regions.map((r) => [r.geoObjectId, r.publicId]));
       const bodies = regions.map((r) =>
-        mapRegion(r, { areaPublicId: f.areaPublicId, regionPublicIds: publicIds, spotIds: spotIdsByRegion.get(r.publicId) ?? [], cfg }),
+        mapRegion(r, { regionPublicIds: publicIds, spotIds: spotIdsByRegion.get(r.publicId) ?? [], cfg }),
       );
       const islandBody = bodies.find((b) => b.id === f.islandPublicId)!;
       const archipelagoBody = bodies.find((b) => b.id === f.archipelagoPublicId)!;
@@ -249,7 +248,7 @@ describe("regions of the delivery fixture", () => {
       // A lies in the bay notch, outside the island's land polygon but within memberMarginNm of it (ruling M6-C-R1)
       expect(regionIdBySpot.get(f.places.A.publicId!)).toBe(f.islandPublicId);
       expect(islandBody.spotIds).toContain(f.places.A.publicId!);
-      expect(archipelagoBody.parentId).toBe(f.areaPublicId);
+      expect(archipelagoBody.parentId).toBeNull();
       for (const b of bodies) expect(regionSchema.safeParse({ ...b, profileVersion: 1, validFrom: "2026-10-19" }).error?.issues).toBeUndefined();
     });
   });

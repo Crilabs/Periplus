@@ -50,7 +50,7 @@ describe("checkJsonSchema", () => {
   });
 
   it("reports a wrong envelope at the root", () => {
-    const errors = checkJsonSchema("spots.json", { ...spotsFile([]), schemaVersion: "2.0" });
+    const errors = checkJsonSchema("spots.json", { ...spotsFile([]), schemaVersion: "1.0" });
     expect(errors).toEqual([expect.objectContaining({ path: "/schemaVersion" })]);
     expect(checkJsonSchema("coast.geojson", { type: "FeatureCollection" })).toEqual([
       expect.objectContaining({ path: "" }),

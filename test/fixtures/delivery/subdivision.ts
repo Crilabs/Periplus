@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { documents, geoNames, geoObjects, landPolygons, places, profileSummaries, restrictedAreas, tileGeoObjects, tiles } from "@/lib/db/schema";
+import { documents, geoNames, geoObjects, landPolygons, places, profileSummaries, restrictedAreas, subdivisions, tileGeoObjects, tiles } from "@/lib/db/schema";
 import type { PlaceKind, PlaceStatus } from "@/lib/db/schema/geo";
 import type { AttributeProvenance } from "@/lib/domain/consolidation/types";
 import { newId, newPublicId, type PublicIdPrefix } from "@/lib/domain/ids";
@@ -9,39 +9,42 @@ import { insertProfile, insertSource, insertTextFact, provenanceEntry } from "@/
 import { insertNamedObject, insertTestTile } from "@/test/text";
 
 /*
- * A synthetic delivery area around 21.0° E / 35.2° N (outside the pilot box), for `withRollback` only — never commit
- * these rows (M5 bundle F NOTE). Only test files in the vitest project `delivery-fixture` may seed it: they run one
- * after another, since two fixtures in parallel transactions wait on each other's unique keys (fixed tiles, area key,
- * public ids). Two tiles: the west one holds an island (land polygon with a bay notch in its north coast), its
- * archipelago and a cape; the east one a marina and an excluded place inside a military area.
+ * A synthetic delivery subdivision around 21.0° E / 35.2° N (outside the pilot box), for `withRollback` only — never
+ * commit these rows (M5 bundle F NOTE). Only test files in the vitest project `delivery-fixture` may seed it: they run
+ * one after another, since two fixtures in parallel transactions wait on each other's unique keys (fixed tiles,
+ * subdivision key, public ids). The subdivision's polygon is its two tiles (its run scope; the third tile east of them
+ * only touches it): the west one holds an island (land polygon with a bay notch in its north coast), its archipelago
+ * (child of the subdivision's admin region) and a cape; the east one a marina and an excluded place inside a military
+ * area. Every delivered object carries the subdivision (`geo_objects.subdivision_id`). A sailing area (Revier, type
+ * `area`, `ar_…`) is linked to both tiles (`tile_geo_objects`) and is listed in the manifest only.
  *
  *   A  anchorage in the bay: complete profile, one text source with document and an `ok` summary
  *   M  marina, shelter 0.9 in every sector
  *   B  anchorage without `shelter.W` (incomplete)
  *   C  `no_anchoring` inside the military area (`restricted:military:<id>`)
- *   K  candidate (not delivered); O a confirmed place in a tile of no area (not delivered)
+ *   K  candidate (not delivered); O a confirmed place of no subdivision in the third tile (not delivered)
  *   T  POI taverna (`derived.importance` 2) 1 nm south of A, on the island
  *
  * Public ids are fixed (snapshot tests) unless `shift` is set; `shift` moves everything east (`lon`) and north (`lat`)
- * by that many degrees (multiples of 0.25 keep the two-tile layout) so a second area fits into the same transaction.
+ * by that many degrees (multiples of 0.25 keep the two-tile layout) so a second subdivision (own `key`) fits into the same transaction.
  * `stable` also fixes what else reaches a package file (the build's snapshot test): the island's and the cape's geo
  * object ids (weather point ids), the land polygon's import date (`extractedAt`) and the URL of A's document.
  *
- * `committed` is for the one test that must commit the area (the build's pool path, ruling M6-E-R2), shifted to
+ * `committed` is for the one test that must commit the subdivision (the build's pool path, ruling M6-E-R2), shifted to
  * −150.1° / −50.1° (`COMMITTED_SHIFT`), never 21.0° / 35.2°: its tiles are taken over from an earlier run (tiles are
- * never deleted) and A's OSM id is unique; `endCommittedDeliveryArea` ends the rows afterwards.
+ * never deleted) and A's OSM id is unique; `endCommittedDeliverySubdivision` ends the rows afterwards.
  *
- * `seedE2eDeliveryArea` commits the same layout once for the e2e run (ruling M6-P29): config key `e2e-delivery`, shifted
- * to −140.0…−139.5° E × −40.0…−39.75° N (`E2E_SHIFT`), away from every other test box; it stays between runs.
+ * `seedE2eDeliverySubdivision` commits the same layout once for the e2e run (ruling M6-P29): key `XT-E2E-DELIVERY`,
+ * shifted to −140.0…−139.5° E × −40.0…−39.75° N (`E2E_SHIFT`), away from every other test box; it stays between runs.
  */
 
 const LAT_PER_NM = 1 / 60;
 
-/** The shift of the committed fixture: the area spans −150.25…−149.75° E × −50.25…−50.0° N around −150.1° / −50.1°. */
+/** The shift of the committed fixture: the subdivision spans −150.25…−149.75° E × −50.25…−50.0° N around −150.1° / −50.1°. */
 export const COMMITTED_SHIFT = { lon: -171.25, lat: -85.25 } as const;
 
-/** The e2e area (ruling M6-P29): its config key and its shift, −140.0…−139.5° E × −40.0…−39.75° N. */
-export const E2E_DELIVERY_KEY = "e2e-delivery";
+/** The e2e subdivision (ruling M6-P29): its key and its shift, −140.0…−139.5° E × −40.0…−39.75° N. */
+export const E2E_DELIVERY_KEY = "XT-E2E-DELIVERY";
 export const E2E_SHIFT = { lon: -161, lat: -75 } as const;
 
 /** A fixed public id: `<prefix>_01J9ZD` and 20 digits (valid Crockford base 32). */
@@ -107,9 +110,14 @@ export function spotAProvenance(factId: string): Record<string, AttributeProvena
 export type FixturePlace = { placeId: string; geoObjectId: string; publicId: string | null };
 
 export type DeliveryFixture = {
+  subdivisionId: string;
+  subdivisionPublicId: string;
+  subdivisionKey: string;
+  /** The subdivision's admin region (`subdivisions.geo_object_id`), parent of the archipelago. */
+  regionId: string;
+  /** The sailing area linked to both tiles (manifest `areas`). */
   areaId: string;
   areaPublicId: string;
-  areaKey: string;
   tileIds: [string, string];
   outsideTileId: string;
   islandId: string;
@@ -128,7 +136,7 @@ export type DeliveryFixture = {
   documentUrl: string;
   /** Lon/lat of A, M and T (for distance checks). */
   positions: { A: [number, number]; M: [number, number]; T: [number, number] };
-  /** `[west, south, east, north]` of the area's tiles. */
+  /** `[west, south, east, north]` of the subdivision's tiles. */
   bbox: [number, number, number, number];
 };
 
@@ -139,30 +147,31 @@ const square = (w: number, s: number, e: number, n: number): GeoJSON.Polygon => 
 
 type SeedOptions = { key?: string; shift?: { lon: number; lat: number }; stable?: boolean; committed?: boolean };
 
-export async function seedDeliveryArea(tx: Db, opts: SeedOptions = {}): Promise<DeliveryFixture> {
+export async function seedDeliverySubdivision(tx: Db, opts: SeedOptions = {}): Promise<DeliveryFixture> {
   if (process.env.PERIPLUS_TEST_PROJECT !== "delivery-fixture") {
-    throw new Error("seedDeliveryArea runs only in the vitest project delivery-fixture (add the file to DELIVERY_FIXTURE_TESTS)");
+    throw new Error("seedDeliverySubdivision runs only in the vitest project delivery-fixture (add the file to DELIVERY_FIXTURE_TESTS)");
   }
   const shift = opts.shift ?? { lon: 0, lat: 0 };
   if (opts.committed && (shift.lon !== COMMITTED_SHIFT.lon || shift.lat !== COMMITTED_SHIFT.lat || !opts.key)) {
     throw new Error("a committed fixture lies at COMMITTED_SHIFT and has its own key");
   }
-  return seedArea(tx, opts);
+  return seedSubdivision(tx, opts);
 }
 
 /**
- * The e2e area, committed by `e2e/global-setup.ts` once (it stays; the e2e run is a separate process, so the vitest
- * project guard of `seedDeliveryArea` does not apply). `tx` is the e2e setup's own transaction.
+ * The e2e subdivision, committed by `e2e/global-setup.ts` once (it stays; the e2e run is a separate process, so the
+ * vitest project guard of `seedDeliverySubdivision` does not apply). `tx` is the e2e setup's own transaction.
  */
-export async function seedE2eDeliveryArea(tx: Db): Promise<DeliveryFixture> {
-  return seedArea(tx, { key: E2E_DELIVERY_KEY, shift: E2E_SHIFT, committed: true });
+export async function seedE2eDeliverySubdivision(tx: Db): Promise<DeliveryFixture> {
+  return seedSubdivision(tx, { key: E2E_DELIVERY_KEY, shift: E2E_SHIFT, committed: true });
 }
 
 /**
- * Ends every valid row of the e2e area's box (geo objects, places, restricted areas, tile labels, land polygons), for a
- * test database whose package files were lost (e.g. a wiped S3 volume): the next setup seeds and builds afresh.
+ * Ends every valid row of the e2e subdivision's box (subdivision, geo objects, places, restricted areas, tile labels,
+ * land polygons), for a test database whose package files were lost (e.g. a wiped S3 volume): the next setup seeds and
+ * builds afresh.
  */
-export async function endE2eDeliveryArea(db: Db): Promise<void> {
+export async function endE2eDeliverySubdivision(db: Db): Promise<void> {
   // the three tiles of the layout, shrunk a little so the neighbouring tiles that only touch them stay untouched
   const inset = 0.001;
   const [w, s, e, n] = [21.0 + E2E_SHIFT.lon + inset, 35.0 + E2E_SHIFT.lat + inset, 21.75 + E2E_SHIFT.lon - inset, 35.25 + E2E_SHIFT.lat - inset];
@@ -171,13 +180,14 @@ export async function endE2eDeliveryArea(db: Db): Promise<void> {
   await db.execute(sql`
     update places set valid_to = ${today}
     where valid_to is null and geo_object_id in (select id from geo_objects where geom && ${box} and valid_to is null)`);
+  await db.execute(sql`update subdivisions set valid_to = ${today} where valid_to is null and key = ${E2E_DELIVERY_KEY}`);
   await db.execute(sql`update geo_objects set valid_to = ${today} where valid_to is null and geom && ${box}`);
   await db.execute(sql`update restricted_areas set valid_to = ${today} where valid_to is null and geom && ${box}`);
-  await db.execute(sql`update tiles set area_id = null where bbox && ${box}`);
+  await db.execute(sql`update tiles set area_id = null, subdivision_id = null where bbox && ${box}`);
   await db.execute(sql`delete from land_polygons where geom && ${box}`);
 }
 
-async function seedArea(tx: Db, opts: SeedOptions): Promise<DeliveryFixture> {
+async function seedSubdivision(tx: Db, opts: SeedOptions): Promise<DeliveryFixture> {
   const shift = opts.shift ?? { lon: 0, lat: 0 };
   const shifted = shift.lon !== 0 || shift.lat !== 0;
   if (opts.stable && shifted) throw new Error("a stable fixture has no shift");
@@ -185,29 +195,57 @@ async function seedArea(tx: Db, opts: SeedOptions): Promise<DeliveryFixture> {
   const x = (lon: number) => Number((lon + shift.lon).toFixed(6));
   const y = (lat: number) => Number((lat + shift.lat).toFixed(6));
   const id = (prefix: PublicIdPrefix, n: number) => (shifted ? newPublicId(prefix) : fixedId(prefix, n));
-  const areaKey = opts.key ?? "delivery-test";
+  const subdivisionKey = opts.key ?? "XT-DELIVERY";
   const col = (c: number) => c + shift.lon * 4;
   const row = 500 + shift.lat * 4;
-  const tile = async (tileId: string, areaId: string | null) => {
+  const tile = async (tileId: string, subdivisionId: string | null) => {
     // a committed fixture takes over the tiles of an earlier run (ended rows, tiles are never deleted)
-    if (opts.committed) await tx.update(tiles).set({ areaId }).where(eq(tiles.id, tileId));
-    return insertTestTile(tx, tileId, areaId);
+    if (opts.committed) await tx.update(tiles).set({ areaId: null, subdivisionId }).where(eq(tiles.id, tileId));
+    return insertTestTile(tx, tileId, null, subdivisionId);
   };
 
-  // Area polygon = the two tiles.
+  // Subdivision polygon (and land) = the two tiles; its admin region carries the names.
+  const polygon = geomFromGeoJson({ type: "MultiPolygon", coordinates: [square(x(21.0), y(35.0), x(21.5), y(35.25)).coordinates] });
+  const [region] = await tx
+    .insert(geoObjects)
+    .values({ type: "admin_region", origin: "manual", adminLevel: 4, tags: { country: "XT" }, geom: polygon })
+    .returning({ id: geoObjects.id });
+  const regionId = region!.id;
+  await tx.insert(geoNames).values([
+    { geoObjectId: regionId, name: "Testlandesteil", nameNormalized: "testlandesteil", language: "de", script: "latin", origin: "manual" },
+    { geoObjectId: regionId, name: "Test Subdivision", nameNormalized: "test subdivision", language: "en", script: "latin", origin: "manual" },
+  ]);
+  const subdivisionPublicId = id("sd", 1);
+  const [subdivision] = await tx
+    .insert(subdivisions)
+    .values({ publicId: subdivisionPublicId, key: subdivisionKey, country: "XT", geoObjectId: regionId, geom: polygon, landGeom: polygon })
+    .returning({ id: subdivisions.id });
+  const subdivisionId = subdivision!.id;
+  const west = await tile(`q025:${col(804)}:${row}`, subdivisionId);
+  const east = await tile(`q025:${col(805)}:${row}`, subdivisionId);
+  const outsideTileId = await tile(`q025:${col(806)}:${row}`, null);
+
+  // The sailing area over both tiles: no parent, no subdivision, only linked to the tiles.
   const areaPublicId = id("ar", 1);
   const [area] = await tx
     .insert(geoObjects)
-    .values({ type: "area", origin: "manual", geom: geomFromGeoJson(square(x(21.0), y(35.0), x(21.5), y(35.25))), publicId: areaPublicId, configKey: areaKey })
+    .values({
+      type: "area",
+      origin: "manual",
+      geom: geomFromGeoJson(square(x(21.0), y(35.0), x(21.5), y(35.25))),
+      publicId: areaPublicId,
+      configKey: `${subdivisionKey.toLowerCase()}-waters`,
+    })
     .returning({ id: geoObjects.id });
   const areaId = area!.id;
   await tx.insert(geoNames).values([
     { geoObjectId: areaId, name: "Testrevier", nameNormalized: "testrevier", language: "de", script: "latin", origin: "manual" },
     { geoObjectId: areaId, name: "Test Waters", nameNormalized: "test waters", language: "en", script: "latin", origin: "manual" },
   ]);
-  const west = await tile(`q025:${col(804)}:${row}`, areaId);
-  const east = await tile(`q025:${col(805)}:${row}`, areaId);
-  const outsideTileId = await tile(`q025:${col(806)}:${row}`, null);
+  await tx.insert(tileGeoObjects).values([
+    { tileId: west, geoObjectId: areaId },
+    { tileId: east, geoObjectId: areaId },
+  ]);
 
   // Island with a bay notch in its north coast (21.12–21.14, down to 35.13).
   const island: GeoJSON.Polygon = {
@@ -230,7 +268,7 @@ async function seedArea(tx: Db, opts: SeedOptions): Promise<DeliveryFixture> {
     .values({ geom: geomFromGeoJson(island), datasetVersion: "test", ...(stable ? { createdAt: STABLE.landCreatedAt } : {}) });
 
   const archipelagoPublicId = id("rg", 2);
-  const archipelagoId = await insertNamedObject(tx, { type: "archipelago", names: [{ name: "Test Islands" }], lon: x(21.15), lat: y(35.1), tiles: [west], parentId: areaId });
+  const archipelagoId = await insertNamedObject(tx, { type: "archipelago", names: [{ name: "Test Islands" }], lon: x(21.15), lat: y(35.1), tiles: [west], parentId: regionId, subdivisionId });
   await tx.update(geoObjects).set({ publicId: archipelagoPublicId }).where(sql`${geoObjects.id} = ${archipelagoId}`);
 
   const islandPublicId = id("rg", 1);
@@ -243,6 +281,7 @@ async function seedArea(tx: Db, opts: SeedOptions): Promise<DeliveryFixture> {
       geom: geomFromGeoJson(island),
       publicId: islandPublicId,
       parentId: archipelagoId,
+      subdivisionId,
       osmId: null,
     })
     .returning({ id: geoObjects.id });
@@ -268,6 +307,7 @@ async function seedArea(tx: Db, opts: SeedOptions): Promise<DeliveryFixture> {
     lon: x(21.2),
     lat: y(35.15),
     tiles: [west],
+    subdivisionId,
   });
 
   const [restricted] = await tx
@@ -287,6 +327,8 @@ async function seedArea(tx: Db, opts: SeedOptions): Promise<DeliveryFixture> {
     statusReason?: string;
     publicId: string | null;
     tile: string;
+    /** Default the fixture's subdivision. */
+    subdivisionId?: string | null;
   }): Promise<FixturePlace> => {
     const geoObjectId = await insertNamedObject(tx, {
       type: o.type ?? "bay",
@@ -294,6 +336,7 @@ async function seedArea(tx: Db, opts: SeedOptions): Promise<DeliveryFixture> {
       lon: o.lon,
       lat: o.lat,
       tiles: [o.tile],
+      subdivisionId: o.subdivisionId === undefined ? subdivisionId : o.subdivisionId,
     });
     const [p] = await tx
       .insert(places)
@@ -373,18 +416,21 @@ async function seedArea(tx: Db, opts: SeedOptions): Promise<DeliveryFixture> {
   await insertProfile(tx, C.geoObjectId, excludedC, computedProvenance(Object.keys(excludedC)), { confidence: 0.4 });
 
   const K = await place({ lon: x(21.22), lat: y(35.2), name: "Kandidat", status: "candidate", publicId: null, tile: west });
-  const O = await place({ lon: x(21.6), lat: y(35.1), name: "Elsewhere", publicId: id("sp", 5), tile: outsideTileId });
+  const O = await place({ lon: x(21.6), lat: y(35.1), name: "Elsewhere", publicId: id("sp", 5), tile: outsideTileId, subdivisionId: null });
 
   const posT: [number, number] = [posA[0], Number((posA[1] - LAT_PER_NM).toFixed(6))];
   const poiPublicId = id("hl", 1);
-  const poiId = await insertNamedObject(tx, { type: "poi", names: [{ name: "Taverna Vathi" }], lon: posT[0], lat: posT[1], category: "food", tiles: [west] });
+  const poiId = await insertNamedObject(tx, { type: "poi", names: [{ name: "Taverna Vathi" }], lon: posT[0], lat: posT[1], category: "food", tiles: [west], subdivisionId });
   await tx.update(geoObjects).set({ publicId: poiPublicId }).where(sql`${geoObjects.id} = ${poiId}`);
   await insertProfile(tx, poiId, { "derived.importance": 2 }, { "derived.importance": provenanceEntry("derived", { confidence: 1 }) }, { confidence: null });
 
   return {
+    subdivisionId,
+    subdivisionPublicId,
+    subdivisionKey,
+    regionId,
     areaId,
     areaPublicId,
-    areaKey,
     tileIds: [west, east],
     outsideTileId,
     islandId,
@@ -406,17 +452,19 @@ async function seedArea(tx: Db, opts: SeedOptions): Promise<DeliveryFixture> {
 }
 
 /**
- * Ends what a committed fixture wrote that area, tile, place and review queries could meet: geo objects and places
- * end today (never deleted), the area's tiles belong to no area again, its restricted area ends and the land polygons
- * in its box are deleted. Append-only rows (profiles, deliveries) stay, attached to ended objects.
+ * Ends what a committed fixture wrote that subdivision, tile, place and review queries could meet: the subdivision,
+ * geo objects and places end today (never deleted), its tiles belong to no subdivision again, its restricted area
+ * ends and the land polygons in its box are deleted. Append-only rows (profiles, deliveries) stay, attached to ended
+ * objects.
  */
-export async function endCommittedDeliveryArea(db: Db, f: DeliveryFixture): Promise<void> {
-  const objectIds = [f.areaId, f.islandId, f.archipelagoId, f.capeId, f.poiId, ...Object.values(f.places).map((p) => p.geoObjectId)];
+export async function endCommittedDeliverySubdivision(db: Db, f: DeliveryFixture): Promise<void> {
+  const objectIds = [f.regionId, f.areaId, f.islandId, f.archipelagoId, f.capeId, f.poiId, ...Object.values(f.places).map((p) => p.geoObjectId)];
   const [w, s, e, n] = f.bbox;
   const today = sql`current_date`;
   await db.update(places).set({ validTo: today }).where(and(inArray(places.geoObjectId, objectIds), isNull(places.validTo)));
   await db.update(geoObjects).set({ validTo: today }).where(and(inArray(geoObjects.id, objectIds), isNull(geoObjects.validTo)));
   await db.update(restrictedAreas).set({ validTo: today }).where(and(eq(restrictedAreas.id, f.restrictedAreaId), isNull(restrictedAreas.validTo)));
-  await db.update(tiles).set({ areaId: null }).where(eq(tiles.areaId, f.areaId));
+  await db.update(subdivisions).set({ validTo: today }).where(and(eq(subdivisions.id, f.subdivisionId), isNull(subdivisions.validTo)));
+  await db.update(tiles).set({ subdivisionId: null }).where(eq(tiles.subdivisionId, f.subdivisionId));
   await db.execute(sql`delete from land_polygons where geom && ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`);
 }

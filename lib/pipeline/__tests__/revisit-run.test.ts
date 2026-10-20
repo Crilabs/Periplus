@@ -82,7 +82,7 @@ describe("simulated revisit on the fixture area", () => {
         const simulated = await tx.select({ runId: documentVersions.runId }).from(documentVersions).where(eq(documentVersions.simulated, true));
         expect(new Set(simulated.filter((s) => s.runId !== null && revisits.some((r) => r.id === s.runId)).map((s) => s.runId))).toEqual(new Set([revisits[0]!.id]));
 
-        const after = await buildDelivery(tx, archive, fx.areaId, { now: new Date("2026-06-08T08:00:00Z"), inCallerTransaction: true });
+        const after = await buildDelivery(tx, archive, fx.subdivisionId, { now: new Date("2026-06-08T08:00:00Z"), inCallerTransaction: true });
         expect(after).toMatchObject({ status: "valid", dataVersion: 2 });
         // the old version is the old value: the taverna open before the revisit, closed after it
         const old = (await spotAsOf(tx, archive, fx.publicIds.A, "2026-05-15"))!;

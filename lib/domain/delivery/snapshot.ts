@@ -16,7 +16,7 @@ export type BuildSnapshot = { snapshot: string; xmin: string };
 /**
  * Runs `read` in a new REPEATABLE READ read-only transaction whose first statement captures its snapshot, and returns
  * the snapshot with read's result. Pass the root pool handle, not a transaction: a nested `db.transaction` would be a
- * savepoint in the caller's isolation level and its snapshot. Take the area lock before calling (in the writing
+ * savepoint in the caller's isolation level and its snapshot. Take the subdivision lock before calling (in the writing
  * transaction): the snapshot is taken here, after the lock, so it sees the previous build's commit.
  */
 export async function openBuildSnapshot<T>(

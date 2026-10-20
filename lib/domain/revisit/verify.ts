@@ -205,8 +205,7 @@ export async function asOfPlan(db: Db, subdivisionKey: string): Promise<AsOfPlan
   const around = async (side: "before" | "after"): Promise<DeliveryPoint | null> => {
     const { rows } = await db.execute<{ data_version: number; generated_at: Date | string }>(sql`
       select d.data_version, d.generated_at
-      -- TODO(plan 14a task 10): deliveries are per subdivision then (deliveries.subdivision_id); until then by area key
-      from deliveries d join geo_objects a on a.id = d.area_id and a.type = 'area' and a.config_key = ${subdivisionKey}
+      from deliveries d join subdivisions s on s.id = d.subdivision_id and s.key = ${subdivisionKey} and s.valid_to is null
       where d.status = 'valid'
         and ${side === "before" ? sql`d.generated_at < ${revisitAt}::timestamptz` : sql`d.generated_at > ${revisitAt}::timestamptz`}
       order by d.data_version ${side === "before" ? sql`desc` : sql`asc`} limit 1
@@ -227,7 +226,7 @@ export async function asOfPlan(db: Db, subdivisionKey: string): Promise<AsOfPlan
 export type AsOfCheck = { ok: boolean; status: number; dataVersion: number | null; reason?: string };
 
 /**
- * `GET <baseUrl>/api/v1/spots/<spotId>[?asOf=<asOf>]` with the API key (never logged or returned): ok when the API
+ * `GET <baseUrl>/api/v2/spots/<spotId>[?asOf=<asOf>]` with the API key (never logged or returned): ok when the API
  * answers 200 with `expect.dataVersion` and, when given, `expect.spot` (compared as canonical JSON: the value, not only
  * its number, ruling M7-G-R3). `label` names the expected state in the reason. A network error is status 0.
  */
@@ -242,7 +241,7 @@ async function checkSpotApi(input: {
 }): Promise<AsOfCheck> {
   const doFetch = input.fetch ?? fetch;
   const query = input.asOf === undefined ? "" : `?asOf=${encodeURIComponent(input.asOf)}`;
-  const url = `${input.baseUrl.replace(/\/+$/, "")}/api/v1/spots/${encodeURIComponent(input.spotId)}${query}`;
+  const url = `${input.baseUrl.replace(/\/+$/, "")}/api/v2/spots/${encodeURIComponent(input.spotId)}${query}`;
   let res: Response;
   try {
     res = await doFetch(url, { headers: { Authorization: `Bearer ${input.key}`, Accept: "application/json" } });
@@ -269,7 +268,7 @@ async function checkSpotApi(input: {
 }
 
 /**
- * `GET <baseUrl>/api/v1/spots/<spotId>?asOf=<asOf>` with the API key (never logged or returned): ok when the API
+ * `GET <baseUrl>/api/v2/spots/<spotId>?asOf=<asOf>` with the API key (never logged or returned): ok when the API
  * answers 200 with the data version the spot had before the revisit (`expectBefore.dataVersion`) and, when given, the
  * spot as it was delivered then (`expectBefore.spot`, compared as canonical JSON: the old value, not only its number,
  * ruling M7-G-R3). A network error is status 0.
@@ -286,7 +285,7 @@ export function checkAsOf(input: {
 }
 
 /**
- * `GET <baseUrl>/api/v1/spots/<spotId>` (no asOf): ok when the API answers the spot's newest delivered state of the
+ * `GET <baseUrl>/api/v2/spots/<spotId>` (no asOf): ok when the API answers the spot's newest delivered state of the
  * simulation clone (`expectCurrent`, a package built only in the simulation after the revisit). A web on another
  * database answers another state, so this tells the simulation web apart from the development or production web
  * (final review A M-4).

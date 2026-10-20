@@ -3,12 +3,12 @@ import { SCHEMA_VERSION } from "@/contract";
 import { withApiClient } from "@/lib/api/handler";
 import { apiBody } from "@/lib/api/respond";
 import { getDb } from "@/lib/db/client";
-import { cacheMaxAgeSeconds, listAreas } from "@/lib/domain/delivery/read";
+import { cacheMaxAgeSeconds, listSubdivisions } from "@/lib/domain/delivery/read";
 
-/** Every area with its current data version (spec 08 `GET /areas`). */
+/** Every active subdivision with its current data version (spec 08, spec 14 `GET /subdivisions`). */
 const handler = withApiClient("delivery:read", async (req) => {
-  const areas = await listAreas(getDb());
-  return apiBody(req, { schemaVersion: SCHEMA_VERSION, areas }, { schemaVersion: SCHEMA_VERSION, dataVersion: null, maxAgeSeconds: cacheMaxAgeSeconds() });
+  const subdivisions = await listSubdivisions(getDb());
+  return apiBody(req, { schemaVersion: SCHEMA_VERSION, subdivisions }, { schemaVersion: SCHEMA_VERSION, dataVersion: null, maxAgeSeconds: cacheMaxAgeSeconds() });
 });
 
 export async function GET(req: Request): Promise<Response> {

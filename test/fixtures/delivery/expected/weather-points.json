@@ -1,6 +1,6 @@
 {
-  "schemaVersion": "1.0",
-  "area": "ar_01J9ZD00000000000000000001",
+  "schemaVersion": "2.0",
+  "subdivision": "sd_01J9ZD00000000000000000001",
   "dataVersion": 1,
   "generatedAt": "2040-06-01T08:00:00.000Z",
   "points": [

@@ -7,6 +7,7 @@ import { geomFromGeoJson } from "@/lib/db/geometry";
 import { deliveredObjects, deliveries, geoObjects } from "@/lib/db/schema";
 import { canonicalJson } from "@/lib/domain/facts/schema";
 import { withRollback } from "@/test/db";
+import { insertTestSubdivision } from "@/test/text";
 import { assignVersions, contentHash, latestDelivered, type DeliveredEntry, type ObjectDraft } from "../versioning";
 
 const BODY: SpotBody = Object.fromEntries(
@@ -76,7 +77,7 @@ describe("assignVersions", () => {
     expect(objects[0]).toMatchObject({ profileVersion: 3, validFrom: "2026-10-20", status: "created" });
   });
 
-  it("the next version follows the highest one of the public id, also from another area (ruling M6-P13)", () => {
+  it("the next version follows the highest one of the public id, also from another subdivision (ruling M6-P13)", () => {
     const latest = new Map([[SP, entry({ profileVersion: 2, maxVersion: 5 })]]);
     expect(assignVersions([draft(withSector(0.3))], latest, "2026-10-20").objects[0]).toMatchObject({ profileVersion: 6, status: "updated" });
     expect(assignVersions([draft()], latest, "2026-10-20").objects[0]).toMatchObject({ profileVersion: 2, status: "same" });
@@ -88,6 +89,7 @@ describe("assignVersions", () => {
   });
 });
 
+/** A pilot area of contract 1.0 (deliveries by `area_id`). */
 async function insertArea(tx: Db): Promise<string> {
   const [row] = await tx
     .insert(geoObjects)
@@ -96,16 +98,16 @@ async function insertArea(tx: Db): Promise<string> {
   return row!.id;
 }
 
-async function insertDelivery(tx: Db, areaId: string, dataVersion: number): Promise<string> {
+async function insertDelivery(tx: Db, scope: { subdivisionId: string } | { areaId: string }, dataVersion: number): Promise<string> {
   const [row] = await tx
     .insert(deliveries)
     .values({
-      areaId,
+      ...scope,
       dataVersion,
-      schemaVersion: "1.0",
+      schemaVersion: "subdivisionId" in scope ? "2.0" : "1.0",
       generatedAt: new Date("2026-10-19T08:00:00Z"),
       status: "valid",
-      storagePrefix: `deliveries/${areaId}/${dataVersion}/`,
+      storagePrefix: `deliveries/${Object.values(scope)[0]}/${dataVersion}/`,
       objectCounts: {},
       validationReport: {},
       changeSnapshot: sql`pg_current_snapshot()`,
@@ -116,16 +118,18 @@ async function insertDelivery(tx: Db, areaId: string, dataVersion: number): Prom
 }
 
 describe("latestDelivered", () => {
-  it("returns the highest version per public id; spot versions span areas, region versions stay per area", async () => {
+  it("returns the highest version per public id; spot versions span subdivisions and pilot packages, region versions stay per subdivision", async () => {
     await withRollback(async (tx) => {
-      const x = await insertArea(tx);
-      const y = await insertArea(tx);
-      const dx = await insertDelivery(tx, x, 1);
-      const dy = await insertDelivery(tx, y, 1);
+      const x = (await insertTestSubdivision(tx, "XT-VX", [20.0, 34.0, 20.25, 34.25])).id;
+      const y = (await insertTestSubdivision(tx, "XT-VY", [20.25, 34.0, 20.5, 34.25])).id;
+      const pilot = await insertArea(tx);
+      const dx = await insertDelivery(tx, { subdivisionId: x }, 1);
+      const dy = await insertDelivery(tx, { subdivisionId: y }, 1);
+      const dp = await insertDelivery(tx, { areaId: pilot }, 1);
       const RG = "rg_01J9X4KZ0A1B2C3D4E5F6G7H8J";
       const SP3 = "sp_01J9X4K2M7Q8R5T6V7W8X9Y0Z3";
-      const row = (areaId: string, firstDeliveryId: string, patch: Partial<typeof deliveredObjects.$inferInsert>) => ({
-        areaId,
+      const row = (subdivisionId: string, firstDeliveryId: string, patch: Partial<typeof deliveredObjects.$inferInsert>) => ({
+        subdivisionId,
         firstDeliveryId,
         objectType: "spot" as const,
         publicId: SP,
@@ -144,7 +148,9 @@ describe("latestDelivered", () => {
         row(x, dx, { publicId: SP3, profileVersion: 4, contentHash: "h4" }),
         // only in y: removed for x, with its version
         row(y, dy, { publicId: "sp_01J9X4K2M7Q8R5T6V7W8X9Y0Z4", profileVersion: 7, contentHash: "h7" }),
-        // regions count per area
+        // delivered only by a pilot package of contract 1.0: removed for x, its version continues
+        { ...row(x, dp, { publicId: "sp_01J9X4K2M7Q8R5T6V7W8X9Y0Z5", profileVersion: 3, contentHash: "p3" }), subdivisionId: null, areaId: pilot },
+        // regions count per subdivision
         row(x, dx, { objectType: "region", publicId: RG, profileVersion: 1, contentHash: "r1" }),
         row(y, dy, { objectType: "region", publicId: RG, profileVersion: 1, contentHash: "ry1" }),
         row(y, dy, { objectType: "region", publicId: RG, profileVersion: 2, contentHash: "ry2" }),
@@ -154,6 +160,7 @@ describe("latestDelivered", () => {
       expect(latest.get(SP2)).toMatchObject({ profileVersion: 2, removed: true, maxVersion: 2 });
       expect(latest.get(SP3)).toMatchObject({ profileVersion: 4, contentHash: "h4", removed: false, maxVersion: 4 });
       expect(latest.get("sp_01J9X4K2M7Q8R5T6V7W8X9Y0Z4")).toMatchObject({ profileVersion: 7, removed: true, maxVersion: 7 });
+      expect(latest.get("sp_01J9X4K2M7Q8R5T6V7W8X9Y0Z5")).toMatchObject({ profileVersion: 3, removed: true, maxVersion: 3 });
       expect(latest.get(RG)).toMatchObject({ type: "region", profileVersion: 1, contentHash: "r1", maxVersion: 1 });
 
       // y: SP3 was taken over by x — y removes it once, with the version after x's (no restart, no collision)

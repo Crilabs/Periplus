@@ -5,7 +5,7 @@ import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { computations, facts, geoObjects, mentions, places, profiles, restrictedAreas, reviewDecisions, reviewTasks, sources, wikidataSitelinks } from "@/lib/db/schema";
 import type { GeoObjectType, PlaceStatus } from "@/lib/db/schema/geo";
-import { popularityForArea, popularityForSubdivision } from "@/lib/domain/consolidation/derived/popularity";
+import { popularityForSubdivision } from "@/lib/domain/consolidation/derived/popularity";
 import { loadContext, loadDerivedInputs, loadInputs } from "@/lib/domain/consolidation/inputs";
 import { newId } from "@/lib/domain/ids";
 import { testDb, withRollback } from "@/test/db";
@@ -263,32 +263,36 @@ describe("popularityForSubdivision", () => {
     }));
 });
 
-// Legacy: the delivery build still reads it (plan 14a task 10 switches it to `popularityForSubdivision`).
-describe("popularityForArea", () => {
-  it("normalizes the newest sources_count of the area's places by the area maximum", () =>
+describe("popularityForSubdivision on the run date", () => {
+  it("counts confirmed places valid on the date, with a valid geo object; the newest sources_count per place", () =>
     withRollback(async (tx) => {
-      const area = await object(tx, "area", { lon: 22.1 });
-      // an own tile of the synthetic grid, labelled with the test area
-      await insertTestTile(tx, "q025:808:500", area);
-      const a = await placeAt(tx, 22.1, LAT);
-      const b = await placeAt(tx, 22.11, LAT);
-      const none = await placeAt(tx, 22.12, LAT);
+      const home = await insertTestSubdivision(tx, `XT-${newId()}`, [22.0, 35.0, 22.5, 35.25]);
+      // the places' tile (a place counts only in a valid tile)
+      await insertTestTile(tx, "q025:808:500", null, home.id);
+      const at = async (lon: number, o: { status?: PlaceStatus } = {}) => {
+        const p = await placeAt(tx, lon, LAT, o);
+        await tx.update(geoObjects).set({ subdivisionId: home.id }).where(eq(geoObjects.id, p.id));
+        return p;
+      };
+      const a = await at(22.1);
+      const b = await at(22.11);
+      const none = await at(22.12);
       await profile(tx, a.id, 1, 1);
       await profile(tx, a.id, 2, 15);
       await profile(tx, b.id, 1, 3);
-      const rejected = await placeAt(tx, 22.13, LAT, { status: "rejected" });
+      const rejected = await at(22.13, { status: "rejected" });
       await profile(tx, rejected.id, 1, 99);
       // neither a candidate, nor an ended geo object, nor a place valid only from tomorrow count (M5-E-R2)
-      const candidate = await placeAt(tx, 22.14, LAT, { status: "candidate" });
+      const candidate = await at(22.14, { status: "candidate" });
       await profile(tx, candidate.id, 1, 50);
-      const endedObject = await placeAt(tx, 22.15, LAT);
+      const endedObject = await at(22.15);
       await profile(tx, endedObject.id, 1, 60);
       await tx.execute(sql`update geo_objects set valid_from = '2000-01-01', valid_to = ${opts.today}::date where id = ${endedObject.id}`);
-      const future = await placeAt(tx, 22.16, LAT);
+      const future = await at(22.16);
       await profile(tx, future.id, 1, 70);
       await tx.execute(sql`update places set valid_from = ${opts.today}::date + 1 where geo_object_id = ${future.id}`);
 
-      const p = await popularityForArea(tx, area, opts.today);
+      const p = await popularityForSubdivision(tx, home.id, opts.today);
       expect([...p.keys()].sort()).toEqual([a.id, b.id].sort());
       expect(p.get(a.id)).toBe(1);
       expect(p.get(b.id)).toBeCloseTo(0.5, 3);

@@ -1,14 +1,12 @@
-import { eq, inArray, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { SpotsFile } from "@/contract";
-import { geoObjects, profileSummaries, tiles } from "@/lib/db/schema";
-import { newId } from "@/lib/domain/ids";
+import { profileSummaries, tiles } from "@/lib/db/schema";
 import { mergePlaceInto } from "@/lib/domain/place-merge";
 import { insertProfile, provenanceEntry } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
-import { seedDeliveryArea, SPOT_A_ATTRIBUTES, SPOT_A_SUMMARY, spotAProvenance } from "@/test/fixtures/delivery/area";
+import { seedDeliverySubdivision, SPOT_A_ATTRIBUTES, SPOT_A_SUMMARY, spotAProvenance } from "@/test/fixtures/delivery/subdivision";
 import { memoryArchive } from "@/test/s3";
-import { insertTestSubdivision } from "@/test/text";
 import { buildDelivery } from "../build";
 import { placeDelivery } from "../view";
 
@@ -25,10 +23,10 @@ describe("placeDelivery", () => {
   it("shows the delivered spot and no difference right after a build", () =>
     withRollback(async (tx) => {
       const archive = memoryArchive();
-      const f = await seedDeliveryArea(tx);
-      const built = await buildDelivery(tx, archive, f.areaId, { now, inCallerTransaction: true });
+      const f = await seedDeliverySubdivision(tx);
+      const built = await buildDelivery(tx, archive, f.subdivisionId, { now, inCallerTransaction: true });
       expect(built).toMatchObject({ status: "valid", dataVersion: 1 });
-      const stored = JSON.parse(new TextDecoder().decode((await archive.get(`deliveries/${f.areaPublicId}/1/spots.json`))!)) as SpotsFile;
+      const stored = JSON.parse(new TextDecoder().decode((await archive.get(`deliveries/${f.subdivisionKey}/1/spots.json`))!)) as SpotsFile;
       const a = stored.spots.find((s) => s.id === f.places.A.publicId)!;
 
       const tab = await placeDelivery(tx, archive, f.places.A.placeId, { today });
@@ -43,8 +41,8 @@ describe("placeDelivery", () => {
   it("a newer profile shows a differing preview", () =>
     withRollback(async (tx) => {
       const archive = memoryArchive();
-      const f = await seedDeliveryArea(tx);
-      await buildDelivery(tx, archive, f.areaId, { now, inCallerTransaction: true });
+      const f = await seedDeliverySubdivision(tx);
+      await buildDelivery(tx, archive, f.subdivisionId, { now, inCallerTransaction: true });
       await insertProfile(
         tx,
         f.places.A.geoObjectId,
@@ -66,18 +64,18 @@ describe("placeDelivery", () => {
   it("a candidate without public id has no delivery tab content", () =>
     withRollback(async (tx) => {
       const archive = memoryArchive();
-      const f = await seedDeliveryArea(tx);
-      await buildDelivery(tx, archive, f.areaId, { now, inCallerTransaction: true });
+      const f = await seedDeliverySubdivision(tx);
+      await buildDelivery(tx, archive, f.subdivisionId, { now, inCallerTransaction: true });
       expect(await placeDelivery(tx, archive, f.places.K.placeId, { today })).toEqual({ delivered: null, preview: null, history: [] });
-      // a confirmed place the package leaves out, and one whose tile belongs to no area
+      // a confirmed place the package leaves out, and one that belongs to no subdivision
       expect(await placeDelivery(tx, archive, f.places.B.placeId, { today })).toEqual({ delivered: null, preview: { omitted: "shelter_incomplete" }, history: [] });
-      expect(await placeDelivery(tx, archive, f.places.O.placeId, { today })).toEqual({ delivered: null, preview: { omitted: "no_area" }, history: [] });
+      expect(await placeDelivery(tx, archive, f.places.O.placeId, { today })).toEqual({ delivered: null, preview: { omitted: "no_subdivision" }, history: [] });
     }));
 
   it("before the first package the preview is new", () =>
     withRollback(async (tx) => {
       const archive = memoryArchive();
-      const f = await seedDeliveryArea(tx);
+      const f = await seedDeliverySubdivision(tx);
       const tab = await placeDelivery(tx, archive, f.places.A.placeId, { today });
       expect(tab).toMatchObject({ delivered: null, preview: { differs: true, spot: { id: f.places.A.publicId } }, history: [] });
     }));
@@ -85,12 +83,10 @@ describe("placeDelivery", () => {
   it("a merged place: carried with mergedInto when its target is in the package, else removed (ruling M6-P14, review minor 4)", () =>
     withRollback(async (tx) => {
       const archive = memoryArchive();
-      const f = await seedDeliveryArea(tx);
+      const f = await seedDeliverySubdivision(tx);
       const { A, M, O } = f.places;
-      // A and M lie on the land of one subdivision (a merge within it needs no confirmation), O on none
-      const { id: subdivisionId } = await insertTestSubdivision(tx, `XT-${newId()}`, [21.0, 35.0, 21.75, 35.25]);
-      await tx.update(geoObjects).set({ subdivisionId }).where(inArray(geoObjects.id, [A.geoObjectId, M.geoObjectId]));
-      await buildDelivery(tx, archive, f.areaId, { now, inCallerTransaction: true });
+      // A and M belong to the fixture's subdivision (a merge within it needs no confirmation), O to none
+      await buildDelivery(tx, archive, f.subdivisionId, { now, inCallerTransaction: true });
       await mergePlaceInto(tx, { placeId: A.placeId, intoPlaceId: M.placeId, decidedBy: "admin@test.invalid" });
       expect((await placeDelivery(tx, archive, A.placeId, { today })).preview).toEqual({ omitted: "merged", mergedInto: M.publicId });
       // M merged on into O, a place of no subdivision: the package does not deliver the final target
@@ -106,8 +102,8 @@ describe("placeDelivery", () => {
       const { rows } = await tx.execute<{ d: string }>(sql`select current_date::text as d`);
       expect(rows[0]!.d).not.toBe(new Date().toISOString().slice(0, 10));
       const archive = memoryArchive();
-      const f = await seedDeliveryArea(tx);
-      // the area's tiles are valid on the database's date only
+      const f = await seedDeliverySubdivision(tx);
+      // the subdivision's rows are valid on the database's date only
       for (const id of f.tileIds) await tx.update(tiles).set({ validTo: sql`current_date + 1` }).where(eq(tiles.id, id));
       const tab = await placeDelivery(tx, archive, f.places.A.placeId);
       expect(tab.preview).toMatchObject({ differs: true, spot: { id: f.places.A.publicId } });

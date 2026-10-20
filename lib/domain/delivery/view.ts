@@ -2,25 +2,25 @@ import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
 import { CONTRACT_FILES, type ChangeEntry, type ChangesFile, type ContractFile, type Spot, type SpotBody } from "@/contract";
 import type { Db } from "@/lib/db/client";
-import { deliveredObjects, deliveries, geoObjects, places, type DeliveryStatus } from "@/lib/db/schema";
+import { deliveredObjects, deliveries, geoObjects, places, subdivisions, type DeliveryStatus } from "@/lib/db/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import type { DeliveryRow } from "./build";
-import { draftArea, type OmittedSpot } from "./draft";
+import { draftSubdivision, type OmittedSpot } from "./draft";
 import { readStoredFile, spotAsOf } from "./read";
 import { contentTypeOf } from "./serialize";
 import type { CheckName, Finding, ValidationReport } from "./validate";
 import { contentHash } from "./versioning";
 
 /*
- * What the admin sees of deliveries (spec 08, plan Tasks 13 and 14): the list per area, one delivery with its report,
+ * What the admin sees of deliveries (spec 08, spec 14): the list per subdivision, one delivery with its report,
  * changes and files (rejected packages too, for diagnosis), a file as download, and the place page's delivery tab.
  * Reads only; never builds, never writes S3.
  */
 
 export const DELIVERIES_PAGE_SIZE = 50;
 
-export type DeliveryAreaHead = {
-  geoObjectId: string;
+export type DeliverySubdivisionHead = {
+  id: string;
   key: string;
   name: string;
   current: { dataVersion: number; generatedAt: Date } | null;
@@ -28,7 +28,8 @@ export type DeliveryAreaHead = {
 
 export type DeliveryListRow = {
   id: string;
-  areaName: string;
+  /** The subdivision's name; a package of the pilot (contract 1.0) shows its configured area's name. */
+  scopeName: string;
   status: DeliveryStatus;
   dataVersion: number | null;
   generatedAt: Date;
@@ -44,45 +45,50 @@ function failedChecks(report: unknown): CheckName[] {
 }
 
 /**
- * The valid areas with a public id, each with its current (latest valid) package, ordered by name, and one page (50,
- * newest first) of the deliveries of all areas or of `areaId`.
+ * The valid active subdivisions that can have a package (a valid tile labelled with them, or a package already),
+ * each with its current (latest valid) package, ordered by name, and one page (50,
+ * newest first) of the deliveries of all subdivisions or of `subdivisionId`. Pilot packages (contract 1.0, area only)
+ * stay in the list of all.
  */
 export async function listDeliveries(
   db: Db,
-  filter: { areaId?: string; page: number },
-): Promise<{ areas: DeliveryAreaHead[]; rows: DeliveryListRow[]; total: number }> {
-  const { rows: areaRows } = await db.execute<{
+  filter: { subdivisionId?: string; page: number },
+): Promise<{ subdivisions: DeliverySubdivisionHead[]; rows: DeliveryListRow[]; total: number }> {
+  const { rows: headRows } = await db.execute<{
     id: string;
-    public_id: string;
-    config_key: string | null;
+    key: string;
     name: string | null;
     data_version: number | null;
     generated_at: string | Date | null;
   }>(sql`
-    select o.id, o.public_id, o.config_key, ${displayNameSql(sql`o.id`)} as name, d.data_version, d.generated_at
-    from geo_objects o
+    select s.id, s.key, ${displayNameSql(sql`s.geo_object_id`)} as name, d.data_version, d.generated_at
+    from subdivisions s
     left join lateral (
       select d.data_version, d.generated_at from deliveries d
-      where d.area_id = o.id and d.status = 'valid'
+      where d.subdivision_id = s.id and d.status = 'valid'
       order by d.data_version desc
       limit 1
     ) d on true
-    where o.type = 'area' and o.public_id is not null
-      and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
-    order by name nulls last, o.public_id
+    where s.status = 'active'
+      and s.valid_from <= current_date and (s.valid_to is null or s.valid_to > current_date)
+      and (exists (select 1 from tiles t where t.subdivision_id = s.id and t.valid_to is null)
+           or exists (select 1 from deliveries d where d.subdivision_id = s.id))
+    order by name nulls last, s.key
   `);
-  const areas = areaRows.map((r) => ({
-    geoObjectId: r.id,
-    key: r.config_key ?? r.public_id,
-    name: r.name ?? r.config_key ?? r.public_id,
+  const heads = headRows.map((r) => ({
+    id: r.id,
+    key: r.key,
+    name: r.name ?? r.key,
     current: r.data_version === null ? null : { dataVersion: r.data_version, generatedAt: new Date(r.generated_at!) },
   }));
 
-  const where = filter.areaId ? eq(deliveries.areaId, filter.areaId) : undefined;
+  const where = filter.subdivisionId ? eq(deliveries.subdivisionId, filter.subdivisionId) : undefined;
   const page = Math.max(1, Math.floor(filter.page));
   const list = await db
     .select({
       id: deliveries.id,
+      subdivisionName: displayNameSql(subdivisions.geoObjectId),
+      subdivisionKey: subdivisions.key,
       areaName: displayNameSql(deliveries.areaId),
       areaPublicId: geoObjects.publicId,
       status: deliveries.status,
@@ -93,17 +99,18 @@ export async function listDeliveries(
       runId: deliveries.runId,
     })
     .from(deliveries)
-    .innerJoin(geoObjects, eq(geoObjects.id, deliveries.areaId))
+    .leftJoin(subdivisions, eq(subdivisions.id, deliveries.subdivisionId))
+    .leftJoin(geoObjects, eq(geoObjects.id, deliveries.areaId))
     .where(where)
     .orderBy(desc(deliveries.createdAt), desc(deliveries.generatedAt), desc(deliveries.id))
     .limit(DELIVERIES_PAGE_SIZE)
     .offset((page - 1) * DELIVERIES_PAGE_SIZE);
   const [{ n } = { n: 0 }] = await db.select({ n: count() }).from(deliveries).where(where);
   return {
-    areas,
+    subdivisions: heads,
     rows: list.map((r) => ({
       id: r.id,
-      areaName: r.areaName ?? r.areaPublicId ?? r.id,
+      scopeName: r.subdivisionName ?? r.subdivisionKey ?? r.areaName ?? r.areaPublicId ?? r.id,
       status: r.status,
       dataVersion: r.dataVersion,
       generatedAt: r.generatedAt,
@@ -117,8 +124,10 @@ export async function listDeliveries(
 
 export type DeliveryDetail = {
   row: DeliveryRow;
-  areaName: string;
-  areaPublicId: string;
+  /** The subdivision's name; a pilot package (contract 1.0) shows its configured area's name. */
+  scopeName: string;
+  /** The subdivision's `sd_` id (a pilot package: the area's `ar_` id). */
+  scopePublicId: string;
   report: ValidationReport;
   /** `changes.json` of the package (also of a rejected one, as its diff to the previous package); null without one. */
   changes: ChangeEntry[] | null;
@@ -134,12 +143,20 @@ const decoder = new TextDecoder();
 /** One delivery with its validation report, changes and files; null for an unknown id. */
 export async function deliveryDetail(db: Db, archive: Archive, id: string): Promise<DeliveryDetail | null> {
   const [found] = await db
-    .select({ row: deliveries, areaName: displayNameSql(deliveries.areaId), areaPublicId: geoObjects.publicId })
+    .select({
+      row: deliveries,
+      subdivisionName: displayNameSql(subdivisions.geoObjectId),
+      subdivisionPublicId: subdivisions.publicId,
+      areaName: displayNameSql(deliveries.areaId),
+      areaPublicId: geoObjects.publicId,
+    })
     .from(deliveries)
-    .innerJoin(geoObjects, eq(geoObjects.id, deliveries.areaId))
+    .leftJoin(subdivisions, eq(subdivisions.id, deliveries.subdivisionId))
+    .leftJoin(geoObjects, eq(geoObjects.id, deliveries.areaId))
     .where(eq(deliveries.id, id));
   if (!found) return null;
   const { row } = found;
+  const scopePublicId = found.subdivisionPublicId ?? found.areaPublicId ?? row.id;
   const report = row.validationReport as ValidationReport;
   let changes: ChangeEntry[] | null = null;
   let archiveError: string | null = null;
@@ -157,8 +174,8 @@ export async function deliveryDetail(db: Db, archive: Archive, id: string): Prom
   for (const c of changes ?? []) named.add(c.objectId);
   return {
     row,
-    areaName: found.areaName ?? found.areaPublicId ?? row.areaId,
-    areaPublicId: found.areaPublicId ?? row.areaId,
+    scopeName: found.subdivisionName ?? found.areaName ?? scopePublicId,
+    scopePublicId,
     report,
     changes,
     archiveError,
@@ -187,7 +204,7 @@ async function objectLinks(db: Db, publicIds: string[]): Promise<Record<string, 
 
 /**
  * One stored file of a delivery as a download (rejected packages too): bytes, content type and the file name
- * `<ar_id>-<dataVersion | rejected>-<file>`. Null for an unknown delivery or a file it does not have.
+ * `<sd_id>-<dataVersion | rejected>-<file>` (a pilot package: its `ar_` id). Null for an unknown delivery or a file it does not have.
  */
 export async function deliveryDownload(
   db: Db,
@@ -196,23 +213,25 @@ export async function deliveryDownload(
   file: ContractFile,
 ): Promise<{ bytes: Uint8Array; contentType: string; filename: string } | null> {
   const [found] = await db
-    .select({ row: deliveries, areaPublicId: geoObjects.publicId })
+    .select({ row: deliveries, subdivisionPublicId: subdivisions.publicId, areaPublicId: geoObjects.publicId })
     .from(deliveries)
-    .innerJoin(geoObjects, eq(geoObjects.id, deliveries.areaId))
+    .leftJoin(subdivisions, eq(subdivisions.id, deliveries.subdivisionId))
+    .leftJoin(geoObjects, eq(geoObjects.id, deliveries.areaId))
     .where(eq(deliveries.id, id));
   if (!found) return null;
   const bytes = await readStoredFile(archive, found.row, file);
   if (bytes === null) return null;
   const version = found.row.dataVersion === null ? "rejected" : String(found.row.dataVersion);
-  return { bytes, contentType: contentTypeOf(file), filename: `${found.areaPublicId}-${version}-${file}` };
+  return { bytes, contentType: contentTypeOf(file), filename: `${found.subdivisionPublicId ?? found.areaPublicId ?? found.row.id}-${version}-${file}` };
 }
 
 /**
  * Why the next package would not deliver the place as a spot of its own: a `mapSpot` omission; a merged place whose
- * final target the package delivers (`merged`: carried with `mergedInto` when the area's previous package had it,
- * ruling M6-P14) or does not deliver (`merged_removed`: an event `removed`); or no spot of its area's package at all.
+ * final target the package delivers (`merged`: carried with `mergedInto` when the subdivision's previous package had
+ * it, ruling M6-P14) or does not deliver (`merged_removed`: an event `removed`); or no spot of its subdivision's
+ * package at all.
  */
-export type PreviewOmission = OmittedSpot["reason"] | "no_area" | "merged" | "merged_removed" | "not_in_package";
+export type PreviewOmission = OmittedSpot["reason"] | "no_subdivision" | "merged" | "merged_removed" | "not_in_package";
 
 export type PlaceDelivery = {
   delivered: { spot: Spot; dataVersion: number; deliveryId: string } | null;
@@ -223,18 +242,17 @@ export type PlaceDelivery = {
 
 /**
  * The place page's delivery tab: the spot as last delivered (`spotAsOf`), the spot the next package of the place's
- * area would deliver (`draftArea` on `today`, default the database's date; the build's own assembly, ruling M6-P27:
+ * subdivision would deliver (`draftSubdivision` on `today`, default the database's date; the build's own assembly, ruling M6-P27:
  * no S3, no versions), whether it differs from the delivered one (`contentHash` without the version fields), and every
  * contract version of the spot. A place without public id has nothing to show.
  */
 export async function placeDelivery(db: Db, archive: Archive, placeId: string, opts: { today?: string } = {}): Promise<PlaceDelivery> {
   // the database's date, as `spotAsOf` and the validity of the geo rows (review minor 6)
   const today = opts.today ?? (await db.execute<{ d: string }>(sql`select current_date::text as d`)).rows[0]!.d;
-  const { rows } = await db.execute<{ public_id: string | null; area_id: string | null }>(sql`
-    select p.public_id, (
-      select t.area_id from tiles t
-      where t.id = p.tile_id and t.valid_from <= ${today}::date and (t.valid_to is null or t.valid_to > ${today}::date)
-    ) as area_id
+  // the subdivision of the place's land (`geo_objects.subdivision_id`), not its tile's label; also of an ended object
+  // (a merged place's object ends with the merge, and its subdivision's package still reports it, as `loadMerged`)
+  const { rows } = await db.execute<{ public_id: string | null; subdivision_id: string | null }>(sql`
+    select p.public_id, (select o.subdivision_id from geo_objects o where o.id = p.geo_object_id) as subdivision_id
     from places p where p.id = ${placeId}
   `);
   const place = rows[0];
@@ -255,10 +273,10 @@ export async function placeDelivery(db: Db, archive: Archive, placeId: string, o
     .orderBy(desc(deliveredObjects.profileVersion));
 
   let preview: PlaceDelivery["preview"];
-  if (place.area_id === null) {
-    preview = { omitted: "no_area" };
+  if (place.subdivision_id === null) {
+    preview = { omitted: "no_subdivision" };
   } else {
-    const draft = await draftArea(db, place.area_id, today);
+    const draft = await draftSubdivision(db, place.subdivision_id, today);
     const spot = draft.spots.find((s) => s.body.id === publicId);
     const omitted = draft.omittedSpots.find((s) => s.id === publicId);
     if (spot) {

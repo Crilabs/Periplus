@@ -5,10 +5,17 @@ import manifest10 from "./1.0/manifest.schema.json";
 import regions10 from "./1.0/regions.schema.json";
 import spots10 from "./1.0/spots.schema.json";
 import weatherPoints10 from "./1.0/weather-points.schema.json";
+import changes20 from "./2.0/changes.schema.json";
+import coast20 from "./2.0/coast.schema.json";
+import highlights20 from "./2.0/highlights.schema.json";
+import manifest20 from "./2.0/manifest.schema.json";
+import regions20 from "./2.0/regions.schema.json";
+import spots20 from "./2.0/spots.schema.json";
+import weatherPoints20 from "./2.0/weather-points.schema.json";
 
 /*
  * The checked-in JSON schemas of every published contract version (spec 08: `contract/schema/<version>/`), served by
- * `GET /api/v1/schema/<version>/<file>`. A new version adds its directory and an entry here; older versions stay, so a
+ * `GET /api/v2/schema/<version>/<file>` (and `/api/v1/schema/…`). A new version adds its directory and an entry here; older versions stay, so a
  * consumer of an archived package (`?dataVersion=`) can still fetch the schema it was built against (gesamt-review
  * DAT-9). The contract test pins the current version to the zod-generated output and this registry to the files.
  */
@@ -21,6 +28,15 @@ export const PUBLISHED_SCHEMAS: Readonly<Record<string, Readonly<Record<string, 
     "coast.schema.json": coast10,
     "weather-points.schema.json": weatherPoints10,
     "changes.schema.json": changes10,
+  },
+  "2.0": {
+    "manifest.schema.json": manifest20,
+    "spots.schema.json": spots20,
+    "highlights.schema.json": highlights20,
+    "regions.schema.json": regions20,
+    "coast.schema.json": coast20,
+    "weather-points.schema.json": weatherPoints20,
+    "changes.schema.json": changes20,
   },
 };
 

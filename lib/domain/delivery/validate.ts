@@ -1,5 +1,5 @@
 import { CONTRACT_SCHEMAS, type CoastCollection, type ContractFile, type Highlight, type Spot } from "@/contract";
-import { GOOGLE_PLACE_ID_PATTERN, highlightCategory, OSM_ID_PATTERN, WIKIDATA_ID_PATTERN } from "@/contract/v1";
+import { GOOGLE_PLACE_ID_PATTERN, highlightCategory, OSM_ID_PATTERN, WIKIDATA_ID_PATTERN } from "@/contract/v2";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
@@ -43,13 +43,13 @@ export type Finding = { file: ContractFile; objectId: string | null; path: strin
 export type ValidationReport = { ok: boolean; checks: Array<{ name: CheckName; ok: boolean; findings: Finding[] }>; warnings: Finding[] };
 
 export type ValidationDeps = {
-  /** The area's previous valid package: its data version and the contract version of every object in it. */
+  /** The subdivision's previous valid package: its data version and the contract version of every object in it. */
   previous: { dataVersion: number; versions: Map<string, number> } | null;
   /** The longest run of words of the text copied from the archive (`findArchiveCopies(db, text).longestRun`). */
   findCopies: (text: string) => Promise<number>;
   /**
    * The links of forbidden domains behind each delivered spot, highlight and region (`mapSpot` / `mapHighlights` /
-   * `draftArea` `regionForbiddenSources`): such an object's values may come from Navily or Google, so it blocks
+   * `draftSubdivision` `regionForbiddenSources`): such an object's values may come from Navily or Google, so it blocks
    * (ruling M6-D-R2, final review I-2).
    */
   forbiddenSources: Array<{ file: "spots.json" | "highlights.json" | "regions.json"; objectId: string; urls: string[] }>;
@@ -134,7 +134,8 @@ const ids: Check = ({ pkg }) => {
     if (other !== undefined) out.push(finding(file, id, path, `Kennung doppelt (auch in ${other})`));
     else seen.set(id, file);
   };
-  visit(MANIFEST, pkg.manifest.area.id, "/area/id", "ar");
+  visit(MANIFEST, pkg.manifest.subdivision.id, "/subdivision/id", "sd");
+  pkg.manifest.areas.forEach((a, i) => visit(MANIFEST, a.id, `/areas/${i}/id`, "ar"));
   spotsOf(pkg).forEach((s, i) => visit(SPOTS, s.id, `/spots/${i}/id`, "sp"));
   highlightsOf(pkg).forEach((h, i) => visit(HIGHLIGHTS, h.id, `/highlights/${i}/id`, "hl"));
   regionsOf(pkg).forEach((r, i) => visit(REGIONS, r.id, `/regions/${i}/id`, "rg"));
@@ -161,7 +162,7 @@ const references: Check = ({ pkg }) => {
   });
   regionsOf(pkg).forEach((r, i) => {
     r.spotIds.forEach((s, j) => spotIds.has(s) || missing(REGIONS, r.id, `/regions/${i}/spotIds/${j}`, s, "den Spot"));
-    if (r.parentId !== null && r.parentId !== pkg.manifest.area.id && !regionIds.has(r.parentId)) {
+    if (r.parentId !== null && !regionIds.has(r.parentId)) {
       missing(REGIONS, r.id, `/regions/${i}/parentId`, r.parentId, "die Region");
     }
   });
@@ -193,7 +194,7 @@ const spotLocation: Check = ({ pkg, deps }) => {
     const p: LonLat = s.position;
     const path = `/spots/${i}/position`;
     if (p.lon < west || p.lon > east || p.lat < south || p.lat > north) {
-      out.push(finding(SPOTS, s.id, path, "Position außerhalb der Bounding Box des Reviers"));
+      out.push(finding(SPOTS, s.id, path, "Position außerhalb der Bounding Box des Landesteils"));
       return;
     }
     if (!land.some((g) => pointInPolygon(p, g))) return;
@@ -445,8 +446,8 @@ const foreignContent: Check = ({ pkg, deps }) => {
 };
 
 /**
- * Teil B "dataVersion ist größer als die vorherige", "je Revier um 1 steigend": the previous one + 1 (1 for the first
- * package); every file names the manifest's version, area and schema.
+ * Teil B "dataVersion ist größer als die vorherige", "je Landesteil um 1 steigend": the previous one + 1 (1 for the first
+ * package); every file names the manifest's version, subdivision and schema.
  */
 const dataVersion: Check = ({ pkg, deps }) => {
   const out: Finding[] = [];
@@ -459,7 +460,7 @@ const dataVersion: Check = ({ pkg, deps }) => {
   if (m.previousDataVersion !== previous) {
     out.push(finding(MANIFEST, null, "/previousDataVersion", `Vorige Datenversion ${m.previousDataVersion ?? "keine"} statt ${previous ?? "keine"}`));
   }
-  const envelopes: Array<[ContractFile, { dataVersion: number; area: string; schemaVersion: string } | undefined]> = [
+  const envelopes: Array<[ContractFile, { dataVersion: number; subdivision: string; schemaVersion: string } | undefined]> = [
     [SPOTS, pkg.files[SPOTS]],
     [HIGHLIGHTS, pkg.files[HIGHLIGHTS]],
     [REGIONS, pkg.files[REGIONS]],
@@ -469,7 +470,7 @@ const dataVersion: Check = ({ pkg, deps }) => {
   for (const [file, e] of envelopes) {
     if (!e) continue;
     if (e.dataVersion !== m.dataVersion) out.push(finding(file, null, "/dataVersion", `Datenversion ${e.dataVersion} statt ${m.dataVersion} wie im Manifest`));
-    if (e.area !== m.area.id) out.push(finding(file, null, "/area", `Revier ${e.area} statt ${m.area.id} wie im Manifest`));
+    if (e.subdivision !== m.subdivision.id) out.push(finding(file, null, "/subdivision", `Landesteil ${e.subdivision} statt ${m.subdivision.id} wie im Manifest`));
     if (e.schemaVersion !== m.schemaVersion) out.push(finding(file, null, "/schemaVersion", `Vertragsversion ${e.schemaVersion} statt ${m.schemaVersion} wie im Manifest`));
   }
   const changes = pkg.files[CHANGES];

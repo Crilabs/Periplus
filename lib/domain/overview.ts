@@ -1,6 +1,6 @@
 import { desc, eq, gt, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { deliveries, reviewKindEnum, reviewTasks, workerHeartbeats, type DeliveryStatus, type ReviewKind } from "@/lib/db/schema";
+import { deliveries, reviewKindEnum, reviewTasks, subdivisions, workerHeartbeats, type DeliveryStatus, type ReviewKind } from "@/lib/db/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { budgetStatus, type BudgetStatus } from "@/lib/domain/costs";
 import { jobsFromDb, type JobsView } from "@/lib/domain/queues-view";
@@ -20,19 +20,21 @@ export type Overview = {
   recentDeliveries: RecentDelivery[];
 };
 
-export type RecentDelivery = { id: string; areaName: string | null; status: DeliveryStatus; dataVersion: number | null; generatedAt: Date };
+/** `scopeName`: the subdivision's name; a pilot package (contract 1.0) shows its configured area's name. */
+export type RecentDelivery = { id: string; scopeName: string | null; status: DeliveryStatus; dataVersion: number | null; generatedAt: Date };
 
-/** The latest package builds of all areas, newest first (area, status, data version, build time). */
+/** The latest package builds of all subdivisions, newest first (subdivision, status, data version, build time). */
 export async function latestDeliveries(db: Db, limit: number): Promise<RecentDelivery[]> {
   return db
     .select({
       id: deliveries.id,
-      areaName: displayNameSql(deliveries.areaId),
+      scopeName: sql<string | null>`coalesce(${displayNameSql(subdivisions.geoObjectId)}, ${subdivisions.key}, ${displayNameSql(deliveries.areaId)})`,
       status: deliveries.status,
       dataVersion: deliveries.dataVersion,
       generatedAt: deliveries.generatedAt,
     })
     .from(deliveries)
+    .leftJoin(subdivisions, eq(subdivisions.id, deliveries.subdivisionId))
     .orderBy(desc(deliveries.createdAt), desc(deliveries.generatedAt), desc(deliveries.id))
     .limit(limit);
 }

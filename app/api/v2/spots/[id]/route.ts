@@ -5,11 +5,11 @@ import { apiBody, apiError, apiNotFound } from "@/lib/api/respond";
 import { getDb } from "@/lib/db/client";
 import { cacheMaxAgeSeconds, deliveryArchive, isCalendarDate, isSpotId, spotAsOf } from "@/lib/domain/delivery/read";
 
-type Ctx = RouteContext<"/api/v1/spots/[id]">;
+type Ctx = RouteContext<"/api/v2/spots/[id]">;
 
 /**
  * A spot as delivered on `?asOf=YYYY-MM-DD`, without it the latest delivered version (spec 08 `GET /spots/{id}`), with
- * the area and data version of the package that introduced that version.
+ * the subdivision and data version of the package that introduced that version.
  */
 const handler = withApiClient<Ctx>("delivery:read", async (req, _client, ctx) => {
   const { id } = await ctx.params;
@@ -20,8 +20,8 @@ const handler = withApiClient<Ctx>("delivery:read", async (req, _client, ctx) =>
   if (!found) return apiNotFound();
   return apiBody(
     req,
-    // dataVersion counts per area: the area whose package introduced this spot version
-    { schemaVersion: SCHEMA_VERSION, area: found.area, dataVersion: found.dataVersion, spot: found.spot },
+    // dataVersion counts per subdivision: the subdivision whose package introduced this spot version
+    { schemaVersion: SCHEMA_VERSION, subdivision: found.subdivision, dataVersion: found.dataVersion, spot: found.spot },
     { schemaVersion: SCHEMA_VERSION, dataVersion: found.dataVersion, maxAgeSeconds: cacheMaxAgeSeconds() },
   );
 });

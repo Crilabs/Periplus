@@ -14,7 +14,7 @@ import { parseArgs, renderReport } from "@/scripts/sim/verify";
 import { withRollback } from "@/test/db";
 import { insertQualitySubdivision } from "@/test/quality";
 import { memoryArchive } from "@/test/s3";
-import { insertNamedObject, insertTestSource } from "@/test/text";
+import { insertTestSource } from "@/test/text";
 
 /*
  * The CLIs of the simulated revisit (plan Task 13): argument parsing, and `simVerify` against a simulation clone
@@ -81,8 +81,6 @@ describe("sim:revisit scenario and polling", () => {
 /** A place with a public id in a synthetic subdivision, a `sim_meta` row cloned at `fromSeq` = the newest event now. */
 async function simClone(tx: Db) {
   const sub = await insertQualitySubdivision(tx, [{ lon: 21.01, lat: 35.2 }]);
-  // TODO(plan 14a task 10): the deliveries are per subdivision then; until then an area object with the key carries them
-  const areaId = await insertNamedObject(tx, { type: "area", names: [{ name: "Test area" }], lon: 21.2, lat: 35.2, configKey: sub.subdivisionKey });
   const { geoObjectId } = await sub.addPlace();
   const publicId = newPublicId("sp");
   await tx.execute(sql`update places set public_id = ${publicId} where geo_object_id = ${geoObjectId}`);
@@ -98,7 +96,7 @@ async function simClone(tx: Db) {
     name: "sim-test",
     entries: [{ id: "e1", url, edit: { op: "gone" }, expect: { document: "gone", events: [{ subject: publicId, attribute: "mooring.buoys", type: "uncertain", severity: "notable" }] } }],
   };
-  return { ...sub, areaId, geoObjectId, publicId, fromSeq, scenario };
+  return { ...sub, geoObjectId, publicId, fromSeq, scenario };
 }
 
 describe("simVerify", () => {
@@ -164,17 +162,17 @@ describe("simVerify", () => {
     }));
 });
 
-/** A valid package of the (delivery) area built at `generatedAt` whose spots.json holds `spots` (stored in `archive`). */
-async function packageAt(tx: Db, archive: Archive, areaId: string, dataVersion: number, generatedAt: string, spots: unknown[]): Promise<string> {
-  const prefix = `deliveries/${areaId}/${dataVersion}/`;
+/** A valid package of the subdivision built at `generatedAt` whose spots.json holds `spots` (stored in `archive`). */
+async function packageAt(tx: Db, archive: Archive, subdivisionId: string, dataVersion: number, generatedAt: string, spots: unknown[]): Promise<string> {
+  const prefix = `deliveries/${subdivisionId}/${dataVersion}/`;
   const bytes = serializeFile({ spots });
   await archive.put(`${prefix}spots.json`, bytes, "application/json");
   const [row] = await tx
     .insert(deliveries)
     .values({
-      areaId,
+      subdivisionId,
       dataVersion,
-      schemaVersion: "1.0",
+      schemaVersion: "2.0",
       generatedAt: new Date(generatedAt),
       status: "valid",
       storagePrefix: prefix,
@@ -189,8 +187,8 @@ async function packageAt(tx: Db, archive: Archive, areaId: string, dataVersion: 
 }
 
 /** Spot version `version` of `publicId`, delivered from `validFrom` by package `deliveryId`. */
-async function spotVersion(tx: Db, areaId: string, publicId: string, version: number, validFrom: string, deliveryId: string) {
-  await tx.insert(deliveredObjects).values({ areaId, objectType: "spot", publicId, profileVersion: version, contentHash: `hash-${version}`, validFrom, firstDeliveryId: deliveryId });
+async function spotVersion(tx: Db, subdivisionId: string, publicId: string, version: number, validFrom: string, deliveryId: string) {
+  await tx.insert(deliveredObjects).values({ subdivisionId, objectType: "spot", publicId, profileVersion: version, contentHash: `hash-${version}`, validFrom, firstDeliveryId: deliveryId });
 }
 
 /**
@@ -199,21 +197,20 @@ async function spotVersion(tx: Db, areaId: string, publicId: string, version: nu
  */
 async function framedClone(tx: Db, o: { secondVersionFrom?: string; unchanged?: boolean } = {}) {
   const c = await simClone(tx);
-  await tx.execute(sql`update geo_objects set public_id = ${newPublicId("ar")} where id = ${c.areaId}`);
   // cloned between the first package and the revisit (the costs are not looked at here)
   await tx.execute(sql`update sim_meta set cloned_at = '2026-05-15T00:00:00Z'`);
   await tx.insert(changeEvents).values({ geoObjectId: c.geoObjectId, attribute: "mooring.buoys", type: "uncertain", severity: "notable", profileVersion: 2 });
   const archive = memoryArchive();
   const spot = (v: number) => ({ id: c.publicId, profileVersion: v, name: `Stand ${v}` });
-  const p1 = await packageAt(tx, archive, c.areaId, 1, "2026-05-01T08:00:00Z", [spot(1)]);
-  await spotVersion(tx, c.areaId, c.publicId, 1, "2026-05-01", p1);
+  const p1 = await packageAt(tx, archive, c.subdivisionId, 1, "2026-05-01T08:00:00Z", [spot(1)]);
+  await spotVersion(tx, c.subdivisionId, c.publicId, 1, "2026-05-01", p1);
   const { id: runId } = await createRun(tx, { kind: "revisit", scope: { type: "subdivision", id: c.subdivisionKey }, stages: [], params: {}, triggeredBy: "sim:revisit" });
   await tx.execute(sql`update runs set created_at = '2026-06-01T07:00:00Z', status = 'finished' where id = ${runId}`);
-  const p2 = await packageAt(tx, archive, c.areaId, 2, "2026-06-08T08:00:00Z", o.unchanged ? [] : [spot(2)]);
-  const p3 = await packageAt(tx, archive, c.areaId, 3, "2026-06-20T08:00:00Z", o.unchanged ? [] : [spot(3)]);
+  const p2 = await packageAt(tx, archive, c.subdivisionId, 2, "2026-06-08T08:00:00Z", o.unchanged ? [] : [spot(2)]);
+  const p3 = await packageAt(tx, archive, c.subdivisionId, 3, "2026-06-20T08:00:00Z", o.unchanged ? [] : [spot(3)]);
   if (!o.unchanged) {
-    await spotVersion(tx, c.areaId, c.publicId, 2, o.secondVersionFrom ?? "2026-06-08", p2);
-    await spotVersion(tx, c.areaId, c.publicId, 3, "2026-06-20", p3);
+    await spotVersion(tx, c.subdivisionId, c.publicId, 2, o.secondVersionFrom ?? "2026-06-08", p2);
+    await spotVersion(tx, c.subdivisionId, c.publicId, 3, "2026-06-20", p3);
   }
   return { ...c, archive, runId, spot };
 }
@@ -240,7 +237,7 @@ describe("simVerify asOf (ruling M7-P18, M7-G-R3)", () => {
       const api = apiStub({ schemaVersion: "1.0", subdivision: "ar_x", dataVersion: 1, spot: c.spot(1) }, { dataVersion: 3, spot: c.spot(3) });
       const report = await simVerify(tx, c.archive, withApi(c.subdivisionKey), { scenario: c.scenario, fetch: api.fetch });
       // first the newest state (only the simulation web has it), then the state before the revisit
-      expect(api.calls).toEqual([`http://localhost:3001/api/v1/spots/${c.publicId}`, `http://localhost:3001/api/v1/spots/${c.publicId}?asOf=2026-06-07`]);
+      expect(api.calls).toEqual([`http://localhost:3001/api/v2/spots/${c.publicId}`, `http://localhost:3001/api/v2/spots/${c.publicId}?asOf=2026-06-07`]);
       expect(report.asOf).toEqual({
         ok: true,
         asOf: "2026-06-07",
@@ -293,7 +290,7 @@ describe("simVerify asOf (ruling M7-P18, M7-G-R3)", () => {
         reason:
           "http://localhost:3001 ist nicht das Simulations-Web (Datenversion 1 statt 3 (Stand der Simulation nach dem Revisit)) – das Web aus dem eigenen Worktree mit .env.sim starten",
       });
-      expect(dev.calls).toEqual([`http://localhost:3001/api/v1/spots/${c.publicId}`]);
+      expect(dev.calls).toEqual([`http://localhost:3001/api/v2/spots/${c.publicId}`]);
       expect(report.passes).toBe(false);
     }));
 

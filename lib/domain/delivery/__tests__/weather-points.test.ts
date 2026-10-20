@@ -1,16 +1,16 @@
 import { createHash } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { weatherPointSchema } from "@/contract/v1";
+import { weatherPointSchema } from "@/contract/v2";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoObjects, landPolygons } from "@/lib/db/schema";
 import { withRollback } from "@/test/db";
-import { seedDeliveryArea } from "@/test/fixtures/delivery/area";
+import { seedDeliverySubdivision } from "@/test/fixtures/delivery/subdivision";
 import { insertNamedObject } from "@/test/text";
 import { distanceNm } from "../geo";
-import { loadAreaScope } from "../load";
+import { loadSubdivisionScope } from "../load";
 import { namedRegions, regionIdAt } from "../map-region";
 import type { RegionSource } from "../types";
 import { buildWeatherPoints, weatherPointId } from "../weather-points";
@@ -30,10 +30,10 @@ async function today(tx: Db): Promise<string> {
 
 /** The fixture plus a strait north of the island; weather points from the loaded scope. */
 async function build(tx: Db) {
-  const f = await seedDeliveryArea(tx);
-  const straitId = await insertNamedObject(tx, { type: "strait", names: [{ name: "Stenon Test" }], lon: 21.22, lat: 35.18, tiles: [f.tileIds[0]] });
+  const f = await seedDeliverySubdivision(tx);
+  const straitId = await insertNamedObject(tx, { type: "strait", names: [{ name: "Stenon Test" }], lon: 21.22, lat: 35.18, tiles: [f.tileIds[0]], subdivisionId: f.subdivisionId });
   await tx.update(geoObjects).set({ geom: geomFromGeoJson(square(21.21, 35.17, 21.23, 35.19)) }).where(sql`${geoObjects.id} = ${straitId}`);
-  const scope = await loadAreaScope(tx, f.areaId, cfg, await today(tx));
+  const scope = await loadSubdivisionScope(tx, f.subdivisionId, cfg, await today(tx));
   const { regions } = namedRegions(scope.regions);
   const input = { regions, passages: scope.passages, regionIdFor: regionIdAt(regions, cfg.regions.memberMarginNm), cfg: cfg.weather };
   return { f, straitId, scope, input, result: await buildWeatherPoints(tx, input) };

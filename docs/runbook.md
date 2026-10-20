@@ -361,14 +361,14 @@ Stufe 8 (M5): aus allen Facts eines Geo-Objekts ein versioniertes Profil mit Wer
 3. Aktivieren seit M7 auf „Qualität“ → „Regression“ → „Aktivieren“ (nur wenn Übereinstimmung und Abdeckung nicht sinken und an keinem Ort des Vergleichssatzes ein Verbot, eine Gefahr, ein Sperrgebiet oder ein Ausschluss entfällt); die wirksame Regelversion steht dann in `config_activations` und gilt sofort, `config/consolidation/active.json` ist nur noch der Rückfall ohne Aktivierung. Danach je Revier `npm run consolidate -- --area <key>`. Jedes Objekt mit geänderten Werten oder Klassen bekommt eine neue Version mit `rules_version` v2.
 
 ## Lieferung
-Stufe 9 (M6): je Revier ein Paket nach dem „Periplus Data Contract“ (`contract/v1/`, JSON-Schemas unter `contract/schema/1.0/`), gebaut, geprüft und in S3 abgelegt (`deliveries/<ar_…>/<dataVersion>/<datei>`), abrufbar über die Liefer-API `/api/v1`. Checkliste der Abnahme: `docs/pilot/m6-abnahme.md`.
+Stufe 9 (M6, Teil-Spec 14): je Landesteil ein Paket nach dem „Periplus Data Contract“ 2.0 (`contract/v2/`, JSON-Schemas unter `contract/schema/2.0/`), gebaut, geprüft und in S3 abgelegt (`deliveries/<Landesteil-Schlüssel>/<dataVersion>/<datei>`), abrufbar über die Liefer-API `/api/v2`. Inhalt sind die Orte, Highlights und Regionen, deren Land zum Landesteil gehört (`geo_objects.subdivision_id`), nicht das Kachel-Label; ein teilweise bearbeiteter Landesteil liefert, was bisher bearbeitet ist, und das Manifest führt alle Kacheln mit Stand. Die Reviere, die den Landesteil berühren, stehen nur zur Information unter `manifest.areas`. Die Pilot-Pakete nach Vertrag 1.0 (je Revier, `contract/v1/`) bleiben in S3 und in `deliveries`, werden aber nicht mehr ausgeliefert; ihre Schemas gibt es weiter unter `/api/v1/schema/1.0/…`. Checkliste der Abnahme: `docs/pilot/m6-abnahme.md`.
 
 > **ODbL:** `coast.geojson`, OSM-Namen und Regionspolygone stehen unter ODbL (im Manifest unter `licenses` ausgewiesen). Bis die ODbL-Trennung (Teil-Spec 08 „Lizenz und ODbL“) rechtlich geprüft ist, gehen Pakete **nur an interne Abnehmer**: keinen API-Schlüssel an Dritte ausgeben.
 
-### Reihenfolge je Revier (Pilot: `saronic`, danach `argolic`)
-1. **Voraussetzung Profile** (M5, Abschnitt „Konsolidierung“): `npm run check:profiles -- --area saronic` (Server: `dc run --rm worker node --import tsx scripts/check-profiles.ts --area saronic`) endet mit Exit 0.
-2. **„Lieferungen“ → „Paket bauen“** beim Revier: startet einen Lauf mit der Stufe `delivery.build` und öffnet seine Laufseite.
-3. **Bericht prüfen**: „Lieferungen“ → Zeile des Baus. Status „Gültig“ (neue Version, Dateien gespeichert, über die API abrufbar), „Unverändert“ (gültig, aber nichts geändert: keine neue Version, keine Dateien) oder „Abgelehnt“ (mindestens eine der 16 Prüfungen mit Verstoß; die Dateien bleiben unter `deliveries/<ar_…>/rejected/<id>/` zur Diagnose, das Revier liefert weiter das letzte gültige Paket). Die Detailseite zeigt jede Prüfung mit Fundstellen (Objekt-IDs verlinken auf Ort- oder Geo-Seite), die Warnungen (was ausgelassen wurde; sie blockieren nicht), die Änderungen (`changes.json`, ab dem zweiten Paket) und die Dateien zum Herunterladen. Der Reiter „Lieferung“ einer Ort-Seite zeigt das gelieferte Vertragsobjekt und eine Vorschau des nächsten Pakets.
+### Reihenfolge je Landesteil (Pilot: `GR-I` Attika, danach `GR-J` Peloponnes)
+1. **Voraussetzung Profile** (M5, Abschnitt „Konsolidierung“): `npm run check:profiles -- --subdivision GR-I` (Server: `dc run --rm worker node --import tsx scripts/check-profiles.ts --subdivision GR-I`) endet mit Exit 0.
+2. **„Lieferungen“ → „Paket bauen“** beim Landesteil (die Seite zeigt die Landesteile mit Kacheln oder schon gebautem Paket): startet einen Lauf mit der Stufe `delivery.build` und öffnet seine Laufseite.
+3. **Bericht prüfen**: „Lieferungen“ → Zeile des Baus. Status „Gültig“ (neue Version, Dateien gespeichert, über die API abrufbar), „Unverändert“ (gültig, aber nichts geändert: keine neue Version, keine Dateien) oder „Abgelehnt“ (mindestens eine der 16 Prüfungen mit Verstoß; die Dateien bleiben unter `deliveries/<Landesteil-Schlüssel>/rejected/<id>/` zur Diagnose, der Landesteil liefert weiter das letzte gültige Paket). Die Detailseite zeigt jede Prüfung mit Fundstellen (Objekt-IDs verlinken auf Ort- oder Geo-Seite), die Warnungen (was ausgelassen wurde; sie blockieren nicht), die Änderungen (`changes.json`, ab dem zweiten Paket) und die Dateien zum Herunterladen. Der Reiter „Lieferung“ einer Ort-Seite zeigt das gelieferte Vertragsobjekt und eine Vorschau des nächsten Pakets.
 4. **Verstöße beheben** (unten), dann erneut „Paket bauen“.
 5. **Abnehmer-Prüfung** (unten): `delivery:consume` gegen den Server endet mit `OK`.
 
@@ -387,8 +387,8 @@ Warnungen (nicht blockierend) nennen u. a. Spots ohne Profil oder mit unvollstä
 - **„Liegt in einem militärischen Sperrgebiet des Pakets …, ist aber nicht ausgeschlossen“** (Spot): der Spot liegt in einer `restrictedArea` mit Grund `military` des eigenen `coast.geojson`. Profil und Status des Orts prüfen („Profil neu berechnen“, Reiter „Geometrie“ → Ausschlussflächen).
 
 ### Bau (Technik)
-Stufe 9 (M6): Lauf „Paket bauen“ je Revier (Stufe `delivery.build`, ein Job). Der Bau nimmt die Revier-Sperre (`pg_advisory_xact_lock`), liest alles aus einem Snapshot (eigene Transaktion, REPEATABLE READ, nur lesend), legt die Dateien in S3 ab und schreibt dann die Zeile `deliveries`. Ein abgelehntes Paket (eine Prüfung schlägt fehl, auch bei unverändertem Inhalt) steht im Log als Warnung „delivery rejected“ mit den fehlgeschlagenen Prüfungen und unter `deliveries/<ar_…>/rejected/<id>/`; das Revier liefert weiter das letzte gültige Paket.
-- **Pool und Nebenläufigkeit**: ein Bau hält zwei Verbindungen des Pools (Sperr-Transaktion und Lese-Snapshot); der Pool hat 10 Verbindungen (`pg`-Standard), die sich alle Queues eines Workers teilen. `concurrency` von `delivery.build` (`config/queues.json`, Pilot 1) mal Anzahl der Worker bleibt deutlich unter der Poolgröße. Wartet ein Bau länger als `build.lockTimeoutMs` (`config/delivery.json`, 5 min) auf die Revier-Sperre, bricht er mit `lock_not_available` ab und der Job wird wiederholt; so halten wartende Bauvorgänge ihre Verbindungen nie dauerhaft. Ein Job läuft höchstens `expireInSeconds` 3600 s.
+Stufe 9 (M6): Lauf „Paket bauen“ je Landesteil (Umfang `subdivision`, Stufe `delivery.build`, ein Job). Der Bau nimmt die Landesteil-Sperre (`pg_advisory_xact_lock`), liest alles aus einem Snapshot (eigene Transaktion, REPEATABLE READ, nur lesend), legt die Dateien in S3 ab und schreibt dann die Zeile `deliveries`. Ein abgelehntes Paket (eine Prüfung schlägt fehl, auch bei unverändertem Inhalt) steht im Log als Warnung „delivery rejected“ mit den fehlgeschlagenen Prüfungen und unter `deliveries/<Landesteil-Schlüssel>/rejected/<id>/`; der Landesteil liefert weiter das letzte gültige Paket.
+- **Pool und Nebenläufigkeit**: ein Bau hält zwei Verbindungen des Pools (Sperr-Transaktion und Lese-Snapshot); der Pool hat 10 Verbindungen (`pg`-Standard), die sich alle Queues eines Workers teilen. `concurrency` von `delivery.build` (`config/queues.json`, Pilot 1) mal Anzahl der Worker bleibt deutlich unter der Poolgröße. Wartet ein Bau länger als `build.lockTimeoutMs` (`config/delivery.json`, 5 min) auf die Landesteil-Sperre, bricht er mit `lock_not_available` ab und der Job wird wiederholt; so halten wartende Bauvorgänge ihre Verbindungen nie dauerhaft. Ein Job läuft höchstens `expireInSeconds` 3600 s.
 
 ### API-Schlüssel für Abnehmer
 ```bash
@@ -399,28 +399,28 @@ dc run --rm worker node --import tsx scripts/apikey.ts create <abnehmer> --scope
 Der Schlüssel (`pk_…`) wird nur einmal ausgegeben. Sperren: „Einstellungen“ → „API-Clients“ → „Sperren“ (wirkt sofort, nicht umkehrbar) oder `npm run apikey:revoke -- <abnehmer>`. Rate-Limit je Schlüssel: `api_clients.rate_limit_per_min` (Standard 60 je Minute, darüber 429).
 
 ### Liefer-API
-Alle Endpunkte unter `/api/v1` brauchen `Authorization: Bearer pk_…` mit Scope `delivery:read`. Antworten tragen `ETag` (mit `If-None-Match` → 304), `Cache-Control: private, max-age=60`, `Periplus-Schema-Version` und, wo es eine gibt, `Periplus-Data-Version`. Fehler kommen als `{ "error": { "code", "message" } }` mit 400/401/403/404/429/500. `<area>` ist der Revier-Schlüssel (`saronic`) oder die öffentliche ID (`ar_…`). Nur gültige Pakete werden ausgeliefert.
+Alle Endpunkte unter `/api/v2` (und `/api/v1/schema/…`) brauchen `Authorization: Bearer pk_…` mit Scope `delivery:read`. Antworten tragen `ETag` (mit `If-None-Match` → 304), `Cache-Control: private, max-age=60`, `Periplus-Schema-Version` und, wo es eine gibt, `Periplus-Data-Version`. Fehler kommen als `{ "error": { "code", "message" } }` mit 400/401/403/404/429/500. `<subdivision>` ist der Landesteil-Schlüssel (`GR-I`) oder die öffentliche ID (`sd_…`); ein Revier-Schlüssel (`saronic`) ergibt 404. Nur gültige Pakete werden ausgeliefert. Die Endpunkte von Vertrag 1.0 (`/api/v1/areas/…`, `/api/v1/spots/…`) gibt es nicht mehr.
 
 ```bash
 read -rs PERIPLUS_API_KEY && export PERIPLUS_API_KEY   # pk_… einfügen, Enter: nicht in der Shell-History; nie in Dateien oder Tickets schreiben
 H="Authorization: Bearer $PERIPLUS_API_KEY"
-curl -sH "$H" https://<domain>/api/v1/areas                                        # Reviere mit aktueller dataVersion, bbox, Bauzeit
-curl -sH "$H" https://<domain>/api/v1/areas/saronic/package                        # Manifest des aktuellen Pakets mit links je Datei
-curl -sH "$H" https://<domain>/api/v1/areas/saronic/package/spots.json             # eine Datei des aktuellen Pakets
-curl -sH "$H" "https://<domain>/api/v1/areas/saronic/package/spots.json?dataVersion=1"   # Datei eines älteren Pakets (Archiv)
-curl -sH "$H" "https://<domain>/api/v1/areas/saronic/changes?since=1"              # Änderungen nach Version 1 bis heute, je Objekt zusammengefasst
-curl -sH "$H" "https://<domain>/api/v1/spots/sp_…?asOf=2026-11-01"                 # ein Spot, wie er an diesem Tag geliefert war
-curl -sH "$H" https://<domain>/api/v1/schema/1.0/spots.schema.json                 # JSON-Schema einer Datei
+curl -sH "$H" https://<domain>/api/v2/subdivisions                                 # Landesteile mit Land, aktueller dataVersion, bbox, Bauzeit
+curl -sH "$H" https://<domain>/api/v2/subdivisions/GR-I/package                    # Manifest des aktuellen Pakets mit links je Datei
+curl -sH "$H" https://<domain>/api/v2/subdivisions/GR-I/package/spots.json         # eine Datei des aktuellen Pakets
+curl -sH "$H" "https://<domain>/api/v2/subdivisions/GR-I/package/spots.json?dataVersion=1"   # Datei eines älteren Pakets (Archiv)
+curl -sH "$H" "https://<domain>/api/v2/subdivisions/GR-I/changes?since=1"          # Änderungen nach Version 1 bis heute, je Objekt zusammengefasst
+curl -sH "$H" "https://<domain>/api/v2/spots/sp_…?asOf=2026-11-01"                 # ein Spot, wie er an diesem Tag geliefert war, mit seinem Landesteil
+curl -sH "$H" https://<domain>/api/v2/schema/2.0/spots.schema.json                 # JSON-Schema einer Datei (auch 1.0)
 ```
 - **`changes?since=<n>`**: `n` von 1 bis zur aktuellen Version (`n` = aktuelle Version → leere Liste); sonst 400 `invalid_since`. Eine App, die Version `n` hat, holt damit alles bis zur aktuellen.
-- **`spots/<id>?asOf=YYYY-MM-DD`**: liest das Paketarchiv (die Spot-Version des Pakets, das an diesem Tag galt), keine Neuberechnung; ohne `asOf` die zuletzt gelieferte Version. Ein gespeicherter Törn bekommt so genau die Fassung zurück, auf die er verweist. Vor einem simulierten Revisit (M7) deshalb ein Paket bauen.
+- **`spots/<id>?asOf=YYYY-MM-DD`**: liest das Paketarchiv der Landesteile (die Spot-Version des Pakets, das an diesem Tag galt; die Pilot-Pakete nach 1.0 zählen nicht), keine Neuberechnung. Wechselt ein Ort den Landesteil, behält er seine `sp_`-ID: der alte Landesteil meldet ihn als entfernt, der neue als neu, und seine Versionen zählen weiter; ohne `asOf` die zuletzt gelieferte Version. Ein gespeicherter Törn bekommt so genau die Fassung zurück, auf die er verweist. Vor einem simulierten Revisit (M7) deshalb ein Paket bauen.
 - Herunterladen in der Oberfläche: Detailseite eines Pakets → Dateien (Admin-Sitzung, kein Schlüssel nötig).
 
 ### Abnehmer-Prüfung
-`delivery:consume` prüft ein Paket so, wie ein fremder Abnehmer es sieht, nur über die API: Manifest holen, jede verlinkte Datei laden, ihren SHA-256 mit dem Manifest vergleichen und sie mit eigenem Ajv (Draft 2020-12) gegen das Schema von `/api/v1/schema/<version>/<datei>` prüfen.
+`delivery:consume` prüft ein Paket so, wie ein fremder Abnehmer es sieht, nur über die API: Manifest holen, jede verlinkte Datei laden, ihren SHA-256 mit dem Manifest vergleichen und sie mit eigenem Ajv (Draft 2020-12) gegen das Schema von `/api/v2/schema/<version>/<datei>` prüfen.
 ```bash
 read -rs PERIPLUS_API_KEY && export PERIPLUS_API_KEY   # Schlüssel einfügen, Enter; erscheint weder am Bildschirm noch in der Shell-History
-npm run delivery:consume -- --base-url https://<domain> --area saronic
+npm run delivery:consume -- --base-url https://<domain> --subdivision GR-I
 unset PERIPLUS_API_KEY
 ```
 Ein Schlüssel in der Befehlszeile (`--key pk_…` oder `PERIPLUS_API_KEY=pk_… npm run …`) landet in der Shell-History. Die Basis-URL darf einen Pfad haben (`https://<domain>/periplus`); Links des Manifests auf einen anderen Host ruft die Prüfung nicht ab (der Schlüssel geht nur an die Basis-URL), und bei `http://` außer `localhost` warnt sie, dass der Schlüssel unverschlüsselt übertragen wird.

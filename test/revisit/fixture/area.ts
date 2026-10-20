@@ -5,7 +5,7 @@ import type { Archive } from "@/lib/adapters/s3";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { crawlFrontier, geoNames, geoObjects, landPolygons, places, sources, tileGeoObjects, tiles, type DocType, type GeoObjectType } from "@/lib/db/schema";
+import { crawlFrontier, geoNames, geoObjects, landPolygons, places, sources, subdivisions, tileGeoObjects, tiles, type DocType, type GeoObjectType } from "@/lib/db/schema";
 import type { PlaceKind } from "@/lib/db/schema/geo";
 import { ensureDocument, storeFetched } from "@/lib/domain/documents/store";
 import { recordComputation } from "@/lib/domain/facts/computations";
@@ -125,15 +125,22 @@ async function geoObject(
 /** Seeds the fixture area; the first versions' Markdown goes to `archive` (the test's memory archive). */
 export async function seedRevisitArea(tx: Db, archive: Archive): Promise<RevisitFixture> {
   const [w, s, e, n] = tileBbox(REVISIT_TILE);
-  const { id: subdivisionId } = await insertTestSubdivision(tx, REVISIT_SUBDIVISION_KEY, [w - 0.05, s - 0.05, e + 0.05, n + 0.05]);
+  const { id: subdivisionId, geoObjectId: regionId } = await insertTestSubdivision(tx, REVISIT_SUBDIVISION_KEY, [w - 0.05, s - 0.05, e + 0.05, n + 0.05]);
+  // valid, with its name, as long as the other rows (the runs and builds are dated 2026)
+  await tx.update(subdivisions).set({ validFrom: VALID_FROM }).where(eq(subdivisions.id, subdivisionId));
+  await tx.update(geoObjects).set({ validFrom: VALID_FROM }).where(eq(geoObjects.id, regionId));
+  await addNames(tx, regionId, [{ name: "Revisionsland", language: "de", origin: "manual" }]);
+  await tx.update(geoNames).set({ validFrom: VALID_FROM }).where(eq(geoNames.geoObjectId, regionId));
+  await tx.insert(tiles).values({ id: REVISIT_TILE, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, subdivisionId, hasCoast: true, validFrom: VALID_FROM });
+  // the sailing area over the tile: linked to it, listed in the manifest, parent of nothing
   const areaId = await geoObject(tx, {
     type: "area",
     geom: square(w, s, e, n),
     names: ["Revisionsrevier"],
     publicId: REVISIT_PUBLIC_IDS.area,
     configKey: REVISIT_AREA_KEY,
+    tiles: [REVISIT_TILE],
   });
-  await tx.insert(tiles).values({ id: REVISIT_TILE, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, areaId, subdivisionId, hasCoast: true, validFrom: VALID_FROM });
 
   // The island fills the middle of the tile; the bay of A cuts into its south coast.
   const island: GeoJSON.Polygon = {
@@ -152,7 +159,7 @@ export async function seedRevisitArea(tx: Db, archive: Archive): Promise<Revisit
     ],
   };
   await tx.insert(landPolygons).values({ geom: geomFromGeoJson(island), datasetVersion: "test" });
-  const islandId = await geoObject(tx, { type: "island", geom: island, names: ["Revisonisi"], publicId: REVISIT_PUBLIC_IDS.island, parentId: areaId, tiles: [REVISIT_TILE], subdivisionId });
+  const islandId = await geoObject(tx, { type: "island", geom: island, names: ["Revisonisi"], publicId: REVISIT_PUBLIC_IDS.island, parentId: regionId, tiles: [REVISIT_TILE], subdivisionId });
 
   const place = async (key: "A" | "B" | "M", o: { name: string; type: GeoObjectType; kind: PlaceKind; lon: number; lat: number; depthConfidence: number; depth: number }) => {
     const point: GeoJSON.Point = { type: "Point", coordinates: [o.lon, o.lat] };

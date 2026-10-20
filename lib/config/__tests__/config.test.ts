@@ -677,7 +677,7 @@ describe("consolidation rules", () => {
 describe("delivery configuration", () => {
   it("the delivery config carries the spec values", () => {
     expect(getConfig().delivery).toMatchObject({
-      schemaVersion: "1.0",
+      schemaVersion: "2.0",
       coast: { marginNm: 2, simplifyToleranceM: 10 },
       validation: {
         maxWaterDistanceNm: 1.5,
@@ -720,7 +720,7 @@ describe("delivery configuration", () => {
       return () => loadConfig(fixtureDir({ delivery }));
     };
     expect(withDelivery(() => {})).not.toThrow();
-    expect(withDelivery((d) => ((d as { schemaVersion: string }).schemaVersion = "2.0"))).toThrow(/delivery\.json.*schemaVersion/);
+    expect(withDelivery((d) => ((d as { schemaVersion: string }).schemaVersion = "1.0"))).toThrow(/delivery\.json.*schemaVersion/);
     expect(withDelivery((d) => (d.validation.maxDraftM = [10, 0.5]))).toThrow(/delivery\.json.*maxDraftM/);
     expect(withDelivery((d) => (d.spots.statuses = ["bogus" as never]))).toThrow(/delivery\.json.*statuses/);
     expect(withDelivery((d) => (d.regions.types = ["volcano" as never]))).toThrow(/delivery\.json.*types/);

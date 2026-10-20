@@ -7,18 +7,18 @@ import { startDeliveryRun } from "@/lib/pipeline/delivery-run";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { startAndRedirect } from "../_components/run-start";
 
-const buildSchema = z.object({ areaId: z.uuid() });
+const buildSchema = z.object({ subdivisionKey: z.string().min(1) });
 
 const fields = (input: FormData | object) => (input instanceof FormData ? Object.fromEntries(input) : input);
 
 /**
- * „Paket bauen“ for one area: starts the run of stage `delivery.build` and goes to it; an area that cannot be built
- * (no valid area with public id and config key) returns to `/deliveries?error=<reason>`.
+ * „Paket bauen“ for one subdivision: starts the run of stage `delivery.build` and goes to it. An unknown or excluded
+ * subdivision is rejected by the run starter (`requireSubdivision`).
  */
-export async function buildDeliveryAction(input: FormData | { areaId: string }): Promise<void> {
+export async function buildDeliveryAction(input: FormData | { subdivisionKey: string }): Promise<void> {
   const admin = await requireAdmin();
-  const { areaId } = buildSchema.parse(fields(input));
+  const { subdivisionKey } = buildSchema.parse(fields(input));
   const db = getDb();
   const boss = await getBoss();
-  await startAndRedirect(() => startDeliveryRun(db, boss, { areaGeoObjectId: areaId, triggeredBy: admin.email }), "/deliveries");
+  await startAndRedirect(() => startDeliveryRun(db, boss, subdivisionKey, admin.email), "/deliveries");
 }

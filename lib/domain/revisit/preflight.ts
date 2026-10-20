@@ -59,9 +59,8 @@ export async function revisitPreflight(
     if (!r.ok) problems.push(`Szenario-Eintrag ${r.entryId}: ${r.error}`);
   }
   const { rows } = await db.execute(sql`
-    -- TODO(plan 14a task 10): deliveries are per subdivision then (deliveries.subdivision_id); until then by area key
-    select 1 from deliveries d join geo_objects a on a.id = d.area_id and a.type = 'area'
-    where a.config_key = ${input.subdivisionKey} and d.status = 'valid' limit 1
+    select 1 from deliveries d join subdivisions s on s.id = d.subdivision_id and s.valid_to is null
+    where s.key = ${input.subdivisionKey} and d.status = 'valid' limit 1
   `);
   if (rows.length === 0) problems.push(`erst Paket bauen: Landesteil ${input.subdivisionKey} hat keine gültige Lieferung`);
   return problems;

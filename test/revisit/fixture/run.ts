@@ -176,7 +176,7 @@ export async function maxSeq(tx: Db): Promise<number> {
 }
 
 /**
- * Seeds the area (with `extraPages` beside d1 … d5), runs „Lauf 1“ on 2026-05-01 and builds the package of that state.
+ * Seeds the subdivision (with `extraPages` beside d1 … d5), runs „Lauf 1“ on 2026-05-01 and builds the package of that state.
  */
 export async function recordedState(tx: Db, extraPages: Array<Parameters<typeof addRevisitDocument>[3]> = []) {
   const archive = memoryArchive();
@@ -184,7 +184,7 @@ export async function recordedState(tx: Db, extraPages: Array<Parameters<typeof 
   const extras = [];
   for (const page of extraPages) extras.push(await addRevisitDocument(tx, archive, fx.sourceIds, page));
   await firstRun(tx, archive, fx, "2026-05-01", extras.map((e) => e.versionId));
-  const first = await buildDelivery(tx, archive, fx.areaId, { now: new Date("2026-05-01T08:00:00Z"), inCallerTransaction: true });
+  const first = await buildDelivery(tx, archive, fx.subdivisionId, { now: new Date("2026-05-01T08:00:00Z"), inCallerTransaction: true });
   expect(first).toMatchObject({ status: "valid", dataVersion: 1 });
   return { archive, fx, extras, fromSeq: await maxSeq(tx) };
 }

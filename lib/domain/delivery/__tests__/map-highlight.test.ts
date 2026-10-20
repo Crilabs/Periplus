@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { highlightSchema } from "@/contract/v1";
+import { highlightSchema } from "@/contract/v2";
 import { getConsolidationConfig, loadConfig } from "@/lib/config";
 import type { AttributeProvenance, ProfileSnapshot } from "@/lib/domain/consolidation/types";
 import { provenanceEntry } from "@/test/consolidation";

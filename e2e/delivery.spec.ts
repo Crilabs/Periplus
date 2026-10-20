@@ -2,8 +2,8 @@ import { expect, test } from "@playwright/test";
 
 const E2E_EMAIL = process.env.E2E_EMAIL!;
 const E2E_PASSWORD = process.env.E2E_PASSWORD!;
-/** Created by global-setup: the synthetic delivery area `e2e-delivery` with its valid package, version 1. */
-const AREA = process.env.E2E_DELIVERY_AREA!;
+/** Created by global-setup: the synthetic delivery subdivision `XT-E2E-DELIVERY` with its valid package, version 1. */
+const SUBDIVISION = process.env.E2E_DELIVERY_SUBDIVISION!;
 
 async function login(page: import("@playwright/test").Page) {
   await page.goto("/login");
@@ -13,14 +13,14 @@ async function login(page: import("@playwright/test").Page) {
   await expect(page.getByRole("heading", { name: "Übersicht" })).toBeVisible();
 }
 
-test("the synthetic area's package is valid with 16 passed checks, spots.json downloads, „Paket bauen“ opens its run", async ({ page }) => {
+test("the synthetic subdivision's package is valid with 16 passed checks, spots.json downloads, „Paket bauen“ opens its run", async ({ page }) => {
   await login(page);
 
   await page.goto("/deliveries");
-  const card = page.getByRole("list", { name: "Reviere" }).getByRole("listitem").filter({ hasText: "e2e-delivery" });
+  const card = page.getByRole("list", { name: "Landesteile" }).getByRole("listitem").filter({ hasText: "XT-E2E-DELIVERY" });
   await expect(card).toContainText("Version 1");
 
-  await page.goto(`/deliveries?area=${AREA}`);
+  await page.goto(`/deliveries?subdivision=${SUBDIVISION}`);
   const row = page.getByRole("row").filter({ hasText: "Gültig" }).first();
   await expect(row.getByRole("cell").nth(2)).toHaveText("1");
   await row.getByRole("link").first().click();

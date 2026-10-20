@@ -7,7 +7,7 @@ import { buildDelivery } from "@/lib/domain/delivery/build";
 import { PlaceStatusNotAllowed, setPlaceStatusByAdmin } from "@/lib/domain/place-status";
 import { createReviewTask } from "@/lib/domain/review";
 import { withRollback } from "@/test/db";
-import { seedDeliveryArea } from "@/test/fixtures/delivery/area";
+import { seedDeliverySubdivision } from "@/test/fixtures/delivery/subdivision";
 import { memoryArchive } from "@/test/s3";
 
 /* „Bestätigen“ / „Verwerfen“ / „Kein Ankerplatz“ in the place header (gesamt review UI-3), on the delivery fixture. */
@@ -29,7 +29,7 @@ const placeRow = async (tx: Db, id: string) => (await tx.select().from(places).w
 describe("setPlaceStatusByAdmin", () => {
   it("takes a confirmed place back as „Kein Ankerplatz“, recorded as a decided task with one decision", () =>
     withRollback(async (tx) => {
-      const f = await seedDeliveryArea(tx);
+      const f = await seedDeliverySubdivision(tx);
       const { A } = f.places;
       const result = await setPlaceStatusByAdmin(tx, { placeId: A.placeId, status: "no_anchoring", from: "confirmed", decidedBy: ADMIN });
       expect(result).toEqual({ geoObjectId: A.geoObjectId, previous: "confirmed" });
@@ -46,7 +46,7 @@ describe("setPlaceStatusByAdmin", () => {
 
   it("confirms a candidate with a new public id; rejects a confirmed place", () =>
     withRollback(async (tx) => {
-      const f = await seedDeliveryArea(tx);
+      const f = await seedDeliverySubdivision(tx);
       const { K, M } = f.places;
       await setPlaceStatusByAdmin(tx, { placeId: K.placeId, status: "confirmed", from: "candidate", decidedBy: ADMIN });
       const k = await placeRow(tx, K.placeId);
@@ -58,7 +58,7 @@ describe("setPlaceStatusByAdmin", () => {
 
   it("refuses while the place has an open task, for the status it has, and for a merged place; nothing is written", () =>
     withRollback(async (tx) => {
-      const f = await seedDeliveryArea(tx);
+      const f = await seedDeliverySubdivision(tx);
       const { A, M, B } = f.places;
       await createReviewTask(tx, { kind: "place_candidate", subjectType: "place", subjectId: A.placeId, context: { reason: "restricted" } });
       expect(await refusal(setPlaceStatusByAdmin(tx, { placeId: A.placeId, status: "rejected", from: "confirmed", decidedBy: ADMIN }))).toBe("open_task");
@@ -72,7 +72,7 @@ describe("setPlaceStatusByAdmin", () => {
 
   it("refuses when the status changed since the page showed it (stale tab, W4-2); nothing is written", () =>
     withRollback(async (tx) => {
-      const f = await seedDeliveryArea(tx);
+      const f = await seedDeliverySubdivision(tx);
       const { K } = f.places;
       // tab A showed K as a candidate; tab B confirmed it meanwhile
       await setPlaceStatusByAdmin(tx, { placeId: K.placeId, status: "confirmed", from: "candidate", decidedBy: ADMIN });
@@ -88,13 +88,13 @@ describe("setPlaceStatusByAdmin", () => {
   it("the next package delivers a place taken back as „Kein Ankerplatz“ as excluded, and a rejected one no more", () =>
     withRollback(async (tx) => {
       const archive = memoryArchive();
-      const f = await seedDeliveryArea(tx);
-      const build = (date: string) => buildDelivery(tx, archive, f.areaId, { now: new Date(`${date}T08:00:00Z`), inCallerTransaction: true });
+      const f = await seedDeliverySubdivision(tx);
+      const build = (date: string) => buildDelivery(tx, archive, f.subdivisionId, { now: new Date(`${date}T08:00:00Z`), inCallerTransaction: true });
       expect(await build("2040-06-01")).toMatchObject({ status: "valid", dataVersion: 1 });
       await setPlaceStatusByAdmin(tx, { placeId: f.places.A.placeId, status: "no_anchoring", from: "confirmed", decidedBy: ADMIN });
       await setPlaceStatusByAdmin(tx, { placeId: f.places.M.placeId, status: "rejected", from: "confirmed", decidedBy: ADMIN });
       expect(await build("2040-06-02")).toMatchObject({ status: "valid", dataVersion: 2 });
-      const spots = JSON.parse(new TextDecoder().decode((await archive.get(`deliveries/${f.areaPublicId}/2/spots.json`))!)) as SpotsFile;
+      const spots = JSON.parse(new TextDecoder().decode((await archive.get(`deliveries/${f.subdivisionKey}/2/spots.json`))!)) as SpotsFile;
       expect(spots.spots.find((s) => s.id === f.places.A.publicId)).toMatchObject({ exclude: { excluded: true } });
       expect(spots.spots.find((s) => s.id === f.places.M.publicId)).toBeUndefined();
     }));

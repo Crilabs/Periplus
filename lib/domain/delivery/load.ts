@@ -3,13 +3,13 @@ import type { DeliveryConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import type { GeoObjectType, PlaceKind, PlaceStatus, PoiCategory } from "@/lib/db/schema/geo";
 import type { DocType } from "@/lib/db/schema/sources";
-import { popularityForArea } from "@/lib/domain/consolidation/derived/popularity";
+import { popularityForSubdivision } from "@/lib/domain/consolidation/derived/popularity";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 import { deliveryNames } from "@/lib/domain/gazetteer/names";
+import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { utmSridFor } from "@/lib/domain/geometry/projection";
 import { latestProfiles, validAtAlias } from "@/lib/domain/timeline";
 import type {
-  AreaScope,
   LonLat,
   PassageSource,
   PoiSource,
@@ -17,13 +17,16 @@ import type {
   SourceRefRow,
   SpotName,
   SpotSource,
+  SubdivisionScope,
 } from "./types";
 
 /*
- * Loads what a delivery of one area consists of (spec 08), on the build date `today`: the area's valid tiles, the
- * places of those tiles delivered as spots (partition by `places.tile_id`), merged places, POIs whose centroid lies in
- * one of the tiles, regions and passages assigned to the tiles (`tile_geo_objects`), each with its latest profile,
- * names and documents. One query per kind of object; lists sorted by public id (passages by geo object id).
+ * Loads what a delivery of one subdivision consists of (spec 08, spec 14), on the build date `today`: the places
+ * delivered as spots, merged places, POIs, regions and passages whose geo object belongs to the subdivision
+ * (`geo_objects.subdivision_id`, the nearest land; never the tile label, so a harbour in a tile labelled with the
+ * neighbour is still delivered here), each with its latest profile, names and documents; the scope tiles with their
+ * state and the sailing areas (Reviere) that touch them. One query per kind of object; lists sorted by public id
+ * (passages by geo object id).
  */
 
 const METRES_PER_NM = 1852;
@@ -31,10 +34,10 @@ const METRES_PER_NM = 1852;
 /** Language tag of a delivered transliteration: Greek in Latin script (BCP 47). */
 export const TRANSLITERATION_LANG = "el-Latn";
 
-export class AreaNotFound extends Error {
-  constructor(readonly areaGeoObjectId: string) {
-    super(`area ${areaGeoObjectId} is no valid area with a public id`);
-    this.name = "AreaNotFound";
+export class SubdivisionNotFound extends Error {
+  constructor(readonly subdivisionId: string) {
+    super(`subdivision ${subdivisionId} is no valid subdivision`);
+    this.name = "SubdivisionNotFound";
   }
 }
 
@@ -49,28 +52,29 @@ const round = (n: number, digits: number) => Number(n.toFixed(digits));
 const point = (lon: number, lat: number): LonLat => ({ lon: Number(lon), lat: Number(lat) });
 const byPublicId = <T extends { publicId: string }>(a: T, b: T) => (a.publicId < b.publicId ? -1 : a.publicId > b.publicId ? 1 : 0);
 
-export async function loadAreaScope(
+export async function loadSubdivisionScope(
   db: Db,
-  areaGeoObjectId: string,
+  subdivisionId: string,
   cfg: DeliveryConfig,
   today: string,
-): Promise<AreaScope> {
-  const area = await loadArea(db, areaGeoObjectId, today);
-  const tiles = await loadTiles(db, areaGeoObjectId, cfg, today);
-  const tileIds = tiles.map((t) => t.id);
+): Promise<SubdivisionScope> {
+  const tileIds = await subdivisionTileIds(db, subdivisionId);
   const tileArray = arrayParam(tileIds, "text");
+  const loaded = await loadSubdivision(db, subdivisionId, tileArray, today);
+  const tiles = await loadTiles(db, subdivisionId, tileArray, cfg, today);
 
   // Sequential: the build runs in one transaction, whose connection takes one query at a time.
-  const spotRows = await loadSpotRows(db, areaGeoObjectId, cfg, today);
-  const merged = await loadMerged(db, areaGeoObjectId, today);
-  const poiRows = await loadPoiRows(db, tileArray, today);
-  const regionRows = await loadRegionRows(db, tileArray, cfg, today);
-  const passages = await loadPassages(db, tileArray, today);
+  const spotRows = await loadSpotRows(db, subdivisionId, cfg, today);
+  const merged = await loadMerged(db, subdivisionId);
+  const poiRows = await loadPoiRows(db, subdivisionId, today);
+  const regionRows = await loadRegionRows(db, subdivisionId, cfg, today);
+  const passages = await loadPassages(db, subdivisionId, today);
+  const areaRows = await loadAreas(db, tileArray, today);
 
   const objectIds = [...spotRows, ...poiRows, ...regionRows].map((r) => r.geoObjectId);
   const profiles = await latestProfiles(db, [...objectIds, ...passages.map((p) => p.geoObjectId)]);
-  const names = await loadNames(db, [areaGeoObjectId, ...objectIds], today);
-  const popularity = await popularityForArea(db, areaGeoObjectId, today);
+  const names = await loadNames(db, [loaded.geoObjectId, ...areaRows.map((a) => a.geoObjectId), ...objectIds], today);
+  const popularity = await popularityForSubdivision(db, subdivisionId, today);
   const withProfile = [...spotRows, ...poiRows].map((r) => r.geoObjectId).filter((id) => profiles.has(id));
   const summaries = await loadSummaries(db, withProfile, profiles);
   // regions too: their facts and character rest on documents, which the forbidden-domain check needs (final review I-2)
@@ -97,8 +101,14 @@ export async function loadAreaScope(
     profile: profiles.get(r.geoObjectId) ?? null,
     sources: sources.get(r.geoObjectId) ?? [],
   }));
+  const { geoObjectId, ...subdivision } = loaded;
   return {
-    area: { ...area, names: (names.get(areaGeoObjectId) ?? []).map(({ lang, name }) => ({ lang, name })) },
+    subdivision: { ...subdivision, names: (names.get(geoObjectId) ?? []).map(({ lang, name }) => ({ lang, name })) },
+    areas: areaRows.map((a) => ({
+      publicId: a.publicId,
+      key: a.key,
+      names: (names.get(a.geoObjectId) ?? []).map(({ lang, name }) => ({ lang, name })),
+    })),
     tiles,
     spots: spots.sort(byPublicId),
     merged,
@@ -108,57 +118,65 @@ export async function loadAreaScope(
   };
 }
 
-async function loadArea(db: Db, areaId: string, today: string): Promise<Omit<AreaScope["area"], "names">> {
+async function loadSubdivision(
+  db: Db,
+  subdivisionId: string,
+  tileArray: SQL,
+  today: string,
+): Promise<Omit<SubdivisionScope["subdivision"], "names"> & { geoObjectId: string }> {
   const { rows } = await db.execute<{
     public_id: string;
-    config_key: string | null;
+    key: string;
+    geo_object_id: string;
     polygon: GeoJSON.Geometry;
     west: number;
     south: number;
     east: number;
     north: number;
   }>(sql`
-    select o.public_id, o.config_key,
-           ST_AsGeoJSON(o.geom, 5)::json as polygon,
+    select s.public_id, s.key, s.geo_object_id,
+           ST_AsGeoJSON(s.geom, 5)::json as polygon,
            ext.west, ext.south, ext.east, ext.north
-    from geo_objects o
+    from subdivisions s
     cross join lateral (
       select ST_XMin(e) as west, ST_YMin(e) as south, ST_XMax(e) as east, ST_YMax(e) as north
-      -- the area's tiles; an area without tiles falls back to its own box
+      -- the scope tiles; a subdivision without tiles falls back to its own box
       from (
         select coalesce(
-          (select ST_Extent(t.bbox)::geometry from tiles t where t.area_id = o.id and ${validAtAlias("t", today)}),
-          ST_Envelope(o.geom)
+          (select ST_Extent(t.bbox)::geometry from tiles t where t.id = any(${tileArray})),
+          ST_Envelope(s.geom)
         ) as e
       ) x
     ) ext
-    where o.id = ${areaId} and o.type = 'area' and o.public_id is not null and ${validAtAlias("o", today)}
+    where s.id = ${subdivisionId} and ${validAtAlias("s", today)}
   `);
   const row = rows[0];
-  if (!row) throw new AreaNotFound(areaId);
+  if (!row) throw new SubdivisionNotFound(subdivisionId);
   if (row.polygon.type !== "Polygon" && row.polygon.type !== "MultiPolygon") {
-    throw new Error(`area ${areaId} has a ${row.polygon.type} geometry, expected a polygon`);
+    throw new Error(`subdivision ${subdivisionId} has a ${row.polygon.type} geometry, expected a polygon`);
   }
   const bbox = [row.west, row.south, row.east, row.north].map((n) => round(Number(n), 5)) as [number, number, number, number];
   return {
-    geoObjectId: areaId,
+    id: subdivisionId,
+    geoObjectId: row.geo_object_id,
     publicId: row.public_id,
-    key: row.config_key ?? row.public_id,
-    name: (await deliveryNames(db, [areaId], today)).get(areaId) ?? "",
+    key: row.key,
+    name: (await deliveryNames(db, [row.geo_object_id], today)).get(row.geo_object_id) ?? "",
     polygon: row.polygon,
     bbox,
   };
 }
 
-/** Places delivered as spots: valid, a delivered status, a public id, unmerged, in a valid tile of the area. */
-function spotFilter(areaId: string, cfg: DeliveryConfig, today: string): SQL {
+/** Places delivered as spots: valid, a delivered status, a public id, unmerged, on the land of the subdivision. */
+function spotFilter(subdivisionId: string, cfg: DeliveryConfig, today: string): SQL {
   return sql`${validAtAlias("p", today)} and p.public_id is not null and p.merged_into_id is null
     and p.status::text = any(${arrayParam(cfg.spots.statuses, "text")})
-    and exists (select 1 from tiles t where t.id = p.tile_id and t.area_id = ${areaId} and ${validAtAlias("t", today)})
-    and exists (select 1 from geo_objects o where o.id = p.geo_object_id and o.merged_into_id is null and ${validAtAlias("o", today)})`;
+    and exists (select 1 from geo_objects o
+                where o.id = p.geo_object_id and o.merged_into_id is null and o.subdivision_id = ${subdivisionId}
+                  and ${validAtAlias("o", today)})`;
 }
 
-async function loadTiles(db: Db, areaId: string, cfg: DeliveryConfig, today: string): Promise<AreaScope["tiles"]> {
+async function loadTiles(db: Db, subdivisionId: string, tileArray: SQL, cfg: DeliveryConfig, today: string): Promise<SubdivisionScope["tiles"]> {
   const { rows } = await db.execute<{ id: string; last_run_at: string | Date | null; profiles_as_of: string | null }>(sql`
     select t.id, t.last_run_at,
       (select max(lp.valid_from)
@@ -166,9 +184,9 @@ async function loadTiles(db: Db, areaId: string, cfg: DeliveryConfig, today: str
          cross join lateral (
            select pr.valid_from from profiles pr where pr.geo_object_id = p.geo_object_id order by pr.version desc limit 1
          ) lp
-         where p.tile_id = t.id and ${spotFilter(areaId, cfg, today)})::text as profiles_as_of
+         where p.tile_id = t.id and ${spotFilter(subdivisionId, cfg, today)})::text as profiles_as_of
     from tiles t
-    where t.area_id = ${areaId} and ${validAtAlias("t", today)}
+    where t.id = any(${tileArray})
     order by t.id
   `);
   return rows.map((r) => ({
@@ -180,7 +198,7 @@ async function loadTiles(db: Db, areaId: string, cfg: DeliveryConfig, today: str
 
 type SpotRow = Omit<SpotSource, "names" | "profile" | "summary" | "popularity" | "sources">;
 
-async function loadSpotRows(db: Db, areaId: string, cfg: DeliveryConfig, today: string): Promise<SpotRow[]> {
+async function loadSpotRows(db: Db, subdivisionId: string, cfg: DeliveryConfig, today: string): Promise<SpotRow[]> {
   const { rows } = await db.execute<{
     place_id: string;
     geo_object_id: string;
@@ -198,7 +216,7 @@ async function loadSpotRows(db: Db, areaId: string, cfg: DeliveryConfig, today: 
            g.osm_id, g.wikidata_id
     from places p
     join geo_objects g on g.id = p.geo_object_id
-    where ${spotFilter(areaId, cfg, today)}
+    where ${spotFilter(subdivisionId, cfg, today)}
     order by p.public_id
   `);
   const names = await deliveryNames(db, rows.map((r) => r.geo_object_id), today);
@@ -217,15 +235,15 @@ async function loadSpotRows(db: Db, areaId: string, cfg: DeliveryConfig, today: 
 }
 
 /**
- * Places of the area's tiles with a public id that were merged into another place: the final target, following
- * `places.merged_into_id` to an unmerged place with a public id (ruling M6-P14).
+ * Places of the subdivision with a public id that were merged into another place: the final target, following
+ * `places.merged_into_id` to an unmerged place with a public id (ruling M6-P14). A merged place belongs to the
+ * subdivision of its own geo object, else (never assigned) to that of the final target.
  */
-async function loadMerged(db: Db, areaId: string, today: string): Promise<AreaScope["merged"]> {
+async function loadMerged(db: Db, subdivisionId: string): Promise<SubdivisionScope["merged"]> {
   const { rows } = await db.execute<{ public_id: string; target_public_id: string }>(sql`
     with recursive chain(start_id, target_id, depth) as (
       select p.id, p.merged_into_id, 1
       from places p
-      join tiles t on t.id = p.tile_id and t.area_id = ${areaId} and ${validAtAlias("t", today)}
       where p.public_id is not null and p.merged_into_id is not null
       union all
       select c.start_id, n.merged_into_id, c.depth + 1
@@ -237,7 +255,10 @@ async function loadMerged(db: Db, areaId: string, today: string): Promise<AreaSc
     from final f
     join places s on s.id = f.start_id
     join places tg on tg.id = f.target_id
+    join geo_objects sg on sg.id = s.geo_object_id
+    join geo_objects tgg on tgg.id = tg.geo_object_id
     where tg.public_id is not null and tg.merged_into_id is null
+      and coalesce(sg.subdivision_id, tgg.subdivision_id) = ${subdivisionId}
     order by s.public_id
   `);
   return rows.map((r) => ({ publicId: r.public_id, mergedIntoPublicId: r.target_public_id }));
@@ -245,7 +266,7 @@ async function loadMerged(db: Db, areaId: string, today: string): Promise<AreaSc
 
 type PoiRow = Omit<PoiSource, "profile" | "summary" | "sources">;
 
-async function loadPoiRows(db: Db, tileArray: SQL, today: string): Promise<PoiRow[]> {
+async function loadPoiRows(db: Db, subdivisionId: string, today: string): Promise<PoiRow[]> {
   const { rows } = await db.execute<{
     geo_object_id: string;
     public_id: string;
@@ -259,7 +280,7 @@ async function loadPoiRows(db: Db, tileArray: SQL, today: string): Promise<PoiRo
            ST_X(o.centroid) as lon, ST_Y(o.centroid) as lat, o.osm_id, o.wikidata_id
     from geo_objects o
     where o.type = 'poi' and o.public_id is not null and o.category is not null and o.merged_into_id is null
-      and ${validAtAlias("o", today)} and tile_id_for(o.centroid) = any(${tileArray})
+      and ${validAtAlias("o", today)} and o.subdivision_id = ${subdivisionId}
     order by o.public_id
   `);
   const names = await deliveryNames(db, rows.map((r) => r.geo_object_id), today);
@@ -276,7 +297,7 @@ async function loadPoiRows(db: Db, tileArray: SQL, today: string): Promise<PoiRo
 
 type RegionRow = Omit<RegionSource, "names" | "profile" | "sources">;
 
-async function loadRegionRows(db: Db, tileArray: SQL, cfg: DeliveryConfig, today: string): Promise<RegionRow[]> {
+async function loadRegionRows(db: Db, subdivisionId: string, cfg: DeliveryConfig, today: string): Promise<RegionRow[]> {
   const { rows } = await db.execute<{
     geo_object_id: string;
     public_id: string;
@@ -301,8 +322,7 @@ async function loadRegionRows(db: Db, tileArray: SQL, cfg: DeliveryConfig, today
            ) as ancestors
     from geo_objects o
     where o.type::text = any(${arrayParam(cfg.regions.types, "text")}) and o.public_id is not null
-      and o.merged_into_id is null and ${validAtAlias("o", today)}
-      and exists (select 1 from tile_geo_objects tg where tg.geo_object_id = o.id and tg.tile_id = any(${tileArray}))
+      and o.merged_into_id is null and ${validAtAlias("o", today)} and o.subdivision_id = ${subdivisionId}
     order by o.public_id
   `);
   const polygons = await simplifiedPolygons(
@@ -351,16 +371,28 @@ async function simplifiedPolygons(
   return new Map(rows.map((r) => [r.id, { polygon: r.polygon, maxDistanceM: Number(r.max_distance_m) }]));
 }
 
-async function loadPassages(db: Db, tileArray: SQL, today: string): Promise<Array<Omit<PassageSource, "profile">>> {
+async function loadPassages(db: Db, subdivisionId: string, today: string): Promise<Array<Omit<PassageSource, "profile">>> {
   const { rows } = await db.execute<{ geo_object_id: string; type: PassageSource["type"]; lon: number; lat: number }>(sql`
     select o.id as geo_object_id, o.type, ST_X(o.centroid) as lon, ST_Y(o.centroid) as lat
     from geo_objects o
     where o.type in ('cape', 'strait', 'channel') and o.merged_into_id is null and ${validAtAlias("o", today)}
-      and exists (select 1 from tile_geo_objects tg where tg.geo_object_id = o.id and tg.tile_id = any(${tileArray}))
+      and o.subdivision_id = ${subdivisionId}
     order by o.id
   `);
   const names = await deliveryNames(db, rows.map((r) => r.geo_object_id), today);
   return rows.map((r) => ({ geoObjectId: r.geo_object_id, type: r.type, name: names.get(r.geo_object_id) ?? "", point: point(r.lon, r.lat) }));
+}
+
+/** The sailing areas (Reviere, geo objects of type `area` with a public id) linked to the scope tiles. */
+async function loadAreas(db: Db, tileArray: SQL, today: string): Promise<Array<{ geoObjectId: string; publicId: string; key: string }>> {
+  const { rows } = await db.execute<{ id: string; public_id: string; config_key: string | null }>(sql`
+    select o.id, o.public_id, o.config_key
+    from geo_objects o
+    where o.type = 'area' and o.public_id is not null and o.merged_into_id is null and ${validAtAlias("o", today)}
+      and exists (select 1 from tile_geo_objects tg where tg.geo_object_id = o.id and tg.tile_id = any(${tileArray}))
+    order by o.public_id
+  `);
+  return rows.map((r) => ({ geoObjectId: r.id, publicId: r.public_id, key: r.config_key ?? r.public_id }));
 }
 
 /**

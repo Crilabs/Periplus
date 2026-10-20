@@ -3,7 +3,7 @@ import type { PgBoss } from "pg-boss";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ChangesFile, Manifest, SpotsFile } from "@/contract";
 import type { Db } from "@/lib/db/client";
-import { deliveries, geoObjects, profiles, profileSummaries, runs, textShingles } from "@/lib/db/schema";
+import { deliveries, geoObjects, profiles, profileSummaries, runs, subdivisions, textShingles } from "@/lib/db/schema";
 import { setDeliveryArchive } from "@/lib/domain/delivery/archive";
 import { buildDelivery } from "@/lib/domain/delivery/build";
 import { sha256Hex } from "@/lib/domain/delivery/serialize";
@@ -15,16 +15,15 @@ import type { JobContext } from "@/lib/jobs/worker";
 import { STAGES } from "@/lib/jobs/stages";
 import { DELIVERY_STAGE } from "@/lib/pipeline/delivery";
 import { startDeliveryRun } from "@/lib/pipeline/delivery-run";
-import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { insertProfile } from "@/test/consolidation";
 import { testDb, withRollback } from "@/test/db";
-import { COMMITTED_SHIFT, endCommittedDeliveryArea, seedDeliveryArea, type DeliveryFixture } from "@/test/fixtures/delivery/area";
+import { COMMITTED_SHIFT, endCommittedDeliverySubdivision, seedDeliverySubdivision, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
 import { deleteTestObjects, testArchive, testObjectContentType } from "@/test/s3";
 import { insertTestVersion } from "@/test/text";
 
 /*
  * The run "Paket bauen" (plan Task 10): stage plan and starter in withRollback (no worker); the job handler on the
- * pool, the way the worker calls it, against a committed fixture area at −150.1° / −50.1° (ruling M6-E-R2) that the
+ * pool, the way the worker calls it, against a committed fixture subdivision at −150.1° / −50.1° (ruling M6-E-R2) that the
  * test ends again, with its files in the test bucket deleted.
  */
 
@@ -62,58 +61,55 @@ async function committedXact<T>(db: Db, fn: (tx: Db) => Promise<T>): Promise<{ x
 afterEach(() => setDeliveryArchive(null));
 
 describe("delivery run", () => {
-  it("the stage plans exactly one job for the area", async () => {
+  it("the stage plans exactly one job for the subdivision", async () => {
     expect(STAGES[DELIVERY_STAGE]).toBe(deliveryBuildStage);
     expect(deliveryBuildStage.queue).toBe("delivery.build");
-    const areaId = newId();
-    const jobs = await deliveryBuildStage.plan({} as Db, { id: newId(), params: { areaId, areaKey: "delivery-test" } });
-    expect(jobs).toEqual([{ key: areaId, areaId }]);
-    await expect(deliveryBuildStage.plan({} as Db, { id: newId(), params: {} })).rejects.toThrow(/areaId/);
+    const subdivisionId = newId();
+    const jobs = await deliveryBuildStage.plan({} as Db, { id: newId(), params: { subdivisionId, subdivisionKey: "XT-DELIVERY" } });
+    expect(jobs).toEqual([{ key: subdivisionId, subdivisionId }]);
+    await expect(deliveryBuildStage.plan({} as Db, { id: newId(), params: {} })).rejects.toThrow(/subdivisionId/);
   });
 
-  it("startDeliveryRun rejects a geo object that is not an area, or an area without config key", async () => {
+  it("startDeliveryRun rejects an unknown key, an excluded subdivision and an area key, naming the way out", async () => {
     await withRollback(async (tx) => {
       const { boss, inserted } = recordingBoss();
       const triggeredBy = someone();
-      const f = await seedDeliveryArea(tx);
-      // an area without config key has no scope id (the other area runs use the key too)
-      const [keyless] = await tx
-        .insert(geoObjects)
-        .values({ type: "area", origin: "manual", geom: sql`ST_GeomFromText('POLYGON((21 35,21.1 35,21.1 35.1,21 35.1,21 35))', 4326)`, publicId: `ar_01J9ZD${"9".repeat(20)}` })
-        .returning({ id: geoObjects.id });
-      for (const id of [f.islandId, keyless!.id, newId(), "not-a-uuid"]) {
-        await expect(startDeliveryRun(tx, boss, { areaGeoObjectId: id, triggeredBy })).rejects.toMatchObject({
-          constructor: RunScopeNotReady,
-          reason: "area_without_geo_object",
-        });
-      }
+      const f = await seedDeliverySubdivision(tx);
+      await expect(startDeliveryRun(tx, boss, "XT-UNKNOWN", triggeredBy)).rejects.toThrow("Unbekannter Landesteil XT-UNKNOWN");
+      // a geo object id is no subdivision key
+      await expect(startDeliveryRun(tx, boss, f.regionId, triggeredBy)).rejects.toThrow(/Unbekannter Landesteil/);
+      await expect(startDeliveryRun(tx, boss, "saronic", triggeredBy)).rejects.toThrow(/Landesteil angeben/);
+      await tx.update(subdivisions).set({ status: "excluded", statusReason: "test" }).where(eq(subdivisions.id, f.subdivisionId));
+      await expect(startDeliveryRun(tx, boss, f.subdivisionKey, triggeredBy)).rejects.toThrow(`Landesteil ${f.subdivisionKey} ist ausgeschlossen`);
       expect(inserted).toEqual([]);
       expect(await tx.select().from(runs).where(eq(runs.triggeredBy, triggeredBy))).toEqual([]);
     });
   });
 
-  it("startDeliveryRun starts the stage run for the area with one job", async () => {
+  it("startDeliveryRun starts the stage run for the subdivision with one job", async () => {
     await withRollback(async (tx) => {
       const { boss, inserted } = recordingBoss();
-      const f = await seedDeliveryArea(tx);
+      const f = await seedDeliverySubdivision(tx);
       const triggeredBy = someone();
-      const { id } = await startDeliveryRun(tx, boss, { areaGeoObjectId: f.areaId, triggeredBy });
+      const { id } = await startDeliveryRun(tx, boss, f.subdivisionKey, triggeredBy);
       const [run] = await tx.select().from(runs).where(eq(runs.id, id)).orderBy(asc(runs.createdAt));
       expect(run).toMatchObject({
         kind: "stage",
-        scopeType: "area",
-        scopeId: "delivery-test",
+        scopeType: "subdivision",
+        scopeId: "XT-DELIVERY",
         stages: [DELIVERY_STAGE],
-        params: { areaId: f.areaId, areaKey: "delivery-test" },
+        params: { subdivisionId: f.subdivisionId, subdivisionKey: "XT-DELIVERY" },
         triggeredBy,
       });
-      expect(inserted).toEqual([{ queue: "delivery.build", data: expect.objectContaining({ key: f.areaId, areaId: f.areaId, runId: id }) }]);
+      expect(inserted).toEqual([
+        { queue: "delivery.build", data: expect.objectContaining({ key: f.subdivisionId, subdivisionId: f.subdivisionId, runId: id }) },
+      ]);
     });
   });
 });
 
 describe("delivery build on the pool (committed, ruling M6-E-R2)", () => {
-  it("the handler builds under the area lock from one read-only snapshot, which it stores", { timeout: 60_000 }, async () => {
+  it("the handler builds under the subdivision lock from one read-only snapshot, which it stores", { timeout: 60_000 }, async () => {
     const db = testDb();
     const archive = testArchive();
     await archive.ensureBucket();
@@ -131,19 +127,27 @@ describe("delivery build on the pool (committed, ruling M6-E-R2)", () => {
       ).rows[0]!.v;
     const readJson = async <T,>(key: string): Promise<T> => JSON.parse(new TextDecoder().decode((await archive.get(key))!)) as T;
     try {
-      const seeded = await committedXact(db, (tx) => seedDeliveryArea(tx, { key: `pool-${newId()}`, shift: COMMITTED_SHIFT, committed: true }));
+      const seeded = await committedXact(db, (tx) => seedDeliverySubdivision(tx, { key: `pool-${newId()}`, shift: COMMITTED_SHIFT, committed: true }));
       f = seeded.result;
-      runId = (await createRun(db, { kind: "stage", scope: { type: "area", id: f.areaKey }, stages: [DELIVERY_STAGE], params: { areaId: f.areaId, areaKey: f.areaKey }, triggeredBy })).id;
-      const job = { key: f.areaId, areaId: f.areaId, runId, stage: DELIVERY_STAGE };
+      runId = (
+        await createRun(db, {
+          kind: "stage",
+          scope: { type: "subdivision", id: f.subdivisionKey },
+          stages: [DELIVERY_STAGE],
+          params: { subdivisionId: f.subdivisionId, subdivisionKey: f.subdivisionKey },
+          triggeredBy,
+        })
+      ).id;
+      const job = { key: f.subdivisionId, subdivisionId: f.subdivisionId, runId, stage: DELIVERY_STAGE };
 
       // 1. the first package, as the worker runs it: ctx.db is the pool
       const first = jobContext(db, runId);
       await deliveryBuildHandler(job, first.ctx);
       expect(first.logs).toEqual([
-        { level: "info", msg: "delivery built", fields: expect.objectContaining({ areaId: f.areaId, status: "valid", dataVersion: 1, failedChecks: 0 }) },
+        { level: "info", msg: "delivery built", fields: expect.objectContaining({ subdivisionId: f.subdivisionId, status: "valid", dataVersion: 1, failedChecks: 0 }) },
       ]);
       const v1 = await row(first.logs[0]!.fields.deliveryId as string);
-      expect(v1).toMatchObject({ status: "valid", dataVersion: 1, runId, triggeredBy, storagePrefix: `deliveries/${f.areaPublicId}/1/` });
+      expect(v1).toMatchObject({ status: "valid", dataVersion: 1, runId, triggeredBy, storagePrefix: `deliveries/${f.subdivisionKey}/1/` });
       // the stored snapshot is the one the contents were read under: it sees the seed, and its xmin is the stored one
       expect(await visible(seeded.xid, v1.id)).toBe(true);
       expect(v1.changeXmin).toBe((await db.execute<{ x: string }>(sql`select pg_snapshot_xmin(${v1.changeSnapshot}::pg_snapshot)::text as x`)).rows[0]!.x);
@@ -160,7 +164,7 @@ describe("delivery build on the pool (committed, ruling M6-E-R2)", () => {
       const words = Array.from({ length: 16 }, (_, i) => `p${newId().replace(/-/g, "").replace(/\d/g, "")}${"abcdefghijklmnop"[i]}`);
       const [latest] = await db.select().from(profiles).where(eq(profiles.geoObjectId, f.places.A.geoObjectId)).orderBy(desc(profiles.version)).limit(1);
       let concurrent: { xid: string } | undefined;
-      const probe = await buildDelivery(db, archive, f.areaId, {
+      const probe = await buildDelivery(db, archive, f.subdivisionId, {
         afterSnapshot: async (tx) => {
           // the read path cannot write: read only, one snapshot for every read
           const { rows } = await tx.execute<{ ro: string; iso: string }>(
@@ -209,19 +213,20 @@ describe("delivery build on the pool (committed, ruling M6-E-R2)", () => {
         },
       ]);
       const rejected = await row(third.logs[0]!.fields.deliveryId as string);
-      expect(rejected).toMatchObject({ status: "rejected", dataVersion: null, previousDeliveryId: v2.id, storagePrefix: `deliveries/${f.areaPublicId}/rejected/${rejected.id}/` });
+      expect(rejected).toMatchObject({ status: "rejected", dataVersion: null, previousDeliveryId: v2.id, storagePrefix: `deliveries/${f.subdivisionKey}/rejected/${rejected.id}/` });
     } finally {
       if (f) {
-        const stored = await db.select().from(deliveries).where(eq(deliveries.areaId, f.areaId));
+        const stored = await db.select().from(deliveries).where(eq(deliveries.subdivisionId, f.subdivisionId));
         await deleteTestObjects(stored.flatMap((d) => (d.storagePrefix ? Object.keys(d.fileHashes).map((file) => `${d.storagePrefix}${file}`) : [])));
         if (chunkIds.length > 0) await db.delete(textShingles).where(inArray(textShingles.chunkId, chunkIds));
-        await endCommittedDeliveryArea(db, f);
+        await endCommittedDeliverySubdivision(db, f);
       }
       if (runId) await endRun(db, runId, "test");
     }
-    // nothing of the area is left to meet: no valid objects, no files
+    // nothing of the subdivision is left to meet: no valid subdivision or objects, no files
+    expect(await db.select({ id: subdivisions.id }).from(subdivisions).where(and(eq(subdivisions.id, f!.subdivisionId), sql`${subdivisions.validTo} is null`))).toEqual([]);
     expect(await db.select({ id: geoObjects.id }).from(geoObjects).where(and(eq(geoObjects.id, f!.areaId), sql`${geoObjects.validTo} is null`))).toEqual([]);
-    const left = await db.select().from(deliveries).where(eq(deliveries.areaId, f!.areaId));
+    const left = await db.select().from(deliveries).where(eq(deliveries.subdivisionId, f!.subdivisionId));
     for (const d of left) for (const file of Object.keys(d.fileHashes)) expect(await archive.exists(`${d.storagePrefix}${file}`)).toBe(false);
   });
 });

@@ -9,10 +9,11 @@ import type {
 } from "@/contract";
 import { spotsFile, TEIL_B_EXAMPLE } from "./fixtures";
 
-const AREA = "ar_01J9X4M0A1B2C3D4E5F6G7H8J9";
+const SUBDIVISION = "sd_01J9X4M0A1B2C3D4E5F6G7H8J9";
+const AREA = "ar_01J9X4M0A1B2C3D4E5F6G7H8JA";
 const REGION = "rg_01J9X4KZ0A1B2C3D4E5F6G7H8J";
 const HIGHLIGHT = "hl_01J9X4KQ3P2N1M0Z9K8J7H6G5F";
-const envelope = { schemaVersion: "1.0" as const, area: AREA, dataVersion: 2, generatedAt: "2026-10-19T08:00:00.000Z" };
+const envelope = { schemaVersion: "2.0" as const, subdivision: SUBDIVISION, dataVersion: 2, generatedAt: "2026-10-19T08:00:00.000Z" };
 const square: [number, number][][] = [
   [
     [23.3, 37.6],
@@ -34,17 +35,18 @@ export const SAMPLE_FILES: {
   "changes.json": ChangesFile;
 } = {
   "manifest.json": {
-    schemaVersion: "1.0",
-    area: {
-      id: AREA,
-      key: "saronic",
-      name: "Saronischer Golf",
+    schemaVersion: "2.0",
+    subdivision: {
+      id: SUBDIVISION,
+      key: "GR-I",
+      name: "Attika",
       names: [
-        { lang: "en", name: "Saronic Gulf" },
-        { lang: "el", name: "Σαρωνικός Κόλπος" },
+        { lang: "en", name: "Attica" },
+        { lang: "el", name: "Αττική" },
       ],
       polygon: { type: "Polygon", coordinates: square },
     },
+    areas: [{ id: AREA, key: "saronic", names: [{ lang: "en", name: "Saronic Gulf" }] }],
     dataVersion: 2,
     previousDataVersion: 1,
     generatedAt: "2026-10-19T08:00:00.000Z",
@@ -98,7 +100,7 @@ export const SAMPLE_FILES: {
         center: { lat: 37.6, lon: 23.35 },
         radiusNm: 6,
         polygon: { type: "MultiPolygon", coordinates: [square] },
-        parentId: AREA,
+        parentId: null,
         spotIds: [TEIL_B_EXAMPLE.id],
         character: { de: "Vulkanische Halbinsel mit ruhigen Buchten." },
         facts: { meltemiExposure: 0.4, ferryTraffic: "light", charterBase: false, supplyPort: null },

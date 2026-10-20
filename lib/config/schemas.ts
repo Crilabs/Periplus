@@ -10,7 +10,7 @@ import {
 } from "@/lib/db/schema/geo";
 import { changeRateEnum, DOC_TYPES, type ChangeRate, type DocType } from "@/lib/db/schema/sources";
 import { CONTRACT_FILES, SCHEMA_VERSION } from "@/contract";
-import { PROVENANCE_SOURCES } from "@/contract/v1";
+import { PROVENANCE_SOURCES } from "@/contract/v2";
 import { COPY_SHINGLE_WORDS } from "@/lib/domain/documents/shingles";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { CONVERTERS, crawlRulesPatchSchema, regexPattern } from "@/lib/domain/sources/crawl-rules";

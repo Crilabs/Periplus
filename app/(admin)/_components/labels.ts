@@ -672,10 +672,10 @@ export const PREVIEW_OMISSION_LABELS: Record<PreviewOmission, string> = {
   no_name: "Der Ort hat keinen gültigen Namen.",
   no_profile: "Der Ort hat kein Profil.",
   shelter_incomplete: "Die Schutzwerte sind unvollständig oder ohne Herkunft.",
-  no_area: "Die Kachel des Orts gehört zu keinem Revier.",
-  merged: "Der Ort ist zusammengelegt. Das nächste Paket liefert ihn mit „zusammengelegt in“ (mergedInto) den Ort, in den er aufgegangen ist, sofern das letzte Paket des Reviers ihn enthielt.",
+  no_subdivision: "Der Ort gehört zu keinem Landesteil.",
+  merged: "Der Ort ist zusammengelegt. Das nächste Paket liefert ihn mit „zusammengelegt in“ (mergedInto) den Ort, in den er aufgegangen ist, sofern das letzte Paket des Landesteils ihn enthielt.",
   merged_removed:
-    "Der Ort ist zusammengelegt in einen Ort, den das nächste Paket des Reviers nicht liefert (anderes Revier oder ausgelassen). Das Paket meldet ihn als entfernt.",
+    "Der Ort ist zusammengelegt in einen Ort, den das nächste Paket des Landesteils nicht liefert (anderer Landesteil oder ausgelassen). Das Paket meldet ihn als entfernt.",
   not_in_package: "Der Ort ist kein Spot des Pakets (nicht bestätigt oder beendet).",
 };
 
