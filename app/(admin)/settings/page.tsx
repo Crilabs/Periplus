@@ -6,7 +6,7 @@ import { getFactSchema } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { Dialog } from "../_components/dialog";
-import { METRIC_LABELS } from "../_components/labels";
+import { GEO_OBJECT_TYPE_LABELS, METRIC_LABELS } from "../_components/labels";
 import {
   Badge,
   Button,
@@ -131,7 +131,7 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
     ],
     [
       "Unbenannte Buchten",
-      `Küste alle ${geometry.bays.coastStepM} m, Prüfpunkt ${geometry.bays.probeOffsetM} m vor der Küste; ≥ ${geometry.bays.minLandDeg}° Land in ${geometry.bays.rayLengthM} m; Ankerfläche ≥ ${geometry.bays.minAnchorAreaM2} m²; zusammengefasst unter ${geometry.bays.mergeDistanceM} m; bekannt bei Ort oder Bucht in ${geometry.bays.knownPlaceDistanceM} m`,
+      `Küste alle ${geometry.bays.coastStepM} m, Prüfpunkt ${geometry.bays.probeOffsetM} m vor der Küste; ≥ ${geometry.bays.minLandDeg}° Land in ${geometry.bays.rayLengthM} m; Ankerfläche ≥ ${geometry.bays.minAnchorAreaM2} m²; zusammengefasst unter ${geometry.bays.mergeDistanceM} m, geteilt über ${geometry.bays.maxClusterSpanM} m; bekannt bei Ort oder ${geometry.bays.knownObjectTypes.map((t) => GEO_OBJECT_TYPE_LABELS[t]).join("/")} in ${geometry.bays.knownPlaceDistanceM} m; Hilfsname nach ${geometry.bays.helperNameTypes.map((tier) => tier.map((t) => GEO_OBJECT_TYPE_LABELS[t]).join(", ")).join(" vor ")} in ${geometry.bays.helperNameMaxDistanceM} m`,
     ],
   ];
   const factSchemaLevels = getFactSchema(factSchema.version).levels;

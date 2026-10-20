@@ -292,10 +292,21 @@ export const geometrySchema = z.strictObject({
       minLandDeg: z.number().positive().max(360),
       minAnchorAreaM2: z.number().positive(),
       mergeDistanceM: meters,
+      /** A merged cluster wider than this (largest distance between two hits) is split into pieces of at most this span. */
+      maxClusterSpanM: meters,
       knownPlaceDistanceM: meters,
+      /** Valid geo objects of these types within `knownPlaceDistanceM` make a hit known (besides places of any status). */
+      knownObjectTypes: z.array(geoObjectType).min(1),
       helperNameMaxDistanceM: meters,
+      /** Helper-name tiers in priority order: the nearest named object of the first tier with one within reach names the bay. */
+      helperNameTypes: z.array(z.array(geoObjectType).min(1)).min(1),
     })
-    .refine((b) => b.probeOffsetM < b.rayLengthM, "probeOffsetM must be below rayLengthM"),
+    .refine((b) => b.probeOffsetM < b.rayLengthM, "probeOffsetM must be below rayLengthM")
+    .refine((b) => b.mergeDistanceM < b.maxClusterSpanM, "mergeDistanceM must be below maxClusterSpanM")
+    .refine(
+      (b) => b.maxClusterSpanM <= 2 * b.knownPlaceDistanceM,
+      "maxClusterSpanM must be at most twice knownPlaceDistanceM (a created bay must make its whole piece known on a rerun)",
+    ),
 });
 
 /** `config/restrictions.json`: Natura 2000 sites (site codes) where anchoring is banned. */

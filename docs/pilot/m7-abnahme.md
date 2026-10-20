@@ -68,7 +68,8 @@ Alle Messwerte auf echten Daten werden **im Pilot gemessen** (unten „Messwerte
   - erste Stufe jedes Geometrie-Laufs für Kachel oder Revier;
   - Parameter in `config/geometry.json` (`bays`).
   - Neue Buchten werden immer Ortskandidaten mit Prüfaufgabe und Hilfsname „Bucht bei …“, **nie automatisch bestätigt**.
-  - Tests an synthetischer Halbkreis-Bucht, gerader Küste, bekannten Orten und Objekten, fehlender Ankerfläche, Wiederholung und Hilfsname (`lib/domain/geometry/__tests__/bays.test.ts`).
+  - Bekannte Treffer (Ort oder Bucht/Hafen in 500 m, auch früher erkannte Buchten) fallen vor dem Zusammenfassen weg; Gruppen über `maxClusterSpanM` (1 km) werden geteilt; nur Prüfpunkte in der eigenen Kachel (Ruling M7-I-R1).
+  - Tests an synthetischer Halbkreis-Bucht, gerader Küste, Golf mit Seitenbucht und bestätigtem Ort am Kopf, Bucht an der Kachelgrenze, bekannten Orten und Objekten (400 m / 600 m), fehlender Ankerfläche, Wiederholung, Eltern-Objekt, Hilfsname mit Stufen und Planung durch `geometry.place` (`lib/domain/geometry/__tests__/bays.test.ts`).
 - [x] **Review-Warteschlange:** Abweichungen eines Bewertungslaufs tragen in Liste und Detail das Kennzeichen „Bewertung“ (M7-E-R2-Notiz).
 - [x] **Gesamtprüfung** am Ende von M7 Teil (a): `npm run lint`, `npm run typecheck`, `npm run test:ops`, `npx vitest run`, `npm run test:e2e`, `npm run build` grün; der Build ohne Umgebung (wie CI) grün.
 
@@ -93,7 +94,7 @@ Alle Werte **werden im Pilot gemessen**, auf echten Daten von `saronic` (und `ar
 
 ## Offen für Christian (Übergabe, nicht automatisierbar)
 1. [ ] **Voller Pilotlauf** (M1–M6) für `saronic` und `argolic` nach `docs/pilot/m7-runbook.md`, Schritte 0–20. Vorher `npm run db:migrate` (0038 → 0047).
-2. [ ] **Unbenannte Buchten** (Schritt 6): Kandidaten prüfen, dann `check:gazetteer` erneut mit Exit 0.
+2. [ ] **Unbenannte Buchten** (Schritt 6): Kandidaten prüfen, dann `check:gazetteer` erneut mit Exit 0. Nach Schritt 14 meldet `check:gazetteer` jede per „Name zuordnen“ benannte Bucht als fehlend (Sprache `und`); Abhilfe und Entscheidung unter „Vorgaben“ (M7-I M-5).
 3. [ ] **Messung „Lauf 1“** (Schritt 21).
 4. [ ] **Navily-Erstdurchgang und Abweichungs-Review** (Schritt 22).
 5. [ ] **Simulierter Revisit** (Schritte 23–24):
@@ -136,6 +137,8 @@ Keine. M7 Teil (a) rief keinen externen Dienst auf; alle KI-Antworten kamen von 
 | --- | --- | --- |
 | **P13** unbenannte Buchten in M7 | umgesetzt als Task 18; Alternative: nach M9, dann senken unbenannte Navily-Buchten `coverage_navily` | `lib/domain/geometry/bays.ts`, `config/geometry.json` |
 | Task 18: Abstand „bekannt“ (500 m) und Radius des Hilfsnamens (5 km) | nicht in Spec 04 festgelegt, gewählt; in `config/geometry.json` (`bays.knownPlaceDistanceM`, `helperNameMaxDistanceM`) | `config/geometry.json` |
+| Task 18: Teilung langer Treffergruppen (`maxClusterSpanM` 1 km, höchstens doppelter Bekannt-Abstand) | gewählt nach Ruling M7-I-R1, damit Seitenbuchten eines Golfs eigene Kandidaten bekommen; Folge: ein langer Golf oder Kanal bringt etwa einen Kandidaten je km Ufer (mehr Prüfaufwand, nie bestätigt) | `config/geometry.json` |
+| **M7-I M-5** Name einer unbenannten Bucht und `check:gazetteer` | „Name zuordnen“ (Schritt 14) speichert den Namen mit Sprache `und`. `check:gazetteer` prüft jede benannte Bucht auf de, en und el, meldet die Bucht als fehlend und endet mit Exit 1; damit scheitert das Kriterium „Gazetteer vollständig“. Abhilfe heute: je gemeldeter Bucht die Namen in de, en und el anfügen (ein kleines Skript mit `addNames`, `lib/domain/gazetteer/names.ts`, Herkunft `review`; die `und`-Zeile bleibt, `geo_names` wird nie gelöscht), dann `check:gazetteer` erneut. Entscheidung für Christian: (a) so von Hand nachtragen, (b) `check:gazetteer` nimmt berechnete Buchten (Herkunft „Berechnet“) mit nur `und` aus, oder (c) „Name zuordnen“ fragt die Sprache ab | `lib/domain/review-decisions.ts` (`assign_name`), `scripts/check-gazetteer.ts` |
 | Task 18: Prüfpunkt-Strecke von der Küste muss ganz im Wasser liegen | eine Bucht schmaler als etwa 400 m wird nur von ihrer Mündung aus geprüft; kleine Buchten können fehlen | `lib/domain/geometry/bays.ts` (`bayClusters`) |
 | **P12** Mehrbefund und Abdeckung | Abnahme nach Datendienst-Spec (`multi_document`, `coverage_navily`); Spec 10 daneben | `lib/domain/quality/metrics.ts` |
 | **P10** Aktivierung | über die Datenbank (`config_activations`), Rückfall `active.json` | `lib/domain/consolidation/active-rules.ts` |
@@ -187,7 +190,8 @@ Keine. M7 Teil (a) rief keinen externen Dienst auf; alle KI-Antworten kamen von 
 | Der Revier-Filter des Revisits überspringt eine neue Seite nur, wenn das Revier ihre Quelle nie fand und die Seite kein Objekt des Reviers nennt (Bündel G) | `lib/pipeline/revisit-stages.ts` |
 | Der Kostenbericht liest die `cost_per_place`-Details der Messungen statt `spendBreakdown`; `clone.sh` hat `--db-user`; `sim:revisit`/`sim:verify` lesen `.env.sim` (Bündel H, D1–D7) | `lib/domain/quality/reports.ts`, `scripts/sim/` |
 | Unbenannte Buchten: Kandidaten in einem Sperrgebiet werden nicht schon bei der Erkennung, sondern in der folgenden Stufe `geometry.place` desselben Laufs `no_anchoring` (ihre Aufgabe schließt sich dann) | `lib/domain/geometry/bays.ts`, `lib/domain/geometry/restrictions.ts` |
-| Unbenannte Buchten: zwei Kachel-Jobs laufen nacheinander (Sperre `pg_advisory_xact_lock`), damit eine Bucht an der Kachelgrenze nicht doppelt entsteht; die Strahlen-Rechnung davor läuft ohne Sperre | `lib/domain/geometry/bays.ts` (`detectTileBays`) |
+| Unbenannte Buchten an der Kachelgrenze: jede Kachel nimmt nur Prüfpunkte in ihrer Fläche, jeder Kandidat liegt in seiner Kachel. Die Kachel-Jobs laufen für Bekannt-Prüfung und Anlage nacheinander (Sperre `pg_advisory_xact_lock`), so sieht die zweite Kachel den Kandidaten der ersten als bekannt und legt die Bucht nicht noch einmal an. Liegen die Treffer einer Bucht auf beiden Seiten mehr als 500 m vom ersten Kandidaten entfernt, kann die zweite Kachel einen weiteren Kandidaten anlegen (nie bestätigt). Die Strahlen-Rechnung davor läuft ohne Sperre | `lib/domain/geometry/bays.ts` (`detectTileBays`) |
+| Unbenannte Buchten: ein Golfabschnitt ohne Ankerfläche kann nach einem neuen Kandidaten nebenan bei einem neuen Lauf anders geschnitten werden und dann einen weiteren Kandidaten bringen (Richtung: mehr Prüfaufwand, nie bestätigt; M7-I-R1) | `lib/domain/geometry/bays.ts` (`clusterHits`) |
 
 ## Ergebnis
 Datum der Abnahme: _offen_ (Pilot, Teil b). Messung „Lauf 1“: _offen_. Messung „Lauf 2“: _offen_. Navily-Abdeckung: _offen_. Simulierter Revisit: _offen_ von 10, _offen_ unerwartete, asOf _offen_. Review-Aufwand Lauf 2: _offen_ min. Kosten je Ort: _offen_. Kachelgröße: Entscheidung _offen_. Pilotbericht: _offen_.

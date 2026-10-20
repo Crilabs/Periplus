@@ -62,14 +62,17 @@ Stand 2026-10-20, nach M7 Teil (a) (Code). Er ersetzt den Entwurf aus dem M7-Pre
   - Prüfpunkt 400 m vor der Küste;
   - ≥ 180° der 72 Strahlen treffen in 1,5 km Land;
   - Ankerfläche (3–12 m Tiefe, 30 m von Land, im 600-m-Kreis) ≥ 5.000 m²;
-  - Treffer unter 300 m zusammengefasst.
-- Eine Bucht gilt als bekannt, wenn ein Ort (jeder Status, auch abgelehnt) oder eine Bucht oder ein Hafen des Gazetteers näher als 500 m liegt. Ein neuer Lauf legt sie dann nicht wieder an. Verworfene Buchten kommen so nie wieder.
+  - Treffer unter 300 m zusammengefasst; eine Gruppe breiter als 1 km (`maxClusterSpanM`) wird in Stücke von höchstens 1 km geteilt, damit Seitenbuchten eines Golfs oder Kanals eigene Kandidaten bekommen.
+- Ein Treffer gilt als bekannt, wenn ein Ort (jeder Status, auch abgelehnt, auch eine früher erkannte Bucht) oder ein Objekt der Typen `knownObjectTypes` (Bucht, Hafen) näher als 500 m liegt. Bekannte Treffer fallen vor dem Zusammenfassen weg. Ein neuer Lauf legt eine Bucht deshalb nicht wieder an; verworfene Buchten kommen so nie wieder. Ein Golfabschnitt ohne Ankerfläche kann nach einem neuen Kandidaten nebenan anders geschnitten werden und dann einen weiteren Kandidaten bringen (nie bestätigt, nur mehr Prüfaufwand).
+- Jeder Kandidat liegt in der Kachel, die ihn erkennt: eine Kachel nimmt nur Prüfpunkte in ihrer eigenen Fläche. Eine Bucht an der Kachelgrenze entsteht einmal; die zweite Kachel sieht den Kandidaten der ersten als bekannt (die Jobs laufen nacheinander, Sperre `pg_advisory_xact_lock`).
+- Der Hilfsname nimmt den nächsten benannten Ort der ersten Stufe von `helperNameTypes` (Kap, Bucht, Hafen, Siedlung, Inselchen), nur ohne einen solchen die nächste Insel.
 - Neue Buchten:
-  - Geo-Objekt Typ Bucht, Herkunft „Berechnet“, ohne Namen;
+  - Geo-Objekt Typ Bucht, Herkunft „Berechnet“, ohne Namen, mit Eltern-Objekt nach der Hierarchie-Regel (Insel, Küstenabschnitt oder Revier);
   - Ort „Ankerplatz“ im Status Kandidat;
   - Prüfaufgabe „Ortskandidat“. Die Liste zeigt sie als „Bucht bei <nächster benannter Ort>“. Das ist nur ein Hilfsname, kein gespeicherter Name.
-- **Nie automatisch bestätigt.** Im selben Lauf rechnet `geometry.place` ihre Geometrie: Schutz, Ankerfläche, Ausschluss in Sperrgebieten.
+- **Nie automatisch bestätigt.** Im selben Lauf rechnet `geometry.place` ihre Geometrie: Schutz, Ankerfläche, Ausschluss in Sperrgebieten. Das gilt, weil der Kandidat immer in einer Kachel des Laufs liegt.
 - Ein bestätigter unbenannter Ort zählt für die Abdeckung. Geliefert wird er erst mit einem Namen: ohne gültigen Namen lässt das Paket den Spot aus (Warnung „kein gültiger Name“). Einen Namen bekommt er über „Name zuordnen“ bei einem Namenskandidaten aus Texten (Schritt 14).
+- **Achtung `check:gazetteer` nach Schritt 14:** „Name zuordnen“ speichert den Namen mit Sprache `und`. Eine so benannte Bucht fehlt danach in de, en und el, und `check:gazetteer` endet mit Exit 1. Abhilfe und offene Entscheidung: Abnahme M7, „Entscheidungen“.
 - Kosten 0 (nur Datenbank). Laufzeit auf echten Küsten ist ungemessen; im Lauf auf `/runs` beobachten, Stopp-Bedingung unten.
 
 ### Nach dem ersten Text-Lauf (Schritt 13)

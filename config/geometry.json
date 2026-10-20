@@ -38,7 +38,10 @@
     "minLandDeg": 180,
     "minAnchorAreaM2": 5000,
     "mergeDistanceM": 300,
+    "maxClusterSpanM": 1000,
     "knownPlaceDistanceM": 500,
-    "helperNameMaxDistanceM": 5000
+    "knownObjectTypes": ["bay", "harbour"],
+    "helperNameMaxDistanceM": 5000,
+    "helperNameTypes": [["cape", "bay", "harbour", "settlement", "islet"], ["island"]]
   }
 }

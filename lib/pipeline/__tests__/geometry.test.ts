@@ -396,7 +396,8 @@ describe("startGeometryRun", () => {
       expect(inserted).toEqual([
         { queue: "geometry.detect_bays", data: { key: scene.tileId, tileId: scene.tileId, runId: id, stage: DETECT_BAYS_STAGE } },
       ]);
-      // the place stage plans the tile's places, a bay detected by the first stage included
+      // the place stage plans the tile's places (here the scene's seeded place; that a bay detected by the first stage
+      // is planned too is tested in lib/domain/geometry/__tests__/bays.test.ts)
       expect(await STAGES[GEOMETRY_STAGE]!.plan(tx, { id, params: run!.params as Record<string, unknown> })).toEqual([
         { key: scene.placeId, placeId: scene.placeId },
       ]);
