@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getConfig } from "@/lib/config";
 import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
 import { droppedSafetyEntries } from "@/lib/domain/profile-view";
+import { recheckExclusion } from "@/lib/domain/geometry/restrictions";
 import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
@@ -265,6 +266,10 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
             : {}),
         })
         .where(eq(places.id, place.id));
+      // a restricted-area review: the next undecided banning area asks at once (wave-1 review M-2)
+      if ((task.context as { reason?: unknown } | null)?.reason === "restricted") {
+        await recheckExclusion(tx, { id: place.id, geoObjectId: place.geoObjectId }, getConfig().geometry.restriction.minShare);
+      }
       return place.geoObjectId;
     }
     case "merge": {

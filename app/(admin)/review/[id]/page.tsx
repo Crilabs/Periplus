@@ -303,7 +303,8 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
                   ))}
                 </ul>
                 Ein Kandidat wäre automatisch ausgeschlossen worden. „Kein Ankerplatz“ schließt den Ort aus; „Trotz Sperrgebiet
-                bestätigen“ behält ihn für diese Gebiete (ein später geladenes Gebiet fragt erneut).
+                bestätigen“ behält ihn für diese Gebiete. Ein weiteres Gebiet, das der letzte Geometrie-Lauf gefunden hat, folgt
+                sofort als nächste Aufgabe; ein danach geladenes fragt nach dem nächsten Geometrie-Lauf.
               </Notice>
             )}
             <PlaceConfirm

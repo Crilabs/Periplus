@@ -1,8 +1,10 @@
 import type { Geometry, MultiPolygon, Polygon } from "geojson";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { z } from "zod";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { places, restrictedAreas, reviewTasks, type RestrictedKind } from "@/lib/db/schema";
+import { places, restrictedAreas, restrictedKindEnum, reviewTasks, type RestrictedKind } from "@/lib/db/schema";
+import { latestComputations } from "@/lib/domain/facts/computations";
 import type { LonLat } from "@/lib/domain/geo-view";
 import { createReviewTask, hasDecidedTask } from "@/lib/domain/review";
 import type { Bbox } from "@/lib/domain/tiles";
@@ -251,4 +253,32 @@ export async function applyExclusion(db: Db, placeId: string, hits: RestrictionH
     });
     return created ? "review_opened" : "unchanged";
   });
+}
+
+const storedHitSchema = z.object({
+  kind: z.enum(restrictedKindEnum.enumValues),
+  restrictedAreaId: z.string(),
+  sourceRef: z.string().nullable(),
+  share: z.number(),
+  anchoringBan: z.boolean(),
+});
+
+/**
+ * Right after a restricted-area review of a confirmed place is decided „Trotz Sperrgebiet bestätigen“ (wave-1 review
+ * M-2, GR-12): the banning hits of the place's newest `restriction` computation whose area is still valid go through
+ * `applyExclusion` again, so an area the last geometry run found while the task was open opens the next task at once
+ * instead of at the next geometry run. An area loaded after that run still needs „Geometrie für Revier“.
+ */
+export async function recheckExclusion(tx: Db, place: { id: string; geoObjectId: string }, minShare: number): Promise<ExclusionOutcome> {
+  const fact = (await latestComputations(tx, place.geoObjectId)).get("restriction")?.facts.find((f) => f.attribute === "prohibitions");
+  const parsed = z.array(storedHitSchema).safeParse(fact?.value ?? []);
+  if (!parsed.success) return "unchanged";
+  const hits = exclusionsFor(parsed.data, minShare);
+  if (hits.length === 0) return "unchanged";
+  const valid = await tx
+    .select({ id: restrictedAreas.id })
+    .from(restrictedAreas)
+    .where(and(inArray(restrictedAreas.id, hits.map((h) => h.restrictedAreaId)), validAt(restrictedAreas)));
+  const ids = new Set(valid.map((r) => r.id));
+  return applyExclusion(tx, place.id, hits.filter((h) => ids.has(h.restrictedAreaId)));
 }

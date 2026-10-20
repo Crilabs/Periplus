@@ -7,6 +7,7 @@ import { geoObjects, places, restrictedAreas, reviewTasks, type PlaceStatus, typ
 import { createReviewTask } from "@/lib/domain/review";
 import { decideReviewTask } from "@/lib/domain/review-decisions";
 import type { Bbox } from "@/lib/domain/tiles";
+import { insertComputation } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { lonLatOf, rect, SYNTHETIC_SRID } from "@/test/geometry/synthetic";
 import {
@@ -376,6 +377,28 @@ describe("applyExclusion", () => {
         await decideOpen(tx, confirmed);
         // both decided now: nothing opens
         expect(await applyExclusion(tx, confirmed, [natura, firing])).toBe("unchanged");
+      }));
+    it("deciding a restricted review re-checks the last geometry run's areas: an area found while the task was open asks at once (wave-1 review M-2)", () =>
+      withRollback(async (tx) => {
+        const confirmed = await insertPlace(tx, "confirmed", `sp_${crypto.randomUUID().replaceAll("-", "").slice(0, 26).toUpperCase()}`);
+        const [{ geoObjectId }] = await tx.select({ geoObjectId: places.geoObjectId }).from(places).where(eq(places.id, confirmed));
+        const square = await utmRect(tx, 0, 0, 1000, 1000);
+        const a = { ...natura, restrictedAreaId: await insertRestricted(tx, "protected_area", square, natura.sourceRef) };
+        const b = { ...firing, restrictedAreaId: await insertRestricted(tx, "military", square, firing.sourceRef) };
+        const ended = { ...firing, restrictedAreaId: await insertRestricted(tx, "military", square, "emodnet/military/X2") };
+        await tx.update(restrictedAreas).set({ validTo: sql`current_date` }).where(eq(restrictedAreas.id, ended.restrictedAreaId));
+        expect(await applyExclusion(tx, confirmed, [a])).toBe("review_opened");
+        // the next geometry run finds B (and an area that has ended since) while T(A) is open: nothing opens yet
+        await insertComputation(tx, geoObjectId!, "restriction", { prohibitions: [b, a, ended] });
+        expect(await applyExclusion(tx, confirmed, [b, a])).toBe("unchanged");
+        await decideOpen(tx, confirmed);
+        const open = (await restrictedTask(tx, confirmed)).filter((t) => t.status === "open");
+        expect(open).toEqual([
+          expect.objectContaining({ context: expect.objectContaining({ restrictions: [{ kind: "military", id: b.restrictedAreaId, share: 1 }] }) }),
+        ]);
+        // deciding B asks nothing more
+        await decideOpen(tx, confirmed);
+        expect((await restrictedTask(tx, confirmed)).filter((t) => t.status === "open")).toEqual([]);
       }));
   });
 
