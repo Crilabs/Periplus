@@ -225,16 +225,16 @@ Ankerverbots-Gebiete pflegen:
 Status eines Orts ohne Prüfaufgabe ändern: Ort-Seite → Kopf → **„Bestätigen“**, **„Verwerfen“** oder **„Kein Ankerplatz“** („Verwerfen“ und „Kein Ankerplatz“ immer mit Rückfrage). Hat sich der Status inzwischen geändert (anderer Tab, Prüfaufgabe), wird nichts gespeichert: „Der Status hat sich inzwischen geändert – bitte neu prüfen“, Seite neu laden. Gedacht für einen bestätigten Ort, der sich als kein Ankerplatz herausstellt (Abgleich, Törnbericht, Besuch), und für einen Kandidaten, dessen Aufgabe hinfällig wurde. Die Entscheidung wird als Review-Aufgabe `place_status` festgehalten; danach startet ein Konsolidierungslauf. „Kein Ankerplatz“ liefert den Ort im nächsten Paket als ausgeschlossen, „Verwerfen“ meldet ihn als entfernt. Hat der Ort eine offene Prüfaufgabe, fehlen die Knöpfe: dort entscheiden („Offene Prüfung“ im Kopf). Verschwindet ein Ort durch ein Zusammenlegen der Geo-Objekte (Gazetteer, „Gleiches Objekt“), werden seine offenen Aufgaben als hinfällig geschlossen; Migration 0052 schließt solche, die vorher offen geblieben sind.
 
 ## Landpolygone
-OSM-Landpolygone (Küstenlinie) bestimmen, welche Kacheln Küste haben und welche Orte küstennah liegen. Sie werden je Revier auf dessen Box (Revier-Polygon ∪ `tileBbox`, erweitert um `landBufferKm`) zugeschnitten importiert.
+OSM-Landpolygone (Küstenlinie) bestimmen, welche Kacheln Küste haben und welche Orte küstennah liegen. Sie werden einmal für das ganze Mittelmeer importiert: Box um die konfigurierten IHO-Meere (`subdivisions.mediterranean`), erweitert um `landBufferKm` und auf das Kachelraster gerundet. Voraussetzung: die Meere sind importiert (Stufe `gazetteer.coarse`).
 1. Herunterladen und entpacken: `https://osmdata.openstreetmap.de/download/land-polygons-split-4326.zip` (enthält `land-polygons-split-4326/land_polygons.shp`).
-2. Je Revier importieren:
+2. Importieren:
    ```bash
-   npm run import:land-polygons -- --shp <pfad>/land_polygons.shp --area saronic [--version 2026-10-18]
+   npm run import:land-polygons -- --shp <pfad>/land_polygons.shp --mediterranean [--version 2026-10-18]
    ```
-   `--version` (Standard: heutiges Datum) benennt den Datenstand. Ein erneuter Import ersetzt alle Polygone in der Box des Reviers; Polygone außerhalb bleiben.
+   `--version` (Standard: heutiges Datum) benennt den Datenstand. Ein erneuter Import ersetzt alle Polygone in der Box; Polygone außerhalb bleiben.
 3. Auf dem Server mit gemountetem Verzeichnis (hier `/data/land`), über den Worker-Container (das Web-Image ist standalone, ohne `scripts/` und tsx) und mit dem `dc`-Alias vom Anfang dieses Runbooks:
    ```bash
-   dc run --rm -v /data/land:/data/land:ro worker node --import tsx scripts/import-land-polygons.ts --shp /data/land/land_polygons.shp --area saronic
+   dc run --rm -v /data/land:/data/land:ro worker node --import tsx scripts/import-land-polygons.ts --shp /data/land/land_polygons.shp --mediterranean
    ```
 
 ## Quellen und Archiv

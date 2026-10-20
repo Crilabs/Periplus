@@ -14,6 +14,7 @@ import {
   gazetteerWikidataStage,
 } from "./handlers/gazetteer";
 import { seedTileStage } from "./handlers/seed";
+import { gazetteerCoarseStage, subdivisionsBuildStage } from "./handlers/subdivisions";
 import { qualityMeasureStage } from "./handlers/quality";
 import { revisitFreezeStage } from "./handlers/revisit";
 import { pingStage } from "./handlers/system-ping";
@@ -37,6 +38,8 @@ export const STAGES: Record<string, StageDefinition> = {
   [gazetteerWikidataStage.name]: gazetteerWikidataStage,
   [gazetteerGeonamesStage.name]: gazetteerGeonamesStage,
   [gazetteerHierarchyStage.name]: gazetteerHierarchyStage,
+  [gazetteerCoarseStage.name]: gazetteerCoarseStage,
+  [subdivisionsBuildStage.name]: subdivisionsBuildStage,
   [seedTileStage.name]: seedTileStage,
   [datasetsImportStage.name]: datasetsImportStage,
   [detectBaysStage.name]: detectBaysStage,

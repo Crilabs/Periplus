@@ -8,6 +8,7 @@ import { discoveryAreaHandler, discoveryPlaceHandler, discoveryProposeHandler, d
 import { embedChunksHandler } from "./handlers/embed";
 import { fetchSourceHandler, fetchUrlHandler } from "./handlers/fetch";
 import { gazetteerHandler } from "./handlers/gazetteer";
+import { gazetteerCoarseHandler, subdivisionsBuildHandler } from "./handlers/subdivisions";
 import { detectBaysHandler, geometryPlaceHandler } from "./handlers/geometry";
 import { qualityMeasureHandler } from "./handlers/quality";
 import { revisitFreezeHandler } from "./handlers/revisit";
@@ -34,6 +35,8 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "run.advance": advanceHandler,
   "tiles.ensure": tilesEnsureHandler,
   "gazetteer.build": gazetteerHandler,
+  "gazetteer.coarse": gazetteerCoarseHandler,
+  "subdivisions.build": subdivisionsBuildHandler,
   "seed.tile": seedTileHandler,
   "datasets.import": datasetsImportHandler,
   "geometry.compute": geometryPlaceHandler,

@@ -2,7 +2,7 @@ import type { CategoriesConfig } from "@/lib/config";
 import type { GeoObjectType, PoiCategory } from "@/lib/db/schema";
 import { isGreek, normalizeName, type NameDraft } from "./names";
 
-export type OsmClass = { type: GeoObjectType; category?: PoiCategory };
+export type OsmClass = { type: GeoObjectType; category?: PoiCategory; adminLevel?: number };
 
 export type OsmElementType = "node" | "way" | "relation";
 
@@ -27,7 +27,8 @@ function namedGulf(tags: Record<string, string>): boolean {
 }
 
 /**
- * Gazetteer type of an OSM object by its tags, first match wins: sea, gulf (also a bay relation named
+ * Gazetteer type of an OSM object by its tags, first match wins: administrative boundary relation (spec 14:
+ * `admin_level=2` country, other levels admin_region, carrying `adminLevel`), sea, gulf (also a bay relation named
  * "Gulf"/"Κόλπος"), island/islet/archipelago, cape, strait, peninsula (coast section), bay, harbour
  * (marina, harbour seamark, `harbour=*`), anchorage/mooring seamark (bay), town/village/hamlet
  * (settlement), then the first category rule (poi). Objects without a non-empty `name`/`name:<lang>` are null.
@@ -41,6 +42,10 @@ export function classifyOsm(
   const { place, natural, leisure, harbour } = tags;
   const seamark = tags["seamark:type"];
 
+  if (elementType === "relation" && tags.boundary === "administrative" && /^[0-9]{1,2}$/.test(tags.admin_level ?? "")) {
+    const adminLevel = Number(tags.admin_level);
+    return { type: adminLevel === 2 ? "country" : "admin_region", adminLevel };
+  }
   if (place === "sea") return { type: "sea" };
   if (place === "gulf") return { type: "gulf" };
   if (elementType === "relation" && natural === "bay" && namedGulf(tags)) return { type: "gulf" };

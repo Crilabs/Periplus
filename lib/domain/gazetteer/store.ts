@@ -13,6 +13,8 @@ export type GeoObjectDraft = {
   wikidataId?: string;
   geonamesId?: string;
   tags?: Record<string, string>;
+  /** OSM admin_level, only for `admin_region` and `country`. */
+  adminLevel?: number;
   /** `{ lines }`: outer rings as lines (OSM relation members), assembled into an area. */
   geometry: GeoJSON.Geometry | { lines: GeoJSON.LineString[] };
   names: NameDraft[];
@@ -109,6 +111,7 @@ export async function upsertGeoObject(db: Db, draft: GeoObjectDraft): Promise<Up
     ? await db
         .select({
           id: geoObjects.id,
+          adminLevel: geoObjects.adminLevel,
           type: geoObjects.type,
           category: geoObjects.category,
           tags: geoObjects.tags,
@@ -134,6 +137,7 @@ export async function upsertGeoObject(db: Db, draft: GeoObjectDraft): Promise<Up
         wikidataId: draft.wikidataId,
         geonamesId: draft.geonamesId,
         tags,
+        adminLevel: draft.adminLevel ?? null,
         geom: sql`${geom}::geometry`,
         publicId: publicIdFor(draft.type),
       })
@@ -147,6 +151,7 @@ export async function upsertGeoObject(db: Db, draft: GeoObjectDraft): Promise<Up
     changed =
       existing.type !== draft.type ||
       existing.category !== category ||
+      existing.adminLevel !== (draft.adminLevel ?? null) ||
       !sameTags(existing.tags, tags) ||
       !existing.sameGeom ||
       publicId !== existing.publicId;
@@ -157,6 +162,7 @@ export async function upsertGeoObject(db: Db, draft: GeoObjectDraft): Promise<Up
           type: draft.type,
           category,
           tags,
+          adminLevel: draft.adminLevel ?? null,
           publicId,
           ...(existing.sameGeom ? {} : { geom: sql`${geom}::geometry` }),
         })

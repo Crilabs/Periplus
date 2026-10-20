@@ -36,11 +36,11 @@ import { planUnits } from "../lib/domain/extraction/units";
 import { effectiveVersionMeta } from "../lib/domain/mentions/classification";
 import { areaBbox, syncAreas } from "../lib/domain/gazetteer/areas";
 import { assignAreaTiles } from "../lib/domain/gazetteer/hierarchy";
-import { ensureTiles } from "../lib/domain/gazetteer/tiles-ensure";
+import { areaTileIds, ensureTiles } from "../lib/domain/gazetteer/tiles-ensure";
 import { bufferBbox, importLandPolygons } from "../lib/domain/gazetteer/land";
 import { createRun } from "../lib/domain/runs";
 import { ensureWhitelistSources, getSource, sourceIdByDomain } from "../lib/domain/sources/store";
-import { parseTileId, type Bbox } from "../lib/domain/tiles";
+import { parseTileId, tileBbox, TILE_SIZE, type Bbox } from "../lib/domain/tiles";
 import { DATASET_KINDS, DATASETS_STAGE, datasetKindsOf, importDataset, type DatasetKind } from "../lib/pipeline/datasets";
 import { GEONAMES_STAGE, importGeonames } from "../lib/pipeline/gazetteer/geonames";
 import { classifyInputs } from "../lib/pipeline/text/classify";
@@ -51,7 +51,26 @@ import { importOsm } from "../lib/pipeline/gazetteer/osm";
 import { importWikidata } from "../lib/pipeline/gazetteer/wikidata";
 import { fetchUrl } from "../lib/pipeline/fetch/url";
 import { queueArticles, WIKIVOYAGE_DOMAIN } from "../lib/pipeline/sources/wikivoyage";
-import { landImportBbox, readShapefile } from "./import-land-polygons";
+import { readShapefile } from "./import-land-polygons";
+
+/**
+ * The box land polygons are recorded for (per area, as before spec 14): the area box plus `bufferKm`, snapped outward
+ * to the tile grid and widened to every tile of `areaTileIds`, so `has_coast` of each area tile sees all land touching it.
+ */
+function landImportBbox(area: AreaConfig, bufferKm: number): Bbox {
+  const [w, s, e, n] = bufferBbox(areaBbox(area), bufferKm);
+  let box: Bbox = [
+    Math.floor(w / TILE_SIZE) * TILE_SIZE,
+    Math.floor(s / TILE_SIZE) * TILE_SIZE,
+    Math.ceil(e / TILE_SIZE) * TILE_SIZE,
+    Math.ceil(n / TILE_SIZE) * TILE_SIZE,
+  ];
+  for (const id of areaTileIds(area)) {
+    const [tw, ts, te, tn] = tileBbox(id);
+    box = [Math.min(box[0], tw), Math.min(box[1], ts), Math.max(box[2], te), Math.max(box[3], tn)];
+  }
+  return box;
+}
 
 const USAGE =
   "usage: fixtures-record.ts --area <key> [--land <path/land_polygons.shp>] [--cache <dir>] [--datasets [<kind,…>] | --serp [--limit <1-3>] | --wikivoyage]\n" +

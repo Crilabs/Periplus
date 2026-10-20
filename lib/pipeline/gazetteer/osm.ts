@@ -33,7 +33,7 @@ const position = (c: Coord): GeoJSON.Position => [c.lon, c.lat];
  * Node → point; way → polygon when closed, else line; relation → its `outer`, `inner` and role-less
  * member ways as lines (`ST_BuildArea` turns inner rings into holes). Null when there is no geometry.
  */
-function elementGeometry(el: OverpassElement): GeoObjectDraft["geometry"] | null {
+export function elementGeometry(el: OverpassElement): GeoObjectDraft["geometry"] | null {
   if (el.type === "node") {
     return el.lat === undefined || el.lon === undefined ? null : { type: "Point", coordinates: [el.lon, el.lat] };
   }
