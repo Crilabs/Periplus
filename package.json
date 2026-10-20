@@ -33,6 +33,8 @@
     "check:sources": "tsx --env-file-if-exists=.env.local scripts/check-sources.ts",
     "compare:models": "tsx --env-file-if-exists=.env.local scripts/compare-models.ts",
     "report:models": "tsx --env-file-if-exists=.env.local scripts/model-report.ts",
+    "report:costs": "tsx --env-file-if-exists=.env.local scripts/report-costs.ts",
+    "report:pilot": "tsx --env-file-if-exists=.env.local scripts/report-pilot.ts",
     "check:texts": "tsx --env-file-if-exists=.env.local scripts/check-texts.ts",
     "check:profiles": "tsx --env-file-if-exists=.env.local scripts/check-profiles.ts",
     "consolidate": "tsx --env-file-if-exists=.env.local scripts/consolidate.ts",
