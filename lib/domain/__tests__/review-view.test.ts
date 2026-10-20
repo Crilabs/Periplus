@@ -224,5 +224,17 @@ describe("review view", () => {
         before: high.id,
       });
       expect(next.map((t) => t.id)).toEqual([low.id]);
+      expect(first.map((t) => t.evaluation)).toEqual([false, false]);
+
+      // a deviation of an evaluation run is marked as such in the queue
+      const evaluation = await createReviewTask(tx, {
+        kind: "comparison_deviation",
+        subjectType: "place",
+        subjectId: `${a}:evaluation`,
+        context: { name: "A", evaluationRunId: crypto.randomUUID() },
+        priority: 2_000_000_002,
+      });
+      const marked = await listOpenTasks(tx, { kind: "comparison_deviation", limit: 1 });
+      expect(marked.map((t) => [t.id, t.evaluation])).toEqual([[evaluation.id, true]]);
     }, { isolationLevel: "repeatable read" }));
 });

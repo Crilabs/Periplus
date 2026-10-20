@@ -9,6 +9,7 @@ export const QUEUES = [
   "seed.tile",
   "datasets.import",
   "geometry.compute",
+  "geometry.detect_bays",
   "discovery.area",
   "discovery.tile",
   "discovery.propose",

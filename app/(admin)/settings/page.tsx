@@ -129,6 +129,10 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
       "Konfidenz",
       `Fetch ${geometry.fetch.confidence}, Schutz ${geometry.shelter.confidence}, Öffnung ${geometry.opening.confidence}, Schwell ${geometry.swell.confidence}`,
     ],
+    [
+      "Unbenannte Buchten",
+      `Küste alle ${geometry.bays.coastStepM} m, Prüfpunkt ${geometry.bays.probeOffsetM} m vor der Küste; ≥ ${geometry.bays.minLandDeg}° Land in ${geometry.bays.rayLengthM} m; Ankerfläche ≥ ${geometry.bays.minAnchorAreaM2} m²; zusammengefasst unter ${geometry.bays.mergeDistanceM} m; bekannt bei Ort oder Bucht in ${geometry.bays.knownPlaceDistanceM} m`,
+    ],
   ];
   const factSchemaLevels = getFactSchema(factSchema.version).levels;
   const factSchemaRows: [string, string][] = [

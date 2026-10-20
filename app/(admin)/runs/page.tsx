@@ -56,7 +56,7 @@ const AREA_RUNS: AreaRun[] = [
     id: "geometry",
     name: "Geometrie",
     description:
-      "Berechnet je Ort Fetch, Schutz je Sektor, Öffnung zur See und Schwell und aktualisiert danach Profil und Zusammenfassung. Braucht Tiefendaten und Landpolygone (Datensätze laden).",
+      "Sucht zuerst unbenannte Buchten an der Küste (neue Ortskandidaten fürs Review), berechnet dann je Ort Fetch, Schutz je Sektor, Öffnung zur See und Schwell und aktualisiert danach Profil und Zusammenfassung. Braucht Tiefendaten und Landpolygone (Datensätze laden).",
     action: startGeometryAction,
     button: "Geometrie für Revier",
   },

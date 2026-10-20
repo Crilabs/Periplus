@@ -229,7 +229,10 @@ const confidence = share;
 const meters = z.number().positive();
 const positiveInt = z.number().int().positive();
 
-/** `config/geometry.json`: parameters of the geometric computations; any change raises `rulesVersion`. */
+/**
+ * `config/geometry.json`: parameters of the geometric computations; any change of a computation's parameters raises
+ * `rulesVersion`. `bays` (unnamed-bay detection, spec 04 / ruling M7-P13) writes no computations and is not versioned by it.
+ */
 export const geometrySchema = z.strictObject({
   rulesVersion: z.string().regex(/^geometry-[1-9][0-9]*$/, "must be geometry-<number>"),
   fetch: z
@@ -280,6 +283,19 @@ export const geometrySchema = z.strictObject({
     .refine((a) => a.minDepthM < a.maxDepthM, "minDepthM must be below maxDepthM"),
   seabed: z.strictObject({ minCoverage: share, confidence }),
   restriction: z.strictObject({ minShare: share, confidence }),
+  bays: z
+    .strictObject({
+      coastStepM: meters,
+      probeOffsetM: meters,
+      rayCount: positiveInt,
+      rayLengthM: meters,
+      minLandDeg: z.number().positive().max(360),
+      minAnchorAreaM2: z.number().positive(),
+      mergeDistanceM: meters,
+      knownPlaceDistanceM: meters,
+      helperNameMaxDistanceM: meters,
+    })
+    .refine((b) => b.probeOffsetM < b.rayLengthM, "probeOffsetM must be below rayLengthM"),
 });
 
 /** `config/restrictions.json`: Natura 2000 sites (site codes) where anchoring is banned. */

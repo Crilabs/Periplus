@@ -62,6 +62,8 @@ export type ReviewTaskRow = {
   subjectId: string;
   /** Display name from the task context (place candidates), if any. */
   name: string | null;
+  /** A `comparison_deviation` on an evaluation candidate's value (context `evaluationRunId`), not on the regular profile. */
+  evaluation: boolean;
   priority: number;
   createdAt: Date;
 };
@@ -100,6 +102,8 @@ export type ReviewSubject =
       };
       geoObject: GeoObjectView;
       nearby: NearbyPlace[];
+      /** „Bucht bei …“ of a bay detected from geometry (display only, no geo name); null otherwise. */
+      helperName: string | null;
     }
   | {
       type: "geo_object_pair";
@@ -293,6 +297,7 @@ export async function listOpenTasks(
       subjectType: reviewTasks.subjectType,
       subjectId: reviewTasks.subjectId,
       name: sql<string | null>`${reviewTasks.context}->>'name'`,
+      evaluation: sql<boolean>`coalesce(${reviewTasks.context}->>'evaluationRunId', '') <> ''`,
       priority: reviewTasks.priority,
       createdAt: reviewTasks.createdAt,
     })
@@ -318,7 +323,7 @@ export async function reviewTaskDetail(db: Db, id: string): Promise<ReviewTaskDe
   let subject: ReviewSubject;
   switch (task.subjectType) {
     case "place":
-      subject = await placeSubject(db, task.subjectId);
+      subject = await placeSubject(db, task.subjectId, str(context.helperName));
       break;
     case "geo_object_pair":
       subject = await pairSubject(db, task.subjectId, context);
@@ -677,7 +682,7 @@ async function geoObjectViews(db: Db, ids: string[]): Promise<GeoObjectView[]> {
   }));
 }
 
-async function placeSubject(db: Db, placeId: string): Promise<ReviewSubject> {
+async function placeSubject(db: Db, placeId: string, helperName: string | null): Promise<ReviewSubject> {
   if (!isUuid(placeId)) return { type: "missing" };
   const [place] = await db
     .select({
@@ -725,6 +730,7 @@ async function placeSubject(db: Db, placeId: string): Promise<ReviewSubject> {
       position: { lon: Number(r.lon), lat: Number(r.lat) },
       distanceM: Number(r.distance_m),
     })),
+    helperName,
   };
 }
 

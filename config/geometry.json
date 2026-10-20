@@ -29,5 +29,16 @@
     "correctionMaxDistanceM": 2000
   },
   "seabed": { "minCoverage": 0.5, "confidence": 0.5 },
-  "restriction": { "minShare": 0.5, "confidence": 0.9 }
+  "restriction": { "minShare": 0.5, "confidence": 0.9 },
+  "bays": {
+    "coastStepM": 50,
+    "probeOffsetM": 400,
+    "rayCount": 72,
+    "rayLengthM": 1500,
+    "minLandDeg": 180,
+    "minAnchorAreaM2": 5000,
+    "mergeDistanceM": 300,
+    "knownPlaceDistanceM": 500,
+    "helperNameMaxDistanceM": 5000
+  }
 }

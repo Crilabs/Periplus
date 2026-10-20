@@ -308,7 +308,7 @@ describe("admin server actions", () => {
       expect(await rows()).toHaveLength(0);
     }));
 
-  it("startGeometryAction for a tile starts a tile-scoped run with stage geometry.place", () =>
+  it("startGeometryAction for a tile starts a tile-scoped run with stages geometry.detect_bays and geometry.place", () =>
     withRollback(async (tx) => {
       currentDb = tx;
       const scene = await buildBayScene(tx);
@@ -317,7 +317,7 @@ describe("admin server actions", () => {
       const expected = expect.objectContaining({
         kind: "stage",
         scope: { type: "tile", id: scene.tileId },
-        stages: ["geometry.place", ...GEOMETRY_CONSOLIDATION_STAGES],
+        stages: ["geometry.detect_bays", "geometry.place", ...GEOMETRY_CONSOLIDATION_STAGES],
         // the rules version active at the start, frozen for the run's consolidation (ruling M7-E-R1)
         params: { tileIds: [scene.tileId], rulesVersion: "v1" },
         triggeredBy: "admin@example.invalid",

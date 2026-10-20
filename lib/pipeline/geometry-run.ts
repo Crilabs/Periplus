@@ -6,7 +6,7 @@ import { places } from "@/lib/db/schema";
 import { activeRulesVersion } from "@/lib/domain/consolidation/active-rules";
 import { tileExists } from "@/lib/domain/geo-view";
 import { GEOMETRY_CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
-import { checkGeometryTiles, GEOMETRY_STAGE, geometryPlaceIds } from "@/lib/pipeline/geometry";
+import { checkGeometryTiles, DETECT_BAYS_STAGE, GEOMETRY_STAGE, geometryPlaceIds } from "@/lib/pipeline/geometry";
 import { startRun } from "@/lib/pipeline/runs";
 import { areaGeoObjectId, RunScopeNotReady, seedTileIds } from "@/lib/pipeline/tile-scope";
 
@@ -15,7 +15,8 @@ import { areaGeoObjectId, RunScopeNotReady, seedTileIds } from "@/lib/pipeline/t
 
 /**
  * Starts the run "Geometrie" for one tile (scope `tile`), the coast tiles of an area (scope `area`) or one place
- * (scope `place`, e.g. after an anchor correction), stage `geometry.place`, then profile and summary for its
+ * (scope `place`, e.g. after an anchor correction): for a tile or an area first `geometry.detect_bays` (unnamed bays
+ * become place candidates, ruling M7-P13), then stage `geometry.place`, then profile and summary for its
  * places (`GEOMETRY_CONSOLIDATION_STAGES`, no paid source discovery; final review I-2: a new exclusion or computed shelter reaches the profile and the
  * change feed in the same run; `consolidationTargets` maps the run's params). Checked before the run exists: the tile
  * exists, or the area is configured and has its geo object and coast tiles, or the place is one the stage computes
@@ -64,5 +65,6 @@ export async function startGeometryRun(
   await checkGeometryTiles(db, tileIds);
   // its consolidation and summaries keep the rules active now, across a later activation (ruling M7-E-R1)
   run.params.rulesVersion = await activeRulesVersion(db);
-  return startRun(db, boss, { kind: "stage", ...run, stages: [GEOMETRY_STAGE, ...GEOMETRY_CONSOLIDATION_STAGES], triggeredBy });
+  const detect = run.scope.type === "place" ? [] : [DETECT_BAYS_STAGE];
+  return startRun(db, boss, { kind: "stage", ...run, stages: [...detect, GEOMETRY_STAGE, ...GEOMETRY_CONSOLIDATION_STAGES], triggeredBy });
 }

@@ -6,7 +6,7 @@ import { deliveryBuildStage } from "./handlers/delivery";
 import { discoveryAreaStage, discoveryPlaceStage, discoveryProposeStage, discoveryTileStage } from "./handlers/discovery";
 import { embedChunksStage } from "./handlers/embed";
 import { fetchSourceStage, fetchUrlStage } from "./handlers/fetch";
-import { geometryPlaceStage } from "./handlers/geometry";
+import { detectBaysStage, geometryPlaceStage } from "./handlers/geometry";
 import {
   gazetteerGeonamesStage,
   gazetteerHierarchyStage,
@@ -39,6 +39,7 @@ export const STAGES: Record<string, StageDefinition> = {
   [gazetteerHierarchyStage.name]: gazetteerHierarchyStage,
   [seedTileStage.name]: seedTileStage,
   [datasetsImportStage.name]: datasetsImportStage,
+  [detectBaysStage.name]: detectBaysStage,
   [geometryPlaceStage.name]: geometryPlaceStage,
   [discoveryAreaStage.name]: discoveryAreaStage,
   [discoveryTileStage.name]: discoveryTileStage,
