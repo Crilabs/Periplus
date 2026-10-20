@@ -23,9 +23,14 @@ vi.mock("@/lib/db/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/client")>()),
   getDb: () => currentDb,
 }));
+/** The job queue cannot be reached (getBoss throws), e.g. right after an upload committed. */
+let bossDown = false;
 // Jobs are only collected: no worker runs.
 vi.mock("@/lib/jobs/boss", () => ({
-  getBoss: async () => ({ insert: async (_queue: string, jobs: Array<{ id: string }>) => jobs.map((j) => j.id) }),
+  getBoss: async () => {
+    if (bossDown) throw new Error("queue down");
+    return { insert: async (_queue: string, jobs: Array<{ id: string }>) => jobs.map((j) => j.id) };
+  },
 }));
 vi.mock("@/lib/adapters/s3", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/adapters/s3")>()),
@@ -86,6 +91,7 @@ const settingsForm = (sourceId: string, overrides: Record<string, string> = {}) 
 
 beforeEach(() => {
   vi.resetAllMocks();
+  bossDown = false;
   currentDb = db;
   archive = memoryArchive();
   requireAdmin.mockResolvedValue({ email: ADMIN });
@@ -284,6 +290,16 @@ describe("uploadPdfAction", () => {
       const [run] = await tx.select().from(runs).where(eq(runs.id, target.slice("/runs/".length)));
       expect(run!.params).toEqual({ documentIds: [doc!.id] });
       expect(archive.keys()).toEqual([`uploads/${doc!.url.slice("upload://".length)}.pdf`]);
+    }));
+
+  it("the file stays archived when its run cannot start, and the page says so instead of an error page (UI-7)", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const sourceId = await insertSource(tx);
+      bossDown = true;
+      await uploadPdfAction(form({ sourceId, file: new File([pdf(newId())], "guide.pdf", { type: "application/pdf" }) }));
+      expect(redirect).toHaveBeenLastCalledWith(`/sources/${sourceId}?error=upload_run_not_started`);
+      expect(await tx.select().from(documents).where(eq(documents.sourceId, sourceId))).toHaveLength(1);
     }));
 
   it("a file that is not a pdf comes back with an error", () =>

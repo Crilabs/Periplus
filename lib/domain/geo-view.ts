@@ -318,3 +318,15 @@ export async function placeDetail(db: Db, id: string): Promise<PlaceDetail | nul
     statusHistory: history.rows.map((r) => ({ status: r.status, changedAt: new Date(r.changed_at) })),
   };
 }
+
+/** The geo object of the place `placeId`; null when the place does not exist. */
+export async function placeGeoObjectId(db: Db, placeId: string): Promise<string | null> {
+  const [place] = await db.select({ geoObjectId: places.geoObjectId }).from(places).where(eq(places.id, placeId));
+  return place?.geoObjectId ?? null;
+}
+
+/** Whether the place `placeId` belongs to the geo object `geoObjectId` (a form posted from a place page names both). */
+export async function placeBelongsTo(db: Db, placeId: string, geoObjectId: string): Promise<boolean> {
+  const [place] = await db.select({ id: places.id }).from(places).where(and(eq(places.id, placeId), eq(places.geoObjectId, geoObjectId)));
+  return place !== undefined;
+}

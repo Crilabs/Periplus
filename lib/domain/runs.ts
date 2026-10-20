@@ -411,3 +411,9 @@ export async function listRuns(db: Db, opts: { limit: number; before?: string })
     .limit(opts.limit);
   return toViews(db, rows);
 }
+
+/** The run an extraction run belongs to; null when the extraction run does not exist. */
+export async function runOfExtractionRun(db: Db, extractionRunId: string): Promise<string | null> {
+  const { rows } = await db.execute<{ run_id: string }>(sql`select run_id from extraction_runs where id = ${extractionRunId}`);
+  return rows[0]?.run_id ?? null;
+}

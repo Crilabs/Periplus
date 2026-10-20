@@ -21,7 +21,14 @@ vi.mock("@/lib/db/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/client")>()),
   getDb: () => currentDb,
 }));
-vi.mock("@/lib/jobs/boss", () => ({ getBoss: async () => ({}) }));
+/** The job queue cannot be reached (getBoss throws), e.g. right after a decision committed. */
+let bossDown = false;
+vi.mock("@/lib/jobs/boss", () => ({
+  getBoss: async () => {
+    if (bossDown) throw new Error("queue down");
+    return {};
+  },
+}));
 vi.mock("@/lib/pipeline/runs", () => ({ startRun: (...args: unknown[]) => startRun(...args) }));
 vi.mock("next/cache", () => ({ revalidatePath: (path: string) => revalidatePath(path), refresh: vi.fn() }));
 const redirect = vi.fn();
@@ -71,6 +78,7 @@ async function anchorOrigin(tx: Db, placeId: string): Promise<string | null> {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  bossDown = false;
   afterMerge = null;
   currentDb = db;
   requireAdmin.mockResolvedValue({ email: ADMIN });
@@ -141,6 +149,21 @@ describe("setAnchorAction", () => {
       });
       expect(await reviewAnchorFacts(tx, scene.geoObjectId)).toHaveLength(1);
       expect(startRun).not.toHaveBeenCalled();
+    }));
+
+  it("keeps the anchor and says so when the job queue is down after the commit, instead of an error page (UI-7)", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const scene = await buildBayScene(tx);
+      const position = await lonLatOf(tx, 0, 150);
+      bossDown = true;
+      const result = await setAnchorAction({ placeId: scene.placeId, ...position });
+      expect(result).toEqual({
+        ok: true,
+        runId: null,
+        message: "Ankerposition übernommen. Die Neuberechnung der Geometrie konnte nicht gestartet werden – bitte im Reiter „Geometrie“ erneut starten.",
+      });
+      expect(await reviewAnchorFacts(tx, scene.geoObjectId)).toHaveLength(1);
     }));
 
   it("too far → German error message", () =>

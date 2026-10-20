@@ -3,6 +3,7 @@ import type { Db } from "@/lib/db/client";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
 import { createLogger } from "@/lib/logger";
 import { startConsolidationRun } from "./consolidation/run";
+import { startUploadFetchRun } from "./fetch/run";
 import { startGeometryRun } from "./geometry-run";
 import { startTextRun } from "./text/run";
 import { RunScopeNotReady, type RunScopeReason } from "./tile-scope";
@@ -35,20 +36,15 @@ async function followUp(what: string, context: Record<string, unknown>, start: (
   }
 }
 
-/** The first of several follow-ups that did not start, else the last one started (or null when there were none). */
-export function combined(outcomes: FollowUp[]): FollowUp | null {
-  return outcomes.find((o) => o.status === "failed") ?? outcomes.find((o) => o.status === "not_ready") ?? outcomes.at(-1) ?? null;
-}
-
-/** A consolidation run of one object (its profile again; with `stagesOnly` e.g. only the summary). */
+/** A consolidation run of the objects (their profiles again; with `stagesOnly` e.g. only the summary). */
 export function consolidateAfter(
   db: Db,
   boss: BossGetter,
-  input: { geoObjectId: string; stagesOnly?: string[]; triggeredBy: string },
+  input: { geoObjectIds: string[]; stagesOnly?: string[]; triggeredBy: string },
 ): Promise<FollowUp> {
-  return followUp("consolidation", { geoObjectId: input.geoObjectId }, async () =>
+  return followUp("consolidation", { geoObjectIds: input.geoObjectIds }, async () =>
     startConsolidationRun(db, await boss(), {
-      scope: { geoObjectIds: [input.geoObjectId] },
+      scope: { geoObjectIds: input.geoObjectIds },
       triggeredBy: input.triggeredBy,
       ...(input.stagesOnly ? { stagesOnly: input.stagesOnly } : {}),
     }),
@@ -82,7 +78,7 @@ export async function afterPositionChange(
 ): Promise<FollowUp> {
   const geometry = await geometryAfter(db, boss, input);
   if (geometry.status === "started") return geometry;
-  return consolidateAfter(db, boss, { geoObjectId: input.geoObjectId, triggeredBy: input.triggeredBy });
+  return consolidateAfter(db, boss, { geoObjectIds: [input.geoObjectId], triggeredBy: input.triggeredBy });
 }
 
 /**
@@ -100,5 +96,10 @@ export async function afterPlaceMerge(
   } catch (e) {
     createLogger("follow-up").error({ geoObjectId: input.dropGeoObjectId, err: e }, "merged object not settled after a place merge");
   }
-  return consolidateAfter(db, boss, { geoObjectId: input.keepGeoObjectId, triggeredBy: input.triggeredBy });
+  return consolidateAfter(db, boss, { geoObjectIds: [input.keepGeoObjectId], triggeredBy: input.triggeredBy });
+}
+
+/** The upload run of an archived PDF (convert, chunk, embed). Uploading the same file again starts it again. */
+export function uploadFetchAfter(db: Db, boss: BossGetter, input: { documentId: string; triggeredBy: string }): Promise<FollowUp> {
+  return followUp("upload", { documentId: input.documentId }, async () => startUploadFetchRun(db, await boss(), input.documentId, input.triggeredBy));
 }

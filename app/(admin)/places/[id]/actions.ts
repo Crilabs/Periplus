@@ -1,26 +1,21 @@
 "use server";
 
-import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getConfig } from "@/lib/config";
-import { getDb, type Db } from "@/lib/db/client";
-import { places } from "@/lib/db/schema";
-import { consolidateGeo } from "@/lib/domain/consolidation/store";
+import { getDb } from "@/lib/db/client";
 import { setAnchorPosition } from "@/lib/domain/geometry/anchor-correction";
 import { setPlacePosition } from "@/lib/domain/geometry/place-position";
+import { placeBelongsTo, placeGeoObjectId } from "@/lib/domain/geo-view";
 import { mergePlaceInto, PlaceMergeNotAllowed } from "@/lib/domain/place-merge";
 import { ADMIN_PLACE_STATUSES, PlaceStatusNotAllowed, setPlaceStatusByAdmin } from "@/lib/domain/place-status";
 import { ProfileChanged, removeProfileEntry } from "@/lib/domain/profile-entry-removal";
 import { DecisionNotAllowed } from "@/lib/domain/review-decisions";
 import { getBoss } from "@/lib/jobs/boss";
-import { createLogger } from "@/lib/logger";
 import { startConsolidationRun } from "@/lib/pipeline/consolidation/run";
 import { CONSOLIDATION_SUMMARY_STAGE } from "@/lib/pipeline/consolidation/stages";
-import { consolidateAfter } from "@/lib/pipeline/follow-ups";
-import { startGeometryRun } from "@/lib/pipeline/geometry-run";
-import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
+import { afterPlaceMerge, afterPositionChange, consolidateAfter, geometryAfter } from "@/lib/pipeline/follow-ups";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { RUN_SCOPE_REASON_LABELS } from "../../_components/labels";
 import { startAndRedirect } from "../../_components/run-start";
@@ -54,17 +49,17 @@ export async function setAnchorAction(
     return { ok: false, error: `Ankerposition zu weit vom Ort entfernt (max. ${maxKm.toLocaleString("de-DE")} km)` };
   }
   revalidatePath(`/places/${placeId}`);
-  try {
-    const run = await startGeometryRun(db, await getBoss(), { placeId }, admin.email);
-    return { ok: true, runId: run.id, message: "Ankerposition übernommen, Geometrie wird neu berechnet." };
-  } catch (e) {
-    if (!(e instanceof RunScopeNotReady)) throw e;
-    return {
-      ok: true,
-      runId: null,
-      message: `Ankerposition übernommen. Geometrie nicht neu berechnet: ${RUN_SCOPE_REASON_LABELS[e.reason]}.`,
-    };
-  }
+  // the anchor stands whatever the follow-up does (UI-7): never an error page after the commit
+  const run = await geometryAfter(db, getBoss, { placeId, triggeredBy: admin.email });
+  if (run.status === "started") return { ok: true, runId: run.runId, message: "Ankerposition übernommen, Geometrie wird neu berechnet." };
+  return {
+    ok: true,
+    runId: null,
+    message:
+      run.status === "not_ready"
+        ? `Ankerposition übernommen. Geometrie nicht neu berechnet: ${RUN_SCOPE_REASON_LABELS[run.reason]}.`
+        : "Ankerposition übernommen. Die Neuberechnung der Geometrie konnte nicht gestartet werden – bitte im Reiter „Geometrie“ erneut starten.",
+  };
 }
 
 /**
@@ -87,21 +82,8 @@ export async function setPlacePositionAction(input: FormData | { placeId: string
     return redirect(`${back}&position=too_far`);
   }
   revalidatePath(`/places/${placeId}`);
-  const log = createLogger("place-position");
-  let target = `${back}&position=moved_no_run`;
-  try {
-    const run = await startGeometryRun(db, await getBoss(), { placeId }, admin.email);
-    target = `${back}&position=moved&run=${run.id}`;
-  } catch (e) {
-    if (!(e instanceof RunScopeNotReady)) log.error({ placeId, err: e }, "geometry run failed to start after a position correction");
-    try {
-      const run = await startConsolidationRun(db, await getBoss(), { scope: { geoObjectIds: [moved.geoObjectId] }, triggeredBy: admin.email });
-      target = `${back}&position=moved&run=${run.id}`;
-    } catch (err) {
-      log.error({ placeId, err }, "no run started after a position correction");
-    }
-  }
-  redirect(target);
+  const run = await afterPositionChange(db, getBoss, { placeId, geoObjectId: moved.geoObjectId, triggeredBy: admin.email });
+  redirect(run.status === "started" ? `${back}&position=moved&run=${run.runId}` : `${back}&position=moved_no_run`);
 }
 
 const placeSchema = z.object({ placeId: z.uuid() });
@@ -120,7 +102,7 @@ export async function setPlaceStatusAction(input: FormData | z.input<typeof plac
   let target = `/places/${f.placeId}`;
   try {
     const { geoObjectId } = await setPlaceStatusByAdmin(db, { placeId: f.placeId, status: f.status, decidedBy: admin.email });
-    const run = await consolidateAfter(db, getBoss, { geoObjectId, triggeredBy: admin.email });
+    const run = await consolidateAfter(db, getBoss, { geoObjectIds: [geoObjectId], triggeredBy: admin.email });
     target += `?status=${f.status}${run.status === "started" ? `&run=${run.runId}` : "&statusNoRun=1"}`;
     revalidatePath(`/places/${f.placeId}`);
   } catch (e) {
@@ -139,11 +121,11 @@ export async function recomputePlaceProfileAction(input: FormData | { placeId: s
   const admin = await requireAdmin();
   const { placeId } = placeSchema.parse(fields(input));
   const db = getDb();
-  const [place] = await db.select({ geoObjectId: places.geoObjectId }).from(places).where(eq(places.id, placeId));
-  if (!place) throw new Error(`Unknown place ${placeId}`);
+  const geoObjectId = await placeGeoObjectId(db, placeId);
+  if (!geoObjectId) throw new Error(`Unknown place ${placeId}`);
   const boss = await getBoss();
   await startAndRedirect(
-    () => startConsolidationRun(db, boss, { scope: { geoObjectIds: [place.geoObjectId] }, triggeredBy: admin.email }),
+    () => startConsolidationRun(db, boss, { scope: { geoObjectIds: [geoObjectId] }, triggeredBy: admin.email }),
     `/places/${placeId}`,
   );
 }
@@ -180,9 +162,8 @@ export async function regenerateSummaryAction(input: FormData | z.input<typeof r
   const raw = fields(input) as Record<string, unknown>;
   const f = regenerateSummarySchema.parse({ ...raw, placeId: raw.placeId || undefined });
   const db = getDb();
-  if (f.placeId) {
-    const [place] = await db.select({ id: places.id }).from(places).where(and(eq(places.id, f.placeId), eq(places.geoObjectId, f.geoObjectId)));
-    if (!place) throw new Error(`Place ${f.placeId} does not belong to geo object ${f.geoObjectId}`);
+  if (f.placeId && !(await placeBelongsTo(db, f.placeId, f.geoObjectId))) {
+    throw new Error(`Place ${f.placeId} does not belong to geo object ${f.geoObjectId}`);
   }
   const boss = await getBoss();
   await startAndRedirect(
@@ -218,9 +199,8 @@ export async function removeProfileEntryAction(input: FormData | z.input<typeof 
   const raw = fields(input) as Record<string, unknown>;
   const f = removeEntrySchema.parse({ ...raw, placeId: raw.placeId || undefined });
   const db = getDb();
-  if (f.placeId) {
-    const [place] = await db.select({ id: places.id }).from(places).where(and(eq(places.id, f.placeId), eq(places.geoObjectId, f.geoObjectId)));
-    if (!place) throw new Error(`Place ${f.placeId} does not belong to geo object ${f.geoObjectId}`);
+  if (f.placeId && !(await placeBelongsTo(db, f.placeId, f.geoObjectId))) {
+    throw new Error(`Place ${f.placeId} does not belong to geo object ${f.geoObjectId}`);
   }
   const back = f.placeId
     ? `/places/${f.placeId}?tab=profile&attr=${encodeURIComponent(f.attribute)}`
@@ -228,7 +208,8 @@ export async function removeProfileEntryAction(input: FormData | z.input<typeof 
   let notice: string;
   try {
     await removeProfileEntry(db, { geoObjectId: f.geoObjectId, attribute: f.attribute, entryKey: f.entryKey, version: f.version, decidedBy: admin.email });
-    notice = await startAfterRemoval(db, f.geoObjectId, admin.email);
+    const run = await consolidateAfter(db, getBoss, { geoObjectIds: [f.geoObjectId], triggeredBy: admin.email });
+    notice = run.status === "started" ? `entry_removed&run=${run.runId}` : "entry_removed_no_run";
     revalidatePath(f.placeId ? `/places/${f.placeId}` : `/geo/${f.geoObjectId}`);
   } catch (e) {
     if (e instanceof ProfileChanged) notice = "changed";
@@ -236,22 +217,6 @@ export async function removeProfileEntryAction(input: FormData | z.input<typeof 
     else throw e;
   }
   redirect(`${back}&notice=${notice}`);
-}
-
-/**
- * The consolidation run after a committed removal: `entry_removed&run=<id>`, or `entry_removed_no_run` (logged) when
- * it does not start — the removal stands either way.
- */
-async function startAfterRemoval(db: Db, geoObjectId: string, triggeredBy: string): Promise<string> {
-  try {
-    const run = await startConsolidationRun(db, await getBoss(), { scope: { geoObjectIds: [geoObjectId] }, triggeredBy });
-    return `entry_removed&run=${run.id}`;
-  } catch (e) {
-    const log = createLogger("profile");
-    if (e instanceof RunScopeNotReady) log.warn({ geoObjectId, reason: e.reason }, "consolidation run not started after an entry removal");
-    else log.error({ geoObjectId, err: e }, "consolidation run failed to start after an entry removal");
-    return "entry_removed_no_run";
-  }
 }
 
 const mergeSchema = z.object({
@@ -285,21 +250,8 @@ export async function mergePlaceAction(
       decidedBy: admin.email,
       confirmAcrossAreas: f.confirmAcrossAreas !== undefined,
     });
-    target = `/places/${f.intoPlaceId}?merged=${f.placeId}`;
-    const log = createLogger("place-merge");
-    try {
-      await consolidateGeo(db, merged.dropGeoObjectId);
-    } catch (e) {
-      log.error({ geoObjectId: merged.dropGeoObjectId, err: e }, "merged object not settled after a place merge");
-    }
-    try {
-      const run = await startConsolidationRun(db, await getBoss(), { scope: { geoObjectIds: [merged.keepGeoObjectId] }, triggeredBy: admin.email });
-      target += `&run=${run.id}`;
-    } catch (e) {
-      if (e instanceof RunScopeNotReady) log.warn({ geoObjectId: merged.keepGeoObjectId, reason: e.reason }, "consolidation run not started after a place merge");
-      else log.error({ geoObjectId: merged.keepGeoObjectId, err: e }, "consolidation run failed to start after a place merge");
-      target += "&mergedNoRun=1";
-    }
+    const run = await afterPlaceMerge(db, getBoss, { ...merged, triggeredBy: admin.email });
+    target = `/places/${f.intoPlaceId}?merged=${f.placeId}${run.status === "started" ? `&run=${run.runId}` : "&mergedNoRun=1"}`;
     revalidatePath(`/places/${f.placeId}`);
     revalidatePath(`/places/${f.intoPlaceId}`);
   } catch (e) {

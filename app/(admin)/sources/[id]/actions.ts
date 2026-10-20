@@ -19,9 +19,8 @@ import {
   uploadPdf,
 } from "@/lib/domain/sources/store";
 import { getBoss } from "@/lib/jobs/boss";
-import { createLogger } from "@/lib/logger";
-import { startConsolidationRun } from "@/lib/pipeline/consolidation/run";
-import { startFetchRun, startTestCrawl, startUploadFetchRun } from "@/lib/pipeline/fetch/run";
+import { startFetchRun, startTestCrawl } from "@/lib/pipeline/fetch/run";
+import { consolidateAfter, uploadFetchAfter } from "@/lib/pipeline/follow-ups";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { parseCrawlRulesForm } from "../../_components/crawl-rules-fields";
 import { startAndRedirect } from "../../_components/run-start";
@@ -121,13 +120,8 @@ export async function endSourceAction(formData: FormData): Promise<void> {
   if (!result.ended) return redirect(`${sourcePath(sourceId)}?error=not_endable`);
   let target = `${sourcePath(sourceId)}?ended=${result.geoObjectIds.length}`;
   if (result.geoObjectIds.length > 0) {
-    try {
-      const run = await startConsolidationRun(db, await getBoss(), { scope: { geoObjectIds: result.geoObjectIds }, triggeredBy: admin.email });
-      target += `&run=${run.id}`;
-    } catch (e) {
-      createLogger("sources").error({ sourceId, objects: result.geoObjectIds.length, err: e }, "consolidation run not started after ending a source");
-      target += "&endedNoRun=1";
-    }
+    const run = await consolidateAfter(db, getBoss, { geoObjectIds: result.geoObjectIds, triggeredBy: admin.email });
+    target += run.status === "started" ? `&run=${run.runId}` : "&endedNoRun=1";
   }
   redirect(target);
 }
@@ -153,6 +147,8 @@ export async function crawlAction(formData: FormData): Promise<void> {
 /**
  * "PDF hochladen": stores the file (at most 100 MB, must be a PDF, source approved, proposed or paused) and starts its upload
  * run. A file archived for another source already starts no run: the page names that source (`?archived=<document>`).
+ * A run that does not start leaves the file archived: `?error=<reason>`, or `upload_run_not_started` (uploading the same
+ * file again starts it).
  */
 export async function uploadPdfAction(formData: FormData): Promise<void> {
   const admin = await requireAdmin();
@@ -171,7 +167,13 @@ export async function uploadPdfAction(formData: FormData): Promise<void> {
   }
   const { documentId } = uploaded;
   if (uploaded.sourceId !== sourceId) return redirect(`${sourcePath(sourceId)}?archived=${documentId}`);
-  const boss = await getBoss();
   revalidatePath(sourcePath(sourceId));
-  await startAndRedirect(() => startUploadFetchRun(db, boss, documentId, admin.email), sourcePath(sourceId));
+  // the file is archived whatever the follow-up does (UI-7): a run that does not start is a notice, never an error page
+  const run = await uploadFetchAfter(db, getBoss, { documentId, triggeredBy: admin.email });
+  revalidatePath("/runs");
+  redirect(
+    run.status === "started"
+      ? `/runs/${run.runId}`
+      : `${sourcePath(sourceId)}?error=${run.status === "not_ready" ? run.reason : "upload_run_not_started"}`,
+  );
 }

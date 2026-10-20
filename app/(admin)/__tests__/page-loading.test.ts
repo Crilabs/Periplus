@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -19,5 +19,17 @@ describe("admin pages", () => {
     expect(dirs.length).toBeGreaterThan(10);
     const missing = dirs.filter((dir) => !existsSync(path.join(dir, "loading.tsx"))).map((dir) => path.relative(ADMIN, dir) || ".");
     expect(missing).toEqual([]);
+  });
+});
+
+// A thrown page or action shows the admin's own German error page inside the layout, never Next's English default (UI-7).
+describe("admin error boundary", () => {
+  it("app/(admin)/error.tsx is a client component in German that offers a retry", () => {
+    const file = path.join(ADMIN, "error.tsx");
+    expect(existsSync(file)).toBe(true);
+    const source = readFileSync(file, "utf8");
+    expect(source.startsWith('"use client";')).toBe(true);
+    expect(source).toContain("Erneut versuchen");
+    expect(source).toContain("retry()");
   });
 });
