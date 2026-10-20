@@ -13,6 +13,7 @@ import {
   startGeometryAction,
   startPingRun,
   startReprocessAction,
+  startRevisitAction,
   startSeedAction,
   startTextRunAction,
 } from "./actions";
@@ -74,6 +75,14 @@ const AREA_RUNS: AreaRun[] = [
       "Extrahiert jede Erwähnung im Revier erneut mit dem aktuell konfigurierten Modell, Prompt und Fact-Schema in einen neuen Extraktionslauf; die alten Facts bleiben. Nach einer Änderung an Modell, Prompt oder Schema.",
     action: startReprocessAction,
     button: "Reprozessieren für Revier (Stufen 6–7)",
+  },
+  {
+    id: "revisit",
+    name: "Revisit",
+    description:
+      "Ruft alle freigegebenen Quellen erneut ab und wertet aus, was sich geändert hat: neue Fassungen, verschwundene Seiten, Facts, Konsolidierung und Änderungsereignisse des Reviers. Der zweite Durchgang nach dem ersten vollen Lauf.",
+    action: startRevisitAction,
+    button: "Revisit für Revier",
   },
 ];
 

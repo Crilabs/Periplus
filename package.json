@@ -37,7 +37,9 @@
     "check:profiles": "tsx --env-file-if-exists=.env.local scripts/check-profiles.ts",
     "consolidate": "tsx --env-file-if-exists=.env.local scripts/consolidate.ts",
     "contract:generate": "tsx scripts/contract-generate.ts",
-    "delivery:consume": "tsx --env-file-if-exists=.env.local scripts/delivery-consume.ts"
+    "delivery:consume": "tsx --env-file-if-exists=.env.local scripts/delivery-consume.ts",
+    "sim:revisit": "tsx --env-file-if-exists=.env.local scripts/sim/revisit.ts",
+    "sim:verify": "tsx --env-file-if-exists=.env.local scripts/sim/verify.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

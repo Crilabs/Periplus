@@ -27,5 +27,6 @@
   "consolidation.summary": { "concurrency": 2, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
   "consolidation.followup": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
   "delivery.build": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true, "expireInSeconds": 3600 },
-  "quality.measure": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true }
+  "quality.measure": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
+  "revisit.freeze": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true }
 }

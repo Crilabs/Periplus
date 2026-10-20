@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import type { HttpCallDeps, Transport } from "@/lib/adapters/http";
 import { searchNominatim, type NominatimHit } from "@/lib/adapters/nominatim";
+import { simulationActive } from "@/lib/adapters/simulation";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { nameCandidates, runs } from "@/lib/db/schema";
@@ -241,8 +242,12 @@ export async function geocodeCandidate(
   }
 }
 
-/** Plan of the stage: one job per name candidate to geocode (`{ key, candidateId }`). */
+/**
+ * Plan of the stage: one job per name candidate to geocode (`{ key, candidateId }`). A simulated revisit plans none
+ * (ruling M7-P8): Nominatim is a third-party service the simulation never reaches, so the clone collects no candidates.
+ */
 export async function planGeocode(db: Db, run: { id: string }, cfg: AppConfig = getConfig()): Promise<JobData[]> {
+  if (simulationActive()) return [];
   const ids = await collectNameCandidates(db, run.id, cfg);
   return ids.map((candidateId) => ({ key: `geocode:${candidateId}`, candidateId }));
 }

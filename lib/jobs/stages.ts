@@ -15,6 +15,7 @@ import {
 } from "./handlers/gazetteer";
 import { seedTileStage } from "./handlers/seed";
 import { qualityMeasureStage } from "./handlers/quality";
+import { revisitFreezeStage } from "./handlers/revisit";
 import { pingStage } from "./handlers/system-ping";
 import {
   classifyDocumentVersionStage,
@@ -60,4 +61,5 @@ export const STAGES: Record<string, StageDefinition> = {
   [consolidationFollowupStage.name]: consolidationFollowupStage,
   [deliveryBuildStage.name]: deliveryBuildStage,
   [qualityMeasureStage.name]: qualityMeasureStage,
+  [revisitFreezeStage.name]: revisitFreezeStage,
 };

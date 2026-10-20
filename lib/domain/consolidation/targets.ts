@@ -54,6 +54,8 @@ const consolidatable = (day: string) => sql`${validObject(day)} and ${takesFacts
  * The geo objects a run consolidates, sorted and without duplicates:
  * - a text run (its params carry the frozen `documentVersionIds`): the objects with facts of its extraction runs and
  *   the objects with mentions it wrote in its frozen versions; its own `tileId` / `areaKey` only selected its versions;
+ *   a revisit run also the objects its freeze stage found on documents gone in its crawl (`goneGeoObjectIds`, ruling
+ *   M7-P7);
  * - `geoObjectIds`: exactly these (the starter checked them);
  * - `tileId`: the objects of the tile (`tile_geo_objects`);
  * - `areaKey`: the objects of every valid coast tile of the area;
@@ -116,8 +118,10 @@ export async function consolidationTargets(db: Db, run: { id: string; params: Re
       return ids(rows);
     }
   }
-  // Mentions only through the frozen versions (indexed), facts through the run's extraction runs (ruling M5-H-R2 M-1).
+  // Mentions only through the frozen versions (indexed), facts through the run's extraction runs (ruling M5-H-R2 M-1);
+  // a revisit run adds the objects of the documents its crawl found gone (ruling M7-P7).
   const versions = JSON.stringify(strings(p.documentVersionIds));
+  const gone = JSON.stringify(strings(p.goneGeoObjectIds));
   const { rows } = await db.execute<{ id: string }>(sql`
     select o.id
     from (
@@ -126,6 +130,8 @@ export async function consolidationTargets(db: Db, run: { id: string; params: Re
       select m.geo_object_id from mentions m
       where m.document_version_id in (select value::uuid from jsonb_array_elements_text(${versions}::jsonb))
         and m.run_id = ${run.id}
+      union
+      select value::uuid from jsonb_array_elements_text(${gone}::jsonb)
     ) t
     join geo_objects o on o.id = t.id
     where ${consolidatable(day)}

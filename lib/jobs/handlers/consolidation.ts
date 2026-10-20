@@ -1,3 +1,4 @@
+import { simulationActive } from "@/lib/adapters/simulation";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import { consolidationBlocked } from "@/lib/domain/consolidation/targets";
 import { consolidateGeoJob, consolidationGeoJobs } from "@/lib/pipeline/consolidation/geo";
@@ -43,13 +44,14 @@ export const consolidationSummaryHandler: JobHandler<JobData> = async (data, ctx
 
 /**
  * Stage `consolidation.followup` (plan only, ruling M5-P11; its handler is `consolidation-followup.ts`): one job, none
- * for an evaluation run or a run whose quote fidelity blocked its consolidation.
+ * for an evaluation run, a run whose quote fidelity blocked its consolidation, or in a simulated revisit (ruling M7-P8:
+ * its revisit runs leave the stage out, and no other run of that process may reach DataForSEO either).
  */
 export const consolidationFollowupStage: StageDefinition = {
   name: CONSOLIDATION_FOLLOWUP_STAGE,
   queue: "consolidation.followup",
   async plan(db, run) {
-    if (run.params.evaluation === true) return [];
+    if (run.params.evaluation === true || simulationActive()) return [];
     if (await consolidationBlocked(db, run.id)) return [];
     return [{ key: "followup" }];
   },
