@@ -257,6 +257,32 @@ describe("importCoarse", () => {
     });
   });
 
+  it("an extra relation of admin_level 2 is stored as admin_region, never as a second country", async () => {
+    const ring = (w: number, s: number, e: number, n: number) => [
+      { lat: s, lon: w }, { lat: s, lon: e }, { lat: n, lon: e }, { lat: n, lon: w }, { lat: s, lon: w },
+    ];
+    const extraId = getConfig().subdivisions.extra.find((e) => e.country === "CY")!.osmRelationId;
+    const elements = [
+      {
+        type: "relation", id: 9_000_001,
+        tags: { boundary: "administrative", admin_level: "2", "ISO3166-1": "CY", name: "Testland", wikidata: "Q9000001" },
+        members: [{ type: "way", ref: 1, role: "outer", geometry: ring(10, 45, 12, 46) }],
+      },
+      {
+        type: "relation", id: extraId,
+        tags: { boundary: "administrative", admin_level: "2", name: "Testbase", wikidata: "Q9000002" },
+        members: [{ type: "way", ref: 2, role: "outer", geometry: ring(11, 45, 11.5, 45.5) }],
+      },
+    ];
+    const transport: Transport = async () => makeResponse(200, new TextEncoder().encode(JSON.stringify({ elements })));
+    await withRollback(async (tx) => {
+      expect(await importCoarse(tx, "CY", { transport })).toEqual({ countries: 1, regions: 1 });
+      const units = await unitsOf(tx, "CY");
+      expect(units.filter((u) => u.type === "country")).toHaveLength(1);
+      expect(units.find((u) => u.osmId === `relation/${extraId}`)).toMatchObject({ type: "admin_region", level: 2 });
+    });
+  });
+
   it("HR: the 21 counties, without Vojvodina from the leaking area query", async () => {
     await withRollback(async (tx) => {
       expect(await importCoarse(tx, "HR", { transport: fixtureTransport() })).toEqual({ countries: 1, regions: 21 });

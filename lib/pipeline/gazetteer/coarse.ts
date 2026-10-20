@@ -126,7 +126,9 @@ export async function importCoarse(
   return db.transaction(async (tx) => {
     const store = async (e: OverpassElement) => {
       const tags = e.tags ?? {};
-      const cls = classifyOsm(tags, getConfig().categories, "relation");
+      const classified = classifyOsm(tags, getConfig().categories, "relation");
+      // A configured extra relation is always an admin_region of its country, even at admin_level 2 (Dhekelia).
+      const cls = classified && extras.includes(e.id) ? { ...classified, type: "admin_region" as const } : classified;
       const geometry = elementGeometry(e);
       if (!cls || !cls.adminLevel || !geometry) return null;
       const osmId = `relation/${e.id}`;
@@ -163,7 +165,7 @@ export async function importCoarse(
 
     const result = { countries: 0, regions: 0 };
     let countryId: string | undefined;
-    for (const e of relations.filter((x) => isOwnCountry(x) || (x.tags?.admin_level === "2" && isConfigured(x)))) {
+    for (const e of relations.filter((x) => isOwnCountry(x) || (x.tags?.admin_level === "2" && isConfigured(x) && !extras.includes(x.id)))) {
       const stored = await store(e);
       if (!stored) continue;
       countryId ??= stored.id;
@@ -172,7 +174,7 @@ export async function importCoarse(
     if (!countryId) throw new Error(`gazetteer.coarse ${country}: no country relation (admin_level 2) in the Overpass answer`);
 
     for (const e of relations) {
-      if (e.tags?.admin_level === "2") continue;
+      if (e.tags?.admin_level === "2" && !extras.includes(e.id)) continue;
       const iso = e.tags?.["ISO3166-2"];
       let keep = isConfigured(e) || (iso !== undefined && iso.startsWith(`${country}-`));
       if (!keep && iso === undefined) {

@@ -32,7 +32,6 @@ export async function insertAeginaWest(
       origin: "manual",
       adminLevel: 5,
       tags: { country: "GR" },
-      parentId: country!.id,
       geom: envelope(AEGINA_WEST_BOX),
     })
     .returning({ id: geoObjects.id });

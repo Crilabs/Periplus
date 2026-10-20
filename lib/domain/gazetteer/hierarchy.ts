@@ -10,7 +10,11 @@ import { areaTileIds, subdivisionTileIds } from "./tiles-ensure";
 const LOCAL_TYPES: GeoObjectType[] = ["bay", "harbour", "settlement", "poi", "cape", "strait", "channel"];
 const ISLANDS: GeoObjectType[] = ["island", "islet"];
 /** Types that belong to a subdivision and lie in a sea (`subdivision_id`, `sea_id`). */
-const PLACED_TYPES = sql`('bay', 'harbour', 'settlement', 'poi', 'cape', 'strait', 'channel', 'island', 'islet', 'archipelago', 'gulf', 'coast_section')`;
+const PLACED_TYPES: GeoObjectType[] = [...LOCAL_TYPES, ...ISLANDS, "archipelago", "gulf", "coast_section"];
+/** Large water bodies whose centroid may lie far offshore: they take the nearest land without the radius limit. */
+const FAR_TYPES: GeoObjectType[] = ["gulf", "archipelago", "strait", "channel"];
+/** Polygons of these types are no tile content: a mention reaches their tiles through the hierarchy and the sea. */
+const UNTILED_TYPES: GeoObjectType[] = ["country", "admin_region", "sea"];
 
 function envelope([west, south, east, north]: Bbox): SQL {
   return sql`ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)`;
@@ -61,25 +65,38 @@ async function setParents(db: Db, types: GeoObjectType[], filter: SQL, parent: S
 /** The geo object (`country` / `admin_region`) of the subdivision the child `c` belongs to; null without subdivision. */
 const SUBDIVISION_OBJECT = sql`(select s.geo_object_id from subdivisions s where s.id = c.subdivision_id)`;
 
-/** The valid `country` object of the child's `tags.country`. */
+/**
+ * The valid `country` object of the child's `tags.country`: the country's own relation (`ISO3166-1` = the code) first,
+ * so that another level-2 row stored under the country (an `extra` relation) never wins by id.
+ */
 const COUNTRY_OBJECT = sql`(select p.id from geo_objects p
   where p.type = 'country' and p.valid_to is null and p.merged_into_id is null and p.tags->>'country' = c.tags->>'country'
-  order by p.id limit 1)`;
+  order by (p.tags->>'ISO3166-1' is not distinct from c.tags->>'country') desc, p.id limit 1)`;
 
-/** First-level `admin_region`s of the configured countries (`firstLevel` is a number), by country and level. */
-function firstLevelUnits(): SQL {
+/** The `admin_region` `a` is a first-level unit of its country (`firstLevel` is a number), by country and level. */
+function firstLevelUnits(a: string): SQL {
   const pairs = Object.entries(getConfig().subdivisions.countries).flatMap(([iso, c]) =>
     typeof c.firstLevel === "number" ? [sql`(${iso}, ${c.firstLevel})`] : [],
   );
   if (pairs.length === 0) return sql`false`;
-  return sql`(c.tags->>'country', c.admin_level) in (${sql.join(pairs, sql`, `)})`;
+  return sql`(${sql.raw(a)}.tags->>'country', ${sql.raw(a)}.admin_level) in (${sql.join(pairs, sql`, `)})`;
+}
+
+/** The `admin_region` `a` is a unit above the second level: split group (`config_key`), subdivision object or first level. */
+function isUnitRegion(a: string): SQL {
+  return sql`(${sql.raw(a)}.config_key is not null
+    or exists (select 1 from subdivisions u where u.valid_to is null and u.geo_object_id = ${sql.raw(a)}.id)
+    or ${firstLevelUnits(a)})`;
 }
 
 /**
  * The hierarchy rule (Spec 03, step 6, over subdivisions: spec 14), in the order it is applied; each step's `parent` is
  * an expression on the child `c`:
  * 1. `area` → none (a Revier has no parents).
- * 2. `admin_region` of a split group (`config_key`) or of the first level of its country → its `country`.
+ * 2. `admin_region` that is a split group (`config_key`), a subdivision's geo object (also an `extra` unit) or of the
+ *    first level of its country → its `country` (the country's own `ISO3166-1` relation).
+ *    Any other (second-level) `admin_region` → the smallest such unit of its country covering its point on surface,
+ *    else the country.
  * 3. `coast_section` → the geo object of its subdivision (from `config_key`, else from `subdivision_id`).
  * 4. `archipelago`, `gulf` → the geo object of its subdivision.
  * 5. `island`, `islet` → smallest containing `archipelago`, else the geo object of its subdivision.
@@ -92,7 +109,17 @@ function parentRules(): { types: GeoObjectType[]; parent: SQL; filter?: SQL }[] 
   const { gazetteer } = getConfig();
   return [
     { types: ["area"], parent: sql`NULL::uuid` },
-    { types: ["admin_region"], filter: sql`(c.config_key is not null or ${firstLevelUnits()})`, parent: COUNTRY_OBJECT },
+    { types: ["admin_region"], filter: isUnitRegion("c"), parent: COUNTRY_OBJECT },
+    {
+      types: ["admin_region"],
+      filter: sql`not ${isUnitRegion("c")}`,
+      parent: sql`coalesce(
+        (select p.id from geo_objects p
+          where ${CANDIDATE} and p.type = 'admin_region' and p.tags->>'country' = c.tags->>'country' and ${isUnitRegion("p")}
+            and ST_Covers(p.geom, ST_PointOnSurface(c.geom))
+          order by ST_Area(p.geom::geography), p.id limit 1),
+        ${COUNTRY_OBJECT})`,
+    },
     {
       types: ["coast_section"],
       parent: sql`coalesce(
@@ -108,22 +135,21 @@ function parentRules(): { types: GeoObjectType[]; parent: SQL; filter?: SQL }[] 
   ];
 }
 
-/** Radius around a centroid within which a subdivision's land counts for the assignment. */
-const SUBDIVISION_RADIUS_M = 30_000;
-
 /**
  * Sets `geo_objects.subdivision_id` of the valid objects `c` that pass `filter` to the subdivision whose land
- * (`land_geom`) is nearest to the centroid, within `SUBDIVISION_RADIUS_M` (bbox prefilter, then distance; ties by
- * key); null when no land is that near. Only changed rows are written.
+ * (`land_geom`) is nearest to the centroid, within `gazetteer.subdivisionRadiusM` (bbox prefilter, then distance; ties by
+ * key; gulfs, archipelagos, straits and channels take the nearest land at any distance); null when no land is that near. Only changed rows are written.
  */
 async function setSubdivisions(db: Db, filter: SQL): Promise<number> {
+  const radiusM = getConfig().gazetteer.subdivisionRadiusM;
   const res = await db.execute(sql`
     with target as (
       select c.id, (
         select s.id from subdivisions s
         where s.valid_to is null and s.land_geom is not null
-          and s.land_geom && ST_Expand(c.centroid, ${SUBDIVISION_RADIUS_M / 50_000})
-          and ST_DWithin(s.land_geom::geography, c.centroid::geography, ${SUBDIVISION_RADIUS_M})
+          and (c.type in ${FAR_TYPES} or (
+            s.land_geom && ST_Expand(c.centroid, ${radiusM / 50_000})
+            and ST_DWithin(s.land_geom::geography, c.centroid::geography, ${radiusM})))
         order by ST_Distance(s.land_geom::geography, c.centroid::geography), s.key limit 1) as subdivision_id
       from geo_objects c
       where c.valid_to is null and c.merged_into_id is null and c.type in ${PLACED_TYPES} and ${filter}
@@ -201,7 +227,8 @@ export async function assignParentOf(db: Db, objectId: string): Promise<string |
 }
 
 /**
- * Rewrites `tile_geo_objects` for `tileIds`: every valid, unmerged object whose geometry intersects the tile box.
+ * Rewrites `tile_geo_objects` for `tileIds`: every valid, unmerged object whose geometry intersects the tile box,
+ * except country, admin_region and sea polygons (they would link to every tile of their extent).
  * Returns the number of links written. A tile shared by two scopes is rebuilt completely, including objects only the
  * other scope imported: the links depend on the geometries alone, so the result is the same whichever run writes it.
  */
@@ -213,7 +240,8 @@ export async function assignTiles(db: Db, tileIds: string[]): Promise<{ links: n
     select t.id, o.id
     from tiles t
     join geo_objects o on o.geom && t.bbox and ST_Intersects(t.bbox, o.geom)
-    where t.id in ${tileIds} and t.valid_to is null and o.valid_to is null and o.merged_into_id is null`);
+    where t.id in ${tileIds} and t.valid_to is null and o.valid_to is null and o.merged_into_id is null
+      and o.type not in ${UNTILED_TYPES}`);
   return { links: res.rowCount ?? 0 };
 }
 

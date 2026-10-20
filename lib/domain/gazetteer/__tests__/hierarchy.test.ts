@@ -125,6 +125,19 @@ describe("assignSubdivisions", () => {
       for (const id of [regionId, countryId, sea]) expect(await subdivisionOf(db, id)).toBeNull();
     }));
 
+  it("gulfs, archipelagos, straits and channels take the nearest land without the radius limit", () =>
+    withRollback(async (db) => {
+      const { subdivisionId } = await setup(db);
+      // 60 km north of the land (35.5 N): beyond subdivisionRadiusM for a bay.
+      const bay = await insert(db, "bay", point(25.25, 36.05));
+      const kinds = await Promise.all(
+        (["gulf", "archipelago", "strait", "channel"] as const).map((t) => insert(db, t, point(25.25, 36.05))),
+      );
+      await assignSubdivisions(db, [25.0, 35.9, 25.5, 36.2]);
+      expect(await subdivisionOf(db, bay)).toBeNull();
+      for (const id of kinds) expect(await subdivisionOf(db, id)).toBe(subdivisionId);
+    }));
+
   it("a subdivision without land (land_geom null) takes no objects", () =>
     withRollback(async (db) => {
       await addSubdivision(db, "GR-NOLAND", HT, null);
@@ -247,7 +260,7 @@ describe("assignParents", () => {
       expect(await parentOf(db, countryId)).toBeNull();
     }));
 
-  it("an admin region of a split group has its country as parent; a second-level region is left alone", () =>
+  it("an admin region of a split group has its country as parent", () =>
     withRollback(async (db) => {
       const { countryId } = await setup(db);
       const group = await insert(db, "admin_region", box(25.0, 35.0, 25.2, 35.2), {
@@ -256,14 +269,53 @@ describe("assignParents", () => {
         adminLevel: 5,
         tags: { country: "GR" },
       });
-      const second = await insert(db, "admin_region", box(25.0, 35.0, 25.1, 35.1), {
-        origin: "osm",
-        adminLevel: 6,
-        tags: { country: "GR" },
-      });
       await assignAll(db);
       expect(await parentOf(db, group)).toBe(countryId);
-      expect(await parentOf(db, second)).toBeNull();
+    }));
+
+  it("a second-level admin region gets the smallest first-level or group region covering its point, else the country", () =>
+    withRollback(async (db) => {
+      const { countryId, regionId } = await setup(db);
+      const group = await insert(db, "admin_region", box(25.0, 35.0, 25.2, 35.2), {
+        origin: "manual",
+        configKey: "GR-HT-GROUP",
+        adminLevel: 5,
+        tags: { country: "GR" },
+      });
+      const inGroup = await insert(db, "admin_region", box(25.0, 35.0, 25.1, 35.1), { origin: "osm", adminLevel: 6, tags: { country: "GR" } });
+      const inRegion = await insert(db, "admin_region", box(25.3, 35.3, 25.4, 35.4), { origin: "osm", adminLevel: 6, tags: { country: "GR" } });
+      const outside = await insert(db, "admin_region", box(24.2, 34.2, 24.4, 34.4), { origin: "osm", adminLevel: 6, tags: { country: "GR" } });
+      // Another country's first-level region covering the point is no parent.
+      await insert(db, "admin_region", box(25.25, 35.25, 25.45, 35.45), { origin: "osm", adminLevel: 5, tags: { country: "TR" } });
+      await assignAll(db, [24.0, 34.0, 26.0, 36.0]);
+      expect(await parentOf(db, inGroup)).toBe(group);
+      expect(await parentOf(db, inRegion)).toBe(regionId);
+      expect(await parentOf(db, outside)).toBe(countryId);
+      // A second-level region is never the parent of another.
+      expect(await parentOf(db, group)).toBe(countryId);
+    }));
+
+  it("an extra unit gets its configured country; a country with two level-2 rows takes its own ISO3166-1 relation", () =>
+    withRollback(async (db) => {
+      // The decoy sorts first by id; the country's own relation is told by ISO3166-1.
+      const decoy = await insert(db, "country", box(25.0, 35.0, 25.5, 35.5), {
+        id: "00000000-0000-4000-8000-000000000001",
+        origin: "osm",
+        adminLevel: 2,
+        tags: { country: "GB", admin_level: "2" },
+      });
+      const own = await insert(db, "country", box(24.0, 34.0, 26.0, 36.0), {
+        id: "ffffffff-0000-4000-8000-000000000001",
+        origin: "osm",
+        adminLevel: 2,
+        tags: { country: "GB", admin_level: "2", "ISO3166-1": "GB" },
+      });
+      // Like GB-SBA: an extra unit without config_key, level 6, in a "whole" country.
+      const sub = await addSubdivision(db, "GB-SBA", HT, HT, "GB");
+      await db.update(geoObjects).set({ adminLevel: 6 }).where(eq(geoObjects.id, sub.regionId));
+      await assignAll(db);
+      expect(await parentOf(db, sub.regionId)).toBe(own);
+      expect(own).not.toBe(decoy);
     }));
 
   it("area object keeps no parent", () =>
@@ -300,7 +352,8 @@ describe("assignParentOf", () => {
 describe("assignTiles", () => {
   it("assignTiles links a polygon to every tile it touches", () =>
     withRollback(async (db) => {
-      const { regionId, subdivisionId } = await setup(db);
+      const { regionId, countryId, subdivisionId } = await setup(db);
+      const seaId = await insert(db, "sea", box(24.0, 34.0, 27.0, 37.0), { origin: "manual" });
       await db.insert(landPolygons).values({ geom: sql`ST_MakeEnvelope(25.0, 35.0, 25.5, 35.5, 4326)`, datasetVersion: "test" });
       await ensureSubdivisionTiles(db, subdivisionId);
       // Crosses 25.25 E within the band 35.1-35.2 N: the two southern tiles.
@@ -315,8 +368,10 @@ describe("assignTiles", () => {
           .sort();
       expect(await linksOf(poly)).toEqual([tileIdFor(25.2, 35.1), tileIdFor(25.3, 35.1)].sort());
       expect(await linksOf(pt)).toEqual([tileIdFor(25.4, 35.4)]);
-      // The admin region polygon covers all four tiles.
-      expect(await linksOf(regionId)).toHaveLength(4);
+      // Country, admin region and sea polygons are not tile content: mentions reach their tiles through the hierarchy.
+      expect(await linksOf(regionId)).toEqual([]);
+      expect(await linksOf(seaId)).toEqual([]);
+      expect(await linksOf(countryId)).toEqual([]);
 
       // Rerun rewrites the same links.
       expect(await assignSubdivisionTiles(db, subdivisionId)).toEqual(r);

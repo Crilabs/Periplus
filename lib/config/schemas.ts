@@ -315,6 +315,8 @@ export const gazetteerSchema = z.strictObject({
   bboxBufferKm: z.number().nonnegative(),
   landBufferKm: z.number().nonnegative(),
   coastDistanceM: z.number().positive(),
+  /** Radius around an object's centroid within which a subdivision's land counts for the assignment (spec 14). */
+  subdivisionRadiusM: z.number().positive(),
   islandParentBufferM: z.number().nonnegative(),
   coastSectionMaxAreaKm2: z.number().positive(),
   merge: z.strictObject({

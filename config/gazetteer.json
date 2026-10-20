@@ -58,6 +58,7 @@
   "bboxBufferKm": 5,
   "landBufferKm": 55,
   "coastDistanceM": 2000,
+  "subdivisionRadiusM": 30000,
   "islandParentBufferM": 200,
   "coastSectionMaxAreaKm2": 1000,
   "merge": {
