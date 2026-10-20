@@ -1,6 +1,7 @@
 import type { FetchConfig } from "@/lib/config";
 import { getEnv } from "@/lib/env";
 import { httpCall, RetryableHttpError, type HttpResponse, type Transport } from "../http";
+import { assertNotSimulated } from "../simulation";
 import { BlockedUrlError, isPublicUrlLiteral } from "./ssrf";
 import { ConverterServiceError, serviceCall, TargetHttpError, type Converter } from "./types";
 
@@ -41,6 +42,7 @@ export function createFirecrawlConverter(transport: Transport, cfg: FetchConfig[
   return {
     name: "firecrawl",
     async convert(input, ctx) {
+      assertNotSimulated("firecrawl", "convert");
       const started = performance.now();
       if (!isPublicUrlLiteral(input.url)) throw new BlockedUrlError(input.url);
       const key = getEnv().FIRECRAWL_API_KEY;

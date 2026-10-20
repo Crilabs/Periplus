@@ -1,6 +1,7 @@
 import type { EmbeddingsConfig } from "@/lib/config";
 import { getEnv } from "@/lib/env";
 import { RetryableHttpError, httpCall, type CallContext, type HttpResponse, type Transport } from "./http";
+import { assertNotSimulated } from "./simulation";
 
 type Answer = { data?: Array<{ embedding?: unknown; index?: unknown }>; usage?: { total_tokens?: unknown } };
 
@@ -30,6 +31,7 @@ export async function embedTexts(
   ctx: CallContext,
   cfg: EmbeddingsConfig,
 ): Promise<{ vectors: number[][]; tokens: number }> {
+  assertNotSimulated("voyage", "embed");
   if (texts.length === 0) return { vectors: [], tokens: 0 };
   const key = getEnv().VOYAGE_API_KEY;
   if (!key) throw new Error("VOYAGE_API_KEY is not set");

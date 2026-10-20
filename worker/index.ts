@@ -7,6 +7,7 @@ import { closeRenderer } from "@/lib/adapters/fetch/browser";
 import { getArchive } from "@/lib/adapters/s3";
 import { createAnthropicClient } from "@/lib/ai/anthropic";
 import { assertEmbeddingDimension } from "@/lib/pipeline/embed";
+import { assertSimulationEnv } from "@/lib/domain/revisit/guard";
 import { getEnv } from "@/lib/env";
 import { createBoss } from "@/lib/jobs/boss";
 import { BATCH_HANDLERS } from "@/lib/jobs/batch-handlers";
@@ -20,6 +21,10 @@ const HEARTBEAT_MS = 30_000;
 const log = createLogger("worker-main");
 
 async function main(): Promise<void> {
+  // A simulation runs only against periplus_sim or *_test and with its own archive prefix: checked before anything
+  // touches the database, the bucket or the queues.
+  const simulation = assertSimulationEnv(getEnv());
+  if (simulation) log.info(simulation, "simulation active");
   const config = getConfig();
   const db = getDb();
   // A model with another dimension needs a migration of chunks.embedding first: refuse to start without it.

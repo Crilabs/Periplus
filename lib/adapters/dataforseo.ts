@@ -1,6 +1,7 @@
 import type { DiscoveryConfig } from "@/lib/config";
 import { getEnv } from "@/lib/env";
 import { HttpError, RetryableHttpError, httpCall, type CallContext, type HttpResponse, type Transport } from "./http";
+import { assertNotSimulated } from "./simulation";
 
 /** One organic result; `rank` is DataForSEO's `rank_absolute` (position among all SERP elements). */
 export type SerpItem = { rank: number; url: string; title: string; snippet: string };
@@ -55,6 +56,7 @@ export async function searchOrganic(
   ctx: CallContext,
   cfg: DiscoveryConfig["serp"],
 ): Promise<{ raw: Uint8Array; items: SerpItem[] }> {
+  assertNotSimulated("dataforseo", "serp_organic");
   const res = await httpCall(
     transport,
     {

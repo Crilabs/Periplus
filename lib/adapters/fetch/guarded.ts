@@ -3,6 +3,7 @@ import { isIP, type LookupFunction } from "node:net";
 import { Agent, buildConnector, fetch as undiciFetch, type Dispatcher } from "undici";
 import { getEnv } from "@/lib/env";
 import { makeResponse, readBodyCapped, RetryableHttpError, transportOverride, type Transport } from "../http";
+import { assertNotSimulated } from "../simulation";
 import { BlockedUrlError, isPublicAddress } from "./ssrf";
 
 /** All addresses of a host, as `dns.lookup(host, { all: true })` gives them. */
@@ -68,8 +69,12 @@ export function blockedCause(error: unknown): BlockedUrlError | null {
   return null;
 }
 
-/** `fetch` through `dispatcher` (undici's fetch: the global one cannot take an undici dispatcher of another version). */
+/**
+ * `fetch` through `dispatcher` (undici's fetch: the global one cannot take an undici dispatcher of another version).
+ * Refused in a simulation.
+ */
 export function guardedFetch(url: string, init: Parameters<typeof undiciFetch>[1] & { dispatcher: Dispatcher }) {
+  assertNotSimulated("crawl", `fetch ${init.method ?? "GET"}`);
   return undiciFetch(url, init);
 }
 
@@ -82,6 +87,8 @@ export function guardedFetch(url: string, init: Parameters<typeof undiciFetch>[1
 export function createGuardedTransport(dispatcher: Dispatcher = createGuardedAgent()): Transport {
   return async (req) => {
     const method = req.method ?? "GET";
+    // Outside the try: a refusal in a simulation must not turn into a retryable network failure.
+    assertNotSimulated(req.service, `${req.operation} ${method}`);
     try {
       const res = await guardedFetch(req.url, {
         method,

@@ -2,6 +2,7 @@ import type { Browser, BrowserContext, LaunchOptions, Request } from "playwright
 import type { Dispatcher } from "undici";
 import { getConfig } from "@/lib/config";
 import { readBodyCapped, userAgent } from "../http";
+import { assertNotSimulated } from "../simulation";
 import { blockedCause, getGuardedAgent, guardedFetch } from "./guarded";
 import { BlockedUrlError, isPublicHttpUrl } from "./ssrf";
 import type { RenderPage } from "./types";
@@ -182,6 +183,7 @@ export function createPlaywrightRenderer(opts: RendererOptions = {}): Renderer {
 
   return {
     async render(url, { timeoutMs }) {
+      assertNotSimulated("playwright", "render");
       if (!(await isAllowed(url))) throw new BlockedUrlError(url);
       const dispatcher = opts.dispatcher ?? getGuardedAgent();
       const context = await (await connectedBrowser()).newContext({ userAgent: userAgent(), serviceWorkers: "block" });

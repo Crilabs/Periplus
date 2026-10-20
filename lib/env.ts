@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+/** An archive write prefix: lower-case segments ending in `/`, e.g. `sim/2026-10-20/`. */
+export const S3_WRITE_PREFIX_PATTERN = /^[a-z0-9][a-z0-9/_-]*\/$/;
+
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   SESSION_SECRET: z.string().min(32),
@@ -18,6 +21,16 @@ const envSchema = z.object({
   CONTACT_EMAIL: z.string().min(1),
   /** The Navily spot file, read at runtime only (Grundprinzip 9); unset: comparisons by hand only. */
   NAVILY_SPOTS_PATH: z.string().min(1).optional(),
+  /**
+   * Archive writes go under this prefix, reads try it first and fall back to the plain key (a simulation's own
+   * objects never mix with the recorded ones). Required with `PERIPLUS_SIMULATION`.
+   */
+  S3_WRITE_PREFIX: z
+    .string()
+    .regex(S3_WRITE_PREFIX_PATTERN, "must be lower-case segments ending in /, e.g. sim/2026-10-20/")
+    .optional(),
+  /** Path of the revisit scenario: this process runs a simulated revisit (only against `periplus_sim` or `*_test`). */
+  PERIPLUS_SIMULATION: z.string().min(1).optional(),
   /** `playwright`: the worker renders pages in headless Chromium when a crawl rule asks for it; `off`: never. */
   PERIPLUS_RENDERER: z.enum(["playwright", "off"]).default("playwright"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error", "silent"]).default("info"),
