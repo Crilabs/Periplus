@@ -71,7 +71,7 @@ export async function loadAreaScope(
   const passages = await loadPassages(db, tileArray, today);
 
   const objectIds = [...spotRows, ...poiRows, ...regionRows].map((r) => r.geoObjectId);
-  const profiles = await latestProfiles(db, objectIds);
+  const profiles = await latestProfiles(db, [...objectIds, ...passages.map((p) => p.geoObjectId)]);
   const names = await loadNames(db, [areaGeoObjectId, ...objectIds], today);
   const popularity = await popularityForArea(db, areaGeoObjectId, today);
   const withProfile = [...spotRows, ...poiRows].map((r) => r.geoObjectId).filter((id) => profiles.has(id));
@@ -107,7 +107,7 @@ export async function loadAreaScope(
     merged,
     pois: pois.sort(byPublicId),
     regions: regions.sort(byPublicId),
-    passages,
+    passages: passages.map((p) => ({ ...p, profile: profiles.get(p.geoObjectId) ?? null })),
   };
 }
 
@@ -355,7 +355,7 @@ async function simplifiedPolygons(
   return new Map(rows.map((r) => [r.id, { polygon: r.polygon, maxDistanceM: Number(r.max_distance_m) }]));
 }
 
-async function loadPassages(db: Db, tileArray: SQL, today: string): Promise<PassageSource[]> {
+async function loadPassages(db: Db, tileArray: SQL, today: string): Promise<Array<Omit<PassageSource, "profile">>> {
   const { rows } = await db.execute<{ geo_object_id: string; type: PassageSource["type"]; name: string | null; lon: number; lat: number }>(sql`
     select o.id as geo_object_id, o.type, ${displayNameSql(sql`o.id`, today)} as name, ST_X(o.centroid) as lon, ST_Y(o.centroid) as lat
     from geo_objects o

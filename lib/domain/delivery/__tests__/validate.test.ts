@@ -20,7 +20,7 @@ import {
 } from "@/test/fixtures/delivery/package";
 import { insertTestVersion } from "@/test/text";
 import type { DeliveryPackage } from "../types";
-import { buildWarnings, CHECK_NAMES, validatePackage, type CheckName, type ValidationDeps, type ValidationReport } from "../validate";
+import { buildWarnings, CHECK_NAMES, spotsInMilitaryAreas, validatePackage, type CheckName, type ValidationDeps, type ValidationReport } from "../validate";
 
 const config = loadConfig("config");
 const cfg = config.delivery;
@@ -397,5 +397,39 @@ describe("buildWarnings", () => {
       ["regions.json", "rg_01J9ZD00000000000000000002", "Nicht geliefert: kein gültiger Name"],
       ["weather-points.json", expect.stringMatching(/^wp_/), "Nicht geliefert: kein offenes Wasser in der Region"],
     ]);
+  });
+
+  it("text-only safety values and spots in a military area of the package become warnings (final review I-3, M-7)", () => {
+    const out = buildWarnings({
+      undeliveredSafety: [{ file: "regions.json", id: "rg_01J9ZD00000000000000000002", message: "Sperrgebiet laut Text nicht geliefert: Schießgebiet" }],
+      militaryAreaSpots: [SPOT_A],
+    });
+    expect(out.map((f) => [f.file, f.objectId, f.message])).toEqual([
+      ["regions.json", "rg_01J9ZD00000000000000000002", "Sperrgebiet laut Text nicht geliefert: Schießgebiet"],
+      ["spots.json", SPOT_A, "Liegt in einem militärischen Sperrgebiet des Pakets (coast.geojson), ist aber nicht ausgeschlossen: Profil oder Status prüfen"],
+    ]);
+  });
+});
+
+describe("spotsInMilitaryAreas (final review M-7)", () => {
+  const around = (lon: number, lat: number, d = 0.01) => ({
+    type: "Polygon" as const,
+    coordinates: <Array<Array<[number, number]>>> [[[lon - d, lat - d], [lon + d, lat - d], [lon + d, lat + d], [lon - d, lat + d], [lon - d, lat - d]]],
+  });
+  const restricted = (reason: "military" | "protectedArea", g: ReturnType<typeof around>) => ({
+    type: "Feature" as const,
+    geometry: g,
+    properties: { kind: "restrictedArea" as const, reason, source: "OpenStreetMap, ODbL" },
+  });
+
+  it("names a non-excluded spot inside a military area, not an excluded one and not one in another kind of area", () => {
+    const pkg = validPackage();
+    const [a, marina] = pkg.files["spots.json"].spots;
+    const coast = pkg.files["coast.geojson"];
+    expect(spotsInMilitaryAreas([a!, marina!], coast)).toEqual([]);
+    coast.features.push(restricted("military", around(a!.position.lon, a!.position.lat)), restricted("protectedArea", around(marina!.position.lon, marina!.position.lat)));
+    expect(spotsInMilitaryAreas([a!, marina!], coast)).toEqual([SPOT_A]);
+    const excluded = { ...a!, exclude: { ...a!.exclude, excluded: true } };
+    expect(spotsInMilitaryAreas([excluded, marina!], coast)).toEqual([]);
   });
 });

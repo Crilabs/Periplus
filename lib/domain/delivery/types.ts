@@ -82,7 +82,14 @@ export type RegionSource = {
   sources: SourceRefRow[];
 };
 
-export type PassageSource = { geoObjectId: string; type: "cape" | "strait" | "channel"; name: string; point: LonLat };
+export type PassageSource = {
+  geoObjectId: string;
+  type: "cape" | "strait" | "channel";
+  name: string;
+  point: LonLat;
+  /** The latest profile: its text-only safety values have no contract field and are reported as not delivered. */
+  profile: ProfileSnapshot | null;
+};
 
 export type AreaScope = {
   area: {

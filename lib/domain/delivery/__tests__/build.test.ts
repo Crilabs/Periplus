@@ -371,6 +371,32 @@ describe("buildDelivery", () => {
     });
   });
 
+  it("a restricted zone known only from the island's text is reported as not delivered (final review I-3)", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliveryArea(tx);
+      await insertProfile(
+        tx,
+        f.islandId,
+        { meltemi_exposure: 0.7, ferry_traffic: "high", charter_bases: ["X"], restricted_zones: [{ kind: "military", name: "Kalami" }] },
+        {
+          meltemi_exposure: provenanceEntry("text", { confidence: 0.6 }),
+          ferry_traffic: provenanceEntry("text", { confidence: 0.6 }),
+          charter_bases: provenanceEntry("text", { confidence: 0.6 }),
+          restricted_zones: provenanceEntry("text", { confidence: 0.6 }),
+        },
+        { version: 2, confidence: null },
+      );
+      const result = await buildDelivery(tx, memoryArchive(), f.areaId, { now: NOW, inCallerTransaction: true });
+      expect(result.status).toBe("valid");
+      expect(result.report.warnings).toContainEqual({
+        file: "regions.json",
+        objectId: f.islandPublicId,
+        path: null,
+        message: "Sperrgebiet laut Text nicht geliefert: Militärisches Sperrgebiet Kalami",
+      });
+    });
+  });
+
   it("a value whose only forbidden document is gone still rejects the package (final review M-1)", async () => {
     await withRollback(async (tx) => {
       const f = await seedDeliveryArea(tx);

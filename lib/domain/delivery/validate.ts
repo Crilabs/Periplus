@@ -1,4 +1,4 @@
-import { CONTRACT_SCHEMAS, type ContractFile, type Highlight, type Spot } from "@/contract";
+import { CONTRACT_SCHEMAS, type CoastCollection, type ContractFile, type Highlight, type Spot } from "@/contract";
 import { GOOGLE_PLACE_ID_PATTERN, highlightCategory, OSM_ID_PATTERN, WIKIDATA_ID_PATTERN } from "@/contract/v1";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
@@ -7,6 +7,7 @@ import { isPublicId, type PublicIdPrefix } from "@/lib/domain/ids";
 import { isForbiddenUrl, mentionsForbiddenDomain } from "@/lib/domain/sources/forbidden-domains";
 import { distanceNm, distanceToLinesNm, pointInPolygon } from "./geo";
 import type { DroppedHighlight } from "./map-highlight";
+import type { UndeliveredSafety } from "./map-region";
 import type { SpotWarning } from "./map-spot";
 import { checkJsonSchema } from "./schema-check";
 import type { DeliveryPackage, LonLat } from "./types";
@@ -608,6 +609,10 @@ export function buildWarnings(input: {
   droppedHighlights?: DroppedHighlight[];
   droppedRegions?: Array<{ id: string; reason: "no_name" }>;
   droppedWeatherPoints?: DroppedWeatherPoint[];
+  /** Text-only safety values without a contract field (`undeliveredSafety`, final review I-3). */
+  undeliveredSafety?: UndeliveredSafety[];
+  /** Non-excluded spots inside a military restricted area of the package's own coast (`spotsInMilitaryAreas`, M-7). */
+  militaryAreaSpots?: string[];
 }): Finding[] {
   const out: Finding[] = [];
   for (const s of input.spots ?? []) {
@@ -635,5 +640,26 @@ export function buildWarnings(input: {
   }
   for (const r of input.droppedRegions ?? []) out.push(finding(REGIONS, r.id, null, "Nicht geliefert: kein gültiger Name"));
   for (const w of input.droppedWeatherPoints ?? []) out.push(finding(WEATHER, weatherPointId(w.geoObjectId, w.kind), null, WEATHER_DROPPED_DE[w.reason]));
+  for (const u of input.undeliveredSafety ?? []) out.push(finding(u.file, u.id, null, u.message));
+  for (const id of input.militaryAreaSpots ?? []) {
+    out.push(finding(SPOTS, id, null, "Liegt in einem militärischen Sperrgebiet des Pakets (coast.geojson), ist aber nicht ausgeschlossen: Profil oder Status prüfen"));
+  }
   return out;
+}
+
+/**
+ * The delivered, non-excluded, unmerged spots whose position lies inside a `restrictedArea` of reason `military` of
+ * the package's own `coast.geojson` (final review M-7): the package contradicts itself, which points to a stale profile
+ * or place status. A warning, not a block: share thresholds may leave such a spot rightly unexcluded.
+ */
+export function spotsInMilitaryAreas(spots: Spot[], coast: CoastCollection): string[] {
+  const areas = coast.features.flatMap((f) =>
+    f.properties.kind === "restrictedArea" && f.properties.reason === "military" && (f.geometry.type === "Polygon" || f.geometry.type === "MultiPolygon")
+      ? [f.geometry]
+      : [],
+  );
+  if (areas.length === 0) return [];
+  return spots
+    .filter((s) => !s.exclude.excluded && s.mergedInto == null && areas.some((g) => pointInPolygon(s.position, g)))
+    .map((s) => s.id);
 }

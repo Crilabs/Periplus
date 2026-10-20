@@ -7,7 +7,8 @@ import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 import { withRollback } from "@/test/db";
 import { seedDeliveryArea } from "@/test/fixtures/delivery/area";
 import { loadAreaScope } from "../load";
-import { assignRegions, mapRegion, namedRegions, REGION_TYPE, regionCharacter, regionIdAt } from "../map-region";
+import { assignRegions, mapRegion, namedRegions, REGION_TYPE, regionCharacter, regionIdAt, undeliveredSafety } from "../map-region";
+import { weatherPointId } from "../weather-points";
 import type { RegionSource } from "../types";
 
 const cfg = loadConfig("config").delivery;
@@ -50,6 +51,7 @@ function region(n: number, o: Partial<RegionSource> = {}): RegionSource {
     areaKm2: null,
     parentGeoObjectIds: [],
     profile: null,
+    sources: [],
     ...o,
   };
 }
@@ -202,6 +204,27 @@ async function dbToday(tx: Db): Promise<string> {
   const { rows } = await tx.execute<{ today: string }>(sql`select current_date::text as today`);
   return rows[0]!.today;
 }
+
+describe("undeliveredSafety (final review I-3)", () => {
+  it("reports every restricted zone of a region and every hazard of a passage, which no contract field carries", () => {
+    const withZones = region(1, {
+      profile: profile({ restricted_zones: [{ kind: "firing", name: "Kalami" }, { kind: "protected", name: null }], meltemi_exposure: 0.7 }),
+    });
+    const cape = {
+      geoObjectId: "01a15602-0000-7000-8000-0000000000c1",
+      type: "cape" as const,
+      name: "Akra Test",
+      point: { lon: 21.2, lat: 35.15 },
+      profile: profile({ hazards: [{ kind: "shoal", name: "Xera" }, { kind: "fish_farm", name: null }], sea_state: "rough" }),
+    };
+    expect(undeliveredSafety([withZones, region(2)], [cape, { ...cape, geoObjectId: "x", profile: null }])).toEqual([
+      { file: "regions.json", id: id("rg", 1), message: "Sperrgebiet laut Text nicht geliefert: Schießgebiet Kalami" },
+      { file: "regions.json", id: id("rg", 1), message: "Sperrgebiet laut Text nicht geliefert: Schutzgebiet" },
+      { file: "weather-points.json", id: weatherPointId(cape.geoObjectId, "cape"), message: "Gefahr laut Text nicht geliefert (Akra Test): Untiefe Xera" },
+      { file: "weather-points.json", id: weatherPointId(cape.geoObjectId, "cape"), message: "Gefahr laut Text nicht geliefert (Akra Test): Fischfarm" },
+    ]);
+  });
+});
 
 describe("regions of the delivery fixture", () => {
   it("map from the loader to contract regions: the island under the archipelago, the archipelago under the area", async () => {

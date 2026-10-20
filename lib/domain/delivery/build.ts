@@ -24,7 +24,8 @@ import { draftArea, type AreaDraft } from "./draft";
 import { contentDigest, contentTypeOf, serializeFile, sha256Hex } from "./serialize";
 import { currentSnapshot, openBuildSnapshot, type BuildSnapshot } from "./snapshot";
 import type { AreaScope, DeliveryPackage } from "./types";
-import { buildWarnings, validatePackage, type ValidationReport } from "./validate";
+import { undeliveredSafety } from "./map-region";
+import { buildWarnings, spotsInMilitaryAreas, validatePackage, type ValidationReport } from "./validate";
 import { assignVersions, latestDelivered, type ObjectDraft, type RemovedObject, type VersionedObject } from "./versioning";
 import { buildWeatherPoints } from "./weather-points";
 
@@ -251,6 +252,8 @@ async function assemble(
       droppedHighlights: draft.droppedHighlights,
       droppedRegions: draft.droppedRegions,
       droppedWeatherPoints: weather.dropped,
+      undeliveredSafety: undeliveredSafety(draft.deliveredRegions, draft.scope.passages),
+      militaryAreaSpots: spotsInMilitaryAreas(files["spots.json"].spots, coast),
     }),
   });
   return { previous, pkg, report, objects, removed, unchanged, dataVersion };

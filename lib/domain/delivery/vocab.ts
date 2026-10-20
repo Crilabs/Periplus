@@ -132,6 +132,14 @@ export const HAZARD_DE: Record<ContractHazardKind, string> = {
   other: "Gefahr",
 };
 
+/** Profile `restricted_zones[].kind` of an area or island (text only, no contract field): German, for the report. */
+export const RESTRICTED_ZONE_DE: Record<"military" | "firing" | "protected" | "other", string> = {
+  military: "Militärisches Sperrgebiet",
+  firing: "Schießgebiet",
+  protected: "Schutzgebiet",
+  other: "Sperrgebiet",
+};
+
 /** `seasonNote[].text` of a season hint kind. */
 export const SEASON_DE: Record<SeasonKind, string> = {
   open: "Geöffnet",

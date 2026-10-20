@@ -3,7 +3,9 @@ import type { z } from "zod";
 import type { regionType } from "@/contract/v1";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import { distanceNm, distanceToPolygonNm, round5 } from "./geo";
-import type { LonLat, RegionSource } from "./types";
+import type { LonLat, PassageSource, RegionSource } from "./types";
+import { HAZARD_DE, HAZARD_KIND, RESTRICTED_ZONE_DE } from "./vocab";
+import { weatherPointId } from "./weather-points";
 
 /*
  * Gazetteer regions → contract regions (spec 08, Teil B "Region"): type, the parent in the package, the spots inside,
@@ -153,4 +155,41 @@ export function mapRegion(
     facts,
   };
   return Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined)) as RegionBody;
+}
+
+/** A safety value known only from text that no contract field carries (final review I-3): reported, never silent. */
+export type UndeliveredSafety = { file: "regions.json" | "weather-points.json"; id: string; message: string };
+
+const namedEntries = (value: unknown): Array<{ kind: string; name: string | null }> =>
+  Array.isArray(value)
+    ? value.flatMap((e) =>
+        e !== null && typeof e === "object" && typeof (e as { kind?: unknown }).kind === "string"
+          ? [{ kind: (e as { kind: string }).kind, name: typeof (e as { name?: unknown }).name === "string" ? (e as { name: string }).name : null }]
+          : [],
+      )
+    : [];
+const label = (word: string, name: string | null) => (name === null ? word : `${word} ${name}`);
+
+/**
+ * The text-only safety values of the delivered regions (`restricted_zones` of an area or island) and of the passages
+ * (`hazards` of a cape or strait): Teil B has no field for them, so the package does not carry them (a named military
+ * or firing zone known only from text reaches neither `regions.json` nor `coast.geojson`). Each becomes a report
+ * warning, so the decision is visible (final review I-3). A passage's warning names its weather point.
+ */
+export function undeliveredSafety(regions: RegionSource[], passages: PassageSource[]): UndeliveredSafety[] {
+  const out: UndeliveredSafety[] = [];
+  for (const r of regions) {
+    for (const z of namedEntries(r.profile?.attributes["restricted_zones"])) {
+      const word = RESTRICTED_ZONE_DE[z.kind as keyof typeof RESTRICTED_ZONE_DE] ?? RESTRICTED_ZONE_DE.other;
+      out.push({ file: "regions.json", id: r.publicId, message: `Sperrgebiet laut Text nicht geliefert: ${label(word, z.name)}` });
+    }
+  }
+  for (const p of passages) {
+    const id = weatherPointId(p.geoObjectId, p.type === "cape" ? "cape" : "channel");
+    for (const h of namedEntries(p.profile?.attributes["hazards"])) {
+      const kind = HAZARD_KIND[h.kind as keyof typeof HAZARD_KIND] ?? "other";
+      out.push({ file: "weather-points.json", id, message: `Gefahr laut Text nicht geliefert (${p.name}): ${label(HAZARD_DE[kind], h.name)}` });
+    }
+  }
+  return out;
 }
