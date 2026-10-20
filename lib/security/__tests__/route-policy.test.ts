@@ -3,6 +3,14 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { matchRoute, normalizePath, ROUTE_POLICY } from "../route-policy";
 
+/** The delivery API routes (spec 08). */
+const DELIVERY_ROUTES = [
+  "/api/v1/areas",
+  "/api/v1/areas/[area]/package",
+  "/api/v1/areas/[area]/package/[file]",
+  "/api/v1/schema/[version]/[file]",
+];
+
 const ROUTE_FILES = /^(page|route)\.(tsx?|jsx?)$/;
 
 /** URL patterns of every page/route file under `dir`: strips (groups), keeps [params], skips _private folders. */
@@ -25,6 +33,20 @@ describe("ROUTE_POLICY", () => {
 
   it("gives /api/v1/ping the delivery:read scope", () => {
     expect(ROUTE_POLICY["/api/v1/ping"]).toEqual({ kind: "api", scope: "delivery:read" });
+  });
+
+  it("every new api route is in the route policy with the delivery:read scope", () => {
+    for (const route of DELIVERY_ROUTES) {
+      expect(ROUTE_POLICY[route], route).toEqual({ kind: "api", scope: "delivery:read" });
+    }
+    for (const [path, pattern] of [
+      ["/api/v1/areas", "/api/v1/areas"],
+      ["/api/v1/areas/ar_X/package", "/api/v1/areas/[area]/package"],
+      ["/api/v1/areas/saronic/package/spots.json", "/api/v1/areas/[area]/package/[file]"],
+      ["/api/v1/schema/1.0/spots.schema.json", "/api/v1/schema/[version]/[file]"],
+    ] as const) {
+      expect(matchRoute(path)?.pattern, path).toBe(pattern);
+    }
   });
 });
 
