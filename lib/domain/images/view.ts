@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
-import { getConfig, type ImagesConfig, type ImagerySource, type ZoomLevel } from "@/lib/config";
+import { getConfig, type ImagesConfig, type ZoomLevel } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
+import { imageBlockedBy, imageSources } from "./delivery-gate";
 import { allowedZooms } from "./render-plan";
 
 /*
@@ -46,24 +47,10 @@ export type PlaceImageView = {
   zooms: ZoomLevel[];
 };
 
-/**
- * Stand-in for the delivery gate (Task 10): per place image the sources of its render's tiles (imagery and DEM, blank
- * tiles excluded) whose images `images.delivery` does not deliver (`false`), sorted. An image without render, or a map
- * entry for every id asked, gives `[]`.
- */
-async function blockedSourcesStandIn(db: Db, placeImageIds: string[], cfg: Pick<ImagesConfig, "delivery">): Promise<Map<string, string[]>> {
-  const out = new Map<string, string[]>(placeImageIds.map((id) => [id, []]));
-  if (placeImageIds.length === 0) return out;
-  const { rows } = await db.execute<{ id: string; source: ImagerySource }>(sql`
-    select distinct pi.id, t.source
-    from place_images pi
-    join place_renders r on r.id = pi.render_id
-    join imagery_tiles t on t.id = any(r.imagery_tile_ids || r.dem_tile_ids) and not t.blank
-    where pi.id in (select value::uuid from jsonb_array_elements_text(${JSON.stringify(placeImageIds)}::jsonb))`);
-  const delivery = cfg.delivery as Partial<Record<ImagerySource, boolean>>;
-  for (const r of rows) if (delivery[r.source] === false) out.get(r.id)!.push(r.source);
-  for (const sources of out.values()) sources.sort();
-  return out;
+/** Per place image the sources of its render whose images `images.delivery` does not deliver (sorted); `[]` when deliverable. */
+async function blockedSources(db: Db, placeImageIds: string[], cfg: Pick<ImagesConfig, "delivery">): Promise<Map<string, string[]>> {
+  const sources = await imageSources(db, placeImageIds);
+  return new Map([...sources].map(([id, list]) => [id, imageBlockedBy(list, cfg.delivery)]));
 }
 
 type ImageRow = {
@@ -118,7 +105,7 @@ export async function placeImageView(db: Db, geoObjectId: string, cfg: Pick<Imag
     from place_images pi left join place_renders r on r.id = pi.render_id
     where pi.geo_object_id = ${geoObjectId} and pi.valid_to is null
     order by pi.sort_order, pi.slot`);
-  const blocked = await blockedSourcesStandIn(db, rows.map((r) => r.id), cfg);
+  const blocked = await blockedSources(db, rows.map((r) => r.id), cfg);
   const images: CurrentImage[] = rows.map((r) => ({
     id: r.id,
     slot: r.slot,
@@ -217,7 +204,7 @@ export async function imageCoverage(db: Db, subdivisionId: string, cfg: Pick<Ima
   const { rows: imageRows } = await db.execute<{ id: string; geo_object_id: string }>(sql`
     with spot as (${spotsSql})
     select i.id, i.geo_object_id from spot s join place_images i on i.geo_object_id = s.geo_object_id and i.valid_to is null`);
-  const blocked = await blockedSourcesStandIn(db, imageRows.map((r) => r.id), cfg);
+  const blocked = await blockedSources(db, imageRows.map((r) => r.id), cfg);
   const deliverable = new Set(imageRows.filter((r) => blocked.get(r.id)!.length === 0).map((r) => r.geo_object_id)).size;
 
   const { rows: reviewRows } = await db.execute<{ decided: number; rejected: number }>(sql`

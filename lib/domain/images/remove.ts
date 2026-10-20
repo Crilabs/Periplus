@@ -11,7 +11,7 @@ export class PlaceImageNotRemovable extends Error {
 
 /**
  * „Bild entfernen“: ends the place's current image `imageId` (`valid_to` = today; the row stays, place_images is stable)
- * so it drops out of the next package. Only a current `ai_illustration` or `photo` row of that place; an unknown, a
+ * so it drops out of the next package. Only a current row of that place (any kind); an unknown, a
  * foreign or an already ended row (the page was stale) throws `PlaceImageNotRemovable`.
  */
 export async function endPlaceImage(db: Db, input: { placeId: string; imageId: string; now?: Date }): Promise<void> {
