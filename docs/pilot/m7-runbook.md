@@ -8,7 +8,7 @@ Stand 2026-10-20, nach M7 Teil (a) (Code). Er ersetzt den Entwurf aus dem M7-Pre
 - M6 und M7 (Code, Teil a) auf `main` gemergt.
 - `npm run services:up`.
 - **`npm run db:migrate`.** Die Entwicklungsdatenbank steht auf Migration **0038**. Nach dem Migrieren steht sie auf **0047**, dem Stand nach M7. Ohne 0044–0047 fehlen `quality_snapshots`, `comparison_results` und `config_activations`; „Messen“, `compare:navily` und `report:*` scheitern dann.
-- Admin anlegen: `npm run user:create`.
+- Admin anlegen: `npm run user:create -- <email>` (Passwort von stdin).
 - `npm run worker` und `npm run dev` starten.
 - `.env.local` enthält alle Schlüssel (geprüft: Anthropic, Voyage, DataForSEO, Jina, Firecrawl, Kontakt-E-Mail).
 - `NAVILY_SPOTS_PATH` zeigt auf die Navily-Datei außerhalb des Repos (`~/Code/dontsticktoaplan/data/navily-spots.json`). Sie wird nie eingecheckt, gespeichert oder geloggt.

@@ -316,7 +316,13 @@ export default async function globalSetup(): Promise<void> {
   if (!dbName.endsWith("_test")) throw new Error(`Refusing to run e2e: database "${dbName}" must end with "_test"`);
 
   // The e2e run may be the first thing to touch the test database, so make sure it is migrated.
-  execFileSync("npx", ["tsx", "scripts/migrate.ts"], { env: { ...process.env, DATABASE_URL: url }, stdio: "ignore" });
+  // stdout ignored, stderr kept: a failed migration fails with its reason, not only "Command failed".
+  try {
+    execFileSync("npx", ["tsx", "scripts/migrate.ts"], { env: { ...process.env, DATABASE_URL: url }, stdio: ["ignore", "ignore", "pipe"] });
+  } catch (error) {
+    const stderr = String((error as { stderr?: Buffer }).stderr ?? "").trim();
+    throw new Error(`e2e migration failed${stderr ? `: ${stderr}` : ""}`, { cause: error });
+  }
   const { db, close } = createDb(url);
   try {
     try {

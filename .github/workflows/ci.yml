@@ -39,6 +39,15 @@ jobs:
           exit 1
       - run: npm run lint
       - run: npm run typecheck
+      # lib/db/schema and drizzle/ stay in sync: a schema change without its migration makes generate write one.
+      - name: Schema and migrations in sync
+        run: |
+          npx drizzle-kit generate
+          if [ -n "$(git status --porcelain drizzle)" ]; then
+            echo "lib/db/schema differs from drizzle/: run npm run db:generate and commit the migration" >&2
+            git status --porcelain drizzle >&2
+            exit 1
+          fi
       # Before the unit tests: the converter tests render pages in Chromium, the PDF tests run pdftotext.
       - run: npx playwright install --with-deps chromium
       - run: sudo apt-get update && sudo apt-get install -y poppler-utils
