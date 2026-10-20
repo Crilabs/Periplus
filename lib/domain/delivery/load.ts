@@ -76,7 +76,9 @@ export async function loadAreaScope(
   const popularity = await popularityForArea(db, areaGeoObjectId, today);
   const withProfile = [...spotRows, ...poiRows].map((r) => r.geoObjectId).filter((id) => profiles.has(id));
   const summaries = await loadSummaries(db, withProfile, profiles);
-  const sources = await loadSources(db, withProfile, profiles);
+  // regions too: their facts and character rest on documents, which the forbidden-domain check needs (final review I-2)
+  const regionsWithProfile = regionRows.map((r) => r.geoObjectId).filter((id) => profiles.has(id));
+  const sources = await loadSources(db, [...withProfile, ...regionsWithProfile], profiles);
 
   const spots: SpotSource[] = spotRows.map((r) => ({
     ...r,
@@ -96,6 +98,7 @@ export async function loadAreaScope(
     ...r,
     names: (names.get(r.geoObjectId) ?? []).map(({ lang, name }) => ({ lang, name })),
     profile: profiles.get(r.geoObjectId) ?? null,
+    sources: sources.get(r.geoObjectId) ?? [],
   }));
   return {
     area: { ...area, names: (names.get(areaGeoObjectId) ?? []).map(({ lang, name }) => ({ lang, name })) },
@@ -275,7 +278,7 @@ async function loadPoiRows(db: Db, tileArray: SQL, today: string): Promise<PoiRo
   }));
 }
 
-type RegionRow = Omit<RegionSource, "names" | "profile">;
+type RegionRow = Omit<RegionSource, "names" | "profile" | "sources">;
 
 async function loadRegionRows(db: Db, tileArray: SQL, cfg: DeliveryConfig, today: string): Promise<RegionRow[]> {
   const { rows } = await db.execute<{
@@ -413,8 +416,9 @@ function valueFactIds(p: ProfileSnapshot["provenance"][string]): string[] {
 
 /**
  * The documents behind each object's profile: the facts the values rest on (`valueFactIds`) that rest on a mention,
- * via the mention's version to its document; documents that are gone are left out. Per URL the newest effective
- * observation date and that version's effective document type (classification first, ruling M6-P10); never a quote.
+ * via the mention's version to its document; a gone document is marked `gone` (left out of `sources`, still checked
+ * against the forbidden domains, final review M-1). Per URL the newest effective observation date and that version's
+ * effective document type (classification first, ruling M6-P10); never a quote.
  */
 async function loadSources(
   db: Db,
@@ -427,8 +431,8 @@ async function loadSources(
     for (const factId of factIds) pairs.push([id, factId]);
   }
   if (pairs.length === 0) return new Map();
-  const { rows } = await db.execute<{ geo_object_id: string; url: string; doc_type: DocType; observed_at: string }>(sql`
-    select distinct on (x.geo_object_id, d.url) x.geo_object_id, d.url,
+  const { rows } = await db.execute<{ geo_object_id: string; url: string; doc_type: DocType; observed_at: string; gone: boolean }>(sql`
+    select distinct on (x.geo_object_id, d.url) x.geo_object_id, d.url, d.status = 'gone' as gone,
            coalesce(v.classified_doc_type, v.doc_type) as doc_type,
            coalesce(v.classified_observed_at, v.observed_at)::text as observed_at
     from unnest(${arrayParam(pairs.map((p) => p[0]), "uuid")}, ${arrayParam(pairs.map((p) => p[1]), "uuid")})
@@ -436,13 +440,13 @@ async function loadSources(
     join facts f on f.id = x.fact_id
     join mentions m on m.id = f.mention_id
     join document_versions v on v.id = m.document_version_id
-    join documents d on d.id = v.document_id and d.status <> 'gone'
+    join documents d on d.id = v.document_id
     order by x.geo_object_id, d.url, coalesce(v.classified_observed_at, v.observed_at) desc, v.fetched_at desc
   `);
   const sources = new Map<string, SourceRefRow[]>();
   for (const r of rows) {
     const list = sources.get(r.geo_object_id) ?? [];
-    list.push({ url: r.url, docType: r.doc_type, observedAt: r.observed_at });
+    list.push({ url: r.url, docType: r.doc_type, observedAt: r.observed_at, ...(r.gone ? { gone: true } : {}) });
     sources.set(r.geo_object_id, list);
   }
   return sources;

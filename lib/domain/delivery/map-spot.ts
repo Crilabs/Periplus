@@ -400,14 +400,15 @@ export function mapSummary(text: string | null, confidence: number | null, cfg: 
 /**
  * Contract `sources` (spot and highlight): public http(s) links only (an uploaded document's `upload://` URL never
  * leaves Periplus, ruling M6-A-R2), none of `forbiddenDomains`, newest observation first, at most `spots.maxSources`;
- * omitted when none is left. The links of forbidden domains come back as `forbidden`: values drawn from such a
- * document must not be delivered, so the validation blocks the package (`foreign_content`, ruling M6-D-R2).
+ * no gone document; omitted when none is left. The links of forbidden domains, gone documents included (final review
+ * M-1), come back as `forbidden`: values drawn from such a document must not be delivered, so the validation blocks the
+ * package (`foreign_content`, ruling M6-D-R2).
  */
 export function mapSources(rows: SourceRefRow[], cfg: DeliveryConfig): { sources: SpotBody["sources"]; forbidden: string[] } {
   const web = rows.filter((r) => /^https?:\/\//.test(r.url));
   const forbidden = [...new Set(web.filter((r) => isForbiddenUrl(r.url, cfg.forbiddenDomains)).map((r) => r.url))].sort();
   const kept = web
-    .filter((r) => !isForbiddenUrl(r.url, cfg.forbiddenDomains))
+    .filter((r) => r.gone !== true && !isForbiddenUrl(r.url, cfg.forbiddenDomains))
     .sort((x, y) => (x.observedAt !== y.observedAt ? (x.observedAt < y.observedAt ? 1 : -1) : x.url < y.url ? -1 : x.url > y.url ? 1 : 0))
     .slice(0, cfg.spots.maxSources)
     .map((r) => ({ url: r.url, kind: SOURCE_KIND[r.docType], observedAt: r.observedAt }));

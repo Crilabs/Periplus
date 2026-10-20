@@ -18,8 +18,11 @@ import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 
 export type LonLat = { lon: number; lat: number };
 
-/** A document behind an object's profile: its URL, effective type and newest observation date (never a quote). */
-export type SourceRefRow = { url: string; docType: DocType; observedAt: string };
+/**
+ * A document behind an object's profile: its URL, effective type and newest observation date (never a quote). `gone`:
+ * the document is gone; it is never listed in `sources`, but still checked against `forbiddenDomains` (final review M-1).
+ */
+export type SourceRefRow = { url: string; docType: DocType; observedAt: string; gone?: boolean };
 
 export type SpotName = { lang: string; name: string; script: "latin" | "greek" };
 export type ObjectName = { lang: string; name: string };
@@ -75,6 +78,8 @@ export type RegionSource = {
   /** Ancestors via `parent_id`, nearest first. */
   parentGeoObjectIds: string[];
   profile: ProfileSnapshot | null;
+  /** The documents behind the profile; only checked against `forbiddenDomains` (final review I-2), never delivered. */
+  sources: SourceRefRow[];
 };
 
 export type PassageSource = { geoObjectId: string; type: "cape" | "strait" | "channel"; name: string; point: LonLat };

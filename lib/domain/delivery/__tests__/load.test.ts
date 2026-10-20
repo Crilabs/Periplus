@@ -273,7 +273,7 @@ describe("loadAreaScope", () => {
     });
   });
 
-  it("list attributes cite the facts of their delivered entries only; gone documents are no source", async () => {
+  it("list attributes cite the facts of their delivered entries only; gone documents are marked gone", async () => {
     await withRollback(async (tx) => {
       const f = await seedDeliveryArea(tx);
       const { A } = f.places;
@@ -292,12 +292,13 @@ describe("loadAreaScope", () => {
       await insertProfile(tx, A.geoObjectId, SPOT_A_ATTRIBUTES, provenance, { version: 2 });
       const urls = async () => {
         const scope = await loadAreaScope(tx, f.areaId, cfg, await dbToday(tx));
-        return scope.spots.find((s) => s.publicId === A.publicId)!.sources.map((s) => s.url).sort();
+        return scope.spots.find((s) => s.publicId === A.publicId)!.sources.map((s) => (s.gone ? `gone:${s.url}` : s.url)).sort();
       };
       const urlOf = async (documentId: string) => (await tx.select({ url: documents.url }).from(documents).where(eq(documents.id, documentId)))[0]!.url;
       expect(await urls()).toEqual([f.documentUrl, await urlOf(kept.documentId)].sort());
       await tx.update(documents).set({ status: "gone" }).where(eq(documents.id, f.documentId));
-      expect(await urls()).toEqual([await urlOf(kept.documentId)]);
+      // still loaded for the forbidden-domain check (final review M-1); mapSources never lists it
+      expect(await urls()).toEqual([await urlOf(kept.documentId), `gone:${f.documentUrl}`].sort());
     });
   });
 

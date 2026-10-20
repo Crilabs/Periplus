@@ -240,6 +240,7 @@ async function assemble(
     forbiddenSources: [
       ...draft.spots.filter((s) => s.forbiddenSources.length > 0).map((s) => ({ file: "spots.json" as const, objectId: s.body.id, urls: s.forbiddenSources })),
       ...draft.highlightForbiddenSources.map((h) => ({ file: "highlights.json" as const, objectId: h.id, urls: h.urls })),
+      ...draft.regionForbiddenSources.map((r) => ({ file: "regions.json" as const, objectId: r.id, urls: r.urls })),
     ],
     cfg,
     radiusNm: consolidation.importance.radiusNm,

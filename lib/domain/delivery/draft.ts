@@ -5,7 +5,7 @@ import type { Db } from "@/lib/db/client";
 import { loadAreaScope } from "./load";
 import { highlightIdsBySpot, mapHighlights, type DroppedHighlight } from "./map-highlight";
 import { assignRegions, mapRegion, namedRegions, regionIdAt } from "./map-region";
-import { mapSpot, type SpotWarning } from "./map-spot";
+import { mapSources, mapSpot, type SpotWarning } from "./map-spot";
 import type { AreaScope, LonLat, RegionSource } from "./types";
 
 /*
@@ -29,6 +29,8 @@ export type AreaDraft = {
   /** Forbidden-domain links behind delivered highlights (ruling M6-D-R2). */
   highlightForbiddenSources: Array<{ id: string; urls: string[] }>;
   regions: Array<DraftObject<RegionBody>>;
+  /** Forbidden-domain links behind delivered regions' facts and character (final review I-2). */
+  regionForbiddenSources: Array<{ id: string; urls: string[] }>;
   droppedRegions: Array<{ id: string; reason: "no_name" }>;
   /** The delivered regions as loaded (weather points), and the region of a point among them. */
   deliveredRegions: RegionSource[];
@@ -115,6 +117,10 @@ export async function draftArea(db: Db, areaGeoObjectId: string, today: string, 
     droppedHighlights: mappedHighlights.dropped,
     highlightForbiddenSources: mappedHighlights.forbiddenSources,
     regions,
+    regionForbiddenSources: named.regions.flatMap((r) => {
+      const urls = mapSources(r.sources, cfg).forbidden;
+      return urls.length > 0 ? [{ id: r.publicId, urls }] : [];
+    }),
     droppedRegions: named.dropped,
     deliveredRegions: named.regions,
     regionIdFor,

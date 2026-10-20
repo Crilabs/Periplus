@@ -4,10 +4,10 @@ import type { Archive } from "@/lib/adapters/s3";
 import type { ChangesFile, Manifest, SpotsFile } from "@/contract";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { deliveredObjects, deliveries, places, profileSummaries, textShingles } from "@/lib/db/schema";
+import { deliveredObjects, deliveries, documents, places, profileSummaries, textShingles } from "@/lib/db/schema";
 import { shingleHashes } from "@/lib/domain/documents/shingles";
 import { newId } from "@/lib/domain/ids";
-import { insertProfile, provenanceEntry } from "@/test/consolidation";
+import { insertExtraction, insertMention, insertMentionFact, insertProfile, provenanceEntry } from "@/test/consolidation";
 import { startWhileLocked, testDb, withRollback } from "@/test/db";
 import { seedDeliveryArea, SPOT_A_ATTRIBUTES, SPOT_A_SUMMARY, spotAProvenance, type DeliveryFixture } from "@/test/fixtures/delivery/area";
 import { deleteTestObjects, memoryArchive, testArchive } from "@/test/s3";
@@ -342,6 +342,45 @@ describe("buildDelivery", () => {
       });
       // the excluded place is delivered with its reason and gets no highlights
       expect(spots.spots.find((s) => s.id === f.places.C.publicId)).toMatchObject({ exclude: { excluded: true, reason: "military" }, highlightIds: [] });
+    });
+  });
+
+  it("a region fact from a forbidden domain rejects the package under regions.json (final review I-2)", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliveryArea(tx);
+      const m = await insertMention(tx, f.islandId, { observedAt: "2026-05-01" });
+      const fact = await insertMentionFact(tx, f.islandId, m, await insertExtraction(tx, f.islandId, m), { attribute: "meltemi_exposure", value: 0.7 });
+      const navily = "https://www.navily.com/region/nisida";
+      await tx.update(documents).set({ url: navily, urlNormalized: navily }).where(eq(documents.id, m.documentId));
+      await insertProfile(
+        tx,
+        f.islandId,
+        { meltemi_exposure: 0.7, ferry_traffic: "high", charter_bases: ["X"] },
+        {
+          meltemi_exposure: provenanceEntry("text", { confidence: 0.6, factIds: [fact] }),
+          ferry_traffic: provenanceEntry("text", { confidence: 0.6 }),
+          charter_bases: provenanceEntry("text", { confidence: 0.6 }),
+        },
+        { version: 2, confidence: null },
+      );
+      const result = await buildDelivery(tx, memoryArchive(), f.areaId, { now: NOW, inCallerTransaction: true });
+      expect(result.status).toBe("rejected");
+      expect(result.report.checks.find((c) => c.name === "foreign_content")!.findings).toEqual([
+        expect.objectContaining({ file: "regions.json", objectId: f.islandPublicId, message: `Werte aus einer Quelle einer gesperrten Domain (${navily})` }),
+      ]);
+    });
+  });
+
+  it("a value whose only forbidden document is gone still rejects the package (final review M-1)", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliveryArea(tx);
+      const navily = "https://www.navily.com/port/vathi";
+      await tx.update(documents).set({ url: navily, urlNormalized: navily, status: "gone" }).where(eq(documents.id, f.documentId));
+      const result = await buildDelivery(tx, memoryArchive(), f.areaId, { now: NOW, inCallerTransaction: true });
+      expect(result.status).toBe("rejected");
+      expect(result.report.checks.find((c) => c.name === "foreign_content")!.findings).toEqual([
+        expect.objectContaining({ file: "spots.json", objectId: f.places.A.publicId, message: `Werte aus einer Quelle einer gesperrten Domain (${navily})` }),
+      ]);
     });
   });
 

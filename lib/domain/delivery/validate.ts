@@ -47,10 +47,11 @@ export type ValidationDeps = {
   /** The longest run of words of the text copied from the archive (`findArchiveCopies(db, text).longestRun`). */
   findCopies: (text: string) => Promise<number>;
   /**
-   * The links of forbidden domains behind each delivered spot and highlight (`mapSpot` / `mapHighlights`
-   * `forbiddenSources`): such an object's values may come from Navily or Google, so it blocks (ruling M6-D-R2).
+   * The links of forbidden domains behind each delivered spot, highlight and region (`mapSpot` / `mapHighlights` /
+   * `draftArea` `regionForbiddenSources`): such an object's values may come from Navily or Google, so it blocks
+   * (ruling M6-D-R2, final review I-2).
    */
-  forbiddenSources: Array<{ file: "spots.json" | "highlights.json"; objectId: string; urls: string[] }>;
+  forbiddenSources: Array<{ file: "spots.json" | "highlights.json" | "regions.json"; objectId: string; urls: string[] }>;
   cfg: DeliveryConfig;
   /** Radius of meaning per importance 1–5, nautical miles (`consolidation.importance.radiusNm`). */
   radiusNm: number[];
@@ -393,8 +394,8 @@ const verbatimText: Check = async ({ pkg, deps }) => {
 };
 
 /**
- * Teil B "Keine fremden Inhalte": external refs are ids only; no delivered spot or highlight draws on a document of a
- * forbidden domain (`deps.forbiddenSources`, ruling M6-D-R2) or lists one in `sources`; no text links to a page or
+ * Teil B "Keine fremden Inhalte": external refs are ids only; no delivered spot, highlight or region draws on a document
+ * of a forbidden domain (`deps.forbiddenSources`, ruling M6-D-R2, final review I-2) or lists one in `sources`; no text links to a page or
  * names a forbidden domain.
  */
 const foreignContent: Check = ({ pkg, deps }) => {
@@ -423,11 +424,16 @@ const foreignContent: Check = ({ pkg, deps }) => {
     ref(HIGHLIGHTS, h.id, `${base}/externalRefs/googlePlaceId`, h.externalRefs?.googlePlaceId, GOOGLE_PLACE_ID_PATTERN, "Google-Kennung");
     sources(HIGHLIGHTS, h.id, base, h.sources);
   });
-  const delivered = { [SPOTS]: spotsOf(pkg).map((s) => s.id), [HIGHLIGHTS]: highlightsOf(pkg).map((h) => h.id) };
+  const delivered = {
+    [SPOTS]: spotsOf(pkg).map((s) => s.id),
+    [HIGHLIGHTS]: highlightsOf(pkg).map((h) => h.id),
+    [REGIONS]: regionsOf(pkg).map((r) => r.id),
+  };
+  const listName = { [SPOTS]: "spots", [HIGHLIGHTS]: "highlights", [REGIONS]: "regions" } as const;
   for (const f of deps.forbiddenSources) {
     const i = delivered[f.file].indexOf(f.objectId);
     if (i < 0) continue; // left out of the package
-    const list = f.file === SPOTS ? "spots" : "highlights";
+    const list = listName[f.file];
     for (const url of f.urls) out.push(finding(f.file, f.objectId, `/${list}/${i}`, `Werte aus einer Quelle einer gesperrten Domain (${url})`));
   }
   for (const f of [...displayTexts(pkg), ...nameTexts(pkg)]) {
