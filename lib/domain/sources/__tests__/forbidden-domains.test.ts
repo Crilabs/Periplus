@@ -22,6 +22,13 @@ const withForbidden = (domains: string[]) => {
 };
 
 describe("forbidden domains", () => {
+  it("the configured list covers the pilot's Google domains and short links (final review M-2)", () => {
+    const configured = getConfig().delivery.forbiddenDomains;
+    for (const url of ["https://maps.google.gr/?q=vathi", "https://g.co/kgs/abc", "https://vathi-taverna.g.page/", "https://www.navily.com/x"]) {
+      expect(isForbiddenUrl(url, configured), url).toBe(true);
+    }
+  });
+
   it("a host, its subdomains and the fully qualified form with a trailing dot are forbidden", () => {
     expect(isForbiddenHost("navily.com", FORBIDDEN)).toBe(true);
     expect(isForbiddenHost("FR.Navily.com", FORBIDDEN)).toBe(true);
