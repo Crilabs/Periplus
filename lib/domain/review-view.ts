@@ -31,6 +31,8 @@ import {
 import type { AttributeProvenance, ConflictResolution, ConflictSide } from "@/lib/domain/consolidation/types";
 import type { ProposalRobots, SerpHit } from "@/lib/domain/discovery/proposals";
 import { formatReviewValue, profileAttributeLabel } from "@/lib/domain/consolidation/format";
+import { comparisonTaskContextSchema } from "@/lib/domain/quality/comparison-results";
+import type { ComparisonAttribute } from "@/lib/db/schema/quality";
 import { factViewsByIds, type FactView } from "@/lib/domain/geo-facts";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { candidateObjects, withNeighbours } from "@/lib/domain/mentions/scope";
@@ -175,7 +177,30 @@ export type ReviewSubject =
       /** Why each attempt failed: `copied`, `sentences`, `invalid`. */
       reasons: string[];
     }
+  | ComparisonSubjectView
   | { type: "missing" };
+
+/**
+ * A `comparison_deviation` task: the place, the compared attribute and the own value as compared (`ownDisplay`).
+ * Nothing of Navily: the admin checks the Navily value in the Navily app (Grundprinzip 9).
+ */
+export type ComparisonSubjectView = {
+  type: "comparison";
+  place: {
+    id: string;
+    publicId: string | null;
+    name: string | null;
+    kind: PlaceKind;
+    status: PlaceStatus;
+    position: LonLat;
+  };
+  attribute: ComparisonAttribute;
+  valueHash: string;
+  /** Null for an evaluation profile. */
+  profileVersion: number | null;
+  evaluationRunId: string | null;
+  ownDisplay: string | null;
+};
 
 /** One value of a conflict: its summed weight, when it was observed and the facts behind it. */
 export type ProfileSideView = {
@@ -327,6 +352,9 @@ export async function reviewTaskDetail(db: Db, id: string): Promise<ReviewTaskDe
     case "profile_summary":
       subject = await profileSummarySubject(db, task.subjectId, context);
       break;
+    case "comparison":
+      subject = await comparisonSubject(db, context);
+      break;
     default:
       subject = { type: "missing" };
   }
@@ -440,6 +468,33 @@ async function profileSummarySubject(db: Db, subjectId: string, context: Record<
     version,
     attempts: typeof context.attempts === "number" ? context.attempts : null,
     reasons: reasons.success ? reasons.data : [],
+  };
+}
+
+async function comparisonSubject(db: Db, context: Record<string, unknown>): Promise<ReviewSubject> {
+  const parsed = comparisonTaskContextSchema.safeParse(context);
+  if (!parsed.success) return { type: "missing" };
+  const c = parsed.data;
+  const [place] = await db
+    .select({
+      id: places.id,
+      publicId: places.publicId,
+      name: displayNameSql(places.geoObjectId),
+      kind: places.kind,
+      status: places.status,
+      position: asGeoJson(places.position),
+    })
+    .from(places)
+    .where(eq(places.id, c.placeId));
+  if (!place) return { type: "missing" };
+  return {
+    type: "comparison",
+    place: { ...place, position: lonLat(place.position as Point) },
+    attribute: c.attribute,
+    valueHash: c.valueHash,
+    profileVersion: c.profileVersion,
+    evaluationRunId: c.evaluationRunId,
+    ownDisplay: c.ownDisplay,
   };
 }
 
@@ -749,6 +804,8 @@ export function detailFeatures(detail: ReviewTaskDetail): GeoJSON.FeatureCollect
     for (const o of s.objects) features.push(feature(o.geom, "subject", o.names[0]?.name ?? null));
   } else if (s.type === "tile") {
     features.push(feature(s.tile.bbox, "subject", s.tile.id));
+  } else if (s.type === "comparison") {
+    features.push(feature(point(s.place.position), "subject", s.place.name));
   } else if (s.type === "name_candidate") {
     if (s.tile) features.push(feature(s.tile.bbox, "subject", s.tile.id));
     for (const h of s.hits) {

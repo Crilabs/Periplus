@@ -12,6 +12,7 @@ import { DecisionKeys } from "../../_components/decision-keys";
 import { Dialog } from "../../_components/dialog";
 import {
   CHANGE_RATE_LABELS,
+  COMPARISON_ATTRIBUTE_LABELS,
   CRAWL_RULE_LABELS,
   DOC_TYPE_LABELS,
   GEO_OBJECT_TYPE_LABELS,
@@ -51,6 +52,7 @@ import {
 } from "../../_components/ui";
 import { REVIEW_KIND_HELP, REVIEW_STATUS_LABELS, REVIEW_STATUS_TONES } from "../kinds";
 import { approveSourceAction } from "./actions";
+import { ComparisonDecision } from "./comparison-decision";
 import { DecisionForm } from "./decision-form";
 import { NameCandidateCreate } from "./name-candidate";
 import { DecisionPanel, Disclosure, Kbd, MapLegend } from "./parts";
@@ -201,6 +203,9 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
             {subject.type === "source" ? `: ${subject.source.domain}` : ""}
             {subject.type === "profile_attribute" ? `: ${subject.name ?? subject.geoObjectId} – ${subject.label}` : ""}
             {subject.type === "profile_summary" ? `: Zusammenfassung von ${subject.name ?? subject.geoObjectId}` : ""}
+            {subject.type === "comparison"
+              ? `: ${subject.place.name ?? subject.place.id} – ${COMPARISON_ATTRIBUTE_LABELS[subject.attribute]}`
+              : ""}
           </>
         }
         meta={
@@ -272,6 +277,8 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
         {subject.type === "profile_attribute" && (task.kind === "conflict" || task.kind === "uncertain_change") && (
           <ProfileDecision kind={task.kind} subject={subject} {...props} open={open} />
         )}
+
+        {subject.type === "comparison" && <ComparisonDecision subject={subject} features={features} {...props} open={open} />}
 
         {subject.type === "place" && (
           <>
