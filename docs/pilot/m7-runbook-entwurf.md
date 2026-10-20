@@ -4,7 +4,7 @@ Entwurf aus dem M7-Preflight (Teil b: echte Daten auf dem lokalen Entwicklungs-S
 
 ## Voraussetzungen
 - M6 und M7 (Code, Teil a) auf `main` gemergt.
-- `npm run services:up`; `npm run db:migrate` (die Entwicklungsdatenbank steht auf Migration 0037); Admin anlegen (`npm run user:create`); `npm run worker` und `npm run dev`.
+- `npm run services:up`; `npm run db:migrate` (die Entwicklungsdatenbank steht vor `db:migrate` auf Migration 0037, danach auf 0043, dem Stand nach M6; „Paket bauen“ braucht 0043); Admin anlegen (`npm run user:create`); `npm run worker` und `npm run dev`.
 - `.env.local` enthält alle Schlüssel (geprüft: Anthropic, Voyage, DataForSEO, Jina, Firecrawl, Kontakt-E-Mail).
 - Kostengrundlagen: `config/discovery.json` (0,0035 € je Suche, ≤ 240 je Lauf), `config/embeddings.json` (0,055 €/MTok), `config/fetch.json` (Jina 0,02 €/MTok, Firecrawl 0,0047 € je Credit), `config/models.json` (Preise Sonnet/Haiku/Opus, Batch 50 %), Abnahmedokumente M3–M5 (Konverter-Vergleich 0,25 €, etwa 0,02 € je Sonnet-Einheit, Modellvergleich ≈ 13 €, Summary ≈ 0,02 €, gezielte Quellenfindung ≈ 1,90 € je 12 Kacheln).
 - Annahmen: etwa 150–250 bestätigte Orte und 200–600 POIs in `saronic` und `argolic` zusammen; 30 Quellen × ≤ 500 Seiten → etwa 3.000–6.000 Dokumente; etwa 2.000–6.000 Extraktionseinheiten.
@@ -32,7 +32,7 @@ Entwurf aus dem M7-Preflight (Teil b: echte Daten auf dem lokalen Entwicklungs-S
 | 17 | `fixtures:record --ai …` (optional); `check:texts` Exit 0; Entscheidung Kachelgrenzen (`neighbourRing`) | Anthropic | 0,3 | **Entscheidung** |
 | 18 | `consolidate --area` für beide Reviere; Konflikte, Unsicherheiten und Summaries prüfen; `check:profiles` Exit 0; Entscheidung Kachelgröße | Anthropic (Summaries geänderter Profile) | in 13 / ≤ 3 | **Review und Entscheidung** |
 | 19 | ODbL rechtlich prüfen (M6-Übergabe), bevor ein Paket hinausgeht | – | 0 | **rechtlich** |
-| 20 | „Paket bauen“ je Revier; Befunde beheben (Zusammenlegen, Summaries); `apikey:create`; `delivery:consume` gegen localhost | lokal | 0 | Review |
+| 20 | „Paket bauen“ je Revier; Befunde nach `docs/runbook.md` „Verstöße beheben“ beheben: Dubletten „Mit Ort zusammenlegen“, kopierte Summaries „Summary neu erzeugen“ (Reiter „Profil“), Spot an Land „Position korrigieren“ (Reiter „Geometrie“), fremde Quelle „Quelle beenden“; neu bauen bis „Gültig“; `apikey:create`; `delivery:consume` gegen localhost | lokal; Anthropic nur für neu erzeugte Summaries (je ≈ 0,02 €, vernachlässigbar) | 0 | Review |
 | 21 | Messung „Lauf 1“ (`/quality`) | lokal | 0 | – |
 | 22 | `compare:navily --accept-proposals` → `/quality/compare` → Abweichungen prüfen → `--coverage` | lokal (Navily-Datei zur Laufzeit) | 0 | **Abweichungen prüfen, P24** |
 | 23 | Tag D: `consolidate --area saronic`, „Paket bauen“. Tag D+1: Entwicklungs-Worker stoppen, `clone.sh`, `sim:draft-scenario`, Szenario prüfen und einchecken | lokal | 0 | **Szenario prüfen** |
