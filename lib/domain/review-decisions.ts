@@ -711,8 +711,8 @@ export function afterInQueue(afterId: string): SQL {
  * The next open task, optionally of one kind: highest `priority` first, then the oldest. With `afterId`, the
  * first one after that task in this order (the task itself may be decided by now).
  */
-export async function nextOpenTask(db: Db, kind?: ReviewKind, afterId?: string): Promise<{ id: string } | null> {
-  const conditions: (SQL | undefined)[] = [eq(reviewTasks.status, "open"), kind ? eq(reviewTasks.kind, kind) : undefined];
+export async function nextOpenTask(db: Db, kind?: ReviewKind, afterId?: string, where?: SQL): Promise<{ id: string } | null> {
+  const conditions: (SQL | undefined)[] = [eq(reviewTasks.status, "open"), kind ? eq(reviewTasks.kind, kind) : undefined, where];
   if (afterId) conditions.push(afterInQueue(afterId));
   const [row] = await db
     .select({ id: reviewTasks.id })

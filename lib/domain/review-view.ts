@@ -64,8 +64,13 @@ export type ReviewTaskRow = {
   kind: ReviewKind;
   subjectType: string;
   subjectId: string;
-  /** Display name from the task context (place candidates), if any. */
+  /**
+   * What the task is about, for the list (gesamt review UI-6): the context name (seed, bay or name candidate), else the
+   * source's domain, the place's or object's name (two names for a pair), or the failed job's queue; null when none.
+   */
   name: string | null;
+  /** The attribute of a profile task (German label) or a comparison deviation (its key); null for other kinds. */
+  attribute: string | null;
   /** A `comparison_deviation` on an evaluation candidate's value (context `evaluationRunId`), not on the regular profile. */
   evaluation: boolean;
   priority: number;
@@ -309,38 +314,76 @@ export async function reviewCounts(db: Db): Promise<Record<ReviewKind, number>> 
   return counts;
 }
 
-/** Open tasks in queue order, optionally of one kind; `before` (a task ID) continues the list after that task. */
+const UUID_SQL = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+/** `part` of the subject id (`<a>:<b>`) as a uuid, null when it is none (never a cast error). */
+const subjectPart = (part: 1 | 2) =>
+  sql`(case when split_part(${reviewTasks.subjectId}, ':', ${sql.raw(String(part))}) ~ ${UUID_SQL}
+    then split_part(${reviewTasks.subjectId}, ':', ${sql.raw(String(part))})::uuid end)`;
+const placeNameSql = (placeId: SQL) => sql`(select ${displayNameSql(sql`p.geo_object_id`)} from places p where p.id = ${placeId})`;
+
+/** The evaluation filter of the list: only deviations of evaluation runs, or only the rest. */
+export type EvaluationFilter = "only" | "none";
+
+/**
+ * Open tasks in queue order, optionally of one kind and with or without evaluation deviations (`evaluation`);
+ * `before` (a task ID) continues the list after that task. Each row names its subject (`name`, `attribute`).
+ */
 export async function listOpenTasks(
   db: Db,
-  opts: { kind?: ReviewKind; limit: number; before?: string },
+  opts: { kind?: ReviewKind; evaluation?: EvaluationFilter; limit: number; before?: string },
 ): Promise<ReviewTaskRow[]> {
+  const evaluation = sql`coalesce(${reviewTasks.context}->>'evaluationRunId', '') <> ''`;
   const conditions: (SQL | undefined)[] = [
     eq(reviewTasks.status, "open"),
     opts.kind ? eq(reviewTasks.kind, opts.kind) : undefined,
+    opts.evaluation === "only" ? evaluation : opts.evaluation === "none" ? sql`not ${evaluation}` : undefined,
     opts.before ? afterInQueue(opts.before) : undefined,
   ];
+  const t = reviewTasks;
   const rows = await db
     .select({
-      id: reviewTasks.id,
-      kind: reviewTasks.kind,
-      subjectType: reviewTasks.subjectType,
-      subjectId: reviewTasks.subjectId,
-      name: sql<string | null>`${reviewTasks.context}->>'name'`,
-      evaluation: sql<boolean>`coalesce(${reviewTasks.context}->>'evaluationRunId', '') <> ''`,
-      priority: reviewTasks.priority,
-      createdAt: reviewTasks.createdAt,
+      id: t.id,
+      kind: t.kind,
+      subjectType: t.subjectType,
+      subjectId: t.subjectId,
+      name: sql<string | null>`coalesce(${t.context}->>'name', case ${t.subjectType}
+        when 'source' then (select s.domain from sources s where s.id = ${subjectPart(1)})
+        when 'place' then ${placeNameSql(subjectPart(1))}
+        when 'comparison' then ${placeNameSql(sql`(case when ${t.context}->>'placeId' ~ ${UUID_SQL} then (${t.context}->>'placeId')::uuid end)`)}
+        when 'profile_attribute' then ${displayNameSql(subjectPart(1))}
+        when 'profile_summary' then ${displayNameSql(subjectPart(1))}
+        when 'geo_object_pair' then concat_ws(' / ', ${displayNameSql(subjectPart(1))}, ${displayNameSql(subjectPart(2))})
+        when 'job' then ${t.context}->>'queue'
+      end)`,
+      attribute: sql<string | null>`case ${t.subjectType}
+        when 'profile_attribute' then nullif(substr(${t.subjectId}, 38), '')
+        when 'comparison' then ${t.context}->>'attribute'
+      end`,
+      evaluation: sql<boolean>`${evaluation}`,
+      priority: t.priority,
+      createdAt: t.createdAt,
     })
-    .from(reviewTasks)
+    .from(t)
     .where(and(...conditions))
     .orderBy(...QUEUE_ORDER)
     .limit(opts.limit);
-  return rows;
+  return rows.map((r) => ({
+    ...r,
+    name: r.name === "" ? null : r.name,
+    attribute: r.attribute !== null && r.subjectType === "profile_attribute" ? profileAttributeLabel(r.attribute) : r.attribute,
+  }));
 }
 
-/** URL of the next open task of the same kind after `taskId`, or `/review` when there is none. */
+/**
+ * URL of the next open task of the same kind after `taskId` (for a comparison deviation also of the same class,
+ * evaluation or regular), or `/review` when there is none.
+ */
 export async function nextTaskHref(db: Db, taskId: string): Promise<string> {
-  const [task] = await db.select({ kind: reviewTasks.kind }).from(reviewTasks).where(eq(reviewTasks.id, taskId));
-  const next = task ? await nextOpenTask(db, task.kind, taskId) : null;
+  const evaluation = sql<boolean>`coalesce(${reviewTasks.context}->>'evaluationRunId', '') <> ''`;
+  const [task] = await db.select({ kind: reviewTasks.kind, evaluation }).from(reviewTasks).where(eq(reviewTasks.id, taskId));
+  // a comparison deviation goes on with deviations of the same class: evaluation run or regular profile (UI-6)
+  const sameClass = task?.kind === "comparison_deviation" ? (task.evaluation ? evaluation : sql`not ${evaluation}`) : undefined;
+  const next = task ? await nextOpenTask(db, task.kind, taskId, sameClass) : null;
   return next ? `/review/${next.id}` : "/review";
 }
 

@@ -17,7 +17,7 @@ import { applyExclusion } from "@/lib/domain/geometry/restrictions";
 import { newId } from "@/lib/domain/ids";
 import { createReviewTask } from "@/lib/domain/review";
 import { DEFAULT_CRAWL_RULES } from "@/lib/domain/sources/crawl-rules";
-import { listOpenTasks, reviewCounts, reviewTaskDetail } from "@/lib/domain/review-view";
+import { listOpenTasks, nextTaskHref, reviewCounts, reviewTaskDetail } from "@/lib/domain/review-view";
 import { withRollback } from "@/test/db";
 
 // Synthetic data in open sea outside the pilot box 23.0-23.75 E x 37.0-38.0 N, at a spot no other test uses.
@@ -277,5 +277,50 @@ describe("review view", () => {
       });
       const marked = await listOpenTasks(tx, { kind: "comparison_deviation", limit: 1 });
       expect(marked.map((t) => [t.id, t.evaluation])).toEqual([[evaluation.id, true]]);
+    }, { isolationLevel: "repeatable read" }));
+
+  it("the list names each task's subject: domain, place, object with attribute, pair, queue; the evaluation filter splits deviations (UI-6)", () =>
+    withRollback(async (tx) => {
+      const domain = `${newId()}.test.invalid`;
+      const [source] = await tx
+        .insert(sources)
+        .values({ domain, name: domain, type: "trip_report", weight: 0.6, crawlRules: DEFAULT_CRAWL_RULES, origin: "serp" })
+        .returning({ id: sources.id });
+      const placeId = await insertPlace(tx, "Listed Bay", 0.03);
+      const otherId = await insertPlace(tx, "Other Bay", 0.031);
+      const object = async (id: string) => (await tx.select({ g: places.geoObjectId }).from(places).where(sql`id = ${id}`))[0]!.g;
+      const [g1, g2] = [await object(placeId), await object(otherId)].sort();
+      const top = 2_100_000_000;
+      const task = (kind: (typeof reviewKindEnum.enumValues)[number], subjectType: string, subjectId: string, context: Record<string, unknown>, n: number) =>
+        createReviewTask(tx, { kind, subjectType, subjectId, context, priority: top - n });
+      const ids = [
+        (await task("source_approval", "source", source!.id, {}, 0)).id,
+        (await task("conflict", "profile_attribute", `${await object(placeId)}:seabed`, { key: "k" }, 1)).id,
+        (await task("place_candidate", "place", placeId, { reason: "restricted" }, 2)).id,
+        (await task("place_candidate", "geo_object_pair", `${g1}:${g2}`, {}, 3)).id,
+        (await task("failed_job", "job", newId(), { queue: "fetch.url" }, 4)).id,
+        (await task("comparison_deviation", "comparison", `${placeId}:depth:x`, { placeId, attribute: "depth" }, 5)).id,
+        (await task("comparison_deviation", "comparison", `${placeId}:depth:y`, { placeId, attribute: "depth", evaluationRunId: newId() }, 6)).id,
+      ];
+      const rows = await listOpenTasks(tx, { limit: ids.length });
+      expect(rows.map((r) => r.id)).toEqual(ids);
+      const pair = [g1, g2].map((g) => (g === (rows[1]!.subjectId.slice(0, 36)) ? "Listed Bay" : "Other Bay")).join(" / ");
+      expect(rows.map((r) => [r.name, r.attribute, r.evaluation])).toEqual([
+        [domain, null, false],
+        ["Listed Bay", "Grund", false],
+        ["Listed Bay", null, false],
+        [pair, null, false],
+        ["fetch.url", null, false],
+        ["Listed Bay", "depth", false],
+        ["Listed Bay", "depth", true],
+      ]);
+
+      const regular = await listOpenTasks(tx, { kind: "comparison_deviation", evaluation: "none", limit: 1 });
+      expect(regular.map((r) => r.id)).toEqual([ids[5]]);
+      const evaluationOnly = await listOpenTasks(tx, { kind: "comparison_deviation", evaluation: "only", limit: 1 });
+      expect(evaluationOnly.map((r) => r.id)).toEqual([ids[6]]);
+      // „Nächste“ after a regular deviation skips the evaluation deviation behind it
+      const afterRegular = await nextTaskHref(tx, ids[5]!);
+      expect(afterRegular).not.toBe(`/review/${ids[6]}`);
     }, { isolationLevel: "repeatable read" }));
 });
