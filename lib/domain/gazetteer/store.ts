@@ -35,6 +35,18 @@ function publicIdFor(type: GeoObjectType): string | null {
 }
 
 /**
+ * The public id an existing object keeps after a type change: its own while the new type is of the same id family,
+ * a new one of the new family otherwise, none for a type without public id. The old id then leaves the next package as
+ * `removed` (a highlight that became an island is no longer that highlight; gesamt-review DAT-3, checked by
+ * `geo_objects_public_id_prefix_check`).
+ */
+function publicIdAfter(type: GeoObjectType, current: string | null): string | null {
+  const prefix = PUBLIC_ID_PREFIX[type];
+  if (!prefix) return null;
+  return current?.startsWith(`${prefix}_`) ? current : newPublicId(prefix);
+}
+
+/**
  * The draft geometry as EWKB hex, or why it is unusable. Lines become `ST_BuildArea(ST_Collect(…))`;
  * when they enclose no area, the centroid of the lines. An invalid geometry is repaired with
  * `ST_MakeValid`, keeping only parts of its own dimension (an area stays an area, a line a line);
@@ -80,7 +92,8 @@ function sameTags(a: unknown, b: Record<string, string>): boolean {
  * Inserts or updates the valid geo object matching the draft's first external ID (`osm_id`, else
  * `wikidata_id`, else `geonames_id`; without any ID always a new object), then adds its names.
  * An existing object is only updated when type, category, tags or geometry changed (the history
- * trigger records core-column changes); a delivered type without public ID gets one. Origin and
+ * trigger records core-column changes); a delivered type without public ID gets one, a type change into another id
+ * family a new one (`publicIdAfter`). Origin and
  * external IDs of an existing object are left alone. An invalid geometry is repaired; one that cannot
  * be repaired writes nothing and returns `{ skipped: <reason> }`.
  */
@@ -130,7 +143,7 @@ export async function upsertGeoObject(db: Db, draft: GeoObjectDraft): Promise<Up
     changed = true;
   } else {
     id = existing.id;
-    const publicId = existing.publicId ?? publicIdFor(draft.type);
+    const publicId = publicIdAfter(draft.type, existing.publicId);
     changed =
       existing.type !== draft.type ||
       existing.category !== category ||
