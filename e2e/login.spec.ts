@@ -37,6 +37,7 @@ test("admin starts a ping run and sees it listed; all admin pages render", async
     ["/jobs", "Jobs"],
     ["/costs", "Kosten"],
     ["/settings", "Einstellungen"],
+    ["/deliveries", "Lieferungen"],
     ["/map", "Karte"],
     ["/sources", "Quellen"],
     ["/compare/converters", "Konverter-Vergleich"],

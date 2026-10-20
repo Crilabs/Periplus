@@ -22,6 +22,7 @@ import {
   EmptyState,
   fmt,
   Mono,
+  Notice,
   numClass,
   PageHeader,
   Panel,
@@ -114,7 +115,13 @@ export default async function Page({ params }: PageProps<"/deliveries/[id]">) {
             }
             flush
           >
-            {changes === null ? (
+            {detail.archiveError ? (
+              <div className="p-4">
+                <Notice tone="danger" title="Änderungsdatei nicht lesbar">
+                  Die gespeicherte changes.json fehlt im Archiv oder passt nicht zu ihrem Hash. Die Dateien lassen sich dann auch nicht herunterladen.
+                </Notice>
+              </div>
+            ) : changes === null ? (
               <EmptyState title="Keine Änderungsdatei">
                 {row.status === "unchanged" ? "Ein unverändertes Paket speichert keine Dateien." : "Das erste Paket eines Reviers hat keine changes.json."}
               </EmptyState>

@@ -127,4 +127,19 @@ describe("deliveryDetail", () => {
       expect(unchanged.report.ok).toBe(true);
       expect(await deliveryDownload(tx, archive, same.deliveryId, "spots.json")).toBeNull();
     }));
+
+  it("a package file lost in S3 does not hide the report", () =>
+    withRollback(async (tx) => {
+      const archive = memoryArchive();
+      const f = await seedDeliveryArea(tx);
+      await build(tx, archive, f, "2040-06-01");
+      await changeA(tx, f);
+      const v2 = await build(tx, archive, f, "2040-06-02");
+      const empty = memoryArchive();
+      const detail = (await deliveryDetail(tx, empty, v2.deliveryId))!;
+      expect(detail).toMatchObject({ changes: null, archiveError: expect.stringMatching(/changes.json .* is missing/) });
+      expect(detail.report.ok).toBe(true);
+      expect(detail.files).toHaveLength(7);
+      expect((await deliveryDetail(tx, archive, v2.deliveryId))!.archiveError).toBeNull();
+    }));
 });

@@ -122,6 +122,8 @@ export type DeliveryDetail = {
   report: ValidationReport;
   /** `changes.json` of the package (also of a rejected one, as its diff to the previous package); null without one. */
   changes: ChangeEntry[] | null;
+  /** Why `changes.json` could not be read (missing in S3 or not matching its hash); null when it could. */
+  archiveError: string | null;
   files: Array<{ name: ContractFile; sha256: string; bytes: number }>;
   /** Public id of an object named in the report or the changes → its admin page (`/places/…`, `/geo/…`). */
   objectLinks: Record<string, string>;
@@ -139,8 +141,15 @@ export async function deliveryDetail(db: Db, archive: Archive, id: string): Prom
   if (!found) return null;
   const { row } = found;
   const report = row.validationReport as ValidationReport;
-  const bytes = await readStoredFile(archive, row, "changes.json");
-  const changes = bytes === null ? null : (JSON.parse(decoder.decode(bytes)) as ChangesFile).changes;
+  let changes: ChangeEntry[] | null = null;
+  let archiveError: string | null = null;
+  try {
+    const bytes = await readStoredFile(archive, row, "changes.json");
+    changes = bytes === null ? null : (JSON.parse(decoder.decode(bytes)) as ChangesFile).changes;
+  } catch (e) {
+    // a lost or altered file must not hide the report: the page says so instead
+    archiveError = e instanceof Error ? e.message : String(e);
+  }
   const files = CONTRACT_FILES.filter((f) => Object.hasOwn(row.fileHashes, f)).map((name) => ({ name, ...row.fileHashes[name]! }));
   const named = new Set<string>();
   const findings: Finding[] = [...(report.checks ?? []).flatMap((c) => c.findings), ...(report.warnings ?? [])];
@@ -152,6 +161,7 @@ export async function deliveryDetail(db: Db, archive: Archive, id: string): Prom
     areaPublicId: found.areaPublicId ?? row.areaId,
     report,
     changes,
+    archiveError,
     files,
     objectLinks: await objectLinks(db, [...named]),
   };
