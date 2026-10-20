@@ -1,13 +1,14 @@
 import { eq } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { comparisonSet, type ComparisonMethod } from "@/lib/db/schema";
+import { comparisonSet, qualitySnapshots, type ComparisonMethod } from "@/lib/db/schema";
 import { areaGeoObjectId } from "@/lib/pipeline/tile-scope";
 import { latestComparisonResults, lockComparisonPlace, recordComparisonResults } from "./comparison-results";
 import { COMPARISON_ATTRIBUTES, loadComparisonSubjects } from "./comparison-values";
 import { coverageOfMatches } from "./navily-assistant";
 import { areaTilePredicate, confirmedAreaPlaces, proposalsFor } from "./navily-compare";
 import type { NavilySpot } from "./navily-sample";
+import { latestMeasurement } from "./snapshot";
 
 /*
  * The CLI pass of the Navily comparison (`npm run compare:navily`, spec 10): matches the comparison set as the page
@@ -32,6 +33,10 @@ export type NavilyRunResult = {
   skippedManual: number;
   /** Spots inside the area matched to a confirmed place of the area. */
   coverage: { spots: number; matched: number; ratio: number | null };
+  /** With `writeCoverage`: the measurement run the `coverage_navily` row belongs to; else null. */
+  snapshotRunId: string | null;
+  /** With `writeCoverage`: whether the row was written now (false: the measurement had one already). */
+  coverageWritten: boolean;
 };
 
 /** Outcomes a person gave: a machine proposal never supersedes them (bundle C review: `proposal_confirmed` like `manual`). */
@@ -52,13 +57,20 @@ async function comparisonSetPlaceIds(db: Db, areaKey: string): Promise<string[]>
  * (by hand or by confirming a proposal) that differs from the proposal is kept (`skippedManual`), and review outcomes
  * are kept by `recordComparisonResults` (ruling M7-P16), so a rerun writes nothing new. The coverage is always computed
  * and counts only matches to the area's confirmed, valid places.
+ *
+ * With `writeCoverage` the coverage is stored as the row `coverage_navily` (value = ratio, details `{ spots, matched }`,
+ * counts only: Grundprinzip 9, ruling M7-P23) of the area's newest measurement (`latestMeasurement`); without one it
+ * fails before writing anything („Erst messen (/quality)“); a measurement that has the row already keeps it.
  */
 export async function runNavilyComparison(
   db: Db,
-  input: { areaKey: string; spots: NavilySpot[]; acceptProposals: boolean; now?: Date },
+  input: { areaKey: string; spots: NavilySpot[]; acceptProposals: boolean; writeCoverage?: boolean; now?: Date },
 ): Promise<NavilyRunResult> {
   const cfg = getConfig().quality.navily;
   const settings = { cfg, affixes: getConfig().nameAffixes };
+
+  const measurement = input.writeCoverage ? await latestMeasurement(db, input.areaKey) : null;
+  if (input.writeCoverage && !measurement) throw new Error(`Erst messen (/quality): area ${input.areaKey} has no measurement`);
 
   const pass = async (tx: Db, write: boolean): Promise<NavilyRunResult> => {
     // the set's places are locked before their subjects are loaded, so no profile changes in between (bundle C review)
@@ -75,6 +87,8 @@ export async function runNavilyComparison(
       tasks: 0,
       skippedManual: 0,
       coverage: { spots: c.spots, matched: c.matched, ratio: c.ratio },
+      snapshotRunId: null,
+      coverageWritten: false,
     };
     if (!write) return result;
 
@@ -105,7 +119,21 @@ export async function runNavilyComparison(
     return result;
   };
 
-  return input.acceptProposals ? db.transaction((tx) => pass(tx, true)) : pass(db, false);
+  const result = input.acceptProposals ? await db.transaction((tx) => pass(tx, true)) : await pass(db, false);
+  if (!measurement) return result;
+  const written = await db
+    .insert(qualitySnapshots)
+    .values({
+      runId: measurement.runId,
+      scopeType: "area",
+      scopeId: input.areaKey,
+      metric: "coverage_navily",
+      value: result.coverage.ratio,
+      details: { spots: result.coverage.spots, matched: result.coverage.matched },
+    })
+    .onConflictDoNothing()
+    .returning({ id: qualitySnapshots.id });
+  return { ...result, snapshotRunId: measurement.runId, coverageWritten: written.length > 0 };
 }
 
 const percent = (ratio: number | null) =>
@@ -121,6 +149,14 @@ export function renderNavilyRunSection(r: NavilyRunResult, acceptProposals: bool
     `Navily-Abdeckung: ${r.coverage.matched} von ${r.coverage.spots} Navily-Orten im Revier (${percent(r.coverage.ratio)})`,
     "",
   ];
+  if (r.snapshotRunId) {
+    lines.push(
+      r.coverageWritten
+        ? "Navily-Abdeckung zur jüngsten Messung gespeichert (coverage_navily)."
+        : "Die jüngste Messung hat die Navily-Abdeckung schon, nichts geändert.",
+      "",
+    );
+  }
   if (acceptProposals) {
     lines.push(`Ergebnisse geschrieben: ${r.written}, Review-Aufgaben: ${r.tasks}`, "");
     if (r.skippedManual > 0) lines.push(`Von Hand gesetzte Ergebnisse behalten: ${r.skippedManual}`, "");

@@ -76,7 +76,7 @@ const utcToday = () => new Date().toISOString().slice(0, 10);
 /**
  * Mehrbefund (spec 10): the share of places in scope with mentions from documents of at least two different sources.
  * `details { places, multi, multiDocument }`; `multiDocument` counts places with mentions from at least two documents,
- * the datendienst definition the acceptance uses (ruling M7-P12; its own metric key arrives with Task 8).
+ * the datendienst definition the acceptance uses (ruling M7-P12, metric `multi_document`).
  */
 export async function multiSourceMetric(db: Db, scope: QualityScope, opts: { today?: string } = {}): Promise<MetricResult> {
   const counts = await mentionCounts(db, scope, opts.today ?? utcToday());
@@ -85,6 +85,21 @@ export async function multiSourceMetric(db: Db, scope: QualityScope, opts: { tod
     metric: "multi_source",
     value: share(counts.multi, counts.places),
     details: { places: counts.places, multi: counts.multi, multiDocument: counts.multiDocument },
+  };
+}
+
+/**
+ * Mehrbefund as the datendienst defines it („mindestens 2 Dokumenten“, the acceptance metric, ruling M7-P12): the share
+ * of places in scope with mentions from at least two documents (counted like `multiSourceMetric`).
+ * `details { places, multiDocument, multiSource }`.
+ */
+export async function multiDocumentMetric(db: Db, scope: QualityScope, opts: { today?: string } = {}): Promise<MetricResult> {
+  const counts = await mentionCounts(db, scope, opts.today ?? utcToday());
+  if (!counts) return { metric: "multi_document", value: null, details: { places: 0, multiDocument: 0, multiSource: 0 } };
+  return {
+    metric: "multi_document",
+    value: share(counts.multiDocument, counts.places),
+    details: { places: counts.places, multiDocument: counts.multiDocument, multiSource: counts.multi },
   };
 }
 
@@ -182,28 +197,44 @@ export async function factPrecisionMetric(
   };
 }
 
+type FidelityCounts = { facts: number; verified: number; runs: number };
+
 /**
  * Belegtreue (spec 10) of the text runs created in the window: the sum of `belegtreue(runId)` (verified / checked text
  * facts and route stops). A text run is one that owns an extraction run: those are exactly the runs with a stage of
  * `TEXT_RUN_STAGES` (and the model comparison) that extracted anything, and a run without one adds nothing to the sums
- * (`TEXT_RUN_STAGES` lives with the run starters, which import the queue; this module stays free of them). `details
- * { facts, verified, runs }`; without text facts null.
+ * (`TEXT_RUN_STAGES` lives with the run starters, which import the queue; this module stays free of them). The value
+ * spans every such run (ruling M7-C-R1); `details.regular` and `details.evaluation` label the scope (bundle C review):
+ * evaluation = candidate evaluations (`params.evaluation`) and model comparisons (only comparison extraction runs),
+ * whose quote failures block that run only, not production. `details { facts, verified, runs, regular, evaluation }`;
+ * without text facts null.
  */
 export async function quoteFidelityMetric(db: Db, window: MeasureWindow): Promise<MetricResult> {
-  const { rows } = await db.execute<{ id: string }>(sql`
-    select r.id from runs r
+  const { rows } = await db.execute<{ id: string; evaluation: boolean }>(sql`
+    select r.id,
+      (r.params @> '{"evaluation": true}'::jsonb
+        or not exists (select 1 from extraction_runs er where er.run_id = r.id and er.purpose <> 'comparison')) as evaluation
+    from runs r
     where r.created_at >= ${window.from.toISOString()}::timestamptz and r.created_at < ${window.to.toISOString()}::timestamptz
       and exists (select 1 from extraction_runs er where er.run_id = r.id)
     order by r.created_at, r.id
   `);
-  let facts = 0;
-  let verified = 0;
-  for (const { id } of rows) {
+  const regular: FidelityCounts = { facts: 0, verified: 0, runs: 0 };
+  const evaluation: FidelityCounts = { facts: 0, verified: 0, runs: 0 };
+  for (const { id, evaluation: isEvaluation } of rows) {
     const b = await belegtreue(db, id);
-    facts += b.facts;
-    verified += b.verified;
+    const part = isEvaluation ? evaluation : regular;
+    part.facts += b.facts;
+    part.verified += b.verified;
+    part.runs++;
   }
-  return { metric: "quote_fidelity", value: share(verified, facts), details: { facts, verified, runs: rows.length } };
+  const facts = regular.facts + evaluation.facts;
+  const verified = regular.verified + evaluation.verified;
+  return {
+    metric: "quote_fidelity",
+    value: share(verified, facts),
+    details: { facts, verified, runs: rows.length, regular, evaluation },
+  };
 }
 
 type SectorCounts = { withText: number; confirmed: number; corrected: number; textOnly: number };

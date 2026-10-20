@@ -8,6 +8,7 @@
     "coverage": { "pilot": 0.85, "full": 0.95, "direction": "min" },
     "coverage_navily": { "pilot": 0.85, "full": 0.95, "direction": "min" },
     "multi_source": { "pilot": 0.70, "full": 0.85, "direction": "min" },
+    "multi_document": { "pilot": 0.70, "full": 0.85, "direction": "min" },
     "fact_precision": { "pilot": 0.90, "full": 0.95, "direction": "min" },
     "quote_fidelity": { "pilot": 1.0, "full": 1.0, "direction": "min" },
     "shelter_confidence": { "pilot": 0.60, "full": 0.80, "direction": "min" },

@@ -33,6 +33,7 @@ import { comparisonValues, loadComparisonSubjects } from "../comparison-values";
 import {
   coverageMetric,
   factPrecisionMetric,
+  multiDocumentMetric,
   multiSourceMetric,
   quoteFidelityMetric,
   routeReconstructionMetric,
@@ -151,8 +152,13 @@ describe("multiSourceMetric", () => {
       const r = await multiSourceMetric(tx, { areaKey });
       expect(r.metric).toBe("multi_source");
       expect(r.value).toBeCloseTo(1 / 3);
-      // ≥ 2 documents (datendienst, ruling M7-P12) is reported beside it
+      // ≥ 2 documents (datendienst, ruling M7-P12) is reported beside it and is its own metric
       expect(r.details).toEqual({ places: 3, multi: 1, multiDocument: 2 });
+      const d = await multiDocumentMetric(tx, { areaKey });
+      expect(d.metric).toBe("multi_document");
+      expect(d.value).toBeCloseTo(2 / 3);
+      expect(d.details).toEqual({ places: 3, multiDocument: 2, multiSource: 1 });
+      expect(await multiDocumentMetric(tx, { areaKey: `test-${newId()}` })).toMatchObject({ value: null, details: { places: 0 } });
     }));
 });
 
@@ -246,10 +252,19 @@ describe("factPrecisionMetric", () => {
 describe("quoteFidelityMetric", () => {
   // runs dated in 2001, so no row another test commits falls into the window
   const window = { from: new Date("2001-02-03T00:00:00Z"), to: new Date("2001-02-04T00:00:00Z") };
-  const textRun = async (tx: Db, createdAt: Date, quoteCheck: { facts: number; verified: number }) => {
+  const textRun = async (
+    tx: Db,
+    createdAt: Date,
+    quoteCheck: { facts: number; verified: number },
+    o: { purpose?: "regular" | "comparison"; evaluation?: boolean } = {},
+  ) => {
     const runId = await insertTestRun(tx);
-    await tx.execute(sql`update runs set created_at = ${createdAt.toISOString()}::timestamptz where id = ${runId}`);
-    await insertTestExtractionRun(tx, { runId, quoteCheck: { ...quoteCheck, ratio: quoteCheck.verified / quoteCheck.facts, failures: [] } });
+    await tx.execute(sql`update runs set created_at = ${createdAt.toISOString()}::timestamptz, params = ${JSON.stringify(o.evaluation ? { evaluation: true } : {})}::jsonb where id = ${runId}`);
+    await insertTestExtractionRun(tx, {
+      runId,
+      purpose: o.purpose ?? "regular",
+      quoteCheck: { ...quoteCheck, ratio: quoteCheck.verified / quoteCheck.facts, failures: [] },
+    });
     return runId;
   };
 
@@ -262,7 +277,26 @@ describe("quoteFidelityMetric", () => {
       const r = await quoteFidelityMetric(tx, window);
       expect(r.metric).toBe("quote_fidelity");
       expect(r.value).toBeCloseTo(0.995);
-      expect(r.details).toEqual({ facts: 200, verified: 199, runs: 2 });
+      expect(r.details).toEqual({
+        facts: 200,
+        verified: 199,
+        runs: 2,
+        regular: { facts: 200, verified: 199, runs: 2 },
+        evaluation: { facts: 0, verified: 0, runs: 0 },
+      });
+    }));
+
+  it("evaluation and model comparison runs are labelled apart (bundle C review)", () =>
+    withRollback(async (tx) => {
+      await textRun(tx, new Date("2001-02-03T08:00:00Z"), { facts: 10, verified: 10 });
+      await textRun(tx, new Date("2001-02-03T09:00:00Z"), { facts: 10, verified: 9 }, { purpose: "comparison" });
+      await textRun(tx, new Date("2001-02-03T10:00:00Z"), { facts: 10, verified: 8 }, { evaluation: true });
+      const r = await quoteFidelityMetric(tx, window);
+      expect(r.value).toBeCloseTo(27 / 30);
+      expect(r.details).toMatchObject({
+        regular: { facts: 10, verified: 10, runs: 1 },
+        evaluation: { facts: 20, verified: 17, runs: 2 },
+      });
     }));
 
   it("without text facts in the window it is null", () =>
@@ -270,7 +304,7 @@ describe("quoteFidelityMetric", () => {
       expect(await quoteFidelityMetric(tx, { from: new Date("2001-03-03T00:00:00Z"), to: new Date("2001-03-04T00:00:00Z") })).toEqual({
         metric: "quote_fidelity",
         value: null,
-        details: { facts: 0, verified: 0, runs: 0 },
+        details: { facts: 0, verified: 0, runs: 0, regular: { facts: 0, verified: 0, runs: 0 }, evaluation: { facts: 0, verified: 0, runs: 0 } },
       });
     }));
 });

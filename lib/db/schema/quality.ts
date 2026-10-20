@@ -45,11 +45,15 @@ export const COMPARISON_ATTRIBUTES = [
 ] as const;
 export type ComparisonAttribute = (typeof COMPARISON_ATTRIBUTES)[number];
 
-/** The metrics of a quality snapshot (spec 10 „Qualitätsmetriken“ plus the pilot extras). */
+/**
+ * The metrics of a quality snapshot (spec 10 „Qualitätsmetriken“ plus the pilot extras; `multi_document` is the
+ * datendienst Mehrbefund, ruling M7-P12/P30).
+ */
 export const METRIC_KEYS = [
   "coverage",
   "coverage_navily",
   "multi_source",
+  "multi_document",
   "fact_precision",
   "quote_fidelity",
   "shelter_confidence",

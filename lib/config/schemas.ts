@@ -315,6 +315,8 @@ export const qualitySchema = z.strictObject({
     coverage: metricTarget,
     coverage_navily: metricTarget,
     multi_source: metricTarget,
+    /** The datendienst Mehrbefund („mindestens 2 Dokumenten“), the acceptance metric (ruling M7-P12). */
+    multi_document: metricTarget,
     fact_precision: metricTarget,
     quote_fidelity: metricTarget,
     shelter_confidence: metricTarget,

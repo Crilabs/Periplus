@@ -9,6 +9,7 @@ import { embedChunksHandler } from "./handlers/embed";
 import { fetchSourceHandler, fetchUrlHandler } from "./handlers/fetch";
 import { gazetteerHandler } from "./handlers/gazetteer";
 import { geometryPlaceHandler } from "./handlers/geometry";
+import { qualityMeasureHandler } from "./handlers/quality";
 import { advanceHandler } from "./handlers/run-advance";
 import { seedTileHandler } from "./handlers/seed";
 import { pingHandler } from "./handlers/system-ping";
@@ -56,4 +57,5 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "consolidation.summary": consolidationSummaryHandler,
   "consolidation.followup": consolidationFollowupHandler,
   "delivery.build": deliveryBuildHandler,
+  "quality.measure": qualityMeasureHandler,
 };

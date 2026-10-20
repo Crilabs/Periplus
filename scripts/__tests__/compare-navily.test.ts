@@ -10,6 +10,7 @@ describe("compare-navily parseArgs", () => {
       navily: "/tmp/s.json",
       out: "x.md",
       acceptProposals: false,
+      coverage: false,
     });
   });
 
@@ -19,6 +20,7 @@ describe("compare-navily parseArgs", () => {
       navily: "/tmp/env.json",
       out: "docs/pilot/2026-10-19-m2-stichprobe.md",
       acceptProposals: false,
+      coverage: false,
     });
   });
 
@@ -33,8 +35,16 @@ describe("compare-navily parseArgs", () => {
       navily: "/x",
       out: "y.md",
       acceptProposals: true,
+      coverage: false,
     });
     expect(() => parseArgs(["--area", "a", "--accept-proposals", "--accept-proposals"], { NAVILY_SPOTS_PATH: "/x" }, TODAY)).toThrow(/usage/);
+  });
+
+  it("--coverage is a flag without a value, given once", () => {
+    expect(parseArgs(["--area", "saronic", "--coverage"], { NAVILY_SPOTS_PATH: "/x" }, TODAY)).toMatchObject({ coverage: true, acceptProposals: false });
+    expect(parseArgs(["--coverage", "--accept-proposals", "--area", "a"], { NAVILY_SPOTS_PATH: "/x" }, TODAY)).toMatchObject({ coverage: true, acceptProposals: true });
+    expect(parseArgs(["--area", "a"], { NAVILY_SPOTS_PATH: "/x" }, TODAY).coverage).toBe(false);
+    expect(() => parseArgs(["--area", "a", "--coverage", "--coverage"], { NAVILY_SPOTS_PATH: "/x" }, TODAY)).toThrow(/usage/);
   });
 
   it("aborts without a Navily path, without an area or on unknown flags", () => {

@@ -17,23 +17,27 @@ import { renderNavilyRunSection, runNavilyComparison } from "../lib/domain/quali
 // Grundprinzip 9: the Navily file is read at runtime from the given path only; nothing of it is stored or printed.
 
 const USAGE =
-  "usage: compare-navily.ts --area <key> [--navily <path>] [--accept-proposals] [--out <file>] (or NAVILY_SPOTS_PATH)";
+  "usage: compare-navily.ts --area <key> [--navily <path>] [--accept-proposals] [--coverage] [--out <file>] (or NAVILY_SPOTS_PATH)";
 
-export type CompareArgs = { area: string; navily: string; out: string; acceptProposals: boolean };
+export type CompareArgs = { area: string; navily: string; out: string; acceptProposals: boolean; coverage: boolean };
+
+const SWITCHES = { "--accept-proposals": "acceptProposals", "--coverage": "coverage" } as const;
 
 /**
  * `--area` is required; the Navily path comes from `--navily`, else `NAVILY_SPOTS_PATH`; `--out` defaults to the dated
- * pilot report; `--accept-proposals` (no value) records the assistant's proposals.
+ * pilot report; `--accept-proposals` (no value) records the assistant's proposals; `--coverage` (no value) stores the
+ * Navily coverage with the area's newest measurement.
  */
 export function parseArgs(argv: string[], env: Record<string, string | undefined>, today: Date): CompareArgs {
   const values: Record<string, string> = {};
-  let acceptProposals = false;
+  const switches = { acceptProposals: false, coverage: false };
   let i = 0;
   while (i < argv.length) {
     const flag = argv[i]!;
-    if (flag === "--accept-proposals") {
-      if (acceptProposals) throw new Error(USAGE);
-      acceptProposals = true;
+    if (Object.hasOwn(SWITCHES, flag)) {
+      const key = SWITCHES[flag as keyof typeof SWITCHES];
+      if (switches[key]) throw new Error(USAGE);
+      switches[key] = true;
       i += 1;
       continue;
     }
@@ -48,7 +52,7 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
   if (!area) throw new Error(USAGE);
   if (!navily) throw new Error(`no Navily file: pass --navily <path> or set NAVILY_SPOTS_PATH\n${USAGE}`);
   const out = values["--out"] ?? path.join("docs", "pilot", `${today.toISOString().slice(0, 10)}-m2-stichprobe.md`);
-  return { area, navily, out, acceptProposals };
+  return { area, navily, out, ...switches };
 }
 
 async function main(): Promise<void> {
@@ -65,7 +69,13 @@ async function main(): Promise<void> {
     const verdicts = own.map((o) =>
       comparePlace(o, spots, { radiusM: cfg.radiusM, protectedThreshold: getConfig().quality.navily.protectedThreshold }),
     );
-    const run = await runNavilyComparison(db, { areaKey: args.area, spots, acceptProposals: args.acceptProposals, now });
+    const run = await runNavilyComparison(db, {
+      areaKey: args.area,
+      spots,
+      acceptProposals: args.acceptProposals,
+      writeCoverage: args.coverage,
+      now,
+    });
     const report = renderReport({
       areaKey: args.area,
       generatedAt: now,
@@ -80,6 +90,9 @@ async function main(): Promise<void> {
     process.stdout.write(`report: ${args.out}\n`);
     process.stdout.write(`places in comparison set: ${verdicts.length}, compared with geometry: ${compared}\n`);
     process.stdout.write(`navily coverage: ${run.coverage.matched} of ${run.coverage.spots} spots in the area matched\n`);
+    if (run.snapshotRunId) {
+      process.stdout.write(`navily coverage ${run.coverageWritten ? "stored with" : "already stored with"} measurement run ${run.snapshotRunId}\n`);
+    }
     process.stdout.write(
       args.acceptProposals
         ? `results written: ${run.written}, review tasks: ${run.tasks}, kept manual outcomes: ${run.skippedManual}\n`

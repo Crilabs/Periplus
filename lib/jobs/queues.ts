@@ -30,6 +30,7 @@ export const QUEUES = [
   "consolidation.summary",
   "consolidation.followup",
   "delivery.build",
+  "quality.measure",
 ] as const;
 export type QueueName = (typeof QUEUES)[number];
 

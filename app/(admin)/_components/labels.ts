@@ -305,6 +305,7 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   geo_object_not_consolidatable: "Geo-Objekt ist unbekannt, beendet, zusammengeführt oder hat keine Fact-Ebene",
   comparison_set_empty: "Der Vergleichssatz des Reviers ist leer",
   geo_object_without_place: "Geo-Objekt hat keinen gültigen Ort",
+  measurement_label_taken: "Bezeichnung schon vergeben",
 };
 
 /** The German text of a `?error=<reason>` a run action redirected with; null for none or an unknown reason. */
@@ -690,6 +691,7 @@ export const METRIC_LABELS: Record<MetricKey, string> = {
   coverage: "Abdeckung",
   coverage_navily: "Abdeckung (Navily-Vergleichssatz)",
   multi_source: "Mehrbefund (≥ 2 Quellen)",
+  multi_document: "Mehrbefund (≥ 2 Dokumente)",
   fact_precision: "Fact-Präzision",
   quote_fidelity: "Belegtreue",
   shelter_confidence: "Schutz-Konfidenz",
