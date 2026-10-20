@@ -129,6 +129,23 @@ describe("generatePlaceImage", () => {
     });
   });
 
+  it("every attempt without a usable image creates a task without candidate and reason no_valid_output", async () => {
+    await withRollback(async (tx) => {
+      const f = await fixture(tx);
+      const archive = memoryArchive();
+      const result = await generatePlaceImage(
+        tx,
+        { geoObjectId: f.objectId, view: TITLE, runId: f.runId },
+        await deps(archive, await imageModel(new ImageOutputInvalid("no b64_json")), checker(false)),
+      );
+      expect(result).toEqual({ status: "review", attempts: 2, waterIoU: null });
+      const [task] = await taskOf(tx, `${f.objectId}:title`);
+      expect(task!.context).toMatchObject({ reason: "no_valid_output", candidateKey: null, passed: false, attempts: 2, waterIoU: null, watermarkVisible: null });
+      expect(task!.context.renderId).not.toBeNull();
+      expect(archive.keys().some((k) => k.startsWith("imagery/candidates/"))).toBe(false);
+    });
+  });
+
   it("no_water_view creates a task without candidate", async () => {
     await withRollback(async (tx) => {
       const f = await fixture(tx);

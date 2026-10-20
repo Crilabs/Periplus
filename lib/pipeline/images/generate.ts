@@ -57,7 +57,8 @@ export type PlaceImageTaskContext = {
   watermarkVisible: boolean | null;
   alt: string;
   allowedZooms: ZoomLevel[];
-  reason?: "no_water_view";
+  /** `no_water_view`: no camera over water; `no_valid_output`: every attempt failed without an image (no candidate). */
+  reason?: "no_water_view" | "no_valid_output";
 };
 
 /**
@@ -183,7 +184,8 @@ export type GenerateResult = { status: "review" | "no_water_view" | "skipped"; a
  *    watermarked (the cadastre), the watermark check on the JPEG. `ImageOutputInvalid`, `ModelOutputInvalid`, a low
  *    IoU or a visible watermark make a failed attempt; the first passing one ends the loop;
  * 5. the best attempt (passed, watermark-free, highest IoU) as JPEG under
- *    `imagery/candidates/<geoObjectId>/<renderId>-<n>.jpg`, and the `place_image` task (`putUpForReview`).
+ *    `imagery/candidates/<geoObjectId>/<renderId>-<n>.jpg`, and the `place_image` task (`putUpForReview`); when no
+ *    attempt gave a usable image, the task has no candidate and `reason: "no_valid_output"`.
  * Other errors (budget, provider, network) propagate so the job is retried. Nothing runs inside a transaction except
  * the task write.
  */
@@ -290,6 +292,7 @@ export async function generatePlaceImage(
     attempts: made,
     watermarkVisible: chosen?.watermarkVisible ?? null,
     allowedZooms: allowedZooms(finestResolution(imagery), icfg),
+    ...(chosen ? {} : { reason: "no_valid_output" as const }),
   });
   return { status: "review", attempts: made, waterIoU: chosen?.iou ?? null };
 }
