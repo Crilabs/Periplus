@@ -630,6 +630,8 @@ async function quietnessInputs(
   const { rows: lanes } = await db.execute<{ id: string }>(sql`
     select r.id from restricted_areas r
     where r.kind = 'ferry_lane' and r.valid_from <= ${today}::date and (r.valid_to is null or r.valid_to > ${today}::date)
+      -- bbox prefilter on the GIST index (a geography cast cannot use it); the longitude degree is the wider one
+      and r.geom && ST_Expand(ST_SetSRID(ST_MakePoint(${position.lon}, ${position.lat}), 4326), ${radiusM}::float8 / (111320 * cos(radians(${position.lat}::float8))))
       and ST_DWithin(r.geom::geography, ${point}, ${radiusM}::float8)
     order by ST_Distance(r.geom::geography, ${point}), r.id
     limit 1

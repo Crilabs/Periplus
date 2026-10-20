@@ -351,6 +351,13 @@
       "when": 1792511848112,
       "tag": "0049_truncate_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1792511883613,
+      "tag": "0050_lookup_indexes",
+      "breakpoints": true
     }
   ]
 }

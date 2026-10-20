@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { index, integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { newId } from "@/lib/domain/ids";
 
 export const reviewKindEnum = pgEnum("review_kind", [
@@ -41,4 +41,7 @@ export const reviewDecisions = pgTable("review_decisions", {
   decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
   durationMs: integer("duration_ms"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [
+  // the decisions of a task (consolidation inputs, review time metrics), gesamt-review DAT-7
+  index("review_decisions_task_id_idx").on(t.taskId),
+]);
