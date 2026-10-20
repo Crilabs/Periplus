@@ -416,6 +416,31 @@ describe("bayHelperName", () => {
     }));
 });
 
+describe("bayHelperName query plan", () => {
+  it("can use the GiST index on geo_objects.geom: a bbox prefilter, not only geography ST_DWithin (final review A M-3)", () =>
+    withRollback(async (tx) => {
+      await bayScene(tx, { raster: false });
+      const p = await lonLatOf(tx, BAY_X, 100);
+      await tx.execute(sql`set local enable_seqscan = off`);
+      const plans: string[] = [];
+      // the proxy runs the helper's query as EXPLAIN and keeps the plan
+      const explaining = new Proxy(tx, {
+        get: (target, prop, receiver) =>
+          prop === "execute"
+            ? async (query: Parameters<Db["execute"]>[0]) => {
+                const r = await target.execute<{ "QUERY PLAN": string }>(sql`explain ${query}`);
+                plans.push(r.rows.map((row) => row["QUERY PLAN"]).join("\n"));
+                return { rows: [] };
+              }
+            : Reflect.get(target, prop, receiver),
+      });
+      await bayHelperName(explaining, p, 5000, cfg.bays.helperNameTypes);
+      expect(plans).toHaveLength(1);
+      expect(plans[0]).toContain("geo_objects_geom_gist");
+      expect(plans[0]).not.toMatch(/Seq Scan on geo_objects/);
+    }));
+});
+
 describe("stage geometry.detect_bays", () => {
   it("plans one job per tile, none for a place run", () =>
     withRollback(async (tx) => {

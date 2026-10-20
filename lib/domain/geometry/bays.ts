@@ -308,12 +308,15 @@ export async function bayHelperName(db: Db, p: LonLat, maxM: number, tiers: stri
     tiers.map((types, i) => sql`when g.type::text in ${types} then ${i}::int`),
     sql` `,
   );
+  // bbox prefilter in degrees (as `hitKeysNearKnown`), so the GiST index on geo_objects.geom serves the search
+  const deg = maxM / 50_000;
   const { rows } = await db.execute<{ name: string }>(sql`
     select name from (
       select ${displayNameSql(sql`g.id`)} as name, case ${tierOf} end as tier,
              ST_Distance(g.geom::geography, (${pointSql(p)})::geography) as d
       from geo_objects g
       where g.type::text in ${tiers.flat()} and g.valid_to is null and g.merged_into_id is null
+        and g.geom && ST_Expand(${pointSql(p)}, ${deg}::float8)
         and ST_DWithin(g.geom::geography, (${pointSql(p)})::geography, ${maxM}::float8)
     ) t
     where name is not null
