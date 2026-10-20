@@ -9,6 +9,7 @@ import { getDb, type Db } from "@/lib/db/client";
 import { places } from "@/lib/db/schema";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
 import { setAnchorPosition } from "@/lib/domain/geometry/anchor-correction";
+import { setPlacePosition } from "@/lib/domain/geometry/place-position";
 import { mergePlaceInto, PlaceMergeNotAllowed } from "@/lib/domain/place-merge";
 import { ProfileChanged, removeProfileEntry } from "@/lib/domain/profile-entry-removal";
 import { DecisionNotAllowed } from "@/lib/domain/review-decisions";
@@ -62,6 +63,43 @@ export async function setAnchorAction(
       message: `Ankerposition übernommen. Geometrie nicht neu berechnet: ${RUN_SCOPE_REASON_LABELS[e.reason]}.`,
     };
   }
+}
+
+/**
+ * „Position korrigieren“ (ruling M6-H-R1): sets the place point (`setPlacePosition`), the remedy when the package
+ * check `spot_location` finds a spot on land or outside the area. After that commit (never inside it) a geometry run
+ * for the place recomputes shelter and depths and consolidates the profile; when the place lacks geometry inputs, a
+ * consolidation run takes the new position into the profile instead. Back to the geometry tab with
+ * `position=moved&run=<id>`, `position=moved_no_run` (the position stands), or `position=too_far`.
+ */
+export async function setPlacePositionAction(input: FormData | { placeId: string; lon: number; lat: number }): Promise<void> {
+  const admin = await requireAdmin();
+  const { placeId, lon, lat } = anchorSchema.parse(fields(input));
+  const db = getDb();
+  const back = `/places/${placeId}?tab=geometry`;
+  let moved: { geoObjectId: string };
+  try {
+    moved = await setPlacePosition(db, { placeId, position: { lon, lat }, decidedBy: admin.email });
+  } catch (e) {
+    if (!(e instanceof DecisionNotAllowed)) throw e;
+    return redirect(`${back}&position=too_far`);
+  }
+  revalidatePath(`/places/${placeId}`);
+  const log = createLogger("place-position");
+  let target = `${back}&position=moved_no_run`;
+  try {
+    const run = await startGeometryRun(db, await getBoss(), { placeId }, admin.email);
+    target = `${back}&position=moved&run=${run.id}`;
+  } catch (e) {
+    if (!(e instanceof RunScopeNotReady)) log.error({ placeId, err: e }, "geometry run failed to start after a position correction");
+    try {
+      const run = await startConsolidationRun(db, await getBoss(), { scope: { geoObjectIds: [moved.geoObjectId] }, triggeredBy: admin.email });
+      target = `${back}&position=moved&run=${run.id}`;
+    } catch (err) {
+      log.error({ placeId, err }, "no run started after a position correction");
+    }
+  }
+  redirect(target);
 }
 
 const placeSchema = z.object({ placeId: z.uuid() });

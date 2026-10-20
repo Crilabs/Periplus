@@ -13,8 +13,12 @@ import {
 import { Dialog } from "../../_components/dialog";
 import {
   Badge,
+  Button,
+  ButtonLink,
   DescriptionList,
   EmptyState,
+  Field,
+  inputClass,
   Mono,
   Notice,
   numClass,
@@ -26,6 +30,7 @@ import {
 } from "../../_components/ui";
 import { WindRose } from "../../_components/wind-rose";
 import { shelterColor } from "../../_components/wind-rose-math";
+import { setPlacePositionAction } from "./actions";
 import { AnchorMap } from "./anchor-map";
 
 const de = (n: number, digits = 0) => n.toLocaleString("de-DE", { maximumFractionDigits: digits });
@@ -103,23 +108,49 @@ function Legend() {
  * Tab "Geometrie" of a place: map with anchor correction, wind rose, depths, seabed and anchor area, exclusions, gaps;
  * the sector table and the raw inputs of each computation open in dialogs.
  */
+/** Result of „Position korrigieren“ (`?position=`), with the run it started. */
+export type PositionNotice = { status: "moved" | "moved_no_run" | "too_far"; runId?: string };
+
+const POSITION_NOTICES = {
+  moved: { tone: "ok", text: "Position korrigiert. Geometrie und Profil werden neu berechnet." },
+  moved_no_run: { tone: "warn", text: "Position korrigiert, aber kein Lauf gestartet: „Profil neu berechnen“ in der Übersicht." },
+  too_far: { tone: "danger", text: "Nicht übernommen: Die neue Position liegt zu weit vom bisherigen Ort entfernt." },
+} as const;
+
 export function GeometryTab({
   placeId,
   position,
   view,
   editable,
+  positionNotice,
 }: {
   placeId: string;
   position: LonLat;
   view: PlaceGeometryView;
   editable: boolean;
+  positionNotice?: PositionNotice;
 }) {
   const shelter = view.sectors
     ? (Object.fromEntries(SECTORS.map((s) => [s, view.sectors![s].shelter])) as Record<Sector, number>)
     : null;
   const anchor = view.anchorPosition;
+  const notice = positionNotice ? POSITION_NOTICES[positionNotice.status] : null;
   return (
     <div className="space-y-6">
+      {notice && (
+        <Notice
+          tone={notice.tone}
+          actions={
+            positionNotice?.runId && (
+              <ButtonLink href={`/runs/${positionNotice.runId}`} size="sm">
+                Lauf ansehen
+              </ButtonLink>
+            )
+          }
+        >
+          {notice.text}
+        </Notice>
+      )}
       {view.computations.length === 0 && (
         <Notice tone="neutral" title="Noch keine Geometrie berechnet.">
           Schutz, Tiefen und Ankerfläche erscheinen nach dem ersten Geometrie-Lauf für diesen Ort.
@@ -138,6 +169,38 @@ export function GeometryTab({
         </Panel>
 
         <div className="space-y-6">
+          <Panel
+            title="Ort"
+            description="Der Punkt des Orts, im Paket die Spot-Position (Prüfung „spot_location“)."
+            actions={
+              editable && (
+                <Dialog
+                  trigger="Position korrigieren …"
+                  triggerSize="sm"
+                  title="Position korrigieren"
+                  description="Setzt den Punkt des Orts, etwa wenn er an Land liegt. Danach werden Geometrie und Profil neu berechnet."
+                >
+                  <form action={setPlacePositionAction} className="grid gap-4">
+                    <input type="hidden" name="placeId" value={placeId} />
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Field label="Breite (lat)">
+                        <input type="number" name="lat" required min={-90} max={90} step="any" defaultValue={position.lat} className={inputClass} />
+                      </Field>
+                      <Field label="Länge (lon)">
+                        <input type="number" name="lon" required min={-180} max={180} step="any" defaultValue={position.lon} className={inputClass} />
+                      </Field>
+                    </div>
+                    <div className="flex justify-end">
+                      <Button variant="primary">Position korrigieren</Button>
+                    </div>
+                  </form>
+                </Dialog>
+              )
+            }
+          >
+            <Mono>{coord(position)}</Mono>
+          </Panel>
+
           <Panel title="Berechnung">
             <DescriptionList
               columns={1}

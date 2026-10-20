@@ -54,6 +54,7 @@ const runsParam = z.enum(["active", "all"]).catch("active");
 const versionParam = z.coerce.number().int().min(1).optional().catch(undefined);
 const textParam = z.string().max(200).optional().catch(undefined);
 const uuidParam = z.uuid().optional().catch(undefined);
+const positionParam = z.enum(["moved", "moved_no_run", "too_far"]).optional().catch(undefined);
 
 type Detail = NonNullable<Awaited<ReturnType<typeof placeDetail>>>;
 
@@ -78,6 +79,7 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
   const merged = uuidParam.parse(sp.merged);
   const mergedRun = uuidParam.parse(sp.run);
   const mergeRefused = mergeError(sp.mergeError);
+  const positionStatus = positionParam.parse(sp.position);
   return (
     <>
       <PageHeader
@@ -156,7 +158,13 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
       ) : facts ? (
         <FactsTab groups={facts} runs={runs} runsHref={(r) => `/places/${p.id}?tab=facts${r === "all" ? "&runs=all" : ""}`} />
       ) : geometry ? (
-        <GeometryTab placeId={p.id} position={p.position} view={geometry} editable={active} />
+        <GeometryTab
+          placeId={p.id}
+          position={p.position}
+          view={geometry}
+          editable={active}
+          positionNotice={positionStatus ? { status: positionStatus, runId: uuidParam.parse(sp.run) } : undefined}
+        />
       ) : (
         <Overview detail={detail} />
       )}
