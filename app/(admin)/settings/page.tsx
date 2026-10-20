@@ -99,7 +99,7 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
   const consolidation = await consolidationConfigFor(db);
   const rulesActivation = await activationOf(db, "consolidation_rules", consolidation.version);
   const rest = { ...configured, consolidation };
-  const { geometry, factSchema, fetch, embeddings, models, delivery, quality } = rest;
+  const { geometry, factSchema, fetch, embeddings, models, delivery, quality, images } = rest;
   const extractFacts = models.tasks["extract-facts"];
   const extractionApproval = extractFacts
     ? await activationOf(db, "extraction", extractionVersion({ model: extractFacts.model, promptVersion: extractFacts.promptVersion }))
@@ -170,6 +170,16 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
       `Lizenz ${l.name}`,
       `${l.attribution} (${l.url}); Dateien: ${l.files.join(", ") || "keine"}; Felder: ${l.fields.join(", ") || "keine"}`,
     ]),
+  ];
+  const imageRows: [string, string][] = [
+    ["Quellen", Object.entries(images.sources).map(([name, s]) => `${name} (${s.kind === "wms" ? "Luftbild" : "Gelände"}, ${s.resolutionM} m, ${s.countries === "*" ? "alle Länder" : s.countries.join(", ")})`).join("; ")],
+    ["Lieferung je Quelle", Object.entries(images.delivery).map(([name, on]) => `${name}: ${on ? "geliefert" : "nicht geliefert"}`).join(", ")],
+    ["Kamera", `Neigung ${images.camera.tiltDeg}°, Bildwinkel ${images.camera.fovDeg}°, ${images.camera.width} × ${images.camera.height}, Drehschritt ${images.camera.rotateStepDeg}°, Standard ${images.camera.defaultZoom}`],
+    ["Zoomstufen", Object.entries(images.camera.zooms).map(([z, v]) => `${z} ${v.heightM} m`).join(", ")],
+    ["Licht", `Stadt im Umkreis ${images.light.townRadiusM} m: ${images.light.nearTown}; je Art ${Object.entries(images.light.byKind).map(([k, v]) => `${k} ${v}`).join(", ")}`],
+    ["Wasser-IoU mindestens", `Mittag ${images.check.minWaterIoU.midday}, Abend ${images.check.minWaterIoU.evening}; höchstens ${images.check.maxAttempts} Versuche`],
+    ["Je Lauf höchstens", `${images.pipeline.maxGenerationsPerRun} Bilder (pipeline.maxGenerationsPerRun)`],
+    ["Ausgabe", `JPEG ${images.output.jpegQuality}, Lizenz ${images.output.license}, ${images.output.credit}`],
   ];
   const qualityRows: [string, string][] = [
     ...(Object.keys(quality.targets) as (keyof typeof quality.targets)[]).map((metric): [string, string] => {
@@ -330,6 +340,13 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
               ["Regeln", Object.keys(consolidation.rules).join(", ")],
             ]}
           />
+        </Panel>
+
+        <Panel
+          title="Titelbilder"
+          description="Wie KI-Titelbilder der Orte entstehen: Luftbildquellen, Kamera, Licht, Prüfschwellen und Lieferung je Quelle (config/images.json)."
+        >
+          <Pairs rows={imageRows} />
         </Panel>
 
         <Panel

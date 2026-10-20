@@ -9,12 +9,15 @@ import { placeStatusEnum } from "@/lib/db/schema";
 import { setAnchorPosition } from "@/lib/domain/geometry/anchor-correction";
 import { setPlacePosition } from "@/lib/domain/geometry/place-position";
 import { placeBelongsTo, placeGeoObjectId } from "@/lib/domain/geo-view";
+import { endPlaceImage, PlaceImageNotRemovable } from "@/lib/domain/images/remove";
+import { placeImageView } from "@/lib/domain/images/view";
 import { mergePlaceInto, PlaceMergeNotAllowed } from "@/lib/domain/place-merge";
 import { ADMIN_PLACE_STATUSES, PlaceStatusNotAllowed, setPlaceStatusByAdmin } from "@/lib/domain/place-status";
 import { ProfileChanged, removeProfileEntry } from "@/lib/domain/profile-entry-removal";
 import { DecisionNotAllowed } from "@/lib/domain/review-decisions";
 import { getBoss } from "@/lib/jobs/boss";
 import { startConsolidationRun } from "@/lib/pipeline/consolidation/run";
+import { nextViewSlot, startImageRun } from "@/lib/pipeline/images-run";
 import { CONSOLIDATION_SUMMARY_STAGE } from "@/lib/pipeline/consolidation/stages";
 import { afterPlaceMerge, afterPositionChange, consolidateAfter, geometryAfter } from "@/lib/pipeline/follow-ups";
 import { requireAdmin } from "@/lib/security/require-admin";
@@ -261,4 +264,51 @@ export async function mergePlaceAction(
     target = `/places/${f.placeId}?mergeError=${e.reason}`;
   }
   redirect(target);
+}
+
+const addViewSchema = z.object({
+  placeId: z.uuid(),
+  zoom: z.enum(["z1", "z2", "z3"]),
+  /** Optional view bearing the camera rotation starts at: 0-359 degrees; an empty field means the automatic direction. */
+  azimuthDeg: z.preprocess((v) => (v === "" || v === undefined ? undefined : v), z.coerce.number().int().min(0).max(359).optional()),
+});
+
+/**
+ * „Weitere Ansicht erzeugen“ on the image tab: an image run of one more view of the place, in the next free slot
+ * (`nextViewSlot`) at the chosen zoom (one the place's core imagery resolution allows) and, optionally, starting the
+ * rotation at a view bearing. The run page follows; a refusal returns to the tab with `?error=<reason>`, a zoom the
+ * imagery does not support with `?imageError=zoom`.
+ */
+export async function addPlaceViewAction(input: FormData | z.input<typeof addViewSchema>): Promise<void> {
+  const admin = await requireAdmin();
+  const f = addViewSchema.parse(fields(input));
+  const db = getDb();
+  const back = `/places/${f.placeId}?tab=image`;
+  const geoObjectId = await placeGeoObjectId(db, f.placeId);
+  if (!geoObjectId) throw new Error(`Unknown place ${f.placeId}`);
+  if (!(await placeImageView(db, geoObjectId)).zooms.includes(f.zoom)) return redirect(`${back}&imageError=zoom`);
+  const boss = await getBoss();
+  const view = { slot: await nextViewSlot(db, geoObjectId), zoom: f.zoom, ...(f.azimuthDeg !== undefined ? { azimuthDeg: f.azimuthDeg } : {}) };
+  await startAndRedirect(() => startImageRun(db, boss, { geoObjectId, view }, admin.email), back);
+}
+
+const removeImageSchema = z.object({ placeId: z.uuid(), imageId: z.uuid() });
+
+/**
+ * „Bild entfernen“ on the image tab: ends the image the page showed (`imageId`) via `valid_to`, so it drops out of the
+ * next package. An image that is already ended or not the place's (the tab was stale) is refused. Back to the tab with
+ * `?imageNotice=removed` or `?imageNotice=changed`.
+ */
+export async function removePlaceImageAction(input: FormData | z.input<typeof removeImageSchema>): Promise<void> {
+  await requireAdmin();
+  const f = removeImageSchema.parse(fields(input));
+  const back = `/places/${f.placeId}?tab=image`;
+  try {
+    await endPlaceImage(getDb(), { placeId: f.placeId, imageId: f.imageId });
+  } catch (e) {
+    if (!(e instanceof PlaceImageNotRemovable)) throw e;
+    return redirect(`${back}&imageNotice=changed`);
+  }
+  revalidatePath(`/places/${f.placeId}`);
+  redirect(`${back}&imageNotice=removed`);
 }

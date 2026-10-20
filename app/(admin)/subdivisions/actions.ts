@@ -5,9 +5,11 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { getBoss } from "@/lib/jobs/boss";
+import { startImageRun } from "@/lib/pipeline/images-run";
 import { queueCountry, startSubdivisionBuild } from "@/lib/pipeline/subdivision-build";
 import { startSubdivisionsBuildRun } from "@/lib/pipeline/subdivisions-run";
 import { requireAdmin } from "@/lib/security/require-admin";
+import { startAndRedirect } from "../_components/run-start";
 
 const fields = (input: FormData | object) => (input instanceof FormData ? Object.fromEntries(input) : input);
 
@@ -46,4 +48,16 @@ export async function rebuildSubdivisionsAction(): Promise<void> {
   const { id } = await startSubdivisionsBuildRun(getDb(), await getBoss(), admin.email);
   revalidatePath("/runs");
   redirect(`/runs/${id}`);
+}
+
+/**
+ * „Titelbilder erzeugen“ for one Landesteil: an image run of the title images of its spots (the plan skips images whose
+ * generation key is done, at most `images.pipeline.maxGenerationsPerRun` per run). Goes to the run.
+ */
+export async function startSubdivisionImagesAction(input: FormData | { subdivisionKey: string }): Promise<void> {
+  const admin = await requireAdmin();
+  const { subdivisionKey } = buildSchema.parse(fields(input));
+  const db = getDb();
+  const boss = await getBoss();
+  await startAndRedirect(() => startImageRun(db, boss, { subdivisionKey }, admin.email), `/subdivisions/${encodeURIComponent(subdivisionKey)}`);
 }

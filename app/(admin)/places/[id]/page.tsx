@@ -12,6 +12,7 @@ import { mergeCandidates, type MergeCandidate } from "@/lib/domain/place-merge";
 import { ADMIN_PLACE_STATUSES } from "@/lib/domain/place-status";
 import { placeDetail } from "@/lib/domain/geo-view";
 import { placeGeometry } from "@/lib/domain/geometry-view";
+import { placeImageView } from "@/lib/domain/images/view";
 import { timelineView } from "@/lib/domain/profile-timeline";
 import { profileAttributeFacts, profileView } from "@/lib/domain/profile-view";
 import { requireAdmin } from "@/lib/security/require-admin";
@@ -44,6 +45,7 @@ import { mergePlaceAction, recomputePlaceProfileAction } from "./actions";
 import { DeliveryTab } from "./delivery-tab";
 import { FactsTab } from "./facts-tab";
 import { GeometryTab } from "./geometry-tab";
+import { ImageTab } from "./image-tab";
 import { ProfileTab } from "./profile-tab";
 import { StatusActions } from "./status-actions";
 import { TimelineTab } from "./timeline-tab";
@@ -70,6 +72,7 @@ const TABS = {
   geometry: "Geometrie",
   facts: "Facts",
   profile: "Profil",
+  image: "Titelbild",
   timeline: "Zeitachse",
   sources: "Quellen",
   delivery: "Lieferung",
@@ -82,6 +85,7 @@ const textParam = z.string().max(200).optional().catch(undefined);
 const uuidParam = z.uuid().optional().catch(undefined);
 const positionParam = z.enum(["moved", "moved_no_run", "too_far"]).optional().catch(undefined);
 const statusParam = z.enum(ADMIN_PLACE_STATUSES).optional().catch(undefined);
+const imageNoticeParam = z.enum(["removed", "changed"]).optional().catch(undefined);
 const mentionPageParam = z.coerce.number().int().min(1).catch(1);
 
 type Detail = NonNullable<Awaited<ReturnType<typeof placeDetail>>>;
@@ -202,6 +206,8 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
         <ProfileTabView placeId={p.id} geoObjectId={p.geoObjectId} version={versionParam.parse(sp.version)} attr={attr} notice={textParam.parse(sp.notice)} runId={uuidParam.parse(sp.run)} confirm={textParam.parse(sp.confirm)} />
       ) : tab === "timeline" ? (
         <TimelineTabView placeId={p.id} geoObjectId={p.geoObjectId} version={versionParam.parse(sp.v)} asOf={textParam.parse(sp.asOf)} attr={attr} confirm={textParam.parse(sp.confirm)} />
+      ) : tab === "image" ? (
+        <ImageTabView placeId={p.id} geoObjectId={p.geoObjectId} editable={active} notice={imageNoticeParam.parse(sp.imageNotice)} zoomRefused={sp.imageError === "zoom"} />
       ) : tab === "delivery" ? (
         <DeliveryTabView placeId={p.id} />
       ) : tab === "sources" ? (
@@ -233,6 +239,10 @@ async function SourcesTabView({ placeId, geoObjectId, page }: { placeId: string;
       pageHref={(mp) => `/places/${placeId}?tab=sources${mp > 1 ? `&mp=${mp}` : ""}`}
     />
   );
+}
+
+async function ImageTabView({ placeId, geoObjectId, editable, notice, zoomRefused }: { placeId: string; geoObjectId: string; editable: boolean; notice?: "removed" | "changed"; zoomRefused: boolean }) {
+  return <ImageTab placeId={placeId} view={await placeImageView(getDb(), geoObjectId)} editable={editable} notice={notice} zoomRefused={zoomRefused} />;
 }
 
 async function DeliveryTabView({ placeId }: { placeId: string }) {

@@ -16,6 +16,8 @@ import {
   geoNames,
   geoObjects,
   mentions,
+  imageryTiles,
+  placeImages,
   placeRenders,
   places,
   profiles,
@@ -343,6 +345,90 @@ async function createPlaceImageScene(db: Db): Promise<{ taskId: string; name: st
 /**
 
 /**
+ * A place whose title image is approved (tab „Titelbild“): a render of the cadastre imagery (source `ktimatologio`, not
+ * delivered while `images.delivery.ktimatologio` is false) and the current image, files in the test archive. Returns
+ * the place id.
+ */
+async function createApprovedImageScene(db: Db): Promise<string> {
+  const archive = createArchive({
+    endpoint: process.env.S3_ENDPOINT!,
+    region: process.env.S3_REGION!,
+    bucket: process.env.S3_BUCKET!,
+    accessKeyId: process.env.S3_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!,
+  });
+  await archive.ensureBucket();
+  const blank = (color: { r: number; g: number; b: number }) => sharp({ create: { width: 96, height: 64, channels: 3, background: color } });
+  const name = `E2E Titelbild Bay ${new Date().toISOString()}`;
+  const geom = sql`${geomFromGeoJson({ type: "Point", coordinates: [27.97, 34.97] })}`;
+  return db.transaction(async (tx) => {
+    const [object] = await tx.insert(geoObjects).values({ type: "bay", origin: "manual", geom }).returning({ id: geoObjects.id });
+    await tx
+      .insert(geoNames)
+      .values({ geoObjectId: object!.id, name, nameNormalized: name.toLowerCase(), language: "en", script: "latin", origin: "manual" });
+    const [place] = await tx.insert(places).values({ geoObjectId: object!.id, kind: "anchorage", position: geom }).returning({ id: places.id });
+    const [run] = await tx.insert(runs).values({ kind: "stage", scopeType: "system", scopeId: "e2e", triggeredBy: "e2e", status: "finished" }).returning({ id: runs.id });
+    const tileId = crypto.randomUUID();
+    await tx.insert(imageryTiles).values({
+      id: tileId,
+      source: "ktimatologio",
+      tileKey: `e2e-${tileId}`,
+      bbox: geomFromGeoJson({ type: "Polygon", coordinates: [[[27.96, 34.96], [27.98, 34.96], [27.98, 34.98], [27.96, 34.98], [27.96, 34.96]]] }),
+      resolutionM: 0.5,
+      acquiredAt: "2009-06-01",
+      license: "CC-BY-3.0",
+      attribution: "Luftbild © Hellenic Cadastre (CC BY 3.0)",
+      fileKey: `imagery/tiles/e2e-${tileId}.jpg`,
+      bytes: 1,
+    });
+    const renderId = crypto.randomUUID();
+    const photoKey = `imagery/renders/${object!.id}/${renderId}/photo.png`;
+    const maskKey = `imagery/renders/${object!.id}/${renderId}/mask.png`;
+    const imageId = crypto.randomUUID();
+    const fileKey = `images/places/${object!.id}/${imageId}.jpg`;
+    await archive.put(photoKey, await blank({ r: 40, g: 90, b: 140 }).png().toBuffer(), "image/png");
+    await archive.put(maskKey, await blank({ r: 255, g: 255, b: 255 }).png().toBuffer(), "image/png");
+    await archive.put(fileKey, await blank({ r: 60, g: 120, b: 170 }).jpeg().toBuffer(), "image/jpeg");
+    await tx.insert(placeRenders).values({
+      id: renderId,
+      geoObjectId: object!.id,
+      camera: { position: [27.97, 34.96], heightM: 260, viewBearingDeg: 0, tiltDeg: 30, fovDeg: 50, target: [27.97, 34.97], azimuthDeg: 0, zoom: "z1" },
+      zoom: "z1",
+      imageryTileIds: [tileId],
+      demTileIds: [],
+      photoKey,
+      maskKey,
+      rendererVersion: "e2e",
+      generationKey: `e2e-tab-${renderId}`,
+      runId: run!.id,
+    });
+    await tx.insert(placeImages).values({
+      id: imageId,
+      geoObjectId: object!.id,
+      kind: "ai_illustration",
+      slot: "title",
+      cameraPosition: sql`${geomFromGeoJson({ type: "Point", coordinates: [27.97, 34.96] })}`,
+      cameraHeightM: 260,
+      viewBearingDeg: 0,
+      cameraTiltDeg: 30,
+      cameraFovDeg: 50,
+      renderId,
+      light: "midday",
+      waterIou: 0.9,
+      fileKey,
+      width: 96,
+      height: 64,
+      alt: "KI-Illustration: E2E-Bucht",
+      generationKey: `e2e-tab-image-${imageId}`,
+      attribution: "Luftbild © Hellenic Cadastre (CC BY 3.0) · Illustration: Periplus",
+      license: "periplus",
+      observedAt: "2009-06-01",
+    });
+    return place!.id;
+  });
+}
+
+/**
  * The subdivisions spec needs a valid, never-built subdivision of Greece: `GR-E2E` „Attika (E2E)“ over 26.0–26.25 E ×
  * 40.0–40.25 N (outside the pilot box), with its admin region and German name. Committed once; it stays between runs
  * (subdivisions are never deleted).
@@ -452,6 +538,7 @@ export default async function globalSetup(): Promise<void> {
       throw new Error(`e2e fact scene: expected profile versions 1 and 2, got ${JSON.stringify([v1, v2])}`);
     }
     process.env.E2E_IMAGE_TASK = (await createPlaceImageScene(db)).taskId;
+    process.env.E2E_IMAGE_PLACE = await createApprovedImageScene(db);
     process.env.E2E_REMOVAL_PLACE = await createRemovalScene(db);
     process.env.E2E_FACT_QUOTE = FACT_QUOTE;
     process.env.E2E_SHELTER_QUOTE = SHELTER_LATER_QUOTE;
