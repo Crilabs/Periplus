@@ -91,6 +91,8 @@ describe("generatePlaceImage", () => {
       const model = checker(false);
       const result = await generatePlaceImage(tx, { geoObjectId: f.objectId, view: TITLE, runId: f.runId }, await deps(archive, images, model));
       expect(result).toEqual({ status: "review", attempts: 1, waterIoU: 1 });
+      // the edit names its place and slot (recorded in external_calls.meta for the cost per Landesteil)
+      expect(images.calls[0]).toMatchObject({ task: "generate-place-image", subject: { geoObjectId: f.objectId, slot: "title" } });
       const [task] = await taskOf(tx, `${f.objectId}:title`);
       const c = task!.context;
       const task0 = cfg.models.imageTasks["generate-place-image"]!;

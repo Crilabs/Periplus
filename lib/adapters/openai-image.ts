@@ -4,7 +4,13 @@ import { getEnv } from "@/lib/env";
 import { httpCall, type CallContext, type HttpResponse, type Transport } from "./http";
 import { assertNotSimulated } from "./simulation";
 
-export type ImageEditRequest = { task: "generate-place-image"; image: Uint8Array; prompt: string };
+export type ImageEditRequest = {
+  task: "generate-place-image";
+  image: Uint8Array;
+  prompt: string;
+  /** The place and slot the edit is for, recorded in `external_calls.meta`: the cost per Landesteil sums by them. */
+  subject?: { geoObjectId: string; slot: string };
+};
 export type ImageEditResult = { image: Uint8Array; model: string; promptVersion: number; costEur: number };
 
 /** Image-to-image model (OpenAI `v1/images/edits`); `MockImageModel` stands in for it in tests. */
@@ -85,7 +91,7 @@ export function createOpenAiImageModel(transport: Transport, config: Pick<AppCon
           budget: "openai",
           // an answered call is billed even when its image turns out unusable
           costOf: () => ({ units: 1, unit: "image", costEur: price }),
-          meta: { model: task.model, quality: task.quality, task: req.task },
+          meta: { model: task.model, quality: task.quality, task: req.task, ...req.subject },
         },
         ctx,
       );

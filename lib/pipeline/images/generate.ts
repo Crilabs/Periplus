@@ -370,7 +370,12 @@ export async function generatePlaceImage(
       made = n;
       let image: Uint8Array;
       try {
-        image = (await deps.imageModel.edit({ task: TASK, image: photo, prompt }, { db, runId, stage: IMAGES_STAGE })).image;
+        image = (
+          await deps.imageModel.edit(
+            { task: TASK, image: photo, prompt, subject: { geoObjectId: place.geoObjectId, slot: view.slot } },
+            { db, runId, stage: IMAGES_STAGE },
+          )
+        ).image;
       } catch (e) {
         if (e instanceof ImageOutputInvalid) continue;
         if (attempts.length === 0) throw e;

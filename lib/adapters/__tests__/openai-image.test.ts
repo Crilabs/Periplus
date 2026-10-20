@@ -19,7 +19,8 @@ vi.mock("@/lib/env", async (importOriginal) => {
 const png = (width: number, height: number) =>
   sharp({ create: { width, height, channels: 3, background: "#3a7ca5" } }).png().toBuffer();
 
-const request = async () => ({ task: "generate-place-image" as const, image: new Uint8Array(await png(64, 48)), prompt: "Make it real." });
+const SUBJECT = { geoObjectId: "0199c2a0-0000-7000-8000-000000000001", slot: "title" };
+const request = async () => ({ task: "generate-place-image" as const, image: new Uint8Array(await png(64, 48)), prompt: "Make it real.", subject: SUBJECT });
 
 /** Answers `{ data: [{ b64_json }] }` with `png` and keeps the requests. */
 function stub(body: unknown): Transport & { requests: HttpRequest[] } {
@@ -54,6 +55,8 @@ describe("createOpenAiImageModel", () => {
     });
 
     expect(sent).toMatchObject({ url: OPENAI_IMAGE_EDITS_URL, method: "POST", service: "openai", budget: "openai" });
+    // the place and slot go into external_calls.meta: the cost per Landesteil sums by them
+    expect(sent.meta).toEqual({ model: "gpt-image-2.5-sunburst", quality: "high", task: "generate-place-image", ...SUBJECT });
     expect(sent.headers).toMatchObject({
       Authorization: "Bearer test-openai-key",
       "Content-Type": `multipart/form-data; boundary=${MULTIPART_BOUNDARY}`,

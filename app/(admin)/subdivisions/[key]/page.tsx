@@ -105,7 +105,7 @@ export default async function Page({ params, searchParams }: PageProps<"/subdivi
             { label: "Median Wasser-IoU", value: d.images.medianWaterIoU === null ? "–" : d.images.medianWaterIoU.toLocaleString("de-DE", { maximumFractionDigits: 2 }) },
             { label: "Anteil abgelehnt", value: d.images.rejectedShare === null ? "–" : fmt.pct(d.images.rejectedShare), hint: "Entschiedene Bildprüfungen mit „Kein Bild“" },
             { label: "Kosten Luftbilder", value: fmt.eur(d.images.imageryCostEur), hint: "Kacheln, aus denen die Renderings dieser Orte entstanden" },
-            { label: "Kosten Bilderzeugung", value: fmt.eur(d.images.generationCostEur), hint: "Aufrufe des Bildmodells in Läufen dieses Landesteils und seiner Orte" },
+            { label: "Kosten Bilderzeugung", value: fmt.eur(d.images.generationCostEur), hint: "Aufrufe des Bildmodells für die Orte dieses Landesteils, aus jedem Lauf" },
           ]}
         />
       </Panel>

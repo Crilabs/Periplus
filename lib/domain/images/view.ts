@@ -179,8 +179,9 @@ export type ImageCoverage = {
  * `withImagery`: spots under a non-blank core tile (the detailed source); `withApprovedImage`: spots with a current
  * image; `deliverable`: of those, spots with a current image none of whose sources is blocked. `medianWaterIoU` over the
  * current images; `rejectedShare`: decided `place_image` tasks whose decision is „Kein Bild“ over all decided ones.
- * Costs: `imagery_tiles.cost_eur` of the tiles the spots' renders used, and `external_calls` of service `openai` in
- * runs of the Landesteil or of one of its places.
+ * Costs: `imagery_tiles.cost_eur` of the tiles the spots' renders used, and `external_calls` of service `openai` made
+ * for one of the spots (`meta.geoObjectId`, which the image edit records), whatever run made them: a consolidation
+ * run over a tile pays for the title images of the places it confirmed, too.
  */
 export async function imageCoverage(db: Db, subdivisionId: string, cfg: Pick<ImagesConfig, "delivery" | "sources"> = getConfig().images, spotStatuses: string[] = getConfig().delivery.spots.statuses): Promise<ImageCoverage> {
   const statuses = `{${spotStatuses.join(",")}}`;
@@ -222,10 +223,7 @@ export async function imageCoverage(db: Db, subdivisionId: string, cfg: Pick<Ima
     )
     select (select coalesce(sum(t.cost_eur), 0) from imagery_tiles t where t.id in (select tile_id from used)) as imagery,
            (select coalesce(sum(e.cost_eur), 0) from external_calls e
-            where e.service = 'openai' and e.run_id in (
-              select r.id from runs r
-              where (r.scope_type = 'subdivision' and r.scope_id = (select key from subdivisions where id = ${subdivisionId}))
-                 or (r.scope_type = 'place' and r.scope_id in (select place_id::text from spot)))) as generation`);
+            where e.service = 'openai' and e.meta->>'geoObjectId' in (select s.geo_object_id::text from spot s)) as generation`);
   const s = spotRows[0]!;
   const decided = reviewRows[0]?.decided ?? 0;
   return {

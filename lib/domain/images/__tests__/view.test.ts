@@ -115,14 +115,20 @@ describe("imageCoverage", () => {
       await decidedImageTask(tx, spots[0]!.objectId, "title", "approve_image");
       await decidedImageTask(tx, spots[1]!.objectId, "title", "no_image");
       await decidedImageTask(tx, spots[2]!.objectId, "title", "approve_image");
-      // costs: an image run of the subdivision and a place run
+      // costs: image edits are attributed to their place (`meta.geoObjectId`), whatever run made them: a consolidation run
+      // over a tile, an image run of the subdivision. Calls of other services, of another object or without a place do not count.
+      const tileRun = await createRun(tx, { kind: "stage", scope: { type: "tile", id: "T-1" }, stages: [IMAGES_STAGE], triggeredBy: "test" });
       const subRun = await createRun(tx, { kind: "stage", scope: { type: "subdivision", id: sd.key }, stages: [IMAGES_STAGE], triggeredBy: "test" });
-      const placeRun = await createRun(tx, { kind: "stage", scope: { type: "place", id: spots[0]!.placeId }, stages: [IMAGES_STAGE], triggeredBy: "test" });
-      const call = (runId: string, service: string, cost: string) =>
-        tx.execute(sql`insert into external_calls (id, service, operation, units, unit, cost_eur, run_id) values (${newId()}, ${service}, 'edit', 1, 'image', ${cost}, ${runId})`);
-      await call(subRun.id, "openai", "0.2");
-      await call(placeRun.id, "openai", "0.25");
-      await call(placeRun.id, "anthropic", "0.7");
+      const other = await insertSpot(tx, (await insertImageSubdivision(tx)).id, { lon: lon(6) });
+      const call = (runId: string, service: string, cost: string, meta: Record<string, unknown>) =>
+        tx.execute(
+          sql`insert into external_calls (id, service, operation, units, unit, cost_eur, run_id, meta) values (${newId()}, ${service}, 'images.edit', 1, 'image', ${cost}, ${runId}, ${JSON.stringify(meta)}::jsonb)`,
+        );
+      await call(tileRun.id, "openai", "0.2", { geoObjectId: spots[0]!.objectId, slot: "title" });
+      await call(subRun.id, "openai", "0.25", { geoObjectId: spots[2]!.objectId, slot: "view-2" });
+      await call(subRun.id, "openai", "0.5", { geoObjectId: other.objectId, slot: "title" });
+      await call(subRun.id, "openai", "0.5", {});
+      await call(subRun.id, "anthropic", "0.7", { geoObjectId: spots[0]!.objectId });
 
       const c = await imageCoverage(tx, sd.id);
       expect(c.spots).toBe(4);
