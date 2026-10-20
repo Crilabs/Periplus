@@ -337,7 +337,7 @@ export const SOURCE_ERROR_LABELS = {
   source_ended: "Die Quelle ist beendet",
   upload_not_allowed: "PDFs lassen sich nur bei freigegebenen, vorgeschlagenen oder pausierten Quellen hochladen",
   upload_run_not_started:
-    "Die Datei ist archiviert, ihre Verarbeitung startete aber nicht (z. B. Job-Queue nicht erreichbar). Dieselbe Datei erneut hochladen startet sie; sie wird nicht doppelt archiviert",
+    "Die Datei ist archiviert, ihre Verarbeitung startete aber nicht (z. B. Job-Warteschlange nicht erreichbar). Dieselbe Datei erneut hochladen startet sie; sie wird nicht doppelt archiviert",
 } as const;
 
 export type SourceErrorCode = keyof typeof SOURCE_ERROR_LABELS;

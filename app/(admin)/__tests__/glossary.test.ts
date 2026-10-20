@@ -14,7 +14,7 @@ const BANNED: Array<[RegExp, string]> = [
   [/\bPOIs?\b/, "Highlight"],
   [/Widerspruch/, "Konflikt"],
   [/Summary neu|"Summaries"|>Summaries</, "Zusammenfassung"],
-  [/>Queue<|"Queue"/, "Warteschlange"],
+  [/\bQueue\b/, "Warteschlange"],
   [/>Query<|"Query"/, "Suchanfrage"],
   [/>Snippet<|"Snippet"/, "Ausschnitt"],
   [/\bChunks\b/, "Abschnitte"],

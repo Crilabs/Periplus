@@ -64,7 +64,7 @@ function QueueTable({ rows }: { rows: Row[] }) {
                     trigger="Fortsetzen …"
                     triggerSize="sm"
                     title="Budget-Stopp aufheben"
-                    description={`${queuePauseText(s.pause!)}. Weiterlaufen lässt jeden Job erneut am Budget scheitern, bis die Queue wieder pausiert; normalerweise bis zum Ende abwarten.`}
+                    description={`${queuePauseText(s.pause!)}. Weiterlaufen lässt jeden Job erneut am Budget scheitern, bis die Warteschlange wieder pausiert; normalerweise bis zum Ende abwarten.`}
                   >
                     <form action={resumeQueueAction} className="flex justify-end">
                       <input type="hidden" name="queue" value={queue} />
