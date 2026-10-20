@@ -28,6 +28,7 @@ const DELIVERY_FIXTURE_TESTS = [
   "lib/domain/__tests__/place-status.test.ts",
   "lib/domain/delivery/__tests__/build.test.ts",
   "lib/domain/delivery/__tests__/coast.test.ts",
+  "lib/domain/delivery/__tests__/images.test.ts",
   "lib/domain/delivery/__tests__/load.test.ts",
   "lib/domain/delivery/__tests__/map-region.test.ts",
   "lib/domain/delivery/__tests__/map-spot.test.ts",
