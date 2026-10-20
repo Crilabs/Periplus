@@ -1,6 +1,7 @@
 import { getConfig, type AppConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { listApiClients } from "@/lib/domain/api-clients";
+import { activationOf, consolidationConfigFor, extractionVersion } from "@/lib/domain/consolidation/active-rules";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { requireAdmin } from "@/lib/security/require-admin";
@@ -86,9 +87,18 @@ function parameterText(value: unknown, prefix = ""): string[] {
 export default async function Page({ searchParams }: PageProps<"/settings">) {
   await requireAdmin();
   const revoked = (await searchParams).notice === "api_client_revoked";
-  const apiClients = await listApiClients(getDb());
-  const { areas, gazetteer, ...rest } = getConfig();
-  const { geometry, factSchema, fetch, embeddings, models, consolidation, delivery, quality } = rest;
+  const db = getDb();
+  const apiClients = await listApiClients(db);
+  const { areas, gazetteer, ...configured } = getConfig();
+  // the active rules version: the newest released activation, else active.json (ruling M7-P10)
+  const consolidation = await consolidationConfigFor(db);
+  const rulesActivation = await activationOf(db, "consolidation_rules", consolidation.version);
+  const rest = { ...configured, consolidation };
+  const { geometry, factSchema, fetch, embeddings, models, delivery, quality } = rest;
+  const extractFacts = models.tasks["extract-facts"];
+  const extractionApproval = extractFacts
+    ? await activationOf(db, "extraction", extractionVersion({ model: extractFacts.model, promptVersion: extractFacts.promptVersion }))
+    : null;
   const exceptions = Object.entries(fetch.converterBySource);
   const archiveRows: [string, string][] = [
     [
@@ -301,6 +311,12 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
           <Pairs
             rows={[
               ["Regelversion", consolidation.version],
+              [
+                "Aktiv durch",
+                rulesActivation
+                  ? `Aktivierung am ${fmt.dateTime(rulesActivation.activatedAt)} von ${rulesActivation.activatedBy} (Qualität → Regression)`
+                  : "config/consolidation/active.json",
+              ],
               ["Regeln", Object.keys(consolidation.rules).join(", ")],
             ]}
           />
@@ -430,6 +446,19 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
                   {t.decision
                     ? `${t.decision.status === "decided" ? "Entschieden" : "Vorläufig"}: ${t.decision.note}`
                     : "–"}
+                  {task === "extract-facts" && (
+                    <div className="mt-1" data-testid="extraction-approval">
+                      {extractionApproval ? (
+                        <Badge tone="ok" title={`am ${fmt.dateTime(extractionApproval.activatedAt)} von ${extractionApproval.activatedBy}`}>
+                          freigegeben
+                        </Badge>
+                      ) : (
+                        <Badge tone="warn" title="Keine Aktivierung dieser Konfiguration auf der Qualitätsseite (Regression)">
+                          ohne Freigabe
+                        </Badge>
+                      )}
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}

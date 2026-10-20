@@ -6,7 +6,7 @@ import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 
 /**
  * Starts a run and redirects to it. A scope lacking an input (`RunScopeNotReady`) redirects to `errorPath` with
- * `?error=<reason>` instead, which that page shows in German.
+ * `?error=<reason>` instead (appended to a query `errorPath` already has), which that page shows in German.
  */
 export async function startAndRedirect(start: () => Promise<{ id: string }>, errorPath: string): Promise<void> {
   let target: string;
@@ -14,7 +14,7 @@ export async function startAndRedirect(start: () => Promise<{ id: string }>, err
     target = `/runs/${(await start()).id}`;
   } catch (e) {
     if (!(e instanceof RunScopeNotReady)) throw e;
-    target = `${errorPath}?error=${e.reason}`;
+    target = `${errorPath}${errorPath.includes("?") ? "&" : "?"}error=${e.reason}`;
   }
   revalidatePath("/runs");
   redirect(target);
