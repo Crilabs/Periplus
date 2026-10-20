@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { getConfig, type AppConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { listApiClients } from "@/lib/domain/api-clients";
@@ -24,6 +25,8 @@ import {
   trClass,
 } from "../_components/ui";
 import { revokeApiClientAction } from "./actions";
+
+export const metadata: Metadata = { title: "Einstellungen" };
 
 const LEVEL_LABELS: Record<FactLevel, string> = {
   place: "Ort",

@@ -1,6 +1,9 @@
+import type { Metadata } from "next";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { PageHeader } from "../_components/ui";
 import { MapView } from "../_components/map-view";
+
+export const metadata: Metadata = { title: "Karte" };
 
 export default async function Page() {
   await requireAdmin();

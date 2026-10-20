@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+import { getSource } from "@/lib/domain/sources/store";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/lib/db/client";
@@ -54,6 +56,14 @@ import {
   testCrawlAction,
   uploadPdfAction,
 } from "./actions";
+
+/** The tab title: the source's name (UI-15). */
+export async function generateMetadata({ params }: PageProps<"/sources/[id]">): Promise<Metadata> {
+  await requireAdmin();
+  const { id } = await params;
+  const source = UUID.test(id) ? await getSource(getDb(), id) : null;
+  return { title: source ? `Quelle ${source.name}` : "Quelle" };
+}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SETTINGS_FIELDS = new Set(["name", "type", "weight", "changeRate"]);

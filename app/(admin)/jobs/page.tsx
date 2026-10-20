@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { getDb } from "@/lib/db/client";
 import { queuesView, type QueueStats } from "@/lib/domain/queues-view";
 import { requireAdmin } from "@/lib/security/require-admin";
@@ -21,6 +22,8 @@ import {
   trClass,
 } from "../_components/ui";
 import { pauseQueueAction, resumeQueueAction } from "./actions";
+
+export const metadata: Metadata = { title: "Jobs" };
 
 type Row = [queue: string, stats: QueueStats];
 

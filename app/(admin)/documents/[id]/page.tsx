@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getArchive } from "@/lib/adapters/s3";
@@ -36,6 +37,8 @@ import {
   thClass,
   trClass,
 } from "../../_components/ui";
+
+export const metadata: Metadata = { title: "Dokument" };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 

@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { listRuns } from "@/lib/domain/runs";
@@ -17,6 +18,8 @@ import {
   startSeedAction,
   startTextRunAction,
 } from "./actions";
+
+export const metadata: Metadata = { title: "Läufe" };
 
 type AreaRun = {
   id: string;

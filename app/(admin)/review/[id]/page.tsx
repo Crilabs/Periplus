@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { z } from "zod";
@@ -7,6 +8,7 @@ import {
   detailFeatures,
   nextTaskHref,
   reviewTaskDetail,
+  reviewTaskTitle,
   type GeoObjectView,
   type NearbyPlace,
   type SourceSuggestion,
@@ -69,6 +71,13 @@ import { NameCandidateCreate } from "./name-candidate";
 import { DecisionPanel, Disclosure, Kbd, MapLegend } from "./parts";
 import { PlaceConfirm } from "./place-confirm";
 import { ProfileDecision } from "./profile-decision";
+
+/** The tab title: the task's kind and subject (UI-15). */
+export async function generateMetadata({ params }: PageProps<"/review/[id]">): Promise<Metadata> {
+  await requireAdmin();
+  const task = await reviewTaskTitle(getDb(), (await params).id);
+  return { title: task ? `${REVIEW_KIND_LABELS[task.kind]}${task.name ? `: ${task.name}` : ""}` : "Prüfen" };
+}
 
 const distance = (m: number) =>
   m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toLocaleString("de-DE", { maximumFractionDigits: 1 })} km`;

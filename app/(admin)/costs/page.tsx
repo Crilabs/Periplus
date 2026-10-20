@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { getDb } from "@/lib/db/client";
 import { budgetStatus, spendBreakdown, spendByService, type SpendBreakdownRow } from "@/lib/domain/costs";
@@ -18,6 +19,8 @@ import {
   thClass,
   trClass,
 } from "../_components/ui";
+
+export const metadata: Metadata = { title: "Kosten" };
 
 /** Small amounts keep four decimals so cent fractions of single model calls stay visible. */
 const eur = (n: number) => fmt.eur(n, n > 0 && n < 0.01 ? 4 : 2);

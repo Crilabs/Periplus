@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { z } from "zod";
 import { consolidationVersions, getConfig } from "@/lib/config";
@@ -42,6 +43,8 @@ import {
   type Tone,
 } from "../_components/ui";
 import { activateCandidateAction, startEvaluationAction, startMeasurementAction, saveComparisonSelectionAction } from "./actions";
+
+export const metadata: Metadata = { title: "Qualität" };
 
 const querySchema = z.object({
   area: z.string().optional().catch(undefined),

@@ -17,7 +17,8 @@ import { applyExclusion } from "@/lib/domain/geometry/restrictions";
 import { newId } from "@/lib/domain/ids";
 import { createReviewTask } from "@/lib/domain/review";
 import { DEFAULT_CRAWL_RULES } from "@/lib/domain/sources/crawl-rules";
-import { listOpenTasks, nextTaskHref, reviewCounts, reviewTaskDetail } from "@/lib/domain/review-view";
+import { listOpenTasks, nextTaskHref, reviewCounts, reviewTaskDetail, reviewTaskTitle } from "@/lib/domain/review-view";
+import { placeTitle } from "@/lib/domain/geo-view";
 import { suggestedKindForHint } from "@/lib/domain/review-decisions";
 import { insertComputation, insertPlace as insertTestPlace } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
@@ -344,4 +345,14 @@ describe("review view", () => {
     expect(suggestedKindForHint("bay")).toBe("anchorage");
     expect(suggestedKindForHint(null)).toBe("anchorage");
   });
+
+  it("a task's and a place's page titles name the subject (UI-15)", () =>
+    withRollback(async (tx) => {
+      const placeId = await insertPlace(tx, "Title Bay", 0.04);
+      const { id } = await createReviewTask(tx, { kind: "place_candidate", subjectType: "place", subjectId: placeId, context: {} });
+      expect(await reviewTaskTitle(tx, id)).toEqual({ kind: "place_candidate", name: "Title Bay" });
+      expect(await reviewTaskTitle(tx, "nope")).toBeNull();
+      expect(await placeTitle(tx, placeId)).toBe("Title Bay");
+      expect(await placeTitle(tx, "nope")).toBeNull();
+    }));
 });

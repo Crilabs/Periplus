@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+import { geoObjectTitle } from "@/lib/domain/geo-view";
 import type { ReactNode } from "react";
 import { notFound } from "next/navigation";
 import { z } from "zod";
@@ -35,6 +37,12 @@ import { Dialog } from "../../_components/dialog";
 import { recomputeGeoProfileAction } from "../../places/[id]/actions";
 import { FactsTab } from "../../places/[id]/facts-tab";
 import { ProfileTab } from "../../places/[id]/profile-tab";
+
+/** The tab title: the geo object's name (UI-15). */
+export async function generateMetadata({ params }: PageProps<"/geo/[id]">): Promise<Metadata> {
+  await requireAdmin();
+  return { title: (await geoObjectTitle(getDb(), (await params).id)) ?? "Geo-Objekt" };
+}
 
 const SCRIPT_LABELS = { latin: "Lateinisch", greek: "Griechisch" } as const;
 const runsParam = z.enum(["active", "all"]).catch("active");

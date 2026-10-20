@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/lib/db/client";
@@ -37,6 +38,12 @@ import {
   seedTileAction,
   textRunTileAction,
 } from "./actions";
+
+/** The tab title: the tile id (UI-15). */
+export async function generateMetadata({ params }: PageProps<"/tiles/[id]">): Promise<Metadata> {
+  const id = tileIdParam((await params).id);
+  return { title: id ? `Kachel ${id}` : "Kachel" };
+}
 
 const TILE_ID = /^q025:\d+:\d+$/;
 

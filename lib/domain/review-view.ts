@@ -329,6 +329,27 @@ const subjectPart = (part: 1 | 2) =>
     then split_part(${reviewTasks.subjectId}, ':', ${sql.raw(String(part))})::uuid end)`;
 const placeNameSql = (placeId: SQL) => sql`(select ${displayNameSql(sql`p.geo_object_id`)} from places p where p.id = ${placeId})`;
 
+/**
+ * What a task is about, by its subject type (UI-6): the context name (seed, bay or name candidate), else the source's
+ * domain, the place's or object's name, both names of a pair, or the failed job's queue.
+ */
+const subjectNameSql = sql<string | null>`coalesce(${reviewTasks.context}->>'name', case ${reviewTasks.subjectType}
+        when 'source' then (select s.domain from sources s where s.id = ${subjectPart(1)})
+        when 'place' then ${placeNameSql(subjectPart(1))}
+        when 'comparison' then ${placeNameSql(sql`(case when ${reviewTasks.context}->>'placeId' ~ ${UUID_SQL} then (${reviewTasks.context}->>'placeId')::uuid end)`)}
+        when 'profile_attribute' then ${displayNameSql(subjectPart(1))}
+        when 'profile_summary' then ${displayNameSql(subjectPart(1))}
+        when 'geo_object_pair' then concat_ws(' / ', ${displayNameSql(subjectPart(1))}, ${displayNameSql(subjectPart(2))})
+        when 'job' then ${reviewTasks.context}->>'queue'
+      end)`;
+
+/** Kind and subject name of a task, for its page title (UI-15); null when it does not exist. */
+export async function reviewTaskTitle(db: Db, id: string): Promise<{ kind: ReviewKind; name: string | null } | null> {
+  if (!isUuid(id)) return null;
+  const [row] = await db.select({ kind: reviewTasks.kind, name: subjectNameSql }).from(reviewTasks).where(eq(reviewTasks.id, id));
+  return row ? { kind: row.kind, name: row.name || null } : null;
+}
+
 /** The evaluation filter of the list: only deviations of evaluation runs, or only the rest. */
 export type EvaluationFilter = "only" | "none";
 
@@ -354,15 +375,7 @@ export async function listOpenTasks(
       kind: t.kind,
       subjectType: t.subjectType,
       subjectId: t.subjectId,
-      name: sql<string | null>`coalesce(${t.context}->>'name', case ${t.subjectType}
-        when 'source' then (select s.domain from sources s where s.id = ${subjectPart(1)})
-        when 'place' then ${placeNameSql(subjectPart(1))}
-        when 'comparison' then ${placeNameSql(sql`(case when ${t.context}->>'placeId' ~ ${UUID_SQL} then (${t.context}->>'placeId')::uuid end)`)}
-        when 'profile_attribute' then ${displayNameSql(subjectPart(1))}
-        when 'profile_summary' then ${displayNameSql(subjectPart(1))}
-        when 'geo_object_pair' then concat_ws(' / ', ${displayNameSql(subjectPart(1))}, ${displayNameSql(subjectPart(2))})
-        when 'job' then ${t.context}->>'queue'
-      end)`,
+      name: subjectNameSql,
       attribute: sql<string | null>`case ${t.subjectType}
         when 'profile_attribute' then nullif(substr(${t.subjectId}, 38), '')
         when 'comparison' then ${t.context}->>'attribute'

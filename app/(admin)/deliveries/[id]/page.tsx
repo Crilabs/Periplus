@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { z } from "zod";
@@ -34,6 +35,8 @@ import {
   type Tone,
 } from "../../_components/ui";
 import { DELIVERY_STATUS_TONES } from "../status";
+
+export const metadata: Metadata = { title: "Lieferung" };
 
 const SEVERITY_TONES: Record<"info" | "notable" | "safety", Tone> = { info: "neutral", notable: "warn", safety: "danger" };
 

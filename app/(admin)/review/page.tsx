@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
@@ -22,6 +23,8 @@ import {
   trClass,
 } from "../_components/ui";
 import { REVIEW_KIND_HELP } from "./kinds";
+
+export const metadata: Metadata = { title: "Prüfen" };
 
 const PAGE_SIZE = 50;
 const querySchema = z.object({

@@ -33,3 +33,13 @@ describe("admin error boundary", () => {
     expect(source).toContain("retry()");
   });
 });
+
+// Each tab names its page (UI-15): a static `metadata` title or a `generateMetadata` (task, place, source …).
+describe("admin page titles", () => {
+  it("each page.tsx sets its title", () => {
+    const untitled = pageDirs(ADMIN)
+      .filter((dir) => !/export (const metadata|async function generateMetadata)/.test(readFileSync(path.join(dir, "page.tsx"), "utf8")))
+      .map((dir) => path.relative(ADMIN, dir) || ".");
+    expect(untitled).toEqual([]);
+  });
+});

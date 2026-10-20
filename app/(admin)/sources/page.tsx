@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { getConfig } from "@/lib/config";
@@ -38,6 +39,8 @@ import {
   wikivoyageRunAction,
 } from "./actions";
 import { SOURCE_STATUS_TONES } from "./tones";
+
+export const metadata: Metadata = { title: "Quellen" };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 

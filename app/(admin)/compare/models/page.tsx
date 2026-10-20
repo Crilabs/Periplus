@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
@@ -43,6 +44,8 @@ import {
   type Tone,
 } from "../../_components/ui";
 import { createComparisonAction, rateDeviationAction, startComparisonRunAction } from "./actions";
+
+export const metadata: Metadata = { title: "Modellvergleich Extraktion" };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 

@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+import { placeTitle } from "@/lib/domain/geo-view";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
@@ -44,6 +46,12 @@ import { FactsTab } from "./facts-tab";
 import { GeometryTab } from "./geometry-tab";
 import { ProfileTab } from "./profile-tab";
 import { TimelineTab } from "./timeline-tab";
+
+/** The tab title: the place's name (UI-15). */
+export async function generateMetadata({ params }: PageProps<"/places/[id]">): Promise<Metadata> {
+  await requireAdmin();
+  return { title: (await placeTitle(getDb(), (await params).id)) ?? "Ort" };
+}
 
 const coord = (lat: number, lon: number) => `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
 

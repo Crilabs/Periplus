@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { DELIVERIES_PAGE_SIZE, listDeliveries } from "@/lib/domain/delivery/view";
@@ -23,6 +24,8 @@ import {
 } from "../_components/ui";
 import { buildDeliveryAction } from "./actions";
 import { DELIVERY_STATUS_TONES } from "./status";
+
+export const metadata: Metadata = { title: "Lieferungen" };
 
 /** Object counts of a row in a short, fixed order. */
 const COUNT_LABELS: Array<[string, string]> = [

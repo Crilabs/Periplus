@@ -330,3 +330,19 @@ export async function placeBelongsTo(db: Db, placeId: string, geoObjectId: strin
   const [place] = await db.select({ id: places.id }).from(places).where(and(eq(places.id, placeId), eq(places.geoObjectId, geoObjectId)));
   return place !== undefined;
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The display name of a place's object, for its page title (UI-15); null when unknown or unnamed. */
+export async function placeTitle(db: Db, placeId: string): Promise<string | null> {
+  if (!UUID_RE.test(placeId)) return null;
+  const [row] = await db.select({ name: displayNameSql(places.geoObjectId) }).from(places).where(eq(places.id, placeId));
+  return row?.name ?? null;
+}
+
+/** The display name of a geo object, for its page title (UI-15); null when unknown or unnamed. */
+export async function geoObjectTitle(db: Db, geoObjectId: string): Promise<string | null> {
+  if (!UUID_RE.test(geoObjectId)) return null;
+  const [row] = await db.select({ name: displayNameSql(geoObjects.id) }).from(geoObjects).where(eq(geoObjects.id, geoObjectId));
+  return row?.name ?? null;
+}
