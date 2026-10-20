@@ -1,4 +1,4 @@
-import { and, asc, desc, sql } from "drizzle-orm";
+import { and, asc, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import type { Db } from "@/lib/db/client";
 import { runs } from "@/lib/db/schema";
@@ -17,12 +17,14 @@ const measurementOf = (areaKey: string) =>
 
 /**
  * Starts a measurement run „Messen“ for the area (spec 10): kind `stage`, scope `area` with the area key, stage
- * `quality.measure`, params `{ areaKey, label, from, to }` (ISO timestamps). `to` defaults to now, `from` to the `to` of
- * the area's previous measurement run, else to the creation of the oldest run (the start of operations). The label
- * (trimmed, 1–40 characters) is unique per area: checked with the run's insert in one transaction under an advisory
- * lock per area (ruling M7-P5), so two starts cannot take the same label. An unknown area throws `RunScopeNotReady`
- * (`unknown_area`), a taken label `measurement_label_taken`; an empty or too long label, or `from` not before `to`,
- * an Error.
+ * `quality.measure`, params `{ areaKey, label, from, to }` (ISO timestamps). `to` defaults to now, `from` to the latest
+ * window end (`params.to`, not the start time) of the area's finished measurements, so a failed or unfinished
+ * measurement loses no window, else to the creation of the oldest run (the start of operations; ruling M7-D-R2). The
+ * label (trimmed, 1–40 characters) is unique per area among measurements that did not fail (a failed one frees it,
+ * ruling M7-D-R1): checked with the run's insert in one transaction under an advisory lock per area (ruling M7-P5), so
+ * two starts cannot take the same label. Every refusal is a `RunScopeNotReady` with a German text: `unknown_area`,
+ * `measurement_label_invalid`, `measurement_label_taken`, `measurement_window_empty` (`from` not before `to`) and
+ * `measurement_without_runs` (no `from` and no run yet to start from).
  */
 export async function startMeasurement(
   db: Db,
@@ -30,7 +32,9 @@ export async function startMeasurement(
   input: { areaKey: string; label: string; from?: Date; to?: Date; triggeredBy: string },
 ): Promise<{ id: string }> {
   const label = input.label.trim();
-  if (label.length < 1 || label.length > MEASUREMENT_LABEL_MAX) throw new Error(`label must have 1–${MEASUREMENT_LABEL_MAX} characters`);
+  if (label.length < 1 || label.length > MEASUREMENT_LABEL_MAX) {
+    throw new RunScopeNotReady("measurement_label_invalid", `label must have 1–${MEASUREMENT_LABEL_MAX} characters`);
+  }
   if (!(await areaGeoObjectId(db, input.areaKey))) throw new RunScopeNotReady("unknown_area", `area ${input.areaKey} has no area geo object`);
 
   return db.transaction(async (tx) => {
@@ -38,7 +42,7 @@ export async function startMeasurement(
     const [taken] = await tx
       .select({ id: runs.id })
       .from(runs)
-      .where(and(measurementOf(input.areaKey), sql`${runs.params} ->> 'label' = ${label}`))
+      .where(and(measurementOf(input.areaKey), sql`${runs.status} <> 'failed'`, sql`${runs.params} ->> 'label' = ${label}`))
       .limit(1);
     if (taken) throw new RunScopeNotReady("measurement_label_taken", `area ${input.areaKey} has a measurement labelled ${label}`);
 
@@ -46,19 +50,19 @@ export async function startMeasurement(
     let from = input.from;
     if (!from) {
       const [previous] = await tx
-        .select({ params: runs.params })
+        .select({ to: sql<Date | string | null>`max((${runs.params} ->> 'to')::timestamptz)` })
         .from(runs)
-        .where(measurementOf(input.areaKey))
-        .orderBy(desc(runs.createdAt), desc(runs.id))
-        .limit(1);
-      const previousTo = (previous?.params as Record<string, unknown> | undefined)?.to;
-      if (typeof previousTo === "string") from = new Date(previousTo);
+        .where(and(measurementOf(input.areaKey), sql`${runs.status} = 'finished'`));
+      if (previous?.to) from = new Date(previous.to);
       else {
         const [oldest] = await tx.select({ createdAt: runs.createdAt }).from(runs).orderBy(asc(runs.createdAt)).limit(1);
-        from = oldest?.createdAt ?? to;
+        if (!oldest) throw new RunScopeNotReady("measurement_without_runs", `no run yet: pass from for the first measurement of ${input.areaKey}`);
+        from = oldest.createdAt;
       }
     }
-    if (!(from.getTime() < to.getTime())) throw new Error(`the window must start before it ends (${from.toISOString()} – ${to.toISOString()})`);
+    if (!(from.getTime() < to.getTime())) {
+      throw new RunScopeNotReady("measurement_window_empty", `the window must start before it ends (${from.toISOString()} – ${to.toISOString()})`);
+    }
 
     return startRun(tx, boss, {
       kind: "stage",

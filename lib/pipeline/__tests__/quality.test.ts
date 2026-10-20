@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "@/lib/config";
@@ -11,7 +11,8 @@ import { HANDLERS } from "@/lib/jobs/registry";
 import { STAGES } from "@/lib/jobs/stages";
 import { QUALITY_MEASURE_STAGE } from "@/lib/pipeline/quality-stages";
 import { startMeasurement } from "@/lib/pipeline/quality-run";
-import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
+import { RunScopeNotReady, type RunScopeReason } from "@/lib/pipeline/tile-scope";
+import { RUN_SCOPE_REASON_LABELS } from "@/app/(admin)/_components/labels";
 import { withRollback } from "@/test/db";
 import { insertQualityArea } from "@/test/quality";
 
@@ -32,6 +33,7 @@ function recordingBoss() {
 }
 
 const someone = () => `${newId()}@test.invalid`;
+const setStatus = (tx: Db, id: string, status: "finished" | "failed" | "queued") => tx.update(runs).set({ status }).where(eq(runs.id, id));
 const runOf = async (tx: Db, id: string) => (await tx.select().from(runs).where(eq(runs.id, id)))[0]!;
 
 describe("measurement stage", () => {
@@ -67,12 +69,13 @@ describe("startMeasurement", () => {
       expect(inserted).toEqual([{ queue: "quality.measure", data: expect.objectContaining({ key: areaKey, areaKey, runId: id }) }]);
     }));
 
-  it("from defaults to the previous measurement's to", () =>
+  it("from defaults to the previous finished measurement's to", () =>
     withRollback(async (tx) => {
       const { boss } = recordingBoss();
       const { areaKey } = await insertQualityArea(tx, [{ lon: 21.01, lat: 35.2 }]);
       const firstTo = new Date("2026-10-10T00:00:00Z");
-      await startMeasurement(tx, boss, { areaKey, label: "Lauf 1", from: new Date("2026-10-01T00:00:00Z"), to: firstTo, triggeredBy: someone() });
+      const first = await startMeasurement(tx, boss, { areaKey, label: "Lauf 1", from: new Date("2026-10-01T00:00:00Z"), to: firstTo, triggeredBy: someone() });
+      await setStatus(tx, first.id, "finished");
       const before = Date.now();
       const { id } = await startMeasurement(tx, boss, { areaKey, label: "Lauf 2", triggeredBy: someone() });
       const params = (await runOf(tx, id)).params as { from: string; to: string };
@@ -80,6 +83,53 @@ describe("startMeasurement", () => {
       // to defaults to now
       expect(new Date(params.to).getTime()).toBeGreaterThanOrEqual(before);
       expect(new Date(params.to).getTime()).toBeLessThanOrEqual(Date.now());
+    }));
+
+  it("from skips failed and unfinished measurements and follows the latest window end, not the latest start (ruling M7-D-R2)", () =>
+    withRollback(async (tx) => {
+      const { boss } = recordingBoss();
+      const { areaKey } = await insertQualityArea(tx, [{ lon: 21.01, lat: 35.2 }]);
+      const at = (day: number) => new Date(Date.UTC(2026, 9, day));
+      const start = async (label: string, from: number, to: number, status: "finished" | "failed" | "queued") => {
+        const { id } = await startMeasurement(tx, boss, { areaKey, label, from: at(from), to: at(to), triggeredBy: someone() });
+        await setStatus(tx, id, status);
+      };
+      await start("Lauf 1", 1, 10, "finished");
+      await start("Lauf 2", 10, 15, "failed"); // its window must be measured again
+      await start("Lauf 3", 10, 16, "queued"); // owns no finished window yet
+      await start("Nachmessung", 2, 5, "finished"); // started later for an earlier window
+      const { id } = await startMeasurement(tx, boss, { areaKey, label: "Lauf 4", to: at(20), triggeredBy: someone() });
+      expect(((await runOf(tx, id)).params as { from: string }).from).toBe(at(10).toISOString());
+    }));
+
+  it("a failed measurement frees its label (ruling M7-D-R1)", () =>
+    withRollback(async (tx) => {
+      const { boss } = recordingBoss();
+      const { areaKey } = await insertQualityArea(tx, [{ lon: 21.01, lat: 35.2 }]);
+      const window = { from: new Date("2026-10-01T00:00:00Z"), to: new Date("2026-10-20T00:00:00Z") };
+      const failed = await startMeasurement(tx, boss, { areaKey, label: "Lauf 1", ...window, triggeredBy: someone() });
+      await setStatus(tx, failed.id, "failed");
+      const again = await startMeasurement(tx, boss, { areaKey, label: "Lauf 1", ...window, triggeredBy: someone() });
+      expect(((await runOf(tx, again.id)).params as { label: string }).label).toBe("Lauf 1");
+      // a finished one keeps it
+      await setStatus(tx, again.id, "finished");
+      await expect(startMeasurement(tx, boss, { areaKey, label: "Lauf 1", ...window, triggeredBy: someone() })).rejects.toMatchObject({
+        reason: "measurement_label_taken",
+      });
+    }));
+
+  it("the first measurement without any run and without from is refused with a German hint to from (ruling M7-D-R1)", () =>
+    withRollback(async (tx) => {
+      const { boss, inserted } = recordingBoss();
+      const { areaKey } = await insertQualityArea(tx, [{ lon: 21.01, lat: 35.2 }]);
+      // an empty runs table for this transaction only: a temporary table shadows it (pg_temp is searched first)
+      await tx.execute(sql`create temporary table runs (like public.runs including defaults) on commit drop`);
+      await expect(startMeasurement(tx, boss, { areaKey, label: "Lauf 1", triggeredBy: someone() })).rejects.toMatchObject({
+        constructor: RunScopeNotReady,
+        reason: "measurement_without_runs",
+      });
+      expect(inserted).toEqual([]);
+      expect(RUN_SCOPE_REASON_LABELS.measurement_without_runs).toMatch(/„von“/);
     }));
 
   it("without a previous measurement from is the creation of the oldest run", () =>
@@ -120,12 +170,23 @@ describe("startMeasurement", () => {
         constructor: RunScopeNotReady,
         reason: "unknown_area",
       });
-      await expect(startMeasurement(tx, boss, { areaKey, label: "   ", ...window, triggeredBy })).rejects.toThrow(/label/);
-      await expect(startMeasurement(tx, boss, { areaKey, label: "x".repeat(41), ...window, triggeredBy })).rejects.toThrow(/label/);
-      await expect(startMeasurement(tx, boss, { areaKey, label: "x".repeat(40), from: window.to, to: window.to, triggeredBy: someone() })).rejects.toThrow(
-        /window/,
+      // refusals a person can trigger are RunScopeNotReady with a German text (ruling M7-D-R2)
+      const refused = (reason: RunScopeReason) => ({ constructor: RunScopeNotReady, reason });
+      await expect(startMeasurement(tx, boss, { areaKey, label: "   ", ...window, triggeredBy })).rejects.toMatchObject(refused("measurement_label_invalid"));
+      await expect(startMeasurement(tx, boss, { areaKey, label: "x".repeat(41), ...window, triggeredBy })).rejects.toMatchObject(
+        refused("measurement_label_invalid"),
       );
+      await expect(startMeasurement(tx, boss, { areaKey, label: "x".repeat(40), from: window.to, to: window.to, triggeredBy })).rejects.toMatchObject(
+        refused("measurement_window_empty"),
+      );
+      // a default from after the given to is an empty window as well
+      const previous = await startMeasurement(tx, boss, { areaKey, label: "Lauf 0", ...window, triggeredBy: someone() });
+      await setStatus(tx, previous.id, "finished");
+      await expect(startMeasurement(tx, boss, { areaKey, label: "Lauf 1", to: window.from, triggeredBy })).rejects.toMatchObject(
+        refused("measurement_window_empty"),
+      );
+      for (const reason of ["measurement_label_invalid", "measurement_window_empty"] as const) expect(RUN_SCOPE_REASON_LABELS[reason]).toBeTruthy();
       expect(await tx.select().from(runs).where(eq(runs.triggeredBy, triggeredBy))).toEqual([]);
-      expect(inserted).toEqual([]);
+      expect(inserted).toHaveLength(1);
     }));
 });

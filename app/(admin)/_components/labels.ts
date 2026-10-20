@@ -306,6 +306,9 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   comparison_set_empty: "Der Vergleichssatz des Reviers ist leer",
   geo_object_without_place: "Geo-Objekt hat keinen gültigen Ort",
   measurement_label_taken: "Bezeichnung schon vergeben",
+  measurement_label_invalid: "Bezeichnung fehlt oder ist länger als 40 Zeichen",
+  measurement_window_empty: "Der Zeitraum ist leer – „von“ muss vor „bis“ liegen",
+  measurement_without_runs: "Noch kein Lauf, ab dem gemessen werden kann – für die erste Messung „von“ angeben",
 };
 
 /** The German text of a `?error=<reason>` a run action redirected with; null for none or an unknown reason. */

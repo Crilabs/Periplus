@@ -12,7 +12,7 @@ import {
   ownValuesForComparisonSet,
   renderReport,
 } from "../lib/domain/quality/navily-sample";
-import { renderNavilyRunSection, runNavilyComparison } from "../lib/domain/quality/navily-run";
+import { notWrittenNote, renderNavilyRunSection, runNavilyComparison } from "../lib/domain/quality/navily-run";
 
 // Grundprinzip 9: the Navily file is read at runtime from the given path only; nothing of it is stored or printed.
 
@@ -96,7 +96,7 @@ async function main(): Promise<void> {
     process.stdout.write(
       args.acceptProposals
         ? `results written: ${run.written}, review tasks: ${run.tasks}, kept manual outcomes: ${run.skippedManual}\n`
-        : "Nur Bericht – Ergebnisse mit --accept-proposals schreiben\n",
+        : `${notWrittenNote(run)}\n`,
     );
     if (compared < cfg.minPlaces) {
       process.stderr.write(`only ${compared} places with geometry compared, ${cfg.minPlaces} required\n`);

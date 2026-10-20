@@ -60,7 +60,8 @@ async function comparisonSetPlaceIds(db: Db, areaKey: string): Promise<string[]>
  *
  * With `writeCoverage` the coverage is stored as the row `coverage_navily` (value = ratio, details `{ spots, matched }`,
  * counts only: Grundprinzip 9, ruling M7-P23) of the area's newest measurement (`latestMeasurement`); without one it
- * fails before writing anything („Erst messen (/quality)“); a measurement that has the row already keeps it.
+ * fails before writing anything („Erst messen (/quality)“); a measurement that has the row already keeps it. The row
+ * is written in the same transaction as the proposals, so either both are stored or neither (ruling M7-D-R2).
  */
 export async function runNavilyComparison(
   db: Db,
@@ -119,21 +120,32 @@ export async function runNavilyComparison(
     return result;
   };
 
-  const result = input.acceptProposals ? await db.transaction((tx) => pass(tx, true)) : await pass(db, false);
-  if (!measurement) return result;
-  const written = await db
-    .insert(qualitySnapshots)
-    .values({
-      runId: measurement.runId,
-      scopeType: "area",
-      scopeId: input.areaKey,
-      metric: "coverage_navily",
-      value: result.coverage.ratio,
-      details: { spots: result.coverage.spots, matched: result.coverage.matched },
-    })
-    .onConflictDoNothing()
-    .returning({ id: qualitySnapshots.id });
-  return { ...result, snapshotRunId: measurement.runId, coverageWritten: written.length > 0 };
+  if (!input.acceptProposals && !measurement) return pass(db, false);
+  return db.transaction(async (tx) => {
+    const result = await pass(tx, input.acceptProposals);
+    if (!measurement) return result;
+    const written = await tx
+      .insert(qualitySnapshots)
+      .values({
+        runId: measurement.runId,
+        scopeType: "area",
+        scopeId: input.areaKey,
+        metric: "coverage_navily",
+        value: result.coverage.ratio,
+        details: { spots: result.coverage.spots, matched: result.coverage.matched },
+      })
+      .onConflictDoNothing()
+      .returning({ id: qualitySnapshots.id });
+    return { ...result, snapshotRunId: measurement.runId, coverageWritten: written.length > 0 };
+  });
+}
+
+/**
+ * The line saying that no comparison results were written (no `--accept-proposals`), for the report and the CLI: a
+ * report only when nothing was stored, else only the results were not written (a `coverage_navily` row was).
+ */
+export function notWrittenNote(r: NavilyRunResult): string {
+  return r.snapshotRunId ? "Vergleichsergebnisse nicht geschrieben – dafür --accept-proposals" : "Nur Bericht – Ergebnisse mit --accept-proposals schreiben";
 }
 
 const percent = (ratio: number | null) =>
@@ -162,7 +174,7 @@ export function renderNavilyRunSection(r: NavilyRunResult, acceptProposals: bool
     if (r.skippedManual > 0) lines.push(`Von Hand gesetzte Ergebnisse behalten: ${r.skippedManual}`, "");
     lines.push("Maschinell übernommene Ergebnisse tragen die Methode „proposal_auto“; jede Abweichung geht ins Review.", "");
   } else {
-    lines.push("Nur Bericht – Ergebnisse mit --accept-proposals schreiben", "");
+    lines.push(notWrittenNote(r), "");
   }
   return lines.join("\n");
 }

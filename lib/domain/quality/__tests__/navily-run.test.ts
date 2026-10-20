@@ -15,7 +15,7 @@ import { insertNamedObject } from "@/test/text";
 import { comparisonValues, loadComparisonSubjects } from "../comparison-values";
 import { recordManualComparison } from "../navily-compare";
 import { loadNavilySpots } from "../navily-sample";
-import { renderNavilyRunSection, runNavilyComparison } from "../navily-run";
+import { notWrittenNote, renderNavilyRunSection, runNavilyComparison } from "../navily-run";
 
 // Synthetic area around the fixture spots at 21.0–21.1° E / 35.2–35.3° N (outside the pilot box), rolled back.
 
@@ -253,6 +253,20 @@ describe("runNavilyComparison", () => {
       expect([again.snapshotRunId, again.coverageWritten]).toEqual([newest, false]);
       expect((await tx.select().from(qualitySnapshots).where(eq(qualitySnapshots.runId, newest))).filter((x) => x.metric === "coverage_navily")).toHaveLength(1);
     }));
+
+  it("coverage_navily is written in the proposals' transaction: when it fails, no proposal stays (ruling M7-D-R2)", () =>
+    withRollback(async (tx) => {
+      const { areaKey, placeIds } = await scene(tx);
+      const spots = await loadNavilySpots(FIXTURE);
+      await measurementRun(tx, areaKey, "Lauf 1", "2026-10-19T08:00:00Z");
+      // a failing coverage write, for this transaction only
+      const fn = sql.raw(`test_fail_coverage_${newId().replaceAll("-", "")}`);
+      await tx.execute(sql`create function ${fn}() returns trigger language plpgsql as $$
+        begin if new.metric = 'coverage_navily' then raise exception 'coverage write failed'; end if; return new; end $$`);
+      await tx.execute(sql`create trigger ${fn} before insert on quality_snapshots for each row execute function ${fn}()`);
+      await expect(runNavilyComparison(tx, { areaKey, spots, acceptProposals: true, writeCoverage: true, now: NOW })).rejects.toThrow();
+      expect(await resultRows(tx, placeIds)).toEqual([]);
+    }));
 });
 
 describe("renderNavilyRunSection", () => {
@@ -281,6 +295,15 @@ describe("renderNavilyRunSection", () => {
     expect(md).toContain("Navily-Abdeckung: 0 von 0 Navily-Orten im Revier (–)");
     expect(md).not.toContain("Ergebnisse geschrieben");
     expect(md).not.toContain("coverage_navily");
+  });
+
+  it("with a stored coverage row and without --accept-proposals it does not claim a report only (ruling M7-D-R2)", () => {
+    const md = renderNavilyRunSection({ ...result, written: 0, tasks: 0, skippedManual: 0, snapshotRunId: newId(), coverageWritten: true }, false);
+    expect(md).not.toContain("Nur Bericht");
+    expect(md).toContain("Vergleichsergebnisse nicht geschrieben – dafür --accept-proposals");
+    // the CLI prints the same line
+    expect(notWrittenNote({ ...result, snapshotRunId: newId(), coverageWritten: false })).toBe("Vergleichsergebnisse nicht geschrieben – dafür --accept-proposals");
+    expect(notWrittenNote({ ...result, snapshotRunId: null })).toBe("Nur Bericht – Ergebnisse mit --accept-proposals schreiben");
   });
 
   it("says whether the coverage was stored with the newest measurement", () => {
