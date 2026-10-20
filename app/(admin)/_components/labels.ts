@@ -690,6 +690,7 @@ export function mergeError(param: string | string[] | undefined): string | null 
 /** Why a header status change of a place was refused (`?statusError=`, gesamt review UI-3). */
 export const PLACE_STATUS_ERROR_LABELS: Record<PlaceStatusRefusal, string> = {
   open_task: "Der Ort hat eine offene Prüfung – dort entscheiden, mit ihrem ganzen Kontext.",
+  changed: "Der Status hat sich inzwischen geändert – bitte neu prüfen.",
   unchanged: "Der Ort hat diesen Status schon.",
   not_valid: "Der Ort ist beendet oder zusammengelegt.",
 };

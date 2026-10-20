@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
+import { placeStatusEnum } from "@/lib/db/schema";
 import { setAnchorPosition } from "@/lib/domain/geometry/anchor-correction";
 import { setPlacePosition } from "@/lib/domain/geometry/place-position";
 import { placeBelongsTo, placeGeoObjectId } from "@/lib/domain/geo-view";
@@ -87,7 +88,8 @@ export async function setPlacePositionAction(input: FormData | { placeId: string
 }
 
 const placeSchema = z.object({ placeId: z.uuid() });
-const placeStatusSchema = z.object({ placeId: z.uuid(), status: z.enum(ADMIN_PLACE_STATUSES) });
+/** `from`: the status the page showed; another status now refuses with `changed` (W4-2). */
+const placeStatusSchema = z.object({ placeId: z.uuid(), status: z.enum(ADMIN_PLACE_STATUSES), from: z.enum(placeStatusEnum.enumValues) });
 
 /**
  * „Bestätigen“ / „Verwerfen“ / „Kein Ankerplatz“ in the place header (spec 09, gesamt review UI-3): sets the status
@@ -101,7 +103,7 @@ export async function setPlaceStatusAction(input: FormData | z.input<typeof plac
   const db = getDb();
   let target = `/places/${f.placeId}`;
   try {
-    const { geoObjectId } = await setPlaceStatusByAdmin(db, { placeId: f.placeId, status: f.status, decidedBy: admin.email });
+    const { geoObjectId } = await setPlaceStatusByAdmin(db, { placeId: f.placeId, status: f.status, from: f.from, decidedBy: admin.email });
     const run = await consolidateAfter(db, getBoss, { geoObjectIds: [geoObjectId], triggeredBy: admin.email });
     target += `?status=${f.status}${run.status === "started" ? `&run=${run.runId}` : "&statusNoRun=1"}`;
     revalidatePath(`/places/${f.placeId}`);

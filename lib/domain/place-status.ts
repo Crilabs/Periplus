@@ -11,7 +11,7 @@ import { DecisionNotAllowed } from "@/lib/domain/review-decisions";
 export const ADMIN_PLACE_STATUSES = ["confirmed", "rejected", "no_anchoring"] as const;
 export type AdminPlaceStatus = (typeof ADMIN_PLACE_STATUSES)[number];
 
-export type PlaceStatusRefusal = "open_task" | "unchanged" | "not_valid";
+export type PlaceStatusRefusal = "open_task" | "changed" | "unchanged" | "not_valid";
 
 /** Why a header status change is refused: an open review task decides it (with its context), or nothing changes. */
 export class PlaceStatusNotAllowed extends DecisionNotAllowed {
@@ -39,13 +39,14 @@ export function adminStatusChoices(status: PlaceStatus): AdminPlaceStatus[] {
  * bestätigen“), so a place inside a ban asks for its review at once.
  *
  * Refused (`PlaceStatusNotAllowed`, nothing written) while the place has an open task of its own (`open_task`: that task
- * decides, with its context), for the status it already has (`unchanged`) and for a place that is ended or merged
- * (`not_valid`). Lock order (M5-F-R4): the place's open tasks first, then the place. Returns the geo object; its profile
+ * decides, with its context), when its status is no longer `from`, the status the page showed (`changed`: a stale tab
+ * never withdraws a place confirmed meanwhile without the confirm step, W4-2), for the status it already has
+ * (`unchanged`) and for a place that is ended or merged (`not_valid`). Lock order (M5-F-R4): the place's open tasks first, then the place. Returns the geo object; its profile
  * follows with a consolidation run the caller starts after the commit (`consolidateAfter`).
  */
 export async function setPlaceStatusByAdmin(
   db: Db,
-  input: { placeId: string; status: AdminPlaceStatus; decidedBy: string; now?: Date },
+  input: { placeId: string; status: AdminPlaceStatus; from: PlaceStatus; decidedBy: string; now?: Date },
 ): Promise<{ geoObjectId: string; previous: PlaceStatus }> {
   return db.transaction(async (tx) => {
     const open = await lockOpenPlaceTasks(tx, input.placeId);
@@ -56,6 +57,9 @@ export async function setPlaceStatusByAdmin(
       .for("update");
     if (!place) throw new PlaceStatusNotAllowed("not_valid", `place ${input.placeId} is not valid`);
     if (open.length > 0) throw new PlaceStatusNotAllowed("open_task", `place ${input.placeId} has an open review task`);
+    if (place.status !== input.from) {
+      throw new PlaceStatusNotAllowed("changed", `place ${input.placeId} is ${place.status}, not ${input.from} as shown`);
+    }
     if (place.status === input.status) throw new PlaceStatusNotAllowed("unchanged", `place ${input.placeId} is ${place.status} already`);
 
     const [task] = await tx

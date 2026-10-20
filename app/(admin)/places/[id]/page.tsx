@@ -9,7 +9,7 @@ import { deliveryArchive } from "@/lib/domain/delivery/archive";
 import { placeDelivery } from "@/lib/domain/delivery/view";
 import { geoFacts, geoMentions } from "@/lib/domain/geo-facts";
 import { mergeCandidates, type MergeCandidate } from "@/lib/domain/place-merge";
-import { ADMIN_PLACE_STATUSES, adminStatusChoices, type AdminPlaceStatus } from "@/lib/domain/place-status";
+import { ADMIN_PLACE_STATUSES } from "@/lib/domain/place-status";
 import { placeDetail } from "@/lib/domain/geo-view";
 import { placeGeometry } from "@/lib/domain/geometry-view";
 import { timelineView } from "@/lib/domain/profile-timeline";
@@ -40,11 +40,12 @@ import {
   TextLink,
   type Tone,
 } from "../../_components/ui";
-import { mergePlaceAction, recomputePlaceProfileAction, setPlaceStatusAction } from "./actions";
+import { mergePlaceAction, recomputePlaceProfileAction } from "./actions";
 import { DeliveryTab } from "./delivery-tab";
 import { FactsTab } from "./facts-tab";
 import { GeometryTab } from "./geometry-tab";
 import { ProfileTab } from "./profile-tab";
+import { StatusActions } from "./status-actions";
 import { TimelineTab } from "./timeline-tab";
 
 /** The tab title: the place's name (UI-15). */
@@ -236,43 +237,6 @@ async function SourcesTabView({ placeId, geoObjectId, page }: { placeId: string;
 
 async function DeliveryTabView({ placeId }: { placeId: string }) {
   return <DeliveryTab view={await placeDelivery(getDb(), deliveryArchive(), placeId)} />;
-}
-
-const STATUS_ACTIONS: Record<AdminPlaceStatus, { label: string; effect: string }> = {
-  confirmed: { label: "Bestätigen", effect: "Der Ort wird bestätigt und mit dem nächsten Paket seines Reviers als Ankerplatz geliefert." },
-  rejected: { label: "Verwerfen", effect: "Der Ort wird verworfen; das nächste Paket seines Reviers meldet ihn als entfernt." },
-  no_anchoring: {
-    label: "Kein Ankerplatz",
-    effect: "Das nächste Paket seines Reviers liefert den Ort als ausgeschlossen: Ankern ist hier nicht möglich oder nicht erlaubt.",
-  },
-};
-
-/**
- * „Bestätigen“ / „Verwerfen“ / „Kein Ankerplatz“ (spec 09, gesamt review UI-3); only without an open review task of the
- * place, which decides with its context. Taking a confirmed place back asks first: the next package changes the spot.
- */
-function StatusActions({ placeId, status }: { placeId: string; status: PlaceStatus }) {
-  return adminStatusChoices(status).map((s) => {
-    const form = (
-      <form action={setPlaceStatusAction} className={status === "confirmed" ? "flex justify-end" : undefined}>
-        <input type="hidden" name="placeId" value={placeId} />
-        <input type="hidden" name="status" value={s} />
-        <Button variant={s === "confirmed" ? "primary" : status === "confirmed" ? "danger" : undefined}>{STATUS_ACTIONS[s].label}</Button>
-      </form>
-    );
-    if (status !== "confirmed") return <span key={s}>{form}</span>;
-    return (
-      <Dialog
-        key={s}
-        trigger={`${STATUS_ACTIONS[s].label} …`}
-        triggerVariant="danger"
-        title={STATUS_ACTIONS[s].label}
-        description={`${STATUS_ACTIONS[s].effect} Das Profil wird danach neu berechnet.`}
-      >
-        {form}
-      </Dialog>
-    );
-  });
 }
 
 /** „Mit Ort zusammenlegen“: choose a confirmed place nearby that this one becomes part of (ruling M6-P15). */

@@ -290,7 +290,7 @@ describe("„Bestätigen“ / „Verwerfen“ / „Kein Ankerplatz“ in the pla
       currentDb = tx;
       const f = await seedDeliveryArea(tx);
       const { A } = f.places;
-      await setPlaceStatusAction(form({ placeId: A.placeId, status: "no_anchoring" }));
+      await setPlaceStatusAction(form({ placeId: A.placeId, status: "no_anchoring", from: "confirmed" }));
       const [a] = await tx.select().from(places).where(eq(places.id, A.placeId));
       expect(a).toMatchObject({ status: "no_anchoring", statusReason: "review" });
       expect(startRun).toHaveBeenCalledTimes(1);
@@ -303,17 +303,34 @@ describe("„Bestätigen“ / „Verwerfen“ / „Kein Ankerplatz“ in the pla
       currentDb = tx;
       const f = await seedDeliveryArea(tx);
       startRun.mockRejectedValue(new Error("queue down"));
-      await setPlaceStatusAction({ placeId: f.places.M.placeId, status: "rejected" });
+      await setPlaceStatusAction({ placeId: f.places.M.placeId, status: "rejected", from: "confirmed" });
       expect(redirect).toHaveBeenLastCalledWith(`/places/${f.places.M.placeId}?status=rejected&statusNoRun=1`);
       expect((await tx.select().from(places).where(eq(places.id, f.places.M.placeId)))[0]!.status).toBe("rejected");
-      await setPlaceStatusAction({ placeId: f.places.M.placeId, status: "rejected" });
+      await setPlaceStatusAction({ placeId: f.places.M.placeId, status: "rejected", from: "rejected" });
       expect(redirect).toHaveBeenLastCalledWith(`/places/${f.places.M.placeId}?statusError=unchanged`);
-      await expect(setPlaceStatusAction({ placeId: f.places.M.placeId, status: "abandoned" as "rejected" })).rejects.toThrow();
+      await expect(setPlaceStatusAction({ placeId: f.places.M.placeId, status: "abandoned" as "rejected", from: "rejected" })).rejects.toThrow();
+      // without the shown status the form is invalid
+      await expect(setPlaceStatusAction(form({ placeId: f.places.M.placeId, status: "confirmed" }))).rejects.toThrow();
+    }));
+
+  it("a stale tab (the status changed since the page showed it) returns with ?statusError=changed and writes nothing (W4-2)", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const f = await seedDeliveryArea(tx);
+      const { K } = f.places;
+      await setPlaceStatusAction(form({ placeId: K.placeId, status: "confirmed", from: "candidate" }));
+      expect(redirect).toHaveBeenLastCalledWith(expect.stringMatching(new RegExp(`^/places/${K.placeId}\\?status=confirmed`)));
+      startRun.mockClear();
+      // tab A still shows K as a candidate and offers a plain „Verwerfen“
+      await setPlaceStatusAction(form({ placeId: K.placeId, status: "rejected", from: "candidate" }));
+      expect(redirect).toHaveBeenLastCalledWith(`/places/${K.placeId}?statusError=changed`);
+      expect((await tx.select().from(places).where(eq(places.id, K.placeId)))[0]!.status).toBe("confirmed");
+      expect(startRun).not.toHaveBeenCalled();
     }));
 
   it("rejects without admin session", async () => {
     requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
-    await expect(setPlaceStatusAction({ placeId: "0199f0a0-0000-7000-8000-000000000001", status: "rejected" })).rejects.toThrow("NEXT_REDIRECT");
+    await expect(setPlaceStatusAction({ placeId: "0199f0a0-0000-7000-8000-000000000001", status: "rejected", from: "confirmed" })).rejects.toThrow("NEXT_REDIRECT");
     expect(startRun).not.toHaveBeenCalled();
   });
 });
