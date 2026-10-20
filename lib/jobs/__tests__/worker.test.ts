@@ -92,6 +92,7 @@ const queueConfig = {
   "consolidation.geo": { concurrency: 4, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "consolidation.summary": { concurrency: 2, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "consolidation.followup": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "delivery.build": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   [DEAD_LETTER_QUEUE]: { concurrency: 1, retryLimit: 1, retryDelaySeconds: 0, retryBackoff: false },
 };
 
