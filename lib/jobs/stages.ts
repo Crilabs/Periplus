@@ -7,6 +7,7 @@ import { discoveryAreaStage, discoveryPlaceStage, discoveryProposeStage, discove
 import { embedChunksStage } from "./handlers/embed";
 import { fetchSourceStage, fetchUrlStage } from "./handlers/fetch";
 import { detectBaysStage, geometryPlaceStage } from "./handlers/geometry";
+import { imagesPlaceStage } from "./handlers/images";
 import {
   gazetteerGeonamesStage,
   gazetteerHierarchyStage,
@@ -63,6 +64,7 @@ export const STAGES: Record<string, StageDefinition> = {
   [consolidationGeoStage.name]: consolidationGeoStage,
   [consolidationSummaryStage.name]: consolidationSummaryStage,
   [consolidationFollowupStage.name]: consolidationFollowupStage,
+  [imagesPlaceStage.name]: imagesPlaceStage,
   [deliveryBuildStage.name]: deliveryBuildStage,
   [qualityMeasureStage.name]: qualityMeasureStage,
   [revisitFreezeStage.name]: revisitFreezeStage,

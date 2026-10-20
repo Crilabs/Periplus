@@ -8,6 +8,7 @@ import { discoveryAreaHandler, discoveryPlaceHandler, discoveryProposeHandler, d
 import { embedChunksHandler } from "./handlers/embed";
 import { fetchSourceHandler, fetchUrlHandler } from "./handlers/fetch";
 import { gazetteerHandler } from "./handlers/gazetteer";
+import { imagesPlaceHandler } from "./handlers/images";
 import { gazetteerCoarseHandler, subdivisionsBuildHandler } from "./handlers/subdivisions";
 import { detectBaysHandler, geometryPlaceHandler } from "./handlers/geometry";
 import { qualityMeasureHandler } from "./handlers/quality";
@@ -66,6 +67,7 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "consolidation.geo": consolidationGeoHandler,
   "consolidation.summary": consolidationSummaryHandler,
   "consolidation.followup": consolidationFollowupHandler,
+  "images.place": imagesPlaceHandler,
   "delivery.build": deliveryBuildHandler,
   "quality.measure": qualityMeasureHandler,
   "revisit.freeze": revisitFreezeHandler,

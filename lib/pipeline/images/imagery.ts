@@ -2,7 +2,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { demTileCorner, demTileNames, fetchDemTile } from "@/lib/adapters/copernicus-dem";
 import type { CallContext, Transport } from "@/lib/adapters/http";
 import type { Archive } from "@/lib/adapters/s3";
-import { fetchWmsImage, isBlankImage, wmsGrid } from "@/lib/adapters/wms";
+import { fetchWmsImage, isBlankImage, wmsGrid, type WmsGridCell } from "@/lib/adapters/wms";
 import { getConfig, type ImagesConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
@@ -119,18 +119,62 @@ async function ensureTile(
   return toRef(row!);
 }
 
+/**
+ * The WMS cells of the aerial imagery of `place`: the cadastre grid of the core window when the place's country has
+ * the cadastre, then the Sentinel-2 grid of the wide window when it has Sentinel-2. `ensureImagery` fetches exactly
+ * these, `currentAerialTileIds` looks them up.
+ */
+function aerialGrids(place: Omit<ImageryPlace, "geoObjectId">, cfg: ImagesConfig): Array<{ source: WmsSourceName; cells: WmsGridCell[] }> {
+  const grids: Array<{ source: WmsSourceName; cells: WmsGridCell[] }> = [];
+  const grid = (source: WmsSourceName, bbox: Bbox) => {
+    const src = cfg.sources[source];
+    if (covers(src.countries, place.country)) grids.push({ source, cells: wmsGrid(bbox, src.resolutionM, src.maxRequestPx) });
+  };
+  grid("ktimatologio", coreWindow(place.lon, place.lat, cfg.window));
+  grid("sentinel2", wideWindow(place.lon, place.lat, cfg.window));
+  return grids;
+}
+
+/**
+ * The ids of the current aerial tiles (core and wide) `ensureImagery` would use for `place`, read without any request;
+ * `null` when one of them has no current row yet (`ensureImagery` would download it: the imagery is new). A row whose
+ * archive object is gone keeps its id when downloaded again, so it counts as present.
+ */
+export async function currentAerialTileIds(
+  db: Db,
+  place: Omit<ImageryPlace, "geoObjectId">,
+  cfg: ImagesConfig = getConfig().images,
+): Promise<string[] | null> {
+  const wanted = aerialGrids(place, cfg).flatMap((g) => g.cells.map((c) => ({ source: g.source, tileKey: c.tileKey })));
+  if (wanted.length === 0) return [];
+  const { rows } = await db.execute<{ id: string; source: string; tile_key: string }>(sql`
+    select t.id, t.source, t.tile_key
+    from imagery_tiles t
+    join jsonb_to_recordset(${JSON.stringify(wanted)}::jsonb) as w(source text, "tileKey" text)
+      on t.source::text = w.source and t.tile_key = w."tileKey"
+    where t.valid_to is null`);
+  const found = new Map(rows.map((r) => [`${r.source}\0${r.tile_key}`, r.id]));
+  const ids: string[] = [];
+  for (const w of wanted) {
+    const id = found.get(`${w.source}\0${w.tileKey}`);
+    if (!id) return null;
+    ids.push(id);
+  }
+  return ids;
+}
+
 async function ensureWmsTiles(
   db: Db,
   archive: Archive,
   transport: Transport,
   source: WmsSourceName,
-  bbox: Bbox,
+  cells: WmsGridCell[],
   ctx: CallContext,
   cfg: ImagesConfig,
 ): Promise<ImageryTileRef[]> {
   const src = cfg.sources[source];
   const refs: ImageryTileRef[] = [];
-  for (const cell of wmsGrid(bbox, src.resolutionM, src.maxRequestPx)) {
+  for (const cell of cells) {
     const ref = await ensureTile(db, archive, {
       source,
       tileKey: cell.tileKey,
@@ -167,15 +211,14 @@ export async function ensureImagery(
   ctx: CallContext,
   cfg: ImagesConfig = getConfig().images,
 ): Promise<ImagerySet> {
-  const core = coreWindow(place.lon, place.lat, cfg.window);
   const wide = wideWindow(place.lon, place.lat, cfg.window);
-
-  const coreTiles = covers(cfg.sources.ktimatologio.countries, place.country)
-    ? await ensureWmsTiles(db, archive, transport, "ktimatologio", core, ctx, cfg)
-    : [];
-  const wideTiles = covers(cfg.sources.sentinel2.countries, place.country)
-    ? await ensureWmsTiles(db, archive, transport, "sentinel2", wide, ctx, cfg)
-    : [];
+  let coreTiles: ImageryTileRef[] = [];
+  let wideTiles: ImageryTileRef[] = [];
+  for (const grid of aerialGrids(place, cfg)) {
+    const refs = await ensureWmsTiles(db, archive, transport, grid.source, grid.cells, ctx, cfg);
+    if (grid.source === "ktimatologio") coreTiles = refs;
+    else wideTiles = refs;
+  }
 
   const dem = cfg.sources.copernicus_dem;
   const demTiles: ImageryTileRef[] = [];

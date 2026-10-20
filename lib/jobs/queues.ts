@@ -32,6 +32,7 @@ export const QUEUES = [
   "consolidation.geo",
   "consolidation.summary",
   "consolidation.followup",
+  "images.place",
   "delivery.build",
   "quality.measure",
   "revisit.freeze",

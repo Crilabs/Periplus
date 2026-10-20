@@ -1,0 +1,304 @@
+import { and, eq, isNull, sql } from "drizzle-orm";
+import type { Transport } from "@/lib/adapters/http";
+import { ImageOutputInvalid, type ImageModel } from "@/lib/adapters/openai-image";
+import type { Archive } from "@/lib/adapters/s3";
+import { checkPlaceImageTask } from "@/lib/ai/tasks/check-place-image";
+import { ModelOutputInvalid, type ModelClient } from "@/lib/ai/types";
+import { getConfig, type AppConfig, type ImageryLight, type ZoomLevel } from "@/lib/config";
+import type { Db } from "@/lib/db/client";
+import { placeImages, reviewTasks, type PlaceKind } from "@/lib/db/schema";
+import { passesGeometry, toJpeg, waterIoU } from "@/lib/domain/images/checks";
+import { lightFor } from "@/lib/domain/images/light";
+import { loadPlaceImageInput, type PlaceImageInput } from "@/lib/domain/images/place-input";
+import { altText, buildPlacePrompt } from "@/lib/domain/images/prompt";
+import { allowedZooms, cameraDetails, planRender, type CameraDetails, type RenderCamera } from "@/lib/domain/images/render-plan";
+import { createReviewTask, hasDecidedTask } from "@/lib/domain/review";
+import { dismissTasks } from "@/lib/domain/consolidation/task-locks";
+import { valueFingerprint } from "@/lib/domain/review-decisions";
+import { ensureImagery, type ImagerySet } from "./imagery";
+import { renderAndStore } from "./render";
+import { IMAGES_STAGE } from "./stage-name";
+
+/*
+ * Stage `images.place` (spec 13), one job: plan the camera, fetch the imagery around its target, render, let the image
+ * model paint over the render, check water and watermarks, and put the best attempt up for review as a `place_image`
+ * task. The model calls run outside any transaction (pattern of `summarizeProfile`).
+ */
+
+const TASK = "generate-place-image";
+
+/** The configuration the image stage reads (tests pass a changed copy). */
+export type ImageStageConfig = Pick<AppConfig, "images" | "models" | "delivery">;
+
+/**
+ * Which image of a place: its slot (`title` from the pipeline, `view-<n>` added by an admin), the zoom level and, for
+ * an additional view, the bearing the camera rotation starts at (`planRender`'s `azimuthOverride`).
+ */
+export type ImageView = { slot: string; zoom: ZoomLevel; azimuthDeg?: number };
+
+/** The automatic view: the title image at the default zoom. */
+export const titleView = (cfg: Pick<AppConfig, "images"> = getConfig()): ImageView => ({ slot: "title", zoom: cfg.images.camera.defaultZoom });
+
+/** Context of a `place_image` review task (subject `<geoObjectId>:<slot>`); the review approval (Task 9) reads it. */
+export type PlaceImageTaskContext = {
+  key: string;
+  slot: string;
+  azimuthOverride: number | null;
+  camera: CameraDetails | null;
+  renderId: string | null;
+  candidateKey: string | null;
+  light: ImageryLight;
+  zoom: ZoomLevel;
+  model: string;
+  promptVersion: number;
+  waterIoU: number | null;
+  passed: boolean;
+  attempts: number;
+  watermarkVisible: boolean | null;
+  alt: string;
+  allowedZooms: ZoomLevel[];
+  reason?: "no_water_view";
+};
+
+/**
+ * Fingerprint of everything an image depends on: the aerial tiles (sorted ids of core and wide), prompt version,
+ * model, place kind, light, slot, zoom and the rotation start. A new image is generated only when it changes.
+ */
+export function generationKey(input: {
+  imageryTileIds: string[];
+  promptVersion: number;
+  model: string;
+  kind: PlaceKind;
+  light: ImageryLight;
+  slot: string;
+  zoom: ZoomLevel;
+  azimuthDeg: number | null;
+}): string {
+  return valueFingerprint({ ...input, imageryTileIds: [...input.imageryTileIds].sort() });
+}
+
+/** The model and prompt version of the image task (part of the generation key). */
+export function imageTaskOf(cfg: Pick<AppConfig, "models">): { model: string; promptVersion: number } {
+  const task = cfg.models.imageTasks[TASK];
+  if (!task) throw new Error(`config/models.json has no image task ${TASK}`);
+  return { model: task.model, promptVersion: task.promptVersion };
+}
+
+/** The generation key of `view` of a planned place for the aerial tiles `imageryTileIds` (none for `no_water_view`). */
+export function keyFor(input: PlaceImageInput, view: ImageView, imageryTileIds: string[], cfg: ImageStageConfig): string {
+  const { model, promptVersion } = imageTaskOf(cfg);
+  return generationKey({
+    imageryTileIds,
+    promptVersion,
+    model,
+    kind: input.kind,
+    light: lightFor(input, cfg.images),
+    slot: view.slot,
+    zoom: view.zoom,
+    azimuthDeg: view.azimuthDeg ?? null,
+  });
+}
+
+/** The image of `place` with its imagery windows centred on the camera target (the render and its imagery agree). */
+export const atTarget = (place: PlaceImageInput, camera: RenderCamera): PlaceImageInput => ({ ...place, lon: camera.target[0], lat: camera.target[1] });
+
+/**
+ * Whether `key` is done for `slot` of the place: a current image of the slot, an open task or a decided task carries
+ * it. A rejected image is not generated again for the same key either.
+ */
+export async function keyDone(db: Db, geoObjectId: string, slot: string, key: string): Promise<boolean> {
+  const [image] = await db
+    .select({ id: placeImages.id })
+    .from(placeImages)
+    .where(and(eq(placeImages.geoObjectId, geoObjectId), eq(placeImages.slot, slot), isNull(placeImages.validTo), eq(placeImages.generationKey, key)))
+    .limit(1);
+  if (image) return true;
+  const subjectId = `${geoObjectId}:${slot}`;
+  const [open] = await db
+    .select({ id: reviewTasks.id })
+    .from(reviewTasks)
+    .where(
+      and(
+        eq(reviewTasks.kind, "place_image"),
+        eq(reviewTasks.subjectId, subjectId),
+        eq(reviewTasks.status, "open"),
+        sql`${reviewTasks.context} @> ${JSON.stringify({ key })}::jsonb`,
+      ),
+    )
+    .limit(1);
+  if (open) return true;
+  return hasDecidedTask(db, "place_image", subjectId, { key });
+}
+
+/**
+ * Opens the `place_image` task of the slot with `context`. An open task with another key (older imagery, prompt or
+ * model) is dismissed (`superseded`) first, in the same transaction; one with the same key stays as it is.
+ */
+async function putUpForReview(db: Db, geoObjectId: string, context: PlaceImageTaskContext): Promise<void> {
+  const subjectId = `${geoObjectId}:${context.slot}`;
+  await db.transaction(async (tx) => {
+    const { rows } = await tx.execute<{ id: string; key: string | null }>(sql`
+      select id, context->>'key' as key from review_tasks
+      where kind = 'place_image' and subject_id = ${subjectId} and status = 'open'
+      for update`);
+    const stale = rows.filter((r) => r.key !== context.key).map((r) => r.id);
+    await dismissTasks(tx, stale, "superseded");
+    await createReviewTask(tx, { kind: "place_image", subjectType: "place_image", subjectId, context });
+  });
+}
+
+type Attempt = { n: number; image: Uint8Array; iou: number; watermarkVisible: boolean | null; watermarkFree: boolean; passed: boolean };
+
+/** Best first: passed, then free of watermarks, then the higher IoU, then the earlier attempt. */
+function best(attempts: Attempt[]): Attempt | null {
+  const sorted = [...attempts].sort(
+    (a, b) => Number(b.passed) - Number(a.passed) || Number(b.watermarkFree) - Number(a.watermarkFree) || b.iou - a.iou || a.n - b.n,
+  );
+  return sorted[0] ?? null;
+}
+
+export type GenerateDeps = {
+  archive: Archive;
+  transport: Transport;
+  imageModel: ImageModel;
+  /** Model client of the watermark check (`check-place-image`). */
+  model: ModelClient;
+  /** Renderer (default `renderAndStore`, headless Chromium); tests of the pipeline logic pass a stub. */
+  render?: typeof renderAndStore;
+  /** Default `getConfig()`. */
+  config?: ImageStageConfig;
+};
+
+export type GenerateResult = { status: "review" | "no_water_view" | "skipped"; attempts: number; waterIoU: number | null };
+
+/**
+ * Generates one image of a place and puts it up for review:
+ * 1. the place's input (`loadPlaceImageInput`) and camera (`planRender` at `view.zoom`, rotation from
+ *    `view.azimuthDeg`); `no_water_view` → a task without candidate, no imagery, no render;
+ * 2. the imagery around the camera target (`ensureImagery`; a near-town target lies between the anchorage and the
+ *    town, so the town is in the core window) and the generation key from the tiles it returned; a key already done
+ *    (`keyDone`: a retried job, or a decision taken meanwhile) → `skipped`;
+ * 3. the render (`renderAndStore`, recording the key);
+ * 4. up to `check.maxAttempts` image edits: water IoU against the render mask, and, when the core imagery is
+ *    watermarked (the cadastre), the watermark check on the JPEG. `ImageOutputInvalid`, `ModelOutputInvalid`, a low
+ *    IoU or a visible watermark make a failed attempt; the first passing one ends the loop;
+ * 5. the best attempt (passed, watermark-free, highest IoU) as JPEG under
+ *    `imagery/candidates/<geoObjectId>/<renderId>-<n>.jpg`, and the `place_image` task (`putUpForReview`).
+ * Other errors (budget, provider, network) propagate so the job is retried. Nothing runs inside a transaction except
+ * the task write.
+ */
+export async function generatePlaceImage(
+  db: Db,
+  input: { geoObjectId: string; view: ImageView; runId?: string },
+  deps: GenerateDeps,
+): Promise<GenerateResult> {
+  const cfg = deps.config ?? getConfig();
+  const icfg = cfg.images;
+  const { view } = input;
+  const place = await loadPlaceImageInput(db, input.geoObjectId, icfg);
+  if (!place || !place.country) return { status: "skipped", attempts: 0, waterIoU: null };
+  const light = lightFor(place, icfg);
+  const { model, promptVersion } = imageTaskOf(cfg);
+  const azimuthOverride = view.azimuthDeg ?? null;
+  const base = { slot: view.slot, azimuthOverride, light, zoom: view.zoom, model, promptVersion, alt: altText(place, light, cfg) };
+
+  const plan = await planRender(db, place, view.zoom, icfg, azimuthOverride);
+  if (!plan.ok) {
+    const key = keyFor(place, view, [], cfg);
+    if (await keyDone(db, input.geoObjectId, view.slot, key)) return { status: "skipped", attempts: 0, waterIoU: null };
+    await putUpForReview(db, input.geoObjectId, {
+      ...base,
+      key,
+      camera: null,
+      renderId: null,
+      candidateKey: null,
+      waterIoU: null,
+      passed: false,
+      attempts: 0,
+      watermarkVisible: null,
+      allowedZooms: [],
+      reason: "no_water_view",
+    });
+    return { status: "no_water_view", attempts: 0, waterIoU: null };
+  }
+
+  if (!input.runId) throw new Error("generating a place image needs the run id (place_renders.run_id)");
+  const { camera } = plan;
+  const target = atTarget(place, camera);
+  const imagery = await ensureImagery(
+    db,
+    deps.archive,
+    deps.transport,
+    { geoObjectId: place.geoObjectId, lon: target.lon, lat: target.lat, country: place.country },
+    { db, runId: input.runId, stage: IMAGES_STAGE },
+    icfg,
+  );
+  const key = keyFor(place, view, aerialIds(imagery), cfg);
+  if (await keyDone(db, input.geoObjectId, view.slot, key)) return { status: "skipped", attempts: 0, waterIoU: null };
+
+  const render = await (deps.render ?? renderAndStore)(db, deps.archive, target, camera, imagery, { runId: input.runId, generationKey: key, cfg: icfg });
+  const photo = await deps.archive.get(render.photoKey);
+  const mask = await deps.archive.get(render.maskKey);
+  if (!photo || !mask) throw new Error(`render ${render.renderId} is missing in the archive`);
+
+  // only the cadastre is a core source, and only it can carry a watermark into the render
+  const watermarked = imagery.coreSource !== null && icfg.sources[imagery.coreSource].watermarked;
+  const prompt = buildPlacePrompt(place, light, watermarked, cfg).text;
+  const attempts: Attempt[] = [];
+  let made = 0;
+  for (let n = 1; n <= icfg.check.maxAttempts; n++) {
+    made = n;
+    let image: Uint8Array;
+    try {
+      image = (await deps.imageModel.edit({ task: TASK, image: photo, prompt }, { db, runId: input.runId, stage: IMAGES_STAGE })).image;
+    } catch (e) {
+      if (!(e instanceof ImageOutputInvalid)) throw e;
+      continue;
+    }
+    const iou = await waterIoU(mask, image, icfg.check);
+    let watermarkVisible: boolean | null = null;
+    let checked = !watermarked;
+    if (watermarked) {
+      try {
+        const jpeg = await toJpeg(image, icfg.output.jpegQuality);
+        watermarkVisible = (await deps.model.call(checkPlaceImageTask, { image: jpeg }, { runId: input.runId, stage: IMAGES_STAGE })).output.watermarkVisible;
+        checked = true;
+      } catch (e) {
+        if (!(e instanceof ModelOutputInvalid)) throw e;
+      }
+    }
+    const watermarkFree = checked && watermarkVisible !== true;
+    const passed = passesGeometry(iou, light, icfg.check) && watermarkFree;
+    attempts.push({ n, image, iou, watermarkVisible, watermarkFree, passed });
+    if (passed) break;
+  }
+
+  const chosen = best(attempts);
+  let candidateKey: string | null = null;
+  if (chosen) {
+    candidateKey = `imagery/candidates/${place.geoObjectId}/${render.renderId}-${chosen.n}.jpg`;
+    await deps.archive.put(candidateKey, await toJpeg(chosen.image, icfg.output.jpegQuality), "image/jpeg");
+  }
+  await putUpForReview(db, input.geoObjectId, {
+    ...base,
+    key,
+    camera: cameraDetails(camera),
+    renderId: render.renderId,
+    candidateKey,
+    waterIoU: chosen?.iou ?? null,
+    passed: chosen?.passed ?? false,
+    attempts: made,
+    watermarkVisible: chosen?.watermarkVisible ?? null,
+    allowedZooms: allowedZooms(finestResolution(imagery), icfg),
+  });
+  return { status: "review", attempts: made, waterIoU: chosen?.iou ?? null };
+}
+
+/** Ids of the aerial tiles (core and wide) of an imagery set: the tiles of the generation key. */
+export const aerialIds = (imagery: Pick<ImagerySet, "core" | "wide">): string[] => [...imagery.core, ...imagery.wide].map((t) => t.id);
+
+/** The finest resolution the render shows in its core: the non-blank aerial tiles, else the satellite image. */
+function finestResolution(imagery: ImagerySet): number {
+  const used = [...imagery.core.filter((t) => !t.blank), ...imagery.wide];
+  return used.length > 0 ? Math.min(...used.map((t) => t.resolutionM)) : Number.POSITIVE_INFINITY;
+}

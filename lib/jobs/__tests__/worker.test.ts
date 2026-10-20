@@ -95,6 +95,7 @@ const queueConfig = {
   "consolidation.geo": { concurrency: 4, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "consolidation.summary": { concurrency: 2, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "consolidation.followup": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "images.place": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "delivery.build": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "quality.measure": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "revisit.freeze": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },

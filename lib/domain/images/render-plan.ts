@@ -229,19 +229,21 @@ async function firstOverWater(db: Db, origin: LonLat, azimuths: number[], distan
 }
 
 /**
- * Camera for the title image of a place at `zoom`. Starting at `baseAzimuthFor` (north without opening and rays),
- * the azimuth turns in `camera.rotateStepDeg` steps until the camera is over water: for `open_water` its ground
- * point, for `near_town` every point from 200 m to `foregroundM` from the centre. `no_water_view` when no azimuth
- * qualifies (an enclosed place).
+ * Camera for an image of a place at `zoom`. Starting at `azimuthOverride` (an additional view an admin asked for),
+ * else at `baseAzimuthFor` (north without opening and rays), the azimuth turns in `camera.rotateStepDeg` steps until
+ * the camera is over water: for `open_water` its ground point, for `near_town` every point from 200 m to
+ * `foregroundM` from the centre. Composition and light rules stay the same with an override. `no_water_view` when no
+ * azimuth qualifies (an enclosed place).
  */
 export async function planRender(
   db: Db,
   input: PlaceImageInput,
   zoom: ZoomLevel,
   cfg: Pick<ImagesConfig, "camera" | "composition">,
+  azimuthOverride: number | null = null,
 ): Promise<RenderPlan> {
   const centre: LonLat = [input.lon, input.lat];
-  const candidates = candidateAzimuths(baseAzimuthFor(input) ?? 0, cfg.camera.rotateStepDeg);
+  const candidates = candidateAzimuths(azimuthOverride ?? baseAzimuthFor(input) ?? 0, cfg.camera.rotateStepDeg);
 
   const nearTown = compositionFor(input) === "near_town";
   const town: LonLat | null = nearTown ? [input.town!.lon, input.town!.lat] : null;
