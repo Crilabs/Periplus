@@ -29,6 +29,7 @@ import {
 } from "@/lib/db/schema";
 import { attributeDef, canonicalJson, InvalidFactValue, UnknownAttribute, validateFactValue } from "@/lib/domain/facts/schema";
 import { assignParentOf } from "@/lib/domain/gazetteer/hierarchy";
+import { dismissTasks, lockOpenTasks } from "@/lib/domain/consolidation/task-locks";
 import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
 import { addNames, isGreek, transliterateElot743, type NameDraft } from "@/lib/domain/gazetteer/names";
 import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
@@ -245,9 +246,9 @@ export async function decideReviewTask(
 
 /**
  * Applies a decision that is no name or profile decision. Returns the geo object of the place a `place_candidate`
- * decision changed (`confirm`, `merge`, `reject`, `no_anchoring`): its status, exclusion and `place_new` /
- * `place_abandoned` reach the profile only through a consolidation, which the caller starts after the commit (final
- * review I-2, ruling M5-FIN-R1); null otherwise.
+ * decision changed (`confirm`, `reject`, `no_anchoring`; for `merge` the target's object) or the surviving object of a
+ * `same` pair: its status, exclusion, merged facts and `place_new` / `place_abandoned` reach the profile only through a
+ * consolidation, which the caller starts after the commit (final review I-2, ruling M5-FIN-R1); null otherwise.
  */
 async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideDeps): Promise<string | null> {
   switch (decision.action) {
@@ -268,8 +269,25 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
       return place.geoObjectId;
     }
     case "merge": {
+      // „Einem Ort zuordnen“ merges like „Derselbe Ort“ (GR-3): the geo objects, so the facts follow the merge chain.
+      // Lock order (as `mergePlaceInto`): the merged object's open profile tasks, both geo objects, then the places.
+      if (decision.intoPlaceId === task.subjectId) throw new DecisionNotAllowed(`place ${task.subjectId} cannot merge into itself`);
+      const { rows: read } = await tx.execute<{ id: string; geo_object_id: string }>(
+        sql`select id, geo_object_id from places where id in (${task.subjectId}, ${decision.intoPlaceId})`,
+      );
+      const dropObject = read.find((r) => r.id === task.subjectId)?.geo_object_id;
+      const keepObject = read.find((r) => r.id === decision.intoPlaceId)?.geo_object_id;
+      if (!dropObject) throw new DecisionNotAllowed(`place ${task.subjectId} is not valid`);
+      if (!keepObject || keepObject === dropObject) throw new DecisionNotAllowed(`place ${decision.intoPlaceId} is no valid merge target for ${task.subjectId}`);
+      const openTasks = [...(await lockOpenTasks(tx, dropObject)).values()];
+      const { rows: objects } = await tx.execute<{ id: string }>(sql`
+        select id from geo_objects
+        where id in (${dropObject}, ${keepObject}) and valid_to is null and merged_into_id is null
+        order by id
+        for update
+      `);
+      if (objects.length !== 2) throw new DecisionNotAllowed(`the geo objects of places ${task.subjectId} and ${decision.intoPlaceId} are not both valid`);
       const place = await lockPlace(tx, task.subjectId);
-      if (decision.intoPlaceId === place.id) throw new DecisionNotAllowed(`place ${place.id} cannot merge into itself`);
       const [target] = await tx
         .select({ id: places.id, geoObjectId: places.geoObjectId })
         .from(places)
@@ -282,14 +300,13 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
           ),
         )
         .for("update");
-      if (!target || target.geoObjectId === place.geoObjectId) {
+      if (!target || place.geoObjectId !== dropObject || target.geoObjectId !== keepObject) {
         throw new DecisionNotAllowed(`place ${decision.intoPlaceId} is no valid merge target for ${place.id}`);
       }
-      await tx
-        .update(places)
-        .set({ status: "rejected", statusReason: "merged", mergedIntoId: target.id })
-        .where(eq(places.id, place.id));
-      return place.geoObjectId;
+      // the merged object's profile stays history: its open profile tasks end with it (as `mergePlaceInto`)
+      await dismissTasks(tx, openTasks.map((t) => t.id), "object_ended");
+      await mergeGeoObjects(tx, keepObject, dropObject);
+      return keepObject;
     }
     case "approve": {
       const domain = await lockSource(tx, task.subjectId, ["proposed"]);
@@ -347,7 +364,8 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
       const [older, newer] = objects as [(typeof objects)[0], (typeof objects)[0]];
       const [keep, drop] = newer.osmId !== null && older.osmId === null ? [newer, older] : [older, newer];
       await mergeGeoObjects(tx, keep.id, drop.id);
-      return null;
+      // the survivor carries the merged object's facts and possibly its exclusion (GR-3/GR-4): consolidate it
+      return keep.id;
     }
     case "assign_area": {
       const [area] = await tx

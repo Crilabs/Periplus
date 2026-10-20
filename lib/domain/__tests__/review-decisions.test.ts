@@ -266,7 +266,7 @@ describe("place decisions", () => {
       expect(await placeOf(tx, place.id)).toMatchObject({ status: "no_anchoring", statusReason: "review" });
     }));
 
-  it("confirm, merge, reject and no_anchoring return the place's object to consolidate after the commit (final review I-2)", () =>
+  it("confirm, merge, reject and no_anchoring return the place's object (merge: the target's) to consolidate after the commit (final review I-2, GR-3)", () =>
     withRollback(async (tx) => {
       const target = await insertPlace(tx, { lon: 28.13 });
       const cases: ReviewDecision[] = [
@@ -278,7 +278,8 @@ describe("place decisions", () => {
       for (const decision of cases) {
         const place = await insertPlace(tx);
         const result = await decide(tx, await placeTask(tx, place.id), decision);
-        expect(result, decision.action).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: place.geoObjectId } });
+        const geoObjectId = decision.action === "merge" ? target.geoObjectId : place.geoObjectId;
+        expect(result, decision.action).toEqual({ documentVersionIds: [], consolidate: { geoObjectId } });
         // the decision itself never consolidates (ruling M5-F-R4)
         expect(await tx.select().from(profiles).where(eq(profiles.geoObjectId, place.geoObjectId))).toEqual([]);
       }
