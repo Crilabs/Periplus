@@ -338,7 +338,7 @@ export default async function Page({ params, searchParams }: PageProps<"/runs/[i
           <Table>
             <thead>
               <tr>
-                <th className={thClass}>Queue</th>
+                <th className={thClass}>Warteschlange</th>
                 <th className={thClass}>Schlüssel</th>
                 <th className={thClass}>Fehler</th>
                 <th className={thClass}>Zeit</th>

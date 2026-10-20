@@ -30,7 +30,7 @@ const LEVEL_LABELS: Record<FactLevel, string> = {
   area: "Revier",
   island: "Insel",
   cape_strait: "Kap/Enge",
-  poi: "POI",
+  poi: "Highlight",
 };
 
 const EFFORT_LABELS = { low: "niedrig", medium: "mittel", high: "hoch" } as const;
@@ -40,7 +40,7 @@ const CONSOLIDATION_GROUPS: Record<Exclude<keyof AppConfig["consolidation"], "ve
   recency: "Aktualität",
   precision: "Nachkommastellen",
   weights: "Gewichte ohne Quelle",
-  poiConfidence: "Konfidenz POI",
+  poiConfidence: "Konfidenz Highlight",
   confidence: "Konfidenz",
   conflict: "Konflikt",
   change: "Änderung",
@@ -111,7 +111,7 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
       "PDF-Extraktor",
       `${fetch.pdf.extractor}${fetch.pdf.modelFallback ? `, Claude für unlesbare Seiten (höchstens ${fetch.pdf.maxModelPagesPerDocument} je Dokument)` : ""}`,
     ],
-    ["Embedding-Modell", `${embeddings.provider} ${embeddings.model}, Dimension ${embeddings.dimension}`],
+    ["Einbettungsmodell", `${embeddings.provider} ${embeddings.model}, Dimension ${embeddings.dimension}`],
   ];
   const geometryRows: [string, string][] = [
     ["Regelversion", geometry.rulesVersion],

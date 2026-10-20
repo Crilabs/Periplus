@@ -89,7 +89,7 @@ export const SCOPE_TYPE_LABELS: Record<RunScopeType, string> = {
 export const REVIEW_KIND_LABELS: Record<ReviewKind, string> = {
   source_approval: "Quellenfreigabe",
   place_candidate: "Ortskandidat",
-  conflict: "Widerspruch",
+  conflict: "Konflikt",
   failed_job: "Fehlgeschlagener Job",
   coast_tile_without_area: "Küstenkachel ohne Revier",
   uncertain_change: "Unsichere Änderung",

@@ -155,7 +155,7 @@ export default async function Page({ searchParams }: PageProps<"/sources">) {
             </form>
           }
         >
-          <span className="font-medium text-ink">Einbettungen nachholen:</span> berechnet Embeddings für alle Chunks,
+          <span className="font-medium text-ink">Einbettungen nachholen:</span> berechnet Einbettungen für alle Abschnitte,
           die noch keins haben. Läuft schon ein solcher Lauf, wird der Start abgelehnt.
         </RunOption>
         <RunOption

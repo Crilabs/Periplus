@@ -751,7 +751,7 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
                 <DescriptionList
                   columns={2}
                   items={[
-                    { label: "Queue", value: subject.job.queue ? <Mono>{subject.job.queue}</Mono> : "–" },
+                    { label: "Warteschlange", value: subject.job.queue ? <Mono>{subject.job.queue}</Mono> : "–" },
                     { label: "Stufe", value: subject.job.stage ?? "–" },
                     { label: "Schlüssel", value: subject.job.key ? <Mono>{subject.job.key}</Mono> : "–" },
                     {
@@ -929,8 +929,8 @@ function SerpHits({ hits, snippets = false }: { hits: Hit[]; snippets?: boolean 
         <tr>
           <th className={cx(thClass, "text-right")}>Rang</th>
           <th className={thClass}>Titel und URL</th>
-          {snippets && <th className={thClass}>Snippet</th>}
-          <th className={thClass}>Query</th>
+          {snippets && <th className={thClass}>Ausschnitt</th>}
+          <th className={thClass}>Suchanfrage</th>
         </tr>
       </thead>
       <tbody>

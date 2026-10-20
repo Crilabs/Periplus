@@ -217,7 +217,7 @@ export default async function Page({ params, searchParams }: PageProps<"/tiles/[
           )}
         </Panel>
 
-        <Panel title="Geo-Objekte" description="Inseln, Buchten, Kaps, Siedlungen und POIs aus dem Gazetteer, die der Kachel zugeordnet sind." flush>
+        <Panel title="Geo-Objekte" description="Inseln, Buchten, Kaps, Siedlungen und Highlights aus dem Gazetteer, die der Kachel zugeordnet sind." flush>
           {detail.geoObjects.length === 0 ? (
             <EmptyState title="Keine Geo-Objekte">Geo-Objekte entstehen durch den Gazetteer-Lauf des Reviers.</EmptyState>
           ) : (

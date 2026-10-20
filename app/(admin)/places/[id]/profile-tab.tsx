@@ -137,7 +137,7 @@ function ProfileBody({ view, selected, links }: { view: ProfileView; selected: A
                 <input type="hidden" name="geoObjectId" value={links.geoObjectId} />
                 {links.placeId && <input type="hidden" name="placeId" value={links.placeId} />}
                 <Button size="sm" title="Startet einen Lauf, der die Zusammenfassung der neuesten Version neu schreibt (auch eine vorhandene).">
-                  Summary neu erzeugen
+                  Zusammenfassung neu erzeugen
                 </Button>
               </form>
             )}
@@ -373,7 +373,7 @@ function AttributeDetail({ detail: d, links, version }: { detail: AttributeFacts
                     <span className="font-medium">{e.display}</span>{" "}
                     <span className="text-xs text-muted">
                       · {e.inputIds.length} {e.inputIds.length === 1 ? "Beleg" : "Belege"}
-                      {e.otherInputs.length > 0 && ` (davon ${e.otherInputs.length} aus Berechnung/POI)`}
+                      {e.otherInputs.length > 0 && ` (davon ${e.otherInputs.length} aus Berechnung/Highlight)`}
                     </span>
                     {e.inReview && (
                       <span className="mt-1 block text-xs text-warn">ohne Beleg, bleibt bis zur Prüfung der Änderung</span>
@@ -411,7 +411,7 @@ function AttributeDetail({ detail: d, links, version }: { detail: AttributeFacts
                       <li key={`${i.type}:${i.id}`}>
                         {i.type === "poi" ? (
                           <>
-                            POI: <TextLink href={`/geo/${i.id}`}>{i.name ?? i.id.slice(0, 8)}</TextLink>
+                            Highlight: <TextLink href={`/geo/${i.id}`}>{i.name ?? i.id.slice(0, 8)}</TextLink>
                           </>
                         ) : (
                           <>
@@ -459,7 +459,7 @@ function AttributeDetail({ detail: d, links, version }: { detail: AttributeFacts
         </Section>
       )}
       {d.pois.length > 0 && (
-        <Section title="POIs">
+        <Section title="Highlights">
           <ul className="space-y-0.5">
             {d.pois.map((p) => (
               <li key={p.id}>

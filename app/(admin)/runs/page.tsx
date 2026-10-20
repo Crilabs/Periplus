@@ -32,7 +32,7 @@ const AREA_RUNS: AreaRun[] = [
     id: "gazetteer",
     name: "Gazetteer",
     description:
-      "Legt die Kacheln des Reviers an und sammelt Inseln, Buchten, Häfen, Orte und POIs aus OSM, Wikidata und GeoNames. Erster Lauf für ein neues Revier.",
+      "Legt die Kacheln des Reviers an und sammelt Inseln, Buchten, Häfen, Orte und Highlights aus OSM, Wikidata und GeoNames. Erster Lauf für ein neues Revier.",
     action: startGazetteerAction,
     button: "Gazetteer aufbauen",
   },

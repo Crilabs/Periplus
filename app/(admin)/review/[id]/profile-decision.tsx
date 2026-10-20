@@ -167,7 +167,7 @@ export function ProfileDecision({
             <DecisionPanel
               question="Welcher Wert gilt?"
               className="lg:col-span-2"
-              note="„Wert A“ und „Wert B“ gehen als Prüfung in das Profil ein. „Beide (saisonal)“ und „Offen lassen“ gelten dauerhaft für dieses Wertepaar: derselbe Widerspruch wird nicht erneut vorgelegt."
+              note="„Wert A“ und „Wert B“ gehen als Prüfung in das Profil ein. „Beide (saisonal)“ und „Offen lassen“ gelten dauerhaft für dieses Wertepaar: derselbe Konflikt wird nicht erneut vorgelegt."
             >
               <DecisionForm
                 {...props}
@@ -188,7 +188,7 @@ export function ProfileDecision({
                 hint={subject.b && `„${subject.b.display}“`}
               />
               <DecisionForm {...props} n={3} label="Beide (saisonal)" decision={{ action: "seasonal" }} hint="Beide Werte gelten, je nach Saison." />
-              <DecisionForm {...props} n={4} label="Offen lassen" decision={{ action: "leave_open" }} hint="Der Widerspruch bleibt bestehen." />
+              <DecisionForm {...props} n={4} label="Offen lassen" decision={{ action: "leave_open" }} hint="Der Konflikt bleibt bestehen." />
             </DecisionPanel>
           )}
           {facts}

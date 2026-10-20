@@ -31,7 +31,7 @@ function QueueTable({ rows }: { rows: Row[] }) {
     <Table>
       <thead>
         <tr>
-          <th className={thClass}>Queue</th>
+          <th className={thClass}>Warteschlange</th>
           <th className={`${thClass} text-right`}>Wartend</th>
           <th className={`${thClass} text-right`}>Aktiv</th>
           <th className={`${thClass} text-right`}>Fehlgeschlagen</th>
