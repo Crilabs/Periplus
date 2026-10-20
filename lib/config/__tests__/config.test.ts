@@ -7,7 +7,7 @@ import { METRIC_KEYS } from "@/lib/db/schema/quality";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { areaByKey, getConfig, getConsolidationConfig, loadConfig } from "../index";
-import { modelsSchema } from "../schemas";
+import { modelsSchema, queuesSchema } from "../schemas";
 
 const repoConfig = loadConfig("config");
 
@@ -685,5 +685,13 @@ describe("areaByKey", () => {
   it("returns the area and throws on an unknown key", () => {
     expect(areaByKey("saronic").names.en).toBe("Saronic Gulf");
     expect(() => areaByKey("atlantis")).toThrow(/atlantis/);
+  });
+});
+
+describe("queue configuration", () => {
+  it("rejects a misspelt key instead of dropping it, so a timeout never falls back to the pg-boss default (DAT-8)", () => {
+    const entry = { concurrency: 8, retryLimit: 2, retryDelaySeconds: 120, retryBackoff: true };
+    expect(queuesSchema.safeParse({ "fetch.url": { ...entry, expireInSeconds: 3600 } }).success).toBe(true);
+    expect(queuesSchema.safeParse({ "fetch.url": { ...entry, expireInSecond: 3600 } }).success).toBe(false);
   });
 });

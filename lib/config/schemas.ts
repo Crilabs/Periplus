@@ -15,7 +15,7 @@ import { COPY_SHINGLE_WORDS } from "@/lib/domain/documents/shingles";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { CONVERTERS, crawlRulesPatchSchema, regexPattern } from "@/lib/domain/sources/crawl-rules";
 
-export const queueConfigSchema = z.object({
+export const queueConfigSchema = z.strictObject({
   concurrency: z.number().int().min(1),
   retryLimit: z.number().int().min(0),
   retryDelaySeconds: z.number().int().min(0),
