@@ -7,8 +7,10 @@ import { serializeFile, sha256Hex } from "@/lib/domain/delivery/serialize";
 import { createRun } from "@/lib/domain/runs";
 import { newId, newPublicId } from "@/lib/domain/ids";
 import type { RevisitScenario } from "@/lib/domain/revisit/scenario";
-import { parseArgs as parseRevisitArgs, scenarioMismatch, waitForRun } from "@/scripts/sim/revisit";
-import { parseArgs, renderReport, simVerify } from "@/scripts/sim/verify";
+import { scenarioMismatch } from "@/lib/domain/revisit/preflight";
+import { parseArgs as parseRevisitArgs, waitForRun } from "@/scripts/sim/revisit";
+import { simVerify } from "@/lib/domain/revisit/sim-verify";
+import { parseArgs, renderReport } from "@/scripts/sim/verify";
 import { withRollback } from "@/test/db";
 import { insertQualityArea } from "@/test/quality";
 import { memoryArchive } from "@/test/s3";
@@ -20,9 +22,9 @@ import { insertTestSource } from "@/test/text";
  */
 
 describe("sim:verify parseArgs", () => {
-  it("needs area and scenario; base url and key go together, spot only with them", () => {
+  it("needs area and scenario; the key of --base-url comes from PERIPLUS_API_KEY, never from argv (final review A M-4)", () => {
     expect(parseArgs(["--area", "saronic", "--scenario", "data/sim/s.json"])).toEqual({ area: "saronic", scenario: "data/sim/s.json" });
-    expect(parseArgs(["--area", "a", "--scenario", "s", "--base-url", "http://localhost:3001", "--key", "pk_x", "--spot", "sp_1", "--out", "r.json"])).toEqual({
+    expect(parseArgs(["--area", "a", "--scenario", "s", "--base-url", "http://localhost:3001", "--spot", "sp_1", "--out", "r.json"], { PERIPLUS_API_KEY: "pk_x" })).toEqual({
       area: "a",
       scenario: "s",
       baseUrl: "http://localhost:3001",
@@ -30,8 +32,11 @@ describe("sim:verify parseArgs", () => {
       spot: "sp_1",
       out: "r.json",
     });
+    expect(() => parseArgs(["--area", "a", "--scenario", "s", "--base-url", "http://localhost:3001", "--key", "pk_x"], { PERIPLUS_API_KEY: "pk_x" })).toThrow(
+      "--key gibt es nicht: den Schlüssel über PERIPLUS_API_KEY übergeben",
+    );
+    expect(() => parseArgs(["--area", "a", "--scenario", "s", "--base-url", "http://localhost:3001"], {})).toThrow("--base-url braucht den API-Schlüssel der Simulation in PERIPLUS_API_KEY");
     expect(() => parseArgs(["--area", "a"])).toThrow(/usage/);
-    expect(() => parseArgs(["--area", "a", "--scenario", "s", "--base-url", "http://x"])).toThrow(/usage/);
     expect(() => parseArgs(["--area", "a", "--scenario", "s", "--spot", "sp_1"])).toThrow(/usage/);
     expect(() => parseArgs(["--area", "a", "--area", "b", "--scenario", "s"])).toThrow(/usage/);
     expect(() => parseArgs(["--area", "a", "--scenario", "s", "--verbose", "x"])).toThrow(/usage/);
@@ -211,10 +216,16 @@ async function framedClone(tx: Db, o: { secondVersionFrom?: string; unchanged?: 
   return { ...c, archive, runId, spot };
 }
 
-/** A fetch stub answering `body` and recording the URLs asked for. */
-function apiStub(body: unknown) {
+/**
+ * A fetch stub answering `body` for an asOf request and `current` (default: the clone's newest state, v3) for the
+ * request without asOf, recording the URLs asked for.
+ */
+function apiStub(body: unknown, current: unknown = { dataVersion: 3, spot: undefined as unknown }) {
   const calls: string[] = [];
-  const fetch = (async (u: string) => (calls.push(String(u)), new Response(JSON.stringify(body), { status: 200 }))) as unknown as typeof globalThis.fetch;
+  const fetch = (async (u: string) => {
+    calls.push(String(u));
+    return new Response(JSON.stringify(String(u).includes("asOf=") ? body : current), { status: 200 });
+  }) as unknown as typeof globalThis.fetch;
   return { calls, fetch };
 }
 
@@ -224,9 +235,10 @@ describe("simVerify asOf (ruling M7-P18, M7-G-R3)", () => {
   it("picks the changed spot, asks for the day before the FIRST package after the revisit and expects the old spot", () =>
     withRollback(async (tx) => {
       const c = await framedClone(tx);
-      const api = apiStub({ schemaVersion: "1.0", area: "ar_x", dataVersion: 1, spot: c.spot(1) });
+      const api = apiStub({ schemaVersion: "1.0", area: "ar_x", dataVersion: 1, spot: c.spot(1) }, { dataVersion: 3, spot: c.spot(3) });
       const report = await simVerify(tx, c.archive, withApi(c.areaKey), { scenario: c.scenario, fetch: api.fetch });
-      expect(api.calls).toEqual([`http://localhost:3001/api/v1/spots/${c.publicId}?asOf=2026-06-07`]);
+      // first the newest state (only the simulation web has it), then the state before the revisit
+      expect(api.calls).toEqual([`http://localhost:3001/api/v1/spots/${c.publicId}`, `http://localhost:3001/api/v1/spots/${c.publicId}?asOf=2026-06-07`]);
       expect(report.asOf).toEqual({
         ok: true,
         asOf: "2026-06-07",
@@ -239,7 +251,7 @@ describe("simVerify asOf (ruling M7-P18, M7-G-R3)", () => {
       expect(JSON.stringify(report) + renderReport(report).join("\n")).not.toContain("pk_secret");
 
       // the right data version with another spot is not the old value
-      const wrong = apiStub({ dataVersion: 1, spot: c.spot(2) });
+      const wrong = apiStub({ dataVersion: 1, spot: c.spot(2) }, { dataVersion: 3, spot: c.spot(3) });
       const failed = await simVerify(tx, c.archive, withApi(c.areaKey), { scenario: c.scenario, fetch: wrong.fetch });
       expect(failed.asOf).toMatchObject({ ok: false, check: { ok: false, reason: "Spot weicht vom Stand vor dem Revisit ab" } });
       expect(failed.passes).toBe(false);
@@ -266,6 +278,37 @@ describe("simVerify asOf (ruling M7-P18, M7-G-R3)", () => {
       expect(report.asOf).toEqual({ ok: false, reason: `asOf 2026-06-07 liefert für ${c.publicId} einen Stand nach dem Revisit` });
       expect(api.calls).toEqual([]);
       expect(report.passes).toBe(false);
+    }));
+
+  it("refuses a web that does not serve the simulation's newest state, before asking for asOf (final review A M-4)", () =>
+    withRollback(async (tx) => {
+      const c = await framedClone(tx);
+      // the development web knows only the package before the revisit: it answers v1 for the current state too
+      const dev = apiStub({ dataVersion: 1, spot: c.spot(1) }, { dataVersion: 1, spot: c.spot(1) });
+      const report = await simVerify(tx, c.archive, withApi(c.areaKey), { scenario: c.scenario, fetch: dev.fetch });
+      expect(report.asOf).toEqual({
+        ok: false,
+        reason:
+          "http://localhost:3001 ist nicht das Simulations-Web (Datenversion 1 statt 3 (Stand der Simulation nach dem Revisit)) – das Web aus dem eigenen Worktree mit .env.sim starten",
+      });
+      expect(dev.calls).toEqual([`http://localhost:3001/api/v1/spots/${c.publicId}`]);
+      expect(report.passes).toBe(false);
+    }));
+
+  it("refuses a base URL that is not the local simulation web before any request (final review A M-4)", () =>
+    withRollback(async (tx) => {
+      const c = await framedClone(tx);
+      const api = apiStub({});
+      for (const baseUrl of ["https://periplus.example.org", "http://10.0.0.5:3001", "ftp://localhost"]) {
+        await expect(simVerify(tx, c.archive, { ...withApi(c.areaKey), baseUrl }, { scenario: c.scenario, fetch: api.fetch })).rejects.toThrow(
+          "--base-url nur gegen das lokale Simulations-Web (localhost",
+        );
+      }
+      expect(api.calls).toEqual([]);
+      for (const baseUrl of ["http://127.0.0.1:3001", "http://[::1]:3001"]) {
+        await simVerify(tx, c.archive, { ...withApi(c.areaKey), baseUrl }, { scenario: c.scenario, fetch: api.fetch });
+      }
+      expect(api.calls).toHaveLength(2);
     }));
 
   it("is refused while a revisit run of the area is still queued or running", () =>

@@ -23,7 +23,7 @@ import { freezeRevisitRun, REVISIT_FREEZE_STAGE } from "@/lib/pipeline/revisit-s
 import { planGeocode } from "@/lib/pipeline/text/geocode";
 import { TEXT_RUN_STAGES } from "@/lib/pipeline/text/run";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
-import { foreignJobs, revisitPreflight, SIM_TRIGGERED_BY } from "@/scripts/sim/revisit";
+import { foreignJobs, revisitPreflight, SIM_TRIGGERED_BY } from "@/lib/domain/revisit/preflight";
 import { insertExtraction, insertMention, insertMentionFact, insertPlace } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { insertQualityArea } from "@/test/quality";
@@ -262,7 +262,7 @@ describe("sim:revisit preflight", () => {
         expect(problems).toEqual([
           "keine Sim-Datenbank – scripts/sim/clone.sh",
           `${before + 1} fremde Jobs in der Warteschlange (wartend, wiederholt oder laufend) – erst abwarten oder beenden`,
-          expect.stringMatching(/^Szenario-Eintrag e1: no document for /),
+          expect.stringMatching(/^Szenario-Eintrag e1: kein Dokument für /),
           `erst Paket bauen: Revier ${a.areaKey} hat keine gültige Lieferung`,
         ]);
       },

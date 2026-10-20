@@ -230,21 +230,22 @@ export async function asOfPlan(db: Db, areaKey: string): Promise<AsOfPlan> {
 export type AsOfCheck = { ok: boolean; status: number; dataVersion: number | null; reason?: string };
 
 /**
- * `GET <baseUrl>/api/v1/spots/<spotId>?asOf=<asOf>` with the API key (never logged or returned): ok when the API
- * answers 200 with the data version the spot had before the revisit (`expectBefore.dataVersion`) and, when given, the
- * spot as it was delivered then (`expectBefore.spot`, compared as canonical JSON: the old value, not only its number,
- * ruling M7-G-R3). A network error is status 0.
+ * `GET <baseUrl>/api/v1/spots/<spotId>[?asOf=<asOf>]` with the API key (never logged or returned): ok when the API
+ * answers 200 with `expect.dataVersion` and, when given, `expect.spot` (compared as canonical JSON: the value, not only
+ * its number, ruling M7-G-R3). `label` names the expected state in the reason. A network error is status 0.
  */
-export async function checkAsOf(input: {
+async function checkSpotApi(input: {
   baseUrl: string;
   key: string;
   spotId: string;
-  asOf: string;
-  expectBefore: { dataVersion: number; spot?: unknown };
+  asOf?: string;
+  expect: { dataVersion: number; spot?: unknown };
+  label: string;
   fetch?: typeof fetch;
 }): Promise<AsOfCheck> {
   const doFetch = input.fetch ?? fetch;
-  const url = `${input.baseUrl.replace(/\/+$/, "")}/api/v1/spots/${encodeURIComponent(input.spotId)}?asOf=${encodeURIComponent(input.asOf)}`;
+  const query = input.asOf === undefined ? "" : `?asOf=${encodeURIComponent(input.asOf)}`;
+  const url = `${input.baseUrl.replace(/\/+$/, "")}/api/v1/spots/${encodeURIComponent(input.spotId)}${query}`;
   let res: Response;
   try {
     res = await doFetch(url, { headers: { Authorization: `Bearer ${input.key}`, Accept: "application/json" } });
@@ -261,16 +262,44 @@ export async function checkAsOf(input: {
   } catch {
     return { ok: false, status: res.status, dataVersion: null, reason: "Antwort ist kein JSON" };
   }
-  if (dataVersion !== input.expectBefore.dataVersion) {
-    return {
-      ok: false,
-      status: res.status,
-      dataVersion,
-      reason: `Datenversion ${dataVersion ?? "fehlt"} statt ${input.expectBefore.dataVersion} (Stand vor dem Revisit)`,
-    };
+  if (dataVersion !== input.expect.dataVersion) {
+    return { ok: false, status: res.status, dataVersion, reason: `Datenversion ${dataVersion ?? "fehlt"} statt ${input.expect.dataVersion} (${input.label})` };
   }
-  if (input.expectBefore.spot !== undefined && (spot === undefined || canonicalJson(spot) !== canonicalJson(input.expectBefore.spot))) {
-    return { ok: false, status: res.status, dataVersion, reason: "Spot weicht vom Stand vor dem Revisit ab" };
+  if (input.expect.spot !== undefined && (spot === undefined || canonicalJson(spot) !== canonicalJson(input.expect.spot))) {
+    return { ok: false, status: res.status, dataVersion, reason: `Spot weicht vom ${input.label} ab` };
   }
   return { ok: true, status: res.status, dataVersion };
+}
+
+/**
+ * `GET <baseUrl>/api/v1/spots/<spotId>?asOf=<asOf>` with the API key (never logged or returned): ok when the API
+ * answers 200 with the data version the spot had before the revisit (`expectBefore.dataVersion`) and, when given, the
+ * spot as it was delivered then (`expectBefore.spot`, compared as canonical JSON: the old value, not only its number,
+ * ruling M7-G-R3). A network error is status 0.
+ */
+export function checkAsOf(input: {
+  baseUrl: string;
+  key: string;
+  spotId: string;
+  asOf: string;
+  expectBefore: { dataVersion: number; spot?: unknown };
+  fetch?: typeof fetch;
+}): Promise<AsOfCheck> {
+  return checkSpotApi({ ...input, expect: input.expectBefore, label: "Stand vor dem Revisit" });
+}
+
+/**
+ * `GET <baseUrl>/api/v1/spots/<spotId>` (no asOf): ok when the API answers the spot's newest delivered state of the
+ * simulation clone (`expectCurrent`, a package built only in the simulation after the revisit). A web on another
+ * database answers another state, so this tells the simulation web apart from the development or production web
+ * (final review A M-4).
+ */
+export function checkCurrentSpot(input: {
+  baseUrl: string;
+  key: string;
+  spotId: string;
+  expectCurrent: { dataVersion: number; spot: unknown };
+  fetch?: typeof fetch;
+}): Promise<AsOfCheck> {
+  return checkSpotApi({ ...input, expect: input.expectCurrent, label: "Stand der Simulation nach dem Revisit" });
 }

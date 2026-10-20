@@ -28,6 +28,7 @@ import { fetchSitelinks } from "../lib/adapters/wikidata";
 import { getConfig, type AppConfig, type AreaConfig, type DiscoveryConfig } from "../lib/config";
 import { areaConfigSchema } from "../lib/config/schemas";
 import { createDb, type Db } from "../lib/db/client";
+import { refuseSimulationEnv } from "../lib/domain/revisit/guard";
 import { extractionUnits } from "../lib/db/schema";
 import { planUnits } from "../lib/domain/extraction/units";
 import { effectiveVersionMeta } from "../lib/domain/mentions/classification";
@@ -762,6 +763,8 @@ async function writeGeonames(downloads: Map<string, Uint8Array>, countries: stri
 }
 
 async function main(): Promise<void> {
+  // never in a simulation or on its clone: costs booked there escape the real budget (final review A M-5)
+  refuseSimulationEnv(process.env, "fixtures:record");
   const args = parseArgs(process.argv.slice(2));
   if ("ai" in args) return recordAi(args.ai);
   if ("nominatim" in args) return recordNominatim(args.nominatim.query, args.nominatim.tileId);

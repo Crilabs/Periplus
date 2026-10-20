@@ -233,7 +233,7 @@ describe("runNavilyComparison", () => {
       const spots = await loadNavilySpots(FIXTURE);
       // without a measurement nothing is written, not even the proposals
       await expect(runNavilyComparison(tx, { areaKey, spots, acceptProposals: true, writeCoverage: true, now: NOW })).rejects.toThrow(
-        /Erst messen \(\/quality\)/,
+        `Erst messen (/quality): Revier ${areaKey} hat noch keine Messung`,
       );
       expect(await rowsWrittenInTransaction(tx)).toEqual([]);
 

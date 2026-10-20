@@ -1,6 +1,7 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parseEnv } from "@/lib/env";
-import { assertSimulationEnv, assertSimulationTarget, databaseNameOf, requireSimulationEnv, SimulationTargetError } from "../guard";
+import { assertSimulationEnv, assertSimulationTarget, databaseNameOf, refuseSimulationEnv, requireSimulationEnv, SimulationTargetError } from "../guard";
 
 const baseEnv = {
   DATABASE_URL: "postgres://u:secret@h:5432/periplus_sim",
@@ -89,5 +90,35 @@ describe("requireSimulationEnv", () => {
     expect(() => requireSimulationEnv(real, "sim:verify")).toThrow(/^sim:verify läuft nur in einer Simulation: in der Umgebung dieses Aufrufs PERIPLUS_SIMULATION/);
     const sim = parseEnv({ ...baseEnv, DATABASE_URL: "postgres://u:p@h/periplus_sim", PERIPLUS_SIMULATION: "data/sim/s.json", S3_WRITE_PREFIX: "sim/x/" });
     expect(requireSimulationEnv(sim, "sim:verify")).toEqual({ scenarioPath: "data/sim/s.json", writePrefix: "sim/x/", database: "periplus_sim" });
+  });
+});
+
+describe("refuseSimulationEnv (final review A M-5)", () => {
+  const dev = { DATABASE_URL: "postgres://u:secret@h:5432/periplus" };
+
+  it("lets a paid CLI run on the development database only, never on the clone, in a simulation or with a prefix", () => {
+    expect(() => refuseSimulationEnv(dev, "smoke:ai")).not.toThrow();
+    expect(() => refuseSimulationEnv({}, "fixtures:record")).not.toThrow();
+    expect(() => refuseSimulationEnv({ DATABASE_URL: "postgres://u:secret@h:5432/periplus_sim" }, "compare:models")).toThrow(
+      /^compare:models nicht gegen den Simulationsklon periplus_sim/,
+    );
+    expect(() => refuseSimulationEnv({ ...dev, PERIPLUS_SIMULATION: "data/sim/s.json" }, "smoke:ai")).toThrow(/^smoke:ai ruft bezahlte Dienste und läuft nie in einer Simulation/);
+    expect(() => refuseSimulationEnv({ ...dev, S3_WRITE_PREFIX: "sim/x/" }, "consolidate")).toThrow(SimulationTargetError);
+    // the message never echoes the URL (it holds a password)
+    expect(() => refuseSimulationEnv({ DATABASE_URL: "postgres://u:secret@h:5432/periplus_sim" }, "x")).not.toThrow(/secret/);
+  });
+
+  it.each([
+    ["scripts/compare-models.ts", "compare:models"],
+    ["scripts/fixtures-record.ts", "fixtures:record"],
+    ["scripts/smoke-ai.ts", "smoke:ai"],
+    ["scripts/consolidate.ts", "consolidate"],
+  ])("%s calls it first in main, before any database or service", (file, cli) => {
+    const source = readFileSync(file, "utf8");
+    const main = source.slice(source.indexOf("async function main()"));
+    const body = main.slice(main.indexOf("{") + 1);
+    const firstStatements = body.split("\n").map((l) => l.trim()).filter((l) => l !== "" && !l.startsWith("//")).slice(0, 2);
+    expect(firstStatements.some((l) => l === `refuseSimulationEnv(process.env, "${cli}");`), firstStatements.join(" | ")).toBe(true);
+    expect(body.indexOf(`refuseSimulationEnv(process.env, "${cli}")`)).toBeLessThan(body.search(/createDb\(|record\w+\(/));
   });
 });

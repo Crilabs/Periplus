@@ -175,8 +175,8 @@ describe("preflightScenario", () => {
       };
       const result = await preflightScenario(tx, archive, scenario);
       expect(result[0]).toEqual({ entryId: "e1", documentId, ok: true });
-      expect(result[1]).toMatchObject({ entryId: "e2", ok: false, error: expect.stringMatching(/duplicate/) });
-      expect(result[2]).toMatchObject({ entryId: "e3", documentId: null, ok: false, error: expect.stringMatching(/no document/) });
+      expect(result[1]).toMatchObject({ entryId: "e2", ok: false, error: expect.stringMatching(/steht zweimal im Szenario/) });
+      expect(result[2]).toMatchObject({ entryId: "e3", documentId: null, ok: false, error: expect.stringMatching(/kein Dokument für/) });
     }));
 
   it("reports an edit that does not apply to the recorded version", () =>
@@ -185,7 +185,7 @@ describe("preflightScenario", () => {
       const url = `https://${newId().toLowerCase()}.test.invalid/a`;
       await recordedDocument(tx, archive, url, "# Bucht\n\nGuter Halt.\n");
       const [r] = await preflightScenario(tx, archive, { name: "t", entries: [entry({ url })] });
-      expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/ist im Sommer geöffnet/) });
+      expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/^Suchtext nicht auf der Seite: ".*ist im Sommer geöffnet/) });
       const [gone] = await preflightScenario(tx, archive, { name: "t", entries: [entry({ url, edit: { op: "gone" } })] });
       expect(gone!.ok).toBe(true);
     }));
@@ -201,17 +201,17 @@ describe("preflightScenario", () => {
       const p = await recordedDocument(tx, archive, paused, md);
       expect((await preflight(paused)).ok).toBe(true);
       await tx.update(sources).set({ status: "paused" }).where(eq(sources.id, p.sourceId));
-      expect(await preflight(paused)).toMatchObject({ ok: false, error: expect.stringMatching(/source .* is paused/) });
+      expect(await preflight(paused)).toMatchObject({ ok: false, error: expect.stringMatching(/Quelle von .* ist paused/) });
 
       const noRow = `https://${newId().toLowerCase()}.test.invalid/a`;
       const n = await recordedDocument(tx, archive, noRow, md);
       await tx.delete(crawlFrontier).where(eq(crawlFrontier.sourceId, n.sourceId));
-      expect(await preflight(noRow)).toMatchObject({ ok: false, error: expect.stringMatching(/no frontier row/) });
+      expect(await preflight(noRow)).toMatchObject({ ok: false, error: expect.stringMatching(/steht nicht in der Crawl-Liste/) });
 
       const skipped = `https://${newId().toLowerCase()}.test.invalid/a`;
       const k = await recordedDocument(tx, archive, skipped, md);
       await tx.update(crawlFrontier).set({ status: "skipped", reason: "denied" }).where(eq(crawlFrontier.sourceId, k.sourceId));
-      expect(await preflight(skipped)).toMatchObject({ ok: false, error: expect.stringMatching(/skipped/) });
+      expect(await preflight(skipped)).toMatchObject({ ok: false, error: expect.stringMatching(/übersprungen \(skipped\)/) });
 
       // Two pages planned before it (depth 0, discovered earlier): outside a window of 2, inside one of 3.
       const late = `https://${newId().toLowerCase()}.test.invalid/a`;
@@ -221,7 +221,7 @@ describe("preflightScenario", () => {
       for (const page of ["x", "y"]) {
         await tx.insert(crawlFrontier).values({ sourceId: l.sourceId, url: `https://${host}/${page}`, urlNormalized: `https://${host}/${page}` });
       }
-      expect(await preflight(late, { maxPages: 2 })).toMatchObject({ ok: false, error: expect.stringMatching(/beyond the source's 2 pages/) });
+      expect(await preflight(late, { maxPages: 2 })).toMatchObject({ ok: false, error: expect.stringMatching(/liegt hinter den 2 Seiten der Quelle/) });
       expect((await preflight(late, { maxPages: 3 })).ok).toBe(true);
       await tx.update(sources).set({ crawlRules: { maxPages: 2 } }).where(eq(sources.id, l.sourceId));
       expect((await preflight(late)).ok).toBe(false);

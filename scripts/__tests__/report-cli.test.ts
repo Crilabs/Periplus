@@ -4,7 +4,7 @@ import { parseSimVerifyReport } from "@/lib/domain/quality/reports";
 import type { MeasurementView } from "@/lib/domain/quality/snapshot";
 import { parseArgs as parseCostArgs, pilotDocPath } from "@/scripts/report-costs";
 import { costReportLink, parseArgs as parsePilotArgs, tilesOf } from "@/scripts/report-pilot";
-import type { SimVerifyReport } from "@/scripts/sim/verify";
+import type { SimVerifyReport } from "@/lib/domain/revisit/sim-verify";
 
 // The report CLIs (plan Task 16): arguments, output paths, the tile size and the sim:verify file they read.
 

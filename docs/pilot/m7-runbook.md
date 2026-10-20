@@ -177,12 +177,13 @@ Ruling M7-P27, Runbook-Abschnitt „Simulierter Revisit“ in `docs/runbook.md`.
 5. **API-Schlüssel in der Simulation:** `npm run apikey:create -- sim-check --scope delivery:read` mit `DATABASE_URL` von `.env.sim`, z. B. `npx tsx --env-file=.env.sim scripts/apikey.ts create sim-check --scope delivery:read`.
 6. **Verifikation**, erst nach dem Ende beider Revisit-Läufe (sonst verweigert):
    ```bash
+   read -rs PERIPLUS_API_KEY && export PERIPLUS_API_KEY     # Schlüssel aus Schritt 5 einfügen, Enter (oder in .env.sim)
    npm run sim:verify -- --area saronic --scenario data/sim/scenario.json \
-     --base-url http://localhost:3001 --key pk_… [--spot sp_…] --out docs/pilot/<datum>-revisit.json
+     --base-url http://localhost:3001 [--spot sp_…] --out docs/pilot/<datum>-revisit.json
    ```
    - Erwartet: 10 von 10, 0 unerwartete, „asOf ok“, Exit 0.
+   - Der Schlüssel kommt nur aus `PERIPLUS_API_KEY`; `--key` gibt es nicht (Shell-History). `--base-url` nimmt nur `localhost`, `127.0.0.1` oder `[::1]`. Vor der asOf-Frage muss das Web den neuesten Stand der Simulation liefern (das Paket nach dem Revisit gibt es nur im Klon); sonst „ist nicht das Simulations-Web“ (M7-FIN-R1).
    - Die JSON-Datei enthält Ergebnis, asOf-Prüfung und die Kosten der Sim-Datenbank. Sie zitiert keine fremden Seiten und darf eingecheckt werden. Vorher prüfen.
-   - Den Schlüssel nicht in die Shell-History schreiben (Runbook „Abnehmer-Prüfung“).
 7. **Aufräumen:** Sim-Worker und Sim-Web stoppen.
    - `dropdb periplus_sim`, lokal: `docker compose -f docker/compose.dev.yml exec db dropdb -U periplus periplus_sim`.
    - Alle Objekte unter dem Präfix `sim/<datum>/` im Bucket löschen.

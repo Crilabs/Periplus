@@ -71,7 +71,7 @@ export async function runNavilyComparison(
   const settings = { cfg, affixes: getConfig().nameAffixes };
 
   const measurement = input.writeCoverage ? await latestMeasurement(db, input.areaKey) : null;
-  if (input.writeCoverage && !measurement) throw new Error(`Erst messen (/quality): area ${input.areaKey} has no measurement`);
+  if (input.writeCoverage && !measurement) throw new Error(`Erst messen (/quality): Revier ${input.areaKey} hat noch keine Messung`);
 
   const pass = async (tx: Db, write: boolean): Promise<NavilyRunResult> => {
     // the set's places are locked before their subjects are loaded, so no profile changes in between (bundle C review)

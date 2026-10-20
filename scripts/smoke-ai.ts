@@ -1,8 +1,11 @@
 import { createDb } from "../lib/db/client";
+import { refuseSimulationEnv } from "../lib/domain/revisit/guard";
 import { createAnthropicClient } from "../lib/ai/anthropic";
 import { echoTask } from "../lib/ai/tasks/system-echo";
 
 async function main(): Promise<void> {
+  // never in a simulation or on its clone: costs booked there escape the real budget (final review A M-5)
+  refuseSimulationEnv(process.env, "smoke:ai");
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
   if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not set (put it in .env.local)");

@@ -86,6 +86,24 @@ export function requireSimulationEnv(env: Pick<Env, "PERIPLUS_SIMULATION" | "DAT
   return sim;
 }
 
+/**
+ * Start check of a CLI that calls paid services on its own (`compare:models`, `fixtures:record`, `smoke:ai`,
+ * `consolidate`): never in a simulation (`PERIPLUS_SIMULATION`), never against the simulation clone and never with an
+ * archive write prefix. Costs booked in the clone are dropped with it, so the real daily budget would never see them
+ * (final review A M-5). Takes the raw environment: these CLIs do not need the full `Env`. German messages.
+ */
+export function refuseSimulationEnv(env: Record<string, string | undefined>, cli: string): void {
+  if (env.PERIPLUS_SIMULATION) {
+    throw new SimulationTargetError(`${cli} ruft bezahlte Dienste und läuft nie in einer Simulation: ohne PERIPLUS_SIMULATION starten (nicht mit .env.sim).`);
+  }
+  if (env.DATABASE_URL && databaseNameOrNull(env.DATABASE_URL) === SIMULATION_DATABASE) {
+    throw new SimulationTargetError(
+      `${cli} nicht gegen den Simulationsklon ${SIMULATION_DATABASE}: dort gebuchte Kosten sieht das echte Tagesbudget nie. DATABASE_URL auf die Entwicklungsdatenbank setzen.`,
+    );
+  }
+  if (env.S3_WRITE_PREFIX) throw new SimulationTargetError("S3_WRITE_PREFIX gehört zu einer Simulation: ohne PERIPLUS_SIMULATION nicht setzen.");
+}
+
 /** The database name, or null when the URL does not parse (a non-simulation process then fails at connect, not here). */
 function databaseNameOrNull(url: string): string | null {
   try {

@@ -121,7 +121,10 @@ export function parseScenario(text: string, path: string): RevisitScenario {
 
 /** A `replace`/`delete` whose text the page does not contain. */
 export class ScenarioEditNotApplicable extends Error {
-  constructor(url: string, text: string) {
+  constructor(
+    url: string,
+    readonly text: string,
+  ) {
     super(`scenario edit for ${url}: text not found: "${text}"`);
     this.name = "ScenarioEditNotApplicable";
   }
@@ -129,7 +132,11 @@ export class ScenarioEditNotApplicable extends Error {
 
 /** A `replace`/`delete` whose text the page contains more than once. */
 export class ScenarioEditAmbiguous extends Error {
-  constructor(url: string, text: string, count: number) {
+  constructor(
+    url: string,
+    readonly text: string,
+    readonly count: number,
+  ) {
     super(`scenario edit for ${url}: text found ${count} times: "${text}"`);
     this.name = "ScenarioEditAmbiguous";
   }
@@ -236,14 +243,14 @@ async function isEditOfRecorded(db: Db, archive: Archive, documentId: string, en
 async function unreachable(db: Db, sourceId: string, urlNormalized: string, maxPagesOverride?: number): Promise<string | null> {
   const source = await getSource(db, sourceId);
   if (!source || source.status !== "approved" || source.validTo !== null) {
-    return `source of ${urlNormalized} is ${source ? (source.validTo !== null ? "ended" : source.status) : "missing"}, a revisit does not fetch it`;
+    return `Quelle von ${urlNormalized} ist ${source ? (source.validTo !== null ? "beendet" : source.status) : "nicht vorhanden"}, ein Revisit ruft die Seite nicht ab`;
   }
   const [row] = await db
     .select({ id: crawlFrontier.id, status: crawlFrontier.status })
     .from(crawlFrontier)
     .where(and(eq(crawlFrontier.sourceId, sourceId), eq(crawlFrontier.urlNormalized, urlNormalized)));
-  if (!row) return `${urlNormalized} has no frontier row, a revisit does not fetch it`;
-  if (row.status === "skipped") return `${urlNormalized} is skipped in the frontier, a revisit does not fetch it`;
+  if (!row) return `${urlNormalized} steht nicht in der Crawl-Liste (Frontier), ein Revisit ruft die Seite nicht ab`;
+  if (row.status === "skipped") return `${urlNormalized} ist in der Crawl-Liste übersprungen (skipped), ein Revisit ruft die Seite nicht ab`;
   const maxPages = maxPagesOverride ?? source.crawlRules.maxPages;
   const planned = await db
     .select({ id: crawlFrontier.id })
@@ -251,14 +258,21 @@ async function unreachable(db: Db, sourceId: string, urlNormalized: string, maxP
     .where(and(eq(crawlFrontier.sourceId, sourceId), ne(crawlFrontier.status, "skipped")))
     .orderBy(asc(crawlFrontier.depth), asc(crawlFrontier.discoveredAt), asc(crawlFrontier.id))
     .limit(maxPages);
-  if (!planned.some((p) => p.id === row.id)) return `${urlNormalized} is beyond the source's ${maxPages} pages, a revisit does not fetch it`;
+  if (!planned.some((p) => p.id === row.id)) return `${urlNormalized} liegt hinter den ${maxPages} Seiten der Quelle, ein Revisit ruft die Seite nicht ab`;
   return null;
 }
 
 export type PreflightResult = { entryId: string; documentId: string | null; ok: boolean; error?: string };
 
+/** The German text of an edit that cannot be applied (preflight output; the error classes keep English messages for logs). */
+function editErrorText(error: unknown): string {
+  if (error instanceof ScenarioEditNotApplicable) return `Suchtext nicht auf der Seite: "${error.text}"`;
+  if (error instanceof ScenarioEditAmbiguous) return `Suchtext ${error.count}-mal auf der Seite (muss genau einmal vorkommen): "${error.text}"`;
+  return (error as Error).message;
+}
+
 /**
- * Checks a scenario against the database before a simulated revisit, each entry for:
+ * Checks a scenario against the database before a simulated revisit (errors in German: the CLI prints them), each entry for:
  * - its URL (normalized, once) is a known active document with a current version;
  * - the revisit fetches it (`unreachable`: source approved, frontier row present and not skipped, within `maxPages`,
  *   `opts.maxPages` standing for a run's `params.maxPages`);
@@ -278,7 +292,7 @@ export async function preflightScenario(
   for (const entry of scenario.entries) {
     const key = scenarioUrlKey(entry.url);
     if (seen.has(key)) {
-      results.push({ entryId: entry.id, documentId: null, ok: false, error: `duplicate url ${key}` });
+      results.push({ entryId: entry.id, documentId: null, ok: false, error: `URL ${key} steht zweimal im Szenario` });
       continue;
     }
     seen.add(key);
@@ -288,11 +302,11 @@ export async function preflightScenario(
       .where(eq(documents.urlNormalized, key));
     const fail = (error: string): PreflightResult => ({ entryId: entry.id, documentId: doc?.id ?? null, ok: false, error });
     if (!doc) {
-      results.push(fail(`no document for ${key}`));
+      results.push(fail(`kein Dokument für ${key}`));
       continue;
     }
     if (doc.status !== "active" || !doc.currentVersionId) {
-      results.push(fail(`document for ${key} is ${doc.status}${doc.currentVersionId ? "" : " without a current version"}`));
+      results.push(fail(`Dokument für ${key} ist ${doc.status}${doc.currentVersionId ? "" : " und hat keine aktuelle Version"}`));
       continue;
     }
     const notFetched = await unreachable(db, doc.sourceId, key, opts.maxPages);
@@ -303,12 +317,12 @@ export async function preflightScenario(
     if (entry.edit.op !== "gone") {
       const base = await editBase(db, archive, doc.id);
       if (!base) {
-        results.push(fail(`document for ${key} has no current version`));
+        results.push(fail(`Dokument für ${key} hat keine aktuelle Version`));
         continue;
       }
       if (base.simulated) {
         if (!(await isEditOfRecorded(db, archive, doc.id, entry, base.contentHash))) {
-          results.push(fail(`document for ${key} has a simulated current version that is not this edit of a recorded version`));
+          results.push(fail(`Dokument für ${key} hat eine simulierte aktuelle Version, die nicht diese Änderung einer aufgezeichneten Version ist`));
           continue;
         }
       } else {
@@ -316,7 +330,7 @@ export async function preflightScenario(
         try {
           edited = applyEdit(base.markdown, entry.edit, entry.url);
         } catch (error) {
-          results.push(fail((error as Error).message));
+          results.push(fail(editErrorText(error)));
           continue;
         }
         const hash = hashOf(edited);
@@ -325,7 +339,7 @@ export async function preflightScenario(
           .from(documentVersions)
           .where(and(eq(documentVersions.documentId, doc.id), eq(documentVersions.simulated, true)));
         if (simulated.some((v) => v.contentHash !== hash)) {
-          results.push(fail(`document for ${key} has a simulated version with another text`));
+          results.push(fail(`Dokument für ${key} hat schon eine simulierte Version mit anderem Text`));
           continue;
         }
       }

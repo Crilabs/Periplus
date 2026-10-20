@@ -86,8 +86,8 @@ Alle Werte **werden im Pilot gemessen**, auf echten Daten von `saronic` (und `ar
 | Fact-Präzision | nach `/quality/compare` und dem Review „Vergleichsabweichung“, dann „Messen“ | wird im Pilot gemessen |
 | Gazetteer vollständig | `npm run check:gazetteer -- --area saronic`, `-- --area argolic` | wird im Pilot gemessen |
 | Unbenannte Buchten je Revier, Laufzeit der Stufe | Lauf „Geometrie für Revier“ → Stufe `geometry.detect_bays`, Log `unnamed bays detected` | wird im Pilot gemessen |
-| Simulierter Revisit | `npm run sim:verify -- … --out docs/pilot/<datum>-revisit.json` | wird im Pilot gemessen |
-| `asOf` vor dem Revisit | `sim:verify --base-url http://localhost:3001 --key pk_… [--spot sp_…]` | wird im Pilot gemessen |
+| Simulierter Revisit | `npm run sim:verify -- --area saronic --scenario data/sim/scenario.json --out docs/pilot/<datum>-revisit.json` | wird im Pilot gemessen |
+| `asOf` vor dem Revisit | `sim:verify --area saronic --scenario data/sim/scenario.json --base-url http://localhost:3001 [--spot sp_…]`, Schlüssel in `PERIPLUS_API_KEY` | wird im Pilot gemessen |
 | Review-Aufwand Lauf 2 | Messung „Lauf 2“, Kennzahl `review_minutes` | wird im Pilot gemessen |
 | Kosten je Ort und Lauf, Hochrechnung | `npm run report:costs -- --area saronic --first "Lauf 1" --second "Lauf 2" --revisit <datei>` | wird im Pilot gemessen |
 | Einheiten am Fact-Limit (`proposed` ≥ `maxFactsPerUnit`) nach Prompt v5 | Abfrage im Runbook M7, „Nach dem ersten Text-Lauf“ | wird im Pilot gemessen |
@@ -116,8 +116,8 @@ Alle Werte **werden im Pilot gemessen**, auf echten Daten von `saronic` (und `ar
 | --- | --- |
 | Alle Pilot-Zielwerte der Kennzahlen erreicht | `/quality?area=saronic` Messung „Lauf 1“ und „Lauf 2“ alle „erreicht“; Navily-Abdeckung per `npm run compare:navily -- --area saronic --coverage`; Präzision nach Abarbeiten von `/quality/compare` und Review `comparison_deviation` |
 | Gazetteer der Pilotkacheln vollständig (de, en, el) | `npm run check:gazetteer -- --area saronic` und `--area argolic` Exit 0 |
-| Simulierter Revisit: 10 von 10, keine falschen | `scripts/sim/clone.sh` → `sim:draft-scenario` → Szenario prüfen und einchecken → `sim:worker` → `sim:revisit` (zweimal) → Paket bauen in der Sim-Umgebung → `sim:verify --out docs/pilot/<datum>-revisit.json` Exit 0 |
-| Profil zum Stand vor dem Revisit per API | `sim:verify --base-url http://localhost:3001 --key pk_… --spot sp_…` meldet „asOf ok“ |
+| Simulierter Revisit: 10 von 10, keine falschen | `scripts/sim/clone.sh` → `sim:draft-scenario` → Szenario prüfen (nur unter `data/sim/`, nie einchecken) → `sim:worker` → `sim:revisit` (zweimal) → Paket bauen in der Sim-Umgebung → `sim:verify --area saronic --scenario data/sim/scenario.json --out docs/pilot/<datum>-revisit.json` Exit 0 |
+| Profil zum Stand vor dem Revisit per API | `sim:verify --area saronic --scenario data/sim/scenario.json --base-url http://localhost:3001 --spot sp_…` (Schlüssel in `PERIPLUS_API_KEY`) meldet „asOf ok“ |
 | Review-Aufwand zweiter Lauf < 60 min | echter zweiter Lauf („Revisit für Revier“) in Produktion, Messung „Lauf 2“, Kennzahl `review_minutes` < 60 |
 | Kosten je Ort und Lauf dokumentiert, Hochrechnung | `npm run report:costs -- --area saronic --first "Lauf 1" --second "Lauf 2"` → `docs/pilot/<datum>-kostenbericht.md` |
 | Abnehmer liest das Paket ohne Nachbearbeitung, validiert gegen das JSON-Schema | `npm run delivery:consume -- --base-url … --key … --area saronic` Exit 0 (M6) |
