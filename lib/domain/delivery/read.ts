@@ -105,9 +105,15 @@ export async function validDelivery(db: Db, subdivisionId: string, dataVersion?:
   return row ?? null;
 }
 
-/** The files a delivery has, in contract order (`changes.json` only from the second package on). */
-export function deliveryFiles(row: DeliveryRow): ContractFile[] {
-  return CONTRACT_FILES.filter((f) => Object.hasOwn(row.fileHashes, f));
+/**
+ * The files a delivery has: the contract files in contract order (`changes.json` only from the second package on),
+ * then its image files (`images/<public id>-<slot>.jpg`, contract 2.1, sorted by name). Both the API (`currentPackage`)
+ * and the admin package page link every one of them.
+ */
+export function deliveryFiles(row: DeliveryRow): string[] {
+  const contract = CONTRACT_FILES.filter((f) => Object.hasOwn(row.fileHashes, f));
+  const images = Object.keys(row.fileHashes).filter(isImageFile).sort();
+  return [...contract, ...images];
 }
 
 /**
@@ -171,11 +177,13 @@ export function cacheMaxAgeSeconds(): number {
   return getConfig().delivery.api.cacheMaxAgeSeconds;
 }
 
-export type PackageLinks = Partial<Record<ContractFile, string>>;
+/** File name of the package (a contract file or `images/…`) → its API URL, pinned to the data version. */
+export type PackageLinks = Record<string, string>;
 
 /**
  * The subdivision's current package (`GET /subdivisions/{subdivision}/package`): its manifest plus `links` to every
- * file it has, pinned to its data version. Null for an unknown subdivision or one without a valid delivery.
+ * file it has (`deliveryFiles`: the contract files and the image files), pinned to its data version. Null for an
+ * unknown subdivision or one without a valid delivery.
  */
 export async function currentPackage(
   db: Db,

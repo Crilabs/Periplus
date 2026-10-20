@@ -1,12 +1,12 @@
 import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
-import { CONTRACT_FILES, type ChangeEntry, type ChangesFile, type ContractFile, type Spot, type SpotBody } from "@/contract";
+import type { ChangeEntry, ChangesFile, Spot, SpotBody } from "@/contract";
 import type { Db } from "@/lib/db/client";
 import { deliveredObjects, deliveries, geoObjects, places, subdivisions, type DeliveryStatus } from "@/lib/db/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import type { DeliveryRow } from "./build";
 import { draftSubdivision, type OmittedSpot } from "./draft";
-import { readStoredFile, spotAsOf } from "./read";
+import { deliveryFiles, readStoredFile, spotAsOf } from "./read";
 import { contentTypeOf } from "./serialize";
 import type { CheckName, Finding, ValidationReport } from "./validate";
 import { contentHash } from "./versioning";
@@ -133,7 +133,8 @@ export type DeliveryDetail = {
   changes: ChangeEntry[] | null;
   /** Why `changes.json` could not be read (missing in S3 or not matching its hash); null when it could. */
   archiveError: string | null;
-  files: Array<{ name: ContractFile; sha256: string; bytes: number }>;
+  /** Every stored file (`deliveryFiles`: the contract files, then the image files `images/…`) with its recorded hash. */
+  files: Array<{ name: string; sha256: string; bytes: number }>;
   /** Public id of an object named in the report or the changes → its admin page (`/places/…`, `/geo/…`). */
   objectLinks: Record<string, string>;
 };
@@ -167,7 +168,7 @@ export async function deliveryDetail(db: Db, archive: Archive, id: string): Prom
     // a lost or altered file must not hide the report: the page says so instead
     archiveError = e instanceof Error ? e.message : String(e);
   }
-  const files = CONTRACT_FILES.filter((f) => Object.hasOwn(row.fileHashes, f)).map((name) => ({ name, ...row.fileHashes[name]! }));
+  const files = deliveryFiles(row).map((name) => ({ name, ...row.fileHashes[name]! }));
   const named = new Set<string>();
   const findings: Finding[] = [...(report.checks ?? []).flatMap((c) => c.findings), ...(report.warnings ?? [])];
   for (const f of findings) if (f.objectId) named.add(f.objectId);

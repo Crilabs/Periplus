@@ -5,6 +5,7 @@ import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { deliveryArchive } from "@/lib/domain/delivery/archive";
 import type { Finding } from "@/lib/domain/delivery/validate";
+import { isContractFile } from "@/lib/domain/delivery/read";
 import { deliveryDetail } from "@/lib/domain/delivery/view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import {
@@ -206,7 +207,7 @@ export default async function Page({ params }: PageProps<"/deliveries/[id]">) {
                   <li key={f.name} className="flex items-center justify-between gap-3 px-4 py-2.5">
                     <div className="min-w-0">
                       <p className="font-medium">
-                        {CONTRACT_FILE_LABELS[f.name]} <Mono>{f.name}</Mono>
+                        {isContractFile(f.name) ? CONTRACT_FILE_LABELS[f.name] : "Bild"} <Mono>{f.name}</Mono>
                       </p>
                       <p className="mt-0.5 truncate text-xs text-muted" title={`sha256 ${f.sha256}`}>
                         {bytes(f.bytes)} · <span className="font-mono">{f.sha256.slice(0, 16)}…</span>

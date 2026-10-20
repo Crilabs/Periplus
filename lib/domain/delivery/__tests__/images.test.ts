@@ -12,9 +12,11 @@ import { seedDeliverySubdivision, type DeliveryFixture } from "@/test/fixtures/d
 import { memoryArchive } from "@/test/s3";
 import { buildDelivery } from "../build";
 import { loadPlaceImages } from "../load";
+import { deliveryFiles } from "../read";
 import { sha256Hex } from "../serialize";
 import type { DeliveryPackage } from "../types";
 import { validatePackage, type ValidationDeps } from "../validate";
+import { deliveryDetail } from "../view";
 
 /*
  * Title images in the package (spec 13, contract 2.1) on the synthetic fixture subdivision: delivered behind the
@@ -91,6 +93,10 @@ describe("images in the package", () => {
       expect(archive.contentType(key)).toBe("image/jpeg");
       const [row] = await tx.select().from(deliveries).where(eq(deliveries.id, result.deliveryId));
       expect(row!.fileHashes[file]).toEqual({ sha256: sha256Hex(stored), bytes: stored.byteLength });
+      // the package lists it after the contract files: the API links it, the admin page offers its download
+      expect(deliveryFiles(row!)).toEqual(["manifest.json", "spots.json", "highlights.json", "regions.json", "coast.geojson", "weather-points.json", file]);
+      const detail = await deliveryDetail(tx, archive, row!.id);
+      expect(detail!.files.at(-1)).toEqual({ name: file, sha256: sha256Hex(stored), bytes: stored.byteLength });
       const manifest = await readJson<Manifest>(archive, `${prefixOf(f, 1)}manifest.json`);
       expect(manifest.files.at(-1)).toEqual({ name: file, sha256: sha256Hex(stored), bytes: stored.byteLength });
       expect(manifest.schemaVersion).toBe("2.1");
