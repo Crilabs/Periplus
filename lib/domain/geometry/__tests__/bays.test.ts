@@ -436,7 +436,9 @@ describe("bayHelperName query plan", () => {
       });
       await bayHelperName(explaining, p, 5000, cfg.bays.helperNameTypes);
       expect(plans).toHaveLength(1);
-      expect(plans[0]).toContain("geo_objects_geom_gist");
+      // the planner's index choice depends on table statistics (CI's near-empty table picks another index), so the
+      // test pins the GiST-usable bbox predicate on geom, not the chosen index
+      expect(plans[0]).toMatch(/\(g?\.?geom && '[0-9A-F]+'::geometry\)/);
       expect(plans[0]).not.toMatch(/Seq Scan on geo_objects/);
     }));
 });
