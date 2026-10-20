@@ -25,12 +25,29 @@ export async function rowsWrittenInTransaction(tx: Db): Promise<string[]> {
   return rows.map((r) => r.row);
 }
 
+type LonLat = { lon: number; lat: number };
+
 /**
- * A synthetic area with its own key and one coast tile per point of `tiles` (outside the pilot box; the caller rolls
- * back). `addPlace` adds a place in the first tile (or the tile of `at`), confirmed unless told otherwise.
+ * A random shift by whole tiles into 170–30° W, 0–20° south of the given points: far from the pilot box and from the
+ * fixed test coordinates (21.0/35.2 …), so concurrent test files never insert the same tile row and wait on each
+ * other's uncommitted row until rollback (final review A M-1). Positions inside a tile are kept.
  */
-export async function insertQualityArea(tx: Db, tilePoints: Array<{ lon: number; lat: number }>) {
+function randomTileShift(): (p: LonLat) => LonLat {
+  const cols = -764 + Math.floor(Math.random() * 561); // 21 + cols * 0.25 within about −170 … −30
+  const rows = -Math.floor(Math.random() * 81);
+  return (p) => ({ lon: p.lon + cols * 0.25, lat: p.lat + rows * 0.25 });
+}
+
+/**
+ * A synthetic area with its own key and one coast tile per point of `tiles` (the caller rolls back). The area is moved
+ * by a random whole-tile shift (`randomTileShift`): `at` maps a point given in the test's own coordinates to the area's
+ * real position. `addPlace` adds a place in the first tile (or the tile of `at`, in the test's coordinates), confirmed
+ * unless told otherwise.
+ */
+export async function insertQualityArea(tx: Db, givenPoints: LonLat[]) {
   const areaKey = `test-${newId()}`;
+  const at = randomTileShift();
+  const tilePoints = givenPoints.map(at);
   const first = tilePoints[0]!;
   const areaId = await insertNamedObject(tx, { type: "area", names: [{ name: "Test area" }], lon: first.lon + 0.11, lat: first.lat + 0.11, configKey: areaKey });
   const tileIds: string[] = [];
@@ -44,10 +61,10 @@ export async function insertQualityArea(tx: Db, tilePoints: Array<{ lon: number;
     tileIds.push(id);
   }
   let n = 0;
-  const addPlace = async (o: { status?: PlaceStatus; at?: { lon: number; lat: number }; inSet?: boolean } = {}) => {
-    const at = o.at ?? first;
-    const lon = at.lon + 0.0005 * ++n;
-    const geoObjectId = await insertNamedObject(tx, { type: "bay", names: [{ name: `Place ${n}` }], lon, lat: at.lat });
+  const addPlace = async (o: { status?: PlaceStatus; at?: LonLat; inSet?: boolean } = {}) => {
+    const pos = o.at ? at(o.at) : first;
+    const lon = pos.lon + 0.0005 * ++n;
+    const geoObjectId = await insertNamedObject(tx, { type: "bay", names: [{ name: `Place ${n}` }], lon, lat: pos.lat });
     const [p] = await tx
       .insert(places)
       .values({
@@ -56,12 +73,12 @@ export async function insertQualityArea(tx: Db, tilePoints: Array<{ lon: number;
         status: o.status ?? "confirmed",
         // valid long before any fixed measurement date a test passes as today
         validFrom: "2000-01-01",
-        tileId: tileIdFor(lon, at.lat),
-        position: geomFromGeoJson({ type: "Point", coordinates: [lon, at.lat] }),
+        tileId: tileIdFor(lon, pos.lat),
+        position: geomFromGeoJson({ type: "Point", coordinates: [lon, pos.lat] }),
       })
       .returning({ id: places.id });
     if (o.inSet) await tx.insert(comparisonSet).values({ placeId: p!.id, areaId, addedBy: "test" });
     return { placeId: p!.id, geoObjectId };
   };
-  return { areaKey, areaId, tileIds, addPlace };
+  return { areaKey, areaId, tileIds, addPlace, at };
 }

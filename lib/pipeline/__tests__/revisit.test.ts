@@ -29,6 +29,7 @@ import { withRollback } from "@/test/db";
 import { insertQualityArea } from "@/test/quality";
 import { memoryArchive } from "@/test/s3";
 import { insertTestSource } from "@/test/text";
+import { RUN_KIND_LABELS } from "@/app/(admin)/_components/labels";
 
 /*
  * The revisit run (plan Task 13, rulings M7-P6/P7/P8): stage list, starter, freeze stage and the simulation's stage
@@ -219,10 +220,10 @@ describe("revisit catch-up", () => {
       expect(await markConsolidationSkipped(tx, id, "run_ended")).toBe(true);
       const [run] = await tx.select({ params: runs.params }).from(runs).where(eq(runs.id, id));
       expect(await consolidationTargets(tx, { id, params: run!.params as Record<string, unknown> })).toEqual([]);
-      const runCount = async () => Number((await tx.execute<{ n: number }>(sql`select count(*)::int as n from runs`)).rows[0]!.n);
-      const before = await runCount();
-      expect(await catchUpConsolidation(tx, boss, id, "test", { config: a.config })).toEqual({ status: "no_targets" });
-      expect(await runCount()).toBe(before);
+      // no catch-up run is created: counted among the runs this call would trigger, never DB-wide (final review B M-12)
+      const triggeredBy = `catch-up-${newId()}`;
+      expect(await catchUpConsolidation(tx, boss, id, triggeredBy, { config: a.config })).toEqual({ status: "no_targets" });
+      expect(await tx.select({ id: runs.id }).from(runs).where(eq(runs.triggeredBy, triggeredBy))).toEqual([]);
       expect(inserted.filter((j) => j.queue.startsWith("consolidation."))).toEqual([]);
 
       // frozen with a gone page only: just that page's object (ruling M7-P7)
@@ -268,4 +269,10 @@ describe("sim:revisit preflight", () => {
       },
       { isolationLevel: "repeatable read" },
     ));
+});
+
+describe("revisit wording (final review B M-11)", () => {
+  it("the runs list names a revisit run „Revisit“, as the button, the dialog and the docs do", () => {
+    expect(RUN_KIND_LABELS.revisit).toBe("Revisit");
+  });
 });

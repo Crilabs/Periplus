@@ -58,7 +58,7 @@ export {
 export const RUN_KIND_LABELS: Record<RunKind, string> = {
   full: "Vollständig",
   stage: "Einzelne Stufe",
-  revisit: "Wiederbesuch",
+  revisit: "Revisit",
   event: "Ereignis",
   reprocess: "Neuverarbeitung",
   system: "System",

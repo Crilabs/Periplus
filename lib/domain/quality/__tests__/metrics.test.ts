@@ -40,16 +40,16 @@ import {
   shelterConfidenceMetric,
 } from "../metrics";
 
-// Synthetic area around 21.0° E / 35.2° N (outside the pilot box): two tiles, every row rolled back.
+// Synthetic area around 61.0° E / 35.2° N (outside the pilot box; its own tiles, no other file uses them, final review A M-1): two tiles, every row rolled back.
 
 const quality = getConfig().quality;
 const extractRoute = loadConfig("config").models.tasks["extract-route"]!;
-const WEST = { lon: 21.0, lat: 35.2 };
-const EAST = { lon: 21.3, lat: 35.2 };
+const WEST = { lon: 61.0, lat: 35.2 };
+const EAST = { lon: 61.3, lat: 35.2 };
 
 async function area(tx: Db) {
   const areaKey = `test-${newId()}`;
-  const areaId = await insertNamedObject(tx, { type: "area", names: [{ name: "Test area" }], lon: 21.15, lat: 35.2, configKey: areaKey });
+  const areaId = await insertNamedObject(tx, { type: "area", names: [{ name: "Test area" }], lon: 61.15, lat: 35.2, configKey: areaKey });
   const tileIds: string[] = [];
   for (const p of [WEST, EAST]) {
     const id = tileIdFor(p.lon, p.lat);
@@ -86,7 +86,7 @@ async function area(tx: Db) {
 
 /** A duplicate geo object merged into `survivorId` (as the gazetteer merge leaves it: ended, `merged_into_id` set). */
 async function mergedDuplicate(tx: Db, survivorId: string): Promise<string> {
-  const id = await insertNamedObject(tx, { type: "bay", names: [{ name: "Duplicate" }], lon: 21.002, lat: 35.2 });
+  const id = await insertNamedObject(tx, { type: "bay", names: [{ name: "Duplicate" }], lon: 61.002, lat: 35.2 });
   await tx.execute(sql`update geo_objects set merged_into_id = ${survivorId}, valid_to = current_date where id = ${id}`);
   return id;
 }
@@ -444,7 +444,7 @@ describe("routeReconstructionMetric", () => {
       await addRoute(tx, complete, [a.objectId, null], { status: "blocked", startedAt: new Date("2026-10-19T10:00:00Z") });
       const open = await tripReport(tx, [b.objectId, candidate.objectId, null]);
       // a report whose stops all lie outside the area is not in the scope
-      const elsewhere = await addPlace({ at: { lon: 22.0, lat: 35.2 } });
+      const elsewhere = await addPlace({ at: { lon: 62.0, lat: 35.2 } });
       await tripReport(tx, [elsewhere.objectId, null]);
 
       const r = await routeReconstructionMetric(tx, { areaKey });
@@ -506,9 +506,9 @@ describe("tile scope", () => {
       expect((await multiSourceMetric(tx, { areaKey, tileId: eastTile })).details).toEqual({ places: 2, multi: 1, multiDocument: 1 });
       expect((await multiSourceMetric(tx, { areaKey, tileId: westTile })).details).toEqual({ places: 3, multi: 0, multiDocument: 0 });
       // a tile of another area is out of the scope
-      expect((await coverageMetric(tx, { areaKey, tileId: tileIdFor(22.0, 35.2) })).details).toEqual({ set: 0, confirmed: 0 });
+      expect((await coverageMetric(tx, { areaKey, tileId: tileIdFor(62.0, 35.2) })).details).toEqual({ set: 0, confirmed: 0 });
       // a set member whose tile is not labelled with the area does not count for the area (ruling M7-C-R1)
-      await addPlace({ inSet: true, at: { lon: 22.0, lat: 35.2 } });
+      await addPlace({ inSet: true, at: { lon: 62.0, lat: 35.2 } });
       expect((await coverageMetric(tx, { areaKey })).details).toEqual({ set: 5, confirmed: 4 });
     }));
 });
