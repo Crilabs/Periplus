@@ -1,14 +1,17 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { SpotsFile } from "@/contract";
 import type { Db } from "@/lib/db/client";
+import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects, places, reviewDecisions, reviewTasks } from "@/lib/db/schema";
 import { buildDelivery } from "@/lib/domain/delivery/build";
-import { mergeCandidates, mergePlaceInto, PlaceMergeNotAllowed } from "@/lib/domain/place-merge";
+import { newPublicId } from "@/lib/domain/ids";
+import { mergeCandidates, mergePlaceInto, PlaceMergeNotAllowed, type MergeResult } from "@/lib/domain/place-merge";
 import { createReviewTask } from "@/lib/domain/review";
 import { testDb, withRollback } from "@/test/db";
 import { seedDeliveryArea, type DeliveryFixture } from "@/test/fixtures/delivery/area";
 import { memoryArchive } from "@/test/s3";
+import { insertNamedObject } from "@/test/text";
 
 /*
  * „Mit Ort zusammenlegen“ (ruling M6-P15) on the delivery fixture (rolled back): A and M are confirmed spots of one
@@ -29,6 +32,16 @@ const refusal = async (p: Promise<unknown>) => {
   }
   return "merged";
 };
+
+/** A confirmed place with its geo object (a bay) at `lon`/`lat`, in `tile` when given. */
+async function confirmedPlace(db: Db, o: { name: string; lon: number; lat: number; tile?: string }): Promise<{ placeId: string; geoObjectId: string }> {
+  const geoObjectId = await insertNamedObject(db, { type: "bay", names: [{ name: o.name }], lon: o.lon, lat: o.lat, tiles: o.tile ? [o.tile] : [] });
+  const [p] = await db
+    .insert(places)
+    .values({ geoObjectId, kind: "anchorage", status: "confirmed", publicId: newPublicId("sp"), position: geomFromGeoJson({ type: "Point", coordinates: [o.lon, o.lat] }) })
+    .returning({ id: places.id });
+  return { placeId: p!.id, geoObjectId };
+}
 
 const placeRow = async (tx: Db, id: string) => (await tx.select().from(places).where(eq(places.id, id)))[0]!;
 const geoRow = async (tx: Db, id: string) => (await tx.select().from(geoObjects).where(eq(geoObjects.id, id)))[0]!;
@@ -86,7 +99,8 @@ describe("mergePlaceInto", () => {
       expect(await merge(A.placeId, O.placeId)).toBe("across_areas");
       // nothing was written by the refusals
       expect(await placeRow(tx, A.placeId)).toMatchObject({ status: "confirmed", mergedIntoId: null });
-      expect(await tx.select().from(reviewTasks).where(eq(reviewTasks.subjectType, "place_merge"))).toEqual([]);
+      const mergeTasks = sql`${reviewTasks.subjectType} = 'place_merge' and ${reviewTasks.subjectId} in (${A.placeId}, ${K.placeId})`;
+      expect(await tx.select().from(reviewTasks).where(mergeTasks)).toEqual([]);
 
       expect(await merge(B.placeId, M.placeId)).toBe("merged");
       // B is merged now: neither a source nor a target any more
@@ -114,6 +128,50 @@ describe("mergePlaceInto and the profile lock", () => {
       expect((await placeRow(tx, A.placeId)).mergedIntoId).toBe(M.placeId);
     }));
 });
+
+describe("mergePlaceInto lock order", () => {
+  /*
+   * Committed rows (another connection must see them) far from every box other tests query (−120.3° / −60.3°, no
+   * tile, no area), ended afterwards. Ruling M6-G-R1: geo objects before places, as `mergeGeoObjects` and the
+   * review decision `same` lock them.
+   */
+  it("locks the geo objects before the places: a transaction holding a geo object and then taking the places never deadlocks with it", { timeout: 15_000 }, async () => {
+    const db = testDb();
+    const lon = -120.3 + Math.random() * 0.1;
+    const drop = await confirmedPlace(db, { name: "Lock Order Drop", lon, lat: -60.3 });
+    const keep = await confirmedPlace(db, { name: "Lock Order Keep", lon: lon + 0.001, lat: -60.3 });
+    try {
+      let merge!: Promise<MergeResult>;
+      // the other transaction holds the dropped geo object, as `mergeGeoObjects` in a `same` decision does ...
+      await db.transaction(async (other) => {
+        await other.execute(sql`select id from geo_objects where id = ${drop.geoObjectId} for update`);
+        const { rows } = await other.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
+        merge = mergePlaceInto(db, { placeId: drop.placeId, intoPlaceId: keep.placeId, decidedBy: ADMIN, confirmAcrossAreas: true });
+        merge.catch(() => undefined);
+        await waitUntilBlockedBy(db, rows[0]!.pid);
+        // ... and then takes the places: the waiting merge holds none of them
+        await other.execute(sql`set local lock_timeout = '3s'`);
+        await other.execute(sql`select id from places where id in (${drop.placeId}, ${keep.placeId}) order by id for update`);
+      });
+      expect(await merge).toMatchObject({ keepGeoObjectId: keep.geoObjectId, dropGeoObjectId: drop.geoObjectId });
+      expect((await placeRow(db, drop.placeId)).mergedIntoId).toBe(keep.placeId);
+    } finally {
+      const ids = [drop.geoObjectId, keep.geoObjectId];
+      await db.update(places).set({ validTo: sql`current_date` }).where(and(inArray(places.geoObjectId, ids), isNull(places.validTo)));
+      await db.update(geoObjects).set({ validTo: sql`current_date` }).where(and(inArray(geoObjects.id, ids), isNull(geoObjects.validTo)));
+    }
+  });
+});
+
+/** Waits (up to 5 s) until a backend waits for a lock the backend `pid` holds. */
+async function waitUntilBlockedBy(db: Db, pid: number): Promise<void> {
+  for (let i = 0; i < 100; i++) {
+    const { rows } = await db.execute<{ n: number }>(sql`select count(*)::int as n from pg_stat_activity where ${pid}::int = any(pg_blocking_pids(pid))`);
+    if (rows[0]!.n > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`no backend waits for ${pid}`);
+}
 
 /** Holds the advisory locks `keys` in a transaction on another connection while `run` runs. */
 async function holdingLocks<T>(db: Db, keys: string[], run: () => Promise<T>): Promise<T> {
@@ -152,6 +210,20 @@ describe("mergeCandidates", () => {
       expect(offered.find((c) => c.id === M.placeId)).toMatchObject({ name: "Marina Test", kind: "marina", publicId: M.publicId, sameArea: true, areaName: "Testrevier" });
       expect(offered.find((c) => c.id === O.placeId)).toMatchObject({ sameArea: false, areaName: null });
       expect(offered.find((c) => c.id === B.placeId)!.distanceM).toBeGreaterThan(1000);
+    }));
+
+  it("two places in no area are across areas for the dialog and the merge alike (review I-2)", () =>
+    withRollback(async (tx) => {
+      const f = await seedDeliveryArea(tx);
+      const { O } = f.places;
+      // a second confirmed place on O's tile, which belongs to no area
+      const P = await confirmedPlace(tx, { name: "Elsewhere Two", lon: 21.61, lat: 35.11, tile: f.outsideTileId });
+      const offered = await mergeCandidates(tx, O.placeId);
+      // the dialog shows the warning and the confirmation box ...
+      expect(offered.find((c) => c.id === P.placeId)).toMatchObject({ sameArea: false, areaName: null });
+      // ... which the merge needs
+      expect(await refusal(mergePlaceInto(tx, { placeId: O.placeId, intoPlaceId: P.placeId, decidedBy: ADMIN }))).toBe("across_areas");
+      expect(await refusal(mergePlaceInto(tx, { placeId: O.placeId, intoPlaceId: P.placeId, decidedBy: ADMIN, confirmAcrossAreas: true }))).toBe("merged");
     }));
 });
 

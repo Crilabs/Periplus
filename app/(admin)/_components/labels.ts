@@ -617,7 +617,10 @@ export const PREVIEW_OMISSION_LABELS: Record<PreviewOmission, string> = {
   no_profile: "Der Ort hat kein Profil.",
   shelter_incomplete: "Die Schutzwerte sind unvollständig oder ohne Herkunft.",
   no_area: "Die Kachel des Orts gehört zu keinem Revier.",
-  not_in_package: "Der Ort ist kein Spot des Pakets (nicht bestätigt, zusammengelegt oder beendet).",
+  merged: "Der Ort ist zusammengelegt. Das nächste Paket liefert ihn mit „zusammengelegt in“ (mergedInto) den Ort, in den er aufgegangen ist, sofern das letzte Paket des Reviers ihn enthielt.",
+  merged_removed:
+    "Der Ort ist zusammengelegt in einen Ort, den das nächste Paket des Reviers nicht liefert (anderes Revier oder ausgelassen). Das Paket meldet ihn als entfernt.",
+  not_in_package: "Der Ort ist kein Spot des Pakets (nicht bestätigt oder beendet).",
 };
 
 /** Why „Mit Ort zusammenlegen“ was refused (`?mergeError=`). */

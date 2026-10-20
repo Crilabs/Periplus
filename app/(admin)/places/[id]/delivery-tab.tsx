@@ -26,7 +26,10 @@ export function DeliveryTab({ view }: { view: PlaceDelivery }) {
       </Panel>
     );
   }
-  const omitted = preview && "omitted" in preview ? PREVIEW_OMISSION_LABELS[preview.omitted] : null;
+  const omission = preview && "omitted" in preview ? preview : null;
+  const omitted = omission ? PREVIEW_OMISSION_LABELS[omission.omitted] : null;
+  // a merged place whose target the package delivers is still in it, with `mergedInto` (ruling M6-P14)
+  const carried = omission?.omitted === "merged";
   const next = preview && "spot" in preview ? preview : null;
   return (
     <div className="space-y-6">
@@ -38,8 +41,17 @@ export function DeliveryTab({ view }: { view: PlaceDelivery }) {
         </Notice>
       )}
       {omitted && (
-        <Notice tone={delivered ? "warn" : "neutral"} title={delivered ? "Nicht mehr im nächsten Paket" : "Nicht im nächsten Paket"}>
+        <Notice
+          tone={delivered && !carried ? "warn" : "neutral"}
+          title={carried ? "Zusammengelegt" : delivered ? "Nicht mehr im nächsten Paket" : "Nicht im nächsten Paket"}
+        >
           {omitted}
+          {omission?.mergedInto && (
+            <>
+              {" "}
+              Ziel: <Mono>{omission.mergedInto}</Mono>
+            </>
+          )}
         </Notice>
       )}
 

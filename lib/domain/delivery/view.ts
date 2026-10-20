@@ -207,23 +207,29 @@ export async function deliveryDownload(
   return { bytes, contentType: contentTypeOf(file), filename: `${found.areaPublicId}-${version}-${file}` };
 }
 
-/** Why the next package would not deliver the place: a `mapSpot` omission, or no spot of its area's package at all. */
-export type PreviewOmission = OmittedSpot["reason"] | "no_area" | "not_in_package";
+/**
+ * Why the next package would not deliver the place as a spot of its own: a `mapSpot` omission; a merged place whose
+ * final target the package delivers (`merged`: carried with `mergedInto` when the area's previous package had it,
+ * ruling M6-P14) or does not deliver (`merged_removed`: an event `removed`); or no spot of its area's package at all.
+ */
+export type PreviewOmission = OmittedSpot["reason"] | "no_area" | "merged" | "merged_removed" | "not_in_package";
 
 export type PlaceDelivery = {
   delivered: { spot: Spot; dataVersion: number; deliveryId: string } | null;
-  preview: { spot: SpotBody; differs: boolean } | { omitted: PreviewOmission } | null;
+  /** `mergedInto`: the final target's public id of a merged place. */
+  preview: { spot: SpotBody; differs: boolean } | { omitted: PreviewOmission; mergedInto?: string } | null;
   history: Array<{ profileVersion: number; validFrom: string; removed: boolean; deliveryId: string }>;
 };
 
 /**
  * The place page's delivery tab: the spot as last delivered (`spotAsOf`), the spot the next package of the place's
- * area would deliver (`draftArea` on `today`, the build's own assembly, ruling M6-P27: no S3, no versions), whether it
- * differs from the delivered one (`contentHash` without the version fields), and every contract version of the spot.
- * A place without public id has nothing to show.
+ * area would deliver (`draftArea` on `today`, default the database's date; the build's own assembly, ruling M6-P27:
+ * no S3, no versions), whether it differs from the delivered one (`contentHash` without the version fields), and every
+ * contract version of the spot. A place without public id has nothing to show.
  */
 export async function placeDelivery(db: Db, archive: Archive, placeId: string, opts: { today?: string } = {}): Promise<PlaceDelivery> {
-  const today = opts.today ?? new Date().toISOString().slice(0, 10);
+  // the database's date, as `spotAsOf` and the validity of the geo rows (review minor 6)
+  const today = opts.today ?? (await db.execute<{ d: string }>(sql`select current_date::text as d`)).rows[0]!.d;
   const { rows } = await db.execute<{ public_id: string | null; area_id: string | null }>(sql`
     select p.public_id, (
       select t.area_id from tiles t
@@ -258,8 +264,13 @@ export async function placeDelivery(db: Db, archive: Archive, placeId: string, o
     if (spot) {
       const deliveredHash = delivered ? deliveredContentHash(delivered.spot) : null;
       preview = { spot: spot.body, differs: deliveredHash !== contentHash(spot.body) };
+    } else if (omitted) {
+      preview = { omitted: omitted.reason };
     } else {
-      preview = { omitted: omitted ? omitted.reason : "not_in_package" };
+      const merged = draft.scope.merged.find((m) => m.publicId === publicId);
+      preview = merged
+        ? { omitted: draft.spots.some((x) => x.body.id === merged.mergedIntoPublicId) ? "merged" : "merged_removed", mergedInto: merged.mergedIntoPublicId }
+        : { omitted: "not_in_package" };
     }
   }
   return { delivered, preview, history };

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { DELIVERIES_PAGE_SIZE, listDeliveries } from "@/lib/domain/delivery/view";
@@ -165,9 +164,9 @@ export default async function Page({ searchParams }: PageProps<"/deliveries">) {
                     </td>
                     <td className={tdClass}>
                       {r.runId ? (
-                        <Link href={`/runs/${r.runId}`} className="font-mono text-[0.8125rem] text-accent hover:underline" title={r.runId}>
+                        <TextLink href={`/runs/${r.runId}`} className="font-mono text-[0.8125rem]" title={r.runId}>
                           {r.runId.slice(0, 8)}
-                        </Link>
+                        </TextLink>
                       ) : (
                         <span className="text-muted">–</span>
                       )}

@@ -7,6 +7,7 @@ import { z } from "zod";
 import { getConfig } from "@/lib/config";
 import { getDb, type Db } from "@/lib/db/client";
 import { places } from "@/lib/db/schema";
+import { consolidateGeo } from "@/lib/domain/consolidation/store";
 import { setAnchorPosition } from "@/lib/domain/geometry/anchor-correction";
 import { mergePlaceInto, PlaceMergeNotAllowed } from "@/lib/domain/place-merge";
 import { ProfileChanged, removeProfileEntry } from "@/lib/domain/profile-entry-removal";
@@ -163,9 +164,11 @@ const mergeSchema = z.object({
 
 /**
  * „Mit Ort zusammenlegen“ of a confirmed place (ruling M6-P15): merges it into the chosen confirmed place
- * (`mergePlaceInto`), then, after that commit, starts a consolidation run for the surviving place's geo object (never
- * inside the merge, ruling M5-F-R4) and goes to the surviving place with `?merged=<placeId>` (and `&run=<id>`, or
- * `&mergedNoRun=1` when the run did not start: the merge stands). A refusal returns to the place with
+ * (`mergePlaceInto`). After that commit (never inside the merge, ruling M5-F-R4) it consolidates the merged geo object,
+ * which only waits for a consolidation of it still running and dismisses the open tasks that one opened after the
+ * merge locked its tasks (`object_ended`, review minor 1; a run's scope refuses a merged object), then starts a
+ * consolidation run for the surviving place's geo object and goes to the surviving place with `?merged=<placeId>` (and
+ * `&run=<id>`, or `&mergedNoRun=1` when the run did not start: the merge stands). A refusal returns to the place with
  * `?mergeError=<reason>`.
  */
 export async function mergePlaceAction(
@@ -184,11 +187,16 @@ export async function mergePlaceAction(
       confirmAcrossAreas: f.confirmAcrossAreas !== undefined,
     });
     target = `/places/${f.intoPlaceId}?merged=${f.placeId}`;
+    const log = createLogger("place-merge");
+    try {
+      await consolidateGeo(db, merged.dropGeoObjectId);
+    } catch (e) {
+      log.error({ geoObjectId: merged.dropGeoObjectId, err: e }, "merged object not settled after a place merge");
+    }
     try {
       const run = await startConsolidationRun(db, await getBoss(), { scope: { geoObjectIds: [merged.keepGeoObjectId] }, triggeredBy: admin.email });
       target += `&run=${run.id}`;
     } catch (e) {
-      const log = createLogger("place-merge");
       if (e instanceof RunScopeNotReady) log.warn({ geoObjectId: merged.keepGeoObjectId, reason: e.reason }, "consolidation run not started after a place merge");
       else log.error({ geoObjectId: merged.keepGeoObjectId, err: e }, "consolidation run failed to start after a place merge");
       target += "&mergedNoRun=1";

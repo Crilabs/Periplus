@@ -119,7 +119,8 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
       {merged && (
         <Notice tone={sp.mergedNoRun ? "warn" : "ok"} className="mb-6" title="Orte zusammengelegt">
           Der Ort <TextLink href={`/places/${merged}`}>{merged.slice(0, 8)}</TextLink> ist jetzt Teil dieses Orts; sein Profil
-          bleibt als Verlauf, das nächste Paket liefert ihn mit „zusammengelegt in“ diesen Ort.{" "}
+          bleibt als Verlauf. Liefert das nächste Paket seines Reviers auch diesen Ort, führt es ihn als „zusammengelegt in“
+          diesen Ort; sonst (anderes Revier, oder dieser Ort wird nicht geliefert) meldet es ihn als entfernt.{" "}
           {sp.mergedNoRun ? (
             "Der Folgelauf konnte nicht gestartet werden – bitte „Profil neu berechnen“."
           ) : mergedRun ? (

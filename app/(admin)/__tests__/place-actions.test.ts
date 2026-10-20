@@ -1,7 +1,8 @@
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { facts, places, reviewDecisions } from "@/lib/db/schema";
+import { facts, places, reviewDecisions, reviewTasks } from "@/lib/db/schema";
+import { createReviewTask } from "@/lib/domain/review";
 import { GEOMETRY_CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
 import { testDb, withRollback } from "@/test/db";
 import { seedDeliveryArea } from "@/test/fixtures/delivery/area";
@@ -25,6 +26,19 @@ vi.mock("@/lib/pipeline/runs", () => ({ startRun: (...args: unknown[]) => startR
 vi.mock("next/cache", () => ({ revalidatePath: (path: string) => revalidatePath(path), refresh: vi.fn() }));
 const redirect = vi.fn();
 vi.mock("next/navigation", () => ({ redirect: (url: string) => redirect(url) }));
+/** Runs right after the merge's transaction, before the action goes on (a concurrent commit in that gap). */
+let afterMerge: ((dropGeoObjectId: string) => Promise<void>) | null = null;
+vi.mock("@/lib/domain/place-merge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/domain/place-merge")>();
+  return {
+    ...actual,
+    mergePlaceInto: async (...args: Parameters<typeof actual.mergePlaceInto>) => {
+      const merged = await actual.mergePlaceInto(...args);
+      await afterMerge?.(merged.dropGeoObjectId);
+      return merged;
+    },
+  };
+});
 
 import { mergePlaceAction, recomputeGeoProfileAction, recomputePlaceProfileAction, setAnchorAction } from "../places/[id]/actions";
 
@@ -51,6 +65,7 @@ async function anchorOrigin(tx: Db, placeId: string): Promise<string | null> {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  afterMerge = null;
   currentDb = db;
   requireAdmin.mockResolvedValue({ email: ADMIN });
   startRun.mockResolvedValue({ id: "run-1" });
@@ -185,6 +200,22 @@ describe("„Mit Ort zusammenlegen“", () => {
       expect(a).toMatchObject({ status: "rejected", mergedIntoId: M.placeId });
       expect(startRun).toHaveBeenCalledTimes(1);
       expect(startRun.mock.calls[0]![2]).toMatchObject({ kind: "stage", params: { geoObjectIds: [M.geoObjectId] }, triggeredBy: ADMIN });
+      expect(redirect).toHaveBeenCalledWith(`/places/${M.placeId}?merged=${A.placeId}&run=run-1`);
+    }));
+
+  it("dismisses a task a consolidation of the merged object opened after the merge locked its tasks (review minor 1)", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const f = await seedDeliveryArea(tx);
+      const { A, M } = f.places;
+      let late: string | undefined;
+      afterMerge = async (dropGeoObjectId) => {
+        late = (await createReviewTask(tx, { kind: "conflict", subjectType: "profile_attribute", subjectId: `${dropGeoObjectId}:holding`, context: { key: "holding:k" } })).id;
+      };
+      await mergePlaceAction(form({ placeId: A.placeId, intoPlaceId: M.placeId }));
+      expect(late).toBeDefined();
+      const [task] = await tx.select().from(reviewTasks).where(eq(reviewTasks.id, late!));
+      expect(task).toMatchObject({ status: "dismissed", context: expect.objectContaining({ dismissedReason: "object_ended" }) });
       expect(redirect).toHaveBeenCalledWith(`/places/${M.placeId}?merged=${A.placeId}&run=run-1`);
     }));
 

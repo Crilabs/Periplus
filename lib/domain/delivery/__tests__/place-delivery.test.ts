@@ -1,6 +1,8 @@
+import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { SpotsFile } from "@/contract";
-import { profileSummaries } from "@/lib/db/schema";
+import { profileSummaries, tiles } from "@/lib/db/schema";
+import { mergePlaceInto } from "@/lib/domain/place-merge";
 import { insertProfile, provenanceEntry } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { seedDeliveryArea, SPOT_A_ATTRIBUTES, SPOT_A_SUMMARY, spotAProvenance } from "@/test/fixtures/delivery/area";
@@ -76,5 +78,33 @@ describe("placeDelivery", () => {
       const f = await seedDeliveryArea(tx);
       const tab = await placeDelivery(tx, archive, f.places.A.placeId, { today });
       expect(tab).toMatchObject({ delivered: null, preview: { differs: true, spot: { id: f.places.A.publicId } }, history: [] });
+    }));
+
+  it("a merged place: carried with mergedInto when its target is in the package, else removed (ruling M6-P14, review minor 4)", () =>
+    withRollback(async (tx) => {
+      const archive = memoryArchive();
+      const f = await seedDeliveryArea(tx);
+      const { A, M, O } = f.places;
+      await buildDelivery(tx, archive, f.areaId, { now, inCallerTransaction: true });
+      await mergePlaceInto(tx, { placeId: A.placeId, intoPlaceId: M.placeId, decidedBy: "admin@test.invalid" });
+      expect((await placeDelivery(tx, archive, A.placeId, { today })).preview).toEqual({ omitted: "merged", mergedInto: M.publicId });
+      // M merged on into O, a place of no area: the package does not deliver the final target
+      await mergePlaceInto(tx, { placeId: M.placeId, intoPlaceId: O.placeId, decidedBy: "admin@test.invalid", confirmAcrossAreas: true });
+      expect((await placeDelivery(tx, archive, A.placeId, { today })).preview).toEqual({ omitted: "merged_removed", mergedInto: O.publicId });
+    }));
+
+  it("without a date it drafts on the database's date, not the UTC date (review minor 6)", () =>
+    withRollback(async (tx) => {
+      // a session time zone whose date differs from the UTC date right now
+      const hour = new Date().getUTCHours();
+      await tx.execute(sql.raw(`set local timezone = '${hour >= 10 ? "Pacific/Kiritimati" : "Etc/GMT+12"}'`));
+      const { rows } = await tx.execute<{ d: string }>(sql`select current_date::text as d`);
+      expect(rows[0]!.d).not.toBe(new Date().toISOString().slice(0, 10));
+      const archive = memoryArchive();
+      const f = await seedDeliveryArea(tx);
+      // the area's tiles are valid on the database's date only
+      for (const id of f.tileIds) await tx.update(tiles).set({ validTo: sql`current_date + 1` }).where(eq(tiles.id, id));
+      const tab = await placeDelivery(tx, archive, f.places.A.placeId);
+      expect(tab.preview).toMatchObject({ differs: true, spot: { id: f.places.A.publicId } });
     }));
 });
