@@ -76,7 +76,7 @@ Stand 2026-10-20, nach M7 Teil (a) (Code). Er ersetzt den Entwurf aus dem M7-Pre
 - Kosten 0 (nur Datenbank). Laufzeit auf echten Küsten ist ungemessen; im Lauf auf `/runs` beobachten, Stopp-Bedingung unten.
 
 ### Nach dem ersten Text-Lauf (Schritt 13)
-1. **max_facts.** Seit Prompt v4 ein Fact je Listeneintrag, also mehr Facts je Einheit (Ruling M7-G-R5, M7-H-R1). Prompt v5 lässt am Limit zuerst andere Facts weg und behält jeden Eintrag von Verboten, Gefahren und Sperrzonen (M7-FIN-R1). Ein Modell, das sich an das Limit hält, liefert genau 40 Facts und lässt den Rest still weg; `overLimit` sieht das nicht. Deshalb zählen Einheiten, die das Limit `maxFactsPerUnit` (40, `config/extraction.json`) erreichen:
+1. **max_facts.** Seit Prompt v4 ein Fact je Listeneintrag, also mehr Facts je Einheit (Ruling M7-G-R5, M7-H-R1). Prompt v5 lässt am Limit zuerst andere Facts weg und behält jeden Eintrag von Verboten, Gefahren und Sperrzonen (M7-FIN-R1); liefert ein Modell mehr als 40 Facts, stellt der Code vor dem Abschneiden die Einträge von Verboten, Gefahren und Sperrzonen nach vorn (GR-7). Ein Modell, das sich an das Limit hält, liefert genau 40 Facts und lässt den Rest still weg; `overLimit` sieht das nicht. Deshalb zählen Einheiten, die das Limit `maxFactsPerUnit` (40, `config/extraction.json`) erreichen:
    ```sql
    select count(*) filter (where (stats->>'proposed')::int >= 40) as at_limit, count(*) as units
    from extraction_units where extraction_run_id in (select id from extraction_runs where run_id = '<text-lauf>');

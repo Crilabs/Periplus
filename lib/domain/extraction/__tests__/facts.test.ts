@@ -321,6 +321,25 @@ describe("processFactOutput", () => {
       const stats = await processFactOutput(tx, s.unit, out, { ...config, extraction: { ...config.extraction, maxFactsPerUnit: 1 } });
       expect(stats).toMatchObject({ proposed: 2, stored: 1, overLimit: 1 });
     }));
+  it("the fact limit keeps the safety list entries first, then the model's order (GR-7, SAF-7)", () =>
+    withRollback(async (tx) => {
+      const third = "Beware of the Vrachos rock off the cape. A wreck lies in the entrance. Strong current.";
+      const s = await scene(tx, third);
+      const out = {
+        facts: [
+          fact({}),
+          fact({ attribute: "seabed", value: '["sand"]' }),
+          // the model lists its hazards last
+          fact({ attribute: "hazards", value: '[{"kind":"rock","name":"Vrachos"}]', quote: "Beware of the Vrachos rock off the cape", chunk: 3 }),
+          fact({ attribute: "hazards", value: '[{"kind":"wreck","name":null}]', quote: "A wreck lies in the entrance", chunk: 3 }),
+        ],
+      };
+      const stats = await processFactOutput(tx, s.unit, out, { ...config, extraction: { ...config.extraction, maxFactsPerUnit: 3 } });
+      expect(stats).toMatchObject({ proposed: 4, overLimit: 1 });
+      const rows = await factsOf(tx, s.unit.extractionRunId);
+      expect(rows.map((r) => r.attribute).sort()).toEqual(["hazards", "hazards", "holding"]);
+    }));
+
   it("facts are checked against and stored with the extraction run's fact schema version", () =>
     withRollback(async (tx) => {
       const s = await scene(tx);

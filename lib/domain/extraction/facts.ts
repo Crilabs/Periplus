@@ -3,7 +3,7 @@ import type { ExtractedFact, ExtractFactsOutput } from "@/lib/ai/tasks/extract-f
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { chunks, extractionRuns, extractionUnits, facts, mentions, unmatchedNames } from "@/lib/db/schema";
-import { canonicalJson, getFactSchema, isEntryListAttribute, validateTextFact } from "@/lib/domain/facts/schema";
+import { canonicalJson, getFactSchema, isEntryListAttribute, SAFETY_LIST_ATTRIBUTES, validateTextFact } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { effectiveVersionMeta, plausibleDate } from "@/lib/domain/mentions/classification";
@@ -182,6 +182,16 @@ function highlightNames(k: Kept, maxNameChars: number): { names: string[]; rejec
 }
 
 /**
+ * The facts with the entries of the safety lists (`SAFETY_LIST_ATTRIBUTES`: prohibitions, hazards, restricted zones)
+ * first, otherwise in the model's order (a stable partition): the fact limit then drops other facts before any safety
+ * entry, as prompt v5 asks of the model (ruling M7-FIN-R1, GR-7).
+ */
+export function safetyFirst(facts: ExtractedFact[]): ExtractedFact[] {
+  const safety = new Set<string>(SAFETY_LIST_ATTRIBUTES);
+  return [...facts.filter((f) => safety.has(f.attribute)), ...facts.filter((f) => !safety.has(f.attribute))];
+}
+
+/**
  * Validates, quote-checks and stores the facts of one answer for one extraction unit; returns its counters. Runs in the
  * caller's transaction (the batch handler's, which also marks the unit done). Storing is idempotent: the same answer
  * processed twice stores nothing new (`stored` then counts 0).
@@ -189,7 +199,7 @@ function highlightNames(k: Kept, maxNameChars: number): { names: string[]; rejec
 export async function processFactOutput(db: Db, unit: ProcessUnit, output: ExtractFactsOutput, cfg: AppConfig): Promise<FactStats> {
   const stats = emptyFactStats();
   stats.proposed = output.facts.length;
-  const considered = output.facts.slice(0, cfg.extraction.maxFactsPerUnit);
+  const considered = safetyFirst(output.facts).slice(0, cfg.extraction.maxFactsPerUnit);
   stats.overLimit = output.facts.length - considered.length;
   if (considered.length === 0) return stats;
 
