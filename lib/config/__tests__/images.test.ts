@@ -21,7 +21,8 @@ describe("images config", () => {
     expect(c.images.check.minWaterIoU.midday).toBe(0.8);
     expect(c.images.delivery.ktimatologio).toBe(false);
     expect(c.images.sources.ktimatologio.countries).toEqual(["GR"]);
-    expect(c.images.light.townRadiusM).toBe(500);
+    expect(c.images.light.townRadiusM).toBe(1500);
+    expect(c.images.composition.nearTown.foregroundM).toBe(450);
     expect(c.images.light.nearTown).toBe("midday");
     expect(c.images.scene.near_town.en).toContain("in front of a town");
     expect(c.budgets.openai.dailyEur).toBe(10);

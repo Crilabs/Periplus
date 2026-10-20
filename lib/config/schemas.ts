@@ -1185,6 +1185,13 @@ export const imagesSchema = z.strictObject({
     waterColour: z.strictObject({ blueOverRedMin: z.number().nonnegative(), greenTolerance: z.number().nonnegative() }),
   }),
   pipeline: z.strictObject({ maxGenerationsPerRun: z.number().int().positive() }),
+  composition: z.strictObject({
+    /**
+     * Anchorage or mooring field near a town: the camera ground point lies `foregroundM` from the centre of the
+     * place, away from the town, so the anchorage is in front and the town behind.
+     */
+    nearTown: z.strictObject({ foregroundM: z.number().positive() }),
+  }),
   output: z.strictObject({
     jpegQuality: z.number().int().min(1).max(100),
     license: z.string().min(1),
