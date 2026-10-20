@@ -7,6 +7,7 @@ import { countingSourceSql, mergedChainsSql } from "@/lib/domain/consolidation/i
 import { activeExtractionRunIdSql } from "@/lib/domain/extraction/active-run";
 import { belegtreue } from "@/lib/domain/extraction/fidelity";
 import { SECTORS, type Sector } from "@/lib/domain/facts/schema-types";
+import { latestProfiles } from "@/lib/domain/timeline";
 import { areaGeoObjectId } from "@/lib/pipeline/tile-scope";
 import { latestComparisonResults } from "./comparison-results";
 import { comparisonValues, loadComparisonSubjects } from "./comparison-values";
@@ -361,5 +362,282 @@ export async function routeReconstructionMetric(db: Db, scope: QualityScope, opt
     metric: "route_reconstruction",
     value: share(complete, reports.length),
     details: { routes: reports.length, complete, openStops: reports.reduce((n, r) => n + r.openStops, 0), reports },
+  };
+}
+
+/*
+ * Quality metrics II (spec 10 „Kosten je Ort“, „Review-Aufwand“, the extras „Anteil Orte mit Highlight-Fact“ and
+ * „Anteil Orte mit Beobachtung < 18 Monate“, „Orte je Kachel, Ziel 10–40“).
+ */
+
+const round6 = (x: number) => Math.round(x * 1e6) / 1e6;
+const roundValues = (m: Map<string, number>) => Object.fromEntries([...m].sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, v]) => [k, round6(v)]));
+const addTo = (m: Map<string, number>, key: string, eur: number) => m.set(key, (m.get(key) ?? 0) + eur);
+
+/** The run scope id of a model comparison (`MODEL_COMPARISON_SCOPE` in `lib/pipeline/text/run.ts`, which imports the queue). */
+const MODEL_COMPARISON_SCOPE_ID = "model-comparison";
+
+/** Kinds of one-off pilot spend (ruling M7-P15), reported as „Einmalkosten Pilot“ and never in the operating cost. */
+type OneOffKind = "converterComparison" | "modelComparison" | "pdfCompare" | "fixturesRecord" | "evaluation";
+
+/** Confirmed, valid places per configured area key (areas without places are missing). */
+async function confirmedPlacesByArea(db: Db, areaKeys: string[]): Promise<Map<string, number>> {
+  if (areaKeys.length === 0) return new Map();
+  const { rows } = await db.execute<{ key: string; n: number }>(sql`
+    select g.config_key as key, count(*)::int as n
+    from geo_objects g join tiles t on t.area_id = g.id join places p on p.tile_id = t.id
+    where g.type = 'area' and g.config_key in (select value from jsonb_array_elements_text(${JSON.stringify(areaKeys)}::jsonb))
+      and p.status = 'confirmed' and ${validPlace}
+    group by g.config_key
+  `);
+  return new Map(rows.map((r) => [r.key, Number(r.n)]));
+}
+
+const configuredAreaKeys = () => getConfig().areas.map((a) => a.key);
+
+/**
+ * Kosten je Ort (spec 10, ruling M7-P15): the operating spend of the window (`external_calls.at`, `from` inclusive,
+ * `to` exclusive) for the scope, per confirmed place in scope. A call belongs to a tile (its `tile_id`, else its run's
+ * tile, else the tile of its run's place), to an area (a run scoped to the area, without tile), or to nobody: shared
+ * spend (source, system and text runs, calls without run). The scope's cost is its direct spend (calls of its tiles;
+ * for an area also the area's own calls), plus for a tile the tile's place share of its area's own calls, plus the
+ * scope's share of the shared spend by confirmed places among all configured areas (`opts.areaKeys`, default the
+ * areas of `config/areas`). One-off pilot spend (converter and model comparison, `pdf:compare`, `fixtures:record`,
+ * candidate evaluations) counts nowhere and is listed in `details.oneOff`. `details { costEur, directEur, sharedEur,
+ * places, byStage, byService, oneOff }`; no confirmed places → null.
+ */
+export async function costPerPlaceMetric(
+  db: Db,
+  scope: QualityScope,
+  window: MeasureWindow,
+  opts: { areaKeys?: string[] } = {},
+): Promise<MetricResult> {
+  const s = await resolveScope(db, scope);
+  const placesCount = s ? (await placesInScope(db, s)).length : 0;
+  const { rows } = await db.execute<{
+    eur: number;
+    stage: string;
+    service: string;
+    tile_id: string | null;
+    tile_area_id: string | null;
+    area_key: string | null;
+    one_off: OneOffKind | null;
+  }>(sql`
+    with calls as (
+      select c.cost_eur::float8 as eur, coalesce(c.stage, '') as stage, c.service,
+        coalesce(c.tile_id, case when r.scope_type = 'tile' then r.scope_id end, rp.tile_id) as tile_id,
+        case when c.tile_id is null and r.scope_type = 'area' then r.scope_id end as area_key,
+        case
+          when c.stage = 'fixtures:record' then 'fixturesRecord'
+          when c.stage like 'pdf:compare%' then 'pdfCompare'
+          when r.scope_type = 'system' and r.scope_id = ${MODEL_COMPARISON_SCOPE_ID} then 'modelComparison'
+          when c.stage = 'compare.converters' or 'compare.converters' = any(r.stages) then 'converterComparison'
+          when r.params @> '{"evaluation": true}'::jsonb then 'evaluation'
+        end as one_off
+      from external_calls c
+      left join runs r on r.id = c.run_id
+      left join places rp on r.scope_type = 'place' and rp.id::text = r.scope_id
+      where c.at >= ${window.from.toISOString()}::timestamptz and c.at < ${window.to.toISOString()}::timestamptz
+    )
+    select sum(c.eur)::float8 as eur, c.stage, c.service, c.tile_id, t.area_id as tile_area_id, c.area_key, c.one_off
+    from calls c left join tiles t on t.id = c.tile_id
+    group by c.stage, c.service, c.tile_id, t.area_id, c.area_key, c.one_off
+    order by c.stage, c.service, c.tile_id, c.area_key, c.one_off
+  `);
+
+  const keys = [...new Set([...(opts.areaKeys ?? configuredAreaKeys()), scope.areaKey])];
+  const byArea = await confirmedPlacesByArea(db, keys);
+  const allPlaces = [...byArea.values()].reduce((n, x) => n + x, 0);
+  const areaPlaces = byArea.get(scope.areaKey) ?? 0;
+  const sharedWeight = allPlaces === 0 ? 0 : placesCount / allPlaces;
+  const areaWeight = !scope.tileId ? 1 : areaPlaces === 0 ? 0 : placesCount / areaPlaces;
+
+  let directEur = 0;
+  let sharedEur = 0;
+  const byStage = new Map<string, number>();
+  const byService = new Map<string, number>();
+  const oneOff = new Map<OneOffKind, number>();
+  for (const r of rows) {
+    const eur = Number(r.eur);
+    if (r.one_off) {
+      addTo(oneOff, r.one_off, eur);
+      continue;
+    }
+    let part = 0;
+    if (r.tile_id !== null) {
+      const own = scope.tileId ? r.tile_id === scope.tileId : s !== null && r.tile_area_id === s.areaId;
+      if (own) directEur += part = eur;
+    } else if (r.area_key !== null) {
+      if (r.area_key === scope.areaKey) {
+        part = eur * areaWeight;
+        if (scope.tileId) sharedEur += part;
+        else directEur += part;
+      }
+    } else {
+      sharedEur += part = eur * sharedWeight;
+    }
+    if (part === 0) continue;
+    addTo(byStage, r.stage, part);
+    addTo(byService, r.service, part);
+  }
+  const costEur = directEur + sharedEur;
+  return {
+    metric: "cost_per_place",
+    value: placesCount === 0 ? null : round6(costEur / placesCount),
+    details: {
+      costEur: round6(costEur),
+      directEur: round6(directEur),
+      sharedEur: round6(sharedEur),
+      places: placesCount,
+      byStage: roundValues(byStage),
+      byService: roundValues(byService),
+      oneOff: { eur: round6([...oneOff.values()].reduce((n, x) => n + x, 0)), byKind: roundValues(oneOff) },
+    },
+  };
+}
+
+type EffortGroup = { tasks: number; decided: number; minutes: number; counted: boolean };
+
+/**
+ * Review-Aufwand (spec 10, ruling M7-P14) over the review tasks created in the window (all areas): each decision
+ * counts `min(duration_ms, reviewDurationCapMinutes)`, a decision without a duration counts 0 (reported). Tasks about a
+ * removed profile entry (`subject_type 'profile_entry'`) and comparison deviations (quality control) are not counted
+ * and appear apart in `byKind`. Returns `review_minutes` (`details { tasks, decided, open, withoutDuration, capped,
+ * byKind }`) and `review_minutes_per_100` = minutes per 100 confirmed places of the configured areas (`opts.areaKeys`,
+ * default `config/areas`; `details { minutes, places }`, no places → null).
+ */
+export async function reviewEffortMetrics(
+  db: Db,
+  window: MeasureWindow,
+  cfg: QualityConfig,
+  opts: { areaKeys?: string[] } = {},
+): Promise<[MetricResult, MetricResult]> {
+  const { rows } = await db.execute<{ id: string; kind: string; subject_type: string; status: string; duration_ms: number | null; decision_id: string | null }>(sql`
+    select t.id, t.kind::text as kind, t.subject_type, t.status::text as status, d.duration_ms, d.id as decision_id
+    from review_tasks t left join review_decisions d on d.task_id = t.id
+    where t.created_at >= ${window.from.toISOString()}::timestamptz and t.created_at < ${window.to.toISOString()}::timestamptz
+    order by t.id, d.id
+  `);
+  const capMs = cfg.reviewDurationCapMinutes * 60_000;
+  const byKind = new Map<string, EffortGroup>();
+  const seen = new Set<string>();
+  let tasks = 0;
+  let decided = 0;
+  let open = 0;
+  let withoutDuration = 0;
+  let capped = 0;
+  let ms = 0;
+  for (const r of rows) {
+    const key = r.subject_type === "profile_entry" ? "profile_entry" : r.kind === "comparison_deviation" ? "comparison_deviation" : r.kind;
+    const counted = key === r.kind && r.kind !== "comparison_deviation";
+    const group = byKind.get(key) ?? { tasks: 0, decided: 0, minutes: 0, counted };
+    byKind.set(key, group);
+    if (!seen.has(r.id)) {
+      seen.add(r.id);
+      group.tasks++;
+      if (r.status === "decided") group.decided++;
+      if (counted) {
+        tasks++;
+        if (r.status === "decided") decided++;
+        if (r.status === "open") open++;
+      }
+    }
+    if (r.decision_id === null) continue;
+    const duration = r.duration_ms === null ? 0 : Math.min(Number(r.duration_ms), capMs);
+    group.minutes += duration / 60_000;
+    if (!counted) continue;
+    if (r.duration_ms === null) withoutDuration++;
+    else if (Number(r.duration_ms) > capMs) capped++;
+    ms += duration;
+  }
+  const minutes = round6(ms / 60_000);
+  const places = [...(await confirmedPlacesByArea(db, opts.areaKeys ?? configuredAreaKeys())).values()].reduce((n, x) => n + x, 0);
+  const kinds = Object.fromEntries(
+    [...byKind].sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, g]) => [k, { ...g, minutes: round6(g.minutes) }]),
+  );
+  return [
+    { metric: "review_minutes", value: minutes, details: { tasks, decided, open, withoutDuration, capped, byKind: kinds } },
+    { metric: "review_minutes_per_100", value: places === 0 ? null : round6((minutes / places) * 100), details: { minutes, places } },
+  ];
+}
+
+/** The newest profile attributes and provenance of each place in scope (no profile → none). */
+async function scopeProfiles(db: Db, scope: QualityScope) {
+  const s = await resolveScope(db, scope);
+  const inScope = s ? await placesInScope(db, s) : [];
+  const profiles = await latestProfiles(db, inScope.map((p) => p.geoObjectId));
+  return { places: inScope.length, profiles: inScope.flatMap((p) => profiles.get(p.geoObjectId) ?? []) };
+}
+
+/**
+ * „Anteil Orte mit Highlight-Fact“: the share of places in scope whose newest profile has a `highlight.<category>`
+ * with `present = true`. `details { places, withHighlight }`; no places → null.
+ */
+export async function highlightShareMetric(db: Db, scope: QualityScope): Promise<MetricResult> {
+  const { places: n, profiles } = await scopeProfiles(db, scope);
+  const withHighlight = profiles.filter((p) =>
+    Object.entries(p.attributes).some(
+      ([k, v]) => k.startsWith("highlight.") && typeof v === "object" && v !== null && (v as { present?: unknown }).present === true,
+    ),
+  ).length;
+  return { metric: "highlight_share", value: share(withHighlight, n), details: { places: n, withHighlight } };
+}
+
+/** `today` (`YYYY-MM-DD`) minus `months` calendar months, the day clamped to the month's length. */
+export function monthsBefore(today: string, months: number): string {
+  const [y, m, d] = today.split("-").map(Number) as [number, number, number];
+  const first = new Date(Date.UTC(y, m - 1 - months, 1));
+  const lastDay = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), Math.min(d, lastDay))).toISOString().slice(0, 10);
+}
+
+const OBSERVATION_ORIGINS: ReadonlySet<string> = new Set(["text", "observed", "review"]);
+
+/**
+ * „Anteil Orte mit Beobachtung < 18 Monate“: the share of places in scope whose newest profile has an attribute from an
+ * observation (origin `text`, `observed` or `review`) with `observedAt` on or after `today` minus `months`.
+ * `details { places, recent, since }`; no places → null.
+ */
+export async function recentObservationShareMetric(
+  db: Db,
+  scope: QualityScope,
+  opts: { today: string; months: number },
+): Promise<MetricResult> {
+  const since = monthsBefore(opts.today, opts.months);
+  const { places: n, profiles } = await scopeProfiles(db, scope);
+  const recent = profiles.filter((p) =>
+    Object.values(p.provenance).some((e) => OBSERVATION_ORIGINS.has(e.origin) && e.observedAt !== null && e.observedAt.slice(0, 10) >= since),
+  ).length;
+  return { metric: "recent_observation_share", value: share(recent, n), details: { places: n, recent, since } };
+}
+
+/**
+ * „Orte je Kachel, Ziel 10–40“: confirmed, valid places per valid coast tile of the area; the value is the median.
+ * `details { tiles, min, max, median, inTarget, outsideTarget, target }` (`inTarget`: tiles within the target range);
+ * no coast tiles → null.
+ */
+export async function placesPerTileMetric(db: Db, areaKey: string, cfg: QualityConfig): Promise<MetricResult> {
+  const target = { min: cfg.placesPerTile.min, max: cfg.placesPerTile.max };
+  const areaId = await areaGeoObjectId(db, areaKey);
+  const { rows } = areaId
+    ? await db.execute<{ tile_id: string; places: number }>(sql`
+        select t.id as tile_id, count(p.id) filter (where p.status = 'confirmed' and ${validPlace})::int as places
+        from tiles t left join places p on p.tile_id = t.id
+        where t.area_id = ${areaId} and t.has_coast and (t.valid_to is null or t.valid_to > current_date)
+        group by t.id order by t.id
+      `)
+    : { rows: [] };
+  const tiles = rows.map((r) => ({ tileId: r.tile_id, places: Number(r.places) }));
+  if (tiles.length === 0) {
+    return { metric: "places_per_tile", value: null, details: { tiles, min: null, max: null, median: null, inTarget: 0, outsideTarget: [], target } };
+  }
+  const counts = tiles.map((t) => t.places).sort((a, b) => a - b);
+  const mid = Math.floor(counts.length / 2);
+  const median = counts.length % 2 === 1 ? counts[mid]! : (counts[mid - 1]! + counts[mid]!) / 2;
+  const outsideTarget = tiles.filter((t) => t.places < target.min || t.places > target.max).map((t) => t.tileId);
+  return {
+    metric: "places_per_tile",
+    value: median,
+    details: { tiles, min: counts[0]!, max: counts[counts.length - 1]!, median, inTarget: tiles.length - outsideTarget.length, outsideTarget, target },
   };
 }
