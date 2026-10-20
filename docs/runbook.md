@@ -112,11 +112,26 @@ bash /opt/periplus/scripts/deploy/deploy.sh <previous sha>
 ```
 (oder aus Actions heraus per Re-Run). Das funktioniert jederzeit, auch lange nach dem Deploy-Job, weil der Server mit seinem eigenen Nur-Lese-Login (Abschnitt 5a) zieht; die Images müssen in ghcr.io noch vorhanden sein. Der aktuell ausgerollte Tag steht in `.deployed-tag`; ein fehlgeschlagener Deploy (pull, Migration, Start, `/readyz` oder Worker nicht bereit) überschreibt ihn nicht und rollt automatisch auf ihn zurück. Migrationen werden nicht zurückgedreht; sie müssen zur Vorversion abwärtskompatibel bleiben. Falls `deploy.sh` nicht auf dem Server liegt: `ssh deploy@<host> bash -s <sha> < scripts/deploy/deploy.sh`.
 
+Rollback auf eine Version vor fb5278c (Worker ohne Bereitschaftsmarker): `deploy.sh` wartet auf den Marker `/tmp/periplus-worker-ready`, den ein älterer Worker nie schreibt, und meldet ihn als „nicht bereit“ (und `up --wait` wartet vergeblich auf die Healthcheck des neuen `compose.prod.yml`). Eine solche Version nicht mit `deploy.sh` ausrollen, sondern von Hand (Vorspann oben, `dc`-Alias): `export IMAGE_TAG=<sha>`, `dc pull`, `dc up -d web worker caddy` (ohne `--wait`; die Healthcheck des Workers bleibt „unhealthy“, das stoppt ihn nicht), dann `dc logs -f worker` und `/readyz` prüfen und `<sha>` in `.deployed-tag` schreiben. Solange der Server nicht live ist, betrifft das nur das Übergangsfenster (Wave-2-Review M-3, geparkt).
+
 ## Backup und Restore
 - Automatisch täglich 02:30 UTC: `scripts/ops/backup.sh` (pg_dump per restic, Aufbewahrung 7 täglich / 4 wöchentlich / 12 monatlich, Archiv-Bucket per `rclone copy` auf die Storage Box; es wird nie gelöscht).
 - Manuell: `/opt/periplus/scripts/ops/backup.sh`.
 - Restore-Prüfung: `/opt/periplus/scripts/ops/restore-check.sh` stellt den letzten Dump in einem Wegwerf-Container wieder her und zählt `users`; Exit 0 bedeutet Erfolg. Regelmäßig (monatlich) ausführen.
 - Echter Restore: `restic dump latest /periplus.dump | dc exec -T postgres pg_restore -U periplus -d periplus --clean --if-exists --no-owner`; vorher web und worker stoppen.
+- Restore in einen **neuen** Postgres-Cluster (leeres Volume, neuer Server): Transaktions-IDs gelten nur in dem Cluster, der sie vergeben hat. Die wiederhergestellten Zeilen tragen die alten Werte (`change_events.xact_id`, `deliveries.change_snapshot`), der neue Cluster zählt aber von vorn. Ohne Ausgleich bekämen die Ereignisse nach dem Restore im nächsten Paket keine Schwere (sie sähen „schon geliefert“ aus), und der Änderungs-Feed hielte die alten Ereignisse zurück. Deshalb den Zähler vor dem Start von web und worker über die alten Werte schieben (jede Schleifenrunde verbraucht eine ID; bei einigen Millionen dauert das Minuten):
+  ```bash
+  dc exec -T postgres psql -U periplus -d periplus <<'SQL'
+  DO $$
+  DECLARE target bigint := greatest(
+      coalesce((select max(xact_id::text::bigint) from change_events), 0),
+      coalesce((select max(pg_snapshot_xmax(change_snapshot)::text::bigint) from deliveries), 0)) + 1000;
+  BEGIN
+    WHILE pg_current_xact_id()::text::bigint < target LOOP COMMIT; END LOOP;
+  END $$;
+  SQL
+  ```
+  Ein Paketbau, dessen Vorgänger-Snapshot vor dem eigenen liegt, bricht mit „transaction ids went back“ ab, statt ein Paket mit falschen Schweregraden zu liefern; nach dem Schritt oben „Paket bauen“ wiederholen. Ein Restore in den laufenden Cluster (Befehl darüber) braucht das nicht.
 
 Ergebnis der letzten Prüfung (nach Abnahme eintragen): _Datum: offen, restore-check: offen_
 

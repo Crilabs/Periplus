@@ -348,6 +348,18 @@ describe("eventSeverities", () => {
     });
   });
 
+  it("refuses a previous snapshot ahead of this one: the database was restored into a new cluster without moving its xids (DAT-2)", async () => {
+    await withRollback(async (tx) => {
+      const a = await insertObject(tx);
+      const x = await baseXid(tx);
+      await tx.insert(changeEvents).values([event(a, "changed", "depth.min", "safety", x + 5n)]);
+      // the previous package's snapshot came from the old cluster, whose counter was far ahead
+      await expect(
+        eventSeverities(tx, [a], { fromSnapshot: snap(x + 1_000_000n, x + 1_000_010n), toSnapshot: snap(x + 10n, x + 10n) }),
+      ).rejects.toThrow(/transaction ids? .*restore/i);
+    });
+  });
+
   it("the first package uses no events", async () => {
     await withRollback(async (tx) => {
       const a = await insertObject(tx);
