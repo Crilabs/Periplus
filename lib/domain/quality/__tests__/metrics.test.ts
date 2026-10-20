@@ -72,6 +72,8 @@ async function area(tx: Db) {
         geoObjectId: objectId,
         kind: "anchorage",
         status: o.status ?? "confirmed",
+        // valid long before any fixed measurement date a test passes as today
+        validFrom: "2000-01-01",
         tileId: tileIdFor(lon, at.lat),
         position: geomFromGeoJson({ type: "Point", coordinates: [lon, at.lat] }),
       })
@@ -286,17 +288,28 @@ describe("quoteFidelityMetric", () => {
       });
     }));
 
-  it("evaluation and model comparison runs are labelled apart (bundle C review)", () =>
+  it("the value spans regular text runs only; evaluation and model comparison runs are reported apart (ruling M7-D-R1)", () =>
     withRollback(async (tx) => {
       await textRun(tx, new Date("2001-02-03T08:00:00Z"), { facts: 10, verified: 10 });
       await textRun(tx, new Date("2001-02-03T09:00:00Z"), { facts: 10, verified: 9 }, { purpose: "comparison" });
       await textRun(tx, new Date("2001-02-03T10:00:00Z"), { facts: 10, verified: 8 }, { evaluation: true });
       const r = await quoteFidelityMetric(tx, window);
-      expect(r.value).toBeCloseTo(27 / 30);
-      expect(r.details).toMatchObject({
+      expect(r.value).toBe(1);
+      expect(r.details).toEqual({
+        facts: 10,
+        verified: 10,
+        runs: 1,
         regular: { facts: 10, verified: 10, runs: 1 },
         evaluation: { facts: 20, verified: 17, runs: 2 },
       });
+    }));
+
+  it("with evaluation runs only the value is null and the evaluation is still reported", () =>
+    withRollback(async (tx) => {
+      await textRun(tx, new Date("2001-02-03T10:00:00Z"), { facts: 10, verified: 8 }, { evaluation: true });
+      const r = await quoteFidelityMetric(tx, window);
+      expect(r.value).toBeNull();
+      expect(r.details).toMatchObject({ facts: 0, verified: 0, runs: 0, evaluation: { facts: 10, verified: 8, runs: 1 } });
     }));
 
   it("without text facts in the window it is null", () =>

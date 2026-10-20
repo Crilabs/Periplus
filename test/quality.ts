@@ -54,6 +54,8 @@ export async function insertQualityArea(tx: Db, tilePoints: Array<{ lon: number;
         geoObjectId,
         kind: "anchorage",
         status: o.status ?? "confirmed",
+        // valid long before any fixed measurement date a test passes as today
+        validFrom: "2000-01-01",
         tileId: tileIdFor(lon, at.lat),
         position: geomFromGeoJson({ type: "Point", coordinates: [lon, at.lat] }),
       })

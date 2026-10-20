@@ -30,10 +30,14 @@ import {
  * --coverage` (Navily data only at runtime), never from here. Details hold counts and own ids only (Grundprinzip 9).
  */
 
-/** The metrics computed per tile (the others need the whole area: the comparison of a tile's few places says little). */
+/**
+ * The metrics computed per tile (the others need the whole area: the comparison of a tile's few places says little).
+ * `multi_document` is the acceptance metric (ruling M7-P12), so tiles have it too (ruling M7-D-R1).
+ */
 export const TILE_METRICS = [
   "coverage",
   "multi_source",
+  "multi_document",
   "fact_precision",
   "shelter_confidence",
   "cost_per_place",
@@ -53,19 +57,21 @@ export type MeasurementView = {
 /** Metrics of one scope, in the order of TILE_METRICS. */
 async function tileMetrics(db: Db, scope: QualityScope, window: MeasureWindow, today: string, cfg: QualityConfig): Promise<MetricResult[]> {
   return [
-    await coverageMetric(db, scope),
+    await coverageMetric(db, scope, { today }),
     await multiSourceMetric(db, scope, { today }),
+    await multiDocumentMetric(db, scope, { today }),
     await factPrecisionMetric(db, scope),
     await shelterConfidenceMetric(db, scope, cfg, { today }),
-    await costPerPlaceMetric(db, scope, window),
-    await highlightShareMetric(db, scope),
+    await costPerPlaceMetric(db, scope, window, { today }),
+    await highlightShareMetric(db, scope, { today }),
     await recentObservationShareMetric(db, scope, { today, months: cfg.recentObservationMonths }),
   ];
 }
 
 /**
  * Computes and stores the snapshot of measurement run `runId` for the area: area rows for every metric except
- * `coverage_navily`, tile rows for `TILE_METRICS` of each valid tile labelled with the area. All in one transaction,
+ * `coverage_navily`, tile rows for `TILE_METRICS` of each coast tile labelled with the area and valid on `today`. All
+ * validity (places, tiles, sources) is judged on `today`, the job's UTC date (ruling M7-D-R2). All in one transaction,
  * under a lock on the run: when rows of the run exist already (a retried job), nothing is written (`skipped`).
  */
 export async function computeQualitySnapshot(
@@ -80,12 +86,12 @@ export async function computeQualitySnapshot(
     if (existing) return { rows: 0, skipped: true };
 
     const scope = { areaKey };
-    const [coverage, multiSource, factPrecision, shelter, cost, highlight, recent] = await tileMetrics(tx, scope, window, today, cfg);
-    const [reviewMinutes, reviewPer100] = await reviewEffortMetrics(tx, window, cfg);
+    const [coverage, multiSource, multiDocument, factPrecision, shelter, cost, highlight, recent] = await tileMetrics(tx, scope, window, today, cfg);
+    const [reviewMinutes, reviewPer100] = await reviewEffortMetrics(tx, window, cfg, { today });
     const area: MetricResult[] = [
       coverage!,
       multiSource!,
-      await multiDocumentMetric(tx, scope, { today }),
+      multiDocument!,
       factPrecision!,
       await quoteFidelityMetric(tx, window),
       shelter!,
@@ -95,7 +101,7 @@ export async function computeQualitySnapshot(
       reviewPer100,
       highlight!,
       recent!,
-      await placesPerTileMetric(tx, areaKey, cfg),
+      await placesPerTileMetric(tx, areaKey, cfg, { today }),
     ];
     const rows: Array<typeof qualitySnapshots.$inferInsert> = area.map((m) => ({
       runId: input.runId,
@@ -109,7 +115,7 @@ export async function computeQualitySnapshot(
     const areaId = await areaGeoObjectId(tx, areaKey);
     if (areaId) {
       const { rows: tiles } = await tx.execute<{ id: string }>(sql`
-        select id from tiles where area_id = ${areaId} and (valid_to is null or valid_to > current_date) order by id`);
+        select id from tiles where area_id = ${areaId} and has_coast and (valid_to is null or valid_to > ${today}::date) order by id`);
       for (const { id: tileId } of tiles) {
         for (const m of await tileMetrics(tx, { areaKey, tileId }, window, today, cfg)) {
           rows.push({ runId: input.runId, scopeType: "tile", scopeId: tileId, metric: m.metric, value: m.value, details: m.details });

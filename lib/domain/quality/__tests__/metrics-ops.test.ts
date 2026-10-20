@@ -11,10 +11,14 @@ import { quietDay } from "@/test/external-calls";
 import { insertQualityArea } from "@/test/quality";
 import {
   costPerPlaceMetric,
+  coverageMetric,
   highlightShareMetric,
+  multiDocumentMetric,
+  multiSourceMetric,
   placesPerTileMetric,
   recentObservationShareMetric,
   reviewEffortMetrics,
+  shelterConfidenceMetric,
 } from "../metrics";
 
 // Quality metrics II on synthetic areas at 21.0–22.0° E / 35.2° N (outside the pilot box), every row rolled back.
@@ -191,6 +195,28 @@ describe("reviewEffortMetrics", () => {
       });
     }));
 
+  it("admin actions decided on creation (merge, position, anchor) are reported apart, not counted (ruling M7-D-R3)", () =>
+    withRollback(async (tx) => {
+      const w = await window(tx);
+      const at = new Date(w.from.getTime() + 3_600_000);
+      await task(tx, at, { durations: [4 * MIN] });
+      await task(tx, at, { durations: [null] });
+      const before = (await reviewEffortMetrics(tx, w, quality, { areaKeys: [] }))[0];
+      for (const subjectType of ["place_merge", "place_position", "place_anchor"]) {
+        await task(tx, at, { subjectType, durations: [null] });
+      }
+      const [minutes] = await reviewEffortMetrics(tx, w, quality, { areaKeys: [] });
+      expect(minutes.value).toBe(4);
+      expect(minutes.details).toMatchObject({ tasks: 2, decided: 2, open: 0, withoutDuration: 1 });
+      expect(minutes.details).toMatchObject({ tasks: before.details.tasks, withoutDuration: before.details.withoutDuration });
+      expect(minutes.details.byKind).toEqual({
+        place_candidate: { tasks: 2, decided: 2, minutes: 4, counted: true },
+        place_merge: { tasks: 1, decided: 1, minutes: 0, counted: false },
+        place_position: { tasks: 1, decided: 1, minutes: 0, counted: false },
+        place_anchor: { tasks: 1, decided: 1, minutes: 0, counted: false },
+      });
+    }));
+
   it("review_minutes_per_100 relates to confirmed places", () =>
     withRollback(async (tx) => {
       const w = await window(tx);
@@ -245,12 +271,13 @@ describe("recentObservationShareMetric", () => {
       await add("text", "2025-10-01");
       await add("text", "2025-03-20"); // 19 months before today
       await add("review", "2026-01-01");
-      await add("observed", "2025-04-20"); // exactly 18 months: still recent
+      await add("observed", "2025-04-20"); // exactly 18 months: no longer „< 18 Monate“ (spec 10, ruling M7-D-R3)
+      await add("observed", "2025-04-21"); // a day younger: recent
       await add("computed", "2026-10-01"); // not an observation
       const r = await recentObservationShareMetric(tx, { areaKey: a.areaKey }, opts);
       expect(r.metric).toBe("recent_observation_share");
-      expect(r.value).toBeCloseTo(3 / 5);
-      expect(r.details).toEqual({ places: 5, recent: 3, since: "2025-04-20" });
+      expect(r.value).toBeCloseTo(3 / 6);
+      expect(r.details).toEqual({ places: 6, recent: 3, since: "2025-04-20" });
     }));
 });
 
@@ -285,11 +312,58 @@ describe("placesPerTileMetric", () => {
         inTarget: 1,
         outsideTarget: [a.tileIds[0], a.tileIds[2]].sort(),
         target: { min: 10, max: 40 },
+        endedTiles: [],
       });
+    }));
+
+  it("confirmed places in ended tiles are listed apart (ruling M7-D-R3)", () =>
+    withRollback(async (tx) => {
+      const a = await insertQualityArea(tx, [X, Y]);
+      await a.addPlace({ at: X });
+      await a.addPlace({ at: Y });
+      await a.addPlace({ at: Y });
+      await a.addPlace({ at: Y, status: "candidate" });
+      await tx.execute(sql`update tiles set valid_to = '2026-01-01' where id = ${a.tileIds[1]!}`);
+      const r = await placesPerTileMetric(tx, a.areaKey, quality, { today: "2026-10-20" });
+      expect(r.details.tiles).toEqual([{ tileId: a.tileIds[0], places: 1 }]);
+      expect(r.details.endedTiles).toEqual([{ tileId: a.tileIds[1], places: 2 }]);
     }));
 
   it("an area without coast tiles is null", () =>
     withRollback(async (tx) => {
       expect((await placesPerTileMetric(tx, `test-${newId()}`, quality)).value).toBeNull();
+    }));
+});
+
+describe("validity on the measurement date (ruling M7-D-R3)", () => {
+  it("place and tile validity are judged on the given today, not on the database date", () =>
+    withRollback(async (tx) => {
+      const today = "2031-01-01";
+      const a = await insertQualityArea(tx, [X]);
+      // valid only from 2030 on: valid on today, not yet on the database date
+      for (let i = 0; i < 2; i++) {
+        const p = await a.addPlace({ inSet: true });
+        await tx.execute(sql`update places set valid_from = '2030-06-01' where id = ${p.placeId}`);
+      }
+      // ended before today, still valid on the database date
+      const ended = await a.addPlace({ inSet: true });
+      await tx.execute(sql`update places set valid_to = '2030-12-01' where id = ${ended.placeId}`);
+      const scope = { areaKey: a.areaKey };
+      const w = await window(tx);
+
+      expect((await coverageMetric(tx, scope, { today })).details).toEqual({ set: 3, confirmed: 2 });
+      expect((await multiSourceMetric(tx, scope, { today })).details.places).toBe(2);
+      expect((await multiDocumentMetric(tx, scope, { today })).details.places).toBe(2);
+      expect((await shelterConfidenceMetric(tx, scope, quality, { today })).details.places).toBe(2);
+      expect((await costPerPlaceMetric(tx, scope, w, { areaKeys: [a.areaKey], today })).details.places).toBe(2);
+      expect((await highlightShareMetric(tx, scope, { today })).details.places).toBe(2);
+      expect((await recentObservationShareMetric(tx, scope, { today, months: 18 })).details.places).toBe(2);
+      expect((await reviewEffortMetrics(tx, w, quality, { areaKeys: [a.areaKey], today }))[1].details.places).toBe(2);
+      expect((await placesPerTileMetric(tx, a.areaKey, quality, { today })).details.tiles).toEqual([{ tileId: a.tileIds[0], places: 2 }]);
+
+      // a tile ended before today is no tile of the area on today
+      await tx.execute(sql`update tiles set valid_to = '2030-12-01' where id = ${a.tileIds[0]!}`);
+      const r = await placesPerTileMetric(tx, a.areaKey, quality, { today });
+      expect(r.details).toMatchObject({ tiles: [], endedTiles: [{ tileId: a.tileIds[0], places: 2 }] });
     }));
 });

@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
@@ -61,14 +61,16 @@ async function measurementRun(tx: Db, areaKey: string, label: string, window: { 
 const rowsOf = (tx: Db, runId: string) => tx.select().from(qualitySnapshots).where(eq(qualitySnapshots.runId, runId));
 
 describe("computeQualitySnapshot", () => {
-  it("a measurement writes area rows for 13 metrics and tile rows for 7", () =>
+  it("a measurement writes area rows for 13 metrics and tile rows for 8", () =>
     withRollback(async (tx) => {
       const { areaKey, tileIds, window } = await scene(tx);
       const runId = await measurementRun(tx, areaKey, "Lauf 1", window);
       const r = await computeQualitySnapshot(tx, { runId, areaKey, window, today: "2026-10-20", cfg: quality });
       // 13 area metrics: every key but coverage_navily, multi_document included (ruling M7-P30)
       expect(AREA_METRICS).toHaveLength(13);
-      expect(r).toEqual({ rows: 13 + 2 * 7, skipped: false });
+      // multi_document is the acceptance metric (ruling M7-P12), so tiles have it too (ruling M7-D-R1)
+      expect(TILE_METRICS).toContain("multi_document");
+      expect(r).toEqual({ rows: 13 + 2 * 8, skipped: false });
 
       const rows = await rowsOf(tx, runId);
       const area = rows.filter((x) => x.scopeType === "area");
@@ -89,6 +91,20 @@ describe("computeQualitySnapshot", () => {
       expect([value("cost_per_place"), value("review_minutes"), value("quote_fidelity")]).toEqual([0, 0, null]);
     }));
 
+  it("tile rows are written for coast tiles valid on the measurement date only (ruling M7-D-R2)", () =>
+    withRollback(async (tx) => {
+      const { areaKey, tileIds, window } = await scene(tx);
+      const third = await insertQualityArea(tx, [{ lon: 21.51, lat: 35.2 }]);
+      await tx.execute(sql`update tiles set area_id = (select area_id from tiles where id = ${tileIds[0]!}) where id = ${third.tileIds[0]!}`);
+      // the east tile has no coast; the third tile ends on 2030-12-01, valid on the database date but not on today
+      await tx.execute(sql`update tiles set has_coast = false where id = ${tileIds[1]!}`);
+      await tx.execute(sql`update tiles set valid_to = '2030-12-01' where id = ${third.tileIds[0]!}`);
+      const runId = await measurementRun(tx, areaKey, "Lauf 1", window);
+      await computeQualitySnapshot(tx, { runId, areaKey, window, today: "2031-01-01", cfg: quality });
+      const tileRows = (await rowsOf(tx, runId)).filter((x) => x.scopeType === "tile");
+      expect([...new Set(tileRows.map((x) => x.scopeId))]).toEqual([tileIds[0]]);
+    }));
+
   it("a retried job writes nothing twice", () =>
     withRollback(async (tx) => {
       const { areaKey, window } = await scene(tx);
@@ -98,7 +114,7 @@ describe("computeQualitySnapshot", () => {
       const job = { key: areaKey, areaKey, runId, stage: QUALITY_MEASURE_STAGE };
       await qualityMeasureHandler(job, ctx as unknown as JobContext);
       const first = (await rowsOf(tx, runId)).length;
-      expect(first).toBe(13 + 2 * 7);
+      expect(first).toBe(13 + 2 * 8);
       await qualityMeasureHandler(job, ctx as unknown as JobContext);
       expect((await rowsOf(tx, runId)).length).toBe(first);
       expect(logs).toEqual([
