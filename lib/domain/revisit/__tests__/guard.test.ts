@@ -46,6 +46,20 @@ describe("assertSimulationEnv", () => {
     expect(assertSimulationEnv(parseEnv({ ...baseEnv, DATABASE_URL: "postgres://u:p@h/periplus" }))).toBeNull();
   });
 
+  it("refuses the simulation database without PERIPLUS_SIMULATION, without the password", () => {
+    const env = parseEnv({ ...baseEnv, DATABASE_URL: "postgres://u:secret@h:5432/periplus_sim" });
+    expect(() => assertSimulationEnv(env)).toThrow(SimulationTargetError);
+    expect(() => assertSimulationEnv(env)).toThrow(/periplus_sim.*PERIPLUS_SIMULATION/);
+    expect(() => assertSimulationEnv(env)).not.toThrow(/secret/);
+    // A test database stays usable without a simulation.
+    expect(assertSimulationEnv(parseEnv({ ...baseEnv, DATABASE_URL: "postgres://u:p@h/periplus_test" }))).toBeNull();
+  });
+
+  it("refuses S3_WRITE_PREFIX without PERIPLUS_SIMULATION", () => {
+    const env = parseEnv({ ...baseEnv, DATABASE_URL: "postgres://u:p@h/periplus", S3_WRITE_PREFIX: "sim/t1/" });
+    expect(() => assertSimulationEnv(env)).toThrow(/S3_WRITE_PREFIX/);
+  });
+
   it("the worker refuses to start a simulation without write prefix", () => {
     const env = parseEnv({ ...baseEnv, PERIPLUS_SIMULATION: "test/revisit/scenario.json" });
     expect(() => assertSimulationEnv(env)).toThrow(/S3_WRITE_PREFIX/);

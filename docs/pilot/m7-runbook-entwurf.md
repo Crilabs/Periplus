@@ -35,7 +35,7 @@ Entwurf aus dem M7-Preflight (Teil b: echte Daten auf dem lokalen Entwicklungs-S
 | 20 | „Paket bauen“ je Revier; Befunde nach `docs/runbook.md` „Verstöße beheben“ beheben: Dubletten „Mit Ort zusammenlegen“, kopierte Summaries „Summary neu erzeugen“ (Reiter „Profil“), Spot an Land „Position korrigieren“ (Reiter „Geometrie“), fremde Quelle „Quelle beenden“; neu bauen bis „Gültig“; `apikey:create`; `delivery:consume` gegen localhost | lokal; Anthropic nur für neu erzeugte Summaries (je ≈ 0,02 €, vernachlässigbar) | 0 | Review |
 | 21 | Messung „Lauf 1“ (`/quality`) | lokal | 0 | – |
 | 22 | `compare:navily --accept-proposals` → `/quality/compare` → Abweichungen prüfen → `--coverage` | lokal (Navily-Datei zur Laufzeit) | 0 | **Abweichungen prüfen, P24** |
-| 23 | Tag D: `consolidate --area saronic`, „Paket bauen“. Tag D+1: Entwicklungs-Worker stoppen, `clone.sh`, `sim:draft-scenario`, Szenario prüfen und einchecken | lokal | 0 | **Szenario prüfen** |
+| 23 | Tag D: `consolidate --area saronic`, „Paket bauen“. Tag D+1: Entwicklungs-Worker stoppen, `clone.sh`, `sim:draft-scenario`, Szenario prüfen und unter `data/sim/` ablegen (git-ignoriert, nie einchecken: es zitiert fremde Seiten wörtlich; Änderungsarten nur Textänderung, Löschen, Anhängen, 404, unverändert – keine neue Seite) | lokal | 0 | **Szenario prüfen** |
 | 24 | `sim:worker`, zweimal `sim:revisit`, Paket in der Simulation bauen, Simulations-Web auf :3001, `sim:verify --base-url … --out docs/pilot/<datum>-revisit.json` | Anthropic, Voyage | 1,5 / 1–3 | – |
 | 25 | Echter „Lauf 2“ (P28: mindestens 7 Tage nach Lauf 1): „Revisit für Revier“; seine Aufgaben mit Zeitmessung prüfen; Messung „Lauf 2“ | Konverter, Voyage, Anthropic | 10 / 5–20 (Firecrawl +15–30) | **Review (< 60 min)** |
 | 26 | Optional: Regressionsbewertung (nur Regeln kostenlos; Extraktionskandidat) | Anthropic | 0 / ≤ 3 | Aktivierung entscheiden |
@@ -56,7 +56,7 @@ Anhalten, berichten, auf Christian warten:
 - **Simulation**: Schutz verweigert (Datenbank nicht `periplus_sim`, kein Präfix), `foreignJobs > 0`, Preflight-Fehler oder `sim:verify` nicht 10/10 mit 0 unerwarteten → anhalten; das Szenario erst korrigieren, wenn Christian entschieden hat, welche Seite falsch ist.
 
 ## Entscheidungen für Christian
-**Blockieren einen Schritt:** Revierpolygone (0); M2-Sperrparameter und Natura-2000-Codes (4); Vergleichssatz mit 50 Orten (7); Quellenfreigaben, Typen, Gewichte, Crawl-Regeln (8, 9, 12); Konverter-Bewertung und -Wahl (10); die zwei PDF-Revierführer und die Wahl `pdf` (11); Modellbewertung und -wahl sowie die Ausgabe für eine Neuverarbeitung mit Opus (16); Kachelgrenzen und Kachelgröße (17, 18); ODbL-Prüfung (19); Szenario prüfen und einchecken (23); Navily-Abweichungen und P24 (22); Aktivierung von Regeln oder Extraktion (26); Abzeichnen (27).
+**Blockieren einen Schritt:** Revierpolygone (0); M2-Sperrparameter und Natura-2000-Codes (4); Vergleichssatz mit 50 Orten (7); Quellenfreigaben, Typen, Gewichte, Crawl-Regeln (8, 9, 12); Konverter-Bewertung und -Wahl (10); die zwei PDF-Revierführer und die Wahl `pdf` (11); Modellbewertung und -wahl sowie die Ausgabe für eine Neuverarbeitung mit Opus (16); Kachelgrenzen und Kachelgröße (17, 18); ODbL-Prüfung (19); Szenario prüfen (23); Navily-Abweichungen und P24 (22); Aktivierung von Regeln oder Extraktion (26); Abzeichnen (27).
 
 **Reviews, die Zeit brauchen:** Ortskandidaten (3), Namenskandidaten (14), Konflikte, Unsicherheiten und Summaries (18), Review von Lauf 2 mit Zeitmessung unter 60 Minuten (25).
 

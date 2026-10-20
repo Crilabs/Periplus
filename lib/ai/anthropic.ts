@@ -192,7 +192,7 @@ function batchItemResult<O>(
 
 export function createAnthropicClient(db: Db, config: AppConfig = getConfig(), options: AnthropicClientOptions = {}): ModelClient {
   let sdk = options.sdk;
-  // Every provider request goes through here: a simulation never reaches Anthropic.
+  // Every provider request goes through here. A simulation may reach Anthropic (ruling M7-P8, budget-checked and booked).
   const getSdk = () => {
     assertNotSimulated("anthropic", "messages");
     return (sdk ??= defaultSdk());

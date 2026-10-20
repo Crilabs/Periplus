@@ -7,19 +7,23 @@ export { SimulationNetworkError };
 /** What the simulated web answers for one page. */
 export type SimulatedResponse = { status: 304 } | { status: 404 } | { status: 200; markdown: string };
 
+/** The version a scenario URL starts from: the document's current one, and whether it is itself simulated. */
+export type SimulatedBase = { markdown: string; simulated: boolean };
+
 /**
- * The pages of a simulated revisit. `respond` takes the normalized URL and the Markdown of the document's newest
- * recorded (non-simulated) version, null when there is none; `covers` tells whether the scenario changes the URL (only
- * then the caller needs to load that version).
+ * The pages of a simulated revisit. `respond` takes the normalized URL and the document's current version (null when
+ * there is none); `covers` tells whether the scenario changes the URL (only then the caller needs to load that version).
  */
 export type SimulatedFetcher = {
-  respond(urlNormalized: string, current: { markdown: string } | null): SimulatedResponse;
+  respond(urlNormalized: string, current: SimulatedBase | null): SimulatedResponse;
   covers(urlNormalized: string): boolean;
 };
 
 /**
- * A scenario URL answers 404 on every fetch when its edit is `gone`, else 200 with the edit applied to the recorded
- * Markdown (ruling M7-P9: the same text on every fetch); every other URL answers 304 (unchanged as recorded).
+ * A scenario URL answers 404 on every fetch when its edit is `gone`. Otherwise it answers 200: with the edit applied to
+ * the current version when that one was recorded (ruling M7-F-R3: the current version, also after a revert A → B → A),
+ * or with the current version as it is when it is already simulated, i.e. carries the edit (ruling M7-P9: a repeated
+ * fetch yields the same text, `unchanged`, instead of editing the edit). Every other URL answers 304 (as recorded).
  */
 export function createSimulatedFetcher(scenario: RevisitScenario): SimulatedFetcher {
   const entries = new Map<string, ScenarioEntry>(scenario.entries.map((e) => [scenarioUrlKey(e.url), e]));
@@ -29,7 +33,8 @@ export function createSimulatedFetcher(scenario: RevisitScenario): SimulatedFetc
       const entry = entries.get(urlNormalized);
       if (!entry) return { status: 304 };
       if (entry.edit.op === "gone") return { status: 404 };
-      if (!current) throw new Error(`scenario entry ${entry.id}: ${urlNormalized} has no recorded version to edit`);
+      if (!current) throw new Error(`scenario entry ${entry.id}: ${urlNormalized} has no current version to edit`);
+      if (current.simulated) return { status: 200, markdown: current.markdown };
       return { status: 200, markdown: applyEdit(current.markdown, entry.edit, entry.url) };
     },
   };

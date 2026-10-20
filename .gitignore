@@ -47,3 +47,6 @@ next-env.d.ts
 # playwright
 /test-results/
 /playwright-report/
+
+# simulated revisit: real pilot scenarios quote third-party pages verbatim and are never committed
+/data/sim/

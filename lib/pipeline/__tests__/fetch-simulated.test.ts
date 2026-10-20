@@ -9,7 +9,7 @@ import { httpCall, type Transport } from "@/lib/adapters/http";
 import { setSimulationMode } from "@/lib/adapters/simulation";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { documents, documentVersions, sources } from "@/lib/db/schema";
+import { crawlFrontier, documents, documentVersions, sources } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { ensureDocument, storeFetched } from "@/lib/domain/documents/store";
 import { createRun } from "@/lib/domain/runs";
@@ -45,6 +45,7 @@ async function seed(tx: Db, archive: ReturnType<typeof memoryArchive>, pages: st
   for (const page of pages) {
     const url = `https://${host}/${page}`;
     const doc = await ensureDocument(tx, { sourceId: source!.id, url, urlNormalized: url, docType: "pilot_guide" });
+    await tx.insert(crawlFrontier).values({ sourceId: source!.id, url, urlNormalized: url, status: "fetched" });
     await storeFetched(
       tx,
       archive,
@@ -199,7 +200,47 @@ describe("simulated fetch", () => {
       const url = fx.docs.a!.url;
       await fetchOnce(tx, fx, url, simDeps(archive, scenarioOf([{ url, edit: { op: "append", text: "Erste Fassung." } }])));
       const changed = scenarioOf([{ url, edit: { op: "append", text: "Zweite Fassung." } }]);
-      expect((await preflightScenario(tx, archive, changed))[0]).toMatchObject({ ok: false, error: expect.stringMatching(/simulated version/) });
+      expect((await preflightScenario(tx, archive, changed))[0]).toMatchObject({ ok: false, error: expect.stringMatching(/simulated current version/) });
+    }));
+
+  it("edits the current version after a revert A -> B -> A, not the newest by fetch time", () =>
+    withRollback(async (tx) => {
+      const archive = memoryArchive();
+      const fx = await seed(tx, archive, ["a"]);
+      const { id, url } = fx.docs.a!;
+      // B adds a paragraph; the page then went back to A (storeFetched points current_version_id at A's old row).
+      await record(tx, archive, id, `${RECORDED}\nEin Absatz nur in B.\n`, "2026-05-02T08:00:00Z");
+      await record(tx, archive, id, RECORDED, "2026-05-03T08:00:00Z");
+      const scenario = scenarioOf([{ url, edit: { op: "replace", from: "ist im Sommer geöffnet.", to: "hat geschlossen." } }]);
+      expect((await preflightScenario(tx, archive, scenario))[0]!.ok).toBe(true);
+      expect((await fetchOnce(tx, fx, url, simDeps(archive, scenario))).outcome).toBe("new_version");
+      const [doc] = await tx.select().from(documents).where(eq(documents.id, id));
+      const [sim] = await tx.select().from(documentVersions).where(eq(documentVersions.id, doc!.currentVersionId!));
+      expect(sim!.simulated).toBe(true);
+      const md = new TextDecoder().decode((await archive.get(sim!.mdKey))!);
+      expect(md).toBe(RECORDED.replace("ist im Sommer geöffnet.", "hat geschlossen."));
+      // The second fetch answers the simulated current version as it is.
+      expect((await fetchOnce(tx, fx, url, simDeps(archive, scenario))).outcome).toBe("unchanged");
+    }));
+
+  it("a non-scenario page recorded with one miss is reset by the 304", () =>
+    withRollback(async (tx) => {
+      const archive = memoryArchive();
+      const fx = await seed(tx, archive, ["a", "b"]);
+      await tx.update(documents).set({ consecutiveGone: 1 }).where(eq(documents.id, fx.docs.b!.id));
+      const deps = simDeps(archive, scenarioOf([{ url: fx.docs.a!.url, edit: { op: "touch" } }]));
+      expect((await fetchOnce(tx, fx, fx.docs.b!.url, deps)).outcome).toBe("not_modified");
+      const [doc] = await tx.select().from(documents).where(eq(documents.id, fx.docs.b!.id));
+      expect(doc).toMatchObject({ status: "active", consecutiveGone: 0 });
+    }));
+
+  it("a gone entry recorded with one miss turns gone at the first simulated fetch", () =>
+    withRollback(async (tx) => {
+      const archive = memoryArchive();
+      const fx = await seed(tx, archive, ["a"]);
+      await tx.update(documents).set({ consecutiveGone: 1 }).where(eq(documents.id, fx.docs.a!.id));
+      const deps = simDeps(archive, scenarioOf([{ url: fx.docs.a!.url, edit: { op: "gone" } }]));
+      expect((await fetchOnce(tx, fx, fx.docs.a!.url, deps)).outcome).toBe("gone");
     }));
 
   it("the source preparation reads robots.txt from the simulated transport", () =>
@@ -235,14 +276,56 @@ describe("simulatedTransport", () => {
 });
 
 describe("simulatedFetcherFor", () => {
-  it("is null without a simulation and loads the scenario once per path", async () => {
-    expect(simulatedFetcherFor({ PERIPLUS_SIMULATION: undefined })).toBeNull();
+  it("is null without a simulation and caches the scenario by path and content", async () => {
+    expect(await simulatedFetcherFor({ PERIPLUS_SIMULATION: undefined })).toBeNull();
     const dir = mkdtempSync(join(tmpdir(), "sim-scenario-"));
     const path = join(dir, "scenario.json");
+    const loaded: string[] = [];
+    const onLoad = (l: { name: string }) => loaded.push(l.name);
     writeFileSync(path, JSON.stringify(scenarioOf([{ url: "https://x.test.invalid/a", edit: { op: "gone" } }])));
-    const first = simulatedFetcherFor({ PERIPLUS_SIMULATION: path });
-    expect(simulatedFetcherFor({ PERIPLUS_SIMULATION: path })).toBe(first);
-    expect((await first)!.respond("https://x.test.invalid/a", null)).toEqual({ status: 404 });
-    expect((await first)!.respond("https://x.test.invalid/b", null)).toEqual({ status: 304 });
+    const first = await simulatedFetcherFor({ PERIPLUS_SIMULATION: path }, onLoad);
+    expect(await simulatedFetcherFor({ PERIPLUS_SIMULATION: path }, onLoad)).toBe(first);
+    expect(first!.respond("https://x.test.invalid/a", null)).toEqual({ status: 404 });
+    expect(first!.respond("https://x.test.invalid/b", null)).toEqual({ status: 304 });
+    expect(loaded).toEqual(["test"]);
+
+    // An entry added while the worker keeps running is answered at once, not as 304 from the old scenario.
+    writeFileSync(
+      path,
+      JSON.stringify(scenarioOf([{ url: "https://x.test.invalid/a", edit: { op: "gone" } }, { url: "https://x.test.invalid/b", edit: { op: "gone" } }])),
+    );
+    const second = await simulatedFetcherFor({ PERIPLUS_SIMULATION: path }, onLoad);
+    expect(second).not.toBe(first);
+    expect(second!.respond("https://x.test.invalid/b", null)).toEqual({ status: 404 });
+    expect(loaded).toHaveLength(2);
+
+    // An invalid edit is not kept: the job fails, and the fixed file is read again.
+    writeFileSync(path, "{");
+    await expect(simulatedFetcherFor({ PERIPLUS_SIMULATION: path })).rejects.toThrow(/scenario/);
+    writeFileSync(path, JSON.stringify(scenarioOf([{ url: "https://x.test.invalid/a", edit: { op: "gone" } }])));
+    expect((await simulatedFetcherFor({ PERIPLUS_SIMULATION: path }))!.respond("https://x.test.invalid/b", null)).toEqual({ status: 304 });
   });
 });
+
+async function record(tx: Db, archive: ReturnType<typeof memoryArchive>, documentId: string, markdown: string, at: string) {
+  await storeFetched(
+    tx,
+    archive,
+    documentId,
+    {
+      fetchedAt: new Date(at),
+      raw: new TextEncoder().encode(markdown),
+      rawExt: "md",
+      contentType: "text/markdown",
+      finalUrl: null,
+      markdown,
+      converter: "local",
+      language: "de",
+      publishedAt: null,
+      docType: "pilot_guide",
+      etag: null,
+      lastModified: null,
+    },
+    getConfig().fetch.chunk,
+  );
+}

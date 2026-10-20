@@ -8,7 +8,7 @@ import { runPdftotext } from "@/lib/adapters/pdf";
 import { getArchive } from "@/lib/adapters/s3";
 import { createAnthropicClient } from "@/lib/ai/anthropic";
 import { getConfig } from "@/lib/config";
-import { loadScenario } from "@/lib/domain/revisit/scenario";
+import { parseScenario, readScenarioFile } from "@/lib/domain/revisit/scenario";
 import { getEnv, type Env } from "@/lib/env";
 import { enqueueStageJobs } from "@/lib/jobs/enqueue";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
@@ -40,23 +40,29 @@ export function crawlRenderPage(env: Pick<Env, "PERIPLUS_RENDERER"> = getEnv()):
 
 const runIdOf = (data: JobData): string => z.string().min(1).parse(data.runId);
 
-let scenarioFetcher: { path: string; fetcher: Promise<SimulatedFetcher> } | undefined;
+let scenarioCache: { path: string; hash: string; fetcher: SimulatedFetcher } | undefined;
+
+/** What `simulatedFetcherFor` reports when it (re)loads a scenario. */
+export type ScenarioLoaded = { path: string; name: string; hash: string };
 
 /**
- * The simulated web of a process with `PERIPLUS_SIMULATION` (its scenario loaded once per process), else null. A
- * failed load is not kept: the next job reads the file again.
+ * The simulated web of a process with `PERIPLUS_SIMULATION`, else null. The scenario is cached by path and content
+ * hash: each job reads the file, and an edited file (e.g. an entry added between two `sim:revisit` calls while the
+ * worker keeps running) is validated and used at once instead of the old one (`onLoad` names it). A failed load is
+ * not kept: the job fails and the next one reads the file again.
  */
-export function simulatedFetcherFor(env: Pick<Env, "PERIPLUS_SIMULATION"> = getEnv()): Promise<SimulatedFetcher> | null {
+export async function simulatedFetcherFor(
+  env: Pick<Env, "PERIPLUS_SIMULATION"> = getEnv(),
+  onLoad?: (loaded: ScenarioLoaded) => void,
+): Promise<SimulatedFetcher | null> {
   const path = env.PERIPLUS_SIMULATION;
   if (!path) return null;
-  if (scenarioFetcher?.path !== path) {
-    const fetcher = loadScenario(path).then(createSimulatedFetcher);
-    fetcher.catch(() => {
-      if (scenarioFetcher?.fetcher === fetcher) scenarioFetcher = undefined;
-    });
-    scenarioFetcher = { path, fetcher };
-  }
-  return scenarioFetcher.fetcher;
+  const { hash, text } = await readScenarioFile(path);
+  if (scenarioCache?.path === path && scenarioCache.hash === hash) return scenarioCache.fetcher;
+  const scenario = parseScenario(text, path);
+  scenarioCache = { path, hash, fetcher: createSimulatedFetcher(scenario) };
+  onLoad?.({ path, name: scenario.name, hash });
+  return scenarioCache.fetcher;
 }
 
 /** The crawl's transport: the simulated one in a simulation (robots.txt 404, nothing else), else the guarded network. */
@@ -90,7 +96,7 @@ export const fetchUrlHandler: JobHandler<JobData> = async (data, ctx) => {
   const job = urlJobSchema.parse(data);
   const runId = runIdOf(data);
   const cfg = getConfig().fetch;
-  const simulated = await simulatedFetcherFor();
+  const simulated = await simulatedFetcherFor(getEnv(), (loaded) => ctx.log.info(loaded, "simulation scenario loaded"));
   // A simulation answers every page from its scenario: no converter service, renderer or model is ever asked.
   const deps = simulated
     ? {

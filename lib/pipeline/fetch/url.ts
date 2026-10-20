@@ -15,7 +15,7 @@ import { extractLinks } from "@/lib/domain/documents/links";
 import { extractPublishedAt } from "@/lib/domain/documents/metadata";
 import { ensureDocument, markChecked, markGone, storeFetched } from "@/lib/domain/documents/store";
 import { structuredToMarkdown } from "@/lib/domain/documents/structured";
-import { recordedVersion } from "@/lib/domain/revisit/scenario";
+import { editBase } from "@/lib/domain/revisit/scenario";
 import { extendStage, stageAcceptsJobs } from "@/lib/domain/runs";
 import { urlAllowed } from "@/lib/domain/sources/crawl-rules";
 import { effectiveRate, robotsForRun } from "@/lib/domain/sources/robots";
@@ -389,10 +389,14 @@ async function recordMiss(
 
 /**
  * A page of a simulated revisit (no request, no robots, no links): the scenario's answer for the URL, given the
- * Markdown of the document's newest recorded version (ruling M7-P9).
- * - 304 → `markChecked` (`not_modified`); a URL never recorded has nothing to replay (`skipped`, row stays queued),
+ * document's current version (`editBase`, rulings M7-P9 and M7-F-R3).
+ * - 304 → `markChecked` (`not_modified`). This also resets a recorded miss (`consecutive_gone` back to 0): the
+ *   simulated web holds the page as recorded, so a page that missed once before the clone does not turn gone in the
+ *   simulation (no spurious `gone` event). A URL never recorded has nothing to replay (`skipped`, row stays queued);
  *   a document recorded as gone answers 404 again, as recorded.
- * - 404 → `recordMiss` (`missing`, at the second run `gone`).
+ * - 404 → `recordMiss` (`missing`, at the second miss `gone`). A `gone` entry whose document was recorded with one
+ *   miss (`consecutive_gone = 1`) therefore turns gone at the first simulated revisit already (`goneAfter` 2), as the
+ *   real crawl would.
  * - 200 → `storeFetched` with converter `simulated`, `simulated: true`, the Markdown as raw `md` object
  *   (`text/markdown`) and the document's type; the same edit on every fetch yields `unchanged` after the first.
  */
@@ -410,8 +414,8 @@ async function fetchSimulated(
     await setFrontier(db, sourceId, urlNormalized, runId, "queued", "not_recorded");
     return { outcome: "skipped", newUrls: 0 };
   }
-  const recorded = simulated.covers(urlNormalized) ? await recordedVersion(db, archive, doc.id) : null;
-  const res = simulated.respond(urlNormalized, recorded);
+  const base = simulated.covers(urlNormalized) ? await editBase(db, archive, doc.id) : null;
+  const res = simulated.respond(urlNormalized, base);
   if (res.status === 404 || (res.status === 304 && doc.status === "gone")) {
     return recordMiss(db, sourceId, urlNormalized, doc, 404, fetchedAt, runId);
   }

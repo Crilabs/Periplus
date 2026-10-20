@@ -43,12 +43,25 @@ export function assertSimulationTarget(databaseUrl: string): void {
 export type SimulationSettings = { scenarioPath: string; writePrefix: string; database: string };
 
 /**
- * Start check of every process (worker, web): without `PERIPLUS_SIMULATION` nothing to check (null); with it the
- * database must be a simulation target and `S3_WRITE_PREFIX` must be set, else `SimulationTargetError` with a German
- * message. Returns what the process logs as `simulation active`.
+ * Start check of every process (worker, web, sim CLIs). With `PERIPLUS_SIMULATION` the database must be a simulation
+ * target and `S3_WRITE_PREFIX` must be set; returns what the process logs as `simulation active`. Without it the
+ * reverse holds: the simulation clone (`periplus_sim`) and an archive write prefix belong to a simulation only, so a
+ * process on the clone without the simulation guard (real crawl, DataForSEO, Nominatim, unprefixed archive writes)
+ * or one writing real objects under a prefix is refused; null otherwise. Refusals are `SimulationTargetError`s
+ * with a German message.
  */
 export function assertSimulationEnv(env: Pick<Env, "PERIPLUS_SIMULATION" | "DATABASE_URL" | "S3_WRITE_PREFIX">): SimulationSettings | null {
-  if (!env.PERIPLUS_SIMULATION) return null;
+  if (!env.PERIPLUS_SIMULATION) {
+    if (databaseNameOrNull(env.DATABASE_URL) === SIMULATION_DATABASE) {
+      throw new SimulationTargetError(
+        `Die Datenbank ${SIMULATION_DATABASE} ist der Simulationsklon: nur mit PERIPLUS_SIMULATION starten, sonst erreicht der Prozess echte Dienste.`,
+      );
+    }
+    if (env.S3_WRITE_PREFIX) {
+      throw new SimulationTargetError("S3_WRITE_PREFIX gehört zu einer Simulation: ohne PERIPLUS_SIMULATION nicht setzen.");
+    }
+    return null;
+  }
   assertSimulationTarget(env.DATABASE_URL);
   if (!env.S3_WRITE_PREFIX) {
     throw new SimulationTargetError(
@@ -56,4 +69,13 @@ export function assertSimulationEnv(env: Pick<Env, "PERIPLUS_SIMULATION" | "DATA
     );
   }
   return { scenarioPath: env.PERIPLUS_SIMULATION, writePrefix: env.S3_WRITE_PREFIX, database: databaseNameOf(env.DATABASE_URL) };
+}
+
+/** The database name, or null when the URL does not parse (a non-simulation process then fails at connect, not here). */
+function databaseNameOrNull(url: string): string | null {
+  try {
+    return databaseNameOf(url);
+  } catch {
+    return null;
+  }
 }
