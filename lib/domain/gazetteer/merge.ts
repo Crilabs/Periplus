@@ -182,7 +182,8 @@ export async function resolveMergedByExternalId(
  * (transliterations and fallbacks are regenerated, not copied) and are ended on `drop`; external IDs
  * missing on `keep` are taken over; children of `drop` move to `keep` (a `keep` below `drop` takes over its parent); `drop` ends with
  * `merged_into_id = keep`. Places: when both have one, the place of `drop` is rejected and merged into
- * that of `keep`; when only `drop` has one, it moves to `keep`. Throws for `keep == drop` and for objects
+ * that of `keep`, and a `no_anchoring` drop place makes a candidate or confirmed keep place `no_anchoring` with the
+ * drop's `status_reason` (the stricter status wins, GR-4); when only `drop` has one, it moves to `keep`. Throws for `keep == drop` and for objects
  * that are not valid (ended or merged).
  */
 export async function mergeGeoObjects(db: Db, keepId: string, dropId: string): Promise<void> {
@@ -256,13 +257,22 @@ export async function mergeGeoObjects(db: Db, keepId: string, dropId: string): P
         .where(eq(geoObjects.id, keepId));
     }
 
-    const [keepPlace] = await tx.select({ id: places.id }).from(places).where(eq(places.geoObjectId, keepId));
-    const [dropPlace] = await tx.select({ id: places.id }).from(places).where(eq(places.geoObjectId, dropId));
+    const placeOf = (geoObjectId: string) =>
+      tx.select({ id: places.id, status: places.status, statusReason: places.statusReason }).from(places).where(eq(places.geoObjectId, geoObjectId));
+    const [keepPlace] = await placeOf(keepId);
+    const [dropPlace] = await placeOf(dropId);
     if (dropPlace && keepPlace) {
       await tx
         .update(places)
         .set({ status: "rejected", statusReason: "merged", mergedIntoId: keepPlace.id, updatedAt: sql`now()` })
         .where(eq(places.id, dropPlace.id));
+      // the stricter status wins (GR-4): an exclusion of the merged place is never lost to a candidate or confirmed survivor
+      if (dropPlace.status === "no_anchoring" && (keepPlace.status === "candidate" || keepPlace.status === "confirmed")) {
+        await tx
+          .update(places)
+          .set({ status: "no_anchoring", statusReason: dropPlace.statusReason ?? "merged", updatedAt: sql`now()` })
+          .where(eq(places.id, keepPlace.id));
+      }
     } else if (dropPlace) {
       await tx
         .update(places)
