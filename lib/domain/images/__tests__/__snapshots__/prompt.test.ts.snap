@@ -4,7 +4,7 @@ exports[`buildPlacePrompt > anchorage near a town adds anchored boats, puts the 
 "Turn this 3D terrain render of a real Greek place - a sheltered anchorage with yachts at anchor in front of a town - into a high-end travel catalogue drone photograph.
 
 Preserve exactly:
-- camera position, 30° downward angle, field of view and framing; the edges of the image show exactly the same content as the render
+- camera position, the same downward angle, field of view and framing; the edges of the image show exactly the same content as the render
   (do not zoom out, do not reveal more sky or horizon);
 - the shape and position of the coastline, breakwaters, moles, piers and quays, streets, buildings and hills;
 - which areas are forest, open ground, built-up, beach and water;
@@ -33,7 +33,7 @@ exports[`buildPlacePrompt > prompt for anchorage removes boats 1`] = `
 "Turn this 3D terrain render of a real Greek place - a sheltered bay with its shore, beach or rocks and the slopes behind - into a high-end travel catalogue drone photograph.
 
 Preserve exactly:
-- camera position, 30° downward angle, field of view and framing; the edges of the image show exactly the same content as the render
+- camera position, the same downward angle, field of view and framing; the edges of the image show exactly the same content as the render
   (do not zoom out, do not reveal more sky or horizon);
 - the shape and position of the coastline, breakwaters, moles, piers and quays, streets, buildings and hills;
 - which areas are forest, open ground, built-up, beach and water;
@@ -58,7 +58,7 @@ exports[`buildPlacePrompt > prompt for marina keeps boats in evening light 1`] =
 "Turn this 3D terrain render of a real Greek place - a marina with harbour basins, breakwaters and floating pontoons - into a high-end travel catalogue drone photograph.
 
 Preserve exactly:
-- camera position, 30° downward angle, field of view and framing; the edges of the image show exactly the same content as the render
+- camera position, the same downward angle, field of view and framing; the edges of the image show exactly the same content as the render
   (do not zoom out, do not reveal more sky or horizon);
 - the shape and position of the coastline, breakwaters, moles, piers and quays, streets, buildings and hills;
 - which areas are forest, open ground, built-up, beach and water;
