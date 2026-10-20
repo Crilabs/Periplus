@@ -307,6 +307,70 @@ Stufe 8 (M5): aus allen Facts eines Geo-Objekts ein versioniertes Profil mit Wer
 2. Bewertungslauf über den Vergleichssatz: `npm run consolidate -- --comparison-set saronic --evaluation --rules v2` (Server: `dc run --rm worker node --import tsx scripts/consolidate.ts --comparison-set saronic --evaluation --rules v2`; im Code `startConsolidationRun({ scope: { comparisonSetArea }, evaluation: true, rulesVersion: "v2" })`). Er schreibt nur `evaluation_profiles`, keine Profile, Ereignisse, Aufgaben, Summaries oder Folgeaufträge. Vergleich alt/neu und Aktivieren auf „Qualität“ kommen mit M7; bis dahin die Tabelle `evaluation_profiles` des Laufs gegen die jüngsten `profiles` derselben Objekte vergleichen.
 3. `config/consolidation/active.json` auf `v2` umstellen, einchecken, deployen, dann je Revier `npm run consolidate -- --area <key>`. Jedes Objekt mit geänderten Werten oder Klassen bekommt eine neue Version mit `rules_version` v2.
 
-## Pakete bauen
+## Lieferung
+Stufe 9 (M6): je Revier ein Paket nach dem „Periplus Data Contract“ (`contract/v1/`, JSON-Schemas unter `contract/schema/1.0/`), gebaut, geprüft und in S3 abgelegt (`deliveries/<ar_…>/<dataVersion>/<datei>`), abrufbar über die Liefer-API `/api/v1`. Checkliste der Abnahme: `docs/pilot/m6-abnahme.md`.
+
+> **ODbL:** `coast.geojson`, OSM-Namen und Regionspolygone stehen unter ODbL (im Manifest unter `licenses` ausgewiesen). Bis die ODbL-Trennung (Teil-Spec 08 „Lizenz und ODbL“) rechtlich geprüft ist, gehen Pakete **nur an interne Abnehmer**: keinen API-Schlüssel an Dritte ausgeben.
+
+### Reihenfolge je Revier (Pilot: `saronic`, danach `argolic`)
+1. **Voraussetzung Profile** (M5, Abschnitt „Konsolidierung“): `npm run check:profiles -- --area saronic` (Server: `dc run --rm worker node --import tsx scripts/check-profiles.ts --area saronic`) endet mit Exit 0.
+2. **„Lieferungen“ → „Paket bauen“** beim Revier: startet einen Lauf mit der Stufe `delivery.build` und öffnet seine Laufseite.
+3. **Bericht prüfen**: „Lieferungen“ → Zeile des Baus. Status „Gültig“ (neue Version, Dateien gespeichert, über die API abrufbar), „Unverändert“ (gültig, aber nichts geändert: keine neue Version, keine Dateien) oder „Abgelehnt“ (mindestens eine der 16 Prüfungen mit Verstoß; die Dateien bleiben unter `deliveries/<ar_…>/rejected/<id>/` zur Diagnose, das Revier liefert weiter das letzte gültige Paket). Die Detailseite zeigt jede Prüfung mit Fundstellen (Objekt-IDs verlinken auf Ort- oder Geo-Seite), die Warnungen (was ausgelassen wurde; sie blockieren nicht), die Änderungen (`changes.json`, ab dem zweiten Paket) und die Dateien zum Herunterladen. Der Reiter „Lieferung“ einer Ort-Seite zeigt das gelieferte Vertragsobjekt und eine Vorschau des nächsten Pakets.
+4. **Verstöße beheben** (unten), dann erneut „Paket bauen“.
+5. **Abnehmer-Prüfung** (unten): `delivery:consume` gegen den Server endet mit `OK`.
+
+### Verstöße beheben
+| Prüfung | Abhilfe |
+| --- | --- |
+| Keine zwei Spots derselben Art näher als 150 m (`spot_duplicates`) | Ort-Seite → **„Mit Ort zusammenlegen“**: der Ort wird Teil des gewählten bestätigten Orts (Status abgelehnt, Grund zusammengelegt; seine Facts gehen an den Ziel-Ort, der danach konsolidiert wird). Im nächsten Paket steht der alte Spot mit `mergedInto`. Ausgeschlossene Spots zählen nicht. |
+| Kein Text länger als 15 Wörter aus einer Quelle (`verbatim_text`) | Betrifft fast immer eine Summary. **Es gibt keinen Knopf, der eine `ok`-Summary neu erzeugt** („Neu erzeugen“ steht nur an Aufgaben fehlgeschlagener Summaries): eine neue Summary entsteht erst mit einer neuen Profilversion. Befund an Christian (offener Punkt in `docs/pilot/m6-abnahme.md`). |
+| Spot in der Bounding Box und höchstens 1,5 sm von Wasser (`spot_location`) | Es gibt keine Aktion, die einen Ort verschiebt („Position korrigieren“ entfällt, Ruling M6-P15). Liegt der Ort falsch, weil er eine Dublette ist: „Mit Ort zusammenlegen“; sonst Befund an Christian. |
+| Keine fremden Inhalte (`foreign_content`) | Ein gelieferter Wert zitiert eine Quelle auf einer verbotenen Domain (`forbiddenDomains` in `config/delivery.json`), oder ein Text nennt eine solche Domain. Quellen auf diesen Domains lassen sich seit M6 nicht freigeben; ein Treffer heißt, eine wurde vorher freigegeben, oder eine Summary nennt die Domain. Keine Aktion entfernt die Facts einer Quelle: Befund an Christian. |
+| Schutz (`shelter`) bei Häfen und Marinas | Ein Hafen oder eine Marina braucht mindestens 0,8 je Sektor, sonst muss die Herkunft des Schutzes Text, Beobachtung oder Review sein (`harbourShelterSources` in `config/delivery.json`). Ein Wert darunter aus Rechnung allein: Befund an Christian. |
+| übrige Prüfungen (Schema, IDs, Referenzen, Grenzen, Saison, Datenversion, `changes.json`) | Fehler im Bau, nicht in den Daten: Bericht und Log (`delivery rejected`) an Christian. |
+
+Warnungen (nicht blockierend) nennen u. a. Spots ohne Profil oder mit unvollständigem Schutz (nicht geliefert; „Profil neu berechnen“), Objekte ohne Namen, Highlights ohne Spot im Radius und zusammengelegte Spots, deren Ziel nicht im Paket ist.
+
+### Bau (Technik)
 Stufe 9 (M6): Lauf „Paket bauen“ je Revier (Stufe `delivery.build`, ein Job). Der Bau nimmt die Revier-Sperre (`pg_advisory_xact_lock`), liest alles aus einem Snapshot (eigene Transaktion, REPEATABLE READ, nur lesend), legt die Dateien in S3 ab und schreibt dann die Zeile `deliveries`. Ein abgelehntes Paket (eine Prüfung schlägt fehl, auch bei unverändertem Inhalt) steht im Log als Warnung „delivery rejected“ mit den fehlgeschlagenen Prüfungen und unter `deliveries/<ar_…>/rejected/<id>/`; das Revier liefert weiter das letzte gültige Paket.
 - **Pool und Nebenläufigkeit**: ein Bau hält zwei Verbindungen des Pools (Sperr-Transaktion und Lese-Snapshot); der Pool hat 10 Verbindungen (`pg`-Standard), die sich alle Queues eines Workers teilen. `concurrency` von `delivery.build` (`config/queues.json`, Pilot 1) mal Anzahl der Worker bleibt deutlich unter der Poolgröße. Wartet ein Bau länger als `build.lockTimeoutMs` (`config/delivery.json`, 5 min) auf die Revier-Sperre, bricht er mit `lock_not_available` ab und der Job wird wiederholt; so halten wartende Bauvorgänge ihre Verbindungen nie dauerhaft. Ein Job läuft höchstens `expireInSeconds` 3600 s.
+
+### API-Schlüssel für Abnehmer
+```bash
+npm run apikey:create -- <abnehmer> --scope delivery:read
+# Server:
+dc run --rm worker node --import tsx scripts/apikey.ts create <abnehmer> --scope delivery:read
+```
+Der Schlüssel (`pk_…`) wird nur einmal ausgegeben. Sperren: „Einstellungen“ → „API-Clients“ → „Sperren“ (wirkt sofort, nicht umkehrbar) oder `npm run apikey:revoke -- <abnehmer>`. Rate-Limit je Schlüssel: `api_clients.rate_limit_per_min` (Standard 60 je Minute, darüber 429).
+
+### Liefer-API
+Alle Endpunkte unter `/api/v1` brauchen `Authorization: Bearer pk_…` mit Scope `delivery:read`. Antworten tragen `ETag` (mit `If-None-Match` → 304), `Cache-Control: private, max-age=60`, `Periplus-Schema-Version` und, wo es eine gibt, `Periplus-Data-Version`. Fehler kommen als `{ "error": { "code", "message" } }` mit 400/401/403/404/429/500. `<area>` ist der Revier-Schlüssel (`saronic`) oder die öffentliche ID (`ar_…`). Nur gültige Pakete werden ausgeliefert.
+
+```bash
+export PERIPLUS_API_KEY=pk_…   # Platzhalter; nie einen echten Schlüssel in Dateien oder Tickets schreiben
+H="Authorization: Bearer $PERIPLUS_API_KEY"
+curl -sH "$H" https://<domain>/api/v1/areas                                        # Reviere mit aktueller dataVersion, bbox, Bauzeit
+curl -sH "$H" https://<domain>/api/v1/areas/saronic/package                        # Manifest des aktuellen Pakets mit links je Datei
+curl -sH "$H" https://<domain>/api/v1/areas/saronic/package/spots.json             # eine Datei des aktuellen Pakets
+curl -sH "$H" "https://<domain>/api/v1/areas/saronic/package/spots.json?dataVersion=1"   # Datei eines älteren Pakets (Archiv)
+curl -sH "$H" "https://<domain>/api/v1/areas/saronic/changes?since=1"              # Änderungen nach Version 1 bis heute, je Objekt zusammengefasst
+curl -sH "$H" "https://<domain>/api/v1/spots/sp_…?asOf=2026-11-01"                 # ein Spot, wie er an diesem Tag geliefert war
+curl -sH "$H" https://<domain>/api/v1/schema/1.0/spots.schema.json                 # JSON-Schema einer Datei
+```
+- **`changes?since=<n>`**: `n` von 1 bis zur aktuellen Version (`n` = aktuelle Version → leere Liste); sonst 400 `invalid_since`. Eine App, die Version `n` hat, holt damit alles bis zur aktuellen.
+- **`spots/<id>?asOf=YYYY-MM-DD`**: liest das Paketarchiv (die Spot-Version des Pakets, das an diesem Tag galt), keine Neuberechnung; ohne `asOf` die zuletzt gelieferte Version. Ein gespeicherter Törn bekommt so genau die Fassung zurück, auf die er verweist. Vor einem simulierten Revisit (M7) deshalb ein Paket bauen.
+- Herunterladen in der Oberfläche: Detailseite eines Pakets → Dateien (Admin-Sitzung, kein Schlüssel nötig).
+
+### Abnehmer-Prüfung
+`delivery:consume` prüft ein Paket so, wie ein fremder Abnehmer es sieht, nur über die API: Manifest holen, jede verlinkte Datei laden, ihren SHA-256 mit dem Manifest vergleichen und sie mit eigenem Ajv (Draft 2020-12) gegen das Schema von `/api/v1/schema/<version>/<datei>` prüfen.
+```bash
+PERIPLUS_API_KEY=pk_… npm run delivery:consume -- --base-url https://<domain> --area saronic
+# oder mit --key pk_… (landet dann in der Shell-History)
+```
+Ausgabe je Datei `sha256 ok|MISMATCH  schema ok|<n> error(s)` mit den ersten Fehlern (JSON-Pointer), am Ende `OK` oder `FAILED` (Exit 1). Ein falscher Schlüssel, ein unbekanntes Revier oder ein Revier ohne gültiges Paket enden mit der Fehlermeldung der API und Exit 1.
+
+### Neue Vertragsversion
+Schritte für eine neue Version (z. B. `2.0`); die laufenden Pakete bleiben bis zum nächsten Bau bei ihrer Version:
+1. Neues Verzeichnis `contract/v2/` (Kopie von `v1`, Änderungen), `CONTRACT_SCHEMAS` in `contract/index.ts` darauf umstellen, `SCHEMA_VERSION` in `contract/index.ts` und `schemaVersion` in `config/delivery.json` auf die neue Version.
+2. `npm run contract:generate` schreibt die JSON-Schemas nach `contract/schema/<version>/` (ein Test vergleicht sie mit den zod-Schemas); einchecken.
+3. Die API liefert nur die aktuelle Version aus (`/schema/<version>/…` kennt nur sie): Abnehmer vorher informieren, danach je Revier „Paket bauen“.

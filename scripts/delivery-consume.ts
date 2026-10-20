@@ -1,0 +1,141 @@
+import { createHash } from "node:crypto";
+import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { fileURLToPath } from "node:url";
+import { Ajv2020 } from "ajv/dist/2020";
+import addFormats from "ajv-formats";
+import type { ContractFile, Manifest } from "../contract";
+
+/*
+ * Consumer check of an area package (plan M6 Task 15): what a foreign consumer sees, through the API only. Fetches the
+ * current manifest, every linked file, checks each file's sha256 against the manifest and validates it with its own
+ * Ajv (draft 2020-12) against the schema served by `GET /api/v1/schema/<version>/<file>`. No database, no project code
+ * except types.
+ */
+
+const USAGE = "usage: delivery-consume.ts --base-url <https://…> --key <pk_…> --area <key or ar_…> (or the key in PERIPLUS_API_KEY)";
+
+export type ConsumedFile = { name: string; sha256Ok: boolean; schemaErrors: string[] };
+export type ConsumeResult = { dataVersion: number; files: ConsumedFile[]; ok: boolean };
+
+type PackageBody = Manifest & { links: Partial<Record<ContractFile, string>> };
+
+/** `spots.json` → `spots.schema.json`, `coast.geojson` → `coast.schema.json` (the API's schema file names). */
+const schemaName = (file: string) => `${file.replace(/\.(json|geojson)$/, "")}.schema.json`;
+
+const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+
+/** Error text of a non-200 answer: status plus the API's `{ error: { code, message } }` when it has one. */
+async function failure(res: Response, what: string): Promise<string> {
+  let detail = "";
+  try {
+    const body = (await res.json()) as { error?: { code?: string; message?: string } };
+    if (body.error) detail = ` ${body.error.code ?? ""}: ${body.error.message ?? ""}`.trimEnd();
+  } catch {
+    // no JSON body
+  }
+  return `GET ${what} → ${res.status}${detail}`;
+}
+
+/**
+ * Consumes the current package of `area` (config key or `ar_…`) from `baseUrl`. Throws when the manifest cannot be
+ * fetched (wrong key, unknown area, no valid package); every file problem is a finding of that file instead.
+ * `manifest.json` has no hash in the manifest itself: it must equal the manifest `GET /package` answered.
+ */
+export async function consumePackage(input: {
+  baseUrl: string;
+  key: string;
+  area: string;
+  fetch?: typeof fetch;
+}): Promise<ConsumeResult> {
+  const doFetch = input.fetch ?? fetch;
+  const base = input.baseUrl.replace(/\/+$/, "");
+  const get = (pathOrUrl: string) =>
+    doFetch(new URL(pathOrUrl, `${base}/`).toString(), { headers: { authorization: `Bearer ${input.key}`, accept: "application/json" } });
+
+  const packagePath = `/api/v1/areas/${encodeURIComponent(input.area)}/package`;
+  const res = await get(packagePath);
+  if (res.status !== 200) throw new Error(await failure(res, packagePath));
+  const { links, ...manifest } = (await res.json()) as PackageBody;
+
+  const ajv = addFormats(new Ajv2020({ allErrors: true, strict: true }));
+  const expected = new Map(manifest.files.map((f) => [f.name, f.sha256]));
+  const files: ConsumedFile[] = [];
+
+  for (const [name, link] of Object.entries(links) as Array<[ContractFile, string]>) {
+    const fileRes = await get(link);
+    if (fileRes.status !== 200) {
+      files.push({ name, sha256Ok: false, schemaErrors: [await failure(fileRes, link)] });
+      continue;
+    }
+    const bytes = new Uint8Array(await fileRes.arrayBuffer());
+    let data: unknown;
+    try {
+      data = JSON.parse(new TextDecoder().decode(bytes));
+    } catch (error) {
+      files.push({ name, sha256Ok: false, schemaErrors: [`invalid JSON: ${error instanceof Error ? error.message : String(error)}`] });
+      continue;
+    }
+    const sha256Ok = name === "manifest.json" ? isDeepStrictEqual(data, manifest) : expected.get(name) === sha256(bytes);
+
+    const schemaPath = `/api/v1/schema/${encodeURIComponent(manifest.schemaVersion)}/${schemaName(name)}`;
+    const schemaRes = await get(schemaPath);
+    if (schemaRes.status !== 200) {
+      files.push({ name, sha256Ok, schemaErrors: [await failure(schemaRes, schemaPath)] });
+      continue;
+    }
+    const validate = ajv.compile((await schemaRes.json()) as object);
+    const schemaErrors = validate(data)
+      ? []
+      : (validate.errors ?? []).map((e) => `${e.instancePath || "/"} ${e.message ?? e.keyword}`);
+    files.push({ name, sha256Ok, schemaErrors });
+  }
+
+  // a file the manifest describes but the package does not link is missing
+  for (const name of expected.keys()) {
+    if (!files.some((f) => f.name === name)) files.push({ name, sha256Ok: false, schemaErrors: ["no link in the package"] });
+  }
+  return {
+    dataVersion: manifest.dataVersion,
+    files,
+    ok: files.length > 0 && files.every((f) => f.sha256Ok && f.schemaErrors.length === 0),
+  };
+}
+
+/** `--base-url`, `--key` (else `env.PERIPLUS_API_KEY`) and `--area`, each exactly once. */
+export function parseArgs(argv: string[], env: Record<string, string | undefined>): { baseUrl: string; key: string; area: string } {
+  const values: Record<string, string> = {};
+  for (let i = 0; i < argv.length; i += 2) {
+    const flag = argv[i]!;
+    const value = argv[i + 1];
+    if (!["--base-url", "--key", "--area"].includes(flag) || !value || value.startsWith("--") || flag in values) throw new Error(USAGE);
+    values[flag] = value;
+  }
+  const baseUrl = values["--base-url"];
+  const key = values["--key"] ?? env.PERIPLUS_API_KEY;
+  const area = values["--area"];
+  if (!baseUrl || !key || !area) throw new Error(USAGE);
+  if (!/^https?:\/\//.test(baseUrl)) throw new Error("--base-url must start with http:// or https://");
+  return { baseUrl, key, area };
+}
+
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2), process.env);
+  const out = (line: string) => process.stdout.write(`${line}\n`);
+  const result = await consumePackage(args);
+  out(`area ${args.area}, data version ${result.dataVersion}`);
+  for (const f of result.files) {
+    out(`${f.name.padEnd(20)} sha256 ${f.sha256Ok ? "ok" : "MISMATCH"}  schema ${f.schemaErrors.length === 0 ? "ok" : `${f.schemaErrors.length} error(s)`}`);
+    for (const e of f.schemaErrors.slice(0, 10)) out(`  ${e}`);
+    if (f.schemaErrors.length > 10) out(`  … ${f.schemaErrors.length - 10} more`);
+  }
+  out(result.ok ? "OK" : "FAILED");
+  if (!result.ok) process.exitCode = 1;
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((err: unknown) => {
+    process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  });
+}

@@ -31,6 +31,7 @@ const DELIVERY_FIXTURE_TESTS = [
   "lib/domain/delivery/__tests__/view.test.ts",
   "lib/domain/delivery/__tests__/weather-points.test.ts",
   "lib/pipeline/__tests__/delivery-run.test.ts",
+  "scripts/__tests__/delivery-consume.test.ts",
 ];
 
 export default defineConfig({

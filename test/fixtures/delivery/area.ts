@@ -30,12 +30,19 @@ import { insertNamedObject, insertTestTile } from "@/test/text";
  * `committed` is for the one test that must commit the area (the build's pool path, ruling M6-E-R2), shifted to
  * −150.1° / −50.1° (`COMMITTED_SHIFT`), never 21.0° / 35.2°: its tiles are taken over from an earlier run (tiles are
  * never deleted) and A's OSM id is unique; `endCommittedDeliveryArea` ends the rows afterwards.
+ *
+ * `seedE2eDeliveryArea` commits the same layout once for the e2e run (ruling M6-P29): config key `e2e-delivery`, shifted
+ * to −140.0…−139.5° E × −40.0…−39.75° N (`E2E_SHIFT`), away from every other test box; it stays between runs.
  */
 
 const LAT_PER_NM = 1 / 60;
 
 /** The shift of the committed fixture: the area spans −150.25…−149.75° E × −50.25…−50.0° N around −150.1° / −50.1°. */
 export const COMMITTED_SHIFT = { lon: -171.25, lat: -85.25 } as const;
+
+/** The e2e area (ruling M6-P29): its config key and its shift, −140.0…−139.5° E × −40.0…−39.75° N. */
+export const E2E_DELIVERY_KEY = "e2e-delivery";
+export const E2E_SHIFT = { lon: -161, lat: -75 } as const;
 
 /** A fixed public id: `<prefix>_01J9ZD` and 20 digits (valid Crockford base 32). */
 const fixedId = (prefix: PublicIdPrefix, n: number) => `${prefix}_01J9ZD${String(n).padStart(20, "0")}`;
@@ -130,19 +137,50 @@ const square = (w: number, s: number, e: number, n: number): GeoJSON.Polygon => 
   coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]],
 });
 
-export async function seedDeliveryArea(
-  tx: Db,
-  opts: { key?: string; shift?: { lon: number; lat: number }; stable?: boolean; committed?: boolean } = {},
-): Promise<DeliveryFixture> {
+type SeedOptions = { key?: string; shift?: { lon: number; lat: number }; stable?: boolean; committed?: boolean };
+
+export async function seedDeliveryArea(tx: Db, opts: SeedOptions = {}): Promise<DeliveryFixture> {
   if (process.env.PERIPLUS_TEST_PROJECT !== "delivery-fixture") {
     throw new Error("seedDeliveryArea runs only in the vitest project delivery-fixture (add the file to DELIVERY_FIXTURE_TESTS)");
   }
   const shift = opts.shift ?? { lon: 0, lat: 0 };
-  const shifted = shift.lon !== 0 || shift.lat !== 0;
-  if (opts.stable && shifted) throw new Error("a stable fixture has no shift");
   if (opts.committed && (shift.lon !== COMMITTED_SHIFT.lon || shift.lat !== COMMITTED_SHIFT.lat || !opts.key)) {
     throw new Error("a committed fixture lies at COMMITTED_SHIFT and has its own key");
   }
+  return seedArea(tx, opts);
+}
+
+/**
+ * The e2e area, committed by `e2e/global-setup.ts` once (it stays; the e2e run is a separate process, so the vitest
+ * project guard of `seedDeliveryArea` does not apply). `tx` is the e2e setup's own transaction.
+ */
+export async function seedE2eDeliveryArea(tx: Db): Promise<DeliveryFixture> {
+  return seedArea(tx, { key: E2E_DELIVERY_KEY, shift: E2E_SHIFT, committed: true });
+}
+
+/**
+ * Ends every valid row of the e2e area's box (geo objects, places, restricted areas, tile labels, land polygons), for a
+ * test database whose package files were lost (e.g. a wiped S3 volume): the next setup seeds and builds afresh.
+ */
+export async function endE2eDeliveryArea(db: Db): Promise<void> {
+  // the three tiles of the layout, shrunk a little so the neighbouring tiles that only touch them stay untouched
+  const inset = 0.001;
+  const [w, s, e, n] = [21.0 + E2E_SHIFT.lon + inset, 35.0 + E2E_SHIFT.lat + inset, 21.75 + E2E_SHIFT.lon - inset, 35.25 + E2E_SHIFT.lat - inset];
+  const box = sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`;
+  const today = sql`current_date`;
+  await db.execute(sql`
+    update places set valid_to = ${today}
+    where valid_to is null and geo_object_id in (select id from geo_objects where geom && ${box} and valid_to is null)`);
+  await db.execute(sql`update geo_objects set valid_to = ${today} where valid_to is null and geom && ${box}`);
+  await db.execute(sql`update restricted_areas set valid_to = ${today} where valid_to is null and geom && ${box}`);
+  await db.execute(sql`update tiles set area_id = null where bbox && ${box}`);
+  await db.execute(sql`delete from land_polygons where geom && ${box}`);
+}
+
+async function seedArea(tx: Db, opts: SeedOptions): Promise<DeliveryFixture> {
+  const shift = opts.shift ?? { lon: 0, lat: 0 };
+  const shifted = shift.lon !== 0 || shift.lat !== 0;
+  if (opts.stable && shifted) throw new Error("a stable fixture has no shift");
   const stable = opts.stable === true;
   const x = (lon: number) => Number((lon + shift.lon).toFixed(6));
   const y = (lat: number) => Number((lat + shift.lat).toFixed(6));
