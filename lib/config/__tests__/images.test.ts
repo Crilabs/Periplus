@@ -21,6 +21,9 @@ describe("images config", () => {
     expect(c.images.check.minWaterIoU.midday).toBe(0.8);
     expect(c.images.delivery.ktimatologio).toBe(false);
     expect(c.images.sources.ktimatologio.countries).toEqual(["GR"]);
+    expect(c.images.light.townRadiusM).toBe(500);
+    expect(c.images.light.nearTown).toBe("midday");
+    expect(c.images.scene.near_town.en).toContain("in front of a town");
     expect(c.budgets.openai.dailyEur).toBe(10);
     expect(c.models.imageTasks["generate-place-image"]).toEqual({
       model: "gpt-image-2.5-sunburst",
@@ -55,7 +58,7 @@ describe("images config", () => {
     const raw = readFileSync("config/prompts/generate-place-image/v1.md", "utf8");
     const blocks = [...raw.matchAll(/^## (\w+)$/gm)].map((m) => m[1]);
     expect(blocks).toEqual([
-      "scene", "preserve", "boats_remove", "boats_keep", "do_not_add", "artefacts", "artefacts_watermark",
+      "scene", "preserve", "boats_remove", "boats_keep", "boats_near_town", "composition_near_town", "do_not_add", "artefacts", "artefacts_watermark",
       "regenerate", "light_midday", "light_evening",
     ]);
     expect(readdirSync("config/prompts/generate-place-image")).toEqual(["v1.md"]);

@@ -9,13 +9,14 @@
   "camera": { "tiltDeg": 30, "fovDeg": 50, "width": 1536, "height": 1024, "rotateStepDeg": 10, "defaultZoom": "z1",
               "zooms": { "z1": { "heightM": 260 }, "z2": { "heightM": 160 }, "z3": { "heightM": 100 } } },
   "render": { "maxSourcePixelOnScreen": 5, "rendererVersion": "render-1", "timeoutSeconds": 120 },
-  "light": { "townRadiusM": 1000, "townPlaces": ["town", "village"],
+  "light": { "townRadiusM": 500, "townPlaces": ["town", "village"], "nearTown": "midday",
              "byKind": { "anchorage": "midday", "mooring_field": "midday", "marina": "evening", "port": "evening" } },
   "scene": {
     "anchorage": { "en": "a sheltered bay with its shore, beach or rocks and the slopes behind", "de": "Bucht mit Ufer und Hängen" },
     "mooring_field": { "en": "a bay with a mooring buoy field, its shore and the slopes behind", "de": "Bucht mit Bojenfeld" },
     "marina": { "en": "a marina with harbour basins, breakwaters and floating pontoons", "de": "Marina mit Becken und Stegen" },
-    "port": { "en": "a harbour town with its quay, waterfront promenade and houses", "de": "Hafenort mit Kai und Promenade" }
+    "port": { "en": "a harbour town with its quay, waterfront promenade and houses", "de": "Hafenort mit Kai und Promenade" },
+    "near_town": { "en": "a sheltered anchorage with yachts at anchor in front of a town", "de": "Ankerplatz vor einem Ort" }
   },
   "check": { "minWaterIoU": { "midday": 0.8, "evening": 0.6 }, "maxAttempts": 2, "waterColour": { "blueOverRedMin": 25, "greenTolerance": 10 } },
   "pipeline": { "maxGenerationsPerRun": 50 },

@@ -1132,6 +1132,7 @@ const imageCogSourceSchema = z.strictObject({
   ratePerMinute: z.number().int().positive(),
   maxBytes: z.number().int().positive(),
 });
+const sceneTextSchema = z.strictObject({ en: z.string().min(1), de: z.string().min(1) });
 const zoomSchema = z.strictObject({ heightM: z.number().positive() });
 const perKind = <T extends z.ZodType>(value: T) =>
   z.strictObject(Object.fromEntries(placeKindEnum.enumValues.map((k) => [k, value])) as Record<PlaceKind, T>);
@@ -1170,9 +1171,14 @@ export const imagesSchema = z.strictObject({
   light: z.strictObject({
     townRadiusM: z.number().positive(),
     townPlaces: z.array(z.string().min(1)),
+    /** Light of an anchorage or mooring field within `townRadiusM` of a place in `townPlaces`. */
+    nearTown: imageryLightSchema,
     byKind: perKind(imageryLightSchema),
   }),
-  scene: perKind(z.strictObject({ en: z.string().min(1), de: z.string().min(1) })),
+  scene: z.strictObject({
+    ...perKind(sceneTextSchema).shape,
+    near_town: sceneTextSchema,
+  }),
   check: z.strictObject({
     minWaterIoU: z.strictObject({ midday: z.number().min(0).max(1), evening: z.number().min(0).max(1) }),
     maxAttempts: z.number().int().min(1),
