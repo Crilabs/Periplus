@@ -1,0 +1,52 @@
+{
+  "name": "revisit-fixture",
+  "entries": [
+    {
+      "id": "e1",
+      "url": "https://revisit-guide.invalid/alonaki",
+      "edit": { "op": "replace", "from": "ist im Sommer geöffnet.", "to": "hat geschlossen." },
+      "expect": {
+        "document": "new_version",
+        "events": [{ "subject": "sp_01JREV00000000000000000001", "attribute": "highlight.food", "type": "changed", "severity": "notable" }]
+      },
+      "note": "taverna negated by a pilot guide (weight 0.9 > strongWeight 0.8)"
+    },
+    {
+      "id": "e2",
+      "url": "https://revisit-guide.invalid/vromolimni",
+      "edit": { "op": "replace", "from": "Ankertiefe 4 m", "to": "Ankertiefe 2 m" },
+      "expect": {
+        "document": "new_version",
+        "events": [{ "subject": "sp_01JREV00000000000000000002", "attribute": "depth.*", "type": "changed", "severity": "safety" }]
+      },
+      "note": "shallower depth by a pilot guide over a weak raster (confidence 0.3), M5-B-R3"
+    },
+    {
+      "id": "e3",
+      "url": "https://revisit-trips.invalid/2026/revisonisi",
+      "edit": { "op": "gone" },
+      "expect": { "document": "gone", "events": [] },
+      "note": "the trip report's depth of A only confirmed the raster"
+    },
+    {
+      "id": "e4",
+      "url": "https://revisit-authority.invalid/notices/limenaki",
+      "edit": { "op": "append", "text": "Anchoring is prohibited in the harbour basin." },
+      "expect": {
+        "document": "new_version",
+        "events": [{ "subject": "sp_01JREV00000000000000000003", "attribute": "prohibitions", "type": "changed", "severity": "safety" }]
+      },
+      "note": "an authority adds a ban to the swimming ban"
+    },
+    {
+      "id": "e5",
+      "url": "https://revisit-forum.invalid/t/vromolimni",
+      "edit": { "op": "replace", "from": "Bojen sind ausgelegt.", "to": "Die Bojen wurden entfernt." },
+      "expect": {
+        "document": "new_version",
+        "events": [{ "subject": "sp_01JREV00000000000000000002", "attribute": "mooring.buoys", "type": "uncertain", "severity": "notable" }]
+      },
+      "note": "a forum (weight 0.4) alone: uncertain, M5-F-R3"
+    }
+  ]
+}

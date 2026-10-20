@@ -6,7 +6,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
-import { getEnv } from "@/lib/env";
+import { getEnv, S3_WRITE_PREFIX_PATTERN } from "@/lib/env";
 
 export type Archive = {
   ensureBucket(): Promise<void>;
@@ -22,6 +22,11 @@ export type ArchiveOptions = {
   bucket: string;
   accessKeyId: string;
   secretAccessKey: string;
+  /**
+   * Writes go to `writePrefix + key`; `get`/`exists` read `writePrefix + key` first, then `key`. A simulation thus
+   * reads the recorded archive but writes only under its own prefix.
+   */
+  writePrefix?: string;
 };
 
 const PING_TIMEOUT_MS = 3000;
@@ -45,6 +50,30 @@ export function createArchive(opts: ArchiveOptions): Archive {
     credentials: { accessKeyId: opts.accessKeyId, secretAccessKey: opts.secretAccessKey },
   });
   const Bucket = opts.bucket;
+  const prefix = opts.writePrefix ?? "";
+  if (prefix !== "" && !S3_WRITE_PREFIX_PATTERN.test(prefix)) {
+    throw new Error("archive write prefix must be lower-case segments ending in /");
+  }
+
+  async function getOne(Key: string): Promise<Uint8Array | null> {
+    try {
+      const res = await client.send(new GetObjectCommand({ Bucket, Key }));
+      return (await res.Body?.transformToByteArray()) ?? null;
+    } catch (err) {
+      if (isNotFound(err)) return null;
+      throw err;
+    }
+  }
+
+  async function existsOne(Key: string): Promise<boolean> {
+    try {
+      await client.send(new HeadObjectCommand({ Bucket, Key }));
+      return true;
+    } catch (err) {
+      if (isNotFound(err)) return false;
+      throw err;
+    }
+  }
 
   return {
     async ensureBucket() {
@@ -63,27 +92,20 @@ export function createArchive(opts: ArchiveOptions): Archive {
     },
 
     async put(key, body, contentType) {
-      await client.send(new PutObjectCommand({ Bucket, Key: key, Body: body, ContentType: contentType }));
+      await client.send(new PutObjectCommand({ Bucket, Key: prefix + key, Body: body, ContentType: contentType }));
     },
 
     async get(key) {
-      try {
-        const res = await client.send(new GetObjectCommand({ Bucket, Key: key }));
-        return (await res.Body?.transformToByteArray()) ?? null;
-      } catch (err) {
-        if (isNotFound(err)) return null;
-        throw err;
+      if (prefix !== "") {
+        const own = await getOne(prefix + key);
+        if (own) return own;
       }
+      return getOne(key);
     },
 
     async exists(key) {
-      try {
-        await client.send(new HeadObjectCommand({ Bucket, Key: key }));
-        return true;
-      } catch (err) {
-        if (isNotFound(err)) return false;
-        throw err;
-      }
+      if (prefix !== "" && (await existsOne(prefix + key))) return true;
+      return existsOne(key);
     },
 
     async ping() {
@@ -101,7 +123,7 @@ export function createArchive(opts: ArchiveOptions): Archive {
 
 let cached: Archive | undefined;
 
-/** Memoized archive configured from the environment. */
+/** Memoized archive configured from the environment (writes under `S3_WRITE_PREFIX` when set). */
 export function getArchive(): Archive {
   if (!cached) {
     const env = getEnv();
@@ -111,6 +133,7 @@ export function getArchive(): Archive {
       bucket: env.S3_BUCKET,
       accessKeyId: env.S3_ACCESS_KEY_ID,
       secretAccessKey: env.S3_SECRET_ACCESS_KEY,
+      writePrefix: env.S3_WRITE_PREFIX,
     });
   }
   return cached;

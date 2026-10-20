@@ -295,7 +295,8 @@ describe("stage mentions.disambiguate", () => {
       const { boss } = recordingBoss();
       const { id } = await startTextRun(tx, boss, { documentVersionIds: [v.versionId], triggeredBy: "test" }, config);
       const [row] = await tx.select({ params: runs.params, stages: runs.stages }).from(runs).where(eq(runs.id, id));
-      expect(row!.params).toEqual({ documentVersionIds: [v.versionId] });
+      // the rules version active at the start is frozen too (ruling M7-E-R1)
+      expect(row!.params).toEqual({ documentVersionIds: [v.versionId], rulesVersion: "v1" });
       const pending = await startTextRun(tx, boss, { pending: true, triggeredBy: "test" }, config);
       const [p] = await tx.select({ params: runs.params }).from(runs).where(eq(runs.id, pending.id));
       expect(p!.params).toMatchObject({ pending: true, documentVersionIds: expect.arrayContaining([v.versionId]) });

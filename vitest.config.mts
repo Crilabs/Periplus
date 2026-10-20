@@ -34,6 +34,12 @@ const DELIVERY_FIXTURE_TESTS = [
   "scripts/__tests__/delivery-consume.test.ts",
 ];
 
+/**
+ * Tests that seed the revisit fixture area (`test/revisit/fixture/area.ts`): its fixed tile, source domains and public
+ * ids are unique keys like the delivery fixture's, so these files run one after another, beside the default project.
+ */
+const REVISIT_FIXTURE_TESTS = ["lib/pipeline/__tests__/revisit-run.test.ts", "scripts/__tests__/draft-scenario.test.ts"];
+
 export default defineConfig({
   resolve: {
     alias: { "@": fileURLToPath(new URL(".", import.meta.url)) },
@@ -48,13 +54,14 @@ export default defineConfig({
         test: {
           name: "default",
           include: ["**/__tests__/**/*.test.{ts,tsx}", "test/**/*.test.ts"],
-          exclude: ["node_modules/**", ".next/**", ...PILOT_RUN_TESTS, ...DELIVERY_FIXTURE_TESTS],
+          exclude: ["node_modules/**", ".next/**", ...PILOT_RUN_TESTS, ...DELIVERY_FIXTURE_TESTS, ...REVISIT_FIXTURE_TESTS],
         },
       },
       {
         extends: true,
         test: { name: "delivery-fixture", include: DELIVERY_FIXTURE_TESTS, fileParallelism: false, env: { PERIPLUS_TEST_PROJECT: "delivery-fixture" } },
       },
+      { extends: true, test: { name: "revisit-fixture", include: REVISIT_FIXTURE_TESTS, fileParallelism: false } },
       // Long pilot-area runs hold rows (pilot tiles, configured areas) other test files write too:
       // run them after everything else instead of beside it.
       { extends: true, test: { name: "pilot-run", include: PILOT_RUN_TESTS, sequence: { groupOrder: 1 } } },

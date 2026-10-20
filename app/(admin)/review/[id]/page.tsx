@@ -12,6 +12,7 @@ import { DecisionKeys } from "../../_components/decision-keys";
 import { Dialog } from "../../_components/dialog";
 import {
   CHANGE_RATE_LABELS,
+  COMPARISON_ATTRIBUTE_LABELS,
   CRAWL_RULE_LABELS,
   DOC_TYPE_LABELS,
   GEO_OBJECT_TYPE_LABELS,
@@ -51,6 +52,7 @@ import {
 } from "../../_components/ui";
 import { REVIEW_KIND_HELP, REVIEW_STATUS_LABELS, REVIEW_STATUS_TONES } from "../kinds";
 import { approveSourceAction } from "./actions";
+import { ComparisonDecision } from "./comparison-decision";
 import { DecisionForm } from "./decision-form";
 import { NameCandidateCreate } from "./name-candidate";
 import { DecisionPanel, Disclosure, Kbd, MapLegend } from "./parts";
@@ -198,15 +200,20 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
           <>
             {subject.type === "name_candidate" ? `Neuer Name: ${subject.candidate.name}` : REVIEW_KIND_LABELS[task.kind]}
             {subject.type === "place" && subject.geoObject.names[0] ? `: ${subject.geoObject.names[0].name}` : ""}
+            {subject.type === "place" && !subject.geoObject.names[0] && subject.helperName ? `: ${subject.helperName}` : ""}
             {subject.type === "source" ? `: ${subject.source.domain}` : ""}
             {subject.type === "profile_attribute" ? `: ${subject.name ?? subject.geoObjectId} – ${subject.label}` : ""}
             {subject.type === "profile_summary" ? `: Zusammenfassung von ${subject.name ?? subject.geoObjectId}` : ""}
+            {subject.type === "comparison"
+              ? `: ${subject.place.name ?? subject.place.id} – ${COMPARISON_ATTRIBUTE_LABELS[subject.attribute]}`
+              : ""}
           </>
         }
         meta={
           <>
             <Badge tone="accent">{REVIEW_KIND_LABELS[task.kind]}</Badge>
             <Badge tone={REVIEW_STATUS_TONES[task.status]}>{REVIEW_STATUS_LABELS[task.status]}</Badge>
+            {subject.type === "comparison" && subject.evaluationRunId && <Badge tone="neutral">Bewertung</Badge>}
             <span title={fmt.dateTime(task.createdAt)}>erstellt {fmt.ago(task.createdAt)}</span>
             {task.priority !== 0 && <span title="Höhere Priorität kommt früher in der Warteschlange">· Priorität {task.priority}</span>}
           </>
@@ -273,6 +280,8 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
           <ProfileDecision kind={task.kind} subject={subject} {...props} open={open} />
         )}
 
+        {subject.type === "comparison" && <ComparisonDecision subject={subject} features={features} {...props} open={open} />}
+
         {subject.type === "place" && (
           <>
             <PlaceConfirm
@@ -335,6 +344,12 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
                 />
               </Panel>
               <Panel title="Geo-Objekt">
+                {subject.helperName && (
+                  <p className="mb-3 text-sm text-muted">
+                    Unbenannte Bucht, aus der Geometrie erkannt. „{subject.helperName}“ ist nur ein Hilfsname und wird
+                    nicht als Name gespeichert.
+                  </p>
+                )}
                 <ObjectFacts o={subject.geoObject} />
               </Panel>
               <Panel title="Nächste Orte" description="Gültige Orte anderer Objekte, nächster zuerst.">

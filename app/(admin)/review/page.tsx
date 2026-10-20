@@ -146,6 +146,11 @@ export default async function Page({ searchParams }: PageProps<"/review">) {
                       >
                         {t.name ?? t.subjectId}
                       </Link>
+                      {t.evaluation && (
+                        <span className="ml-2" title="Abweichung eines Bewertungslaufs (Kandidat für eine neue Konfiguration), nicht des laufenden Profils">
+                          <Badge tone="neutral">Bewertung</Badge>
+                        </span>
+                      )}
                     </td>
                     {!kind && (
                       <td className={tdClass}>

@@ -19,7 +19,7 @@ import { STAGES } from "@/lib/jobs/stages";
 import { createLogger } from "@/lib/logger";
 import { consolidateGeoJob } from "@/lib/pipeline/consolidation/geo";
 import { CONSOLIDATION_FOLLOWUP_STAGE, CONSOLIDATION_GEO_STAGE, CONSOLIDATION_STAGES, GEOMETRY_CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
-import { computePlaceGeometry, GEOMETRY_STAGE, geometryPlaceIds, storeComputedAnchor } from "@/lib/pipeline/geometry";
+import { computePlaceGeometry, DETECT_BAYS_STAGE, GEOMETRY_STAGE, geometryPlaceIds, storeComputedAnchor } from "@/lib/pipeline/geometry";
 import { startGeometryRun } from "@/lib/pipeline/geometry-run";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { testDb, withRollback } from "@/test/db";
@@ -377,7 +377,7 @@ async function insertTile(tx: Db, tileId: string) {
 }
 
 describe("startGeometryRun", () => {
-  it("creates a tile run and enqueues one job per place", () =>
+  it("creates a tile run that first detects unnamed bays on the tile (ruling M7-P13)", () =>
     withRollback(async (tx) => {
       const scene = await buildBayScene(tx);
       await insertTile(tx, scene.tileId);
@@ -385,13 +385,22 @@ describe("startGeometryRun", () => {
       const { id } = await startGeometryRun(tx, boss, { tileId: scene.tileId }, "test");
       const [run] = await tx.select().from(runs).where(eq(runs.id, id));
       // the consolidation stages follow for the run's places (final review I-2)
-      expect(run).toMatchObject({ scopeType: "tile", scopeId: scene.tileId, stages: [GEOMETRY_STAGE, ...GEOMETRY_CONSOLIDATION_STAGES], params: { tileIds: [scene.tileId] } });
+      expect(run).toMatchObject({
+        scopeType: "tile",
+        scopeId: scene.tileId,
+        stages: [DETECT_BAYS_STAGE, GEOMETRY_STAGE, ...GEOMETRY_CONSOLIDATION_STAGES],
+        params: { tileIds: [scene.tileId] },
+      });
       expect(run!.stages).not.toContain(CONSOLIDATION_FOLLOWUP_STAGE);
       expect(await consolidationTargets(tx, { id, params: run!.params as Record<string, unknown> })).toContain(scene.geoObjectId);
-      expect(inserted).toContainEqual({
-        queue: "geometry.compute",
-        data: { key: scene.placeId, placeId: scene.placeId, runId: id, stage: GEOMETRY_STAGE },
-      });
+      expect(inserted).toEqual([
+        { queue: "geometry.detect_bays", data: { key: scene.tileId, tileId: scene.tileId, runId: id, stage: DETECT_BAYS_STAGE } },
+      ]);
+      // the place stage plans the tile's places (here the scene's seeded place; that a bay detected by the first stage
+      // is planned too is tested in lib/domain/geometry/__tests__/bays.test.ts)
+      expect(await STAGES[GEOMETRY_STAGE]!.plan(tx, { id, params: run!.params as Record<string, unknown> })).toEqual([
+        { key: scene.placeId, placeId: scene.placeId },
+      ]);
     }));
 
   it("creates a place run that enqueues only that place", () =>

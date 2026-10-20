@@ -1,7 +1,8 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { summarizeProfileTask, type SummarizeInput } from "@/lib/ai/tasks/summarize-profile";
 import { ModelOutputInvalid, type ModelClient } from "@/lib/ai/types";
-import { getConfig, getConsolidationConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
+import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
 import type { Db } from "@/lib/db/client";
 import { profiles, profileSummaries, reviewTasks } from "@/lib/db/schema";
 import { checkSummary, summaryInput } from "@/lib/domain/consolidation/summary";
@@ -37,7 +38,7 @@ type Target = { geoObjectId: string; version: number };
  * also versions with one.
  */
 export async function summaryTargets(db: Db, run: { id: string; params: Record<string, unknown> }): Promise<Target[]> {
-  const cfg = getConsolidationConfig();
+  const cfg = await consolidationConfigFor(db, run.params.rulesVersion);
   let candidates: Target[];
   if (Array.isArray(run.params.stagesOnly)) {
     const ids = await consolidationTargets(db, run);
@@ -81,10 +82,14 @@ export async function summaryTargets(db: Db, run: { id: string; params: Record<s
   return targets;
 }
 
-/** One job per target (`key` `<geoObjectId>:<version>`), with `regenerate` for „Summary neu erzeugen“. */
+/**
+ * One job per target (`key` `<geoObjectId>:<version>`), with `regenerate` for „Summary neu erzeugen“ and the run's
+ * frozen `rulesVersion` (ruling M7-E-R1: the summary keeps the run's rules across an activation).
+ */
 export async function summaryJobs(db: Db, run: { id: string; params: Record<string, unknown> }): Promise<JobData[]> {
   const regenerate = run.params.regenerateSummary === true ? { regenerate: true } : {};
-  return (await summaryTargets(db, run)).map((t) => ({ key: `${t.geoObjectId}:${t.version}`, geoObjectId: t.geoObjectId, version: t.version, ...regenerate }));
+  const rulesVersion = typeof run.params.rulesVersion === "string" ? { rulesVersion: run.params.rulesVersion } : {};
+  return (await summaryTargets(db, run)).map((t) => ({ key: `${t.geoObjectId}:${t.version}`, geoObjectId: t.geoObjectId, version: t.version, ...regenerate, ...rulesVersion }));
 }
 
 export type SummaryResult = { status: "ok" | "empty" | "skipped"; attempts: number };
@@ -99,14 +104,15 @@ export type SummaryResult = { status: "ok" | "empty" | "skipped"; attempts: numb
  * run already stored (a retried job). With `regenerate` („Summary neu erzeugen“, ruling M6-H-R1, needs `runId`) an
  * existing `ok` summary is no reason to skip, only one this run already stored: the new one is stored beside it and
  * the newest `ok` summary is the one shown and delivered; when every attempt fails, the old one stays. Other errors
- * (budget, provider) propagate, so the job is retried.
+ * (budget, provider) propagate, so the job is retried. The settings come from `rulesVersion` (the run's frozen version,
+ * carried by the job), else from the active rules.
  */
 export async function summarizeProfile(
   db: Db,
-  input: { geoObjectId: string; version: number; runId?: string; regenerate?: boolean },
+  input: { geoObjectId: string; version: number; runId?: string; regenerate?: boolean; rulesVersion?: string },
   deps: { model: ModelClient },
 ): Promise<SummaryResult> {
-  const cfg = getConsolidationConfig();
+  const cfg = await consolidationConfigFor(db, input.rulesVersion);
   const prompt = promptVersion();
   const [row] = await db
     .select({ attributes: profiles.attributes, provenance: profiles.provenance, confidence: profiles.confidence })

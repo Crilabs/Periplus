@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getConfig } from "../lib/config";
 import { createDb } from "../lib/db/client";
+import { refuseSimulationEnv } from "../lib/domain/revisit/guard";
 import { createBoss } from "../lib/jobs/boss";
 import { ensureQueues } from "../lib/jobs/queues";
 import { startConsolidationRun, type ConsolidationScope, type StartConsolidationInput } from "../lib/pipeline/consolidation/run";
@@ -49,6 +50,8 @@ export function parseArgs(argv: string[]): ConsolidateArgs {
 }
 
 async function main(): Promise<void> {
+  // never in a simulation or on its clone: costs booked there escape the real budget (final review A M-5)
+  refuseSimulationEnv(process.env, "consolidate");
   const args = parseArgs(process.argv.slice(2));
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");

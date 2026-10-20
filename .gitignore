@@ -33,6 +33,7 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example
+!.env.sim.example
 
 # vercel
 .vercel
@@ -47,3 +48,8 @@ next-env.d.ts
 # playwright
 /test-results/
 /playwright-report/
+
+# simulated revisit: real pilot scenarios quote third-party pages verbatim and are never committed; .env.sim (above)
+# holds the simulation's environment
+/data/sim/
+.env.sim

@@ -6,6 +6,7 @@
   "seed.tile": { "concurrency": 2, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
   "datasets.import": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 300, "retryBackoff": true },
   "geometry.compute": { "concurrency": 4, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
+  "geometry.detect_bays": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
   "discovery.area": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
   "discovery.tile": { "concurrency": 2, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
   "discovery.propose": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
@@ -26,5 +27,7 @@
   "consolidation.geo": { "concurrency": 4, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
   "consolidation.summary": { "concurrency": 2, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
   "consolidation.followup": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
-  "delivery.build": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true, "expireInSeconds": 3600 }
+  "delivery.build": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true, "expireInSeconds": 3600 },
+  "quality.measure": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
+  "revisit.freeze": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true }
 }

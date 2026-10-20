@@ -33,7 +33,14 @@ export type RunScopeReason =
   | "comparison_over_budget"
   | "geo_object_not_consolidatable"
   | "comparison_set_empty"
-  | "geo_object_without_place";
+  | "geo_object_without_place"
+  | "measurement_label_taken"
+  | "measurement_label_invalid"
+  | "measurement_window_empty"
+  | "measurement_from_required"
+  | "measurement_running"
+  | "evaluation_candidate_missing"
+  | "evaluation_candidate_unknown";
 
 /** A run start refused before the run exists because its scope lacks an input (an expected, user-facing error). */
 export class RunScopeNotReady extends Error {

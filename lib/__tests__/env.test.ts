@@ -25,6 +25,25 @@ describe("parseEnv", () => {
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
   });
 
+  it("keeps NAVILY_SPOTS_PATH optional and treats an empty value as unset", () => {
+    expect(parseEnv(validSource).NAVILY_SPOTS_PATH).toBeUndefined();
+    expect(parseEnv({ ...validSource, NAVILY_SPOTS_PATH: "" }).NAVILY_SPOTS_PATH).toBeUndefined();
+    expect(parseEnv({ ...validSource, NAVILY_SPOTS_PATH: "/data/spots.json" }).NAVILY_SPOTS_PATH).toBe("/data/spots.json");
+  });
+
+  it("an invalid S3_WRITE_PREFIX is rejected by the env schema", () => {
+    for (const bad of ["sim", "/sim/", "Sim/", "sim run/", "../sim/"]) {
+      expect(() => parseEnv({ ...validSource, S3_WRITE_PREFIX: bad })).toThrow(/S3_WRITE_PREFIX/);
+    }
+    expect(parseEnv({ ...validSource, S3_WRITE_PREFIX: "sim/2026-10-20/" }).S3_WRITE_PREFIX).toBe("sim/2026-10-20/");
+    expect(parseEnv({ ...validSource, S3_WRITE_PREFIX: "" }).S3_WRITE_PREFIX).toBeUndefined();
+  });
+
+  it("keeps PERIPLUS_SIMULATION optional", () => {
+    expect(parseEnv(validSource).PERIPLUS_SIMULATION).toBeUndefined();
+    expect(parseEnv({ ...validSource, PERIPLUS_SIMULATION: "test/revisit/scenario.json" }).PERIPLUS_SIMULATION).toBe("test/revisit/scenario.json");
+  });
+
   it("rejects a SESSION_SECRET shorter than 32 chars without echoing the value", () => {
     expect(() => parseEnv({ ...validSource, SESSION_SECRET: "short-secret-value" })).toThrow(
       /SESSION_SECRET/,

@@ -1,5 +1,5 @@
 import { eq, sql } from "drizzle-orm";
-import { getConfig, getConsolidationConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { changeEvents, evaluationProfiles, profiles, reviewTasks } from "@/lib/db/schema";
 import { canonicalJson } from "@/lib/domain/facts/schema";
@@ -7,9 +7,10 @@ import { createReviewTask, OpenTaskVanished } from "@/lib/domain/review";
 import { runDate as runDateOf } from "@/lib/domain/runs";
 import { latestProfile } from "@/lib/domain/timeline";
 import { createLogger } from "@/lib/logger";
+import { consolidationConfigFor } from "./active-rules";
 import { buildProfile } from "./build";
 import { diffProfiles, type EventDraft, type TaskDraft } from "./changes";
-import { loadContext, loadDerivedInputs, loadInputs, type LoadInputsOptions } from "./inputs";
+import { candidateAppConfig, loadContext, loadDerivedInputs, loadInputs, type ExtractionCandidate, type LoadInputsOptions } from "./inputs";
 import { dismissTasks, lockOpenTasks, subjectPrefix } from "./task-locks";
 
 /*
@@ -23,8 +24,13 @@ export type ConsolidateOptions = {
   today?: string;
   /** `evaluation`: a candidate rules version into `evaluation_profiles`, never into profiles or the change feed. */
   mode?: "regular" | "evaluation";
-  /** The rules version (default the active one); required for `evaluation`. */
+  /** The rules version (default the active one, `activeRulesVersion`); required for `evaluation`. */
   rulesVersion?: string;
+  /**
+   * An extraction candidate (only with `evaluation`, else an Error): the active extraction run is the one of this model
+   * and prompt version (ruling M7-P11, `candidateAppConfig`).
+   */
+  extraction?: ExtractionCandidate;
 };
 
 export type ConsolidateResult = {
@@ -115,8 +121,9 @@ export async function consolidateGeo(db: Db, geoObjectId: string, opts: Consolid
   if (mode === "evaluation" && (!opts.runId || !opts.rulesVersion)) {
     throw new Error("an evaluation consolidation needs runId and rulesVersion");
   }
-  const appConfig = getConfig();
-  const cfg = getConsolidationConfig(opts.rulesVersion);
+  if (opts.extraction && mode !== "evaluation") throw new Error("an extraction candidate is consolidated in evaluation mode only");
+  const appConfig = opts.extraction ? candidateAppConfig(getConfig(), opts.extraction) : getConfig();
+  const cfg = await consolidationConfigFor(db, opts.rulesVersion);
   const schemaVersion = appConfig.factSchema.version;
 
   return db.transaction(async (tx) => {

@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import type { AppConfig } from "@/lib/config";
 import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
@@ -29,6 +29,35 @@ import { inputId } from "./weights";
  * - Facts of a rejected or ended source do not count; a paused one still counts (a pause only stops crawling).
  * - Validity (objects, POIs, tiles, sources) is judged on the run date `today`, not the database clock.
  */
+
+/** An extraction configuration to evaluate (ruling M7-P11): the model and prompt version of `extract-facts`. */
+export type ExtractionCandidate = { model: string; promptVersion: number };
+
+/**
+ * A copy of `config` in which only the model and prompt version of `extract-facts` are the candidate's (ruling M7-P11,
+ * M5-P22): passed as `LoadInputsOptions.appConfig`, it makes the candidate's extraction runs the active ones. The
+ * candidate's runs are comparison runs (as the M4 model comparison), so the copy marks the decision `decided`: for this
+ * evaluation the candidate is the chosen configuration. The running configuration is never changed.
+ */
+export function candidateAppConfig(config: AppConfig, candidate: ExtractionCandidate): AppConfig {
+  const task = config.models.tasks["extract-facts"];
+  if (!task) throw new Error("config/models.json has no task extract-facts");
+  return {
+    ...config,
+    models: {
+      ...config.models,
+      tasks: {
+        ...config.models.tasks,
+        "extract-facts": {
+          ...task,
+          model: candidate.model,
+          promptVersion: candidate.promptVersion,
+          decision: { status: "decided", note: `Bewertung des Kandidaten ${candidate.model}@p${candidate.promptVersion}` },
+        },
+      },
+    },
+  };
+}
 
 export type LoadInputsOptions = {
   cfg: ConsolidationConfig;
@@ -69,16 +98,25 @@ type PoiRow = { id: string; category: string; origin: string; valid_from: string
 
 const utcDate = (d: Date) => d.toISOString().slice(0, 10);
 
-/** The ids of the object and of every object merged into it, transitively (the `merged_into_id` chain). */
-function mergedChainSql(geoObjectId: string) {
+/**
+ * For each root object (`roots`: a query with one uuid column `id`), the root and every object merged into it,
+ * transitively (the `merged_into_id` chain): rows `(root_id, id)`. Set-based form of `mergedChainSql`, for the quality
+ * metrics that count text the way consolidation does (ruling M7-C-R2).
+ */
+export function mergedChainsSql(roots: SQL) {
   return sql`(
-    with recursive chain(id) as (
-      select ${geoObjectId}::uuid
+    with recursive chain(root_id, id) as (
+      select r.id, r.id from (${roots}) r
       union
-      select o.id from geo_objects o join chain on o.merged_into_id = chain.id
+      select chain.root_id, o.id from geo_objects o join chain on o.merged_into_id = chain.id
     )
-    select id from chain
+    select root_id, id from chain
   )`;
+}
+
+/** The ids of the object and of every object merged into it, transitively (the `merged_into_id` chain). */
+export function mergedChainSql(geoObjectId: string) {
+  return sql`(select c.id from ${mergedChainsSql(sql`select ${geoObjectId}::uuid as id`)} c)`;
 }
 
 /** Fact alias `f` has one of `attributes` (no filter without). */

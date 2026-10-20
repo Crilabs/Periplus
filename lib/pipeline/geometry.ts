@@ -22,6 +22,9 @@ import { RunScopeNotReady, seedTileIds } from "@/lib/pipeline/tile-scope";
 
 export const GEOMETRY_STAGE = "geometry.place";
 
+/** Unnamed-bay detection per tile (spec 04, ruling M7-P13); first stage of tile and area geometry runs. */
+export const DETECT_BAYS_STAGE = "geometry.detect_bays";
+
 export { GAP_REASONS, type Gap, type GapReason } from "@/lib/domain/geometry/gaps";
 
 export type PlaceGeometryResult = {

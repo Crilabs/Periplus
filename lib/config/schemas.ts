@@ -227,8 +227,12 @@ export const factSchemaConfigSchema = z.strictObject({
 const share = z.number().min(0).max(1);
 const confidence = share;
 const meters = z.number().positive();
+const positiveInt = z.number().int().positive();
 
-/** `config/geometry.json`: parameters of the geometric computations; any change raises `rulesVersion`. */
+/**
+ * `config/geometry.json`: parameters of the geometric computations; any change of a computation's parameters raises
+ * `rulesVersion`. `bays` (unnamed-bay detection, spec 04 / ruling M7-P13) writes no computations and is not versioned by it.
+ */
 export const geometrySchema = z.strictObject({
   rulesVersion: z.string().regex(/^geometry-[1-9][0-9]*$/, "must be geometry-<number>"),
   fetch: z
@@ -279,6 +283,39 @@ export const geometrySchema = z.strictObject({
     .refine((a) => a.minDepthM < a.maxDepthM, "minDepthM must be below maxDepthM"),
   seabed: z.strictObject({ minCoverage: share, confidence }),
   restriction: z.strictObject({ minShare: share, confidence }),
+  bays: z
+    .strictObject({
+      coastStepM: meters,
+      probeOffsetM: meters,
+      rayCount: positiveInt,
+      rayLengthM: meters,
+      minLandDeg: z.number().positive().max(360),
+      minAnchorAreaM2: z.number().positive(),
+      mergeDistanceM: meters,
+      /** A merged cluster wider than this (largest distance between two hits) is split into pieces of at most this span. */
+      maxClusterSpanM: meters,
+      knownPlaceDistanceM: meters,
+      /**
+       * A hit single-linked to a known hit and within this distance of a place or known object belongs to that place's
+       * own bay and is dropped too (ruling M7-I-R2).
+       */
+      knownBayDistanceM: meters,
+      /** Valid geo objects of these types within `knownPlaceDistanceM` make a hit known (besides places of any status). */
+      knownObjectTypes: z.array(geoObjectType).min(1),
+      helperNameMaxDistanceM: meters,
+      /** Helper-name tiers in priority order: the nearest named object of the first tier with one within reach names the bay. */
+      helperNameTypes: z.array(z.array(geoObjectType).min(1)).min(1),
+    })
+    .refine((b) => b.probeOffsetM < b.rayLengthM, "probeOffsetM must be below rayLengthM")
+    .refine((b) => b.mergeDistanceM < b.maxClusterSpanM, "mergeDistanceM must be below maxClusterSpanM")
+    .refine(
+      (b) => b.maxClusterSpanM <= 2 * b.knownPlaceDistanceM,
+      "maxClusterSpanM must be at most twice knownPlaceDistanceM (a created bay must make its whole piece known on a rerun)",
+    )
+    .refine(
+      (b) => b.knownBayDistanceM >= b.knownPlaceDistanceM + b.maxClusterSpanM / 2,
+      "knownBayDistanceM must be at least knownPlaceDistanceM + maxClusterSpanM / 2 (a same-pass duplicate's piece must be claimed on a rerun)",
+    ),
 });
 
 /** `config/restrictions.json`: Natura 2000 sites (site codes) where anchoring is banned. */
@@ -288,20 +325,85 @@ export const restrictionsSchema = z.strictObject({
   ),
 });
 
-/** `config/quality.json`: parameters of the quality tools (spot check against the comparison set). */
+/** Pilot and full-operation target of a metric; `direction` says whether the value must reach (min) or stay under (max) it. */
+const metricTarget = z.strictObject({
+  pilot: z.number().min(0).nullable(),
+  full: z.number().min(0).nullable(),
+  direction: z.enum(["min", "max"]),
+});
+
+/**
+ * `config/quality.json`: the M2 spot check (`navilySample`) and the quality measurement of spec 10 (targets,
+ * thresholds of the metrics, the Navily comparison, the extrapolation). One source per threshold (ruling M7-P1): the
+ * spot check reads the protected threshold and the seabed share from `navily`.
+ */
 export const qualitySchema = z.strictObject({
   navilySample: z.strictObject({
     /** A Navily spot counts as the same place within this distance. */
     radiusM: meters,
+    /** Spec 04: the sample covers 20 places. */
+    minPlaces: positiveInt,
+    /** Per-sector rates are only reported from this many matched places on (no reconstruction of single spots). */
+    minMatchedForSectorRates: positiveInt,
+  }),
+  /** Spec 10 „Zielwerte“: pilot and full operation per metric (keys of `METRIC_KEYS`). */
+  targets: z.strictObject({
+    coverage: metricTarget,
+    coverage_navily: metricTarget,
+    multi_source: metricTarget,
+    /** The datendienst Mehrbefund („mindestens 2 Dokumenten“), the acceptance metric (ruling M7-P12). */
+    multi_document: metricTarget,
+    fact_precision: metricTarget,
+    quote_fidelity: metricTarget,
+    shelter_confidence: metricTarget,
+    route_reconstruction: metricTarget,
+    cost_per_place: metricTarget,
+    review_minutes_per_100: metricTarget,
+  }),
+  /** Pilot: „Review-Aufwand für den zweiten Lauf unter 60 Minuten“. */
+  secondRunReviewMinutesMax: z.number().positive(),
+  /** Pilot success criteria with a count: „Routen-Rekonstruktion an mindestens 3 Törnberichten“, „10 von 10 Änderungen“. */
+  pilotCriteria: z.strictObject({ minTripReports: positiveInt, revisitChanges: positiveInt }),
+  /** A review duration counts at most this long (a tab left open must not skew the effort). */
+  reviewDurationCapMinutes: z.number().positive(),
+  /** „Anteil Orte mit Beobachtung < 18 Monate“. */
+  recentObservationMonths: positiveInt,
+  /** Shelter confidence: a text fact confirms a computed sector within this deviation. */
+  shelterConfirmTolerance: share,
+  /** Tile size check: places per tile, target range. */
+  placesPerTile: z
+    .strictObject({ min: z.number().int().min(0), max: positiveInt })
+    .refine((r) => r.min <= r.max, "min must not exceed max"),
+  /** „im Pilot 50 Orte, je weiterem Revier 20–30“. */
+  comparisonSet: z
+    .strictObject({ pilotSize: positiveInt, perAreaMin: positiveInt, perAreaMax: positiveInt })
+    .refine((s) => s.perAreaMin <= s.perAreaMax, "perAreaMin must not exceed perAreaMax"),
+  /** The Navily comparison assistant (matching, normalisation of the compared values). */
+  navily: z.strictObject({
+    /** No Navily spot farther than this is matched to a place. */
+    maxRadiusM: meters,
+    /** Name similarity from which a spot matches within `maxRadiusM`. */
+    nameStrongMin: share,
+    /** Name similarity from which a spot matches within `nameRadiusM`. */
+    nameMin: share,
+    nameRadiusM: meters,
+    /** A spot this close matches without a name. */
+    nearRadiusM: meters,
+    /** Positions within this distance count as the same. */
+    positionToleranceM: meters,
     /** Own shelter at or above this value counts as a protected sector. */
     protectedThreshold: share,
     /** Own seabed types below this share do not count as the place's seabed. */
-    seabedMinShare: share,
-    /** Spec 04: the sample covers 20 places. */
-    minPlaces: z.number().int().positive(),
-    /** Per-sector rates are only reported from this many matched places on (no reconstruction of single spots). */
-    minMatchedForSectorRates: z.number().int().positive(),
+    seabedShareMin: share,
+    /** Depths are compared rounded to this step. */
+    depthStepM: z.number().positive(),
+    /** `checked_by` of machine-accepted proposals. */
+    proposalVersion: z.string().min(1).max(120),
   }),
+  /** Mediterranean extrapolation of the cost report; `placesPerArea` null = measured in the pilot. */
+  extrapolation: z
+    .strictObject({ areasMin: positiveInt, areasMax: positiveInt, placesPerArea: positiveInt.nullable() })
+    .refine((e) => e.areasMin <= e.areasMax, "areasMin must not exceed areasMax"),
 });
 
 /** EMODnet Seabed Habitats WFS (EUSeaMap substrate layer) and the mapping of its classes to `seabed_type`. */
@@ -407,7 +509,6 @@ export const datasetsSchema = z.strictObject({
 
 const docType = z.enum(DOC_TYPES);
 const changeRate = z.enum(changeRateEnum.enumValues);
-const positiveInt = z.number().int().positive();
 const eur = z.number().nonnegative();
 const languageCode = z.string().regex(/^[a-z]{2,3}$/, "must be an ISO 639 language code");
 const domainName = z

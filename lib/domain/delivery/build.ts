@@ -12,7 +12,8 @@ import {
   type Spot,
   type SpotBody,
 } from "@/contract";
-import { getConfig, getConsolidationConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
+import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { deliveredObjects, deliveries, type DeliveryStatus } from "@/lib/db/schema/deliveries";
@@ -161,7 +162,7 @@ async function assemble(
   input: { archive: Archive; areaId: string; today: string; generatedAt: string; cfg: DeliveryConfig; scopeTransform?: (s: AreaScope) => AreaScope },
 ): Promise<Assembly> {
   const { cfg, today } = input;
-  const consolidation = getConsolidationConfig();
+  const consolidation = await consolidationConfigFor(tx);
   const previous = await previousPackage(tx, input.archive, input.areaId);
   const draft = await draftArea(tx, input.areaId, today, {
     cfg,

@@ -8,6 +8,9 @@ import { runDate } from "@/lib/domain/runs";
  * What a run consolidates (plan Task 16): the geo objects of its scope, and whether its quote fidelity blocks it.
  */
 
+/** A configuration to evaluate against the active one (at least one part; spec 10 „Regression“, ruling M7-P11). */
+export type EvaluationCandidate = { rulesVersion?: string; extraction?: { model: string; promptVersion: number } };
+
 /** Params of a consolidation run (`startConsolidationRun`); a text run's params carry `documentVersionIds` instead. */
 export type ConsolidationParams = {
   tileId?: string;
@@ -16,7 +19,12 @@ export type ConsolidationParams = {
   comparisonSetArea?: string;
   /** An evaluation run: profiles into `evaluation_profiles`, nothing into profiles, the change feed or tasks. */
   evaluation?: true;
+  /** The rules version the run consolidates with (set at the start: the given or the active one, ruling M7-P10). */
   rulesVersion?: string;
+  /** An evaluation run's extraction candidate (ruling M7-P11): the extraction runs of this model and prompt are the active ones. */
+  extraction?: { model: string; promptVersion: number };
+  /** What an evaluation run evaluates (spec 10 regression): the rules version, the extraction candidate or both. */
+  candidate?: EvaluationCandidate;
   /** Only these consolidation stages ran (e.g. `["consolidation.summary"]` for "Neu erzeugen"). */
   stagesOnly?: string[];
   /**
@@ -46,6 +54,9 @@ const consolidatable = (day: string) => sql`${validObject(day)} and ${takesFacts
  * The geo objects a run consolidates, sorted and without duplicates:
  * - a text run (its params carry the frozen `documentVersionIds`): the objects with facts of its extraction runs and
  *   the objects with mentions it wrote in its frozen versions; its own `tileId` / `areaKey` only selected its versions;
+ *   a revisit run also the objects its freeze stage found on documents gone in its crawl (`goneGeoObjectIds`, ruling
+ *   M7-P7); a revisit run not frozen (failed or ended before `revisit.freeze`): only its `goneGeoObjectIds`, i.e.
+ *   none (ruling M7-G-R4), never the area of its `areaKey`;
  * - `geoObjectIds`: exactly these (the starter checked them);
  * - `tileId`: the objects of the tile (`tile_geo_objects`);
  * - `areaKey`: the objects of every valid coast tile of the area;
@@ -61,6 +72,16 @@ export async function consolidationTargets(db: Db, run: { id: string; params: Re
   const p = run.params;
   if (!Array.isArray(p.documentVersionIds) && Array.isArray(p.geoObjectIds)) return sorted(strings(p.geoObjectIds));
   const day = today ?? (await runDate(db, run.id));
+  if (!Array.isArray(p.documentVersionIds) && (await isRevisitRun(db, run.id))) {
+    // A revisit stopped before `revisit.freeze` evaluated nothing: only the objects of pages its crawl found gone,
+    // never the area its `areaKey` names (ruling M7-G-R4).
+    const gone = JSON.stringify(strings(p.goneGeoObjectIds));
+    const { rows } = await db.execute<{ id: string }>(sql`
+      select o.id from geo_objects o
+      where o.id in (select value::uuid from jsonb_array_elements_text(${gone}::jsonb)) and ${consolidatable(day)}
+    `);
+    return ids(rows);
+  }
   if (!Array.isArray(p.documentVersionIds)) {
     if (typeof p.tileId === "string") {
       const { rows } = await db.execute<{ id: string }>(sql`
@@ -108,8 +129,10 @@ export async function consolidationTargets(db: Db, run: { id: string; params: Re
       return ids(rows);
     }
   }
-  // Mentions only through the frozen versions (indexed), facts through the run's extraction runs (ruling M5-H-R2 M-1).
+  // Mentions only through the frozen versions (indexed), facts through the run's extraction runs (ruling M5-H-R2 M-1);
+  // a revisit run adds the objects of the documents its crawl found gone (ruling M7-P7).
   const versions = JSON.stringify(strings(p.documentVersionIds));
+  const gone = JSON.stringify(strings(p.goneGeoObjectIds));
   const { rows } = await db.execute<{ id: string }>(sql`
     select o.id
     from (
@@ -118,11 +141,18 @@ export async function consolidationTargets(db: Db, run: { id: string; params: Re
       select m.geo_object_id from mentions m
       where m.document_version_id in (select value::uuid from jsonb_array_elements_text(${versions}::jsonb))
         and m.run_id = ${run.id}
+      union
+      select value::uuid from jsonb_array_elements_text(${gone}::jsonb)
     ) t
     join geo_objects o on o.id = t.id
     where ${consolidatable(day)}
   `);
   return ids(rows);
+}
+
+async function isRevisitRun(db: Db, runId: string): Promise<boolean> {
+  const { rows } = await db.execute<{ kind: string }>(sql`select kind from runs where id = ${runId}`);
+  return rows[0]?.kind === "revisit";
 }
 
 /**

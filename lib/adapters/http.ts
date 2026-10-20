@@ -4,6 +4,7 @@ import { assertWithinBudget, recordExternalCall } from "@/lib/domain/costs";
 import { takeToken } from "@/lib/domain/rate-limit";
 import { getEnv } from "@/lib/env";
 import { createLogger } from "@/lib/logger";
+import { assertNotSimulated, isOffline } from "./simulation";
 
 export type HttpRequest = {
   service: string;
@@ -181,7 +182,8 @@ async function waitForToken(db: Db, req: HttpRequest, deps: HttpCallDeps): Promi
 }
 
 /**
- * One call to an external HTTP service: checks the daily budget of a paid service (`BudgetExceeded`),
+ * One call to an external HTTP service: refuses it in a simulation unless the transport answers in the process
+ * (`assertNotSimulated`, `markOffline`), checks the daily budget of a paid service (`BudgetExceeded`),
  * sets the contact User-Agent, waits for a rate-limit token (at most `maxRateWaitMs`, else
  * `RetryableHttpError`), calls the transport, records the call in `external_calls` (cost by `costOf`,
  * default 0 EUR for one request) and throws by status (429/5xx retryable, other 4xx not) unless the
@@ -196,6 +198,7 @@ export async function httpCall(
   ctx: CallContext,
   deps: HttpCallDeps = {},
 ): Promise<HttpResponse> {
+  if (!isOffline(transport)) assertNotSimulated(req.service, `${req.operation} ${req.method ?? "GET"}`);
   if (req.budget) await assertWithinBudget(ctx.db, req.budget, undefined, deps.now?.());
   if (req.ratePerMinute !== undefined) {
     await waitForToken(ctx.db, req, deps);
@@ -251,9 +254,10 @@ export async function httpCall(
   return res;
 }
 
-/** The real network. Timeouts and network failures become `RetryableHttpError`. */
+/** The real network (refused in a simulation). Timeouts and network failures become `RetryableHttpError`. */
 export const fetchTransport: Transport = async (req) => {
   const method = req.method ?? "GET";
+  assertNotSimulated(req.service, `${req.operation} ${method}`);
   try {
     const res = await fetch(req.url, {
       method,

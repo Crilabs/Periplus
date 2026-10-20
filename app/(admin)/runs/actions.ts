@@ -10,6 +10,7 @@ import { getBoss } from "@/lib/jobs/boss";
 import { startDatasetImportRun } from "@/lib/pipeline/datasets-run";
 import { startGazetteerRun } from "@/lib/pipeline/gazetteer/stages";
 import { startGeometryRun } from "@/lib/pipeline/geometry-run";
+import { startRevisitRun } from "@/lib/pipeline/revisit-run";
 import { startRun } from "@/lib/pipeline/runs";
 import { startSeedRun } from "@/lib/pipeline/seed";
 import { startReprocessRun, startTextRun } from "@/lib/pipeline/text/run";
@@ -108,4 +109,17 @@ export async function startReprocessAction(input: FormData | { areaKey: string }
   const scope = parsed.tileId ? { tileId: parsed.tileId } : { areaKey: parsed.areaKey! };
   const boss = await getBoss();
   await startAndRedirect(() => startReprocessRun(db, boss, { scope, triggeredBy: admin.email }), textRunErrorPath(parsed));
+}
+
+/**
+ * „Revisit für Revier“ (spec 10, ruling M7-P22): crawls every approved source again and evaluates what changed for a
+ * configured area, up to the consolidation and its change events; refusals (no tiles, no approved source, a source
+ * being fetched) return to the runs page.
+ */
+export async function startRevisitAction(input: FormData | { areaKey: string }): Promise<void> {
+  const admin = await requireAdmin();
+  const { areaKey } = areaSchema.parse(fields(input));
+  const db = getDb();
+  const boss = await getBoss();
+  await startAndRedirect(() => startRevisitRun(db, boss, { areaKey, triggeredBy: admin.email }), "/runs");
 }

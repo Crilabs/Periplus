@@ -8,7 +8,9 @@ import { discoveryAreaHandler, discoveryPlaceHandler, discoveryProposeHandler, d
 import { embedChunksHandler } from "./handlers/embed";
 import { fetchSourceHandler, fetchUrlHandler } from "./handlers/fetch";
 import { gazetteerHandler } from "./handlers/gazetteer";
-import { geometryPlaceHandler } from "./handlers/geometry";
+import { detectBaysHandler, geometryPlaceHandler } from "./handlers/geometry";
+import { qualityMeasureHandler } from "./handlers/quality";
+import { revisitFreezeHandler } from "./handlers/revisit";
 import { advanceHandler } from "./handlers/run-advance";
 import { seedTileHandler } from "./handlers/seed";
 import { pingHandler } from "./handlers/system-ping";
@@ -35,6 +37,7 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "seed.tile": seedTileHandler,
   "datasets.import": datasetsImportHandler,
   "geometry.compute": geometryPlaceHandler,
+  "geometry.detect_bays": detectBaysHandler,
   "discovery.area": discoveryAreaHandler,
   "discovery.tile": discoveryTileHandler,
   "discovery.propose": discoveryProposeHandler,
@@ -56,4 +59,6 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "consolidation.summary": consolidationSummaryHandler,
   "consolidation.followup": consolidationFollowupHandler,
   "delivery.build": deliveryBuildHandler,
+  "quality.measure": qualityMeasureHandler,
+  "revisit.freeze": revisitFreezeHandler,
 };

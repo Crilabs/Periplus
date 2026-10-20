@@ -93,13 +93,36 @@ function own(over: Partial<OwnPlaceValues> = {}): OwnPlaceValues {
 
 /** A point `m` metres north of `AT`. */
 const north = (m: number) => ({ lon: AT.lon, lat: AT.lat + m / 111_320 });
+/** The spot fields the M2 spot check does not read. */
+const NO_EXTRA = { name: null, kind: null, type: null, water: null, shop: null } as const;
 
 describe("loadNavilySpots", () => {
-  it("keeps only position, protection and seabeds", async () => {
+  // ruling M7-P2: the assistant also reads name, kind, type, water and shop; id, rating, draft, length and url stay dropped
+  it("keeps only position, protection, seabeds, name, kind, type, water and shop", async () => {
     const spots = await loadNavilySpots(file);
     expect(spots).toHaveLength(2);
-    expect(spots[0]).toEqual({ lat: AT.lat, lon: AT.lon, prot: ["n", "ne", "nw"], seabeds: ["algae", "sand"] });
-    expect(Object.keys(spots[1]!).sort()).toEqual(["lat", "lon", "prot", "seabeds"]);
+    expect(spots[0]).toEqual({
+      lat: AT.lat,
+      lon: AT.lon,
+      prot: ["n", "ne", "nw"],
+      seabeds: ["algae", "sand"],
+      name: "NAVILY-ONLY-NAME",
+      kind: null, // "anchorage" is no kind the assistant knows
+      type: "bay",
+      water: false,
+      shop: true,
+    });
+    expect(Object.keys(spots[1]!).sort()).toEqual(["kind", "lat", "lon", "name", "prot", "seabeds", "shop", "type", "water"]);
+    expect(JSON.stringify(spots)).not.toMatch(/987654321|navily\.com|4\.5/);
+  });
+
+  it("reads the synthetic fixture file", async () => {
+    const spots = await loadNavilySpots(path.join(process.cwd(), "test/fixtures/navily/sample.json"));
+    expect(spots.map((s) => [s.kind, s.type, s.name])).toEqual([
+      ["mooring", "buoy", "NAVILY-ONLY-NAME"],
+      ["port", "marina", "NAVILY-PORT"],
+      ["mooring", "bay", null],
+    ]);
   });
 });
 
@@ -133,7 +156,7 @@ describe("comparePlace", () => {
   });
 
   it("4–5 agreeing sectors → 'teilweise', ≤ 3 → 'weicht ab'", () => {
-    const spot: NavilySpot = { ...AT, prot: ["n", "ne", "nw"], seabeds: null };
+    const spot: NavilySpot = { ...AT, prot: ["n", "ne", "nw"], seabeds: null, ...NO_EXTRA };
     // Own protection on N, NE, NW, E, SE, S: 3 deviations → 5/8.
     const five = comparePlace(own({ shelter: shelter({ N: 1, NE: 1, NW: 1, E: 1, SE: 1, S: 1 }) }), [spot], OPTS);
     expect(five.sectorsAgree).toBe(5);
@@ -146,13 +169,13 @@ describe("comparePlace", () => {
   });
 
   it("the threshold decides: a sector at exactly 0.5 counts as protected", () => {
-    const spot: NavilySpot = { ...AT, prot: ["n"], seabeds: null };
+    const spot: NavilySpot = { ...AT, prot: ["n"], seabeds: null, ...NO_EXTRA };
     const v = comparePlace(own({ shelter: shelter({ N: 0.5 }, 0.49) }), [spot], OPTS);
     expect(v.sectorsAgree).toBe(8);
   });
 
   it("nearest spot 800 m away → 'nicht bei Navily'", () => {
-    const spot: NavilySpot = { ...north(800), prot: ["n"], seabeds: ["sand"] };
+    const spot: NavilySpot = { ...north(800), prot: ["n"], seabeds: ["sand"], ...NO_EXTRA };
     const v = comparePlace(own(), [spot], OPTS);
     expect(v.matched).toBe(false);
     expect(v.sectorsAgree).toBeNull();
@@ -162,13 +185,13 @@ describe("comparePlace", () => {
   });
 
   it("matches the nearest spot within the radius", () => {
-    const far: NavilySpot = { ...north(400), prot: [], seabeds: null };
-    const near: NavilySpot = { ...north(100), prot: ["n", "ne", "nw"], seabeds: null };
+    const far: NavilySpot = { ...north(400), prot: [], seabeds: null, ...NO_EXTRA };
+    const near: NavilySpot = { ...north(100), prot: ["n", "ne", "nw"], seabeds: null, ...NO_EXTRA };
     expect(comparePlace(own(), [far, near], OPTS).sectorsAgree).toBe(8);
   });
 
   it("algae matches own weed", () => {
-    const spot: NavilySpot = { ...AT, prot: ["n"], seabeds: ["algae"] };
+    const spot: NavilySpot = { ...AT, prot: ["n"], seabeds: ["algae"], ...NO_EXTRA };
     expect(comparePlace(own({ seabed: ["weed"] }), [spot], OPTS).seabed).toBe("match");
     expect(comparePlace(own({ seabed: ["sand", "rock"] }), [spot], OPTS).seabed).toBe("deviation");
     expect(comparePlace(own({ seabed: null }), [spot], OPTS).seabed).toBe("no_own_value");
@@ -176,7 +199,7 @@ describe("comparePlace", () => {
   });
 
   it("a place without shelter facts → 'ohne Geometrie'", () => {
-    const spot: NavilySpot = { ...AT, prot: ["n"], seabeds: null };
+    const spot: NavilySpot = { ...AT, prot: ["n"], seabeds: null, ...NO_EXTRA };
     const v = comparePlace(own({ shelter: null, hasDepth: false, depthGap: "no_water" }), [spot], OPTS);
     expect(v.verdict).toBe("ohne Geometrie");
     expect(v.sectorsAgree).toBeNull();
@@ -184,7 +207,7 @@ describe("comparePlace", () => {
   });
 
   it("reports depth as coverage only", () => {
-    const spot: NavilySpot = { ...AT, prot: ["n", "ne", "nw"], seabeds: null };
+    const spot: NavilySpot = { ...AT, prot: ["n", "ne", "nw"], seabeds: null, ...NO_EXTRA };
     const v = comparePlace(own({ hasDepth: false, depthGap: "no_bathymetry" }), [spot], OPTS);
     expect(v.depth).toBe("no_bathymetry");
     expect(v.verdict).toBe("stimmt");
@@ -222,7 +245,7 @@ describe("renderReport", () => {
   });
 
   it("reports per-sector rates only from 5 matched places on, and explains mixed and shared spots", () => {
-    const spots: NavilySpot[] = [{ ...AT, prot: ["n"], seabeds: ["sand"] }];
+    const spots: NavilySpot[] = [{ ...AT, prot: ["n"], seabeds: ["sand"], ...NO_EXTRA }];
     const render = (n: number) =>
       renderReport({
         areaKey: "saronic",

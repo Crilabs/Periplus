@@ -24,6 +24,8 @@ export const textRunParamsSchema = z.object({
   rematch: z.literal(true).optional(),
   comparisonId: z.string().uuid().optional(),
   models: z.array(z.string()).optional(),
+  /** The rules version the run's consolidation uses, frozen at the start (ruling M7-E-R1). */
+  rulesVersion: z.string().min(1).optional(),
 });
 
 export type TextRunParams = z.infer<typeof textRunParamsSchema>;
@@ -58,7 +60,7 @@ export async function textRunVersions(db: Db, params: TextRunParams, cfg: AppCon
 }
 
 /** The tiles of a tile or area selection: the tile itself, or the valid tiles labelled with the area. */
-function scopeTiles(params: Pick<TextRunParams, "tileId" | "areaKey">) {
+export function scopeTiles(params: Pick<TextRunParams, "tileId" | "areaKey">) {
   return params.tileId
     ? sql`select ${params.tileId}::text as id`
     : sql`select t.id from tiles t join geo_objects a on a.id = t.area_id and a.type = 'area'
@@ -71,8 +73,27 @@ function scopeTiles(params: Pick<TextRunParams, "tileId" | "areaKey">) {
  * in one of those tiles (ruling M5-P12) found.
  */
 async function pendingVersions(db: Db, cfg: AppConfig, scope?: Pick<TextRunParams, "tileId" | "areaKey">): Promise<string[]> {
-  const sourceFilter = scope
-    ? sql`and d.source_id in (
+  const sourceFilter = scope ? sql`and d.source_id in (${scopeSources(scope)})` : sql``;
+  const { rows } = await db.execute<{ id: string }>(sql`
+    select v.id
+    from documents d
+    join document_versions v on v.id = d.current_version_id
+    where d.status = 'active' and d.valid_to is null ${sourceFilter}
+      and not exists (
+        select 1 from pipeline_passes p
+        where p.document_version_id = v.id and p.stage = ${MATCH_PASS_STAGE} and p.config_key = ${mentionsConfigKey(cfg)}
+      )
+    order by v.id
+  `);
+  return rows.map((r) => r.id);
+}
+
+/**
+ * The ids of the sources of a tile or area selection (a query with one column): those a SERP search of that tile, of a
+ * tile of that area, of that area or of a place in one of those tiles found (rulings M4-I-R0, M5-P12).
+ */
+export function scopeSources(scope: Pick<TextRunParams, "tileId" | "areaKey">) {
+  return sql`
         with st as (${scopeTiles(scope)}),
         sa as (
           select a.config_key as key from tiles t join geo_objects a on a.id = t.area_id and a.type = 'area'
@@ -88,21 +109,7 @@ async function pendingVersions(db: Db, cfg: AppConfig, scope?: Pick<TextRunParam
             select 1 from places p
             where p.geo_object_id::text = q.scope_id and p.tile_id in (select id from st) and p.merged_into_id is null
               and p.valid_from <= current_date and (p.valid_to is null or p.valid_to > current_date)
-          ))
-      )`
-    : sql``;
-  const { rows } = await db.execute<{ id: string }>(sql`
-    select v.id
-    from documents d
-    join document_versions v on v.id = d.current_version_id
-    where d.status = 'active' and d.valid_to is null ${sourceFilter}
-      and not exists (
-        select 1 from pipeline_passes p
-        where p.document_version_id = v.id and p.stage = ${MATCH_PASS_STAGE} and p.config_key = ${mentionsConfigKey(cfg)}
-      )
-    order by v.id
-  `);
-  return rows.map((r) => r.id);
+          ))`;
 }
 
 /** Current versions of active documents with a mention of an object in the tile or in the tiles of the area. */

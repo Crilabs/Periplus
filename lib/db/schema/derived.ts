@@ -103,7 +103,15 @@ export const facts = pgTable(
       sql`${t.mentionId} is null or (${t.quoteStart} is not null and ${t.quoteEnd} is not null and ${t.quoteStart} >= 0 and ${t.quoteStart} < ${t.quoteEnd})`,
     ),
     check("facts_confidence_range", sql`${t.confidence} between 0 and 1`),
-    uniqueIndex("facts_mention_attribute_run_unique").on(t.mentionId, t.attribute, t.extractionRunId),
+    // One fact per quote span: a list attribute keeps every proposal with its own quote (ruling M7-G-R2).
+    uniqueIndex("facts_mention_attribute_run_span_unique").on(
+      t.mentionId,
+      t.attribute,
+      t.extractionRunId,
+      t.quoteChunkId,
+      t.quoteStart,
+      t.quoteEnd,
+    ),
     uniqueIndex("facts_computation_attribute_unique")
       .on(t.computationId, t.attribute)
       .where(sql`${t.computationId} is not null`),

@@ -9,6 +9,7 @@ export const QUEUES = [
   "seed.tile",
   "datasets.import",
   "geometry.compute",
+  "geometry.detect_bays",
   "discovery.area",
   "discovery.tile",
   "discovery.propose",
@@ -30,6 +31,8 @@ export const QUEUES = [
   "consolidation.summary",
   "consolidation.followup",
   "delivery.build",
+  "quality.measure",
+  "revisit.freeze",
 ] as const;
 export type QueueName = (typeof QUEUES)[number];
 

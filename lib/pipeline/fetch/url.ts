@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, asc, count, eq, inArray, ne, sql } from "drizzle-orm";
 import { resolveConverter, type Converter, type ConverterName } from "@/lib/adapters/fetch";
+import type { SimulatedFetcher } from "@/lib/adapters/fetch/simulated";
 import { BlockedUrlError, isPublicHttpUrl } from "@/lib/adapters/fetch/ssrf";
 import { HttpError, httpCall, RetryableHttpError, type CallContext, type HttpResponse, type Transport } from "@/lib/adapters/http";
 import { convertPdf, type runPdftotext } from "@/lib/adapters/pdf";
@@ -8,12 +9,13 @@ import type { Archive } from "@/lib/adapters/s3";
 import type { ModelClient } from "@/lib/ai/types";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { crawlFrontier, documents, documentVersions, jobOutcomes, outlinks, sources, type FrontierStatus } from "@/lib/db/schema";
+import { crawlFrontier, documents, documentVersions, jobOutcomes, outlinks, sources, type DocType, type FrontierStatus } from "@/lib/db/schema";
 import { detectLanguage } from "@/lib/domain/documents/language";
 import { extractLinks } from "@/lib/domain/documents/links";
 import { extractPublishedAt } from "@/lib/domain/documents/metadata";
 import { ensureDocument, markChecked, markGone, storeFetched } from "@/lib/domain/documents/store";
 import { structuredToMarkdown } from "@/lib/domain/documents/structured";
+import { editBase } from "@/lib/domain/revisit/scenario";
 import { extendStage, stageAcceptsJobs } from "@/lib/domain/runs";
 import { urlAllowed } from "@/lib/domain/sources/crawl-rules";
 import { effectiveRate, robotsForRun } from "@/lib/domain/sources/robots";
@@ -43,6 +45,8 @@ export type FetchUrlDeps = {
   now?: () => Date;
   /** Address check before every request and redirect hop (default `isPublicHttpUrl`). */
   isAllowed?: (url: string) => Promise<boolean>;
+  /** A simulated revisit: pages come from the scenario instead of the network (`fetchSimulated`). */
+  simulated?: SimulatedFetcher;
 };
 
 export type FetchUrlOutcome =
@@ -360,12 +364,100 @@ async function archivedLinks(db: Db, archive: Archive, documentId: string, pageU
 }
 
 /**
+ * A 404/410 of a known document: `markGone` once per run (a retried job of this run finds its row already failed),
+ * the row `failed` with `HTTP <status>`. `gone` when the document turns gone now, else `missing`.
+ */
+async function recordMiss(
+  db: Db,
+  sourceId: string,
+  urlNormalized: string,
+  doc: { id: string; status: string },
+  status: number,
+  fetchedAt: Date,
+  runId: string,
+): Promise<FetchUrlResult> {
+  const reason = `HTTP ${status}`;
+  const gone = await db.transaction(async (tx) => {
+    const row = await lockFrontierRow(tx, sourceId, urlNormalized);
+    if (row?.status === "failed" && row.reason === reason && row.lastRunId === runId) return false;
+    const marked = await markGone(tx, doc.id, fetchedAt, getConfig().fetch.goneAfter);
+    await setFrontier(tx, sourceId, urlNormalized, runId, "failed", reason);
+    return marked.gone && doc.status === "active";
+  });
+  return { outcome: gone ? "gone" : "missing", newUrls: 0 };
+}
+
+/**
+ * A page of a simulated revisit (no request, no robots, no links): the scenario's answer for the URL, given the
+ * document's current version (`editBase`, rulings M7-P9 and M7-F-R3).
+ * - 304 → `markChecked` (`not_modified`). This also resets a recorded miss (`consecutive_gone` back to 0): the
+ *   simulated web holds the page as recorded, so a page that missed once before the clone does not turn gone in the
+ *   simulation (no spurious `gone` event). A URL never recorded has nothing to replay (`skipped`, row stays queued);
+ *   a document recorded as gone answers 404 again, as recorded.
+ * - 404 → `recordMiss` (`missing`, at the second miss `gone`). A `gone` entry whose document was recorded with one
+ *   miss (`consecutive_gone = 1`) therefore turns gone at the first simulated revisit already (`goneAfter` 2), as the
+ *   real crawl would.
+ * - 200 → `storeFetched` with converter `simulated`, `simulated: true`, the Markdown as raw `md` object
+ *   (`text/markdown`) and the document's type; the same edit on every fetch yields `unchanged` after the first.
+ */
+async function fetchSimulated(
+  db: Db,
+  simulated: SimulatedFetcher,
+  archive: Archive,
+  page: { sourceId: string; url: string; urlNormalized: string; doc: { id: string; status: string; docType: DocType } | null },
+  fetchedAt: Date,
+  runId: string,
+): Promise<FetchUrlResult> {
+  const cfg = getConfig().fetch;
+  const { sourceId, urlNormalized, doc } = page;
+  if (!doc) {
+    await setFrontier(db, sourceId, urlNormalized, runId, "queued", "not_recorded");
+    return { outcome: "skipped", newUrls: 0 };
+  }
+  const base = simulated.covers(urlNormalized) ? await editBase(db, archive, doc.id) : null;
+  const res = simulated.respond(urlNormalized, base);
+  if (res.status === 404 || (res.status === 304 && doc.status === "gone")) {
+    return recordMiss(db, sourceId, urlNormalized, doc, 404, fetchedAt, runId);
+  }
+  if (res.status === 304) {
+    await markChecked(db, doc.id, { at: fetchedAt });
+    await setFrontier(db, sourceId, urlNormalized, runId, "fetched", null);
+    return { outcome: "not_modified", newUrls: 0 };
+  }
+  const stored = await storeFetched(
+    db,
+    archive,
+    doc.id,
+    {
+      fetchedAt,
+      raw: new TextEncoder().encode(res.markdown),
+      rawExt: "md",
+      contentType: "text/markdown",
+      finalUrl: null,
+      markdown: res.markdown,
+      converter: "simulated",
+      language: detectLanguage(res.markdown, cfg.languages),
+      publishedAt: extractPublishedAt({ html: null, url: page.url, hint: null, fetchedAt }),
+      docType: doc.docType,
+      etag: null,
+      lastModified: null,
+      simulated: true,
+      runId,
+    },
+    cfg.chunk,
+  );
+  await setFrontier(db, sourceId, urlNormalized, runId, "fetched", null);
+  return { outcome: stored.outcome, newUrls: 0 };
+}
+
+/**
  * Job `fetch.url`: fetches, converts and archives one URL of a source.
  * 1. The source must still be current (else `source_ended`) and approved (an upload is exempt; else `source_paused`):
  *    otherwise outcome `skipped`, row left `queued`.
  * 2. `upload://<sha256>` reads `uploads/<sha256>.pdf` from the archive (no robots, no HTTP). Otherwise a conditional
  *    GET (validators of the document) through `fetchFollowing`, rate-limited per registrable domain at the
  *    crawl-delay-adjusted rate.
+ *    With `deps.simulated` the page comes from the scenario instead (`fetchSimulated`), steps 2–7 do not apply.
  * 3. 304 → `markChecked` (`not_modified`), links from the archived current version; 404/410 → `markGone` once per
  *    run (`gone` when it turns gone now, else `missing`; a URL without document is `missing` and creates none); more
  *    than `maxRawBytes` → `skipped` (`too_large`).
@@ -397,10 +489,13 @@ export async function fetchUrl(db: Db, job: FetchUrlJob, deps: FetchUrlDeps, ctx
   if (!isUpload && source.status !== "approved") return stop("skipped", "queued", "source_paused");
 
   const [doc] = await db
-    .select({ id: documents.id, status: documents.status, etag: documents.etag, lastModified: documents.lastModified })
+    .select({ id: documents.id, status: documents.status, docType: documents.docType, etag: documents.etag, lastModified: documents.lastModified })
     .from(documents)
     .where(job.documentId ? eq(documents.id, job.documentId) : eq(documents.urlNormalized, urlNormalized));
   const fetchedAt = now();
+  if (deps.simulated) {
+    return fetchSimulated(db, deps.simulated, deps.archive, { sourceId: source.id, url: job.url, urlNormalized, doc: doc ?? null }, fetchedAt, ctx.runId);
+  }
 
   let raw: Uint8Array;
   let contentType: string | null;
@@ -429,16 +524,7 @@ export async function fetchUrl(db: Db, job: FetchUrlJob, deps: FetchUrlDeps, ctx
       }
       if (res.status === 404 || res.status === 410) {
         if (!doc) return stop("missing", "failed", `HTTP ${res.status}`);
-        const reason = `HTTP ${res.status}`;
-        const gone = await db.transaction(async (tx) => {
-          // A retried job of this run finds its row already failed: the miss is counted once per run.
-          const row = await lockFrontierRow(tx, source.id, urlNormalized);
-          if (row?.status === "failed" && row.reason === reason && row.lastRunId === ctx.runId) return false;
-          const marked = await markGone(tx, doc.id, fetchedAt, cfg.goneAfter);
-          await setFrontier(tx, source.id, urlNormalized, ctx.runId, "failed", reason);
-          return marked.gone && doc.status === "active";
-        });
-        return { outcome: gone ? "gone" : "missing", newUrls: 0 };
+        return recordMiss(db, source.id, urlNormalized, doc, res.status, fetchedAt, ctx.runId);
       }
       const declared = Number(res.headers["content-length"]);
       if (res.truncated || res.body.byteLength > cfg.maxRawBytes || declared > cfg.maxRawBytes) return stop("skipped", "skipped", "too_large");

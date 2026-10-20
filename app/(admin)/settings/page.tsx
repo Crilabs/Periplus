@@ -1,10 +1,12 @@
 import { getConfig, type AppConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { listApiClients } from "@/lib/domain/api-clients";
+import { activationOf, consolidationConfigFor, extractionVersion } from "@/lib/domain/consolidation/active-rules";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { Dialog } from "../_components/dialog";
+import { GEO_OBJECT_TYPE_LABELS, METRIC_LABELS } from "../_components/labels";
 import {
   Badge,
   Button,
@@ -66,6 +68,13 @@ const DELIVERY_GROUPS: Record<Exclude<keyof AppConfig["delivery"], "schemaVersio
   api: "API",
 };
 
+/** A target of `config/quality.json` in German: shares as percent, cost in euro, review effort in minutes. */
+function targetText(metric: keyof AppConfig["quality"]["targets"], value: number): string {
+  if (metric === "cost_per_place") return value.toLocaleString("de-DE", { style: "currency", currency: "EUR" });
+  if (metric === "review_minutes_per_100") return `${value.toLocaleString("de-DE")} Min.`;
+  return value.toLocaleString("de-DE", { style: "percent", maximumFractionDigits: 1 });
+}
+
 /** Flattens parameters to `a.b: value` pairs for a read-only table cell. */
 function parameterText(value: unknown, prefix = ""): string[] {
   if (value !== null && typeof value === "object" && !Array.isArray(value)) {
@@ -78,9 +87,18 @@ function parameterText(value: unknown, prefix = ""): string[] {
 export default async function Page({ searchParams }: PageProps<"/settings">) {
   await requireAdmin();
   const revoked = (await searchParams).notice === "api_client_revoked";
-  const apiClients = await listApiClients(getDb());
-  const { areas, gazetteer, ...rest } = getConfig();
-  const { geometry, factSchema, fetch, embeddings, models, consolidation, delivery } = rest;
+  const db = getDb();
+  const apiClients = await listApiClients(db);
+  const { areas, gazetteer, ...configured } = getConfig();
+  // the active rules version: the newest released activation, else active.json (ruling M7-P10)
+  const consolidation = await consolidationConfigFor(db);
+  const rulesActivation = await activationOf(db, "consolidation_rules", consolidation.version);
+  const rest = { ...configured, consolidation };
+  const { geometry, factSchema, fetch, embeddings, models, delivery, quality } = rest;
+  const extractFacts = models.tasks["extract-facts"];
+  const extractionApproval = extractFacts
+    ? await activationOf(db, "extraction", extractionVersion({ model: extractFacts.model, promptVersion: extractFacts.promptVersion }))
+    : null;
   const exceptions = Object.entries(fetch.converterBySource);
   const archiveRows: [string, string][] = [
     [
@@ -110,6 +128,10 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
     [
       "Konfidenz",
       `Fetch ${geometry.fetch.confidence}, Schutz ${geometry.shelter.confidence}, Öffnung ${geometry.opening.confidence}, Schwell ${geometry.swell.confidence}`,
+    ],
+    [
+      "Unbenannte Buchten",
+      `Küste alle ${geometry.bays.coastStepM} m, Prüfpunkt ${geometry.bays.probeOffsetM} m vor der Küste; ≥ ${geometry.bays.minLandDeg}° Land in ${geometry.bays.rayLengthM} m; Ankerfläche ≥ ${geometry.bays.minAnchorAreaM2} m²; zusammengefasst unter ${geometry.bays.mergeDistanceM} m, geteilt über ${geometry.bays.maxClusterSpanM} m; bekannt bei Ort oder ${geometry.bays.knownObjectTypes.map((t) => GEO_OBJECT_TYPE_LABELS[t]).join("/")} in ${geometry.bays.knownPlaceDistanceM} m, eigene Bucht eines bekannten Orts bis ${geometry.bays.knownBayDistanceM} m; Hilfsname nach ${geometry.bays.helperNameTypes.map((tier) => tier.map((t) => GEO_OBJECT_TYPE_LABELS[t]).join(", ")).join(" vor ")} in ${geometry.bays.helperNameMaxDistanceM} m`,
     ],
   ];
   const factSchemaLevels = getFactSchema(factSchema.version).levels;
@@ -143,6 +165,23 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
       `Lizenz ${l.name}`,
       `${l.attribution} (${l.url}); Dateien: ${l.files.join(", ") || "keine"}; Felder: ${l.fields.join(", ") || "keine"}`,
     ]),
+  ];
+  const qualityRows: [string, string][] = [
+    ...(Object.keys(quality.targets) as (keyof typeof quality.targets)[]).map((metric): [string, string] => {
+      const t = quality.targets[metric];
+      const bound = t.direction === "min" ? "mindestens" : "höchstens";
+      const parts = [
+        t.pilot === null ? "kein Pilotziel" : `${bound} ${targetText(metric, t.pilot)} im Pilot`,
+        t.full === null ? "kein Ziel im Vollbetrieb" : `${bound} ${targetText(metric, t.full)} im Vollbetrieb`,
+      ];
+      return [METRIC_LABELS[metric], parts.join(", ")];
+    }),
+    ["Review-Aufwand zweiter Lauf (Pilot)", `unter ${quality.secondRunReviewMinutesMax} Min.`],
+    ["Orte je Kachel", `${quality.placesPerTile.min}–${quality.placesPerTile.max}`],
+    [
+      "Vergleichssatz",
+      `${quality.comparisonSet.pilotSize} Orte im Pilot, ${quality.comparisonSet.perAreaMin}–${quality.comparisonSet.perAreaMax} je weiterem Revier`,
+    ],
   ];
   const thresholds: [string, string][] = [
     ["Puffer Kachelbox", `${gazetteer.bboxBufferKm} km`],
@@ -276,9 +315,22 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
           <Pairs
             rows={[
               ["Regelversion", consolidation.version],
+              [
+                "Aktiv durch",
+                rulesActivation
+                  ? `Aktivierung am ${fmt.dateTime(rulesActivation.activatedAt)} von ${rulesActivation.activatedBy} (Qualität → Regression)`
+                  : "config/consolidation/active.json",
+              ],
               ["Regeln", Object.keys(consolidation.rules).join(", ")],
             ]}
           />
+        </Panel>
+
+        <Panel
+          title="Qualitätsziele"
+          description="Zielwerte der Qualitätskennzahlen für Pilot und Vollbetrieb (config/quality.json)."
+        >
+          <Pairs rows={qualityRows} />
         </Panel>
 
         <Panel
@@ -398,6 +450,19 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
                   {t.decision
                     ? `${t.decision.status === "decided" ? "Entschieden" : "Vorläufig"}: ${t.decision.note}`
                     : "–"}
+                  {task === "extract-facts" && (
+                    <div className="mt-1" data-testid="extraction-approval">
+                      {extractionApproval ? (
+                        <Badge tone="ok" title={`am ${fmt.dateTime(extractionApproval.activatedAt)} von ${extractionApproval.activatedBy}`}>
+                          freigegeben
+                        </Badge>
+                      ) : (
+                        <Badge tone="warn" title="Keine Aktivierung dieser Konfiguration auf der Qualitätsseite (Regression)">
+                          ohne Freigabe
+                        </Badge>
+                      )}
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}

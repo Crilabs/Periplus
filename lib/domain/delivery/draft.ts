@@ -1,5 +1,6 @@
 import type { HighlightBody, RegionBody, SpotBody } from "@/contract";
-import { getConfig, getConsolidationConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
+import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { loadAreaScope } from "./load";
@@ -68,7 +69,7 @@ function ordered(scope: AreaScope): AreaScope {
 
 export async function draftArea(db: Db, areaGeoObjectId: string, today: string, opts: DraftOptions = {}): Promise<AreaDraft> {
   const cfg = opts.cfg ?? getConfig().delivery;
-  const consolidation = getConsolidationConfig();
+  const consolidation = await consolidationConfigFor(db);
   const radiusNm = opts.radiusNm ?? consolidation.importance.radiusNm;
   const poiConfidence = opts.poiConfidence ?? consolidation.poiConfidence;
   const loaded = await loadAreaScope(db, areaGeoObjectId, cfg, today);

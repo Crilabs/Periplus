@@ -4,9 +4,6 @@ import { comparisonSet, geoObjects, places, tiles, type PlaceKind } from "@/lib/
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { validAt } from "@/lib/domain/timeline";
 
-/** Pilot size of the comparison set (spec 10); informational, adding beyond it is allowed. */
-export const COMPARISON_TARGET = 50;
-
 export type ComparisonCandidate = {
   placeId: string;
   name: string | null;

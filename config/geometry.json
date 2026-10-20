@@ -29,5 +29,20 @@
     "correctionMaxDistanceM": 2000
   },
   "seabed": { "minCoverage": 0.5, "confidence": 0.5 },
-  "restriction": { "minShare": 0.5, "confidence": 0.9 }
+  "restriction": { "minShare": 0.5, "confidence": 0.9 },
+  "bays": {
+    "coastStepM": 50,
+    "probeOffsetM": 400,
+    "rayCount": 72,
+    "rayLengthM": 1500,
+    "minLandDeg": 180,
+    "minAnchorAreaM2": 5000,
+    "mergeDistanceM": 300,
+    "maxClusterSpanM": 1000,
+    "knownPlaceDistanceM": 500,
+    "knownBayDistanceM": 1000,
+    "knownObjectTypes": ["bay", "harbour"],
+    "helperNameMaxDistanceM": 5000,
+    "helperNameTypes": [["cape", "bay", "harbour", "settlement", "islet"], ["island"]]
+  }
 }

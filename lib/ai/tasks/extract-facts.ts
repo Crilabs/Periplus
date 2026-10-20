@@ -2,7 +2,7 @@ import { z } from "zod";
 import { EXPOSURE_SCALE, TEXT_SCALE } from "@/config/fact-schema/v2";
 import type { GeoObjectType } from "@/lib/db/schema/geo";
 import type { DocType } from "@/lib/db/schema/sources";
-import { attributesForPrompt, nameValuesForPrompt } from "@/lib/domain/facts/schema";
+import { attributesForPrompt, listAttributesForPrompt, nameValuesForPrompt, safetyAttributesForPrompt } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import type { ModelTask } from "../types";
 
@@ -13,7 +13,9 @@ import type { ModelTask } from "../types";
  * names), checked against the fact schema on receipt. The system prompt holds only what is the same for every unit of
  * a level (level, attribute list, word scales, the fact, quote and name limits), so it can be cached (ruling M4-P20). The output schema keeps to what
  * structured outputs support; lengths, counts and ranges are enforced when the answer is processed
- * (`lib/domain/extraction/facts.ts`), so one over-long field drops one fact instead of the whole answer.
+ * (`lib/domain/extraction/facts.ts`), so one over-long field drops one fact instead of the whole answer. Prompt v4 asks
+ * for list attributes (bans, hazards …) as one fact per entry with its own quote (ruling M7-G-R5); v5 keeps every
+ * safety list entry first when the fact limit would be reached (ruling M7-FIN-R1).
  */
 
 export type ExtractFactsInput = {
@@ -112,6 +114,8 @@ export const extractFactsTask: ModelTask<ExtractFactsInput, ExtractFactsOutput> 
     level: input.level,
     attributes: attributesForPrompt(input.level, input.factSchemaVersion),
     name_values: nameValuesForPrompt(input.level, input.factSchemaVersion),
+    list_attributes: listAttributesForPrompt(input.level, input.factSchemaVersion),
+    safety_attributes: safetyAttributesForPrompt(input.level, input.factSchemaVersion),
     max_facts: String(input.maxFacts),
     quote_min_chars: String(input.limits.quoteMinChars),
     quote_max_chars: String(input.limits.quoteMaxChars),

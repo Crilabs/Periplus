@@ -359,7 +359,7 @@ describe("consolidation run", () => {
       const started = await catchUpConsolidation(tx, rec.boss, textRun, "admin", { afterRecheck: true });
       expect(started.status).toBe("started");
       const [catchUp] = await tx.select().from(runs).where(eq(runs.id, (started as { consolidationRunId: string }).consolidationRunId));
-      expect(catchUp!.params).toEqual({ geoObjectIds: [a.objectId] });
+      expect(catchUp!.params).toEqual({ geoObjectIds: [a.objectId], rulesVersion: "v1" });
     }));
 
   it("after a recheck a run that consolidated before its late block consolidates again; one still to consolidate is left alone", () =>

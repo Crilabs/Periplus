@@ -29,6 +29,7 @@ import type {
 } from "@/lib/db/schema";
 import type { ChangeSeverity, ChangeType, SummaryStatus } from "@/lib/db/schema/profiles";
 import type { DeliveryStatus } from "@/lib/db/schema/deliveries";
+import type { ComparisonAttribute, ComparisonMethod, ComparisonResultValue, MetricKey } from "@/lib/db/schema/quality";
 import type { ChangeEntry, ContractFile } from "@/contract";
 import type { CheckName } from "@/lib/domain/delivery/validate";
 import type { PreviewOmission } from "@/lib/domain/delivery/view";
@@ -57,7 +58,7 @@ export {
 export const RUN_KIND_LABELS: Record<RunKind, string> = {
   full: "Vollständig",
   stage: "Einzelne Stufe",
-  revisit: "Wiederbesuch",
+  revisit: "Revisit",
   event: "Ereignis",
   reprocess: "Neuverarbeitung",
   system: "System",
@@ -304,6 +305,13 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   geo_object_not_consolidatable: "Geo-Objekt ist unbekannt, beendet, zusammengeführt oder hat keine Fact-Ebene",
   comparison_set_empty: "Der Vergleichssatz des Reviers ist leer",
   geo_object_without_place: "Geo-Objekt hat keinen gültigen Ort",
+  measurement_label_taken: "Bezeichnung schon vergeben",
+  measurement_label_invalid: "Bezeichnung fehlt oder ist länger als 40 Zeichen",
+  measurement_window_empty: "Der Zeitraum ist leer – „von“ muss vor „bis“ liegen",
+  measurement_from_required: "Erste Messung des Reviers: „von“ angeben (Beginn des ersten Pilot-Laufs)",
+  measurement_running: "Für das Revier wartet oder läuft schon eine Messung – erst ihr Ende abwarten",
+  evaluation_candidate_missing: "Regelversion oder Modell mit Prompt-Version angeben",
+  evaluation_candidate_unknown: "Diese Regelversion, dieses Modell oder diese Prompt-Version gibt es in config/ nicht",
 };
 
 /** The German text of a `?error=<reason>` a run action redirected with; null for none or an unknown reason. */
@@ -347,6 +355,18 @@ export const COMPARE_ERROR_LABELS = {
 export function comparePageError(param: string | string[] | undefined): string | null {
   if (typeof param !== "string") return null;
   return runScopeError(param) ?? (Object.hasOwn(COMPARE_ERROR_LABELS, param) ? COMPARE_ERROR_LABELS[param as keyof typeof COMPARE_ERROR_LABELS] : null);
+}
+
+/** Errors of the quality page besides refused runs (`?error=<code>`). */
+export const QUALITY_ERROR_LABELS = {
+  regression_gate_closed: "Nicht aktiviert – der Vergleich alt/neu besteht nicht (Gründe bei der Bewertung)",
+  invalid_input: "Eingabe ungültig – bitte die Felder prüfen",
+} as const;
+
+/** The German text of a `?error=` on the quality page: a refused run or a `QUALITY_ERROR_LABELS` code. */
+export function qualityPageError(param: string | string[] | undefined): string | null {
+  if (typeof param !== "string") return null;
+  return runScopeError(param) ?? (Object.hasOwn(QUALITY_ERROR_LABELS, param) ? QUALITY_ERROR_LABELS[param as keyof typeof QUALITY_ERROR_LABELS] : null);
 }
 
 export const queueStateLabel = (paused: boolean): string => (paused ? "Pausiert" : "Läuft");
@@ -636,3 +656,68 @@ export const MERGE_ERROR_LABELS: Record<MergeRefusal, string> = {
 export function mergeError(param: string | string[] | undefined): string | null {
   return typeof param === "string" && Object.hasOwn(MERGE_ERROR_LABELS, param) ? MERGE_ERROR_LABELS[param as MergeRefusal] : null;
 }
+
+/* ---- M7: quality measurement ---- */
+
+/** The compared attributes (spec 10 „Existenz, Position, Schutz je Sektor, Tiefe, Grund, Bojen, Versorgung, Taverne“). */
+export const COMPARISON_ATTRIBUTE_LABELS: Record<ComparisonAttribute, string> = {
+  existence: "Existenz",
+  position: "Position",
+  "shelter.N": "Schutz N",
+  "shelter.NE": "Schutz NO",
+  "shelter.E": "Schutz O",
+  "shelter.SE": "Schutz SO",
+  "shelter.S": "Schutz S",
+  "shelter.SW": "Schutz SW",
+  "shelter.W": "Schutz W",
+  "shelter.NW": "Schutz NW",
+  depth: "Tiefe",
+  seabed: "Grund",
+  "mooring.buoys": "Bojen",
+  "services.water": "Versorgung: Wasser",
+  "highlight.supply": "Versorgung: Einkauf",
+  "highlight.food": "Taverne",
+};
+
+/** Decisions on a `comparison_deviation` task, in button order (keys 1–3). */
+export const COMPARISON_DECISION_LABELS = {
+  own_correct: "Eigener Wert stimmt",
+  navily_correct: "Navily stimmt (eigener Wert falsch)",
+  unclear: "Unklar",
+} as const;
+
+/** Outcomes of the comparison against Navily (`comparison_results.result`). */
+export const COMPARISON_RESULT_LABELS: Record<ComparisonResultValue, string> = {
+  match: "stimmt",
+  deviation: "weicht ab",
+  not_at_navily: "bei Navily nicht vorhanden",
+  deviation_confirmed_own: "Abweichung: eigener Wert stimmt",
+  deviation_confirmed_navily: "Abweichung: Navily stimmt",
+  unclear: "unklar",
+};
+
+/** How an outcome was recorded (`comparison_results.method`). */
+export const COMPARISON_METHOD_LABELS: Record<ComparisonMethod, string> = {
+  manual: "von Hand",
+  proposal_confirmed: "Vorschlag bestätigt",
+  proposal_auto: "Vorschlag maschinell",
+  review: "Prüfung",
+};
+
+/** The metrics of a quality snapshot. */
+export const METRIC_LABELS: Record<MetricKey, string> = {
+  coverage: "Abdeckung",
+  coverage_navily: "Abdeckung (Navily-Vergleichssatz)",
+  multi_source: "Mehrbefund (≥ 2 Quellen)",
+  multi_document: "Mehrbefund (≥ 2 Dokumente)",
+  fact_precision: "Fact-Präzision",
+  quote_fidelity: "Belegtreue",
+  shelter_confidence: "Schutz-Konfidenz",
+  route_reconstruction: "Routen-Rekonstruktion",
+  cost_per_place: "Kosten je Ort",
+  review_minutes: "Review-Aufwand",
+  review_minutes_per_100: "Review-Aufwand je 100 Orte",
+  highlight_share: "Anteil Orte mit Highlight",
+  recent_observation_share: "Anteil Orte mit aktueller Beobachtung",
+  places_per_tile: "Orte je Kachel",
+};

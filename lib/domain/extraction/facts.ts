@@ -3,7 +3,7 @@ import type { ExtractedFact, ExtractFactsOutput } from "@/lib/ai/tasks/extract-f
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { chunks, extractionRuns, extractionUnits, facts, mentions, unmatchedNames } from "@/lib/db/schema";
-import { getFactSchema, validateTextFact } from "@/lib/domain/facts/schema";
+import { canonicalJson, getFactSchema, isEntryListAttribute, validateTextFact } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { effectiveVersionMeta, plausibleDate } from "@/lib/domain/mentions/classification";
@@ -18,8 +18,11 @@ import { restoreUnitMentions } from "./unit-status";
  * Processing of an `extract-facts` answer (spec 06): "Ein Fact ohne wörtliches Zitat existiert nicht." Each proposed
  * fact is checked in order — value is JSON in the attribute's text format (`validateTextFact`), the quote is found
  * verbatim in a chunk of the unit (`locateQuote`, the stated chunk first) — and gets the unit's mention nearest to the
- * quote. Of an attribute proposed twice the more confident one stays. The kept facts are stored with the located quote
- * span (append-only, unique per mention, attribute and extraction run: a repeated answer adds nothing). Values are
+ * quote. Of a scalar attribute proposed twice the more confident one stays. A list attribute (rule `union` or
+ * `prohibitions`: bans, hazards, restricted zones …) is never cut down to one fact (ruling M7-G-R2): every proposal
+ * with its own quote span is stored as its own fact with that quote, and proposals sharing one span are merged into
+ * one fact holding the union of their entries. The kept facts are stored with the located quote span (append-only,
+ * unique per mention, attribute, extraction run and quote span: a repeated answer adds nothing). Values are
  * checked against the fact schema version of the extraction run (frozen when it was planned, ruling M4-G-R3), not the
  * one active when the answer arrives. A highlight's proper names (`poi_name` and every entry of `names`) count only
  * when they occur in the quote (normalized like the quote check, ruling M4-G-R4): the others are dropped from the value
@@ -36,6 +39,8 @@ export type FactStats = {
   invalidValue: number;
   unknownAttribute: number;
   duplicate: number;
+  /** List-attribute proposals merged into another proposal with the same quote span (ruling M7-G-R2). */
+  merged: number;
   poiMentions: number;
   poiUnmatched: number;
   /** Highlight names (`poi_name` or in `names`) dropped because the quote does not contain them. */
@@ -55,6 +60,7 @@ export const FACT_STAT_KEYS = [
   "invalidValue",
   "unknownAttribute",
   "duplicate",
+  "merged",
   "poiMentions",
   "poiUnmatched",
   "poiNameRejected",
@@ -92,6 +98,12 @@ type Kept = {
 };
 
 type HighlightValue = { present: boolean; names: string[] };
+
+/** The entries of `a` followed by those of `b` not in `a` (by canonical JSON). */
+function unionEntries(a: unknown[], b: unknown[]): unknown[] {
+  const seen = new Set(a.map(canonicalJson));
+  return [...a, ...b.filter((e) => !seen.has(canonicalJson(e)))];
+}
 
 /** The quote in the stated chunk, else in the unit's other chunks in order; null when it is in none. */
 function locateInUnit(fact: ExtractedFact, unitChunks: UnitChunk[], cfg: AppConfig["extraction"]["quote"]): Located | null {
@@ -233,7 +245,8 @@ export async function processFactOutput(db: Db, unit: ProcessUnit, output: Extra
     // Proper names outside highlights count only when the quote contains them (ruling M4-G-R5), before the dedupe,
     // so a fact whose names the quote does not support cannot push out a supported one.
     let value = checked.value;
-    const textNames = getFactSchema(version).levels[unit.level].find((d) => d.key === fact.attribute)?.textNames;
+    const def = getFactSchema(version).levels[unit.level].find((d) => d.key === fact.attribute);
+    const textNames = def?.textNames;
     if (textNames) {
       const supported = textNames(value, (name) => nameInQuote(name, fact.quote));
       stats.nameRejected += supported.rejected;
@@ -251,9 +264,19 @@ export async function processFactOutput(db: Db, unit: ProcessUnit, output: Extra
       confidence: clamp01(fact.confidence),
       observedAt: plausibleDate(fact.observed_at, meta.fetchedAt, cfg.extraction.earliestDate, true) ?? meta.observedAt,
     };
-    const prev = kept.get(fact.attribute);
+    // A list attribute is keyed by its quote span: another span is another fact, never a dropped one (ruling M7-G-R2).
+    const list = isEntryListAttribute(def);
+    const key = list ? `${fact.attribute}\u0000${located.chunk.id}:${located.start}:${located.end}` : fact.attribute;
+    const prev = kept.get(key);
+    if (prev && list && Array.isArray(prev.value) && Array.isArray(candidate.value)) {
+      // one quote, two proposals: one fact with the entries of both, the more confident one's confidence and date
+      stats.merged++;
+      const lead = candidate.confidence > prev.confidence ? candidate : prev;
+      kept.set(key, { ...lead, value: unionEntries(prev.value, candidate.value) });
+      continue;
+    }
     if (prev) stats.duplicate++;
-    if (!prev || candidate.confidence > prev.confidence) kept.set(fact.attribute, candidate);
+    if (!prev || candidate.confidence > prev.confidence) kept.set(key, candidate);
   }
   if (kept.size === 0) return stats;
 

@@ -1,7 +1,8 @@
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { getConfig, getConsolidationConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
+import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import {
@@ -30,6 +31,7 @@ import { addNames, isGreek, transliterateElot743, type NameDraft } from "@/lib/d
 import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
 import { newPublicId } from "@/lib/domain/ids";
 import { candidateObjects, withNeighbours } from "@/lib/domain/mentions/scope";
+import { appendReviewOutcome, comparisonTaskContextSchema } from "@/lib/domain/quality/comparison-results";
 import { crawlRulesSchema } from "@/lib/domain/sources/crawl-rules";
 import { isForbiddenHost } from "@/lib/domain/sources/forbidden-domains";
 import { QUEUES, type QueueName } from "@/lib/jobs/queues";
@@ -77,6 +79,10 @@ export const reviewDecisionSchema = z.discriminatedUnion("action", [
   // uncertain_change / profile_attribute
   z.object({ action: z.literal("accept_change") }),
   z.object({ action: z.literal("discard_change") }),
+  // comparison_deviation / comparison: the own value is right, Navily is right (own value wrong), or unclear
+  z.object({ action: z.literal("own_correct") }),
+  z.object({ action: z.literal("navily_correct") }),
+  z.object({ action: z.literal("unclear") }),
   // source_approval / source
   z.object({
     action: z.literal("approve"),
@@ -137,6 +143,7 @@ const ALLOWED: Record<string, readonly Action[]> = {
   "failed_job/job": ["retry", "ignore", "pause_source"],
   "failed_job/profile_summary": ["ignore", "regenerate_summary"],
   "source_approval/source": ["approve", "reject"],
+  "comparison_deviation/comparison": ["own_correct", "navily_correct", "unclear"],
 };
 
 export type DecideDeps = { retryJob?: (queue: QueueName, jobId: string) => Promise<void> };
@@ -162,10 +169,12 @@ type Task = typeof reviewTasks.$inferSelect;
  * of the documents the name was found in (`documentVersionIds`, for the rematch run of Task 17); every other decision,
  * including `reject`, returns none. A decision on a `profile_attribute` task (`applyProfileDecision`) and a
  * `confirm` / `merge` / `reject` / `no_anchoring` on a place return the geo object to consolidate again (`consolidate`); `regenerate_summary` on a `failed_job` / `profile_summary` task returns
- * it with `stagesOnly ["consolidation.summary"]`; the caller starts that run after the commit (ruling M5-P10). It needs
- * `taskKey`, the `context.key` the admin saw: another key means a later run replaced the question
+ * it with `stagesOnly ["consolidation.summary"]`; the caller starts that run after the commit (ruling M5-P10). A
+ * profile decision needs `taskKey`, the `context.key` the admin saw: another key means a later run replaced the question
  * (`TaskContextChanged`, ruling M5-F-R2); `value_a` / `value_b` also need `valueKey`, the `valueFingerprint` of the
- * chosen side's value as shown (ruling M5-G-R2).
+ * chosen side's value as shown (ruling M5-G-R2). A decision on a `comparison_deviation` task appends its outcome to
+ * `comparison_results` (`deviation_confirmed_own` / `deviation_confirmed_navily` / `unclear`, method `review`) and
+ * returns nothing to do.
  *
  * Global lock order: the review task row first, then the subject row(s) (`lockPlace`, `lockSource`,
  * `lockNameCandidate`). Every transaction that locks both an open `place_candidate` task and its place
@@ -205,6 +214,14 @@ export async function decideReviewTask(
     // Dispatch by `<kind>/<subject_type>` (ruling M4-P13): a name candidate's reject never touches a place.
     if (task.subjectType === "name_candidate") {
       return { documentVersionIds: await applyNameDecision(tx, task, decision), consolidate: null };
+    }
+    if (task.subjectType === COMPARISON_SUBJECT) {
+      // the outcome is a new comparison_results row beside the deviation (append-only); the profile is untouched
+      const context = comparisonTaskContextSchema.safeParse(task.context);
+      if (!context.success) throw new DecisionNotAllowed(`comparison task ${task.id} has no valid context`);
+      const action = decision.action as "own_correct" | "navily_correct" | "unclear";
+      await appendReviewOutcome(tx, { context: context.data, action, taskId: task.id, decidedBy: input.decidedBy, now });
+      return { documentVersionIds: [], consolidate: null };
     }
     if (task.subjectType === PROFILE_SUBJECT) {
       const geoObjectId = await applyProfileDecision(tx, task, decision, decisionRow!.id, now, input.valueKey);
@@ -373,10 +390,16 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
       throw new DecisionNotAllowed(`action ${decision.action} needs a profile attribute`);
     case "regenerate_summary":
       throw new DecisionNotAllowed(`action ${decision.action} needs a profile summary`);
+    case "own_correct":
+    case "navily_correct":
+    case "unclear":
+      throw new DecisionNotAllowed(`action ${decision.action} needs a comparison deviation`);
   }
 }
 
 const PROFILE_SUBJECT = "profile_attribute";
+/** Subject of a `comparison_deviation` task: `<placeId>:<attribute>:<valueHash>` (`recordComparisonResults`). */
+const COMPARISON_SUBJECT = "comparison";
 
 /** `<geoObjectId>:<attribute>` of a profile task; `DecisionNotAllowed` for another shape. */
 function profileSubject(subjectId: string): { geoObjectId: string; attribute: string } {
@@ -460,7 +483,7 @@ async function applyProfileDecision(
     value: reviewFactValue(attribute, value, factSchemaVersion),
     reviewDecisionId: decisionId,
     observedAt: now.toISOString().slice(0, 10),
-    confidence: getConsolidationConfig().confidence.review,
+    confidence: (await consolidationConfigFor(tx)).confidence.review,
     factSchemaVersion,
   });
   return geoObjectId;
