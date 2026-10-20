@@ -14,6 +14,7 @@ import { quietDay } from "@/test/external-calls";
 import { insertQualityArea, NAVILY_MARKERS, rowsWrittenInTransaction } from "@/test/quality";
 import {
   computeQualitySnapshot,
+  isSerializationFailure,
   latestMeasurement,
   listMeasurements,
   measurementByLabel,
@@ -142,6 +143,13 @@ describe("computeQualitySnapshot", () => {
       ]);
       expect(await computeQualitySnapshot(tx, { runId, areaKey, window, today: "2026-10-20" })).toEqual({ rows: 0, skipped: true });
     }));
+
+  it("a serialization failure (40001), also wrapped as a cause, is recognised; other errors are not", () => {
+    expect(isSerializationFailure(Object.assign(new Error("could not serialize"), { code: "40001" }))).toBe(true);
+    expect(isSerializationFailure(new Error("query failed", { cause: Object.assign(new Error("x"), { code: "40001" }) }))).toBe(true);
+    expect(isSerializationFailure(Object.assign(new Error("dup"), { code: "23505" }))).toBe(false);
+    expect(isSerializationFailure("40001")).toBe(false);
+  });
 
   it("snapshot details hold counts and own ids only (Grundprinzip 9, ruling M7-P23)", () =>
     withRollback(async (tx) => {

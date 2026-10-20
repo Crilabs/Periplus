@@ -124,10 +124,25 @@ export async function computeQualitySnapshot(
       }
     }
     // under REPEATABLE READ the lock's statement fixes the snapshot before it waits, so a concurrent retry that
-    // committed meanwhile is not seen by the check above: its rows conflict and this attempt writes nothing
-    const inserted = await tx.insert(qualitySnapshots).values(rows).onConflictDoNothing().returning({ id: qualitySnapshots.id });
-    return inserted.length === 0 && rows.length > 0 ? { rows: 0, skipped: true } : { rows: inserted.length, skipped: false };
+    // committed meanwhile is not seen by the check above: its rows conflict. ON CONFLICT DO NOTHING against a row
+    // committed after our snapshot raises 40001 (serialization failure) instead of skipping; that is the same
+    // "already measured": this attempt writes nothing
+    try {
+      const inserted = await tx.insert(qualitySnapshots).values(rows).onConflictDoNothing().returning({ id: qualitySnapshots.id });
+      return inserted.length === 0 && rows.length > 0 ? { rows: 0, skipped: true } : { rows: inserted.length, skipped: false };
+    } catch (e) {
+      if (isSerializationFailure(e)) return { rows: 0, skipped: true };
+      throw e;
+    }
   }, { isolationLevel: "repeatable read" });
+}
+
+/** SQLSTATE 40001, on the error itself or on its `cause` (drizzle wraps driver errors). */
+export function isSerializationFailure(e: unknown): boolean {
+  for (let err = e, i = 0; err instanceof Error && i < 3; err = err.cause, i++) {
+    if ((err as { code?: unknown }).code === "40001") return true;
+  }
+  return false;
 }
 
 type MeasurementRun = { id: string; params: unknown; createdAt: Date };

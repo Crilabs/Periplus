@@ -27,8 +27,9 @@ const FIXTURE = path.join(process.cwd(), "test/fixtures/navily/sample.json");
 const DLON = 20;
 const loadSpots = async () => (await loadNavilySpots(FIXTURE)).map((s) => ({ ...s, lon: s.lon + DLON }));
 const NOW = new Date("2026-10-20T08:00:00Z");
-/** The fixture spots' coordinates (spot 1 at 35.25/41.05): no row may carry them. */
-const SPOT_COORDINATES = /35[.,]2003|21[.,]0003|35[.,]25(?!\d)|21[.,]05(?!\d)/;
+/** The (shifted) fixture spots' lat and lon, decimal point or comma, no digit around them: no stored row may carry one. */
+const spotCoordinates = (spots: Array<{ lat: number; lon: number }>) =>
+  new RegExp(spots.flatMap((s) => [s.lat, s.lon]).map((v) => `(?<![\\d.,])${String(Number(v.toFixed(6))).replace(".", "[.,]")}(?!\\d)`).join("|"));
 
 /** Three set places: Kolona (spot 0 ≈ 43 m away), Poros harbour (spot 1 ≈ 60 m away), Agios (no spot nearby). */
 async function scene(tx: Db) {
@@ -204,6 +205,7 @@ describe("runNavilyComparison", () => {
     withRollback(async (tx) => {
       const { areaKey } = await scene(tx);
       const spots = await loadSpots();
+      const SPOT_COORDINATES = spotCoordinates(spots);
       const r = await runNavilyComparison(tx, { areaKey, spots, acceptProposals: true, now: NOW });
       expect(r.written).toBe(48);
       // comparison_results, review_tasks (context) and quality_snapshots (details) written by this transaction
