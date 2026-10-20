@@ -2,7 +2,8 @@ import { getDb } from "@/lib/db/client";
 import { queuesView, type QueueStats } from "@/lib/domain/queues-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { AutoRefresh } from "../_components/auto-refresh";
-import { queueStateLabel } from "../_components/labels";
+import { Dialog } from "../_components/dialog";
+import { isBudgetPause, queuePauseText, queueStateLabel } from "../_components/labels";
 import {
   Badge,
   Button,
@@ -51,16 +52,32 @@ function QueueTable({ rows }: { rows: Row[] }) {
             <td className={cx(tdClass, numClass)}>{count(s.failed, "font-medium text-danger")}</td>
             <td className={tdClass}>
               <Badge tone={s.paused ? "warn" : "ok"}>{queueStateLabel(s.paused)}</Badge>
+              {s.pause && <span className="ml-2 text-xs text-muted">{queuePauseText(s.pause)}</span>}
             </td>
             <td className={cx(tdClass, "text-right")}>
-              {s.pausable && (
-                <form action={s.paused ? resumeQueueAction : pauseQueueAction}>
-                  <input type="hidden" name="queue" value={queue} />
-                  <Button type="submit" size="sm" variant={s.paused ? "primary" : "secondary"}>
-                    {s.paused ? "Fortsetzen" : "Pausieren"}
-                  </Button>
-                </form>
-              )}
+              {s.pausable &&
+                (isBudgetPause(s.pause) ? (
+                  <Dialog
+                    trigger="Fortsetzen …"
+                    triggerSize="sm"
+                    title="Budget-Stopp aufheben"
+                    description={`${queuePauseText(s.pause!)}. Weiterlaufen lässt jeden Job erneut am Budget scheitern, bis die Queue wieder pausiert; normalerweise bis zum Ende abwarten.`}
+                  >
+                    <form action={resumeQueueAction} className="flex justify-end">
+                      <input type="hidden" name="queue" value={queue} />
+                      <Button type="submit" variant="danger">
+                        Trotzdem fortsetzen
+                      </Button>
+                    </form>
+                  </Dialog>
+                ) : (
+                  <form action={s.paused ? resumeQueueAction : pauseQueueAction}>
+                    <input type="hidden" name="queue" value={queue} />
+                    <Button type="submit" size="sm" variant={s.paused ? "primary" : "secondary"}>
+                      {s.paused ? "Fortsetzen" : "Pausieren"}
+                    </Button>
+                  </form>
+                ))}
             </td>
           </tr>
         ))}

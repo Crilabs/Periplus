@@ -1,10 +1,18 @@
 import { sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { hasPgBossSchema } from "@/lib/domain/jobs-view";
-import { isQueuePaused } from "@/lib/jobs/controls";
+import { queuePause, type QueuePause } from "@/lib/jobs/controls";
 import { DEAD_LETTER_QUEUE, QUEUES, type QueueName } from "@/lib/jobs/queues";
 
-export type QueueStats = { queued: number; active: number; failed: number; paused: boolean; pausable: boolean };
+export type QueueStats = {
+  queued: number;
+  active: number;
+  failed: number;
+  paused: boolean;
+  /** Why and until when the queue is paused (UI-8: a budget stop is told apart from a pause by hand); null when it runs. */
+  pause: QueuePause | null;
+  pausable: boolean;
+};
 
 /** Work queues plus the dead-letter queue, so a stuck or failing dead-letter queue is visible. */
 export const VIEW_QUEUES = [...QUEUES, DEAD_LETTER_QUEUE] as const;
@@ -48,8 +56,8 @@ export async function jobsFromDb(db: Db, now?: Date): Promise<JobsView> {
   const view: Partial<JobsView> = {};
   for (const queue of VIEW_QUEUES) {
     const pausable = isWorkQueue(queue);
-    const paused = pausable ? await isQueuePaused(db, queue, now) : false;
-    view[queue] = { ...(byQueue.get(queue) ?? ZERO), paused, pausable };
+    const pause = pausable ? await queuePause(db, queue, now) : null;
+    view[queue] = { ...(byQueue.get(queue) ?? ZERO), paused: pause !== null, pause, pausable };
   }
   return view as JobsView;
 }

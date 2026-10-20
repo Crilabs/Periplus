@@ -374,6 +374,33 @@ export function qualityPageError(param: string | string[] | undefined): string |
 
 export const queueStateLabel = (paused: boolean): string => (paused ? "Pausiert" : "Läuft");
 
+const BUDGET_SERVICE_LABELS: Record<string, string> = {
+  anthropic: "Anthropic",
+  dataforseo: "DataForSEO",
+  voyage: "Voyage",
+  jina: "Jina",
+  firecrawl: "Firecrawl",
+};
+
+/** Whether a pause is a budget stop (`pauseForBudget`, reason `budget:<service>`). */
+export const isBudgetPause = (pause: { reason: string | null } | null): boolean => pause?.reason?.startsWith("budget:") ?? false;
+
+/**
+ * Why and until when a queue is paused, in German (UI-8): „Budget Anthropic erreicht, bis 21.10.26, 00:00 UTC“ for a budget stop,
+ * „von Hand (a@b)“ for a pause from the jobs page.
+ */
+export function queuePauseText(pause: { reason: string | null; until: Date | null; by: string }): string {
+  const until = pause.until
+    ? `bis ${pause.until.toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short", timeZone: "UTC" })} UTC`
+    : "ohne Ende";
+  if (isBudgetPause(pause)) {
+    const service = pause.reason!.slice("budget:".length);
+    return `Budget ${BUDGET_SERVICE_LABELS[service] ?? service} erreicht, ${until}`;
+  }
+  if (pause.reason === "manual") return `von Hand (${pause.by}), ${until}`;
+  return `${pause.reason ?? "ohne Grund"} (${pause.by}), ${until}`;
+}
+
 /* ---- M4: mentions, extraction runs, facts ---- */
 
 /** The extraction state of a mention (`failed`: its unit failed for good; only a reprocess extracts it again). */
