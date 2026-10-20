@@ -105,12 +105,41 @@ dc logs -f caddy
 ```
 Backup-Log: `/opt/periplus/backup.log`.
 
+## Vor dem ersten Deploy mit Migration 0048 (Präfix der Public-IDs)
+Migration 0048 prüft, dass jede Public-ID zur Familie ihres Typs passt (`ar_` Revier; `rg_` Insel, Archipel, Küstenabschnitt, Golf, Kanal; `hl_` POI; keine bei anderen Typen; `sp_` bei Orten), auch bei beendeten und zusammengelegten Zeilen. Versionen vor f3bc00d behielten bei einem Typwechsel die alte ID (ein POI, der eine Insel oder ein Kap wurde, behielt `hl_`); solche Zeilen lassen die Migration scheitern, `deploy.sh` rollt dann zurück. Deshalb vor dem Merge des Deploys mit 0048 auf dem Server prüfen (Vorspann oben, `dc`-Alias):
+```bash
+dc exec -T postgres psql -U periplus -d periplus <<'SQL'
+-- 0048-check
+select 'geo_objects' as tbl, id, type::text, public_id from geo_objects
+where public_id is not null and public_id not like (case
+  when type = 'area' then 'ar\_%'
+  when type in ('island', 'archipelago', 'coast_section', 'gulf', 'channel') then 'rg\_%'
+  when type = 'poi' then 'hl\_%'
+  else '' end)
+union all
+select 'places', id, null, public_id from places where public_id is not null and public_id not like 'sp\_%';
+SQL
+```
+Keine Zeile: nichts zu tun. Zeilen aus `geo_objects`: ihre ID passt nicht mehr zum Typ und darf ohnehin nicht weiter geliefert werden. Reparatur (setzt die ID auf leer; der nächste OSM-Import des Reviers vergibt eine neue der richtigen Familie, das nächste Paket meldet die alte als `removed`, die neue als `created`):
+```bash
+dc exec -T postgres psql -U periplus -d periplus <<'SQL'
+-- 0048-repair
+update geo_objects set public_id = null
+where public_id is not null and public_id not like (case
+  when type = 'area' then 'ar\_%'
+  when type in ('island', 'archipelago', 'coast_section', 'gulf', 'channel') then 'rg\_%'
+  when type = 'poi' then 'hl\_%'
+  else '' end);
+SQL
+```
+Danach die Prüfung wiederholen. Eine Zeile aus `places` kann kein Code schreiben (Orte bekommen nur `sp_`-IDs, die sich nie ändern): nicht reparieren, den Deploy zurückhalten und die Zeile untersuchen.
+
 ## Rollback
 Eine frühere Version erneut ausrollen:
 ```bash
 bash /opt/periplus/scripts/deploy/deploy.sh <previous sha>
 ```
-(oder aus Actions heraus per Re-Run). Das funktioniert jederzeit, auch lange nach dem Deploy-Job, weil der Server mit seinem eigenen Nur-Lese-Login (Abschnitt 5a) zieht; die Images müssen in ghcr.io noch vorhanden sein. Der aktuell ausgerollte Tag steht in `.deployed-tag`; ein fehlgeschlagener Deploy (pull, Migration, Start, `/readyz` oder Worker nicht bereit) überschreibt ihn nicht und rollt automatisch auf ihn zurück. Migrationen werden nicht zurückgedreht; sie müssen zur Vorversion abwärtskompatibel bleiben. Falls `deploy.sh` nicht auf dem Server liegt: `ssh deploy@<host> bash -s <sha> < scripts/deploy/deploy.sh`.
+(oder aus Actions heraus per Re-Run). Das funktioniert jederzeit, auch lange nach dem Deploy-Job, weil der Server mit seinem eigenen Nur-Lese-Login (Abschnitt 5a) zieht; die Images müssen in ghcr.io noch vorhanden sein. Der aktuell ausgerollte Tag steht in `.deployed-tag`; ein fehlgeschlagener Deploy (pull, Migration, Start, `/readyz` oder Worker nicht bereit) überschreibt ihn nicht und rollt automatisch auf ihn zurück. Migrationen werden nicht zurückgedreht; sie müssen zur Vorversion abwärtskompatibel bleiben. Ausnahme 0048: eine Version vor f3bc00d vergibt bei einem Typwechsel über die ID-Familie hinweg (z. B. POI → Insel) keine neue ID; ihr OSM-Import des Reviers scheitert dann am CHECK (Job schlägt fehl, nichts wird halb geschrieben). Auf einer solchen Version nur so kurz wie nötig bleiben. Falls `deploy.sh` nicht auf dem Server liegt: `ssh deploy@<host> bash -s <sha> < scripts/deploy/deploy.sh`.
 
 Rollback auf eine Version vor fb5278c (Worker ohne Bereitschaftsmarker): `deploy.sh` wartet auf den Marker `/tmp/periplus-worker-ready`, den ein älterer Worker nie schreibt, und meldet ihn als „nicht bereit“ (und `up --wait` wartet vergeblich auf die Healthcheck des neuen `compose.prod.yml`). Eine solche Version nicht mit `deploy.sh` ausrollen, sondern von Hand (Vorspann oben, `dc`-Alias): `export IMAGE_TAG=<sha>`, `dc pull`, `dc up -d web worker caddy` (ohne `--wait`; die Healthcheck des Workers bleibt „unhealthy“, das stoppt ihn nicht), dann `dc logs -f worker` und `/readyz` prüfen und `<sha>` in `.deployed-tag` schreiben. Solange der Server nicht live ist, betrifft das nur das Übergangsfenster (Wave-2-Review M-3, geparkt).
 
