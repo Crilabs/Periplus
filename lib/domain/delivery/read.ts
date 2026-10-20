@@ -6,7 +6,6 @@ import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { deliveries } from "@/lib/db/schema/deliveries";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
-import { deliveryArchive } from "./archive";
 import type { DeliveryRow } from "./build";
 import { mergeChanges } from "./changes";
 import { sha256Hex } from "./serialize";
@@ -47,21 +46,23 @@ export async function resolveArea(db: Db, ref: string): Promise<ResolvedArea | n
 }
 
 /**
- * Every valid area with a public id, with data version and build time of its latest valid delivery and the bbox of
- * that package's manifest (null before the first one). Ordered by public id.
+ * Every valid area with a public id, with data version, build time and bbox of its latest valid delivery (null before
+ * the first one), ordered by public id. Reads the `deliveries` row only, never S3: one broken package cannot fail the
+ * whole list. A row built before `deliveries.bbox` existed lists its bbox as null.
  */
-export async function listAreas(db: Db, archive: Archive = deliveryArchive()): Promise<AreaListEntry[]> {
+export async function listAreas(db: Db): Promise<AreaListEntry[]> {
   const { rows } = await db.execute<{
-    id: string;
     public_id: string;
     config_key: string | null;
     name: string | null;
-    delivery_id: string | null;
+    data_version: number | null;
+    generated_at: string | Date | null;
+    bbox: [number, number, number, number] | null;
   }>(sql`
-    select o.id, o.public_id, o.config_key, ${displayNameSql(sql`o.id`)} as name, d.id as delivery_id
+    select o.public_id, o.config_key, ${displayNameSql(sql`o.id`)} as name, d.data_version, d.generated_at, d.bbox
     from geo_objects o
     left join lateral (
-      select d.id from deliveries d
+      select d.data_version, d.generated_at, d.bbox from deliveries d
       where d.area_id = o.id and d.status = 'valid'
       order by d.data_version desc
       limit 1
@@ -70,26 +71,14 @@ export async function listAreas(db: Db, archive: Archive = deliveryArchive()): P
       and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
     order by o.public_id
   `);
-  const out: AreaListEntry[] = [];
-  for (const r of rows) {
-    const entry: AreaListEntry = {
-      id: r.public_id,
-      key: r.config_key ?? r.public_id,
-      name: r.name ?? "",
-      dataVersion: null,
-      bbox: null,
-      generatedAt: null,
-    };
-    if (r.delivery_id !== null) {
-      const [row] = await db.select().from(deliveries).where(eq(deliveries.id, r.delivery_id));
-      const manifest = await readManifest(archive, row!);
-      entry.dataVersion = row!.dataVersion;
-      entry.generatedAt = row!.generatedAt.toISOString();
-      entry.bbox = manifest.bbox;
-    }
-    out.push(entry);
-  }
-  return out;
+  return rows.map((r) => ({
+    id: r.public_id,
+    key: r.config_key ?? r.public_id,
+    name: r.name ?? "",
+    dataVersion: r.data_version,
+    bbox: r.bbox,
+    generatedAt: r.generated_at === null ? null : new Date(r.generated_at).toISOString(),
+  }));
 }
 
 const MAX_INT = 2_147_483_647;
@@ -143,9 +132,13 @@ export async function readJsonFile<T>(archive: Archive, row: DeliveryRow, file: 
   return JSON.parse(new TextDecoder().decode(bytes)) as T;
 }
 
-/** A data version as the API accepts it (`^[1-9]\d*$`), else null. */
-export function parseDataVersion(value: string): number | null {
-  return /^[1-9]\d*$/.test(value) ? Number(value) : null;
+/**
+ * A data version as the API accepts it, for `?dataVersion=` and `?since=` alike: a positive integer without sign or
+ * leading zeros (`^[1-9]\d*$`), else null (also for a missing parameter). A value beyond the current version is the
+ * caller's to reject.
+ */
+export function parseDataVersion(value: string | null): number | null {
+  return value !== null && /^[1-9]\d*$/.test(value) ? Number(value) : null;
 }
 
 /** True for a file name of the contract (`spots.json` …); anything else, a traversal included, is no package file. */
@@ -180,8 +173,9 @@ export async function currentPackage(
 }
 
 /**
- * One file of the area's valid package of `dataVersion` (default the current one), byte for byte as stored. Null for
- * an unknown area, an unknown version or a file the package does not have.
+ * One file of the area's valid package of `dataVersion` (default the current one), byte for byte as stored, with its
+ * recorded sha256 (checked against the bytes; the route's ETag, so they are not hashed twice). Null for an unknown
+ * area, an unknown version or a file the package does not have.
  */
 export async function packageFile(
   db: Db,
@@ -189,12 +183,13 @@ export async function packageFile(
   areaRef: string,
   file: ContractFile,
   dataVersion?: number,
-): Promise<{ bytes: Uint8Array; dataVersion: number } | null> {
+): Promise<{ bytes: Uint8Array; sha256: string; dataVersion: number } | null> {
   const area = await resolveArea(db, areaRef);
   const row = area && (await validDelivery(db, area.geoObjectId, dataVersion));
   if (!area || !row) return null;
   const bytes = await readDeliveryFile(archive, row, file);
-  return bytes === null ? null : { bytes, dataVersion: row.dataVersion! };
+  // readDeliveryFile checked the bytes against this hash
+  return bytes === null ? null : { bytes, sha256: row.fileHashes[file]!.sha256, dataVersion: row.dataVersion! };
 }
 
 /**
@@ -234,16 +229,24 @@ export async function changesSince(
 }
 
 /**
- * The spot `publicId` as delivered on `asOf` (`YYYY-MM-DD`; without it the latest), with the data version of the
- * package that introduced that version; null when no package delivered it then.
+ * The spot `publicId` as delivered on `asOf` (`YYYY-MM-DD`; without it the latest), with the data version and area
+ * (`ar_…`) of the package that introduced that version; null when no package delivered it then.
  *
  * Spot versions count per public id across areas (ruling M6-P13): a spot that moves to another area continues its
  * versions there, and its old area later reports it `removed` with a higher version. So per area only the area's
  * latest version on that date counts, and the spot is gone only when it is removed (or absent) in every area; else the
- * highest version an area still delivers wins. Its content is read from that version's first delivery.
+ * highest version an area still delivers wins. Only areas valid today count, as for every other endpoint
+ * (`resolveArea`): an ended area no longer delivers, so its last versions are no answer. Its content is read from that
+ * version's first delivery. A spot moved away from an area that has not rebuilt since still counts there with its
+ * last version, which that area's current package still delivers.
  */
-export async function spotAsOf(db: Db, archive: Archive, publicId: string, asOf?: string): Promise<{ spot: Spot; dataVersion: number } | null> {
-  const { rows } = await db.execute<{ first_delivery_id: string }>(sql`
+export async function spotAsOf(
+  db: Db,
+  archive: Archive,
+  publicId: string,
+  asOf?: string,
+): Promise<{ spot: Spot; dataVersion: number; area: string } | null> {
+  const { rows } = await db.execute<{ first_delivery_id: string; area_public_id: string }>(sql`
     with latest as (
       select distinct on (o.area_id) o.area_id, o.profile_version, o.removed, o.first_delivery_id
       from delivered_objects o
@@ -251,8 +254,11 @@ export async function spotAsOf(db: Db, archive: Archive, publicId: string, asOf?
         ${asOf === undefined ? sql`` : sql`and o.valid_from <= ${asOf}::date`}
       order by o.area_id, o.profile_version desc
     )
-    select l.first_delivery_id from latest l
-    where not l.removed
+    select l.first_delivery_id, a.public_id as area_public_id
+    from latest l
+    join geo_objects a on a.id = l.area_id
+    where not l.removed and a.public_id is not null
+      and a.valid_from <= current_date and (a.valid_to is null or a.valid_to > current_date)
     order by l.profile_version desc
     limit 1
   `);
@@ -261,12 +267,7 @@ export async function spotAsOf(db: Db, archive: Archive, publicId: string, asOf?
   const [row] = await db.select().from(deliveries).where(eq(deliveries.id, found.first_delivery_id));
   const spot = (await readJsonFile<SpotsFile>(archive, row!, "spots.json")).spots.find((s) => s.id === publicId);
   if (!spot) throw new Error(`spot ${publicId} is not in spots.json of delivery ${row!.id}`);
-  return { spot, dataVersion: row!.dataVersion! };
-}
-
-/** `since` as the API accepts it: digits only, else null (a value out of range is `invalid_since` later). */
-export function parseSince(value: string | null): number | null {
-  return value !== null && /^\d+$/.test(value) ? Number(value) : null;
+  return { spot, dataVersion: row!.dataVersion!, area: found.area_public_id };
 }
 
 const isoDate = z.iso.date();

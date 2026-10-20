@@ -1,12 +1,14 @@
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Archive } from "@/lib/adapters/s3";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { deliveredObjects, deliveries, geoObjects } from "@/lib/db/schema";
-import { newPublicId } from "@/lib/domain/ids";
+import { deliveredObjects, deliveries, geoNames, geoObjects, tiles } from "@/lib/db/schema";
+import { newId, newPublicId } from "@/lib/domain/ids";
 import { withRollback } from "@/test/db";
+import { seedDeliveryArea } from "@/test/fixtures/delivery/area";
 import { memoryArchive } from "@/test/s3";
+import { buildDelivery } from "../build";
 import { changesSince, spotAsOf } from "../read";
 import { serializeFile, sha256Hex } from "../serialize";
 
@@ -95,16 +97,50 @@ describe("spotAsOf", () => {
       await insertVersion(tx, { areaId: west.id, publicId: id, version: 3, validFrom: "2040-06-06", deliveryId: w2, removed: true });
 
       expect(await spotAsOf(tx, archive, id, "2040-05-31")).toBeNull();
-      expect(await spotAsOf(tx, archive, id, "2040-06-02")).toEqual({ spot: spot(1, "west"), dataVersion: 1 });
-      expect(await spotAsOf(tx, archive, id, "2040-06-05")).toEqual({ spot: spot(2, "east"), dataVersion: 1 });
-      expect(await spotAsOf(tx, archive, id, "2040-06-07")).toEqual({ spot: spot(2, "east"), dataVersion: 1 });
-      expect(await spotAsOf(tx, archive, id)).toEqual({ spot: spot(2, "east"), dataVersion: 1 });
+      expect(await spotAsOf(tx, archive, id, "2040-06-02")).toEqual({ spot: spot(1, "west"), dataVersion: 1, area: west.publicId });
+      expect(await spotAsOf(tx, archive, id, "2040-06-05")).toEqual({ spot: spot(2, "east"), dataVersion: 1, area: east.publicId });
+      expect(await spotAsOf(tx, archive, id, "2040-06-07")).toEqual({ spot: spot(2, "east"), dataVersion: 1, area: east.publicId });
+      expect(await spotAsOf(tx, archive, id)).toEqual({ spot: spot(2, "east"), dataVersion: 1, area: east.publicId });
 
       const e2 = await insertDelivery(tx, archive, east, 2, { "spots.json": { spots: [] } });
       await insertVersion(tx, { areaId: east.id, publicId: id, version: 4, validFrom: "2040-06-10", deliveryId: e2, removed: true });
-      expect(await spotAsOf(tx, archive, id, "2040-06-09")).toEqual({ spot: spot(2, "east"), dataVersion: 1 });
+      expect(await spotAsOf(tx, archive, id, "2040-06-09")).toEqual({ spot: spot(2, "east"), dataVersion: 1, area: east.publicId });
       expect(await spotAsOf(tx, archive, id, "2040-06-10")).toBeNull();
       expect(await spotAsOf(tx, archive, id)).toBeNull();
+    }));
+
+  it("a spot moved to another area by a tile relabel, through buildDelivery", () =>
+    withRollback(async (tx) => {
+      const archive = memoryArchive();
+      const f = await seedDeliveryArea(tx);
+      const build = (areaId: string, date: string) => buildDelivery(tx, archive, areaId, { now: new Date(`${date}T08:00:00Z`), inCallerTransaction: true });
+      const m = f.places.M.publicId!;
+      expect(await build(f.areaId, "2040-06-01")).toMatchObject({ status: "valid", dataVersion: 1 });
+
+      // a second area over the same water takes over the east tile, and with it the marina M
+      const [w, s, e, n] = f.bbox;
+      const second = newPublicId("ar");
+      const [row] = await tx
+        .insert(geoObjects)
+        .values({ type: "area", origin: "manual", publicId: second, configKey: `moved-${newId()}`, geom: geomFromGeoJson({ type: "Polygon", coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] }) })
+        .returning({ id: geoObjects.id });
+      await tx.insert(geoNames).values({ geoObjectId: row!.id, name: "Ostrevier", nameNormalized: "ostrevier", language: "de", script: "latin", origin: "manual" });
+      await tx.update(tiles).set({ areaId: row!.id }).where(eq(tiles.id, f.tileIds[1]));
+      expect(await build(row!.id, "2040-06-05")).toMatchObject({ status: "valid", dataVersion: 1 });
+      const moved = await spotAsOf(tx, archive, m, "2040-06-05");
+      // the versions of a spot count across areas: the new area continues them
+      expect(moved).toMatchObject({ area: second, dataVersion: 1, spot: { id: m, profileVersion: 2, validFrom: "2040-06-05" } });
+      expect(await spotAsOf(tx, archive, m, "2040-06-02")).toMatchObject({ area: f.areaPublicId, dataVersion: 1, spot: { profileVersion: 1 } });
+
+      // the old area rebuilds and reports M removed, with a higher version than the new area's
+      expect(await build(f.areaId, "2040-06-08")).toMatchObject({ status: "valid", dataVersion: 2 });
+      const removed = await tx
+        .select({ version: deliveredObjects.profileVersion })
+        .from(deliveredObjects)
+        .where(and(eq(deliveredObjects.publicId, m), eq(deliveredObjects.removed, true)));
+      expect(removed).toEqual([{ version: 3 }]);
+      expect(await spotAsOf(tx, archive, m)).toEqual(moved);
+      expect(await spotAsOf(tx, archive, m, "2040-06-09")).toEqual(moved);
     }));
 
   it("a spot missing from the spots.json of its delivery throws", () =>

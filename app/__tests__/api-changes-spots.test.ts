@@ -1,10 +1,10 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChangeEntry, ChangesFile, Spot, SpotsFile } from "@/contract";
 import type { Archive } from "@/lib/adapters/s3";
 import type { Db } from "@/lib/db/client";
-import { places, profileSummaries } from "@/lib/db/schema";
-import { createApiClient } from "@/lib/domain/api-clients";
+import { geoObjects, places, profileSummaries } from "@/lib/db/schema";
+import { createApiClient, revokeApiClient } from "@/lib/domain/api-clients";
 import { buildDelivery } from "@/lib/domain/delivery/build";
 import { mergeChanges } from "@/lib/domain/delivery/changes";
 import { setDeliveryArchive } from "@/lib/domain/delivery/read";
@@ -37,11 +37,11 @@ const spotsRoute = await import("../api/v1/spots/[id]/route");
 const BASE = "http://localhost/api/v1";
 const day = (d: string) => new Date(`${d}T08:00:00Z`);
 
-const request = (path: string, key: string, headers: Record<string, string> = {}) =>
-  new Request(`${BASE}${path}`, { headers: { authorization: `Bearer ${key}`, ...headers } });
-const getChanges = (area: string, key: string, query: string, headers?: Record<string, string>) =>
+const request = (path: string, key: string | undefined, headers: Record<string, string> = {}) =>
+  new Request(`${BASE}${path}`, { headers: { ...(key ? { authorization: `Bearer ${key}` } : {}), ...headers } });
+const getChanges = (area: string, key: string | undefined, query: string, headers?: Record<string, string>) =>
   changesRoute.GET(request(`/areas/${area}/changes${query}`, key, headers), { params: Promise.resolve({ area }) });
-const getSpot = (id: string, key: string, query = "", headers?: Record<string, string>) =>
+const getSpot = (id: string, key: string | undefined, query = "", headers?: Record<string, string>) =>
   spotsRoute.GET(request(`/spots/${id}${query}`, key, headers), { params: Promise.resolve({ id }) });
 
 const build = (tx: Db, archive: Archive, f: DeliveryFixture, date: string) =>
@@ -78,6 +78,37 @@ beforeEach(() => {
 });
 afterEach(() => setDeliveryArchive(null));
 
+describe("changes and spots: authentication", () => {
+  it("401 without key, 401 with a revoked key, 403 with reports:write only", () =>
+    withRollback(async (tx) => {
+      const { f, archive, key } = await setup(tx);
+      await build(tx, archive, f, "2040-06-01");
+      const writer = await createApiClient(tx, { name: `test-${newId()}`, scopes: ["reports:write"] });
+      const revoked = await createApiClient(tx, { name: `test-${newId()}`, scopes: ["delivery:read"] });
+      await revokeApiClient(tx, revoked.id);
+      const calls = [
+        (k?: string) => getChanges(f.areaPublicId, k, "?since=1"),
+        (k?: string) => getSpot(f.places.A.publicId!, k),
+        // parameters are checked only after the key: a bad one never answers 400 to a caller without access
+        (k?: string) => getChanges(f.areaPublicId, k, "?since=abc"),
+        (k?: string) => getSpot(f.places.A.publicId!, k, "?asOf=gestern"),
+      ];
+      for (const call of calls) {
+        const none = await call();
+        expect(none.status).toBe(401);
+        expect(none.headers.get("www-authenticate")).toBe("Bearer");
+        const gone = await call(revoked.key);
+        expect(gone.status).toBe(401);
+        expect(await gone.json()).toEqual({ error: { code: "unauthorized", message: "Missing or invalid API key." } });
+        const forbidden = await call(writer.key);
+        expect(forbidden.status).toBe(403);
+        expect(await forbidden.json()).toEqual({ error: { code: "forbidden", message: "The API key lacks the required scope." } });
+      }
+      expect((await calls[0]!(key)).status).toBe(200);
+      expect((await calls[1]!(key)).status).toBe(200);
+    }));
+});
+
 describe("GET /api/v1/areas/[area]/changes", () => {
   it("changes since 1 merge the change files of versions 2 and 3", () =>
     withRollback(async (tx) => {
@@ -111,7 +142,8 @@ describe("GET /api/v1/areas/[area]/changes", () => {
       const current = await getChanges(f.areaPublicId, key, "?since=1");
       expect(current.status).toBe(200);
       expect(await current.json()).toEqual({ schemaVersion: "1.0", area: f.areaPublicId, since: 1, dataVersion: 1, changes: [] });
-      for (const query of ["?since=0", "", "?since=", "?since=abc", "?since=1.5", "?since=-1", "?since=1e0"]) {
+      // the same parser as dataVersion: no sign, no leading zeros
+      for (const query of ["?since=0", "", "?since=", "?since=abc", "?since=1.5", "?since=-1", "?since=1e0", "?since=01", "?since=+1"]) {
         const res = await getChanges(f.areaPublicId, key, query);
         expect(res.status, query).toBe(400);
         expect(res.headers.get("cache-control")).toBe("no-store");
@@ -149,14 +181,14 @@ describe("GET /api/v1/spots/[id]", () => {
       const asOf = async (query: string) => {
         const res = await getSpot(a, key, query);
         expect(res.status, query).toBe(200);
-        return { header: res.headers.get("periplus-data-version"), body: (await res.json()) as { schemaVersion: string; dataVersion: number; spot: Spot } };
+        return { header: res.headers.get("periplus-data-version"), body: (await res.json()) as { schemaVersion: string; area: string; dataVersion: number; spot: Spot } };
       };
       const early = await asOf("?asOf=2040-06-10");
-      expect(early.body).toEqual({ schemaVersion: "1.0", dataVersion: 1, spot: await spotOf(archive, f, 1, a) });
+      expect(early.body).toEqual({ schemaVersion: "1.0", area: f.areaPublicId, dataVersion: 1, spot: await spotOf(archive, f, 1, a) });
       expect(early.body.spot).toMatchObject({ profileVersion: 1, validFrom: "2040-06-01" });
       expect(early.header).toBe("1");
       expect((await asOf("?asOf=2040-06-01")).body.spot.profileVersion).toBe(1);
-      expect((await asOf("?asOf=2040-06-15")).body).toEqual({ schemaVersion: "1.0", dataVersion: 2, spot: await spotOf(archive, f, 2, a) });
+      expect((await asOf("?asOf=2040-06-15")).body).toEqual({ schemaVersion: "1.0", area: f.areaPublicId, dataVersion: 2, spot: await spotOf(archive, f, 2, a) });
       expect((await asOf("")).body).toMatchObject({ dataVersion: 2, spot: { profileVersion: 2, validFrom: "2040-06-15" } });
       // an unchanged spot keeps the content of the delivery that introduced its version
       expect((await (await getSpot(f.places.M.publicId!, key)).json()) as { dataVersion: number }).toMatchObject({ dataVersion: 1, spot: { profileVersion: 1 } });
@@ -205,6 +237,16 @@ describe("GET /api/v1/spots/[id]", () => {
       expect((await getSpot(a, key)).status).toBe(404);
     }));
 
+  it("a spot only an area that has ended delivered is 404", () =>
+    withRollback(async (tx) => {
+      const { f, archive, key } = await setup(tx);
+      await build(tx, archive, f, "2040-06-01");
+      expect((await getSpot(f.places.A.publicId!, key)).status).toBe(200);
+      await tx.update(geoObjects).set({ validTo: sql`current_date` }).where(eq(geoObjects.id, f.areaId));
+      expect((await getSpot(f.places.A.publicId!, key)).status).toBe(404);
+      expect((await getSpot(f.places.A.publicId!, key, "?asOf=2040-06-10")).status).toBe(404);
+    }));
+
   it("responses carry ETag and Periplus-Schema-Version 1.0", () =>
     withRollback(async (tx) => {
       const { f, archive, key } = await setup(tx);
@@ -218,6 +260,7 @@ describe("GET /api/v1/spots/[id]", () => {
         expect(res.headers.get("periplus-schema-version")).toBe("1.0");
         expect(res.headers.get("periplus-data-version")).toBe("1");
         expect(res.headers.get("cache-control")).toBe("private, max-age=60");
+        expect(res.headers.get("vary")).toBe("Authorization");
         const etag = res.headers.get("etag")!;
         expect(etag).toMatch(/^"[0-9a-f]{32}"$/);
         expect((await call({ "if-none-match": etag })).status).toBe(304);

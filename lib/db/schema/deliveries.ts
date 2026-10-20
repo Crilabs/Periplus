@@ -58,6 +58,8 @@ export const deliveries = pgTable(
     /** `{ "<file>": { sha256, bytes } }`. */
     fileHashes: jsonb("file_hashes").$type<Record<string, { sha256: string; bytes: number }>>().notNull().default({}),
     objectCounts: jsonb("object_counts").$type<Record<string, number>>().notNull(),
+    /** The manifest's `bbox` (`[w, s, e, n]`), so the area list needs no S3 read; null on rows built before it. */
+    bbox: jsonb("bbox").$type<[number, number, number, number]>(),
     validationReport: jsonb("validation_report").notNull(),
     previousDeliveryId: uuid("previous_delivery_id").references((): AnyPgColumn => deliveries.id),
     /**

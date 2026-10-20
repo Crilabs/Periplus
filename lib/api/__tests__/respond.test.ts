@@ -11,6 +11,7 @@ describe("apiError", () => {
     expect(res.status).toBe(429);
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(res.headers.get("retry-after")).toBe("2");
+    expect(res.headers.get("vary")).toBe("Authorization");
     expect(await res.json()).toEqual({ error: { code: "rate_limited", message: "Rate limit exceeded." } });
   });
 });
@@ -27,6 +28,17 @@ describe("apiBody", () => {
     expect(res.headers.get("periplus-schema-version")).toBe("1.0");
     expect(res.headers.get("periplus-data-version")).toBe("3");
     expect(res.headers.get("content-type")).toBe("application/geo+json");
+    expect(res.headers.get("vary")).toBe("Authorization");
+  });
+
+  it("takes a known sha256 as the ETag instead of hashing the bytes", () => {
+    const bytes = new TextEncoder().encode("{}\n");
+    const sha256 = "ab".repeat(32);
+    const res = apiBody(req(), bytes, { ...META, sha256 });
+    expect(res.headers.get("etag")).toBe(`"${sha256.slice(0, 32)}"`);
+    const again = apiBody(req({ "if-none-match": `"${sha256.slice(0, 32)}"` }), bytes, { ...META, sha256 });
+    expect(again.status).toBe(304);
+    expect(again.headers.get("vary")).toBe("Authorization");
   });
 
   it("serializes an object like a package file and omits a null data version", async () => {

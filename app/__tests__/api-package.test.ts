@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Manifest, SpotsFile } from "@/contract";
 import type { Archive } from "@/lib/adapters/s3";
 import type { Db } from "@/lib/db/client";
-import { profileSummaries, textShingles } from "@/lib/db/schema";
+import { deliveries, profileSummaries, textShingles } from "@/lib/db/schema";
 import { createApiClient, revokeApiClient } from "@/lib/domain/api-clients";
 import { buildDelivery } from "@/lib/domain/delivery/build";
 import { setDeliveryArchive } from "@/lib/domain/delivery/read";
@@ -173,6 +174,23 @@ describe("GET /api/v1/areas", () => {
         generatedAt: NOW.toISOString(),
       });
     }));
+
+  it("lists from the delivery rows alone: a package missing in S3 does not fail the list", () =>
+    withRollback(async (tx) => {
+      const { f, archive, key } = await setup(tx);
+      await build(tx, archive, f);
+      const [row] = await tx.select({ bbox: deliveries.bbox }).from(deliveries).where(eq(deliveries.areaId, f.areaId));
+      expect(row!.bbox).toEqual(f.bbox);
+      // an archive that has lost every file and fails every read
+      const broken: Archive = { ...memoryArchive(), get: async () => Promise.reject(new Error("S3 unreachable")) };
+      setDeliveryArchive(broken);
+      const res = await getAreas(key);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { areas: Array<{ id: string; bbox: number[] | null; dataVersion: number | null }> };
+      expect(body.areas.find((a) => a.id === f.areaPublicId)).toMatchObject({ dataVersion: 1, bbox: f.bbox });
+      // the package itself fails closed
+      expect((await getPackage(f.areaPublicId, key)).status).toBe(500);
+    }));
 });
 
 describe("GET /api/v1/areas/[area]/package", () => {
@@ -217,6 +235,18 @@ describe("GET /api/v1/areas/[area]/package", () => {
       expect((await getPackage("unknown-area", key)).status).toBe(404);
       // an island is no area
       expect((await getPackage(f.islandPublicId, key)).status).toBe(404);
+    }));
+
+  it("a dataVersion on the package is 400: an older manifest is its file", () =>
+    withRollback(async (tx) => {
+      const { f, archive, key } = await setup(tx);
+      await build(tx, archive, f);
+      for (const query of ["?dataVersion=1", "?dataVersion=", "?dataVersion=abc"]) {
+        const res = await packageRoute.GET(request(`/areas/${f.areaPublicId}/package${query}`, key), { params: Promise.resolve({ area: f.areaPublicId }) });
+        expect(res.status, query).toBe(400);
+        expect(await res.json()).toEqual({ error: { code: "invalid_parameter", message: expect.stringContaining("manifest.json?dataVersion=") } });
+      }
+      expect((await getFile(f.areaPublicId, "manifest.json", key, "?dataVersion=1")).status).toBe(200);
     }));
 });
 
@@ -338,9 +368,13 @@ describe("GET /api/v1/areas/[area]/package/[file]", () => {
       ]) {
         expect(res.status).toBe(200);
         expect(res.headers.get("cache-control")).toBe("private, max-age=60");
+        // the answer depends on the key: no private cache hands it to another one
+        expect(res.headers.get("vary")).toBe("Authorization");
       }
       // errors are never cached
-      expect((await getFile(f.areaPublicId, "secrets.json", key)).headers.get("cache-control")).toBe("no-store");
+      const error = await getFile(f.areaPublicId, "secrets.json", key);
+      expect(error.headers.get("cache-control")).toBe("no-store");
+      expect(error.headers.get("vary")).toBe("Authorization");
     }));
 
   it("a rejected package is never served", () =>

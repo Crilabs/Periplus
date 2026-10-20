@@ -348,6 +348,7 @@ export async function buildDelivery(db: Db, archive: Archive, areaGeoObjectId: s
       generatedAt: now,
       status,
       objectCounts: a.pkg.manifest.objectCounts,
+      bbox: a.pkg.manifest.bbox,
       validationReport: a.report,
       previousDeliveryId: a.previous?.delivery.id ?? null,
       changeSnapshot: snapshot.snapshot,

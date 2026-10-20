@@ -2,8 +2,8 @@ import { serializeFile, sha256Hex } from "@/lib/domain/delivery/serialize";
 
 /*
  * Responses of the delivery API (spec 08): errors as `{ error: { code, message } }` without internal details and never
- * cached; bodies with an `ETag`, `Cache-Control: private`, the schema version and the data version. Pure (no database,
- * no environment), so `proxy.ts` answers its own denials in the same format (ruling M6-P20).
+ * cached; bodies with an `ETag`, `Cache-Control: private`, the schema version and the data version; all with
+ * `Vary: Authorization`. Pure (no database, no environment), so `proxy.ts` answers its own denials in the same format (ruling M6-P20).
  */
 
 export type ApiErrorStatus = 400 | 401 | 403 | 404 | 429 | 500;
@@ -18,7 +18,7 @@ export const API_MESSAGES = {
 } as const;
 
 export function apiError(status: ApiErrorStatus, code: string, message: string, headers?: Record<string, string>): Response {
-  return Response.json({ error: { code, message } }, { status, headers: { "Cache-Control": "no-store", ...headers } });
+  return Response.json({ error: { code, message } }, { status, headers: { "Cache-Control": "no-store", ...VARY, ...headers } });
 }
 
 /** 404 `not_found` with the fixed message. */
@@ -33,12 +33,25 @@ export type BodyMeta = {
   /** Default `application/json`. */
   contentType?: string;
   maxAgeSeconds: number;
+  /** The body's sha256 when already known (a stored package file): the ETag without hashing the bytes again. */
+  sha256?: string;
 };
 
 /** `"` + the first 32 hex characters of the sha256 of the bytes + `"` (a strong validator). */
 export function etagOf(bytes: Uint8Array): string {
-  return `"${sha256Hex(bytes).slice(0, 32)}"`;
+  return etagOfSha256(sha256Hex(bytes));
 }
+
+/** The ETag of bytes whose sha256 (hex) is known. */
+export function etagOfSha256(sha256: string): string {
+  return `"${sha256.slice(0, 32)}"`;
+}
+
+/**
+ * Every API answer depends on the `Authorization` header: a private cache must not hand one key's answer to another
+ * key (security review M6-F minor 2).
+ */
+const VARY = { Vary: "Authorization" } as const;
 
 /** True when an `If-None-Match` list (weak `W/` tags allowed, or `*`) names `etag`. */
 function noneMatchHits(header: string | null, etag: string): boolean {
@@ -55,8 +68,9 @@ function noneMatchHits(header: string | null, etag: string): boolean {
  */
 export function apiBody(req: Request, body: Uint8Array | object, meta: BodyMeta): Response {
   const bytes = body instanceof Uint8Array ? body : serializeFile(body);
-  const etag = etagOf(bytes);
+  const etag = meta.sha256 === undefined ? etagOf(bytes) : etagOfSha256(meta.sha256);
   const headers: Record<string, string> = {
+    ...VARY,
     ETag: etag,
     "Cache-Control": `private, max-age=${meta.maxAgeSeconds}`,
     "Periplus-Schema-Version": meta.schemaVersion,

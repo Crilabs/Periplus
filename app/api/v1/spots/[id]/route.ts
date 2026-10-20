@@ -7,7 +7,10 @@ import { cacheMaxAgeSeconds, deliveryArchive, isCalendarDate, isSpotId, spotAsOf
 
 type Ctx = RouteContext<"/api/v1/spots/[id]">;
 
-/** A spot as delivered on `?asOf=YYYY-MM-DD`, without it the latest delivered version (spec 08 `GET /spots/{id}`). */
+/**
+ * A spot as delivered on `?asOf=YYYY-MM-DD`, without it the latest delivered version (spec 08 `GET /spots/{id}`), with
+ * the area and data version of the package that introduced that version.
+ */
 const handler = withApiClient<Ctx>("delivery:read", async (req, _client, ctx) => {
   const { id } = await ctx.params;
   if (!isSpotId(id)) return apiNotFound();
@@ -17,7 +20,8 @@ const handler = withApiClient<Ctx>("delivery:read", async (req, _client, ctx) =>
   if (!found) return apiNotFound();
   return apiBody(
     req,
-    { schemaVersion: SCHEMA_VERSION, dataVersion: found.dataVersion, spot: found.spot },
+    // dataVersion counts per area: the area whose package introduced this spot version
+    { schemaVersion: SCHEMA_VERSION, area: found.area, dataVersion: found.dataVersion, spot: found.spot },
     { schemaVersion: SCHEMA_VERSION, dataVersion: found.dataVersion, maxAgeSeconds: cacheMaxAgeSeconds() },
   );
 });

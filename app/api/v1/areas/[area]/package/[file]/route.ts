@@ -22,6 +22,7 @@ const handler = withApiClient<Ctx>("delivery:read", async (req, _client, ctx) =>
     dataVersion: found.dataVersion,
     contentType: contentTypeOf(file),
     maxAgeSeconds: cacheMaxAgeSeconds(),
+    sha256: found.sha256,
   });
 });
 
