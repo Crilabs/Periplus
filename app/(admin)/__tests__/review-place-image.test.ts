@@ -146,11 +146,11 @@ describe("review of a place image", () => {
 describe("GET /images/file", () => {
   it("file route rejects keys outside the allowed prefixes", async () => {
     const id = "0193a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
-    await archive.put(`imagery/renders/${id}/photo.png`, new Uint8Array([1, 2, 3]), "image/png");
+    await archive.put(`imagery/renders/${id}/${id}/photo.png`, new Uint8Array([1, 2, 3]), "image/png");
     await archive.put(`imagery/ktimatologio/x.jpg`, new Uint8Array([4]), "image/jpeg");
     await archive.put(`documents/${id}/raw.html`, new Uint8Array([5]), "text/html");
 
-    const ok = await get(`imagery/renders/${id}/photo.png`);
+    const ok = await get(`imagery/renders/${id}/${id}/photo.png`);
     expect(ok.status).toBe(200);
     expect(ok.headers.get("Content-Type")).toBe("image/png");
     expect(ok.headers.get("Cache-Control")).toBe("private, no-store");
@@ -160,7 +160,8 @@ describe("GET /images/file", () => {
       "imagery/ktimatologio/x.jpg",
       `documents/${id}/raw.html`,
       `imagery/renders/${id}/../../../documents/${id}/raw.html`,
-      `imagery/renders/not-a-uuid/photo.png`,
+      `imagery/renders/${id}/photo.png`,
+      `imagery/renders/not-a-uuid/${id}/photo.png`,
       `images/places/${id}/sub/x.jpg`,
       "",
     ]) {
@@ -170,6 +171,19 @@ describe("GET /images/file", () => {
     expect((await get(`images/places/${id}/missing.jpg`)).status).toBe(404);
     // without a session
     adminSession.mockResolvedValue(null);
-    expect((await get(`imagery/renders/${id}/photo.png`)).status).toBe(401);
+    expect((await get(`imagery/renders/${id}/${id}/photo.png`)).status).toBe(401);
   });
+
+  it("serves the render photo, mask and candidate keys the pipeline produced", () =>
+    withRollback(async (tx) => {
+      current = tx;
+      const t = await imageTask(tx);
+      const detail = await reviewTaskDetail(tx, t.task.id);
+      const s = detail!.subject;
+      if (s.type !== "place_image") throw new Error(`subject ${s.type}`);
+      for (const key of [s.photoKey, s.maskKey, s.candidateKey]) {
+        expect(key).toBeTruthy();
+        expect((await get(key!)).status, key!).toBe(200);
+      }
+    }));
 });

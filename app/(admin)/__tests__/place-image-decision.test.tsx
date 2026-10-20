@@ -54,7 +54,7 @@ describe("PlaceImageDecision", () => {
     expect(html).toContain(`src="/images/file?key=${encodeURIComponent(`imagery/renders/${GEO}/r/photo.png`)}"`);
     expect(html).toContain(`src="/images/file?key=${encodeURIComponent(`imagery/candidates/${GEO}/r-1.jpg`)}"`);
     expect(html).toContain("Maske");
-    expect(html).toContain("Aufnahme aus S (0°), 260 m Höhe, Neigung 30°");
+    expect(html).toContain("Aufnahme von S, Blick nach N (0°), 260 m Höhe, Neigung 30°");
     expect(html).toContain("0,72 (Schwelle 0,80) ✗");
     expect(html).toContain("Mittag");
     expect(html).toContain("kein Wasserzeichen ✓");

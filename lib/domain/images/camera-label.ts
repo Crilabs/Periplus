@@ -15,13 +15,13 @@ export function compassPoint(bearingDeg: number): (typeof COMPASS)[number] {
 const whole = (n: number) => Math.round(n).toLocaleString("de-DE");
 
 /**
- * „Aufnahme aus <Himmelsrichtung> (<Blickrichtung>°), <Höhe> m Höhe, Neigung <Neigung>°“. The compass point names the
- * side the camera stands on as seen from the place (opposite the view bearing: a camera south of the bay looking north
- * takes the shot „aus S“); the degrees are the view bearing, the direction the camera looks.
+ * „Aufnahme von <Kameraseite>, Blick nach <Blickrichtung> (<Blickrichtung in Grad>°), <Höhe> m Höhe, Neigung <Neigung>°“.
+ * The camera side is the compass point opposite the view bearing (a camera south of the bay looking north: „von S“),
+ * the view direction the compass point of the bearing itself.
  */
 export function cameraLine(camera: Pick<CameraDetails, "viewBearingDeg" | "heightM" | "tiltDeg">): string {
   const bearing = ((Math.round(camera.viewBearingDeg) % 360) + 360) % 360;
-  return `Aufnahme aus ${compassPoint(camera.viewBearingDeg + 180)} (${bearing}°), ${whole(camera.heightM)} m Höhe, Neigung ${whole(camera.tiltDeg)}°`;
+  return `Aufnahme von ${compassPoint(camera.viewBearingDeg + 180)}, Blick nach ${compassPoint(camera.viewBearingDeg)} (${bearing}°), ${whole(camera.heightM)} m Höhe, Neigung ${whole(camera.tiltDeg)}°`;
 }
 
 /** „Titelbild“ for slot `title`, „Weitere Ansicht <n>“ for `view-<n>`, else the slot itself. */

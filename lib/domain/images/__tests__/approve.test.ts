@@ -88,8 +88,8 @@ describe("camera labels", () => {
     expect(compassPoint(135)).toBe("SO");
     expect(compassPoint(359)).toBe("N");
     // looking north: the camera stands south of the place
-    expect(cameraLine({ viewBearingDeg: 0.4, heightM: 260, tiltDeg: 30 })).toBe("Aufnahme aus S (0°), 260 m Höhe, Neigung 30°");
-    expect(cameraLine({ viewBearingDeg: 281, heightM: 260, tiltDeg: 18.2 })).toBe("Aufnahme aus O (281°), 260 m Höhe, Neigung 18°");
+    expect(cameraLine({ viewBearingDeg: 0.4, heightM: 260, tiltDeg: 30 })).toBe("Aufnahme von S, Blick nach N (0°), 260 m Höhe, Neigung 30°");
+    expect(cameraLine({ viewBearingDeg: 281, heightM: 260, tiltDeg: 18.2 })).toBe("Aufnahme von O, Blick nach W (281°), 260 m Höhe, Neigung 18°");
     expect(slotLabel("title")).toBe("Titelbild");
     expect(slotLabel("view-2")).toBe("Weitere Ansicht 2");
   });

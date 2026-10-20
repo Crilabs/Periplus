@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { and, desc, eq, isNull, like, sql } from "drizzle-orm";
+import sharp from "sharp";
 import { createArchive } from "../lib/adapters/s3";
 import { createDb, type Db } from "../lib/db/client";
 import { geomFromGeoJson } from "../lib/db/geometry";
@@ -15,6 +16,7 @@ import {
   geoNames,
   geoObjects,
   mentions,
+  placeRenders,
   places,
   profiles,
   runs,
@@ -264,6 +266,83 @@ async function createSourceProposal(db: Db): Promise<{ domain: string; taskId: s
 export const E2E_SUBDIVISION_KEY = "GR-E2E";
 
 /**
+ * A place image task for the place-image review spec (spec 13), as the pipeline leaves it: a bay with a place, a
+ * render row with its photo and mask in the archive, a candidate JPEG and the open `place_image` task. Unique per
+ * run (places and renders are never deleted). Returns the task id and the place name.
+ */
+async function createPlaceImageScene(db: Db): Promise<{ taskId: string; name: string }> {
+  const archive = createArchive({
+    endpoint: process.env.S3_ENDPOINT!,
+    region: process.env.S3_REGION!,
+    bucket: process.env.S3_BUCKET!,
+    accessKeyId: process.env.S3_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!,
+  });
+  await archive.ensureBucket();
+  const blank = (channels: 3 | 4, color: { r: number; g: number; b: number }) =>
+    sharp({ create: { width: 96, height: 64, channels, background: color } });
+  const name = `E2E Image Bay ${new Date().toISOString()}`;
+  const geom = sql`${geomFromGeoJson({ type: "Point", coordinates: [27.95, 34.95] })}`;
+  return db.transaction(async (tx) => {
+    const [object] = await tx.insert(geoObjects).values({ type: "bay", origin: "manual", geom }).returning({ id: geoObjects.id });
+    await tx
+      .insert(geoNames)
+      .values({ geoObjectId: object!.id, name, nameNormalized: name.toLowerCase(), language: "en", script: "latin", origin: "manual" });
+    await tx.insert(places).values({ geoObjectId: object!.id, kind: "anchorage", position: geom });
+    const [run] = await tx.insert(runs).values({ kind: "stage", scopeType: "system", scopeId: "e2e", triggeredBy: "e2e", status: "finished" }).returning({ id: runs.id });
+    const renderId = crypto.randomUUID();
+    const photoKey = `imagery/renders/${object!.id}/${renderId}/photo.png`;
+    const maskKey = `imagery/renders/${object!.id}/${renderId}/mask.png`;
+    const candidateKey = `imagery/candidates/${object!.id}/${renderId}-1.jpg`;
+    await archive.put(photoKey, await blank(3, { r: 40, g: 90, b: 140 }).png().toBuffer(), "image/png");
+    await archive.put(maskKey, await blank(3, { r: 255, g: 255, b: 255 }).png().toBuffer(), "image/png");
+    await archive.put(candidateKey, await blank(3, { r: 60, g: 120, b: 170 }).jpeg().toBuffer(), "image/jpeg");
+    const camera = { position: [27.95, 34.94] as [number, number], heightM: 260, viewBearingDeg: 0, tiltDeg: 30, fovDeg: 50 };
+    const key = `e2e-image-${renderId}`;
+    await tx.insert(placeRenders).values({
+      id: renderId,
+      geoObjectId: object!.id,
+      camera: { ...camera, target: [27.95, 34.95], azimuthDeg: 0, zoom: "z1" },
+      zoom: "z1",
+      imageryTileIds: [],
+      demTileIds: [],
+      photoKey,
+      maskKey,
+      rendererVersion: "e2e",
+      generationKey: key,
+      runId: run!.id,
+    });
+    const task = await createReviewTask(tx, {
+      kind: "place_image",
+      subjectType: "place_image",
+      subjectId: `${object!.id}:title`,
+      context: {
+        key,
+        slot: "title",
+        azimuthOverride: null,
+        camera,
+        renderId,
+        candidateKey,
+        light: "midday",
+        zoom: "z1",
+        model: "e2e-model",
+        promptVersion: 1,
+        waterIoU: 0.9,
+        passed: true,
+        attempts: 1,
+        watermarkVisible: false,
+        alt: "KI-Illustration: E2E-Bucht",
+        allowedZooms: ["z1", "z2", "z3"],
+      },
+      priority: REVIEW_PRIORITY,
+    });
+    return { taskId: task.id, name };
+  });
+}
+
+/**
+
+/**
  * The subdivisions spec needs a valid, never-built subdivision of Greece: `GR-E2E` „Attika (E2E)“ over 26.0–26.25 E ×
  * 40.0–40.25 N (outside the pilot box), with its admin region and German name. Committed once; it stays between runs
  * (subdivisions are never deleted).
@@ -372,6 +451,7 @@ export default async function globalSetup(): Promise<void> {
     if (v1.version !== 1 || v2.status !== "created" || v2.version !== 2) {
       throw new Error(`e2e fact scene: expected profile versions 1 and 2, got ${JSON.stringify([v1, v2])}`);
     }
+    process.env.E2E_IMAGE_TASK = (await createPlaceImageScene(db)).taskId;
     process.env.E2E_REMOVAL_PLACE = await createRemovalScene(db);
     process.env.E2E_FACT_QUOTE = FACT_QUOTE;
     process.env.E2E_SHELTER_QUOTE = SHELTER_LATER_QUOTE;
