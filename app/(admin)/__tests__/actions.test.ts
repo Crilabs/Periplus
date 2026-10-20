@@ -49,7 +49,7 @@ import {
 import { consolidateTileAction, geometryTileAction, seedTileAction } from "../tiles/[id]/actions";
 import { pauseQueueAction, resumeQueueAction } from "../jobs/actions";
 import { endRunAction, retryJobAction } from "../runs/[id]/actions";
-import { toggleComparisonAction } from "../quality/actions";
+import { saveComparisonSelectionAction } from "../quality/actions";
 
 const form = (fields: Record<string, string>) => {
   const data = new FormData();
@@ -269,7 +269,7 @@ describe("admin server actions", () => {
       expect(redirect).not.toHaveBeenCalled();
     }));
 
-  it("toggleComparisonAction: validates input, adds and removes a confirmed place", () =>
+  it("saveComparisonSelectionAction: validates input, saves every shown place's box at once", () =>
     withRollback(async (tx) => {
       currentDb = tx;
       // Open sea outside the pilot box, at a spot no other test uses.
@@ -283,29 +283,42 @@ describe("admin server actions", () => {
       )[0]!;
       const tileId = tileIdFor(24.61, 32.83);
       await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(24.5, 32.75, 24.75, 33.0, 4326)`, areaId: area.id });
-      const [obj] = await tx.insert(geoObjects).values({ type: "bay", origin: "osm", geom }).returning({ id: geoObjects.id });
-      const [place] = await tx
-        .insert(places)
-        .values({ geoObjectId: obj!.id, kind: "anchorage", status: "confirmed", position: geom })
-        .returning({ id: places.id });
-      const placeId = place!.id;
-      const rows = () => tx.select().from(comparisonSet).where(sql`${comparisonSet.placeId} = ${placeId}`);
+      const confirmed = async () => {
+        const [obj] = await tx.insert(geoObjects).values({ type: "bay", origin: "osm", geom }).returning({ id: geoObjects.id });
+        const [place] = await tx
+          .insert(places)
+          .values({ geoObjectId: obj!.id, kind: "anchorage", status: "confirmed", position: geom })
+          .returning({ id: places.id });
+        return place!.id;
+      };
+      const a = await confirmed();
+      const b = await confirmed();
+      const rows = () => tx.select().from(comparisonSet).where(sql`${comparisonSet.placeId} in (${a}, ${b})`);
+      const selection = (areaKey: string, shown: string[], included: string[]) => {
+        const f = form({ areaKey });
+        for (const id of shown) f.append("shown", id);
+        for (const id of included) f.append("include", id);
+        return f;
+      };
 
-      await expect(toggleComparisonAction({ placeId, areaKey: "atlantis", include: true })).rejects.toThrow();
-      await expect(toggleComparisonAction({ placeId: "nope", areaKey: "saronic", include: true })).rejects.toThrow();
+      await saveComparisonSelectionAction(selection("atlantis", [a], [a]));
+      expect(redirect).toHaveBeenLastCalledWith("/quality?error=invalid_input");
+      await saveComparisonSelectionAction(selection("saronic", ["nope"], []));
+      expect(redirect).toHaveBeenLastCalledWith("/quality?area=saronic&error=invalid_input");
       expect(await rows()).toHaveLength(0);
 
-      await toggleComparisonAction(form({ placeId, areaKey: "saronic", include: "true" }));
-      await toggleComparisonAction({ placeId, areaKey: "saronic", include: true });
-      expect(await rows()).toMatchObject([{ placeId, areaId: area.id, addedBy: "admin@example.invalid" }]);
+      // every ticked box of the list is saved at once (UI-11), not only one row
+      await saveComparisonSelectionAction(selection("saronic", [a, b], [a, b]));
+      expect((await rows()).map((r) => r.placeId).sort()).toEqual([a, b].sort());
+      expect(await rows()).toMatchObject([{ areaId: area.id, addedBy: "admin@example.invalid" }, { areaId: area.id }]);
 
-      // An unticked checkbox sends no `include` field.
-      await toggleComparisonAction(form({ placeId, areaKey: "saronic" }));
-      expect(await rows()).toHaveLength(0);
+      // an unticked box sends no `include`: that place leaves the set, the other stays
+      await saveComparisonSelectionAction(selection("saronic", [a, b], [b]));
+      expect((await rows()).map((r) => r.placeId)).toEqual([b]);
 
       requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
-      await expect(toggleComparisonAction({ placeId, areaKey: "saronic", include: true })).rejects.toThrow("NEXT_REDIRECT");
-      expect(await rows()).toHaveLength(0);
+      await expect(saveComparisonSelectionAction(selection("saronic", [a, b], []))).rejects.toThrow("NEXT_REDIRECT");
+      expect(await rows()).toHaveLength(1);
     }));
 
   it("startGeometryAction for a tile starts a tile-scoped run with stages geometry.detect_bays and geometry.place", () =>

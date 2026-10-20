@@ -41,7 +41,7 @@ import {
   trClass,
   type Tone,
 } from "../_components/ui";
-import { activateCandidateAction, startEvaluationAction, startMeasurementAction, toggleComparisonAction } from "./actions";
+import { activateCandidateAction, startEvaluationAction, startMeasurementAction, saveComparisonSelectionAction } from "./actions";
 
 const querySchema = z.object({
   area: z.string().optional().catch(undefined),
@@ -531,7 +531,7 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
 
       <Panel
         title="Vergleichssatz"
-        description="Haken setzen oder entfernen und „Übernehmen“ klicken. Nur die Ortsliste festlegen, keine Navily-Daten übernehmen."
+        description="Haken setzen oder entfernen und „Auswahl speichern“ klicken. Nur die Ortsliste festlegen, keine Navily-Daten übernehmen."
         className="mt-6"
         flush
       >
@@ -560,32 +560,37 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
             Ortskandidaten werden in der Prüfung bestätigt; erst dann lassen sie sich hier auswählen.
           </EmptyState>
         ) : (
-          <ul className="divide-y divide-line">
-            {shown.map((c) => (
-              <li key={c.placeId} className="hover:bg-sunken/50">
-                <form action={toggleComparisonAction} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-sm">
-                  <input type="hidden" name="placeId" value={c.placeId} />
-                  <input type="hidden" name="areaKey" value={area.key} />
-                  <input
-                    type="checkbox"
-                    name="include"
-                    value="true"
-                    defaultChecked={c.inSet}
-                    aria-label={`${c.name ?? c.placeId} im Vergleichssatz`}
-                    className="size-4 accent-accent"
-                  />
-                  <Link href={`/places/${c.placeId}`} className="font-medium text-accent hover:underline">
-                    {c.name ?? c.placeId}
-                  </Link>
-                  <span className="text-muted">{PLACE_KIND_LABELS[c.kind]}</span>
-                  {c.tileId && <Mono>{c.tileId}</Mono>}
-                  <Button type="submit" size="sm" variant="ghost" className="ml-auto">
-                    Übernehmen
-                  </Button>
-                </form>
-              </li>
-            ))}
-          </ul>
+          <form action={saveComparisonSelectionAction}>
+            <input type="hidden" name="areaKey" value={area.key} />
+            <ul className="divide-y divide-line">
+              {shown.map((c) => (
+                <li key={c.placeId} className="hover:bg-sunken/50">
+                  <label className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-sm">
+                    <input type="hidden" name="shown" value={c.placeId} />
+                    <input
+                      type="checkbox"
+                      name="include"
+                      value={c.placeId}
+                      defaultChecked={c.inSet}
+                      aria-label={`${c.name ?? c.placeId} im Vergleichssatz`}
+                      className="size-4 accent-accent"
+                    />
+                    <Link href={`/places/${c.placeId}`} className="font-medium text-accent hover:underline">
+                      {c.name ?? c.placeId}
+                    </Link>
+                    <span className="text-muted">{PLACE_KIND_LABELS[c.kind]}</span>
+                    {c.tileId && <Mono>{c.tileId}</Mono>}
+                  </label>
+                </li>
+              ))}
+            </ul>
+            <div className="flex items-center justify-end gap-3 border-t border-line px-4 py-3">
+              <span className="text-xs text-muted">Speichert alle Haken dieser Liste auf einmal.</span>
+              <Button type="submit" size="sm" variant="primary">
+                Auswahl speichern
+              </Button>
+            </div>
+          </form>
         )}
       </Panel>
     </>

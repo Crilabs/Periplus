@@ -74,6 +74,27 @@ export async function removeFromComparisonSet(db: Db, placeId: string): Promise<
   await db.delete(comparisonSet).where(eq(comparisonSet.placeId, placeId));
 }
 
+/**
+ * Saves the comparison set selection of a list (UI-11: one save for every ticked box): of the places `shown`, those in
+ * `included` join the set of area `areaKey` and the others leave it, in one transaction. Throws (nothing saved) when an
+ * included place is no confirmed place of the area, or is not among `shown`.
+ */
+export async function saveComparisonSelection(
+  db: Db,
+  input: { areaKey: string; shown: string[]; included: string[]; by: string },
+): Promise<void> {
+  const shown = new Set(input.shown);
+  const stray = input.included.find((id) => !shown.has(id));
+  if (stray) throw new Error(`Place ${stray} was not shown`);
+  const included = new Set(input.included);
+  await db.transaction(async (tx) => {
+    for (const placeId of [...shown].sort()) {
+      if (included.has(placeId)) await addToComparisonSet(tx, placeId, input.areaKey, input.by);
+      else await removeFromComparisonSet(tx, placeId);
+    }
+  });
+}
+
 export async function comparisonSetSize(db: Db, areaKey: string): Promise<number> {
   const areaId = await areaIdFor(db, areaKey);
   const [row] = await db
