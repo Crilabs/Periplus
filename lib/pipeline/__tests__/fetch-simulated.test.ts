@@ -200,7 +200,7 @@ describe("simulated fetch", () => {
       const url = fx.docs.a!.url;
       await fetchOnce(tx, fx, url, simDeps(archive, scenarioOf([{ url, edit: { op: "append", text: "Erste Fassung." } }])));
       const changed = scenarioOf([{ url, edit: { op: "append", text: "Zweite Fassung." } }]);
-      expect((await preflightScenario(tx, archive, changed))[0]).toMatchObject({ ok: false, error: expect.stringMatching(/simulated current version/) });
+      expect((await preflightScenario(tx, archive, changed))[0]).toMatchObject({ ok: false, error: expect.stringMatching(/hat eine simulierte aktuelle Version, die nicht diese Änderung/) });
     }));
 
   it("edits the current version after a revert A -> B -> A, not the newest by fetch time", () =>
