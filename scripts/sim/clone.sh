@@ -3,6 +3,7 @@
 #   bash scripts/sim/clone.sh [--compose-file docker/compose.dev.yml] [--service db] [--source-db periplus]
 #                             [--db-user periplus] [--force]
 # Local pilot (ruling M7-P20): the defaults. Server: --compose-file docker/compose.prod.yml --service postgres.
+# A relative --compose-file is read from the current directory; --source-db/--db-user must match ^[a-z_][a-z0-9_]*$.
 # The target is always periplus_sim (not selectable). Stop the development worker first: pg_dump is consistent, but
 # batches running at that moment would be cloned mid-flight. Steps, all inside the compose service:
 #   pg_dump -Fc <source> → dropdb --if-exists periplus_sim → createdb periplus_sim → pg_restore --no-owner →
@@ -12,7 +13,8 @@
 set -euo pipefail
 
 TARGET=periplus_sim
-COMPOSE_FILE=docker/compose.dev.yml
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+COMPOSE_FILE="$REPO/docker/compose.dev.yml"
 SERVICE=db
 SOURCE_DB=periplus
 DB_USER=periplus
@@ -34,12 +36,30 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# A relative --compose-file is read from the caller's working directory, before the cd to the repo root (M7-H-R1, M-4).
+case "$COMPOSE_FILE" in
+  /*) ;;
+  *) COMPOSE_FILE="$PWD/$COMPOSE_FILE" ;;
+esac
+if [ ! -f "$COMPOSE_FILE" ]; then
+  echo "Abbruch: Compose-Datei $COMPOSE_FILE nicht gefunden." >&2
+  exit 1
+fi
+
+# Database and role names go into SQL literals and argv: plain lower-case identifiers only (M7-H-R1, M-4).
+for name in "$SOURCE_DB" "$DB_USER"; do
+  if ! [[ "$name" =~ ^[a-z_][a-z0-9_]*$ ]]; then
+    echo "Abbruch: ungültiger Name „$name“ (erlaubt: a–z, 0–9, _; nicht mit einer Ziffer beginnend)." >&2
+    exit 1
+  fi
+done
+
 if [ "$SOURCE_DB" = "$TARGET" ]; then
   echo "Abbruch: Quelle und Ziel sind beide $TARGET – der Klon braucht eine andere Quelldatenbank." >&2
   exit 1
 fi
 
-cd "$(dirname "${BASH_SOURCE[0]}")/../.."
+cd "$REPO"
 DC=(docker compose -f "$COMPOSE_FILE" exec -T "$SERVICE")
 
 exists="$("${DC[@]}" psql -U "$DB_USER" -d postgres -Atc "select 1 from pg_database where datname = '$TARGET'")"

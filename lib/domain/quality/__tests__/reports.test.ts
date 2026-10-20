@@ -72,7 +72,7 @@ const report: CostReport = {
     byService: { anthropic: 36 },
     oneOff: { eur: 0, byKind: {} },
   },
-  assumptions: { placesPerArea: 120, placesPerAreaSource: "pilot", areasMin: 60, areasMax: 100, cycleDays: 30, revisitsPerYear: 365 / 30 },
+  assumptions: { placesPerArea: 120, placesPerAreaSource: "pilot", areasMin: 60, areasMax: 100, cycleDays: 30, revisitsPerYear: 365 / 30, revisitIntervalDays: 14 },
   extrapolation: { initialMin: 8640, initialMax: 14400, yearlyMin: 26280, yearlyMax: 43800 },
   simulation: { totalEur: 1.48, byService: { anthropic: { calls: 3, eur: 1.4 }, voyage: { calls: 2, eur: 0.08 } } },
 };
@@ -111,13 +111,31 @@ describe("renderCostReport", () => {
     expect(md).toContain("Simulierter Revisit (Datenbank periplus_sim, getrennt gezählt): 1,48 €");
     expect(md).toMatch(/smoke:ai/);
     expect(md).toMatch(/Kacheln ohne Revier zählen für niemanden/);
+    // the revisit-interval assumption with its range (M7-H-R1, M-1): 14 days measured against a 30-day cycle
+    expect(md).toContain("- Abstand der Läufe: 14 Tage (Beginn Lauf 1 bis Beginn Lauf 2); die Hochrechnung setzt die Revisit-Kosten je Ort von Lauf 2 unverändert für einen Abstand von 30 Tagen an.");
+    expect(md).toContain("Obergrenze: Revisit-Kosten wachsen linear mit dem Abstand, also Faktor 2,1 (30 / 14)");
+    expect(md).toContain("- Jahr, Revisit-Kosten linear auf 30 Tage Abstand hochgerechnet (Obergrenze, Faktor 2,1): 56.314,29 € – 93.857,14 €");
+  });
+
+  it("a revisit interval of at least the cycle states the assumption without an upper range", () => {
+    const md = renderCostReport({ ...report, assumptions: { ...report.assumptions, revisitIntervalDays: 30 } });
+    expect(md).toContain("- Abstand der Läufe: 30 Tage (Beginn Lauf 1 bis Beginn Lauf 2)");
+    expect(md).not.toContain("Obergrenze");
+  });
+
+  it("a second run without cost per place says so in the yearly line", () => {
+    const md = renderCostReport({ ...report, second: { ...report.second!, perPlace: null, places: 0 }, extrapolation: { ...report.extrapolation, yearlyMin: null, yearlyMax: null } });
+    expect(md).toContain("Jahr (Revisits, 12,2 je Revier): – (Lauf 2 hat keine Kosten je Ort, keine bestätigten Orte)");
+    expect(md).not.toContain("kein zweiter Lauf gemessen");
+    expect(md).not.toContain("hochgerechnet (Obergrenze");
   });
 
   it("without a second run the yearly line says so", () => {
-    const md = renderCostReport({ ...report, second: null, simulation: null, extrapolation: { ...report.extrapolation, yearlyMin: null, yearlyMax: null } });
+    const md = renderCostReport({ ...report, second: null, simulation: null, assumptions: { ...report.assumptions, revisitIntervalDays: null }, extrapolation: { ...report.extrapolation, yearlyMin: null, yearlyMax: null } });
     expect(md).toContain("Jahr (Revisits, 12,2 je Revier): – (kein zweiter Lauf gemessen)");
     expect(md).toContain("Simulierter Revisit: keine Angabe");
     expect(md).not.toContain("Lauf 2");
+    expect(md).not.toContain("Abstand der Läufe");
   });
 });
 
@@ -129,7 +147,7 @@ describe("costReport", () => {
       await measurement(tx, areaKey, "Lauf 1", { cost_per_place: costRow(1.2, 110) });
       await measurement(tx, areaKey, "Lauf 2", { cost_per_place: costRow(0.3, 120) }, { from: "2026-05-15T00:00:00.000Z", to: "2026-05-16T00:00:00.000Z" });
       const r = await costReport(tx, { areaKey, firstLabel: "Lauf 1", secondLabel: "Lauf 2", areas, cfg: { ...quality, extrapolation: { areasMin: 60, areasMax: 100, placesPerArea: null } } });
-      expect(r.assumptions).toEqual({ placesPerArea: 120, placesPerAreaSource: "pilot", areasMin: 60, areasMax: 100, cycleDays: 30, revisitsPerYear: 365 / 30 });
+      expect(r.assumptions).toEqual({ placesPerArea: 120, placesPerAreaSource: "pilot", areasMin: 60, areasMax: 100, cycleDays: 30, revisitsPerYear: 365 / 30, revisitIntervalDays: 14 });
       expect(r.first).toMatchObject({ label: "Lauf 1", costEur: 132, places: 110, perPlace: 1.2, byService: { jina: 33, anthropic: 99 }, oneOff: { eur: 13.5 } });
       expect(r.first.window.from.toISOString()).toBe("2026-05-01T00:00:00.000Z");
       expect(r.second).toMatchObject({ label: "Lauf 2", perPlace: 0.3, places: 120 });
@@ -140,6 +158,7 @@ describe("costReport", () => {
       const configured = await costReport(tx, { areaKey, firstLabel: "Lauf 1", areas, cfg: { ...quality, extrapolation: { areasMin: 60, areasMax: 100, placesPerArea: 150 } } });
       expect(configured.assumptions).toMatchObject({ placesPerArea: 150, placesPerAreaSource: "config" });
       expect(configured.second).toBeNull();
+      expect(configured.assumptions.revisitIntervalDays).toBeNull();
       expect(configured.extrapolation).toEqual({ initialMin: 10800, initialMax: 18000, yearlyMin: null, yearlyMax: null });
       // and with only the first run, the pilot count is the first run's
       const pilotOnly = await costReport(tx, { areaKey, firstLabel: "Lauf 1", areas, cfg: { ...quality, extrapolation: { areasMin: 60, areasMax: 100, placesPerArea: null } } });
@@ -211,7 +230,7 @@ describe("renderPilotReport", () => {
     expect(md).toContain("- [x] Mehrbefund (≥ 2 Dokumente): 72 % (Pilotziel ≥ 70 %)");
     expect(md).toContain("- [ ] Fact-Präzision: 88 % (Pilotziel ≥ 90 %)");
     expect(md).toContain("- [x] Belegtreue: 100 % (Pilotziel ≥ 100 %)");
-    expect(md).toContain("- [x] Kosten je Ort: 0,30 € (Pilotziel unter 2,00 €)");
+    expect(md).toContain("- [x] Kosten je Ort je Lauf: Lauf 1 1,20 €, Lauf 2 0,30 € (Pilotziel unter 2,00 € in jedem Lauf)");
     expect(md).toContain("- [ ] Simulierter Revisit liefert 10 von 10 Änderungen korrekt, keine falschen: 9 von 10 korrekt, 1 zusätzliche");
     expect(md).toContain("- [x] Ein Profil ist zum Stand „vor dem Revisit“ über die API abrufbar: ja");
     expect(md).toContain("- [x] Review-Aufwand für den zweiten Lauf unter 60 Minuten: 45 min");
@@ -228,7 +247,7 @@ describe("renderPilotReport", () => {
     expect(md).toContain("- zusätzlich: sp_01JREV00000000000000000009 depth.min changed safety");
     expect(md).toContain("Orte je Küstenkachel: Median 23, Spanne 4–52 (Ziel 10–40); außerhalb: q025:812:508, q025:813:509.");
     expect(md).toContain("Entscheidung: …");
-    expect(md).toContain("9 von 10 Belegen in 1 Läufen");
+    expect(md).toContain("9 von 10 Belegen in 1 Lauf)");
     expect(md).toMatch(/Abrufdatum/);
     expect(md).toContain("`docs/pilot/2026-06-01-kostenbericht.md`");
     // counts only: the report never carries a Navily marker or value
@@ -245,5 +264,20 @@ describe("renderPilotReport", () => {
     expect(md).toContain("- [ ] Abdeckung (Navily-Vergleichssatz): 80 % (Pilotziel ≥ 85 %)");
     expect(md).toContain("Keine Kachelzahlen gemessen.");
     expect(md).toContain("Bewertet wird Lauf 1.");
+    expect(md).toContain("- [x] Kosten je Ort je Lauf: Lauf 1 1,20 € (Pilotziel unter 2,00 € in jedem Lauf)");
+  });
+
+  it("the cost criterion is not ticked when Lauf 1 is over 2 € and Lauf 2 under (ruling M7-H-R1, I-1)", () => {
+    const expensive = view("Lauf 1", { ...first.metrics, cost_per_place: { value: 3 } } as Metrics);
+    const md = renderPilotReport({ ...base, first: expensive });
+    expect(md).toContain("- [ ] Kosten je Ort je Lauf: Lauf 1 3,00 €, Lauf 2 0,30 € (Pilotziel unter 2,00 € in jedem Lauf)");
+    // and the other way round, a missing value in one run also leaves it open
+    const missing = renderPilotReport({ ...base, second: view("Lauf 2", { ...second.metrics, cost_per_place: { value: null } } as Metrics) });
+    expect(missing).toContain("- [ ] Kosten je Ort je Lauf: Lauf 1 1,20 €, Lauf 2 – (Pilotziel unter 2,00 € in jedem Lauf)");
+  });
+
+  it("the evaluation runs use the German plural", () => {
+    const two = view("Lauf 2", { ...second.metrics, quote_fidelity: { value: 1, details: { evaluation: { facts: 10, verified: 10, runs: 2 } } } } as Metrics);
+    expect(renderPilotReport({ ...base, second: two })).toContain("10 von 10 Belegen in 2 Läufen)");
   });
 });

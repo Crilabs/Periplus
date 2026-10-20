@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getConfig } from "../lib/config";
@@ -10,19 +10,27 @@ import { pilotDocPath } from "./report-costs";
 
 /*
  * `npm run report:pilot -- --area <key> --first <label> --second <label> [--revisit <sim:verify json>]
- * [--consumer-ok --data-version <n>]` (spec 10, plan Task 16): the pilot report — success criteria with the measured
- * values, the metric table, the simulated revisit, review effort, tile size — written to
- * `docs/pilot/<YYYY-MM-DD>-pilotbericht.md`, pointing at the cost report of the same day. `--consumer-ok` records that
+ * [--cost-report <path>] [--consumer-ok --data-version <n>]` (spec 10, plan Task 16): the pilot report — success
+ * criteria with the measured values, the metric table, the simulated revisit, review effort, tile size — written to
+ * `docs/pilot/<YYYY-MM-DD>-pilotbericht.md`, pointing at the cost report: `--cost-report` (must exist), else the cost
+ * report of the same day when it exists, else no file link (M7-H-R1, M-6). `--consumer-ok` records that
  * the consumer read package `--data-version` without post-processing (`delivery:consume`). Reads the stored
  * measurements only; free.
  */
 
 const USAGE =
-  "usage: report-pilot.ts --area <key> --first <label> --second <label> [--revisit <sim-verify.json>] [--consumer-ok --data-version <n>]";
+  "usage: report-pilot.ts --area <key> --first <label> --second <label> [--revisit <sim-verify.json>] [--cost-report <path>] [--consumer-ok --data-version <n>]";
 
-export type ReportPilotArgs = { area: string; first: string; second: string; revisit?: string; consumer?: { dataVersion: number } };
+export type ReportPilotArgs = { area: string; first: string; second: string; revisit?: string; costReport?: string; consumer?: { dataVersion: number } };
 
-const VALUE_FLAGS = { "--area": "area", "--first": "first", "--second": "second", "--revisit": "revisit", "--data-version": "dataVersion" } as const;
+const VALUE_FLAGS = {
+  "--area": "area",
+  "--first": "first",
+  "--second": "second",
+  "--revisit": "revisit",
+  "--cost-report": "costReport",
+  "--data-version": "dataVersion",
+} as const;
 
 /** `--area`, `--first`, `--second` are required; `--consumer-ok` (no value) and `--data-version` go together. */
 export function parseArgs(argv: string[]): ReportPilotArgs {
@@ -43,10 +51,10 @@ export function parseArgs(argv: string[]): ReportPilotArgs {
     values[key] = value;
     i += 2;
   }
-  const { area, first, second, revisit, dataVersion } = values;
+  const { area, first, second, revisit, costReport, dataVersion } = values;
   if (!area || !first || !second) throw new Error(USAGE);
   if (consumerOk !== (dataVersion !== undefined)) throw new Error(USAGE);
-  const args: ReportPilotArgs = { area, first, second, ...(revisit ? { revisit } : {}) };
+  const args: ReportPilotArgs = { area, first, second, ...(revisit ? { revisit } : {}), ...(costReport ? { costReport } : {}) };
   if (dataVersion !== undefined) {
     const n = Number(dataVersion);
     if (!Number.isInteger(n) || n < 1) throw new Error(USAGE);
@@ -63,9 +71,29 @@ export function tilesOf(m: MeasurementView): PilotReportInput["tiles"] {
   return { median: Number(d.median ?? row.value), min: Number(d.min ?? 0), max: Number(d.max ?? 0), outside: d.outsideTarget ?? [] };
 }
 
+const fileExists = (file: string) =>
+  access(file).then(
+    () => true,
+    () => false,
+  );
+
+/**
+ * The cost report the pilot report links to (M7-H-R1, M-6): `--cost-report` when given (refused when the file is
+ * missing), else today's `docs/pilot/<date>-kostenbericht.md` when it exists, else none (the report then names
+ * `npm run report:costs`). Never a dead link.
+ */
+export async function costReportLink(given: string | undefined, today: string, exists: (file: string) => Promise<boolean> = fileExists): Promise<string | undefined> {
+  if (given !== undefined) {
+    if (!(await exists(given))) throw new Error(`Kostenbericht ${given} nicht gefunden (erst npm run report:costs)`);
+    return given;
+  }
+  return (await exists(today)) ? today : undefined;
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const sim = args.revisit ? parseSimVerifyReport(await readFile(args.revisit, "utf8"), args.revisit) : null;
+  const costReportFile = await costReportLink(args.costReport, pilotDocPath("kostenbericht"));
   const { db, close } = createDb(getEnv().DATABASE_URL);
   let first: MeasurementView | null;
   let second: MeasurementView | null;
@@ -85,7 +113,7 @@ async function main(): Promise<void> {
     asOf: sim?.asOf ?? null,
     consumer: args.consumer ? { ok: true, dataVersion: args.consumer.dataVersion } : null,
     tiles: tilesOf(second),
-    costReportFile: pilotDocPath("kostenbericht"),
+    ...(costReportFile ? { costReportFile } : {}),
   });
   const out = pilotDocPath("pilotbericht");
   await mkdir(path.dirname(out), { recursive: true });

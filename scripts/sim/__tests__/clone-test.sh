@@ -5,6 +5,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLONE="$HERE/../clone.sh"
+REPO="$(cd "$HERE/../../.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -39,7 +40,7 @@ run_case() {
   OUT="$WORK/$CASE/out.log"
   : > "$LOG"
   RC=0
-  PATH="$WORK/bin:$PATH" FAKE_LOG="$LOG" FAKE_SIM_EXISTS="$exists" bash "$CLONE" "$@" > "$OUT" 2>&1 || RC=$?
+  (cd "${CASE_CWD:-$REPO}" && PATH="$WORK/bin:$PATH" FAKE_LOG="$LOG" FAKE_SIM_EXISTS="$exists" bash "$CLONE" "$@") > "$OUT" 2>&1 || RC=$?
 }
 
 # line number of the first log line matching the pattern (0: none)
@@ -68,7 +69,7 @@ grep -q "dropdb .*--if-exists periplus_sim" "$LOG" || fail "no dropdb of periplu
 run_case "pgboss jobs are removed after restore" ""
 before="$FAILURES"
 [ "$RC" -eq 0 ] || fail "expected exit 0, got $RC: $(cat "$OUT")"
-grep -q "compose -f docker/compose.dev.yml exec -T db pg_dump .*-Fc periplus$" "$LOG" || fail "no pg_dump -Fc of periplus via the dev compose service db"
+grep -q "compose -f $REPO/docker/compose.dev.yml exec -T db pg_dump .*-Fc periplus$" "$LOG" || fail "no pg_dump -Fc of periplus via the dev compose service db"
 dump=$(line_of " pg_dump "); drop=$(line_of " dropdb "); create=$(line_of " createdb "); restore=$(line_of " pg_restore "); jobs=$(line_of "delete from pgboss.job;")
 [ -n "$restore" ] && grep -q "pg_restore .*--no-owner .*-d periplus_sim" "$LOG" || fail "no pg_restore --no-owner into periplus_sim"
 [ -n "$jobs" ] || fail "no delete of the pgboss jobs"
@@ -84,11 +85,42 @@ fi
 run_case "sim_meta is written with from_seq" "" --compose-file docker/compose.prod.yml --service postgres
 before="$FAILURES"
 [ "$RC" -eq 0 ] || fail "expected exit 0, got $RC: $(cat "$OUT")"
-grep -q "compose -f docker/compose.prod.yml exec -T postgres " "$LOG" || fail "compose file and service options not used"
+grep -q "compose -f $REPO/docker/compose.prod.yml exec -T postgres " "$LOG" || fail "compose file and service options not used"
 grep -q "periplus_sim .*create table sim_meta (cloned_at timestamptz, source_db text, from_seq bigint)" "$LOG" || fail "sim_meta not created in periplus_sim"
 grep -q "insert into sim_meta (cloned_at, source_db, from_seq) select now(), 'periplus', coalesce(max(seq), 0) from change_events" "$LOG" \
   || fail "sim_meta row with from_seq = coalesce(max(change_events.seq), 0) not written"
 grep -q "sim:worker" "$OUT" || fail "next step not printed"
+[ "$FAILURES" -eq "$before" ] && pass
+
+# M7-H-R1, M-4: a relative --compose-file is taken from the caller's cwd, not from the repo root
+mkdir -p "$WORK/elsewhere/ops"
+: > "$WORK/elsewhere/ops/compose.yml"
+CASE_CWD="$WORK/elsewhere" run_case "a relative compose file is resolved from the caller's cwd" "" --compose-file ops/compose.yml
+before="$FAILURES"
+[ "$RC" -eq 0 ] || fail "expected exit 0, got $RC: $(cat "$OUT")"
+grep -q "compose -f $WORK/elsewhere/ops/compose.yml exec -T db " "$LOG" || fail "compose file not resolved from the caller's cwd: $(head -1 "$LOG")"
+[ "$FAILURES" -eq "$before" ] && pass
+
+CASE_CWD="$WORK/elsewhere" run_case "a missing compose file is refused" "" --compose-file docker/compose.dev.yml
+before="$FAILURES"
+[ "$RC" -ne 0 ] || fail "expected a refusal, got exit 0"
+grep -q "nicht gefunden" "$OUT" || fail "refusal does not say the file is missing"
+[ -s "$LOG" ] && fail "called docker: $(cat "$LOG")"
+[ "$FAILURES" -eq "$before" ] && pass
+
+for bad in "periplus'; drop database periplus; --" "Periplus" "1db" "a-b"; do
+  run_case "invalid source db name is refused: $bad" "" --source-db "$bad"
+  before="$FAILURES"
+  [ "$RC" -ne 0 ] || fail "expected a refusal, got exit 0"
+  grep -q "ungültiger Name" "$OUT" || fail "refusal does not name the invalid name"
+  [ -s "$LOG" ] && fail "called docker: $(cat "$LOG")"
+  [ "$FAILURES" -eq "$before" ] && pass
+done
+
+run_case "invalid db user is refused" "" --db-user "x y"
+before="$FAILURES"
+[ "$RC" -ne 0 ] || fail "expected a refusal, got exit 0"
+[ -s "$LOG" ] && fail "called docker: $(cat "$LOG")"
 [ "$FAILURES" -eq "$before" ] && pass
 
 run_case "an unknown option is refused" "" --target other_db

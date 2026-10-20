@@ -3,7 +3,7 @@ import { newId } from "@/lib/domain/ids";
 import { parseSimVerifyReport } from "@/lib/domain/quality/reports";
 import type { MeasurementView } from "@/lib/domain/quality/snapshot";
 import { parseArgs as parseCostArgs, pilotDocPath } from "@/scripts/report-costs";
-import { parseArgs as parsePilotArgs, tilesOf } from "@/scripts/report-pilot";
+import { costReportLink, parseArgs as parsePilotArgs, tilesOf } from "@/scripts/report-pilot";
 import type { SimVerifyReport } from "@/scripts/sim/verify";
 
 // The report CLIs (plan Task 16): arguments, output paths, the tile size and the sim:verify file they read.
@@ -31,6 +31,12 @@ describe("report:costs and report:pilot arguments", () => {
       revisit: "r.json",
       consumer: { dataVersion: 4 },
     });
+    expect(parsePilotArgs(["--area", "s", "--first", "a", "--second", "b", "--cost-report", "docs/pilot/2026-06-01-kostenbericht.md"])).toEqual({
+      area: "s",
+      first: "a",
+      second: "b",
+      costReport: "docs/pilot/2026-06-01-kostenbericht.md",
+    });
     expect(() => parsePilotArgs(["--area", "s", "--first", "a"])).toThrow(/usage/);
     expect(() => parsePilotArgs(["--area", "s", "--first", "a", "--second", "b", "--consumer-ok"])).toThrow(/usage/);
     expect(() => parsePilotArgs(["--area", "s", "--first", "a", "--second", "b", "--data-version", "4"])).toThrow(/usage/);
@@ -40,6 +46,23 @@ describe("report:costs and report:pilot arguments", () => {
   it("the reports go to docs/pilot/ under the UTC date", () => {
     expect(pilotDocPath("kostenbericht", new Date("2026-06-01T23:30:00Z"))).toBe("docs/pilot/2026-06-01-kostenbericht.md");
     expect(pilotDocPath("pilotbericht", new Date("2026-06-02T00:10:00+02:00"))).toBe("docs/pilot/2026-06-01-pilotbericht.md");
+  });
+});
+
+describe("costReportLink", () => {
+  const today = "docs/pilot/2026-06-02-kostenbericht.md";
+  const only = (...files: string[]) => async (f: string) => files.includes(f);
+
+  it("links an existing --cost-report, else today's cost report only when it exists (M7-H-R1, M-6)", async () => {
+    expect(await costReportLink("docs/pilot/2026-06-01-kostenbericht.md", today, only("docs/pilot/2026-06-01-kostenbericht.md"))).toBe("docs/pilot/2026-06-01-kostenbericht.md");
+    expect(await costReportLink(undefined, today, only(today))).toBe(today);
+    expect(await costReportLink(undefined, today, only())).toBeUndefined();
+    await expect(costReportLink("docs/pilot/fehlt.md", today, only(today))).rejects.toThrow("Kostenbericht docs/pilot/fehlt.md nicht gefunden");
+  });
+
+  it("checks the real file system by default", async () => {
+    expect(await costReportLink(undefined, "package.json")).toBe("package.json");
+    expect(await costReportLink(undefined, `docs/pilot/${newId()}-kostenbericht.md`)).toBeUndefined();
   });
 });
 

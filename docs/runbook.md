@@ -409,4 +409,4 @@ Ein Klon der Datenbank (`periplus_sim`), ein eigener Worker und ein eigenes Arch
 
 ### Berichte
 - `npm run report:costs -- --area saronic --first "Lauf 1" --second "Lauf 2" [--revisit docs/pilot/<datum>-revisit.json]` → `docs/pilot/<datum>-kostenbericht.md` (Kosten je Stufe, Dienst, Ort und Lauf, Einmalkosten, Simulation, Hochrechnung Mittelmeer für 60–100 Reviere).
-- `npm run report:pilot -- --area saronic --first "Lauf 1" --second "Lauf 2" [--revisit <datei>] [--consumer-ok --data-version <n>]` → `docs/pilot/<datum>-pilotbericht.md` (Checkliste, Kennzahlen, Revisit, Review-Aufwand, Kachelgröße mit der Entscheidung).
+- `npm run report:pilot -- --area saronic --first "Lauf 1" --second "Lauf 2" [--revisit <datei>] [--cost-report <datei>] [--consumer-ok --data-version <n>]` → `docs/pilot/<datum>-pilotbericht.md` (Checkliste, Kennzahlen, Revisit, Review-Aufwand, Kachelgröße mit der Entscheidung).

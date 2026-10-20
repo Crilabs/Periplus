@@ -42,6 +42,8 @@ export type CostReport = {
     areasMax: number;
     cycleDays: number;
     revisitsPerYear: number;
+    /** Days from the start of the first to the start of the second run; null without a second run. */
+    revisitIntervalDays: number | null;
   };
   extrapolation: Extrapolation;
   /** Spend of the simulated revisit in `periplus_sim` (from `sim:verify --out`), reported apart (ruling M7-P15). */
@@ -129,6 +131,7 @@ export async function costReport(
     areasMax: cfg.extrapolation.areasMax,
     cycleDays: area.cycleDays,
     revisitsPerYear,
+    revisitIntervalDays: second === null ? null : (second.window.from.getTime() - first.window.from.getTime()) / 86_400_000,
   };
   const extrapolation = extrapolate({
     perPlaceFirst: first.perPlace,
@@ -144,6 +147,8 @@ export async function costReport(
 const decimal = (digits: number) => new Intl.NumberFormat("de-DE", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 const EUR = decimal(2);
 const ONE = decimal(1);
+/** Up to one decimal, none for whole numbers (`14`, `7,5`). */
+const UPTO_ONE = new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 });
 
 /** `8.640,00 €` (German format, two decimals, a plain space before the sign). */
 export const eur = (x: number) => `${EUR.format(x)} €`;
@@ -159,12 +164,41 @@ function amountTable(title: string, keyHeader: string, runs: CostRun[], pick: (r
   return lines;
 }
 
-const range = (min: number | null, max: number | null) => (min === null || max === null ? "– (kein zweiter Lauf gemessen)" : `${eur(min)} – ${eur(max)}`);
+/**
+ * The factor by which the yearly figure may be too low when the measured revisit came sooner than the cycle (M7-H-R1,
+ * M-1): a shorter interval sees fewer changes. Upper bound = revisit cost growing linearly with the interval up to
+ * `cycleDays`. 1 when the interval is unknown or not shorter than the cycle.
+ */
+export function revisitIntervalScale(a: CostReport["assumptions"]): number {
+  const d = a.revisitIntervalDays;
+  return d === null || d <= 0 || d >= a.cycleDays ? 1 : a.cycleDays / d;
+}
+
+/** The yearly range; without a value it says why (no second run, or a second run without cost per place). */
+function yearlyRange(r: CostReport, scale = 1): string {
+  const { yearlyMin: min, yearlyMax: max } = r.extrapolation;
+  if (min === null || max === null) return r.second ? `– (${r.second.label} hat keine Kosten je Ort, keine bestätigten Orte)` : "– (kein zweiter Lauf gemessen)";
+  return `${eur(cents(min * scale))} – ${eur(cents(max * scale))}`;
+}
+
+/** The revisit-interval assumption of the yearly extrapolation (M7-H-R1, M-1); empty without a second run. */
+function intervalAssumption(r: CostReport): string[] {
+  const a = r.assumptions;
+  if (r.second === null || a.revisitIntervalDays === null) return [];
+  const days = UPTO_ONE.format(a.revisitIntervalDays);
+  const base = `- Abstand der Läufe: ${days} Tage (Beginn ${r.first.label} bis Beginn ${r.second.label}); die Hochrechnung setzt die Revisit-Kosten je Ort von ${r.second.label} unverändert für einen Abstand von ${a.cycleDays} Tagen an.`;
+  const scale = revisitIntervalScale(a);
+  if (scale === 1) return [base];
+  return [
+    `${base} Ein kürzerer Abstand sieht weniger Änderungen, der Jahreswert ist daher eher zu niedrig. Obergrenze: Revisit-Kosten wachsen linear mit dem Abstand, also Faktor ${ONE.format(scale)} (${a.cycleDays} / ${days}); Untergrenze: Kosten wie gemessen.`,
+  ];
+}
 
 /** The cost report as Markdown (German): stages, services, per place and run, assumptions, extrapolation. */
 export function renderCostReport(r: CostReport): string {
   const runs = r.second ? [r.first, r.second] : [r.first];
   const a = r.assumptions;
+  const scale = revisitIntervalScale(a);
   const lines = [
     `# Kostenbericht Pilot – Revier ${r.areaKey}`,
     "",
@@ -201,14 +235,21 @@ export function renderCostReport(r: CostReport): string {
     `- Zahl der Reviere im Mittelmeer: ${a.areasMin}–${a.areasMax}`,
     `- Zyklus: ${a.cycleDays} Tage, also ${ONE.format(a.revisitsPerYear)} Revisits je Revier und Jahr`,
     `- Erstlauf je Ort = Kosten je Ort von ${r.first.label}; Revisit je Ort = ${r.second ? `Kosten je Ort von ${r.second.label}` : "nicht gemessen (kein zweiter Lauf)"}`,
+    ...intervalAssumption(r),
     "- Zuordnung der Kosten (Ruling M7-D-R1): Aufrufe mit Kachel zählen für deren Revier; Aufrufe eines Revier-Laufs ohne Kachel für das Revier; geteilte Aufrufe (Quellen-, System- und Text-Läufe, Aufrufe ohne Lauf, auch `smoke:ai` als Betriebskosten) nach dem Anteil bestätigter Orte über alle konfigurierten Reviere; Kacheln ohne Revier zählen für niemanden.",
     "- Im Kachel-Umfang erscheinen Ausgaben eines Revier-Laufs ohne Kachel als geteilte Kosten (nach Ortsanteil der Kachel); die Summe des Reviers bleibt gleich.",
     "- Einmalkosten (Konverter- und Modellvergleich, `pdf:compare`, `fixtures:record`, Kandidaten-Bewertungen) sind nicht in der Hochrechnung.",
     "",
     "## Hochrechnung Mittelmeer",
     "",
-    `- Erstlauf (${a.areasMin}–${a.areasMax} Reviere × ${a.placesPerArea} Orte): ${range(r.extrapolation.initialMin, r.extrapolation.initialMax)}`,
-    `- Jahr (Revisits, ${ONE.format(a.revisitsPerYear)} je Revier): ${range(r.extrapolation.yearlyMin, r.extrapolation.yearlyMax)}`,
+    `- Erstlauf (${a.areasMin}–${a.areasMax} Reviere × ${a.placesPerArea} Orte): ${eur(r.extrapolation.initialMin)} – ${eur(r.extrapolation.initialMax)}`,
+    `- Jahr (Revisits, ${ONE.format(a.revisitsPerYear)} je Revier): ${yearlyRange(r)}`,
+    ...(scale > 1 && r.extrapolation.yearlyMin !== null
+      ? [
+          `- Jahr, Revisit-Kosten linear auf ${a.cycleDays} Tage Abstand hochgerechnet (Obergrenze, Faktor ${ONE.format(scale)}): ${yearlyRange(r, scale)}`,
+          "- Der Jahreswert liegt also voraussichtlich zwischen den beiden Jahreszeilen.",
+        ]
+      : []),
     "",
   ];
   return lines.join("\n");
@@ -303,7 +344,16 @@ export function renderPilotReport(input: PilotReportInput): string {
 
   // Erfolgskriterien
   lines.push("## Erfolgskriterien", "");
+  const measured = second ? [first, second] : [first];
   for (const metric of ACCEPTANCE_METRICS) {
+    if (metric === "cost_per_place") {
+      // The datendienst defines the cost target per place „und Lauf“: met only when every measured run is under it,
+      // each run's value shown (ruling M7-H-R1, I-1).
+      const met = measured.every((m) => metricStatus(metric, value(m, metric), cfg, "pilot") === "met");
+      const values = measured.map((m) => `${m.label} ${formatMetric(metric, value(m, metric))}`).join(", ");
+      lines.push(`- ${box(met)} ${METRIC_NAMES[metric]} je Lauf: ${values} (Pilotziel ${target(metric, cfg, "pilot")} in jedem Lauf)`);
+      continue;
+    }
     const v = value(current, metric);
     const met = metricStatus(metric, v, cfg, "pilot") === "met";
     lines.push(`- ${box(met)} ${METRIC_NAMES[metric]}: ${formatMetric(metric, v)} (Pilotziel ${target(metric, cfg, "pilot")})`);
@@ -411,7 +461,7 @@ export function renderPilotReport(input: PilotReportInput): string {
     "## Lesart der Zahlen",
     "",
     "- Abdeckung und Mehrbefund werden nach dem Datendienst abgenommen (Navily-Vergleichssatz, ≥ 2 Dokumente; Ruling M7-P12); die strengeren Werte aus Spec 10 stehen in der Tabelle daneben.",
-    `- Belegtreue zählt die regulären Text-Läufe; Bewertungs- und Vergleichsläufe stehen getrennt (${num(evaluation.verified)} von ${num(evaluation.facts)} Belegen in ${num(evaluation.runs)} Läufen).`,
+    `- Belegtreue zählt die regulären Text-Läufe; Bewertungs- und Vergleichsläufe stehen getrennt (${num(evaluation.verified)} von ${num(evaluation.facts)} Belegen in ${num(evaluation.runs)} ${num(evaluation.runs) === 1 ? "Lauf" : "Läufen"}).`,
     "- Der Anteil Orte mit aktueller Beobachtung ist zu hoch: Texte ohne eigenes Datum zählen mit dem Abrufdatum (Ruling M7-D-R3).",
     "- Kosten je Ort: Zuordnung der Kosten nach Ruling M7-D-R1, Einmalkosten getrennt (Ruling M7-P15); Einzelheiten im Kostenbericht.",
     "",

@@ -198,6 +198,8 @@ Ruling M7-P27, Runbook-Abschnitt „Simulierter Revisit“ in `docs/runbook.md`.
   ```
   → `docs/pilot/<datum>-pilotbericht.md`.
   - `--consumer-ok --data-version` nur, wenn `delivery:consume` für diese Version `OK` meldete.
+  - Verweist auf den Kostenbericht von heute, wenn es ihn gibt; einen älteren mit `--cost-report docs/pilot/<datum>-kostenbericht.md` angeben (M7-H-R1).
+  - „Kosten je Ort“ ist nur abgehakt, wenn jeder gemessene Lauf unter 2 € liegt (beide Werte stehen in der Zeile).
   - Der Bericht enthält Checkliste, Kennzahlen, Revisit, Review-Aufwand und Kachelgröße.
   - Gazetteer und Kachelgröße entscheidet Christian; die Entscheidung im Bericht nachtragen.
 - Erst danach M8.

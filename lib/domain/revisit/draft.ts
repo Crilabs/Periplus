@@ -349,6 +349,22 @@ const BAN_TEMPLATES = [
   { kind: "jet_ski", de: "Jetskis sind in {name} verboten.", en: "Jet skis are prohibited in {name}." },
 ] as const;
 
+/**
+ * The first name that occurs in the text as a whole word (M7-H-R1, M-5): not inside another word, Unicode letters
+ * and digits count as word characters (Greek names too). Names are tried in the given order.
+ */
+export function nameInText(text: string, names: readonly string[]): string | undefined {
+  return names.find((n) => n.trim() !== "" && new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(n)}(?![\\p{L}\\p{N}])`, "u").test(text));
+}
+
+/**
+ * The change type an attribute gets when it takes a new value, as `detectChanges` decides it: `changed` when the
+ * previous profile carries the attribute (value and provenance, even an empty list), else `new_attribute` (M7-H-R1, M-5).
+ */
+export function changeTypeOf(profile: ProfileSnapshot | undefined, attribute: string): ChangeType {
+  return profile !== undefined && attribute in profile.attributes && profile.provenance[attribute] !== undefined ? "changed" : "new_attribute";
+}
+
 function banAppended(ctx: Context, names: Map<string, string[]>): Array<{ documentId: string; proposal: () => Proposal | null }> {
   const seen = new Set<string>();
   const out: Array<{ documentId: string; proposal: () => Proposal | null }> = [];
@@ -363,14 +379,15 @@ function banAppended(ctx: Context, names: Map<string, string[]>): Array<{ docume
         const doc = ctx.docs.get(f.documentId);
         if (!doc?.markdown) return null;
         const place = ctx.places.get(f.geoObjectId)!;
-        const name = (names.get(f.geoObjectId) ?? []).find((n) => doc.markdown!.includes(n));
+        const name = nameInText(doc.markdown, names.get(f.geoObjectId) ?? []);
         if (!name) return null;
-        const old = ctx.profiles.get(f.geoObjectId)?.attributes.prohibitions;
+        const profile = ctx.profiles.get(f.geoObjectId);
+        const old = profile?.attributes.prohibitions;
         const list = Array.isArray(old) ? old : [];
         const ban = BAN_TEMPLATES.find((t) => !list.some((e) => isObject(e) && e.kind === t.kind));
         if (!ban) return null;
         const text = (german(doc) ? ban.de : ban.en).replace("{name}", name);
-        const type: ChangeType = list.length > 0 ? "changed" : "new_attribute";
+        const type = changeTypeOf(profile, "prohibitions");
         return {
           url: doc.url,
           edit: { op: "append", text },
