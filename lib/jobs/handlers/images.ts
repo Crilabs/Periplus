@@ -41,6 +41,8 @@ const jobSchema = z.object({
     azimuthDeg: z.number().min(0).lt(360).optional(),
   }),
   runId: z.uuid(),
+  /** „Neu erzeugen“ at the same zoom: a decided task with the key does not skip the job. */
+  force: z.literal(true).optional(),
 });
 
 /** Generates one image of `data.geoObjectId` (`generatePlaceImage`) and puts it up for review. */
@@ -49,7 +51,7 @@ export const imagesPlaceHandler: JobHandler<JobData> = async (data, ctx) => {
   const view = { ...job.view, zoom: job.view.zoom as ZoomLevel };
   const result = await generatePlaceImage(
     ctx.db,
-    { geoObjectId: job.geoObjectId, view, runId: job.runId },
+    { geoObjectId: job.geoObjectId, view, runId: job.runId, force: job.force },
     { archive: getArchive(), transport: getTransport(), imageModel: imageModelFor(ctx.db), model: modelClientFor(ctx.db) },
   );
   ctx.log.info({ geoObjectId: job.geoObjectId, slot: view.slot, ...result }, "place image");

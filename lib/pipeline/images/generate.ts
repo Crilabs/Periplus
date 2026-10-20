@@ -105,9 +105,11 @@ export const atTarget = (place: PlaceImageInput, camera: RenderCamera): PlaceIma
 
 /**
  * Whether `key` is done for `slot` of the place: a current image of the slot, an open task or a decided task carries
- * it. A rejected image is not generated again for the same key either.
+ * it. A rejected image is not generated again for the same key either. With `force` (an admin's „Neu erzeugen“ at
+ * the same zoom, whose decided task carries the key), a decided task does not count; a current image or an open task
+ * still does, so a retried forced job changes nothing.
  */
-export async function keyDone(db: Db, geoObjectId: string, slot: string, key: string): Promise<boolean> {
+export async function keyDone(db: Db, geoObjectId: string, slot: string, key: string, force = false): Promise<boolean> {
   const [image] = await db
     .select({ id: placeImages.id })
     .from(placeImages)
@@ -128,7 +130,7 @@ export async function keyDone(db: Db, geoObjectId: string, slot: string, key: st
     )
     .limit(1);
   if (open) return true;
-  return hasDecidedTask(db, "place_image", subjectId, { key });
+  return !force && (await hasDecidedTask(db, "place_image", subjectId, { key }));
 }
 
 /**
@@ -178,7 +180,7 @@ export type GenerateResult = { status: "review" | "no_water_view" | "skipped"; a
  *    `view.azimuthDeg`); `no_water_view` → a task without candidate, no imagery, no render;
  * 2. the imagery around the camera target (`ensureImagery`; a near-town target lies between the anchorage and the
  *    town, so the town is in the core window) and the generation key from the tiles it returned; a key already done
- *    (`keyDone`: a retried job, or a decision taken meanwhile) → `skipped`;
+ *    (`keyDone`: a retried job, or a decision taken meanwhile; with `force` a decided task does not count) → `skipped`;
  * 3. the render (`renderAndStore`, recording the key);
  * 4. up to `check.maxAttempts` image edits: water IoU against the render mask, and, when the core imagery is
  *    watermarked (the cadastre), the watermark check on the JPEG. `ImageOutputInvalid`, `ModelOutputInvalid`, a low
@@ -191,7 +193,7 @@ export type GenerateResult = { status: "review" | "no_water_view" | "skipped"; a
  */
 export async function generatePlaceImage(
   db: Db,
-  input: { geoObjectId: string; view: ImageView; runId?: string },
+  input: { geoObjectId: string; view: ImageView; runId?: string; force?: boolean },
   deps: GenerateDeps,
 ): Promise<GenerateResult> {
   const cfg = deps.config ?? getConfig();
@@ -207,7 +209,7 @@ export async function generatePlaceImage(
   const plan = await planRender(db, place, view.zoom, icfg, azimuthOverride);
   if (!plan.ok) {
     const key = keyFor(place, view, [], cfg);
-    if (await keyDone(db, input.geoObjectId, view.slot, key)) return { status: "skipped", attempts: 0, waterIoU: null };
+    if (await keyDone(db, input.geoObjectId, view.slot, key, input.force)) return { status: "skipped", attempts: 0, waterIoU: null };
     await putUpForReview(db, input.geoObjectId, {
       ...base,
       key,
@@ -236,7 +238,7 @@ export async function generatePlaceImage(
     icfg,
   );
   const key = keyFor(place, view, aerialIds(imagery), cfg);
-  if (await keyDone(db, input.geoObjectId, view.slot, key)) return { status: "skipped", attempts: 0, waterIoU: null };
+  if (await keyDone(db, input.geoObjectId, view.slot, key, input.force)) return { status: "skipped", attempts: 0, waterIoU: null };
 
   const render = await (deps.render ?? renderAndStore)(db, deps.archive, target, camera, imagery, { runId: input.runId, generationKey: key, cfg: icfg });
   const photo = await deps.archive.get(render.photoKey);

@@ -17,12 +17,13 @@ export { nextViewSlot } from "@/lib/pipeline/images/stage";
  * Starts an image run (kind `stage`, only stage `images.place`): the title images of a subdivision's spots (scope
  * `subdivision`; an unknown or excluded key is refused by `requireSubdivision`), or one view of one place (scope
  * `place` with its current place id; an additional view takes the slot from `nextViewSlot`). A geo object without a
- * current place throws `RunScopeNotReady` (`place_not_computable`). The plan skips images whose generation key is done.
+ * current place throws `RunScopeNotReady` (`place_not_computable`). The plan skips images whose generation key is done;
+ * `force` (after „Neu erzeugen“) lets it pass over a decided task with the key (`keyDone`).
  */
 export async function startImageRun(
   db: Db,
   boss: PgBoss,
-  input: { subdivisionKey: string } | { geoObjectId: string; view: ImageView },
+  input: { subdivisionKey: string } | { geoObjectId: string; view: ImageView; force?: boolean },
   triggeredBy: string,
 ): Promise<{ id: string }> {
   let scope: { type: "subdivision" | "place"; id: string };
@@ -38,7 +39,7 @@ export async function startImageRun(
       order by created_at desc limit 1`);
     if (!rows[0]) throw new RunScopeNotReady("place_not_computable", `geo object ${input.geoObjectId} has no current place`);
     scope = { type: "place", id: rows[0].id };
-    images = { geoObjectId: input.geoObjectId, view: input.view };
+    images = { geoObjectId: input.geoObjectId, view: input.view, ...(input.force ? { force: true } : {}) };
   }
   return startRun(db, boss, { kind: "stage", scope, stages: [IMAGES_STAGE], params: { images }, triggeredBy });
 }

@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { z, ZodError } from "zod";
+import { getArchive } from "@/lib/adapters/s3";
 import { changeRateEnum, DOC_TYPES } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 import { retryFailedJob } from "@/lib/domain/jobs-view";
@@ -16,7 +17,7 @@ import {
 import { nextTaskHref } from "@/lib/domain/review-view";
 import { getBoss } from "@/lib/jobs/boss";
 import type { QueueName } from "@/lib/jobs/queues";
-import { consolidateAfter, rematchAfter } from "@/lib/pipeline/follow-ups";
+import { consolidateAfter, imageRunAfter, rematchAfter } from "@/lib/pipeline/follow-ups";
 import { requireAdmin } from "@/lib/security/require-admin";
 import type { CrawlRules } from "@/lib/domain/sources/crawl-rules";
 import { parseCrawlRulesForm } from "../../_components/crawl-rules-fields";
@@ -60,8 +61,8 @@ const taskFields = (formData: FormData) =>
 const withRunNotice = (href: string) => `${href}${href.includes("?") ? "&" : "?"}notice=run_not_started`;
 
 /**
- * Decides the task, then starts the rematch run a new name asks for and the consolidation run a profile or summary
- * decision asks for (both after the decision committed), then redirects to the next open task of the same kind (or
+ * Decides the task, then starts the rematch run a new name asks for, the consolidation run a profile or summary
+ * decision asks for and the image run of „Neu erzeugen“ on a place image (all after the decision committed), then redirects to the next open task of the same kind (or
  * `/review`), with `?notice=run_not_started` when a follow-up run failed to start. An already decided task redirects
  * back with `?stale=1`, a profile task whose value changed since it was shown with `?changed=1`, a decision that does
  * not fit the task with `?error=1`.
@@ -76,7 +77,7 @@ async function decideAndRedirect(
 
   let target: string;
   try {
-    const { documentVersionIds, consolidate } = await decideReviewTask(
+    const { documentVersionIds, consolidate, regenerateImage } = await decideReviewTask(
       db,
       {
         taskId: task.taskId,
@@ -86,7 +87,7 @@ async function decideAndRedirect(
         taskKey: task.taskKey,
         valueKey: task.valueKey,
       },
-      { retryJob },
+      { retryJob, archive: getArchive() },
     );
     // the follow-ups of the committed decision (UI-16); a scope that is not ready is no failure here: the decision
     // asked for nothing that could run
@@ -95,6 +96,7 @@ async function decideAndRedirect(
       ...(consolidate
         ? [await consolidateAfter(db, getBoss, { geoObjectIds: [consolidate.geoObjectId], stagesOnly: consolidate.stagesOnly, triggeredBy: decidedBy })]
         : []),
+      ...(regenerateImage ? [await imageRunAfter(db, getBoss, { ...regenerateImage, triggeredBy: decidedBy })] : []),
     ];
     target = await nextTaskHref(db, task.taskId);
     if (followUps.some((f) => f.status === "failed")) target = withRunNotice(target);

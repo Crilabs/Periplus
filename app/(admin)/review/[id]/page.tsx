@@ -70,6 +70,7 @@ import { DecisionForm } from "./decision-form";
 import { NameCandidateCreate } from "./name-candidate";
 import { DecisionPanel, Disclosure, Kbd, MapLegend } from "./parts";
 import { PlaceConfirm } from "./place-confirm";
+import { PlaceImageDecision } from "./place-image-decision";
 import { ProfileDecision } from "./profile-decision";
 
 /** The tab title: the task's kind and subject (UI-15). */
@@ -231,6 +232,7 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
             {subject.type === "comparison"
               ? `: ${subject.place.name ?? subject.place.id} – ${COMPARISON_ATTRIBUTE_LABELS[subject.attribute]}`
               : ""}
+            {subject.type === "place_image" ? `: ${subject.name ?? subject.placeId}` : ""}
           </>
         }
         meta={
@@ -271,6 +273,8 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
               <Notice tone="danger" title="Der Wert hat sich geändert – bitte neu laden">
                 {subject.type === "source"
                   ? "Die Werte der Quelle wurden inzwischen geändert (z. B. auf der Quellenseite). Es wurde nichts gespeichert."
+                  : subject.type === "place_image"
+                  ? "Ein späterer Lauf hat das Bild dieser Aufgabe ersetzt. Es wurde nichts gespeichert."
                   : "Ein späterer Lauf hat die Frage dieser Aufgabe ersetzt. Es wurde nichts gespeichert."}
               </Notice>
             )}
@@ -307,6 +311,8 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
         )}
 
         {subject.type === "comparison" && <ComparisonDecision subject={subject} features={features} {...props} open={open} />}
+
+        {subject.type === "place_image" && <PlaceImageDecision subject={subject} {...props} open={open} />}
 
         {subject.type === "place" && (
           <>

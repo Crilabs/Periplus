@@ -17,10 +17,13 @@ import { currentAerialTileIds } from "./imagery";
  * geometry, consolidation) targets the title images of the objects it consolidated.
  */
 
-/** `params.images` of a run from `startImageRun`. */
-export type ImageRunScope = { subdivisionKey: string } | { geoObjectId: string; view: ImageView };
+/**
+ * `params.images` of a run from `startImageRun`. `force` (one place and view, after „Neu erzeugen“): a decided task
+ * with the view's key does not make it done (`keyDone`).
+ */
+export type ImageRunScope = { subdivisionKey: string } | { geoObjectId: string; view: ImageView; force?: boolean };
 
-export type ImageTarget = { geoObjectId: string; view: ImageView };
+export type ImageTarget = { geoObjectId: string; view: ImageView; force?: true };
 
 /**
  * The objects a text, geometry or consolidation run consolidated, as `summaryTargets` derives them: the objects of the
@@ -85,7 +88,7 @@ async function plannedKey(db: Db, geoObjectId: string, view: ImageView, cfg: Ima
  * `startImageRun` the title images of the subdivision's spots, or the one place and view it names; for any other run
  * the title images of the objects it consolidated (`consolidatedObjects`). Of those, the eligible spots
  * (`eligibleSpots`) whose current generation key is not done yet (`keyDone`: a current image of the slot, an open or a
- * decided task with that key). Since the key depends on the imagery tiles, it is computed from the current
+ * decided task with that key; a forced scope passes over the decided task). Since the key depends on the imagery tiles, it is computed from the current
  * `imagery_tiles` rows of the windows around the camera target; a missing tile makes the key new. None in an
  * evaluation run or a simulation (no paid image calls there).
  */
@@ -99,7 +102,7 @@ export async function imageTargets(
   let candidates: ImageTarget[];
   if (scope && "geoObjectId" in scope) {
     const ok = await eligibleSpots(db, inIds([scope.geoObjectId]), cfg);
-    candidates = ok.map((geoObjectId) => ({ geoObjectId, view: scope.view }));
+    candidates = ok.map((geoObjectId) => ({ geoObjectId, view: scope.view, ...(scope.force === true ? { force: true as const } : {}) }));
   } else {
     let ids: string[];
     if (scope && "subdivisionKey" in scope) {
@@ -118,15 +121,20 @@ export async function imageTargets(
   for (const c of candidates) {
     if (targets.length >= cfg.images.pipeline.maxGenerationsPerRun) break;
     const key = await plannedKey(db, c.geoObjectId, c.view, cfg);
-    if (key !== null && (await keyDone(db, c.geoObjectId, c.view.slot, key))) continue;
+    if (key !== null && (await keyDone(db, c.geoObjectId, c.view.slot, key, c.force))) continue;
     targets.push(c);
   }
   return targets;
 }
 
-/** One job per target, key `<geoObjectId>:<slot>`. */
+/** One job per target, key `<geoObjectId>:<slot>`; a forced target's job carries `force`. */
 export async function imageJobs(db: Db, run: { id: string; params: Record<string, unknown> }): Promise<JobData[]> {
-  return (await imageTargets(db, run)).map((t) => ({ key: `${t.geoObjectId}:${t.view.slot}`, geoObjectId: t.geoObjectId, view: t.view }));
+  return (await imageTargets(db, run)).map((t) => ({
+    key: `${t.geoObjectId}:${t.view.slot}`,
+    geoObjectId: t.geoObjectId,
+    view: t.view,
+    ...(t.force ? { force: true } : {}),
+  }));
 }
 
 /**

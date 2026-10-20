@@ -8,6 +8,8 @@ import { recheckExclusion } from "@/lib/domain/geometry/restrictions";
 import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
+import type { Archive } from "@/lib/adapters/s3";
+import { applyPlaceImageDecision, type RegenerateImage } from "@/lib/domain/images/approve";
 import {
   changeRateEnum,
   DOC_TYPES,
@@ -92,6 +94,10 @@ export const reviewDecisionSchema = z.discriminatedUnion("action", [
     changeRate: z.enum(changeRateEnum.enumValues),
     crawlRules: crawlRulesSchema,
   }),
+  // place_image / place_image: approve the candidate, generate again (optionally at another zoom), or no image
+  z.object({ action: z.literal("approve_image") }),
+  z.object({ action: z.literal("regenerate_image"), zoom: z.enum(["z1", "z2", "z3"]).optional() }),
+  z.object({ action: z.literal("no_image") }),
 ]);
 
 export type ReviewDecision = z.infer<typeof reviewDecisionSchema>;
@@ -154,9 +160,14 @@ const ALLOWED: Record<string, readonly Action[]> = {
   "failed_job/profile_summary": ["ignore", "regenerate_summary"],
   "source_approval/source": ["approve", "reject"],
   "comparison_deviation/comparison": ["own_correct", "navily_correct", "unclear"],
+  "place_image/place_image": ["approve_image", "regenerate_image", "no_image"],
 };
 
-export type DecideDeps = { retryJob?: (queue: QueueName, jobId: string) => Promise<void> };
+export type DecideDeps = {
+  retryJob?: (queue: QueueName, jobId: string) => Promise<void>;
+  /** The archive an `approve_image` reads the candidate from and writes the image to. */
+  archive?: Archive;
+};
 
 /**
  * What a decision asks for after its commit (ruling M5-P10): `documentVersionIds` for the rematch of a new name;
@@ -164,7 +175,12 @@ export type DecideDeps = { retryJob?: (queue: QueueName, jobId: string) => Promi
  * `place_candidate` decision on a place), never started inside the decision's transaction, which could roll back under
  * a started run.
  */
-export type DecideResult = { documentVersionIds: string[]; consolidate: { geoObjectId: string; stagesOnly?: string[] } | null };
+export type DecideResult = {
+  documentVersionIds: string[];
+  consolidate: { geoObjectId: string; stagesOnly?: string[] } | null;
+  /** The image run „Neu erzeugen“ on a `place_image` task asks for (`applyPlaceImageDecision`). */
+  regenerateImage: RegenerateImage | null;
+};
 
 type Task = typeof reviewTasks.$inferSelect;
 
@@ -185,7 +201,9 @@ type Task = typeof reviewTasks.$inferSelect;
  * chosen side's value as shown (ruling M5-G-R2). `approve` needs `valueKey` too, the `sourceSettingsKey` of the source
  * as the approval form showed it; another key means the source was edited since (`TaskContextChanged`, W4-1). A decision on a `comparison_deviation` task appends its outcome to
  * `comparison_results` (`deviation_confirmed_own` / `deviation_confirmed_navily` / `unclear`, method `review`) and
- * returns nothing to do.
+ * returns nothing to do. A decision on a `place_image` task needs `taskKey` as well (`TaskContextChanged` when the
+ * pipeline replaced the image meanwhile) and is applied by `applyPlaceImageDecision`: `approve_image` needs
+ * `deps.archive`, `regenerate_image` returns the image run to start after the commit (`regenerateImage`).
  *
  * Global lock order: the review task row first, then the subject row(s) (`lockPlace`, `lockSource`,
  * `lockNameCandidate`). Every transaction that locks both an open `place_candidate` task and its place
@@ -207,7 +225,10 @@ export async function decideReviewTask(
     if (!ALLOWED[`${task.kind}/${task.subjectType}`]?.includes(decision.action)) {
       throw new DecisionNotAllowed(`action ${decision.action} does not fit a ${task.kind} task on a ${task.subjectType}`);
     }
-    if (task.subjectType === PROFILE_SUBJECT && (input.taskKey === undefined || (task.context as { key?: unknown } | null)?.key !== input.taskKey)) {
+    if (
+      (task.subjectType === PROFILE_SUBJECT || task.subjectType === PLACE_IMAGE_SUBJECT) &&
+      (input.taskKey === undefined || (task.context as { key?: unknown } | null)?.key !== input.taskKey)
+    ) {
       throw new TaskContextChanged(task.id);
     }
 
@@ -224,7 +245,7 @@ export async function decideReviewTask(
     await tx.update(reviewTasks).set({ status: "decided" }).where(eq(reviewTasks.id, task.id));
     // Dispatch by `<kind>/<subject_type>` (ruling M4-P13): a name candidate's reject never touches a place.
     if (task.subjectType === "name_candidate") {
-      return { documentVersionIds: await applyNameDecision(tx, task, decision), consolidate: null };
+      return { documentVersionIds: await applyNameDecision(tx, task, decision), consolidate: null, regenerateImage: null };
     }
     if (task.subjectType === COMPARISON_SUBJECT) {
       // the outcome is a new comparison_results row beside the deviation (append-only); the profile is untouched
@@ -232,11 +253,15 @@ export async function decideReviewTask(
       if (!context.success) throw new DecisionNotAllowed(`comparison task ${task.id} has no valid context`);
       const action = decision.action as "own_correct" | "navily_correct" | "unclear";
       await appendReviewOutcome(tx, { context: context.data, action, taskId: task.id, decidedBy: input.decidedBy, now });
-      return { documentVersionIds: [], consolidate: null };
+      return { documentVersionIds: [], consolidate: null, regenerateImage: null };
+    }
+    if (task.subjectType === PLACE_IMAGE_SUBJECT) {
+      const regenerateImage = await applyPlaceImageDecision(tx, task, decision, decisionRow!.id, now, { archive: deps.archive });
+      return { documentVersionIds: [], consolidate: null, regenerateImage };
     }
     if (task.subjectType === PROFILE_SUBJECT) {
       const geoObjectId = await applyProfileDecision(tx, task, decision, decisionRow!.id, now, input.valueKey);
-      return { documentVersionIds: [], consolidate: { geoObjectId } };
+      return { documentVersionIds: [], consolidate: { geoObjectId }, regenerateImage: null };
     }
     if (decision.action === "regenerate_summary") {
       // `<geoObjectId>:<version>` of a summary that stayed empty: the summary stage runs again after the commit
@@ -244,10 +269,10 @@ export async function decideReviewTask(
       if (!z.uuid().safeParse(geoObjectId).success) throw new DecisionNotAllowed(`subject ${task.subjectId} is no profile summary`);
       const [object] = await tx.select({ id: geoObjects.id }).from(geoObjects).where(eq(geoObjects.id, geoObjectId));
       if (!object) throw new DecisionNotAllowed(`geo object ${geoObjectId} does not exist`);
-      return { documentVersionIds: [], consolidate: { geoObjectId, stagesOnly: [CONSOLIDATION_SUMMARY_STAGE] } };
+      return { documentVersionIds: [], consolidate: { geoObjectId, stagesOnly: [CONSOLIDATION_SUMMARY_STAGE] }, regenerateImage: null };
     }
     const placeObject = await apply(tx, task, decision, deps, input.valueKey);
-    return { documentVersionIds: [], consolidate: placeObject ? { geoObjectId: placeObject } : null };
+    return { documentVersionIds: [], consolidate: placeObject ? { geoObjectId: placeObject } : null, regenerateImage: null };
   });
 }
 
@@ -410,12 +435,18 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
     case "navily_correct":
     case "unclear":
       throw new DecisionNotAllowed(`action ${decision.action} needs a comparison deviation`);
+    case "approve_image":
+    case "regenerate_image":
+    case "no_image":
+      throw new DecisionNotAllowed(`action ${decision.action} needs a place image`);
   }
 }
 
 const PROFILE_SUBJECT = "profile_attribute";
 /** Subject of a `comparison_deviation` task: `<placeId>:<attribute>:<valueHash>` (`recordComparisonResults`). */
 const COMPARISON_SUBJECT = "comparison";
+/** Subject of a `place_image` task: `<geoObjectId>:<slot>` (`generatePlaceImage`). */
+const PLACE_IMAGE_SUBJECT = "place_image";
 
 /** `<geoObjectId>:<attribute>` of a profile task; `DecisionNotAllowed` for another shape. */
 function profileSubject(subjectId: string): { geoObjectId: string; attribute: string } {

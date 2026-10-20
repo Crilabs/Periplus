@@ -282,7 +282,7 @@ describe("place decisions", () => {
         const place = await insertPlace(tx);
         const result = await decide(tx, await placeTask(tx, place.id), decision);
         const geoObjectId = decision.action === "merge" ? target.geoObjectId : place.geoObjectId;
-        expect(result, decision.action).toEqual({ documentVersionIds: [], consolidate: { geoObjectId } });
+        expect(result, decision.action).toEqual({ documentVersionIds: [], consolidate: { geoObjectId }, regenerateImage: null });
         // the decision itself never consolidates (ruling M5-F-R4)
         expect(await tx.select().from(profiles).where(eq(profiles.geoObjectId, place.geoObjectId))).toEqual([]);
       }
@@ -797,7 +797,7 @@ describe("name candidate decisions", () => {
       const t = await nameTask(tx);
       const result = await decide(tx, t.taskId, createPlace(t.name));
 
-      expect(result).toEqual({ documentVersionIds: t.versionIds, consolidate: null });
+      expect(result).toEqual({ documentVersionIds: t.versionIds, consolidate: null, regenerateImage: null });
       const object = await createdObject(tx, t.name);
       expect(object).toMatchObject({ type: "bay", origin: "text", category: null, parentId: islandId });
       const names = await tx
@@ -886,7 +886,7 @@ describe("name candidate decisions", () => {
       const objectId = await insertNamedObject(tx, { type: "bay", names: [{ name: "Other Bay" }], lon: LON + 0.26, lat: LAT, tiles: [neighbour] });
       const result = await decide(tx, t.taskId, { action: "assign_name", geoObjectId: objectId });
 
-      expect(result).toEqual({ documentVersionIds: t.versionIds, consolidate: null });
+      expect(result).toEqual({ documentVersionIds: t.versionIds, consolidate: null, regenerateImage: null });
       const names = await tx
         .select({ name: geoNames.name, language: geoNames.language, origin: geoNames.origin })
         .from(geoNames)
@@ -914,7 +914,7 @@ describe("name candidate decisions", () => {
   it("reject only decides the candidate", () =>
     withRollback(async (tx) => {
       const t = await nameTask(tx);
-      expect(await decide(tx, t.taskId, { action: "reject" })).toEqual({ documentVersionIds: [], consolidate: null });
+      expect(await decide(tx, t.taskId, { action: "reject" })).toEqual({ documentVersionIds: [], consolidate: null, regenerateImage: null });
       expect(await candidateStatus(tx, t.candidateId)).toBe("decided");
       expect(await createdObject(tx, t.name)).toBeUndefined();
     }));
@@ -928,7 +928,7 @@ describe("name candidate decisions", () => {
       const objectId = await insertNamedObject(tx, { type: "bay", names: [{ name: "Own Bay" }], lon: LON + 0.01, lat: LAT, tiles: [t.tileId] });
       const result = await decide(tx, t.taskId, { action: "assign_name", geoObjectId: objectId });
 
-      expect(result).toEqual({ documentVersionIds: [newer.versionId, t.versionIds[1]!].sort(), consolidate: null });
+      expect(result).toEqual({ documentVersionIds: [newer.versionId, t.versionIds[1]!].sort(), consolidate: null, regenerateImage: null });
     }));
 
   it("assign_name offers the candidate space of the configured neighbourRing", () =>
@@ -967,7 +967,7 @@ describe("name candidate decisions", () => {
   it("other decisions return no document versions", () =>
     withRollback(async (tx) => {
       const place = await insertPlace(tx);
-      expect(await decide(tx, await placeTask(tx, place.id), { action: "reject" })).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: place.geoObjectId } });
+      expect(await decide(tx, await placeTask(tx, place.id), { action: "reject" })).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: place.geoObjectId }, regenerateImage: null });
     }));
 
   it("the schema bounds name, language and position", () => {
@@ -1059,7 +1059,7 @@ describe("profile attribute decisions (conflict, uncertain_change)", () => {
       const { objectId, taskId, key } = await holdingConflict(tx);
       expect((await latest(tx, objectId)).attributes["holding"]).toBe("good");
 
-      expect(await decideProfile(tx, taskId, key, { action: "value_b" }, valueFingerprint("poor"))).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: objectId } });
+      expect(await decideProfile(tx, taskId, key, { action: "value_b" }, valueFingerprint("poor"))).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: objectId }, regenerateImage: null });
       const [decision] = await tx.select({ id: reviewDecisions.id }).from(reviewDecisions).where(eq(reviewDecisions.taskId, taskId));
       const reviewFacts = await tx.select().from(facts).where(eq(facts.reviewDecisionId, decision!.id));
       expect(reviewFacts).toHaveLength(1);
@@ -1104,7 +1104,7 @@ describe("profile attribute decisions (conflict, uncertain_change)", () => {
   it("seasonal resolves the conflict marker; no new conflict task for the same key", () =>
     withRollback(async (tx) => {
       const { objectId, taskId, key } = await holdingConflict(tx);
-      expect(await decideProfile(tx, taskId, key, { action: "seasonal" })).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: objectId } });
+      expect(await decideProfile(tx, taskId, key, { action: "seasonal" })).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: objectId }, regenerateImage: null });
       expect(await tx.select().from(facts).where(and(eq(facts.geoObjectId, objectId), sql`${facts.reviewDecisionId} is not null`))).toEqual([]);
 
       expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "created", tasks: 0, events: 0 });
@@ -1129,7 +1129,7 @@ describe("profile attribute decisions (conflict, uncertain_change)", () => {
   it("accept_change writes the proposed value; the next run emits changed", () =>
     withRollback(async (tx) => {
       const { objectId, taskId, key } = await uncertainWater(tx);
-      expect(await decideProfile(tx, taskId, key, { action: "accept_change" })).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: objectId } });
+      expect(await decideProfile(tx, taskId, key, { action: "accept_change" })).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: objectId }, regenerateImage: null });
       const [fact] = await tx.select().from(facts).where(and(eq(facts.geoObjectId, objectId), sql`${facts.reviewDecisionId} is not null`));
       expect(fact).toMatchObject({ attribute: "services.water", value: false, confidence: 0.95, observedAt: today });
 
@@ -1202,7 +1202,7 @@ describe("profile attribute decisions (conflict, uncertain_change)", () => {
         .returning({ id: reviewTasks.id });
       return decideReviewTask(tx, { taskId: task!.id, decision: { action: "accept_change" }, decidedBy: ADMIN, taskKey: "k1" });
     });
-    expect(result).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: objectId } });
+    expect(result).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: objectId }, regenerateImage: null });
   });
 
   it("a union list with single-entry facts stores the accepted list, every entry validated", () =>
@@ -1236,10 +1236,11 @@ describe("profile attribute decisions (conflict, uncertain_change)", () => {
       };
       await expect(decide(tx, await task(), { action: "retry" })).rejects.toThrow(DecisionNotAllowed);
       await tx.update(reviewTasks).set({ status: "dismissed" }).where(eq(reviewTasks.subjectId, `${objectId}:1`));
-      expect(await decide(tx, await task(), { action: "ignore" })).toEqual({ documentVersionIds: [], consolidate: null });
+      expect(await decide(tx, await task(), { action: "ignore" })).toEqual({ documentVersionIds: [], consolidate: null, regenerateImage: null });
       expect(await decide(tx, await task(), { action: "regenerate_summary" })).toEqual({
         documentVersionIds: [],
         consolidate: { geoObjectId: objectId, stagesOnly: ["consolidation.summary"] },
+        regenerateImage: null,
       });
     }));
 });
