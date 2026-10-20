@@ -1,8 +1,13 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
-/** Tests that run whole gazetteer, dataset or geometry passes over the pilot area in one long transaction. */
+/**
+ * Tests that run whole gazetteer, dataset or geometry passes over the pilot area in one long transaction, and every
+ * other file that seeds the aegina-west subdivision (`insertAeginaWest`): its key is unique among valid rows, so two
+ * such transactions in parallel wait on each other beyond the test timeout. One worker runs these files in turn.
+ */
 const PILOT_RUN_TESTS = [
+  "app/(admin)/__tests__/actions.test.ts",
   "lib/pipeline/__tests__/gazetteer-run.test.ts",
   "lib/pipeline/__tests__/datasets.test.ts",
   "lib/pipeline/__tests__/geometry-golden.test.ts",
