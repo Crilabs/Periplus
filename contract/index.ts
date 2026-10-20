@@ -13,8 +13,8 @@ import {
 
 /*
  * Periplus Data Contract (spec 08). The zod schemas in `contract/v1/` are the source; the JSON schemas under
- * `contract/schema/<version>/` are generated from them (`npm run contract:generate`) and served by
- * `GET /api/v1/schema/<version>/<file>`.
+ * `contract/schema/<version>/` are generated from them (`npm run contract:generate`); every checked-in version is
+ * served by `GET /api/v1/schema/<version>/<file>` from `contract/schema/published.ts`.
  */
 
 export const SCHEMA_VERSION = "1.0";

@@ -381,8 +381,8 @@ Ausgabe je Datei `sha256 ok|MISMATCH  schema ok|<n> error(s)` mit den ersten Feh
 ### Neue Vertragsversion
 Schritte für eine neue Version (z. B. `2.0`); die laufenden Pakete bleiben bis zum nächsten Bau bei ihrer Version:
 1. Neues Verzeichnis `contract/v2/` (Kopie von `v1`, Änderungen), `CONTRACT_SCHEMAS` in `contract/index.ts` darauf umstellen, `SCHEMA_VERSION` in `contract/index.ts` und `schemaVersion` in `config/delivery.json` auf die neue Version.
-2. `npm run contract:generate` schreibt die JSON-Schemas nach `contract/schema/<version>/` (ein Test vergleicht sie mit den zod-Schemas); einchecken.
-3. Die API liefert nur die aktuelle Version aus (`/schema/<version>/…` kennt nur sie): Abnehmer vorher informieren, danach je Revier „Paket bauen“.
+2. `npm run contract:generate` schreibt die JSON-Schemas nach `contract/schema/<version>/` (ein Test vergleicht sie mit den zod-Schemas); einchecken. Das alte Verzeichnis bleibt.
+3. Die neue Version in `contract/schema/published.ts` eintragen (ein Test verlangt für jedes Verzeichnis einen Eintrag). `/schema/<version>/…` liefert dann alte und neue Schemas, so dass ein archiviertes Paket (`?dataVersion=`) weiter gegen sein Schema prüfbar ist. Abnehmer vorher informieren, danach je Revier „Paket bauen“.
 
 ## Qualität und Pilot (M7)
 Stufe 10 (Teil-Spec 10): Kennzahlen, Navily-Vergleich, Regression und simulierter Revisit. Ablauf des Piloten mit Kosten, Stopp-Bedingungen und Entscheidungen: `docs/pilot/m7-runbook.md`; Abnahme: `docs/pilot/m7-abnahme.md`. Migrationsstand nach M7: **0047** (`npm run db:migrate`; die Entwicklungsdatenbank stand auf 0038).

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import type { ExcludeReason } from "@/lib/domain/consolidation/exclude";
 import {
@@ -10,6 +10,7 @@ import {
   type Spot,
 } from "@/contract";
 import { changeEntrySchema, coastFeatureSchema, highlightSchema, manifestSchema, regionSchema, spotSchema } from "@/contract/v1";
+import { PUBLISHED_SCHEMAS, publishedJsonSchema } from "@/contract/schema/published";
 import { TEIL_B_EXAMPLE } from "./fixtures";
 import { SAMPLE_FILES } from "./samples";
 
@@ -145,6 +146,20 @@ describe("Periplus Data Contract v1", () => {
       $id: "periplus:contract/1.0/spots.schema.json",
       title: "Periplus Data Contract 1.0 – spots.json",
     });
+  });
+
+  it("every checked-in schema version is published, file by file, so older versions stay served (DAT-9)", () => {
+    const versions = readdirSync("contract/schema", { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+    expect(Object.keys(PUBLISHED_SCHEMAS).sort()).toEqual(versions.sort());
+    for (const version of versions) {
+      const files = readdirSync(`contract/schema/${version}`).filter((f) => f.endsWith(".schema.json"));
+      expect(Object.keys(PUBLISHED_SCHEMAS[version]!).sort(), version).toEqual(files.sort());
+      for (const file of files) expect(publishedJsonSchema(version, file), `${version}/${file}`).toEqual(readJson(`contract/schema/${version}/${file}`));
+    }
+    expect(Object.keys(PUBLISHED_SCHEMAS[SCHEMA_VERSION]!)).toEqual(CONTRACT_FILES.map(jsonSchemaFileName));
+    for (const [version, file] of [["2.0", "spots.schema.json"], ["1.0", "spots.json"], ["1.0", "constructor"], ["__proto__", "spots.schema.json"]]) {
+      expect(publishedJsonSchema(version!, file!), `${version}/${file}`).toBeNull();
+    }
   });
 
   it("an unknown version or file yields null", () => {
