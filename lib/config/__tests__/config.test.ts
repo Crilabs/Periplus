@@ -91,6 +91,8 @@ describe("loadConfig", () => {
     expect(c.queues["system.ping"].retryLimit).toBe(2);
     // A crawled PDF is transcribed page by page in one job: it must not expire after pg-boss's default 15 minutes.
     expect(c.queues["fetch.url"].expireInSeconds).toBeGreaterThanOrEqual(3600);
+    // A package build holds its area lock and two pool connections; it must not expire and be retried meanwhile.
+    expect(c.queues["delivery.build"].expireInSeconds).toBe(3600);
     expect(c.budgets.anthropic.dailyEur).toBeGreaterThan(0);
     expect(c.models.tasks["system.echo"].model).toBe("claude-haiku-5-5");
     expect(c.models.pricesEurPerMTok["claude-haiku-5-5"].input).toBeGreaterThan(0);
@@ -623,6 +625,7 @@ describe("delivery configuration", () => {
       validation: { harbourMinShelter: 0.8, lowConfidenceNote: "wenig belegt" },
       severity: { shelterDelta: 0.2 },
       api: { cacheMaxAgeSeconds: 60 },
+      build: { lockTimeoutMs: 300000 },
     });
     expect(repoConfig.delivery.forbiddenDomains).toContain("navily.com");
     expect(repoConfig.delivery.licenses).toEqual([
@@ -653,6 +656,7 @@ describe("delivery configuration", () => {
     expect(withDelivery((d) => (d.forbiddenDomains = ["https://navily.com"]))).toThrow(/delivery\.json.*forbiddenDomains/);
     expect(withDelivery((d) => (d.licenses[0]!.files = ["land.json" as never]))).toThrow(/delivery\.json.*files/);
     expect(withDelivery((d) => (d.licenses[0]!.fields = ["land.json#/name"]))).toThrow(/delivery\.json.*fields/);
+    expect(withDelivery((d) => (d.build.lockTimeoutMs = 0))).toThrow(/delivery\.json.*lockTimeoutMs/);
     expect(withDelivery((d) => Object.assign(d, { bogus: 1 }))).toThrow(/delivery\.json/);
   });
 });

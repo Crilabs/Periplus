@@ -14,8 +14,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Starts the run "Paket bauen" for one area (scope `area` with the area's key, as other area runs), stage
- * `delivery.build`. Checked before the run exists: the id is a valid area geo object with a public id; anything else
- * throws `RunScopeNotReady` (`area_without_geo_object`).
+ * `delivery.build`. Checked before the run exists: the id is a valid area geo object with a public id and a config key
+ * (the scope id, as the other area runs); anything else throws `RunScopeNotReady` (`area_without_geo_object`).
  */
 export async function startDeliveryRun(
   db: Db,
@@ -24,14 +24,22 @@ export async function startDeliveryRun(
 ): Promise<{ id: string }> {
   const [area] = UUID.test(input.areaGeoObjectId)
     ? await db
-        .select({ configKey: geoObjects.configKey, publicId: geoObjects.publicId })
+        .select({ configKey: geoObjects.configKey })
         .from(geoObjects)
-        .where(and(eq(geoObjects.id, input.areaGeoObjectId), eq(geoObjects.type, "area"), isNotNull(geoObjects.publicId), validAt(geoObjects)))
+        .where(
+          and(
+            eq(geoObjects.id, input.areaGeoObjectId),
+            eq(geoObjects.type, "area"),
+            isNotNull(geoObjects.publicId),
+            isNotNull(geoObjects.configKey),
+            validAt(geoObjects),
+          ),
+        )
     : [];
   if (!area) {
-    throw new RunScopeNotReady("area_without_geo_object", `${input.areaGeoObjectId} is no valid area with a public id`);
+    throw new RunScopeNotReady("area_without_geo_object", `${input.areaGeoObjectId} is no valid area with a public id and config key`);
   }
-  const areaKey = area.configKey ?? area.publicId!;
+  const areaKey = area.configKey!;
   return startRun(db, boss, {
     kind: "stage",
     scope: { type: "area", id: areaKey },

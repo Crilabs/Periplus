@@ -759,6 +759,13 @@ const contractField = z
 export const deliverySchema = z.strictObject({
   /** Contract version the build writes. */
   schemaVersion: z.literal(SCHEMA_VERSION),
+  build: z.strictObject({
+    /**
+     * `lock_timeout` while a build waits for its area lock, milliseconds: a build waiting longer fails and its job is
+     * retried, so waiters never hold their pool connections for good (see docs/runbook.md, "Pakete bauen").
+     */
+    lockTimeoutMs: positiveInt,
+  }),
   spots: z.strictObject({
     /** Place statuses delivered as spots (excluded spots are delivered with `exclude.excluded`). */
     statuses: z.array(z.enum(placeStatusEnum.enumValues)).min(1),

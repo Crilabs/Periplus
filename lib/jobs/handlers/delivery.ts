@@ -1,6 +1,6 @@
 import { deliveryArchive } from "@/lib/domain/delivery/archive";
 import { buildDelivery } from "@/lib/domain/delivery/build";
-import { getRun } from "@/lib/domain/runs";
+import { runTriggeredBy } from "@/lib/domain/runs";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import { DELIVERY_STAGE, deliveryAreaId } from "@/lib/pipeline/delivery";
 import type { StageDefinition } from "@/lib/pipeline/runs";
@@ -16,22 +16,16 @@ export const deliveryBuildStage: StageDefinition = {
 };
 
 /**
- * Builds the package of `data.areaId` (spec 08). A rejected package is a finished job (its report is the result, a
- * retry would build the same package); a failure to read or store throws, so the job is retried.
+ * Builds the package of `data.areaId` (spec 08) on the pool (`ctx.db`). A rejected package is a finished job (its
+ * report is the result, a retry would build the same package) and is logged as a warning; a failure to read or store
+ * throws, so the job is retried.
  */
 export const deliveryBuildHandler: JobHandler<JobData> = async (data, ctx) => {
   const areaId = deliveryAreaId(data);
-  const runId = data.runId ?? ctx.runId;
-  const run = runId ? await getRun(ctx.db, runId) : null;
-  const result = await buildDelivery(ctx.db, deliveryArchive(), areaId, { runId, triggeredBy: run?.triggeredBy });
-  ctx.log.info(
-    {
-      areaId,
-      deliveryId: result.deliveryId,
-      status: result.status,
-      dataVersion: result.dataVersion,
-      failedChecks: result.report.checks.filter((c) => !c.ok).length,
-    },
-    "delivery built",
-  );
+  const triggeredBy = ctx.runId ? await runTriggeredBy(ctx.db, ctx.runId) : null;
+  const result = await buildDelivery(ctx.db, deliveryArchive(), areaId, { runId: ctx.runId, triggeredBy: triggeredBy ?? undefined });
+  const failed = result.report.checks.filter((c) => !c.ok);
+  const fields = { areaId, deliveryId: result.deliveryId, status: result.status, dataVersion: result.dataVersion, failedChecks: failed.length };
+  if (result.status === "rejected") ctx.log.warn({ ...fields, checks: failed.map((c) => c.name) }, "delivery rejected");
+  else ctx.log.info(fields, "delivery built");
 };

@@ -47,6 +47,7 @@ const CONSOLIDATION_GROUPS: Record<Exclude<keyof AppConfig["consolidation"], "ve
 
 /** Parameter groups of the delivery configuration, in display order. */
 const DELIVERY_GROUPS: Record<Exclude<keyof AppConfig["delivery"], "schemaVersion" | "forbiddenDomains" | "licenses">, string> = {
+  build: "Paketbau",
   spots: "Spots",
   coast: "Küste",
   regions: "Regionen",

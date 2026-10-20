@@ -32,8 +32,8 @@ import { buildWeatherPoints } from "./weather-points";
  * Builds one area's package (spec 08 "Paket je Revier"): reads everything from one snapshot, maps, versions, validates,
  * stores the files in S3 and writes the `deliveries` row with the contract versions it introduced. A valid package with
  * a change gets the next data version under `deliveries/<ar_id>/<dataVersion>/`; a rejected one is stored for
- * diagnosis under `deliveries/<ar_id>/rejected/<deliveryId>/` without a data version; a build without any change is
- * recorded as `unchanged` and stores nothing.
+ * diagnosis under `deliveries/<ar_id>/rejected/<deliveryId>/` without a data version (also when its content equals the
+ * previous package); a valid build without any change is recorded as `unchanged` and stores nothing.
  */
 
 export type DeliveryRow = InferSelectModel<typeof deliveries>;
@@ -61,6 +61,14 @@ export type BuildOptions = {
   scopeTransform?: (scope: AreaScope) => AreaScope;
   /** Test seam: runs after the uploads and rows, before the commit. */
   beforeCommit?: () => Promise<void>;
+  /** Test seam: runs in the read transaction right after its snapshot is taken, before any read. */
+  afterSnapshot?: (tx: Db) => Promise<void>;
+  /**
+   * Test only: `db` is the caller's transaction (`withRollback`), and the build reads in it under its current
+   * snapshot. That transaction is READ COMMITTED and read-write, so the one-snapshot guarantee (ruling M6-D-R3) does
+   * not hold: never for production callers. Without this option a transaction handle throws; with it the pool does.
+   */
+  inCallerTransaction?: boolean;
 };
 
 export type BuildResult = { deliveryId: string; status: DeliveryStatus; dataVersion: number | null; report: ValidationReport };
@@ -287,12 +295,15 @@ function buildManifest(
 
 /**
  * Builds and records the package of one area in one transaction under the area lock
- * (`pg_advisory_xact_lock(hashtext('delivery:' || areaId))`), so two builds of an area never make two data versions.
- * All reads come from one snapshot (ruling M6-D-R3): with the pool handle a REPEATABLE READ read-only transaction opened
- * after the lock (`openBuildSnapshot`), whose snapshot is stored as `change_snapshot`; inside a caller's transaction
- * (tests) that transaction and its current snapshot. Then the uploads, the `deliveries` row and its contract versions
- * (ruling M6-P16); the commit is the commit point, so a failed commit leaves files without a row, and the retry
- * writes the same keys.
+ * (`pg_advisory_xact_lock(hashtext('delivery:' || areaId))`, waiting at most `build.lockTimeoutMs`), so two builds of
+ * an area never make two data versions. Pass the pool handle: all reads come from one snapshot (ruling M6-D-R3), a
+ * REPEATABLE READ read-only transaction opened after the lock (`openBuildSnapshot`), whose snapshot is stored as
+ * `change_snapshot`. A build therefore holds two pool connections (the lock transaction and the read one); keep the
+ * `delivery.build` concurrency of all workers well below the pool size (docs/runbook.md, "Pakete bauen"). A caller's
+ * transaction only with the test option `inCallerTransaction`. The package is validated before it counts as
+ * unchanged: a failing check rejects it even when its content equals the previous package. Then the uploads, the
+ * `deliveries` row and its contract versions (ruling M6-P16); the commit is the commit point, so a failed commit
+ * leaves files without a row, and the retry writes the same keys.
  */
 export async function buildDelivery(db: Db, archive: Archive, areaGeoObjectId: string, opts: BuildOptions = {}): Promise<BuildResult> {
   const cfg = opts.cfg ?? getConfig().delivery;
@@ -301,20 +312,35 @@ export async function buildDelivery(db: Db, archive: Archive, areaGeoObjectId: s
   const generatedAt = now.toISOString();
   // known before the files are stored: a rejected package lies under its delivery id
   const deliveryId = newId();
+  const inCallerTransaction = db instanceof PgTransaction;
+  if (inCallerTransaction !== (opts.inCallerTransaction === true)) {
+    throw new Error(
+      inCallerTransaction
+        ? "buildDelivery needs the pool handle: a caller's transaction breaks the one-snapshot build (test option inCallerTransaction)"
+        : "inCallerTransaction needs a transaction handle",
+    );
+  }
 
   return db.transaction(async (wtx) => {
+    // a build waiting for the lock holds this connection: give up after `build.lockTimeoutMs`, the job is retried
+    const { rows } = await wtx.execute<{ previous: string }>(
+      sql`select current_setting('lock_timeout') as previous, set_config('lock_timeout', ${`${cfg.build.lockTimeoutMs}ms`}, true)`,
+    );
     await wtx.execute(sql`select pg_advisory_xact_lock(hashtext(${`delivery:${areaGeoObjectId}`}))`);
-    const read = (tx: Db, snapshot: BuildSnapshot) =>
-      assemble(tx, snapshot, { archive, areaId: areaGeoObjectId, today, generatedAt, cfg, scopeTransform: opts.scopeTransform });
-    const { snapshot, result: a } =
-      db instanceof PgTransaction
-        ? await (async () => {
-            const snapshot = await currentSnapshot(wtx);
-            return { snapshot, result: await read(wtx, snapshot) };
-          })()
-        : await openBuildSnapshot(db, read);
+    await wtx.execute(sql`select set_config('lock_timeout', ${rows[0]!.previous}, true)`);
+    const read = async (tx: Db, snapshot: BuildSnapshot) => {
+      await opts.afterSnapshot?.(tx);
+      return assemble(tx, snapshot, { archive, areaId: areaGeoObjectId, today, generatedAt, cfg, scopeTransform: opts.scopeTransform });
+    };
+    const { snapshot, result: a } = inCallerTransaction
+      ? await (async () => {
+          const snapshot = await currentSnapshot(wtx);
+          return { snapshot, result: await read(wtx, snapshot) };
+        })()
+      : await openBuildSnapshot(db, read);
 
-    const status: DeliveryStatus = a.unchanged ? "unchanged" : a.report.ok ? "valid" : "rejected";
+    // validation first: content that has not changed but now fails a check is rejected, not silently unchanged
+    const status: DeliveryStatus = !a.report.ok ? "rejected" : a.unchanged ? "unchanged" : "valid";
     const row = {
       id: deliveryId,
       areaId: areaGeoObjectId,
