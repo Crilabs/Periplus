@@ -35,5 +35,6 @@ function sortKeys(v: unknown): unknown {
 
 /** The content type a package file is stored and served with. */
 export function contentTypeOf(file: string): string {
+  if (file.endsWith(".jpg")) return "image/jpeg";
   return file.endsWith(".geojson") ? "application/geo+json" : "application/json";
 }

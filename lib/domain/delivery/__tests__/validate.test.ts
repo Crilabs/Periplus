@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { textShingles } from "@/lib/db/schema";
+import { imageAttributionTexts } from "@/lib/domain/images/delivery-gate";
 import { findArchiveCopies } from "@/lib/domain/documents/archive-copies";
 import { shingleHashes } from "@/lib/domain/documents/shingles";
 import { newId } from "@/lib/domain/ids";
@@ -24,6 +25,7 @@ import { buildWarnings, CHECK_NAMES, failedChecksSummary, spotsInMilitaryAreas, 
 
 const config = loadConfig("config");
 const cfg = config.delivery;
+const imagesCfg = config.images;
 
 function validate(pkg: DeliveryPackage, deps: Partial<ValidationDeps> = {}): Promise<ValidationReport> {
   return validatePackage(pkg, {
@@ -87,6 +89,27 @@ describe("validatePackage", () => {
       },
     ],
     ["verbatim_text", () => {}, { findCopies: async (text: string) => (text.startsWith("Tiefe Bucht") ? 16 : 0) }],
+    [
+      "image_attribution",
+      (p) =>
+        void (spots(p)[0]!.images = [
+          {
+            kind: "ai_illustration",
+            slot: "title",
+            file: `images/${SPOT_A}-title.jpg`,
+            width: 1536,
+            height: 1024,
+            alt: { de: "KI-Illustration: Bucht" },
+            light: "midday",
+            observedAt: null,
+            license: "periplus",
+            attribution: `${imagesCfg.sources.sentinel2.attribution} · Illustration: Periplus`,
+            sourceUrl: null,
+            camera: null,
+          },
+        ]),
+      { imageAttribution: imageAttributionTexts(imagesCfg) },
+    ],
     // the spot's values draw on a navily document the mapper kept out of `sources` (ruling M6-D-R2)
     ["foreign_content", () => {}, { forbiddenSources: [{ file: "spots.json", objectId: SPOT_A, urls: ["https://www.navily.com/port/vathi"] }] }],
     ["data_version", (p) => void (p.files["spots.json"].dataVersion = 3)],

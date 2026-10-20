@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "2.0",
+  "schemaVersion": "2.1",
   "build": { "lockTimeoutMs": 300000 },
   "spots": { "statuses": ["confirmed", "no_anchoring"], "maxSources": 20, "excludedFallbackName": "Ankerplatz ohne Namen" },
   "coast": {
@@ -47,6 +47,27 @@
         "regions.json#/regions/*/names",
         "regions.json#/regions/*/polygon"
       ]
+    },
+    {
+      "name": "CC-BY-3.0",
+      "attribution": "Luftbild © Hellenic Cadastre (CC BY 3.0)",
+      "url": "https://creativecommons.org/licenses/by/3.0/",
+      "files": [],
+      "fields": ["spots.json#/spots/*/images", "highlights.json#/highlights/*/images"]
+    },
+    {
+      "name": "CC-BY-4.0",
+      "attribution": "Sentinel-2 cloudless 2016 © EOX (CC BY 4.0)",
+      "url": "https://creativecommons.org/licenses/by/4.0/",
+      "files": [],
+      "fields": ["spots.json#/spots/*/images", "highlights.json#/highlights/*/images"]
+    },
+    {
+      "name": "Copernicus-DEM",
+      "attribution": "Gelände © DLR/Airbus, Copernicus",
+      "url": "https://spacedata.copernicus.eu/collections/copernicus-digital-elevation-model",
+      "files": [],
+      "fields": ["spots.json#/spots/*/images", "highlights.json#/highlights/*/images"]
     }
   ],
   "api": { "cacheMaxAgeSeconds": 60 }

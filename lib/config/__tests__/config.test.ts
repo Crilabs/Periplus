@@ -648,7 +648,7 @@ describe("consolidation rules", () => {
 describe("delivery configuration", () => {
   it("the delivery config carries the spec values", () => {
     expect(getConfig().delivery).toMatchObject({
-      schemaVersion: "2.0",
+      schemaVersion: "2.1",
       coast: { marginNm: 2, simplifyToleranceM: 10 },
       validation: {
         maxWaterDistanceNm: 1.5,
@@ -673,6 +673,10 @@ describe("delivery configuration", () => {
     expect(repoConfig.delivery.forbiddenDomains).toContain("navily.com");
     expect(repoConfig.delivery.licenses).toEqual([
       expect.objectContaining({ name: "ODbL-1.0", attribution: "© OpenStreetMap contributors", files: ["coast.geojson"] }),
+      // the three imagery sources of the title images (spec 13): licence entries for the image fields
+      expect.objectContaining({ name: "CC-BY-3.0", files: [], fields: expect.arrayContaining(["spots.json#/spots/*/images"]) }),
+      expect.objectContaining({ name: "CC-BY-4.0", files: [], fields: expect.arrayContaining(["spots.json#/spots/*/images"]) }),
+      expect.objectContaining({ name: "Copernicus-DEM", files: [], fields: expect.arrayContaining(["spots.json#/spots/*/images"]) }),
     ]);
     expect(repoConfig.delivery.licenses[0]!.fields).toContain("regions.json#/regions/*/polygon");
   });

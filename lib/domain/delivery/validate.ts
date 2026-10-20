@@ -33,6 +33,7 @@ export const CHECK_NAMES = [
   "spot_duplicates",
   "highlight_duplicates",
   "verbatim_text",
+  "image_attribution",
   "foreign_content",
   "data_version",
   "changes_complete",
@@ -54,6 +55,11 @@ export type ValidationDeps = {
    */
   forbiddenSources: Array<{ file: "spots.json" | "highlights.json" | "regions.json"; objectId: string; urls: string[] }>;
   cfg: DeliveryConfig;
+  /**
+   * The attribution texts of the aerial and the terrain sources (`imageAttributionTexts`): an AI illustration's
+   * attribution must contain one of each. Without it the check `image_attribution` has nothing to hold the images to.
+   */
+  imageAttribution?: { aerial: string[]; terrain: string[] };
   /** Radius of meaning per importance 1–5, nautical miles (`consolidation.importance.radiusNm`). */
   radiusNm: number[];
   /** Build warnings (`buildWarnings`), passed into the report. */
@@ -333,8 +339,12 @@ function displayTexts(pkg: DeliveryPackage): TextField[] {
     (s.seasonNote ?? []).forEach((n, j) => add(SPOTS, s.id, `/spots/${i}/seasonNote/${j}/text`, n.text));
     (s.hazards ?? []).forEach((h, j) => add(SPOTS, s.id, `/spots/${i}/hazards/${j}/text`, h.text));
     add(SPOTS, s.id, `/spots/${i}/exclude/detail`, s.exclude.detail);
+    (s.images ?? []).forEach((img, j) => add(SPOTS, s.id, `/spots/${i}/images/${j}/alt/de`, img.alt.de));
   });
-  highlightsOf(pkg).forEach((h, i) => add(HIGHLIGHTS, h.id, `/highlights/${i}/summary/de`, h.summary?.de));
+  highlightsOf(pkg).forEach((h, i) => {
+    add(HIGHLIGHTS, h.id, `/highlights/${i}/summary/de`, h.summary?.de);
+    (h.images ?? []).forEach((img, j) => add(HIGHLIGHTS, h.id, `/highlights/${i}/images/${j}/alt/de`, img.alt.de));
+  });
   regionsOf(pkg).forEach((r, i) => add(REGIONS, r.id, `/regions/${i}/character/de`, r.character?.de));
   changesOf(pkg).forEach((c, i) => add(CHANGES, c.objectId, `/changes/${i}/summary/de`, c.summary.de));
   return out;
@@ -393,6 +403,25 @@ const verbatimText: Check = async ({ pkg, deps }) => {
       ? [finding(f.file, f.objectId, f.path, `Text enthält eine wörtliche Passage aus einer Quelle (mehr als ${maxCopiedWords} Wörter)`)]
       : [],
   );
+};
+
+/**
+ * Spec 13: the attribution of an AI illustration names the aerial and the terrain source it was made from (CC BY asks
+ * for it), so an image whose attribution lacks either does not leave. Judged by the sources' configured attribution texts.
+ */
+const imageAttribution: Check = ({ pkg, deps }) => {
+  const texts = deps.imageAttribution;
+  if (!texts) return [];
+  const out: Finding[] = [];
+  const check = (file: ContractFile, id: string, base: string, images: Array<{ kind: string; attribution: string }> | undefined) =>
+    (images ?? []).forEach((img, j) => {
+      if (img.kind !== "ai_illustration") return;
+      if (!texts.aerial.some((t) => img.attribution.includes(t))) out.push(finding(file, id, `${base}/images/${j}/attribution`, "Bildnachweis nennt keine Luftbildquelle"));
+      if (!texts.terrain.some((t) => img.attribution.includes(t))) out.push(finding(file, id, `${base}/images/${j}/attribution`, "Bildnachweis nennt keine Geländequelle"));
+    });
+  spotsOf(pkg).forEach((s, i) => check(SPOTS, s.id, `/spots/${i}`, s.images));
+  highlightsOf(pkg).forEach((h, i) => check(HIGHLIGHTS, h.id, `/highlights/${i}`, h.images));
+  return out;
 };
 
 /**
@@ -537,6 +566,7 @@ const CHECKS: Record<CheckName, Check> = {
   spot_duplicates: spotDuplicates,
   highlight_duplicates: highlightDuplicates,
   verbatim_text: verbatimText,
+  image_attribution: imageAttribution,
   foreign_content: foreignContent,
   data_version: dataVersion,
   changes_complete: changesComplete,

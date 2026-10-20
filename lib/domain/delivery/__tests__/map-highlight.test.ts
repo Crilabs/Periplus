@@ -54,6 +54,7 @@ function poi(n: number, o: { importance?: unknown; position?: LonLat; name?: str
           ),
     summary: null,
     sources: [],
+    images: [],
   };
 }
 

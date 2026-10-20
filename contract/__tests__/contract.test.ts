@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import type { ExcludeReason } from "@/lib/domain/consolidation/exclude";
@@ -122,7 +123,7 @@ describe("Periplus Data Contract v2", () => {
   });
 
   it("names one JSON schema file per contract file", () => {
-    expect(SCHEMA_VERSION).toBe("2.0");
+    expect(SCHEMA_VERSION).toBe("2.1");
     expect(CONTRACT_FILES.map(jsonSchemaFileName)).toEqual([
       "manifest.schema.json",
       "spots.schema.json",
@@ -134,7 +135,7 @@ describe("Periplus Data Contract v2", () => {
     ]);
   });
 
-  it.each(["1.0", "2.0"])("checked-in JSON schemas of %s equal the generated ones", (version) => {
+  it.each(["1.0", "2.0", "2.1"])("checked-in JSON schemas of %s equal the generated ones", (version) => {
     for (const f of CONTRACT_FILES) {
       expect(readJson(`contract/schema/${version}/${jsonSchemaFileName(f)}`), f).toEqual(
         contractJsonSchema(version, jsonSchemaFileName(f)),
@@ -161,11 +162,76 @@ describe("Periplus Data Contract v2", () => {
     expect(manifestSchema.safeParse({ ...manifest, areas: [{ ...manifest.areas[0]!, id: "sd_01J9X4M0A1B2C3D4E5F6G7H8J9" }] }).success).toBe(false);
   });
 
+  const IMAGE = {
+    kind: "ai_illustration",
+    slot: "title",
+    file: `images/${ex.id}-title.jpg`,
+    width: 1536,
+    height: 1024,
+    alt: { de: "KI-Illustration: Bucht mit Hängen" },
+    light: "midday",
+    observedAt: "2016-07-01",
+    license: "periplus",
+    attribution: "Luftbild © X · Gelände © Y · Illustration: Periplus",
+    sourceUrl: null,
+    camera: { position: [23.33, 37.6], heightM: 260, viewBearingDeg: 281.5, tiltDeg: 18, fovDeg: 50 },
+  };
+
+  it("2.1 spot validates with image and without", () => {
+    expect(spotSchema.safeParse(ex).success).toBe(true);
+    expect(spotSchema.safeParse({ ...ex, images: [IMAGE] }).success).toBe(true);
+    expect(spotSchema.safeParse({ ...ex, images: [IMAGE, { ...IMAGE, slot: "view-1", file: `images/${ex.id}-view-1.jpg`, camera: null }] }).success).toBe(true);
+    const highlight = SAMPLE_FILES["highlights.json"].highlights[0]!;
+    const hlImage = { ...IMAGE, file: `images/${highlight.id}-title.jpg` };
+    expect(highlightSchema.safeParse({ ...highlight, images: [hlImage] }).success).toBe(true);
+    for (const [name, images] of [
+      ["an empty list", []],
+      ["a file outside images/", [{ ...IMAGE, file: "photo.jpg" }]],
+      ["a region id in the file name", [{ ...IMAGE, file: "images/rg_01J9X4KZ0A1B2C3D4E5F6G7H8J-title.jpg" }]],
+      ["a bearing of 360", [{ ...IMAGE, camera: { ...IMAGE.camera, viewBearingDeg: 360 } }]],
+      ["an unknown field", [{ ...IMAGE, extra: 1 }]],
+      ["an alt text of nothing", [{ ...IMAGE, alt: { de: "" } }]],
+      ["a slot of nothing", [{ ...IMAGE, slot: "" }]],
+    ] as const) {
+      expect(spotSchema.safeParse({ ...ex, images }).success, name).toBe(false);
+    }
+  });
+
+  it("the 2.1 manifest lists image files beside the contract files", () => {
+    const manifest = SAMPLE_FILES["manifest.json"];
+    const entry = { name: `images/${ex.id}-title.jpg`, sha256: "a".repeat(64), bytes: 10 };
+    expect(manifestSchema.safeParse({ ...manifest, files: [...manifest.files, entry] }).success).toBe(true);
+    expect(manifestSchema.safeParse({ ...manifest, files: [...manifest.files, { ...entry, name: "secret.jpg" }] }).success).toBe(false);
+  });
+
+  // the 2.0 files as published on 2026-10-19 (sha256 of the checked-in bytes): 2.1 is additive, 2.0 never changes
+  const FROZEN_2_0: Record<string, string> = {
+    "changes.schema.json": "9d76ca62e505a45e42e4560bf056fc2d4fa4a5cf784517a46bfff8e97c0487d6",
+    "coast.schema.json": "278fd6907afd93f16f94663e301edd277ba3a5f09ee685a5ae6438073bbdaf47",
+    "highlights.schema.json": "23433956130821c813c5a64857e31e7adf9f4421515177edf9d095a5d019ee5e",
+    "manifest.schema.json": "e65467cb72f8f7b4e2d12f7e73a09da6b19fab9aac3751721fdcc5f212acc519",
+    "regions.schema.json": "6a8aceb605480fb22788af83fb32ce53f000cc75148ea54e3517cff56fd3bf96",
+    "spots.schema.json": "127749c51999f7d11234835d4624a8f8b23e8c7f54a1e94c90c4f05a38c91998",
+    "weather-points.schema.json": "9c60f78a1f36e3f14f0b6c151dac7b71b4d28e2d48e7786090ed8f3180925071",
+  };
+
+  it("2.0 schema files are unchanged", () => {
+    expect(readdirSync("contract/schema/2.0").sort()).toEqual(Object.keys(FROZEN_2_0).sort());
+    for (const [file, sha] of Object.entries(FROZEN_2_0)) {
+      expect(createHash("sha256").update(readFileSync(`contract/schema/2.0/${file}`)).digest("hex"), file).toBe(sha);
+      expect(publishedJsonSchema("2.0", file), file).toEqual(readJson(`contract/schema/2.0/${file}`));
+    }
+    // and 2.0 still rejects what only 2.1 knows
+    const spots20 = contractJsonSchema("2.0", "spots.schema.json") as { $defs?: unknown };
+    expect(JSON.stringify(spots20)).not.toContain("images");
+    expect(JSON.stringify(contractJsonSchema("2.1", "spots.schema.json"))).toContain("images");
+  });
+
   it("a generated JSON schema carries its id and title", () => {
-    expect(contractJsonSchema("2.0", "spots.schema.json")).toMatchObject({
+    expect(contractJsonSchema("2.1", "spots.schema.json")).toMatchObject({
       $schema: "https://json-schema.org/draft/2020-12/schema",
-      $id: "periplus:contract/2.0/spots.schema.json",
-      title: "Periplus Data Contract 2.0 – spots.json",
+      $id: "periplus:contract/2.1/spots.schema.json",
+      title: "Periplus Data Contract 2.1 – spots.json",
     });
   });
 

@@ -73,6 +73,7 @@ function spotA(
       { url: "https://example-toernbericht.de/vathi", docType: "trip_report", observedAt: "2025-06-10" },
       { url: "https://example-revierfuehrer.com/vathi", docType: "pilot_guide", observedAt: "2024-01-01" },
     ],
+    images: [],
     ...o.src,
   };
 }
@@ -166,6 +167,13 @@ const FIELD_CASES: Record<keyof SpotBody, () => void> = {
     expect(mapped(spotA(), { highlightIds: [] }).highlightIds).toEqual([]);
   },
   externalRefs: () => expect(mapped().externalRefs).toEqual({ googlePlaceIds: {}, osmId: "way/123456789", wikidataId: null }),
+  images: () => {
+    expect(mapped().images).toBeUndefined();
+    const image = { id: "i", slot: "title", sortOrder: 0, rank: 3, kind: "ai_illustration" as const, fileKey: "k", width: 1536, height: 1024, alt: "KI-Illustration: Bucht", light: "midday" as const, observedAt: null, license: "periplus", attribution: "x", camera: null };
+    expect(mapped(spotA({ src: { images: [image] } })).images).toEqual([
+      { kind: "ai_illustration", slot: "title", file: "images/sp_01J9ZD00000000000000000001-title.jpg", width: 1536, height: 1024, alt: { de: "KI-Illustration: Bucht" }, light: "midday", observedAt: null, license: "periplus", attribution: "x", sourceUrl: null, camera: null },
+    ]);
+  },
   summary: () => {
     expect(mapped().summary).toEqual({ de: SPOT_A_SUMMARY });
     expect(mapped(spotA({ src: { summary: null } })).summary).toBeUndefined();

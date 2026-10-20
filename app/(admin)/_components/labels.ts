@@ -636,6 +636,7 @@ export const CHECK_LABELS: Record<CheckName, string> = {
   spot_duplicates: "Keine zwei Spots derselben Art näher als 150 m",
   highlight_duplicates: "Keine zwei Highlights gleichen Namens näher als 500 m",
   verbatim_text: "Kein Text länger als 15 Wörter aus einer Quelle",
+  image_attribution: "Bildnachweis nennt Luftbild- und Geländequelle",
   foreign_content: "Keine fremden Inhalte",
   data_version: "Datenversion größer als die vorherige",
   changes_complete: "changes.json enthält genau die geänderten Objekte",

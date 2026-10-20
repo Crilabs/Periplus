@@ -18,6 +18,7 @@ import {
   versionFields,
   wikidataId,
 } from "./common";
+import { placeImageSchema } from "./image";
 
 /** Spot (Teil B "Spot"); required fields are the bold ones of Teil B. */
 
@@ -133,6 +134,8 @@ export const spotSchema = z.strictObject({
     })
     .optional(),
   summary: textDe.optional(),
+  /** Title and further views, best first (rank, sort order, slot); contract 2.1. */
+  images: z.array(placeImageSchema).min(1).optional(),
   sources: z.array(sourceRef).optional(),
   /** Per attribute, flat (`shelter`, `services.taverna` …). */
   provenance: z.record(

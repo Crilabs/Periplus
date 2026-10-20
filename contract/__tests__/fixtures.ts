@@ -71,7 +71,7 @@ export const TEIL_B_EXAMPLE: Spot = {
 
 export function spotsFile(spots: unknown[]): SpotsFile {
   return {
-    schemaVersion: "2.0",
+    schemaVersion: "2.1",
     subdivision: "sd_01J9X4M0A1B2C3D4E5F6G7H8J9",
     dataVersion: 1,
     generatedAt: "2026-10-19T08:00:00.000Z",

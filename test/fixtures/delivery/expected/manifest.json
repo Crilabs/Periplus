@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "2.0",
+  "schemaVersion": "2.1",
   "subdivision": {
     "id": "sd_01J9ZD00000000000000000001",
     "key": "XT-DELIVERY",
@@ -106,22 +106,52 @@
         "regions.json#/regions/*/names",
         "regions.json#/regions/*/polygon"
       ]
+    },
+    {
+      "name": "CC-BY-3.0",
+      "attribution": "Luftbild © Hellenic Cadastre (CC BY 3.0)",
+      "url": "https://creativecommons.org/licenses/by/3.0/",
+      "files": [],
+      "fields": [
+        "spots.json#/spots/*/images",
+        "highlights.json#/highlights/*/images"
+      ]
+    },
+    {
+      "name": "CC-BY-4.0",
+      "attribution": "Sentinel-2 cloudless 2016 © EOX (CC BY 4.0)",
+      "url": "https://creativecommons.org/licenses/by/4.0/",
+      "files": [],
+      "fields": [
+        "spots.json#/spots/*/images",
+        "highlights.json#/highlights/*/images"
+      ]
+    },
+    {
+      "name": "Copernicus-DEM",
+      "attribution": "Gelände © DLR/Airbus, Copernicus",
+      "url": "https://spacedata.copernicus.eu/collections/copernicus-digital-elevation-model",
+      "files": [],
+      "fields": [
+        "spots.json#/spots/*/images",
+        "highlights.json#/highlights/*/images"
+      ]
     }
   ],
   "files": [
     {
       "name": "spots.json",
-      "sha256": "604723cd06ad9c502f0f44e4ec3ee4a4532fa2a195b49866a3df4f02f5d84fdd",
+      "sha256": "4a7ed5b3453cfc83e1b0a83f6d80d2399fb685d3b7386c2752a059bec3419cd8",
       "bytes": 9603
     },
     {
       "name": "highlights.json",
-      "sha256": "9d7a4a3f3e5062619ac287261056bfdccc29ce9e19e5df064c07a89dd6e2b000",
+      "sha256": "2489a71243ffb355ef12e8f9de9b3c382a7603e6b2dc8fa5b25185fcdd4c3136",
       "bytes": 843
     },
     {
       "name": "regions.json",
-      "sha256": "6da31063e76ce64b4009280c679ff7765581f257185a85b7baac635a91c574be",
+      "sha256": "b15c5d28a8c5202491103e1e3f151619fc376a0227cf5a68c193cb8d29926d65",
       "bytes": 1971
     },
     {
@@ -131,7 +161,7 @@
     },
     {
       "name": "weather-points.json",
-      "sha256": "b00de3f4c8d6343dd0c710c4f57c72b6265494f894ae9e386e9d9cdaf17c5b99",
+      "sha256": "99f8a6979bd5a86af92f92d2f948c31f29ff739bc840b2fa1d2b8c645c491e79",
       "bytes": 603
     }
   ]

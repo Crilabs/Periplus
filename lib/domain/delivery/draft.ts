@@ -1,9 +1,10 @@
 import type { HighlightBody, RegionBody, SpotBody } from "@/contract";
 import { getConfig } from "@/lib/config";
 import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
-import type { DeliveryConfig } from "@/lib/config/schemas";
+import type { DeliveryConfig, ImagesConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { loadSubdivisionScope } from "./load";
+import { imageFiles, type ImageFile } from "./map-image";
 import { highlightIdsBySpot, mapHighlights, type DroppedHighlight } from "./map-highlight";
 import { assignRegions, mapRegion, namedRegions, regionIdAt } from "./map-region";
 import { mapSources, mapSpot, type SpotWarning } from "./map-spot";
@@ -36,6 +37,8 @@ export type SubdivisionDraft = {
   /** The delivered regions as loaded (weather points), and the region of a point among them. */
   deliveredRegions: RegionSource[];
   regionIdFor: (p: LonLat) => string | null;
+  /** The image files of the delivered spots and highlights (their bytes come from the archive, `fileKey`). */
+  imageFiles: ImageFile[];
 };
 
 /** Defaults: the delivery configuration and the active consolidation rules. */
@@ -45,6 +48,8 @@ export type DraftOptions = {
   radiusNm?: number[];
   /** Highlight confidence without a profile value (`consolidation.poiConfidence`, ruling M6-P7). */
   poiConfidence?: number;
+  /** Which sources' images are delivered (`images.delivery`); default the configuration. */
+  images?: ImagesConfig;
   /** Test seam: changes the loaded scope (e.g. its order) before mapping. */
   scopeTransform?: (scope: SubdivisionScope) => SubdivisionScope;
 };
@@ -73,7 +78,7 @@ export async function draftSubdivision(db: Db, subdivisionId: string, today: str
   const consolidation = await consolidationConfigFor(db);
   const radiusNm = opts.radiusNm ?? consolidation.importance.radiusNm;
   const poiConfidence = opts.poiConfidence ?? consolidation.poiConfidence;
-  const loaded = await loadSubdivisionScope(db, subdivisionId, cfg, today);
+  const loaded = await loadSubdivisionScope(db, subdivisionId, cfg, today, opts.images);
   const scope = ordered(opts.scopeTransform ? opts.scopeTransform(loaded) : loaded);
 
   // Which spots the package delivers, and which of them are excluded: the context (region, highlights) does not
@@ -111,6 +116,10 @@ export async function draftSubdivision(db: Db, subdivisionId: string, today: str
   }));
 
   const poiGeoObjectIds = new Map(scope.pois.map((p) => [p.publicId, p.geoObjectId]));
+  const deliveredImages = new Map<string, ImageFile[]>([
+    ...scope.spots.map((s): [string, ImageFile[]] => [s.publicId, imageFiles(s.publicId, s.images)]),
+    ...scope.pois.map((p): [string, ImageFile[]] => [p.publicId, imageFiles(p.publicId, p.images)]),
+  ]);
   return {
     scope,
     spots,
@@ -126,5 +135,6 @@ export async function draftSubdivision(db: Db, subdivisionId: string, today: str
     droppedRegions: named.dropped,
     deliveredRegions: named.regions,
     regionIdFor,
+    imageFiles: [...spots.map((s) => s.body.id), ...mappedHighlights.highlights.map((h) => h.id)].flatMap((id) => deliveredImages.get(id) ?? []),
   };
 }

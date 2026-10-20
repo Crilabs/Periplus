@@ -2,6 +2,7 @@ import type { HighlightBody } from "@/contract";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { distanceNm, round5 } from "./geo";
+import { mapImages } from "./map-image";
 import { lastObserved, mapSources, mapSummary } from "./map-spot";
 import type { LonLat, PoiSource } from "./types";
 import { HIGHLIGHT_CATEGORY } from "./vocab";
@@ -112,6 +113,7 @@ export function mapHighlights(
         regionId: ctx.regionIdFor(position),
         season: season(a),
         summary: mapSummary(poi.summary, conf, ctx.cfg),
+        images: mapImages(poi.publicId, poi.images),
         sources: sources.sources,
         externalRefs: { googlePlaceId: null, osmId: poi.osmId, wikidataId: poi.wikidataId },
         score: {

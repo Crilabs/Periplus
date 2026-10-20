@@ -25,7 +25,7 @@ export const WEATHER_POINT = "wp_01J9ZD00000000000000000001";
 export const INLAND_2NM = { lat: 35.23333, lon: 21.05 };
 
 const GENERATED_AT = "2026-10-20T06:00:00.000Z";
-const envelope = { schemaVersion: "2.0" as const, subdivision: SUBDIVISION_ID, dataVersion: 2, generatedAt: GENERATED_AT };
+const envelope = { schemaVersion: "2.1" as const, subdivision: SUBDIVISION_ID, dataVersion: 2, generatedAt: GENERATED_AT };
 const island: [number, number][] = [
   [21.0, 35.2],
   [21.1, 35.2],
@@ -123,7 +123,7 @@ const weatherPoint: WeatherPoint = {
 export function validPackage(): DeliveryPackage {
   return structuredClone({
     manifest: {
-      schemaVersion: "2.0",
+      schemaVersion: "2.1",
       subdivision: {
         id: SUBDIVISION_ID,
         key: "XT-NISIDA",

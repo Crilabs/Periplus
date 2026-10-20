@@ -14,14 +14,16 @@ import {
 } from "@/contract";
 import { getConfig } from "@/lib/config";
 import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
-import type { DeliveryConfig } from "@/lib/config/schemas";
+import type { DeliveryConfig, ImagesConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { deliveredObjects, deliveries, type DeliveryStatus } from "@/lib/db/schema/deliveries";
 import { findArchiveCopies } from "@/lib/domain/documents/archive-copies";
 import { newId } from "@/lib/domain/ids";
+import { imageAttributionTexts } from "@/lib/domain/images/delivery-gate";
 import { buildChanges, eventSeverities } from "./changes";
 import { buildCoast } from "./coast";
 import { draftSubdivision, type SubdivisionDraft } from "./draft";
+import type { ImageFile } from "./map-image";
 import { contentDigest, contentTypeOf, serializeFile, sha256Hex } from "./serialize";
 import { currentSnapshot, openBuildSnapshot, type BuildSnapshot } from "./snapshot";
 import type { DeliveryPackage, SubdivisionScope } from "./types";
@@ -60,6 +62,8 @@ export type BuildOptions = {
   now?: Date;
   triggeredBy?: string;
   cfg?: DeliveryConfig;
+  /** The images configuration: which sources' images are delivered (`images.delivery`), the source attributions. */
+  imagesCfg?: ImagesConfig;
   /** Test seam: changes the loaded scope before mapping. */
   scopeTransform?: (scope: SubdivisionScope) => SubdivisionScope;
   /** Test seam: runs after the uploads and rows, before the commit. */
@@ -118,6 +122,8 @@ type Assembly = {
   removed: RemovedObject[];
   unchanged: boolean;
   dataVersion: number;
+  /** The delivered image files and their bytes, by package file name. */
+  imageBytes: Map<string, Uint8Array>;
 };
 
 const byId = <T extends { id: string }>(a: T, b: T) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
@@ -146,6 +152,8 @@ function carryMerged(draft: SubdivisionDraft, previous: PreviousPackage | null):
       continue;
     }
     const body = withoutVersion(last);
+    // a merged spot has no images of its own, and the package holds no file for it
+    delete body.images;
     carried.push({
       ...body,
       ...(body.highlightIds ? { highlightIds: body.highlightIds.filter((id) => highlightIds.has(id)) } : {}),
@@ -160,17 +168,26 @@ function carryMerged(draft: SubdivisionDraft, previous: PreviousPackage | null):
 async function assemble(
   tx: Db,
   snapshot: BuildSnapshot,
-  input: { archive: Archive; subdivisionId: string; today: string; generatedAt: string; cfg: DeliveryConfig; scopeTransform?: (s: SubdivisionScope) => SubdivisionScope },
+  input: {
+    archive: Archive;
+    subdivisionId: string;
+    today: string;
+    generatedAt: string;
+    cfg: DeliveryConfig;
+    imagesCfg: ImagesConfig;
+    scopeTransform?: (s: SubdivisionScope) => SubdivisionScope },
 ): Promise<Assembly> {
-  const { cfg, today } = input;
+  const { cfg, imagesCfg, today } = input;
   const consolidation = await consolidationConfigFor(tx);
   const previous = await previousPackage(tx, input.archive, input.subdivisionId);
   const draft = await draftSubdivision(tx, input.subdivisionId, today, {
     cfg,
     radiusNm: consolidation.importance.radiusNm,
     poiConfidence: consolidation.poiConfidence,
+    images: imagesCfg,
     scopeTransform: input.scopeTransform,
   });
+  const imageBytes = await readImageFiles(input.archive, draft.imageFiles);
   const latest = await latestDelivered(tx, input.subdivisionId);
   const { carried, notCarried } = carryMerged(draft, previous);
 
@@ -195,7 +212,9 @@ async function assemble(
     removed.length === 0 &&
     objects.every((o) => o.status === "same") &&
     contentDigest(coast.features) === previous.coastDigest &&
-    contentDigest(weather.points) === previous.weatherDigest;
+    contentDigest(weather.points) === previous.weatherDigest &&
+    // an image's bytes may change while its object does not (a new picture for the same slot)
+    [...imageBytes].every(([file, bytes]) => previous.fileHashes[file] === sha256Hex(bytes));
   const previousVersion = previous?.delivery.dataVersion ?? null;
   const dataVersion = (previousVersion ?? 0) + 1;
 
@@ -226,7 +245,7 @@ async function assemble(
       ? { "changes.json": { ...envelope, previousDataVersion: previousVersion, changes } }
       : {}),
   };
-  const manifest = buildManifest(draft.scope, files, { dataVersion, previousDataVersion: previousVersion, generatedAt: input.generatedAt, cfg });
+  const manifest = buildManifest(draft.scope, files, imageBytes, { dataVersion, previousDataVersion: previousVersion, generatedAt: input.generatedAt, cfg });
   const pkg: DeliveryPackage = { manifest, files };
 
   const report = await validatePackage(pkg, {
@@ -246,6 +265,7 @@ async function assemble(
       ...draft.regionForbiddenSources.map((r) => ({ file: "regions.json" as const, objectId: r.id, urls: r.urls })),
     ],
     cfg,
+    imageAttribution: imageAttributionTexts(imagesCfg),
     radiusNm: consolidation.importance.radiusNm,
     warnings: buildWarnings({
       spots: draft.spots.map((s) => ({ id: s.body.id, warnings: s.warnings })),
@@ -258,13 +278,25 @@ async function assemble(
       militaryAreaSpots: spotsInMilitaryAreas(files["spots.json"].spots, coast),
     }),
   });
-  return { previous, pkg, report, objects, removed, unchanged, dataVersion };
+  return { previous, pkg, report, objects, removed, unchanged, dataVersion, imageBytes };
+}
+
+/** The bytes of the images the package delivers, by package file name; an image missing in the archive fails the build (retried). */
+async function readImageFiles(archive: Archive, files: ImageFile[]): Promise<Map<string, Uint8Array>> {
+  const out = new Map<string, Uint8Array>();
+  for (const { file, fileKey } of files) {
+    const bytes = await archive.get(fileKey);
+    if (bytes === null) throw new Error(`image ${fileKey} of ${file} is missing in the archive`);
+    out.set(file, bytes);
+  }
+  return out;
 }
 
 /** The manifest (Teil B): subdivision, touching areas, versions, tiles, counts, licences from the configuration, and every other file's hash. */
 function buildManifest(
   scope: SubdivisionScope,
   files: DeliveryPackage["files"],
+  imageBytes: Map<string, Uint8Array>,
   o: { dataVersion: number; previousDataVersion: number | null; generatedAt: string; cfg: DeliveryConfig },
 ): Manifest {
   const listed = CONTRACT_FILES.filter((f): f is Exclude<ContractFile, "manifest.json"> => f !== "manifest.json" && files[f as keyof typeof files] !== undefined);
@@ -293,10 +325,13 @@ function buildManifest(
       changes: files["changes.json"]?.changes.length ?? 0,
     },
     licenses: o.cfg.licenses.map((l) => ({ name: l.name, attribution: l.attribution, url: l.url, files: [...l.files], fields: [...l.fields] })),
-    files: listed.map((name) => {
-      const bytes = serializeFile(files[name]);
-      return { name, sha256: sha256Hex(bytes), bytes: bytes.byteLength };
-    }),
+    files: [
+      ...listed.map((name) => {
+        const bytes = serializeFile(files[name]);
+        return { name, sha256: sha256Hex(bytes), bytes: bytes.byteLength };
+      }),
+      ...[...imageBytes].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([name, bytes]) => ({ name, sha256: sha256Hex(bytes), bytes: bytes.byteLength })),
+    ],
   };
 }
 
@@ -314,6 +349,7 @@ function buildManifest(
  */
 export async function buildDelivery(db: Db, archive: Archive, subdivisionId: string, opts: BuildOptions = {}): Promise<BuildResult> {
   const cfg = opts.cfg ?? getConfig().delivery;
+  const imagesCfg = opts.imagesCfg ?? getConfig().images;
   const now = opts.now ?? new Date();
   const today = now.toISOString().slice(0, 10);
   const generatedAt = now.toISOString();
@@ -337,7 +373,7 @@ export async function buildDelivery(db: Db, archive: Archive, subdivisionId: str
     await wtx.execute(sql`select set_config('lock_timeout', ${rows[0]!.previous}, true)`);
     const read = async (tx: Db, snapshot: BuildSnapshot) => {
       await opts.afterSnapshot?.(tx);
-      return assemble(tx, snapshot, { archive, subdivisionId, today, generatedAt, cfg, scopeTransform: opts.scopeTransform });
+      return assemble(tx, snapshot, { archive, subdivisionId, today, generatedAt, cfg, imagesCfg, scopeTransform: opts.scopeTransform });
     };
     const { snapshot, result: a } = inCallerTransaction
       ? await (async () => {
@@ -376,6 +412,10 @@ export async function buildDelivery(db: Db, archive: Archive, subdivisionId: str
       ];
       for (const [file, data] of stored) {
         const bytes = serializeFile(data);
+        fileHashes[file] = { sha256: sha256Hex(bytes), bytes: bytes.byteLength };
+        await archive.put(`${storagePrefix}${file}`, bytes, contentTypeOf(file));
+      }
+      for (const [file, bytes] of a.imageBytes) {
         fileHashes[file] = { sha256: sha256Hex(bytes), bytes: bytes.byteLength };
         await archive.put(`${storagePrefix}${file}`, bytes, contentTypeOf(file));
       }
