@@ -144,6 +144,7 @@ Ergebnis der letzten Prüfung (nach Abnahme eintragen): _Datum: offen, restore-c
 - Je Revier eine Datei; `key` muss dem Dateinamen entsprechen. Die Datei wird beim Start mit zod geprüft (Namen `de`, `en`, `el` Pflicht).
 - **Entwurf:** Die Polygone von `saronic` und `argolic` sowie die Küstenabschnitte von `saronic` (Methana, Ermioni, Porto Cheli, Epidavros) sind grobe Entwürfe. Vor der Abnahme M1 in geojson.io nachzeichnen und die Koordinaten in die Dateien übernehmen (Task 23).
 - Ein Revier (Datei) oder Küstenabschnitt, der aus der Konfiguration verschwindet oder einen neuen `key` bekommt, wird beim nächsten `tiles.ensure` (Gazetteer-Lauf) beendet: das nächste Paket meldet den Abschnitt als `removed`, `GET /areas` listet das Revier nicht mehr. Ein umbenannter Abschnitt bekommt eine neue `rg_`-ID. Kommt derselbe `key` zurück, lebt dasselbe Objekt mit seiner alten ID wieder auf.
+- Ein korrigierter Name (`de`, `en`, `el`) ersetzt beim nächsten Gazetteer-Lauf den alten; beim `el`-Namen endet auch dessen lateinische Umschrift (`el-Latn`), sofern kein anderer gültiger griechischer Name des Objekts sie ergibt.
 
 ## Offene Checkliste (nicht automatisiert, Abnahme M0)
 1. Branch pushen, Pull Request öffnen; Job `check` in GitHub Actions grün (`gh pr checks --watch`).

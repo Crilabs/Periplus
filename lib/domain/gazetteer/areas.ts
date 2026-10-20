@@ -6,7 +6,7 @@ import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects } from "@/lib/db/schema";
 import { newPublicId } from "@/lib/domain/ids";
 import type { Bbox } from "@/lib/domain/tiles";
-import { addNames } from "./names";
+import { addNames, isGreek, transliterateElot743 } from "./names";
 
 /** Bounding box of a polygon's outer rings. */
 export function polygonBbox(polygon: AreaConfig["polygon"]): Bbox {
@@ -157,8 +157,9 @@ async function syncObject(db: Db, o: ConfigObject): Promise<string> {
 }
 
 /**
- * Ends (`valid_to`) the valid manual names the config no longer lists. Transliterations derived from an
- * ended Greek name stay valid: the same row may stem from another source's identical name.
+ * Ends (`valid_to`) the valid manual names the config no longer lists, and then every valid transliteration that no
+ * Greek name still valid on the object or configured produces (the old form of a corrected `el` name, gesamt-review
+ * W3-M-2). A transliteration another source's identical Greek name still produces stays.
  */
 async function endStaleManualNames(db: Db, id: string, names: Record<string, string>): Promise<void> {
   const configured = Object.entries(names).map(([language, name]) => ({ language, name: name.trim().replace(/\s+/g, " ") }));
@@ -174,6 +175,22 @@ async function endStaleManualNames(db: Db, id: string, names: Record<string, str
           notInArray(geoNames.language, configured.map((n) => n.language)),
           ...configured.map((n) => and(eq(geoNames.language, n.language), ne(geoNames.name, n.name))),
         ),
+      ),
+    );
+  const greek = await db
+    .select({ name: geoNames.name })
+    .from(geoNames)
+    .where(and(eq(geoNames.geoObjectId, id), eq(geoNames.script, "greek"), isNull(geoNames.validTo)));
+  const produced = [...greek.map((r) => r.name), ...configured.map((n) => n.name).filter(isGreek)].map(transliterateElot743);
+  await db
+    .update(geoNames)
+    .set({ validTo: sql`current_date` })
+    .where(
+      and(
+        eq(geoNames.geoObjectId, id),
+        eq(geoNames.origin, "transliteration"),
+        isNull(geoNames.validTo),
+        ...(produced.length > 0 ? [notInArray(geoNames.name, produced)] : []),
       ),
     );
 }

@@ -115,6 +115,26 @@ describe("syncAreas", () => {
     });
   });
 
+  it("a corrected Greek name ends the old name's transliteration, one another Greek name still produces stays (W3-M-2)", async () => {
+    await withRollback(async (tx) => {
+      const ids = await syncAreas(tx, [testArea()]);
+      const sectionId = ids.get("test-area/north")!;
+      // another source's identical Greek name on the area: its transliteration must survive the correction
+      const areaId = ids.get("test-area")!;
+      await tx.insert(geoNames).values({
+        geoObjectId: areaId, name: "Δοκιμαστικός Κόλπος", nameNormalized: "δοκιμαστικος κολπος", language: "el", script: "greek", origin: "osm",
+      });
+      const renamed = testArea();
+      renamed.names.el = "Δοκιμαστικός Όρμος";
+      renamed.coastSections[0]!.names.el = "Βόρειες Ακτές";
+      await syncAreas(tx, [renamed]);
+      const latin = async (id: string) =>
+        (await validNames(tx, id)).filter((n) => n.origin === "transliteration").map((n) => n.name).sort();
+      expect(await latin(sectionId)).toEqual(["Voreies Aktes"]);
+      expect(await latin(areaId)).toEqual(["Dokimastikos Kolpos", "Dokimastikos Ormos"]);
+    });
+  });
+
   it("keeps an area's parent set by the hierarchy stage", async () => {
     await withRollback(async (tx) => {
       const [sea] = await tx
