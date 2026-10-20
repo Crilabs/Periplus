@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
-import { imageCoverage, type ImageCoverage } from "@/lib/domain/images/view";
+import { hasCoreImagery, imageCoverage, type ImageCoverage } from "@/lib/domain/images/view";
 
 /*
  * The admin view „Länder und Landesteile“ (spec 14 „Admin-UI“): every valid subdivision grouped by country, with its
@@ -158,6 +158,8 @@ export type SubdivisionDetail = SubdivisionRow & {
   runs: Array<{ id: string; kind: string; status: string; stages: string[]; createdAt: string; triggeredBy: string }>;
   /** Title image coverage of its spots (spec 13). */
   images: ImageCoverage;
+  /** Its country has a detailed aerial source (`hasCoreImagery`), so its spots get images and „Titelbilder erzeugen“ is offered. */
+  coreImagery: boolean;
 };
 
 /**
@@ -202,6 +204,7 @@ export async function subdivisionDetail(db: Db, key: string): Promise<Subdivisio
   return {
     ...row,
     images: await imageCoverage(db, idRows[0]!.id),
+    coreImagery: hasCoreImagery(country),
     country,
     whole,
     countryName: countryName(country),

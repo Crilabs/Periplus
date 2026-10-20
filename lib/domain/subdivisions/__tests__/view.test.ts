@@ -68,6 +68,10 @@ describe("subdivisionDetail", () => {
       expect(detail.tiles).toEqual([{ id: tile, lastRunAt: null, label: true }]);
       expect(detail.areas.map((a) => a.name)).toEqual(["Testrevier"]);
       expect(detail.runs).toHaveLength(1);
+      // XQ has no detailed aerial source, so no „Titelbilder erzeugen“; a Greek Landesteil has the cadastre
+      expect(detail.coreImagery).toBe(false);
+      await insertTestSubdivision(tx, "XQ-G", [40.25, 30.0, 40.5, 30.25], { country: "GR" });
+      expect((await subdivisionDetail(tx, "XQ-G"))!.coreImagery).toBe(true);
       expect(await subdivisionDetail(tx, "XQ-NONE")).toBeNull();
     }));
 });

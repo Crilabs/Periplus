@@ -4,7 +4,7 @@ import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { imageryTiles, placeImages, placeRenders, type ImagerySource } from "@/lib/db/schema";
-import { imageCoverage, placeImageView } from "@/lib/domain/images/view";
+import { hasCoreImagery, imageCoverage, placeImageView } from "@/lib/domain/images/view";
 import { newId } from "@/lib/domain/ids";
 import { createReviewTask } from "@/lib/domain/review";
 import { createRun } from "@/lib/domain/runs";
@@ -168,6 +168,16 @@ describe("imageCoverage", () => {
         generationCostEur: 0,
       });
     }));
+});
+
+describe("hasCoreImagery", () => {
+  it("names the countries of a WMS source with an explicit country list, not those of the satellite source", () => {
+    expect(hasCoreImagery("GR")).toBe(true);
+    expect(hasCoreImagery("HR")).toBe(false);
+    const sources = structuredClone(cfg.images.sources);
+    sources.ktimatologio.countries = "*";
+    expect(hasCoreImagery("GR", { sources })).toBe(false);
+  });
 });
 
 describe("placeImageView", () => {

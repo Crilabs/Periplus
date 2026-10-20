@@ -47,6 +47,15 @@ export type PlaceImageView = {
   zooms: ZoomLevel[];
 };
 
+/**
+ * Whether a country has a detailed (core) aerial source: a WMS source with an explicit country list naming it (the
+ * cadastre; a source for every country, `"*"`, is the wide satellite window). Only such a country's spots get images
+ * (`eligibleSpots`), so only its Landesteile offer „Titelbilder erzeugen“.
+ */
+export function hasCoreImagery(country: string, cfg: Pick<ImagesConfig, "sources"> = getConfig().images): boolean {
+  return Object.values(cfg.sources).some((s) => s.kind === "wms" && s.countries !== "*" && s.countries.includes(country));
+}
+
 /** Per place image the sources of its render whose images `images.delivery` does not deliver (sorted); `[]` when deliverable. */
 async function blockedSources(db: Db, placeImageIds: string[], cfg: Pick<ImagesConfig, "delivery">): Promise<Map<string, string[]>> {
   const sources = await imageSources(db, placeImageIds);

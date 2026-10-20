@@ -56,12 +56,14 @@ export default async function Page({ params, searchParams }: PageProps<"/subdivi
         actions={
           d.status !== "ausgeschlossen" && (
             <>
-              <form action={startSubdivisionImagesAction}>
-                <input type="hidden" name="subdivisionKey" value={d.key} />
-                <Button title="Startet einen Lauf, der die Titelbilder der Orte dieses Landesteils erzeugt (höchstens so viele, wie die Konfiguration je Lauf erlaubt). Bilder, die schon erzeugt oder in Prüfung sind, werden übersprungen.">
-                  Titelbilder erzeugen
-                </Button>
-              </form>
+              {d.coreImagery && (
+                <form action={startSubdivisionImagesAction}>
+                  <input type="hidden" name="subdivisionKey" value={d.key} />
+                  <Button title="Startet einen Lauf, der die Titelbilder der Orte dieses Landesteils erzeugt (höchstens so viele, wie die Konfiguration je Lauf erlaubt). Bilder, die schon erzeugt oder in Prüfung sind, werden übersprungen.">
+                    Titelbilder erzeugen
+                  </Button>
+                </form>
+              )}
               {d.status !== "läuft" && (
                 <form action={buildSubdivisionAction}>
                   <input type="hidden" name="subdivisionKey" value={d.key} />
