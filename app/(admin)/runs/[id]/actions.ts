@@ -11,6 +11,7 @@ import { QUEUES } from "@/lib/jobs/queues";
 import { createLogger } from "@/lib/logger";
 import { catchUpConsolidation, type CatchUpResult } from "@/lib/pipeline/consolidation/run";
 import { endRunByAdmin } from "@/lib/pipeline/runs";
+import { afterBuildRunEnded } from "@/lib/pipeline/subdivision-build";
 import { recheckBlockedExtractionRun } from "@/lib/pipeline/text/check";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { requireAdmin } from "@/lib/security/require-admin";
@@ -35,7 +36,11 @@ const endRunSchema = z.object({ runId: z.uuid() });
 export async function endRunAction(input: FormData | { runId: string }): Promise<void> {
   const admin = await requireAdmin();
   const { runId } = endRunSchema.parse(input instanceof FormData ? Object.fromEntries(input) : input);
-  await endRunByAdmin(getDb(), await getBoss(), runId, admin.email);
+  const db = getDb();
+  const boss = await getBoss();
+  const { ended } = await endRunByAdmin(db, boss, runId, admin.email);
+  // an ended subdivision build leaves the queue, and the next queued subdivision of its country starts
+  if (ended) await afterBuildRunEnded(db, boss, runId);
   refresh();
 }
 

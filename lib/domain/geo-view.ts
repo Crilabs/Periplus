@@ -2,27 +2,7 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { Point, Polygon } from "geojson";
 import type { Db } from "@/lib/db/client";
 import { asGeoJson } from "@/lib/db/geometry";
-import {
-  externalCalls,
-  geoNames,
-  geoObjects,
-  places,
-  reviewTasks,
-  runs,
-  tileGeoObjects,
-  tiles,
-  type GeoObjectType,
-  type GeoOrigin,
-  type NameOrigin,
-  type NameScript,
-  type PlaceKind,
-  type PlaceStatus,
-  type PoiCategory,
-  type ReviewKind,
-  type RunKind,
-  type RunScopeType,
-  type RunStatus,
-} from "@/lib/db/schema";
+import { externalCalls, geoNames, geoObjects, places, reviewTasks, runs, tileGeoObjects, tiles, type GeoObjectType, type GeoOrigin, type NameOrigin, type NameScript, type PlaceKind, type PlaceStatus, type PoiCategory, type ReviewKind, type RunKind, type RunScopeType, type RunStatus, subdivisions } from "@/lib/db/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { validAt } from "@/lib/domain/timeline";
 
@@ -39,7 +19,7 @@ export type TileDetail = {
   tile: {
     id: string;
     bbox: Polygon;
-    areaId: string | null;
+    subdivisionId: string | null;
     hasCoast: boolean;
     priority: number;
     cycleDays: number;
@@ -47,7 +27,8 @@ export type TileDetail = {
     nextRunAt: Date | null;
     validTo: string | null;
   };
-  area: { id: string; name: string | null; configKey: string | null } | null;
+  /** The subdivision the tile is labelled with (most coastline); its sailing areas are among `geoObjects`. */
+  subdivision: { key: string; name: string | null } | null;
   geoObjects: GeoObjectRef[];
   places: PlaceRef[];
   runs: Array<{
@@ -126,13 +107,13 @@ export async function tileExists(db: Db, id: string): Promise<boolean> {
   return row !== undefined;
 }
 
-/** A tile with its area, geo objects, places, the last runs touching it and its costs; null when unknown. */
+/** A tile with its subdivision label, geo objects, places, the last runs touching it and its costs; null when unknown. */
 export async function tileDetail(db: Db, id: string): Promise<TileDetail | null> {
   const [tile] = await db
     .select({
       id: tiles.id,
       bbox: asGeoJson(tiles.bbox),
-      areaId: tiles.areaId,
+      subdivisionId: tiles.subdivisionId,
       hasCoast: tiles.hasCoast,
       priority: tiles.priority,
       cycleDays: tiles.cycleDays,
@@ -147,11 +128,11 @@ export async function tileDetail(db: Db, id: string): Promise<TileDetail | null>
   const objectName = displayNameSql(geoObjects.id);
   const placeName = displayNameSql(places.geoObjectId);
   // One query after the other: `db` may be a transaction (one connection), where parallel queries are not allowed.
-  const area = tile.areaId
+  const subdivision = tile.subdivisionId
     ? await db
-        .select({ id: geoObjects.id, name: objectName, configKey: geoObjects.configKey })
-        .from(geoObjects)
-        .where(eq(geoObjects.id, tile.areaId))
+        .select({ key: subdivisions.key, name: displayNameSql(subdivisions.geoObjectId) })
+        .from(subdivisions)
+        .where(eq(subdivisions.id, tile.subdivisionId))
         .then((rows) => rows[0] ?? null)
     : null;
   const objects = await db
@@ -195,7 +176,7 @@ export async function tileDetail(db: Db, id: string): Promise<TileDetail | null>
   const costs = costRows.map((r) => ({ service: r.service, calls: r.calls, costEur: Number(r.costEur) }));
   return {
     tile: { ...tile, bbox: tile.bbox as Polygon },
-    area,
+    subdivision,
     geoObjects: objects,
     places: placeRows,
     runs: runRows,

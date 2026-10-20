@@ -29,6 +29,7 @@ import type { AttributeProvenance } from "../lib/domain/consolidation/types";
 import { profileEntryKey } from "../lib/domain/profile-view";
 import { createReviewTask } from "../lib/domain/review";
 import { createUser } from "../lib/domain/users";
+import { newPublicId } from "../lib/domain/ids";
 import { E2E_DELIVERY_KEY, endE2eDeliverySubdivision, seedE2eDeliverySubdivision } from "../test/fixtures/delivery/subdivision";
 
 /** Above the pipeline's priorities, so the e2e candidate is listed first on /review. */
@@ -259,6 +260,28 @@ async function createSourceProposal(db: Db): Promise<{ domain: string; taskId: s
   });
 }
 
+/** Key of the Greek subdivision of the subdivisions spec: named „Attika (E2E)“, committed once, outside every test box. */
+export const E2E_SUBDIVISION_KEY = "GR-E2E";
+
+/**
+ * The subdivisions spec needs a valid, never-built subdivision of Greece: `GR-E2E` „Attika (E2E)“ over 26.0–26.25 E ×
+ * 40.0–40.25 N (outside the pilot box), with its admin region and German name. Committed once; it stays between runs
+ * (subdivisions are never deleted).
+ */
+async function ensureE2eSubdivision(db: Db): Promise<void> {
+  const [found] = await db.select({ id: subdivisions.id }).from(subdivisions).where(and(eq(subdivisions.key, E2E_SUBDIVISION_KEY), isNull(subdivisions.validTo)));
+  if (found) return;
+  await db.transaction(async (tx) => {
+    const polygon = sql`ST_Multi(ST_MakeEnvelope(26.0, 40.0, 26.25, 40.25, 4326))`;
+    const [region] = await tx
+      .insert(geoObjects)
+      .values({ type: "admin_region", origin: "manual", adminLevel: 4, tags: { country: "GR" }, geom: polygon })
+      .returning({ id: geoObjects.id });
+    await tx.insert(geoNames).values({ geoObjectId: region!.id, name: "Attika (E2E)", nameNormalized: "attika (e2e)", language: "de", script: "latin", origin: "manual" });
+    await tx.insert(subdivisions).values({ publicId: newPublicId("sd"), key: E2E_SUBDIVISION_KEY, country: "GR", geoObjectId: region!.id, geom: polygon, landGeom: polygon });
+  });
+}
+
 /**
  * The synthetic delivery subdivision of the deliveries spec (ruling M6-P29): the delivery fixture's layout committed
  * once under key `XT-E2E-DELIVERY` (`E2E_SHIFT`, away from every other test box) and its package built here, only when
@@ -352,13 +375,8 @@ export default async function globalSetup(): Promise<void> {
     process.env.E2E_REMOVAL_PLACE = await createRemovalScene(db);
     process.env.E2E_FACT_QUOTE = FACT_QUOTE;
     process.env.E2E_SHELTER_QUOTE = SHELTER_LATER_QUOTE;
-    // Pilot-area tests roll back, so the test database normally has no saronic area object (like a fresh
-    // installation before its first gazetteer run); the quality spec checks the page for either state.
-    const { rows } = await db.execute(
-      sql`select 1 from geo_objects where type = 'area' and config_key = 'saronic' and valid_to is null`,
-    );
-    process.env.E2E_SARONIC_AREA = rows.length > 0 ? "created" : "missing";
     process.env.E2E_DELIVERY_SUBDIVISION = await ensureDeliverySubdivision(db);
+    await ensureE2eSubdivision(db);
   } finally {
     await close();
   }

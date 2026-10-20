@@ -9,3 +9,9 @@ export const CLIENT_BBOX_DEGREES = MAX_BBOX_DEGREES - 1e-4;
 
 /** Cap per layer request; beyond ~5,000 objects the map would need vector tiles (spec 09). A cut layer says so. */
 export const MAP_FEATURE_LIMIT = 5000;
+
+/**
+ * Geo object types the layer `geo-objects` leaves out: areas and seas have layers of their own, countries and admin
+ * regions show as subdivisions.
+ */
+export const NOT_IN_GEO_OBJECT_LAYER = ["area", "sea", "country", "admin_region"] as const;

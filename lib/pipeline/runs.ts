@@ -10,6 +10,7 @@ import { STAGES } from "@/lib/jobs/stages";
 import { cancelRunJobs, enqueueRunAdvance, enqueueStageJobs } from "@/lib/jobs/enqueue";
 import { createLogger } from "@/lib/logger";
 import { endRunBatches } from "@/lib/pipeline/batches";
+import { runEnded } from "@/lib/pipeline/run-ended";
 import type { QueueName } from "@/lib/jobs/queues";
 import type { JobData } from "@/lib/jobs/worker";
 
@@ -60,6 +61,8 @@ export async function enqueueStage(db: Db, boss: PgBoss, runId: string, stageNam
     const begun = await beginStage(tx, runId, stage.name, jobs.length);
     await enqueueStageJobs(boss, stage.queue, runId, stage.name, jobs, tx);
     if (begun.nextStage) await enqueueRunAdvance(boss, runId, begun.nextStage, tx);
+    // a stage without jobs that ends the run (the last one, or none planned): its follow-ups, as in the worker
+    if (begun.runFinished) await runEnded(tx, boss, runId);
     return true;
   });
 }

@@ -53,6 +53,7 @@ import { getSource, type Source } from "@/lib/domain/sources/store";
 import { latestProfile } from "@/lib/domain/timeline";
 import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
 import { droppedSafetyEntries } from "@/lib/domain/profile-view";
+import { offeredKindSql } from "@/lib/domain/review";
 
 /** Places offered for "merge into a place". */
 export const NEARBY_PLACES = 5;
@@ -313,12 +314,12 @@ export type ReviewTaskDetail = {
   subject: ReviewSubject;
 };
 
-/** Open review tasks per kind (every kind present, 0 when none). */
+/** Open review tasks per kind (every kind present, 0 when none; a retired kind counts 0). */
 export async function reviewCounts(db: Db): Promise<Record<ReviewKind, number>> {
   const rows = await db
     .select({ kind: reviewTasks.kind, n: sql<number>`count(*)::int` })
     .from(reviewTasks)
-    .where(eq(reviewTasks.status, "open"))
+    .where(and(eq(reviewTasks.status, "open"), offeredKindSql))
     .groupBy(reviewTasks.kind);
   const counts = Object.fromEntries(reviewKindEnum.enumValues.map((kind) => [kind, 0])) as Record<ReviewKind, number>;
   for (const row of rows) counts[row.kind] = row.n;
@@ -367,6 +368,7 @@ export async function listOpenTasks(
   const evaluation = sql`coalesce(${reviewTasks.context}->>'evaluationRunId', '') <> ''`;
   const conditions: (SQL | undefined)[] = [
     eq(reviewTasks.status, "open"),
+    offeredKindSql,
     opts.kind ? eq(reviewTasks.kind, opts.kind) : undefined,
     opts.evaluation === "only" ? evaluation : opts.evaluation === "none" ? sql`not ${evaluation}` : undefined,
     opts.before ? afterInQueue(opts.before) : undefined,

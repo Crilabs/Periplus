@@ -19,6 +19,9 @@ export const PROPOSAL_RUN_SCOPE = "discovery";
 export const PLACE_DISCOVERY_RUN_SCOPE = "places";
 
 /** The stages of a targeted discovery for places. */
+/** The stages of a discovery run for a subdivision, in order. */
+export const SUBDIVISION_DISCOVERY_STAGES = [DISCOVERY_AREA_STAGE, DISCOVERY_TILE_STAGE, DISCOVERY_PROPOSE_STAGE] as const;
+
 export const PLACE_DISCOVERY_STAGES = [DISCOVERY_PLACE_STAGE, DISCOVERY_PROPOSE_STAGE] as const;
 
 /**
@@ -45,7 +48,7 @@ export async function startDiscoveryRun(
       kind: "stage",
       scope: { type: "subdivision", id: scope.subdivisionKey },
       params: { subdivisionKey: scope.subdivisionKey },
-      stages: [DISCOVERY_AREA_STAGE, DISCOVERY_TILE_STAGE, DISCOVERY_PROPOSE_STAGE],
+      stages: [...SUBDIVISION_DISCOVERY_STAGES],
       triggeredBy,
     });
   }

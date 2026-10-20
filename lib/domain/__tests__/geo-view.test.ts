@@ -17,6 +17,7 @@ import { geoObjectDetail, placeDetail, tileDetail, tileExists } from "@/lib/doma
 import { createReviewTask } from "@/lib/domain/review";
 import { tileIdFor } from "@/lib/domain/tiles";
 import { withRollback } from "@/test/db";
+import { insertTestSubdivision } from "@/test/text";
 
 // Synthetic data in open sea outside the pilot box 23.0-23.75 E x 37.0-38.0 N, at a spot no other test uses.
 const LON = 25.47;
@@ -64,11 +65,11 @@ async function insertChain(tx: Db) {
   return { sea, area, island, bay, cape };
 }
 
-async function insertTile(tx: Db, areaId: string | null) {
+async function insertTile(tx: Db, subdivisionId: string | null) {
   await tx.insert(tiles).values({
     id: TILE,
     bbox: sql`ST_MakeEnvelope(25.25, 35.75, 25.5, 36.0, 4326)`,
-    areaId,
+    subdivisionId,
     hasCoast: true,
   });
 }
@@ -81,7 +82,7 @@ describe("geo view", () => {
         { geoObjectId: c.island, name: "Testinsel", nameNormalized: "testinsel", language: "de", script: "latin", origin: "manual", isPreferred: true },
         { geoObjectId: c.island, name: "Old Name", nameNormalized: "old name", language: "en", script: "latin", origin: "geonames", validTo: sql`current_date` },
       ]);
-      await insertTile(tx, c.area);
+      await insertTile(tx, null);
       await tx.insert(tileGeoObjects).values({ tileId: TILE, geoObjectId: c.island });
 
       const detail = await geoObjectDetail(tx, c.island);
@@ -128,7 +129,8 @@ describe("geo view", () => {
   it("tileDetail returns the tile, area, geo objects, places, related runs and costs", () =>
     withRollback(async (tx) => {
       const c = await insertChain(tx);
-      await insertTile(tx, c.area);
+      const sub = await insertTestSubdivision(tx, "XT-GEO", [25.0, 35.5, 25.75, 36.25], { country: "XT" });
+      await insertTile(tx, sub.id);
       await tx.insert(tileGeoObjects).values([
         { tileId: TILE, geoObjectId: c.island },
         { tileId: TILE, geoObjectId: c.bay },
@@ -157,7 +159,7 @@ describe("geo view", () => {
 
       const detail = await tileDetail(tx, TILE);
       expect(detail?.tile).toMatchObject({ id: TILE, hasCoast: true });
-      expect(detail?.area).toMatchObject({ id: c.area, name: "Test Area" });
+      expect(detail?.subdivision).toEqual({ key: "XT-GEO", name: null });
       expect(detail?.geoObjects).toEqual([
         { id: c.bay, type: "bay", name: "Test Bay" },
         { id: c.island, type: "island", name: "Test Island" },

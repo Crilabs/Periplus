@@ -13,6 +13,9 @@ import { RunScopeNotReady, seedTileIds } from "@/lib/pipeline/tile-scope";
 // Kept apart from ./geometry: the job handler imports that module, and this one reaches the stage registry
 // through ./runs, which would close an import cycle through the handler.
 
+/** The stages of a geometry run for a tile or a subdivision, in order (a place skips `geometry.detect_bays`). */
+export const GEOMETRY_RUN_STAGES = [DETECT_BAYS_STAGE, GEOMETRY_STAGE, ...GEOMETRY_CONSOLIDATION_STAGES] as const;
+
 /**
  * Starts the run "Geometrie" for one tile (scope `tile`), the coast tiles of a subdivision (scope `subdivision`) or one place
  * (scope `place`, e.g. after an anchor correction): for a tile or a subdivision first `geometry.detect_bays` (unnamed bays
@@ -59,6 +62,6 @@ export async function startGeometryRun(
   await checkGeometryTiles(db, tileIds);
   // its consolidation and summaries keep the rules active now, across a later activation (ruling M7-E-R1)
   run.params.rulesVersion = await activeRulesVersion(db);
-  const detect = run.scope.type === "place" ? [] : [DETECT_BAYS_STAGE];
-  return startRun(db, boss, { kind: "stage", ...run, stages: [...detect, GEOMETRY_STAGE, ...GEOMETRY_CONSOLIDATION_STAGES], triggeredBy });
+  const stages = run.scope.type === "place" ? GEOMETRY_RUN_STAGES.filter((s) => s !== DETECT_BAYS_STAGE) : [...GEOMETRY_RUN_STAGES];
+  return startRun(db, boss, { kind: "stage", ...run, stages, triggeredBy });
 }

@@ -1,0 +1,210 @@
+import { sql } from "drizzle-orm";
+import type { Db } from "@/lib/db/client";
+import { displayNameSql } from "@/lib/domain/gazetteer/names";
+
+/*
+ * The admin view „Länder und Landesteile“ (spec 14 „Admin-UI“): every valid subdivision grouped by country, with its
+ * status, its coast tiles (labelled with it) and how many of them a run processed, its last run and the costs of its
+ * runs. A country that is one subdivision as a whole (`wholeCountry`, the subdivision's object is the country) is one
+ * row without children.
+ */
+
+export const SUBDIVISION_STATUSES = ["nicht begonnen", "läuft", "aufgebaut", "fehlgeschlagen", "ausgeschlossen"] as const;
+export type SubdivisionStatus = (typeof SUBDIVISION_STATUSES)[number];
+
+/**
+ * The status of a subdivision: `ausgeschlossen` by configuration; `läuft` while a build (run of kind `full`) is queued
+ * or running; `fehlgeschlagen` when its latest build failed (also one an admin ended); `aufgebaut` once a build
+ * finished (`built_at`); otherwise `nicht begonnen`.
+ */
+export function subdivisionStatus(s: {
+  excluded: boolean;
+  builtAt: Date | string | null;
+  latestBuild: { status: "queued" | "running" | "finished" | "failed" } | null;
+}): SubdivisionStatus {
+  if (s.excluded) return "ausgeschlossen";
+  if (s.latestBuild?.status === "queued" || s.latestBuild?.status === "running") return "läuft";
+  if (s.latestBuild?.status === "failed") return "fehlgeschlagen";
+  if (s.builtAt !== null) return "aufgebaut";
+  return "nicht begonnen";
+}
+
+export type SubdivisionRow = {
+  key: string;
+  publicId: string;
+  name: string;
+  status: SubdivisionStatus;
+  statusReason: string | null;
+  coastTiles: number;
+  processedTiles: number;
+  lastRunAt: string | null;
+  costEur: number;
+  queued: boolean;
+};
+
+export type CountrySummary = { total: number; built: number; running: number; failed: number; excluded: number };
+
+export type CountryNode = { country: string; name: string; whole: boolean; summary: CountrySummary; subdivisions: SubdivisionRow[] };
+
+const countryNames = new Intl.DisplayNames(["de"], { type: "region" });
+
+/** German name of an ISO 3166-1 alpha-2 code; the code itself when the runtime does not know it. */
+export function countryName(code: string): string {
+  try {
+    return countryNames.of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
+
+type Row = {
+  key: string;
+  public_id: string;
+  country: string;
+  name: string | null;
+  whole: boolean;
+  status: "active" | "excluded";
+  status_reason: string | null;
+  built_at: string | Date | null;
+  queued_at: string | Date | null;
+  build_status: "queued" | "running" | "finished" | "failed" | null;
+  coast_tiles: number;
+  processed_tiles: number;
+  last_run_at: string | Date | null;
+  cost_eur: string | number;
+};
+
+const subdivisionRowsSql = (where: ReturnType<typeof sql>) => sql`
+  select s.key, s.public_id, s.country, ${displayNameSql(sql`s.geo_object_id`)} as name,
+         (o.type = 'country') as whole, s.status, s.status_reason, s.built_at, s.queued_at,
+         (select r.status from runs r where r.kind = 'full' and r.scope_type = 'subdivision' and r.scope_id = s.key
+          order by r.created_at desc limit 1) as build_status,
+         (select count(*)::int from tiles t where t.subdivision_id = s.id and t.has_coast and t.valid_to is null) as coast_tiles,
+         (select count(*)::int from tiles t
+          where t.subdivision_id = s.id and t.has_coast and t.valid_to is null and t.last_run_at is not null) as processed_tiles,
+         (select max(r.created_at) from runs r where r.scope_type = 'subdivision' and r.scope_id = s.key) as last_run_at,
+         (select coalesce(sum(e.cost_eur), 0) from external_calls e
+          where e.run_id in (select r.id from runs r where r.scope_type = 'subdivision' and r.scope_id = s.key)) as cost_eur
+  from subdivisions s
+  join geo_objects o on o.id = s.geo_object_id
+  where s.valid_to is null and ${where}
+`;
+
+function toRow(r: Row): { country: string; whole: boolean; row: SubdivisionRow } {
+  return { country: r.country, whole: r.whole, row: subdivisionRow(r) };
+}
+
+function subdivisionRow(r: Row): SubdivisionRow {
+  return {
+    key: r.key,
+    publicId: r.public_id,
+    name: r.name ?? r.key,
+    status: subdivisionStatus({ excluded: r.status === "excluded", builtAt: r.built_at, latestBuild: r.build_status ? { status: r.build_status } : null }),
+    statusReason: r.status_reason,
+    coastTiles: Number(r.coast_tiles),
+    processedTiles: Number(r.processed_tiles),
+    lastRunAt: r.last_run_at === null ? null : new Date(r.last_run_at).toISOString(),
+    costEur: Number(r.cost_eur),
+    queued: r.queued_at !== null,
+  };
+}
+
+/** Every valid subdivision grouped by country (German country names, sorted), subdivisions sorted by name. */
+export async function subdivisionTree(db: Db): Promise<CountryNode[]> {
+  const { rows } = await db.execute<Row>(subdivisionRowsSql(sql`true`));
+  const byCountry = new Map<string, Array<ReturnType<typeof toRow>>>();
+  for (const r of rows.map(toRow)) byCountry.set(r.country, [...(byCountry.get(r.country) ?? []), r]);
+  const collator = new Intl.Collator("de");
+  return [...byCountry]
+    .map(([country, items]) => {
+      const subdivisions = items
+        .map((i) => i.row)
+        .sort((a, b) => collator.compare(a.name, b.name) || collator.compare(a.key, b.key));
+      return {
+        country,
+        name: countryName(country),
+        whole: items.length === 1 && items[0]!.whole,
+        summary: {
+          total: subdivisions.length,
+          built: subdivisions.filter((s) => s.status === "aufgebaut").length,
+          running: subdivisions.filter((s) => s.status === "läuft").length,
+          failed: subdivisions.filter((s) => s.status === "fehlgeschlagen").length,
+          excluded: subdivisions.filter((s) => s.status === "ausgeschlossen").length,
+        },
+        subdivisions,
+      };
+    })
+    .sort((a, b) => collator.compare(a.name, b.name));
+}
+
+/** The short German summary of a country, e.g. „3 von 13 aufgebaut, 1 läuft“. */
+export function countrySummaryText(s: CountrySummary): string {
+  const open = s.total - s.excluded;
+  const parts = [`${s.built} von ${open} aufgebaut`];
+  if (s.running > 0) parts.push(`${s.running} läuft`);
+  if (s.failed > 0) parts.push(`${s.failed} fehlgeschlagen`);
+  if (s.excluded > 0) parts.push(`${s.excluded} ausgeschlossen`);
+  return parts.join(", ");
+}
+
+export type SubdivisionDetail = SubdivisionRow & {
+  country: string;
+  countryName: string;
+  whole: boolean;
+  tiles: Array<{ id: string; lastRunAt: string | null; label: boolean }>;
+  areas: Array<{ id: string; publicId: string | null; name: string }>;
+  counts: { confirmedPlaces: number; candidates: number; geoObjects: number };
+  runs: Array<{ id: string; kind: string; status: string; stages: string[]; createdAt: string; triggeredBy: string }>;
+};
+
+/**
+ * One subdivision for its detail page: the row of the tree, its scope tiles (coast tiles meeting its polygon; `label`:
+ * labelled with it), the sailing areas linked to them, counts of its objects and its last 20 runs. Null for an
+ * unknown key.
+ */
+export async function subdivisionDetail(db: Db, key: string): Promise<SubdivisionDetail | null> {
+  const { rows } = await db.execute<Row>(subdivisionRowsSql(sql`s.key = ${key}`));
+  if (!rows[0]) return null;
+  const { country, whole, row } = toRow(rows[0]);
+  const { rows: tileRows } = await db.execute<{ id: string; last_run_at: string | Date | null; label: boolean }>(sql`
+    select t.id, t.last_run_at, (t.subdivision_id = s.id) as label
+    from subdivisions s join tiles t on t.has_coast and t.valid_to is null and ST_Intersects(t.bbox, s.geom) and not ST_Touches(t.bbox, s.geom)
+    where s.key = ${key} and s.valid_to is null
+    order by t.id
+  `);
+  const { rows: areaRows } = await db.execute<{ id: string; public_id: string | null; name: string | null }>(sql`
+    select distinct o.id, o.public_id, ${displayNameSql(sql`o.id`)} as name
+    from subdivisions s
+    join tiles t on t.has_coast and t.valid_to is null and ST_Intersects(t.bbox, s.geom) and not ST_Touches(t.bbox, s.geom)
+    join tile_geo_objects tg on tg.tile_id = t.id
+    join geo_objects o on o.id = tg.geo_object_id and o.type = 'area' and o.valid_to is null
+    where s.key = ${key} and s.valid_to is null
+  `);
+  const { rows: countRows } = await db.execute<{ confirmed: number; candidates: number; objects: number }>(sql`
+    select
+      (select count(*)::int from places p join geo_objects o on o.id = p.geo_object_id
+       where o.subdivision_id = s.id and p.status = 'confirmed' and p.valid_to is null and p.merged_into_id is null) as confirmed,
+      (select count(*)::int from places p join geo_objects o on o.id = p.geo_object_id
+       where o.subdivision_id = s.id and p.status = 'candidate' and p.valid_to is null) as candidates,
+      (select count(*)::int from geo_objects o where o.subdivision_id = s.id and o.valid_to is null) as objects
+    from subdivisions s where s.key = ${key} and s.valid_to is null
+  `);
+  const { rows: runRows } = await db.execute<{ id: string; kind: string; status: string; stages: string[]; created_at: string | Date; triggered_by: string }>(sql`
+    select id, kind, status, stages, created_at, triggered_by from runs
+    where scope_type = 'subdivision' and scope_id = ${key}
+    order by created_at desc limit 20
+  `);
+  const collator = new Intl.Collator("de");
+  return {
+    ...row,
+    country,
+    whole,
+    countryName: countryName(country),
+    tiles: tileRows.map((t) => ({ id: t.id, lastRunAt: t.last_run_at === null ? null : new Date(t.last_run_at).toISOString(), label: t.label })),
+    areas: areaRows
+      .map((a) => ({ id: a.id, publicId: a.public_id, name: a.name ?? a.public_id ?? a.id }))
+      .sort((a, b) => collator.compare(a.name, b.name)),
+    counts: { confirmedPlaces: countRows[0]?.confirmed ?? 0, candidates: countRows[0]?.candidates ?? 0, geoObjects: countRows[0]?.objects ?? 0 },
+    runs: runRows.map((r) => ({ id: r.id, kind: r.kind, status: r.status, stages: r.stages, createdAt: new Date(r.created_at).toISOString(), triggeredBy: r.triggered_by })),
+  };
+}

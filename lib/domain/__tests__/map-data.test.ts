@@ -14,6 +14,7 @@ import {
 } from "@/lib/db/schema";
 import { tileBbox, tileIdFor, type Bbox } from "@/lib/domain/tiles";
 import { mapLayer } from "@/lib/domain/map-data";
+import { insertTestSubdivision } from "@/test/text";
 import { withRollback } from "@/test/db";
 
 // Synthetic data in open sea outside the pilot box 23.0-23.75 E x 37.0-38.0 N, at a spot no other test uses.
@@ -102,16 +103,18 @@ describe("mapLayer", () => {
       expect(fc.features.find((f) => f.properties!.id === overlapping)!.properties!.name).toBe("Akra");
     }));
 
-  it("areas and tiles carry their keys and counts", () =>
+  it("areas, subdivisions, seas and tiles carry their keys and counts", () =>
     withRollback(async (tx) => {
       const key = `test-area-${LON}`;
+      const sub = await insertTestSubdivision(tx, "XT-MAP", [LON - 0.5, LAT - 0.5, LON + 0.5, LAT + 0.5], { country: "XT" });
+      const sea = await insertObject(tx, { type: "sea", geom: square(LON - 1, LAT - 1, 2), names: [["Testmeer", "de", true]] });
       const area = await insertObject(tx, { type: "area", geom: square(LON - 0.1, LAT - 0.1, 0.2), configKey: key, names: [["Testrevier", "de", true]] });
       const tileId = tileIdFor(LON, LAT);
       const [w, s] = tileBbox(tileId);
       await tx.insert(tiles).values({
         id: tileId,
         bbox: sql`${geomFromGeoJson(square(w, s, 0.25))}`,
-        areaId: area,
+        subdivisionId: sub.id,
         hasCoast: true,
       });
       // places.tile_id is set from the position by trigger.
@@ -123,11 +126,18 @@ describe("mapLayer", () => {
       const areas = await mapLayer(tx, "areas", BOX);
       expect(areas.features.find((f) => f.properties!.id === area)!.properties).toEqual({ id: area, key, name: "Testrevier" });
 
+      const subdivisionLayer = await mapLayer(tx, "subdivisions", BOX);
+      expect(subdivisionLayer.features.find((f) => f.properties!.key === "XT-MAP")!.properties).toEqual({ key: "XT-MAP", country: "XT", status: "active", name: null });
+      expect((await mapLayer(tx, "seas", BOX)).features.map((f) => f.properties!.id)).toContain(sea);
+      // seas, countries and admin regions are no geo-object features
+      expect((await mapLayer(tx, "geo-objects", BOX)).features.map((f) => f.properties!.id)).not.toContain(sea);
+      expect((await mapLayer(tx, "geo-objects", BOX)).features.map((f) => f.properties!.id)).not.toContain(sub.geoObjectId);
+
       const tileLayer = await mapLayer(tx, "tiles", BOX);
       expect(tileLayer.features.find((f) => f.properties!.id === tileId)!.properties).toEqual({
         id: tileId,
         hasCoast: true,
-        areaKey: key,
+        subdivisionKey: "XT-MAP",
         placeCount: 3,
         candidateCount: 2,
       });

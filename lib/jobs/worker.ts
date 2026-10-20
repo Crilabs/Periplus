@@ -9,6 +9,7 @@ import { createReviewTask } from "@/lib/domain/review";
 import { failRun, isRunEnded, recordJobOutcome } from "@/lib/domain/runs";
 import { createLogger } from "@/lib/logger";
 import { failBatchUnit, failSubmitUnit, type BatchHandlerEntry } from "@/lib/pipeline/batches";
+import { runEnded } from "@/lib/pipeline/run-ended";
 import { isQueuePaused, pauseForBudget } from "./controls";
 import { enqueueRunAdvance } from "./enqueue";
 import { BATCH_POLL_QUEUE, DEAD_LETTER_QUEUE, QUEUES, RUN_ADVANCE_QUEUE, type QueueName } from "./queues";
@@ -62,6 +63,8 @@ export async function startWorkers(
     if (!data.runId || !data.stage) return;
     const result = await recordJobOutcome(tx, data.runId, data.stage, data.key, outcome);
     if (result.nextStage) await enqueueRunAdvance(boss, data.runId, result.nextStage, tx);
+    // finished after its last stage, or failed by a stage whose jobs all failed (`runEnded`, e.g. the build queue)
+    if (result.runFinished) await runEnded(tx, boss, data.runId);
   }
 
   async function deferForBudget(queue: QueueName, job: Job<JobData>, err: BudgetExceeded): Promise<void> {
@@ -134,6 +137,7 @@ export async function startWorkers(
         // repeated delivery after a retry must not fail the resumed or finished run.
         if (queue === RUN_ADVANCE_QUEUE && runId && (await lockFailedJob(tx, queue, jobId))) {
           await failRun(tx, runId, `stage transition failed: ${error}`);
+          await runEnded(tx, boss, runId);
         }
         // Only the call that opened the task records the failure, so a retried dead-letter job counts once.
         if (!task.created) return;

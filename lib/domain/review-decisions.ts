@@ -20,7 +20,6 @@ import {
   reviewDecisions,
   reviewTasks,
   sources,
-  tiles,
   type GeoObjectType,
   type PlaceKind,
   type PoiCategory,
@@ -34,6 +33,7 @@ import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
 import { addNames, isGreek, transliterateElot743, type NameDraft } from "@/lib/domain/gazetteer/names";
 import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
 import { newPublicId } from "@/lib/domain/ids";
+import { offeredKindSql } from "@/lib/domain/review";
 import { candidateObjects, withNeighbours } from "@/lib/domain/mentions/scope";
 import { appendReviewOutcome, comparisonTaskContextSchema } from "@/lib/domain/quality/comparison-results";
 import { crawlRulesSchema } from "@/lib/domain/sources/crawl-rules";
@@ -66,9 +66,6 @@ export const reviewDecisionSchema = z.discriminatedUnion("action", [
   // place_candidate / geo_object_pair
   z.object({ action: z.literal("same") }),
   z.object({ action: z.literal("distinct") }),
-  // coast_tile_without_area
-  z.object({ action: z.literal("assign_area"), areaId: z.uuid() }),
-  z.object({ action: z.literal("no_area") }),
   // failed_job
   z.object({ action: z.literal("retry") }),
   z.object({ action: z.literal("ignore") }),
@@ -153,7 +150,6 @@ const ALLOWED: Record<string, readonly Action[]> = {
   "place_candidate/place": ["confirm", "merge", "reject", "no_anchoring"],
   "place_candidate/geo_object_pair": ["same", "distinct"],
   "place_candidate/name_candidate": ["create_place", "assign_name", "reject"],
-  "coast_tile_without_area/tile": ["assign_area", "no_area"],
   "failed_job/job": ["retry", "ignore", "pause_source"],
   "failed_job/profile_summary": ["ignore", "regenerate_summary"],
   "source_approval/source": ["approve", "reject"],
@@ -388,27 +384,6 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
       // the survivor carries the merged object's facts and possibly its exclusion (GR-3/GR-4): consolidate it
       return keep.id;
     }
-    case "assign_area": {
-      const [area] = await tx
-        .select({ id: geoObjects.id })
-        .from(geoObjects)
-        .where(
-          and(
-            eq(geoObjects.id, decision.areaId),
-            eq(geoObjects.type, "area"),
-            isNull(geoObjects.validTo),
-            isNull(geoObjects.mergedIntoId),
-          ),
-        );
-      if (!area) throw new DecisionNotAllowed(`geo object ${decision.areaId} is no valid area`);
-      const updated = await tx
-        .update(tiles)
-        .set({ areaId: area.id })
-        .where(and(eq(tiles.id, task.subjectId), isNull(tiles.validTo)))
-        .returning({ id: tiles.id });
-      if (updated.length === 0) throw new DecisionNotAllowed(`tile ${task.subjectId} is not valid`);
-      return null;
-    }
     case "retry": {
       if (!deps.retryJob) throw new Error("retry decision needs deps.retryJob");
       const queue = z.enum(QUEUES).safeParse((task.context as { queue?: unknown }).queue);
@@ -417,7 +392,6 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
       return null;
     }
     case "distinct":
-    case "no_area":
     case "ignore":
       return null;
     case "create_place":
@@ -741,7 +715,7 @@ export function afterInQueue(afterId: string): SQL {
  * first one after that task in this order (the task itself may be decided by now).
  */
 export async function nextOpenTask(db: Db, kind?: ReviewKind, afterId?: string, where?: SQL): Promise<{ id: string } | null> {
-  const conditions: (SQL | undefined)[] = [eq(reviewTasks.status, "open"), kind ? eq(reviewTasks.kind, kind) : undefined, where];
+  const conditions: (SQL | undefined)[] = [eq(reviewTasks.status, "open"), offeredKindSql, kind ? eq(reviewTasks.kind, kind) : undefined, where];
   if (afterId) conditions.push(afterInQueue(afterId));
   const [row] = await db
     .select({ id: reviewTasks.id })

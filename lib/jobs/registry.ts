@@ -26,8 +26,13 @@ import {
 } from "./handlers/text";
 import { tilesEnsureHandler } from "./handlers/tiles";
 import { wikivoyageHandler } from "./handlers/wikivoyage";
+import { onRunEnded } from "@/lib/pipeline/run-ended";
+import { afterBuildRunEnded } from "@/lib/pipeline/subdivision-build";
 import type { QueueName } from "./queues";
 import type { JobData, JobHandler } from "./worker";
+
+// The end of a subdivision build sets `built_at` and starts the next queued subdivision of its country (spec 14).
+onRunEnded(afterBuildRunEnded);
 
 /** The handler the worker runs for each queue. */
 export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {

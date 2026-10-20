@@ -1,12 +1,13 @@
 import { desc, eq, gt, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { deliveries, reviewKindEnum, reviewTasks, subdivisions, workerHeartbeats, type DeliveryStatus, type ReviewKind } from "@/lib/db/schema";
+import { deliveries, reviewTasks, subdivisions, workerHeartbeats, type DeliveryStatus, type ReviewKind } from "@/lib/db/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { budgetStatus, type BudgetStatus } from "@/lib/domain/costs";
+import { OFFERED_REVIEW_KINDS } from "@/lib/domain/review";
 import { jobsFromDb, type JobsView } from "@/lib/domain/queues-view";
 import { listRuns, type RunView } from "@/lib/domain/runs";
 
-export const REVIEW_KINDS: readonly ReviewKind[] = reviewKindEnum.enumValues;
+export const REVIEW_KINDS: readonly ReviewKind[] = OFFERED_REVIEW_KINDS;
 
 /** Workers whose last heartbeat is older than this are treated as gone and not listed. */
 export const WORKER_STALE_MS = 3_600_000;

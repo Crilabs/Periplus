@@ -10,6 +10,7 @@ import { GEOMETRY_CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stag
 import { testDb, withRollback } from "@/test/db";
 import { AEGINA_WEST_KEY, insertAeginaWest } from "@/test/fixtures/subdivisions/aegina-west";
 import { buildBayScene } from "@/test/geometry/scene";
+import { insertTestSubdivision } from "@/test/text";
 
 const db = testDb();
 /** What getDb() returns; a test may point it at a rollback transaction. */
@@ -51,6 +52,7 @@ import { consolidateTileAction, geometryTileAction, seedTileAction } from "../ti
 import { pauseQueueAction, resumeQueueAction } from "../jobs/actions";
 import { endRunAction, retryJobAction } from "../runs/[id]/actions";
 import { saveComparisonSelectionAction } from "../quality/actions";
+import { buildSubdivisionAction, queueCountryAction } from "../subdivisions/actions";
 
 const form = (fields: Record<string, string>) => {
   const data = new FormData();
@@ -122,8 +124,11 @@ describe("admin server actions", () => {
     await expect(endRunAction({ runId: "" })).rejects.toThrow();
     expect(endRunByAdmin).not.toHaveBeenCalled();
 
+    // a run that is no subdivision build: its end starts nothing (`afterBuildRunEnded` finds no build)
+    endRunByAdmin.mockResolvedValue({ ended: true, cleanedUp: true, cancelledJobs: 0 });
     await endRunAction(form({ runId }));
     expect(endRunByAdmin).toHaveBeenCalledWith(db, expect.anything(), runId, "admin@example.invalid");
+    expect(startRun).not.toHaveBeenCalled();
 
     requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
     await expect(endRunAction(form({ runId }))).rejects.toThrow("NEXT_REDIRECT");
@@ -392,5 +397,33 @@ describe("admin server actions", () => {
         }),
       );
       expect(redirect).toHaveBeenCalledWith("/runs/run-1");
+    }));
+
+  it("buildSubdivisionAction starts the build and opens its run; an excluded subdivision starts nothing", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      requireAdmin.mockResolvedValue({ email: "admin@example.invalid" });
+      startRun.mockResolvedValue({ id: "run-1" });
+      await insertTestSubdivision(tx, "XQ-ACT", [40.0, 30.0, 40.5, 30.25], { country: "XQ" });
+      await insertTestSubdivision(tx, "XQ-EXC", [40.5, 30.0, 41.0, 30.25], { country: "XQ", status: "excluded" });
+      await buildSubdivisionAction(form({ subdivisionKey: "XQ-ACT" }));
+      expect(startRun).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ kind: "full", scope: { type: "subdivision", id: "XQ-ACT" } }));
+      expect(redirect).toHaveBeenLastCalledWith("/runs/run-1");
+      await expect(buildSubdivisionAction({ subdivisionKey: "XQ-EXC" })).rejects.toThrow("Landesteil XQ-EXC ist ausgeschlossen");
+      expect(startRun).toHaveBeenCalledTimes(1);
+      currentDb = db;
+    }));
+
+  it("queueCountryAction queues the open subdivisions of a country and reports how many", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      requireAdmin.mockResolvedValue({ email: "admin@example.invalid" });
+      startRun.mockResolvedValue({ id: "run-2" });
+      await insertTestSubdivision(tx, "XQ-Q1", [40.0, 30.0, 40.5, 30.25], { country: "XQ" });
+      await insertTestSubdivision(tx, "XQ-Q2", [40.5, 30.0, 41.0, 30.25], { country: "XQ" });
+      await queueCountryAction(form({ country: "XQ" }));
+      expect(redirect).toHaveBeenLastCalledWith("/subdivisions?queued=2&country=XQ");
+      await expect(queueCountryAction({ country: "greece" })).rejects.toThrow();
+      currentDb = db;
     }));
 });
