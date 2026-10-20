@@ -133,7 +133,7 @@ function scriptedServices(
       case "emodnet-human-activities":
         return json(answers.layers?.[new URL(req.url).searchParams.get("typeNames")!] ?? fc([]));
       case "overpass": {
-        const ql = decodeURIComponent(req.body!.replace(/^data=/, ""));
+        const ql = decodeURIComponent(String(req.body).replace(/^data=/, ""));
         return json({ elements: (ql.includes("cable_submarine") ? answers.cables : answers.roads) ?? [] });
       }
       case "wikidata": {
@@ -292,7 +292,7 @@ describe("importRestrictions", () => {
       expect(wfsBox(finfish.url)).toEqual(bufferBbox(box, 0.25));
       const military = first.seen.find((r) => r.url.includes("militaryareaspoly"))!;
       expect(wfsBox(military.url)).toEqual(box);
-      const cableQuery = decodeURIComponent(first.seen.find((r) => r.service === "overpass")!.body!);
+      const cableQuery = decodeURIComponent(String(first.seen.find((r) => r.service === "overpass")!.body));
       const cableBox = bufferBbox(box, 0.2);
       expect(cableQuery).toContain(`(${cableBox[1]},${cableBox[0]},${cableBox[3]},${cableBox[2]})`);
       expect(archive.keys()).toEqual(
@@ -374,7 +374,7 @@ describe("importVesselDensity and importRoads", () => {
       const result = await importRoads(db, { scope: await scopeOf(db) }, { transport: first.transport, archive });
       expect(result).toMatchObject({ roads: 2, removed: 0 });
       expect(archive.keys()).toEqual([`datasets/osm-roads/${result.version}/${AREA}.json`]);
-      const query = decodeURIComponent(first.seen[0]!.body!);
+      const query = decodeURIComponent(String(first.seen[0]!.body));
       expect(query).toContain('way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|track)$"]');
 
       const again = await importRoads(db, { scope: await scopeOf(db) }, { transport: scriptedServices(db, { roads }).transport, archive });

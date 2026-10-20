@@ -46,7 +46,7 @@ describe("searchOrganic", () => {
       const [req] = transport.requests;
       expect(req!.method).toBe("POST");
       expect(req!.url).toBe(getConfig().discovery.serp.endpoint);
-      expect(JSON.parse(req!.body!)).toEqual([{ keyword: "anchorage hand", language_code: "en", location_code: 2826, depth: 20 }]);
+      expect(JSON.parse(String(req!.body))).toEqual([{ keyword: "anchorage hand", language_code: "en", location_code: 2826, depth: 20 }]);
       const auth = Buffer.from("test@example.invalid:test-password").toString("base64");
       expect(req!.headers?.Authorization).toBe(`Basic ${auth}`);
       expect(req!.budget).toBe("dataforseo");

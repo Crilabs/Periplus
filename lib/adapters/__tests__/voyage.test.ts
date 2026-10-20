@@ -73,7 +73,7 @@ describe("embedTexts", () => {
       expect(req.method).toBe("POST");
       expect(req.url).toBe(getConfig().embeddings.endpoint);
       expect(req.headers?.Authorization).toBe("Bearer test-voyage-key");
-      expect(JSON.parse(req.body!)).toEqual({ input: ["a", "b"], model: "voyage-3.5", input_type: "document", output_dimension: 1024 });
+      expect(JSON.parse(String(req.body))).toEqual({ input: ["a", "b"], model: "voyage-3.5", input_type: "document", output_dimension: 1024 });
     });
   });
 

@@ -26,6 +26,8 @@ import { disambiguateMentionTask } from "../lib/ai/tasks/disambiguate-mention";
 import { extractFactsTask } from "../lib/ai/tasks/extract-facts";
 import { extractRouteTask } from "../lib/ai/tasks/extract-route";
 import type { ModelClient, ModelTask } from "../lib/ai/types";
+import sharp from "sharp";
+import { createOpenAiImageModel } from "../lib/adapters/openai-image";
 import { embedTexts } from "../lib/adapters/voyage";
 import { fetchSitelinks } from "../lib/adapters/wikidata";
 import { getConfig, type AppConfig, type DiscoveryConfig } from "../lib/config";
@@ -76,6 +78,7 @@ const USAGE =
   "       fixtures-record.ts --converters <url> [<url> <url>]\n" +
   "       fixtures-record.ts --coarse <ISO2,…>\n" +
   "       fixtures-record.ts --voyage\n" +
+  "       fixtures-record.ts --image\n" +
   "       fixtures-record.ts --nominatim <query> <tileId>\n" +
   "       fixtures-record.ts --imagery <lon> <lat>\n" +
   "       fixtures-record.ts --ai <classify-document|disambiguate-mention|extract-facts|extract-route> [--limit <1-5>] [--max-eur <eur>]";
@@ -110,6 +113,7 @@ export type RecordArgs =
   | SubdivisionRecordArgs
   | { converters: string[] }
   | { voyage: true }
+  | { image: true }
   | { coarse: string[] }
   | { nominatim: { query: string; tileId: string } }
   | { imagery: { lon: number; lat: number } }
@@ -189,6 +193,10 @@ export function parseArgs(argv: string[]): RecordArgs {
     if (argv.length !== 1) throw new Error(USAGE);
     return { voyage: true };
   }
+  if (argv[0] === "--image") {
+    if (argv.length !== 1) throw new Error(USAGE);
+    return { image: true };
+  }
   if (argv[0] === "--converters") {
     const urls = argv.slice(1);
     if (urls.length < 1 || urls.length > MAX_CONVERTER_URLS || !urls.every(isHttpUrl)) throw new Error(USAGE);
@@ -201,7 +209,7 @@ export function parseArgs(argv: string[]): RecordArgs {
   let wikivoyage = false;
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]!;
-    if (flag === "--converters" || flag === "--voyage" || flag === "--nominatim" || flag === "--ai" || flag === "--coarse" || flag === "--imagery") throw new Error(USAGE);
+    if (flag === "--converters" || flag === "--voyage" || flag === "--image" || flag === "--nominatim" || flag === "--ai" || flag === "--coarse" || flag === "--imagery") throw new Error(USAGE);
     if (flag === "--datasets" || flag === "--serp" || flag === "--wikivoyage") {
       if (flag === "--datasets") {
         datasets = true;
@@ -335,6 +343,27 @@ async function recordVoyage(): Promise<void> {
       getConfig().embeddings,
     );
     process.stdout.write(`voyage: ${vectors.length} vectors of ${vectors[0]?.length} dimensions, ${tokens} tokens\n`);
+  } finally {
+    await close();
+  }
+}
+
+/**
+ * Records one real OpenAI image edit (a plain 1536 x 1024 PNG with a tiny prompt, about 0.25 EUR at quality `high`),
+ * booked in the database of `DATABASE_URL` (budget `openai`, `external_calls`). The adapter test builds its own
+ * fixture by hand; this is for checking the real answer shape.
+ */
+async function recordImage(): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is not set");
+  const { db, close } = createDb(url);
+  try {
+    const image = await sharp({ create: { width: 1536, height: 1024, channels: 3, background: "#3a7ca5" } }).png().toBuffer();
+    const result = await createOpenAiImageModel(recordingTransport(fetchTransport)).edit(
+      { task: "generate-place-image", image: new Uint8Array(image), prompt: "Turn this plain blue image into a photograph of a calm sea." },
+      { db, stage: "fixtures:record" },
+    );
+    process.stdout.write(`image: ${result.image.byteLength} bytes, ${result.costEur} EUR\n`);
   } finally {
     await close();
   }
@@ -906,6 +935,7 @@ async function main(): Promise<void> {
   if ("nominatim" in args) return recordNominatim(args.nominatim.query, args.nominatim.tileId);
   if ("imagery" in args) return recordImagery(args.imagery.lon, args.imagery.lat);
   if ("voyage" in args) return recordVoyage();
+  if ("image" in args) return recordImage();
   if ("coarse" in args) return recordCoarse(args.coarse);
   if ("converters" in args) return recordConverters(args.converters);
   if (args.serp) return recordSerp(args.subdivision, args.limit!);
