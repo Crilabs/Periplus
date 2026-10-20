@@ -530,7 +530,7 @@ describe("startDatasetImportRun", () => {
     withRollback(async (db) => {
       const { boss, inserted } = recordingBoss();
       await expect(startDatasetImportRun(db, boss, "XD-NOWHERE", "test")).rejects.toThrow("Unbekannter Landesteil XD-NOWHERE");
-      const areaKey = getConfig().areas[0]!.key;
+      const areaKey = Object.keys(getConfig().subdivisions.retiredAreaKeys)[0]!;
       await expect(startDatasetImportRun(db, boss, areaKey, "test")).rejects.toThrow(`Revier-Schlüssel ${areaKey} ist kein Laufumfang mehr`);
       await insertAeginaWest(db); // no tiles yet
       await expect(startDatasetImportRun(db, boss, AREA, "test")).rejects.toMatchObject({ reason: "subdivision_without_coast_tiles" });

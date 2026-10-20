@@ -15,6 +15,7 @@ function config(over: Partial<SubdivisionsConfig> & { countries: SubdivisionsCon
     notMediterranean: [],
     keyOverrides: {},
     overrides: {},
+    retiredAreaKeys: {},
     ...over,
   };
 }

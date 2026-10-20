@@ -208,7 +208,7 @@ async function seedSubdivision(tx: Db, opts: SeedOptions): Promise<DeliveryFixtu
   const polygon = geomFromGeoJson({ type: "MultiPolygon", coordinates: [square(x(21.0), y(35.0), x(21.5), y(35.25)).coordinates] });
   const [region] = await tx
     .insert(geoObjects)
-    .values({ type: "admin_region", origin: "manual", adminLevel: 4, tags: { country: "XT" }, geom: polygon })
+    .values({ type: "admin_region", origin: "manual", adminLevel: 4, tags: { country: "GR" }, geom: polygon })
     .returning({ id: geoObjects.id });
   const regionId = region!.id;
   await tx.insert(geoNames).values([
@@ -218,7 +218,7 @@ async function seedSubdivision(tx: Db, opts: SeedOptions): Promise<DeliveryFixtu
   const subdivisionPublicId = id("sd", 1);
   const [subdivision] = await tx
     .insert(subdivisions)
-    .values({ publicId: subdivisionPublicId, key: subdivisionKey, country: "XT", geoObjectId: regionId, geom: polygon, landGeom: polygon })
+    .values({ publicId: subdivisionPublicId, key: subdivisionKey, country: "GR", geoObjectId: regionId, geom: polygon, landGeom: polygon })
     .returning({ id: subdivisions.id });
   const subdivisionId = subdivision!.id;
   const west = await tile(`q025:${col(804)}:${row}`, subdivisionId);

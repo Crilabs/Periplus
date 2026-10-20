@@ -320,7 +320,7 @@ describe("text run", () => {
       expect(await reason(startTextRun(tx, boss, { subdivisionKey: "XT-T3", triggeredBy: "test" }, config))).toBe("Error: Landesteil XT-T3 ist ausgeschlossen");
       await insertTestSubdivision(tx, "XT-T4", [30.5, 36.0, 30.7, 36.1]);
       expect(await reason(startReprocessRun(tx, boss, { scope: { subdivisionKey: "XT-T4" }, triggeredBy: "test" }, config))).toBe("subdivision_without_coast_tiles");
-      expect(await reason(startTextRun(tx, boss, { areaKey: config.areas[0]!.key, triggeredBy: "test" }, config))).toBe("unknown_area");
+      expect(await reason(startTextRun(tx, boss, { areaKey: "saronic", triggeredBy: "test" }, config))).toBe("unknown_area");
       expect(await reason(startTextRun(tx, boss, { documentVersionIds: [v.versionId], rematch: true, triggeredBy: "test" }, config))).toBe("versions_not_current");
       expect(await reason(startTextRun(tx, boss, { documentVersionIds: [newId()], triggeredBy: "test" }, config))).toBe("versions_not_current");
       expect(inserted).toEqual([]);

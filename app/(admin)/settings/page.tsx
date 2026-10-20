@@ -93,7 +93,7 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
   const revoked = (await searchParams).notice === "api_client_revoked";
   const db = getDb();
   const apiClients = await listApiClients(db);
-  const { areas, gazetteer, ...configured } = getConfig();
+  const { gazetteer, ...configured } = getConfig();
   const subdivisionsCfg = configured.subdivisions;
   // the active rules version: the newest released activation, else active.json (ruling M7-P10)
   const consolidation = await consolidationConfigFor(db);
@@ -219,7 +219,7 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
           <Dialog
             trigger="Aktive Konfiguration (JSON)"
             title="Aktive Konfiguration"
-            description="Alle geladenen Konfigurationsbereiche außer Revieren und Gazetteer, so wie die Pipeline sie sieht."
+            description="Alle geladenen Konfigurationsbereiche außer dem Gazetteer, so wie die Pipeline sie sieht."
             wide
           >
             <div className="space-y-2">
@@ -276,49 +276,6 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
                   </td>
                 </tr>
               ))}
-          </tbody>
-        </Table>
-      </Panel>
-
-      <Panel
-        title="Reviere"
-        description="Ein Revier ist ein Seegebiet mit eigener Konfigurationsdatei in config/areas/. Zyklus: Abstand, in dem seine Kacheln neu bearbeitet werden."
-        flush
-      >
-        <Table>
-          <thead>
-            <tr>
-              <th className={thClass}>Key</th>
-              <th className={thClass}>Namen</th>
-              <th className={thClass}>Kachelbox</th>
-              <th className={`${thClass} text-right`}>Zyklus</th>
-              <th className={thClass}>Küstenabschnitte</th>
-            </tr>
-          </thead>
-          <tbody>
-            {areas.map((area) => (
-              <tr key={area.key} className={trClass}>
-                <td className={tdClass}>
-                  <Mono>{area.key}</Mono>
-                </td>
-                <td className={tdClass}>
-                  <span className="font-medium">{area.names.de ?? area.key}</span>
-                  <div className="text-xs text-muted">
-                    {Object.entries(area.names)
-                      .filter(([lang]) => lang !== "de")
-                      .map(([lang, name]) => `${lang}: ${name}`)
-                      .join(" · ")}
-                  </div>
-                </td>
-                <td className={cx(tdClass, "whitespace-nowrap")}>
-                  {area.tileBbox ? <Mono>{area.tileBbox.join(", ")}</Mono> : <span className="text-muted">keine</span>}
-                </td>
-                <td className={cx(tdClass, "text-right whitespace-nowrap tabular-nums")}>{area.cycleDays} Tage</td>
-                <td className={tdClass}>
-                  {area.coastSections.map((s) => s.names.de).join(", ") || <span className="text-muted">keine</span>}
-                </td>
-              </tr>
-            ))}
           </tbody>
         </Table>
       </Panel>

@@ -141,33 +141,7 @@ const polygonSchema = z.union([
   z.strictObject({ type: z.literal("MultiPolygon"), coordinates: z.array(polygonCoordinates).min(1) }),
 ]);
 
-const bboxSchema = z
-  .tuple([lon, lat, lon, lat])
-  .refine(([w, s, e, n]) => w < e && s < n, "bbox must be [west, south, east, north] with west < east, south < north");
-
 const coastSectionSchema = z.strictObject({ key: configKey, names: namesSchema, polygon: polygonSchema });
-
-export const areaConfigSchema = z
-  .strictObject({
-    /** Equals the file name in `config/areas/`. */
-    key: configKey,
-    names: namesSchema,
-    polygon: polygonSchema,
-    /** Pilot tile box; `null` while the area has no tiles. */
-    tileBbox: bboxSchema.nullable(),
-    sourceLanguages: z.array(z.string().regex(/^[a-z]{2,3}$/)).min(1),
-    season: z.strictObject({
-      fromMonth: z.number().int().min(1).max(12),
-      toMonth: z.number().int().min(1).max(12),
-    }),
-    cycleDays: z.number().int().min(1),
-    coastSections: z.array(coastSectionSchema),
-  })
-  .superRefine((area, ctx) => {
-    const keys = area.coastSections.map((s) => s.key);
-    const dup = keys.find((k, i) => keys.indexOf(k) !== i);
-    if (dup) ctx.addIssue({ code: "custom", path: ["coastSections"], message: `duplicate coast section key ${dup}` });
-  });
 
 const iso2 = z.string().regex(/^[A-Z]{2}$/, "must be an ISO 3166-1 alpha-2 code");
 const languageCode = z.string().regex(/^[a-z]{2,3}$/, "must be an ISO 639 language code");
@@ -241,6 +215,11 @@ export const subdivisionsConfigSchema = z
     notMediterranean: z.array(subdivisionKey),
     /** OSM relation id to key, for units without or with a wrong ISO 3166-2 tag. */
     keyOverrides: z.record(z.string().regex(/^[1-9][0-9]*$/, "must be an OSM relation id"), subdivisionKey),
+    /**
+     * Keys of the configured areas (Reviere) before spec 14, each with the subdivision to name instead when a run,
+     * script or API call still passes one.
+     */
+    retiredAreaKeys: z.record(configKey, subdivisionKey),
     /** Per subdivision key: deviations from its country's settings. */
     overrides: z.record(
       subdivisionKey,
@@ -1069,7 +1048,6 @@ export type GeometryConfig = z.infer<typeof geometrySchema>;
 export type QualityConfig = z.infer<typeof qualitySchema>;
 export type RestrictionsConfig = z.infer<typeof restrictionsSchema>;
 export type SubdivisionsConfig = z.infer<typeof subdivisionsConfigSchema>;
-export type AreaConfig =z.infer<typeof areaConfigSchema>;
 export type CategoriesConfig = z.infer<typeof categoriesSchema>;
 export type GazetteerConfig = z.infer<typeof gazetteerSchema>;
 export type ConsolidationConfig = z.infer<typeof consolidationSchema>;
@@ -1080,7 +1058,6 @@ export type AppConfig = {
   queues: Record<string, QueueConfig>;
   budgets: Record<BudgetService, { dailyEur: number }>;
   models: ModelsConfig;
-  areas: AreaConfig[];
   subdivisions: SubdivisionsConfig;
   categories: CategoriesConfig;
   gazetteer: GazetteerConfig;

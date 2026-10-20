@@ -583,5 +583,9 @@
         }
       ]
     }
+  },
+  "retiredAreaKeys": {
+    "saronic": "GR-I",
+    "argolic": "GR-J"
   }
 }

@@ -277,7 +277,7 @@ describe("startWikivoyageRun", () => {
       await insertSubdivision(tx);
       const { boss, inserted } = recordingBoss();
       await expect(startWikivoyageRun(tx, boss, "nowhere", "admin")).rejects.toThrow("Unbekannter Landesteil nowhere");
-      const areaKey = getConfig().areas[0]!.key;
+      const areaKey = Object.keys(getConfig().subdivisions.retiredAreaKeys)[0]!;
       await expect(startWikivoyageRun(tx, boss, areaKey, "admin")).rejects.toThrow(`Revier-Schlüssel ${areaKey} ist kein Laufumfang mehr`);
       await setSourceStatus(tx, await wikivoyageSource(tx), "paused", "admin");
       await expect(startWikivoyageRun(tx, boss, SUB_KEY, "admin")).rejects.toMatchObject({ reason: "source_not_approved" });

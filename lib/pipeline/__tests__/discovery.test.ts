@@ -243,7 +243,7 @@ describe("startDiscoveryRun", () => {
       await expect(startDiscoveryRun(tx, boss, { subdivisionKey: "nowhere" }, "discovery-scope-test")).rejects.toThrow(
         "Unbekannter Landesteil nowhere",
       );
-      const areaKey = getConfig().areas[0]!.key;
+      const areaKey = Object.keys(getConfig().subdivisions.retiredAreaKeys)[0]!;
       await expect(startDiscoveryRun(tx, boss, { subdivisionKey: areaKey }, "discovery-scope-test")).rejects.toThrow(
         `Revier-Schlüssel ${areaKey} ist kein Laufumfang mehr`,
       );

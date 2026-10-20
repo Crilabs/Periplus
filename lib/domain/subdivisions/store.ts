@@ -263,6 +263,15 @@ export async function subdivisionByKey(db: Db, key: string): Promise<Subdivision
 }
 
 /**
+ * Why a leftover area key (`saronic`) is no run scope any more, naming the subdivision to pass instead
+ * (`retiredAreaKeys` of `config/subdivisions.json`; GR-I for a key not listed there).
+ */
+export function retiredAreaKeyMessage(key: string): string {
+  const instead = getConfig().subdivisions.retiredAreaKeys[key] ?? "GR-I";
+  return `Revier-Schlüssel ${key} ist kein Laufumfang mehr; Landesteil angeben (z. B. ${instead})`;
+}
+
+/**
  * The valid subdivision `key`; throws `Unbekannter Landesteil <key>` for an unknown one, and names the replacement for
  * a leftover configured area key (`saronic`): a run is scoped by a subdivision now. An excluded subdivision is refused
  * with `Landesteil <key> ist ausgeschlossen`, unless the caller reads it on purpose (`allowExcluded`, e.g. labels).
@@ -273,9 +282,7 @@ export async function requireSubdivision(db: Db, key: string, opts: { allowExclu
     if (sub.status === "excluded" && !opts.allowExcluded) throw new Error(`Landesteil ${key} ist ausgeschlossen`);
     return sub;
   }
-  if (getConfig().areas.some((a) => a.key === key)) {
-    throw new Error(`Revier-Schlüssel ${key} ist kein Laufumfang mehr; Landesteil angeben (z. B. GR-I)`);
-  }
+  if (Object.hasOwn(getConfig().subdivisions.retiredAreaKeys, key)) throw new Error(retiredAreaKeyMessage(key));
   throw new Error(`Unbekannter Landesteil ${key}`);
 }
 

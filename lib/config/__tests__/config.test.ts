@@ -6,7 +6,7 @@ import { FACT_SCHEMAS } from "@/config/fact-schema";
 import { METRIC_KEYS } from "@/lib/db/schema/quality";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
-import { areaByKey, countryConfig, getConfig, getConsolidationConfig, loadConfig } from "../index";
+import { countryConfig, getConfig, getConsolidationConfig, loadConfig } from "../index";
 import { modelsSchema, queuesSchema } from "../schemas";
 
 const repoConfig = loadConfig("config");
@@ -36,8 +36,6 @@ type Overrides = {
   consolidationActive?: unknown;
   /** Rules version file name (without `.json`) to content; replaces the repo's `consolidation/v*.json`. */
   consolidation?: Record<string, unknown>;
-  /** File name (without `.json`) to content; replaces all repo area files. */
-  areas?: Record<string, unknown>;
 };
 
 /** Writes a temporary config dir: repo config files with the given overrides applied. */
@@ -78,15 +76,8 @@ function fixtureDir(overrides: Overrides): string {
   for (const [name, value] of Object.entries(overrides.consolidation ?? { [activeRules]: activeRulesConfig })) {
     writeFileSync(join(dir, "consolidation", `${name}.json`), JSON.stringify(value));
   }
-  mkdirSync(join(dir, "areas"));
-  const areas = overrides.areas ?? Object.fromEntries(repoConfig.areas.map((a) => [a.key, a]));
-  for (const [name, value] of Object.entries(areas)) {
-    writeFileSync(join(dir, "areas", `${name}.json`), JSON.stringify(value));
-  }
   return dir;
 }
-
-const saronic = () => structuredClone(repoConfig.areas.find((a) => a.key === "saronic")!);
 
 describe("subdivisions config", () => {
   const sub = () => structuredClone(repoConfig.subdivisions);
@@ -297,16 +288,6 @@ describe("loadConfig", () => {
     expect(() => loadConfig(join(tmpdir(), "periplus-does-not-exist"))).toThrow();
   });
 
-  it("loadConfig reads both areas", () => {
-    const c = loadConfig("config");
-    expect(c.areas.map((a) => a.key).sort()).toEqual(["argolic", "saronic"]);
-    const s = c.areas.find((a) => a.key === "saronic")!;
-    expect(s.names).toMatchObject({ de: "Saronischer Golf", en: "Saronic Gulf", el: "Σαρωνικός Κόλπος" });
-    expect(s.tileBbox).toEqual([23.0, 37.0, 23.75, 38.0]);
-    expect(s.coastSections.map((cs) => cs.key)).toEqual(["methana", "ermioni", "porto-cheli", "epidavros"]);
-    expect(c.areas.find((a) => a.key === "argolic")!.tileBbox).toBeNull();
-  });
-
   it("loads categories and gazetteer settings", () => {
     const c = loadConfig("config");
     expect(c.categories.wikidata.Q40080).toBe("beach");
@@ -317,18 +298,6 @@ describe("loadConfig", () => {
     expect(c.gazetteer.merge.distanceM.default).toBe(500);
     expect(c.gazetteer.landBufferKm).toBe(55);
     expect(c.gazetteer.noAnchoringKinds).toEqual(["military", "cable", "firing_area", "aquaculture"]);
-  });
-
-  it("area without an el name is rejected", () => {
-    const area = saronic();
-    delete (area.names as Record<string, string>).el;
-    expect(() => loadConfig(fixtureDir({ areas: { saronic: area } }))).toThrow(/saronic\.json.*names/);
-  });
-
-  it("area key must equal file name", () => {
-    expect(() => loadConfig(fixtureDir({ areas: { "saronic-copy": saronic() } }))).toThrow(
-      /saronic-copy\.json.*key/,
-    );
   });
 
   it("rejects an unknown POI category", () => {
@@ -733,10 +702,9 @@ describe("delivery configuration", () => {
   });
 });
 
-describe("areaByKey", () => {
-  it("returns the area and throws on an unknown key", () => {
-    expect(areaByKey("saronic").names.en).toBe("Saronic Gulf");
-    expect(() => areaByKey("atlantis")).toThrow(/atlantis/);
+describe("retired area keys", () => {
+  it("name the subdivision to pass instead of each former area", () => {
+    expect(loadConfig("config").subdivisions.retiredAreaKeys).toEqual({ saronic: "GR-I", argolic: "GR-J" });
   });
 });
 

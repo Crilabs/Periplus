@@ -1,98 +1,46 @@
-import { and, desc, eq, inArray, isNotNull, isNull, ne, notInArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, ne, notInArray, or, sql } from "drizzle-orm";
 import type { Polygon, MultiPolygon } from "geojson";
-import { getConfig, type AreaConfig } from "@/lib/config";
+import { getConfig, type SubdivisionsConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects, subdivisions } from "@/lib/db/schema";
 import { newPublicId } from "@/lib/domain/ids";
-import type { Bbox } from "@/lib/domain/tiles";
 import { addNames, isGreek, transliterateElot743 } from "./names";
 
-/** Bounding box of a polygon's outer rings. */
-export function polygonBbox(polygon: AreaConfig["polygon"]): Bbox {
-  const rings = polygon.type === "Polygon" ? [polygon.coordinates] : polygon.coordinates;
-  let [west, south, east, north] = [Infinity, Infinity, -Infinity, -Infinity];
-  for (const ring of rings) {
-    for (const [x, y] of ring[0]) {
-      west = Math.min(west, x);
-      east = Math.max(east, x);
-      south = Math.min(south, y);
-      north = Math.max(north, y);
-    }
-  }
-  return [west, south, east, north];
-}
-
-/** The area's bounding box: its polygon's box, widened to cover the configured `tileBbox`. */
-export function areaBbox(area: AreaConfig): Bbox {
-  const box = polygonBbox(area.polygon);
-  if (!area.tileBbox) return box;
-  const [w, s, e, n] = area.tileBbox;
-  return [Math.min(box[0], w), Math.min(box[1], s), Math.max(box[2], e), Math.max(box[3], n)];
-}
+/*
+ * Coast sections (spec 04, spec 14): named stretches of coast configured per subdivision
+ * (`subdivisions.overrides[key].coastSections`), kept as geo objects of type `coast_section` below the subdivision's
+ * geo object.
+ */
 
 type ConfigObject = {
   configKey: string;
-  type: "area" | "coast_section";
+  type: "coast_section";
   polygon: Polygon | MultiPolygon;
   names: Record<string, string>;
-  /** `undefined`: the parent is left alone (an area's sea is set by the hierarchy stage). */
-  parentId?: string;
+  parentId: string;
 };
-
-/**
- * Creates or updates the `geo_objects` of the configured areas (`type area`, `ar_…`) and their coast
- * sections (`type coast_section`, `rg_…`, `config_key "<area>/<section>"`, parent = the area). An area's
- * parent (its sea or gulf) is left to `assignParents`.
- * Geometry and parent are only written when they changed, so an unchanged rerun writes no history.
- * Config names are `origin manual`; a manual name no longer in the config is ended (`valid_to`). An object ended
- * because its key was no longer configured is revived. Ending such objects is `endUnconfiguredAreas`.
- * Returns `config_key → id`.
- */
-export async function syncAreas(db: Db, areas: AreaConfig[]): Promise<Map<string, string>> {
-  return db.transaction(async (tx) => {
-    const ids = new Map<string, string>();
-    for (const area of areas) {
-      const areaId = await syncObject(tx, {
-        configKey: area.key,
-        type: "area",
-        polygon: area.polygon,
-        names: area.names,
-      });
-      ids.set(area.key, areaId);
-      for (const section of area.coastSections) {
-        const configKey = `${area.key}/${section.key}`;
-        ids.set(
-          configKey,
-          await syncObject(tx, {
-            configKey,
-            type: "coast_section",
-            polygon: section.polygon,
-            names: section.names,
-            parentId: areaId,
-          }),
-        );
-      }
-    }
-    return ids;
-  });
-}
 
 /**
  * Creates or updates the coast sections of the subdivision `subdivisionKey` from
  * `subdivisions.overrides[key].coastSections` (`type coast_section`, `rg_…`, `config_key "<key>/<section>"`, parent = the
- * subdivision's geo object). Like `syncAreas` it writes geometry and parent only when they changed. Sections no longer
+ * subdivision's geo object). Geometry and parent are written only when they changed, so an unchanged rerun writes no
+ * history; config names are `origin manual`, and a manual name no longer configured is ended. Sections no longer
  * configured are ended (`valid_to`); a key configured again revives its object. Returns `config_key → id`; throws for an
- * unknown subdivision.
+ * unknown subdivision. `cfg`: the subdivisions configuration (tests pass a changed one).
  */
-export async function syncCoastSections(db: Db, subdivisionKey: string): Promise<Map<string, string>> {
+export async function syncCoastSections(
+  db: Db,
+  subdivisionKey: string,
+  cfg: SubdivisionsConfig = getConfig().subdivisions,
+): Promise<Map<string, string>> {
   return db.transaction(async (tx) => {
     const [sub] = await tx
       .select({ geoObjectId: subdivisions.geoObjectId })
       .from(subdivisions)
       .where(and(eq(subdivisions.key, subdivisionKey), isNull(subdivisions.validTo)));
     if (!sub) throw new Error(`Unknown subdivision ${subdivisionKey}`);
-    const sections = getConfig().subdivisions.overrides[subdivisionKey]?.coastSections ?? [];
+    const sections = cfg.overrides[subdivisionKey]?.coastSections ?? [];
     const ids = new Map<string, string>();
     for (const section of sections) {
       const configKey = `${subdivisionKey}/${section.key}`;
@@ -122,31 +70,6 @@ export async function syncCoastSections(db: Db, subdivisionKey: string): Promise
   });
 }
 
-/**
- * Ends (`valid_to = current_date`) the valid areas and coast sections whose config key is no longer configured, so the
- * next package reports a removed coast section as `removed` and `GET /areas` no longer lists a removed area
- * (gesamt-review DAT-4). Takes the whole configuration (the tiles stage passes `getConfig().areas`); `among` limits the
- * keys considered (tests). Returns the ended keys, sorted. A key configured again revives its object (`syncObject`).
- */
-export async function endUnconfiguredAreas(db: Db, areas: AreaConfig[], opts: { among?: string[] } = {}): Promise<string[]> {
-  const configured = areas.flatMap((a) => [a.key, ...a.coastSections.map((s) => `${a.key}/${s.key}`)]);
-  if (opts.among?.length === 0) return [];
-  const rows = await db
-    .update(geoObjects)
-    .set({ validTo: sql`current_date`, updatedAt: sql`now()` })
-    .where(
-      and(
-        isNotNull(geoObjects.configKey),
-        isNull(geoObjects.validTo),
-        inArray(geoObjects.type, ["area", "coast_section"]),
-        configured.length > 0 ? notInArray(geoObjects.configKey, configured) : undefined,
-        opts.among ? inArray(geoObjects.configKey, opts.among) : undefined,
-      ),
-    )
-    .returning({ configKey: geoObjects.configKey });
-  return rows.map((r) => r.configKey!).sort();
-}
-
 async function syncObject(db: Db, o: ConfigObject): Promise<string> {
   const geom = geomFromGeoJson(o.polygon);
   let [existing] = await db
@@ -154,7 +77,7 @@ async function syncObject(db: Db, o: ConfigObject): Promise<string> {
     .from(geoObjects)
     .where(and(eq(geoObjects.configKey, o.configKey), isNull(geoObjects.validTo)));
   if (!existing) {
-    // configured again after `endUnconfiguredAreas` ended it: the same object and public id come back
+    // configured again after `syncCoastSections` ended it: the same object and public id come back
     const [ended] = await db
       .select({ id: geoObjects.id })
       .from(geoObjects)
@@ -170,11 +93,10 @@ async function syncObject(db: Db, o: ConfigObject): Promise<string> {
   let id: string;
   if (existing) {
     id = existing.id;
-    const parentChanged =
-      o.parentId === undefined ? sql`false` : sql`${geoObjects.parentId} is distinct from ${o.parentId}`;
+    const parentChanged = sql`${geoObjects.parentId} is distinct from ${o.parentId}`;
     await db
       .update(geoObjects)
-      .set({ geom: sql`${geom}`, ...(o.parentId === undefined ? {} : { parentId: o.parentId }) })
+      .set({ geom: sql`${geom}`, parentId: o.parentId })
       .where(and(eq(geoObjects.id, id), sql`(not ST_OrderingEquals(${geoObjects.geom}, ${geom}) or ${parentChanged})`));
   } else {
     const [row] = await db
@@ -183,8 +105,8 @@ async function syncObject(db: Db, o: ConfigObject): Promise<string> {
         type: o.type,
         origin: "manual",
         configKey: o.configKey,
-        publicId: newPublicId(o.type === "area" ? "ar" : "rg"),
-        parentId: o.parentId ?? null,
+        publicId: newPublicId("rg"),
+        parentId: o.parentId,
         geom: sql`${geom}`,
       })
       .returning({ id: geoObjects.id });

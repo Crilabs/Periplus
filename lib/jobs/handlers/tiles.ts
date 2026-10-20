@@ -1,6 +1,6 @@
-import { syncCoastSections } from "@/lib/domain/gazetteer/areas";
+import { syncCoastSections } from "@/lib/domain/gazetteer/coast-sections";
 import { ensureSubdivisionTiles } from "@/lib/domain/gazetteer/tiles-ensure";
-import { requireSubdivision } from "@/lib/domain/subdivisions/store";
+import { requireSubdivision, retiredAreaKeyMessage } from "@/lib/domain/subdivisions/store";
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 
@@ -8,7 +8,7 @@ import type { JobData, JobHandler } from "@/lib/jobs/worker";
 export function subdivisionKeyOf(params: Record<string, unknown>): string {
   if (typeof params.subdivisionKey === "string" && params.subdivisionKey !== "") return params.subdivisionKey;
   if (typeof params.areaKey === "string" && params.areaKey !== "") {
-    throw new Error(`Revier-Schlüssel ${params.areaKey} ist kein Laufumfang mehr; Landesteil angeben (z. B. GR-I)`);
+    throw new Error(retiredAreaKeyMessage(params.areaKey));
   }
   throw new Error("subdivisionKey is required");
 }

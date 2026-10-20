@@ -1,6 +1,6 @@
 import type { Db } from "@/lib/db/client";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
-import { requireSubdivision } from "@/lib/domain/subdivisions/store";
+import { requireSubdivision, retiredAreaKeyMessage } from "@/lib/domain/subdivisions/store";
 import { parseTileId } from "@/lib/domain/tiles";
 
 // No import of ./runs here: modules a job handler imports must not reach the stage registry (import cycle).
@@ -69,7 +69,7 @@ export async function seedTileIds(db: Db, params: Record<string, unknown>): Prom
     return params.tileIds as string[];
   }
   if (typeof params.areaKey === "string" && params.areaKey !== "") {
-    throw new Error(`Revier-Schlüssel ${params.areaKey} ist kein Laufumfang mehr; Landesteil angeben (z. B. GR-I)`);
+    throw new Error(retiredAreaKeyMessage(params.areaKey));
   }
   if (typeof params.subdivisionKey !== "string" || params.subdivisionKey === "") {
     throw new Error("tileIds or subdivisionKey is required");

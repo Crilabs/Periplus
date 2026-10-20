@@ -9,7 +9,7 @@ import { estimateComparisonCostEur } from "@/lib/domain/extraction/comparison";
 import { anthropicHeadroomEur } from "@/lib/pipeline/batches";
 import { CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
 import { enqueueStage, startRun } from "@/lib/pipeline/runs";
-import { requireSubdivision } from "@/lib/domain/subdivisions/store";
+import { requireSubdivision, retiredAreaKeyMessage } from "@/lib/domain/subdivisions/store";
 import { RunScopeNotReady, seedTileIds } from "@/lib/pipeline/tile-scope";
 import { CHECK_STAGE } from "./check";
 import { CLASSIFY_STAGE } from "./classify";
@@ -63,7 +63,7 @@ async function assertSelectionReady(db: Db, params: TextRunParams): Promise<void
     if (rows.length === 0) throw new RunScopeNotReady("unknown_tile", `tile ${params.tileId} is not a valid tile`);
   }
   if (params.areaKey) {
-    throw new RunScopeNotReady("unknown_area", `Revier-Schlüssel ${params.areaKey} ist kein Laufumfang mehr; Landesteil angeben (z. B. GR-I)`);
+    throw new RunScopeNotReady("unknown_area", retiredAreaKeyMessage(params.areaKey));
   }
   if (params.subdivisionKey) {
     await requireSubdivision(db, params.subdivisionKey);

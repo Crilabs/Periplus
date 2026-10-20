@@ -156,7 +156,7 @@ describe("startSeedRun", () => {
   it("startSeedRun with an area key fails with the replacement hint", () =>
     withRollback(async (db) => {
       const { boss, inserted } = recordingBoss();
-      const areaKey = getConfig().areas[0]!.key;
+      const areaKey = Object.keys(getConfig().subdivisions.retiredAreaKeys)[0]!;
       await expect(startSeedRun(db, boss, { subdivisionKey: areaKey }, "test")).rejects.toThrow(
         `Revier-Schlüssel ${areaKey} ist kein Laufumfang mehr; Landesteil angeben (z. B. GR-I)`,
       );

@@ -491,7 +491,7 @@ describe("startGeometryRun", () => {
       const { boss } = recordingBoss();
       await expect(startGeometryRun(tx, boss, { tileId: "q025:0:0" }, "test")).rejects.toThrow("Unknown tile q025:0:0");
       await expect(startGeometryRun(tx, boss, { subdivisionKey: "XG-NOPE" }, "test")).rejects.toThrow("Unbekannter Landesteil XG-NOPE");
-      const areaKey = getConfig().areas[0]!.key;
+      const areaKey = Object.keys(getConfig().subdivisions.retiredAreaKeys)[0]!;
       await expect(startGeometryRun(tx, boss, { subdivisionKey: areaKey }, "test")).rejects.toThrow(`Revier-Schlüssel ${areaKey} ist kein Laufumfang mehr`);
       expect(getConfig().queues["geometry.compute"]).toEqual({
         concurrency: 4,
