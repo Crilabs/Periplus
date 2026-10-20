@@ -1,4 +1,5 @@
-import { eq } from "drizzle-orm";
+import { readFileSync } from "node:fs";
+import { eq, inArray, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { describe, expect, it } from "vitest";
 import { withRollback } from "@/test/db";
@@ -96,5 +97,34 @@ describe("Lauf beenden", () => {
       expect(stage).toMatchObject({ status: "pending", total: 0 });
       const claims = await tx.select({ s: mentions.extractionStatus }).from(mentions).where(eq(mentions.documentVersionId, v.versionId));
       expect(claims.map((m) => m.s)).toEqual(["pending", "pending"]);
+    }));
+
+  it("the backfill marks runs ended before the repeatable cleanup as cleaned up, unless something is left open (GR-13, W2-M-2)", () =>
+    withRollback(async (tx) => {
+      const v = await scene(tx, "Kolonaz", -150.5, -50.5);
+      const params = { documentVersionIds: [v.versionId] };
+      const newRun = (p: Record<string, unknown>) =>
+        createRun(tx, { kind: "stage", scope: { type: "system", id: `end-${newId()}` }, stages: [EXTRACT_STAGE], params: p, triggeredBy: "test" });
+      const { id: clean } = await newRun({});
+      const { id: open } = await newRun(params);
+      await planExtraction(tx, { id: open, params }, config);
+      const { id: cleanedLater } = await newRun({ endCleanedUpAt: "2026-10-20T10:00:00.000Z" });
+      const endedAt = new Date("2026-09-01T08:00:00Z");
+      // ended by the old „Lauf beenden“: ended_by set, no cleanup marker
+      await tx.update(runs).set({ status: "failed", endedBy: ADMIN, endedAt }).where(inArray(runs.id, [clean, open, cleanedLater]));
+      expect((await getRun(tx, clean))!.endCleanupPending).toBe(true);
+
+      // the migration, limited to this test's runs (never touch other files' committed rows)
+      const migration = readFileSync("drizzle/0051_runs_end_cleanup_backfill.sql", "utf8");
+      const scoped = migration.replace("WHERE r.ended_by IS NOT NULL", `WHERE r.id in ('${clean}', '${open}', '${cleanedLater}') AND r.ended_by IS NOT NULL`);
+      expect(scoped).not.toBe(migration);
+      await tx.execute(sql.raw(scoped));
+
+      expect((await getRun(tx, clean))!.endCleanupPending).toBe(false);
+      const [row] = await tx.select({ params: runs.params }).from(runs).where(eq(runs.id, clean));
+      expect(new Date((row!.params as { endCleanedUpAt: string }).endCleanedUpAt).toISOString()).toBe(endedAt.toISOString());
+      expect((await getRun(tx, open))!.endCleanupPending).toBe(true);
+      const [later] = await tx.select({ params: runs.params }).from(runs).where(eq(runs.id, cleanedLater));
+      expect(later!.params).toEqual({ endCleanedUpAt: "2026-10-20T10:00:00.000Z" });
     }));
 });
