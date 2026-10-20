@@ -49,6 +49,14 @@ services:
     command: ["node", "--import", "tsx", "worker/index.ts"]
     # Lets running jobs finish and the heartbeat row be removed before SIGKILL.
     stop_grace_period: 60s
+    # Healthy once the start checks passed and while the heartbeat reaches the database: the worker touches
+    # /tmp/periplus-worker-ready on every beat (30 s; lib/jobs/ready-marker.ts). `deploy.sh` waits for it.
+    healthcheck:
+      test: ["CMD-SHELL", "test -n \"$$(find /tmp/periplus-worker-ready -mmin -2 2>/dev/null)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
     depends_on:
       postgres:
         condition: service_healthy

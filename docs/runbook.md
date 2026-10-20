@@ -59,7 +59,7 @@ Der Server zieht die Images mit einem eigenen, dauerhaften Nur-Lese-Zugang:
 Alle Werte in `/opt/periplus/.env` setzen. `SESSION_SECRET`: `openssl rand -base64 48`. `POSTGRES_PASSWORD` und das Passwort in `DATABASE_URL` müssen übereinstimmen. Werte ohne Anführungszeichen schreiben.
 
 ## Erstes Deployment
-Auf `main` mergen: der Job `deploy` baut und pusht die drei Images mit dem Tag des Commits und führt `scripts/deploy/deploy.sh <sha>` auf dem Server aus (pull, Migration, Neustart von web/worker/caddy, Warten auf `/readyz` bis 60 s, bei Fehler automatischer Rollback auf den vorigen Tag). Danach `https://<domain>/readyz` aufrufen: erwartet `{"status":"ok"}`.
+Auf `main` mergen: der Job `deploy` baut und pusht die drei Images mit dem Tag des Commits und führt `scripts/deploy/deploy.sh <sha>` auf dem Server aus (pull, Migration, Neustart von web/worker/caddy mit `up --wait`, Warten auf `/readyz` und auf die Bereit-Marke des Workers bis 60 s, bei Fehler automatischer Rollback auf den vorigen Tag). Die Bereit-Marke `/tmp/periplus-worker-ready` schreibt der Worker, wenn seine Startprüfungen bestanden sind (Umgebung, Embedding-Dimension, Bucket, Queues), und erneuert sie mit jedem Heartbeat; ein Worker, der beim Start scheitert und in der Neustartschleife hängt, lässt den Deploy deshalb scheitern. Der Compose-Healthcheck des Workers prüft dieselbe Marke; er wirkt auf dem Server erst, wenn dort `docker/compose.prod.yml` aktualisiert ist (`docs/m0-folgearbeiten.md` §3), die Prüfung in `deploy.sh` wirkt sofort. Danach `https://<domain>/readyz` aufrufen: erwartet `{"status":"ok"}`.
 
 ## Ersten Admin anlegen
 Das Web-Image ist standalone (`node server.js`, kein tsx). Deshalb über den Worker-Container. Das Passwort wird von stdin gelesen:
@@ -107,7 +107,7 @@ Eine frühere Version erneut ausrollen:
 ```bash
 bash /opt/periplus/scripts/deploy/deploy.sh <previous sha>
 ```
-(oder aus Actions heraus per Re-Run). Das funktioniert jederzeit, auch lange nach dem Deploy-Job, weil der Server mit seinem eigenen Nur-Lese-Login (Abschnitt 5a) zieht; die Images müssen in ghcr.io noch vorhanden sein. Der aktuell ausgerollte Tag steht in `.deployed-tag`; ein fehlgeschlagener Deploy (pull, Migration, Start oder `/readyz`) überschreibt ihn nicht und rollt automatisch auf ihn zurück. Migrationen werden nicht zurückgedreht; sie müssen zur Vorversion abwärtskompatibel bleiben. Falls `deploy.sh` nicht auf dem Server liegt: `ssh deploy@<host> bash -s <sha> < scripts/deploy/deploy.sh`.
+(oder aus Actions heraus per Re-Run). Das funktioniert jederzeit, auch lange nach dem Deploy-Job, weil der Server mit seinem eigenen Nur-Lese-Login (Abschnitt 5a) zieht; die Images müssen in ghcr.io noch vorhanden sein. Der aktuell ausgerollte Tag steht in `.deployed-tag`; ein fehlgeschlagener Deploy (pull, Migration, Start, `/readyz` oder Worker nicht bereit) überschreibt ihn nicht und rollt automatisch auf ihn zurück. Migrationen werden nicht zurückgedreht; sie müssen zur Vorversion abwärtskompatibel bleiben. Falls `deploy.sh` nicht auf dem Server liegt: `ssh deploy@<host> bash -s <sha> < scripts/deploy/deploy.sh`.
 
 ## Backup und Restore
 - Automatisch täglich 02:30 UTC: `scripts/ops/backup.sh` (pg_dump per restic, Aufbewahrung 7 täglich / 4 wöchentlich / 12 monatlich, Archiv-Bucket per `rclone copy` auf die Storage Box; es wird nie gelöscht).

@@ -13,6 +13,7 @@ import { createBoss } from "@/lib/jobs/boss";
 import { BATCH_HANDLERS } from "@/lib/jobs/batch-handlers";
 import { setModelClientFactory } from "@/lib/jobs/handlers/ai-batch";
 import { DEAD_LETTER_QUEUE, ensureQueues, QUEUES } from "@/lib/jobs/queues";
+import { clearReadyMarker, touchReadyMarker } from "@/lib/jobs/ready-marker";
 import { HANDLERS } from "@/lib/jobs/registry";
 import { startWorkers } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
@@ -21,6 +22,8 @@ const HEARTBEAT_MS = 30_000;
 const log = createLogger("worker-main");
 
 async function main(): Promise<void> {
+  // Not ready until every start check below has passed (a restarted container keeps the marker of its last start).
+  clearReadyMarker();
   // A simulation runs only against periplus_sim or *_test and with its own archive prefix: checked before anything
   // touches the database, the bucket or the queues.
   const simulation = assertSimulationEnv(getEnv());
@@ -46,6 +49,8 @@ async function main(): Promise<void> {
       .insert(workerHeartbeats)
       .values({ workerId, host, startedAt, beatAt: sql`now()` })
       .onConflictDoUpdate({ target: workerHeartbeats.workerId, set: { beatAt: sql`now()` } });
+    // Fresh only while the heartbeat reaches the database (compose healthcheck, deploy check).
+    touchReadyMarker();
   }
   await beat();
   let beating: Promise<void> = Promise.resolve();
@@ -61,6 +66,7 @@ async function main(): Promise<void> {
     stopping = true;
     log.info({ signal }, "worker stopping");
     clearInterval(heartbeat);
+    clearReadyMarker();
     try {
       await workers.stop();
       await boss.stop({ graceful: true });
