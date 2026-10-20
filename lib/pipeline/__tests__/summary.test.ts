@@ -146,6 +146,7 @@ describe("profile summaries", () => {
       expect(await decideReviewTask(tx, { taskId: tasks[0]!.id, decision: { action: "regenerate_summary" }, decidedBy: "admin@example.invalid" })).toEqual({
         documentVersionIds: [],
         consolidate: { geoObjectId: objectId, stagesOnly: ["consolidation.summary"] },
+        regenerateImage: null,
       });
       const again = await insertTestRun(tx);
       expect(await summaryTargets(tx, { id: again, params: { geoObjectIds: [objectId], stagesOnly: ["consolidation.summary"] } })).toEqual([{ geoObjectId: objectId, version: 1 }]);
