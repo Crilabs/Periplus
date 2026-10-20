@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { eq, inArray, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
@@ -261,6 +262,12 @@ describe("uploadPdfAction", () => {
     // The action refuses files over 100 MB itself; the request around such a file is a few KB larger.
     expect(nextConfig.experimental?.serverActions?.bodySizeLimit).toBe("101mb");
     expect(nextConfig.experimental?.proxyClientMaxBodySize).toBe("101mb");
+  });
+
+  it("the edge allows such a body only on a source page, 1 MB elsewhere (SEC-1)", () => {
+    const caddy = readFileSync("docker/Caddyfile", "utf8");
+    expect(caddy).toMatch(/@sourcePage path_regexp \^\/sources\/\[0-9a-fA-F-\]\{36\}\/\?\$\s*request_body @sourcePage \{\s*max_size 101MB/);
+    expect(caddy).toMatch(/@otherPaths not path_regexp \^\/sources\/\[0-9a-fA-F-\]\{36\}\/\?\$\s*request_body @otherPaths \{\s*max_size 1MB/);
   });
 
   const pdf = (text: string) => new Blob([`%PDF-1.7\n${text}\n%%EOF\n`], { type: "application/pdf" });

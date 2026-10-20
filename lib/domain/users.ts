@@ -2,11 +2,15 @@ import { and, count, eq, gt, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { loginAttempts, users } from "@/lib/db/schema";
 import { createLogger } from "@/lib/logger";
-import { hashPassword, verifyPassword } from "@/lib/security/password";
+import { hashPassword, MAX_PASSWORD_LENGTH, verifyPassword } from "@/lib/security/password";
 
 
 const WINDOW_MS = 15 * 60_000;
 const MAX_FAILED = 10;
+/** Longest address RFC 5321 allows; anything longer is no account's email (SEC-1). */
+export const MAX_EMAIL_LENGTH = 320;
+/** The client address kept per attempt (an IPv6 address with zone fits); a longer forwarded value is cut. */
+const MAX_IP_LENGTH = 64;
 
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
 
@@ -72,7 +76,14 @@ export async function authenticate(
   input: { email: string; password: string; ip: string },
   now: Date = new Date(),
 ): Promise<AuthResult> {
+  // Over-long input is refused before any work (no Argon2, no lock, no insert): such an email or password belongs to no
+  // account, and an index row that large would fail the attempt's insert, so the attempt would never count (SEC-1).
+  if (input.email.length > MAX_EMAIL_LENGTH || input.password.length > MAX_PASSWORD_LENGTH) {
+    return { ok: false, reason: "invalid" } as const;
+  }
   const email = normalizeEmail(input.email);
+  // A long forwarded address (only possible without the Caddy edge) still counts, cut to its first characters.
+  input = { ...input, ip: input.ip.slice(0, MAX_IP_LENGTH) };
   // Serialise attempts per email and per IP (fixed lock order: email, then ip) so concurrent
   // requests cannot all read the failure count before any of them records its own failure.
   return db.transaction(async (tx) => {

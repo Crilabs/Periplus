@@ -3,7 +3,8 @@ import { eq } from "drizzle-orm";
 import { testDb } from "@/test/db";
 import { loginAttempts, users } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
-import { authenticate, createUser, disableUser, isUserActive, setPassword } from "../users";
+import { MAX_PASSWORD_LENGTH } from "@/lib/security/password";
+import { authenticate, createUser, disableUser, isUserActive, MAX_EMAIL_LENGTH, setPassword } from "../users";
 
 const db = testDb();
 const correct = "correct horse battery";
@@ -35,6 +36,27 @@ describe("users", () => {
     expect(await authenticate(db, { email: a.email, password: "wrong-password-x", ip: a.ip }, t0)).toEqual({ ok: false, reason: "invalid" });
     const b = fresh();
     expect(await authenticate(db, { email: b.email, password: "wrong-password-x", ip: b.ip }, t0)).toEqual({ ok: false, reason: "invalid" });
+  });
+
+  it("refuses an over-long email or password at once, without an attempt row (SEC-1)", async () => {
+    const { ip } = fresh();
+    const huge = `${"x".repeat(5_000_000)}@test.invalid`;
+    expect(await authenticate(db, { email: huge, password: "wrong-password-x", ip }, t0)).toEqual({ ok: false, reason: "invalid" });
+    const { email } = fresh();
+    await createUser(db, email, correct);
+    expect(await authenticate(db, { email, password: "x".repeat(MAX_PASSWORD_LENGTH + 1), ip }, t0)).toEqual({ ok: false, reason: "invalid" });
+    expect(await authenticate(db, { email: `${"x".repeat(MAX_EMAIL_LENGTH)}@test.invalid`, password: correct, ip }, t0)).toEqual({ ok: false, reason: "invalid" });
+    expect(await db.select().from(loginAttempts).where(eq(loginAttempts.ip, ip))).toEqual([]);
+  });
+
+  it("counts failures with an over-long client address, so the rate limit still comes (SEC-1)", async () => {
+    const { email } = fresh();
+    // random, so the value does not compress below the index row limit
+    const ip = `ip-${newId()}${Array.from({ length: 2000 }, () => Math.random().toString(36).slice(2)).join("")}`;
+    for (let i = 0; i < 10; i++) {
+      expect(await authenticate(db, { email, password: "wrong-password-x", ip }, addMinutes(t0, i))).toEqual({ ok: false, reason: "invalid" });
+    }
+    expect(await authenticate(db, { email, password: "wrong-password-x", ip }, addMinutes(t0, 10))).toEqual({ ok: false, reason: "rate_limited" });
   });
 
   it("records every attempt", async () => {

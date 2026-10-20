@@ -2,5 +2,18 @@
 	# Deliberately no trusted_proxies: Caddy is the edge, so it overwrites any client-supplied
 	# X-Forwarded-For with the real peer address. The login rate limit takes the leftmost
 	# X-Forwarded-For entry and relies on exactly that.
+
+	# Request bodies are limited here, before the web server buffers them (SEC-1; the Next proxy buffers up to
+	# proxyClientMaxBodySize, 101 MB, in memory): 101 MB only on a source page (the PDF upload action posts there),
+	# 1 MB everywhere else (login, admin forms, the delivery API).
+	@sourcePage path_regexp ^/sources/[0-9a-fA-F-]{36}/?$
+	request_body @sourcePage {
+		max_size 101MB
+	}
+	@otherPaths not path_regexp ^/sources/[0-9a-fA-F-]{36}/?$
+	request_body @otherPaths {
+		max_size 1MB
+	}
+
 	reverse_proxy web:3000
 }
