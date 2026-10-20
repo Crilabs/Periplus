@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { documents, geoNames, geoObjects, places, profileSummaries, tileGeoObjects } from "@/lib/db/schema";
+import { addNames } from "@/lib/domain/gazetteer/names";
+import { osmNames } from "@/lib/domain/gazetteer/osm-classify";
 import { newPublicId } from "@/lib/domain/ids";
 import { insertMention, insertMentionFact, insertExtraction, insertProfile, provenanceEntry } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
@@ -270,6 +272,31 @@ describe("loadAreaScope", () => {
         { lang: "el", name: "Νησίδα" },
         { lang: "el-Latn", name: "Nisida" },
       ]);
+    });
+  });
+
+  it("an object with several Greek names is delivered with the transliteration of its preferred one, a Latin source name ahead of a derived one (W3-I-1)", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliveryArea(tx);
+      const today = await dbToday(tx);
+      const rename = async (geoObjectId: string, tags: Record<string, string>) => {
+        await tx.update(geoNames).set({ validTo: today }).where(eq(geoNames.geoObjectId, geoObjectId));
+        await addNames(tx, geoObjectId, osmNames(tags));
+      };
+      // a: OSM `name` plus an `old_name`, both Greek
+      await rename(f.places.A.geoObjectId, { name: "Όρμος Φτερό", old_name: "Αγία Μαρίνα" });
+      // b: a Latin OSM `name` plus `name:el`
+      await rename(f.places.C.geoObjectId, { name: "Vathi", "name:el": "Βαθύ" });
+      // c: OSM `name` plus an `alt_name`, both Greek
+      await rename(f.islandId, { name: "Όρμος Φτερό", alt_name: "Άγιος Νικόλαος" });
+
+      const scope = await loadAreaScope(tx, f.areaId, cfg, today);
+      const a = scope.spots.find((s) => s.publicId === f.places.A.publicId)!;
+      expect.soft(a.name).toBe("Ormos Ftero");
+      // the old name's transliteration stays in names
+      expect(a.names.map((n) => `${n.lang}:${n.name}`)).toEqual(["el:Αγία Μαρίνα", "el:Όρμος Φτερό", "el-Latn:Agia Marina", "el-Latn:Ormos Ftero"]);
+      expect.soft(scope.spots.find((s) => s.publicId === f.places.C.publicId)!.name).toBe("Vathi");
+      expect.soft(scope.regions.find((r) => r.publicId === f.islandPublicId)!.name).toBe("Ormos Ftero");
     });
   });
 

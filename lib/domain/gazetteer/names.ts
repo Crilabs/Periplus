@@ -2,7 +2,7 @@ import { and, eq, getTableName, inArray, is, isNull, SQL, sql, type AnyColumn } 
 import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "@/lib/db/client";
 import { geoNames, type NameOrigin, type NameScript } from "@/lib/db/schema";
-import { validAt } from "@/lib/domain/timeline";
+import { validAt, validAtAlias } from "@/lib/domain/timeline";
 
 /**
  * A name as delivered by an import; `language` is ISO 639-1 or `"und"`.
@@ -282,20 +282,71 @@ export function displayNameSql(geoObjectId: SQL | AnyColumn, date?: string): SQL
   )`;
 }
 
+type DeliveryCandidate = { name: string; language: string; script: NameScript; origin: NameOrigin; isPreferred: boolean };
+
+/** Plain code-point order, the same on every machine (no locale). */
+const byCodePoint = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
 /**
- * Name of a geo object as delivered (contract `name`, spec Teil B: „Anzeigename, bevorzugt lateinische Schreibweise“;
- * a region's „Deutscher Anzeigename“): a valid Latin-script name first, then German, English, the local Greek
- * (the ELOT 743 transliteration is `el` in Latin script), any other language; within that the preferred name, then
- * alphabetical. A Greek-only object is delivered with its transliteration, never in Greek script while a Latin
- * form exists (gesamt-review DAT-1). `displayNameSql` stays the admin and prompt ordering.
+ * The delivered name among an object's valid names (contract `name`, spec Teil B: „Anzeigename, bevorzugt lateinische
+ * Schreibweise“; a region's „Deutscher Anzeigename“), ruling GR-14:
+ * 1. German, then English (Latin script);
+ * 2. the object's own Latin source name: the preferred name without a language (OSM `name` in Latin script);
+ * 3. the ELOT 743 transliteration of the preferred Greek name — never one of an `old_name`, `alt_name` or a Greek
+ *    alternate from GeoNames or Wikidata (those stay in `names` only);
+ * 4. any other Latin source name (another language, a non-preferred name without a language);
+ * 5. a Greek-script name (German, English, Greek, other);
+ * 6. last, another transliteration, only for an object with nothing else.
+ * Within a rank the preferred name first, then code-point order. Null without a valid name. `displayNameSql` stays
+ * the admin and prompt ordering.
  */
-export function deliveryNameSql(geoObjectId: SQL | AnyColumn, date?: string): SQL<string | null> {
-  const outerId = is(geoObjectId, SQL) ? geoObjectId : qualified(geoObjectId);
-  return sql<string | null>`(
-    select gn.name from geo_names gn
-    where gn.geo_object_id = ${outerId} and ${validAt(gn, date)}
-    order by gn.script = 'latin' desc, case gn.language when 'de' then 0 when 'en' then 1 when 'el' then 2 else 3 end,
-      gn.is_preferred desc, gn.name
-    limit 1
-  )`;
+export function pickDeliveryName(names: DeliveryCandidate[]): string | null {
+  const greekSource = names
+    .filter((n) => n.script === "greek" && n.origin !== "transliteration" && n.origin !== "fallback")
+    .sort((a, b) => Number(a.language !== "el") - Number(b.language !== "el") || Number(b.isPreferred) - Number(a.isPreferred) || byCodePoint(a.name, b.name))[0];
+  const ownTransliteration = greekSource ? transliterateElot743(greekSource.name) : null;
+  const rank = (n: DeliveryCandidate): number => {
+    if (n.script === "latin") {
+      if (n.language === "de") return 0;
+      if (n.language === "en") return 1;
+      if (n.origin === "transliteration") return n.name === ownTransliteration ? 3 : 9;
+      if (n.language === "und" && n.isPreferred) return 2;
+      return 4;
+    }
+    return 5 + ({ de: 0, en: 1, el: 2 }[n.language] ?? 3);
+  };
+  const best = [...names].sort((a, b) => rank(a) - rank(b) || Number(b.isPreferred) - Number(a.isPreferred) || byCodePoint(a.name, b.name))[0];
+  return best?.name ?? null;
+}
+
+/**
+ * Delivered name (`pickDeliveryName`) of each geo object in `geoObjectIds` from its names valid on `date`
+ * (`YYYY-MM-DD`, by default the database's `current_date`). An object without a valid name is missing from the map.
+ */
+export async function deliveryNames(db: Db, geoObjectIds: string[], date?: string): Promise<Map<string, string>> {
+  if (geoObjectIds.length === 0) return new Map();
+  const { rows } = await db.execute<{
+    geo_object_id: string;
+    name: string;
+    language: string;
+    script: NameScript;
+    origin: NameOrigin;
+    is_preferred: boolean;
+  }>(sql`
+    select n.geo_object_id, n.name, n.language, n.script, n.origin, n.is_preferred
+    from geo_names n
+    where n.geo_object_id = any(${sql.param([...new Set(geoObjectIds)])}::uuid[]) and ${validAtAlias("n", date)}
+  `);
+  const byObject = new Map<string, DeliveryCandidate[]>();
+  for (const r of rows) {
+    const list = byObject.get(r.geo_object_id) ?? [];
+    list.push({ name: r.name, language: r.language, script: r.script, origin: r.origin, isPreferred: r.is_preferred });
+    byObject.set(r.geo_object_id, list);
+  }
+  const out = new Map<string, string>();
+  for (const [id, list] of byObject) {
+    const name = pickDeliveryName(list);
+    if (name !== null) out.set(id, name);
+  }
+  return out;
 }

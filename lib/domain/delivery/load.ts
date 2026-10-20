@@ -5,7 +5,7 @@ import type { GeoObjectType, PlaceKind, PlaceStatus, PoiCategory } from "@/lib/d
 import type { DocType } from "@/lib/db/schema/sources";
 import { popularityForArea } from "@/lib/domain/consolidation/derived/popularity";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
-import { deliveryNameSql } from "@/lib/domain/gazetteer/names";
+import { deliveryNames } from "@/lib/domain/gazetteer/names";
 import { utmSridFor } from "@/lib/domain/geometry/projection";
 import { latestProfiles, validAtAlias } from "@/lib/domain/timeline";
 import type {
@@ -112,14 +112,13 @@ async function loadArea(db: Db, areaId: string, today: string): Promise<Omit<Are
   const { rows } = await db.execute<{
     public_id: string;
     config_key: string | null;
-    name: string | null;
     polygon: GeoJSON.Geometry;
     west: number;
     south: number;
     east: number;
     north: number;
   }>(sql`
-    select o.public_id, o.config_key, ${deliveryNameSql(sql`o.id`, today)} as name,
+    select o.public_id, o.config_key,
            ST_AsGeoJSON(o.geom, 5)::json as polygon,
            ext.west, ext.south, ext.east, ext.north
     from geo_objects o
@@ -145,7 +144,7 @@ async function loadArea(db: Db, areaId: string, today: string): Promise<Omit<Are
     geoObjectId: areaId,
     publicId: row.public_id,
     key: row.config_key ?? row.public_id,
-    name: row.name ?? "",
+    name: (await deliveryNames(db, [areaId], today)).get(areaId) ?? "",
     polygon: row.polygon,
     bbox,
   };
@@ -191,18 +190,18 @@ async function loadSpotRows(db: Db, areaId: string, cfg: DeliveryConfig, today: 
     status_reason: string | null;
     lon: number;
     lat: number;
-    name: string | null;
     osm_id: string | null;
     wikidata_id: string | null;
   }>(sql`
     select p.id as place_id, p.geo_object_id, p.public_id, p.kind, p.status, p.status_reason,
            ST_X(p.position) as lon, ST_Y(p.position) as lat,
-           ${deliveryNameSql(sql`p.geo_object_id`, today)} as name, g.osm_id, g.wikidata_id
+           g.osm_id, g.wikidata_id
     from places p
     join geo_objects g on g.id = p.geo_object_id
     where ${spotFilter(areaId, cfg, today)}
     order by p.public_id
   `);
+  const names = await deliveryNames(db, rows.map((r) => r.geo_object_id), today);
   return rows.map((r) => ({
     placeId: r.place_id,
     geoObjectId: r.geo_object_id,
@@ -211,7 +210,7 @@ async function loadSpotRows(db: Db, areaId: string, cfg: DeliveryConfig, today: 
     status: r.status,
     statusReason: r.status_reason,
     position: point(r.lon, r.lat),
-    name: r.name ?? "",
+    name: names.get(r.geo_object_id) ?? "",
     osmId: r.osm_id,
     wikidataId: r.wikidata_id,
   }));
@@ -251,24 +250,24 @@ async function loadPoiRows(db: Db, tileArray: SQL, today: string): Promise<PoiRo
     geo_object_id: string;
     public_id: string;
     category: PoiCategory;
-    name: string | null;
     lon: number;
     lat: number;
     osm_id: string | null;
     wikidata_id: string | null;
   }>(sql`
-    select o.id as geo_object_id, o.public_id, o.category, ${deliveryNameSql(sql`o.id`, today)} as name,
+    select o.id as geo_object_id, o.public_id, o.category,
            ST_X(o.centroid) as lon, ST_Y(o.centroid) as lat, o.osm_id, o.wikidata_id
     from geo_objects o
     where o.type = 'poi' and o.public_id is not null and o.category is not null and o.merged_into_id is null
       and ${validAtAlias("o", today)} and tile_id_for(o.centroid) = any(${tileArray})
     order by o.public_id
   `);
+  const names = await deliveryNames(db, rows.map((r) => r.geo_object_id), today);
   return rows.map((r) => ({
     geoObjectId: r.geo_object_id,
     publicId: r.public_id,
     category: r.category,
-    name: r.name ?? "",
+    name: names.get(r.geo_object_id) ?? "",
     position: point(r.lon, r.lat),
     osmId: r.osm_id,
     wikidataId: r.wikidata_id,
@@ -282,14 +281,13 @@ async function loadRegionRows(db: Db, tileArray: SQL, cfg: DeliveryConfig, today
     geo_object_id: string;
     public_id: string;
     type: GeoObjectType;
-    name: string | null;
     lon: number;
     lat: number;
     areal: boolean;
     area_m2: number | null;
     ancestors: string[];
   }>(sql`
-    select o.id as geo_object_id, o.public_id, o.type, ${deliveryNameSql(sql`o.id`, today)} as name,
+    select o.id as geo_object_id, o.public_id, o.type,
            ST_X(o.centroid) as lon, ST_Y(o.centroid) as lat,
            GeometryType(o.geom) in ('POLYGON', 'MULTIPOLYGON') as areal,
            case when GeometryType(o.geom) in ('POLYGON', 'MULTIPOLYGON') then ST_Area(o.geom::geography) end as area_m2,
@@ -312,11 +310,12 @@ async function loadRegionRows(db: Db, tileArray: SQL, cfg: DeliveryConfig, today
     rows.filter((r) => r.areal).map((r) => ({ id: r.geo_object_id, srid: utmSridFor(Number(r.lon), Number(r.lat)) })),
     cfg.regions.simplifyToleranceM,
   );
+  const names = await deliveryNames(db, rows.map((r) => r.geo_object_id), today);
   return rows.map((r) => ({
     geoObjectId: r.geo_object_id,
     publicId: r.public_id,
     type: r.type,
-    name: r.name ?? "",
+    name: names.get(r.geo_object_id) ?? "",
     polygon: polygons.get(r.geo_object_id)?.polygon ?? null,
     center: point(r.lon, r.lat),
     radiusNm: polygons.has(r.geo_object_id)
@@ -353,14 +352,15 @@ async function simplifiedPolygons(
 }
 
 async function loadPassages(db: Db, tileArray: SQL, today: string): Promise<Array<Omit<PassageSource, "profile">>> {
-  const { rows } = await db.execute<{ geo_object_id: string; type: PassageSource["type"]; name: string | null; lon: number; lat: number }>(sql`
-    select o.id as geo_object_id, o.type, ${deliveryNameSql(sql`o.id`, today)} as name, ST_X(o.centroid) as lon, ST_Y(o.centroid) as lat
+  const { rows } = await db.execute<{ geo_object_id: string; type: PassageSource["type"]; lon: number; lat: number }>(sql`
+    select o.id as geo_object_id, o.type, ST_X(o.centroid) as lon, ST_Y(o.centroid) as lat
     from geo_objects o
     where o.type in ('cape', 'strait', 'channel') and o.merged_into_id is null and ${validAtAlias("o", today)}
       and exists (select 1 from tile_geo_objects tg where tg.geo_object_id = o.id and tg.tile_id = any(${tileArray}))
     order by o.id
   `);
-  return rows.map((r) => ({ geoObjectId: r.geo_object_id, type: r.type, name: r.name ?? "", point: point(r.lon, r.lat) }));
+  const names = await deliveryNames(db, rows.map((r) => r.geo_object_id), today);
+  return rows.map((r) => ({ geoObjectId: r.geo_object_id, type: r.type, name: names.get(r.geo_object_id) ?? "", point: point(r.lon, r.lat) }));
 }
 
 /**

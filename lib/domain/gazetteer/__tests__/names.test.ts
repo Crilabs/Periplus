@@ -9,6 +9,7 @@ import {
   ensureFallbackNames,
   isGreek,
   normalizeName,
+  pickDeliveryName,
   transliterateElot743,
 } from "@/lib/domain/gazetteer/names";
 import { withRollback } from "@/test/db";
@@ -311,4 +312,29 @@ describe("displayNameSql", () => {
         .limit(1);
       expect(joined!.name).toBe("Kalm Bay");
     }));
+});
+
+describe("pickDeliveryName (GR-14)", () => {
+  const n = (name: string, language: string, origin: string, isPreferred = false) => ({
+    name,
+    language,
+    script: isGreek(name) ? ("greek" as const) : ("latin" as const),
+    origin: origin as "osm",
+    isPreferred,
+  });
+
+  it("German, then English, then the own Latin name, then the transliteration of the preferred Greek name", () => {
+    const greek = [n("Όρμος Φτερό", "el", "osm", true), n("Αγία Μαρίνα", "el", "osm"), n("Ormos Ftero", "el", "transliteration"), n("Agia Marina", "el", "transliteration")];
+    expect(pickDeliveryName(greek)).toBe("Ormos Ftero");
+    expect(pickDeliveryName([...greek, n("Baia Ftero", "it", "osm", true)])).toBe("Ormos Ftero");
+    expect(pickDeliveryName([...greek, n("Ftero", "und", "osm", true)])).toBe("Ftero");
+    expect(pickDeliveryName([...greek, n("Ftero", "und", "osm", true), n("Ftero Bay", "en", "osm")])).toBe("Ftero Bay");
+    expect(pickDeliveryName([...greek, n("Ftero Bay", "en", "osm"), n("Fterobucht", "de", "manual")])).toBe("Fterobucht");
+  });
+
+  it("never delivers the transliteration of another Greek name, not even without one of the preferred name", () => {
+    expect(pickDeliveryName([n("Όρμος Φτερό", "el", "osm", true), n("Αγία Μαρίνα", "el", "geonames"), n("Agia Marina", "el", "transliteration")])).toBe("Όρμος Φτερό");
+    expect(pickDeliveryName([n("Agia Marina", "el", "transliteration")])).toBe("Agia Marina");
+    expect(pickDeliveryName([])).toBeNull();
+  });
 });
