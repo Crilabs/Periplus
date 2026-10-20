@@ -117,10 +117,14 @@ export function buildParams<I, O>(
     attachments.length === 0
       ? user
       : [
-          ...attachments.map((a) => ({
-            type: "document" as const,
-            source: { type: "base64" as const, media_type: "application/pdf" as const, data: Buffer.from(a.data).toString("base64") },
-          })),
+          ...attachments.map((a) =>
+            a.kind === "image"
+              ? { type: "image" as const, source: { type: "base64" as const, media_type: a.mediaType, data: Buffer.from(a.data).toString("base64") } }
+              : {
+                  type: "document" as const,
+                  source: { type: "base64" as const, media_type: "application/pdf" as const, data: Buffer.from(a.data).toString("base64") },
+                },
+          ),
           { type: "text" as const, text: user },
         ];
   const system: Anthropic.MessageCreateParamsNonStreaming["system"] = taskConfig.cacheSystem
