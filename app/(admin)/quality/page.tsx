@@ -271,7 +271,7 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
                 <Field label="von (optional)">
                   <input type="date" name="from" className={inputClass} />
                 </Field>
-                <Field label="bis (optional)">
+                <Field label="bis (optional)" hint="einschließlich dieses Tages">
                   <input type="date" name="to" className={inputClass} />
                 </Field>
               </div>
@@ -392,7 +392,8 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
         <form action={startEvaluationAction} className="flex flex-wrap items-end gap-3">
           <input type="hidden" name="areaKey" value={area.key} />
           <Field label="Regelversion">
-            <select name="rulesVersion" defaultValue={activeRules} className={inputClass}>
+            <select name="rulesVersion" defaultValue="" className={inputClass}>
+              <option value="">unverändert</option>
               {ruleVersions.map((v) => (
                 <option key={v} value={v}>
                   {v}
@@ -417,8 +418,9 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
           <Button>Bewertung starten</Button>
         </form>
         <p className="mt-2 text-xs text-muted">
-          Mit Modell und Prompt-Version werden die vorhandenen Extraktionsläufe dieser Konfiguration bewertet; die Bewertung
-          extrahiert nichts neu.
+          „unverändert“ bewertet die aktiven Regeln ({activeRules}) und aktiviert keine Regelversion. Mit Modell und
+          Prompt-Version werden die vorhandenen Extraktionsläufe dieser Konfiguration bewertet; die Bewertung extrahiert
+          nichts neu.
         </p>
 
         {evaluations.length === 0 ? (
@@ -448,7 +450,7 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
                         triggerVariant="primary"
                         triggerSize="sm"
                         title={`${candidateText(c.candidate)} aktivieren?`}
-                        description="Regelversionen gelten danach für jede neue Konsolidierung, Lieferung und Zusammenfassung. Eine Extraktion gilt als freigegeben und wirkt erst nach dem Deploy von config/models.json."
+                        description={`Die Aktivierung gilt für alle Reviere, nicht nur für ${area.names.de}, an dessen Vergleichssatz bewertet wurde. Regelversionen gelten danach für jede neue Konsolidierung, Lieferung und Zusammenfassung. Eine Extraktion gilt als freigegeben und wirkt erst nach dem Deploy von config/models.json.`}
                       >
                         <form action={activateCandidateAction} className="flex justify-end">
                           <input type="hidden" name="areaKey" value={area.key} />

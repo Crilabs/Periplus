@@ -26,12 +26,16 @@ export const consolidationSummaryStage: StageDefinition = {
   plan: summaryJobs,
 };
 
-/** Summarizes profile version `data.version` of `data.geoObjectId` (synchronous model calls, outside any transaction). */
+/**
+ * Summarizes profile version `data.version` of `data.geoObjectId` with the run's frozen `data.rulesVersion` (synchronous
+ * model calls, outside any transaction).
+ */
 export const consolidationSummaryHandler: JobHandler<JobData> = async (data, ctx) => {
   if (typeof data.geoObjectId !== "string" || typeof data.version !== "number") throw new Error("geoObjectId and version are required");
+  if (data.rulesVersion !== undefined && typeof data.rulesVersion !== "string") throw new Error("rulesVersion must be a string");
   const result = await summarizeProfile(
     ctx.db,
-    { geoObjectId: data.geoObjectId, version: data.version, runId: data.runId, regenerate: data.regenerate === true },
+    { geoObjectId: data.geoObjectId, version: data.version, runId: data.runId, regenerate: data.regenerate === true, rulesVersion: data.rulesVersion },
     { model: modelClientFor(ctx.db) },
   );
   ctx.log.info({ geoObjectId: data.geoObjectId, version: data.version, ...result }, "profile summary");

@@ -55,6 +55,10 @@ test("quality page renders before the area exists and says to start a gazetteer 
     await expect(page.getByRole("heading", { name: section, exact: true })).toBeVisible();
   }
   await expect(page.getByRole("link", { name: "Navily-Abgleich" })).toHaveAttribute("href", /\/quality\/compare\?area=/);
+  // an evaluation leaves the rules unchanged unless a version is chosen (ruling M7-E-R2)
+  const rules = page.locator('select[name="rulesVersion"]');
+  await expect(rules).toHaveValue("");
+  await expect(rules.locator("option:checked")).toHaveText("unverändert");
   const hint = page.getByTestId("area-missing");
   if (process.env.E2E_SARONIC_AREA === "missing") {
     await expect(hint).toHaveText("Revier noch nicht angelegt – Gazetteer-Lauf starten");

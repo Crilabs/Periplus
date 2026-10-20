@@ -81,8 +81,9 @@ const recordInputSchema = z.strictObject({
  * `comparisonValues(subject).display` (Grundprinzip 9: no caller-given text reaches the context). An open task for the
  * same value is reused and its context refreshed to the newest deviation (ruling M7-A-R1); a written `match` or
  * `not_at_navily` dismisses every open deviation task of the place and attribute, of any value hash (`dismissedReason`
- * `resolved_by_match` / `resolved_by_not_at_navily`; ruling M7-B-R1 item 5, M7-B-R2). `tasks` counts tasks newly
- * opened.
+ * `resolved_by_match` / `resolved_by_not_at_navily`; ruling M7-B-R1 item 5, M7-B-R2); with `evaluationRunId` only the
+ * task of that very value, never the regular place's task for its own value (ruling M7-E-R2). `tasks` counts tasks
+ * newly opened.
  */
 export async function recordComparisonResults(
   db: Db,
@@ -140,14 +141,17 @@ export async function recordComparisonResults(
       written++;
       if (e.result !== "deviation") {
         // the place's attribute is settled for now: every open deviation task of it closes, whatever own value it was
-        // opened for (an older value's task would otherwise append a decision over this newer outcome)
+        // opened for (an older value's task would otherwise append a decision over this newer outcome). An outcome for
+        // an evaluation value settles only that value: the regular place's tasks for other values stay open.
         await tx
           .update(reviewTasks)
           .set({ status: "dismissed", context: sql`${reviewTasks.context} || ${JSON.stringify({ dismissedReason: DISMISS_REASONS[e.result] })}::jsonb` })
           .where(
             and(
               eq(reviewTasks.kind, "comparison_deviation"),
-              sql`${reviewTasks.subjectId} like ${`${placeId}:${e.attribute}:%`}`,
+              evaluationRunId
+                ? eq(reviewTasks.subjectId, comparisonSubjectId(placeId, e.attribute, e.valueHash))
+                : sql`${reviewTasks.subjectId} like ${`${placeId}:${e.attribute}:%`}`,
               eq(reviewTasks.status, "open"),
             ),
           );

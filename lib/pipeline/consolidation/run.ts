@@ -174,7 +174,8 @@ export type CatchUpResult =
  * it also consolidates a run that had consolidated before a later block (late results) and one caught up on already,
  * since the recheck made facts active that no profile has seen; it leaves alone a run whose `consolidation.geo` is
  * still to come (it consolidates on its own). Only runs with a `consolidation.geo` stage (text and consolidation runs,
- * not model comparisons) are ever caught up on.
+ * not model comparisons) are ever caught up on. The catch-up inherits the skipped run's frozen `params.rulesVersion`
+ * (ruling M7-E-R1; the active version only for a run without one).
  *
  * The run row of the consolidation run and the record of it on the skipped run are written in one transaction that
  * locks the skipped run (a double click starts one run); its first stage is enqueued after that commit (when that
@@ -208,7 +209,9 @@ export async function catchUpConsolidation(
     if (await consolidationBlocked(tx, runId)) return { status: "blocked" };
     const targets = await consolidationTargets(tx, { id: runId, params });
     if (targets.length === 0) return { status: "no_targets" };
-    const input = await consolidationRunInput(tx, { scope: { geoObjectIds: targets }, triggeredBy }, config);
+    // the catch-up consolidates with the rules version the skipped run froze at its start (ruling M7-E-R1)
+    const rulesVersion = typeof params.rulesVersion === "string" ? params.rulesVersion : undefined;
+    const input = await consolidationRunInput(tx, { scope: { geoObjectIds: targets }, triggeredBy, ...(rulesVersion ? { rulesVersion } : {}) }, config);
     const { id } = await createRun(tx, input);
     await recordConsolidationCatchUp(tx, runId, id);
     return { status: "started", consolidationRunId: id, stage: input.stages[0] };

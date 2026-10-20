@@ -24,6 +24,8 @@ export const textRunParamsSchema = z.object({
   rematch: z.literal(true).optional(),
   comparisonId: z.string().uuid().optional(),
   models: z.array(z.string()).optional(),
+  /** The rules version the run's consolidation uses, frozen at the start (ruling M7-E-R1). */
+  rulesVersion: z.string().min(1).optional(),
 });
 
 export type TextRunParams = z.infer<typeof textRunParamsSchema>;

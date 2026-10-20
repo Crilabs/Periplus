@@ -2,7 +2,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { COMPARISON_ATTRIBUTES, configActivations, runs, type ComparisonAttribute, type RunStatus } from "@/lib/db/schema";
-import { extractionVersion } from "@/lib/domain/consolidation/active-rules";
+import { activeRulesVersion, extractionVersion } from "@/lib/domain/consolidation/active-rules";
 import type { EvaluationCandidate } from "@/lib/domain/consolidation/targets";
 import { latestComparisonResults } from "./comparison-results";
 import { comparisonValues, loadComparisonSubjects } from "./comparison-values";
@@ -79,8 +79,11 @@ async function evaluationRun(db: Db, runId: string): Promise<EvaluationRun> {
  * Old/new comparison of an evaluation run over its area's comparison set: `old` = the current profiles, `next` = the
  * run's `evaluation_profiles`, both through `factPrecisionMetric` (an outcome counts for the value hash it was given
  * for, so an unchanged value carries its old outcome) and `coverageMetric`. `changed` lists every attribute whose
- * value hash differs; one without an outcome for the new hash is pending. `passes` = run finished, nothing pending,
- * precision and coverage not lower (`null` counts as 0); `reasons` say in German why not.
+ * value hash differs; one without an outcome for the new hash is pending. `passes` = run finished, the set not empty,
+ * at least one compared value on the candidate's side (an activation always rests on a checked outcome), no set place
+ * with a profile row written after the run finished (the comparison would judge the candidate against data it never
+ * saw: evaluate again, ruling M7-E-R2), nothing pending, precision and coverage not lower (`null` counts as 0);
+ * `reasons` say in German why not.
  */
 export async function compareEvaluation(db: Db, evaluationRunId: string): Promise<RegressionComparison> {
   const run = await evaluationRun(db, evaluationRunId);
@@ -120,6 +123,10 @@ export async function compareEvaluation(db: Db, evaluationRunId: string): Promis
   const pending = changed.filter((c) => !c.checked).length;
   const reasons: string[] = [];
   if (run.status !== "finished") reasons.push("Bewertungslauf ist noch nicht abgeschlossen");
+  if (evaluated.length === 0) reasons.push("Vergleichssatz leer");
+  else if (next.compared === 0) reasons.push("Kein geprüfter Vergleichswert – erst Werte im Navily-Abgleich prüfen");
+  const stale = run.status === "finished" ? await placesChangedSince(db, evaluated.map((s) => s.placeId), run.id) : 0;
+  if (stale > 0) reasons.push(`Profile seit der Bewertung geändert (${stale} ${stale === 1 ? "Ort" : "Orte"}) – neu bewerten`);
   if (pending > 0) reasons.push(`${pending} geänderte${pending === 1 ? "r Wert" : " Werte"} ungeprüft`);
   if (drops(next.precision, old.precision)) reasons.push(`Präzision sinkt von ${percent(old.precision)} auf ${percent(next.precision)}`);
   if (drops(next.coverage, old.coverage)) reasons.push(`Abdeckung sinkt von ${percent(old.coverage)} auf ${percent(next.coverage)}`);
@@ -138,11 +145,28 @@ export async function compareEvaluation(db: Db, evaluationRunId: string): Promis
 }
 
 /**
+ * How many of the places got a profile row after the run finished (a regular consolidation after the evaluation); a
+ * run without `finished_at` counts from its start. Compared in SQL: a JavaScript date would cut the microseconds.
+ */
+async function placesChangedSince(db: Db, placeIds: string[], runId: string): Promise<number> {
+  if (placeIds.length === 0) return 0;
+  const { rows } = await db.execute<{ n: number }>(sql`
+    select count(distinct pl.id)::int as n
+    from places pl join profiles p on p.geo_object_id = pl.geo_object_id
+    where pl.id in (select value::uuid from jsonb_array_elements_text(${JSON.stringify(placeIds)}::jsonb))
+      and p.created_at > (select coalesce(r.finished_at, r.created_at) from runs r where r.id = ${runId}::uuid)
+  `);
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
  * „Aktivieren“ (a deliberate click): compares again and refuses unless the comparison passes (`RegressionGateClosed`
  * with the reasons); else one `config_activations` row per part of the candidate: `consolidation_rules` with the
  * rules version (from now on the active rules, `activeRulesVersion`) and/or `extraction` with `<model>@p<prompt>` (the
  * approval; effective once `config/models.json` is deployed with it). `comparison` holds the old/new numbers and
  * counts only. Under a lock per run, and a part already activated from this run is not written again (double click).
+ * A rules part equal to the active version is never written (ruling M7-E-R2): the row would pin today's rules over a
+ * later `active.json` without anyone having chosen them.
  */
 export async function activateCandidate(db: Db, input: { evaluationRunId: string; activatedBy: string }): Promise<void> {
   await db.transaction(async (tx) => {
@@ -150,8 +174,9 @@ export async function activateCandidate(db: Db, input: { evaluationRunId: string
     const c = await compareEvaluation(tx, input.evaluationRunId);
     if (!c.passes) throw new RegressionGateClosed(c.reasons);
     const comparison = { old: c.old, next: c.next, changed: c.changed.length, pending: c.pending };
+    const active = await activeRulesVersion(tx);
     const parts: Array<{ kind: "consolidation_rules" | "extraction"; version: string }> = [
-      ...(c.candidate.rulesVersion !== undefined ? [{ kind: "consolidation_rules" as const, version: c.candidate.rulesVersion }] : []),
+      ...(c.candidate.rulesVersion !== undefined && c.candidate.rulesVersion !== active ? [{ kind: "consolidation_rules" as const, version: c.candidate.rulesVersion }] : []),
       ...(c.candidate.extraction ? [{ kind: "extraction" as const, version: extractionVersion(c.candidate.extraction) }] : []),
     ];
     for (const part of parts) {

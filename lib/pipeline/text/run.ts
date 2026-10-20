@@ -3,6 +3,7 @@ import type { PgBoss } from "pg-boss";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { modelComparisons, modelComparisonUnits, runs } from "@/lib/db/schema";
+import { activeRulesVersion } from "@/lib/domain/consolidation/active-rules";
 import { createRun, type RunScope } from "@/lib/domain/runs";
 import { estimateComparisonCostEur } from "@/lib/domain/extraction/comparison";
 import { anthropicHeadroomEur } from "@/lib/pipeline/batches";
@@ -87,7 +88,9 @@ async function assertSelectionReady(db: Db, params: TextRunParams, config: AppCo
  * checked first (`RunScopeNotReady`) and frozen at the start (ruling M4-E-R2): `pending`, `tileId` and `areaKey` are
  * resolved once into `params.documentVersionIds`, and every stage plans from that list, so versions arriving mid-run
  * wait for the next run. `rematch: true` (after a review decision named a new object) matches the versions again;
- * only the mentions this creates are pending, so only they are extracted.
+ * only the mentions this creates are pending, so only they are extracted. The active rules version is frozen in
+ * `params.rulesVersion` too (ruling M7-E-R1): the run's consolidation, summaries and follow-up keep it across an
+ * activation.
  */
 export async function startTextRun(
   db: Db,
@@ -97,7 +100,7 @@ export async function startTextRun(
 ): Promise<{ id: string }> {
   const { triggeredBy, ...selection } = input;
   await assertSelectionReady(db, selection, config);
-  const params = await freezeTextRunParams(db, selection, config);
+  const params = { ...(await freezeTextRunParams(db, selection, config)), rulesVersion: await activeRulesVersion(db) };
   return startRun(db, boss, { kind: "stage", scope: scopeOf(selection), stages: [...TEXT_RUN_STAGES], params, triggeredBy });
 }
 
@@ -105,7 +108,8 @@ export async function startTextRun(
  * Starts "Reprozessieren" for a tile or an area (spec 06, Reprozessierung: kind `reprocess`, every text stage,
  * `params.reprocess`): the versions with mentions there are matched again (adding nothing that exists), and every one
  * of their mentions is extracted again into a new extraction run with the configured model, prompt and fact schema;
- * the old facts stay. Pending versions are not taken in (a reprocess ignores the passes).
+ * the old facts stay. Pending versions are not taken in (a reprocess ignores the passes). Like a text run it freezes
+ * the active rules version in `params.rulesVersion`.
  */
 export async function startReprocessRun(
   db: Db,
@@ -115,7 +119,7 @@ export async function startReprocessRun(
 ): Promise<{ id: string }> {
   const selection: TextRunParams = { ...input.scope, reprocess: true };
   await assertSelectionReady(db, selection, config);
-  const params = await freezeTextRunParams(db, selection, config);
+  const params = { ...(await freezeTextRunParams(db, selection, config)), rulesVersion: await activeRulesVersion(db) };
   return startRun(db, boss, { kind: "reprocess", scope: scopeOf(selection), stages: [...TEXT_RUN_STAGES], params, triggeredBy: input.triggeredBy });
 }
 

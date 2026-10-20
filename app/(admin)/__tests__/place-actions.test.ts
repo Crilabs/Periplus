@@ -115,7 +115,7 @@ describe("setAnchorAction", () => {
           kind: "stage",
           scope: { type: "place", id: scene.placeId },
           stages: ["geometry.place", ...GEOMETRY_CONSOLIDATION_STAGES],
-          params: { placeIds: [scene.placeId] },
+          params: { placeIds: [scene.placeId], rulesVersion: "v1" },
           triggeredBy: ADMIN,
         }),
       );

@@ -5,7 +5,9 @@ import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { comparisonResults, comparisonSet, geoObjects, places, reviewTasks } from "@/lib/db/schema";
+import { comparisonResults, comparisonSet, evaluationProfiles, geoObjects, places, reviewTasks, runs } from "@/lib/db/schema";
+import { createRun } from "@/lib/domain/runs";
+import { CONSOLIDATION_GEO_STAGE } from "@/lib/pipeline/consolidation/stages";
 import { comparisonValues, loadComparisonSubjects } from "@/lib/domain/quality/comparison-values";
 import { areaComparisonView } from "@/lib/domain/quality/navily-compare";
 import { loadNavilySpots } from "@/lib/domain/quality/navily-sample";
@@ -258,6 +260,45 @@ describe("/quality/compare actions", () => {
       const rows = await resultsOf(tx, placeId);
       expect(rows).toMatchObject([{ attribute: "depth", result: "deviation", method: "manual", checkedBy: ADMIN, valueHash, profileVersion: 2 }]);
       expect(await tasksOf(tx, placeId)).toHaveLength(1);
+    }));
+
+  it("an outcome for an evaluation value never opens or closes a deviation task of the regular place (ruling M7-E-R2)", () =>
+    withRollback(async (tx) => {
+      const { placeId } = await setUp(tx);
+      const regularHash = await currentHash(tx, placeId, "services.water");
+      await recordComparisonAction({ placeId, areaKey: "saronic", attribute: "services.water", result: "deviation", valueHash: regularHash });
+      const [regular] = await tasksOf(tx, placeId);
+      expect(regular).toMatchObject({ status: "open", subjectId: `${placeId}:services.water:${regularHash}`, context: { evaluationRunId: null } });
+
+      // an evaluation whose profile holds another water value
+      const { id: evaluationRunId } = await createRun(tx, {
+        kind: "reprocess",
+        scope: { type: "system", id: "consolidation" },
+        stages: [CONSOLIDATION_GEO_STAGE],
+        params: { comparisonSetArea: "saronic", evaluation: true, rulesVersion: "v1", candidate: { rulesVersion: "v1" } },
+        triggeredBy: "test",
+      });
+      await tx.update(runs).set({ status: "finished" }).where(eq(runs.id, evaluationRunId));
+      const [place] = await tx.select({ geoObjectId: places.geoObjectId }).from(places).where(eq(places.id, placeId));
+      await tx.insert(evaluationProfiles).values({ runId: evaluationRunId, geoObjectId: place!.geoObjectId, rulesVersion: "v1", factSchemaVersion: "v2", attributes: { "services.water": true }, provenance: {}, contentHash: "e" });
+      const subject = (await loadComparisonSubjects(tx, "saronic", { evaluationRunId })).find((s) => s.placeId === placeId)!;
+      const evaluationHash = comparisonValues(subject, getConfig().quality.navily)["services.water"].hash;
+      expect(evaluationHash).not.toBe(regularHash);
+
+      const deviation = { placeId, areaKey: "saronic", attribute: "services.water" as const, valueHash: evaluationHash, evaluationRunId };
+      await recordComparisonAction({ ...deviation, result: "deviation" });
+      const regularTasks = (await tasksOf(tx, placeId)).filter((t) => (t.context as { evaluationRunId: string | null }).evaluationRunId === null);
+      // the regular place keeps exactly its own task, unchanged
+      expect(regularTasks).toEqual([regular]);
+      for (const t of await tasksOf(tx, placeId)) {
+        if (t.id !== regular!.id) expect(t).toMatchObject({ subjectId: `${placeId}:services.water:${evaluationHash}`, context: { evaluationRunId } });
+      }
+
+      // a match for the evaluation value settles that value only: the regular deviation stays open
+      await recordComparisonAction({ ...deviation, result: "match" });
+      const after = await tasksOf(tx, placeId);
+      expect(after.find((t) => t.id === regular!.id)).toMatchObject({ status: "open" });
+      expect(after.filter((t) => t.id !== regular!.id).every((t) => t.status === "dismissed")).toBe(true);
     }));
 
   it("a stale value hash gives the code stale and writes nothing", () =>

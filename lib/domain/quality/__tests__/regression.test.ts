@@ -5,13 +5,24 @@ import type { PgBoss } from "pg-boss";
 import { describe, expect, it, vi } from "vitest";
 import { areaByKey, getConfig, loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { comparisonResults, configActivations, evaluationProfiles, profiles, runs, type ComparisonAttribute, type ComparisonResultValue } from "@/lib/db/schema";
+import { comparisonResults, comparisonSet, configActivations, evaluationProfiles, profiles, runs, type ComparisonAttribute, type ComparisonResultValue } from "@/lib/db/schema";
 import { activeRulesVersion, consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
+import { markConsolidationSkipped } from "@/lib/domain/consolidation/skipped";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
+import type { ModelClient } from "@/lib/ai/types";
+import { setModelClientFactory } from "@/lib/jobs/handlers/ai-batch";
+import { consolidationSummaryHandler } from "@/lib/jobs/handlers/consolidation";
+import type { JobContext } from "@/lib/jobs/worker";
+import { createLogger } from "@/lib/logger";
+import { requestPlaceDiscovery } from "@/lib/pipeline/consolidation/followup";
+import { summaryJobs } from "@/lib/pipeline/consolidation/summary";
+import { startGeometryRun } from "@/lib/pipeline/geometry-run";
+import { startTextRun } from "@/lib/pipeline/text/run";
+import { buildBayScene } from "@/test/geometry/scene";
 import { createRun } from "@/lib/domain/runs";
 import { CONSOLIDATION_GEO_STAGE } from "@/lib/pipeline/consolidation/stages";
 import { consolidateGeoJob, consolidationGeoJobs } from "@/lib/pipeline/consolidation/geo";
-import { startConsolidationRun } from "@/lib/pipeline/consolidation/run";
+import { catchUpConsolidation, startConsolidationRun } from "@/lib/pipeline/consolidation/run";
 import { startEvaluation } from "@/lib/pipeline/quality-run";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { insertExtraction, insertMention, insertMentionFact, insertProfile, insertSource } from "@/test/consolidation";
@@ -27,13 +38,18 @@ import { activateCandidate, compareEvaluation, listEvaluations, NotAnEvaluationR
  * than active.json's. Synthetic area at 21.0° E / 35.2° N, every row in withRollback.
  */
 
+/** The versions `getConsolidationConfig` was asked for (`undefined`: active.json), to see which rules a job read. */
+const configReads = vi.hoisted(() => [] as Array<string | undefined>);
+
 vi.mock("@/lib/config", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/config")>();
   return {
     ...real,
     consolidationVersions: (dir?: string) => [...real.consolidationVersions(dir), "v2"],
-    getConsolidationConfig: (version?: string, dir?: string) =>
-      version === "v2" ? { ...real.getConsolidationConfig("v1", dir), version: "v2" } : real.getConsolidationConfig(version, dir),
+    getConsolidationConfig: (version?: string, dir?: string) => {
+      configReads.push(version);
+      return version === "v2" ? { ...real.getConsolidationConfig("v1", dir), version: "v2" } : real.getConsolidationConfig(version, dir);
+    },
   };
 });
 
@@ -149,6 +165,66 @@ describe("compareEvaluation and activateCandidate", () => {
       expect(await compareEvaluation(tx, runId)).toMatchObject({ pending: 0, passes: true });
     }));
 
+  it("an empty comparison set never passes (ruling M7-E-R2)", () =>
+    withRollback(async (tx) => {
+      const { runId, areaId } = await scene(tx);
+      await tx.delete(comparisonSet).where(eq(comparisonSet.areaId, areaId));
+      const c = await compareEvaluation(tx, runId);
+      expect(c).toMatchObject({ passes: false, reasons: ["Vergleichssatz leer"] });
+      await expect(activateCandidate(tx, { evaluationRunId: runId, activatedBy: "a" })).rejects.toThrow(RegressionGateClosed);
+      expect(await activations(tx)).toEqual([]);
+    }));
+
+  it("a candidate without any compared value never passes (ruling M7-E-R1/R2)", () =>
+    withRollback(async (tx) => {
+      const area = await insertQualityArea(tx, [{ lon: 21.01, lat: 35.2 }]);
+      const place = await area.addPlace({ inSet: true });
+      await insertProfile(tx, place.geoObjectId, BASE[0]!, {});
+      const runId = await evaluationRunRow(tx, area.areaKey, { rulesVersion: "v2", candidate: { rulesVersion: "v2" } });
+      await tx.insert(evaluationProfiles).values({ runId, geoObjectId: place.geoObjectId, rulesVersion: "v2", factSchemaVersion: "v2", attributes: BASE[0]!, provenance: {}, contentHash: "h" });
+      const c = await compareEvaluation(tx, runId);
+      expect(c).toMatchObject({ next: { compared: 0 }, pending: 0, passes: false, reasons: ["Kein geprüfter Vergleichswert – erst Werte im Navily-Abgleich prüfen"] });
+      await expect(activateCandidate(tx, { evaluationRunId: runId, activatedBy: "a" })).rejects.toThrow(RegressionGateClosed);
+    }));
+
+  it("a set place with a profile row after the evaluation finished refuses activation (ruling M7-E-R2)", () =>
+    withRollback(async (tx) => {
+      const { runId, places } = await scene(tx);
+      await tx.update(runs).set({ finishedAt: sql`now()` }).where(eq(runs.id, runId));
+      expect(await compareEvaluation(tx, runId)).toMatchObject({ passes: true });
+      // a regular consolidation after the evaluation: the candidate was never evaluated on these profiles
+      await tx.insert(profiles).values({
+        geoObjectId: places[0]!.geoObjectId,
+        version: 2,
+        validFrom: "2026-10-19",
+        attributes: BASE[0]!,
+        provenance: {},
+        sourcesCount: 0,
+        documentsCount: 0,
+        confidence: 0.8,
+        contentHash: "later",
+        factSchemaVersion: "v2",
+        rulesVersion: "v1",
+        createdAt: sql`now() + interval '1 minute'`,
+      });
+      const c = await compareEvaluation(tx, runId);
+      expect(c).toMatchObject({ passes: false, reasons: ["Profile seit der Bewertung geändert (1 Ort) – neu bewerten"] });
+      await expect(activateCandidate(tx, { evaluationRunId: runId, activatedBy: "a" })).rejects.toThrow(RegressionGateClosed);
+      expect(await activations(tx)).toEqual([]);
+    }));
+
+  it("a rules part equal to the active version is never written (ruling M7-E-R2)", () =>
+    withRollback(async (tx) => {
+      const { runId } = await scene(tx);
+      await tx
+        .update(runs)
+        .set({ params: sql`${runs.params} || ${JSON.stringify({ rulesVersion: "v1", candidate: { rulesVersion: "v1", extraction: OPUS } })}::jsonb` })
+        .where(eq(runs.id, runId));
+      await activateCandidate(tx, { evaluationRunId: runId, activatedBy: "a" });
+      expect((await activations(tx)).map((r) => [r.kind, r.version])).toEqual([["extraction", `${OPUS.model}@p${OPUS.promptVersion}`]]);
+      expect(await activeRulesVersion(tx)).toBe("v1");
+    }));
+
   it("an unfinished evaluation run cannot be activated", () =>
     withRollback(async (tx) => {
       const { runId } = await scene(tx);
@@ -199,7 +275,7 @@ describe("activeRulesVersion (ruling M7-P10)", () => {
       const after = await startConsolidationRun(tx, rec.boss, { scope: { geoObjectIds: [places[0]!.geoObjectId] }, triggeredBy: "test" });
       expect((await runParams(tx, after.id)).rulesVersion).toBe("v2");
       expect(rec.inserted.filter((j) => j.queue === "consolidation.geo").map((j) => j.data.rulesVersion)).toEqual(["v1", "v2"]);
-      // a text or geometry run carries no version: its consolidation takes the active one
+      // a consolidation without a version (a place merge) takes the active one
       const result = await consolidateGeo(tx, places[1]!.geoObjectId);
       expect(result.status).toBe("created");
       const [profile] = await tx.select({ rulesVersion: profiles.rulesVersion }).from(profiles).where(eq(profiles.geoObjectId, places[1]!.geoObjectId)).orderBy(sql`version desc`).limit(1);
@@ -298,5 +374,87 @@ describe("extraction candidates (ruling M7-P11)", () => {
       await expect(start({ extraction: { model: OPUS.model, promptVersion: 99 } })).rejects.toMatchObject(refused("evaluation_candidate_unknown"));
       await expect(startEvaluation(tx, boss, { areaKey: "test-unknown", candidate: { rulesVersion: "v1" }, triggeredBy: "test" })).rejects.toMatchObject(refused("unknown_area"));
       expect(inserted).toEqual([]);
+    }));
+});
+
+describe("frozen rules version (ruling M7-E-R1)", () => {
+  /** Activates v2 as a deliberate activation would (a row in config_activations). */
+  async function activateV2(tx: Db, areaKey: string) {
+    const evaluationRunId = await evaluationRunRow(tx, areaKey, { rulesVersion: "v2", candidate: { rulesVersion: "v2" } });
+    await tx.insert(configActivations).values({ kind: "consolidation_rules", version: "v2", evaluationRunId, comparison: {}, activatedBy: "test", activatedAt: sql`clock_timestamp()` });
+    expect(await activeRulesVersion(tx)).toBe("v2");
+  }
+
+  /** A text run started under v1 whose extraction run holds a verified fact of a set place (its consolidation target). */
+  async function textRunScene(tx: Db, rec: ReturnType<typeof recordingBoss>) {
+    const area = await insertQualityArea(tx, [{ lon: 21.01, lat: 35.2 }]);
+    const place = await area.addPlace();
+    const run = await startTextRun(tx, rec.boss, { documentVersionIds: [], triggeredBy: "test" }, withArea(area.areaKey));
+    const m = await insertMention(tx, place.geoObjectId, { sourceId: await insertSource(tx) });
+    await insertMentionFact(tx, place.geoObjectId, m, await insertExtraction(tx, place.geoObjectId, m, { runId: run.id }));
+    return { ...area, place, runId: run.id };
+  }
+
+  /** A model client that fails every call: a summary that gets as far as the model has read its rules already. */
+  const noModel = { call: async () => { throw new Error("no model call in this test"); } } as unknown as ModelClient;
+  const ctx = (tx: Db): JobContext => ({ db: tx, boss: recordingBoss().boss, log: createLogger("test"), jobId: "job" });
+
+  it("text and geometry runs started before an activation keep the old version on their geo, summary and follow-up jobs", () =>
+    withRollback(async (tx) => {
+      const rec = recordingBoss();
+      const text = await textRunScene(tx, rec);
+      const bay = await buildBayScene(tx);
+      const geometry = await startGeometryRun(tx, rec.boss, { placeId: bay.placeId }, "test");
+      for (const id of [text.runId, geometry.id]) expect((await runParams(tx, id)).rulesVersion).toBe("v1");
+      await activateV2(tx, text.areaKey);
+
+      for (const id of [text.runId, geometry.id]) {
+        const run = { id, params: await runParams(tx, id) };
+        const geoJobs = await consolidationGeoJobs(tx, run);
+        expect(geoJobs.length).toBeGreaterThan(0);
+        expect(geoJobs.every((j) => j.rulesVersion === "v1")).toBe(true);
+        for (const job of geoJobs) await consolidateGeoJob(tx, { ...job, runId: id });
+      }
+      const [profile] = await tx.select({ rulesVersion: profiles.rulesVersion }).from(profiles).where(eq(profiles.runId, text.runId));
+      expect(profile!.rulesVersion).toBe("v1");
+
+      // the summary job carries the run's version and the summary reads those rules, not the active ones
+      const textRun = { id: text.runId, params: await runParams(tx, text.runId) };
+      const [summaryJob] = await summaryJobs(tx, textRun);
+      expect(summaryJob).toMatchObject({ geoObjectId: text.place.geoObjectId, rulesVersion: "v1" });
+      setModelClientFactory(() => noModel);
+      try {
+        configReads.length = 0;
+        await expect(consolidationSummaryHandler({ ...summaryJob!, runId: text.runId }, ctx(tx))).rejects.toThrow("no model call in this test");
+        expect(configReads).toEqual(["v1"]);
+      } finally {
+        setModelClientFactory(undefined);
+      }
+
+      // the follow-up reads the run's rules too
+      configReads.length = 0;
+      await requestPlaceDiscovery(tx, rec.boss, text.runId, { config: withArea(text.areaKey) });
+      expect(configReads).toContain("v1");
+      expect(configReads).not.toContain("v2");
+    }));
+
+  it("a catch-up consolidates with the rules version of the run it catches up", () =>
+    withRollback(async (tx) => {
+      const rec = recordingBoss();
+      const text = await textRunScene(tx, rec);
+      await activateV2(tx, text.areaKey);
+      await markConsolidationSkipped(tx, text.runId, "run_ended");
+      const result = await catchUpConsolidation(tx, rec.boss, text.runId, "test", { config: withArea(text.areaKey) });
+      expect(result.status).toBe("started");
+      const catchUp = (result as { consolidationRunId: string }).consolidationRunId;
+      expect(await runParams(tx, catchUp)).toMatchObject({ geoObjectIds: [text.place.geoObjectId], rulesVersion: "v1" });
+      expect(rec.inserted.filter((j) => j.queue === "consolidation.geo" && j.data.runId === catchUp).map((j) => j.data.rulesVersion)).toEqual(["v1"]);
+    }));
+
+  it("consolidationConfigFor refuses a rules version that is not a string", () =>
+    withRollback(async (tx) => {
+      await expect(consolidationConfigFor(tx, 2)).rejects.toThrow(/rules version must be a string/);
+      await expect(consolidationConfigFor(tx, null)).rejects.toThrow(/rules version must be a string/);
+      expect((await consolidationConfigFor(tx, undefined)).version).toBe("v1");
     }));
 });

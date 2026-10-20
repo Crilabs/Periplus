@@ -23,9 +23,14 @@ export async function activeRulesVersion(db: Db): Promise<string> {
   return rows.find((r) => released.has(r.version))?.version ?? getConsolidationConfig().version;
 }
 
-/** The rules of `version` when it is a string (a run's `params.rulesVersion`), else of the active version. */
+/**
+ * The rules of `version` (a run's frozen `params.rulesVersion` or a job's `rulesVersion`), of the active version when
+ * none is given (`undefined`). Any other non-string value (corrupted params) throws instead of falling back silently.
+ */
 export async function consolidationConfigFor(db: Db, version?: unknown): Promise<VersionedConsolidationConfig> {
-  return getConsolidationConfig(typeof version === "string" ? version : await activeRulesVersion(db));
+  if (version === undefined) return getConsolidationConfig(await activeRulesVersion(db));
+  if (typeof version !== "string") throw new Error(`rules version must be a string, got ${JSON.stringify(version)}`);
+  return getConsolidationConfig(version);
 }
 
 /** The version string of an extraction configuration in `config_activations`: `<model>@p<promptVersion>`. */

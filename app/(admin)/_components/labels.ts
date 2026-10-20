@@ -360,6 +360,7 @@ export function comparePageError(param: string | string[] | undefined): string |
 /** Errors of the quality page besides refused runs (`?error=<code>`). */
 export const QUALITY_ERROR_LABELS = {
   regression_gate_closed: "Nicht aktiviert – der Vergleich alt/neu besteht nicht (Gründe bei der Bewertung)",
+  invalid_input: "Eingabe ungültig – bitte die Felder prüfen",
 } as const;
 
 /** The German text of a `?error=` on the quality page: a refused run or a `QUALITY_ERROR_LABELS` code. */

@@ -3,6 +3,7 @@ import type { PgBoss } from "pg-boss";
 import { areaByKey } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { places } from "@/lib/db/schema";
+import { activeRulesVersion } from "@/lib/domain/consolidation/active-rules";
 import { tileExists } from "@/lib/domain/geo-view";
 import { GEOMETRY_CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
 import { checkGeometryTiles, GEOMETRY_STAGE, geometryPlaceIds } from "@/lib/pipeline/geometry";
@@ -61,5 +62,7 @@ export async function startGeometryRun(
     run = { scope: { type: "place", id: scope.placeId }, params: { placeIds: [scope.placeId] } };
   }
   await checkGeometryTiles(db, tileIds);
+  // its consolidation and summaries keep the rules active now, across a later activation (ruling M7-E-R1)
+  run.params.rulesVersion = await activeRulesVersion(db);
   return startRun(db, boss, { kind: "stage", ...run, stages: [GEOMETRY_STAGE, ...GEOMETRY_CONSOLIDATION_STAGES], triggeredBy });
 }

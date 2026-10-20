@@ -15,15 +15,35 @@ import { startAndRedirect } from "../_components/run-start";
 const areaKeySchema = z.string().refine((key) => getConfig().areas.some((a) => a.key === key), "unknown area");
 /** An empty form field is no value. */
 const optional = <T extends z.ZodType>(schema: T) => z.preprocess((v) => (v === "" || v === null ? undefined : v), schema.optional());
-/** A window bound: a date (`YYYY-MM-DD`, midnight UTC) or an ISO timestamp. */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const DAY_MS = 86_400_000;
+/** A window bound as typed: a date (`YYYY-MM-DD`) or an ISO timestamp. */
 const bound = z
   .string()
   .trim()
-  .refine((v) => /^\d{4}-\d{2}-\d{2}(T.+)?$/.test(v) && !Number.isNaN(new Date(v).getTime()), "invalid date")
-  .transform((v) => new Date(/^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T00:00:00Z` : v));
+  .refine((v) => /^\d{4}-\d{2}-\d{2}(T.+)?$/.test(v) && !Number.isNaN(new Date(v).getTime()), "invalid date");
+/** „von“: a date starts at midnight UTC. */
+const fromBound = bound.transform((v) => new Date(DATE_ONLY.test(v) ? `${v}T00:00:00Z` : v));
+/** „bis“ is inclusive: a date ends at the end of that day (midnight UTC of the next), never later than now. */
+const toBound = bound.transform((v) => {
+  if (!DATE_ONLY.test(v)) return new Date(v);
+  const end = new Date(new Date(`${v}T00:00:00Z`).getTime() + DAY_MS);
+  const now = new Date();
+  return end.getTime() > now.getTime() ? now : end;
+});
 
 const fields = (input: FormData | object) => (input instanceof FormData ? Object.fromEntries(input) : input);
 const qualityPath = (areaKey: string) => `/quality?${new URLSearchParams({ area: areaKey })}`;
+
+/**
+ * Invalid form input returns to `/quality` with a German notice (`?error=invalid_input`) instead of an error page; the
+ * area of the form when it is a configured one.
+ */
+function invalidInput(input: FormData | object): never {
+  const area = (fields(input) as { areaKey?: unknown }).areaKey;
+  const known = typeof area === "string" && getConfig().areas.some((a) => a.key === area);
+  redirect(known ? `${qualityPath(area)}&error=invalid_input` : "/quality?error=invalid_input");
+}
 
 const toggleSchema = z.object({
   placeId: z.uuid(),
@@ -50,14 +70,19 @@ export async function toggleComparisonAction(input: FormData | ToggleInput): Pro
 const measurementSchema = z.object({
   areaKey: areaKeySchema,
   label: z.string().trim().min(1).max(MEASUREMENT_LABEL_MAX),
-  from: optional(bound),
-  to: optional(bound),
+  from: optional(fromBound),
+  to: optional(toBound),
 });
 
-/** „Messen“: starts a measurement of the area and opens its run page; a refused start returns to `/quality` with the reason. */
+/**
+ * „Messen“: starts a measurement of the area and opens its run page; a refused start or invalid input returns to
+ * `/quality` with the reason. A date „bis“ includes that day.
+ */
 export async function startMeasurementAction(input: FormData | { areaKey: string; label: string; from?: string; to?: string }): Promise<void> {
   const admin = await requireAdmin();
-  const { areaKey, label, from, to } = measurementSchema.parse(fields(input));
+  const parsed = measurementSchema.safeParse(fields(input));
+  if (!parsed.success) return invalidInput(input);
+  const { areaKey, label, from, to } = parsed.data;
   const db = getDb();
   const boss = await getBoss();
   await startAndRedirect(
@@ -77,13 +102,16 @@ const evaluationSchema = z
 
 /**
  * „Bewertung starten“: an evaluation run of a rules version and/or an extraction candidate over the area's comparison
- * set; opens its run page, or returns to `/quality` with the reason of a refused start.
+ * set; opens its run page, or returns to `/quality` with the reason of a refused start or invalid input. An empty rules
+ * version („unverändert“) leaves the rules out of the candidate.
  */
 export async function startEvaluationAction(
   input: FormData | { areaKey: string; rulesVersion?: string; model?: string; promptVersion?: number | string },
 ): Promise<void> {
   const admin = await requireAdmin();
-  const { areaKey, rulesVersion, model, promptVersion } = evaluationSchema.parse(fields(input));
+  const parsed = evaluationSchema.safeParse(fields(input));
+  if (!parsed.success) return invalidInput(input);
+  const { areaKey, rulesVersion, model, promptVersion } = parsed.data;
   const db = getDb();
   const boss = await getBoss();
   const candidate = {
@@ -101,7 +129,9 @@ const activationSchema = z.object({ areaKey: areaKeySchema, evaluationRunId: z.u
  */
 export async function activateCandidateAction(input: FormData | { areaKey: string; evaluationRunId: string }): Promise<void> {
   const admin = await requireAdmin();
-  const { areaKey, evaluationRunId } = activationSchema.parse(fields(input));
+  const parsed = activationSchema.safeParse(fields(input));
+  if (!parsed.success) return invalidInput(input);
+  const { areaKey, evaluationRunId } = parsed.data;
   let target = `${qualityPath(areaKey)}&notice=activated`;
   try {
     await activateCandidate(getDb(), { evaluationRunId, activatedBy: admin.email });

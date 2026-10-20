@@ -4,7 +4,6 @@ import { connection } from "next/server";
 import { z } from "zod";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
-import { COMPARISON_TARGET } from "@/lib/domain/comparison";
 import { SEABED_TYPE_LABELS } from "@/lib/domain/facts/labels";
 import type { ComparisonAttribute } from "@/lib/domain/quality/comparison-values";
 import { loadNavilyFromEnv } from "@/lib/domain/quality/navily-assistant";
@@ -182,7 +181,7 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
           label="Vergleichssatz"
           value={
             <span className="tabular-nums" data-testid="compare-set-size">
-              {view.places.length} von {COMPARISON_TARGET}
+              {view.places.length} von {config.quality.comparisonSet.pilotSize}
             </span>
           }
           hint={`Orte im Revier ${area.names.de}`}

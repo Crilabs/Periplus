@@ -15,8 +15,9 @@ import { createLogger } from "@/lib/logger";
 /**
  * Plan of `consolidation.geo`: nothing when the run's quote fidelity is below 100 % (`consolidationBlocked`, logged
  * `consolidation blocked by quote fidelity` and stored as the run's skip marker, `markConsolidationSkipped`), else one
- * job per target carrying the mode (`evaluation` for an evaluation run), the rules version of the run (none: the
- * consolidation takes the active one, `activeRulesVersion`) and an evaluation run's extraction candidate.
+ * job per target carrying the mode (`evaluation` for an evaluation run), the rules version the run froze at its start
+ * (text, geometry and consolidation runs, ruling M7-E-R1; only a run from before that has none, and its consolidation
+ * takes the active one, `activeRulesVersion`) and an evaluation run's extraction candidate.
  */
 export async function consolidationGeoJobs(db: Db, run: { id: string; params: Record<string, unknown> }): Promise<JobData[]> {
   if (await consolidationBlocked(db, run.id)) {
