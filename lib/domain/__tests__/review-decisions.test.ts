@@ -18,6 +18,7 @@ import {
   serpQueries,
   serpResults,
   sources,
+  subdivisions,
   tiles,
   type GeoObjectType,
   type PlaceStatus,
@@ -25,7 +26,7 @@ import {
 } from "@/lib/db/schema";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
 import { domainCandidates } from "@/lib/domain/discovery/proposals";
-import { isPublicId, newId } from "@/lib/domain/ids";
+import { isPublicId, newId, newPublicId } from "@/lib/domain/ids";
 import { createReviewTask } from "@/lib/domain/review";
 import {
   DecisionNotAllowed,
@@ -865,18 +866,26 @@ describe("name candidate decisions", () => {
       expect(fallbacks).toEqual([]);
     }));
 
-  it("an island hint creates an islet without a place under its area; a Greek name gets its transliteration as German fallback", () =>
+  it("an island hint creates an islet without a place under its subdivision; a Greek name gets its transliteration as German fallback", () =>
     withRollback(async (tx) => {
       // An own Greek name: hex digits of a fresh id as Greek letters without digraph rules, with their ELOT 743 form.
       const suffix = [...newId().slice(-6)].map((h) => GREEK_HEX[parseInt(h, 16)]!);
       const name = `Κολώνα ${suffix.map(([g]) => g).join("")}`;
       const latin = `Kolona ${suffix.map(([, l]) => l).join("")}`;
-      const areaId = await insertPolygon(tx, "area", LON - 0.1, LAT - 0.1, LON + 0.1, LAT + 0.1);
+      const regionId = await insertPolygon(tx, "admin_region", LON - 0.1, LAT - 0.1, LON + 0.1, LAT + 0.1);
+      await tx.insert(subdivisions).values({
+        publicId: newPublicId("sd"),
+        key: "XX-ISLET",
+        country: "GR",
+        geoObjectId: regionId,
+        geom: sql`ST_Multi(ST_MakeEnvelope(${LON - 0.1}, ${LAT - 0.1}, ${LON + 0.1}, ${LAT + 0.1}, 4326))`,
+        landGeom: sql`ST_Multi(ST_MakeEnvelope(${LON - 0.1}, ${LAT - 0.1}, ${LON + 0.1}, ${LAT + 0.1}, 4326))`,
+      });
       const t = await nameTask(tx, { hint: "island", name });
       await decide(tx, t.taskId, createPlace(name, { language: "el" }));
 
       const object = await createdObject(tx, name);
-      expect(object).toMatchObject({ type: "islet", parentId: areaId });
+      expect(object).toMatchObject({ type: "islet", parentId: regionId });
       expect(await tx.select().from(places).where(eq(places.geoObjectId, object!.id))).toEqual([]);
       const names = await tx
         .select({ name: geoNames.name, language: geoNames.language, origin: geoNames.origin })

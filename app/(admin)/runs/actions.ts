@@ -44,11 +44,14 @@ export async function startPingRun(input: FormData | { count: number | string })
   redirect("/runs");
 }
 
-/** Starts "build gazetteer" for a configured area. */
-export async function startGazetteerAction(input: FormData | { areaKey: string }): Promise<void> {
+const subdivisionSchema = z.object({ subdivisionKey: z.string().min(1) });
+
+/** Starts "build gazetteer" for a subdivision (an unknown or excluded one is rejected by the run starter). */
+// TODO(plan 14a task 7): the start dialog still posts an area key; it picks a subdivision there
+export async function startGazetteerAction(input: FormData | { subdivisionKey: string }): Promise<void> {
   const admin = await requireAdmin();
-  const { areaKey } = areaSchema.parse(fields(input));
-  const run = await startGazetteerRun(getDb(), await getBoss(), areaKey, admin.email);
+  const { subdivisionKey } = subdivisionSchema.parse(fields(input));
+  const run = await startGazetteerRun(getDb(), await getBoss(), subdivisionKey, admin.email);
   revalidatePath("/runs");
   redirect(`/runs/${run.id}`);
 }

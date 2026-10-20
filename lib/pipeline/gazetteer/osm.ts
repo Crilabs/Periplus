@@ -2,10 +2,10 @@ import { sql } from "drizzle-orm";
 import type { Transport } from "@/lib/adapters/http";
 import { buildGazetteerQuery, overpassQuery, type OverpassElement } from "@/lib/adapters/overpass";
 import type { Archive } from "@/lib/adapters/s3";
-import { getConfig, type AreaConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { areaBbox } from "@/lib/domain/gazetteer/areas";
+import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
 import { bufferBbox, landCoverage } from "@/lib/domain/gazetteer/land";
 import { classifyOsm, osmNames } from "@/lib/domain/gazetteer/osm-classify";
 import { upsertGeoObject, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
@@ -71,30 +71,30 @@ async function nearCoast(db: Db, geometry: GeoObjectDraft["geometry"], distanceM
 }
 
 /**
- * Stage `gazetteer.osm` (Spec 03, step 1): queries Overpass for the area box plus `bboxBufferKm`,
- * archives the raw answer under `datasets/overpass/<area>/<YYYY-MM-DD>.json` and upserts every
+ * Stage `gazetteer.osm` (Spec 03, step 1): queries Overpass for the subdivision box plus `bboxBufferKm`,
+ * archives the raw answer under `datasets/overpass/<subdivision key>/<YYYY-MM-DD>.json` and upserts every
  * classified, named element in one transaction (all or nothing). Settlements are kept only within
  * `coastDistanceM` of the water. An element whose geometry cannot be repaired is logged and skipped.
  * Requires land polygons for the box.
  */
 export async function importOsm(
   db: Db,
-  input: { area: AreaConfig; runId: string; now?: Date },
+  input: { scope: GazetteerScope; runId: string; now?: Date },
   deps: { transport: Transport; archive: Archive },
 ): Promise<{ created: number; updated: number; skipped: number; names: number }> {
-  const { area, runId } = input;
+  const { scope, runId } = input;
   const { gazetteer, categories } = getConfig();
-  const bbox = bufferBbox(areaBbox(area), gazetteer.bboxBufferKm);
+  const bbox = bufferBbox(scope.bbox, gazetteer.bboxBufferKm);
 
   if ((await landCoverage(db, bbox)) === 0) {
-    throw new Error(`land polygons missing for ${area.key} – run npm run import:land-polygons`);
+    throw new Error(`land polygons missing for ${scope.key} – run npm run import:land-polygons`);
   }
 
   // Fetch outside the import transaction: a rollback must not drop the external_calls row.
   const ql = buildGazetteerQuery(bbox, categories, gazetteer.overpass.timeoutSeconds);
   const { raw, elements } = await overpassQuery(deps.transport, ql, { db, runId, stage: OSM_STAGE }, gazetteer.overpass);
   const date = (input.now ?? new Date()).toISOString().slice(0, 10);
-  await deps.archive.put(`datasets/overpass/${area.key}/${date}.json`, raw, "application/json");
+  await deps.archive.put(`datasets/overpass/${scope.key}/${date}.json`, raw, "application/json");
 
   return db.transaction(async (tx) => {
     const result = { created: 0, updated: 0, skipped: 0, names: 0 };

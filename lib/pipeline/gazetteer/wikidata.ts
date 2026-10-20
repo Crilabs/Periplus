@@ -1,10 +1,10 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Transport } from "@/lib/adapters/http";
 import { buildWikidataQuery, wikidataQuery, type WikidataItem } from "@/lib/adapters/wikidata";
-import { getConfig, type AreaConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geoObjects, type GeoObjectType, type PoiCategory } from "@/lib/db/schema";
-import { areaBbox } from "@/lib/domain/gazetteer/areas";
+import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
 import { bufferBbox } from "@/lib/domain/gazetteer/land";
 import { findMatch, openPairTask, resolveMergedByExternalId, typeGroup } from "@/lib/domain/gazetteer/merge";
 import { addNames, type NameDraft } from "@/lib/domain/gazetteer/names";
@@ -94,7 +94,7 @@ async function link(db: Db, id: string, qid: string): Promise<boolean> {
 
 /**
  * Stage `gazetteer.wikidata` (Spec 03, step 2): queries WDQS for items of the configured classes in the
- * area box plus `bboxBufferKm` and, in one transaction, per item: (1) an object with this `wikidata_id`
+ * subdivision box plus `bboxBufferKm` and, in one transaction, per item: (1) an object with this `wikidata_id`
  * gets the names (for an object merged away with it, its survivor gets them and counts as linked); (2) else
  * an object of a compatible type whose OSM tag `wikidata` names the item is linked; (3) else `findMatch`
  * within `wikidataLinkDistanceM`, ignoring objects known only from GeoNames: `same` links (unless that
@@ -104,13 +104,13 @@ async function link(db: Db, id: string, qid: string): Promise<boolean> {
  */
 export async function importWikidata(
   db: Db,
-  input: { area: AreaConfig; runId: string },
+  input: { scope: GazetteerScope; runId: string },
   deps: { transport: Transport },
 ): Promise<{ linked: number; created: number; uncertain: number; names: number }> {
-  const { area, runId } = input;
+  const { scope, runId } = input;
   const { gazetteer, categories } = getConfig();
   const { classes, languages } = gazetteer.wikidata;
-  const bbox = bufferBbox(areaBbox(area), gazetteer.bboxBufferKm);
+  const bbox = bufferBbox(scope.bbox, gazetteer.bboxBufferKm);
 
   // Fetch outside the import transaction: a rollback must not drop the external_calls row.
   const sparql = buildWikidataQuery(bbox, Object.keys(classes), languages);

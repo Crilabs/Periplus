@@ -8,6 +8,7 @@ import { createReviewTask } from "@/lib/domain/review";
 import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
 import { GEOMETRY_CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
 import { testDb, withRollback } from "@/test/db";
+import { AEGINA_WEST_KEY, insertAeginaWest } from "@/test/fixtures/subdivisions/aegina-west";
 import { buildBayScene } from "@/test/geometry/scene";
 
 const db = testDb();
@@ -147,25 +148,28 @@ describe("admin server actions", () => {
     expect(decisions[0]).toMatchObject({ decision: { action: "retry" }, decidedBy: "admin@example.invalid" });
   });
 
-  it("startGazetteerAction: unknown areaKey rejected, a configured area starts a gazetteer run", async () => {
-    await expect(startGazetteerAction(form({ areaKey: "atlantis" }))).rejects.toThrow();
-    await expect(startGazetteerAction({ areaKey: "" })).rejects.toThrow();
-    expect(startRun).not.toHaveBeenCalled();
+  it("startGazetteerAction: unknown subdivisionKey rejected, a subdivision starts a gazetteer run", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      await expect(startGazetteerAction(form({ subdivisionKey: "XX-ATLANTIS" }))).rejects.toThrow("Unknown subdivision XX-ATLANTIS");
+      await expect(startGazetteerAction({ subdivisionKey: "" })).rejects.toThrow();
+      expect(startRun).not.toHaveBeenCalled();
 
-    await startGazetteerAction(form({ areaKey: "saronic" }));
-    expect(startRun).toHaveBeenCalledWith(
-      db,
-      expect.anything(),
-      expect.objectContaining({
-        kind: "stage",
-        scope: { type: "area", id: "saronic" },
-        stages: ["tiles.ensure", "gazetteer.osm", "gazetteer.wikidata", "gazetteer.geonames", "gazetteer.hierarchy"],
-        params: { areaKey: "saronic" },
-        triggeredBy: "admin@example.invalid",
-      }),
-    );
-    expect(redirect).toHaveBeenCalledWith("/runs/run-1");
-  });
+      await insertAeginaWest(tx);
+      await startGazetteerAction(form({ subdivisionKey: AEGINA_WEST_KEY }));
+      expect(startRun).toHaveBeenCalledWith(
+        tx,
+        expect.anything(),
+        expect.objectContaining({
+          kind: "stage",
+          scope: { type: "subdivision", id: AEGINA_WEST_KEY },
+          stages: ["tiles.ensure", "gazetteer.osm", "gazetteer.wikidata", "gazetteer.geonames", "gazetteer.hierarchy"],
+          params: { subdivisionKey: AEGINA_WEST_KEY },
+          triggeredBy: "admin@example.invalid",
+        }),
+      );
+      expect(redirect).toHaveBeenCalledWith("/runs/run-1");
+    }));
 
   it("startSeedAction: unknown areaKey, malformed or unknown tileId rejected without a run", async () => {
     await expect(startSeedAction(form({ areaKey: "atlantis" }))).rejects.toThrow();
@@ -227,7 +231,7 @@ describe("admin server actions", () => {
       requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
       await expect(startSeedAction({ tileId })).rejects.toThrow("NEXT_REDIRECT");
       await expect(seedTileAction({ tileId })).rejects.toThrow("NEXT_REDIRECT");
-      await expect(startGazetteerAction({ areaKey: "saronic" })).rejects.toThrow("NEXT_REDIRECT");
+      await expect(startGazetteerAction({ subdivisionKey: "GR-I" })).rejects.toThrow("NEXT_REDIRECT");
       expect(startRun).toHaveBeenCalledTimes(2);
     }));
   it("„Konsolidieren“ on the tile page starts a tile-scoped consolidation run; an unknown tile is refused", () =>

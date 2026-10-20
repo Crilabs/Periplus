@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import type { AreaConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { asGeoJson } from "@/lib/db/geometry";
-import { geoNames, geoObjects } from "@/lib/db/schema";
-import { areaBbox, endUnconfiguredAreas, syncAreas } from "@/lib/domain/gazetteer/areas";
-import { isPublicId } from "@/lib/domain/ids";
+import { geoNames, geoObjects, subdivisions } from "@/lib/db/schema";
+import { areaBbox, endUnconfiguredAreas, syncAreas, syncCoastSections } from "@/lib/domain/gazetteer/areas";
+import { isPublicId, newPublicId } from "@/lib/domain/ids";
 import { withRollback } from "@/test/db";
 
 // Outside the pilot box 23.0-23.75 E x 37.0-38.0 N; keys unlike any real area.
@@ -191,5 +191,41 @@ describe("areaBbox", () => {
     const area = testArea();
     expect(areaBbox(area)).toEqual([25.0, 35.0, 26.0, 36.0]);
     expect(areaBbox({ ...area, tileBbox: [24.5, 35.5, 25.5, 36.5] })).toEqual([24.5, 35.0, 26.0, 36.5]);
+  });
+});
+
+describe("syncCoastSections", () => {
+  it("creates the configured sections under the subdivision's geo object, once", async () => {
+    await withRollback(async (tx) => {
+      // GR-I has the coast section "methana" in config/subdivisions.json (inside the pilot box: rolled back).
+      const [region] = await tx
+        .insert(geoObjects)
+        .values({ type: "admin_region", origin: "manual", adminLevel: 5, geom: sql`ST_Multi(ST_MakeEnvelope(22.5, 37.0, 23.9, 38.0, 4326))` })
+        .returning({ id: geoObjects.id });
+      await tx.insert(subdivisions).values({
+        publicId: newPublicId("sd"),
+        key: "GR-I",
+        country: "GR",
+        geoObjectId: region!.id,
+        geom: sql`ST_Multi(ST_MakeEnvelope(22.5, 37.0, 23.9, 38.0, 4326))`,
+      });
+
+      const first = await syncCoastSections(tx, "GR-I");
+      expect([...first.keys()]).toEqual(["GR-I/methana"]);
+      const section = await validObject(tx, "GR-I/methana");
+      expect(section).toMatchObject({ type: "coast_section", origin: "manual", parentId: region!.id });
+      expect(isPublicId(section.publicId!, "rg")).toBe(true);
+      expect((await validNames(tx, section.id)).filter((n) => n.origin === "manual").map((n) => n.language).sort()).toEqual(["de", "el", "en"]);
+
+      const history = await historyCount(tx, section.id);
+      expect(await syncCoastSections(tx, "GR-I")).toEqual(first);
+      expect(await historyCount(tx, section.id)).toBe(history);
+    });
+  });
+
+  it("an unknown subdivision throws", async () => {
+    await withRollback(async (tx) => {
+      await expect(syncCoastSections(tx, "XX-NOWHERE")).rejects.toThrow("Unknown subdivision XX-NOWHERE");
+    });
   });
 });

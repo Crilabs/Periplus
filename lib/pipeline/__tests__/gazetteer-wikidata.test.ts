@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
-import type { AreaConfig } from "@/lib/config";
+import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
 import type { Db } from "@/lib/db/client";
 import { geoNames, geoObjects, rateLimits, reviewTasks } from "@/lib/db/schema";
 import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
@@ -11,18 +11,9 @@ import { importWikidata } from "@/lib/pipeline/gazetteer/wikidata";
 import { withRollback } from "@/test/db";
 import { createdInThisTransaction, ownGeoObjectIds, pairTasksOf } from "@/test/gazetteer";
 
-// Synthetic area outside the pilot box 23.0-23.75 E x 37.0-38.0 N.
-function area(): AreaConfig {
-  return {
-    key: "wikidata-test",
-    names: { de: "Testrevier", en: "Test area" },
-    polygon: { type: "Polygon", coordinates: [[[26.0, 35.6], [26.4, 35.6], [26.4, 35.9], [26.0, 35.9], [26.0, 35.6]]] },
-    tileBbox: null,
-    sourceLanguages: ["de", "en", "el"],
-    season: { fromMonth: 4, toMonth: 10 },
-    cycleDays: 30,
-    coastSections: [],
-  };
+// Synthetic subdivision scope outside the pilot box 23.0-23.75 E x 37.0-38.0 N.
+function scope(): GazetteerScope {
+  return { subdivisionId: newId(), key: "wikidata-test", country: "GR", bbox: [26.0, 35.6, 26.4, 35.9], sourceLanguages: ["de", "en", "el"] };
 }
 
 const ID = 9_140_000_000;
@@ -130,7 +121,7 @@ async function names(db: Db, geoObjectId: string) {
 }
 
 const run = (db: Db, bindings = allRows(), seen?: HttpRequest[]) =>
-  importWikidata(db, { area: area(), runId: newId() }, { transport: transport(bindings, seen) });
+  importWikidata(db, { scope: scope(), runId: newId() }, { transport: transport(bindings, seen) });
 
 describe("importWikidata", () => {
   it("links via osm wikidata tag", () =>

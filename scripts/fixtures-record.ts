@@ -36,8 +36,10 @@ import { planUnits } from "../lib/domain/extraction/units";
 import { effectiveVersionMeta } from "../lib/domain/mentions/classification";
 import { areaBbox, syncAreas } from "../lib/domain/gazetteer/areas";
 import { assignAreaTiles } from "../lib/domain/gazetteer/hierarchy";
+import type { GazetteerScope } from "../lib/domain/gazetteer/scope";
 import { areaTileIds, ensureTiles } from "../lib/domain/gazetteer/tiles-ensure";
 import { bufferBbox, importLandPolygons } from "../lib/domain/gazetteer/land";
+import { newId } from "../lib/domain/ids";
 import { createRun } from "../lib/domain/runs";
 import { ensureWhitelistSources, getSource, sourceIdByDomain } from "../lib/domain/sources/store";
 import { parseTileId, tileBbox, TILE_SIZE, type Bbox } from "../lib/domain/tiles";
@@ -898,6 +900,14 @@ async function main(): Promise<void> {
       triggeredBy: "fixtures:record",
     });
 
+    // TODO(plan 14a task 7): record per subdivision; the pilot areas are Greek
+    const scope: GazetteerScope = {
+      subdivisionId: newId(),
+      key: area.key,
+      country: "GR",
+      bbox: areaBbox(area),
+      sourceLanguages: area.sourceLanguages,
+    };
     const source = sourceTransport(args.cache);
     if (args.datasets) {
       // Dataset imports only: they need the tiles (coast tiles for bathymetry), not the gazetteer.
@@ -908,8 +918,8 @@ async function main(): Promise<void> {
       if (kinds.includes("sitelinks")) {
         // Sitelinks are asked for the area's objects with a Wikidata id: the gazetteer from its recorded fixtures.
         const replay = fixtureTransport();
-        await importOsm(db, { area, runId }, { transport: replay, archive });
-        await importWikidata(db, { area, runId }, { transport: replay });
+        await importOsm(db, { scope, runId }, { transport: replay, archive });
+        await importWikidata(db, { scope, runId }, { transport: replay });
         out(`tile links: ${(await assignAreaTiles(db, area)).links}`);
       }
       for (const dataset of kinds) {
@@ -922,10 +932,10 @@ async function main(): Promise<void> {
     }
     const recording = recordingTransport(compacting(source));
     const osm = await withRetry("overpass", () =>
-      importOsm(db, { area, runId }, { transport: recording, archive: memoryArchive() }),
+      importOsm(db, { scope, runId }, { transport: recording, archive: memoryArchive() }),
     );
     out(`osm: ${JSON.stringify(osm)}`);
-    const wikidata = await withRetry("wikidata", () => importWikidata(db, { area, runId }, { transport: recording }));
+    const wikidata = await withRetry("wikidata", () => importWikidata(db, { scope, runId }, { transport: recording }));
     out(`wikidata: ${JSON.stringify(wikidata)}`);
 
     // GeoNames dumps are too large for HTTP fixtures: keep the downloads and cut them to the box.
@@ -941,7 +951,7 @@ async function main(): Promise<void> {
       ctx: { db, runId, stage: GEONAMES_STAGE },
       cfg: gazetteer.geonames,
     });
-    const geonames = await withRetry("geonames", () => importGeonames(db, { area, runId }, { source: geonamesSource }));
+    const geonames = await withRetry("geonames", () => importGeonames(db, { scope, runId }, { source: geonamesSource }));
     out(`geonames: ${JSON.stringify(geonames)}`);
     const cut = await writeGeonames(downloads, gazetteer.geonames.countries, gazetteer.geonames.baseUrl, queryBox);
     out(`geonames fixtures: ${JSON.stringify(cut)}`);

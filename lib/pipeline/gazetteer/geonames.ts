@@ -1,9 +1,9 @@
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import type { GeonamesAltName, GeonamesRow, GeonamesSource } from "@/lib/adapters/geonames";
-import { getConfig, type AreaConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geoObjects, type GeoObjectType } from "@/lib/db/schema";
-import { areaBbox } from "@/lib/domain/gazetteer/areas";
+import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
 import { bufferBbox } from "@/lib/domain/gazetteer/land";
 import { findMatch, ISLAND_GROUP, openPairTask, resolveMergedByExternalId } from "@/lib/domain/gazetteer/merge";
 import { addNames, isGreek, type NameDraft } from "@/lib/domain/gazetteer/names";
@@ -74,8 +74,8 @@ async function hasNeighbour(db: Db, type: GeoObjectType, row: GeonamesRow, radiu
 }
 
 /**
- * Stage `gazetteer.geonames` (Spec 03, step 3): reads the GeoNames rows of every configured country in the
- * area box plus `bboxBufferKm` and their alternate names, then, in one transaction, per row of a configured
+ * Stage `gazetteer.geonames` (Spec 03, step 3): reads the GeoNames rows of the subdivision's country in the
+ * subdivision box plus `bboxBufferKm` and their alternate names, then, in one transaction, per row of a configured
  * feature code: (1) an object with this `geonames_id` gets the names (for an object merged away with it,
  * its survivor gets them and counts as linked); (2) else a `same` match of `findMatch` within
  * `geonamesNewObjectRadiusM` that has no GeoNames ID yet is linked and gets the names; (3) else, when any
@@ -85,23 +85,22 @@ async function hasNeighbour(db: Db, type: GeoObjectType, row: GeonamesRow, radiu
  */
 export async function importGeonames(
   db: Db,
-  input: { area: AreaConfig; runId: string },
+  input: { scope: GazetteerScope; runId: string },
   deps: { source: GeonamesSource },
 ): Promise<{ linked: number; created: number; skipped: number; uncertain: number; names: number }> {
-  const { area } = input;
+  const { scope } = input;
   const { gazetteer } = getConfig();
-  const { countries, featureCodes } = gazetteer.geonames;
+  const { featureCodes } = gazetteer.geonames;
   const radiusM = gazetteer.merge.geonamesNewObjectRadiusM;
-  const bbox = bufferBbox(areaBbox(area), gazetteer.bboxBufferKm);
+  const bbox = bufferBbox(scope.bbox, gazetteer.bboxBufferKm);
 
   // Read outside the import transaction: a download must not hold it open.
   const rows: GeonamesRow[] = [];
   const alternates = new Map<string, GeonamesAltName[]>();
-  for (const country of countries) {
-    const countryRows = (await deps.source.rows(country, bbox)).filter((r) => featureCodes[r.featureCode]);
-    rows.push(...countryRows);
-    if (countryRows.length === 0) continue;
-    for (const a of await deps.source.alternateNames(country, new Set(countryRows.map((r) => r.id)))) {
+  const countryRows = (await deps.source.rows(scope.country, bbox)).filter((r) => featureCodes[r.featureCode]);
+  rows.push(...countryRows);
+  if (countryRows.length > 0) {
+    for (const a of await deps.source.alternateNames(scope.country, new Set(countryRows.map((r) => r.id)))) {
       alternates.set(a.geonameId, [...(alternates.get(a.geonameId) ?? []), a]);
     }
   }

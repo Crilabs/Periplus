@@ -2,10 +2,9 @@ import { readFileSync } from "node:fs";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { areaByKey, getConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geoNames, geoObjects, runs, runStages } from "@/lib/db/schema";
-import { areaBbox } from "@/lib/domain/gazetteer/areas";
 import { bufferBbox, importLandPolygons } from "@/lib/domain/gazetteer/land";
 import { newId } from "@/lib/domain/ids";
 import { createRun } from "@/lib/domain/runs";
@@ -13,32 +12,16 @@ import { HANDLERS } from "@/lib/jobs/registry";
 import { STAGES } from "@/lib/jobs/stages";
 import { createLogger } from "@/lib/logger";
 import { GAZETTEER_STAGES, startGazetteerRun } from "@/lib/pipeline/gazetteer/stages";
+import { AEGINA_WEST_BOX, AEGINA_WEST_KEY, insertAeginaWest } from "@/test/fixtures/subdivisions/aegina-west";
 import { withRollback } from "@/test/db";
 import { testArchive } from "@/test/s3";
-
-// The test area aegina-west (tile q025:813:510) joins the configured areas; everything else is the real config.
-vi.mock("@/lib/config", async (importOriginal) => {
-  const original = await importOriginal<typeof import("@/lib/config")>();
-  const { areaConfigSchema } = await import("@/lib/config/schemas");
-  const { readFileSync: read } = await import("node:fs");
-  const testArea = areaConfigSchema.parse(JSON.parse(read("test/fixtures/areas/aegina-west.json", "utf8")));
-  const getConfig = () => ({ ...original.getConfig(), areas: [...original.getConfig().areas, testArea] });
-  return {
-    ...original,
-    getConfig,
-    areaByKey: (key: string) => {
-      const found = getConfig().areas.find((a) => a.key === key);
-      if (!found) throw new Error(`Unknown area ${key}`);
-      return found;
-    },
-  };
-});
 
 // Rate limiting is covered by the http tests. Here its bucket rows would stay locked by the long test
 // transaction and block other test files using the same services.
 vi.mock("@/lib/domain/rate-limit", () => ({ takeToken: async () => ({ ok: true }) }));
 
-const AREA = "aegina-west";
+const AREA = "aegina-west"; // name of the land fixture file
+const KEY = AEGINA_WEST_KEY;
 const TILE = "q025:813:510";
 const AEGINA = "relation/543490";
 const AGISTRI = "relation/543488";
@@ -72,7 +55,7 @@ async function* landFixture(): AsyncGenerator<LandFeature> {
 
 /** The land of the fixture area, as `npm run fixtures:record` imported it. */
 async function importLand(db: Db): Promise<void> {
-  const box = bufferBbox(areaBbox(areaByKey(AREA)), getConfig().gazetteer.landBufferKm);
+  const box = bufferBbox(AEGINA_WEST_BOX, getConfig().gazetteer.landBufferKm);
   await importLandPolygons(db, landFixture(), box, "fixture");
 }
 
@@ -83,10 +66,10 @@ const stubBoss = {} as PgBoss;
  * through the registered handler, as the worker would (NODE_ENV=test: fixture transport and GeoNames files).
  */
 async function runGazetteer(db: Db): Promise<void> {
-  const params = { areaKey: AREA };
+  const params = { subdivisionKey: KEY };
   const { id: runId } = await createRun(db, {
     kind: "stage",
-    scope: { type: "area", id: AREA },
+    scope: { type: "subdivision", id: KEY },
     stages: [...GAZETTEER_STAGES],
     params,
     triggeredBy: "test",
@@ -142,6 +125,7 @@ describe("gazetteer run", () => {
   it("builds the Aegina-West gazetteer; a second run adds no objects, tile links or tasks", () =>
     withRollback(async (db) => {
       await importLand(db);
+      const { subdivisionId, regionId, countryId } = await insertAeginaWest(db);
       await runGazetteer(db);
 
       expect(await importedByType(db)).toEqual(EXPECTED_BY_TYPE);
@@ -157,12 +141,23 @@ describe("gazetteer run", () => {
       expect(perdika.type).toBe("settlement");
       expect(perdika.parentId).toBe(aegina.id);
 
-      const [area] = await db
-        .select({ id: geoObjects.id })
+      // Parents run over the subdivision: islands hang on its admin region, which hangs on the country.
+      expect(aegina.parentId).toBe(regionId);
+      expect(agistri.parentId).toBe(regionId);
+      const [region] = await db.select({ parentId: geoObjects.parentId }).from(geoObjects).where(eq(geoObjects.id, regionId));
+      expect(region!.parentId).toBe(countryId);
+
+      // Assignment by nearest land: the objects of the run belong to the subdivision.
+      const [row] = await db
+        .select({ subdivisionId: geoObjects.subdivisionId })
         .from(geoObjects)
-        .where(and(eq(geoObjects.configKey, AREA), isNull(geoObjects.validTo)));
-      expect(aegina.parentId).toBe(area!.id);
-      expect(agistri.parentId).toBe(area!.id);
+        .where(eq(geoObjects.id, aegina.id));
+      expect(row!.subdivisionId).toBe(subdivisionId);
+      const { rows: unassigned } = await db.execute<{ n: number }>(sql`
+        select count(*)::int as n from geo_objects
+        where created_at = now() and origin <> 'manual' and valid_to is null and subdivision_id is null
+          and type not in ('sea') and ST_Intersects(centroid, ST_MakeEnvelope(23.25, 37.5, 23.5, 37.75, 4326))`);
+      expect(unassigned[0]!.n).toBe(0);
 
       const { rows: links } = await db.execute<{ tile_id: string }>(
         sql`select tile_id from tile_geo_objects where geo_object_id = ${aegina.id}`,
@@ -198,8 +193,9 @@ describe("startGazetteerRun", () => {
     ]);
   });
 
-  it("creates the run for the area and enqueues tiles.ensure", () =>
+  it("creates the run for the subdivision and enqueues tiles.ensure", () =>
     withRollback(async (db) => {
+      await insertAeginaWest(db);
       const inserted: Array<{ queue: string; data: unknown }> = [];
       const boss = {
         insert: async (queue: string, jobs: Array<{ id: string; data: unknown }>) => {
@@ -207,10 +203,10 @@ describe("startGazetteerRun", () => {
           return jobs.map((j) => j.id);
         },
       } as unknown as PgBoss;
-      const { id } = await startGazetteerRun(db, boss, AREA, "test");
+      const { id } = await startGazetteerRun(db, boss, KEY, "test");
 
       const [run] = await db.select().from(runs).where(eq(runs.id, id));
-      expect(run).toMatchObject({ kind: "stage", scopeType: "area", scopeId: AREA, params: { areaKey: AREA }, triggeredBy: "test" });
+      expect(run).toMatchObject({ kind: "stage", scopeType: "subdivision", scopeId: KEY, params: { subdivisionKey: KEY }, triggeredBy: "test" });
       const stages = await db.select().from(runStages).where(eq(runStages.runId, id)).orderBy(runStages.ordinal);
       expect(stages.map((s) => [s.stage, s.status])).toEqual([
         ["tiles.ensure", "running"],
@@ -220,14 +216,17 @@ describe("startGazetteerRun", () => {
         ["gazetteer.hierarchy", "pending"],
       ]);
       expect(inserted).toEqual([
-        { queue: "tiles.ensure", data: { key: AREA, areaKey: AREA, runId: id, stage: "tiles.ensure" } },
+        { queue: "tiles.ensure", data: { key: KEY, subdivisionKey: KEY, runId: id, stage: "tiles.ensure" } },
       ]);
     }));
 
-  it("rejects an area that is not configured before creating a run", () =>
+  it("rejects an unknown or excluded subdivision before creating a run", () =>
     withRollback(async (db) => {
       const boss = { insert: async () => [] } as unknown as PgBoss;
-      await expect(startGazetteerRun(db, boss, "nowhere-test", "test")).rejects.toThrow("Unknown area nowhere-test");
-      expect(await db.select().from(runs).where(eq(runs.scopeId, "nowhere-test"))).toEqual([]);
+      await expect(startGazetteerRun(db, boss, "XX-NOWHERE", "test")).rejects.toThrow("Unknown subdivision XX-NOWHERE");
+      await insertAeginaWest(db, { status: "excluded", statusReason: "test" });
+      await expect(startGazetteerRun(db, boss, KEY, "test")).rejects.toThrow(`Landesteil ${KEY} ist ausgeschlossen`);
+      expect(await db.select().from(runs).where(eq(runs.scopeId, KEY))).toEqual([]);
+      expect(await db.select().from(runs).where(eq(runs.scopeId, "XX-NOWHERE"))).toEqual([]);
     }));
 });

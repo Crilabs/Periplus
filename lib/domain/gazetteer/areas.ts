@@ -1,9 +1,9 @@
 import { and, desc, eq, inArray, isNotNull, isNull, ne, notInArray, or, sql } from "drizzle-orm";
 import type { Polygon, MultiPolygon } from "geojson";
-import type { AreaConfig } from "@/lib/config";
+import { getConfig, type AreaConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { geoNames, geoObjects } from "@/lib/db/schema";
+import { geoNames, geoObjects, subdivisions } from "@/lib/db/schema";
 import { newPublicId } from "@/lib/domain/ids";
 import type { Bbox } from "@/lib/domain/tiles";
 import { addNames, isGreek, transliterateElot743 } from "./names";
@@ -74,6 +74,50 @@ export async function syncAreas(db: Db, areas: AreaConfig[]): Promise<Map<string
         );
       }
     }
+    return ids;
+  });
+}
+
+/**
+ * Creates or updates the coast sections of the subdivision `subdivisionKey` from
+ * `subdivisions.overrides[key].coastSections` (`type coast_section`, `rg_…`, `config_key "<key>/<section>"`, parent = the
+ * subdivision's geo object). Like `syncAreas` it writes geometry and parent only when they changed. Sections no longer
+ * configured are ended (`valid_to`); a key configured again revives its object. Returns `config_key → id`; throws for an
+ * unknown subdivision.
+ */
+export async function syncCoastSections(db: Db, subdivisionKey: string): Promise<Map<string, string>> {
+  return db.transaction(async (tx) => {
+    const [sub] = await tx
+      .select({ geoObjectId: subdivisions.geoObjectId })
+      .from(subdivisions)
+      .where(and(eq(subdivisions.key, subdivisionKey), isNull(subdivisions.validTo)));
+    if (!sub) throw new Error(`Unknown subdivision ${subdivisionKey}`);
+    const sections = getConfig().subdivisions.overrides[subdivisionKey]?.coastSections ?? [];
+    const ids = new Map<string, string>();
+    for (const section of sections) {
+      const configKey = `${subdivisionKey}/${section.key}`;
+      ids.set(
+        configKey,
+        await syncObject(tx, {
+          configKey,
+          type: "coast_section",
+          polygon: section.polygon,
+          names: section.names,
+          parentId: sub.geoObjectId,
+        }),
+      );
+    }
+    await tx
+      .update(geoObjects)
+      .set({ validTo: sql`current_date`, updatedAt: sql`now()` })
+      .where(
+        and(
+          eq(geoObjects.type, "coast_section"),
+          isNull(geoObjects.validTo),
+          sql`${geoObjects.configKey} like ${`${subdivisionKey}/%`}`,
+          ids.size > 0 ? notInArray(geoObjects.configKey, [...ids.keys()]) : undefined,
+        ),
+      );
     return ids;
   });
 }

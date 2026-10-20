@@ -10,7 +10,7 @@ import { externalCalls, geoObjects, runs, tileGeoObjects, wikidataSitelinks } fr
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { areaBbox, syncAreas } from "@/lib/domain/gazetteer/areas";
 import { bufferBbox, importLandPolygons } from "@/lib/domain/gazetteer/land";
-import { assignTiles } from "@/lib/domain/gazetteer/hierarchy";
+import { assignAreaTiles } from "@/lib/domain/gazetteer/hierarchy";
 import { ensureTiles } from "@/lib/domain/gazetteer/tiles-ensure";
 import { sampleDepths } from "@/lib/domain/geometry/depth";
 import { newId } from "@/lib/domain/ids";
@@ -470,9 +470,11 @@ describe("importSitelinks", () => {
       await prepareArea(db);
       const replay = fixtureTransport();
       const runId = newId();
-      await importOsm(db, { area: areaByKey(AREA), runId }, { transport: replay, archive: memoryArchive() });
-      await importWikidata(db, { area: areaByKey(AREA), runId }, { transport: replay });
-      await assignTiles(db, AREA);
+      // TODO(plan 14a task 7): scope of the aegina-west subdivision fixture instead of the area
+      const scope = { subdivisionId: newId(), key: AREA, country: "GR", bbox: areaBbox(areaByKey(AREA)), sourceLanguages: ["de", "en", "el"] };
+      await importOsm(db, { scope, runId }, { transport: replay, archive: memoryArchive() });
+      await importWikidata(db, { scope, runId }, { transport: replay });
+      await assignAreaTiles(db, areaByKey(AREA));
 
       expect(await importSitelinks(db, { area: areaByKey(AREA), runId }, { transport: replay })).toEqual({ fetched: 123, reused: 0 });
       const rows = await db

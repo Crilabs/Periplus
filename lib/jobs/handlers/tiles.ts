@@ -1,5 +1,5 @@
 import { areaByKey, getConfig } from "@/lib/config";
-import { endUnconfiguredAreas, syncAreas } from "@/lib/domain/gazetteer/areas";
+import { endUnconfiguredAreas, syncAreas, syncCoastSections } from "@/lib/domain/gazetteer/areas";
 import { ensureSubdivisionTiles, ensureTiles } from "@/lib/domain/gazetteer/tiles-ensure";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import type { StageDefinition } from "@/lib/pipeline/runs";
@@ -33,8 +33,9 @@ export const tilesEnsureHandler: JobHandler<JobData> = async (data, ctx) => {
   if (typeof data.subdivisionKey === "string" && data.subdivisionKey !== "") {
     const sub = await subdivisionByKey(ctx.db, data.subdivisionKey);
     if (!sub) throw new Error(`Unknown subdivision ${data.subdivisionKey}`);
+    const sections = await syncCoastSections(ctx.db, sub.key);
     const result = await ensureSubdivisionTiles(ctx.db, sub.id);
-    ctx.log.info({ subdivisionKey: sub.key, ...result }, "tiles ensured");
+    ctx.log.info({ subdivisionKey: sub.key, coastSections: sections.size, ...result }, "tiles ensured");
     return;
   }
   // TODO(plan 14a task 7): remove with the area run path

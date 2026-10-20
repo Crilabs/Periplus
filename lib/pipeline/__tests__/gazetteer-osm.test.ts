@@ -2,7 +2,7 @@ import { inArray, sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import { RetryableHttpError, makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import type { OverpassElement } from "@/lib/adapters/overpass";
-import type { AreaConfig } from "@/lib/config";
+import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects, landPolygons, rateLimits } from "@/lib/db/schema";
@@ -11,18 +11,9 @@ import { importOsm } from "@/lib/pipeline/gazetteer/osm";
 import { withRollback } from "@/test/db";
 import { testArchive } from "@/test/s3";
 
-// Synthetic area outside the pilot box 23.0-23.75 E x 37.0-38.0 N: sea north of 35.35 N, land south of it.
-function area(key = "osm-test"): AreaConfig {
-  return {
-    key,
-    names: { de: "Testrevier", en: "Test area" },
-    polygon: { type: "Polygon", coordinates: [[[24.9, 35.2], [25.3, 35.2], [25.3, 35.5], [24.9, 35.5], [24.9, 35.2]]] },
-    tileBbox: null,
-    sourceLanguages: ["de", "en", "el"],
-    season: { fromMonth: 4, toMonth: 10 },
-    cycleDays: 30,
-    coastSections: [],
-  };
+// Synthetic subdivision scope outside the pilot box 23.0-23.75 E x 37.0-38.0 N: sea north of 35.35 N, land south of it.
+function scope(key = "osm-test"): GazetteerScope {
+  return { subdivisionId: newId(), key, country: "GR", bbox: [24.9, 35.2, 25.3, 35.5], sourceLanguages: ["de", "en", "el"] };
 }
 
 // The land south of 35.35 N as two pieces sharing the cut line 25.0 E, like the split land polygons dataset.
@@ -97,7 +88,7 @@ describe("importOsm", () => {
     withRollback(async (db) => {
       await prepare(db);
       const seen: HttpRequest[] = [];
-      const result = await importOsm(db, { area: area(), runId: newId() }, { transport: transport({ elements: ELEMENTS }, seen), archive });
+      const result = await importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({ elements: ELEMENTS }, seen), archive });
       expect(result).toMatchObject({ created: 7, updated: 0, skipped: 3 });
       expect(result.names).toBeGreaterThan(7);
 
@@ -146,21 +137,21 @@ describe("importOsm", () => {
   it("a second run with the same answer creates and updates nothing", () =>
     withRollback(async (db) => {
       await prepare(db);
-      const input = { area: area(), runId: newId() };
+      const input = { scope: scope(), runId: newId() };
       const deps = { transport: transport({ elements: ELEMENTS }), archive };
       await importOsm(db, input, deps);
       const second = await importOsm(db, input, deps);
       expect(second).toEqual({ created: 0, updated: 0, skipped: 3, names: 0 });
     }));
 
-  it("archives the raw overpass response under datasets/overpass/<area>/<date>.json", () =>
+  it("archives the raw overpass response under datasets/overpass/<subdivision key>/<date>.json", () =>
     withRollback(async (db) => {
       await prepare(db);
       const key = `osm-test-${newId()}`;
       const payload = { elements: ELEMENTS };
       await importOsm(
         db,
-        { area: area(key), runId: newId(), now: new Date("2026-10-18T22:30:00Z") },
+        { scope: scope(key), runId: newId(), now: new Date("2026-10-18T22:30:00Z") },
         { transport: transport(payload), archive },
       );
       const body = await archive.get(`datasets/overpass/${key}/2026-10-18.json`);
@@ -178,7 +169,7 @@ describe("importOsm", () => {
         CREATE TRIGGER test_fail_geo_object_insert BEFORE INSERT ON geo_objects
         FOR EACH ROW WHEN (NEW.osm_id = '${osm("node", 9)}') EXECUTE FUNCTION test_fail_geo_object_insert()`));
       await prepare(db);
-      const error = await importOsm(db, { area: area(), runId: newId() }, { transport: transport({ elements: ELEMENTS }), archive }).then(
+      const error = await importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({ elements: ELEMENTS }), archive }).then(
         () => null,
         (e: unknown) => e as Error & { cause?: Error },
       );
@@ -207,7 +198,7 @@ describe("importOsm", () => {
       };
       const result = await importOsm(
         db,
-        { area: area(), runId: newId() },
+        { scope: scope(), runId: newId() },
         { transport: transport({ elements: [...ELEMENTS, bowtie, broken] }), archive },
       );
       expect(result).toMatchObject({ created: 8, updated: 0, skipped: 4 });
@@ -229,7 +220,7 @@ describe("importOsm", () => {
         // ~500 m south of the coastline 35.35 N.
         { type: "node", id: ID + 22, lat: 35.3455, lon: 25.15, tags: { place: "village", name: "Akti" } },
       ];
-      const result = await importOsm(db, { area: area(), runId: newId() }, { transport: transport({ elements: villages }), archive });
+      const result = await importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({ elements: villages }), archive });
       expect(result).toMatchObject({ created: 1, skipped: 1 });
       const rows = await objects(db, [osm("node", 21), osm("node", 22)]);
       expect(rows.map((r) => r.osmId)).toEqual([osm("node", 22)]);
@@ -247,7 +238,7 @@ describe("importOsm", () => {
           { type: "way", ref: 2, role: "inner", geometry: pts([[25.13, 35.42], [25.17, 35.42], [25.17, 35.46], [25.13, 35.46], [25.13, 35.42]]) },
         ],
       };
-      await importOsm(db, { area: area(), runId: newId() }, { transport: transport({ elements: [island] }), archive });
+      await importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({ elements: [island] }), archive });
       const [row] = await db
         .select({ type: sql<string>`GeometryType(${geoObjects.geom})`, holes: sql<number>`ST_NumInteriorRings(${geoObjects.geom})` })
         .from(geoObjects)
@@ -259,7 +250,7 @@ describe("importOsm", () => {
     withRollback(async (db) => {
       const seen: HttpRequest[] = [];
       await expect(
-        importOsm(db, { area: area(), runId: newId() }, { transport: transport({ elements: ELEMENTS }, seen), archive }),
+        importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({ elements: ELEMENTS }, seen), archive }),
       ).rejects.toThrow("land polygons missing for osm-test – run npm run import:land-polygons");
       expect(seen).toHaveLength(0);
     }));
@@ -273,7 +264,7 @@ describe("importOsm", () => {
         names: (await db.select({ n: sql<number>`count(*)::int` }).from(geoNames).where(sql`${geoNames.createdAt} = now()`))[0]!.n,
       });
       await expect(
-        importOsm(db, { area: area(), runId: newId() }, { transport: transport({}, [], 429), archive }),
+        importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({}, [], 429), archive }),
       ).rejects.toBeInstanceOf(RetryableHttpError);
       expect(await written()).toEqual({ objects: 0, names: 0 });
       expect(await objects(db)).toEqual([]);
