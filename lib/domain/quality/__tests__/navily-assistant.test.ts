@@ -121,7 +121,7 @@ describe("matchPlacesToSpots", () => {
     expect(m!.nameSimilarity).toBeCloseTo(9 / 14, 6);
   });
 
-  it("similarity class before kind and distance: bay Vathi takes the mooring Vathy 50 m away, not the port Vathia 300 m away", () => {
+  it("kind before similarity class: bay Vathi takes the mooring Vathy 50 m away, not the port Vathia 300 m away", () => {
     // both names are in the class „named“ (≥ nameMin, < nameStrongMin): Vathy 0.5, Vathia 0.625
     expect(nameSimilarity(["Vathi"], "Vathia", affixes)).toBe(0.625);
     const spots = [spot({ name: "Vathia", kind: "port", ...north(300) }), spot({ name: "Vathy", kind: "mooring", ...north(50) })];
@@ -130,6 +130,17 @@ describe("matchPlacesToSpots", () => {
     // a strong name still outranks a merely similar one
     const strong = [spot({ name: "Vathi", kind: "mooring", ...north(400) }), spot({ name: "Vathy", kind: "mooring", ...north(50) })];
     expect(matchPlacesToSpots([place("bay", ["Vathi"])], strong, cfg, affixes)[0]!.spotIndex).toBe(0);
+  });
+
+  it("kind before similarity class, bay only (ruling M7-B-R3): with no harbour place the bay Vathi takes the mooring Vathy 50 m away, not the port Vathi 800 m away", () => {
+    // strong (Vathi = Vathi, 1.0) vs named (Vathy 0.5): the class alone would give the bay the incompatible port
+    expect(nameSimilarity(["Vathi"], "Vathi", affixes)).toBe(1);
+    const spots = [spot({ name: "Vathi", kind: "port", ...north(800) }), spot({ name: "Vathy", kind: "mooring", ...north(50) })];
+    const [m] = matchPlacesToSpots([place("bay", ["Vathi"])], spots, cfg, affixes);
+    expect(m!.spotIndex).toBe(1);
+    expect(m!.distanceM).toBeCloseTo(50, 0);
+    // without a compatible candidate the bay still takes the port
+    expect(matchPlacesToSpots([place("bay", ["Vathi"])], [spots[0]!], cfg, affixes)[0]!.spotIndex).toBe(0);
   });
 
   it("confirmed places match first: a rejected duplicate never takes the spot of a confirmed place (ruling M7-B-R2)", () => {
@@ -168,7 +179,7 @@ describe("matchPlacesToSpots", () => {
     ]);
   });
 
-  it("ties on class, kind and distance go to the lower place index, then the lower spot index", () => {
+  it("ties on kind, class and distance go to the lower place index, then the lower spot index", () => {
     const twins = [place("first", ["Kolona"]), place("second", ["Kolona"])];
     expect(matchPlacesToSpots(twins, [spot({ name: "Kolona" })], cfg, affixes).map((m) => m.spotIndex)).toEqual([0, null]);
     const [m] = matchPlacesToSpots([place("p", ["Kolona"])], [spot({ name: "Kolona" }), spot({ name: "Kolona" })], cfg, affixes);

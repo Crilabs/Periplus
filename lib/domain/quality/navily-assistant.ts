@@ -72,8 +72,9 @@ const METRES_PER_DEGREE_LAT = 111_000;
  *
  * Two passes (ruling M7-B-R2): the confirmed places first, then all others against the spots left over, so a
  * rejected or candidate duplicate never takes the spot of a confirmed place. Within a pass candidates are taken
- * greedily by similarity class (strong, named, none), kind compatibility, distance (ascending), then place and spot
- * index; each spot and each place is matched at most once. One match per place, in input order.
+ * greedily by kind compatibility, similarity class (strong, named, none), distance (ascending), then place and spot
+ * index (ruling M7-B-R3: a bay never prefers an incompatible port over a compatible mooring, whatever the names);
+ * each spot and each place is matched at most once. One match per place, in input order.
  */
 export function matchPlacesToSpots(
   places: MatchPlace[],
@@ -119,8 +120,8 @@ export function matchPlacesToSpots(
     const candidates = indexes.flatMap(candidatesOf);
     candidates.sort(
       (a, b) =>
-        classOf(b.similarity) - classOf(a.similarity) ||
         Number(b.compatible) - Number(a.compatible) ||
+        classOf(b.similarity) - classOf(a.similarity) ||
         a.distance - b.distance ||
         a.place - b.place ||
         a.spot - b.spot,
