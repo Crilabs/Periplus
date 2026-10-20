@@ -10,8 +10,10 @@ import { insertNamedObject, insertTestTile } from "@/test/text";
 
 /*
  * A synthetic delivery area around 21.0° E / 35.2° N (outside the pilot box), for `withRollback` only — never commit
- * these rows (M5 bundle F NOTE). Two tiles: the west one holds an island (land polygon with a bay notch in its north
- * coast), its archipelago and a cape; the east one a marina and an excluded place inside a military area.
+ * these rows (M5 bundle F NOTE). Only test files in the vitest project `delivery-fixture` may seed it: they run one
+ * after another, since two fixtures in parallel transactions wait on each other's unique keys (fixed tiles, area key,
+ * public ids). Two tiles: the west one holds an island (land polygon with a bay notch in its north coast), its
+ * archipelago and a cape; the east one a marina and an excluded place inside a military area.
  *
  *   A  anchorage in the bay: complete profile, one text source with document and an `ok` summary
  *   M  marina, shelter 0.9 in every sector
@@ -132,6 +134,9 @@ export async function seedDeliveryArea(
   tx: Db,
   opts: { key?: string; shift?: { lon: number; lat: number }; stable?: boolean; committed?: boolean } = {},
 ): Promise<DeliveryFixture> {
+  if (process.env.PERIPLUS_TEST_PROJECT !== "delivery-fixture") {
+    throw new Error("seedDeliveryArea runs only in the vitest project delivery-fixture (add the file to DELIVERY_FIXTURE_TESTS)");
+  }
   const shift = opts.shift ?? { lon: 0, lat: 0 };
   const shifted = shift.lon !== 0 || shift.lat !== 0;
   if (opts.stable && shifted) throw new Error("a stable fixture has no shift");

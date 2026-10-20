@@ -68,11 +68,15 @@ describe("listDeliveries", () => {
       ]);
       expect(rows[1]).toMatchObject({ areaName: "Testrevier", failedChecks: [], runId: null, generatedAt: day("2040-06-02") });
       expect(rows[1]!.objectCounts).toMatchObject({ spots: expect.any(Number), changes: 1 });
-      // the second page of this area is empty; the list of all areas holds these rows too
+      // the second page of this area is empty; the list of all areas starts with these rows: every other delivery row
+      // is older (the only test that commits deliveries, delivery-run.test, runs before or after this file in the
+      // sequential project delivery-fixture, never beside it)
       expect((await listDeliveries(tx, { areaId: f.areaId, page: 2 })).rows).toEqual([]);
       const all = await listDeliveries(tx, { page: 1 });
-      expect(all.rows.map((r) => r.id)).toEqual(expect.arrayContaining([v1.deliveryId, v2.deliveryId, same.deliveryId]));
-      expect((await latestDeliveries(tx, 50)).find((d) => d.id === v2.deliveryId)).toEqual({
+      expect(all.rows.slice(0, 3).map((r) => r.id)).toEqual([same.deliveryId, v2.deliveryId, v1.deliveryId]);
+      const latest = await latestDeliveries(tx, 3);
+      expect(latest.map((d) => d.id)).toEqual([same.deliveryId, v2.deliveryId, v1.deliveryId]);
+      expect(latest[1]).toEqual({
         id: v2.deliveryId,
         areaName: "Testrevier",
         status: "valid",

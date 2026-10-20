@@ -8,6 +8,31 @@ const PILOT_RUN_TESTS = [
   "lib/pipeline/__tests__/geometry-golden.test.ts",
 ];
 
+/**
+ * Tests that seed the delivery fixture area (`test/fixtures/delivery/area.ts`). Its fixed tiles, area key and public
+ * ids are unique keys, so two of these transactions wait on each other's uncommitted rows, beyond the test timeout
+ * under full parallel load. One worker runs these files one after another, beside the default project.
+ * `seedDeliveryArea` refuses to run outside this project.
+ */
+const DELIVERY_FIXTURE_TESTS = [
+  "app/__tests__/api-changes-spots.test.ts",
+  "app/__tests__/api-package.test.ts",
+  "app/(admin)/__tests__/delivery-actions.test.ts",
+  "app/(admin)/__tests__/place-actions.test.ts",
+  "lib/domain/__tests__/place-merge.test.ts",
+  "lib/domain/delivery/__tests__/build.test.ts",
+  "lib/domain/delivery/__tests__/coast.test.ts",
+  "lib/domain/delivery/__tests__/load.test.ts",
+  "lib/domain/delivery/__tests__/map-region.test.ts",
+  "lib/domain/delivery/__tests__/map-spot.test.ts",
+  "lib/domain/delivery/__tests__/place-delivery.test.ts",
+  "lib/domain/delivery/__tests__/read.test.ts",
+  "lib/domain/delivery/__tests__/validate.test.ts",
+  "lib/domain/delivery/__tests__/view.test.ts",
+  "lib/domain/delivery/__tests__/weather-points.test.ts",
+  "lib/pipeline/__tests__/delivery-run.test.ts",
+];
+
 export default defineConfig({
   resolve: {
     alias: { "@": fileURLToPath(new URL(".", import.meta.url)) },
@@ -22,8 +47,12 @@ export default defineConfig({
         test: {
           name: "default",
           include: ["**/__tests__/**/*.test.{ts,tsx}", "test/**/*.test.ts"],
-          exclude: ["node_modules/**", ".next/**", ...PILOT_RUN_TESTS],
+          exclude: ["node_modules/**", ".next/**", ...PILOT_RUN_TESTS, ...DELIVERY_FIXTURE_TESTS],
         },
+      },
+      {
+        extends: true,
+        test: { name: "delivery-fixture", include: DELIVERY_FIXTURE_TESTS, fileParallelism: false, env: { PERIPLUS_TEST_PROJECT: "delivery-fixture" } },
       },
       // Long pilot-area runs hold rows (pilot tiles, configured areas) other test files write too:
       // run them after everything else instead of beside it.
