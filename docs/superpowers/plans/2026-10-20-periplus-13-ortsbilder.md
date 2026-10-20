@@ -25,7 +25,7 @@
 - Image rules (Christian, 20.10.2026), one per place type:
   - **Anchorage/mooring field:** no boats, midday.
   - **Marina/port:** boats as in the render and evening life, evening.
-  - **Anchorage within 500 m of a town** (`settlement` with `place=town|village`): midday, with boats, the anchorage in front and the town behind. This is its own perspective. The camera sits over water `composition.nearTown.foregroundM` (250 m) behind the centre of the anchorage, on the side facing away from the town. It looks along the line anchorage → town, so the anchorage lies in the lower part of the image and the town in the upper middle. The target is the point `distanceM` in front of the camera on that line, not the centre of the anchorage.
+  - **Anchorage within `light.townRadiusM` = 1500 m of a town** (`settlement` with `place=town|village`; Christian, 20.10.2026, raised from 500 m): midday, with boats, the anchorage in front and the town behind. This is its own perspective. The camera ground point lies `composition.nearTown.foregroundM` (450 m) from the centre of the anchorage, in the direction away from the town; it is rotated in 10° steps until the whole segment from 200 m to `foregroundM` is over water. The camera height is that of the zoom level (z1 260 m). The target is the midpoint between the centre and the town, and the tilt follows from the geometry: `atan(heightM / distance camera → target)`, not 30°. Tested on 20.10.2026 at Mikro Neorio/Poros (town 952 m, azimuth 281°, tilt 18°): yachts in front, town behind.
 
   For the other two types (anchorage without a town, marina/port), the view is from the water towards land, and the target is the centre of the place: `anchor_position`, else `position`.
 - Water IoU thresholds are midday 0.80 and evening 0.60. Generation runs at most twice (one retry), then the task goes to review.
@@ -67,7 +67,7 @@
   "camera": { "tiltDeg": 30, "fovDeg": 50, "width": 1536, "height": 1024, "rotateStepDeg": 10, "defaultZoom": "z1",
               "zooms": { "z1": { "heightM": 260 }, "z2": { "heightM": 160 }, "z3": { "heightM": 100 } } },
   "render": { "maxSourcePixelOnScreen": 5, "rendererVersion": "render-1", "timeoutSeconds": 120 },
-  "light": { "townRadiusM": 500, "townPlaces": ["town", "village"], "nearTown": "midday",
+  "light": { "townRadiusM": 1500, "townPlaces": ["town", "village"], "nearTown": "midday",
              "byKind": { "anchorage": "midday", "mooring_field": "midday", "marina": "evening", "port": "evening" } },
   "scene": {
     "anchorage": { "en": "a sheltered bay with its shore, beach or rocks and the slopes behind", "de": "Bucht mit Ufer und Hängen" },
@@ -78,7 +78,7 @@
   },
   "check": { "minWaterIoU": { "midday": 0.8, "evening": 0.6 }, "maxAttempts": 2, "waterColour": { "blueOverRedMin": 25, "greenTolerance": 10 } },
   "pipeline": { "maxGenerationsPerRun": 50 },
-  "composition": { "nearTown": { "foregroundM": 250 } },
+  "composition": { "nearTown": { "foregroundM": 450 } },
   "output": { "jpegQuality": 85, "license": "periplus", "credit": "Illustration: Periplus", "altPrefix": "KI-Illustration:" }
 }
 ```
@@ -221,9 +221,9 @@ Archive-first: a current `imagery_tiles` row with the same `(source, tile_key)` 
   - `lightFor(input: PlaceImageInput, cfg): ImageryLight`: `light.nearTown` (midday) when `input.town` is set, else `byKind[kind]`
   - `type Composition = "open_water" | "near_town"` and `compositionFor(input): Composition`: `near_town` when `input.town` is set and the kind is `anchorage` or `mooring_field`
   - `baseAzimuthFor(input, cfg): number | null`: for `near_town`, the bearing from the town to the centre of the place; otherwise `baseAzimuth(openingBearing, rays, …)`. The rotation in 10° steps until the camera is over water applies to both.
-  - `nearTownCamera(centre, azimuthDeg, zoom, cfg): RenderCamera`: camera ground point = `centre` moved `foregroundM` along `azimuthDeg`; `target` = the camera ground point moved `distanceM` along `azimuthDeg + 180`. `open_water` uses `cameraFor(centre, azimuthDeg, zoom, cfg)`. `planRender` picks the function by `compositionFor(input)` and tests the camera ground point against land in both cases.
+  - `nearTownCamera(centre, town, azimuthDeg, zoom, cfg): RenderCamera`: the camera ground point is `centre` moved `foregroundM` along `azimuthDeg`, and `target` is the midpoint of centre and town. `heightM` comes from the zoom level, `distanceM` = ground distance camera → target, and `tiltDeg = atan(heightM / distanceM)`. `RenderCamera` therefore carries its own `tiltDeg`, and the renderer and `foregroundPixelSize` use it. `open_water` uses `cameraFor(centre, azimuthDeg, zoom, cfg)`. `planRender` picks the function by `compositionFor(input)`. The land test checks the camera ground point for `open_water`, and the points every 10 m from 200 m to `foregroundM` for `near_town`.
   - `type PlaceImageInput = { geoObjectId; publicId; kind: PlaceKind; lon; lat; country; subdivisionKey; openingBearing: number | null; rays: number[] | null; town: { geoObjectId: string; lon: number; lat: number } | null }`. `lon`/`lat` is the centre of the place, which is the camera target.
-  - `loadPlaceImageInput(db, geoObjectId, cfg): Promise<PlaceImageInput | null>` reads the centre (`anchor_position` if set, else `position`) and the latest facts. `town` is the nearest current `settlement` with `tags->>'place'` in `townPlaces` within `light.townRadiusM` (500 m), and is set only for anchorages and mooring fields.
+  - `loadPlaceImageInput(db, geoObjectId, cfg): Promise<PlaceImageInput | null>` reads the centre (`anchor_position` if set, else `position`) and the latest facts. `town` is the nearest current `settlement` with `tags->>'place'` in `townPlaces` within `light.townRadiusM` (1500 m), and is set only for anchorages and mooring fields.
 
 - [ ] **Step 1: Write the failing tests:**
   - `distance for z1 is 450 m and z2 277 m` (±1 m)
@@ -232,8 +232,9 @@ Archive-first: a current `imagery_tiles` row with the same `(source, tile_key)` 
   - `null opening falls back to the longest ray`
   - `rotates until the camera is over water` (fixture land polygon covering the first two candidates)
   - `enclosed place yields no_water_view` (land on all sides; Review Focus 1)
-  - `anchorage → midday, open_water; marina → evening; anchorage with a town at 400 m → midday, near_town; town at 600 m does not count; hamlet does not count; marina near a town stays evening, open_water`
-  - `near_town camera lies 250 m behind the anchorage, away from the town, and its target lies between anchorage and town or beyond` (distance camera→centre = 250 m; the town is closer to the target than the centre is; the centre's ground point projects into the lower half of the image)
+  - `anchorage → midday, open_water; marina → evening; anchorage with a town at 1400 m → midday, near_town; town at 1600 m does not count; hamlet does not count; marina near a town stays evening, open_water`
+  - `near_town camera lies 450 m behind the anchorage, away from the town, and looks at the midpoint` (camera→centre = 450 m ±1; target = midpoint; tilt = atan(260/d); fixture: centre 23.4501/37.5067, town 23.4535/37.4985 and a land polygon north of the centre; the result has an azimuth in 270–300° and a tilt of 15–22°)
+  - `town at 1400 m counts, at 1600 m it does not`
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement** (pure functions without DB except `planRender`/`loadPlaceImageInput`). **Step 4: Run** → PASS.
 - [ ] **Step 5: Commit** `feat(images): render plan with camera over water, zoom limit from resolution and light rule (spec 13)`
 
