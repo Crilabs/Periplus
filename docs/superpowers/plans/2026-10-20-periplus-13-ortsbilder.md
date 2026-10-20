@@ -28,6 +28,7 @@
   - **Anchorage within `light.townRadiusM` = 1500 m of a town** (`settlement` with `place=town|village`; Christian, 20.10.2026, raised from 500 m): midday, with boats, the anchorage in front and the town behind. This is its own perspective. The camera ground point lies `composition.nearTown.foregroundM` (450 m) from the centre of the anchorage, in the direction away from the town; it is rotated in 10° steps until the whole segment from 200 m to `foregroundM` is over water. The camera height is that of the zoom level (z1 260 m). The target is the midpoint between the centre and the town, and the tilt follows from the geometry: `atan(heightM / distance camera → target)`, not 30°. Tested on 20.10.2026 at Mikro Neorio/Poros (town 952 m, azimuth 281°, tilt 18°): yachts in front, town behind.
 
   For the other two types (anchorage without a town, marina/port), the view is from the water towards land, and the target is the centre of the place: `anchor_position`, else `position`.
+- Several images per spot, each with camera details (Christian, 20.10.2026). A spot holds any number of current images, one per `slot`. The pipeline generates slot `title` automatically, and admins add further views (slot `view-<n>`). Every image records where it was taken from: camera position (lon/lat), height above sea level (m), view bearing (clockwise from north, the direction the camera looks), tilt and vertical field of view. The data model, the review, the contract and the UI carry them.
 - Water IoU thresholds are midday 0.80 and evening 0.60. Generation runs at most twice (one retry), then the task goes to review.
 - `kind = "ai_illustration"`, and alt text starts with „KI-Illustration:“. A new image is generated only when the aerial image, prompt version, model or place kind changes, never per run.
 - Before touching routes, `proxy.ts` or `next.config.ts`, read the Next 16 docs in `node_modules/next/dist/docs/`.
@@ -169,6 +170,29 @@ A few people strolling on the promenades. Rich but believable colours, no long-e
 - [ ] **Step 2: Run** → FAIL. **Step 3:** write the schema, then `npm run db:generate`. Write the trigger migration with `drizzle-kit generate --custom --name images_triggers`, following `0054_subdivisions_triggers.sql`. Add `ALTER TYPE "public"."review_kind" ADD VALUE 'place_image'` to the generated migration (precedent `0053`). Then run `npm run db:migrate` and migrate the test DB.
 - [ ] **Step 4: Run** → PASS. Typecheck forces the `Record<ReviewKind, …>` maps to be completed.
 - [ ] **Step 5: Commit** `feat(db): imagery_tiles, place_renders, place_images and review kind place_image (spec 13)`
+
+### Task 2b: Several images per spot and camera details
+
+**Files:**
+- Create: `drizzle/0059_place_images_slots.sql` (generated) and, if triggers change, a custom migration next to it
+- Modify: `lib/db/schema/images.ts`
+- Test: `lib/db/__tests__/images-schema.test.ts`
+
+**Interfaces:**
+- Produces, on `place_images`:
+  - the unique index on `(geo_object_id, kind) where valid_to is null` is replaced by a unique index on `(geo_object_id, slot) where valid_to is null`
+  - new columns: `slot text not null` (e.g. `title`, `view-2`), `sort_order int not null default 0`, `camera_position geometry(Point,4326)`, `camera_height_m real`, `view_bearing_deg real`, `camera_tilt_deg real`, `camera_fov_deg real`
+  - check `place_images_ai_camera`: `kind <> 'ai_illustration'` or all five camera columns are not null
+  - check `place_images_bearing_range`: `view_bearing_deg` in [0, 360)
+- Produces the pure helper `cameraDetails(camera: RenderCamera): { position: [lon, lat]; heightM: number; viewBearingDeg: number; tiltDeg: number; fovDeg: number }` in `lib/domain/images/render-plan.ts`. The position is the target moved `distanceM` along `azimuthDeg` (reuse the existing `destination` helper), and `viewBearingDeg = (azimuthDeg + 180) mod 360`.
+
+- [ ] **Step 1: Write the failing tests:**
+  - `two current images per object in different slots`
+  - `second current image in the same slot violates the unique index`
+  - `ai_illustration without camera columns violates place_images_ai_camera`
+  - `cameraDetails of an open_water z1 camera looks back at the target` (position 450 m from the target along azimuthDeg, viewBearingDeg = azimuth + 180, heightM 260, tiltDeg 30)
+- [ ] **Step 2: Run** → FAIL. **Step 3: Implement** with `npm run db:generate` (record_history stays on `valid_to`). **Step 4: Run** → PASS, then typecheck and lint.
+- [ ] **Step 5: Commit** `feat(db): several images per spot (slot) with camera position, height, bearing, tilt and field of view (spec 13)`
 
 ### Task 3: Imagery adapters and `ensureImagery`
 
@@ -335,23 +359,24 @@ Scene rules (in `scene.ts`, as in the tests):
 - Consumes: Tasks 3–7.
 - Produces:
   - `IMAGES_STAGE = "images.place"`
-  - `generationKey(input: { imageryTileIds: string[]; promptVersion: number; model: string; kind: PlaceKind; light: ImageryLight; zoom: ZoomLevel }): string`: `valueFingerprint` of the sorted ids and the other fields
-  - `imageTargets(db, run): Promise<Array<{ geoObjectId: string; zoom: ZoomLevel }>>`. In a consolidation, text or geometry run, the candidates are the geo objects this run consolidated (derived the same way `summaryTargets` derives them). In a run from `startImageRun`, they are the subdivision's places or the single place. Of those, it keeps places that are current and unmerged, have status in `delivery.spots.statuses` and a `fetch` computation (without one, the next geometry run brings the place in), and whose subdivision country has a core source. Every kind counts: anchorage, mooring_field, marina and port. It skips a place when one of the following holds for the current key:
-    - a current `place_images` row has the same `generation_key`
+  - `generationKey(input: { imageryTileIds: string[]; promptVersion: number; model: string; kind: PlaceKind; light: ImageryLight; slot: string; zoom: ZoomLevel; azimuthDeg: number | null }): string`: `valueFingerprint` of the sorted ids and the other fields
+  - `type ImageView = { slot: string; zoom: ZoomLevel; azimuthDeg?: number }`. The automatic view is `{ slot: "title", zoom: defaultZoom }`. With `azimuthDeg`, `planRender` starts its 10° rotation at that bearing instead of the rule bearing; the composition and light rules stay. `planRender` gets an optional `azimuthOverride` parameter for this.
+  - `imageTargets(db, run): Promise<Array<{ geoObjectId: string; view: ImageView }>>`. Automatic runs target only slot `title`. In a consolidation, text or geometry run, the candidates are the geo objects this run consolidated (derived the same way `summaryTargets` derives them). In a run from `startImageRun`, they are the subdivision's places or the single place. Of those, it keeps places that are current and unmerged, have status in `delivery.spots.statuses` and a `fetch` computation (without one, the next geometry run brings the place in), and whose subdivision country has a core source. Every kind counts: anchorage, mooring_field, marina and port. It skips a place when one of the following holds for the current key:
+    - a current `place_images` row in the same slot has the same `generation_key`
     - an open `place_image` task has the same key
-    - a decided task has the same key (`hasDecidedTask(db, "place_image", geoObjectId, { key })`)
+    - a decided task has the same key (`hasDecidedTask(db, "place_image", \`${geoObjectId}:${slot}\`, { key })`)
 
     Results are capped at `images.pipeline.maxGenerationsPerRun`. Since the key needs the imagery tile ids, the plan computes it from the current `imagery_tiles` rows covering the windows. A missing tile means a new key.
-  - `generatePlaceImage(db, input: { geoObjectId; zoom; runId? }, deps: { archive; transport; imageModel: ImageModel; model: ModelClient }): Promise<{ status: "review" | "no_water_view" | "skipped"; attempts: number; waterIoU: number | null }>`. Steps:
+  - `generatePlaceImage(db, input: { geoObjectId; view: ImageView; runId? }, deps: { archive; transport; imageModel: ImageModel; model: ModelClient }): Promise<{ status: "review" | "no_water_view" | "skipped"; attempts: number; waterIoU: number | null }>`. Steps:
     1. `loadPlaceImageInput`, `ensureImagery`, `planRender` (on `no_water_view` → task without candidate, return)
     2. `renderAndStore`
     3. up to `check.maxAttempts`: `imageModel.edit`, `waterIoU`, then `checkPlaceImageTask` when the core is watermarked; `ImageOutputInvalid` or a failed check counts as an attempt
     4. store the best attempt (highest IoU, watermark-free first) as `imagery/candidates/<geoObjectId>/<renderId>-<n>.jpg`
-    5. `createReviewTask(db, { kind: "place_image", subjectType: "place_image", subjectId: geoObjectId, context: PlaceImageTaskContext })`, replacing an open task's context via dismiss + create when the key differs
+    5. `createReviewTask(db, { kind: "place_image", subjectType: "place_image", subjectId: \`${geoObjectId}:${view.slot}\`, context: PlaceImageTaskContext })`, replacing an open task's context via dismiss + create when the key differs
 
     Model calls run outside transactions, as in `summarizeProfile`.
-  - `type PlaceImageTaskContext = { key: string; renderId: string | null; candidateKey: string | null; light: ImageryLight; zoom: ZoomLevel; model: string; promptVersion: number; waterIoU: number | null; passed: boolean; attempts: number; watermarkVisible: boolean | null; alt: string; allowedZooms: ZoomLevel[]; reason?: "no_water_view" }`
-  - `startImageRun(db, boss, input: { subdivisionKey: string } | { geoObjectId: string; zoom?: ZoomLevel }, triggeredBy): Promise<{ id: string }>`: kind `stage`, stages `[IMAGES_STAGE]`
+  - `type PlaceImageTaskContext = { key: string; slot: string; azimuthOverride: number | null; camera: CameraDetails | null; renderId: string | null; candidateKey: string | null; light: ImageryLight; zoom: ZoomLevel; model: string; promptVersion: number; waterIoU: number | null; passed: boolean; attempts: number; watermarkVisible: boolean | null; alt: string; allowedZooms: ZoomLevel[]; reason?: "no_water_view" }`
+  - `startImageRun(db, boss, input: { subdivisionKey: string } | { geoObjectId: string; view: ImageView }, triggeredBy): Promise<{ id: string }>`. For an additional view, the caller picks the next free slot with `nextViewSlot(db, geoObjectId): Promise<string>` (`view-2`, `view-3`, …, counting current images and open tasks).: kind `stage`, stages `[IMAGES_STAGE]`
   - `setImageModelFactory(f)` / `imageModelFor(db): ImageModel`, same pattern as `modelClientFor`
 
 - [ ] **Step 1: Write the failing tests** (MockImageModel, MockModel, fixture transport, a fixture place outside the pilot box):
@@ -363,6 +388,7 @@ Scene rules (in `scene.ts`, as in the tests):
   - `new prompt version makes the place a target again`
   - `place outside GR is no target`
   - `targets are capped at maxGenerationsPerRun`
+  - `an additional view with azimuthDeg 90 gets its own slot, task subject and camera starting at 90°; the title image stays`
   - `text run, geometry run and consolidateAfter run list images.place last; regenerate_summary run does not`
   - `newly confirmed marina gets a place_image task through its consolidation run` (end to end with MockImageModel: confirm via `decideReviewTask` → `consolidateAfter` stages planned → images.place job → task)
   - `confirmed place without fetch computation is no target`
@@ -379,19 +405,21 @@ Scene rules (in `scene.ts`, as in the tests):
 **Interfaces:**
 - Consumes: `PlaceImageTaskContext` (Task 8).
 - Produces:
-  - `approvePlaceImage(tx, task, decisionId, now): Promise<{ placeImageId: string }>`. It locks the place and reads the candidate from the archive. It ends the current `ai_illustration` row (`valid_to = today`) and inserts `place_images` with: `kind ai_illustration`, `rank 3`, `render_id`, `light`, `model`, `prompt_version`, `water_iou`, `generation_key`, `alt`, `observed_at` (= core tile `acquiredAt`, else Sentinel-2's), `license = output.license`, `attribution` and `review_decision_id`. The candidate is copied to its final `file_key` `images/places/<geoObjectId>/<placeImageId>.jpg`.
+  - `approvePlaceImage(tx, task, decisionId, now): Promise<{ placeImageId: string }>`. It locks the place and reads the candidate from the archive. It ends the current row of the task's slot (`valid_to = today`) and inserts `place_images` with: `slot`, `sort_order` (0 for `title`, else the highest current one + 1), the camera columns from `context.camera`, `kind ai_illustration`, `rank 3`, `render_id`, `light`, `model`, `prompt_version`, `water_iou`, `generation_key`, `alt`, `observed_at` (= core tile `acquiredAt`, else Sentinel-2's), `license = output.license`, `attribution` and `review_decision_id`. The candidate is copied to its final `file_key` `images/places/<geoObjectId>/<placeImageId>.jpg`.
   - `attributionFor(tiles: ImageryTileRef[], cfg): string`: the distinct `attribution` of every used imagery and DEM source, in order core, wide, DEM, joined with ` · `, plus `output.credit`
-  - `no_image` ends a current `ai_illustration` row and keeps the task decided with the key, so the place is not generated again for this key
+  - `no_image` ends the current row of the task's slot and keeps the task decided with the key, so this slot is not generated again for this key. Other slots stay.
   - Stale check: `decideAction` posts `taskKey = context.key`. If the context key has changed since the form was built, the result is `TaskContextChanged` (`?changed=1`).
   - Route `GET /images/file?key=…` streams archive objects for admins. It allows only keys matching `^imagery/(renders|candidates)/[0-9a-f-]{36}/[\w.-]+$` or `^images/places/[0-9a-f-]{36}/[\w.-]+$` and returns 404 otherwise. Read the Next 16 route handler docs first.
   - Panel „Titelbild prüfen“:
     - render and AI image side by side, mask in a `Disclosure`
+    - the camera line „Aufnahme aus <Richtung> (<view bearing>°), <Höhe> m Höhe, Neigung <tilt>°“ and the slot („Titelbild“ or „Weitere Ansicht 2“)
     - Wasser-IoU with threshold and ✓/✗, Licht, Zoom, Versuche, Wasserzeichen-Prüfung
     - buttons „Freigeben“ (disabled without candidate), „Neu erzeugen“ (zoom select from `allowedZooms`, default current) and „Kein Bild“
 
 - [ ] **Step 1: Write the failing tests:**
   - `approve writes place_images with attribution naming aerial and terrain source`
-  - `approve ends the previous image`
+  - `approve ends the previous image of the same slot and keeps other slots`
+  - `approved image carries camera position, height, bearing, tilt and fov`
   - `approve after context change throws TaskContextChanged and writes nothing` (Review Focus 4)
   - `no_image ends the current image and the same key is not targeted again`
   - `regenerate_image returns regenerateImage with zoom`
@@ -404,18 +432,18 @@ Scene rules (in `scene.ts`, as in the tests):
 
 **Files:**
 - Create: `contract/v2/image.ts`, `contract/schema/2.1/*` (generated)
-- Modify: `contract/v2/spot.ts`, `contract/v2/highlight.ts` (`image: placeImageSchema.optional()`), `contract/v2/manifest.ts` (`schemaVersion: z.literal("2.1")`), `contract/index.ts` (`SCHEMA_VERSION = "2.1"`), `contract/schema/published.ts`, `config/delivery.json` (`schemaVersion`, licence entries for the three sources with `fields: ["spots.json#/spots/*/image"]`), `lib/domain/delivery/load.ts` (`loadPlaceImages`), `lib/domain/delivery/map-spot.ts` (`SPOT_FIELDS.image`), `lib/domain/delivery/changes.ts` (`FIELD_LABELS_DE.image = "Titelbild"`), `lib/domain/delivery/build.ts` (image files), `lib/domain/delivery/serialize.ts` (`contentTypeOf` `.jpg` → `image/jpeg`), `lib/domain/delivery/validate.ts` (`verbatim_text` also checks `image.alt.de`; new check `image_attribution` requires that `attribution` names an aerial source and a terrain source)
+- Modify: `contract/v2/spot.ts`, `contract/v2/highlight.ts` (`images: z.array(placeImageSchema).min(1).optional()`, in delivery order; the first is the title image), `contract/v2/manifest.ts` (`schemaVersion: z.literal("2.1")`), `contract/index.ts` (`SCHEMA_VERSION = "2.1"`), `contract/schema/published.ts`, `config/delivery.json` (`schemaVersion`, licence entries for the three sources with `fields: ["spots.json#/spots/*/images"]`), `lib/domain/delivery/load.ts` (`loadPlaceImages`), `lib/domain/delivery/map-spot.ts` (`SPOT_FIELDS.images`), `lib/domain/delivery/changes.ts` (`FIELD_LABELS_DE.images = "Bilder"`), `lib/domain/delivery/build.ts` (image files), `lib/domain/delivery/serialize.ts` (`contentTypeOf` `.jpg` → `image/jpeg`), `lib/domain/delivery/validate.ts` (`verbatim_text` also checks every `images[].alt.de`; new check `image_attribution` requires that `attribution` names an aerial source and a terrain source)
 - Test: `contract/__tests__/contract.test.ts`, `lib/domain/delivery/__tests__/images.test.ts`
 
 **Interfaces:**
 - Produces:
-  - `placeImageSchema = z.strictObject({ kind: z.enum(["photo","ai_illustration"]), file: z.string().regex(/^images\/(sp|hl)_[0-9A-Z]{26}\.jpg$/), width: z.number().int(), height: z.number().int(), alt: textDe, light: z.enum(["midday","evening"]).nullable(), observedAt: z.iso.date().nullable(), license: z.string().min(1), attribution: z.string().min(1), sourceUrl: z.string().url().nullable() })`
-  - `loadPlaceImages(db, geoObjectIds, today, cfg): Promise<Map<geoObjectId, DeliverableImage>>`: the current row with the lowest `rank`. An image is deliverable only when every source of its render's tiles has `images.delivery[source] === true`.
-  - Build: every delivered spot with an image writes `images/<publicId>.jpg` (bytes from `file_key`) next to the JSON files under the same `storagePrefix`, adds it to `file_hashes`, and lists it in the manifest's files. `image` is part of the spot body, so `contentHash`/`profileVersion` change only when the image object changes.
+  - `placeImageSchema = z.strictObject({ kind: z.enum(["photo","ai_illustration"]), file: z.string().regex(/^images\/(sp|hl)_[0-9A-Z]{26}-[a-z0-9-]+\.jpg$/), camera: z.strictObject({ position: z.tuple([z.number(), z.number()]), heightM: z.number(), viewBearingDeg: z.number().min(0).lt(360), tiltDeg: z.number(), fovDeg: z.number() }).nullable(), width: z.number().int(), height: z.number().int(), alt: textDe, light: z.enum(["midday","evening"]).nullable(), observedAt: z.iso.date().nullable(), license: z.string().min(1), attribution: z.string().min(1), sourceUrl: z.string().url().nullable() })`
+  - `loadPlaceImages(db, geoObjectIds, today, cfg): Promise<Map<geoObjectId, DeliverableImage[]>>`: all current rows, ordered by `rank`, then `sort_order`, then `slot`. An image is deliverable only when every source of its render's tiles has `images.delivery[source] === true`.
+  - Build: every delivered image writes `images/<publicId>-<slot>.jpg` (bytes from `file_key`) next to the JSON files under the same `storagePrefix`, adds it to `file_hashes`, and lists it in the manifest's files. `images` is part of the spot body, so `contentHash`/`profileVersion` change only when the image object changes.
   - The v2.0 schemas stay published, and 2.1 is additive (minor).
 
 - [ ] **Step 1: Write the failing tests:**
-  - `2.1 spot validates with image and without`
+  - `2.1 spot validates with two images and without; an ai_illustration image carries camera details`
   - `2.0 schema files are unchanged`
   - `approved image with ktimatologio is not delivered while the switch is off` (Review Focus 5)
   - `flipping the switch delivers the image and raises profileVersion once` (Review Focus 5, two builds after the flip: the second is `unchanged`)
@@ -434,14 +462,17 @@ Scene rules (in `scene.ts`, as in the tests):
 
 **Interfaces:**
 - Produces:
-  - `placeImageView(db, geoObjectId): Promise<{ current: { kind; light; alt; attribution; observedAt; fileKey; waterIoU; approvedAt } | null; candidate: { candidateKey; waterIoU; passed; light; taskId } | null; latestRender: { photoKey; maskKey; camera } | null; deliverable: boolean; blockedBy: string[] }>`. `candidate` comes from the open `place_image` task. The tab shows it as „Entwurf, wartet auf Freigabe“ with a link to the task, so every new spot shows its generated image right away.
+  - `placeImageView(db, geoObjectId): Promise<{ images: Array<{ id; slot; kind; light; alt; attribution; observedAt; fileKey; waterIoU; approvedAt; camera: CameraDetails | null }>; candidates: Array<{ slot; candidateKey; waterIoU; passed; light; taskId; camera: CameraDetails | null }>; latestRender: { photoKey; maskKey; camera } | null; deliverable: boolean; blockedBy: string[] }>`. `candidates` come from the open `place_image` tasks. The tab lists every image with its camera line (as in the review panel) and shows each candidate as „Entwurf, wartet auf Freigabe“ with a link to the task, so every new spot shows its generated image right away.
   - `imageCoverage(db, subdivisionId): Promise<{ spots: number; withImagery: number; withApprovedImage: number; deliverable: number; medianWaterIoU: number | null; rejectedShare: number | null; imageryCostEur: number; generationCostEur: number }>`: `withImagery` = places with a non-blank core tile; costs from `imagery_tiles.cost_eur` and `external_calls` with service `openai`
-  - The place tab shows the current image with Art („KI-Illustration“), Licht, Quellen and Aufnahmedatum, and the render and mask in a „Rendering und Maske“ `Disclosure`. It says „Nicht geliefert: Freigabe Luftbildquelle ktimatologio fehlt“ when `blockedBy` is not empty.
+  - Actions on the tab: „Weitere Ansicht erzeugen“ (form with view bearing in degrees, optional, and zoom from `allowedZooms`; calls `startImageRun` with `nextViewSlot`) and „Bild entfernen“ per image (ends the row with `valid_to`; the title slot is then generated again by the next automatic run, others are not).
+  - The place tab shows each current image with Art („KI-Illustration“), Licht, Quellen and Aufnahmedatum, and the render and mask in a „Rendering und Maske“ `Disclosure`. It says „Nicht geliefert: Freigabe Luftbildquelle ktimatologio fehlt“ when `blockedBy` is not empty.
 
 - [ ] **Step 1: Write the failing tests:**
   - `coverage counts spots, imagery, approved and deliverable separately`
   - `blank core tile does not count as imagery`
   - `view names the blocking source`
+  - `view lists title and additional view with camera details`
+  - `removing an additional view ends only that row`
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement.** Read the Next 16 docs on server actions first. **Step 4: Run** → PASS. In Playwright, open a place with an approved image and see „KI-Illustration“ and the blocking note. Then `npm run build`.
 - [ ] **Step 5: Commit** `feat(admin): Titelbild tab, Landesteil image coverage and image run start; design notes (spec 13)`
 

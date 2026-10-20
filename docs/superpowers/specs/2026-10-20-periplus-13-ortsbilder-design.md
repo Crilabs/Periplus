@@ -123,21 +123,24 @@ Geschützte Fotos gehen **nicht** ins Bildmodell. Der in der ersten Fassung vorg
 
 ## Liefervertrag (Teil-Spec 08)
 
-Optionales Feld `image` an `spot` und `highlight` (Minor-Version):
+Optionales Feld `images` an `spot` und `highlight` (Minor-Version): eine Liste in Lieferreihenfolge, das erste Bild ist das Titelbild. Ein Spot kann mehrere Bilder haben (Titelbild und weitere Ansichten; Entscheidung Christian, 20.10.2026). Jedes Bild nennt, von wo es aufgenommen ist.
 
 ```json
-"image": {
+"images": [{
   "kind": "photo | ai_illustration",
-  "file": "images/sp_8f3k2.jpg",
+  "file": "images/sp_8f3k2-title.jpg",
   "width": 1536, "height": 1024,
   "alt": { "de": "KI-Illustration: Bucht mit Kiesstrand und Pinienwald, Blick vom Wasser" },
   "light": "midday | evening | null",
   "observedAt": "2009-06-01",
   "license": "CC-BY-4.0 | periplus | …",
   "attribution": "Luftbild © Hellenic Cadastre (CC BY 3.0) · Gelände © DLR/Airbus, Copernicus · Illustration: Periplus",
-  "sourceUrl": null
-}
+  "sourceUrl": null,
+  "camera": { "position": [23.4447, 37.5081], "heightM": 260, "viewBearingDeg": 112, "tiltDeg": 18, "fovDeg": 50 }
+}]
 ```
+
+- `camera` gibt Standort (Länge, Breite), Höhe über dem Meer in Metern, Blickrichtung (Grad, im Uhrzeigersinn ab Nord), Neigung und vertikalen Bildwinkel an; bei einer KI-Illustration immer gesetzt, bei Fotos ohne bekannte Kamera `null`.
 
 - `observedAt` ist bei `ai_illustration` das Aufnahmedatum des Luftbilds.
 - `attribution` nennt immer Luftbild- und Geländequelle; bei kommerziellen Luftbildern den vom Anbieter verlangten Vermerk.
@@ -157,7 +160,7 @@ Optionales Feld `image` an `spot` und `highlight` (Minor-Version):
 
 - `imagery_tiles` (stabil mit Gültigkeit): `source` (`pnoa`, `ign_fr`, `dgu_hr`, `ktimatologio`, `vantor`, `sentinel2`, …), `bbox`, `resolution_m`, `acquired_at`, `license`, `attribution`, `file_key`, `watermarked bool`, `cost_eur`.
 - `place_renders` (nur anfügend): `geo_object_id`, `camera` jsonb (Ziel, Azimut, Höhe, Neigung, Bildwinkel), `zoom`, `imagery_tile_ids`, `dem_source`, `photo_key`, `mask_key`, `depth_key`, `renderer_version`.
-- `place_images` (versioniert mit `valid_from`/`valid_to`): `geo_object_id`, `kind` (`photo` | `ai_illustration`), `rank`, `render_id`, `light`, `model`, `prompt_version`, `water_iou`, `file_key`, `alt`, `attribution`, `license`, `observed_at`, `review_decision_id`.
+- `place_images` (versioniert mit `valid_from`/`valid_to`): `geo_object_id`, `slot` (`title`, `view-2`, …; je Ort und Slot ein aktuelles Bild), `sort_order`, Kameradaten (`camera_position`, `camera_height_m`, `view_bearing_deg`, `camera_tilt_deg`, `camera_fov_deg`), `kind` (`photo` | `ai_illustration`), `rank`, `render_id`, `light`, `model`, `prompt_version`, `water_iou`, `file_key`, `alt`, `attribution`, `license`, `observed_at`, `review_decision_id`.
 - `review_kind` um `place_image` erweitern.
 - Teil E: `image_candidates`, `image_assessments`, `image_observations`, Spalte `facts.image_observation_id` (wie in der ersten Fassung).
 
