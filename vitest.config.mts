@@ -9,10 +9,10 @@ const PILOT_RUN_TESTS = [
 ];
 
 /**
- * Tests that seed the delivery fixture area (`test/fixtures/delivery/area.ts`). Its fixed tiles, area key and public
+ * Tests that seed the delivery fixture subdivision (`test/fixtures/delivery/subdivision.ts`). Its fixed tiles, subdivision key and public
  * ids are unique keys, so two of these transactions wait on each other's uncommitted rows, beyond the test timeout
  * under full parallel load. One worker runs these files one after another, beside the default project.
- * `seedDeliveryArea` refuses to run outside this project.
+ * `seedDeliverySubdivision` refuses to run outside this project.
  */
 const DELIVERY_FIXTURE_TESTS = [
   "app/__tests__/api-changes-spots.test.ts",
@@ -33,6 +33,7 @@ const DELIVERY_FIXTURE_TESTS = [
   "lib/domain/delivery/__tests__/weather-points.test.ts",
   "lib/pipeline/__tests__/delivery-run.test.ts",
   "scripts/__tests__/delivery-consume.test.ts",
+  "scripts/__tests__/migrate-subdivisions.test.ts",
 ];
 
 /**
