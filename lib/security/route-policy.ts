@@ -35,6 +35,8 @@ export const ROUTE_POLICY: Record<string, RouteRule> = {
   "/api/v1/areas/[area]/package": { kind: "api", scope: "delivery:read" },
   "/api/v1/areas/[area]/package/[file]": { kind: "api", scope: "delivery:read" },
   "/api/v1/schema/[version]/[file]": { kind: "api", scope: "delivery:read" },
+  "/api/v1/areas/[area]/changes": { kind: "api", scope: "delivery:read" },
+  "/api/v1/spots/[id]": { kind: "api", scope: "delivery:read" },
 };
 
 const ENCODED_SEPARATOR = /%(2f|5c)/i;

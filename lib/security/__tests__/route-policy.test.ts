@@ -9,6 +9,8 @@ const DELIVERY_ROUTES = [
   "/api/v1/areas/[area]/package",
   "/api/v1/areas/[area]/package/[file]",
   "/api/v1/schema/[version]/[file]",
+  "/api/v1/areas/[area]/changes",
+  "/api/v1/spots/[id]",
 ];
 
 const ROUTE_FILES = /^(page|route)\.(tsx?|jsx?)$/;
@@ -44,6 +46,8 @@ describe("ROUTE_POLICY", () => {
       ["/api/v1/areas/ar_X/package", "/api/v1/areas/[area]/package"],
       ["/api/v1/areas/saronic/package/spots.json", "/api/v1/areas/[area]/package/[file]"],
       ["/api/v1/schema/1.0/spots.schema.json", "/api/v1/schema/[version]/[file]"],
+      ["/api/v1/areas/ar_X/changes", "/api/v1/areas/[area]/changes"],
+      ["/api/v1/spots/sp_X", "/api/v1/spots/[id]"],
     ] as const) {
       expect(matchRoute(path)?.pattern, path).toBe(pattern);
     }

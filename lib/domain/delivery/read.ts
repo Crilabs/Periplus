@@ -1,12 +1,14 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, lte, sql } from "drizzle-orm";
+import { z } from "zod";
 import type { Archive } from "@/lib/adapters/s3";
-import { CONTRACT_FILES, type ContractFile, type Manifest } from "@/contract";
+import { CONTRACT_FILES, type ChangeEntry, type ChangesFile, type ContractFile, type Manifest, type Spot, type SpotsFile } from "@/contract";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { deliveries } from "@/lib/db/schema/deliveries";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { deliveryArchive } from "./archive";
 import type { DeliveryRow } from "./build";
+import { mergeChanges } from "./changes";
 import { sha256Hex } from "./serialize";
 
 /*
@@ -193,4 +195,92 @@ export async function packageFile(
   if (!area || !row) return null;
   const bytes = await readDeliveryFile(archive, row, file);
   return bytes === null ? null : { bytes, dataVersion: row.dataVersion! };
+}
+
+/**
+ * The changes of the area's packages after `since` up to the current one, merged per object (`mergeChanges` over the
+ * stored `changes.json` of versions `since + 1 … current`, the windows the packages were built from, ruling M6-D-R3).
+ * `since` equal to the current version gives no changes; below 1 or above the current version is `invalid_since`.
+ */
+export async function changesSince(
+  db: Db,
+  archive: Archive,
+  areaGeoObjectId: string,
+  since: number,
+): Promise<{ dataVersion: number; changes: ChangeEntry[] } | "invalid_since" | "not_found"> {
+  const current = await validDelivery(db, areaGeoObjectId);
+  if (!current) return "not_found";
+  const dataVersion = current.dataVersion!;
+  if (!Number.isSafeInteger(since) || since < 1 || since > dataVersion) return "invalid_since";
+  if (since === dataVersion) return { dataVersion, changes: [] };
+  const rows = await db
+    .select()
+    .from(deliveries)
+    .where(
+      and(
+        eq(deliveries.areaId, areaGeoObjectId),
+        eq(deliveries.status, "valid"),
+        gt(deliveries.dataVersion, since),
+        lte(deliveries.dataVersion, dataVersion),
+      ),
+    )
+    .orderBy(asc(deliveries.dataVersion));
+  if (rows.length !== dataVersion - since) {
+    throw new Error(`area ${areaGeoObjectId} lacks valid deliveries between ${since + 1} and ${dataVersion}`);
+  }
+  const lists: ChangeEntry[][] = [];
+  for (const row of rows) lists.push((await readJsonFile<ChangesFile>(archive, row, "changes.json")).changes);
+  return { dataVersion, changes: mergeChanges(lists) };
+}
+
+/**
+ * The spot `publicId` as delivered on `asOf` (`YYYY-MM-DD`; without it the latest), with the data version of the
+ * package that introduced that version; null when no package delivered it then.
+ *
+ * Spot versions count per public id across areas (ruling M6-P13): a spot that moves to another area continues its
+ * versions there, and its old area later reports it `removed` with a higher version. So per area only the area's
+ * latest version on that date counts, and the spot is gone only when it is removed (or absent) in every area; else the
+ * highest version an area still delivers wins. Its content is read from that version's first delivery.
+ */
+export async function spotAsOf(db: Db, archive: Archive, publicId: string, asOf?: string): Promise<{ spot: Spot; dataVersion: number } | null> {
+  const { rows } = await db.execute<{ first_delivery_id: string }>(sql`
+    with latest as (
+      select distinct on (o.area_id) o.area_id, o.profile_version, o.removed, o.first_delivery_id
+      from delivered_objects o
+      where o.public_id = ${publicId} and o.object_type = 'spot'
+        ${asOf === undefined ? sql`` : sql`and o.valid_from <= ${asOf}::date`}
+      order by o.area_id, o.profile_version desc
+    )
+    select l.first_delivery_id from latest l
+    where not l.removed
+    order by l.profile_version desc
+    limit 1
+  `);
+  const found = rows[0];
+  if (!found) return null;
+  const [row] = await db.select().from(deliveries).where(eq(deliveries.id, found.first_delivery_id));
+  const spot = (await readJsonFile<SpotsFile>(archive, row!, "spots.json")).spots.find((s) => s.id === publicId);
+  if (!spot) throw new Error(`spot ${publicId} is not in spots.json of delivery ${row!.id}`);
+  return { spot, dataVersion: row!.dataVersion! };
+}
+
+/** `since` as the API accepts it: digits only, else null (a value out of range is `invalid_since` later). */
+export function parseSince(value: string | null): number | null {
+  return value !== null && /^\d+$/.test(value) ? Number(value) : null;
+}
+
+const isoDate = z.iso.date();
+
+/** True for a calendar date `YYYY-MM-DD` that exists (`2026-02-30` does not). */
+export function isCalendarDate(value: string): boolean {
+  if (!isoDate.safeParse(value).success) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+const SPOT_ID = /^sp_[0-9A-HJKMNP-TV-Z]{26}$/;
+
+/** True for a spot id `sp_<ulid>`. */
+export function isSpotId(value: string): boolean {
+  return SPOT_ID.test(value);
 }
