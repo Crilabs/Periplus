@@ -47,11 +47,11 @@ Stand 2026-10-20, nach M7 Teil (a) (Code). Er ersetzt den Entwurf aus dem M7-Pre
 | 18 | `npm run consolidate -- --area <key>` für beide Reviere; Konflikte, Unsicherheiten und Summaries prüfen; `check:profiles` Exit 0 | Anthropic (Summaries geänderter Profile) | in 13 / ≤ 3 | **Review** |
 | 19 | ODbL rechtlich prüfen (M6-Übergabe), bevor ein Paket hinausgeht | – | 0 | **rechtlich** |
 | 20 | „Paket bauen“ je Revier; Befunde nach `docs/runbook.md` „Verstöße beheben“ beheben, neu bauen bis „Gültig“; `npm run apikey:create -- <abnehmer> --scope delivery:read`; `npm run delivery:consume -- --base-url http://localhost:<port des Entwicklungsservers> --area saronic` bis `OK` (Schlüssel über `PERIPLUS_API_KEY`, Runbook „Abnehmer-Prüfung“) | lokal; Anthropic nur für neu erzeugte Summaries (je ≈ 0,02 €) | 0 | Review |
-| 21 | **Messung „Lauf 1“**: „Qualität“ → Revier → „Messen“, Bezeichnung `Lauf 1`, „von“ = Beginn des Pilots (Tag von Schritt 2, dem ersten Lauf dieser Tabelle; die erste Messung eines Reviers braucht „von“, sonst zählten die bezahlten Läufe der Abnahmen M3–M6 mit), „bis“ leer (jetzt) | lokal | 0 | – |
-| 22 | **Navily-Abgleich** (unten): `compare:navily --accept-proposals`, dann `/quality/compare` und die Abweichungen im Review, dann `--coverage` | lokal (Navily-Datei zur Laufzeit) | 0 | **Abweichungen prüfen, P24** |
+| 21 | **Navily-Abgleich „Lauf 1“** (unten, Schritte 1–3): `compare:navily --accept-proposals`, dann `/quality/compare` und die Abweichungen im Review. Optional vorher eine Vorab-Messung `Lauf 1 vorab` zum Ansehen (keine Abnahme), „von“ wie in Schritt 22 | lokal (Navily-Datei zur Laufzeit) | 0 | **Abweichungen prüfen, P24** |
+| 22 | **Abnahme-Messung „Lauf 1“**, erst nach dem Review von Schritt 21 (sonst fehlt die Fact-Präzision): „Qualität“ → Revier → „Messen“, Bezeichnung `Lauf 1`, „von“ = Beginn des Pilots (Tag von Schritt 2, dem ersten Lauf dieser Tabelle; die erste Messung eines Reviers braucht „von“, sonst zählten die bezahlten Läufe der Abnahmen M3–M6 mit; nach einer Vorab-Messung immer setzen, sonst schlösse sie an diese an), „bis“ leer (jetzt). **Danach als Letztes** `npm run compare:navily -- --area saronic --coverage`: hängt `coverage_navily` an diese Messung. Nicht erneut messen, sonst fehlt der Wert in der neuen Messung | lokal | 0 | – |
 | 23 | **Simulierter Revisit, Vorbereitung** (unten): Tag D Paket bauen; Tag D+1 Klon, Szenario-Entwurf, Szenario prüfen | lokal | 0 | **Szenario prüfen** |
 | 24 | **Simulierter Revisit, Ausführung** (unten): `sim:worker`, zweimal `sim:revisit`, Paket in der Simulation bauen, Simulations-Web aus eigenem Worktree auf :3001, `sim:verify` | Anthropic, Voyage | 1,5 / 1–3 | – |
-| 25 | **Echter „Lauf 2“** (P28: mindestens 7 Tage nach Lauf 1): „Revisit für Revier“. Er blockiert für seine ganze Dauer (auch Extraktion und Konsolidierung, Stunden) jeden Crawl der freigegebenen Quellen (M7-G-R4): keinen Crawl daneben planen. Seine Aufgaben mit Zeitmessung prüfen (Seite der Aufgabe offen lassen, bis entschieden ist; eine Bearbeitung zählt höchstens 10 min). Dann Messung „Lauf 2“ | Konverter, Voyage, Anthropic | 10 / 5–20 (Firecrawl +15–30) | **Review (< 60 min)** |
+| 25 | **Echter „Lauf 2“** (P28: mindestens 7 Tage nach Lauf 1): „Revisit für Revier“. Er blockiert für seine ganze Dauer (auch Extraktion und Konsolidierung, Stunden) jeden Crawl der freigegebenen Quellen (M7-G-R4): keinen Crawl daneben planen. Seine Aufgaben mit Zeitmessung prüfen (Seite der Aufgabe offen lassen, bis entschieden ist; eine Bearbeitung zählt höchstens 10 min), bis keine Aufgabe des Laufs mehr offen ist. Dann der Navily-Abgleich wie in Schritt 21 für die geänderten Werte (`compare:navily --accept-proposals`, `/quality/compare`, Review). Dann Abnahme-Messung `Lauf 2` („von“ leer: schließt an „Lauf 1“ an; keine Vorab-Messung dazwischen) und als Letztes `compare:navily -- --area saronic --coverage` | Konverter, Voyage, Anthropic | 10 / 5–20 (Firecrawl +15–30) | **Review (< 60 min)** |
 | 26 | Optional: Regressionsbewertung (unten). Regeln allein kostenlos; ein Extraktionskandidat bewertet nur vorhandene Extraktionsläufe | Anthropic | 0 / ≤ 3 | Aktivierung entscheiden |
 | 27 | Berichte (unten): `report:costs`, `report:pilot`; Ergebnisse der Abnahmen M3/M4/M5/M6/M7 und die Kachelgröße eintragen | lokal | 0 | **abzeichnen** |
 
@@ -89,10 +89,11 @@ Stand 2026-10-20, nach M7 Teil (a) (Code). Er ersetzt den Entwurf aus dem M7-Pre
    ```
    Erwartet: keine Zeile, außer `smoke:ai` (Betriebskosten, M7-D-R1). Sonst berichten.
 
-## Qualität messen (Schritte 21, 25)
+## Qualität messen (Schritte 22, 25)
 - „Qualität“ → Revier → Panel „Messen“:
   - Bezeichnung (`Lauf 1`, `Lauf 2`), „von“ und „bis“ (beide optional, „bis“ einschließlich).
-  - Ohne „von“ schließt die Messung an das Ende der letzten beendeten Messung des Reviers an. Die erste Messung beginnt beim ersten Lauf.
+  - Ohne „von“ schließt die Messung an das Ende der letzten beendeten Messung des Reviers an. Die erste Messung eines Reviers braucht „von“ (Beginn des Pilots); ohne wird sie verweigert.
+  - Reihenfolge je Lauf: Lauf und seine Reviews → Navily-Abgleich mit Review → Abnahme-Messung → `compare:navily --coverage` als Letztes. Abgenommen wird nur auf dieser Messung nach dem Review (M7-FIN-R1).
   - Eine Bezeichnung gibt es je Revier nur einmal. Eine fehlgeschlagene Messung gibt sie wieder frei.
   - Während einer laufenden Messung desselben Reviers wird eine zweite verweigert.
 - Die Messung ist ein eigener Lauf (`quality.measure`). Ihre Kennzahlen stehen als Snapshots und erscheinen auf „Qualität“ mit Status je Zielwert:
@@ -103,14 +104,15 @@ Stand 2026-10-20, nach M7 Teil (a) (Code). Er ersetzt den Entwurf aus dem M7-Pre
   - Einmalkosten des Piloten (Konverter-, Modell-, PDF-Vergleich, Bewertungen) stehen getrennt (P15).
 - Belegtreue unter 100 % sperrt die Konsolidierung des Laufs (Runbook „Gesperrter Extraktionslauf“).
 
-## Navily-Abgleich (Schritt 22)
+## Navily-Abgleich (Schritte 21, 22, 25)
 - **Die Datei** liegt lokal außerhalb des Repos bzw. auf dem Server nur für die Dauer des Laufs (`docs/runbook.md`, Geometrie Schritt 5). Sie wird über `NAVILY_SPOTS_PATH` oder `--navily <pfad>` zur Laufzeit gelesen.
 - **Nie Navily-Werte eintragen**: nicht in die Datenbank, Reviews, Berichte, Commits oder Tickets. Gespeichert werden nur Ergebnisse (`match`, `deviation`, …) und Zählwerte.
 - **Ablauf:**
   1. **Erstdurchgang:** `npm run compare:navily -- --area saronic --accept-proposals`. Er übernimmt alle Vorschläge des Assistenten als `proposal_auto` (`checked_by navily-assistant/1`) und überschreibt nie ein von Hand gesetztes Ergebnis. Vorher den Anteil `deviation` je Sektor-Attribut ansehen (Stopp-Bedingung).
   2. **`/quality/compare?area=saronic`:** Ort für Ort prüfen. Die Seite zeigt Navily-Namen zur Laufzeit (M7-P23) und speichert nur das bestätigte Ergebnis. Navily-Spots ohne Periplus-Ort erscheinen nur hier („wird nicht gespeichert“).
   3. **Review „Vergleichsabweichung“** (`comparison_deviation`): „Eigener Wert stimmt“, „Navily stimmt“ oder „Unklar“. Aufgaben eines Bewertungslaufs tragen in Liste und Detail das Kennzeichen „Bewertung“.
-  4. **Abdeckung:** `npm run compare:navily -- --area saronic --coverage` schreibt `coverage_navily` als Zählwerte. Danach erneut „Messen“, sonst steht der Wert nicht in der Messung.
+  4. **Abnahme-Messung** „Lauf 1“ bzw. „Lauf 2“ (Schritte 22, 25), erst nach 1–3.
+  5. **Abdeckung, als Letztes:** `npm run compare:navily -- --area saronic --coverage` schreibt `coverage_navily` als Zählwerte in die neueste Messung des Reviers, also in die Abnahme-Messung aus 4. Danach **nicht** erneut messen: eine neue Messung berechnet `coverage_navily` nie selbst, der Wert fehlte dort.
 
 ## Regression (Schritt 26)
 **Neue Regelversion:**
