@@ -27,6 +27,7 @@ import {
   type ReviewStatus,
   type ChangeRate,
   type DocType,
+  type RestrictedKind,
 } from "@/lib/db/schema";
 import type { AttributeProvenance, ConflictResolution, ConflictSide } from "@/lib/domain/consolidation/types";
 import type { ProposalRobots, SerpHit } from "@/lib/domain/discovery/proposals";
@@ -89,6 +90,18 @@ export type NearbyPlace = {
   distanceM: number;
 };
 
+/**
+ * A restricted area a `place_candidate` review of a confirmed place is about (`context.reason = "restricted"`, GR-5 /
+ * UI-4): kind, the dataset reference, the importing source and the share of the anchor area it covers.
+ */
+export type RestrictionView = {
+  id: string;
+  kind: RestrictedKind;
+  sourceRef: string | null;
+  sourceName: string | null;
+  share: number | null;
+};
+
 export type ReviewSubject =
   | {
       type: "place";
@@ -104,6 +117,8 @@ export type ReviewSubject =
       nearby: NearbyPlace[];
       /** „Bucht bei …“ of a bay detected from geometry (display only, no geo name); null otherwise. */
       helperName: string | null;
+      /** The restricted areas of a restricted-area review (`context.reason = "restricted"`); null for another task. */
+      restrictions: RestrictionView[] | null;
     }
   | {
       type: "geo_object_pair";
@@ -323,7 +338,7 @@ export async function reviewTaskDetail(db: Db, id: string): Promise<ReviewTaskDe
   let subject: ReviewSubject;
   switch (task.subjectType) {
     case "place":
-      subject = await placeSubject(db, task.subjectId, str(context.helperName));
+      subject = await placeSubject(db, task.subjectId, str(context.helperName), context);
       break;
     case "geo_object_pair":
       subject = await pairSubject(db, task.subjectId, context);
@@ -682,7 +697,36 @@ async function geoObjectViews(db: Db, ids: string[]): Promise<GeoObjectView[]> {
   }));
 }
 
-async function placeSubject(db: Db, placeId: string, helperName: string | null): Promise<ReviewSubject> {
+/**
+ * The areas of a restricted-area review: `context.restrictions` (since GR-5), else the single `context.restriction`;
+ * kind and share from the context, the dataset reference and the source from `restricted_areas`. Null when the task
+ * is no restricted-area review.
+ */
+async function restrictionViews(db: Db, context: Record<string, unknown>): Promise<RestrictionView[] | null> {
+  if (context.reason !== "restricted") return null;
+  const listed = Array.isArray(context.restrictions) ? context.restrictions : context.restriction ? [context.restriction] : [];
+  const areas = listed
+    .map((r) => r as { id?: unknown; kind?: unknown; share?: unknown })
+    .filter((r): r is { id: string; kind?: unknown; share?: unknown } => typeof r.id === "string" && isUuid(r.id));
+  if (areas.length === 0) return [];
+  const { rows } = await db.execute<{ id: string; kind: RestrictedKind; source_ref: string | null; source_name: string | null }>(sql`
+    select a.id, a.kind, a.source_ref, s.name as source_name
+    from restricted_areas a left join sources s on s.id = a.source_id
+    where a.id in (${sql.join(areas.map((a) => sql`${a.id}::uuid`), sql`, `)})`);
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return areas.map((a) => {
+    const row = byId.get(a.id);
+    return {
+      id: a.id,
+      kind: (row?.kind ?? a.kind) as RestrictedKind,
+      sourceRef: row?.source_ref ?? null,
+      sourceName: row?.source_name ?? null,
+      share: typeof a.share === "number" ? a.share : null,
+    };
+  });
+}
+
+async function placeSubject(db: Db, placeId: string, helperName: string | null, context: Record<string, unknown> = {}): Promise<ReviewSubject> {
   if (!isUuid(placeId)) return { type: "missing" };
   const [place] = await db
     .select({
@@ -731,6 +775,7 @@ async function placeSubject(db: Db, placeId: string, helperName: string | null):
       distanceM: Number(r.distance_m),
     })),
     helperName,
+    restrictions: await restrictionViews(db, context),
   };
 }
 

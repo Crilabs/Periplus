@@ -6,12 +6,14 @@ import {
   geoNames,
   geoObjects,
   places,
+  restrictedAreas,
   reviewDecisions,
   reviewKindEnum,
   sources,
   type PlaceStatus,
 } from "@/lib/db/schema";
 import { setAnchorPosition } from "@/lib/domain/geometry/anchor-correction";
+import { applyExclusion } from "@/lib/domain/geometry/restrictions";
 import { newId } from "@/lib/domain/ids";
 import { createReviewTask } from "@/lib/domain/review";
 import { DEFAULT_CRAWL_RULES } from "@/lib/domain/sources/crawl-rules";
@@ -172,6 +174,40 @@ describe("review view", () => {
         context: {},
       });
       expect((await reviewTaskDetail(tx, id))?.subject).toEqual({ type: "missing" });
+    }));
+
+  it("a restricted-area review of a confirmed place shows the reason and every area with kind, reference and source (UI-4, GR-5)", () =>
+    withRollback(async (tx) => {
+      const placeId = await insertPlace(tx, "Kept Bay", 0.02, "confirmed");
+      const [source] = await tx
+        .insert(sources)
+        .values({ domain: `${newId()}.test.invalid`, name: "EMODnet Human Activities", type: "authority", weight: 0.9, crawlRules: DEFAULT_CRAWL_RULES, origin: "manual" })
+        .returning({ id: sources.id });
+      const area = (kind: "military" | "protected_area", sourceRef: string) =>
+        tx
+          .insert(restrictedAreas)
+          .values({ kind, sourceRef, sourceId: source!.id, geom: sql`${geomFromGeoJson(point(LON + 0.02, LAT))}` })
+          .returning({ id: restrictedAreas.id })
+          .then((r) => r[0]!.id);
+      const firing = await area("military", "emodnet/military/X1");
+      const natura = await area("protected_area", "emodnet/natura/GR0001");
+      await applyExclusion(tx, placeId, [
+        { restrictedAreaId: firing, kind: "military", sourceRef: "emodnet/military/X1", share: 1, anchoringBan: true },
+        { restrictedAreaId: natura, kind: "protected_area", sourceRef: "emodnet/natura/GR0001", share: 0.6, anchoringBan: true },
+      ]);
+      const { rows } = await tx.execute<{ id: string }>(sql`select id from review_tasks where subject_id = ${placeId} and status = 'open'`);
+      const task = rows[0];
+      const detail = await reviewTaskDetail(tx, task!.id);
+      expect(detail?.subject).toMatchObject({
+        type: "place",
+        restrictions: [
+          { id: firing, kind: "military", sourceRef: "emodnet/military/X1", sourceName: "EMODnet Human Activities", share: 1 },
+          { id: natura, kind: "protected_area", sourceRef: "emodnet/natura/GR0001", sourceName: "EMODnet Human Activities", share: 0.6 },
+        ],
+      });
+      // any other place task has none
+      const { id: other } = await createReviewTask(tx, { kind: "place_candidate", subjectType: "place", subjectId: await insertPlace(tx, "Other Bay", 0.03), context: {} });
+      expect((await reviewTaskDetail(tx, other))?.subject).toMatchObject({ type: "place", restrictions: null });
     }));
 
   it("reviewTaskDetail renders a decided place_anchor task from an anchor correction without error", () =>

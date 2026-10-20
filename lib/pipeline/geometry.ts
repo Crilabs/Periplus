@@ -10,7 +10,7 @@ import { anchorArea, type AnchorArea } from "@/lib/domain/geometry/anchor-area";
 import { depthConfidence, depthRange, sampleDepths } from "@/lib/domain/geometry/depth";
 import type { Gap, GapReason } from "@/lib/domain/geometry/gaps";
 import { computeFetch } from "@/lib/domain/geometry/rays";
-import { applyExclusion, exclusionFor, restrictionHits } from "@/lib/domain/geometry/restrictions";
+import { applyExclusion, exclusionsFor, restrictionHits } from "@/lib/domain/geometry/restrictions";
 import { seabedShares } from "@/lib/domain/geometry/seabed";
 import { opening, sectorFetch, shelterFromFetch, swellProtection } from "@/lib/domain/geometry/shelter";
 import { resolveOrigin, waterArea, type LonLat } from "@/lib/domain/geometry/water";
@@ -509,8 +509,9 @@ export async function computePlaceGeometry(
       { settlementDistanceM: quietness.settlementDistanceM, roadDistanceM: quietness.roadDistanceM },
     );
 
-    const exclusion = exclusionFor(hits, cfg.restriction.minShare);
-    if (exclusion) result.excluded = (await applyExclusion(tx, placeId, exclusion)) === "excluded";
+    // every banning area, not only the first: a review is decided per (place, area) (GR-5)
+    const exclusions = exclusionsFor(hits, cfg.restriction.minShare);
+    if (exclusions.length > 0) result.excluded = (await applyExclusion(tx, placeId, exclusions)) === "excluded";
     return result;
   });
 }

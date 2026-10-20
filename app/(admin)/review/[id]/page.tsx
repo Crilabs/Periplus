@@ -23,6 +23,7 @@ import {
   PLACE_KIND_LABELS,
   PLACE_STATUS_LABELS,
   POI_CATEGORY_LABELS,
+  RESTRICTED_KIND_LABELS,
   REVIEW_KIND_LABELS,
   SOURCE_STATUS_LABELS,
   SUMMARY_FAILURE_LABELS,
@@ -284,12 +285,38 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
 
         {subject.type === "place" && (
           <>
+            {subject.restrictions && (
+              <Notice tone="danger" title="Dieser bestätigte Ort liegt in einem Sperrgebiet mit Ankerverbot">
+                <ul className="space-y-0.5">
+                  {subject.restrictions.map((r) => (
+                    <li key={r.id}>
+                      {RESTRICTED_KIND_LABELS[r.kind] ?? r.kind}
+                      {r.share !== null && <> – {Math.round(r.share * 100)} % der Ankerfläche</>}
+                      {r.sourceRef && (
+                        <>
+                          {" "}
+                          · <Mono>{r.sourceRef}</Mono>
+                        </>
+                      )}
+                      {r.sourceName && <> · Quelle {r.sourceName}</>}
+                    </li>
+                  ))}
+                </ul>
+                Ein Kandidat wäre automatisch ausgeschlossen worden. „Kein Ankerplatz“ schließt den Ort aus; „Trotz Sperrgebiet
+                bestätigen“ behält ihn für diese Gebiete (ein später geladenes Gebiet fragt erneut).
+              </Notice>
+            )}
             <PlaceConfirm
               {...props}
               defaultKind={subject.place.kind}
               features={features}
               open={open}
-              question="Ist das ein eigener Ort? Bestätigen, einem Ort in der Nähe zuordnen, verwerfen oder als „kein Ankerplatz“ markieren."
+              confirmLabel={subject.restrictions ? "Trotz Sperrgebiet bestätigen" : undefined}
+              question={
+                subject.restrictions
+                  ? "Darf hier trotz Sperrgebiet geankert werden? Sonst als „kein Ankerplatz“ markieren."
+                  : "Ist das ein eigener Ort? Bestätigen, einem Ort in der Nähe zuordnen, verwerfen oder als „kein Ankerplatz“ markieren."
+              }
             >
               <DecisionForm
                 {...props}

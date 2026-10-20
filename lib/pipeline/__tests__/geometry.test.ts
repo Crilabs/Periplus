@@ -266,6 +266,44 @@ describe("computePlaceGeometry", () => {
       ]);
     }));
 
+  it("a confirmed place kept in one ban area is asked again for a second area that sorts after it (GR-5, SAF-5)", () =>
+    withRollback(async (tx) => {
+      const scene = await buildBayScene(tx);
+      await tx.update(places).set({ status: "confirmed" }).where(eq(places.id, scene.placeId));
+      // the scene's own candidate task is done: the place was confirmed
+      await tx.update(reviewTasks).set({ status: "decided" }).where(eq(reviewTasks.subjectId, scene.placeId));
+      const military = async () => {
+        const [row] = await tx
+          .insert(restrictedAreas)
+          .values({
+            kind: "military",
+            sourceRef: `test:scene-${crypto.randomUUID()}`,
+            geom: sql`ST_Transform(ST_GeomFromText(${rect(-1000, -1000, 1000, 1000)}, ${SYNTHETIC_SRID}::int), 4326)`,
+          })
+          .returning({ id: restrictedAreas.id });
+        return row!.id;
+      };
+      const first = await military();
+      await computePlaceGeometry(tx, scene.placeId, { today: TODAY });
+      const openTasks = () =>
+        tx
+          .select({ id: reviewTasks.id, context: reviewTasks.context })
+          .from(reviewTasks)
+          .where(and(eq(reviewTasks.kind, "place_candidate"), eq(reviewTasks.subjectId, scene.placeId), eq(reviewTasks.status, "open")));
+      const [task] = await openTasks();
+      expect(task!.context).toMatchObject({ reason: "restricted", restriction: { id: first } });
+      await decideReviewTask(tx, { taskId: task!.id, decision: { action: "confirm", kind: "anchorage" }, decidedBy: "test" });
+
+      // the same area again: the decision holds
+      await computePlaceGeometry(tx, scene.placeId, { today: TODAY });
+      expect(await openTasks()).toEqual([]);
+      // a second area (a newer id, so it sorts after the decided one) asks again
+      const second = await military();
+      await computePlaceGeometry(tx, scene.placeId, { today: TODAY });
+      const [again] = await openTasks();
+      expect(again!.context).toMatchObject({ reason: "restricted", restriction: { id: second }, restrictions: [{ id: second }] });
+    }));
+
   it("a geometry run's consolidation stage carries a new exclusion into the profile (final review I-2)", () =>
     withRollback(async (tx) => {
       const scene = await buildBayScene(tx);
