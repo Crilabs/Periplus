@@ -91,7 +91,7 @@ export const isEntryListAttribute = (def: Pick<AttributeDef, "rule"> | undefined
 
 /**
  * The text attributes of `level` whose value is a list of entries (`isEntryListAttribute`), as the prompt clause
- * `` `a`, `b` `` (`none on this level` when it has none): the extract-facts prompt v4 asks for one fact per entry of these
+ * `` `a`, `b` `` (`none on this level` when it has none): the extract-facts prompt (since v4) asks for one fact per entry of these
  * (ruling M7-G-R5).
  */
 export function listAttributesForPrompt(level: FactLevel, version?: string): string {
@@ -99,6 +99,20 @@ export function listAttributesForPrompt(level: FactLevel, version?: string): str
     .levels[level].filter((d) => d.origins.includes("text") && isEntryListAttribute(d))
     .map((d) => `\`${d.key}\``);
   return keys.length === 0 ? "none on this level" : keys.join(", ");
+}
+
+/** The list attributes that carry safety entries: prompt v5 keeps all their entries first at the fact limit (ruling M7-FIN-R1). */
+export const SAFETY_LIST_ATTRIBUTES = ["prohibitions", "hazards", "restricted_zones"] as const;
+
+/**
+ * The safety list attributes (`SAFETY_LIST_ATTRIBUTES`) that `level` has as text attributes, as the prompt clause
+ * `` `a`, `b` `` (`none` when it has none).
+ */
+export function safetyAttributesForPrompt(level: FactLevel, version?: string): string {
+  const keys = getFactSchema(version)
+    .levels[level].filter((d) => d.origins.includes("text") && isEntryListAttribute(d) && (SAFETY_LIST_ATTRIBUTES as readonly string[]).includes(d.key))
+    .map((d) => `\`${d.key}\``);
+  return keys.length === 0 ? "none" : keys.join(", ");
 }
 
 /**

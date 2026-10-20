@@ -153,7 +153,7 @@ describe("stage extraction.mention", () => {
       const kolona = s.mentions.filter((m) => m.geoObjectId === s.kolona).map((m) => m.id);
       expect(await statusOf(tx, kolona)).toEqual(["done", "done", "done"]);
       const [run] = await tx.select().from(extractionRuns).where(eq(extractionRuns.runId, runId));
-      expect(run).toMatchObject({ task: "extract-facts", model: "claude-sonnet-5-5", promptVersion: 4, factSchemaVersion: "v2", purpose: "regular" });
+      expect(run).toMatchObject({ task: "extract-facts", model: "claude-sonnet-5-5", promptVersion: 5, factSchemaVersion: "v2", purpose: "regular" });
       const units = await tx.select().from(extractionUnits).where(eq(extractionUnits.extractionRunId, run!.id));
       expect(units.map((u) => [u.geoObjectId, u.status, u.mentionIds.length])).toEqual([[s.kolona, "done", 3]]);
       expect(units[0]!.stats).toMatchObject({ proposed: 1, stored: 1 });
@@ -411,9 +411,8 @@ describe("stage extraction.mention", () => {
     expect([...covered].sort()).toEqual(["charter_bases", "hazards", "restricted_zones", "supply_ports"]);
   });
 
-  it("prompt v4 asks for one fact per entry of every list attribute and keeps other attributes to one fact", () => {
+  it("the facts prompt asks for one fact per entry of every list attribute and keeps other attributes to one fact", () => {
     const taskConfig = config.models.tasks["extract-facts"]!;
-    expect(taskConfig.promptVersion).toBe(4);
     const levels = ["place", "area", "island", "cape_strait", "poi"] as const;
     const covered = new Set<string>();
     for (const level of levels) {
@@ -444,6 +443,39 @@ describe("stage extraction.mention", () => {
       expect(system).not.toContain("Give each attribute at most once");
     }
     expect([...covered].sort()).toEqual(["charter_bases", "hazards", "mooring.types", "prohibitions", "restricted_zones", "season_notes", "supply_ports", "wind_systems"]);
+  });
+
+  it("prompt v5 keeps every safety list entry first when the fact limit would be reached", () => {
+    const taskConfig = config.models.tasks["extract-facts"]!;
+    expect(taskConfig.promptVersion).toBe(5);
+    const levels = ["place", "area", "island", "cape_strait", "poi"] as const;
+    const covered = new Set<string>();
+    for (const level of levels) {
+      const input: ExtractFactsInput = {
+        level,
+        factSchemaVersion: "v2",
+        maxFacts: 40,
+        limits: { quoteMinChars: 12, quoteMaxChars: 300, nameMaxChars: 80 },
+        object: { name: "X", type: "bay", parents: [] },
+        docType: "trip_report",
+        observedAt: "2026-10-19",
+        chunks: [{ n: 1, text: "t" }],
+      };
+      const system = (buildParams(extractFactsTask, input, taskConfig, "claude-sonnet-5-5").system as Array<{ text: string }>)[0]!.text;
+      const limitLine = system.split("\n").find((l) => l.startsWith("At most 40 facts."));
+      expect(limitLine, level).toBeDefined();
+      expect(limitLine).toContain("keep every entry of the safety lists first");
+      expect(limitLine).toContain("Never drop a safety entry to stay under the limit.");
+      const safetyKeys = getFactSchema("v2")
+        .levels[level].filter((d) => d.origins.includes("text") && ["prohibitions", "hazards", "restricted_zones"].includes(d.key))
+        .map((d) => d.key);
+      for (const key of safetyKeys) {
+        expect(limitLine, `${level} ${key}`).toContain(`\`${key}\``);
+        covered.add(key);
+      }
+      if (safetyKeys.length === 0) expect(limitLine).toContain("(on this level: none)");
+    }
+    expect([...covered].sort()).toEqual(["hazards", "prohibitions", "restricted_zones"]);
   });
 
   it("the prompt carries the word scale and keeps unit data out of the system prompt", () =>

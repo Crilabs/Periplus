@@ -63,6 +63,7 @@ Alle Messwerte auf echten Daten werden **im Pilot gemessen** (unten „Messwerte
 
 ### Weitere Änderungen
 - [x] **Prompt `extract-facts` v4:** ein Fact je Listeneintrag mit eigenem Zitat (M7-G-R5).
+- [x] **Prompt `extract-facts` v5:** am Fact-Limit bleiben alle Einträge von `prohibitions`, `hazards` und `restricted_zones`; weggelassen werden zuerst andere Facts (M7-FIN-R1).
 - [x] **Listen-Attribute einer Einheit** werden zusammengeführt statt verworfen (M7-G-R2, Migration 0047).
 - [x] **Unbenannte Buchten** `geometry.detect_bays` (Task 18, Ruling M7-P13):
   - erste Stufe jedes Geometrie-Laufs für Kachel oder Revier;
@@ -89,7 +90,7 @@ Alle Werte **werden im Pilot gemessen**, auf echten Daten von `saronic` (und `ar
 | `asOf` vor dem Revisit | `sim:verify --base-url http://localhost:3001 --key pk_… [--spot sp_…]` | wird im Pilot gemessen |
 | Review-Aufwand Lauf 2 | Messung „Lauf 2“, Kennzahl `review_minutes` | wird im Pilot gemessen |
 | Kosten je Ort und Lauf, Hochrechnung | `npm run report:costs -- --area saronic --first "Lauf 1" --second "Lauf 2" --revisit <datei>` | wird im Pilot gemessen |
-| Einheiten am Fact-Limit (`overLimit`) nach Prompt v4 | Abfrage im Runbook M7, „Nach dem ersten Text-Lauf“ | wird im Pilot gemessen |
+| Einheiten am Fact-Limit (`proposed` ≥ `maxFactsPerUnit`) nach Prompt v5 | Abfrage im Runbook M7, „Nach dem ersten Text-Lauf“ | wird im Pilot gemessen |
 | Bezahlte Aufrufe ohne `run_id` | Abfrage im Runbook M7, „Nach dem ersten Text-Lauf“ | wird im Pilot gemessen |
 | Orte je Kachel | `places_per_tile` auf `/quality` | wird im Pilot gemessen |
 
@@ -159,7 +160,7 @@ Keine. M7 Teil (a) rief keinen externen Dienst auf; alle KI-Antworten kamen von 
 | **Unbenannte Buchten auf echten Küsten ungemessen**: Laufzeit und Trefferzahl der Stufe `geometry.detect_bays` (Landvereinigung je Kachel, 72 Strahlen je Prüfpunkt) nur an Synthetik geprüft; Stopp bei > 30 Buchten je Revier oder > 15 min je Kachel | `lib/domain/geometry/bays.ts`, Runbook M7 |
 | **Bestätigte unbenannte Bucht ohne Namen** wird nicht geliefert (`no_name`), zählt aber für die Abdeckung; einen Namen bekommt sie nur über einen Namenskandidaten aus Texten („Name zuordnen“). Eine Namenseingabe von Hand gibt es nicht. Entscheidung, ob das reicht | `lib/domain/delivery/map-spot.ts`, `lib/domain/review-decisions.ts` |
 | **run_id bei bezahlten Aufrufen** nach dem ersten echten Text- oder Bewertungslauf prüfen (M7-D-R3, Abfrage im Runbook M7) | `external_calls` |
-| **Fact-Limit nach Prompt v4**: nach dem ersten Text-Lauf prüfen, dass Einheiten nicht an `maxFactsPerUnit` (40) stoßen (M7-H-R1, Abfrage im Runbook M7) | `config/extraction.json`, `config/prompts/extract-facts/v4.md` |
+| **Fact-Limit nach Prompt v5**: nach dem ersten Text-Lauf prüfen, dass Einheiten `maxFactsPerUnit` (40) nicht erreichen (`proposed` ≥ 40, M7-H-R1, M7-FIN-R1, Abfrage im Runbook M7) | `config/extraction.json`, `config/prompts/extract-facts/v5.md` |
 | **Simulations-Web nur aus eigenem Worktree** oder als `next start` eines eigenen Builds dort: Next 16 verweigert ein zweites `next dev` im selben Projekt (`.next/dev/lock`, M7-H-R1); `.env.sim.example` beschreibt denselben Weg | `.env.sim.example`, Runbook M7 Schritt 24 |
 | **Ein Revisit blockiert jeden Crawl** der freigegebenen Quellen für seine ganze Dauer (M7-G-R4); keinen Crawl daneben planen | `lib/pipeline/revisit-run.ts` |
 | **Echte Pilotszenarien** zitieren fremde Seiten: nur unter `data/sim/` (git-ignoriert), nie einchecken; „neue Seite“ ist keine Änderungsart (M7-F-R3) | `data/sim/`, `lib/domain/revisit/scenario.ts` |

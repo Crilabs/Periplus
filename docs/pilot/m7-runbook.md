@@ -16,7 +16,7 @@ Stand 2026-10-20, nach M7 Teil (a) (Code). Er ersetzt den Entwurf aus dem M7-Pre
   - `config/discovery.json`: 0,0035 € je Suche, ≤ 240 je Lauf.
   - `config/embeddings.json`: 0,055 €/MTok.
   - `config/fetch.json`: Jina 0,02 €/MTok, Firecrawl 0,0047 € je Credit.
-  - `config/models.json`: Preise Sonnet/Haiku/Opus, Batch 50 %. Prompt `extract-facts` v4.
+  - `config/models.json`: Preise Sonnet/Haiku/Opus, Batch 50 %. Prompt `extract-facts` v5.
   - Abnahmedokumente M3–M5: Konverter-Vergleich 0,25 €, etwa 0,02 € je Sonnet-Einheit, Modellvergleich ≈ 13 €, Summary ≈ 0,02 €, gezielte Quellenfindung ≈ 1,90 € je 12 Kacheln.
 - Annahmen:
   - etwa 150–250 bestätigte Orte und 200–600 POIs in `saronic` und `argolic` zusammen;
@@ -39,7 +39,7 @@ Stand 2026-10-20, nach M7 Teil (a) (Code). Er ersetzt den Entwurf aus dem M7-Pre
 | 10 | Konverter-Vergleich (50 Seiten), drei Spalten bewerten, `npm run report:converters`, Entscheidung in `config/fetch.json` | Firecrawl, Jina | 0,25 | **bewerten und entscheiden** |
 | 11 | Zwei PDF-Revierführer hochladen; `npm run pdf:compare -- <a.pdf> <b.pdf>`; Entscheidung `pdf` | Anthropic (Fallback ≤ 40 Seiten je Dokument) | 1,0 / ≤ 1,3 | **PDFs bereitstellen, entscheiden** |
 | 12 | Voller Crawl „Alle freigegebenen crawlen“; Vorschläge aus dem Linkgraphen prüfen; `check:sources` Exit 0 | Konverter (lokal 0 · Jina ~1 · Firecrawl 15–30), Voyage | 1 / 0,5–1,5 (+ Konverter) | Review |
-| 13 | „Texte auswerten für Revier“: Klassifikation (Haiku), Disambiguierung, Geocoding, Extraktion (Sonnet, Prompt v4), Routen, Belegprüfung, Konsolidierung mit Summaries und Folgeaufträgen. Dauert bei 20 €/Tag mindestens 3–7 Tage. **Nach dem ersten Text-Lauf** die Prüfungen „max_facts“ und „run_id“ unten ausführen | Anthropic, Nominatim, DataForSEO | 95 / 55–175 (Extraktion 45–140, Routen 2–15, Summaries 7–17, Klassifikation 1–2, Folgeaufträge ≤ 1,6) | – |
+| 13 | „Texte auswerten für Revier“: Klassifikation (Haiku), Disambiguierung, Geocoding, Extraktion (Sonnet, Prompt v5), Routen, Belegprüfung, Konsolidierung mit Summaries und Folgeaufträgen. Dauert bei 20 €/Tag mindestens 3–7 Tage. **Nach dem ersten Text-Lauf** die Prüfungen „max_facts“ und „run_id“ unten ausführen | Anthropic, Nominatim, DataForSEO | 95 / 55–175 (Extraktion 45–140, Routen 2–15, Summaries 7–17, Klassifikation 1–2, Folgeaufträge ≤ 1,6) | – |
 | 14 | Namenskandidaten prüfen (Rematch-Läufe). Unbenannte Buchten aus Schritt 6 bekommen ihren Namen nur so („Name zuordnen“) | – | gering (in 13) | **Review** |
 | 15 | Modellvergleich `npm run compare:models -- --label pilot --start` an einem Tag ohne andere Anthropic-Ausgaben | Anthropic | 13 / ≤ 15 | – |
 | 16 | 50 Bewertungen, `npm run report:models -- <comparisonId>`, Modellentscheidung in `config/models.json`; bei Opus beide Reviere neu verarbeiten | Anthropic | 0 (Sonnet) / +90–280 (Opus) | **bewerten und entscheiden** |
@@ -76,12 +76,12 @@ Stand 2026-10-20, nach M7 Teil (a) (Code). Er ersetzt den Entwurf aus dem M7-Pre
 - Kosten 0 (nur Datenbank). Laufzeit auf echten Küsten ist ungemessen; im Lauf auf `/runs` beobachten, Stopp-Bedingung unten.
 
 ### Nach dem ersten Text-Lauf (Schritt 13)
-1. **max_facts.** Prompt v4 verlangt einen Fact je Listeneintrag, also mehr Facts je Einheit (Ruling M7-G-R5, M7-H-R1). Prüfen, ob Einheiten an `maxFactsPerUnit` (40, `config/extraction.json`) stoßen:
+1. **max_facts.** Seit Prompt v4 ein Fact je Listeneintrag, also mehr Facts je Einheit (Ruling M7-G-R5, M7-H-R1). Prompt v5 lässt am Limit zuerst andere Facts weg und behält jeden Eintrag von Verboten, Gefahren und Sperrzonen (M7-FIN-R1). Ein Modell, das sich an das Limit hält, liefert genau 40 Facts und lässt den Rest still weg; `overLimit` sieht das nicht. Deshalb zählen Einheiten, die das Limit `maxFactsPerUnit` (40, `config/extraction.json`) erreichen:
    ```sql
-   select count(*) filter (where (stats->>'overLimit')::int > 0) as at_limit, count(*) as units
+   select count(*) filter (where (stats->>'proposed')::int >= 40) as at_limit, count(*) as units
    from extraction_units where extraction_run_id in (select id from extraction_runs where run_id = '<text-lauf>');
    ```
-   Mehr als 1 % der Einheiten mit `at_limit` > 0: anhalten und berichten. Christian entscheidet über ein höheres `maxFactsPerUnit` (neue Konfiguration, Regressionsbewertung) oder kleinere Einheiten.
+   (40 = `maxFactsPerUnit`; bei einem anderen Wert die Zahl anpassen.) Mehr als 1 % der Einheiten in `at_limit`: anhalten und berichten. Christian entscheidet über ein höheres `maxFactsPerUnit` (neue Konfiguration, Regressionsbewertung) oder kleinere Einheiten.
 2. **run_id.** Nach dem ersten echten Text- oder Bewertungslauf prüfen, dass jeder bezahlte Aufruf einen Lauf trägt (Ruling M7-D-R3). Sonst verteilt die Kosten-Kennzahl ihn falsch:
    ```sql
    select service, stage, count(*) from external_calls
@@ -231,7 +231,7 @@ Anhalten, berichten, auf Christian warten:
   - ein fehlgeschlagener Job `embed.chunks`/`fetch.*` bleibt offen;
   - je Quelle `failed` in der Frontier > 20 % → Quelle pausieren;
   - Anthropic-Wiederholungen wegen `max_tokens`/Ablehnung > 2 % der Einheiten;
-  - mehr als 1 % der Einheiten am Fact-Limit (`overLimit`, oben);
+  - mehr als 1 % der Einheiten am Fact-Limit (`proposed` ≥ `maxFactsPerUnit`, oben);
   - bezahlte Aufrufe ohne `run_id` (oben);
   - wiederholte 429/5xx eines Anbieters länger als 1 h;
   - Overpass-/EMODnet-Timeouts, die eine Kachel ohne Bathymetrie lassen (die Geometrie verweigert dann).

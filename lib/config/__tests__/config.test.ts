@@ -389,7 +389,7 @@ describe("text configuration", () => {
   it("the extraction model is one of the compared models, with a recorded decision status", () => {
     // Model and decision status change at the M4 acceptance (Christian decides in config/models.json): not pinned here.
     const task = cfg.models.tasks["extract-facts"]!;
-    expect(task).toMatchObject({ promptVersion: 4, effort: "medium", maxTokens: 16000, cacheSystem: true });
+    expect(task).toMatchObject({ promptVersion: 5, effort: "medium", maxTokens: 16000, cacheSystem: true });
     expect(cfg.models.comparison.models).toContain(task.model);
     expect(["provisional", "decided"]).toContain(task.decision?.status);
   });
