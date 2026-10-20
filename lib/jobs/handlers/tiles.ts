@@ -5,6 +5,7 @@ import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 
+// TODO(plan 14a task 7): remove with the area run path
 /** `areaKey` of run params or job data; throws when missing. */
 export function areaKeyOf(params: Record<string, unknown>): string {
   if (typeof params.areaKey !== "string" || params.areaKey === "") throw new Error("areaKey is required");
@@ -21,6 +22,7 @@ export const tilesEnsureStage: StageDefinition = {
       if (!(await subdivisionByKey(db, key))) throw new Error(`Unknown subdivision ${key}`);
       return [{ key, subdivisionKey: key }];
     }
+    // TODO(plan 14a task 7): remove with the area run path
     const areaKey = areaKeyOf(run.params);
     areaByKey(areaKey); // fail planning for an unknown area
     return [{ key: areaKey, areaKey }];
@@ -35,6 +37,7 @@ export const tilesEnsureHandler: JobHandler<JobData> = async (data, ctx) => {
     ctx.log.info({ subdivisionKey: sub.key, ...result }, "tiles ensured");
     return;
   }
+  // TODO(plan 14a task 7): remove with the area run path
   const area = areaByKey(areaKeyOf(data));
   const areas = getConfig().areas;
   const areaIds = await syncAreas(ctx.db, areas);

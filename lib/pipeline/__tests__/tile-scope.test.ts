@@ -2,8 +2,11 @@ import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geoObjects, landPolygons, subdivisions } from "@/lib/db/schema";
+import { ensureSubdivisionTiles } from "@/lib/domain/gazetteer/tiles-ensure";
 import { newPublicId } from "@/lib/domain/ids";
 import { tileIdFor } from "@/lib/domain/tiles";
+import { seedTileIds } from "@/lib/pipeline/tile-scope";
+import { withRollback } from "@/test/db";
 
 /** A synthetic subdivision: polygon and land are boxes [west, south, east, north]; outside the pilot box. */
 async function addSubdivision(
@@ -36,9 +39,6 @@ async function addSubdivision(
 async function addLand(db: Db, w: number, s: number, e: number, n: number) {
   await db.insert(landPolygons).values({ geom: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, datasetVersion: "test" });
 }
-import { ensureSubdivisionTiles } from "@/lib/domain/gazetteer/tiles-ensure";
-import { seedTileIds } from "@/lib/pipeline/tile-scope";
-import { withRollback } from "@/test/db";
 
 describe("seedTileIds", () => {
   it("subdivisionKey gives the coast tiles meeting the polygon", () =>

@@ -1,10 +1,13 @@
 import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { getConfig } from "@/lib/config";
+import { getConfig, type AreaConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
+import { syncAreas } from "@/lib/domain/gazetteer/areas";
 import { geoObjects, landPolygons, subdivisions, tiles } from "@/lib/db/schema";
 import { newPublicId } from "@/lib/domain/ids";
+import { ensureTiles, ensureSubdivisionTiles, subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { tileIdFor } from "@/lib/domain/tiles";
+import { withRollback } from "@/test/db";
 
 /** A synthetic subdivision: polygon and land are boxes [west, south, east, north]; outside the pilot box. */
 async function addSubdivision(
@@ -37,8 +40,6 @@ async function addSubdivision(
 async function addLand(db: Db, w: number, s: number, e: number, n: number) {
   await db.insert(landPolygons).values({ geom: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, datasetVersion: "test" });
 }
-import { ensureSubdivisionTiles, subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
-import { withRollback } from "@/test/db";
 
 const SHARED = tileIdFor(26.3, 35.1); // 26.25-26.5 x 35.0-35.25
 const A_ONLY = tileIdFor(26.1, 35.1);
@@ -120,5 +121,76 @@ describe("ensureSubdivisionTiles", () => {
       const a = await addSubdivision(db, "XA-N", [26.0, 35.0, 26.2, 35.2], null);
       expect(await ensureSubdivisionTiles(db, a)).toEqual({ tiles: 1, coast: 0 });
       expect(await subdivisionTileIds(db, a)).toEqual([]);
+    }));
+});
+
+const SEA_TILE = tileIdFor(26.3, 35.1); // 26.25-26.5 x 35.0-35.25
+
+describe("tile label rule", () => {
+  it("sea tile gets the subdivision whose geom contains the centre, not one with only a land bbox there", () =>
+    withRollback(async (db) => {
+      // E: geom meets the tile, land in two pieces outside the tile whose bbox covers it; sorts first by key.
+      const e = await addSubdivision(db, "XA-0E", [26.1, 35.2, 26.6, 35.4], null);
+      await db
+        .update(subdivisions)
+        .set({
+          landGeom: sql`ST_Collect(ST_MakeEnvelope(26.1, 35.3, 26.15, 35.35, 4326), ST_MakeEnvelope(26.55, 35.2, 26.6, 35.22, 4326))`,
+        })
+        .where(eq(subdivisions.id, e));
+      const d = await addSubdivision(db, "XA-D", [26.0, 35.0, 26.7, 35.15], [26.6, 35.0, 26.7, 35.05]);
+      await ensureSubdivisionTiles(db, d);
+      const t = await tile(db, SEA_TILE);
+      expect(t!.hasCoast).toBe(false);
+      expect(t!.subdivisionId).toBe(d);
+    }));
+
+  it("an administrative border over land does not count as coastline", () =>
+    withRollback(async (db) => {
+      // Land spans the whole tile and beyond; the only real coast in the tile is a bay inside A.
+      await db.insert(landPolygons).values({
+        geom: sql`ST_Difference(ST_MakeEnvelope(26.0, 34.9, 26.6, 35.4, 4326), ST_MakeEnvelope(26.25, 35.1, 26.28, 35.15, 4326))`,
+        datasetVersion: "test",
+      });
+      const a = await addSubdivision(db, "XA-A", [26.0, 35.0, 26.3, 35.25], [26.0, 35.0, 26.3, 35.25]);
+      const b = await addSubdivision(db, "XA-B", [26.3, 35.0, 26.75, 35.25], [26.3, 35.0, 26.6, 35.25]);
+      await ensureSubdivisionTiles(db, b);
+      await ensureSubdivisionTiles(db, a);
+      expect((await tile(db, SEA_TILE))!.subdivisionId).toBe(a);
+    }));
+
+  it("a tile fully inside the land of A is labelled A", () =>
+    withRollback(async (db) => {
+      await addLand(db, 26.0, 34.9, 26.6, 35.4);
+      const a = await addSubdivision(db, "XA-A", [26.0, 35.0, 26.3, 35.25], [26.0, 35.0, 26.3, 35.25]);
+      await ensureSubdivisionTiles(db, a);
+      expect((await tile(db, A_ONLY))!.subdivisionId).toBe(a);
+    }));
+});
+
+// TODO(plan 14a task 7): remove with the legacy area path (`ensureTiles`).
+describe("ensureTiles (legacy area path)", () => {
+  it("creates tiles and opens one review task for a coast tile outside the area polygon", () =>
+    withRollback(async (db) => {
+      const area: AreaConfig = {
+        key: "test-tiles-area",
+        names: { de: "Testgolf", en: "Test Gulf", el: "Δοκιμαστικός Κόλπος" },
+        polygon: { type: "Polygon", coordinates: [[[25.0, 35.0], [25.45, 35.0], [25.0, 35.45], [25.0, 35.0]]] },
+        tileBbox: null,
+        sourceLanguages: ["de", "en", "el"],
+        season: { fromMonth: 4, toMonth: 10 },
+        cycleDays: 14,
+        coastSections: [],
+      };
+      await addLand(db, 25.3, 35.3, 25.4, 35.4); // coast in the tile outside the triangle
+      const ids = await syncAreas(db, [area]);
+      const r = await ensureTiles(db, area, ids);
+      expect(r).toEqual({ tiles: 4, coast: 1, withoutArea: 1 });
+      const outside = tileIdFor(25.3, 35.3);
+      expect((await tile(db, outside))!.areaId).toBeNull();
+      expect((await tile(db, tileIdFor(25.05, 35.05)))!.areaId).toBe(ids.get(area.key));
+      const [{ n }] = await db
+        .execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM review_tasks WHERE kind = 'coast_tile_without_area' AND subject_id = ${outside}`)
+        .then((x) => x.rows);
+      expect(n).toBe(1);
     }));
 });

@@ -27,12 +27,14 @@ function tileBboxLabels(area: AreaConfig, areaIds: Map<string, string>): Map<str
   return labels;
 }
 
+// TODO(plan 14a task 7): remove with the area run path
 /** The tiles of an area: `tilesInBbox(tileBbox)` ∪ `tilesInBbox(bbox(polygon))`. */
 export function areaTileIds(area: AreaConfig): string[] {
   return [...new Set([...(area.tileBbox ? tilesInBbox(area.tileBbox) : []), ...tilesInBbox(polygonBbox(area.polygon))])];
 }
 
 /**
+ * TODO(plan 14a task 7): remove with the area run path.
  * Creates or updates the tiles of `area`: `tilesInBbox(tileBbox)` ∪ `tilesInBbox(bbox(polygon))`.
  * - `has_coast`: the tile box intersects a land polygon.
  * - `area_id`: the area whose `tileBbox` contains the tile; else the area (from `areaIds`) whose polygon
@@ -118,9 +120,13 @@ function subdivisionCycleDays(key: string, country: string): number {
  * Creates or updates the tiles of a subdivision: every tile of the polygon's bbox whose box meets the polygon
  * (not just along an edge).
  * - `has_coast`: the tile box intersects a land polygon.
- * - `subdivision_id`: the label, the valid subdivision whose land boundary has the largest length inside the tile box
- *   (ties by key); null when no subdivision has land there. Same result whichever subdivision ensures the tile.
- * - New tiles take `cycle_days` from config (override per key, else the country). Rows only change when a value changed.
+ * - `subdivision_id`: the label. Candidates are all valid subdivisions (excluded ones too) whose `geom` intersects the
+ *   tile box. The label is the candidate with the longest true coastline (boundary of the land polygons, not the
+ *   administrative border over land) inside the box near its land, ties by key. Without any coastline length: the
+ *   candidate whose `geom` contains the tile centre, else the one with the largest `geom` overlap with the box; null
+ *   without candidates. Same result whichever subdivision ensures the tile.
+ * - New tiles take `cycle_days` from config (override per key, else the country). `cycle_days` is set only when a tile
+ *   is created, so the first ensuring subdivision wins. Rows only change when a value changed.
  * Throws for an excluded subdivision. `tiles.area_id` is not written.
  */
 export async function ensureSubdivisionTiles(db: Db, subdivisionId: string): Promise<{ tiles: number; coast: number }> {
@@ -145,10 +151,22 @@ export async function ensureSubdivisionTiles(db: Db, subdivisionId: string): Pro
                 EXISTS (SELECT 1 FROM subdivisions s, box WHERE s.id = ${sub.id} AND ST_Intersects(s.geom, box.g)
                         AND NOT ST_Touches(s.geom, box.g)) AS meets,
                 EXISTS (SELECT 1 FROM land_polygons l, box WHERE ST_Intersects(l.geom, box.g)) AS "hasCoast",
-                (SELECT s.id FROM subdivisions s, box
-                 WHERE s.valid_to IS NULL AND s.land_geom IS NOT NULL AND s.land_geom && box.g
-                 ORDER BY ST_Length(ST_Intersection(ST_Boundary(s.land_geom), box.g)::geography) DESC, s.key
-                 LIMIT 1) AS label`,
+                COALESCE(
+                  (SELECT c.id FROM (
+                     SELECT s.id, s.key,
+                       ST_Length(ST_Intersection(
+                         (SELECT ST_Collect(ST_Intersection(ST_Boundary(l.geom), box.g))
+                          FROM land_polygons l WHERE ST_Intersects(l.geom, box.g)),
+                         ST_Buffer(s.land_geom, 0.00001))::geography) AS len
+                     FROM subdivisions s, box
+                     WHERE s.valid_to IS NULL AND s.land_geom IS NOT NULL AND ST_Intersects(s.geom, box.g)) c
+                   WHERE c.len > 0 ORDER BY c.len DESC, c.key LIMIT 1),
+                  (SELECT s.id FROM subdivisions s, box
+                   WHERE s.valid_to IS NULL AND ST_Intersects(s.geom, box.g)
+                   ORDER BY ST_Contains(s.geom, ST_Centroid(box.g)) DESC,
+                            ST_Area(ST_Intersection(s.geom, box.g)::geography) DESC, s.key
+                   LIMIT 1)
+                ) AS label`,
         )
         .then((r) => r.rows);
       if (!geo!.meets) continue;
