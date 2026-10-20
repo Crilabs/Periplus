@@ -14,6 +14,8 @@ import { fixtureTransport, recordingTransport } from "../lib/adapters/http-fixtu
 import { fetchSeas } from "../lib/adapters/marine-regions";
 import { searchNominatim } from "../lib/adapters/nominatim";
 import { buildBoundaryQuery, buildRelationQuery, overpassQuery } from "../lib/adapters/overpass";
+import { demTileNames, fetchDemTile } from "../lib/adapters/copernicus-dem";
+import { fetchWmsImage, wmsGrid } from "../lib/adapters/wms";
 import { runPdftotext } from "../lib/adapters/pdf";
 import { getArchive, type Archive } from "../lib/adapters/s3";
 import { createAnthropicClient } from "../lib/ai/anthropic";
@@ -42,6 +44,7 @@ import { bufferBbox, importLandPolygons } from "../lib/domain/gazetteer/land";
 import { createRun } from "../lib/domain/runs";
 import { ensureWhitelistSources, getSource, sourceIdByDomain } from "../lib/domain/sources/store";
 import { parseTileId, TILE_SIZE, type Bbox } from "../lib/domain/tiles";
+import { coreWindow, wideWindow } from "../lib/domain/images/window";
 import { DATASET_KINDS, DATASETS_STAGE, datasetKindsOf, importDataset, type DatasetKind } from "../lib/pipeline/datasets";
 import { GEONAMES_STAGE, importGeonames } from "../lib/pipeline/gazetteer/geonames";
 import { classifyInputs } from "../lib/pipeline/text/classify";
@@ -74,6 +77,7 @@ const USAGE =
   "       fixtures-record.ts --coarse <ISO2,…>\n" +
   "       fixtures-record.ts --voyage\n" +
   "       fixtures-record.ts --nominatim <query> <tileId>\n" +
+  "       fixtures-record.ts --imagery <lon> <lat>\n" +
   "       fixtures-record.ts --ai <classify-document|disambiguate-mention|extract-facts|extract-route> [--limit <1-5>] [--max-eur <eur>]";
 /** Model tasks `--ai` records real answers of (synchronous calls, at most `MAX_AI_ANSWERS`, at most `--max-eur`). */
 export const AI_RECORDING_TASKS = ["classify-document", "disambiguate-mention", "extract-facts", "extract-route"] as const;
@@ -108,6 +112,7 @@ export type RecordArgs =
   | { voyage: true }
   | { coarse: string[] }
   | { nominatim: { query: string; tileId: string } }
+  | { imagery: { lon: number; lat: number } }
   | { ai: { task: AiRecordingTask; limit: number; maxEur: number } };
 
 /** The two texts of the recorded Voyage answer (`--voyage`); the embedding tests send exactly these. */
@@ -170,6 +175,11 @@ export function parseArgs(argv: string[]): RecordArgs {
     if (argv.length !== 3 || !query || query.startsWith("--") || !isTileId(tileId)) throw new Error(USAGE);
     return { nominatim: { query, tileId: tileId! } };
   }
+  if (argv[0] === "--imagery") {
+    const [lon, lat] = [argv[1], argv[2]].map((v) => (v === undefined || v.trim() === "" ? Number.NaN : Number(v)));
+    if (argv.length !== 3 || !(lon! >= -180 && lon! < 180) || !(lat! > -90 && lat! < 90)) throw new Error(USAGE);
+    return { imagery: { lon: lon!, lat: lat! } };
+  }
   if (argv[0] === "--coarse") {
     const countries = argv[1]?.split(",") ?? [];
     if (argv.length !== 2 || countries.length === 0 || !countries.every((c) => /^[A-Z]{2}$/.test(c))) throw new Error(USAGE);
@@ -191,7 +201,7 @@ export function parseArgs(argv: string[]): RecordArgs {
   let wikivoyage = false;
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]!;
-    if (flag === "--converters" || flag === "--voyage" || flag === "--nominatim" || flag === "--ai" || flag === "--coarse") throw new Error(USAGE);
+    if (flag === "--converters" || flag === "--voyage" || flag === "--nominatim" || flag === "--ai" || flag === "--coarse" || flag === "--imagery") throw new Error(USAGE);
     if (flag === "--datasets" || flag === "--serp" || flag === "--wikivoyage") {
       if (flag === "--datasets") {
         datasets = true;
@@ -348,6 +358,45 @@ async function recordNominatim(query: string, tileId: string): Promise<void> {
     );
     process.stdout.write(`nominatim "${query}" around ${tileId}: ${hits.length} hits\n`);
     for (const h of hits) process.stdout.write(`  ${h.osmId} ${h.name} (${h.category}/${h.type}) ${h.distanceM} m\n`);
+  } finally {
+    await close();
+  }
+}
+
+/**
+ * Records the imagery requests of one place (spec 13): the cadastre grid of its core window (whatever the country),
+ * the Sentinel-2 grid of its wide window and the Copernicus DEM tiles under the wide window, into
+ * `test/fixtures/http/<source>/`. Free of charge; calls are booked in the database of `DATABASE_URL`. A DEM tile is a
+ * COG of up to `maxBytes`: crop it to a small COG with `gdal_translate` before committing the fixture.
+ */
+async function recordImagery(lon: number, lat: number): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is not set");
+  const cfg = getConfig().images;
+  const transport = recordingTransport(fetchTransport);
+  const { db, close } = createDb(url);
+  const ctx = { db, stage: "fixtures:record" };
+  try {
+    const grids = [
+      { source: "ktimatologio" as const, bbox: coreWindow(lon, lat, cfg.window) },
+      { source: "sentinel2" as const, bbox: wideWindow(lon, lat, cfg.window) },
+    ];
+    for (const { source, bbox } of grids) {
+      const src = cfg.sources[source];
+      for (const cell of wmsGrid(bbox, src.resolutionM, src.maxRequestPx)) {
+        const bytes = await fetchWmsImage(
+          transport,
+          { url: src.url, layer: src.layer, format: src.format, bbox: cell.bbox, width: cell.width, height: cell.height, timeoutSeconds: src.timeoutSeconds, ratePerMinute: src.ratePerMinute },
+          ctx,
+          source,
+        );
+        process.stdout.write(`${source} ${cell.tileKey}: ${cell.width}x${cell.height}, ${bytes.byteLength} bytes\n`);
+      }
+    }
+    for (const name of demTileNames(wideWindow(lon, lat, cfg.window))) {
+      const bytes = await fetchDemTile(transport, name, ctx, cfg.sources.copernicus_dem);
+      process.stdout.write(`copernicus_dem ${name}: ${bytes ? `${bytes.byteLength} bytes` : "no tile"}\n`);
+    }
   } finally {
     await close();
   }
@@ -855,6 +904,7 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   if ("ai" in args) return recordAi(args.ai);
   if ("nominatim" in args) return recordNominatim(args.nominatim.query, args.nominatim.tileId);
+  if ("imagery" in args) return recordImagery(args.imagery.lon, args.imagery.lat);
   if ("voyage" in args) return recordVoyage();
   if ("coarse" in args) return recordCoarse(args.coarse);
   if ("converters" in args) return recordConverters(args.converters);
