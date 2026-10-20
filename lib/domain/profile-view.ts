@@ -258,7 +258,13 @@ export async function profileView(
     .select({ text: profileSummaries.text, status: profileSummaries.status })
     .from(profileSummaries)
     .where(and(eq(profileSummaries.geoObjectId, geoObjectId), eq(profileSummaries.profileVersion, snapshot.version)))
-    .orderBy(sql`(${profileSummaries.status} = 'ok') desc`, desc(profileSummaries.createdAt), desc(profileSummaries.id))
+    // an ok summary first, then like the delivery loader: highest prompt version, newest (ruling M6-FIN-R2)
+    .orderBy(
+      sql`(${profileSummaries.status} = 'ok') desc`,
+      sql`${profileSummaries.promptVersion} desc nulls last`,
+      desc(profileSummaries.createdAt),
+      desc(profileSummaries.id),
+    )
     .limit(1);
 
   return {

@@ -12,6 +12,7 @@ import { profileAttributeFacts, profileEntryKey, profileView } from "@/lib/domai
 import { DecisionNotAllowed } from "@/lib/domain/review-decisions";
 import { insertComputation, insertPlace, insertSource, insertTextFact } from "@/test/consolidation";
 import { testDb, withRollback } from "@/test/db";
+import { insertTestRun } from "@/test/text";
 
 /*
  * The profile tab's data (Task 17): rows with provenance, the facts of one attribute, older versions, the map colour
@@ -61,6 +62,28 @@ async function profiledPlace(tx: Db, o: { lon?: number; lat?: number } = {}) {
 }
 
 describe("profileView", () => {
+  it("profileView shows the summary the delivery takes: highest prompt version, then newest (ruling M6-FIN-R2)", () =>
+    withRollback(async (tx) => {
+      const p = await profiledPlace(tx);
+      const summary = async (text: string, promptVersion: number, createdAt: string) =>
+        tx.insert(profileSummaries).values({
+          geoObjectId: p.objectId,
+          profileVersion: 1,
+          text,
+          status: "ok",
+          attempts: 1,
+          model: "m",
+          promptVersion,
+          runId: await insertTestRun(tx),
+          createdAt: new Date(createdAt),
+        });
+      await summary("Neuer Prompt.", 2, "2026-10-01T00:00:00Z");
+      await summary("Alter Prompt, neu erzeugt.", 1, "2026-10-10T00:00:00Z");
+      expect((await profileView(tx, p.objectId, { today }))!.summary).toMatchObject({ text: "Neuer Prompt." });
+      await summary("Neuer Prompt, neu erzeugt.", 2, "2026-10-11T00:00:00Z");
+      expect((await profileView(tx, p.objectId, { today }))!.summary).toMatchObject({ text: "Neuer Prompt, neu erzeugt." });
+    }));
+
   it("profileView lists rows in schema order with provenance and gaps", () =>
     withRollback(async (tx) => {
       const p = await profiledPlace(tx);
