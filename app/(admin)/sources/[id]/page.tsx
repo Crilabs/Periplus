@@ -43,7 +43,7 @@ import {
   thClass,
   trClass,
 } from "../../_components/ui";
-import { pendingTextRunAction } from "../actions";
+import { pendingSourceTextRunAction } from "../actions";
 import { SOURCE_STATUS_TONES } from "../tones";
 import {
   crawlAction,
@@ -158,11 +158,9 @@ export default async function Page({ params, searchParams }: PageProps<"/sources
         }
         actions={
           <>
-            <form action={pendingTextRunAction}>
-              <Button
-                variant="ghost"
-                title="Alle Quellen: jede aktuelle Version, die der Abgleich noch nicht gesehen hat"
-              >
+            <form action={pendingSourceTextRunAction}>
+              {hidden}
+              <Button variant="ghost" title="Nur diese Quelle: jede aktuelle Version, die der Abgleich noch nicht gesehen hat">
                 Neue Texte auswerten
               </Button>
             </form>

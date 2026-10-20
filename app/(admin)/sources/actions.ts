@@ -118,12 +118,29 @@ export async function embedBackfillAction(): Promise<void> {
 }
 
 /**
- * "Neue Texte auswerten": a text run over every current version (of all sources) the match has not passed with the
- * current configuration; with nothing to do it still starts and finishes at once.
+ * "Neue Texte auswerten" on the source list: a text run over every current version (of all sources) the match has not
+ * passed with the current configuration; with nothing to do it still starts and finishes at once.
  */
 export async function pendingTextRunAction(): Promise<void> {
   const admin = await requireAdmin();
   const db = getDb();
   const boss = await getBoss();
   await startAndRedirect(() => startTextRun(db, boss, { pending: true, triggeredBy: admin.email }), "/sources");
+}
+
+const pendingSourceSchema = z.object({ sourceId: z.uuid() });
+
+/**
+ * "Neue Texte auswerten" on a source page (UI-10): the same run, but only over the pending versions of this source
+ * (`params.sourceIds`, run scope the source); a refusal returns to the source page.
+ */
+export async function pendingSourceTextRunAction(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+  const { sourceId } = pendingSourceSchema.parse({ sourceId: formData.get("sourceId") });
+  const db = getDb();
+  const boss = await getBoss();
+  await startAndRedirect(
+    () => startTextRun(db, boss, { pending: true, sourceIds: [sourceId], triggeredBy: admin.email }),
+    `/sources/${sourceId}`,
+  );
 }

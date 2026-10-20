@@ -8,6 +8,7 @@ import { newId } from "@/lib/domain/ids";
 import { DEFAULT_CRAWL_RULES } from "@/lib/domain/sources/crawl-rules";
 import { getSource } from "@/lib/domain/sources/store";
 import { insertPlace, insertTextFact } from "@/test/consolidation";
+import { insertTestVersion } from "@/test/text";
 import { testDb, withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
 
@@ -45,7 +46,7 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
-import { crawlAllApprovedAction, createSourceAction } from "../sources/actions";
+import { crawlAllApprovedAction, createSourceAction, pendingSourceTextRunAction } from "../sources/actions";
 import { discoveryForTileAction } from "../tiles/[id]/actions";
 import { crawlAction, endSourceAction, pauseSourceAction, saveSourceAction, testCrawlAction, uploadPdfAction } from "../sources/[id]/actions";
 
@@ -379,5 +380,20 @@ describe("discovery from the tile page", () => {
       await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(26.5, 31.75, 26.75, 32.0, 4326)` });
       await discoveryForTileAction(form({ tileId }));
       expect(redirect).toHaveBeenCalledWith(`/tiles/${encodeURIComponent(tileId)}?error=tile_without_area`);
+    }));
+});
+
+describe("„Neue Texte auswerten“ on a source page (UI-10)", () => {
+  it("evaluates only this source's pending versions, in a run scoped to the source", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const mine = await insertTestVersion(tx, ["Rund um Kalonisi."]);
+      await insertTestVersion(tx, ["Rund um Kalonisi."]);
+      await pendingSourceTextRunAction(form({ sourceId: mine.sourceId }));
+      const target = String(redirect.mock.lastCall![0]);
+      expect(target).toMatch(/^\/runs\/[0-9a-f-]{36}$/);
+      const [run] = await tx.select().from(runs).where(eq(runs.id, target.slice("/runs/".length)));
+      expect(run).toMatchObject({ scopeType: "source", scopeId: mine.sourceId });
+      expect(run!.params).toMatchObject({ pending: true, sourceIds: [mine.sourceId], documentVersionIds: [mine.versionId] });
     }));
 });

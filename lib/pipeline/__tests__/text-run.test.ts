@@ -222,6 +222,15 @@ async function fullRun(tx: Db) {
 }
 
 describe("text run", () => {
+  it("pending with sourceIds selects only the pending versions of those sources (UI-10)", () =>
+    withRollback(async (tx) => {
+      const mine = await insertTestVersion(tx, ["Rund um Kalonisi."]);
+      const other = await insertTestVersion(tx, ["Rund um Kalonisi."]);
+      const { documentVersionIds } = await freezeTextRunParams(tx, { pending: true, sourceIds: [mine.sourceId] }, config);
+      expect(documentVersionIds).toEqual([mine.versionId]);
+      expect((await freezeTextRunParams(tx, { pending: true }, config)).documentVersionIds).toContain(other.versionId);
+    }));
+
   it("pending selects only versions without a mention pass", () =>
     withRollback(async (tx) => {
       await islandTile(tx);
