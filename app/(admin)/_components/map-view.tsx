@@ -13,7 +13,7 @@ import Link from "next/link";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { GeoObjectType, PlaceStatus, RestrictedKind } from "@/lib/db/schema";
 import type { MapLayer } from "@/lib/domain/map-data";
-import { CLIENT_BBOX_DEGREES } from "@/lib/domain/map-limits";
+import { CLIENT_BBOX_DEGREES, MAP_FEATURE_LIMIT } from "@/lib/domain/map-limits";
 import type { ConfidenceClass } from "@/lib/domain/consolidation/types";
 import {
   CONFIDENCE_CLASS_LABELS,
@@ -242,6 +242,7 @@ export function MapView() {
   const visibilityRef = useRef(visibility);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [failed, setFailed] = useState<MapLayer[]>([]);
+  const [truncated, setTruncated] = useState<MapLayer[]>([]);
   const [clamped, setClamped] = useState(false);
   const reload = useRef<() => void>(() => {});
 
@@ -266,18 +267,23 @@ export function MapView() {
       setClamped(wasClamped);
       const results = await Promise.all(
         LAYERS.filter((layer) => isOn(layer, visibilityRef.current)).map(async (layer) => {
+          // geo objects are filtered by type on the server, so the cap counts only the types shown (UI-12)
+          const types = layer === "geo-objects" ? `&types=${visibilityRef.current.geoTypes.join(",")}` : "";
           try {
-            const res = await fetch(`/map-data/${layer}?bbox=${bbox}`, { signal: controller.signal, cache: "no-store" });
-            if (!res.ok) return { layer, ok: false };
-            const data = (await res.json()) as GeoJSON.FeatureCollection;
+            const res = await fetch(`/map-data/${layer}?bbox=${bbox}${types}`, { signal: controller.signal, cache: "no-store" });
+            if (!res.ok) return { layer, ok: false, truncated: false };
+            const data = (await res.json()) as GeoJSON.FeatureCollection & { truncated?: boolean };
             m.getSource<GeoJSONSource>(layer)?.setData(data);
-            return { layer, ok: true };
+            return { layer, ok: true, truncated: data.truncated === true };
           } catch {
-            return { layer, ok: controller.signal.aborted };
+            return { layer, ok: controller.signal.aborted, truncated: false };
           }
         }),
       );
-      if (!controller.signal.aborted) setFailed(results.filter((r) => !r.ok).map((r) => r.layer));
+      if (!controller.signal.aborted) {
+        setFailed(results.filter((r) => !r.ok).map((r) => r.layer));
+        setTruncated(results.filter((r) => r.truncated).map((r) => r.layer));
+      }
     };
     const schedule = () => {
       clearTimeout(timer);
@@ -311,8 +317,8 @@ export function MapView() {
     const m = map.current;
     if (!m?.getLayer("places-point")) return;
     applyVisibility(m, visibility);
-    // Newly switched-on layers have no data for the current view yet.
-    if (LAYERS.some((layer) => isOn(layer, visibility) && !isOn(layer, before))) reload.current();
+    // Newly switched-on layers have no data for the current view yet; other geo-object types need a new query.
+    if (LAYERS.some((layer) => isOn(layer, visibility) && !isOn(layer, before)) || visibility.geoTypes !== before.geoTypes) reload.current();
   }, [visibility]);
 
   return (
@@ -324,7 +330,7 @@ export function MapView() {
       <div className="absolute inset-0">
         <div ref={container} role="region" aria-label="Karte" className="h-full w-full" />
       </div>
-      <LayerPanel visibility={visibility} onChange={setVisibility} failed={failed} clamped={clamped} />
+      <LayerPanel visibility={visibility} onChange={setVisibility} failed={failed} truncated={truncated} clamped={clamped} />
       {selection && <Sidebar selection={selection} onClose={() => setSelection(null)} />}
     </div>
   );
@@ -429,11 +435,13 @@ function LayerPanel({
   visibility: v,
   onChange,
   failed,
+  truncated,
   clamped,
 }: {
   visibility: Visibility;
   onChange: (v: Visibility) => void;
   failed: MapLayer[];
+  truncated: MapLayer[];
   clamped: boolean;
 }) {
   const [open, setOpen] = useState(true);
@@ -466,6 +474,12 @@ function LayerPanel({
       {failed.length > 0 && (
         <p role="alert" className="mx-3 mb-2 rounded-md bg-danger-soft px-2.5 py-1.5 text-xs text-danger">
           Nicht geladen: {failed.map((l) => LAYER_LABELS[l]).join(", ")}
+        </p>
+      )}
+      {truncated.length > 0 && (
+        <p role="status" className="mx-3 mb-2 rounded-md bg-warn-soft px-2.5 py-1.5 text-xs text-warn">
+          Unvollständig (mehr als {MAP_FEATURE_LIMIT.toLocaleString("de-DE")} im Ausschnitt): {truncated.map((l) => LAYER_LABELS[l]).join(", ")}.
+          Ausschnitt verkleinern oder Typen abwählen.
         </p>
       )}
       {clamped && (

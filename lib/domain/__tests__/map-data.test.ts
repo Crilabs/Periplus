@@ -159,11 +159,27 @@ describe("mapLayer", () => {
       expect(fc.features.find((f) => f.properties!.id === rejected)!.properties!.status).toBe("rejected");
     }));
 
-  it("limit caps the feature count", () =>
+  it("limit caps the feature count and says the layer was cut (UI-12)", () =>
     withRollback(async (tx) => {
       for (let i = 0; i < 4; i++) await insertPlace(tx, `Cove ${i}`, LON + i * 0.001, LAT, "candidate");
-      expect((await mapLayer(tx, "places", BOX, { limit: 2 })).features).toHaveLength(2);
-      expect((await mapLayer(tx, "places", BOX)).features).toHaveLength(4);
+      const cut = await mapLayer(tx, "places", BOX, { limit: 2 });
+      expect(cut.features).toHaveLength(2);
+      expect(cut.truncated).toBe(true);
+      expect(await mapLayer(tx, "places", BOX, { limit: 4 })).toMatchObject({ truncated: false });
+      const all = await mapLayer(tx, "places", BOX);
+      expect(all.features).toHaveLength(4);
+      expect(all.truncated).toBe(false);
+    }));
+
+  it("geo objects are filtered by type in the query, so the cap counts only the types shown (UI-12)", () =>
+    withRollback(async (tx) => {
+      for (let i = 0; i < 3; i++) await insertObject(tx, { type: "cape", geom: point(LON + 0.01 + i * 0.001, LAT + 0.01) });
+      const bay = await insertObject(tx, { type: "bay", geom: point(LON + 0.02, LAT + 0.02) });
+      const bays = await mapLayer(tx, "geo-objects", BOX, { limit: 1, types: ["bay"] });
+      expect(ids(bays)).toEqual([bay]);
+      expect(bays.truncated).toBe(false);
+      expect((await mapLayer(tx, "geo-objects", BOX, { limit: 1 })).truncated).toBe(true);
+      expect((await mapLayer(tx, "geo-objects", BOX, { types: [] })).features).toEqual([]);
     }));
 
   it("restricted-areas layer returns only valid areas in the bbox with anchoringBan", () =>

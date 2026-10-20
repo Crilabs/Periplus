@@ -117,4 +117,25 @@ describe("GET /map-data/[layer]", () => {
       expect(body.type).toBe("FeatureCollection");
       expect(body.features.map((f) => f.properties!.id)).toEqual([place!.id]);
     }));
+
+  it("passes ?types= to the geo-object layer and refuses an unknown type (UI-12)", () =>
+    withRollback(async (tx) => {
+      db = tx;
+      await login(tx);
+      const geom = sql`${geomFromGeoJson({ type: "Point", coordinates: [LON, LAT] })}`;
+      const [bay] = await tx.insert(geoObjects).values({ type: "bay", origin: "manual", geom }).returning({ id: geoObjects.id });
+      await tx.insert(geoObjects).values({ type: "cape", origin: "manual", geom });
+      const box = `${LON - 0.1},${LAT - 0.1},${LON + 0.1},${LAT + 0.1}`;
+      const res = await GET(new NextRequest(`http://localhost/map-data/geo-objects?bbox=${box}&types=bay`), {
+        params: Promise.resolve({ layer: "geo-objects" }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as GeoJSON.FeatureCollection & { truncated: boolean };
+      expect(body.features.map((f) => f.properties!.id)).toEqual([bay!.id]);
+      expect(body.truncated).toBe(false);
+      const bad = await GET(new NextRequest(`http://localhost/map-data/geo-objects?bbox=${box}&types=volcano`), {
+        params: Promise.resolve({ layer: "geo-objects" }),
+      });
+      expect(bad.status).toBe(400);
+    }));
 });
