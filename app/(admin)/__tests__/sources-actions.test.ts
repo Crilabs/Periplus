@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { documents, runs, sources, tiles, type SourceStatus } from "@/lib/db/schema";
@@ -335,11 +335,13 @@ describe("uploadPdfAction", () => {
       const text = newId();
       await uploadPdfAction(form({ sourceId: first, file: new File([pdf(text)], "guide.pdf", { type: "application/pdf" }) }));
       const [doc] = await tx.select().from(documents).where(eq(documents.sourceId, first));
-      const runsBefore = await tx.select({ id: runs.id }).from(runs);
+      // only this test's runs: other test files commit runs while this one runs (never count DB-wide)
+      const ownRuns = () => tx.select({ id: runs.id }).from(runs).where(inArray(runs.scopeId, [first, second]));
+      const runsBefore = await ownRuns();
 
       await uploadPdfAction(form({ sourceId: second, file: new File([pdf(text)], "copy.pdf", { type: "application/pdf" }) }));
       expect(redirect).toHaveBeenLastCalledWith(`/sources/${second}?archived=${doc!.id}`);
-      expect(await tx.select({ id: runs.id }).from(runs)).toEqual(runsBefore);
+      expect(await ownRuns()).toEqual(runsBefore);
       expect(await tx.select().from(documents).where(eq(documents.sourceId, second))).toEqual([]);
     }));
 });
