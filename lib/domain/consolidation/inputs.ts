@@ -365,6 +365,8 @@ export type ProfileContext = {
    * value resting only on them is withdrawn, not kept to expire („Quelle beenden“, ruling M6-H-R1).
    */
   withdrawnFactIds: Set<string>;
+  /** `source:<id>` keys of the sources of `withdrawnFactIds`: a kept value stops citing them (ruling M6-FIN-R2). */
+  withdrawnSourceKeys: Set<string>;
 };
 
 type ObjectRow = {
@@ -443,8 +445,8 @@ export async function loadContext(
     where m.geo_object_id in ${mergedChainSql(geoObjectId)} and ${countingSourceSql(today)}
   `);
 
-  const { rows: withdrawn } = await db.execute<{ id: string }>(sql`
-    select f.id
+  const { rows: withdrawn } = await db.execute<{ id: string; source_id: string }>(sql`
+    select f.id, s.id as source_id
     from facts f
     join mentions m on m.id = f.mention_id
     join document_versions v on v.id = m.document_version_id
@@ -501,6 +503,7 @@ export async function loadContext(
     decidedConflictKeys,
     openTasks,
     withdrawnFactIds: new Set(withdrawn.map((r) => r.id)),
+    withdrawnSourceKeys: new Set(withdrawn.map((r) => `source:${r.source_id}`)),
   };
 }
 

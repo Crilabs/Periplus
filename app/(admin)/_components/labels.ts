@@ -454,6 +454,7 @@ export const PROFILE_GAP_REASON_LABELS: Record<string, string> = {
   no_facts: "Keine Facts",
   too_few_parts: "Zu wenige Teilwerte",
   no_category: "Keine Kategorie",
+  in_review: "In Prüfung (unsichere Änderung)",
 };
 
 /** The label of a gap reason; the reason itself when unknown. */

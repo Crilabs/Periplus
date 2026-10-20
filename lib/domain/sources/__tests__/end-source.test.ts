@@ -1,8 +1,9 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { geoObjects, sources } from "@/lib/db/schema";
+import { geoObjects, reviewTasks, sources } from "@/lib/db/schema";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
+import { decideReviewTask } from "@/lib/domain/review-decisions";
 import { endSource, getSource, resumeSource } from "@/lib/domain/sources/store";
 import { latestProfile } from "@/lib/domain/timeline";
 import { insertPlace, insertSource, insertTextFact } from "@/test/consolidation";
@@ -70,5 +71,39 @@ describe("endSource", () => {
       await endSource(tx, sourceId);
       await consolidateGeo(tx, objectId, { today });
       expect((await latestProfile(tx, objectId))!.attributes["holding"]).toBeUndefined();
+    }));
+
+  it("one weak post after the end does not raise a shelter sector: null and one uncertain_change task until decided (ruling M6-FIN-R2)", () =>
+    withRollback(async (tx) => {
+      const navily = await insertSource(tx, "travel_guide", 0.9);
+      await tx.update(sources).set({ status: "approved" }).where(eq(sources.id, navily));
+      const forum = await approvedSource(tx);
+      const { objectId } = await insertPlace(tx, { name: "Schutzbucht" });
+      await insertTextFact(tx, objectId, navily, { attribute: "shelter.S", value: 0.4, observedAt: "2026-07-01", confidence: 0.9 });
+      const today = await utcToday(tx);
+      await consolidateGeo(tx, objectId, { today });
+      expect((await latestProfile(tx, objectId))!.attributes["shelter.S"]).toBe(0.4);
+
+      await endSource(tx, navily);
+      await insertTextFact(tx, objectId, forum, { attribute: "shelter.S", value: 0.9, observedAt: "2026-08-01" });
+      const tasks = () =>
+        tx.select().from(reviewTasks).where(and(eq(reviewTasks.kind, "uncertain_change"), eq(reviewTasks.subjectId, `${objectId}:shelter.S`)));
+
+      await consolidateGeo(tx, objectId, { today });
+      expect((await latestProfile(tx, objectId))!.attributes["shelter.S"]).toBeUndefined();
+      const [task, ...more] = await tasks();
+      expect(more).toEqual([]);
+      expect(task).toMatchObject({ status: "open", priority: 2, context: expect.objectContaining({ oldValue: null, newValue: 0.9 }) });
+
+      // a second run while the task is open: still null, the same single task
+      expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "unchanged", events: 0, tasks: 0 });
+      expect((await latestProfile(tx, objectId))!.attributes["shelter.S"]).toBeUndefined();
+      expect(await tasks()).toEqual([expect.objectContaining({ id: task!.id, status: "open" })]);
+
+      // deciding the task applies the value
+      const taskKey = (task!.context as { key: string }).key;
+      await decideReviewTask(tx, { taskId: task!.id, decision: { action: "accept_change" }, decidedBy: "admin@example.invalid", taskKey });
+      await consolidateGeo(tx, objectId, { today });
+      expect((await latestProfile(tx, objectId))!.attributes["shelter.S"]).toBe(0.9);
     }));
 });

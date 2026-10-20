@@ -107,7 +107,8 @@ function valueFacts(p: AttributeProvenance): string[] {
 
 /**
  * A text or observed value whose every fact comes from a source that is rejected or ended now (`withdrawnFactIds`,
- * „Quelle beenden“, ruling M6-H-R1): it is withdrawn, not kept to expire, and a new value replaces it without support.
+ * „Quelle beenden“, ruling M6-H-R1): it is withdrawn, not kept to expire. A new value of a non-safety attribute
+ * replaces it without support; on a safety attribute it needs support like any change (ruling M6-FIN-R2).
  */
 function withdrawn(p: AttributeProvenance, withdrawnFactIds: Set<string>): boolean {
   if (!canExpire(p)) return false;
@@ -145,6 +146,30 @@ function producedConfirmation(p: AttributeProvenance, support: AttributeSupport 
   }
   if (p.factIds.length === 0 || !p.factIds.every((id) => support.confirmedByInput[id] !== undefined)) return undefined;
   return latest(p.factIds);
+}
+
+/**
+ * A safety attribute (ruling M6-FIN-R2): a shelter sector or an attribute matching `severity.safety`. A weak text
+ * never sets such a value in place of a withdrawn one or past an open `uncertain_change` task.
+ */
+function safetyAttribute(attribute: string, cfg: ConsolidationConfig): boolean {
+  return attribute.startsWith("shelter.") || attributeIn(attribute, cfg.severity.safety);
+}
+
+/** Gap reason of a safety value held back until its `uncertain_change` task is decided (ruling M6-FIN-R2). */
+export const IN_REVIEW_GAP = "in_review";
+
+/**
+ * A kept provenance without the facts and sources withdrawn now (ruling M6-FIN-R2): the value rests on its other
+ * sources, and no package cites an ended or rejected source through it.
+ */
+function withoutWithdrawn(p: AttributeProvenance, context: ProfileContext): AttributeProvenance {
+  const facts = (ids: string[]) => ids.filter((id) => !context.withdrawnFactIds.has(id));
+  const sourceKeys = p.sourceKeys.filter((k) => !context.withdrawnSourceKeys.has(k));
+  const factIds = facts(p.factIds);
+  const entryFactIds = p.entryFactIds ? Object.fromEntries(Object.entries(p.entryFactIds).map(([k, ids]) => [k, facts(ids)])) : p.entryFactIds;
+  if (factIds.length === p.factIds.length && sourceKeys.length === p.sourceKeys.length && same(entryFactIds, p.entryFactIds)) return p;
+  return { ...p, factIds, sourceKeys, ...(entryFactIds ? { entryFactIds } : {}) };
 }
 
 /** Severity of a value that is gone: a shelter sector without a value any more is `safety` (no Δ to measure). */
@@ -197,7 +222,10 @@ function mergedListProvenance(prev: AttributeProvenance, next: AttributeProvenan
  * The new profile against the valid one (`prev`, null before the first version), rulings M5-P7/P8/P9/P23, M5-F-R3:
  * - Without a previous profile: no attribute events; a confirmed place → `place_new`.
  * - Per attribute of the fact schema level:
- *   - no value before → `new_attribute`;
+ *   - no value before → `new_attribute`; but an unsupported value of a safety attribute (shelter sectors,
+ *     `severity.safety`, not the additive lists) whose `uncertain_change` task is open, or whose key was decided
+ *     (discarded: an accepted value has review support), stays without a value (gap `in_review`) and keeps its task
+ *     (ruling M6-FIN-R2);
  *   - another value supported by `change.minIndependent` independent sources or a source weighing more than
  *     `change.strongWeight` (or set by the rule itself, origin `rule`) → `changed`;
  *   - otherwise uncertain: the old value, its provenance and its conflict note stay and, unless its key
@@ -207,8 +235,12 @@ function mergedListProvenance(prev: AttributeProvenance, next: AttributeProvenan
  *   - a value without inputs any more stays (no event, expiry ages it) if it can expire (text or observation);
  *     a computed, rule, review or POI value goes, its gap stays, and `changed` → null is emitted (ruling M5-F-R3 I-1);
  *   - a text or observed value resting only on facts of rejected or ended sources (`withdrawn`, ruling M6-H-R1) goes
- *     like a computed one, and another value replaces it as `changed` without the support rule;
- * - A kept value still carried by a current input is confirmed again (`lastConfirmedAt`, ruling M5-F-R3 M-1).
+ *     like a computed one; another value replaces it as `changed` without the support rule, except on a safety
+ *     attribute (ruling M6-FIN-R2): there an unsupported value is held for review (`changed` → null, severity by
+ *     attribute, gap `in_review`, priority-2 `uncertain_change` task with old value null); a safety list takes the
+ *     new entries at once (each mention counts, ruling M5-F-R3 I-3);
+ * - A kept value still carried by a current input is confirmed again (`lastConfirmedAt`, ruling M5-F-R3 M-1); it no
+ *   longer cites withdrawn facts or their sources (ruling M6-FIN-R2).
  * - A value newly `expired` → `expired` (severity by attribute, `details.lastConfirmedAt`).
  * - Identity: name, parent, geometry, position → `geo_changed` (`info`); `place.kind` → `changed` (`info`); `exclude`
  *   → `changed` (`safety`); status newly `confirmed` from none or `candidate` → `place_new`, newly `abandoned` →
@@ -234,12 +266,15 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
 
   if (prev !== null) {
     const cutoff = dateMinusDays(ctx.today, cfg.expiry.cycles * context.tileCycleDays);
-    /** The old value with its provenance and its conflict note (re-resolved against the decided tasks). */
+    /**
+     * The old value with its provenance (without withdrawn facts and sources) and its conflict note (re-resolved
+     * against the decided tasks).
+     */
     const keep = (key: string) => {
       const support = next.support[key];
       const confirmedAt = support?.confirmedAt[canonicalJson(prev.attributes[key] ?? null)] ?? producedConfirmation(prev.provenance[key]!, support);
       profile.attributes[key] = prev.attributes[key];
-      profile.provenance[key] = keptProvenance(prev.provenance[key]!, cutoff, cfg, confirmedAt);
+      profile.provenance[key] = withoutWithdrawn(keptProvenance(prev.provenance[key]!, cutoff, cfg, confirmedAt), context);
       profile.gaps = profile.gaps.filter((g) => g.attribute !== key);
       profile.conflicts = [
         ...profile.conflicts.filter((c) => c.attribute !== key),
@@ -247,13 +282,51 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
       ].sort((a, b) => cmp(a.attribute, b.attribute) || cmp(a.key, b.key));
     };
 
+    /**
+     * A safety value held back for review (ruling M6-FIN-R2): the attribute stays without a value (gap `in_review`)
+     * and, unless its key was decided, an `uncertain_change` task (priority 2, old value null) proposes the value;
+     * `withEvent` false when the task already waits (its `uncertain` event was written when it was opened).
+     */
+    const holdForReview = (key: string, newValue: unknown, support: AttributeSupport, withEvent: boolean) => {
+      delete profile.attributes[key];
+      delete profile.provenance[key];
+      profile.conflicts = profile.conflicts.filter((c) => c.attribute !== key);
+      profile.gaps = [...profile.gaps.filter((g) => g.attribute !== key), { attribute: key, reason: IN_REVIEW_GAP }];
+      const factIds = [...support.factIds].sort();
+      const taskKey = uncertainKey(key, newValue, factIds);
+      if (context.decidedUncertainKeys.has(taskKey)) return;
+      tasks.push({
+        kind: "uncertain_change",
+        attribute: key,
+        key: taskKey,
+        context: { key: taskKey, attribute: key, oldValue: null, newValue, factIds, sources: next.provenance[key]?.sourceKeys ?? [] },
+        priority: priorityOf("safety"),
+        event: withEvent ? { type: "uncertain", attribute: key, oldValue: null, newValue, severity: "safety", details: { key: taskKey } } : null,
+      });
+    };
+
     for (const def of getFactSchema(next.factSchemaVersion).levels[ctx.level]) {
       const key = def.key;
       const had = key in prev.attributes && prev.provenance[key] !== undefined;
       const oldValue = prev.attributes[key];
       const newValue = next.attributes[key];
+      const support = next.support[key] ?? { independent: 0, maxWeight: 0, factIds: [], confirmedAt: {} };
+      const supported =
+        next.provenance[key]?.origin === "rule" ||
+        support.independent >= cfg.change.minIndependent ||
+        support.maxWeight > cfg.change.strongWeight;
+      const safety = safetyAttribute(key, cfg);
+      const additive = attributeIn(key, cfg.change.additiveLists);
       if (!had) {
-        if (newValue !== undefined) event("new_attribute", key, null, newValue, severityFor(key, undefined, newValue, cfg));
+        if (newValue === undefined) continue;
+        // an unsupported safety value waits for its open or discarded uncertain_change task (ruling M6-FIN-R2)
+        const held =
+          safety &&
+          !additive &&
+          !supported &&
+          (context.openTasks.has(`uncertain_change:${key}`) || context.decidedUncertainKeys.has(uncertainKey(key, newValue, [...support.factIds].sort())));
+        if (held) holdForReview(key, newValue, support, false);
+        else event("new_attribute", key, null, newValue, severityFor(key, undefined, newValue, cfg));
         continue;
       }
       const oldWithdrawn = withdrawn(prev.provenance[key]!, context.withdrawnFactIds);
@@ -261,24 +334,23 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
         if (canExpire(prev.provenance[key]!) && !oldWithdrawn) keep(key);
         else event("changed", key, oldValue, null, removalSeverity(key, oldValue, cfg));
       } else if (!same(oldValue, newValue)) {
-        const support = next.support[key] ?? { independent: 0, maxWeight: 0, factIds: [], confirmedAt: {} };
         const severity = severityFor(key, oldValue, newValue, cfg);
-        const supported =
-          oldWithdrawn ||
-          next.provenance[key]?.origin === "rule" ||
-          support.independent >= cfg.change.minIndependent ||
-          support.maxWeight > cfg.change.strongWeight;
-        if (supported) {
+        if (supported || (oldWithdrawn && (!safety || additive))) {
+          // a withdrawn safety list takes the new entries at once: each mention counts (ruling M5-F-R3 I-3)
           event("changed", key, oldValue, newValue, severity);
+        } else if (oldWithdrawn) {
+          // a withdrawn safety value goes; the weak replacement waits for review (ruling M6-FIN-R2)
+          event("changed", key, oldValue, null, removalSeverity(key, oldValue, cfg));
+          holdForReview(key, newValue, support, true);
         } else {
           const merged =
-            attributeIn(key, cfg.change.additiveLists) && Array.isArray(oldValue) && Array.isArray(newValue)
+            additive && Array.isArray(oldValue) && Array.isArray(newValue)
               ? withAdditions(key, oldValue, newValue, ctx)
               : null;
           if (merged !== null) {
             // added entries of a safety list hold at once (ruling M5-F-R3 I-3)
             profile.attributes[key] = merged;
-            profile.provenance[key] = mergedListProvenance(prev.provenance[key]!, next.provenance[key]!, merged, key, ctx);
+            profile.provenance[key] = withoutWithdrawn(mergedListProvenance(prev.provenance[key]!, next.provenance[key]!, merged, key, ctx), context);
             profile.conflicts = profile.conflicts.filter((c) => c.attribute !== key);
             event("changed", key, oldValue, merged, severity);
           } else {
