@@ -180,6 +180,13 @@ export type RuleResult = {
    * not from the flat `support`, which also holds removal decisions and inputs of other entries.
    */
   entryFactIds?: Record<string, string[]>;
+  /**
+   * Safety list rules only (`union`, `prohibitions`; GR-1): the entry keys a review removal decision took out and no
+   * input observed after it names again, also when no current input names them. Change detection lets a text entry
+   * leave the profile only through such a decision (or a withdrawn source); the rule may return a null value with
+   * only this set when the removals are its only inputs.
+   */
+  removedEntryKeys?: string[];
 };
 
 /** A pure consolidation rule (spec 07); `null` = no value. */

@@ -3,6 +3,9 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { getConfig } from "@/lib/config";
 import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
+import { attributeIn } from "@/lib/domain/consolidation/weights";
+import { isTextProhibition, profileEntryKey } from "@/lib/domain/profile-view";
+import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import {
@@ -477,16 +480,39 @@ async function applyProfileDecision(
   }
   if (value === null || value === undefined) throw new DecisionNotAllowed(`task ${task.id} proposes no value for ${attribute}`);
   const factSchemaVersion = getConfig().factSchema.version;
+  const cfg = await consolidationConfigFor(tx);
+  const removal = decision.action === "accept_change" ? safetyListRemoval(attribute, context.oldValue, value, cfg, factSchemaVersion) : null;
   await tx.insert(facts).values({
     geoObjectId,
     attribute,
-    value: reviewFactValue(attribute, value, factSchemaVersion),
+    value: removal ?? reviewFactValue(attribute, value, factSchemaVersion),
     reviewDecisionId: decisionId,
     observedAt: now.toISOString().slice(0, 10),
-    confidence: (await consolidationConfigFor(tx)).confidence.review,
+    confidence: cfg.confidence.review,
     factSchemaVersion,
   });
   return geoObjectId;
+}
+
+/**
+ * An accepted change of a safety list (`change.additiveLists`) that drops entries (GR-1): the review fact is the
+ * removal decision of those entries (`{ remove: [<entry>, …] }`; for `prohibitions` the text kinds `{ kind }`), since
+ * change detection lets a text entry leave only by such a decision; the entries the proposal adds already hold. Null
+ * when the attribute is no safety list or nothing is dropped (the proposed list is stored as before).
+ */
+function safetyListRemoval(attribute: string, oldValue: unknown, newValue: unknown, cfg: ConsolidationConfig, version: string): unknown {
+  if (!attributeIn(attribute, cfg.change.additiveLists) || !Array.isArray(oldValue) || !Array.isArray(newValue)) return null;
+  const keyOf = (e: unknown) => profileEntryKey(attribute, e, cfg);
+  const kept = new Set(newValue.map(keyOf));
+  const dropped = oldValue.filter((e) => !kept.has(keyOf(e)) && (attribute !== "prohibitions" || isTextProhibition(e)));
+  if (dropped.length === 0) return null;
+  try {
+    validateFactValue(attribute, dropped, version);
+  } catch (e) {
+    if (e instanceof UnknownAttribute || e instanceof InvalidFactValue) throw new DecisionNotAllowed(e.message);
+    throw e;
+  }
+  return { remove: attribute === "prohibitions" ? dropped.map((e) => ({ kind: String((e as { kind: unknown }).kind) })) : dropped };
 }
 
 /**

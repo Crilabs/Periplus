@@ -24,10 +24,18 @@ function entryKey(fields: string[], entry: unknown): string {
 }
 
 /**
- * A review decision removing one entry from a union list: value `{ remove: <entry> }` (ruling M5-C-R2 M-3). Bundle I:
- * the review action writes this shape; any other review value adds its entries like a text.
+ * A review decision removing one entry from a union list: value `{ remove: <entry> }` (ruling M5-C-R2 M-3), or
+ * `{ remove: [<entry>, …] }` when an accepted `uncertain_change` drops several entries of a safety list at once (one
+ * fact per decision, GR-1; list entries are never arrays themselves). Bundle I: the review action writes the single
+ * shape; any other review value adds its entries like a text.
  */
 export type UnionRemoval = { remove: unknown };
+
+/** The entries a removal decision removes. */
+function removedEntries(r: ConsolidationInput): unknown[] {
+  const remove = (r.value as UnionRemoval).remove;
+  return Array.isArray(remove) ? remove : [remove];
+}
 
 function isRemoval(i: ConsolidationInput): boolean {
   return i.origin === "review" && i.value !== null && typeof i.value === "object" && !Array.isArray(i.value) && "remove" in i.value;
@@ -66,16 +74,24 @@ export function unite(inputs: ConsolidationInput[], keyOf: (entry: unknown) => s
       byKey.set(key, slot);
     }
   }
-  if (byKey.size === 0) return null;
+  if (byKey.size === 0 && removals.length === 0) return null;
 
   const effective = new Set<ConsolidationInput>();
+  // entries a removal decision took out, also those no current input names any more (GR-1: change detection lets a
+  // text entry of a safety list leave the profile only through such a decision)
+  const removedEntryKeys = new Set<string>();
   for (const r of removals) {
-    const key = keyOf((r.value as UnionRemoval).remove);
-    const slot = byKey.get(key);
-    if (!slot || slot.entries.some((e) => e.input.observedAt > r.observedAt)) continue;
-    byKey.delete(key);
-    effective.add(r);
+    for (const entry of removedEntries(r)) {
+      const key = keyOf(entry);
+      const slot = byKey.get(key);
+      if (slot?.entries.some((e) => e.input.observedAt > r.observedAt)) continue;
+      removedEntryKeys.add(key);
+      if (!slot) continue;
+      byKey.delete(key);
+      effective.add(r);
+    }
   }
+  if (byKey.size === 0 && effective.size === 0) return { ...ruleResult(null, "review", removals, ctx), removedEntryKeys: [...removedEntryKeys].sort() };
 
   const merged = [...byKey.entries()]
     .map(([key, slot]) => {
@@ -105,7 +121,7 @@ export function unite(inputs: ConsolidationInput[], keyOf: (entry: unknown) => s
     ctx,
     confirming,
   );
-  return { ...result, entryFactIds };
+  return { ...result, entryFactIds, removedEntryKeys: [...removedEntryKeys].sort() };
 }
 
 function strongestEntry(entries: { entry: unknown; input: ConsolidationInput }[], ctx: RuleContext): unknown {

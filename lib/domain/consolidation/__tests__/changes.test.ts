@@ -608,6 +608,29 @@ describe("diffProfiles", () => {
     });
   });
 
+  it("a supported list without a text entry never drops it; only a review removal does (GR-1, SAF-1)", () => {
+    const rock = { kind: "rock", name: "Xera" };
+    const shoal = { kind: "shoal", name: null };
+    const hz = (factId: string, source: string, value: unknown) =>
+      text({ factId, attribute: "hazards", value, sourceKey: `source:${source}`, sourceWeight: 0.9, confidence: 0.9, observedAt: "2026-06-01" });
+    const prev = stored(build([...basis(), hz("fact-rock", "guide", [rock])]));
+    // two strong independent sources name only the shoal; the rock's own fact no longer counts (reprocess, prompt switch)
+    const r = diff(prev, build([...basis(), hz("fact-a", "a", [shoal]), hz("fact-b", "b", [shoal])]));
+    expect(r.profile.attributes["hazards"]).toEqual([shoal, rock]);
+    expect(r.profile.provenance["hazards"]!.entryMarkers).toEqual({ [JSON.stringify(["rock", "Xera"])]: "in_review" });
+    expect(r.events).toEqual([expect.objectContaining({ type: "changed", attribute: "hazards", oldValue: [rock], newValue: [shoal, rock] })]);
+    expect(r.tasks).toEqual([expect.objectContaining({ kind: "uncertain_change", attribute: "hazards", priority: 2, context: expect.objectContaining({ newValue: [shoal] }) })]);
+
+    // the accepted removal (`{ remove: [<entry>] }`, also when nothing names the rock any more) takes it out
+    const removal = review({ attribute: "hazards", value: { remove: [rock] }, observedAt: TODAY });
+    const removed = diff(prev, build([...basis(), hz("fact-a", "a", [shoal]), hz("fact-b", "b", [shoal]), removal]));
+    expect(removed.profile.attributes["hazards"]).toEqual([shoal]);
+    expect(removed.tasks).toEqual([]);
+    const only = diff(prev, build([...basis(), removal]));
+    expect(only.profile.attributes["hazards"]).toBeUndefined();
+    expect(only.events).toEqual([expect.objectContaining({ type: "changed", attribute: "hazards", oldValue: [rock], newValue: null })]);
+  });
+
   it("a kept value still confirmed by its source does not expire (ruling M5-F-R3 M-1)", () => {
     const prev = stored(build([...basis(), guideWater()]));
     // the guide is fetched again and still says yes; a newer forum says no (uncertain)

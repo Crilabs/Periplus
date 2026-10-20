@@ -6,7 +6,7 @@ import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { type AttributeSupport, type BuiltProfile, conflictResolution, profileContentHash } from "./build";
 import { profileConfidence } from "./derived/confidence";
 import type { ProfileContext } from "./inputs";
-import { compareProhibitions, prohibitionEntryKey } from "./rules/prohibitions";
+import { compareProhibitions, isComputedProhibition, prohibitionEntryKey } from "./rules/prohibitions";
 import { unionEntryKey } from "./rules/union";
 import type { AttributeProvenance, ProfileSnapshot } from "./types";
 import { attributeIn, classMidpoint, lowerClass, roundTo } from "./weights";
@@ -205,21 +205,6 @@ function listEntryKey(attribute: string, entry: unknown, ctx: DiffContext): stri
   return unionEntryKey(entry, { attribute, level: ctx.level, place: null, today: ctx.today, cfg: ctx.cfg });
 }
 
-/**
- * The old list with the entries the new one adds (ruling M5-F-R3 I-3): kept entries in their old form, added entries
- * in the new list's order, entries the new list lacks after them in the union rule's order for entries no current
- * source names, i.e. by entry key (ruling M5-F-R3 N-3; `prohibitions` sorted by kind); `null` when the new list adds
- * nothing.
- */
-function withAdditions(attribute: string, oldList: unknown[], newList: unknown[], ctx: DiffContext): unknown[] | null {
-  const oldByKey = new Map(oldList.map((e) => [listEntryKey(attribute, e, ctx), e]));
-  const newKeys = new Set(newList.map((e) => listEntryKey(attribute, e, ctx)));
-  if ([...newKeys].every((k) => oldByKey.has(k))) return null;
-  const carried = [...oldByKey].filter(([k]) => !newKeys.has(k)).sort(([a], [b]) => cmp(a, b)).map(([, e]) => e);
-  const merged = [...newList.map((e) => oldByKey.get(listEntryKey(attribute, e, ctx)) ?? e), ...carried];
-  return attribute === "prohibitions" ? merged.sort(compareProhibitions) : merged;
-}
-
 const unique = (values: string[]) => [...new Set(values)].sort();
 
 /** Provenance of a list with accepted additions: the new provenance, citing the kept entries of the old one too. */
@@ -254,17 +239,17 @@ function mergedListProvenance(prev: AttributeProvenance, next: AttributeProvenan
  *   - another value supported by `change.minIndependent` independent sources or a source weighing more than
  *     `change.strongWeight` (or set by the rule itself, origin `rule`) → `changed`;
  *   - otherwise uncertain: the old value, its provenance and its conflict note stay and, unless its key
- *     (`uncertainKey`) was decided, an `uncertain_change` task draft with an `uncertain` event. On a list of
- *     `change.additiveLists` (safety lists) the entries the new list adds are accepted anyway, per entry (`changed`);
- *     only the rest of the change (removed or changed entries) waits as uncertain; a kept entry citing no fact any
- *     more (withdrawn source) stays, marked `in_review` in `entryMarkers` while its task is drafted (ruling M6-FIN-R3);
+ *     (`uncertainKey`) was decided, an `uncertain_change` task draft with an `uncertain` event;
+ *   - a list of `change.additiveLists` (safety lists) goes through `safetyListDiff` whatever its support: added
+ *     entries hold at once (`changed`); a missing entry leaves only by a review removal, as a computed-only entry its
+ *     newer computation dropped, or with every text fact of the list withdrawn; any other missing entry stays,
+ *     marked `in_review`, and the change waits as uncertain (GR-1, rulings M5-C-R2 I-2, M5-F-R3 I-3, M6-FIN-R3);
  *   - a value without inputs any more stays (no event, expiry ages it) if it can expire (text or observation);
  *     a computed, rule, review or POI value goes, its gap stays, and `changed` → null is emitted (ruling M5-F-R3 I-1);
  *   - a text or observed value resting only on facts of rejected or ended sources (`withdrawn`, ruling M6-H-R1) goes
  *     like a computed one; another value replaces it as `changed` without the support rule, except on a safety
  *     attribute (ruling M6-FIN-R2): there an unsupported value is held for review (`changed` → null, severity by
- *     attribute, gap `in_review`, priority-2 `uncertain_change` task with old value null); a safety list takes the
- *     new entries at once (each mention counts, ruling M5-F-R3 I-3);
+ *     attribute, gap `in_review`, priority-2 `uncertain_change` task with old value null);
  * - A kept value still carried by a current input is confirmed again (`lastConfirmedAt`, ruling M5-F-R3 M-1); it no
  *   longer cites withdrawn facts or their sources (ruling M6-FIN-R2).
  * - A value newly `expired` → `expired` (severity by attribute, `details.lastConfirmedAt`).
@@ -343,6 +328,83 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
       });
     };
 
+    /**
+     * A safety list (`change.additiveLists`) against its previous value (`newList` null: the rule has no value now),
+     * rulings M5-F-R3 I-3, M6-FIN-R2/R3 and GR-1. Entries the new list adds hold at once (`changed`). An entry of the
+     * old list the new one lacks leaves only when
+     * - a review removal decision took it out (`support.removedEntryKeys`, „Eintrag entfernen“ or an accepted
+     *   `uncertain_change`),
+     * - it is a computed entry (a restricted area of `prohibitions`, or an entry cited by `computation:`/`poi:` inputs
+     *   alone): the newer computation no longer has it, or
+     * - every text fact of the old list is withdrawn now (a rejected or ended source, ruling M6-H-R1).
+     * Support never lifts an entry by omission: a computed `[]` basis, a reprocess run that misses the entry or facts
+     * that stop counting after a model or prompt switch leave it in place (GR-1). Such an entry is carried in its old
+     * form with its old provenance, marked `in_review`, and an `uncertain_change` task proposes the new list (unless
+     * its key was decided: then it stays without the marker). Without support, kept entries also keep their old form.
+     */
+    const safetyListDiff = (key: string, oldList: unknown[], newList: unknown[] | null, support: AttributeSupport, supported: boolean) => {
+      const prevP = prev.provenance[key]!;
+      const entryKey = (e: unknown) => listEntryKey(key, e, ctx);
+      const removed = new Set(support.removedEntryKeys ?? []);
+      const idsOf = (k: string) => prevP.entryFactIds?.[k] ?? [];
+      // a computed entry: a restricted area of `prohibitions`, or one cited by computation/POI inputs alone
+      const computedEntry = (k: string, e: unknown) => {
+        if (key === "prohibitions") return isComputedProhibition(e);
+        const ids = idsOf(k);
+        return ids.length > 0 && ids.every((id) => id.includes(":"));
+      };
+      const textIds = (k: string, e: unknown) => (computedEntry(k, e) ? [] : idsOf(k).filter((id) => !id.includes(":")));
+      const allText = oldList.flatMap((e) => textIds(entryKey(e), e));
+      const listWithdrawn = allText.length > 0 && allText.every((id) => context.withdrawnFactIds.has(id));
+      const proposed = newList ?? [];
+      const newKeys = new Set(proposed.map(entryKey));
+      const mayGo = (k: string, e: unknown) => removed.has(k) || computedEntry(k, e) || (listWithdrawn && textIds(k, e).length > 0);
+      const carried = oldList
+        .map((e) => [entryKey(e), e] as const)
+        .filter(([k, e]) => !newKeys.has(k) && !mayGo(k, e))
+        .sort(([a], [b]) => cmp(a, b));
+      const takesNew = supported || listWithdrawn;
+      const severity = severityFor(key, oldList, newList, cfg);
+      if (carried.length === 0 && (takesNew || newList === null)) {
+        // an accepted change: the new list (or none) as the rule made it
+        if (newList === null) event("changed", key, oldList, null, removalSeverity(key, oldList, cfg));
+        else if (!same(oldList, newList)) event("changed", key, oldList, newList, severity);
+        return;
+      }
+      const oldByKey = new Map(oldList.map((e) => [entryKey(e), e]));
+      const base = takesNew ? proposed : proposed.map((e) => oldByKey.get(entryKey(e)) ?? e);
+      const unsorted = [...base, ...carried.map(([, e]) => e)];
+      const merged = key === "prohibitions" ? unsorted.sort(compareProhibitions) : unsorted;
+      // the same entries in their old form: the old list stays as it was ordered (ruling M5-F-R3 N-3)
+      const sameEntries = merged.length === oldList.length && merged.every((e) => oldByKey.has(entryKey(e)) && same(oldByKey.get(entryKey(e)), e));
+      if (sameEntries) {
+        keep(key);
+      } else {
+        profile.attributes[key] = merged;
+        profile.provenance[key] = withoutWithdrawn(mergedListProvenance(prevP, next.provenance[key] ?? prevP, merged, key, ctx), context);
+        profile.conflicts = profile.conflicts.filter((c) => c.attribute !== key);
+        profile.gaps = profile.gaps.filter((g) => g.attribute !== key);
+        event("changed", key, oldList, merged, severity);
+      }
+      if (same(merged, proposed)) return;
+      const factIds = [...support.factIds].sort();
+      const taskKey = uncertainKey(key, proposed, factIds);
+      if (context.decidedUncertainKeys.has(taskKey)) return;
+      // the entries held back and those citing no fact any more stay, marked, while their removal waits (GR-1, M6-FIN-R3)
+      const marked = markUncitedEntries(profile.provenance[key]!);
+      const held = Object.fromEntries(carried.map(([k]) => [k, IN_REVIEW_GAP] as const));
+      const entryMarkers = { ...(marked.entryMarkers ?? {}), ...held };
+      profile.provenance[key] = Object.keys(entryMarkers).length > 0 ? { ...marked, entryMarkers } : marked;
+      tasks.push({
+        kind: "uncertain_change",
+        attribute: key,
+        key: taskKey,
+        // the profile's value while the change waits: the merged list after accepted additions (ruling M5-F-R3 N-1)
+        context: { key: taskKey, attribute: key, oldValue: merged, newValue: proposed, factIds, sources: next.provenance[key]?.sourceKeys ?? [] },
+        priority: priorityOf("safety"),
+        event: { type: "uncertain", attribute: key, oldValue: merged, newValue: proposed, severity: "safety", details: { key: taskKey } },
+      });
+    };
     for (const def of getFactSchema(next.factSchemaVersion).levels[ctx.level]) {
       const key = def.key;
       const had = key in prev.attributes && prev.provenance[key] !== undefined;
@@ -374,48 +436,32 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
         continue;
       }
       const oldWithdrawn = withdrawn(prev.provenance[key]!, context.withdrawnFactIds);
-      if (newValue === undefined) {
+      if (additive && Array.isArray(oldValue) && (newValue === undefined || Array.isArray(newValue))) {
+        safetyListDiff(key, oldValue, (newValue as unknown[] | undefined) ?? null, support, supported);
+      } else if (newValue === undefined) {
         if (canExpire(prev.provenance[key]!) && !oldWithdrawn) keep(key);
         else event("changed", key, oldValue, null, removalSeverity(key, oldValue, cfg));
       } else if (!same(oldValue, newValue)) {
         const severity = severityFor(key, oldValue, newValue, cfg);
-        if (supported || (oldWithdrawn && (!safety || additive))) {
-          // a withdrawn safety list takes the new entries at once: each mention counts (ruling M5-F-R3 I-3)
+        if (supported || (oldWithdrawn && !safety)) {
           event("changed", key, oldValue, newValue, severity);
         } else if (oldWithdrawn) {
           // a withdrawn safety value goes; the weak replacement waits for review (ruling M6-FIN-R2)
           event("changed", key, oldValue, null, removalSeverity(key, oldValue, cfg));
           holdForReview(key, newValue, support, true);
         } else {
-          const merged =
-            additive && Array.isArray(oldValue) && Array.isArray(newValue)
-              ? withAdditions(key, oldValue, newValue, ctx)
-              : null;
-          if (merged !== null) {
-            // added entries of a safety list hold at once (ruling M5-F-R3 I-3)
-            profile.attributes[key] = merged;
-            profile.provenance[key] = withoutWithdrawn(mergedListProvenance(prev.provenance[key]!, next.provenance[key]!, merged, key, ctx), context);
-            profile.conflicts = profile.conflicts.filter((c) => c.attribute !== key);
-            event("changed", key, oldValue, merged, severity);
-          } else {
-            keep(key);
-          }
-          if (merged === null || !same(merged, newValue)) {
-            const factIds = [...support.factIds].sort();
-            const taskKey = uncertainKey(key, newValue, factIds);
-            if (!context.decidedUncertainKeys.has(taskKey)) {
-              // a kept entry citing no fact any more stays while its removal waits (ruling M6-FIN-R3)
-              if (additive) profile.provenance[key] = markUncitedEntries(profile.provenance[key]!);
-              tasks.push({
-                kind: "uncertain_change",
-                attribute: key,
-                key: taskKey,
-                // the profile's value while the change waits: the merged list after accepted additions (ruling M5-F-R3 N-1)
-                context: { key: taskKey, attribute: key, oldValue: merged ?? oldValue, newValue, factIds, sources: next.provenance[key]?.sourceKeys ?? [] },
-                priority: priorityOf(severity),
-                event: { type: "uncertain", attribute: key, oldValue: merged ?? oldValue, newValue, severity, details: { key: taskKey } },
-              });
-            }
+          keep(key);
+          const factIds = [...support.factIds].sort();
+          const taskKey = uncertainKey(key, newValue, factIds);
+          if (!context.decidedUncertainKeys.has(taskKey)) {
+            tasks.push({
+              kind: "uncertain_change",
+              attribute: key,
+              key: taskKey,
+              context: { key: taskKey, attribute: key, oldValue, newValue, factIds, sources: next.provenance[key]?.sourceKeys ?? [] },
+              priority: priorityOf(severity),
+              event: { type: "uncertain", attribute: key, oldValue, newValue, severity, details: { key: taskKey } },
+            });
           }
         }
       }
