@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { placeImages, runs } from "@/lib/db/schema";
+import { placeImages, reviewDecisions, runs } from "@/lib/db/schema";
 import { createReviewTask } from "@/lib/domain/review";
 import { decideReviewTask } from "@/lib/domain/review-decisions";
 import { createRun } from "@/lib/domain/runs";
@@ -18,7 +18,7 @@ import {
   GEOMETRY_CONSOLIDATION_STAGES,
 } from "@/lib/pipeline/consolidation/stages";
 import { consolidateAfter } from "@/lib/pipeline/follow-ups";
-import { generatePlaceImage } from "@/lib/pipeline/images/generate";
+import { generatePlaceImage, keyDone } from "@/lib/pipeline/images/generate";
 import { imageJobs, imageTargets, nextViewSlot } from "@/lib/pipeline/images/stage";
 import { IMAGES_STAGE } from "@/lib/pipeline/images/stage-name";
 import { startImageRun } from "@/lib/pipeline/images-run";
@@ -143,6 +143,61 @@ describe("imageTargets", () => {
         alt: c.alt,
         generationKey: c.key,
       });
+      expect(await imageTargets(tx, run)).toEqual([]);
+    });
+  });
+
+  /** Decides `task` with `action` by writing the decision row and the status (the approval's image row is not made here). */
+  async function decide(tx: Db, taskId: string, action: string) {
+    await tx.insert(reviewDecisions).values({ taskId, decision: { action }, decidedBy: "test" });
+    await tx.execute(sql`update review_tasks set status = 'decided' where id = ${taskId}`);
+  }
+
+  it("removed title image is a target again", async () => {
+    await withRollback(async (tx) => {
+      const sd = await insertImageSubdivision(tx);
+      const spot = await insertSpot(tx, sd.id);
+      const run = await subdivisionRun(tx, sd.key);
+      const task = await generateTitle(tx, spot.objectId, run.id);
+      await decide(tx, task.id, "approve_image");
+      // the approval's image is current: done
+      const c = task.context;
+      await tx.insert(placeImages).values({
+        geoObjectId: spot.objectId, kind: "ai_illustration", slot: "title",
+        cameraPosition: geomFromGeoJson({ type: "Point", coordinates: c.camera!.position }),
+        cameraHeightM: c.camera!.heightM, viewBearingDeg: c.camera!.viewBearingDeg, cameraTiltDeg: c.camera!.tiltDeg, cameraFovDeg: c.camera!.fovDeg,
+        renderId: c.renderId, fileKey: c.candidateKey!, width: 1536, height: 1024, alt: c.alt, generationKey: c.key,
+      });
+      expect(await imageTargets(tx, run)).toEqual([]);
+      // „Bild entfernen“ ends it
+      await tx.execute(sql`update place_images set valid_to = current_date where geo_object_id = ${spot.objectId}`);
+      expect(await imageTargets(tx, run)).toEqual([{ geoObjectId: spot.objectId, view: TITLE }]);
+    });
+  });
+
+  it("removed further view is not regenerated", async () => {
+    await withRollback(async (tx) => {
+      const sd = await insertImageSubdivision(tx);
+      const spot = await insertSpot(tx, sd.id);
+      const run = await subdivisionRun(tx, sd.key);
+      const title = await generateTitle(tx, spot.objectId, run.id);
+      await tx.execute(sql`update review_tasks set status = 'dismissed' where id = ${title.id}`);
+      // a decided, approved task of a further view whose image was removed stays done
+      await tx.execute(sql`update review_tasks set subject_id = ${`${spot.objectId}:view-2`} where id = ${title.id}`);
+      await decide(tx, title.id, "approve_image");
+      expect(await keyDone(tx, spot.objectId, "view-2", title.context.key!)).toBe(true);
+      // and the automatic run only ever targets the title slot
+      expect((await imageTargets(tx, run)).every((t) => t.view.slot === "title")).toBe(true);
+    });
+  });
+
+  it("no_image still blocks", async () => {
+    await withRollback(async (tx) => {
+      const sd = await insertImageSubdivision(tx);
+      const spot = await insertSpot(tx, sd.id);
+      const run = await subdivisionRun(tx, sd.key);
+      const task = await generateTitle(tx, spot.objectId, run.id);
+      await decide(tx, task.id, "no_image");
       expect(await imageTargets(tx, run)).toEqual([]);
     });
   });

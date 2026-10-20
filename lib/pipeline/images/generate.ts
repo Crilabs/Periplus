@@ -6,7 +6,7 @@ import { checkPlaceImageTask } from "@/lib/ai/tasks/check-place-image";
 import { ModelOutputInvalid, type ModelClient } from "@/lib/ai/types";
 import { getConfig, type AppConfig, type ImageryLight, type ZoomLevel } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { placeImages, reviewTasks, type PlaceKind } from "@/lib/db/schema";
+import { placeImages, reviewDecisions, reviewTasks, type PlaceKind } from "@/lib/db/schema";
 import { passesGeometry, toJpeg, waterIoU } from "@/lib/domain/images/checks";
 import { lightFor } from "@/lib/domain/images/light";
 import { loadPlaceImageInput, type PlaceImageInput } from "@/lib/domain/images/place-input";
@@ -105,7 +105,9 @@ export const atTarget = (place: PlaceImageInput, camera: RenderCamera): PlaceIma
 
 /**
  * Whether `key` is done for `slot` of the place: a current image of the slot, an open task or a decided task carries
- * it. A rejected image is not generated again for the same key either. With `force` (an admin's „Neu erzeugen“ at
+ * it. A rejected image („Kein Bild“) is not generated again for the same key either, but a title image that was
+ * approved and then removed („Bild entfernen“: no current image of the slot, the decided task's decision was
+ * `approve_image`) is: the next automatic run generates it again. A removed further view does not come back. With `force` (an admin's „Neu erzeugen“ at
  * the same zoom, whose decided task carries the key), a decided task does not count; a current image or an open task
  * still does, so a retried forced job changes nothing.
  */
@@ -130,7 +132,26 @@ export async function keyDone(db: Db, geoObjectId: string, slot: string, key: st
     )
     .limit(1);
   if (open) return true;
-  return !force && (await hasDecidedTask(db, "place_image", subjectId, { key }));
+  if (force) return false;
+  if (slot !== "title") return hasDecidedTask(db, "place_image", subjectId, { key });
+  // Title slot: a decided task is done, except one that approved an image which has since been removed („Bild entfernen“):
+  // without a current image of the slot, the next automatic run generates the title image again.
+  const { rows } = await db.execute<{ approved_only: boolean }>(sql`
+    select bool_and(coalesce(d.decision->>'action', '') = 'approve_image') as approved_only
+    from ${reviewTasks} t
+    left join lateral (
+      select decision from ${reviewDecisions} where task_id = t.id order by decided_at desc, id desc limit 1
+    ) d on true
+    where t.kind = 'place_image' and t.subject_id = ${subjectId} and t.status = 'decided'
+      and t.context @> ${JSON.stringify({ key })}::jsonb`);
+  if (rows.length === 0 || rows[0]!.approved_only === null) return false;
+  if (!rows[0]!.approved_only) return true;
+  const [current] = await db
+    .select({ id: placeImages.id })
+    .from(placeImages)
+    .where(and(eq(placeImages.geoObjectId, geoObjectId), eq(placeImages.slot, slot), isNull(placeImages.validTo)))
+    .limit(1);
+  return current !== undefined;
 }
 
 /**
