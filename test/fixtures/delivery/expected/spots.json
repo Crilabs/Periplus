@@ -1,0 +1,428 @@
+{
+  "schemaVersion": "1.0",
+  "area": "ar_01J9ZD00000000000000000001",
+  "dataVersion": 1,
+  "generatedAt": "2040-06-01T08:00:00.000Z",
+  "spots": [
+    {
+      "id": "sp_01J9ZD00000000000000000001",
+      "kind": "anchorage",
+      "name": "Vathi Bay",
+      "names": [
+        {
+          "lang": "el",
+          "name": "Όρμος Βαθύ",
+          "script": "greek"
+        },
+        {
+          "lang": "en",
+          "name": "Vathi Bay",
+          "script": "latin"
+        }
+      ],
+      "position": {
+        "lat": 35.145,
+        "lon": 21.13
+      },
+      "anchorPosition": {
+        "lat": 35.1445,
+        "lon": 21.1301,
+        "confidence": 0.6,
+        "source": "computed"
+      },
+      "shelter": {
+        "sectors": {
+          "N": 0.9,
+          "NE": 0.8,
+          "E": 0.4,
+          "SE": 0.1,
+          "S": 0.2,
+          "SW": 0.7,
+          "W": 0.9,
+          "NW": 0.95
+        },
+        "swell": 0.5,
+        "source": "computed+text"
+      },
+      "depth": {
+        "min": 2,
+        "max": 14,
+        "anchoring": {
+          "min": 4,
+          "max": 8
+        },
+        "confidence": 0.8,
+        "source": "computed"
+      },
+      "seabed": [
+        {
+          "type": "sand",
+          "share": 0.7
+        },
+        {
+          "type": "weed",
+          "share": 0.3
+        }
+      ],
+      "holding": "good",
+      "limits": {
+        "maxDraft": null,
+        "maxLength": null,
+        "capacity": 8
+      },
+      "mooring": {
+        "types": [
+          "anchor",
+          "lineAshore"
+        ],
+        "buoys": 0,
+        "lineAshoreRequired": false
+      },
+      "services": {
+        "water": "no",
+        "electricity": "unknown",
+        "fuel": "unknown",
+        "showers": "unknown",
+        "shop": "unknown",
+        "taverna": "seasonal",
+        "wifi": "unknown",
+        "dinghyLanding": "yes"
+      },
+      "berth": {
+        "status": "unknown",
+        "months": [],
+        "sourcesCount": 0,
+        "bookable": null
+      },
+      "occupancy": [
+        {
+          "month": 7,
+          "level": "full"
+        },
+        {
+          "month": 8,
+          "level": "full"
+        },
+        {
+          "month": 9,
+          "level": "moderate"
+        }
+      ],
+      "exclude": {
+        "excluded": false,
+        "reason": null,
+        "detail": null
+      },
+      "hazards": [
+        {
+          "kind": "rock",
+          "text": "Fels: Petra"
+        }
+      ],
+      "seasonNote": [
+        {
+          "months": [
+            6,
+            7,
+            8,
+            9
+          ],
+          "text": "Geöffnet"
+        }
+      ],
+      "score": {
+        "confidence": 0.72,
+        "popularity": 1,
+        "quietness": 0.8,
+        "sourcesCount": 3,
+        "lastObserved": "2025-06-10"
+      },
+      "highlightIds": [
+        "hl_01J9ZD00000000000000000001"
+      ],
+      "externalRefs": {
+        "googlePlaceIds": {},
+        "osmId": "way/123456789",
+        "wikidataId": null
+      },
+      "summary": {
+        "de": "Tiefe Bucht mit gutem Schutz von West bis Nord, Sandgrund mit Seegras."
+      },
+      "sources": [
+        {
+          "url": "https://vathi.test.invalid/trip-report",
+          "kind": "tripReport",
+          "observedAt": "2026-10-19"
+        }
+      ],
+      "provenance": {
+        "shelter": {
+          "source": "text",
+          "confidence": 0.7,
+          "observedAt": "2026-10-01"
+        },
+        "depth": {
+          "source": "computed",
+          "confidence": 0.8,
+          "observedAt": "2026-10-01"
+        },
+        "seabed": {
+          "source": "computed",
+          "confidence": 0.8,
+          "observedAt": "2026-10-01"
+        },
+        "holding": {
+          "source": "text",
+          "confidence": 0.7,
+          "observedAt": "2025-06-10"
+        },
+        "limits": {
+          "source": "computed",
+          "confidence": 0.8,
+          "observedAt": "2026-10-01"
+        },
+        "mooring": {
+          "source": "text",
+          "confidence": 0.7,
+          "observedAt": "2026-10-01"
+        },
+        "services.water": {
+          "source": "text",
+          "confidence": 0.7,
+          "observedAt": "2025-06-10"
+        },
+        "services.taverna": {
+          "source": "text",
+          "confidence": 0.7,
+          "observedAt": "2025-06-10"
+        },
+        "services.dinghyLanding": {
+          "source": "text",
+          "confidence": 0.7,
+          "observedAt": "2025-06-10"
+        },
+        "occupancy": {
+          "source": "text",
+          "confidence": 0.7,
+          "observedAt": "2025-06-10"
+        },
+        "exclude": {
+          "source": "computed",
+          "confidence": 1,
+          "observedAt": null
+        },
+        "hazards": {
+          "source": "text",
+          "confidence": 0.7,
+          "observedAt": "2025-06-10"
+        },
+        "anchorPosition": {
+          "source": "computed",
+          "confidence": 0.6,
+          "observedAt": "2026-10-01"
+        },
+        "seasonNote": {
+          "source": "computed",
+          "confidence": 1,
+          "observedAt": null
+        }
+      },
+      "regionId": "rg_01J9ZD00000000000000000001",
+      "mergedInto": null,
+      "profileVersion": 1,
+      "validFrom": "2040-06-01"
+    },
+    {
+      "id": "sp_01J9ZD00000000000000000002",
+      "kind": "marina",
+      "name": "Marina Test",
+      "names": [
+        {
+          "lang": "en",
+          "name": "Marina Test",
+          "script": "latin"
+        }
+      ],
+      "position": {
+        "lat": 35.1,
+        "lon": 21.3
+      },
+      "shelter": {
+        "sectors": {
+          "N": 0.9,
+          "NE": 0.9,
+          "E": 0.9,
+          "SE": 0.9,
+          "S": 0.9,
+          "SW": 0.9,
+          "W": 0.9,
+          "NW": 0.9
+        },
+        "swell": 0.9,
+        "source": "computed"
+      },
+      "holding": "unknown",
+      "limits": {
+        "maxDraft": null,
+        "maxLength": null,
+        "capacity": null
+      },
+      "services": {
+        "water": "unknown",
+        "electricity": "unknown",
+        "fuel": "unknown",
+        "showers": "unknown",
+        "shop": "unknown",
+        "taverna": "unknown",
+        "wifi": "unknown",
+        "dinghyLanding": "unknown"
+      },
+      "berth": {
+        "status": "seasonFull",
+        "months": [
+          7,
+          8
+        ],
+        "sourcesCount": 0,
+        "bookable": null
+      },
+      "occupancy": [
+        {
+          "month": 7,
+          "level": "full"
+        },
+        {
+          "month": 8,
+          "level": "full"
+        }
+      ],
+      "exclude": {
+        "excluded": false,
+        "reason": null,
+        "detail": null
+      },
+      "score": {
+        "confidence": 0.6,
+        "popularity": 0.5,
+        "quietness": null,
+        "sourcesCount": 1,
+        "lastObserved": null
+      },
+      "highlightIds": [
+        "hl_01J9ZD00000000000000000001"
+      ],
+      "externalRefs": {
+        "googlePlaceIds": {},
+        "osmId": null,
+        "wikidataId": null
+      },
+      "provenance": {
+        "shelter": {
+          "source": "computed",
+          "confidence": 0.8,
+          "observedAt": null
+        },
+        "occupancy": {
+          "source": "computed",
+          "confidence": 0.8,
+          "observedAt": null
+        },
+        "exclude": {
+          "source": "computed",
+          "confidence": 0.8,
+          "observedAt": null
+        }
+      },
+      "regionId": null,
+      "mergedInto": null,
+      "profileVersion": 1,
+      "validFrom": "2040-06-01"
+    },
+    {
+      "id": "sp_01J9ZD00000000000000000004",
+      "kind": "anchorage",
+      "name": "Ormos C",
+      "names": [
+        {
+          "lang": "en",
+          "name": "Ormos C",
+          "script": "latin"
+        }
+      ],
+      "position": {
+        "lat": 35.2,
+        "lon": 21.4
+      },
+      "shelter": {
+        "sectors": {
+          "N": 0.5,
+          "NE": 0.5,
+          "E": 0.5,
+          "SE": 0.5,
+          "S": 0.5,
+          "SW": 0.5,
+          "W": 0.5,
+          "NW": 0.5
+        },
+        "swell": 0.5,
+        "source": "computed"
+      },
+      "holding": "unknown",
+      "limits": {
+        "maxDraft": null,
+        "maxLength": null,
+        "capacity": null
+      },
+      "services": {
+        "water": "unknown",
+        "electricity": "unknown",
+        "fuel": "unknown",
+        "showers": "unknown",
+        "shop": "unknown",
+        "taverna": "unknown",
+        "wifi": "unknown",
+        "dinghyLanding": "unknown"
+      },
+      "berth": {
+        "status": "unknown",
+        "months": [],
+        "sourcesCount": 0,
+        "bookable": null
+      },
+      "exclude": {
+        "excluded": true,
+        "reason": "military",
+        "detail": "Militärisches Sperrgebiet"
+      },
+      "score": {
+        "confidence": 0.4,
+        "popularity": 0,
+        "quietness": null,
+        "sourcesCount": 0,
+        "lastObserved": null
+      },
+      "highlightIds": [],
+      "externalRefs": {
+        "googlePlaceIds": {},
+        "osmId": null,
+        "wikidataId": null
+      },
+      "provenance": {
+        "shelter": {
+          "source": "computed",
+          "confidence": 0.8,
+          "observedAt": null
+        },
+        "exclude": {
+          "source": "computed",
+          "confidence": 0.8,
+          "observedAt": null
+        }
+      },
+      "regionId": null,
+      "mergedInto": null,
+      "profileVersion": 1,
+      "validFrom": "2040-06-01"
+    }
+  ]
+}

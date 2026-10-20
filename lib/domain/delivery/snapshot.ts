@@ -26,12 +26,17 @@ export async function openBuildSnapshot<T>(
   if (db instanceof PgTransaction) throw new Error("openBuildSnapshot needs the pool handle, not a transaction");
   return db.transaction(
     async (tx) => {
-      const { rows } = await tx.execute<{ snapshot: string; xmin: string }>(
-        sql`select pg_current_snapshot()::text as snapshot, pg_snapshot_xmin(pg_current_snapshot())::text as xmin`,
-      );
-      const snapshot = rows[0]!;
+      const snapshot = await currentSnapshot(tx);
       return { snapshot, result: await read(tx, snapshot) };
     },
     { isolationLevel: "repeatable read", accessMode: "read only" },
   );
+}
+
+/** The current snapshot of `db`'s connection (as the first statement of a REPEATABLE READ transaction, its snapshot). */
+export async function currentSnapshot(db: Db): Promise<BuildSnapshot> {
+  const { rows } = await db.execute<{ snapshot: string; xmin: string }>(
+    sql`select pg_current_snapshot()::text as snapshot, pg_snapshot_xmin(pg_current_snapshot())::text as xmin`,
+  );
+  return rows[0]!;
 }

@@ -29,6 +29,7 @@ function validate(pkg: DeliveryPackage, deps: Partial<ValidationDeps> = {}): Pro
   return validatePackage(pkg, {
     previous: PREVIOUS,
     findCopies: async () => 0,
+    forbiddenSources: [],
     cfg,
     radiusNm: config.consolidation.importance.radiusNm,
     ...deps,

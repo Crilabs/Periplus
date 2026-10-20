@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "1.0",
+  "area": "ar_01J9ZD00000000000000000001",
+  "dataVersion": 1,
+  "generatedAt": "2040-06-01T08:00:00.000Z",
+  "points": [
+    {
+      "id": "wp_45KA0CCQG9E0MGABX6RY27R49C",
+      "name": "Nisida",
+      "position": {
+        "lon": 21.12959,
+        "lat": 35.17398
+      },
+      "kind": "region",
+      "regionId": "rg_01J9ZD00000000000000000001"
+    },
+    {
+      "id": "wp_H01AVWWKA77QPCWQG6PSBMGATQ",
+      "name": "Akra Test",
+      "position": {
+        "lon": 21.21437,
+        "lat": 35.1618
+      },
+      "kind": "cape",
+      "regionId": null
+    }
+  ]
+}

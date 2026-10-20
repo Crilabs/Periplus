@@ -50,7 +50,7 @@ export type ValidationDeps = {
    * The links of forbidden domains behind each delivered spot and highlight (`mapSpot` / `mapHighlights`
    * `forbiddenSources`): such an object's values may come from Navily or Google, so it blocks (ruling M6-D-R2).
    */
-  forbiddenSources?: Array<{ file: "spots.json" | "highlights.json"; objectId: string; urls: string[] }>;
+  forbiddenSources: Array<{ file: "spots.json" | "highlights.json"; objectId: string; urls: string[] }>;
   cfg: DeliveryConfig;
   /** Radius of meaning per importance 1–5, nautical miles (`consolidation.importance.radiusNm`). */
   radiusNm: number[];
@@ -371,12 +371,15 @@ const verbatimText: Check = async ({ pkg, deps }) => {
   const texts = [...new Set(fields.map((f) => f.text))];
   const runs = new Map<string, number>();
   let next = 0;
+  // the first failure stops every worker: the build unwinds, no further query runs on its transaction
+  let failed = false;
   const worker = async () => {
-    while (next < texts.length) {
+    while (!failed && next < texts.length) {
       const text = texts[next++]!;
       try {
         runs.set(text, await Promise.resolve().then(() => deps.findCopies(text)));
       } catch (e) {
+        failed = true;
         throw new DependencyFailed(e);
       }
     }
@@ -421,7 +424,7 @@ const foreignContent: Check = ({ pkg, deps }) => {
     sources(HIGHLIGHTS, h.id, base, h.sources);
   });
   const delivered = { [SPOTS]: spotsOf(pkg).map((s) => s.id), [HIGHLIGHTS]: highlightsOf(pkg).map((h) => h.id) };
-  for (const f of deps.forbiddenSources ?? []) {
+  for (const f of deps.forbiddenSources) {
     const i = delivered[f.file].indexOf(f.objectId);
     if (i < 0) continue; // left out of the package
     const list = f.file === SPOTS ? "spots" : "highlights";
@@ -594,6 +597,8 @@ const WEATHER_DROPPED_DE: Record<DroppedWeatherPoint["reason"], string> = {
 export function buildWarnings(input: {
   spots?: Array<{ id: string; warnings: SpotWarning[] }>;
   omittedSpots?: Array<{ id: string; reason: keyof typeof SPOT_OMITTED_DE }>;
+  /** Merged places of the previous package whose target is not delivered: removed, not carried (ruling M6-P14). */
+  mergedNotCarried?: Array<{ id: string; into: string }>;
   droppedHighlights?: DroppedHighlight[];
   droppedRegions?: Array<{ id: string; reason: "no_name" }>;
   droppedWeatherPoints?: DroppedWeatherPoint[];
@@ -616,6 +621,9 @@ export function buildWarnings(input: {
     }
   }
   for (const s of input.omittedSpots ?? []) out.push(finding(SPOTS, s.id, null, SPOT_OMITTED_DE[s.reason]));
+  for (const m of input.mergedNotCarried ?? []) {
+    out.push(finding(SPOTS, m.id, null, `Zusammengelegt mit ${m.into}, das nicht geliefert wird: als entfernt gemeldet`));
+  }
   for (const h of input.droppedHighlights ?? []) {
     out.push(finding(HIGHLIGHTS, h.id, null, h.reason === "duplicate" && h.into ? `${HIGHLIGHT_DROPPED_DE.duplicate} von ${h.into}` : HIGHLIGHT_DROPPED_DE[h.reason]));
   }

@@ -164,6 +164,8 @@ export async function insertTestTile(tx: Db, id: string, areaId: string | null =
 }
 
 export type TestNamedObject = {
+  /** A fixed id (else a new one). */
+  id?: string;
   type: GeoObjectType;
   names: Array<{ name: string; language?: string }>;
   lon: number;
@@ -179,6 +181,7 @@ export type TestNamedObject = {
 /** A geo object with its names (incl. transliterations, via `addNames`) and its tile assignments. */
 export async function insertNamedObject(tx: Db, o: TestNamedObject): Promise<string> {
   const id = await insertTestGeoObject(tx, {
+    ...(o.id ? { id: o.id } : {}),
     type: o.type,
     geom: geomFromGeoJson({ type: "Point", coordinates: [o.lon, o.lat] }),
     parentId: o.parentId ?? null,

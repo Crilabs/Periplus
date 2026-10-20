@@ -1,7 +1,7 @@
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { geoNames, geoObjects, landPolygons, places, profileSummaries, restrictedAreas, tileGeoObjects } from "@/lib/db/schema";
+import { documents, geoNames, geoObjects, landPolygons, places, profileSummaries, restrictedAreas, tileGeoObjects } from "@/lib/db/schema";
 import type { PlaceKind, PlaceStatus } from "@/lib/db/schema/geo";
 import type { AttributeProvenance } from "@/lib/domain/consolidation/types";
 import { newPublicId, type PublicIdPrefix } from "@/lib/domain/ids";
@@ -21,13 +21,23 @@ import { insertNamedObject, insertTestTile } from "@/test/text";
  *   T  POI taverna (`derived.importance` 2) 1 nm south of A, on the island
  *
  * Public ids are fixed (snapshot tests) unless `shift` is set; `shift` moves everything east by that many degrees (a
- * multiple of 0.5 keeps the two-tile layout) so a second area fits into the same transaction.
+ * multiple of 0.5 keeps the two-tile layout) so a second area fits into the same transaction. `stable` also fixes
+ * what else reaches a package file (the build's snapshot test): the island's and the cape's geo object ids (weather
+ * point ids), the land polygon's import date (`extractedAt`) and the URL of A's document.
  */
 
 const LAT_PER_NM = 1 / 60;
 
 /** A fixed public id: `<prefix>_01J9ZD` and 20 digits (valid Crockford base 32). */
 const fixedId = (prefix: PublicIdPrefix, n: number) => `${prefix}_01J9ZD${String(n).padStart(20, "0")}`;
+
+/** Fixed values of a `stable` fixture. */
+export const STABLE = {
+  islandId: "0199f0a0-0000-7000-8000-000000000001",
+  capeId: "0199f0a0-0000-7000-8000-000000000002",
+  landCreatedAt: new Date("2026-10-01T06:00:00Z"),
+  documentUrl: "https://vathi.test.invalid/trip-report",
+} as const;
 
 export const SPOT_A_SHELTER = { N: 0.9, NE: 0.8, E: 0.4, SE: 0.1, S: 0.2, SW: 0.7, W: 0.9, NW: 0.95 };
 export const SPOT_A_SUMMARY = "Tiefe Bucht mit gutem Schutz von West bis Nord, Sandgrund mit Seegras.";
@@ -109,8 +119,13 @@ const square = (w: number, s: number, e: number, n: number): GeoJSON.Polygon => 
   coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]],
 });
 
-export async function seedDeliveryArea(tx: Db, opts: { key?: string; shift?: number } = {}): Promise<DeliveryFixture> {
+export async function seedDeliveryArea(
+  tx: Db,
+  opts: { key?: string; shift?: number; stable?: boolean } = {},
+): Promise<DeliveryFixture> {
   const shift = opts.shift ?? 0;
+  if (opts.stable && shift !== 0) throw new Error("a stable fixture has no shift");
+  const stable = opts.stable === true;
   const x = (lon: number) => Number((lon + shift).toFixed(6));
   const id = (prefix: PublicIdPrefix, n: number) => (shift === 0 ? fixedId(prefix, n) : newPublicId(prefix));
   const areaKey = opts.key ?? "delivery-test";
@@ -146,7 +161,9 @@ export async function seedDeliveryArea(tx: Db, opts: { key?: string; shift?: num
       ],
     ],
   };
-  await tx.insert(landPolygons).values({ geom: geomFromGeoJson(island), datasetVersion: "test" });
+  await tx
+    .insert(landPolygons)
+    .values({ geom: geomFromGeoJson(island), datasetVersion: "test", ...(stable ? { createdAt: STABLE.landCreatedAt } : {}) });
 
   const archipelagoPublicId = id("rg", 2);
   const archipelagoId = await insertNamedObject(tx, { type: "archipelago", names: [{ name: "Test Islands" }], lon: x(21.15), lat: 35.1, tiles: [west], parentId: areaId });
@@ -155,7 +172,15 @@ export async function seedDeliveryArea(tx: Db, opts: { key?: string; shift?: num
   const islandPublicId = id("rg", 1);
   const [islandRow] = await tx
     .insert(geoObjects)
-    .values({ type: "island", origin: "osm", geom: geomFromGeoJson(island), publicId: islandPublicId, parentId: archipelagoId, osmId: null })
+    .values({
+      ...(stable ? { id: STABLE.islandId } : {}),
+      type: "island",
+      origin: "osm",
+      geom: geomFromGeoJson(island),
+      publicId: islandPublicId,
+      parentId: archipelagoId,
+      osmId: null,
+    })
     .returning({ id: geoObjects.id });
   const islandId = islandRow!.id;
   await tx.insert(geoNames).values({ geoObjectId: islandId, name: "Nisida", nameNormalized: "nisida", language: "en", script: "latin", origin: "osm" });
@@ -172,7 +197,14 @@ export async function seedDeliveryArea(tx: Db, opts: { key?: string; shift?: num
     { confidence: null },
   );
 
-  const capeId = await insertNamedObject(tx, { type: "cape", names: [{ name: "Akra Test" }], lon: x(21.2), lat: 35.15, tiles: [west] });
+  const capeId = await insertNamedObject(tx, {
+    ...(stable ? { id: STABLE.capeId } : {}),
+    type: "cape",
+    names: [{ name: "Akra Test" }],
+    lon: x(21.2),
+    lat: 35.15,
+    tiles: [west],
+  });
 
   const [restricted] = await tx
     .insert(restrictedAreas)
@@ -237,6 +269,10 @@ export async function seedDeliveryArea(tx: Db, opts: { key?: string; shift?: num
       join mentions m on m.id = f.mention_id join document_versions v on v.id = m.document_version_id
       join documents d on d.id = v.document_id where f.id = ${factId}`)
   ).rows;
+  if (stable) {
+    await tx.update(documents).set({ url: STABLE.documentUrl, urlNormalized: STABLE.documentUrl }).where(eq(documents.id, doc!.document_id));
+    doc!.url = STABLE.documentUrl;
+  }
   const posAnchor = { lon: x(21.1301), lat: 35.1445 };
   await insertProfile(
     tx,
