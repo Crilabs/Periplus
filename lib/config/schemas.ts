@@ -929,8 +929,11 @@ export const deliverySchema = z.strictObject({
     lowConfidenceNote: z.string().trim().min(1),
   }),
   severity: z.strictObject({ shelterDelta: share }),
-  /** Domains whose content never leaves Periplus (Navily, Google). */
-  forbiddenDomains: z.array(domainName).min(1),
+  /**
+   * Domains whose content never leaves Periplus (Navily, Google): a domain (and its subdomains) or `label.*` for that
+   * registrable label on any ICANN public suffix (`google.*`, SEC-4).
+   */
+  forbiddenDomains: z.array(z.union([domainName, z.string().regex(/^[a-z0-9-]+\.\*$/, "must be label.*")])).min(1),
   licenses: z.array(
     z.strictObject({
       name: z.string().trim().min(1),
