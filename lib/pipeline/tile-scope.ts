@@ -37,7 +37,7 @@ export type RunScopeReason =
   | "measurement_label_taken"
   | "measurement_label_invalid"
   | "measurement_window_empty"
-  | "measurement_without_runs"
+  | "measurement_from_required"
   | "measurement_running"
   | "evaluation_candidate_missing"
   | "evaluation_candidate_unknown";

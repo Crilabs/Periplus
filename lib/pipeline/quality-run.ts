@@ -1,4 +1,4 @@
-import { and, asc, sql } from "drizzle-orm";
+import { and, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { loadPrompt } from "@/lib/ai/prompts";
 import { consolidationVersions, getConfig, type AppConfig } from "@/lib/config";
@@ -23,13 +23,13 @@ const measurementOf = (areaKey: string) =>
  * Starts a measurement run „Messen“ for the area (spec 10): kind `stage`, scope `area` with the area key, stage
  * `quality.measure`, params `{ areaKey, label, from, to }` (ISO timestamps). `to` defaults to now, `from` to the latest
  * window end (`params.to`, not the start time) of the area's finished measurements, so a failed or unfinished
- * measurement loses no window, else to the creation of the oldest run (the start of operations; ruling M7-D-R2). The
+ * measurement loses no window (ruling M7-D-R2); the area's first measurement needs `from` (final review B M-13). The
  * label (trimmed, 1–40 characters) is unique per area among measurements that did not fail (a failed one frees it,
  * ruling M7-D-R1): checked with the run's insert in one transaction under an advisory lock per area (ruling M7-P5), so
  * two starts cannot take the same label. Every refusal is a `RunScopeNotReady` with a German text: `unknown_area`,
  * `measurement_label_invalid`, `measurement_label_taken`, `measurement_running` (a measurement of the area is queued or
- * running: its window would overlap), `measurement_window_empty` (`from` not before `to`) and `measurement_without_runs`
- * (no `from` and no run yet to start from).
+ * running: its window would overlap), `measurement_window_empty` (`from` not before `to`) and `measurement_from_required`
+ * (no `from` for the area's first measurement: it never defaults, the start of the pilot's first run is given).
  */
 export async function startMeasurement(
   db: Db,
@@ -65,12 +65,10 @@ export async function startMeasurement(
         .select({ to: sql<Date | string | null>`max((${runs.params} ->> 'to')::timestamptz)` })
         .from(runs)
         .where(and(measurementOf(input.areaKey), sql`${runs.status} = 'finished'`));
-      if (previous?.to) from = new Date(previous.to);
-      else {
-        const [oldest] = await tx.select({ createdAt: runs.createdAt }).from(runs).orderBy(asc(runs.createdAt)).limit(1);
-        if (!oldest) throw new RunScopeNotReady("measurement_without_runs", `no run yet: pass from for the first measurement of ${input.areaKey}`);
-        from = oldest.createdAt;
-      }
+      // the first measurement has no default: the oldest run of the database may be a paid run of an earlier
+      // acceptance, which would inflate the pilot's first cost per place (final review B M-13)
+      if (!previous?.to) throw new RunScopeNotReady("measurement_from_required", `pass from for the first measurement of ${input.areaKey}`);
+      from = new Date(previous.to);
     }
     if (!(from.getTime() < to.getTime())) {
       throw new RunScopeNotReady("measurement_window_empty", `the window must start before it ends (${from.toISOString()} – ${to.toISOString()})`);

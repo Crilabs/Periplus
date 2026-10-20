@@ -1,4 +1,4 @@
-import { asc, eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "@/lib/config";
@@ -15,6 +15,7 @@ import { RunScopeNotReady, type RunScopeReason } from "@/lib/pipeline/tile-scope
 import { RUN_SCOPE_REASON_LABELS } from "@/app/(admin)/_components/labels";
 import { withRollback } from "@/test/db";
 import { insertQualityArea } from "@/test/quality";
+import { insertTestRun } from "@/test/text";
 
 /*
  * The measurement run „Messen“ (plan Task 8, ruling M7-P5): stage plan, registration and starter in withRollback
@@ -144,28 +145,18 @@ describe("startMeasurement", () => {
       });
     }));
 
-  it("the first measurement without any run and without from is refused with a German hint to from (ruling M7-D-R1)", () =>
+  it("the first measurement of an area without from is refused with a German hint to from, even with older runs (final review B M-13)", () =>
     withRollback(async (tx) => {
       const { boss, inserted } = recordingBoss();
       const { areaKey } = await insertQualityArea(tx, [{ lon: 21.01, lat: 35.2 }]);
-      // an empty runs table for this transaction only: a temporary table shadows it (pg_temp is searched first)
-      await tx.execute(sql`create temporary table runs (like public.runs including defaults) on commit drop`);
+      // older runs exist (paid runs of earlier acceptances): they must not open the pilot's first window
+      await insertTestRun(tx);
       await expect(startMeasurement(tx, boss, { areaKey, label: "Lauf 1", triggeredBy: someone() })).rejects.toMatchObject({
         constructor: RunScopeNotReady,
-        reason: "measurement_without_runs",
+        reason: "measurement_from_required",
       });
       expect(inserted).toEqual([]);
-      expect(RUN_SCOPE_REASON_LABELS.measurement_without_runs).toMatch(/„von“/);
-    }));
-
-  it("without a previous measurement from is the creation of the oldest run", () =>
-    withRollback(async (tx) => {
-      const { boss } = recordingBoss();
-      const { areaKey } = await insertQualityArea(tx, [{ lon: 21.01, lat: 35.2 }]);
-      const [oldest] = await tx.select({ createdAt: runs.createdAt }).from(runs).orderBy(asc(runs.createdAt)).limit(1);
-      const { id } = await startMeasurement(tx, boss, { areaKey, label: "Lauf 1", triggeredBy: someone() });
-      const params = (await runOf(tx, id)).params as { from: string };
-      expect(params.from).toBe((oldest?.createdAt ?? new Date(0)).toISOString());
+      expect(RUN_SCOPE_REASON_LABELS.measurement_from_required).toMatch(/„von“/);
     }));
 
   it("a duplicate label is rejected", () =>

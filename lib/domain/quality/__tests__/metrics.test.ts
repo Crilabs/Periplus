@@ -355,13 +355,14 @@ describe("shelterConfidenceMetric", () => {
       expect(bySector.NW).toEqual({ withText: 1, confirmed: 1, corrected: 0, textOnly: 0 });
     }));
 
-  it("a text fact without a computed value is text only, never corrected (ruling M7-C-R1); no places is null", () =>
+  it("a text fact without a computed value is text only, never corrected (ruling M7-C-R1), and never completes a place (final review B M-5); no places is null", () =>
     withRollback(async (tx) => {
       const { areaKey, addPlace } = await area(tx);
       const place = await addPlace();
       await shelterFacts(tx, place.objectId, all(0.9));
       const r = await shelterConfidenceMetric(tx, { areaKey }, quality);
-      expect([r.value, r.details.confirmed, r.details.corrected, r.details.textOnly]).toEqual([1, 0, 0, 8]);
+      // spec 10: a sector counts when its text confirms or corrects the computed value; text alone does not
+      expect([r.value, r.details.complete, r.details.confirmed, r.details.corrected, r.details.textOnly]).toEqual([0, 0, 0, 0, 8]);
       expect((r.details.bySector as Record<string, unknown>).E).toEqual({ withText: 1, confirmed: 0, corrected: 0, textOnly: 1 });
       expect((await shelterConfidenceMetric(tx, { areaKey: `test-${newId()}` }, quality)).value).toBeNull();
     }));

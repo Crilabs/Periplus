@@ -17,6 +17,7 @@
     "review_minutes_per_100": { "pilot": null, "full": 30, "direction": "max" }
   },
   "secondRunReviewMinutesMax": 60,
+  "pilotCriteria": { "minTripReports": 3, "revisitChanges": 10 },
   "reviewDurationCapMinutes": 10,
   "recentObservationMonths": 18,
   "shelterConfirmTolerance": 0.2,

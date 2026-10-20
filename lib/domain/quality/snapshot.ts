@@ -71,8 +71,9 @@ async function tileMetrics(db: Db, scope: QualityScope, window: MeasureWindow, t
 /**
  * Computes and stores the snapshot of measurement run `runId` for the area: area rows for every metric except
  * `coverage_navily`, tile rows for `TILE_METRICS` of each coast tile labelled with the area and valid on `today`. All
- * validity (places, tiles, sources) is judged on `today`, the job's UTC date (ruling M7-D-R2). All in one transaction,
- * under a lock on the run: when rows of the run exist already (a retried job), nothing is written (`skipped`).
+ * validity (places, tiles, sources) is judged on `today`, the job's UTC date (ruling M7-D-R2). All in one REPEATABLE
+ * READ transaction, so every metric reads the same snapshot while consolidations or reviews commit (final review A
+ * M-2), under a lock on the run: when rows of the run exist already (a retried job), nothing is written (`skipped`).
  */
 export async function computeQualitySnapshot(
   db: Db,
@@ -122,9 +123,11 @@ export async function computeQualitySnapshot(
         }
       }
     }
-    await tx.insert(qualitySnapshots).values(rows);
-    return { rows: rows.length, skipped: false };
-  });
+    // under REPEATABLE READ the lock's statement fixes the snapshot before it waits, so a concurrent retry that
+    // committed meanwhile is not seen by the check above: its rows conflict and this attempt writes nothing
+    const inserted = await tx.insert(qualitySnapshots).values(rows).onConflictDoNothing().returning({ id: qualitySnapshots.id });
+    return inserted.length === 0 && rows.length > 0 ? { rows: 0, skipped: true } : { rows: inserted.length, skipped: false };
+  }, { isolationLevel: "repeatable read" });
 }
 
 type MeasurementRun = { id: string; params: unknown; createdAt: Date };

@@ -174,6 +174,17 @@ describe("costReport", () => {
       await expect(costReport(tx, { areaKey: "nirgendwo", firstLabel: "leer", areas })).rejects.toThrow("Revier nirgendwo ist nicht konfiguriert");
       await expect(costReport(tx, { areaKey, firstLabel: "leer", areas })).rejects.toThrow("hat keine Kosten je Ort");
     }));
+
+  it("refuses swapped labels: the second measurement starting before the first (final review B M-10)", () =>
+    withRollback(async (tx) => {
+      const areaKey = `report-${newId()}`;
+      const areas = [{ ...baseArea, key: areaKey, cycleDays: 30 }];
+      await measurement(tx, areaKey, "Lauf 1", { cost_per_place: costRow(1.2, 110) });
+      await measurement(tx, areaKey, "Lauf 2", { cost_per_place: costRow(0.3, 120) }, { from: "2026-05-15T00:00:00.000Z", to: "2026-05-16T00:00:00.000Z" });
+      await expect(costReport(tx, { areaKey, firstLabel: "Lauf 2", secondLabel: "Lauf 1", areas })).rejects.toThrow(
+        "Messung „Lauf 1“ beginnt vor „Lauf 2“: erst den früheren Lauf, dann den späteren angeben",
+      );
+    }));
 });
 
 const verification = (correct: number, unexpected: number): RevisitVerification => ({
@@ -226,14 +237,15 @@ describe("renderPilotReport", () => {
 
   it("the pilot report ticks only met criteria", () => {
     const md = renderPilotReport(base);
-    expect(md).toContain("- [x] Abdeckung (Navily-Vergleichssatz): 86 % (Pilotziel ≥ 85 %)");
-    expect(md).toContain("- [x] Mehrbefund (≥ 2 Dokumente): 72 % (Pilotziel ≥ 70 %)");
-    expect(md).toContain("- [ ] Fact-Präzision: 88 % (Pilotziel ≥ 90 %)");
-    expect(md).toContain("- [x] Belegtreue: 100 % (Pilotziel ≥ 100 %)");
+    expect(md).toContain("- [ ] Abdeckung (Navily-Vergleichssatz) je Lauf: Lauf 1 80 %, Lauf 2 86 % (Pilotziel ≥ 85 % in jedem Lauf)");
+    expect(md).toContain("- [x] Mehrbefund (≥ 2 Dokumente) je Lauf: Lauf 1 75 %, Lauf 2 72 % (Pilotziel ≥ 70 % in jedem Lauf)");
+    expect(md).toContain("- [ ] Fact-Präzision je Lauf: Lauf 1 –, Lauf 2 88 % (Pilotziel ≥ 90 % in jedem Lauf)");
+    expect(md).toContain("- [ ] Belegtreue je Lauf: Lauf 1 –, Lauf 2 100 % (Pilotziel ≥ 100 % in jedem Lauf)");
+    expect(md).toContain("Die Erfolgskriterien gelten für beide Läufe.");
     expect(md).toContain("- [x] Kosten je Ort je Lauf: Lauf 1 1,20 €, Lauf 2 0,30 € (Pilotziel unter 2,00 € in jedem Lauf)");
     expect(md).toContain("- [ ] Simulierter Revisit liefert 10 von 10 Änderungen korrekt, keine falschen: 9 von 10 korrekt, 1 zusätzliche");
     expect(md).toContain("- [x] Ein Profil ist zum Stand „vor dem Revisit“ über die API abrufbar: ja");
-    expect(md).toContain("- [x] Review-Aufwand für den zweiten Lauf unter 60 Minuten: 45 min");
+    expect(md).toContain("- [x] Review-Aufwand für den zweiten Lauf unter 60 Minuten: 45 min (offene Aufgaben: 0, Entscheidungen ohne Dauer: 0)");
     expect(md).toContain("- [x] Gemessene Kosten je Ort und Lauf dokumentiert, Hochrechnung für das Mittelmeer erstellt: Lauf 1 1,20 €, Lauf 2 0,30 €");
     expect(md).toContain("- [x] Die Törn-App liest Orte und Profile aus dem Export ohne eigene Nachbearbeitung: ja (Datenversion 4)");
     expect(md).toContain("- [x] Routen-Rekonstruktion an mindestens 3 Törnberichten: 4 Törnberichte mit Route, davon 3 vollständig (Stopps je Bericht: 5, 7, 3, 4)");
@@ -261,7 +273,7 @@ describe("renderPilotReport", () => {
     expect(md).toContain("- [ ] Review-Aufwand für den zweiten Lauf unter 60 Minuten: kein zweiter Lauf gemessen");
     expect(md).toContain("- [ ] Gemessene Kosten je Ort und Lauf dokumentiert, Hochrechnung für das Mittelmeer erstellt: Lauf 1 1,20 €, zweiter Lauf fehlt");
     expect(md).toContain("- [ ] Die Törn-App liest Orte und Profile aus dem Export ohne eigene Nachbearbeitung: nicht geprüft");
-    expect(md).toContain("- [ ] Abdeckung (Navily-Vergleichssatz): 80 % (Pilotziel ≥ 85 %)");
+    expect(md).toContain("- [ ] Abdeckung (Navily-Vergleichssatz) je Lauf: Lauf 1 80 % (Pilotziel ≥ 85 % in jedem Lauf)");
     expect(md).toContain("Keine Kachelzahlen gemessen.");
     expect(md).toContain("Bewertet wird Lauf 1.");
     expect(md).toContain("- [x] Kosten je Ort je Lauf: Lauf 1 1,20 € (Pilotziel unter 2,00 € in jedem Lauf)");
@@ -274,6 +286,31 @@ describe("renderPilotReport", () => {
     // and the other way round, a missing value in one run also leaves it open
     const missing = renderPilotReport({ ...base, second: view("Lauf 2", { ...second.metrics, cost_per_place: { value: null } } as Metrics) });
     expect(missing).toContain("- [ ] Kosten je Ort je Lauf: Lauf 1 1,20 €, Lauf 2 – (Pilotziel unter 2,00 € in jedem Lauf)");
+  });
+
+  it("an acceptance metric is ticked only when both runs meet it (final review B M-2)", () => {
+    const low = view("Lauf 1", { ...first.metrics, multi_document: { value: 0.6 } } as Metrics);
+    expect(renderPilotReport({ ...base, first: low })).toContain("- [ ] Mehrbefund (≥ 2 Dokumente) je Lauf: Lauf 1 60 %, Lauf 2 72 % (Pilotziel ≥ 70 % in jedem Lauf)");
+    const both = view("Lauf 1", { ...first.metrics, coverage_navily: { value: 0.9 } } as Metrics);
+    expect(renderPilotReport({ ...base, first: both })).toContain("- [x] Abdeckung (Navily-Vergleichssatz) je Lauf: Lauf 1 90 %, Lauf 2 86 % (Pilotziel ≥ 85 % in jedem Lauf)");
+  });
+
+  it("the review effort is not ticked while review tasks of the second run are open (final review B I-3)", () => {
+    const pending = view("Lauf 2", { ...second.metrics, review_minutes: { value: 0, details: { tasks: 150, decided: 0, open: 150, withoutDuration: 0 } } } as Metrics);
+    expect(renderPilotReport({ ...base, second: pending })).toContain(
+      "- [ ] Review-Aufwand für den zweiten Lauf unter 60 Minuten: 0 min (offene Aufgaben: 150, Entscheidungen ohne Dauer: 0)",
+    );
+    const decided = view("Lauf 2", { ...second.metrics, review_minutes: { value: 20, details: { tasks: 30, decided: 30, open: 0, withoutDuration: 2 } } } as Metrics);
+    expect(renderPilotReport({ ...base, second: decided })).toContain(
+      "- [x] Review-Aufwand für den zweiten Lauf unter 60 Minuten: 20 min (offene Aufgaben: 0, Entscheidungen ohne Dauer: 2)",
+    );
+  });
+
+  it("the trip-report and revisit counts come from config/quality.json (final review B M-7)", () => {
+    const md = renderPilotReport({ ...base, targets: { ...quality, pilotCriteria: { minTripReports: 5, revisitChanges: 8 } }, revisit: verification(10, 0) });
+    expect(md).toContain("- [ ] Routen-Rekonstruktion an mindestens 5 Törnberichten: 4 Törnberichte mit Route");
+    expect(md).toContain("- [ ] Simulierter Revisit liefert 8 von 8 Änderungen korrekt, keine falschen: 10 von 10 korrekt, 0 zusätzliche");
+    expect(quality.pilotCriteria).toEqual({ minTripReports: 3, revisitChanges: 10 });
   });
 
   it("the evaluation runs use the German plural", () => {

@@ -362,6 +362,8 @@ export const qualitySchema = z.strictObject({
   }),
   /** Pilot: „Review-Aufwand für den zweiten Lauf unter 60 Minuten“. */
   secondRunReviewMinutesMax: z.number().positive(),
+  /** Pilot success criteria with a count: „Routen-Rekonstruktion an mindestens 3 Törnberichten“, „10 von 10 Änderungen“. */
+  pilotCriteria: z.strictObject({ minTripReports: positiveInt, revisitChanges: positiveInt }),
   /** A review duration counts at most this long (a tab left open must not skew the effort). */
   reviewDurationCapMinutes: z.number().positive(),
   /** „Anteil Orte mit Beobachtung < 18 Monate“. */

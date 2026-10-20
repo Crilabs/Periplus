@@ -308,7 +308,7 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   measurement_label_taken: "Bezeichnung schon vergeben",
   measurement_label_invalid: "Bezeichnung fehlt oder ist länger als 40 Zeichen",
   measurement_window_empty: "Der Zeitraum ist leer – „von“ muss vor „bis“ liegen",
-  measurement_without_runs: "Noch kein Lauf, ab dem gemessen werden kann – für die erste Messung „von“ angeben",
+  measurement_from_required: "Erste Messung des Reviers: „von“ angeben (Beginn des ersten Pilot-Laufs)",
   measurement_running: "Für das Revier wartet oder läuft schon eine Messung – erst ihr Ende abwarten",
   evaluation_candidate_missing: "Regelversion oder Modell mit Prompt-Version angeben",
   evaluation_candidate_unknown: "Diese Regelversion, dieses Modell oder diese Prompt-Version gibt es in config/ nicht",

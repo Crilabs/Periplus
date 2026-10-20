@@ -261,7 +261,7 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
         </Panel>
 
         <div className="space-y-6">
-          <Panel title="Messen" description="Berechnet alle Kennzahlen des Reviers für einen Zeitraum. Ohne „von“ schließt die Messung an die letzte an, ohne „bis“ endet sie jetzt.">
+          <Panel title="Messen" description="Berechnet alle Kennzahlen des Reviers für einen Zeitraum. Ohne „von“ schließt die Messung an die letzte an (die erste Messung braucht „von“: Beginn des ersten Pilot-Laufs), ohne „bis“ endet sie jetzt.">
             <form action={startMeasurementAction} className="flex flex-col gap-3">
               <input type="hidden" name="areaKey" value={area.key} />
               <Field label="Bezeichnung" hint="z. B. „Lauf 1“; je Revier eindeutig">

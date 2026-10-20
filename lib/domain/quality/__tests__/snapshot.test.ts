@@ -105,6 +105,25 @@ describe("computeQualitySnapshot", () => {
       expect([...new Set(tileRows.map((x) => x.scopeId))]).toEqual([tileIds[0]]);
     }));
 
+  it("a measurement reads all its metrics from one snapshot: a repeatable read transaction (final review A M-2)", () =>
+    withRollback(async (tx) => {
+      const { areaKey, window } = await scene(tx);
+      const runId = await measurementRun(tx, areaKey, "Lauf 1", window);
+      const configs: unknown[] = [];
+      // the test transaction runs the nested one as a savepoint; the proxy records the options it was asked for
+      const db = new Proxy(tx, {
+        get: (target, prop, receiver) =>
+          prop === "transaction"
+            ? (fn: (t: Db) => Promise<unknown>, config?: unknown) => {
+                configs.push(config);
+                return target.transaction(fn);
+              }
+            : Reflect.get(target, prop, receiver),
+      });
+      expect((await computeQualitySnapshot(db, { runId, areaKey, window, today: "2026-10-20", cfg: quality })).skipped).toBe(false);
+      expect(configs).toEqual([{ isolationLevel: "repeatable read" }]);
+    }));
+
   it("a retried job writes nothing twice", () =>
     withRollback(async (tx) => {
       const { areaKey, window } = await scene(tx);

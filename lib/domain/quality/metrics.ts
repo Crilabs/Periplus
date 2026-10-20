@@ -248,10 +248,11 @@ type SectorCounts = { withText: number; confirmed: number; corrected: number; te
 
 /**
  * Schutz-Konfidenz (spec 10): the share of places in scope where every one of the 8 sectors `shelter.<Sektor>` has at
- * least one text fact of the active extraction run of its (document version, object) (`activeExtractionRunIdSql`),
+ * least one confirming or correcting text fact of the active extraction run of its (document version, object) (`activeExtractionRunIdSql`),
  * counted as consolidation counts text (merged objects, counting sources). A sector's text confirms the newest computed
  * value of the place's own object when one of its facts lies within `shelterConfirmTolerance` of it, else it corrects
- * it; without a computed value it is text only (ruling M7-C-R1). `details { places, complete, confirmed, corrected,
+ * it; without a computed value it is text only (ruling M7-C-R1) and does not count for the sector, since spec 10 asks
+ * for a text that confirms or corrects (final review B M-5). `details { places, complete, confirmed, corrected,
  * textOnly, bySector }`, counted per place and sector with text; no places → null. Two queries for any number of places.
  */
 export async function shelterConfidenceMetric(
@@ -324,9 +325,10 @@ export async function shelterConfidenceMetric(
     for (const sector of SECTORS) {
       const values = textBySector.get(`${place.geoObjectId}|${sector}`);
       if (!values) continue;
-      sectors++;
       const c = computedValue.get(`${place.geoObjectId}|shelter.${sector}`);
       bySector[sector].withText++;
+      // only a text that confirms or corrects a computed value makes the sector count (spec 10, final review B M-5)
+      if (c !== undefined) sectors++;
       if (c === undefined) bySector[sector].textOnly++;
       else if (values.some((t) => Math.abs(t - c) <= cfg.shelterConfirmTolerance + EPSILON)) bySector[sector].confirmed++;
       else bySector[sector].corrected++;

@@ -102,7 +102,8 @@ async function measurement(db: Db, areaKey: string, label: string): Promise<Meas
  * The cost report of the area from the stored measurements `firstLabel` and `secondLabel` (`cost_per_place` details).
  * Places per area: `extrapolation.placesPerArea` of `config/quality.json`, else the confirmed places of the pilot
  * area (the newer measurement's count). Revisits per year: `365 / cycleDays` of the area (`config/areas`). Refused when
- * the first run has no cost per place (no confirmed places).
+ * the first run has no cost per place (no confirmed places) or the second measurement starts before the first (labels
+ * swapped, final review B M-10).
  */
 export async function costReport(
   db: Db,
@@ -121,6 +122,9 @@ export async function costReport(
   const first = costRunOf(await measurement(db, input.areaKey, input.firstLabel));
   const second = input.secondLabel === undefined ? null : costRunOf(await measurement(db, input.areaKey, input.secondLabel));
   if (first.perPlace === null) throw new Error(`Messung „${first.label}“ hat keine Kosten je Ort (keine bestätigten Orte)`);
+  if (second !== null && second.window.from.getTime() < first.window.from.getTime()) {
+    throw new Error(`Messung „${second.label}“ beginnt vor „${first.label}“: erst den früheren Lauf, dann den späteren angeben`);
+  }
   const configured = cfg.extrapolation.placesPerArea;
   const placesPerArea = configured ?? (second ?? first).places;
   const revisitsPerYear = 365 / area.cycleDays;
@@ -331,8 +335,9 @@ const box = (ok: boolean) => (ok ? "[x]" : "[ ]");
 
 /**
  * The pilot report as Markdown (German): the datendienst's success criteria as a checklist with the measured values
- * (ticked only when met), the metric table with pilot and full-operation targets and the status of the newer run,
- * the revisit („n von 10 korrekt, k zusätzliche“), the review effort of the second run against 60 minutes, the tile
+ * (an acceptance metric ticked only when met in every measured run), the metric table with pilot and full-operation
+ * targets and the status of the newer run, the revisit („n von 10 korrekt, k zusätzliche“), the review effort of the
+ * second run against 60 minutes (ticked only with no open task), the tile
  * size with a placeholder for Christian's decision, the reading of the numbers and the cost report.
  */
 export function renderPilotReport(input: PilotReportInput): string {
@@ -340,36 +345,36 @@ export function renderPilotReport(input: PilotReportInput): string {
   const current = second ?? first;
   const value = (m: MeasurementView | null, metric: MetricKey) => m?.metrics[metric]?.value ?? null;
   const details = (m: MeasurementView | null, metric: MetricKey) => (m?.metrics[metric]?.details ?? {}) as Record<string, unknown>;
-  const lines = [`# Pilotbericht – Revier ${input.areaKey}`, "", `Messungen: ${first.label}${second ? `, ${second.label}` : ""}. Bewertet wird ${current.label}.`, ""];
+  const lines = [
+    `# Pilotbericht – Revier ${input.areaKey}`,
+    "",
+    `Messungen: ${first.label}${second ? `, ${second.label}` : ""}. ${second ? "Die Erfolgskriterien gelten für beide Läufe" : `Bewertet wird ${current.label}`}.`,
+    "",
+  ];
 
   // Erfolgskriterien
   lines.push("## Erfolgskriterien", "");
   const measured = second ? [first, second] : [first];
   for (const metric of ACCEPTANCE_METRICS) {
-    if (metric === "cost_per_place") {
-      // The datendienst defines the cost target per place „und Lauf“: met only when every measured run is under it,
-      // each run's value shown (ruling M7-H-R1, I-1).
-      const met = measured.every((m) => metricStatus(metric, value(m, metric), cfg, "pilot") === "met");
-      const values = measured.map((m) => `${m.label} ${formatMetric(metric, value(m, metric))}`).join(", ");
-      lines.push(`- ${box(met)} ${METRIC_NAMES[metric]} je Lauf: ${values} (Pilotziel ${target(metric, cfg, "pilot")} in jedem Lauf)`);
-      continue;
-    }
-    const v = value(current, metric);
-    const met = metricStatus(metric, v, cfg, "pilot") === "met";
-    lines.push(`- ${box(met)} ${METRIC_NAMES[metric]}: ${formatMetric(metric, v)} (Pilotziel ${target(metric, cfg, "pilot")})`);
+    // Every acceptance metric is met only when every measured run meets it, each run's value shown (cost per place
+    // „und Lauf“, ruling M7-H-R1; the other metrics alike, final review B M-2).
+    const met = measured.every((m) => metricStatus(metric, value(m, metric), cfg, "pilot") === "met");
+    const values = measured.map((m) => `${m.label} ${formatMetric(metric, value(m, metric))}`).join(", ");
+    lines.push(`- ${box(met)} ${METRIC_NAMES[metric]} je Lauf: ${values} (Pilotziel ${target(metric, cfg, "pilot")} in jedem Lauf)`);
   }
   lines.push("- [ ] Gazetteer der Pilot-Kacheln vollständig (Inseln, Küstenorte, benannte Buchten mit Namen in Deutsch, Englisch, Griechisch) – von Hand prüfen");
   const routes = details(current, "route_reconstruction");
   const reports = Array.isArray(routes.reports) ? (routes.reports as Array<{ stops: number; complete: boolean }>) : [];
+  const { minTripReports, revisitChanges } = cfg.pilotCriteria;
   lines.push(
-    `- ${box(reports.length >= 3)} Routen-Rekonstruktion an mindestens 3 Törnberichten: ${reports.length} Törnberichte mit Route, davon ${
+    `- ${box(reports.length >= minTripReports)} Routen-Rekonstruktion an mindestens ${minTripReports} Törnberichten: ${reports.length} Törnberichte mit Route, davon ${
       reports.filter((r) => r.complete).length
     } vollständig${reports.length > 0 ? ` (Stopps je Bericht: ${reports.map((r) => r.stops).join(", ")})` : ""}`,
   );
   const v = input.revisit;
-  const revisitOk = v !== null && v.expected === 10 && v.correct === 10 && v.unexpected.length === 0;
+  const revisitOk = v !== null && v.expected === revisitChanges && v.correct === revisitChanges && v.unexpected.length === 0;
   lines.push(
-    `- ${box(revisitOk)} Simulierter Revisit liefert 10 von 10 Änderungen korrekt, keine falschen: ${
+    `- ${box(revisitOk)} Simulierter Revisit liefert ${revisitChanges} von ${revisitChanges} Änderungen korrekt, keine falschen: ${
       v ? `${v.correct} von ${v.expected} korrekt, ${v.unexpected.length} zusätzliche` : "nicht geprüft"
     }`,
   );
@@ -379,9 +384,15 @@ export function renderPilotReport(input: PilotReportInput): string {
     }`,
   );
   const review = value(second, "review_minutes");
+  // Open tasks and decisions without a duration count 0 minutes: the effort is shown only when every task of the run
+  // was decided (final review B I-3).
+  const effort = details(second, "review_minutes");
+  const openTasks = Number(effort.open ?? 0);
+  const withoutDuration = Number(effort.withoutDuration ?? 0);
+  const reviewMet = review !== null && review < cfg.secondRunReviewMinutesMax && openTasks === 0;
   lines.push(
-    `- ${box(review !== null && review < cfg.secondRunReviewMinutesMax)} Review-Aufwand für den zweiten Lauf unter ${cfg.secondRunReviewMinutesMax} Minuten: ${
-      second ? formatMetric("review_minutes", review) : "kein zweiter Lauf gemessen"
+    `- ${box(reviewMet)} Review-Aufwand für den zweiten Lauf unter ${cfg.secondRunReviewMinutesMax} Minuten: ${
+      second ? `${formatMetric("review_minutes", review)} (offene Aufgaben: ${openTasks}, Entscheidungen ohne Dauer: ${withoutDuration})` : "kein zweiter Lauf gemessen"
     }`,
   );
   const costsDone = value(first, "cost_per_place") !== null && value(second, "cost_per_place") !== null;

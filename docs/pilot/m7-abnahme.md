@@ -181,7 +181,7 @@ Keine. M7 Teil (a) rief keinen externen Dienst auf; alle KI-Antworten kamen von 
 | Rundungskanten der Vergleichsklassen (Schutz ab 0,5, Tiefe 0,5 m, Position 4 Nachkommastellen) wie im Plan (M7-A-R1) | `lib/domain/comparison.ts` |
 | Eine wiederholte Abweichung nutzt die offene Aufgabe und frischt ihren Kontext auf; ein späteres `match` oder `not_at_navily` schließt sie (M7-A-R1, M7-B-R2) | `lib/domain/quality/comparison-results.ts` |
 | Bestätigen einer Abweichung schreibt nie über ein von Hand gesetztes Ergebnis; `proposal_confirmed` ist wie manuell geschützt (M7-B-R2, M7-C-R2) | `lib/domain/quality/comparison-results.ts` |
-| Ein Schutzsektor mit Text-Fact, aber ohne berechneten Wert zählt als „nur Text“, nie als „korrigiert“ (M7-C-R1) | `lib/domain/quality/metrics.ts` |
+| Ein Schutzsektor mit Text-Fact, aber ohne berechneten Wert zählt als „nur Text“, nie als „korrigiert“ (M7-C-R1), und macht den Ort für die Schutz-Konfidenz nicht vollständig: Spec 10 verlangt einen Text, der den berechneten Wert bestätigt oder korrigiert (M7-FIN-R1) | `lib/domain/quality/metrics.ts` |
 | Beendete Kacheln stehen in `places_per_tile.details.endedTiles` und zählen für das Revier; Belegtreue zählt nur reguläre Läufe, Bewertungs- und Vergleichsläufe stehen getrennt (Bündel D) | `lib/domain/quality/metrics.ts` |
 | Pseudo-Aufgaben (`profile_entry`, `place_merge`, `place_position`, `place_anchor`) und Vergleichsabweichungen zählen nicht zum Review-Aufwand, stehen aber in `byKind` (P14, M7-D-R3) | `lib/domain/quality/metrics.ts` |
 | Der Anteil „Beobachtung < 18 Monate“ ist durch den Rückfall auf das Abrufdatum überhöht (M7-D-R3 M-1, im Pilotbericht erklärt) | `lib/domain/quality/metrics.ts` |
