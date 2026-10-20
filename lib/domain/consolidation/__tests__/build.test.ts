@@ -23,6 +23,7 @@ function context(over: Partial<ProfileContext> = {}): ProfileContext {
     resolutions: new Map(),
     decidedUncertainKeys: new Set(),
     decidedConflictKeys: new Set(),
+    withdrawnFactIds: new Set(),
     openTasks: new Map(),
     ...over,
   };

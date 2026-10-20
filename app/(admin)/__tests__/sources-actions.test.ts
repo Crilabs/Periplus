@@ -6,6 +6,7 @@ import { tileIdFor } from "@/lib/domain/tiles";
 import { newId } from "@/lib/domain/ids";
 import { DEFAULT_CRAWL_RULES } from "@/lib/domain/sources/crawl-rules";
 import { getSource } from "@/lib/domain/sources/store";
+import { insertPlace, insertTextFact } from "@/test/consolidation";
 import { testDb, withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
 
@@ -40,7 +41,7 @@ vi.mock("next/navigation", () => ({
 
 import { crawlAllApprovedAction, createSourceAction } from "../sources/actions";
 import { discoveryForTileAction } from "../tiles/[id]/actions";
-import { crawlAction, pauseSourceAction, saveSourceAction, testCrawlAction, uploadPdfAction } from "../sources/[id]/actions";
+import { crawlAction, endSourceAction, pauseSourceAction, saveSourceAction, testCrawlAction, uploadPdfAction } from "../sources/[id]/actions";
 
 import nextConfig from "@/next.config";
 
@@ -157,6 +158,46 @@ describe("saveSourceAction", () => {
       requireAdmin.mockRejectedValue(new Error("unauthorized"));
       await expect(saveSourceAction(settingsForm(sourceId))).rejects.toThrow("unauthorized");
       expect((await getSource(tx, sourceId))!.name).not.toBe("Neuer Name");
+    }));
+});
+
+describe("endSourceAction (ruling M6-H-R1)", () => {
+  it("ends an approved source, then starts one consolidation run for its objects and says so", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const sourceId = await insertSource(tx);
+      const { objectId } = await insertPlace(tx, { name: "Quellenbucht" });
+      await insertTextFact(tx, objectId, sourceId, { attribute: "holding", value: "good", observedAt: "2026-07-01" });
+      await endSourceAction(form({ sourceId }));
+      expect(requireAdmin).toHaveBeenCalled();
+      expect((await getSource(tx, sourceId))!.validTo).not.toBeNull();
+      const [run] = await tx.select({ id: runs.id, params: runs.params }).from(runs).where(sql`${runs.params}->'geoObjectIds' ? ${objectId}`);
+      expect(run).toMatchObject({ params: { geoObjectIds: [objectId] } });
+      expect(redirect).toHaveBeenCalledWith(`/sources/${sourceId}?ended=1&run=${run!.id}`);
+    }));
+
+  it("a source without facts ends without a run; a proposed or ended one is refused; a bad id is a 404", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const paused = await insertSource(tx, "paused");
+      await endSourceAction(form({ sourceId: paused }));
+      expect(redirect).toHaveBeenLastCalledWith(`/sources/${paused}?ended=0`);
+      const proposed = await insertSource(tx, "proposed");
+      await endSourceAction(form({ sourceId: proposed }));
+      expect(redirect).toHaveBeenLastCalledWith(`/sources/${proposed}?error=not_endable`);
+      expect((await getSource(tx, proposed))!.validTo).toBeNull();
+      await endSourceAction(form({ sourceId: paused }));
+      expect(redirect).toHaveBeenLastCalledWith(`/sources/${paused}?error=not_endable`);
+      await expect(endSourceAction(form({ sourceId: "not-a-uuid" }))).rejects.toThrow("NEXT_NOT_FOUND");
+    }));
+
+  it("rejects without admin session", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const sourceId = await insertSource(tx);
+      requireAdmin.mockRejectedValue(new Error("not an admin"));
+      await expect(endSourceAction(form({ sourceId }))).rejects.toThrow("not an admin");
+      expect((await getSource(tx, sourceId))!.validTo).toBeNull();
     }));
 });
 

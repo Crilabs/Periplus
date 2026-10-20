@@ -324,6 +324,7 @@ export const SOURCE_ERROR_LABELS = {
   invalid_source: "Domain, Name und Typ angeben",
   not_approved: "Nur eine freigegebene Quelle kann pausiert werden",
   not_paused: "Nur eine pausierte Quelle kann fortgesetzt werden",
+  not_endable: "Nur eine freigegebene oder pausierte Quelle kann beendet werden",
   source_ended: "Die Quelle ist beendet",
   upload_not_allowed: "PDFs lassen sich nur bei freigegebenen, vorgeschlagenen oder pausierten Quellen hochladen",
 } as const;

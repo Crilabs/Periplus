@@ -23,6 +23,7 @@ function context(over: Partial<ProfileContext> = {}): ProfileContext {
     resolutions: new Map(),
     decidedUncertainKeys: new Set(),
     decidedConflictKeys: new Set(),
+    withdrawnFactIds: new Set(),
     openTasks: new Map(),
     ...over,
   };
@@ -174,6 +175,26 @@ describe("diffProfiles", () => {
       { type: "expired", attribute: "services.water", oldValue: true, newValue: true, severity: "notable", details: { lastConfirmedAt: "2026-10-01" } },
     ]);
     expect(expired.versionNeeded).toBe(true);
+  });
+
+  it("a value resting only on facts of an ended source is withdrawn, not kept (ruling M6-H-R1)", () => {
+    const prev = stored(build([...basis(), guideWater()]));
+    const ended = context({ withdrawnFactIds: new Set(["fact-guide-water"]) });
+    const gone = diff(prev, build(basis(), ended), ended);
+    expect(gone.profile.attributes["services.water"]).toBeUndefined();
+    expect(gone.events).toEqual([expect.objectContaining({ type: "changed", attribute: "services.water", oldValue: true, newValue: null })]);
+    expect(gone.versionNeeded).toBe(true);
+
+    // a single forum saying otherwise replaces it without the support rule (else uncertain, see above)
+    const forum = text({ factId: "fact-forum-water", attribute: "services.water", value: false, sourceKey: "source:forum", sourceWeight: 0.4, observedAt: "2026-07-01" });
+    const replaced = diff(prev, build([...basis(), forum], ended), ended);
+    expect(replaced.profile.attributes["services.water"]).toBe(false);
+    expect(replaced.tasks).toEqual([]);
+    expect(replaced.events).toEqual([expect.objectContaining({ type: "changed", attribute: "services.water", oldValue: true, newValue: false })]);
+
+    // one fact of a still counting source keeps it
+    const partly = context({ withdrawnFactIds: new Set(["other-fact"]) });
+    expect(diff(prev, build(basis(), partly), partly).profile.attributes["services.water"]).toBe(true);
   });
 
   it("a newly expired value emits expired with its severity and last confirmation", () => {

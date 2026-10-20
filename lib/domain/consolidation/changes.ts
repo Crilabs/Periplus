@@ -99,6 +99,22 @@ function canExpire(p: AttributeProvenance): boolean {
   );
 }
 
+/** The facts a value rests on: for a list attribute those of its entries, else `factIds`; computation ids left out. */
+function valueFacts(p: AttributeProvenance): string[] {
+  const ids = p.entryFactIds ? Object.values(p.entryFactIds).flat() : p.factIds;
+  return ids.filter((id) => !id.includes(":"));
+}
+
+/**
+ * A text or observed value whose every fact comes from a source that is rejected or ended now (`withdrawnFactIds`,
+ * „Quelle beenden“, ruling M6-H-R1): it is withdrawn, not kept to expire, and a new value replaces it without support.
+ */
+function withdrawn(p: AttributeProvenance, withdrawnFactIds: Set<string>): boolean {
+  if (!canExpire(p)) return false;
+  const facts = valueFacts(p);
+  return facts.length > 0 && facts.every((id) => withdrawnFactIds.has(id));
+}
+
 /**
  * The provenance of a value kept from the previous profile, with expiry applied on the run date like `buildProfile`
  * does: a value that can expire, last confirmed before `cutoff`, drops one class (its confidence never rises).
@@ -189,7 +205,9 @@ function mergedListProvenance(prev: AttributeProvenance, next: AttributeProvenan
  *     `change.additiveLists` (safety lists) the entries the new list adds are accepted anyway, per entry (`changed`);
  *     only the rest of the change (removed or changed entries) waits as uncertain;
  *   - a value without inputs any more stays (no event, expiry ages it) if it can expire (text or observation);
- *     a computed, rule, review or POI value goes, its gap stays, and `changed` → null is emitted (ruling M5-F-R3 I-1).
+ *     a computed, rule, review or POI value goes, its gap stays, and `changed` → null is emitted (ruling M5-F-R3 I-1);
+ *   - a text or observed value resting only on facts of rejected or ended sources (`withdrawn`, ruling M6-H-R1) goes
+ *     like a computed one, and another value replaces it as `changed` without the support rule;
  * - A kept value still carried by a current input is confirmed again (`lastConfirmedAt`, ruling M5-F-R3 M-1).
  * - A value newly `expired` → `expired` (severity by attribute, `details.lastConfirmedAt`).
  * - Identity: name, parent, geometry, position → `geo_changed` (`info`); `place.kind` → `changed` (`info`); `exclude`
@@ -238,13 +256,15 @@ export function diffProfiles(prev: ProfileSnapshot | null, next: BuiltProfile, c
         if (newValue !== undefined) event("new_attribute", key, null, newValue, severityFor(key, undefined, newValue, cfg));
         continue;
       }
+      const oldWithdrawn = withdrawn(prev.provenance[key]!, context.withdrawnFactIds);
       if (newValue === undefined) {
-        if (canExpire(prev.provenance[key]!)) keep(key);
+        if (canExpire(prev.provenance[key]!) && !oldWithdrawn) keep(key);
         else event("changed", key, oldValue, null, removalSeverity(key, oldValue, cfg));
       } else if (!same(oldValue, newValue)) {
         const support = next.support[key] ?? { independent: 0, maxWeight: 0, factIds: [], confirmedAt: {} };
         const severity = severityFor(key, oldValue, newValue, cfg);
         const supported =
+          oldWithdrawn ||
           next.provenance[key]?.origin === "rule" ||
           support.independent >= cfg.change.minIndependent ||
           support.maxWeight > cfg.change.strongWeight;

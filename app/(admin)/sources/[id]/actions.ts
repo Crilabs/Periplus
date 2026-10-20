@@ -9,6 +9,7 @@ import { changeRateEnum, DOC_TYPES } from "@/lib/db/schema";
 import type { CrawlRules } from "@/lib/domain/sources/crawl-rules";
 import { ForbiddenSourceDomain } from "@/lib/domain/sources/forbidden-domains";
 import {
+  endSource,
   NotAPdf,
   pauseSource,
   resumeSource,
@@ -18,6 +19,8 @@ import {
   uploadPdf,
 } from "@/lib/domain/sources/store";
 import { getBoss } from "@/lib/jobs/boss";
+import { createLogger } from "@/lib/logger";
+import { startConsolidationRun } from "@/lib/pipeline/consolidation/run";
 import { startFetchRun, startTestCrawl, startUploadFetchRun } from "@/lib/pipeline/fetch/run";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { parseCrawlRulesForm } from "../../_components/crawl-rules-fields";
@@ -100,6 +103,32 @@ export async function resumeSourceAction(formData: FormData): Promise<void> {
     target = `${sourcePath(sourceId)}?error=forbidden_domain`;
   }
   revalidatePath(sourcePath(sourceId));
+  redirect(target);
+}
+
+/**
+ * „Quelle beenden“ (ruling M6-H-R1): ends an approved or paused source (`endSource`), then, after that commit (never
+ * inside it, ruling M5-F-R4), starts one consolidation run for the objects that had facts from it, so its values leave
+ * their profiles. Back to the source with `?ended=<n objects>` and `&run=<id>`, or `&endedNoRun=1` when the run did not
+ * start (the end stands); `?error=not_endable` for any other status.
+ */
+export async function endSourceAction(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+  const sourceId = sourceIdOf(formData);
+  const db = getDb();
+  const result = await endSource(db, sourceId);
+  revalidatePath(sourcePath(sourceId));
+  if (!result.ended) return redirect(`${sourcePath(sourceId)}?error=not_endable`);
+  let target = `${sourcePath(sourceId)}?ended=${result.geoObjectIds.length}`;
+  if (result.geoObjectIds.length > 0) {
+    try {
+      const run = await startConsolidationRun(db, await getBoss(), { scope: { geoObjectIds: result.geoObjectIds }, triggeredBy: admin.email });
+      target += `&run=${run.id}`;
+    } catch (e) {
+      createLogger("sources").error({ sourceId, objects: result.geoObjectIds.length, err: e }, "consolidation run not started after ending a source");
+      target += "&endedNoRun=1";
+    }
+  }
   redirect(target);
 }
 

@@ -24,6 +24,7 @@ import { RunStatusBadge } from "../../_components/runs-table";
 import {
   Badge,
   Button,
+  ButtonLink,
   DescriptionList,
   EmptyState,
   Field,
@@ -46,6 +47,7 @@ import { pendingTextRunAction } from "../actions";
 import { SOURCE_STATUS_TONES } from "../tones";
 import {
   crawlAction,
+  endSourceAction,
   pauseSourceAction,
   resumeSourceAction,
   saveSourceAction,
@@ -76,6 +78,8 @@ export default async function Page({ params, searchParams }: PageProps<"/sources
   const ended = source.validTo !== null;
   const uploadable = !ended && source.status !== "rejected";
   const error = sourcePageError(sp.error);
+  const endedObjects = param(sp.ended);
+  const endedRun = param(sp.run);
   const invalid = (param(sp.invalid) ?? "").split(",").filter((f) => f !== "");
   const mark = (field: string) =>
     invalid.includes(field) ? (
@@ -207,13 +211,46 @@ export default async function Page({ params, searchParams }: PageProps<"/sources
                 <Button variant="primary">Fortsetzen</Button>
               </form>
             )}
+            {!ended && (source.status === "approved" || source.status === "paused") && (
+              <Dialog
+                trigger="Quelle beenden …"
+                triggerVariant="danger"
+                title="Quelle beenden"
+                description="Beendet die Quelle endgültig: Sie wird nicht mehr gecrawlt, und ihre Facts zählen in keinem Profil mehr. Danach werden die Objekte mit Facts aus ihr neu konsolidiert. Lässt sich nicht rückgängig machen."
+              >
+                <form action={endSourceAction} className="flex justify-end">
+                  {hidden}
+                  <Button variant="danger">Quelle beenden</Button>
+                </form>
+              </Dialog>
+            )}
           </>
         }
       />
 
       <div className="space-y-6">
-        {(error || invalid.length > 0 || archivedElsewhere || param(sp.saved) === "1") && (
+        {(error || invalid.length > 0 || archivedElsewhere || param(sp.saved) === "1" || endedObjects !== undefined) && (
           <div className="space-y-3">
+            {endedObjects !== undefined && (
+              <Notice
+                tone={param(sp.endedNoRun) === "1" ? "warn" : "ok"}
+                title="Quelle beendet"
+                actions={
+                  endedRun &&
+                  UUID.test(endedRun) && (
+                    <ButtonLink href={`/runs/${endedRun}`} size="sm">
+                      Lauf ansehen
+                    </ButtonLink>
+                  )
+                }
+              >
+                {endedObjects === "0"
+                  ? "Ihre Facts zählen nicht mehr. Kein Objekt hatte Facts aus ihr."
+                  : param(sp.endedNoRun) === "1"
+                    ? `Ihre Facts zählen nicht mehr. Die Neuberechnung von ${endedObjects} Objekten ist nicht gestartet: „Profil neu berechnen“ auf den Orten.`
+                    : `Ihre Facts zählen nicht mehr. ${endedObjects} Objekte werden neu konsolidiert.`}
+              </Notice>
+            )}
             {error && (
               <Notice tone="danger" title="Nicht ausgeführt">
                 {error}

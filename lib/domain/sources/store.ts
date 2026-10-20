@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Archive } from "@/lib/adapters/s3";
 import { getConfig, type AppConfig } from "@/lib/config";
@@ -15,6 +15,7 @@ import {
   type SourceStatus,
 } from "@/lib/db/schema";
 import { ensureDocument } from "@/lib/domain/documents/store";
+import { takesFactsSql } from "@/lib/domain/facts/levels";
 import { createLogger } from "@/lib/logger";
 import { crawlRulesSchema, DEFAULT_CRAWL_RULES, type CrawlRules } from "./crawl-rules";
 import { assertAllowedSourceDomain, isForbiddenHost } from "./forbidden-domains";
@@ -179,6 +180,49 @@ export async function resumeSource(db: Db, id: string, cfg: Pick<AppConfig, "del
   const [row] = await db.select({ domain: sources.domain }).from(sources).where(eq(sources.id, id));
   if (row) assertAllowedSourceDomain(row.domain, cfg.delivery.forbiddenDomains);
   return setSourceStatus(db, id, "approved", null, { from: "paused" });
+}
+
+/**
+ * „Quelle beenden“ (ruling M6-H-R1, the remedy of a package blocked by `foreign_content`): ends the approved or paused
+ * source `id` on today's UTC date (`valid_to`; the history trigger records it). From then on its facts count in no
+ * consolidation (`countingSourceSql`), it is neither crawled nor resumed, and its documents leave the delivered
+ * `sources` with the next profile. Returns whether it ended (a proposed, rejected or already ended source does not)
+ * and the geo objects to consolidate again after the commit: those with a fact from one of its documents, a merged one
+ * replaced by its final target, only valid objects that take facts, sorted.
+ */
+export async function endSource(db: Db, id: string): Promise<{ ended: boolean; geoObjectIds: string[] }> {
+  return db.transaction(async (tx) => {
+    const ended = await tx
+      .update(sources)
+      .set({ validTo: sql`(now() at time zone 'UTC')::date` })
+      .where(and(eq(sources.id, id), inArray(sources.status, ["approved", "paused"]), isNull(sources.validTo)))
+      .returning({ id: sources.id });
+    if (ended.length === 0) return { ended: false, geoObjectIds: [] };
+    const { rows } = await tx.execute<{ id: string }>(sql`
+      with recursive hit as (
+        select distinct f.geo_object_id as id
+        from facts f
+        join mentions m on m.id = f.mention_id
+        join document_versions v on v.id = m.document_version_id
+        join documents d on d.id = v.document_id
+        where d.source_id = ${id}
+      ),
+      chain(id, merged_into_id, depth) as (
+        select o.id, o.merged_into_id, 0 from hit h join geo_objects o on o.id = h.id
+        union all
+        select n.id, n.merged_into_id, c.depth + 1 from chain c join geo_objects n on n.id = c.merged_into_id where c.depth < 100
+      )
+      select distinct o.id
+      from chain c
+      join geo_objects o on o.id = c.id
+      where c.merged_into_id is null
+        and o.valid_from <= (now() at time zone 'UTC')::date
+        and (o.valid_to is null or o.valid_to > (now() at time zone 'UTC')::date)
+        and ${takesFactsSql}
+      order by o.id
+    `);
+    return { ended: true, geoObjectIds: rows.map((r) => r.id) };
+  });
 }
 
 /** The domain of a manual source is known already (any source row of its registrable domain, ended ones too). */
