@@ -23,7 +23,7 @@ import { reviewDecisions } from "./review";
 
 /*
  * imagery_tiles and place_images are stable tables (forbid_delete, history in <table>_history), place_renders is
- * append-only (forbid_mutation). Triggers: drizzle/0058_images_triggers.sql.
+ * append-only (forbid_mutation). Triggers: drizzle/0059_images_triggers.sql.
  */
 
 export const imagerySourceEnum = pgEnum("imagery_source", [
