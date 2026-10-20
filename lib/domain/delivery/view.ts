@@ -1,17 +1,19 @@
-import { count, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
-import { CONTRACT_FILES, type ChangeEntry, type ChangesFile, type ContractFile } from "@/contract";
+import { CONTRACT_FILES, type ChangeEntry, type ChangesFile, type ContractFile, type Spot, type SpotBody } from "@/contract";
 import type { Db } from "@/lib/db/client";
-import { deliveries, geoObjects, places, type DeliveryStatus } from "@/lib/db/schema";
+import { deliveredObjects, deliveries, geoObjects, places, type DeliveryStatus } from "@/lib/db/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import type { DeliveryRow } from "./build";
-import { readStoredFile } from "./read";
+import { draftArea, type OmittedSpot } from "./draft";
+import { readStoredFile, spotAsOf } from "./read";
 import { contentTypeOf } from "./serialize";
 import type { CheckName, Finding, ValidationReport } from "./validate";
+import { contentHash } from "./versioning";
 
 /*
- * What the admin sees of deliveries (spec 08, plan Task 13): the list per area, one delivery with its report, changes
- * and files (rejected packages too, for diagnosis) and a file as download.
+ * What the admin sees of deliveries (spec 08, plan Tasks 13 and 14): the list per area, one delivery with its report,
+ * changes and files (rejected packages too, for diagnosis), a file as download, and the place page's delivery tab.
  * Reads only; never builds, never writes S3.
  */
 
@@ -193,4 +195,70 @@ export async function deliveryDownload(
   if (bytes === null) return null;
   const version = found.row.dataVersion === null ? "rejected" : String(found.row.dataVersion);
   return { bytes, contentType: contentTypeOf(file), filename: `${found.areaPublicId}-${version}-${file}` };
+}
+
+/** Why the next package would not deliver the place: a `mapSpot` omission, or no spot of its area's package at all. */
+export type PreviewOmission = OmittedSpot["reason"] | "no_area" | "not_in_package";
+
+export type PlaceDelivery = {
+  delivered: { spot: Spot; dataVersion: number; deliveryId: string } | null;
+  preview: { spot: SpotBody; differs: boolean } | { omitted: PreviewOmission } | null;
+  history: Array<{ profileVersion: number; validFrom: string; removed: boolean; deliveryId: string }>;
+};
+
+/**
+ * The place page's delivery tab: the spot as last delivered (`spotAsOf`), the spot the next package of the place's
+ * area would deliver (`draftArea` on `today`, the build's own assembly, ruling M6-P27: no S3, no versions), whether it
+ * differs from the delivered one (`contentHash` without the version fields), and every contract version of the spot.
+ * A place without public id has nothing to show.
+ */
+export async function placeDelivery(db: Db, archive: Archive, placeId: string, opts: { today?: string } = {}): Promise<PlaceDelivery> {
+  const today = opts.today ?? new Date().toISOString().slice(0, 10);
+  const { rows } = await db.execute<{ public_id: string | null; area_id: string | null }>(sql`
+    select p.public_id, (
+      select t.area_id from tiles t
+      where t.id = p.tile_id and t.valid_from <= ${today}::date and (t.valid_to is null or t.valid_to > ${today}::date)
+    ) as area_id
+    from places p where p.id = ${placeId}
+  `);
+  const place = rows[0];
+  if (!place?.public_id) return { delivered: null, preview: null, history: [] };
+  const publicId = place.public_id;
+
+  const found = await spotAsOf(db, archive, publicId);
+  const delivered = found && { spot: found.spot, dataVersion: found.dataVersion, deliveryId: found.deliveryId };
+  const history = await db
+    .select({
+      profileVersion: deliveredObjects.profileVersion,
+      validFrom: deliveredObjects.validFrom,
+      removed: deliveredObjects.removed,
+      deliveryId: deliveredObjects.firstDeliveryId,
+    })
+    .from(deliveredObjects)
+    .where(and(eq(deliveredObjects.publicId, publicId), eq(deliveredObjects.objectType, "spot")))
+    .orderBy(desc(deliveredObjects.profileVersion));
+
+  let preview: PlaceDelivery["preview"];
+  if (place.area_id === null) {
+    preview = { omitted: "no_area" };
+  } else {
+    const draft = await draftArea(db, place.area_id, today);
+    const spot = draft.spots.find((s) => s.body.id === publicId);
+    const omitted = draft.omittedSpots.find((s) => s.id === publicId);
+    if (spot) {
+      const deliveredHash = delivered ? deliveredContentHash(delivered.spot) : null;
+      preview = { spot: spot.body, differs: deliveredHash !== contentHash(spot.body) };
+    } else {
+      preview = { omitted: omitted ? omitted.reason : "not_in_package" };
+    }
+  }
+  return { delivered, preview, history };
+}
+
+/** The content hash of a delivered spot: its stored body without the version fields, as the build hashes it. */
+function deliveredContentHash(spot: Spot): string {
+  const body: Record<string, unknown> = { ...spot };
+  delete body.profileVersion;
+  delete body.validFrom;
+  return contentHash(body);
 }

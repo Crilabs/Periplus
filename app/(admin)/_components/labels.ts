@@ -31,6 +31,7 @@ import type { ChangeSeverity, ChangeType, SummaryStatus } from "@/lib/db/schema/
 import type { DeliveryStatus } from "@/lib/db/schema/deliveries";
 import type { ChangeEntry, ContractFile } from "@/contract";
 import type { CheckName } from "@/lib/domain/delivery/validate";
+import type { PreviewOmission } from "@/lib/domain/delivery/view";
 import type { ConfidenceClass, ConflictResolution, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
 import type { VersionDiff, VersionNote } from "@/lib/domain/profile-timeline";
 import type { GapReason } from "@/lib/domain/geometry/gaps";
@@ -607,4 +608,13 @@ export const CONTRACT_FILE_LABELS: Record<ContractFile, string> = {
   "coast.geojson": "Küste",
   "weather-points.json": "Wetterpunkte",
   "changes.json": "Änderungen",
+};
+
+/** Why the next package would not deliver a place (place page, tab „Lieferung“). */
+export const PREVIEW_OMISSION_LABELS: Record<PreviewOmission, string> = {
+  no_name: "Der Ort hat keinen gültigen Namen.",
+  no_profile: "Der Ort hat kein Profil.",
+  shelter_incomplete: "Die Schutzwerte sind unvollständig oder ohne Herkunft.",
+  no_area: "Die Kachel des Orts gehört zu keinem Revier.",
+  not_in_package: "Der Ort ist kein Spot des Pakets (nicht bestätigt, zusammengelegt oder beendet).",
 };

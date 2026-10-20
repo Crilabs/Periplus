@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { z } from "zod";
 import type { PlaceStatus } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
+import { deliveryArchive } from "@/lib/domain/delivery/archive";
+import { placeDelivery } from "@/lib/domain/delivery/view";
 import { geoFacts } from "@/lib/domain/geo-facts";
 import { placeDetail } from "@/lib/domain/geo-view";
 import { placeGeometry } from "@/lib/domain/geometry-view";
@@ -26,6 +28,7 @@ import {
   type Tone,
 } from "../../_components/ui";
 import { recomputePlaceProfileAction } from "./actions";
+import { DeliveryTab } from "./delivery-tab";
 import { FactsTab } from "./facts-tab";
 import { GeometryTab } from "./geometry-tab";
 import { ProfileTab } from "./profile-tab";
@@ -42,7 +45,7 @@ const PLACE_STATUS_TONES: Record<PlaceStatus, Tone> = {
 };
 
 /** Tabs of the place page (`?tab=`); later milestones add theirs. */
-const TABS = { overview: "Übersicht", geometry: "Geometrie", facts: "Facts", profile: "Profil", timeline: "Zeitachse" } as const;
+const TABS = { overview: "Übersicht", geometry: "Geometrie", facts: "Facts", profile: "Profil", timeline: "Zeitachse", delivery: "Lieferung" } as const;
 type Tab = keyof typeof TABS;
 const tabParam = z.enum(Object.keys(TABS) as [Tab, ...Tab[]]).catch("overview");
 const runsParam = z.enum(["active", "all"]).catch("active");
@@ -119,6 +122,8 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
         <ProfileTabView placeId={p.id} geoObjectId={p.geoObjectId} version={versionParam.parse(sp.version)} attr={attr} notice={textParam.parse(sp.notice)} runId={uuidParam.parse(sp.run)} confirm={textParam.parse(sp.confirm)} />
       ) : tab === "timeline" ? (
         <TimelineTabView placeId={p.id} geoObjectId={p.geoObjectId} version={versionParam.parse(sp.v)} asOf={textParam.parse(sp.asOf)} attr={attr} confirm={textParam.parse(sp.confirm)} />
+      ) : tab === "delivery" ? (
+        <DeliveryTabView placeId={p.id} />
       ) : facts ? (
         <FactsTab groups={facts} runs={runs} runsHref={(r) => `/places/${p.id}?tab=facts${r === "all" ? "&runs=all" : ""}`} />
       ) : geometry ? (
@@ -128,6 +133,10 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
       )}
     </>
   );
+}
+
+async function DeliveryTabView({ placeId }: { placeId: string }) {
+  return <DeliveryTab view={await placeDelivery(getDb(), deliveryArchive(), placeId)} />;
 }
 
 type ProfileTabProps = { placeId: string; geoObjectId: string; version: number | undefined; attr: string | undefined };
