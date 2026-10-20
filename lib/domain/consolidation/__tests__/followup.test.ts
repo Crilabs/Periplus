@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { and, eq } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { makeResponse, type Transport } from "@/lib/adapters/http";
 import { areaByKey, getConfig, getConsolidationConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
@@ -21,7 +21,7 @@ import type { JobContext } from "@/lib/jobs/worker";
 import { sql } from "drizzle-orm";
 import { freezeTextRunParams } from "@/lib/pipeline/text/versions";
 import { insertMention, insertPlace, insertSource } from "@/test/consolidation";
-import { withRollback } from "@/test/db";
+import { testDb, withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
 import { insertTestRun, insertTestTile, insertTestVersion } from "@/test/text";
 
@@ -45,9 +45,14 @@ const LON = 20.13;
 const LAT = 34.13;
 const TILE = tileIdFor(LON, LAT);
 // Fixture rows are valid from the test database's current_date (UTC) and requests are stamped with now(), so the
-// test runs on today's UTC date.
-const TODAY = new Date().toISOString().slice(0, 10);
-const NOW = new Date(`${TODAY}T12:00:00Z`);
+// test runs on the database's date, read once before the tests (not the JS clock at import, OPS-5).
+let TODAY = "";
+let NOW = new Date(0);
+beforeAll(async () => {
+  const { rows } = await testDb().execute<{ today: string }>(sql`select current_date::text as today`);
+  TODAY = rows[0]!.today;
+  NOW = new Date(`${TODAY}T12:00:00Z`);
+});
 const DAY_MS = 86_400_000;
 const followup = () => getConsolidationConfig().followup;
 

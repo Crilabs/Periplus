@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { withRollback } from "@/test/db";
 import { insertNamedObject, insertTestTile, insertTestVersion } from "@/test/text";
@@ -113,7 +114,9 @@ describe("check-texts", () => {
       }
       expect(await measureTileBorders(tx, cfg, { versionIds: [v.versionId] })).toEqual({ unmatchedNames: 2, matchedWithRing2: 1 });
       // older entries are outside the window
-      expect(await measureTileBorders(tx, cfg, { versionIds: [v.versionId], since: new Date(Date.now() + 86_400_000) })).toEqual({ unmatchedNames: 0, matchedWithRing2: 0 });
+      // the database's clock, not the JS one (OPS-5): the entries were stamped with now()
+      const { rows } = await tx.execute<{ t: string }>(sql`select (now() + interval '1 day')::text as t`);
+      expect(await measureTileBorders(tx, cfg, { versionIds: [v.versionId], since: new Date(rows[0]!.t) })).toEqual({ unmatchedNames: 0, matchedWithRing2: 0 });
       // the database-wide numbers include the scene (never asserted as exact counts: other tests write too)
       const all = await textStats(tx, cfg);
       expect(all.tileBorders.unmatchedNames).toBeGreaterThanOrEqual(2);

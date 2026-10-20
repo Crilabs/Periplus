@@ -22,12 +22,13 @@ export async function measureTileBorders(
   cfg: AppConfig = getConfig(),
   opts: { since?: Date; versionIds?: string[] } = {},
 ): Promise<TileBorderMeasurement> {
-  const since = opts.since ?? new Date(Date.now() - 30 * 86_400_000);
+  // The default window on the database's clock, the one that stamped `created_at`.
+  const since = opts.since ? sql`${opts.since.toISOString()}::timestamptz` : sql`now() - interval '30 days'`;
   const versionFilter = opts.versionIds ? sql`and u.document_version_id in ${jsonUuids(opts.versionIds)}` : sql``;
   const { rows } = await db.execute<{ version_id: string; name_normalized: string }>(sql`
     select u.document_version_id as version_id, u.name_normalized
     from unmatched_names u
-    where u.created_at >= ${since.toISOString()}::timestamptz ${versionFilter}
+    where u.created_at >= ${since} ${versionFilter}
     order by u.document_version_id, u.name_normalized, u.id
   `);
   const ctx = { nameAffixes: cfg.nameAffixes, areaKeys: cfg.areas.map((a) => a.key) };
