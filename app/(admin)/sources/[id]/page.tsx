@@ -273,6 +273,20 @@ export default async function Page({ params, searchParams }: PageProps<"/sources
           </div>
         )}
 
+        {detail.approvalTaskId && (
+          <Notice
+            tone="warn"
+            title="Freigabe offen"
+            actions={
+              <ButtonLink href={`/review/${detail.approvalTaskId}`} size="sm">
+                Zur Freigabe
+              </ButtonLink>
+            }
+          >
+            Die Quelle ist vorgeschlagen. Die Freigabe übernimmt die hier gespeicherten Einstellungen.
+          </Notice>
+        )}
+
         {invalid.length > 0 && (
           <Panel title="Einstellungen und Crawl-Regeln" description="Nicht gespeichert: bitte die markierten Felder korrigieren.">
             {settingsForm}

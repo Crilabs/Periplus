@@ -3,7 +3,14 @@ import type { ReactNode } from "react";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import type { ProposalRobots } from "@/lib/domain/discovery/proposals";
-import { detailFeatures, nextTaskHref, reviewTaskDetail, type GeoObjectView, type NearbyPlace } from "@/lib/domain/review-view";
+import {
+  detailFeatures,
+  nextTaskHref,
+  reviewTaskDetail,
+  type GeoObjectView,
+  type NearbyPlace,
+  type SourceSuggestion,
+} from "@/lib/domain/review-view";
 import { QUEUES } from "@/lib/jobs/queues";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { AnnotatedText } from "../../_components/annotated-text";
@@ -102,6 +109,10 @@ function robotsText(robots: ProposalRobots | null): string {
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+function suggestionText(s: SourceSuggestion): string {
+  return `${DOC_TYPE_LABELS[s.type]}, Gewicht ${s.weight.toLocaleString("de-DE", { maximumFractionDigits: 2 })}, ${CHANGE_RATE_LABELS[s.changeRate]}`;
 }
 
 /** "Bucht", "Highlight (Essen)", or the raw hint when it is unknown. */
@@ -805,9 +816,20 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
                     },
                     { label: "Sprachen", value: subject.languages.join(", ") || "–" },
                     { label: "robots.txt", value: robotsText(subject.robots) },
-                    {
-                      label: "Vorschlag",
-                      value: `${DOC_TYPE_LABELS[subject.suggestion.type]}, Gewicht ${subject.suggestion.weight.toLocaleString("de-DE", { maximumFractionDigits: 2 })}, ${CHANGE_RATE_LABELS[subject.suggestion.changeRate]}`,
+                    !!subject.originalSuggestion && {
+                      label: "Ursprünglicher Vorschlag",
+                      value: (
+                        <>
+                          {suggestionText(subject.originalSuggestion)}
+                          {subject.editedSinceProposal && (
+                            <Hint>
+                              {" "}
+                              Auf der Quellenseite geändert; das Formular zeigt die aktuellen Werte (
+                              {suggestionText(subject.suggestion)}).
+                            </Hint>
+                          )}
+                        </>
+                      ),
                     },
                   ]}
                 />

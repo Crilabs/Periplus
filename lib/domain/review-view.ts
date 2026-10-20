@@ -34,6 +34,7 @@ import type { ProposalRobots, SerpHit } from "@/lib/domain/discovery/proposals";
 import { formatReviewValue, profileAttributeLabel } from "@/lib/domain/consolidation/format";
 import { comparisonTaskContextSchema } from "@/lib/domain/quality/comparison-results";
 import type { ComparisonAttribute } from "@/lib/db/schema/quality";
+import { canonicalJson } from "@/lib/domain/facts/schema";
 import { factViewsByIds, type FactView } from "@/lib/domain/geo-facts";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { candidateObjects, withNeighbours } from "@/lib/domain/mentions/scope";
@@ -163,8 +164,15 @@ export type ReviewSubject =
       languages: string[];
       /** robots.txt summary at proposal time; null when the task has none. */
       robots: ProposalRobots | null;
-      /** Suggested approval values; the source's current values when the task has none. */
+      /**
+       * Approval form defaults: the source's current values. Discovery writes its suggestion into the row, so they only
+       * differ from `originalSuggestion` after an edit on the source page, which the approval must not undo (UI-1).
+       */
       suggestion: SourceSuggestion;
+      /** The suggestion the proposal was made with (task context); null when the task has none. */
+      originalSuggestion: SourceSuggestion | null;
+      /** The source's values differ from `originalSuggestion` (edited on the source page). */
+      editedSinceProposal: boolean;
     }
   | {
       type: "name_candidate";
@@ -560,6 +568,12 @@ async function sourceSubject(db: Db, sourceId: string, context: Record<string, u
   const languages = z.array(z.string()).safeParse(context.languages);
   const robots = proposalRobotsSchema.safeParse(context.robots);
   const suggestion = suggestionSchema.safeParse(context.suggestion);
+  const current: SourceSuggestion = {
+    type: source.type,
+    weight: source.weight,
+    changeRate: source.changeRate,
+    crawlRules: source.crawlRules,
+  };
   return {
     type: "source",
     source,
@@ -569,9 +583,9 @@ async function sourceSubject(db: Db, sourceId: string, context: Record<string, u
     linkingSources: typeof context.linkingSources === "number" ? context.linkingSources : 0,
     languages: languages.success ? languages.data : source.languages,
     robots: robots.success ? robots.data : null,
-    suggestion: suggestion.success
-      ? suggestion.data
-      : { type: source.type, weight: source.weight, changeRate: source.changeRate, crawlRules: source.crawlRules },
+    suggestion: current,
+    originalSuggestion: suggestion.success ? suggestion.data : null,
+    editedSinceProposal: suggestion.success && canonicalJson(suggestion.data) !== canonicalJson(current),
   };
 }
 

@@ -145,10 +145,13 @@ describe("review view", () => {
         linkingSources: 2,
         languages: ["en", "de"],
         robots,
-        suggestion,
+        // The form defaults are the source's current values; the proposal's own suggestion stays visible (UI-1).
+        suggestion: { type: "trip_report", weight: 0.6, changeRate: "normal", crawlRules: DEFAULT_CRAWL_RULES },
+        originalSuggestion: suggestion,
+        editedSinceProposal: true,
       });
 
-      // Without (valid) context the suggestion is the source's current values.
+      // Without (valid) context the suggestion is the source's current values and there is no original.
       const { id: bare } = await createReviewTask(tx, {
         kind: "source_approval",
         subjectType: "source",
@@ -162,6 +165,8 @@ describe("review view", () => {
         linkingSources: 0,
         robots: null,
         suggestion: { type: "trip_report", weight: 0.6, changeRate: "normal", crawlRules: DEFAULT_CRAWL_RULES },
+        originalSuggestion: null,
+        editedSinceProposal: false,
       });
     }));
 
