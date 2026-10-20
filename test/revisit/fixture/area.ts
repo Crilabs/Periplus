@@ -54,7 +54,7 @@ export const REVISIT_SOURCES = {
   S4: { host: "revisit-forum.invalid", type: "forum", weight: 0.4 },
 } as const satisfies Record<string, { host: string; type: DocType; weight: number }>;
 
-type SourceKey = keyof typeof REVISIT_SOURCES;
+export type SourceKey = keyof typeof REVISIT_SOURCES;
 
 /** The documents: source and path; the URL is `https://<host><path>`. */
 export const REVISIT_DOCUMENTS = {
@@ -191,33 +191,9 @@ export async function seedRevisitArea(tx: Db, archive: Archive): Promise<Revisit
 
   const docs = {} as RevisitFixture["documents"];
   for (const d of Object.keys(REVISIT_DOCUMENTS) as DocumentKey[]) {
-    const { source } = REVISIT_DOCUMENTS[d];
-    const url = documentUrl(d);
-    const docType = REVISIT_SOURCES[source].type;
-    const doc = await ensureDocument(tx, { sourceId: sourceIds[source], url, urlNormalized: url, docType });
-    await tx.insert(crawlFrontier).values({ sourceId: sourceIds[source], url, urlNormalized: url, status: "fetched" });
+    const { source, path } = REVISIT_DOCUMENTS[d];
     const markdown = readFileSync(join(DIR, `${d}.md`), "utf8");
-    const stored = await storeFetched(
-      tx,
-      archive,
-      doc.id,
-      {
-        fetchedAt: FIRST_FETCH,
-        raw: new TextEncoder().encode(markdown),
-        rawExt: "md",
-        contentType: "text/markdown",
-        finalUrl: null,
-        markdown,
-        converter: "local",
-        language: d === "d4" ? "en" : "de",
-        publishedAt: null,
-        docType,
-        etag: null,
-        lastModified: null,
-      },
-      getConfig().fetch.chunk,
-    );
-    docs[d] = { id: doc.id, url, versionId: stored.versionId };
+    docs[d] = await addRevisitDocument(tx, archive, sourceIds, { source, path, markdown, language: d === "d4" ? "en" : "de" });
   }
 
   return {
@@ -230,4 +206,41 @@ export async function seedRevisitArea(tx: Db, archive: Archive): Promise<Revisit
     sourceIds,
     documents: docs,
   };
+}
+
+/**
+ * Stores one recorded page of the fixture: document, frontier row `fetched` and its first version (fetched
+ * `FIRST_FETCH`) from `markdown`. Also for a test that needs a page beyond d1 … d5 (before „Lauf 1“).
+ */
+export async function addRevisitDocument(
+  tx: Db,
+  archive: Archive,
+  sourceIds: Record<SourceKey, string>,
+  page: { source: SourceKey; path: string; markdown: string; language: string },
+): Promise<{ id: string; url: string; versionId: string }> {
+  const url = `https://${REVISIT_SOURCES[page.source].host}${page.path}`;
+  const docType = REVISIT_SOURCES[page.source].type;
+  const doc = await ensureDocument(tx, { sourceId: sourceIds[page.source], url, urlNormalized: url, docType });
+  await tx.insert(crawlFrontier).values({ sourceId: sourceIds[page.source], url, urlNormalized: url, status: "fetched" });
+  const stored = await storeFetched(
+    tx,
+    archive,
+    doc.id,
+    {
+      fetchedAt: FIRST_FETCH,
+      raw: new TextEncoder().encode(page.markdown),
+      rawExt: "md",
+      contentType: "text/markdown",
+      finalUrl: null,
+      markdown: page.markdown,
+      converter: "local",
+      language: page.language,
+      publishedAt: null,
+      docType,
+      etag: null,
+      lastModified: null,
+    },
+    getConfig().fetch.chunk,
+  );
+  return { id: doc.id, url, versionId: stored.versionId };
 }

@@ -13,7 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:ops": "bash scripts/deploy/__tests__/deploy-test.sh",
+    "test:ops": "bash scripts/deploy/__tests__/deploy-test.sh && bash scripts/sim/__tests__/clone-test.sh",
     "worker": "tsx watch --env-file-if-exists=.env.local worker/index.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=.env.local scripts/migrate.ts",
@@ -38,8 +38,11 @@
     "consolidate": "tsx --env-file-if-exists=.env.local scripts/consolidate.ts",
     "contract:generate": "tsx scripts/contract-generate.ts",
     "delivery:consume": "tsx --env-file-if-exists=.env.local scripts/delivery-consume.ts",
-    "sim:revisit": "tsx --env-file-if-exists=.env.local scripts/sim/revisit.ts",
-    "sim:verify": "tsx --env-file-if-exists=.env.local scripts/sim/verify.ts"
+    "sim:clone": "bash scripts/sim/clone.sh",
+    "sim:worker": "tsx --env-file=.env.sim worker/index.ts",
+    "sim:draft-scenario": "tsx --env-file=.env.sim scripts/sim/draft-scenario.ts",
+    "sim:revisit": "tsx --env-file=.env.sim scripts/sim/revisit.ts",
+    "sim:verify": "tsx --env-file=.env.sim scripts/sim/verify.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
