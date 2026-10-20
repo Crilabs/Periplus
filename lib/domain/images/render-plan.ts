@@ -63,6 +63,27 @@ function offset(a: LonLat, b: LonLat): { distanceM: number; azimuthDeg: number }
   return { distanceM: Math.hypot(east, north), azimuthDeg: normalise(Math.atan2(east, north) / RAD) };
 }
 
+/** Where an image was taken from; stored on `place_images` and shown in the contract and the UI. */
+export type CameraDetails = {
+  position: LonLat;
+  heightM: number;
+  /** Clockwise from north, the direction the camera looks. */
+  viewBearingDeg: number;
+  tiltDeg: number;
+  fovDeg: number;
+};
+
+/** Camera position (target moved `distanceM` along `azimuthDeg`), height, view bearing (`azimuthDeg + 180`), tilt, field of view. */
+export function cameraDetails(camera: RenderCamera): CameraDetails {
+  return {
+    position: destination(camera.target, camera.distanceM, camera.azimuthDeg),
+    heightM: camera.heightM,
+    viewBearingDeg: normalise(camera.azimuthDeg + 180),
+    tiltDeg: camera.tiltDeg,
+    fovDeg: camera.fovDeg,
+  };
+}
+
 /** The opening bearing, else the bearing of the longest fetch ray (ray i at `i · rayStepDeg`), else `null`. */
 export function baseAzimuth(openingBearing: number | null, rays: number[] | null, rayStepDeg: number): number | null {
   if (openingBearing !== null) return openingBearing;

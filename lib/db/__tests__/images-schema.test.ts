@@ -70,6 +70,12 @@ async function insertImage(tx: Db, geoObjectId: string, renderId: string, patch:
     .values({
       geoObjectId,
       kind: "ai_illustration",
+      slot: "title",
+      cameraPosition: geomFromGeoJson({ type: "Point", coordinates: [21.05, 35.05] }),
+      cameraHeightM: 260,
+      viewBearingDeg: 270,
+      cameraTiltDeg: 30,
+      cameraFovDeg: 50,
       renderId,
       light: "midday",
       model: "m",
@@ -131,7 +137,18 @@ describe("images schema", () => {
     });
   });
 
-  it("one current image per object and kind", async () => {
+  it("two current images per object in different slots", async () => {
+    await withRollback(async (tx) => {
+      const geo = await insertTestGeoObject(tx);
+      const render = await insertRender(tx, geo);
+      await insertImage(tx, geo, render.id);
+      await insertImage(tx, geo, render.id, { slot: "view-2", sortOrder: 1 });
+      const r = await tx.execute(sql`select count(*)::int as n from place_images where geo_object_id = ${geo} and valid_to is null`);
+      expect(r.rows[0]).toEqual({ n: 2 });
+    });
+  });
+
+  it("second current image in the same slot violates the unique index", async () => {
     await withRollback(async (tx) => {
       const geo = await insertTestGeoObject(tx);
       const render = await insertRender(tx, geo);
@@ -139,6 +156,26 @@ describe("images schema", () => {
       expect(await rejectionMessage(tx, (d) => insertImage(d, geo, render.id))).toContain("place_images_current_unique");
       await tx.update(placeImages).set({ validTo: sql`current_date` }).where(eq(placeImages.id, first.id));
       await insertImage(tx, geo, render.id);
+    });
+  });
+
+  it("ai_illustration without camera columns violates place_images_ai_camera", async () => {
+    await withRollback(async (tx) => {
+      const geo = await insertTestGeoObject(tx);
+      const render = await insertRender(tx, geo);
+      expect(await rejectionMessage(tx, (d) => insertImage(d, geo, render.id, { cameraTiltDeg: null }))).toContain("place_images_ai_camera");
+      expect(await rejectionMessage(tx, (d) => insertImage(d, geo, render.id, { cameraPosition: null }))).toContain("place_images_ai_camera");
+      // a photo needs no camera
+      await insertImage(tx, geo, render.id, { kind: "photo", slot: "photo", cameraPosition: null, cameraHeightM: null, viewBearingDeg: null, cameraTiltDeg: null, cameraFovDeg: null });
+    });
+  });
+
+  it("view bearing must lie in [0, 360)", async () => {
+    await withRollback(async (tx) => {
+      const geo = await insertTestGeoObject(tx);
+      const render = await insertRender(tx, geo);
+      expect(await rejectionMessage(tx, (d) => insertImage(d, geo, render.id, { viewBearingDeg: 360 }))).toContain("place_images_bearing_range");
+      expect(await rejectionMessage(tx, (d) => insertImage(d, geo, render.id, { viewBearingDeg: -1 }))).toContain("place_images_bearing_range");
     });
   });
 

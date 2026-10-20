@@ -10,6 +10,7 @@ import type { PlaceImageInput } from "../place-input";
 import {
   allowedZooms,
   baseAzimuth,
+  cameraDetails,
   cameraFor,
   candidateAzimuths,
   foregroundPixelSize,
@@ -172,5 +173,21 @@ describe("planRender", () => {
       const fromTarget = await groundPoint(tx, camera, camera.target);
       expect(Math.abs(fromTarget.distance - camera.distanceM)).toBeLessThanOrEqual(0.5);
     });
+  });
+});
+
+describe("cameraDetails", () => {
+  it("cameraDetails of an open_water z1 camera looks back at the target", () => {
+    const cam = cameraFor([LON, LAT], 90, "z1", cfg);
+    const d = cameraDetails(cam);
+    // azimuth 90: the camera stands due east of the target, 450 m away, and looks west.
+    expect(d.position[0] - LON).toBeCloseTo(cam.distanceM / 89_390, 5);
+    expect(d.position[1]).toBeCloseTo(LAT, 6);
+    expect(Math.abs(cam.distanceM - 450)).toBeLessThanOrEqual(1);
+    expect(d.viewBearingDeg).toBeCloseTo(270, 9);
+    expect(d.heightM).toBe(260);
+    expect(d.tiltDeg).toBe(30);
+    expect(d.fovDeg).toBe(cfg.camera.fovDeg);
+    expect(cameraDetails(cameraFor([LON, LAT], 200, "z1", cfg)).viewBearingDeg).toBeCloseTo(20, 9);
   });
 });
