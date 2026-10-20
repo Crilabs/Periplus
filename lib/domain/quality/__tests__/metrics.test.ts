@@ -1,0 +1,377 @@
+import { sql } from "drizzle-orm";
+import { describe, expect, it } from "vitest";
+import { getConfig, loadConfig } from "@/lib/config";
+import type { Db } from "@/lib/db/client";
+import { geomFromGeoJson } from "@/lib/db/geometry";
+import {
+  COMPARISON_ATTRIBUTES,
+  comparisonResults,
+  comparisonSet,
+  places,
+  routes,
+  routeStops,
+  tiles,
+  type ComparisonAttribute,
+  type ComparisonResultValue,
+  type PlaceStatus,
+} from "@/lib/db/schema";
+import { SECTORS } from "@/lib/domain/facts/schema-types";
+import { newId } from "@/lib/domain/ids";
+import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
+import {
+  insertComputation,
+  insertExtraction,
+  insertMention,
+  insertMentionFact,
+  insertSource,
+  type TestMention,
+} from "@/test/consolidation";
+import { withRollback } from "@/test/db";
+import { insertNamedObject, insertTestExtractionRun, insertTestRun, insertTestVersion } from "@/test/text";
+import { comparisonValues, loadComparisonSubjects } from "../comparison-values";
+import {
+  coverageMetric,
+  factPrecisionMetric,
+  multiSourceMetric,
+  quoteFidelityMetric,
+  routeReconstructionMetric,
+  shelterConfidenceMetric,
+} from "../metrics";
+
+// Synthetic area around 21.0° E / 35.2° N (outside the pilot box): two tiles, every row rolled back.
+
+const quality = getConfig().quality;
+const extractRoute = loadConfig("config").models.tasks["extract-route"]!;
+const WEST = { lon: 21.0, lat: 35.2 };
+const EAST = { lon: 21.3, lat: 35.2 };
+
+async function area(tx: Db) {
+  const areaKey = `test-${newId()}`;
+  const areaId = await insertNamedObject(tx, { type: "area", names: [{ name: "Test area" }], lon: 21.15, lat: 35.2, configKey: areaKey });
+  const tileIds: string[] = [];
+  for (const p of [WEST, EAST]) {
+    const id = tileIdFor(p.lon, p.lat);
+    const [w, s, e, n] = tileBbox(id);
+    await tx
+      .insert(tiles)
+      .values({ id, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, areaId })
+      .onConflictDoUpdate({ target: tiles.id, set: { areaId } });
+    tileIds.push(id);
+  }
+  let n = 0;
+  /** A place in the west tile (or `at`), confirmed unless told otherwise, optionally in the comparison set. */
+  const addPlace = async (o: { status?: PlaceStatus; inSet?: boolean; at?: { lon: number; lat: number }; name?: string } = {}) => {
+    const at = o.at ?? WEST;
+    const lon = at.lon + 0.001 * ++n;
+    const objectId = await insertNamedObject(tx, { type: "bay", names: [{ name: o.name ?? `Place ${n}` }], lon, lat: at.lat });
+    const [p] = await tx
+      .insert(places)
+      .values({
+        geoObjectId: objectId,
+        kind: "anchorage",
+        status: o.status ?? "confirmed",
+        tileId: tileIdFor(lon, at.lat),
+        position: geomFromGeoJson({ type: "Point", coordinates: [lon, at.lat] }),
+      })
+      .returning({ id: places.id });
+    if (o.inSet) await tx.insert(comparisonSet).values({ placeId: p!.id, areaId, addedBy: "test" });
+    return { placeId: p!.id, objectId };
+  };
+  return { areaKey, areaId, westTile: tileIds[0]!, eastTile: tileIds[1]!, addPlace };
+}
+
+/** Appends a comparison outcome for the place's current own value (or `valueHash`). */
+async function addResult(
+  tx: Db,
+  areaKey: string,
+  placeId: string,
+  attribute: ComparisonAttribute,
+  result: ComparisonResultValue,
+  o: { method?: "manual" | "proposal_auto" | "proposal_confirmed" | "review"; valueHash?: string } = {},
+) {
+  const subject = (await loadComparisonSubjects(tx, areaKey)).find((s) => s.placeId === placeId)!;
+  await tx.insert(comparisonResults).values({
+    placeId,
+    attribute,
+    profileVersion: subject.profileVersion,
+    valueHash: o.valueHash ?? comparisonValues(subject, quality.navily)[attribute].hash,
+    result,
+    method: o.method ?? (result.startsWith("deviation_confirmed") ? "review" : "manual"),
+    checkedBy: "test",
+  });
+}
+
+describe("coverageMetric", () => {
+  it("coverage: 4 of 5 set places confirmed is 0.8", () =>
+    withRollback(async (tx) => {
+      const { areaKey, addPlace } = await area(tx);
+      for (let i = 0; i < 4; i++) await addPlace({ inSet: true });
+      await addPlace({ inSet: true, status: "rejected" });
+      await addPlace(); // confirmed, not in the set
+      expect(await coverageMetric(tx, { areaKey })).toEqual({ metric: "coverage", value: 0.8, details: { set: 5, confirmed: 4 } });
+    }));
+
+  it("an empty set or an unknown area is null", () =>
+    withRollback(async (tx) => {
+      const { areaKey, addPlace } = await area(tx);
+      await addPlace();
+      expect((await coverageMetric(tx, { areaKey })).value).toBeNull();
+      expect(await coverageMetric(tx, { areaKey: `test-${newId()}` })).toEqual({ metric: "coverage", value: null, details: { set: 0, confirmed: 0 } });
+    }));
+});
+
+describe("multiSourceMetric", () => {
+  it("multi_source: two documents of one source do not count, two sources do", () =>
+    withRollback(async (tx) => {
+      const { areaKey, addPlace } = await area(tx);
+      const [s1, s2] = [await insertSource(tx), await insertSource(tx)];
+      const oneSource = await addPlace();
+      await insertMention(tx, oneSource.objectId, { sourceId: s1 });
+      await insertMention(tx, oneSource.objectId, { sourceId: s1 });
+      const twoSources = await addPlace();
+      await insertMention(tx, twoSources.objectId, { sourceId: s1 });
+      await insertMention(tx, twoSources.objectId, { sourceId: s2 });
+      const single = await addPlace();
+      await insertMention(tx, single.objectId, { sourceId: s2 });
+      // a candidate place mentioned in two sources is not in the scope
+      const candidate = await addPlace({ status: "candidate" });
+      await insertMention(tx, candidate.objectId, { sourceId: s1 });
+      await insertMention(tx, candidate.objectId, { sourceId: s2 });
+
+      const r = await multiSourceMetric(tx, { areaKey });
+      expect(r.metric).toBe("multi_source");
+      expect(r.value).toBeCloseTo(1 / 3);
+      // ≥ 2 documents (datendienst, ruling M7-P12) is reported beside it
+      expect(r.details).toEqual({ places: 3, multi: 1, multiDocument: 2 });
+    }));
+});
+
+describe("factPrecisionMetric", () => {
+  it("fact_precision: 7 match + 2 confirmed own of 10 compared and 3 not_at_navily is 0.9", () =>
+    withRollback(async (tx) => {
+      const { areaKey, addPlace } = await area(tx);
+      const { placeId } = await addPlace({ inSet: true });
+      const plan: Array<[ComparisonAttribute, ComparisonResultValue, ("proposal_auto" | "manual")?]> = [
+        ["existence", "match", "proposal_auto"],
+        ["position", "match", "proposal_auto"],
+        ["shelter.N", "match", "proposal_auto"],
+        ["shelter.NE", "match"],
+        ["shelter.E", "match"],
+        ["shelter.SE", "match"],
+        ["shelter.S", "match"],
+        ["shelter.SW", "deviation_confirmed_own"],
+        ["shelter.W", "deviation_confirmed_own"],
+        ["shelter.NW", "deviation_confirmed_navily"],
+        ["depth", "not_at_navily"],
+        ["seabed", "not_at_navily"],
+        ["highlight.food", "not_at_navily"],
+      ];
+      for (const [attribute, result, method] of plan) await addResult(tx, areaKey, placeId, attribute, result, { method });
+
+      const r = await factPrecisionMetric(tx, { areaKey });
+      expect(r.metric).toBe("fact_precision");
+      expect(r.value).toBeCloseTo(0.9);
+      expect(r.details).toMatchObject({ compared: 10, correct: 9, notAtNavily: 3, pending: 3, matches: 7, autoMatches: 3 });
+      const byAttribute = r.details.byAttribute as Record<ComparisonAttribute, { compared: number; correct: number }>;
+      expect(Object.keys(byAttribute).sort()).toEqual([...COMPARISON_ATTRIBUTES].sort());
+      expect([byAttribute["shelter.W"], byAttribute["shelter.NW"], byAttribute.depth, byAttribute["mooring.buoys"]]).toEqual([
+        { compared: 1, correct: 1 },
+        { compared: 1, correct: 0 },
+        { compared: 0, correct: 0 },
+        { compared: 0, correct: 0 },
+      ]);
+    }));
+
+  it("fact_precision ignores results for an old value hash and counts them as pending", () =>
+    withRollback(async (tx) => {
+      const { areaKey, addPlace } = await area(tx);
+      const { placeId } = await addPlace({ inSet: true });
+      await addResult(tx, areaKey, placeId, "existence", "match");
+      await addResult(tx, areaKey, placeId, "services.water", "deviation", { valueHash: "0123456789abcdef" });
+      const r = await factPrecisionMetric(tx, { areaKey });
+      expect(r.value).toBe(1);
+      expect(r.details).toMatchObject({ compared: 1, correct: 1, notAtNavily: 0, pending: 15 });
+    }));
+
+  it("without compared results the precision is null", () =>
+    withRollback(async (tx) => {
+      const { areaKey, addPlace } = await area(tx);
+      const { placeId } = await addPlace({ inSet: true });
+      await addResult(tx, areaKey, placeId, "depth", "not_at_navily");
+      expect((await factPrecisionMetric(tx, { areaKey })).value).toBeNull();
+    }));
+});
+
+describe("quoteFidelityMetric", () => {
+  // runs dated in 2001, so no row another test commits falls into the window
+  const window = { from: new Date("2001-02-03T00:00:00Z"), to: new Date("2001-02-04T00:00:00Z") };
+  const textRun = async (tx: Db, createdAt: Date, quoteCheck: { facts: number; verified: number }) => {
+    const runId = await insertTestRun(tx);
+    await tx.execute(sql`update runs set created_at = ${createdAt.toISOString()}::timestamptz where id = ${runId}`);
+    await insertTestExtractionRun(tx, { runId, quoteCheck: { ...quoteCheck, ratio: quoteCheck.verified / quoteCheck.facts, failures: [] } });
+    return runId;
+  };
+
+  it("quote_fidelity over two text runs is verified / facts", () =>
+    withRollback(async (tx) => {
+      await textRun(tx, new Date("2001-02-03T08:00:00Z"), { facts: 100, verified: 100 });
+      await textRun(tx, new Date("2001-02-03T20:00:00Z"), { facts: 100, verified: 99 });
+      await textRun(tx, new Date("2001-02-04T00:00:00Z"), { facts: 50, verified: 0 }); // the window's end is exclusive
+      await textRun(tx, new Date("2001-02-02T23:59:59Z"), { facts: 50, verified: 0 });
+      const r = await quoteFidelityMetric(tx, window);
+      expect(r.metric).toBe("quote_fidelity");
+      expect(r.value).toBeCloseTo(0.995);
+      expect(r.details).toEqual({ facts: 200, verified: 199, runs: 2 });
+    }));
+
+  it("without text facts in the window it is null", () =>
+    withRollback(async (tx) => {
+      expect(await quoteFidelityMetric(tx, { from: new Date("2001-03-03T00:00:00Z"), to: new Date("2001-03-04T00:00:00Z") })).toEqual({
+        metric: "quote_fidelity",
+        value: null,
+        details: { facts: 0, verified: 0, runs: 0 },
+      });
+    }));
+});
+
+describe("shelterConfidenceMetric", () => {
+  const shelterFacts = async (tx: Db, objectId: string, values: Partial<Record<(typeof SECTORS)[number], number>>, o: { blocked?: boolean } = {}) => {
+    const m: TestMention = await insertMention(tx, objectId);
+    const run = await insertExtraction(tx, objectId, m, o.blocked ? { status: "blocked" } : {});
+    for (const [sector, value] of Object.entries(values)) {
+      await insertMentionFact(tx, objectId, m, run, { attribute: `shelter.${sector}`, value });
+    }
+  };
+  const all = (v: number) => Object.fromEntries(SECTORS.map((s) => [s, v])) as Record<(typeof SECTORS)[number], number>;
+
+  it("shelter_confidence counts a place only with text facts in all 8 sectors", () =>
+    withRollback(async (tx) => {
+      const { areaKey, addPlace } = await area(tx);
+      const complete = await addPlace();
+      await insertComputation(tx, complete.objectId, "shelter", Object.fromEntries(SECTORS.map((s) => [`shelter.${s}`, 0.9])));
+      // seven sectors confirm the computation (0.7 is within the tolerance 0.2), S corrects it
+      await shelterFacts(tx, complete.objectId, { ...all(0.9), NE: 0.7, S: 0.1 });
+
+      const seven = await addPlace();
+      await insertComputation(tx, seven.objectId, "shelter", Object.fromEntries(SECTORS.map((s) => [`shelter.${s}`, 0.5])));
+      await shelterFacts(tx, seven.objectId, Object.fromEntries(SECTORS.filter((x) => x !== "NW").map((x) => [x, 0.5])));
+      // the eighth sector only from a blocked extraction run: not active, does not count
+      await shelterFacts(tx, seven.objectId, { NW: 0.5 }, { blocked: true });
+
+      const r = await shelterConfidenceMetric(tx, { areaKey }, quality);
+      expect(r.metric).toBe("shelter_confidence");
+      expect(r.value).toBe(0.5);
+      expect(r.details).toMatchObject({ places: 2, complete: 1, confirmed: 14, corrected: 1 });
+      const bySector = r.details.bySector as Record<string, { withText: number; confirmed: number; corrected: number }>;
+      expect(bySector.S).toEqual({ withText: 2, confirmed: 1, corrected: 1 });
+      expect(bySector.NW).toEqual({ withText: 1, confirmed: 1, corrected: 0 });
+    }));
+
+  it("a text fact without a computed value corrects; no places is null", () =>
+    withRollback(async (tx) => {
+      const { areaKey, addPlace } = await area(tx);
+      const place = await addPlace();
+      await shelterFacts(tx, place.objectId, all(0.9));
+      const r = await shelterConfidenceMetric(tx, { areaKey }, quality);
+      expect([r.value, r.details.confirmed, r.details.corrected]).toEqual([1, 0, 8]);
+      expect((await shelterConfidenceMetric(tx, { areaKey: `test-${newId()}` }, quality)).value).toBeNull();
+    }));
+});
+
+describe("routeReconstructionMetric", () => {
+  /** A route of a route extraction run on the version; `stops` are geo object ids or null (unassigned). */
+  async function addRoute(
+    tx: Db,
+    v: { versionId: string; chunkIds: string[] },
+    stops: Array<string | null>,
+    o: { status?: "finished" | "blocked"; startedAt?: Date } = {},
+  ) {
+    const status = o.status ?? "finished";
+    const extractionRunId = await insertTestExtractionRun(tx, {
+      task: "extract-route",
+      model: extractRoute.model,
+      promptVersion: extractRoute.promptVersion,
+      status,
+      blockedReason: status === "blocked" ? "quote_fidelity" : null,
+      startedAt: o.startedAt ?? new Date("2026-10-18T10:00:00Z"),
+    });
+    const [route] = await tx.insert(routes).values({ documentVersionId: v.versionId, extractionRunId, stopsCount: stops.length }).returning({ id: routes.id });
+    await tx.insert(routeStops).values(
+      stops.map((geoObjectId, ordinal) => ({
+        routeId: route!.id,
+        ordinal,
+        name: `Stop ${ordinal}`,
+        geoObjectId,
+        quote: "we anchored",
+        quoteVerified: true,
+        quoteChunkId: v.chunkIds[0]!,
+      })),
+    );
+  }
+
+  /** A trip report (a new document, its version current) with one route. */
+  async function tripReport(tx: Db, stops: Array<string | null>) {
+    const v = await insertTestVersion(tx, ["Day 1: we anchored. Day 2: we moored."]);
+    await addRoute(tx, v, stops);
+    return v;
+  }
+
+  it("route_reconstruction: one of two routes fully on confirmed places is 0.5", () =>
+    withRollback(async (tx) => {
+      const { areaKey, addPlace } = await area(tx);
+      const [a, b] = [await addPlace(), await addPlace()];
+      const candidate = await addPlace({ status: "candidate" });
+      const complete = await tripReport(tx, [a.objectId, b.objectId]);
+      // an older route of the same version and a blocked newer route do not count: the newest eligible route does
+      await addRoute(tx, complete, [a.objectId, null], { startedAt: new Date("2026-10-01T10:00:00Z") });
+      await addRoute(tx, complete, [a.objectId, null], { status: "blocked", startedAt: new Date("2026-10-19T10:00:00Z") });
+      const open = await tripReport(tx, [b.objectId, candidate.objectId, null]);
+      // a report whose stops all lie outside the area is not in the scope
+      const elsewhere = await addPlace({ at: { lon: 22.0, lat: 35.2 } });
+      await tripReport(tx, [elsewhere.objectId, null]);
+
+      const r = await routeReconstructionMetric(tx, { areaKey });
+      expect(r.metric).toBe("route_reconstruction");
+      expect(r.value).toBe(0.5);
+      expect(r.details).toMatchObject({ routes: 2, complete: 1, openStops: 2 });
+      expect(r.details.reports).toEqual(
+        expect.arrayContaining([
+          { documentId: complete.documentId, stops: 2, openStops: 0, complete: true },
+          { documentId: open.documentId, stops: 3, openStops: 2, complete: false },
+        ]),
+      );
+    }));
+
+  it("only the current version of a trip report counts; without routes it is null", () =>
+    withRollback(async (tx) => {
+      const { areaKey, addPlace } = await area(tx);
+      const a = await addPlace();
+      expect((await routeReconstructionMetric(tx, { areaKey })).value).toBeNull();
+      const old = await tripReport(tx, [a.objectId, null]);
+      await insertTestVersion(tx, ["A new text without a route."], { documentId: old.documentId });
+      expect((await routeReconstructionMetric(tx, { areaKey })).details).toMatchObject({ routes: 0, complete: 0, openStops: 0 });
+    }));
+});
+
+describe("tile scope", () => {
+  it("a tile scope counts only places of that tile", () =>
+    withRollback(async (tx) => {
+      const { areaKey, addPlace, westTile, eastTile } = await area(tx);
+      for (let i = 0; i < 3; i++) await addPlace({ inSet: true });
+      await addPlace({ inSet: true, at: EAST });
+      await addPlace({ inSet: true, at: EAST, status: "rejected" });
+      const s1 = await insertSource(tx);
+      const s2 = await insertSource(tx);
+      const east = await addPlace({ at: EAST });
+      await insertMention(tx, east.objectId, { sourceId: s1 });
+      await insertMention(tx, east.objectId, { sourceId: s2 });
+
+      expect((await coverageMetric(tx, { areaKey })).details).toEqual({ set: 5, confirmed: 4 });
+      expect((await coverageMetric(tx, { areaKey, tileId: westTile })).value).toBe(1);
+      expect(await coverageMetric(tx, { areaKey, tileId: eastTile })).toMatchObject({ value: 0.5, details: { set: 2, confirmed: 1 } });
+      expect((await multiSourceMetric(tx, { areaKey, tileId: eastTile })).details).toEqual({ places: 2, multi: 1, multiDocument: 1 });
+      expect((await multiSourceMetric(tx, { areaKey, tileId: westTile })).details).toEqual({ places: 3, multi: 0, multiDocument: 0 });
+      // a tile of another area is out of the scope
+      expect((await coverageMetric(tx, { areaKey, tileId: tileIdFor(22.0, 35.2) })).details).toEqual({ set: 0, confirmed: 0 });
+    }));
+});
