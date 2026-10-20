@@ -226,21 +226,6 @@ export function coverageOfMatches(
 }
 
 /**
- * Navily coverage of an area: the spots inside the area (`inArea`) matched to a confirmed place, where `places` are
- * the area's confirmed places (not only the comparison set). The matching is the one the proposals use
- * (`matchPlacesToSpots` over all spots), so a place near the area's edge keeps its own spot outside the area.
- */
-export function navilyCoverage(
-  places: MatchPlace[],
-  spots: NavilySpot[],
-  inArea: (p: LonLat) => boolean,
-  cfg: NavilyConfig,
-  affixes: NameAffixesConfig,
-): NavilyCoverage {
-  return coverageOfMatches(places, matchPlacesToSpots(places, spots, cfg, affixes), spots, inArea);
-}
-
-/**
  * The Navily spots from `NAVILY_SPOTS_PATH`, read at call time (never at module level: env-less build); null when the
  * variable is not set. A missing or broken file fails with its path, never with its content.
  */

@@ -6,11 +6,12 @@ import { getConfig } from "@/lib/config";
 import type { LonLat } from "@/lib/domain/geometry/water";
 import { COMPARISON_ATTRIBUTES, comparisonValues, type ComparisonSubject } from "../comparison-values";
 import {
+  coverageOfMatches,
   loadNavilyFromEnv,
   matchPlacesToSpots,
   nameSimilarity,
-  navilyCoverage,
   proposeResults,
+  type MatchPlace,
 } from "../navily-assistant";
 import { loadNavilySpots, type NavilySpot } from "../navily-sample";
 
@@ -308,7 +309,11 @@ describe("proposeResults", () => {
   });
 });
 
-describe("navilyCoverage", () => {
+describe("navily coverage (coverageOfMatches, as navily-run and navily-compare call it)", () => {
+  // The production call: matching over all spots, and only the area's confirmed, valid places count (OPS-8).
+  const coverage = (places: MatchPlace[], spots: NavilySpot[], inArea: (p: LonLat) => boolean, areaPlaceIds = new Set(places.map((p) => p.placeId))) =>
+    coverageOfMatches(places, matchPlacesToSpots(places, spots, cfg, affixes), spots, inArea, areaPlaceIds);
+
   it("coverage counts only spots inside the area against all confirmed places", () => {
     const inArea = (p: LonLat) => p.lat < 35.5;
     const places = [place("a", ["Vathi"]), place("b", ["Kolona"], north(5000))];
@@ -318,14 +323,21 @@ describe("navilyCoverage", () => {
       spot({ name: "Kolona", lat: 36.0, lon: AT.lon }), // outside the area
       spot({ ...north(5050) }), // nameless, 50 m from b
     ];
-    expect(navilyCoverage(places, spots, inArea, cfg, affixes)).toEqual({ spots: 3, matched: 2, ratio: 2 / 3, unmatchedSpotIndexes: [1] });
-    expect(navilyCoverage(places, [], inArea, cfg, affixes)).toEqual({ spots: 0, matched: 0, ratio: null, unmatchedSpotIndexes: [] });
+    expect(coverage(places, spots, inArea)).toEqual({ spots: 3, matched: 2, ratio: 2 / 3, unmatchedSpotIndexes: [1] });
+    expect(coverage(places, [], inArea)).toEqual({ spots: 0, matched: 0, ratio: null, unmatchedSpotIndexes: [] });
   });
 
   it("a spot only a non-confirmed place matched has no confirmed place", () => {
     const places = [place("a", ["Vathi"]), place("dup", ["Kolona"], north(3000), "anchorage", { status: "candidate" })];
     const spots = [spot({ name: "Vathi", ...north(50) }), spot({ name: "Kolona", ...north(3000) })];
-    expect(navilyCoverage(places, spots, () => true, cfg, affixes)).toEqual({ spots: 2, matched: 1, ratio: 0.5, unmatchedSpotIndexes: [1] });
+    expect(coverage(places, spots, () => true)).toEqual({ spots: 2, matched: 1, ratio: 0.5, unmatchedSpotIndexes: [1] });
+  });
+
+  it("a confirmed place that is not one of the area's places covers no spot", () => {
+    const places = [place("a", ["Vathi"]), place("b", ["Kolona"], north(5000))];
+    const spots = [spot({ name: "Vathi", ...north(50) }), spot({ name: "Kolona", ...north(5000) })];
+    const areaPlaceIds = new Set([places[0]!.placeId]);
+    expect(coverage(places, spots, () => true, areaPlaceIds)).toEqual({ spots: 2, matched: 1, ratio: 0.5, unmatchedSpotIndexes: [1] });
   });
 });
 

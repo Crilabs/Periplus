@@ -134,7 +134,9 @@ async function main(): Promise<void> {
     out(`extraction model decision: ${r.modelDecision} (${getConfig().models.tasks["extract-facts"]?.model})`);
     out(`mentions of the name match: ${r.mentions}, without a model call: ${(r.deterministicShare * 100).toFixed(1)} % (target > ${r.minDeterministicShare * 100} %)`);
     out(`cost per mention: ${r.costPerMentionEur === null ? "–" : `${r.costPerMentionEur.toFixed(6)} EUR`} (anthropic, text runs)`);
-    out(`routes: ${r.routes.routes}, all stops assigned: ${r.routes.complete}, open stops: ${r.routes.openStops}`);
+    // Assigned to any geo object; the quality metric route_reconstruction (/quality) counts a stop only at a confirmed
+    // place, so its numbers differ until the places are reviewed (OPS-8).
+    out(`routes: ${r.routes.routes}, all stops assigned to an object: ${r.routes.complete}, stops without an object: ${r.routes.openStops} (not the quality metric route_reconstruction, which needs confirmed places)`);
     out(`tile borders (unmatched names, last 30 days): ${r.tileBorders.unmatchedNames}, found with neighbourRing 2: ${r.tileBorders.matchedWithRing2}`);
     const failures = textCheckFailures(r);
     for (const f of failures) out(`FAIL: ${f}`);
