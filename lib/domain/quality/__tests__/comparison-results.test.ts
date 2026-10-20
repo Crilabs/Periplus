@@ -303,6 +303,67 @@ describe("comparison results", () => {
     });
   });
 
+  it("a regular match leaves the open deviation task of an evaluation run open (final review B I-1)", async () => {
+    await withRollback(async (tx) => {
+      const { placeId } = await insertPlace(tx);
+      const runId = await insertTestRun(tx);
+      const regular = subjectOf(placeId, { "shelter.N": 0.6 });
+      const candidate = subjectOf(placeId, { "shelter.N": 0.3 }, { profileVersion: null });
+      // the evaluation of a candidate configuration finds a deviation on its changed value
+      const evaluation = await recordComparisonResults(tx, {
+        subject: candidate,
+        entries: [{ attribute: "shelter.N", result: "deviation", valueHash: hashOf(candidate, "shelter.N"), profileVersion: null }],
+        evaluationRunId: runId,
+        method: "manual",
+        checkedBy: "admin@test",
+        now: new Date(Date.UTC(2026, 9, 1, 10, 0)),
+      });
+      expect(evaluation).toEqual({ written: 1, tasks: 1 });
+      // the regular page confirms the place's own (unchanged) value: settles the regular value only
+      await recordComparisonResults(tx, {
+        subject: regular,
+        entries: [{ attribute: "shelter.N", result: "match", valueHash: hashOf(regular, "shelter.N"), profileVersion: 3 }],
+        method: "manual",
+        checkedBy: "admin@test",
+        now: new Date(Date.UTC(2026, 9, 1, 10, 1)),
+      });
+      const [task, ...more] = await tasksOf(tx, placeId);
+      expect(more).toEqual([]);
+      expect(task!.status).toBe("open");
+      expect(comparisonTaskContextSchema.parse(task!.context).evaluationRunId).toBe(runId);
+    });
+  });
+
+  it("a repeated deviation whose task was dismissed opens a task again instead of being skipped (final review B I-1)", async () => {
+    await withRollback(async (tx) => {
+      const { placeId } = await insertPlace(tx);
+      const record = (subject: ComparisonSubject, r: "match" | "deviation", minute: number) =>
+        recordComparisonResults(tx, {
+          subject,
+          entries: [{ attribute: "shelter.N", result: r, valueHash: hashOf(subject, "shelter.N"), profileVersion: subject.profileVersion }],
+          method: "manual",
+          checkedBy: "admin@test",
+          now: new Date(Date.UTC(2026, 9, 1, 10, minute)),
+        });
+      const v1 = subjectOf(placeId, { "shelter.N": 0.6 });
+      const v2 = subjectOf(placeId, { "shelter.N": 0.3 }, { profileVersion: 4 });
+      const v3 = subjectOf(placeId, { "shelter.N": 0.6 }, { profileVersion: 5 });
+      expect(await record(v1, "deviation", 0)).toEqual({ written: 1, tasks: 1 });
+      // a match on a newer value dismisses the old value's task
+      expect(await record(v2, "match", 1)).toEqual({ written: 1, tasks: 0 });
+      expect((await tasksOf(tx, placeId)).map((t) => t.status)).toEqual(["dismissed"]);
+      // the value reverts and deviates again: its deviation must be reviewable
+      expect(await record(v3, "deviation", 2)).toEqual({ written: 1, tasks: 1 });
+      const tasks = await tasksOf(tx, placeId);
+      expect(tasks.map((t) => t.status).sort()).toEqual(["dismissed", "open"]);
+      const open = tasks.find((t) => t.status === "open")!;
+      const rows = await resultsOf(tx, placeId);
+      expect(comparisonTaskContextSchema.parse(open.context)).toMatchObject({ resultId: rows.at(-1)!.id, profileVersion: 5 });
+      // with the task open, the same deviation again is skipped
+      expect(await record(v3, "deviation", 3)).toEqual({ written: 0, tasks: 0 });
+    });
+  });
+
   it("the task context takes the own display from the subject only; a caller-given display is refused", async () => {
     await withRollback(async (tx) => {
       const { placeId } = await insertPlace(tx);

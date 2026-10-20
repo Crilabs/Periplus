@@ -82,8 +82,9 @@ async function evaluationRun(db: Db, runId: string): Promise<EvaluationRun> {
  * value hash differs; one without an outcome for the new hash is pending. `passes` = run finished, the set not empty,
  * at least one compared value on the candidate's side (an activation always rests on a checked outcome), no set place
  * with a profile row written after the run finished (the comparison would judge the candidate against data it never
- * saw: evaluate again, ruling M7-E-R2), nothing pending, precision and coverage not lower (`null` counts as 0);
- * `reasons` say in German why not.
+ * saw: evaluate again, ruling M7-E-R2), no activation of the same kind from another run since this run started (an
+ * older evaluation would silently roll a newer activation back, final review B M-4), nothing pending, precision and
+ * coverage not lower (`null` counts as 0); `reasons` say in German why not.
  */
 export async function compareEvaluation(db: Db, evaluationRunId: string): Promise<RegressionComparison> {
   const run = await evaluationRun(db, evaluationRunId);
@@ -127,6 +128,7 @@ export async function compareEvaluation(db: Db, evaluationRunId: string): Promis
   else if (next.compared === 0) reasons.push("Kein geprüfter Vergleichswert – erst Werte im Navily-Abgleich prüfen");
   const stale = run.status === "finished" ? await placesChangedSince(db, evaluated.map((s) => s.placeId), run.id) : 0;
   if (stale > 0) reasons.push(`Profile seit der Bewertung geändert (${stale} ${stale === 1 ? "Ort" : "Orte"}) – neu bewerten`);
+  if (await activatedSince(db, run)) reasons.push("Nach dieser Bewertung wurde eine andere Konfiguration aktiviert – neu bewerten");
   if (pending > 0) reasons.push(`${pending} geänderte${pending === 1 ? "r Wert" : " Werte"} ungeprüft`);
   if (drops(next.precision, old.precision)) reasons.push(`Präzision sinkt von ${percent(old.precision)} auf ${percent(next.precision)}`);
   if (drops(next.coverage, old.coverage)) reasons.push(`Abdeckung sinkt von ${percent(old.coverage)} auf ${percent(next.coverage)}`);
@@ -142,6 +144,22 @@ export async function compareEvaluation(db: Db, evaluationRunId: string): Promis
     passes: reasons.length === 0,
     reasons,
   };
+}
+
+/**
+ * Whether a configuration of a kind the run's candidate holds was activated from another evaluation run after this run
+ * was created. Compared in SQL (microseconds).
+ */
+async function activatedSince(db: Db, run: EvaluationRun): Promise<boolean> {
+  const kinds = [...(run.candidate.rulesVersion !== undefined ? ["consolidation_rules"] : []), ...(run.candidate.extraction ? ["extraction"] : [])];
+  if (kinds.length === 0) return false;
+  const { rows } = await db.execute<{ n: number }>(sql`
+    select count(*)::int as n from config_activations a
+    where a.kind in (select value from jsonb_array_elements_text(${JSON.stringify(kinds)}::jsonb))
+      and a.evaluation_run_id <> ${run.id}::uuid
+      and a.activated_at > (select r.created_at from runs r where r.id = ${run.id}::uuid)
+  `);
+  return Number(rows[0]?.n ?? 0) > 0;
 }
 
 /**

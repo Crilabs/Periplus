@@ -255,6 +255,23 @@ describe("compareEvaluation and activateCandidate", () => {
       expect((await listEvaluations(tx, (await runParams(tx, runId)).comparisonSetArea as string))[0]).toMatchObject({ runId, activated: ["consolidation_rules"] });
     }));
 
+  it("an evaluation older than a later activation of the same kind cannot be activated (final review B M-4)", () =>
+    withRollback(async (tx) => {
+      const { areaKey, places, runId: older } = await scene(tx);
+      // a second evaluation of the same set, activated first
+      const newer = await evaluationRunRow(tx, areaKey, { rulesVersion: "v2", candidate: { rulesVersion: "v2" } });
+      for (const [i, p] of places.entries()) {
+        await tx.insert(evaluationProfiles).values({ runId: newer, geoObjectId: p.geoObjectId, rulesVersion: "v2", factSchemaVersion: "v2", attributes: BASE[i]!, provenance: {}, contentHash: `n${i}` });
+      }
+      await activateCandidate(tx, { evaluationRunId: newer, activatedBy: "a" });
+      const reason = "Nach dieser Bewertung wurde eine andere Konfiguration aktiviert – neu bewerten";
+      expect((await compareEvaluation(tx, older)).reasons).toContain(reason);
+      await expect(activateCandidate(tx, { evaluationRunId: older, activatedBy: "a" })).rejects.toThrow(RegressionGateClosed);
+      expect((await activations(tx)).map((r) => r.evaluationRunId)).toEqual([newer]);
+      // the activated run itself is not blocked by its own activation (double click stays idempotent)
+      expect((await compareEvaluation(tx, newer)).reasons).not.toContain(reason);
+    }));
+
   it("a run that is no evaluation run is refused", () =>
     withRollback(async (tx) => {
       const { id } = await createRun(tx, { kind: "stage", scope: { type: "system", id: "consolidation" }, stages: [CONSOLIDATION_GEO_STAGE], params: {}, triggeredBy: "test" });

@@ -74,7 +74,8 @@ const recordInputSchema = z.strictObject({
 /**
  * Writes the outcomes of one place in one transaction. Each entry's `valueHash` must be the hash of the subject's
  * current own value (else `StaleComparison`, nothing written). An entry whose newest outcome for `(place, attribute,
- * valueHash)` is the same result or a review outcome is skipped (ruling M7-P16).
+ * valueHash)` is the same result or a review outcome is skipped (ruling M7-P16), except a repeated deviation whose task
+ * is not open: it is written again and opens a task (final review B I-1).
  *
  * Every written `deviation` opens a `comparison_deviation` task whose context holds only Periplus data: place,
  * attribute, value hash, profile version, evaluation run, the result row and `ownDisplay`, which is always
@@ -82,7 +83,8 @@ const recordInputSchema = z.strictObject({
  * same value is reused and its context refreshed to the newest deviation (ruling M7-A-R1); a written `match` or
  * `not_at_navily` dismisses every open deviation task of the place and attribute, of any value hash (`dismissedReason`
  * `resolved_by_match` / `resolved_by_not_at_navily`; ruling M7-B-R1 item 5, M7-B-R2); with `evaluationRunId` only the
- * task of that very value, never the regular place's task for its own value (ruling M7-E-R2). `tasks` counts tasks
+ * task of that very value, never the regular place's task for its own value (ruling M7-E-R2); without it only regular
+ * tasks, never an evaluation run's (final review B I-1). `tasks` counts tasks
  * newly opened.
  */
 export async function recordComparisonResults(
@@ -123,7 +125,10 @@ export async function recordComparisonResults(
     let tasks = 0;
     for (const e of entries) {
       const previous = latest.get(key(placeId, e.attribute, e.valueHash));
-      if (previous && (previous.result === e.result || REVIEW_OUTCOMES.has(previous.result))) continue;
+      if (previous && REVIEW_OUTCOMES.has(previous.result)) continue;
+      // the same result again is skipped, except a deviation whose task is no longer open (a later outcome for another
+      // value dismissed it): it is written again and opens a task, so the deviation stays reviewable (final review B I-1)
+      if (previous && previous.result === e.result && (e.result !== "deviation" || (await hasOpenDeviationTask(tx, comparisonSubjectId(placeId, e.attribute, e.valueHash))))) continue;
       const [row] = await tx
         .insert(comparisonResults)
         .values({
@@ -140,9 +145,10 @@ export async function recordComparisonResults(
         .returning({ id: comparisonResults.id });
       written++;
       if (e.result !== "deviation") {
-        // the place's attribute is settled for now: every open deviation task of it closes, whatever own value it was
-        // opened for (an older value's task would otherwise append a decision over this newer outcome). An outcome for
-        // an evaluation value settles only that value: the regular place's tasks for other values stay open.
+        // the place's attribute is settled for now: every open regular deviation task of it closes, whatever own value it
+        // was opened for (an older value's task would otherwise append a decision over this newer outcome). An outcome
+        // for an evaluation value settles only that value: the regular place's tasks for other values stay open; a
+        // regular outcome never closes an evaluation run's task (final review B I-1).
         await tx
           .update(reviewTasks)
           .set({ status: "dismissed", context: sql`${reviewTasks.context} || ${JSON.stringify({ dismissedReason: DISMISS_REASONS[e.result] })}::jsonb` })
@@ -151,7 +157,7 @@ export async function recordComparisonResults(
               eq(reviewTasks.kind, "comparison_deviation"),
               evaluationRunId
                 ? eq(reviewTasks.subjectId, comparisonSubjectId(placeId, e.attribute, e.valueHash))
-                : sql`${reviewTasks.subjectId} like ${`${placeId}:${e.attribute}:%`}`,
+                : and(sql`${reviewTasks.subjectId} like ${`${placeId}:${e.attribute}:%`}`, sql`${reviewTasks.context}->>'evaluationRunId' is null`),
               eq(reviewTasks.status, "open"),
             ),
           );
@@ -179,6 +185,15 @@ export async function recordComparisonResults(
     }
     return { written, tasks };
   });
+}
+
+async function hasOpenDeviationTask(tx: Db, subjectId: string): Promise<boolean> {
+  const [row] = await tx
+    .select({ id: reviewTasks.id })
+    .from(reviewTasks)
+    .where(and(eq(reviewTasks.kind, "comparison_deviation"), eq(reviewTasks.subjectId, subjectId), eq(reviewTasks.status, "open")))
+    .limit(1);
+  return row !== undefined;
 }
 
 export type LatestComparisonResult = {

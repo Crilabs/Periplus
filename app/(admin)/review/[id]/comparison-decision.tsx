@@ -61,7 +61,7 @@ export function ComparisonDecision({
               n={3}
               label={COMPARISON_DECISION_LABELS.unclear}
               decision={{ action: "unclear" }}
-              hint="Bleibt in der Fact-Präzision als unklar stehen."
+              hint="Zählt in der Fact-Präzision nicht als richtig (wie „falsch“)."
             />
           </DecisionPanel>
         )}
