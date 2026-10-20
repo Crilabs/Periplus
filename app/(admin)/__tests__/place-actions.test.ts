@@ -40,7 +40,13 @@ vi.mock("@/lib/domain/place-merge", async (importOriginal) => {
   };
 });
 
-import { mergePlaceAction, recomputeGeoProfileAction, recomputePlaceProfileAction, setAnchorAction } from "../places/[id]/actions";
+import {
+  mergePlaceAction,
+  recomputeGeoProfileAction,
+  recomputePlaceProfileAction,
+  setAnchorAction,
+  setPlaceStatusAction,
+} from "../places/[id]/actions";
 
 const ADMIN = "admin@example.invalid";
 
@@ -251,6 +257,40 @@ describe("„Mit Ort zusammenlegen“", () => {
   it("rejects without admin session", async () => {
     requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
     await expect(mergePlaceAction({ placeId: "0199f0a0-0000-7000-8000-000000000001", intoPlaceId: "0199f0a0-0000-7000-8000-000000000002" })).rejects.toThrow("NEXT_REDIRECT");
+    expect(startRun).not.toHaveBeenCalled();
+  });
+});
+
+describe("„Bestätigen“ / „Verwerfen“ / „Kein Ankerplatz“ in the place header (UI-3)", () => {
+  it("sets the status, then starts the consolidation of the place's object after the commit", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const f = await seedDeliveryArea(tx);
+      const { A } = f.places;
+      await setPlaceStatusAction(form({ placeId: A.placeId, status: "no_anchoring" }));
+      const [a] = await tx.select().from(places).where(eq(places.id, A.placeId));
+      expect(a).toMatchObject({ status: "no_anchoring", statusReason: "review" });
+      expect(startRun).toHaveBeenCalledTimes(1);
+      expect(startRun.mock.calls[0]![2]).toMatchObject({ kind: "stage", params: { geoObjectIds: [A.geoObjectId] }, triggeredBy: ADMIN });
+      expect(redirect).toHaveBeenCalledWith(`/places/${A.placeId}?status=no_anchoring&run=run-1`);
+    }));
+
+  it("the status stands when the follow-up run does not start; a refusal returns with the reason", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const f = await seedDeliveryArea(tx);
+      startRun.mockRejectedValue(new Error("queue down"));
+      await setPlaceStatusAction({ placeId: f.places.M.placeId, status: "rejected" });
+      expect(redirect).toHaveBeenLastCalledWith(`/places/${f.places.M.placeId}?status=rejected&statusNoRun=1`);
+      expect((await tx.select().from(places).where(eq(places.id, f.places.M.placeId)))[0]!.status).toBe("rejected");
+      await setPlaceStatusAction({ placeId: f.places.M.placeId, status: "rejected" });
+      expect(redirect).toHaveBeenLastCalledWith(`/places/${f.places.M.placeId}?statusError=unchanged`);
+      await expect(setPlaceStatusAction({ placeId: f.places.M.placeId, status: "abandoned" as "rejected" })).rejects.toThrow();
+    }));
+
+  it("rejects without admin session", async () => {
+    requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
+    await expect(setPlaceStatusAction({ placeId: "0199f0a0-0000-7000-8000-000000000001", status: "rejected" })).rejects.toThrow("NEXT_REDIRECT");
     expect(startRun).not.toHaveBeenCalled();
   });
 });

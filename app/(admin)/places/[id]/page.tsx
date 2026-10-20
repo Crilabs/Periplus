@@ -7,13 +7,21 @@ import { deliveryArchive } from "@/lib/domain/delivery/archive";
 import { placeDelivery } from "@/lib/domain/delivery/view";
 import { geoFacts } from "@/lib/domain/geo-facts";
 import { mergeCandidates, type MergeCandidate } from "@/lib/domain/place-merge";
+import { ADMIN_PLACE_STATUSES, adminStatusChoices, type AdminPlaceStatus } from "@/lib/domain/place-status";
 import { placeDetail } from "@/lib/domain/geo-view";
 import { placeGeometry } from "@/lib/domain/geometry-view";
 import { timelineView } from "@/lib/domain/profile-timeline";
 import { profileAttributeFacts, profileView } from "@/lib/domain/profile-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { Dialog } from "../../_components/dialog";
-import { mergeError, PLACE_KIND_LABELS, PLACE_STATUS_LABELS, REVIEW_KIND_LABELS, runScopeError } from "../../_components/labels";
+import {
+  mergeError,
+  PLACE_KIND_LABELS,
+  PLACE_STATUS_LABELS,
+  placeStatusError,
+  REVIEW_KIND_LABELS,
+  runScopeError,
+} from "../../_components/labels";
 import { MiniMap } from "../../_components/mini-map";
 import {
   Badge,
@@ -29,7 +37,7 @@ import {
   TextLink,
   type Tone,
 } from "../../_components/ui";
-import { mergePlaceAction, recomputePlaceProfileAction } from "./actions";
+import { mergePlaceAction, recomputePlaceProfileAction, setPlaceStatusAction } from "./actions";
 import { DeliveryTab } from "./delivery-tab";
 import { FactsTab } from "./facts-tab";
 import { GeometryTab } from "./geometry-tab";
@@ -55,6 +63,7 @@ const versionParam = z.coerce.number().int().min(1).optional().catch(undefined);
 const textParam = z.string().max(200).optional().catch(undefined);
 const uuidParam = z.uuid().optional().catch(undefined);
 const positionParam = z.enum(["moved", "moved_no_run", "too_far"]).optional().catch(undefined);
+const statusParam = z.enum(ADMIN_PLACE_STATUSES).optional().catch(undefined);
 
 type Detail = NonNullable<Awaited<ReturnType<typeof placeDetail>>>;
 
@@ -79,6 +88,8 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
   const merged = uuidParam.parse(sp.merged);
   const mergedRun = uuidParam.parse(sp.run);
   const mergeRefused = mergeError(sp.mergeError);
+  const statusSet = statusParam.parse(sp.status);
+  const statusRefused = placeStatusError(sp.statusError);
   const positionStatus = positionParam.parse(sp.position);
   return (
     <>
@@ -107,6 +118,7 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
         actions={
           active && (
             <>
+              {!task && <StatusActions placeId={p.id} status={p.status} />}
               {mergeable && <MergeDialog placeId={p.id} candidates={candidates} />}
               <form action={recomputePlaceProfileAction}>
                 <input type="hidden" name="placeId" value={p.id} />
@@ -130,6 +142,24 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
               Das Profil wird neu berechnet (<TextLink href={`/runs/${mergedRun}`}>Lauf</TextLink>).
             </>
           ) : null}
+        </Notice>
+      )}
+      {statusSet && (
+        <Notice tone={sp.statusNoRun ? "warn" : "ok"} className="mb-6" title={`Status: ${PLACE_STATUS_LABELS[statusSet]}`}>
+          {sp.statusNoRun ? (
+            "Der Status ist gespeichert. Der Folgelauf konnte nicht gestartet werden – bitte „Profil neu berechnen“."
+          ) : mergedRun ? (
+            <>
+              Gespeichert; das Profil wird neu berechnet (<TextLink href={`/runs/${mergedRun}`}>Lauf</TextLink>).
+            </>
+          ) : (
+            "Gespeichert."
+          )}
+        </Notice>
+      )}
+      {statusRefused && (
+        <Notice tone="danger" className="mb-6" title="Status nicht geändert">
+          {statusRefused}
         </Notice>
       )}
       {mergeRefused && (
@@ -174,6 +204,43 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
 
 async function DeliveryTabView({ placeId }: { placeId: string }) {
   return <DeliveryTab view={await placeDelivery(getDb(), deliveryArchive(), placeId)} />;
+}
+
+const STATUS_ACTIONS: Record<AdminPlaceStatus, { label: string; effect: string }> = {
+  confirmed: { label: "Bestätigen", effect: "Der Ort wird bestätigt und mit dem nächsten Paket seines Reviers als Ankerplatz geliefert." },
+  rejected: { label: "Verwerfen", effect: "Der Ort wird verworfen; das nächste Paket seines Reviers meldet ihn als entfernt." },
+  no_anchoring: {
+    label: "Kein Ankerplatz",
+    effect: "Das nächste Paket seines Reviers liefert den Ort als ausgeschlossen: Ankern ist hier nicht möglich oder nicht erlaubt.",
+  },
+};
+
+/**
+ * „Bestätigen“ / „Verwerfen“ / „Kein Ankerplatz“ (spec 09, gesamt review UI-3); only without an open review task of the
+ * place, which decides with its context. Taking a confirmed place back asks first: the next package changes the spot.
+ */
+function StatusActions({ placeId, status }: { placeId: string; status: PlaceStatus }) {
+  return adminStatusChoices(status).map((s) => {
+    const form = (
+      <form action={setPlaceStatusAction} className={status === "confirmed" ? "flex justify-end" : undefined}>
+        <input type="hidden" name="placeId" value={placeId} />
+        <input type="hidden" name="status" value={s} />
+        <Button variant={s === "confirmed" ? "primary" : status === "confirmed" ? "danger" : undefined}>{STATUS_ACTIONS[s].label}</Button>
+      </form>
+    );
+    if (status !== "confirmed") return <span key={s}>{form}</span>;
+    return (
+      <Dialog
+        key={s}
+        trigger={`${STATUS_ACTIONS[s].label} …`}
+        triggerVariant="danger"
+        title={STATUS_ACTIONS[s].label}
+        description={`${STATUS_ACTIONS[s].effect} Das Profil wird danach neu berechnet.`}
+      >
+        {form}
+      </Dialog>
+    );
+  });
 }
 
 /** „Mit Ort zusammenlegen“: choose a confirmed place nearby that this one becomes part of (ruling M6-P15). */

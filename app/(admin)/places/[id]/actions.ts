@@ -11,12 +11,14 @@ import { consolidateGeo } from "@/lib/domain/consolidation/store";
 import { setAnchorPosition } from "@/lib/domain/geometry/anchor-correction";
 import { setPlacePosition } from "@/lib/domain/geometry/place-position";
 import { mergePlaceInto, PlaceMergeNotAllowed } from "@/lib/domain/place-merge";
+import { ADMIN_PLACE_STATUSES, PlaceStatusNotAllowed, setPlaceStatusByAdmin } from "@/lib/domain/place-status";
 import { ProfileChanged, removeProfileEntry } from "@/lib/domain/profile-entry-removal";
 import { DecisionNotAllowed } from "@/lib/domain/review-decisions";
 import { getBoss } from "@/lib/jobs/boss";
 import { createLogger } from "@/lib/logger";
 import { startConsolidationRun } from "@/lib/pipeline/consolidation/run";
 import { CONSOLIDATION_SUMMARY_STAGE } from "@/lib/pipeline/consolidation/stages";
+import { consolidateAfter } from "@/lib/pipeline/follow-ups";
 import { startGeometryRun } from "@/lib/pipeline/geometry-run";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { requireAdmin } from "@/lib/security/require-admin";
@@ -103,6 +105,30 @@ export async function setPlacePositionAction(input: FormData | { placeId: string
 }
 
 const placeSchema = z.object({ placeId: z.uuid() });
+const placeStatusSchema = z.object({ placeId: z.uuid(), status: z.enum(ADMIN_PLACE_STATUSES) });
+
+/**
+ * „Bestätigen“ / „Verwerfen“ / „Kein Ankerplatz“ in the place header (spec 09, gesamt review UI-3): sets the status
+ * (`setPlaceStatusByAdmin`), then, after that commit, a consolidation run takes it into the profile. Back to the place
+ * with `?status=<status>` (and `&run=<id>`, or `&statusNoRun=1` when the run did not start: the status stands), or
+ * with `?statusError=<reason>` when refused.
+ */
+export async function setPlaceStatusAction(input: FormData | z.input<typeof placeStatusSchema>): Promise<void> {
+  const admin = await requireAdmin();
+  const f = placeStatusSchema.parse(fields(input));
+  const db = getDb();
+  let target = `/places/${f.placeId}`;
+  try {
+    const { geoObjectId } = await setPlaceStatusByAdmin(db, { placeId: f.placeId, status: f.status, decidedBy: admin.email });
+    const run = await consolidateAfter(db, getBoss, { geoObjectId, triggeredBy: admin.email });
+    target += `?status=${f.status}${run.status === "started" ? `&run=${run.runId}` : "&statusNoRun=1"}`;
+    revalidatePath(`/places/${f.placeId}`);
+  } catch (e) {
+    if (!(e instanceof PlaceStatusNotAllowed)) throw e;
+    target += `?statusError=${e.reason}`;
+  }
+  redirect(target);
+}
 const geoObjectSchema = z.object({ geoObjectId: z.uuid() });
 
 /**

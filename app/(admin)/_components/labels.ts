@@ -34,6 +34,7 @@ import type { ChangeEntry, ContractFile } from "@/contract";
 import type { CheckName } from "@/lib/domain/delivery/validate";
 import type { PreviewOmission } from "@/lib/domain/delivery/view";
 import type { MergeRefusal } from "@/lib/domain/place-merge";
+import type { PlaceStatusRefusal } from "@/lib/domain/place-status";
 import type { ConfidenceClass, ConflictResolution, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
 import type { VersionDiff, VersionNote } from "@/lib/domain/profile-timeline";
 import type { GapReason } from "@/lib/domain/geometry/gaps";
@@ -655,6 +656,20 @@ export const MERGE_ERROR_LABELS: Record<MergeRefusal, string> = {
 /** The German text of a `?mergeError=`; null for none or an unknown reason. */
 export function mergeError(param: string | string[] | undefined): string | null {
   return typeof param === "string" && Object.hasOwn(MERGE_ERROR_LABELS, param) ? MERGE_ERROR_LABELS[param as MergeRefusal] : null;
+}
+
+/** Why a header status change of a place was refused (`?statusError=`, gesamt review UI-3). */
+export const PLACE_STATUS_ERROR_LABELS: Record<PlaceStatusRefusal, string> = {
+  open_task: "Der Ort hat eine offene Prüfung – dort entscheiden, mit ihrem ganzen Kontext.",
+  unchanged: "Der Ort hat diesen Status schon.",
+  not_valid: "Der Ort ist beendet oder zusammengelegt.",
+};
+
+/** The German text of a `?statusError=`; null for none or an unknown reason. */
+export function placeStatusError(param: string | string[] | undefined): string | null {
+  return typeof param === "string" && Object.hasOwn(PLACE_STATUS_ERROR_LABELS, param)
+    ? PLACE_STATUS_ERROR_LABELS[param as PlaceStatusRefusal]
+    : null;
 }
 
 /* ---- M7: quality measurement ---- */

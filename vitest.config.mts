@@ -20,6 +20,7 @@ const DELIVERY_FIXTURE_TESTS = [
   "app/(admin)/__tests__/delivery-actions.test.ts",
   "app/(admin)/__tests__/place-actions.test.ts",
   "lib/domain/__tests__/place-merge.test.ts",
+  "lib/domain/__tests__/place-status.test.ts",
   "lib/domain/delivery/__tests__/build.test.ts",
   "lib/domain/delivery/__tests__/coast.test.ts",
   "lib/domain/delivery/__tests__/load.test.ts",
