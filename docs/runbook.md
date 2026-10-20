@@ -132,7 +132,7 @@ where public_id is not null and public_id not like (case
   else '' end);
 SQL
 ```
-Danach die Prüfung wiederholen. Eine Zeile aus `places` kann kein Code schreiben (Orte bekommen nur `sp_`-IDs, die sich nie ändern): nicht reparieren, den Deploy zurückhalten und die Zeile untersuchen.
+Danach die Prüfung wiederholen. Betroffen sein können nur Geo-Objekte aus dem OSM-Import (ihr Typ kommt aus den Tags); die Reparatur nimmt ihnen die ID, der nächste OSM-Import des Reviers vergibt eine der richtigen Familie, bis dahin fehlt das Objekt im Paket. Der alte Worker läuft zwischen Prüfung und Migration weiter: scheitert der Deploy trotzdem an 0048, Prüfung und Reparatur wiederholen und erneut ausrollen. Eine Zeile aus `places` kann kein Code schreiben (Orte bekommen nur `sp_`-IDs, die sich nie ändern): nicht reparieren, den Deploy zurückhalten und die Zeile untersuchen.
 
 ## Rollback
 Eine frühere Version erneut ausrollen:
