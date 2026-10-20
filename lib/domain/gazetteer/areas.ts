@@ -1,4 +1,4 @@
-import { and, eq, isNull, ne, notInArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, ne, notInArray, or, sql } from "drizzle-orm";
 import type { Polygon, MultiPolygon } from "geojson";
 import type { AreaConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
@@ -45,7 +45,8 @@ type ConfigObject = {
  * sections (`type coast_section`, `rg_…`, `config_key "<area>/<section>"`, parent = the area). An area's
  * parent (its sea or gulf) is left to `assignParents`.
  * Geometry and parent are only written when they changed, so an unchanged rerun writes no history.
- * Config names are `origin manual`; a manual name no longer in the config is ended (`valid_to`).
+ * Config names are `origin manual`; a manual name no longer in the config is ended (`valid_to`). An object ended
+ * because its key was no longer configured is revived. Ending such objects is `endUnconfiguredAreas`.
  * Returns `config_key → id`.
  */
 export async function syncAreas(db: Db, areas: AreaConfig[]): Promise<Map<string, string>> {
@@ -77,12 +78,50 @@ export async function syncAreas(db: Db, areas: AreaConfig[]): Promise<Map<string
   });
 }
 
+/**
+ * Ends (`valid_to = current_date`) the valid areas and coast sections whose config key is no longer configured, so the
+ * next package reports a removed coast section as `removed` and `GET /areas` no longer lists a removed area
+ * (gesamt-review DAT-4). Takes the whole configuration (the tiles stage passes `getConfig().areas`); `among` limits the
+ * keys considered (tests). Returns the ended keys, sorted. A key configured again revives its object (`syncObject`).
+ */
+export async function endUnconfiguredAreas(db: Db, areas: AreaConfig[], opts: { among?: string[] } = {}): Promise<string[]> {
+  const configured = areas.flatMap((a) => [a.key, ...a.coastSections.map((s) => `${a.key}/${s.key}`)]);
+  if (opts.among?.length === 0) return [];
+  const rows = await db
+    .update(geoObjects)
+    .set({ validTo: sql`current_date`, updatedAt: sql`now()` })
+    .where(
+      and(
+        isNotNull(geoObjects.configKey),
+        isNull(geoObjects.validTo),
+        inArray(geoObjects.type, ["area", "coast_section"]),
+        configured.length > 0 ? notInArray(geoObjects.configKey, configured) : undefined,
+        opts.among ? inArray(geoObjects.configKey, opts.among) : undefined,
+      ),
+    )
+    .returning({ configKey: geoObjects.configKey });
+  return rows.map((r) => r.configKey!).sort();
+}
+
 async function syncObject(db: Db, o: ConfigObject): Promise<string> {
   const geom = geomFromGeoJson(o.polygon);
-  const [existing] = await db
+  let [existing] = await db
     .select({ id: geoObjects.id })
     .from(geoObjects)
     .where(and(eq(geoObjects.configKey, o.configKey), isNull(geoObjects.validTo)));
+  if (!existing) {
+    // configured again after `endUnconfiguredAreas` ended it: the same object and public id come back
+    const [ended] = await db
+      .select({ id: geoObjects.id })
+      .from(geoObjects)
+      .where(and(eq(geoObjects.configKey, o.configKey), eq(geoObjects.type, o.type), isNull(geoObjects.mergedIntoId)))
+      .orderBy(desc(geoObjects.validTo), desc(geoObjects.id))
+      .limit(1);
+    if (ended) {
+      await db.update(geoObjects).set({ validTo: null, updatedAt: sql`now()` }).where(eq(geoObjects.id, ended.id));
+      existing = ended;
+    }
+  }
 
   let id: string;
   if (existing) {

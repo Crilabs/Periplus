@@ -4,7 +4,7 @@ import type { AreaConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { asGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects } from "@/lib/db/schema";
-import { areaBbox, syncAreas } from "@/lib/domain/gazetteer/areas";
+import { areaBbox, endUnconfiguredAreas, syncAreas } from "@/lib/domain/gazetteer/areas";
 import { isPublicId } from "@/lib/domain/ids";
 import { withRollback } from "@/test/db";
 
@@ -132,6 +132,41 @@ describe("syncAreas", () => {
 });
 
 describe("areaBbox", () => {
+  it("ends an area or coast section no longer configured, and a key configured again revives the same object (DAT-4)", async () => {
+    await withRollback(async (tx) => {
+      const key = `test-area-${Math.random().toString(36).slice(2, 10)}`;
+      const base = { ...testArea(), key };
+      const sections = [
+        { ...base.coastSections[0]!, key: "east" },
+        { ...base.coastSections[0]!, key: "west" },
+      ];
+      const area = { ...base, coastSections: sections };
+      const other = { ...testArea(), key: `${key}-other`, coastSections: [] };
+      const ids = await syncAreas(tx, [area, other]);
+      const among = [key, `${key}/east`, `${key}/west`, `${key}/aegina-east`, `${key}-other`];
+
+      // `east` renamed to `aegina-east`, the other area's file deleted
+      const renamed = { ...area, coastSections: [{ ...sections[0]!, key: "aegina-east" }, sections[1]!] };
+      const after = await syncAreas(tx, [renamed]);
+      expect(await endUnconfiguredAreas(tx, [renamed], { among })).toEqual([`${key}-other`, `${key}/east`]);
+      const validTo = async (id: string) =>
+        (await tx.select({ validTo: geoObjects.validTo }).from(geoObjects).where(eq(geoObjects.id, id)))[0]!.validTo;
+      expect(await validTo(ids.get(`${key}/east`)!)).not.toBeNull();
+      expect(await validTo(ids.get(`${key}-other`)!)).not.toBeNull();
+      expect(await validTo(ids.get(`${key}/west`)!)).toBeNull();
+      expect(await validTo(after.get(`${key}/aegina-east`)!)).toBeNull();
+      expect(after.get(`${key}/aegina-east`)).not.toBe(ids.get(`${key}/east`));
+      // nothing left to end
+      expect(await endUnconfiguredAreas(tx, [renamed], { among })).toEqual([]);
+
+      // the other area's file comes back: same object, same public id
+      const otherBefore = (await tx.select({ publicId: geoObjects.publicId }).from(geoObjects).where(eq(geoObjects.id, ids.get(`${key}-other`)!)))[0]!;
+      const again = await syncAreas(tx, [renamed, other]);
+      expect(again.get(`${key}-other`)).toBe(ids.get(`${key}-other`));
+      expect(await validObject(tx, `${key}-other`)).toMatchObject({ id: ids.get(`${key}-other`), publicId: otherBefore.publicId });
+    });
+  });
+
   it("unions the polygon box with the tile box", () => {
     const area = testArea();
     expect(areaBbox(area)).toEqual([25.0, 35.0, 26.0, 36.0]);
