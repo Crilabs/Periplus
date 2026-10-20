@@ -169,6 +169,108 @@ export const areaConfigSchema = z
     if (dup) ctx.addIssue({ code: "custom", path: ["coastSections"], message: `duplicate coast section key ${dup}` });
   });
 
+const iso2 = z.string().regex(/^[A-Z]{2}$/, "must be an ISO 3166-1 alpha-2 code");
+const languageCode = z.string().regex(/^[a-z]{2,3}$/, "must be an ISO 639 language code");
+const subdivisionKey = z.string().regex(/^[A-Z]{2}(-[A-Z0-9]+)*$/, "must be an ISO 3166-2 style key (e.g. GR-L)");
+const seasonSchema = z.strictObject({
+  fromMonth: z.number().int().min(1).max(12),
+  toMonth: z.number().int().min(1).max(12),
+});
+const subdivisionStatus = z.enum(["active", "excluded"]);
+
+/** The coast sections of a subdivision must have unique keys. */
+const coastSectionsSchema = z.array(coastSectionSchema).superRefine((sections, ctx) => {
+  const keys = sections.map((s) => s.key);
+  const dup = keys.find((k, i) => keys.indexOf(k) !== i);
+  if (dup) ctx.addIssue({ code: "custom", message: `duplicate coast section key ${dup}` });
+});
+
+/** Which unit is a Landesteil, per country, and how the OSM units are split, merged, added or left out (spec 14). */
+export const subdivisionsConfigSchema = z
+  .strictObject({
+    /** IHO sea areas counted as Mediterranean (Marine Regions ids); the Sea of Marmara is not among them. */
+    mediterranean: z.strictObject({ marineRegionsMrgids: z.array(z.number().int().positive()).min(1) }),
+    countries: z.record(
+      iso2,
+      z.strictObject({
+        /** OSM admin_level of the first-level units, or `whole` when the country is one unit. */
+        firstLevel: z.union([z.number().int().min(2).max(10), z.literal("whole")]),
+        secondLevel: z.number().int().min(2).max(10).optional(),
+        sourceLanguages: z.array(languageCode).min(1),
+        season: seasonSchema,
+        cycleDays: z.number().int().min(1),
+        status: subdivisionStatus.optional(),
+        statusReason: z.string().trim().min(1).optional(),
+      }),
+    ),
+    /** A first-level unit split into groups of second-level units (by Wikidata id). */
+    split: z.array(
+      z.strictObject({
+        parentKey: subdivisionKey,
+        groups: z
+          .array(
+            z.strictObject({
+              key: subdivisionKey,
+              names: namesSchema,
+              memberWikidataIds: z.array(wikidataQid).min(1),
+            }),
+          )
+          .min(2),
+      }),
+    ),
+    wholeCountry: z.array(iso2),
+    /** A unit that is no first-level unit of its country (OSM relation), cut out of another country. */
+    extra: z.array(
+      z.strictObject({
+        key: subdivisionKey,
+        country: iso2,
+        osmRelationId: z.number().int().positive(),
+        cutFrom: iso2,
+        names: namesSchema,
+      }),
+    ),
+    /** Several units merged into one subdivision. */
+    merge: z.array(
+      z.strictObject({
+        key: subdivisionKey,
+        memberKeys: z.array(subdivisionKey).min(2),
+        names: namesSchema,
+      }),
+    ),
+    /** Unit keys that touch the IHO polygon only via canals or river mouths. */
+    notMediterranean: z.array(subdivisionKey),
+    /** OSM relation id to key, for units without or with a wrong ISO 3166-2 tag. */
+    keyOverrides: z.record(z.string().regex(/^[1-9][0-9]*$/, "must be an OSM relation id"), subdivisionKey),
+    /** Per subdivision key: deviations from its country's settings. */
+    overrides: z.record(
+      subdivisionKey,
+      z.strictObject({
+        status: subdivisionStatus.optional(),
+        statusReason: z.string().trim().min(1).optional(),
+        sourceLanguages: z.array(languageCode).min(1).optional(),
+        season: seasonSchema.optional(),
+        cycleDays: z.number().int().min(1).optional(),
+        coastSections: coastSectionsSchema.optional(),
+      }),
+    ),
+  })
+  .superRefine((config, ctx) => {
+    const groupKeys = new Set(config.split.flatMap((s) => s.groups.map((g) => g.key)));
+    config.merge.forEach((m, i) => {
+      if (groupKeys.has(m.key)) {
+        ctx.addIssue({ code: "custom", path: ["merge", i, "key"], message: `merge key ${m.key} is also a split group key` });
+      }
+    });
+    config.wholeCountry.forEach((iso, i) => {
+      if (!(iso in config.countries)) ctx.addIssue({ code: "custom", path: ["wholeCountry", i], message: `unknown country ${iso}` });
+    });
+    config.extra.forEach((e, i) => {
+      for (const iso of [e.country, e.cutFrom]) {
+        if (!(iso in config.countries)) ctx.addIssue({ code: "custom", path: ["extra", i], message: `unknown country ${iso}` });
+      }
+    });
+  });
+
 export const categoriesSchema = z.strictObject({
   osm: z.array(
     z.strictObject({
@@ -512,7 +614,6 @@ export const datasetsSchema = z.strictObject({
 const docType = z.enum(DOC_TYPES);
 const changeRate = z.enum(changeRateEnum.enumValues);
 const eur = z.number().nonnegative();
-const languageCode = z.string().regex(/^[a-z]{2,3}$/, "must be an ISO 639 language code");
 const domainName = z
   .string()
   .regex(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/, "must be a lower-case domain name without scheme or path");
@@ -961,7 +1062,8 @@ export type QueueConfig = z.infer<typeof queueConfigSchema>;
 export type GeometryConfig = z.infer<typeof geometrySchema>;
 export type QualityConfig = z.infer<typeof qualitySchema>;
 export type RestrictionsConfig = z.infer<typeof restrictionsSchema>;
-export type AreaConfig = z.infer<typeof areaConfigSchema>;
+export type SubdivisionsConfig = z.infer<typeof subdivisionsConfigSchema>;
+export type AreaConfig =z.infer<typeof areaConfigSchema>;
 export type CategoriesConfig = z.infer<typeof categoriesSchema>;
 export type GazetteerConfig = z.infer<typeof gazetteerSchema>;
 export type ConsolidationConfig = z.infer<typeof consolidationSchema>;
@@ -973,6 +1075,7 @@ export type AppConfig = {
   budgets: Record<BudgetService, { dailyEur: number }>;
   models: ModelsConfig;
   areas: AreaConfig[];
+  subdivisions: SubdivisionsConfig;
   categories: CategoriesConfig;
   gazetteer: GazetteerConfig;
   factSchema: z.infer<typeof factSchemaConfigSchema>;

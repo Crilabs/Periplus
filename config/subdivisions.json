@@ -1,0 +1,577 @@
+{
+  "mediterranean": {
+    "marineRegionsMrgids": [
+      3346,
+      3324,
+      3322,
+      3363,
+      3386,
+      3314,
+      3351,
+      3315,
+      4279,
+      4280
+    ]
+  },
+  "countries": {
+    "ES": {
+      "firstLevel": 4,
+      "sourceLanguages": [
+        "es",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "FR": {
+      "firstLevel": 4,
+      "sourceLanguages": [
+        "fr",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "MC": {
+      "firstLevel": "whole",
+      "sourceLanguages": [
+        "fr",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "IT": {
+      "firstLevel": 4,
+      "sourceLanguages": [
+        "it",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "MT": {
+      "firstLevel": "whole",
+      "sourceLanguages": [
+        "mt",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "SI": {
+      "firstLevel": "whole",
+      "sourceLanguages": [
+        "sl",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "HR": {
+      "firstLevel": 4,
+      "sourceLanguages": [
+        "hr",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "BA": {
+      "firstLevel": "whole",
+      "sourceLanguages": [
+        "bs",
+        "hr",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "ME": {
+      "firstLevel": "whole",
+      "sourceLanguages": [
+        "sr",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "AL": {
+      "firstLevel": 6,
+      "sourceLanguages": [
+        "sq",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "GR": {
+      "firstLevel": 5,
+      "secondLevel": 6,
+      "sourceLanguages": [
+        "el",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "TR": {
+      "firstLevel": 4,
+      "sourceLanguages": [
+        "tr",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "CY": {
+      "firstLevel": 5,
+      "sourceLanguages": [
+        "el",
+        "tr",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "GB": {
+      "firstLevel": "whole",
+      "sourceLanguages": [
+        "en",
+        "de"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "SY": {
+      "firstLevel": 4,
+      "sourceLanguages": [
+        "ar",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30,
+      "status": "excluded",
+      "statusReason": "Krieg"
+    },
+    "LB": {
+      "firstLevel": 4,
+      "sourceLanguages": [
+        "ar",
+        "fr",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "IL": {
+      "firstLevel": 4,
+      "sourceLanguages": [
+        "he",
+        "ar",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "PS": {
+      "firstLevel": "whole",
+      "sourceLanguages": [
+        "ar",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30,
+      "status": "excluded",
+      "statusReason": "Gaza, Sperrgebiet"
+    },
+    "EG": {
+      "firstLevel": 4,
+      "sourceLanguages": [
+        "ar",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "LY": {
+      "firstLevel": 4,
+      "sourceLanguages": [
+        "ar",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30,
+      "status": "excluded",
+      "statusReason": "Bürgerkrieg, kein Segelbetrieb"
+    },
+    "TN": {
+      "firstLevel": 4,
+      "sourceLanguages": [
+        "ar",
+        "fr",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "DZ": {
+      "firstLevel": 4,
+      "sourceLanguages": [
+        "ar",
+        "fr",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "MA": {
+      "firstLevel": 4,
+      "sourceLanguages": [
+        "ar",
+        "fr",
+        "de",
+        "en"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    },
+    "GI": {
+      "firstLevel": "whole",
+      "sourceLanguages": [
+        "en",
+        "es",
+        "de"
+      ],
+      "season": {
+        "fromMonth": 4,
+        "toMonth": 10
+      },
+      "cycleDays": 30
+    }
+  },
+  "split": [
+    {
+      "parentKey": "GR-L",
+      "groups": [
+        {
+          "key": "GR-CYC",
+          "names": {
+            "de": "Kykladen",
+            "en": "Cyclades",
+            "el": "Κυκλάδες"
+          },
+          "memberWikidataIds": [
+            "Q19896683",
+            "Q21693236",
+            "Q737908",
+            "Q546132",
+            "Q669210",
+            "Q11723845",
+            "Q763524",
+            "Q12875777",
+            "Q11723841"
+          ]
+        },
+        {
+          "key": "GR-DOD",
+          "names": {
+            "de": "Dodekanes",
+            "en": "Dodecanese",
+            "el": "Δωδεκάνησα"
+          },
+          "memberWikidataIds": [
+            "Q1541953",
+            "Q21683539",
+            "Q1242904",
+            "Q1541945"
+          ]
+        }
+      ]
+    }
+  ],
+  "wholeCountry": [
+    "LB",
+    "IL",
+    "CY"
+  ],
+  "extra": [
+    {
+      "key": "CY-NC",
+      "country": "CY",
+      "osmRelationId": 2514541,
+      "cutFrom": "CY",
+      "names": {
+        "de": "Nordzypern",
+        "en": "Northern Cyprus",
+        "el": "Βόρεια Κύπρος"
+      }
+    }
+  ],
+  "merge": [],
+  "notMediterranean": [
+    "EG-IS",
+    "EG-SUZ",
+    "EG-GH"
+  ],
+  "keyOverrides": {
+    "12903506": "LB-KJ",
+    "3263728": "GB-SBA"
+  },
+  "overrides": {
+    "ES-CT": {
+      "sourceLanguages": [
+        "es",
+        "ca",
+        "de",
+        "en"
+      ]
+    },
+    "ES-IB": {
+      "sourceLanguages": [
+        "es",
+        "ca",
+        "de",
+        "en"
+      ]
+    },
+    "GR-I": {
+      "coastSections": [
+        {
+          "key": "methana",
+          "names": {
+            "de": "Methana",
+            "en": "Methana",
+            "el": "Μέθανα"
+          },
+          "polygon": {
+            "type": "Polygon",
+            "coordinates": [
+              [
+                [
+                  23.33,
+                  37.55
+                ],
+                [
+                  23.42,
+                  37.55
+                ],
+                [
+                  23.42,
+                  37.65
+                ],
+                [
+                  23.33,
+                  37.65
+                ],
+                [
+                  23.33,
+                  37.55
+                ]
+              ]
+            ]
+          }
+        }
+      ]
+    },
+    "GR-J": {
+      "coastSections": [
+        {
+          "key": "ermioni",
+          "names": {
+            "de": "Ermioni",
+            "en": "Ermioni",
+            "el": "Ερμιόνη"
+          },
+          "polygon": {
+            "type": "Polygon",
+            "coordinates": [
+              [
+                [
+                  23.2,
+                  37.35
+                ],
+                [
+                  23.3,
+                  37.35
+                ],
+                [
+                  23.3,
+                  37.42
+                ],
+                [
+                  23.2,
+                  37.42
+                ],
+                [
+                  23.2,
+                  37.35
+                ]
+              ]
+            ]
+          }
+        },
+        {
+          "key": "porto-cheli",
+          "names": {
+            "de": "Porto Cheli",
+            "en": "Porto Cheli",
+            "el": "Πόρτο Χέλι"
+          },
+          "polygon": {
+            "type": "Polygon",
+            "coordinates": [
+              [
+                [
+                  23.1,
+                  37.28
+                ],
+                [
+                  23.2,
+                  37.28
+                ],
+                [
+                  23.2,
+                  37.35
+                ],
+                [
+                  23.1,
+                  37.35
+                ],
+                [
+                  23.1,
+                  37.28
+                ]
+              ]
+            ]
+          }
+        },
+        {
+          "key": "epidavros",
+          "names": {
+            "de": "Epidauros",
+            "en": "Epidaurus",
+            "el": "Επίδαυρος"
+          },
+          "polygon": {
+            "type": "Polygon",
+            "coordinates": [
+              [
+                [
+                  23.12,
+                  37.6
+                ],
+                [
+                  23.2,
+                  37.6
+                ],
+                [
+                  23.2,
+                  37.66
+                ],
+                [
+                  23.12,
+                  37.66
+                ],
+                [
+                  23.12,
+                  37.6
+                ]
+              ]
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

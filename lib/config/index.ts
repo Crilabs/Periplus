@@ -25,9 +25,11 @@ import {
   queuesSchema,
   restrictionsSchema,
   sourceTypesSchema,
+  subdivisionsConfigSchema,
   whitelistSchema,
   type AppConfig,
   type AreaConfig,
+  type SubdivisionsConfig,
   type VersionedConsolidationConfig,
 } from "./schemas";
 
@@ -54,6 +56,7 @@ export type {
   QueueConfig,
   RestrictionsConfig,
   SourceTypesConfig,
+  SubdivisionsConfig,
   VersionedConsolidationConfig,
   WhitelistConfig,
 } from "./schemas";
@@ -144,6 +147,7 @@ export function loadConfig(dir = "config"): AppConfig {
     budgets: readJson(dir, "budgets", budgetsSchema),
     models: readJson(dir, "models", modelsSchema),
     areas: readAreas(dir),
+    subdivisions: readJson(dir, "subdivisions", subdivisionsConfigSchema),
     categories: readJson(dir, "categories", categoriesSchema),
     gazetteer: readJson(dir, "gazetteer", gazetteerSchema),
     factSchema: readJson(dir, "fact-schema/active", factSchemaConfigSchema),
@@ -200,6 +204,13 @@ export function consolidationVersions(dir = "config"): string[] {
     .map((f) => basename(f, ".json"))
     .filter((v) => consolidationActiveSchema.safeParse({ version: v }).success)
     .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+}
+
+/** The configuration of a country (ISO 3166-1 alpha-2) in `config/subdivisions.json`; throws for an unknown one. */
+export function countryConfig(iso: string): SubdivisionsConfig["countries"][string] {
+  const country = getConfig().subdivisions.countries[iso];
+  if (!country) throw new Error(`Unknown country ${iso}`);
+  return country;
 }
 
 /** The configured area with this key; throws for an unknown key. */

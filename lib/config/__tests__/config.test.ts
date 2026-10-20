@@ -6,7 +6,7 @@ import { FACT_SCHEMAS } from "@/config/fact-schema";
 import { METRIC_KEYS } from "@/lib/db/schema/quality";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
-import { areaByKey, getConfig, getConsolidationConfig, loadConfig } from "../index";
+import { areaByKey, countryConfig, getConfig, getConsolidationConfig, loadConfig } from "../index";
 import { modelsSchema, queuesSchema } from "../schemas";
 
 const repoConfig = loadConfig("config");
@@ -31,6 +31,7 @@ type Overrides = {
   nameAffixes?: unknown;
   extraction?: unknown;
   delivery?: unknown;
+  subdivisions?: unknown;
   /** `consolidation/active.json`. */
   consolidationActive?: unknown;
   /** Rules version file name (without `.json`) to content; replaces the repo's `consolidation/v*.json`. */
@@ -61,6 +62,7 @@ function fixtureDir(overrides: Overrides): string {
     "name-affixes": overrides.nameAffixes ?? repoConfig.nameAffixes,
     extraction: overrides.extraction ?? repoConfig.extraction,
     delivery: overrides.delivery ?? repoConfig.delivery,
+    subdivisions: overrides.subdivisions ?? repoConfig.subdivisions,
   };
   for (const [name, value] of Object.entries(files)) {
     writeFileSync(join(dir, `${name}.json`), JSON.stringify(value));
@@ -85,6 +87,50 @@ function fixtureDir(overrides: Overrides): string {
 }
 
 const saronic = () => structuredClone(repoConfig.areas.find((a) => a.key === "saronic")!);
+
+describe("subdivisions config", () => {
+  const sub = () => structuredClone(repoConfig.subdivisions);
+  const invalid = (value: unknown) => () => loadConfig(fixtureDir({ subdivisions: value }));
+
+  it("loads subdivisions.json", () => {
+    const c = getConfig().subdivisions;
+    expect(c.countries.GR!.firstLevel).toBe(5);
+    expect(c.countries.HR!.firstLevel).toBe(4);
+    expect(c.countries.AL!.firstLevel).toBe(6);
+    expect(c.countries.MC!.firstLevel).toBe("whole");
+    expect(c.wholeCountry).toEqual(expect.arrayContaining(["LB", "IL", "CY"]));
+    expect(c.split[0]!.parentKey).toBe("GR-L");
+    expect(c.split[0]!.groups.map((g) => g.key)).toEqual(["GR-CYC", "GR-DOD"]);
+    expect(c.extra[0]!.osmRelationId).toBe(2514541);
+    expect(c.countries.LY!.status).toBe("excluded");
+    expect(c.mediterranean.marineRegionsMrgids).not.toContain(3369);
+    expect(c.overrides["GR-J"]!.coastSections!.map((s) => s.key)).toEqual(["ermioni", "porto-cheli", "epidavros"]);
+  });
+
+  it("countryConfig returns a country and throws for an unknown one", () => {
+    expect(countryConfig("GR").cycleDays).toBe(30);
+    expect(() => countryConfig("XX")).toThrow("Unknown country XX");
+  });
+
+  it("rejects a split group without members", () => {
+    const c = sub();
+    c.split[0]!.groups[0]!.memberWikidataIds = [];
+    expect(invalid(c)).toThrow(/^Invalid config .*subdivisions\.json: /);
+  });
+
+  it("rejects a merge key that is also a split group key", () => {
+    const c = sub();
+    c.merge = [{ key: "GR-CYC", memberKeys: ["GR-A", "GR-B"], names: { de: "x", en: "x", el: "x" } }];
+    expect(invalid(c)).toThrow(/subdivisions\.json: .*GR-CYC/);
+  });
+
+  it("rejects coastSections with duplicate keys", () => {
+    const c = sub();
+    const sections = c.overrides["GR-J"]!.coastSections!;
+    c.overrides["GR-J"]!.coastSections = [sections[0]!, sections[0]!];
+    expect(invalid(c)).toThrow(/duplicate coast section key ermioni/);
+  });
+});
 
 describe("loadConfig", () => {
   it("loads the repo config", () => {
