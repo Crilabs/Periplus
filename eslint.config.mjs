@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     "drizzle/**",
     "playwright-report/**",
+    // Agent worktrees (Claude Code) hold a whole checkout with node_modules.
+    ".claude/**",
   ]),
   { rules: { "no-console": "error" } },
 ]);

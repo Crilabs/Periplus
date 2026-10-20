@@ -262,6 +262,16 @@ describe("loadInputs", () => {
       expect(await loadContext(tx, objectId, cfg, opts.today)).not.toBeNull();
     }));
 
+  it("the place is judged valid on the run date as the object is: one ending after the run date still counts (DAT-5)", () =>
+    withRollback(async (tx) => {
+      const { objectId, placeId } = await insertPlace(tx);
+      const poi = await insertNamedObject(tx, { type: "poi", category: "food", names: [{ name: "Taverna Avrio" }], lon: LON + 300 * LON_PER_M, lat: LAT });
+      // planned end tomorrow: valid on the run date
+      await tx.execute(sql`update places set valid_to = ${opts.today}::date + 1 where id = ${placeId}`);
+      expect((await loadInputs(tx, objectId, opts)).inputs.some((i) => i.poiId === poi)).toBe(true);
+      expect((await loadContext(tx, objectId, cfg, opts.today))?.place?.id).toBe(placeId);
+    }));
+
   it("a review fact enters with weight 1 and its stored confidence", () =>
     withRollback(async (tx) => {
       const { objectId } = await insertPlace(tx);

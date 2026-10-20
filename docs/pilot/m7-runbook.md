@@ -8,7 +8,7 @@ Stand 2026-10-20, nach M7 Teil (a) (Code). Er ersetzt den Entwurf aus dem M7-Pre
 - M6 und M7 (Code, Teil a) auf `main` gemergt.
 - `npm run services:up`.
 - **`npm run db:migrate`.** Die Entwicklungsdatenbank steht auf Migration **0038**. Nach dem Migrieren steht sie auf **0047**, dem Stand nach M7. Ohne 0044–0047 fehlen `quality_snapshots`, `comparison_results` und `config_activations`; „Messen“, `compare:navily` und `report:*` scheitern dann.
-- Admin anlegen: `npm run user:create`.
+- Admin anlegen: `npm run user:create -- <email>` (Passwort von stdin).
 - `npm run worker` und `npm run dev` starten.
 - `.env.local` enthält alle Schlüssel (geprüft: Anthropic, Voyage, DataForSEO, Jina, Firecrawl, Kontakt-E-Mail).
 - `NAVILY_SPOTS_PATH` zeigt auf die Navily-Datei außerhalb des Repos (`~/Code/dontsticktoaplan/data/navily-spots.json`). Sie wird nie eingecheckt, gespeichert oder geloggt.
@@ -42,7 +42,7 @@ Stand 2026-10-20, nach M7 Teil (a) (Code). Er ersetzt den Entwurf aus dem M7-Pre
 | 13 | „Texte auswerten für Revier“: Klassifikation (Haiku), Disambiguierung, Geocoding, Extraktion (Sonnet, Prompt v5), Routen, Belegprüfung, Konsolidierung mit Summaries und Folgeaufträgen. Dauert bei 20 €/Tag mindestens 3–7 Tage. **Nach dem ersten Text-Lauf** die Prüfungen „max_facts“ und „run_id“ unten ausführen | Anthropic, Nominatim, DataForSEO | 95 / 55–175 (Extraktion 45–140, Routen 2–15, Summaries 7–17, Klassifikation 1–2, Folgeaufträge ≤ 1,6) | – |
 | 14 | Namenskandidaten prüfen (Rematch-Läufe). Unbenannte Buchten aus Schritt 6 bekommen ihren Namen nur so („Name zuordnen“) | – | gering (in 13) | **Review** |
 | 15 | Modellvergleich `npm run compare:models -- --label pilot --start` an einem Tag ohne andere Anthropic-Ausgaben | Anthropic | 13 / ≤ 15 | – |
-| 16 | 50 Bewertungen, `npm run report:models -- <comparisonId>`, Modellentscheidung in `config/models.json`; bei Opus beide Reviere neu verarbeiten | Anthropic | 0 (Sonnet) / +90–280 (Opus) | **bewerten und entscheiden** |
+| 16 | 50 Bewertungen, `npm run report:models -- <comparisonId>`, Modellentscheidung in `config/models.json`; bei Opus beide Reviere neu verarbeiten. Bis das Reprozessieren einen Ort erreicht, zählen seine alten Extraktionsläufe nicht mehr: Verbote, Gefahren und Sperrzonen aus Text bleiben im Profil (Eintrag „in Prüfung“) und je Liste öffnet eine Aufgabe „Unsichere Änderung“. Diese Aufgaben erst nach dem Reprozessieren entscheiden; „Übernehmen“ entfernt die Einträge | Anthropic | 0 (Sonnet) / +90–280 (Opus) | **bewerten und entscheiden** |
 | 17 | `fixtures:record --ai …` (optional); `check:texts` Exit 0; Entscheidung Kachelgrenzen (`neighbourRing`) | Anthropic | 0,3 | **Entscheidung** |
 | 18 | `npm run consolidate -- --area <key>` für beide Reviere; Konflikte, Unsicherheiten und Summaries prüfen; `check:profiles` Exit 0 | Anthropic (Summaries geänderter Profile) | in 13 / ≤ 3 | **Review** |
 | 19 | ODbL rechtlich prüfen (M6-Übergabe), bevor ein Paket hinausgeht | – | 0 | **rechtlich** |
@@ -76,7 +76,7 @@ Stand 2026-10-20, nach M7 Teil (a) (Code). Er ersetzt den Entwurf aus dem M7-Pre
 - Kosten 0 (nur Datenbank). Laufzeit auf echten Küsten ist ungemessen; im Lauf auf `/runs` beobachten, Stopp-Bedingung unten.
 
 ### Nach dem ersten Text-Lauf (Schritt 13)
-1. **max_facts.** Seit Prompt v4 ein Fact je Listeneintrag, also mehr Facts je Einheit (Ruling M7-G-R5, M7-H-R1). Prompt v5 lässt am Limit zuerst andere Facts weg und behält jeden Eintrag von Verboten, Gefahren und Sperrzonen (M7-FIN-R1). Ein Modell, das sich an das Limit hält, liefert genau 40 Facts und lässt den Rest still weg; `overLimit` sieht das nicht. Deshalb zählen Einheiten, die das Limit `maxFactsPerUnit` (40, `config/extraction.json`) erreichen:
+1. **max_facts.** Seit Prompt v4 ein Fact je Listeneintrag, also mehr Facts je Einheit (Ruling M7-G-R5, M7-H-R1). Prompt v5 lässt am Limit zuerst andere Facts weg und behält jeden Eintrag von Verboten, Gefahren und Sperrzonen (M7-FIN-R1); liefert ein Modell mehr als 40 Facts, stellt der Code vor dem Abschneiden die Einträge von Verboten, Gefahren und Sperrzonen nach vorn (GR-7). Ein Modell, das sich an das Limit hält, liefert genau 40 Facts und lässt den Rest still weg; `overLimit` sieht das nicht. Deshalb zählen Einheiten, die das Limit `maxFactsPerUnit` (40, `config/extraction.json`) erreichen:
    ```sql
    select count(*) filter (where (stats->>'proposed')::int >= 40) as at_limit, count(*) as units
    from extraction_units where extraction_run_id in (select id from extraction_runs where run_id = '<text-lauf>');
@@ -119,7 +119,7 @@ Stand 2026-10-20, nach M7 Teil (a) (Code). Er ersetzt den Entwurf aus dem M7-Pre
 1. `config/consolidation/v<n>.json` anlegen (nie die aktive ändern) und deployen.
 2. „Qualität“ → „Regression“: Regelversion wählen → „Bewertung starten“. Das ist ein Bewertungslauf über den Vergleichssatz: nur Bewertungsprofile, keine Ereignisse, keine Lieferung.
 3. Geänderte Werte prüfen: Vergleich alt/neu auf der Seite. Neue Abweichungen erscheinen als Aufgaben „Bewertung“ im Review.
-4. „Aktivieren“ → „Jetzt aktivieren“. Der Knopf erscheint nur, wenn Übereinstimmung und Abdeckung nicht sinken und mindestens ein Wert verglichen wurde.
+4. „Aktivieren“ → „Jetzt aktivieren“. Der Knopf erscheint nur, wenn Übereinstimmung und Abdeckung nicht sinken, mindestens ein Wert verglichen wurde und an keinem Ort des Vergleichssatzes ein Verbot, eine Gefahr, ein Sperrgebiet oder ein Ausschluss entfällt (Grund „Sicherheitswert entfällt: …“).
    - Die Aktivierung gilt sofort für alle Reviere: jede neue Konsolidierung, Lieferung und Summary.
    - Sie wird verweigert, wenn ein Ort des Vergleichssatzes nach der Bewertung ein neues Profil bekam. Dann neu bewerten.
 
@@ -142,7 +142,7 @@ Ruling M7-P27, Runbook-Abschnitt „Simulierter Revisit“ in `docs/runbook.md`.
 2. **Klonen:** `npm run sim:clone` (lokal: Compose-Dienst `db`; `-- --force` ersetzt einen vorhandenen Klon).
    - Der Klon `periplus_sim` behält die Queue-Definitionen. Alle Jobs werden gelöscht.
    - `sim_meta` hält `from_seq` fest, die Grenze „vor dem Revisit“.
-   - Server: `bash scripts/sim/clone.sh --compose-file docker/compose.prod.yml --service postgres --db-user <POSTGRES_USER>`.
+   - Server: Skript zuerst auf den Server kopieren (`scp scripts/sim/clone.sh deploy@<host>:/opt/periplus/scripts/sim/`, Verzeichnis vorher anlegen), dann in `/opt/periplus`: `bash scripts/sim/clone.sh --env-file .env --compose-file docker/compose.prod.yml --service postgres --db-user <POSTGRES_USER>`.
 3. **`.env.sim`:**
    - `cp .env.sim.example .env.sim`.
    - Die übrigen Werte aus `.env.local` übernehmen.

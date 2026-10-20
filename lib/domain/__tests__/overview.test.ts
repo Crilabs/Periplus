@@ -53,6 +53,7 @@ describe("overview", () => {
         active: expect.any(Number),
         failed: expect.any(Number),
         paused: expect.any(Boolean),
+        pause: result.jobs[queue].paused ? expect.any(Object) : null,
         pausable: true,
       });
     }
@@ -62,6 +63,7 @@ describe("overview", () => {
       active: expect.any(Number),
       failed: expect.any(Number),
       paused: false,
+      pause: null,
       pausable: false,
     });
     expect(result.budgets).toHaveLength(5);

@@ -3,6 +3,9 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { getConfig } from "@/lib/config";
 import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
+import { droppedSafetyEntries } from "@/lib/domain/profile-view";
+import { recheckExclusion } from "@/lib/domain/geometry/restrictions";
+import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import {
@@ -26,6 +29,7 @@ import {
 } from "@/lib/db/schema";
 import { attributeDef, canonicalJson, InvalidFactValue, UnknownAttribute, validateFactValue } from "@/lib/domain/facts/schema";
 import { assignParentOf } from "@/lib/domain/gazetteer/hierarchy";
+import { dismissTasks, lockOpenPlaceTasks, lockOpenTasks } from "@/lib/domain/consolidation/task-locks";
 import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
 import { addNames, isGreek, transliterateElot743, type NameDraft } from "@/lib/domain/gazetteer/names";
 import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
@@ -132,6 +136,16 @@ export function valueFingerprint(value: unknown): string {
   return createHash("sha256").update(canonicalJson(value === undefined ? null : value)).digest("hex").slice(0, 16);
 }
 
+/**
+ * The fingerprint of a source's settings as an approval form shows them (`type`, `weight`, `changeRate`, `crawlRules`).
+ * The form posts it; `approve` compares it with the locked row and refuses with `TaskContextChanged` when the source
+ * was edited since (another tab, a history navigation), so a stale form never undoes an edit (W4-1, pattern of ruling
+ * M5-G-R2).
+ */
+export function sourceSettingsKey(source: { type: string; weight: number; changeRate: string; crawlRules: unknown }): string {
+  return valueFingerprint({ type: source.type, weight: source.weight, changeRate: source.changeRate, crawlRules: source.crawlRules });
+}
+
 /** Allowed actions per `<kind>/<subject_type>`. */
 const ALLOWED: Record<string, readonly Action[]> = {
   "conflict/profile_attribute": ["value_a", "value_b", "seasonal", "leave_open"],
@@ -172,7 +186,8 @@ type Task = typeof reviewTasks.$inferSelect;
  * it with `stagesOnly ["consolidation.summary"]`; the caller starts that run after the commit (ruling M5-P10). A
  * profile decision needs `taskKey`, the `context.key` the admin saw: another key means a later run replaced the question
  * (`TaskContextChanged`, ruling M5-F-R2); `value_a` / `value_b` also need `valueKey`, the `valueFingerprint` of the
- * chosen side's value as shown (ruling M5-G-R2). A decision on a `comparison_deviation` task appends its outcome to
+ * chosen side's value as shown (ruling M5-G-R2). `approve` needs `valueKey` too, the `sourceSettingsKey` of the source
+ * as the approval form showed it; another key means the source was edited since (`TaskContextChanged`, W4-1). A decision on a `comparison_deviation` task appends its outcome to
  * `comparison_results` (`deviation_confirmed_own` / `deviation_confirmed_navily` / `unclear`, method `review`) and
  * returns nothing to do.
  *
@@ -235,18 +250,18 @@ export async function decideReviewTask(
       if (!object) throw new DecisionNotAllowed(`geo object ${geoObjectId} does not exist`);
       return { documentVersionIds: [], consolidate: { geoObjectId, stagesOnly: [CONSOLIDATION_SUMMARY_STAGE] } };
     }
-    const placeObject = await apply(tx, task, decision, deps);
+    const placeObject = await apply(tx, task, decision, deps, input.valueKey);
     return { documentVersionIds: [], consolidate: placeObject ? { geoObjectId: placeObject } : null };
   });
 }
 
 /**
  * Applies a decision that is no name or profile decision. Returns the geo object of the place a `place_candidate`
- * decision changed (`confirm`, `merge`, `reject`, `no_anchoring`): its status, exclusion and `place_new` /
- * `place_abandoned` reach the profile only through a consolidation, which the caller starts after the commit (final
- * review I-2, ruling M5-FIN-R1); null otherwise.
+ * decision changed (`confirm`, `reject`, `no_anchoring`; for `merge` the target's object) or the surviving object of a
+ * `same` pair: its status, exclusion, merged facts and `place_new` / `place_abandoned` reach the profile only through a
+ * consolidation, which the caller starts after the commit (final review I-2, ruling M5-FIN-R1); null otherwise.
  */
-async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideDeps): Promise<string | null> {
+async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideDeps, valueKey?: string): Promise<string | null> {
   switch (decision.action) {
     case "confirm": {
       const place = await lockPlace(tx, task.subjectId);
@@ -262,11 +277,34 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
             : {}),
         })
         .where(eq(places.id, place.id));
+      // a restricted-area review: the next undecided banning area asks at once (wave-1 review M-2)
+      if ((task.context as { reason?: unknown } | null)?.reason === "restricted") {
+        await recheckExclusion(tx, { id: place.id, geoObjectId: place.geoObjectId }, getConfig().geometry.restriction.minShare);
+      }
       return place.geoObjectId;
     }
     case "merge": {
+      // „Einem Ort zuordnen“ merges like „Derselbe Ort“ (GR-3): the geo objects, so the facts follow the merge chain.
+      // Lock order (as `mergePlaceInto`): the merged object's open profile tasks, both geo objects, then the places.
+      if (decision.intoPlaceId === task.subjectId) throw new DecisionNotAllowed(`place ${task.subjectId} cannot merge into itself`);
+      const { rows: read } = await tx.execute<{ id: string; geo_object_id: string }>(
+        sql`select id, geo_object_id from places where id in (${task.subjectId}, ${decision.intoPlaceId})`,
+      );
+      const dropObject = read.find((r) => r.id === task.subjectId)?.geo_object_id;
+      const keepObject = read.find((r) => r.id === decision.intoPlaceId)?.geo_object_id;
+      if (!dropObject) throw new DecisionNotAllowed(`place ${task.subjectId} is not valid`);
+      if (!keepObject || keepObject === dropObject) throw new DecisionNotAllowed(`place ${decision.intoPlaceId} is no valid merge target for ${task.subjectId}`);
+      const openTasks = [...(await lockOpenTasks(tx, dropObject)).values()];
+      // the place's other open tasks, before the geo objects: `mergeGeoObjects` dismisses them (UI-5)
+      await lockOpenPlaceTasks(tx, task.subjectId);
+      const { rows: objects } = await tx.execute<{ id: string }>(sql`
+        select id from geo_objects
+        where id in (${dropObject}, ${keepObject}) and valid_to is null and merged_into_id is null
+        order by id
+        for update
+      `);
+      if (objects.length !== 2) throw new DecisionNotAllowed(`the geo objects of places ${task.subjectId} and ${decision.intoPlaceId} are not both valid`);
       const place = await lockPlace(tx, task.subjectId);
-      if (decision.intoPlaceId === place.id) throw new DecisionNotAllowed(`place ${place.id} cannot merge into itself`);
       const [target] = await tx
         .select({ id: places.id, geoObjectId: places.geoObjectId })
         .from(places)
@@ -279,20 +317,23 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
           ),
         )
         .for("update");
-      if (!target || target.geoObjectId === place.geoObjectId) {
+      if (!target || place.geoObjectId !== dropObject || target.geoObjectId !== keepObject) {
         throw new DecisionNotAllowed(`place ${decision.intoPlaceId} is no valid merge target for ${place.id}`);
       }
-      await tx
-        .update(places)
-        .set({ status: "rejected", statusReason: "merged", mergedIntoId: target.id })
-        .where(eq(places.id, place.id));
-      return place.geoObjectId;
+      // the merged object's profile stays history: its open profile tasks end with it (as `mergePlaceInto`)
+      await dismissTasks(tx, openTasks.map((t) => t.id), "object_ended");
+      await mergeGeoObjects(tx, keepObject, dropObject);
+      return keepObject;
     }
     case "approve": {
-      const domain = await lockSource(tx, task.subjectId, ["proposed"]);
+      const source = await lockSource(tx, task.subjectId, ["proposed"]);
       // a forbidden domain (Navily, Google) is never approved (ruling M6-D-R2)
-      if (isForbiddenHost(domain, getConfig().delivery.forbiddenDomains)) {
-        throw new DecisionNotAllowed(`source ${task.subjectId} is on the forbidden domain ${domain}`);
+      if (isForbiddenHost(source.domain, getConfig().delivery.forbiddenDomains)) {
+        throw new DecisionNotAllowed(`source ${task.subjectId} is on the forbidden domain ${source.domain}`);
+      }
+      // the form was built from other settings than the row has now: a stale form never undoes an edit (W4-1)
+      if (valueKey === undefined || valueKey !== sourceSettingsKey({ ...source, crawlRules: crawlRulesSchema.parse(source.crawlRules) })) {
+        throw new TaskContextChanged(task.id);
       }
       await tx
         .update(sources)
@@ -344,7 +385,8 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
       const [older, newer] = objects as [(typeof objects)[0], (typeof objects)[0]];
       const [keep, drop] = newer.osmId !== null && older.osmId === null ? [newer, older] : [older, newer];
       await mergeGeoObjects(tx, keep.id, drop.id);
-      return null;
+      // the survivor carries the merged object's facts and possibly its exclusion (GR-3/GR-4): consolidate it
+      return keep.id;
     }
     case "assign_area": {
       const [area] = await tx
@@ -477,16 +519,36 @@ async function applyProfileDecision(
   }
   if (value === null || value === undefined) throw new DecisionNotAllowed(`task ${task.id} proposes no value for ${attribute}`);
   const factSchemaVersion = getConfig().factSchema.version;
+  const cfg = await consolidationConfigFor(tx);
+  const removal = decision.action === "accept_change" ? safetyListRemoval(attribute, context.oldValue, value, cfg, factSchemaVersion) : null;
   await tx.insert(facts).values({
     geoObjectId,
     attribute,
-    value: reviewFactValue(attribute, value, factSchemaVersion),
+    value: removal ?? reviewFactValue(attribute, value, factSchemaVersion),
     reviewDecisionId: decisionId,
     observedAt: now.toISOString().slice(0, 10),
-    confidence: (await consolidationConfigFor(tx)).confidence.review,
+    confidence: cfg.confidence.review,
     factSchemaVersion,
   });
   return geoObjectId;
+}
+
+/**
+ * An accepted change of a safety list (`change.additiveLists`) that drops entries (GR-1): the review fact is the
+ * removal decision of those entries (`{ remove: [<entry>, …] }`; for `prohibitions` the text kinds `{ kind }`), since
+ * change detection lets a text entry leave only by such a decision; the entries the proposal adds already hold. Null
+ * when the attribute is no safety list or nothing is dropped (the proposed list is stored as before).
+ */
+function safetyListRemoval(attribute: string, oldValue: unknown, newValue: unknown, cfg: ConsolidationConfig, version: string): unknown {
+  const dropped = droppedSafetyEntries(attribute, oldValue, newValue, cfg);
+  if (dropped.length === 0) return null;
+  try {
+    validateFactValue(attribute, dropped, version);
+  } catch (e) {
+    if (e instanceof UnknownAttribute || e instanceof InvalidFactValue) throw new DecisionNotAllowed(e.message);
+    throw e;
+  }
+  return { remove: attribute === "prohibitions" ? dropped.map((e) => ({ kind: String((e as { kind: unknown }).kind) })) : dropped };
 }
 
 /**
@@ -519,6 +581,13 @@ export function newNameObjectType(hint: string | null, kind: PlaceKind): { type:
   const type = hint ? HINT_TYPES[hint] : undefined;
   if (type) return { type, category: null };
   return { type: kind === "port" || kind === "marina" ? "harbour" : "bay", category: null };
+}
+
+/** The place kind „Ort anlegen“ suggests for a name's hint (UI-13): a harbour a port, a marina a marina, else an anchorage. */
+export function suggestedKindForHint(hint: string | null): PlaceKind {
+  if (hint === "harbour") return "port";
+  if (hint === "marina") return "marina";
+  return "anchorage";
 }
 
 /** Types that get a place when a new name creates them. */
@@ -612,13 +681,20 @@ async function applyPlaceStatus(tx: Db, task: Task, status: "rejected" | "no_anc
 }
 
 /**
- * The source, locked, returning its domain; `DecisionNotAllowed` when it does not exist, has ended or its status is
+ * The source, locked, returning its domain, status and settings; `DecisionNotAllowed` when it does not exist, has ended or its status is
  * not one of `statuses` (e.g. a proposal approved or rejected meanwhile).
  */
-async function lockSource(tx: Db, sourceId: string, statuses: readonly SourceStatus[]): Promise<string> {
+async function lockSource(tx: Db, sourceId: string, statuses: readonly SourceStatus[]) {
   const [source] = z.uuid().safeParse(sourceId).success
     ? await tx
-        .select({ status: sources.status, domain: sources.domain })
+        .select({
+          status: sources.status,
+          domain: sources.domain,
+          type: sources.type,
+          weight: sources.weight,
+          changeRate: sources.changeRate,
+          crawlRules: sources.crawlRules,
+        })
         .from(sources)
         .where(and(eq(sources.id, sourceId), isNull(sources.validTo)))
         .for("update")
@@ -627,7 +703,7 @@ async function lockSource(tx: Db, sourceId: string, statuses: readonly SourceSta
   if (!statuses.includes(source.status)) {
     throw new DecisionNotAllowed(`source ${sourceId} is ${source.status}, not ${statuses.join(" or ")}`);
   }
-  return source.domain;
+  return source;
 }
 
 /** The task's place, locked; `DecisionNotAllowed` when it does not exist, has ended or was merged. */
@@ -664,8 +740,8 @@ export function afterInQueue(afterId: string): SQL {
  * The next open task, optionally of one kind: highest `priority` first, then the oldest. With `afterId`, the
  * first one after that task in this order (the task itself may be decided by now).
  */
-export async function nextOpenTask(db: Db, kind?: ReviewKind, afterId?: string): Promise<{ id: string } | null> {
-  const conditions: (SQL | undefined)[] = [eq(reviewTasks.status, "open"), kind ? eq(reviewTasks.kind, kind) : undefined];
+export async function nextOpenTask(db: Db, kind?: ReviewKind, afterId?: string, where?: SQL): Promise<{ id: string } | null> {
+  const conditions: (SQL | undefined)[] = [eq(reviewTasks.status, "open"), kind ? eq(reviewTasks.kind, kind) : undefined, where];
   if (afterId) conditions.push(afterInQueue(afterId));
   const [row] = await db
     .select({ id: reviewTasks.id })

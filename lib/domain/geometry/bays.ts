@@ -354,6 +354,7 @@ export async function detectTileBays(db: Db, tileId: string, cfg: GeometryConfig
   };
   if (found.hits.length === 0) return result;
   return db.transaction(async (tx) => {
+    // Exclusive: also against `seedTile`, which takes it shared, so a place a seed is creating is known here.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('geometry.detect_bays'))`);
     const known = await hitKeysNearKnown(tx, found.hits, cfg.bays.knownPlaceDistanceM, cfg.bays);
     const near = await hitKeysNearKnown(tx, found.hits, cfg.bays.knownBayDistanceM, cfg.bays);

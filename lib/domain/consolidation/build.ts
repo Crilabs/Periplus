@@ -51,6 +51,8 @@ export type AttributeSupport = {
    * M5-F-R3 N-2).
    */
   confirmedByInput: Record<string, string>;
+  /** Safety lists: the entry keys review removal decisions took out, with the removal date (`RuleResult.removedEntries`, GR-1/GR-12). */
+  removedEntries?: Record<string, string>;
 };
 
 export type BuiltProfile = Omit<ProfileSnapshot, "version" | "validFrom"> & { support: Record<string, AttributeSupport> };
@@ -258,6 +260,11 @@ export function buildProfile(input: BuildProfileInput): BuiltProfile {
     const ctx: RuleContext = { attribute: def.key, level: context.level, place, today, cfg };
     const r = applyRule(rule, byAttribute.get(def.key) ?? [], ctx);
     results[def.key] = r;
+    const removedEntries = r?.removedEntries && Object.keys(r.removedEntries).length > 0 ? r.removedEntries : null;
+    if (r !== null && (r.value === null || r.value === undefined) && removedEntries) {
+      // no value left, but the removals still tell change detection which entries the admin took out (GR-1)
+      support[def.key] = { independent: 0, maxWeight: 0, factIds: [], confirmedAt: {}, confirmedByInput: {}, removedEntries };
+    }
     if (r === null || r.value === null || r.value === undefined) continue;
     attributes[def.key] = r.value;
     provenance[def.key] = ruleProvenance(def.key, rule, r, cutoff, cfg);
@@ -267,6 +274,7 @@ export function buildProfile(input: BuildProfileInput): BuiltProfile {
       factIds: provenance[def.key].factIds,
       confirmedAt: confirmedAtByValue(byAttribute.get(def.key) ?? []),
       confirmedByInput: confirmedAtByInput(byAttribute.get(def.key) ?? []),
+      ...(removedEntries ? { removedEntries } : {}),
     };
     if (r.conflict) conflicts.push({ ...r.conflict, resolution: conflictResolution(r.conflict.key, context) });
   }

@@ -120,6 +120,18 @@ export function isRemovableEntry(attribute: string, entry: unknown, cfg: Consoli
   return attribute !== "prohibitions" || isTextProhibition(entry);
 }
 
+/**
+ * The entries an accepted `uncertain_change` of a safety list (`change.additiveLists`) removes (GR-1): those of the
+ * old list the proposal no longer names, of `prohibitions` only text entries (removable ones). Empty for any other
+ * attribute or value; the review decision and the review page share it.
+ */
+export function droppedSafetyEntries(attribute: string, oldValue: unknown, newValue: unknown, cfg: ConsolidationConfig): unknown[] {
+  if (!Array.isArray(oldValue) || !Array.isArray(newValue)) return [];
+  const keyOf = (e: unknown) => profileEntryKey(attribute, e, cfg);
+  const kept = new Set(newValue.map(keyOf));
+  return oldValue.filter((e) => !kept.has(keyOf(e)) && isRemovableEntry(attribute, e, cfg));
+}
+
 function entriesOf(attribute: string, value: unknown, p: AttributeProvenance, cfg: ConsolidationConfig, latest: boolean): ProfileEntry[] | null {
   if (!p.entryFactIds || !Array.isArray(value)) return null;
   return value.map((entry) => {

@@ -5,8 +5,11 @@ import type { Db } from "@/lib/db/client";
 import { reviewDecisions, reviewTasks, sources } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { createReviewTask } from "@/lib/domain/review";
+import { sourceSettingsKey } from "@/lib/domain/review-decisions";
 import { DEFAULT_CRAWL_RULES } from "@/lib/domain/sources/crawl-rules";
 import { getSource } from "@/lib/domain/sources/store";
+import { reviewTaskDetail } from "@/lib/domain/review-view";
+import { sourceDetail } from "@/lib/domain/sources-view";
 import { testDb, withRollback } from "@/test/db";
 
 const db = testDb();
@@ -26,6 +29,7 @@ vi.mock("next/navigation", () => ({ redirect: (url: string) => redirect(url) }))
 
 import { parseCrawlRulesForm } from "../_components/crawl-rules-fields";
 import { approveSourceAction } from "../review/[id]/actions";
+import { saveSourceAction } from "../sources/[id]/actions";
 
 const ADMIN = "admin@example.invalid";
 
@@ -129,7 +133,7 @@ describe("approveSourceAction", () => {
     withRollback(async (tx) => {
       currentDb = tx;
       const { sourceId, taskId } = await proposal(tx);
-      await approveSourceAction(approveForm(taskId));
+      await approveSourceAction(approveForm(taskId, { valueKey: sourceSettingsKey((await getSource(tx, sourceId))!) }));
 
       expect(redirect).toHaveBeenCalledTimes(1);
       expect(redirect.mock.calls[0]![0]).not.toContain(taskId);
@@ -182,5 +186,70 @@ describe("approveSourceAction", () => {
       requireAdmin.mockRejectedValue(new Error("unauthorized"));
       await expect(approveSourceAction(approveForm(taskId))).rejects.toThrow("unauthorized");
       expect((await getSource(tx, sourceId))!.status).toBe("proposed");
+    }));
+});
+
+describe("a proposed source edited on its page (UI-1)", () => {
+  it("the approval form defaults to the saved settings, so „Freigeben“ keeps the edit; the proposal stays visible", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const { sourceId, taskId } = await proposal(tx);
+      await tx
+        .update(reviewTasks)
+        .set({
+          context: {
+            suggestion: { type: "trip_report", weight: 0.6, changeRate: "normal", crawlRules: DEFAULT_CRAWL_RULES },
+          },
+        })
+        .where(eq(reviewTasks.id, taskId));
+      const form = rulesForm({ deny: "/forum/" });
+      for (const [k, v] of Object.entries({ sourceId, name: "Edited", type: "trip_report", weight: "0.2", changeRate: "normal" }))
+        form.set(k, v);
+      await saveSourceAction(form);
+      expect(redirect).toHaveBeenCalledWith(`/sources/${sourceId}?saved=1`);
+
+      const subject = (await reviewTaskDetail(tx, taskId))!.subject;
+      expect(subject).toMatchObject({
+        type: "source",
+        suggestion: { weight: 0.2, crawlRules: { deny: ["/forum/"] } },
+        originalSuggestion: { weight: 0.6, crawlRules: { deny: [] } },
+        editedSinceProposal: true,
+      });
+      // The source page links to its open approval.
+      expect((await sourceDetail(tx, sourceId, { docPage: 1 }))!.approvalTaskId).toBe(taskId);
+    }));
+
+  it("a stale approval form (rendered before the edit) is refused with ?changed=1 and keeps the edit (W4-1)", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const { sourceId, taskId } = await proposal(tx);
+      const before = (await reviewTaskDetail(tx, taskId))!.subject;
+      if (before.type !== "source") throw new Error("expected a source subject");
+      // the edit in another tab
+      const edit = rulesForm({ deny: "/forum/" });
+      for (const [k, v] of Object.entries({ sourceId, name: "Edited", type: "trip_report", weight: "0.2", changeRate: "normal" }))
+        edit.set(k, v);
+      await saveSourceAction(edit);
+
+      // the stale tab posts its old defaults with the fingerprint it was built from
+      const stale = rulesForm({ deny: "" });
+      for (const [k, v] of Object.entries({ taskId, type: "trip_report", weight: "0.6", changeRate: "normal", valueKey: before.settingsKey }))
+        stale.set(k, v);
+      await approveSourceAction(stale);
+      expect(redirect).toHaveBeenLastCalledWith(`/review/${taskId}?changed=1`);
+      expect(await getSource(tx, sourceId)).toMatchObject({ status: "proposed", weight: 0.2, crawlRules: { deny: ["/forum/"] } });
+      const [task] = await tx.select().from(reviewTasks).where(eq(reviewTasks.id, taskId));
+      expect(task!.status).toBe("open");
+      expect(await tx.select().from(reviewDecisions).where(eq(reviewDecisions.taskId, taskId))).toHaveLength(0);
+
+      // the reloaded form carries the current fingerprint
+      const after = (await reviewTaskDetail(tx, taskId))!.subject;
+      if (after.type !== "source") throw new Error("expected a source subject");
+      expect(after.settingsKey).not.toBe(before.settingsKey);
+      const fresh = rulesForm({ deny: "/forum/" });
+      for (const [k, v] of Object.entries({ taskId, type: "trip_report", weight: "0.2", changeRate: "normal", valueKey: after.settingsKey }))
+        fresh.set(k, v);
+      await approveSourceAction(fresh);
+      expect(await getSource(tx, sourceId)).toMatchObject({ status: "approved", weight: 0.2, crawlRules: { deny: ["/forum/"] } });
     }));
 });

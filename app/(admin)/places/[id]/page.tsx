@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+import { placeTitle } from "@/lib/domain/geo-view";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { z } from "zod";
@@ -5,15 +7,24 @@ import type { PlaceStatus } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 import { deliveryArchive } from "@/lib/domain/delivery/archive";
 import { placeDelivery } from "@/lib/domain/delivery/view";
-import { geoFacts } from "@/lib/domain/geo-facts";
+import { geoFacts, geoMentions } from "@/lib/domain/geo-facts";
 import { mergeCandidates, type MergeCandidate } from "@/lib/domain/place-merge";
+import { ADMIN_PLACE_STATUSES } from "@/lib/domain/place-status";
 import { placeDetail } from "@/lib/domain/geo-view";
 import { placeGeometry } from "@/lib/domain/geometry-view";
 import { timelineView } from "@/lib/domain/profile-timeline";
 import { profileAttributeFacts, profileView } from "@/lib/domain/profile-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { Dialog } from "../../_components/dialog";
-import { mergeError, PLACE_KIND_LABELS, PLACE_STATUS_LABELS, REVIEW_KIND_LABELS, runScopeError } from "../../_components/labels";
+import {
+  mergeError,
+  PLACE_KIND_LABELS,
+  PLACE_STATUS_LABELS,
+  placeStatusError,
+  REVIEW_KIND_LABELS,
+  runScopeError,
+} from "../../_components/labels";
+import { MentionsPanel } from "../../_components/mentions-panel";
 import { MiniMap } from "../../_components/mini-map";
 import {
   Badge,
@@ -34,7 +45,14 @@ import { DeliveryTab } from "./delivery-tab";
 import { FactsTab } from "./facts-tab";
 import { GeometryTab } from "./geometry-tab";
 import { ProfileTab } from "./profile-tab";
+import { StatusActions } from "./status-actions";
 import { TimelineTab } from "./timeline-tab";
+
+/** The tab title: the place's name (UI-15). */
+export async function generateMetadata({ params }: PageProps<"/places/[id]">): Promise<Metadata> {
+  await requireAdmin();
+  return { title: (await placeTitle(getDb(), (await params).id)) ?? "Ort" };
+}
 
 const coord = (lat: number, lon: number) => `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
 
@@ -47,7 +65,15 @@ const PLACE_STATUS_TONES: Record<PlaceStatus, Tone> = {
 };
 
 /** Tabs of the place page (`?tab=`); later milestones add theirs. */
-const TABS = { overview: "Übersicht", geometry: "Geometrie", facts: "Facts", profile: "Profil", timeline: "Zeitachse", delivery: "Lieferung" } as const;
+const TABS = {
+  overview: "Übersicht",
+  geometry: "Geometrie",
+  facts: "Facts",
+  profile: "Profil",
+  timeline: "Zeitachse",
+  sources: "Quellen",
+  delivery: "Lieferung",
+} as const;
 type Tab = keyof typeof TABS;
 const tabParam = z.enum(Object.keys(TABS) as [Tab, ...Tab[]]).catch("overview");
 const runsParam = z.enum(["active", "all"]).catch("active");
@@ -55,6 +81,8 @@ const versionParam = z.coerce.number().int().min(1).optional().catch(undefined);
 const textParam = z.string().max(200).optional().catch(undefined);
 const uuidParam = z.uuid().optional().catch(undefined);
 const positionParam = z.enum(["moved", "moved_no_run", "too_far"]).optional().catch(undefined);
+const statusParam = z.enum(ADMIN_PLACE_STATUSES).optional().catch(undefined);
+const mentionPageParam = z.coerce.number().int().min(1).catch(1);
 
 type Detail = NonNullable<Awaited<ReturnType<typeof placeDetail>>>;
 
@@ -79,6 +107,8 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
   const merged = uuidParam.parse(sp.merged);
   const mergedRun = uuidParam.parse(sp.run);
   const mergeRefused = mergeError(sp.mergeError);
+  const statusSet = statusParam.parse(sp.status);
+  const statusRefused = placeStatusError(sp.statusError);
   const positionStatus = positionParam.parse(sp.position);
   return (
     <>
@@ -107,6 +137,7 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
         actions={
           active && (
             <>
+              {!task && <StatusActions placeId={p.id} status={p.status} />}
               {mergeable && <MergeDialog placeId={p.id} candidates={candidates} />}
               <form action={recomputePlaceProfileAction}>
                 <input type="hidden" name="placeId" value={p.id} />
@@ -132,6 +163,24 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
           ) : null}
         </Notice>
       )}
+      {statusSet && (
+        <Notice tone={sp.statusNoRun ? "warn" : "ok"} className="mb-6" title={`Status: ${PLACE_STATUS_LABELS[statusSet]}`}>
+          {sp.statusNoRun ? (
+            "Der Status ist gespeichert. Der Folgelauf konnte nicht gestartet werden – bitte „Profil neu berechnen“."
+          ) : mergedRun ? (
+            <>
+              Gespeichert; das Profil wird neu berechnet (<TextLink href={`/runs/${mergedRun}`}>Lauf</TextLink>).
+            </>
+          ) : (
+            "Gespeichert."
+          )}
+        </Notice>
+      )}
+      {statusRefused && (
+        <Notice tone="danger" className="mb-6" title="Status nicht geändert">
+          {statusRefused}
+        </Notice>
+      )}
       {mergeRefused && (
         <Notice tone="danger" className="mb-6" title="Nicht zusammengelegt">
           {mergeRefused}
@@ -155,6 +204,8 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
         <TimelineTabView placeId={p.id} geoObjectId={p.geoObjectId} version={versionParam.parse(sp.v)} asOf={textParam.parse(sp.asOf)} attr={attr} confirm={textParam.parse(sp.confirm)} />
       ) : tab === "delivery" ? (
         <DeliveryTabView placeId={p.id} />
+      ) : tab === "sources" ? (
+        <SourcesTabView placeId={p.id} geoObjectId={p.geoObjectId} page={mentionPageParam.parse(sp.mp)} />
       ) : facts ? (
         <FactsTab groups={facts} runs={runs} runsHref={(r) => `/places/${p.id}?tab=facts${r === "all" ? "&runs=all" : ""}`} />
       ) : geometry ? (
@@ -169,6 +220,18 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
         <Overview detail={detail} />
       )}
     </>
+  );
+}
+
+/** „Quellen“: the documents that mention the place's object (spec 09), as on the geo page. */
+async function SourcesTabView({ placeId, geoObjectId, page }: { placeId: string; geoObjectId: string; page: number }) {
+  const mentions = await geoMentions(getDb(), geoObjectId, page);
+  return (
+    <MentionsPanel
+      mentions={mentions}
+      page={page}
+      pageHref={(mp) => `/places/${placeId}?tab=sources${mp > 1 ? `&mp=${mp}` : ""}`}
+    />
   );
 }
 

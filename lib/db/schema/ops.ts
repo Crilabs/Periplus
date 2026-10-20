@@ -102,6 +102,9 @@ export const externalCalls = pgTable(
   (t) => [
     index("external_calls_service_at_idx").on(t.service, t.at),
     index("external_calls_source_id_at_idx").on(t.sourceId, t.at),
+    // costs per listed run (runs page), calls per tile (geo view), gesamt-review DAT-7
+    index("external_calls_run_id_idx").on(t.runId),
+    index("external_calls_tile_id_at_idx").on(t.tileId, t.at),
   ],
 );
 

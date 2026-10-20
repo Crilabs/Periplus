@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import type { ConverterName } from "@/lib/adapters/fetch";
 import { getArchive } from "@/lib/adapters/s3";
@@ -39,6 +40,8 @@ import {
   type Tone,
 } from "../../_components/ui";
 import { rateOutputAction, startComparisonAction } from "./actions";
+
+export const metadata: Metadata = { title: "Konverter-Vergleich" };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 

@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
-import { addToComparisonSet, removeFromComparisonSet } from "@/lib/domain/comparison";
+import { saveComparisonSelection } from "@/lib/domain/comparison";
 import { activateCandidate, RegressionGateClosed } from "@/lib/domain/quality/regression";
 import { getBoss } from "@/lib/jobs/boss";
 import { MEASUREMENT_LABEL_MAX, startEvaluation, startMeasurement } from "@/lib/pipeline/quality-run";
@@ -45,25 +45,25 @@ function invalidInput(input: FormData | object): never {
   redirect(known ? `${qualityPath(area)}&error=invalid_input` : "/quality?error=invalid_input");
 }
 
-const toggleSchema = z.object({
-  placeId: z.uuid(),
+const selectionSchema = z.object({
   areaKey: areaKeySchema,
-  include: z.boolean(),
+  shown: z.array(z.uuid()).max(5000),
+  included: z.array(z.uuid()).max(5000),
 });
 
-type ToggleInput = { placeId: string; areaKey: string; include: boolean };
-
-/** Adds a place to the comparison set or removes it. A form sends `include=true` for a ticked checkbox, nothing otherwise. */
-export async function toggleComparisonAction(input: FormData | ToggleInput): Promise<void> {
+/**
+ * „Auswahl speichern“ of the comparison set list (UI-11): every place the list showed (`shown`) joins the set when its
+ * box is ticked (`include=<placeId>`) and leaves it otherwise, all in one save.
+ */
+export async function saveComparisonSelectionAction(formData: FormData): Promise<void> {
   const admin = await requireAdmin();
-  const raw =
-    input instanceof FormData
-      ? { placeId: input.get("placeId"), areaKey: input.get("areaKey"), include: input.get("include") === "true" }
-      : input;
-  const { placeId, areaKey, include } = toggleSchema.parse(raw);
-  const db = getDb();
-  if (include) await addToComparisonSet(db, placeId, areaKey, admin.email);
-  else await removeFromComparisonSet(db, placeId);
+  const parsed = selectionSchema.safeParse({
+    areaKey: formData.get("areaKey"),
+    shown: formData.getAll("shown"),
+    included: formData.getAll("include"),
+  });
+  if (!parsed.success) return invalidInput(formData);
+  await saveComparisonSelection(getDb(), { ...parsed.data, by: admin.email });
   revalidatePath("/quality");
 }
 

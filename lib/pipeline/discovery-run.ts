@@ -1,8 +1,8 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { areaByKey, getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { geoObjects, placeDiscoveryRequests, tiles } from "@/lib/db/schema";
+import { geoObjects, placeDiscoveryRequests, runs, runStages, tiles } from "@/lib/db/schema";
 import { createRun } from "@/lib/domain/runs";
 import { tileExists } from "@/lib/domain/geo-view";
 import { DISCOVERY_AREA_STAGE, DISCOVERY_PLACE_STAGE, DISCOVERY_PROPOSE_STAGE, DISCOVERY_TILE_STAGE } from "./discovery";
@@ -130,4 +130,20 @@ export async function startPlaceDiscoveryRun(
   });
   await enqueueStage(db, boss, created.id, PLACE_DISCOVERY_STAGES[0]);
   return created;
+}
+
+/**
+ * Enqueues the first stage of a place discovery run that never got it: the run and its `place_discovery_requests`
+ * committed, then the enqueue failed (a job queue or database blip). Only a run still `queued` whose first stage is
+ * `pending`; returns whether it enqueued. Lets the follow-up job's retry recover its run instead of skipping it while
+ * the places sit in their cool-down (CON-3).
+ */
+export async function resumePlaceDiscoveryRun(db: Db, boss: PgBoss, runId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ runStatus: runs.status, stageStatus: runStages.status })
+    .from(runs)
+    .innerJoin(runStages, and(eq(runStages.runId, runs.id), eq(runStages.stage, PLACE_DISCOVERY_STAGES[0])))
+    .where(eq(runs.id, runId));
+  if (row?.runStatus !== "queued" || row.stageStatus !== "pending") return false;
+  return enqueueStage(db, boss, runId, PLACE_DISCOVERY_STAGES[0]);
 }

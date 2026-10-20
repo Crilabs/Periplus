@@ -1,21 +1,22 @@
+import type { Metadata } from "next";
+import { geoObjectTitle } from "@/lib/domain/geo-view";
 import type { ReactNode } from "react";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
-import { geoFacts, geoMentions, MENTIONS_PER_PAGE } from "@/lib/domain/geo-facts";
+import { geoFacts, geoMentions } from "@/lib/domain/geo-facts";
 import { geoObjectDetail, type GeoObjectRef } from "@/lib/domain/geo-view";
 import { profileAttributeFacts, profileView } from "@/lib/domain/profile-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import {
   GEO_OBJECT_TYPE_LABELS,
   GEO_ORIGIN_LABELS,
-  MATCH_KIND_LABELS,
   NAME_ORIGIN_LABELS,
   PLACE_KIND_LABELS,
   PLACE_STATUS_LABELS,
   runScopeError,
 } from "../../_components/labels";
-import { AnnotatedText } from "../../_components/annotated-text";
+import { MentionsPanel } from "../../_components/mentions-panel";
 import {
   Badge,
   Button,
@@ -24,7 +25,6 @@ import {
   Mono,
   Notice,
   PageHeader,
-  Pagination,
   Panel,
   Table,
   tdClass,
@@ -38,12 +38,17 @@ import { recomputeGeoProfileAction } from "../../places/[id]/actions";
 import { FactsTab } from "../../places/[id]/facts-tab";
 import { ProfileTab } from "../../places/[id]/profile-tab";
 
+/** The tab title: the geo object's name (UI-15). */
+export async function generateMetadata({ params }: PageProps<"/geo/[id]">): Promise<Metadata> {
+  await requireAdmin();
+  return { title: (await geoObjectTitle(getDb(), (await params).id)) ?? "Geo-Objekt" };
+}
+
 const SCRIPT_LABELS = { latin: "Lateinisch", greek: "Griechisch" } as const;
 const runsParam = z.enum(["active", "all"]).catch("active");
 const pageParam = z.coerce.number().int().min(1).catch(1);
 const textParam = z.string().max(200).optional().catch(undefined);
 const uuidParam = z.uuid().optional().catch(undefined);
-const share = (n: number) => n.toLocaleString("de-DE", { maximumFractionDigits: 2 });
 
 function GeoLink({ o }: { o: GeoObjectRef }) {
   return (
@@ -81,7 +86,6 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
     profileView(db, id.data),
   ]);
   const selected = profile && attr ? await profileAttributeFacts(db, id.data, profile.snapshot.version, attr) : null;
-  const pages = Math.max(1, Math.ceil(mentionPage.total / MENTIONS_PER_PAGE));
   const href = (q: { runs?: "active" | "all"; mp?: number; attr?: string | null }) => {
     const r = q.runs ?? runs;
     const m = q.mp ?? page;
@@ -151,46 +155,7 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
             />
           </section>
 
-          <Panel
-            title={`Erwähnungen (${mentionPage.total})`}
-            description="Textstellen in Dokumenten, die diesem Geo-Objekt zugeordnet wurden."
-            flush
-          >
-            {mentionPage.rows.length === 0 ? (
-              <EmptyState title="Keine Erwähnungen.">
-                Erwähnungen entstehen, wenn ein Lauf ein Dokument liest, das dieses Geo-Objekt nennt.
-              </EmptyState>
-            ) : (
-              <>
-                <ul className="divide-y divide-line">
-                  {mentionPage.rows.map((m) => (
-                    <li key={m.id} className="space-y-1 px-4 py-3 text-sm">
-                      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
-                        <TextLink href={`/documents/${m.documentId}`} className="text-sm">
-                          {m.domain}
-                        </TextLink>
-                        <span>{m.observedAt}</span>
-                        <Badge>
-                          {MATCH_KIND_LABELS[m.matchKind]} {share(m.confidence)}
-                        </Badge>
-                      </p>
-                      <p className="max-w-3xl text-xs leading-relaxed text-muted">
-                        <AnnotatedText
-                          text={m.snippet.before + m.snippet.quote + m.snippet.after}
-                          spans={[{ start: m.snippet.before.length, end: m.snippet.before.length + m.snippet.quote.length, kind: "mention", ref: m.id }]}
-                        />
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-                {pages > 1 && (
-                  <div className="border-t border-line">
-                    <Pagination page={page} pages={pages} total={mentionPage.total} noun="Erwähnungen" href={(mp) => href({ mp })} />
-                  </div>
-                )}
-              </>
-            )}
-          </Panel>
+          <MentionsPanel mentions={mentionPage} page={page} pageHref={(mp) => href({ mp })} />
 
           <section>
             <SectionHeading>Facts</SectionHeading>

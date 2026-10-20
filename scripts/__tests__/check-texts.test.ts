@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { withRollback } from "@/test/db";
 import { insertNamedObject, insertTestTile, insertTestVersion } from "@/test/text";
@@ -6,7 +7,13 @@ import { ambiguousMatches, mentions, unmatchedNames } from "@/lib/db/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { newId } from "@/lib/domain/ids";
 import { measureTileBorders } from "@/lib/domain/mentions/tile-borders";
+import { tileIdFor } from "@/lib/domain/tiles";
 import { assessTexts, matchMentionCounts, textCheckFailures, textStats, type TextStats } from "../check-texts";
+
+// Own tiles of this file (OPS-4): no other test file inserts them, so no uncommitted primary key is shared with a
+// test running in parallel. TILE_C lies two columns east of TILE_A (the second ring).
+const TILE_A = tileIdFor(-100.1, 10.1);
+const TILE_C = tileIdFor(-99.6, 10.1);
 
 const stats = (over: Partial<TextStats> = {}): TextStats => ({
   belegtreue: { facts: 120, verified: 120 },
@@ -72,8 +79,8 @@ describe("check-texts", () => {
 
   it("the share counts the match's mentions only: a disambiguated one counts, a POI mention of the extraction does not", () =>
     withRollback(async (tx) => {
-      const tile = await insertTestTile(tx, "q025:804:500");
-      const a = await insertNamedObject(tx, { type: "bay", names: [{ name: uniqueName() }], lon: 21.1, lat: 35.1, tiles: [tile] });
+      const tile = await insertTestTile(tx, TILE_A);
+      const a = await insertNamedObject(tx, { type: "bay", names: [{ name: uniqueName() }], lon: -100.1, lat: 10.1, tiles: [tile] });
       const v = await insertTestVersion(tx, ["Kolona Vathy Taverna"]);
       const mention = (start: number, matchKind: "deterministic" | "model") => ({
         documentVersionId: v.versionId,
@@ -95,19 +102,21 @@ describe("check-texts", () => {
   it("the tile border measurement finds an unmatched name in the second ring and writes nothing", () =>
     withRollback(async (tx) => {
       const cfg = getConfig();
-      const tile = await insertTestTile(tx, "q025:804:500");
-      await insertTestTile(tx, "q025:806:500");
-      await insertNamedObject(tx, { type: "island", names: [{ name: "Kalonisi" }], lon: 21.12, lat: 35.12, tiles: [tile] });
+      const tile = await insertTestTile(tx, TILE_A);
+      await insertTestTile(tx, TILE_C);
+      await insertNamedObject(tx, { type: "island", names: [{ name: "Kalonisi" }], lon: -100.08, lat: 10.12, tiles: [tile] });
       const far = uniqueName();
       const nowhere = uniqueName();
-      await insertNamedObject(tx, { type: "bay", names: [{ name: far }], lon: 21.6, lat: 35.1, tiles: ["q025:806:500"] });
+      await insertNamedObject(tx, { type: "bay", names: [{ name: far }], lon: -99.6, lat: 10.1, tiles: [TILE_C] });
       const v = await insertTestVersion(tx, [`Rund um Kalonisi, dann weiter nach ${far} und ${nowhere}.`]);
       for (const name of [far, nowhere]) {
         await tx.insert(unmatchedNames).values({ nameNormalized: normalizeName(name), displayName: name, documentVersionId: v.versionId, chunkId: v.chunkIds[0]!, sourceId: v.sourceId, tileId: tile });
       }
       expect(await measureTileBorders(tx, cfg, { versionIds: [v.versionId] })).toEqual({ unmatchedNames: 2, matchedWithRing2: 1 });
       // older entries are outside the window
-      expect(await measureTileBorders(tx, cfg, { versionIds: [v.versionId], since: new Date(Date.now() + 86_400_000) })).toEqual({ unmatchedNames: 0, matchedWithRing2: 0 });
+      // the database's clock, not the JS one (OPS-5): the entries were stamped with now()
+      const { rows } = await tx.execute<{ t: string }>(sql`select (now() + interval '1 day')::text as t`);
+      expect(await measureTileBorders(tx, cfg, { versionIds: [v.versionId], since: new Date(rows[0]!.t) })).toEqual({ unmatchedNames: 0, matchedWithRing2: 0 });
       // the database-wide numbers include the scene (never asserted as exact counts: other tests write too)
       const all = await textStats(tx, cfg);
       expect(all.tileBorders.unmatchedNames).toBeGreaterThanOrEqual(2);

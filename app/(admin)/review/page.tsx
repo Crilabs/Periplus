@@ -1,15 +1,17 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { reviewKindEnum } from "@/lib/db/schema";
 import { listOpenTasks, reviewCounts } from "@/lib/domain/review-view";
 import { requireAdmin } from "@/lib/security/require-admin";
-import { REVIEW_KIND_LABELS, RUN_NOT_STARTED_NOTICE } from "../_components/labels";
+import { COMPARISON_ATTRIBUTE_LABELS, REVIEW_KIND_LABELS, RUN_NOT_STARTED_NOTICE } from "../_components/labels";
 import {
   Badge,
   ButtonLink,
   cx,
   EmptyState,
+  FilterChips,
   fmt,
   Notice,
   numClass,
@@ -22,12 +24,24 @@ import {
 } from "../_components/ui";
 import { REVIEW_KIND_HELP } from "./kinds";
 
+export const metadata: Metadata = { title: "Prüfen" };
+
 const PAGE_SIZE = 50;
 const querySchema = z.object({
   kind: z.enum(reviewKindEnum.enumValues).optional().catch(undefined),
   before: z.uuid().optional().catch(undefined),
   notice: z.literal("run_not_started").optional().catch(undefined),
+  /** Comparison deviations of evaluation runs only (`only`) or without them (`none`). */
+  evaluation: z.enum(["only", "none"]).optional().catch(undefined),
 });
+
+/** The attribute of a list row in German: profile attributes come labelled, comparison attributes by key. */
+const attributeText = (kind: string, attribute: string | null) =>
+  attribute === null
+    ? null
+    : kind === "comparison_deviation" && Object.hasOwn(COMPARISON_ATTRIBUTE_LABELS, attribute)
+      ? COMPARISON_ATTRIBUTE_LABELS[attribute as keyof typeof COMPARISON_ATTRIBUTE_LABELS]
+      : attribute;
 
 /** Like FilterChips, but each chip's accessible name is "<Art>: <Zahl>" and the count keeps its test id. */
 function KindChips({ items }: { items: Array<{ href: string; label: string; count: number; current: boolean; testId?: string }> }) {
@@ -61,15 +75,17 @@ function KindChips({ items }: { items: Array<{ href: string; label: string; coun
 
 export default async function Page({ searchParams }: PageProps<"/review">) {
   await requireAdmin();
-  const { kind, before, notice } = querySchema.parse(await searchParams);
+  const { kind, before, notice, evaluation } = querySchema.parse(await searchParams);
   const db = getDb();
-  const [counts, tasks] = await Promise.all([reviewCounts(db), listOpenTasks(db, { kind, limit: PAGE_SIZE, before })]);
+  const [counts, tasks] = await Promise.all([reviewCounts(db), listOpenTasks(db, { kind, evaluation, limit: PAGE_SIZE, before })]);
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
-  const filter = (k?: string) => (k ? `/review?kind=${k}` : "/review");
-  const more =
-    tasks.length === PAGE_SIZE
-      ? `/review?${new URLSearchParams({ ...(kind ? { kind } : {}), before: tasks.at(-1)!.id })}`
-      : null;
+  const href = (q: { kind?: string; evaluation?: string; before?: string }) => {
+    const params = new URLSearchParams(Object.entries(q).filter((e): e is [string, string] => e[1] !== undefined));
+    return params.size > 0 ? `/review?${params}` : "/review";
+  };
+  const filter = (k?: string) => href({ kind: k, evaluation });
+  const more = tasks.length === PAGE_SIZE ? href({ kind, evaluation, before: tasks.at(-1)!.id }) : null;
+  const evaluationKinds = !kind || kind === "comparison_deviation";
   const now = new Date();
 
   return (
@@ -106,6 +122,19 @@ export default async function Page({ searchParams }: PageProps<"/review">) {
           ]}
         />
       </div>
+
+      {evaluationKinds && counts.comparison_deviation > 0 && (
+        <div className="mb-4">
+          <FilterChips
+            label="Abweichungen aus Bewertungsläufen"
+            items={[
+              { href: href({ kind }), label: "Alle", current: !evaluation },
+              { href: href({ kind, evaluation: "none" }), label: "Ohne Bewertung", current: evaluation === "none" },
+              { href: href({ kind, evaluation: "only" }), label: "Nur Bewertung", current: evaluation === "only" },
+            ]}
+          />
+        </div>
+      )}
 
       <Panel
         title={kind ? REVIEW_KIND_LABELS[kind] : "Offene Aufgaben"}
@@ -146,6 +175,7 @@ export default async function Page({ searchParams }: PageProps<"/review">) {
                       >
                         {t.name ?? t.subjectId}
                       </Link>
+                      {attributeText(t.kind, t.attribute) && <span className="ml-1.5 text-muted">· {attributeText(t.kind, t.attribute)}</span>}
                       {t.evaluation && (
                         <span className="ml-2" title="Abweichung eines Bewertungslaufs (Kandidat für eine neue Konfiguration), nicht des laufenden Profils">
                           <Badge tone="neutral">Bewertung</Badge>

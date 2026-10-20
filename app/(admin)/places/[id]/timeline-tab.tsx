@@ -148,7 +148,7 @@ export function TimelineTab({
           <Table>
             <thead>
               <tr>
-                <th className={thClass}>seq</th>
+                <th className={thClass} title="Laufende Nummer im Änderungs-Feed">Nr.</th>
                 <th className={thClass}>Schwere</th>
                 <th className={thClass}>Typ</th>
                 <th className={thClass}>Attribut</th>

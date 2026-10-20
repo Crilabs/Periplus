@@ -35,6 +35,7 @@ const config: AppConfig = {
     },
     pricesEurPerMTok: { "claude-haiku-5-5": { input: 0.1, output: 0.5, cacheReadFactor: 0.1 } },
     cacheWriteFactor: 1.25,
+    callTimeoutSeconds: 600,
     batch: { discount: 0.5, pollSeconds: 60, maxHours: 26, maxRequests: 1000, providerTimeoutSeconds: 120, leaseSeconds: 600, clockSkewSeconds: 120, reservationHours: 48, budgetRetrySeconds: 900 },
     comparison: { models: ["claude-haiku-5-5", "claude-haiku-5-5"] },
   },
@@ -106,6 +107,29 @@ describe("anthropic client", () => {
       const client = createAnthropicClient(tx, config, { sdk: api, now: () => now });
       await expect(client.call(echoTask, { text: "x" })).rejects.toBeInstanceOf(BudgetExceeded);
       expect(create).not.toHaveBeenCalled();
+    }));
+
+  it("calls without SDK retries; a failed attempt is on record at 0 EUR with its reason (SEC-2)", () =>
+    withRollback(async (tx) => {
+      const now = new Date((await quietDay(tx)).getTime() + 12 * 3_600_000);
+      const stage = `ai-test-${newId()}`;
+      const create = vi.fn(async () => {
+        throw new Error("Request timed out.");
+      });
+      const api = { messages: { create } } as unknown as AnthropicMessagesApi;
+      const client = createAnthropicClient(tx, { ...config, budgets: { ...config.budgets, anthropic: { dailyEur: 1 } } }, { sdk: api, now: () => now });
+      await expect(client.call(echoTask, { text: "x" }, { stage })).rejects.toThrow("Request timed out.");
+      const rows = await tx.select().from(externalCalls).where(eq(externalCalls.stage, stage));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ service: "anthropic", operation: "system.echo", unit: "tokens", meta: expect.objectContaining({ error: "Request timed out." }) });
+      expect(Number(rows[0]!.costEur)).toBe(0);
+      expect(create).toHaveBeenCalledWith(expect.anything(), { maxRetries: 0, timeout: 600_000 });
+    }));
+
+  it("never builds the real SDK under test (OPS-7)", () =>
+    withRollback(async (tx) => {
+      const client = createAnthropicClient(tx, { ...config, budgets: { ...config.budgets, anthropic: { dailyEur: 1000 } } });
+      await expect(client.call(echoTask, { text: "x" })).rejects.toThrow(/no Anthropic SDK under test/);
     }));
 
   it("records tokens and cost", () =>

@@ -35,6 +35,11 @@ export type RunView = {
   stages: RunStageView[];
   /** The stored marker of a consolidation the run skipped (ruling M5-H-R2); null when it did not skip one. */
   consolidationSkip: ConsolidationSkip | null;
+  /**
+   * An admin ended the run, but the cleanup of „Lauf beenden“ has not completed (it failed part-way, or the run was
+   * ended before the cleanup was recorded): the run page offers to repeat it (ruling GR-8).
+   */
+  endCleanupPending: boolean;
 };
 
 export async function createRun(
@@ -321,6 +326,28 @@ export async function runDate(db: Db, runId: string): Promise<string> {
   return rows[0].day;
 }
 
+/** Key in `runs.params`: when the cleanup of „Lauf beenden“ last completed (ISO time). */
+const END_CLEANUP_KEY = "endCleanedUpAt";
+
+/**
+ * Whether the run was ended by an admin and its cleanup („Lauf beenden“: cancel jobs, end batches, fail units, block
+ * extraction runs, mark the skipped consolidation) has not completed yet. Every cleanup step is idempotent, so such a
+ * run can be cleaned up again (ruling GR-8).
+ */
+export async function endCleanupPending(db: Db, runId: string): Promise<boolean> {
+  const { rows } = await db.execute<{ pending: boolean }>(sql`
+    select ended_by is not null and not (params ? ${END_CLEANUP_KEY}::text) as pending from runs where id = ${runId}
+  `);
+  return rows[0]?.pending === true;
+}
+
+/** Records that the cleanup of the ended run completed. */
+export async function markEndCleanupDone(db: Db, runId: string): Promise<void> {
+  await db.execute(sql`
+    update runs set params = params || jsonb_build_object(${END_CLEANUP_KEY}::text, now()) where id = ${runId} and ended_by is not null
+  `);
+}
+
 /** Whether an admin ended the run by hand. */
 export async function isRunEnded(db: Db, runId: string): Promise<boolean> {
   const [row] = await db.select({ endedBy: runs.endedBy }).from(runs).where(eq(runs.id, runId));
@@ -359,6 +386,7 @@ async function toViews(db: Db, rows: RunRow[]): Promise<RunView[]> {
       .filter((s) => s.runId === r.id)
       .map((s) => ({ stage: s.stage, ordinal: s.ordinal, total: s.total, done: s.done, failed: s.failed, status: s.status })),
     consolidationSkip: consolidationSkipOf((r.params ?? {}) as Record<string, unknown>),
+    endCleanupPending: r.endedBy != null && !(END_CLEANUP_KEY in ((r.params ?? {}) as Record<string, unknown>)),
   }));
 }
 
@@ -382,4 +410,10 @@ export async function listRuns(db: Db, opts: { limit: number; before?: string })
     .orderBy(desc(runs.id))
     .limit(opts.limit);
   return toViews(db, rows);
+}
+
+/** The run an extraction run belongs to; null when the extraction run does not exist. */
+export async function runOfExtractionRun(db: Db, extractionRunId: string): Promise<string | null> {
+  const { rows } = await db.execute<{ run_id: string }>(sql`select run_id from extraction_runs where id = ${extractionRunId}`);
+  return rows[0]?.run_id ?? null;
 }

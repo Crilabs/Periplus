@@ -7,6 +7,7 @@ import { geoObjects, places, restrictedAreas, reviewTasks, type PlaceStatus, typ
 import { createReviewTask } from "@/lib/domain/review";
 import { decideReviewTask } from "@/lib/domain/review-decisions";
 import type { Bbox } from "@/lib/domain/tiles";
+import { insertComputation } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { lonLatOf, rect, SYNTHETIC_SRID } from "@/test/geometry/synthetic";
 import {
@@ -291,21 +292,21 @@ describe("applyExclusion", () => {
     withRollback(async (tx) => {
       const candidate = await insertPlace(tx, "candidate");
       await createReviewTask(tx, { kind: "place_candidate", subjectType: "place", subjectId: candidate, context: {} });
-      expect(await applyExclusion(tx, candidate, hit)).toBe("excluded");
+      expect(await applyExclusion(tx, candidate, [hit])).toBe("excluded");
       expect(await placeOf(tx, candidate)).toEqual({ status: "no_anchoring", statusReason: reason, publicId: null });
       expect(await taskStatus(tx, candidate)).toEqual(["dismissed"]);
       const history = await historyOf(tx, candidate);
       expect(history).toHaveLength(1);
       expect(history[0]).toMatchObject({ status: "candidate", status_reason: null });
       // Already excluded: no second change.
-      expect(await applyExclusion(tx, candidate, hit)).toBe("unchanged");
+      expect(await applyExclusion(tx, candidate, [hit])).toBe("unchanged");
     }));
 
   it("confirmed → unchanged place, a restricted review task is opened (once)", () =>
     withRollback(async (tx) => {
       const publicId = `sp_${crypto.randomUUID().replaceAll("-", "").slice(0, 26).toUpperCase()}`;
       const confirmed = await insertPlace(tx, "confirmed", publicId);
-      expect(await applyExclusion(tx, confirmed, hit)).toBe("review_opened");
+      expect(await applyExclusion(tx, confirmed, [hit])).toBe("review_opened");
       expect(await placeOf(tx, confirmed)).toEqual({ status: "confirmed", statusReason: null, publicId });
       expect(await historyOf(tx, confirmed)).toHaveLength(0);
       expect(await restrictedTask(tx, confirmed)).toEqual([
@@ -314,18 +315,19 @@ describe("applyExclusion", () => {
           context: {
             reason: "restricted",
             restriction: { kind: "military", id: hit.restrictedAreaId, share: 0.8 },
+            restrictions: [{ kind: "military", id: hit.restrictedAreaId, share: 0.8 }],
             previousStatus: "confirmed",
           },
         },
       ]);
-      expect(await applyExclusion(tx, confirmed, hit)).toBe("unchanged");
+      expect(await applyExclusion(tx, confirmed, [hit])).toBe("unchanged");
       expect(await taskStatus(tx, confirmed)).toEqual(["open"]);
     }));
 
   it("the admin's decision on the restricted task is sticky", () =>
     withRollback(async (tx) => {
       const confirmed = await insertPlace(tx, "confirmed", `sp_${crypto.randomUUID().replaceAll("-", "").slice(0, 26).toUpperCase()}`);
-      expect(await applyExclusion(tx, confirmed, hit)).toBe("review_opened");
+      expect(await applyExclusion(tx, confirmed, [hit])).toBe("review_opened");
       const [task] = await tx
         .select({ id: reviewTasks.id })
         .from(reviewTasks)
@@ -335,39 +337,99 @@ describe("applyExclusion", () => {
         decision: { action: "confirm", kind: "anchorage" },
         decidedBy: "admin@example.invalid",
       });
-      expect(await applyExclusion(tx, confirmed, hit)).toBe("unchanged");
+      expect(await applyExclusion(tx, confirmed, [hit])).toBe("unchanged");
       expect((await restrictedTask(tx, confirmed)).map((t) => t.status)).toEqual(["decided"]);
       expect((await placeOf(tx, confirmed))?.status).toBe("confirmed");
     }));
+
+  describe("the decision is sticky per (place, restricted area) over all banning hits (GR-5, SAF-5)", () => {
+    const natura: RestrictionHit = { restrictedAreaId: "00000000-0000-0000-0000-00000000000a", kind: "protected_area", sourceRef: "emodnet/natura/GR0001", share: 0.5, anchoringBan: true };
+    const firing: RestrictionHit = { restrictedAreaId: "00000000-0000-0000-0000-00000000000b", kind: "military", sourceRef: "emodnet/military/X1", share: 1, anchoringBan: true };
+    const decideOpen = async (tx: Db, placeId: string) => {
+      const [task] = await tx
+        .select({ id: reviewTasks.id })
+        .from(reviewTasks)
+        .where(and(eq(reviewTasks.subjectId, placeId), eq(reviewTasks.status, "open")));
+      await decideReviewTask(tx, { taskId: task!.id, decision: { action: "confirm", kind: "anchorage" }, decidedBy: "admin@example.invalid" });
+    };
+
+    it("a new ban area over a kept place opens a review again, listing only the new area", () =>
+      withRollback(async (tx) => {
+        const confirmed = await insertPlace(tx, "confirmed", `sp_${crypto.randomUUID().replaceAll("-", "").slice(0, 26).toUpperCase()}`);
+        expect(await applyExclusion(tx, confirmed, [natura])).toBe("review_opened");
+        await decideOpen(tx, confirmed);
+        expect(await applyExclusion(tx, confirmed, [natura])).toBe("unchanged");
+        expect(await applyExclusion(tx, confirmed, [firing])).toBe("review_opened");
+        const open = (await restrictedTask(tx, confirmed)).filter((t) => t.status === "open");
+        expect(open).toEqual([
+          expect.objectContaining({
+            context: expect.objectContaining({ restriction: { kind: "military", id: firing.restrictedAreaId, share: 1 }, restrictions: [{ kind: "military", id: firing.restrictedAreaId, share: 1 }] }),
+          }),
+        ]);
+      }));
+
+    it("with the decided area sorting first, the undecided one behind it still opens a review", () =>
+      withRollback(async (tx) => {
+        const confirmed = await insertPlace(tx, "confirmed", `sp_${crypto.randomUUID().replaceAll("-", "").slice(0, 26).toUpperCase()}`);
+        expect(await applyExclusion(tx, confirmed, [natura])).toBe("review_opened");
+        await decideOpen(tx, confirmed);
+        expect(await applyExclusion(tx, confirmed, [natura, firing])).toBe("review_opened");
+        await decideOpen(tx, confirmed);
+        // both decided now: nothing opens
+        expect(await applyExclusion(tx, confirmed, [natura, firing])).toBe("unchanged");
+      }));
+    it("deciding a restricted review re-checks the last geometry run's areas: an area found while the task was open asks at once (wave-1 review M-2)", () =>
+      withRollback(async (tx) => {
+        const confirmed = await insertPlace(tx, "confirmed", `sp_${crypto.randomUUID().replaceAll("-", "").slice(0, 26).toUpperCase()}`);
+        const [{ geoObjectId }] = await tx.select({ geoObjectId: places.geoObjectId }).from(places).where(eq(places.id, confirmed));
+        const square = await utmRect(tx, 0, 0, 1000, 1000);
+        const a = { ...natura, restrictedAreaId: await insertRestricted(tx, "protected_area", square, natura.sourceRef) };
+        const b = { ...firing, restrictedAreaId: await insertRestricted(tx, "military", square, firing.sourceRef) };
+        const ended = { ...firing, restrictedAreaId: await insertRestricted(tx, "military", square, "emodnet/military/X2") };
+        await tx.update(restrictedAreas).set({ validTo: sql`current_date` }).where(eq(restrictedAreas.id, ended.restrictedAreaId));
+        expect(await applyExclusion(tx, confirmed, [a])).toBe("review_opened");
+        // the next geometry run finds B (and an area that has ended since) while T(A) is open: nothing opens yet
+        await insertComputation(tx, geoObjectId!, "restriction", { prohibitions: [b, a, ended] });
+        expect(await applyExclusion(tx, confirmed, [b, a])).toBe("unchanged");
+        await decideOpen(tx, confirmed);
+        const open = (await restrictedTask(tx, confirmed)).filter((t) => t.status === "open");
+        expect(open).toEqual([
+          expect.objectContaining({ context: expect.objectContaining({ restrictions: [{ kind: "military", id: b.restrictedAreaId, share: 1 }] }) }),
+        ]);
+        // deciding B asks nothing more
+        await decideOpen(tx, confirmed);
+        expect((await restrictedTask(tx, confirmed)).filter((t) => t.status === "open")).toEqual([]);
+      }));
+  });
 
   it("an earlier decided non-restricted task does not block the review task", () =>
     withRollback(async (tx) => {
       const confirmed = await insertPlace(tx, "confirmed", `sp_${crypto.randomUUID().replaceAll("-", "").slice(0, 26).toUpperCase()}`);
       const { id } = await createReviewTask(tx, { kind: "place_candidate", subjectType: "place", subjectId: confirmed, context: {} });
       await tx.update(reviewTasks).set({ status: "decided" }).where(eq(reviewTasks.id, id));
-      expect(await applyExclusion(tx, confirmed, hit)).toBe("review_opened");
+      expect(await applyExclusion(tx, confirmed, [hit])).toBe("review_opened");
     }));
 
   it("leaves rejected, review-decided no_anchoring, merged and ended places untouched", () =>
     withRollback(async (tx) => {
       const rejected = await insertPlace(tx, "rejected");
       await tx.update(places).set({ statusReason: "review" }).where(eq(places.id, rejected));
-      expect(await applyExclusion(tx, rejected, hit)).toBe("unchanged");
+      expect(await applyExclusion(tx, rejected, [hit])).toBe("unchanged");
       expect(await placeOf(tx, rejected)).toEqual({ status: "rejected", statusReason: "review", publicId: null });
 
       const noAnchoring = await insertPlace(tx, "no_anchoring");
       await tx.update(places).set({ statusReason: "review" }).where(eq(places.id, noAnchoring));
-      expect(await applyExclusion(tx, noAnchoring, hit)).toBe("unchanged");
+      expect(await applyExclusion(tx, noAnchoring, [hit])).toBe("unchanged");
       expect(await placeOf(tx, noAnchoring)).toEqual({ status: "no_anchoring", statusReason: "review", publicId: null });
 
       const merged = await insertPlace(tx, "candidate");
       await tx.update(places).set({ mergedIntoId: noAnchoring }).where(eq(places.id, merged));
-      expect(await applyExclusion(tx, merged, hit)).toBe("unchanged");
+      expect(await applyExclusion(tx, merged, [hit])).toBe("unchanged");
       expect((await placeOf(tx, merged))?.status).toBe("candidate");
 
       const ended = await insertPlace(tx, "candidate");
       await tx.update(places).set({ validTo: "2020-01-01" }).where(eq(places.id, ended));
-      expect(await applyExclusion(tx, ended, hit)).toBe("unchanged");
+      expect(await applyExclusion(tx, ended, [hit])).toBe("unchanged");
       expect((await placeOf(tx, ended))?.status).toBe("candidate");
     }));
 });

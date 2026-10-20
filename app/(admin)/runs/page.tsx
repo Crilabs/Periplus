@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { listRuns } from "@/lib/domain/runs";
@@ -18,6 +19,8 @@ import {
   startTextRunAction,
 } from "./actions";
 
+export const metadata: Metadata = { title: "Läufe" };
+
 type AreaRun = {
   id: string;
   name: string;
@@ -32,7 +35,7 @@ const AREA_RUNS: AreaRun[] = [
     id: "gazetteer",
     name: "Gazetteer",
     description:
-      "Legt die Kacheln des Reviers an und sammelt Inseln, Buchten, Häfen, Orte und POIs aus OSM, Wikidata und GeoNames. Erster Lauf für ein neues Revier.",
+      "Legt die Kacheln des Reviers an und sammelt Inseln, Buchten, Häfen, Orte und Highlights aus OSM, Wikidata und GeoNames. Erster Lauf für ein neues Revier.",
     action: startGazetteerAction,
     button: "Gazetteer aufbauen",
   },

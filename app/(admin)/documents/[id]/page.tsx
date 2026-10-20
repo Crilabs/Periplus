@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getArchive } from "@/lib/adapters/s3";
@@ -36,6 +37,8 @@ import {
   thClass,
   trClass,
 } from "../../_components/ui";
+
+export const metadata: Metadata = { title: "Dokument" };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -144,13 +147,13 @@ export default async function Page({ params, searchParams }: PageProps<"/documen
                   {content && (
                     <Panel
                       title="Inhalt"
-                      description={`Text der Version vom ${fmt.dateTime(selected.fetchedAt)}, wie er archiviert und in Chunks zerlegt wurde.`}
+                      description={`Text der Version vom ${fmt.dateTime(selected.fetchedAt)}, wie er archiviert und in Abschnitte zerlegt wurde.`}
                       actions={
                         <Dialog
-                          trigger={`Chunks (${content.chunks.length})`}
+                          trigger={`Abschnitte (${content.chunks.length})`}
                           triggerSize="sm"
-                          title={`Chunks (${content.chunks.length})`}
-                          description="Abschnitte, in die der Text für Abgleich und Extraktion zerlegt ist. Übernommene Chunks sind gegenüber der vorigen Version unverändert."
+                          title={`Abschnitte (${content.chunks.length})`}
+                          description="Abschnitte, in die der Text für Abgleich und Extraktion zerlegt ist. Übernommene Abschnitte sind gegenüber der vorigen Version unverändert."
                           wide
                         >
                           <ChunkTable chunks={content.chunks} />
@@ -220,7 +223,7 @@ export default async function Page({ params, searchParams }: PageProps<"/documen
                     value: `${selected.converter} · ${selected.language ?? "–"}`,
                   },
                   {
-                    label: "Chunks",
+                    label: "Abschnitte",
                     value: `${fmt.int(selected.chunks)}, davon ${fmt.int(selected.carried)} übernommen`,
                   },
                   { label: "Hash", value: <Mono>{selected.hash8}</Mono> },
@@ -268,7 +271,7 @@ export default async function Page({ params, searchParams }: PageProps<"/documen
                       </div>
                       <div className="mt-0.5 flex items-center justify-between gap-2 text-xs text-muted">
                         <span>
-                          {v.converter} · {v.language ?? "–"} · {v.chunks} Chunks
+                          {v.converter} · {v.language ?? "–"} · {v.chunks} Abschnitte
                         </span>
                         {selectedId && !isSelected && (
                           <Link href={versionHref(selectedId, v.id)} className="text-accent hover:underline">
@@ -298,7 +301,7 @@ function ChunkTable({ chunks }: { chunks: VersionChunk[] }) {
             <th className={thClass}>Überschrift</th>
             <th className={`${thClass} text-right`}>Wörter</th>
             <th className={thClass}>Übernommen</th>
-            <th className={thClass}>Embedding</th>
+            <th className={thClass}>Einbettung</th>
           </tr>
         </thead>
         <tbody>
@@ -308,7 +311,7 @@ function ChunkTable({ chunks }: { chunks: VersionChunk[] }) {
               <td className={tdClass}>{c.heading ?? <span className="text-muted">–</span>}</td>
               <td className={`${tdClass} ${numClass}`}>{fmt.int(c.wordCount)}</td>
               <td className={tdClass}>{c.carried ? "übernommen" : <span className="text-muted">–</span>}</td>
-              <td className={tdClass}>{c.embedded ? <Badge tone="ok">Embedding</Badge> : <span className="text-muted">–</span>}</td>
+              <td className={tdClass}>{c.embedded ? <Badge tone="ok">vorhanden</Badge> : <span className="text-muted">–</span>}</td>
             </tr>
           ))}
         </tbody>
@@ -322,7 +325,7 @@ function Annotations({ chunks }: { chunks: ChunkAnnotations[] }) {
   if (chunks.length === 0)
     return (
       <Panel>
-        <EmptyState title="Keine Chunks">Diese Version hat keine Chunks.</EmptyState>
+        <EmptyState title="Keine Abschnitte">Diese Version hat keine Abschnitte.</EmptyState>
       </Panel>
     );
   const annotated = chunks.filter((c) => c.spans.length > 0).length;
@@ -331,7 +334,7 @@ function Annotations({ chunks }: { chunks: ChunkAnnotations[] }) {
       <div className="space-y-1.5">
         <AnnotationLegend />
         <p className="text-xs text-muted">
-          {annotated} von {chunks.length} Chunks mit Erwähnungen oder Zitaten. Facts nicht aktiver Extraktionsläufe sind grau.
+          {annotated} von {chunks.length} Abschnitten mit Erwähnungen oder Zitaten. Facts nicht aktiver Extraktionsläufe sind grau.
         </p>
       </div>
       {chunks.map((c) => (

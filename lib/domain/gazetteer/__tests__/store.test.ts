@@ -1,6 +1,7 @@
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, type SQL } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { geoNames, geoObjects } from "@/lib/db/schema";
+import { geomFromGeoJson } from "@/lib/db/geometry";
+import { geoNames, geoObjects, places } from "@/lib/db/schema";
 import { isPublicId } from "@/lib/domain/ids";
 import { upsertGeoObject as upsertOrSkip, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
 import type { Db } from "@/lib/db/client";
@@ -187,5 +188,44 @@ describe("upsertGeoObject", () => {
       expect(r).toEqual({ skipped: expect.any(String) });
       expect(await db.select().from(geoObjects).where(eq(geoObjects.osmId, id))).toEqual([]);
     }));
-});
 
+  it("a type change into another id family gets a public id of the new family; one without a family drops it (DAT-3)", () =>
+    withRollback(async (db) => {
+      const draft = { origin: "osm" as const, osmId: osmId("node"), geometry: { type: "Point", coordinates: [25.05, 35.35] } as GeoJSON.Point, names: [] };
+      const poi = await upsertGeoObject(db, { ...draft, type: "poi", category: "nature" });
+      const publicIdOf = async () =>
+        (await db.select({ publicId: geoObjects.publicId }).from(geoObjects).where(eq(geoObjects.id, poi.id)))[0]!.publicId;
+      expect(await publicIdOf()).toMatch(/^hl_/);
+      const island = await upsertGeoObject(db, { ...draft, type: "island" });
+      expect(island).toMatchObject({ id: poi.id, changed: true });
+      const rg = await publicIdOf();
+      expect(rg).toMatch(/^rg_/);
+      // within one family the id stays
+      await upsertGeoObject(db, { ...draft, type: "archipelago" });
+      expect(await publicIdOf()).toBe(rg);
+      await upsertGeoObject(db, { ...draft, type: "cape" });
+      expect(await publicIdOf()).toBeNull();
+    }));
+
+  it("the database refuses a public id whose prefix does not fit the type (DAT-3)", () =>
+    withRollback(async (db) => {
+      const draft = { origin: "osm" as const, osmId: osmId("node"), geometry: { type: "Point", coordinates: [25.05, 35.35] } as GeoJSON.Point, names: [] };
+      const poi = await upsertGeoObject(db, { ...draft, type: "poi", category: "nature" });
+      const [place] = await db
+        .insert(places)
+        .values({ geoObjectId: poi.id, kind: "anchorage", status: "candidate", position: geomFromGeoJson({ type: "Point", coordinates: [25.05, 35.35] }) })
+        .returning({ id: places.id });
+      const attempt = (statement: SQL) =>
+        db.transaction(async (sp) => {
+          await sp.execute(statement);
+        });
+      const bad = "01J9X4K2M7Q8R5T6V7W8X9Y0Z1";
+      await expect(attempt(sql`update geo_objects set type = 'island' where id = ${poi.id}`)).rejects.toThrow();
+      await expect(attempt(sql`update geo_objects set type = 'cape' where id = ${poi.id}`)).rejects.toThrow();
+      await expect(attempt(sql`update geo_objects set public_id = ${`sp_${bad}`} where id = ${poi.id}`)).rejects.toThrow();
+      await expect(attempt(sql`update places set public_id = ${`hl_${bad}`} where id = ${place!.id}`)).rejects.toThrow();
+      // the fitting ones pass
+      await attempt(sql`update geo_objects set type = 'island', public_id = ${`rg_${bad}`} where id = ${poi.id}`);
+      await attempt(sql`update places set public_id = ${`sp_${bad}`} where id = ${place!.id}`);
+    }));
+});

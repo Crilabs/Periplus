@@ -206,32 +206,3 @@ async function storedRouteCounts(db: Db, input: StoreRouteInput, dropped: number
   `);
   return { stops: Number(rows[0]!.stops), dropped, assigned: Number(rows[0]!.assigned) };
 }
-
-/**
- * Route reconstruction (spec 10): the routes (of one run's extraction runs, or all), those complete — every stop
- * assigned to an object with a confirmed place — and the stops still open (unassigned, or at an object without a
- * confirmed place).
- */
-export async function routeOpenStops(db: Db, scope: { runId?: string }): Promise<{ routes: number; complete: number; openStops: number }> {
-  const inScope = scope.runId ? sql`er.run_id = ${scope.runId}` : sql`true`;
-  const { rows } = await db.execute<{ routes: number; complete: number; open_stops: number }>(sql`
-    with st as (
-      select r.id as route_id,
-        exists (
-          select 1 from places p
-          where p.geo_object_id = s.geo_object_id and p.status = 'confirmed' and p.merged_into_id is null
-            and (p.valid_to is null or p.valid_to > current_date)
-        ) as at_place
-      from routes r
-      join extraction_runs er on er.id = r.extraction_run_id
-      join route_stops s on s.route_id = r.id
-      where ${inScope}
-    ),
-    per_route as (select route_id, bool_and(at_place) as complete from st group by route_id)
-    select (select count(*) from per_route)::int as routes,
-      (select count(*) from per_route where complete)::int as complete,
-      (select count(*) from st where not at_place)::int as open_stops
-  `);
-  const row = rows[0]!;
-  return { routes: Number(row.routes), complete: Number(row.complete), openStops: Number(row.open_stops) };
-}

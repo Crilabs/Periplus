@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { documents, geoNames, geoObjects, places, profileSummaries, tileGeoObjects } from "@/lib/db/schema";
+import { addNames } from "@/lib/domain/gazetteer/names";
+import { osmNames } from "@/lib/domain/gazetteer/osm-classify";
 import { newPublicId } from "@/lib/domain/ids";
 import { insertMention, insertMentionFact, insertExtraction, insertProfile, provenanceEntry } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
@@ -204,7 +206,7 @@ describe("loadAreaScope", () => {
     });
   });
 
-  it("names exclude transliterations and fallbacks", async () => {
+  it("names exclude fallbacks and carry the transliteration as el-Latn (DAT-1)", async () => {
     await withRollback(async (tx) => {
       const f = await seedDeliveryArea(tx);
       const names = await tx.execute<{ origin: string }>(sql`select origin from geo_names where geo_object_id = ${f.places.A.geoObjectId}`);
@@ -212,10 +214,100 @@ describe("loadAreaScope", () => {
       const scope = await loadAreaScope(tx, f.areaId, cfg, await dbToday(tx));
       expect(scope.spots.find((s) => s.publicId === f.places.A.publicId)!.names).toEqual([
         { lang: "el", name: "Όρμος Βαθύ", script: "greek" },
+        { lang: "el-Latn", name: "Ormos Vathy", script: "latin" },
         { lang: "en", name: "Vathi Bay", script: "latin" },
       ]);
     });
   });
+
+  it("a transliteration equal to a source name is not delivered twice (DAT-1)", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliveryArea(tx);
+      await tx.insert(geoNames).values({
+        geoObjectId: f.places.A.geoObjectId, name: "Ormos Vathy", nameNormalized: "ormos vathy", language: "en", script: "latin", origin: "osm",
+      });
+      const scope = await loadAreaScope(tx, f.areaId, cfg, await dbToday(tx));
+      expect(scope.spots.find((s) => s.publicId === f.places.A.publicId)!.names.map((n) => `${n.lang}:${n.name}`)).toEqual([
+        "el:Όρμος Βαθύ",
+        "en:Ormos Vathy",
+        "en:Vathi Bay",
+      ]);
+    });
+  });
+
+  it("a Greek-only spot and island are delivered with their Latin transliteration as name, both scripts in names (DAT-1)", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliveryArea(tx);
+      const today = await dbToday(tx);
+      // A keeps only its Greek OSM name (and the transliteration written with it)
+      await tx
+        .update(geoNames)
+        .set({ validTo: today })
+        .where(sql`${geoNames.geoObjectId} = ${f.places.A.geoObjectId} and ${geoNames.language} in ('de', 'en')`);
+      // the island has only a Greek name and its transliteration
+      await tx.update(geoNames).set({ validTo: today }).where(eq(geoNames.geoObjectId, f.islandId));
+      await tx.insert(geoNames).values([
+        { geoObjectId: f.islandId, name: "Νησίδα", nameNormalized: "νησιδα", language: "el", script: "greek", origin: "osm", isPreferred: true },
+        { geoObjectId: f.islandId, name: "Nisida", nameNormalized: "nisida", language: "el", script: "latin", origin: "transliteration" },
+      ]);
+      const { rows: tl } = await tx.execute<{ name: string }>(
+        sql`select name from geo_names where geo_object_id = ${f.places.A.geoObjectId} and origin = 'transliteration'`,
+      );
+      const transliteration = tl[0]!.name;
+      expect(transliteration).toMatch(/^Ormos /);
+
+      const scope = await loadAreaScope(tx, f.areaId, cfg, today);
+      const a = scope.spots.find((s) => s.publicId === f.places.A.publicId)!;
+      expect(a.name).toBe(transliteration);
+      expect(a.names).toEqual([
+        { lang: "el", name: "Όρμος Βαθύ", script: "greek" },
+        { lang: "el-Latn", name: transliteration, script: "latin" },
+      ]);
+      const mapped = mapSpot(a, { regionId: null, highlightIds: [], cfg });
+      if (!("spot" in mapped)) throw new Error(`omitted ${mapped.omitted}`);
+      expect(spotSchema.safeParse({ ...mapped.spot, profileVersion: 1, validFrom: "2026-10-19" }).error?.issues).toBeUndefined();
+      const island = scope.regions.find((r) => r.publicId === f.islandPublicId)!;
+      expect(island.name).toBe("Nisida");
+      expect(island.names).toEqual([
+        { lang: "el", name: "Νησίδα" },
+        { lang: "el-Latn", name: "Nisida" },
+      ]);
+    });
+  });
+
+  it("an object with several Greek names is delivered with the transliteration of its preferred one, a Latin source name ahead of a derived one (W3-I-1)", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliveryArea(tx);
+      const today = await dbToday(tx);
+      const rename = async (geoObjectId: string, tags: Record<string, string>) => {
+        await tx.update(geoNames).set({ validTo: today }).where(eq(geoNames.geoObjectId, geoObjectId));
+        await addNames(tx, geoObjectId, osmNames(tags));
+      };
+      // a: OSM `name` plus an `old_name`, both Greek
+      await rename(f.places.A.geoObjectId, { name: "Όρμος Φτερό", old_name: "Αγία Μαρίνα" });
+      // b: a Latin OSM `name` plus `name:el`
+      await rename(f.places.C.geoObjectId, { name: "Vathi", "name:el": "Βαθύ" });
+      // c: OSM `name` plus an `alt_name`, both Greek
+      await rename(f.islandId, { name: "Όρμος Φτερό", alt_name: "Άγιος Νικόλαος" });
+
+      const scope = await loadAreaScope(tx, f.areaId, cfg, today);
+      const a = scope.spots.find((s) => s.publicId === f.places.A.publicId)!;
+      expect.soft(a.name).toBe("Ormos Ftero");
+      // the old name's transliteration stays in names
+      expect(a.names.map((n) => `${n.lang}:${n.name}`)).toEqual(["el:Αγία Μαρίνα", "el:Όρμος Φτερό", "el-Latn:Agia Marina", "el-Latn:Ormos Ftero"]);
+      expect.soft(scope.spots.find((s) => s.publicId === f.places.C.publicId)!.name).toBe("Vathi");
+      expect.soft(scope.regions.find((r) => r.publicId === f.islandPublicId)!.name).toBe("Ormos Ftero");
+    });
+  });
+
+  it("a German or English name stays ahead of a Latin transliteration (DAT-1)", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliveryArea(tx);
+      const scope = await loadAreaScope(tx, f.areaId, cfg, await dbToday(tx));
+      expect(scope.spots.find((s) => s.publicId === f.places.A.publicId)!.name).toBe("Vathi Bay");
+    });
+  });
+
   it("leaves out rejected and abandoned places (a later step reports them as removed)", async () => {
     await withRollback(async (tx) => {
       const f = await seedDeliveryArea(tx);

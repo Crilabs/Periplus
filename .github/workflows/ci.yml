@@ -1,8 +1,10 @@
 name: ci
 
+# Pull requests run on pull_request; push only for main (a PR branch would otherwise run twice).
 on:
   pull_request:
   push:
+    branches: [main]
 
 # Least privilege by default; only the deploy job may push images.
 permissions:
@@ -37,12 +39,24 @@ jobs:
           exit 1
       - run: npm run lint
       - run: npm run typecheck
+      # lib/db/schema and drizzle/ stay in sync: a schema change without its migration makes generate write one.
+      - name: Schema and migrations in sync
+        run: |
+          npx drizzle-kit generate
+          if [ -n "$(git status --porcelain drizzle)" ]; then
+            echo "lib/db/schema differs from drizzle/: run npm run db:generate and commit the migration" >&2
+            git status --porcelain drizzle >&2
+            exit 1
+          fi
       # Before the unit tests: the converter tests render pages in Chromium, the PDF tests run pdftotext.
       - run: npx playwright install --with-deps chromium
       - run: sudo apt-get update && sudo apt-get install -y poppler-utils
       - run: npm test
       - run: npm run build
+      # Against the build above (no second build), served standalone like the web image.
       - run: npm run test:e2e
+        env:
+          E2E_SKIP_BUILD: "1"
       - name: Service logs on failure
         if: failure()
         run: docker compose -f docker/compose.dev.yml logs --no-color --tail 200

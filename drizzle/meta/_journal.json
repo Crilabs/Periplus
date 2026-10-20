@@ -337,6 +337,41 @@
       "when": 1792482791789,
       "tag": "0047_facts_unique_per_quote_span",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1792511766406,
+      "tag": "0048_public_id_prefix_checks",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1792511848112,
+      "tag": "0049_truncate_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1792511883613,
+      "tag": "0050_lookup_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1792511942788,
+      "tag": "0051_runs_end_cleanup_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1792513179046,
+      "tag": "0052_merged_place_tasks_dismiss",
+      "breakpoints": true
     }
   ]
 }

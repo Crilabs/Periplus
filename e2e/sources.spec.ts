@@ -21,6 +21,23 @@ test("admin approves a proposed source in the review and it is listed as approve
 
   await page.goto(`/review/${TASK}`);
   await expect(page.getByRole("heading", { name: "Quellenvorschlag" })).toBeVisible();
+  await expect(page.locator("body[data-decision-keys=on]")).toBeAttached();
+
+  // „Ablehnen“ (key 2) asks first: the domain would be ignored for good (UI-2). While the question is open, the decision
+  // keys do nothing behind it (UI-9); „Abbrechen“ leaves the proposal open.
+  await page.keyboard.press("2");
+  const ask = page.getByRole("dialog", { name: "Quelle ablehnen" });
+  await expect(ask).toBeVisible();
+  await expect(ask).toContainText("dauerhaft ignoriert");
+  await page.keyboard.press("1");
+  // a decision the key had submitted would have redirected by now
+  await page.waitForTimeout(1000);
+  await expect(page).toHaveURL(new RegExp(`/review/${TASK}$`));
+  await ask.getByRole("button", { name: "Abbrechen" }).click();
+  await expect(ask).toBeHidden();
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Freigeben" })).toBeEnabled();
+
   await page.getByRole("button", { name: "Freigeben" }).click();
   await expect(page).not.toHaveURL(new RegExp(`/review/${TASK}$`));
 

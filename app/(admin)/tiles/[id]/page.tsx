@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/lib/db/client";
@@ -37,6 +38,12 @@ import {
   seedTileAction,
   textRunTileAction,
 } from "./actions";
+
+/** The tab title: the tile id (UI-15). */
+export async function generateMetadata({ params }: PageProps<"/tiles/[id]">): Promise<Metadata> {
+  const id = tileIdParam((await params).id);
+  return { title: id ? `Kachel ${id}` : "Kachel" };
+}
 
 const TILE_ID = /^q025:\d+:\d+$/;
 
@@ -217,7 +224,7 @@ export default async function Page({ params, searchParams }: PageProps<"/tiles/[
           )}
         </Panel>
 
-        <Panel title="Geo-Objekte" description="Inseln, Buchten, Kaps, Siedlungen und POIs aus dem Gazetteer, die der Kachel zugeordnet sind." flush>
+        <Panel title="Geo-Objekte" description="Inseln, Buchten, Kaps, Siedlungen und Highlights aus dem Gazetteer, die der Kachel zugeordnet sind." flush>
           {detail.geoObjects.length === 0 ? (
             <EmptyState title="Keine Geo-Objekte">Geo-Objekte entstehen durch den Gazetteer-Lauf des Reviers.</EmptyState>
           ) : (

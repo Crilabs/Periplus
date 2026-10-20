@@ -112,7 +112,7 @@ async function displayName(db: Db, geoObjectId: string): Promise<string | null> 
  * position lies in a valid restricted area that bans anchoring (`exclusionFor` over `restrictionHits` of the
  * position, share 1) starts as `no_anchoring` with reason `restricted:<kind>:<id>`; any other new place starts as
  * `candidate` with a `place_candidate` review task. Existing places (any status) stay untouched, so a rerun
- * creates nothing.
+ * creates nothing. Serialised against the bay detection by its advisory lock (shared here).
  */
 export async function seedTile(
   db: Db,
@@ -133,6 +133,10 @@ export async function seedTile(
     const inTile = candidates.filter((c) => c.positionTileId === tileId);
     result.skippedOtherTile = candidates.length - inTile.length;
     if (inTile.length === 0) return result;
+    // Shared with every other seed, exclusive against `geometry.detect_bays` (which takes it exclusively): a bay
+    // detection running beside a seed then sees the places the seed creates, never a second candidate for the same
+    // anchorage (CON-4).
+    await tx.execute(sql`select pg_advisory_xact_lock_shared(hashtext('geometry.detect_bays'))`);
 
     const existing = await tx
       .select({ geoObjectId: places.geoObjectId })

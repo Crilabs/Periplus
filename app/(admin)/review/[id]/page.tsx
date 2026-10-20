@@ -1,9 +1,18 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import type { ProposalRobots } from "@/lib/domain/discovery/proposals";
-import { detailFeatures, nextTaskHref, reviewTaskDetail, type GeoObjectView, type NearbyPlace } from "@/lib/domain/review-view";
+import {
+  detailFeatures,
+  nextTaskHref,
+  reviewTaskDetail,
+  reviewTaskTitle,
+  type GeoObjectView,
+  type NearbyPlace,
+  type SourceSuggestion,
+} from "@/lib/domain/review-view";
 import { QUEUES } from "@/lib/jobs/queues";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { AnnotatedText } from "../../_components/annotated-text";
@@ -15,6 +24,9 @@ import {
   COMPARISON_ATTRIBUTE_LABELS,
   CRAWL_RULE_LABELS,
   DOC_TYPE_LABELS,
+  FACT_ORIGIN_LABELS,
+  factAttributeLabel,
+  formatFactValue,
   GEO_OBJECT_TYPE_LABELS,
   GEO_ORIGIN_LABELS,
   NAME_CANDIDATE_STATUS_LABELS,
@@ -23,6 +35,7 @@ import {
   PLACE_KIND_LABELS,
   PLACE_STATUS_LABELS,
   POI_CATEGORY_LABELS,
+  RESTRICTED_KIND_LABELS,
   REVIEW_KIND_LABELS,
   SOURCE_STATUS_LABELS,
   SUMMARY_FAILURE_LABELS,
@@ -58,6 +71,13 @@ import { NameCandidateCreate } from "./name-candidate";
 import { DecisionPanel, Disclosure, Kbd, MapLegend } from "./parts";
 import { PlaceConfirm } from "./place-confirm";
 import { ProfileDecision } from "./profile-decision";
+
+/** The tab title: the task's kind and subject (UI-15). */
+export async function generateMetadata({ params }: PageProps<"/review/[id]">): Promise<Metadata> {
+  await requireAdmin();
+  const task = await reviewTaskTitle(getDb(), (await params).id);
+  return { title: task ? `${REVIEW_KIND_LABELS[task.kind]}${task.name ? `: ${task.name}` : ""}` : "Prüfen" };
+}
 
 const distance = (m: number) =>
   m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toLocaleString("de-DE", { maximumFractionDigits: 1 })} km`;
@@ -101,6 +121,10 @@ function robotsText(robots: ProposalRobots | null): string {
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+function suggestionText(s: SourceSuggestion): string {
+  return `${DOC_TYPE_LABELS[s.type]}, Gewicht ${s.weight.toLocaleString("de-DE", { maximumFractionDigits: 2 })}, ${CHANGE_RATE_LABELS[s.changeRate]}`;
 }
 
 /** "Bucht", "Highlight (Essen)", or the raw hint when it is unknown. */
@@ -245,7 +269,9 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
             )}
             {query.changed && open && (
               <Notice tone="danger" title="Der Wert hat sich geändert – bitte neu laden">
-                Ein späterer Lauf hat die Frage dieser Aufgabe ersetzt. Es wurde nichts gespeichert.
+                {subject.type === "source"
+                  ? "Die Werte der Quelle wurden inzwischen geändert (z. B. auf der Quellenseite). Es wurde nichts gespeichert."
+                  : "Ein späterer Lauf hat die Frage dieser Aufgabe ersetzt. Es wurde nichts gespeichert."}
               </Notice>
             )}
             {query.error && open && (
@@ -284,12 +310,39 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
 
         {subject.type === "place" && (
           <>
+            {subject.restrictions && (
+              <Notice tone="danger" title="Dieser bestätigte Ort liegt in einem Sperrgebiet mit Ankerverbot">
+                <ul className="space-y-0.5">
+                  {subject.restrictions.map((r) => (
+                    <li key={r.id}>
+                      {RESTRICTED_KIND_LABELS[r.kind] ?? r.kind}
+                      {r.share !== null && <> – {Math.round(r.share * 100)} % der Ankerfläche</>}
+                      {r.sourceRef && (
+                        <>
+                          {" "}
+                          · <Mono>{r.sourceRef}</Mono>
+                        </>
+                      )}
+                      {r.sourceName && <> · Quelle {r.sourceName}</>}
+                    </li>
+                  ))}
+                </ul>
+                Ein Kandidat wäre automatisch ausgeschlossen worden. „Kein Ankerplatz“ schließt den Ort aus; „Trotz Sperrgebiet
+                bestätigen“ behält ihn für diese Gebiete. Ein weiteres Gebiet, das der letzte Geometrie-Lauf gefunden hat, folgt
+                sofort als nächste Aufgabe; ein danach geladenes fragt nach dem nächsten Geometrie-Lauf.
+              </Notice>
+            )}
             <PlaceConfirm
               {...props}
               defaultKind={subject.place.kind}
               features={features}
               open={open}
-              question="Ist das ein eigener Ort? Bestätigen, einem Ort in der Nähe zuordnen, verwerfen oder als „kein Ankerplatz“ markieren."
+              confirmLabel={subject.restrictions ? "Trotz Sperrgebiet bestätigen" : undefined}
+              question={
+                subject.restrictions
+                  ? "Darf hier trotz Sperrgebiet geankert werden? Sonst als „kein Ankerplatz“ markieren."
+                  : "Ist das ein eigener Ort? Bestätigen, einem Ort in der Nähe zuordnen, verwerfen oder als „kein Ankerplatz“ markieren."
+              }
             >
               <DecisionForm
                 {...props}
@@ -356,6 +409,49 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
                 <NearbyList nearby={subject.nearby} />
               </Panel>
             </div>
+            <Panel
+              title="Bisherige Facts"
+              description="Je Attribut der neueste Fact: berechnet (Schutz, Tiefe) oder aus Texten mit Quelle und Gewicht."
+              actions={
+                subject.facts.length > 0 && (
+                  <TextLink href={`/places/${subject.place.id}?tab=facts`} className="text-sm">
+                    Alle Facts
+                  </TextLink>
+                )
+              }
+              flush
+            >
+              {subject.facts.length === 0 ? (
+                <EmptyState title="Noch keine Facts">Facts entstehen mit dem Geometrie-Lauf und der Auswertung der Texte.</EmptyState>
+              ) : (
+                <Table>
+                  <thead>
+                    <tr>
+                      <th className={thClass}>Attribut</th>
+                      <th className={thClass}>Wert</th>
+                      <th className={thClass}>Herkunft</th>
+                      <th className={thClass}>Quelle (Gewicht)</th>
+                      <th className={cx(thClass, "text-right")}>Facts</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {subject.facts.map(({ attribute, newest, count }) => (
+                      <tr key={attribute} className={trClass}>
+                        <td className={tdClass}>{factAttributeLabel(attribute)}</td>
+                        <td className={tdClass}>{formatFactValue(attribute, newest.value)}</td>
+                        <td className={tdClass}>{FACT_ORIGIN_LABELS[newest.origin]}</td>
+                        <td className={tdClass}>
+                          {newest.source
+                            ? `${newest.source.domain} (${newest.source.weight.toLocaleString("de-DE", { maximumFractionDigits: 2 })})`
+                            : "–"}
+                        </td>
+                        <td className={cx(tdClass, numClass)}>{count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              )}
+            </Panel>
           </>
         )}
 
@@ -481,6 +577,7 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
               features={features}
               hits={subject.hits}
               objectTypes={subject.objectTypes}
+              suggestedKind={subject.suggestedKind}
               open={open}
               question="Wofür steht der Name? Neu anlegen, einem bekannten Objekt zuordnen oder verwerfen."
             >
@@ -665,7 +762,7 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
                 <DescriptionList
                   columns={2}
                   items={[
-                    { label: "Queue", value: subject.job.queue ? <Mono>{subject.job.queue}</Mono> : "–" },
+                    { label: "Warteschlange", value: subject.job.queue ? <Mono>{subject.job.queue}</Mono> : "–" },
                     { label: "Stufe", value: subject.job.stage ?? "–" },
                     { label: "Schlüssel", value: subject.job.key ? <Mono>{subject.job.key}</Mono> : "–" },
                     {
@@ -701,6 +798,7 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
                     n={1}
                     label="Freigeben"
                     action={approveSourceAction}
+                    valueKey={subject.settingsKey}
                     variant="primary"
                     hint="Übernimmt die Werte und setzt die Quelle auf „Freigegeben“."
                   >
@@ -748,7 +846,12 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
                     label="Ablehnen"
                     decision={{ action: "reject" }}
                     variant="danger"
-                    hint="Setzt die Quelle auf „Abgelehnt“."
+                    hint="Setzt die Quelle auf „Abgelehnt“: die Domain wird dauerhaft ignoriert."
+                    confirm={{
+                      title: "Quelle ablehnen",
+                      description: `${subject.source.domain} wird dauerhaft ignoriert: nie gecrawlt und nie wieder vorgeschlagen. Das lässt sich nicht zurücknehmen.`,
+                      confirmLabel: "Endgültig ablehnen",
+                    }}
                   />
                 </DecisionPanel>
               )}
@@ -777,9 +880,20 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
                     },
                     { label: "Sprachen", value: subject.languages.join(", ") || "–" },
                     { label: "robots.txt", value: robotsText(subject.robots) },
-                    {
-                      label: "Vorschlag",
-                      value: `${DOC_TYPE_LABELS[subject.suggestion.type]}, Gewicht ${subject.suggestion.weight.toLocaleString("de-DE", { maximumFractionDigits: 2 })}, ${CHANGE_RATE_LABELS[subject.suggestion.changeRate]}`,
+                    !!subject.originalSuggestion && {
+                      label: "Ursprünglicher Vorschlag",
+                      value: (
+                        <>
+                          {suggestionText(subject.originalSuggestion)}
+                          {subject.editedSinceProposal && (
+                            <Hint>
+                              {" "}
+                              Auf der Quellenseite geändert; das Formular zeigt die aktuellen Werte (
+                              {suggestionText(subject.suggestion)}).
+                            </Hint>
+                          )}
+                        </>
+                      ),
                     },
                   ]}
                 />
@@ -827,8 +941,8 @@ function SerpHits({ hits, snippets = false }: { hits: Hit[]; snippets?: boolean 
         <tr>
           <th className={cx(thClass, "text-right")}>Rang</th>
           <th className={thClass}>Titel und URL</th>
-          {snippets && <th className={thClass}>Snippet</th>}
-          <th className={thClass}>Query</th>
+          {snippets && <th className={thClass}>Ausschnitt</th>}
+          <th className={thClass}>Suchanfrage</th>
         </tr>
       </thead>
       <tbody>

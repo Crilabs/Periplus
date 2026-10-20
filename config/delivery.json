@@ -31,7 +31,7 @@
     "lowConfidenceNote": "wenig belegt"
   },
   "severity": { "shelterDelta": 0.2 },
-  "forbiddenDomains": ["navily.com", "google.com", "google.de", "google.gr", "goo.gl", "g.co", "g.page", "googleusercontent.com", "googleapis.com"],
+  "forbiddenDomains": ["navily.com", "google.*", "goo.gl", "g.co", "g.page", "googleusercontent.com", "googleapis.com", "gstatic.com", "ggpht.com"],
   "licenses": [
     {
       "name": "ODbL-1.0",

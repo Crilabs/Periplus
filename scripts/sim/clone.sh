@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Clones the Periplus database into periplus_sim for a simulated revisit (spec 10, plan Task 15, ruling M7-P27).
-#   bash scripts/sim/clone.sh [--compose-file docker/compose.dev.yml] [--service db] [--source-db periplus]
-#                             [--db-user periplus] [--force]
-# Local pilot (ruling M7-P20): the defaults. Server: --compose-file docker/compose.prod.yml --service postgres.
-# A relative --compose-file is read from the current directory; --source-db/--db-user must match ^[a-z_][a-z0-9_]*$.
+#   bash scripts/sim/clone.sh [--compose-file docker/compose.dev.yml] [--env-file <file>] [--service db]
+#                             [--source-db periplus] [--db-user periplus] [--force]
+# Local pilot (ruling M7-P20): the defaults. Server (in /opt/periplus): --env-file .env --compose-file
+# docker/compose.prod.yml --service postgres (without the env file compose stops at ${POSTGRES_PASSWORD:?}).
+# A relative --compose-file or --env-file is read from the current directory; --source-db/--db-user must match
+# ^[a-z_][a-z0-9_]*$.
 # The target is always periplus_sim (not selectable). Stop the development worker first: pg_dump is consistent, but
 # batches running at that moment would be cloned mid-flight. Steps, all inside the compose service:
 #   pg_dump -Fc <source> → dropdb --if-exists periplus_sim → createdb periplus_sim → pg_restore --no-owner →
@@ -15,19 +17,21 @@ set -euo pipefail
 TARGET=periplus_sim
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_FILE="$REPO/docker/compose.dev.yml"
+ENV_FILE=""
 SERVICE=db
 SOURCE_DB=periplus
 DB_USER=periplus
 FORCE=0
 
 usage() {
-  echo "usage: scripts/sim/clone.sh [--compose-file <file>] [--service <name>] [--source-db <name>] [--db-user <name>] [--force]" >&2
+  echo "usage: scripts/sim/clone.sh [--compose-file <file>] [--env-file <file>] [--service <name>] [--source-db <name>] [--db-user <name>] [--force]" >&2
   exit 2
 }
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --compose-file) [ $# -ge 2 ] || usage; COMPOSE_FILE="$2"; shift 2 ;;
+    --env-file) [ $# -ge 2 ] || usage; ENV_FILE="$2"; shift 2 ;;
     --service) [ $# -ge 2 ] || usage; SERVICE="$2"; shift 2 ;;
     --source-db) [ $# -ge 2 ] || usage; SOURCE_DB="$2"; shift 2 ;;
     --db-user) [ $# -ge 2 ] || usage; DB_USER="$2"; shift 2 ;;
@@ -46,6 +50,17 @@ if [ ! -f "$COMPOSE_FILE" ]; then
   exit 1
 fi
 
+if [ -n "$ENV_FILE" ]; then
+  case "$ENV_FILE" in
+    /*) ;;
+    *) ENV_FILE="$PWD/$ENV_FILE" ;;
+  esac
+  if [ ! -f "$ENV_FILE" ]; then
+    echo "Abbruch: Env-Datei $ENV_FILE nicht gefunden." >&2
+    exit 1
+  fi
+fi
+
 # Database and role names go into SQL literals and argv: plain lower-case identifiers only (M7-H-R1, M-4).
 for name in "$SOURCE_DB" "$DB_USER"; do
   if ! [[ "$name" =~ ^[a-z_][a-z0-9_]*$ ]]; then
@@ -60,7 +75,9 @@ if [ "$SOURCE_DB" = "$TARGET" ]; then
 fi
 
 cd "$REPO"
-DC=(docker compose -f "$COMPOSE_FILE" exec -T "$SERVICE")
+COMPOSE=(docker compose)
+[ -n "$ENV_FILE" ] && COMPOSE+=(--env-file "$ENV_FILE")
+DC=("${COMPOSE[@]}" -f "$COMPOSE_FILE" exec -T "$SERVICE")
 
 exists="$("${DC[@]}" psql -U "$DB_USER" -d postgres -Atc "select 1 from pg_database where datname = '$TARGET'")"
 if [ "$exists" = "1" ] && [ "$FORCE" -ne 1 ]; then

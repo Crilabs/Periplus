@@ -24,6 +24,7 @@
     "claude-opus-5-5": { "input": 3.5546, "output": 17.773, "cacheReadFactor": 0.05 }
   },
   "cacheWriteFactor": 1.25,
+  "callTimeoutSeconds": 600,
   "batch": {
     "discount": 0.5,
     "pollSeconds": 60,

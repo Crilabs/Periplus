@@ -100,7 +100,7 @@ describe("ProfileTab", () => {
     expect(html).toContain('href="/places/p1?tab=profile&amp;attr=hazards&amp;confirm=rock"');
     expect(html).not.toContain('name="entryKey"');
     expect(html).not.toContain("Wirklich entfernen?");
-    expect(html).toContain("(davon 1 aus Berechnung/POI)");
+    expect(html).toContain("(davon 1 aus Berechnung/Highlight)");
     expect(html).toContain("Berechnung: Schutz vom 2026-10-01 08:00");
     expect(html).not.toContain("ohne Beleg");
   });
@@ -132,13 +132,13 @@ describe("ProfileTab", () => {
     expect(profileConfidenceText({ profileConfidence: null, profileClass: null, hasProfile: false })).toBe("kein Profil");
   });
 
-  it("„Summary neu erzeugen“ is a form on the newest version only (ruling M6-H-R1)", () => {
+  it("„Zusammenfassung neu erzeugen“ is a form on the newest version only (ruling M6-H-R1)", () => {
     const html = renderToStaticMarkup(<ProfileTab view={view()} selected={null} links={links} />);
-    expect(html).toContain("Summary neu erzeugen");
+    expect(html).toContain("Zusammenfassung neu erzeugen");
     expect(html.match(/<form/g)).toHaveLength(1);
     expect(html).toContain(`name="geoObjectId" value="${GEO}"`);
     expect(html).toContain('name="placeId" value="p1"');
-    expect(renderToStaticMarkup(<ProfileTab view={view({ latest: false })} selected={null} links={links} />)).not.toContain("Summary neu erzeugen");
+    expect(renderToStaticMarkup(<ProfileTab view={view({ latest: false })} selected={null} links={links} />)).not.toContain("Zusammenfassung neu erzeugen");
   });
 
   it("marks an older version and shows a notice", () => {

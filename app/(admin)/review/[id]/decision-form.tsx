@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { ReviewDecision } from "@/lib/domain/review-decisions";
-import { buttonClass, cx } from "../../_components/ui";
+import { ConfirmOnSubmit } from "../../_components/dialog";
+import { Button } from "../../_components/ui";
 import { decideAction } from "./actions";
 import { Kbd } from "./parts";
 
@@ -10,7 +11,8 @@ import { Kbd } from "./parts";
  * of choices); another `action` reads its own fields from `children`. `taskKey` is the context key of a profile task as
  * shown (the decision is refused when the task changed meanwhile, ruling M5-F-R2); `valueKey` is the fingerprint of the
  * value a conflict decision chose (refused when that side holds another value by now, ruling M5-G-R2). `hint` says in
- * one sentence what the decision does; `variant` styles its button.
+ * one sentence what the decision does; `variant` styles its button. `confirm` asks in a modal before the decision is
+ * submitted, by button or key, for a decision that cannot be taken back.
  */
 export function DecisionForm({
   action = decideAction,
@@ -24,6 +26,7 @@ export function DecisionForm({
   disabled = false,
   variant = "secondary",
   hint,
+  confirm,
   children,
 }: {
   action?: (formData: FormData) => Promise<void>;
@@ -37,6 +40,7 @@ export function DecisionForm({
   disabled?: boolean;
   variant?: "primary" | "secondary" | "danger";
   hint?: ReactNode;
+  confirm?: { title: string; description: string; confirmLabel: string };
   children?: ReactNode;
 }) {
   return (
@@ -47,18 +51,14 @@ export function DecisionForm({
       {valueKey !== undefined && <input type="hidden" name="valueKey" value={valueKey} />}
       {taskKey !== undefined && <input type="hidden" name="taskKey" value={taskKey} />}
       <span className="inline-flex items-center gap-2">
-        <button
-          type="submit"
-          disabled={disabled}
-          aria-keyshortcuts={String(n)}
-          className={cx(buttonClass(variant), "min-w-32")}
-        >
+        <Button variant={variant} disabled={disabled} aria-keyshortcuts={String(n)} className="min-w-32">
           {label}
-        </button>
+        </Button>
         <Kbd title={`Taste ${n}`}>{n}</Kbd>
       </span>
       {children}
       {hint && <p className="w-full text-xs leading-snug text-muted text-pretty">{hint}</p>}
+      {confirm && <ConfirmOnSubmit {...confirm} />}
     </form>
   );
 }

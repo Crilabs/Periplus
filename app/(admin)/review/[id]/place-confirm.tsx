@@ -22,6 +22,7 @@ export function PlaceConfirm({
   features,
   open,
   question,
+  confirmLabel,
   children,
 }: {
   taskId: string;
@@ -30,6 +31,8 @@ export function PlaceConfirm({
   features: GeoJSON.FeatureCollection;
   open: boolean;
   question?: ReactNode;
+  /** The label of „Bestätigen“ (a restricted-area review says „Trotz Sperrgebiet bestätigen“). */
+  confirmLabel?: string;
   children?: ReactNode;
 }) {
   const [kind, setKind] = useState(defaultKind);
@@ -84,7 +87,7 @@ export function PlaceConfirm({
           n={1}
           taskId={taskId}
           openedAt={openedAt}
-          label="Bestätigen"
+          label={confirmLabel ?? "Bestätigen"}
           decision={decision}
           variant="primary"
           hint="Bestätigt den Ort mit der gewählten Art und Position; ein Kandidat erhält dabei seine öffentliche ID."

@@ -1,4 +1,4 @@
-import { asc, count, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import {
   crawlFrontier,
@@ -6,6 +6,7 @@ import {
   documentVersions,
   externalCalls,
   frontierStatusEnum,
+  reviewTasks,
   sources,
   sourceStatusEnum,
   type DocType,
@@ -156,6 +157,8 @@ export type SourceDetail = {
   /** The 10 newest runs of the source (scope or `params.sourceIds`). */
   runs: SourceRunRow[];
   costs: { totalEur: number; byService: Array<{ service: string; calls: number; costEur: number }> };
+  /** The open `source_approval` task of a proposed source (its settings are the approval form's defaults); else null. */
+  approvalTaskId: string | null;
 };
 
 /**
@@ -219,6 +222,18 @@ export async function sourceDetail(db: Db, id: string, opts: { docPage: number }
     .groupBy(externalCalls.service)
     .orderBy(asc(externalCalls.service));
   const byService = costRows.map((r) => ({ service: r.service, calls: r.calls, costEur: Number(r.costEur) }));
+  const [approval] = await db
+    .select({ id: reviewTasks.id })
+    .from(reviewTasks)
+    .where(
+      and(
+        eq(reviewTasks.kind, "source_approval"),
+        eq(reviewTasks.subjectType, "source"),
+        eq(reviewTasks.subjectId, id),
+        eq(reviewTasks.status, "open"),
+      ),
+    )
+    .limit(1);
 
   return {
     source: { ...source, validTo: meta!.validTo, createdAt: meta!.createdAt },
@@ -236,6 +251,7 @@ export async function sourceDetail(db: Db, id: string, opts: { docPage: number }
       finishedAt: r.finished_at ? new Date(r.finished_at) : null,
     })),
     costs: { totalEur: byService.reduce((sum, c) => sum + c.costEur, 0), byService },
+    approvalTaskId: approval?.id ?? null,
   };
 }
 

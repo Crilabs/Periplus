@@ -37,6 +37,8 @@ export type AnthropicClientOptions = {
 };
 
 function defaultSdk(): AnthropicMessagesApi {
+  // Tests never reach the provider (AI only through MockModel or an injected SDK), like the HTTP transports.
+  if (getEnv().NODE_ENV === "test") throw new Error("no Anthropic SDK under test: inject one (options.sdk) or use MockModel");
   const apiKey = getEnv().ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
   return new Anthropic({ apiKey });
@@ -198,6 +200,7 @@ export function createAnthropicClient(db: Db, config: AppConfig = getConfig(), o
     return (sdk ??= defaultSdk());
   };
   const timeout = config.models.batch.providerTimeoutSeconds * 1000;
+  const callTimeout = config.models.callTimeoutSeconds * 1000;
 
   return {
     async call<I, O>(task: ModelTask<I, O>, input: I, ctx?: ModelCallContext): Promise<ModelResult<O>> {
@@ -210,7 +213,28 @@ export function createAnthropicClient(db: Db, config: AppConfig = getConfig(), o
       const reserved = await reservedBatchEur(db, { now, hours: config.models.batch.reservationHours });
       await assertWithinBudget(db, "anthropic", config.budgets, now, reserved);
 
-      const response = await getSdk().messages.create(params);
+      const messages = getSdk().messages;
+      let response: Awaited<ReturnType<typeof messages.create>>;
+      try {
+        // No SDK retry (SEC-2): a resent request after a timeout or a lost connection may be billed again without a
+        // booking. The job retry resends instead, after a new budget check.
+        response = await messages.create(params, { maxRetries: 0, timeout: callTimeout });
+      } catch (error) {
+        // The attempt may still have been billed: on record at 0 EUR with the reason, as `httpCall` does.
+        await recordExternalCall(db, {
+          service: "anthropic",
+          operation: task.name,
+          units: 0,
+          unit: "tokens",
+          costEur: 0,
+          runId: ctx?.runId,
+          stage: ctx?.stage,
+          sourceId: ctx?.sourceId,
+          meta: { model, promptVersion, error: (error as Error).message },
+          ...(options.now ? { at: options.now() } : {}),
+        }).catch((recordError: unknown) => getLog().error({ err: recordError, task: task.name }, "recording failed model call failed"));
+        throw error;
+      }
 
       const usage = usageOf(response.usage);
       const { inputTokens, outputTokens } = usage;

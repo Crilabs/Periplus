@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { getConfig } from "@/lib/config";
@@ -38,6 +39,8 @@ import {
   wikivoyageRunAction,
 } from "./actions";
 import { SOURCE_STATUS_TONES } from "./tones";
+
+export const metadata: Metadata = { title: "Quellen" };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -155,7 +158,7 @@ export default async function Page({ searchParams }: PageProps<"/sources">) {
             </form>
           }
         >
-          <span className="font-medium text-ink">Einbettungen nachholen:</span> berechnet Embeddings für alle Chunks,
+          <span className="font-medium text-ink">Einbettungen nachholen:</span> berechnet Einbettungen für alle Abschnitte,
           die noch keins haben. Läuft schon ein solcher Lauf, wird der Start abgelehnt.
         </RunOption>
         <RunOption

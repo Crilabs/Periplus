@@ -94,6 +94,24 @@ const OBJECT_TYPES: ChangeType[] = ["place_new", "place_abandoned", "geo_changed
 export type ObjectEvents = { object: ChangeSeverity | null; attributes: Map<string, ChangeSeverity> };
 
 /**
+ * Transaction ids are only comparable inside the cluster that issued them. A previous package's snapshot ahead of this
+ * build's means the database was restored into a new cluster whose xid counter starts lower (gesamt-review DAT-2):
+ * every new event would count as „already delivered“ and lose its severity. The build fails instead, until the
+ * counter is moved past the old values (runbook „Echter Restore“, `pg_resetwal -x`).
+ */
+async function assertSnapshotsInOrder(db: Db, fromSnapshot: string, toSnapshot: string): Promise<void> {
+  const { rows } = await db.execute<{ ahead: boolean }>(sql`
+    select pg_snapshot_xmax(${fromSnapshot}::pg_snapshot) > pg_snapshot_xmax(${toSnapshot}::pg_snapshot) as ahead
+  `);
+  if (rows[0]?.ahead) {
+    throw new Error(
+      `the previous package's snapshot ${fromSnapshot} is ahead of this build's ${toSnapshot}: transaction ids went back, ` +
+        "as after a restore into a new cluster; move the xid counter past the old values first (runbook „Echter Restore“)",
+    );
+  }
+}
+
+/**
  * The change events of the objects in the package window (ruling M6-D-R3): visible in the package's snapshot and not in
  * the previous valid package's (`BuildSnapshot.snapshot`, stored as `deliveries.change_snapshot`). So the window holds
  * exactly the transactions the build saw and its predecessor did not; one in flight at the build belongs to the next
@@ -106,7 +124,9 @@ export async function eventSeverities(
   window: { fromSnapshot: string | null; toSnapshot: string },
 ): Promise<Map<string, ObjectEvents>> {
   const out = new Map<string, ObjectEvents>();
-  if (window.fromSnapshot === null || geoObjectIds.length === 0) return out;
+  if (window.fromSnapshot === null) return out;
+  await assertSnapshotsInOrder(db, window.fromSnapshot, window.toSnapshot);
+  if (geoObjectIds.length === 0) return out;
   const rows = await db
     .select({ geoObjectId: changeEvents.geoObjectId, type: changeEvents.type, attribute: changeEvents.attribute, severity: changeEvents.severity })
     .from(changeEvents)

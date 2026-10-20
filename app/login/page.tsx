@@ -1,8 +1,11 @@
+import type { Metadata } from "next";
 import Image from "next/image";
 import { Suspense } from "react";
 import { safeNext } from "@/lib/security/safe-next";
 import logo from "@/app/_brand/logo.png";
 import { LoginForm } from "./login-form";
+
+export const metadata: Metadata = { title: "Anmelden" };
 
 async function Form({ searchParams }: { searchParams: Promise<{ next?: string | string[] }> }) {
   const { next } = await searchParams;

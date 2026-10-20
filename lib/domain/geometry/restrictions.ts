@@ -1,8 +1,10 @@
 import type { Geometry, MultiPolygon, Polygon } from "geojson";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { z } from "zod";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { places, restrictedAreas, reviewTasks, type RestrictedKind } from "@/lib/db/schema";
+import { places, restrictedAreas, restrictedKindEnum, reviewTasks, type RestrictedKind } from "@/lib/db/schema";
+import { latestComputations } from "@/lib/domain/facts/computations";
 import type { LonLat } from "@/lib/domain/geo-view";
 import { createReviewTask, hasDecidedTask } from "@/lib/domain/review";
 import type { Bbox } from "@/lib/domain/tiles";
@@ -171,9 +173,14 @@ export async function restrictionHits(
   }));
 }
 
+/** Every hit that bans anchoring and covers more than `minShare`, in the order of `hits` (GR-5). */
+export function exclusionsFor(hits: RestrictionHit[], minShare: number): RestrictionHit[] {
+  return hits.filter((h) => h.anchoringBan && h.share > minShare);
+}
+
 /** The first hit that bans anchoring and covers more than `minShare`, else null. */
 export function exclusionFor(hits: RestrictionHit[], minShare: number): RestrictionHit | null {
-  return hits.find((h) => h.anchoringBan && h.share > minShare) ?? null;
+  return exclusionsFor(hits, minShare)[0] ?? null;
 }
 
 /** `status_reason` of a place excluded by a restricted area. */
@@ -184,16 +191,32 @@ export function exclusionReason(hit: Pick<RestrictionHit, "kind" | "restrictedAr
 export type ExclusionOutcome = "excluded" | "review_opened" | "unchanged";
 
 /**
- * Applies a restricted-area hit to a valid, unmerged place (spec 03/04: only candidates are excluded automatically).
- * - `candidate`: status `no_anchoring`, reason `restricted:<kind>:<id>`, its open `place_candidate` task dismissed
- *   → `excluded`.
+ * Whether the admin already decided a restricted-area review of the place for this area (GR-5): a decided
+ * `place_candidate` task whose context names the area as `restriction` or among `restrictions`.
+ */
+async function areaDecided(tx: Db, placeId: string, areaId: string): Promise<boolean> {
+  return (
+    (await hasDecidedTask(tx, "place_candidate", placeId, { reason: "restricted", restriction: { id: areaId } })) ||
+    (await hasDecidedTask(tx, "place_candidate", placeId, { reason: "restricted", restrictions: [{ id: areaId }] }))
+  );
+}
+
+/**
+ * Applies the restricted-area hits that ban anchoring (`exclusionsFor`, at least one; the first one decides a
+ * candidate's reason) to a valid, unmerged place (spec 03/04: only candidates are excluded automatically).
+ * - `candidate`: status `no_anchoring`, reason `restricted:<kind>:<id>` of the first hit, its open `place_candidate`
+ *   task dismissed → `excluded`.
  * - `confirmed`: left as is; a `place_candidate` review task (`context.reason = "restricted"`) is opened so the admin
- *   decides → `review_opened`. Not opened again once the admin decided such a task (the decision is sticky), nor
- *   while a task is already open → `unchanged`.
+ *   decides → `review_opened`. The decision is sticky per (place, restricted area) (ruling M2-T8-R1, GR-5): the task
+ *   lists every banning area not yet decided for the place (`restrictions`, the first also as `restriction`), so an
+ *   area loaded later over a kept place asks again; nothing opens while a task is already open or every area was
+ *   decided → `unchanged`.
  * - anything else → `unchanged`.
  * Lock order as in `decideReviewTask`: the open task row first, then the place.
  */
-export async function applyExclusion(db: Db, placeId: string, hit: RestrictionHit): Promise<ExclusionOutcome> {
+export async function applyExclusion(db: Db, placeId: string, hits: RestrictionHit[]): Promise<ExclusionOutcome> {
+  const first = hits[0];
+  if (!first) return "unchanged";
   return db.transaction(async (tx) => {
     const [openTask] = await tx
       .select({ id: reviewTasks.id })
@@ -208,22 +231,54 @@ export async function applyExclusion(db: Db, placeId: string, hit: RestrictionHi
     if (!place) return "unchanged";
 
     if (place.status === "candidate") {
-      await tx.update(places).set({ status: "no_anchoring", statusReason: exclusionReason(hit) }).where(eq(places.id, placeId));
+      await tx.update(places).set({ status: "no_anchoring", statusReason: exclusionReason(first) }).where(eq(places.id, placeId));
       if (openTask) await tx.update(reviewTasks).set({ status: "dismissed" }).where(eq(reviewTasks.id, openTask.id));
       return "excluded";
     }
     if (place.status !== "confirmed" || openTask) return "unchanged";
-    if (await hasDecidedTask(tx, "place_candidate", placeId, { reason: "restricted" })) return "unchanged";
+    const undecided: RestrictionHit[] = [];
+    for (const h of hits) if (!(await areaDecided(tx, placeId, h.restrictedAreaId))) undecided.push(h);
+    if (undecided.length === 0) return "unchanged";
+    const area = (h: RestrictionHit) => ({ kind: h.kind, id: h.restrictedAreaId, share: h.share });
     const { created } = await createReviewTask(tx, {
       kind: "place_candidate",
       subjectType: "place",
       subjectId: placeId,
       context: {
         reason: "restricted",
-        restriction: { kind: hit.kind, id: hit.restrictedAreaId, share: hit.share },
+        restriction: area(undecided[0]!),
+        restrictions: undecided.map(area),
         previousStatus: "confirmed",
       },
     });
     return created ? "review_opened" : "unchanged";
   });
+}
+
+const storedHitSchema = z.object({
+  kind: z.enum(restrictedKindEnum.enumValues),
+  restrictedAreaId: z.string(),
+  sourceRef: z.string().nullable(),
+  share: z.number(),
+  anchoringBan: z.boolean(),
+});
+
+/**
+ * Right after a restricted-area review of a confirmed place is decided „Trotz Sperrgebiet bestätigen“ (wave-1 review
+ * M-2, GR-12): the banning hits of the place's newest `restriction` computation whose area is still valid go through
+ * `applyExclusion` again, so an area the last geometry run found while the task was open opens the next task at once
+ * instead of at the next geometry run. An area loaded after that run still needs „Geometrie für Revier“.
+ */
+export async function recheckExclusion(tx: Db, place: { id: string; geoObjectId: string }, minShare: number): Promise<ExclusionOutcome> {
+  const fact = (await latestComputations(tx, place.geoObjectId)).get("restriction")?.facts.find((f) => f.attribute === "prohibitions");
+  const parsed = z.array(storedHitSchema).safeParse(fact?.value ?? []);
+  if (!parsed.success) return "unchanged";
+  const hits = exclusionsFor(parsed.data, minShare);
+  if (hits.length === 0) return "unchanged";
+  const valid = await tx
+    .select({ id: restrictedAreas.id })
+    .from(restrictedAreas)
+    .where(and(inArray(restrictedAreas.id, hits.map((h) => h.restrictedAreaId)), validAt(restrictedAreas)));
+  const ids = new Set(valid.map((r) => r.id));
+  return applyExclusion(tx, place.id, hits.filter((h) => ids.has(h.restrictedAreaId)));
 }

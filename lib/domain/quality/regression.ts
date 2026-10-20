@@ -2,7 +2,11 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { COMPARISON_ATTRIBUTES, configActivations, runs, type ComparisonAttribute, type RunStatus } from "@/lib/db/schema";
-import { activeRulesVersion, extractionVersion } from "@/lib/domain/consolidation/active-rules";
+import type { ConsolidationConfig } from "@/lib/config/schemas";
+import { activeRulesVersion, consolidationConfigFor, extractionVersion } from "@/lib/domain/consolidation/active-rules";
+import { formatProfileValue, profileAttributeLabel } from "@/lib/domain/consolidation/format";
+import { attributeIn } from "@/lib/domain/consolidation/weights";
+import { profileEntryKey } from "@/lib/domain/profile-view";
 import type { EvaluationCandidate } from "@/lib/domain/consolidation/targets";
 import { latestComparisonResults } from "./comparison-results";
 import { comparisonValues, loadComparisonSubjects } from "./comparison-values";
@@ -35,6 +39,12 @@ export type RegressionComparison = {
   /** Attributes whose own value differs between the current and the candidate's profile; `checked` = outcome for the new value. */
   changed: Array<{ placeId: string; name: string | null; attribute: ComparisonAttribute; oldDisplay: string; newDisplay: string; checked: boolean }>;
   pending: number;
+  /**
+   * Safety values the candidate loses at a set place (GR-2): an entry of a safety list (`change.additiveLists`:
+   * prohibitions, hazards, restricted zones) the current profile has and the candidate's lacks, or an exclusion the
+   * candidate lifts. Any of them closes the gate.
+   */
+  safetyLosses: Array<{ placeId: string; name: string | null; attribute: string; display: string }>;
   passes: boolean;
   reasons: string[];
 };
@@ -84,7 +94,8 @@ async function evaluationRun(db: Db, runId: string): Promise<EvaluationRun> {
  * with a profile row written after the run finished (the comparison would judge the candidate against data it never
  * saw: evaluate again, ruling M7-E-R2), no activation of the same kind from another run since this run started (an
  * older evaluation would silently roll a newer activation back, final review B M-4), nothing pending, precision and
- * coverage not lower (`null` counts as 0); `reasons` say in German why not.
+ * coverage not lower (`null` counts as 0), and no safety value lost at a set place (`safetyLosses`: a prohibition,
+ * hazard or restricted-zone entry, or an exclusion; GR-2); `reasons` say in German why not.
  */
 export async function compareEvaluation(db: Db, evaluationRunId: string): Promise<RegressionComparison> {
   const run = await evaluationRun(db, evaluationRunId);
@@ -119,6 +130,12 @@ export async function compareEvaluation(db: Db, evaluationRunId: string): Promis
     }
   }
 
+  const cfg = await consolidationConfigFor(db);
+  const safetyLosses = evaluated.flatMap((subject) => {
+    const before = current.get(subject.placeId);
+    return before ? lostSafetyValues(before.attributes, subject.attributes, cfg).map((l) => ({ placeId: subject.placeId, name: subject.name, ...l })) : [];
+  });
+
   const old: Side = { precision: oldPrecision.value, coverage: coverage.value, compared: Number(oldPrecision.details.compared) };
   const next: Side = { precision: nextPrecision.value, coverage: coverage.value, compared: Number(nextPrecision.details.compared) };
   const pending = changed.filter((c) => !c.checked).length;
@@ -132,6 +149,7 @@ export async function compareEvaluation(db: Db, evaluationRunId: string): Promis
   if (pending > 0) reasons.push(`${pending} geänderte${pending === 1 ? "r Wert" : " Werte"} ungeprüft`);
   if (drops(next.precision, old.precision)) reasons.push(`Präzision sinkt von ${percent(old.precision)} auf ${percent(next.precision)}`);
   if (drops(next.coverage, old.coverage)) reasons.push(`Abdeckung sinkt von ${percent(old.coverage)} auf ${percent(next.coverage)}`);
+  for (const l of safetyLosses) reasons.push(`Sicherheitswert entfällt: ${l.name ?? l.placeId} – ${profileAttributeLabel(l.attribute)} ${l.display}`);
   return {
     evaluationRunId,
     areaKey: run.areaKey,
@@ -141,9 +159,28 @@ export async function compareEvaluation(db: Db, evaluationRunId: string): Promis
     next,
     changed,
     pending,
+    safetyLosses,
     passes: reasons.length === 0,
     reasons,
   };
+}
+
+/**
+ * The safety values `next` loses against `old` (GR-2): per safety list (`change.additiveLists`) the entries of `old`
+ * whose identity key (`profileEntryKey`) `next` lacks, and an exclusion `old` has and `next` does not.
+ */
+export function lostSafetyValues(old: Record<string, unknown>, next: Record<string, unknown>, cfg: ConsolidationConfig): Array<{ attribute: string; display: string }> {
+  const losses: Array<{ attribute: string; display: string }> = [];
+  for (const [attribute, value] of Object.entries(old).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    if (!attributeIn(attribute, cfg.change.additiveLists) || !Array.isArray(value)) continue;
+    const kept = new Set((Array.isArray(next[attribute]) ? (next[attribute] as unknown[]) : []).map((e) => profileEntryKey(attribute, e, cfg)));
+    for (const entry of value) {
+      if (!kept.has(profileEntryKey(attribute, entry, cfg))) losses.push({ attribute, display: formatProfileValue(attribute, [entry]) });
+    }
+  }
+  const excluded = (v: unknown) => v !== null && typeof v === "object" && (v as { excluded?: unknown }).excluded === true;
+  if (excluded(old["exclude"]) && !excluded(next["exclude"])) losses.push({ attribute: "exclude", display: "aufgehoben" });
+  return losses;
 }
 
 /**

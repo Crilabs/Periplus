@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { getDb } from "@/lib/db/client";
 import { overview, REVIEW_KINDS } from "@/lib/domain/overview";
@@ -7,6 +8,8 @@ import { DELIVERY_STATUS_LABELS, REVIEW_KIND_LABELS } from "./_components/labels
 import { RunsTable } from "./_components/runs-table";
 import { Badge, ButtonLink, EmptyState, fmt, Meter, Mono, PageHeader, Panel, Stat, StatusDot, TextLink } from "./_components/ui";
 import { DELIVERY_STATUS_TONES } from "./deliveries/status";
+
+export const metadata: Metadata = { title: "Übersicht" };
 
 export default async function Page() {
   await requireAdmin();

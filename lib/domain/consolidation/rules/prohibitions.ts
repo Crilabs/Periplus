@@ -10,6 +10,10 @@ function isTextEntry(entry: unknown): entry is TextEntry {
   return entry !== null && typeof entry === "object" && "months" in entry && !("restrictedAreaId" in entry);
 }
 
+/** A computed entry of `prohibitions`: a restricted area (`restrictedAreaId`), which only its computation removes. */
+export const isComputedProhibition = (entry: unknown): boolean =>
+  entry !== null && typeof entry === "object" && "restrictedAreaId" in entry;
+
 const kindOf = (entry: unknown) => String((entry as { kind: unknown }).kind);
 
 /** The identity key of one entry: a text entry by `kind`, a computed one by `<kind>:<restrictedAreaId>`. */
@@ -29,16 +33,24 @@ export function compareProhibitions(a: unknown, b: unknown): number {
 }
 
 /**
- * A review decision removing one text kind from `prohibitions`: value `{ remove: { kind } }` (ruling M5-FIN-R1 I-1,
- * the counterpart of `UnionRemoval`). „Eintrag entfernen“ writes this shape; any other review value adds its text
- * entries like a text.
+ * A review decision removing text kinds from `prohibitions`: value `{ remove: { kind } }` (ruling M5-FIN-R1 I-1,
+ * the counterpart of `UnionRemoval`), or `{ remove: [{ kind }, …] }` when an accepted `uncertain_change` drops several
+ * kinds at once (one fact per decision, GR-1). „Eintrag entfernen“ writes the single shape; any other review value adds
+ * its text entries like a text.
  */
-export type ProhibitionRemoval = { remove: { kind: string } };
+export type ProhibitionRemoval = { remove: { kind: string } | { kind: string }[] };
 
 function isRemoval(i: ConsolidationInput): boolean {
   if (i.origin !== "review" || i.value === null || typeof i.value !== "object" || Array.isArray(i.value)) return false;
   const remove = (i.value as { remove?: unknown }).remove;
-  return remove !== null && typeof remove === "object" && "kind" in remove;
+  const isKind = (r: unknown) => r !== null && typeof r === "object" && !Array.isArray(r) && "kind" in r;
+  return Array.isArray(remove) ? remove.length > 0 && remove.every(isKind) : isKind(remove);
+}
+
+/** The kinds a removal decision removes. */
+function removedKinds(r: ConsolidationInput): string[] {
+  const remove = (r.value as ProhibitionRemoval).remove;
+  return (Array.isArray(remove) ? remove : [remove]).map((e) => String(e.kind));
 }
 
 /**
@@ -62,7 +74,7 @@ export const prohibitionsRule: ConsolidationRule = (inputs, ctx) => {
   const removals = inputs.filter(isRemoval);
   const basis = youngest(inputs.filter((i) => i.origin === "computed"));
   const texts = inputs.filter((i) => i.origin !== "computed" && !isRemoval(i));
-  if (!basis && texts.length === 0) return null;
+  if (!basis && texts.length === 0 && removals.length === 0) return null;
 
   const named = new Map<string, { input: ConsolidationInput; months: number[] | null }[]>();
   for (const i of texts) {
@@ -71,13 +83,21 @@ export const prohibitionsRule: ConsolidationRule = (inputs, ctx) => {
     }
   }
   const effective = new Set<ConsolidationInput>();
+  // kinds a removal decision took out, also those no current input names any more, with the youngest removal's date
+  // (GR-1: change detection lets a text entry leave the profile only through such a decision; GR-12: and only while
+  // no fact the previous profile cites for it is younger)
+  const removedEntries: Record<string, string> = {};
   for (const r of removals) {
-    const kind = String((r.value as ProhibitionRemoval).remove.kind);
-    const naming = named.get(kind);
-    if (!naming || naming.some((n) => n.input.observedAt > r.observedAt)) continue;
-    named.delete(kind);
-    effective.add(r);
+    for (const kind of removedKinds(r)) {
+      const naming = named.get(kind);
+      if (naming?.some((n) => n.input.observedAt > r.observedAt)) continue;
+      if (!(kind in removedEntries) || r.observedAt > removedEntries[kind]!) removedEntries[kind] = r.observedAt;
+      if (!naming) continue;
+      named.delete(kind);
+      effective.add(r);
+    }
   }
+  if (!basis && texts.length === 0) return { ...ruleResult(null, "review", removals, ctx), removedEntries };
 
   const naming = new Map<string, Set<string>>();
   const cite = (key: string, i: ConsolidationInput) => naming.set(key, (naming.get(key) ?? new Set<string>()).add(inputId(i)));
@@ -107,5 +127,5 @@ export const prohibitionsRule: ConsolidationRule = (inputs, ctx) => {
       return [key, [...(naming.get(key) ?? [])].sort()];
     }),
   );
-  return { ...ruleResult(value, origin, support.length > 0 ? support : texts, ctx), entryFactIds };
+  return { ...ruleResult(value, origin, support.length > 0 ? support : texts, ctx), entryFactIds, removedEntries };
 };

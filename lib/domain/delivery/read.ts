@@ -5,7 +5,8 @@ import { CONTRACT_FILES, type ChangeEntry, type ChangesFile, type ContractFile, 
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { deliveries } from "@/lib/db/schema/deliveries";
-import { displayNameSql } from "@/lib/domain/gazetteer/names";
+import { deliveryNames } from "@/lib/domain/gazetteer/names";
+import { validAtAlias } from "@/lib/domain/timeline";
 import type { DeliveryRow } from "./build";
 import { mergeChanges } from "./changes";
 import { sha256Hex } from "./serialize";
@@ -31,18 +32,19 @@ export type AreaListEntry = {
 
 /** A valid area (geo object of type `area` with a public id, valid today), by public id (`ar_…`) or config key. */
 export async function resolveArea(db: Db, ref: string): Promise<ResolvedArea | null> {
-  const { rows } = await db.execute<{ id: string; public_id: string; config_key: string | null; name: string | null }>(sql`
-    select o.id, o.public_id, o.config_key, ${displayNameSql(sql`o.id`)} as name
+  const { rows } = await db.execute<{ id: string; public_id: string; config_key: string | null }>(sql`
+    select o.id, o.public_id, o.config_key
     from geo_objects o
     where o.type = 'area' and o.public_id is not null
-      and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
+      and ${validAtAlias("o")}
       and (o.public_id = ${ref} or o.config_key = ${ref})
     order by (o.public_id = ${ref}) desc, o.id
     limit 1
   `);
   const row = rows[0];
   if (!row) return null;
-  return { geoObjectId: row.id, publicId: row.public_id, key: row.config_key ?? row.public_id, name: row.name ?? "" };
+  const name = (await deliveryNames(db, [row.id])).get(row.id) ?? "";
+  return { geoObjectId: row.id, publicId: row.public_id, key: row.config_key ?? row.public_id, name };
 }
 
 /**
@@ -52,14 +54,14 @@ export async function resolveArea(db: Db, ref: string): Promise<ResolvedArea | n
  */
 export async function listAreas(db: Db): Promise<AreaListEntry[]> {
   const { rows } = await db.execute<{
+    id: string;
     public_id: string;
     config_key: string | null;
-    name: string | null;
     data_version: number | null;
     generated_at: string | Date | null;
     bbox: [number, number, number, number] | null;
   }>(sql`
-    select o.public_id, o.config_key, ${displayNameSql(sql`o.id`)} as name, d.data_version, d.generated_at, d.bbox
+    select o.id, o.public_id, o.config_key, d.data_version, d.generated_at, d.bbox
     from geo_objects o
     left join lateral (
       select d.data_version, d.generated_at, d.bbox from deliveries d
@@ -68,13 +70,14 @@ export async function listAreas(db: Db): Promise<AreaListEntry[]> {
       limit 1
     ) d on true
     where o.type = 'area' and o.public_id is not null
-      and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
+      and ${validAtAlias("o")}
     order by o.public_id
   `);
+  const names = await deliveryNames(db, rows.map((r) => r.id));
   return rows.map((r) => ({
     id: r.public_id,
     key: r.config_key ?? r.public_id,
-    name: r.name ?? "",
+    name: names.get(r.id) ?? "",
     dataVersion: r.data_version,
     bbox: r.bbox,
     generatedAt: r.generated_at === null ? null : new Date(r.generated_at).toISOString(),
@@ -267,7 +270,7 @@ export async function spotAsOf(
     from latest l
     join geo_objects a on a.id = l.area_id
     where not l.removed and a.public_id is not null
-      and a.valid_from <= current_date and (a.valid_to is null or a.valid_to > current_date)
+      and ${validAtAlias("a")}
     order by l.profile_version desc
     limit 1
   `);

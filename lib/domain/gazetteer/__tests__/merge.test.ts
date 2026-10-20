@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { getConfig } from "@/lib/config";
@@ -6,6 +7,7 @@ import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects, places, reviewTasks, type GeoObjectType } from "@/lib/db/schema";
 import { findMatch, mergeGeoObjects, openPairTask, resolveMergedByExternalId } from "@/lib/domain/gazetteer/merge";
 import { upsertGeoObject, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
+import { createReviewTask } from "@/lib/domain/review";
 import { withRollback } from "@/test/db";
 
 const rules = getConfig().gazetteer.merge;
@@ -222,6 +224,49 @@ describe("mergeGeoObjects", () => {
       expect(kp).toMatchObject({ geoObjectId: keep, status: "candidate", mergedIntoId: null });
       const [dp] = await tx.select().from(places).where(eq(places.id, dropPlace));
       expect(dp).toMatchObject({ geoObjectId: drop, status: "rejected", statusReason: "merged", mergedIntoId: keepPlace });
+    });
+  });
+
+  it("dismisses the open tasks on the dropped place, which no decision could close any more (UI-5)", async () => {
+    await withRollback(async (tx) => {
+      const keep = await insert(tx, "bay", ["Ormos Klima"], point(offset(0)));
+      const drop = await insert(tx, "bay", ["Klima"], point(offset(100)));
+      const keepPlace = await insertPlace(tx, keep);
+      const dropPlace = await insertPlace(tx, drop);
+      const task = (subjectId: string) =>
+        createReviewTask(tx, { kind: "place_candidate", subjectType: "place", subjectId, context: {} });
+      const dropTask = await task(dropPlace);
+      const keepTask = await task(keepPlace);
+
+      await mergeGeoObjects(tx, keep, drop);
+
+      const status = async (id: string) => (await tx.select().from(reviewTasks).where(eq(reviewTasks.id, id)))[0]!;
+      expect(await status(dropTask.id)).toMatchObject({ status: "dismissed", context: { dismissedReason: "object_ended" } });
+      expect((await status(keepTask.id)).status).toBe("open");
+    });
+  });
+
+  it("the migration dismisses tasks a merge left open before, and only those (UI-5)", async () => {
+    await withRollback(async (tx) => {
+      const keep = await insert(tx, "bay", ["Ormos Klima"], point(offset(0)));
+      const drop = await insert(tx, "bay", ["Klima"], point(offset(100)));
+      const keepPlace = await insertPlace(tx, keep);
+      const dropPlace = await insertPlace(tx, drop);
+      await mergeGeoObjects(tx, keep, drop);
+      // a task left open by an earlier merge, and an open task on the kept place
+      const task = (subjectId: string) =>
+        createReviewTask(tx, { kind: "place_candidate", subjectType: "place", subjectId, context: { name: "x" } });
+      const stuck = await task(dropPlace);
+      const live = await task(keepPlace);
+
+      const migration = readFileSync("drizzle/0052_merged_place_tasks_dismiss.sql", "utf8");
+      const scoped = migration.replace("WHERE t.status = 'open'", `WHERE t.id in ('${stuck.id}', '${live.id}') AND t.status = 'open'`);
+      expect(scoped).not.toBe(migration);
+      await tx.execute(sql.raw(scoped));
+
+      const row = async (id: string) => (await tx.select().from(reviewTasks).where(eq(reviewTasks.id, id)))[0]!;
+      expect(await row(stuck.id)).toMatchObject({ status: "dismissed", context: { name: "x", dismissedReason: "object_ended" } });
+      expect((await row(live.id)).status).toBe("open");
     });
   });
 

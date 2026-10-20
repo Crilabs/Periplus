@@ -9,13 +9,16 @@ const isTyping = (target: EventTarget | null) =>
 
 /**
  * Keyboard shortcuts of a review task: `1`–`4` submit the decision form marked `data-decision-key="<n>"`,
- * `n` opens `nextHref`. Inactive while an input field has focus.
+ * `n` opens `nextHref`. Inactive while an input field has focus or a modal is open (a key pressed while reading
+ * „Alle Fundstellen“ must not decide behind it, gesamt review UI-9), and for a form whose button is disabled (also
+ * while its decision is being submitted).
  */
 export function DecisionKeys({ nextHref }: { nextHref: string }) {
   const router = useRouter();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.repeat || e.altKey || e.ctrlKey || e.metaKey || isTyping(e.target)) return;
+      if (document.querySelector("dialog[open]")) return;
       if (e.key === "n") {
         e.preventDefault();
         router.push(nextHref);

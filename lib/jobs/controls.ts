@@ -27,10 +27,18 @@ export async function resumeQueue(db: Db, queue: string, by: string): Promise<vo
   createLogger("queue-controls").info({ queue, by }, "queue resumed");
 }
 
-export async function isQueuePaused(db: Db, queue: string, now: Date = new Date()): Promise<boolean> {
+export type QueuePause = { reason: string | null; until: Date | null; by: string };
+
+/** The pause of `queue` in force at `now` (why, until when, by whom: `system` for a budget stop); null when it runs. */
+export async function queuePause(db: Db, queue: string, now: Date = new Date()): Promise<QueuePause | null> {
   const [row] = await db.select().from(queueControls).where(eq(queueControls.queue, queue));
-  if (!row) return false;
-  return row.pausedUntil === null || row.pausedUntil.getTime() > now.getTime();
+  if (!row) return null;
+  if (row.pausedUntil !== null && row.pausedUntil.getTime() <= now.getTime()) return null;
+  return { reason: row.reason, until: row.pausedUntil, by: row.updatedBy };
+}
+
+export async function isQueuePaused(db: Db, queue: string, now: Date = new Date()): Promise<boolean> {
+  return (await queuePause(db, queue, now)) !== null;
 }
 
 /** Pauses the given queues until the next 00:00 UTC after `now`; returns the pause end. */

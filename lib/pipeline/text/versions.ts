@@ -18,6 +18,8 @@ import { MATCH_PASS_STAGE, mentionsConfigKey } from "@/lib/domain/mentions/store
 export const textRunParamsSchema = z.object({
   documentVersionIds: z.array(z.string().uuid()).optional(),
   pending: z.literal(true).optional(),
+  /** With `pending`: only the pending versions of these sources („Neue Texte auswerten“ on a source page, UI-10). */
+  sourceIds: z.array(z.string().uuid()).optional(),
   tileId: z.string().optional(),
   areaKey: z.string().optional(),
   reprocess: z.literal(true).optional(),
@@ -39,7 +41,8 @@ export type TextRunParams = z.infer<typeof textRunParamsSchema>;
  *   also takes in what was fetched there and never matched; a reprocess or rematch run takes no pending versions (it
  *   works on what was matched before and ignores the passes);
  * - `pending`: the current versions of active documents the match has not passed with the current configuration
- *   (no `pipeline_passes` row for `mentions.batch` and `mentionsConfigKey(cfg)`).
+ *   (no `pipeline_passes` row for `mentions.batch` and `mentionsConfigKey(cfg)`), with `sourceIds` only those of
+ *   these sources.
  */
 export async function textRunVersions(db: Db, params: TextRunParams, cfg: AppConfig): Promise<string[]> {
   const ids = new Set<string>();
@@ -55,7 +58,7 @@ export async function textRunVersions(db: Db, params: TextRunParams, cfg: AppCon
       .where(inArray(documentVersions.id, params.documentVersionIds));
     for (const r of existing) ids.add(r.id);
   }
-  if (params.pending) for (const id of await pendingVersions(db, cfg)) ids.add(id);
+  if (params.pending) for (const id of await pendingVersions(db, cfg, undefined, params.sourceIds)) ids.add(id);
   return [...ids].sort();
 }
 
@@ -70,10 +73,19 @@ export function scopeTiles(params: Pick<TextRunParams, "tileId" | "areaKey">) {
 /**
  * Current versions of active documents not passed by the match with the current configuration; with a tile or area
  * selection only those of the sources a SERP search of that tile, of a tile of that area, of that area or of a place
- * in one of those tiles (ruling M5-P12) found.
+ * in one of those tiles (ruling M5-P12) found; with `sourceIds` only those of these sources.
  */
-async function pendingVersions(db: Db, cfg: AppConfig, scope?: Pick<TextRunParams, "tileId" | "areaKey">): Promise<string[]> {
-  const sourceFilter = scope ? sql`and d.source_id in (${scopeSources(scope)})` : sql``;
+async function pendingVersions(
+  db: Db,
+  cfg: AppConfig,
+  scope?: Pick<TextRunParams, "tileId" | "areaKey">,
+  sourceIds?: string[],
+): Promise<string[]> {
+  const sourceFilter = scope
+    ? sql`and d.source_id in (${scopeSources(scope)})`
+    : sourceIds
+      ? sql`and d.source_id in (select value::uuid from jsonb_array_elements_text(${JSON.stringify(sourceIds)}::jsonb))`
+      : sql``;
   const { rows } = await db.execute<{ id: string }>(sql`
     select v.id
     from documents d

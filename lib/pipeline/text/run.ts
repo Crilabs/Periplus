@@ -44,6 +44,7 @@ export const TEXT_RUN_STAGES = [
 function scopeOf(params: TextRunParams): RunScope {
   if (params.tileId) return { type: "tile", id: params.tileId };
   if (params.areaKey) return { type: "area", id: params.areaKey };
+  if (params.sourceIds?.length === 1) return { type: "source", id: params.sourceIds[0]! };
   return { type: "system", id: "texts" };
 }
 

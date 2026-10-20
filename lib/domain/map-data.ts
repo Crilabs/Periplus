@@ -4,19 +4,18 @@ import { z } from "zod";
 import { getConfig, getConsolidationConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { asGeoJson } from "@/lib/db/geometry";
-import { geoObjects, places, restrictedAreas, tiles, type RestrictedKind } from "@/lib/db/schema";
+import { geoObjects, geoObjectTypeEnum, places, restrictedAreas, tiles, type GeoObjectType, type RestrictedKind } from "@/lib/db/schema";
 import { confidenceClass } from "@/lib/domain/consolidation/weights";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { isAnchoringBan, type AnchoringBanConfig } from "@/lib/domain/geometry/restrictions";
 import type { Bbox } from "@/lib/domain/tiles";
-import { BBOX_TOLERANCE, MAX_BBOX_DEGREES } from "@/lib/domain/map-limits";
+import { BBOX_TOLERANCE, MAP_FEATURE_LIMIT, MAX_BBOX_DEGREES } from "@/lib/domain/map-limits";
 import { validAt } from "@/lib/domain/timeline";
 
 export const MAP_LAYERS = ["areas", "tiles", "geo-objects", "places", "restricted-areas"] as const;
 export type MapLayer = (typeof MAP_LAYERS)[number];
 
-/** Default cap per request; beyond ~5,000 objects the map switches to vector tiles (spec 09). */
-export const MAP_FEATURE_LIMIT = 5000;
+export { MAP_FEATURE_LIMIT };
 
 
 const coordinate = z
@@ -34,7 +33,16 @@ export const bboxParam = z
   .refine(([w, s, e, n]) => e - w <= MAX_BBOX_DEGREES + BBOX_TOLERANCE && n - s <= MAX_BBOX_DEGREES + BBOX_TOLERANCE, "bbox too large")
   .transform((b): Bbox => b);
 
-export const mapDataRequest = z.object({ layer: z.enum(MAP_LAYERS), bbox: bboxParam });
+/** `?types=bay,island` of the geo-object layer: only these types (filtered in the query, so the cap counts only them). */
+export const typesParam = z
+  .string()
+  .transform((s) => (s === "" ? [] : s.split(",")))
+  .pipe(z.array(z.enum(geoObjectTypeEnum.enumValues)).max(geoObjectTypeEnum.enumValues.length));
+
+export const mapDataRequest = z.object({ layer: z.enum(MAP_LAYERS), bbox: bboxParam, types: typesParam.optional() });
+
+/** A layer's features plus `truncated` (a GeoJSON foreign member): more rows than the cap intersect the view. */
+export type MapLayerData = FeatureCollection & { truncated: boolean };
 
 type Row = { geometry: Geometry; properties: Record<string, unknown> };
 
@@ -45,7 +53,7 @@ const envelope = ([west, south, east, north]: Bbox): SQL =>
 const intersects = (geom: AnyColumn, bbox: Bbox): SQL =>
   sql`(${geom} && ${envelope(bbox)} and ST_Intersects(${geom}, ${envelope(bbox)}))`;
 
-function layerQuery(layer: MapLayer, bbox: Bbox, limit: number): SQL {
+function layerQuery(layer: MapLayer, bbox: Bbox, limit: number, types?: GeoObjectType[]): SQL {
   switch (layer) {
     case "areas":
       return sql`
@@ -84,6 +92,7 @@ function layerQuery(layer: MapLayer, bbox: Bbox, limit: number): SQL {
           ) as properties
         from ${geoObjects}
         where ${geoObjects.type} <> 'area' and ${validAt(geoObjects)} and ${intersects(geoObjects.geom, bbox)}
+          ${types ? sql`and ${geoObjects.type}::text = any(${`{${types.join(",")}}`}::text[])` : sql``}
         order by ${geoObjects.id}
         limit ${limit}`;
     case "places":
@@ -130,8 +139,9 @@ function configuredAnchoringBan(): AnchoringBanConfig {
 }
 
 /**
- * One map layer as GeoJSON: valid rows intersecting `bbox`, at most `limit` features (default 5,000).
- * `geo-objects` leaves out areas (own layer). Tile counts: `placeCount` all valid places of the tile,
+ * One map layer as GeoJSON: valid rows intersecting `bbox`, at most `limit` features (default 5,000), with
+ * `truncated` when more intersect it (UI-12: the map says so instead of silently dropping objects).
+ * `geo-objects` leaves out areas (own layer) and, with `types`, keeps only those types. Tile counts: `placeCount` all valid places of the tile,
  * `candidateCount` those still `candidate`. `restricted-areas` carry `anchoringBan` by `opts.anchoringBan`
  * (default: the configured rule). `places` carry `profileConfidence` and `profileClass` of the newest profile version
  * of their geo object (its class by that version's rules), both null without a profile (or without a profile
@@ -141,9 +151,12 @@ export async function mapLayer(
   db: Db,
   layer: MapLayer,
   bbox: Bbox,
-  opts: { limit?: number; anchoringBan?: AnchoringBanConfig } = {},
-): Promise<FeatureCollection> {
-  const { rows } = await db.execute<Row>(layerQuery(layer, bbox, opts.limit ?? MAP_FEATURE_LIMIT));
+  opts: { limit?: number; anchoringBan?: AnchoringBanConfig; types?: GeoObjectType[] } = {},
+): Promise<MapLayerData> {
+  const limit = opts.limit ?? MAP_FEATURE_LIMIT;
+  const { rows: fetched } = await db.execute<Row>(layerQuery(layer, bbox, limit + 1, layer === "geo-objects" ? opts.types : undefined));
+  const truncated = fetched.length > limit;
+  const rows = fetched.slice(0, limit);
   if (layer === "restricted-areas") {
     const ban = opts.anchoringBan ?? configuredAnchoringBan();
     for (const r of rows) {
@@ -162,5 +175,5 @@ export async function mapLayer(
     }
   }
   const features: Feature[] = rows.map((r) => ({ type: "Feature", geometry: r.geometry, properties: r.properties }));
-  return { type: "FeatureCollection", features };
+  return { type: "FeatureCollection", features, truncated };
 }

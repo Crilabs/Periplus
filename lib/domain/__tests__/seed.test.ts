@@ -18,7 +18,7 @@ import {
 } from "@/lib/db/schema";
 import { placeKindFromTags, seedTile } from "@/lib/domain/seed";
 import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
-import { withRollback } from "@/test/db";
+import { startWhileLocked, testDb, withRollback } from "@/test/db";
 
 // Synthetic data in open sea outside the pilot box 23.0-23.75 E x 37.0-38.0 N: tiles T1 (27.00-27.25 E)
 // and its eastern neighbour T2 (27.25-27.50 E), both 34.00-34.25 N.
@@ -165,6 +165,15 @@ describe("seedTile", () => {
       });
       expect(tasks.find((t) => t.subjectId === rows[1]!.id)?.context).toMatchObject({ name: null });
     }));
+
+  it("waits for a running bay detection (its advisory lock), so the detection never misses a place being seeded (CON-4)", async () => {
+    await expect(
+      startWhileLocked(testDb(), "geometry.detect_bays", async (db) => {
+        await insertObject(db, { type: "bay", geometry: point(27.1, 34.1) });
+        return seedTile(db, T1, cfg());
+      }),
+    ).rejects.toMatchObject({ cause: expect.objectContaining({ code: "55P03" }) });
+  });
 
   it("bay spanning two tiles yields one place, in the tile of its position", () =>
     withRollback(async (db) => {

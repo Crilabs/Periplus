@@ -20,6 +20,7 @@ const DELIVERY_FIXTURE_TESTS = [
   "app/(admin)/__tests__/delivery-actions.test.ts",
   "app/(admin)/__tests__/place-actions.test.ts",
   "lib/domain/__tests__/place-merge.test.ts",
+  "lib/domain/__tests__/place-status.test.ts",
   "lib/domain/delivery/__tests__/build.test.ts",
   "lib/domain/delivery/__tests__/coast.test.ts",
   "lib/domain/delivery/__tests__/load.test.ts",
@@ -54,7 +55,7 @@ export default defineConfig({
         test: {
           name: "default",
           include: ["**/__tests__/**/*.test.{ts,tsx}", "test/**/*.test.ts"],
-          exclude: ["node_modules/**", ".next/**", ...PILOT_RUN_TESTS, ...DELIVERY_FIXTURE_TESTS, ...REVISIT_FIXTURE_TESTS],
+          exclude: ["node_modules/**", ".next/**", ".claude/**", ...PILOT_RUN_TESTS, ...DELIVERY_FIXTURE_TESTS, ...REVISIT_FIXTURE_TESTS],
         },
       },
       {

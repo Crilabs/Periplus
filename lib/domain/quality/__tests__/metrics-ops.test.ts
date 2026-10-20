@@ -202,7 +202,7 @@ describe("reviewEffortMetrics", () => {
       await task(tx, at, { durations: [4 * MIN] });
       await task(tx, at, { durations: [null] });
       const before = (await reviewEffortMetrics(tx, w, quality, { areaKeys: [] }))[0];
-      for (const subjectType of ["place_merge", "place_position", "place_anchor"]) {
+      for (const subjectType of ["place_merge", "place_position", "place_anchor", "place_status"]) {
         await task(tx, at, { subjectType, durations: [null] });
       }
       const [minutes] = await reviewEffortMetrics(tx, w, quality, { areaKeys: [] });
@@ -214,6 +214,7 @@ describe("reviewEffortMetrics", () => {
         place_merge: { tasks: 1, decided: 1, minutes: 0, counted: false },
         place_position: { tasks: 1, decided: 1, minutes: 0, counted: false },
         place_anchor: { tasks: 1, decided: 1, minutes: 0, counted: false },
+        place_status: { tasks: 1, decided: 1, minutes: 0, counted: false },
       });
     }));
 

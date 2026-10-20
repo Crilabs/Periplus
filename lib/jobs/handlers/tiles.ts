@@ -1,5 +1,5 @@
 import { areaByKey, getConfig } from "@/lib/config";
-import { syncAreas } from "@/lib/domain/gazetteer/areas";
+import { endUnconfiguredAreas, syncAreas } from "@/lib/domain/gazetteer/areas";
 import { ensureTiles } from "@/lib/domain/gazetteer/tiles-ensure";
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
@@ -23,7 +23,9 @@ export const tilesEnsureStage: StageDefinition = {
 
 export const tilesEnsureHandler: JobHandler<JobData> = async (data, ctx) => {
   const area = areaByKey(areaKeyOf(data));
-  const areaIds = await syncAreas(ctx.db, getConfig().areas);
+  const areas = getConfig().areas;
+  const areaIds = await syncAreas(ctx.db, areas);
+  const ended = await endUnconfiguredAreas(ctx.db, areas);
   const result = await ensureTiles(ctx.db, area, areaIds);
-  ctx.log.info({ areaKey: area.key, ...result }, "tiles ensured");
+  ctx.log.info({ areaKey: area.key, ended, ...result }, "tiles ensured");
 };

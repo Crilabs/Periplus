@@ -30,7 +30,9 @@ export default defineConfig({
   reporter: "list",
   use: { baseURL: `http://localhost:${PORT}`, ...devices["Desktop Chrome"] },
   webServer: {
-    command: "npm run build && npm start",
+    // The deployed server: standalone output started with `node server.js` (e2e/serve-standalone.sh). CI builds
+    // once before and sets E2E_SKIP_BUILD.
+    command: process.env.E2E_SKIP_BUILD ? "bash e2e/serve-standalone.sh" : "npm run build && bash e2e/serve-standalone.sh",
     url: `http://localhost:${PORT}/healthz`,
     timeout: 240_000,
     reuseExistingServer: false,

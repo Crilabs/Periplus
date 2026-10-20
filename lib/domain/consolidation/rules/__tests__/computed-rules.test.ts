@@ -217,6 +217,20 @@ describe("bathymetryRule", () => {
     expect(bathymetryRule([...inputs].reverse(), seabedCtx)!.value).toEqual(mud);
   });
 
+  it("contradicting weak depth texts over a weak or missing raster: the shallower value with a conflict note (GR-6, SAF-6)", () => {
+    const shallow = t(2.5, { confidence: 0.75, sourceKey: "source:a", factId: "fact-a" });
+    const deep = t(8, { confidence: 0.78, sourceKey: "source:b", factId: "fact-b" });
+    for (const inputs of [[shallow, deep], [c(6, { confidence: 0.3 }), shallow, deep]]) {
+      const r = bathymetryRule(inputs, depthCtx)!;
+      expect(r).toMatchObject({ value: 2.5, origin: "text" });
+      expect(r.conflict).toMatchObject({ attribute: depthCtx.attribute, a: { value: 2.5 }, b: { value: 8 } });
+      expect(bathymetryRule([...inputs].reverse(), depthCtx)).toEqual(r);
+    }
+    // one weak text: it holds, no conflict; a good raster still wins over weak texts (spec 07)
+    expect(bathymetryRule([c(6, { confidence: 0.3 }), deep], depthCtx)).toMatchObject({ value: 8, conflict: null });
+    expect(bathymetryRule([c(6, { confidence: 0.6 }), shallow, deep], depthCtx)).toMatchObject({ value: 6, origin: "computed", conflict: null });
+  });
+
   it("enum-like values (seabed) pass unchanged; no input no value", () => {
     const seabed = [{ type: "sand", share: 1 }];
     expect(bathymetryRule([c(seabed, { confidence: 0.6 })], ruleCtx({ attribute: "seabed" }))!.value).toEqual(seabed);

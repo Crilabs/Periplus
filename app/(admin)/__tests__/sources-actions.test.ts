@@ -1,4 +1,5 @@
-import { eq, sql } from "drizzle-orm";
+import { readFileSync } from "node:fs";
+import { eq, inArray, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { documents, runs, sources, tiles, type SourceStatus } from "@/lib/db/schema";
@@ -7,6 +8,7 @@ import { newId } from "@/lib/domain/ids";
 import { DEFAULT_CRAWL_RULES } from "@/lib/domain/sources/crawl-rules";
 import { getSource } from "@/lib/domain/sources/store";
 import { insertPlace, insertTextFact } from "@/test/consolidation";
+import { insertTestVersion } from "@/test/text";
 import { testDb, withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
 
@@ -22,9 +24,14 @@ vi.mock("@/lib/db/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/client")>()),
   getDb: () => currentDb,
 }));
+/** The job queue cannot be reached (getBoss throws), e.g. right after an upload committed. */
+let bossDown = false;
 // Jobs are only collected: no worker runs.
 vi.mock("@/lib/jobs/boss", () => ({
-  getBoss: async () => ({ insert: async (_queue: string, jobs: Array<{ id: string }>) => jobs.map((j) => j.id) }),
+  getBoss: async () => {
+    if (bossDown) throw new Error("queue down");
+    return { insert: async (_queue: string, jobs: Array<{ id: string }>) => jobs.map((j) => j.id) };
+  },
 }));
 vi.mock("@/lib/adapters/s3", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/adapters/s3")>()),
@@ -39,7 +46,7 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
-import { crawlAllApprovedAction, createSourceAction } from "../sources/actions";
+import { crawlAllApprovedAction, createSourceAction, pendingSourceTextRunAction } from "../sources/actions";
 import { discoveryForTileAction } from "../tiles/[id]/actions";
 import { crawlAction, endSourceAction, pauseSourceAction, saveSourceAction, testCrawlAction, uploadPdfAction } from "../sources/[id]/actions";
 
@@ -85,6 +92,7 @@ const settingsForm = (sourceId: string, overrides: Record<string, string> = {}) 
 
 beforeEach(() => {
   vi.resetAllMocks();
+  bossDown = false;
   currentDb = db;
   archive = memoryArchive();
   requireAdmin.mockResolvedValue({ email: ADMIN });
@@ -263,6 +271,12 @@ describe("uploadPdfAction", () => {
     expect(nextConfig.experimental?.proxyClientMaxBodySize).toBe("101mb");
   });
 
+  it("the edge allows such a body (101 MiB, as Next reads 101mb) only on a source page, 1 MB elsewhere (SEC-1, W2-M-1)", () => {
+    const caddy = readFileSync("docker/Caddyfile", "utf8");
+    expect(caddy).toMatch(/@sourcePage path_regexp \^\/sources\/\[0-9a-fA-F-\]\{36\}\/\?\$\s*request_body @sourcePage \{\s*max_size 101MiB\s*\}/);
+    expect(caddy).toMatch(/@otherPaths not path_regexp \^\/sources\/\[0-9a-fA-F-\]\{36\}\/\?\$\s*request_body @otherPaths \{\s*max_size 1MB/);
+  });
+
   const pdf = (text: string) => new Blob([`%PDF-1.7\n${text}\n%%EOF\n`], { type: "application/pdf" });
 
   it("stores the pdf and starts its upload run", () =>
@@ -277,6 +291,16 @@ describe("uploadPdfAction", () => {
       const [run] = await tx.select().from(runs).where(eq(runs.id, target.slice("/runs/".length)));
       expect(run!.params).toEqual({ documentIds: [doc!.id] });
       expect(archive.keys()).toEqual([`uploads/${doc!.url.slice("upload://".length)}.pdf`]);
+    }));
+
+  it("the file stays archived when its run cannot start, and the page says so instead of an error page (UI-7)", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const sourceId = await insertSource(tx);
+      bossDown = true;
+      await uploadPdfAction(form({ sourceId, file: new File([pdf(newId())], "guide.pdf", { type: "application/pdf" }) }));
+      expect(redirect).toHaveBeenLastCalledWith(`/sources/${sourceId}?error=upload_run_not_started`);
+      expect(await tx.select().from(documents).where(eq(documents.sourceId, sourceId))).toHaveLength(1);
     }));
 
   it("a file that is not a pdf comes back with an error", () =>
@@ -335,11 +359,13 @@ describe("uploadPdfAction", () => {
       const text = newId();
       await uploadPdfAction(form({ sourceId: first, file: new File([pdf(text)], "guide.pdf", { type: "application/pdf" }) }));
       const [doc] = await tx.select().from(documents).where(eq(documents.sourceId, first));
-      const runsBefore = await tx.select({ id: runs.id }).from(runs);
+      // only this test's runs: other test files commit runs while this one runs (never count DB-wide)
+      const ownRuns = () => tx.select({ id: runs.id }).from(runs).where(inArray(runs.scopeId, [first, second]));
+      const runsBefore = await ownRuns();
 
       await uploadPdfAction(form({ sourceId: second, file: new File([pdf(text)], "copy.pdf", { type: "application/pdf" }) }));
       expect(redirect).toHaveBeenLastCalledWith(`/sources/${second}?archived=${doc!.id}`);
-      expect(await tx.select({ id: runs.id }).from(runs)).toEqual(runsBefore);
+      expect(await ownRuns()).toEqual(runsBefore);
       expect(await tx.select().from(documents).where(eq(documents.sourceId, second))).toEqual([]);
     }));
 });
@@ -354,5 +380,20 @@ describe("discovery from the tile page", () => {
       await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(26.5, 31.75, 26.75, 32.0, 4326)` });
       await discoveryForTileAction(form({ tileId }));
       expect(redirect).toHaveBeenCalledWith(`/tiles/${encodeURIComponent(tileId)}?error=tile_without_area`);
+    }));
+});
+
+describe("„Neue Texte auswerten“ on a source page (UI-10)", () => {
+  it("evaluates only this source's pending versions, in a run scoped to the source", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const mine = await insertTestVersion(tx, ["Rund um Kalonisi."]);
+      await insertTestVersion(tx, ["Rund um Kalonisi."]);
+      await pendingSourceTextRunAction(form({ sourceId: mine.sourceId }));
+      const target = String(redirect.mock.lastCall![0]);
+      expect(target).toMatch(/^\/runs\/[0-9a-f-]{36}$/);
+      const [run] = await tx.select().from(runs).where(eq(runs.id, target.slice("/runs/".length)));
+      expect(run).toMatchObject({ scopeType: "source", scopeId: mine.sourceId });
+      expect(run!.params).toMatchObject({ pending: true, sourceIds: [mine.sourceId], documentVersionIds: [mine.versionId] });
     }));
 });

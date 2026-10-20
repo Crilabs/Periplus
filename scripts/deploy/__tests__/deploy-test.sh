@@ -9,7 +9,7 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 # Fake binaries: docker logs "IMAGE_TAG=<tag> <args>" and fails the step named in FAKE_FAIL
-# (pull | migrate | up | ready) while IMAGE_TAG equals FAKE_FAIL_TAG. sleep is a no-op.
+# (pull | migrate | up | ready | worker) while IMAGE_TAG equals FAKE_FAIL_TAG. sleep is a no-op.
 mkdir -p "$WORK/bin"
 cat > "$WORK/bin/docker" <<'FAKE'
 #!/usr/bin/env bash
@@ -19,8 +19,9 @@ if [ "${IMAGE_TAG:-}" = "${FAKE_FAIL_TAG:-}" ]; then
   case "${FAKE_FAIL:-}:$args" in
     pull:*" pull") exit 1 ;;
     migrate:*" run --rm migrate") exit 1 ;;
-    up:*" up -d web worker caddy") exit 1 ;;
+    up:*" up -d --wait --wait-timeout 180 web worker caddy") exit 1 ;;
     ready:*" exec -T web "*) exit 1 ;;
+    worker:*" exec -T worker "*) exit 1 ;;
   esac
 fi
 exit 0
@@ -52,7 +53,7 @@ assert_rolled_back() {
   local before="$FAILURES"
   [ "$RC" -eq 1 ] || fail "expected exit 1, got $RC"
   [ "$(cat "$APP/.deployed-tag")" = "oldsha" ] || fail ".deployed-tag changed to $(cat "$APP/.deployed-tag")"
-  grep -qx 'IMAGE_TAG=oldsha compose --env-file .env -f docker/compose.prod.yml up -d postgres web worker caddy' "$LOG" \
+  grep -qx 'IMAGE_TAG=oldsha compose --env-file .env -f docker/compose.prod.yml up -d --wait --wait-timeout 180 postgres web worker caddy' "$LOG" \
     || fail "no rollback 'up' with previous tag oldsha"
   grep -q 'rollback to oldsha ok' "$APP/out.log" || fail "rollback not reported ok"
   [ "$FAILURES" -eq "$before" ] && pass
@@ -68,7 +69,7 @@ grep -q '^IMAGE_TAG=oldsha' "$LOG" && fail "unexpected rollback"
 
 run_case migrate-fails migrate
 assert_rolled_back
-grep -q '^IMAGE_TAG=newsha .* up -d web worker caddy$' "$LOG" && fail "web/worker/caddy started with new tag after failed migrate"
+grep -q '^IMAGE_TAG=newsha .* up -d --wait --wait-timeout 180 web worker caddy$' "$LOG" && fail "web/worker/caddy started with new tag after failed migrate"
 
 run_case pull-fails pull
 assert_rolled_back
@@ -79,6 +80,11 @@ assert_rolled_back
 
 run_case readyz-fails ready
 assert_rolled_back
+
+# Web is ready, but the worker never writes its ready marker (it fails at start and restarts forever).
+run_case worker-not-ready worker
+assert_rolled_back
+grep -q 'worker not ready' "$APP/out.log" || fail "worker failure not reported"
 
 if [ "$FAILURES" -ne 0 ]; then
   echo "$FAILURES assertion(s) failed" >&2

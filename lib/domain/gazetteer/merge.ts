@@ -2,6 +2,7 @@ import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { GazetteerConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geoNames, geoObjects, places, type GeoObjectType, type GeoOrigin } from "@/lib/db/schema";
+import { dismissTasks, lockOpenPlaceTasks } from "@/lib/domain/consolidation/task-locks";
 import { createReviewTask, hasDecidedTask } from "@/lib/domain/review";
 import { addNames, ensureFallbackNames, isGreek, normalizeName, transliterateElot743 } from "./names";
 
@@ -182,12 +183,18 @@ export async function resolveMergedByExternalId(
  * (transliterations and fallbacks are regenerated, not copied) and are ended on `drop`; external IDs
  * missing on `keep` are taken over; children of `drop` move to `keep` (a `keep` below `drop` takes over its parent); `drop` ends with
  * `merged_into_id = keep`. Places: when both have one, the place of `drop` is rejected and merged into
- * that of `keep`; when only `drop` has one, it moves to `keep`. Throws for `keep == drop` and for objects
+ * that of `keep`, and a `no_anchoring` drop place makes a candidate or confirmed keep place `no_anchoring` with the
+ * drop's `status_reason` (the stricter status wins, GR-4), and the open tasks on the drop place are dismissed
+ * (`object_ended`, UI-5); when only `drop` has one, it moves to `keep`. Throws for `keep == drop` and for objects
  * that are not valid (ended or merged).
  */
 export async function mergeGeoObjects(db: Db, keepId: string, dropId: string): Promise<void> {
   if (keepId === dropId) throw new Error(`cannot merge geo object ${keepId} into itself`);
   await db.transaction(async (tx) => {
+    // Lock order (M5-F-R4): the open tasks on drop's place before the geo objects and places (read unlocked here,
+    // checked again below).
+    const [dropPlaceRead] = await tx.select({ id: places.id }).from(places).where(eq(places.geoObjectId, dropId));
+    if (dropPlaceRead) await lockOpenPlaceTasks(tx, dropPlaceRead.id);
     const objects = await tx
       .select({
         id: geoObjects.id,
@@ -256,13 +263,25 @@ export async function mergeGeoObjects(db: Db, keepId: string, dropId: string): P
         .where(eq(geoObjects.id, keepId));
     }
 
-    const [keepPlace] = await tx.select({ id: places.id }).from(places).where(eq(places.geoObjectId, keepId));
-    const [dropPlace] = await tx.select({ id: places.id }).from(places).where(eq(places.geoObjectId, dropId));
+    const placeOf = (geoObjectId: string) =>
+      tx.select({ id: places.id, status: places.status, statusReason: places.statusReason }).from(places).where(eq(places.geoObjectId, geoObjectId));
+    const [keepPlace] = await placeOf(keepId);
+    const [dropPlace] = await placeOf(dropId);
     if (dropPlace && keepPlace) {
+      // its open place tasks can no longer be decided (a merged place refuses every decision): dismissed like the
+      // place merge does (UI-5); already locked above unless the place moved meanwhile
+      await dismissTasks(tx, await lockOpenPlaceTasks(tx, dropPlace.id), "object_ended");
       await tx
         .update(places)
         .set({ status: "rejected", statusReason: "merged", mergedIntoId: keepPlace.id, updatedAt: sql`now()` })
         .where(eq(places.id, dropPlace.id));
+      // the stricter status wins (GR-4): an exclusion of the merged place is never lost to a candidate or confirmed survivor
+      if (dropPlace.status === "no_anchoring" && (keepPlace.status === "candidate" || keepPlace.status === "confirmed")) {
+        await tx
+          .update(places)
+          .set({ status: "no_anchoring", statusReason: dropPlace.statusReason ?? "merged", updatedAt: sql`now()` })
+          .where(eq(places.id, keepPlace.id));
+      }
     } else if (dropPlace) {
       await tx
         .update(places)

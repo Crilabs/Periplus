@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+import { getSource } from "@/lib/domain/sources/store";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDb } from "@/lib/db/client";
@@ -43,7 +45,7 @@ import {
   thClass,
   trClass,
 } from "../../_components/ui";
-import { pendingTextRunAction } from "../actions";
+import { pendingSourceTextRunAction } from "../actions";
 import { SOURCE_STATUS_TONES } from "../tones";
 import {
   crawlAction,
@@ -54,6 +56,14 @@ import {
   testCrawlAction,
   uploadPdfAction,
 } from "./actions";
+
+/** The tab title: the source's name (UI-15). */
+export async function generateMetadata({ params }: PageProps<"/sources/[id]">): Promise<Metadata> {
+  await requireAdmin();
+  const { id } = await params;
+  const source = UUID.test(id) ? await getSource(getDb(), id) : null;
+  return { title: source ? `Quelle ${source.name}` : "Quelle" };
+}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SETTINGS_FIELDS = new Set(["name", "type", "weight", "changeRate"]);
@@ -158,11 +168,9 @@ export default async function Page({ params, searchParams }: PageProps<"/sources
         }
         actions={
           <>
-            <form action={pendingTextRunAction}>
-              <Button
-                variant="ghost"
-                title="Alle Quellen: jede aktuelle Version, die der Abgleich noch nicht gesehen hat"
-              >
+            <form action={pendingSourceTextRunAction}>
+              {hidden}
+              <Button variant="ghost" title="Nur diese Quelle: jede aktuelle Version, die der Abgleich noch nicht gesehen hat">
                 Neue Texte auswerten
               </Button>
             </form>
@@ -271,6 +279,20 @@ export default async function Page({ params, searchParams }: PageProps<"/sources
             )}
             {param(sp.saved) === "1" && <Notice tone="ok">Gespeichert.</Notice>}
           </div>
+        )}
+
+        {detail.approvalTaskId && (
+          <Notice
+            tone="warn"
+            title="Freigabe offen"
+            actions={
+              <ButtonLink href={`/review/${detail.approvalTaskId}`} size="sm">
+                Zur Freigabe
+              </ButtonLink>
+            }
+          >
+            Die Quelle ist vorgeschlagen. Die Freigabe übernimmt die hier gespeicherten Einstellungen.
+          </Notice>
         )}
 
         {invalid.length > 0 && (

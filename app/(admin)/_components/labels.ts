@@ -34,6 +34,7 @@ import type { ChangeEntry, ContractFile } from "@/contract";
 import type { CheckName } from "@/lib/domain/delivery/validate";
 import type { PreviewOmission } from "@/lib/domain/delivery/view";
 import type { MergeRefusal } from "@/lib/domain/place-merge";
+import type { PlaceStatusRefusal } from "@/lib/domain/place-status";
 import type { ConfidenceClass, ConflictResolution, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
 import type { VersionDiff, VersionNote } from "@/lib/domain/profile-timeline";
 import type { GapReason } from "@/lib/domain/geometry/gaps";
@@ -88,7 +89,7 @@ export const SCOPE_TYPE_LABELS: Record<RunScopeType, string> = {
 export const REVIEW_KIND_LABELS: Record<ReviewKind, string> = {
   source_approval: "Quellenfreigabe",
   place_candidate: "Ortskandidat",
-  conflict: "Widerspruch",
+  conflict: "Konflikt",
   failed_job: "Fehlgeschlagener Job",
   coast_tile_without_area: "Küstenkachel ohne Revier",
   uncertain_change: "Unsichere Änderung",
@@ -335,6 +336,8 @@ export const SOURCE_ERROR_LABELS = {
   not_endable: "Nur eine freigegebene oder pausierte Quelle kann beendet werden",
   source_ended: "Die Quelle ist beendet",
   upload_not_allowed: "PDFs lassen sich nur bei freigegebenen, vorgeschlagenen oder pausierten Quellen hochladen",
+  upload_run_not_started:
+    "Die Datei ist archiviert, ihre Verarbeitung startete aber nicht (z. B. Job-Warteschlange nicht erreichbar). Dieselbe Datei erneut hochladen startet sie; sie wird nicht doppelt archiviert",
 } as const;
 
 export type SourceErrorCode = keyof typeof SOURCE_ERROR_LABELS;
@@ -370,6 +373,33 @@ export function qualityPageError(param: string | string[] | undefined): string |
 }
 
 export const queueStateLabel = (paused: boolean): string => (paused ? "Pausiert" : "Läuft");
+
+const BUDGET_SERVICE_LABELS: Record<string, string> = {
+  anthropic: "Anthropic",
+  dataforseo: "DataForSEO",
+  voyage: "Voyage",
+  jina: "Jina",
+  firecrawl: "Firecrawl",
+};
+
+/** Whether a pause is a budget stop (`pauseForBudget`, reason `budget:<service>`). */
+export const isBudgetPause = (pause: { reason: string | null } | null): boolean => pause?.reason?.startsWith("budget:") ?? false;
+
+/**
+ * Why and until when a queue is paused, in German (UI-8): „Budget Anthropic erreicht, bis 21.10.26, 00:00 UTC“ for a budget stop,
+ * „von Hand (a@b)“ for a pause from the jobs page.
+ */
+export function queuePauseText(pause: { reason: string | null; until: Date | null; by: string }): string {
+  const until = pause.until
+    ? `bis ${pause.until.toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short", timeZone: "UTC" })} UTC`
+    : "ohne Ende";
+  if (isBudgetPause(pause)) {
+    const service = pause.reason!.slice("budget:".length);
+    return `Budget ${BUDGET_SERVICE_LABELS[service] ?? service} erreicht, ${until}`;
+  }
+  if (pause.reason === "manual") return `von Hand (${pause.by}), ${until}`;
+  return `${pause.reason ?? "ohne Grund"} (${pause.by}), ${until}`;
+}
 
 /* ---- M4: mentions, extraction runs, facts ---- */
 
@@ -655,6 +685,21 @@ export const MERGE_ERROR_LABELS: Record<MergeRefusal, string> = {
 /** The German text of a `?mergeError=`; null for none or an unknown reason. */
 export function mergeError(param: string | string[] | undefined): string | null {
   return typeof param === "string" && Object.hasOwn(MERGE_ERROR_LABELS, param) ? MERGE_ERROR_LABELS[param as MergeRefusal] : null;
+}
+
+/** Why a header status change of a place was refused (`?statusError=`, gesamt review UI-3). */
+export const PLACE_STATUS_ERROR_LABELS: Record<PlaceStatusRefusal, string> = {
+  open_task: "Der Ort hat eine offene Prüfung – dort entscheiden, mit ihrem ganzen Kontext.",
+  changed: "Der Status hat sich inzwischen geändert – bitte neu prüfen.",
+  unchanged: "Der Ort hat diesen Status schon.",
+  not_valid: "Der Ort ist beendet oder zusammengelegt.",
+};
+
+/** The German text of a `?statusError=`; null for none or an unknown reason. */
+export function placeStatusError(param: string | string[] | undefined): string | null {
+  return typeof param === "string" && Object.hasOwn(PLACE_STATUS_ERROR_LABELS, param)
+    ? PLACE_STATUS_ERROR_LABELS[param as PlaceStatusRefusal]
+    : null;
 }
 
 /* ---- M7: quality measurement ---- */

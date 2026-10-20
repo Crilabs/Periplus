@@ -29,4 +29,4 @@ npm run dev                         # Admin-UI und API auf http://localhost:3000
 | Postgres (Tests) | `localhost:5434`, Datenbank `periplus_test` |
 | S3 (SeaweedFS) | `http://localhost:8333`, Bucket `periplus-archive` |
 
-Stand: Specs und Entwicklungsumgebung stehen; die Umsetzung beginnt mit Meilenstein M0 (Fundament).
+Stand: Meilensteine M0–M7 (Teil a: Code, an Fixtures und `MockModel` geprüft) sind umgesetzt; der Pilotbetrieb (M7 Teil b) steht aus. Betrieb: `docs/runbook.md`, Pilot: `docs/pilot/m7-runbook.md`.

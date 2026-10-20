@@ -1,4 +1,4 @@
-import { and, eq, isNull, ne, notInArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, ne, notInArray, or, sql } from "drizzle-orm";
 import type { Polygon, MultiPolygon } from "geojson";
 import type { AreaConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
@@ -6,7 +6,7 @@ import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects } from "@/lib/db/schema";
 import { newPublicId } from "@/lib/domain/ids";
 import type { Bbox } from "@/lib/domain/tiles";
-import { addNames } from "./names";
+import { addNames, isGreek, transliterateElot743 } from "./names";
 
 /** Bounding box of a polygon's outer rings. */
 export function polygonBbox(polygon: AreaConfig["polygon"]): Bbox {
@@ -45,7 +45,8 @@ type ConfigObject = {
  * sections (`type coast_section`, `rg_…`, `config_key "<area>/<section>"`, parent = the area). An area's
  * parent (its sea or gulf) is left to `assignParents`.
  * Geometry and parent are only written when they changed, so an unchanged rerun writes no history.
- * Config names are `origin manual`; a manual name no longer in the config is ended (`valid_to`).
+ * Config names are `origin manual`; a manual name no longer in the config is ended (`valid_to`). An object ended
+ * because its key was no longer configured is revived. Ending such objects is `endUnconfiguredAreas`.
  * Returns `config_key → id`.
  */
 export async function syncAreas(db: Db, areas: AreaConfig[]): Promise<Map<string, string>> {
@@ -77,12 +78,50 @@ export async function syncAreas(db: Db, areas: AreaConfig[]): Promise<Map<string
   });
 }
 
+/**
+ * Ends (`valid_to = current_date`) the valid areas and coast sections whose config key is no longer configured, so the
+ * next package reports a removed coast section as `removed` and `GET /areas` no longer lists a removed area
+ * (gesamt-review DAT-4). Takes the whole configuration (the tiles stage passes `getConfig().areas`); `among` limits the
+ * keys considered (tests). Returns the ended keys, sorted. A key configured again revives its object (`syncObject`).
+ */
+export async function endUnconfiguredAreas(db: Db, areas: AreaConfig[], opts: { among?: string[] } = {}): Promise<string[]> {
+  const configured = areas.flatMap((a) => [a.key, ...a.coastSections.map((s) => `${a.key}/${s.key}`)]);
+  if (opts.among?.length === 0) return [];
+  const rows = await db
+    .update(geoObjects)
+    .set({ validTo: sql`current_date`, updatedAt: sql`now()` })
+    .where(
+      and(
+        isNotNull(geoObjects.configKey),
+        isNull(geoObjects.validTo),
+        inArray(geoObjects.type, ["area", "coast_section"]),
+        configured.length > 0 ? notInArray(geoObjects.configKey, configured) : undefined,
+        opts.among ? inArray(geoObjects.configKey, opts.among) : undefined,
+      ),
+    )
+    .returning({ configKey: geoObjects.configKey });
+  return rows.map((r) => r.configKey!).sort();
+}
+
 async function syncObject(db: Db, o: ConfigObject): Promise<string> {
   const geom = geomFromGeoJson(o.polygon);
-  const [existing] = await db
+  let [existing] = await db
     .select({ id: geoObjects.id })
     .from(geoObjects)
     .where(and(eq(geoObjects.configKey, o.configKey), isNull(geoObjects.validTo)));
+  if (!existing) {
+    // configured again after `endUnconfiguredAreas` ended it: the same object and public id come back
+    const [ended] = await db
+      .select({ id: geoObjects.id })
+      .from(geoObjects)
+      .where(and(eq(geoObjects.configKey, o.configKey), eq(geoObjects.type, o.type), isNull(geoObjects.mergedIntoId)))
+      .orderBy(desc(geoObjects.validTo), desc(geoObjects.id))
+      .limit(1);
+    if (ended) {
+      await db.update(geoObjects).set({ validTo: null, updatedAt: sql`now()` }).where(eq(geoObjects.id, ended.id));
+      existing = ended;
+    }
+  }
 
   let id: string;
   if (existing) {
@@ -118,8 +157,9 @@ async function syncObject(db: Db, o: ConfigObject): Promise<string> {
 }
 
 /**
- * Ends (`valid_to`) the valid manual names the config no longer lists. Transliterations derived from an
- * ended Greek name stay valid: the same row may stem from another source's identical name.
+ * Ends (`valid_to`) the valid manual names the config no longer lists, and then every valid transliteration that no
+ * Greek name still valid on the object or configured produces (the old form of a corrected `el` name, gesamt-review
+ * W3-M-2). A transliteration another source's identical Greek name still produces stays.
  */
 async function endStaleManualNames(db: Db, id: string, names: Record<string, string>): Promise<void> {
   const configured = Object.entries(names).map(([language, name]) => ({ language, name: name.trim().replace(/\s+/g, " ") }));
@@ -135,6 +175,22 @@ async function endStaleManualNames(db: Db, id: string, names: Record<string, str
           notInArray(geoNames.language, configured.map((n) => n.language)),
           ...configured.map((n) => and(eq(geoNames.language, n.language), ne(geoNames.name, n.name))),
         ),
+      ),
+    );
+  const greek = await db
+    .select({ name: geoNames.name })
+    .from(geoNames)
+    .where(and(eq(geoNames.geoObjectId, id), eq(geoNames.script, "greek"), isNull(geoNames.validTo)));
+  const produced = [...greek.map((r) => r.name), ...configured.map((n) => n.name).filter(isGreek)].map(transliterateElot743);
+  await db
+    .update(geoNames)
+    .set({ validTo: sql`current_date` })
+    .where(
+      and(
+        eq(geoNames.geoObjectId, id),
+        eq(geoNames.origin, "transliteration"),
+        isNull(geoNames.validTo),
+        ...(produced.length > 0 ? [notInArray(geoNames.name, produced)] : []),
       ),
     );
 }

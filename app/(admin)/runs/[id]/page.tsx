@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 import type { RunStageStatus } from "@/lib/db/schema";
@@ -44,6 +45,11 @@ import {
   type Tone,
 } from "../../_components/ui";
 import { catchUpConsolidationAction, endRunAction, recheckExtractionRunAction, retryJobAction } from "./actions";
+
+/** The tab title: the run's short id (UI-15). */
+export async function generateMetadata({ params }: PageProps<"/runs/[id]">): Promise<Metadata> {
+  return { title: `Lauf ${(await params).id.slice(0, 8)}` };
+}
 
 const isRetryable = (queue: string) => (QUEUES as readonly string[]).includes(queue);
 
@@ -190,6 +196,21 @@ export default async function Page({ params, searchParams }: PageProps<"/runs/[i
                 </form>
               </Dialog>
             )}
+            {run.endCleanupPending && (
+              <Dialog
+                trigger="Aufräumen wiederholen …"
+                triggerVariant="danger"
+                title="Aufräumen wiederholen"
+                description="Das Beenden dieses Laufs wurde nicht vollständig abgeschlossen. Bricht seine wartenden Jobs ab, beendet ungesendete Batches, schließt offene Extraktionseinheiten und sperrt ungeprüfte Extraktionsläufe."
+              >
+                <form action={endRunAction} className="flex justify-end">
+                  <input type="hidden" name="runId" value={run.id} />
+                  <Button type="submit" variant="danger">
+                    Aufräumen wiederholen
+                  </Button>
+                </form>
+              </Dialog>
+            )}
           </>
         }
       />
@@ -323,7 +344,7 @@ export default async function Page({ params, searchParams }: PageProps<"/runs/[i
           <Table>
             <thead>
               <tr>
-                <th className={thClass}>Queue</th>
+                <th className={thClass}>Warteschlange</th>
                 <th className={thClass}>Schlüssel</th>
                 <th className={thClass}>Fehler</th>
                 <th className={thClass}>Zeit</th>

@@ -32,6 +32,7 @@ import {
   decideReviewTask,
   nextOpenTask,
   reviewDecisionSchema,
+  sourceSettingsKey,
   TaskContextChanged,
   valueFingerprint,
   TaskNotOpen,
@@ -266,7 +267,7 @@ describe("place decisions", () => {
       expect(await placeOf(tx, place.id)).toMatchObject({ status: "no_anchoring", statusReason: "review" });
     }));
 
-  it("confirm, merge, reject and no_anchoring return the place's object to consolidate after the commit (final review I-2)", () =>
+  it("confirm, merge, reject and no_anchoring return the place's object (merge: the target's) to consolidate after the commit (final review I-2, GR-3)", () =>
     withRollback(async (tx) => {
       const target = await insertPlace(tx, { lon: 28.13 });
       const cases: ReviewDecision[] = [
@@ -278,7 +279,8 @@ describe("place decisions", () => {
       for (const decision of cases) {
         const place = await insertPlace(tx);
         const result = await decide(tx, await placeTask(tx, place.id), decision);
-        expect(result, decision.action).toEqual({ documentVersionIds: [], consolidate: { geoObjectId: place.geoObjectId } });
+        const geoObjectId = decision.action === "merge" ? target.geoObjectId : place.geoObjectId;
+        expect(result, decision.action).toEqual({ documentVersionIds: [], consolidate: { geoObjectId } });
         // the decision itself never consolidates (ruling M5-F-R4)
         expect(await tx.select().from(profiles).where(eq(profiles.geoObjectId, place.geoObjectId))).toEqual([]);
       }
@@ -557,6 +559,14 @@ describe("source decisions", () => {
     crawlRules: { ...DEFAULT_CRAWL_RULES, startUrls: ["https://example.test.invalid/guide/"], allow: ["^/guide/"] },
   } as const satisfies ReviewDecision;
 
+  /** The fingerprint the approval form posts: the source's settings as the form shows them (W4-1). */
+  const shownKey = async (tx: Db, sourceId: string) => {
+    const source = await getSource(tx, sourceId);
+    return source ? sourceSettingsKey(source) : "0000000000000000";
+  };
+  const decideApprove = async (tx: Db, taskId: string, sourceId: string, decision: ReviewDecision = approve) =>
+    decideReviewTask(tx, { taskId, decision, decidedBy: ADMIN, valueKey: await shownKey(tx, sourceId) });
+
   it("accepts approve and pause_source in the schema", () => {
     expect(reviewDecisionSchema.parse({ action: "pause_source" })).toEqual({ action: "pause_source" });
     expect(() => reviewDecisionSchema.parse({ ...approve, weight: 1.5 })).toThrow();
@@ -567,7 +577,7 @@ describe("source decisions", () => {
     withRollback(async (tx) => {
       const sourceId = await insertSource(tx);
       const taskId = await approvalTask(tx, sourceId);
-      await decide(tx, taskId, approve);
+      await decideApprove(tx, taskId, sourceId);
 
       expect(await getSource(tx, sourceId)).toMatchObject({
         status: "approved",
@@ -582,6 +592,35 @@ describe("source decisions", () => {
       expect(decisions).toHaveLength(1);
       expect(decisions[0]!.decision).toMatchObject({ action: "approve", type: "pilot_guide" });
       expect(await historyRows(tx, sourceId)).toBeGreaterThanOrEqual(1);
+    }));
+
+  it("approve refuses with TaskContextChanged when the source changed since the form was shown (W4-1)", () =>
+    withRollback(async (tx) => {
+      const sourceId = await insertSource(tx);
+      const taskId = await approvalTask(tx, sourceId);
+      const shown = await shownKey(tx, sourceId);
+      // edited on the source page (another tab) after the approval form was rendered
+      await tx
+        .update(sources)
+        .set({ weight: 0.2, crawlRules: { ...DEFAULT_CRAWL_RULES, deny: ["/forum/"] } })
+        .where(eq(sources.id, sourceId));
+
+      await expect(
+        tx.transaction((sp) => decideReviewTask(sp, { taskId, decision: approve, decidedBy: ADMIN, valueKey: shown })),
+      ).rejects.toThrow(TaskContextChanged);
+      // without a fingerprint the approval is refused as well
+      await expect(tx.transaction((sp) => decide(sp, taskId, approve))).rejects.toThrow(TaskContextChanged);
+      expect((await taskOf(tx, taskId)).status).toBe("open");
+      expect(await decisionsOf(tx, taskId)).toHaveLength(0);
+      expect(await getSource(tx, sourceId)).toMatchObject({
+        status: "proposed",
+        weight: 0.2,
+        crawlRules: { deny: ["/forum/"] },
+      });
+
+      // the reloaded form carries the new fingerprint, so the approval goes through
+      await decideApprove(tx, taskId, sourceId);
+      expect((await getSource(tx, sourceId))!.status).toBe("approved");
     }));
 
   it("approving a source that is not proposed is not allowed", () =>

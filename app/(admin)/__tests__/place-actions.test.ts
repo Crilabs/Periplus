@@ -21,7 +21,14 @@ vi.mock("@/lib/db/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/client")>()),
   getDb: () => currentDb,
 }));
-vi.mock("@/lib/jobs/boss", () => ({ getBoss: async () => ({}) }));
+/** The job queue cannot be reached (getBoss throws), e.g. right after a decision committed. */
+let bossDown = false;
+vi.mock("@/lib/jobs/boss", () => ({
+  getBoss: async () => {
+    if (bossDown) throw new Error("queue down");
+    return {};
+  },
+}));
 vi.mock("@/lib/pipeline/runs", () => ({ startRun: (...args: unknown[]) => startRun(...args) }));
 vi.mock("next/cache", () => ({ revalidatePath: (path: string) => revalidatePath(path), refresh: vi.fn() }));
 const redirect = vi.fn();
@@ -40,7 +47,13 @@ vi.mock("@/lib/domain/place-merge", async (importOriginal) => {
   };
 });
 
-import { mergePlaceAction, recomputeGeoProfileAction, recomputePlaceProfileAction, setAnchorAction } from "../places/[id]/actions";
+import {
+  mergePlaceAction,
+  recomputeGeoProfileAction,
+  recomputePlaceProfileAction,
+  setAnchorAction,
+  setPlaceStatusAction,
+} from "../places/[id]/actions";
 
 const ADMIN = "admin@example.invalid";
 
@@ -65,6 +78,7 @@ async function anchorOrigin(tx: Db, placeId: string): Promise<string | null> {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  bossDown = false;
   afterMerge = null;
   currentDb = db;
   requireAdmin.mockResolvedValue({ email: ADMIN });
@@ -135,6 +149,21 @@ describe("setAnchorAction", () => {
       });
       expect(await reviewAnchorFacts(tx, scene.geoObjectId)).toHaveLength(1);
       expect(startRun).not.toHaveBeenCalled();
+    }));
+
+  it("keeps the anchor and says so when the job queue is down after the commit, instead of an error page (UI-7)", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const scene = await buildBayScene(tx);
+      const position = await lonLatOf(tx, 0, 150);
+      bossDown = true;
+      const result = await setAnchorAction({ placeId: scene.placeId, ...position });
+      expect(result).toEqual({
+        ok: true,
+        runId: null,
+        message: "Ankerposition übernommen. Die Neuberechnung der Geometrie konnte nicht gestartet werden – bitte im Reiter „Geometrie“ erneut starten.",
+      });
+      expect(await reviewAnchorFacts(tx, scene.geoObjectId)).toHaveLength(1);
     }));
 
   it("too far → German error message", () =>
@@ -251,6 +280,57 @@ describe("„Mit Ort zusammenlegen“", () => {
   it("rejects without admin session", async () => {
     requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
     await expect(mergePlaceAction({ placeId: "0199f0a0-0000-7000-8000-000000000001", intoPlaceId: "0199f0a0-0000-7000-8000-000000000002" })).rejects.toThrow("NEXT_REDIRECT");
+    expect(startRun).not.toHaveBeenCalled();
+  });
+});
+
+describe("„Bestätigen“ / „Verwerfen“ / „Kein Ankerplatz“ in the place header (UI-3)", () => {
+  it("sets the status, then starts the consolidation of the place's object after the commit", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const f = await seedDeliveryArea(tx);
+      const { A } = f.places;
+      await setPlaceStatusAction(form({ placeId: A.placeId, status: "no_anchoring", from: "confirmed" }));
+      const [a] = await tx.select().from(places).where(eq(places.id, A.placeId));
+      expect(a).toMatchObject({ status: "no_anchoring", statusReason: "review" });
+      expect(startRun).toHaveBeenCalledTimes(1);
+      expect(startRun.mock.calls[0]![2]).toMatchObject({ kind: "stage", params: { geoObjectIds: [A.geoObjectId] }, triggeredBy: ADMIN });
+      expect(redirect).toHaveBeenCalledWith(`/places/${A.placeId}?status=no_anchoring&run=run-1`);
+    }));
+
+  it("the status stands when the follow-up run does not start; a refusal returns with the reason", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const f = await seedDeliveryArea(tx);
+      startRun.mockRejectedValue(new Error("queue down"));
+      await setPlaceStatusAction({ placeId: f.places.M.placeId, status: "rejected", from: "confirmed" });
+      expect(redirect).toHaveBeenLastCalledWith(`/places/${f.places.M.placeId}?status=rejected&statusNoRun=1`);
+      expect((await tx.select().from(places).where(eq(places.id, f.places.M.placeId)))[0]!.status).toBe("rejected");
+      await setPlaceStatusAction({ placeId: f.places.M.placeId, status: "rejected", from: "rejected" });
+      expect(redirect).toHaveBeenLastCalledWith(`/places/${f.places.M.placeId}?statusError=unchanged`);
+      await expect(setPlaceStatusAction({ placeId: f.places.M.placeId, status: "abandoned" as "rejected", from: "rejected" })).rejects.toThrow();
+      // without the shown status the form is invalid
+      await expect(setPlaceStatusAction(form({ placeId: f.places.M.placeId, status: "confirmed" }))).rejects.toThrow();
+    }));
+
+  it("a stale tab (the status changed since the page showed it) returns with ?statusError=changed and writes nothing (W4-2)", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const f = await seedDeliveryArea(tx);
+      const { K } = f.places;
+      await setPlaceStatusAction(form({ placeId: K.placeId, status: "confirmed", from: "candidate" }));
+      expect(redirect).toHaveBeenLastCalledWith(expect.stringMatching(new RegExp(`^/places/${K.placeId}\\?status=confirmed`)));
+      startRun.mockClear();
+      // tab A still shows K as a candidate and offers a plain „Verwerfen“
+      await setPlaceStatusAction(form({ placeId: K.placeId, status: "rejected", from: "candidate" }));
+      expect(redirect).toHaveBeenLastCalledWith(`/places/${K.placeId}?statusError=changed`);
+      expect((await tx.select().from(places).where(eq(places.id, K.placeId)))[0]!.status).toBe("confirmed");
+      expect(startRun).not.toHaveBeenCalled();
+    }));
+
+  it("rejects without admin session", async () => {
+    requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
+    await expect(setPlaceStatusAction({ placeId: "0199f0a0-0000-7000-8000-000000000001", status: "rejected", from: "confirmed" })).rejects.toThrow("NEXT_REDIRECT");
     expect(startRun).not.toHaveBeenCalled();
   });
 });

@@ -7,7 +7,7 @@ import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { mentions, places, routes, routeStops } from "@/lib/db/schema";
-import { assignStop, routeOpenStops, routeSections, storeRoute } from "@/lib/domain/extraction/routes";
+import { assignStop, routeSections, storeRoute } from "@/lib/domain/extraction/routes";
 import { tileIdFor } from "@/lib/domain/tiles";
 
 const config = loadConfig("config");
@@ -191,9 +191,6 @@ describe("storeRoute", () => {
       await storeRoute(tx, { versionId: other.versionId, extractionRunId: s.extractionRunId, sections: [{ stops: [stop({ name: "Ermioni", quote: "We left Ermioni early and anchored" }), KOLONA, poros] }] }, config);
       const otherStops = await stopsOf(tx, other.versionId);
       expect(otherStops.map((r) => r.geoObjectId)).toEqual([ermioni, null, null]);
-      expect(await routeOpenStops(tx, { runId: s.runId })).toEqual({ routes: 2, complete: 1, openStops: 3 });
-      // other runs do not count
-      expect(await routeOpenStops(tx, { runId: await insertTestRun(tx) })).toEqual({ routes: 0, complete: 0, openStops: 0 });
       expect(await tx.select().from(routeStops).where(inArray(routeStops.geoObjectId, [s.kolona]))).toHaveLength(1);
     }));
 });

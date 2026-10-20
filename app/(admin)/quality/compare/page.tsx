@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
@@ -34,6 +35,8 @@ import {
   trClass,
 } from "../../_components/ui";
 import { ComparePlace, type CompareRow } from "./compare-place";
+
+export const metadata: Metadata = { title: "Vergleich mit Navily" };
 
 const querySchema = z.object({
   area: z.string().optional().catch(undefined),

@@ -8,7 +8,7 @@ import { thinPlaces } from "@/lib/domain/consolidation/followup";
 import { consolidationTargets } from "@/lib/domain/consolidation/targets";
 import { placeQueries, queryKey } from "@/lib/domain/discovery/queries";
 import { runDate } from "@/lib/domain/runs";
-import { startPlaceDiscoveryRun } from "@/lib/pipeline/discovery-run";
+import { resumePlaceDiscoveryRun, startPlaceDiscoveryRun } from "@/lib/pipeline/discovery-run";
 
 /*
  * Job of the stage `consolidation.followup` (ruling M5-P11): it starts a run, so it reaches `lib/pipeline/runs`. Only
@@ -28,7 +28,8 @@ export type FollowupResult = { places: string[]; discoveryRunId: string | null; 
  * as many as `discovery.serp.maxQueriesPerRun` covers, fewest documents first. Nothing for none, otherwise one place
  * discovery run (`startPlaceDiscoveryRun`, which also writes the `place_discovery_requests`, in that order) triggered
  * by `consolidation:<runId>`. Retry-safe: when a run with that trigger exists already (an earlier attempt started it),
- * nothing happens (`skipped`).
+ * nothing new is started (`skipped`); a run of that attempt whose first stage was never enqueued (still `queued`,
+ * stage `pending`) gets it now (`resumePlaceDiscoveryRun`), so its places' cool-down is not used up for nothing.
  */
 export async function requestPlaceDiscovery(
   db: Db,
@@ -37,8 +38,12 @@ export async function requestPlaceDiscovery(
   opts: { today?: string; config?: AppConfig } = {},
 ): Promise<FollowupResult> {
   const triggeredBy = followupTrigger(runId);
-  const [prior] = await db.select({ id: runs.id }).from(runs).where(eq(runs.triggeredBy, triggeredBy)).limit(1);
-  if (prior) return { places: [], discoveryRunId: prior.id, skipped: true };
+  const [prior] = await db.select({ id: runs.id, params: runs.params }).from(runs).where(eq(runs.triggeredBy, triggeredBy)).limit(1);
+  if (prior) {
+    if (!(await resumePlaceDiscoveryRun(db, boss, prior.id))) return { places: [], discoveryRunId: prior.id, skipped: true };
+    const resumed = ((prior.params ?? {}) as { geoObjectIds?: string[] }).geoObjectIds ?? [];
+    return { places: resumed, discoveryRunId: prior.id, skipped: false };
+  }
   const [run] = await db.select({ params: runs.params }).from(runs).where(eq(runs.id, runId));
   if (!run) throw new Error(`run ${runId} not found`);
   const params = (run.params ?? {}) as Record<string, unknown>;
