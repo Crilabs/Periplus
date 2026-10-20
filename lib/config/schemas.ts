@@ -486,8 +486,8 @@ export const qualitySchema = z.strictObject({
     .refine((r) => r.min <= r.max, "min must not exceed max"),
   /** „im Pilot 50 Orte, je weiterem Revier 20–30“. */
   comparisonSet: z
-    .strictObject({ pilotSize: positiveInt, perAreaMin: positiveInt, perAreaMax: positiveInt })
-    .refine((s) => s.perAreaMin <= s.perAreaMax, "perAreaMin must not exceed perAreaMax"),
+    .strictObject({ pilotSize: positiveInt, perSubdivisionMin: positiveInt, perSubdivisionMax: positiveInt })
+    .refine((s) => s.perSubdivisionMin <= s.perSubdivisionMax, "perSubdivisionMin must not exceed perSubdivisionMax"),
   /** The Navily comparison assistant (matching, normalisation of the compared values). */
   navily: z.strictObject({
     /** No Navily spot farther than this is matched to a place. */
@@ -510,10 +510,10 @@ export const qualitySchema = z.strictObject({
     /** `checked_by` of machine-accepted proposals. */
     proposalVersion: z.string().min(1).max(120),
   }),
-  /** Mediterranean extrapolation of the cost report; `placesPerArea` null = measured in the pilot. */
+  /** Mediterranean extrapolation of the cost report; `placesPerSubdivision` null = measured in the pilot. */
   extrapolation: z
-    .strictObject({ areasMin: positiveInt, areasMax: positiveInt, placesPerArea: positiveInt.nullable() })
-    .refine((e) => e.areasMin <= e.areasMax, "areasMin must not exceed areasMax"),
+    .strictObject({ subdivisionsMin: positiveInt, subdivisionsMax: positiveInt, placesPerSubdivision: positiveInt.nullable() })
+    .refine((e) => e.subdivisionsMin <= e.subdivisionsMax, "subdivisionsMin must not exceed subdivisionsMax"),
 });
 
 /** EMODnet Seabed Habitats WFS (EUSeaMap substrate layer) and the mapping of its classes to `seabed_type`. */

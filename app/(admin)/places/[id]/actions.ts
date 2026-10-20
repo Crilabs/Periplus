@@ -224,8 +224,8 @@ export async function removeProfileEntryAction(input: FormData | z.input<typeof 
 const mergeSchema = z.object({
   placeId: z.uuid(),
   intoPlaceId: z.uuid(),
-  /** Checkbox „über Reviergrenzen“: present when ticked. */
-  confirmAcrossAreas: z.union([z.literal("on"), z.literal("true"), z.boolean()]).optional(),
+  /** Checkbox „über Landesteilgrenzen“: present when ticked. */
+  confirmAcrossSubdivisions: z.union([z.literal("on"), z.literal("true"), z.boolean()]).optional(),
 });
 
 /**
@@ -238,11 +238,11 @@ const mergeSchema = z.object({
  * `?mergeError=<reason>`.
  */
 export async function mergePlaceAction(
-  input: FormData | { placeId: string; intoPlaceId: string; confirmAcrossAreas?: boolean },
+  input: FormData | { placeId: string; intoPlaceId: string; confirmAcrossSubdivisions?: boolean },
 ): Promise<void> {
   const admin = await requireAdmin();
   const raw = fields(input) as Record<string, unknown>;
-  const f = mergeSchema.parse({ ...raw, confirmAcrossAreas: raw.confirmAcrossAreas || undefined });
+  const f = mergeSchema.parse({ ...raw, confirmAcrossSubdivisions: raw.confirmAcrossSubdivisions || undefined });
   const db = getDb();
   let target: string;
   try {
@@ -250,7 +250,7 @@ export async function mergePlaceAction(
       placeId: f.placeId,
       intoPlaceId: f.intoPlaceId,
       decidedBy: admin.email,
-      confirmAcrossAreas: f.confirmAcrossAreas !== undefined,
+      confirmAcrossSubdivisions: f.confirmAcrossSubdivisions !== undefined,
     });
     const run = await afterPlaceMerge(db, getBoss, { ...merged, triggeredBy: admin.email });
     target = `/places/${f.intoPlaceId}?merged=${f.placeId}${run.status === "started" ? `&run=${run.runId}` : "&mergedNoRun=1"}`;

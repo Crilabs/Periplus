@@ -279,19 +279,11 @@ describe("admin server actions", () => {
   it("saveComparisonSelectionAction: validates input, saves every shown place's box at once", () =>
     withRollback(async (tx) => {
       currentDb = tx;
-      // Open sea outside the pilot box, at a spot no other test uses.
+      // Open sea outside the pilot box, at a spot no other test uses; the places belong to the test subdivision.
       const geom = sql`${geomFromGeoJson({ type: "Point", coordinates: [24.61, 32.83] })}`;
-      let [area] = await tx
-        .select({ id: geoObjects.id })
-        .from(geoObjects)
-        .where(sql`${geoObjects.type} = 'area' and ${geoObjects.configKey} = 'saronic' and ${geoObjects.validTo} is null`);
-      area ??= (
-        await tx.insert(geoObjects).values({ type: "area", origin: "manual", configKey: "saronic", geom }).returning({ id: geoObjects.id })
-      )[0]!;
-      const tileId = tileIdFor(24.61, 32.83);
-      await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(24.5, 32.75, 24.75, 33.0, 4326)`, areaId: area.id });
+      const { subdivisionId } = await insertAeginaWest(tx);
       const confirmed = async () => {
-        const [obj] = await tx.insert(geoObjects).values({ type: "bay", origin: "osm", geom }).returning({ id: geoObjects.id });
+        const [obj] = await tx.insert(geoObjects).values({ type: "bay", origin: "osm", geom, subdivisionId }).returning({ id: geoObjects.id });
         const [place] = await tx
           .insert(places)
           .values({ geoObjectId: obj!.id, kind: "anchorage", status: "confirmed", position: geom })
@@ -301,8 +293,8 @@ describe("admin server actions", () => {
       const a = await confirmed();
       const b = await confirmed();
       const rows = () => tx.select().from(comparisonSet).where(sql`${comparisonSet.placeId} in (${a}, ${b})`);
-      const selection = (areaKey: string, shown: string[], included: string[]) => {
-        const f = form({ areaKey });
+      const selection = (subdivisionKey: string, shown: string[], included: string[]) => {
+        const f = form({ subdivisionKey });
         for (const id of shown) f.append("shown", id);
         for (const id of included) f.append("include", id);
         return f;
@@ -310,21 +302,23 @@ describe("admin server actions", () => {
 
       await saveComparisonSelectionAction(selection("atlantis", [a], [a]));
       expect(redirect).toHaveBeenLastCalledWith("/quality?error=invalid_input");
-      await saveComparisonSelectionAction(selection("saronic", ["nope"], []));
-      expect(redirect).toHaveBeenLastCalledWith("/quality?area=saronic&error=invalid_input");
+      await saveComparisonSelectionAction(selection("saronic", [a], [a]));
+      expect(redirect).toHaveBeenLastCalledWith("/quality?error=invalid_input");
+      await saveComparisonSelectionAction(selection(AEGINA_WEST_KEY, ["nope"], []));
+      expect(redirect).toHaveBeenLastCalledWith(`/quality?subdivision=${AEGINA_WEST_KEY}&error=invalid_input`);
       expect(await rows()).toHaveLength(0);
 
       // every ticked box of the list is saved at once (UI-11), not only one row
-      await saveComparisonSelectionAction(selection("saronic", [a, b], [a, b]));
+      await saveComparisonSelectionAction(selection(AEGINA_WEST_KEY, [a, b], [a, b]));
       expect((await rows()).map((r) => r.placeId).sort()).toEqual([a, b].sort());
-      expect(await rows()).toMatchObject([{ areaId: area.id, addedBy: "admin@example.invalid" }, { areaId: area.id }]);
+      expect(await rows()).toMatchObject([{ subdivisionId, addedBy: "admin@example.invalid" }, { subdivisionId }]);
 
       // an unticked box sends no `include`: that place leaves the set, the other stays
-      await saveComparisonSelectionAction(selection("saronic", [a, b], [b]));
+      await saveComparisonSelectionAction(selection(AEGINA_WEST_KEY, [a, b], [b]));
       expect((await rows()).map((r) => r.placeId)).toEqual([b]);
 
       requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
-      await expect(saveComparisonSelectionAction(selection("saronic", [a, b], []))).rejects.toThrow("NEXT_REDIRECT");
+      await expect(saveComparisonSelectionAction(selection(AEGINA_WEST_KEY, [a, b], []))).rejects.toThrow("NEXT_REDIRECT");
       expect(await rows()).toHaveLength(1);
     }));
 

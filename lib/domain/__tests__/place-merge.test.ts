@@ -5,20 +5,35 @@ import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects, places, reviewDecisions, reviewTasks } from "@/lib/db/schema";
 import { buildDelivery } from "@/lib/domain/delivery/build";
-import { newPublicId } from "@/lib/domain/ids";
+import { addNames } from "@/lib/domain/gazetteer/names";
+import { newId, newPublicId } from "@/lib/domain/ids";
 import { mergeCandidates, mergePlaceInto, PlaceMergeNotAllowed, type MergeResult } from "@/lib/domain/place-merge";
 import { createReviewTask } from "@/lib/domain/review";
 import { testDb, withRollback } from "@/test/db";
 import { seedDeliveryArea, type DeliveryFixture } from "@/test/fixtures/delivery/area";
 import { memoryArchive } from "@/test/s3";
-import { insertNamedObject } from "@/test/text";
+import { insertNamedObject, insertTestSubdivision } from "@/test/text";
 
 /*
  * „Mit Ort zusammenlegen“ (ruling M6-P15) on the delivery fixture (rolled back): A and M are confirmed spots of one
- * area, B and C confirmed too, K a candidate, O confirmed on a tile without area.
+ * subdivision (their geo objects' `subdivision_id`), B and C confirmed too, K a candidate, O confirmed on a tile
+ * without subdivision.
  */
 
 const ADMIN = "admin@test.invalid";
+
+/**
+ * The delivery fixture with the geo objects of A, M, B, C and K assigned to one subdivision (nearest land, spec 14);
+ * O (a tile without area) belongs to none.
+ */
+async function seed(tx: Db): Promise<DeliveryFixture> {
+  const fixture = await seedDeliveryArea(tx);
+  const { id, geoObjectId } = await insertTestSubdivision(tx, `XT-${newId()}`, [21.0, 35.0, 21.75, 35.25]);
+  await addNames(tx, geoObjectId, [{ name: "Testlandesteil", language: "de", origin: "manual", isPreferred: true }]);
+  const { A, M, B, C, K } = fixture.places;
+  await tx.update(geoObjects).set({ subdivisionId: id }).where(inArray(geoObjects.id, [A, M, B, C, K].map((p) => p.geoObjectId)));
+  return fixture;
+}
 
 const openTask = (tx: Db, kind: "conflict" | "uncertain_change", geoObjectId: string, attribute: string) =>
   createReviewTask(tx, { kind, subjectType: "profile_attribute", subjectId: `${geoObjectId}:${attribute}`, context: { key: `${attribute}:k`, geoObjectId } });
@@ -49,7 +64,7 @@ const geoRow = async (tx: Db, id: string) => (await tx.select().from(geoObjects)
 describe("mergePlaceInto", () => {
   it("merges a confirmed place into another: place and geo object merged, its open profile tasks dismissed, the decision recorded", () =>
     withRollback(async (tx) => {
-      const f = await seedDeliveryArea(tx);
+      const f = await seed(tx);
       const { A, M } = f.places;
       const conflict = await openTask(tx, "conflict", A.geoObjectId, "holding");
       const uncertain = await openTask(tx, "uncertain_change", A.geoObjectId, "capacity");
@@ -89,24 +104,24 @@ describe("mergePlaceInto", () => {
         .from(reviewTasks)
         .innerJoin(reviewDecisions, eq(reviewDecisions.taskId, reviewTasks.id))
         .where(and(eq(reviewTasks.subjectType, "place_merge"), eq(reviewTasks.subjectId, A.placeId)));
-      expect(audit!.task).toMatchObject({ kind: "place_candidate", status: "decided", context: expect.objectContaining({ intoPlaceId: M.placeId, acrossAreas: false }) });
+      expect(audit!.task).toMatchObject({ kind: "place_candidate", status: "decided", context: expect.objectContaining({ intoPlaceId: M.placeId, acrossSubdivisions: false }) });
       expect(audit!.decision).toMatchObject({ decision: { action: "merge_place", intoPlaceId: M.placeId }, decidedBy: ADMIN });
     }));
 
-  it("refuses merging into itself, into a candidate, an ended or a merged place, and across areas without confirmation", () =>
+  it("refuses merging into itself, into a candidate, an ended or a merged place, and across subdivisions without confirmation", () =>
     withRollback(async (tx) => {
-      const f = await seedDeliveryArea(tx);
+      const f = await seed(tx);
       const { A, M, B, K, O, C } = f.places;
-      const merge = (placeId: string, intoPlaceId: string, confirmAcrossAreas?: boolean) =>
-        refusal(mergePlaceInto(tx, { placeId, intoPlaceId, decidedBy: ADMIN, confirmAcrossAreas }));
+      const merge = (placeId: string, intoPlaceId: string, confirmAcrossSubdivisions?: boolean) =>
+        refusal(mergePlaceInto(tx, { placeId, intoPlaceId, decidedBy: ADMIN, confirmAcrossSubdivisions }));
       expect(await merge(A.placeId, A.placeId)).toBe("self");
       expect(await merge(A.placeId, K.placeId)).toBe("not_valid");
       expect(await merge(K.placeId, A.placeId)).toBe("not_valid");
       // C is no_anchoring, not confirmed
       expect(await merge(A.placeId, C.placeId)).toBe("not_valid");
       expect(await merge(A.placeId, "0199f0a0-0000-7000-8000-00000000ffff")).toBe("not_valid");
-      // O lies on a tile without area
-      expect(await merge(A.placeId, O.placeId)).toBe("across_areas");
+      // O belongs to no subdivision
+      expect(await merge(A.placeId, O.placeId)).toBe("across_subdivisions");
       // nothing was written by the refusals
       expect(await placeRow(tx, A.placeId)).toMatchObject({ status: "confirmed", mergedIntoId: null });
       const mergeTasks = sql`${reviewTasks.subjectType} = 'place_merge' and ${reviewTasks.subjectId} in (${A.placeId}, ${K.placeId})`;
@@ -128,7 +143,7 @@ describe("mergePlaceInto", () => {
 describe("mergePlaceInto and the profile lock", () => {
   it("never consolidates inside the merge: it completes while both profile locks are held elsewhere (ruling M5-F-R4)", () =>
     withRollback(async (tx) => {
-      const f = await seedDeliveryArea(tx);
+      const f = await seed(tx);
       const { A, M } = f.places;
       // a merge that took a profile lock would wait and hit the lock timeout
       await tx.execute(sql`set local lock_timeout = '300ms'`);
@@ -156,7 +171,7 @@ describe("mergePlaceInto lock order", () => {
       await db.transaction(async (other) => {
         await other.execute(sql`select id from geo_objects where id = ${drop.geoObjectId} for update`);
         const { rows } = await other.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
-        merge = mergePlaceInto(db, { placeId: drop.placeId, intoPlaceId: keep.placeId, decidedBy: ADMIN, confirmAcrossAreas: true });
+        merge = mergePlaceInto(db, { placeId: drop.placeId, intoPlaceId: keep.placeId, decidedBy: ADMIN, confirmAcrossSubdivisions: true });
         merge.catch(() => undefined);
         await waitUntilBlockedBy(db, rows[0]!.pid);
         // ... and then takes the places: the waiting merge holds none of them
@@ -204,9 +219,9 @@ async function holdingLocks<T>(db: Db, keys: string[], run: () => Promise<T>): P
 }
 
 describe("mergeCandidates", () => {
-  it("offers the nearest confirmed places with their area", () =>
+  it("offers the nearest confirmed places with their subdivision", () =>
     withRollback(async (tx) => {
-      const f: DeliveryFixture = await seedDeliveryArea(tx);
+      const f: DeliveryFixture = await seed(tx);
       const { A, M, B, O, K, C } = f.places;
       const offered = await mergeCandidates(tx, A.placeId);
       const ids = offered.map((c) => c.id);
@@ -217,23 +232,23 @@ describe("mergeCandidates", () => {
       // nearest first: B (5 km) before M (15 km) before O (42 km)
       expect(ids.indexOf(B.placeId)).toBeLessThan(ids.indexOf(M.placeId));
       expect(ids.indexOf(M.placeId)).toBeLessThan(ids.indexOf(O.placeId));
-      expect(offered.find((c) => c.id === M.placeId)).toMatchObject({ name: "Marina Test", kind: "marina", publicId: M.publicId, sameArea: true, areaName: "Testrevier" });
-      expect(offered.find((c) => c.id === O.placeId)).toMatchObject({ sameArea: false, areaName: null });
+      expect(offered.find((c) => c.id === M.placeId)).toMatchObject({ name: "Marina Test", kind: "marina", publicId: M.publicId, sameSubdivision: true, subdivisionName: "Testlandesteil" });
+      expect(offered.find((c) => c.id === O.placeId)).toMatchObject({ sameSubdivision: false, subdivisionName: null });
       expect(offered.find((c) => c.id === B.placeId)!.distanceM).toBeGreaterThan(1000);
     }));
 
-  it("two places in no area are across areas for the dialog and the merge alike (review I-2)", () =>
+  it("two places in no subdivision are across subdivisions for the dialog and the merge alike (review I-2)", () =>
     withRollback(async (tx) => {
-      const f = await seedDeliveryArea(tx);
+      const f = await seed(tx);
       const { O } = f.places;
-      // a second confirmed place on O's tile, which belongs to no area
+      // a second confirmed place on O's tile, which belongs to no subdivision
       const P = await confirmedPlace(tx, { name: "Elsewhere Two", lon: 21.61, lat: 35.11, tile: f.outsideTileId });
       const offered = await mergeCandidates(tx, O.placeId);
       // the dialog shows the warning and the confirmation box ...
-      expect(offered.find((c) => c.id === P.placeId)).toMatchObject({ sameArea: false, areaName: null });
+      expect(offered.find((c) => c.id === P.placeId)).toMatchObject({ sameSubdivision: false, subdivisionName: null });
       // ... which the merge needs
-      expect(await refusal(mergePlaceInto(tx, { placeId: O.placeId, intoPlaceId: P.placeId, decidedBy: ADMIN }))).toBe("across_areas");
-      expect(await refusal(mergePlaceInto(tx, { placeId: O.placeId, intoPlaceId: P.placeId, decidedBy: ADMIN, confirmAcrossAreas: true }))).toBe("merged");
+      expect(await refusal(mergePlaceInto(tx, { placeId: O.placeId, intoPlaceId: P.placeId, decidedBy: ADMIN }))).toBe("across_subdivisions");
+      expect(await refusal(mergePlaceInto(tx, { placeId: O.placeId, intoPlaceId: P.placeId, decidedBy: ADMIN, confirmAcrossSubdivisions: true }))).toBe("merged");
     }));
 });
 
@@ -241,7 +256,7 @@ describe("the next package after a merge", () => {
   it("delivers the merged spot with mergedInto the place it became part of", () =>
     withRollback(async (tx) => {
       const archive = memoryArchive();
-      const f = await seedDeliveryArea(tx);
+      const f = await seed(tx);
       const build = (date: string) => buildDelivery(tx, archive, f.areaId, { now: new Date(`${date}T08:00:00Z`), inCallerTransaction: true });
       expect(await build("2040-06-01")).toMatchObject({ status: "valid", dataVersion: 1 });
       await mergePlaceInto(tx, { placeId: f.places.A.placeId, intoPlaceId: f.places.M.placeId, decidedBy: ADMIN });

@@ -10,7 +10,7 @@ function envelope([west, south, east, north]: Bbox) {
 }
 
 /** Cycle days of a subdivision: the override for its key, else its country's default. */
-function subdivisionCycleDays(key: string, country: string): number {
+export function subdivisionCycleDays(key: string, country: string): number {
   return getConfig().subdivisions.overrides[key]?.cycleDays ?? countryConfig(country).cycleDays;
 }
 

@@ -1,13 +1,11 @@
 import { eq, inArray, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { describe, expect, it } from "vitest";
-import { areaByKey } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { changeEvents, comparisonSet, evaluationProfiles, extractionRuns, extractionUnits, profiles, runs, tileGeoObjects } from "@/lib/db/schema";
+import { changeEvents, comparisonSet, evaluationProfiles, extractionRuns, extractionUnits, profiles, runs, subdivisions, tileGeoObjects } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { createRun, failRun, getRun } from "@/lib/domain/runs";
 import { consolidationBlocked, consolidationTargets } from "@/lib/domain/consolidation/targets";
-import { syncAreas } from "@/lib/domain/gazetteer/areas";
 import { tileIdFor } from "@/lib/domain/tiles";
 import { STAGES } from "@/lib/jobs/stages";
 import { consolidateGeoJob } from "@/lib/pipeline/consolidation/geo";
@@ -23,7 +21,7 @@ import {
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { insertExtraction, insertMention, insertMentionFact, insertPlace, insertSource } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
-import { insertNamedObject, insertTestTile } from "@/test/text";
+import { insertNamedObject, insertTestSubdivision, insertTestTile } from "@/test/text";
 
 /*
  * Consolidation runs (plan Task 16): the stage functions called directly in withRollback (no worker), objects on the
@@ -33,6 +31,8 @@ import { insertNamedObject, insertTestTile } from "@/test/text";
 const LON = 20.62;
 const LAT = 34.62;
 const TILE = tileIdFor(LON, LAT);
+/** A subdivision around TILE and its eastern neighbour (both tiles inside the polygon). */
+const insertSubdivision = (tx: Db) => insertTestSubdivision(tx, `XT-${newId()}`, [20.3, 34.4, 21.2, 34.9]);
 
 function recordingBoss() {
   const inserted: Array<{ queue: string; data: Record<string, unknown> }> = [];
@@ -150,16 +150,17 @@ describe("consolidation run", () => {
 
   it("an evaluation run over the comparison set writes evaluation profiles only", () =>
     withRollback(async (tx) => {
-      const areaId = (await syncAreas(tx, [areaByKey("saronic")])).get("saronic")!;
+      const sub = await insertSubdivision(tx);
+      const subdivisionKey = (await tx.select({ key: subdivisions.key }).from(subdivisions).where(eq(subdivisions.id, sub.id)))[0]!.key;
       const textRun = await runRow(tx, { documentVersionIds: [] });
       const inSet = await placeWithFact(tx, "Vergleichsbucht", textRun);
       const [p] = await tx.execute<{ id: string }>(sql`select id from places where geo_object_id = ${inSet.objectId}`).then((r) => r.rows);
-      await tx.insert(comparisonSet).values({ placeId: p!.id, areaId, addedBy: "test" });
+      await tx.insert(comparisonSet).values({ placeId: p!.id, subdivisionId: sub.id, addedBy: "test" });
 
       const rec = recordingBoss();
-      const { id } = await startConsolidationRun(tx, rec.boss, { scope: { comparisonSetArea: "saronic" }, evaluation: true, triggeredBy: "test" });
+      const { id } = await startConsolidationRun(tx, rec.boss, { scope: { comparisonSetSubdivision: subdivisionKey }, evaluation: true, triggeredBy: "test" });
       const [run] = await tx.select().from(runs).where(eq(runs.id, id));
-      expect(run).toMatchObject({ kind: "reprocess", scopeType: "system", stages: [CONSOLIDATION_GEO_STAGE], params: { comparisonSetArea: "saronic", evaluation: true, rulesVersion: "v1" } });
+      expect(run).toMatchObject({ kind: "reprocess", scopeType: "system", stages: [CONSOLIDATION_GEO_STAGE], params: { comparisonSetSubdivision: subdivisionKey, evaluation: true, rulesVersion: "v1" } });
       expect(await consolidationTargets(tx, { id, params: run!.params as Record<string, unknown> })).toEqual([inSet.objectId]);
       expect(rec.inserted.map((j) => [j.queue, j.data.geoObjectId, j.data.mode, j.data.rulesVersion])).toEqual([["consolidation.geo", inSet.objectId, "evaluation", "v1"]]);
 
@@ -200,9 +201,16 @@ describe("consolidation run", () => {
       };
       expect(await refused({ tileId: tileIdFor(LON + 2, LAT) })).toBe("unknown_tile");
       expect(await refused({ geoObjectIds: [settlement] })).toBe("geo_object_not_consolidatable");
-      expect(await refused({ areaKey: "nowhere" })).toBe("unknown_area");
-      await syncAreas(tx, [areaByKey("saronic")]);
-      expect(await refused({ comparisonSetArea: "saronic" })).toBe("comparison_set_empty");
+      // an unknown subdivision and a leftover area key name what to use instead (requireSubdivision)
+      const notStarted = (scope: Parameters<typeof startConsolidationRun>[2]["scope"]) =>
+        tx.transaction((t) => startConsolidationRun(t, rec.boss, { scope, triggeredBy: "refused" }));
+      await expect(notStarted({ subdivisionKey: "nowhere" })).rejects.toThrow("Unbekannter Landesteil nowhere");
+      await expect(notStarted({ subdivisionKey: "saronic" })).rejects.toThrow("Revier-Schlüssel saronic ist kein Laufumfang mehr; Landesteil angeben (z. B. GR-I)");
+      await expect(notStarted({ comparisonSetSubdivision: "saronic" })).rejects.toThrow("Revier-Schlüssel saronic ist kein Laufumfang mehr");
+      const sub = await insertSubdivision(tx);
+      const key = (await tx.select({ key: subdivisions.key }).from(subdivisions).where(eq(subdivisions.id, sub.id)))[0]!.key;
+      expect(await refused({ subdivisionKey: key })).toBe("subdivision_without_coast_tiles");
+      expect(await refused({ comparisonSetSubdivision: key })).toBe("comparison_set_empty");
       expect(await tx.select().from(runs).where(eq(runs.triggeredBy, "refused"))).toEqual([]);
     }));
   it("„Summary neu erzeugen“ is a summary-only run with regenerateSummary; any other stage set is refused (ruling M6-H-R1)", () =>
@@ -234,13 +242,14 @@ describe("consolidation run", () => {
       expect(await tx.select().from(runs).where(eq(runs.triggeredBy, "refused-eval"))).toEqual([]);
     }));
 
-  it("tile, area and comparison-set targets skip objects that take no facts, ended and merged ones", () =>
+  it("tile, subdivision and comparison-set targets skip objects that take no facts, ended and merged ones", () =>
     withRollback(async (tx) => {
-      const areaId = (await syncAreas(tx, [areaByKey("saronic")])).get("saronic")!;
-      await insertTestTile(tx, TILE, areaId);
+      const sub = await insertSubdivision(tx);
+      const subdivisionKey = (await tx.select({ key: subdivisions.key }).from(subdivisions).where(eq(subdivisions.id, sub.id)))[0]!.key;
+      await insertTestTile(tx, TILE);
       await tx.execute(sql`update tiles set has_coast = true where id = ${TILE}`);
       const inland = tileIdFor(LON + 0.25, LAT);
-      await insertTestTile(tx, inland, areaId);
+      await insertTestTile(tx, inland);
       await tx.execute(sql`update tiles set has_coast = false where id = ${inland}`);
       const bay = await insertPlace(tx, { lon: LON, lat: LAT, name: "Zielbucht" });
       await tx.insert(tileGeoObjects).values({ tileId: TILE, geoObjectId: bay.objectId });
@@ -253,21 +262,21 @@ describe("consolidation run", () => {
       const today = await utcToday(tx);
       const targets = (params: Record<string, unknown>) => consolidationTargets(tx, { id: newId(), params }, today);
       expect(await targets({ tileId: TILE })).toEqual([bay.objectId, island].sort());
-      // the area: the objects of its valid coast tiles only (not the inland tile's island, nor the settlement)
-      expect(await targets({ areaKey: "saronic" })).toEqual([bay.objectId, island].sort());
+      // the subdivision: the objects of the valid coast tiles of its run scope only (not the inland tile's island, nor the settlement)
+      expect(await targets({ subdivisionKey })).toEqual([bay.objectId, island].sort());
       await tx.execute(sql`update tiles set has_coast = true where id = ${inland}`);
-      expect(await targets({ areaKey: "saronic" })).toEqual([bay.objectId, island, inlandIsland].sort());
+      expect(await targets({ subdivisionKey })).toEqual([bay.objectId, island, inlandIsland].sort());
       await tx.execute(sql`update tiles set valid_from = '2020-01-01', valid_to = '2021-01-01' where id = ${inland}`);
-      expect(await targets({ areaKey: "saronic" })).toEqual([bay.objectId, island].sort());
-      expect(await targets({ areaKey: "saronic" })).not.toContain(village);
+      expect(await targets({ subdivisionKey })).toEqual([bay.objectId, island].sort());
+      expect(await targets({ subdivisionKey })).not.toContain(village);
 
       // the comparison set: an ended place and a merged object drop out
       const ended = await insertPlace(tx, { lon: LON, lat: LAT, name: "Endbucht" });
       const gone = await insertPlace(tx, { lon: LON, lat: LAT, name: "Weg" });
-      for (const placeId of [bay.placeId, ended.placeId, gone.placeId]) await tx.insert(comparisonSet).values({ placeId, areaId, addedBy: "test" });
+      for (const placeId of [bay.placeId, ended.placeId, gone.placeId]) await tx.insert(comparisonSet).values({ placeId, subdivisionId: sub.id, addedBy: "test" });
       await tx.execute(sql`update places set valid_from = '2020-01-01', valid_to = '2021-01-01' where id = ${ended.placeId}`);
       await tx.execute(sql`update geo_objects set merged_into_id = ${bay.objectId} where id = ${gone.objectId}`);
-      expect(await targets({ comparisonSetArea: "saronic" })).toEqual([bay.objectId]);
+      expect(await targets({ comparisonSetSubdivision: subdivisionKey })).toEqual([bay.objectId]);
     }));
 
   it("targets judge validity on the run date, not the database date (final review M-7)", () =>

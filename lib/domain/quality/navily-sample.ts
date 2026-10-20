@@ -11,7 +11,7 @@ import type { Gap, GapReason } from "@/lib/domain/geometry/gaps";
 import type { LonLat } from "@/lib/domain/geometry/water";
 import { DATASETS_STAGE } from "@/lib/pipeline/datasets";
 import { GEOMETRY_STAGE, geometryPlaceIds } from "@/lib/pipeline/geometry";
-import { areaGeoObjectId } from "@/lib/pipeline/tile-scope";
+import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 
 // Grundprinzip 9: Navily values are read at runtime only. Nothing in this module writes them anywhere; the report
 // carries Periplus names and ids plus aggregated agreement, never a Navily name, id, url or value.
@@ -111,18 +111,18 @@ function ownValuesOf(stored: Stored, minShare: number): Pick<OwnPlaceValues, "sh
 }
 
 /**
- * The places of the area's comparison set that the geometry stage computes (`geometryPlaceIds`: valid, unmerged,
+ * The places of the subdivision's comparison set that the geometry stage computes (`geometryPlaceIds`: valid, unmerged,
  * candidate/confirmed/no_anchoring), with the facts of their newest computations; `seabed` = types with a share ≥ 0.3.
- * An unknown area has no set: empty list.
+ * An unknown subdivision has no set: empty list.
  */
 export async function ownValuesForComparisonSet(
   db: Db,
-  areaKey: string,
+  subdivisionKey: string,
   opts: { seabedMinShare?: number } = {},
 ): Promise<OwnPlaceValues[]> {
-  const areaId = await areaGeoObjectId(db, areaKey);
-  if (!areaId) return [];
-  const members = await db.select({ placeId: comparisonSet.placeId }).from(comparisonSet).where(eq(comparisonSet.areaId, areaId));
+  const sub = await subdivisionByKey(db, subdivisionKey);
+  if (!sub) return [];
+  const members = await db.select({ placeId: comparisonSet.placeId }).from(comparisonSet).where(eq(comparisonSet.subdivisionId, sub.id));
   const ids = await geometryPlaceIds(db, { placeIds: members.map((m) => m.placeId) });
   if (ids.length === 0) return [];
 
@@ -238,8 +238,8 @@ export function comparePlace(
 export type GeometryRunStats = { runId: string; places: number; durationS: number; perPlaceS: number };
 export type DatasetImportCosts = { calls: number; costEur: number; byService: Record<string, number> };
 
-/** The newest finished run with stage `geometry.place` over this area (scope `area`), with its place count and duration. */
-export async function geometryRunStats(db: Db, areaKey: string): Promise<GeometryRunStats | null> {
+/** The newest finished run with stage `geometry.place` over this subdivision (scope `subdivision`), with its place count and duration. */
+export async function geometryRunStats(db: Db, subdivisionKey: string): Promise<GeometryRunStats | null> {
   const [run] = await db
     .select({ id: runs.id, startedAt: runs.startedAt, finishedAt: runs.finishedAt, total: runStages.total })
     .from(runs)
@@ -247,8 +247,8 @@ export async function geometryRunStats(db: Db, areaKey: string): Promise<Geometr
     .where(
       and(
         eq(runs.status, "finished"),
-        eq(runs.scopeType, "area"),
-        eq(runs.scopeId, areaKey),
+        eq(runs.scopeType, "subdivision"),
+        eq(runs.scopeId, subdivisionKey),
         isNotNull(runs.startedAt),
         isNotNull(runs.finishedAt),
       ),
@@ -260,13 +260,13 @@ export async function geometryRunStats(db: Db, areaKey: string): Promise<Geometr
   return { runId: run.id, places: run.total, durationS, perPlaceS: run.total > 0 ? durationS / run.total : 0 };
 }
 
-/** External calls and costs of the newest finished `datasets.import` run of this area; zeros when there is none. */
-export async function datasetImportCosts(db: Db, areaKey: string): Promise<DatasetImportCosts> {
+/** External calls and costs of the newest finished `datasets.import` run of this subdivision; zeros when there is none. */
+export async function datasetImportCosts(db: Db, subdivisionKey: string): Promise<DatasetImportCosts> {
   const [run] = await db
     .select({ id: runs.id })
     .from(runs)
     .where(
-      and(eq(runs.status, "finished"), eq(runs.scopeType, "area"), eq(runs.scopeId, areaKey), sql`${DATASETS_STAGE} = any(${runs.stages})`),
+      and(eq(runs.status, "finished"), eq(runs.scopeType, "subdivision"), eq(runs.scopeId, subdivisionKey), sql`${DATASETS_STAGE} = any(${runs.stages})`),
     )
     .orderBy(desc(runs.createdAt), desc(runs.id))
     .limit(1);
@@ -314,7 +314,7 @@ const SEABED_LABEL: Record<PlaceVerdict["seabed"], string> = {
  * „Verglichene Orte“ are the places with geometry; sector and seabed rates refer to those found at Navily.
  */
 export function renderReport(input: {
-  areaKey: string;
+  subdivisionKey: string;
   generatedAt: Date;
   verdicts: PlaceVerdict[];
   runtime: GeometryRunStats | null;
@@ -331,7 +331,7 @@ export function renderReport(input: {
   const withDepth = withGeometry.filter((v) => v.depth === "value");
 
   const lines: string[] = [
-    `# Stichprobe gegen Navily – Revier ${input.areaKey}`,
+    `# Stichprobe gegen Navily – Landesteil ${input.subdivisionKey}`,
     "",
     `Erstellt: ${input.generatedAt.toISOString()}`,
     "",

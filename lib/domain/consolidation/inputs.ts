@@ -383,7 +383,8 @@ export type ProfileContext = {
   } | null;
   identity: { name: string | null; parentId: string | null; geometryHash: string };
   tileCycleDays: number;
-  areaId: string | null;
+  /** The subdivision of the object (`geo_objects.subdivision_id`, nearest land); null before the hierarchy stage ran. */
+  subdivisionId: string | null;
   documentsCount: number;
   sourcesCount: number;
   /** Attribute → reason, from `outputs.gaps` of the newest computations. */
@@ -429,7 +430,7 @@ type ObjectRow = {
   place_lon: number | null;
   place_lat: number | null;
   cycle_days: number | null;
-  area_id: string | null;
+  subdivision_id: string | null;
 };
 
 type TaskRow = { id: string; kind: "conflict" | "uncertain_change"; status: string; subject_id: string; key: string | null; action: string | null };
@@ -440,7 +441,7 @@ const RESOLUTION_BY_ACTION: Record<string, ConflictResolution> = { seasonal: "se
  * The profile context of a geo object on the run date `today`; null for an unknown or invalid (ended, merged) object,
  * one without a fact level, or one whose place is rejected or merged (a merged object is consolidated as part of its
  * survivor). The tile is the place's tile, else the tile of the object's centroid; without a valid tile the cycle is
- * `expiry.defaultCycleDays` and there is no area. Documents and sources count the distinct ones with a mention of the
+ * `expiry.defaultCycleDays`. Documents and sources count the distinct ones with a mention of the
  * object or of an object merged into it, from sources that are neither rejected nor ended (as `loadInputs`).
  */
 export async function loadContext(
@@ -456,7 +457,7 @@ export async function loadContext(
            p.id as place_id, p.kind as place_kind, p.status as place_status, p.status_reason as place_status_reason,
            p.merged_into_id is not null as place_merged, coalesce(${validAtAlias("p", today)}, false) as place_valid,
            p.public_id as place_public_id, ST_X(p.position) as place_lon, ST_Y(p.position) as place_lat,
-           t.cycle_days, t.area_id
+           t.cycle_days, o.subdivision_id
     from geo_objects o
     left join places p on p.geo_object_id = o.id
     left join tiles t on t.id = coalesce(p.tile_id, tile_id_for(o.centroid))
@@ -545,7 +546,7 @@ export async function loadContext(
     place,
     identity: { name: o.name, parentId: o.parent_id, geometryHash: o.geometry_hash },
     tileCycleDays: o.cycle_days ?? cfg.expiry.defaultCycleDays,
-    areaId: o.area_id,
+    subdivisionId: o.subdivision_id,
     documentsCount: counts[0]?.documents ?? 0,
     sourcesCount: counts[0]?.sources ?? 0,
     computationGaps,

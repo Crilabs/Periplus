@@ -6,7 +6,7 @@ import { startRun } from "@/lib/pipeline/runs";
 import { RunScopeNotReady, SEED_STAGE, seedTileIds } from "@/lib/pipeline/tile-scope";
 
 // Re-exported for existing callers; the scope lives apart so job pipelines can use it without importing ./runs.
-export { areaGeoObjectId, SEED_STAGE, seedTileIds } from "@/lib/pipeline/tile-scope";
+export { SEED_STAGE, seedTileIds } from "@/lib/pipeline/tile-scope";
 
 /**
  * Starts a seed run for one tile (scope `tile`) or for the coast tiles of a subdivision (scope `subdivision`). The

@@ -1,10 +1,9 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { geomFromGeoJson } from "@/lib/db/geometry";
-import { comparisonSet, externalCalls, geoObjects, places, runs, runStages } from "@/lib/db/schema";
+import { comparisonSet, externalCalls, places, runs, runStages } from "@/lib/db/schema";
 import { SECTORS, type Sector } from "@/lib/domain/facts/schema-types";
 import { newId } from "@/lib/domain/ids";
 import {
@@ -20,6 +19,7 @@ import {
 import { computePlaceGeometry } from "@/lib/pipeline/geometry";
 import { withRollback } from "@/test/db";
 import { buildBayScene, insertScenePlace } from "@/test/geometry/scene";
+import { insertTestSubdivision } from "@/test/text";
 
 const OPTS = { radiusM: 500, protectedThreshold: 0.5 };
 const AT = { lon: 21.0, lat: 35.24 };
@@ -223,7 +223,7 @@ describe("renderReport", () => {
       comparePlace(own({ placeId: "p-3", name: "Leerbucht", shelter: null, depthGap: "no_water", hasDepth: false }), spots, OPTS),
     ];
     const md = renderReport({
-      areaKey: "saronic",
+      subdivisionKey: "GR-I",
       generatedAt: new Date("2026-10-19T08:00:00Z"),
       verdicts,
       runtime: { runId: "run-1", places: 120, durationS: 600, perPlaceS: 5 },
@@ -248,7 +248,7 @@ describe("renderReport", () => {
     const spots: NavilySpot[] = [{ ...AT, prot: ["n"], seabeds: ["sand"], ...NO_EXTRA }];
     const render = (n: number) =>
       renderReport({
-        areaKey: "saronic",
+        subdivisionKey: "GR-I",
         generatedAt: new Date("2026-10-19T08:00:00Z"),
         verdicts: Array.from({ length: n }, (_, i) => comparePlace(own({ placeId: `p-${i}` }), spots, OPTS)),
         runtime: null,
@@ -263,7 +263,7 @@ describe("renderReport", () => {
 
   it("says so when no run or no costs exist", () => {
     const md = renderReport({
-      areaKey: "saronic",
+      subdivisionKey: "GR-I",
       generatedAt: new Date("2026-10-19T08:00:00Z"),
       verdicts: [],
       runtime: null,
@@ -285,18 +285,15 @@ describe("ownValuesForComparisonSet", () => {
       await computePlaceGeometry(tx, scene.placeId, { today: "2026-10-19" });
       await computePlaceGeometry(tx, outsideSet.placeId, { today: "2026-10-19" });
 
-      const areaKey = `test-${newId()}`;
-      const [area] = await tx
-        .insert(geoObjects)
-        .values({ type: "area", origin: "manual", configKey: areaKey, geom: sql`${geomFromGeoJson({ type: "Point", coordinates: [21, 35.24] })}` })
-        .returning({ id: geoObjects.id });
+      const subdivisionKey = `XT-${newId()}`;
+      const { id: subdivisionId } = await insertTestSubdivision(tx, subdivisionKey, [20.5, 34.7, 21.5, 35.7]);
       await tx.insert(comparisonSet).values([
-        { placeId: scene.placeId, areaId: area!.id, addedBy: "test" },
-        { placeId: bare.placeId, areaId: area!.id, addedBy: "test" },
-        { placeId: rejected.placeId, areaId: area!.id, addedBy: "test" },
+        { placeId: scene.placeId, subdivisionId, addedBy: "test" },
+        { placeId: bare.placeId, subdivisionId, addedBy: "test" },
+        { placeId: rejected.placeId, subdivisionId, addedBy: "test" },
       ]);
 
-      const values = await ownValuesForComparisonSet(tx, areaKey);
+      const values = await ownValuesForComparisonSet(tx, subdivisionKey);
       expect(values.map((v) => v.placeId).sort()).toEqual([scene.placeId, bare.placeId].sort());
 
       const bay = values.find((v) => v.placeId === scene.placeId)!;
@@ -316,22 +313,22 @@ describe("ownValuesForComparisonSet", () => {
       expect(empty.depthGap).toBeNull();
     }));
 
-  it("returns an empty list for an unknown area", () =>
+  it("returns an empty list for an unknown subdivision", () =>
     withRollback(async (tx) => {
       expect(await ownValuesForComparisonSet(tx, `test-${newId()}`)).toEqual([]);
     }));
 });
 
 describe("run statistics", () => {
-  it("geometryRunStats takes the newest finished geometry run of the area", () =>
+  it("geometryRunStats takes the newest finished geometry run of the subdivision", () =>
     withRollback(async (tx) => {
-      const areaKey = `test-${newId()}`;
-      const insertRun = async (status: "finished" | "running", start: string, end: string | null, total: number, scopeId = areaKey) => {
+      const subdivisionKey = `test-${newId()}`;
+      const insertRun = async (status: "finished" | "running", start: string, end: string | null, total: number, scopeId = subdivisionKey) => {
         const [r] = await tx
           .insert(runs)
           .values({
             kind: "stage",
-            scopeType: "area",
+            scopeType: "subdivision",
             scopeId,
             stages: ["geometry.place"],
             triggeredBy: "test",
@@ -343,22 +340,22 @@ describe("run statistics", () => {
         await tx.insert(runStages).values({ runId: r!.id, stage: "geometry.place", ordinal: 0, total, done: total });
         return r!.id;
       };
-      expect(await geometryRunStats(tx, areaKey)).toBeNull();
+      expect(await geometryRunStats(tx, subdivisionKey)).toBeNull();
       await insertRun("finished", "2026-10-01T10:00:00Z", "2026-10-01T10:10:00Z", 50);
       const newest = await insertRun("finished", "2026-10-02T10:00:00Z", "2026-10-02T10:05:00Z", 100);
       await insertRun("running", "2026-10-03T10:00:00Z", null, 100);
       await insertRun("finished", "2026-10-04T10:00:00Z", "2026-10-04T10:01:00Z", 10, `other-${newId()}`);
-      expect(await geometryRunStats(tx, areaKey)).toEqual({ runId: newest, places: 100, durationS: 300, perPlaceS: 3 });
+      expect(await geometryRunStats(tx, subdivisionKey)).toEqual({ runId: newest, places: 100, durationS: 300, perPlaceS: 3 });
     }));
 
   it("datasetImportCosts sums the external calls of the newest dataset import run", () =>
     withRollback(async (tx) => {
-      const areaKey = `test-${newId()}`;
-      expect(await datasetImportCosts(tx, areaKey)).toEqual({ calls: 0, costEur: 0, byService: {} });
+      const subdivisionKey = `test-${newId()}`;
+      expect(await datasetImportCosts(tx, subdivisionKey)).toEqual({ calls: 0, costEur: 0, byService: {} });
       const insertRun = async (createdAt: string, status: "finished" | "failed" | "running" = "finished") => {
         const [r] = await tx
           .insert(runs)
-          .values({ kind: "stage", scopeType: "area", scopeId: areaKey, stages: ["datasets.import"], triggeredBy: "test", status, createdAt: new Date(createdAt) })
+          .values({ kind: "stage", scopeType: "subdivision", scopeId: subdivisionKey, stages: ["datasets.import"], triggeredBy: "test", status, createdAt: new Date(createdAt) })
           .returning({ id: runs.id });
         return r!.id;
       };
@@ -381,6 +378,6 @@ describe("run statistics", () => {
         call(newest, "overpass", "0.5"),
         call(running, "emodnet", "7"),
       ]);
-      expect(await datasetImportCosts(tx, areaKey)).toEqual({ calls: 3, costEur: 0.5, byService: { emodnet: 2, overpass: 1 } });
+      expect(await datasetImportCosts(tx, subdivisionKey)).toEqual({ calls: 3, costEur: 0.5, byService: { emodnet: 2, overpass: 1 } });
     }));
 });

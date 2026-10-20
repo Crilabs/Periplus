@@ -3,13 +3,13 @@ import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import { measurementParams, QUALITY_MEASURE_STAGE } from "@/lib/pipeline/quality-stages";
 import type { StageDefinition } from "@/lib/pipeline/runs";
 
-/** Stage `quality.measure`: exactly one job, the area of `run.params.areaKey` (ruling M7-P5). */
+/** Stage `quality.measure`: exactly one job, the subdivision of `run.params.subdivisionKey` (ruling M7-P5). */
 export const qualityMeasureStage: StageDefinition = {
   name: QUALITY_MEASURE_STAGE,
   queue: "quality.measure",
   async plan(_db, run) {
-    const { areaKey } = measurementParams(run.params);
-    return [{ key: areaKey, areaKey }];
+    const { subdivisionKey } = measurementParams(run.params);
+    return [{ key: subdivisionKey, subdivisionKey }];
   },
 };
 
@@ -20,5 +20,5 @@ export const qualityMeasureStage: StageDefinition = {
 export const qualityMeasureHandler: JobHandler<JobData> = async (_data, ctx) => {
   if (!ctx.runId) throw new Error("quality.measure needs the job's run");
   const result = await computeMeasurement(ctx.db, ctx.runId);
-  ctx.log.info({ runId: ctx.runId, areaKey: result.areaKey, rows: result.rows, skipped: result.skipped }, "quality measured");
+  ctx.log.info({ runId: ctx.runId, subdivisionKey: result.subdivisionKey, rows: result.rows, skipped: result.skipped }, "quality measured");
 };

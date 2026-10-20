@@ -14,36 +14,36 @@ import { startRevisitRun } from "../../lib/pipeline/revisit-run";
 import { RunScopeNotReady } from "../../lib/pipeline/tile-scope";
 
 /*
- * `npm run sim:revisit -- --area <key> --scenario <path> [--max-pages <n>]` (spec 10, plan Task 13): starts a simulated
- * revisit of the area in the simulation clone and waits for it. A second call is the second fetch (a `gone` page turns
+ * `npm run sim:revisit -- --subdivision <key> --scenario <path> [--max-pages <n>]` (spec 10, plan Task 13): starts a simulated
+ * revisit of the subdivision in the simulation clone and waits for it. A second call is the second fetch (a `gone` page turns
  * gone at its second miss). Refused before anything is written: no simulation environment (`requireSimulationEnv`, first
  * of all), a scenario other than `PERIPLUS_SIMULATION` of this call (the worker's when both use one env file), no clone (`sim_meta`), foreign jobs in the
- * queue, a scenario entry the revisit cannot apply, no valid package of the area to compare against. A real pilot
+ * queue, a scenario entry the revisit cannot apply, no valid package of the subdivision to compare against. A real pilot
  * scenario quotes third-party pages and lives under the git-ignored `data/sim/` (ruling M7-F-R3), never in the repo.
  * The checks live in `lib/domain/revisit/preflight.ts`; this file only parses, starts and waits.
  */
 
-const USAGE = "usage: sim/revisit.ts --area <key> --scenario <path> [--max-pages <n>]";
+const USAGE = "usage: sim/revisit.ts --subdivision <key> --scenario <path> [--max-pages <n>]";
 
-export type SimRevisitArgs = { area: string; scenario: string; maxPages?: number };
+export type SimRevisitArgs = { subdivision: string; scenario: string; maxPages?: number };
 
-/** `--area` and `--scenario` are required, `--max-pages` a positive integer; a repeated or unknown flag is refused. */
+/** `--subdivision` and `--scenario` are required, `--max-pages` a positive integer; a repeated or unknown flag is refused. */
 export function parseArgs(argv: string[]): SimRevisitArgs {
   const values: Record<string, string> = {};
   for (let i = 0; i < argv.length; i += 2) {
     const flag = argv[i]!;
     const value = argv[i + 1];
-    if (!["--area", "--scenario", "--max-pages"].includes(flag) || value === undefined || value.startsWith("--")) throw new Error(USAGE);
+    if (!["--subdivision", "--scenario", "--max-pages"].includes(flag) || value === undefined || value.startsWith("--")) throw new Error(USAGE);
     if (values[flag] !== undefined) throw new Error(USAGE);
     values[flag] = value;
   }
-  const area = values["--area"];
+  const subdivision = values["--subdivision"];
   const scenario = values["--scenario"];
-  if (!area || !scenario) throw new Error(USAGE);
-  if (values["--max-pages"] === undefined) return { area, scenario };
+  if (!subdivision || !scenario) throw new Error(USAGE);
+  if (values["--max-pages"] === undefined) return { subdivision, scenario };
   const maxPages = Number(values["--max-pages"]);
   if (!Number.isInteger(maxPages) || maxPages < 1) throw new Error(USAGE);
-  return { area, scenario, maxPages };
+  return { subdivision, scenario, maxPages };
 }
 
 const POLL_MS = 5_000;
@@ -87,7 +87,7 @@ async function main(): Promise<void> {
   const scenario = await loadScenario(args.scenario);
   const { db, close } = createDb(env.DATABASE_URL);
   try {
-    const problems = await revisitPreflight(db, getArchive(), { areaKey: args.area, scenario, maxPages: args.maxPages });
+    const problems = await revisitPreflight(db, getArchive(), { subdivisionKey: args.subdivision, scenario, maxPages: args.maxPages });
     if (problems.length > 0) {
       out("Revisit nicht gestartet:");
       for (const p of problems) out(`  - ${p}`);
@@ -100,7 +100,7 @@ async function main(): Promise<void> {
     try {
       await ensureQueues(boss, config.queues);
       try {
-        ({ id: runId } = await startRevisitRun(db, boss, { areaKey: args.area, triggeredBy: SIM_TRIGGERED_BY, maxPages: args.maxPages }, config));
+        ({ id: runId } = await startRevisitRun(db, boss, { subdivisionKey: args.subdivision, triggeredBy: SIM_TRIGGERED_BY, maxPages: args.maxPages }));
       } catch (error) {
         if (!(error instanceof RunScopeNotReady)) throw error;
         out(`Revisit nicht gestartet (${error.reason}): ${error.message}`);

@@ -301,8 +301,7 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   comparison_run_active: "Ein Konverter-Vergleich läuft bereits",
   embed_backfill_active: "„Einbettungen nachholen“ läuft bereits",
   unknown_tile: "Kachel ist unbekannt oder beendet",
-  unknown_area: "Revier ist nicht konfiguriert",
-  area_without_tiles: "Revier hat noch keine Kacheln – zuerst „Gazetteer aufbauen“",
+  unknown_area: "Ein Revier-Schlüssel ist kein Laufumfang mehr – einen Landesteil angeben",
   versions_not_current: "Eine Dokumentversion gibt es nicht oder sie ist nicht mehr aktuell",
   unknown_comparison: "Diesen Modellvergleich gibt es nicht",
   comparison_without_units: "Der Modellvergleich hat keine Einheiten – zuerst Texte auswerten",
@@ -684,7 +683,7 @@ export const PREVIEW_OMISSION_LABELS: Record<PreviewOmission, string> = {
 export const MERGE_ERROR_LABELS: Record<MergeRefusal, string> = {
   self: "Ein Ort kann nicht mit sich selbst zusammengelegt werden.",
   not_valid: "Beide Orte müssen gültige, bestätigte Orte sein – einer ist beendet, verworfen oder schon zusammengelegt.",
-  across_areas: "Die Orte liegen in verschiedenen Revieren – bitte das Zusammenlegen über Reviergrenzen bestätigen.",
+  across_subdivisions: "Die Orte liegen in verschiedenen Landesteilen – bitte das Zusammenlegen über Landesteilgrenzen bestätigen.",
 };
 
 /** The German text of a `?mergeError=`; null for none or an unknown reason. */

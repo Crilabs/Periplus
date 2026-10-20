@@ -4,7 +4,7 @@ import type { QualityConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { qualitySnapshots, runs, type MetricKey } from "@/lib/db/schema";
 import { measurementParams, QUALITY_MEASURE_STAGE } from "@/lib/pipeline/quality-stages";
-import { areaGeoObjectId } from "@/lib/pipeline/tile-scope";
+import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import {
   costPerPlaceMetric,
   coverageMetric,
@@ -25,13 +25,13 @@ import {
 
 /*
  * A measurement (spec 10 „Snapshots … gespeichert in quality_snapshots (run_id, scope, metric, value, details)“): one
- * run of the stage `quality.measure` per area, with a label and a window in its params; its snapshot rows are one per
- * metric of the area and one per tile metric of each tile of the area. `coverage_navily` comes from `compare:navily
+ * run of the stage `quality.measure` per subdivision, with a label and a window in its params; its snapshot rows are one
+ * per metric of the subdivision and one per tile metric of each tile labelled with the subdivision. `coverage_navily` comes from `compare:navily
  * --coverage` (Navily data only at runtime), never from here. Details hold counts and own ids only (Grundprinzip 9).
  */
 
 /**
- * The metrics computed per tile (the others need the whole area: the comparison of a tile's few places says little).
+ * The metrics computed per tile (the others need the whole subdivision: the comparison of a tile's few places says little).
  * `multi_document` is the acceptance metric (ruling M7-P12), so tiles have it too (ruling M7-D-R1).
  */
 export const TILE_METRICS = [
@@ -69,27 +69,28 @@ async function tileMetrics(db: Db, scope: QualityScope, window: MeasureWindow, t
 }
 
 /**
- * Computes and stores the snapshot of measurement run `runId` for the area: area rows for every metric except
- * `coverage_navily`, tile rows for `TILE_METRICS` of each coast tile labelled with the area and valid on `today`. All
+ * Computes and stores the snapshot of measurement run `runId` for the subdivision: subdivision rows for every metric
+ * except `coverage_navily`, tile rows for `TILE_METRICS` of each coast tile labelled with the subdivision and valid on
+ * `today`. All
  * validity (places, tiles, sources) is judged on `today`, the job's UTC date (ruling M7-D-R2). All in one REPEATABLE
  * READ transaction, so every metric reads the same snapshot while consolidations or reviews commit (final review A
  * M-2), under a lock on the run: when rows of the run exist already (a retried job), nothing is written (`skipped`).
  */
 export async function computeQualitySnapshot(
   db: Db,
-  input: { runId: string; areaKey: string; window: MeasureWindow; today: string; cfg?: QualityConfig },
+  input: { runId: string; subdivisionKey: string; window: MeasureWindow; today: string; cfg?: QualityConfig },
 ): Promise<{ rows: number; skipped: boolean }> {
   const cfg = input.cfg ?? getConfig().quality;
-  const { window, today, areaKey } = input;
+  const { window, today, subdivisionKey } = input;
   return db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`snapshot:${input.runId}`}))`);
     const [existing] = await tx.select({ id: qualitySnapshots.id }).from(qualitySnapshots).where(eq(qualitySnapshots.runId, input.runId)).limit(1);
     if (existing) return { rows: 0, skipped: true };
 
-    const scope = { areaKey };
+    const scope = { subdivisionKey };
     const [coverage, multiSource, multiDocument, factPrecision, shelter, cost, highlight, recent] = await tileMetrics(tx, scope, window, today, cfg);
     const [reviewMinutes, reviewPer100] = await reviewEffortMetrics(tx, window, cfg, { today });
-    const area: MetricResult[] = [
+    const subdivision: MetricResult[] = [
       coverage!,
       multiSource!,
       multiDocument!,
@@ -102,23 +103,23 @@ export async function computeQualitySnapshot(
       reviewPer100,
       highlight!,
       recent!,
-      await placesPerTileMetric(tx, areaKey, cfg, { today }),
+      await placesPerTileMetric(tx, subdivisionKey, cfg, { today }),
     ];
-    const rows: Array<typeof qualitySnapshots.$inferInsert> = area.map((m) => ({
+    const rows: Array<typeof qualitySnapshots.$inferInsert> = subdivision.map((m) => ({
       runId: input.runId,
-      scopeType: "area",
-      scopeId: areaKey,
+      scopeType: "subdivision",
+      scopeId: subdivisionKey,
       metric: m.metric,
       value: m.value,
       details: m.details,
     }));
 
-    const areaId = await areaGeoObjectId(tx, areaKey);
-    if (areaId) {
+    const sub = await subdivisionByKey(tx, subdivisionKey);
+    if (sub) {
       const { rows: tiles } = await tx.execute<{ id: string }>(sql`
-        select id from tiles where area_id = ${areaId} and has_coast and (valid_to is null or valid_to > ${today}::date) order by id`);
+        select id from tiles where subdivision_id = ${sub.id} and has_coast and (valid_to is null or valid_to > ${today}::date) order by id`);
       for (const { id: tileId } of tiles) {
-        for (const m of await tileMetrics(tx, { areaKey, tileId }, window, today, cfg)) {
+        for (const m of await tileMetrics(tx, { subdivisionKey, tileId }, window, today, cfg)) {
           rows.push({ runId: input.runId, scopeType: "tile", scopeId: tileId, metric: m.metric, value: m.value, details: m.details });
         }
       }
@@ -147,15 +148,15 @@ export function isSerializationFailure(e: unknown): boolean {
 
 type MeasurementRun = { id: string; params: unknown; createdAt: Date };
 
-/** The measurement runs of the area, newest first (`label`: only that one). */
-function measurementRuns(db: Db, areaKey: string, o: { label?: string; limit?: number } = {}): Promise<MeasurementRun[]> {
+/** The measurement runs of the subdivision, newest first (`label`: only that one). */
+function measurementRuns(db: Db, subdivisionKey: string, o: { label?: string; limit?: number } = {}): Promise<MeasurementRun[]> {
   const q = db
     .select({ id: runs.id, params: runs.params, createdAt: runs.createdAt })
     .from(runs)
     .where(
       and(
-        eq(runs.scopeType, "area"),
-        eq(runs.scopeId, areaKey),
+        eq(runs.scopeType, "subdivision"),
+        eq(runs.scopeId, subdivisionKey),
         sql`${QUALITY_MEASURE_STAGE} = any(${runs.stages})`,
         o.label === undefined ? undefined : sql`${runs.params} ->> 'label' = ${o.label}`,
         sql`exists (select 1 from quality_snapshots q where q.run_id = ${runs.id})`,
@@ -165,13 +166,13 @@ function measurementRuns(db: Db, areaKey: string, o: { label?: string; limit?: n
   return o.limit === undefined ? q : q.limit(o.limit);
 }
 
-/** Measurement views (area rows) of the runs, in the given order. */
-async function views(db: Db, areaKey: string, list: MeasurementRun[]): Promise<MeasurementView[]> {
+/** Measurement views (subdivision rows) of the runs, in the given order. */
+async function views(db: Db, subdivisionKey: string, list: MeasurementRun[]): Promise<MeasurementView[]> {
   if (list.length === 0) return [];
   const rows = await db
     .select({ runId: qualitySnapshots.runId, metric: qualitySnapshots.metric, value: qualitySnapshots.value, details: qualitySnapshots.details })
     .from(qualitySnapshots)
-    .where(and(inArray(qualitySnapshots.runId, list.map((r) => r.id)), eq(qualitySnapshots.scopeType, "area"), eq(qualitySnapshots.scopeId, areaKey)))
+    .where(and(inArray(qualitySnapshots.runId, list.map((r) => r.id)), eq(qualitySnapshots.scopeType, "subdivision"), eq(qualitySnapshots.scopeId, subdivisionKey)))
     .orderBy(asc(qualitySnapshots.metric));
   return list.map((run) => {
     const { label, from, to } = measurementParams(run.params as Record<string, unknown>);
@@ -180,19 +181,19 @@ async function views(db: Db, areaKey: string, list: MeasurementRun[]): Promise<M
   });
 }
 
-/** The newest measurement of the area that has stored its snapshot; null without one. */
-export async function latestMeasurement(db: Db, areaKey: string): Promise<MeasurementView | null> {
-  return (await views(db, areaKey, await measurementRuns(db, areaKey, { limit: 1 })))[0] ?? null;
+/** The newest measurement of the subdivision that has stored its snapshot; null without one. */
+export async function latestMeasurement(db: Db, subdivisionKey: string): Promise<MeasurementView | null> {
+  return (await views(db, subdivisionKey, await measurementRuns(db, subdivisionKey, { limit: 1 })))[0] ?? null;
 }
 
-/** The newest `limit` measurements of the area with a stored snapshot, newest first. */
-export async function listMeasurements(db: Db, areaKey: string, limit: number): Promise<MeasurementView[]> {
-  return views(db, areaKey, await measurementRuns(db, areaKey, { limit }));
+/** The newest `limit` measurements of the subdivision with a stored snapshot, newest first. */
+export async function listMeasurements(db: Db, subdivisionKey: string, limit: number): Promise<MeasurementView[]> {
+  return views(db, subdivisionKey, await measurementRuns(db, subdivisionKey, { limit }));
 }
 
-/** The measurement of the area with this label (with a stored snapshot); null without one. */
-export async function measurementByLabel(db: Db, areaKey: string, label: string): Promise<MeasurementView | null> {
-  return (await views(db, areaKey, await measurementRuns(db, areaKey, { label, limit: 1 })))[0] ?? null;
+/** The measurement of the subdivision with this label (with a stored snapshot); null without one. */
+export async function measurementByLabel(db: Db, subdivisionKey: string, label: string): Promise<MeasurementView | null> {
+  return (await views(db, subdivisionKey, await measurementRuns(db, subdivisionKey, { label, limit: 1 })))[0] ?? null;
 }
 
 /** The tile rows of a measurement, by tile id. */
@@ -224,13 +225,13 @@ export function metricStatus(metric: MetricKey, value: number | null, cfg: Quali
 }
 
 /**
- * The snapshot of measurement run `runId`, from its params (area, window); `today` (validity, recency) is the UTC date
+ * The snapshot of measurement run `runId`, from its params (subdivision, window); `today` (validity, recency) is the UTC date
  * of `now`. Throws for an unknown run or invalid params.
  */
-export async function computeMeasurement(db: Db, runId: string, now: Date = new Date()): Promise<{ rows: number; skipped: boolean; areaKey: string }> {
+export async function computeMeasurement(db: Db, runId: string, now: Date = new Date()): Promise<{ rows: number; skipped: boolean; subdivisionKey: string }> {
   const [run] = await db.select({ params: runs.params }).from(runs).where(eq(runs.id, runId));
   if (!run) throw new Error(`run ${runId} not found`);
-  const { areaKey, from, to } = measurementParams(run.params as Record<string, unknown>);
-  const result = await computeQualitySnapshot(db, { runId, areaKey, window: { from, to }, today: now.toISOString().slice(0, 10) });
-  return { ...result, areaKey };
+  const { subdivisionKey, from, to } = measurementParams(run.params as Record<string, unknown>);
+  const result = await computeQualitySnapshot(db, { runId, subdivisionKey, window: { from, to }, today: now.toISOString().slice(0, 10) });
+  return { ...result, subdivisionKey };
 }

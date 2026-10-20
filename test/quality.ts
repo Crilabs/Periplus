@@ -4,7 +4,7 @@ import { geomFromGeoJson } from "@/lib/db/geometry";
 import { comparisonSet, places, tiles, type PlaceStatus } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
-import { insertNamedObject } from "@/test/text";
+import { insertNamedObject, insertTestSubdivision } from "@/test/text";
 
 /** Navily markers of the synthetic fixture (`test/fixtures/navily/sample.json`): names, ids and urls (the rating is never read). */
 export const NAVILY_MARKERS = /NAVILY-ONLY-NAME|NAVILY-PORT|987654321|123456789|555000111|navily\.com/;
@@ -39,32 +39,48 @@ function randomTileShift(): (p: LonLat) => LonLat {
 }
 
 /**
- * A synthetic area with its own key and one coast tile per point of `tiles` (the caller rolls back). The area is moved
- * by a random whole-tile shift (`randomTileShift`): `at` maps a point given in the test's own coordinates to the area's
- * real position. `addPlace` adds a place in the first tile (or the tile of `at`, in the test's coordinates), confirmed
- * unless told otherwise.
+ * A synthetic subdivision with its own key and one coast tile per point of `tiles`, labelled with it (the caller rolls
+ * back). The subdivision (`insertTestSubdivision`, a box around the tiles) is moved by a random whole-tile shift
+ * (`randomTileShift`): `at` maps a point given in the test's own coordinates to its real position. `addPlace` adds a
+ * place in the first tile (or the tile of `at`, in the test's coordinates), confirmed unless told otherwise; its geo
+ * object belongs to the subdivision (`geo_objects.subdivision_id`, which decides the metrics) when it lies in one of its
+ * tiles, else to none; `subdivisionId` gives another or none explicitly (e.g. a place in a tile that carries this label
+ * but whose land is the neighbour's, or the other way round).
  */
-export async function insertQualityArea(tx: Db, givenPoints: LonLat[]) {
-  const areaKey = `test-${newId()}`;
+export async function insertQualitySubdivision(tx: Db, givenPoints: LonLat[]) {
+  const subdivisionKey = `XT-${newId()}`;
   const at = randomTileShift();
   const tilePoints = givenPoints.map(at);
   const first = tilePoints[0]!;
-  const areaId = await insertNamedObject(tx, { type: "area", names: [{ name: "Test area" }], lon: first.lon + 0.11, lat: first.lat + 0.11, configKey: areaKey });
+  const boxes = tilePoints.map((p) => tileBbox(tileIdFor(p.lon, p.lat)));
+  const box: [number, number, number, number] = [
+    Math.min(...boxes.map((b) => b[0])) - 0.1,
+    Math.min(...boxes.map((b) => b[1])) - 0.1,
+    Math.max(...boxes.map((b) => b[2])) + 0.1,
+    Math.max(...boxes.map((b) => b[3])) + 0.1,
+  ];
+  const { id: subdivisionId } = await insertTestSubdivision(tx, subdivisionKey, box);
   const tileIds: string[] = [];
   for (const p of tilePoints) {
     const id = tileIdFor(p.lon, p.lat);
     const [w, s, e, n] = tileBbox(id);
     await tx
       .insert(tiles)
-      .values({ id, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, areaId, hasCoast: true })
-      .onConflictDoUpdate({ target: tiles.id, set: { areaId, hasCoast: true } });
+      .values({ id, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, subdivisionId, hasCoast: true })
+      .onConflictDoUpdate({ target: tiles.id, set: { subdivisionId, hasCoast: true } });
     tileIds.push(id);
   }
   let n = 0;
-  const addPlace = async (o: { status?: PlaceStatus; at?: LonLat; inSet?: boolean } = {}) => {
+  const addPlace = async (o: { status?: PlaceStatus; at?: LonLat; inSet?: boolean; subdivisionId?: string | null } = {}) => {
     const pos = o.at ? at(o.at) : first;
     const lon = pos.lon + 0.0005 * ++n;
-    const geoObjectId = await insertNamedObject(tx, { type: "bay", names: [{ name: `Place ${n}` }], lon, lat: pos.lat });
+    const geoObjectId = await insertNamedObject(tx, {
+      type: "bay",
+      names: [{ name: `Place ${n}` }],
+      lon,
+      lat: pos.lat,
+      subdivisionId: o.subdivisionId === undefined ? (tileIds.includes(tileIdFor(lon, pos.lat)) ? subdivisionId : null) : o.subdivisionId,
+    });
     const [p] = await tx
       .insert(places)
       .values({
@@ -77,8 +93,8 @@ export async function insertQualityArea(tx: Db, givenPoints: LonLat[]) {
         position: geomFromGeoJson({ type: "Point", coordinates: [lon, pos.lat] }),
       })
       .returning({ id: places.id });
-    if (o.inSet) await tx.insert(comparisonSet).values({ placeId: p!.id, areaId, addedBy: "test" });
+    if (o.inSet) await tx.insert(comparisonSet).values({ placeId: p!.id, subdivisionId, addedBy: "test" });
     return { placeId: p!.id, geoObjectId };
   };
-  return { areaKey, areaId, tileIds, addPlace, at };
+  return { subdivisionKey, subdivisionId, tileIds, addPlace, at };
 }

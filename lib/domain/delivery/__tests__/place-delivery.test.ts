@@ -1,12 +1,14 @@
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { SpotsFile } from "@/contract";
-import { profileSummaries, tiles } from "@/lib/db/schema";
+import { geoObjects, profileSummaries, tiles } from "@/lib/db/schema";
+import { newId } from "@/lib/domain/ids";
 import { mergePlaceInto } from "@/lib/domain/place-merge";
 import { insertProfile, provenanceEntry } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { seedDeliveryArea, SPOT_A_ATTRIBUTES, SPOT_A_SUMMARY, spotAProvenance } from "@/test/fixtures/delivery/area";
 import { memoryArchive } from "@/test/s3";
+import { insertTestSubdivision } from "@/test/text";
 import { buildDelivery } from "../build";
 import { placeDelivery } from "../view";
 
@@ -85,11 +87,14 @@ describe("placeDelivery", () => {
       const archive = memoryArchive();
       const f = await seedDeliveryArea(tx);
       const { A, M, O } = f.places;
+      // A and M lie on the land of one subdivision (a merge within it needs no confirmation), O on none
+      const { id: subdivisionId } = await insertTestSubdivision(tx, `XT-${newId()}`, [21.0, 35.0, 21.75, 35.25]);
+      await tx.update(geoObjects).set({ subdivisionId }).where(inArray(geoObjects.id, [A.geoObjectId, M.geoObjectId]));
       await buildDelivery(tx, archive, f.areaId, { now, inCallerTransaction: true });
       await mergePlaceInto(tx, { placeId: A.placeId, intoPlaceId: M.placeId, decidedBy: "admin@test.invalid" });
       expect((await placeDelivery(tx, archive, A.placeId, { today })).preview).toEqual({ omitted: "merged", mergedInto: M.publicId });
-      // M merged on into O, a place of no area: the package does not deliver the final target
-      await mergePlaceInto(tx, { placeId: M.placeId, intoPlaceId: O.placeId, decidedBy: "admin@test.invalid", confirmAcrossAreas: true });
+      // M merged on into O, a place of no subdivision: the package does not deliver the final target
+      await mergePlaceInto(tx, { placeId: M.placeId, intoPlaceId: O.placeId, decidedBy: "admin@test.invalid", confirmAcrossSubdivisions: true });
       expect((await placeDelivery(tx, archive, A.placeId, { today })).preview).toEqual({ omitted: "merged_removed", mergedInto: O.publicId });
     }));
 

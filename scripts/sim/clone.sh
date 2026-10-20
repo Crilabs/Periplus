@@ -103,6 +103,6 @@ cat <<NEXT
 $TARGET ist geklont aus $SOURCE_DB.
 Nächste Schritte:
   1. .env.sim aus .env.sim.example anlegen (DATABASE_URL auf $TARGET, S3_WRITE_PREFIX=sim/<YYYYMMDD>/, PERIPLUS_SIMULATION).
-  2. npm run sim:draft-scenario -- --area <key> --out data/sim/scenario.json, den Entwurf von Hand prüfen.
+  2. npm run sim:draft-scenario -- --subdivision <key> --out data/sim/scenario.json, den Entwurf von Hand prüfen.
   3. npm run sim:worker, dann npm run sim:revisit und npm run sim:verify (alle aus .env.sim).
 NEXT

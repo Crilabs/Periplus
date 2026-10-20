@@ -390,7 +390,7 @@ describe("loadContext", () => {
         place: { id: placeId, kind: "anchorage", status: "confirmed", statusReason: null, position: { lon: 21.61, lat: 35.61 }, publicId: null },
         identity: { name: "Kolona", parentId: null, geometryHash: rows[0]!.h },
         tileCycleDays: 14,
-        areaId: null,
+        subdivisionId: null,
         computationGaps: { "depth.min": "no_bathymetry" },
       });
       expect(ctx.resolutions).toEqual(new Map([["seasonal-key", "seasonal"], ["open-key", "left_open"]]));
@@ -404,6 +404,6 @@ describe("loadContext", () => {
     withRollback(async (tx) => {
       // far outside every grid the tests create
       const objectId = await insertNamedObject(tx, { type: "cape", names: [{ name: "Akra" }], lon: -170.1, lat: -60.1 });
-      expect(await loadContext(tx, objectId, cfg, opts.today)).toMatchObject({ level: "cape_strait", tileCycleDays: cfg.expiry.defaultCycleDays, areaId: null });
+      expect(await loadContext(tx, objectId, cfg, opts.today)).toMatchObject({ level: "cape_strait", tileCycleDays: cfg.expiry.defaultCycleDays, subdivisionId: null });
     }));
 });

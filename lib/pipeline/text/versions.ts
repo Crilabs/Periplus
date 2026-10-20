@@ -24,7 +24,7 @@ export const textRunParamsSchema = z.object({
   tileId: z.string().optional(),
   /** The scope tiles of this subdivision (`subdivisionTileIds`); a run start with it must name a valid one. */
   subdivisionKey: z.string().optional(),
-  /** Legacy: only the revisit run (`revisit-stages`) still selects by area until plan 14a task 9; text run starters refuse it. */
+  /** A leftover area key: never a selection, the text run starter refuses it with the subdivision to use instead. */
   areaKey: z.string().optional(),
   reprocess: z.literal(true).optional(),
   rematch: z.literal(true).optional(),
@@ -51,7 +51,7 @@ export type TextRunParams = z.infer<typeof textRunParamsSchema>;
  */
 export async function textRunVersions(db: Db, params: TextRunParams, cfg: AppConfig): Promise<string[]> {
   const ids = new Set<string>();
-  if (params.tileId || params.subdivisionKey || params.areaKey) {
+  if (params.tileId || params.subdivisionKey) {
     for (const id of await scopedVersions(db, params)) ids.add(id);
     if (!params.reprocess && !params.rematch) for (const id of await pendingVersions(db, cfg, params)) ids.add(id);
   }
@@ -67,19 +67,15 @@ export async function textRunVersions(db: Db, params: TextRunParams, cfg: AppCon
   return [...ids].sort();
 }
 
-type Scope = Pick<TextRunParams, "tileId" | "subdivisionKey" | "areaKey">;
+type Scope = Pick<TextRunParams, "tileId" | "subdivisionKey">;
 
 /**
  * The tiles of a tile or subdivision selection (a query with one column): the tile itself, or the scope tiles of the
- * subdivision. The legacy `areaKey` (revisit run) selects the valid tiles labelled with the area.
+ * subdivision.
  */
 export function scopeTiles(params: Scope) {
   if (params.tileId) return sql`select ${params.tileId}::text as id`;
-  if (params.subdivisionKey) {
-    return subdivisionTilesSql(sql`(select id from subdivisions where key = ${params.subdivisionKey} and valid_to is null)`);
-  }
-  return sql`select t.id from tiles t join geo_objects a on a.id = t.area_id and a.type = 'area'
-          where a.config_key = ${params.areaKey!} and t.valid_from <= current_date and (t.valid_to is null or t.valid_to > current_date)`;
+  return subdivisionTilesSql(sql`(select id from subdivisions where key = ${params.subdivisionKey!} and valid_to is null)`);
 }
 
 /**
@@ -124,7 +120,6 @@ export function scopeSources(scope: Scope) {
           select a.config_key as key from tile_geo_objects tgo join geo_objects a on a.id = tgo.geo_object_id and a.type = 'area'
           where tgo.tile_id in (select id from st) and a.config_key is not null
             and a.valid_from <= current_date and (a.valid_to is null or a.valid_to > current_date)
-          union select ${scope.areaKey ?? null}::text where ${scope.areaKey ?? null}::text is not null
         )
         select s.id from sources s
         join serp_results r on r.domain = s.domain

@@ -3,7 +3,6 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { getConfig } from "@/lib/config";
 import { getDb, type Db } from "@/lib/db/client";
 import { tileExists } from "@/lib/domain/geo-view";
 import { getBoss } from "@/lib/jobs/boss";
@@ -18,7 +17,6 @@ import { requireAdmin } from "@/lib/security/require-admin";
 import { startAndRedirect } from "../_components/run-start";
 
 const pingSchema = z.object({ count: z.coerce.number().int().min(1).max(50) });
-const areaKeySchema = z.string().refine((key) => getConfig().areas.some((a) => a.key === key), "unknown area");
 const tileIdSchema = z.string().regex(/^q025:\d+:\d+$/);
 const subdivisionKeySchema = z.string().min(1);
 /** Exactly one of tileId and subdivisionKey: a payload with both, or a rejected tile next to a subdivision, never falls back. */
@@ -27,8 +25,6 @@ const tileOrSubdivisionSchema = (db: Db) =>
     z.object({ tileId: tileIdSchema.refine((id) => tileExists(db, id), "unknown tile"), subdivisionKey: z.undefined().optional() }),
     z.object({ subdivisionKey: subdivisionKeySchema, tileId: z.undefined().optional() }),
   ]);
-// TODO(plan 14a task 9): the revisit run still takes an area key; it takes a subdivision there
-const areaSchema = z.object({ areaKey: areaKeySchema });
 
 const fields = (input: FormData | object) => (input instanceof FormData ? Object.fromEntries(input) : input);
 
@@ -116,14 +112,14 @@ export async function startReprocessAction(input: FormData | { subdivisionKey: s
 }
 
 /**
- * „Revisit für Revier“ (spec 10, ruling M7-P22): crawls every approved source again and evaluates what changed for a
- * configured area, up to the consolidation and its change events; refusals (no tiles, no approved source, a source
+ * „Revisit für Landesteil“ (spec 10, ruling M7-P22): crawls every approved source again and evaluates what changed for a
+ * subdivision, up to the consolidation and its change events; refusals (no tiles, no approved source, a source
  * being fetched) return to the runs page.
  */
-export async function startRevisitAction(input: FormData | { areaKey: string }): Promise<void> {
+export async function startRevisitAction(input: FormData | { subdivisionKey: string }): Promise<void> {
   const admin = await requireAdmin();
-  const { areaKey } = areaSchema.parse(fields(input));
+  const { subdivisionKey } = subdivisionSchema.parse(fields(input));
   const db = getDb();
   const boss = await getBoss();
-  await startAndRedirect(() => startRevisitRun(db, boss, { areaKey, triggeredBy: admin.email }), "/runs");
+  await startAndRedirect(() => startRevisitRun(db, boss, { subdivisionKey, triggeredBy: admin.email }), "/runs");
 }

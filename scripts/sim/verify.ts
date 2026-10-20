@@ -10,7 +10,7 @@ import { getEnv } from "../../lib/env";
 export type { SimVerifyReport };
 
 /*
- * `npm run sim:verify -- --area <key> --scenario <path> [--base-url http://localhost:<port> [--spot sp_…]] [--out <json>]`
+ * `npm run sim:verify -- --subdivision <key> --scenario <path> [--base-url http://localhost:<port> [--spot sp_…]] [--out <json>]`
  * (spec 10, plan Task 13): compares the change feed of the simulation clone since the clone (`sim_meta.from_seq`) with
  * the scenario („10 von 10 erwartet, 0 zusätzliche“) and, with `--base-url`, asks the local simulation web for a spot as
  * of the day before the revisit (it must answer the old version). The API key comes from `PERIPLUS_API_KEY` (in
@@ -19,14 +19,14 @@ export type { SimVerifyReport };
  * `lib/domain/revisit/sim-verify.ts`.
  */
 
-const USAGE = "usage: sim/verify.ts --area <key> --scenario <path> [--base-url <http://localhost:…> [--spot <sp_…>]] [--out <file.json>] (API key in PERIPLUS_API_KEY)";
+const USAGE = "usage: sim/verify.ts --subdivision <key> --scenario <path> [--base-url <http://localhost:…> [--spot <sp_…>]] [--out <file.json>] (API key in PERIPLUS_API_KEY)";
 
-export type SimVerifyArgs = { area: string; scenario: string; baseUrl?: string; key?: string; spot?: string; out?: string };
+export type SimVerifyArgs = { subdivision: string; scenario: string; baseUrl?: string; key?: string; spot?: string; out?: string };
 
-const FLAGS = { "--area": "area", "--scenario": "scenario", "--base-url": "baseUrl", "--spot": "spot", "--out": "out" } as const;
+const FLAGS = { "--subdivision": "subdivision", "--scenario": "scenario", "--base-url": "baseUrl", "--spot": "spot", "--out": "out" } as const;
 
 /**
- * `--area` and `--scenario` are required; `--spot` only with `--base-url`, which needs the key in
+ * `--subdivision` and `--scenario` are required; `--spot` only with `--base-url`, which needs the key in
  * `env.PERIPLUS_API_KEY`. `--key` is refused: a key on the command line lands in the shell history.
  */
 export function parseArgs(argv: string[], env: Record<string, string | undefined> = {}): SimVerifyArgs {
@@ -40,7 +40,7 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
     if (args[key] !== undefined) throw new Error(USAGE);
     args[key] = value;
   }
-  if (!args.area || !args.scenario) throw new Error(USAGE);
+  if (!args.subdivision || !args.scenario) throw new Error(USAGE);
   if (args.spot !== undefined && args.baseUrl === undefined) throw new Error(USAGE);
   if (args.baseUrl !== undefined) {
     const key = env.PERIPLUS_API_KEY;
@@ -53,7 +53,7 @@ export function parseArgs(argv: string[], env: Record<string, string | undefined
 /** The table printed for a report (German, as the run book quotes it). */
 export function renderReport(r: SimVerifyReport): string[] {
   const v = r.verification;
-  const lines = [`Revisit-Prüfung ${r.area} (Szenario ${r.scenario}, Ereignisse ab seq ${r.fromSeq}):`];
+  const lines = [`Revisit-Prüfung ${r.subdivision} (Szenario ${r.scenario}, Ereignisse ab seq ${r.fromSeq}):`];
   for (const e of v.entries) {
     lines.push(
       `  ${e.ok ? "ok    " : "FEHLER"} ${e.id}  Dokument ${e.document.actual}${e.document.actual === e.document.expected ? "" : ` (erwartet ${e.document.expected})`}  Ereignisse ${e.events.matched}/${e.events.expected}  ${e.url}`,

@@ -1,10 +1,7 @@
-import { and, eq } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { geoObjects } from "@/lib/db/schema";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { parseTileId } from "@/lib/domain/tiles";
-import { validAt } from "@/lib/domain/timeline";
 
 // No import of ./runs here: modules a job handler imports must not reach the stage registry (import cycle).
 
@@ -28,7 +25,6 @@ export type RunScopeReason =
   | "embed_backfill_active"
   | "unknown_tile"
   | "unknown_area"
-  | "area_without_tiles"
   | "versions_not_current"
   | "unknown_comparison"
   | "comparison_without_units"
@@ -80,13 +76,4 @@ export async function seedTileIds(db: Db, params: Record<string, unknown>): Prom
   }
   const sub = await requireSubdivision(db, params.subdivisionKey);
   return subdivisionTileIds(db, sub.id);
-}
-
-/** The valid geo object of the area `areaKey` (written by `tiles.ensure`); null before it exists. */
-export async function areaGeoObjectId(db: Db, areaKey: string): Promise<string | null> {
-  const [area] = await db
-    .select({ id: geoObjects.id })
-    .from(geoObjects)
-    .where(and(eq(geoObjects.type, "area"), eq(geoObjects.configKey, areaKey), validAt(geoObjects)));
-  return area?.id ?? null;
 }

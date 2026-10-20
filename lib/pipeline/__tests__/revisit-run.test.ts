@@ -45,7 +45,7 @@ describe("simulated revisit on the fixture area", () => {
         for (const day of ["2026-06-01", "2026-06-08"]) revisits.push(await revisit(tx, archive, day, scenario));
         setSimulationMode(undefined);
 
-        const v = await verifyRevisit(tx, scenario, { fromSeq, areaKey: fx.areaKey });
+        const v = await verifyRevisit(tx, scenario, { fromSeq, subdivisionKey: fx.subdivisionKey });
         expect(v.unexpected).toEqual([]);
         expect(v.entries.map((e) => [e.id, e.ok])).toEqual([
           ["e1", true],
@@ -66,7 +66,7 @@ describe("simulated revisit on the fixture area", () => {
         // the runs: kind revisit, no follow-up stage, no geocoding or follow-up job (ruling M7-P8)
         for (const r of revisits) {
           const [row] = await tx.select().from(runs).where(eq(runs.id, r.id));
-          expect(row).toMatchObject({ kind: "revisit", scopeType: "area", scopeId: fx.areaKey, status: "finished" });
+          expect(row).toMatchObject({ kind: "revisit", scopeType: "subdivision", scopeId: fx.subdivisionKey, status: "finished" });
           expect(row!.stages).toEqual(REVISIT_STAGES.filter((s) => s !== "consolidation.followup"));
           expect(r.queues.filter((q) => ["mentions.geocode", "consolidation.followup", "discovery.place", "discovery.tile"].includes(q))).toEqual([]);
         }
@@ -128,7 +128,7 @@ describe("simulated revisit on the fixture area", () => {
           ...scenario,
           entries: scenario.entries.map((e) => (e.id === "e2" ? { ...e, expect: { ...e.expect, events: [{ ...e.expect.events[0]!, type: "uncertain" as const }] } } : e)),
         };
-        const v = await verifyRevisit(tx, wrong, { fromSeq, areaKey: fx.areaKey });
+        const v = await verifyRevisit(tx, wrong, { fromSeq, subdivisionKey: fx.subdivisionKey });
         expect(v.entries.find((e) => e.id === "e2")).toMatchObject({ events: { expected: 1, matched: 0 }, ok: false });
         expect(v.correct).toBe(4);
         expect(v.unexpected.map((u) => [u.subject, u.attribute, u.type, u.severity])).toEqual([[fx.publicIds.B, "depth.min", "changed", "safety"]]);

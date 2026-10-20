@@ -236,9 +236,9 @@ describe("loadConfig", () => {
     expect(q.targets.review_minutes_per_100).toEqual({ pilot: null, full: 30, direction: "max" });
     expect(q.secondRunReviewMinutesMax).toBe(60);
     expect(q.placesPerTile).toEqual({ min: 10, max: 40 });
-    expect(q.comparisonSet).toEqual({ pilotSize: 50, perAreaMin: 20, perAreaMax: 30 });
+    expect(q.comparisonSet).toEqual({ pilotSize: 50, perSubdivisionMin: 20, perSubdivisionMax: 30 });
     expect(q.navily.proposalVersion).toBe("navily-assistant/1");
-    expect(q.extrapolation).toEqual({ areasMin: 60, areasMax: 100, placesPerArea: null });
+    expect(q.extrapolation).toEqual({ subdivisionsMin: 60, subdivisionsMax: 100, placesPerSubdivision: null });
   });
 
   it("quality config targets only name metric keys and reject an inverted tile range", () => {

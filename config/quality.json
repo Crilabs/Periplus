@@ -22,7 +22,7 @@
   "recentObservationMonths": 18,
   "shelterConfirmTolerance": 0.2,
   "placesPerTile": { "min": 10, "max": 40 },
-  "comparisonSet": { "pilotSize": 50, "perAreaMin": 20, "perAreaMax": 30 },
+  "comparisonSet": { "pilotSize": 50, "perSubdivisionMin": 20, "perSubdivisionMax": 30 },
   "navily": {
     "maxRadiusM": 1000,
     "nameStrongMin": 0.8,
@@ -35,5 +35,5 @@
     "depthStepM": 0.5,
     "proposalVersion": "navily-assistant/1"
   },
-  "extrapolation": { "areasMin": 60, "areasMax": 100, "placesPerArea": null }
+  "extrapolation": { "subdivisionsMin": 60, "subdivisionsMax": 100, "placesPerSubdivision": null }
 }

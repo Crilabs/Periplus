@@ -1,15 +1,15 @@
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import { getConsolidationConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { computations, facts, mentions, places, profiles, restrictedAreas, reviewDecisions, reviewTasks, sources, wikidataSitelinks } from "@/lib/db/schema";
+import { computations, facts, geoObjects, mentions, places, profiles, restrictedAreas, reviewDecisions, reviewTasks, sources, wikidataSitelinks } from "@/lib/db/schema";
 import type { GeoObjectType, PlaceStatus } from "@/lib/db/schema/geo";
-import { popularityForArea } from "@/lib/domain/consolidation/derived/popularity";
+import { popularityForArea, popularityForSubdivision } from "@/lib/domain/consolidation/derived/popularity";
 import { loadContext, loadDerivedInputs, loadInputs } from "@/lib/domain/consolidation/inputs";
 import { newId } from "@/lib/domain/ids";
 import { testDb, withRollback } from "@/test/db";
-import { insertNamedObject, insertTestTile, insertTestVersion } from "@/test/text";
+import { insertNamedObject, insertTestSubdivision, insertTestTile, insertTestVersion } from "@/test/text";
 
 /*
  * Inputs of the derived values (quietness, POI importance and spot candidates), inside withRollback around 21.0° E /
@@ -217,22 +217,54 @@ describe("loadDerivedInputs", () => {
     }));
 });
 
-describe("popularityForArea", () => {
-  async function profile(tx: Db, objectId: string, version: number, sourcesCount: number) {
-    await tx.insert(profiles).values({
-      geoObjectId: objectId,
-      version,
-      validFrom: "2026-10-19",
-      attributes: {},
-      provenance: {},
-      sourcesCount,
-      documentsCount: sourcesCount,
-      contentHash: newId(),
-      factSchemaVersion: "v2",
-      rulesVersion: "v1",
-    });
-  }
+async function profile(tx: Db, objectId: string, version: number, sourcesCount: number) {
+  await tx.insert(profiles).values({
+    geoObjectId: objectId,
+    version,
+    validFrom: "2026-10-19",
+    attributes: {},
+    provenance: {},
+    sourcesCount,
+    documentsCount: sourcesCount,
+    contentHash: newId(),
+    factSchemaVersion: "v2",
+    rulesVersion: "v1",
+  });
+}
 
+describe("popularityForSubdivision", () => {
+  it("popularity normalises within the subdivision of the place, not the tile label", () =>
+    withRollback(async (tx) => {
+      const home = await insertTestSubdivision(tx, `XT-${newId()}`, [22.0, 35.0, 22.5, 35.25]);
+      const neighbour = await insertTestSubdivision(tx, `XT-${newId()}`, [22.0, 35.25, 22.5, 35.5]);
+      // the tile of the home place carries the neighbour's label (it shares its coast, the neighbour has the longer share)
+      await insertTestTile(tx, "q025:808:500", null, neighbour.id);
+      await insertTestTile(tx, "q025:809:500", null, home.id);
+      const assign = (objectId: string, subdivisionId: string) => tx.update(geoObjects).set({ subdivisionId }).where(eq(geoObjects.id, objectId));
+      const a = await placeAt(tx, 22.1, LAT); // home land, in the tile labelled with the neighbour
+      const b = await placeAt(tx, 22.3, LAT); // home land, in a tile labelled with home
+      const other = await placeAt(tx, 22.12, LAT); // neighbour land, in the same neighbour-labelled tile: its own maximum
+      const unassigned = await placeAt(tx, 22.14, LAT); // no subdivision yet
+      await assign(a.id, home.id);
+      await assign(b.id, home.id);
+      await assign(other.id, neighbour.id);
+      await profile(tx, a.id, 1, 15);
+      await profile(tx, b.id, 1, 3);
+      await profile(tx, other.id, 1, 99);
+      await profile(tx, unassigned.id, 1, 80);
+
+      const homeValues = await popularityForSubdivision(tx, home.id, opts.today);
+      expect([...homeValues.keys()].sort()).toEqual([a.id, b.id].sort());
+      expect(homeValues.get(a.id)).toBe(1);
+      expect(homeValues.get(b.id)).toBeCloseTo(0.5, 3);
+      const neighbourValues = await popularityForSubdivision(tx, neighbour.id, opts.today);
+      expect([...neighbourValues.keys()]).toEqual([other.id]);
+      expect(neighbourValues.get(other.id)).toBe(1);
+    }));
+});
+
+// Legacy: the delivery build still reads it (plan 14a task 10 switches it to `popularityForSubdivision`).
+describe("popularityForArea", () => {
   it("normalizes the newest sources_count of the area's places by the area maximum", () =>
     withRollback(async (tx) => {
       const area = await object(tx, "area", { lon: 22.1 });

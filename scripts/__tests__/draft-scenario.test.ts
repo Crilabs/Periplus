@@ -5,7 +5,7 @@ import { applyEdit, editBase, parseScenario, preflightScenario } from "@/lib/dom
 import { verifyRevisit } from "@/lib/domain/revisit/verify";
 import { parseArgs, renderDraftSummary } from "@/scripts/sim/draft-scenario";
 import { withRollback } from "@/test/db";
-import { documentUrl, REVISIT_AREA_KEY, seedRevisitArea } from "@/test/revisit/fixture/area";
+import { documentUrl, REVISIT_SUBDIVISION_KEY, seedRevisitArea } from "@/test/revisit/fixture/area";
 import { recordedState, revisit } from "@/test/revisit/fixture/run";
 import { memoryArchive } from "@/test/s3";
 
@@ -27,7 +27,7 @@ describe("draftScenario on the fixture area", () => {
     () =>
       withRollback(async (tx) => {
         const { archive, fx } = await recordedState(tx);
-        const { scenario, gaps } = await draftScenario(tx, archive, { areaKey: REVISIT_AREA_KEY, seed: 1 });
+        const { scenario, gaps } = await draftScenario(tx, archive, { subdivisionKey: REVISIT_SUBDIVISION_KEY, seed: 1 });
         const searched = scenario.entries.flatMap((e) =>
           e.edit.op === "replace" ? [{ url: e.url, text: e.edit.from }] : e.edit.op === "delete" ? [{ url: e.url, text: e.edit.text }] : [],
         );
@@ -77,7 +77,7 @@ describe("draftScenario on the fixture area", () => {
       // the recorded pages without „Lauf 1“: no fact, so no category finds a document (and no model batch runs)
       const archive = memoryArchive();
       await seedRevisitArea(tx, archive);
-      const { scenario, gaps } = await draftScenario(tx, archive, { areaKey: REVISIT_AREA_KEY, seed: 1 });
+      const { scenario, gaps } = await draftScenario(tx, archive, { subdivisionKey: REVISIT_SUBDIVISION_KEY, seed: 1 });
       expect(scenario.entries).toEqual([]);
       expect(gaps.map((g) => g.split(" – ")[0])).toEqual([
         "Taverne verneint: 0 von 2 gefunden",
@@ -88,7 +88,8 @@ describe("draftScenario on the fixture area", () => {
         "Bojen widersprochen: 0 von 1 gefunden",
         "unverändert abgerufen: 0 von 1 gefunden",
       ]);
-      await expect(draftScenario(tx, archive, { areaKey: "no-such-area", seed: 1 })).rejects.toThrow(/Revier no-such-area ist unbekannt/);
+      await expect(draftScenario(tx, archive, { subdivisionKey: "no-such-area", seed: 1 })).rejects.toThrow(/Unbekannter Landesteil no-such-area/);
+      await expect(draftScenario(tx, archive, { subdivisionKey: "saronic", seed: 1 })).rejects.toThrow(/Revier-Schlüssel saronic ist kein Laufumfang mehr/);
     }));
 
   it(
@@ -96,19 +97,19 @@ describe("draftScenario on the fixture area", () => {
     () =>
       withRollback(async (tx) => {
         const { archive, fx, fromSeq } = await recordedState(tx);
-        const draft = await draftScenario(tx, archive, { areaKey: REVISIT_AREA_KEY, seed: 7 });
+        const draft = await draftScenario(tx, archive, { subdivisionKey: REVISIT_SUBDIVISION_KEY, seed: 7 });
         // the written file is a valid scenario, and every entry would be fetched and edited by the revisit
         const scenario = parseScenario(JSON.stringify(draft.scenario), "draft.json");
         const results = await preflightScenario(tx, archive, scenario);
         expect(results.length).toBe(5);
         expect(results.filter((r) => !r.ok)).toEqual([]);
         // the same seed gives the same draft
-        expect((await draftScenario(tx, archive, { areaKey: REVISIT_AREA_KEY, seed: 7 })).scenario).toEqual(draft.scenario);
+        expect((await draftScenario(tx, archive, { subdivisionKey: REVISIT_SUBDIVISION_KEY, seed: 7 })).scenario).toEqual(draft.scenario);
 
         setSimulationMode(true);
         for (const day of ["2026-06-01", "2026-06-08"]) await revisit(tx, archive, day, scenario);
         setSimulationMode(undefined);
-        const v = await verifyRevisit(tx, scenario, { fromSeq, areaKey: fx.areaKey });
+        const v = await verifyRevisit(tx, scenario, { fromSeq, subdivisionKey: fx.subdivisionKey });
         expect(v.unexpected).toEqual([]);
         expect(v.entries.filter((e) => !e.ok)).toEqual([]);
         expect(v.passes).toBe(true);
@@ -125,7 +126,7 @@ describe("draftScenario on the fixture area", () => {
           { source: "S3", path: "/2026/alonaki-abend", markdown: "# Abend\n\nAbends in Alonaki auf Revisonisi. Die Taverne Nikos ist im Sommer geöffnet.\n", language: "de" },
         ]);
         const pages = [fx.documents.d1.url, extras[0]!.url];
-        const { scenario, gaps } = await draftScenario(tx, archive, { areaKey: REVISIT_AREA_KEY, seed: 3 });
+        const { scenario, gaps } = await draftScenario(tx, archive, { subdivisionKey: REVISIT_SUBDIVISION_KEY, seed: 3 });
         const deleted = scenario.entries.find((e) => e.edit.op === "delete")!;
         expect(deleted).toMatchObject({ edit: { text: "Die Taverne Nikos ist im Sommer geöffnet." }, expect: { document: "new_version", events: [] } });
         expect(pages).toContain(deleted.url);
@@ -138,7 +139,7 @@ describe("draftScenario on the fixture area", () => {
         setSimulationMode(true);
         for (const day of ["2026-06-01", "2026-06-08"]) await revisit(tx, archive, day, scenario);
         setSimulationMode(undefined);
-        const v = await verifyRevisit(tx, scenario, { fromSeq, areaKey: fx.areaKey });
+        const v = await verifyRevisit(tx, scenario, { fromSeq, subdivisionKey: fx.subdivisionKey });
         expect(v.unexpected).toEqual([]);
         expect(v.entries.filter((e) => !e.ok)).toEqual([]);
         expect(v.passes).toBe(true);
@@ -148,15 +149,15 @@ describe("draftScenario on the fixture area", () => {
 });
 
 describe("sim:draft-scenario CLI", () => {
-  it("needs an area and a .json file under data/sim/; the seed defaults to 1", () => {
-    expect(parseArgs(["--area", "saronic", "--out", "data/sim/scenario.json"], "/repo")).toEqual({ area: "saronic", out: "data/sim/scenario.json", seed: 1 });
-    expect(parseArgs(["--area", "saronic", "--out", "data/sim/a/b.json", "--seed", "3"], "/repo")).toEqual({ area: "saronic", out: "data/sim/a/b.json", seed: 3 });
-    expect(() => parseArgs(["--area", "saronic"], "/repo")).toThrow(/usage/);
-    expect(() => parseArgs(["--area", "saronic", "--out", "test/revisit/scenario.json"], "/repo")).toThrow(/unter data\/sim\//);
-    expect(() => parseArgs(["--area", "saronic", "--out", "data/sim/../x.json"], "/repo")).toThrow(/unter data\/sim\//);
-    expect(() => parseArgs(["--area", "saronic", "--out", "data/sim/x.txt"], "/repo")).toThrow(/unter data\/sim\//);
-    expect(() => parseArgs(["--area", "saronic", "--out", "data/sim/x.json", "--seed", "-1"], "/repo")).toThrow(/usage/);
-    expect(() => parseArgs(["--area", "a", "--area", "b", "--out", "data/sim/x.json"], "/repo")).toThrow(/usage/);
+  it("needs a subdivision and a .json file under data/sim/; the seed defaults to 1", () => {
+    expect(parseArgs(["--subdivision", "GR-I", "--out", "data/sim/scenario.json"], "/repo")).toEqual({ subdivision: "GR-I", out: "data/sim/scenario.json", seed: 1 });
+    expect(parseArgs(["--subdivision", "GR-I", "--out", "data/sim/a/b.json", "--seed", "3"], "/repo")).toEqual({ subdivision: "GR-I", out: "data/sim/a/b.json", seed: 3 });
+    expect(() => parseArgs(["--subdivision", "GR-I"], "/repo")).toThrow(/usage/);
+    expect(() => parseArgs(["--subdivision", "GR-I", "--out", "test/revisit/scenario.json"], "/repo")).toThrow(/unter data\/sim\//);
+    expect(() => parseArgs(["--subdivision", "GR-I", "--out", "data/sim/../x.json"], "/repo")).toThrow(/unter data\/sim\//);
+    expect(() => parseArgs(["--subdivision", "GR-I", "--out", "data/sim/x.txt"], "/repo")).toThrow(/unter data\/sim\//);
+    expect(() => parseArgs(["--subdivision", "GR-I", "--out", "data/sim/x.json", "--seed", "-1"], "/repo")).toThrow(/usage/);
+    expect(() => parseArgs(["--subdivision", "a", "--subdivision", "b", "--out", "data/sim/x.json"], "/repo")).toThrow(/usage/);
   });
 
   it("the summary lists entries, gaps and the review reminder", () => {

@@ -12,9 +12,9 @@ import { parseArgs as parseRevisitArgs, waitForRun } from "@/scripts/sim/revisit
 import { simVerify } from "@/lib/domain/revisit/sim-verify";
 import { parseArgs, renderReport } from "@/scripts/sim/verify";
 import { withRollback } from "@/test/db";
-import { insertQualityArea } from "@/test/quality";
+import { insertQualitySubdivision } from "@/test/quality";
 import { memoryArchive } from "@/test/s3";
-import { insertTestSource } from "@/test/text";
+import { insertNamedObject, insertTestSource } from "@/test/text";
 
 /*
  * The CLIs of the simulated revisit (plan Task 13): argument parsing, and `simVerify` against a simulation clone
@@ -22,34 +22,34 @@ import { insertTestSource } from "@/test/text";
  */
 
 describe("sim:verify parseArgs", () => {
-  it("needs area and scenario; the key of --base-url comes from PERIPLUS_API_KEY, never from argv (final review A M-4)", () => {
-    expect(parseArgs(["--area", "saronic", "--scenario", "data/sim/s.json"])).toEqual({ area: "saronic", scenario: "data/sim/s.json" });
-    expect(parseArgs(["--area", "a", "--scenario", "s", "--base-url", "http://localhost:3001", "--spot", "sp_1", "--out", "r.json"], { PERIPLUS_API_KEY: "pk_x" })).toEqual({
-      area: "a",
+  it("needs subdivision and scenario; the key of --base-url comes from PERIPLUS_API_KEY, never from argv (final review A M-4)", () => {
+    expect(parseArgs(["--subdivision", "GR-I", "--scenario", "data/sim/s.json"])).toEqual({ subdivision: "GR-I", scenario: "data/sim/s.json" });
+    expect(parseArgs(["--subdivision", "a", "--scenario", "s", "--base-url", "http://localhost:3001", "--spot", "sp_1", "--out", "r.json"], { PERIPLUS_API_KEY: "pk_x" })).toEqual({
+      subdivision: "a",
       scenario: "s",
       baseUrl: "http://localhost:3001",
       key: "pk_x",
       spot: "sp_1",
       out: "r.json",
     });
-    expect(() => parseArgs(["--area", "a", "--scenario", "s", "--base-url", "http://localhost:3001", "--key", "pk_x"], { PERIPLUS_API_KEY: "pk_x" })).toThrow(
+    expect(() => parseArgs(["--subdivision", "a", "--scenario", "s", "--base-url", "http://localhost:3001", "--key", "pk_x"], { PERIPLUS_API_KEY: "pk_x" })).toThrow(
       "--key gibt es nicht: den Schlüssel über PERIPLUS_API_KEY übergeben",
     );
-    expect(() => parseArgs(["--area", "a", "--scenario", "s", "--base-url", "http://localhost:3001"], {})).toThrow("--base-url braucht den API-Schlüssel der Simulation in PERIPLUS_API_KEY");
-    expect(() => parseArgs(["--area", "a"])).toThrow(/usage/);
-    expect(() => parseArgs(["--area", "a", "--scenario", "s", "--spot", "sp_1"])).toThrow(/usage/);
-    expect(() => parseArgs(["--area", "a", "--area", "b", "--scenario", "s"])).toThrow(/usage/);
-    expect(() => parseArgs(["--area", "a", "--scenario", "s", "--verbose", "x"])).toThrow(/usage/);
+    expect(() => parseArgs(["--subdivision", "a", "--scenario", "s", "--base-url", "http://localhost:3001"], {})).toThrow("--base-url braucht den API-Schlüssel der Simulation in PERIPLUS_API_KEY");
+    expect(() => parseArgs(["--subdivision", "a"])).toThrow(/usage/);
+    expect(() => parseArgs(["--subdivision", "a", "--scenario", "s", "--spot", "sp_1"])).toThrow(/usage/);
+    expect(() => parseArgs(["--subdivision", "a", "--subdivision", "b", "--scenario", "s"])).toThrow(/usage/);
+    expect(() => parseArgs(["--subdivision", "a", "--scenario", "s", "--verbose", "x"])).toThrow(/usage/);
   });
 });
 
 describe("sim:revisit parseArgs", () => {
-  it("needs area and scenario, takes a positive page cap", () => {
-    expect(parseRevisitArgs(["--area", "saronic", "--scenario", "data/sim/s.json"])).toEqual({ area: "saronic", scenario: "data/sim/s.json" });
-    expect(parseRevisitArgs(["--area", "a", "--scenario", "s", "--max-pages", "20"])).toEqual({ area: "a", scenario: "s", maxPages: 20 });
-    expect(() => parseRevisitArgs(["--area", "a", "--scenario", "s", "--max-pages", "0"])).toThrow(/usage/);
+  it("needs subdivision and scenario, takes a positive page cap", () => {
+    expect(parseRevisitArgs(["--subdivision", "GR-I", "--scenario", "data/sim/s.json"])).toEqual({ subdivision: "GR-I", scenario: "data/sim/s.json" });
+    expect(parseRevisitArgs(["--subdivision", "a", "--scenario", "s", "--max-pages", "20"])).toEqual({ subdivision: "a", scenario: "s", maxPages: 20 });
+    expect(() => parseRevisitArgs(["--subdivision", "a", "--scenario", "s", "--max-pages", "0"])).toThrow(/usage/);
     expect(() => parseRevisitArgs(["--scenario", "s"])).toThrow(/usage/);
-    expect(() => parseRevisitArgs(["--area", "a", "--scenario", "s", "--scenario", "t"])).toThrow(/usage/);
+    expect(() => parseRevisitArgs(["--subdivision", "a", "--scenario", "s", "--scenario", "t"])).toThrow(/usage/);
   });
 });
 
@@ -78,10 +78,12 @@ describe("sim:revisit scenario and polling", () => {
   });
 });
 
-/** A place with a public id in a synthetic area, a `sim_meta` row cloned at `fromSeq` = the newest event now. */
+/** A place with a public id in a synthetic subdivision, a `sim_meta` row cloned at `fromSeq` = the newest event now. */
 async function simClone(tx: Db) {
-  const area = await insertQualityArea(tx, [{ lon: 21.01, lat: 35.2 }]);
-  const { geoObjectId } = await area.addPlace();
+  const sub = await insertQualitySubdivision(tx, [{ lon: 21.01, lat: 35.2 }]);
+  // TODO(plan 14a task 10): the deliveries are per subdivision then; until then an area object with the key carries them
+  const areaId = await insertNamedObject(tx, { type: "area", names: [{ name: "Test area" }], lon: 21.2, lat: 35.2, configKey: sub.subdivisionKey });
+  const { geoObjectId } = await sub.addPlace();
   const publicId = newPublicId("sp");
   await tx.execute(sql`update places set public_id = ${publicId} where geo_object_id = ${geoObjectId}`);
   const { rows } = await tx.execute<{ seq: string | null }>(sql`select max(seq)::text as seq from change_events`);
@@ -96,13 +98,13 @@ async function simClone(tx: Db) {
     name: "sim-test",
     entries: [{ id: "e1", url, edit: { op: "gone" }, expect: { document: "gone", events: [{ subject: publicId, attribute: "mooring.buoys", type: "uncertain", severity: "notable" }] } }],
   };
-  return { ...area, geoObjectId, publicId, fromSeq, scenario };
+  return { ...sub, areaId, geoObjectId, publicId, fromSeq, scenario };
 }
 
 describe("simVerify", () => {
   it("is refused without a simulation clone", () =>
     withRollback(async (tx) => {
-      await expect(simVerify(tx, memoryArchive(), { area: "a", scenario: "unused" }, { scenario: { name: "x", entries: [] } as unknown as RevisitScenario })).rejects.toThrow(
+      await expect(simVerify(tx, memoryArchive(), { subdivision: "a", scenario: "unused" }, { scenario: { name: "x", entries: [] } as unknown as RevisitScenario })).rejects.toThrow(
         /keine Sim-Datenbank/,
       );
     }));
@@ -111,8 +113,8 @@ describe("simVerify", () => {
     withRollback(async (tx) => {
       const c = await simClone(tx);
       await tx.insert(changeEvents).values({ geoObjectId: c.geoObjectId, attribute: "mooring.buoys", type: "uncertain", severity: "notable", profileVersion: 1 });
-      const report = await simVerify(tx, memoryArchive(), { area: c.areaKey, scenario: "unused" }, { scenario: c.scenario });
-      expect(report).toMatchObject({ area: c.areaKey, scenario: "sim-test", fromSeq: c.fromSeq, asOf: null, passes: true });
+      const report = await simVerify(tx, memoryArchive(), { subdivision: c.subdivisionKey, scenario: "unused" }, { scenario: c.scenario });
+      expect(report).toMatchObject({ subdivision: c.subdivisionKey, scenario: "sim-test", fromSeq: c.fromSeq, asOf: null, passes: true });
       expect(report.verification).toMatchObject({ expected: 1, correct: 1, unexpected: [] });
       expect(report.costs).toEqual({ totalEur: 0, byService: {} });
       await tx.insert(externalCalls).values([
@@ -120,7 +122,7 @@ describe("simVerify", () => {
         { service: "anthropic", operation: "messages", units: "1000", unit: "token", costEur: "0.5", at: new Date("2999-01-02T00:00:00Z") },
         { service: "crawl", operation: "robots", units: "1", unit: "request", costEur: "0", at: new Date("2999-01-02T00:00:00Z") },
       ]);
-      expect((await simVerify(tx, memoryArchive(), { area: c.areaKey, scenario: "unused" }, { scenario: c.scenario })).costs).toEqual({
+      expect((await simVerify(tx, memoryArchive(), { subdivision: c.subdivisionKey, scenario: "unused" }, { scenario: c.scenario })).costs).toEqual({
         totalEur: 0.75,
         byService: { anthropic: { calls: 2, eur: 0.75 }, crawl: { calls: 1, eur: 0 } },
       });
@@ -134,7 +136,7 @@ describe("simVerify", () => {
       const c = await simClone(tx);
       await tx.insert(changeEvents).values({ geoObjectId: c.geoObjectId, attribute: "mooring.buoys", type: "uncertain", severity: "notable", profileVersion: 1 });
       await tx.insert(changeEvents).values({ geoObjectId: c.geoObjectId, attribute: "services.water", type: "expired", severity: "notable", profileVersion: 1 });
-      const report = await simVerify(tx, memoryArchive(), { area: c.areaKey, scenario: "unused" }, { scenario: c.scenario });
+      const report = await simVerify(tx, memoryArchive(), { subdivision: c.subdivisionKey, scenario: "unused" }, { scenario: c.scenario });
       expect(report.passes).toBe(false);
       const lines = renderReport(report);
       expect(lines).toContain("1 von 1 erwartet, 1 zusätzliche");
@@ -150,19 +152,19 @@ describe("simVerify", () => {
       const report = await simVerify(
         tx,
         memoryArchive(),
-        { area: c.areaKey, scenario: "unused", baseUrl: "http://localhost:3001", key: "pk_secret" },
+        { subdivision: c.subdivisionKey, scenario: "unused", baseUrl: "http://localhost:3001", key: "pk_secret" },
         { scenario: c.scenario, fetch: (async (u: string) => (calls.push(String(u)), new Response("{}"))) as unknown as typeof fetch },
       );
       expect(report.verification.passes).toBe(true);
-      expect(report.asOf).toEqual({ ok: false, reason: "Kein Revisit-Lauf für das Revier" });
+      expect(report.asOf).toEqual({ ok: false, reason: "Kein Revisit-Lauf für den Landesteil" });
       expect(report.passes).toBe(false);
       expect(calls).toEqual([]);
       expect(JSON.stringify(report) + renderReport(report).join("\n")).not.toContain("pk_secret");
-      expect(renderReport(report)).toContain("asOf: FEHLER – Kein Revisit-Lauf für das Revier");
+      expect(renderReport(report)).toContain("asOf: FEHLER – Kein Revisit-Lauf für den Landesteil");
     }));
 });
 
-/** A valid package of the area built at `generatedAt` whose spots.json holds `spots` (stored in `archive`). */
+/** A valid package of the (delivery) area built at `generatedAt` whose spots.json holds `spots` (stored in `archive`). */
 async function packageAt(tx: Db, archive: Archive, areaId: string, dataVersion: number, generatedAt: string, spots: unknown[]): Promise<string> {
   const prefix = `deliveries/${areaId}/${dataVersion}/`;
   const bytes = serializeFile({ spots });
@@ -205,7 +207,7 @@ async function framedClone(tx: Db, o: { secondVersionFrom?: string; unchanged?: 
   const spot = (v: number) => ({ id: c.publicId, profileVersion: v, name: `Stand ${v}` });
   const p1 = await packageAt(tx, archive, c.areaId, 1, "2026-05-01T08:00:00Z", [spot(1)]);
   await spotVersion(tx, c.areaId, c.publicId, 1, "2026-05-01", p1);
-  const { id: runId } = await createRun(tx, { kind: "revisit", scope: { type: "area", id: c.areaKey }, stages: [], params: {}, triggeredBy: "sim:revisit" });
+  const { id: runId } = await createRun(tx, { kind: "revisit", scope: { type: "subdivision", id: c.subdivisionKey }, stages: [], params: {}, triggeredBy: "sim:revisit" });
   await tx.execute(sql`update runs set created_at = '2026-06-01T07:00:00Z', status = 'finished' where id = ${runId}`);
   const p2 = await packageAt(tx, archive, c.areaId, 2, "2026-06-08T08:00:00Z", o.unchanged ? [] : [spot(2)]);
   const p3 = await packageAt(tx, archive, c.areaId, 3, "2026-06-20T08:00:00Z", o.unchanged ? [] : [spot(3)]);
@@ -230,13 +232,13 @@ function apiStub(body: unknown, current: unknown = { dataVersion: 3, spot: undef
 }
 
 describe("simVerify asOf (ruling M7-P18, M7-G-R3)", () => {
-  const withApi = (areaKey: string) => ({ area: areaKey, scenario: "unused", baseUrl: "http://localhost:3001", key: "pk_secret" });
+  const withApi = (subdivisionKey: string) => ({ subdivision: subdivisionKey, scenario: "unused", baseUrl: "http://localhost:3001", key: "pk_secret" });
 
   it("picks the changed spot, asks for the day before the FIRST package after the revisit and expects the old spot", () =>
     withRollback(async (tx) => {
       const c = await framedClone(tx);
-      const api = apiStub({ schemaVersion: "1.0", area: "ar_x", dataVersion: 1, spot: c.spot(1) }, { dataVersion: 3, spot: c.spot(3) });
-      const report = await simVerify(tx, c.archive, withApi(c.areaKey), { scenario: c.scenario, fetch: api.fetch });
+      const api = apiStub({ schemaVersion: "1.0", subdivision: "ar_x", dataVersion: 1, spot: c.spot(1) }, { dataVersion: 3, spot: c.spot(3) });
+      const report = await simVerify(tx, c.archive, withApi(c.subdivisionKey), { scenario: c.scenario, fetch: api.fetch });
       // first the newest state (only the simulation web has it), then the state before the revisit
       expect(api.calls).toEqual([`http://localhost:3001/api/v1/spots/${c.publicId}`, `http://localhost:3001/api/v1/spots/${c.publicId}?asOf=2026-06-07`]);
       expect(report.asOf).toEqual({
@@ -252,7 +254,7 @@ describe("simVerify asOf (ruling M7-P18, M7-G-R3)", () => {
 
       // the right data version with another spot is not the old value
       const wrong = apiStub({ dataVersion: 1, spot: c.spot(2) }, { dataVersion: 3, spot: c.spot(3) });
-      const failed = await simVerify(tx, c.archive, withApi(c.areaKey), { scenario: c.scenario, fetch: wrong.fetch });
+      const failed = await simVerify(tx, c.archive, withApi(c.subdivisionKey), { scenario: c.scenario, fetch: wrong.fetch });
       expect(failed.asOf).toMatchObject({ ok: false, check: { ok: false, reason: "Spot weicht vom Stand vor dem Revisit ab" } });
       expect(failed.passes).toBe(false);
     }));
@@ -261,10 +263,10 @@ describe("simVerify asOf (ruling M7-P18, M7-G-R3)", () => {
     withRollback(async (tx) => {
       const c = await framedClone(tx, { unchanged: true });
       const api = apiStub({});
-      const unchanged = await simVerify(tx, c.archive, withApi(c.areaKey), { scenario: c.scenario, fetch: api.fetch });
+      const unchanged = await simVerify(tx, c.archive, withApi(c.subdivisionKey), { scenario: c.scenario, fetch: api.fetch });
       expect(unchanged.asOf).toEqual({ ok: false, reason: `Spot ${c.publicId} hat sich im Revisit nicht geändert` });
       const later = newPublicId("sp");
-      const notThen = await simVerify(tx, c.archive, { ...withApi(c.areaKey), spot: later }, { scenario: c.scenario, fetch: api.fetch });
+      const notThen = await simVerify(tx, c.archive, { ...withApi(c.subdivisionKey), spot: later }, { scenario: c.scenario, fetch: api.fetch });
       expect(notThen.asOf).toEqual({ ok: false, reason: `Spot ${later} war am 2026-06-07 nicht geliefert` });
       expect(api.calls).toEqual([]);
     }));
@@ -274,7 +276,7 @@ describe("simVerify asOf (ruling M7-P18, M7-G-R3)", () => {
       // v2 claims validity from before the first post-revisit package: asOf would return it
       const c = await framedClone(tx, { secondVersionFrom: "2026-06-02" });
       const api = apiStub({ dataVersion: 2, spot: c.spot(2) });
-      const report = await simVerify(tx, c.archive, withApi(c.areaKey), { scenario: c.scenario, fetch: api.fetch });
+      const report = await simVerify(tx, c.archive, withApi(c.subdivisionKey), { scenario: c.scenario, fetch: api.fetch });
       expect(report.asOf).toEqual({ ok: false, reason: `asOf 2026-06-07 liefert für ${c.publicId} einen Stand nach dem Revisit` });
       expect(api.calls).toEqual([]);
       expect(report.passes).toBe(false);
@@ -285,7 +287,7 @@ describe("simVerify asOf (ruling M7-P18, M7-G-R3)", () => {
       const c = await framedClone(tx);
       // the development web knows only the package before the revisit: it answers v1 for the current state too
       const dev = apiStub({ dataVersion: 1, spot: c.spot(1) }, { dataVersion: 1, spot: c.spot(1) });
-      const report = await simVerify(tx, c.archive, withApi(c.areaKey), { scenario: c.scenario, fetch: dev.fetch });
+      const report = await simVerify(tx, c.archive, withApi(c.subdivisionKey), { scenario: c.scenario, fetch: dev.fetch });
       expect(report.asOf).toEqual({
         ok: false,
         reason:
@@ -300,22 +302,22 @@ describe("simVerify asOf (ruling M7-P18, M7-G-R3)", () => {
       const c = await framedClone(tx);
       const api = apiStub({});
       for (const baseUrl of ["https://periplus.example.org", "http://10.0.0.5:3001", "ftp://localhost"]) {
-        await expect(simVerify(tx, c.archive, { ...withApi(c.areaKey), baseUrl }, { scenario: c.scenario, fetch: api.fetch })).rejects.toThrow(
+        await expect(simVerify(tx, c.archive, { ...withApi(c.subdivisionKey), baseUrl }, { scenario: c.scenario, fetch: api.fetch })).rejects.toThrow(
           "--base-url nur gegen das lokale Simulations-Web (localhost",
         );
       }
       expect(api.calls).toEqual([]);
       for (const baseUrl of ["http://127.0.0.1:3001", "http://[::1]:3001"]) {
-        await simVerify(tx, c.archive, { ...withApi(c.areaKey), baseUrl }, { scenario: c.scenario, fetch: api.fetch });
+        await simVerify(tx, c.archive, { ...withApi(c.subdivisionKey), baseUrl }, { scenario: c.scenario, fetch: api.fetch });
       }
       expect(api.calls).toHaveLength(2);
     }));
 
-  it("is refused while a revisit run of the area is still queued or running", () =>
+  it("is refused while a revisit run of the subdivision is still queued or running", () =>
     withRollback(async (tx) => {
       const c = await framedClone(tx);
       await tx.execute(sql`update runs set status = 'running' where id = ${c.runId}`);
-      await expect(simVerify(tx, c.archive, { area: c.areaKey, scenario: "unused" }, { scenario: c.scenario })).rejects.toThrow(
+      await expect(simVerify(tx, c.archive, { subdivision: c.subdivisionKey, scenario: "unused" }, { scenario: c.scenario })).rejects.toThrow(
         `Revisit-Lauf ${c.runId} läuft noch – erst abwarten (/runs)`,
       );
     }));

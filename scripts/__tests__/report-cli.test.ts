@@ -10,37 +10,37 @@ import type { SimVerifyReport } from "@/lib/domain/revisit/sim-verify";
 
 describe("report:costs and report:pilot arguments", () => {
   it("report:costs needs area and first run; second and revisit are optional", () => {
-    expect(parseCostArgs(["--area", "saronic", "--first", "Lauf 1"])).toEqual({ area: "saronic", first: "Lauf 1" });
-    expect(parseCostArgs(["--area", "saronic", "--first", "Lauf 1", "--second", "Lauf 2", "--revisit", "docs/pilot/r.json"])).toEqual({
-      area: "saronic",
+    expect(parseCostArgs(["--subdivision", "GR-I", "--first", "Lauf 1"])).toEqual({ subdivision: "GR-I", first: "Lauf 1" });
+    expect(parseCostArgs(["--subdivision", "GR-I", "--first", "Lauf 1", "--second", "Lauf 2", "--revisit", "docs/pilot/r.json"])).toEqual({
+      subdivision: "GR-I",
       first: "Lauf 1",
       second: "Lauf 2",
       revisit: "docs/pilot/r.json",
     });
-    expect(() => parseCostArgs(["--area", "saronic"])).toThrow(/usage/);
-    expect(() => parseCostArgs(["--area", "saronic", "--first", "a", "--first", "b"])).toThrow(/usage/);
-    expect(() => parseCostArgs(["--area", "saronic", "--first", "a", "--out", "x.md"])).toThrow(/usage/);
+    expect(() => parseCostArgs(["--subdivision", "GR-I"])).toThrow(/usage/);
+    expect(() => parseCostArgs(["--subdivision", "GR-I", "--first", "a", "--first", "b"])).toThrow(/usage/);
+    expect(() => parseCostArgs(["--subdivision", "GR-I", "--first", "a", "--out", "x.md"])).toThrow(/usage/);
   });
 
   it("report:pilot needs both runs; --consumer-ok goes with --data-version", () => {
-    expect(parsePilotArgs(["--area", "saronic", "--first", "Lauf 1", "--second", "Lauf 2"])).toEqual({ area: "saronic", first: "Lauf 1", second: "Lauf 2" });
-    expect(parsePilotArgs(["--area", "s", "--first", "a", "--second", "b", "--consumer-ok", "--data-version", "4", "--revisit", "r.json"])).toEqual({
-      area: "s",
+    expect(parsePilotArgs(["--subdivision", "GR-I", "--first", "Lauf 1", "--second", "Lauf 2"])).toEqual({ subdivision: "GR-I", first: "Lauf 1", second: "Lauf 2" });
+    expect(parsePilotArgs(["--subdivision", "s", "--first", "a", "--second", "b", "--consumer-ok", "--data-version", "4", "--revisit", "r.json"])).toEqual({
+      subdivision: "s",
       first: "a",
       second: "b",
       revisit: "r.json",
       consumer: { dataVersion: 4 },
     });
-    expect(parsePilotArgs(["--area", "s", "--first", "a", "--second", "b", "--cost-report", "docs/pilot/2026-06-01-kostenbericht.md"])).toEqual({
-      area: "s",
+    expect(parsePilotArgs(["--subdivision", "s", "--first", "a", "--second", "b", "--cost-report", "docs/pilot/2026-06-01-kostenbericht.md"])).toEqual({
+      subdivision: "s",
       first: "a",
       second: "b",
       costReport: "docs/pilot/2026-06-01-kostenbericht.md",
     });
-    expect(() => parsePilotArgs(["--area", "s", "--first", "a"])).toThrow(/usage/);
-    expect(() => parsePilotArgs(["--area", "s", "--first", "a", "--second", "b", "--consumer-ok"])).toThrow(/usage/);
-    expect(() => parsePilotArgs(["--area", "s", "--first", "a", "--second", "b", "--data-version", "4"])).toThrow(/usage/);
-    expect(() => parsePilotArgs(["--area", "s", "--first", "a", "--second", "b", "--consumer-ok", "--data-version", "0"])).toThrow(/usage/);
+    expect(() => parsePilotArgs(["--subdivision", "s", "--first", "a"])).toThrow(/usage/);
+    expect(() => parsePilotArgs(["--subdivision", "s", "--first", "a", "--second", "b", "--consumer-ok"])).toThrow(/usage/);
+    expect(() => parsePilotArgs(["--subdivision", "s", "--first", "a", "--second", "b", "--data-version", "4"])).toThrow(/usage/);
+    expect(() => parsePilotArgs(["--subdivision", "s", "--first", "a", "--second", "b", "--consumer-ok", "--data-version", "0"])).toThrow(/usage/);
   });
 
   it("the reports go to docs/pilot/ under the UTC date", () => {
@@ -90,7 +90,7 @@ describe("tilesOf", () => {
 
 describe("parseSimVerifyReport", () => {
   const simReport: SimVerifyReport = {
-    area: "saronic",
+    subdivision: "GR-I",
     scenario: "pilot",
     clonedAt: "2026-06-01T08:00:00.000Z",
     fromSeq: 42,

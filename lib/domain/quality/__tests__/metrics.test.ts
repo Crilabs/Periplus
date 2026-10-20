@@ -28,7 +28,7 @@ import {
   type TestMention,
 } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
-import { insertNamedObject, insertTestExtractionRun, insertTestRun, insertTestVersion } from "@/test/text";
+import { insertNamedObject, insertTestExtractionRun, insertTestRun, insertTestSubdivision, insertTestVersion } from "@/test/text";
 import { comparisonValues, loadComparisonSubjects } from "../comparison-values";
 import {
   coverageMetric,
@@ -40,32 +40,42 @@ import {
   shelterConfidenceMetric,
 } from "../metrics";
 
-// Synthetic area around 61.0° E / 35.2° N (outside the pilot box; its own tiles, no other file uses them, final review A M-1): two tiles, every row rolled back.
+// Synthetic subdivision around 61.0° E / 35.2° N (outside the pilot box; its own tiles, no other file uses them, final review A M-1): two tiles, every row rolled back.
 
 const quality = getConfig().quality;
 const extractRoute = loadConfig("config").models.tasks["extract-route"]!;
 const WEST = { lon: 61.0, lat: 35.2 };
 const EAST = { lon: 61.3, lat: 35.2 };
 
-async function area(tx: Db) {
-  const areaKey = `test-${newId()}`;
-  const areaId = await insertNamedObject(tx, { type: "area", names: [{ name: "Test area" }], lon: 61.15, lat: 35.2, configKey: areaKey });
+async function subdivision(tx: Db) {
+  const subdivisionKey = `XT-${newId()}`;
+  const { id: subdivisionId } = await insertTestSubdivision(tx, subdivisionKey, [60.5, 34.7, 61.8, 35.7]);
   const tileIds: string[] = [];
   for (const p of [WEST, EAST]) {
     const id = tileIdFor(p.lon, p.lat);
     const [w, s, e, n] = tileBbox(id);
     await tx
       .insert(tiles)
-      .values({ id, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, areaId })
-      .onConflictDoUpdate({ target: tiles.id, set: { areaId } });
+      .values({ id, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, subdivisionId })
+      .onConflictDoUpdate({ target: tiles.id, set: { subdivisionId } });
     tileIds.push(id);
   }
   let n = 0;
   /** A place in the west tile (or `at`), confirmed unless told otherwise, optionally in the comparison set. */
-  const addPlace = async (o: { status?: PlaceStatus; inSet?: boolean; at?: { lon: number; lat: number }; name?: string } = {}) => {
+  const addPlace = async (
+    o: { status?: PlaceStatus; inSet?: boolean; at?: { lon: number; lat: number }; name?: string; subdivisionId?: string | null } = {},
+  ) => {
     const at = o.at ?? WEST;
     const lon = at.lon + 0.001 * ++n;
-    const objectId = await insertNamedObject(tx, { type: "bay", names: [{ name: o.name ?? `Place ${n}` }], lon, lat: at.lat });
+    // the object's subdivision (nearest land) decides the scope: this one when it lies in one of its tiles, else none
+    const inOwnTile = tileIds.includes(tileIdFor(lon, at.lat));
+    const objectId = await insertNamedObject(tx, {
+      type: "bay",
+      names: [{ name: o.name ?? `Place ${n}` }],
+      lon,
+      lat: at.lat,
+      subdivisionId: o.subdivisionId === undefined ? (inOwnTile ? subdivisionId : null) : o.subdivisionId,
+    });
     const [p] = await tx
       .insert(places)
       .values({
@@ -78,10 +88,10 @@ async function area(tx: Db) {
         position: geomFromGeoJson({ type: "Point", coordinates: [lon, at.lat] }),
       })
       .returning({ id: places.id });
-    if (o.inSet) await tx.insert(comparisonSet).values({ placeId: p!.id, areaId, addedBy: "test" });
+    if (o.inSet) await tx.insert(comparisonSet).values({ placeId: p!.id, subdivisionId, addedBy: "test" });
     return { placeId: p!.id, objectId };
   };
-  return { areaKey, areaId, westTile: tileIds[0]!, eastTile: tileIds[1]!, addPlace };
+  return { subdivisionKey, subdivisionId, westTile: tileIds[0]!, eastTile: tileIds[1]!, addPlace };
 }
 
 /** A duplicate geo object merged into `survivorId` (as the gazetteer merge leaves it: ended, `merged_into_id` set). */
@@ -96,13 +106,13 @@ const rejectSource = (tx: Db, sourceId: string) => tx.update(sources).set({ stat
 /** Appends a comparison outcome for the place's current own value (or `valueHash`). */
 async function addResult(
   tx: Db,
-  areaKey: string,
+  subdivisionKey: string,
   placeId: string,
   attribute: ComparisonAttribute,
   result: ComparisonResultValue,
   o: { method?: "manual" | "proposal_auto" | "proposal_confirmed" | "review"; valueHash?: string } = {},
 ) {
-  const subject = (await loadComparisonSubjects(tx, areaKey)).find((s) => s.placeId === placeId)!;
+  const subject = (await loadComparisonSubjects(tx, subdivisionKey)).find((s) => s.placeId === placeId)!;
   await tx.insert(comparisonResults).values({
     placeId,
     attribute,
@@ -117,26 +127,40 @@ async function addResult(
 describe("coverageMetric", () => {
   it("coverage: 4 of 5 set places confirmed is 0.8", () =>
     withRollback(async (tx) => {
-      const { areaKey, addPlace } = await area(tx);
+      const { subdivisionKey, addPlace } = await subdivision(tx);
       for (let i = 0; i < 4; i++) await addPlace({ inSet: true });
       await addPlace({ inSet: true, status: "rejected" });
       await addPlace(); // confirmed, not in the set
-      expect(await coverageMetric(tx, { areaKey })).toEqual({ metric: "coverage", value: 0.8, details: { set: 5, confirmed: 4 } });
+      expect(await coverageMetric(tx, { subdivisionKey })).toEqual({ metric: "coverage", value: 0.8, details: { set: 5, confirmed: 4 } });
     }));
 
-  it("an empty set or an unknown area is null", () =>
+  it("an empty set or an unknown subdivision is null", () =>
     withRollback(async (tx) => {
-      const { areaKey, addPlace } = await area(tx);
+      const { subdivisionKey, addPlace } = await subdivision(tx);
       await addPlace();
-      expect((await coverageMetric(tx, { areaKey })).value).toBeNull();
-      expect(await coverageMetric(tx, { areaKey: `test-${newId()}` })).toEqual({ metric: "coverage", value: null, details: { set: 0, confirmed: 0 } });
+      expect((await coverageMetric(tx, { subdivisionKey })).value).toBeNull();
+      expect(await coverageMetric(tx, { subdivisionKey: `test-${newId()}` })).toEqual({ metric: "coverage", value: null, details: { set: 0, confirmed: 0 } });
+    }));
+});
+
+describe("scope of the metrics", () => {
+  it("follows the place's subdivision, not the label of its tile (a Kastellorizo-style place)", () =>
+    withRollback(async (tx) => {
+      const { subdivisionKey, subdivisionId, westTile, addPlace } = await subdivision(tx);
+      await addPlace({ inSet: true }); // own land in a tile with its label
+      await addPlace({ inSet: true, subdivisionId: null }); // the same labelled tile, but another subdivision's land
+      await addPlace({ inSet: true, at: { lon: 62.0, lat: 35.2 }, subdivisionId }); // a tile with another label, its land
+      expect((await coverageMetric(tx, { subdivisionKey })).details).toEqual({ set: 2, confirmed: 2 });
+      expect((await multiSourceMetric(tx, { subdivisionKey })).details).toMatchObject({ places: 2 });
+      // a tile scope narrows it to the places of the subdivision in that tile
+      expect((await multiSourceMetric(tx, { subdivisionKey, tileId: westTile })).details).toMatchObject({ places: 1 });
     }));
 });
 
 describe("multiSourceMetric", () => {
   it("multi_source: two documents of one source do not count, two sources do", () =>
     withRollback(async (tx) => {
-      const { areaKey, addPlace } = await area(tx);
+      const { subdivisionKey, addPlace } = await subdivision(tx);
       const [s1, s2] = [await insertSource(tx), await insertSource(tx)];
       const oneSource = await addPlace();
       await insertMention(tx, oneSource.objectId, { sourceId: s1 });
@@ -151,23 +175,23 @@ describe("multiSourceMetric", () => {
       await insertMention(tx, candidate.objectId, { sourceId: s1 });
       await insertMention(tx, candidate.objectId, { sourceId: s2 });
 
-      const r = await multiSourceMetric(tx, { areaKey });
+      const r = await multiSourceMetric(tx, { subdivisionKey });
       expect(r.metric).toBe("multi_source");
       expect(r.value).toBeCloseTo(1 / 3);
       // ≥ 2 documents (datendienst, ruling M7-P12) is reported beside it and is its own metric
       expect(r.details).toEqual({ places: 3, multi: 1, multiDocument: 2 });
-      const d = await multiDocumentMetric(tx, { areaKey });
+      const d = await multiDocumentMetric(tx, { subdivisionKey });
       expect(d.metric).toBe("multi_document");
       expect(d.value).toBeCloseTo(2 / 3);
       expect(d.details).toEqual({ places: 3, multiDocument: 2, multiSource: 1 });
-      expect(await multiDocumentMetric(tx, { areaKey: `test-${newId()}` })).toMatchObject({ value: null, details: { places: 0 } });
+      expect(await multiDocumentMetric(tx, { subdivisionKey: `test-${newId()}` })).toMatchObject({ value: null, details: { places: 0 } });
     }));
 });
 
 describe("multiSourceMetric counts text as consolidation does (ruling M7-C-R2)", () => {
   it("a mention on a duplicate merged into the place counts for it", () =>
     withRollback(async (tx) => {
-      const { areaKey, addPlace } = await area(tx);
+      const { subdivisionKey, addPlace } = await subdivision(tx);
       const [s1, s2] = [await insertSource(tx), await insertSource(tx)];
       const place = await addPlace();
       await insertMention(tx, place.objectId, { sourceId: s1 });
@@ -175,30 +199,30 @@ describe("multiSourceMetric counts text as consolidation does (ruling M7-C-R2)",
       // a chain of two merges: the older duplicate was merged into the first
       const older = await mergedDuplicate(tx, duplicate);
       await insertMention(tx, older, { sourceId: s2 });
-      expect((await multiSourceMetric(tx, { areaKey })).details).toEqual({ places: 1, multi: 1, multiDocument: 1 });
+      expect((await multiSourceMetric(tx, { subdivisionKey })).details).toEqual({ places: 1, multi: 1, multiDocument: 1 });
     }));
 
   it("a mention from a rejected or ended source does not count", () =>
     withRollback(async (tx) => {
-      const { areaKey, addPlace } = await area(tx);
+      const { subdivisionKey, addPlace } = await subdivision(tx);
       const [s1, rejected, ended] = [await insertSource(tx), await insertSource(tx), await insertSource(tx)];
       const place = await addPlace();
       await insertMention(tx, place.objectId, { sourceId: s1 });
       await insertMention(tx, place.objectId, { sourceId: rejected });
       await insertMention(tx, place.objectId, { sourceId: ended });
-      expect((await multiSourceMetric(tx, { areaKey })).details).toEqual({ places: 1, multi: 1, multiDocument: 1 });
+      expect((await multiSourceMetric(tx, { subdivisionKey })).details).toEqual({ places: 1, multi: 1, multiDocument: 1 });
       await rejectSource(tx, rejected);
       await tx.update(sources).set({ validTo: "2026-10-01" }).where(eq(sources.id, ended));
-      expect((await multiSourceMetric(tx, { areaKey }, { today: "2026-10-20" })).details).toEqual({ places: 1, multi: 0, multiDocument: 0 });
+      expect((await multiSourceMetric(tx, { subdivisionKey }, { today: "2026-10-20" })).details).toEqual({ places: 1, multi: 0, multiDocument: 0 });
       // before the source ended, it still counts
-      expect((await multiSourceMetric(tx, { areaKey }, { today: "2026-09-30" })).details).toEqual({ places: 1, multi: 1, multiDocument: 1 });
+      expect((await multiSourceMetric(tx, { subdivisionKey }, { today: "2026-09-30" })).details).toEqual({ places: 1, multi: 1, multiDocument: 1 });
     }));
 });
 
 describe("factPrecisionMetric", () => {
   it("fact_precision: 7 match + 2 confirmed own of 10 compared and 3 not_at_navily is 0.9", () =>
     withRollback(async (tx) => {
-      const { areaKey, addPlace } = await area(tx);
+      const { subdivisionKey, addPlace } = await subdivision(tx);
       const { placeId } = await addPlace({ inSet: true });
       const plan: Array<[ComparisonAttribute, ComparisonResultValue, ("proposal_auto" | "manual")?]> = [
         ["existence", "match", "proposal_auto"],
@@ -215,9 +239,9 @@ describe("factPrecisionMetric", () => {
         ["seabed", "not_at_navily"],
         ["highlight.food", "not_at_navily"],
       ];
-      for (const [attribute, result, method] of plan) await addResult(tx, areaKey, placeId, attribute, result, { method });
+      for (const [attribute, result, method] of plan) await addResult(tx, subdivisionKey, placeId, attribute, result, { method });
 
-      const r = await factPrecisionMetric(tx, { areaKey });
+      const r = await factPrecisionMetric(tx, { subdivisionKey });
       expect(r.metric).toBe("fact_precision");
       expect(r.value).toBeCloseTo(0.9);
       expect(r.details).toMatchObject({ compared: 10, correct: 9, notAtNavily: 3, pending: 3, matches: 7, autoMatches: 3 });
@@ -233,21 +257,21 @@ describe("factPrecisionMetric", () => {
 
   it("fact_precision ignores results for an old value hash and counts them as pending", () =>
     withRollback(async (tx) => {
-      const { areaKey, addPlace } = await area(tx);
+      const { subdivisionKey, addPlace } = await subdivision(tx);
       const { placeId } = await addPlace({ inSet: true });
-      await addResult(tx, areaKey, placeId, "existence", "match");
-      await addResult(tx, areaKey, placeId, "services.water", "deviation", { valueHash: "0123456789abcdef" });
-      const r = await factPrecisionMetric(tx, { areaKey });
+      await addResult(tx, subdivisionKey, placeId, "existence", "match");
+      await addResult(tx, subdivisionKey, placeId, "services.water", "deviation", { valueHash: "0123456789abcdef" });
+      const r = await factPrecisionMetric(tx, { subdivisionKey });
       expect(r.value).toBe(1);
       expect(r.details).toMatchObject({ compared: 1, correct: 1, notAtNavily: 0, pending: 15 });
     }));
 
   it("without compared results the precision is null", () =>
     withRollback(async (tx) => {
-      const { areaKey, addPlace } = await area(tx);
+      const { subdivisionKey, addPlace } = await subdivision(tx);
       const { placeId } = await addPlace({ inSet: true });
-      await addResult(tx, areaKey, placeId, "depth", "not_at_navily");
-      expect((await factPrecisionMetric(tx, { areaKey })).value).toBeNull();
+      await addResult(tx, subdivisionKey, placeId, "depth", "not_at_navily");
+      expect((await factPrecisionMetric(tx, { subdivisionKey })).value).toBeNull();
     }));
 });
 
@@ -334,7 +358,7 @@ describe("shelterConfidenceMetric", () => {
 
   it("shelter_confidence counts a place only with text facts in all 8 sectors", () =>
     withRollback(async (tx) => {
-      const { areaKey, addPlace } = await area(tx);
+      const { subdivisionKey, addPlace } = await subdivision(tx);
       const complete = await addPlace();
       await insertComputation(tx, complete.objectId, "shelter", Object.fromEntries(SECTORS.map((s) => [`shelter.${s}`, 0.9])));
       // seven sectors confirm the computation (0.7 is within the tolerance 0.2), S corrects it
@@ -346,7 +370,7 @@ describe("shelterConfidenceMetric", () => {
       // the eighth sector only from a blocked extraction run: not active, does not count
       await shelterFacts(tx, seven.objectId, { NW: 0.5 }, { blocked: true });
 
-      const r = await shelterConfidenceMetric(tx, { areaKey }, quality);
+      const r = await shelterConfidenceMetric(tx, { subdivisionKey }, quality);
       expect(r.metric).toBe("shelter_confidence");
       expect(r.value).toBe(0.5);
       expect(r.details).toMatchObject({ places: 2, complete: 1, confirmed: 14, corrected: 1, textOnly: 0 });
@@ -357,19 +381,19 @@ describe("shelterConfidenceMetric", () => {
 
   it("a text fact without a computed value is text only, never corrected (ruling M7-C-R1), and never completes a place (final review B M-5); no places is null", () =>
     withRollback(async (tx) => {
-      const { areaKey, addPlace } = await area(tx);
+      const { subdivisionKey, addPlace } = await subdivision(tx);
       const place = await addPlace();
       await shelterFacts(tx, place.objectId, all(0.9));
-      const r = await shelterConfidenceMetric(tx, { areaKey }, quality);
+      const r = await shelterConfidenceMetric(tx, { subdivisionKey }, quality);
       // spec 10: a sector counts when its text confirms or corrects the computed value; text alone does not
       expect([r.value, r.details.complete, r.details.confirmed, r.details.corrected, r.details.textOnly]).toEqual([0, 0, 0, 0, 8]);
       expect((r.details.bySector as Record<string, unknown>).E).toEqual({ withText: 1, confirmed: 0, corrected: 0, textOnly: 1 });
-      expect((await shelterConfidenceMetric(tx, { areaKey: `test-${newId()}` }, quality)).value).toBeNull();
+      expect((await shelterConfidenceMetric(tx, { subdivisionKey: `test-${newId()}` }, quality)).value).toBeNull();
     }));
 
   it("facts on a merged duplicate count for the place, facts of a rejected source do not (ruling M7-C-R2)", () =>
     withRollback(async (tx) => {
-      const { areaKey, addPlace } = await area(tx);
+      const { subdivisionKey, addPlace } = await subdivision(tx);
       const place = await addPlace();
       await insertComputation(tx, place.objectId, "shelter", Object.fromEntries(SECTORS.map((x) => [`shelter.${x}`, 0.5])));
       // four sectors on the place's own object, four on a duplicate merged into it
@@ -378,7 +402,7 @@ describe("shelterConfidenceMetric", () => {
       // the duplicate's own computation describes ended geometry: it is not compared with
       await insertComputation(tx, duplicate, "shelter", Object.fromEntries(SECTORS.map((x) => [`shelter.${x}`, 0.0])));
       await shelterFacts(tx, duplicate, { S: 0.5, SW: 0.5, W: 0.5, NW: 0.5 });
-      const r = await shelterConfidenceMetric(tx, { areaKey }, quality);
+      const r = await shelterConfidenceMetric(tx, { subdivisionKey }, quality);
       expect(r.value).toBe(1);
       expect(r.details).toMatchObject({ places: 1, complete: 1, confirmed: 8, corrected: 0, textOnly: 0 });
 
@@ -389,7 +413,7 @@ describe("shelterConfidenceMetric", () => {
           join documents d on d.id = v.document_id where f.geo_object_id = ${duplicate} limit 1`)
       ).rows[0]!.source_id;
       await rejectSource(tx, sourceOfDuplicate);
-      const after = await shelterConfidenceMetric(tx, { areaKey }, quality);
+      const after = await shelterConfidenceMetric(tx, { subdivisionKey }, quality);
       expect(after.value).toBe(0);
       expect(after.details).toMatchObject({ complete: 0, confirmed: 4 });
     }));
@@ -435,7 +459,7 @@ describe("routeReconstructionMetric", () => {
 
   it("route_reconstruction: one of two routes fully on confirmed places is 0.5", () =>
     withRollback(async (tx) => {
-      const { areaKey, addPlace } = await area(tx);
+      const { subdivisionKey, addPlace } = await subdivision(tx);
       const [a, b] = [await addPlace(), await addPlace()];
       const candidate = await addPlace({ status: "candidate" });
       const complete = await tripReport(tx, [a.objectId, b.objectId]);
@@ -443,11 +467,11 @@ describe("routeReconstructionMetric", () => {
       await addRoute(tx, complete, [a.objectId, null], { startedAt: new Date("2026-10-01T10:00:00Z") });
       await addRoute(tx, complete, [a.objectId, null], { status: "blocked", startedAt: new Date("2026-10-19T10:00:00Z") });
       const open = await tripReport(tx, [b.objectId, candidate.objectId, null]);
-      // a report whose stops all lie outside the area is not in the scope
+      // a report whose stops all lie outside the subdivision is not in the scope
       const elsewhere = await addPlace({ at: { lon: 62.0, lat: 35.2 } });
       await tripReport(tx, [elsewhere.objectId, null]);
 
-      const r = await routeReconstructionMetric(tx, { areaKey });
+      const r = await routeReconstructionMetric(tx, { subdivisionKey });
       expect(r.metric).toBe("route_reconstruction");
       expect(r.value).toBe(0.5);
       expect(r.details).toMatchObject({ routes: 2, complete: 1, openStops: 2 });
@@ -461,36 +485,36 @@ describe("routeReconstructionMetric", () => {
 
   it("a stop at a duplicate merged into a confirmed place is at that place; a rejected source's report does not count (ruling M7-C-R2)", () =>
     withRollback(async (tx) => {
-      const { areaKey, addPlace } = await area(tx);
+      const { subdivisionKey, addPlace } = await subdivision(tx);
       const [a, b] = [await addPlace(), await addPlace()];
       const duplicate = await mergedDuplicate(tx, b.objectId);
       const report = await tripReport(tx, [a.objectId, duplicate]);
-      expect((await routeReconstructionMetric(tx, { areaKey })).details).toMatchObject({ routes: 1, complete: 1, openStops: 0 });
+      expect((await routeReconstructionMetric(tx, { subdivisionKey })).details).toMatchObject({ routes: 1, complete: 1, openStops: 0 });
       // a report whose only in-scope stop is the merged duplicate is still in the scope
       await tripReport(tx, [duplicate, null]);
-      expect((await routeReconstructionMetric(tx, { areaKey })).details).toMatchObject({ routes: 2, complete: 1, openStops: 1 });
+      expect((await routeReconstructionMetric(tx, { subdivisionKey })).details).toMatchObject({ routes: 2, complete: 1, openStops: 1 });
 
       const [doc] = (await tx.execute<{ source_id: string }>(sql`select source_id from documents where id = ${report.documentId}`)).rows;
       await rejectSource(tx, doc!.source_id);
-      const r = await routeReconstructionMetric(tx, { areaKey });
+      const r = await routeReconstructionMetric(tx, { subdivisionKey });
       expect((r.details.reports as Array<{ documentId: string }>).map((x) => x.documentId)).not.toContain(report.documentId);
     }));
 
   it("only the current version of a trip report counts; without routes it is null", () =>
     withRollback(async (tx) => {
-      const { areaKey, addPlace } = await area(tx);
+      const { subdivisionKey, addPlace } = await subdivision(tx);
       const a = await addPlace();
-      expect((await routeReconstructionMetric(tx, { areaKey })).value).toBeNull();
+      expect((await routeReconstructionMetric(tx, { subdivisionKey })).value).toBeNull();
       const old = await tripReport(tx, [a.objectId, null]);
       await insertTestVersion(tx, ["A new text without a route."], { documentId: old.documentId });
-      expect((await routeReconstructionMetric(tx, { areaKey })).details).toMatchObject({ routes: 0, complete: 0, openStops: 0 });
+      expect((await routeReconstructionMetric(tx, { subdivisionKey })).details).toMatchObject({ routes: 0, complete: 0, openStops: 0 });
     }));
 });
 
 describe("tile scope", () => {
   it("a tile scope counts only places of that tile", () =>
     withRollback(async (tx) => {
-      const { areaKey, addPlace, westTile, eastTile } = await area(tx);
+      const { subdivisionKey, addPlace, westTile, eastTile } = await subdivision(tx);
       for (let i = 0; i < 3; i++) await addPlace({ inSet: true });
       await addPlace({ inSet: true, at: EAST });
       await addPlace({ inSet: true, at: EAST, status: "rejected" });
@@ -500,15 +524,15 @@ describe("tile scope", () => {
       await insertMention(tx, east.objectId, { sourceId: s1 });
       await insertMention(tx, east.objectId, { sourceId: s2 });
 
-      expect((await coverageMetric(tx, { areaKey })).details).toEqual({ set: 5, confirmed: 4 });
-      expect((await coverageMetric(tx, { areaKey, tileId: westTile })).value).toBe(1);
-      expect(await coverageMetric(tx, { areaKey, tileId: eastTile })).toMatchObject({ value: 0.5, details: { set: 2, confirmed: 1 } });
-      expect((await multiSourceMetric(tx, { areaKey, tileId: eastTile })).details).toEqual({ places: 2, multi: 1, multiDocument: 1 });
-      expect((await multiSourceMetric(tx, { areaKey, tileId: westTile })).details).toEqual({ places: 3, multi: 0, multiDocument: 0 });
-      // a tile of another area is out of the scope
-      expect((await coverageMetric(tx, { areaKey, tileId: tileIdFor(62.0, 35.2) })).details).toEqual({ set: 0, confirmed: 0 });
-      // a set member whose tile is not labelled with the area does not count for the area (ruling M7-C-R1)
+      expect((await coverageMetric(tx, { subdivisionKey })).details).toEqual({ set: 5, confirmed: 4 });
+      expect((await coverageMetric(tx, { subdivisionKey, tileId: westTile })).value).toBe(1);
+      expect(await coverageMetric(tx, { subdivisionKey, tileId: eastTile })).toMatchObject({ value: 0.5, details: { set: 2, confirmed: 1 } });
+      expect((await multiSourceMetric(tx, { subdivisionKey, tileId: eastTile })).details).toEqual({ places: 2, multi: 1, multiDocument: 1 });
+      expect((await multiSourceMetric(tx, { subdivisionKey, tileId: westTile })).details).toEqual({ places: 3, multi: 0, multiDocument: 0 });
+      // a tile of another subdivision is out of the scope
+      expect((await coverageMetric(tx, { subdivisionKey, tileId: tileIdFor(62.0, 35.2) })).details).toEqual({ set: 0, confirmed: 0 });
+      // a set member whose geo object is not of the subdivision does not count for it (ruling M7-C-R1)
       await addPlace({ inSet: true, at: { lon: 62.0, lat: 35.2 } });
-      expect((await coverageMetric(tx, { areaKey })).details).toEqual({ set: 5, confirmed: 4 });
+      expect((await coverageMetric(tx, { subdivisionKey })).details).toEqual({ set: 5, confirmed: 4 });
     }));
 });

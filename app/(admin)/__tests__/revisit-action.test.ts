@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 
 /*
- * „Revisit für Revier“ on /runs (plan Task 13, ruling M7-P22): the action checks the area, starts the revisit run as the
+ * „Revisit für Landesteil“ on /runs (plan Task 13, ruling M7-P22): the action checks the subdivision key, starts the revisit run as the
  * admin and redirects to it; a refused start returns to /runs with the German flash code. The starter itself is tested in
  * lib/pipeline/__tests__/revisit.test.ts.
  */
@@ -33,22 +33,23 @@ beforeEach(() => {
 });
 
 describe("startRevisitAction", () => {
-  it("starts the revisit of a configured area as the admin and opens the run", async () => {
-    await startRevisitAction(form({ areaKey: "saronic" }));
-    expect(startRevisitRun).toHaveBeenCalledWith({ db: "test" }, { boss: "test" }, { areaKey: "saronic", triggeredBy: "admin@example.invalid" });
+  it("starts the revisit of a subdivision as the admin and opens the run", async () => {
+    await startRevisitAction(form({ subdivisionKey: "GR-I" }));
+    expect(startRevisitRun).toHaveBeenCalledWith({ db: "test" }, { boss: "test" }, { subdivisionKey: "GR-I", triggeredBy: "admin@example.invalid" });
     expect(redirect).toHaveBeenCalledWith("/runs/run-7");
   });
 
   it("returns a refused start to /runs with its reason", async () => {
     startRevisitRun.mockRejectedValue(new RunScopeNotReady("source_run_active", "busy"));
-    await startRevisitAction(form({ areaKey: "saronic" }));
+    await startRevisitAction(form({ subdivisionKey: "GR-I" }));
     expect(redirect).toHaveBeenCalledWith("/runs?error=source_run_active");
   });
 
-  it("rejects an unknown area and a missing session without starting anything", async () => {
-    await expect(startRevisitAction(form({ areaKey: "atlantis" }))).rejects.toThrow();
+  it("rejects a missing or area key payload and a missing session without starting anything", async () => {
+    await expect(startRevisitAction(form({}))).rejects.toThrow();
+    await expect(startRevisitAction(form({ areaKey: "saronic" }))).rejects.toThrow();
     requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
-    await expect(startRevisitAction(form({ areaKey: "saronic" }))).rejects.toThrow("NEXT_REDIRECT");
+    await expect(startRevisitAction(form({ subdivisionKey: "GR-I" }))).rejects.toThrow("NEXT_REDIRECT");
     expect(startRevisitRun).not.toHaveBeenCalled();
   });
 });

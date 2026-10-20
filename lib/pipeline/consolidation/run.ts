@@ -1,6 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
-import { getConfig, getConsolidationConfig, type AppConfig } from "@/lib/config";
+import { getConsolidationConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { runStages, runs } from "@/lib/db/schema";
 import { activeRulesVersion } from "@/lib/domain/consolidation/active-rules";
@@ -12,7 +12,9 @@ import { validAtAlias } from "@/lib/domain/timeline";
 import { createRun, failRun, type RunScope } from "@/lib/domain/runs";
 import { createLogger } from "@/lib/logger";
 import { enqueueStage, startRun } from "@/lib/pipeline/runs";
-import { areaGeoObjectId, RunScopeNotReady } from "@/lib/pipeline/tile-scope";
+import { requireSubdivision } from "@/lib/domain/subdivisions/store";
+import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
+import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { CONSOLIDATION_GEO_STAGE, CONSOLIDATION_STAGES, CONSOLIDATION_SUMMARY_STAGE } from "./stages";
 
 /*
@@ -22,7 +24,7 @@ import { CONSOLIDATION_GEO_STAGE, CONSOLIDATION_STAGES, CONSOLIDATION_SUMMARY_ST
 /** Scope id of a consolidation run over given objects or a comparison set (scope type `system`). */
 export const CONSOLIDATION_RUN_SCOPE = "consolidation";
 
-export type ConsolidationScope = { tileId: string } | { areaKey: string } | { geoObjectIds: string[] } | { comparisonSetArea: string };
+export type ConsolidationScope = { tileId: string } | { subdivisionKey: string } | { geoObjectIds: string[] } | { comparisonSetSubdivision: string };
 
 export type StartConsolidationInput = {
   scope: ConsolidationScope;
@@ -44,24 +46,22 @@ export type StartConsolidationInput = {
 const validToday = (alias: string) => validAtAlias(alias, sql`(now() at time zone 'UTC')::date`);
 
 /**
- * Checks the scope before the run exists (`RunScopeNotReady`) and returns the run's scope: a valid tile; a configured
- * area with valid tiles; geo objects that are valid, unmerged and have a fact level (scope `place` with the place id for
- * exactly one object with a valid place, else `system`); an area whose comparison set is not empty (`system`).
+ * Checks the scope before the run exists (`RunScopeNotReady`) and returns the run's scope: a valid tile; a subdivision
+ * with tiles in its run scope (an unknown, excluded or area key is refused by `requireSubdivision`); geo objects that are valid, unmerged and have a fact level (scope `place` with the place id for
+ * exactly one object with a valid place, else `system`); a subdivision whose comparison set is not empty (`system`).
  */
-async function checkedScope(db: Db, scope: ConsolidationScope, config: AppConfig): Promise<RunScope> {
+async function checkedScope(db: Db, scope: ConsolidationScope): Promise<RunScope> {
   if ("tileId" in scope) {
     const { rows } = await db.execute(sql`select 1 from tiles t where t.id = ${scope.tileId} and ${validToday("t")}`);
     if (rows.length === 0) throw new RunScopeNotReady("unknown_tile", `tile ${scope.tileId} is not a valid tile`);
     return { type: "tile", id: scope.tileId };
   }
-  if ("areaKey" in scope) {
-    if (!config.areas.some((a) => a.key === scope.areaKey)) throw new RunScopeNotReady("unknown_area", `area ${scope.areaKey} is not configured`);
-    const { rows } = await db.execute(sql`
-      select 1 from tiles t join geo_objects a on a.id = t.area_id and a.type = 'area'
-      where a.config_key = ${scope.areaKey} and ${validToday("t")} limit 1
-    `);
-    if (rows.length === 0) throw new RunScopeNotReady("area_without_tiles", `area ${scope.areaKey} has no tiles yet`);
-    return { type: "area", id: scope.areaKey };
+  if ("subdivisionKey" in scope) {
+    const sub = await requireSubdivision(db, scope.subdivisionKey);
+    if ((await subdivisionTileIds(db, sub.id)).length === 0) {
+      throw new RunScopeNotReady("subdivision_without_coast_tiles", `Subdivision ${scope.subdivisionKey} has no coast tiles yet`);
+    }
+    return { type: "subdivision", id: scope.subdivisionKey };
   }
   if ("geoObjectIds" in scope) {
     const ids = [...new Set(scope.geoObjectIds)].sort();
@@ -85,14 +85,11 @@ async function checkedScope(db: Db, scope: ConsolidationScope, config: AppConfig
     const placeId = ids.length === 1 ? valid.get(ids[0]!) : null;
     return placeId ? { type: "place", id: placeId } : { type: "system", id: CONSOLIDATION_RUN_SCOPE };
   }
-  if (!config.areas.some((a) => a.key === scope.comparisonSetArea)) {
-    throw new RunScopeNotReady("unknown_area", `area ${scope.comparisonSetArea} is not configured`);
+  const sub = await requireSubdivision(db, scope.comparisonSetSubdivision);
+  const { rows } = await db.execute(sql`select 1 from comparison_set where subdivision_id = ${sub.id}::uuid limit 1`);
+  if (rows.length === 0) {
+    throw new RunScopeNotReady("comparison_set_empty", `the comparison set of subdivision ${scope.comparisonSetSubdivision} is empty`);
   }
-  const areaId = await areaGeoObjectId(db, scope.comparisonSetArea);
-  const { rows } = areaId
-    ? await db.execute(sql`select 1 from comparison_set where area_id = ${areaId}::uuid limit 1`)
-    : { rows: [] };
-  if (rows.length === 0) throw new RunScopeNotReady("comparison_set_empty", `the comparison set of area ${scope.comparisonSetArea} is empty`);
   return { type: "system", id: CONSOLIDATION_RUN_SCOPE };
 }
 
@@ -100,7 +97,6 @@ async function checkedScope(db: Db, scope: ConsolidationScope, config: AppConfig
 async function consolidationRunInput(
   db: Db,
   input: StartConsolidationInput,
-  config: AppConfig,
 ): Promise<Parameters<typeof createRun>[1]> {
   if (input.evaluation && input.stagesOnly) {
     // An evaluation run only ever has `consolidation.geo` (ruling M5-H-R2 M-5): refused, not silently dropped.
@@ -118,7 +114,7 @@ async function consolidationRunInput(
   const rulesVersion = input.rulesVersion ?? (await activeRulesVersion(db));
   const extraction = input.extraction && { model: input.extraction.model, promptVersion: input.extraction.promptVersion };
   getConsolidationConfig(rulesVersion);
-  const scope = await checkedScope(db, input.scope, config);
+  const scope = await checkedScope(db, input.scope);
   const stages = input.evaluation
     ? [CONSOLIDATION_GEO_STAGE]
     : input.stagesOnly
@@ -149,9 +145,8 @@ export async function startConsolidationRun(
   db: Db,
   boss: PgBoss,
   input: StartConsolidationInput,
-  config: AppConfig = getConfig(),
 ): Promise<{ id: string }> {
-  return startRun(db, boss, await consolidationRunInput(db, input, config));
+  return startRun(db, boss, await consolidationRunInput(db, input));
 }
 
 export type CatchUpResult =
@@ -185,9 +180,8 @@ export async function catchUpConsolidation(
   boss: PgBoss,
   runId: string,
   triggeredBy: string,
-  opts: { afterRecheck?: boolean; config?: AppConfig } = {},
+  opts: { afterRecheck?: boolean } = {},
 ): Promise<CatchUpResult> {
-  const config = opts.config ?? getConfig();
   const outcome = await db.transaction(async (tx): Promise<CatchUpResult & { stage?: string }> => {
     const [run] = await tx.select({ params: runs.params }).from(runs).where(eq(runs.id, runId)).for("update");
     if (!run) throw new Error(`run ${runId} not found`);
@@ -209,7 +203,7 @@ export async function catchUpConsolidation(
     if (targets.length === 0) return { status: "no_targets" };
     // the catch-up consolidates with the rules version the skipped run froze at its start (ruling M7-E-R1)
     const rulesVersion = typeof params.rulesVersion === "string" ? params.rulesVersion : undefined;
-    const input = await consolidationRunInput(tx, { scope: { geoObjectIds: targets }, triggeredBy, ...(rulesVersion ? { rulesVersion } : {}) }, config);
+    const input = await consolidationRunInput(tx, { scope: { geoObjectIds: targets }, triggeredBy, ...(rulesVersion ? { rulesVersion } : {}) });
     const { id } = await createRun(tx, input);
     await recordConsolidationCatchUp(tx, runId, id);
     return { status: "started", consolidationRunId: id, stage: input.stages[0] };

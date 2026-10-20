@@ -33,7 +33,7 @@ type Target = { geoObjectId: string; version: number };
 /**
  * The profile versions to summarize for a run: the versions this run created (newest per object), or with
  * `params.stagesOnly` (a summary run started for given objects, e.g. "Neu erzeugen" after a failed summary) the newest
- * version of each target of the run (`consolidationTargets`: its `geoObjectIds`, tile, area or comparison set). Kept: objects whose fact level is in `summary.levels` and versions without an
+ * version of each target of the run (`consolidationTargets`: its `geoObjectIds`, tile, subdivision or comparison set). Kept: objects whose fact level is in `summary.levels` and versions without an
  * `ok` summary of the current prompt version; with `params.regenerateSummary` („Summary neu erzeugen“, ruling M6-H-R1)
  * also versions with one.
  */

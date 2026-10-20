@@ -9,7 +9,7 @@ import { detailFeatures, reviewTaskDetail } from "@/lib/domain/review-view";
 import { insertPlace, insertProfile, provenanceEntry } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { rowsWrittenInTransaction } from "@/test/quality";
-import { insertNamedObject, insertTestRun } from "@/test/text";
+import { insertNamedObject, insertTestRun, insertTestSubdivision } from "@/test/text";
 import { getConfig } from "@/lib/config";
 import { comparisonTaskContextSchema, latestComparisonResults, recordComparisonResults, StaleComparison } from "../comparison-results";
 import { comparisonValues, loadComparisonSubjects, type ComparisonAttribute, type ComparisonSubject } from "../comparison-values";
@@ -452,8 +452,8 @@ describe("comparison results", () => {
 
   it("loadComparisonSubjects reads evaluation profiles for an evaluation run", async () => {
     await withRollback(async (tx) => {
-      const areaKey = `test-${newId()}`;
-      const areaId = await insertNamedObject(tx, { type: "area", names: [{ name: "Test area" }], lon: 21.0, lat: 35.2, configKey: areaKey });
+      const subdivisionKey = `XT-${newId()}`;
+      const { id: subdivisionId } = await insertTestSubdivision(tx, subdivisionKey, [20.5, 34.7, 21.5, 35.7]);
       const objectId = await insertNamedObject(tx, {
         type: "bay",
         names: [{ name: "Kolona" }, { name: "Κολώνα", language: "el" }],
@@ -465,7 +465,7 @@ describe("comparison results", () => {
         .values({ geoObjectId: objectId, kind: "anchorage", status: "confirmed", position: geomFromGeoJson({ type: "Point", coordinates: [21.0, 35.2] }) })
         .returning({ id: places.id });
       const outside = await insertPlace(tx, { lon: 21.02, name: "Not in the set" });
-      await tx.insert(comparisonSet).values({ placeId: place!.id, areaId, addedBy: "test" });
+      await tx.insert(comparisonSet).values({ placeId: place!.id, subdivisionId, addedBy: "test" });
       await insertProfile(
         tx,
         objectId,
@@ -484,7 +484,7 @@ describe("comparison results", () => {
         contentHash: "h",
       });
 
-      const current = await loadComparisonSubjects(tx, areaKey);
+      const current = await loadComparisonSubjects(tx, subdivisionKey);
       expect(current).toHaveLength(1);
       expect(current[0]).toMatchObject({
         placeId: place!.id,
@@ -499,7 +499,7 @@ describe("comparison results", () => {
       expect(current[0]!.names).toEqual(expect.arrayContaining(["Kolona", "Κολώνα"]));
       expect(current.map((s) => s.placeId)).not.toContain(outside.placeId);
 
-      const evaluated = await loadComparisonSubjects(tx, areaKey, { evaluationRunId: runId });
+      const evaluated = await loadComparisonSubjects(tx, subdivisionKey, { evaluationRunId: runId });
       expect(evaluated[0]).toMatchObject({
         position: { lon: 21.00002, lat: 35.20002 },
         anchorPosition: { lon: 21.001, lat: 35.201 },
@@ -508,7 +508,7 @@ describe("comparison results", () => {
       });
       // without an evaluation profile the attributes are empty and the place position is used
       const otherRun = await insertTestRun(tx);
-      expect((await loadComparisonSubjects(tx, areaKey, { evaluationRunId: otherRun }))[0]).toMatchObject({
+      expect((await loadComparisonSubjects(tx, subdivisionKey, { evaluationRunId: otherRun }))[0]).toMatchObject({
         position: { lon: 21.0, lat: 35.2 },
         attributes: {},
         profileVersion: null,

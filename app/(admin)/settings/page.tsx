@@ -183,7 +183,7 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
     ["Orte je Kachel", `${quality.placesPerTile.min}–${quality.placesPerTile.max}`],
     [
       "Vergleichssatz",
-      `${quality.comparisonSet.pilotSize} Orte im Pilot, ${quality.comparisonSet.perAreaMin}–${quality.comparisonSet.perAreaMax} je weiterem Revier`,
+      `${quality.comparisonSet.pilotSize} Orte im Pilot, ${quality.comparisonSet.perSubdivisionMin}–${quality.comparisonSet.perSubdivisionMax} je weiterem Landesteil`,
     ],
   ];
   const thresholds: [string, string][] = [

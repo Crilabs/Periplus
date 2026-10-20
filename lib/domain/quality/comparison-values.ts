@@ -20,7 +20,7 @@ import { canonicalJson } from "@/lib/domain/facts/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import type { LonLat } from "@/lib/domain/geometry/water";
 import { latestProfiles, validAt } from "@/lib/domain/timeline";
-import { areaGeoObjectId } from "@/lib/pipeline/tile-scope";
+import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 
 export { COMPARISON_ATTRIBUTES, type ComparisonAttribute };
 
@@ -171,17 +171,17 @@ export function comparisonValues(s: ComparisonSubject, cfg: NavilyConfig): Recor
 }
 
 /**
- * The places of the area's comparison set (any status: existence compares it), sorted by name. Attributes from the
+ * The places of the subdivision's comparison set (any status: existence compares it), sorted by name. Attributes from the
  * newest profile, or with `evaluationRunId` from that run's `evaluation_profiles` (then `profileVersion` null);
- * without a profile the attributes are empty. An unknown area has no set: empty list.
+ * without a profile the attributes are empty. An unknown subdivision has no set: empty list.
  */
 export async function loadComparisonSubjects(
   db: Db,
-  areaKey: string,
+  subdivisionKey: string,
   opts: { evaluationRunId?: string } = {},
 ): Promise<ComparisonSubject[]> {
-  const areaId = await areaGeoObjectId(db, areaKey);
-  if (!areaId) return [];
+  const sub = await subdivisionByKey(db, subdivisionKey);
+  if (!sub) return [];
   const rows = await db
     .select({
       placeId: places.id,
@@ -194,7 +194,7 @@ export async function loadComparisonSubjects(
     })
     .from(comparisonSet)
     .innerJoin(places, eq(places.id, comparisonSet.placeId))
-    .where(eq(comparisonSet.areaId, areaId));
+    .where(eq(comparisonSet.subdivisionId, sub.id));
   if (rows.length === 0) return [];
   const objectIds = rows.map((r) => r.geoObjectId);
 

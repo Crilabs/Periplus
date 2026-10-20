@@ -8,17 +8,18 @@ import { activeExtractionRunIdSql } from "@/lib/domain/extraction/active-run";
 import { belegtreue } from "@/lib/domain/extraction/fidelity";
 import { SECTORS, type Sector } from "@/lib/domain/facts/schema-types";
 import { latestProfiles } from "@/lib/domain/timeline";
-import { areaGeoObjectId } from "@/lib/pipeline/tile-scope";
+import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import { latestComparisonResults } from "./comparison-results";
 import { comparisonValues, loadComparisonSubjects } from "./comparison-values";
 
 /*
  * Quality metrics I (spec 10 „Kennzahlen“, ruling M7-P12): one function per metric, each a value (null when it cannot
  * be computed) and details with counts only (Grundprinzip 9: never a Navily value). The places in scope are the
- * confirmed, valid places in the tiles labelled with the area (or in the one tile of a tile scope).
+ * confirmed, valid places of the subdivision (`geo_objects.subdivision_id`, nearest land, spec 14; the tile label decides nothing here)
+ * or, for a tile scope, those of the subdivision in that tile.
  */
 
-export type QualityScope = { areaKey: string; tileId?: string };
+export type QualityScope = { subdivisionKey: string; tileId?: string };
 /** A measurement window: `from` inclusive, `to` exclusive. */
 export type MeasureWindow = { from: Date; to: Date };
 export type MetricResult = { metric: MetricKey; value: number | null; details: Record<string, unknown> };
@@ -35,24 +36,30 @@ const utcToday = () => new Date().toISOString().slice(0, 10);
 const validPlaceOn = (today: string) => sql`p.valid_from <= ${today}::date and (p.valid_to is null or p.valid_to > ${today}::date)`;
 const validTileOn = (today: string) => sql`(t.valid_to is null or t.valid_to > ${today}::date)`;
 
-type ResolvedScope = { areaId: string; tileId: string | undefined; tiles: SQL };
+type ResolvedScope = { subdivisionId: string; tileId: string | undefined; inScope: SQL };
 
-/** The area of the scope and the condition on `tiles t` of the scope; null for an unknown area. */
+/**
+ * The subdivision of the scope and the condition on `places p` joined with `geo_objects g` of the scope: the place's
+ * geo object belongs to the subdivision (and, for a tile scope, the place lies in that tile); null for an unknown
+ * subdivision.
+ */
 async function resolveScope(db: Db, scope: QualityScope): Promise<ResolvedScope | null> {
-  const areaId = await areaGeoObjectId(db, scope.areaKey);
-  if (!areaId) return null;
-  const tiles = scope.tileId ? sql`t.area_id = ${areaId} and t.id = ${scope.tileId}` : sql`t.area_id = ${areaId}`;
-  return { areaId, tileId: scope.tileId, tiles };
+  const sub = await subdivisionByKey(db, scope.subdivisionKey);
+  if (!sub) return null;
+  const inScope = scope.tileId
+    ? sql`g.subdivision_id = ${sub.id} and p.tile_id = ${scope.tileId}`
+    : sql`g.subdivision_id = ${sub.id}`;
+  return { subdivisionId: sub.id, tileId: scope.tileId, inScope };
 }
 
 /**
- * The places in scope: confirmed, valid on `today`, in a tile of the scope. An area counts the places of its ended
- * tiles too (`placesPerTileMetric` lists them under `endedTiles`, ruling M7-D-R3).
+ * The places in scope: confirmed, valid on `today`, of the subdivision (in the tile, for a tile scope). A subdivision
+ * counts the places of its ended tiles too (`placesPerTileMetric` lists them under `endedTiles`, ruling M7-D-R3).
  */
 async function placesInScope(db: Db, s: ResolvedScope, today: string): Promise<Array<{ placeId: string; geoObjectId: string }>> {
   const { rows } = await db.execute<{ place_id: string; geo_object_id: string }>(sql`
-    select p.id as place_id, p.geo_object_id from places p join tiles t on t.id = p.tile_id
-    where ${s.tiles} and p.status = 'confirmed' and ${validPlaceOn(today)}
+    select p.id as place_id, p.geo_object_id from places p join geo_objects g on g.id = p.geo_object_id
+    where ${s.inScope} and p.status = 'confirmed' and ${validPlaceOn(today)}
     order by p.id
   `);
   return rows.map((r) => ({ placeId: r.place_id, geoObjectId: r.geo_object_id }));
@@ -60,7 +67,7 @@ async function placesInScope(db: Db, s: ResolvedScope, today: string): Promise<A
 
 /**
  * Abdeckung (spec 10): the share of the comparison set's places that are confirmed and valid. A member counts for the
- * area only while its tile is labelled with the area (and, for a tile scope, lies in that tile; ruling M7-C-R1).
+ * subdivision only while its geo object belongs to it (and, for a tile scope, the place lies in that tile; ruling M7-C-R1).
  * `details { set, confirmed }`; an empty set is null.
  */
 export async function coverageMetric(db: Db, scope: QualityScope, opts: { today?: string } = {}): Promise<MetricResult> {
@@ -68,8 +75,8 @@ export async function coverageMetric(db: Db, scope: QualityScope, opts: { today?
   if (!s) return { metric: "coverage", value: null, details: { set: 0, confirmed: 0 } };
   const { rows } = await db.execute<{ set: number; confirmed: number }>(sql`
     select count(*)::int as set, count(*) filter (where p.status = 'confirmed' and ${validPlaceOn(opts.today ?? utcToday())})::int as confirmed
-    from comparison_set cs join places p on p.id = cs.place_id join tiles t on t.id = p.tile_id
-    where cs.area_id = ${s.areaId} and ${s.tiles}
+    from comparison_set cs join places p on p.id = cs.place_id join geo_objects g on g.id = p.geo_object_id
+    where cs.subdivision_id = ${s.subdivisionId} and ${s.inScope}
   `);
   const set = Number(rows[0]!.set);
   const confirmed = Number(rows[0]!.confirmed);
@@ -112,14 +119,14 @@ export async function multiDocumentMetric(db: Db, scope: QualityScope, opts: { t
   };
 }
 
-/** Places in scope, those with mentions from ≥ 2 sources and from ≥ 2 documents; null for an unknown area. */
+/** Places in scope, those with mentions from ≥ 2 sources and from ≥ 2 documents; null for an unknown subdivision. */
 async function mentionCounts(db: Db, scope: QualityScope, today: string) {
   const s = await resolveScope(db, scope);
   if (!s) return null;
   const { rows } = await db.execute<{ places: number; multi: number; multi_document: number }>(sql`
     with scope_places as (
-      select p.id, p.geo_object_id from places p join tiles t on t.id = p.tile_id
-      where ${s.tiles} and p.status = 'confirmed' and ${validPlaceOn(today)}
+      select p.id, p.geo_object_id from places p join geo_objects g on g.id = p.geo_object_id
+      where ${s.inScope} and p.status = 'confirmed' and ${validPlaceOn(today)}
     ),
     chains as ${mergedChainsSql(sql`select geo_object_id as id from scope_places`)},
     per_place as (
@@ -159,7 +166,7 @@ export async function factPrecisionMetric(
   opts: { evaluationRunId?: string } = {},
 ): Promise<MetricResult> {
   const cfg = getConfig().quality.navily;
-  let subjects = await loadComparisonSubjects(db, scope.areaKey, { evaluationRunId: opts.evaluationRunId });
+  let subjects = await loadComparisonSubjects(db, scope.subdivisionKey, { evaluationRunId: opts.evaluationRunId });
   if (scope.tileId && subjects.length > 0) {
     const inTile = await db
       .select({ id: places.id })
@@ -349,7 +356,7 @@ type ReportRoute = { documentId: string; stops: number; openStops: number; compl
  * Routen-Rekonstruktion per trip report (ruling M7-P12, datendienst „Anteil der Törnberichte“): each document of a
  * counting source whose current version is a trip report (classified type, else the fetch-time type) counts with the
  * newest route of a finished (quote check passed, never blocked) `extract-route` run on that version, not of a model
- * comparison, when at least one stop lies at a place (of any status) in a tile of the scope. Complete = every stop is
+ * comparison, when at least one stop lies at a place (of any status) of the scope. Complete = every stop is
  * assigned to a geo object with a confirmed, valid place. A stop at an object merged into a place's object is at that
  * place (ruling M7-C-R2). `details { routes, complete, openStops, reports }` (reports: own document ids with stop
  * counts, for the pilot report); no such report → null.
@@ -371,9 +378,9 @@ export async function routeReconstructionMetric(db: Db, scope: QualityScope, opt
       order by d.id, er.started_at desc, er.id desc
     ),
     known_places as (
-      select p.geo_object_id, bool_or(p.status = 'confirmed') as confirmed, bool_or(${s.tiles}) as in_scope
-      from places p join tiles t on t.id = p.tile_id
-      where ${validPlaceOn(today)} and (p.status = 'confirmed' or ${s.tiles})
+      select p.geo_object_id, bool_or(p.status = 'confirmed') as confirmed, bool_or(${s.inScope}) as in_scope
+      from places p join geo_objects g on g.id = p.geo_object_id
+      where ${validPlaceOn(today)} and (p.status = 'confirmed' or ${s.inScope})
       group by p.geo_object_id
     ),
     chains as ${mergedChainsSql(sql`select geo_object_id as id from known_places`)},
@@ -422,29 +429,31 @@ const MODEL_COMPARISON_SCOPE_ID = "model-comparison";
 /** Kinds of one-off pilot spend (ruling M7-P15), reported as „Einmalkosten Pilot“ and never in the operating cost. */
 type OneOffKind = "converterComparison" | "modelComparison" | "pdfCompare" | "fixturesRecord" | "evaluation";
 
-/** Confirmed places valid on `today` per configured area key (areas without places are missing; ended tiles included). */
-async function confirmedPlacesByArea(db: Db, areaKeys: string[], today: string): Promise<Map<string, number>> {
-  if (areaKeys.length === 0) return new Map();
+/**
+ * Confirmed places valid on `today` per valid subdivision key (by the place's geo object, subdivisions without places are
+ * missing); `keys` limits it to these subdivisions, default every valid one.
+ */
+async function confirmedPlacesBySubdivision(db: Db, today: string, keys?: string[]): Promise<Map<string, number>> {
+  if (keys && keys.length === 0) return new Map();
   const { rows } = await db.execute<{ key: string; n: number }>(sql`
-    select g.config_key as key, count(*)::int as n
-    from geo_objects g join tiles t on t.area_id = g.id join places p on p.tile_id = t.id
-    where g.type = 'area' and g.config_key in (select value from jsonb_array_elements_text(${JSON.stringify(areaKeys)}::jsonb))
+    select s.key, count(*)::int as n
+    from subdivisions s join geo_objects g on g.subdivision_id = s.id join places p on p.geo_object_id = g.id
+    where s.valid_to is null
+      ${keys ? sql`and s.key in (select value from jsonb_array_elements_text(${JSON.stringify(keys)}::jsonb))` : sql``}
       and p.status = 'confirmed' and ${validPlaceOn(today)}
-    group by g.config_key
+    group by s.key
   `);
   return new Map(rows.map((r) => [r.key, Number(r.n)]));
 }
 
-const configuredAreaKeys = () => getConfig().areas.map((a) => a.key);
-
 /**
  * Kosten je Ort (spec 10, ruling M7-P15): the operating spend of the window (`external_calls.at`, `from` inclusive,
  * `to` exclusive) for the scope, per confirmed place in scope. A call belongs to a tile (its `tile_id`, else its run's
- * tile, else the tile of its run's place), to an area (a run scoped to the area, without tile), or to nobody: shared
+ * tile, else the tile of its run's place), to a subdivision (a run scoped to the subdivision, without tile), or to nobody: shared
  * spend (source, system and text runs, calls without run). The scope's cost is its direct spend (calls of its tiles;
- * for an area also the area's own calls), plus for a tile the tile's place share of its area's own calls, plus the
- * scope's share of the shared spend by confirmed places among all configured areas (`opts.areaKeys`, default the
- * areas of `config/areas`). One-off pilot spend (converter and model comparison, `pdf:compare`, `fixtures:record`,
+ * for a subdivision also its own calls), plus for a tile the tile's place share of its subdivision's own calls, plus the
+ * scope's share of the shared spend by confirmed places among all valid subdivisions (`opts.subdivisionKeys`, default
+ * all). One-off pilot spend (converter and model comparison, `pdf:compare`, `fixtures:record`,
  * candidate evaluations) counts nowhere and is listed in `details.oneOff`. `details { costEur, directEur, sharedEur,
  * places, byStage, byService, oneOff }`; no confirmed places → null.
  */
@@ -452,7 +461,7 @@ export async function costPerPlaceMetric(
   db: Db,
   scope: QualityScope,
   window: MeasureWindow,
-  opts: { areaKeys?: string[]; today?: string } = {},
+  opts: { subdivisionKeys?: string[]; today?: string } = {},
 ): Promise<MetricResult> {
   const today = opts.today ?? utcToday();
   const s = await resolveScope(db, scope);
@@ -462,14 +471,14 @@ export async function costPerPlaceMetric(
     stage: string;
     service: string;
     tile_id: string | null;
-    tile_area_id: string | null;
-    area_key: string | null;
+    tile_subdivision_id: string | null;
+    subdivision_key: string | null;
     one_off: OneOffKind | null;
   }>(sql`
     with calls as (
       select c.cost_eur::float8 as eur, coalesce(c.stage, '') as stage, c.service,
         coalesce(c.tile_id, case when r.scope_type = 'tile' then r.scope_id end, rp.tile_id) as tile_id,
-        case when c.tile_id is null and r.scope_type = 'area' then r.scope_id end as area_key,
+        case when c.tile_id is null and r.scope_type = 'subdivision' then r.scope_id end as subdivision_key,
         case
           when c.stage = 'fixtures:record' then 'fixturesRecord'
           when c.stage like 'pdf:compare%' then 'pdfCompare'
@@ -482,18 +491,18 @@ export async function costPerPlaceMetric(
       left join places rp on r.scope_type = 'place' and rp.id::text = r.scope_id
       where c.at >= ${window.from.toISOString()}::timestamptz and c.at < ${window.to.toISOString()}::timestamptz
     )
-    select sum(c.eur)::float8 as eur, c.stage, c.service, c.tile_id, t.area_id as tile_area_id, c.area_key, c.one_off
+    select sum(c.eur)::float8 as eur, c.stage, c.service, c.tile_id, t.subdivision_id as tile_subdivision_id, c.subdivision_key, c.one_off
     from calls c left join tiles t on t.id = c.tile_id
-    group by c.stage, c.service, c.tile_id, t.area_id, c.area_key, c.one_off
-    order by c.stage, c.service, c.tile_id, c.area_key, c.one_off
+    group by c.stage, c.service, c.tile_id, t.subdivision_id, c.subdivision_key, c.one_off
+    order by c.stage, c.service, c.tile_id, c.subdivision_key, c.one_off
   `);
 
-  const keys = [...new Set([...(opts.areaKeys ?? configuredAreaKeys()), scope.areaKey])];
-  const byArea = await confirmedPlacesByArea(db, keys, today);
-  const allPlaces = [...byArea.values()].reduce((n, x) => n + x, 0);
-  const areaPlaces = byArea.get(scope.areaKey) ?? 0;
+  const keys = opts.subdivisionKeys ? [...new Set([...opts.subdivisionKeys, scope.subdivisionKey])] : undefined;
+  const bySubdivision = await confirmedPlacesBySubdivision(db, today, keys);
+  const allPlaces = [...bySubdivision.values()].reduce((n, x) => n + x, 0);
+  const subdivisionPlaces = bySubdivision.get(scope.subdivisionKey) ?? 0;
   const sharedWeight = allPlaces === 0 ? 0 : placesCount / allPlaces;
-  const areaWeight = !scope.tileId ? 1 : areaPlaces === 0 ? 0 : placesCount / areaPlaces;
+  const subdivisionWeight = !scope.tileId ? 1 : subdivisionPlaces === 0 ? 0 : placesCount / subdivisionPlaces;
 
   let directEur = 0;
   let sharedEur = 0;
@@ -508,11 +517,11 @@ export async function costPerPlaceMetric(
     }
     let part = 0;
     if (r.tile_id !== null) {
-      const own = scope.tileId ? r.tile_id === scope.tileId : s !== null && r.tile_area_id === s.areaId;
+      const own = scope.tileId ? r.tile_id === scope.tileId : s !== null && r.tile_subdivision_id === s.subdivisionId;
       if (own) directEur += part = eur;
-    } else if (r.area_key !== null) {
-      if (r.area_key === scope.areaKey) {
-        part = eur * areaWeight;
+    } else if (r.subdivision_key !== null) {
+      if (r.subdivision_key === scope.subdivisionKey) {
+        part = eur * subdivisionWeight;
         if (scope.tileId) sharedEur += part;
         else directEur += part;
       }
@@ -555,18 +564,18 @@ export const PSEUDO_TASK_SUBJECT_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Review-Aufwand (spec 10, ruling M7-P14) over the review tasks created in the window (all areas): each decision
+ * Review-Aufwand (spec 10, ruling M7-P14) over the review tasks created in the window (all subdivisions): each decision
  * counts `min(duration_ms, reviewDurationCapMinutes)`, a decision without a duration counts 0 (reported). Pseudo-tasks
  * (`PSEUDO_TASK_SUBJECT_TYPES`, keyed by subject type) and comparison deviations (quality control) are not counted and
  * appear apart in `byKind` with `counted: false`. Returns `review_minutes` (`details { tasks, decided, open, withoutDuration, capped,
- * byKind }`) and `review_minutes_per_100` = minutes per 100 confirmed places of the configured areas (`opts.areaKeys`,
- * default `config/areas`; `details { minutes, places }`, no places → null).
+ * byKind }`) and `review_minutes_per_100` = minutes per 100 confirmed places of the valid subdivisions (`opts.subdivisionKeys`,
+ * default all; `details { minutes, places }`, no places → null).
  */
 export async function reviewEffortMetrics(
   db: Db,
   window: MeasureWindow,
   cfg: QualityConfig,
-  opts: { areaKeys?: string[]; today?: string } = {},
+  opts: { subdivisionKeys?: string[]; today?: string } = {},
 ): Promise<[MetricResult, MetricResult]> {
   const { rows } = await db.execute<{ id: string; kind: string; subject_type: string; status: string; duration_ms: number | null; decision_id: string | null }>(sql`
     select t.id, t.kind::text as kind, t.subject_type, t.status::text as status, d.duration_ms, d.id as decision_id
@@ -608,8 +617,8 @@ export async function reviewEffortMetrics(
     ms += duration;
   }
   const minutes = round6(ms / 60_000);
-  const byArea = await confirmedPlacesByArea(db, opts.areaKeys ?? configuredAreaKeys(), opts.today ?? utcToday());
-  const places = [...byArea.values()].reduce((n, x) => n + x, 0);
+  const bySubdivision = await confirmedPlacesBySubdivision(db, opts.today ?? utcToday(), opts.subdivisionKeys);
+  const places = [...bySubdivision.values()].reduce((n, x) => n + x, 0);
   const kinds = Object.fromEntries(
     [...byKind].sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, g]) => [k, { ...g, minutes: round6(g.minutes) }]),
   );
@@ -671,21 +680,22 @@ export async function recentObservationShareMetric(
 }
 
 /**
- * „Orte je Kachel, Ziel 10–40“: confirmed places valid on `today` per coast tile of the area valid on `today`; the
- * value is the median. `details { tiles, min, max, median, inTarget, outsideTarget, target, endedTiles }` (`inTarget`:
- * tiles within the target range; `endedTiles`: tiles of the area ended by `today` that still hold confirmed, valid
- * places, which the area's metrics count but no tile row shows, ruling M7-D-R3); no coast tiles → null.
+ * „Orte je Kachel, Ziel 10–40“: confirmed places valid on `today` per coast tile labelled with the subdivision
+ * (`tiles.subdivision_id`, the label for tile metrics, spec 14) and valid on `today`; the value is the median.
+ * `details { tiles, min, max, median, inTarget, outsideTarget, target, endedTiles }` (`inTarget`: tiles within the
+ * target range; `endedTiles`: tiles of the subdivision ended by `today` that still hold confirmed, valid places,
+ * which the subdivision's metrics count but no tile row shows, ruling M7-D-R3); no coast tiles → null.
  */
-export async function placesPerTileMetric(db: Db, areaKey: string, cfg: QualityConfig, opts: { today?: string } = {}): Promise<MetricResult> {
+export async function placesPerTileMetric(db: Db, subdivisionKey: string, cfg: QualityConfig, opts: { today?: string } = {}): Promise<MetricResult> {
   const today = opts.today ?? utcToday();
   const target = { min: cfg.placesPerTile.min, max: cfg.placesPerTile.max };
-  const areaId = await areaGeoObjectId(db, areaKey);
-  const { rows } = areaId
+  const sub = await subdivisionByKey(db, subdivisionKey);
+  const { rows } = sub
     ? await db.execute<{ tile_id: string; places: number; valid: boolean }>(sql`
         select t.id as tile_id, count(p.id) filter (where p.status = 'confirmed' and ${validPlaceOn(today)})::int as places,
           ${validTileOn(today)} as valid
         from tiles t left join places p on p.tile_id = t.id
-        where t.area_id = ${areaId} and (t.has_coast or not ${validTileOn(today)})
+        where t.subdivision_id = ${sub.id} and (t.has_coast or not ${validTileOn(today)})
         group by t.id order by t.id
       `)
     : { rows: [] };

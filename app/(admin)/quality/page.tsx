@@ -4,6 +4,7 @@ import { z } from "zod";
 import { consolidationVersions, getConfig } from "@/lib/config";
 import type { MetricKey } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
+import { activeSubdivisionKeys, listSubdivisionOptions } from "@/lib/domain/subdivisions/store";
 import { comparisonOverview } from "@/lib/domain/comparison";
 import { activeRulesVersion } from "@/lib/domain/consolidation/active-rules";
 import { detailNumbers, METRIC_UNITS, qualityDashboard, type DashboardRow } from "@/lib/domain/quality/dashboard";
@@ -12,6 +13,7 @@ import type { MetricStatus } from "@/lib/domain/quality/snapshot";
 import { MEASUREMENT_LABEL_MAX } from "@/lib/pipeline/quality-run";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { Dialog } from "../_components/dialog";
+import { SubdivisionOptions } from "../_components/subdivision-options";
 import {
   COMPARISON_ATTRIBUTE_LABELS,
   METRIC_LABELS,
@@ -47,7 +49,7 @@ import { activateCandidateAction, startEvaluationAction, startMeasurementAction,
 export const metadata: Metadata = { title: "Qualität" };
 
 const querySchema = z.object({
-  area: z.string().optional().catch(undefined),
+  subdivision: z.string().optional().catch(undefined),
   tile: z.string().optional().catch(undefined),
   error: z.string().optional().catch(undefined),
   notice: z.string().optional().catch(undefined),
@@ -106,20 +108,23 @@ function candidateText(c: EvaluationCandidate): string {
 export default async function Page({ searchParams }: PageProps<"/quality">) {
   await requireAdmin();
   const config = getConfig();
-  const { areas, quality } = config;
+  const { quality } = config;
   const query = querySchema.parse(await searchParams);
-  const area = areas.find((a) => a.key === query.area) ?? areas[0];
-  if (!area)
+  const db = getDb();
+  // the subdivisions with tiles (built or in work), by country and name
+  const withTiles = new Set(await activeSubdivisionKeys(db));
+  const options = (await listSubdivisionOptions(db)).filter((o) => withTiles.has(o.key));
+  const subdivision = options.find((o) => o.key === query.subdivision) ?? options[0];
+  if (!subdivision)
     return (
       <>
         <PageHeader title="Qualität" />
-        <Notice tone="warn">Kein Revier konfiguriert.</Notice>
+        <Notice tone="warn">Noch kein Landesteil mit Kacheln – zuerst einen Landesteil aufbauen.</Notice>
       </>
     );
-  const db = getDb();
-  const overview = await comparisonOverview(db, area.key);
-  const dashboard = await qualityDashboard(db, area.key, quality);
-  const evaluations = await listEvaluations(db, area.key);
+  const overview = await comparisonOverview(db, subdivision.key);
+  const dashboard = await qualityDashboard(db, subdivision.key, quality);
+  const evaluations = await listEvaluations(db, subdivision.key);
   const comparisons = new Map(await Promise.all(evaluations.map(async (e) => [e.runId, await compareEvaluation(db, e.runId)] as const)));
   const activeRules = await activeRulesVersion(db);
   const ruleVersions = consolidationVersions();
@@ -130,7 +135,7 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
   const tileIds = [...new Set(candidates.flatMap((c) => (c.tileId ? [c.tileId] : [])))];
   const tile = tileIds.includes(query.tile ?? "") ? query.tile : undefined;
   const shown = tile ? candidates.filter((c) => c.tileId === tile) : candidates;
-  const href = (t?: string) => `/quality?${new URLSearchParams({ area: area.key, ...(t ? { tile: t } : {}) })}`;
+  const href = (t?: string) => `/quality?${new URLSearchParams({ subdivision: subdivision.key, ...(t ? { tile: t } : {}) })}`;
   const remaining = Math.max(0, target - size);
   const error = qualityPageError(query.error);
   const { latest, history } = dashboard;
@@ -144,28 +149,28 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
     <>
       <PageHeader
         title="Qualität"
-        description={`Kennzahlen je Revier gegen die Ziele für Pilot und Vollbetrieb, gemessen in Messläufen. Der Vergleichssatz ist eine feste Auswahl bestätigter Orte, an der die Ergebnisse gegen eine externe Referenz (Navily) geprüft werden; Ziel sind ${target} Orte.`}
+        description={`Kennzahlen je Landesteil gegen die Ziele für Pilot und Vollbetrieb, gemessen in Messläufen. Der Vergleichssatz ist eine feste Auswahl bestätigter Orte, an der die Ergebnisse gegen eine externe Referenz (Navily) geprüft werden; Ziel sind ${target} Orte.`}
         actions={
-          <ButtonLink href={`/quality/compare?area=${area.key}`} variant="primary">
+          <ButtonLink href={`/quality/compare?${new URLSearchParams({ subdivision: subdivision.key })}`} variant="primary">
             Navily-Abgleich
           </ButtonLink>
         }
       />
 
-      {areas.length > 1 && (
-        <div className="mb-6">
-          <FilterChips
-            label="Revier"
-            items={areas.map((a) => ({ href: `/quality?area=${a.key}`, label: a.names.de, current: a.key === area.key }))}
-          />
-        </div>
-      )}
+      <form method="get" className="mb-6 flex flex-wrap items-end gap-3">
+        <Field label="Landesteil">
+          <select name="subdivision" defaultValue={subdivision.key} className={inputClass} aria-label="Landesteil">
+            <SubdivisionOptions options={options} />
+          </select>
+        </Field>
+        <Button>Anzeigen</Button>
+      </form>
 
       {!overview && (
-        <Notice tone="warn" className="mb-6" data-testid="area-missing">
-          Revier noch nicht angelegt –{" "}
+        <Notice tone="warn" className="mb-6" data-testid="subdivision-missing">
+          Landesteil nicht gefunden –{" "}
           <Link href="/runs" className="font-medium text-accent underline-offset-2 hover:underline">
-            Gazetteer-Lauf starten
+            Läufe ansehen
           </Link>
         </Notice>
       )}
@@ -192,20 +197,20 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
           tone={size >= target ? "ok" : "neutral"}
           hint={
             remaining > 0
-              ? `Orte im Revier ${area.names.de}; noch ${remaining} auswählen`
-              : `Orte im Revier ${area.names.de}; Ziel erreicht`
+              ? `Orte im Landesteil ${subdivision.name}; noch ${remaining} auswählen`
+              : `Orte im Landesteil ${subdivision.name}; Ziel erreicht`
           }
         />
         <Stat
           label="Geprüfte Vergleichswerte"
           value={fmt.int(dashboard.comparison.checked)}
           hint={`${fmt.int(dashboard.comparison.pending)} Werte im Vergleichssatz noch ohne Ergebnis für ihren aktuellen Wert`}
-          href={`/quality/compare?area=${area.key}`}
+          href={`/quality/compare?${new URLSearchParams({ subdivision: subdivision.key })}`}
         />
         <Stat
           label="Letzte Messung"
           value={latest ? latest.label : "—"}
-          hint={latest ? `${fmt.date(latest.from)} bis ${fmt.date(latest.to)}` : "Noch keine Messung für dieses Revier"}
+          hint={latest ? `${fmt.date(latest.from)} bis ${fmt.date(latest.to)}` : "Noch keine Messung für diesen Landesteil"}
           href={latest ? `/runs/${latest.runId}` : undefined}
         />
       </div>
@@ -216,7 +221,7 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
           description={
             latest
               ? `Messung „${latest.label}“ vom ${fmt.dateTime(latest.createdAt)}. Für die Zahlen dahinter über einen Wert fahren.`
-              : "Noch keine Messung. Mit „Messen“ die Kennzahlen des Reviers berechnen."
+              : "Noch keine Messung. Mit „Messen“ die Kennzahlen des Landesteils berechnen."
           }
           flush
         >
@@ -264,10 +269,10 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
         </Panel>
 
         <div className="space-y-6">
-          <Panel title="Messen" description="Berechnet alle Kennzahlen des Reviers für einen Zeitraum. Ohne „von“ schließt die Messung an die letzte an (die erste Messung braucht „von“: Beginn des ersten Pilot-Laufs), ohne „bis“ endet sie jetzt.">
+          <Panel title="Messen" description="Berechnet alle Kennzahlen des Landesteils für einen Zeitraum. Ohne „von“ schließt die Messung an die letzte an (die erste Messung braucht „von“: Beginn des ersten Pilot-Laufs), ohne „bis“ endet sie jetzt.">
             <form action={startMeasurementAction} className="flex flex-col gap-3">
-              <input type="hidden" name="areaKey" value={area.key} />
-              <Field label="Bezeichnung" hint="z. B. „Lauf 1“; je Revier eindeutig">
+              <input type="hidden" name="subdivisionKey" value={subdivision.key} />
+              <Field label="Bezeichnung" hint="z. B. „Lauf 1“; je Landesteil eindeutig">
                 <input name="label" required maxLength={MEASUREMENT_LABEL_MAX} className={inputClass} />
               </Field>
               <div className="grid grid-cols-2 gap-3">
@@ -309,7 +314,7 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
         </div>
       </div>
 
-      <Panel title="Verlauf" description="Die letzten Messungen des Reviers, ältere zuerst." className="mt-6" flush>
+      <Panel title="Verlauf" description="Die letzten Messungen des Landesteils, ältere zuerst." className="mt-6" flush>
         {history.length === 0 ? (
           <EmptyState title="Noch keine Messung">Der Verlauf zeigt je Messung eine Spalte.</EmptyState>
         ) : (
@@ -350,7 +355,7 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
         flush
       >
         {dashboard.tiles.length === 0 ? (
-          <EmptyState title="Keine Kachelwerte">Die Messung schreibt eine Zeile je Küstenkachel des Reviers.</EmptyState>
+          <EmptyState title="Keine Kachelwerte">Die Messung schreibt eine Zeile je Küstenkachel des Landesteils.</EmptyState>
         ) : (
           <Table>
             <thead>
@@ -393,7 +398,7 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
         className="mt-6"
       >
         <form action={startEvaluationAction} className="flex flex-wrap items-end gap-3">
-          <input type="hidden" name="areaKey" value={area.key} />
+          <input type="hidden" name="subdivisionKey" value={subdivision.key} />
           <Field label="Regelversion">
             <select name="rulesVersion" defaultValue="" className={inputClass}>
               <option value="">unverändert</option>
@@ -453,10 +458,10 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
                         triggerVariant="primary"
                         triggerSize="sm"
                         title={`${candidateText(c.candidate)} aktivieren?`}
-                        description={`Die Aktivierung gilt für alle Reviere, nicht nur für ${area.names.de}, an dessen Vergleichssatz bewertet wurde. Regelversionen gelten danach für jede neue Konsolidierung, Lieferung und Zusammenfassung. Eine Extraktion gilt als freigegeben und wirkt erst nach dem Deploy von config/models.json.`}
+                        description={`Die Aktivierung gilt für alle Landesteile, nicht nur für ${subdivision.name}, an dessen Vergleichssatz bewertet wurde. Regelversionen gelten danach für jede neue Konsolidierung, Lieferung und Zusammenfassung. Eine Extraktion gilt als freigegeben und wirkt erst nach dem Deploy von config/models.json.`}
                       >
                         <form action={activateCandidateAction} className="flex justify-end">
-                          <input type="hidden" name="areaKey" value={area.key} />
+                          <input type="hidden" name="subdivisionKey" value={subdivision.key} />
                           <input type="hidden" name="evaluationRunId" value={e.runId} />
                           <Button variant="primary">Jetzt aktivieren</Button>
                         </form>
@@ -504,7 +509,7 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
                           {c.changed.slice(0, CHANGED_SHOWN).map((ch) => (
                             <li key={`${ch.placeId}|${ch.attribute}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
                               <TextLink
-                                href={`/quality/compare?${new URLSearchParams({ area: area.key, evaluation: e.runId, place: ch.placeId })}`}
+                                href={`/quality/compare?${new URLSearchParams({ subdivision: subdivision.key, evaluation: e.runId, place: ch.placeId })}`}
                                 className="font-medium"
                               >
                                 {ch.name ?? ch.placeId}
@@ -556,7 +561,7 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
         )}
         {!overview ? (
           <EmptyState title="Noch keine Orte">
-            Orte entstehen nach dem Gazetteer- und dem Seed-Lauf für das Revier und werden in der Prüfung bestätigt.
+            Orte entstehen nach dem Gazetteer- und dem Seed-Lauf für den Landesteil und werden in der Prüfung bestätigt.
           </EmptyState>
         ) : shown.length === 0 ? (
           <EmptyState title="Keine bestätigten Orte">
@@ -564,7 +569,7 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
           </EmptyState>
         ) : (
           <form action={saveComparisonSelectionAction}>
-            <input type="hidden" name="areaKey" value={area.key} />
+            <input type="hidden" name="subdivisionKey" value={subdivision.key} />
             <ul className="divide-y divide-line">
               {shown.map((c) => (
                 <li key={c.placeId} className="hover:bg-sunken/50">

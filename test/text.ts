@@ -206,6 +206,8 @@ export type TestNamedObject = {
   tiles?: string[];
   parentId?: string | null;
   configKey?: string;
+  /** The subdivision the object belongs to (`geo_objects.subdivision_id`, nearest land). */
+  subdivisionId?: string | null;
   /** The POI category (`poi` objects only). */
   category?: PoiCategory | null;
 };
@@ -218,6 +220,7 @@ export async function insertNamedObject(tx: Db, o: TestNamedObject): Promise<str
     geom: geomFromGeoJson({ type: "Point", coordinates: [o.lon, o.lat] }),
     parentId: o.parentId ?? null,
     configKey: o.configKey ?? null,
+    ...(o.subdivisionId !== undefined ? { subdivisionId: o.subdivisionId } : {}),
     category: o.category ?? null,
   });
   await addNames(

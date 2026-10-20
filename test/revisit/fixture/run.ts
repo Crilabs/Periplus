@@ -34,7 +34,7 @@ import { MENTIONS_QUEUE, matchVersions } from "@/lib/pipeline/text/mentions";
 import { ROUTE_QUEUE, extractRoutes } from "@/lib/pipeline/text/routes";
 import { startTextRun } from "@/lib/pipeline/text/run";
 import { memoryArchive } from "@/test/s3";
-import { addRevisitDocument, REVISIT_AREA_KEY, seedRevisitArea, type RevisitFixture } from "./area";
+import { addRevisitDocument, REVISIT_SUBDIVISION_KEY, seedRevisitArea, type RevisitFixture } from "./area";
 import { createRevisitFakeModel } from "./fake-model";
 
 /*
@@ -51,10 +51,9 @@ function requireScenario(scenario: RevisitScenario | undefined, runId: string): 
 }
 
 const base = loadConfig("config");
-/** The repository configuration with the fixture area and a large Anthropic budget (MockModel batches cost nothing). */
+/** The repository configuration with a large Anthropic budget (MockModel batches cost nothing). */
 export const revisitTestConfig: AppConfig = {
   ...base,
-  areas: [...base.areas, { ...base.areas[0]!, key: REVISIT_AREA_KEY }],
   budgets: { ...base.budgets, anthropic: { dailyEur: 1000 } },
 };
 
@@ -165,7 +164,7 @@ export async function firstRun(tx: Db, archive: ReturnType<typeof memoryArchive>
 /** One simulated revisit on `day`: started like `sim:revisit` does, driven to its end. */
 export async function revisit(tx: Db, archive: ReturnType<typeof memoryArchive>, day: string, scenario: RevisitScenario, seen: { extract: string[] } = { extract: [] }) {
   const rec = recordingBoss();
-  const { id } = await startRevisitRun(tx, rec.boss, { areaKey: REVISIT_AREA_KEY, triggeredBy: "sim:revisit" }, revisitTestConfig);
+  const { id } = await startRevisitRun(tx, rec.boss, { subdivisionKey: REVISIT_SUBDIVISION_KEY, triggeredBy: "sim:revisit" });
   await dateRun(tx, id, day);
   expect(await drive(tx, archive, rec, createRevisitFakeModel(seen), id, day, scenario)).toBe("finished");
   return { id, queues: rec.inserted.filter((j) => j.data.runId === id).map((j) => j.queue) };

@@ -5,10 +5,11 @@ import { connection } from "next/server";
 import { z } from "zod";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
+import { activeSubdivisionKeys, listSubdivisionOptions } from "@/lib/domain/subdivisions/store";
 import { SEABED_TYPE_LABELS } from "@/lib/domain/facts/labels";
 import type { ComparisonAttribute } from "@/lib/domain/quality/comparison-values";
 import { loadNavilyFromEnv } from "@/lib/domain/quality/navily-assistant";
-import { areaComparisonView, isEvaluationRun, type PlaceComparison } from "@/lib/domain/quality/navily-compare";
+import { isEvaluationRun, subdivisionComparisonView, type PlaceComparison } from "@/lib/domain/quality/navily-compare";
 import { navilySeabedTypes, type NavilySpot } from "@/lib/domain/quality/navily-sample";
 import { createLogger } from "@/lib/logger";
 import { requireAdmin } from "@/lib/security/require-admin";
@@ -20,10 +21,13 @@ import {
 } from "../../_components/labels";
 import {
   Badge,
+  Button,
   cx,
   EmptyState,
+  Field,
   FilterChips,
   fmt,
+  inputClass,
   Meter,
   Notice,
   PageHeader,
@@ -34,12 +38,13 @@ import {
   thClass,
   trClass,
 } from "../../_components/ui";
+import { SubdivisionOptions } from "../../_components/subdivision-options";
 import { ComparePlace, type CompareRow } from "./compare-place";
 
 export const metadata: Metadata = { title: "Vergleich mit Navily" };
 
 const querySchema = z.object({
-  area: z.string().optional().catch(undefined),
+  subdivision: z.string().optional().catch(undefined),
   place: z.uuid().optional().catch(undefined),
   filter: z.enum(["open", "all"]).default("open").catch("open"),
   /** Checked below: an id that is no evaluation run is a 404, never a page of empty values. */
@@ -104,13 +109,15 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
   const query = querySchema.parse(await searchParams);
   if (query.evaluation !== undefined && !(z.uuid().safeParse(query.evaluation).success && (await isEvaluationRun(getDb(), query.evaluation))))
     notFound();
-  const area = config.areas.find((a) => a.key === query.area) ?? config.areas[0];
+  const withTiles = new Set(await activeSubdivisionKeys(getDb()));
+  const options = (await listSubdivisionOptions(getDb())).filter((o) => withTiles.has(o.key));
+  const subdivision = options.find((o) => o.key === query.subdivision) ?? options[0];
   const back = { href: "/quality", label: "Qualität" };
-  if (!area)
+  if (!subdivision)
     return (
       <>
         <PageHeader title="Vergleich mit Navily" back={back} />
-        <Notice tone="warn">Kein Revier konfiguriert.</Notice>
+        <Notice tone="warn">Noch kein Landesteil mit Kacheln – zuerst einen Landesteil aufbauen.</Notice>
       </>
     );
 
@@ -123,8 +130,8 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
     createLogger("quality-compare").warn({ reason: (e as Error).message }, "navily file unreadable");
     navilyUnreadable = true;
   }
-  const view = await areaComparisonView(getDb(), {
-    areaKey: area.key,
+  const view = await subdivisionComparisonView(getDb(), {
+    subdivisionKey: subdivision.key,
     evaluationRunId: query.evaluation,
     spots,
     cfg: config.quality.navily,
@@ -132,9 +139,9 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
   });
   const shown = query.filter === "open" ? view.places.filter((p) => p.open > 0) : view.places;
   const selected = view.places.find((p) => p.subject.placeId === query.place) ?? shown[0] ?? null;
-  const href = (o: { place?: string; filter?: string; area?: string }) =>
+  const href = (o: { place?: string; filter?: string; subdivision?: string }) =>
     `/quality/compare?${new URLSearchParams({
-      area: o.area ?? area.key,
+      subdivision: o.subdivision ?? subdivision.key,
       filter: o.filter ?? query.filter,
       ...(o.place ? { place: o.place } : {}),
       ...(query.evaluation ? { evaluation: query.evaluation } : {}),
@@ -149,14 +156,14 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
         description="Je Ort des Vergleichssatzes und Attribut ein Ergebnis: stimmt, weicht ab oder bei Navily nicht vorhanden. Gespeichert wird nur das Ergebnis, nie ein Navily-Wert; jede Abweichung wird eine Prüfaufgabe."
       />
 
-      {config.areas.length > 1 && (
-        <div className="mb-6">
-          <FilterChips
-            label="Revier"
-            items={config.areas.map((a) => ({ href: href({ area: a.key }), label: a.names.de, current: a.key === area.key }))}
-          />
-        </div>
-      )}
+      <form method="get" className="mb-6 flex flex-wrap items-end gap-3">
+        <Field label="Landesteil">
+          <select name="subdivision" defaultValue={subdivision.key} className={inputClass} aria-label="Landesteil">
+            <SubdivisionOptions options={options} />
+          </select>
+        </Field>
+        <Button>Anzeigen</Button>
+      </form>
 
       <div className="mb-6 space-y-3">
         {navilyUnreadable ? (
@@ -187,8 +194,8 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
               {view.places.length} von {config.quality.comparisonSet.pilotSize}
             </span>
           }
-          hint={`Orte im Revier ${area.names.de}`}
-          href={`/quality?area=${area.key}`}
+          hint={`Orte im Landesteil ${subdivision.name}`}
+          href={`/quality?${new URLSearchParams({ subdivision: subdivision.key })}`}
         />
         <div className="flex flex-col gap-2 rounded-lg border border-line bg-surface px-4 py-3">
           <span className="text-xs text-muted">Fortschritt</span>
@@ -203,7 +210,7 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
           value={view.coverage?.ratio != null ? fmt.pct(view.coverage.ratio) : "–"}
           hint={
             view.coverage
-              ? `${fmt.int(view.coverage.matched)} von ${fmt.int(view.coverage.spots)} Navily-Spots im Revier haben einen bestätigten Ort`
+              ? `${fmt.int(view.coverage.matched)} von ${fmt.int(view.coverage.spots)} Navily-Spots im Landesteil haben einen bestätigten Ort`
               : "Nur mit Navily-Datei"
           }
         />
@@ -225,7 +232,7 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
               {view.places.length === 0 ? (
                 <>
                   Orte werden auf der Seite{" "}
-                  <Link href={`/quality?area=${area.key}`} className="text-accent hover:underline">
+                  <Link href={`/quality?${new URLSearchParams({ subdivision: subdivision.key })}`} className="text-accent hover:underline">
                     Qualität
                   </Link>{" "}
                   in den Vergleichssatz aufgenommen.
@@ -259,7 +266,7 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
           <ComparePlace
             key={selected.subject.placeId}
             placeId={selected.subject.placeId}
-            areaKey={area.key}
+            subdivisionKey={subdivision.key}
             evaluationRunId={query.evaluation}
             title={placeName(selected)}
             description={[
@@ -286,12 +293,12 @@ export default async function Page({ searchParams }: PageProps<"/quality/compare
       {spots && (
         <Panel
           title={`Navily-Orte ohne Periplus-Ort (${fmt.int(view.unmatchedSpots.length)})`}
-          description="Navily-Spots im Revier, denen kein bestätigter Ort zugeordnet ist, mit dem Abstand zum nächsten Ort. Nur zur Laufzeit gelesen – wird nicht gespeichert."
+          description="Navily-Spots im Landesteil, denen kein bestätigter Ort zugeordnet ist, mit dem Abstand zum nächsten Ort. Nur zur Laufzeit gelesen – wird nicht gespeichert."
           className="mt-6"
           flush
         >
           {view.unmatchedSpots.length === 0 ? (
-            <EmptyState title="Keine">Jeder Navily-Spot im Revier hat einen bestätigten Ort.</EmptyState>
+            <EmptyState title="Keine">Jeder Navily-Spot im Landesteil hat einen bestätigten Ort.</EmptyState>
           ) : (
             <Table>
               <thead>

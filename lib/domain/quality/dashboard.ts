@@ -7,7 +7,7 @@ import { factPrecisionMetric } from "./metrics";
 import { latestMeasurement, listMeasurements, metricStatus, tileSnapshots, type MeasurementView, type MetricStatus } from "./snapshot";
 
 /*
- * The quality dashboard `/quality` (spec 10): the newest measurement of an area against the pilot and full-operation
+ * The quality dashboard `/quality` (spec 10): the newest measurement of a subdivision against the pilot and full-operation
  * targets of `config/quality.json`, the history of the last measurements, its tile rows and the state of the
  * comparison set. Read only; the page formats.
  */
@@ -59,10 +59,10 @@ export type QualityDashboard = {
   comparison: { setSize: number; target: number; checked: number; pending: number };
 };
 
-/** The dashboard of the area (an unknown area or one without measurements has empty parts). */
-export async function qualityDashboard(db: Db, areaKey: string, cfg: QualityConfig = getConfig().quality): Promise<QualityDashboard> {
-  const latest = await latestMeasurement(db, areaKey);
-  const history = (await listMeasurements(db, areaKey, HISTORY_SIZE)).reverse();
+/** The dashboard of the subdivision (an unknown subdivision or one without measurements has empty parts). */
+export async function qualityDashboard(db: Db, subdivisionKey: string, cfg: QualityConfig = getConfig().quality): Promise<QualityDashboard> {
+  const latest = await latestMeasurement(db, subdivisionKey);
+  const history = (await listMeasurements(db, subdivisionKey, HISTORY_SIZE)).reverse();
   const counts = new Map(
     ((latest?.metrics.places_per_tile?.details.tiles ?? []) as Array<{ tileId: string; places: number }>).map((t) => [t.tileId, Number(t.places)]),
   );
@@ -83,10 +83,10 @@ export async function qualityDashboard(db: Db, areaKey: string, cfg: QualityConf
       statusFull: metricStatus(metric, value, cfg, "full"),
     };
   });
-  const precision = await factPrecisionMetric(db, { areaKey });
+  const precision = await factPrecisionMetric(db, { subdivisionKey });
   const d = precision.details as { compared?: number; notAtNavily?: number; pending?: number };
-  // 0 for an area without an area object (no gazetteer run yet)
-  const setSize = (await loadComparisonSubjects(db, areaKey)).length;
+  // 0 for an unknown subdivision
+  const setSize = (await loadComparisonSubjects(db, subdivisionKey)).length;
   return {
     latest,
     history,

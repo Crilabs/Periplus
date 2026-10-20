@@ -4,11 +4,13 @@ import type { AttributeProvenance } from "@/lib/domain/consolidation/types";
 import { levelFor } from "@/lib/domain/facts/levels";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
+import { subdivisionTilesSql } from "@/lib/domain/gazetteer/tiles-ensure";
+import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { profileAsOf } from "@/lib/domain/timeline";
 
 /*
  * M5 acceptance check of the profiles (spec 07 "jedes bestätigte Pilot-Geo-Objekt hat ein Profil; Herkunft je
- * Attribut; Profil zum Datum abrufbar"), per area. Split into the query `profileStats` and the pure verdict
+ * Attribut; Profil zum Datum abrufbar"), per subdivision. Split into the query `profileStats` and the pure verdict
  * `assessProfiles` (ruling M5-P20), so the verdict is tested without the shared test database.
  */
 
@@ -85,8 +87,8 @@ export function assessProfiles(stats: ProfileStats): ProfilesCheck {
 /** Why the check fails (empty: it passes). Open conflicts, uncertain changes and empty summaries are counted, not failed. */
 export function profileCheckFailures(check: ProfilesCheck): string[] {
   const failures: string[] = [];
-  // an area without objects (gazetteer not built, no coast tiles) would pass on nothing (bundle J review M-1)
-  if (check.objects === 0) failures.push("no objects in the area (gazetteer built? coast tiles assigned?)");
+  // a subdivision without objects (gazetteer not built, no coast tiles) would pass on nothing (bundle J review M-1)
+  if (check.objects === 0) failures.push("no objects in the subdivision (gazetteer built? coast tiles assigned?)");
   if (check.missing.length > 0) failures.push(`${check.missing.length} object(s) without a profile`);
   if (check.withoutProvenance.length > 0) failures.push(`${check.withoutProvenance.length} profile(s) with an attribute without provenance, rule or cited input`);
   if (!check.asOfCheck) failures.push("profileAsOf did not return the earlier version for the day before a later version");
@@ -122,16 +124,13 @@ function dayBefore(date: string): string {
 }
 
 /**
- * The numbers of the check for the area `areaKey`: the valid, unmerged geo objects of the area's valid coast tiles
- * (the objects a consolidation run with `areaKey` takes), of level `place` with a confirmed place, or of level
- * `area`, `island`, `cape_strait`, `poi`. Throws for an unknown area.
+ * The numbers of the check for the subdivision `subdivisionKey`: the valid, unmerged geo objects of the tiles of its run
+ * scope (`subdivisionTilesSql`; the objects a consolidation run with `subdivisionKey` takes), of level `place` with a
+ * confirmed place, or of level `area`, `island`, `cape_strait`, `poi`. Throws for an unknown or excluded subdivision and
+ * for a leftover area key (`requireSubdivision`).
  */
-export async function profileStats(db: Db, areaKey: string): Promise<ProfileStats> {
-  const { rows: area } = await db.execute<{ id: string }>(sql`
-    select id from geo_objects a
-    where a.type = 'area' and a.config_key = ${areaKey} and a.valid_from <= current_date and (a.valid_to is null or a.valid_to > current_date)
-  `);
-  if (area.length === 0) throw new Error(`unknown area ${areaKey} (no valid area object)`);
+export async function profileStats(db: Db, subdivisionKey: string): Promise<ProfileStats> {
+  const sub = await requireSubdivision(db, subdivisionKey);
 
   const { rows } = await db.execute<{
     id: string;
@@ -152,12 +151,10 @@ export async function profileStats(db: Db, areaKey: string): Promise<ProfileStat
          from profile_summaries s where s.geo_object_id = o.id and s.profile_version = pr.version) as summary
     from (
       select distinct o.id
-      from geo_objects a
-      join tiles t on t.area_id = a.id and t.has_coast and t.valid_from <= current_date and (t.valid_to is null or t.valid_to > current_date)
-      join tile_geo_objects tgo on tgo.tile_id = t.id
+      from tile_geo_objects tgo
       join geo_objects o on o.id = tgo.geo_object_id
         and o.merged_into_id is null and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
-      where a.id = ${area[0]!.id}
+      where tgo.tile_id in (${subdivisionTilesSql(sql`${sub.id}::uuid`)})
     ) o
     left join lateral (
       select p.version, p.attributes, p.provenance from profiles p where p.geo_object_id = o.id order by p.version desc limit 1
@@ -216,7 +213,7 @@ export async function profileStats(db: Db, areaKey: string): Promise<ProfileStat
   };
 }
 
-/** M5 acceptance check of the profiles of area `areaKey`: `profileStats` assessed by `assessProfiles`. */
-export async function checkProfiles(db: Db, areaKey: string): Promise<ProfilesCheck> {
-  return assessProfiles(await profileStats(db, areaKey));
+/** M5 acceptance check of the profiles of subdivision `subdivisionKey`: `profileStats` assessed by `assessProfiles`. */
+export async function checkProfiles(db: Db, subdivisionKey: string): Promise<ProfilesCheck> {
+  return assessProfiles(await profileStats(db, subdivisionKey));
 }
