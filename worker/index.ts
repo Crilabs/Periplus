@@ -14,7 +14,7 @@ import { getEnv } from "@/lib/env";
 import { createBoss } from "@/lib/jobs/boss";
 import { BATCH_HANDLERS } from "@/lib/jobs/batch-handlers";
 import { setModelClientFactory } from "@/lib/jobs/handlers/ai-batch";
-import { setImageModelFactory } from "@/lib/jobs/handlers/images";
+import { setImageModelFactory } from "@/lib/pipeline/images/model";
 import { DEAD_LETTER_QUEUE, ensureQueues, QUEUES } from "@/lib/jobs/queues";
 import { clearReadyMarker, touchReadyMarker } from "@/lib/jobs/ready-marker";
 import { HANDLERS } from "@/lib/jobs/registry";

@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { describe, expect, it } from "vitest";
+import { MockImageModel } from "@/lib/ai/mock-image";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
@@ -19,6 +20,7 @@ import {
 } from "@/lib/pipeline/consolidation/stages";
 import { consolidateAfter } from "@/lib/pipeline/follow-ups";
 import { generatePlaceImage, keyDone } from "@/lib/pipeline/images/generate";
+import { setImageModelFactory } from "@/lib/pipeline/images/model";
 import { imageJobs, imageTargets, nextViewSlot } from "@/lib/pipeline/images/stage";
 import { IMAGES_STAGE } from "@/lib/pipeline/images/stage-name";
 import { startImageRun } from "@/lib/pipeline/images-run";
@@ -240,6 +242,25 @@ describe("imageTargets", () => {
       await generateTitle(tx, spot.objectId, run.id);
       expect(await imageTargets(tx, run)).toEqual([]);
       expect(await imageTargets(tx, run, withPromptVersion(2))).toEqual([{ geoObjectId: spot.objectId, view: TITLE }]);
+    });
+  });
+
+  it("without a usable image model (no key, or none set) the plan targets nothing", async () => {
+    await withRollback(async (tx) => {
+      const sd = await insertImageSubdivision(tx);
+      await insertSpot(tx, sd.id);
+      const run = await subdivisionRun(tx, sd.key);
+      expect(await imageTargets(tx, run)).toHaveLength(1);
+      try {
+        setImageModelFactory(() => new MockImageModel(() => new Error("unreachable"), { available: false }));
+        expect(await imageTargets(tx, run)).toEqual([]);
+        setImageModelFactory(undefined);
+        expect(await imageTargets(tx, run)).toEqual([]);
+      } finally {
+        // what test/setup.ts set
+        setImageModelFactory(() => new MockImageModel(() => new Error("the test must pass its own image model to generatePlaceImage")));
+      }
+      expect(await imageTargets(tx, run)).toHaveLength(1);
     });
   });
 

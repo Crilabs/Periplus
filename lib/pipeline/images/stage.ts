@@ -8,8 +8,12 @@ import { loadPlaceImageInput } from "@/lib/domain/images/place-input";
 import { planRender } from "@/lib/domain/images/render-plan";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import type { JobData } from "@/lib/jobs/worker";
+import { createLogger } from "@/lib/logger";
 import { atTarget, keyDone, keyFor, titleView, type ImageStageConfig, type ImageView } from "./generate";
 import { currentAerialTileIds } from "./imagery";
+import { imageModelAvailable } from "./model";
+
+const log = createLogger("images.place");
 
 /*
  * Plan of stage `images.place` (spec 13): which places of a run get an image generated. A run started for images
@@ -90,7 +94,9 @@ async function plannedKey(db: Db, geoObjectId: string, view: ImageView, cfg: Ima
  * (`eligibleSpots`) whose current generation key is not done yet (`keyDone`: a current image of the slot, an open or a
  * decided task with that key; a forced scope passes over the decided task). Since the key depends on the imagery tiles, it is computed from the current
  * `imagery_tiles` rows of the windows around the camera target; a missing tile makes the key new. None in an
- * evaluation run or a simulation (no paid image calls there).
+ * evaluation run or a simulation (no paid image calls there), and none (logged once per plan) while the process has
+ * no usable image model (`imageModelAvailable`: no `OPENAI_API_KEY`), so no run downloads imagery and renders for
+ * nothing.
  */
 export async function imageTargets(
   db: Db,
@@ -98,6 +104,10 @@ export async function imageTargets(
   cfg: ImageStageConfig = getConfig(),
 ): Promise<ImageTarget[]> {
   if (run.params.evaluation === true || simulationActive()) return [];
+  if (!imageModelAvailable(db)) {
+    log.warn({ runId: run.id }, "no usable image model (OPENAI_API_KEY missing?): the run generates no place images");
+    return [];
+  }
   const scope = run.params.images as ImageRunScope | undefined;
   let candidates: ImageTarget[];
   if (scope && "geoObjectId" in scope) {

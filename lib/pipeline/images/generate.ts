@@ -1,12 +1,12 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { Transport } from "@/lib/adapters/http";
 import { ImageOutputInvalid, type ImageModel } from "@/lib/adapters/openai-image";
 import type { Archive } from "@/lib/adapters/s3";
 import { checkPlaceImageTask } from "@/lib/ai/tasks/check-place-image";
 import { ModelOutputInvalid, type ModelClient } from "@/lib/ai/types";
-import { getConfig, type AppConfig, type ImageryLight, type ZoomLevel } from "@/lib/config";
+import { getConfig, type AppConfig, type ImagesConfig, type ImageryLight, type ZoomLevel } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { placeImages, reviewDecisions, reviewTasks, type PlaceKind } from "@/lib/db/schema";
+import { placeImages, placeRenders, reviewDecisions, reviewTasks, type PlaceKind } from "@/lib/db/schema";
 import { passesGeometry, toJpeg, waterIoU } from "@/lib/domain/images/checks";
 import { lightFor } from "@/lib/domain/images/light";
 import { loadPlaceImageInput, type PlaceImageInput } from "@/lib/domain/images/place-input";
@@ -198,11 +198,43 @@ export const slotLockKey = (geoObjectId: string, slot: string): string => `place
  * not held up). Inside one transaction (`lockDb` a `tx`) the lock is reentrant and never refused.
  */
 async function withSlotLock<T>(lockDb: Db, geoObjectId: string, slot: string, fn: () => Promise<T>): Promise<T | null> {
-  return lockDb.transaction(async (lock) => {
+  // An error of `fn` is rethrown after the lock transaction ended normally: it holds nothing to roll back, and inside
+  // one transaction (a savepoint) a rollback would undo what `fn` wrote on `db` before it failed (its render).
+  const outcome = await lockDb.transaction(async (lock): Promise<{ value: T } | { error: unknown } | null> => {
     const { rows } = await lock.execute<{ locked: boolean }>(sql`select pg_try_advisory_xact_lock(hashtext(${slotLockKey(geoObjectId, slot)})) as locked`);
     if (!rows[0]!.locked) return null;
-    return fn();
+    try {
+      return { value: await fn() };
+    } catch (error) {
+      return { error };
+    }
   });
+  if (outcome === null) return null;
+  if ("error" in outcome) throw outcome.error;
+  return outcome.value;
+}
+
+/**
+ * The newest render of the place recorded with `key` by the current renderer version whose photo and mask are still
+ * archived, or null: the same imagery, camera and renderer give the same pixels, so a retried job does not render
+ * again. Not for a forced job („Neu erzeugen“ at the same zoom): its candidates are named by render and attempt, a
+ * new render keeps them apart from the decided task's.
+ */
+async function existingRender(
+  db: Db,
+  archive: Archive,
+  geoObjectId: string,
+  key: string,
+  cfg: Pick<ImagesConfig, "render">,
+): Promise<{ renderId: string; photoKey: string; maskKey: string } | null> {
+  const [row] = await db
+    .select({ renderId: placeRenders.id, photoKey: placeRenders.photoKey, maskKey: placeRenders.maskKey })
+    .from(placeRenders)
+    .where(and(eq(placeRenders.geoObjectId, geoObjectId), eq(placeRenders.generationKey, key), eq(placeRenders.rendererVersion, cfg.render.rendererVersion)))
+    .orderBy(desc(placeRenders.createdAt), desc(placeRenders.id))
+    .limit(1);
+  if (!row || !(await archive.exists(row.photoKey)) || !(await archive.exists(row.maskKey))) return null;
+  return row;
 }
 
 type Attempt = { n: number; image: Uint8Array; iou: number; watermarkVisible: boolean | null; watermarkFree: boolean; passed: boolean };
@@ -237,13 +269,15 @@ export type GenerateResult = { status: "review" | "no_water_view" | "skipped"; a
 /**
  * Generates one image of a place and puts it up for review:
  * 1. the place's input (`loadPlaceImageInput`) and camera (`planRender` at `view.zoom`, rotation from
- *    `view.azimuthDeg`); `no_water_view` → a task without candidate, no imagery, no render;
+ *    `view.azimuthDeg`); `no_water_view` → a task without candidate, no imagery, no render; without a usable image
+ *    model (`ImageModel.available`: no `OPENAI_API_KEY`) → `skipped` before anything is downloaded or rendered;
  * 2. under the slot lock (`withSlotLock`; held by another job → `skipped`, that job makes the task): the imagery
  *    around the camera target (`ensureImagery`; a near-town target lies between the anchorage and the town, so the
  *    town is in the core window) and the generation key from the tiles it returned; a key already done (`keyDone`,
  *    checked again under the lock: a retried job, or a decision taken meanwhile; with `force` a decided task does
  *    not count) → `skipped`;
- * 3. the render (`renderAndStore`, recording the key);
+ * 3. the render (`renderAndStore`, recording the key), unless a retried job finds the one it made for the key with
+ *    its photo and mask still archived (`existingRender`; a forced job renders anew);
  * 4. up to `check.maxAttempts` image edits: water IoU against the render mask, and, when the core imagery is
  *    watermarked (the cadastre), the watermark check on the JPEG. `ImageOutputInvalid`, `ModelOutputInvalid`, a low
  *    IoU or a visible watermark make a failed attempt; the first passing one ends the loop. Any other error (budget,
@@ -291,6 +325,11 @@ export async function generatePlaceImage(
     return { status: "no_water_view", attempts: 0, waterIoU: null };
   }
 
+  if (!deps.imageModel.available()) {
+    // the plan asked the same; a job that still runs (the key vanished meanwhile) must not download and render for nothing
+    log.warn({ geoObjectId: input.geoObjectId, slot: view.slot }, "no usable image model (OPENAI_API_KEY missing?): place image skipped");
+    return { status: "skipped", attempts: 0, waterIoU: null };
+  }
   if (!input.runId) throw new Error("generating a place image needs the run id (place_renders.run_id)");
   const runId = input.runId;
   const { camera } = plan;
@@ -308,7 +347,10 @@ export async function generatePlaceImage(
     const key = keyFor(place, view, aerialIds(imagery), cfg);
     if (await keyDone(db, input.geoObjectId, view.slot, key, input.force)) return { status: "skipped", attempts: 0, waterIoU: null };
 
-    const render = await (deps.render ?? renderAndStore)(db, deps.archive, target, camera, imagery, { runId, generationKey: key, cfg: icfg });
+    // a retried job (the edit failed, pg-boss expired the job) takes the render it already made for the key
+    const render =
+      (input.force ? null : await existingRender(db, deps.archive, place.geoObjectId, key, icfg)) ??
+      (await (deps.render ?? renderAndStore)(db, deps.archive, target, camera, imagery, { runId, generationKey: key, cfg: icfg }));
     const photo = await deps.archive.get(render.photoKey);
     const mask = await deps.archive.get(render.maskKey);
     if (!photo || !mask) throw new Error(`render ${render.renderId} is missing in the archive`);

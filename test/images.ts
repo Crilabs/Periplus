@@ -2,6 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { writeArrayBuffer } from "geotiff";
 import sharp from "sharp";
 import { makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
+import { getConfig } from "@/lib/config";
 import { MockImageModel } from "@/lib/ai/mock-image";
 import { MockModel } from "@/lib/ai/mock";
 import type { Db } from "@/lib/db/client";
@@ -120,7 +121,10 @@ export const GOOD = rgbPng((x, y) => (y < MASK_H / 4 ? [230, 230, 240] : x < MAS
 /** An AI image without any water (water IoU 0 against `stubMask`). */
 export const DRY = rgbPng(() => [40, 150, 60]);
 
-/** Stand-in for `renderAndStore` (no browser): archives `stubMask` and a photo and records the render like the real one. */
+/**
+ * Stand-in for `renderAndStore` (no browser): archives `stubMask` and a photo and records the render like the real one
+ * (with the configured renderer version, so a retried job finds it as `existingRender` does).
+ */
 export const stubRender: typeof renderAndStore = async (db, archive, place, camera, imagery, ctx) => {
   const renderId = newId();
   const photoKey = `imagery/renders/${place.geoObjectId}/${renderId}/photo.png`;
@@ -136,7 +140,7 @@ export const stubRender: typeof renderAndStore = async (db, archive, place, came
     demTileIds: imagery.dem.map((t) => t.id),
     photoKey,
     maskKey,
-    rendererVersion: "stub",
+    rendererVersion: (ctx.cfg ?? getConfig().images).render.rendererVersion,
     generationKey: ctx.generationKey,
     runId: ctx.runId,
   });

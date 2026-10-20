@@ -1,30 +1,14 @@
 import { z } from "zod";
 import { getTransport } from "@/lib/adapters/http";
-import type { ImageModel } from "@/lib/adapters/openai-image";
 import { getArchive } from "@/lib/adapters/s3";
 import { getConfig, type ZoomLevel } from "@/lib/config";
-import type { Db } from "@/lib/db/client";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import { generatePlaceImage } from "@/lib/pipeline/images/generate";
+import { imageModelFor } from "@/lib/pipeline/images/model";
 import { imageJobs } from "@/lib/pipeline/images/stage";
 import { IMAGES_STAGE } from "@/lib/pipeline/images/stage-name";
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import { modelClientFor } from "./ai-batch";
-
-type ImageModelFactory = (db: Db) => ImageModel;
-
-let imageModelFactory: ImageModelFactory | undefined;
-
-/** Sets how image jobs get their image model: the worker passes the OpenAI adapter, tests a `MockImageModel`. */
-export function setImageModelFactory(factory: ImageModelFactory | undefined): void {
-  imageModelFactory = factory;
-}
-
-/** The image model of image jobs; throws when the process never set one. */
-export function imageModelFor(db: Db): ImageModel {
-  if (!imageModelFactory) throw new Error("No image model configured for image jobs (setImageModelFactory)");
-  return imageModelFactory(db);
-}
 
 /** Stage `images.place`: one job per place and view to generate (`imageTargets`). */
 export const imagesPlaceStage: StageDefinition = {

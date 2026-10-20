@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { RetryableHttpError } from "@/lib/adapters/http";
 import { ImageOutputInvalid } from "@/lib/adapters/openai-image";
 import type { Archive } from "@/lib/adapters/s3";
-import type { MockImageModel } from "@/lib/ai/mock-image";
+import { MockImageModel } from "@/lib/ai/mock-image";
 import { MockModel } from "@/lib/ai/mock";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
@@ -227,6 +227,59 @@ describe("generatePlaceImage", () => {
       expect(extra!.context).toMatchObject({ slot: "view-2", azimuthOverride: 90 });
       expect(extra!.context.camera!.viewBearingDeg).toBeCloseTo(270, 6);
       expect(extra!.context.key).not.toBe(title!.context.key);
+    });
+  });
+
+  it("without a usable image model the job is skipped before imagery, render and edit", async () => {
+    await withRollback(async (tx) => {
+      const f = await fixture(tx);
+      const images = new MockImageModel(() => new Error("unreachable"), { available: false });
+      const result = await generatePlaceImage(
+        tx,
+        { geoObjectId: f.objectId, view: TITLE, runId: f.runId },
+        { archive: memoryArchive(), transport: refusingTransport, imageModel: images, model: checker(false), render: stubRender },
+      );
+      expect(result).toEqual({ status: "skipped", attempts: 0, waterIoU: null });
+      expect(images.calls).toHaveLength(0);
+      expect(await taskOf(tx, `${f.objectId}:title`)).toEqual([]);
+    });
+  });
+
+  it("a retried job reuses the render of its key; a forced job or a lost archive object renders anew", async () => {
+    await withRollback(async (tx) => {
+      const f = await fixture(tx);
+      const archive = memoryArchive();
+      let renders = 0;
+      const countingRender: typeof stubRender = (...args) => {
+        renders++;
+        return stubRender(...args);
+      };
+      const input = { geoObjectId: f.objectId, view: TITLE, runId: f.runId };
+      // the first job renders, then the provider fails before any image: the job fails and is retried
+      const failing = await imageModel(new RetryableHttpError("openai images.edit POST: 503", 503));
+      const d = { ...(await deps(archive, failing, checker(false))), render: countingRender };
+      await expect(generatePlaceImage(tx, input, d)).rejects.toBeInstanceOf(RetryableHttpError);
+      expect(renders).toBe(1);
+      const { rows } = await tx.execute<{ id: string }>(sql`select id from place_renders where geo_object_id = ${f.objectId}`);
+      expect(rows).toHaveLength(1);
+      // the retry paints over the render it already has
+      const retry = await generatePlaceImage(tx, input, { ...d, imageModel: await imageModel(GOOD) });
+      expect(retry.status).toBe("review");
+      expect(renders).toBe(1);
+      const [task] = await taskOf(tx, `${f.objectId}:title`);
+      expect(task!.context.renderId).toBe(rows[0]!.id);
+      // „Neu erzeugen“ at the same zoom (force, the task decided) renders anew: its candidates must not overwrite the decided task's
+      await tx.execute(sql`update review_tasks set status = 'decided' where id = ${task!.id}`);
+      const forced = await generatePlaceImage(tx, { ...input, force: true }, { ...d, imageModel: await imageModel(GOOD) });
+      expect(forced.status).toBe("review");
+      expect(renders).toBe(2);
+      const [forcedTask] = await taskOf(tx, `${f.objectId}:title`);
+      expect(forcedTask!.context.renderId).not.toBe(rows[0]!.id);
+      // a render whose photo or mask is gone from the archive is not reused either (the key not done: no task decided or open)
+      await tx.execute(sql`update review_tasks set status = 'dismissed' where id in (${task!.id}, ${forcedTask!.id})`);
+      const again = await generatePlaceImage(tx, input, { ...d, archive: memoryArchive(), imageModel: await imageModel(GOOD) });
+      expect(again.status).toBe("review");
+      expect(renders).toBe(3);
     });
   });
 

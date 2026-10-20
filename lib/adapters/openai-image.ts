@@ -10,6 +10,8 @@ export type ImageEditResult = { image: Uint8Array; model: string; promptVersion:
 /** Image-to-image model (OpenAI `v1/images/edits`); `MockImageModel` stands in for it in tests. */
 export interface ImageModel {
   edit(req: ImageEditRequest, ctx: CallContext): Promise<ImageEditResult>;
+  /** Whether `edit` can be called at all (the OpenAI adapter: `OPENAI_API_KEY` is set); the image plan asks first. */
+  available(): boolean;
 }
 
 /** The model answered, but without a usable image (no `b64_json`, not a PNG, or not 1536 x 1024). */
@@ -55,6 +57,7 @@ function b64Of(res: HttpResponse): string | undefined {
 /** The OpenAI image edit model of task `generate-place-image`, priced from `models.pricesEurPerImage`. */
 export function createOpenAiImageModel(transport: Transport, config: Pick<AppConfig, "models"> = getConfig()): ImageModel {
   return {
+    available: () => getEnv().OPENAI_API_KEY !== undefined,
     async edit(req, ctx) {
       assertNotSimulated("openai", "images.edit");
       const key = getEnv().OPENAI_API_KEY;
