@@ -60,7 +60,8 @@ export function PlaceImageDecision({
 }) {
   const c = subject.context;
   const props = { taskId, openedAt, taskKey: subject.key };
-  const approvable = !c.reason && subject.candidateKey !== null && c.camera !== null;
+  const hasCandidate = !c.reason && subject.candidateKey !== null;
+  const approvable = hasCandidate && c.camera !== null;
   const zooms = c.allowedZooms.length > 0 ? c.allowedZooms : (Object.keys(ZOOM_LABELS) as ZoomLevel[]);
   const iouPassed = c.waterIoU !== null && c.waterIoU >= subject.threshold;
   const slot = slotLabel(subject.slot);
@@ -105,7 +106,11 @@ export function PlaceImageDecision({
               label="Kein Bild"
               decision={{ action: "no_image" }}
               variant="danger"
-              hint={`Kein ${slot} für diesen Stand; ein bisheriges Bild dieses Platzes endet, andere Ansichten bleiben.`}
+              hint={
+                hasCandidate
+                  ? `Kein ${slot} für diesen Stand; ein bisheriges Bild dieses Platzes endet, andere Ansichten bleiben.`
+                  : `Kein ${slot} für diesen Stand; ohne Illustration bleibt ein bisheriges Bild dieses Platzes stehen.`
+              }
             />
           </DecisionPanel>
         )}

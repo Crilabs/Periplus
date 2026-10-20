@@ -243,6 +243,33 @@ describe("decisions on a place_image task", () => {
       expect(again.result.status).toBe("skipped");
     }));
 
+  it("no_image on a task without candidate keeps the current image; its key is still decided", () =>
+    withRollback(async (tx) => {
+      const s = await spot(tx);
+      const archive = memoryArchive();
+      const first = await generated(tx, s, archive);
+      await decide(tx, first.task!, { action: "approve_image" }, archive);
+      expect((await currentImages(tx, s.objectId)).map((i) => i.slot)).toEqual(["title"]);
+      // the next stand found no usable output: a task without candidate
+      const second = await generated(tx, s, archive, TITLE, "gpt-image-test");
+      await tx
+        .update(reviewTasks)
+        .set({ context: sql`${reviewTasks.context} || '{"candidateKey": null, "reason": "no_valid_output"}'::jsonb` })
+        .where(eq(reviewTasks.id, second.task!.id));
+      await decide(tx, second.task!, { action: "no_image" }, archive);
+      // nothing to decline: the approved image stays current
+      expect((await currentImages(tx, s.objectId)).map((i) => i.slot)).toEqual(["title"]);
+      const [row] = await tx.select({ status: reviewTasks.status }).from(reviewTasks).where(eq(reviewTasks.id, second.task!.id));
+      expect(row!.status).toBe("decided");
+      const testCfg = { ...cfg, models: { ...cfg.models, imageTasks: { "generate-place-image": { ...cfg.models.imageTasks["generate-place-image"]!, model: "gpt-image-test" } } } };
+      expect(await imageTargets(tx, { id: s.runId, params: { images: { geoObjectId: s.objectId, view: TITLE } } }, testCfg)).toEqual([]);
+      // a task without candidate key alone (no reason) declines nothing either
+      const third = await generated(tx, s, archive, TITLE, "gpt-image-test-2");
+      await tx.update(reviewTasks).set({ context: sql`${reviewTasks.context} || '{"candidateKey": null}'::jsonb` }).where(eq(reviewTasks.id, third.task!.id));
+      await decide(tx, third.task!, { action: "no_image" }, archive);
+      expect((await currentImages(tx, s.objectId)).map((i) => i.slot)).toEqual(["title"]);
+    }));
+
   it("regenerate_image returns regenerateImage with zoom", () =>
     withRollback(async (tx) => {
       const s = await spot(tx);

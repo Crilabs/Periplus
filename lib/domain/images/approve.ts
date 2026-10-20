@@ -223,8 +223,9 @@ export async function approvePlaceImage(tx: Db, task: Task, decisionId: string, 
 /**
  * Applies a decision on a `place_image` task (after the task row is locked and decided):
  * - `approve_image`: `approvePlaceImage`;
- * - `no_image`: ends the slot's current image (other slots stay); the decided task keeps the key, so this slot is not
- *   generated again for it;
+ * - `no_image`: ends the slot's current image (other slots stay) when the task has a candidate; a task without one
+ *   (`reason`, no candidate key) leaves the current image as it is. Either way the decided task keeps the key, so this
+ *   slot is not generated again for it;
  * - `regenerate_image`: an image run of the same slot and rotation start at `zoom` (default the task's), which must be
  *   one of `allowedZooms` (any configured level when the task has none, e.g. `no_water_view`). The key includes the
  *   zoom, but the same zoom gives the same key, which the decided task now marks done: the run carries `force`, which
@@ -247,7 +248,9 @@ export async function applyPlaceImageDecision(
       return null;
     case "no_image":
       await lockPlaceOf(tx, geoObjectId);
-      await endCurrent(tx, geoObjectId, slot, now.toISOString().slice(0, 10));
+      // a task without candidate (`reason`, or no candidate key) declines nothing that exists: the slot's current
+      // image stays; with a candidate „Kein Bild“ ends it
+      if (!context.reason && context.candidateKey !== null) await endCurrent(tx, geoObjectId, slot, now.toISOString().slice(0, 10));
       return null;
     case "regenerate_image": {
       const zoom: ZoomLevel = decision.zoom ?? context.zoom;
