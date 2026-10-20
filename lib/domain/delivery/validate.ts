@@ -663,3 +663,19 @@ export function spotsInMilitaryAreas(spots: Spot[], coast: CoastCollection): str
     .filter((s) => !s.exclude.excluded && s.mergedInto == null && areas.some((g) => pointInPolygon(s.position, g)))
     .map((s) => s.id);
 }
+
+/**
+ * One line naming the failed checks of a report with their first `perCheck` findings (`<file> <object>: <message>`),
+ * e.g. for a setup that expects a valid package (bundle H review); "none" when every check passed.
+ */
+export function failedChecksSummary(report: ValidationReport, perCheck = 3): string {
+  const failed = report.checks.filter((c) => !c.ok);
+  if (failed.length === 0) return "none";
+  return failed
+    .map((c) => {
+      const shown = c.findings.slice(0, perCheck).map((f) => `${f.file}${f.objectId ? ` ${f.objectId}` : ""}: ${f.message}`);
+      const more = c.findings.length > perCheck ? `; … ${c.findings.length - perCheck} more` : "";
+      return `${c.name} (${shown.join("; ")}${more})`;
+    })
+    .join(", ");
+}

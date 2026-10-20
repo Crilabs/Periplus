@@ -20,7 +20,7 @@ import {
 } from "@/test/fixtures/delivery/package";
 import { insertTestVersion } from "@/test/text";
 import type { DeliveryPackage } from "../types";
-import { buildWarnings, CHECK_NAMES, spotsInMilitaryAreas, validatePackage, type CheckName, type ValidationDeps, type ValidationReport } from "../validate";
+import { buildWarnings, CHECK_NAMES, failedChecksSummary, spotsInMilitaryAreas, validatePackage, type CheckName, type ValidationDeps, type ValidationReport } from "../validate";
 
 const config = loadConfig("config");
 const cfg = config.delivery;
@@ -431,5 +431,15 @@ describe("spotsInMilitaryAreas (final review M-7)", () => {
     expect(spotsInMilitaryAreas([a!, marina!], coast)).toEqual([SPOT_A]);
     const excluded = { ...a!, exclude: { ...a!.exclude, excluded: true } };
     expect(spotsInMilitaryAreas([excluded, marina!], coast)).toEqual([]);
+  });
+});
+
+describe("failedChecksSummary (bundle H review)", () => {
+  it("names each failed check with its first findings, or none", async () => {
+    expect(failedChecksSummary(await validate(validPackage()))).toBe("none");
+    const report = await validate(breakPackage(validPackage(), (p) => void (spots(p)[0]!.limits.maxDraft = 12)));
+    expect(failedChecksSummary(report)).toMatch(new RegExp(`^limits \\(spots\\.json ${SPOT_A}: .+\\)$`));
+    const many = { ok: false, warnings: [], checks: [{ name: "shelter" as const, ok: false, findings: [1, 2, 3, 4].map((n) => ({ file: "spots.json" as const, objectId: null, path: null, message: `m${n}` })) }] };
+    expect(failedChecksSummary(many, 2)).toBe("shelter (spots.json: m1; spots.json: m2; … 2 more)");
   });
 });

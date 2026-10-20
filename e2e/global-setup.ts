@@ -22,6 +22,7 @@ import {
 } from "../lib/db/schema";
 import { consolidateGeo } from "../lib/domain/consolidation/store";
 import { buildDelivery } from "../lib/domain/delivery/build";
+import { failedChecksSummary } from "../lib/domain/delivery/validate";
 import { deliveryFiles, readStoredFile } from "../lib/domain/delivery/read";
 import type { AttributeProvenance } from "../lib/domain/consolidation/types";
 import { profileEntryKey } from "../lib/domain/profile-view";
@@ -295,7 +296,12 @@ async function ensureDeliveryArea(db: Db): Promise<string> {
   }
   areaId ??= (await db.transaction((tx) => seedE2eDeliveryArea(tx))).areaId;
   const built = await buildDelivery(db, archive, areaId);
-  if (built.status !== "valid") throw new Error(`e2e delivery area: expected a valid package, got ${JSON.stringify(built)}`);
+  if (built.status !== "valid") {
+    throw new Error(
+      `e2e delivery area: package ${built.status} (delivery ${built.deliveryId}), failed checks: ${failedChecksSummary(built.report)}. ` +
+        "Fix the fixture (test/fixtures/delivery/area.ts) or end the area e2e-delivery in the test database.",
+    );
+  }
   return areaId;
 }
 
