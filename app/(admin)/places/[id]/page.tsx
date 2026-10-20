@@ -6,12 +6,14 @@ import { getDb } from "@/lib/db/client";
 import { deliveryArchive } from "@/lib/domain/delivery/archive";
 import { placeDelivery } from "@/lib/domain/delivery/view";
 import { geoFacts } from "@/lib/domain/geo-facts";
+import { mergeCandidates, type MergeCandidate } from "@/lib/domain/place-merge";
 import { placeDetail } from "@/lib/domain/geo-view";
 import { placeGeometry } from "@/lib/domain/geometry-view";
 import { timelineView } from "@/lib/domain/profile-timeline";
 import { profileAttributeFacts, profileView } from "@/lib/domain/profile-view";
 import { requireAdmin } from "@/lib/security/require-admin";
-import { PLACE_KIND_LABELS, PLACE_STATUS_LABELS, REVIEW_KIND_LABELS, runScopeError } from "../../_components/labels";
+import { Dialog } from "../../_components/dialog";
+import { mergeError, PLACE_KIND_LABELS, PLACE_STATUS_LABELS, REVIEW_KIND_LABELS, runScopeError } from "../../_components/labels";
 import { MiniMap } from "../../_components/mini-map";
 import {
   Badge,
@@ -27,7 +29,7 @@ import {
   TextLink,
   type Tone,
 } from "../../_components/ui";
-import { recomputePlaceProfileAction } from "./actions";
+import { mergePlaceAction, recomputePlaceProfileAction } from "./actions";
 import { DeliveryTab } from "./delivery-tab";
 import { FactsTab } from "./facts-tab";
 import { GeometryTab } from "./geometry-tab";
@@ -71,6 +73,11 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
   const facts = tab === "facts" ? await geoFacts(db, p.geoObjectId, { runs }) : null;
   const attr = textParam.parse(sp.attr);
   const active = !p.validTo && !p.mergedIntoId;
+  const mergeable = active && p.status === "confirmed";
+  const candidates = mergeable ? await mergeCandidates(db, p.id) : [];
+  const merged = uuidParam.parse(sp.merged);
+  const mergedRun = uuidParam.parse(sp.run);
+  const mergeRefused = mergeError(sp.mergeError);
   return (
     <>
       <PageHeader
@@ -97,15 +104,36 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
         description="Ein Ankerplatz mit seinem Profil, den Facts, aus denen es entsteht, und der berechneten Geometrie."
         actions={
           active && (
-            <form action={recomputePlaceProfileAction}>
-              <input type="hidden" name="placeId" value={p.id} />
-              <Button title="Startet einen Konsolidierungslauf für diesen Ort: das Profil wird aus den aktuellen Facts neu gebildet.">
-                Profil neu berechnen
-              </Button>
-            </form>
+            <>
+              {mergeable && <MergeDialog placeId={p.id} candidates={candidates} />}
+              <form action={recomputePlaceProfileAction}>
+                <input type="hidden" name="placeId" value={p.id} />
+                <Button title="Startet einen Konsolidierungslauf für diesen Ort: das Profil wird aus den aktuellen Facts neu gebildet.">
+                  Profil neu berechnen
+                </Button>
+              </form>
+            </>
           )
         }
       />
+      {merged && (
+        <Notice tone={sp.mergedNoRun ? "warn" : "ok"} className="mb-6" title="Orte zusammengelegt">
+          Der Ort <TextLink href={`/places/${merged}`}>{merged.slice(0, 8)}</TextLink> ist jetzt Teil dieses Orts; sein Profil
+          bleibt als Verlauf, das nächste Paket liefert ihn mit „zusammengelegt in“ diesen Ort.{" "}
+          {sp.mergedNoRun ? (
+            "Der Folgelauf konnte nicht gestartet werden – bitte „Profil neu berechnen“."
+          ) : mergedRun ? (
+            <>
+              Das Profil wird neu berechnet (<TextLink href={`/runs/${mergedRun}`}>Lauf</TextLink>).
+            </>
+          ) : null}
+        </Notice>
+      )}
+      {mergeRefused && (
+        <Notice tone="danger" className="mb-6" title="Nicht zusammengelegt">
+          {mergeRefused}
+        </Notice>
+      )}
       {error && (
         <Notice tone="danger" className="mb-6">
           Lauf nicht gestartet: {error}
@@ -137,6 +165,52 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
 
 async function DeliveryTabView({ placeId }: { placeId: string }) {
   return <DeliveryTab view={await placeDelivery(getDb(), deliveryArchive(), placeId)} />;
+}
+
+/** „Mit Ort zusammenlegen“: choose a confirmed place nearby that this one becomes part of (ruling M6-P15). */
+function MergeDialog({ placeId, candidates }: { placeId: string; candidates: MergeCandidate[] }) {
+  return (
+    <Dialog
+      trigger="Mit Ort zusammenlegen"
+      title="Mit Ort zusammenlegen"
+      description="Für eine Dublette: dieser Ort wird verworfen und Teil des gewählten Orts. Namen, Kennungen und Facts gehen auf ihn über, sein Profil wird danach neu berechnet. Lässt sich nicht zurücknehmen."
+      wide
+    >
+      {candidates.length === 0 ? (
+        <EmptyState title="Kein bestätigter Ort in der Nähe" />
+      ) : (
+        <form action={mergePlaceAction} className="space-y-4">
+          <input type="hidden" name="placeId" value={placeId} />
+          <fieldset className="space-y-1.5">
+            <legend className="mb-1.5 text-sm font-medium">Zusammenlegen mit</legend>
+            {candidates.map((c, i) => (
+              <label key={c.id} className="flex cursor-pointer items-start gap-3 rounded-md border border-line px-3 py-2 hover:bg-sunken/50 has-checked:border-accent">
+                <input type="radio" name="intoPlaceId" value={c.id} required defaultChecked={i === 0} className="mt-1 size-4 accent-accent" />
+                <span className="min-w-0 flex-1">
+                  <span className="font-medium">{c.name ?? c.id.slice(0, 8)}</span>
+                  <span className="ml-2 text-xs text-muted">{PLACE_KIND_LABELS[c.kind]}</span>
+                  <span className="mt-0.5 flex flex-wrap items-center gap-x-3 text-xs text-muted">
+                    <span className="tabular-nums">{fmt.int(Math.round(c.distanceM))} m entfernt</span>
+                    {c.publicId && <Mono>{c.publicId}</Mono>}
+                    {c.sameArea ? <span>{c.areaName ?? "ohne Revier"}</span> : <Badge tone="warn">Anderes Revier: {c.areaName ?? "ohne Revier"}</Badge>}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+          {candidates.some((c) => !c.sameArea) && (
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" name="confirmAcrossAreas" className="mt-0.5 size-4 accent-accent" />
+              <span>Auch über Reviergrenzen zusammenlegen (nötig, wenn der gewählte Ort in einem anderen Revier liegt)</span>
+            </label>
+          )}
+          <div className="flex justify-end">
+            <Button variant="danger">Zusammenlegen</Button>
+          </div>
+        </form>
+      )}
+    </Dialog>
+  );
 }
 
 type ProfileTabProps = { placeId: string; geoObjectId: string; version: number | undefined; attr: string | undefined };

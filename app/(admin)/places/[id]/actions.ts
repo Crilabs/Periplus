@@ -8,6 +8,7 @@ import { getConfig } from "@/lib/config";
 import { getDb, type Db } from "@/lib/db/client";
 import { places } from "@/lib/db/schema";
 import { setAnchorPosition } from "@/lib/domain/geometry/anchor-correction";
+import { mergePlaceInto, PlaceMergeNotAllowed } from "@/lib/domain/place-merge";
 import { ProfileChanged, removeProfileEntry } from "@/lib/domain/profile-entry-removal";
 import { DecisionNotAllowed } from "@/lib/domain/review-decisions";
 import { getBoss } from "@/lib/jobs/boss";
@@ -151,4 +152,52 @@ async function startAfterRemoval(db: Db, geoObjectId: string, triggeredBy: strin
     else log.error({ geoObjectId, err: e }, "consolidation run failed to start after an entry removal");
     return "entry_removed_no_run";
   }
+}
+
+const mergeSchema = z.object({
+  placeId: z.uuid(),
+  intoPlaceId: z.uuid(),
+  /** Checkbox „über Reviergrenzen“: present when ticked. */
+  confirmAcrossAreas: z.union([z.literal("on"), z.literal("true"), z.boolean()]).optional(),
+});
+
+/**
+ * „Mit Ort zusammenlegen“ of a confirmed place (ruling M6-P15): merges it into the chosen confirmed place
+ * (`mergePlaceInto`), then, after that commit, starts a consolidation run for the surviving place's geo object (never
+ * inside the merge, ruling M5-F-R4) and goes to the surviving place with `?merged=<placeId>` (and `&run=<id>`, or
+ * `&mergedNoRun=1` when the run did not start: the merge stands). A refusal returns to the place with
+ * `?mergeError=<reason>`.
+ */
+export async function mergePlaceAction(
+  input: FormData | { placeId: string; intoPlaceId: string; confirmAcrossAreas?: boolean },
+): Promise<void> {
+  const admin = await requireAdmin();
+  const raw = fields(input) as Record<string, unknown>;
+  const f = mergeSchema.parse({ ...raw, confirmAcrossAreas: raw.confirmAcrossAreas || undefined });
+  const db = getDb();
+  let target: string;
+  try {
+    const merged = await mergePlaceInto(db, {
+      placeId: f.placeId,
+      intoPlaceId: f.intoPlaceId,
+      decidedBy: admin.email,
+      confirmAcrossAreas: f.confirmAcrossAreas !== undefined,
+    });
+    target = `/places/${f.intoPlaceId}?merged=${f.placeId}`;
+    try {
+      const run = await startConsolidationRun(db, await getBoss(), { scope: { geoObjectIds: [merged.keepGeoObjectId] }, triggeredBy: admin.email });
+      target += `&run=${run.id}`;
+    } catch (e) {
+      const log = createLogger("place-merge");
+      if (e instanceof RunScopeNotReady) log.warn({ geoObjectId: merged.keepGeoObjectId, reason: e.reason }, "consolidation run not started after a place merge");
+      else log.error({ geoObjectId: merged.keepGeoObjectId, err: e }, "consolidation run failed to start after a place merge");
+      target += "&mergedNoRun=1";
+    }
+    revalidatePath(`/places/${f.placeId}`);
+    revalidatePath(`/places/${f.intoPlaceId}`);
+  } catch (e) {
+    if (!(e instanceof PlaceMergeNotAllowed)) throw e;
+    target = `/places/${f.placeId}?mergeError=${e.reason}`;
+  }
+  redirect(target);
 }

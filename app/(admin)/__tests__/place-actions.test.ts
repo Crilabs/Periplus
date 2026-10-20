@@ -1,9 +1,10 @@
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { facts, reviewDecisions } from "@/lib/db/schema";
+import { facts, places, reviewDecisions } from "@/lib/db/schema";
 import { GEOMETRY_CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
 import { testDb, withRollback } from "@/test/db";
+import { seedDeliveryArea } from "@/test/fixtures/delivery/area";
 import { buildBayScene } from "@/test/geometry/scene";
 import { lonLatOf } from "@/test/geometry/synthetic";
 
@@ -25,7 +26,7 @@ vi.mock("next/cache", () => ({ revalidatePath: (path: string) => revalidatePath(
 const redirect = vi.fn();
 vi.mock("next/navigation", () => ({ redirect: (url: string) => redirect(url) }));
 
-import { recomputeGeoProfileAction, recomputePlaceProfileAction, setAnchorAction } from "../places/[id]/actions";
+import { mergePlaceAction, recomputeGeoProfileAction, recomputePlaceProfileAction, setAnchorAction } from "../places/[id]/actions";
 
 const ADMIN = "admin@example.invalid";
 
@@ -171,4 +172,54 @@ describe("„Profil neu berechnen“", () => {
       await expect(recomputeGeoProfileAction({ geoObjectId: scene.geoObjectId })).rejects.toThrow("NEXT_REDIRECT");
       expect(startRun).not.toHaveBeenCalled();
     }));
+});
+
+describe("„Mit Ort zusammenlegen“", () => {
+  it("merges, then starts the consolidation of the surviving object after the commit and goes to it", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const f = await seedDeliveryArea(tx);
+      const { A, M } = f.places;
+      await mergePlaceAction(form({ placeId: A.placeId, intoPlaceId: M.placeId }));
+      const [a] = await tx.select().from(places).where(eq(places.id, A.placeId));
+      expect(a).toMatchObject({ status: "rejected", mergedIntoId: M.placeId });
+      expect(startRun).toHaveBeenCalledTimes(1);
+      expect(startRun.mock.calls[0]![2]).toMatchObject({ kind: "stage", params: { geoObjectIds: [M.geoObjectId] }, triggeredBy: ADMIN });
+      expect(redirect).toHaveBeenCalledWith(`/places/${M.placeId}?merged=${A.placeId}&run=run-1`);
+    }));
+
+  it("a refusal returns to the place with the reason; the checkbox confirms a merge across areas", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const f = await seedDeliveryArea(tx);
+      const { A, O, K } = f.places;
+      await mergePlaceAction(form({ placeId: A.placeId, intoPlaceId: O.placeId }));
+      expect(redirect).toHaveBeenLastCalledWith(`/places/${A.placeId}?mergeError=across_areas`);
+      await mergePlaceAction(form({ placeId: A.placeId, intoPlaceId: K.placeId }));
+      expect(redirect).toHaveBeenLastCalledWith(`/places/${A.placeId}?mergeError=not_valid`);
+      await mergePlaceAction(form({ placeId: A.placeId, intoPlaceId: A.placeId }));
+      expect(redirect).toHaveBeenLastCalledWith(`/places/${A.placeId}?mergeError=self`);
+      expect(startRun).not.toHaveBeenCalled();
+      await expect(mergePlaceAction(form({ placeId: A.placeId, intoPlaceId: "x" }))).rejects.toThrow();
+
+      await mergePlaceAction(form({ placeId: A.placeId, intoPlaceId: O.placeId, confirmAcrossAreas: "on" }));
+      expect(redirect).toHaveBeenLastCalledWith(expect.stringMatching(new RegExp(`^/places/${O.placeId}\\?merged=${A.placeId}`)));
+    }));
+
+  it("the merge stands when the follow-up run does not start", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const f = await seedDeliveryArea(tx);
+      startRun.mockRejectedValue(new Error("queue down"));
+      await mergePlaceAction({ placeId: f.places.A.placeId, intoPlaceId: f.places.M.placeId });
+      expect(redirect).toHaveBeenCalledWith(`/places/${f.places.M.placeId}?merged=${f.places.A.placeId}&mergedNoRun=1`);
+      const [a] = await tx.select().from(places).where(eq(places.id, f.places.A.placeId));
+      expect(a!.mergedIntoId).toBe(f.places.M.placeId);
+    }));
+
+  it("rejects without admin session", async () => {
+    requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
+    await expect(mergePlaceAction({ placeId: "0199f0a0-0000-7000-8000-000000000001", intoPlaceId: "0199f0a0-0000-7000-8000-000000000002" })).rejects.toThrow("NEXT_REDIRECT");
+    expect(startRun).not.toHaveBeenCalled();
+  });
 });

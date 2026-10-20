@@ -32,6 +32,7 @@ import type { DeliveryStatus } from "@/lib/db/schema/deliveries";
 import type { ChangeEntry, ContractFile } from "@/contract";
 import type { CheckName } from "@/lib/domain/delivery/validate";
 import type { PreviewOmission } from "@/lib/domain/delivery/view";
+import type { MergeRefusal } from "@/lib/domain/place-merge";
 import type { ConfidenceClass, ConflictResolution, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
 import type { VersionDiff, VersionNote } from "@/lib/domain/profile-timeline";
 import type { GapReason } from "@/lib/domain/geometry/gaps";
@@ -618,3 +619,15 @@ export const PREVIEW_OMISSION_LABELS: Record<PreviewOmission, string> = {
   no_area: "Die Kachel des Orts gehört zu keinem Revier.",
   not_in_package: "Der Ort ist kein Spot des Pakets (nicht bestätigt, zusammengelegt oder beendet).",
 };
+
+/** Why „Mit Ort zusammenlegen“ was refused (`?mergeError=`). */
+export const MERGE_ERROR_LABELS: Record<MergeRefusal, string> = {
+  self: "Ein Ort kann nicht mit sich selbst zusammengelegt werden.",
+  not_valid: "Beide Orte müssen gültige, bestätigte Orte sein – einer ist beendet, verworfen oder schon zusammengelegt.",
+  across_areas: "Die Orte liegen in verschiedenen Revieren – bitte das Zusammenlegen über Reviergrenzen bestätigen.",
+};
+
+/** The German text of a `?mergeError=`; null for none or an unknown reason. */
+export function mergeError(param: string | string[] | undefined): string | null {
+  return typeof param === "string" && Object.hasOwn(MERGE_ERROR_LABELS, param) ? MERGE_ERROR_LABELS[param as MergeRefusal] : null;
+}
