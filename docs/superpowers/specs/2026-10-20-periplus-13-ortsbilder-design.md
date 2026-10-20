@@ -166,7 +166,7 @@ Optionales Feld `images` an `spot` und `highlight` (Minor-Version): eine Liste i
 
 ## Konfiguration
 
-`config/images.json`: Luftbildquellen je Land mit Lizenz und Status, Kameraparameter (Neigung, Bildwinkel, Höhen je Zoomstufe), `render.maxSourcePixelOnScreen`, Lichtregeln je Ortsart und `light.townRadiusM`, Prüfschwellen, Ausschlusslisten für Teil E. Budgets in `config/budgets.json` (Luftbildkauf je Revier, Bilderzeugungen je Lauf). Prompts unter `config/prompts/generate-place-image/` (Blöcke als Abschnitte einer Datei).
+`config/images.json`: Luftbildquellen je Land mit Lizenz und Status, Kameraparameter (Neigung, Bildwinkel, Höhen je Zoomstufe), `render.maxSourcePixelOnScreen`, Lichtregeln je Ortsart und `light.townRadiusM`, Prüfschwellen, Ausschlusslisten für Teil E, und die Obergrenze der Bilderzeugungen je Lauf (`pipeline.maxGenerationsPerRun`; sie liegt in `images.json`, nicht in `budgets.json`). Budgets in `config/budgets.json` nur für Geld (Luftbildkauf je Landesteil). Prompts unter `config/prompts/generate-place-image/` (Blöcke als Abschnitte einer Datei).
 
 ## Pipeline
 
@@ -183,9 +183,10 @@ Fachlogik in `lib/domain/images/`, Ablauf in `lib/pipeline/images/`, Adapter in 
 
 - Ortsseite: Titelbild mit Art, Licht und Quellen; Rendering und Maske aufklappbar.
 - Review `place_image` wie in Teil D.
-- Revierseite: Abdeckung (Anteil Orte mit Luftbild, mit freigegebenem Bild), Kosten der Luftbilder.
+- Seite des Landesteils (`/subdivisions/<Schlüssel>`): Abdeckung (Orte, mit Luftbild, mit freigegebenem Bild, lieferbar, Median der Wasser-IoU, Anteil abgelehnt, Kosten der Luftbilder und der Bilderzeugung) und die Schaltfläche „Titelbilder erzeugen“.
+- Ortsseite, Reiter „Titelbild“: alle aktuellen Bilder mit Kamera, der Entwurf aus der offenen Prüfung, „Weitere Ansicht erzeugen“ und „Bild entfernen“.
 
-## Kennzahlen (je Revier)
+## Kennzahlen (je Landesteil)
 
 | Kennzahl | Ziel Pilot |
 | --- | --- |
@@ -216,6 +217,10 @@ Fachlogik in `lib/domain/images/`, Ablauf in `lib/pipeline/images/`, Adapter in 
 | E: Fotos und Merkmale | 6–7 Tage | später |
 
 Stufe 1 gesamt: grob 7–9 Tage.
+
+## Hinweis nach Teil-Spec 14
+
+Nach Teil-Spec 14 liegt die Liefereinheit im Landesteil (Land, Verwaltungseinheit), nicht im Revier. Wo diese Spec „Revier“ sagt, in den Budgets, der Abdeckung, den Kennzahlen und beim Pilot, ist der **Landesteil** gemeint; Reviere sind überlappende Namensgebiete außerhalb der Hierarchie. Der Laufumfang `subdivision` der Bildstufe und die Abdeckung der Landesteil-Seite folgen dem. Die Obergrenze der Bilderzeugungen je Lauf steht in `config/images.json` (`pipeline.maxGenerationsPerRun`), nicht in `config/budgets.json`.
 
 ## Abweichungen
 
