@@ -7269,7 +7269,13 @@
           "name": "area_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
+        },
+        "subdivision_id": {
+          "name": "subdivision_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         },
         "object_type": {
           "name": "object_type",
@@ -7380,6 +7386,34 @@
           "method": "btree",
           "with": {}
         },
+        "delivered_objects_subdivision_region_version_unique": {
+          "name": "delivered_objects_subdivision_region_version_unique",
+          "columns": [
+            {
+              "expression": "subdivision_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "public_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "profile_version",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"delivered_objects\".\"object_type\" = 'region' AND \"delivered_objects\".\"subdivision_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "delivered_objects_public_valid_from_idx": {
           "name": "delivered_objects_public_valid_from_idx",
           "columns": [
@@ -7409,6 +7443,19 @@
           "tableTo": "geo_objects",
           "columnsFrom": [
             "area_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "delivered_objects_subdivision_id_subdivisions_id_fk": {
+          "name": "delivered_objects_subdivision_id_subdivisions_id_fk",
+          "tableFrom": "delivered_objects",
+          "tableTo": "subdivisions",
+          "columnsFrom": [
+            "subdivision_id"
           ],
           "columnsTo": [
             "id"
@@ -7447,6 +7494,10 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
+        "delivered_objects_area_or_subdivision": {
+          "name": "delivered_objects_area_or_subdivision",
+          "value": "\"delivered_objects\".\"area_id\" IS NOT NULL OR \"delivered_objects\".\"subdivision_id\" IS NOT NULL"
+        },
         "delivered_objects_profile_version_positive": {
           "name": "delivered_objects_profile_version_positive",
           "value": "\"delivered_objects\".\"profile_version\" >= 1"
@@ -7476,7 +7527,13 @@
           "name": "area_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
+        },
+        "subdivision_id": {
+          "name": "subdivision_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         },
         "data_version": {
           "name": "data_version",
@@ -7595,11 +7652,54 @@
           "method": "btree",
           "with": {}
         },
+        "deliveries_subdivision_data_version_unique": {
+          "name": "deliveries_subdivision_data_version_unique",
+          "columns": [
+            {
+              "expression": "subdivision_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "data_version",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"deliveries\".\"data_version\" IS NOT NULL AND \"deliveries\".\"subdivision_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "deliveries_area_created_idx": {
           "name": "deliveries_area_created_idx",
           "columns": [
             {
               "expression": "area_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "deliveries_subdivision_created_idx": {
+          "name": "deliveries_subdivision_created_idx",
+          "columns": [
+            {
+              "expression": "subdivision_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -7624,6 +7724,19 @@
           "tableTo": "geo_objects",
           "columnsFrom": [
             "area_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "deliveries_subdivision_id_subdivisions_id_fk": {
+          "name": "deliveries_subdivision_id_subdivisions_id_fk",
+          "tableFrom": "deliveries",
+          "tableTo": "subdivisions",
+          "columnsFrom": [
+            "subdivision_id"
           ],
           "columnsTo": [
             "id"
@@ -7662,6 +7775,10 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
+        "deliveries_area_or_subdivision": {
+          "name": "deliveries_area_or_subdivision",
+          "value": "\"deliveries\".\"area_id\" IS NOT NULL OR \"deliveries\".\"subdivision_id\" IS NOT NULL"
+        },
         "deliveries_data_version_iff_valid": {
           "name": "deliveries_data_version_iff_valid",
           "value": "(\"deliveries\".\"status\" = 'valid') = (\"deliveries\".\"data_version\" IS NOT NULL)"
