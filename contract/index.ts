@@ -6,6 +6,7 @@ import {
   coastCollectionSchema,
   CONTRACT_FILES,
   highlightsFileSchema,
+  IMAGE_FILE_PATTERN,
   manifestSchema,
   regionsFileSchema,
   spotsFileSchema,
@@ -22,7 +23,7 @@ import {
  */
 
 export const SCHEMA_VERSION = "2.1";
-export { CONTRACT_FILES };
+export { CONTRACT_FILES, IMAGE_FILE_PATTERN };
 export type { ContractFile };
 export type {
   ChangeEntry,

@@ -210,7 +210,7 @@ export async function deliveryDownload(
   db: Db,
   archive: Archive,
   id: string,
-  file: ContractFile,
+  file: string,
 ): Promise<{ bytes: Uint8Array; contentType: string; filename: string } | null> {
   const [found] = await db
     .select({ row: deliveries, subdivisionPublicId: subdivisions.publicId, areaPublicId: geoObjects.publicId })
@@ -222,7 +222,7 @@ export async function deliveryDownload(
   const bytes = await readStoredFile(archive, found.row, file);
   if (bytes === null) return null;
   const version = found.row.dataVersion === null ? "rejected" : String(found.row.dataVersion);
-  return { bytes, contentType: contentTypeOf(file), filename: `${found.subdivisionPublicId ?? found.areaPublicId ?? found.row.id}-${version}-${file}` };
+  return { bytes, contentType: contentTypeOf(file), filename: `${found.subdivisionPublicId ?? found.areaPublicId ?? found.row.id}-${version}-${file.replace("/", "-")}` };
 }
 
 /**
