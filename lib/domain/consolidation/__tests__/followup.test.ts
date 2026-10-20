@@ -225,6 +225,30 @@ describe("stage consolidation.followup", () => {
       expect(await thinPlaces(tx, [thin.objectId], followup(), TODAY)).toEqual([]);
     }));
 
+  it("a retry after the first-stage enqueue failed enqueues that stage instead of skipping (CON-3)", () =>
+    withRollback(async (tx) => {
+      await areaTile(tx);
+      const thin = await place(tx, `Duenn${newId().slice(0, 8)}`, { languages: ["de", "en"] });
+      const [run] = await tx
+        .insert(runs)
+        .values({ kind: "stage", scopeType: "system", scopeId: "consolidation", stages: [CONSOLIDATION_FOLLOWUP_STAGE], params: { geoObjectIds: [thin.objectId] }, triggeredBy: "test" })
+        .returning({ id: runs.id });
+      // the first attempt: run and requests committed, then the job queue failed
+      const down = { insert: async () => { throw new Error("connection terminated"); } } as unknown as PgBoss;
+      await expect(requestPlaceDiscovery(tx, down, run!.id, { today: TODAY })).rejects.toThrow("connection terminated");
+      const [orphan] = await tx.select().from(runs).where(eq(runs.triggeredBy, `consolidation:${run!.id}`));
+      expect(orphan!.status).toBe("queued");
+
+      const rec = recordingBoss();
+      const retried = await requestPlaceDiscovery(tx, rec.boss, run!.id, { today: TODAY });
+      expect(rec.inserted.map((j) => [j.queue, j.data.key])).toEqual([["discovery.place", thin.objectId]]);
+      expect(retried).toEqual({ places: [thin.objectId], discoveryRunId: orphan!.id, skipped: false });
+      expect((await tx.select().from(runs).where(eq(runs.id, orphan!.id)))[0]!.status).toBe("running");
+      // a further retry skips: the stage is planned
+      expect(await requestPlaceDiscovery(tx, rec.boss, run!.id, { today: TODAY })).toMatchObject({ skipped: true });
+      expect(rec.inserted).toHaveLength(1);
+    }));
+
   it("an evaluation run plans no followup", () =>
     withRollback(async (tx) => {
       await areaTile(tx);
