@@ -56,7 +56,7 @@ Der Server zieht die Images mit einem eigenen, dauerhaften Nur-Lese-Zugang:
 3. Läuft das Token ab, schlagen Deploys beim `pull` fehl (automatischer Rollback, Exit 1). Dann neues Token anlegen und Schritt 2 wiederholen.
 
 ### 5b. Caddy (Grenzen am Rand)
-`docker/Caddyfile` begrenzt Anfragekörper: 101 MB nur auf einer Quellen-Seite (PDF-Upload), sonst 1 MB (Login, Formulare, API); größere Anfragen beantwortet Caddy mit 413, bevor der Web-Server sie puffert. Die Datei kommt nur beim Bootstrap auf den Server (`docs/m0-folgearbeiten.md` §3): nach einer Änderung `docker/Caddyfile` nach `/opt/periplus/docker/Caddyfile` kopieren und `dc restart caddy`.
+`docker/Caddyfile` begrenzt Anfragekörper: 101 MiB nur auf einer Quellen-Seite (PDF-Upload, die App selbst nimmt bis 100 MiB), sonst 1 MB (Login, Formulare, API); größere Anfragen beantwortet Caddy mit 413, bevor der Web-Server sie puffert. Die Datei kommt nur beim Bootstrap auf den Server (`docs/m0-folgearbeiten.md` §3): nach einer Änderung `docker/Caddyfile` nach `/opt/periplus/docker/Caddyfile` kopieren und `dc restart caddy`.
 
 ### 6. `.env` ausfüllen
 Alle Werte in `/opt/periplus/.env` setzen. `SESSION_SECRET`: `openssl rand -base64 48`. `POSTGRES_PASSWORD` und das Passwort in `DATABASE_URL` müssen übereinstimmen. Werte ohne Anführungszeichen schreiben.

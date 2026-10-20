@@ -264,9 +264,9 @@ describe("uploadPdfAction", () => {
     expect(nextConfig.experimental?.proxyClientMaxBodySize).toBe("101mb");
   });
 
-  it("the edge allows such a body only on a source page, 1 MB elsewhere (SEC-1)", () => {
+  it("the edge allows such a body (101 MiB, as Next reads 101mb) only on a source page, 1 MB elsewhere (SEC-1, W2-M-1)", () => {
     const caddy = readFileSync("docker/Caddyfile", "utf8");
-    expect(caddy).toMatch(/@sourcePage path_regexp \^\/sources\/\[0-9a-fA-F-\]\{36\}\/\?\$\s*request_body @sourcePage \{\s*max_size 101MB/);
+    expect(caddy).toMatch(/@sourcePage path_regexp \^\/sources\/\[0-9a-fA-F-\]\{36\}\/\?\$\s*request_body @sourcePage \{\s*max_size 101MiB\s*\}/);
     expect(caddy).toMatch(/@otherPaths not path_regexp \^\/sources\/\[0-9a-fA-F-\]\{36\}\/\?\$\s*request_body @otherPaths \{\s*max_size 1MB/);
   });
 
