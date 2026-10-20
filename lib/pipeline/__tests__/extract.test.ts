@@ -153,7 +153,7 @@ describe("stage extraction.mention", () => {
       const kolona = s.mentions.filter((m) => m.geoObjectId === s.kolona).map((m) => m.id);
       expect(await statusOf(tx, kolona)).toEqual(["done", "done", "done"]);
       const [run] = await tx.select().from(extractionRuns).where(eq(extractionRuns.runId, runId));
-      expect(run).toMatchObject({ task: "extract-facts", model: "claude-sonnet-5-5", promptVersion: 3, factSchemaVersion: "v2", purpose: "regular" });
+      expect(run).toMatchObject({ task: "extract-facts", model: "claude-sonnet-5-5", promptVersion: 4, factSchemaVersion: "v2", purpose: "regular" });
       const units = await tx.select().from(extractionUnits).where(eq(extractionUnits.extractionRunId, run!.id));
       expect(units.map((u) => [u.geoObjectId, u.status, u.mentionIds.length])).toEqual([[s.kolona, "done", 3]]);
       expect(units[0]!.stats).toMatchObject({ proposed: 1, stored: 1 });
@@ -382,9 +382,8 @@ describe("stage extraction.mention", () => {
     expect(changed).toContain("(at most 60 characters)");
   });
 
-  it("prompt v3 states the name-in-quote rule for every attribute holding proper names", () => {
+  it("the facts prompt states the name-in-quote rule for every attribute holding proper names", () => {
     const taskConfig = config.models.tasks["extract-facts"]!;
-    expect(taskConfig.promptVersion).toBe(3);
     const levels = ["place", "area", "island", "cape_strait", "poi"] as const;
     const covered = new Set<string>();
     for (const level of levels) {
@@ -410,6 +409,41 @@ describe("stage extraction.mention", () => {
       if (named.length === 0) expect(rule).not.toContain("values of");
     }
     expect([...covered].sort()).toEqual(["charter_bases", "hazards", "restricted_zones", "supply_ports"]);
+  });
+
+  it("prompt v4 asks for one fact per entry of every list attribute and keeps other attributes to one fact", () => {
+    const taskConfig = config.models.tasks["extract-facts"]!;
+    expect(taskConfig.promptVersion).toBe(4);
+    const levels = ["place", "area", "island", "cape_strait", "poi"] as const;
+    const covered = new Set<string>();
+    for (const level of levels) {
+      const input: ExtractFactsInput = {
+        level,
+        factSchemaVersion: "v2",
+        maxFacts: 40,
+        limits: { quoteMinChars: 12, quoteMaxChars: 300, nameMaxChars: 80 },
+        object: { name: "X", type: "bay", parents: [] },
+        docType: "trip_report",
+        observedAt: "2026-10-19",
+        chunks: [{ n: 1, text: "t" }],
+      };
+      const system = (buildParams(extractFactsTask, input, taskConfig, "claude-sonnet-5-5").system as Array<{ text: string }>)[0]!.text;
+      const lines = system.split("\n");
+      const listRule = lines.find((l) => l.startsWith("- A list attribute holds entries"));
+      expect(listRule, level).toBeDefined();
+      expect(listRule).toContain("one fact per entry");
+      expect(listRule).toContain("its own verbatim quote");
+      const listKeys = getFactSchema("v2").levels[level].filter((d) => d.origins.includes("text") && (d.rule === "union" || d.rule === "prohibitions")).map((d) => d.key);
+      for (const key of listKeys) {
+        expect(listRule, `${level} ${key}`).toContain(`\`${key}\``);
+        covered.add(key);
+      }
+      // scalar attributes and seabed (a composition, not entries) are never named as list attributes
+      for (const d of getFactSchema("v2").levels[level].filter((d) => !listKeys.includes(d.key))) expect(listRule).not.toContain(`\`${d.key}\``);
+      expect(lines.some((l) => l.startsWith("- Give every other attribute at most once"))).toBe(true);
+      expect(system).not.toContain("Give each attribute at most once");
+    }
+    expect([...covered].sort()).toEqual(["charter_bases", "hazards", "mooring.types", "prohibitions", "restricted_zones", "season_notes", "supply_ports", "wind_systems"]);
   });
 
   it("the prompt carries the word scale and keeps unit data out of the system prompt", () =>

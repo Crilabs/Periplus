@@ -3,8 +3,8 @@ import type { ExtractedFact, ExtractFactsOutput } from "@/lib/ai/tasks/extract-f
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { chunks, extractionRuns, extractionUnits, facts, mentions, unmatchedNames } from "@/lib/db/schema";
-import { canonicalJson, getFactSchema, validateTextFact } from "@/lib/domain/facts/schema";
-import type { AttributeDef, FactLevel } from "@/lib/domain/facts/schema-types";
+import { canonicalJson, getFactSchema, isEntryListAttribute, validateTextFact } from "@/lib/domain/facts/schema";
+import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { effectiveVersionMeta, plausibleDate } from "@/lib/domain/mentions/classification";
 import { findNameHits, type MatchHit, type NameForm } from "@/lib/domain/mentions/match";
@@ -98,13 +98,6 @@ type Kept = {
 };
 
 type HighlightValue = { present: boolean; names: string[] };
-
-/**
- * Whether the attribute's value is a list of entries that consolidation unites across facts (rules `union` and
- * `prohibitions`, ruling M7-G-R2). `seabed` is a list too, but of shares summing to 1: one composition, not entries.
- */
-export const isEntryListAttribute = (def: Pick<AttributeDef, "rule"> | undefined): boolean =>
-  def?.rule === "union" || def?.rule === "prohibitions";
 
 /** The entries of `a` followed by those of `b` not in `a` (by canonical JSON). */
 function unionEntries(a: unknown[], b: unknown[]): unknown[] {
