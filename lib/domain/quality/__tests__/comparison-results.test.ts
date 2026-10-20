@@ -347,6 +347,8 @@ describe("comparison results", () => {
         method: "manual",
         checkedBy: "a@test",
         checkedAt: at("2026-10-02T10:00:00Z"),
+        profileVersion: 1,
+        evaluationRunId: null,
       });
       expect(latest.get(`${placeId}|depth|${H2}`)?.result).toBe("match");
       expect(await latestComparisonResults(tx, [])).toEqual(new Map());

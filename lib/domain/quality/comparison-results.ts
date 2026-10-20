@@ -159,6 +159,8 @@ export type LatestComparisonResult = {
   method: ComparisonMethod;
   checkedBy: string;
   checkedAt: Date;
+  profileVersion: number | null;
+  evaluationRunId: string | null;
 };
 
 /**
@@ -176,6 +178,8 @@ export async function latestComparisonResults(db: Db, placeIds: string[]): Promi
       method: comparisonResults.method,
       checkedBy: comparisonResults.checkedBy,
       checkedAt: comparisonResults.checkedAt,
+      profileVersion: comparisonResults.profileVersion,
+      evaluationRunId: comparisonResults.evaluationRunId,
     })
     .from(comparisonResults)
     .where(inArray(comparisonResults.placeId, placeIds))
@@ -188,7 +192,7 @@ export async function latestComparisonResults(db: Db, placeIds: string[]): Promi
       desc(comparisonResults.id),
     );
   return new Map(
-    rows.map((r) => [key(r.placeId, r.attribute, r.valueHash), { result: r.result, method: r.method, checkedBy: r.checkedBy, checkedAt: r.checkedAt }]),
+    rows.map(({ placeId, attribute, valueHash, ...latest }) => [key(placeId, attribute, valueHash), latest]),
   );
 }
 

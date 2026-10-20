@@ -5,7 +5,7 @@ import { getDb } from "@/lib/db/client";
 import { COMPARISON_TARGET, comparisonOverview } from "@/lib/domain/comparison";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { PLACE_KIND_LABELS } from "../_components/labels";
-import { Button, EmptyState, FilterChips, Mono, Notice, PageHeader, Panel, Stat } from "../_components/ui";
+import { Button, ButtonLink, EmptyState, FilterChips, Mono, Notice, PageHeader, Panel, Stat } from "../_components/ui";
 import { toggleComparisonAction } from "./actions";
 
 const querySchema = z.object({
@@ -38,6 +38,11 @@ export default async function Page({ searchParams }: PageProps<"/quality">) {
       <PageHeader
         title="Qualität"
         description={`Der Vergleichssatz ist eine feste Auswahl bestätigter Orte je Revier. An ihm wird die Qualität der Ergebnisse gegen eine externe Referenz (Navily) gemessen; Ziel sind ${COMPARISON_TARGET} Orte.`}
+        actions={
+          <ButtonLink href={`/quality/compare?area=${area.key}`} variant="primary">
+            Mit Navily vergleichen
+          </ButtonLink>
+        }
       />
 
       {areas.length > 1 && (

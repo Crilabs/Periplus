@@ -29,7 +29,7 @@ import type {
 } from "@/lib/db/schema";
 import type { ChangeSeverity, ChangeType, SummaryStatus } from "@/lib/db/schema/profiles";
 import type { DeliveryStatus } from "@/lib/db/schema/deliveries";
-import type { ComparisonAttribute, MetricKey } from "@/lib/db/schema/quality";
+import type { ComparisonAttribute, ComparisonMethod, ComparisonResultValue, MetricKey } from "@/lib/db/schema/quality";
 import type { ChangeEntry, ContractFile } from "@/contract";
 import type { CheckName } from "@/lib/domain/delivery/validate";
 import type { PreviewOmission } from "@/lib/domain/delivery/view";
@@ -666,6 +666,24 @@ export const COMPARISON_DECISION_LABELS = {
   navily_correct: "Navily stimmt (eigener Wert falsch)",
   unclear: "Unklar",
 } as const;
+
+/** Outcomes of the comparison against Navily (`comparison_results.result`). */
+export const COMPARISON_RESULT_LABELS: Record<ComparisonResultValue, string> = {
+  match: "stimmt",
+  deviation: "weicht ab",
+  not_at_navily: "bei Navily nicht vorhanden",
+  deviation_confirmed_own: "Abweichung: eigener Wert stimmt",
+  deviation_confirmed_navily: "Abweichung: Navily stimmt",
+  unclear: "unklar",
+};
+
+/** How an outcome was recorded (`comparison_results.method`). */
+export const COMPARISON_METHOD_LABELS: Record<ComparisonMethod, string> = {
+  manual: "von Hand",
+  proposal_confirmed: "Vorschlag bestätigt",
+  proposal_auto: "Vorschlag maschinell",
+  review: "Prüfung",
+};
 
 /** The metrics of a quality snapshot. */
 export const METRIC_LABELS: Record<MetricKey, string> = {
