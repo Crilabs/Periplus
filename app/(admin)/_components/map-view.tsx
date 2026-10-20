@@ -13,7 +13,7 @@ import Link from "next/link";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { GeoObjectType, PlaceStatus, RestrictedKind } from "@/lib/db/schema";
 import type { MapLayer } from "@/lib/domain/map-data";
-import { CLIENT_BBOX_DEGREES, MAP_FEATURE_LIMIT } from "@/lib/domain/map-limits";
+import { CLIENT_BBOX_DEGREES, MAP_FEATURE_LIMIT, NOT_IN_GEO_OBJECT_LAYER } from "@/lib/domain/map-limits";
 import type { ConfidenceClass } from "@/lib/domain/consolidation/types";
 import {
   CONFIDENCE_CLASS_LABELS,
@@ -26,12 +26,12 @@ import {
 import { DEFAULT_CENTER, MAP_SEA_COLOR, MAP_STYLE, OSM_ATTRIBUTION } from "./map-style";
 import { buttonClass, cx } from "./ui";
 
-const LAYERS: MapLayer[] = ["tiles", "restricted-areas", "areas", "geo-objects", "places"];
+const LAYERS: MapLayer[] = ["seas", "subdivisions", "tiles", "restricted-areas", "areas", "geo-objects", "places"];
 const DEBOUNCE_MS = 300;
 /** The map-data route accepts at most 5° × 5°; larger views load the 5° box around the centre. */
 const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
-const GEO_TYPES = (Object.keys(GEO_OBJECT_TYPE_LABELS) as GeoObjectType[]).filter((t) => t !== "area");
+const GEO_TYPES = (Object.keys(GEO_OBJECT_TYPE_LABELS) as GeoObjectType[]).filter((t) => !(NOT_IN_GEO_OBJECT_LAYER as readonly GeoObjectType[]).includes(t));
 const PLACE_STATUSES = Object.keys(PLACE_STATUS_LABELS) as PlaceStatus[];
 
 // Overlay colours are tuned for the dark base map: light enough to read on the sea, distinct from each other.
@@ -47,6 +47,8 @@ const PROFILE_CLASS_COLORS: Record<ConfidenceClass, string> = { high: "#22c55e",
 const NO_PROFILE_COLOR = "#64748b";
 const PROFILE_CLASSES = Object.keys(PROFILE_CLASS_COLORS) as ConfidenceClass[];
 const AREA_COLOR = "#a78bfa";
+const SUBDIVISION_COLOR = "#f59e0b";
+const SEA_COLOR = "#2dd4bf";
 const TILE_COLOR = "#38bdf8";
 const GEO_OBJECT_COLOR = "#60a5fa";
 const RESTRICTED_KIND_COLORS: Record<RestrictedKind, string> = {
@@ -61,6 +63,8 @@ const RESTRICTED_KINDS = Object.keys(RESTRICTED_KIND_COLORS) as RestrictedKind[]
 
 type Selection = { layer: MapLayer; properties: Record<string, unknown> };
 type Visibility = {
+  subdivisions: boolean;
+  seas: boolean;
   areas: boolean;
   tiles: boolean;
   restricted: boolean;
@@ -99,6 +103,8 @@ const restrictedColor = [
 
 /** Interactive MapLibre layer ids per data layer (for clicks). */
 const CLICK_LAYERS: Record<MapLayer, string[]> = {
+  seas: ["seas-line"],
+  subdivisions: ["subdivisions-fill"],
   tiles: ["tiles-fill"],
   "restricted-areas": ["restricted-areas-fill"],
   areas: ["areas-line"],
@@ -108,6 +114,15 @@ const CLICK_LAYERS: Record<MapLayer, string[]> = {
 
 function addLayers(m: MapLibreMap): void {
   for (const layer of LAYERS) m.addSource(layer, { type: "geojson", data: EMPTY });
+  m.addLayer({ id: "seas-line", type: "line", source: "seas", paint: { "line-color": SEA_COLOR, "line-width": 1, "line-opacity": 0.6, "line-dasharray": [4, 2] } });
+  // a transparent fill makes the inside clickable; excluded subdivisions are greyed
+  m.addLayer({
+    id: "subdivisions-fill",
+    type: "fill",
+    source: "subdivisions",
+    paint: { "fill-color": ["case", ["==", ["get", "status"], "excluded"], "#525252", SUBDIVISION_COLOR], "fill-opacity": ["case", ["==", ["get", "status"], "excluded"], 0.12, 0.02] },
+  });
+  m.addLayer({ id: "subdivisions-line", type: "line", source: "subdivisions", paint: { "line-color": SUBDIVISION_COLOR, "line-width": 1.25, "line-opacity": 0.8 } });
   m.addLayer({
     id: "tiles-fill",
     type: "fill",
@@ -176,6 +191,9 @@ function applyVisibility(m: MapLibreMap, v: Visibility): void {
   show("tiles-fill", v.tiles);
   show("tiles-line", v.tiles);
   show("areas-line", v.areas);
+  show("seas-line", v.seas);
+  show("subdivisions-fill", v.subdivisions);
+  show("subdivisions-line", v.subdivisions);
   show("restricted-areas-fill", v.restricted);
   show("restricted-areas-line", v.restricted);
   const typeFilter: ExpressionSpecification = ["in", ["get", "type"], ["literal", v.geoTypes]];
@@ -189,6 +207,10 @@ function applyVisibility(m: MapLibreMap, v: Visibility): void {
 
 function isOn(layer: MapLayer, v: Visibility): boolean {
   switch (layer) {
+    case "subdivisions":
+      return v.subdivisions;
+    case "seas":
+      return v.seas;
     case "areas":
       return v.areas;
     case "tiles":
@@ -226,13 +248,15 @@ function toggle<T>(list: T[], item: T): T[] {
 }
 
 /**
- * Admin map: toggleable layers (areas, tiles, restricted areas by kind, geo objects by type, places by status), loaded per layer from
+ * Admin map: toggleable layers (subdivisions, seas, areas, tiles, restricted areas by kind, geo objects by type, places by status), loaded per layer from
  * `/map-data/<layer>` for the visible bounds after each move (debounced). A click opens a floating panel with a link.
  */
 export function MapView() {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
   const [visibility, setVisibility] = useState<Visibility>({
+    subdivisions: true,
+    seas: false,
     areas: true,
     tiles: true,
     restricted: true,
@@ -424,6 +448,8 @@ function Group<T>({
 }
 
 const LAYER_LABELS: Record<MapLayer, string> = {
+  subdivisions: "Landesteile",
+  seas: "Meere",
   areas: "Reviere",
   tiles: "Kacheln",
   "geo-objects": "Geo-Objekte",
@@ -489,6 +515,18 @@ function LayerPanel({
       )}
       <div className={cx("space-y-4 overflow-y-auto border-t border-line px-2 pt-2 pb-3", !open && "hidden")}>
         <div className="space-y-0.5">
+          <LayerSwitch
+            label="Landesteile"
+            checked={v.subdivisions}
+            onChange={() => onChange({ ...v, subdivisions: !v.subdivisions })}
+            mark={<span className="h-0.5 w-4 rounded-full" style={{ background: SUBDIVISION_COLOR }} />}
+          />
+          <LayerSwitch
+            label="Meere"
+            checked={v.seas}
+            onChange={() => onChange({ ...v, seas: !v.seas })}
+            mark={<span className="h-0.5 w-4 rounded-full border-t border-dashed" style={{ borderColor: SEA_COLOR }} />}
+          />
           <LayerSwitch
             label="Reviere"
             checked={v.areas}
@@ -610,11 +648,25 @@ function Sidebar({ selection: { layer, properties: p }, onClose }: { selection: 
       rows = [
         ["Typ", "Kachel"],
         ["Küste", p.hasCoast ? "ja" : "nein"],
-        ["Revier", str(p.areaKey) || "–"],
+        ["Landesteil", str(p.subdivisionKey) || "–"],
         ["Orte", String(p.placeCount ?? 0)],
         ["Kandidaten", String(p.candidateCount ?? 0)],
       ];
       href = `/tiles/${id}`;
+      break;
+    case "subdivisions":
+      title = str(p.name) || str(p.key);
+      rows = [
+        ["Typ", "Landesteil"],
+        ["Schlüssel", str(p.key)],
+        ["Land", str(p.country)],
+        ["Status", p.status === "excluded" ? "ausgeschlossen" : "aktiv"],
+      ];
+      href = `/subdivisions/${encodeURIComponent(str(p.key))}`;
+      break;
+    case "seas":
+      rows = [["Typ", GEO_OBJECT_TYPE_LABELS.sea]];
+      href = `/geo/${id}`;
       break;
     case "areas":
       rows = [

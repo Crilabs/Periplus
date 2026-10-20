@@ -11,13 +11,13 @@ import { QUALITY_MEASURE_STAGE } from "@/lib/pipeline/quality-stages";
 import { insertProfile, provenanceEntry } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { NAVILY_MARKERS, rowsWrittenInTransaction } from "@/test/quality";
-import { insertNamedObject } from "@/test/text";
+import { insertNamedObject, insertTestSubdivision } from "@/test/text";
 import { comparisonValues, loadComparisonSubjects } from "../comparison-values";
 import { recordManualComparison } from "../navily-compare";
 import { loadNavilySpots } from "../navily-sample";
 import { notWrittenNote, renderNavilyRunSection, runNavilyComparison } from "../navily-run";
 
-// Synthetic area around the fixture spots, shifted by DLON to 41.0–41.1° E / 35.2–35.3° N (outside the pilot box), rolled back.
+// Synthetic subdivision around the fixture spots, shifted by DLON to 41.0–41.1° E / 35.2–35.3° N (outside the pilot box), rolled back.
 
 const FIXTURE = path.join(process.cwd(), "test/fixtures/navily/sample.json");
 /**
@@ -33,9 +33,8 @@ const spotCoordinates = (spots: Array<{ lat: number; lon: number }>) =>
 
 /** Three set places: Kolona (spot 0 ≈ 43 m away), Poros harbour (spot 1 ≈ 60 m away), Agios (no spot nearby). */
 async function scene(tx: Db) {
-  const areaKey = `test-${newId()}`;
-  // the area's own point lies away from every fixture spot (no test row at a spot coordinate)
-  const areaId = await insertNamedObject(tx, { type: "area", names: [{ name: "Test area" }], lon: 41.07, lat: 35.23, configKey: areaKey });
+  const subdivisionKey = `XT-${newId()}`;
+  const { id: subdivisionId } = await insertTestSubdivision(tx, subdivisionKey, [40.9, 35.0, 41.6, 35.7]);
   for (const [lon, lat] of [
     [41.0, 35.2],
     [41.05, 35.25],
@@ -44,11 +43,11 @@ async function scene(tx: Db) {
     const [w, s, e, n] = tileBbox(id);
     await tx
       .insert(tiles)
-      .values({ id, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, areaId })
-      .onConflictDoUpdate({ target: tiles.id, set: { areaId } });
+      .values({ id, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, subdivisionId, hasCoast: true })
+      .onConflictDoUpdate({ target: tiles.id, set: { subdivisionId, hasCoast: true } });
   }
   const addPlace = async (name: string, lon: number, lat: number, kind: "anchorage" | "port" = "anchorage") => {
-    const objectId = await insertNamedObject(tx, { type: kind === "port" ? "harbour" : "bay", names: [{ name }], lon, lat });
+    const objectId = await insertNamedObject(tx, { type: kind === "port" ? "harbour" : "bay", names: [{ name }], lon, lat, subdivisionId });
     const [p] = await tx
       .insert(places)
       .values({
@@ -59,7 +58,7 @@ async function scene(tx: Db) {
         position: geomFromGeoJson({ type: "Point", coordinates: [lon, lat] }),
       })
       .returning({ id: places.id });
-    await tx.insert(comparisonSet).values({ placeId: p!.id, areaId, addedBy: "test" });
+    await tx.insert(comparisonSet).values({ placeId: p!.id, subdivisionId, addedBy: "test" });
     return { placeId: p!.id, objectId };
   };
   const kolona = await addPlace("Kolona", 41.0, 35.2);
@@ -67,24 +66,24 @@ async function scene(tx: Db) {
   const agios = await addPlace("Agios", 41.08, 35.22);
   await insertProfile(tx, kolona.objectId, { "services.water": true, "shelter.N": 0.9 }, { "shelter.N": provenanceEntry("computed") }, { version: 1 });
   const placeIds = [kolona.placeId, poros.placeId, agios.placeId];
-  return { areaKey, kolona, poros, agios, placeIds };
+  return { subdivisionKey, kolona, poros, agios, placeIds };
 }
 
-/** A measurement run of the area created at `createdAt`, with one stored area row (so it counts as measured). */
-async function measurementRun(tx: Db, areaKey: string, label: string, createdAt: string): Promise<string> {
+/** A measurement run of the subdivision created at `createdAt`, with one stored subdivision row (so it counts as measured). */
+async function measurementRun(tx: Db, subdivisionKey: string, label: string, createdAt: string): Promise<string> {
   const [run] = await tx
     .insert(runs)
     .values({
       kind: "stage",
-      scopeType: "area",
-      scopeId: areaKey,
+      scopeType: "subdivision",
+      scopeId: subdivisionKey,
       stages: [QUALITY_MEASURE_STAGE],
-      params: { areaKey, label, from: "2026-10-01T00:00:00.000Z", to: createdAt },
+      params: { subdivisionKey, label, from: "2026-10-01T00:00:00.000Z", to: createdAt },
       triggeredBy: "test",
       createdAt: new Date(createdAt),
     })
     .returning({ id: runs.id });
-  await tx.insert(qualitySnapshots).values({ runId: run!.id, scopeType: "area", scopeId: areaKey, metric: "coverage", value: 1 });
+  await tx.insert(qualitySnapshots).values({ runId: run!.id, scopeType: "subdivision", scopeId: subdivisionKey, metric: "coverage", value: 1 });
   return run!.id;
 }
 
@@ -93,10 +92,10 @@ const resultRows = (tx: Db, placeIds: string[]) => tx.select().from(comparisonRe
 describe("runNavilyComparison", () => {
   it("without acceptProposals nothing is written, but matching and coverage are reported", () =>
     withRollback(async (tx) => {
-      const { areaKey, placeIds } = await scene(tx);
+      const { subdivisionKey, placeIds } = await scene(tx);
       const spots = await loadSpots();
-      const r = await runNavilyComparison(tx, { areaKey, spots, acceptProposals: false, now: NOW });
-      // spot 2 (nameless, 41.1/35.3) lies in the area but matches no place
+      const r = await runNavilyComparison(tx, { subdivisionKey, spots, acceptProposals: false, now: NOW });
+      // spot 2 (nameless, 41.1/35.3) lies in the subdivision but matches no place
       expect(r).toEqual({
         places: 3,
         matched: 2,
@@ -113,16 +112,16 @@ describe("runNavilyComparison", () => {
 
   it("with acceptProposals every set place gets 16 results by navily-assistant/1", () =>
     withRollback(async (tx) => {
-      const { areaKey, kolona, agios, placeIds } = await scene(tx);
+      const { subdivisionKey, kolona, agios, placeIds } = await scene(tx);
       const spots = await loadSpots();
-      const r = await runNavilyComparison(tx, { areaKey, spots, acceptProposals: true, now: NOW });
+      const r = await runNavilyComparison(tx, { subdivisionKey, spots, acceptProposals: true, now: NOW });
       expect(r.written).toBe(48);
       const rows = await resultRows(tx, placeIds);
       expect(rows).toHaveLength(48);
       expect(new Set(rows.map((x) => `${x.method}|${x.checkedBy}`))).toEqual(new Set(["proposal_auto|navily-assistant/1"]));
       expect(rows.every((x) => x.checkedAt.getTime() === NOW.getTime())).toBe(true);
       // the results are the hashes of the current own values and the profile version compared
-      const subjects = await loadComparisonSubjects(tx, areaKey);
+      const subjects = await loadComparisonSubjects(tx, subdivisionKey);
       const cfg = getConfig().quality.navily;
       for (const row of rows) {
         const subject = subjects.find((s) => s.placeId === row.placeId)!;
@@ -146,24 +145,24 @@ describe("runNavilyComparison", () => {
 
   it("a rerun writes nothing new", () =>
     withRollback(async (tx) => {
-      const { areaKey, placeIds } = await scene(tx);
+      const { subdivisionKey, placeIds } = await scene(tx);
       const spots = await loadSpots();
-      await runNavilyComparison(tx, { areaKey, spots, acceptProposals: true, now: NOW });
-      const again = await runNavilyComparison(tx, { areaKey, spots, acceptProposals: true, now: new Date(NOW.getTime() + 60_000) });
+      await runNavilyComparison(tx, { subdivisionKey, spots, acceptProposals: true, now: NOW });
+      const again = await runNavilyComparison(tx, { subdivisionKey, spots, acceptProposals: true, now: new Date(NOW.getTime() + 60_000) });
       expect([again.written, again.tasks, again.skippedManual]).toEqual([0, 0, 0]);
       expect(await resultRows(tx, placeIds)).toHaveLength(48);
     }));
 
   it("an outcome set by hand that differs from the proposal is kept and counted", () =>
     withRollback(async (tx) => {
-      const { areaKey, kolona, placeIds } = await scene(tx);
+      const { subdivisionKey, kolona, placeIds } = await scene(tx);
       const spots = await loadSpots();
-      const subject = (await loadComparisonSubjects(tx, areaKey)).find((s) => s.placeId === kolona.placeId)!;
+      const subject = (await loadComparisonSubjects(tx, subdivisionKey)).find((s) => s.placeId === kolona.placeId)!;
       const cfg = getConfig().quality.navily;
       const valueHash = comparisonValues(subject, cfg).existence.hash;
-      await recordManualComparison(tx, { placeId: kolona.placeId, areaKey, attribute: "existence", result: "deviation", valueHash, checkedBy: "admin@test", cfg });
+      await recordManualComparison(tx, { placeId: kolona.placeId, subdivisionKey, attribute: "existence", result: "deviation", valueHash, checkedBy: "admin@test", cfg });
 
-      const r = await runNavilyComparison(tx, { areaKey, spots, acceptProposals: true, now: NOW });
+      const r = await runNavilyComparison(tx, { subdivisionKey, spots, acceptProposals: true, now: NOW });
       expect([r.written, r.skippedManual]).toEqual([47, 1]);
       const existence = (await resultRows(tx, placeIds)).filter((x) => x.placeId === kolona.placeId && x.attribute === "existence");
       expect(existence.map((x) => [x.method, x.result])).toEqual([["manual", "deviation"]]);
@@ -171,9 +170,9 @@ describe("runNavilyComparison", () => {
 
   it("an outcome a person confirmed on the page is kept like one set by hand", () =>
     withRollback(async (tx) => {
-      const { areaKey, kolona, placeIds } = await scene(tx);
+      const { subdivisionKey, kolona, placeIds } = await scene(tx);
       const spots = await loadSpots();
-      const subject = (await loadComparisonSubjects(tx, areaKey)).find((s) => s.placeId === kolona.placeId)!;
+      const subject = (await loadComparisonSubjects(tx, subdivisionKey)).find((s) => s.placeId === kolona.placeId)!;
       const valueHash = comparisonValues(subject, getConfig().quality.navily).existence.hash;
       await tx.insert(comparisonResults).values({
         placeId: kolona.placeId,
@@ -185,28 +184,28 @@ describe("runNavilyComparison", () => {
         checkedBy: "admin@test",
       });
 
-      const r = await runNavilyComparison(tx, { areaKey, spots, acceptProposals: true, now: NOW });
+      const r = await runNavilyComparison(tx, { subdivisionKey, spots, acceptProposals: true, now: NOW });
       expect([r.written, r.skippedManual]).toEqual([47, 1]);
       const existence = (await resultRows(tx, placeIds)).filter((x) => x.placeId === kolona.placeId && x.attribute === "existence");
       expect(existence.map((x) => [x.method, x.result])).toEqual([["proposal_confirmed", "deviation"]]);
     }));
 
-  it("the coverage counts only matches to the area's confirmed, valid places", () =>
+  it("the coverage counts only matches to the subdivision's confirmed, valid places", () =>
     withRollback(async (tx) => {
-      const { areaKey, kolona } = await scene(tx);
+      const { subdivisionKey, kolona } = await scene(tx);
       const spots = await loadSpots();
       // Kolona stays in the set with status confirmed, but has ended: it no longer covers its spot
       await tx.update(places).set({ validTo: sql`current_date` }).where(eq(places.id, kolona.placeId));
-      const r = await runNavilyComparison(tx, { areaKey, spots, acceptProposals: false, now: NOW });
+      const r = await runNavilyComparison(tx, { subdivisionKey, spots, acceptProposals: false, now: NOW });
       expect(r.coverage).toEqual({ spots: 3, matched: 1, ratio: 1 / 3 });
     }));
 
   it("no navily name, id, url or coordinate appears in any written row", () =>
     withRollback(async (tx) => {
-      const { areaKey } = await scene(tx);
+      const { subdivisionKey } = await scene(tx);
       const spots = await loadSpots();
       const SPOT_COORDINATES = spotCoordinates(spots);
-      const r = await runNavilyComparison(tx, { areaKey, spots, acceptProposals: true, now: NOW });
+      const r = await runNavilyComparison(tx, { subdivisionKey, spots, acceptProposals: true, now: NOW });
       expect(r.written).toBe(48);
       // comparison_results, review_tasks (context) and quality_snapshots (details) written by this transaction
       const rows = await rowsWrittenInTransaction(tx);
@@ -220,10 +219,10 @@ describe("runNavilyComparison", () => {
       expect(JSON.stringify(r)).not.toMatch(SPOT_COORDINATES);
     }));
 
-  it("an unknown area has no places and no coverage", () =>
+  it("an unknown subdivision has no places and no coverage", () =>
     withRollback(async (tx) => {
       const spots = await loadSpots();
-      expect(await runNavilyComparison(tx, { areaKey: `test-${newId()}`, spots, acceptProposals: true, now: NOW })).toEqual({
+      expect(await runNavilyComparison(tx, { subdivisionKey: `test-${newId()}`, spots, acceptProposals: true, now: NOW })).toEqual({
         places: 0,
         matched: 0,
         written: 0,
@@ -237,42 +236,42 @@ describe("runNavilyComparison", () => {
 
   it("coverage_navily needs a measurement run and is written once", () =>
     withRollback(async (tx) => {
-      const { areaKey } = await scene(tx);
+      const { subdivisionKey } = await scene(tx);
       const spots = await loadSpots();
       // without a measurement nothing is written, not even the proposals
-      await expect(runNavilyComparison(tx, { areaKey, spots, acceptProposals: true, writeCoverage: true, now: NOW })).rejects.toThrow(
-        `Erst messen (/quality): Revier ${areaKey} hat noch keine Messung`,
+      await expect(runNavilyComparison(tx, { subdivisionKey, spots, acceptProposals: true, writeCoverage: true, now: NOW })).rejects.toThrow(
+        `Erst messen (/quality): Landesteil ${subdivisionKey} hat noch keine Messung`,
       );
       expect(await rowsWrittenInTransaction(tx)).toEqual([]);
 
-      const older = await measurementRun(tx, areaKey, "Lauf 0", "2026-10-18T08:00:00Z");
-      const newest = await measurementRun(tx, areaKey, "Lauf 1", "2026-10-19T08:00:00Z");
-      const r = await runNavilyComparison(tx, { areaKey, spots, acceptProposals: false, writeCoverage: true, now: NOW });
+      const older = await measurementRun(tx, subdivisionKey, "Lauf 0", "2026-10-18T08:00:00Z");
+      const newest = await measurementRun(tx, subdivisionKey, "Lauf 1", "2026-10-19T08:00:00Z");
+      const r = await runNavilyComparison(tx, { subdivisionKey, spots, acceptProposals: false, writeCoverage: true, now: NOW });
       expect([r.snapshotRunId, r.coverageWritten]).toEqual([newest, true]);
       const rows = await tx.select().from(qualitySnapshots).where(eq(qualitySnapshots.metric, "coverage_navily"));
       expect(rows.filter((x) => x.runId === older)).toEqual([]);
       const mine = rows.filter((x) => x.runId === newest);
       expect(mine).toHaveLength(1);
-      expect(mine[0]).toMatchObject({ scopeType: "area", scopeId: areaKey, value: 2 / 3, details: { spots: 3, matched: 2 } });
+      expect(mine[0]).toMatchObject({ scopeType: "subdivision", scopeId: subdivisionKey, value: 2 / 3, details: { spots: 3, matched: 2 } });
       // counts only (Grundprinzip 9)
       expect(Object.keys(mine[0]!.details).sort()).toEqual(["matched", "spots"]);
 
-      const again = await runNavilyComparison(tx, { areaKey, spots, acceptProposals: false, writeCoverage: true, now: NOW });
+      const again = await runNavilyComparison(tx, { subdivisionKey, spots, acceptProposals: false, writeCoverage: true, now: NOW });
       expect([again.snapshotRunId, again.coverageWritten]).toEqual([newest, false]);
       expect((await tx.select().from(qualitySnapshots).where(eq(qualitySnapshots.runId, newest))).filter((x) => x.metric === "coverage_navily")).toHaveLength(1);
     }));
 
   it("coverage_navily is written in the proposals' transaction: when it fails, no proposal stays (ruling M7-D-R2)", () =>
     withRollback(async (tx) => {
-      const { areaKey, placeIds } = await scene(tx);
+      const { subdivisionKey, placeIds } = await scene(tx);
       const spots = await loadSpots();
-      await measurementRun(tx, areaKey, "Lauf 1", "2026-10-19T08:00:00Z");
+      await measurementRun(tx, subdivisionKey, "Lauf 1", "2026-10-19T08:00:00Z");
       // a failing coverage write, for this transaction only
       const fn = sql.raw(`test_fail_coverage_${newId().replaceAll("-", "")}`);
       await tx.execute(sql`create function ${fn}() returns trigger language plpgsql as $$
         begin if new.metric = 'coverage_navily' then raise exception 'coverage write failed'; end if; return new; end $$`);
       await tx.execute(sql`create trigger ${fn} before insert on quality_snapshots for each row execute function ${fn}()`);
-      await expect(runNavilyComparison(tx, { areaKey, spots, acceptProposals: true, writeCoverage: true, now: NOW })).rejects.toThrow();
+      await expect(runNavilyComparison(tx, { subdivisionKey, spots, acceptProposals: true, writeCoverage: true, now: NOW })).rejects.toThrow();
       expect(await resultRows(tx, placeIds)).toEqual([]);
     }));
 });

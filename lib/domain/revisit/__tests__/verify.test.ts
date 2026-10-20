@@ -2,20 +2,21 @@ import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { changeEvents, deliveries, documents, documentVersions, geoObjects, places, type ChangeSeverity, type ChangeType } from "@/lib/db/schema";
+import { changeEvents, deliveries, documents, documentVersions, places, type ChangeSeverity, type ChangeType } from "@/lib/db/schema";
 import { newId, newPublicId } from "@/lib/domain/ids";
 import { createRun } from "@/lib/domain/runs";
 import type { RevisitScenario } from "@/lib/domain/revisit/scenario";
 import { asOfPlan, attributeMatches, checkAsOf, readSimMeta, verifyRevisit } from "@/lib/domain/revisit/verify";
 import { withRollback } from "@/test/db";
-import { insertNamedObject, insertTestSource, insertTestTile } from "@/test/text";
+import { insertNamedObject, insertTestSource, insertTestSubdivision, insertTestTile } from "@/test/text";
 
 /*
- * verifyRevisit, asOfPlan and checkAsOf on rows inserted directly (withRollback): a one-tile area on a fixed tile of
- * the synthetic grid far from every other test box (−147.5° E, −57.5° N), its change events written by hand.
+ * verifyRevisit, asOfPlan and checkAsOf on rows inserted directly (withRollback): a one-tile subdivision on a fixed tile
+ * of the synthetic grid far from every other test box (−147.5° E, −57.5° N), its change events written by hand. The
+ * deliveries are still per area until plan 14a task 10, so an area object carries the subdivision's key for them.
  */
 
-type Area = { areaKey: string; areaId: string; tileId: string; spot: { geoObjectId: string; publicId: string }; other: { geoObjectId: string; publicId: string } };
+type Area = { subdivisionKey: string; subdivisionId: string; tileId: string; spot: { geoObjectId: string; publicId: string }; other: { geoObjectId: string; publicId: string } };
 
 async function seedArea(tx: Db): Promise<Area> {
   // one fixed tile: the tests of this file run one after the other, each rolled back
@@ -23,19 +24,16 @@ async function seedArea(tx: Db): Promise<Area> {
   const row = 130;
   const lon = col * 0.25 - 180 + 0.125;
   const lat = row * 0.25 - 90 + 0.125;
-  const areaKey = `verify-${newId()}`;
-  const [area] = await tx
-    .insert(geoObjects)
-    .values({ type: "area", origin: "manual", geom: geomFromGeoJson({ type: "Point", coordinates: [lon, lat] }), publicId: newPublicId("ar"), configKey: areaKey })
-    .returning({ id: geoObjects.id });
-  const tileId = await insertTestTile(tx, `q025:${col}:${row}`, area!.id);
+  const subdivisionKey = `XT-${newId()}`;
+  const { id: subdivisionId } = await insertTestSubdivision(tx, subdivisionKey, [lon - 0.2, lat - 0.2, lon + 0.2, lat + 0.2]);
+  const tileId = await insertTestTile(tx, `q025:${col}:${row}`, null, subdivisionId);
   const place = async (dx: number) => {
     const geoObjectId = await insertNamedObject(tx, { type: "bay", names: [{ name: `Bucht ${dx}` }], lon: lon + dx, lat, tiles: [tileId] });
     const publicId = newPublicId("sp");
     await tx.insert(places).values({ geoObjectId, kind: "anchorage", status: "confirmed", publicId, position: geomFromGeoJson({ type: "Point", coordinates: [lon + dx, lat] }) });
     return { geoObjectId, publicId };
   };
-  return { areaKey, areaId: area!.id, tileId, spot: await place(0.01), other: await place(0.02) };
+  return { subdivisionKey, subdivisionId, tileId, spot: await place(0.01), other: await place(0.02) };
 }
 
 async function maxSeq(tx: Db): Promise<number> {
@@ -110,7 +108,7 @@ describe("verifyRevisit", () => {
           { id: "e1", url: changed, edit: replace, expect: { document: "new_version", events: [{ subject: a.spot.publicId, attribute: "highlight.food", type: "changed", severity: "notable" }] } },
           { id: "e2", url: gone, edit: { op: "gone" }, expect: { document: "gone", events: [] } },
         ]),
-        { fromSeq, areaKey: a.areaKey },
+        { fromSeq, subdivisionKey: a.subdivisionKey },
       );
       expect(v).toMatchObject({ fromSeq, expected: 2, correct: 2, unexpected: [], passes: true });
       expect(v.entries).toEqual([
@@ -134,7 +132,7 @@ describe("verifyRevisit", () => {
         scenario([
           { id: "e1", url: changed, edit: replace, expect: { document: "new_version", events: [{ subject: a.spot.publicId, attribute: "highlight.food", type: "changed", severity: "notable" }] } },
         ]),
-        { fromSeq, areaKey: a.areaKey },
+        { fromSeq, subdivisionKey: a.subdivisionKey },
       );
       expect(v.correct).toBe(1);
       expect(v.unexpected).toEqual([
@@ -152,7 +150,7 @@ describe("verifyRevisit", () => {
       const v = await verifyRevisit(
         tx,
         scenario([{ id: "e1", url: changed, edit: replace, expect: { document: "new_version", events: [{ subject: a.spot.publicId, attribute: "depth.*", type: "changed", severity: "safety" }] } }]),
-        { fromSeq, areaKey: a.areaKey },
+        { fromSeq, subdivisionKey: a.subdivisionKey },
       );
       expect(v.entries[0]).toMatchObject({ events: { expected: 1, matched: 0 }, ok: false });
       expect(v.unexpected.map((e) => [e.attribute, e.severity])).toEqual([["depth.min", "notable"]]);
@@ -169,7 +167,7 @@ describe("verifyRevisit", () => {
       const v = await verifyRevisit(
         tx,
         scenario([{ id: "e1", url: changed, edit: replace, expect: { document: "new_version", events: [{ subject: a.spot.publicId, attribute: "depth.*", type: "changed", severity: "safety" }] } }]),
-        { fromSeq, areaKey: a.areaKey },
+        { fromSeq, subdivisionKey: a.subdivisionKey },
       );
       expect(v.entries[0]!.ok).toBe(true);
       expect(v.unexpected.map((e) => e.attribute)).toEqual(["max_draft"]);
@@ -190,7 +188,7 @@ describe("verifyRevisit", () => {
           { id: "e1", url: first, edit: replace, expect: { document: "new_version", events: [depth("depth.*")] } },
           { id: "e2", url: second, edit: replace, expect: { document: "new_version", events: [depth("depth.min")] } },
         ]),
-        { fromSeq, areaKey: a.areaKey },
+        { fromSeq, subdivisionKey: a.subdivisionKey },
       );
       expect(v).toMatchObject({ correct: 2, unexpected: [], passes: true });
     }));
@@ -205,7 +203,7 @@ describe("verifyRevisit", () => {
       const v = await verifyRevisit(
         tx,
         scenario([{ id: "e1", url: changed, edit: replace, expect: { document: "new_version", events: [{ subject: a.spot.publicId, attribute: "prohibitions", type: "changed", severity: "safety" }] } }]),
-        { fromSeq, areaKey: a.areaKey },
+        { fromSeq, subdivisionKey: a.subdivisionKey },
       );
       expect(v.entries[0]!.ok).toBe(true);
       expect(v.unexpected).toHaveLength(1);
@@ -217,7 +215,7 @@ describe("verifyRevisit", () => {
       const a = await seedArea(tx);
       const fromSeq = await maxSeq(tx);
       const url = await page(tx, "unchanged");
-      const v = await verifyRevisit(tx, scenario([{ id: "e1", url, edit: replace, expect: { document: "new_version", events: [] } }]), { fromSeq, areaKey: a.areaKey });
+      const v = await verifyRevisit(tx, scenario([{ id: "e1", url, edit: replace, expect: { document: "new_version", events: [] } }]), { fromSeq, subdivisionKey: a.subdivisionKey });
       expect(v.entries[0]).toMatchObject({ document: { expected: "new_version", actual: "unchanged" }, ok: false });
       expect(v.passes).toBe(false);
     }));
@@ -228,16 +226,16 @@ describe("verifyRevisit", () => {
       await event(tx, a.spot.geoObjectId, "holding", "changed", "info");
       const fromSeq = await maxSeq(tx);
       const url = await page(tx, "unchanged");
-      const v = await verifyRevisit(tx, scenario([{ id: "e1", url, edit: { op: "touch" }, expect: { document: "unchanged", events: [] } }]), { fromSeq, areaKey: a.areaKey });
+      const v = await verifyRevisit(tx, scenario([{ id: "e1", url, edit: { op: "touch" }, expect: { document: "unchanged", events: [] } }]), { fromSeq, subdivisionKey: a.subdivisionKey });
       expect(v).toMatchObject({ correct: 1, unexpected: [], passes: true });
     }));
 });
 
-async function delivery(tx: Db, areaId: string, dataVersion: number, generatedAt: string, status: "valid" | "unchanged" = "valid") {
+async function delivery(tx: Db, subdivisionId: string, dataVersion: number, generatedAt: string, status: "valid" | "unchanged" = "valid") {
   await tx.insert(deliveries).values({
-    areaId,
+    subdivisionId,
     dataVersion: status === "valid" ? dataVersion : null,
-    schemaVersion: "1.0.0",
+    schemaVersion: "2.0",
     generatedAt: new Date(generatedAt),
     status,
     storagePrefix: status === "unchanged" ? null : `deliveries/test/${newId()}/`,
@@ -248,8 +246,8 @@ async function delivery(tx: Db, areaId: string, dataVersion: number, generatedAt
   });
 }
 
-async function revisitRun(tx: Db, areaKey: string, at: string) {
-  const { id } = await createRun(tx, { kind: "revisit", scope: { type: "area", id: areaKey }, stages: [], params: {}, triggeredBy: "test" });
+async function revisitRun(tx: Db, subdivisionKey: string, at: string) {
+  const { id } = await createRun(tx, { kind: "revisit", scope: { type: "subdivision", id: subdivisionKey }, stages: [], params: {}, triggeredBy: "test" });
   await tx.execute(sql`update runs set created_at = ${at}::timestamptz where id = ${id}`);
 }
 
@@ -257,36 +255,36 @@ describe("asOfPlan", () => {
   it("asOf check reports a same-day previous delivery", () =>
     withRollback(async (tx) => {
       const a = await seedArea(tx);
-      await delivery(tx, a.areaId, 1, "2026-06-01T06:00:00Z");
-      await revisitRun(tx, a.areaKey, "2026-06-01T07:00:00Z");
-      await delivery(tx, a.areaId, 2, "2026-06-01T18:00:00Z");
-      expect(await asOfPlan(tx, a.areaKey)).toEqual({ reason: expect.stringMatching(/selben Tag/) });
+      await delivery(tx, a.subdivisionId, 1, "2026-06-01T06:00:00Z");
+      await revisitRun(tx, a.subdivisionKey, "2026-06-01T07:00:00Z");
+      await delivery(tx, a.subdivisionId, 2, "2026-06-01T18:00:00Z");
+      expect(await asOfPlan(tx, a.subdivisionKey)).toEqual({ reason: expect.stringMatching(/selben Tag/) });
     }));
 
   it("names a missing package before or after the revisit, and a missing revisit", () =>
     withRollback(async (tx) => {
       const a = await seedArea(tx);
-      expect(await asOfPlan(tx, a.areaKey)).toEqual({ reason: "Kein Revisit-Lauf für das Revier" });
-      await revisitRun(tx, a.areaKey, "2026-06-01T07:00:00Z");
-      expect(await asOfPlan(tx, a.areaKey)).toEqual({ reason: "Vor dem Revisit kein Paket gebaut" });
-      await delivery(tx, a.areaId, 1, "2026-05-01T08:00:00Z");
-      expect(await asOfPlan(tx, a.areaKey)).toEqual({ reason: "Nach dem Revisit kein Paket gebaut" });
+      expect(await asOfPlan(tx, a.subdivisionKey)).toEqual({ reason: "Kein Revisit-Lauf für den Landesteil" });
+      await revisitRun(tx, a.subdivisionKey, "2026-06-01T07:00:00Z");
+      expect(await asOfPlan(tx, a.subdivisionKey)).toEqual({ reason: "Vor dem Revisit kein Paket gebaut" });
+      await delivery(tx, a.subdivisionId, 1, "2026-05-01T08:00:00Z");
+      expect(await asOfPlan(tx, a.subdivisionKey)).toEqual({ reason: "Nach dem Revisit kein Paket gebaut" });
       // an unchanged package after the revisit is no package of the new state
-      await delivery(tx, a.areaId, 0, "2026-06-02T08:00:00Z", "unchanged");
-      expect(await asOfPlan(tx, a.areaKey)).toEqual({ reason: "Nach dem Revisit kein Paket gebaut" });
+      await delivery(tx, a.subdivisionId, 0, "2026-06-02T08:00:00Z", "unchanged");
+      expect(await asOfPlan(tx, a.subdivisionKey)).toEqual({ reason: "Nach dem Revisit kein Paket gebaut" });
     }));
 
   it("takes the latest valid package before the first revisit, the FIRST after it and the day before that one", () =>
     withRollback(async (tx) => {
       const a = await seedArea(tx);
-      await delivery(tx, a.areaId, 1, "2026-04-20T08:00:00Z");
-      await delivery(tx, a.areaId, 2, "2026-05-01T08:00:00Z");
-      await revisitRun(tx, a.areaKey, "2026-06-01T07:00:00Z");
-      await revisitRun(tx, a.areaKey, "2026-06-08T07:00:00Z");
-      await delivery(tx, a.areaId, 3, "2026-06-08T08:00:00Z");
+      await delivery(tx, a.subdivisionId, 1, "2026-04-20T08:00:00Z");
+      await delivery(tx, a.subdivisionId, 2, "2026-05-01T08:00:00Z");
+      await revisitRun(tx, a.subdivisionKey, "2026-06-01T07:00:00Z");
+      await revisitRun(tx, a.subdivisionKey, "2026-06-08T07:00:00Z");
+      await delivery(tx, a.subdivisionId, 3, "2026-06-08T08:00:00Z");
       // a second package after the revisit never moves asOf onto a post-revisit state (ruling M7-G-R3)
-      await delivery(tx, a.areaId, 4, "2026-06-20T08:00:00Z");
-      expect(await asOfPlan(tx, a.areaKey)).toEqual({
+      await delivery(tx, a.subdivisionId, 4, "2026-06-20T08:00:00Z");
+      expect(await asOfPlan(tx, a.subdivisionKey)).toEqual({
         asOf: "2026-06-07",
         before: { dataVersion: 2, generatedAt: new Date("2026-05-01T08:00:00Z") },
         after: { dataVersion: 3, generatedAt: new Date("2026-06-08T08:00:00Z") },
@@ -306,7 +304,7 @@ describe("checkAsOf", () => {
     };
     const result = await checkAsOf({ baseUrl: "http://localhost:3001/", key: "pk_test", spotId: "sp_01ABC", asOf: "2026-06-07", expectBefore: { dataVersion: 1 }, fetch: stub });
     expect(result).toEqual({ ok: true, status: 200, dataVersion: 1 });
-    expect(seen).toEqual([{ url: "http://localhost:3001/api/v1/spots/sp_01ABC?asOf=2026-06-07", auth: "Bearer pk_test" }]);
+    expect(seen).toEqual([{ url: "http://localhost:3001/api/v2/spots/sp_01ABC?asOf=2026-06-07", auth: "Bearer pk_test" }]);
   });
 
   it("compares the old spot when given, not only its data version (ruling M7-G-R3)", async () => {

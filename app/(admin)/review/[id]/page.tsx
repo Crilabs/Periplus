@@ -514,39 +514,9 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
           <div className="grid gap-6 lg:grid-cols-5">
             <div className="space-y-6 lg:col-span-2">
               {open && (
-                <DecisionPanel question="Zu welchem Revier gehört die Kachel?">
-                  <DecisionForm
-                    {...props}
-                    n={1}
-                    label="Revier zuordnen"
-                    disabled={subject.areas.length === 0}
-                    variant="primary"
-                    hint={subject.areas.length === 0 ? "Es gibt kein Revier zur Auswahl." : "Reviere nach Abstand zur Kachel, nächstes zuerst."}
-                  >
-                    {subject.areas.length > 0 && (
-                      <select name="decision" aria-label="Revier" className={cx(SELECT, "flex-1")}>
-                        {subject.areas.map((a) => (
-                          <option
-                            key={a.id}
-                            value={JSON.stringify({
-                              action: "assign_area",
-                              areaId: a.id,
-                            })}
-                          >
-                            {a.name ?? a.id} ({distance(a.distanceM)})
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </DecisionForm>
-                  <DecisionForm
-                    {...props}
-                    n={2}
-                    label="Kein Revier nötig"
-                    decision={{ action: "no_area" }}
-                    hint="Die Kachel bleibt ohne Revier und wird nicht erneut vorgelegt."
-                  />
-                </DecisionPanel>
+                <Notice tone="warn">
+                  Diese Art Aufgabe entfällt: Jede Küstenkachel gehört zu einem Landesteil, Reviere werden gefunden, nicht zugeordnet.
+                </Notice>
               )}
               <Panel title="Kachel">
                 <DescriptionList

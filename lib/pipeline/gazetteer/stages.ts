@@ -1,9 +1,9 @@
 import type { PgBoss } from "pg-boss";
-import { areaByKey } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
+import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { startRun } from "@/lib/pipeline/runs";
 
-/** The stages of a gazetteer run for one area, in order (one job each). */
+/** The stages of a gazetteer run for one subdivision, in order (one job each). */
 export const GAZETTEER_STAGES = [
   "tiles.ensure",
   "gazetteer.osm",
@@ -12,14 +12,17 @@ export const GAZETTEER_STAGES = [
   "gazetteer.hierarchy",
 ] as const;
 
-/** Starts the run "build gazetteer" for an area; an area that is not configured is rejected before the run exists. */
-export async function startGazetteerRun(db: Db, boss: PgBoss, areaKey: string, triggeredBy: string): Promise<{ id: string }> {
-  areaByKey(areaKey);
+/**
+ * Starts the run "build gazetteer" for a subdivision; an unknown or excluded subdivision is rejected before the run
+ * exists.
+ */
+export async function startGazetteerRun(db: Db, boss: PgBoss, subdivisionKey: string, triggeredBy: string): Promise<{ id: string }> {
+  await requireSubdivision(db, subdivisionKey);
   return startRun(db, boss, {
     kind: "stage",
-    scope: { type: "area", id: areaKey },
+    scope: { type: "subdivision", id: subdivisionKey },
     stages: [...GAZETTEER_STAGES],
-    params: { areaKey },
+    params: { subdivisionKey },
     triggeredBy,
   });
 }

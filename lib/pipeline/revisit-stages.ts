@@ -18,14 +18,14 @@ export type RevisitFreeze = { documentVersionIds: string[]; goneGeoObjectIds: st
 
 /**
  * Freezes a revisit run once its crawl has finished (rulings M7-P6, M7-P7, M4-E-R2): `params.documentVersionIds` =
- * `textRunVersions({ areaKey, documentVersionIds: <the current versions this run's crawl wrote of the area's pages> })`
- * (a page of a source of the area, or of a document that mentioned an object of the area's tiles before, ruling
- * M7-G-R4), i.e. those new versions plus what an area text run takes (the current versions mentioning objects of the area and the pending
- * versions of its sources); and `params.goneGeoObjectIds` = the objects with facts of finished extraction runs on
+ * `textRunVersions({ subdivisionKey, documentVersionIds: <the current versions this run's crawl wrote of the subdivision's pages> })`
+ * (a page of a source of the subdivision, or of a document that mentioned an object of its scope tiles before, ruling
+ * M7-G-R4), i.e. those new versions plus what a subdivision text run takes (the current versions mentioning objects of
+ * its scope tiles and the pending versions of its sources); and `params.goneGeoObjectIds` = the objects with facts of finished extraction runs on
  * documents this run's crawl marked `gone` (`goneGeoObjectsOfRun`), which `consolidationTargets` adds to the run's
  * targets, so a value only a vanished page supported is judged again (spec 10). The crawl's versions are taken by
  * their `run_id`, not as the database-wide `pending` set: that would pull in the unmatched versions of every other
- * area and source. Idempotent: a retried job keeps the list a former attempt wrote (`frozenBefore`), under a row lock
+ * subdivision and source. Idempotent: a retried job keeps the list a former attempt wrote (`frozenBefore`), under a row lock
  * of the run.
  */
 export async function freezeRevisitRun(db: Db, runId: string, cfg: AppConfig = getConfig()): Promise<RevisitFreeze> {
@@ -40,10 +40,10 @@ export async function freezeRevisitRun(db: Db, runId: string, cfg: AppConfig = g
         frozenBefore: true,
       };
     }
-    if (typeof params.areaKey !== "string" || params.areaKey === "") throw new Error(`revisit run ${runId} has no areaKey`);
-    // Only the area's pages (ruling M7-G-R4): a source of the area, or a document an earlier version of which mentions
-    // an object of the area's tiles; the other areas' pages the crawl wrote wait for their own run.
-    const scope = { areaKey: params.areaKey };
+    if (typeof params.subdivisionKey !== "string" || params.subdivisionKey === "") throw new Error(`revisit run ${runId} has no subdivisionKey`);
+    // Only the subdivision's pages (ruling M7-G-R4): a source of the subdivision, or a document an earlier version of
+    // which mentions an object of its scope tiles; the other subdivisions' pages the crawl wrote wait for their own run.
+    const scope = { subdivisionKey: params.subdivisionKey };
     const { rows } = await tx.execute<{ id: string }>(sql`
       select v.id from document_versions v join documents d on d.current_version_id = v.id
       where v.run_id = ${runId} and d.status = 'active' and d.valid_to is null
@@ -57,7 +57,7 @@ export async function freezeRevisitRun(db: Db, runId: string, cfg: AppConfig = g
           )
         )
     `);
-    const documentVersionIds = await textRunVersions(tx, { areaKey: params.areaKey, documentVersionIds: rows.map((r) => r.id) }, cfg);
+    const documentVersionIds = await textRunVersions(tx, { subdivisionKey: params.subdivisionKey, documentVersionIds: rows.map((r) => r.id) }, cfg);
     const goneGeoObjectIds = await goneGeoObjectsOfRun(tx, runId, cfg);
     await tx
       .update(runs)

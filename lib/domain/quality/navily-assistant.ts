@@ -16,7 +16,7 @@ import { distanceM, loadNavilySpots, navilySeabedTypes, type NavilySpot } from "
 import { similarityOfSets, trigrams } from "./trigram";
 
 /*
- * The Navily assistant (spec 10): matches the places of an area to the spots of the Navily file and proposes an
+ * The Navily assistant (spec 10): matches the places of a subdivision to the spots of the Navily file and proposes an
  * outcome per compared attribute. Grundprinzip 9: everything here is pure and runs at request or CLI time; the spot
  * list lives in memory only, and what leaves this module is an outcome per attribute, a distance, a similarity or an
  * index into the loaded list (meaningful only while the list is loaded), never a Navily name, id, url or value.
@@ -202,8 +202,8 @@ export type NavilyCoverage = { spots: number; matched: number; ratio: number | n
 
 /**
  * Navily coverage from a matching (`matches` of `matchPlacesToSpots(places, spots)`, same order as `places`): the spots
- * inside the area (`inArea`) that a confirmed place matched. With `areaPlaceIds` (the area's confirmed, valid places),
- * only a match to one of those counts: a set member that is ended or lies in a tile of another area does not cover a
+ * inside the subdivision (`inArea`) that a confirmed place matched. With `areaPlaceIds` (the subdivision's confirmed, valid places),
+ * only a match to one of those counts: a set member that is ended or belongs to another subdivision does not cover a
  * spot (bundle C review). `unmatchedSpotIndexes` index `spots` (runtime only).
  */
 export function coverageOfMatches(

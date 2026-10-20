@@ -11,7 +11,7 @@ import { shingleHashes } from "@/lib/domain/documents/shingles";
 import { newId } from "@/lib/domain/ids";
 import { DELIVERY_STAGE } from "@/lib/pipeline/delivery";
 import { testDb, withRollback } from "@/test/db";
-import { seedDeliveryArea } from "@/test/fixtures/delivery/area";
+import { seedDeliverySubdivision } from "@/test/fixtures/delivery/subdivision";
 import { memoryArchive } from "@/test/s3";
 import { insertTestVersion } from "@/test/text";
 
@@ -70,34 +70,37 @@ beforeEach(() => {
 afterEach(() => setDeliveryArchive(null));
 
 describe("buildDeliveryAction", () => {
-  it("buildDeliveryAction starts a delivery run for the area", () =>
+  it("buildDeliveryAction starts a delivery run for the subdivision", () =>
     withRollback(async (tx) => {
       currentDb = tx;
-      const f = await seedDeliveryArea(tx);
-      await buildDeliveryAction(form({ areaId: f.areaId }));
+      const f = await seedDeliverySubdivision(tx);
+      await buildDeliveryAction(form({ subdivisionKey: f.subdivisionKey }));
       const [run] = await tx.select().from(runs).where(eq(runs.triggeredBy, ADMIN));
-      expect(run).toMatchObject({ kind: "stage", scopeType: "area", scopeId: f.areaKey, stages: [DELIVERY_STAGE], params: { areaId: f.areaId, areaKey: f.areaKey } });
-      expect(inserted).toEqual([{ queue: "delivery.build", data: expect.objectContaining({ areaId: f.areaId, runId: run!.id }) }]);
+      expect(run).toMatchObject({
+        kind: "stage",
+        scopeType: "subdivision",
+        scopeId: f.subdivisionKey,
+        stages: [DELIVERY_STAGE],
+        params: { subdivisionId: f.subdivisionId, subdivisionKey: f.subdivisionKey },
+      });
+      expect(inserted).toEqual([{ queue: "delivery.build", data: expect.objectContaining({ subdivisionId: f.subdivisionId, runId: run!.id }) }]);
       expect(redirect).toHaveBeenCalledWith(`/runs/${run!.id}`);
     }));
 
-  it("buildDeliveryAction rejects an unknown area id", () =>
+  it("buildDeliveryAction rejects an unknown key and an area key without starting a run", () =>
     withRollback(async (tx) => {
       currentDb = tx;
-      const f = await seedDeliveryArea(tx);
-      // an id that is no area (an island) or none at all: back to the list with the reason
-      for (const areaId of [newId(), f.islandId]) {
-        await buildDeliveryAction({ areaId });
-        expect(redirect).toHaveBeenLastCalledWith("/deliveries?error=area_without_geo_object");
-      }
-      await expect(buildDeliveryAction({ areaId: "not-a-uuid" })).rejects.toThrow();
+      await seedDeliverySubdivision(tx);
+      await expect(buildDeliveryAction({ subdivisionKey: "XT-UNKNOWN" })).rejects.toThrow("Unbekannter Landesteil XT-UNKNOWN");
+      await expect(buildDeliveryAction({ subdivisionKey: "saronic" })).rejects.toThrow(/Landesteil angeben/);
+      await expect(buildDeliveryAction({ subdivisionKey: "" })).rejects.toThrow();
       expect(await tx.select().from(runs).where(eq(runs.triggeredBy, ADMIN))).toEqual([]);
       expect(inserted).toEqual([]);
     }));
 
   it("needs an admin session", async () => {
     requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
-    await expect(buildDeliveryAction({ areaId: newId() })).rejects.toThrow("NEXT_REDIRECT");
+    await expect(buildDeliveryAction({ subdivisionKey: "XT-DELIVERY" })).rejects.toThrow("NEXT_REDIRECT");
     await expect(revokeApiClientAction({ id: newId() })).rejects.toThrow("NEXT_REDIRECT");
     expect(inserted).toEqual([]);
   });
@@ -109,7 +112,7 @@ describe("GET /deliveries/[id]/files/[file]", () => {
       currentDb = tx;
       const archive = memoryArchive();
       setDeliveryArchive(archive);
-      const f = await seedDeliveryArea(tx);
+      const f = await seedDeliverySubdivision(tx);
       // A's summary is a 16-word copy of an archived text: the package is rejected
       const salt = newId().replace(/-/g, "").replace(/\d/g, (d) => "ghijklmnop"[Number(d)]!);
       const words = Array.from({ length: 30 }, (_, i) => `${salt}${"abcdefghijklmnopqrstuvwxyz"[i % 26]}`);
@@ -124,7 +127,7 @@ describe("GET /deliveries/[id]/files/[file]", () => {
         model: "test",
         promptVersion: 9,
       });
-      const rejected = await buildDelivery(tx, archive, f.areaId, { now: new Date("2040-06-01T08:00:00Z"), inCallerTransaction: true });
+      const rejected = await buildDelivery(tx, archive, f.subdivisionId, { now: new Date("2040-06-01T08:00:00Z"), inCallerTransaction: true });
       expect(rejected.status).toBe("rejected");
 
       adminSession.mockResolvedValue(null);
@@ -135,10 +138,10 @@ describe("GET /deliveries/[id]/files/[file]", () => {
       adminSession.mockResolvedValue({ sub: newId(), email: ADMIN });
       const res = await getFile(rejected.deliveryId, "spots.json");
       expect(res.status).toBe(200);
-      expect(res.headers.get("content-disposition")).toBe(`attachment; filename="${f.areaPublicId}-rejected-spots.json"`);
+      expect(res.headers.get("content-disposition")).toBe(`attachment; filename="${f.subdivisionPublicId}-rejected-spots.json"`);
       expect(res.headers.get("cache-control")).toBe("private, no-store");
       expect(res.headers.get("content-type")).toBe("application/json");
-      expect(new Uint8Array(await res.arrayBuffer())).toEqual(await archive.get(`deliveries/${f.areaPublicId}/rejected/${rejected.deliveryId}/spots.json`));
+      expect(new Uint8Array(await res.arrayBuffer())).toEqual(await archive.get(`deliveries/${f.subdivisionKey}/rejected/${rejected.deliveryId}/spots.json`));
       const coast = await getFile(rejected.deliveryId, "coast.geojson");
       expect(coast.headers.get("content-type")).toBe("application/geo+json");
 

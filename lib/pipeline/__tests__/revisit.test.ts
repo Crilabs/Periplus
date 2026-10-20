@@ -2,9 +2,9 @@ import { eq, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { afterEach, describe, expect, it } from "vitest";
 import { setSimulationMode } from "@/lib/adapters/simulation";
-import { loadConfig, type AppConfig } from "@/lib/config";
+import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { crawlFrontier, documents, documentVersions, runs, sources, tileGeoObjects } from "@/lib/db/schema";
+import { crawlFrontier, documents, documentVersions, runs, sources, subdivisions, tileGeoObjects } from "@/lib/db/schema";
 import { activeRulesVersion } from "@/lib/domain/consolidation/active-rules";
 import { consolidationTargets } from "@/lib/domain/consolidation/targets";
 import { newId } from "@/lib/domain/ids";
@@ -26,9 +26,9 @@ import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { foreignJobs, revisitPreflight, SIM_TRIGGERED_BY } from "@/lib/domain/revisit/preflight";
 import { insertExtraction, insertMention, insertMentionFact, insertPlace } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
-import { insertQualityArea } from "@/test/quality";
+import { insertQualitySubdivision } from "@/test/quality";
 import { memoryArchive } from "@/test/s3";
-import { insertTestSource } from "@/test/text";
+import { insertTestSource, insertTestSubdivision } from "@/test/text";
 import { RUN_KIND_LABELS } from "@/app/(admin)/_components/labels";
 
 /*
@@ -51,13 +51,12 @@ function recordingBoss() {
 
 const someone = () => `${newId()}@test.invalid`;
 
-/** A configured synthetic area (one coast tile) and an approved source of it. */
-async function revisitArea(tx: Db) {
-  const area = await insertQualityArea(tx, [{ lon: 21.01, lat: 35.2 }]);
-  const config: AppConfig = { ...base, areas: [...base.areas, { ...base.areas[0]!, key: area.areaKey }] };
+/** A synthetic subdivision (one coast tile) and an approved source. */
+async function revisitSubdivision(tx: Db) {
+  const subdivision = await insertQualitySubdivision(tx, [{ lon: 21.01, lat: 35.2 }]);
   const sourceId = await insertTestSource(tx);
   await tx.update(sources).set({ status: "approved" }).where(eq(sources.id, sourceId));
-  return { ...area, config, sourceId };
+  return { ...subdivision, sourceId };
 }
 
 afterEach(() => setSimulationMode(undefined));
@@ -101,51 +100,56 @@ describe("revisit stages", () => {
 });
 
 describe("startRevisitRun", () => {
-  it("startRevisitRun creates a revisit run over fetch and text stages for the area", () =>
+  it("startRevisitRun creates a revisit run over fetch and text stages for the subdivision", () =>
     withRollback(async (tx) => {
       setSimulationMode(false);
       const { boss, inserted } = recordingBoss();
-      const a = await revisitArea(tx);
+      const a = await revisitSubdivision(tx);
       const triggeredBy = someone();
-      const { id } = await startRevisitRun(tx, boss, { areaKey: a.areaKey, triggeredBy }, a.config);
+      const { id } = await startRevisitRun(tx, boss, { subdivisionKey: a.subdivisionKey, triggeredBy });
       const [run] = await tx.select().from(runs).where(eq(runs.id, id));
-      expect(run).toMatchObject({ kind: "revisit", scopeType: "area", scopeId: a.areaKey, stages: [...REVISIT_STAGES], triggeredBy });
-      expect(run!.params).toMatchObject({ areaKey: a.areaKey, rulesVersion: await activeRulesVersion(tx) });
+      expect(run).toMatchObject({ kind: "revisit", scopeType: "subdivision", scopeId: a.subdivisionKey, stages: [...REVISIT_STAGES], triggeredBy });
+      expect(run!.params).toMatchObject({ subdivisionKey: a.subdivisionKey, rulesVersion: await activeRulesVersion(tx) });
       expect(run!.params).not.toHaveProperty("documentVersionIds");
       expect((run!.params as { sourceIds: string[] }).sourceIds).toContain(a.sourceId);
       expect(inserted.filter((j) => j.queue === "fetch.source").map((j) => j.data.sourceId)).toContain(a.sourceId);
 
       // a second start while the first crawls the source is refused (ruling M3-C-R6)
-      await expect(startRevisitRun(tx, boss, { areaKey: a.areaKey, triggeredBy }, a.config)).rejects.toMatchObject({ reason: "source_run_active" });
+      await expect(startRevisitRun(tx, boss, { subdivisionKey: a.subdivisionKey, triggeredBy })).rejects.toMatchObject({ reason: "source_run_active" });
     }));
 
-  it("refuses an unknown area, an area without tiles and a bad page cap before the run exists", () =>
+  it("refuses an unknown subdivision or area key, a subdivision without tiles and a bad page cap before the run exists", () =>
     withRollback(async (tx) => {
       const { boss } = recordingBoss();
-      const a = await revisitArea(tx);
+      const a = await revisitSubdivision(tx);
       const reason = (p: Promise<unknown>) => p.then(() => "started", (e: unknown) => (e instanceof RunScopeNotReady ? e.reason : String(e)));
-      expect(await reason(startRevisitRun(tx, boss, { areaKey: `nope-${newId()}`, triggeredBy: "test" }, a.config))).toBe("unknown_area");
-      const empty: AppConfig = { ...a.config, areas: [...a.config.areas, { ...base.areas[0]!, key: `empty-${newId()}` }] };
-      expect(await reason(startRevisitRun(tx, boss, { areaKey: empty.areas.at(-1)!.key, triggeredBy: "test" }, empty))).toBe("area_without_tiles");
-      expect(await reason(startRevisitRun(tx, boss, { areaKey: a.areaKey, triggeredBy: "test", maxPages: 0 }, a.config))).toMatch(/maxPages/);
-      const { id } = await startRevisitRun(tx, boss, { areaKey: a.areaKey, triggeredBy: "test", maxPages: 5 }, a.config);
+      // an unknown subdivision and a leftover area key name what to use instead (requireSubdivision)
+      expect(await reason(startRevisitRun(tx, boss, { subdivisionKey: "nope", triggeredBy: "test" }))).toBe("Error: Unbekannter Landesteil nope");
+      expect(await reason(startRevisitRun(tx, boss, { subdivisionKey: "saronic", triggeredBy: "test" }))).toBe(
+        "Error: Revier-Schlüssel saronic ist kein Laufumfang mehr; Landesteil angeben (z. B. GR-I)",
+      );
+      const empty = await insertTestSubdivision(tx, `XT-${newId()}`, [5, 5, 5.5, 5.5]);
+      const emptyKey = (await tx.select({ key: subdivisions.key }).from(subdivisions).where(eq(subdivisions.id, empty.id)))[0]!.key;
+      expect(await reason(startRevisitRun(tx, boss, { subdivisionKey: emptyKey, triggeredBy: "test" }))).toBe("subdivision_without_coast_tiles");
+      expect(await reason(startRevisitRun(tx, boss, { subdivisionKey: a.subdivisionKey, triggeredBy: "test", maxPages: 0 }))).toMatch(/maxPages/);
+      const { id } = await startRevisitRun(tx, boss, { subdivisionKey: a.subdivisionKey, triggeredBy: "test", maxPages: 5 });
       expect((await tx.select({ params: runs.params }).from(runs).where(eq(runs.id, id)))[0]!.params).toMatchObject({ maxPages: 5 });
     }));
 
   it("a simulated revisit has no follow-up stage, plans no geocoding and no follow-up job (ruling M7-P8)", () =>
     withRollback(async (tx) => {
       const { boss } = recordingBoss();
-      const a = await revisitArea(tx);
+      const a = await revisitSubdivision(tx);
       setSimulationMode(true);
-      const { id } = await startRevisitRun(tx, boss, { areaKey: a.areaKey, triggeredBy: "test" }, a.config);
+      const { id } = await startRevisitRun(tx, boss, { subdivisionKey: a.subdivisionKey, triggeredBy: "test" });
       const [run] = await tx.select().from(runs).where(eq(runs.id, id));
       expect(run!.stages).toEqual(REVISIT_STAGES.filter((s) => s !== CONSOLIDATION_FOLLOWUP_STAGE));
       expect(run!.stages).toContain("mentions.geocode");
       // the simulation plans no geocoding (Nominatim) before it looks at anything; a real run reads its frozen versions
-      expect(await planGeocode(tx, { id }, a.config)).toEqual([]);
+      expect(await planGeocode(tx, { id }, base)).toEqual([]);
       expect(await consolidationFollowupStage.plan(tx, { id, params: {} })).toEqual([]);
       setSimulationMode(false);
-      await expect(planGeocode(tx, { id }, a.config)).rejects.toThrow(/frozen version set/);
+      await expect(planGeocode(tx, { id }, base)).rejects.toThrow(/frozen version set/);
       expect(await consolidationFollowupStage.plan(tx, { id, params: {} })).toEqual([{ key: "followup" }]);
     }));
 });
@@ -153,12 +157,12 @@ describe("startRevisitRun", () => {
 describe("revisit.freeze", () => {
   it("freezes the pending versions and the objects of pages gone in the run's crawl, once", () =>
     withRollback(async (tx) => {
-      const a = await revisitArea(tx);
+      const a = await revisitSubdivision(tx);
       const { id: runId } = await createRun(tx, {
         kind: "revisit",
-        scope: { type: "area", id: a.areaKey },
+        scope: { type: "subdivision", id: a.subdivisionKey },
         stages: [...REVISIT_STAGES],
-        params: { sourceIds: [a.sourceId], areaKey: a.areaKey },
+        params: { sourceIds: [a.sourceId], subdivisionKey: a.subdivisionKey },
         triggeredBy: "test",
       });
       // a page the crawl found gone: a place with a fact from it
@@ -174,24 +178,24 @@ describe("revisit.freeze", () => {
       await insertMentionFact(tx, missedObject, missed, await insertExtraction(tx, missedObject, missed));
       const [missedDoc] = await tx.update(documents).set({ consecutiveGone: 1 }).where(eq(documents.id, missed.documentId)).returning();
       await tx.insert(crawlFrontier).values({ sourceId: a.sourceId, url: missedDoc!.url, urlNormalized: missedDoc!.urlNormalized, status: "failed", reason: "HTTP 404", lastRunId: runId });
-      // a version the crawl just wrote of a page that mentioned a place of the area before, and one of another run
+      // a version the crawl just wrote of a page that mentioned a place of the subdivision before, and one of another run
       // (not matched either: never taken in by the database-wide pending set)
       const { geoObjectId: areaPlace } = await a.addPlace();
       await tx.insert(tileGeoObjects).values({ tileId: a.tileIds[0]!, geoObjectId: areaPlace });
       const earlier = await insertMention(tx, areaPlace, { sourceId: a.sourceId });
       const fresh = await crawledVersion(tx, a.sourceId, runId, earlier.documentId);
       const elsewhere = await crawledVersion(tx, a.sourceId, null);
-      // a page of another area the same crawl wrote: neither a source of this area nor a mention of it (ruling M7-G-R4)
-      const otherArea = await crawledVersion(tx, a.sourceId, runId);
+      // a page of another subdivision the same crawl wrote: neither a source of this one nor a mention of it (ruling M7-G-R4)
+      const otherSubdivision = await crawledVersion(tx, a.sourceId, runId);
 
       const frozen = await freezeRevisitRun(tx, runId, base);
       expect(frozen.frozenBefore).toBe(false);
       expect(frozen.documentVersionIds).toContain(fresh.versionId);
       expect(frozen.documentVersionIds).not.toContain(elsewhere.versionId);
-      expect(frozen.documentVersionIds).not.toContain(otherArea.versionId);
+      expect(frozen.documentVersionIds).not.toContain(otherSubdivision.versionId);
       expect(frozen.goneGeoObjectIds).toEqual([goneObject]);
       const [run] = await tx.select({ params: runs.params }).from(runs).where(eq(runs.id, runId));
-      expect(run!.params).toMatchObject({ documentVersionIds: frozen.documentVersionIds, goneGeoObjectIds: [goneObject], areaKey: a.areaKey });
+      expect(run!.params).toMatchObject({ documentVersionIds: frozen.documentVersionIds, goneGeoObjectIds: [goneObject], subdivisionKey: a.subdivisionKey });
       // the gone page's object is a consolidation target of the run
       expect(await consolidationTargets(tx, { id: runId, params: run!.params as Record<string, unknown> })).toContain(goneObject);
 
@@ -204,17 +208,17 @@ describe("revisit.freeze", () => {
 });
 
 describe("revisit catch-up", () => {
-  it("a revisit ended before its freeze consolidates nothing of the area on catch-up (ruling M7-G-R4)", () =>
+  it("a revisit ended before its freeze consolidates nothing of the subdivision on catch-up (ruling M7-G-R4)", () =>
     withRollback(async (tx) => {
       setSimulationMode(false);
       const { boss, inserted } = recordingBoss();
-      const a = await revisitArea(tx);
-      // an object of the area's coast tile: the area-wide consolidation would take it
+      const a = await revisitSubdivision(tx);
+      // an object of the subdivision's coast tile: the subdivision-wide consolidation would take it
       const { geoObjectId } = await a.addPlace();
       await tx.insert(tileGeoObjects).values({ tileId: a.tileIds[0]!, geoObjectId });
-      expect(await consolidationTargets(tx, { id: newId(), params: { areaKey: a.areaKey } }, new Date().toISOString().slice(0, 10))).toContain(geoObjectId);
+      expect(await consolidationTargets(tx, { id: newId(), params: { subdivisionKey: a.subdivisionKey } }, new Date().toISOString().slice(0, 10))).toContain(geoObjectId);
 
-      const { id } = await startRevisitRun(tx, boss, { areaKey: a.areaKey, triggeredBy: "test" }, a.config);
+      const { id } = await startRevisitRun(tx, boss, { subdivisionKey: a.subdivisionKey, triggeredBy: "test" });
       // ended by the admin during the crawl: the consolidation is stored as skipped
       expect(await endRun(tx, id, "test")).toBe(true);
       expect(await markConsolidationSkipped(tx, id, "run_ended")).toBe(true);
@@ -222,7 +226,7 @@ describe("revisit catch-up", () => {
       expect(await consolidationTargets(tx, { id, params: run!.params as Record<string, unknown> })).toEqual([]);
       // no catch-up run is created: counted among the runs this call would trigger, never DB-wide (final review B M-12)
       const triggeredBy = `catch-up-${newId()}`;
-      expect(await catchUpConsolidation(tx, boss, id, triggeredBy, { config: a.config })).toEqual({ status: "no_targets" });
+      expect(await catchUpConsolidation(tx, boss, id, triggeredBy)).toEqual({ status: "no_targets" });
       expect(await tx.select({ id: runs.id }).from(runs).where(eq(runs.triggeredBy, triggeredBy))).toEqual([]);
       expect(inserted.filter((j) => j.queue.startsWith("consolidation."))).toEqual([]);
 
@@ -236,19 +240,19 @@ describe("sim:revisit preflight", () => {
   it("revisit preflight fails on queued pg-boss jobs", () =>
     withRollback(
       async (tx) => {
-        const a = await revisitArea(tx);
+        const a = await revisitSubdivision(tx);
         const before = await foreignJobs(tx);
         const insertJob = (runId: string) =>
           tx.execute(sql`insert into pgboss.job (name, data, state) values ('system.ping', ${JSON.stringify({ runId, key: "x" })}::jsonb, 'created')`);
         // a job of a run this CLI started is not foreign; a waiting job of any other run is
-        const sim = await createRun(tx, { kind: "revisit", scope: { type: "area", id: a.areaKey }, stages: [], params: {}, triggeredBy: SIM_TRIGGERED_BY });
+        const sim = await createRun(tx, { kind: "revisit", scope: { type: "subdivision", id: a.subdivisionKey }, stages: [], params: {}, triggeredBy: SIM_TRIGGERED_BY });
         await insertJob(sim.id);
         expect(await foreignJobs(tx)).toBe(before);
         const other = await createRun(tx, { kind: "system", scope: { type: "system", id: "ping" }, stages: [], params: {}, triggeredBy: someone() });
         await insertJob(other.id);
         expect(await foreignJobs(tx)).toBe(before + 1);
         // a leftover job of an earlier sim run that failed is foreign: only a live sim run owns its jobs (ruling M7-G-R4)
-        const failed = await createRun(tx, { kind: "revisit", scope: { type: "area", id: a.areaKey }, stages: [], params: {}, triggeredBy: SIM_TRIGGERED_BY });
+        const failed = await createRun(tx, { kind: "revisit", scope: { type: "subdivision", id: a.subdivisionKey }, stages: [], params: {}, triggeredBy: SIM_TRIGGERED_BY });
         await insertJob(failed.id);
         expect(await foreignJobs(tx)).toBe(before + 1);
         await tx.update(runs).set({ status: "failed" }).where(eq(runs.id, failed.id));
@@ -259,12 +263,12 @@ describe("sim:revisit preflight", () => {
           name: "t",
           entries: [{ id: "e1", url: `https://${newId()}.test.invalid/x`, edit: { op: "gone" as const }, expect: { document: "gone" as const, events: [] } }],
         };
-        const problems = await revisitPreflight(tx, memoryArchive(), { areaKey: a.areaKey, scenario });
+        const problems = await revisitPreflight(tx, memoryArchive(), { subdivisionKey: a.subdivisionKey, scenario });
         expect(problems).toEqual([
           "keine Sim-Datenbank – scripts/sim/clone.sh",
           `${before + 1} fremde Jobs in der Warteschlange (wartend, wiederholt oder laufend) – erst abwarten oder beenden`,
           expect.stringMatching(/^Szenario-Eintrag e1: kein Dokument für /),
-          `erst Paket bauen: Revier ${a.areaKey} hat keine gültige Lieferung`,
+          `erst Paket bauen: Landesteil ${a.subdivisionKey} hat keine gültige Lieferung`,
         ]);
       },
       { isolationLevel: "repeatable read" },

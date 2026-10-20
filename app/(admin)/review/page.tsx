@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
-import { reviewKindEnum } from "@/lib/db/schema";
+import type { ReviewKind } from "@/lib/db/schema";
+import { OFFERED_REVIEW_KINDS } from "@/lib/domain/review";
 import { listOpenTasks, reviewCounts } from "@/lib/domain/review-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { COMPARISON_ATTRIBUTE_LABELS, REVIEW_KIND_LABELS, RUN_NOT_STARTED_NOTICE } from "../_components/labels";
@@ -28,7 +29,7 @@ export const metadata: Metadata = { title: "Prüfen" };
 
 const PAGE_SIZE = 50;
 const querySchema = z.object({
-  kind: z.enum(reviewKindEnum.enumValues).optional().catch(undefined),
+  kind: z.enum(OFFERED_REVIEW_KINDS as [ReviewKind, ...ReviewKind[]]).optional().catch(undefined),
   before: z.uuid().optional().catch(undefined),
   notice: z.literal("run_not_started").optional().catch(undefined),
   /** Comparison deviations of evaluation runs only (`only`) or without them (`none`). */
@@ -112,7 +113,7 @@ export default async function Page({ searchParams }: PageProps<"/review">) {
         <KindChips
           items={[
             { href: filter(), label: "Alle", count: total, current: !kind },
-            ...reviewKindEnum.enumValues.map((k) => ({
+            ...OFFERED_REVIEW_KINDS.map((k) => ({
               href: filter(k),
               label: REVIEW_KIND_LABELS[k],
               count: counts[k],

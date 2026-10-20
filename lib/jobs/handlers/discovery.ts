@@ -2,7 +2,7 @@ import { z } from "zod";
 import { getCrawlTransport } from "@/lib/adapters/fetch/guarded";
 import { getTransport } from "@/lib/adapters/http";
 import { getArchive } from "@/lib/adapters/s3";
-import { areaByKey } from "@/lib/config";
+import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { proposeSources } from "@/lib/domain/discovery/proposals";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import {
@@ -17,16 +17,16 @@ import {
   runQueries,
 } from "@/lib/pipeline/discovery";
 import type { StageDefinition } from "@/lib/pipeline/runs";
-import { areaKeyOf } from "./tiles";
+import { subdivisionKeyOf } from "./tiles";
 
-/** Stage `discovery.area`: one job for the run's area (`run.params.areaKey`). */
+/** Stage `discovery.area`: one job for the run's subdivision (`run.params.subdivisionKey`). */
 export const discoveryAreaStage: StageDefinition = {
   name: DISCOVERY_AREA_STAGE,
   queue: "discovery.area",
-  async plan(_db, run) {
-    const areaKey = areaKeyOf(run.params);
-    areaByKey(areaKey); // fail planning for an unknown area
-    return [{ key: areaKey, areaKey }];
+  async plan(db, run) {
+    const subdivisionKey = subdivisionKeyOf(run.params);
+    await requireSubdivision(db, subdivisionKey); // fail planning for an unknown subdivision
+    return [{ key: subdivisionKey, subdivisionKey }];
   },
 };
 
@@ -61,11 +61,11 @@ export const discoveryProposeStage: StageDefinition = {
 
 const deps = () => ({ transport: getTransport(), archive: getArchive() });
 
-/** Makes the area queries of `data.areaKey`. */
+/** Makes the area queries of the subdivision `data.subdivisionKey`. */
 export const discoveryAreaHandler: JobHandler<JobData> = async (data, ctx) => {
-  const areaKey = areaKeyOf(data);
-  const result = await discoverArea(ctx.db, areaKey, deps(), { db: ctx.db, runId: data.runId, stage: data.stage });
-  ctx.log.info({ areaKey, ...result }, "area discovery done");
+  const subdivisionKey = subdivisionKeyOf(data);
+  const result = await discoverArea(ctx.db, subdivisionKey, deps(), { db: ctx.db, runId: data.runId, stage: data.stage });
+  ctx.log.info({ subdivisionKey, ...result }, "area discovery done");
 };
 
 const tileJobSchema = z.object({ tileId: z.string().min(1), queries: z.array(discoveryQuerySchema) });

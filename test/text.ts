@@ -11,12 +11,13 @@ import {
   mentions,
   runs,
   sources,
+  subdivisions,
   tileGeoObjects,
   tiles,
   type GeoObjectType,
 } from "@/lib/db/schema";
 import { addNames } from "@/lib/domain/gazetteer/names";
-import { newId } from "@/lib/domain/ids";
+import { newId, newPublicId } from "@/lib/domain/ids";
 import { tileBbox } from "@/lib/domain/tiles";
 import type { Db } from "@/lib/db/client";
 
@@ -149,18 +150,49 @@ export async function insertTestMention(
 }
 
 /**
- * A tile of the synthetic test grid around 21.0° E / 35.2° N (`q025:<col>:<row>`), with an optional label area. A tile
- * that already exists (committed by some other test) with another label area fails loudly instead of skewing the test.
+ * A tile of the synthetic test grid around 21.0° E / 35.2° N (`q025:<col>:<row>`), with an optional label area and
+ * label subdivision. A tile that already exists (committed by some other test) with another label area fails loudly
+ * instead of skewing the test.
  */
-export async function insertTestTile(tx: Db, id: string, areaId: string | null = null): Promise<string> {
+export async function insertTestTile(tx: Db, id: string, areaId: string | null = null, subdivisionId: string | null = null): Promise<string> {
   const [w, s, e, n] = tileBbox(id);
   await tx
     .insert(tiles)
-    .values({ id, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, areaId, hasCoast: true })
+    .values({ id, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, areaId, subdivisionId, hasCoast: true })
     .onConflictDoNothing();
   const [row] = await tx.select({ areaId: tiles.areaId }).from(tiles).where(eq(tiles.id, id));
   if (row?.areaId !== areaId) throw new Error(`test tile ${id} exists with area ${row?.areaId ?? "none"}, expected ${areaId ?? "none"}`);
   return id;
+}
+
+/**
+ * A subdivision over the box `[west, south, east, north]` (polygon and land) with its admin region object (a valid
+ * subdivision's `geo_object_id`). Use a key no committed row has (`XT-...`), and boxes outside the pilot box.
+ */
+export async function insertTestSubdivision(
+  tx: Db,
+  key: string,
+  box: [number, number, number, number],
+  o: { country?: string; status?: "active" | "excluded" } = {},
+): Promise<{ id: string; geoObjectId: string }> {
+  const polygon = sql`ST_Multi(ST_MakeEnvelope(${box[0]}, ${box[1]}, ${box[2]}, ${box[3]}, 4326))`;
+  const [region] = await tx
+    .insert(geoObjects)
+    .values({ type: "admin_region", origin: "manual", configKey: `${key}/region`, geom: polygon })
+    .returning({ id: geoObjects.id });
+  const [row] = await tx
+    .insert(subdivisions)
+    .values({
+      publicId: newPublicId("sd"),
+      key,
+      country: o.country ?? "GR",
+      geoObjectId: region!.id,
+      geom: polygon,
+      landGeom: polygon,
+      status: o.status ?? "active",
+    })
+    .returning({ id: subdivisions.id });
+  return { id: row!.id, geoObjectId: region!.id };
 }
 
 export type TestNamedObject = {
@@ -174,6 +206,8 @@ export type TestNamedObject = {
   tiles?: string[];
   parentId?: string | null;
   configKey?: string;
+  /** The subdivision the object belongs to (`geo_objects.subdivision_id`, nearest land). */
+  subdivisionId?: string | null;
   /** The POI category (`poi` objects only). */
   category?: PoiCategory | null;
 };
@@ -186,6 +220,7 @@ export async function insertNamedObject(tx: Db, o: TestNamedObject): Promise<str
     geom: geomFromGeoJson({ type: "Point", coordinates: [o.lon, o.lat] }),
     parentId: o.parentId ?? null,
     configKey: o.configKey ?? null,
+    ...(o.subdivisionId !== undefined ? { subdivisionId: o.subdivisionId } : {}),
     category: o.category ?? null,
   });
   await addNames(

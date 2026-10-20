@@ -4,7 +4,6 @@ import type { ZodType } from "zod";
 import { FACT_SCHEMAS } from "@/config/fact-schema";
 import type { FactSchema } from "@/lib/domain/facts/schema-types";
 import {
-  areaConfigSchema,
   budgetsSchema,
   categoriesSchema,
   consolidationActiveSchema,
@@ -25,15 +24,15 @@ import {
   queuesSchema,
   restrictionsSchema,
   sourceTypesSchema,
+  subdivisionsConfigSchema,
   whitelistSchema,
   type AppConfig,
-  type AreaConfig,
+  type SubdivisionsConfig,
   type VersionedConsolidationConfig,
 } from "./schemas";
 
 export type {
   AppConfig,
-  AreaConfig,
   BudgetService,
   CategoriesConfig,
   ConsolidationConfig,
@@ -54,6 +53,7 @@ export type {
   QueueConfig,
   RestrictionsConfig,
   SourceTypesConfig,
+  SubdivisionsConfig,
   VersionedConsolidationConfig,
   WhitelistConfig,
 } from "./schemas";
@@ -77,21 +77,6 @@ function readJsonFile<T>(file: string, schema: ZodType<T>): T {
     throw new Error(`Invalid config ${file}: ${issues}`);
   }
   return parsed.data;
-}
-
-/** Reads every `<dir>/areas/*.json`; each area's `key` must equal its file name, which makes keys unique. */
-function readAreas(dir: string): AreaConfig[] {
-  const areasDir = join(dir, "areas");
-  const files = readdirSync(areasDir).filter((f) => f.endsWith(".json")).sort();
-  return files.map((f) => {
-    const file = join(areasDir, f);
-    const area = readJsonFile(file, areaConfigSchema);
-    const expected = basename(f, ".json");
-    if (area.key !== expected) {
-      throw new Error(`Invalid config ${file}: key "${area.key}" must equal the file name "${expected}"`);
-    }
-    return area;
-  });
 }
 
 /** The keys of the object an attribute's value (or its list entries) is made of; null when it is not an object. */
@@ -143,7 +128,7 @@ export function loadConfig(dir = "config"): AppConfig {
     queues: readJson(dir, "queues", queuesSchema),
     budgets: readJson(dir, "budgets", budgetsSchema),
     models: readJson(dir, "models", modelsSchema),
-    areas: readAreas(dir),
+    subdivisions: readJson(dir, "subdivisions", subdivisionsConfigSchema),
     categories: readJson(dir, "categories", categoriesSchema),
     gazetteer: readJson(dir, "gazetteer", gazetteerSchema),
     factSchema: readJson(dir, "fact-schema/active", factSchemaConfigSchema),
@@ -202,9 +187,9 @@ export function consolidationVersions(dir = "config"): string[] {
     .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
 }
 
-/** The configured area with this key; throws for an unknown key. */
-export function areaByKey(key: string): AreaConfig {
-  const area = getConfig().areas.find((a) => a.key === key);
-  if (!area) throw new Error(`Unknown area ${key}`);
-  return area;
+/** The configuration of a country (ISO 3166-1 alpha-2) in `config/subdivisions.json`; throws for an unknown one. */
+export function countryConfig(iso: string): SubdivisionsConfig["countries"][string] {
+  const country = getConfig().subdivisions.countries[iso];
+  if (!country) throw new Error(`Unknown country ${iso}`);
+  return country;
 }

@@ -1,14 +1,13 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { geomFromGeoJson } from "@/lib/db/geometry";
-import { geoObjects, places, profileSummaries, reviewTasks, tileGeoObjects, tiles } from "@/lib/db/schema";
+import { places, profileSummaries, reviewTasks, tileGeoObjects, tiles } from "@/lib/db/schema";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
 import { newId } from "@/lib/domain/ids";
 import { tileBbox } from "@/lib/domain/tiles";
 import { insertPlace, insertProfileTask, insertSource, insertTextFact } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
-import { insertNamedObject } from "@/test/text";
+import { insertNamedObject, insertTestSubdivision } from "@/test/text";
 import {
   assessProfiles,
   attributesWithoutProvenance,
@@ -21,23 +20,21 @@ import {
 } from "../check-profiles";
 
 /**
- * An area with its own coast tile, far from every other test grid (a random column near the south pole), so the
- * area's objects are exactly the ones the test links to the tile. Returns the area key and the tile id.
+ * A subdivision whose polygon lies inside its own coast tile, far from every other test grid (a random column near the
+ * south pole), so the subdivision's run scope is that one tile and its objects are exactly the ones the test links to
+ * it. Returns the subdivision key and the tile id.
  */
-async function ownArea(tx: Db): Promise<{ areaKey: string; tileId: string }> {
-  const areaKey = `test-${newId()}`;
-  const [area] = await tx
-    .insert(geoObjects)
-    .values({ type: "area", origin: "manual", configKey: areaKey, geom: sql`${geomFromGeoJson({ type: "Point", coordinates: [21, 35.2] })}` })
-    .returning({ id: geoObjects.id });
+async function ownSubdivision(tx: Db): Promise<{ subdivisionKey: string; tileId: string }> {
+  const subdivisionKey = `XT-${newId()}`;
   const tileId = `q025:${Math.floor(Math.random() * 1400)}:${3 + Math.floor(Math.random() * 5)}`;
   const [w, s, e, n] = tileBbox(tileId);
+  const { id: subdivisionId } = await insertTestSubdivision(tx, subdivisionKey, [w + 0.01, s + 0.01, e - 0.01, n - 0.01]);
   await tx
     .insert(tiles)
-    .values({ id: tileId, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, areaId: area!.id, hasCoast: true })
-    .onConflictDoUpdate({ target: tiles.id, set: { areaId: area!.id, hasCoast: true, validTo: null } });
+    .values({ id: tileId, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, subdivisionId, hasCoast: true })
+    .onConflictDoUpdate({ target: tiles.id, set: { subdivisionId, hasCoast: true, validTo: null } });
   await tx.delete(tileGeoObjects).where(sql`${tileGeoObjects.tileId} = ${tileId}`);
-  return { areaKey, tileId };
+  return { subdivisionKey, tileId };
 }
 
 /** Today (UTC) plus `n` days, `YYYY-MM-DD`. */
@@ -90,8 +87,8 @@ describe("check-profiles", () => {
     expect(assessProfiles(stats()).asOfCheck).toBe(true);
   });
 
-  it("an area without objects fails instead of passing on nothing (bundle J review M-1)", () => {
-    expect(profileCheckFailures(assessProfiles(stats({ objects: [] })))).toEqual(["no objects in the area (gazetteer built? coast tiles assigned?)"]);
+  it("a subdivision without objects fails instead of passing on nothing (bundle J review M-1)", () => {
+    expect(profileCheckFailures(assessProfiles(stats({ objects: [] })))).toEqual(["no objects in the subdivision (gazetteer built? coast tiles assigned?)"]);
   });
 
   it("attributesWithoutProvenance lists valued attributes without provenance or rule", () => {
@@ -120,30 +117,30 @@ describe("check-profiles", () => {
     ).toEqual(["a", "b", "c"]);
   });
 
-  it("parseArgs takes exactly --area <key>", () => {
-    expect(parseArgs(["--area", "saronic"])).toEqual({ area: "saronic" });
+  it("parseArgs takes exactly --subdivision <key>", () => {
+    expect(parseArgs(["--subdivision", "GR-I"])).toEqual({ subdivision: "GR-I" });
     expect(() => parseArgs([])).toThrow(/usage/);
-    expect(() => parseArgs(["--area", "--x"])).toThrow(/usage/);
+    expect(() => parseArgs(["--subdivision", "--x"])).toThrow(/usage/);
   });
 
   it("a confirmed place without profile is missing", () =>
     withRollback(async (tx) => {
-      const { areaKey, tileId } = await ownArea(tx);
+      const { subdivisionKey, tileId } = await ownSubdivision(tx);
       const confirmed = await insertPlace(tx, { name: "Ohneprofil" });
       const candidate = await insertPlace(tx, { name: "Kandidat", status: "candidate" });
       const settlement = await insertNamedObject(tx, { type: "settlement", names: [{ name: "Dorf" }], lon: 21.0, lat: 35.2 });
       for (const id of [confirmed.objectId, candidate.objectId, settlement]) await link(tx, tileId, id);
 
-      const r = await checkProfiles(tx, areaKey);
-      // the candidate place and the settlement take no profile check; the area object lies outside the tile
+      const r = await checkProfiles(tx, subdivisionKey);
+      // the candidate place and the settlement take no profile check; the subdivision's own object lies outside the tile
       expect(r).toMatchObject({ objects: 1, withProfile: 0, withoutProvenance: [], asOfCheck: true });
       expect(r.missing).toEqual([{ geoObjectId: confirmed.objectId, name: "Ohneprofil", level: "place" }]);
       expect(profileCheckFailures(r)).toEqual(["1 object(s) without a profile"]);
     }));
 
-  it("an area whose objects all have profiles with provenance passes", () =>
+  it("a subdivision whose objects all have profiles with provenance passes", () =>
     withRollback(async (tx) => {
-      const { areaKey, tileId } = await ownArea(tx);
+      const { subdivisionKey, tileId } = await ownSubdivision(tx);
       const place = await insertPlace(tx, { name: "Mitprofil" });
       const island = await insertNamedObject(tx, { type: "island", names: [{ name: "Insel" }], lon: 21.0, lat: 35.2 });
       for (const id of [place.objectId, island]) await link(tx, tileId, id);
@@ -161,7 +158,7 @@ describe("check-profiles", () => {
       // „Eintrag entfernen“ writes uncertain_change tasks of subject type profile_entry: never counted (M5-I-R2 M-3)
       await tx.insert(reviewTasks).values({ kind: "uncertain_change", subjectType: "profile_entry", subjectId: `${place.objectId}:hazards`, context: {}, status: "open" });
 
-      const r = await checkProfiles(tx, areaKey);
+      const r = await checkProfiles(tx, subdivisionKey);
       expect(r).toEqual({
         objects: 2,
         withProfile: 2,
@@ -174,21 +171,22 @@ describe("check-profiles", () => {
       });
       expect(profileCheckFailures(r)).toEqual([]);
       // the as-of check really probed the place: the day before version 2 gives version 1
-      expect((await profileStats(tx, areaKey)).asOfProbes).toEqual([{ geoObjectId: place.objectId, date: day(8), expectedVersion: 1, gotVersion: 1 }]);
+      expect((await profileStats(tx, subdivisionKey)).asOfProbes).toEqual([{ geoObjectId: place.objectId, date: day(8), expectedVersion: 1, gotVersion: 1 }]);
     }));
 
-  it("an unknown area is an error", () =>
+  it("an unknown subdivision is an error, and an area key names the subdivision to use instead", () =>
     withRollback(async (tx) => {
-      await expect(checkProfiles(tx, `test-${newId()}`)).rejects.toThrow(/unknown area/);
+      await expect(checkProfiles(tx, `test-${newId()}`)).rejects.toThrow(/Unbekannter Landesteil/);
+      await expect(checkProfiles(tx, "saronic")).rejects.toThrow(/Revier-Schlüssel saronic ist kein Laufumfang mehr/);
     }));
 
   it("places of another area or ended places do not count", () =>
     withRollback(async (tx) => {
-      const { areaKey, tileId } = await ownArea(tx);
+      const { subdivisionKey, tileId } = await ownSubdivision(tx);
       const ended = await insertPlace(tx, { name: "Beendet" });
       await tx.update(places).set({ validTo: "2026-01-01" }).where(sql`${places.id} = ${ended.placeId}`);
       await link(tx, tileId, ended.objectId);
       await insertPlace(tx, { name: "Woanders" }); // in no tile of the area
-      expect(await checkProfiles(tx, areaKey)).toMatchObject({ objects: 0, missing: [] });
+      expect(await checkProfiles(tx, subdivisionKey)).toMatchObject({ objects: 0, missing: [] });
     }));
 });

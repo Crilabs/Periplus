@@ -9,13 +9,13 @@ import { startConsolidationRun, type ConsolidationScope, type StartConsolidation
 import { RunScopeNotReady } from "../lib/pipeline/tile-scope";
 
 /*
- * Starts a consolidation run from the command line, for the scopes without a button in M5: a whole area, the
- * comparison set of an area, and the evaluation run of a candidate rules version (spec 10 regression; comparison and
+ * Starts a consolidation run from the command line, for the scopes without a button in M5: a whole subdivision, the
+ * comparison set of a subdivision, and the evaluation run of a candidate rules version (spec 10 regression; comparison and
  * activation on /quality come with M7). Tiles and single places have „Konsolidieren“ / „Profil neu berechnen“.
  */
 
 const USAGE =
-  "usage: consolidate.ts (--area <key> | --tile <id> | --comparison-set <areaKey>) [--evaluation --rules <version>]";
+  "usage: consolidate.ts (--subdivision <key> | --tile <id> | --comparison-set <subdivisionKey>) [--evaluation --rules <version>]";
 
 export type ConsolidateArgs = Pick<StartConsolidationInput, "scope" | "evaluation" | "rulesVersion">;
 
@@ -39,9 +39,9 @@ export function parseArgs(argv: string[]): ConsolidateArgs {
     }
     const value = argv[++i];
     if (value === undefined || value.startsWith("--")) throw new Error(USAGE);
-    if (flag === "--area") scopes.push({ areaKey: value });
+    if (flag === "--subdivision") scopes.push({ subdivisionKey: value });
     else if (flag === "--tile") scopes.push({ tileId: value });
-    else if (flag === "--comparison-set") scopes.push({ comparisonSetArea: value });
+    else if (flag === "--comparison-set") scopes.push({ comparisonSetSubdivision: value });
     else if (flag === "--rules") rulesVersion = value;
     else throw new Error(USAGE);
   }
@@ -63,7 +63,7 @@ async function main(): Promise<void> {
   try {
     await ensureQueues(boss, config.queues);
     try {
-      const { id } = await startConsolidationRun(db, boss, { ...args, triggeredBy: "consolidate" }, config);
+      const { id } = await startConsolidationRun(db, boss, { ...args, triggeredBy: "consolidate" });
       out(`consolidation run ${id} started${args.evaluation ? ` (evaluation of rules ${args.rulesVersion})` : ""}; follow it on /runs/${id}`);
     } catch (error) {
       if (!(error instanceof RunScopeNotReady)) throw error;

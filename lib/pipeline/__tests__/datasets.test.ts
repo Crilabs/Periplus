@@ -4,14 +4,14 @@ import type { PgBoss } from "pg-boss";
 import { describe, expect, it, vi } from "vitest";
 import { makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import { fixtureTransport } from "@/lib/adapters/http-fixtures";
-import { areaByKey, getConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { externalCalls, geoObjects, runs, tileGeoObjects, wikidataSitelinks } from "@/lib/db/schema";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { areaBbox, syncAreas } from "@/lib/domain/gazetteer/areas";
 import { bufferBbox, importLandPolygons } from "@/lib/domain/gazetteer/land";
-import { assignTiles } from "@/lib/domain/gazetteer/hierarchy";
-import { ensureTiles } from "@/lib/domain/gazetteer/tiles-ensure";
+import { assignSubdivisionTiles } from "@/lib/domain/gazetteer/hierarchy";
+import { gazetteerScope } from "@/lib/domain/gazetteer/scope";
+import { ensureSubdivisionTiles } from "@/lib/domain/gazetteer/tiles-ensure";
 import { sampleDepths } from "@/lib/domain/geometry/depth";
 import { newId } from "@/lib/domain/ids";
 import { tileBbox, type Bbox } from "@/lib/domain/tiles";
@@ -31,31 +31,7 @@ import { importOsm } from "@/lib/pipeline/gazetteer/osm";
 import { importWikidata } from "@/lib/pipeline/gazetteer/wikidata";
 import { withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
-
-// Test areas: aegina-west (tile q025:813:510, as in the gazetteer run) and datasets-unsynced (outside the
-// pilot box, never synced, so it has no geo object). Everything else is the real config.
-vi.mock("@/lib/config", async (importOriginal) => {
-  const original = await importOriginal<typeof import("@/lib/config")>();
-  const { areaConfigSchema } = await import("@/lib/config/schemas");
-  const { readFileSync: read } = await import("node:fs");
-  const testArea = areaConfigSchema.parse(JSON.parse(read("test/fixtures/areas/aegina-west.json", "utf8")));
-  const unsynced = areaConfigSchema.parse({
-    ...testArea,
-    key: "datasets-unsynced",
-    polygon: { type: "Polygon", coordinates: [[[21.0, 35.0], [21.25, 35.0], [21.25, 35.25], [21.0, 35.25], [21.0, 35.0]]] },
-    tileBbox: [21.0, 35.0, 21.25, 35.25],
-  });
-  const getConfig = () => ({ ...original.getConfig(), areas: [...original.getConfig().areas, testArea, unsynced] });
-  return {
-    ...original,
-    getConfig,
-    areaByKey: (key: string) => {
-      const found = getConfig().areas.find((a) => a.key === key);
-      if (!found) throw new Error(`Unknown area ${key}`);
-      return found;
-    },
-  };
-});
+import { AEGINA_WEST_BOX, AEGINA_WEST_KEY, insertAeginaWest } from "@/test/fixtures/subdivisions/aegina-west";
 
 // Rate limiting is covered by the http tests; its bucket rows would stay locked by the long test transaction.
 vi.mock("@/lib/domain/rate-limit", () => ({ takeToken: async () => ({ ok: true }) }));
@@ -63,7 +39,8 @@ vi.mock("@/lib/domain/rate-limit", () => ({ takeToken: async () => ({ ok: true }
 // Every test imports the land fixture and builds the area's tiles first.
 vi.setConfig({ testTimeout: 120_000 });
 
-const AREA = "aegina-west";
+const AREA = AEGINA_WEST_KEY;
+const LAND_FIXTURE = "aegina-west";
 const TILE = "q025:813:510";
 const SEA = { lon: 23.3, lat: 37.62 };
 /** Agistri interior. */
@@ -72,20 +49,23 @@ const LAND = { lon: 23.345, lat: 37.695 };
 type LandFeature = GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
 
 async function* landFixture(): AsyncGenerator<LandFeature> {
-  const collection = JSON.parse(readFileSync(`test/fixtures/land/${AREA}.geojson`, "utf8")) as GeoJSON.FeatureCollection;
+  const collection = JSON.parse(readFileSync(`test/fixtures/land/${LAND_FIXTURE}.geojson`, "utf8")) as GeoJSON.FeatureCollection;
   for (const f of collection.features) yield f as LandFeature;
 }
 
-/** Land, the area's geo object and its tiles, as a gazetteer run leaves them. */
-async function prepareArea(db: Db): Promise<void> {
-  const area = areaByKey(AREA);
-  await importLandPolygons(db, landFixture(), bufferBbox(areaBbox(area), getConfig().gazetteer.landBufferKm), "fixture");
-  const ids = await syncAreas(db, [area]);
-  await ensureTiles(db, area, ids);
+/** Land, the subdivision and its tiles, as a gazetteer run leaves them; returns the subdivision's id. */
+async function prepareArea(db: Db): Promise<string> {
+  await importLandPolygons(db, landFixture(), bufferBbox(AEGINA_WEST_BOX, getConfig().gazetteer.landBufferKm), "fixture");
+  const { subdivisionId } = await insertAeginaWest(db);
+  await ensureSubdivisionTiles(db, subdivisionId);
+  return subdivisionId;
 }
 
-/** The box every area dataset request uses: area box plus `datasets.bufferKm`. */
-const datasetBox = (): Bbox => bufferBbox(areaBbox(areaByKey(AREA)), getConfig().datasets.bufferKm);
+/** The scope of the aegina-west subdivision (after `prepareArea`). */
+const scopeOf = (db: Db) => gazetteerScope(db, AEGINA_WEST_KEY);
+
+/** The box every dataset request uses: subdivision box plus `datasets.bufferKm`. */
+const datasetBox = (): Bbox => bufferBbox(AEGINA_WEST_BOX, getConfig().datasets.bufferKm);
 
 /** [west, south, east, north] from `Long(w,e)` / `Lat(s,n)` subsets of a WCS URL. */
 function subsetBox(url: string): Bbox {
@@ -183,7 +163,7 @@ describe("importBathymetry", () => {
       const archive = memoryArchive();
       const runId = newId();
 
-      const result = await importBathymetry(db, { area: areaByKey(AREA), runId }, { transport, archive });
+      const result = await importBathymetry(db, { scope: await scopeOf(db), runId }, { transport, archive });
 
       // The coast tile and its 8 neighbours, each requested with exactly its box.
       expect(result).toEqual({ tiles: 9, rasterTiles: 9, reused: 0 });
@@ -204,10 +184,10 @@ describe("importBathymetry", () => {
     withRollback(async (db) => {
       await prepareArea(db);
       const archive = memoryArchive();
-      await importBathymetry(db, { area: areaByKey(AREA) }, { transport: scriptedServices(db).transport, archive });
+      await importBathymetry(db, { scope: await scopeOf(db) }, { transport: scriptedServices(db).transport, archive });
 
       const { transport, seen } = scriptedServices(db);
-      const again = await importBathymetry(db, { area: areaByKey(AREA) }, { transport, archive });
+      const again = await importBathymetry(db, { scope: await scopeOf(db) }, { transport, archive });
       expect(seen).toHaveLength(0);
       expect(again).toEqual({ tiles: 9, rasterTiles: 9, reused: 9 });
       const { rows } = await db.execute<{ n: number }>(
@@ -225,13 +205,12 @@ describe("importBathymetry", () => {
         subsetBox(req.url).join() === tileBbox(TILE).join() ? makeResponse(200, new Uint8Array([0x49, 0x49, 0x2a, 0x00, 1, 2, 3])) : good.transport(req);
 
       // The savepoint keeps the outer test transaction usable after the failed raster import.
-      await expect(
-        db.transaction((tx) => importBathymetry(tx, { area: areaByKey(AREA) }, { transport: broken, archive })),
-      ).rejects.toThrow();
+      const scope = await scopeOf(db);
+      await expect(db.transaction((tx) => importBathymetry(tx, { scope }, { transport: broken, archive }))).rejects.toThrow();
       expect(archive.keys()).not.toContain(`datasets/emodnet-bathymetry/2024/${TILE}.tif`);
 
       const { transport, seen } = scriptedServices(db);
-      const again = await importBathymetry(db, { area: areaByKey(AREA) }, { transport, archive });
+      const again = await importBathymetry(db, { scope: await scopeOf(db) }, { transport, archive });
       expect(seen.map((r) => subsetBox(r.url))).toContainEqual(tileBbox(TILE));
       expect(again.rasterTiles).toBe(9);
       expect(archive.keys()).toContain(`datasets/emodnet-bathymetry/2024/${TILE}.tif`);
@@ -253,7 +232,7 @@ describe("importSeabed", () => {
       const { transport, seen } = scriptedServices(db, { seabed });
       const archive = memoryArchive();
 
-      const result = await importSeabed(db, { area: areaByKey(AREA) }, { transport, archive });
+      const result = await importSeabed(db, { scope: await scopeOf(db) }, { transport, archive });
 
       expect(result.features).toBe(3);
       expect(result.unmapped).toBe(1);
@@ -265,7 +244,7 @@ describe("importSeabed", () => {
       const { rows } = await db.execute<{ substrate: string; inside: boolean; version: string }>(sql`
         select substrate::text, dataset_version as version,
                ST_CoveredBy(geom, ST_MakeEnvelope(${box[0]}::float8, ${box[1]}::float8, ${box[2]}::float8, ${box[3]}::float8, 4326)) as inside
-        from seabed_polygons where area_key = ${AREA} order by substrate`);
+        from seabed_polygons where subdivision_key = ${AREA} order by substrate`);
       expect(rows.map((r) => r.substrate)).toEqual(["mud", "sand", "weed"]);
       expect(rows.every((r) => r.inside && r.version === result.version)).toBe(true);
     }));
@@ -304,7 +283,7 @@ describe("importRestrictions", () => {
       const today = new Date("2026-10-19T12:00:00Z");
       const first = scriptedServices(db, { layers, cables });
 
-      const result = await importRestrictions(db, { area: areaByKey(AREA), now: today }, { transport: first.transport, archive });
+      const result = await importRestrictions(db, { scope: await scopeOf(db), now: today }, { transport: first.transport, archive });
 
       const counts = (inserted: number) => ({ inserted, updated: 0, unchanged: 0, ended: 0 });
       expect(result).toEqual({ military: counts(2), protected_area: counts(1), aquaculture: counts(1), cable: counts(2) });
@@ -356,7 +335,7 @@ describe("importRestrictions", () => {
 
       const again = await importRestrictions(
         db,
-        { area: areaByKey(AREA), now: today },
+        { scope: await scopeOf(db), now: today },
         { transport: scriptedServices(db, { layers, cables }).transport, archive },
       );
       const same = (unchanged: number) => ({ inserted: 0, updated: 0, unchanged, ended: 0 });
@@ -370,13 +349,13 @@ describe("importVesselDensity and importRoads", () => {
       await prepareArea(db);
       const archive = memoryArchive();
       const first = scriptedServices(db);
-      const result = await importVesselDensity(db, { area: areaByKey(AREA) }, { transport: first.transport, archive });
+      const result = await importVesselDensity(db, { scope: await scopeOf(db) }, { transport: first.transport, archive });
       expect(result).toMatchObject({ key: `datasets/emodnet-vessel-density/2024/${AREA}.tif`, reused: false });
       expect(first.seen.map((r) => [r.service, subsetBox(r.url)])).toEqual([["emodnet-vessel-density", datasetBox()]]);
       expect(new URL(first.seen[0]!.url).searchParams.getAll("subset")).toContain('time("2024-01-01T00:00:00.000Z")');
 
       const second = scriptedServices(db);
-      expect(await importVesselDensity(db, { area: areaByKey(AREA) }, { transport: second.transport, archive })).toMatchObject({
+      expect(await importVesselDensity(db, { scope: await scopeOf(db) }, { transport: second.transport, archive })).toMatchObject({
         reused: true,
       });
       expect(second.seen).toHaveLength(0);
@@ -392,18 +371,18 @@ describe("importVesselDensity and importRoads", () => {
       ];
       const archive = memoryArchive();
       const first = scriptedServices(db, { roads });
-      const result = await importRoads(db, { area: areaByKey(AREA) }, { transport: first.transport, archive });
+      const result = await importRoads(db, { scope: await scopeOf(db) }, { transport: first.transport, archive });
       expect(result).toMatchObject({ roads: 2, removed: 0 });
       expect(archive.keys()).toEqual([`datasets/osm-roads/${result.version}/${AREA}.json`]);
       const query = decodeURIComponent(first.seen[0]!.body!);
       expect(query).toContain('way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|track)$"]');
 
-      const again = await importRoads(db, { area: areaByKey(AREA) }, { transport: scriptedServices(db, { roads }).transport, archive });
+      const again = await importRoads(db, { scope: await scopeOf(db) }, { transport: scriptedServices(db, { roads }).transport, archive });
       expect(again).toEqual({ roads: 2, removed: 0, version: result.version });
 
       const later = await importRoads(
         db,
-        { area: areaByKey(AREA) },
+        { scope: await scopeOf(db) },
         { transport: scriptedServices(db, { roads: roads.slice(1) }).transport, archive },
       );
       expect(later).toMatchObject({ roads: 1, removed: 1 });
@@ -438,7 +417,7 @@ describe("importSitelinks", () => {
       const { transport, seen } = scriptedServices(db, { sitelinks: { [stale]: 12, [unknown]: 3 } });
       const runId = newId();
 
-      expect(await importSitelinks(db, { area: areaByKey(AREA), runId, now }, { transport })).toEqual({ fetched: 2, reused: 1 });
+      expect(await importSitelinks(db, { scope: await scopeOf(db), runId, now }, { transport })).toEqual({ fetched: 2, reused: 1 });
       expect(seen.map((r) => new URL(r.url).searchParams.get("ids"))).toEqual([[stale, unknown].sort().join("|")]);
       const stored = await db
         .select({ id: wikidataSitelinks.wikidataId, n: wikidataSitelinks.sitelinks, at: wikidataSitelinks.fetchedAt })
@@ -457,7 +436,7 @@ describe("importSitelinks", () => {
 
       // a day later everything is fresh: no call at all
       const again = scriptedServices(db);
-      expect(await importSitelinks(db, { area: areaByKey(AREA), now: new Date("2026-10-20T12:00:00Z") }, { transport: again.transport })).toEqual({
+      expect(await importSitelinks(db, { scope: await scopeOf(db), now: new Date("2026-10-20T12:00:00Z") }, { transport: again.transport })).toEqual({
         fetched: 0,
         reused: 3,
       });
@@ -470,11 +449,12 @@ describe("importSitelinks", () => {
       await prepareArea(db);
       const replay = fixtureTransport();
       const runId = newId();
-      await importOsm(db, { area: areaByKey(AREA), runId }, { transport: replay, archive: memoryArchive() });
-      await importWikidata(db, { area: areaByKey(AREA), runId }, { transport: replay });
-      await assignTiles(db, AREA);
+      const scope = await scopeOf(db);
+      await importOsm(db, { scope, runId }, { transport: replay, archive: memoryArchive() });
+      await importWikidata(db, { scope, runId }, { transport: replay });
+      await assignSubdivisionTiles(db, scope.subdivisionId);
 
-      expect(await importSitelinks(db, { area: areaByKey(AREA), runId }, { transport: replay })).toEqual({ fetched: 123, reused: 0 });
+      expect(await importSitelinks(db, { scope: await scopeOf(db), runId }, { transport: replay })).toEqual({ fetched: 123, reused: 0 });
       const rows = await db
         .select({ id: wikidataSitelinks.wikidataId, n: wikidataSitelinks.sitelinks })
         .from(wikidataSitelinks)
@@ -496,7 +476,7 @@ describe("importSitelinks", () => {
       await db.execute(sql`update geo_objects set valid_to = current_date where wikidata_id = ${ended}`);
       await db.insert(geoObjects).values({ type: "bay", origin: "wikidata", wikidataId: "Q930000012", geom: geomFromGeoJson({ type: "Point", coordinates: [SEA.lon, SEA.lat] }) });
       const { transport, seen } = scriptedServices(db);
-      expect(await importSitelinks(db, { area: areaByKey(AREA) }, { transport })).toEqual({ fetched: 0, reused: 0 });
+      expect(await importSitelinks(db, { scope: await scopeOf(db) }, { transport })).toEqual({ fetched: 0, reused: 0 });
       expect(seen).toHaveLength(0);
     }));
 });
@@ -507,17 +487,18 @@ describe("stage datasets.import", () => {
   it("stage plans one job per requested dataset", () =>
     withRollback(async (db) => {
       expect(stage.queue).toBe("datasets.import");
-      const run = { id: newId(), params: { areaKey: AREA, datasets: ["seabed", "bathymetry"] } };
+      await insertAeginaWest(db);
+      const run = { id: newId(), params: { subdivisionKey: AREA, datasets: ["seabed", "bathymetry"] } };
       expect(await stage.plan(db, run)).toEqual([
-        { key: `seabed:${AREA}`, dataset: "seabed", areaKey: AREA },
-        { key: `bathymetry:${AREA}`, dataset: "bathymetry", areaKey: AREA },
+        { key: `seabed:${AREA}`, dataset: "seabed", subdivisionKey: AREA },
+        { key: `bathymetry:${AREA}`, dataset: "bathymetry", subdivisionKey: AREA },
       ]);
-      const all = await stage.plan(db, { id: newId(), params: { areaKey: AREA } });
+      const all = await stage.plan(db, { id: newId(), params: { subdivisionKey: AREA } });
       expect(all.map((j) => j.dataset)).toEqual([...DATASET_KINDS]);
-      await expect(stage.plan(db, { id: newId(), params: { areaKey: AREA, datasets: ["tides"] } })).rejects.toThrow(
+      await expect(stage.plan(db, { id: newId(), params: { subdivisionKey: AREA, datasets: ["tides"] } })).rejects.toThrow(
         "unknown dataset tides",
       );
-      await expect(stage.plan(db, { id: newId(), params: { areaKey: "nowhere-test" } })).rejects.toThrow("Unknown area");
+      await expect(stage.plan(db, { id: newId(), params: { subdivisionKey: "XD-NOWHERE" } })).rejects.toThrow("Unbekannter Landesteil XD-NOWHERE");
     }));
 });
 
@@ -533,28 +514,29 @@ describe("startDatasetImportRun", () => {
     return { boss, inserted };
   }
 
-  it("creates the area run and enqueues one job per dataset", () =>
+  it("creates the subdivision run and enqueues one job per dataset", () =>
     withRollback(async (db) => {
       await prepareArea(db);
       const { boss, inserted } = recordingBoss();
       const { id } = await startDatasetImportRun(db, boss, AREA, "test", ["roads"]);
       const [run] = await db.select().from(runs).where(eq(runs.id, id));
-      expect(run).toMatchObject({ scopeType: "area", scopeId: AREA, params: { areaKey: AREA, datasets: ["roads"] } });
+      expect(run).toMatchObject({ scopeType: "subdivision", scopeId: AREA, params: { subdivisionKey: AREA, datasets: ["roads"] } });
       expect(inserted).toEqual([
-        { queue: "datasets.import", data: { key: `roads:${AREA}`, dataset: "roads", areaKey: AREA, runId: id, stage: DATASETS_STAGE } },
+        { queue: "datasets.import", data: { key: `roads:${AREA}`, dataset: "roads", subdivisionKey: AREA, runId: id, stage: DATASETS_STAGE } },
       ]);
     }));
 
-  it("rejects an unknown area, an unknown dataset and an area without geo object before the run exists", () =>
+  it("rejects an unknown subdivision, an area key, an unknown dataset and a subdivision without tiles before the run exists", () =>
     withRollback(async (db) => {
       const { boss, inserted } = recordingBoss();
-      await expect(startDatasetImportRun(db, boss, "nowhere-test", "test")).rejects.toThrow("Unknown area nowhere-test");
-      await expect(startDatasetImportRun(db, boss, "datasets-unsynced", "test")).rejects.toThrow(/no geo object/);
-      await expect(
-        startDatasetImportRun(db, boss, "datasets-unsynced", "test", ["tides" as never]),
-      ).rejects.toThrow("unknown dataset tides");
-      expect(await db.select().from(runs).where(like(runs.scopeId, "datasets-unsynced"))).toEqual([]);
-      expect(await db.select().from(runs).where(eq(runs.scopeId, "nowhere-test"))).toEqual([]);
+      await expect(startDatasetImportRun(db, boss, "XD-NOWHERE", "test")).rejects.toThrow("Unbekannter Landesteil XD-NOWHERE");
+      const areaKey = Object.keys(getConfig().subdivisions.retiredAreaKeys)[0]!;
+      await expect(startDatasetImportRun(db, boss, areaKey, "test")).rejects.toThrow(`Revier-Schlüssel ${areaKey} ist kein Laufumfang mehr`);
+      await insertAeginaWest(db); // no tiles yet
+      await expect(startDatasetImportRun(db, boss, AREA, "test")).rejects.toMatchObject({ reason: "subdivision_without_coast_tiles" });
+      await expect(startDatasetImportRun(db, boss, AREA, "test", ["tides" as never])).rejects.toThrow("unknown dataset tides");
+      expect(await db.select().from(runs).where(like(runs.scopeId, AREA))).toEqual([]);
+      expect(await db.select().from(runs).where(eq(runs.scopeId, "XD-NOWHERE"))).toEqual([]);
       expect(inserted).toEqual([]);
     }));
 });

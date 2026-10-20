@@ -81,6 +81,7 @@ export const STAGE_STATUS_LABELS: Record<RunStageStatus, string> = {
 export const SCOPE_TYPE_LABELS: Record<RunScopeType, string> = {
   tile: "Kachel",
   area: "Gebiet",
+  subdivision: "Landesteil",
   place: "Ort",
   source: "Quelle",
   system: "System",
@@ -126,6 +127,8 @@ export const GEO_OBJECT_TYPE_LABELS: Record<GeoObjectType, string> = {
   harbour: "Hafen",
   settlement: "Siedlung",
   poi: "Highlight",
+  country: "Land",
+  admin_region: "Verwaltungsregion",
 };
 
 /** The type hint of a name in a text ("Ormos …", "… Bay"). */
@@ -153,6 +156,7 @@ export const GEO_ORIGIN_LABELS: Record<GeoOrigin, string> = {
   review: "Review",
   computed: "Berechnet",
   manual: "Manuell",
+  marine_regions: "Marine Regions",
 };
 
 export const NAME_ORIGIN_LABELS: Record<NameOrigin, string> = {
@@ -282,10 +286,11 @@ export const CONVERTER_LABELS: Record<CrawlRules["converter"], string> = {
 export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   area_without_geo_object: "Revier hat noch kein Geo-Objekt – zuerst „Gazetteer aufbauen“",
   area_without_coast_tiles: "Revier hat noch keine Küstenkacheln – zuerst „Gazetteer aufbauen“",
+  subdivision_without_coast_tiles: "Landesteil hat noch keine Küstenkacheln – zuerst „Gazetteer aufbauen“",
+  tile_without_subdivision: "Kachel gehört zu keinem Landesteil – Suchsprachen unbekannt",
   bathymetry_missing: "Bathymetrie fehlt – zuerst „Datensätze laden“",
   land_missing: "Landpolygone fehlen – zuerst die Landpolygone importieren",
   place_not_computable: "Ort wird nicht berechnet (beendet, zusammengeführt, verworfen oder ohne Kachel)",
-  tile_without_area: "Kachel gehört zu keinem konfigurierten Revier – Suchsprachen unbekannt",
   no_approved_sources: "Keine freigegebene Quelle",
   source_not_approved: "Quelle ist nicht freigegeben",
   source_run_active: "Für die Quelle läuft bereits ein Abruf",
@@ -296,8 +301,7 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   comparison_run_active: "Ein Konverter-Vergleich läuft bereits",
   embed_backfill_active: "„Einbettungen nachholen“ läuft bereits",
   unknown_tile: "Kachel ist unbekannt oder beendet",
-  unknown_area: "Revier ist nicht konfiguriert",
-  area_without_tiles: "Revier hat noch keine Kacheln – zuerst „Gazetteer aufbauen“",
+  unknown_area: "Ein Revier-Schlüssel ist kein Laufumfang mehr – einen Landesteil angeben",
   versions_not_current: "Eine Dokumentversion gibt es nicht oder sie ist nicht mehr aktuell",
   unknown_comparison: "Diesen Modellvergleich gibt es nicht",
   comparison_without_units: "Der Modellvergleich hat keine Einheiten – zuerst Texte auswerten",
@@ -668,10 +672,10 @@ export const PREVIEW_OMISSION_LABELS: Record<PreviewOmission, string> = {
   no_name: "Der Ort hat keinen gültigen Namen.",
   no_profile: "Der Ort hat kein Profil.",
   shelter_incomplete: "Die Schutzwerte sind unvollständig oder ohne Herkunft.",
-  no_area: "Die Kachel des Orts gehört zu keinem Revier.",
-  merged: "Der Ort ist zusammengelegt. Das nächste Paket liefert ihn mit „zusammengelegt in“ (mergedInto) den Ort, in den er aufgegangen ist, sofern das letzte Paket des Reviers ihn enthielt.",
+  no_subdivision: "Der Ort gehört zu keinem Landesteil.",
+  merged: "Der Ort ist zusammengelegt. Das nächste Paket liefert ihn mit „zusammengelegt in“ (mergedInto) den Ort, in den er aufgegangen ist, sofern das letzte Paket des Landesteils ihn enthielt.",
   merged_removed:
-    "Der Ort ist zusammengelegt in einen Ort, den das nächste Paket des Reviers nicht liefert (anderes Revier oder ausgelassen). Das Paket meldet ihn als entfernt.",
+    "Der Ort ist zusammengelegt in einen Ort, den das nächste Paket des Landesteils nicht liefert (anderer Landesteil oder ausgelassen). Das Paket meldet ihn als entfernt.",
   not_in_package: "Der Ort ist kein Spot des Pakets (nicht bestätigt oder beendet).",
 };
 
@@ -679,7 +683,7 @@ export const PREVIEW_OMISSION_LABELS: Record<PreviewOmission, string> = {
 export const MERGE_ERROR_LABELS: Record<MergeRefusal, string> = {
   self: "Ein Ort kann nicht mit sich selbst zusammengelegt werden.",
   not_valid: "Beide Orte müssen gültige, bestätigte Orte sein – einer ist beendet, verworfen oder schon zusammengelegt.",
-  across_areas: "Die Orte liegen in verschiedenen Revieren – bitte das Zusammenlegen über Reviergrenzen bestätigen.",
+  across_subdivisions: "Die Orte liegen in verschiedenen Landesteilen – bitte das Zusammenlegen über Landesteilgrenzen bestätigen.",
 };
 
 /** The German text of a `?mergeError=`; null for none or an unknown reason. */

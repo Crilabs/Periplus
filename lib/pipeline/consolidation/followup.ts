@@ -24,7 +24,7 @@ export type FollowupResult = { places: string[]; discoveryRunId: string | null; 
 /**
  * Requests a targeted source discovery for the thin places among the run's targets: `thinPlaces` on the run date (one
  * date for the selection, the queries and the starter, ruling M5-H-R2), only places with queries of their own (a tile
- * of a configured area and a name in one of its languages; a place without gets no request and no cool-down) and only
+ * of a subdivision and a name in one of its languages; a place without gets no request and no cool-down) and only
  * as many as `discovery.serp.maxQueriesPerRun` covers, fewest documents first. Nothing for none, otherwise one place
  * discovery run (`startPlaceDiscoveryRun`, which also writes the `place_discovery_requests`, in that order) triggered
  * by `consolidation:<runId>`. Retry-safe: when a run with that trigger exists already (an earlier attempt started it),
@@ -49,12 +49,12 @@ export async function requestPlaceDiscovery(
   const params = (run.params ?? {}) as Record<string, unknown>;
   const today = opts.today ?? (await runDate(db, runId));
   const cfg = await consolidationConfigFor(db, params.rulesVersion);
-  const { discovery, areas } = opts.config ?? getConfig();
+  const { discovery } = opts.config ?? getConfig();
   const seen = new Set<string>();
   let budget = discovery.serp.maxQueriesPerRun;
   // A place is requested only with queries of its own that still fit the run's query budget.
   const searchable = async (geoObjectId: string) => {
-    const fresh = (await placeQueries(db, geoObjectId, discovery, { areas, on: today })).filter((q) => !seen.has(queryKey(q)));
+    const fresh = (await placeQueries(db, geoObjectId, discovery, { on: today })).filter((q) => !seen.has(queryKey(q)));
     if (fresh.length === 0 || fresh.length > budget) return false;
     for (const q of fresh) seen.add(queryKey(q));
     budget -= fresh.length;

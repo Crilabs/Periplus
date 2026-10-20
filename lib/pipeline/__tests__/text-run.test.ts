@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { withRollback } from "@/test/db";
 import { quietDay } from "@/test/external-calls";
 import { memoryArchive } from "@/test/s3";
-import { insertNamedObject, insertTestSource, insertTestTile, insertTestVersion } from "@/test/text";
+import { insertNamedObject, insertTestSource, insertTestSubdivision, insertTestTile, insertTestVersion } from "@/test/text";
 import type { Transport } from "@/lib/adapters/http";
 import { MockModel } from "@/lib/ai/mock";
 import type { ClassifyDocumentInput } from "@/lib/ai/tasks/classify-document";
@@ -29,6 +29,7 @@ import {
   serpQueries,
   serpResults,
   sources,
+  tiles,
   type GeoObjectType,
 } from "@/lib/db/schema";
 import { activeExtractionRun } from "@/lib/domain/extraction/active-run";
@@ -276,20 +277,66 @@ describe("text run", () => {
       expect(reprocess).not.toContain(pendingHere.versionId);
     }));
 
-  it("the starters refuse an unknown tile, an area without tiles and versions that are not current", () =>
+  it("a subdivision run takes the versions mentioning objects in its scope tiles plus the pending versions of the sources its areas' searches found", () =>
     withRollback(async (tx) => {
-      const { boss } = recordingBoss();
+      const sub = await insertTestSubdivision(tx, "XT-T1", [21.0, 35.0, 21.5, 35.25]);
+      const { tile } = await islandTile(tx);
+      await tx.update(tiles).set({ subdivisionId: sub.id }).where(eq(tiles.id, tile));
+      const mentioned = await insertTestVersion(tx, ["Rund um Kalonisi."]);
+      await matchVersion(tx, mentioned.versionId, { runId: null, cfg: config });
+      // a source found by a search for an area touching the scope tile
+      await insertNamedObject(tx, { type: "area", names: [{ name: "Testgolf" }], lon: 21.1, lat: 35.1, configKey: "xt-text-area", tiles: [tile] });
+      const found = await insertTestSource(tx);
+      const elsewhere = await insertTestSource(tx);
+      const pendingHere = await insertTestVersion(tx, ["Noch nicht abgeglichen."], { sourceId: found });
+      const pendingElsewhere = await insertTestVersion(tx, ["Noch nicht abgeglichen."], { sourceId: elsewhere });
+      const [src] = await tx.select({ domain: sources.domain }).from(sources).where(eq(sources.id, found));
+      const [q] = await tx
+        .insert(serpQueries)
+        .values({ keyword: `k-${newId()}`, languageCode: "de", locationCode: 2300, depth: 20, level: "area", scopeId: "xt-text-area", rawKey: `serp/x/${newId()}.json`, fetchedAt: new Date() })
+        .returning({ id: serpQueries.id });
+      await tx.insert(serpResults).values({ serpQueryId: q!.id, rank: 1, url: `https://${src!.domain}/`, urlNormalized: `https://${src!.domain}/`, domain: src!.domain, title: "t", snippet: "s" });
+
+      const run = (await freezeTextRunParams(tx, { subdivisionKey: "XT-T1" }, config)).documentVersionIds;
+      expect(run).toEqual(expect.arrayContaining([mentioned.versionId, pendingHere.versionId]));
+      expect(run).not.toContain(pendingElsewhere.versionId);
+      const reprocess = (await freezeTextRunParams(tx, { subdivisionKey: "XT-T1", reprocess: true }, config)).documentVersionIds;
+      expect(reprocess).toContain(mentioned.versionId);
+      expect(reprocess).not.toContain(pendingHere.versionId);
+      // another subdivision without those tiles takes none of them
+      await insertTestSubdivision(tx, "XT-T2", [30.0, 36.0, 30.2, 36.1]);
+      expect((await freezeTextRunParams(tx, { subdivisionKey: "XT-T2" }, config)).documentVersionIds).not.toContain(mentioned.versionId);
+    }));
+
+  it("the starters refuse an unknown tile, subdivision problems, a leftover area key and versions that are not current", () =>
+    withRollback(async (tx) => {
+      const { boss, inserted } = recordingBoss();
       const v = await insertTestVersion(tx, ["Alt."]);
       await insertTestVersion(tx, ["Neu."], { documentId: v.documentId });
       const reason = (p: Promise<unknown>) => p.then(() => "started", (e: unknown) => (e instanceof RunScopeNotReady ? e.reason : String(e)));
       expect(await reason(startTextRun(tx, boss, { tileId: "q025:1:1", triggeredBy: "test" }, config))).toBe("unknown_tile");
-      expect(await reason(startTextRun(tx, boss, { areaKey: `nope-${newId()}`, triggeredBy: "test" }, config))).toBe("unknown_area");
-      const empty: AppConfig = { ...config, areas: [...config.areas, { ...config.areas[0]!, key: `empty-${newId()}` }] };
-      expect(await reason(startReprocessRun(tx, boss, { scope: { areaKey: empty.areas.at(-1)!.key }, triggeredBy: "test" }, empty))).toBe("area_without_tiles");
+      expect(await reason(startTextRun(tx, boss, { subdivisionKey: "XT-NOPE", triggeredBy: "test" }, config))).toBe("Error: Unbekannter Landesteil XT-NOPE");
+      await insertTestSubdivision(tx, "XT-T3", [30.0, 36.0, 30.2, 36.1], { status: "excluded" });
+      expect(await reason(startTextRun(tx, boss, { subdivisionKey: "XT-T3", triggeredBy: "test" }, config))).toBe("Error: Landesteil XT-T3 ist ausgeschlossen");
+      await insertTestSubdivision(tx, "XT-T4", [30.5, 36.0, 30.7, 36.1]);
+      expect(await reason(startReprocessRun(tx, boss, { scope: { subdivisionKey: "XT-T4" }, triggeredBy: "test" }, config))).toBe("subdivision_without_coast_tiles");
+      expect(await reason(startTextRun(tx, boss, { areaKey: "saronic", triggeredBy: "test" }, config))).toBe("unknown_area");
       expect(await reason(startTextRun(tx, boss, { documentVersionIds: [v.versionId], rematch: true, triggeredBy: "test" }, config))).toBe("versions_not_current");
       expect(await reason(startTextRun(tx, boss, { documentVersionIds: [newId()], triggeredBy: "test" }, config))).toBe("versions_not_current");
+      expect(inserted).toEqual([]);
       // a pending run with nothing to do still starts
       expect(await reason(startTextRun(tx, boss, { pending: true, triggeredBy: "test" }, config))).toBe("started");
+    }));
+
+  it("a subdivision text run is scoped by the subdivision", () =>
+    withRollback(async (tx) => {
+      const sub = await insertTestSubdivision(tx, "XT-T5", [21.0, 35.0, 21.5, 35.25]);
+      const { tile } = await islandTile(tx);
+      await tx.update(tiles).set({ subdivisionId: sub.id }).where(eq(tiles.id, tile));
+      const { boss } = recordingBoss();
+      const { id } = await startTextRun(tx, boss, { subdivisionKey: "XT-T5", triggeredBy: "test" }, config);
+      const [run] = await tx.select().from(runs).where(eq(runs.id, id));
+      expect(run).toMatchObject({ scopeType: "subdivision", scopeId: "XT-T5", params: expect.objectContaining({ subdivisionKey: "XT-T5" }) });
     }));
 
   it("a full text run over the fixture documents ends finished with belegtreue 1", () =>

@@ -9,7 +9,8 @@ import { estimateComparisonCostEur } from "@/lib/domain/extraction/comparison";
 import { anthropicHeadroomEur } from "@/lib/pipeline/batches";
 import { CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
 import { enqueueStage, startRun } from "@/lib/pipeline/runs";
-import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
+import { requireSubdivision, retiredAreaKeyMessage } from "@/lib/domain/subdivisions/store";
+import { RunScopeNotReady, seedTileIds } from "@/lib/pipeline/tile-scope";
 import { CHECK_STAGE } from "./check";
 import { CLASSIFY_STAGE } from "./classify";
 import { DISAMBIGUATE_STAGE } from "./disambiguate";
@@ -21,7 +22,7 @@ import { freezeTextRunParams, type TextRunParams } from "./versions";
 
 /*
  * Starters of text runs (ruling M4-P1: only starters live here, no stage or handler imports this module): "Texte
- * auswerten" (`startTextRun`: pending versions, a tile or area, or given versions, also the rematch after a review
+ * auswerten" (`startTextRun`: pending versions, a tile or subdivision, or given versions, also the rematch after a review
  * decision), "Reprozessieren" (`startReprocessRun`) and the model comparison run (`startModelComparisonRun`).
  */
 
@@ -43,18 +44,18 @@ export const TEXT_RUN_STAGES = [
 
 function scopeOf(params: TextRunParams): RunScope {
   if (params.tileId) return { type: "tile", id: params.tileId };
-  if (params.areaKey) return { type: "area", id: params.areaKey };
+  if (params.subdivisionKey) return { type: "subdivision", id: params.subdivisionKey };
   if (params.sourceIds?.length === 1) return { type: "source", id: params.sourceIds[0]! };
   return { type: "system", id: "texts" };
 }
 
 /**
  * Refuses a text run whose selection cannot be worked on, before the run exists (ruling M4-P16): a tile that is not a
- * valid tile, an area that is not configured or has no valid tile, given versions that do not exist or are no longer
+ * valid tile, a subdivision that is unknown, excluded or has no coast tile, a leftover area key, given versions that do not exist or are no longer
  * the current version of their document. A `pending` selection with nothing to do still starts (its stages finish at
  * once).
  */
-async function assertSelectionReady(db: Db, params: TextRunParams, config: AppConfig): Promise<void> {
+async function assertSelectionReady(db: Db, params: TextRunParams): Promise<void> {
   if (params.tileId) {
     const { rows } = await db.execute(sql`
       select 1 from tiles t where t.id = ${params.tileId} and t.valid_from <= current_date and (t.valid_to is null or t.valid_to > current_date)
@@ -62,15 +63,16 @@ async function assertSelectionReady(db: Db, params: TextRunParams, config: AppCo
     if (rows.length === 0) throw new RunScopeNotReady("unknown_tile", `tile ${params.tileId} is not a valid tile`);
   }
   if (params.areaKey) {
-    if (!config.areas.some((a) => a.key === params.areaKey)) {
-      throw new RunScopeNotReady("unknown_area", `area ${params.areaKey} is not configured`);
+    throw new RunScopeNotReady("unknown_area", retiredAreaKeyMessage(params.areaKey));
+  }
+  if (params.subdivisionKey) {
+    await requireSubdivision(db, params.subdivisionKey);
+    if ((await seedTileIds(db, { subdivisionKey: params.subdivisionKey })).length === 0) {
+      throw new RunScopeNotReady(
+        "subdivision_without_coast_tiles",
+        `Subdivision ${params.subdivisionKey} has no coast tiles yet; build its gazetteer first`,
+      );
     }
-    const { rows } = await db.execute(sql`
-      select 1 from tiles t join geo_objects a on a.id = t.area_id and a.type = 'area'
-      where a.config_key = ${params.areaKey} and t.valid_from <= current_date and (t.valid_to is null or t.valid_to > current_date)
-      limit 1
-    `);
-    if (rows.length === 0) throw new RunScopeNotReady("area_without_tiles", `area ${params.areaKey} has no tiles yet`);
   }
   const ids = params.documentVersionIds ?? [];
   if (ids.length > 0) {
@@ -86,7 +88,7 @@ async function assertSelectionReady(db: Db, params: TextRunParams, config: AppCo
 
 /**
  * Starts a text run ("Texte auswerten", kind `stage`, every text stage) over the selected versions. The selection is
- * checked first (`RunScopeNotReady`) and frozen at the start (ruling M4-E-R2): `pending`, `tileId` and `areaKey` are
+ * checked first (`RunScopeNotReady`) and frozen at the start (ruling M4-E-R2): `pending`, `tileId` and `subdivisionKey` are
  * resolved once into `params.documentVersionIds`, and every stage plans from that list, so versions arriving mid-run
  * wait for the next run. `rematch: true` (after a review decision named a new object) matches the versions again;
  * only the mentions this creates are pending, so only they are extracted. The active rules version is frozen in
@@ -100,13 +102,13 @@ export async function startTextRun(
   config: AppConfig = getConfig(),
 ): Promise<{ id: string }> {
   const { triggeredBy, ...selection } = input;
-  await assertSelectionReady(db, selection, config);
+  await assertSelectionReady(db, selection);
   const params = { ...(await freezeTextRunParams(db, selection, config)), rulesVersion: await activeRulesVersion(db) };
   return startRun(db, boss, { kind: "stage", scope: scopeOf(selection), stages: [...TEXT_RUN_STAGES], params, triggeredBy });
 }
 
 /**
- * Starts "Reprozessieren" for a tile or an area (spec 06, Reprozessierung: kind `reprocess`, every text stage,
+ * Starts "Reprozessieren" for a tile or a subdivision (spec 06, Reprozessierung: kind `reprocess`, every text stage,
  * `params.reprocess`): the versions with mentions there are matched again (adding nothing that exists), and every one
  * of their mentions is extracted again into a new extraction run with the configured model, prompt and fact schema;
  * the old facts stay. Pending versions are not taken in (a reprocess ignores the passes). Like a text run it freezes
@@ -115,11 +117,11 @@ export async function startTextRun(
 export async function startReprocessRun(
   db: Db,
   boss: PgBoss,
-  input: { scope: { tileId: string } | { areaKey: string }; triggeredBy: string },
+  input: { scope: { tileId: string } | { subdivisionKey: string }; triggeredBy: string },
   config: AppConfig = getConfig(),
 ): Promise<{ id: string }> {
   const selection: TextRunParams = { ...input.scope, reprocess: true };
-  await assertSelectionReady(db, selection, config);
+  await assertSelectionReady(db, selection);
   const params = { ...(await freezeTextRunParams(db, selection, config)), rulesVersion: await activeRulesVersion(db) };
   return startRun(db, boss, { kind: "reprocess", scope: scopeOf(selection), stages: [...TEXT_RUN_STAGES], params, triggeredBy: input.triggeredBy });
 }

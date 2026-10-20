@@ -18,6 +18,7 @@ import {
   serpQueries,
   serpResults,
   sources,
+  subdivisions,
   tiles,
   type GeoObjectType,
   type PlaceStatus,
@@ -25,8 +26,9 @@ import {
 } from "@/lib/db/schema";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
 import { domainCandidates } from "@/lib/domain/discovery/proposals";
-import { isPublicId, newId } from "@/lib/domain/ids";
-import { createReviewTask } from "@/lib/domain/review";
+import { isPublicId, newId, newPublicId } from "@/lib/domain/ids";
+import { createReviewTask, OFFERED_REVIEW_KINDS } from "@/lib/domain/review";
+import { listOpenTasks } from "@/lib/domain/review-view";
 import {
   DecisionNotAllowed,
   decideReviewTask,
@@ -305,7 +307,7 @@ describe("place decisions", () => {
     withRollback(async (tx) => {
       const place = await insertPlace(tx);
       const taskId = await placeTask(tx, place.id);
-      for (const decision of [{ action: "same" }, { action: "retry" }, { action: "no_area" }] as ReviewDecision[]) {
+      for (const decision of [{ action: "same" }, { action: "retry" }, { action: "pause_source" }] as ReviewDecision[]) {
         await expect(tx.transaction((sp) => decide(sp, taskId, decision))).rejects.toThrow(DecisionNotAllowed);
       }
       expect((await taskOf(tx, taskId)).status).toBe("open");
@@ -409,48 +411,17 @@ describe("pair decisions", () => {
     }));
 });
 
-describe("coast tile decisions", () => {
-  async function tileTask(tx: Db, tileId: string): Promise<string> {
-    const { id } = await createReviewTask(tx, {
-      kind: "coast_tile_without_area",
-      subjectType: "tile",
-      subjectId: tileId,
-      context: {},
-    });
-    return id;
-  }
-
-  it("assign_area sets the area of the tile", () =>
+describe("retired coast tile tasks (spec 14)", () => {
+  it("coast_tile_without_area is not offered in review lists and cannot be decided", () =>
     withRollback(async (tx) => {
       const tileId = await ensureTile(tx, LON, LAT);
-      const area = await insertObject(tx, { type: "area" });
-      const taskId = await tileTask(tx, tileId);
-      await decide(tx, taskId, { action: "assign_area", areaId: area });
-      const [tile] = await tx.select().from(tiles).where(eq(tiles.id, tileId));
-      expect(tile!.areaId).toBe(area);
-      expect((await taskOf(tx, taskId)).status).toBe("decided");
-    }));
-
-  it("assign_area to a non-area geo object is DecisionNotAllowed", () =>
-    withRollback(async (tx) => {
-      const tileId = await ensureTile(tx, LON, LAT);
-      const bay = await insertObject(tx, { type: "bay" });
-      const taskId = await tileTask(tx, tileId);
-      await expect(
-        tx.transaction((sp) => decide(sp, taskId, { action: "assign_area", areaId: bay })),
-      ).rejects.toThrow(DecisionNotAllowed);
-      const [tile] = await tx.select().from(tiles).where(eq(tiles.id, tileId));
-      expect(tile!.areaId).toBeNull();
-    }));
-
-  it("no_area changes no data besides the decision", () =>
-    withRollback(async (tx) => {
-      const tileId = await ensureTile(tx, LON, LAT);
-      const taskId = await tileTask(tx, tileId);
-      await decide(tx, taskId, { action: "no_area" });
-      const [tile] = await tx.select().from(tiles).where(eq(tiles.id, tileId));
-      expect(tile!.areaId).toBeNull();
-      expect((await taskOf(tx, taskId)).status).toBe("decided");
+      // above every other test's priorities, so it would be first in the queue if it were offered
+      const { id: taskId } = await createReviewTask(tx, { kind: "coast_tile_without_area", subjectType: "tile", subjectId: tileId, context: {}, priority: 2_100_000_000 });
+      expect(OFFERED_REVIEW_KINDS).not.toContain("coast_tile_without_area");
+      expect((await listOpenTasks(tx, { limit: 50 })).map((t) => t.id)).not.toContain(taskId);
+      expect(await nextOpenTask(tx, "coast_tile_without_area")).toBeNull();
+      await expect(tx.transaction((sp) => decide(sp, taskId, { action: "ignore" }))).rejects.toThrow(DecisionNotAllowed);
+      expect((await taskOf(tx, taskId)).status).toBe("open");
     }));
 });
 
@@ -865,18 +836,26 @@ describe("name candidate decisions", () => {
       expect(fallbacks).toEqual([]);
     }));
 
-  it("an island hint creates an islet without a place under its area; a Greek name gets its transliteration as German fallback", () =>
+  it("an island hint creates an islet without a place under its subdivision; a Greek name gets its transliteration as German fallback", () =>
     withRollback(async (tx) => {
       // An own Greek name: hex digits of a fresh id as Greek letters without digraph rules, with their ELOT 743 form.
       const suffix = [...newId().slice(-6)].map((h) => GREEK_HEX[parseInt(h, 16)]!);
       const name = `Κολώνα ${suffix.map(([g]) => g).join("")}`;
       const latin = `Kolona ${suffix.map(([, l]) => l).join("")}`;
-      const areaId = await insertPolygon(tx, "area", LON - 0.1, LAT - 0.1, LON + 0.1, LAT + 0.1);
+      const regionId = await insertPolygon(tx, "admin_region", LON - 0.1, LAT - 0.1, LON + 0.1, LAT + 0.1);
+      await tx.insert(subdivisions).values({
+        publicId: newPublicId("sd"),
+        key: "XX-ISLET",
+        country: "GR",
+        geoObjectId: regionId,
+        geom: sql`ST_Multi(ST_MakeEnvelope(${LON - 0.1}, ${LAT - 0.1}, ${LON + 0.1}, ${LAT + 0.1}, 4326))`,
+        landGeom: sql`ST_Multi(ST_MakeEnvelope(${LON - 0.1}, ${LAT - 0.1}, ${LON + 0.1}, ${LAT + 0.1}, 4326))`,
+      });
       const t = await nameTask(tx, { hint: "island", name });
       await decide(tx, t.taskId, createPlace(name, { language: "el" }));
 
       const object = await createdObject(tx, name);
-      expect(object).toMatchObject({ type: "islet", parentId: areaId });
+      expect(object).toMatchObject({ type: "islet", parentId: regionId });
       expect(await tx.select().from(places).where(eq(places.geoObjectId, object!.id))).toEqual([]);
       const names = await tx
         .select({ name: geoNames.name, language: geoNames.language, origin: geoNames.origin })
@@ -1008,12 +987,12 @@ describe("nextOpenTask", () => {
       // Open tasks of other test files (committed at any time, priorities 0 … 1.5e9) never rank among the test's own:
       // those lie above 1.9e9, `last` below every other task. No shadowing update: it cannot hide rows committed
       // after it.
-      const mk = async (priority: number, kind: "failed_job" | "coast_tile_without_area" = "failed_job") =>
+      const mk = async (priority: number, kind: "failed_job" | "conflict" = "failed_job") =>
         (await createReviewTask(tx, { kind, subjectType: "job", subjectId: newId(), context: {}, priority })).id;
       const low = await mk(1_999_999_999);
       const highOld = await mk(2_000_000_000);
       const highNew = await mk(2_000_000_000);
-      const tile = await mk(2_000_000_001, "coast_tile_without_area");
+      const tile = await mk(2_000_000_001, "conflict");
       const decided = await mk(2_000_000_002);
       const last = await mk(-2_000_000_000);
       await tx.update(reviewTasks).set({ status: "decided" }).where(eq(reviewTasks.id, decided));

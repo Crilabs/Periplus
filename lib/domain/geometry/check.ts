@@ -5,6 +5,7 @@ import { latestComputations, type StoredComputation } from "@/lib/domain/facts/c
 import { SECTORS } from "@/lib/domain/facts/schema-types";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { GAP_REASONS, type Gap, type GapReason } from "@/lib/domain/geometry/gaps";
+import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { geometryPlaceIds } from "@/lib/pipeline/geometry";
 
 export type GeometryCheck = {
@@ -49,13 +50,14 @@ function assess(stored: Stored): { missing: string[]; depthGap: GapReason | null
 }
 
 /**
- * Acceptance check of the geometry stage for the area `areaKey`, over the places the stage computes
+ * Acceptance check of the geometry stage for the subdivision `subdivisionKey`, over the places the stage computes
  * (`geometryPlaceIds`). A place is complete with all 8 `shelter.*` facts, `opening_bearing`, and `depth.approach` or
  * `depth.min` — or instead of a depth a gap `no_bathymetry` / `no_anchor_area` (listed in `depthGaps`). `missing`
- * lists the incomplete places (attributes, `depth` for the depth), sorted by name. Throws for an unknown area.
+ * lists the incomplete places (attributes, `depth` for the depth), sorted by name. Throws for an unknown subdivision.
  */
-export async function checkGeometry(db: Db, areaKey: string): Promise<GeometryCheck> {
-  const ids = await geometryPlaceIds(db, { areaKey });
+export async function checkGeometry(db: Db, subdivisionKey: string): Promise<GeometryCheck> {
+  await requireSubdivision(db, subdivisionKey);
+  const ids = await geometryPlaceIds(db, { subdivisionKey });
   const rows = ids.length
     ? await db
         .select({ placeId: places.id, geoObjectId: places.geoObjectId, name: displayNameSql(places.geoObjectId) })

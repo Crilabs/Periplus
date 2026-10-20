@@ -7,13 +7,13 @@ import addFormats from "ajv-formats";
 import type { ContractFile, Manifest } from "../contract";
 
 /*
- * Consumer check of an area package (plan M6 Task 15): what a foreign consumer sees, through the API only. Fetches the
+ * Consumer check of a subdivision package (plan M6 Task 15): what a foreign consumer sees, through the API only. Fetches the
  * current manifest, every linked file, checks each file's sha256 against the manifest and validates it with its own
- * Ajv (draft 2020-12) against the schema served by `GET /api/v1/schema/<version>/<file>`. No database, no project code
+ * Ajv (draft 2020-12) against the schema served by `GET /api/v2/schema/<version>/<file>`. No database, no project code
  * except types.
  */
 
-const USAGE = "usage: delivery-consume.ts --base-url <https://…> --key <pk_…> --area <key or ar_…> (or the key in PERIPLUS_API_KEY)";
+const USAGE = "usage: delivery-consume.ts --base-url <https://…> --key <pk_…> --subdivision <key or sd_…> (or the key in PERIPLUS_API_KEY)";
 
 export type ConsumedFile = { name: string; sha256Ok: boolean; schemaErrors: string[] };
 export type ConsumeResult = { dataVersion: number; files: ConsumedFile[]; ok: boolean };
@@ -38,7 +38,7 @@ async function failure(res: Response, what: string): Promise<string> {
 }
 
 /**
- * The URL of an API link under `base` (no trailing slash): a root-relative link (`/api/v1/…`) is appended to the base
+ * The URL of an API link under `base` (no trailing slash): a root-relative link (`/api/v2/…`) is appended to the base
  * URL, so a path prefix (`https://host/periplus`) is kept (final review M-4); an absolute link must have the base URL's
  * origin, else null — the key is never sent to another host (bundle H review).
  */
@@ -61,21 +61,21 @@ export function baseUrlWarning(baseUrl: string): string | null {
 }
 
 /**
- * Consumes the current package of `area` (config key or `ar_…`) from `baseUrl`. Throws when the manifest cannot be
- * fetched (wrong key, unknown area, no valid package); every file problem is a finding of that file instead.
+ * Consumes the current package of `subdivision` (key, e.g. `GR-I`, or `sd_…`) from `baseUrl`. Throws when the manifest
+ * cannot be fetched (wrong key, unknown subdivision, no valid package); every file problem is a finding of that file instead.
  * `manifest.json` has no hash in the manifest itself: it must equal the manifest `GET /package` answered.
  */
 export async function consumePackage(input: {
   baseUrl: string;
   key: string;
-  area: string;
+  subdivision: string;
   fetch?: typeof fetch;
 }): Promise<ConsumeResult> {
   const doFetch = input.fetch ?? fetch;
   const base = input.baseUrl.replace(/\/+$/, "");
   const get = (url: string) => doFetch(url, { headers: { authorization: `Bearer ${input.key}`, accept: "application/json" } });
 
-  const packagePath = `/api/v1/areas/${encodeURIComponent(input.area)}/package`;
+  const packagePath = `/api/v2/subdivisions/${encodeURIComponent(input.subdivision)}/package`;
   const res = await get(resolveLink(base, packagePath)!);
   if (res.status !== 200) throw new Error(await failure(res, packagePath));
   const { links, ...manifest } = (await res.json()) as PackageBody;
@@ -106,7 +106,7 @@ export async function consumePackage(input: {
     }
     const sha256Ok = name === "manifest.json" ? isDeepStrictEqual(data, manifest) : expected.get(name) === sha256(bytes);
 
-    const schemaPath = `/api/v1/schema/${encodeURIComponent(manifest.schemaVersion)}/${schemaName(name)}`;
+    const schemaPath = `/api/v2/schema/${encodeURIComponent(manifest.schemaVersion)}/${schemaName(name)}`;
     const schemaRes = await get(resolveLink(base, schemaPath)!);
     if (schemaRes.status !== 200) {
       files.push({ name, sha256Ok, schemaErrors: [await failure(schemaRes, schemaPath)] });
@@ -130,21 +130,21 @@ export async function consumePackage(input: {
   };
 }
 
-/** `--base-url`, `--key` (else `env.PERIPLUS_API_KEY`) and `--area`, each exactly once. */
-export function parseArgs(argv: string[], env: Record<string, string | undefined>): { baseUrl: string; key: string; area: string } {
+/** `--base-url`, `--key` (else `env.PERIPLUS_API_KEY`) and `--subdivision`, each exactly once. */
+export function parseArgs(argv: string[], env: Record<string, string | undefined>): { baseUrl: string; key: string; subdivision: string } {
   const values: Record<string, string> = {};
   for (let i = 0; i < argv.length; i += 2) {
     const flag = argv[i]!;
     const value = argv[i + 1];
-    if (!["--base-url", "--key", "--area"].includes(flag) || !value || value.startsWith("--") || flag in values) throw new Error(USAGE);
+    if (!["--base-url", "--key", "--subdivision"].includes(flag) || !value || value.startsWith("--") || flag in values) throw new Error(USAGE);
     values[flag] = value;
   }
   const baseUrl = values["--base-url"];
   const key = values["--key"] ?? env.PERIPLUS_API_KEY;
-  const area = values["--area"];
-  if (!baseUrl || !key || !area) throw new Error(USAGE);
+  const subdivision = values["--subdivision"];
+  if (!baseUrl || !key || !subdivision) throw new Error(USAGE);
   if (!/^https?:\/\//.test(baseUrl)) throw new Error("--base-url must start with http:// or https://");
-  return { baseUrl, key, area };
+  return { baseUrl, key, subdivision };
 }
 
 async function main(): Promise<void> {
@@ -153,7 +153,7 @@ async function main(): Promise<void> {
   const warning = baseUrlWarning(args.baseUrl);
   if (warning !== null) process.stderr.write(`${warning}\n`);
   const result = await consumePackage(args);
-  out(`area ${args.area}, data version ${result.dataVersion}`);
+  out(`subdivision ${args.subdivision}, data version ${result.dataVersion}`);
   for (const f of result.files) {
     out(`${f.name.padEnd(20)} sha256 ${f.sha256Ok ? "ok" : "MISMATCH"}  schema ${f.schemaErrors.length === 0 ? "ok" : `${f.schemaErrors.length} error(s)`}`);
     for (const e of f.schemaErrors.slice(0, 10)) out(`  ${e}`);

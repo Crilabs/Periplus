@@ -10,7 +10,7 @@ import {
 } from "@/lib/db/schema/geo";
 import { changeRateEnum, DOC_TYPES, type ChangeRate, type DocType } from "@/lib/db/schema/sources";
 import { CONTRACT_FILES, SCHEMA_VERSION } from "@/contract";
-import { PROVENANCE_SOURCES } from "@/contract/v1";
+import { PROVENANCE_SOURCES } from "@/contract/v2";
 import { COPY_SHINGLE_WORDS } from "@/lib/domain/documents/shingles";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { CONVERTERS, crawlRulesPatchSchema, regexPattern } from "@/lib/domain/sources/crawl-rules";
@@ -141,32 +141,113 @@ const polygonSchema = z.union([
   z.strictObject({ type: z.literal("MultiPolygon"), coordinates: z.array(polygonCoordinates).min(1) }),
 ]);
 
-const bboxSchema = z
-  .tuple([lon, lat, lon, lat])
-  .refine(([w, s, e, n]) => w < e && s < n, "bbox must be [west, south, east, north] with west < east, south < north");
-
 const coastSectionSchema = z.strictObject({ key: configKey, names: namesSchema, polygon: polygonSchema });
 
-export const areaConfigSchema = z
+const iso2 = z.string().regex(/^[A-Z]{2}$/, "must be an ISO 3166-1 alpha-2 code");
+const languageCode = z.string().regex(/^[a-z]{2,3}$/, "must be an ISO 639 language code");
+const subdivisionKey = z.string().regex(/^[A-Z]{2}(-[A-Z0-9]+)*$/, "must be an ISO 3166-2 style key (e.g. GR-L)");
+const seasonSchema = z.strictObject({
+  fromMonth: z.number().int().min(1).max(12),
+  toMonth: z.number().int().min(1).max(12),
+});
+const subdivisionStatus = z.enum(["active", "excluded"]);
+
+/** The coast sections of a subdivision must have unique keys. */
+const coastSectionsSchema = z.array(coastSectionSchema).superRefine((sections, ctx) => {
+  const keys = sections.map((s) => s.key);
+  const dup = keys.find((k, i) => keys.indexOf(k) !== i);
+  if (dup) ctx.addIssue({ code: "custom", message: `duplicate coast section key ${dup}` });
+});
+
+/** Which unit is a Landesteil, per country, and how the OSM units are split, merged, added or left out (spec 14). */
+export const subdivisionsConfigSchema = z
   .strictObject({
-    /** Equals the file name in `config/areas/`. */
-    key: configKey,
-    names: namesSchema,
-    polygon: polygonSchema,
-    /** Pilot tile box; `null` while the area has no tiles. */
-    tileBbox: bboxSchema.nullable(),
-    sourceLanguages: z.array(z.string().regex(/^[a-z]{2,3}$/)).min(1),
-    season: z.strictObject({
-      fromMonth: z.number().int().min(1).max(12),
-      toMonth: z.number().int().min(1).max(12),
-    }),
-    cycleDays: z.number().int().min(1),
-    coastSections: z.array(coastSectionSchema),
+    /** IHO sea areas counted as Mediterranean (Marine Regions ids); the Sea of Marmara is not among them. */
+    mediterranean: z.strictObject({ marineRegionsMrgids: z.array(z.number().int().positive()).min(1) }),
+    countries: z.record(
+      iso2,
+      z.strictObject({
+        /** OSM admin_level of the first-level units, or `whole` when the country is one unit. */
+        firstLevel: z.union([z.number().int().min(2).max(10), z.literal("whole")]),
+        secondLevel: z.number().int().min(2).max(10).optional(),
+        sourceLanguages: z.array(languageCode).min(1),
+        season: seasonSchema,
+        cycleDays: z.number().int().min(1),
+        status: subdivisionStatus.optional(),
+        statusReason: z.string().trim().min(1).optional(),
+      }),
+    ),
+    /** A first-level unit split into groups of second-level units (by Wikidata id). */
+    split: z.array(
+      z.strictObject({
+        parentKey: subdivisionKey,
+        groups: z
+          .array(
+            z.strictObject({
+              key: subdivisionKey,
+              names: namesSchema,
+              memberWikidataIds: z.array(wikidataQid).min(1),
+            }),
+          )
+          .min(2),
+      }),
+    ),
+    wholeCountry: z.array(iso2),
+    /** A unit that is no first-level unit of its country (OSM relation), cut out of another country. */
+    extra: z.array(
+      z.strictObject({
+        key: subdivisionKey,
+        country: iso2,
+        osmRelationId: z.number().int().positive(),
+        cutFrom: iso2,
+        names: namesSchema,
+      }),
+    ),
+    /** Several units merged into one subdivision. */
+    merge: z.array(
+      z.strictObject({
+        key: subdivisionKey,
+        memberKeys: z.array(subdivisionKey).min(2),
+        names: namesSchema,
+      }),
+    ),
+    /** Unit keys that touch the IHO polygon only via canals or river mouths. */
+    notMediterranean: z.array(subdivisionKey),
+    /** OSM relation id to key, for units without or with a wrong ISO 3166-2 tag. */
+    keyOverrides: z.record(z.string().regex(/^[1-9][0-9]*$/, "must be an OSM relation id"), subdivisionKey),
+    /**
+     * Keys of the configured areas (Reviere) before spec 14, each with the subdivision to name instead when a run,
+     * script or API call still passes one.
+     */
+    retiredAreaKeys: z.record(configKey, subdivisionKey),
+    /** Per subdivision key: deviations from its country's settings. */
+    overrides: z.record(
+      subdivisionKey,
+      z.strictObject({
+        status: subdivisionStatus.optional(),
+        statusReason: z.string().trim().min(1).optional(),
+        sourceLanguages: z.array(languageCode).min(1).optional(),
+        season: seasonSchema.optional(),
+        cycleDays: z.number().int().min(1).optional(),
+        coastSections: coastSectionsSchema.optional(),
+      }),
+    ),
   })
-  .superRefine((area, ctx) => {
-    const keys = area.coastSections.map((s) => s.key);
-    const dup = keys.find((k, i) => keys.indexOf(k) !== i);
-    if (dup) ctx.addIssue({ code: "custom", path: ["coastSections"], message: `duplicate coast section key ${dup}` });
+  .superRefine((config, ctx) => {
+    const groupKeys = new Set(config.split.flatMap((s) => s.groups.map((g) => g.key)));
+    config.merge.forEach((m, i) => {
+      if (groupKeys.has(m.key)) {
+        ctx.addIssue({ code: "custom", path: ["merge", i, "key"], message: `merge key ${m.key} is also a split group key` });
+      }
+    });
+    config.wholeCountry.forEach((iso, i) => {
+      if (!(iso in config.countries)) ctx.addIssue({ code: "custom", path: ["wholeCountry", i], message: `unknown country ${iso}` });
+    });
+    config.extra.forEach((e, i) => {
+      for (const iso of [e.country, e.cutFrom]) {
+        if (!(iso in config.countries)) ctx.addIssue({ code: "custom", path: ["extra", i], message: `unknown country ${iso}` });
+      }
+    });
   });
 
 export const categoriesSchema = z.strictObject({
@@ -191,6 +272,11 @@ export const gazetteerSchema = z.strictObject({
     timeoutSeconds: z.number().int().positive(),
     ratePerMinute: z.number().positive(),
   }),
+  /** Marine Regions WFS (IHO sea areas, spec 14). */
+  marineRegions: z.strictObject({
+    endpoint: z.url(),
+    timeoutMs: z.number().int().positive(),
+  }),
   wikidata: z.strictObject({
     endpoint: z.url(),
     /** Wikibase API (`wbgetentities`), e.g. for the Wikivoyage sitelinks of gazetteer objects. */
@@ -201,13 +287,14 @@ export const gazetteerSchema = z.strictObject({
   }),
   geonames: z.strictObject({
     baseUrl: z.url(),
-    countries: z.array(z.string().regex(/^[A-Z]{2}$/)).min(1),
     featureCodes: z.record(z.string().regex(/^[A-Z0-9]+$/), geoObjectType),
     refreshDays: z.number().int().positive(),
   }),
   bboxBufferKm: z.number().nonnegative(),
   landBufferKm: z.number().nonnegative(),
   coastDistanceM: z.number().positive(),
+  /** Radius around an object's centroid within which a subdivision's land counts for the assignment (spec 14). */
+  subdivisionRadiusM: z.number().positive(),
   islandParentBufferM: z.number().nonnegative(),
   coastSectionMaxAreaKm2: z.number().positive(),
   merge: z.strictObject({
@@ -378,8 +465,8 @@ export const qualitySchema = z.strictObject({
     .refine((r) => r.min <= r.max, "min must not exceed max"),
   /** „im Pilot 50 Orte, je weiterem Revier 20–30“. */
   comparisonSet: z
-    .strictObject({ pilotSize: positiveInt, perAreaMin: positiveInt, perAreaMax: positiveInt })
-    .refine((s) => s.perAreaMin <= s.perAreaMax, "perAreaMin must not exceed perAreaMax"),
+    .strictObject({ pilotSize: positiveInt, perSubdivisionMin: positiveInt, perSubdivisionMax: positiveInt })
+    .refine((s) => s.perSubdivisionMin <= s.perSubdivisionMax, "perSubdivisionMin must not exceed perSubdivisionMax"),
   /** The Navily comparison assistant (matching, normalisation of the compared values). */
   navily: z.strictObject({
     /** No Navily spot farther than this is matched to a place. */
@@ -402,10 +489,10 @@ export const qualitySchema = z.strictObject({
     /** `checked_by` of machine-accepted proposals. */
     proposalVersion: z.string().min(1).max(120),
   }),
-  /** Mediterranean extrapolation of the cost report; `placesPerArea` null = measured in the pilot. */
+  /** Mediterranean extrapolation of the cost report; `placesPerSubdivision` null = measured in the pilot. */
   extrapolation: z
-    .strictObject({ areasMin: positiveInt, areasMax: positiveInt, placesPerArea: positiveInt.nullable() })
-    .refine((e) => e.areasMin <= e.areasMax, "areasMin must not exceed areasMax"),
+    .strictObject({ subdivisionsMin: positiveInt, subdivisionsMax: positiveInt, placesPerSubdivision: positiveInt.nullable() })
+    .refine((e) => e.subdivisionsMin <= e.subdivisionsMax, "subdivisionsMin must not exceed subdivisionsMax"),
 });
 
 /** EMODnet Seabed Habitats WFS (EUSeaMap substrate layer) and the mapping of its classes to `seabed_type`. */
@@ -512,7 +599,6 @@ export const datasetsSchema = z.strictObject({
 const docType = z.enum(DOC_TYPES);
 const changeRate = z.enum(changeRateEnum.enumValues);
 const eur = z.number().nonnegative();
-const languageCode = z.string().regex(/^[a-z]{2,3}$/, "must be an ISO 639 language code");
 const domainName = z
   .string()
   .regex(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/, "must be a lower-case domain name without scheme or path");
@@ -961,7 +1047,7 @@ export type QueueConfig = z.infer<typeof queueConfigSchema>;
 export type GeometryConfig = z.infer<typeof geometrySchema>;
 export type QualityConfig = z.infer<typeof qualitySchema>;
 export type RestrictionsConfig = z.infer<typeof restrictionsSchema>;
-export type AreaConfig = z.infer<typeof areaConfigSchema>;
+export type SubdivisionsConfig = z.infer<typeof subdivisionsConfigSchema>;
 export type CategoriesConfig = z.infer<typeof categoriesSchema>;
 export type GazetteerConfig = z.infer<typeof gazetteerSchema>;
 export type ConsolidationConfig = z.infer<typeof consolidationSchema>;
@@ -972,7 +1058,7 @@ export type AppConfig = {
   queues: Record<string, QueueConfig>;
   budgets: Record<BudgetService, { dailyEur: number }>;
   models: ModelsConfig;
-  areas: AreaConfig[];
+  subdivisions: SubdivisionsConfig;
   categories: CategoriesConfig;
   gazetteer: GazetteerConfig;
   factSchema: z.infer<typeof factSchemaConfigSchema>;

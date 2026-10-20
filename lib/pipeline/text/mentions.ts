@@ -5,6 +5,7 @@ import { chunks } from "@/lib/db/schema";
 import { effectiveVersionMeta } from "@/lib/domain/mentions/classification";
 import { findNameHits, nameFormsOf, resolveHits, setTrigramThreshold, type MatchHit, type ResolvedMatch } from "@/lib/domain/mentions/match";
 import { linkTextOnly, ngrams } from "@/lib/domain/mentions/ngrams";
+import { activeSubdivisionKeys } from "@/lib/domain/subdivisions/store";
 import { candidateObjects, candidateTiles, jsonTexts, jsonUuids } from "@/lib/domain/mentions/scope";
 import {
   MATCH_PASS_STAGE,
@@ -119,7 +120,7 @@ export async function matchVersion(
   return db.transaction(async (tx) => {
     await setTrigramThreshold(tx, cfg.mentions.uncertainSimilarity);
     const meta = await effectiveVersionMeta(tx, versionId);
-    const scope = await candidateTiles(tx, versionId, cfg.mentions, { nameAffixes: cfg.nameAffixes, areaKeys: cfg.areas.map((a) => a.key) });
+    const scope = await candidateTiles(tx, versionId, cfg.mentions, { nameAffixes: cfg.nameAffixes, subdivisionKeys: await activeSubdivisionKeys(tx) });
     const objectIds = await candidateObjects(tx, scope.tiles);
     const rows = await tx
       .select({ id: chunks.id, text: chunks.text, origin: chunks.carriedFromChunkId })

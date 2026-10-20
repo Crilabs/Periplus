@@ -1,55 +1,52 @@
+import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { getConfig, type AreaConfig } from "@/lib/config";
-import { areaBbox } from "@/lib/domain/gazetteer/areas";
-import { bufferBbox } from "@/lib/domain/gazetteer/land";
-import { areaTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
-import { tileBbox, TILE_SIZE, type Bbox } from "@/lib/domain/tiles";
-import { landImportBbox, parseArgs } from "../import-land-polygons";
+import { getConfig } from "@/lib/config";
+import { bufferBbox, mediterraneanBbox } from "@/lib/domain/gazetteer/land";
+import { TILE_SIZE } from "@/lib/domain/tiles";
+import { withRollback } from "@/test/db";
+import { parseArgs } from "../import-land-polygons";
 
 describe("import-land-polygons CLI", () => {
   it("parses flags and defaults the version to today", () => {
-    const a = parseArgs(["--shp", "x.shp", "--area", "saronic"]);
-    expect(a).toMatchObject({ shp: "x.shp", area: "saronic" });
+    const a = parseArgs(["--shp", "x.shp", "--mediterranean"]);
+    expect(a).toMatchObject({ shp: "x.shp", mediterranean: true });
     expect(a.version).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    expect(parseArgs(["--shp", "x", "--area", "a", "--version", "2026-01-02"]).version).toBe("2026-01-02");
+    expect(parseArgs(["--mediterranean", "--shp", "x", "--version", "2026-01-02"]).version).toBe("2026-01-02");
   });
 
   it("rejects missing, unknown or malformed arguments", () => {
-    expect(() => parseArgs(["--area", "a"])).toThrow(/usage/);
-    expect(() => parseArgs(["--shp", "x", "--area", "a", "--foo", "1"])).toThrow(/usage/);
-    expect(() => parseArgs(["--shp", "x", "--area", "a", "--version", "today"])).toThrow(/YYYY-MM-DD/);
+    expect(() => parseArgs(["--mediterranean"])).toThrow(/usage/);
+    expect(() => parseArgs(["--shp", "x"])).toThrow(/usage/);
+    expect(() => parseArgs(["--shp", "x", "--area", "saronic"])).toThrow(/usage/);
+    expect(() => parseArgs(["--shp", "x", "--mediterranean", "--foo", "1"])).toThrow(/usage/);
+    expect(() => parseArgs(["--shp", "x", "--mediterranean", "--version", "today"])).toThrow(/YYYY-MM-DD/);
   });
 });
 
-describe("landImportBbox", () => {
-  const contains = ([w, s, e, n]: Bbox, [iw, is, ie, inn]: Bbox) => w <= iw && s <= is && e >= ie && n >= inn;
-  const onGrid = (v: number) => Number.isInteger(v / TILE_SIZE);
+describe("mediterraneanBbox", () => {
+  it("covers the buffered extent of a configured sea, snapped outward to the tile grid", async () => {
+    const mrgid = String(getConfig().subdivisions.mediterranean.marineRegionsMrgids[0]);
+    await withRollback(async (tx) => {
+      await tx.execute(sql`
+        INSERT INTO geo_objects (id, type, origin, tags, geom)
+        VALUES (gen_random_uuid(), 'sea', 'marine_regions', ${JSON.stringify({ mrgid })}::jsonb,
+                ST_SetSRID(ST_GeomFromText('POLYGON((-30.07 -60.03, -29.5 -60.03, -29.5 -59.5, -30.07 -59.5, -30.07 -60.03))'), 4326))`);
+      const km = getConfig().gazetteer.landBufferKm;
+      const box = await mediterraneanBbox(tx, km);
+      const [w, s, e, n] = bufferBbox([-30.07, -60.03, -29.5, -59.5], km);
+      // The box also covers whatever seas other tests committed; at least it contains this one, on the grid.
+      expect(box[0]).toBeLessThanOrEqual(w);
+      expect(box[1]).toBeLessThanOrEqual(s);
+      expect(box[2]).toBeGreaterThanOrEqual(e);
+      expect(box[3]).toBeGreaterThanOrEqual(n);
+      expect(box.every((v) => Number.isInteger(v / TILE_SIZE))).toBe(true);
+    });
+  });
 
-  /** A polygon box ending exactly on a tile edge: tilesInBbox still includes the tile east / north of it. */
-  const edgeArea: AreaConfig = {
-    ...getConfig().areas[0]!,
-    key: "edge-test",
-    polygon: { type: "Polygon", coordinates: [[[23, 37], [23.5, 37], [23.5, 37], [23, 37], [23, 37]]] },
-    tileBbox: null,
-    coastSections: [],
-  };
-
-  it.each([...getConfig().areas, edgeArea].map((a) => [a.key, a] as const))(
-    "%s: buffered area box snapped outward to the tile grid, covering every area tile",
-    (_key, area) => {
-      for (const km of [0, getConfig().gazetteer.landBufferKm]) {
-        const box = landImportBbox(area, km);
-        expect(box.every(onGrid)).toBe(true);
-        expect(contains(box, bufferBbox(areaBbox(area), km))).toBe(true);
-        for (const id of areaTileIds(area)) expect(contains(box, tileBbox(id)), id).toBe(true);
-      }
-    },
-  );
-
-  it("adds the buffer before snapping", () => {
-    const area: AreaConfig = { ...edgeArea, polygon: { type: "Polygon", coordinates: [[[23.1, 37.1], [23.4, 37.1], [23.4, 37.2], [23.1, 37.1]]] } };
-    expect(landImportBbox(area, 0)).toEqual([23, 37, 23.5, 37.25]);
-    // 20 km reach past the neighbouring grid lines (about 0.18 deg latitude, 0.23 deg longitude here).
-    expect(landImportBbox(area, 20)).toEqual([22.75, 36.75, 23.75, 37.5]);
+  it("throws without seas", async () => {
+    await withRollback(async (tx) => {
+      await tx.execute(sql`UPDATE geo_objects SET valid_to = current_date WHERE type = 'sea' AND origin = 'marine_regions' AND valid_to IS NULL`);
+      await expect(mediterraneanBbox(tx, 5)).rejects.toThrow(/seas missing/);
+    });
   });
 });

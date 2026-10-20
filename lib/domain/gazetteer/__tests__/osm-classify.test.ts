@@ -50,6 +50,14 @@ describe("classifyOsm", () => {
     expect(classifyOsm({ natural: "bay", name: "Ormos Klima" }, categories, "relation")).toEqual({ type: "bay" });
   });
 
+  it("administrative boundary relations are country (level 2) or admin_region with their level", () => {
+    const tags = { boundary: "administrative", name: "Hrvatska" };
+    expect(classifyOsm({ ...tags, admin_level: "2" }, categories, "relation")).toEqual({ type: "country", adminLevel: 2 });
+    expect(classifyOsm({ ...tags, admin_level: "4" }, categories, "relation")).toEqual({ type: "admin_region", adminLevel: 4 });
+    expect(classifyOsm({ ...tags, admin_level: "4" }, categories, "way")).toBeNull();
+    expect(classifyOsm({ boundary: "administrative", admin_level: "4" }, categories, "relation")).toBeNull();
+  });
+
   it("place outranks a harbour tag", () => {
     expect(classifyOsm({ place: "island", harbour: "yes", name: "Agistri" }, categories)).toEqual({ type: "island" });
   });

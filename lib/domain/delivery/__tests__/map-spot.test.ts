@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { SpotBody } from "@/contract";
-import { spotSchema } from "@/contract/v1";
+import { spotSchema } from "@/contract/v2";
 import { loadConfig } from "@/lib/config";
 import { excludeValue } from "@/lib/domain/consolidation/exclude";
 import type { AttributeProvenance, ProfileSnapshot, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
 import { provenanceEntry } from "@/test/consolidation";
-import { SPOT_A_ATTRIBUTES, SPOT_A_SUMMARY, spotAProvenance } from "@/test/fixtures/delivery/area";
+import { SPOT_A_ATTRIBUTES, SPOT_A_SUMMARY, spotAProvenance } from "@/test/fixtures/delivery/subdivision";
 import { mapSpot, SPOT_FIELDS, type SpotWarning } from "../map-spot";
 import type { SpotSource } from "../types";
 import { aggregateProvenance, combineSource, ORIGIN } from "../vocab";

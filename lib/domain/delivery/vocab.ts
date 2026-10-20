@@ -7,7 +7,7 @@ import type {
   restrictedAreaReason,
   sourceKind,
   spotKind,
-} from "@/contract/v1";
+} from "@/contract/v2";
 import type { PlaceKind, PoiCategory, RestrictedKind } from "@/lib/db/schema/geo";
 import type { DocType } from "@/lib/db/schema/sources";
 import type { AttributeProvenance, ProvenanceOrigin } from "@/lib/domain/consolidation/types";

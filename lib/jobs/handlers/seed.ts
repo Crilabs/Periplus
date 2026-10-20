@@ -5,7 +5,7 @@ import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import { SEED_STAGE, seedTileIds } from "@/lib/pipeline/tile-scope";
 
-/** Seeds places per tile: one job per tile of `run.params.tileIds` or of the coast tiles of `run.params.areaKey`. */
+/** Seeds places per tile: one job per tile of `run.params.tileIds` or of the coast tiles of `run.params.subdivisionKey`. */
 export const seedTileStage: StageDefinition = {
   name: SEED_STAGE,
   queue: "seed.tile",

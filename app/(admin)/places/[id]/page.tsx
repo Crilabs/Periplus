@@ -264,16 +264,16 @@ function MergeDialog({ placeId, candidates }: { placeId: string; candidates: Mer
                   <span className="mt-0.5 flex flex-wrap items-center gap-x-3 text-xs text-muted">
                     <span className="tabular-nums">{fmt.int(Math.round(c.distanceM))} m entfernt</span>
                     {c.publicId && <Mono>{c.publicId}</Mono>}
-                    {c.sameArea ? <span>{c.areaName ?? "ohne Revier"}</span> : <Badge tone="warn">Anderes Revier: {c.areaName ?? "ohne Revier"}</Badge>}
+                    {c.sameSubdivision ? <span>{c.subdivisionName ?? "ohne Landesteil"}</span> : <Badge tone="warn">Anderer Landesteil: {c.subdivisionName ?? "ohne Landesteil"}</Badge>}
                   </span>
                 </span>
               </label>
             ))}
           </fieldset>
-          {candidates.some((c) => !c.sameArea) && (
+          {candidates.some((c) => !c.sameSubdivision) && (
             <label className="flex items-start gap-2 text-sm">
-              <input type="checkbox" name="confirmAcrossAreas" className="mt-0.5 size-4 accent-accent" />
-              <span>Auch über Reviergrenzen zusammenlegen (nötig, wenn der gewählte Ort in einem anderen Revier liegt)</span>
+              <input type="checkbox" name="confirmAcrossSubdivisions" className="mt-0.5 size-4 accent-accent" />
+              <span>Auch über Landesteilgrenzen zusammenlegen (nötig, wenn der gewählte Ort in einem anderen Landesteil liegt)</span>
             </label>
           )}
           <div className="flex justify-end">

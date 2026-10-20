@@ -3,14 +3,14 @@ import { getConfig } from "@/lib/config";
 import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
-import { loadAreaScope } from "./load";
+import { loadSubdivisionScope } from "./load";
 import { highlightIdsBySpot, mapHighlights, type DroppedHighlight } from "./map-highlight";
 import { assignRegions, mapRegion, namedRegions, regionIdAt } from "./map-region";
 import { mapSources, mapSpot, type SpotWarning } from "./map-spot";
-import type { AreaScope, LonLat, RegionSource } from "./types";
+import type { LonLat, RegionSource, SubdivisionScope } from "./types";
 
 /*
- * The contract objects of an area as the next package would deliver them, before versions (ruling M6-P27): load,
+ * The contract objects of a subdivision as the next package would deliver them, before versions (ruling M6-P27): load,
  * spots, regions and highlights mapped together, so a spot carries the region and highlights of its package. Shared by
  * the build and the place page's delivery tab. Reads only; no S3, no versions, no merged spots (those come from the
  * previous package, which only the build reads).
@@ -20,8 +20,8 @@ export type OmittedSpot = { id: string; reason: "no_name" | "no_profile" | "shel
 export type DraftObject<B> = { body: B; geoObjectId: string };
 export type DraftSpot = DraftObject<SpotBody> & { warnings: SpotWarning[]; forbiddenSources: string[] };
 
-export type AreaDraft = {
-  scope: AreaScope;
+export type SubdivisionDraft = {
+  scope: SubdivisionScope;
   /** Delivered spots, by id. */
   spots: DraftSpot[];
   omittedSpots: OmittedSpot[];
@@ -46,7 +46,7 @@ export type DraftOptions = {
   /** Highlight confidence without a profile value (`consolidation.poiConfidence`, ruling M6-P7). */
   poiConfidence?: number;
   /** Test seam: changes the loaded scope (e.g. its order) before mapping. */
-  scopeTransform?: (scope: AreaScope) => AreaScope;
+  scopeTransform?: (scope: SubdivisionScope) => SubdivisionScope;
 };
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -54,10 +54,11 @@ const byPublicId = <T extends { publicId: string }>(a: T, b: T) => cmp(a.publicI
 const byName = <T extends { lang: string; name: string }>(a: T, b: T) => cmp(a.lang, b.lang) || cmp(a.name, b.name);
 
 /** Every list of the scope in one fixed order, so the files never depend on the order the database returned. */
-function ordered(scope: AreaScope): AreaScope {
+function ordered(scope: SubdivisionScope): SubdivisionScope {
   return {
     ...scope,
-    area: { ...scope.area, names: [...scope.area.names].sort(byName) },
+    subdivision: { ...scope.subdivision, names: [...scope.subdivision.names].sort(byName) },
+    areas: [...scope.areas].map((a) => ({ ...a, names: [...a.names].sort(byName) })).sort(byPublicId),
     tiles: [...scope.tiles].sort((a, b) => cmp(a.id, b.id)),
     spots: [...scope.spots].map((s) => ({ ...s, names: [...s.names].sort(byName) })).sort(byPublicId),
     merged: [...scope.merged].sort(byPublicId),
@@ -67,18 +68,18 @@ function ordered(scope: AreaScope): AreaScope {
   };
 }
 
-export async function draftArea(db: Db, areaGeoObjectId: string, today: string, opts: DraftOptions = {}): Promise<AreaDraft> {
+export async function draftSubdivision(db: Db, subdivisionId: string, today: string, opts: DraftOptions = {}): Promise<SubdivisionDraft> {
   const cfg = opts.cfg ?? getConfig().delivery;
   const consolidation = await consolidationConfigFor(db);
   const radiusNm = opts.radiusNm ?? consolidation.importance.radiusNm;
   const poiConfidence = opts.poiConfidence ?? consolidation.poiConfidence;
-  const loaded = await loadAreaScope(db, areaGeoObjectId, cfg, today);
+  const loaded = await loadSubdivisionScope(db, subdivisionId, cfg, today);
   const scope = ordered(opts.scopeTransform ? opts.scopeTransform(loaded) : loaded);
 
   // Which spots the package delivers, and which of them are excluded: the context (region, highlights) does not
   // decide that, so a first pass without it finds them.
   const omittedSpots: OmittedSpot[] = [];
-  const delivered: Array<{ src: AreaScope["spots"][number]; id: string; position: LonLat; excluded: boolean }> = [];
+  const delivered: Array<{ src: SubdivisionScope["spots"][number]; id: string; position: LonLat; excluded: boolean }> = [];
   for (const src of scope.spots) {
     const mapped = mapSpot(src, { regionId: null, highlightIds: [], cfg });
     if ("omitted" in mapped) omittedSpots.push({ id: src.publicId, reason: mapped.omitted });
@@ -105,7 +106,7 @@ export async function draftArea(db: Db, areaGeoObjectId: string, today: string, 
   // only delivered regions are parents (ruling M6-C-R2 NOTE): a nameless one is skipped to the next ancestor
   const regionPublicIds = new Map(named.regions.map((r) => [r.geoObjectId, r.publicId]));
   const regions = named.regions.map((r) => ({
-    body: mapRegion(r, { areaPublicId: scope.area.publicId, regionPublicIds, spotIds: spotIdsByRegion.get(r.publicId) ?? [], cfg }),
+    body: mapRegion(r, { regionPublicIds, spotIds: spotIdsByRegion.get(r.publicId) ?? [], cfg }),
     geoObjectId: r.geoObjectId,
   }));
 

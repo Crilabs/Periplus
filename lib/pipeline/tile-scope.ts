@@ -1,8 +1,7 @@
-import { and, asc, eq } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { geoObjects, tiles } from "@/lib/db/schema";
+import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
+import { requireSubdivision, retiredAreaKeyMessage } from "@/lib/domain/subdivisions/store";
 import { parseTileId } from "@/lib/domain/tiles";
-import { validAt } from "@/lib/domain/timeline";
 
 // No import of ./runs here: modules a job handler imports must not reach the stage registry (import cycle).
 
@@ -10,10 +9,11 @@ import { validAt } from "@/lib/domain/timeline";
 export type RunScopeReason =
   | "area_without_geo_object"
   | "area_without_coast_tiles"
+  | "subdivision_without_coast_tiles"
+  | "tile_without_subdivision"
   | "bathymetry_missing"
   | "land_missing"
   | "place_not_computable"
-  | "tile_without_area"
   | "no_approved_sources"
   | "source_not_approved"
   | "source_run_active"
@@ -25,7 +25,6 @@ export type RunScopeReason =
   | "embed_backfill_active"
   | "unknown_tile"
   | "unknown_area"
-  | "area_without_tiles"
   | "versions_not_current"
   | "unknown_comparison"
   | "comparison_without_units"
@@ -57,8 +56,9 @@ export class RunScopeNotReady extends Error {
 export const SEED_STAGE = "seed.tile";
 
 /**
- * The tiles a seed run covers: `params.tileIds` exactly as given, else every valid coast tile labelled with
- * the area `params.areaKey` (ordered by id). Throws for invalid params or an unknown area.
+ * The tiles a seed run covers: `params.tileIds` exactly as given, else every valid coast tile whose box meets the
+ * subdivision `params.subdivisionKey` (ordered by id; border tiles belong to both neighbours). Throws for invalid
+ * params, an unknown subdivision, or a leftover area key.
  */
 export async function seedTileIds(db: Db, params: Record<string, unknown>): Promise<string[]> {
   if (Array.isArray(params.tileIds)) {
@@ -68,22 +68,12 @@ export async function seedTileIds(db: Db, params: Record<string, unknown>): Prom
     }
     return params.tileIds as string[];
   }
-  if (typeof params.areaKey !== "string" || params.areaKey === "") throw new Error("tileIds or areaKey is required");
-  const areaId = await areaGeoObjectId(db, params.areaKey);
-  if (!areaId) throw new Error(`Unknown area ${params.areaKey}`);
-  const rows = await db
-    .select({ id: tiles.id })
-    .from(tiles)
-    .where(and(eq(tiles.areaId, areaId), eq(tiles.hasCoast, true), validAt(tiles)))
-    .orderBy(asc(tiles.id));
-  return rows.map((r) => r.id);
-}
-
-/** The valid geo object of the area `areaKey` (written by `tiles.ensure`); null before it exists. */
-export async function areaGeoObjectId(db: Db, areaKey: string): Promise<string | null> {
-  const [area] = await db
-    .select({ id: geoObjects.id })
-    .from(geoObjects)
-    .where(and(eq(geoObjects.type, "area"), eq(geoObjects.configKey, areaKey), validAt(geoObjects)));
-  return area?.id ?? null;
+  if (typeof params.areaKey === "string" && params.areaKey !== "") {
+    throw new Error(retiredAreaKeyMessage(params.areaKey));
+  }
+  if (typeof params.subdivisionKey !== "string" || params.subdivisionKey === "") {
+    throw new Error("tileIds or subdivisionKey is required");
+  }
+  const sub = await requireSubdivision(db, params.subdivisionKey);
+  return subdivisionTileIds(db, sub.id);
 }

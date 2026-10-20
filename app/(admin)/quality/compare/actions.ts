@@ -12,12 +12,13 @@ import type { NavilySpot } from "@/lib/domain/quality/navily-sample";
 import { createLogger } from "@/lib/logger";
 import { requireAdmin } from "@/lib/security/require-admin";
 
-const areaKey = z.string().refine((key) => getConfig().areas.some((a) => a.key === key), "unknown area");
+/** An unknown subdivision (or a leftover area key) has no comparison set: the place is then not in it and the call fails. */
+const subdivisionKey = z.string().min(1);
 const HEX16 = /^[0-9a-f]{16}$/;
 
 const placeSchema = z.strictObject({
   placeId: z.uuid(),
-  areaKey,
+  subdivisionKey,
   evaluationRunId: z.uuid().optional(),
 });
 
@@ -47,7 +48,7 @@ export type AcceptProposalsResult =
  */
 export async function recordComparisonAction(input: {
   placeId: string;
-  areaKey: string;
+  subdivisionKey: string;
   attribute: ComparisonAttribute;
   result: "match" | "deviation" | "not_at_navily";
   valueHash: string;
@@ -72,7 +73,7 @@ export async function recordComparisonAction(input: {
  */
 export async function acceptProposalsAction(input: {
   placeId: string;
-  areaKey: string;
+  subdivisionKey: string;
   digest: string;
   evaluationRunId?: string;
 }): Promise<AcceptProposalsResult> {

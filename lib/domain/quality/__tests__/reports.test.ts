@@ -8,21 +8,28 @@ import { createRun } from "@/lib/domain/runs";
 import { QUALITY_MEASURE_STAGE } from "@/lib/pipeline/quality-stages";
 import { withRollback } from "@/test/db";
 import { NAVILY_MARKERS } from "@/test/quality";
+import { insertTestSubdivision } from "@/test/text";
 import { costReport, extrapolate, renderCostReport, renderPilotReport, type CostReport } from "../reports";
 import type { MeasurementView } from "../snapshot";
 
 // The cost and pilot reports (plan Task 16) on synthetic measurements: snapshot rows inserted directly, rolled back.
 
 const quality = getConfig().quality;
-const baseArea = getConfig().areas[0]!;
 
 type Metrics = Partial<Record<MetricKey, { value: number | null; details?: Record<string, unknown> }>>;
 
-/** A measurement run of `areaKey` with these area rows, as the measurement stores them. */
-async function measurement(tx: Db, areaKey: string, label: string, metrics: Metrics, window = { from: "2026-05-01T00:00:00.000Z", to: "2026-05-08T00:00:00.000Z" }) {
-  const { id } = await createRun(tx, { kind: "stage", scope: { type: "area", id: areaKey }, stages: [QUALITY_MEASURE_STAGE], params: { areaKey, label, ...window }, triggeredBy: "test" });
+/** A subdivision (outside the pilot box, rolled back) the cost report can refer to; returns its key. */
+async function reportSubdivision(tx: Db): Promise<string> {
+  const key = `XT-${newId()}`;
+  await insertTestSubdivision(tx, key, [10, 10, 10.5, 10.5]);
+  return key;
+}
+
+/** A measurement run of `subdivisionKey` with these subdivision rows, as the measurement stores them. */
+async function measurement(tx: Db, subdivisionKey: string, label: string, metrics: Metrics, window = { from: "2026-05-01T00:00:00.000Z", to: "2026-05-08T00:00:00.000Z" }) {
+  const { id } = await createRun(tx, { kind: "stage", scope: { type: "subdivision", id: subdivisionKey }, stages: [QUALITY_MEASURE_STAGE], params: { subdivisionKey, label, ...window }, triggeredBy: "test" });
   await tx.insert(qualitySnapshots).values(
-    Object.entries(metrics).map(([metric, m]) => ({ runId: id, scopeType: "area" as const, scopeId: areaKey, metric: metric as MetricKey, value: m!.value, details: m!.details ?? {} })),
+    Object.entries(metrics).map(([metric, m]) => ({ runId: id, scopeType: "subdivision" as const, scopeId: subdivisionKey, metric: metric as MetricKey, value: m!.value, details: m!.details ?? {} })),
   );
   return id;
 }
@@ -51,7 +58,7 @@ const view = (label: string, metrics: Metrics): MeasurementView => ({
 });
 
 const report: CostReport = {
-  areaKey: "saronic",
+  subdivisionKey: "saronic",
   first: {
     label: "Lauf 1",
     window: { from: new Date("2026-05-01T00:00:00Z"), to: new Date("2026-05-08T00:00:00Z") },
@@ -72,14 +79,14 @@ const report: CostReport = {
     byService: { anthropic: 36 },
     oneOff: { eur: 0, byKind: {} },
   },
-  assumptions: { placesPerArea: 120, placesPerAreaSource: "pilot", areasMin: 60, areasMax: 100, cycleDays: 30, revisitsPerYear: 365 / 30, revisitIntervalDays: 14 },
+  assumptions: { placesPerSubdivision: 120, placesPerSubdivisionSource: "pilot", subdivisionsMin: 60, subdivisionsMax: 100, cycleDays: 30, revisitsPerYear: 365 / 30, revisitIntervalDays: 14 },
   extrapolation: { initialMin: 8640, initialMax: 14400, yearlyMin: 26280, yearlyMax: 43800 },
   simulation: { totalEur: 1.48, byService: { anthropic: { calls: 3, eur: 1.4 }, voyage: { calls: 2, eur: 0.08 } } },
 };
 
 describe("extrapolate", () => {
   it("extrapolates 1.20 €/place, 120 places, 60–100 areas", () => {
-    expect(extrapolate({ perPlaceFirst: 1.2, perPlaceRevisit: 0.3, placesPerArea: 120, areasMin: 60, areasMax: 100, revisitsPerYear: 12 })).toEqual({
+    expect(extrapolate({ perPlaceFirst: 1.2, perPlaceRevisit: 0.3, placesPerSubdivision: 120, subdivisionsMin: 60, subdivisionsMax: 100, revisitsPerYear: 12 })).toEqual({
       initialMin: 8640,
       initialMax: 14400,
       yearlyMin: 25920,
@@ -88,7 +95,7 @@ describe("extrapolate", () => {
   });
 
   it("without a second run the yearly figures are null", () => {
-    expect(extrapolate({ perPlaceFirst: 0.5, perPlaceRevisit: null, placesPerArea: 100, areasMin: 60, areasMax: 100, revisitsPerYear: 12 })).toEqual({
+    expect(extrapolate({ perPlaceFirst: 0.5, perPlaceRevisit: null, placesPerSubdivision: 100, subdivisionsMin: 60, subdivisionsMax: 100, revisitsPerYear: 12 })).toEqual({
       initialMin: 3000,
       initialMax: 5000,
       yearlyMin: null,
@@ -98,19 +105,19 @@ describe("extrapolate", () => {
 });
 
 describe("renderCostReport", () => {
-  it("the cost report names stages, assumptions and 60–100 areas", () => {
+  it("the cost report names stages, assumptions and 60–100 subdivisions", () => {
     const md = renderCostReport(report);
     for (const s of ["Kosten je Stufe", "Kosten je Dienst", "Kosten je Ort und Lauf", "Annahmen", "Hochrechnung Mittelmeer", "60–100", "8.640,00 €"]) expect(md).toContain(s);
     expect(md).toContain("| extraction.mention | 108,00 € | 36,00 € |");
     expect(md).toContain("| Lauf 1 | 2026-05-01 bis 2026-05-07 | 144,00 € | 120 | 1,20 € |");
-    expect(md).toContain("- Ortszahl je Revier: 120 (bestätigte Orte des Pilotreviers)");
-    expect(md).toContain("- Zyklus: 30 Tage, also 12,2 Revisits je Revier und Jahr");
-    expect(md).toContain("Erstlauf (60–100 Reviere × 120 Orte): 8.640,00 € – 14.400,00 €");
+    expect(md).toContain("- Ortszahl je Landesteil: 120 (bestätigte Orte des Pilot-Landesteils)");
+    expect(md).toContain("- Zyklus: 30 Tage, also 12,2 Revisits je Landesteil und Jahr");
+    expect(md).toContain("Erstlauf (60–100 Landesteile × 120 Orte): 8.640,00 € – 14.400,00 €");
     expect(md).toContain("26.280,00 € – 43.800,00 €");
     expect(md).toContain("Einmalkosten Pilot im Zeitraum von Lauf 1 (nicht in den Betriebskosten, Ruling M7-P15): 13,50 € (modelComparison 13,50 €)");
     expect(md).toContain("Simulierter Revisit (Datenbank periplus_sim, getrennt gezählt): 1,48 €");
     expect(md).toMatch(/smoke:ai/);
-    expect(md).toMatch(/Kacheln ohne Revier zählen für niemanden/);
+    expect(md).toMatch(/Kacheln ohne Landesteil zählen für niemanden/);
     // the revisit-interval assumption with its range (M7-H-R1, M-1): 14 days measured against a 30-day cycle
     expect(md).toContain("- Abstand der Läufe: 14 Tage (Beginn Lauf 1 bis Beginn Lauf 2); die Hochrechnung setzt die Revisit-Kosten je Ort von Lauf 2 unverändert für einen Abstand von 30 Tagen an.");
     expect(md).toContain("Obergrenze: Revisit-Kosten wachsen linear mit dem Abstand, also Faktor 2,1 (30 / 14)");
@@ -125,14 +132,14 @@ describe("renderCostReport", () => {
 
   it("a second run without cost per place says so in the yearly line", () => {
     const md = renderCostReport({ ...report, second: { ...report.second!, perPlace: null, places: 0 }, extrapolation: { ...report.extrapolation, yearlyMin: null, yearlyMax: null } });
-    expect(md).toContain("Jahr (Revisits, 12,2 je Revier): – (Lauf 2 hat keine Kosten je Ort, keine bestätigten Orte)");
+    expect(md).toContain("Jahr (Revisits, 12,2 je Landesteil): – (Lauf 2 hat keine Kosten je Ort, keine bestätigten Orte)");
     expect(md).not.toContain("kein zweiter Lauf gemessen");
     expect(md).not.toContain("hochgerechnet (Obergrenze");
   });
 
   it("without a second run the yearly line says so", () => {
     const md = renderCostReport({ ...report, second: null, simulation: null, assumptions: { ...report.assumptions, revisitIntervalDays: null }, extrapolation: { ...report.extrapolation, yearlyMin: null, yearlyMax: null } });
-    expect(md).toContain("Jahr (Revisits, 12,2 je Revier): – (kein zweiter Lauf gemessen)");
+    expect(md).toContain("Jahr (Revisits, 12,2 je Landesteil): – (kein zweiter Lauf gemessen)");
     expect(md).toContain("Simulierter Revisit: keine Angabe");
     expect(md).not.toContain("Lauf 2");
     expect(md).not.toContain("Abstand der Läufe");
@@ -140,48 +147,54 @@ describe("renderCostReport", () => {
 });
 
 describe("costReport", () => {
-  it("costReport takes places per area from the pilot when config is null", () =>
+  it("costReport takes places per subdivision from the pilot when config is null", () =>
     withRollback(async (tx) => {
-      const areaKey = `report-${newId()}`;
-      const areas = [{ ...baseArea, key: areaKey, cycleDays: 30 }];
-      await measurement(tx, areaKey, "Lauf 1", { cost_per_place: costRow(1.2, 110) });
-      await measurement(tx, areaKey, "Lauf 2", { cost_per_place: costRow(0.3, 120) }, { from: "2026-05-15T00:00:00.000Z", to: "2026-05-16T00:00:00.000Z" });
-      const r = await costReport(tx, { areaKey, firstLabel: "Lauf 1", secondLabel: "Lauf 2", areas, cfg: { ...quality, extrapolation: { areasMin: 60, areasMax: 100, placesPerArea: null } } });
-      expect(r.assumptions).toEqual({ placesPerArea: 120, placesPerAreaSource: "pilot", areasMin: 60, areasMax: 100, cycleDays: 30, revisitsPerYear: 365 / 30, revisitIntervalDays: 14 });
+      const subdivisionKey = await reportSubdivision(tx);
+      await measurement(tx, subdivisionKey, "Lauf 1", { cost_per_place: costRow(1.2, 110) });
+      await measurement(tx, subdivisionKey, "Lauf 2", { cost_per_place: costRow(0.3, 120) }, { from: "2026-05-15T00:00:00.000Z", to: "2026-05-16T00:00:00.000Z" });
+      const r = await costReport(tx, { subdivisionKey, firstLabel: "Lauf 1", secondLabel: "Lauf 2", cycleDays: 30, cfg: { ...quality, extrapolation: { subdivisionsMin: 60, subdivisionsMax: 100, placesPerSubdivision: null } } });
+      expect(r.assumptions).toEqual({ placesPerSubdivision: 120, placesPerSubdivisionSource: "pilot", subdivisionsMin: 60, subdivisionsMax: 100, cycleDays: 30, revisitsPerYear: 365 / 30, revisitIntervalDays: 14 });
       expect(r.first).toMatchObject({ label: "Lauf 1", costEur: 132, places: 110, perPlace: 1.2, byService: { jina: 33, anthropic: 99 }, oneOff: { eur: 13.5 } });
       expect(r.first.window.from.toISOString()).toBe("2026-05-01T00:00:00.000Z");
       expect(r.second).toMatchObject({ label: "Lauf 2", perPlace: 0.3, places: 120 });
-      expect(r.extrapolation).toEqual(extrapolate({ perPlaceFirst: 1.2, perPlaceRevisit: 0.3, placesPerArea: 120, areasMin: 60, areasMax: 100, revisitsPerYear: 365 / 30 }));
+      expect(r.extrapolation).toEqual(extrapolate({ perPlaceFirst: 1.2, perPlaceRevisit: 0.3, placesPerSubdivision: 120, subdivisionsMin: 60, subdivisionsMax: 100, revisitsPerYear: 365 / 30 }));
       expect(r.simulation).toBeNull();
 
       // a configured place count wins; without a second run only the first counts
-      const configured = await costReport(tx, { areaKey, firstLabel: "Lauf 1", areas, cfg: { ...quality, extrapolation: { areasMin: 60, areasMax: 100, placesPerArea: 150 } } });
-      expect(configured.assumptions).toMatchObject({ placesPerArea: 150, placesPerAreaSource: "config" });
+      const configured = await costReport(tx, { subdivisionKey, firstLabel: "Lauf 1", cycleDays: 30, cfg: { ...quality, extrapolation: { subdivisionsMin: 60, subdivisionsMax: 100, placesPerSubdivision: 150 } } });
+      expect(configured.assumptions).toMatchObject({ placesPerSubdivision: 150, placesPerSubdivisionSource: "config" });
       expect(configured.second).toBeNull();
       expect(configured.assumptions.revisitIntervalDays).toBeNull();
       expect(configured.extrapolation).toEqual({ initialMin: 10800, initialMax: 18000, yearlyMin: null, yearlyMax: null });
       // and with only the first run, the pilot count is the first run's
-      const pilotOnly = await costReport(tx, { areaKey, firstLabel: "Lauf 1", areas, cfg: { ...quality, extrapolation: { areasMin: 60, areasMax: 100, placesPerArea: null } } });
-      expect(pilotOnly.assumptions.placesPerArea).toBe(110);
+      const pilotOnly = await costReport(tx, { subdivisionKey, firstLabel: "Lauf 1", cycleDays: 30, cfg: { ...quality, extrapolation: { subdivisionsMin: 60, subdivisionsMax: 100, placesPerSubdivision: null } } });
+      expect(pilotOnly.assumptions.placesPerSubdivision).toBe(110);
     }));
 
-  it("refuses an unknown measurement, an unconfigured area and a run without cost per place", () =>
+  it("the cycle comes from the subdivision's config (its country's value) unless given", () =>
     withRollback(async (tx) => {
-      const areaKey = `report-${newId()}`;
-      const areas = [{ ...baseArea, key: areaKey }];
-      await measurement(tx, areaKey, "leer", { cost_per_place: { value: null, details: { costEur: 0, places: 0 } } });
-      await expect(costReport(tx, { areaKey, firstLabel: "Lauf 9", areas })).rejects.toThrow(`Keine Messung „Lauf 9“ für das Revier ${areaKey}`);
-      await expect(costReport(tx, { areaKey: "nirgendwo", firstLabel: "leer", areas })).rejects.toThrow("Revier nirgendwo ist nicht konfiguriert");
-      await expect(costReport(tx, { areaKey, firstLabel: "leer", areas })).rejects.toThrow("hat keine Kosten je Ort");
+      const subdivisionKey = await reportSubdivision(tx);
+      await measurement(tx, subdivisionKey, "Lauf 1", { cost_per_place: costRow(1.2, 110) });
+      const days = getConfig().subdivisions.countries["GR"]!.cycleDays;
+      const r = await costReport(tx, { subdivisionKey, firstLabel: "Lauf 1" });
+      expect(r.assumptions).toMatchObject({ cycleDays: days, revisitsPerYear: 365 / days });
+    }));
+
+  it("refuses an unknown measurement, an unknown subdivision and a run without cost per place", () =>
+    withRollback(async (tx) => {
+      const subdivisionKey = await reportSubdivision(tx);
+      await measurement(tx, subdivisionKey, "leer", { cost_per_place: { value: null, details: { costEur: 0, places: 0 } } });
+      await expect(costReport(tx, { subdivisionKey, firstLabel: "Lauf 9", cycleDays: 30 })).rejects.toThrow(`Keine Messung „Lauf 9“ für den Landesteil ${subdivisionKey}`);
+      await expect(costReport(tx, { subdivisionKey: "nirgendwo", firstLabel: "leer", cycleDays: 30 })).rejects.toThrow("Unbekannter Landesteil nirgendwo");
+      await expect(costReport(tx, { subdivisionKey, firstLabel: "leer", cycleDays: 30 })).rejects.toThrow("hat keine Kosten je Ort");
     }));
 
   it("refuses swapped labels: the second measurement starting before the first (final review B M-10)", () =>
     withRollback(async (tx) => {
-      const areaKey = `report-${newId()}`;
-      const areas = [{ ...baseArea, key: areaKey, cycleDays: 30 }];
-      await measurement(tx, areaKey, "Lauf 1", { cost_per_place: costRow(1.2, 110) });
-      await measurement(tx, areaKey, "Lauf 2", { cost_per_place: costRow(0.3, 120) }, { from: "2026-05-15T00:00:00.000Z", to: "2026-05-16T00:00:00.000Z" });
-      await expect(costReport(tx, { areaKey, firstLabel: "Lauf 2", secondLabel: "Lauf 1", areas })).rejects.toThrow(
+      const subdivisionKey = await reportSubdivision(tx);
+      await measurement(tx, subdivisionKey, "Lauf 1", { cost_per_place: costRow(1.2, 110) });
+      await measurement(tx, subdivisionKey, "Lauf 2", { cost_per_place: costRow(0.3, 120) }, { from: "2026-05-15T00:00:00.000Z", to: "2026-05-16T00:00:00.000Z" });
+      await expect(costReport(tx, { subdivisionKey, firstLabel: "Lauf 2", secondLabel: "Lauf 1", cycleDays: 30 })).rejects.toThrow(
         "Messung „Lauf 1“ beginnt vor „Lauf 2“: erst den früheren Lauf, dann den späteren angeben",
       );
     }));
@@ -224,7 +237,7 @@ describe("renderPilotReport", () => {
     places_per_tile: { value: 23 },
   });
   const base = {
-    areaKey: "saronic",
+    subdivisionKey: "saronic",
     first,
     second,
     targets: quality,

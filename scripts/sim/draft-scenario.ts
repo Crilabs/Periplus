@@ -8,7 +8,7 @@ import { requireSimulationEnv } from "../../lib/domain/revisit/guard";
 import { getEnv } from "../../lib/env";
 
 /*
- * `npm run sim:draft-scenario -- --area <key> --out data/sim/<file>.json [--seed <n>]` (spec 10, plan Task 15): drafts
+ * `npm run sim:draft-scenario -- --subdivision <key> --out data/sim/<file>.json [--seed <n>]` (spec 10, plan Task 15): drafts
  * the ten entries of a simulated revisit from the simulation clone's archive (`draftScenario`) and writes them for
  * Christian to review by hand before `sim:revisit`. Only in a simulation (`requireSimulationEnv`, first of all), only
  * under the git-ignored `data/sim/` (the draft quotes third-party sentences verbatim, ruling M7-F-R3), never over an
@@ -18,13 +18,13 @@ import { getEnv } from "../../lib/env";
 /** Where drafts go: git-ignored, never committed. */
 export const DRAFT_DIR = "data/sim";
 
-const USAGE = "usage: sim/draft-scenario.ts --area <key> --out data/sim/<file>.json [--seed <n>]";
+const USAGE = "usage: sim/draft-scenario.ts --subdivision <key> --out data/sim/<file>.json [--seed <n>]";
 
-export type DraftArgs = { area: string; out: string; seed: number };
+export type DraftArgs = { subdivision: string; out: string; seed: number };
 
-const FLAGS = ["--area", "--out", "--seed"];
+const FLAGS = ["--subdivision", "--out", "--seed"];
 
-/** `--area` and `--out` (a `.json` file under `data/sim/`) are required; `--seed` a non-negative integer, default 1. */
+/** `--subdivision` and `--out` (a `.json` file under `data/sim/`) are required; `--seed` a non-negative integer, default 1. */
 export function parseArgs(argv: string[], cwd = process.cwd()): DraftArgs {
   const values: Record<string, string> = {};
   for (let i = 0; i < argv.length; i += 2) {
@@ -33,16 +33,16 @@ export function parseArgs(argv: string[], cwd = process.cwd()): DraftArgs {
     if (!FLAGS.includes(flag) || value === undefined || value.startsWith("--") || values[flag] !== undefined) throw new Error(USAGE);
     values[flag] = value;
   }
-  const area = values["--area"];
+  const subdivision = values["--subdivision"];
   const out = values["--out"];
-  if (!area || !out) throw new Error(USAGE);
+  if (!subdivision || !out) throw new Error(USAGE);
   const relative = path.relative(path.resolve(cwd, DRAFT_DIR), path.resolve(cwd, out));
   if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative) || !out.endsWith(".json")) {
     throw new Error(`--out muss eine .json-Datei unter ${DRAFT_DIR}/ sein (git-ignoriert: der Entwurf zitiert fremde Seiten wörtlich)`);
   }
   const seed = values["--seed"] === undefined ? 1 : Number(values["--seed"]);
   if (!Number.isInteger(seed) || seed < 0) throw new Error(USAGE);
-  return { area, out, seed };
+  return { subdivision, out, seed };
 }
 
 /** The CLI's summary of a draft, in German: one line per entry, then the gaps and the review reminder. */
@@ -77,7 +77,7 @@ async function main(): Promise<void> {
   const { db, close } = createDb(env.DATABASE_URL);
   let draft: ScenarioDraft;
   try {
-    draft = await draftScenario(db, getArchive(), { areaKey: args.area, seed: args.seed });
+    draft = await draftScenario(db, getArchive(), { subdivisionKey: args.subdivision, seed: args.seed });
   } finally {
     await close();
   }

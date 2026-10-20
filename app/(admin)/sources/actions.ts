@@ -3,7 +3,6 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { DOC_TYPES } from "@/lib/db/schema";
 import { tileExists } from "@/lib/domain/geo-view";
@@ -19,9 +18,7 @@ import { startAndRedirect } from "../_components/run-start";
 
 const fields = (input: FormData | object) => (input instanceof FormData ? Object.fromEntries(input) : input);
 
-const areaSchema = z.object({
-  areaKey: z.string().refine((key) => getConfig().areas.some((a) => a.key === key), "unknown area"),
-});
+const subdivisionSchema = z.object({ subdivisionKey: z.string().min(1) });
 const tileSchema = z.object({ tileId: z.string().regex(/^q025:\d+:\d+$/) });
 const newSourceSchema = z.object({
   domain: z.string().trim().min(1).max(500),
@@ -74,13 +71,13 @@ export async function crawlAllApprovedAction(): Promise<void> {
   redirect(target);
 }
 
-/** "Quellenfindung" for a configured area. */
-export async function discoveryAreaAction(input: FormData | { areaKey: string }): Promise<void> {
+/** "Quellenfindung" for a subdivision. */
+export async function discoveryAreaAction(input: FormData | { subdivisionKey: string }): Promise<void> {
   const admin = await requireAdmin();
-  const { areaKey } = areaSchema.parse(fields(input));
+  const { subdivisionKey } = subdivisionSchema.parse(fields(input));
   const db = getDb();
   const boss = await getBoss();
-  await startAndRedirect(() => startDiscoveryRun(db, boss, { areaKey }, admin.email), "/sources");
+  await startAndRedirect(() => startDiscoveryRun(db, boss, { subdivisionKey }, admin.email), "/sources");
 }
 
 /** "Quellenfindung" for one existing tile (button of the tile page); refusals return to the tile page. */
@@ -100,13 +97,13 @@ export async function proposalRunAction(): Promise<void> {
   await startAndRedirect(() => startProposalRun(db, boss, admin.email), "/sources");
 }
 
-/** "Wikivoyage" for a configured area. */
-export async function wikivoyageRunAction(input: FormData | { areaKey: string }): Promise<void> {
+/** "Wikivoyage" for a subdivision. */
+export async function wikivoyageRunAction(input: FormData | { subdivisionKey: string }): Promise<void> {
   const admin = await requireAdmin();
-  const { areaKey } = areaSchema.parse(fields(input));
+  const { subdivisionKey } = subdivisionSchema.parse(fields(input));
   const db = getDb();
   const boss = await getBoss();
-  await startAndRedirect(() => startWikivoyageRun(db, boss, areaKey, admin.email), "/sources");
+  await startAndRedirect(() => startWikivoyageRun(db, boss, subdivisionKey, admin.email), "/sources");
 }
 
 /** "Einbettungen nachholen": embeds every chunk still without an embedding. */

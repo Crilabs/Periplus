@@ -1,9 +1,9 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
-import { areaByKey } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { documents, runs, sources } from "@/lib/db/schema";
 import { createRun } from "@/lib/domain/runs";
+import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { ensureWhitelistSources, sourceIdByDomain } from "@/lib/domain/sources/store";
 import { EMBED_STAGE } from "../embed";
 import { enqueueStage, startRun } from "../runs";
@@ -190,13 +190,13 @@ export async function startEmbedBackfillRun(db: Db, boss: PgBoss, triggeredBy: s
 const EMBED_BACKFILL_LOCK = "embed-backfill-run";
 
 /**
- * Starts the run "Wikivoyage" for an area: creates the whitelist sources that are missing, then queues the area's
+ * Starts the run "Wikivoyage" for a subdivision: creates the whitelist sources that are missing, then queues its
  * Wikivoyage articles (`sources.wikivoyage`) and crawls them like any source (`FETCH_RUN_STAGES`). Checked before the
- * run exists: the area is configured, the Wikivoyage source is not ended (`wikivoyage_source_ended`), approved and
+ * run exists: the subdivision exists (an area key fails with the replacement hint), the Wikivoyage source is not ended (`wikivoyage_source_ended`), approved and
  * not being fetched already.
  */
-export async function startWikivoyageRun(db: Db, boss: PgBoss, areaKey: string, triggeredBy: string): Promise<{ id: string }> {
-  areaByKey(areaKey);
+export async function startWikivoyageRun(db: Db, boss: PgBoss, subdivisionKey: string, triggeredBy: string): Promise<{ id: string }> {
+  await requireSubdivision(db, subdivisionKey);
   await ensureWhitelistSources(db);
   const sourceId = await sourceIdByDomain(db, WIKIVOYAGE_DOMAIN);
   if (!sourceId) {
@@ -208,8 +208,8 @@ export async function startWikivoyageRun(db: Db, boss: PgBoss, areaKey: string, 
   await assertApproved(db, [sourceId]);
   const { id } = await startExclusiveFetchRun(db, boss, [sourceId], { skipBusy: false }, () => ({
     kind: "stage",
-    scope: { type: "area", id: areaKey },
-    params: { areaKey, sourceIds: [sourceId] },
+    scope: { type: "subdivision", id: subdivisionKey },
+    params: { subdivisionKey, sourceIds: [sourceId] },
     stages: [WIKIVOYAGE_STAGE, ...FETCH_RUN_STAGES],
     triggeredBy,
   }));

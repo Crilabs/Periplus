@@ -11,7 +11,7 @@ import { QUALITY_MEASURE_STAGE } from "@/lib/pipeline/quality-stages";
 import { insertMention, insertProfile, insertSource } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { quietDay } from "@/test/external-calls";
-import { insertQualityArea, NAVILY_MARKERS, rowsWrittenInTransaction } from "@/test/quality";
+import { insertQualitySubdivision, NAVILY_MARKERS, rowsWrittenInTransaction } from "@/test/quality";
 import {
   computeQualitySnapshot,
   isSerializationFailure,
@@ -23,37 +23,37 @@ import {
   tileSnapshots,
 } from "../snapshot";
 
-// Measurements of a synthetic area at 21.0–21.3° E / 35.2° N (outside the pilot box), rolled back; the window is a
+// Measurements of a synthetic subdivision at 21.0–21.3° E / 35.2° N (outside the pilot box), rolled back; the window is a
 // far-future day nobody else writes to, so spend, review and run sums are never DB-wide.
 
 const quality = getConfig().quality;
 const DAY_MS = 24 * 3_600_000;
 const WEST = { lon: 21.01, lat: 35.2 };
 const EAST = { lon: 21.26, lat: 35.2 };
-const AREA_METRICS = METRIC_KEYS.filter((m) => m !== "coverage_navily");
+const SUBDIVISION_METRICS = METRIC_KEYS.filter((m) => m !== "coverage_navily");
 
 async function scene(tx: Db) {
   const from = await quietDay(tx);
   const window = { from, to: new Date(from.getTime() + DAY_MS) };
-  const area = await insertQualityArea(tx, [WEST, EAST]);
+  const sub = await insertQualitySubdivision(tx, [WEST, EAST]);
   const [s1, s2] = [await insertSource(tx), await insertSource(tx)];
   for (let i = 0; i < 3; i++) {
-    const p = await area.addPlace({ inSet: true });
+    const p = await sub.addPlace({ inSet: true });
     await insertMention(tx, p.geoObjectId, { sourceId: s1 });
     if (i === 0) await insertMention(tx, p.geoObjectId, { sourceId: s2 });
     await insertProfile(tx, p.geoObjectId, { "highlight.food": { present: i === 0, names: [] } }, {});
   }
-  await area.addPlace({ at: EAST });
-  return { ...area, window };
+  await sub.addPlace({ at: EAST });
+  return { ...sub, window };
 }
 
-/** A measurement run of the area, as `startMeasurement` creates it. */
-async function measurementRun(tx: Db, areaKey: string, label: string, window: { from: Date; to: Date }) {
+/** A measurement run of the subdivision, as `startMeasurement` creates it. */
+async function measurementRun(tx: Db, subdivisionKey: string, label: string, window: { from: Date; to: Date }) {
   const { id } = await createRun(tx, {
     kind: "stage",
-    scope: { type: "area", id: areaKey },
+    scope: { type: "subdivision", id: subdivisionKey },
     stages: [QUALITY_MEASURE_STAGE],
-    params: { areaKey, label, from: window.from.toISOString(), to: window.to.toISOString() },
+    params: { subdivisionKey, label, from: window.from.toISOString(), to: window.to.toISOString() },
     triggeredBy: "test",
   });
   return id;
@@ -62,25 +62,25 @@ async function measurementRun(tx: Db, areaKey: string, label: string, window: { 
 const rowsOf = (tx: Db, runId: string) => tx.select().from(qualitySnapshots).where(eq(qualitySnapshots.runId, runId));
 
 describe("computeQualitySnapshot", () => {
-  it("a measurement writes area rows for 13 metrics and tile rows for 8", () =>
+  it("a measurement writes subdivision rows for 13 metrics and tile rows for 8", () =>
     withRollback(async (tx) => {
-      const { areaKey, tileIds, window } = await scene(tx);
-      const runId = await measurementRun(tx, areaKey, "Lauf 1", window);
-      const r = await computeQualitySnapshot(tx, { runId, areaKey, window, today: "2026-10-20", cfg: quality });
-      // 13 area metrics: every key but coverage_navily, multi_document included (ruling M7-P30)
-      expect(AREA_METRICS).toHaveLength(13);
+      const { subdivisionKey, tileIds, window } = await scene(tx);
+      const runId = await measurementRun(tx, subdivisionKey, "Lauf 1", window);
+      const r = await computeQualitySnapshot(tx, { runId, subdivisionKey, window, today: "2026-10-20", cfg: quality });
+      // 13 subdivision metrics: every key but coverage_navily, multi_document included (ruling M7-P30)
+      expect(SUBDIVISION_METRICS).toHaveLength(13);
       // multi_document is the acceptance metric (ruling M7-P12), so tiles have it too (ruling M7-D-R1)
       expect(TILE_METRICS).toContain("multi_document");
       expect(r).toEqual({ rows: 13 + 2 * 8, skipped: false });
 
       const rows = await rowsOf(tx, runId);
-      const area = rows.filter((x) => x.scopeType === "area");
-      expect(area.every((x) => x.scopeId === areaKey)).toBe(true);
-      expect(area.map((x) => x.metric).sort()).toEqual([...AREA_METRICS].sort());
+      const subRows = rows.filter((x) => x.scopeType === "subdivision");
+      expect(subRows.every((x) => x.scopeId === subdivisionKey)).toBe(true);
+      expect(subRows.map((x) => x.metric).sort()).toEqual([...SUBDIVISION_METRICS].sort());
       for (const tileId of tileIds) {
         expect(rows.filter((x) => x.scopeType === "tile" && x.scopeId === tileId).map((x) => x.metric).sort()).toEqual([...TILE_METRICS].sort());
       }
-      const value = (metric: MetricKey, scopeId = areaKey) => rows.find((x) => x.metric === metric && x.scopeId === scopeId)!.value;
+      const value = (metric: MetricKey, scopeId = subdivisionKey) => rows.find((x) => x.metric === metric && x.scopeId === scopeId)!.value;
       expect(value("coverage")).toBe(1);
       expect(value("multi_source")).toBeCloseTo(1 / 4);
       expect(value("multi_document")).toBeCloseTo(1 / 4);
@@ -94,22 +94,22 @@ describe("computeQualitySnapshot", () => {
 
   it("tile rows are written for coast tiles valid on the measurement date only (ruling M7-D-R2)", () =>
     withRollback(async (tx) => {
-      const { areaKey, tileIds, window } = await scene(tx);
-      const third = await insertQualityArea(tx, [{ lon: 21.51, lat: 35.2 }]);
-      await tx.execute(sql`update tiles set area_id = (select area_id from tiles where id = ${tileIds[0]!}) where id = ${third.tileIds[0]!}`);
+      const { subdivisionKey, tileIds, window } = await scene(tx);
+      const third = await insertQualitySubdivision(tx, [{ lon: 21.51, lat: 35.2 }]);
+      await tx.execute(sql`update tiles set subdivision_id = (select subdivision_id from tiles where id = ${tileIds[0]!}) where id = ${third.tileIds[0]!}`);
       // the east tile has no coast; the third tile ends on 2030-12-01, valid on the database date but not on today
       await tx.execute(sql`update tiles set has_coast = false where id = ${tileIds[1]!}`);
       await tx.execute(sql`update tiles set valid_to = '2030-12-01' where id = ${third.tileIds[0]!}`);
-      const runId = await measurementRun(tx, areaKey, "Lauf 1", window);
-      await computeQualitySnapshot(tx, { runId, areaKey, window, today: "2031-01-01", cfg: quality });
+      const runId = await measurementRun(tx, subdivisionKey, "Lauf 1", window);
+      await computeQualitySnapshot(tx, { runId, subdivisionKey, window, today: "2031-01-01", cfg: quality });
       const tileRows = (await rowsOf(tx, runId)).filter((x) => x.scopeType === "tile");
       expect([...new Set(tileRows.map((x) => x.scopeId))]).toEqual([tileIds[0]]);
     }));
 
   it("a measurement reads all its metrics from one snapshot: a repeatable read transaction (final review A M-2)", () =>
     withRollback(async (tx) => {
-      const { areaKey, window } = await scene(tx);
-      const runId = await measurementRun(tx, areaKey, "Lauf 1", window);
+      const { subdivisionKey, window } = await scene(tx);
+      const runId = await measurementRun(tx, subdivisionKey, "Lauf 1", window);
       const configs: unknown[] = [];
       // the test transaction runs the nested one as a savepoint; the proxy records the options it was asked for
       const db = new Proxy(tx, {
@@ -121,27 +121,27 @@ describe("computeQualitySnapshot", () => {
               }
             : Reflect.get(target, prop, receiver),
       });
-      expect((await computeQualitySnapshot(db, { runId, areaKey, window, today: "2026-10-20", cfg: quality })).skipped).toBe(false);
+      expect((await computeQualitySnapshot(db, { runId, subdivisionKey, window, today: "2026-10-20", cfg: quality })).skipped).toBe(false);
       expect(configs).toEqual([{ isolationLevel: "repeatable read" }]);
     }));
 
   it("a retried job writes nothing twice", () =>
     withRollback(async (tx) => {
-      const { areaKey, window } = await scene(tx);
-      const runId = await measurementRun(tx, areaKey, "Lauf 1", window);
+      const { subdivisionKey, window } = await scene(tx);
+      const runId = await measurementRun(tx, subdivisionKey, "Lauf 1", window);
       const logs: Array<Record<string, unknown>> = [];
       const ctx = { db: tx, runId, jobId: newId(), log: { info: (f: Record<string, unknown>) => void logs.push(f), warn: () => undefined, error: () => undefined } };
-      const job = { key: areaKey, areaKey, runId, stage: QUALITY_MEASURE_STAGE };
+      const job = { key: subdivisionKey, subdivisionKey, runId, stage: QUALITY_MEASURE_STAGE };
       await qualityMeasureHandler(job, ctx as unknown as JobContext);
       const first = (await rowsOf(tx, runId)).length;
       expect(first).toBe(13 + 2 * 8);
       await qualityMeasureHandler(job, ctx as unknown as JobContext);
       expect((await rowsOf(tx, runId)).length).toBe(first);
       expect(logs).toEqual([
-        { runId, areaKey, rows: first, skipped: false },
-        { runId, areaKey, rows: 0, skipped: true },
+        { runId, subdivisionKey, rows: first, skipped: false },
+        { runId, subdivisionKey, rows: 0, skipped: true },
       ]);
-      expect(await computeQualitySnapshot(tx, { runId, areaKey, window, today: "2026-10-20" })).toEqual({ rows: 0, skipped: true });
+      expect(await computeQualitySnapshot(tx, { runId, subdivisionKey, window, today: "2026-10-20" })).toEqual({ rows: 0, skipped: true });
     }));
 
   it("a serialization failure (40001), also wrapped as a cause, is recognised; other errors are not", () => {
@@ -153,9 +153,9 @@ describe("computeQualitySnapshot", () => {
 
   it("snapshot details hold counts and own ids only (Grundprinzip 9, ruling M7-P23)", () =>
     withRollback(async (tx) => {
-      const { areaKey, window } = await scene(tx);
-      const runId = await measurementRun(tx, areaKey, "Lauf 1", window);
-      await computeQualitySnapshot(tx, { runId, areaKey, window, today: "2026-10-20" });
+      const { subdivisionKey, window } = await scene(tx);
+      const runId = await measurementRun(tx, subdivisionKey, "Lauf 1", window);
+      await computeQualitySnapshot(tx, { runId, subdivisionKey, window, today: "2026-10-20" });
       const ownId = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|q025:\d+:\d+|\d{4}-\d{2}-\d{2})$/;
       const strings = (v: unknown): string[] =>
         typeof v === "string" ? [v] : Array.isArray(v) ? v.flatMap(strings) : v && typeof v === "object" ? Object.values(v).flatMap(strings) : [];
@@ -167,26 +167,26 @@ describe("computeQualitySnapshot", () => {
 });
 
 describe("measurement views", () => {
-  it("latest, list, by label and tile rows read stored measurements of the area", () =>
+  it("latest, list, by label and tile rows read stored measurements of the subdivision", () =>
     withRollback(async (tx) => {
-      const { areaKey, tileIds, window } = await scene(tx);
-      expect(await latestMeasurement(tx, areaKey)).toBeNull();
-      const first = await measurementRun(tx, areaKey, "Lauf 1", window);
-      await computeQualitySnapshot(tx, { runId: first, areaKey, window, today: "2026-10-20" });
+      const { subdivisionKey, tileIds, window } = await scene(tx);
+      expect(await latestMeasurement(tx, subdivisionKey)).toBeNull();
+      const first = await measurementRun(tx, subdivisionKey, "Lauf 1", window);
+      await computeQualitySnapshot(tx, { runId: first, subdivisionKey, window, today: "2026-10-20" });
       const secondWindow = { from: window.to, to: new Date(window.to.getTime() + DAY_MS) };
-      const second = await measurementRun(tx, areaKey, "Lauf 2", secondWindow);
-      await computeQualitySnapshot(tx, { runId: second, areaKey, window: secondWindow, today: "2026-10-20" });
+      const second = await measurementRun(tx, subdivisionKey, "Lauf 2", secondWindow);
+      await computeQualitySnapshot(tx, { runId: second, subdivisionKey, window: secondWindow, today: "2026-10-20" });
       // a measurement run without stored rows (queued) is not a measurement yet
-      await measurementRun(tx, areaKey, "Lauf 3", { from: secondWindow.to, to: new Date(secondWindow.to.getTime() + DAY_MS) });
+      await measurementRun(tx, subdivisionKey, "Lauf 3", { from: secondWindow.to, to: new Date(secondWindow.to.getTime() + DAY_MS) });
       // ids are time ordered: the second run is the newest
-      const latest = await latestMeasurement(tx, areaKey);
+      const latest = await latestMeasurement(tx, subdivisionKey);
       expect(latest).toMatchObject({ runId: second, label: "Lauf 2", from: secondWindow.from, to: secondWindow.to });
       expect(latest!.metrics.coverage).toEqual({ value: 1, details: { set: 3, confirmed: 3 } });
-      expect(Object.keys(latest!.metrics).sort()).toEqual([...AREA_METRICS].sort());
-      expect((await listMeasurements(tx, areaKey, 10)).map((m) => m.label)).toEqual(["Lauf 2", "Lauf 1"]);
-      expect((await listMeasurements(tx, areaKey, 1)).map((m) => m.label)).toEqual(["Lauf 2"]);
-      expect((await measurementByLabel(tx, areaKey, "Lauf 1"))?.runId).toBe(first);
-      expect(await measurementByLabel(tx, areaKey, "Lauf 3")).toBeNull();
+      expect(Object.keys(latest!.metrics).sort()).toEqual([...SUBDIVISION_METRICS].sort());
+      expect((await listMeasurements(tx, subdivisionKey, 10)).map((m) => m.label)).toEqual(["Lauf 2", "Lauf 1"]);
+      expect((await listMeasurements(tx, subdivisionKey, 1)).map((m) => m.label)).toEqual(["Lauf 2"]);
+      expect((await measurementByLabel(tx, subdivisionKey, "Lauf 1"))?.runId).toBe(first);
+      expect(await measurementByLabel(tx, subdivisionKey, "Lauf 3")).toBeNull();
       expect(await latestMeasurement(tx, `test-${newId()}`)).toBeNull();
 
       const tiles = await tileSnapshots(tx, first);

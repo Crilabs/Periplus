@@ -8,7 +8,7 @@ import { canonicalJson } from "@/lib/domain/facts/schema";
 /*
  * Contract versions (spec 08 "profileVersion im Vertrag = Version des Vertragsobjekts … steigt nur, wenn sich das
  * gelieferte Objekt ändert"): a version is keyed by the hash of the serialized contract object without its version
- * fields. Spot and highlight versions count per public id across areas, region versions per area (ruling M6-P13).
+ * fields. Spot and highlight versions count per public id across subdivisions, region versions per subdivision (ruling M6-P13).
  */
 
 /** A contract object of the next package before it gets its version. */
@@ -20,9 +20,9 @@ export type ObjectDraft = {
 };
 
 /**
- * The area's latest delivered version of an object. `maxVersion`: the highest version of the public id anywhere (spot
- * and highlight versions are global, ruling M6-P13), the base of the next one; equal to `profileVersion` unless the
- * object was also delivered by another area.
+ * The subdivision's latest delivered version of an object. `maxVersion`: the highest version of the public id anywhere
+ * (spot and highlight versions are global, ruling M6-P13), the base of the next one; equal to `profileVersion` unless
+ * the object was also delivered by another subdivision (or by a pilot package of contract 1.0).
  */
 export type LatestDelivered = {
   profileVersion: number;
@@ -80,17 +80,17 @@ type LatestRow = {
 };
 
 /**
- * Per public id, the area's latest delivered row (highest `profile_version`), with `maxVersion` over every area for
- * spots and highlights. A spot or highlight delivered only by other areas is part of the map as `removed` (it is not
- * in this area's package) carrying its global version, so delivering it here continues the version instead of
- * restarting at 1 (a tile relabel, ruling M6-P13).
+ * Per public id, the subdivision's latest delivered row (highest `profile_version`), with `maxVersion` over every
+ * package for spots and highlights. A spot or highlight delivered only by other subdivisions is part of the map as
+ * `removed` (it is not in this subdivision's package) carrying its global version, so delivering it here continues
+ * the version instead of restarting at 1 (a place that changed its subdivision, ruling M6-P13).
  */
-export async function latestDelivered(db: Db, areaId: string): Promise<Map<string, DeliveredEntry>> {
+export async function latestDelivered(db: Db, subdivisionId: string): Promise<Map<string, DeliveredEntry>> {
   const { rows } = await db.execute<LatestRow>(sql`
     with candidates as (
-      select d.*, d.area_id = ${areaId}::uuid as own, max(d.profile_version) over (partition by d.public_id) as max_version
+      select d.*, coalesce(d.subdivision_id = ${subdivisionId}::uuid, false) as own, max(d.profile_version) over (partition by d.public_id) as max_version
       from delivered_objects d
-      where d.area_id = ${areaId}::uuid or d.object_type in ('spot', 'highlight')
+      where d.subdivision_id = ${subdivisionId}::uuid or d.object_type in ('spot', 'highlight')
     )
     select distinct on (public_id) public_id, object_type, geo_object_id, profile_version, content_hash,
            valid_from::text as valid_from, removed, own, max_version
@@ -119,7 +119,7 @@ const nextVersion = (l: LatestDelivered) => Math.max(l.maxVersion ?? l.profileVe
 /**
  * Versions of the next package: an object without an entry or with a `removed` one is `created` (the version after the
  * last one, else 1); the same hash keeps version and `validFrom` (`same`); another hash is `updated` with the next
- * version from `today`. `removed`: the area's delivered objects missing from the drafts, with their next version.
+ * version from `today`. `removed`: the subdivision's delivered objects missing from the drafts, with their next version.
  */
 export function assignVersions(
   drafts: ObjectDraft[],

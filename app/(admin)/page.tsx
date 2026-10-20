@@ -130,7 +130,7 @@ export default async function Page() {
                   <li key={d.id}>
                     <Link href={`/deliveries/${d.id}`} className="flex items-center justify-between gap-3 px-4 py-2 hover:bg-sunken/50">
                       <span className="min-w-0 truncate">
-                        {d.areaName ?? "Revier"}
+                        {d.scopeName ?? "Landesteil"}
                         {d.dataVersion !== null && <span className="text-muted tabular-nums"> · Version {d.dataVersion}</span>}
                       </span>
                       <span className="flex shrink-0 items-center gap-2">

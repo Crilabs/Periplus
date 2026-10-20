@@ -1,6 +1,6 @@
 import type { RegionBody } from "@/contract";
 import type { z } from "zod";
-import type { regionType } from "@/contract/v1";
+import type { regionType } from "@/contract/v2";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import { distanceNm, distanceToPolygonNm, round5 } from "./geo";
 import type { LonLat, PassageSource, RegionSource } from "./types";
@@ -133,10 +133,10 @@ function regionFacts(attributes: Record<string, unknown>): RegionBody["facts"] {
 
 export function mapRegion(
   src: RegionSource,
-  ctx: { areaPublicId: string; regionPublicIds: Map<string, string>; spotIds: string[]; cfg: DeliveryConfig },
+  ctx: { regionPublicIds: Map<string, string>; spotIds: string[]; cfg: DeliveryConfig },
 ): RegionBody {
   if (!Object.hasOwn(REGION_TYPE, src.type)) throw new Error(`region ${src.publicId} has type ${src.type}, not a region type`);
-  // the nearest ancestor delivered in this package (ended objects, other kinds and the area itself are not in the map)
+  // the nearest ancestor delivered in this package (ended objects, other kinds, regions of another subdivision and the administrative units are not in the map); none: null
   const parent = src.parentGeoObjectIds.map((id) => ctx.regionPublicIds.get(id)).find((id) => id !== undefined);
   const facts = regionFacts(src.profile?.attributes ?? {});
   const character = regionCharacter(facts, ctx.cfg);
@@ -149,7 +149,7 @@ export function mapRegion(
     radiusNm: Math.max(MIN_RADIUS_NM, Number(src.radiusNm.toFixed(1))),
     // 2D positions from ST_AsGeoJSON with 5 decimals (loader)
     polygon: (src.polygon ?? undefined) as RegionBody["polygon"],
-    parentId: parent ?? ctx.areaPublicId,
+    parentId: parent ?? null,
     spotIds: [...ctx.spotIds].sort(byId),
     character: character === null ? undefined : { de: character },
     facts,

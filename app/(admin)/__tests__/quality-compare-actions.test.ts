@@ -5,17 +5,17 @@ import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { comparisonResults, comparisonSet, evaluationProfiles, geoObjects, places, reviewTasks, runs } from "@/lib/db/schema";
+import { comparisonResults, comparisonSet, evaluationProfiles, places, reviewTasks, runs } from "@/lib/db/schema";
 import { createRun } from "@/lib/domain/runs";
 import { CONSOLIDATION_GEO_STAGE } from "@/lib/pipeline/consolidation/stages";
 import { comparisonValues, loadComparisonSubjects } from "@/lib/domain/quality/comparison-values";
-import { areaComparisonView } from "@/lib/domain/quality/navily-compare";
+import { subdivisionComparisonView } from "@/lib/domain/quality/navily-compare";
 import { loadNavilySpots } from "@/lib/domain/quality/navily-sample";
 import { getConfig } from "@/lib/config";
 import { insertProfile, provenanceEntry } from "@/test/consolidation";
 import { testDb, withRollback } from "@/test/db";
 import { NAVILY_MARKERS, rowsWrittenInTransaction } from "@/test/quality";
-import { insertNamedObject } from "@/test/text";
+import { insertNamedObject, insertTestSubdivision } from "@/test/text";
 
 const db = testDb();
 let currentDb: Db = db;
@@ -49,6 +49,8 @@ vi.mock("@/lib/domain/quality/comparison-values", async (importOriginal) => {
 import { acceptProposalsAction, recordComparisonAction } from "../quality/compare/actions";
 
 const FIXTURE = path.join(process.cwd(), "test/fixtures/navily/sample.json");
+/** The key of the test subdivision `setUp` inserts (rolled back, so a fixed key is safe). */
+const SUBDIVISION = "XT-compare-actions";
 const ADMIN = "admin@example.invalid";
 /** The coordinates of the fixture's first spot, about 43 m off the place, in every form a leak could take. */
 const SPOT_COORDINATES = /35[.,]2003|21[.,]0003/;
@@ -79,26 +81,17 @@ beforeEach(() => {
 
 /**
  * A confirmed anchorage at 21.0° E / 35.2° N (about 43 m from the fixture's first spot, outside the pilot box) in the
- * saronic comparison set, rolled back. Its values agree with the spot except `services.water` (own false, Navily true).
+ * comparison set of the test subdivision, rolled back. Its values agree with the spot except `services.water` (own false, Navily true).
  */
 async function setUp(tx: Db) {
   currentDb = tx;
-  let [area] = await tx
-    .select({ id: geoObjects.id })
-    .from(geoObjects)
-    .where(sql`${geoObjects.type} = 'area' and ${geoObjects.configKey} = 'saronic' and ${geoObjects.validTo} is null`);
-  area ??= (
-    await tx
-      .insert(geoObjects)
-      .values({ type: "area", origin: "manual", configKey: "saronic", geom: geomFromGeoJson({ type: "Point", coordinates: [24.61, 32.83] }) })
-      .returning({ id: geoObjects.id })
-  )[0]!;
-  const objectId = await insertNamedObject(tx, { type: "bay", names: [{ name: "Kolona" }], lon: 21.0, lat: 35.2 });
+  const { id: subdivisionId } = await insertTestSubdivision(tx, SUBDIVISION, [20.5, 34.7, 21.5, 35.7]);
+  const objectId = await insertNamedObject(tx, { type: "bay", names: [{ name: "Kolona" }], lon: 21.0, lat: 35.2, subdivisionId });
   const [place] = await tx
     .insert(places)
     .values({ geoObjectId: objectId, kind: "anchorage", status: "confirmed", position: geomFromGeoJson({ type: "Point", coordinates: [21.0, 35.2] }) })
     .returning({ id: places.id });
-  await tx.insert(comparisonSet).values({ placeId: place!.id, areaId: area.id, addedBy: "test" });
+  await tx.insert(comparisonSet).values({ placeId: place!.id, subdivisionId, addedBy: "test" });
   const attributes = {
     "place.position": { lon: 21.0, lat: 35.2 },
     "shelter.N": 0.9,
@@ -131,8 +124,8 @@ const tasksOf = (tx: Db, placeId: string) =>
 /** The digest of the proposals the page shows for the place. */
 async function shownDigest(tx: Db, placeId: string): Promise<string> {
   const config = getConfig();
-  const view = await areaComparisonView(tx, {
-    areaKey: "saronic",
+  const view = await subdivisionComparisonView(tx, {
+    subdivisionKey: SUBDIVISION,
     spots: await loadNavilySpots(FIXTURE),
     cfg: config.quality.navily,
     affixes: config.nameAffixes,
@@ -141,11 +134,11 @@ async function shownDigest(tx: Db, placeId: string): Promise<string> {
 }
 
 async function accept(tx: Db, placeId: string) {
-  return acceptProposalsAction({ placeId, areaKey: "saronic", digest: await shownDigest(tx, placeId) });
+  return acceptProposalsAction({ placeId, subdivisionKey: SUBDIVISION, digest: await shownDigest(tx, placeId) });
 }
 
 async function currentHash(tx: Db, placeId: string, attribute: "services.water" | "depth") {
-  const subject = (await loadComparisonSubjects(tx, "saronic")).find((s) => s.placeId === placeId)!;
+  const subject = (await loadComparisonSubjects(tx, SUBDIVISION)).find((s) => s.placeId === placeId)!;
   return comparisonValues(subject, getConfig().quality.navily)[attribute].hash;
 }
 
@@ -203,18 +196,18 @@ describe("/quality/compare actions", () => {
       const { placeId } = await setUp(tx);
       const shown = await shownDigest(tx, placeId);
       // another digest: the proposals the admin saw are not the ones the server computes now
-      const r = await acceptProposalsAction({ placeId, areaKey: "saronic", digest: "0123456789abcdef" });
+      const r = await acceptProposalsAction({ placeId, subdivisionKey: SUBDIVISION, digest: "0123456789abcdef" });
       expect(r).toEqual({ ok: false, code: "stale" });
       expectCodesAndCounts(r);
       expect(await resultsOf(tx, placeId)).toEqual([]);
       // the profile changes after the page was rendered: the shown digest is stale too
       const [place] = await tx.select({ objectId: places.geoObjectId }).from(places).where(eq(places.id, placeId));
       await insertProfile(tx, place!.objectId, { "services.water": true }, {}, { version: 3, validFrom: "2026-10-20" });
-      expect(await acceptProposalsAction({ placeId, areaKey: "saronic", digest: shown })).toEqual({ ok: false, code: "stale" });
+      expect(await acceptProposalsAction({ placeId, subdivisionKey: SUBDIVISION, digest: shown })).toEqual({ ok: false, code: "stale" });
       expect(await resultsOf(tx, placeId)).toEqual([]);
       // a missing digest is invalid input
       // @ts-expect-error the digest is required
-      await expect(acceptProposalsAction({ placeId, areaKey: "saronic" })).rejects.toThrow();
+      await expect(acceptProposalsAction({ placeId, subdivisionKey: SUBDIVISION })).rejects.toThrow();
     }));
 
   it("accepting never overwrites an outcome set by hand; the result counts what it kept (ruling M7-B-R2)", () =>
@@ -222,7 +215,7 @@ describe("/quality/compare actions", () => {
       const { placeId } = await setUp(tx);
       const valueHash = await currentHash(tx, placeId, "services.water");
       // the admin decided by hand that water matches; the proposal says deviation
-      expect(await recordComparisonAction({ placeId, areaKey: "saronic", attribute: "services.water", result: "match", valueHash })).toEqual({
+      expect(await recordComparisonAction({ placeId, subdivisionKey: SUBDIVISION, attribute: "services.water", result: "match", valueHash })).toEqual({
         ok: true,
         written: 1,
         tasks: 0,
@@ -239,10 +232,10 @@ describe("/quality/compare actions", () => {
       const { placeId } = await setUp(tx);
       const digest = await shownDigest(tx, placeId);
       subjectLoads.length = 0;
-      await acceptProposalsAction({ placeId, areaKey: "saronic", digest });
+      await acceptProposalsAction({ placeId, subdivisionKey: SUBDIVISION, digest });
       expect(subjectLoads).toHaveLength(1);
       const valueHash = await currentHash(tx, placeId, "depth"); // the test's own load, on `tx`
-      await recordComparisonAction({ placeId, areaKey: "saronic", attribute: "depth", result: "deviation", valueHash });
+      await recordComparisonAction({ placeId, subdivisionKey: SUBDIVISION, attribute: "depth", result: "deviation", valueHash });
       expect(subjectLoads).toHaveLength(3);
       expect(subjectLoads[1]).toBe(tx);
       // each action loaded on a transaction of its own (a savepoint of the test transaction), never on `tx` itself
@@ -254,7 +247,7 @@ describe("/quality/compare actions", () => {
     withRollback(async (tx) => {
       const { placeId } = await setUp(tx);
       const valueHash = await currentHash(tx, placeId, "depth");
-      const r = await recordComparisonAction({ placeId, areaKey: "saronic", attribute: "depth", result: "deviation", valueHash });
+      const r = await recordComparisonAction({ placeId, subdivisionKey: SUBDIVISION, attribute: "depth", result: "deviation", valueHash });
       expect(r).toEqual({ ok: true, written: 1, tasks: 1 });
       expectCodesAndCounts(r);
       const rows = await resultsOf(tx, placeId);
@@ -266,7 +259,7 @@ describe("/quality/compare actions", () => {
     withRollback(async (tx) => {
       const { placeId } = await setUp(tx);
       const regularHash = await currentHash(tx, placeId, "services.water");
-      await recordComparisonAction({ placeId, areaKey: "saronic", attribute: "services.water", result: "deviation", valueHash: regularHash });
+      await recordComparisonAction({ placeId, subdivisionKey: SUBDIVISION, attribute: "services.water", result: "deviation", valueHash: regularHash });
       const [regular] = await tasksOf(tx, placeId);
       expect(regular).toMatchObject({ status: "open", subjectId: `${placeId}:services.water:${regularHash}`, context: { evaluationRunId: null } });
 
@@ -275,17 +268,17 @@ describe("/quality/compare actions", () => {
         kind: "reprocess",
         scope: { type: "system", id: "consolidation" },
         stages: [CONSOLIDATION_GEO_STAGE],
-        params: { comparisonSetArea: "saronic", evaluation: true, rulesVersion: "v1", candidate: { rulesVersion: "v1" } },
+        params: { comparisonSetSubdivision: SUBDIVISION, evaluation: true, rulesVersion: "v1", candidate: { rulesVersion: "v1" } },
         triggeredBy: "test",
       });
       await tx.update(runs).set({ status: "finished" }).where(eq(runs.id, evaluationRunId));
       const [place] = await tx.select({ geoObjectId: places.geoObjectId }).from(places).where(eq(places.id, placeId));
       await tx.insert(evaluationProfiles).values({ runId: evaluationRunId, geoObjectId: place!.geoObjectId, rulesVersion: "v1", factSchemaVersion: "v2", attributes: { "services.water": true }, provenance: {}, contentHash: "e" });
-      const subject = (await loadComparisonSubjects(tx, "saronic", { evaluationRunId })).find((s) => s.placeId === placeId)!;
+      const subject = (await loadComparisonSubjects(tx, SUBDIVISION, { evaluationRunId })).find((s) => s.placeId === placeId)!;
       const evaluationHash = comparisonValues(subject, getConfig().quality.navily)["services.water"].hash;
       expect(evaluationHash).not.toBe(regularHash);
 
-      const deviation = { placeId, areaKey: "saronic", attribute: "services.water" as const, valueHash: evaluationHash, evaluationRunId };
+      const deviation = { placeId, subdivisionKey: SUBDIVISION, attribute: "services.water" as const, valueHash: evaluationHash, evaluationRunId };
       await recordComparisonAction({ ...deviation, result: "deviation" });
       const regularTasks = (await tasksOf(tx, placeId)).filter((t) => (t.context as { evaluationRunId: string | null }).evaluationRunId === null);
       // the regular place keeps exactly its own task, unchanged
@@ -304,25 +297,25 @@ describe("/quality/compare actions", () => {
   it("a stale value hash gives the code stale and writes nothing", () =>
     withRollback(async (tx) => {
       const { placeId } = await setUp(tx);
-      const r = await recordComparisonAction({ placeId, areaKey: "saronic", attribute: "services.water", result: "match", valueHash: "0123456789abcdef" });
+      const r = await recordComparisonAction({ placeId, subdivisionKey: SUBDIVISION, attribute: "services.water", result: "match", valueHash: "0123456789abcdef" });
       expect(r).toEqual({ ok: false, code: "stale" });
       expectCodesAndCounts(r);
       expect(await resultsOf(tx, placeId)).toEqual([]);
     }));
 
-  it("refuses invalid input, an unknown area, a place outside the set and a non-admin", () =>
+  it("refuses invalid input, an unknown subdivision, a place outside the set and a non-admin", () =>
     withRollback(async (tx) => {
       const { placeId } = await setUp(tx);
       const valueHash = await currentHash(tx, placeId, "services.water");
-      const ok = { placeId, areaKey: "saronic", attribute: "services.water" as const, result: "match" as const, valueHash };
-      await expect(recordComparisonAction({ ...ok, areaKey: "atlantis" })).rejects.toThrow();
+      const ok = { placeId, subdivisionKey: SUBDIVISION, attribute: "services.water" as const, result: "match" as const, valueHash };
+      await expect(recordComparisonAction({ ...ok, subdivisionKey: "atlantis" })).rejects.toThrow();
       // @ts-expect-error a review outcome is never recorded from the page
       await expect(recordComparisonAction({ ...ok, result: "deviation_confirmed_own" })).rejects.toThrow();
       await expect(recordComparisonAction({ ...ok, placeId: "0190a1b2-0000-7000-8000-000000000001" })).rejects.toThrow(/comparison set/);
-      await expect(acceptProposalsAction({ placeId: "nope", areaKey: "saronic", digest: "0123456789abcdef" })).rejects.toThrow();
+      await expect(acceptProposalsAction({ placeId: "nope", subdivisionKey: SUBDIVISION, digest: "0123456789abcdef" })).rejects.toThrow();
       requireAdmin.mockRejectedValue(new Error("NEXT_REDIRECT"));
       await expect(recordComparisonAction(ok)).rejects.toThrow("NEXT_REDIRECT");
-      await expect(acceptProposalsAction({ placeId, areaKey: "saronic", digest: "0123456789abcdef" })).rejects.toThrow("NEXT_REDIRECT");
+      await expect(acceptProposalsAction({ placeId, subdivisionKey: SUBDIVISION, digest: "0123456789abcdef" })).rejects.toThrow("NEXT_REDIRECT");
       expect(await resultsOf(tx, placeId)).toEqual([]);
     }));
 
@@ -331,12 +324,12 @@ describe("/quality/compare actions", () => {
       const { placeId } = await setUp(tx);
       const digest = await shownDigest(tx, placeId);
       navilyPath = null;
-      const missing = await acceptProposalsAction({ placeId, areaKey: "saronic", digest });
+      const missing = await acceptProposalsAction({ placeId, subdivisionKey: SUBDIVISION, digest });
       expect(missing).toEqual({ ok: false, code: "navily_missing" });
       expectCodesAndCounts(missing);
       navilyPath = path.join(dir, "broken.json");
       await writeFile(navilyPath, '[{"lat": "NAVILY-ONLY-NAME"}]');
-      const unreadable = await acceptProposalsAction({ placeId, areaKey: "saronic", digest });
+      const unreadable = await acceptProposalsAction({ placeId, subdivisionKey: SUBDIVISION, digest });
       expect(unreadable).toEqual({ ok: false, code: "navily_unreadable" });
       expectCodesAndCounts(unreadable);
       expect(JSON.stringify(unreadable)).not.toContain("broken.json");

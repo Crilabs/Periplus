@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { getConfig } from "@/lib/config";
-import type { AreaConfig, QualityConfig } from "@/lib/config/schemas";
+import type { QualityConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
+import { subdivisionCycleDays } from "@/lib/domain/gazetteer/tiles-ensure";
+import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { changeSeverityEnum, changeTypeEnum, METRIC_KEYS, type MetricKey } from "@/lib/db/schema";
 import type { RevisitVerification } from "@/lib/domain/revisit/verify";
 import { METRIC_UNITS } from "./dashboard";
@@ -10,7 +12,7 @@ import { measurementByLabel, metricStatus, type MeasurementView, type MetricStat
 
 /*
  * The pilot's reports (spec 10, plan Task 16): the cost report („Kosten je Stufe, je Ort, Annahmen für Ortszahl je
- * Revier, Zahl der Reviere 60–100“) with the Mediterranean extrapolation, and the pilot report (the datendienst's
+ * Landesteil, Zahl der Landesteile 60–100“) with the Mediterranean extrapolation, and the pilot report (the datendienst's
  * success criteria with the measured values). Both read the stored measurements (`quality_snapshots`) only and hold
  * counts, sums and own ids, never a Navily value (Grundprinzip 9). Amounts in EUR with two decimals, German number
  * format (ruling M7-P30). Pure renderers; the CLIs (`report:costs`, `report:pilot`) write them to `docs/pilot/`.
@@ -32,14 +34,14 @@ export type CostRun = {
 export type Extrapolation = { initialMin: number; initialMax: number; yearlyMin: number | null; yearlyMax: number | null };
 
 export type CostReport = {
-  areaKey: string;
+  subdivisionKey: string;
   first: CostRun;
   second: CostRun | null;
   assumptions: {
-    placesPerArea: number;
-    placesPerAreaSource: "pilot" | "config";
-    areasMin: number;
-    areasMax: number;
+    placesPerSubdivision: number;
+    placesPerSubdivisionSource: "pilot" | "config";
+    subdivisionsMin: number;
+    subdivisionsMax: number;
     cycleDays: number;
     revisitsPerYear: number;
     /** Days from the start of the first to the start of the second run; null without a second run. */
@@ -53,28 +55,28 @@ export type CostReport = {
 const cents = (x: number) => Math.round(x * 100) / 100;
 
 /**
- * The Mediterranean extrapolation: `initial = perPlaceFirst × placesPerArea × areas` (first run of every area);
- * `yearly = perPlaceRevisit × placesPerArea × areas × revisitsPerYear` (null without a second run). Rounded to cents.
+ * The Mediterranean extrapolation: `initial = perPlaceFirst × placesPerSubdivision × subdivisions` (first run of every subdivision);
+ * `yearly = perPlaceRevisit × placesPerSubdivision × subdivisions × revisitsPerYear` (null without a second run). Rounded to cents.
  */
 export function extrapolate(input: {
   perPlaceFirst: number;
   perPlaceRevisit: number | null;
-  placesPerArea: number;
-  areasMin: number;
-  areasMax: number;
+  placesPerSubdivision: number;
+  subdivisionsMin: number;
+  subdivisionsMax: number;
   revisitsPerYear: number;
 }): Extrapolation {
-  const initial = (areas: number) => cents(input.perPlaceFirst * input.placesPerArea * areas);
-  const yearly = (areas: number) =>
-    input.perPlaceRevisit === null ? null : cents(input.perPlaceRevisit * input.placesPerArea * areas * input.revisitsPerYear);
-  return { initialMin: initial(input.areasMin), initialMax: initial(input.areasMax), yearlyMin: yearly(input.areasMin), yearlyMax: yearly(input.areasMax) };
+  const initial = (subdivisions: number) => cents(input.perPlaceFirst * input.placesPerSubdivision * subdivisions);
+  const yearly = (subdivisions: number) =>
+    input.perPlaceRevisit === null ? null : cents(input.perPlaceRevisit * input.placesPerSubdivision * subdivisions * input.revisitsPerYear);
+  return { initialMin: initial(input.subdivisionsMin), initialMax: initial(input.subdivisionsMax), yearlyMin: yearly(input.subdivisionsMin), yearlyMax: yearly(input.subdivisionsMax) };
 }
 
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 const record = (v: unknown): Record<string, number> =>
   typeof v === "object" && v !== null ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, num(x)])) : {};
 
-/** The cost run of a measurement from its `cost_per_place` area row. */
+/** The cost run of a measurement from its `cost_per_place` subdivision row. */
 export function costRunOf(m: MeasurementView): CostRun {
   const row = m.metrics.cost_per_place;
   const d = row?.details ?? {};
@@ -91,61 +93,63 @@ export function costRunOf(m: MeasurementView): CostRun {
   };
 }
 
-/** A measurement of the area by label; a missing one is refused in German (the CLI prints it). */
-async function measurement(db: Db, areaKey: string, label: string): Promise<MeasurementView> {
-  const m = await measurementByLabel(db, areaKey, label);
-  if (!m) throw new Error(`Keine Messung „${label}“ für das Revier ${areaKey} – erst auf /quality messen`);
+/** A measurement of the subdivision by label; a missing one is refused in German (the CLI prints it). */
+async function measurement(db: Db, subdivisionKey: string, label: string): Promise<MeasurementView> {
+  const m = await measurementByLabel(db, subdivisionKey, label);
+  if (!m) throw new Error(`Keine Messung „${label}“ für den Landesteil ${subdivisionKey} – erst auf /quality messen`);
   return m;
 }
 
 /**
- * The cost report of the area from the stored measurements `firstLabel` and `secondLabel` (`cost_per_place` details).
- * Places per area: `extrapolation.placesPerArea` of `config/quality.json`, else the confirmed places of the pilot
- * area (the newer measurement's count). Revisits per year: `365 / cycleDays` of the area (`config/areas`). Refused when
+ * The cost report of the subdivision from the stored measurements `firstLabel` and `secondLabel` (`cost_per_place` details).
+ * Places per subdivision: `extrapolation.placesPerSubdivision` of `config/quality.json`, else the confirmed places of the
+ * pilot subdivision (the newer measurement's count). Revisits per year: `365 / cycleDays` of the subdivision
+ * (`config/subdivisions.json`: its override, else its country's value; `input.cycleDays` overrides it). Refused when
  * the first run has no cost per place (no confirmed places) or the second measurement starts before the first (labels
  * swapped, final review B M-10).
  */
 export async function costReport(
   db: Db,
   input: {
-    areaKey: string;
+    subdivisionKey: string;
     firstLabel: string;
     secondLabel?: string;
     simulation?: CostReport["simulation"];
     cfg?: QualityConfig;
-    areas?: AreaConfig[];
+    /** Cycle length in days; default from the subdivision's config. */
+    cycleDays?: number;
   },
 ): Promise<CostReport> {
   const cfg = input.cfg ?? getConfig().quality;
-  const area = (input.areas ?? getConfig().areas).find((a) => a.key === input.areaKey);
-  if (!area) throw new Error(`Revier ${input.areaKey} ist nicht konfiguriert (config/areas)`);
-  const first = costRunOf(await measurement(db, input.areaKey, input.firstLabel));
-  const second = input.secondLabel === undefined ? null : costRunOf(await measurement(db, input.areaKey, input.secondLabel));
+  const sub = await requireSubdivision(db, input.subdivisionKey, { allowExcluded: true });
+  const cycleDays = input.cycleDays ?? subdivisionCycleDays(sub.key, sub.country);
+  const first = costRunOf(await measurement(db, input.subdivisionKey, input.firstLabel));
+  const second = input.secondLabel === undefined ? null : costRunOf(await measurement(db, input.subdivisionKey, input.secondLabel));
   if (first.perPlace === null) throw new Error(`Messung „${first.label}“ hat keine Kosten je Ort (keine bestätigten Orte)`);
   if (second !== null && second.window.from.getTime() < first.window.from.getTime()) {
     throw new Error(`Messung „${second.label}“ beginnt vor „${first.label}“: erst den früheren Lauf, dann den späteren angeben`);
   }
-  const configured = cfg.extrapolation.placesPerArea;
-  const placesPerArea = configured ?? (second ?? first).places;
-  const revisitsPerYear = 365 / area.cycleDays;
+  const configured = cfg.extrapolation.placesPerSubdivision;
+  const placesPerSubdivision = configured ?? (second ?? first).places;
+  const revisitsPerYear = 365 / cycleDays;
   const assumptions = {
-    placesPerArea,
-    placesPerAreaSource: configured === null ? ("pilot" as const) : ("config" as const),
-    areasMin: cfg.extrapolation.areasMin,
-    areasMax: cfg.extrapolation.areasMax,
-    cycleDays: area.cycleDays,
+    placesPerSubdivision,
+    placesPerSubdivisionSource: configured === null ? ("pilot" as const) : ("config" as const),
+    subdivisionsMin: cfg.extrapolation.subdivisionsMin,
+    subdivisionsMax: cfg.extrapolation.subdivisionsMax,
+    cycleDays,
     revisitsPerYear,
     revisitIntervalDays: second === null ? null : (second.window.from.getTime() - first.window.from.getTime()) / 86_400_000,
   };
   const extrapolation = extrapolate({
     perPlaceFirst: first.perPlace,
     perPlaceRevisit: second?.perPlace ?? null,
-    placesPerArea,
-    areasMin: assumptions.areasMin,
-    areasMax: assumptions.areasMax,
+    placesPerSubdivision,
+    subdivisionsMin: assumptions.subdivisionsMin,
+    subdivisionsMax: assumptions.subdivisionsMax,
     revisitsPerYear,
   });
-  return { areaKey: input.areaKey, first, second, assumptions, extrapolation, simulation: input.simulation ?? null };
+  return { subdivisionKey: input.subdivisionKey, first, second, assumptions, extrapolation, simulation: input.simulation ?? null };
 }
 
 const decimal = (digits: number) => new Intl.NumberFormat("de-DE", { minimumFractionDigits: digits, maximumFractionDigits: digits });
@@ -204,7 +208,7 @@ export function renderCostReport(r: CostReport): string {
   const a = r.assumptions;
   const scale = revisitIntervalScale(a);
   const lines = [
-    `# Kostenbericht Pilot – Revier ${r.areaKey}`,
+    `# Kostenbericht Pilot – Landesteil ${r.subdivisionKey}`,
     "",
     "Betriebskosten der gemessenen Läufe aus `external_calls` (Messungen auf /quality, Kennzahl „Kosten je Ort“). Nur Summen, keine Einzelwerte fremder Daten.",
     "",
@@ -235,19 +239,19 @@ export function renderCostReport(r: CostReport): string {
     "",
     "## Annahmen",
     "",
-    `- Ortszahl je Revier: ${a.placesPerArea} (${a.placesPerAreaSource === "pilot" ? "bestätigte Orte des Pilotreviers" : "Vorgabe aus config/quality.json"})`,
-    `- Zahl der Reviere im Mittelmeer: ${a.areasMin}–${a.areasMax}`,
-    `- Zyklus: ${a.cycleDays} Tage, also ${ONE.format(a.revisitsPerYear)} Revisits je Revier und Jahr`,
+    `- Ortszahl je Landesteil: ${a.placesPerSubdivision} (${a.placesPerSubdivisionSource === "pilot" ? "bestätigte Orte des Pilot-Landesteils" : "Vorgabe aus config/quality.json"})`,
+    `- Zahl der Landesteile im Mittelmeer: ${a.subdivisionsMin}–${a.subdivisionsMax}`,
+    `- Zyklus: ${a.cycleDays} Tage, also ${ONE.format(a.revisitsPerYear)} Revisits je Landesteil und Jahr`,
     `- Erstlauf je Ort = Kosten je Ort von ${r.first.label}; Revisit je Ort = ${r.second ? `Kosten je Ort von ${r.second.label}` : "nicht gemessen (kein zweiter Lauf)"}`,
     ...intervalAssumption(r),
-    "- Zuordnung der Kosten (Ruling M7-D-R1): Aufrufe mit Kachel zählen für deren Revier; Aufrufe eines Revier-Laufs ohne Kachel für das Revier; geteilte Aufrufe (Quellen-, System- und Text-Läufe, Aufrufe ohne Lauf, auch `smoke:ai` als Betriebskosten) nach dem Anteil bestätigter Orte über alle konfigurierten Reviere; Kacheln ohne Revier zählen für niemanden.",
-    "- Im Kachel-Umfang erscheinen Ausgaben eines Revier-Laufs ohne Kachel als geteilte Kosten (nach Ortsanteil der Kachel); die Summe des Reviers bleibt gleich.",
+    "- Zuordnung der Kosten (Ruling M7-D-R1): Aufrufe mit Kachel zählen für deren Landesteil; Aufrufe eines Landesteil-Laufs ohne Kachel für den Landesteil; geteilte Aufrufe (Quellen-, System- und Text-Läufe, Aufrufe ohne Lauf, auch `smoke:ai` als Betriebskosten) nach dem Anteil bestätigter Orte über alle Landesteile; Kacheln ohne Landesteil zählen für niemanden.",
+    "- Im Kachel-Umfang erscheinen Ausgaben eines Landesteil-Laufs ohne Kachel als geteilte Kosten (nach Ortsanteil der Kachel); die Summe des Landesteils bleibt gleich.",
     "- Einmalkosten (Konverter- und Modellvergleich, `pdf:compare`, `fixtures:record`, Kandidaten-Bewertungen) sind nicht in der Hochrechnung.",
     "",
     "## Hochrechnung Mittelmeer",
     "",
-    `- Erstlauf (${a.areasMin}–${a.areasMax} Reviere × ${a.placesPerArea} Orte): ${eur(r.extrapolation.initialMin)} – ${eur(r.extrapolation.initialMax)}`,
-    `- Jahr (Revisits, ${ONE.format(a.revisitsPerYear)} je Revier): ${yearlyRange(r)}`,
+    `- Erstlauf (${a.subdivisionsMin}–${a.subdivisionsMax} Landesteile × ${a.placesPerSubdivision} Orte): ${eur(r.extrapolation.initialMin)} – ${eur(r.extrapolation.initialMax)}`,
+    `- Jahr (Revisits, ${ONE.format(a.revisitsPerYear)} je Landesteil): ${yearlyRange(r)}`,
     ...(scale > 1 && r.extrapolation.yearlyMin !== null
       ? [
           `- Jahr, Revisit-Kosten linear auf ${a.cycleDays} Tage Abstand hochgerechnet (Obergrenze, Faktor ${ONE.format(scale)}): ${yearlyRange(r, scale)}`,
@@ -319,7 +323,7 @@ function target(metric: MetricKey, cfg: QualityConfig, level: "pilot" | "full"):
 const STATUS: Record<MetricStatus, string> = { met: "erreicht", missed: "verfehlt", no_target: "ohne Ziel", no_value: "kein Wert" };
 
 export type PilotReportInput = {
-  areaKey: string;
+  subdivisionKey: string;
   first: MeasurementView;
   second: MeasurementView | null;
   targets: QualityConfig;
@@ -346,7 +350,7 @@ export function renderPilotReport(input: PilotReportInput): string {
   const value = (m: MeasurementView | null, metric: MetricKey) => m?.metrics[metric]?.value ?? null;
   const details = (m: MeasurementView | null, metric: MetricKey) => (m?.metrics[metric]?.details ?? {}) as Record<string, unknown>;
   const lines = [
-    `# Pilotbericht – Revier ${input.areaKey}`,
+    `# Pilotbericht – Landesteil ${input.subdivisionKey}`,
     "",
     `Messungen: ${first.label}${second ? `, ${second.label}` : ""}. ${second ? "Die Erfolgskriterien gelten für beide Läufe" : `Bewertet wird ${current.label}`}.`,
     "",

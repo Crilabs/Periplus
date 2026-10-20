@@ -371,15 +371,15 @@ describe("uploadPdfAction", () => {
 });
 
 describe("discovery from the tile page", () => {
-  it("an unknown tile is rejected; a tile outside a configured area comes back with the German refusal", () =>
+  it("an unknown tile is rejected; a tile without a subdivision comes back with the German refusal", () =>
     withRollback(async (tx) => {
       currentDb = tx;
       await expect(discoveryForTileAction({ tileId: "q025:0:719" })).rejects.toThrow();
-      // Open sea outside the pilot box, at a spot no other test uses; no area.
+      // Open sea outside the pilot box, at a spot no other test uses; no subdivision.
       const tileId = tileIdFor(26.61, 31.83);
       await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(26.5, 31.75, 26.75, 32.0, 4326)` });
       await discoveryForTileAction(form({ tileId }));
-      expect(redirect).toHaveBeenCalledWith(`/tiles/${encodeURIComponent(tileId)}?error=tile_without_area`);
+      expect(redirect).toHaveBeenCalledWith(`/tiles/${encodeURIComponent(tileId)}?error=tile_without_subdivision`);
     }));
 });
 

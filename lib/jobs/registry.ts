@@ -8,6 +8,7 @@ import { discoveryAreaHandler, discoveryPlaceHandler, discoveryProposeHandler, d
 import { embedChunksHandler } from "./handlers/embed";
 import { fetchSourceHandler, fetchUrlHandler } from "./handlers/fetch";
 import { gazetteerHandler } from "./handlers/gazetteer";
+import { gazetteerCoarseHandler, subdivisionsBuildHandler } from "./handlers/subdivisions";
 import { detectBaysHandler, geometryPlaceHandler } from "./handlers/geometry";
 import { qualityMeasureHandler } from "./handlers/quality";
 import { revisitFreezeHandler } from "./handlers/revisit";
@@ -25,8 +26,13 @@ import {
 } from "./handlers/text";
 import { tilesEnsureHandler } from "./handlers/tiles";
 import { wikivoyageHandler } from "./handlers/wikivoyage";
+import { onRunEnded } from "@/lib/pipeline/run-ended";
+import { afterBuildRunEnded } from "@/lib/pipeline/subdivision-build";
 import type { QueueName } from "./queues";
 import type { JobData, JobHandler } from "./worker";
+
+// The end of a subdivision build sets `built_at` and starts the next queued subdivision of its country (spec 14).
+onRunEnded(afterBuildRunEnded);
 
 /** The handler the worker runs for each queue. */
 export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
@@ -34,6 +40,8 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "run.advance": advanceHandler,
   "tiles.ensure": tilesEnsureHandler,
   "gazetteer.build": gazetteerHandler,
+  "gazetteer.coarse": gazetteerCoarseHandler,
+  "subdivisions.build": subdivisionsBuildHandler,
   "seed.tile": seedTileHandler,
   "datasets.import": datasetsImportHandler,
   "geometry.compute": geometryPlaceHandler,

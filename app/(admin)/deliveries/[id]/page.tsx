@@ -62,13 +62,13 @@ export default async function Page({ params }: PageProps<"/deliveries/[id]">) {
   return (
     <>
       <PageHeader
-        title={`${detail.areaName} – ${row.dataVersion !== null ? `Version ${row.dataVersion}` : DELIVERY_STATUS_LABELS[row.status]}`}
-        back={{ href: `/deliveries?area=${row.areaId}`, label: "Lieferungen" }}
+        title={`${detail.scopeName} – ${row.dataVersion !== null ? `Version ${row.dataVersion}` : DELIVERY_STATUS_LABELS[row.status]}`}
+        back={{ href: row.subdivisionId ? `/deliveries?subdivision=${row.subdivisionId}` : "/deliveries", label: "Lieferungen" }}
         meta={
           <>
             <Badge tone={DELIVERY_STATUS_TONES[row.status]}>{DELIVERY_STATUS_LABELS[row.status]}</Badge>
             <span>{fmt.dateTime(row.generatedAt)}</span>
-            <Mono>{detail.areaPublicId}</Mono>
+            <Mono>{detail.scopePublicId}</Mono>
           </>
         }
         description={
@@ -126,7 +126,7 @@ export default async function Page({ params }: PageProps<"/deliveries/[id]">) {
               </div>
             ) : changes === null ? (
               <EmptyState title="Keine Änderungsdatei">
-                {row.status === "unchanged" ? "Ein unverändertes Paket speichert keine Dateien." : "Das erste Paket eines Reviers hat keine changes.json."}
+                {row.status === "unchanged" ? "Ein unverändertes Paket speichert keine Dateien." : "Das erste Paket eines Landesteils hat keine changes.json."}
               </EmptyState>
             ) : changes.length === 0 ? (
               <EmptyState title="Keine Änderungen" />

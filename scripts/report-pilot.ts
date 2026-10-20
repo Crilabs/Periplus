@@ -9,7 +9,7 @@ import { getEnv } from "../lib/env";
 import { pilotDocPath } from "./report-costs";
 
 /*
- * `npm run report:pilot -- --area <key> --first <label> --second <label> [--revisit <sim:verify json>]
+ * `npm run report:pilot -- --subdivision <key> --first <label> --second <label> [--revisit <sim:verify json>]
  * [--cost-report <path>] [--consumer-ok --data-version <n>]` (spec 10, plan Task 16): the pilot report — success
  * criteria with the measured values, the metric table, the simulated revisit, review effort, tile size — written to
  * `docs/pilot/<YYYY-MM-DD>-pilotbericht.md`, pointing at the cost report: `--cost-report` (must exist), else the cost
@@ -19,12 +19,12 @@ import { pilotDocPath } from "./report-costs";
  */
 
 const USAGE =
-  "usage: report-pilot.ts --area <key> --first <label> --second <label> [--revisit <sim-verify.json>] [--cost-report <path>] [--consumer-ok --data-version <n>]";
+  "usage: report-pilot.ts --subdivision <key> --first <label> --second <label> [--revisit <sim-verify.json>] [--cost-report <path>] [--consumer-ok --data-version <n>]";
 
-export type ReportPilotArgs = { area: string; first: string; second: string; revisit?: string; costReport?: string; consumer?: { dataVersion: number } };
+export type ReportPilotArgs = { subdivision: string; first: string; second: string; revisit?: string; costReport?: string; consumer?: { dataVersion: number } };
 
 const VALUE_FLAGS = {
-  "--area": "area",
+  "--subdivision": "subdivision",
   "--first": "first",
   "--second": "second",
   "--revisit": "revisit",
@@ -32,7 +32,7 @@ const VALUE_FLAGS = {
   "--data-version": "dataVersion",
 } as const;
 
-/** `--area`, `--first`, `--second` are required; `--consumer-ok` (no value) and `--data-version` go together. */
+/** `--subdivision`, `--first`, `--second` are required; `--consumer-ok` (no value) and `--data-version` go together. */
 export function parseArgs(argv: string[]): ReportPilotArgs {
   const values: Partial<Record<(typeof VALUE_FLAGS)[keyof typeof VALUE_FLAGS], string>> = {};
   let consumerOk = false;
@@ -51,10 +51,10 @@ export function parseArgs(argv: string[]): ReportPilotArgs {
     values[key] = value;
     i += 2;
   }
-  const { area, first, second, revisit, costReport, dataVersion } = values;
-  if (!area || !first || !second) throw new Error(USAGE);
+  const { subdivision, first, second, revisit, costReport, dataVersion } = values;
+  if (!subdivision || !first || !second) throw new Error(USAGE);
   if (consumerOk !== (dataVersion !== undefined)) throw new Error(USAGE);
-  const args: ReportPilotArgs = { area, first, second, ...(revisit ? { revisit } : {}), ...(costReport ? { costReport } : {}) };
+  const args: ReportPilotArgs = { subdivision, first, second, ...(revisit ? { revisit } : {}), ...(costReport ? { costReport } : {}) };
   if (dataVersion !== undefined) {
     const n = Number(dataVersion);
     if (!Number.isInteger(n) || n < 1) throw new Error(USAGE);
@@ -98,14 +98,14 @@ async function main(): Promise<void> {
   let first: MeasurementView | null;
   let second: MeasurementView | null;
   try {
-    first = await measurementByLabel(db, args.area, args.first);
-    second = await measurementByLabel(db, args.area, args.second);
+    first = await measurementByLabel(db, args.subdivision, args.first);
+    second = await measurementByLabel(db, args.subdivision, args.second);
   } finally {
     await close();
   }
-  if (!first || !second) throw new Error(`Keine Messung „${!first ? args.first : args.second}“ für das Revier ${args.area} – erst auf /quality messen`);
+  if (!first || !second) throw new Error(`Keine Messung „${!first ? args.first : args.second}“ für den Landesteil ${args.subdivision} – erst auf /quality messen`);
   const markdown = renderPilotReport({
-    areaKey: args.area,
+    subdivisionKey: args.subdivision,
     first,
     second,
     targets: getConfig().quality,

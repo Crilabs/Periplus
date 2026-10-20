@@ -2,17 +2,17 @@ import { eq } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { comparisonSet, qualitySnapshots, type ComparisonMethod } from "@/lib/db/schema";
-import { areaGeoObjectId } from "@/lib/pipeline/tile-scope";
+import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import { latestComparisonResults, lockComparisonPlace, recordComparisonResults } from "./comparison-results";
 import { COMPARISON_ATTRIBUTES, loadComparisonSubjects } from "./comparison-values";
 import { coverageOfMatches } from "./navily-assistant";
-import { areaTilePredicate, confirmedAreaPlaces, proposalsFor } from "./navily-compare";
+import { confirmedSubdivisionPlaces, proposalsFor, subdivisionTilePredicate } from "./navily-compare";
 import type { NavilySpot } from "./navily-sample";
 import { latestMeasurement } from "./snapshot";
 
 /*
  * The CLI pass of the Navily comparison (`npm run compare:navily`, spec 10): matches the comparison set as the page
- * `/quality/compare` does (`proposalsFor`, over the set and all confirmed places of the area) and, on request, records
+ * `/quality/compare` does (`proposalsFor`, over the set and all confirmed places of the subdivision) and, on request, records
  * every proposal as a machine outcome (`proposal_auto`, checked by the assistant's version; ruling M7-P24). Every
  * deviation still opens a review task (Grundprinzip 10). Grundprinzip 9: the spots live in memory only; what is
  * written is the outcome per attribute and the own value hash, what is returned are counts.
@@ -31,7 +31,7 @@ export type NavilyRunResult = {
    * and that differs from the proposal (kept).
    */
   skippedManual: number;
-  /** Spots inside the area matched to a confirmed place of the area. */
+  /** Spots inside the subdivision matched to a confirmed place of the subdivision. */
   coverage: { spots: number; matched: number; ratio: number | null };
   /** With `writeCoverage`: the measurement run the `coverage_navily` row belongs to; else null. */
   snapshotRunId: string | null;
@@ -42,44 +42,44 @@ export type NavilyRunResult = {
 /** Outcomes a person gave: a machine proposal never supersedes them (bundle C review: `proposal_confirmed` like `manual`). */
 const PERSON_METHODS: ReadonlySet<ComparisonMethod> = new Set(["manual", "proposal_confirmed"]);
 
-/** The place ids of the area's comparison set, sorted (the lock order). */
-async function comparisonSetPlaceIds(db: Db, areaKey: string): Promise<string[]> {
-  const areaId = await areaGeoObjectId(db, areaKey);
-  if (!areaId) return [];
-  const rows = await db.select({ id: comparisonSet.placeId }).from(comparisonSet).where(eq(comparisonSet.areaId, areaId));
+/** The place ids of the subdivision's comparison set, sorted (the lock order). */
+async function comparisonSetPlaceIds(db: Db, subdivisionKey: string): Promise<string[]> {
+  const sub = await subdivisionByKey(db, subdivisionKey);
+  if (!sub) return [];
+  const rows = await db.select({ id: comparisonSet.placeId }).from(comparisonSet).where(eq(comparisonSet.subdivisionId, sub.id));
   return rows.map((r) => r.id).sort();
 }
 
 /**
- * Compares the area's comparison set with the spots. Without `acceptProposals` nothing is written; with it, all set
+ * Compares the subdivision's comparison set with the spots. Without `acceptProposals` nothing is written; with it, all set
  * places are locked and loaded in one transaction and each gets its proposals recorded with method `proposal_auto` and
  * `checkedBy = quality.navily.proposalVersion` („navily-assistant/1“, machine-recognisable). An outcome a person set
  * (by hand or by confirming a proposal) that differs from the proposal is kept (`skippedManual`), and review outcomes
  * are kept by `recordComparisonResults` (ruling M7-P16), so a rerun writes nothing new. The coverage is always computed
- * and counts only matches to the area's confirmed, valid places.
+ * and counts only matches to the subdivision's confirmed, valid places.
  *
  * With `writeCoverage` the coverage is stored as the row `coverage_navily` (value = ratio, details `{ spots, matched }`,
- * counts only: Grundprinzip 9, ruling M7-P23) of the area's newest measurement (`latestMeasurement`); without one it
+ * counts only: Grundprinzip 9, ruling M7-P23) of the subdivision's newest measurement (`latestMeasurement`); without one it
  * fails before writing anything („Erst messen (/quality)“); a measurement that has the row already keeps it. The row
  * is written in the same transaction as the proposals, so either both are stored or neither (ruling M7-D-R2).
  */
 export async function runNavilyComparison(
   db: Db,
-  input: { areaKey: string; spots: NavilySpot[]; acceptProposals: boolean; writeCoverage?: boolean; now?: Date },
+  input: { subdivisionKey: string; spots: NavilySpot[]; acceptProposals: boolean; writeCoverage?: boolean; now?: Date },
 ): Promise<NavilyRunResult> {
   const cfg = getConfig().quality.navily;
   const settings = { cfg, affixes: getConfig().nameAffixes };
 
-  const measurement = input.writeCoverage ? await latestMeasurement(db, input.areaKey) : null;
-  if (input.writeCoverage && !measurement) throw new Error(`Erst messen (/quality): Revier ${input.areaKey} hat noch keine Messung`);
+  const measurement = input.writeCoverage ? await latestMeasurement(db, input.subdivisionKey) : null;
+  if (input.writeCoverage && !measurement) throw new Error(`Erst messen (/quality): Landesteil ${input.subdivisionKey} hat noch keine Messung`);
 
   const pass = async (tx: Db, write: boolean): Promise<NavilyRunResult> => {
     // the set's places are locked before their subjects are loaded, so no profile changes in between (bundle C review)
-    if (write) for (const id of await comparisonSetPlaceIds(tx, input.areaKey)) await lockComparisonPlace(tx, id);
-    const subjects = await loadComparisonSubjects(tx, input.areaKey);
-    const areaPlaces = await confirmedAreaPlaces(tx, input.areaKey);
+    if (write) for (const id of await comparisonSetPlaceIds(tx, input.subdivisionKey)) await lockComparisonPlace(tx, id);
+    const subjects = await loadComparisonSubjects(tx, input.subdivisionKey);
+    const areaPlaces = await confirmedSubdivisionPlaces(tx, input.subdivisionKey);
     const { proposals, places, matches } = proposalsFor(subjects, areaPlaces, input.spots, settings);
-    const inArea = await areaTilePredicate(tx, input.areaKey);
+    const inArea = await subdivisionTilePredicate(tx, input.subdivisionKey);
     const c = coverageOfMatches(places, matches, input.spots, inArea, new Set(areaPlaces.map((p) => p.placeId)));
     const result: NavilyRunResult = {
       places: subjects.length,
@@ -128,8 +128,8 @@ export async function runNavilyComparison(
       .insert(qualitySnapshots)
       .values({
         runId: measurement.runId,
-        scopeType: "area",
-        scopeId: input.areaKey,
+        scopeType: "subdivision",
+        scopeId: input.subdivisionKey,
         metric: "coverage_navily",
         value: result.coverage.ratio,
         details: { spots: result.coverage.spots, matched: result.coverage.matched },

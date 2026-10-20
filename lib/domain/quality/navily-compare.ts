@@ -5,12 +5,13 @@ import type { NameAffixesConfig } from "@/lib/config";
 import type { QualityConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { asGeoJson } from "@/lib/db/geometry";
-import { geoNames, places, runs, tiles } from "@/lib/db/schema";
+import { geoNames, geoObjects, places, runs } from "@/lib/db/schema";
 import { canonicalJson } from "@/lib/domain/facts/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
+import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
+import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import { tileIdFor } from "@/lib/domain/tiles";
 import { latestProfiles, validAt } from "@/lib/domain/timeline";
-import { areaGeoObjectId } from "@/lib/pipeline/tile-scope";
 import {
   latestComparisonResults,
   lockComparisonPlace,
@@ -39,7 +40,7 @@ import {
 import { distanceM, type NavilySpot } from "./navily-sample";
 
 /*
- * The comparison of an area's set against Navily as the page `/quality/compare` shows and records it. Grundprinzip 9:
+ * The comparison of a subdivision's set against Navily as the page `/quality/compare` shows and records it. Grundprinzip 9:
  * the spot list is passed in at request time and only lives in the returned view (rendered, never cached or stored);
  * what is recorded goes through `recordComparisonResults` (outcome, own value hash and own display only).
  */
@@ -47,17 +48,18 @@ import { distanceM, type NavilySpot } from "./navily-sample";
 type NavilyConfig = QualityConfig["navily"];
 type Settings = { cfg: NavilyConfig; affixes: NameAffixesConfig };
 
-/** A confirmed, valid place of the area (in a tile labelled with it), with all its valid names. */
-export type AreaPlace = MatchPlace & { name: string | null };
+/** A confirmed, valid place of the subdivision (its geo object belongs to it), with all its valid names. */
+export type SubdivisionPlace = MatchPlace & { name: string | null };
 
 /**
- * The confirmed, valid places in the tiles labelled with the area; empty for an unknown area. Their positions are the
+ * The confirmed, valid places of the subdivision (`geo_objects.subdivision_id`, nearest land); empty for an unknown
+ * subdivision. Their positions are the
  * delivered ones of the newest profile (`place.position`, else the place point, and `anchor_position`), as for the
  * comparison set, so matching and coverage measure from the point the contract delivers.
  */
-export async function confirmedAreaPlaces(db: Db, areaKey: string): Promise<AreaPlace[]> {
-  const areaId = await areaGeoObjectId(db, areaKey);
-  if (!areaId) return [];
+export async function confirmedSubdivisionPlaces(db: Db, subdivisionKey: string): Promise<SubdivisionPlace[]> {
+  const sub = await subdivisionByKey(db, subdivisionKey);
+  if (!sub) return [];
   const rows = await db
     .select({
       placeId: places.id,
@@ -67,8 +69,8 @@ export async function confirmedAreaPlaces(db: Db, areaKey: string): Promise<Area
       position: asGeoJson(places.position),
     })
     .from(places)
-    .innerJoin(tiles, eq(tiles.id, places.tileId))
-    .where(and(eq(tiles.areaId, areaId), eq(places.status, "confirmed"), validAt(places)))
+    .innerJoin(geoObjects, eq(geoObjects.id, places.geoObjectId))
+    .where(and(eq(geoObjects.subdivisionId, sub.id), eq(places.status, "confirmed"), validAt(places)))
     .orderBy(asc(places.id));
   if (rows.length === 0) return [];
   const objectIds = rows.map((r) => r.geoObjectId);
@@ -95,11 +97,11 @@ export async function confirmedAreaPlaces(db: Db, areaKey: string): Promise<Area
   });
 }
 
-/** Whether a point lies in a tile labelled with the area (the scope the area's places come from). */
-export async function areaTilePredicate(db: Db, areaKey: string): Promise<(p: { lon: number; lat: number }) => boolean> {
-  const areaId = await areaGeoObjectId(db, areaKey);
-  if (!areaId) return () => false;
-  const ids = new Set((await db.select({ id: tiles.id }).from(tiles).where(eq(tiles.areaId, areaId))).map((t) => t.id));
+/** Whether a point lies in a tile of the subdivision's run scope (`subdivisionTileIds`: coast tiles that meet its polygon). */
+export async function subdivisionTilePredicate(db: Db, subdivisionKey: string): Promise<(p: { lon: number; lat: number }) => boolean> {
+  const sub = await subdivisionByKey(db, subdivisionKey);
+  if (!sub) return () => false;
+  const ids = new Set(await subdivisionTileIds(db, sub.id));
   return (p) => ids.has(tileIdFor(p.lon, p.lat));
 }
 
@@ -120,22 +122,22 @@ type Proposal = {
 };
 
 /**
- * The places a set is matched with: the set's subjects and every other confirmed place of the area. Matching over all
+ * The places a set is matched with: the set's subjects and every other confirmed place of the subdivision. Matching over all
  * of them (rulings M7-B-R1 item 2 and M7-B-R2) means a spot that is nearer to a confirmed place outside the set is
  * never given to a set place, and confirmed places match before non-confirmed set members.
  */
-export function matchingPlaces(subjects: ComparisonSubject[], areaPlaces: AreaPlace[]): MatchPlace[] {
+export function matchingPlaces(subjects: ComparisonSubject[], areaPlaces: SubdivisionPlace[]): MatchPlace[] {
   const inSet = new Set(subjects.map((s) => s.placeId));
   return [...subjects, ...areaPlaces.filter((p) => !inSet.has(p.placeId))];
 }
 
 /**
- * The proposals of each subject, matched over the set and all confirmed places of the area (`matchingPlaces`); also
+ * The proposals of each subject, matched over the set and all confirmed places of the subdivision (`matchingPlaces`); also
  * returns the matching for the coverage. The page, the accept action and the CLI share this function.
  */
 export function proposalsFor(
   subjects: ComparisonSubject[],
-  areaPlaces: AreaPlace[],
+  areaPlaces: SubdivisionPlace[],
   spots: NavilySpot[],
   { cfg, affixes }: Settings,
 ): { proposals: Map<string, Proposal>; places: MatchPlace[]; matches: NavilyMatch[] } {
@@ -173,11 +175,11 @@ const digestOf = (p: Proposal) =>
  * Inside the write transaction: takes the place's comparison lock, then loads the comparison set (so the subject is
  * the one the outcome is recorded for, ruling M7-B-R2) and finds the place in it.
  */
-async function lockedSubjects(tx: Db, areaKey: string, placeId: string, evaluationRunId?: string) {
+async function lockedSubjects(tx: Db, subdivisionKey: string, placeId: string, evaluationRunId?: string) {
   await lockComparisonPlace(tx, placeId);
-  const subjects = await loadComparisonSubjects(tx, areaKey, { evaluationRunId });
+  const subjects = await loadComparisonSubjects(tx, subdivisionKey, { evaluationRunId });
   const subject = subjects.find((s) => s.placeId === placeId);
-  if (!subject) throw new Error(`place ${placeId} is not in the comparison set of area ${areaKey}`);
+  if (!subject) throw new Error(`place ${placeId} is not in the comparison set of subdivision ${subdivisionKey}`);
   return { subjects, subject };
 }
 
@@ -189,7 +191,7 @@ export async function recordManualComparison(
   db: Db,
   input: {
     placeId: string;
-    areaKey: string;
+    subdivisionKey: string;
     attribute: ComparisonAttribute;
     result: "match" | "deviation" | "not_at_navily";
     valueHash: string;
@@ -199,7 +201,7 @@ export async function recordManualComparison(
   },
 ): Promise<{ written: number; tasks: number }> {
   return db.transaction(async (tx) => {
-    const { subject } = await lockedSubjects(tx, input.areaKey, input.placeId, input.evaluationRunId);
+    const { subject } = await lockedSubjects(tx, input.subdivisionKey, input.placeId, input.evaluationRunId);
     return recordComparisonResults(tx, {
       subject,
       entries: [{ attribute: input.attribute, result: input.result, valueHash: input.valueHash, profileVersion: subject.profileVersion }],
@@ -221,11 +223,11 @@ export async function recordManualComparison(
  */
 export async function acceptNavilyProposals(
   db: Db,
-  input: { placeId: string; areaKey: string; evaluationRunId?: string; spots: NavilySpot[]; digest: string; checkedBy: string } & Settings,
+  input: { placeId: string; subdivisionKey: string; evaluationRunId?: string; spots: NavilySpot[]; digest: string; checkedBy: string } & Settings,
 ): Promise<{ written: number; tasks: number; skippedManual: number }> {
   return db.transaction(async (tx) => {
-    const { subjects, subject } = await lockedSubjects(tx, input.areaKey, input.placeId, input.evaluationRunId);
-    const areaPlaces = await confirmedAreaPlaces(tx, input.areaKey);
+    const { subjects, subject } = await lockedSubjects(tx, input.subdivisionKey, input.placeId, input.evaluationRunId);
+    const areaPlaces = await confirmedSubdivisionPlaces(tx, input.subdivisionKey);
     const proposal = proposalsFor(subjects, areaPlaces, input.spots, input).proposals.get(subject.placeId)!;
     if (digestOf(proposal) !== input.digest) throw new StaleComparison(subject.placeId, "proposals");
     const latest = await latestComparisonResults(tx, [subject.placeId]);
@@ -276,28 +278,28 @@ export type PlaceComparison = {
 
 export type UnmatchedSpot = { spot: NavilySpot; nearest: { placeId: string; name: string | null; distanceM: number } | null };
 
-export type AreaComparisonView = {
+export type SubdivisionComparisonView = {
   places: PlaceComparison[];
   checked: number;
   total: number;
   /** Null without a Navily file. */
   coverage: { spots: number; matched: number; ratio: number | null } | null;
-  /** Runtime only: spots in the area no confirmed place matches. */
+  /** Runtime only: spots in the subdivision no confirmed place matches. */
   unmatchedSpots: UnmatchedSpot[];
 };
 
 /**
- * The comparison of the area's set: own values, proposals (with spots) and their digest, the newest outcome per
+ * The comparison of the subdivision's set: own values, proposals (with spots) and their digest, the newest outcome per
  * current value hash (`carried` when it was recorded on another profile version or evaluation run) and the coverage
- * of the area's spots from the same matching the proposals use (set plus all confirmed places of the area).
+ * of the subdivision's spots from the same matching the proposals use (set plus all confirmed places of the subdivision).
  */
-export async function areaComparisonView(
+export async function subdivisionComparisonView(
   db: Db,
-  input: { areaKey: string; evaluationRunId?: string; spots: NavilySpot[] | null } & Settings,
-): Promise<AreaComparisonView> {
-  const subjects = await loadComparisonSubjects(db, input.areaKey, { evaluationRunId: input.evaluationRunId });
+  input: { subdivisionKey: string; evaluationRunId?: string; spots: NavilySpot[] | null } & Settings,
+): Promise<SubdivisionComparisonView> {
+  const subjects = await loadComparisonSubjects(db, input.subdivisionKey, { evaluationRunId: input.evaluationRunId });
   const latest = await latestComparisonResults(db, subjects.map((s) => s.placeId));
-  const areaPlaces = input.spots ? await confirmedAreaPlaces(db, input.areaKey) : [];
+  const areaPlaces = input.spots ? await confirmedSubdivisionPlaces(db, input.subdivisionKey) : [];
   const matching = input.spots ? proposalsFor(subjects, areaPlaces, input.spots, input) : null;
   const proposals = matching?.proposals ?? null;
   const evaluationRunId = input.evaluationRunId ?? null;
@@ -329,11 +331,11 @@ export async function areaComparisonView(
     };
   });
 
-  let coverage: AreaComparisonView["coverage"] = null;
+  let coverage: SubdivisionComparisonView["coverage"] = null;
   let unmatchedSpots: UnmatchedSpot[] = [];
   if (input.spots && matching) {
     const spots = input.spots;
-    const inArea = await areaTilePredicate(db, input.areaKey);
+    const inArea = await subdivisionTilePredicate(db, input.subdivisionKey);
     const c = coverageOfMatches(matching.places, matching.matches, spots, inArea, new Set(areaPlaces.map((p) => p.placeId)));
     coverage = { spots: c.spots, matched: c.matched, ratio: c.ratio };
     unmatchedSpots = c.unmatchedSpotIndexes.map((i) => {

@@ -12,8 +12,9 @@ import type { DocType } from "@/lib/db/schema/sources";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 
 /*
- * What a delivery build reads for one area (spec 08): the delivered objects with their latest profiles, names and the
- * documents behind them. Loaded by `loadAreaScope` (load.ts), mapped to the contract by the `map-*.ts` modules.
+ * What a delivery build reads for one subdivision (spec 08, spec 14): the delivered objects with their latest profiles,
+ * names and the documents behind them. Loaded by `loadSubdivisionScope` (load.ts), mapped to the contract by the
+ * `map-*.ts` modules. Content belongs to the subdivision by `geo_objects.subdivision_id`, never by tile label.
  */
 
 export type LonLat = { lon: number; lat: number };
@@ -43,7 +44,7 @@ export type SpotSource = {
   profile: ProfileSnapshot | null;
   /** The `ok` summary of the latest profile version (highest prompt version), ruling M6-P9. */
   summary: string | null;
-  /** `popularityForArea` on the build date; null for a place outside its map (ruling M6-P8). */
+  /** `popularityForSubdivision` on the build date; null for a place outside its map (ruling M6-P8). */
   popularity: number | null;
   sources: SourceRefRow[];
 };
@@ -91,17 +92,20 @@ export type PassageSource = {
   profile: ProfileSnapshot | null;
 };
 
-export type AreaScope = {
-  area: {
-    geoObjectId: string;
+export type SubdivisionScope = {
+  subdivision: {
+    id: string;
     publicId: string;
     key: string;
     name: string;
     names: ObjectName[];
     polygon: GeoJSON.Polygon | GeoJSON.MultiPolygon;
-    /** `[west, south, east, north]` of the area's tiles, 5 decimals. */
+    /** `[west, south, east, north]` of the subdivision's scope tiles (its polygon's box without tiles), 5 decimals. */
     bbox: [number, number, number, number];
   };
+  /** The sailing areas (Reviere) linked to the scope tiles (`tile_geo_objects`), by public id; information only. */
+  areas: Array<{ publicId: string; key: string; names: ObjectName[] }>;
+  /** The scope tiles (`subdivisionTileIds`) with their state; a tile without a run has no `lastRunAt` and no profiles. */
   tiles: Array<{ id: string; lastRunAt: string | null; profilesAsOf: string | null }>;
   spots: SpotSource[];
   merged: MergedSpot[];

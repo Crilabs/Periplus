@@ -1,6 +1,6 @@
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { areaByKey, getConfig, type DiscoveryConfig } from "@/lib/config";
+import { getConfig, type DiscoveryConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import {
@@ -13,10 +13,10 @@ import {
   type GeoObjectType,
   type NameOrigin,
 } from "@/lib/db/schema";
-import { areaQueries, capQueries, tileQueries, type DiscoveryQuery } from "@/lib/domain/discovery/queries";
-import { syncAreas } from "@/lib/domain/gazetteer/areas";
+import { areaQueries, capQueries, sourceLanguagesOfTile, tileQueries, type DiscoveryQuery } from "@/lib/domain/discovery/queries";
 import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
 import { withRollback } from "@/test/db";
+import { insertTestSubdivision } from "@/test/text";
 
 // Synthetic data in open sea outside the pilot box 23.0-23.75 E x 37.0-38.0 N, at a spot no other test uses.
 const LON = 29.83;
@@ -24,19 +24,21 @@ const LAT = 33.17;
 const TILE = tileIdFor(LON, LAT);
 
 const cfg = (): DiscoveryConfig => getConfig().discovery;
-const areas = () => getConfig().areas;
 
 type Name = { name: string; language: string; origin?: NameOrigin; isPreferred?: boolean };
 
-/** The valid `saronic` area object (created inside the transaction when the test database has none). */
-async function saronicAreaId(tx: Db): Promise<string> {
-  const ids = await syncAreas(tx, [areaByKey("saronic")]);
-  return ids.get("saronic")!;
+const SUB_BOX: [number, number, number, number] = [29.5, 33.0, 30.5, 33.5];
+
+/** A Greek subdivision (languages el, de, en) around the test tile, its tile labelled with it. */
+async function subdivisionTile(tx: Db, key = "XT-Q1", country = "GR"): Promise<string> {
+  const sub = await insertTestSubdivision(tx, key, SUB_BOX, { country });
+  await insertTile(tx, sub.id);
+  return sub.id;
 }
 
-async function insertTile(tx: Db, areaId: string | null): Promise<void> {
+async function insertTile(tx: Db, subdivisionId: string | null): Promise<void> {
   const [w, s, e, n] = tileBbox(TILE);
-  await tx.insert(tiles).values({ id: TILE, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, areaId, hasCoast: true });
+  await tx.insert(tiles).values({ id: TILE, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, subdivisionId, hasCoast: true });
 }
 
 async function insertObject(tx: Db, type: GeoObjectType, names: Name[], opts: { validTo?: string } = {}): Promise<string> {
@@ -85,7 +87,7 @@ const keywords = (qs: DiscoveryQuery[]) => qs.map((q) => `${q.keyword}|${q.langu
 describe("tileQueries", () => {
   it("a bay qualifies by anchor area or two wikidata names", async () => {
     await withRollback(async (tx) => {
-      await insertTile(tx, await saronicAreaId(tx));
+      await subdivisionTile(tx);
       await insertObject(tx, "island", [
         { name: "Nisos", language: "en" },
         { name: "Nisos-de", language: "de" },
@@ -101,7 +103,7 @@ describe("tileQueries", () => {
       ]);
       await insertObject(tx, "settlement", [{ name: "Chora", language: "en" }]);
 
-      const qs = await tileQueries(tx, TILE, cfg(), areas());
+      const qs = await tileQueries(tx, TILE, cfg());
       expect(keywords(qs)).toEqual(
         [
           "Ankerplatz Nisos-de|de|2276|1",
@@ -119,27 +121,27 @@ describe("tileQueries", () => {
 
   it("the newest anchor_area fact decides", async () => {
     await withRollback(async (tx) => {
-      await insertTile(tx, await saronicAreaId(tx));
+      await subdivisionTile(tx);
       const bay = await insertObject(tx, "bay", [{ name: "Bay D", language: "en" }]);
       await insertAnchorArea(tx, bay, 25_000);
       // Same transaction, same created_at: a later fact must still win by insertion order.
       await insertAnchorArea(tx, bay, 10_000);
-      expect(await tileQueries(tx, TILE, cfg(), areas())).toEqual([]);
+      expect(await tileQueries(tx, TILE, cfg())).toEqual([]);
     });
   });
 
   it("a language without a name yields no query", async () => {
     await withRollback(async (tx) => {
-      await insertTile(tx, await saronicAreaId(tx));
+      await subdivisionTile(tx);
       await insertObject(tx, "island", [{ name: "Only English", language: "en" }]);
-      const qs = await tileQueries(tx, TILE, cfg(), areas());
+      const qs = await tileQueries(tx, TILE, cfg());
       expect(keywords(qs)).toEqual(["anchorage Only English|en|2826|1"]);
     });
   });
 
-  it("uses the preferred valid name, skips ended objects, dedupes and keeps only the area's languages", async () => {
+  it("uses the preferred valid name, skips ended objects, dedupes and keeps only the subdivision's languages", async () => {
     await withRollback(async (tx) => {
-      await insertTile(tx, await saronicAreaId(tx));
+      await subdivisionTile(tx);
       await insertObject(tx, "island", [
         { name: "Zeta", language: "en" },
         { name: "Alpha", language: "en", isPreferred: true },
@@ -152,42 +154,101 @@ describe("tileQueries", () => {
         ...cfg(),
         templates: { ...cfg().templates, tile: [...cfg().templates.tile, { template: "mouillage {name}", lang: "fr", locationCode: 2250 }] },
       };
-      const qs = await tileQueries(tx, TILE, withFrench, areas());
+      const qs = await tileQueries(tx, TILE, withFrench);
       expect(keywords(qs)).toEqual(["anchorage Alpha|en|2826|1"]);
     });
   });
 });
 
 describe("tileQueries scope", () => {
-  it("throws when the tile has no area", async () => {
+  it("throws when the tile has no subdivision", async () => {
     await withRollback(async (tx) => {
       await insertTile(tx, null);
       await insertObject(tx, "island", [{ name: "Nowhere", language: "en" }]);
-      await expect(tileQueries(tx, TILE, cfg(), areas())).rejects.toThrow(/no area/);
+      await expect(tileQueries(tx, TILE, cfg())).rejects.toThrow(`Kachel ${TILE} hat keinen Landesteil`);
+      await expect(sourceLanguagesOfTile(tx, TILE)).rejects.toThrow(`Kachel ${TILE} hat keinen Landesteil`);
     });
   });
 
-  it("throws when the tile's area is not configured", async () => {
+  it("tile query languages come from the subdivision override, else from its country", async () => {
     await withRollback(async (tx) => {
-      await insertTile(tx, await saronicAreaId(tx));
-      await expect(tileQueries(tx, TILE, cfg(), [])).rejects.toThrow(/not configured/);
+      const withCatalan: DiscoveryConfig = {
+        ...cfg(),
+        templates: { ...cfg().templates, tile: [...cfg().templates.tile, { template: "fondejador {name}", lang: "ca", locationCode: 2724 }] },
+      };
+      await subdivisionTile(tx, "ES-CT", "ES");
+      await insertObject(tx, "island", [
+        { name: "Illa", language: "ca" },
+        { name: "Isla", language: "es" },
+      ]);
+      // ES-CT overrides the Spanish default (es, de, en) with Catalan added
+      expect(await sourceLanguagesOfTile(tx, TILE)).toEqual(["es", "ca", "de", "en"]);
+      expect(keywords(await tileQueries(tx, TILE, withCatalan))).toContain("fondejador Illa|ca|2724|1");
+    });
+    await withRollback(async (tx) => {
+      const withCatalan: DiscoveryConfig = {
+        ...cfg(),
+        templates: { ...cfg().templates, tile: [...cfg().templates.tile, { template: "fondejador {name}", lang: "ca", locationCode: 2724 }] },
+      };
+      await subdivisionTile(tx, "ES-VC", "ES");
+      await insertObject(tx, "island", [{ name: "Illa", language: "ca" }]);
+      expect(await sourceLanguagesOfTile(tx, TILE)).toEqual(["es", "de", "en"]);
+      expect(await tileQueries(tx, TILE, withCatalan)).toEqual([]);
     });
   });
 });
 
 describe("areaQueries", () => {
-  it("builds the area templates from the area object's names", async () => {
+  /** An `area` object (with `config_key`) named in de, en linked to the test tile and a Greek subdivision there. */
+  async function areaObject(tx: Db, configKey: string, names: Name[]): Promise<string> {
+    const [o] = await tx
+      .insert(geoObjects)
+      .values({
+        type: "area",
+        origin: "manual",
+        configKey,
+        geom: geomFromGeoJson({ type: "Point", coordinates: [LON, LAT] }),
+      })
+      .returning({ id: geoObjects.id });
+    for (const n of names) {
+      await tx.insert(geoNames).values({
+        geoObjectId: o!.id,
+        name: n.name,
+        nameNormalized: n.name.toLowerCase(),
+        language: n.language,
+        script: "latin",
+        origin: "manual",
+        isPreferred: true,
+      });
+    }
+    await tx.insert(tileGeoObjects).values({ tileId: TILE, geoObjectId: o!.id });
+    return o!.id;
+  }
+
+  it("builds the area templates from the names of the areas touching the subdivision's tiles", async () => {
     await withRollback(async (tx) => {
-      await saronicAreaId(tx);
-      const qs = await areaQueries(tx, "saronic", cfg());
+      const subId = await subdivisionTile(tx, "XT-Q2");
+      await areaObject(tx, "xt-gulf", [
+        { name: "Testgolf", language: "de" },
+        { name: "Test Gulf", language: "en" },
+        { name: "Francais", language: "fr" },
+      ]);
+      expect(subId).toBeTruthy();
+      const qs = await areaQueries(tx, "XT-Q2", cfg());
       expect(keywords(qs)).toEqual(
-        [
-          "Törnbericht Saronischer Golf|de|2276|0",
-          "Revierführer Saronischer Golf|de|2276|0",
-          "Saronic Gulf anchorages|en|2826|0",
-        ].sort(),
+        ["Törnbericht Testgolf|de|2276|0", "Revierführer Testgolf|de|2276|0", "Test Gulf anchorages|en|2826|0"].sort(),
       );
-      expect(qs.every((q) => q.level === "area" && q.scopeId === "saronic")).toBe(true);
+      expect(qs.every((q) => q.level === "area" && q.scopeId === "xt-gulf")).toBe(true);
+    });
+  });
+
+  it("an area outside the subdivision's tiles yields nothing; an unknown subdivision throws", async () => {
+    await withRollback(async (tx) => {
+      await subdivisionTile(tx, "XT-Q3");
+      const far = await areaObject(tx, "xt-far", [{ name: "Fernegolf", language: "de" }]);
+      await tx.delete(tileGeoObjects).where(eq(tileGeoObjects.geoObjectId, far));
+      expect(await areaQueries(tx, "XT-Q3", cfg())).toEqual([]);
+      await expect(areaQueries(tx, "XT-NOPE", cfg())).rejects.toThrow("Unbekannter Landesteil XT-NOPE");
     });
   });
 });

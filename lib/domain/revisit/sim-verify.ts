@@ -11,14 +11,14 @@ import { asOfPlan, checkAsOf, checkCurrentSpot, readSimMeta, verifyRevisit, type
  * The API key is never returned or written.
  */
 
-export type SimVerifyInput = { area: string; scenario: string; baseUrl?: string; key?: string; spot?: string };
+export type SimVerifyInput = { subdivision: string; scenario: string; baseUrl?: string; key?: string; spot?: string };
 
 export type AsOfReport =
   | { ok: false; reason: string }
   | { ok: boolean; asOf: string; spot: string; before: { dataVersion: number }; after: { dataVersion: number }; check: AsOfCheck };
 
 export type SimVerifyReport = {
-  area: string;
+  subdivision: string;
   scenario: string;
   clonedAt: string;
   fromSeq: number;
@@ -67,12 +67,12 @@ export function changedSpot(scenario: RevisitScenario, v: RevisitVerification): 
 export async function asOfReport(
   db: Db,
   archive: Archive,
-  input: { area: string; baseUrl: string; key: string; spot?: string },
+  input: { subdivision: string; baseUrl: string; key: string; spot?: string },
   scenario: RevisitScenario,
   v: RevisitVerification,
   doFetch?: typeof fetch,
 ): Promise<AsOfReport> {
-  const plan = await asOfPlan(db, input.area);
+  const plan = await asOfPlan(db, input.subdivision);
   if ("reason" in plan) return { ok: false, reason: plan.reason };
   const spot = input.spot ?? changedSpot(scenario, v);
   if (!spot) return { ok: false, reason: "Kein Spot mit erkannter Änderung – --spot angeben" };
@@ -117,7 +117,7 @@ async function simCosts(db: Db, since: Date): Promise<SimVerifyReport["costs"]> 
 
 /**
  * The verification of a simulated revisit: `sim_meta` (else refused: no simulation clone), refused while a revisit run
- * of the area is queued or running, `verifyRevisit` from its `from_seq`, with `baseUrl` (local only,
+ * of the subdivision is queued or running, `verifyRevisit` from its `from_seq`, with `baseUrl` (local only,
  * `assertSimulationWebUrl`) the asOf check (`asOfReport`), the clone's external costs. Passes when the verification
  * passes and the asOf check, if asked for, is ok.
  */
@@ -132,18 +132,18 @@ export async function simVerify(
   if (!meta) throw new Error("keine Sim-Datenbank – scripts/sim/clone.sh");
   // a revisit still at work writes more events: a pass now could be premature (ruling M7-G-R3)
   const { rows: live } = await db.execute<{ id: string }>(sql`
-    select id from runs where kind = 'revisit' and scope_type = 'area' and scope_id = ${input.area} and status in ('queued', 'running')
+    select id from runs where kind = 'revisit' and scope_type = 'subdivision' and scope_id = ${input.subdivision} and status in ('queued', 'running')
     order by created_at limit 1
   `);
   if (live[0]) throw new Error(`Revisit-Lauf ${live[0].id} läuft noch – erst abwarten (/runs)`);
   const scenario = opts.scenario ?? (await loadScenario(input.scenario));
-  const verification = await verifyRevisit(db, scenario, { fromSeq: meta.fromSeq, areaKey: input.area });
+  const verification = await verifyRevisit(db, scenario, { fromSeq: meta.fromSeq, subdivisionKey: input.subdivision });
   const asOf =
     input.baseUrl !== undefined && input.key !== undefined
-      ? await asOfReport(db, archive, { area: input.area, baseUrl: input.baseUrl, key: input.key, spot: input.spot }, scenario, verification, opts.fetch)
+      ? await asOfReport(db, archive, { subdivision: input.subdivision, baseUrl: input.baseUrl, key: input.key, spot: input.spot }, scenario, verification, opts.fetch)
       : null;
   return {
-    area: input.area,
+    subdivision: input.subdivision,
     scenario: scenario.name,
     clonedAt: meta.clonedAt.toISOString(),
     fromSeq: meta.fromSeq,

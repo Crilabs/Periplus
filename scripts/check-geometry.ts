@@ -3,20 +3,20 @@ import { fileURLToPath } from "node:url";
 import { createDb } from "../lib/db/client";
 import { checkGeometry } from "../lib/domain/geometry/check";
 
-const USAGE = "usage: check-geometry.ts --area <key>";
+const USAGE = "usage: check-geometry.ts --subdivision <key>";
 
-export function parseArgs(argv: string[]): { area: string } {
-  if (argv.length !== 2 || argv[0] !== "--area" || argv[1].startsWith("--")) throw new Error(USAGE);
-  return { area: argv[1] };
+export function parseArgs(argv: string[]): { subdivision: string } {
+  if (argv.length !== 2 || argv[0] !== "--subdivision" || argv[1].startsWith("--")) throw new Error(USAGE);
+  return { subdivision: argv[1] };
 }
 
 async function main(): Promise<void> {
-  const { area } = parseArgs(process.argv.slice(2));
+  const { subdivision } = parseArgs(process.argv.slice(2));
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
   const { db, close } = createDb(url);
   try {
-    const r = await checkGeometry(db, area);
+    const r = await checkGeometry(db, subdivision);
     process.stdout.write(`places: ${r.places}\n`);
     process.stdout.write(`complete: ${r.complete}\n`);
     process.stdout.write(`depth gaps (counted as complete): ${r.depthGaps.length}\n`);

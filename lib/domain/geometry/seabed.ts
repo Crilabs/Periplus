@@ -40,12 +40,12 @@ export function classifySeabed(props: Record<string, unknown>, cfg: DatasetsConf
 }
 
 /**
- * Replaces the `seabed_polygons` of `areaKey` in one transaction: every feature made valid, cut to `box`
+ * Replaces the `seabed_polygons` of `subdivisionKey` in one transaction: every feature made valid, cut to `box`
  * and split into its polygons (parts outside the box or without area are dropped).
  */
 export async function replaceSeabed(
   db: Db,
-  input: { areaKey: string; datasetVersion: string; box: Bbox; features: SeabedFeature[] },
+  input: { subdivisionKey: string; datasetVersion: string; box: Bbox; features: SeabedFeature[] },
 ): Promise<{ inserted: number }> {
   const [west, south, east, north] = input.box;
   const features = input.features.map((f) => ({
@@ -55,7 +55,7 @@ export async function replaceSeabed(
     geometry: f.geometry,
   }));
   return db.transaction(async (tx) => {
-    await tx.execute(sql`delete from seabed_polygons where area_key = ${input.areaKey}`);
+    await tx.execute(sql`delete from seabed_polygons where subdivision_key = ${input.subdivisionKey}`);
     if (features.length === 0) return { inserted: 0 };
     const { rows } = await tx.execute<{ id: string }>(sql`
       with box as (select ST_MakeEnvelope(${west}::float8, ${south}::float8, ${east}::float8, ${north}::float8, 4326) as geom),
@@ -70,8 +70,8 @@ export async function replaceSeabed(
         from src, box
         where src.geom && box.geom
       )
-      insert into seabed_polygons (id, substrate, habitat, source_ref, area_key, dataset_version, geom)
-      select gen_random_uuid(), substrate::seabed_type, habitat, source_ref, ${input.areaKey}, ${input.datasetVersion}, geom
+      insert into seabed_polygons (id, substrate, habitat, source_ref, subdivision_key, dataset_version, geom)
+      select gen_random_uuid(), substrate::seabed_type, habitat, source_ref, ${input.subdivisionKey}, ${input.datasetVersion}, geom
       from parts
       where not ST_IsEmpty(geom) and ST_Area(geom) > 0
       returning id`);
@@ -81,7 +81,7 @@ export async function replaceSeabed(
 
 /**
  * Seabed shares inside `area`: per type the area of the union of its polygons ∩ `area` (polygons imported
- * for several areas count once). Shares are relative to the summed type areas (= covered area when types
+ * for several subdivisions count once). Shares are relative to the summed type areas (= covered area when types
  * do not overlap), rounded to 0.01, zeros dropped; the largest absorbs the rounding rest so the sum is 1.
  * `coverage` = union of all polygons ∩ `area` / area.
  */

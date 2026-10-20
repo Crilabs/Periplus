@@ -3,14 +3,15 @@ import type { Db } from "@/lib/db/client";
 import type { ChangeSeverity, ChangeType } from "@/lib/db/schema";
 import { visibleChangeEventsFilter } from "@/lib/domain/change-feed";
 import { canonicalJson } from "@/lib/domain/facts/schema";
+import { subdivisionObjectIds } from "./scope";
 import { scenarioUrlKey, type ExpectedEvent, type RevisitScenario } from "./scenario";
 
 /*
- * Verification of a simulated revisit (spec 10, plan Task 13): the change feed of the area since the clone against the
+ * Verification of a simulated revisit (spec 10, plan Task 13): the change feed of the subdivision since the clone against the
  * scenario's expectations („genau diese Änderungen und nichts anderes“), and the asOf check of the API.
  */
 
-/** A change event of the area the scenario did not expect (or one more than it expected). */
+/** A change event of the subdivision the scenario did not expect (or one more than it expected). */
 export type UnexpectedEvent = {
   seq: number;
   subject: string | null;
@@ -54,13 +55,14 @@ const matches = (e: ExpectedEvent, row: EventRow) =>
   row.subject === e.subject && attributeMatches(e.attribute, row.attribute) && row.type === e.type && row.severity === e.severity;
 
 /**
- * The change events after `fromSeq` of the area's geo objects: the area object, every object of its tiles
- * (`tile_geo_objects`: places, POIs, regions) and the places on its tiles, with the subject's public id (the place's
- * `sp_` id, else the object's `ar_`/`rg_`/`hl_` id). Read with the change feed's outbox guard (`visibleChangeEventsFilter`,
+ * The change events after `fromSeq` of the subdivision's geo objects (`subdivisionObjectIds`: its own object, every
+ * object of its scope tiles and the places on them), with the subject's public id (the place's `sp_` id, else the
+ * object's `ar_`/`rg_`/`hl_` id). Read with the change feed's outbox guard (`visibleChangeEventsFilter`,
  * ruling M5-A-R2): only rows of transactions no longer in flight, plus the reader's own (a verification inside the
  * writing transaction, tests).
  */
-async function areaEvents(db: Db, areaKey: string, fromSeq: number): Promise<EventRow[]> {
+async function subdivisionEvents(db: Db, subdivisionKey: string, fromSeq: number): Promise<EventRow[]> {
+  const objectIds = JSON.stringify(await subdivisionObjectIds(db, subdivisionKey));
   const { rows } = await db.execute<{
     seq: string | number;
     subject: string | null;
@@ -70,14 +72,8 @@ async function areaEvents(db: Db, areaKey: string, fromSeq: number): Promise<Eve
     old_value: unknown;
     new_value: unknown;
   }>(sql`
-    with area as (
-      select id from geo_objects where type = 'area' and config_key = ${areaKey}
-    ), area_tiles as (
-      select t.id from tiles t where t.area_id in (select id from area)
-    ), objects as (
-      select id from area
-      union select tgo.geo_object_id from tile_geo_objects tgo where tgo.tile_id in (select id from area_tiles)
-      union select p.geo_object_id from places p where p.tile_id in (select id from area_tiles)
+    with objects as (
+      select value::uuid as id from jsonb_array_elements_text(${objectIds}::jsonb)
     )
     select change_events.seq, change_events.attribute, change_events.type, change_events.severity,
       change_events.old_value, change_events.new_value,
@@ -121,14 +117,14 @@ async function documentOutcome(db: Db, url: string): Promise<"new_version" | "go
 }
 
 /**
- * Compares the area's change events after `fromSeq` (`areaEvents`) with the scenario: per entry the document outcome
+ * Compares the subdivision's change events after `fromSeq` (`subdivisionEvents`) with the scenario: per entry the document outcome
  * (`documentOutcome`) and each expected event — same subject (public id), attribute equal or under a `.*` prefix, same
  * type and severity. Exact attributes are matched before `.*` prefixes, each pass in scenario order and events in `seq`
  * order; an event satisfies at most one expectation, so a second event of the same kind is unexpected, as is every event no expectation took (also `expired`
  * ones: „nichts anderes“, ruling M7-P7). `passes` = every entry correct and nothing unexpected.
  */
-export async function verifyRevisit(db: Db, scenario: RevisitScenario, opts: { fromSeq: number; areaKey: string }): Promise<RevisitVerification> {
-  const events = await areaEvents(db, opts.areaKey, opts.fromSeq);
+export async function verifyRevisit(db: Db, scenario: RevisitScenario, opts: { fromSeq: number; subdivisionKey: string }): Promise<RevisitVerification> {
+  const events = await subdivisionEvents(db, opts.subdivisionKey, opts.fromSeq);
   const used = new Set<number>();
   const matchedOf = new Map<string, number>(scenario.entries.map((e) => [e.id, 0]));
   // exact attributes first, `.*` prefixes after: a prefix never takes the event an exact expectation needs
@@ -191,25 +187,25 @@ const utcDay = (d: Date) => d.toISOString().slice(0, 10);
 
 /**
  * The asOf check of a revisit (spec 10 „GET /spots/{id}?asOf=<Datum vor Revisit> liefert die alte Version“): the latest
- * valid package of the area built before the first revisit run (in a simulation clone: the first one started after the
+ * valid package of the subdivision built before the first revisit run (in a simulation clone: the first one started after the
  * clone) and the FIRST one built after it (ruling M7-G-R3: a later package would let asOf land on a post-revisit state);
  * `asOf` = the UTC day before that first package was built. Packages are dated by UTC day, so a package built on the
  * same day as that one cannot be told apart from it.
  */
-export async function asOfPlan(db: Db, areaKey: string): Promise<AsOfPlan> {
+export async function asOfPlan(db: Db, subdivisionKey: string): Promise<AsOfPlan> {
   const meta = await readSimMeta(db);
   const { rows: revisits } = await db.execute<{ created_at: Date | string }>(sql`
     select created_at from runs
-    where kind = 'revisit' and scope_type = 'area' and scope_id = ${areaKey}
+    where kind = 'revisit' and scope_type = 'subdivision' and scope_id = ${subdivisionKey}
       ${meta ? sql`and created_at >= ${meta.clonedAt.toISOString()}::timestamptz` : sql``}
     order by created_at, id limit 1
   `);
-  if (!revisits[0]) return { reason: "Kein Revisit-Lauf für das Revier" };
+  if (!revisits[0]) return { reason: "Kein Revisit-Lauf für den Landesteil" };
   const revisitAt = new Date(revisits[0].created_at).toISOString();
   const around = async (side: "before" | "after"): Promise<DeliveryPoint | null> => {
     const { rows } = await db.execute<{ data_version: number; generated_at: Date | string }>(sql`
       select d.data_version, d.generated_at
-      from deliveries d join geo_objects a on a.id = d.area_id and a.type = 'area' and a.config_key = ${areaKey}
+      from deliveries d join subdivisions s on s.id = d.subdivision_id and s.key = ${subdivisionKey} and s.valid_to is null
       where d.status = 'valid'
         and ${side === "before" ? sql`d.generated_at < ${revisitAt}::timestamptz` : sql`d.generated_at > ${revisitAt}::timestamptz`}
       order by d.data_version ${side === "before" ? sql`desc` : sql`asc`} limit 1
@@ -230,7 +226,7 @@ export async function asOfPlan(db: Db, areaKey: string): Promise<AsOfPlan> {
 export type AsOfCheck = { ok: boolean; status: number; dataVersion: number | null; reason?: string };
 
 /**
- * `GET <baseUrl>/api/v1/spots/<spotId>[?asOf=<asOf>]` with the API key (never logged or returned): ok when the API
+ * `GET <baseUrl>/api/v2/spots/<spotId>[?asOf=<asOf>]` with the API key (never logged or returned): ok when the API
  * answers 200 with `expect.dataVersion` and, when given, `expect.spot` (compared as canonical JSON: the value, not only
  * its number, ruling M7-G-R3). `label` names the expected state in the reason. A network error is status 0.
  */
@@ -245,7 +241,7 @@ async function checkSpotApi(input: {
 }): Promise<AsOfCheck> {
   const doFetch = input.fetch ?? fetch;
   const query = input.asOf === undefined ? "" : `?asOf=${encodeURIComponent(input.asOf)}`;
-  const url = `${input.baseUrl.replace(/\/+$/, "")}/api/v1/spots/${encodeURIComponent(input.spotId)}${query}`;
+  const url = `${input.baseUrl.replace(/\/+$/, "")}/api/v2/spots/${encodeURIComponent(input.spotId)}${query}`;
   let res: Response;
   try {
     res = await doFetch(url, { headers: { Authorization: `Bearer ${input.key}`, Accept: "application/json" } });
@@ -272,7 +268,7 @@ async function checkSpotApi(input: {
 }
 
 /**
- * `GET <baseUrl>/api/v1/spots/<spotId>?asOf=<asOf>` with the API key (never logged or returned): ok when the API
+ * `GET <baseUrl>/api/v2/spots/<spotId>?asOf=<asOf>` with the API key (never logged or returned): ok when the API
  * answers 200 with the data version the spot had before the revisit (`expectBefore.dataVersion`) and, when given, the
  * spot as it was delivered then (`expectBefore.spot`, compared as canonical JSON: the old value, not only its number,
  * ruling M7-G-R3). A network error is status 0.
@@ -289,7 +285,7 @@ export function checkAsOf(input: {
 }
 
 /**
- * `GET <baseUrl>/api/v1/spots/<spotId>` (no asOf): ok when the API answers the spot's newest delivered state of the
+ * `GET <baseUrl>/api/v2/spots/<spotId>` (no asOf): ok when the API answers the spot's newest delivered state of the
  * simulation clone (`expectCurrent`, a package built only in the simulation after the revisit). A web on another
  * database answers another state, so this tells the simulation web apart from the development or production web
  * (final review A M-4).

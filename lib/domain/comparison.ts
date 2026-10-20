@@ -1,7 +1,8 @@
 import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { comparisonSet, geoObjects, places, tiles, type PlaceKind } from "@/lib/db/schema";
+import { comparisonSet, geoObjects, places, type PlaceKind } from "@/lib/db/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
+import { requireSubdivision, subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import { validAt } from "@/lib/domain/timeline";
 
 export type ComparisonCandidate = {
@@ -12,35 +13,28 @@ export type ComparisonCandidate = {
   inSet: boolean;
 };
 
-/** The valid area object of a configured area; null until a gazetteer run has created it. */
-async function findAreaId(db: Db, areaKey: string): Promise<string | null> {
-  const [area] = await db
-    .select({ id: geoObjects.id })
-    .from(geoObjects)
-    .where(and(eq(geoObjects.type, "area"), eq(geoObjects.configKey, areaKey), validAt(geoObjects)));
-  return area?.id ?? null;
-}
-
-async function areaIdFor(db: Db, areaKey: string): Promise<string> {
-  const areaId = await findAreaId(db, areaKey);
-  if (!areaId) throw new Error(`Unknown area ${areaKey}`);
-  return areaId;
+/** The id of the valid subdivision `key`; refuses an unknown, excluded or area key (`requireSubdivision`). */
+async function subdivisionIdFor(db: Db, subdivisionKey: string): Promise<string> {
+  return (await requireSubdivision(db, subdivisionKey)).id;
 }
 
 export type ComparisonOverview = { candidates: ComparisonCandidate[]; size: number };
 
 /**
- * Candidates and set size of an area for the quality page; null when the area object does not exist yet
- * (configured, but no gazetteer run so far), so the page can say so instead of failing.
+ * Candidates and set size of a subdivision for the quality page; null when there is no such valid subdivision, so the
+ * page can say so instead of failing.
  */
-export async function comparisonOverview(db: Db, areaKey: string): Promise<ComparisonOverview | null> {
-  if (!(await findAreaId(db, areaKey))) return null;
-  return { candidates: await listComparisonCandidates(db, areaKey), size: await comparisonSetSize(db, areaKey) };
+export async function comparisonOverview(db: Db, subdivisionKey: string): Promise<ComparisonOverview | null> {
+  if (!(await subdivisionByKey(db, subdivisionKey))) return null;
+  return { candidates: await listComparisonCandidates(db, subdivisionKey), size: await comparisonSetSize(db, subdivisionKey) };
 }
 
-/** Confirmed, valid places in tiles labelled with the area, by tile and name. */
-export async function listComparisonCandidates(db: Db, areaKey: string): Promise<ComparisonCandidate[]> {
-  const areaId = await areaIdFor(db, areaKey);
+/**
+ * Confirmed, valid places of the subdivision (`geo_objects.subdivision_id`, nearest land, not the tile label), by tile
+ * and name.
+ */
+export async function listComparisonCandidates(db: Db, subdivisionKey: string): Promise<ComparisonCandidate[]> {
+  const subdivisionId = await subdivisionIdFor(db, subdivisionKey);
   const name = displayNameSql(places.geoObjectId);
   const rows = await db
     .select({
@@ -51,23 +45,23 @@ export async function listComparisonCandidates(db: Db, areaKey: string): Promise
       inSet: sql<boolean>`${comparisonSet.placeId} is not null`,
     })
     .from(places)
-    .innerJoin(tiles, eq(tiles.id, places.tileId))
-    .leftJoin(comparisonSet, and(eq(comparisonSet.placeId, places.id), eq(comparisonSet.areaId, areaId)))
-    .where(and(eq(tiles.areaId, areaId), eq(places.status, "confirmed"), validAt(places)))
+    .innerJoin(geoObjects, eq(geoObjects.id, places.geoObjectId))
+    .leftJoin(comparisonSet, and(eq(comparisonSet.placeId, places.id), eq(comparisonSet.subdivisionId, subdivisionId)))
+    .where(and(eq(geoObjects.subdivisionId, subdivisionId), eq(places.status, "confirmed"), validAt(places)))
     .orderBy(places.tileId, name, places.id);
   return rows;
 }
 
-/** Adds a confirmed place of the area to the set; adding it again is a no-op. */
-export async function addToComparisonSet(db: Db, placeId: string, areaKey: string, by: string): Promise<void> {
-  const areaId = await areaIdFor(db, areaKey);
+/** Adds a confirmed place of the subdivision to the set; adding it again is a no-op. */
+export async function addToComparisonSet(db: Db, placeId: string, subdivisionKey: string, by: string): Promise<void> {
+  const subdivisionId = await subdivisionIdFor(db, subdivisionKey);
   const [eligible] = await db
     .select({ id: places.id })
     .from(places)
-    .innerJoin(tiles, eq(tiles.id, places.tileId))
-    .where(and(eq(places.id, placeId), eq(places.status, "confirmed"), validAt(places), eq(tiles.areaId, areaId)));
-  if (!eligible) throw new Error(`Place ${placeId} is not a confirmed place of area ${areaKey}`);
-  await db.insert(comparisonSet).values({ placeId, areaId, addedBy: by }).onConflictDoNothing();
+    .innerJoin(geoObjects, eq(geoObjects.id, places.geoObjectId))
+    .where(and(eq(places.id, placeId), eq(places.status, "confirmed"), validAt(places), eq(geoObjects.subdivisionId, subdivisionId)));
+  if (!eligible) throw new Error(`Place ${placeId} is not a confirmed place of subdivision ${subdivisionKey}`);
+  await db.insert(comparisonSet).values({ placeId, subdivisionId, addedBy: by }).onConflictDoNothing();
 }
 
 export async function removeFromComparisonSet(db: Db, placeId: string): Promise<void> {
@@ -76,12 +70,12 @@ export async function removeFromComparisonSet(db: Db, placeId: string): Promise<
 
 /**
  * Saves the comparison set selection of a list (UI-11: one save for every ticked box): of the places `shown`, those in
- * `included` join the set of area `areaKey` and the others leave it, in one transaction. Throws (nothing saved) when an
- * included place is no confirmed place of the area, or is not among `shown`.
+ * `included` join the set of subdivision `subdivisionKey` and the others leave it, in one transaction. Throws (nothing saved) when an
+ * included place is no confirmed place of the subdivision, or is not among `shown`.
  */
 export async function saveComparisonSelection(
   db: Db,
-  input: { areaKey: string; shown: string[]; included: string[]; by: string },
+  input: { subdivisionKey: string; shown: string[]; included: string[]; by: string },
 ): Promise<void> {
   const shown = new Set(input.shown);
   const stray = input.included.find((id) => !shown.has(id));
@@ -89,17 +83,17 @@ export async function saveComparisonSelection(
   const included = new Set(input.included);
   await db.transaction(async (tx) => {
     for (const placeId of [...shown].sort()) {
-      if (included.has(placeId)) await addToComparisonSet(tx, placeId, input.areaKey, input.by);
+      if (included.has(placeId)) await addToComparisonSet(tx, placeId, input.subdivisionKey, input.by);
       else await removeFromComparisonSet(tx, placeId);
     }
   });
 }
 
-export async function comparisonSetSize(db: Db, areaKey: string): Promise<number> {
-  const areaId = await areaIdFor(db, areaKey);
+export async function comparisonSetSize(db: Db, subdivisionKey: string): Promise<number> {
+  const subdivisionId = await subdivisionIdFor(db, subdivisionKey);
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(comparisonSet)
-    .where(eq(comparisonSet.areaId, areaId));
+    .where(eq(comparisonSet.subdivisionId, subdivisionId));
   return row!.n;
 }

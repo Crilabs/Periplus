@@ -19,6 +19,8 @@ const LEVEL_BY_TYPE: Record<GeoObjectType, FactLevel | null> = {
   bay: "place",
   harbour: "place",
   settlement: null,
+  country: null,
+  admin_region: null,
 };
 
 /** Types that take no facts without a place (`LEVEL_BY_TYPE` null). */

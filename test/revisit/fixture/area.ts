@@ -5,17 +5,20 @@ import type { Archive } from "@/lib/adapters/s3";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { crawlFrontier, geoNames, geoObjects, landPolygons, places, sources, tileGeoObjects, tiles, type DocType, type GeoObjectType } from "@/lib/db/schema";
+import { crawlFrontier, geoNames, geoObjects, landPolygons, places, sources, subdivisions, tileGeoObjects, tiles, type DocType, type GeoObjectType } from "@/lib/db/schema";
 import type { PlaceKind } from "@/lib/db/schema/geo";
 import { ensureDocument, storeFetched } from "@/lib/domain/documents/store";
 import { recordComputation } from "@/lib/domain/facts/computations";
 import { addNames } from "@/lib/domain/gazetteer/names";
 import { tileBbox } from "@/lib/domain/tiles";
+import { insertTestSubdivision } from "@/test/text";
 
 /*
  * The fixture area of the revisit integration test (plan Task 14, spec 10 „kleines Fixture-Revier (eine Kachel, 3 Orte,
  * 5 Dokumente)“), for `withRollback` only — never commit these rows. Synthetic, around 21.6° E / 35.85° N (outside the
- * pilot box; the tile north of 21.5/35.6, whose tile another test file uses): one area (fixed `ar_`), one coast tile,
+ * pilot box; the tile north of 21.5/35.6, whose tile another test file uses): one subdivision (key
+ * `REVISIT_SUBDIVISION_KEY`, the unit the revisit runs on; the geo objects below belong to it), one area (fixed `ar_`,
+ * which the delivery still builds from until plan 14a task 10), one coast tile,
  * an island „Revisonisi“ (land polygon with a bay notch in its south coast, fixed `rg_`), three confirmed places with
  * fixed `sp_` ids, each with eight computed shelter facts and a computed depth:
  *
@@ -37,6 +40,7 @@ import { tileBbox } from "@/lib/domain/tiles";
 const DIR = join(process.cwd(), "test/revisit/fixture/documents");
 
 export const REVISIT_AREA_KEY = "revisit-test";
+export const REVISIT_SUBDIVISION_KEY = "XT-revisit-test";
 export const REVISIT_TILE = "q025:806:503";
 const VALID_FROM = "2000-01-01";
 export const FIRST_FETCH = new Date("2026-05-01T06:00:00Z");
@@ -70,6 +74,8 @@ export type DocumentKey = keyof typeof REVISIT_DOCUMENTS;
 export const documentUrl = (d: DocumentKey) => `https://${REVISIT_SOURCES[REVISIT_DOCUMENTS[d].source].host}${REVISIT_DOCUMENTS[d].path}`;
 
 export type RevisitFixture = {
+  subdivisionKey: string;
+  subdivisionId: string;
   areaKey: string;
   areaId: string;
   tileId: string;
@@ -90,7 +96,7 @@ const SHELTER = { N: 0.9, NE: 0.9, E: 0.8, SE: 0.4, S: 0.2, SW: 0.3, W: 0.7, NW:
 
 async function geoObject(
   tx: Db,
-  o: { type: GeoObjectType; geom: GeoJSON.Geometry; names: string[]; publicId?: string; configKey?: string; parentId?: string; tiles?: string[] },
+  o: { type: GeoObjectType; geom: GeoJSON.Geometry; names: string[]; publicId?: string; configKey?: string; parentId?: string; tiles?: string[]; subdivisionId?: string },
 ): Promise<string> {
   const [row] = await tx
     .insert(geoObjects)
@@ -101,6 +107,7 @@ async function geoObject(
       publicId: o.publicId ?? null,
       configKey: o.configKey ?? null,
       parentId: o.parentId ?? null,
+      subdivisionId: o.subdivisionId ?? null,
       validFrom: VALID_FROM,
     })
     .returning({ id: geoObjects.id });
@@ -118,14 +125,22 @@ async function geoObject(
 /** Seeds the fixture area; the first versions' Markdown goes to `archive` (the test's memory archive). */
 export async function seedRevisitArea(tx: Db, archive: Archive): Promise<RevisitFixture> {
   const [w, s, e, n] = tileBbox(REVISIT_TILE);
+  const { id: subdivisionId, geoObjectId: regionId } = await insertTestSubdivision(tx, REVISIT_SUBDIVISION_KEY, [w - 0.05, s - 0.05, e + 0.05, n + 0.05]);
+  // valid, with its name, as long as the other rows (the runs and builds are dated 2026)
+  await tx.update(subdivisions).set({ validFrom: VALID_FROM }).where(eq(subdivisions.id, subdivisionId));
+  await tx.update(geoObjects).set({ validFrom: VALID_FROM }).where(eq(geoObjects.id, regionId));
+  await addNames(tx, regionId, [{ name: "Revisionsland", language: "de", origin: "manual" }]);
+  await tx.update(geoNames).set({ validFrom: VALID_FROM }).where(eq(geoNames.geoObjectId, regionId));
+  await tx.insert(tiles).values({ id: REVISIT_TILE, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, subdivisionId, hasCoast: true, validFrom: VALID_FROM });
+  // the sailing area over the tile: linked to it, listed in the manifest, parent of nothing
   const areaId = await geoObject(tx, {
     type: "area",
     geom: square(w, s, e, n),
     names: ["Revisionsrevier"],
     publicId: REVISIT_PUBLIC_IDS.area,
     configKey: REVISIT_AREA_KEY,
+    tiles: [REVISIT_TILE],
   });
-  await tx.insert(tiles).values({ id: REVISIT_TILE, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, areaId, hasCoast: true, validFrom: VALID_FROM });
 
   // The island fills the middle of the tile; the bay of A cuts into its south coast.
   const island: GeoJSON.Polygon = {
@@ -144,11 +159,11 @@ export async function seedRevisitArea(tx: Db, archive: Archive): Promise<Revisit
     ],
   };
   await tx.insert(landPolygons).values({ geom: geomFromGeoJson(island), datasetVersion: "test" });
-  const islandId = await geoObject(tx, { type: "island", geom: island, names: ["Revisonisi"], publicId: REVISIT_PUBLIC_IDS.island, parentId: areaId, tiles: [REVISIT_TILE] });
+  const islandId = await geoObject(tx, { type: "island", geom: island, names: ["Revisonisi"], publicId: REVISIT_PUBLIC_IDS.island, parentId: regionId, tiles: [REVISIT_TILE], subdivisionId });
 
   const place = async (key: "A" | "B" | "M", o: { name: string; type: GeoObjectType; kind: PlaceKind; lon: number; lat: number; depthConfidence: number; depth: number }) => {
     const point: GeoJSON.Point = { type: "Point", coordinates: [o.lon, o.lat] };
-    const geoObjectId = await geoObject(tx, { type: o.type, geom: point, names: [o.name], parentId: islandId, tiles: [REVISIT_TILE] });
+    const geoObjectId = await geoObject(tx, { type: o.type, geom: point, names: [o.name], parentId: islandId, tiles: [REVISIT_TILE], subdivisionId });
     const publicId = REVISIT_PUBLIC_IDS[key];
     const [p] = await tx
       .insert(places)
@@ -197,6 +212,8 @@ export async function seedRevisitArea(tx: Db, archive: Archive): Promise<Revisit
   }
 
   return {
+    subdivisionKey: REVISIT_SUBDIVISION_KEY,
+    subdivisionId,
     areaKey: REVISIT_AREA_KEY,
     areaId,
     tileId: REVISIT_TILE,

@@ -6,6 +6,8 @@ export const QUEUES = [
   "run.advance",
   "tiles.ensure",
   "gazetteer.build",
+  "gazetteer.coarse",
+  "subdivisions.build",
   "seed.tile",
   "datasets.import",
   "geometry.compute",

@@ -21,26 +21,27 @@ import { findArchiveCopies } from "@/lib/domain/documents/archive-copies";
 import { newId } from "@/lib/domain/ids";
 import { buildChanges, eventSeverities } from "./changes";
 import { buildCoast } from "./coast";
-import { draftArea, type AreaDraft } from "./draft";
+import { draftSubdivision, type SubdivisionDraft } from "./draft";
 import { contentDigest, contentTypeOf, serializeFile, sha256Hex } from "./serialize";
 import { currentSnapshot, openBuildSnapshot, type BuildSnapshot } from "./snapshot";
-import type { AreaScope, DeliveryPackage } from "./types";
+import type { DeliveryPackage, SubdivisionScope } from "./types";
 import { undeliveredSafety } from "./map-region";
 import { buildWarnings, spotsInMilitaryAreas, validatePackage, type ValidationReport } from "./validate";
 import { assignVersions, latestDelivered, type ObjectDraft, type RemovedObject, type VersionedObject } from "./versioning";
 import { buildWeatherPoints } from "./weather-points";
 
 /*
- * Builds one area's package (spec 08 "Paket je Revier"): reads everything from one snapshot, maps, versions, validates,
- * stores the files in S3 and writes the `deliveries` row with the contract versions it introduced. A valid package with
- * a change gets the next data version under `deliveries/<ar_id>/<dataVersion>/`; a rejected one is stored for
- * diagnosis under `deliveries/<ar_id>/rejected/<deliveryId>/` without a data version (also when its content equals the
+ * Builds one subdivision's package (spec 08 "Paket", spec 14 "Paket je Landesteil"): reads everything from one
+ * snapshot, maps, versions, validates, stores the files in S3 and writes the `deliveries` row with the contract
+ * versions it introduced. A valid package with a change gets the next data version under
+ * `deliveries/<subdivision-key>/<dataVersion>/`; a rejected one is stored for diagnosis under
+ * `deliveries/<subdivision-key>/rejected/<deliveryId>/` without a data version (also when its content equals the
  * previous package); a valid build without any change is recorded as `unchanged` and stores nothing.
  */
 
 export type DeliveryRow = InferSelectModel<typeof deliveries>;
 
-/** The area's latest valid package as stored: its row, its objects by id and the contents of coast and weather points. */
+/** The subdivision's latest valid package as stored: its row, its objects by id and the contents of coast and weather points. */
 export type PreviousPackage = {
   delivery: DeliveryRow;
   spots: Map<string, Spot>;
@@ -60,7 +61,7 @@ export type BuildOptions = {
   triggeredBy?: string;
   cfg?: DeliveryConfig;
   /** Test seam: changes the loaded scope before mapping. */
-  scopeTransform?: (scope: AreaScope) => AreaScope;
+  scopeTransform?: (scope: SubdivisionScope) => SubdivisionScope;
   /** Test seam: runs after the uploads and rows, before the commit. */
   beforeCommit?: () => Promise<void>;
   /** Test seam: runs in the read transaction right after its snapshot is taken, before any read. */
@@ -77,12 +78,12 @@ export type BuildResult = { deliveryId: string; status: DeliveryStatus; dataVers
 
 const decoder = new TextDecoder();
 
-/** The latest valid package of the area with its files from `storage_prefix`; null before the first one. */
-export async function previousPackage(db: Db, archive: Archive, areaId: string): Promise<PreviousPackage | null> {
+/** The latest valid package of the subdivision with its files from `storage_prefix`; null before the first one. */
+export async function previousPackage(db: Db, archive: Archive, subdivisionId: string): Promise<PreviousPackage | null> {
   const [delivery] = await db
     .select()
     .from(deliveries)
-    .where(and(eq(deliveries.areaId, areaId), eq(deliveries.status, "valid")))
+    .where(and(eq(deliveries.subdivisionId, subdivisionId), eq(deliveries.status, "valid")))
     .orderBy(desc(deliveries.dataVersion))
     .limit(1);
   if (!delivery) return null;
@@ -130,7 +131,7 @@ const withoutVersion = <T extends { profileVersion: number; validFrom: string }>
  * target when the target is delivered in this package (highlight ids cut to the delivered ones, a region no longer
  * delivered dropped), otherwise left out, so they are removed, with a warning.
  */
-function carryMerged(draft: AreaDraft, previous: PreviousPackage | null): { carried: SpotBody[]; notCarried: Array<{ id: string; into: string }> } {
+function carryMerged(draft: SubdivisionDraft, previous: PreviousPackage | null): { carried: SpotBody[]; notCarried: Array<{ id: string; into: string }> } {
   const carried: SpotBody[] = [];
   const notCarried: Array<{ id: string; into: string }> = [];
   if (!previous) return { carried, notCarried };
@@ -159,18 +160,18 @@ function carryMerged(draft: AreaDraft, previous: PreviousPackage | null): { carr
 async function assemble(
   tx: Db,
   snapshot: BuildSnapshot,
-  input: { archive: Archive; areaId: string; today: string; generatedAt: string; cfg: DeliveryConfig; scopeTransform?: (s: AreaScope) => AreaScope },
+  input: { archive: Archive; subdivisionId: string; today: string; generatedAt: string; cfg: DeliveryConfig; scopeTransform?: (s: SubdivisionScope) => SubdivisionScope },
 ): Promise<Assembly> {
   const { cfg, today } = input;
   const consolidation = await consolidationConfigFor(tx);
-  const previous = await previousPackage(tx, input.archive, input.areaId);
-  const draft = await draftArea(tx, input.areaId, today, {
+  const previous = await previousPackage(tx, input.archive, input.subdivisionId);
+  const draft = await draftSubdivision(tx, input.subdivisionId, today, {
     cfg,
     radiusNm: consolidation.importance.radiusNm,
     poiConfidence: consolidation.poiConfidence,
     scopeTransform: input.scopeTransform,
   });
-  const latest = await latestDelivered(tx, input.areaId);
+  const latest = await latestDelivered(tx, input.subdivisionId);
   const { carried, notCarried } = carryMerged(draft, previous);
 
   const drafts: ObjectDraft[] = [
@@ -181,7 +182,7 @@ async function assemble(
   ];
   const { objects, removed } = assignVersions(drafts, latest, today);
 
-  const coast = await buildCoast(tx, { bbox: draft.scope.area.bbox, cfg: cfg.coast, asOf: today });
+  const coast = await buildCoast(tx, { bbox: draft.scope.subdivision.bbox, cfg: cfg.coast, asOf: today });
   const weather = await buildWeatherPoints(tx, {
     regions: draft.deliveredRegions,
     passages: draft.scope.passages,
@@ -209,7 +210,7 @@ async function assemble(
     changes = buildChanges({ objects, removed, previousBodies, eventSeverity, cfg: cfg.severity });
   }
 
-  const envelope = { schemaVersion: SCHEMA_VERSION, area: draft.scope.area.publicId, dataVersion, generatedAt: input.generatedAt } as const;
+  const envelope = { schemaVersion: SCHEMA_VERSION, subdivision: draft.scope.subdivision.publicId, dataVersion, generatedAt: input.generatedAt } as const;
   const versioned = (type: VersionedObject["type"]) =>
     objects
       .filter((o) => o.type === type)
@@ -260,27 +261,28 @@ async function assemble(
   return { previous, pkg, report, objects, removed, unchanged, dataVersion };
 }
 
-/** The manifest (Teil B): area, versions, tiles, counts, licences from the configuration, and every other file's hash. */
+/** The manifest (Teil B): subdivision, touching areas, versions, tiles, counts, licences from the configuration, and every other file's hash. */
 function buildManifest(
-  scope: AreaScope,
+  scope: SubdivisionScope,
   files: DeliveryPackage["files"],
   o: { dataVersion: number; previousDataVersion: number | null; generatedAt: string; cfg: DeliveryConfig },
 ): Manifest {
   const listed = CONTRACT_FILES.filter((f): f is Exclude<ContractFile, "manifest.json"> => f !== "manifest.json" && files[f as keyof typeof files] !== undefined);
   return {
     schemaVersion: SCHEMA_VERSION,
-    area: {
-      id: scope.area.publicId,
-      key: scope.area.key,
-      name: scope.area.name,
-      names: scope.area.names,
+    subdivision: {
+      id: scope.subdivision.publicId,
+      key: scope.subdivision.key,
+      name: scope.subdivision.name,
+      names: scope.subdivision.names,
       // 2D positions with 5 decimals from ST_AsGeoJSON (loader)
-      polygon: scope.area.polygon as Manifest["area"]["polygon"],
+      polygon: scope.subdivision.polygon as Manifest["subdivision"]["polygon"],
     },
+    areas: scope.areas.map((a) => ({ id: a.publicId, key: a.key, names: a.names })),
     dataVersion: o.dataVersion,
     previousDataVersion: o.previousDataVersion,
     generatedAt: o.generatedAt,
-    bbox: scope.area.bbox,
+    bbox: scope.subdivision.bbox,
     tiles: scope.tiles.map((t) => ({ id: t.id, lastRunAt: t.lastRunAt, profilesAsOf: t.profilesAsOf })),
     objectCounts: {
       spots: files["spots.json"].spots.length,
@@ -299,9 +301,9 @@ function buildManifest(
 }
 
 /**
- * Builds and records the package of one area in one transaction under the area lock
- * (`pg_advisory_xact_lock(hashtext('delivery:' || areaId))`, waiting at most `build.lockTimeoutMs`), so two builds of
- * an area never make two data versions. Pass the pool handle: all reads come from one snapshot (ruling M6-D-R3), a
+ * Builds and records the package of one subdivision in one transaction under the subdivision lock
+ * (`pg_advisory_xact_lock(hashtext('delivery:' || subdivisionId))`, waiting at most `build.lockTimeoutMs`), so two
+ * builds of a subdivision never make two data versions. Pass the pool handle: all reads come from one snapshot (ruling M6-D-R3), a
  * REPEATABLE READ read-only transaction opened after the lock (`openBuildSnapshot`), whose snapshot is stored as
  * `change_snapshot`. A build therefore holds two pool connections (the lock transaction and the read one); keep the
  * `delivery.build` concurrency of all workers well below the pool size (docs/runbook.md, "Pakete bauen"). A caller's
@@ -310,7 +312,7 @@ function buildManifest(
  * `deliveries` row and its contract versions (ruling M6-P16); the commit is the commit point, so a failed commit
  * leaves files without a row, and the retry writes the same keys.
  */
-export async function buildDelivery(db: Db, archive: Archive, areaGeoObjectId: string, opts: BuildOptions = {}): Promise<BuildResult> {
+export async function buildDelivery(db: Db, archive: Archive, subdivisionId: string, opts: BuildOptions = {}): Promise<BuildResult> {
   const cfg = opts.cfg ?? getConfig().delivery;
   const now = opts.now ?? new Date();
   const today = now.toISOString().slice(0, 10);
@@ -331,11 +333,11 @@ export async function buildDelivery(db: Db, archive: Archive, areaGeoObjectId: s
     const { rows } = await wtx.execute<{ previous: string }>(
       sql`select current_setting('lock_timeout') as previous, set_config('lock_timeout', ${`${cfg.build.lockTimeoutMs}ms`}, true)`,
     );
-    await wtx.execute(sql`select pg_advisory_xact_lock(hashtext(${`delivery:${areaGeoObjectId}`}))`);
+    await wtx.execute(sql`select pg_advisory_xact_lock(hashtext(${`delivery:${subdivisionId}`}))`);
     await wtx.execute(sql`select set_config('lock_timeout', ${rows[0]!.previous}, true)`);
     const read = async (tx: Db, snapshot: BuildSnapshot) => {
       await opts.afterSnapshot?.(tx);
-      return assemble(tx, snapshot, { archive, areaId: areaGeoObjectId, today, generatedAt, cfg, scopeTransform: opts.scopeTransform });
+      return assemble(tx, snapshot, { archive, subdivisionId, today, generatedAt, cfg, scopeTransform: opts.scopeTransform });
     };
     const { snapshot, result: a } = inCallerTransaction
       ? await (async () => {
@@ -348,7 +350,7 @@ export async function buildDelivery(db: Db, archive: Archive, areaGeoObjectId: s
     const status: DeliveryStatus = !a.report.ok ? "rejected" : a.unchanged ? "unchanged" : "valid";
     const row = {
       id: deliveryId,
-      areaId: areaGeoObjectId,
+      subdivisionId,
       schemaVersion: SCHEMA_VERSION,
       generatedAt: now,
       status,
@@ -365,8 +367,8 @@ export async function buildDelivery(db: Db, archive: Archive, areaGeoObjectId: s
     if (status === "unchanged") {
       await wtx.insert(deliveries).values({ ...row, dataVersion: null, storagePrefix: null });
     } else {
-      const area = a.pkg.manifest.area.id;
-      const storagePrefix = status === "valid" ? `deliveries/${area}/${a.dataVersion}/` : `deliveries/${area}/rejected/${deliveryId}/`;
+      const key = a.pkg.manifest.subdivision.key;
+      const storagePrefix = status === "valid" ? `deliveries/${key}/${a.dataVersion}/` : `deliveries/${key}/rejected/${deliveryId}/`;
       const fileHashes: Record<string, { sha256: string; bytes: number }> = {};
       const stored: Array<[ContractFile, unknown]> = [
         ["manifest.json", a.pkg.manifest],
@@ -378,7 +380,7 @@ export async function buildDelivery(db: Db, archive: Archive, areaGeoObjectId: s
         await archive.put(`${storagePrefix}${file}`, bytes, contentTypeOf(file));
       }
       await wtx.insert(deliveries).values({ ...row, dataVersion: status === "valid" ? a.dataVersion : null, storagePrefix, fileHashes });
-      if (status === "valid") await recordVersions(wtx, areaGeoObjectId, deliveryId, a, today);
+      if (status === "valid") await recordVersions(wtx, subdivisionId, deliveryId, a, today);
     }
     await opts.beforeCommit?.();
     return { deliveryId, status, dataVersion: status === "valid" ? a.dataVersion : null, report: a.report };
@@ -386,12 +388,12 @@ export async function buildDelivery(db: Db, archive: Archive, areaGeoObjectId: s
 }
 
 /** The contract versions the package introduced: created and updated objects, and the removed ones (`removed`). */
-async function recordVersions(tx: Db, areaId: string, deliveryId: string, a: Assembly, today: string): Promise<void> {
+async function recordVersions(tx: Db, subdivisionId: string, deliveryId: string, a: Assembly, today: string): Promise<void> {
   const rows = [
     ...a.objects
       .filter((o) => o.status !== "same")
       .map((o) => ({
-        areaId,
+        subdivisionId,
         objectType: o.type,
         publicId: o.id,
         geoObjectId: o.geoObjectId,
@@ -402,7 +404,7 @@ async function recordVersions(tx: Db, areaId: string, deliveryId: string, a: Ass
         firstDeliveryId: deliveryId,
       })),
     ...a.removed.map((r) => ({
-      areaId,
+      subdivisionId,
       objectType: r.type,
       publicId: r.id,
       geoObjectId: r.geoObjectId,

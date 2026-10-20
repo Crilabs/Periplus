@@ -4,15 +4,18 @@ import { z } from "zod";
 import { getConfig, getConsolidationConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { asGeoJson } from "@/lib/db/geometry";
-import { geoObjects, geoObjectTypeEnum, places, restrictedAreas, tiles, type GeoObjectType, type RestrictedKind } from "@/lib/db/schema";
+import { geoObjects, geoObjectTypeEnum, places, restrictedAreas, subdivisions, tiles, type GeoObjectType, type RestrictedKind } from "@/lib/db/schema";
 import { confidenceClass } from "@/lib/domain/consolidation/weights";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { isAnchoringBan, type AnchoringBanConfig } from "@/lib/domain/geometry/restrictions";
 import type { Bbox } from "@/lib/domain/tiles";
-import { BBOX_TOLERANCE, MAP_FEATURE_LIMIT, MAX_BBOX_DEGREES } from "@/lib/domain/map-limits";
+import { BBOX_TOLERANCE, MAP_FEATURE_LIMIT, MAX_BBOX_DEGREES, NOT_IN_GEO_OBJECT_LAYER } from "@/lib/domain/map-limits";
 import { validAt } from "@/lib/domain/timeline";
 
-export const MAP_LAYERS = ["areas", "tiles", "geo-objects", "places", "restricted-areas"] as const;
+export const MAP_LAYERS = ["subdivisions", "seas", "areas", "tiles", "geo-objects", "places", "restricted-areas"] as const;
+
+/** Large outlines (subdivisions, seas) are drawn simplified to this many degrees (about 100 m). */
+const OUTLINE_SIMPLIFY_DEG = 0.001;
 export type MapLayer = (typeof MAP_LAYERS)[number];
 
 export { MAP_FEATURE_LIMIT };
@@ -55,6 +58,27 @@ const intersects = (geom: AnyColumn, bbox: Bbox): SQL =>
 
 function layerQuery(layer: MapLayer, bbox: Bbox, limit: number, types?: GeoObjectType[]): SQL {
   switch (layer) {
+    case "subdivisions":
+      return sql`
+        select ST_AsGeoJSON(ST_SimplifyPreserveTopology(${subdivisions.geom}, ${OUTLINE_SIMPLIFY_DEG}), 5)::json as geometry,
+          json_build_object(
+            'key', ${subdivisions.key},
+            'country', ${subdivisions.country},
+            'status', ${subdivisions.status},
+            'name', ${displayNameSql(subdivisions.geoObjectId)}
+          ) as properties
+        from ${subdivisions}
+        where ${subdivisions.validTo} is null and ${intersects(subdivisions.geom, bbox)}
+        order by ${subdivisions.key}
+        limit ${limit}`;
+    case "seas":
+      return sql`
+        select ST_AsGeoJSON(ST_SimplifyPreserveTopology(${geoObjects.geom}, ${OUTLINE_SIMPLIFY_DEG}), 5)::json as geometry,
+          json_build_object('id', ${geoObjects.id}, 'name', ${displayNameSql(geoObjects.id)}) as properties
+        from ${geoObjects}
+        where ${geoObjects.type} = 'sea' and ${validAt(geoObjects)} and ${intersects(geoObjects.geom, bbox)}
+        order by ${geoObjects.id}
+        limit ${limit}`;
     case "areas":
       return sql`
         select ${asGeoJson(geoObjects.geom)} as geometry,
@@ -69,7 +93,7 @@ function layerQuery(layer: MapLayer, bbox: Bbox, limit: number, types?: GeoObjec
           json_build_object(
             'id', ${tiles.id},
             'hasCoast', ${tiles.hasCoast},
-            'areaKey', (select a.config_key from geo_objects a where a.id = ${tiles.areaId}),
+            'subdivisionKey', (select s.key from subdivisions s where s.id = ${tiles.subdivisionId}),
             'placeCount', (select count(*) from ${places} where ${places.tileId} = ${tiles.id} and ${validAt(places)}),
             'candidateCount', (
               select count(*) from ${places}
@@ -91,7 +115,7 @@ function layerQuery(layer: MapLayer, bbox: Bbox, limit: number, types?: GeoObjec
             'parentName', ${displayNameSql(geoObjects.parentId)}
           ) as properties
         from ${geoObjects}
-        where ${geoObjects.type} <> 'area' and ${validAt(geoObjects)} and ${intersects(geoObjects.geom, bbox)}
+        where ${geoObjects.type}::text <> all(${`{${NOT_IN_GEO_OBJECT_LAYER.join(",")}}`}::text[]) and ${validAt(geoObjects)} and ${intersects(geoObjects.geom, bbox)}
           ${types ? sql`and ${geoObjects.type}::text = any(${`{${types.join(",")}}`}::text[])` : sql``}
         order by ${geoObjects.id}
         limit ${limit}`;
@@ -141,7 +165,8 @@ function configuredAnchoringBan(): AnchoringBanConfig {
 /**
  * One map layer as GeoJSON: valid rows intersecting `bbox`, at most `limit` features (default 5,000), with
  * `truncated` when more intersect it (UI-12: the map says so instead of silently dropping objects).
- * `geo-objects` leaves out areas (own layer) and, with `types`, keeps only those types. Tile counts: `placeCount` all valid places of the tile,
+ * `geo-objects` leaves out areas and seas (own layers), countries and admin regions (shown as `subdivisions`) and, with
+ * `types`, keeps only those types. `subdivisions` and `seas` are simplified outlines; tiles carry their `subdivisionKey`. Tile counts: `placeCount` all valid places of the tile,
  * `candidateCount` those still `candidate`. `restricted-areas` carry `anchoringBan` by `opts.anchoringBan`
  * (default: the configured rule). `places` carry `profileConfidence` and `profileClass` of the newest profile version
  * of their geo object (its class by that version's rules), both null without a profile (or without a profile

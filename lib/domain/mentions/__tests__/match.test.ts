@@ -182,12 +182,12 @@ describe("candidate space", () => {
     expect(withNeighbours([A, B], 1)).toHaveLength(12);
   });
 
-  it("the prepass, earlier versions and the source's searches give the tiles; else the configured areas", () =>
+  it("the prepass, earlier versions and the source's searches give the tiles; else the active subdivisions", () =>
     withRollback(async (tx) => {
       await grid(tx);
       await island(tx);
       const v = await insertTestVersion(tx, ["Nichts Bekanntes hier."]);
-      const ctx = { nameAffixes: config.nameAffixes, areaKeys: [] as string[] };
+      const ctx = { nameAffixes: config.nameAffixes, subdivisionKeys: [] as string[] };
       expect(await candidateTiles(tx, v.versionId, config.mentions, ctx)).toEqual({ tiles: [], basis: "fallback" });
       const named = await insertTestVersion(tx, ["Rund um Kalonisi."]);
       expect(await candidateTiles(tx, named.versionId, config.mentions, ctx)).toEqual({ tiles: withNeighbours([A], 1), basis: "prepass" });
@@ -205,7 +205,7 @@ describe("candidate space", () => {
     withRollback(async (tx) => {
       await grid(tx);
       await island(tx);
-      const ctx = { nameAffixes: config.nameAffixes, areaKeys: [] as string[] };
+      const ctx = { nameAffixes: config.nameAffixes, subdivisionKeys: [] as string[] };
       const early = await insertTestVersion(tx, ["Nichts Bekanntes hier."], { fetchedAt: new Date("2026-10-01T10:00:00Z") });
       const later = await insertTestVersion(tx, ["Rund um Kalonisi."], {
         documentId: early.documentId,
@@ -218,11 +218,11 @@ describe("candidate space", () => {
 
   it("the document's own tiles win; history and the source's area count only without them (spec 06)", () =>
     withRollback(async (tx) => {
-      const area = await insertNamedObject(tx, { type: "area", names: [{ name: "Testrevier" }], lon: 21.2, lat: 35.2, configKey: `test-${newId()}` });
-      await grid(tx, area);
+      await grid(tx);
+      const area = await insertNamedObject(tx, { type: "area", names: [{ name: "Testrevier" }], lon: 21.2, lat: 35.2, configKey: `test-${newId()}`, tiles: [A, B, C] });
       await island(tx);
       const farBay = await insertNamedObject(tx, { type: "bay", names: [{ name: "Fernbucht" }], ...at(C) });
-      const ctx = { nameAffixes: config.nameAffixes, areaKeys: [] as string[] };
+      const ctx = { nameAffixes: config.nameAffixes, subdivisionKeys: [] as string[] };
       // the source was found by a search for the whole area
       const sourceId = await insertTestSource(tx);
       const [src] = await tx.select({ domain: sources.domain }).from(sources).where(eq(sources.id, sourceId));
@@ -265,7 +265,7 @@ describe("candidate space", () => {
       await expect(insertTestTile(tx, A, null)).rejects.toThrow(/exists with area/);
     }));
 
-  it("candidate objects are the tiles' objects plus their ancestors and label areas", () =>
+  it("candidate objects are the tiles' objects plus their ancestors", () =>
     withRollback(async (tx) => {
       const area = await insertNamedObject(tx, { type: "area", names: [{ name: "Testrevier" }], lon: 21.2, lat: 35.2 });
       await grid(tx, area);

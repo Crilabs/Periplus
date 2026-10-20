@@ -1,60 +1,36 @@
 import { eq, sql } from "drizzle-orm";
-import { describe, expect, it, vi } from "vitest";
-import type { AreaConfig } from "@/lib/config";
+import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { geoObjects, tileGeoObjects, type GeoObjectType } from "@/lib/db/schema";
-import { syncAreas } from "@/lib/domain/gazetteer/areas";
-import { assignParents, assignTiles } from "@/lib/domain/gazetteer/hierarchy";
-import { ensureTiles } from "@/lib/domain/gazetteer/tiles-ensure";
-import { tileIdFor } from "@/lib/domain/tiles";
+import { geoObjects, landPolygons, subdivisions, tileGeoObjects, type GeoObjectType } from "@/lib/db/schema";
+import {
+  assignParentOf,
+  assignParents,
+  assignSeas,
+  assignSubdivisions,
+  assignSubdivisionTiles,
+  assignTiles,
+} from "@/lib/domain/gazetteer/hierarchy";
+import { ensureSubdivisionTiles } from "@/lib/domain/gazetteer/tiles-ensure";
+import { newPublicId } from "@/lib/domain/ids";
+import { tileIdFor, type Bbox } from "@/lib/domain/tiles";
 import { withRollback } from "@/test/db";
 
-// Synthetic areas outside the pilot box 23.0-23.75 E x 37.0-38.0 N: "hier-test" (25.0-25.5 E x 35.0-35.5 N,
-// four tiles) with a coast section in its south-east corner, inside the larger "hier-outer".
+// Synthetic subdivision "GR-HT" outside the pilot box 23.0-23.75 E x 37.0-38.0 N: 25.0-25.5 E x 35.0-35.5 N
+// (four tiles), all of it land, with a coast section in its south-east corner. Kastellorizo lives at 29.6 E.
 type Polygon = { type: "Polygon"; coordinates: [number, number][][] };
 const box = (w: number, s: number, e: number, n: number): Polygon => ({
   type: "Polygon",
   coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]],
 });
+const HT: Bbox = [25.0, 35.0, 25.5, 35.5];
 
-const area = (key: string, polygon: Polygon, coastSections: AreaConfig["coastSections"] = []): AreaConfig => ({
-  key,
-  names: { de: key, en: key },
-  polygon,
-  tileBbox: null,
-  sourceLanguages: ["de", "en", "el"],
-  season: { fromMonth: 4, toMonth: 10 },
-  cycleDays: 30,
-  coastSections,
-});
+const envelope = ([w, s, e, n]: Bbox) => sql`ST_Multi(ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326))`;
 
-const AREAS = vi.hoisted(() => ({ list: [] as AreaConfig[] }));
-AREAS.list = [
-  area("hier-test", box(25.0, 35.0, 25.5, 35.5), [
-    { key: "south-east", names: { en: "South East" }, polygon: box(25.35, 35.0, 25.5, 35.1) },
-  ]),
-  area("hier-outer", box(24.5, 34.0, 26.0, 36.0)),
-];
-
-vi.mock("@/lib/config", async (importOriginal) => {
-  const original = await importOriginal<typeof import("@/lib/config")>();
-  const getConfig = () => ({ ...original.getConfig(), areas: [...original.getConfig().areas, ...AREAS.list] });
-  return {
-    ...original,
-    getConfig,
-    areaByKey: (key: string) => {
-      const found = getConfig().areas.find((a) => a.key === key);
-      if (!found) throw new Error(`Unknown area ${key}`);
-      return found;
-    },
-  };
-});
-
-async function insert(db: Db, type: GeoObjectType, geometry: GeoJSON.Geometry): Promise<string> {
+async function insert(db: Db, type: GeoObjectType, geometry: GeoJSON.Geometry, patch: Partial<typeof geoObjects.$inferInsert> = {}): Promise<string> {
   const [row] = await db
     .insert(geoObjects)
-    .values({ type, origin: "osm", geom: sql`${geomFromGeoJson(geometry)}` })
+    .values({ type, origin: "osm", geom: sql`${geomFromGeoJson(geometry)}`, ...patch })
     .returning({ id: geoObjects.id });
   return row!.id;
 }
@@ -66,13 +42,128 @@ async function parentOf(db: Db, id: string): Promise<string | null> {
   return row!.parentId;
 }
 
+async function subdivisionOf(db: Db, id: string): Promise<string | null> {
+  const [row] = await db.select({ subdivisionId: geoObjects.subdivisionId }).from(geoObjects).where(eq(geoObjects.id, id));
+  return row!.subdivisionId;
+}
+
+async function seaOf(db: Db, id: string): Promise<string | null> {
+  const [row] = await db.select({ seaId: geoObjects.seaId }).from(geoObjects).where(eq(geoObjects.id, id));
+  return row!.seaId;
+}
+
+/** A first-level admin region and its subdivision; `geom` is the padded polygon, `land` the land of the unit. */
+async function addSubdivision(db: Db, key: string, geom: Bbox, land: Bbox | null, country = "GR") {
+  const regionId = await insert(db, "admin_region", box(...geom), { origin: "manual", adminLevel: 5, tags: { country } });
+  const [row] = await db
+    .insert(subdivisions)
+    .values({
+      publicId: newPublicId("sd"),
+      key,
+      country,
+      geoObjectId: regionId,
+      geom: envelope(geom),
+      landGeom: land ? envelope(land) : null,
+    })
+    .returning({ id: subdivisions.id });
+  return { id: row!.id, regionId };
+}
+
+async function addCountry(db: Db, iso: string, geom: Bbox): Promise<string> {
+  return insert(db, "country", box(...geom), { origin: "manual", tags: { country: iso } });
+}
+
+/** `assignSubdivisions`, `assignSeas`, then `assignParents` for the box of GR-HT: the order of the hierarchy stage. */
+async function assignAll(db: Db, bbox: Bbox = HT) {
+  await assignSubdivisions(db, bbox);
+  await assignSeas(db, bbox);
+  return assignParents(db, bbox);
+}
+
 async function setup(db: Db) {
-  const ids = await syncAreas(db, AREAS.list);
-  return { areaId: ids.get("hier-test")!, outerId: ids.get("hier-outer")!, sectionId: ids.get("hier-test/south-east")! };
+  const countryId = await addCountry(db, "GR", [24.0, 34.0, 26.0, 36.0]);
+  const sub = await addSubdivision(db, "GR-HT", HT, HT);
+  const sectionId = await insert(db, "coast_section", box(25.35, 35.0, 25.5, 35.1), {
+    origin: "manual",
+    configKey: "GR-HT/south-east",
+  });
+  return { countryId, subdivisionId: sub.id, regionId: sub.regionId, sectionId };
 }
 
 // Island 25.10-25.20 E x 35.20-35.30 N; 0.001 degree latitude is ~111 m.
 const ISLAND = box(25.1, 35.2, 25.2, 35.3);
+
+describe("assignSubdivisions", () => {
+  it("an island near a foreign coast belongs to its own country's subdivision", () =>
+    withRollback(async (db) => {
+      // Kastellorizo: a Greek island ~3 km off the Turkish coast, its centroid inside the Turkish padded polygon
+      // (12 nm of water) but outside the Greek one's land.
+      const turkey = await addSubdivision(db, "TR-TEST", [28.9, 36.0, 29.9, 36.4], [28.9, 36.0, 29.6, 36.4], "TR");
+      const greece = await addSubdivision(db, "GR-TEST", [29.55, 36.05, 29.95, 36.25], [29.633, 36.14, 29.653, 36.15]);
+      const island = await insert(db, "island", box(29.633, 36.14, 29.653, 36.15));
+      const harbour = await insert(db, "harbour", point(29.64, 36.1445));
+      const turkishBay = await insert(db, "bay", point(29.55, 36.2));
+
+      expect(await assignSubdivisions(db, [29.0, 36.0, 30.0, 36.4])).toBe(3);
+      expect(await subdivisionOf(db, island)).toBe(greece.id);
+      expect(await subdivisionOf(db, harbour)).toBe(greece.id);
+      expect(await subdivisionOf(db, turkishBay)).toBe(turkey.id);
+
+      // Only changed rows are written.
+      expect(await assignSubdivisions(db, [29.0, 36.0, 30.0, 36.4])).toBe(0);
+    }));
+
+  it("an object without land within 30 km gets no subdivision; countries, regions and seas are not assigned", () =>
+    withRollback(async (db) => {
+      const { regionId, countryId } = await setup(db);
+      const far = await insert(db, "bay", point(25.4, 36.0)); // ~55 km north of the land (35.5 N), outside the box
+      const near = await insert(db, "bay", point(25.4, 35.4));
+      const sea = await insert(db, "sea", box(24.0, 34.0, 27.0, 37.0), { origin: "manual" });
+      await assignSubdivisions(db, [25.0, 35.0, 25.5, 36.5]);
+      expect(await subdivisionOf(db, far)).toBeNull();
+      expect(await subdivisionOf(db, near)).not.toBeNull();
+      for (const id of [regionId, countryId, sea]) expect(await subdivisionOf(db, id)).toBeNull();
+    }));
+
+  it("gulfs, archipelagos, straits and channels take the nearest land without the radius limit", () =>
+    withRollback(async (db) => {
+      const { subdivisionId } = await setup(db);
+      // 60 km north of the land (35.5 N): beyond subdivisionRadiusM for a bay.
+      const bay = await insert(db, "bay", point(25.25, 36.05));
+      const kinds = await Promise.all(
+        (["gulf", "archipelago", "strait", "channel"] as const).map((t) => insert(db, t, point(25.25, 36.05))),
+      );
+      await assignSubdivisions(db, [25.0, 35.9, 25.5, 36.2]);
+      expect(await subdivisionOf(db, bay)).toBeNull();
+      for (const id of kinds) expect(await subdivisionOf(db, id)).toBe(subdivisionId);
+    }));
+
+  it("a subdivision without land (land_geom null) takes no objects", () =>
+    withRollback(async (db) => {
+      await addSubdivision(db, "GR-NOLAND", HT, null);
+      const bay = await insert(db, "bay", point(25.4, 35.4));
+      expect(await assignSubdivisions(db, HT)).toBe(0);
+      expect(await subdivisionOf(db, bay)).toBeNull();
+    }));
+});
+
+describe("assignSeas", () => {
+  it("sets sea_id to the smallest sea covering the centroid, else the nearest", () =>
+    withRollback(async (db) => {
+      await setup(db);
+      const big = await insert(db, "sea", box(24.0, 34.0, 27.0, 37.0), { origin: "manual" });
+      const small = await insert(db, "sea", box(24.9, 35.1, 25.6, 35.6), { origin: "manual" });
+      const inSmall = await insert(db, "bay", point(25.4, 35.4));
+      const inBig = await insert(db, "bay", point(26.5, 36.5));
+      const outside = await insert(db, "bay", point(27.2, 36.5)); // nearest sea: big
+      // Rows other test files committed to the shared database may lie in the box too: count only our own.
+      expect(await assignSeas(db, [24.0, 34.0, 28.0, 37.0])).toBeGreaterThanOrEqual(3);
+      expect(await seaOf(db, inSmall)).toBe(small);
+      expect(await seaOf(db, inBig)).toBe(big);
+      expect(await seaOf(db, outside)).toBe(big);
+      expect(await assignSeas(db, [24.0, 34.0, 28.0, 37.0])).toBe(0); // only changed rows
+    }));
+});
 
 describe("assignParents", () => {
   it("bay inside an island buffer gets the island", () =>
@@ -81,108 +172,194 @@ describe("assignParents", () => {
       const island = await insert(db, "island", ISLAND);
       const bay = await insert(db, "bay", point(25.15, 35.3011)); // ~120 m north of the shore
       const far = await insert(db, "bay", point(25.15, 35.303)); // ~330 m: outside the 200 m buffer
-      const r = await assignParents(db, "hier-test");
+      const r = await assignAll(db);
       expect(r.updated).toBeGreaterThan(0);
       expect(await parentOf(db, bay)).toBe(island);
       expect(await parentOf(db, far)).not.toBe(island);
 
       // Unchanged rerun writes nothing.
-      expect(await assignParents(db, "hier-test")).toEqual({ updated: 0 });
+      expect(await assignParents(db, HT)).toEqual({ updated: 0 });
     }));
 
   it("a point island does not act as parent", () =>
     withRollback(async (db) => {
-      const { areaId } = await setup(db);
+      const { regionId } = await setup(db);
       await insert(db, "island", point(25.3, 35.3));
       const bay = await insert(db, "bay", point(25.3005, 35.3));
-      await assignParents(db, "hier-test");
-      expect(await parentOf(db, bay)).toBe(areaId);
+      await assignAll(db);
+      expect(await parentOf(db, bay)).toBe(regionId);
     }));
 
-  it("bay on the mainland without coast section gets the area", () =>
+  it("bay on the mainland without coast section gets the subdivision's admin region", () =>
     withRollback(async (db) => {
-      const { areaId } = await setup(db);
+      const { regionId } = await setup(db);
       await insert(db, "island", ISLAND);
       const bay = await insert(db, "bay", point(25.4, 35.4));
-      await assignParents(db, "hier-test");
-      expect(await parentOf(db, bay)).toBe(areaId);
+      await assignAll(db);
+      expect(await parentOf(db, bay)).toBe(regionId);
     }));
 
   it("bay inside a coast section gets the section", () =>
     withRollback(async (db) => {
-      const { areaId, sectionId } = await setup(db);
+      const { regionId, sectionId } = await setup(db);
       const bay = await insert(db, "bay", point(25.4, 35.05));
       const harbour = await insert(db, "harbour", point(25.42, 35.06));
-      await assignParents(db, "hier-test");
+      await assignAll(db);
       expect(await parentOf(db, bay)).toBe(sectionId);
       expect(await parentOf(db, harbour)).toBe(sectionId);
-      expect(await parentOf(db, sectionId)).toBe(areaId);
+      expect(await parentOf(db, sectionId)).toBe(regionId);
     }));
 
   it("an OSM coast section is a parent only up to coastSectionMaxAreaKm2", () =>
     withRollback(async (db) => {
-      const { areaId } = await setup(db);
+      const { regionId } = await setup(db);
       // A peninsula of ~28,000 km2 (the Peloponnese class) without config_key: never a parent.
       const large = await insert(db, "coast_section", box(24.6, 34.5, 25.9, 35.9));
       const bay = await insert(db, "bay", point(25.4, 35.4));
-      await assignParents(db, "hier-test");
-      expect(await parentOf(db, bay)).toBe(areaId);
+      await assignAll(db);
+      expect(await parentOf(db, bay)).toBe(regionId);
 
       // A peninsula of ~230 km2 without config_key: parent like a configured section.
       const small = await insert(db, "coast_section", box(25.3, 35.3, 25.45, 35.45));
-      await assignParents(db, "hier-test");
+      await assignAll(db);
       expect(await parentOf(db, bay)).toBe(small);
       expect(await parentOf(db, small)).not.toBe(large);
+      expect(await parentOf(db, small)).toBe(regionId);
     }));
 
-  it("island gets the smallest containing area, or its archipelago", () =>
+  it("island gets its subdivision's admin region, or its archipelago", () =>
     withRollback(async (db) => {
-      const { areaId } = await setup(db);
+      const { regionId } = await setup(db);
       const island = await insert(db, "island", ISLAND);
-      expect((await assignParents(db, "hier-test")).updated).toBeGreaterThan(0);
-      expect(await parentOf(db, island)).toBe(areaId);
+      expect((await assignAll(db)).updated).toBeGreaterThan(0);
+      expect(await parentOf(db, island)).toBe(regionId);
 
       const archipelago = await insert(db, "archipelago", box(25.05, 35.15, 25.25, 35.35));
-      await assignParents(db, "hier-test");
+      await assignAll(db);
       expect(await parentOf(db, island)).toBe(archipelago);
-      expect(await parentOf(db, archipelago)).toBe(areaId);
+      expect(await parentOf(db, archipelago)).toBe(regionId);
     }));
 
-  it("area gets the containing sea, else none", () =>
+  it("a gulf belongs to its subdivision's admin region", () =>
     withRollback(async (db) => {
-      const { areaId, outerId } = await setup(db);
-      await assignParents(db, "hier-test");
-      expect(await parentOf(db, areaId)).toBeNull();
-
-      const sea = await insert(db, "sea", box(24.0, 34.0, 27.0, 37.0));
-      const gulf = await insert(db, "gulf", box(24.9, 35.1, 25.6, 35.6)); // covers hier-test's centroid, not hier-outer's
-      await assignParents(db, "hier-test");
-      expect(await parentOf(db, areaId)).toBe(gulf);
-      expect(await parentOf(db, outerId)).toBe(sea);
-      // The gulf belongs to the smallest area containing it, except hier-test whose parent it is (no cycle).
-      expect(await parentOf(db, gulf)).toBe(outerId);
+      const { regionId } = await setup(db);
+      const gulf = await insert(db, "gulf", box(25.2, 35.2, 25.4, 35.4));
+      await assignAll(db);
+      expect(await parentOf(db, gulf)).toBe(regionId);
     }));
 
-  it("a bay outside every island, section and area gets the sea", () =>
+  it("bay -> island -> admin_region -> country chain", () =>
+    withRollback(async (db) => {
+      const { regionId, countryId } = await setup(db);
+      const island = await insert(db, "island", ISLAND);
+      const bay = await insert(db, "bay", point(25.15, 35.3011));
+      await assignAll(db);
+      expect(await parentOf(db, bay)).toBe(island);
+      expect(await parentOf(db, island)).toBe(regionId);
+      expect(await parentOf(db, regionId)).toBe(countryId);
+      expect(await parentOf(db, countryId)).toBeNull();
+    }));
+
+  it("an admin region of a split group has its country as parent", () =>
+    withRollback(async (db) => {
+      const { countryId } = await setup(db);
+      const group = await insert(db, "admin_region", box(25.0, 35.0, 25.2, 35.2), {
+        origin: "manual",
+        configKey: "GR-HT-GROUP",
+        adminLevel: 5,
+        tags: { country: "GR" },
+      });
+      await assignAll(db);
+      expect(await parentOf(db, group)).toBe(countryId);
+    }));
+
+  it("a second-level admin region gets the smallest first-level or group region covering its point, else the country", () =>
+    withRollback(async (db) => {
+      const { countryId, regionId } = await setup(db);
+      const group = await insert(db, "admin_region", box(25.0, 35.0, 25.2, 35.2), {
+        origin: "manual",
+        configKey: "GR-HT-GROUP",
+        adminLevel: 5,
+        tags: { country: "GR" },
+      });
+      const inGroup = await insert(db, "admin_region", box(25.0, 35.0, 25.1, 35.1), { origin: "osm", adminLevel: 6, tags: { country: "GR" } });
+      const inRegion = await insert(db, "admin_region", box(25.3, 35.3, 25.4, 35.4), { origin: "osm", adminLevel: 6, tags: { country: "GR" } });
+      const outside = await insert(db, "admin_region", box(24.2, 34.2, 24.4, 34.4), { origin: "osm", adminLevel: 6, tags: { country: "GR" } });
+      // Another country's first-level region covering the point is no parent.
+      await insert(db, "admin_region", box(25.25, 35.25, 25.45, 35.45), { origin: "osm", adminLevel: 5, tags: { country: "TR" } });
+      await assignAll(db, [24.0, 34.0, 26.0, 36.0]);
+      expect(await parentOf(db, inGroup)).toBe(group);
+      expect(await parentOf(db, inRegion)).toBe(regionId);
+      expect(await parentOf(db, outside)).toBe(countryId);
+      // A second-level region is never the parent of another.
+      expect(await parentOf(db, group)).toBe(countryId);
+    }));
+
+  it("an extra unit gets its configured country; a country with two level-2 rows takes its own ISO3166-1 relation", () =>
+    withRollback(async (db) => {
+      // The decoy sorts first by id; the country's own relation is told by ISO3166-1.
+      const decoy = await insert(db, "country", box(25.0, 35.0, 25.5, 35.5), {
+        id: "00000000-0000-4000-8000-000000000001",
+        origin: "osm",
+        adminLevel: 2,
+        tags: { country: "GB", admin_level: "2" },
+      });
+      const own = await insert(db, "country", box(24.0, 34.0, 26.0, 36.0), {
+        id: "ffffffff-0000-4000-8000-000000000001",
+        origin: "osm",
+        adminLevel: 2,
+        tags: { country: "GB", admin_level: "2", "ISO3166-1": "GB" },
+      });
+      // Like GB-SBA: an extra unit without config_key, level 6, in a "whole" country.
+      const sub = await addSubdivision(db, "GB-SBA", HT, HT, "GB");
+      await db.update(geoObjects).set({ adminLevel: 6 }).where(eq(geoObjects.id, sub.regionId));
+      await assignAll(db);
+      expect(await parentOf(db, sub.regionId)).toBe(own);
+      expect(own).not.toBe(decoy);
+    }));
+
+  it("area object keeps no parent", () =>
     withRollback(async (db) => {
       await setup(db);
-      const sea = await insert(db, "sea", box(24.0, 34.0, 27.0, 37.0));
-      // Just east of hier-outer's polygon, within its box plus the 5 km buffer, outside every area.
-      const bay = await insert(db, "bay", point(26.02, 35.0));
-      await assignParents(db, "hier-outer");
-      expect(await parentOf(db, bay)).toBe(sea);
+      const gulf = await insert(db, "gulf", box(24.9, 35.1, 25.6, 35.6));
+      const area = await insert(db, "area", box(25.0, 35.0, 25.5, 35.5), { origin: "manual", configKey: "hier-revier", parentId: gulf });
+      await assignAll(db);
+      expect(await parentOf(db, area)).toBeNull();
+    }));
+
+  it("a bay outside every subdivision, island and section gets no parent", () =>
+    withRollback(async (db) => {
+      await setup(db);
+      await insert(db, "sea", box(24.0, 34.0, 27.0, 37.0), { origin: "manual" });
+      const bay = await insert(db, "bay", point(25.4, 36.2)); // 80 km north of the land
+      await assignAll(db, [25.0, 35.0, 25.5, 36.5]);
+      expect(await parentOf(db, bay)).toBeNull();
+    }));
+});
+
+describe("assignParentOf", () => {
+  it("assigns subdivision, sea and parent of one new object", () =>
+    withRollback(async (db) => {
+      const { regionId, subdivisionId } = await setup(db);
+      const sea = await insert(db, "sea", box(24.0, 34.0, 27.0, 37.0), { origin: "manual" });
+      const bay = await insert(db, "bay", point(25.4, 35.4), { origin: "text" });
+      expect(await assignParentOf(db, bay)).toBe(regionId);
+      expect(await subdivisionOf(db, bay)).toBe(subdivisionId);
+      expect(await seaOf(db, bay)).toBe(sea);
     }));
 });
 
 describe("assignTiles", () => {
   it("assignTiles links a polygon to every tile it touches", () =>
     withRollback(async (db) => {
-      const ids = await setup(db);
-      await ensureTiles(db, AREAS.list[0]!, new Map([["hier-test", ids.areaId]]));
+      const { regionId, countryId, subdivisionId } = await setup(db);
+      const seaId = await insert(db, "sea", box(24.0, 34.0, 27.0, 37.0), { origin: "manual" });
+      await db.insert(landPolygons).values({ geom: sql`ST_MakeEnvelope(25.0, 35.0, 25.5, 35.5, 4326)`, datasetVersion: "test" });
+      await ensureSubdivisionTiles(db, subdivisionId);
       // Crosses 25.25 E within the band 35.1-35.2 N: the two southern tiles.
       const poly = await insert(db, "bay", box(25.2, 35.1, 25.3, 35.2));
       const pt = await insert(db, "harbour", point(25.4, 35.4));
-      const r = await assignTiles(db, "hier-test");
+      const r = await assignSubdivisionTiles(db, subdivisionId);
       expect(r.links).toBeGreaterThanOrEqual(2);
 
       const linksOf = async (id: string) =>
@@ -191,16 +368,23 @@ describe("assignTiles", () => {
           .sort();
       expect(await linksOf(poly)).toEqual([tileIdFor(25.2, 35.1), tileIdFor(25.3, 35.1)].sort());
       expect(await linksOf(pt)).toEqual([tileIdFor(25.4, 35.4)]);
-      // The area polygon covers all four tiles.
-      expect(await linksOf(ids.areaId)).toHaveLength(4);
+      // Country, admin region and sea polygons are not tile content: mentions reach their tiles through the hierarchy.
+      expect(await linksOf(regionId)).toEqual([]);
+      expect(await linksOf(seaId)).toEqual([]);
+      expect(await linksOf(countryId)).toEqual([]);
 
       // Rerun rewrites the same links.
-      expect(await assignTiles(db, "hier-test")).toEqual(r);
+      expect(await assignSubdivisionTiles(db, subdivisionId)).toEqual(r);
       expect(await linksOf(poly)).toHaveLength(2);
 
       // An object no longer valid loses its links.
       await db.update(geoObjects).set({ validTo: sql`current_date` }).where(eq(geoObjects.id, pt));
-      await assignTiles(db, "hier-test");
+      await assignSubdivisionTiles(db, subdivisionId);
       expect(await linksOf(pt)).toEqual([]);
+    }));
+
+  it("assignTiles without tiles writes nothing", () =>
+    withRollback(async (db) => {
+      expect(await assignTiles(db, [])).toEqual({ links: 0 });
     }));
 });

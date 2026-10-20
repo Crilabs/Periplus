@@ -1,15 +1,16 @@
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { fetchSitelinks, type Sitelink } from "@/lib/adapters/wikidata";
 import type { CallContext, Transport } from "@/lib/adapters/http";
-import { areaByKey, getConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { crawlFrontier, geoObjects, tileGeoObjects, tiles, type GeoObjectType } from "@/lib/db/schema";
+import { crawlFrontier, geoObjects, tileGeoObjects, subdivisions, type GeoObjectType } from "@/lib/db/schema";
 import { ensureDocument } from "@/lib/domain/documents/store";
+import { gazetteerScope } from "@/lib/domain/gazetteer/scope";
+import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { urlAllowed } from "@/lib/domain/sources/crawl-rules";
 import { getSource, sourceIdByDomain, type Source } from "@/lib/domain/sources/store";
 import { normalizeUrl } from "@/lib/domain/sources/urls";
 import { validAt } from "@/lib/domain/timeline";
-import { areaGeoObjectId } from "../tile-scope";
 
 // No import of ../runs here: the job handlers import this module (import cycle through the stage registry).
 
@@ -21,27 +22,32 @@ export const WIKIVOYAGE_DOMAIN = "wikivoyage.org";
 /** Gazetteer objects that may have a Wikivoyage article of their own. */
 const ARTICLE_TYPES: GeoObjectType[] = ["area", "archipelago", "island", "islet", "settlement"];
 
-/** The Wikidata items of the area `areaKey`: its own and those of the valid article-type objects in its tiles, sorted. */
-export async function wikivoyageItems(db: Db, areaKey: string): Promise<string[]> {
-  const areaId = await areaGeoObjectId(db, areaKey);
-  if (!areaId) return [];
+/**
+ * The Wikidata items of the subdivision `subdivisionKey`: its own (admin region) and those of the valid article-type
+ * objects in its run scope tiles, sorted. A tile shared with a neighbour counts for both.
+ */
+export async function wikivoyageItems(db: Db, subdivisionKey: string): Promise<string[]> {
+  const [sub] = await db
+    .select({ id: subdivisions.id, geoObjectId: subdivisions.geoObjectId })
+    .from(subdivisions)
+    .where(and(eq(subdivisions.key, subdivisionKey), isNull(subdivisions.validTo)));
+  if (!sub) return [];
+  const scopeTiles = await subdivisionTileIds(db, sub.id);
   const inTiles = await db
     .selectDistinct({ qid: geoObjects.wikidataId })
     .from(geoObjects)
     .innerJoin(tileGeoObjects, eq(tileGeoObjects.geoObjectId, geoObjects.id))
-    .innerJoin(tiles, eq(tiles.id, tileGeoObjects.tileId))
     .where(
       and(
-        eq(tiles.areaId, areaId),
-        validAt(tiles),
+        inArray(tileGeoObjects.tileId, scopeTiles),
         validAt(geoObjects),
         inArray(geoObjects.type, ARTICLE_TYPES),
         isNotNull(geoObjects.wikidataId),
       ),
     );
-  const [area] = await db.select({ qid: geoObjects.wikidataId }).from(geoObjects).where(eq(geoObjects.id, areaId));
+  const [own] = await db.select({ qid: geoObjects.wikidataId }).from(geoObjects).where(eq(geoObjects.id, sub.geoObjectId));
   const qids = new Set(inTiles.map((r) => r.qid!));
-  if (area?.qid) qids.add(area.qid);
+  if (own?.qid) qids.add(own.qid);
   return [...qids].sort();
 }
 
@@ -69,23 +75,23 @@ export async function queueArticles(db: Db, source: Source, articles: Sitelink[]
 }
 
 /**
- * Job `sources.wikivoyage`: queues the Wikivoyage articles of the area `areaKey` for the crawl that follows. The
- * articles are the sitelinks on `<lang>wikivoyage` (languages = the area's `sourceLanguages`) of the area's own
- * Wikidata item and of the valid areas, archipelagos, islands, islets and settlements in its tiles. Does nothing while
+ * Job `sources.wikivoyage`: queues the Wikivoyage articles of the subdivision `subdivisionKey` for the crawl that
+ * follows. The articles are the sitelinks on `<lang>wikivoyage` (languages = the subdivision's `sourceLanguages`) of
+ * its own Wikidata item and of the valid areas, archipelagos, islands, islets and settlements in its tiles. Does nothing while
  * the Wikivoyage source is not approved (an admin's pause stands).
  */
 export async function seedWikivoyage(
   db: Db,
-  areaKey: string,
+  subdivisionKey: string,
   deps: { transport: Transport },
   ctx: CallContext,
 ): Promise<{ objects: number; articles: number; newDocuments: number }> {
-  const area = areaByKey(areaKey);
+  const scope = await gazetteerScope(db, subdivisionKey);
   const sourceId = await sourceIdByDomain(db, WIKIVOYAGE_DOMAIN);
   const source = sourceId ? await getSource(db, sourceId) : null;
   if (!source || source.status !== "approved") return { objects: 0, articles: 0, newDocuments: 0 };
-  const qids = await wikivoyageItems(db, areaKey);
-  const sites = area.sourceLanguages.map((lang) => `${lang}wikivoyage`);
+  const qids = await wikivoyageItems(db, subdivisionKey);
+  const sites = scope.sourceLanguages.map((lang) => `${lang}wikivoyage`);
   const sitelinks = await fetchSitelinks(deps.transport, qids, sites, { ...ctx, sourceId: source.id }, getConfig().gazetteer.wikidata);
   const queued = await queueArticles(db, source, [...sitelinks.values()].flat());
   return { objects: qids.length, ...queued };

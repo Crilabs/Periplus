@@ -12,7 +12,7 @@ export const REVIEW_KIND_HELP: Record<ReviewKind, string> = {
   failed_job:
     "Ein Job ist nach allen Versuchen gescheitert, oder die Zusammenfassung eines Profils blieb nach allen Versuchen leer.",
   coast_tile_without_area:
-    "Eine Kachel mit Küste ließ sich keinem Revier zuordnen. Hier wird das Revier gewählt oder festgehalten, dass sie keins braucht.",
+    "Entfallen (Teil-Spec 14): Früher wurde hier einer Küstenkachel ein Revier zugeordnet. Heute gehört jede Küstenkachel zu einem Landesteil.",
   uncertain_change:
     "Ein neuer Wert weicht vom Profil ab, ist aber zu schwach belegt (zu wenige unabhängige Quellen, keine besonders gewichtige). Das Profil behält bis zur Entscheidung den bisherigen Wert.",
   comparison_deviation: "Ein eigener Wert wich beim Qualitätsvergleich von der Vergleichsquelle ab.",

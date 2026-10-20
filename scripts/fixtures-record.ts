@@ -1,8 +1,7 @@
-import { readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { unzipSync } from "fflate";
 import { searchOrganic } from "../lib/adapters/dataforseo";
 import { createConverters } from "../lib/adapters/fetch";
@@ -12,7 +11,9 @@ import { createJinaConverter } from "../lib/adapters/fetch/jina";
 import { createGeonamesSource } from "../lib/adapters/geonames";
 import { fetchTransport, makeResponse, RetryableHttpError, type Transport } from "../lib/adapters/http";
 import { fixtureTransport, recordingTransport } from "../lib/adapters/http-fixtures";
+import { fetchSeas } from "../lib/adapters/marine-regions";
 import { searchNominatim } from "../lib/adapters/nominatim";
+import { buildBoundaryQuery, buildRelationQuery, overpassQuery } from "../lib/adapters/overpass";
 import { runPdftotext } from "../lib/adapters/pdf";
 import { getArchive, type Archive } from "../lib/adapters/s3";
 import { createAnthropicClient } from "../lib/ai/anthropic";
@@ -25,20 +26,22 @@ import { extractRouteTask } from "../lib/ai/tasks/extract-route";
 import type { ModelClient, ModelTask } from "../lib/ai/types";
 import { embedTexts } from "../lib/adapters/voyage";
 import { fetchSitelinks } from "../lib/adapters/wikidata";
-import { getConfig, type AppConfig, type AreaConfig, type DiscoveryConfig } from "../lib/config";
-import { areaConfigSchema } from "../lib/config/schemas";
+import { getConfig, type AppConfig, type DiscoveryConfig } from "../lib/config";
 import { createDb, type Db } from "../lib/db/client";
 import { refuseSimulationEnv } from "../lib/domain/revisit/guard";
-import { extractionUnits } from "../lib/db/schema";
+import { extractionUnits, subdivisions } from "../lib/db/schema";
+import { namesByLanguage } from "../lib/domain/discovery/queries";
 import { planUnits } from "../lib/domain/extraction/units";
 import { effectiveVersionMeta } from "../lib/domain/mentions/classification";
-import { areaBbox, syncAreas } from "../lib/domain/gazetteer/areas";
-import { assignAreaTiles } from "../lib/domain/gazetteer/hierarchy";
-import { ensureTiles } from "../lib/domain/gazetteer/tiles-ensure";
+import { assignSubdivisionTiles } from "../lib/domain/gazetteer/hierarchy";
+import { gazetteerScope } from "../lib/domain/gazetteer/scope";
+import { ensureSubdivisionTiles } from "../lib/domain/gazetteer/tiles-ensure";
+import { subdivisionByKey } from "../lib/domain/subdivisions/store";
+import { AEGINA_WEST_BOX, AEGINA_WEST_KEY, insertAeginaWest } from "../test/fixtures/subdivisions/aegina-west";
 import { bufferBbox, importLandPolygons } from "../lib/domain/gazetteer/land";
 import { createRun } from "../lib/domain/runs";
 import { ensureWhitelistSources, getSource, sourceIdByDomain } from "../lib/domain/sources/store";
-import { parseTileId, type Bbox } from "../lib/domain/tiles";
+import { parseTileId, TILE_SIZE, type Bbox } from "../lib/domain/tiles";
 import { DATASET_KINDS, DATASETS_STAGE, datasetKindsOf, importDataset, type DatasetKind } from "../lib/pipeline/datasets";
 import { GEONAMES_STAGE, importGeonames } from "../lib/pipeline/gazetteer/geonames";
 import { classifyInputs } from "../lib/pipeline/text/classify";
@@ -49,11 +52,26 @@ import { importOsm } from "../lib/pipeline/gazetteer/osm";
 import { importWikidata } from "../lib/pipeline/gazetteer/wikidata";
 import { fetchUrl } from "../lib/pipeline/fetch/url";
 import { queueArticles, WIKIVOYAGE_DOMAIN } from "../lib/pipeline/sources/wikivoyage";
-import { landImportBbox, readShapefile } from "./import-land-polygons";
+import { readShapefile } from "./import-land-polygons";
+
+/**
+ * The box land polygons are recorded for: the subdivision's box plus `bufferKm`, snapped outward to the tile grid, so
+ * `has_coast` of each tile of the subdivision (all tiles of its box lie inside) sees all land touching it.
+ */
+function landImportBbox(bbox: Bbox, bufferKm: number): Bbox {
+  const [w, s, e, n] = bufferBbox(bbox, bufferKm);
+  return [
+    Math.floor(w / TILE_SIZE) * TILE_SIZE,
+    Math.floor(s / TILE_SIZE) * TILE_SIZE,
+    Math.ceil(e / TILE_SIZE) * TILE_SIZE,
+    Math.ceil(n / TILE_SIZE) * TILE_SIZE,
+  ];
+}
 
 const USAGE =
-  "usage: fixtures-record.ts --area <key> [--land <path/land_polygons.shp>] [--cache <dir>] [--datasets [<kind,…>] | --serp [--limit <1-3>] | --wikivoyage]\n" +
+  "usage: fixtures-record.ts --subdivision <key> [--land <path/land_polygons.shp>] [--cache <dir>] [--datasets [<kind,…>] | --serp [--limit <1-3>] | --wikivoyage]\n" +
   "       fixtures-record.ts --converters <url> [<url> <url>]\n" +
+  "       fixtures-record.ts --coarse <ISO2,…>\n" +
   "       fixtures-record.ts --voyage\n" +
   "       fixtures-record.ts --nominatim <query> <tileId>\n" +
   "       fixtures-record.ts --ai <classify-document|disambiguate-mention|extract-facts|extract-route> [--limit <1-5>] [--max-eur <eur>]";
@@ -72,8 +90,8 @@ const RETRY_WAIT_MS = 90_000;
 
 type LandFeature = GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;
 
-export type AreaRecordArgs = {
-  area: string;
+export type SubdivisionRecordArgs = {
+  subdivision: string;
   land?: string;
   cache?: string;
   datasets: boolean;
@@ -85,9 +103,10 @@ export type AreaRecordArgs = {
   wikivoyage?: true;
 };
 export type RecordArgs =
-  | AreaRecordArgs
+  | SubdivisionRecordArgs
   | { converters: string[] }
   | { voyage: true }
+  | { coarse: string[] }
   | { nominatim: { query: string; tileId: string } }
   | { ai: { task: AiRecordingTask; limit: number; maxEur: number } };
 
@@ -122,10 +141,10 @@ function isHttpUrl(value: string): boolean {
 }
 
 /**
- * `--area`, `--land`, `--cache`, `--limit` take a value; `--datasets` (record the dataset imports only, optionally
+ * `--subdivision`, `--land`, `--cache`, `--limit` take a value; `--datasets` (record the dataset imports only, optionally
  * followed by a comma-separated list of dataset kinds),
- * `--serp` (record at most `--limit` ≤ 3 area SERP searches, default 3) and `--wikivoyage` (the Wikivoyage sitelinks
- * and articles) take none. `--converters` takes 1–3 page URLs and stands alone (no area), as does `--voyage` (one
+ * `--serp` (record at most `--limit` ≤ 3 area SERP searches of the subdivision, default 3) and `--wikivoyage` (the Wikivoyage sitelinks
+ * and articles) take none. `--converters` takes 1–3 page URLs and stands alone (no subdivision), as does `--voyage` (one
  * embedding call), as does `--nominatim <query> <tileId>` (one Nominatim radius search).
  */
 export function parseArgs(argv: string[]): RecordArgs {
@@ -151,6 +170,11 @@ export function parseArgs(argv: string[]): RecordArgs {
     if (argv.length !== 3 || !query || query.startsWith("--") || !isTileId(tileId)) throw new Error(USAGE);
     return { nominatim: { query, tileId: tileId! } };
   }
+  if (argv[0] === "--coarse") {
+    const countries = argv[1]?.split(",") ?? [];
+    if (argv.length !== 2 || countries.length === 0 || !countries.every((c) => /^[A-Z]{2}$/.test(c))) throw new Error(USAGE);
+    return { coarse: countries };
+  }
   if (argv[0] === "--voyage") {
     if (argv.length !== 1) throw new Error(USAGE);
     return { voyage: true };
@@ -167,7 +191,7 @@ export function parseArgs(argv: string[]): RecordArgs {
   let wikivoyage = false;
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]!;
-    if (flag === "--converters" || flag === "--voyage" || flag === "--nominatim" || flag === "--ai") throw new Error(USAGE);
+    if (flag === "--converters" || flag === "--voyage" || flag === "--nominatim" || flag === "--ai" || flag === "--coarse") throw new Error(USAGE);
     if (flag === "--datasets" || flag === "--serp" || flag === "--wikivoyage") {
       if (flag === "--datasets") {
         datasets = true;
@@ -185,13 +209,13 @@ export function parseArgs(argv: string[]): RecordArgs {
       continue;
     }
     const value = argv[++i];
-    if (!["--area", "--land", "--cache", "--limit"].includes(flag) || value === undefined || value.startsWith("--")) {
+    if (!["--subdivision", "--land", "--cache", "--limit"].includes(flag) || value === undefined || value.startsWith("--")) {
       throw new Error(USAGE);
     }
     values.set(flag, value);
   }
-  const area = values.get("--area");
-  if (!area || Number(datasets) + Number(serp) + Number(wikivoyage) > 1) throw new Error(USAGE);
+  const subdivision = values.get("--subdivision");
+  if (!subdivision || Number(datasets) + Number(serp) + Number(wikivoyage) > 1) throw new Error(USAGE);
   const rawLimit = values.get("--limit");
   if (rawLimit !== undefined && !serp) throw new Error(USAGE);
   let limit: number | undefined;
@@ -200,7 +224,7 @@ export function parseArgs(argv: string[]): RecordArgs {
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_SERP_CALLS) throw new Error(USAGE);
   }
   return {
-    area,
+    subdivision,
     land: values.get("--land"),
     cache: values.get("--cache"),
     datasets,
@@ -212,17 +236,17 @@ export function parseArgs(argv: string[]): RecordArgs {
 }
 
 /**
- * The area SERP searches a `--serp` recording makes, from the area's configured names (no database): each
- * area template whose language is one of the area's `sourceLanguages` and has a name, the first `limit`.
+ * The area SERP searches a `--serp` recording makes, from the names of the subdivision's admin region: each area
+ * template whose language is one of the subdivision's `sourceLanguages` and has a name, the first `limit`.
  */
 export function serpRecordingQueries(
-  area: AreaConfig,
+  subdivision: { names: Record<string, string | undefined>; sourceLanguages: string[] },
   discovery: DiscoveryConfig,
   limit: number,
 ): Array<{ keyword: string; languageCode: string; locationCode: number }> {
-  const names = area.names as Record<string, string | undefined>;
+  const { names } = subdivision;
   return discovery.templates.area
-    .filter((t) => area.sourceLanguages.includes(t.lang) && names[t.lang])
+    .filter((t) => subdivision.sourceLanguages.includes(t.lang) && names[t.lang])
     .map((t) => ({ keyword: t.template.replaceAll("{name}", names[t.lang]!), languageCode: t.lang, locationCode: t.locationCode }))
     .slice(0, Math.min(limit, MAX_SERP_CALLS));
 }
@@ -231,14 +255,17 @@ export function serpRecordingQueries(
  * Records real DataForSEO answers as fixtures. Calls are booked (budget, `external_calls`) in the database of
  * `DATABASE_URL`, the development database: they cost real money, so no scratch database hides them.
  */
-async function recordSerp(area: AreaConfig, limit: number): Promise<void> {
+async function recordSerp(subdivisionKey: string, limit: number): Promise<void> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
   const { discovery } = getConfig();
   const { db, close } = createDb(url);
   try {
+    const scope = await gazetteerScope(db, subdivisionKey);
+    const [sub] = await db.select({ geoObjectId: subdivisions.geoObjectId }).from(subdivisions).where(eq(subdivisions.id, scope.subdivisionId));
+    const names = (await namesByLanguage(db, [sub!.geoObjectId], scope.sourceLanguages)).get(sub!.geoObjectId);
     const recording = recordingTransport(fetchTransport);
-    for (const q of serpRecordingQueries(area, discovery, limit)) {
+    for (const q of serpRecordingQueries({ names: Object.fromEntries(names ?? []), sourceLanguages: scope.sourceLanguages }, discovery, limit)) {
       const { items } = await searchOrganic(recording, q, { db, stage: "fixtures:record" }, discovery.serp);
       process.stdout.write(`serp "${q.keyword}" (${q.languageCode}/${q.locationCode}): ${items.length} organic results\n`);
     }
@@ -321,6 +348,44 @@ async function recordNominatim(query: string, tileId: string): Promise<void> {
     );
     process.stdout.write(`nominatim "${query}" around ${tileId}: ${hits.length} hits\n`);
     for (const h of hits) process.stdout.write(`  ${h.osmId} ${h.name} (${h.category}/${h.type}) ${h.distanceM} m\n`);
+  } finally {
+    await close();
+  }
+}
+
+/**
+ * Records the coarse boundary fixtures of spec 14: per country the Overpass boundary query (the configured levels
+ * plus the country relation; whole-country entries the country relation only), the `extra` relations of that
+ * country, and the Marine Regions IHO seas of `mediterranean.marineRegionsMrgids`. Calls are booked in the
+ * `*_scratch` database of `DATABASE_URL`.
+ */
+async function recordCoarse(countries: string[]): Promise<void> {
+  const url = assertScratchUrl(process.env.DATABASE_URL);
+  const { gazetteer, subdivisions } = getConfig();
+  const { db, close } = createDb(url);
+  const ctx = { db, stage: "fixtures:record" };
+  const out = (line: string) => process.stdout.write(`${line}\n`);
+  try {
+    const recording = recordingTransport(compacting(fetchTransport));
+    for (const country of countries) {
+      const entry = subdivisions.countries[country];
+      if (!entry) throw new Error(`no subdivision config for country ${country}`);
+      const levels = [entry.firstLevel, entry.secondLevel].filter((l): l is number => typeof l === "number");
+      const { elements } = await withRetry(`overpass ${country}`, () =>
+        overpassQuery(recording, buildBoundaryQuery(country, levels, gazetteer.overpass.timeoutSeconds), ctx, gazetteer.overpass),
+      );
+      out(`boundaries ${country} (levels ${levels.join(",") || "none"}): ${elements.length} relations`);
+      const extra = subdivisions.extra.filter((e) => e.country === country).map((e) => e.osmRelationId);
+      if (extra.length > 0) {
+        const res = await withRetry(`overpass ${country} extra`, () =>
+          overpassQuery(recording, buildRelationQuery(extra, gazetteer.overpass.timeoutSeconds), ctx, gazetteer.overpass),
+        );
+        out(`extra ${country}: ${res.elements.length} relations`);
+      }
+    }
+    const mrgids = subdivisions.mediterranean.marineRegionsMrgids;
+    const seas = await withRetry("marine regions", () => fetchSeas(recording, mrgids, ctx, gazetteer.marineRegions));
+    for (const sea of seas) out(`sea ${sea.mrgid} ${sea.name}: ${sea.geometry.coordinates.length} polygons`);
   } finally {
     await close();
   }
@@ -465,13 +530,13 @@ async function recordAi(args: { task: AiRecordingTask; limit: number; maxEur: nu
 }
 
 /**
- * Records the Wikivoyage sitelinks of `WIKIVOYAGE_RECORDING_ITEMS` on the area's languages (one `wbgetentities` call)
+ * Records the Wikivoyage sitelinks of `WIKIVOYAGE_RECORDING_ITEMS` on the subdivision's languages (one `wbgetentities` call)
  * and crawls up to `MAX_WIKIVOYAGE_ARTICLES` of the articles with the crawl's own code (robots.txt and pages through
  * the guarded crawl transport, local converter, no renderer). The database work runs in a transaction of the
  * `DATABASE_URL` database that is rolled back: the calls are free, and the recording leaves no source, document or
  * frontier row behind.
  */
-async function recordWikivoyage(area: AreaConfig): Promise<void> {
+async function recordWikivoyage(subdivisionKey: string): Promise<void> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
   const config = getConfig();
@@ -486,13 +551,14 @@ async function recordWikivoyage(area: AreaConfig): Promise<void> {
         if (!source) throw new Error(`no source for ${WIKIVOYAGE_DOMAIN}`);
         const { id: runId } = await createRun(tx, {
           kind: "stage",
-          scope: { type: "area", id: area.key },
+          scope: { type: "subdivision", id: subdivisionKey },
           stages: [],
-          params: { areaKey: area.key, sourceIds: [source.id] },
+          params: { subdivisionKey, sourceIds: [source.id] },
           triggeredBy: "fixtures:record",
         });
         const ctx = { db: tx, runId, stage: "fixtures:record", sourceId: source.id };
-        const sites = area.sourceLanguages.map((lang) => `${lang}wikivoyage`);
+        const { sourceLanguages } = await gazetteerScope(tx, subdivisionKey);
+        const sites = sourceLanguages.map((lang) => `${lang}wikivoyage`);
         const links = await fetchSitelinks(recordingTransport(fetchTransport), WIKIVOYAGE_RECORDING_ITEMS, sites, ctx, config.gazetteer.wikidata);
         const articles = [...links.values()].flat().slice(0, MAX_WIKIVOYAGE_ARTICLES);
         out(`wikidata sitelinks: ${articles.map((a) => a.url).join(", ") || "none"}`);
@@ -525,15 +591,6 @@ export function assertScratchUrl(url: string | undefined): string {
   const name = new URL(url).pathname.replace(/^\//, "");
   if (!name.endsWith("_scratch")) throw new Error(`DATABASE_URL must name a *_scratch database, got "${name}"`);
   return url;
-}
-
-/** A configured area, else the test area `test/fixtures/areas/<key>.json`. */
-function loadArea(key: string): AreaConfig {
-  const configured = getConfig().areas.find((a) => a.key === key);
-  if (configured) return configured;
-  const parsed = areaConfigSchema.parse(JSON.parse(readFileSync(path.join(FIXTURES, "areas", `${key}.json`), "utf8")));
-  if (parsed.key !== key) throw new Error(`area file ${key}.json has key ${parsed.key}`);
-  return parsed;
 }
 
 function memoryArchive(): Archive {
@@ -697,11 +754,41 @@ export function compactOverpass(raw: string): string {
   return JSON.stringify(answer);
 }
 
-/** Thins successful Overpass answers and minifies Wikidata's before they are recorded and imported. */
+/** Douglas-Peucker tolerance for the IHO sea rings in degrees (~200 m; the seas span hundreds of km). */
+const SEA_TOLERANCE_DEG = 0.002;
+
+/**
+ * The IHO sea polygons come with 8 decimals and ~14 MB for the configured Mediterranean seas. Every ring is thinned
+ * (Douglas-Peucker, end points kept so rings stay closed) and its coordinates rounded to 4 decimals; a ring that
+ * collapses below 4 points is dropped, as is a polygon without an exterior ring.
+ */
+export function compactMarineRegions(raw: string): string {
+  const answer = JSON.parse(raw) as { features?: Array<{ geometry?: { type?: string; coordinates?: number[][][][] } | null }> };
+  for (const feature of answer.features ?? []) {
+    const geometry = feature.geometry;
+    if (geometry?.type !== "MultiPolygon" || !geometry.coordinates) continue;
+    geometry.coordinates = geometry.coordinates
+      .map((polygon) =>
+        polygon
+          .map((ring) =>
+            simplifyLine(
+              ring.map(([lon, lat]) => ({ lon: lon!, lat: lat! })),
+              SEA_TOLERANCE_DEG,
+            ).map((p) => [Math.round(p.lon * 1e4) / 1e4, Math.round(p.lat * 1e4) / 1e4]),
+          )
+          .filter((ring) => ring.length >= 4),
+      )
+      .filter((polygon) => polygon.length > 0);
+  }
+  return JSON.stringify(answer);
+}
+
+/** Thins successful Overpass and Marine Regions answers and minifies Wikidata's before they are recorded and imported. */
 function compacting(inner: Transport): Transport {
   return async (req) => {
     const res = await inner(req);
     if (res.status !== 200) return res;
+    if (req.service === "marine-regions") return makeResponse(200, new TextEncoder().encode(compactMarineRegions(res.text())));
     if (req.service === "overpass") return makeResponse(200, new TextEncoder().encode(compactOverpass(res.text())));
     if (req.service === "wikidata") {
       return makeResponse(200, new TextEncoder().encode(JSON.stringify(JSON.parse(res.text()))));
@@ -714,8 +801,8 @@ async function* featuresOf(collection: GeoJSON.FeatureCollection): AsyncGenerato
   for (const f of collection.features) yield f as LandFeature;
 }
 
-/** Writes the land polygons in the box as `test/fixtures/land/<area>.geojson` (6 decimals, ~0.1 m). */
-async function exportLand(db: Db, areaKey: string, [west, south, east, north]: Bbox): Promise<number> {
+/** Writes the land polygons in the box as `test/fixtures/land/<name>.geojson` (6 decimals, ~0.1 m). */
+async function exportLand(db: Db, name: string, [west, south, east, north]: Bbox): Promise<number> {
   const { rows } = await db.execute<{ geometry: string }>(sql`
     select ST_AsGeoJSON(geom, 6) as geometry from land_polygons
     where geom && ST_MakeEnvelope(${west}, ${south}, ${east}, ${north}, 4326)
@@ -723,7 +810,7 @@ async function exportLand(db: Db, areaKey: string, [west, south, east, north]: B
   const lines = rows.map((r) => `    { "type": "Feature", "properties": {}, "geometry": ${r.geometry} }`);
   await mkdir(path.join(FIXTURES, "land"), { recursive: true });
   await writeFile(
-    path.join(FIXTURES, "land", `${areaKey}.geojson`),
+    path.join(FIXTURES, "land", `${name}.geojson`),
     `{\n  "type": "FeatureCollection",\n  "features": [\n${lines.join(",\n")}\n  ]\n}\n`,
   );
   return rows.length;
@@ -769,55 +856,64 @@ async function main(): Promise<void> {
   if ("ai" in args) return recordAi(args.ai);
   if ("nominatim" in args) return recordNominatim(args.nominatim.query, args.nominatim.tileId);
   if ("voyage" in args) return recordVoyage();
+  if ("coarse" in args) return recordCoarse(args.coarse);
   if ("converters" in args) return recordConverters(args.converters);
-  if (args.serp) return recordSerp(loadArea(args.area), args.limit!);
-  if (args.wikivoyage) return recordWikivoyage(loadArea(args.area));
+  if (args.serp) return recordSerp(args.subdivision, args.limit!);
+  if (args.wikivoyage) return recordWikivoyage(args.subdivision);
   const url = assertScratchUrl(process.env.DATABASE_URL);
-  const area = loadArea(args.area);
   const { gazetteer } = getConfig();
-  // The land import box (area box plus `landBufferKm`, snapped to the tile grid): 50 km fetch rays need it.
-  const landBox = landImportBbox(area, gazetteer.landBufferKm);
-  const queryBox = bufferBbox(areaBbox(area), gazetteer.bboxBufferKm);
   const out = (line: string) => process.stdout.write(`${line}\n`);
 
   const { db, close } = createDb(url);
   try {
+    // The test subdivision around the aegina-west fixtures is created here (its land comes first); any other key must
+    // already be in the scratch database (`subdivisions.build`), which also names the land fixture after its key.
+    const isTestSubdivision = args.subdivision === AEGINA_WEST_KEY;
+    const existing = await subdivisionByKey(db, args.subdivision);
+    const bbox = isTestSubdivision ? AEGINA_WEST_BOX : existing?.bbox;
+    if (!bbox) throw new Error(`subdivision ${args.subdivision} is not in the scratch database; build the subdivisions first`);
+    // The land import box (subdivision box plus `landBufferKm`, snapped to the tile grid): 50 km fetch rays need it.
+    const landBox = landImportBbox(bbox, gazetteer.landBufferKm);
+    const queryBox = bufferBbox(bbox, gazetteer.bboxBufferKm);
+    const landName = isTestSubdivision ? "aegina-west" : args.subdivision;
+
     // Land: from the shapefile (rewriting the fixture), then always from the fixture, so the recording
     // sees exactly the land the integration test imports.
-    const landFile = path.join(FIXTURES, "land", `${area.key}.geojson`);
+    const landFile = path.join(FIXTURES, "land", `${landName}.geojson`);
     if (args.land) {
       await importLandPolygons(db, readShapefile(args.land), landBox, "fixture");
-      out(`land: ${await exportLand(db, area.key, landBox)} polygons written to ${landFile}`);
+      out(`land: ${await exportLand(db, landName, landBox)} polygons written to ${landFile}`);
     }
     const land = JSON.parse(await readFile(landFile, "utf8")) as GeoJSON.FeatureCollection;
     await importLandPolygons(db, featuresOf(land), landBox, "fixture");
 
-    const areaIds = await syncAreas(db, [area]);
+    if (!existing) await insertAeginaWest(db);
+    const scope = await gazetteerScope(db, args.subdivision);
     const { id: runId } = await createRun(db, {
       kind: "stage",
-      scope: { type: "area", id: area.key },
+      scope: { type: "subdivision", id: scope.key },
       stages: [],
-      params: { areaKey: area.key },
+      params: { subdivisionKey: scope.key },
       triggeredBy: "fixtures:record",
     });
 
     const source = sourceTransport(args.cache);
     if (args.datasets) {
       // Dataset imports only: they need the tiles (coast tiles for bathymetry), not the gazetteer.
-      out(`tiles: ${JSON.stringify(await ensureTiles(db, area, areaIds))}`);
+      out(`tiles: ${JSON.stringify(await ensureSubdivisionTiles(db, scope.subdivisionId))}`);
       const recordingSource = recordingTransport(source);
       const archive = memoryArchive();
       const kinds = args.datasetKinds ?? [...DATASET_KINDS];
       if (kinds.includes("sitelinks")) {
-        // Sitelinks are asked for the area's objects with a Wikidata id: the gazetteer from its recorded fixtures.
+        // Sitelinks are asked for the subdivision's objects with a Wikidata id: the gazetteer from its recorded fixtures.
         const replay = fixtureTransport();
-        await importOsm(db, { area, runId }, { transport: replay, archive });
-        await importWikidata(db, { area, runId }, { transport: replay });
-        out(`tile links: ${(await assignAreaTiles(db, area)).links}`);
+        await importOsm(db, { scope, runId }, { transport: replay, archive });
+        await importWikidata(db, { scope, runId }, { transport: replay });
+        out(`tile links: ${(await assignSubdivisionTiles(db, scope.subdivisionId)).links}`);
       }
       for (const dataset of kinds) {
         const result = await withRetry(dataset, () =>
-          importDataset(db, dataset, { area, runId }, { transport: recordingSource, archive }),
+          importDataset(db, dataset, { scope, runId }, { transport: recordingSource, archive }),
         );
         out(`${DATASETS_STAGE} ${dataset}: ${JSON.stringify(result)}`);
       }
@@ -825,10 +921,10 @@ async function main(): Promise<void> {
     }
     const recording = recordingTransport(compacting(source));
     const osm = await withRetry("overpass", () =>
-      importOsm(db, { area, runId }, { transport: recording, archive: memoryArchive() }),
+      importOsm(db, { scope, runId }, { transport: recording, archive: memoryArchive() }),
     );
     out(`osm: ${JSON.stringify(osm)}`);
-    const wikidata = await withRetry("wikidata", () => importWikidata(db, { area, runId }, { transport: recording }));
+    const wikidata = await withRetry("wikidata", () => importWikidata(db, { scope, runId }, { transport: recording }));
     out(`wikidata: ${JSON.stringify(wikidata)}`);
 
     // GeoNames dumps are too large for HTTP fixtures: keep the downloads and cut them to the box.
@@ -844,9 +940,9 @@ async function main(): Promise<void> {
       ctx: { db, runId, stage: GEONAMES_STAGE },
       cfg: gazetteer.geonames,
     });
-    const geonames = await withRetry("geonames", () => importGeonames(db, { area, runId }, { source: geonamesSource }));
+    const geonames = await withRetry("geonames", () => importGeonames(db, { scope, runId }, { source: geonamesSource }));
     out(`geonames: ${JSON.stringify(geonames)}`);
-    const cut = await writeGeonames(downloads, gazetteer.geonames.countries, gazetteer.geonames.baseUrl, queryBox);
+    const cut = await writeGeonames(downloads, [scope.country], gazetteer.geonames.baseUrl, queryBox);
     out(`geonames fixtures: ${JSON.stringify(cut)}`);
 
     const { rows } = await db.execute<{ type: string; n: number }>(sql`

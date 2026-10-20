@@ -6,7 +6,7 @@ import { FACT_SCHEMAS } from "@/config/fact-schema";
 import { METRIC_KEYS } from "@/lib/db/schema/quality";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
-import { areaByKey, getConfig, getConsolidationConfig, loadConfig } from "../index";
+import { countryConfig, getConfig, getConsolidationConfig, loadConfig } from "../index";
 import { modelsSchema, queuesSchema } from "../schemas";
 
 const repoConfig = loadConfig("config");
@@ -31,12 +31,11 @@ type Overrides = {
   nameAffixes?: unknown;
   extraction?: unknown;
   delivery?: unknown;
+  subdivisions?: unknown;
   /** `consolidation/active.json`. */
   consolidationActive?: unknown;
   /** Rules version file name (without `.json`) to content; replaces the repo's `consolidation/v*.json`. */
   consolidation?: Record<string, unknown>;
-  /** File name (without `.json`) to content; replaces all repo area files. */
-  areas?: Record<string, unknown>;
 };
 
 /** Writes a temporary config dir: repo config files with the given overrides applied. */
@@ -61,6 +60,7 @@ function fixtureDir(overrides: Overrides): string {
     "name-affixes": overrides.nameAffixes ?? repoConfig.nameAffixes,
     extraction: overrides.extraction ?? repoConfig.extraction,
     delivery: overrides.delivery ?? repoConfig.delivery,
+    subdivisions: overrides.subdivisions ?? repoConfig.subdivisions,
   };
   for (const [name, value] of Object.entries(files)) {
     writeFileSync(join(dir, `${name}.json`), JSON.stringify(value));
@@ -76,15 +76,58 @@ function fixtureDir(overrides: Overrides): string {
   for (const [name, value] of Object.entries(overrides.consolidation ?? { [activeRules]: activeRulesConfig })) {
     writeFileSync(join(dir, "consolidation", `${name}.json`), JSON.stringify(value));
   }
-  mkdirSync(join(dir, "areas"));
-  const areas = overrides.areas ?? Object.fromEntries(repoConfig.areas.map((a) => [a.key, a]));
-  for (const [name, value] of Object.entries(areas)) {
-    writeFileSync(join(dir, "areas", `${name}.json`), JSON.stringify(value));
-  }
   return dir;
 }
 
-const saronic = () => structuredClone(repoConfig.areas.find((a) => a.key === "saronic")!);
+describe("subdivisions config", () => {
+  const sub = () => structuredClone(repoConfig.subdivisions);
+  const invalid = (value: unknown) => () => loadConfig(fixtureDir({ subdivisions: value }));
+
+  it("loads subdivisions.json", () => {
+    const c = getConfig().subdivisions;
+    expect(c.countries.GR!.firstLevel).toBe(5);
+    expect(c.countries.HR!.firstLevel).toBe(4);
+    expect(c.countries.AL!.firstLevel).toBe(6);
+    expect(c.countries.MC!.firstLevel).toBe("whole");
+    expect(c.wholeCountry).toEqual(expect.arrayContaining(["LB", "IL", "CY"]));
+    expect(c.split[0]!.parentKey).toBe("GR-L");
+    expect(c.split[0]!.groups.map((g) => g.key)).toEqual(["GR-CYC", "GR-DOD"]);
+    expect(c.extra.map((e) => [e.key, e.country, e.osmRelationId, e.cutFrom])).toEqual(
+      expect.arrayContaining([
+        ["CY-NC", "CY", 2514541, "CY"],
+        ["GB-SBA", "GB", 3263728, "CY"],
+      ]),
+    );
+    expect(c.keyOverrides["3263728"]).toBeUndefined();
+    expect(c.countries.LY!.status).toBe("excluded");
+    expect(c.mediterranean.marineRegionsMrgids).not.toContain(3369);
+    expect(c.overrides["GR-J"]!.coastSections!.map((s) => s.key)).toEqual(["ermioni", "porto-cheli", "epidavros"]);
+  });
+
+  it("countryConfig returns a country and throws for an unknown one", () => {
+    expect(countryConfig("GR").cycleDays).toBe(30);
+    expect(() => countryConfig("XX")).toThrow("Unknown country XX");
+  });
+
+  it("rejects a split group without members", () => {
+    const c = sub();
+    c.split[0]!.groups[0]!.memberWikidataIds = [];
+    expect(invalid(c)).toThrow(/^Invalid config .*subdivisions\.json: /);
+  });
+
+  it("rejects a merge key that is also a split group key", () => {
+    const c = sub();
+    c.merge = [{ key: "GR-CYC", memberKeys: ["GR-A", "GR-B"], names: { de: "x", en: "x", el: "x" } }];
+    expect(invalid(c)).toThrow(/subdivisions\.json: .*GR-CYC/);
+  });
+
+  it("rejects coastSections with duplicate keys", () => {
+    const c = sub();
+    const sections = c.overrides["GR-J"]!.coastSections!;
+    c.overrides["GR-J"]!.coastSections = [sections[0]!, sections[0]!];
+    expect(invalid(c)).toThrow(/duplicate coast section key ermioni/);
+  });
+});
 
 describe("loadConfig", () => {
   it("loads the repo config", () => {
@@ -184,9 +227,9 @@ describe("loadConfig", () => {
     expect(q.targets.review_minutes_per_100).toEqual({ pilot: null, full: 30, direction: "max" });
     expect(q.secondRunReviewMinutesMax).toBe(60);
     expect(q.placesPerTile).toEqual({ min: 10, max: 40 });
-    expect(q.comparisonSet).toEqual({ pilotSize: 50, perAreaMin: 20, perAreaMax: 30 });
+    expect(q.comparisonSet).toEqual({ pilotSize: 50, perSubdivisionMin: 20, perSubdivisionMax: 30 });
     expect(q.navily.proposalVersion).toBe("navily-assistant/1");
-    expect(q.extrapolation).toEqual({ areasMin: 60, areasMax: 100, placesPerArea: null });
+    expect(q.extrapolation).toEqual({ subdivisionsMin: 60, subdivisionsMax: 100, placesPerSubdivision: null });
   });
 
   it("quality config targets only name metric keys and reject an inverted tile range", () => {
@@ -245,16 +288,6 @@ describe("loadConfig", () => {
     expect(() => loadConfig(join(tmpdir(), "periplus-does-not-exist"))).toThrow();
   });
 
-  it("loadConfig reads both areas", () => {
-    const c = loadConfig("config");
-    expect(c.areas.map((a) => a.key).sort()).toEqual(["argolic", "saronic"]);
-    const s = c.areas.find((a) => a.key === "saronic")!;
-    expect(s.names).toMatchObject({ de: "Saronischer Golf", en: "Saronic Gulf", el: "Σαρωνικός Κόλπος" });
-    expect(s.tileBbox).toEqual([23.0, 37.0, 23.75, 38.0]);
-    expect(s.coastSections.map((cs) => cs.key)).toEqual(["methana", "ermioni", "porto-cheli", "epidavros"]);
-    expect(c.areas.find((a) => a.key === "argolic")!.tileBbox).toBeNull();
-  });
-
   it("loads categories and gazetteer settings", () => {
     const c = loadConfig("config");
     expect(c.categories.wikidata.Q40080).toBe("beach");
@@ -265,18 +298,6 @@ describe("loadConfig", () => {
     expect(c.gazetteer.merge.distanceM.default).toBe(500);
     expect(c.gazetteer.landBufferKm).toBe(55);
     expect(c.gazetteer.noAnchoringKinds).toEqual(["military", "cable", "firing_area", "aquaculture"]);
-  });
-
-  it("area without an el name is rejected", () => {
-    const area = saronic();
-    delete (area.names as Record<string, string>).el;
-    expect(() => loadConfig(fixtureDir({ areas: { saronic: area } }))).toThrow(/saronic\.json.*names/);
-  });
-
-  it("area key must equal file name", () => {
-    expect(() => loadConfig(fixtureDir({ areas: { "saronic-copy": saronic() } }))).toThrow(
-      /saronic-copy\.json.*key/,
-    );
   });
 
   it("rejects an unknown POI category", () => {
@@ -470,7 +491,7 @@ describe("text configuration", () => {
       maxNgramWords: 4,
       maxCandidates: 6,
       versionsPerJob: 50,
-      prepassTypes: ["area", "gulf", "archipelago", "island"],
+      prepassTypes: ["area", "gulf", "archipelago", "island", "country", "admin_region", "sea"],
     });
     // The fallback to the source's areas is built into `candidateTiles`; no switch for it (it was never read).
     expect(cfg.mentions).not.toHaveProperty("fallbackScope");
@@ -625,7 +646,7 @@ describe("consolidation rules", () => {
 describe("delivery configuration", () => {
   it("the delivery config carries the spec values", () => {
     expect(getConfig().delivery).toMatchObject({
-      schemaVersion: "1.0",
+      schemaVersion: "2.0",
       coast: { marginNm: 2, simplifyToleranceM: 10 },
       validation: {
         maxWaterDistanceNm: 1.5,
@@ -668,7 +689,7 @@ describe("delivery configuration", () => {
       return () => loadConfig(fixtureDir({ delivery }));
     };
     expect(withDelivery(() => {})).not.toThrow();
-    expect(withDelivery((d) => ((d as { schemaVersion: string }).schemaVersion = "2.0"))).toThrow(/delivery\.json.*schemaVersion/);
+    expect(withDelivery((d) => ((d as { schemaVersion: string }).schemaVersion = "1.0"))).toThrow(/delivery\.json.*schemaVersion/);
     expect(withDelivery((d) => (d.validation.maxDraftM = [10, 0.5]))).toThrow(/delivery\.json.*maxDraftM/);
     expect(withDelivery((d) => (d.spots.statuses = ["bogus" as never]))).toThrow(/delivery\.json.*statuses/);
     expect(withDelivery((d) => (d.regions.types = ["volcano" as never]))).toThrow(/delivery\.json.*types/);
@@ -681,10 +702,9 @@ describe("delivery configuration", () => {
   });
 });
 
-describe("areaByKey", () => {
-  it("returns the area and throws on an unknown key", () => {
-    expect(areaByKey("saronic").names.en).toBe("Saronic Gulf");
-    expect(() => areaByKey("atlantis")).toThrow(/atlantis/);
+describe("retired area keys", () => {
+  it("name the subdivision to pass instead of each former area", () => {
+    expect(loadConfig("config").subdivisions.retiredAreaKeys).toEqual({ saronic: "GR-I", argolic: "GR-J" });
   });
 });
 

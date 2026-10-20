@@ -5,12 +5,11 @@ import { createConverters } from "@/lib/adapters/fetch";
 import { makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import { fixtureTransport } from "@/lib/adapters/http-fixtures";
 import { runPdftotext } from "@/lib/adapters/pdf";
-import { areaByKey, getConfig } from "@/lib/config";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { crawlFrontier, documents, documentVersions, geoObjects, runs, sources, tileGeoObjects, tiles } from "@/lib/db/schema";
-import { syncAreas } from "@/lib/domain/gazetteer/areas";
-import { newId } from "@/lib/domain/ids";
+import { crawlFrontier, documents, documentVersions, geoObjects, runs, sources, subdivisions, tileGeoObjects, tiles } from "@/lib/db/schema";
+import { newId, newPublicId } from "@/lib/domain/ids";
 import { createRun } from "@/lib/domain/runs";
 import { getSource, ensureWhitelistSources, setSourceStatus, sourceIdByDomain } from "@/lib/domain/sources/store";
 import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
@@ -22,38 +21,16 @@ import { withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
 import { WIKIVOYAGE_RECORDING_ITEMS } from "@/scripts/fixtures-record";
 
-// The synthetic area "wikivoyage-test" (languages of the recorded area saronic) joins the configured areas; Wikidata
-// calls are not rate limited here. Everything else is the real config.
+// Wikidata calls are not rate limited here. Everything else is the real config.
 vi.mock("@/lib/config", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/config")>();
   const base = original.getConfig();
-  const saronic = base.areas.find((a) => a.key === "saronic")!;
-  const testArea = {
-    ...saronic,
-    key: "wikivoyage-test",
-    names: { de: "Wikivoyage-Test", en: "Wikivoyage Test", el: "Δοκιμή" },
-    polygon: { type: "Polygon" as const, coordinates: [[[31, 34], [31.5, 34], [31.5, 34.25], [31, 34.25], [31, 34]]] },
-    tileBbox: [31, 34, 31.5, 34.25] as [number, number, number, number],
-    coastSections: [],
-  };
-  const config = {
-    ...base,
-    areas: [...base.areas, testArea],
-    gazetteer: { ...base.gazetteer, wikidata: { ...base.gazetteer.wikidata, ratePerMinute: 1_000_000 } },
-  };
-  return {
-    ...original,
-    getConfig: () => config,
-    areaByKey: (key: string) => {
-      const found = config.areas.find((a) => a.key === key);
-      if (!found) throw new Error(`Unknown area ${key}`);
-      return found;
-    },
-  };
+  const config = { ...base, gazetteer: { ...base.gazetteer, wikidata: { ...base.gazetteer.wikidata, ratePerMinute: 1_000_000 } } };
+  return { ...original, getConfig: () => config };
 });
 
 // Synthetic tiles in open sea outside the pilot box 23.0-23.75 E x 37.0-38.0 N, at spots no other test uses.
-const AREA_KEY = "wikivoyage-test";
+const SUB_KEY = "XW-WIKIVOYAGE";
 const TILE_A = tileIdFor(31.1, 34.1);
 const TILE_B = tileIdFor(31.3, 34.1);
 const AEGINA = WIKIVOYAGE_RECORDING_ITEMS[0]!;
@@ -63,9 +40,18 @@ const ARTICLES = [
   "https://en.wikivoyage.org/wiki/Aegina",
 ];
 
-async function insertTile(tx: Db, id: string, areaId: string): Promise<void> {
+async function insertTile(tx: Db, id: string): Promise<void> {
   const [w, s, e, n] = tileBbox(id);
-  await tx.insert(tiles).values({ id, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, areaId, hasCoast: true });
+  await tx.insert(tiles).values({ id, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, hasCoast: true });
+}
+
+/** A subdivision (country GR) over both synthetic tiles (31-31.5 E x 34-34.25 N). */
+async function insertSubdivision(tx: Db): Promise<void> {
+  const polygon = sql`ST_Multi(ST_MakeEnvelope(31, 34, 31.5, 34.25, 4326))`;
+  const [region] = await tx.insert(geoObjects).values({ type: "admin_region", origin: "manual", configKey: SUB_KEY, geom: polygon }).returning({ id: geoObjects.id });
+  await tx
+    .insert(subdivisions)
+    .values({ publicId: newPublicId("sd"), key: SUB_KEY, country: "GR", geoObjectId: region!.id, geom: polygon, landGeom: polygon });
 }
 
 async function insertObject(tx: Db, tileId: string, type: "island" | "islet" | "bay", wikidataId: string | null): Promise<void> {
@@ -76,11 +62,11 @@ async function insertObject(tx: Db, tileId: string, type: "island" | "islet" | "
   await tx.insert(tileGeoObjects).values({ tileId, geoObjectId: o!.id });
 }
 
-/** The area object and its two tiles; tile A holds `objects`. */
+/** The subdivision and its two tiles; tile A holds `objects`. */
 async function seedArea(tx: Db, objects: Array<{ type: "island" | "islet" | "bay"; wikidataId: string | null }>): Promise<void> {
-  const areaId = (await syncAreas(tx, [areaByKey(AREA_KEY)])).get(AREA_KEY)!;
-  await insertTile(tx, TILE_A, areaId);
-  await insertTile(tx, TILE_B, areaId);
+  await insertSubdivision(tx);
+  await insertTile(tx, TILE_A);
+  await insertTile(tx, TILE_B);
   for (const o of objects) await insertObject(tx, TILE_A, o.type, o.wikidataId);
 }
 
@@ -153,7 +139,7 @@ describe("seedWikivoyage", () => {
         { type: "bay", wikidataId: "Q999999991" },
       ]);
       const sourceId = await wikivoyageSource(tx);
-      const result = await seedWikivoyage(tx, AREA_KEY, { transport: fixtureTransport() }, { db: tx, stage: WIKIVOYAGE_STAGE });
+      const result = await seedWikivoyage(tx, SUB_KEY, { transport: fixtureTransport() }, { db: tx, stage: WIKIVOYAGE_STAGE });
       expect(result).toEqual({ objects: 1, articles: 3, newDocuments: 3 });
 
       const docs = await tx
@@ -176,7 +162,7 @@ describe("seedWikivoyage", () => {
         const body = { entities: { Q999999992: { type: "item", id: "Q999999992", sitelinks: {} } } };
         return makeResponse(200, new TextEncoder().encode(JSON.stringify(body)));
       };
-      const result = await seedWikivoyage(tx, AREA_KEY, { transport }, { db: tx, stage: WIKIVOYAGE_STAGE });
+      const result = await seedWikivoyage(tx, SUB_KEY, { transport }, { db: tx, stage: WIKIVOYAGE_STAGE });
       expect(result).toEqual({ objects: 1, articles: 0, newDocuments: 0 });
       expect(requests).toHaveLength(1);
       expect(new URL(requests[0]!.url).searchParams.get("sitefilter")).toBe("dewikivoyage|elwikivoyage|enwikivoyage");
@@ -190,10 +176,10 @@ describe("seedWikivoyage", () => {
       await seedArea(tx, [{ type: "island", wikidataId: AEGINA }]);
       const sourceId = await wikivoyageSource(tx);
       const ctx = { db: tx, stage: WIKIVOYAGE_STAGE };
-      await seedWikivoyage(tx, AREA_KEY, { transport: fixtureTransport() }, ctx);
+      await seedWikivoyage(tx, SUB_KEY, { transport: fixtureTransport() }, ctx);
       // A crawled article keeps its frontier state.
       await tx.update(crawlFrontier).set({ status: "fetched" }).where(eq(crawlFrontier.url, ARTICLES[2]!));
-      const again = await seedWikivoyage(tx, AREA_KEY, { transport: fixtureTransport() }, ctx);
+      const again = await seedWikivoyage(tx, SUB_KEY, { transport: fixtureTransport() }, ctx);
       expect(again).toEqual({ objects: 1, articles: 3, newDocuments: 0 });
       const frontier = await frontierOf(tx, sourceId);
       expect(frontier).toHaveLength(3);
@@ -210,7 +196,7 @@ describe("seedWikivoyage", () => {
       const transport: Transport = async (req) => {
         throw new Error(`unexpected request ${req.url}`);
       };
-      expect(await seedWikivoyage(tx, AREA_KEY, { transport }, { db: tx, stage: WIKIVOYAGE_STAGE })).toEqual({
+      expect(await seedWikivoyage(tx, SUB_KEY, { transport }, { db: tx, stage: WIKIVOYAGE_STAGE })).toEqual({
         objects: 0,
         articles: 0,
         newDocuments: 0,
@@ -224,13 +210,13 @@ describe("seedWikivoyage", () => {
       const sourceId = await wikivoyageSource(tx);
       const { id: runId } = await createRun(tx, {
         kind: "stage",
-        scope: { type: "area", id: AREA_KEY },
+        scope: { type: "subdivision", id: SUB_KEY },
         stages: [],
-        params: { areaKey: AREA_KEY, sourceIds: [sourceId] },
+        params: { subdivisionKey: SUB_KEY, sourceIds: [sourceId] },
         triggeredBy: "wikivoyage-test",
       });
       const ctx = { db: tx, runId, stage: "fetch.url", sourceId };
-      await seedWikivoyage(tx, AREA_KEY, { transport: fixtureTransport() }, ctx);
+      await seedWikivoyage(tx, SUB_KEY, { transport: fixtureTransport() }, ctx);
       const transport = fixtureTransport();
       const deps = {
         transport,
@@ -258,38 +244,43 @@ describe("seedWikivoyage", () => {
 describe("startWikivoyageRun", () => {
   it("creates the whitelist sources and starts sources.wikivoyage before the crawl stages", async () => {
     await withRollback(async (tx) => {
+      await seedArea(tx, []);
       const { boss, inserted } = recordingBoss();
-      const { id } = await startWikivoyageRun(tx, boss, AREA_KEY, "admin");
+      const { id } = await startWikivoyageRun(tx, boss, SUB_KEY, "admin");
       const sourceId = (await sourceIdByDomain(tx, WIKIVOYAGE_DOMAIN))!;
       const [run] = await tx.select().from(runs).where(eq(runs.id, id));
       expect(run).toMatchObject({
-        scopeType: "area",
-        scopeId: AREA_KEY,
+        scopeType: "subdivision",
+        scopeId: SUB_KEY,
         stages: [WIKIVOYAGE_STAGE, ...FETCH_RUN_STAGES],
-        params: { areaKey: AREA_KEY, sourceIds: [sourceId] },
+        params: { subdivisionKey: SUB_KEY, sourceIds: [sourceId] },
       });
-      expect(inserted).toEqual([{ queue: "sources.wikivoyage", data: expect.objectContaining({ key: AREA_KEY, areaKey: AREA_KEY }) }]);
+      expect(inserted).toEqual([{ queue: "sources.wikivoyage", data: expect.objectContaining({ key: SUB_KEY, subdivisionKey: SUB_KEY }) }]);
       // The Wikivoyage source is being fetched now: a second run is refused.
-      await expect(startWikivoyageRun(tx, boss, AREA_KEY, "admin")).rejects.toMatchObject({ reason: "source_run_active" });
+      await expect(startWikivoyageRun(tx, boss, SUB_KEY, "admin")).rejects.toMatchObject({ reason: "source_run_active" });
     });
   });
 
   it("an ended Wikivoyage source has its own refusal", async () => {
     await withRollback(async (tx) => {
+      await insertSubdivision(tx);
       const { boss, inserted } = recordingBoss();
       const sourceId = await wikivoyageSource(tx);
       await tx.update(sources).set({ validTo: "2026-01-01" }).where(eq(sources.id, sourceId));
-      await expect(startWikivoyageRun(tx, boss, AREA_KEY, "admin")).rejects.toMatchObject({ reason: "wikivoyage_source_ended" });
+      await expect(startWikivoyageRun(tx, boss, SUB_KEY, "admin")).rejects.toMatchObject({ reason: "wikivoyage_source_ended" });
       expect(inserted).toEqual([]);
     });
   });
 
-  it("refuses an unknown area and a paused Wikivoyage source before a run exists", async () => {
+  it("refuses an unknown subdivision, an area key and a paused Wikivoyage source before a run exists", async () => {
     await withRollback(async (tx) => {
+      await insertSubdivision(tx);
       const { boss, inserted } = recordingBoss();
-      await expect(startWikivoyageRun(tx, boss, "nowhere", "admin")).rejects.toThrow(/Unknown area/);
+      await expect(startWikivoyageRun(tx, boss, "nowhere", "admin")).rejects.toThrow("Unbekannter Landesteil nowhere");
+      const areaKey = Object.keys(getConfig().subdivisions.retiredAreaKeys)[0]!;
+      await expect(startWikivoyageRun(tx, boss, areaKey, "admin")).rejects.toThrow(`Revier-Schlüssel ${areaKey} ist kein Laufumfang mehr`);
       await setSourceStatus(tx, await wikivoyageSource(tx), "paused", "admin");
-      await expect(startWikivoyageRun(tx, boss, AREA_KEY, "admin")).rejects.toMatchObject({ reason: "source_not_approved" });
+      await expect(startWikivoyageRun(tx, boss, SUB_KEY, "admin")).rejects.toMatchObject({ reason: "source_not_approved" });
       expect(inserted).toEqual([]);
     });
   });

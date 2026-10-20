@@ -91,6 +91,33 @@ export function buildCablesQuery(bbox: Bbox, timeoutSeconds: number): string {
   );
 }
 
+/**
+ * Overpass QL for the administrative boundaries of one country (spec 14): the relations of `levels` inside the
+ * country's area plus the country relation itself (`admin_level=2`). No levels (a whole-country entry) = the
+ * country relation only. `country` is an ISO 3166-1 alpha-2 code.
+ */
+export function buildBoundaryQuery(country: string, levels: number[], timeoutSeconds: number): string {
+  const cc = qlString(country);
+  const statements = [`relation["ISO3166-1"="${cc}"][admin_level=2][boundary=administrative];`];
+  if (levels.length > 0) {
+    statements.unshift(`relation[boundary=administrative][admin_level~"^(${levels.join("|")})$"](area.c);`);
+  }
+  return [
+    `[out:json][timeout:${timeoutSeconds}];`,
+    ...(levels.length > 0 ? [`area["ISO3166-1"="${cc}"][admin_level=2]->.c;`] : []),
+    "(",
+    ...statements.map((s) => `  ${s}`),
+    ");",
+    "out geom;",
+    "",
+  ].join("\n");
+}
+
+/** Overpass QL for single relations by OSM id (the `extra` entries of the subdivision config), full geometry. */
+export function buildRelationQuery(relationIds: number[], timeoutSeconds: number): string {
+  return [`[out:json][timeout:${timeoutSeconds}];`, `relation(id:${relationIds.join(",")});`, "out geom;", ""].join("\n");
+}
+
 /** Client-side margin over the server-side `[timeout:…]`, so Overpass can answer with its own remark. */
 const CLIENT_TIMEOUT_MARGIN_MS = 30_000;
 

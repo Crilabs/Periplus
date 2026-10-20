@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   date,
   index,
   integer,
@@ -40,8 +41,20 @@ export const geoObjectTypeEnum = pgEnum("geo_object_type", [
   "harbour",
   "settlement",
   "poi",
+  "country",
+  "admin_region",
 ]);
-export const geoOriginEnum = pgEnum("geo_origin", ["osm", "geonames", "wikidata", "text", "review", "computed", "manual"]);
+export const geoOriginEnum = pgEnum("geo_origin", [
+  "osm",
+  "geonames",
+  "wikidata",
+  "text",
+  "review",
+  "computed",
+  "manual",
+  "marine_regions",
+]);
+export const subdivisionStatusEnum = pgEnum("subdivision_status", ["active", "excluded"]);
 export const poiCategoryEnum = pgEnum("poi_category", ["food", "supply", "beach", "nature", "active", "culture", "town"]);
 export const nameOriginEnum = pgEnum("name_origin", [
   "osm",
@@ -67,6 +80,7 @@ export const restrictedKindEnum = pgEnum("restricted_kind", [
 export const seabedTypeEnum = pgEnum("seabed_type", ["sand", "mud", "gravel", "rock", "mixed", "weed"]);
 
 export type GeoObjectType = (typeof geoObjectTypeEnum.enumValues)[number];
+export type SubdivisionStatus = (typeof subdivisionStatusEnum.enumValues)[number];
 export type GeoOrigin = (typeof geoOriginEnum.enumValues)[number];
 export type PoiCategory = (typeof poiCategoryEnum.enumValues)[number];
 export type NameOrigin = (typeof nameOriginEnum.enumValues)[number];
@@ -85,6 +99,12 @@ export const geoObjects = pgTable("geo_objects", {
   id: uuid("id").primaryKey().$defaultFn(newId),
   type: geoObjectTypeEnum("type").notNull(),
   parentId: uuid("parent_id").references((): AnyPgColumn => geoObjects.id),
+  /** Subdivision the object belongs to (nearest land, spec 14); set by the pipeline. */
+  subdivisionId: uuid("subdivision_id").references((): AnyPgColumn => subdivisions.id),
+  /** Sea the object lies in (type `sea`); set by the pipeline. */
+  seaId: uuid("sea_id").references((): AnyPgColumn => geoObjects.id),
+  /** OSM admin_level, only for `admin_region`. */
+  adminLevel: integer("admin_level"),
   geom: geometry("geom", "Geometry").notNull(),
   /** ST_PointOnSurface: lies on the surface even for concave bays. */
   centroid: geometry("centroid", "Point").generatedAlwaysAs(sql`ST_PointOnSurface("geom")`),
@@ -118,10 +138,44 @@ export const geoObjects = pgTable("geo_objects", {
   uniqueIndex("geo_objects_geonames_id_valid_unique").on(t.geonamesId).where(sql`${t.validTo} is null`),
   uniqueIndex("geo_objects_config_key_valid_unique").on(t.configKey).where(sql`${t.validTo} is null`),
   index("geo_objects_parent_id_idx").on(t.parentId),
+  index("geo_objects_subdivision_id_idx").on(t.subdivisionId).where(sql`${t.subdivisionId} is not null`),
+  index("geo_objects_sea_id_idx").on(t.seaId).where(sql`${t.seaId} is not null`),
   // the merge chain of a consolidated object (loadInputs, loadContext) walks merged_into_id
   index("geo_objects_merged_into_id_idx").on(t.mergedIntoId).where(sql`${t.mergedIntoId} is not null`),
   index("geo_objects_geom_gist").using("gist", t.geom),
   index("geo_objects_centroid_gist").using("gist", t.centroid),
+]);
+
+/**
+ * Stable unit of work (spec 14): a Landesteil. Rejects DELETE and records history (drizzle/0054).
+ * `land_geom` (polygon ∩ land polygons) stays null until computed.
+ */
+export const subdivisions = pgTable("subdivisions", {
+  id: uuid("id").primaryKey().$defaultFn(newId),
+  /** `sd_<ulid>` */
+  publicId: text("public_id").notNull(),
+  key: text("key").notNull(),
+  /** ISO 3166-1 alpha-2 */
+  country: text("country").notNull(),
+  geoObjectId: uuid("geo_object_id")
+    .notNull()
+    .references((): AnyPgColumn => geoObjects.id),
+  geom: geometry("geom", "MultiPolygon").notNull(),
+  landGeom: geometry("land_geom", "MultiPolygon"),
+  status: subdivisionStatusEnum("status").notNull().default("active"),
+  statusReason: text("status_reason"),
+  queuedAt: timestamp("queued_at", { withTimezone: true }),
+  builtAt: timestamp("built_at", { withTimezone: true }),
+  validFrom: validFrom(),
+  validTo: validTo(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex("subdivisions_public_id_unique").on(t.publicId),
+  uniqueIndex("subdivisions_key_valid_unique").on(t.key).where(sql`${t.validTo} is null`),
+  check("subdivisions_public_id_prefix", sql`${t.publicId} like 'sd\\_%'`),
+  index("subdivisions_geom_gist").using("gist", t.geom),
+  index("subdivisions_land_geom_gist").using("gist", t.landGeom),
 ]);
 
 export const geoNames = pgTable("geo_names", {
@@ -153,6 +207,8 @@ export const tiles = pgTable("tiles", {
   bbox: geometry("bbox", "Polygon").notNull(),
   /** Label area (geo_objects of type `area`). */
   areaId: uuid("area_id").references(() => geoObjects.id),
+  /** Label subdivision: the one with the largest coastline share in the tile (spec 14). */
+  subdivisionId: uuid("subdivision_id").references((): AnyPgColumn => subdivisions.id),
   hasCoast: boolean("has_coast").notNull().default(false),
   priority: integer("priority").notNull().default(0),
   cycleDays: integer("cycle_days").notNull().default(30),
@@ -161,7 +217,9 @@ export const tiles = pgTable("tiles", {
   validFrom: validFrom(),
   validTo: validTo(),
   createdAt: createdAt(),
-}, (t) => [index("tiles_bbox_gist").using("gist", t.bbox), index("tiles_area_id_idx").on(t.areaId)]);
+}, (t) => [index("tiles_bbox_gist").using("gist", t.bbox), index("tiles_area_id_idx").on(t.areaId),
+  index("tiles_subdivision_id_idx").on(t.subdivisionId),
+]);
 
 /** Working state: rewritten after every gazetteer run (ST_Intersects). */
 export const tileGeoObjects = pgTable("tile_geo_objects", {
@@ -242,19 +300,19 @@ export const bathymetry = pgTable("bathymetry", {
 }, (t) => [index("bathymetry_dataset_tile_id_idx").on(t.dataset, t.tileId)]);
 
 /**
- * Working state: seabed polygons (EMODnet EUSeaMap) per configured area, replaced per `area_key` on import.
- * Neighbouring areas may import the same polygon; shares union the geometries so overlaps count once.
+ * Working state: seabed polygons (EMODnet EUSeaMap) per subdivision, replaced per `subdivision_key` on import.
+ * Neighbouring subdivisions may import the same polygon; shares union the geometries so overlaps count once.
  */
 export const seabedPolygons = pgTable("seabed_polygons", {
   id: uuid("id").primaryKey().$defaultFn(newId),
   substrate: seabedTypeEnum("substrate").notNull(),
   habitat: text("habitat"),
   sourceRef: text("source_ref"),
-  areaKey: text("area_key").notNull(),
+  subdivisionKey: text("subdivision_key").notNull(),
   datasetVersion: text("dataset_version").notNull(),
   geom: geometry("geom", "Polygon").notNull(),
   createdAt: createdAt(),
-}, (t) => [index("seabed_polygons_geom_gist").using("gist", t.geom), index("seabed_polygons_area_key_idx").on(t.areaKey)]);
+}, (t) => [index("seabed_polygons_geom_gist").using("gist", t.geom), index("seabed_polygons_subdivision_key_idx").on(t.subdivisionKey)]);
 
 /**
  * Working state: OSM roads (Overpass, `highway` from `config/datasets.json`) for the distance to the next road.
@@ -274,9 +332,9 @@ export const comparisonSet = pgTable("comparison_set", {
   placeId: uuid("place_id")
     .primaryKey()
     .references(() => places.id),
-  areaId: uuid("area_id")
-    .notNull()
-    .references(() => geoObjects.id),
+  /** Legacy, read nowhere; dropped in plan 14b. */
+  areaId: uuid("area_id").references(() => geoObjects.id),
+  subdivisionId: uuid("subdivision_id").references(() => subdivisions.id),
   addedBy: text("added_by").notNull(),
   addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
 });

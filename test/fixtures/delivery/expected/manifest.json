@@ -1,47 +1,65 @@
 {
-  "schemaVersion": "1.0",
-  "area": {
-    "id": "ar_01J9ZD00000000000000000001",
-    "key": "delivery-test",
-    "name": "Testrevier",
+  "schemaVersion": "2.0",
+  "subdivision": {
+    "id": "sd_01J9ZD00000000000000000001",
+    "key": "XT-DELIVERY",
+    "name": "Testlandesteil",
     "names": [
       {
         "lang": "de",
-        "name": "Testrevier"
+        "name": "Testlandesteil"
       },
       {
         "lang": "en",
-        "name": "Test Waters"
+        "name": "Test Subdivision"
       }
     ],
     "polygon": {
-      "type": "Polygon",
+      "type": "MultiPolygon",
       "coordinates": [
         [
           [
-            21,
-            35
-          ],
-          [
-            21.5,
-            35
-          ],
-          [
-            21.5,
-            35.25
-          ],
-          [
-            21,
-            35.25
-          ],
-          [
-            21,
-            35
+            [
+              21,
+              35
+            ],
+            [
+              21.5,
+              35
+            ],
+            [
+              21.5,
+              35.25
+            ],
+            [
+              21,
+              35.25
+            ],
+            [
+              21,
+              35
+            ]
           ]
         ]
       ]
     }
   },
+  "areas": [
+    {
+      "id": "ar_01J9ZD00000000000000000001",
+      "key": "xt-delivery-waters",
+      "names": [
+        {
+          "lang": "de",
+          "name": "Testrevier"
+        },
+        {
+          "lang": "en",
+          "name": "Test Waters"
+        }
+      ]
+    }
+  ],
   "dataVersion": 1,
   "previousDataVersion": null,
   "generatedAt": "2040-06-01T08:00:00.000Z",
@@ -93,18 +111,18 @@
   "files": [
     {
       "name": "spots.json",
-      "sha256": "7c416c0a0f0cdf51ceb237ce51ee03a1e0eb2e49a43f3e64a6af79a2f7932b47",
-      "bytes": 9596
+      "sha256": "604723cd06ad9c502f0f44e4ec3ee4a4532fa2a195b49866a3df4f02f5d84fdd",
+      "bytes": 9603
     },
     {
       "name": "highlights.json",
-      "sha256": "bfbf8e7b67f208f48912eef9b6e6e1fa277999535fbd58a2cbc4a86fbce89b5a",
-      "bytes": 836
+      "sha256": "9d7a4a3f3e5062619ac287261056bfdccc29ce9e19e5df064c07a89dd6e2b000",
+      "bytes": 843
     },
     {
       "name": "regions.json",
-      "sha256": "f65236193d9323ae98290bd772e140b4cfc4c63be4516d569d175bf112cb23fe",
-      "bytes": 1991
+      "sha256": "6da31063e76ce64b4009280c679ff7765581f257185a85b7baac635a91c574be",
+      "bytes": 1971
     },
     {
       "name": "coast.geojson",
@@ -113,8 +131,8 @@
     },
     {
       "name": "weather-points.json",
-      "sha256": "95d8048265c3c867eb8a8fc4800bc1b7ba2f7d5bbb550e88d63f97f4404997d1",
-      "bytes": 596
+      "sha256": "b00de3f4c8d6343dd0c710c4f57c72b6265494f894ae9e386e9d9cdaf17c5b99",
+      "bytes": 603
     }
   ]
 }

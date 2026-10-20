@@ -44,12 +44,12 @@ export function scenarioMismatch(scenarioArg: string, sim: SimulationSettings): 
 /**
  * What stands against a simulated revisit, in German (empty: it may start): no simulation clone (`sim_meta`), foreign
  * jobs (`foreignJobs`), each scenario entry the preflight refuses (`preflightScenario` with the run's `maxPages`), and
- * no valid package of the area (the asOf check needs the state before the revisit).
+ * no valid package of the subdivision (the asOf check needs the state before the revisit).
  */
 export async function revisitPreflight(
   db: Db,
   archive: Archive,
-  input: { areaKey: string; scenario: RevisitScenario; maxPages?: number },
+  input: { subdivisionKey: string; scenario: RevisitScenario; maxPages?: number },
 ): Promise<string[]> {
   const problems: string[] = [];
   if (!(await readSimMeta(db))) problems.push("keine Sim-Datenbank – scripts/sim/clone.sh");
@@ -59,9 +59,9 @@ export async function revisitPreflight(
     if (!r.ok) problems.push(`Szenario-Eintrag ${r.entryId}: ${r.error}`);
   }
   const { rows } = await db.execute(sql`
-    select 1 from deliveries d join geo_objects a on a.id = d.area_id and a.type = 'area'
-    where a.config_key = ${input.areaKey} and d.status = 'valid' limit 1
+    select 1 from deliveries d join subdivisions s on s.id = d.subdivision_id and s.valid_to is null
+    where s.key = ${input.subdivisionKey} and d.status = 'valid' limit 1
   `);
-  if (rows.length === 0) problems.push(`erst Paket bauen: Revier ${input.areaKey} hat keine gültige Lieferung`);
+  if (rows.length === 0) problems.push(`erst Paket bauen: Landesteil ${input.subdivisionKey} hat keine gültige Lieferung`);
   return problems;
 }

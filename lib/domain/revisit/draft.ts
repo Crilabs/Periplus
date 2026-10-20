@@ -10,6 +10,7 @@ import { loadInputs } from "@/lib/domain/consolidation/inputs";
 import type { ConsolidationInput, ProfileSnapshot } from "@/lib/domain/consolidation/types";
 import { canonicalJson } from "@/lib/domain/facts/schema";
 import { latestProfiles } from "@/lib/domain/timeline";
+import { subdivisionObjectIds } from "./scope";
 import {
   applyEdit,
   editBase,
@@ -22,8 +23,8 @@ import {
 } from "./scenario";
 
 /*
- * Draft of a simulated revisit scenario from the archive of an area (spec 10, plan Task 15): ten entries, each built
- * from a document of the area as it is now (its current version), with the change events the M5 rules lead to
+ * Draft of a simulated revisit scenario from the archive of a subdivision (spec 10, plan Task 15): ten entries, each built
+ * from a document of the subdivision as it is now (its current version), with the change events the M5 rules lead to
  * (ruling M7-P26). A text edit searches for one verbatim sentence of the current version (found exactly once) that
  * quotes the fact it changes and no fact of another attribute; the replacement or appended text is Periplus' own
  * short sentence, so the draft holds no third-party text beyond the sentences it searches for. Every entry passes
@@ -79,7 +80,7 @@ const GAP_REASON: Record<DraftKind, string> = {
   touch: "kein Dokument mehr übrig",
 };
 
-export type DraftInput = { areaKey: string; seed: number; today?: string };
+export type DraftInput = { subdivisionKey: string; seed: number; today?: string };
 export type ScenarioDraft = { scenario: RevisitScenario; gaps: string[] };
 
 type Place = { geoObjectId: string; publicId: string };
@@ -100,7 +101,7 @@ type Context = {
   cfg: ConsolidationConfig;
   places: Map<string, Place>;
   profiles: Map<string, ProfileSnapshot>;
-  /** Every input per geo object of the area. */
+  /** Every input per geo object of the subdivision. */
   inputs: Map<string, ConsolidationInput[]>;
   texts: TextFact[];
   docs: Map<string, Doc>;
@@ -433,29 +434,14 @@ function touch(ctx: Context): Array<{ documentId: string; proposal: () => Propos
   }));
 }
 
-/** The area's geo objects as `verifyRevisit` scopes them: the area, every object of its tiles and their places. */
-async function areaObjects(db: Db, areaKey: string): Promise<string[]> {
-  const { rows: area } = await db.execute<{ id: string }>(sql`select id from geo_objects where type = 'area' and config_key = ${areaKey}`);
-  if (area.length === 0) throw new Error(`Revier ${areaKey} ist unbekannt`);
-  const { rows } = await db.execute<{ id: string }>(sql`
-    with area as (select id from geo_objects where type = 'area' and config_key = ${areaKey}),
-         area_tiles as (select t.id from tiles t where t.area_id in (select id from area))
-    select id from area
-    union select tgo.geo_object_id from tile_geo_objects tgo where tgo.tile_id in (select id from area_tiles)
-    union select p.geo_object_id from places p where p.tile_id in (select id from area_tiles)
-    order by 1
-  `);
-  return rows.map((r) => r.id);
-}
-
 /**
- * Proposes a scenario of ten entries for a simulated revisit of the area from the archive as it is now (see the module
+ * Proposes a scenario of ten entries for a simulated revisit of the subdivision from the archive as it is now (see the module
  * comment), with `seed` choosing among the candidates of a kind. Runs against the simulation clone (the CLI refuses
  * anything else); reads only.
  */
 export async function draftScenario(db: Db, archive: Archive, input: DraftInput): Promise<ScenarioDraft> {
   const today = input.today ?? new Date().toISOString().slice(0, 10);
-  const objects = await areaObjects(db, input.areaKey);
+  const objects = await subdivisionObjectIds(db, input.subdivisionKey);
   const cfg = await consolidationConfigFor(db);
   const schemaVersion = getConfig().factSchema.version;
 
@@ -502,7 +488,7 @@ export async function draftScenario(db: Db, archive: Archive, input: DraftInput)
     });
   }
 
-  // documents with facts on objects outside the area: a 404 would change objects the verification does not see
+  // documents with facts on objects outside the subdivision: a 404 would change objects the verification does not see
   const { rows: outsideRows } = await db.execute<{ document_id: string }>(sql`
     select distinct v.document_id from facts f
     join mentions m on m.id = f.mention_id join document_versions v on v.id = m.document_version_id
@@ -535,7 +521,7 @@ export async function draftScenario(db: Db, archive: Archive, input: DraftInput)
   const relied = new Set<string>();
   const entries: ScenarioEntry[] = [];
   const gaps: string[] = [];
-  const name = `entwurf-${input.areaKey}-seed-${input.seed}`;
+  const name = `entwurf-${input.subdivisionKey}-seed-${input.seed}`;
   for (const { kind, count, label } of DRAFT_PLAN) {
     let found = 0;
     for (const candidate of shuffled(candidates[kind], random)) {

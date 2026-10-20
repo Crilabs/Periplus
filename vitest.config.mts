@@ -1,18 +1,23 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
-/** Tests that run whole gazetteer, dataset or geometry passes over the pilot area in one long transaction. */
+/**
+ * Tests that run whole gazetteer, dataset or geometry passes over the pilot area in one long transaction, and every
+ * other file that seeds the aegina-west subdivision (`insertAeginaWest`): its key is unique among valid rows, so two
+ * such transactions in parallel wait on each other beyond the test timeout. One worker runs these files in turn.
+ */
 const PILOT_RUN_TESTS = [
+  "app/(admin)/__tests__/actions.test.ts",
   "lib/pipeline/__tests__/gazetteer-run.test.ts",
   "lib/pipeline/__tests__/datasets.test.ts",
   "lib/pipeline/__tests__/geometry-golden.test.ts",
 ];
 
 /**
- * Tests that seed the delivery fixture area (`test/fixtures/delivery/area.ts`). Its fixed tiles, area key and public
+ * Tests that seed the delivery fixture subdivision (`test/fixtures/delivery/subdivision.ts`). Its fixed tiles, subdivision key and public
  * ids are unique keys, so two of these transactions wait on each other's uncommitted rows, beyond the test timeout
  * under full parallel load. One worker runs these files one after another, beside the default project.
- * `seedDeliveryArea` refuses to run outside this project.
+ * `seedDeliverySubdivision` refuses to run outside this project.
  */
 const DELIVERY_FIXTURE_TESTS = [
   "app/__tests__/api-changes-spots.test.ts",
@@ -33,6 +38,7 @@ const DELIVERY_FIXTURE_TESTS = [
   "lib/domain/delivery/__tests__/weather-points.test.ts",
   "lib/pipeline/__tests__/delivery-run.test.ts",
   "scripts/__tests__/delivery-consume.test.ts",
+  "scripts/__tests__/migrate-subdivisions.test.ts",
 ];
 
 /**

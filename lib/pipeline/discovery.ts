@@ -43,34 +43,37 @@ export async function runQueries(db: Db, queries: DiscoveryQuery[], deps: Deps, 
   return { queries: queries.length, searched, reused };
 }
 
-/** The area queries of `areaKey` a run makes: `areaQueries` cut to `maxQueriesPerRun`. */
-async function plannedAreaQueries(db: Db, areaKey: string): Promise<DiscoveryQuery[]> {
+/** The area queries of a subdivision a run makes: `areaQueries` cut to `maxQueriesPerRun`. */
+async function plannedAreaQueries(db: Db, subdivisionKey: string): Promise<DiscoveryQuery[]> {
   const { discovery } = getConfig();
-  return capQueries(await areaQueries(db, areaKey, discovery), discovery.serp.maxQueriesPerRun).kept;
+  return capQueries(await areaQueries(db, subdivisionKey, discovery), discovery.serp.maxQueriesPerRun).kept;
 }
 
-/** Job `discovery.area`: makes the area's queries, at most `maxQueriesPerRun`. */
-export async function discoverArea(db: Db, areaKey: string, deps: Deps, ctx: CallContext): Promise<SearchSummary> {
-  return runQueries(db, await plannedAreaQueries(db, areaKey), deps, ctx);
+/**
+ * Job `discovery.area`: makes the area queries of the subdivision, at most `maxQueriesPerRun`. A query another
+ * subdivision's run made within `serp.reuseDays` is reused, not searched again.
+ */
+export async function discoverArea(db: Db, subdivisionKey: string, deps: Deps, ctx: CallContext): Promise<SearchSummary> {
+  return runQueries(db, await plannedAreaQueries(db, subdivisionKey), deps, ctx);
 }
 
 /**
  * Plan of the stage `discovery.tile`: one entry per coast tile of the run (`params.tileIds` or the coast tiles of
- * `params.areaKey`) with the tile's queries. The queries of all tiles are deduplicated among each other (lowest
- * priority wins, then the first tile) and against the run's area queries (recomputed: an area run made them in
+ * the subdivision `params.subdivisionKey`) with the tile's queries. The queries of all tiles are deduplicated among each other (lowest
+ * priority wins, then the first tile) and against the run's area queries (recomputed: the area stage made them in
  * `discovery.area`), then cut to what is left of `maxQueriesPerRun` after the area queries.
  */
 export async function planTileDiscovery(
   db: Db,
   params: Record<string, unknown>,
 ): Promise<Array<{ tileId: string; queries: DiscoveryQuery[] }>> {
-  const { discovery, areas } = getConfig();
+  const { discovery } = getConfig();
   const tileIds = await seedTileIds(db, params);
-  const areaPlanned = typeof params.areaKey === "string" ? await plannedAreaQueries(db, params.areaKey) : [];
+  const areaPlanned = typeof params.subdivisionKey === "string" ? await plannedAreaQueries(db, params.subdivisionKey) : [];
   const areaKeys = new Set(areaPlanned.map(queryKey));
   const byKey = new Map<string, DiscoveryQuery>();
   for (const tileId of tileIds) {
-    for (const q of await tileQueries(db, tileId, discovery, areas)) {
+    for (const q of await tileQueries(db, tileId, discovery)) {
       const key = queryKey(q);
       if (areaKeys.has(key)) continue;
       const prior = byKey.get(key);
@@ -101,13 +104,13 @@ export async function planPlaceDiscovery(
   params: Record<string, unknown>,
   config: AppConfig = getConfig(),
 ): Promise<Array<{ geoObjectId: string; queries: DiscoveryQuery[] }>> {
-  const { discovery, areas } = config;
+  const { discovery } = config;
   const seen = new Set<string>();
   let budget = discovery.serp.maxQueriesPerRun;
   const out: Array<{ geoObjectId: string; queries: DiscoveryQuery[] }> = [];
   for (const geoObjectId of placeDiscoveryIds(params)) {
     const queries: DiscoveryQuery[] = [];
-    for (const q of await placeQueries(db, geoObjectId, discovery, { areas })) {
+    for (const q of await placeQueries(db, geoObjectId, discovery)) {
       const key = queryKey(q);
       if (seen.has(key) || budget === 0) continue;
       seen.add(key);

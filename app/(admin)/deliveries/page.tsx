@@ -36,19 +36,19 @@ const COUNT_LABELS: Array<[string, string]> = [
 ];
 
 const pageParam = z.coerce.number().int().min(1).catch(1);
-const areaParam = z.uuid().optional().catch(undefined);
+const subdivisionParam = z.uuid().optional().catch(undefined);
 
 export default async function Page({ searchParams }: PageProps<"/deliveries">) {
   await requireAdmin();
   const sp = await searchParams;
   const error = runScopeError(sp.error);
   const page = pageParam.parse(sp.page);
-  const areaId = areaParam.parse(sp.area);
-  const { areas, rows, total } = await listDeliveries(getDb(), { areaId, page });
+  const subdivisionId = subdivisionParam.parse(sp.subdivision);
+  const { subdivisions, rows, total } = await listDeliveries(getDb(), { subdivisionId, page });
   const pages = Math.max(1, Math.ceil(total / DELIVERIES_PAGE_SIZE));
-  const href = (p: number, area = areaId) => {
+  const href = (p: number, subdivision = subdivisionId) => {
     const q = new URLSearchParams();
-    if (area) q.set("area", area);
+    if (subdivision) q.set("subdivision", subdivision);
     if (p > 1) q.set("page", String(p));
     const s = q.toString();
     return s ? `/deliveries?${s}` : "/deliveries";
@@ -58,7 +58,7 @@ export default async function Page({ searchParams }: PageProps<"/deliveries">) {
     <>
       <PageHeader
         title="Lieferungen"
-        description="Je Revier ein Paket nach dem Liefervertrag: bauen, den Validierungsbericht prüfen, Dateien herunterladen. Nur gültige Pakete gehen über die API hinaus; abgelehnte bleiben zur Diagnose gespeichert."
+        description="Je Landesteil ein Paket nach dem Liefervertrag: bauen, den Validierungsbericht prüfen, Dateien herunterladen. Ein Paket enthält, was im Landesteil bisher bearbeitet ist. Nur gültige Pakete gehen über die API hinaus; abgelehnte bleiben zur Diagnose gespeichert."
       />
       {error && (
         <Notice tone="danger" className="mb-6">
@@ -66,14 +66,16 @@ export default async function Page({ searchParams }: PageProps<"/deliveries">) {
         </Notice>
       )}
 
-      {areas.length === 0 ? (
+      {subdivisions.length === 0 ? (
         <Panel className="mb-6">
-          <EmptyState title="Noch kein Revier">Ein Revier entsteht mit dem ersten Gazetteer-Lauf; danach lässt sich hier sein Paket bauen.</EmptyState>
+          <EmptyState title="Noch kein Landesteil mit Kacheln">
+            Ein Landesteil bekommt seine Kacheln mit dem ersten Lauf (Gazetteer oder Seed); danach lässt sich hier sein Paket bauen.
+          </EmptyState>
         </Panel>
       ) : (
-        <ul className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3" aria-label="Reviere">
-          {areas.map((a) => (
-            <li key={a.geoObjectId} className="flex items-start justify-between gap-4 rounded-lg border border-line bg-surface px-4 py-3">
+        <ul className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3" aria-label="Landesteile">
+          {subdivisions.map((a) => (
+            <li key={a.id} className="flex items-start justify-between gap-4 rounded-lg border border-line bg-surface px-4 py-3">
               <div className="min-w-0">
                 <p className="font-medium">{a.name}</p>
                 <p className="mt-0.5 text-xs text-muted">
@@ -91,11 +93,11 @@ export default async function Page({ searchParams }: PageProps<"/deliveries">) {
                 </p>
               </div>
               <form action={buildDeliveryAction}>
-                <input type="hidden" name="areaId" value={a.geoObjectId} />
+                <input type="hidden" name="subdivisionKey" value={a.key} />
                 <Button
                   size="sm"
                   variant="primary"
-                  title="Startet einen Lauf, der das Paket des Reviers aus den aktuellen Profilen baut, prüft und speichert."
+                  title="Startet einen Lauf, der das Paket des Landesteils aus den aktuellen Profilen baut, prüft und speichert."
                   aria-label={`Paket bauen: ${a.name}`}
                 >
                   Paket bauen
@@ -110,12 +112,12 @@ export default async function Page({ searchParams }: PageProps<"/deliveries">) {
         title="Pakete"
         description="Jeder Bau, neueste zuerst. „Unverändert“: gültig, aber ohne Änderung zum vorigen Paket, daher ohne neue Version und ohne Dateien."
         actions={
-          areas.length > 1 && (
+          subdivisions.length > 1 && (
             <FilterChips
-              label="Revier"
+              label="Landesteil"
               items={[
-                { href: href(1, undefined), label: "Alle", current: !areaId },
-                ...areas.map((a) => ({ href: href(1, a.geoObjectId), label: a.name, current: areaId === a.geoObjectId })),
+                { href: href(1, undefined), label: "Alle", current: !subdivisionId },
+                ...subdivisions.map((a) => ({ href: href(1, a.id), label: a.name, current: subdivisionId === a.id })),
               ]}
             />
           )
@@ -123,13 +125,13 @@ export default async function Page({ searchParams }: PageProps<"/deliveries">) {
         flush
       >
         {rows.length === 0 ? (
-          <EmptyState title="Noch kein Paket gebaut">„Paket bauen“ bei einem Revier startet den ersten Bau.</EmptyState>
+          <EmptyState title="Noch kein Paket gebaut">„Paket bauen“ bei einem Landesteil startet den ersten Bau.</EmptyState>
         ) : (
           <>
             <Table>
               <thead>
                 <tr>
-                  <th className={thClass}>Revier</th>
+                  <th className={thClass}>Landesteil</th>
                   <th className={thClass}>Status</th>
                   <th className={cx(thClass, "text-right")}>Version</th>
                   <th className={thClass}>Zeitpunkt</th>
@@ -142,7 +144,7 @@ export default async function Page({ searchParams }: PageProps<"/deliveries">) {
                 {rows.map((r) => (
                   <tr key={r.id} className={trClass}>
                     <td className={tdClass}>
-                      <TextLink href={`/deliveries/${r.id}`}>{r.areaName}</TextLink>
+                      <TextLink href={`/deliveries/${r.id}`}>{r.scopeName}</TextLink>
                     </td>
                     <td className={tdClass}>
                       <Badge tone={DELIVERY_STATUS_TONES[r.status]}>{DELIVERY_STATUS_LABELS[r.status]}</Badge>

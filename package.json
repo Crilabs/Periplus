@@ -44,7 +44,9 @@
     "sim:worker": "tsx --env-file=.env.sim worker/index.ts",
     "sim:draft-scenario": "tsx --env-file=.env.sim scripts/sim/draft-scenario.ts",
     "sim:revisit": "tsx --env-file=.env.sim scripts/sim/revisit.ts",
-    "sim:verify": "tsx --env-file=.env.sim scripts/sim/verify.ts"
+    "sim:verify": "tsx --env-file=.env.sim scripts/sim/verify.ts",
+    "migrate:subdivisions": "tsx --env-file-if-exists=.env.local scripts/migrate-subdivisions.ts",
+    "check:subdivision-migration": "tsx scripts/check-subdivision-migration.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

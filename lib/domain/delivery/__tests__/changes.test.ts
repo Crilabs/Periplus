@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { ChangeEntry, SpotBody } from "@/contract";
-import { changeEntrySchema } from "@/contract/v1";
+import { changeEntrySchema } from "@/contract/v2";
 import { TEIL_B_EXAMPLE } from "@/contract/__tests__/fixtures";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";

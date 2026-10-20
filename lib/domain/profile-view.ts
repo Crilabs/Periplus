@@ -4,7 +4,7 @@ import { getConsolidationConfig } from "@/lib/config";
 import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { computations, profiles, profileSummaries, type SummaryStatus } from "@/lib/db/schema";
-import { popularityForArea } from "@/lib/domain/consolidation/derived/popularity";
+import { popularityForSubdivision } from "@/lib/domain/consolidation/derived/popularity";
 import { formatProfileValue, profileAttributeLabel, ruleLabel } from "@/lib/domain/consolidation/format";
 import { prohibitionEntryKey } from "@/lib/domain/consolidation/rules/prohibitions";
 import { unionEntryKey } from "@/lib/domain/consolidation/rules/union";
@@ -210,18 +210,12 @@ async function chosenSnapshot(db: Db, geoObjectId: string, opts: { version?: num
   return latestProfile(db, geoObjectId);
 }
 
-/** The area of the object: its place's tile, else the tile of its centroid (as `loadContext`). */
-async function areaOf(db: Db, geoObjectId: string, today: string): Promise<string | null> {
-  const { rows } = await db.execute<{ area_id: string | null }>(sql`
-    select t.area_id
-    from geo_objects o
-    left join places p on p.geo_object_id = o.id and p.valid_to is null and p.merged_into_id is null
-    left join tiles t on t.id = coalesce(p.tile_id, tile_id_for(o.centroid))
-      and t.valid_from <= ${today}::date and (t.valid_to is null or t.valid_to > ${today}::date)
-    where o.id = ${geoObjectId}
-    limit 1
+/** The subdivision of the object (`geo_objects.subdivision_id`, nearest land); null before the hierarchy stage ran. */
+async function subdivisionOf(db: Db, geoObjectId: string): Promise<string | null> {
+  const { rows } = await db.execute<{ subdivision_id: string | null }>(sql`
+    select subdivision_id from geo_objects where id = ${geoObjectId}
   `);
-  return rows[0]?.area_id ?? null;
+  return rows[0]?.subdivision_id ?? null;
 }
 
 const isIdentity = (p: AttributeProvenance) => p.rule === "identity" && p.origin === "gazetteer";
@@ -230,7 +224,7 @@ const isIdentity = (p: AttributeProvenance) => p.rule === "identity" && p.origin
  * The profile of a geo object for the admin pages: `version`, or the profile as of `asOf` (`YYYY-MM-DD`, validated:
  * an impossible date throws), else the newest version; null without a profile (or none on that date). Rows in fact
  * schema order (unknown keys and `exclude` after them, by name); identity fields (`geo.*`, `place.*`) go to the head,
- * derived values (`derived.*`) to their own list. `popularity` is read now (it depends on the area, ruling M5-E-R2
+ * derived values (`derived.*`) to their own list. `popularity` is read now (it depends on the subdivision, ruling M5-E-R2
  * NOTE M6); `today` defaults to the UTC date.
  */
 export async function profileView(
@@ -266,8 +260,8 @@ export async function profileView(
     .filter((k) => k === "exclude" || (!isIdentity(snapshot.provenance[k]!) && snapshot.provenance[k]!.rule !== "derived"))
     .map((k) => buildRow(k, snapshot, cfg, tasks, latest));
 
-  const areaId = await areaOf(db, geoObjectId, today);
-  const popularity = areaId ? ((await popularityForArea(db, areaId, today)).get(geoObjectId) ?? null) : null;
+  const subdivisionId = await subdivisionOf(db, geoObjectId);
+  const popularity = subdivisionId ? ((await popularityForSubdivision(db, subdivisionId, today)).get(geoObjectId) ?? null) : null;
   const [summary] = await db
     .select({ text: profileSummaries.text, status: profileSummaries.status })
     .from(profileSummaries)

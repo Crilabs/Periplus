@@ -3,12 +3,11 @@ import { and, eq } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { makeResponse, type Transport } from "@/lib/adapters/http";
-import { areaByKey, getConfig, getConsolidationConfig, type AppConfig } from "@/lib/config";
+import { getConfig, getConsolidationConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { externalCalls, geoNames, placeDiscoveryRequests, places, runs, serpQueries, serpResults, sources } from "@/lib/db/schema";
 import { thinPlaces } from "@/lib/domain/consolidation/followup";
 import { placeQueries } from "@/lib/domain/discovery/queries";
-import { syncAreas } from "@/lib/domain/gazetteer/areas";
 import { newId } from "@/lib/domain/ids";
 import { candidateTiles } from "@/lib/domain/mentions/scope";
 import { tileIdFor } from "@/lib/domain/tiles";
@@ -23,7 +22,7 @@ import { freezeTextRunParams } from "@/lib/pipeline/text/versions";
 import { insertMention, insertPlace, insertSource } from "@/test/consolidation";
 import { testDb, withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
-import { insertTestRun, insertTestTile, insertTestVersion } from "@/test/text";
+import { insertTestRun, insertTestSubdivision, insertTestTile, insertTestVersion } from "@/test/text";
 
 /** The transport and archive the `discovery.place` handler gets (no network: the recorded DataForSEO answer). */
 const adapters = vi.hoisted(() => ({ transport: undefined as unknown, archive: undefined as unknown }));
@@ -67,10 +66,10 @@ function recordingBoss() {
   return { boss, inserted };
 }
 
-/** The `saronic` area (de, en, el) and the test tile labelled with it. */
+/** A Greek subdivision (source languages el, de, en) and the test tile labelled with it. */
 async function areaTile(tx: Db): Promise<string> {
-  const areaId = (await syncAreas(tx, [areaByKey("saronic")])).get("saronic")!;
-  return insertTestTile(tx, TILE, areaId);
+  const sub = await insertTestSubdivision(tx, "XT-F1", [20.0, 34.0, 20.5, 34.5]);
+  return insertTestTile(tx, TILE, null, sub.id);
 }
 
 /** A place in the test tile with a preferred name in each of `languages`. */
@@ -118,10 +117,10 @@ describe("place queries", () => {
       ]);
     }));
 
-  it("a place outside a configured area gets no queries", () =>
+  it("a place in a tile without a subdivision gets no queries", () =>
     withRollback(async (tx) => {
       await insertTestTile(tx, TILE, null);
-      const { objectId } = await place(tx, "Ohnerevier", { languages: ["de", "en"] });
+      const { objectId } = await place(tx, "Ohnelandesteil", { languages: ["de", "en"] });
       expect(await placeQueries(tx, objectId, getConfig().discovery)).toEqual([]);
     }));
 
@@ -153,7 +152,7 @@ describe("place queries", () => {
       const v = await insertTestVersion(tx, ["Ein Text ohne bekannte Namen."], { sourceId });
 
       const cfg = getConfig();
-      const space = await candidateTiles(tx, v.versionId, cfg.mentions, { nameAffixes: cfg.nameAffixes, areaKeys: cfg.areas.map((a) => a.key) });
+      const space = await candidateTiles(tx, v.versionId, cfg.mentions, { nameAffixes: cfg.nameAffixes, subdivisionKeys: [] });
       expect(space.basis).toBe("source");
       expect(space.tiles).toContain(TILE);
       // and a text run of the tile takes the pending version of that source in
@@ -331,7 +330,7 @@ describe("follow-up refinements (ruling M5-H-R2)", () => {
       await tx.insert(serpResults).values({ serpQueryId: q!.id, rank: 1, url: `https://${source!.domain}/`, urlNormalized: `https://${source!.domain}/`, domain: source!.domain, title: "t", snippet: "s" });
       const v = await insertTestVersion(tx, ["Ein Text ohne bekannte Namen."], { sourceId });
       const cfg = getConfig();
-      const space = await candidateTiles(tx, v.versionId, cfg.mentions, { nameAffixes: cfg.nameAffixes, areaKeys: cfg.areas.map((a) => a.key) });
+      const space = await candidateTiles(tx, v.versionId, cfg.mentions, { nameAffixes: cfg.nameAffixes, subdivisionKeys: [] });
       expect(space.tiles).not.toContain(other);
       expect((await freezeTextRunParams(tx, { tileId: other }, cfg)).documentVersionIds).not.toContain(v.versionId);
     }));

@@ -30,7 +30,7 @@ type Side = { precision: number | null; coverage: number | null; compared: numbe
 
 export type RegressionComparison = {
   evaluationRunId: string;
-  areaKey: string;
+  subdivisionKey: string;
   candidate: EvaluationCandidate;
   /** The evaluation run's status: only a finished run can pass. */
   status: RunStatus;
@@ -70,23 +70,23 @@ const percent = (v: number | null) =>
 /** `null` counts as 0; a tiny float difference is no drop. */
 const drops = (next: number | null, old: number | null) => (next ?? 0) < (old ?? 0) - 1e-9;
 
-type EvaluationRun = { id: string; status: RunStatus; areaKey: string; candidate: EvaluationCandidate };
+type EvaluationRun = { id: string; status: RunStatus; subdivisionKey: string; candidate: EvaluationCandidate };
 
-/** The evaluation run with its area and candidate (`params.candidate`, else the rules version of a CLI evaluation). */
+/** The evaluation run with its subdivision and candidate (`params.candidate`, else the rules version of a CLI evaluation). */
 async function evaluationRun(db: Db, runId: string): Promise<EvaluationRun> {
   const [run] = await db.select({ id: runs.id, status: runs.status, params: runs.params }).from(runs).where(eq(runs.id, runId));
   const params = (run?.params ?? {}) as Record<string, unknown>;
-  if (!run || params.evaluation !== true || typeof params.comparisonSetArea !== "string") throw new NotAnEvaluationRun(runId);
+  if (!run || params.evaluation !== true || typeof params.comparisonSetSubdivision !== "string") throw new NotAnEvaluationRun(runId);
   const stored = params.candidate as EvaluationCandidate | undefined;
   const candidate: EvaluationCandidate =
     stored && (stored.rulesVersion !== undefined || stored.extraction !== undefined)
       ? stored
       : { rulesVersion: typeof params.rulesVersion === "string" ? params.rulesVersion : undefined };
-  return { id: run.id, status: run.status, areaKey: params.comparisonSetArea, candidate };
+  return { id: run.id, status: run.status, subdivisionKey: params.comparisonSetSubdivision, candidate };
 }
 
 /**
- * Old/new comparison of an evaluation run over its area's comparison set: `old` = the current profiles, `next` = the
+ * Old/new comparison of an evaluation run over its subdivision's comparison set: `old` = the current profiles, `next` = the
  * run's `evaluation_profiles`, both through `factPrecisionMetric` (an outcome counts for the value hash it was given
  * for, so an unchanged value carries its old outcome) and `coverageMetric`. `changed` lists every attribute whose
  * value hash differs; one without an outcome for the new hash is pending. `passes` = run finished, the set not empty,
@@ -99,7 +99,7 @@ async function evaluationRun(db: Db, runId: string): Promise<EvaluationRun> {
  */
 export async function compareEvaluation(db: Db, evaluationRunId: string): Promise<RegressionComparison> {
   const run = await evaluationRun(db, evaluationRunId);
-  const scope = { areaKey: run.areaKey };
+  const scope = { subdivisionKey: run.subdivisionKey };
   const [oldPrecision, nextPrecision, coverage] = [
     await factPrecisionMetric(db, scope),
     await factPrecisionMetric(db, scope, { evaluationRunId }),
@@ -108,8 +108,8 @@ export async function compareEvaluation(db: Db, evaluationRunId: string): Promis
   ];
 
   const navily = getConfig().quality.navily;
-  const current = new Map((await loadComparisonSubjects(db, run.areaKey)).map((s) => [s.placeId, s]));
-  const evaluated = await loadComparisonSubjects(db, run.areaKey, { evaluationRunId });
+  const current = new Map((await loadComparisonSubjects(db, run.subdivisionKey)).map((s) => [s.placeId, s]));
+  const evaluated = await loadComparisonSubjects(db, run.subdivisionKey, { evaluationRunId });
   const latest = await latestComparisonResults(db, evaluated.map((s) => s.placeId));
   const changed: RegressionComparison["changed"] = [];
   for (const subject of evaluated) {
@@ -152,7 +152,7 @@ export async function compareEvaluation(db: Db, evaluationRunId: string): Promis
   for (const l of safetyLosses) reasons.push(`Sicherheitswert entfällt: ${l.name ?? l.placeId} – ${profileAttributeLabel(l.attribute)} ${l.display}`);
   return {
     evaluationRunId,
-    areaKey: run.areaKey,
+    subdivisionKey: run.subdivisionKey,
     candidate: run.candidate,
     status: run.status,
     old,
@@ -262,12 +262,12 @@ export type EvaluationRunView = {
   activated: Array<"consolidation_rules" | "extraction">;
 };
 
-/** The newest `limit` evaluation runs over the area's comparison set, newest first. */
-export async function listEvaluations(db: Db, areaKey: string, limit = 5): Promise<EvaluationRunView[]> {
+/** The newest `limit` evaluation runs over the subdivision's comparison set, newest first. */
+export async function listEvaluations(db: Db, subdivisionKey: string, limit = 5): Promise<EvaluationRunView[]> {
   const rows = await db
     .select({ id: runs.id, status: runs.status, createdAt: runs.createdAt })
     .from(runs)
-    .where(and(sql`${runs.params} @> '{"evaluation": true}'::jsonb`, sql`${runs.params} ->> 'comparisonSetArea' = ${areaKey}`))
+    .where(and(sql`${runs.params} @> '{"evaluation": true}'::jsonb`, sql`${runs.params} ->> 'comparisonSetSubdivision' = ${subdivisionKey}`))
     .orderBy(desc(runs.createdAt), desc(runs.id))
     .limit(limit);
   const views: EvaluationRunView[] = [];

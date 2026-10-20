@@ -23,7 +23,7 @@ Abnehmer ist eine Törn-App (der Prototyp DSTAP war der erste Versuch; die näch
 
 1. Pilot Saronischer und Argolischer Golf mit den Zielwerten der Quell-Spec (Abschnitt „Qualitätsmetriken“), aber von Anfang an als laufender Dienst mit Weboberfläche statt als Skriptsammlung.
 2. Danach Betrieb ohne Zutun: Zyklen je Kachel, Change-Feed, Review nur an den vier Rändern der Quell-Spec.
-3. Ausbau auf weitere Reviere ohne Umbau: neue Reviere sind Konfiguration und Laufzeit, kein Code.
+3. Ausbau auf weitere Landesteile ohne Umbau: ein neuer Landesteil ist Konfiguration und Laufzeit, kein Code.
 
 **Nicht-Ziele**
 
@@ -59,6 +59,8 @@ Es gelten die elf Grundprinzipien der Quell-Spec unverändert. Zusätzlich für 
 | Betrieb „wie die anderen Designery-Dienste“ | Eigener Hetzner-Server, Docker Compose | Entscheidung Christian (Hetzner); Docker Compose ist Entscheidung Claude (PostGIS, pgvector und Raster-Unterstützung stecken so im Image) |
 | Arbeitsname „Datendienst“ | Periplus | Entscheidung Christian |
 | Ort-Highlights nur als Facts je Kategorie (Teil A) vs. eigene Highlight-Objekte (Teil B) | Beides: ein Highlight ist ein Geo-Objekt vom Typ `poi` mit Kategorie und eigenen Facts; die Kategorie-Facts am Ort werden daraus abgeleitet | Entscheidung Claude, löst den Widerspruch zwischen Teil A und B |
+| Revier als Ebene der Hierarchie (Meer → Revier → Insel → Ort) und als Liefereinheit | Reviere sind überlappende Namensgebiete außerhalb der Hierarchie; Hierarchie und Lieferumfang laufen über Landesteile (Land, Verwaltungseinheit) | Entscheidung Christian: Reviere überlappen in der Welt; Landesteile sind eindeutig und lückenlos (Teil-Spec 14) |
+| Kacheln ohne Revier → Review „Küstenkachel ohne Revier“ | Jede Küstenkachel liegt in einem Landesteil; ausgeschlossene Landesteile statt Einzelentscheidungen | Folge der Landesteile (Teil-Spec 14) |
 
 ## 5. Architektur
 
@@ -86,7 +88,7 @@ flowchart LR
 
 - **web** und **worker** sind dasselbe Repo, dieselbe Codebasis (`lib/`), zwei Einstiegspunkte: Next.js-Server und `worker/index.ts`. Der Worker ist zustandslos und skaliert über die Zahl der Container bzw. Nebenläufigkeit je Queue.
 - **Die Web-App führt nie Pipeline-Arbeit aus**; sie legt Jobs an (z. B. „Lauf für Kachel starten“) und liest Ergebnisse.
-- **Abnehmer kennen nur die API** unter `/api/v1`, nie die Datenbank.
+- **Abnehmer kennen nur die API** unter `/api/v2` (Vertrag 2.0, Teil-Spec 14; `/api/v1` nur noch für die Schemas von 1.0), nie die Datenbank.
 
 ## 6. Technische Entscheidungen
 
@@ -116,7 +118,7 @@ Ausdrücklich **nicht** übernommen: Repo-Vorlage, Codacy, Renovate-Tiers, SITA-
 ## 7. Code-Struktur
 
 ```
-app/                      Next.js: Admin-UI (app/(admin)/…), Login, API (app/api/v1/…), Health
+app/                      Next.js: Admin-UI (app/(admin)/…), Login, API (app/api/v2/…), Health
 lib/
   db/                     Drizzle-Schema (schema/*.ts), Client, SQL-Helfer für PostGIS
   domain/                 Fachregeln: gazetteer, tiles, places, sources, documents, mentions,
@@ -150,7 +152,8 @@ Regeln: Fachlogik nur in `lib/domain` und `lib/pipeline`; Seiten, API-Routen und
 | Fachbegriff (Spec) | Code | Anmerkung |
 | --- | --- | --- |
 | Geo-Objekt | `GeoObject` | Gazetteer-Eintrag jeder Ebene |
-| Revier | `area` (Geo-Objekt-Typ) | Liefereinheit des Vertrags |
+| Landesteil | `subdivision` (Tabelle; Geo-Objekte `country`, `admin_region`) | Land oder Verwaltungseinheit erster Ebene mit Mittelmeerküste; Laufumfang, Elternobjekt und Liefereinheit des Vertrags (Teil-Spec 14) |
+| Revier | `area` (Geo-Objekt-Typ) | Überlappendes Namensgebiet eines Seegebiets außerhalb der Hierarchie; im Manifest nur zur Information (Teil-Spec 14) |
 | Kachel | `Tile` | |
 | Ort | `Place` | Liegeplatz: Ankerplatz, Hafen, Marina, Bojenfeld |
 | Highlight | `GeoObject` Typ `poi` mit `category` | |
@@ -167,7 +170,7 @@ Regeln: Fachlogik nur in `lib/domain` und `lib/pipeline`; Seiten, API-Routen und
 | Vergleichssatz | `ComparisonSet` | Navily-Abgleich, nur Ergebnisse |
 | Lieferung / Paket | `Delivery` | |
 
-- **IDs:** intern UUIDv7 (zeitlich sortierbar). Öffentliche, stabile IDs mit Präfix (`sp_`, `hl_`, `rg_`, `ar_`) + ULID, einmal vergeben, nie wiederverwendet.
+- **IDs:** intern UUIDv7 (zeitlich sortierbar). Öffentliche, stabile IDs mit Präfix (`sp_`, `hl_`, `rg_`, `ar_`, `sd_` für Landesteile) + ULID, einmal vergeben, nie wiederverwendet.
 - **Zeit:** alle Zeitstempel `timestamptz` UTC; fachliche Daten (`observed_at`, `valid_from`) als `date`.
 - **Koordinaten:** WGS84, PostGIS `geography`/`geometry(…, 4326)`; Distanzen intern Meter, im Vertrag Seemeilen.
 
@@ -194,7 +197,7 @@ Jeder Meilenstein endet mit etwas, das man in der Oberfläche sieht, und einer A
 | **M6** | Lieferung | Liefervertrag v1: Paketbau, Validierung, Archiv der Pakete, API für Pakete, Profile mit `asOf`, Changes | 08 | Paket des Pilotreviers besteht alle Validierungsregeln; per API mit Schlüssel abrufbar |
 | **M7** | Pilot-Abnahme | Qualitätsdashboard, Navily-Abgleich, Routen-Rekonstruktion an 3 Törnberichten, simulierter Revisit, Kostenbericht und Mittelmeer-Hochrechnung | 10 | Erfolgskriterien der Quell-Spec (Abschnitt „Pilot“) erfüllt |
 | **M8** | Dauerbetrieb | Automatischer Scheduler mit Zyklen je Kachel, täglicher Fetch, wöchentliche Konsolidierung, voller REST-Endpunktsatz, `POST /reports`, Monitoring mit Alarmen, Rückfluss der Review-Entscheidungen | 01, 05, 07, 08, 09 | Zwei Wochen ohne Eingriff außer Review; Alarm getestet |
-| **M9** | Ausbau | Weitere Reviere (Vorschlag: Kykladen, Ionisches Meer, Dalmatien), Revier-Polygone per KI aus Revierführer-Inhaltsverzeichnissen, NAVTEX-Dauerverbote, Fährkorridore, Partner-Schlüssel, Beobachtungen aus der App, YouTube-Transkripte | alle | Je neues Revier ohne Codeänderung |
+| **M9** | Ausbau | Landesteil für Landesteil über das Mittelmeer („Länder und Landesteile“, Teil-Spec 14), NAVTEX-Dauerverbote, Fährkorridore, Partner-Schlüssel, Beobachtungen aus der App, YouTube-Transkripte | alle, 14 | Je neuer Landesteil ohne Codeänderung |
 
 **Gates:** M7 ist das Gate zum Dauerbetrieb (Quell-Spec: „Service-Rahmen wird gebaut, sobald der Pilot die Zielwerte erreicht“). Verfehlt der Pilot einen Zielwert, wird vor M8 nachgebessert, nicht ausgebaut.
 
@@ -214,10 +217,14 @@ Jeder Meilenstein endet mit etwas, das man in der Oberfläche sieht, und einer A
 | 08 | `2026-10-18-periplus-08-liefervertrag-api-design.md` | Periplus Data Contract v1, Paket, API, Change-Feed |
 | 09 | `2026-10-18-periplus-09-admin-ui-design.md` | Admin-Oberfläche: Seiten, Review, Karte, Dashboard |
 | 10 | `2026-10-18-periplus-10-qualitaet-pilot-design.md` | Kennzahlen, Vergleichssatz, Revisit-Simulation, Pilot-Abnahme |
+| 11 | `2026-10-19-periplus-11-quellen-autofreigabe-design.md` | Automatische Quellenfreigabe mit Schattenbetrieb und Probezeit; zurückgestellt bis zu einem Auslöser aus Phase 0 |
+| 12 | `2026-10-20-periplus-12-pruefung-echtdaten-design.md` | Schrittweise Prüfung mit echten Daten (Probekachel → Revier) nach M7 Teil (a), vor dem vollen Pilotlauf |
+| 13 | `2026-10-20-periplus-13-ortsbilder-design.md` | Ortsbilder: Luftbild auf Gelände als 30°-Schrägansicht vom Wasser rendern, mit Bildmodell zum Katalogbild machen (Ankerbuchten mittags, Häfen und Orte bei Städten abends), Prüfung und Freigabe, Feld `image` im Vertrag; Fotos und Aussehens-Merkmale als zweite Stufe; erste Umsetzung nur Griechenland mit freien Daten (Kataster-Orthofoto, Sentinel-2, Copernicus DEM); nach M7 |
+| 14 | `2026-10-20-periplus-14-raumgliederung-design.md` | Raumgliederung: Landesteile (Land, Verwaltungseinheit) als Laufumfang, Hierarchie und Liefereinheit (Vertrag 2.0), Grob-Gazetteer, Ansicht „Länder und Landesteile“; Reviere als überlappende Namensgebiete (Plan 14b) |
 
 ## 12. Offene Punkte
 
-Aus der Quell-Spec weiter offen (werden im genannten Meilenstein entschieden): Fetch-Konverter (M3), Modellklasse Extraktion (M4), Kachelgröße (nach M5, aus Ortszahl je Kachel), Kachelgrenzen (M4), Bilder und Karten in Quellen (nach M7), YouTube (M9), Revierführer-Vereinbarungen (vor M8), Nutzer-Meldungen als Quelle (M8), ODbL-Trennung (vor M6, siehe Teil-Spec 08), Revier-Polygone (M1 per Hand, M9 per KI).
+Aus der Quell-Spec weiter offen (werden im genannten Meilenstein entschieden): Fetch-Konverter (M3), Modellklasse Extraktion (M4), Kachelgröße (nach M5, aus Ortszahl je Kachel), Kachelgrenzen (M4), Bilder und Karten in Quellen (nach M7, Bilder: Teil-Spec 13), YouTube (M9), Revierführer-Vereinbarungen (vor M8), Nutzer-Meldungen als Quelle (M8), ODbL-Trennung (vor M6, siehe Teil-Spec 08). Erledigt: Revier-Polygone (durch Teil-Spec 14: Reviere werden gefunden, Landesteile tragen Umfang und Lieferung).
 
 Neu offen:
 

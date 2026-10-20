@@ -13,7 +13,7 @@ export const SCENE_ROADS_VERSION = "scene-roads-1";
 
 export type ScenePlace = { placeId: string; geoObjectId: string; position: LonLat; tileId: string };
 
-export type BayScene = ScenePlace & { settlementId: string; seabedAreaKey: string };
+export type BayScene = ScenePlace & { settlementId: string; seabedSubdivisionKey: string };
 
 const point = (p: LonLat): GeoJSON.Point => ({ type: "Point", coordinates: [p.lon, p.lat] });
 
@@ -64,14 +64,14 @@ export async function buildBayScene(tx: Db, opts: { raster?: boolean } = {}): Pr
   const place = await insertScenePlace(tx, 0, 100);
   if (opts.raster ?? true) await insertTestRaster(tx, { origin: await lonLatOf(tx, -455, 555), tileId: place.tileId });
 
-  const seabedAreaKey = `scene-${crypto.randomUUID()}`;
+  const seabedSubdivisionKey = `scene-${crypto.randomUUID()}`;
   for (const [substrate, wkt] of [
     ["sand", rect(-2000, -2000, 0, 2000)],
     ["mud", rect(0, -2000, 2000, 2000)],
   ] as const) {
     await tx.execute(sql`
-      insert into seabed_polygons (id, substrate, area_key, dataset_version, geom)
-      values (gen_random_uuid(), ${substrate}::seabed_type, ${seabedAreaKey}, ${SCENE_SEABED_VERSION},
+      insert into seabed_polygons (id, substrate, subdivision_key, dataset_version, geom)
+      values (gen_random_uuid(), ${substrate}::seabed_type, ${seabedSubdivisionKey}, ${SCENE_SEABED_VERSION},
               ST_Transform(ST_GeomFromText(${wkt}, ${SYNTHETIC_SRID}::int), 4326))`);
   }
 
@@ -85,5 +85,5 @@ export async function buildBayScene(tx: Db, opts: { raster?: boolean } = {}): Pr
             ST_Transform(ST_GeomFromText(${`LINESTRING(497000 3902500, 503000 3902500)`}, ${SYNTHETIC_SRID}::int), 4326),
             ${SCENE_ROADS_VERSION})`);
 
-  return { ...place, settlementId: settlement!.id, seabedAreaKey };
+  return { ...place, settlementId: settlement!.id, seabedSubdivisionKey };
 }

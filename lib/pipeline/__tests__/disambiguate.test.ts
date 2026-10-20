@@ -3,7 +3,7 @@ import type { PgBoss } from "pg-boss";
 import { describe, expect, it } from "vitest";
 import { withRollback } from "@/test/db";
 import { quietDay } from "@/test/external-calls";
-import { insertNamedObject, insertTestRun, insertTestTile, insertTestVersion } from "@/test/text";
+import { insertNamedObject, insertTestRun, insertTestSubdivision, insertTestTile, insertTestVersion } from "@/test/text";
 import { MockModel } from "@/lib/ai/mock";
 import { candidateList, disambiguateMentionTask, type DisambiguateMentionInput } from "@/lib/ai/tasks/disambiguate-mention";
 import { disambiguationInputs } from "@/lib/pipeline/text/disambiguate";
@@ -320,7 +320,7 @@ describe("stage mentions.disambiguate", () => {
       expect(row!.runId).toBe(other.id);
     }));
 
-  it("a tile or area selection resolves to the current versions mentioning objects there", () =>
+  it("a tile or subdivision selection resolves to the current versions mentioning objects there", () =>
     withRollback(async (tx) => {
       const key = `test-${newId()}`;
       const area = await insertNamedObject(tx, { type: "area", names: [{ name: "Testrevier" }], lon: 21.2, lat: 35.2, configKey: key });
@@ -331,6 +331,12 @@ describe("stage mentions.disambiguate", () => {
       expect((await mentionsOf(tx, v.versionId)).map((m) => m.geoObjectId)).toEqual([kalonisi]);
       expect((await freezeTextRunParams(tx, { tileId: A }, config)).documentVersionIds).toContain(v.versionId);
       expect((await freezeTextRunParams(tx, { tileId: B }, config)).documentVersionIds).not.toContain(v.versionId);
-      expect((await freezeTextRunParams(tx, { areaKey: key }, config)).documentVersionIds).toContain(v.versionId);
+      // the subdivision's run scope is tile A only (its polygon lies inside A); tile B is not in it
+      const subdivisionKey = `XT-${newId()}`;
+      await insertTestSubdivision(tx, subdivisionKey, [21.02, 35.02, 21.2, 35.2]);
+      expect((await freezeTextRunParams(tx, { subdivisionKey }, config)).documentVersionIds).toContain(v.versionId);
+      const other = `XT-${newId()}`;
+      await insertTestSubdivision(tx, other, [21.27, 35.02, 21.45, 35.2]);
+      expect((await freezeTextRunParams(tx, { subdivisionKey: other }, config)).documentVersionIds).not.toContain(v.versionId);
     }));
 });

@@ -5,6 +5,7 @@ import { listApiClients } from "@/lib/domain/api-clients";
 import { activationOf, consolidationConfigFor, extractionVersion } from "@/lib/domain/consolidation/active-rules";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
+import { countryName } from "@/lib/domain/subdivisions/view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { Dialog } from "../_components/dialog";
 import { GEO_OBJECT_TYPE_LABELS, METRIC_LABELS } from "../_components/labels";
@@ -92,7 +93,8 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
   const revoked = (await searchParams).notice === "api_client_revoked";
   const db = getDb();
   const apiClients = await listApiClients(db);
-  const { areas, gazetteer, ...configured } = getConfig();
+  const { gazetteer, ...configured } = getConfig();
+  const subdivisionsCfg = configured.subdivisions;
   // the active rules version: the newest released activation, else active.json (ruling M7-P10)
   const consolidation = await consolidationConfigFor(db);
   const rulesActivation = await activationOf(db, "consolidation_rules", consolidation.version);
@@ -183,7 +185,7 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
     ["Orte je Kachel", `${quality.placesPerTile.min}–${quality.placesPerTile.max}`],
     [
       "Vergleichssatz",
-      `${quality.comparisonSet.pilotSize} Orte im Pilot, ${quality.comparisonSet.perAreaMin}–${quality.comparisonSet.perAreaMax} je weiterem Revier`,
+      `${quality.comparisonSet.pilotSize} Orte im Pilot, ${quality.comparisonSet.perSubdivisionMin}–${quality.comparisonSet.perSubdivisionMax} je weiterem Landesteil`,
     ],
   ];
   const thresholds: [string, string][] = [
@@ -205,7 +207,7 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
     ["GeoNames neues Objekt ab", `${gazetteer.merge.geonamesNewObjectRadiusM} m`],
     ["Overpass", `${gazetteer.overpass.timeoutSeconds} s Timeout, ${gazetteer.overpass.ratePerMinute}/min`],
     ["Wikidata", `${gazetteer.wikidata.ratePerMinute}/min, Sprachen ${gazetteer.wikidata.languages.join(", ")}`],
-    ["GeoNames", `${gazetteer.geonames.countries.join(", ")}, alle ${gazetteer.geonames.refreshDays} Tage`],
+    ["GeoNames", `Land des Landesteils, alle ${gazetteer.geonames.refreshDays} Tage`],
     ["Kein Ankern bei", gazetteer.noAnchoringKinds.join(", ")],
   ];
   return (
@@ -217,7 +219,7 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
           <Dialog
             trigger="Aktive Konfiguration (JSON)"
             title="Aktive Konfiguration"
-            description="Alle geladenen Konfigurationsbereiche außer Revieren und Gazetteer, so wie die Pipeline sie sieht."
+            description="Alle geladenen Konfigurationsbereiche außer dem Gazetteer, so wie die Pipeline sie sieht."
             wide
           >
             <div className="space-y-2">
@@ -235,44 +237,45 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
       />
 
       <Panel
-        title="Reviere"
-        description="Ein Revier ist ein Seegebiet mit eigener Konfigurationsdatei in config/areas/. Zyklus: Abstand, in dem seine Kacheln neu bearbeitet werden."
+        title="Länder und Landesteile"
+        description={`Wie Landesteile aus den Verwaltungseinheiten der Mittelmeerländer entstehen (config/subdivisions.json): Ebene der Einheiten in OSM, Quellsprachen, Saison und Zyklus je Land. Dazu ${subdivisionsCfg.split.length} Teilungen, ${subdivisionsCfg.merge.length} Zusammenlegungen, ${subdivisionsCfg.extra.length} zusätzliche Einheiten, ${subdivisionsCfg.notMediterranean.length} ausgenommene Einheiten ohne Mittelmeerküste und ${Object.keys(subdivisionsCfg.overrides).length} Abweichungen je Landesteil.`}
+        className="mb-6"
         flush
       >
         <Table>
           <thead>
             <tr>
-              <th className={thClass}>Key</th>
-              <th className={thClass}>Namen</th>
-              <th className={thClass}>Kachelbox</th>
+              <th className={thClass}>Land</th>
+              <th className={thClass}>Ebene</th>
+              <th className={thClass}>Quellsprachen</th>
+              <th className={thClass}>Saison</th>
               <th className={`${thClass} text-right`}>Zyklus</th>
-              <th className={thClass}>Küstenabschnitte</th>
+              <th className={thClass}>Status</th>
             </tr>
           </thead>
           <tbody>
-            {areas.map((area) => (
-              <tr key={area.key} className={trClass}>
-                <td className={tdClass}>
-                  <Mono>{area.key}</Mono>
-                </td>
-                <td className={tdClass}>
-                  <span className="font-medium">{area.names.de ?? area.key}</span>
-                  <div className="text-xs text-muted">
-                    {Object.entries(area.names)
-                      .filter(([lang]) => lang !== "de")
-                      .map(([lang, name]) => `${lang}: ${name}`)
-                      .join(" · ")}
-                  </div>
-                </td>
-                <td className={cx(tdClass, "whitespace-nowrap")}>
-                  {area.tileBbox ? <Mono>{area.tileBbox.join(", ")}</Mono> : <span className="text-muted">keine</span>}
-                </td>
-                <td className={cx(tdClass, "text-right whitespace-nowrap tabular-nums")}>{area.cycleDays} Tage</td>
-                <td className={tdClass}>
-                  {area.coastSections.map((s) => s.names.de).join(", ") || <span className="text-muted">keine</span>}
-                </td>
-              </tr>
-            ))}
+            {Object.entries(subdivisionsCfg.countries)
+              .sort(([a], [b]) => countryName(a).localeCompare(countryName(b), "de"))
+              .map(([code, c]) => (
+                <tr key={code} className={trClass}>
+                  <td className={tdClass}>
+                    <span className="font-medium">{countryName(code)}</span> <Mono>{code}</Mono>
+                  </td>
+                  <td className={tdClass}>
+                    {c.firstLevel === "whole" || subdivisionsCfg.wholeCountry.includes(code)
+                      ? "als Ganzes"
+                      : `admin_level ${c.firstLevel}${c.secondLevel ? `, Teilung ${c.secondLevel}` : ""}`}
+                  </td>
+                  <td className={tdClass}>{c.sourceLanguages.join(", ")}</td>
+                  <td className={cx(tdClass, "whitespace-nowrap tabular-nums")}>
+                    {c.season.fromMonth}–{c.season.toMonth}
+                  </td>
+                  <td className={cx(tdClass, "text-right whitespace-nowrap tabular-nums")}>{c.cycleDays} Tage</td>
+                  <td className={tdClass}>
+                    {c.status === "excluded" ? <span className="text-danger">ausgeschlossen: {c.statusReason}</span> : <span className="text-muted">aktiv</span>}
+                  </td>
+                </tr>
+              ))}
           </tbody>
         </Table>
       </Panel>

@@ -1,12 +1,12 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { coastCollectionSchema, type CoastCollection, type CoastFeature } from "@/contract/v1";
+import { coastCollectionSchema, type CoastCollection, type CoastFeature } from "@/contract/v2";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { landPolygons, restrictedAreas } from "@/lib/db/schema";
 import { withRollback } from "@/test/db";
-import { seedDeliveryArea } from "@/test/fixtures/delivery/area";
+import { seedDeliverySubdivision } from "@/test/fixtures/delivery/subdivision";
 import { buildCoast, coastBox, preClipPadDeg } from "../coast";
 
 const cfg = loadConfig("config").delivery;
@@ -28,7 +28,7 @@ async function today(tx: Db): Promise<string> {
 const MAINLAND = square(20.8, 35.02, 21.02, 35.1);
 
 async function seedCoast(tx: Db) {
-  const f = await seedDeliveryArea(tx);
+  const f = await seedDeliverySubdivision(tx);
   await tx.insert(landPolygons).values({ geom: geomFromGeoJson(MAINLAND), datasetVersion: "test" });
   const asOf = await today(tx);
   const coast = await buildCoast(tx, { bbox: BBOX, cfg: cfg.coast, asOf });
@@ -86,7 +86,7 @@ describe("buildCoast", () => {
 
   it("restricted areas: valid on asOf and in the box, reasons mapped, firing area military, default source", async () => {
     await withRollback(async (tx) => {
-      await seedDeliveryArea(tx);
+      await seedDeliverySubdivision(tx);
       await tx.insert(restrictedAreas).values([
         { kind: "firing_area", geom: geomFromGeoJson(square(21.3, 35.0, 21.32, 35.02)), sourceRef: null },
         { kind: "protected_area", geom: geomFromGeoJson(square(21.25, 35.21, 21.27, 35.23)), sourceRef: "natura" },
@@ -134,7 +134,7 @@ describe("buildCoast", () => {
 
   it("simplification keeps every vertex within 10 m of the original land", async () => {
     await withRollback(async (tx) => {
-      await seedDeliveryArea(tx);
+      await seedDeliverySubdivision(tx);
       // a coast of 2 m zigzags every 20 m (5.6 km long) south of the island
       const ring: Array<[number, number]> = [];
       for (let i = 0; i <= 250; i++) ring.push([Number((21.25 + i * 0.00022).toFixed(6)), Number((35.02 + (i % 2) * 0.000018).toFixed(6))]);
@@ -177,7 +177,7 @@ describe("buildCoast", () => {
 
   it("restricted areas with equal geometry are ordered by reason, then source, not by row order (review M-1)", async () => {
     await withRollback(async (tx) => {
-      await seedDeliveryArea(tx);
+      await seedDeliverySubdivision(tx);
       const g = geomFromGeoJson(square(21.3, 35.05, 21.32, 35.07));
       await tx.insert(restrictedAreas).values({ kind: "military", geom: g, sourceRef: "zeta" });
       await tx.insert(restrictedAreas).values({ kind: "protected_area", geom: g, sourceRef: "alpha" });
@@ -194,7 +194,7 @@ describe("buildCoast", () => {
 
   it("polygons have counter-clockwise outer rings and clockwise holes (RFC 7946, review M-2)", async () => {
     await withRollback(async (tx) => {
-      await seedDeliveryArea(tx);
+      await seedDeliverySubdivision(tx);
       // a clockwise area with a counter-clockwise hole, inside the box
       const clockwise: GeoJSON.Polygon = {
         type: "Polygon",
@@ -216,7 +216,7 @@ describe("buildCoast", () => {
 
   it("an invalid land polygon and an invalid area crossing the box edge do not fail the build; the output is valid (review M-3)", async () => {
     await withRollback(async (tx) => {
-      await seedDeliveryArea(tx);
+      await seedDeliverySubdivision(tx);
       const [, , east] = coastBox(BBOX, cfg.coast.marginNm);
       // self-intersecting bowties: GEOS refuses to intersect them as they are
       const bowtie = (w: number, s: number, e: number, n: number) => sql`ST_GeomFromText(${`POLYGON((${w} ${s},${e} ${n},${e} ${s},${w} ${n},${w} ${s}))`}, 4326)`;
@@ -235,7 +235,7 @@ describe("buildCoast", () => {
 
   it("a restricted area stored as a geometry collection is reduced to its polygons (review M-5)", async () => {
     await withRollback(async (tx) => {
-      await seedDeliveryArea(tx);
+      await seedDeliverySubdivision(tx);
       const collection = "GEOMETRYCOLLECTION(POLYGON((21.3 35.05,21.32 35.05,21.32 35.07,21.3 35.07,21.3 35.05)),LINESTRING(21.33 35.05,21.34 35.06),POINT(21.35 35.05))";
       await tx.insert(restrictedAreas).values({ kind: "aquaculture", geom: sql`ST_GeomFromText(${collection}, 4326)`, sourceRef: "mixed" });
       const coast = await buildCoast(tx, { bbox: BBOX, cfg: cfg.coast, asOf: await today(tx) });

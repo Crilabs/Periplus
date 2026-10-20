@@ -16,7 +16,7 @@ function context(over: Partial<ProfileContext> = {}): ProfileContext {
     place: { id: "place-1", kind: "anchorage", status: "confirmed", statusReason: null, position: { lon: 21, lat: 35.2 }, publicId: "sp_1" },
     identity: { name: "Kolona", parentId: "island-1", geometryHash: "hash-1" },
     tileCycleDays: 30,
-    areaId: "area-1",
+    subdivisionId: "subdivision-1",
     documentsCount: 2,
     sourcesCount: 2,
     computationGaps: {},

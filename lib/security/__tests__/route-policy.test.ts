@@ -3,14 +3,16 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { matchRoute, normalizePath, ROUTE_POLICY } from "../route-policy";
 
-/** The delivery API routes (spec 08). */
+/** The delivery API routes (spec 08, spec 14: contract 2.0 under `/api/v2`; the 1.0 schemas stay under `/api/v1`). */
 const DELIVERY_ROUTES = [
-  "/api/v1/areas",
-  "/api/v1/areas/[area]/package",
-  "/api/v1/areas/[area]/package/[file]",
   "/api/v1/schema/[version]/[file]",
-  "/api/v1/areas/[area]/changes",
-  "/api/v1/spots/[id]",
+  "/api/v2/ping",
+  "/api/v2/subdivisions",
+  "/api/v2/subdivisions/[subdivision]/package",
+  "/api/v2/subdivisions/[subdivision]/package/[file]",
+  "/api/v2/schema/[version]/[file]",
+  "/api/v2/subdivisions/[subdivision]/changes",
+  "/api/v2/spots/[id]",
 ];
 
 const ROUTE_FILES = /^(page|route)\.(tsx?|jsx?)$/;
@@ -49,12 +51,13 @@ describe("ROUTE_POLICY", () => {
       expect(ROUTE_POLICY[route], route).toEqual({ kind: "api", scope: "delivery:read" });
     }
     for (const [path, pattern] of [
-      ["/api/v1/areas", "/api/v1/areas"],
-      ["/api/v1/areas/ar_X/package", "/api/v1/areas/[area]/package"],
-      ["/api/v1/areas/saronic/package/spots.json", "/api/v1/areas/[area]/package/[file]"],
+      ["/api/v2/subdivisions", "/api/v2/subdivisions"],
+      ["/api/v2/subdivisions/sd_X/package", "/api/v2/subdivisions/[subdivision]/package"],
+      ["/api/v2/subdivisions/GR-I/package/spots.json", "/api/v2/subdivisions/[subdivision]/package/[file]"],
       ["/api/v1/schema/1.0/spots.schema.json", "/api/v1/schema/[version]/[file]"],
-      ["/api/v1/areas/ar_X/changes", "/api/v1/areas/[area]/changes"],
-      ["/api/v1/spots/sp_X", "/api/v1/spots/[id]"],
+      ["/api/v2/schema/2.0/spots.schema.json", "/api/v2/schema/[version]/[file]"],
+      ["/api/v2/subdivisions/GR-I/changes", "/api/v2/subdivisions/[subdivision]/changes"],
+      ["/api/v2/spots/sp_X", "/api/v2/spots/[id]"],
     ] as const) {
       expect(matchRoute(path)?.pattern, path).toBe(pattern);
     }
@@ -119,5 +122,11 @@ describe("matchRoute", () => {
     expect(matchRoute("/runs/abc/def")).toBeNull();
     expect(matchRoute("/api/v1/ping/x")).toBeNull();
     expect(matchRoute("/Healthz")).toBeNull();
+  });
+});
+
+describe("contract 1.0 routes", () => {
+  it("the area routes of contract 1.0 are gone: a key gets 404, not a package", () => {
+    for (const path of ["/api/v1/areas", "/api/v1/areas/saronic/package", "/api/v1/spots/sp_X"]) expect(matchRoute(path), path).toBeNull();
   });
 });

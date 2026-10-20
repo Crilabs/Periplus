@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { GeonamesAltName, GeonamesRow, GeonamesSource } from "@/lib/adapters/geonames";
-import type { AreaConfig } from "@/lib/config";
+import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
 import type { Db } from "@/lib/db/client";
 import { geoNames, geoObjects, reviewTasks } from "@/lib/db/schema";
 import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
@@ -12,18 +12,9 @@ import { importGeonames } from "@/lib/pipeline/gazetteer/geonames";
 import { withRollback } from "@/test/db";
 import { createdInThisTransaction, pairTasksOf } from "@/test/gazetteer";
 
-// Synthetic area outside the pilot box 23.0-23.75 E x 37.0-38.0 N.
-function area(): AreaConfig {
-  return {
-    key: "geonames-test",
-    names: { de: "Testrevier", en: "Test area" },
-    polygon: { type: "Polygon", coordinates: [[[26.0, 35.6], [26.4, 35.6], [26.4, 35.9], [26.0, 35.9], [26.0, 35.6]]] },
-    tileBbox: null,
-    sourceLanguages: ["de", "en", "el"],
-    season: { fromMonth: 4, toMonth: 10 },
-    cycleDays: 30,
-    coastSections: [],
-  };
+// Synthetic subdivision scope outside the pilot box 23.0-23.75 E x 37.0-38.0 N.
+function scope(): GazetteerScope {
+  return { subdivisionId: newId(), key: "geonames-test", country: "GR", bbox: [26.0, 35.6, 26.4, 35.9], sourceLanguages: ["de", "en", "el"] };
 }
 
 const ID = 9_150_000_000;
@@ -119,7 +110,7 @@ async function names(db: Db, geoObjectId: string) {
 }
 
 const run = (db: Db, rows: GeonamesRow[] = Object.values(ROWS), seen?: { country: string; bbox: Bbox }[]) =>
-  importGeonames(db, { area: area(), runId: newId() }, { source: source(rows, seen) });
+  importGeonames(db, { scope: scope(), runId: newId() }, { source: source(rows, seen) });
 
 describe("importGeonames", () => {
   it("adds Greek and German alternate names to the matching OSM bay", () =>
@@ -146,9 +137,21 @@ describe("importGeonames", () => {
       // The ASCII name is not added as a second `en` name: an `en` alternate name exists.
       expect(rows.filter((r) => r.language === "en" && r.origin === "geonames")).toHaveLength(1);
 
-      // One read per configured country, for the area box plus 5 km.
+      // One read, for the scope's country and its box plus 5 km.
       expect(seen.map((s) => s.country)).toEqual(["GR"]);
       expect(seen[0]!.bbox[1]).toBeCloseTo(35.6 - 5 / 111.32, 6);
+    }));
+
+  it("reads the country of the scope, not a configured list", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      const seen: { country: string; bbox: Bbox }[] = [];
+      await importGeonames(
+        db,
+        { scope: { ...scope(), country: "TR" }, runId: newId() },
+        { source: source([], seen) },
+      );
+      expect(seen.map((s) => s.country)).toEqual(["TR"]);
     }));
 
   it("skips an unmatched bay within 500 m of another bay", () =>

@@ -1,6 +1,18 @@
 import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { reviewTasks, type ReviewKind } from "@/lib/db/schema";
+import { reviewKindEnum, reviewTasks, type ReviewKind } from "@/lib/db/schema";
+
+/**
+ * Kinds no longer created or decided: `coast_tile_without_area` (spec 14: every coast tile has a subdivision, a
+ * sailing area is found, not assigned). The enum value stays for old tasks; migration 0057 dismissed the open ones.
+ */
+export const RETIRED_REVIEW_KINDS: readonly ReviewKind[] = ["coast_tile_without_area"];
+
+/** The kinds the review lists, filters, counts and queue offer. */
+export const OFFERED_REVIEW_KINDS: readonly ReviewKind[] = reviewKindEnum.enumValues.filter((k) => !RETIRED_REVIEW_KINDS.includes(k));
+
+/** SQL: the task's kind is offered (not retired). */
+export const offeredKindSql = sql`${reviewTasks.kind}::text <> all(${`{${RETIRED_REVIEW_KINDS.join(",")}}`}::text[])`;
 
 export type ReviewTaskInput = {
   kind: ReviewKind;

@@ -6,7 +6,10 @@ import { cacheMaxAgeSeconds } from "@/lib/domain/delivery/read";
 
 type Ctx = RouteContext<"/api/v1/schema/[version]/[file]">;
 
-/** The JSON schema of a contract file (spec 08 `GET /schema/{version}/{file}`, e.g. `1.0/spots.schema.json`). */
+/**
+ * The JSON schema of a contract file (spec 08 `GET /schema/{version}/{file}`, e.g. `1.0/spots.schema.json`). Kept under
+ * `/api/v1` beside `/api/v2/schema` for consumers of archived 1.0 packages; it serves every published version.
+ */
 const handler = withApiClient<Ctx>("delivery:read", async (req, _client, ctx) => {
   const { version, file } = await ctx.params;
   const schema = publishedJsonSchema(version, file);

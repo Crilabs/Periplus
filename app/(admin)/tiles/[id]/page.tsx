@@ -111,14 +111,14 @@ export default async function Page({ params, searchParams }: PageProps<"/tiles/[
   if (!id) notFound();
   const detail = await tileDetail(getDb(), id);
   if (!detail) notFound();
-  const { tile, area } = detail;
-  const areaName = area ? (area.name ?? area.configKey ?? area.id) : null;
+  const { tile, subdivision } = detail;
+  const subdivisionHref = subdivision ? `/subdivisions/${encodeURIComponent(subdivision.key)}` : null;
   const now = new Date();
 
   return (
     <>
       <PageHeader
-        back={area ? { href: `/geo/${area.id}`, label: areaName ?? "Revier" } : { href: "/map", label: "Karte" }}
+        back={subdivision ? { href: subdivisionHref!, label: subdivision.name ?? subdivision.key } : { href: "/map", label: "Karte" }}
         title={
           <>
             Kachel <span className="font-mono">{tile.id}</span>
@@ -128,15 +128,15 @@ export default async function Page({ params, searchParams }: PageProps<"/tiles/[
           <>
             <Badge tone={tile.hasCoast ? "accent" : "neutral"}>{tile.hasCoast ? "Küste" : "Ohne Küste"}</Badge>
             {tile.validTo && <Badge tone="warn">Gültig bis {tile.validTo}</Badge>}
-            {area ? (
+            {subdivision ? (
               <span>
-                Revier{" "}
-                <Link href={`/geo/${area.id}`} className="text-accent hover:underline">
-                  {areaName}
+                Landesteil{" "}
+                <Link href={subdivisionHref!} className="text-accent hover:underline">
+                  {subdivision.name ?? subdivision.key}
                 </Link>
               </span>
             ) : (
-              <span>Keinem Revier zugeordnet</span>
+              <span>Keinem Landesteil zugeordnet</span>
             )}
           </>
         }
