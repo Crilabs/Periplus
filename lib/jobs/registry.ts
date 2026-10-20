@@ -1,4 +1,5 @@
 import { aiBatchPollHandler } from "./handlers/ai-batch";
+import { areaImportHandler } from "./handlers/areas";
 import { compareConvertersHandler } from "./handlers/compare";
 import { consolidationGeoHandler, consolidationSummaryHandler } from "./handlers/consolidation";
 import { consolidationFollowupHandler } from "./handlers/consolidation-followup";
@@ -45,6 +46,7 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "subdivisions.build": subdivisionsBuildHandler,
   "seed.tile": seedTileHandler,
   "datasets.import": datasetsImportHandler,
+  "areas.import": areaImportHandler,
   "geometry.compute": geometryPlaceHandler,
   "geometry.detect_bays": detectBaysHandler,
   "discovery.area": discoveryAreaHandler,

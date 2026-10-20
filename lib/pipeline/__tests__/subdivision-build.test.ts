@@ -32,6 +32,15 @@ const buildRuns = (tx: Db, key: string) =>
 
 const subdivision = async (tx: Db, key: string) => (await tx.select().from(subdivisions).where(eq(subdivisions.key, key)))[0]!;
 
+describe("SUBDIVISION_BUILD_STAGES", () => {
+  it("has areas.import after geometry and before discovery.area", () => {
+    const stages: readonly string[] = SUBDIVISION_BUILD_STAGES;
+    const i = stages.indexOf("areas.import");
+    expect(i).toBeGreaterThan(stages.indexOf("geometry.compute"));
+    expect(i).toBe(stages.indexOf("discovery.area") - 1);
+  });
+});
+
 describe("startSubdivisionBuild", () => {
   it("starts one full run with the build stages and plans its first stage", () =>
     withRollback(async (tx) => {

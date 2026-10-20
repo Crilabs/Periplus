@@ -3,6 +3,7 @@ import type { PgBoss } from "pg-boss";
 import type { Db } from "@/lib/db/client";
 import { activeRulesVersion } from "@/lib/domain/consolidation/active-rules";
 import { requireSubdivision } from "@/lib/domain/subdivisions/store";
+import { AREA_IMPORT_STAGE } from "@/lib/pipeline/areas-import";
 import { DATASETS_STAGE } from "@/lib/pipeline/datasets";
 import { SUBDIVISION_DISCOVERY_STAGES } from "@/lib/pipeline/discovery-run";
 import { GAZETTEER_STAGES } from "@/lib/pipeline/gazetteer/stages";
@@ -12,7 +13,7 @@ import { SEED_STAGE } from "@/lib/pipeline/tile-scope";
 
 /*
  * „Aufbauen“ of a subdivision (spec 14 „Landesteil-Lauf“, „Admin-UI“): one run of kind `full` with the stages of the
- * gazetteer, dataset, seed, geometry and discovery runs, in that order. Fetch, text, consolidation of texts and the
+ * gazetteer, dataset, seed, geometry and discovery runs (with the Revier import between geometry and discovery), in that order. Fetch, text, consolidation of texts and the
  * package stay separate runs: they wait on source approval. Each stage plans when it is reached, so the run needs no
  * tiles to start (the gazetteer creates them). A queue per country („Alle offenen aufbauen“) builds one subdivision
  * after the other: `queued_at` marks the waiting ones, and the end of a build (finished, failed or ended by an admin,
@@ -25,6 +26,7 @@ export const SUBDIVISION_BUILD_STAGES = [
   DATASETS_STAGE,
   SEED_STAGE,
   ...GEOMETRY_RUN_STAGES,
+  AREA_IMPORT_STAGE,
   ...SUBDIVISION_DISCOVERY_STAGES,
 ] as const;
 
