@@ -1,0 +1,18 @@
+{
+  "minMembers": 2,
+  "polygon": { "bufferNm": 3, "concaveRatio": 0.3, "inlandCutM": 1000, "gulfCoverShare": 0.9 },
+  "neighbourRing": 1,
+  "memberTypes": {
+    "harbour": ["harbour", "settlement"],
+    "island": ["island", "islet"],
+    "islet": ["island", "islet"],
+    "settlement": ["settlement", "harbour"],
+    "bay": ["bay", "harbour"],
+    "gulf": ["gulf", "bay"],
+    "cape": ["cape"],
+    "strait": ["strait", "channel"],
+    "channel": ["strait", "channel"],
+    "archipelago": ["archipelago"]
+  },
+  "aliases": { "saronic": "saronic-gulf", "argolic": "argolic-gulf" }
+}

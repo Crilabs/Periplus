@@ -158,6 +158,7 @@ export const GEO_ORIGIN_LABELS: Record<GeoOrigin, string> = {
   computed: "Berechnet",
   manual: "Manuell",
   marine_regions: "Marine Regions",
+  import: "Revier-Bot",
 };
 
 export const NAME_ORIGIN_LABELS: Record<NameOrigin, string> = {
@@ -169,6 +170,7 @@ export const NAME_ORIGIN_LABELS: Record<NameOrigin, string> = {
   manual: "Manuell",
   transliteration: "Transliteration",
   fallback: "Ersatz",
+  import: "Revier-Bot",
 };
 
 export const GAP_REASON_LABELS: Record<GapReason, string> = {

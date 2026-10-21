@@ -1,6 +1,6 @@
 # Periplus 14 – Raumgliederung: Landesteile, Reviere, Kacheln
 
-Stand: 20.10.2026 · Gehört zu: `2026-10-18-periplus-design.md` · Zeitpunkt: nach M7, Grundlage von M9 (Ausbau) · Ändert: Teil-Spec 03 (Reviere, Hierarchie, Kacheln), 05 (Quellenfindung), 06 (Erwähnungen), 07 (`popularity`), 08 (Paket-Umfang), 09 (Karte, Review), 10 (Kennzahlen je Revier) · Quell-Spec: Grundprinzipien 2 und 8, Verarbeitungsstufen 1, 4 und 6, offener Punkt „Revier-Polygone“
+Stand: 20.10.2026 · Umgesetzt mit Plan 14a und 14b · Gehört zu: `2026-10-18-periplus-design.md` · Zeitpunkt: nach M7, Grundlage von M9 (Ausbau) · Ändert: Teil-Spec 03 (Reviere, Hierarchie, Kacheln), 05 (Quellenfindung), 06 (Erwähnungen), 07 (`popularity`), 08 (Paket-Umfang), 09 (Karte, Review), 10 (Kennzahlen je Revier) · Quell-Spec: Grundprinzipien 2 und 8, Verarbeitungsstufen 1, 4 und 6, offener Punkt „Revier-Polygone“
 
 ## Zweck
 
@@ -130,6 +130,19 @@ Kartenebene „Reviere“ auf `/map`: Polygone nach Bahn eingefärbt, überlappe
 
 Nichts im Ablauf wartet auf diese Aktionen.
 
+### Änderung 21.10.2026: Reviere kommen aus dem Revier-Bot
+
+Entscheidung Christian: Ein eigener KI-Bot außerhalb von Periplus findet die Reviere und liefert sie je Land als Datei (erste Lieferung Griechenland, 36 Reviere). Periplus sucht und extrahiert Reviere nicht selbst. Damit entfallen die Abschnitte „Finden (je Landesteil)“ Schritte 1–3, „Bahnen“, die Bearbeitungsaktionen unter „Freigabe in der Karte“, die Review-Art `area_candidate`, `area_status`/`approval_kind`, die Templates `subdivisionArea`, der Prompt `area-extract` und das Budget der Revier-Findung. Korrekturen an Revieren macht der Bot; Periplus übernimmt seinen Stand.
+
+- **Lieferung:** `config/area-imports/<Land>.json` (eingecheckt, Format des Bots: `country`, `generatedAt`, `areas[]` mit `key`, `names[]` (`lang`, `name`, `preferred`), `subdivisions[]`, `members[]` und `boundaryPoints[]` (`name`, `type`), `boundary`, `related[]` (`key`, `relation`: `contains`|`within`|`overlaps`), `evidence[]` (`url`, `publisher`, `lang`, `quote`), `notes`). Die Datei hat keine Polygone.
+- **Import** (`areas.import`): je Revier ein Geo-Objekt `area`, Schlüssel `config_key` = Bot-Schlüssel, Namen mit Herkunft `import`, Belege in `area_evidence` (Zitat, URL, Herausgeber, Sprache, Stand der Datei; nur anfügend), `boundary`, `related` und `notes` in `tags`. Ein Revier, das aus der Datei verschwindet, endet über `valid_to`. Die Datei `<Land>.json` trägt genau dieses Land in `country`. Ein gültiges Revier, das die Datei eines anderen Landes importiert hat, übernimmt der Import nicht (auch nicht über einen Alt-Schlüssel); er meldet den Schlüssel als Konflikt und lässt ihn aus.
+- **Mitglieder auflösen:** Mitglieds- und Grenzpunktnamen gegen den Gazetteer (grob und fein) mit dem Namensabgleich aus Teil-Spec 06, beschränkt auf die genannten Landesteile (ein Schlüssel, den `split` ersetzt hat, steht für seine Gruppen, z. B. `GR-L` → Kykladen und Dodekanes) und ihre Nachbarkacheln; der Typ aus der Datei schränkt die Kandidaten ein. Nicht aufgelöste Namen bleiben am Revier vermerkt und werden bei jedem Import neu versucht.
+- **Polygon:** wie Schritt 6 oben (konkave Hülle der aufgelösten Mitglieder und Grenzpunkte, gepuffert, Land landeinwärts abgeschnitten; ein Mitglied, das der Bot als `gulf` führt und das die übrigen deckt, ist das Polygon; eine Bucht `bay` nie). Ein Revier entsteht erst, wenn mindestens `minMembers` Mitglieder aufgelöst sind; bis dahin meldet der Import es als „wartet auf Gazetteer“.
+- **Wann:** von Hand per Skript aus der Entwicklungsumgebung, wenn eine neue Datei des Bots eingecheckt ist (`npm run areas:import`, auf dem Server `scripts/import-areas.ts`; keine Oberfläche, Entscheidung Christian), und im Landesteil-Lauf nach der Geometrie und vor der Quellenfindung, dort nur die Datei des Landes, zu dem der Landesteil gehört (neue Gazetteer-Objekte lösen weitere Mitglieder auf). Das Nachlesen der Erwähnungen startet im Landesteil-Lauf erst nach diesem Import, damit die eben angelegten Reviere in seinem Vorlauf zählen (der Lauf wartet weiter nicht darauf). Weitere Länder kommen im selben Format.
+- **Pilotreviere:** `saronic` wird zu `saronic-gulf`, `argolic` zu `argolic-gulf` (Zuordnung in `config/areas.json`); das Geo-Objekt mit `ar_`-ID und Revier-Facts bleibt, alte SERP-Suchen unter dem alten Schlüssel zählen weiter.
+- **Karte:** Ebene „Reviere“ zur Ansicht mit Filter nach Landesteil; Klick zeigt Namen je Sprache, Mitglieder (aufgelöst und offen), Abgrenzung, Beziehungen, Belege mit Zitat und Quelle.
+- Alles Übrige dieser Spec (Datenmodell `area_members`/`area_evidence`, Quellenfindung, Erwähnungen, Nachlesen, Lieferung) gilt unverändert für die importierten Reviere.
+
 ## Quellenfindung (ändert Teil-Spec 05)
 
 - **Revier-Ebene:** je Landesteil für alle Reviere mit `approved`, deren Kacheln den Landesteil berühren (auch teilweise), alle Namen in den Sprachen des Landesteils × `templates.area`. Ein Revier wird höchstens einmal je `serp.reuseDays` gesucht, egal wie viele Landesteile es berührt; `serp_results.scope_id` ist die Revier-ID.
@@ -153,6 +166,8 @@ Ein Admin startet einen Landesteil auf der neuen Seite `/subdivisions` (siehe Ad
 5. Revier-Findung: `areas.discover` → `fetch.url` → `areas.extract` → Bahnen
 6. Quellenfindung Revier- und Kachel-Ebene; die Revier-Ebene nimmt alle zu diesem Zeitpunkt aktiven Reviere
 7. Fetch, Text, Konsolidierung, Paket
+
+Umgesetzt (Plan 14b, nach der Änderung vom 21.10.2026): Gazetteer → Datensätze → Seed → Geometrie → `areas.import` (Revier-Import statt Revier-Findung) → `mentions.reread` (startet das Nachlesen als eigenen Lauf, der Aufbau wartet nicht) → Quellenfindung. Das Nachlesen steht nach dem Revier-Import, damit in diesem Lauf neu entstandene Reviere im Vorlauf zählen.
 
 Die Schritte 4 bis 7 laufen, wie heute, je Kachel und Kachelblock und warten auf keine Review-Aufgabe. Die Reihenfolge der Landesteile bestimmt der Admin; ein automatischer nächster Landesteil ist nicht Teil dieser Spec.
 
@@ -233,7 +248,9 @@ Im Gesamtdesign außerdem: Glossar „Revier“ (neue Bedeutung) und neuer Eintr
 
 ## Was dem Builder überlassen ist
 
-Hüllen-Algorithmus im Detail (`ST_ConcaveHull`-Parameter oder Alpha-Shape), Overpass-Aufteilung des Grob-Gazetteers, Index- und Spaltendetails, ob `area_status` als eigene Tabelle mit Historie statt Spalten umgesetzt wird, Gestaltung von `/subdivisions` und der Kartenwerkzeuge innerhalb von Teil-Spec 09.
+Hüllen-Algorithmus im Detail (`ST_ConcaveHull`-Parameter oder Alpha-Shape), Overpass-Aufteilung des Grob-Gazetteers, Index- und Spaltendetails, Gestaltung von `/subdivisions` und der Kartenwerkzeuge innerhalb von Teil-Spec 09.
+
+Entschieden beim Bau (Plan 14b): `ST_ConcaveHull` mit Verhältnis 0,3 (`config/areas.json` → `polygon.concaveRatio`); `area_status` entfällt mit dem Wechsel zum Revier-Bot (kein Freigabestatus in Periplus, Korrekturen im Bot).
 
 ## Offene Punkte
 

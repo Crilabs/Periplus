@@ -31,7 +31,8 @@ const PUBLIC_ID_PREFIX: Partial<Record<GeoObjectType, PublicIdPrefix>> = {
   poi: "hl",
 };
 
-function publicIdFor(type: GeoObjectType): string | null {
+/** A new public id of the type's family (`ar_` for an area), null for a type without one. */
+export function publicIdFor(type: GeoObjectType): string | null {
   const prefix = PUBLIC_ID_PREFIX[type];
   return prefix ? newPublicId(prefix) : null;
 }

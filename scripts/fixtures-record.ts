@@ -13,7 +13,7 @@ import { fetchTransport, makeResponse, RetryableHttpError, type Transport } from
 import { fixtureTransport, recordingTransport } from "../lib/adapters/http-fixtures";
 import { fetchSeas } from "../lib/adapters/marine-regions";
 import { searchNominatim } from "../lib/adapters/nominatim";
-import { buildBoundaryQuery, buildRelationQuery, overpassQuery } from "../lib/adapters/overpass";
+import { buildBoundaryQuery, buildCoarseFeatureQuery, buildRelationQuery, overpassQuery } from "../lib/adapters/overpass";
 import { demTileNames, fetchDemTile } from "../lib/adapters/copernicus-dem";
 import { fetchWmsImage, wmsGrid } from "../lib/adapters/wms";
 import { runPdftotext } from "../lib/adapters/pdf";
@@ -434,7 +434,7 @@ async function recordImagery(lon: number, lat: number): Promise<void> {
 /**
  * Records the coarse boundary fixtures of spec 14: per country the Overpass boundary query (the configured levels
  * plus the country relation; whole-country entries the country relation only), the `extra` relations of that
- * country, and the Marine Regions IHO seas of `mediterranean.marineRegionsMrgids`. Calls are booked in the
+ * country, the coarse features (islands, archipelagos, bays, towns), and the Marine Regions IHO seas of `mediterranean.marineRegionsMrgids`. Calls are booked in the
  * `*_scratch` database of `DATABASE_URL`.
  */
 async function recordCoarse(countries: string[]): Promise<void> {
@@ -460,6 +460,10 @@ async function recordCoarse(countries: string[]): Promise<void> {
         );
         out(`extra ${country}: ${res.elements.length} relations`);
       }
+      const features = await withRetry(`overpass ${country} features`, () =>
+        overpassQuery(recording, buildCoarseFeatureQuery(country, gazetteer.coarse, gazetteer.overpass.timeoutSeconds), ctx, gazetteer.overpass),
+      );
+      out(`features ${country}: ${features.elements.length} elements`);
     }
     const mrgids = subdivisions.mediterranean.marineRegionsMrgids;
     const seas = await withRetry("marine regions", () => fetchSeas(recording, mrgids, ctx, gazetteer.marineRegions));

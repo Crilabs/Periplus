@@ -19,6 +19,7 @@ describe("classifyOsm", () => {
     ["peninsula", { natural: "peninsula", name: "Methana" }, { type: "coast_section" }],
     ["bay", { natural: "bay", name: "Όρμος Κλήμα" }, { type: "bay" }],
     ["village", { place: "village", name: "Perdika" }, { type: "settlement" }],
+    ["city", { place: "city", name: "Valletta" }, { type: "settlement" }],
     ["taverna", { amenity: "restaurant", name: "Taverna Nontas" }, { type: "poi", category: "food" }],
     ["ruins", { historic: "ruins", name: "Temple" }, { type: "poi", category: "culture" }],
   ])("%s", (_label, tags, expected) => {

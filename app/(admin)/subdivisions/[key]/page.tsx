@@ -155,6 +155,9 @@ export default async function Page({ params, searchParams }: PageProps<"/subdivi
                       <Mono>{a.publicId}</Mono>
                     </span>
                   )}
+                  <span className="ml-2 text-xs text-muted">
+                    Schlüssel: {a.key ? <Mono>{a.key}</Mono> : "–"} · Mitglieder: {a.members}
+                  </span>
                 </li>
               ))}
             </ul>

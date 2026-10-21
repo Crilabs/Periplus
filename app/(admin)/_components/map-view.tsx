@@ -23,6 +23,8 @@ import {
   RESTRICTED_KIND_LABELS,
   profileConfidenceText,
 } from "./labels";
+import type { SubdivisionOption } from "@/lib/domain/areas/view";
+import { AreaPanel } from "../map/area-panel";
 import { DEFAULT_CENTER, MAP_SEA_COLOR, MAP_STYLE, OSM_ATTRIBUTION } from "./map-style";
 import { buttonClass, cx } from "./ui";
 
@@ -66,6 +68,8 @@ type Visibility = {
   subdivisions: boolean;
   seas: boolean;
   areas: boolean;
+  /** Key of the Landesteil the Reviere are limited to; null = all. */
+  areaSubdivision: string | null;
   tiles: boolean;
   restricted: boolean;
   geoTypes: GeoObjectType[];
@@ -107,10 +111,13 @@ const CLICK_LAYERS: Record<MapLayer, string[]> = {
   subdivisions: ["subdivisions-fill"],
   tiles: ["tiles-fill"],
   "restricted-areas": ["restricted-areas-fill"],
-  areas: ["areas-line"],
+  areas: ["areas-line", "areas-fill"],
   "geo-objects": ["geo-objects-fill", "geo-objects-line", "geo-objects-point"],
   places: ["places-point"],
 };
+
+/** Which layer wins a click where several overlap (first = most specific / safety-relevant), independent of draw order. */
+const CLICK_PRIORITY: MapLayer[] = ["places", "geo-objects", "restricted-areas", "areas", "tiles", "subdivisions", "seas"];
 
 function addLayers(m: MapLibreMap): void {
   for (const layer of LAYERS) m.addSource(layer, { type: "geojson", data: EMPTY });
@@ -150,6 +157,8 @@ function addLayers(m: MapLibreMap): void {
     filter: LINE,
     paint: { "line-color": restrictedColor, "line-width": ["case", ["get", "anchoringBan"], 3, 1] },
   });
+  // Overlapping Reviere stay visible: a light fill under a clear outline, no blending tricks.
+  m.addLayer({ id: "areas-fill", type: "fill", source: "areas", paint: { "fill-color": AREA_COLOR, "fill-opacity": 0.12 } });
   m.addLayer({ id: "areas-line", type: "line", source: "areas", paint: { "line-color": AREA_COLOR, "line-width": 2, "line-opacity": 0.9 } });
   m.addLayer({
     id: "geo-objects-fill",
@@ -190,6 +199,7 @@ function applyVisibility(m: MapLibreMap, v: Visibility): void {
   const show = (id: string, on: boolean) => m.setLayoutProperty(id, "visibility", on ? "visible" : "none");
   show("tiles-fill", v.tiles);
   show("tiles-line", v.tiles);
+  show("areas-fill", v.areas);
   show("areas-line", v.areas);
   show("seas-line", v.seas);
   show("subdivisions-fill", v.subdivisions);
@@ -251,13 +261,14 @@ function toggle<T>(list: T[], item: T): T[] {
  * Admin map: toggleable layers (subdivisions, seas, areas, tiles, restricted areas by kind, geo objects by type, places by status), loaded per layer from
  * `/map-data/<layer>` for the visible bounds after each move (debounced). A click opens a floating panel with a link.
  */
-export function MapView() {
+export function MapView({ subdivisions = [] }: { subdivisions?: SubdivisionOption[] }) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
   const [visibility, setVisibility] = useState<Visibility>({
     subdivisions: true,
     seas: false,
     areas: true,
+    areaSubdivision: null,
     tiles: true,
     restricted: true,
     geoTypes: GEO_TYPES,
@@ -293,8 +304,9 @@ export function MapView() {
         LAYERS.filter((layer) => isOn(layer, visibilityRef.current)).map(async (layer) => {
           // geo objects are filtered by type on the server, so the cap counts only the types shown (UI-12)
           const types = layer === "geo-objects" ? `&types=${visibilityRef.current.geoTypes.join(",")}` : "";
+          const subdivision = layer === "areas" && visibilityRef.current.areaSubdivision ? `&subdivision=${encodeURIComponent(visibilityRef.current.areaSubdivision)}` : "";
           try {
-            const res = await fetch(`/map-data/${layer}?bbox=${bbox}${types}`, { signal: controller.signal, cache: "no-store" });
+            const res = await fetch(`/map-data/${layer}?bbox=${bbox}${types}${subdivision}`, { signal: controller.signal, cache: "no-store" });
             if (!res.ok) return { layer, ok: false, truncated: false };
             const data = (await res.json()) as GeoJSON.FeatureCollection & { truncated?: boolean };
             m.getSource<GeoJSONSource>(layer)?.setData(data);
@@ -322,8 +334,11 @@ export function MapView() {
     });
     m.on("moveend", schedule);
     m.on("click", (e) => {
-      const ids = [...LAYERS].reverse().flatMap((layer) => CLICK_LAYERS[layer]).filter((id) => m.getLayer(id));
-      const [hit]: MapGeoJSONFeature[] = m.queryRenderedFeatures(e.point, { layers: ids });
+      const ids = LAYERS.flatMap((layer) => CLICK_LAYERS[layer]).filter((id) => m.getLayer(id));
+      // queryRenderedFeatures lists hits in render order; rank them explicitly so a Revier's fill never hides what lies under it
+      const hits: MapGeoJSONFeature[] = m.queryRenderedFeatures(e.point, { layers: ids });
+      const rank = (f: MapGeoJSONFeature) => CLICK_PRIORITY.indexOf(f.source as MapLayer);
+      const hit = hits.reduce<MapGeoJSONFeature | undefined>((best, f) => (best === undefined || rank(f) < rank(best) ? f : best), undefined);
       setSelection(hit ? { layer: hit.source as MapLayer, properties: hit.properties } : null);
     });
     map.current = m;
@@ -342,7 +357,7 @@ export function MapView() {
     if (!m?.getLayer("places-point")) return;
     applyVisibility(m, visibility);
     // Newly switched-on layers have no data for the current view yet; other geo-object types need a new query.
-    if (LAYERS.some((layer) => isOn(layer, visibility) && !isOn(layer, before)) || visibility.geoTypes !== before.geoTypes) reload.current();
+    if (LAYERS.some((layer) => isOn(layer, visibility) && !isOn(layer, before)) || visibility.geoTypes !== before.geoTypes || visibility.areaSubdivision !== before.areaSubdivision) reload.current();
   }, [visibility]);
 
   return (
@@ -354,7 +369,15 @@ export function MapView() {
       <div className="absolute inset-0">
         <div ref={container} role="region" aria-label="Karte" className="h-full w-full" />
       </div>
-      <LayerPanel visibility={visibility} onChange={setVisibility} failed={failed} truncated={truncated} clamped={clamped} />
+      <LayerPanel
+        visibility={visibility}
+        onChange={(next) => {
+          setVisibility(next);
+          // choosing a Landesteil shows it: fit the view to its bounds
+          const picked = next.areaSubdivision !== visibility.areaSubdivision && subdivisions.find((s) => s.key === next.areaSubdivision);
+          if (picked) map.current?.fitBounds(picked.bbox, { padding: 40, maxZoom: 10, duration: 0 });
+        }}
+        subdivisions={subdivisions} failed={failed} truncated={truncated} clamped={clamped} />
       {selection && <Sidebar selection={selection} onClose={() => setSelection(null)} />}
     </div>
   );
@@ -460,12 +483,14 @@ const LAYER_LABELS: Record<MapLayer, string> = {
 function LayerPanel({
   visibility: v,
   onChange,
+  subdivisions,
   failed,
   truncated,
   clamped,
 }: {
   visibility: Visibility;
   onChange: (v: Visibility) => void;
+  subdivisions: SubdivisionOption[];
   failed: MapLayer[];
   truncated: MapLayer[];
   clamped: boolean;
@@ -533,6 +558,22 @@ function LayerPanel({
             onChange={() => onChange({ ...v, areas: !v.areas })}
             mark={<span className="h-0.5 w-4 rounded-full" style={{ background: AREA_COLOR }} />}
           />
+          {v.areas && subdivisions.length > 0 && (
+            <label className="flex items-center gap-2 px-2 pb-1 text-xs text-muted">
+              <span className="shrink-0">Landesteil</span>
+              <select
+                aria-label="Landesteil der Reviere"
+                value={v.areaSubdivision ?? ""}
+                onChange={(e) => onChange({ ...v, areaSubdivision: e.target.value || null })}
+                className="min-w-0 flex-1 rounded-md border border-line bg-surface px-1.5 py-1 text-ink"
+              >
+                <option value="">Alle</option>
+                {subdivisions.map((s) => (
+                  <option key={s.key} value={s.key}>{s.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
           <LayerSwitch
             label="Kacheln"
             checked={v.tiles}
@@ -669,10 +710,7 @@ function Sidebar({ selection: { layer, properties: p }, onClose }: { selection: 
       href = `/geo/${id}`;
       break;
     case "areas":
-      rows = [
-        ["Typ", GEO_OBJECT_TYPE_LABELS.area],
-        ["Schlüssel", str(p.key) || "–"],
-      ];
+      rows = [];
       href = `/geo/${id}`;
       break;
     case "geo-objects":
@@ -694,7 +732,7 @@ function Sidebar({ selection: { layer, properties: p }, onClose }: { selection: 
   return (
     <aside
       aria-label="Auswahl"
-      className={`${FLOAT} right-3 bottom-3 left-3 max-h-[60%] space-y-3 overflow-y-auto p-4 text-sm sm:bottom-auto sm:left-auto sm:top-3 sm:right-3 sm:max-h-[calc(100%-6rem)] sm:w-72`}
+      className={`${FLOAT} right-3 bottom-3 left-3 max-h-[60%] space-y-3 overflow-y-auto p-4 text-sm sm:bottom-auto sm:left-auto sm:top-3 sm:right-3 sm:max-h-[calc(100%-6rem)] ${layer === "areas" ? "sm:w-96" : "sm:w-72"}`}
     >
       <div className="flex items-start justify-between gap-2">
         <h2 className="font-semibold">{title}</h2>
@@ -709,6 +747,7 @@ function Sidebar({ selection: { layer, properties: p }, onClose }: { selection: 
           </svg>
         </button>
       </div>
+      {layer === "areas" && <AreaPanel areaId={id} fallbackName={title} />}
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
         {rows.map(([k, v]) => (
           <div key={k} className="contents">

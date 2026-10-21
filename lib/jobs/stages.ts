@@ -1,4 +1,6 @@
 import type { StageDefinition } from "@/lib/pipeline/runs";
+import { areaImportStage } from "./handlers/areas";
+import { mentionsRereadStage } from "./handlers/reread";
 import { compareConvertersStage } from "./handlers/compare";
 import { consolidationFollowupStage, consolidationGeoStage, consolidationSummaryStage } from "./handlers/consolidation";
 import { datasetsImportStage } from "./handlers/datasets";
@@ -41,8 +43,10 @@ export const STAGES: Record<string, StageDefinition> = {
   [gazetteerHierarchyStage.name]: gazetteerHierarchyStage,
   [gazetteerCoarseStage.name]: gazetteerCoarseStage,
   [subdivisionsBuildStage.name]: subdivisionsBuildStage,
+  [mentionsRereadStage.name]: mentionsRereadStage,
   [seedTileStage.name]: seedTileStage,
   [datasetsImportStage.name]: datasetsImportStage,
+  [areaImportStage.name]: areaImportStage,
   [detectBaysStage.name]: detectBaysStage,
   [geometryPlaceStage.name]: geometryPlaceStage,
   [discoveryAreaStage.name]: discoveryAreaStage,

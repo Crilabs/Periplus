@@ -57,6 +57,7 @@
   "bboxBufferKm": 5,
   "landBufferKm": 55,
   "coastDistanceM": 2000,
+  "coarse": { "placeTypes": ["city", "town"], "islandMinAreaKm2": 1, "gulfMinAreaKm2": 20, "coastDistanceKm": 5 },
   "subdivisionRadiusM": 30000,
   "islandParentBufferM": 200,
   "coastSectionMaxAreaKm2": 1000,

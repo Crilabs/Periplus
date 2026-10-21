@@ -2,7 +2,7 @@ import { getTransport } from "@/lib/adapters/http";
 import { getArchive } from "@/lib/adapters/s3";
 import { getConfig } from "@/lib/config";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
-import { COARSE_STAGE, importCoarse, importSeas } from "@/lib/pipeline/gazetteer/coarse";
+import { COARSE_STAGE, importCoarse, importCoarseFeatures, importSeas } from "@/lib/pipeline/gazetteer/coarse";
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import { buildSubdivisions, SUBDIVISIONS_STAGE } from "@/lib/pipeline/subdivisions";
 
@@ -26,8 +26,11 @@ export const gazetteerCoarseHandler: JobHandler<JobData> = async (data, ctx) => 
     return;
   }
   if (typeof data.country !== "string") throw new Error("gazetteer.coarse job without country");
-  const result = await importCoarse(ctx.db, data.country, { transport: getTransport(), archive: getArchive(), runId: data.runId });
+  const deps = { transport: getTransport(), archive: getArchive(), runId: data.runId };
+  const result = await importCoarse(ctx.db, data.country, deps);
   ctx.log.info({ country: data.country, ...result }, "boundaries imported");
+  const features = await importCoarseFeatures(ctx.db, data.country, deps);
+  ctx.log.info({ country: data.country, ...features }, "coarse features imported");
 };
 
 /** The Landesteil list: one job per run. */

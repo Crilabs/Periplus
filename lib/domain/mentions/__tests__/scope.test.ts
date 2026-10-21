@@ -1,9 +1,10 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { serpQueries, serpResults, sources } from "@/lib/db/schema";
 import { addNames } from "@/lib/domain/gazetteer/names";
+import { scopeSources } from "@/lib/pipeline/text/versions";
 import { tileIdFor } from "@/lib/domain/tiles";
 import { withRollback } from "@/test/db";
 import { insertNamedObject, insertTestSubdivision, insertTestTile, insertTestVersion, type TestNamedObject } from "@/test/text";
@@ -92,5 +93,51 @@ describe("candidateTiles", () => {
       await tx.insert(serpResults).values({ serpQueryId: q!.id, rank: 1, url: `https://${src!.domain}/a`, urlNormalized: `https://${src!.domain}/a`, domain: src!.domain, title: "t", snippet: "s" });
       const v = await insertTestVersion(tx, ["Nichts Bekanntes hier."], { sourceId });
       expect(await candidateTiles(tx, v.versionId, config.mentions, ctxOf())).toEqual({ tiles: withNeighbours([A, B], 1), basis: "source" });
+    }));
+
+  /** A version of a source that a SERP search of `level`/`scopeId` found. */
+  async function sourceFoundBy(tx: Db, scopeId: string): Promise<string> {
+    const { sourceId } = await insertTestVersion(tx, ["Nichts."]);
+    const [src] = await tx.select({ domain: sources.domain }).from(sources).where(eq(sources.id, sourceId));
+    const [q] = await tx
+      .insert(serpQueries)
+      .values({ keyword: `kw-${scopeId}`, languageCode: "de", locationCode: 1, depth: 20, level: "area", scopeId, rawKey: "serp/x.json", fetchedAt: new Date() })
+      .returning({ id: serpQueries.id });
+    await tx.insert(serpResults).values({ serpQueryId: q!.id, rank: 1, url: `https://${src!.domain}/a`, urlNormalized: `https://${src!.domain}/a`, domain: src!.domain, title: "t", snippet: "s" });
+    return sourceId;
+  }
+
+  it("a SERP stored under the area id maps to its tiles", () =>
+    withRollback(async (tx) => {
+      await insertTestTile(tx, A);
+      await insertTestTile(tx, B);
+      const areaId = await insertNamedObject(tx, { type: "area", names: [{ name: "Idrevier" }], lon: 21.2, lat: 35.1, tiles: [A, B] });
+      const sourceId = await sourceFoundBy(tx, areaId);
+      const v = await insertTestVersion(tx, ["Nichts Bekanntes hier."], { sourceId });
+      expect(await candidateTiles(tx, v.versionId, config.mentions, ctxOf())).toEqual({ tiles: withNeighbours([A, B], 1), basis: "source" });
+      const { rows } = await tx.execute<{ id: string }>(scopeSources({ tileId: A }));
+      expect(rows.map((r) => r.id)).toContain(sourceId);
+    }));
+
+  it("a SERP stored under the legacy key saronic maps to saronic-gulf tiles", () =>
+    withRollback(async (tx) => {
+      await insertTestTile(tx, A);
+      await insertTestTile(tx, B);
+      await insertNamedObject(tx, { type: "area", names: [{ name: "Saronrevier" }], lon: 21.2, lat: 35.1, configKey: "saronic-gulf", tiles: [A, B] });
+      const sourceId = await sourceFoundBy(tx, "saronic");
+      const v = await insertTestVersion(tx, ["Nichts Bekanntes hier."], { sourceId });
+      expect(await candidateTiles(tx, v.versionId, config.mentions, ctxOf())).toEqual({ tiles: withNeighbours([A, B], 1), basis: "source" });
+      const { rows } = await tx.execute<{ id: string }>(scopeSources({ tileId: B }));
+      expect(rows.map((r) => r.id)).toContain(sourceId);
+    }));
+
+  it("an ended area gets no tiles from its SERP history", () =>
+    withRollback(async (tx) => {
+      await insertTestTile(tx, A);
+      const areaId = await insertNamedObject(tx, { type: "area", names: [{ name: "Altrevier" }], lon: 21.2, lat: 35.1, tiles: [A] });
+      await tx.execute(sql`update geo_objects set valid_from = current_date - 5, valid_to = current_date - 1 where id = ${areaId}`);
+      const sourceId = await sourceFoundBy(tx, areaId);
+      const { rows } = await tx.execute<{ id: string }>(scopeSources({ tileId: A }));
+      expect(rows.map((r) => r.id)).not.toContain(sourceId);
     }));
 });
