@@ -5,7 +5,7 @@ import type { GeoObjectType } from "@/lib/db/schema";
 import { jsonTexts, jsonUuids } from "@/lib/domain/mentions/scope";
 
 /*
- * Polygon of an area (spec 14, „Finden“ step 6): a gulf member covering the other members is the polygon; otherwise
+ * Polygon of an area (spec 14, „Finden“ step 6): a member the bot typed `gulf` covering the other members is the polygon; otherwise
  * the concave hull of the members' geometries, buffered on the sphere and cut back to the water and the coast (land
  * more than `inlandCutM` inland is removed). The model never produces coordinates.
  */
@@ -23,15 +23,22 @@ export type AreaPolygon = {
 /**
  * The polygon of an area with the given members; null when fewer than `minMembers` of them are valid objects with a
  * non-empty geometry (or the cut leaves nothing).
- * - Gulf rule: a `gulf`/`bay` member with an area whose polygon covers (the point on surface of) at least
+ * - Gulf rule: a member of `gulfIds` (the members the bot typed `gulf`; a bot `bay` is often a small cove with one
+ *   harbour inside, never the whole area) that is a `gulf`/`bay` object with an area and whose polygon covers (the point on surface of) at least
  *   `gulfCoverShare` of the other members; among several, the one covering most, then the largest.
  * - Else `ST_ConcaveHull(ST_Collect(geoms), concaveRatio)` (a point or line for single or collinear members),
  *   buffered by `bufferNm` nautical miles as geography, minus the land polygons (clipped to the buffer's box widened by
  *   more than `inlandCutM`) shrunk by `inlandCutM` (geography), made valid and reduced to its polygons.
  */
-export async function computeAreaPolygon(db: Db, memberIds: string[], cfg: AppConfig): Promise<AreaPolygon | null> {
+export async function computeAreaPolygon(
+  db: Db,
+  memberIds: string[],
+  cfg: AppConfig,
+  gulfIds: readonly string[] = [],
+): Promise<AreaPolygon | null> {
   const ids = [...new Set(memberIds)];
   if (ids.length === 0) return null;
+  const gulfs = ids.filter((id) => gulfIds.includes(id));
   const p = cfg.areas.polygon;
   const { rows } = await db.execute<{ n: number; gulf: string | null; hull: string | null }>(sql`
     with m as (
@@ -46,7 +53,7 @@ export async function computeAreaPolygon(db: Db, memberIds: string[], cfg: AppCo
       cross join lateral (
         select count(*)::int as covered from m o where o.id <> g.id and ST_Covers(g.geom, o.centroid)
       ) c
-      where g.type::text in ${jsonTexts(GULF_TYPES)} and ST_Dimension(g.geom) = 2
+      where g.id in ${jsonUuids(gulfs)} and g.type::text in ${jsonTexts(GULF_TYPES)} and ST_Dimension(g.geom) = 2
         and c.covered >= ${p.gulfCoverShare}::float8 * ((select n from n) - 1)
       order by c.covered desc, ST_Area(g.geom::geography) desc, g.id
       limit 1

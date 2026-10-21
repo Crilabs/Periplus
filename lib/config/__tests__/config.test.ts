@@ -738,4 +738,14 @@ describe("areas config", () => {
     (c.memberTypes as Record<string, string[]>).cape = ["nonsense"];
     expect(() => loadConfig(fixtureDir({ areas: c }))).toThrow(/areas/);
   });
+
+  it("rejects a member type key that is no bot type, and a missing bot type", () => {
+    const typo = structuredClone(repoConfig.areas) as { memberTypes: Record<string, string[]> };
+    typo.memberTypes.harbor = typo.memberTypes.harbour!;
+    delete typo.memberTypes.harbour;
+    expect(() => loadConfig(fixtureDir({ areas: typo }))).toThrow(/areas/);
+    const extra = structuredClone(repoConfig.areas) as { memberTypes: Record<string, string[]> };
+    extra.memberTypes.lagoon = ["bay"];
+    expect(() => loadConfig(fixtureDir({ areas: extra }))).toThrow(/areas/);
+  });
 });

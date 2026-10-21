@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { AppConfig } from "@/lib/config";
+import type { BotType } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import type { GeoObjectType } from "@/lib/db/schema";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
@@ -16,8 +17,9 @@ import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
  */
 
 export type MemberRole = "member" | "boundary";
-export type MemberEntry = { name: string; type: string; role: MemberRole };
-export type ResolvedMember = { geoObjectId: string; name: string; role: MemberRole };
+export type MemberEntry = { name: string; type: BotType; role: MemberRole };
+/** A resolved entry; `type` is the bot's type of the entry (the gulf rule of the polygon only takes `gulf`). */
+export type ResolvedMember = { geoObjectId: string; name: string; type: BotType; role: MemberRole };
 /** Scope tiles per subdivision id (`subdivisionTileIds`), shared by the areas of one file import. */
 export type TileCache = Map<string, string[]>;
 
@@ -129,14 +131,14 @@ export async function resolveAreaMembers(
     // rest of that outer transaction, not just this savepoint.
     await setTrigramThreshold(tx, cfg.mentions.uncertainSimilarity);
     const scope = await scopeObjects(tx, subdivisionIds, cfg.areas.neighbourRing, tileCache);
-    const byType = new Map<string, number[]>();
+    const byType = new Map<BotType, number[]>();
     entries.forEach((e, i) => byType.set(e.type, [...(byType.get(e.type) ?? []), i]));
     for (const [type, indexes] of byType) {
       // `memberTypes[type]` is an order of preference: a harbour and its town share their name (Poros, Hydra), so a
       // `harbour` entry is matched among harbours first and only an entry without any hit there among settlements.
       // An ambiguous result at one level is final (Review Focus 1): it never falls through to a lower preference.
       let pending = indexes;
-      for (const objectType of cfg.areas.memberTypes[type] ?? []) {
+      for (const objectType of cfg.areas.memberTypes[type]) {
         if (pending.length === 0) break;
         const decided = await matchLevel(tx, entries, pending, await ofTypes(tx, scope, [objectType]), match);
         for (const [i, id] of decided) if (id) sure.set(i, id);
@@ -148,7 +150,7 @@ export async function resolveAreaMembers(
   const unresolved: MemberEntry[] = [];
   entries.forEach((e, i) => {
     const id = sure.get(i);
-    if (id) resolved.push({ geoObjectId: id, name: e.name, role: e.role });
+    if (id) resolved.push({ geoObjectId: id, name: e.name, type: e.type, role: e.role });
     else unresolved.push(e);
   });
   return { resolved, unresolved };

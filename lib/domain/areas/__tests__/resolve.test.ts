@@ -35,11 +35,11 @@ describe("resolveAreaMembers", () => {
       );
       expect(res.unresolved).toEqual([]);
       expect(res.resolved).toEqual([
-        { geoObjectId: scene.objects.velani, name: "Velani", role: "member" },
-        { geoObjectId: scene.objects.myrtidi, name: "Myrtidi", role: "member" },
-        { geoObjectId: scene.objects.dorkasi, name: "Δορκάσι", role: "member" },
-        { geoObjectId: scene.objects.kastelani, name: "Kastelani", role: "member" },
-        { geoObjectId: scene.objects.sarandi, name: "Sarandi", role: "boundary" },
+        { geoObjectId: scene.objects.velani, name: "Velani", type: "harbour", role: "member" },
+        { geoObjectId: scene.objects.myrtidi, name: "Myrtidi", type: "harbour", role: "member" },
+        { geoObjectId: scene.objects.dorkasi, name: "Δορκάσι", type: "harbour", role: "member" },
+        { geoObjectId: scene.objects.kastelani, name: "Kastelani", type: "harbour", role: "member" },
+        { geoObjectId: scene.objects.sarandi, name: "Sarandi", type: "cape", role: "boundary" },
       ]);
     }));
 
@@ -84,7 +84,7 @@ describe("resolveAreaMembers", () => {
         [scene.subdivisions.a],
         cfg,
       );
-      expect(res.resolved).toEqual([{ geoObjectId: scene.objects.plakari, name: "Plakari", role: "member" }]);
+      expect(res.resolved).toEqual([{ geoObjectId: scene.objects.plakari, name: "Plakari", type: "harbour", role: "member" }]);
       expect(res.unresolved).toEqual([{ name: "Xerolimni", type: "harbour", role: "member" }]);
     }));
 
@@ -101,8 +101,8 @@ describe("resolveAreaMembers", () => {
         cfg,
       );
       expect(res.resolved).toEqual([
-        { geoObjectId: scene.objects.kalidonaHarbour, name: "Kalidona", role: "member" },
-        { geoObjectId: scene.objects.kalidonaTown, name: "Kalidona", role: "boundary" },
+        { geoObjectId: scene.objects.kalidonaHarbour, name: "Kalidona", type: "harbour", role: "member" },
+        { geoObjectId: scene.objects.kalidonaTown, name: "Kalidona", type: "settlement", role: "boundary" },
       ]);
     }));
 
@@ -111,6 +111,6 @@ describe("resolveAreaMembers", () => {
       const scene = await insertScene(db);
       expect(cfg.mentions.commonWords.el).toContain("skala");
       const res = await resolveAreaMembers(db, [{ name: "Skala", type: "harbour", role: "member" }], [scene.subdivisions.a], cfg);
-      expect(res.resolved).toEqual([{ geoObjectId: scene.objects.skala, name: "Skala", role: "member" }]);
+      expect(res.resolved).toEqual([{ geoObjectId: scene.objects.skala, name: "Skala", type: "harbour", role: "member" }]);
     }));
 });

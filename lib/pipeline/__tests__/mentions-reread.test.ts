@@ -66,9 +66,10 @@ const bayMentions = (tx: Db, versionId: string, bay: string) =>
   tx.select({ id: mentions.id }).from(mentions).where(and(eq(mentions.documentVersionId, versionId), eq(mentions.geoObjectId, bay)));
 
 describe("mentions re-read", () => {
-  it("has the stage right after the gazetteer stages in a build, as one job on its own queue", async () => {
+  it("has the stage after the gazetteer stages and the Revier import in a build, as one job on its own queue", async () => {
     const stages: readonly string[] = SUBDIVISION_BUILD_STAGES;
-    expect(stages.indexOf("mentions.reread")).toBe(GAZETTEER_STAGES.length);
+    expect(stages.indexOf("mentions.reread")).toBeGreaterThan(GAZETTEER_STAGES.length - 1);
+    expect(stages.indexOf("mentions.reread")).toBe(stages.indexOf("areas.import") + 1);
     expect(mentionsRereadStage).toMatchObject({ name: "mentions.reread", queue: "mentions.reread" });
     expect(await mentionsRereadStage.plan({} as never, { id: "r", params: { subdivisionKey: "XT-RB" } })).toEqual([{ key: "XT-RB", subdivisionKey: "XT-RB" }]);
   });

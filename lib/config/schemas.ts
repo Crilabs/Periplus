@@ -1079,6 +1079,10 @@ export type QualityConfig = z.infer<typeof qualitySchema>;
 export type RestrictionsConfig = z.infer<typeof restrictionsSchema>;
 const geoObjectTypeSchema = z.enum(geoObjectTypeEnum.enumValues);
 
+/** The member and boundary-point types of a Revier-Bot file. */
+export const botType = z.enum(["harbour", "island", "islet", "settlement", "bay", "gulf", "cape", "strait", "channel", "archipelago"]);
+export type BotType = z.infer<typeof botType>;
+
 /** `config/areas.json`: import of the Revier-Bot delivery (spec 14). */
 export const areasConfigSchema = z.strictObject({
   minMembers: z.number().int().min(1),
@@ -1089,8 +1093,8 @@ export const areasConfigSchema = z.strictObject({
     gulfCoverShare: z.number().min(0).max(1),
   }),
   neighbourRing: z.number().int().min(0),
-  /** Bot member type to the geo object types it may resolve to. */
-  memberTypes: z.record(z.string().min(1), z.array(geoObjectTypeSchema).min(1)),
+  /** Bot member type to the geo object types it may resolve to; every bot type, no other key (a typo fails at load). */
+  memberTypes: z.record(botType, z.array(geoObjectTypeSchema).min(1)),
   /** Legacy area key to bot key. */
   aliases: z.record(z.string().min(1), z.string().min(1)),
 });
@@ -1232,7 +1236,6 @@ export const imagesSchema = z.strictObject({
 });
 
 const nonEmpty = z.string().trim().min(1);
-const botType = z.enum(["harbour", "island", "islet", "settlement", "bay", "gulf", "cape", "strait", "channel", "archipelago"]);
 const botMember = z.object({ name: nonEmpty, type: botType });
 
 /** One area of a bot delivery file `config/area-imports/<CC>.json`; unknown keys (e.g. `countries`) are ignored. */
@@ -1245,7 +1248,14 @@ export const importedAreaSchema = z.object({
   boundary: z.string(),
   related: z.array(z.object({ key: nonEmpty, relation: z.enum(["contains", "within", "overlaps"]) })),
   evidence: z
-    .array(z.object({ url: nonEmpty, publisher: z.string(), lang: nonEmpty, quote: nonEmpty }))
+    .array(
+      z.object({
+        url: z.url({ protocol: /^https?$/, error: "evidence url must be http(s)" }),
+        publisher: z.string(),
+        lang: nonEmpty,
+        quote: nonEmpty.max(1000),
+      }),
+    )
     .min(1),
   notes: z.string(),
 });

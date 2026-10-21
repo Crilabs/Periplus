@@ -34,18 +34,16 @@ const buildRuns = (tx: Db, key: string) =>
 const subdivision = async (tx: Db, key: string) => (await tx.select().from(subdivisions).where(eq(subdivisions.key, key)))[0]!;
 
 describe("SUBDIVISION_BUILD_STAGES", () => {
-  it("has mentions.reread right after the gazetteer stages", () => {
-    const stages: readonly string[] = SUBDIVISION_BUILD_STAGES;
-    expect(stages.indexOf("mentions.reread")).toBe(GAZETTEER_STAGES.length);
-    expect(stages[stages.indexOf("mentions.reread") + 1]).toBe(stages[GAZETTEER_STAGES.length + 1]);
-    expect(stages.slice(0, GAZETTEER_STAGES.length)).toEqual([...GAZETTEER_STAGES]);
+  it("starts with the gazetteer stages", () => {
+    expect(SUBDIVISION_BUILD_STAGES.slice(0, GAZETTEER_STAGES.length)).toEqual([...GAZETTEER_STAGES]);
   });
 
-  it("has areas.import after geometry and before discovery.area", () => {
+  it("has areas.import after geometry, then mentions.reread (Reviere of this build count in its prepass), then discovery.area", () => {
     const stages: readonly string[] = SUBDIVISION_BUILD_STAGES;
     const i = stages.indexOf("areas.import");
     expect(i).toBeGreaterThan(stages.indexOf("geometry.compute"));
-    expect(i).toBe(stages.indexOf("discovery.area") - 1);
+    expect(stages.indexOf("mentions.reread")).toBe(i + 1);
+    expect(stages.indexOf("discovery.area")).toBe(i + 2);
   });
 });
 

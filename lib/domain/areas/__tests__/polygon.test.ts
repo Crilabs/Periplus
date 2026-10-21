@@ -72,13 +72,26 @@ describe("computeAreaPolygon", () => {
   it("takes a gulf member that covers the other members as the polygon", () =>
     withRollback(async (db) => {
       const { objects: o } = await insertScene(db);
-      const res = await computeAreaPolygon(db, [o.teranos!, o.lefkori!, o.petrili!], cfg);
+      const res = await computeAreaPolygon(db, [o.teranos!, o.lefkori!, o.petrili!], cfg, [o.teranos!]);
       expect(res?.origin).toBe("gulf");
       const { rows } = await db.execute<{ same: boolean }>(sql`
         select ST_Equals(${res!.geom}::geometry, g.geom) as same from geo_objects g where g.id = ${o.teranos!}`);
       expect(rows[0]!.same).toBe(true);
       // A member outside the gulf (one of three others) is below gulfCoverShare: the hull is computed.
-      const mixed = await computeAreaPolygon(db, [o.teranos!, o.lefkori!, o.petrili!, o.plakari!], cfg);
+      const mixed = await computeAreaPolygon(db, [o.teranos!, o.lefkori!, o.petrili!, o.plakari!], cfg, [o.teranos!]);
       expect(mixed?.origin).toBe("computed");
+    }));
+
+  it("applies the gulf rule only to members the bot typed gulf: a small bay with a harbour inside is no polygon", () =>
+    withRollback(async (db) => {
+      const { objects: o } = await insertScene(db);
+      const [bay] = await db
+        .insert(geoObjects)
+        .values({ type: "bay", origin: "osm", geom: sql`ST_Multi(ST_MakeEnvelope(10.6, 40.1, 10.85, 40.35, 4326))` })
+        .returning({ id: geoObjects.id });
+      const res = await computeAreaPolygon(db, [bay!.id, o.lefkori!, o.petrili!], cfg);
+      expect(res?.origin).toBe("computed");
+      // The same object typed gulf by the bot may stand for the area.
+      expect((await computeAreaPolygon(db, [bay!.id, o.lefkori!, o.petrili!], cfg, [bay!.id]))?.origin).toBe("gulf");
     }));
 });

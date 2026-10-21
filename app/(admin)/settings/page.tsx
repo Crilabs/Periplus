@@ -104,7 +104,7 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
       "Polygon",
       `Puffer ${areasCfg.polygon.bufferNm} sm, konkave Hülle ${areasCfg.polygon.concaveRatio}, höchstens ${areasCfg.polygon.inlandCutM} m ins Land, Golf deckt ab ${areasCfg.polygon.gulfCoverShare}`,
     ],
-    ["Nachbarring Nachlesen", `${areasCfg.neighbourRing} Kachel(n)`],
+    ["Nachbarring Mitgliedersuche", `${areasCfg.neighbourRing} Kachel(n)`],
     [
       "Mitgliedstypen",
       Object.entries(areasCfg.memberTypes)

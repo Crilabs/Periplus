@@ -30,6 +30,17 @@ describe("parseAreaFile", () => {
     expect(() => parseAreaFile(json, "GR.json")).toThrow(/^Ungültige Revier-Datei GR\.json:/);
   });
 
+  it("rejects an evidence quote over 1000 characters and an evidence url that is not http(s)", () => {
+    const long = gr() as { areas: Array<{ evidence: Array<Record<string, unknown>> }> };
+    long.areas[0]!.evidence[0]!.quote = "x".repeat(1001);
+    expect(() => parseAreaFile(long, "GR.json")).toThrow(/evidence\.0\.quote/);
+    for (const url of ["javascript:alert(1)", "ftp://example.org/x", "not a url"]) {
+      const bad = gr() as { areas: Array<{ evidence: Array<Record<string, unknown>> }> };
+      bad.areas[0]!.evidence[0]!.url = url;
+      expect(() => parseAreaFile(bad, "GR.json"), url).toThrow(/evidence\.0\.url/);
+    }
+  });
+
   it("rejects related to unknown key", () => {
     const json = gr();
     json.areas[0]!.related = [{ key: "nowhere", relation: "contains" }];

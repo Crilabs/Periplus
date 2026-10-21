@@ -75,7 +75,8 @@ export async function importAreaFile(db: Db, file: AreaFile, cfg: AppConfig, tod
     const scope = await scopeSubdivisionIds(db, area.subdivisions, cfg);
     for (const subdivision of scope.unknown) report.unknownSubdivisions.push({ key: area.key, subdivision });
     const { resolved, unresolved } = await resolveAreaMembers(db, entriesOf(area), scope.ids, cfg, tileCache);
-    const polygon = await computeAreaPolygon(db, resolved.map((r) => r.geoObjectId), cfg);
+    const gulfIds = resolved.filter((r) => r.type === "gulf").map((r) => r.geoObjectId);
+    const polygon = await computeAreaPolygon(db, resolved.map((r) => r.geoObjectId), cfg, gulfIds);
     // An ended area comes back only with a polygon; until then the key waits like a new one.
     const existing = found && (!found.ended || polygon) ? found : null;
     if (!polygon && !existing) {
