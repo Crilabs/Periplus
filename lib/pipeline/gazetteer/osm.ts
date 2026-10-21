@@ -53,7 +53,7 @@ export function elementGeometry(el: OverpassElement): GeoObjectDraft["geometry"]
 }
 
 /** Number of member way points of a relation; 0 for nodes and ways. */
-function relationPoints(el: OverpassElement): number {
+export function relationPoints(el: OverpassElement): number {
   return el.type === "relation" ? (el.members ?? []).reduce((n, m) => n + (m.geometry?.length ?? 0), 0) : 0;
 }
 

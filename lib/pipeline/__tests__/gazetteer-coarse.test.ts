@@ -98,6 +98,25 @@ describe("importCoarseFeatures", () => {
     });
   }, 120_000);
 
+  it("skips a relation with more member points than overpass.maxRelationPoints", async () => {
+    const limited = { ...overpass, maxRelationPoints: 6 };
+    const elements = [
+      {
+        type: "relation",
+        id: 9_100_011,
+        tags: { type: "multipolygon", place: "archipelago", name: "Huge Test Archipelago" },
+        members: [{ type: "way", ref: 1, role: "outer", geometry: ring(14.6, 35.3, 14.9, 35.6) }, { type: "way", ref: 2, role: "outer", geometry: ring(14.6, 35.3, 14.61, 35.31) }],
+      },
+      { type: "way", id: 9_100_012, tags: { place: "island", name: "Small Test Island" }, geometry: ring(14.7, 35.4, 14.75, 35.45) },
+    ];
+    const transport: Transport = async () => makeResponse(200, new TextEncoder().encode(JSON.stringify({ elements })));
+    await withRollback(async (tx) => {
+      await setUpMalta(tx);
+      expect(await importCoarseFeatures(tx, "MT", { transport, overpass: limited })).toEqual({ islands: 1, archipelagos: 0, gulfs: 0, towns: 0 });
+      expect(await malta(tx, "Huge Test Archipelago")).toHaveLength(0);
+    });
+  }, 120_000);
+
   it("updates a feature the fine gazetteer imported instead of duplicating it", async () => {
     await withRollback(async (tx) => {
       await setUpMalta(tx);
