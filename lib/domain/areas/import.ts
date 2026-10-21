@@ -2,7 +2,7 @@ import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { loadAreaFiles, type AreaFile, type ImportedArea } from "./file";
 import { computeAreaPolygon } from "./polygon";
-import { resolveAreaMembers, scopeSubdivisionIds, type MemberEntry } from "./resolve";
+import { resolveAreaMembers, scopeSubdivisionIds, type MemberEntry, type TileCache } from "./resolve";
 import {
   addAreaEvidence,
   createArea,
@@ -63,6 +63,7 @@ export async function importAreaFile(db: Db, file: AreaFile, cfg: AppConfig, tod
     unknownSubdivisions: [],
     conflicts: [],
   };
+  const tileCache: TileCache = new Map();
   for (const area of file.areas) {
     const found = await findArea(db, area.key, cfg.areas.aliases, file.country);
     const otherCountry = found && !found.ended ? found.tags.importCountry : undefined;
@@ -73,7 +74,7 @@ export async function importAreaFile(db: Db, file: AreaFile, cfg: AppConfig, tod
     }
     const scope = await scopeSubdivisionIds(db, area.subdivisions, cfg);
     for (const subdivision of scope.unknown) report.unknownSubdivisions.push({ key: area.key, subdivision });
-    const { resolved, unresolved } = await resolveAreaMembers(db, entriesOf(area), scope.ids, cfg);
+    const { resolved, unresolved } = await resolveAreaMembers(db, entriesOf(area), scope.ids, cfg, tileCache);
     const polygon = await computeAreaPolygon(db, resolved.map((r) => r.geoObjectId), cfg);
     // An ended area comes back only with a polygon; until then the key waits like a new one.
     const existing = found && (!found.ended || polygon) ? found : null;

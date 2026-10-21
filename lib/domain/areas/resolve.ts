@@ -18,6 +18,8 @@ import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 export type MemberRole = "member" | "boundary";
 export type MemberEntry = { name: string; type: string; role: MemberRole };
 export type ResolvedMember = { geoObjectId: string; name: string; role: MemberRole };
+/** Scope tiles per subdivision id (`subdivisionTileIds`), shared by the areas of one file import. */
+export type TileCache = Map<string, string[]>;
 
 /**
  * The valid subdivisions the file's keys name. A key replaced by `split` (`GR-L`) stands for its group keys; a key
@@ -48,10 +50,14 @@ export async function scopeSubdivisionIds(
  * The candidate objects of the scope: valid, unmerged objects assigned to one of the subdivisions, plus the objects of
  * the subdivisions' scope tiles with `neighbourRing` rings of neighbours (and their ancestors, `candidateObjects`).
  */
-async function scopeObjects(db: Db, subdivisionIds: string[], ring: number): Promise<string[]> {
+async function scopeObjects(db: Db, subdivisionIds: string[], ring: number, tileCache: TileCache): Promise<string[]> {
   if (subdivisionIds.length === 0) return [];
   const tiles = new Set<string>();
-  for (const id of subdivisionIds) for (const t of await subdivisionTileIds(db, id)) tiles.add(t);
+  for (const id of subdivisionIds) {
+    let ids = tileCache.get(id);
+    if (!ids) tileCache.set(id, (ids = await subdivisionTileIds(db, id)));
+    for (const t of ids) tiles.add(t);
+  }
   const fromTiles = await candidateObjects(db, withNeighbours(tiles, ring));
   const { rows } = await db.execute<{ id: string }>(sql`
     select o.id from geo_objects o
@@ -107,13 +113,14 @@ async function matchLevel(
  * `subdivisionIds` whose type `cfg.areas.memberTypes[type]` allows, type by type in that order (`matchLevel`). Every
  * entry is one span of the spec-06 match (`nameForms` → `findNameHits` → `resolveHits`); only a `sure` result
  * resolves. Runs in one transaction (a savepoint inside the caller's) so the trigram threshold holds. Both lists keep
- * the order of `entries`.
+ * the order of `entries`. `tileCache` keeps the subdivisions' scope tiles across the calls of one import.
  */
 export async function resolveAreaMembers(
   db: Db,
   entries: MemberEntry[],
   subdivisionIds: string[],
   cfg: AppConfig,
+  tileCache: TileCache = new Map(),
 ): Promise<{ resolved: ResolvedMember[]; unresolved: MemberEntry[] }> {
   const match: MatchConfig = { mentions: cfg.mentions, nameAffixes: cfg.nameAffixes };
   const sure = new Map<number, string>();
@@ -121,7 +128,7 @@ export async function resolveAreaMembers(
     // `set_config(…, true)` is transaction-local: inside the caller's transaction the threshold stays in effect for the
     // rest of that outer transaction, not just this savepoint.
     await setTrigramThreshold(tx, cfg.mentions.uncertainSimilarity);
-    const scope = await scopeObjects(tx, subdivisionIds, cfg.areas.neighbourRing);
+    const scope = await scopeObjects(tx, subdivisionIds, cfg.areas.neighbourRing, tileCache);
     const byType = new Map<string, number[]>();
     entries.forEach((e, i) => byType.set(e.type, [...(byType.get(e.type) ?? []), i]));
     for (const [type, indexes] of byType) {
