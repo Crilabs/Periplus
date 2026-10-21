@@ -1,10 +1,10 @@
 import type { ZoomLevel } from "@/lib/config";
 import type { ImagerySource } from "@/lib/db/schema";
-import { cameraLine, slotLabel } from "@/lib/domain/images/camera-label";
+import { cameraLine, imageTypeLabel, slotLabel } from "@/lib/domain/images/camera-label";
 import { imageFileHref } from "@/lib/domain/images/files";
 import type { PlaceImageSubjectView } from "@/lib/domain/review-view";
-import { PLACE_KIND_LABELS } from "../../_components/labels";
-import { cx, DescriptionList, inputClass, Mono, Notice, Panel, TextLink } from "../../_components/ui";
+import { imagePlaceItems } from "../../_components/image-place";
+import { cx, DescriptionList, inputClass, Notice, Panel } from "../../_components/ui";
 import { DecisionForm } from "./decision-form";
 import { DecisionPanel, Disclosure } from "./parts";
 
@@ -41,11 +41,12 @@ function Figure({ label, fileKey, alt }: { label: string; fileKey: string | null
 }
 
 /**
- * A `place_image` task, „Titelbild prüfen“: the render and the AI illustration side by side (the mask folds away), the
- * slot and the camera, the checks (water IoU against its threshold, light, zoom, attempts, watermark check) and the
- * decisions „Freigeben“, „Neu erzeugen“ (zoom from `allowedZooms`, default the task's) and „Kein Bild“. Every decision
- * posts the context key as shown (`taskKey`). Without a candidate (`reason`), „Freigeben“ is disabled here and refused
- * by the server.
+ * A `place_image` task, „Bild prüfen: <Bildtyp>“ (`imageTypeLabel`: „Ankerplatz“, „Ankerplatz bei einem Ort – …“,
+ * „Marina“, „Hafen“; the slot as the secondary line): the render and the AI illustration side by side (the mask folds
+ * away), the camera, which place it is (name, ids, Landesteil, anchor and cove point, the town nearby), the checks
+ * (water IoU against its threshold, light, zoom, attempts, watermark check) and the decisions „Freigeben“,
+ * „Neu erzeugen“ (zoom from `allowedZooms`, default the task's) and „Kein Bild“. Every decision posts the context key
+ * as shown (`taskKey`). Without a candidate (`reason`), „Freigeben“ is disabled here and refused by the server.
  */
 export function PlaceImageDecision({
   subject,
@@ -65,6 +66,8 @@ export function PlaceImageDecision({
   const zooms = c.allowedZooms.length > 0 ? c.allowedZooms : (Object.keys(ZOOM_LABELS) as ZoomLevel[]);
   const iouPassed = c.waterIoU !== null && c.waterIoU >= subject.threshold;
   const slot = slotLabel(subject.slot);
+  const { place } = subject;
+  const type = imageTypeLabel(place, place.town?.name ?? null);
 
   return (
     <>
@@ -114,10 +117,10 @@ export function PlaceImageDecision({
             />
           </DecisionPanel>
         )}
-        <Panel title="Titelbild prüfen" description={slot} className={open ? "lg:col-span-3" : "lg:col-span-5"}>
+        <Panel title={`Bild prüfen: ${type}`} description={slot} className={open ? "lg:col-span-3" : "lg:col-span-5"}>
           <div className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Figure label="Rendering" fileKey={subject.photoKey} alt={`Rendering von ${subject.name ?? "dem Ort"}`} />
+              <Figure label="Rendering" fileKey={subject.photoKey} alt={`Rendering von ${place.name ?? "dem Ort"}`} />
               <Figure label="KI-Illustration" fileKey={subject.candidateKey} alt={c.alt} />
             </div>
             {subject.maskKey && (
@@ -126,6 +129,7 @@ export function PlaceImageDecision({
               </Disclosure>
             )}
             <p className="text-sm">{c.camera ? cameraLine(c.camera) : "Keine Kamera über Wasser"}</p>
+            <DescriptionList columns={2} items={imagePlaceItems(place)} />
           </div>
         </Panel>
       </div>
@@ -133,12 +137,8 @@ export function PlaceImageDecision({
         <DescriptionList
           columns={2}
           items={[
-            {
-              label: "Ort",
-              value: <TextLink href={`/places/${subject.placeId}`}>{subject.name ?? subject.placeId}</TextLink>,
-            },
-            { label: "Art", value: PLACE_KIND_LABELS[subject.kind] },
             { label: "Bild", value: slot },
+            { label: "Bildtyp", value: type },
             {
               label: "Wasser-IoU",
               hint: "Überdeckung des Wassers im Rendering und in der Illustration, 0 bis 1",
@@ -160,7 +160,6 @@ export function PlaceImageDecision({
             },
             { label: "Quellen", value: subject.sources.map((s) => SOURCE_LABELS[s] ?? s).join(" · ") || "–" },
             { label: "Modell", value: `${c.model} · Prompt v${c.promptVersion}` },
-            !!subject.publicId && { label: "Öffentliche ID", value: <Mono>{subject.publicId}</Mono> },
           ]}
         />
       </Panel>

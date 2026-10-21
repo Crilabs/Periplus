@@ -5,7 +5,7 @@ import { MockImageModel } from "@/lib/ai/mock-image";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { placeImages, reviewDecisions, runs } from "@/lib/db/schema";
+import { landPolygons, placeImages, reviewDecisions, runs } from "@/lib/db/schema";
 import { createReviewTask } from "@/lib/domain/review";
 import { decideReviewTask } from "@/lib/domain/review-decisions";
 import { createRun } from "@/lib/domain/runs";
@@ -19,7 +19,7 @@ import {
   GEOMETRY_CONSOLIDATION_STAGES,
 } from "@/lib/pipeline/consolidation/stages";
 import { consolidateAfter } from "@/lib/pipeline/follow-ups";
-import { generatePlaceImage, keyDone } from "@/lib/pipeline/images/generate";
+import { generatePlaceImage, keyDone, type ImageView } from "@/lib/pipeline/images/generate";
 import { setImageModelFactory } from "@/lib/pipeline/images/model";
 import { imageJobs, imageTargets, nextViewSlot } from "@/lib/pipeline/images/stage";
 import { IMAGES_STAGE } from "@/lib/pipeline/images/stage-name";
@@ -47,7 +47,8 @@ import { memoryArchive } from "@/test/s3";
  */
 
 const cfg = getConfig();
-const TITLE = { slot: "title", zoom: "z1" as const };
+/** The automatic title view: no zoom, the composition and the imagery choose it (`titleZoomFor`). */
+const TITLE: ImageView = { slot: "title" };
 const RENDER_TIMEOUT_MS = 180_000;
 
 function recordingBoss() {
@@ -71,6 +72,11 @@ const withPromptVersion = (promptVersion: number): AppConfig => ({
   models: { ...cfg.models, imageTasks: { "generate-place-image": { ...cfg.models.imageTasks["generate-place-image"]!, promptVersion } } },
 });
 
+const withRulesVersion = (rulesVersion: string): AppConfig => ({
+  ...cfg,
+  images: { ...cfg.images, camera: { ...cfg.images.camera, rulesVersion } },
+});
+
 /** Kind, scope and stage names of run `id`. */
 async function getRun(tx: Db, id: string) {
   const [row] = await tx
@@ -86,12 +92,15 @@ async function subdivisionRun(tx: Db, subdivisionKey: string) {
   return { id: run.id, params: { images: { subdivisionKey } } as Record<string, unknown> };
 }
 
-/** Generates the title image of `objectId` once (stub renderer), so its imagery and task exist. */
-async function generateTitle(tx: Db, objectId: string, runId: string, force?: boolean) {
+/**
+ * Generates the title image of `objectId` once (stub renderer, `config` default the repo's, a green cadastre unless
+ * `blankCadastre`), so its imagery and task exist.
+ */
+async function generateTitle(tx: Db, objectId: string, runId: string, force?: boolean, config?: AppConfig, blankCadastre = false) {
   await generatePlaceImage(
     tx,
     { geoObjectId: objectId, view: TITLE, runId, force },
-    { archive: memoryArchive(), transport: await syntheticImageryTransport(), imageModel: await imageModel(GOOD), model: checker(false), render: stubRender },
+    { archive: memoryArchive(), transport: await syntheticImageryTransport({ blankCadastre }), imageModel: await imageModel(GOOD), model: checker(false), render: stubRender, config },
   );
   const [task] = await imageTasksOf(tx, `${objectId}:title`);
   return task!;
@@ -116,6 +125,40 @@ describe("imageTargets", () => {
       const run = await subdivisionRun(tx, sd.key);
       expect(await imageTargets(tx, run)).toEqual([{ geoObjectId: spot.objectId, view: TITLE }]);
       await generateTitle(tx, spot.objectId, run.id);
+      expect(await imageTargets(tx, run)).toEqual([]);
+    });
+  });
+
+  it("plan and job agree on the key and zoom with a blank cadastre (z1) as with a fine one (z2)", async () => {
+    await withRollback(async (tx) => {
+      const sd = await insertImageSubdivision(tx);
+      const fine = await insertSpot(tx, sd.id);
+      const blank = await insertSpot(tx, sd.id, { lon: IMAGE_LON + 0.1 });
+      const run = await subdivisionRun(tx, sd.key);
+      expect((await imageTargets(tx, run)).map((t) => t.geoObjectId).sort()).toEqual([fine.objectId, blank.objectId].sort());
+      const fineTask = await generateTitle(tx, fine.objectId, run.id);
+      const blankTask = await generateTitle(tx, blank.objectId, run.id, undefined, undefined, true);
+      expect(fineTask.context.zoom).toBe("z2");
+      expect(blankTask.context.zoom).toBe("z1");
+      // the plan reads the same zoom from the tiles the job stored, so both keys are done
+      expect(await imageTargets(tx, run)).toEqual([]);
+    });
+  });
+
+  it("plan and job agree on the key for a place with a named cove", async () => {
+    await withRollback(async (tx) => {
+      const sd = await insertImageSubdivision(tx);
+      // the cove point (the place's position) 480 m east of the anchor point, a coast 600 m east of the anchor point
+      const spot = await insertSpot(tx, sd.id, { lon: IMAGE_LON + 480 / 89_390, anchor: { lon: IMAGE_LON, lat: IMAGE_LAT } });
+      const [w, s, e, n] = [IMAGE_LON + 600 / 89_390, IMAGE_LAT - 500 / 110_960, IMAGE_LON + 1000 / 89_390, IMAGE_LAT + 500 / 110_960];
+      await tx.insert(landPolygons).values({ geom: sql`${geomFromGeoJson({ type: "Polygon", coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] })}`, datasetVersion: "test" });
+      const run = await subdivisionRun(tx, sd.key);
+      const task = await generateTitle(tx, spot.objectId, run.id);
+      // the camera stands over the anchorage and looks east at the cove (the fetch rays would have it look north)
+      expect(task.context.zoom).toBe("z2");
+      expect(task.context.camera!.viewBearingDeg).toBeCloseTo(90, 6);
+      expect(task.context.camera!.position[0]).toBeGreaterThan(IMAGE_LON);
+      expect(task.context.camera!.position[0]).toBeLessThan(IMAGE_LON + 480 / 89_390);
       expect(await imageTargets(tx, run)).toEqual([]);
     });
   });
@@ -242,6 +285,22 @@ describe("imageTargets", () => {
       await generateTitle(tx, spot.objectId, run.id);
       expect(await imageTargets(tx, run)).toEqual([]);
       expect(await imageTargets(tx, run, withPromptVersion(2))).toEqual([{ geoObjectId: spot.objectId, view: TITLE }]);
+    });
+  });
+
+  it("new camera rules version makes a place with an image under the old key a target again", async () => {
+    await withRollback(async (tx) => {
+      const sd = await insertImageSubdivision(tx);
+      const spot = await insertSpot(tx, sd.id);
+      const run = await subdivisionRun(tx, sd.key);
+      // the title image was generated and approved under the old camera rules
+      const old = withRulesVersion("camera-1");
+      const task = await generateTitle(tx, spot.objectId, run.id, undefined, old);
+      await decide(tx, task.id, "approve_image");
+      await insertApprovedTitle(tx, spot.objectId, task);
+      expect(await imageTargets(tx, run, old)).toEqual([]);
+      // the current rules give a new key: the title image is generated again (the old one stays until approval)
+      expect(await imageTargets(tx, run)).toEqual([{ geoObjectId: spot.objectId, view: TITLE }]);
     });
   });
 

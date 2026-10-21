@@ -112,6 +112,49 @@ export function candidateAzimuths(base: number, stepDeg: number): number[] {
   return out;
 }
 
+/**
+ * Fetch (metres) along `bearingDeg` from the rays of the centre (ray i at `i · 360 / rays.length`), interpolated
+ * linearly between the two neighbouring rays; `null` without rays.
+ */
+export function shoreDistance(rays: number[] | null, bearingDeg: number): number | null {
+  if (!rays || rays.length === 0) return null;
+  const pos = normalise(bearingDeg) / (360 / rays.length);
+  const i = Math.floor(pos) % rays.length;
+  const t = pos - Math.floor(pos);
+  return rays[i]! * (1 - t) + rays[(i + 1) % rays.length]! * t;
+}
+
+/**
+ * How far behind the shoreline the open-water target lies at `zoom`, so that the shoreline runs
+ * `composition.openWater.shoreBelowCentreDeg` below the image centre (8.3° ≈ fov/6: the lower-third line, a strip
+ * of water at the bottom and the coast filling the image): the camera stands `d = h / tan(tilt)` before its target
+ * but only `ds = h / tan(tilt + angle)` before the shoreline, so the target lies `d − ds` inland of it.
+ */
+export function inlandOffsetM(zoom: ZoomLevel, cfg: Pick<ImagesConfig, "camera" | "composition">): number {
+  const h = cfg.camera.zooms[zoom].heightM;
+  const tilt = cfg.camera.tiltDeg;
+  return h / Math.tan(tilt * RAD) - h / Math.tan((tilt + cfg.composition.openWater.shoreBelowCentreDeg) * RAD);
+}
+
+/**
+ * Target of the open-water composition for the camera side `azimuthDeg` and a shore `shoreM` ahead along the view
+ * direction (`azimuthDeg + 180`; from the fetch rays or the named cove's land query): the centre moved
+ * `shoreM + inlandOffsetM` along the view, so the shoreline runs through the lower third of the image. The centre
+ * itself (the same array) without a shore distance or when the shore ahead is farther than
+ * `composition.openWater.maxShoreM` (open sea ahead). Decision Christian, 21.10.2026, after review feedback: with
+ * the centre as target the image showed water below and the bay far away at the top.
+ */
+export function openWaterTarget(
+  centre: LonLat,
+  shoreM: number | null,
+  azimuthDeg: number,
+  zoom: ZoomLevel,
+  cfg: Pick<ImagesConfig, "camera" | "composition">,
+): LonLat {
+  if (shoreM === null || shoreM > cfg.composition.openWater.maxShoreM) return centre;
+  return destination(centre, shoreM + inlandOffsetM(zoom, cfg), normalise(azimuthDeg + 180));
+}
+
 /** Open-water camera: at the zoom height, `heightM / tan(tilt)` from the target along `azimuthDeg`. */
 export function cameraFor(target: LonLat, azimuthDeg: number, zoom: ZoomLevel, cfg: Pick<ImagesConfig, "camera">): RenderCamera {
   const c = cfg.camera;
@@ -187,6 +230,26 @@ export function allowedZooms(resolutionM: number, cfg: Pick<ImagesConfig, "camer
 }
 
 /**
+ * Zoom of the automatic title image: `camera.defaultZoom` for the near-town composition; for open water
+ * `composition.openWater.zoom` when core imagery of `coreResolutionM` allows it (`allowedZooms`), else the closest
+ * allowed level below it (`z1` is always allowed). `coreResolutionM` null (the imagery is not known yet) gives the
+ * wanted level. An explicit zoom of a view (an admin's choice) is not subject to this. Decision Christian,
+ * 21.10.2026: the title image shows the anchorage at z2.
+ */
+export function titleZoomFor(
+  input: Pick<PlaceImageInput, "kind" | "town">,
+  coreResolutionM: number | null,
+  cfg: Pick<ImagesConfig, "camera" | "composition" | "render">,
+): ZoomLevel {
+  if (compositionFor(input) === "near_town") return cfg.camera.defaultZoom;
+  const wanted = cfg.composition.openWater.zoom;
+  if (coreResolutionM === null) return wanted;
+  const levels = Object.keys(cfg.camera.zooms) as ZoomLevel[];
+  const allowed = allowedZooms(coreResolutionM, cfg);
+  return levels.slice(0, levels.indexOf(wanted) + 1).filter((z) => allowed.includes(z)).at(-1) ?? "z1";
+}
+
+/**
  * Where the rotation starts: for `near_town` the bearing from the town to the centre (the camera stands on the far
  * side of the anchorage), otherwise the opening bearing or the longest fetch ray (`baseAzimuth`; the rays cover the
  * full circle, so their step is `360 / rays.length`).
@@ -207,19 +270,21 @@ function nearTownSamples(foregroundM: number): number[] {
 }
 
 /**
- * Index of the first azimuth for which every point `origin` moved `distance` along it (for all `distancesM`,
- * geodesic `ST_Project`) lies outside `land_polygons`; `null` if none does. One query over all candidates.
+ * Index of the first candidate (origin `origins[i]`, azimuth `azimuths[i]`) for which every point `origin` moved
+ * `distance` along the azimuth (for all `distancesM`, geodesic `ST_Project`) lies outside `land_polygons`; `null` if
+ * none does. One query over all candidates.
  */
-async function firstOverWater(db: Db, origin: LonLat, azimuths: number[], distancesM: number[]): Promise<number | null> {
+async function firstOverWater(db: Db, origins: LonLat[], azimuths: number[], distancesM: number[]): Promise<number | null> {
   const { rows } = await db.execute<{ i: number | string }>(sql`
     select t.i
-    from unnest(${`{${azimuths.join(",")}}`}::float8[]) with ordinality as t(az, i)
+    from unnest(${`{${azimuths.join(",")}}`}::float8[],
+                ${`{${origins.map((o) => o[0]).join(",")}}`}::float8[],
+                ${`{${origins.map((o) => o[1]).join(",")}}`}::float8[]) with ordinality as t(az, lon, lat, i)
     where not exists (
       select 1
       from unnest(${`{${distancesM.join(",")}}`}::float8[]) as d(m)
       cross join lateral (
-        select ST_Project(ST_SetSRID(ST_MakePoint(${origin[0]}::float8, ${origin[1]}::float8), 4326)::geography,
-                          d.m, radians(t.az))::geometry as p
+        select ST_Project(ST_SetSRID(ST_MakePoint(t.lon, t.lat), 4326)::geography, d.m, radians(t.az))::geometry as p
       ) q
       join land_polygons l on l.geom && q.p and ST_Intersects(l.geom, q.p)
     )
@@ -229,11 +294,42 @@ async function firstOverWater(db: Db, origin: LonLat, azimuths: number[], distan
 }
 
 /**
- * Camera for an image of a place at `zoom`. Starting at `azimuthOverride` (an additional view an admin asked for),
- * else at `baseAzimuthFor` (north without opening and rays), the azimuth turns in `camera.rotateStepDeg` steps until
- * the camera is over water: for `open_water` its ground point, for `near_town` every point from 200 m to
- * `foregroundM` from the centre. Composition and light rules stay the same with an override. `no_water_view` when no
- * azimuth qualifies (an enclosed place).
+ * For each bearing, the distance (metres) from `origin` to the first land along it between `fromM` and `maxM` out
+ * (`land_polygons` cut by that segment), `null` where there is none. One query over all bearings.
+ */
+async function landDistances(db: Db, origin: LonLat, bearings: number[], fromM: number, maxM: number): Promise<Array<number | null>> {
+  if (bearings.length === 0 || fromM >= maxM) return bearings.map(() => null);
+  const { rows } = await db.execute<{ i: number | string; m: number | string | null }>(sql`
+    with o as (select ST_SetSRID(ST_MakePoint(${origin[0]}::float8, ${origin[1]}::float8), 4326)::geography as p),
+    ray as (
+      select t.i,
+             ST_MakeLine(ST_Project(o.p, ${fromM}::float8, radians(t.b))::geometry, ST_Project(o.p, ${maxM}::float8, radians(t.b))::geometry) as seg
+      from unnest(${`{${bearings.join(",")}}`}::float8[]) with ordinality as t(b, i), o
+    )
+    select ray.i,
+           (select min(ST_Distance(o.p, ST_Intersection(ray.seg, l.geom)::geography))
+            from land_polygons l, o
+            where l.geom && ray.seg and ST_Intersects(l.geom, ray.seg)) as m
+    from ray
+    order by ray.i`);
+  return rows.map((r) => (r.m === null ? null : Number(r.m)));
+}
+
+/**
+ * Camera for an image of a place at `zoom`. The azimuth starts at `azimuthOverride` (an additional view an admin
+ * asked for), else at the rule's base, and turns in `camera.rotateStepDeg` steps until the camera is over water.
+ * `near_town`: every point from 200 m to `foregroundM` from the centre must be over water. `open_water`: the camera
+ * ground point must be, with the target `openWaterTarget` of the shore ahead; the rules in turn until one yields a
+ * camera:
+ * 1. the named cove (`input.cove`): the camera stands over the anchorage and looks at the cove point (base: the
+ *    bearing cove → anchor point); each candidate's shore is the first land along its view direction from the
+ *    anchor point beyond the cove point's distance (`landDistances`, within `maxShoreM`; a view without land there
+ *    is no candidate);
+ * 2. the fetch rays (base: `baseAzimuthFor`): each candidate's shore is the fetch along its view direction;
+ * 3. the same candidates with the centre as target (the rule before camera-3).
+ * Composition and light rules stay the same with an override. `no_water_view` when no azimuth qualifies (an
+ * enclosed place). Decision Christian, 21.10.2026: the title image shows the named cove, the camera over the
+ * anchorage, the shoreline in the lower third.
  */
 export async function planRender(
   db: Db,
@@ -243,14 +339,36 @@ export async function planRender(
   azimuthOverride: number | null = null,
 ): Promise<RenderPlan> {
   const centre: LonLat = [input.lon, input.lat];
-  const candidates = candidateAzimuths(azimuthOverride ?? baseAzimuthFor(input) ?? 0, cfg.camera.rotateStepDeg);
+  const step = cfg.camera.rotateStepDeg;
+  // the ground point lies `distanceM` from each candidate's own target
+  const overWater = (cameras: RenderCamera[]) => firstOverWater(db, cameras.map((c) => c.target), cameras.map((c) => c.azimuthDeg), [cameras[0]!.distanceM]);
 
-  const nearTown = compositionFor(input) === "near_town";
-  const town: LonLat | null = nearTown ? [input.town!.lon, input.town!.lat] : null;
-  const camera = (azimuthDeg: number) =>
-    town ? nearTownCamera(centre, town, azimuthDeg, zoom, cfg) : cameraFor(centre, azimuthDeg, zoom, cfg);
-  const samples = town ? nearTownSamples(cfg.composition.nearTown.foregroundM) : [camera(0).distanceM];
+  if (compositionFor(input) === "near_town") {
+    const town: LonLat = [input.town!.lon, input.town!.lat];
+    const candidates = candidateAzimuths(azimuthOverride ?? baseAzimuthFor(input)!, step);
+    const index = await firstOverWater(db, candidates.map(() => centre), candidates, nearTownSamples(cfg.composition.nearTown.foregroundM));
+    return index === null ? { ok: false, reason: "no_water_view" } : { ok: true, camera: nearTownCamera(centre, town, candidates[index]!, zoom, cfg) };
+  }
 
-  const index = await firstOverWater(db, centre, candidates, samples);
-  return index === null ? { ok: false, reason: "no_water_view" } : { ok: true, camera: camera(candidates[index]!) };
+  if (input.cove) {
+    const cove = offset(centre, input.cove);
+    const candidates = candidateAzimuths(azimuthOverride ?? normalise(cove.azimuthDeg + 180), step);
+    const shores = await landDistances(db, centre, candidates.map((az) => normalise(az + 180)), cove.distanceM, cfg.composition.openWater.maxShoreM);
+    const cameras = candidates.flatMap((az, i) => (shores[i] === null ? [] : [cameraFor(openWaterTarget(centre, shores[i], az, zoom, cfg), az, zoom, cfg)]));
+    if (cameras.length > 0) {
+      const index = await overWater(cameras);
+      if (index !== null) return { ok: true, camera: cameras[index]! };
+    }
+  }
+
+  const candidates = candidateAzimuths(azimuthOverride ?? baseAzimuthFor(input) ?? 0, step);
+  const shifted = candidates.map((az) => cameraFor(openWaterTarget(centre, shoreDistance(input.rays, normalise(az + 180)), az, zoom, cfg), az, zoom, cfg));
+  const stages = [shifted];
+  // `openWaterTarget` hands back `centre` itself when it does not shift: a further stage only when the first differs
+  if (shifted.some((c) => c.target !== centre)) stages.push(candidates.map((az) => cameraFor(centre, az, zoom, cfg)));
+  for (const cameras of stages) {
+    const index = await overWater(cameras);
+    if (index !== null) return { ok: true, camera: cameras[index]! };
+  }
+  return { ok: false, reason: "no_water_view" };
 }

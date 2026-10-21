@@ -195,8 +195,9 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
   const imageRows: [string, string][] = [
     ["Quellen", Object.entries(images.sources).map(([name, s]) => `${name} (${s.kind === "wms" ? "Luftbild" : "Gelände"}, ${s.resolutionM} m, ${s.countries === "*" ? "alle Länder" : s.countries.join(", ")})`).join("; ")],
     ["Lieferung je Quelle", Object.entries(images.delivery).map(([name, on]) => `${name}: ${on ? "geliefert" : "nicht geliefert"}`).join(", ")],
-    ["Kamera", `Neigung ${images.camera.tiltDeg}°, Bildwinkel ${images.camera.fovDeg}°, ${images.camera.width} × ${images.camera.height}, Drehschritt ${images.camera.rotateStepDeg}°, Standard ${images.camera.defaultZoom}`],
+    ["Kamera", `Neigung ${images.camera.tiltDeg}°, Bildwinkel ${images.camera.fovDeg}°, ${images.camera.width} × ${images.camera.height}, Drehschritt ${images.camera.rotateStepDeg}°, Standard ${images.camera.defaultZoom}, Regeln ${images.camera.rulesVersion}`],
     ["Zoomstufen", Object.entries(images.camera.zooms).map(([z, v]) => `${z} ${v.heightM} m`).join(", ")],
+    ["Bildaufbau", `offenes Wasser: Zoom ${images.composition.openWater.zoom}, Uferlinie ${images.composition.openWater.shoreBelowCentreDeg}° unter der Bildmitte, Ufer höchstens ${images.composition.openWater.maxShoreM} m entfernt, benannte Bucht ab ${images.composition.openWater.coveMinDistanceM} m vom Ankerpunkt; vor einem Ort: Kamera ${images.composition.nearTown.foregroundM} m hinter dem Ankerplatz`],
     ["Licht", `Stadt im Umkreis ${images.light.townRadiusM} m: ${images.light.nearTown}; je Art ${Object.entries(images.light.byKind).map(([k, v]) => `${k} ${v}`).join(", ")}`],
     ["Wasser-IoU mindestens", `Mittag ${images.check.minWaterIoU.midday}, Abend ${images.check.minWaterIoU.evening}; höchstens ${images.check.maxAttempts} Versuche`],
     ["Je Lauf höchstens", `${images.pipeline.maxGenerationsPerRun} Bilder (pipeline.maxGenerationsPerRun)`],

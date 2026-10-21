@@ -8,7 +8,7 @@ import { createRun } from "@/lib/domain/runs";
 import { generatePlaceImage, type PlaceImageTaskContext } from "@/lib/pipeline/images/generate";
 import { IMAGES_STAGE } from "@/lib/pipeline/images/stage-name";
 import { testDb, withRollback } from "@/test/db";
-import { checker, GOOD, imageModel, imageTasksOf, insertImageSubdivision, insertSpot, stubRender, syntheticImageryTransport } from "@/test/images";
+import { checker, GOOD, IMAGE_LAT, IMAGE_LON, imageModel, imageTasksOf, insertImageSubdivision, insertSpot, stubRender, syntheticImageryTransport } from "@/test/images";
 import { memoryArchive } from "@/test/s3";
 
 /*
@@ -84,15 +84,18 @@ describe("review of a place image", () => {
       const s = detail!.subject;
       if (s.type !== "place_image") throw new Error(`subject ${s.type}`);
       expect(s).toMatchObject({
-        geoObjectId: t.objectId,
-        placeId: t.placeId,
-        name: "Bildbucht",
+        place: { geoObjectId: t.objectId, placeId: t.placeId, name: "Bildbucht", publicId: null, kind: "anchorage", composition: "open_water", cove: null, town: null },
         slot: "title",
         key: t.task.context.key,
         candidateKey: t.task.context.candidateKey,
         threshold: 0.8,
         sources: ["ktimatologio", "sentinel2", "copernicus_dem"],
       });
+      // the place block of the panel: the centre (no anchor point in the fixture: the position) and the Landesteil
+      expect(s.place.centre).toMatchObject({ anchor: false });
+      expect(s.place.centre.lon).toBeCloseTo(IMAGE_LON, 9);
+      expect(s.place.centre.lat).toBeCloseTo(IMAGE_LAT, 9);
+      expect(s.place.subdivision?.key).toMatch(/^XT-/);
       expect(s.photoKey).toMatch(/^imagery\/renders\/.+\/photo\.png$/);
       expect(s.maskKey).toMatch(/^imagery\/renders\/.+\/mask\.png$/);
       expect(s.context.camera).toEqual(t.task.context.camera);

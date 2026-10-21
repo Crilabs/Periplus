@@ -3,7 +3,7 @@ import { getTransport } from "@/lib/adapters/http";
 import { getArchive } from "@/lib/adapters/s3";
 import { getConfig, type ZoomLevel } from "@/lib/config";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
-import { generatePlaceImage } from "@/lib/pipeline/images/generate";
+import { generatePlaceImage, type ImageView } from "@/lib/pipeline/images/generate";
 import { imageModelFor } from "@/lib/pipeline/images/model";
 import { imageJobs } from "@/lib/pipeline/images/stage";
 import { IMAGES_STAGE } from "@/lib/pipeline/images/stage-name";
@@ -21,7 +21,8 @@ const jobSchema = z.object({
   geoObjectId: z.uuid(),
   view: z.object({
     slot: z.string().regex(/^(title|view-\d+)$/),
-    zoom: z.string().refine((z) => z in getConfig().images.camera.zooms, "unknown zoom level"),
+    /** An admin's zoom; the automatic title view has none (the composition and the imagery choose it). */
+    zoom: z.string().refine((z) => z in getConfig().images.camera.zooms, "unknown zoom level").optional(),
     azimuthDeg: z.number().min(0).lt(360).optional(),
   }),
   runId: z.uuid(),
@@ -32,7 +33,11 @@ const jobSchema = z.object({
 /** Generates one image of `data.geoObjectId` (`generatePlaceImage`) and puts it up for review. */
 export const imagesPlaceHandler: JobHandler<JobData> = async (data, ctx) => {
   const job = jobSchema.parse(data);
-  const view = { ...job.view, zoom: job.view.zoom as ZoomLevel };
+  const view: ImageView = {
+    slot: job.view.slot,
+    ...(job.view.zoom !== undefined ? { zoom: job.view.zoom as ZoomLevel } : {}),
+    ...(job.view.azimuthDeg !== undefined ? { azimuthDeg: job.view.azimuthDeg } : {}),
+  };
   const result = await generatePlaceImage(
     ctx.db,
     { geoObjectId: job.geoObjectId, view, runId: job.runId, force: job.force },

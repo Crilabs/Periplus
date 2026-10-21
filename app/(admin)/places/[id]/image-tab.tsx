@@ -1,8 +1,9 @@
-import { cameraLine, slotLabel } from "@/lib/domain/images/camera-label";
+import { cameraLine, imageTypeLabel, slotLabel } from "@/lib/domain/images/camera-label";
 import { imageFileHref } from "@/lib/domain/images/files";
 import type { CurrentImage, PlaceImageView } from "@/lib/domain/images/view";
 import { Disclosure } from "../../review/[id]/parts";
 import { Dialog } from "../../_components/dialog";
+import { imagePlaceItems } from "../../_components/image-place";
 import { Badge, Button, DescriptionList, EmptyState, Field, fmt, inputClass, Notice, Panel, TextLink } from "../../_components/ui";
 import { addPlaceViewAction, removePlaceImageAction } from "./actions";
 
@@ -20,10 +21,11 @@ function Picture({ fileKey, alt }: { fileKey: string; alt: string }) {
   return <img src={imageFileHref(fileKey)} alt={alt} className="w-full rounded-md border border-line bg-sunken" />;
 }
 
-function ImagePanel({ placeId, image, editable }: { placeId: string; image: CurrentImage; editable: boolean }) {
+function ImagePanel({ placeId, image, editable, type }: { placeId: string; image: CurrentImage; editable: boolean; type: string | null }) {
   return (
     <Panel
-      title={slotLabel(image.slot)}
+      title={type ?? slotLabel(image.slot)}
+      description={type ? slotLabel(image.slot) : undefined}
       actions={
         editable && (
           <Dialog
@@ -79,9 +81,10 @@ function ImagePanel({ placeId, image, editable }: { placeId: string; image: Curr
 }
 
 /**
- * Tab „Bilder“ of the place page (spec 13): every current image of the place (title image and further views) with
- * its kind, light, sources, imagery date and camera, the render and mask behind it, the draft waiting for approval, and
- * the form for a further view.
+ * Tab „Bilder“ of the place page (spec 13): which place the images show and their type (`imageTypeLabel`, with the
+ * name, ids, Landesteil, anchor and cove point and the town nearby), every current image of the place (title image
+ * and further views, the type as title and the slot as its secondary line) with its kind, light, sources, imagery
+ * date and camera, the render and mask behind it, the draft waiting for approval, and the form for a further view.
  */
 export function ImageTab({
   placeId,
@@ -96,11 +99,17 @@ export function ImageTab({
   notice?: keyof typeof NOTICES;
   zoomRefused?: boolean;
 }) {
-  const { images, candidates } = view;
+  const { images, candidates, place } = view;
+  const type = place ? imageTypeLabel(place, place.town?.name ?? null) : null;
   const note = notice ? NOTICES[notice] : null;
   return (
     <div className="space-y-6">
       {note && <Notice tone={note.tone}>{note.text}</Notice>}
+      {place && (
+        <Panel title={type!} description="Bildtyp dieses Orts: so legt das System Kamera, Licht und Szene der Bilder an">
+          <DescriptionList columns={2} items={imagePlaceItems(place)} />
+        </Panel>
+      )}
       {zoomRefused && (
         <Notice tone="danger" title="Nicht gestartet">
           Diese Zoomstufe trägt das Luftbild des Orts nicht.
@@ -115,8 +124,8 @@ export function ImageTab({
       {candidates.map((c) => (
         <Panel
           key={c.taskId}
-          title={`${slotLabel(c.slot)}: Entwurf, wartet auf Freigabe`}
-          description={`${c.passed ? "Prüfungen bestanden" : "Prüfungen nicht bestanden"}${c.light ? `, Licht: ${LIGHT_LABELS[c.light]}` : ""}${c.waterIoU === null ? "" : `, Wasser-IoU ${c.waterIoU.toLocaleString("de-DE", { maximumFractionDigits: 2 })}`}`}
+          title={`${type ?? slotLabel(c.slot)}: Entwurf, wartet auf Freigabe`}
+          description={`${type ? `${slotLabel(c.slot)}, ` : ""}${c.passed ? "Prüfungen bestanden" : "Prüfungen nicht bestanden"}${c.light ? `, Licht: ${LIGHT_LABELS[c.light]}` : ""}${c.waterIoU === null ? "" : `, Wasser-IoU ${c.waterIoU.toLocaleString("de-DE", { maximumFractionDigits: 2 })}`}`}
           actions={<TextLink href={`/review/${c.taskId}`}>Zur Prüfung</TextLink>}
         >
           <div className="max-w-2xl">
@@ -134,7 +143,7 @@ export function ImageTab({
       )}
 
       {images.map((image) => (
-        <ImagePanel key={image.id} placeId={placeId} image={image} editable={editable} />
+        <ImagePanel key={image.id} placeId={placeId} image={image} editable={editable} type={type} />
       ))}
 
       {editable && (

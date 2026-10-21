@@ -119,10 +119,13 @@ async function ensureTile(
   return toRef(row!);
 }
 
+/** The aerial tiles of a render as the generation key and the zoom choice read them: core (cadastre) and wide (Sentinel-2). */
+export type AerialTiles = Pick<ImagerySet, "core" | "wide">;
+
 /**
  * The WMS cells of the aerial imagery of `place`: the cadastre grid of the core window when the place's country has
  * the cadastre, then the Sentinel-2 grid of the wide window when it has Sentinel-2. `ensureImagery` fetches exactly
- * these, `currentAerialTileIds` looks them up.
+ * these, `currentAerialTiles` looks them up.
  */
 function aerialGrids(place: Omit<ImageryPlace, "geoObjectId">, cfg: ImagesConfig): Array<{ source: WmsSourceName; cells: WmsGridCell[] }> {
   const grids: Array<{ source: WmsSourceName; cells: WmsGridCell[] }> = [];
@@ -136,31 +139,40 @@ function aerialGrids(place: Omit<ImageryPlace, "geoObjectId">, cfg: ImagesConfig
 }
 
 /**
- * The ids of the current aerial tiles (core and wide) `ensureImagery` would use for `place`, read without any request;
- * `null` when one of them has no current row yet (`ensureImagery` would download it: the imagery is new). A row whose
- * archive object is gone keeps its id when downloaded again, so it counts as present.
+ * The current aerial tiles (core and wide, in the order `ensureImagery` returns them) `ensureImagery` would use for
+ * `place`, read without any request; `null` when one of them has no current row yet (`ensureImagery` would download
+ * it: the imagery is new). A row whose archive object is gone keeps its id when downloaded again, so it counts as
+ * present.
  */
-export async function currentAerialTileIds(
+export async function currentAerialTiles(
   db: Db,
   place: Omit<ImageryPlace, "geoObjectId">,
   cfg: ImagesConfig = getConfig().images,
-): Promise<string[] | null> {
-  const wanted = aerialGrids(place, cfg).flatMap((g) => g.cells.map((c) => ({ source: g.source, tileKey: c.tileKey })));
-  if (wanted.length === 0) return [];
-  const { rows } = await db.execute<{ id: string; source: string; tile_key: string }>(sql`
-    select t.id, t.source, t.tile_key
-    from imagery_tiles t
-    join jsonb_to_recordset(${JSON.stringify(wanted)}::jsonb) as w(source text, "tileKey" text)
-      on t.source::text = w.source and t.tile_key = w."tileKey"
-    where t.valid_to is null`);
-  const found = new Map(rows.map((r) => [`${r.source}\0${r.tile_key}`, r.id]));
-  const ids: string[] = [];
-  for (const w of wanted) {
-    const id = found.get(`${w.source}\0${w.tileKey}`);
-    if (!id) return null;
-    ids.push(id);
+): Promise<AerialTiles | null> {
+  const grids = aerialGrids(place, cfg);
+  const wanted = grids.flatMap((g) => g.cells.map((c) => ({ source: g.source, tileKey: c.tileKey })));
+  const found = new Map<string, ImageryTileRef>();
+  if (wanted.length > 0) {
+    const rows = await db
+      .select({ ...refColumns, tileKey: imageryTiles.tileKey })
+      .from(imageryTiles)
+      .where(
+        and(
+          isNull(imageryTiles.validTo),
+          sql`(${imageryTiles.source}::text, ${imageryTiles.tileKey}) in (select source, "tileKey" from jsonb_to_recordset(${JSON.stringify(wanted)}::jsonb) as w(source text, "tileKey" text))`,
+        ),
+      );
+    for (const row of rows) found.set(`${row.source}\0${row.tileKey}`, toRef(row));
   }
-  return ids;
+  const tiles: AerialTiles = { core: [], wide: [] };
+  for (const grid of grids) {
+    for (const cell of grid.cells) {
+      const ref = found.get(`${grid.source}\0${cell.tileKey}`);
+      if (!ref) return null;
+      (grid.source === "ktimatologio" ? tiles.core : tiles.wide).push(ref);
+    }
+  }
+  return tiles;
 }
 
 async function ensureWmsTiles(

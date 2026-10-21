@@ -8,13 +8,22 @@ import { PlaceImageDecision } from "../review/[id]/place-image-decision";
 
 const GEO = "00000000-0000-4000-8000-000000000001";
 
-const subject = (over: Partial<PlaceImageSubjectView["context"]> = {}, slot = "title"): PlaceImageSubjectView => ({
-  type: "place_image",
+const PLACE: PlaceImageSubjectView["place"] = {
   geoObjectId: GEO,
   placeId: "00000000-0000-4000-8000-000000000002",
-  publicId: null,
+  publicId: "sp_bildbucht",
   name: "Bildbucht",
   kind: "anchorage",
+  subdivision: { key: "GR-ATT", name: "Attika" },
+  centre: { lon: 19.37, lat: 36.61, anchor: true },
+  cove: { lon: 19.3754, lat: 36.6102 },
+  town: null,
+  composition: "open_water",
+};
+
+const subject = (over: Partial<PlaceImageSubjectView["context"]> = {}, slot = "title", place: PlaceImageSubjectView["place"] = PLACE): PlaceImageSubjectView => ({
+  type: "place_image",
+  place,
   slot,
   key: "k1",
   context: {
@@ -50,7 +59,10 @@ const isDisabled = (html: string, label: string) => new RegExp(`<button[^>]* dis
 describe("PlaceImageDecision", () => {
   it("shows render and illustration, the camera line, the slot and the checks; every form posts the key", () => {
     const html = render(subject());
-    expect(html).toContain("Titelbild prüfen");
+    // the image type as the title, the slot as its secondary line
+    expect(html).toContain("Bild prüfen: Ankerplatz");
+    expect(html).toContain("Titelbild");
+    expect(html).not.toContain("Titelbild prüfen");
     expect(html).toContain(`src="/images/file?key=${encodeURIComponent(`imagery/renders/${GEO}/r/photo.png`)}"`);
     expect(html).toContain(`src="/images/file?key=${encodeURIComponent(`imagery/candidates/${GEO}/r-1.jpg`)}"`);
     expect(html).toContain("Maske");
@@ -68,6 +80,27 @@ describe("PlaceImageDecision", () => {
 
   it("names a further view by its number", () => {
     expect(render(subject({}, "view-2"))).toContain("Weitere Ansicht 2");
+  });
+
+  it("says which place it is: name linked, public id, Landesteil, anchor point and cove point", () => {
+    const html = render(subject());
+    expect(html).toContain('href="/places/00000000-0000-4000-8000-000000000002"');
+    expect(html).toContain("Bildbucht");
+    expect(html).toContain("sp_bildbucht");
+    expect(html).toContain("Attika");
+    expect(html).toContain("36.61000, 19.37000");
+    expect(html).toContain("36.61020, 19.37540");
+    // without a cove apart from the anchor point and without a name
+    const plain = render(subject({}, "title", { ...PLACE, name: null, cove: null, centre: { lon: 19.37, lat: 36.61, anchor: false } }));
+    expect(plain).toContain("ohne Namen");
+    expect(plain).not.toContain("36.61020, 19.37540");
+  });
+
+  it("near a town: the type names the town, the place block its distance", () => {
+    const near = render(subject({ light: "evening" }, "title", { ...PLACE, composition: "near_town", town: { geoObjectId: "00000000-0000-4000-8000-000000000009", name: "Poros", distanceM: 960.4 } }));
+    expect(near).toContain("Bild prüfen: Ankerplatz bei einem Ort – Poros");
+    expect(near).toContain("Poros (960 m)");
+    expect(render(subject({}, "title", { ...PLACE, kind: "mooring_field" }))).toContain("Bild prüfen: Bojenfeld");
   });
 
   it("disables Freigeben without a candidate and says why", () => {

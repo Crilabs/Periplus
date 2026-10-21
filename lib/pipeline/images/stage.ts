@@ -10,8 +10,8 @@ import { planRender } from "@/lib/domain/images/render-plan";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import type { JobData } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
-import { atTarget, keyDone, keyFor, titleView, type ImageStageConfig, type ImageView } from "./generate";
-import { currentAerialTileIds } from "./imagery";
+import { aerialIds, initialZoom, keyDone, keyFor, resolveView, titleView, type ImageStageConfig, type ImageView } from "./generate";
+import { currentAerialTiles } from "./imagery";
 import { imageModelAvailable } from "./model";
 
 let logger: ReturnType<typeof createLogger> | undefined;
@@ -76,17 +76,22 @@ const inIds = (ids: string[]) => sql`p.geo_object_id in (select value::uuid from
 
 /**
  * The generation key `generatePlaceImage` would compute for `view` of the place now, without any request: the camera
- * from `planRender`, the current aerial tiles of the windows around its target (`currentAerialTileIds`). `null` when
- * the place has no input or one of the tiles is missing (new imagery, so a new key).
+ * from `planRender` at the view's zoom (else the wanted title zoom), the current aerial tiles of the windows around
+ * its target and, for a title view, the zoom they allow (`resolveView` with `currentAerialTiles`, the job's steps).
+ * `null` when the place has no input or one of the tiles is missing (new imagery, so a new key).
  */
 async function plannedKey(db: Db, geoObjectId: string, view: ImageView, cfg: ImageStageConfig): Promise<string | null> {
   const place = await loadPlaceImageInput(db, geoObjectId, cfg.images);
   if (!place || !place.country) return null;
-  const plan = await planRender(db, place, view.zoom, cfg.images, view.azimuthDeg ?? null);
-  if (!plan.ok) return keyFor(place, view, [], cfg);
-  const target = atTarget(place, plan.camera);
-  const tiles = await currentAerialTileIds(db, { lon: target.lon, lat: target.lat, country: place.country }, cfg.images);
-  return tiles === null ? null : keyFor(place, view, tiles, cfg);
+  const country = place.country;
+  const zoom = initialZoom(place, view, cfg.images);
+  const plan = await planRender(db, place, zoom, cfg.images, view.azimuthDeg ?? null);
+  if (!plan.ok) return keyFor(place, { ...view, zoom }, [], cfg);
+  const resolved = await resolveView(db, place, view, { zoom, camera: plan.camera }, cfg.images, (target) =>
+    currentAerialTiles(db, { lon: target.lon, lat: target.lat, country }, cfg.images),
+  );
+  if (resolved === null) return null;
+  return keyFor(place, { ...view, zoom: resolved.zoom }, resolved.ok ? aerialIds(resolved.imagery) : [], cfg);
 }
 
 /**
@@ -126,7 +131,7 @@ export async function imageTargets(
       const objects = await consolidatedObjects(db, run);
       ids = objects.length === 0 ? [] : await eligibleSpots(db, inIds(objects), cfg);
     }
-    const view = titleView(cfg);
+    const view = titleView();
     candidates = ids.map((geoObjectId) => ({ geoObjectId, view }));
   }
 
