@@ -163,22 +163,22 @@
     "minParts": 2
   },
   "importance": {
-    "sitelinksPerPoint": 10,
-    "maxSitelinkPoints": 2,
+    "sitelinksPerPoint": 30,
+    "maxSitelinkPoints": 5,
     "categoryBonus": {
       "food": 0,
       "supply": 0,
       "beach": 0.5,
       "nature": 0.5,
       "active": 0.5,
-      "culture": 1,
-      "town": 1
+      "culture": 0.5,
+      "town": 0.5
     },
     "thresholds": [
       1,
       2,
       3.5,
-      5
+      6
     ],
     "radiusNm": [
       5,

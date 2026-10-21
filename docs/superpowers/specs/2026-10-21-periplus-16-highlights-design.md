@@ -125,7 +125,9 @@ Für Abschnitt 4 des Gesamtdesigns:
 
 ## Kalibrierung und Umsetzungsentscheide
 
-- Startwerte bestätigt (keine Änderung nötig): `levelWeights` [0,005; 0,2; 1; 3; 6], `levelThresholds` [1, 6], `tagBonus` unverändert. Test `lib/domain/highlights/__tests__/calibration.test.ts`: Agistri-ähnlich (eine Ruine, Wichtigkeit 2) `none`; Poros-ähnlich (Kloster 4, sechs Kirchen 3, drei Ruinen 2, 30 Kleinigkeiten 1) `some`; Athen-ähnlich (Akropolis 5, 20 Museen 4, 40 Stätten 3, 3000 Kleinigkeiten 1) `many`.
+- Kalibrierung der Wichtigkeit (Schlussprüfung, `config/consolidation/v2.json`, `importance`): `sitelinksPerPoint` 30, `maxSitelinkPoints` 5, `categoryBonus` `culture` und `town` 0,5 (übrige unverändert: `food`/`supply` 0, `beach`/`nature`/`active` 0,5), `thresholds` [1; 2; 3,5; 6], `tagBonus` unverändert. Damit (alle Fälle über `importanceOf` gerechnet, Test `lib/domain/highlights/__tests__/calibration.test.ts`): Akropolis (150 Sitelinks, archäologische Stätte, 2–5 Textquellen) 5; Tempel von Aphaia (25 Sitelinks, archäologische Stätte) und Kloster Zoodochos Pigi (5 Sitelinks, Kloster) bei 0–3 Textquellen 3–4; Kapelle und Taverne ohne Textnennung 1, Wegkreuz 1, Ruine ohne Sitelinks und Text 2. Vorher ergab jede Kultur-POI mindestens 2, jede Ruine 3 und Aphaia 5.
+- Stufen unverändert: `levelWeights` [0,005; 0,2; 1; 3; 6], `levelThresholds` [1, 6]. Mit Kandidaten über `importanceOf`: Agistri-ähnlich (eine Ruine, zehn Kapellen) `none`; Poros-ähnlich (Kloster, Tempel, Museum, Ruinen, drei im Text genannte Kirchen, 30 Kapellen) `some`; Athen-ähnlich (Akropolis, Nationalmuseum, 20 Museen, 40 Stätten, 3000 Kleinigkeiten) `many`; 1000 Kleinigkeiten allein nicht `many`.
+- POIs ohne Anzeigenamen sind keine Kandidaten (sie würden sonst einen der fünf Plätze belegen).
 - Highlights werden nur im Paket ihres eigenen Landesteils geliefert.
 - Paar-Aufgaben unter Highlights: ähnliche, verschiedene Namen unter 2 km; gleiche Namen 500–2000 m (`gazetteer.merge.highlightPairM`).
 - Zielorte der Auswahl sind alle nicht abgelehnten Orte.

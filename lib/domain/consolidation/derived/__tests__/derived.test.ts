@@ -46,12 +46,12 @@ describe("importanceOf", () => {
 
   it("a source key counts once, with its largest weight", () => {
     const r = importanceOf({ sources: [{ key: "a", weight: 0.4 }, { key: "a", weight: 0.9 }], sitelinks: 15, category: "beach", kinds: [] }, cfg);
-    // 0.9 + 1.5 + 0.5
-    expect(r).toEqual({ importance: 3, score: 2.9, radiusNm: 20 });
+    // 0.9 + 15 / 30 + 0.5
+    expect(r).toEqual({ importance: 2, score: 1.9, radiusNm: 10 });
   });
 
   it("sitelink points are capped", () => {
-    expect(importanceOf({ sources: [], sitelinks: 500, category: "food", kinds: [] }, cfg).score).toBe(2);
+    expect(importanceOf({ sources: [], sitelinks: 500, category: "food", kinds: [] }, cfg).score).toBe(5);
   });
 });
 
