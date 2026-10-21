@@ -3,7 +3,7 @@ import type { Transport } from "@/lib/adapters/http";
 import { fetchSeas } from "@/lib/adapters/marine-regions";
 import { buildBoundaryQuery, buildCoarseFeatureQuery, buildRelationQuery, overpassQuery, type OverpassElement } from "@/lib/adapters/overpass";
 import type { Archive } from "@/lib/adapters/s3";
-import { countryConfig, getConfig } from "@/lib/config";
+import { countryConfig, getConfig, type GazetteerConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoObjects } from "@/lib/db/schema";
@@ -217,12 +217,12 @@ async function countryBbox(db: Db, country: string): Promise<Bbox | null> {
  * `islandMinAreaKm2` (smaller ones are left to the fine gazetteer), archipelagos, named bays from `gulfMinAreaKm2`
  * (stored as `gulf`), and towns (`coarse.placeTypes`) within `coastDistanceKm` of the water. Stored by `osm_id` through
  * the gazetteer store with the fine gazetteer's classifier, so a feature the fine run imported is updated, not
- * duplicated. Then subdivisions, seas and parents are assigned over the country's bbox. Returns the stored counts.
+ * duplicated. `deps.overpass` replaces the configured Overpass settings (tests lift the rate limit). Then subdivisions, seas and parents are assigned over the country's bbox. Returns the stored counts.
  */
 export async function importCoarseFeatures(
   db: Db,
   country: string,
-  deps: Deps,
+  deps: Deps & { overpass?: GazetteerConfig["overpass"] },
 ): Promise<{ islands: number; archipelagos: number; gulfs: number; towns: number }> {
   const { gazetteer, categories } = getConfig();
   const cfg = gazetteer.coarse;
@@ -232,7 +232,7 @@ export async function importCoarseFeatures(
   const ctx = { db, runId: deps.runId, stage: COARSE_STAGE };
   const date = (deps.now ?? new Date()).toISOString().slice(0, 10);
   const ql = buildCoarseFeatureQuery(country, cfg, gazetteer.overpass.timeoutSeconds);
-  const { raw, elements } = await overpassQuery(deps.transport, ql, ctx, gazetteer.overpass);
+  const { raw, elements } = await overpassQuery(deps.transport, ql, ctx, deps.overpass ?? gazetteer.overpass);
   await deps.archive?.put(`datasets/overpass/features/${country}/${date}.json`, raw, "application/json");
 
   const result = await db.transaction(async (tx) => {

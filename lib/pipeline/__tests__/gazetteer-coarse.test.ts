@@ -4,17 +4,19 @@ import { makeResponse, type Transport } from "@/lib/adapters/http";
 import { fixtureTransport } from "@/lib/adapters/http-fixtures";
 import type { Db } from "@/lib/db/client";
 import { subdivisions } from "@/lib/db/schema";
+import { getConfig } from "@/lib/config";
 import { newPublicId } from "@/lib/domain/ids";
 import { applySubdivisionPlan } from "@/lib/domain/subdivisions/store";
 import { importCoarseFeatures } from "@/lib/pipeline/gazetteer/coarse";
 import { withRollback } from "@/test/db";
 
+// The bucket "http:overpass" is shared across test files; a huge rate keeps these tests (a mock of `takeToken` does not reach http.ts, which the setup loads first) from ever sleeping on it.
+const overpass = { ...getConfig().gazetteer.overpass, ratePerMinute: 1_000_000 };
+
 /**
  * A synthetic MT country polygon (not the real relation: its unique osm_id would make parallel test files wait for each
  * other) and land at Malta's longitudes with its east edge 2 km east of Valletta: Valletta lies at the coast, inland
- * towns do not. Every Overpass call takes a token of the shared `http:overpass` bucket (2 per minute, burst 2; a mock of
- * `takeToken` does not reach the module the test setup already loaded), so a test makes at most two feature imports and no boundary call:
- * a third call would sleep 30 s holding the bucket row and make other files' Overpass tests time out.
+ * towns do not.
  */
 async function setUpMalta(tx: Db): Promise<string> {
   const inserted = await tx.execute<{ id: string }>(sql`INSERT INTO geo_objects (id, type, origin, admin_level, tags, geom)
@@ -49,7 +51,7 @@ describe("importCoarseFeatures", () => {
     await withRollback(async (tx) => {
       await setUpMalta(tx);
       const [sd] = await tx.select({ id: subdivisions.id }).from(subdivisions).where(and(eq(subdivisions.key, "MT-T"), isNull(subdivisions.validTo)));
-      const result = await importCoarseFeatures(tx, "MT", { transport: fixtureTransport() });
+      const result = await importCoarseFeatures(tx, "MT", { transport: fixtureTransport(), overpass });
       expect(result).toEqual({ islands: 3, archipelagos: 1, gulfs: 0, towns: 20 });
 
       for (const [name, type] of [["Malta", "island"], ["Għawdex", "island"], ["Kemmuna", "island"], ["Il-Gżejjer Maltin", "archipelago"], ["Valletta", "settlement"]] as const) {
@@ -67,11 +69,11 @@ describe("importCoarseFeatures", () => {
       const { rows: before } = await tx.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM geo_objects WHERE origin = 'osm'`);
       const snapshot = await tx.execute(sql`SELECT id, updated_at, parent_id, subdivision_id FROM geo_objects WHERE origin = 'osm' ORDER BY id`);
 
-      expect(await importCoarseFeatures(tx, "MT", { transport: fixtureTransport() })).toEqual(result);
+      expect(await importCoarseFeatures(tx, "MT", { transport: fixtureTransport(), overpass })).toEqual(result);
       const { rows: after } = await tx.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM geo_objects WHERE origin = 'osm'`);
       expect(after[0]!.n).toBe(before[0]!.n);
       expect((await tx.execute(sql`SELECT id, updated_at, parent_id, subdivision_id FROM geo_objects WHERE origin = 'osm' ORDER BY id`)).rows).toEqual(snapshot.rows);
-    });
+    }, { isolationLevel: "repeatable read" }); // one snapshot: rows other files commit meanwhile must not show in the before/after comparison
   }, 120_000);
 
   it("keeps a large bay as gulf; drops a small island, a small bay and a town away from the coast", async () => {
@@ -87,7 +89,7 @@ describe("importCoarseFeatures", () => {
     const transport: Transport = async () => makeResponse(200, new TextEncoder().encode(JSON.stringify({ elements })));
     await withRollback(async (tx) => {
       await setUpMalta(tx);
-      expect(await importCoarseFeatures(tx, "MT", { transport })).toEqual({ islands: 1, archipelagos: 0, gulfs: 1, towns: 0 });
+      expect(await importCoarseFeatures(tx, "MT", { transport, overpass })).toEqual({ islands: 1, archipelagos: 0, gulfs: 1, towns: 0 });
       expect(await malta(tx, "Great Test Bay")).toMatchObject([{ type: "gulf" }]);
       expect(await malta(tx, "Test Island")).toMatchObject([{ type: "island" }]);
       for (const n of ["Tiny Test Bay", "Test Rock", "Inland Test Town"]) expect(await malta(tx, n), n).toHaveLength(0);
@@ -102,7 +104,7 @@ describe("importCoarseFeatures", () => {
         VALUES (gen_random_uuid(), 'island', 'osm', 'relation/9353903', ${publicId}, '{}'::jsonb,
                 ST_Multi(ST_GeomFromText('POLYGON((14.2 36.0, 14.3 36.0, 14.3 36.1, 14.2 36.0))', 4326)))
         ON CONFLICT DO NOTHING`);
-      await importCoarseFeatures(tx, "MT", { transport: fixtureTransport() });
+      await importCoarseFeatures(tx, "MT", { transport: fixtureTransport(), overpass });
       const { rows } = await tx.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM geo_objects WHERE osm_id = 'relation/9353903' AND valid_to IS NULL`);
       expect(rows[0]!.n).toBe(1);
       const { rows: ids } = await tx.execute<{ public_id: string }>(sql`SELECT public_id FROM geo_objects WHERE osm_id = 'relation/9353903' AND valid_to IS NULL`);
@@ -113,7 +115,7 @@ describe("importCoarseFeatures", () => {
 
   it("fails before any query when the country is not stored", async () => {
     await withRollback(async (tx) => {
-      await expect(importCoarseFeatures(tx, "MT", { transport: fixtureTransport() })).rejects.toThrow(/no country object/);
+      await expect(importCoarseFeatures(tx, "MT", { transport: fixtureTransport(), overpass })).rejects.toThrow(/no country object/);
     });
   });
 });
