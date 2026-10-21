@@ -38,7 +38,7 @@ type CandidateRow = {
 };
 
 /**
- * Candidates: valid, unmerged, categorised POIs within `max(highlights.reachKm)` of the place's anchor (else its
+ * Candidates: valid, unmerged, categorised POIs with a display name within `max(highlights.reachKm)` of the place's anchor (else its
  * position; the valid, unmerged, not rejected place row of the object), distance over `::geography` in km rounded to 3
  * decimals, nearest first. Importance by `importanceOf`: the counting sources (rejected and ended left out) with a
  * mention of the POI or an object merged into it, its Wikidata sitelinks, category and kinds.
@@ -58,7 +58,7 @@ export async function loadHighlightCandidates(
 ): Promise<{ candidates: HighlightCandidate[]; textNames: TextName[] }> {
   const reachM = Math.max(...highlightsConfig(cfg).reachKm) * 1000;
 
-  const { rows } = await db.execute<CandidateRow>(sql`
+  const { rows: loaded } = await db.execute<CandidateRow>(sql`
     with anchor as (
       select coalesce(p.anchor_position, p.position) as pt
       from places p
@@ -82,6 +82,8 @@ export async function loadHighlightCandidates(
     left join wikidata_sitelinks w on w.wikidata_id = o.wikidata_id
     order by distance_km, o.id
   `);
+  // a POI without a display name is never one of the five (final review minor): it cannot be named to a sailor
+  const rows = loaded.filter((r) => r.name !== null);
   if (rows.length === 0) return { candidates: [], textNames: await textNamesOf(db, placeGeoObjectId, [], new Map(), today, appConfig) };
 
   const ids = rows.map((r) => r.id);

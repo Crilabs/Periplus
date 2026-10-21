@@ -158,6 +158,16 @@ describe("loadHighlightCandidates", () => {
       expect(candidates.find((c) => c.geoObjectId === root)!.score).toBe(expected.score);
     }));
 
+  it("a POI without a name is no candidate (final review minor)", () =>
+    withRollback(async (tx) => {
+      const place = await insertPlace(tx, { lon: LON, lat: LAT });
+      const named = await poi(tx, "Kapelle Agios Nikolaos", "culture", 0.3);
+      const nameless = await insertNamedObject(tx, { type: "poi", category: "culture", names: [], lon: LON, lat: LAT + 0.2 * LAT_PER_KM });
+      const { candidates } = await loadHighlightCandidates(tx, place.objectId, cfg, today);
+      const own = candidates.filter((c) => [named, nameless].includes(c.geoObjectId)).map((c) => c.geoObjectId);
+      expect(own).toEqual([named]);
+    }));
+
   it("an object without a place has no candidates", () =>
     withRollback(async (tx) => {
       const lone = await insertNamedObject(tx, { type: "bay", names: [{ name: "Lone" }], lon: LON, lat: LAT });
