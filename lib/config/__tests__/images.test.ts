@@ -18,13 +18,13 @@ describe("images config", () => {
     const c = getConfig();
     expect(c.images.camera.tiltDeg).toBe(30);
     expect(c.images.camera.zooms.z1.heightM).toBe(260);
-    expect(c.images.camera.rulesVersion).toBe("camera-2");
+    expect(c.images.camera.rulesVersion).toBe("camera-3");
     expect(c.images.check.minWaterIoU.midday).toBe(0.8);
     expect(c.images.delivery.ktimatologio).toBe(false);
     expect(c.images.sources.ktimatologio.countries).toEqual(["GR"]);
     expect(c.images.light.townRadiusM).toBe(1500);
     expect(c.images.composition.nearTown.foregroundM).toBe(450);
-    expect(c.images.composition.openWater).toEqual({ maxShoreM: 2000, shoreBackM: 120 });
+    expect(c.images.composition.openWater).toEqual({ maxShoreM: 2000, shoreBelowCentreDeg: 8.3, zoom: "z2", coveMinDistanceM: 50 });
     expect(c.images.light.nearTown).toBe("midday");
     expect(c.images.scene.near_town.en).toContain("in front of a town");
     expect(c.budgets.openai.dailyEur).toBe(10);
@@ -61,6 +61,12 @@ describe("images config", () => {
     const bare = structuredClone(loadConfig("config").queues) as Record<string, Record<string, unknown>>;
     delete bare["images.place"]!.expireInSeconds;
     expect(() => loadConfig(configWith("queues", bare))).toThrow(/images\.place\.expireInSeconds 900 is below/);
+  });
+
+  it("shoreline angle below the image centre must stay above the bottom edge", () => {
+    const images = structuredClone(loadConfig("config").images) as { camera: { fovDeg: number }; composition: { openWater: Record<string, unknown> } };
+    images.composition.openWater.shoreBelowCentreDeg = images.camera.fovDeg / 2;
+    expect(() => loadConfig(configWith("images", images))).toThrow(/shoreBelowCentreDeg/);
   });
 
   it("delivery switch needs every source", () => {

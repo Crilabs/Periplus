@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { Polygon } from "geojson";
 import { describe, expect, it } from "vitest";
-import { getConfig } from "@/lib/config";
+import { getConfig, type ZoomLevel } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { landPolygons } from "@/lib/db/schema";
@@ -14,12 +14,32 @@ import {
   cameraFor,
   candidateAzimuths,
   foregroundPixelSize,
+  inlandOffsetM,
   planRender,
   shoreDistance,
+  titleZoomFor,
   type RenderCamera,
 } from "../render-plan";
 
 const cfg = getConfig().images;
+const RAD = Math.PI / 180;
+
+/** The inland offset of the camera-3 rule at `zoom`: `d − ds` with `d = h / tan(tilt)`, `ds = h / tan(tilt + shoreBelowCentreDeg)`. */
+function inlandOf(zoom: ZoomLevel): number {
+  const h = cfg.camera.zooms[zoom].heightM;
+  return h / Math.tan(cfg.camera.tiltDeg * RAD) - h / Math.tan((cfg.camera.tiltDeg + cfg.composition.openWater.shoreBelowCentreDeg) * RAD);
+}
+
+/**
+ * Image row (0 = top) of a ground point `groundDistanceM` from the camera ground point along the view direction: the
+ * projection maths of `foregroundPixelSize` (focal length `f = (height/2) / tan(fov/2)`, a point at depression angle
+ * `β = atan(h / x)` lands `f · tan(β − tilt)` below the image centre).
+ */
+function imageRow(camera: RenderCamera, groundDistanceM: number): number {
+  const f = camera.height / 2 / Math.tan((camera.fovDeg / 2) * RAD);
+  const beta = Math.atan(camera.heightM / groundDistanceM);
+  return camera.height / 2 + f * Math.tan(beta - camera.tiltDeg * RAD);
+}
 
 /** Open sea west of the Peloponnese (outside the pilot box); rolled back. */
 const LON = 19.37;
@@ -104,6 +124,28 @@ describe("camera and zoom", () => {
     expect(allowedZooms(10, cfg)).toEqual(["z1"]);
   });
 
+  it("inland offset puts the shoreline on the lower-third line: 75 m at z2, 121 m at z1", () => {
+    expect(Math.abs(inlandOffsetM("z2", cfg) - 75)).toBeLessThanOrEqual(1);
+    expect(inlandOffsetM("z2", cfg)).toBeCloseTo(inlandOf("z2"), 9);
+    expect(Math.abs(inlandOffsetM("z1", cfg) - 121)).toBeLessThanOrEqual(1);
+  });
+
+  it("title zoom: open water z2 with 0.5 m imagery, z1 with Sentinel-2 only, near town always the default z1", () => {
+    const open = input();
+    expect(titleZoomFor(open, 0.5, cfg)).toBe("z2");
+    expect(titleZoomFor(open, 10, cfg)).toBe("z1");
+    // before the imagery is known: the wanted zoom
+    expect(titleZoomFor(open, null, cfg)).toBe("z2");
+    const near = input({ town: { geoObjectId: "00000000-0000-7000-8000-000000000003", lon: LON, lat: LAT + 0.005 } });
+    expect(titleZoomFor(near, 0.5, cfg)).toBe("z1");
+    expect(titleZoomFor(near, null, cfg)).toBe("z1");
+    // a closer wanted level falls back to the next allowed one: 0.7 m allows z1 and z2, not z3
+    const z3 = { ...cfg, composition: { ...cfg.composition, openWater: { ...cfg.composition.openWater, zoom: "z3" as const } } };
+    expect(allowedZooms(0.7, cfg)).toEqual(["z1", "z2"]);
+    expect(titleZoomFor(open, 0.7, z3)).toBe("z2");
+    expect(titleZoomFor(open, 0.5, z3)).toBe("z3");
+  });
+
   it("foreground pixel size follows the camera tilt", () => {
     const at30 = foregroundPixelSize(0.5, "z1", cfg);
     expect(at30).toBeCloseTo(foregroundPixelSize(0.5, "z1", cfg, 30), 12);
@@ -164,23 +206,49 @@ describe("planRender", () => {
     });
   });
 
-  it("open_water target moves to 120 m before the shore along the view direction", async () => {
+  it("open_water target lies S + inland behind the shore along the view direction", async () => {
     await withRollback(async (tx) => {
-      // the reviewed case: camera side 310°, view 130°, shore 793 m ahead → the bay head 673 m from the centre
+      // the reviewed case: camera side 310°, view 130°, shore 793 m ahead; at z1 the target is 121 m inland of it
       const plan = await planRender(tx, input({ openingBearing: 310, rays: rays(3000, { 130: 793 }) }), "z1", cfg);
       if (!plan.ok) throw new Error("expected a camera");
       const toTarget = await between(tx, [LON, LAT], plan.camera.target);
-      expect(Math.abs(toTarget.distance - 673)).toBeLessThanOrEqual(1);
+      expect(Math.abs(toTarget.distance - (793 + inlandOf("z1")))).toBeLessThanOrEqual(1);
       expect(toTarget.azimuth).toBeCloseTo(130, 1);
       expect(plan.camera).toEqual(cameraFor(plan.camera.target, 310, "z1", cfg));
       // the camera stands the zoom's 450 m before the target on its side (310°) …
       const fromTarget = await groundPoint(tx, plan.camera, plan.camera.target);
       expect(Math.abs(fromTarget.distance - 450)).toBeLessThanOrEqual(1);
       expect(fromTarget.azimuth).toBeCloseTo(310, 1);
-      // … that is 223 m from the centre towards the shore, over the water of the bay
+      // … that is 464 m from the centre towards the shore, 329 m before the shoreline over the water of the bay
       const fromCentre = await groundPoint(tx, plan.camera, [LON, LAT]);
-      expect(Math.abs(fromCentre.distance - 223)).toBeLessThanOrEqual(1);
+      expect(Math.abs(fromCentre.distance - (793 + inlandOf("z1") - 450))).toBeLessThanOrEqual(1);
       expect(fromCentre.azimuth).toBeCloseTo(130, 1);
+    });
+  });
+
+  it("inland offset at z2: target = centre + S + 75 m", async () => {
+    await withRollback(async (tx) => {
+      // the PyVista test at a straight coast: shore 247 m ahead
+      const plan = await planRender(tx, input({ rays: rays(3000, { 270: 247 }) }), "z2", cfg);
+      if (!plan.ok) throw new Error("expected a camera");
+      const toTarget = await between(tx, [LON, LAT], plan.camera.target);
+      expect(Math.abs(toTarget.distance - (247 + 75))).toBeLessThanOrEqual(1);
+      expect(toTarget.azimuth).toBeCloseTo(270, 1);
+      expect(plan.camera.zoom).toBe("z2");
+      expect(Math.abs(plan.camera.distanceM - 277)).toBeLessThanOrEqual(1);
+    });
+  });
+
+  it("shoreline projects to the lower third of the image", async () => {
+    await withRollback(async (tx) => {
+      const plan = await planRender(tx, input({ rays: rays(3000, { 270: 247 }) }), "z2", cfg);
+      if (!plan.ok) throw new Error("expected a camera");
+      // the shoreline is 247 m west of the centre; its ground distance from the camera ground point along the view
+      const shore: [number, number] = [LON - 247 * M_LON, LAT];
+      const x = (await between(tx, cameraDetails(plan.camera).position, shore)).distance;
+      expect(Math.abs(imageRow(plan.camera, x) / plan.camera.height - 2 / 3)).toBeLessThanOrEqual(0.03);
+      // and the centre of the image shows the ground 75 m inland of it
+      expect(Math.abs(imageRow(plan.camera, x + inlandOf("z2")) / plan.camera.height - 1 / 2)).toBeLessThanOrEqual(0.001);
     });
   });
 
@@ -191,7 +259,7 @@ describe("planRender", () => {
       const plan = await planRender(tx, input({ openingBearing: 315, rays: r }), "z1", cfg);
       if (!plan.ok) throw new Error("expected a camera");
       const toTarget = await between(tx, [LON, LAT], plan.camera.target);
-      expect(Math.abs(toTarget.distance - 680)).toBeLessThanOrEqual(1);
+      expect(Math.abs(toTarget.distance - (800 + inlandOf("z1")))).toBeLessThanOrEqual(1);
       expect(toTarget.azimuth).toBeCloseTo(135, 1);
     });
   });
@@ -203,9 +271,23 @@ describe("planRender", () => {
       // at the limit the target still moves
       const plan = await planRender(tx, input({ rays: rays(2000) }), "z1", cfg);
       if (!plan.ok) throw new Error("expected a camera");
-      expect(Math.abs((await between(tx, [LON, LAT], plan.camera.target)).distance - 1880)).toBeLessThanOrEqual(1);
-      // a shore within shoreBackM leaves the target at the centre too (never behind it)
-      expect(await planRender(tx, input({ rays: rays(100) }), "z1", cfg)).toEqual(atCentre);
+      expect(Math.abs((await between(tx, [LON, LAT], plan.camera.target)).distance - (2000 + inlandOf("z1")))).toBeLessThanOrEqual(1);
+      // a close shore moves the target inland all the same (the camera then stands behind the centre)
+      const close = await planRender(tx, input({ rays: rays(100) }), "z1", cfg);
+      if (!close.ok) throw new Error("expected a camera");
+      expect(Math.abs((await between(tx, [LON, LAT], close.camera.target)).distance - (100 + inlandOf("z1")))).toBeLessThanOrEqual(1);
+    });
+  });
+
+  it("every shifted candidate on land falls back to the centre as target", async () => {
+    await withRollback(async (tx) => {
+      // shore 500 m in every direction: the shifted camera ground points lie 171 m from the centre (500 − 329 m) in
+      // every direction, on a ring of land 120–220 m out; the centre-target camera 450 m out is over water
+      await insertLand(tx, [
+        box(LON - 220 * M_LON, LAT - 220 * M_LAT, LON + 220 * M_LON, LAT + 220 * M_LAT),
+        box(LON - 120 * M_LON, LAT - 120 * M_LAT, LON + 120 * M_LON, LAT + 120 * M_LAT).reverse(),
+      ]);
+      expect(await planRender(tx, input({ rays: rays(500) }), "z1", cfg)).toEqual({ ok: true, camera: cameraFor([LON, LAT], 90, "z1", cfg) });
     });
   });
 
@@ -218,29 +300,29 @@ describe("planRender", () => {
 
   it("rotated candidate recomputes the shore distance for its own view direction", async () => {
     await withRollback(async (tx) => {
-      // Opening 90°: view 270° with the shore 800 m ahead puts the target 680 m west and the camera ground point 230 m
-      // west of the centre, on a land strip 200–260 m west. The next candidate (100°, view 280°) finds the shore at
-      // 1500 m: target 1380 m along 280°, camera 930 m along 280°, over water. With the first candidate's shore distance
-      // the camera at 100° would stand 230 m along 280°, on the strip again.
-      await insertLand(tx, [box(LON - 260 * M_LON, LAT - 100 * M_LAT, LON - 200 * M_LON, LAT + 100 * M_LAT)]);
+      // Opening 90°: view 270° with the shore 800 m ahead puts the target 921 m west and the camera ground point 471 m
+      // west of the centre (800 − 329 m), on a land strip 440–500 m west. The next candidate (100°, view 280°) finds
+      // the shore at 1500 m: target 1621 m along 280°, camera 1171 m along 280°, over water. With the first candidate's
+      // shore distance the camera at 100° would stand 471 m along 280°, on the strip again.
+      await insertLand(tx, [box(LON - 500 * M_LON, LAT - 100 * M_LAT, LON - 440 * M_LON, LAT + 100 * M_LAT)]);
       const plan = await planRender(tx, input({ rays: rays(3000, { 270: 800, 280: 1500 }) }), "z1", cfg);
       if (!plan.ok) throw new Error("expected a camera");
       expect(plan.camera.azimuthDeg).toBe(100);
       const toTarget = await between(tx, [LON, LAT], plan.camera.target);
-      expect(Math.abs(toTarget.distance - 1380)).toBeLessThanOrEqual(1);
+      expect(Math.abs(toTarget.distance - (1500 + inlandOf("z1")))).toBeLessThanOrEqual(1);
       expect(toTarget.azimuth).toBeCloseTo(280, 1);
-      expect(Math.abs((await groundPoint(tx, plan.camera, [LON, LAT])).distance - 930)).toBeLessThanOrEqual(1);
+      expect(Math.abs((await groundPoint(tx, plan.camera, [LON, LAT])).distance - (1500 + inlandOf("z1") - 450))).toBeLessThanOrEqual(1);
     });
   });
 
   it("azimuthOverride of a further view uses the bay-head rule too", async () => {
     await withRollback(async (tx) => {
-      // override 180°: view 0° with the shore 500 m ahead → target 380 m north, whatever the opening says
+      // override 180°: view 0° with the shore 500 m ahead → target 621 m north, whatever the opening says
       const plan = await planRender(tx, input({ openingBearing: 90, rays: rays(3000, { 0: 500 }) }), "z1", cfg, 180);
       if (!plan.ok) throw new Error("expected a camera");
       expect(plan.camera.azimuthDeg).toBe(180);
       const toTarget = await between(tx, [LON, LAT], plan.camera.target);
-      expect(Math.abs(toTarget.distance - 380)).toBeLessThanOrEqual(1);
+      expect(Math.abs(toTarget.distance - (500 + inlandOf("z1")))).toBeLessThanOrEqual(1);
       expect(Math.abs(toTarget.azimuth % 360)).toBeLessThan(0.1);
     });
   });
@@ -254,6 +336,8 @@ describe("planRender", () => {
       ]);
       expect(await planRender(tx, input(), "z1", cfg)).toEqual({ ok: false, reason: "no_water_view" });
       expect(await planRender(tx, input({ openingBearing: null }), "z3", cfg)).toEqual({ ok: false, reason: "no_water_view" });
+      // with rays (the pond's edge 120 m out) the shifted targets and the centre fallback fail alike
+      expect(await planRender(tx, input({ rays: rays(120) }), "z1", cfg)).toEqual({ ok: false, reason: "no_water_view" });
     });
   });
 

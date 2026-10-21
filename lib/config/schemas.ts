@@ -1232,10 +1232,18 @@ export const imagesSchema = z.strictObject({
      */
     nearTown: z.strictObject({ foregroundM: z.number().positive() }),
     /**
-     * Every other place: the camera looks at the head of the bay, `shoreBackM` before the shore along the view
-     * direction (the fetch ray there), when that shore is within `maxShoreM`; else at the centre of the place.
+     * Every other place: the camera looks at the shore ahead (the named cove, else the fetch ray along the view
+     * direction) when it is within `maxShoreM`, else at the centre of the place; the target lies far enough inland for
+     * the shoreline to run `shoreBelowCentreDeg` below the image centre (8.3° ≈ fov/6, the lower-third line). The
+     * automatic title image takes `zoom` when the core imagery allows it. The cove point (the place's `position`)
+     * counts only when it lies at least `coveMinDistanceM` from the anchor point.
      */
-    openWater: z.strictObject({ maxShoreM: z.number().positive(), shoreBackM: z.number().nonnegative() }),
+    openWater: z.strictObject({
+      maxShoreM: z.number().positive(),
+      shoreBelowCentreDeg: z.number().positive(),
+      zoom: z.enum(["z1", "z2", "z3"]),
+      coveMinDistanceM: z.number().nonnegative(),
+    }),
   }),
   output: z.strictObject({
     jpegQuality: z.number().int().min(1).max(100),
@@ -1243,6 +1251,9 @@ export const imagesSchema = z.strictObject({
     credit: z.string().min(1),
     altPrefix: z.string().min(1),
   }),
+}).refine((v) => v.composition.openWater.shoreBelowCentreDeg < v.camera.fovDeg / 2, {
+  message: "composition.openWater.shoreBelowCentreDeg must be below camera.fovDeg / 2 (the bottom edge of the image)",
+  path: ["composition", "openWater", "shoreBelowCentreDeg"],
 });
 
 const nonEmpty = z.string().trim().min(1);
