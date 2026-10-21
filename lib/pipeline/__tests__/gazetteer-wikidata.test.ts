@@ -97,6 +97,13 @@ async function prepare(db: Db): Promise<Record<string, string>> {
     .insert(rateLimits)
     .values({ key: "http:wikidata", tokens: 1_000_000, updatedAt: new Date() })
     .onConflictDoUpdate({ target: rateLimits.key, set: { tokens: 1_000_000, updatedAt: new Date() } });
+  const sea = await upsertGeoObject(db, {
+    type: "sea",
+    origin: "marine_regions",
+    geometry: { type: "Polygon", coordinates: [[[25.5, 35.0], [27.0, 35.0], [27.0, 36.2], [25.5, 36.2], [25.5, 35.0]]] },
+    names: [],
+  });
+  if ("skipped" in sea) throw new Error(sea.skipped);
   const ids: Record<string, string> = {};
   for (const draft of OSM_OBJECTS) {
     const r = await upsertGeoObject(db, draft);
@@ -210,6 +217,54 @@ describe("importWikidata", () => {
       expect(tasks[0]!.context).toMatchObject({ source: "wikidata", similarity: 1 });
       expect((tasks[0]!.context as { distanceM: number }).distanceM).toBeGreaterThan(1000);
       expect((tasks[0]!.context as { distanceM: number }).distanceM).toBeLessThan(2000);
+    }));
+
+  it("an uncertain match between two POIs opens no pair task", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      const existing = await upsertGeoObject(db, {
+        type: "poi",
+        category: "culture",
+        origin: "osm",
+        osmId: osm("node", 30),
+        tags: { amenity: "place_of_worship" },
+        geometry: { type: "Point", coordinates: [26.3, 35.8] },
+        names: [{ name: "Moni Dokimis", language: "en", origin: "osm" }],
+      });
+      if ("skipped" in existing) throw new Error(existing.skipped);
+      // The existing POI already matches by name and distance, the other carries another QID: uncertain.
+      await db.update(geoObjects).set({ wikidataId: q(31) }).where(eq(geoObjects.id, existing.id));
+      const result = await run(db, ITEMS.monastery);
+      expect(result).toMatchObject({ linked: 0, created: 1, uncertain: 1 });
+      const [monastery] = await byWikidata(db, q(3));
+      expect(monastery).toMatchObject({ type: "poi" });
+      expect(await pairTasksOf(db, [monastery!.id, existing.id])).toEqual([]);
+    }));
+
+  it("an uncertain match between two bays still opens a pair task", () =>
+    withRollback(async (db) => {
+      const ids = await prepare(db);
+      await db.update(geoObjects).set({ wikidataId: q(7) }).where(eq(geoObjects.id, ids[osm("node", 2)]!));
+      expect(await run(db, ITEMS.bay)).toMatchObject({ created: 1, uncertain: 1 });
+      const [bay] = await byWikidata(db, q(2));
+      expect(await pairTasksOf(db, [bay!.id])).toHaveLength(1);
+    }));
+
+  it("a wikidata POI stores its class as tags.wikidata_class", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      await run(db, ITEMS.monastery);
+      const [monastery] = await byWikidata(db, q(3));
+      const [row] = await db.select({ tags: geoObjects.tags }).from(geoObjects).where(eq(geoObjects.id, monastery!.id));
+      expect(row!.tags).toEqual({ wikidata_class: "Q44613" });
+    }));
+
+  it("skips a wikidata POI farther than poiCoastDistanceKm from the sea", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      const far = rows(q(32), "Q44613", 26.3, 34.5, [["Moni Ferne", "en"]]);
+      expect(await run(db, far)).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0 });
+      expect(await byWikidata(db, q(32))).toEqual([]);
     }));
 
   it("same match whose object carries another QID creates a new object and a pair task", () =>

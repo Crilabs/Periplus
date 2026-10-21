@@ -8,6 +8,7 @@ import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
 import { bufferBbox } from "@/lib/domain/gazetteer/land";
 import { findMatch, openPairTask, resolveMergedByExternalId, typeGroup } from "@/lib/domain/gazetteer/merge";
 import { addNames, type NameDraft } from "@/lib/domain/gazetteer/names";
+import { nearSea } from "@/lib/domain/gazetteer/sea-distance";
 import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
 import { createLogger } from "@/lib/logger";
 
@@ -19,7 +20,7 @@ const getLog = () => (logger ??= createLogger("gazetteer.wikidata"));
 /** Types a Wikidata item may create without OSM counterpart; OSM is more complete for the others. */
 const CREATE_WITHOUT_MATCH = new Set<GeoObjectType>(["poi", "island", "islet", "cape", "bay"]);
 
-type Classified = { type: GeoObjectType; category?: PoiCategory };
+type Classified = { type: GeoObjectType; category?: PoiCategory; wikidataClass?: string };
 
 /** Type (and POI category) of the first class in config order that the item has. */
 function classify(
@@ -30,7 +31,8 @@ function classify(
   const cls = Object.keys(classes).find((c) => item.classes.includes(c));
   if (!cls) return null;
   const type = classes[cls]!;
-  return type === "poi" && categories[cls] ? { type, category: categories[cls] } : { type };
+  if (type !== "poi") return { type };
+  return categories[cls] ? { type, category: categories[cls], wikidataClass: cls } : { type, wikidataClass: cls };
 }
 
 /**
@@ -80,6 +82,11 @@ async function byOsmTag(db: Db, qid: string, type: GeoObjectType): Promise<strin
     .orderBy(asc(geoObjects.id))
     .limit(1);
   return row?.id;
+}
+
+async function isPoi(db: Db, id: string): Promise<boolean> {
+  const [row] = await db.select({ type: geoObjects.type }).from(geoObjects).where(eq(geoObjects.id, id));
+  return row?.type === "poi";
 }
 
 /** Sets `wikidata_id` on an object that has none; false when it already carries another one. */
@@ -143,7 +150,14 @@ export async function importWikidata(
       unlinked.push({ item, cls, names });
     }
 
+    const poiNearSea = await nearSea(
+      tx,
+      unlinked.filter((u) => u.cls.type === "poi").map((u) => ({ key: u.item.id, lon: u.item.lon, lat: u.item.lat })),
+      gazetteer.poiCoastDistanceKm,
+    );
+
     for (const { item, cls, names } of unlinked) {
+      if (cls.type === "poi" && !poiNearSea.has(item.id)) continue;
       const match = await findMatch(
         tx,
         { type: cls.type, point: { lon: item.lon, lat: item.lat }, names: names.map((n) => n.name) },
@@ -158,8 +172,10 @@ export async function importWikidata(
       }
       if (match.kind === "none" && !CREATE_WITHOUT_MATCH.has(cls.type)) continue;
 
+      const { wikidataClass, ...classified } = cls;
       const created = await upsertGeoObject(tx, {
-        ...cls,
+        ...classified,
+        ...(wikidataClass ? { tags: { wikidata_class: wikidataClass } } : {}),
         origin: "wikidata",
         wikidataId: item.id,
         geometry: { type: "Point", coordinates: [item.lon, item.lat] },
@@ -172,6 +188,11 @@ export async function importWikidata(
       result.created++;
       result.names += created.names;
       if (match.kind !== "none") {
+        // Two POIs near each other are two places: no review between them (spec 16).
+        if (cls.type === "poi" && (await isPoi(tx, match.id))) {
+          result.uncertain++;
+          continue;
+        }
         await openPairTask(tx, created.id, match.id, {
           similarity: match.similarity,
           distanceM: match.distanceM,

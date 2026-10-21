@@ -8,6 +8,7 @@ import { geomFromGeoJson } from "@/lib/db/geometry";
 import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
 import { bufferBbox, landCoverage } from "@/lib/domain/gazetteer/land";
 import { classifyOsm, osmNames } from "@/lib/domain/gazetteer/osm-classify";
+import { nearSea } from "@/lib/domain/gazetteer/sea-distance";
 import { upsertGeoObject, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
 import { createLogger } from "@/lib/logger";
 
@@ -17,7 +18,7 @@ let logger: ReturnType<typeof createLogger> | undefined;
 const getLog = () => (logger ??= createLogger("gazetteer.osm"));
 
 /** OSM tag keys kept in `geo_objects.tags`; `seamark:*` by prefix. */
-const KEPT_TAGS = new Set(["place", "natural", "leisure", "harbour", "mooring", "historic", "tourism", "amenity", "shop", "wikidata"]);
+const KEPT_TAGS = new Set(["place", "natural", "leisure", "harbour", "mooring", "historic", "tourism", "amenity", "shop", "man_made", "wikidata"]);
 
 export function keptTags(tags: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(tags).filter(([k]) => KEPT_TAGS.has(k) || k.startsWith("seamark:")));
@@ -75,11 +76,20 @@ export async function nearCoast(db: Db, geometry: GeoObjectDraft["geometry"], di
   return rows[0]!.near;
 }
 
+/** One point of a geometry (a node, else the first vertex), enough for a distance of kilometres. */
+function samplePoint(geometry: GeoObjectDraft["geometry"]): { lon: number; lat: number } {
+  if ("lines" in geometry) return { lon: geometry.lines[0]!.coordinates[0]![0]!, lat: geometry.lines[0]!.coordinates[0]![1]! };
+  let c: unknown = (geometry as GeoJSON.Point | GeoJSON.LineString | GeoJSON.Polygon).coordinates;
+  while (Array.isArray(c) && Array.isArray(c[0])) c = c[0];
+  const [lon, lat] = c as number[];
+  return { lon: lon!, lat: lat! };
+}
+
 /**
  * Stage `gazetteer.osm` (Spec 03, step 1): queries Overpass for the subdivision box plus `bboxBufferKm`,
  * archives the raw answer under `datasets/overpass/<subdivision key>/<YYYY-MM-DD>.json` and upserts every
  * classified, named element in one transaction (all or nothing). Settlements are kept only within
- * `coastDistanceM` of the water. An element whose geometry cannot be repaired is logged and skipped.
+ * `coastDistanceM` of the water, POIs only within `poiCoastDistanceKm` of an IHO sea. An element whose geometry cannot be repaired is logged and skipped.
  * Requires land polygons for the box.
  */
 export async function importOsm(
@@ -103,6 +113,11 @@ export async function importOsm(
 
   return db.transaction(async (tx) => {
     const result = { created: 0, updated: 0, skipped: 0, names: 0 };
+    const seaPoints = elements.flatMap((el) => {
+      const geometry = classifyOsm(el.tags ?? {}, categories, el.type)?.type === "poi" ? elementGeometry(el) : null;
+      return geometry ? [{ key: `${el.type}/${el.id}`, ...samplePoint(geometry) }] : [];
+    });
+    const poiNearSea = await nearSea(tx, seaPoints, gazetteer.poiCoastDistanceKm);
     for (const el of elements) {
       const tags = el.tags ?? {};
       const cls = classifyOsm(tags, categories, el.type);
@@ -122,6 +137,10 @@ export async function importOsm(
         continue;
       }
       const osmId = `${el.type}/${el.id}`;
+      if (cls.type === "poi" && !poiNearSea.has(osmId)) {
+        result.skipped++;
+        continue;
+      }
       const r = await upsertGeoObject(tx, {
         ...cls,
         origin: "osm",

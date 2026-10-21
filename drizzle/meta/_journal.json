@@ -442,6 +442,13 @@
       "when": 1792546535469,
       "tag": "0062_areas_triggers",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1792546538900,
+      "tag": "0063_dismiss_poi_pair_tasks",
+      "breakpoints": true
     }
   ]
 }
