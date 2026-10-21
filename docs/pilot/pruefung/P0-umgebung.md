@@ -17,7 +17,6 @@ Datum: 21.10.2026 (Nacht, autonom durch Claude) · Umfang: lokal, Dev-DB `peripl
 | Budgets abgesenkt (`anthropic` 5 €, `firecrawl` 2 €) | ok, Commit auf dem Prüf-Branch; vor dem vollen Lauf zurücksetzen |
 | `npm run db:migrate` (leere DB) | ok |
 | Worker, Web (`next dev -p 3100`) | laufen |
-
 | „Landesteile neu bilden“ (Lauf `01a15c05…`) | **fehlgeschlagen**: `gazetteer.coarse` 24/25 Länder (Palästina, B2), `subdivisions.build` an fehlenden Landpolygonen (B3, erwartet) |
 | Landpolygone `--mediterranean` (Version 2026-10-20) | 26.388 Polygone in 21 s |
 | nur `subdivisions.build` (Lauf `01a15c27…`) | hing > 20 min (B1), nach Fix Absturz von Postgres durch Speichermangel bei den Kykladen (B4) |
