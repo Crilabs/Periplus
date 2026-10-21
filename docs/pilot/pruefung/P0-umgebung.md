@@ -64,3 +64,5 @@ Datenbank geleert bis auf Benutzer (Wunsch Christian: „bestehende Daten verwer
 | Nur `subdivisions.build` | 45 s; 93 aktive + 2 ausgeschlossene Landesteile (statt 111: Länder mit fehlgeschlagenem Grob-Gazetteer fehlen); alle 13 griechischen vorhanden |
 
 Tor für die Probekachel: **bestanden** (GR-I vollständig). Grob-Gazetteer der übrigen Länder wird nach P3 nachgeholt (nicht parallel, B16).
+
+Nachtrag 16:10: Grob-Gazetteer erneut (Lauf `01a15e7f…`, 82 min): Grenzen jetzt vollständig (22 Länder, 430 Verwaltungseinheiten; Palästina fehlt, B2); Inseln, Golfe, Orte teilweise (viele HTTP 502, B15; Frankreich überschreitet 900 s). `subdivisions.build` danach: 110 aktive + 2 ausgeschlossene Landesteile; `GR-I` unverändert (gleiche ID).
