@@ -53,3 +53,6 @@ next-env.d.ts
 # holds the simulation's environment
 /data/sim/
 .env.sim
+
+# Prüfung mit echten Daten (Spec 12): Navily-Abgleiche und -Listen bleiben lokal
+docs/pilot/pruefung/lokal/
