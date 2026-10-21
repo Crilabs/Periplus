@@ -123,6 +123,14 @@ Für Abschnitt 4 des Gesamtdesigns:
 | Highlight zählt für alle Spots in seinem Bedeutungsradius (5–50 sm je Wichtigkeit) | Highlight zählt für die Orte, bei denen es unter den fünf wichtigsten seiner Kategorie in Reichweite (1–20 km Landweg) ist | Entscheidung Christian: höchstens fünf je Kategorie; „dort“ heißt an Land erreichbar, nicht im Segelradius |
 | Highlights je Kategorie als Fact „vorhanden, Anzahl, …“ | „Anzahl“ wird zur Stufe `none`/`some`/`many` | Entscheidung Christian: Einschätzung statt Zählung |
 
+## Kalibrierung und Umsetzungsentscheide
+
+- Startwerte bestätigt (keine Änderung nötig): `levelWeights` [0,005; 0,2; 1; 3; 6], `levelThresholds` [1, 6], `tagBonus` unverändert. Test `lib/domain/highlights/__tests__/calibration.test.ts`: Agistri-ähnlich (eine Ruine, Wichtigkeit 2) `none`; Poros-ähnlich (Kloster 4, sechs Kirchen 3, drei Ruinen 2, 30 Kleinigkeiten 1) `some`; Athen-ähnlich (Akropolis 5, 20 Museen 4, 40 Stätten 3, 3000 Kleinigkeiten 1) `many`.
+- Highlights werden nur im Paket ihres eigenen Landesteils geliefert.
+- Paar-Aufgaben unter Highlights: ähnliche, verschiedene Namen unter 2 km; gleiche Namen 500–2000 m (`gazetteer.merge.highlightPairM`).
+- Zielorte der Auswahl sind alle nicht abgelehnten Orte.
+- Ausgeschlossene Spots tragen ebenfalls `highlightLevels`.
+
 ## Offene Punkte
 
 - Modell-Einschätzung von Wichtigkeit und Stufe mit Belegen, falls die Rechnung an echten Daten nicht trägt.
