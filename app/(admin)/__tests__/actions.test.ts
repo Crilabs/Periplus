@@ -1,3 +1,4 @@
+import { getConfig } from "@/lib/config";
 import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
@@ -256,7 +257,7 @@ describe("admin server actions", () => {
           kind: "stage",
           scope: { type: "tile", id: tileId },
           stages: ["consolidation.geo", "consolidation.summary", "consolidation.followup", "images.place"],
-          params: { tileId, rulesVersion: "v1" },
+          params: { tileId, rulesVersion: getConfig().consolidation.version },
           triggeredBy: "admin@example.invalid",
         }),
       );
@@ -338,7 +339,7 @@ describe("admin server actions", () => {
         scope: { type: "tile", id: scene.tileId },
         stages: ["geometry.detect_bays", "geometry.place", ...GEOMETRY_CONSOLIDATION_STAGES],
         // the rules version active at the start, frozen for the run's consolidation (ruling M7-E-R1)
-        params: { tileIds: [scene.tileId], rulesVersion: "v1" },
+        params: { tileIds: [scene.tileId], rulesVersion: getConfig().consolidation.version },
         triggeredBy: "admin@example.invalid",
       });
 

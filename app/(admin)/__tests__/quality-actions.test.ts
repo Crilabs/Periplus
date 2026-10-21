@@ -18,6 +18,9 @@ import { testDb, withRollback } from "@/test/db";
  * withRollback (never committed).
  */
 
+/** The active rules version (config/consolidation/active.json). */
+const ACTIVE_RULES = getConfig().consolidation.version;
+
 let current: Db | undefined;
 const requireAdmin = vi.fn();
 const redirect = vi.fn();
@@ -184,7 +187,7 @@ describe("startEvaluationAction and activateCandidateAction", () => {
   it("activation is refused while the gate is closed and writes its row once it passes", () =>
     withRollback(async (tx) => {
       current = tx;
-      const { evaluationRunId, subdivisionKey } = await evaluated(tx, { rulesVersion: "v1", candidate: { rulesVersion: "v1" } });
+      const { evaluationRunId, subdivisionKey } = await evaluated(tx, { rulesVersion: ACTIVE_RULES, candidate: { rulesVersion: ACTIVE_RULES } });
       await tx.update(runs).set({ status: "running" }).where(eq(runs.id, evaluationRunId));
       await activateCandidateAction(form({ subdivisionKey, evaluationRunId }));
       expect(redirect).toHaveBeenLastCalledWith(`/quality?subdivision=${subdivisionKey}&error=regression_gate_closed`);
@@ -193,14 +196,14 @@ describe("startEvaluationAction and activateCandidateAction", () => {
       await tx.update(runs).set({ status: "finished" }).where(eq(runs.id, evaluationRunId));
       await activateCandidateAction({ subdivisionKey, evaluationRunId });
       expect(redirect).toHaveBeenLastCalledWith(`/quality?subdivision=${subdivisionKey}&notice=activated`);
-      // v1 is the active version already: no rules row pins it (ruling M7-E-R2)
+      // the active version is already: no rules row pins it (ruling M7-E-R2)
       expect(await activationsOf(tx, evaluationRunId)).toEqual([]);
     }));
 
   it("an empty comparison set never activates (ruling M7-E-R2)", () =>
     withRollback(async (tx) => {
       current = tx;
-      const { evaluationRunId, placeId, subdivisionKey } = await evaluated(tx, { rulesVersion: "v1", candidate: { rulesVersion: "v1", extraction: OPUS } });
+      const { evaluationRunId, placeId, subdivisionKey } = await evaluated(tx, { rulesVersion: ACTIVE_RULES, candidate: { rulesVersion: ACTIVE_RULES, extraction: OPUS } });
       await tx.delete(comparisonSet).where(eq(comparisonSet.placeId, placeId));
       await activateCandidateAction({ subdivisionKey, evaluationRunId });
       expect(redirect).toHaveBeenLastCalledWith(`/quality?subdivision=${subdivisionKey}&error=regression_gate_closed`);
