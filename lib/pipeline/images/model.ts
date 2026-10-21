@@ -1,5 +1,6 @@
 import type { ImageModel } from "@/lib/adapters/openai-image";
 import type { Db } from "@/lib/db/client";
+import { getEnv, type Env } from "@/lib/env";
 
 /*
  * The image model of the image jobs (spec 13), set once per process: the worker passes the OpenAI adapter, tests a
@@ -23,10 +24,13 @@ export function imageModelFor(db: Db): ImageModel {
 }
 
 /**
- * Whether the image jobs of this process can paint: a model is set and usable (`ImageModel.available`: the OpenAI
- * adapter needs `OPENAI_API_KEY`, a test's mock always is). Without one the plan targets nothing, so no run downloads
- * imagery and renders for an edit that cannot happen.
+ * Whether the image jobs can paint, so a plan may target places: the model this process set (`ImageModel.available`:
+ * the OpenAI adapter needs `OPENAI_API_KEY`, a test's mock always is) or, in a process without one (the Next.js
+ * server plans the first stage of a run it starts; only the worker sets the adapter), the same condition as the
+ * adapter's: `OPENAI_API_KEY` is set. Without either the plan targets nothing, so no run downloads imagery and renders
+ * for an edit that cannot happen.
  */
-export function imageModelAvailable(db: Db): boolean {
-  return imageModelFactory !== undefined && imageModelFactory(db).available();
+export function imageModelAvailable(db: Db, env: Pick<Env, "OPENAI_API_KEY"> = getEnv()): boolean {
+  if (imageModelFactory) return imageModelFactory(db).available();
+  return env.OPENAI_API_KEY !== undefined;
 }
