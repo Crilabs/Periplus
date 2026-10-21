@@ -18,6 +18,7 @@ describe("images config", () => {
     const c = getConfig();
     expect(c.images.camera.tiltDeg).toBe(30);
     expect(c.images.camera.zooms.z1.heightM).toBe(260);
+    expect(c.images.camera.rulesVersion).toBe("camera-2");
     expect(c.images.check.minWaterIoU.midday).toBe(0.8);
     expect(c.images.delivery.ktimatologio).toBe(false);
     expect(c.images.sources.ktimatologio.countries).toEqual(["GR"]);

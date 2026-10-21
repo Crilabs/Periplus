@@ -1197,6 +1197,11 @@ export const imagesSchema = z.strictObject({
     rotateStepDeg: z.number().int().min(1).max(180),
     defaultZoom: z.enum(["z1", "z2", "z3"]),
     zooms: z.strictObject({ z1: zoomSchema, z2: zoomSchema, z3: zoomSchema }),
+    /**
+     * Version of the camera rules in code (`render-plan.ts`: target, rotation) and of their parameters here; part of
+     * the generation key, so a bump generates every image again. `camera-1` was the centre as target (implicit).
+     */
+    rulesVersion: z.string().min(1),
   }),
   render: z.strictObject({
     maxSourcePixelOnScreen: z.number().positive(),

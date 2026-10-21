@@ -59,10 +59,14 @@ const candidateKeyOf = (geoObjectId: string, renderId: string, n: string) => new
 
 describe("generationKey", () => {
   it("is independent of the tile order and changes with each field", () => {
-    const base = { imageryTileIds: ["b", "a"], promptVersion: 1, model: "m", kind: "anchorage" as const, light: "midday" as const, slot: "title", zoom: "z1" as const, azimuthDeg: null };
+    const base = {
+      imageryTileIds: ["b", "a"], promptVersion: 1, model: "m", kind: "anchorage" as const, light: "midday" as const, slot: "title", zoom: "z1" as const,
+      azimuthDeg: null, rulesVersion: "camera-2",
+    };
     const key = generationKey(base);
     expect(generationKey({ ...base, imageryTileIds: ["a", "b"] })).toBe(key);
     expect(generationKey({ ...base, promptVersion: 2 })).not.toBe(key);
+    expect(generationKey({ ...base, rulesVersion: "camera-1" })).not.toBe(key);
     expect(generationKey({ ...base, imageryTileIds: ["a", "c"] })).not.toBe(key);
     expect(generationKey({ ...base, kind: "marina" })).not.toBe(key);
     expect(generationKey({ ...base, slot: "view-2" })).not.toBe(key);

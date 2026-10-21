@@ -71,6 +71,11 @@ const withPromptVersion = (promptVersion: number): AppConfig => ({
   models: { ...cfg.models, imageTasks: { "generate-place-image": { ...cfg.models.imageTasks["generate-place-image"]!, promptVersion } } },
 });
 
+const withRulesVersion = (rulesVersion: string): AppConfig => ({
+  ...cfg,
+  images: { ...cfg.images, camera: { ...cfg.images.camera, rulesVersion } },
+});
+
 /** Kind, scope and stage names of run `id`. */
 async function getRun(tx: Db, id: string) {
   const [row] = await tx
@@ -86,12 +91,12 @@ async function subdivisionRun(tx: Db, subdivisionKey: string) {
   return { id: run.id, params: { images: { subdivisionKey } } as Record<string, unknown> };
 }
 
-/** Generates the title image of `objectId` once (stub renderer), so its imagery and task exist. */
-async function generateTitle(tx: Db, objectId: string, runId: string, force?: boolean) {
+/** Generates the title image of `objectId` once (stub renderer, `config` default the repo's), so its imagery and task exist. */
+async function generateTitle(tx: Db, objectId: string, runId: string, force?: boolean, config?: AppConfig) {
   await generatePlaceImage(
     tx,
     { geoObjectId: objectId, view: TITLE, runId, force },
-    { archive: memoryArchive(), transport: await syntheticImageryTransport(), imageModel: await imageModel(GOOD), model: checker(false), render: stubRender },
+    { archive: memoryArchive(), transport: await syntheticImageryTransport(), imageModel: await imageModel(GOOD), model: checker(false), render: stubRender, config },
   );
   const [task] = await imageTasksOf(tx, `${objectId}:title`);
   return task!;
@@ -242,6 +247,22 @@ describe("imageTargets", () => {
       await generateTitle(tx, spot.objectId, run.id);
       expect(await imageTargets(tx, run)).toEqual([]);
       expect(await imageTargets(tx, run, withPromptVersion(2))).toEqual([{ geoObjectId: spot.objectId, view: TITLE }]);
+    });
+  });
+
+  it("new camera rules version makes a place with an image under the old key a target again", async () => {
+    await withRollback(async (tx) => {
+      const sd = await insertImageSubdivision(tx);
+      const spot = await insertSpot(tx, sd.id);
+      const run = await subdivisionRun(tx, sd.key);
+      // the title image was generated and approved under the old camera rules
+      const old = withRulesVersion("camera-1");
+      const task = await generateTitle(tx, spot.objectId, run.id, undefined, old);
+      await decide(tx, task.id, "approve_image");
+      await insertApprovedTitle(tx, spot.objectId, task);
+      expect(await imageTargets(tx, run, old)).toEqual([]);
+      // the current rules give a new key: the title image is generated again (the old one stays until approval)
+      expect(await imageTargets(tx, run)).toEqual([{ geoObjectId: spot.objectId, view: TITLE }]);
     });
   });
 

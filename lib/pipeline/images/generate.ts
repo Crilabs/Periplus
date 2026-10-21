@@ -76,7 +76,8 @@ export type PlaceImageTaskContext = {
 
 /**
  * Fingerprint of everything an image depends on: the aerial tiles (sorted ids of core and wide), prompt version,
- * model, place kind, light, slot, zoom and the rotation start. A new image is generated only when it changes.
+ * model, place kind, light, slot, zoom, the rotation start and the camera rules version (`camera.rulesVersion`). A
+ * new image is generated only when it changes.
  */
 export function generationKey(input: {
   imageryTileIds: string[];
@@ -87,6 +88,7 @@ export function generationKey(input: {
   slot: string;
   zoom: ZoomLevel;
   azimuthDeg: number | null;
+  rulesVersion: string;
 }): string {
   return valueFingerprint({ ...input, imageryTileIds: [...input.imageryTileIds].sort() });
 }
@@ -110,6 +112,7 @@ export function keyFor(input: PlaceImageInput, view: ImageView, imageryTileIds: 
     slot: view.slot,
     zoom: view.zoom,
     azimuthDeg: view.azimuthDeg ?? null,
+    rulesVersion: cfg.images.camera.rulesVersion,
   });
 }
 
