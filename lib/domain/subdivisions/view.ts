@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { hasCoreImagery, imageCoverage, type ImageCoverage } from "@/lib/domain/images/view";
+import { countryName } from "./country-name";
 
 /*
  * The admin view „Länder und Landesteile“ (spec 14 „Admin-UI“): every valid subdivision grouped by country, with its
@@ -47,16 +48,7 @@ export type CountrySummary = { total: number; built: number; running: number; fa
 
 export type CountryNode = { country: string; name: string; whole: boolean; summary: CountrySummary; subdivisions: SubdivisionRow[] };
 
-const countryNames = new Intl.DisplayNames(["de"], { type: "region" });
-
-/** German name of an ISO 3166-1 alpha-2 code; the code itself when the runtime does not know it. */
-export function countryName(code: string): string {
-  try {
-    return countryNames.of(code) ?? code;
-  } catch {
-    return code;
-  }
-}
+export { countryName };
 
 type Row = {
   key: string;

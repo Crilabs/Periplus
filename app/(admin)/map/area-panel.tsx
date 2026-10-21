@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { AreaDetail } from "@/lib/domain/areas/view";
 import { GEO_OBJECT_TYPE_LABELS } from "../_components/labels";
-import { countryName } from "@/lib/domain/subdivisions/view";
+import { countryName } from "@/lib/domain/subdivisions/country-name";
 import { cx } from "../_components/ui";
 
 const typeLabel = (type: string): string => GEO_OBJECT_TYPE_LABELS[type as keyof typeof GEO_OBJECT_TYPE_LABELS] ?? type;
