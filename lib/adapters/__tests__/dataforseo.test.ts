@@ -11,7 +11,7 @@ import { withRollback } from "@/test/db";
 
 const HAND = "test/fixtures/http/dataforseo/hand";
 
-const cfg = () => ({ ...getConfig().discovery.serp, ratePerMinute: 1_000_000 });
+const cfg = () => ({ ...getConfig().discovery.serp, ratePerMinute: 1_000_000, taskRetryDelayMs: 0 });
 
 /** Answers every request with the hand-written body `<HAND>/<name>.json` and keeps the requests. */
 function handTransport(name: string): Transport & { requests: HttpRequest[] } {
@@ -69,6 +69,26 @@ describe("searchOrganic", () => {
       // DataForSEO bills an errored task too.
       const [call] = await tx.select().from(externalCalls).where(eq(externalCalls.tileId, tileId));
       expect(Number(call!.costEur)).toBeCloseTo(getConfig().discovery.serp.costPerQueryEur, 6);
+    });
+  });
+
+  it("a 40101 task status is retried within the call and the next answer is used", async () => {
+    await withRollback(async (tx) => {
+      const bodies = ["task-40101", "organic-20-paa"].map((n) => readFileSync(`${HAND}/${n}.json`));
+      let calls = 0;
+      const transport: Transport = async () => makeResponse(200, new Uint8Array(bodies[Math.min(calls++, 1)]!));
+      const { items } = await searchOrganic(transport, query, { db: tx }, cfg());
+      expect(calls).toBe(2);
+      expect(items.length).toBeGreaterThan(0);
+    });
+  });
+
+  it("a 40101 task status that persists gives up after taskRetries further attempts", async () => {
+    await withRollback(async (tx) => {
+      const transport = handTransport("task-40101");
+      const error = await searchOrganic(transport, query, { db: tx }, cfg()).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(RetryableHttpError);
+      expect(transport.requests).toHaveLength(1 + getConfig().discovery.serp.taskRetries);
     });
   });
 

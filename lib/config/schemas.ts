@@ -664,6 +664,10 @@ export const discoverySchema = z.strictObject({
     costPerQueryEur: eur,
     ratePerMinute: z.number().positive(),
     timeoutMs: positiveInt,
+    /** Further attempts of one search after a transient task error (40101) before the search is given up. */
+    taskRetries: z.number().int().nonnegative(),
+    /** Pause before the first further attempt; it doubles with each attempt. */
+    taskRetryDelayMs: z.number().int().nonnegative(),
   }),
   templates: z.strictObject({ area: z.array(queryTemplateSchema), tile: z.array(queryTemplateSchema) }),
   /** A named bay becomes a tile query with an anchor area of at least this size or this many Wikidata names. */

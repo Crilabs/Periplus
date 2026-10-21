@@ -6,7 +6,9 @@
     "maxQueriesPerRun": 240,
     "costPerQueryEur": 0.0035,
     "ratePerMinute": 30,
-    "timeoutMs": 120000
+    "timeoutMs": 120000,
+    "taskRetries": 3,
+    "taskRetryDelayMs": 5000
   },
   "templates": {
     "area": [
