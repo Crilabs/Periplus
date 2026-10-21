@@ -155,6 +155,12 @@ describe("mentions re-read", () => {
       expect(names).not.toContain("palmira bay"); // a bay is no prepass type
       expect(names).not.toContain("wolkeninsel");
       const accent = await insertTestVersion(tx, ["Im Zórbos-Gulf, dann weiter."]);
+      for (const [name, text] of [["Muğla", "Hafen von Muğla im Süden"], ["Ċirkewwa", "Die Fähre ab Ċirkewwa fährt oft"], ["Ġnejna", "Ankern in Ġnejna Bay"]] as const) {
+        await insertNamedObject(tx, { type: "island", names: [{ name }], lon: 53.1, lat: 31.1, tiles: [TILE_B] });
+        const v = await insertTestVersion(tx, [text]);
+        await s.match(v.versionId);
+        expect(await prefilteredVersions(tx, await prefilterNames(tx, [TILE_B], config))).toContain(v.versionId);
+      }
       const greek = await insertTestVersion(tx, ["Ο κόλπος."]);
       const plainText = await insertTestVersion(tx, ["Nothing about any known place here."]);
       for (const v of [accent, greek, plainText]) await s.match(v.versionId);

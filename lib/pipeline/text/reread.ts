@@ -15,12 +15,30 @@ import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 
 export const REREAD_STAGE = "mentions.reread";
 
-/** Accented Latin letters `normalizeName` (NFD, marks removed) reduces to their base letter, and the base letters. */
-const ACCENTED = "ÀÁÂÃÄÅàáâãäåÇçÈÉÊËèéêëÌÍÎÏìíîïÑñÒÓÔÕÖòóôõöÙÚÛÜùúûüÝýÿŠšŽžČčŘřŚśŞşĚěĆćĄąĘęŃńŇňŤťŮůŹźŻżŐőŰű";
-const BASE = "AAAAAAaaaaaaCcEEEEeeeeIIIIiiiiNnOOOOOoooooUUUUuuuuYyySsZzCcRrSsSsEeCcAaEeNnNnTtUuZzZzOoUu";
+/**
+ * Letters `normalizeName` reduces to one other letter (NFD, combining marks removed), found by trying every code point of
+ * Latin-1 Supplement, Latin Extended-A/B and Latin Extended Additional, and their base letters (same positions), for
+ * `translate`: ğ, ş, ġ, ċ, ţ and the rest, not a hand-picked list.
+ */
+const [ACCENTED, BASE] = (() => {
+  const from: string[] = [];
+  const to: string[] = [];
+  const ranges: Array<[number, number]> = [[0xc0, 0x24f], [0x1e00, 0x1eff]];
+  for (const [lo, hi] of ranges) {
+    for (let cp = lo; cp <= hi; cp++) {
+      const c = String.fromCodePoint(cp);
+      const base = c.normalize("NFD").replace(/\p{M}/gu, "");
+      if (base !== c && [...base].length === 1) {
+        from.push(c);
+        to.push(base);
+      }
+    }
+  }
+  return [from.join(""), to.join("")];
+})();
 const GREEK_SCRIPT = "[\\u0370-\\u03ff\\u1f00-\\u1fff]";
 
-/** LIKE pattern of a normalized name: its words in order with anything between (commas, dashes, accents of a word are folded in the text). */
+/** LIKE pattern of a normalized name: its words in order with anything between (commas, dashes). */
 const likePattern = (name: string) => `%${name.split(" ").map((w) => w.replace(/[\\%_]/g, "\\$&")).join("%")}%`;
 
 /**
@@ -56,7 +74,7 @@ export async function prefilterNames(db: Db, scope: string[], cfg: AppConfig): P
 /**
  * Current versions of active documents that passed the name match once (a never matched version is pending and left to
  * the pending runs, as `textRunVersions` does for rematch runs) and whose text can name one of `names`: a chunk or an
- * area hint contains the name (LIKE, case and accent folded), or a chunk is in greek script (names match through the
+ * area hint contains the name (LIKE, case-insensitive, accented letters folded to their base letter), or a chunk is in greek script (names match through the
  * transliteration there). Sound, not exact: the prepass confirms.
  */
 export async function prefilteredVersions(db: Db, names: string[]): Promise<string[]> {
