@@ -10,6 +10,7 @@ import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { isAnchoringBan, type AnchoringBanConfig } from "@/lib/domain/geometry/restrictions";
 import type { Bbox } from "@/lib/domain/tiles";
 import { BBOX_TOLERANCE, MAP_FEATURE_LIMIT, MAX_BBOX_DEGREES, NOT_IN_GEO_OBJECT_LAYER } from "@/lib/domain/map-limits";
+import { areaSubdivisionsSql } from "@/lib/domain/areas/view";
 import { validAt } from "@/lib/domain/timeline";
 
 export const MAP_LAYERS = ["subdivisions", "seas", "areas", "tiles", "geo-objects", "places", "restricted-areas"] as const;
@@ -42,7 +43,15 @@ export const typesParam = z
   .transform((s) => (s === "" ? [] : s.split(",")))
   .pipe(z.array(z.enum(geoObjectTypeEnum.enumValues)).max(geoObjectTypeEnum.enumValues.length));
 
-export const mapDataRequest = z.object({ layer: z.enum(MAP_LAYERS), bbox: bboxParam, types: typesParam.optional() });
+/** `?subdivision=GR-ATT` of the areas layer: only areas whose scope tiles belong to this subdivision (by key). */
+export const subdivisionParam = z.string().trim().min(1).max(64);
+
+export const mapDataRequest = z.object({
+  layer: z.enum(MAP_LAYERS),
+  bbox: bboxParam,
+  types: typesParam.optional(),
+  subdivision: subdivisionParam.optional(),
+});
 
 /** A layer's features plus `truncated` (a GeoJSON foreign member): more rows than the cap intersect the view. */
 export type MapLayerData = FeatureCollection & { truncated: boolean };
@@ -56,7 +65,7 @@ const envelope = ([west, south, east, north]: Bbox): SQL =>
 const intersects = (geom: AnyColumn, bbox: Bbox): SQL =>
   sql`(${geom} && ${envelope(bbox)} and ST_Intersects(${geom}, ${envelope(bbox)}))`;
 
-function layerQuery(layer: MapLayer, bbox: Bbox, limit: number, types?: GeoObjectType[]): SQL {
+function layerQuery(layer: MapLayer, bbox: Bbox, limit: number, types?: GeoObjectType[], subdivision?: string): SQL {
   switch (layer) {
     case "subdivisions":
       return sql`
@@ -82,9 +91,16 @@ function layerQuery(layer: MapLayer, bbox: Bbox, limit: number, types?: GeoObjec
     case "areas":
       return sql`
         select ${asGeoJson(geoObjects.geom)} as geometry,
-          json_build_object('id', ${geoObjects.id}, 'key', ${geoObjects.configKey}, 'name', ${displayNameSql(geoObjects.id)}) as properties
+          json_build_object(
+            'id', ${geoObjects.id},
+            'key', ${geoObjects.configKey},
+            'name', ${displayNameSql(geoObjects.id)},
+            'subdivisionKeys', (select string_agg(x.key, ',' order by x.key) from (${areaSubdivisionsSql(sql`${geoObjects.id}`)}) x),
+            'polygonOrigin', ${geoObjects.tags}->>'polygonOrigin'
+          ) as properties
         from ${geoObjects}
         where ${geoObjects.type} = 'area' and ${validAt(geoObjects)} and ${intersects(geoObjects.geom, bbox)}
+          ${subdivision ? sql`and exists (select 1 from (${areaSubdivisionsSql(sql`${geoObjects.id}`)}) y where y.key = ${subdivision})` : sql``}
         order by ${geoObjects.id}
         limit ${limit}`;
     case "tiles":
@@ -166,7 +182,8 @@ function configuredAnchoringBan(): AnchoringBanConfig {
  * One map layer as GeoJSON: valid rows intersecting `bbox`, at most `limit` features (default 5,000), with
  * `truncated` when more intersect it (UI-12: the map says so instead of silently dropping objects).
  * `geo-objects` leaves out areas and seas (own layers), countries and admin regions (shown as `subdivisions`) and, with
- * `types`, keeps only those types. `subdivisions` and `seas` are simplified outlines; tiles carry their `subdivisionKey`. Tile counts: `placeCount` all valid places of the tile,
+ * `types`, keeps only those types. `areas` carry `subdivisionKeys` (comma-joined keys of the subdivisions their scope tiles belong to) and
+ * `polygonOrigin`; with `subdivision` (a key) only the areas touching it. `subdivisions` and `seas` are simplified outlines; tiles carry their `subdivisionKey`. Tile counts: `placeCount` all valid places of the tile,
  * `candidateCount` those still `candidate`. `restricted-areas` carry `anchoringBan` by `opts.anchoringBan`
  * (default: the configured rule). `places` carry `profileConfidence` and `profileClass` of the newest profile version
  * of their geo object (its class by that version's rules), both null without a profile (or without a profile
@@ -176,10 +193,10 @@ export async function mapLayer(
   db: Db,
   layer: MapLayer,
   bbox: Bbox,
-  opts: { limit?: number; anchoringBan?: AnchoringBanConfig; types?: GeoObjectType[] } = {},
+  opts: { limit?: number; anchoringBan?: AnchoringBanConfig; types?: GeoObjectType[]; subdivision?: string } = {},
 ): Promise<MapLayerData> {
   const limit = opts.limit ?? MAP_FEATURE_LIMIT;
-  const { rows: fetched } = await db.execute<Row>(layerQuery(layer, bbox, limit + 1, layer === "geo-objects" ? opts.types : undefined));
+  const { rows: fetched } = await db.execute<Row>(layerQuery(layer, bbox, limit + 1, layer === "geo-objects" ? opts.types : undefined, layer === "areas" ? opts.subdivision : undefined));
   const truncated = fetched.length > limit;
   const rows = fetched.slice(0, limit);
   if (layer === "restricted-areas") {
