@@ -8,7 +8,7 @@ import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
 import { selectedPoiIds } from "@/lib/domain/highlights/selections";
 import { setPlaceStatusByAdmin } from "@/lib/domain/place-status";
 import { newId } from "@/lib/domain/ids";
-import { insertComputation, insertPlace, insertSource, insertTextFact } from "@/test/consolidation";
+import { insertComputation, insertMention, insertPlace, insertSource, insertTextFact } from "@/test/consolidation";
 import { testDb, withRollback } from "@/test/db";
 import { insertNamedObject, insertTestRun } from "@/test/text";
 
@@ -477,6 +477,26 @@ describe("consolidateGeo", () => {
         // the next regular run replaces the rows: the ended POI drops out
         expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "created", version: 2 });
         expect((await selectionOf(tx, objectId)).map((r) => [r.poi, r.rank, r.profileVersion])).toEqual([[b, 1, 2]]);
+      }));
+
+    it("a score change of an unselected candidate that keeps ids and level writes no new version (final review I1)", () =>
+      withRollback(async (tx) => {
+        const { objectId } = await insertPlace(tx, { lon: LON, lat: LAT, name: "Gleichbucht" });
+        const castles: string[] = [];
+        for (let i = 0; i < 5; i++) {
+          const id = await culture(tx, `Kastro ${i}`, 1 + i * 0.5);
+          await tx.update(geoObjects).set({ tags: { historic: "castle" } }).where(eq(geoObjects.id, id));
+          castles.push(id);
+        }
+        const chapel = await culture(tx, "Agios Nikolaos", 0.5);
+        expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "created", version: 1 });
+        const [v1] = await versionsOf(tx, objectId);
+        expect(v1!.attributes["derived.highlights"]).toEqual({ culture: { ids: castles, level: "none" } });
+
+        // a text source now names the chapel: its score rises, its importance, the ids and the level stay
+        await insertMention(tx, chapel, { sourceId: await insertSource(tx, "other", 0.3) });
+        expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "unchanged", version: 1 });
+        expect(await versionsOf(tx, objectId)).toHaveLength(1);
       }));
 
     it("a merged place has no selection rows; a merged POI is no selected highlight", () =>
