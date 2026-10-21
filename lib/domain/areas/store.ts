@@ -228,17 +228,28 @@ export async function endMissingAreas(db: Db, country: string, keys: string[], t
 
 /**
  * The id of the valid, unmerged area a level-`area` `serp_queries.scope_id` stands for (a scalar subquery, null when
- * none): the area with `id::text = scope_id`, or `config_key = scope_id`, or `config_key = aliases[scope_id]` (legacy
- * keys, `config/areas.json`). `scopeIdSql` is the SQL expression of the scope id, e.g. `sql\`q.scope_id\``.
+ * none): the area with `id = scope_id` (a uuid), else the one with `config_key = scope_id` or `config_key =
+ * aliases[scope_id]` (legacy keys, `config/areas.json`). Both branches are index lookups (primary key, the partial
+ * unique index on valid `config_key`), so a query over many SERP rows never scans `geo_objects`. `scopeIdSql` is the
+ * SQL expression of the scope id, e.g. `sql\`q.scope_id\``.
  */
 export function areaOfSerpScopeSql(scopeIdSql: SQL) {
   const aliases = JSON.stringify(getConfig().areas.aliases);
   return sql`(
-    select a.id from geo_objects a
-    where a.type = 'area' and a.merged_into_id is null
-      and a.valid_from <= current_date and (a.valid_to is null or a.valid_to > current_date)
-      and (a.id::text = ${scopeIdSql} or a.config_key = ${scopeIdSql} or a.config_key = (${aliases}::jsonb ->> (${scopeIdSql})))
-    order by (a.id::text = ${scopeIdSql}) desc, a.id
+    select x.id from (
+      select a.id, 0 as rank from geo_objects a
+      where a.id = (case when ${scopeIdSql} ~ ${UUID_TEXT} then (${scopeIdSql})::uuid end)
+        and a.type = 'area' and a.merged_into_id is null
+        and a.valid_from <= current_date and (a.valid_to is null or a.valid_to > current_date)
+      union all
+      select a.id, 1 as rank from geo_objects a
+      where a.config_key in (${scopeIdSql}, ${aliases}::jsonb ->> (${scopeIdSql})) and a.valid_to is null
+        and a.type = 'area' and a.merged_into_id is null and a.valid_from <= current_date
+    ) x
+    order by x.rank, x.id
     limit 1
   )`;
 }
+
+/** A uuid in its canonical text form (`uuid::text`), the only form `id::text = scope_id` matched before. */
+const UUID_TEXT = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
