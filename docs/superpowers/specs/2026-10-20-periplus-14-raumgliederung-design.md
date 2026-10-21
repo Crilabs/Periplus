@@ -167,6 +167,8 @@ Ein Admin startet einen Landesteil auf der neuen Seite `/subdivisions` (siehe Ad
 6. Quellenfindung Revier- und Kachel-Ebene; die Revier-Ebene nimmt alle zu diesem Zeitpunkt aktiven Reviere
 7. Fetch, Text, Konsolidierung, Paket
 
+Umgesetzt (Plan 14b, nach der Änderung vom 21.10.2026): Gazetteer → Datensätze → Seed → Geometrie → `areas.import` (Revier-Import statt Revier-Findung) → `mentions.reread` (startet das Nachlesen als eigenen Lauf, der Aufbau wartet nicht) → Quellenfindung. Das Nachlesen steht nach dem Revier-Import, damit in diesem Lauf neu entstandene Reviere im Vorlauf zählen.
+
 Die Schritte 4 bis 7 laufen, wie heute, je Kachel und Kachelblock und warten auf keine Review-Aufgabe. Die Reihenfolge der Landesteile bestimmt der Admin; ein automatischer nächster Landesteil ist nicht Teil dieser Spec.
 
 ## Folgen für Konsolidierung, Lieferung, Qualität
