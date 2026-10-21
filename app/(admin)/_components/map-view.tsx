@@ -116,6 +116,9 @@ const CLICK_LAYERS: Record<MapLayer, string[]> = {
   places: ["places-point"],
 };
 
+/** Which layer wins a click where several overlap (first = most specific / safety-relevant), independent of draw order. */
+const CLICK_PRIORITY: MapLayer[] = ["places", "geo-objects", "restricted-areas", "areas", "tiles", "subdivisions", "seas"];
+
 function addLayers(m: MapLibreMap): void {
   for (const layer of LAYERS) m.addSource(layer, { type: "geojson", data: EMPTY });
   m.addLayer({ id: "seas-line", type: "line", source: "seas", paint: { "line-color": SEA_COLOR, "line-width": 1, "line-opacity": 0.6, "line-dasharray": [4, 2] } });
@@ -331,8 +334,11 @@ export function MapView({ subdivisions = [] }: { subdivisions?: SubdivisionOptio
     });
     m.on("moveend", schedule);
     m.on("click", (e) => {
-      const ids = [...LAYERS].reverse().flatMap((layer) => CLICK_LAYERS[layer]).filter((id) => m.getLayer(id));
-      const [hit]: MapGeoJSONFeature[] = m.queryRenderedFeatures(e.point, { layers: ids });
+      const ids = LAYERS.flatMap((layer) => CLICK_LAYERS[layer]).filter((id) => m.getLayer(id));
+      // queryRenderedFeatures lists hits in render order; rank them explicitly so a Revier's fill never hides what lies under it
+      const hits: MapGeoJSONFeature[] = m.queryRenderedFeatures(e.point, { layers: ids });
+      const rank = (f: MapGeoJSONFeature) => CLICK_PRIORITY.indexOf(f.source as MapLayer);
+      const hit = hits.reduce<MapGeoJSONFeature | undefined>((best, f) => (best === undefined || rank(f) < rank(best) ? f : best), undefined);
       setSelection(hit ? { layer: hit.source as MapLayer, properties: hit.properties } : null);
     });
     map.current = m;

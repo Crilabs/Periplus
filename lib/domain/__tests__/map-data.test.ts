@@ -14,7 +14,7 @@ import {
   type RestrictedKind,
 } from "@/lib/db/schema";
 import { tileBbox, tileIdFor, type Bbox } from "@/lib/domain/tiles";
-import { mapLayer } from "@/lib/domain/map-data";
+import { mapDataRequest, mapLayer } from "@/lib/domain/map-data";
 import { insertTestSubdivision } from "@/test/text";
 import { withRollback } from "@/test/db";
 
@@ -261,4 +261,13 @@ describe("mapLayer", () => {
       const fc = await mapLayer(tx, "restricted-areas", BOX);
       expect(ids(fc)).not.toContain(ended!.id);
     }));
+});
+
+describe("mapDataRequest", () => {
+  const base = { layer: "areas", bbox: "27,33,27.1,33.1" };
+  it("accepts an optional subdivision key and rejects an empty one", () => {
+    expect(mapDataRequest.parse({ ...base, subdivision: "GR-ATT" }).subdivision).toBe("GR-ATT");
+    expect(mapDataRequest.parse(base).subdivision).toBeUndefined();
+    expect(mapDataRequest.safeParse({ ...base, subdivision: "" }).success).toBe(false);
+  });
 });

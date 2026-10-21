@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { AreaDetail } from "@/lib/domain/areas/view";
 import { GEO_OBJECT_TYPE_LABELS } from "../_components/labels";
+import { countryName } from "@/lib/domain/subdivisions/view";
 import { cx } from "../_components/ui";
 
+const typeLabel = (type: string): string => GEO_OBJECT_TYPE_LABELS[type as keyof typeof GEO_OBJECT_TYPE_LABELS] ?? type;
 const RELATION_LABELS: Record<string, string> = { contains: "enthält", within: "liegt in", overlaps: "überlappt" };
 const LANGUAGE_ORDER = ["de", "en", "el"];
 
@@ -67,7 +69,7 @@ export function AreaPanel({ areaId, fallbackName }: { areaId: string; fallbackNa
         <dt className="text-muted">Öffentliche ID</dt>
         <dd className="min-w-0 break-words">{d.publicId ?? "–"}</dd>
         <dt className="text-muted">Land</dt>
-        <dd>{d.importedFrom || "–"}</dd>
+        <dd>{d.importedFrom ? countryName(d.importedFrom) : "–"}</dd>
         <dt className="text-muted">Landesteile</dt>
         <dd className="min-w-0 break-words">{d.subdivisions.length ? d.subdivisions.map((s) => s.name).join(", ") : "–"}</dd>
         <dt className="text-muted">Polygon</dt>
@@ -95,19 +97,20 @@ export function AreaPanel({ areaId, fallbackName }: { areaId: string; fallbackNa
       </Section>
 
       <Section title={`Mitglieder (${d.members.length + d.unresolvedMembers.length})`}>
+        {d.members.length + d.unresolvedMembers.length === 0 && <p className="text-muted">–</p>}
         <ul className="space-y-0.5">
           {d.members.map((m) => (
             <li key={`${m.id}-${m.role}`}>
               <Link href={`/geo/${m.id}`} className="text-accent hover:underline">{m.name}</Link>{" "}
               <span className="text-muted">
-                {GEO_OBJECT_TYPE_LABELS[m.type as keyof typeof GEO_OBJECT_TYPE_LABELS] ?? m.type}
+                {typeLabel(m.type)}
                 {m.role === "boundary" && ", Grenzpunkt"}
               </span>
             </li>
           ))}
           {d.unresolvedMembers.map((m) => (
             <li key={`${m.name}-${m.role}`} className="text-muted/70">
-              {m.name} <span>({m.type}{m.role === "boundary" && ", Grenzpunkt"}, nicht aufgelöst)</span>
+              {m.name} <span>({typeLabel(m.type)}{m.role === "boundary" && ", Grenzpunkt"}, nicht aufgelöst)</span>
             </li>
           ))}
         </ul>
@@ -133,6 +136,7 @@ export function AreaPanel({ areaId, fallbackName }: { areaId: string; fallbackNa
       )}
 
       <Section title={`Belege (${d.evidence.length})`}>
+        {d.evidence.length === 0 && <p className="text-muted">–</p>}
         <ul className="space-y-2">
           {d.evidence.map((e) => {
             const href = safeHref(e.url);

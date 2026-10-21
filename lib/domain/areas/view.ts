@@ -12,13 +12,13 @@ import { displayNameSql } from "@/lib/domain/gazetteer/names";
  * Subdivisions (rows with `s.key`, `s.id`) whose scope tiles (valid coast tiles meeting the subdivision's polygon
  * beyond a shared border) the area `areaId` (an SQL expression) is linked to.
  */
-export const areaSubdivisionsSql = (areaId: SQL | string): SQL => sql`
+export const areaSubdivisionsSql = (areaId: SQL): SQL => sql`
   select s.id, s.key, s.geo_object_id
   from subdivisions s
   where s.valid_to is null and exists (
     select 1 from tile_geo_objects tg
     join tiles t on t.id = tg.tile_id and t.has_coast and t.valid_to is null
-    where tg.geo_object_id = ${typeof areaId === "string" ? sql`${areaId}::uuid` : areaId}
+    where tg.geo_object_id = ${areaId}
       and ST_Intersects(t.bbox, s.geom) and not ST_Touches(t.bbox, s.geom)
   )`;
 
@@ -54,13 +54,13 @@ const list = (v: unknown): Array<Record<string, unknown>> => (Array.isArray(v) ?
 /**
  * The detail of a valid, unmerged area (`ar_`) for the map panel: names (valid ones), members (resolved with type,
  * role and name; unresolved ones from the import's tags), boundary text, relations (with the related area's id and
- * name when it is valid), evidence (oldest first), notes and the subdivisions it touches. Null for an unknown, ended
+ * name when it is valid), evidence (oldest first), notes and the subdivisions it touches. `areaId` must be a UUID. Null for an unknown, ended
  * or merged area.
  */
 export async function areaDetail(db: Db, areaId: string): Promise<AreaDetail | null> {
   const { rows } = await db.execute<{ id: string; public_id: string | null; config_key: string | null; tags: Tags | null }>(sql`
     select id, public_id, config_key, tags from geo_objects
-    where id::text = ${areaId} and type = 'area' and merged_into_id is null
+    where id = ${areaId}::uuid and type = 'area' and merged_into_id is null
       and valid_from <= current_date and (valid_to is null or valid_to > current_date)`);
   const area = rows[0];
   if (!area) return null;
