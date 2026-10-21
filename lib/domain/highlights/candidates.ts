@@ -7,6 +7,7 @@ import { importanceOf, poiKinds } from "@/lib/domain/consolidation/derived/impor
 import { countingSourceSql, mergedChainSql, mergedChainsSql } from "@/lib/domain/consolidation/inputs";
 import { activeExtractionRunIdSql } from "@/lib/domain/extraction/active-run";
 import { displayNameSql, normalizeName } from "@/lib/domain/gazetteer/names";
+import { trigramSimilarity } from "@/lib/domain/quality/trigram";
 import { validAtAlias } from "@/lib/domain/timeline";
 import { highlightsConfig, type HighlightCandidate, type TextName } from "./select";
 
@@ -45,8 +46,8 @@ type CandidateRow = {
  * Text names: the normalized names (`value.names`) of the place's (and merged objects') `highlight.<category>` facts
  * of the active extraction run of their (version, object), counting sources only, that no candidate took. Extraction
  * links a name to a POI (`matchPoi`) by a POI mention at the fact's quote span, one per linked name; so a name is
- * taken when a candidate mentioned at that span carries it among its names, and the names left over are taken too
- * when at least as many other candidates are mentioned there (a fuzzy match). Distinct per (category, name), sorted.
+ * taken when a candidate mentioned at that span carries it among its names; each other candidate mentioned there took
+ * (by a fuzzy match) the leftover name most similar to its names (pg_trgm similarity, `trigramSimilarity`). Distinct per (category, name), sorted.
  */
 export async function loadHighlightCandidates(
   db: Db,
@@ -170,8 +171,15 @@ async function textNamesOf(
     const linked = r.linked ?? [];
     const carriers = new Set(linked.filter((id) => names.some((n) => namesOf.get(id)?.has(n))));
     const left = names.filter((n) => !linked.some((id) => namesOf.get(id)?.has(n)));
-    // the leftover names took the other mentioned candidates (fuzzy matches), when there are enough of them
-    if (left.length <= linked.length - carriers.size) continue;
+    // each other mentioned candidate took one leftover name by a fuzzy match: the one most similar to its names
+    for (const id of linked.filter((x) => !carriers.has(x)).sort()) {
+      if (left.length === 0) break;
+      const own = [...(namesOf.get(id) ?? [])];
+      const score = (n: string) => Math.max(0, ...own.map((o) => trigramSimilarity(n, o)));
+      let best = 0;
+      for (let i = 1; i < left.length; i++) if (score(left[i]!) > score(left[best]!)) best = i;
+      left.splice(best, 1);
+    }
     for (const n of left) found.set(`${category}\u0000${n}`, { category: category as PoiCategory, nameNormalized: n });
   }
   return [...found.values()].sort((a, b) =>

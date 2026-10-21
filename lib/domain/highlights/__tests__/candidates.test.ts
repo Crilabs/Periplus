@@ -124,6 +124,17 @@ describe("loadHighlightCandidates", () => {
       expect(candidates.find((c) => c.geoObjectId === nikos)!.score).toBeGreaterThan(0);
     }));
 
+  it("a fuzzily linked name of a fact with two names is no text name, the other one is", () =>
+    withRollback(async (tx) => {
+      const place = await insertPlace(tx, { lon: LON, lat: LAT });
+      const kastro = await poi(tx, "Kastro", "culture", 1);
+      const m = await insertMention(tx, place.objectId, { sourceId: await insertSource(tx) });
+      await poiMention(tx, kastro, m, await highlightFact(tx, place.objectId, m, "culture", ["Kastro Paleo", "Unknown Taverna"]));
+
+      const { textNames } = await loadHighlightCandidates(tx, place.objectId, cfg, today);
+      expect(textNames).toEqual([{ category: "culture", nameNormalized: "unknown taverna" }]);
+    }));
+
   it("merged and ended POIs are left out", () =>
     withRollback(async (tx) => {
       const place = await insertPlace(tx, { lon: LON, lat: LAT });
