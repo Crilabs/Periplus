@@ -14,7 +14,7 @@ import type { JobContext } from "@/lib/jobs/worker";
 import { SUBDIVISION_BUILD_STAGES } from "@/lib/pipeline/subdivision-build";
 import { GAZETTEER_STAGES } from "@/lib/pipeline/gazetteer/stages";
 import { matchVersions, planMentions } from "@/lib/pipeline/text/mentions";
-import { rereadVersions } from "@/lib/pipeline/text/reread";
+import { prefilteredVersions, prefilterNames, rereadVersions } from "@/lib/pipeline/text/reread";
 import { startRereadRun, TEXT_RUN_STAGES } from "@/lib/pipeline/text/run";
 
 /*
@@ -89,7 +89,7 @@ describe("mentions re-read", () => {
 
       const rec = recordingBoss();
       const ctx = { db: tx, boss: rec.boss, log: { info: () => undefined } } as unknown as JobContext;
-      await mentionsRereadHandler({ key: "XT-RB", subdivisionKey: "XT-RB", runId: "r", stage: "mentions.reread" }, ctx);
+      await mentionsRereadHandler({ key: "XT-RB", subdivisionKey: "XT-RB", runId: await insertTestRun(tx), stage: "mentions.reread" }, ctx);
       const [run] = await tx.select().from(runs).where(and(eq(runs.kind, "reprocess"), eq(runs.scopeId, "XT-RB")));
       expect(run).toMatchObject({
         scopeType: "subdivision",
@@ -119,8 +119,62 @@ describe("mentions re-read", () => {
       await insertTestTile(tx, TILE_B, null, (await tx.query.subdivisions.findFirst({ where: (t, { eq: e }) => e(t.key, "XT-RB") }))!.id);
       const rec = recordingBoss();
       const ctx = { db: tx, boss: rec.boss, log: { info: () => undefined } } as unknown as JobContext;
-      await mentionsRereadHandler({ key: "XT-RB", subdivisionKey: "XT-RB", runId: "r", stage: "mentions.reread" }, ctx);
+      await mentionsRereadHandler({ key: "XT-RB", subdivisionKey: "XT-RB", runId: await insertTestRun(tx), stage: "mentions.reread" }, ctx);
       expect(await tx.select().from(runs).where(and(eq(runs.kind, "reprocess"), eq(runs.scopeId, "XT-RB")))).toEqual([]);
       expect(rec.inserted).toEqual([]);
+    }));
+
+  it("leaves out pending (never matched) versions", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx);
+      await buildB(tx, s);
+      const pending = await insertTestVersion(tx, ["Noch nicht ausgewertet: Zorbos Gulf."]);
+      expect(await rereadVersions(tx, "XT-RB", config)).toEqual([s.report.versionId]);
+      await s.match(pending.versionId);
+      expect(await rereadVersions(tx, "XT-RB", config)).toEqual([s.report.versionId, pending.versionId].sort());
+    }));
+
+  it("takes a document whose prepass tiles only neighbour the subdivision's tile (ring)", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx);
+      await buildB(tx, s);
+      const neighbour = tileIdFor(53.35, 31.1);
+      await insertTestTile(tx, neighbour);
+      await insertNamedObject(tx, { type: "gulf", names: [{ name: "Kerpa Gulf" }], lon: 53.35, lat: 31.1, tiles: [neighbour] });
+      const near = await insertTestVersion(tx, ["Der Kerpa Gulf liegt gleich nebenan."]);
+      await s.match(near.versionId);
+      expect(await rereadVersions(tx, "XT-RB", config)).toContain(near.versionId);
+    }));
+
+  it("prefilters by the names around the subdivision before the prepass (accents, punctuation, greek script folded in)", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx);
+      await buildB(tx, s);
+      const names = await prefilterNames(tx, [TILE_B], config);
+      expect(names).toEqual(expect.arrayContaining(["zorbos gulf"]));
+      expect(names).not.toContain("palmira bay"); // a bay is no prepass type
+      expect(names).not.toContain("wolkeninsel");
+      const accent = await insertTestVersion(tx, ["Im Zórbos-Gulf, dann weiter."]);
+      const greek = await insertTestVersion(tx, ["Ο κόλπος."]);
+      const plainText = await insertTestVersion(tx, ["Nothing about any known place here."]);
+      for (const v of [accent, greek, plainText]) await s.match(v.versionId);
+      const kept = await prefilteredVersions(tx, names);
+      expect(kept).toEqual(expect.arrayContaining([s.report.versionId, accent.versionId, greek.versionId]));
+      expect(kept).not.toContain(s.unrelated.versionId);
+      expect(kept).not.toContain(plainText.versionId);
+    }));
+
+  it("a retry of the stage for the same build run starts one run", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx);
+      await buildB(tx, s);
+      const rec = recordingBoss();
+      const ctx = { db: tx, boss: rec.boss, log: { info: () => undefined } } as unknown as JobContext;
+      const job = { key: "XT-RB", subdivisionKey: "XT-RB", runId: await insertTestRun(tx), stage: "mentions.reread" };
+      await mentionsRereadHandler(job, ctx);
+      await mentionsRereadHandler(job, ctx);
+      const started = await tx.select().from(runs).where(and(eq(runs.kind, "reprocess"), eq(runs.scopeId, "XT-RB")));
+      expect(started).toHaveLength(1);
+      expect(started[0]!.params).toMatchObject({ buildRunId: job.runId });
     }));
 });

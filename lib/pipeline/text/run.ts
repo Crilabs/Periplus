@@ -136,13 +136,14 @@ export async function startReprocessRun(
 export async function startRereadRun(
   db: Db,
   boss: PgBoss,
-  input: { subdivisionKey: string; documentVersionIds: string[]; triggeredBy: string },
+  input: { subdivisionKey: string; documentVersionIds: string[]; triggeredBy: string; buildRunId?: string },
 ): Promise<{ id: string } | null> {
   if (input.documentVersionIds.length === 0) return null;
   const params = {
     subdivisionKey: input.subdivisionKey,
     documentVersionIds: [...new Set(input.documentVersionIds)].sort(),
     rematch: true as const,
+    ...(input.buildRunId ? { buildRunId: input.buildRunId } : {}),
   };
   await assertSelectionReady(db, params);
   return startRun(db, boss, {
@@ -160,9 +161,15 @@ export async function startRereadForSubdivision(
   boss: PgBoss,
   subdivisionKey: string,
   config: AppConfig = getConfig(),
+  buildRunId?: string,
 ): Promise<{ id: string; versions: number } | null> {
+  if (buildRunId) {
+    // a retry of the stage must not start a second run (the run row and its first job commit separately)
+    const { rows } = await db.execute(sql`select 1 from runs where kind = 'reprocess' and params ->> 'buildRunId' = ${buildRunId} limit 1`);
+    if (rows.length > 0) return null;
+  }
   const documentVersionIds = await rereadVersions(db, subdivisionKey, config);
-  const run = await startRereadRun(db, boss, { subdivisionKey, documentVersionIds, triggeredBy: "system" });
+  const run = await startRereadRun(db, boss, { subdivisionKey, documentVersionIds, triggeredBy: "system", ...(buildRunId ? { buildRunId } : {}) });
   return run ? { id: run.id, versions: documentVersionIds.length } : null;
 }
 

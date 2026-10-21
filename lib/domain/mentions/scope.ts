@@ -83,6 +83,15 @@ export async function prepassTiles(db: Db, versionId: string, cfg: MentionsConfi
   return [...tiles];
 }
 
+/**
+ * The tiles a text's prepass gives the candidate space: `prepassTiles` plus `neighbourRing` rings of neighbours (empty
+ * when the prepass touches nothing). The one definition `candidateTiles` and the re-read of a new subdivision share.
+ */
+export async function prepassCandidateTiles(db: Db, versionId: string, cfg: MentionsConfig, affixes: NameAffixesConfig): Promise<string[]> {
+  const tiles = await prepassTiles(db, versionId, cfg, affixes);
+  return tiles.length > 0 ? withNeighbours(tiles, cfg.neighbourRing) : [];
+}
+
 /** (b) Tiles of the objects mentioned in earlier versions (fetched before this one) of the same document. */
 async function historyTiles(db: Db, versionId: string): Promise<string[]> {
   const { rows } = await db.execute<{ tile_id: string }>(sql`
@@ -161,13 +170,13 @@ export async function candidateTiles(
   ctx: { nameAffixes: NameAffixesConfig; subdivisionKeys: readonly string[] },
 ): Promise<{ tiles: string[]; basis: CandidateBasis }> {
   const steps: Array<[CandidateBasis, () => Promise<string[]>]> = [
-    ["prepass", () => prepassTiles(db, versionId, cfg, ctx.nameAffixes)],
+    ["prepass", () => prepassCandidateTiles(db, versionId, cfg, ctx.nameAffixes)],
     ["history", () => historyTiles(db, versionId)],
     ["source", () => sourceTiles(db, versionId)],
   ];
   for (const [basis, tilesOf] of steps) {
     const tiles = await tilesOf();
-    if (tiles.length > 0) return { tiles: withNeighbours(tiles, cfg.neighbourRing), basis };
+    if (tiles.length > 0) return { tiles: basis === "prepass" ? tiles : withNeighbours(tiles, cfg.neighbourRing), basis };
   }
   return { tiles: [...new Set(await fallbackTiles(db, ctx.subdivisionKeys))].sort(), basis: "fallback" };
 }

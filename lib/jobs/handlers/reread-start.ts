@@ -9,6 +9,6 @@ import { subdivisionKeyOf } from "./tiles";
 /** Starts the re-read run of the subdivision (`startRereadForSubdivision`); no document to re-read, no run. */
 export const mentionsRereadHandler: JobHandler<JobData> = async (data, ctx) => {
   const subdivisionKey = subdivisionKeyOf(data);
-  const started = await startRereadForSubdivision(ctx.db, ctx.boss, subdivisionKey, getConfig());
+  const started = await startRereadForSubdivision(ctx.db, ctx.boss, subdivisionKey, getConfig(), data.runId);
   ctx.log.info({ subdivisionKey, reread: started }, started ? "re-read run started" : "no document to re-read");
 };

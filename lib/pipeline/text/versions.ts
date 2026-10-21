@@ -29,6 +29,8 @@ export const textRunParamsSchema = z.object({
   areaKey: z.string().optional(),
   reprocess: z.literal(true).optional(),
   rematch: z.literal(true).optional(),
+  /** The subdivision build run that started this re-read run (retries of its stage start no second one). */
+  buildRunId: z.string().uuid().optional(),
   comparisonId: z.string().uuid().optional(),
   models: z.array(z.string()).optional(),
   /** The rules version the run's consolidation uses, frozen at the start (ruling M7-E-R1). */
