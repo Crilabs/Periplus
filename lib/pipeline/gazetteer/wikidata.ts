@@ -107,13 +107,13 @@ async function link(db: Db, id: string, qid: string): Promise<boolean> {
  * within `wikidataLinkDistanceM`, ignoring objects known only from GeoNames: `same` links (unless that
  * object carries another Wikidata ID, then it counts as uncertain), `uncertain` creates a new object and
  * opens a pair task, `none` creates one only for poi, island, islet, cape and bay. Steps 1 and 2 run for all
- * items before step 3. Labels and aliases become names with `origin wikidata`.
+ * items before step 3. A POI farther than `poiCoastDistanceKm` from an IHO sea is skipped and counted in `skipped`. Labels and aliases become names with `origin wikidata`.
  */
 export async function importWikidata(
   db: Db,
   input: { scope: GazetteerScope; runId: string },
   deps: { transport: Transport },
-): Promise<{ linked: number; created: number; uncertain: number; names: number }> {
+): Promise<{ linked: number; created: number; uncertain: number; names: number; skipped: number }> {
   const { scope, runId } = input;
   const { gazetteer, categories } = getConfig();
   const { classes, languages } = gazetteer.wikidata;
@@ -124,7 +124,7 @@ export async function importWikidata(
   const items = await wikidataQuery(deps.transport, sparql, { db, runId, stage: WIKIDATA_STAGE }, gazetteer.wikidata);
 
   return db.transaction(async (tx) => {
-    const result = { linked: 0, created: 0, uncertain: 0, names: 0 };
+    const result = { linked: 0, created: 0, uncertain: 0, names: 0, skipped: 0 };
     // ID and tag links first, matching by name second: a name match then sees the names of every item
     // linked by ID, as a rerun would, so it does not depend on the order of the items.
     const unlinked: Array<{ item: WikidataItem; cls: Classified; names: NameDraft[] }> = [];
@@ -157,7 +157,10 @@ export async function importWikidata(
     );
 
     for (const { item, cls, names } of unlinked) {
-      if (cls.type === "poi" && !poiNearSea.has(item.id)) continue;
+      if (cls.type === "poi" && !poiNearSea.has(item.id)) {
+        result.skipped++;
+        continue;
+      }
       const match = await findMatch(
         tx,
         { type: cls.type, point: { lon: item.lon, lat: item.lat }, names: names.map((n) => n.name) },

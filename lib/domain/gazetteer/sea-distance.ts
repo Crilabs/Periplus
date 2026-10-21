@@ -3,7 +3,10 @@ import type { Db } from "@/lib/db/client";
 
 /** Vertex limit of a sea piece; IHO sea polygons have up to ~200,000 points, too many for a per-point distance. */
 const SEA_PART_VERTICES = 128;
-/** Sea pieces compared exactly per point: the nearest by the index (`<->`), as in `setSubdivisions`. */
+/**
+ * Sea pieces compared exactly per point: the nearest by the index (`<->`), as in `setSubdivisions`. The preselection
+ * is planar (degrees), fine at Mediterranean latitudes for the 20 km threshold.
+ */
 const NEAREST_SEA_PARTS = 10;
 
 /**

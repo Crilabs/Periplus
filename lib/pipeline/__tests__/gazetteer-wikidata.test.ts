@@ -136,7 +136,7 @@ describe("importWikidata", () => {
       const ids = await prepare(db);
       const seen: HttpRequest[] = [];
       const result = await run(db, ITEMS.island, seen);
-      expect(result).toEqual({ linked: 1, created: 0, uncertain: 0, names: 2 });
+      expect(result).toEqual({ linked: 1, created: 0, uncertain: 0, names: 2, skipped: 0 });
 
       const [island] = await byWikidata(db, q(1));
       expect(island).toMatchObject({ id: ids[osm("relation", 1)], osmId: osm("relation", 1), origin: "osm" });
@@ -163,7 +163,7 @@ describe("importWikidata", () => {
       const ids = await prepare(db);
       const result = await run(db, ITEMS.bay);
       // The English label equals the OSM name but is its own row (origin wikidata), not preferred.
-      expect(result).toEqual({ linked: 1, created: 0, uncertain: 0, names: 2 });
+      expect(result).toEqual({ linked: 1, created: 0, uncertain: 0, names: 2, skipped: 0 });
       const [bay] = await byWikidata(db, q(2));
       expect(bay).toMatchObject({ id: ids[osm("node", 2)], type: "bay", origin: "osm" });
       expect(await names(db, bay!.id)).toEqual(
@@ -198,7 +198,7 @@ describe("importWikidata", () => {
     withRollback(async (db) => {
       await prepare(db);
       const result = await run(db, ITEMS.settlement);
-      expect(result).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0 });
+      expect(result).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0, skipped: 0 });
       expect(await byWikidata(db, q(5))).toEqual([]);
     }));
 
@@ -263,7 +263,7 @@ describe("importWikidata", () => {
     withRollback(async (db) => {
       await prepare(db);
       const far = rows(q(32), "Q44613", 26.3, 34.5, [["Moni Ferne", "en"]]);
-      expect(await run(db, far)).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0 });
+      expect(await run(db, far)).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0, skipped: 1 });
       expect(await byWikidata(db, q(32))).toEqual([]);
     }));
 
@@ -307,7 +307,7 @@ describe("importWikidata", () => {
       });
       const before = await count();
       const second = await run(db, ITEMS.cape);
-      expect(second).toEqual({ linked: 1, created: 0, uncertain: 0, names: 0 });
+      expect(second).toEqual({ linked: 1, created: 0, uncertain: 0, names: 0, skipped: 0 });
       expect(await count()).toEqual(before);
       expect(await names(db, osmCape)).toEqual(
         expect.arrayContaining([{ name: "Akrotiri Kavos", language: "en", origin: "wikidata", isPreferred: false }]),
@@ -327,7 +327,7 @@ describe("importWikidata", () => {
       });
       if ("skipped" in created) throw new Error(created.skipped);
       const result = await run(db, ITEMS.settlement);
-      expect(result).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0 });
+      expect(result).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0, skipped: 0 });
       const [row] = await db.select({ wikidataId: geoObjects.wikidataId }).from(geoObjects).where(eq(geoObjects.id, created.id));
       expect(row!.wikidataId).toBeNull();
       expect(await pairTasksOf(db, await ownGeoObjectIds(db))).toEqual([]);
@@ -378,7 +378,7 @@ describe("importWikidata", () => {
       ];
       expect(await run(db, items)).toMatchObject({ linked: 1, created: 1, uncertain: 1 });
       expect(await byWikidata(db, q(9))).toMatchObject([{ id: village.id }]);
-      expect(await run(db, items)).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0 });
+      expect(await run(db, items)).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0, skipped: 0 });
     }));
 
   it("second run changes nothing", () =>
@@ -416,7 +416,7 @@ describe("importWikidata", () => {
       const before = await snapshot();
       expect(before.objects.map((o) => o.wikidataId).sort()).toEqual([q(1), q(2), q(3), q(4), null].sort());
       const second = await run(db);
-      expect(second).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0 });
+      expect(second).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0, skipped: 0 });
       expect(await snapshot()).toEqual(before);
     }));
 });
