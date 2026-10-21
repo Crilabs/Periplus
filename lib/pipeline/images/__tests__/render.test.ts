@@ -218,6 +218,7 @@ describe.skipIf(!chromiumInstalled())("renderAndStore", () => {
           openingBearing: 180,
           rays: null,
           town: null,
+          cove: null,
         };
         // A near-town view: 800 m out, the tilt from the geometry (18°, not 30°), the horizon in the picture.
         const camera = { ...cameraFor([LON, LAT], 180, "z1", cfg), distanceM: 800, tiltDeg: (Math.atan(260 / 800) * 180) / Math.PI };

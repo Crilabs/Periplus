@@ -54,6 +54,25 @@ describe("loadPlaceImageInput", () => {
       });
       expect(input!.lon).toBeCloseTo(LON + 0.001, 9);
       expect(input!.lat).toBeCloseTo(LAT, 9);
+      // the named cove: the place's position, 89 m from the anchor point
+      expect(input!.cove![0]).toBeCloseTo(LON, 9);
+      expect(input!.cove![1]).toBeCloseTo(LAT, 9);
+    });
+  });
+
+  it("cove point only with an anchor point at least coveMinDistanceM away", async () => {
+    await withRollback(async (tx) => {
+      const { objectId, placeId } = await insertPlace(tx, { lon: LON, lat: LAT });
+      // no anchor point: the position is the centre, there is no separate cove
+      expect((await loadPlaceImageInput(tx, objectId, cfg))!.cove).toBeNull();
+      // 30 m east: too close to count as a cove of its own
+      await tx.update(places).set({ anchorPosition: geomFromGeoJson({ type: "Point", coordinates: [LON + 30 / 89_390, LAT] }) }).where(eq(places.id, placeId));
+      expect((await loadPlaceImageInput(tx, objectId, cfg))!.cove).toBeNull();
+      // 60 m east: the position is the cove, the anchor point the centre
+      await tx.update(places).set({ anchorPosition: geomFromGeoJson({ type: "Point", coordinates: [LON + 60 / 89_390, LAT] }) }).where(eq(places.id, placeId));
+      const input = (await loadPlaceImageInput(tx, objectId, cfg))!;
+      expect(input.cove).toEqual([LON, LAT]);
+      expect(input.lon).toBeCloseTo(LON + 60 / 89_390, 9);
     });
   });
 

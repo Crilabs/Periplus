@@ -6,6 +6,7 @@ import { getConfig } from "@/lib/config";
 import { MockImageModel } from "@/lib/ai/mock-image";
 import { MockModel } from "@/lib/ai/mock";
 import type { Db } from "@/lib/db/client";
+import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoObjects, placeRenders, places, type PlaceKind, type PlaceStatus } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import type { PlaceImageTaskContext } from "@/lib/pipeline/images/generate";
@@ -82,15 +83,18 @@ export async function insertImageSubdivision(tx: Db, country = "GR"): Promise<{ 
 /**
  * A spot in subdivision `subdivisionId`: geo object and place (`kind`, default anchorage; `status`, default
  * confirmed) at (`lon`, `lat`), with a fetch computation whose rays are longest towards the south unless `fetch` is
- * false.
+ * false. `anchor` sets `anchor_position` apart from the position (the position is then the named cove).
  */
 export async function insertSpot(
   tx: Db,
   subdivisionId: string,
-  o: { lon?: number; lat?: number; kind?: PlaceKind; status?: PlaceStatus; fetch?: boolean; name?: string } = {},
+  o: { lon?: number; lat?: number; kind?: PlaceKind; status?: PlaceStatus; fetch?: boolean; name?: string; anchor?: { lon: number; lat: number } } = {},
 ): Promise<{ objectId: string; placeId: string }> {
   const spot = await insertPlace(tx, { lon: o.lon ?? IMAGE_LON, lat: o.lat ?? IMAGE_LAT, status: o.status, name: o.name });
   if (o.kind) await tx.update(places).set({ kind: o.kind }).where(eq(places.id, spot.placeId));
+  if (o.anchor) {
+    await tx.update(places).set({ anchorPosition: geomFromGeoJson({ type: "Point", coordinates: [o.anchor.lon, o.anchor.lat] }) }).where(eq(places.id, spot.placeId));
+  }
   await tx.update(geoObjects).set({ subdivisionId }).where(eq(geoObjects.id, spot.objectId));
   if (o.fetch !== false) {
     const rays = Array.from({ length: 72 }, (_, i) => (i === 36 ? 9000 : 400));

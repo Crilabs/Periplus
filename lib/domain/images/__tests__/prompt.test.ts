@@ -20,6 +20,7 @@ function input(over: Partial<PlaceImageInput> = {}): PlaceImageInput {
     openingBearing: null,
     rays: null,
     town: null,
+    cove: null,
     ...over,
   };
 }

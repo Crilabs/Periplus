@@ -60,6 +60,7 @@ function input(o: Partial<PlaceImageInput> = {}): PlaceImageInput {
     openingBearing: 90,
     rays: null,
     town: null,
+    cove: null,
     ...o,
   };
 }
@@ -324,6 +325,87 @@ describe("planRender", () => {
       const toTarget = await between(tx, [LON, LAT], plan.camera.target);
       expect(Math.abs(toTarget.distance - (500 + inlandOf("z1")))).toBeLessThanOrEqual(1);
       expect(Math.abs(toTarget.azimuth % 360)).toBeLessThan(0.1);
+    });
+  });
+
+  describe("named cove", () => {
+    /** The cove point 480 m east of the anchor point (the centre). */
+    const COVE: [number, number] = [LON + 480 * M_LON, LAT];
+    /** A straight coast 600 m east of the anchor point, running north–south `halfM` to either side. */
+    const coast = (halfM = 500) => box(LON + 600 * M_LON, LAT - halfM * M_LAT, LON + 1000 * M_LON, LAT + halfM * M_LAT);
+    /** `ds` of z2: the camera ground point stands this far before the shoreline. */
+    const ds = () => cameraFor([LON, LAT], 0, "z2", cfg).distanceM - inlandOf("z2");
+
+    it("cove target centres the named cove: on the line anchor → cove, inland of the shore behind it", async () => {
+      await withRollback(async (tx) => {
+        await insertLand(tx, [coast()]);
+        // the opening says 90° (camera east); the cove says: camera over the anchorage, looking east at the cove
+        const plan = await planRender(tx, input({ cove: COVE, openingBearing: 90, rays: rays(3000) }), "z2", cfg);
+        if (!plan.ok) throw new Error("expected a camera");
+        expect(plan.camera.azimuthDeg).toBe(270);
+        const toTarget = await between(tx, [LON, LAT], plan.camera.target);
+        expect(Math.abs(toTarget.distance - (600 + inlandOf("z2")))).toBeLessThanOrEqual(2);
+        expect(toTarget.azimuth).toBeCloseTo(90, 1);
+        // the camera stands over the anchorage: between the anchor point and the cove, `ds` before the shoreline
+        const ground = await groundPoint(tx, plan.camera, [LON, LAT]);
+        expect(Math.abs(ground.distance - (600 - ds()))).toBeLessThanOrEqual(2);
+        expect(ground.azimuth).toBeCloseTo(90, 1);
+        expect(ground.distance).toBeLessThan(480);
+      });
+    });
+
+    it("rotates when the straight line to the cove puts the camera on an islet", async () => {
+      await withRollback(async (tx) => {
+        // an islet 380–420 m east of the anchor point, right where the camera of the straight view would stand
+        await insertLand(tx, [coast()]);
+        await insertLand(tx, [box(LON + 380 * M_LON, LAT - 20 * M_LAT, LON + 420 * M_LON, LAT + 20 * M_LAT)]);
+        const plan = await planRender(tx, input({ cove: COVE, rays: rays(3000) }), "z2", cfg);
+        if (!plan.ok) throw new Error("expected a camera");
+        expect(plan.camera.azimuthDeg).toBe(280);
+        // the shore along the view 100° (beyond the cove's distance) lies 600 / cos 10° = 609 m out
+        const toTarget = await between(tx, [LON, LAT], plan.camera.target);
+        expect(Math.abs(toTarget.distance - (600 / Math.cos(10 * RAD) + inlandOf("z2")))).toBeLessThanOrEqual(2);
+        expect(toTarget.azimuth).toBeCloseTo(100, 1);
+      });
+    });
+
+    it("every cove candidate on land falls back to the fetch rays, then to the centre", async () => {
+      await withRollback(async (tx) => {
+        // a short coast (±150 m) is seen by the views 80°, 90° and 100° only; a block of land 380–430 m east
+        // (within the cove's 480 m, so no land search starts inside it) covers their camera ground points
+        await insertLand(tx, [coast(150)]);
+        await insertLand(tx, [box(LON + 380 * M_LON, LAT - 100 * M_LAT, LON + 430 * M_LON, LAT + 100 * M_LAT)]);
+        // the rays rule: opening 180° (camera south, view north), shore 300 m north → target 375 m north
+        const withRays = await planRender(tx, input({ cove: COVE, openingBearing: 180, rays: rays(300) }), "z2", cfg);
+        if (!withRays.ok) throw new Error("expected a camera");
+        expect(withRays.camera.azimuthDeg).toBe(180);
+        const toTarget = await between(tx, [LON, LAT], withRays.camera.target);
+        expect(Math.abs(toTarget.distance - (300 + inlandOf("z2")))).toBeLessThanOrEqual(1);
+        expect(Math.abs(toTarget.azimuth % 360)).toBeLessThan(0.1);
+        // without rays the centre is the target
+        expect(await planRender(tx, input({ cove: COVE, openingBearing: 180 }), "z2", cfg)).toEqual({ ok: true, camera: cameraFor([LON, LAT], 180, "z2", cfg) });
+      });
+    });
+
+    it("a cove without land within maxShoreM behind it has no cove candidates", async () => {
+      await withRollback(async (tx) => {
+        // open sea beyond the cove point: the rays rule (opening 90°, shore 500 m west) decides
+        const plan = await planRender(tx, input({ cove: COVE, rays: rays(3000, { 270: 500 }) }), "z2", cfg);
+        if (!plan.ok) throw new Error("expected a camera");
+        expect(plan.camera.azimuthDeg).toBe(90);
+        expect(Math.abs((await between(tx, [LON, LAT], plan.camera.target)).distance - (500 + inlandOf("z2")))).toBeLessThanOrEqual(1);
+      });
+    });
+
+    it("azimuthOverride starts the cove rotation at the given side", async () => {
+      await withRollback(async (tx) => {
+        await insertLand(tx, [coast()]);
+        // camera side 280° asked: view 100° towards the coast, the shore beyond the cove's distance
+        const plan = await planRender(tx, input({ cove: COVE }), "z2", cfg, 280);
+        if (!plan.ok) throw new Error("expected a camera");
+        expect(plan.camera.azimuthDeg).toBe(280);
+        expect((await between(tx, [LON, LAT], plan.camera.target)).azimuth).toBeCloseTo(100, 1);
+      });
     });
   });
 

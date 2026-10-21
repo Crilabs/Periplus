@@ -21,6 +21,12 @@ export type PlaceImageInput = {
   rays: number[] | null;
   /** Nearest town within `light.townRadiusM`; only for anchorages and mooring fields. */
   town: { geoObjectId: string; lon: number; lat: number } | null;
+  /**
+   * The named cove: the place's `position` (for a bay the OSM point, its name marker) when the place has an
+   * `anchor_position` at least `composition.openWater.coveMinDistanceM` away from it; else `null` (the centre is
+   * the cove). The open-water camera looks at it from over the anchorage.
+   */
+  cove: [lon: number, lat: number] | null;
 };
 
 type PlaceRow = {
@@ -28,6 +34,9 @@ type PlaceRow = {
   kind: PlaceKind;
   lon: number;
   lat: number;
+  cove_lon: number;
+  cove_lat: number;
+  anchor_distance: number | string | null;
   country: string | null;
   subdivision_key: string | null;
 };
@@ -42,11 +51,13 @@ type TownRow = { id: string; lon: number; lat: number };
 export async function loadPlaceImageInput(
   db: Db,
   geoObjectId: string,
-  cfg: Pick<ImagesConfig, "light">,
+  cfg: Pick<ImagesConfig, "light" | "composition">,
 ): Promise<PlaceImageInput | null> {
   const { rows } = await db.execute<PlaceRow>(sql`
     select p.public_id, p.kind,
            ST_X(coalesce(p.anchor_position, p.position)) as lon, ST_Y(coalesce(p.anchor_position, p.position)) as lat,
+           ST_X(p.position) as cove_lon, ST_Y(p.position) as cove_lat,
+           ST_Distance(p.position::geography, p.anchor_position::geography) as anchor_distance,
            s.country, s.key as subdivision_key
     from places p
     join geo_objects o on o.id = p.geo_object_id
@@ -58,6 +69,10 @@ export async function loadPlaceImageInput(
   if (!place) return null;
   const lon = Number(place.lon);
   const lat = Number(place.lat);
+  const cove: PlaceImageInput["cove"] =
+    place.anchor_distance !== null && Number(place.anchor_distance) >= cfg.composition.openWater.coveMinDistanceM
+      ? [Number(place.cove_lon), Number(place.cove_lat)]
+      : null;
 
   let town: PlaceImageInput["town"] = null;
   if (place.kind === "anchorage" || place.kind === "mooring_field") {
@@ -96,5 +111,6 @@ export async function loadPlaceImageInput(
     openingBearing: opening?.bearingDeg ?? null,
     rays: Array.isArray(rays) && rays.length > 0 ? rays.map(Number) : null,
     town,
+    cove,
   };
 }

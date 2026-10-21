@@ -5,7 +5,7 @@ import { MockImageModel } from "@/lib/ai/mock-image";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { placeImages, reviewDecisions, runs } from "@/lib/db/schema";
+import { landPolygons, placeImages, reviewDecisions, runs } from "@/lib/db/schema";
 import { createReviewTask } from "@/lib/domain/review";
 import { decideReviewTask } from "@/lib/domain/review-decisions";
 import { createRun } from "@/lib/domain/runs";
@@ -141,6 +141,24 @@ describe("imageTargets", () => {
       expect(fineTask.context.zoom).toBe("z2");
       expect(blankTask.context.zoom).toBe("z1");
       // the plan reads the same zoom from the tiles the job stored, so both keys are done
+      expect(await imageTargets(tx, run)).toEqual([]);
+    });
+  });
+
+  it("plan and job agree on the key for a place with a named cove", async () => {
+    await withRollback(async (tx) => {
+      const sd = await insertImageSubdivision(tx);
+      // the cove point (the place's position) 480 m east of the anchor point, a coast 600 m east of the anchor point
+      const spot = await insertSpot(tx, sd.id, { lon: IMAGE_LON + 480 / 89_390, anchor: { lon: IMAGE_LON, lat: IMAGE_LAT } });
+      const [w, s, e, n] = [IMAGE_LON + 600 / 89_390, IMAGE_LAT - 500 / 110_960, IMAGE_LON + 1000 / 89_390, IMAGE_LAT + 500 / 110_960];
+      await tx.insert(landPolygons).values({ geom: sql`${geomFromGeoJson({ type: "Polygon", coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] })}`, datasetVersion: "test" });
+      const run = await subdivisionRun(tx, sd.key);
+      const task = await generateTitle(tx, spot.objectId, run.id);
+      // the camera stands over the anchorage and looks east at the cove (the fetch rays would have it look north)
+      expect(task.context.zoom).toBe("z2");
+      expect(task.context.camera!.viewBearingDeg).toBeCloseTo(90, 6);
+      expect(task.context.camera!.position[0]).toBeGreaterThan(IMAGE_LON);
+      expect(task.context.camera!.position[0]).toBeLessThan(IMAGE_LON + 480 / 89_390);
       expect(await imageTargets(tx, run)).toEqual([]);
     });
   });

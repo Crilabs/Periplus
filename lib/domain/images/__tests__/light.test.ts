@@ -19,6 +19,7 @@ function input(kind: PlaceKind, town: PlaceImageInput["town"] = null): PlaceImag
     openingBearing: null,
     rays: null,
     town,
+    cove: null,
   };
 }
 

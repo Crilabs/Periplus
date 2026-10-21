@@ -294,13 +294,42 @@ async function firstOverWater(db: Db, origins: LonLat[], azimuths: number[], dis
 }
 
 /**
+ * For each bearing, the distance (metres) from `origin` to the first land along it between `fromM` and `maxM` out
+ * (`land_polygons` cut by that segment), `null` where there is none. One query over all bearings.
+ */
+async function landDistances(db: Db, origin: LonLat, bearings: number[], fromM: number, maxM: number): Promise<Array<number | null>> {
+  if (bearings.length === 0 || fromM >= maxM) return bearings.map(() => null);
+  const { rows } = await db.execute<{ i: number | string; m: number | string | null }>(sql`
+    with o as (select ST_SetSRID(ST_MakePoint(${origin[0]}::float8, ${origin[1]}::float8), 4326)::geography as p),
+    ray as (
+      select t.i,
+             ST_MakeLine(ST_Project(o.p, ${fromM}::float8, radians(t.b))::geometry, ST_Project(o.p, ${maxM}::float8, radians(t.b))::geometry) as seg
+      from unnest(${`{${bearings.join(",")}}`}::float8[]) with ordinality as t(b, i), o
+    )
+    select ray.i,
+           (select min(ST_Distance(o.p, ST_Intersection(ray.seg, l.geom)::geography))
+            from land_polygons l, o
+            where l.geom && ray.seg and ST_Intersects(l.geom, ray.seg)) as m
+    from ray
+    order by ray.i`);
+  return rows.map((r) => (r.m === null ? null : Number(r.m)));
+}
+
+/**
  * Camera for an image of a place at `zoom`. The azimuth starts at `azimuthOverride` (an additional view an admin
- * asked for), else at `baseAzimuthFor` (north without opening and rays), and turns in `camera.rotateStepDeg` steps
- * until the camera is over water. `near_town`: every point from 200 m to `foregroundM` from the centre must be over
- * water. `open_water`: the camera ground point must be; each candidate's target is the shore the fetch rays see along
- * its own view direction, moved inland (`openWaterTarget`), and when every candidate's camera stands on land the
- * same candidates are tried again with the centre as target (the rule before camera-3). Composition and light rules
- * stay the same with an override. `no_water_view` when no azimuth qualifies (an enclosed place).
+ * asked for), else at the rule's base, and turns in `camera.rotateStepDeg` steps until the camera is over water.
+ * `near_town`: every point from 200 m to `foregroundM` from the centre must be over water. `open_water`: the camera
+ * ground point must be, with the target `openWaterTarget` of the shore ahead; the rules in turn until one yields a
+ * camera:
+ * 1. the named cove (`input.cove`): the camera stands over the anchorage and looks at the cove point (base: the
+ *    bearing cove → anchor point); each candidate's shore is the first land along its view direction from the
+ *    anchor point beyond the cove point's distance (`landDistances`, within `maxShoreM`; a view without land there
+ *    is no candidate);
+ * 2. the fetch rays (base: `baseAzimuthFor`): each candidate's shore is the fetch along its view direction;
+ * 3. the same candidates with the centre as target (the rule before camera-3).
+ * Composition and light rules stay the same with an override. `no_water_view` when no azimuth qualifies (an
+ * enclosed place). Decision Christian, 21.10.2026: the title image shows the named cove, the camera over the
+ * anchorage, the shoreline in the lower third.
  */
 export async function planRender(
   db: Db,
@@ -310,21 +339,35 @@ export async function planRender(
   azimuthOverride: number | null = null,
 ): Promise<RenderPlan> {
   const centre: LonLat = [input.lon, input.lat];
-  const candidates = candidateAzimuths(azimuthOverride ?? baseAzimuthFor(input) ?? 0, cfg.camera.rotateStepDeg);
+  const step = cfg.camera.rotateStepDeg;
+  // the ground point lies `distanceM` from each candidate's own target
+  const overWater = (cameras: RenderCamera[]) => firstOverWater(db, cameras.map((c) => c.target), cameras.map((c) => c.azimuthDeg), [cameras[0]!.distanceM]);
 
   if (compositionFor(input) === "near_town") {
     const town: LonLat = [input.town!.lon, input.town!.lat];
+    const candidates = candidateAzimuths(azimuthOverride ?? baseAzimuthFor(input)!, step);
     const index = await firstOverWater(db, candidates.map(() => centre), candidates, nearTownSamples(cfg.composition.nearTown.foregroundM));
     return index === null ? { ok: false, reason: "no_water_view" } : { ok: true, camera: nearTownCamera(centre, town, candidates[index]!, zoom, cfg) };
   }
 
+  if (input.cove) {
+    const cove = offset(centre, input.cove);
+    const candidates = candidateAzimuths(azimuthOverride ?? normalise(cove.azimuthDeg + 180), step);
+    const shores = await landDistances(db, centre, candidates.map((az) => normalise(az + 180)), cove.distanceM, cfg.composition.openWater.maxShoreM);
+    const cameras = candidates.flatMap((az, i) => (shores[i] === null ? [] : [cameraFor(openWaterTarget(centre, shores[i], az, zoom, cfg), az, zoom, cfg)]));
+    if (cameras.length > 0) {
+      const index = await overWater(cameras);
+      if (index !== null) return { ok: true, camera: cameras[index]! };
+    }
+  }
+
+  const candidates = candidateAzimuths(azimuthOverride ?? baseAzimuthFor(input) ?? 0, step);
   const shifted = candidates.map((az) => cameraFor(openWaterTarget(centre, shoreDistance(input.rays, normalise(az + 180)), az, zoom, cfg), az, zoom, cfg));
   const stages = [shifted];
-  // `openWaterTarget` hands back `centre` itself when it does not shift: a second stage only when the first differs
+  // `openWaterTarget` hands back `centre` itself when it does not shift: a further stage only when the first differs
   if (shifted.some((c) => c.target !== centre)) stages.push(candidates.map((az) => cameraFor(centre, az, zoom, cfg)));
   for (const cameras of stages) {
-    // the ground point lies `distanceM` from each candidate's own target
-    const index = await firstOverWater(db, cameras.map((c) => c.target), candidates, [cameras[0]!.distanceM]);
+    const index = await overWater(cameras);
     if (index !== null) return { ok: true, camera: cameras[index]! };
   }
   return { ok: false, reason: "no_water_view" };
