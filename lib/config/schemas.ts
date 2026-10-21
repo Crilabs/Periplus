@@ -1226,6 +1226,11 @@ export const imagesSchema = z.strictObject({
      * place, away from the town, so the anchorage is in front and the town behind.
      */
     nearTown: z.strictObject({ foregroundM: z.number().positive() }),
+    /**
+     * Every other place: the camera looks at the head of the bay, `shoreBackM` before the shore along the view
+     * direction (the fetch ray there), when that shore is within `maxShoreM`; else at the centre of the place.
+     */
+    openWater: z.strictObject({ maxShoreM: z.number().positive(), shoreBackM: z.number().nonnegative() }),
   }),
   output: z.strictObject({
     jpegQuality: z.number().int().min(1).max(100),

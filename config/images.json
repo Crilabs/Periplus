@@ -20,6 +20,6 @@
   },
   "check": { "minWaterIoU": { "midday": 0.8, "evening": 0.6 }, "maxAttempts": 2, "waterColour": { "blueOverRedMin": 25, "greenTolerance": 10 } },
   "pipeline": { "maxGenerationsPerRun": 50 },
-  "composition": { "nearTown": { "foregroundM": 450 } },
+  "composition": { "nearTown": { "foregroundM": 450 }, "openWater": { "maxShoreM": 2000, "shoreBackM": 120 } },
   "output": { "jpegQuality": 85, "license": "periplus", "credit": "Illustration: Periplus", "altPrefix": "KI-Illustration:" }
 }

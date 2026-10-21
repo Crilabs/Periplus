@@ -103,7 +103,8 @@ describe("generatePlaceImage", () => {
       expect(c).toMatchObject({ slot: "title", passed: true, attempts: 1, waterIoU: 1, watermarkVisible: false, model: task0.model, promptVersion: task0.promptVersion, allowedZooms: ["z1", "z2", "z3"] });
       expect(c.candidateKey).toMatch(candidateKeyOf(f.objectId, c.renderId!, "1"));
       expect(c.alt.startsWith("KI-Illustration:")).toBe(true);
-      // camera details: rays longest towards the south, so the camera stands south and looks north
+      // camera details: rays longest towards the south, so the camera looks north; the shore 400 m north puts the
+      // target (bay head) 280 m north of the centre and the camera 450 m before it, still south of the centre
       expect(c.camera!.viewBearingDeg).toBeCloseTo(0, 6);
       expect(c.camera!.heightM).toBe(260);
       expect(c.camera!.position[1]).toBeLessThan(IMAGE_LAT);

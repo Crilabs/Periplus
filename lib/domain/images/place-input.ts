@@ -9,7 +9,7 @@ export type PlaceImageInput = {
   geoObjectId: string;
   publicId: string | null;
   kind: PlaceKind;
-  /** Centre of the place (`anchor_position`, else `position`): the camera target of the open-water view. */
+  /** Centre of the place (`anchor_position`, else `position`); the open-water target (the bay head) is derived from it. */
   lon: number;
   lat: number;
   /** ISO 3166-1 alpha-2 of the subdivision, `null` while the object has none. */

@@ -15,6 +15,7 @@ import {
   candidateAzimuths,
   foregroundPixelSize,
   planRender,
+  shoreDistance,
   type RenderCamera,
 } from "../render-plan";
 
@@ -50,6 +51,22 @@ function box(west: number, south: number, east: number, north: number): number[]
 async function insertLand(tx: Db, rings: number[][][]): Promise<void> {
   const polygon: Polygon = { type: "Polygon", coordinates: rings };
   await tx.insert(landPolygons).values({ geom: sql`${geomFromGeoJson(polygon)}`, datasetVersion: "test" });
+}
+
+/** 72 fetch rays (5° step) of `fetchM` everywhere, except at the bearings of `at` (bearing → metres). */
+function rays(fetchM: number, at: Record<number, number> = {}): number[] {
+  return Array.from({ length: 72 }, (_, i) => at[i * 5] ?? fetchM);
+}
+
+/** Geodesic distance and bearing from `from` to `to`. */
+async function between(tx: Db, from: [number, number], to: [number, number]) {
+  const { rows } = await tx.execute<{ distance: number; azimuth: number }>(sql`
+    with c as (
+      select ST_SetSRID(ST_MakePoint(${from[0]}::float8, ${from[1]}::float8), 4326)::geography as f,
+             ST_SetSRID(ST_MakePoint(${to[0]}::float8, ${to[1]}::float8), 4326)::geography as t
+    )
+    select ST_Distance(f, t) as distance, degrees(ST_Azimuth(f, t)) as azimuth from c`);
+  return { distance: Number(rows[0]!.distance), azimuth: Number(rows[0]!.azimuth) };
 }
 
 /** Camera ground point (`target` moved `distanceM` along `azimuthDeg`), its distance and azimuth from `from`. */
@@ -116,6 +133,20 @@ describe("azimuths", () => {
   });
 });
 
+describe("shoreDistance", () => {
+  it("reads the ray at the bearing and interpolates between neighbours, wrapping at north", () => {
+    // ray i at i·10°: 100 m … 3600 m
+    const r = Array.from({ length: 36 }, (_, i) => 100 * (i + 1));
+    expect(shoreDistance(r, 130)).toBe(1400);
+    expect(shoreDistance(r, 135)).toBe(1450);
+    expect(shoreDistance(r, 355)).toBe((3600 + 100) / 2);
+    expect(shoreDistance(r, 360)).toBe(100);
+    expect(shoreDistance(r, -10)).toBe(3600);
+    expect(shoreDistance(null, 10)).toBeNull();
+    expect(shoreDistance([], 10)).toBeNull();
+  });
+});
+
 describe("planRender", () => {
   it("looks from the opening when the camera is over water", async () => {
     await withRollback(async (tx) => {
@@ -130,6 +161,87 @@ describe("planRender", () => {
       await insertLand(tx, [box(LON + 400 * M_LON, LAT - 120 * M_LAT, LON + 500 * M_LON, LAT + 30 * M_LAT)]);
       const plan = await planRender(tx, input(), "z1", cfg);
       expect(plan.ok && plan.camera.azimuthDeg).toBe(80);
+    });
+  });
+
+  it("open_water target moves to 120 m before the shore along the view direction", async () => {
+    await withRollback(async (tx) => {
+      // the reviewed case: camera side 310°, view 130°, shore 793 m ahead → the bay head 673 m from the centre
+      const plan = await planRender(tx, input({ openingBearing: 310, rays: rays(3000, { 130: 793 }) }), "z1", cfg);
+      if (!plan.ok) throw new Error("expected a camera");
+      const toTarget = await between(tx, [LON, LAT], plan.camera.target);
+      expect(Math.abs(toTarget.distance - 673)).toBeLessThanOrEqual(1);
+      expect(toTarget.azimuth).toBeCloseTo(130, 1);
+      expect(plan.camera).toEqual(cameraFor(plan.camera.target, 310, "z1", cfg));
+      // the camera stands the zoom's 450 m before the target on its side (310°) …
+      const fromTarget = await groundPoint(tx, plan.camera, plan.camera.target);
+      expect(Math.abs(fromTarget.distance - 450)).toBeLessThanOrEqual(1);
+      expect(fromTarget.azimuth).toBeCloseTo(310, 1);
+      // … that is 223 m from the centre towards the shore, over the water of the bay
+      const fromCentre = await groundPoint(tx, plan.camera, [LON, LAT]);
+      expect(Math.abs(fromCentre.distance - 223)).toBeLessThanOrEqual(1);
+      expect(fromCentre.azimuth).toBeCloseTo(130, 1);
+    });
+  });
+
+  it("interpolates the shore distance between rays", async () => {
+    await withRollback(async (tx) => {
+      // 36 rays (10° step); view 135° lies midway between the rays at 130° (600 m) and 140° (1000 m): shore 800 m
+      const r = Array.from({ length: 36 }, (_, i) => (i === 13 ? 600 : i === 14 ? 1000 : 3000));
+      const plan = await planRender(tx, input({ openingBearing: 315, rays: r }), "z1", cfg);
+      if (!plan.ok) throw new Error("expected a camera");
+      const toTarget = await between(tx, [LON, LAT], plan.camera.target);
+      expect(Math.abs(toTarget.distance - 680)).toBeLessThanOrEqual(1);
+      expect(toTarget.azimuth).toBeCloseTo(135, 1);
+    });
+  });
+
+  it("shore farther than maxShoreM keeps the centre as target", async () => {
+    await withRollback(async (tx) => {
+      const atCentre = { ok: true, camera: cameraFor([LON, LAT], 90, "z1", cfg) };
+      expect(await planRender(tx, input({ rays: rays(2001) }), "z1", cfg)).toEqual(atCentre);
+      // at the limit the target still moves
+      const plan = await planRender(tx, input({ rays: rays(2000) }), "z1", cfg);
+      if (!plan.ok) throw new Error("expected a camera");
+      expect(Math.abs((await between(tx, [LON, LAT], plan.camera.target)).distance - 1880)).toBeLessThanOrEqual(1);
+      // a shore within shoreBackM leaves the target at the centre too (never behind it)
+      expect(await planRender(tx, input({ rays: rays(100) }), "z1", cfg)).toEqual(atCentre);
+    });
+  });
+
+  it("no rays keeps the centre", async () => {
+    await withRollback(async (tx) => {
+      expect(await planRender(tx, input({ rays: null }), "z1", cfg)).toEqual({ ok: true, camera: cameraFor([LON, LAT], 90, "z1", cfg) });
+      expect(await planRender(tx, input({ openingBearing: null, rays: [] }), "z1", cfg)).toEqual({ ok: true, camera: cameraFor([LON, LAT], 0, "z1", cfg) });
+    });
+  });
+
+  it("rotated candidate recomputes the shore distance for its own view direction", async () => {
+    await withRollback(async (tx) => {
+      // Opening 90°: view 270° with the shore 800 m ahead puts the target 680 m west and the camera ground point 230 m
+      // west of the centre, on a land strip 200–260 m west. The next candidate (100°, view 280°) finds the shore at
+      // 1500 m: target 1380 m along 280°, camera 930 m along 280°, over water. With the first candidate's shore distance
+      // the camera at 100° would stand 230 m along 280°, on the strip again.
+      await insertLand(tx, [box(LON - 260 * M_LON, LAT - 100 * M_LAT, LON - 200 * M_LON, LAT + 100 * M_LAT)]);
+      const plan = await planRender(tx, input({ rays: rays(3000, { 270: 800, 280: 1500 }) }), "z1", cfg);
+      if (!plan.ok) throw new Error("expected a camera");
+      expect(plan.camera.azimuthDeg).toBe(100);
+      const toTarget = await between(tx, [LON, LAT], plan.camera.target);
+      expect(Math.abs(toTarget.distance - 1380)).toBeLessThanOrEqual(1);
+      expect(toTarget.azimuth).toBeCloseTo(280, 1);
+      expect(Math.abs((await groundPoint(tx, plan.camera, [LON, LAT])).distance - 930)).toBeLessThanOrEqual(1);
+    });
+  });
+
+  it("azimuthOverride of a further view uses the bay-head rule too", async () => {
+    await withRollback(async (tx) => {
+      // override 180°: view 0° with the shore 500 m ahead → target 380 m north, whatever the opening says
+      const plan = await planRender(tx, input({ openingBearing: 90, rays: rays(3000, { 0: 500 }) }), "z1", cfg, 180);
+      if (!plan.ok) throw new Error("expected a camera");
+      expect(plan.camera.azimuthDeg).toBe(180);
+      const toTarget = await between(tx, [LON, LAT], plan.camera.target);
+      expect(Math.abs(toTarget.distance - 380)).toBeLessThanOrEqual(1);
+      expect(Math.abs(toTarget.azimuth % 360)).toBeLessThan(0.1);
     });
   });
 
