@@ -214,8 +214,8 @@ async function countryBbox(db: Db, country: string): Promise<Bbox | null> {
 
 /**
  * Coarse features of one country (plan 14b), run after `importCoarse` so the country polygon exists: islands from
- * `islandMinAreaKm2` (smaller ones are left to the fine gazetteer), archipelagos, named bays from `gulfMinAreaKm2`
- * (stored as `gulf`), and towns (`coarse.placeTypes`) within `coastDistanceKm` of the water. Stored by `osm_id` through
+ * `islandMinAreaKm2` (smaller ones are left to the fine gazetteer), archipelagos, named gulfs and bays from
+ * `gulfMinAreaKm2` (with the classifier's type), and towns (`coarse.placeTypes`) within `coastDistanceKm` of the water. Stored by `osm_id` through
  * the gazetteer store with the fine gazetteer's classifier, so a feature the fine run imported is updated, not
  * duplicated. `deps.overpass` replaces the configured Overpass settings (tests lift the rate limit). Then subdivisions, seas and parents are assigned over the country's bbox. Returns the stored counts.
  */
@@ -247,7 +247,7 @@ export async function importCoarseFeatures(
       const classified = classifyOsm(tags, categories, el.type);
       const geometry = classified && elementGeometry(el);
       if (!classified || !geometry) continue;
-      let type = classified.type;
+      const type = classified.type;
       let key: keyof typeof counts;
       if (type === "island") {
         if ((await areaKm2(tx, geometry)) < cfg.islandMinAreaKm2) continue;
@@ -255,8 +255,9 @@ export async function importCoarseFeatures(
       } else if (type === "archipelago") {
         key = "archipelagos";
       } else if (type === "gulf" || type === "bay") {
+        // The classifier's type stays (a bay stays a bay): the fine gazetteer stores the same osm_id with it, and a
+        // type flip between both runs would reissue the public id.
         if ((await areaKm2(tx, geometry)) < cfg.gulfMinAreaKm2) continue;
-        type = "gulf";
         key = "gulfs";
       } else if (type === "settlement" && tags.place && cfg.placeTypes.includes(tags.place)) {
         landChecked ??= (await landCoverage(tx, bbox)) > 0;

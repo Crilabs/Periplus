@@ -66,17 +66,19 @@ describe("importCoarseFeatures", () => {
       const [gozo] = await malta(tx, "Għawdex");
       const { rows: names } = await tx.execute<{ name: string }>(sql`SELECT name FROM geo_names WHERE geo_object_id = ${gozo!.id}`);
       expect(names.map((n) => n.name)).toContain("Gozo");
-      const { rows: before } = await tx.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM geo_objects WHERE origin = 'osm'`);
-      const snapshot = await tx.execute(sql`SELECT id, updated_at, parent_id, subdivision_id FROM geo_objects WHERE origin = 'osm' ORDER BY id`);
+      // Only the rows of the Malta box: rows other test files commit meanwhile must not show in the comparison.
+      const maltaRows = () =>
+        tx.execute(sql`SELECT id, updated_at, parent_id, subdivision_id FROM geo_objects
+          WHERE origin = 'osm' AND geom && ST_MakeEnvelope(14.0, 35.7, 15.1, 36.2, 4326) ORDER BY id`);
+      const snapshot = await maltaRows();
+      expect(snapshot.rows.length).toBeGreaterThan(0);
 
       expect(await importCoarseFeatures(tx, "MT", { transport: fixtureTransport(), overpass })).toEqual(result);
-      const { rows: after } = await tx.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM geo_objects WHERE origin = 'osm'`);
-      expect(after[0]!.n).toBe(before[0]!.n);
-      expect((await tx.execute(sql`SELECT id, updated_at, parent_id, subdivision_id FROM geo_objects WHERE origin = 'osm' ORDER BY id`)).rows).toEqual(snapshot.rows);
-    }, { isolationLevel: "repeatable read" }); // one snapshot: rows other files commit meanwhile must not show in the before/after comparison
+      expect((await maltaRows()).rows).toEqual(snapshot.rows);
+    });
   }, 120_000);
 
-  it("keeps a large bay as gulf; drops a small island, a small bay and a town away from the coast", async () => {
+  it("keeps a large bay as bay; drops a small island, a small bay and a town away from the coast", async () => {
     const element = (type: "way" | "node", id: number, tags: Record<string, string>, geometry?: ReturnType<typeof ring>, at?: [number, number]) =>
       geometry ? { type, id, tags, geometry } : { type, id, tags, lat: at![0], lon: at![1] };
     const elements = [
@@ -90,7 +92,7 @@ describe("importCoarseFeatures", () => {
     await withRollback(async (tx) => {
       await setUpMalta(tx);
       expect(await importCoarseFeatures(tx, "MT", { transport, overpass })).toEqual({ islands: 1, archipelagos: 0, gulfs: 1, towns: 0 });
-      expect(await malta(tx, "Great Test Bay")).toMatchObject([{ type: "gulf" }]);
+      expect(await malta(tx, "Great Test Bay")).toMatchObject([{ type: "bay" }]);
       expect(await malta(tx, "Test Island")).toMatchObject([{ type: "island" }]);
       for (const n of ["Tiny Test Bay", "Test Rock", "Inland Test Town"]) expect(await malta(tx, n), n).toHaveLength(0);
     });
@@ -110,6 +112,22 @@ describe("importCoarseFeatures", () => {
       const { rows: ids } = await tx.execute<{ public_id: string }>(sql`SELECT public_id FROM geo_objects WHERE osm_id = 'relation/9353903' AND valid_to IS NULL`);
       expect(ids[0]!.public_id).toBe(publicId);
       expect(await malta(tx, "Għawdex", "island")).toHaveLength(1);
+    });
+  }, 120_000);
+
+  it("keeps the type (and so the public id) of a bay the fine gazetteer imported", async () => {
+    const elements = [{ type: "way", id: 9_100_011, tags: { natural: "bay", name: "Fine Test Bay" }, geometry: ring(14.7, 35.8, 15.0, 36.0) }];
+    const transport: Transport = async () => makeResponse(200, new TextEncoder().encode(JSON.stringify({ elements })));
+    await withRollback(async (tx) => {
+      await setUpMalta(tx);
+      // A bay has no public id; as `gulf` it would get an rg_ id that the next fine run drops again.
+      await tx.execute(sql`INSERT INTO geo_objects (id, type, origin, osm_id, public_id, tags, geom)
+        VALUES (gen_random_uuid(), 'bay', 'osm', 'way/9100011', null, '{"natural":"bay","name":"Fine Test Bay"}'::jsonb,
+                ST_Multi(ST_GeomFromText('POLYGON((14.7 35.8, 15.0 35.8, 15.0 36.0, 14.7 36.0, 14.7 35.8))', 4326)))`);
+      expect(await importCoarseFeatures(tx, "MT", { transport, overpass })).toMatchObject({ gulfs: 1 });
+      const { rows } = await tx.execute<{ type: string; public_id: string }>(sql`
+        SELECT type, public_id FROM geo_objects WHERE osm_id = 'way/9100011' AND valid_to IS NULL`);
+      expect(rows).toEqual([{ type: "bay", public_id: null }]);
     });
   }, 120_000);
 

@@ -183,7 +183,7 @@ Ergebnis der letzten Prüfung (nach Abnahme eintragen): _Datum: offen, restore-c
 - **Defekte Datei:** der Import schlägt fehl und damit auch der Aufbau des Landesteils. Deshalb jede neue Datei vorher in der Entwicklungsumgebung importieren (`--dry-run`).
 - **Beendete und alte Schlüssel:** Fehlt ein Revier in der Datei, endet es (`valid_to`); kommt sein Schlüssel zurück, lebt dasselbe Revier mit derselben `ar_`-ID wieder auf. Die Pilot-Schlüssel `saronic` und `argolic` gelten über die Aliasse in `config/areas.json` für `saronic-gulf` und `argolic-gulf`; alte SERP-Suchen zählen weiter.
 - **Nachlesen:** Die Stufe `mentions.reread` (nach den Gazetteer-Stufen) startet einen eigenen Nachlauf für bereits zugeordnete Dokumentversionen, deren Vorprüfung (samt Nachbarring) die Kacheln des Landesteils berührt. Der Aufbau wartet nicht darauf.
-- **Grob-Gazetteer** übernimmt jetzt auch Inseln ab 1 km², Archipele, benannte Buchten ab 20 km² (als Golf) und Küstenorte (höchstens 5 km von der Küste) je Land; dafür müssen die Landpolygone importiert sein (Abschnitt „Landpolygone“).
+- **Grob-Gazetteer** übernimmt jetzt auch Inseln ab 1 km², Archipele, benannte Golfe und Buchten ab 20 km² (mit dem Typ, den auch der Fein-Gazetteer vergibt) und Küstenorte (höchstens 5 km von der Küste) je Land; dafür müssen die Landpolygone importiert sein (Abschnitt „Landpolygone“).
 - Einstellungen: Seite „Einstellungen“ → „Reviere“ (Werte aus `config/areas.json`, importierte Dateien). Karte: Ebene „Reviere“ mit Filter nach Landesteil und Detailfeld.
 
 ## Umstellung auf Landesteile (einmalig, Teil-Spec 14)
