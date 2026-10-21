@@ -1,6 +1,6 @@
 # Periplus 14 – Raumgliederung: Landesteile, Reviere, Kacheln
 
-Stand: 20.10.2026 · Gehört zu: `2026-10-18-periplus-design.md` · Zeitpunkt: nach M7, Grundlage von M9 (Ausbau) · Ändert: Teil-Spec 03 (Reviere, Hierarchie, Kacheln), 05 (Quellenfindung), 06 (Erwähnungen), 07 (`popularity`), 08 (Paket-Umfang), 09 (Karte, Review), 10 (Kennzahlen je Revier) · Quell-Spec: Grundprinzipien 2 und 8, Verarbeitungsstufen 1, 4 und 6, offener Punkt „Revier-Polygone“
+Stand: 20.10.2026 · Umgesetzt mit Plan 14a und 14b · Gehört zu: `2026-10-18-periplus-design.md` · Zeitpunkt: nach M7, Grundlage von M9 (Ausbau) · Ändert: Teil-Spec 03 (Reviere, Hierarchie, Kacheln), 05 (Quellenfindung), 06 (Erwähnungen), 07 (`popularity`), 08 (Paket-Umfang), 09 (Karte, Review), 10 (Kennzahlen je Revier) · Quell-Spec: Grundprinzipien 2 und 8, Verarbeitungsstufen 1, 4 und 6, offener Punkt „Revier-Polygone“
 
 ## Zweck
 
@@ -246,7 +246,9 @@ Im Gesamtdesign außerdem: Glossar „Revier“ (neue Bedeutung) und neuer Eintr
 
 ## Was dem Builder überlassen ist
 
-Hüllen-Algorithmus im Detail (`ST_ConcaveHull`-Parameter oder Alpha-Shape), Overpass-Aufteilung des Grob-Gazetteers, Index- und Spaltendetails, ob `area_status` als eigene Tabelle mit Historie statt Spalten umgesetzt wird, Gestaltung von `/subdivisions` und der Kartenwerkzeuge innerhalb von Teil-Spec 09.
+Hüllen-Algorithmus im Detail (`ST_ConcaveHull`-Parameter oder Alpha-Shape), Overpass-Aufteilung des Grob-Gazetteers, Index- und Spaltendetails, Gestaltung von `/subdivisions` und der Kartenwerkzeuge innerhalb von Teil-Spec 09.
+
+Entschieden beim Bau (Plan 14b): `ST_ConcaveHull` mit Verhältnis 0,3 (`config/areas.json` → `polygon.concaveRatio`); `area_status` entfällt mit dem Wechsel zum Revier-Bot (kein Freigabestatus in Periplus, Korrekturen im Bot).
 
 ## Offene Punkte
 

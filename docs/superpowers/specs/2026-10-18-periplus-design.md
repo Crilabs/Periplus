@@ -154,7 +154,7 @@ Regeln: Fachlogik nur in `lib/domain` und `lib/pipeline`; Seiten, API-Routen und
 | --- | --- | --- |
 | Geo-Objekt | `GeoObject` | Gazetteer-Eintrag jeder Ebene |
 | Landesteil | `subdivision` (Tabelle; Geo-Objekte `country`, `admin_region`) | Land oder Verwaltungseinheit erster Ebene mit Mittelmeerküste; Laufumfang, Elternobjekt und Liefereinheit des Vertrags (Teil-Spec 14) |
-| Revier | `area` (Geo-Objekt-Typ) | Überlappendes Namensgebiet eines Seegebiets außerhalb der Hierarchie; im Manifest nur zur Information (Teil-Spec 14) |
+| Revier | `area` (Geo-Objekt-Typ; Tabellen `area_members`, `area_evidence`) | Überlappendes Namensgebiet eines Seegebiets außerhalb der Hierarchie; geliefert vom Revier-Bot als Datei je Land und importiert (`config/area-imports/`), Mitglieder und Belege in `area_members` und `area_evidence`; im Manifest nur zur Information (Teil-Spec 14) |
 | Kachel | `Tile` | |
 | Ort | `Place` | Liegeplatz: Ankerplatz, Hafen, Marina, Bojenfeld |
 | Highlight | `GeoObject` Typ `poi` mit `category` | |
@@ -221,7 +221,7 @@ Jeder Meilenstein endet mit etwas, das man in der Oberfläche sieht, und einer A
 | 11 | `2026-10-19-periplus-11-quellen-autofreigabe-design.md` | Automatische Quellenfreigabe mit Schattenbetrieb und Probezeit; zurückgestellt bis zu einem Auslöser aus Phase 0 |
 | 12 | `2026-10-20-periplus-12-pruefung-echtdaten-design.md` | Schrittweise Prüfung mit echten Daten (Probekachel → Revier) nach M7 Teil (a), vor dem vollen Pilotlauf |
 | 13 | `2026-10-20-periplus-13-ortsbilder-design.md` | Ortsbilder (Plan `docs/superpowers/plans/2026-10-20-periplus-13-ortsbilder.md`): Luftbild auf Gelände als 30°-Schrägansicht vom Wasser rendern, mit Bildmodell zum Katalogbild machen (Ankerbuchten mittags, Häfen und Orte bei Städten abends), Prüfung und Freigabe, Feld `image` im Vertrag; Fotos und Aussehens-Merkmale als zweite Stufe; erste Umsetzung nur Griechenland mit freien Daten (Kataster-Orthofoto, Sentinel-2, Copernicus DEM); nach M7 |
-| 14 | `2026-10-20-periplus-14-raumgliederung-design.md` | Raumgliederung: Landesteile (Land, Verwaltungseinheit) als Laufumfang, Hierarchie und Liefereinheit (Vertrag 2.0), Grob-Gazetteer, Ansicht „Länder und Landesteile“; Reviere als überlappende Namensgebiete (Plan 14b) |
+| 14 | `2026-10-20-periplus-14-raumgliederung-design.md` | Raumgliederung: Landesteile (Land, Verwaltungseinheit) als Laufumfang, Hierarchie und Liefereinheit (Vertrag 2.0), Grob-Gazetteer, Ansicht „Länder und Landesteile“; Reviere als überlappende Namensgebiete, vom Revier-Bot geliefert und importiert (Plan 14a und 14b); umgesetzt |
 
 ## 12. Offene Punkte
 
