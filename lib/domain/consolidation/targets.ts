@@ -89,24 +89,24 @@ export async function consolidationScope(db: Db, run: { id: string; params: Reco
 }
 
 /**
- * Spec 16 „Aktualität“: the places whose highlight selection a POI of the run's scope may change, without the run's
- * own targets (`consolidationTargets`): the geo objects of the valid, unmerged, not rejected places within
- * `max(highlights.reachKm)` of such a POI (distance from the place's anchor, else its position, as
+ * Spec 16 „Aktualität“: the places whose highlight selection a POI of the run's scope (`geoObjectIds` included, final
+ * review I2) may change, without the run's own targets (`consolidationTargets`): the geo objects of the valid,
+ * unmerged, not rejected places within `max(highlights.reachKm)` of such a POI or of an object merged into it (a
+ * review „same“ merges a selected highlight away; distance from the place's anchor, else its position, as
  * `loadHighlightCandidates` measures), themselves consolidatable on `today`. They only re-select (`reselectHighlights`):
  * no full consolidation, summary only for a changed selection, no follow-up discovery, no title image (final review
- * C1). Empty for rules without `highlights` (v1) and for explicit `geoObjectIds` runs.
+ * C1). Empty for rules without `highlights` (v1).
  */
 export async function reselectionTargets(db: Db, run: { id: string; params: Record<string, unknown> }, today?: string): Promise<string[]> {
   const p = run.params;
   const highlights = (await consolidationConfigFor(db, p.rulesVersion)).highlights;
   if (!highlights) return [];
-  if (isExplicit(p)) return [];
   const day = today ?? (await runDate(db, run.id));
-  const scope = await scopeTargets(db, run, day);
+  const scope = isExplicit(p) ? sorted(strings(p.geoObjectIds)) : await scopeTargets(db, run, day);
   if (scope.length === 0) return [];
-  const own = new Set(await withoutPois(db, scope));
+  const own = new Set(isExplicit(p) ? scope : await withoutPois(db, scope));
   const reachM = Math.max(...highlights.reachKm) * 1000;
-  // one box per POI; the places with an anchor by `anchor_position && box`, the
+  // one box per POI (and per object merged into it); the places with an anchor by `anchor_position && box`, the
   // others by `position && box`, so each side uses its gist index (places_anchor_position_gist,
   // places_position_gist); then the exact distance in metres
   const { rows } = await db.execute<{ id: string }>(sql`
@@ -114,7 +114,7 @@ export async function reselectionTargets(db: Db, run: { id: string; params: Reco
       select o.geom,
              ST_Expand(o.geom, ${reachM}::float8 / (111320 * greatest(cos(radians(ST_Y(ST_Centroid(o.geom)))), 0.1))) as box
       from geo_objects o
-      where o.type = 'poi' and o.id = any(${sql.param(scope)}::uuid[])
+      where o.type = 'poi' and (o.id = any(${sql.param(scope)}::uuid[]) or o.merged_into_id = any(${sql.param(scope)}::uuid[]))
     )
     select distinct o.id from t
     cross join lateral (

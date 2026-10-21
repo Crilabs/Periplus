@@ -6,6 +6,7 @@ import { geoObjects, profiles, reviewTasks, runs, wikidataSitelinks } from "@/li
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
 import { consolidationTargets } from "@/lib/domain/consolidation/targets";
 import { selectedPoiIds } from "@/lib/domain/highlights/selections";
+import { decideReviewTask } from "@/lib/domain/review-decisions";
 import { tileIdFor } from "@/lib/domain/tiles";
 import { latestProfile } from "@/lib/domain/timeline";
 import { STAGES } from "@/lib/jobs/stages";
@@ -196,6 +197,28 @@ describe("stage consolidation.highlights (spec 16)", () => {
       expect(await runStageJobs(tx, again, CONSOLIDATION_GEO_STAGE)).toEqual([{ geoObjectId: bay.objectId, reselect: true, status: "unchanged" }]);
       expect((await latestProfile(tx, bay.objectId))!.version).toBe(2);
       expect((await summaryTargets(tx, again)).map((t) => t.geoObjectId)).not.toContain(bay.objectId);
+    }));
+
+  it("deciding 'same' on two selected highlights re-selects the places that chose the dropped one (final review I2)", () =>
+    withRollback(async (tx) => {
+      const bay = await insertPlace(tx, { lon: LON, lat: LAT, name: "Gleichbucht" });
+      const keep = await culture(tx, "Kastro Poros", 0.4);
+      const drop = await culture(tx, "Kastro Porou", -0.4);
+      const run = await runOver(tx, [bay.objectId]);
+      await runStage(tx, run, CONSOLIDATION_GEO_STAGE);
+      await runStage(tx, run, CONSOLIDATION_HIGHLIGHTS_STAGE);
+      expect(await selectedPoiIds(tx, [bay.objectId])).toEqual([keep, drop].sort());
+      const [task] = await pairTasks(tx, keep, drop);
+
+      const { consolidate } = await decideReviewTask(tx, { taskId: task!.id, decision: { action: "same" }, decidedBy: "test" });
+      expect(consolidate?.geoObjectId).toBe(keep);
+      // the follow-up run (`consolidateAfter` with the survivor) consolidates it and re-selects the bay
+      const follow = await runOver(tx, [keep]);
+      const jobs = await runStageJobs(tx, follow, CONSOLIDATION_GEO_STAGE);
+      expect(jobs.map((j) => [j.geoObjectId, j.reselect])).toEqual([[keep, false], [bay.objectId, true]]);
+      const profile = await latestProfile(tx, bay.objectId);
+      expect(profile!.attributes["derived.highlights"]).toEqual({ culture: { ids: [keep], level: "none" } });
+      expect(await selectedPoiIds(tx, [bay.objectId])).toEqual([keep]);
     }));
 
   it("text, geometry and consolidateAfter runs list consolidation.highlights after consolidation.geo", () =>

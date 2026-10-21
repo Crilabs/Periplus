@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { tileGeoObjects } from "@/lib/db/schema";
 import { consolidationScope, consolidationTargets, reselectionTargets } from "@/lib/domain/consolidation/targets";
+import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
 import { newId } from "@/lib/domain/ids";
 import { tileIdFor } from "@/lib/domain/tiles";
 import { insertMention, insertPlace, insertSource } from "@/test/consolidation";
@@ -68,11 +69,25 @@ describe("consolidationTargets with POIs (spec 16)", () => {
       const castle = await poi(tx, "Kastro", 2);
       const direct = { id: newId(), params: { geoObjectIds: [castle] } };
       expect(await consolidationTargets(tx, direct, today)).toEqual([castle]);
+      // the places within reach of the given POI re-select (final review I2)
+      expect(await reselectionTargets(tx, direct, today)).toEqual([bay.objectId]);
       const runId = await insertTestRun(tx);
       const m = await insertMention(tx, castle, { sourceId: await insertSource(tx), runId });
       const v1 = await consolidationTargets(tx, { id: runId, params: { documentVersionIds: [m.versionId], rulesVersion: "v1" } }, today);
       expect(v1).toEqual([castle]);
       expect(v1).not.toContain(bay.objectId);
       expect(await reselectionTargets(tx, { id: runId, params: { documentVersionIds: [m.versionId], rulesVersion: "v1" } }, today)).toEqual([]);
+    }));
+
+  it("an explicit run on a POI re-selects the places within reach of an object merged into it (final review I2)", () =>
+    withRollback(async (tx) => {
+      const bay = await insertPlace(tx, { lon: LON, lat: LAT, name: "Randbucht" });
+      // the dropped twin lies within 20 km of the bay, the survivor just beyond
+      const drop = await poi(tx, "Naos", 19.5);
+      const keep = await poi(tx, "Naos Afaias", 20.5);
+      const direct = { id: newId(), params: { geoObjectIds: [keep] } };
+      expect(await reselectionTargets(tx, direct, today)).toEqual([]);
+      await mergeGeoObjects(tx, keep, drop);
+      expect(await reselectionTargets(tx, direct, today)).toEqual([bay.objectId]);
     }));
 });
