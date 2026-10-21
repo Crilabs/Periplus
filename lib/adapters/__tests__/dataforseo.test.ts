@@ -92,6 +92,22 @@ describe("searchOrganic", () => {
     });
   });
 
+  it("a 40106 task with partial results returns the items it has", async () => {
+    await withRollback(async (tx) => {
+      const { items } = await searchOrganic(handTransport("task-40106-partial"), query, { db: tx }, cfg());
+      expect(items.length).toBeGreaterThan(0);
+    });
+  });
+
+  it("a 40106 task without results is transient: repeated, then retryable", async () => {
+    await withRollback(async (tx) => {
+      const transport = handTransport("task-40106-empty");
+      const error = await searchOrganic(transport, query, { db: tx }, cfg()).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(RetryableHttpError);
+      expect(transport.requests).toHaveLength(1 + getConfig().discovery.serp.taskRetries);
+    });
+  });
+
   it("a 50000 task status is retryable", async () => {
     await withRollback(async (tx) => {
       const error = await searchOrganic(handTransport("task-50000"), query, { db: tx }, cfg()).catch((e: unknown) => e);
