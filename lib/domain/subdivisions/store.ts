@@ -92,7 +92,12 @@ async function candidate(db: Db, entry: PlannedSubdivision): Promise<Candidate> 
     )
     SELECT ST_Multi(ST_CollectionExtract(ST_MakeValid(
              CASE WHEN land.g IS NULL OR ST_IsEmpty(land.g) THEN u.g
-                  ELSE ST_Union(u.g, ST_Buffer(ST_SimplifyPreserveTopology(land.g, 0.0005)::geography, ${TERRITORIAL_WATER_M})::geometry) END
+                  -- Each land part is buffered on its own: one geography buffer around thousands of islands
+                  -- (Cyclades) exhausted the database memory.
+                  ELSE ST_Union(u.g, (
+                    SELECT ST_Union(ST_Buffer(d.geom::geography, ${TERRITORIAL_WATER_M})::geometry)
+                    FROM ST_Dump(ST_SimplifyPreserveTopology(land.g, 0.0005)) d
+                  )) END
            ), 3))::text AS geom,
            CASE WHEN land.g IS NULL OR ST_IsEmpty(land.g) THEN NULL ELSE ST_Multi(land.g)::text END AS land
     FROM u LEFT JOIN land ON true`);

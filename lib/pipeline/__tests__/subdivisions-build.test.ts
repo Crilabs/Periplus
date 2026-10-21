@@ -205,6 +205,23 @@ describe("applySubdivisionPlan", () => {
   });
 });
 
+describe("applySubdivisionPlan with an island group", () => {
+  it("pads every island of the land with 12 sm of water", async () => {
+    await withRollback(async (tx) => {
+      const a = await insertUnit(tx, [10, 45, 11, 46]);
+      await insertLand(tx, [10.1, 45.1, 10.12, 45.12]);
+      await insertLand(tx, [10.8, 45.8, 10.82, 45.82]);
+      await applySubdivisionPlan(tx, [entry("HR-T9", a)], TODAY);
+      const { rows } = await tx.execute<{ west: boolean; east: boolean }>(sql`
+        SELECT ST_Covers(s.geom, ST_SetSRID(ST_MakePoint(10.11, 44.95), 4326)) AS west,
+               ST_Covers(s.geom, ST_SetSRID(ST_MakePoint(10.81, 46.0), 4326)) AS east
+        FROM subdivisions s WHERE s.key = 'HR-T9' AND s.valid_to IS NULL`);
+      // Both points lie outside the unit polygon, about 16 and 20 km from their island.
+      expect(rows[0]).toEqual({ west: true, east: true });
+    });
+  });
+});
+
 describe("loadAdminUnits", () => {
   it("marks units within 2 km of a configured sea as touching it, farther ones and unconfigured seas not", async () => {
     await withRollback(async (tx) => {
