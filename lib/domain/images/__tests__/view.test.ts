@@ -194,6 +194,9 @@ describe("placeImageView", () => {
       expect(cfg.images.delivery.ktimatologio).toBe(false);
       expect(view.deliverable).toBe(false);
       expect(view.blockedBy).toEqual(["ktimatologio"]);
+      // the place the images belong to, as the tab's header shows it (name, ids, points, composition)
+      expect(view.place).toMatchObject({ geoObjectId: spot.objectId, placeId: spot.placeId, name: "Kolona", kind: "anchorage", composition: "open_water", cove: null });
+      expect(view.place!.centre.lon).toBeCloseTo(IMAGE_LON, 9);
       expect(view.current).toMatchObject({
         slot: "title",
         kind: "ai_illustration",

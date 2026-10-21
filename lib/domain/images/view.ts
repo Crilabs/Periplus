@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { getConfig, type ImagesConfig, type ZoomLevel } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { imageBlockedBy, imageSources } from "./delivery-gate";
+import { loadImagePlaceInfo, type ImagePlaceInfo } from "./place-info";
 import { allowedZooms } from "./render-plan";
 
 /*
@@ -31,6 +32,8 @@ export type CurrentImage = {
 export type ImageCandidate = { taskId: string; slot: string; candidateKey: string; waterIoU: number | null; passed: boolean; light: "midday" | "evening" | null };
 
 export type PlaceImageView = {
+  /** The place the images belong to (name, ids, points, composition: the tab's header and the image type label). */
+  place: ImagePlaceInfo | null;
   /** The title image, else the first current one. */
   current: CurrentImage | null;
   /** Every current image of the place, by sort order. */
@@ -106,7 +109,12 @@ async function coreResolutionM(db: Db, geoObjectId: string, cfg: Pick<ImagesConf
  * and the sources that block its delivery, the open task's candidate (a draft: the generated image shows right away),
  * the newest render and the zoom levels a further view may use.
  */
-export async function placeImageView(db: Db, geoObjectId: string, cfg: Pick<ImagesConfig, "delivery" | "sources" | "camera" | "render"> = getConfig().images): Promise<PlaceImageView> {
+export async function placeImageView(
+  db: Db,
+  geoObjectId: string,
+  cfg: Pick<ImagesConfig, "delivery" | "sources" | "camera" | "render" | "light" | "composition"> = getConfig().images,
+): Promise<PlaceImageView> {
+  const place = await loadImagePlaceInfo(db, geoObjectId, cfg);
   const { rows } = await db.execute<ImageRow>(sql`
     select pi.id, pi.slot, pi.sort_order, pi.kind, pi.light, pi.alt, pi.attribution, pi.observed_at, pi.file_key, pi.water_iou, pi.valid_from,
            ST_X(pi.camera_position) as lon, ST_Y(pi.camera_position) as lat, pi.camera_height_m, pi.view_bearing_deg,
@@ -161,6 +169,7 @@ export async function placeImageView(db: Db, geoObjectId: string, cfg: Pick<Imag
   const configured = Object.keys(cfg.camera.zooms) as ZoomLevel[];
   const blockedBy = current?.blockedBy ?? [];
   return {
+    place,
     current,
     images,
     candidate: candidates[0] ?? null,

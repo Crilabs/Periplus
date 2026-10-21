@@ -14,7 +14,7 @@ test("admin approves a place image", async ({ page }) => {
 
   const taskUrl = `/review/${TASK}`;
   await page.goto(taskUrl);
-  await expect(page.getByText("Titelbild prüfen")).toBeVisible();
+  await expect(page.getByText("Bild prüfen: Ankerplatz")).toBeVisible();
   await expect(page.getByText("Aufnahme von S, Blick nach N (0°), 260 m Höhe, Neigung 30°")).toBeVisible();
   await expect(page.getByRole("button", { name: "Freigeben" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Neu erzeugen" })).toBeVisible();

@@ -42,6 +42,7 @@ import type { ComparisonAttribute } from "@/lib/db/schema/quality";
 import { canonicalJson } from "@/lib/domain/facts/schema";
 import { factViewsByIds, geoFacts, type FactView } from "@/lib/domain/geo-facts";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
+import { loadImagePlaceInfo, type ImagePlaceInfo } from "@/lib/domain/images/place-info";
 import { candidateObjects, withNeighbours } from "@/lib/domain/mentions/scope";
 import {
   afterInQueue,
@@ -233,17 +234,14 @@ export type ReviewSubject =
   | { type: "missing" };
 
 /**
- * A `place_image` task (spec 13): the place, the slot, the task's context (camera, checks, attempts, allowed zooms) and
- * the archive keys of the render's photo and mask (null when the task has no render, e.g. `no_water_view`), the
- * imagery sources the render used (core, wide, DEM) and the water IoU threshold of its light.
+ * A `place_image` task (spec 13): the place (`ImagePlaceInfo`: name, ids, points, composition), the slot, the task's
+ * context (camera, checks, attempts, allowed zooms) and the archive keys of the render's photo and mask (null when
+ * the task has no render, e.g. `no_water_view`), the imagery sources the render used (core, wide, DEM) and the water
+ * IoU threshold of its light.
  */
 export type PlaceImageSubjectView = {
   type: "place_image";
-  geoObjectId: string;
-  placeId: string;
-  publicId: string | null;
-  name: string | null;
-  kind: PlaceKind;
+  place: ImagePlaceInfo;
   slot: string;
   key: string;
   context: PlaceImageTaskContext;
@@ -639,12 +637,7 @@ async function placeImageSubject(db: Db, subjectId: string, context: Record<stri
   const [geoObjectId, slot] = [subjectId.slice(0, 36), subjectId.slice(37)];
   if (!isUuid(geoObjectId) || subjectId[36] !== ":" || slot === "" || typeof context.key !== "string") return { type: "missing" };
   const c = context as PlaceImageTaskContext;
-  const [place] = await db
-    .select({ id: places.id, publicId: places.publicId, kind: places.kind, name: displayNameSql(places.geoObjectId) })
-    .from(places)
-    .where(and(eq(places.geoObjectId, geoObjectId), isNull(places.validTo), isNull(places.mergedIntoId)))
-    .orderBy(places.id)
-    .limit(1);
+  const place = await loadImagePlaceInfo(db, geoObjectId, getConfig().images);
   if (!place) return { type: "missing" };
   const [render] =
     typeof c.renderId === "string" && isUuid(c.renderId)
@@ -662,11 +655,7 @@ async function placeImageSubject(db: Db, subjectId: string, context: Record<stri
   const light = c.light === "evening" ? "evening" : "midday";
   return {
     type: "place_image",
-    geoObjectId,
-    placeId: place.id,
-    publicId: place.publicId,
-    name: place.name,
-    kind: place.kind,
+    place,
     slot,
     key: c.key,
     context: c,

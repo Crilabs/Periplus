@@ -232,7 +232,7 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
             {subject.type === "comparison"
               ? `: ${subject.place.name ?? subject.place.id} – ${COMPARISON_ATTRIBUTE_LABELS[subject.attribute]}`
               : ""}
-            {subject.type === "place_image" ? `: ${subject.name ?? subject.placeId}` : ""}
+            {subject.type === "place_image" ? `: ${subject.place.name ?? subject.place.placeId}` : ""}
           </>
         }
         meta={
