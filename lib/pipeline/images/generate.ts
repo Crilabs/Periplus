@@ -7,6 +7,8 @@ import { ModelOutputInvalid, type ModelClient } from "@/lib/ai/types";
 import { getConfig, type AppConfig, type ImagesConfig, type ImageryLight, type ZoomLevel } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { placeImages, placeRenders, reviewDecisions, reviewTasks, type PlaceKind } from "@/lib/db/schema";
+import { BudgetExceeded } from "@/lib/domain/costs";
+import { newId } from "@/lib/domain/ids";
 import { passesGeometry, toJpeg, waterIoU } from "@/lib/domain/images/checks";
 import { lightFor } from "@/lib/domain/images/light";
 import { loadPlaceImageInput, type PlaceImageInput } from "@/lib/domain/images/place-input";
@@ -285,8 +287,11 @@ export type GenerateResult = { status: "review" | "no_water_view" | "skipped"; a
  *    image yet; once one has (and is paid for), the error ends the attempts instead, the image of a failed check stays
  *    an unchecked attempt, and the task notes it as `interrupted`;
  * 5. the best attempt (passed, watermark-free, highest IoU) as JPEG under
- *    `imagery/candidates/<geoObjectId>/<renderId>-<n>.jpg`, and the `place_image` task (`putUpForReview`); when no
- *    attempt gave a usable image, the task has no candidate and `reason: "no_valid_output"`.
+ *    `imagery/candidates/<geoObjectId>/<renderId>-<generation id>-<n>.jpg` (unique per generation, so a later one
+ *    over the same render leaves a decided task's candidate as it is), and the `place_image` task (`putUpForReview`);
+ *    when no attempt gave a usable image, the task has no candidate and `reason: "no_valid_output"`. A
+ *    `BudgetExceeded` that interrupted the attempts is thrown after the task write all the same: the worker pauses
+ *    the queue on it, and the job it re-sends finds the open task (`keyDone`) and skips.
  * Nothing runs inside a transaction except the task write.
  */
 export async function generatePlaceImage(
@@ -361,9 +366,11 @@ export async function generatePlaceImage(
     const attempts: Attempt[] = [];
     let made = 0;
     let interrupted: PlaceImageTaskContext["interrupted"];
+    let interruptedBy: unknown;
     /** An error after the first paid image ends the attempts instead of the job; the attempts so far go up for review. */
     const interrupt = (n: number, step: string, e: unknown) => {
       interrupted = { attempt: n, error: errorMessage(e) };
+      interruptedBy = e;
       log.warn({ geoObjectId: place.geoObjectId, slot: view.slot, attempt: n, step, err: e }, "image attempt interrupted, earlier attempts go up for review");
     };
     for (let n = 1; n <= icfg.check.maxAttempts; n++) {
@@ -401,10 +408,13 @@ export async function generatePlaceImage(
       if (passed || interrupted) break;
     }
 
+    const generationId = newId();
     const chosen = best(attempts);
     let candidateKey: string | null = null;
     if (chosen) {
-      candidateKey = `imagery/candidates/${place.geoObjectId}/${render.renderId}-${chosen.n}.jpg`;
+      // named by render, this generation and attempt: a later generation over the same render (the render is reused
+      // when a title image is generated again after „Bild entfernen“) never overwrites the candidate a decided task shows
+      candidateKey = `imagery/candidates/${place.geoObjectId}/${render.renderId}-${generationId}-${chosen.n}.jpg`;
       await deps.archive.put(candidateKey, await toJpeg(chosen.image, icfg.output.jpegQuality), "image/jpeg");
     }
     await putUpForReview(db, input.geoObjectId, {
@@ -421,6 +431,8 @@ export async function generatePlaceImage(
       ...(chosen ? {} : { reason: "no_valid_output" as const }),
       ...(interrupted ? { interrupted } : {}),
     });
+    // a budget stop must still reach the worker (it pauses the queue): the task exists, so the retried job skips it
+    if (interruptedBy instanceof BudgetExceeded) throw interruptedBy;
     return { status: "review", attempts: made, waterIoU: chosen?.iou ?? null };
   });
   if (generated === null) {

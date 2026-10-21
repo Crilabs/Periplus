@@ -11,6 +11,7 @@ import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { landPolygons, reviewTasks } from "@/lib/db/schema";
 import { BudgetExceeded } from "@/lib/domain/costs";
+import { decideReviewTask } from "@/lib/domain/review-decisions";
 import { createRun } from "@/lib/domain/runs";
 import { generatePlaceImage, generationKey, slotLockKey } from "@/lib/pipeline/images/generate";
 import { IMAGES_STAGE } from "@/lib/pipeline/images/stage-name";
@@ -53,6 +54,9 @@ const taskOf = imageTasksOf;
 
 const TITLE = { slot: "title", zoom: "z1" as const };
 
+/** The candidate key of attempt `n` (a pattern) of a generation over `renderId`: `<renderId>-<generation id>-<n>.jpg`. */
+const candidateKeyOf = (geoObjectId: string, renderId: string, n: string) => new RegExp(`^imagery/candidates/${geoObjectId}/${renderId}-[0-9a-f-]{36}-${n}\\.jpg$`);
+
 describe("generationKey", () => {
   it("is independent of the tile order and changes with each field", () => {
     const base = { imageryTileIds: ["b", "a"], promptVersion: 1, model: "m", kind: "anchorage" as const, light: "midday" as const, slot: "title", zoom: "z1" as const, azimuthDeg: null };
@@ -78,7 +82,7 @@ describe("generatePlaceImage", () => {
       const [task] = await taskOf(tx, `${f.objectId}:title`);
       expect(task!.subject_type).toBe("place_image");
       expect(task!.context).toMatchObject({ slot: "title", passed: false, attempts: 2, waterIoU: 0, light: "midday", zoom: "z1", azimuthOverride: null, watermarkVisible: false });
-      expect(task!.context.candidateKey).toMatch(new RegExp(`^imagery/candidates/${f.objectId}/${task!.context.renderId}-[12]\\.jpg$`));
+      expect(task!.context.candidateKey).toMatch(candidateKeyOf(f.objectId, task!.context.renderId!, "[12]"));
       expect(archive.contentType(task!.context.candidateKey!)).toBe("image/jpeg");
     });
   });
@@ -97,7 +101,7 @@ describe("generatePlaceImage", () => {
       const c = task!.context;
       const task0 = cfg.models.imageTasks["generate-place-image"]!;
       expect(c).toMatchObject({ slot: "title", passed: true, attempts: 1, waterIoU: 1, watermarkVisible: false, model: task0.model, promptVersion: task0.promptVersion, allowedZooms: ["z1", "z2", "z3"] });
-      expect(c.candidateKey).toBe(`imagery/candidates/${f.objectId}/${c.renderId}-1.jpg`);
+      expect(c.candidateKey).toMatch(candidateKeyOf(f.objectId, c.renderId!, "1"));
       expect(c.alt.startsWith("KI-Illustration:")).toBe(true);
       // camera details: rays longest towards the south, so the camera stands south and looks north
       expect(c.camera!.viewBearingDeg).toBeCloseTo(0, 6);
@@ -117,7 +121,7 @@ describe("generatePlaceImage", () => {
       expect(result).toEqual({ status: "review", attempts: 2, waterIoU: 1 });
       const [task] = await taskOf(tx, `${f.objectId}:title`);
       expect(task!.context).toMatchObject({ passed: true, attempts: 2, watermarkVisible: false });
-      expect(task!.context.candidateKey).toBe(`imagery/candidates/${f.objectId}/${task!.context.renderId}-2.jpg`);
+      expect(task!.context.candidateKey).toMatch(candidateKeyOf(f.objectId, task!.context.renderId!, "2"));
     });
   });
 
@@ -146,7 +150,7 @@ describe("generatePlaceImage", () => {
       const [task] = await taskOf(tx, `${f.objectId}:title`);
       expect(task!.context).toMatchObject({ passed: false, attempts: 2, waterIoU: 0, interrupted: { attempt: 2, error: "RetryableHttpError: openai images.edit POST: 503" } });
       expect(task!.context.reason).toBeUndefined();
-      expect(task!.context.candidateKey).toBe(`imagery/candidates/${f.objectId}/${task!.context.renderId}-1.jpg`);
+      expect(task!.context.candidateKey).toMatch(candidateKeyOf(f.objectId, task!.context.renderId!, "1"));
       expect(archive.contentType(task!.context.candidateKey!)).toBe("image/jpeg");
     });
   });
@@ -161,7 +165,7 @@ describe("generatePlaceImage", () => {
     });
   });
 
-  it("a failing watermark check keeps the paid image as an unchecked attempt and ends the attempts", async () => {
+  it("a failing watermark check keeps the paid image as an unchecked attempt and ends the attempts; a budget stop still reaches the worker", async () => {
     await withRollback(async (tx) => {
       const f = await fixture(tx);
       const archive = memoryArchive();
@@ -171,12 +175,38 @@ describe("generatePlaceImage", () => {
           throw new BudgetExceeded("anthropic", 20, 20);
         },
       });
-      const result = await generatePlaceImage(tx, { geoObjectId: f.objectId, view: TITLE, runId: f.runId }, await deps(archive, images, failingChecker));
-      expect(result).toEqual({ status: "review", attempts: 1, waterIoU: 1 });
+      const input = { geoObjectId: f.objectId, view: TITLE, runId: f.runId };
+      // the task exists with the paid image, and the budget stop propagates so the worker pauses the queue
+      await expect(generatePlaceImage(tx, input, await deps(archive, images, failingChecker))).rejects.toBeInstanceOf(BudgetExceeded);
       expect(images.calls).toHaveLength(1);
       const [task] = await taskOf(tx, `${f.objectId}:title`);
       expect(task!.context).toMatchObject({ passed: false, attempts: 1, waterIoU: 1, watermarkVisible: null, interrupted: { attempt: 1, error: "BudgetExceeded: Daily budget for anthropic exceeded: 20 of 20 EUR" } });
-      expect(task!.context.candidateKey).toBe(`imagery/candidates/${f.objectId}/${task!.context.renderId}-1.jpg`);
+      expect(task!.context.candidateKey).toMatch(candidateKeyOf(f.objectId, task!.context.renderId!, "1"));
+      // the job the worker re-sends after the pause finds the open task and skips
+      expect((await generatePlaceImage(tx, input, await deps(archive, await imageModel(GOOD), checker(false)))).status).toBe("skipped");
+      expect(await taskOf(tx, `${f.objectId}:title`)).toHaveLength(1);
+      // a provider failure of the check (no budget stop) ends the attempts without failing the job
+      const g = await fixture(tx);
+      const flaky = new MockModel({
+        "check-place-image": () => {
+          throw new RetryableHttpError("anthropic 529", 529);
+        },
+      });
+      const result = await generatePlaceImage(tx, { geoObjectId: g.objectId, view: TITLE, runId: g.runId }, await deps(memoryArchive(), await imageModel(GOOD), flaky));
+      expect(result).toEqual({ status: "review", attempts: 1, waterIoU: 1 });
+    });
+  });
+
+  it("a budget stop of the edit after a paid attempt puts the attempt up for review and still propagates", async () => {
+    await withRollback(async (tx) => {
+      const f = await fixture(tx);
+      const archive = memoryArchive();
+      const images = await imageModel(DRY, new BudgetExceeded("openai", 10, 10));
+      await expect(generatePlaceImage(tx, { geoObjectId: f.objectId, view: TITLE, runId: f.runId }, await deps(archive, images, checker(false)))).rejects.toBeInstanceOf(BudgetExceeded);
+      expect(images.calls).toHaveLength(2);
+      const [task] = await taskOf(tx, `${f.objectId}:title`);
+      expect(task!.context).toMatchObject({ passed: false, attempts: 2, waterIoU: 0, interrupted: { attempt: 2, error: "BudgetExceeded: Daily budget for openai exceeded: 10 of 10 EUR" } });
+      expect(task!.context.candidateKey).toMatch(candidateKeyOf(f.objectId, task!.context.renderId!, "1"));
     });
   });
 
@@ -282,6 +312,30 @@ describe("generatePlaceImage", () => {
       const again = await generatePlaceImage(tx, input, { ...d, archive: memoryArchive(), imageModel: await imageModel(GOOD) });
       expect(again.status).toBe("review");
       expect(renders).toBe(3);
+    });
+  });
+
+  it("a generation over a reused render names its candidate apart from the decided task's, which keeps its image", async () => {
+    await withRollback(async (tx) => {
+      const f = await fixture(tx);
+      const archive = memoryArchive();
+      const input = { geoObjectId: f.objectId, view: TITLE, runId: f.runId };
+      await generatePlaceImage(tx, input, await deps(archive, await imageModel(GOOD), checker(false)));
+      const [first] = await taskOf(tx, `${f.objectId}:title`);
+      const firstCandidate = first!.context.candidateKey!;
+      const firstBytes = (await archive.get(firstCandidate))!;
+      // approved, then removed („Bild entfernen“): the next automatic run generates the same key again over the same render
+      await decideReviewTask(tx, { taskId: first!.id, decision: { action: "approve_image" }, decidedBy: "admin", taskKey: first!.context.key }, { archive });
+      await tx.execute(sql`update place_images set valid_to = current_date where geo_object_id = ${f.objectId}`);
+      const again = await generatePlaceImage(tx, input, await deps(archive, await imageModel(DRY), checker(false)));
+      expect(again.status).toBe("review");
+      const [second] = await taskOf(tx, `${f.objectId}:title`);
+      expect(second!.context.renderId).toBe(first!.context.renderId);
+      expect(second!.context.candidateKey).not.toBe(firstCandidate);
+      expect(second!.context.candidateKey).toMatch(candidateKeyOf(f.objectId, first!.context.renderId!, "[12]"));
+      // the decided task still shows the image it was decided on
+      expect(Buffer.from((await archive.get(firstCandidate))!).equals(Buffer.from(firstBytes))).toBe(true);
+      expect(Buffer.from((await archive.get(second!.context.candidateKey!))!).equals(Buffer.from(firstBytes))).toBe(false);
     });
   });
 
