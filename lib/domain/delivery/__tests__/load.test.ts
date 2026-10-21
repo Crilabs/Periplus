@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { documents, geoNames, geoObjects, places, profileSummaries, subdivisions, tileGeoObjects, tiles } from "@/lib/db/schema";
+import { documents, geoNames, geoObjects, highlightSelections, places, profileSummaries, subdivisions, tileGeoObjects, tiles } from "@/lib/db/schema";
 import { addNames } from "@/lib/domain/gazetteer/names";
 import { osmNames } from "@/lib/domain/gazetteer/osm-classify";
 import { newPublicId } from "@/lib/domain/ids";
@@ -390,10 +390,35 @@ describe("loadSubdivisionScope", () => {
       const f = await seedDeliverySubdivision(tx);
       const outside = await insertNamedObject(tx, { type: "poi", names: [{ name: "Taverna Fern" }], lon: 21.6, lat: 35.1, category: "food", tiles: [f.outsideTileId] });
       await tx.update(geoObjects).set({ publicId: newPublicId("hl") }).where(eq(geoObjects.id, outside));
-      // linked to a scope tile, but it belongs to no subdivision (`subdivision_id` null)
+      // linked to a scope tile, but it belongs to no subdivision (`subdivision_id` null); A even selects it
       await tx.insert(tileGeoObjects).values({ tileId: f.tileIds[1], geoObjectId: outside });
+      await tx.insert(highlightSelections).values({ placeGeoObjectId: f.places.A.geoObjectId, poiGeoObjectId: outside, category: "food", rank: 2, distanceKm: 40, profileVersion: 1 });
       const scope = await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx));
       expect(scope.pois.map((p) => p.geoObjectId)).toEqual([f.poiId]);
+    });
+  });
+
+  it("loads only the POIs a counting place of the subdivision selected, with the selecting places (spec 16)", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliverySubdivision(tx);
+      const today = await dbToday(tx);
+      const [lon, lat] = f.positions.T;
+      const poi = async (name: string) => {
+        const id = await insertNamedObject(tx, { type: "poi", names: [{ name }], lon, lat: lat - 0.01, category: "culture", tiles: [f.tileIds[0]], subdivisionId: f.subdivisionId });
+        await tx.update(geoObjects).set({ publicId: newPublicId("hl") }).where(eq(geoObjects.id, id));
+        return id;
+      };
+      const unselected = await poi("Kastro");
+      const byRejected = await poi("Moni");
+      await tx.insert(highlightSelections).values({ placeGeoObjectId: f.places.B.geoObjectId, poiGeoObjectId: byRejected, category: "culture", rank: 1, distanceKm: 3, profileVersion: 1 });
+      await tx.update(places).set({ status: "rejected" }).where(eq(places.id, f.places.B.placeId));
+
+      const scope = await loadSubdivisionScope(tx, f.subdivisionId, cfg, today);
+      expect(scope.pois.map((p) => p.geoObjectId)).toEqual([f.poiId]);
+      expect(scope.pois.map((p) => p.geoObjectId)).not.toContain(unselected);
+      const selectedBy = [...scope.pois[0]!.selectedBy].sort((a, b) => a.distanceKm - b.distanceKm);
+      expect(selectedBy.map((s) => s.placeGeoObjectId)).toEqual([f.places.A.geoObjectId, f.places.M.geoObjectId]);
+      expect(selectedBy[0]!.distanceKm).toBeCloseTo(1.85, 1);
     });
   });
 

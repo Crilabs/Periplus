@@ -639,7 +639,7 @@ export const CHECK_LABELS: Record<CheckName, string> = {
   exclude_reason: "Ausgeschlossener Spot mit Grund",
   berth_months: "„Saisonal voll“ mit mindestens einem Monat",
   low_confidence_note: "Geringe Konfidenz mit Hinweis „wenig belegt“",
-  highlight_radius: "Highlight mit Spot im Bedeutungsradius",
+  highlight_selected: "Highlight nur an Spots, die es ausgewählt haben",
   spot_duplicates: "Keine zwei Spots derselben Art näher als 150 m",
   highlight_duplicates: "Keine zwei Highlights gleichen Namens näher als 500 m",
   verbatim_text: "Kein Text länger als 15 Wörter aus einer Quelle",

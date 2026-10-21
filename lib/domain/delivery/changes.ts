@@ -224,6 +224,7 @@ export const FIELD_LABELS_DE: Record<keyof SpotBody | keyof HighlightBody | keyo
   seasonNote: "Saisonhinweise",
   score: "Bewertung",
   highlightIds: "Highlights",
+  highlightLevels: "Highlight-Stufen",
   externalRefs: "Externe Kennungen",
   summary: "Zusammenfassung",
   images: "Bilder",

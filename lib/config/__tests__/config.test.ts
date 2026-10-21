@@ -675,7 +675,7 @@ describe("consolidation rules", () => {
 describe("delivery configuration", () => {
   it("the delivery config carries the spec values", () => {
     expect(getConfig().delivery).toMatchObject({
-      schemaVersion: "2.1",
+      schemaVersion: "2.2",
       coast: { marginNm: 2, simplifyToleranceM: 10 },
       validation: {
         maxWaterDistanceNm: 1.5,

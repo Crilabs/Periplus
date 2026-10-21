@@ -13,7 +13,7 @@ const SUBDIVISION = "sd_01J9X4M0A1B2C3D4E5F6G7H8J9";
 const AREA = "ar_01J9X4M0A1B2C3D4E5F6G7H8JA";
 const REGION = "rg_01J9X4KZ0A1B2C3D4E5F6G7H8J";
 const HIGHLIGHT = "hl_01J9X4KQ3P2N1M0Z9K8J7H6G5F";
-const envelope = { schemaVersion: "2.1" as const, subdivision: SUBDIVISION, dataVersion: 2, generatedAt: "2026-10-19T08:00:00.000Z" };
+const envelope = { schemaVersion: "2.2" as const, subdivision: SUBDIVISION, dataVersion: 2, generatedAt: "2026-10-19T08:00:00.000Z" };
 const square: [number, number][][] = [
   [
     [23.3, 37.6],
@@ -35,7 +35,7 @@ export const SAMPLE_FILES: {
   "changes.json": ChangesFile;
 } = {
   "manifest.json": {
-    schemaVersion: "2.1",
+    schemaVersion: "2.2",
     subdivision: {
       id: SUBDIVISION,
       key: "GR-I",

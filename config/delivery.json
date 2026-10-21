@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "2.1",
+  "schemaVersion": "2.2",
   "build": { "lockTimeoutMs": 300000 },
   "spots": { "statuses": ["confirmed", "no_anchoring"], "maxSources": 20, "excludedFallbackName": "Ankerplatz ohne Namen" },
   "coast": {

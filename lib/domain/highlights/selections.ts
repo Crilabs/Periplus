@@ -1,5 +1,6 @@
 import { eq, or, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
+import { validAtAlias } from "@/lib/domain/timeline";
 import { highlightSelections, type PoiCategory } from "@/lib/db/schema";
 import type { CategorySelection, HighlightLevel } from "./select";
 
@@ -50,19 +51,20 @@ export async function dropHighlightSelectionsOf(tx: Db, geoObjectId: string): Pr
 }
 
 /**
- * The selection rows (alias `hs`) that count: of a valid, unmerged, not rejected place on a valid, unmerged geo object,
- * selecting a valid, unmerged POI (validity on the database date). Safety net beside the deletes on merge, rejection
- * and end.
+ * The selection rows (alias `hs`) that count: of a valid, unmerged, not rejected place on a valid, unmerged geo object
+ * (alias `po`), selecting a valid, unmerged POI (alias `o`), validity on `date` (default the database date). Safety net
+ * beside the deletes on merge, rejection and end. The delivery reads them on its build date.
  */
-const countingSelections = sql`
+export function countingSelectionsAt(date?: string): SQL {
+  return sql`
   highlight_selections hs
-  join geo_objects po on po.id = hs.place_geo_object_id and po.merged_into_id is null
-    and po.valid_from <= current_date and (po.valid_to is null or po.valid_to > current_date)
-  join places pl on pl.geo_object_id = po.id and pl.merged_into_id is null and pl.status <> 'rejected'
-    and pl.valid_from <= current_date and (pl.valid_to is null or pl.valid_to > current_date)
-  join geo_objects o on o.id = hs.poi_geo_object_id and o.merged_into_id is null
-    and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
+  join geo_objects po on po.id = hs.place_geo_object_id and po.merged_into_id is null and ${validAtAlias("po", date)}
+  join places pl on pl.geo_object_id = po.id and pl.merged_into_id is null and pl.status <> 'rejected' and ${validAtAlias("pl", date)}
+  join geo_objects o on o.id = hs.poi_geo_object_id and o.merged_into_id is null and ${validAtAlias("o", date)}
 `;
+}
+
+const countingSelections = countingSelectionsAt();
 
 /** The POIs the given places selected, sorted, without duplicates (only rows that count, see `countingSelections`). */
 export async function selectedPoiIds(db: Db, placeGeoObjectIds: string[]): Promise<string[]> {
