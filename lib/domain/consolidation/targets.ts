@@ -48,13 +48,13 @@ const validObject = (day: string) =>
 const consolidatable = (day: string) => sql`${validObject(day)} and ${takesFactsSql}`;
 
 /**
- * The geo objects a run consolidates, sorted and without duplicates:
+ * The geo objects a run consolidates in full, sorted and without duplicates:
  * - a text run (its params carry the frozen `documentVersionIds`): the objects with facts of its extraction runs and
  *   the objects with mentions it wrote in its frozen versions; its own `tileId` / `subdivisionKey` only selected its versions;
  *   a revisit run also the objects its freeze stage found on documents gone in its crawl (`goneGeoObjectIds`, ruling
  *   M7-P7); a revisit run not frozen (failed or ended before `revisit.freeze`): only its `goneGeoObjectIds`, i.e.
  *   none (ruling M7-G-R4), never the subdivision of its `subdivisionKey`;
- * - `geoObjectIds`: exactly these (the starter checked them);
+ * - `geoObjectIds`: exactly these (the starter checked them), POIs included (ruling 2 of plan 16);
  * - `tileId`: the objects of the tile (`tile_geo_objects`);
  * - `subdivisionKey`: the objects of every tile of the subdivision's run scope (`subdivisionTilesSql`: coast tiles whose
  *   box meets its polygon, border tiles included whatever their label says);
@@ -65,38 +65,58 @@ const consolidatable = (day: string) => sql`${validObject(day)} and ${takesFacts
  * - otherwise as a text run.
  * Except for `geoObjectIds`, only valid, unmerged objects that take facts (a settlement would only be skipped). Validity
  * is judged on `today`, default the run date (`runDate`, final review M-7), as `consolidateGeo` judges it. Except for
- * `geoObjectIds` too, a POI is replaced by the places within the largest highlight reach of it (`poisToPlaces`, spec 16):
- * its importance feeds their selection, its own profile comes from the highlights stage.
+ * `geoObjectIds` too, rules with `highlights` (spec 16) leave the POIs out: a POI's own profile comes from the highlights
+ * stage, and the places its importance may change only re-select (`reselectionTargets`). These targets are the ones
+ * the summary (`stagesOnly`), follow-up discovery and title images look at; the neighbours re-selected never are.
  */
 export async function consolidationTargets(db: Db, run: { id: string; params: Record<string, unknown> }, today?: string): Promise<string[]> {
   const p = run.params;
-  if (!Array.isArray(p.documentVersionIds) && Array.isArray(p.geoObjectIds)) return sorted(strings(p.geoObjectIds));
+  if (isExplicit(p)) return sorted(strings(p.geoObjectIds));
   const day = today ?? (await runDate(db, run.id));
-  return poisToPlaces(db, await scopeTargets(db, run, day), day, p.rulesVersion);
+  const scope = await scopeTargets(db, run, day);
+  if (!(await consolidationConfigFor(db, p.rulesVersion)).highlights) return scope;
+  return withoutPois(db, scope);
 }
 
 /**
- * Spec 16: a POI target leaves the geo stage; the places whose selection it may change take its place, i.e. the geo
- * objects of the valid, unmerged, not rejected places within `max(highlights.reachKm)` of it (distance from the place's
- * anchor, else its position, as `loadHighlightCandidates` measures), themselves consolidatable on `day`. Rules
- * without `highlights` (v1) keep the POI targets.
+ * The run's scope with its POIs (`consolidationTargets` before the POIs leave it; `geoObjectIds` as given): what a
+ * catch-up of a skipped run names, so its explicit run consolidates the POIs and re-selects their neighbours.
  */
-async function poisToPlaces(db: Db, targets: string[], day: string, rulesVersion: unknown): Promise<string[]> {
-  if (targets.length === 0) return targets;
-  const highlights = (await consolidationConfigFor(db, rulesVersion)).highlights;
-  if (!highlights) return targets;
+export async function consolidationScope(db: Db, run: { id: string; params: Record<string, unknown> }, today?: string): Promise<string[]> {
+  const p = run.params;
+  if (isExplicit(p)) return sorted(strings(p.geoObjectIds));
+  return scopeTargets(db, run, today ?? (await runDate(db, run.id)));
+}
+
+/**
+ * Spec 16 „Aktualität“: the places whose highlight selection a POI of the run's scope may change, without the run's
+ * own targets (`consolidationTargets`): the geo objects of the valid, unmerged, not rejected places within
+ * `max(highlights.reachKm)` of such a POI (distance from the place's anchor, else its position, as
+ * `loadHighlightCandidates` measures), themselves consolidatable on `today`. They only re-select (`reselectHighlights`):
+ * no full consolidation, summary only for a changed selection, no follow-up discovery, no title image (final review
+ * C1). Empty for rules without `highlights` (v1) and for explicit `geoObjectIds` runs.
+ */
+export async function reselectionTargets(db: Db, run: { id: string; params: Record<string, unknown> }, today?: string): Promise<string[]> {
+  const p = run.params;
+  const highlights = (await consolidationConfigFor(db, p.rulesVersion)).highlights;
+  if (!highlights) return [];
+  if (isExplicit(p)) return [];
+  const day = today ?? (await runDate(db, run.id));
+  const scope = await scopeTargets(db, run, day);
+  if (scope.length === 0) return [];
+  const own = new Set(await withoutPois(db, scope));
   const reachM = Math.max(...highlights.reachKm) * 1000;
-  // one box per POI target; the places with an anchor by `anchor_position && box`, the others by `position && box`, so
-  // each side uses its gist index (places_anchor_position_gist, places_position_gist); then the exact distance in metres
+  // one box per POI; the places with an anchor by `anchor_position && box`, the
+  // others by `position && box`, so each side uses its gist index (places_anchor_position_gist,
+  // places_position_gist); then the exact distance in metres
   const { rows } = await db.execute<{ id: string }>(sql`
     with t as (
-      select o.id, o.geom, o.type = 'poi' as poi,
+      select o.geom,
              ST_Expand(o.geom, ${reachM}::float8 / (111320 * greatest(cos(radians(ST_Y(ST_Centroid(o.geom)))), 0.1))) as box
-      from geo_objects o where o.id = any(${sql.param(targets)}::uuid[])
+      from geo_objects o
+      where o.type = 'poi' and o.id = any(${sql.param(scope)}::uuid[])
     )
-    select t.id from t where not t.poi
-    union
-    select o.id from t
+    select distinct o.id from t
     cross join lateral (
       select p.geo_object_id, p.anchor_position as pt, p.merged_into_id, p.status, p.valid_from, p.valid_to
       from places p where p.anchor_position && t.box
@@ -105,9 +125,21 @@ async function poisToPlaces(db: Db, targets: string[], day: string, rulesVersion
       from places p where p.position && t.box and p.anchor_position is null
     ) pl
     join geo_objects o on o.id = pl.geo_object_id and ${consolidatable(day)}
-    where t.poi and ST_DWithin(t.geom::geography, pl.pt::geography, ${reachM}::float8)
+    where ST_DWithin(t.geom::geography, pl.pt::geography, ${reachM}::float8)
       and pl.merged_into_id is null and pl.status <> 'rejected'
       and pl.valid_from <= ${day}::date and (pl.valid_to is null or pl.valid_to > ${day}::date)
+  `);
+  return ids(rows).filter((id) => !own.has(id));
+}
+
+/** An explicit run (`geoObjectIds`, not a text run's frozen versions): its targets are exactly the given objects. */
+const isExplicit = (p: Record<string, unknown>) => !Array.isArray(p.documentVersionIds) && Array.isArray(p.geoObjectIds);
+
+/** The ids without the POIs, sorted. */
+async function withoutPois(db: Db, targets: string[]): Promise<string[]> {
+  if (targets.length === 0) return targets;
+  const { rows } = await db.execute<{ id: string }>(sql`
+    select o.id from geo_objects o where o.id = any(${sql.param(targets)}::uuid[]) and o.type <> 'poi'
   `);
   return ids(rows);
 }

@@ -2,7 +2,12 @@ import { and, eq, inArray } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { profiles, reviewTasks, runs } from "@/lib/db/schema";
+import { geoObjects, profiles, reviewTasks, runs, wikidataSitelinks } from "@/lib/db/schema";
+import { consolidateGeo } from "@/lib/domain/consolidation/store";
+import { consolidationTargets } from "@/lib/domain/consolidation/targets";
+import { selectedPoiIds } from "@/lib/domain/highlights/selections";
+import { tileIdFor } from "@/lib/domain/tiles";
+import { latestProfile } from "@/lib/domain/timeline";
 import { STAGES } from "@/lib/jobs/stages";
 import { GEOMETRY_RUN_STAGES } from "@/lib/pipeline/geometry-run";
 import { consolidateGeoJob } from "@/lib/pipeline/consolidation/geo";
@@ -10,10 +15,12 @@ import { openHighlightPairTasks } from "@/lib/pipeline/consolidation/highlights"
 import { CONSOLIDATION_GEO_STAGE, CONSOLIDATION_HIGHLIGHTS_STAGE, CONSOLIDATION_STAGES, CONSOLIDATION_SUMMARY_STAGE } from "@/lib/pipeline/consolidation/stages";
 import { summaryTargets } from "@/lib/pipeline/consolidation/summary";
 import { consolidateAfter } from "@/lib/pipeline/follow-ups";
+import { imageTargets } from "@/lib/pipeline/images/stage";
 import { TEXT_RUN_STAGES } from "@/lib/pipeline/text/run";
 import { insertPlace } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
-import { insertNamedObject } from "@/test/text";
+import { IMAGE_LAT, IMAGE_LON, insertImageSubdivision, insertSpot } from "@/test/images";
+import { insertNamedObject, insertTestTile } from "@/test/text";
 
 /*
  * Stage `consolidation.highlights` (spec 16): after `consolidation.geo` it consolidates the POIs the run's places
@@ -40,9 +47,28 @@ async function runOver(tx: Db, geoObjectIds: string[], extra: Record<string, unk
 
 /** Plans `stage` for the run and runs every planned job (`consolidateGeoJob`); returns the planned object ids. */
 async function runStage(tx: Db, run: { id: string; params: Record<string, unknown> }, stage: string): Promise<string[]> {
+  return (await runStageJobs(tx, run, stage)).map((j) => j.geoObjectId);
+}
+
+/** As `runStage`, with each job's `reselect` flag and result status. */
+async function runStageJobs(tx: Db, run: { id: string; params: Record<string, unknown> }, stage: string) {
   const jobs = await STAGES[stage]!.plan(tx, run);
-  for (const job of jobs) await consolidateGeoJob(tx, { ...job, runId: run.id, stage });
-  return jobs.map((j) => j.geoObjectId as string);
+  const done: Array<{ geoObjectId: string; reselect: boolean; status: string }> = [];
+  for (const job of jobs) {
+    const result = await consolidateGeoJob(tx, { ...job, runId: run.id, stage });
+    done.push({ geoObjectId: job.geoObjectId as string, reselect: job.reselect === true, status: result.status });
+  }
+  return done;
+}
+
+/** A consolidation run row over tile `tileId` with every consolidation stage. */
+async function tileRun(tx: Db, tileId: string): Promise<{ id: string; params: Record<string, unknown> }> {
+  const params = { tileId };
+  const [row] = await tx
+    .insert(runs)
+    .values({ kind: "stage", scopeType: "tile", scopeId: tileId, stages: [...CONSOLIDATION_STAGES], params, triggeredBy: "test" })
+    .returning({ id: runs.id });
+  return { id: row!.id, params };
 }
 
 const profileIds = async (tx: Db, ids: string[]) =>
@@ -125,6 +151,51 @@ describe("stage consolidation.highlights (spec 16)", () => {
 
       expect(await openHighlightPairTasks(tx, [c, d])).toBe(0);
       expect(await pairTasks(tx, c, d)).toEqual([]);
+    }));
+
+  it("a tile run re-selects a place of another tile within reach of its POI: new selection, no follow-up, no image, no summary when unchanged (final review C1)", () =>
+    withRollback(async (tx) => {
+      const sd = await insertImageSubdivision(tx);
+      const bay = await insertSpot(tx, sd.id, { name: "Nachbarbucht" });
+      expect(await consolidateGeo(tx, bay.objectId)).toMatchObject({ status: "created", version: 1 });
+      const v1 = await latestProfile(tx, bay.objectId);
+      expect(v1!.attributes["derived.highlights"]).toBeUndefined();
+
+      // a temple of importance 5 (castle tag, 150 sitelinks) 10 km north, on a tile the bay does not belong to
+      const lat = IMAGE_LAT + 10 * LAT_PER_KM;
+      const tile = tileIdFor(IMAGE_LON, lat);
+      await insertTestTile(tx, tile);
+      const temple = await insertNamedObject(tx, { type: "poi", category: "culture", names: [{ name: "Naos" }], lon: IMAGE_LON, lat, tiles: [tile] });
+      const qid = `Q${900000000 + Math.floor(Math.random() * 99999999)}`;
+      await tx.update(geoObjects).set({ tags: { historic: "castle" }, wikidataId: qid }).where(eq(geoObjects.id, temple));
+      await tx.insert(wikidataSitelinks).values({ wikidataId: qid, sitelinks: 150, fetchedAt: new Date("2026-10-01T00:00:00Z") });
+
+      const run = await tileRun(tx, tile);
+      // the geo stage only re-selects the bay; the POI leaves it (its profile comes from the highlights stage)
+      expect(await runStageJobs(tx, run, CONSOLIDATION_GEO_STAGE)).toEqual([{ geoObjectId: bay.objectId, reselect: true, status: "created" }]);
+      const v2 = await latestProfile(tx, bay.objectId);
+      expect(v2!.version).toBe(2);
+      expect(v2!.attributes["derived.highlights"]).toEqual({ culture: { ids: [temple], level: "none" } });
+      // only the selection changed: every other attribute is the previous version's
+      const { ["derived.highlights"]: _h, ...rest } = v2!.attributes;
+      void _h;
+      expect(rest).toEqual(v1!.attributes);
+      expect(await selectedPoiIds(tx, [bay.objectId])).toEqual([temple]);
+      expect(await runStage(tx, run, CONSOLIDATION_HIGHLIGHTS_STAGE)).toEqual([temple]);
+
+      // follow-up discovery and images look at the run's own targets only: the bay is in neither
+      expect(await consolidationTargets(tx, run)).not.toContain(bay.objectId);
+      expect((await imageTargets(tx, run)).map((t) => t.geoObjectId)).not.toContain(bay.objectId);
+      // (a run that consolidates the bay itself would target its image)
+      expect((await imageTargets(tx, await runOver(tx, [bay.objectId]))).map((t) => t.geoObjectId)).toContain(bay.objectId);
+      // its visible profile content changed: the new version may get a summary
+      expect((await summaryTargets(tx, run)).map((t) => t.geoObjectId)).toContain(bay.objectId);
+
+      // the next tile run finds the same selection: no version, no summary
+      const again = await tileRun(tx, tile);
+      expect(await runStageJobs(tx, again, CONSOLIDATION_GEO_STAGE)).toEqual([{ geoObjectId: bay.objectId, reselect: true, status: "unchanged" }]);
+      expect((await latestProfile(tx, bay.objectId))!.version).toBe(2);
+      expect((await summaryTargets(tx, again)).map((t) => t.geoObjectId)).not.toContain(bay.objectId);
     }));
 
   it("text, geometry and consolidateAfter runs list consolidation.highlights after consolidation.geo", () =>

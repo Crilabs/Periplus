@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { changeEvents, evaluationProfiles, geoObjects, highlightSelections, places, profiles, reviewDecisions, reviewTasks } from "@/lib/db/schema";
-import { consolidateGeo } from "@/lib/domain/consolidation/store";
+import { consolidateGeo, reselectHighlights } from "@/lib/domain/consolidation/store";
 import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
 import { selectedPoiIds } from "@/lib/domain/highlights/selections";
 import { setPlaceStatusByAdmin } from "@/lib/domain/place-status";
@@ -497,6 +497,27 @@ describe("consolidateGeo", () => {
         await insertMention(tx, chapel, { sourceId: await insertSource(tx, "other", 0.3) });
         expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "unchanged", version: 1 });
         expect(await versionsOf(tx, objectId)).toHaveLength(1);
+      }));
+
+    it("reselectHighlights skips a place without a profile and one of other rules; it writes only derived.highlights (final review C1)", () =>
+      withRollback(async (tx) => {
+        const { objectId } = await insertPlace(tx, { lon: LON, lat: LAT, name: "Auswahlbucht" });
+        const a = await culture(tx, "Kastro", 0.3);
+        expect(await reselectHighlights(tx, objectId, { today })).toMatchObject({ status: "skipped" });
+        expect(await versionsOf(tx, objectId)).toHaveLength(0);
+
+        await consolidateGeo(tx, objectId, { today, rulesVersion: "v1" });
+        expect(await reselectHighlights(tx, objectId, { today })).toMatchObject({ status: "skipped" });
+        expect(await versionsOf(tx, objectId)).toHaveLength(1);
+
+        await consolidateGeo(tx, objectId, { today });
+        const b = await culture(tx, "Moni", 0.6);
+        expect(await reselectHighlights(tx, objectId, { today })).toMatchObject({ status: "created", version: 3 });
+        const [, v2, v3] = await versionsOf(tx, objectId);
+        expect(v3!.attributes["derived.highlights"]).toEqual({ culture: { ids: [a, b], level: "none" } });
+        expect({ ...v3!.attributes, "derived.highlights": null }).toEqual({ ...v2!.attributes, "derived.highlights": null });
+        expect((await selectionOf(tx, objectId)).map((r) => [r.poi, r.profileVersion])).toEqual([[a, 3], [b, 3]]);
+        expect(await reselectHighlights(tx, objectId, { today })).toMatchObject({ status: "unchanged", version: 3 });
       }));
 
     it("a merged place has no selection rows; a merged POI is no selected highlight", () =>

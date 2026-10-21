@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { tileGeoObjects } from "@/lib/db/schema";
-import { consolidationTargets } from "@/lib/domain/consolidation/targets";
+import { consolidationScope, consolidationTargets, reselectionTargets } from "@/lib/domain/consolidation/targets";
 import { newId } from "@/lib/domain/ids";
 import { tileIdFor } from "@/lib/domain/tiles";
 import { insertMention, insertPlace, insertSource } from "@/test/consolidation";
@@ -10,9 +10,9 @@ import { testDb, withRollback } from "@/test/db";
 import { insertNamedObject, insertTestRun, insertTestTile } from "@/test/text";
 
 /*
- * POI targets of a run become the places within the largest highlight reach (spec 16): a POI's importance changes
- * the selection of those places, so they are consolidated again in the same run; the POIs leave the geo stage. Objects
- * on a synthetic spot far from the pilot box and the other tests' objects.
+ * POIs of a run's scope leave its targets (spec 16); the places within the largest highlight reach of them only
+ * re-select (`reselectionTargets`, final review C1), explicit runs included (final review I2). Objects on a synthetic
+ * spot far from the pilot box and the other tests' objects.
  */
 
 const LON = -141.2;
@@ -30,7 +30,7 @@ const poi = (tx: Db, name: string, km: number) =>
   insertNamedObject(tx, { type: "poi", category: "culture", names: [{ name }], lon: LON, lat: LAT + km * LAT_PER_KM });
 
 describe("consolidationTargets with POIs (spec 16)", () => {
-  it("a text run with a mention on a POI targets the places within 20 km, not the POI", () =>
+  it("a text run with a mention on a POI re-selects the places within 20 km and targets neither them nor the POI", () =>
     withRollback(async (tx) => {
       const near = await insertPlace(tx, { lon: LON, lat: LAT, name: "Nahbucht" });
       const far = await insertPlace(tx, { lon: LON, lat: LAT - 10 * LAT_PER_KM, name: "Fernbucht" });
@@ -40,11 +40,14 @@ describe("consolidationTargets with POIs (spec 16)", () => {
       const castle = await poi(tx, "Kastro", 15);
       const runId = await insertTestRun(tx);
       const m = await insertMention(tx, castle, { sourceId: await insertSource(tx), runId });
-      const targets = await consolidationTargets(tx, { id: runId, params: { documentVersionIds: [m.versionId] } }, today);
-      expect(targets).toEqual([near.objectId, candidate.objectId].sort());
-      expect(targets).not.toContain(castle);
-      expect(targets).not.toContain(far.objectId);
-      expect(targets).not.toContain(rejected.objectId);
+      const run = { id: runId, params: { documentVersionIds: [m.versionId] } };
+      expect(await consolidationTargets(tx, run, today)).toEqual([]);
+      const reselect = await reselectionTargets(tx, run, today);
+      expect(reselect).toEqual([near.objectId, candidate.objectId].sort());
+      expect(reselect).not.toContain(far.objectId);
+      expect(reselect).not.toContain(rejected.objectId);
+      // a catch-up of the run names its scope with the POI
+      expect(await consolidationScope(tx, run, today)).toEqual([castle]);
     }));
 
   it("a tile run excludes POIs", () =>
@@ -53,18 +56,23 @@ describe("consolidationTargets with POIs (spec 16)", () => {
       const bay = await insertPlace(tx, { lon: LON, lat: LAT, name: "Kachelbucht" });
       const beach = await poi(tx, "Strand", 1);
       for (const id of [bay.objectId, beach]) await tx.insert(tileGeoObjects).values({ tileId: TILE, geoObjectId: id });
-      expect(await consolidationTargets(tx, { id: newId(), params: { tileId: TILE } }, today)).toEqual([bay.objectId]);
+      const run = { id: newId(), params: { tileId: TILE } };
+      expect(await consolidationTargets(tx, run, today)).toEqual([bay.objectId]);
+      // the bay is a target already: it is not re-selected besides
+      expect(await reselectionTargets(tx, run, today)).toEqual([]);
     }));
 
   it("explicit geoObjectIds stay exactly the given objects, POIs included; rules without highlights keep POI targets", () =>
     withRollback(async (tx) => {
       const bay = await insertPlace(tx, { lon: LON, lat: LAT, name: "Direktbucht" });
       const castle = await poi(tx, "Kastro", 2);
-      expect(await consolidationTargets(tx, { id: newId(), params: { geoObjectIds: [castle] } }, today)).toEqual([castle]);
+      const direct = { id: newId(), params: { geoObjectIds: [castle] } };
+      expect(await consolidationTargets(tx, direct, today)).toEqual([castle]);
       const runId = await insertTestRun(tx);
       const m = await insertMention(tx, castle, { sourceId: await insertSource(tx), runId });
       const v1 = await consolidationTargets(tx, { id: runId, params: { documentVersionIds: [m.versionId], rulesVersion: "v1" } }, today);
       expect(v1).toEqual([castle]);
       expect(v1).not.toContain(bay.objectId);
+      expect(await reselectionTargets(tx, { id: runId, params: { documentVersionIds: [m.versionId], rulesVersion: "v1" } }, today)).toEqual([]);
     }));
 });

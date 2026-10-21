@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { consolidationBlocked, consolidationTargets } from "@/lib/domain/consolidation/targets";
+import { consolidationBlocked, consolidationTargets, reselectionTargets } from "@/lib/domain/consolidation/targets";
 import { openPairTask } from "@/lib/domain/gazetteer/merge";
 import { isSelectedSql, selectedPoiIds } from "@/lib/domain/highlights/selections";
 import type { JobData } from "@/lib/jobs/worker";
@@ -18,14 +18,16 @@ import { consolidateJobs } from "./geo";
 /**
  * Plan of `consolidation.highlights`: nothing when the run's quote fidelity blocks its consolidation (the geo stage
  * consolidated nothing); else the POIs selected by the run's places (`consolidationTargets`, the targets the geo stage
- * consolidated; `selectedPoiIds` keeps only rows of valid places), without those the geo stage consolidated already
+ * consolidated, and in a regular run the places it re-selected, `reselectionTargets`; `selectedPoiIds` keeps only rows
+ * of valid places), without those the geo stage consolidated already
  * (an explicit `geoObjectIds` run), one job each in the geo stage's job shape (`consolidateJobs`). A regular run first
  * opens the pair tasks among these highlights (`openHighlightPairTasks`); an evaluation run opens none.
  */
 export async function consolidationHighlightJobs(db: Db, run: { id: string; params: Record<string, unknown> }): Promise<JobData[]> {
   if (await consolidationBlocked(db, run.id)) return [];
   const targets = await consolidationTargets(db, run);
-  const selected = await selectedPoiIds(db, targets);
+  const reselected = run.params.evaluation === true ? [] : await reselectionTargets(db, run);
+  const selected = await selectedPoiIds(db, [...targets, ...reselected]);
   if (run.params.evaluation !== true && selected.length > 0) {
     const pairs = await openHighlightPairTasks(db, selected);
     if (pairs > 0) createLogger("consolidation").info({ runId: run.id, pairs }, "highlight pair tasks");

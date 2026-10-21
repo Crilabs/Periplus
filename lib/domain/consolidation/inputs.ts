@@ -633,7 +633,7 @@ export async function loadDerivedInputs(
 }
 
 /** The highlight inputs of a place; null when the rules version has no `highlights` (v1 selects nothing). */
-async function highlightInputs(db: Db, geoObjectId: string, opts: LoadInputsOptions): Promise<DerivedInputs["highlights"]> {
+export async function highlightInputs(db: Db, geoObjectId: string, opts: LoadInputsOptions): Promise<DerivedInputs["highlights"]> {
   if (!opts.cfg.highlights) return null;
   const appConfig = opts.appConfig ?? getConfig();
   const { candidates, textNames } = await loadHighlightCandidates(db, geoObjectId, opts.cfg, opts.today, appConfig);

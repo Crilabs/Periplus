@@ -223,6 +223,26 @@ export function profileContentHash(p: Pick<BuiltProfile, "attributes" | "provena
 }
 
 /**
+ * The attribute `derived.highlights` of a place (spec 16) from its highlight inputs: per category the selected ids in
+ * rank order and the level; the provenance cites the selected POIs and holds the `CategorySelection` per category in
+ * `derivedFrom`. Null for rules without `highlights` (v1), without inputs or without any category in reach. Shared by
+ * `buildProfile` and the selection-only update (`reselectHighlights`).
+ */
+export function highlightsAttribute(
+  inputs: DerivedInputs["highlights"],
+  cfg: ConsolidationConfig,
+): { value: Record<string, { ids: string[]; level: string }>; provenance: AttributeProvenance } | null {
+  if (!cfg.highlights || !inputs) return null;
+  const selections = selectHighlights(inputs.candidates, inputs.textNames, cfg.highlights, inputs.duplicateM);
+  const categories = Object.keys(selections).sort() as PoiCategory[];
+  if (categories.length === 0) return null;
+  const value = Object.fromEntries(categories.map((c) => [c, { ids: selections[c]!.ids, level: selections[c]!.level }]));
+  const derivedFrom = Object.fromEntries(categories.map((c) => [c, selections[c]!]));
+  const poiIds = sortedUnique(categories.flatMap((c) => selections[c]!.ids));
+  return { value, provenance: fixedProvenance("derived", { poiIds }, derivedFrom) };
+}
+
+/**
  * The profile of one geo object (spec 07, plan Task 10):
  * 1. inputs sorted by (attribute, observedAt, fact or POI id), then each attribute of the level through its schema rule;
  * 2. a value ≠ null goes to `attributes` with its provenance; a conflict to `conflicts` with the resolution of a decided
@@ -352,17 +372,8 @@ export function buildProfile(input: BuildProfileInput): BuiltProfile {
     const hints = seasonHints(results);
     if (hints.length > 0) setDerived("derived.season", hints, fixedProvenance("derived", cite(provenance, ["season_notes"])));
     // spec 16: rules without `highlights` (v1) select nothing; no category in reach → no attribute, no gap
-    if (cfg.highlights && derived.highlights) {
-      const h = derived.highlights;
-      const selections = selectHighlights(h.candidates, h.textNames, cfg.highlights, h.duplicateM);
-      const categories = Object.keys(selections).sort() as PoiCategory[];
-      if (categories.length > 0) {
-        const value = Object.fromEntries(categories.map((c) => [c, { ids: selections[c]!.ids, level: selections[c]!.level }]));
-        const derivedFrom = Object.fromEntries(categories.map((c) => [c, selections[c]!]));
-        const poiIds = sortedUnique(categories.flatMap((c) => selections[c]!.ids));
-        setDerived("derived.highlights", value, fixedProvenance("derived", { poiIds }, derivedFrom));
-      }
-    }
+    const highlights = highlightsAttribute(derived.highlights, cfg);
+    if (highlights) setDerived("derived.highlights", highlights.value, highlights.provenance);
   }
   if (context.level === "poi" && derived.importance) {
     const d = derived.importance;
