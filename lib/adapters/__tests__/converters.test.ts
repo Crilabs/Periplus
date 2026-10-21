@@ -290,7 +290,7 @@ describe("firecrawl converter", () => {
       expect(r.costEur).toBeCloseTo(2 * cfg().firecrawl.eurPerCredit, 10);
       expect(r.title).toBe("T");
     });
-    expect(JSON.parse(requests[0]!.body!)).toEqual({
+    expect(JSON.parse(String(requests[0]!.body))).toEqual({
       url: "https://x.test.invalid/a",
       formats: ["markdown"],
       onlyMainContent: true,

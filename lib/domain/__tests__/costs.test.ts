@@ -27,6 +27,7 @@ const budgets = (anthropic: number): AppConfig["budgets"] => ({
   dataforseo: { dailyEur: 1 },
   firecrawl: { dailyEur: 1 },
   jina: { dailyEur: 1 },
+  openai: { dailyEur: 1 },
 });
 
 async function spend(tx: Db, service: string, costEur: number, when: Date) {
@@ -64,7 +65,7 @@ describe("costs", () => {
       const status = await budgetStatus(tx, budgets(2), at(day, 2));
       const a = status.find((s) => s.service === "anthropic");
       expect(a).toEqual({ service: "anthropic", spentEur: 0.5, budgetEur: 2, ratio: 0.25 });
-      expect(status).toHaveLength(5);
+      expect(status).toHaveLength(6);
     }));
 });
 

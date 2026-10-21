@@ -8,8 +8,8 @@ import { withRollback } from "@/test/db";
 import { seedDeliverySubdivision } from "@/test/fixtures/delivery/subdivision";
 import { memoryArchive } from "@/test/s3";
 import { insertTestSubdivision } from "@/test/text";
-import { buildDelivery } from "../build";
-import { changesSince, spotAsOf } from "../read";
+import { buildDelivery, type DeliveryRow } from "../build";
+import { changesSince, deliveryFiles, spotAsOf } from "../read";
 import { serializeFile, sha256Hex } from "../serialize";
 
 /*
@@ -75,6 +75,33 @@ async function insertVersion(
     firstDeliveryId: input.deliveryId,
   });
 }
+
+describe("deliveryFiles", () => {
+  it("lists the contract files in contract order, then the image files sorted; nothing else", () => {
+    const a = "images/sp_01ARZ3NDEKTSV4RRFFQ69G5FAA-title.jpg";
+    const a2 = "images/sp_01ARZ3NDEKTSV4RRFFQ69G5FAA-view-2.jpg";
+    const b = "images/sp_01ARZ3NDEKTSV4RRFFQ69G5FAB-title.jpg";
+    const hash = { sha256: "x", bytes: 1 };
+    const row = {
+      fileHashes: {
+        [b]: hash,
+        "spots.json": hash,
+        "weather-points.json": hash,
+        [a2]: hash,
+        "manifest.json": hash,
+        [a]: hash,
+        "coast.geojson": hash,
+        "regions.json": hash,
+        "highlights.json": hash,
+        // not a package file: a traversal and a stray key never become a link
+        "../secret": hash,
+        "images/notes.txt": hash,
+      },
+    } as unknown as DeliveryRow;
+    expect(deliveryFiles(row)).toEqual(["manifest.json", "spots.json", "highlights.json", "regions.json", "coast.geojson", "weather-points.json", a, a2, b]);
+    expect(deliveryFiles({ fileHashes: {} } as unknown as DeliveryRow)).toEqual([]);
+  });
+});
 
 describe("spotAsOf", () => {
   it("a spot that moved to another subdivision is found although its old subdivision reports it removed", () =>

@@ -17,6 +17,7 @@ import {
   fetchSchema,
   gazetteerSchema,
   geometrySchema,
+  imagesSchema,
   mentionsSchema,
   modelsSchema,
   nameAffixesSchema,
@@ -44,6 +45,9 @@ export type {
   FetchConfig,
   GazetteerConfig,
   GeometryConfig,
+  ImageryLight,
+  ImagesConfig,
+  ImagerySource,
   MentionsConfig,
   ModelEffort,
   ModelsConfig,
@@ -56,6 +60,7 @@ export type {
   SubdivisionsConfig,
   VersionedConsolidationConfig,
   WhitelistConfig,
+  ZoomLevel,
 } from "./schemas";
 
 function readJson<T>(dir: string, name: string, schema: ZodType<T>): T {
@@ -122,9 +127,40 @@ function readConsolidation(dir: string, version: string): VersionedConsolidation
   return { ...config, version: valid };
 }
 
+/** Seconds a job may stay active before pg-boss expires it when the queue sets no `expireInSeconds`. */
+const PG_BOSS_DEFAULT_EXPIRE_SECONDS = 900;
+/** Seconds an image job needs beyond the render, the edits and the watermark checks: the water check, the task write. */
+const IMAGE_JOB_MARGIN_SECONDS = 120;
+const IMAGE_TASK = "generate-place-image";
+const IMAGE_CHECK_TASK = "check-place-image";
+
+/**
+ * pg-boss must not expire an `images.place` job (and hand it out again beside the one still running) before its worst
+ * case ends: the render at `images.render.timeoutSeconds`, then `images.check.maxAttempts` times an image edit at the
+ * image task's `timeoutSeconds` plus a watermark check at the check task's `timeoutSeconds` (default
+ * `callTimeoutSeconds`), and the margin. The values live in three files, so the check is here, not in a schema.
+ */
+function checkImageJobExpiry(dir: string, config: Pick<AppConfig, "queues" | "images" | "models">): void {
+  const task = config.models.imageTasks[IMAGE_TASK];
+  if (!task) throw new Error(`Invalid config ${join(dir, "models.json")}: imageTasks has no ${IMAGE_TASK}`);
+  const check = config.models.tasks[IMAGE_CHECK_TASK];
+  if (!check) throw new Error(`Invalid config ${join(dir, "models.json")}: tasks has no ${IMAGE_CHECK_TASK}`);
+  const checkTimeout = check.timeoutSeconds ?? config.models.callTimeoutSeconds;
+  const expire = config.queues["images.place"]?.expireInSeconds ?? PG_BOSS_DEFAULT_EXPIRE_SECONDS;
+  const render = config.images.render.timeoutSeconds;
+  const attempts = config.images.check.maxAttempts;
+  const needed = render + attempts * (task.timeoutSeconds + checkTimeout) + IMAGE_JOB_MARGIN_SECONDS;
+  if (expire < needed) {
+    throw new Error(
+      `Invalid config ${join(dir, "queues.json")}: images.place.expireInSeconds ${expire} is below the worst case of an image job, ` +
+        `${needed} s (render ${render} + ${attempts} × (edit ${task.timeoutSeconds} + watermark check ${checkTimeout}) + ${IMAGE_JOB_MARGIN_SECONDS})`,
+    );
+  }
+}
+
 /** Loads and validates all config files; throws on any invalid or missing file. */
 export function loadConfig(dir = "config"): AppConfig {
-  return {
+  const config: AppConfig = {
     queues: readJson(dir, "queues", queuesSchema),
     budgets: readJson(dir, "budgets", budgetsSchema),
     models: readJson(dir, "models", modelsSchema),
@@ -146,7 +182,10 @@ export function loadConfig(dir = "config"): AppConfig {
     extraction: readJson(dir, "extraction", extractionSchema),
     consolidation: readConsolidation(dir, readJson(dir, "consolidation/active", consolidationActiveSchema).version),
     delivery: readJson(dir, "delivery", deliverySchema),
+    images: readJson(dir, "images", imagesSchema),
   };
+  checkImageJobExpiry(dir, config);
+  return config;
 }
 
 let cached: AppConfig | undefined;

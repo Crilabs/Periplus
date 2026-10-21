@@ -4,7 +4,7 @@ import type { RunKind, RunStatus } from "@/lib/db/schema";
 import { getDb } from "@/lib/db/client";
 import { subdivisionDetail } from "@/lib/domain/subdivisions/view";
 import { requireAdmin } from "@/lib/security/require-admin";
-import { RUN_KIND_LABELS, RUN_STATUS_LABELS } from "../../_components/labels";
+import { RUN_KIND_LABELS, RUN_STATUS_LABELS, runScopeError } from "../../_components/labels";
 import {
   Badge,
   Button,
@@ -13,6 +13,7 @@ import {
   EmptyState,
   fmt,
   Mono,
+  Notice,
   PageHeader,
   Panel,
   Table,
@@ -21,18 +22,19 @@ import {
   thClass,
   trClass,
 } from "../../_components/ui";
-import { buildSubdivisionAction } from "../actions";
+import { buildSubdivisionAction, startSubdivisionImagesAction } from "../actions";
 import { SUBDIVISION_STATUS_TONES } from "../status";
 
 export async function generateMetadata({ params }: PageProps<"/subdivisions/[key]">): Promise<Metadata> {
   return { title: `Landesteil ${decodeURIComponent((await params).key)}` };
 }
 
-export default async function Page({ params }: PageProps<"/subdivisions/[key]">) {
+export default async function Page({ params, searchParams }: PageProps<"/subdivisions/[key]">) {
   await requireAdmin();
   const key = decodeURIComponent((await params).key);
   const d = await subdivisionDetail(getDb(), key);
   if (!d) notFound();
+  const error = runScopeError((await searchParams).error);
   const date = (iso: string | null) => fmt.dateTime(iso ? new Date(iso) : null);
 
   return (
@@ -52,15 +54,31 @@ export default async function Page({ params }: PageProps<"/subdivisions/[key]">)
         }
         description={d.status === "ausgeschlossen" ? `Ausgeschlossen: ${d.statusReason ?? "ohne Grund"}` : undefined}
         actions={
-          d.status !== "ausgeschlossen" &&
-          d.status !== "läuft" && (
-            <form action={buildSubdivisionAction}>
-              <input type="hidden" name="subdivisionKey" value={d.key} />
-              <Button variant="primary">Aufbauen</Button>
-            </form>
+          d.status !== "ausgeschlossen" && (
+            <>
+              {d.coreImagery && (
+                <form action={startSubdivisionImagesAction}>
+                  <input type="hidden" name="subdivisionKey" value={d.key} />
+                  <Button title="Startet einen Lauf, der die Titelbilder der Orte dieses Landesteils erzeugt (höchstens so viele, wie die Konfiguration je Lauf erlaubt). Bilder, die schon erzeugt oder in Prüfung sind, werden übersprungen.">
+                    Titelbilder erzeugen
+                  </Button>
+                </form>
+              )}
+              {d.status !== "läuft" && (
+                <form action={buildSubdivisionAction}>
+                  <input type="hidden" name="subdivisionKey" value={d.key} />
+                  <Button variant="primary">Aufbauen</Button>
+                </form>
+              )}
+            </>
           )
         }
       />
+      {error && (
+        <Notice tone="danger" className="mb-6">
+          Lauf nicht gestartet: {error}
+        </Notice>
+      )}
 
       <Panel title="Kennzahlen" className="mb-6">
         <DescriptionList
@@ -74,6 +92,22 @@ export default async function Page({ params }: PageProps<"/subdivisions/[key]">)
             { label: "Kosten der Läufe", value: fmt.eur(d.costEur) },
             { label: "Letzter Lauf", value: date(d.lastRunAt) },
             { label: "Qualität", value: <TextLink href={`/quality?subdivision=${encodeURIComponent(d.key)}`}>Messungen ansehen</TextLink> },
+          ]}
+        />
+      </Panel>
+
+      <Panel title="Titelbilder" description="Abdeckung der Orte dieses Landesteils mit KI-Titelbildern (Spec 13)." className="mb-6">
+        <DescriptionList
+          columns={3}
+          items={[
+            { label: "Orte", value: fmt.int(d.images.spots), hint: "Bestätigte und ausgeschlossene Orte, die geliefert werden" },
+            { label: "Mit Luftbild", value: fmt.int(d.images.withImagery), hint: "Orte unter einer Kachel des detaillierten Luftbilds (nicht leer)" },
+            { label: "Mit freigegebenem Bild", value: fmt.int(d.images.withApprovedImage) },
+            { label: "Lieferbar", value: fmt.int(d.images.deliverable), hint: "Freigegebenes Bild, dessen Quellen zur Lieferung freigegeben sind" },
+            { label: "Median Wasser-IoU", value: d.images.medianWaterIoU === null ? "–" : d.images.medianWaterIoU.toLocaleString("de-DE", { maximumFractionDigits: 2 }) },
+            { label: "Anteil abgelehnt", value: d.images.rejectedShare === null ? "–" : fmt.pct(d.images.rejectedShare), hint: "Entschiedene Bildprüfungen mit „Kein Bild“" },
+            { label: "Kosten Luftbilder", value: fmt.eur(d.images.imageryCostEur), hint: "Kacheln, aus denen die Renderings dieser Orte entstanden" },
+            { label: "Kosten Bilderzeugung", value: fmt.eur(d.images.generationCostEur), hint: "Aufrufe des Bildmodells für die Orte dieses Landesteils, aus jedem Lauf" },
           ]}
         />
       </Panel>

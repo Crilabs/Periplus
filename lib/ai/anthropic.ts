@@ -117,10 +117,14 @@ export function buildParams<I, O>(
     attachments.length === 0
       ? user
       : [
-          ...attachments.map((a) => ({
-            type: "document" as const,
-            source: { type: "base64" as const, media_type: "application/pdf" as const, data: Buffer.from(a.data).toString("base64") },
-          })),
+          ...attachments.map((a) =>
+            a.kind === "image"
+              ? { type: "image" as const, source: { type: "base64" as const, media_type: a.mediaType, data: Buffer.from(a.data).toString("base64") } }
+              : {
+                  type: "document" as const,
+                  source: { type: "base64" as const, media_type: "application/pdf" as const, data: Buffer.from(a.data).toString("base64") },
+                },
+          ),
           { type: "text" as const, text: user },
         ];
   const system: Anthropic.MessageCreateParamsNonStreaming["system"] = taskConfig.cacheSystem
@@ -218,7 +222,7 @@ export function createAnthropicClient(db: Db, config: AppConfig = getConfig(), o
       try {
         // No SDK retry (SEC-2): a resent request after a timeout or a lost connection may be billed again without a
         // booking. The job retry resends instead, after a new budget check.
-        response = await messages.create(params, { maxRetries: 0, timeout: callTimeout });
+        response = await messages.create(params, { maxRetries: 0, timeout: taskConfig.timeoutSeconds === undefined ? callTimeout : taskConfig.timeoutSeconds * 1000 });
       } catch (error) {
         // The attempt may still have been billed: on record at 0 EUR with the reason, as `httpCall` does.
         await recordExternalCall(db, {

@@ -27,13 +27,16 @@ type FixtureFile = {
 const UNRECORDED_HEADERS = new Set(["set-cookie", "x-client-ip", "x-analytics"]);
 
 /**
- * sha256 hex of `method + " " + url + "\n" + body`, plus `"\nredirect: manual"` for a request that follows no
+ * sha256 hex of `method + " " + url + "\n" + body` (a byte body is hashed as is), plus `"\nredirect: manual"` for a request that follows no
  * redirects (a crawl hop answers with the 3xx itself, a followed request with its target): stable across processes
  * and machines, and unchanged for every request recorded before redirect modes existed.
  */
 export function fixtureKey(req: Pick<HttpRequest, "method" | "url" | "body" | "redirect">): string {
+  // the same bytes as hashing the concatenated string, so keys of text bodies recorded earlier stay valid
   return createHash("sha256")
-    .update(`${req.method ?? "GET"} ${req.url}\n${req.body ?? ""}${req.redirect === "manual" ? "\nredirect: manual" : ""}`)
+    .update(`${req.method ?? "GET"} ${req.url}\n`)
+    .update(req.body ?? "")
+    .update(req.redirect === "manual" ? "\nredirect: manual" : "")
     .digest("hex");
 }
 
@@ -71,7 +74,7 @@ export function recordingTransport(
     const res = await inner(req);
     if ((res.status < 200 || res.status > 299) && !opts.recordErrors) return res;
     const fixture: FixtureFile = {
-      request: { method: req.method ?? "GET", url: req.url, body: req.body ?? null },
+      request: { method: req.method ?? "GET", url: req.url, body: typeof req.body === "object" ? `base64:${Buffer.from(req.body).toString("base64")}` : (req.body ?? null) },
       status: res.status,
       bodyBase64: Buffer.from(res.body).toString("base64"),
       headers: Object.fromEntries(Object.entries(res.headers).filter(([name]) => !UNRECORDED_HEADERS.has(name))),

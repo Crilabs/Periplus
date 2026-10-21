@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gt, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Archive } from "@/lib/adapters/s3";
-import { CONTRACT_FILES, type ChangeEntry, type ChangesFile, type ContractFile, type Manifest, type Spot, type SpotsFile } from "@/contract";
+import { CONTRACT_FILES, IMAGE_FILE_PATTERN, type ChangeEntry, type ChangesFile, type ContractFile, type Manifest, type Spot, type SpotsFile } from "@/contract";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { deliveries } from "@/lib/db/schema/deliveries";
@@ -105,16 +105,22 @@ export async function validDelivery(db: Db, subdivisionId: string, dataVersion?:
   return row ?? null;
 }
 
-/** The files a delivery has, in contract order (`changes.json` only from the second package on). */
-export function deliveryFiles(row: DeliveryRow): ContractFile[] {
-  return CONTRACT_FILES.filter((f) => Object.hasOwn(row.fileHashes, f));
+/**
+ * The files a delivery has: the contract files in contract order (`changes.json` only from the second package on),
+ * then its image files (`images/<public id>-<slot>.jpg`, contract 2.1, sorted by name). Both the API (`currentPackage`)
+ * and the admin package page link every one of them.
+ */
+export function deliveryFiles(row: DeliveryRow): string[] {
+  const contract = CONTRACT_FILES.filter((f) => Object.hasOwn(row.fileHashes, f));
+  const images = Object.keys(row.fileHashes).filter(isImageFile).sort();
+  return [...contract, ...images];
 }
 
 /**
- * The stored bytes of one file of a valid delivery, null when the delivery has no such file. A stored file that does
+ * The stored bytes of one file (a contract file or a package image) of a valid delivery, null when the delivery has no such file. A stored file that does
  * not match its recorded sha256 throws: the API never serves bytes other than the manifest describes.
  */
-export async function readDeliveryFile(archive: Archive, row: DeliveryRow, file: ContractFile): Promise<Uint8Array | null> {
+export async function readDeliveryFile(archive: Archive, row: DeliveryRow, file: string): Promise<Uint8Array | null> {
   return row.status === "valid" ? readStoredFile(archive, row, file) : null;
 }
 
@@ -123,7 +129,7 @@ export async function readDeliveryFile(archive: Archive, row: DeliveryRow, file:
  * `unchanged` row or a file the row does not list; a missing object or bytes that do not match the recorded sha256
  * throw.
  */
-export async function readStoredFile(archive: Archive, row: DeliveryRow, file: ContractFile): Promise<Uint8Array | null> {
+export async function readStoredFile(archive: Archive, row: DeliveryRow, file: string): Promise<Uint8Array | null> {
   if (row.storagePrefix === null || !Object.hasOwn(row.fileHashes, file)) return null;
   const key = `${row.storagePrefix}${file}`;
   const bytes = await archive.get(key);
@@ -158,16 +164,26 @@ export function isContractFile(value: string): value is ContractFile {
   return (CONTRACT_FILES as readonly string[]).includes(value);
 }
 
+/**
+ * `images/<public id>-<slot>.jpg` of a package (contract 2.1, `IMAGE_FILE_PATTERN`); anything else, a traversal included,
+ * is no image file. The routes serve one from its file name `<public id>-<slot>.jpg`.
+ */
+export function isImageFile(value: string): boolean {
+  return IMAGE_FILE_PATTERN.test(value);
+}
+
 /** `Cache-Control: private, max-age=<n>` of API answers (`delivery.api.cacheMaxAgeSeconds`). */
 export function cacheMaxAgeSeconds(): number {
   return getConfig().delivery.api.cacheMaxAgeSeconds;
 }
 
-export type PackageLinks = Partial<Record<ContractFile, string>>;
+/** File name of the package (a contract file or `images/…`) → its API URL, pinned to the data version. */
+export type PackageLinks = Record<string, string>;
 
 /**
  * The subdivision's current package (`GET /subdivisions/{subdivision}/package`): its manifest plus `links` to every
- * file it has, pinned to its data version. Null for an unknown subdivision or one without a valid delivery.
+ * file it has (`deliveryFiles`: the contract files and the image files), pinned to its data version. Null for an
+ * unknown subdivision or one without a valid delivery.
  */
 export async function currentPackage(
   db: Db,
@@ -193,7 +209,7 @@ export async function packageFile(
   db: Db,
   archive: Archive,
   subdivisionRef: string,
-  file: ContractFile,
+  file: string,
   dataVersion?: number,
 ): Promise<{ bytes: Uint8Array; sha256: string; dataVersion: number } | null> {
   const subdivision = await resolveSubdivision(db, subdivisionRef);

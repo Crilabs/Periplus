@@ -25,6 +25,28 @@ export type LonLat = { lon: number; lat: number };
  */
 export type SourceRefRow = { url: string; docType: DocType; observedAt: string; gone?: boolean };
 
+/**
+ * A current image of a place that may be delivered (`loadPlaceImages`): every source of its render has its delivery
+ * switch on. `camera` is null for an image without a known viewpoint.
+ */
+export type DeliverableImage = {
+  id: string;
+  slot: string;
+  sortOrder: number;
+  rank: number;
+  kind: "photo" | "ai_illustration";
+  /** Archive key of the JPEG (`place_images.file_key`). */
+  fileKey: string;
+  width: number;
+  height: number;
+  alt: string;
+  light: "midday" | "evening" | null;
+  observedAt: string | null;
+  license: string;
+  attribution: string;
+  camera: { position: [number, number]; heightM: number; viewBearingDeg: number; tiltDeg: number; fovDeg: number } | null;
+};
+
 export type SpotName = { lang: string; name: string; script: "latin" | "greek" };
 export type ObjectName = { lang: string; name: string };
 
@@ -47,6 +69,8 @@ export type SpotSource = {
   /** `popularityForSubdivision` on the build date; null for a place outside its map (ruling M6-P8). */
   popularity: number | null;
   sources: SourceRefRow[];
+  /** The deliverable current images, best first (rank, sort order, slot). */
+  images: DeliverableImage[];
 };
 
 /** A place merged into another: its public id and the final target's (ruling M6-P14). */
@@ -63,6 +87,8 @@ export type PoiSource = {
   profile: ProfileSnapshot | null;
   summary: string | null;
   sources: SourceRefRow[];
+  /** The deliverable current images, best first (rank, sort order, slot). */
+  images: DeliverableImage[];
 };
 
 export type RegionSource = {

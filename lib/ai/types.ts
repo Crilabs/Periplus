@@ -1,7 +1,9 @@
 import type { z } from "zod";
 
-/** A file sent with the prompt (before its text); `pdf` becomes an Anthropic `document` block. */
-export type ModelAttachment = { kind: "pdf"; data: Uint8Array };
+/** A file sent with the prompt (before its text); `pdf` becomes an Anthropic `document` block, `image` an `image` block. */
+export type ModelAttachment =
+  | { kind: "pdf"; data: Uint8Array }
+  | { kind: "image"; mediaType: "image/png" | "image/jpeg"; data: Uint8Array };
 
 export type ModelTask<I, O> = {
   name: string;

@@ -11,6 +11,7 @@ import { shingleHashes } from "@/lib/domain/documents/shingles";
 import { newId } from "@/lib/domain/ids";
 import { DELIVERY_STAGE } from "@/lib/pipeline/delivery";
 import { testDb, withRollback } from "@/test/db";
+import { seedImage } from "@/test/fixtures/delivery/images";
 import { seedDeliverySubdivision } from "@/test/fixtures/delivery/subdivision";
 import { memoryArchive } from "@/test/s3";
 import { insertTestVersion } from "@/test/text";
@@ -49,6 +50,7 @@ vi.mock("next/navigation", () => ({ redirect: (url: string) => redirect(url) }))
 const { buildDeliveryAction } = await import("../deliveries/actions");
 const { revokeApiClientAction } = await import("../settings/actions");
 const { GET: download } = await import("../deliveries/[id]/files/[file]/route");
+const { GET: downloadImage } = await import("../deliveries/[id]/files/images/[file]/route");
 
 const ADMIN = `${newId()}@test.invalid`;
 
@@ -150,6 +152,36 @@ describe("GET /deliveries/[id]/files/[file]", () => {
         const missing = await getFile(id, file);
         expect(missing.status, `${id}/${file}`).toBe(404);
         expect(missing.headers.get("cache-control")).toBe("private, no-store");
+      }
+    }));
+});
+
+describe("GET /deliveries/[id]/files/images/[file]", () => {
+  it("serves a package image to a session only, and refuses unlisted or malformed names", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      const archive = memoryArchive();
+      setDeliveryArchive(archive);
+      const f = await seedDeliverySubdivision(tx);
+      await seedImage(tx, f, archive, { content: "jpeg bytes" });
+      const built = await buildDelivery(tx, archive, f.subdivisionId, { now: new Date("2040-06-01T08:00:00Z"), inCallerTransaction: true });
+      expect(built.status).toBe("valid");
+      const name = `${f.places.A.publicId}-title.jpg`;
+      const get = (id: string, file: string) =>
+        downloadImage(new NextRequest(`http://localhost/deliveries/${id}/files/images/${file}`), { params: Promise.resolve({ id, file }) });
+
+      adminSession.mockResolvedValue(null);
+      expect((await get(built.deliveryId, name)).status).toBe(401);
+
+      adminSession.mockResolvedValue({ sub: newId(), email: ADMIN });
+      const res = await get(built.deliveryId, name);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("image/jpeg");
+      expect(res.headers.get("cache-control")).toBe("private, no-store");
+      expect(res.headers.get("content-disposition")).toBe(`attachment; filename="${f.subdivisionPublicId}-1-images-${name}"`);
+      expect(new TextDecoder().decode(new Uint8Array(await res.arrayBuffer()))).toBe("jpeg bytes");
+      for (const [id, file] of [[newId(), name], [built.deliveryId, "sp_01J9ZD00000000000000000002-title.jpg"], [built.deliveryId, "secrets.jpg"], ["x", name]] as const) {
+        expect((await get(id, file)).status, `${id}/${file}`).toBe(404);
       }
     }));
 });

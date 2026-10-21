@@ -11,7 +11,8 @@ export type HttpRequest = {
   operation: string;
   url: string;
   method?: "GET" | "POST";
-  body?: string;
+  /** Text, or raw bytes (e.g. a multipart upload). */
+  body?: string | Uint8Array;
   headers?: Record<string, string>;
   timeoutMs: number;
   /** Requests per minute for this bucket, shared across processes via `takeToken`; omitted = unlimited. */
@@ -261,7 +262,8 @@ export const fetchTransport: Transport = async (req) => {
   try {
     const res = await fetch(req.url, {
       method,
-      body: req.body,
+      // a Uint8Array is a valid fetch body; the DOM typing wants a narrower buffer type
+      body: req.body as BodyInit | undefined,
       headers: req.headers,
       redirect: req.redirect ?? "follow",
       signal: AbortSignal.timeout(req.timeoutMs),

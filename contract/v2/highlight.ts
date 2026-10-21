@@ -14,6 +14,7 @@ import {
   versionFields,
   wikidataId,
 } from "./common";
+import { placeImageSchema } from "./image";
 
 /** Highlight (Teil B "Highlight"): a reason to go somewhere. */
 export const highlightSchema = z.strictObject({
@@ -29,6 +30,8 @@ export const highlightSchema = z.strictObject({
   /** Only reachable or open in these months; null = all year. */
   season: z.strictObject({ months: z.array(month).min(1) }).nullable(),
   summary: textDe.optional(),
+  /** Title and further views, best first (rank, sort order, slot); contract 2.1. */
+  images: z.array(placeImageSchema).min(1).optional(),
   sources: z.array(sourceRef).optional(),
   externalRefs: z
     .strictObject({

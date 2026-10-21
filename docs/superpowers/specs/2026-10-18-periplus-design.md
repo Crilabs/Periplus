@@ -61,6 +61,7 @@ Es gelten die elf Grundprinzipien der Quell-Spec unverändert. Zusätzlich für 
 | Ort-Highlights nur als Facts je Kategorie (Teil A) vs. eigene Highlight-Objekte (Teil B) | Beides: ein Highlight ist ein Geo-Objekt vom Typ `poi` mit Kategorie und eigenen Facts; die Kategorie-Facts am Ort werden daraus abgeleitet | Entscheidung Claude, löst den Widerspruch zwischen Teil A und B |
 | Revier als Ebene der Hierarchie (Meer → Revier → Insel → Ort) und als Liefereinheit | Reviere sind überlappende Namensgebiete außerhalb der Hierarchie; Hierarchie und Lieferumfang laufen über Landesteile (Land, Verwaltungseinheit) | Entscheidung Christian: Reviere überlappen in der Welt; Landesteile sind eindeutig und lückenlos (Teil-Spec 14) |
 | Kacheln ohne Revier → Review „Küstenkachel ohne Revier“ | Jede Küstenkachel liegt in einem Landesteil; ausgeschlossene Landesteile statt Einzelentscheidungen | Folge der Landesteile (Teil-Spec 14) |
+| Nach außen nur abgeleitete Fakten (Teil A, Rechtliches) | Zusätzlich liefert der Vertrag ein Titelbild je Spot: ein aus Luftbildern abgeleitetes, KI-bearbeitetes Bild (kein Fakt) mit Kamera, Licht, Namensnennung und Aufnahmedatum. Zulässig, weil die Luftbilder unter offenen oder dafür erworbenen Lizenzen stehen; ausgeliefert wird eine Quelle erst, wenn ihr Liefer-Schalter in `config/images.json` auf `true` steht (Kataster: nach schriftlicher Bestätigung) | Entscheidung Christian, 20.10.2026 (Teil-Spec 13) |
 
 ## 5. Architektur
 
@@ -219,7 +220,7 @@ Jeder Meilenstein endet mit etwas, das man in der Oberfläche sieht, und einer A
 | 10 | `2026-10-18-periplus-10-qualitaet-pilot-design.md` | Kennzahlen, Vergleichssatz, Revisit-Simulation, Pilot-Abnahme |
 | 11 | `2026-10-19-periplus-11-quellen-autofreigabe-design.md` | Automatische Quellenfreigabe mit Schattenbetrieb und Probezeit; zurückgestellt bis zu einem Auslöser aus Phase 0 |
 | 12 | `2026-10-20-periplus-12-pruefung-echtdaten-design.md` | Schrittweise Prüfung mit echten Daten (Probekachel → Revier) nach M7 Teil (a), vor dem vollen Pilotlauf |
-| 13 | `2026-10-20-periplus-13-ortsbilder-design.md` | Ortsbilder: Luftbild auf Gelände als 30°-Schrägansicht vom Wasser rendern, mit Bildmodell zum Katalogbild machen (Ankerbuchten mittags, Häfen und Orte bei Städten abends), Prüfung und Freigabe, Feld `image` im Vertrag; Fotos und Aussehens-Merkmale als zweite Stufe; erste Umsetzung nur Griechenland mit freien Daten (Kataster-Orthofoto, Sentinel-2, Copernicus DEM); nach M7 |
+| 13 | `2026-10-20-periplus-13-ortsbilder-design.md` | Ortsbilder (Plan `docs/superpowers/plans/2026-10-20-periplus-13-ortsbilder.md`): Luftbild auf Gelände als 30°-Schrägansicht vom Wasser rendern, mit Bildmodell zum Katalogbild machen (Ankerbuchten mittags, Häfen und Orte bei Städten abends), Prüfung und Freigabe, Feld `image` im Vertrag; Fotos und Aussehens-Merkmale als zweite Stufe; erste Umsetzung nur Griechenland mit freien Daten (Kataster-Orthofoto, Sentinel-2, Copernicus DEM); nach M7 |
 | 14 | `2026-10-20-periplus-14-raumgliederung-design.md` | Raumgliederung: Landesteile (Land, Verwaltungseinheit) als Laufumfang, Hierarchie und Liefereinheit (Vertrag 2.0), Grob-Gazetteer, Ansicht „Länder und Landesteile“; Reviere als überlappende Namensgebiete (Plan 14b) |
 
 ## 12. Offene Punkte

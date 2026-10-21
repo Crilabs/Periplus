@@ -10,6 +10,8 @@ import {
   geoNames,
   documents,
   geoObjects,
+  imageryTiles,
+  placeRenders,
   nameCandidates,
   placeKindEnum,
   places,
@@ -28,7 +30,10 @@ import {
   type ChangeRate,
   type DocType,
   type RestrictedKind,
+  type ImagerySource,
 } from "@/lib/db/schema";
+import { getConfig } from "@/lib/config";
+import type { PlaceImageTaskContext } from "@/lib/pipeline/images/generate";
 import type { AttributeProvenance, ConflictResolution, ConflictSide } from "@/lib/domain/consolidation/types";
 import type { ProposalRobots, SerpHit } from "@/lib/domain/discovery/proposals";
 import { formatReviewValue, profileAttributeLabel } from "@/lib/domain/consolidation/format";
@@ -224,7 +229,30 @@ export type ReviewSubject =
       reasons: string[];
     }
   | ComparisonSubjectView
+  | PlaceImageSubjectView
   | { type: "missing" };
+
+/**
+ * A `place_image` task (spec 13): the place, the slot, the task's context (camera, checks, attempts, allowed zooms) and
+ * the archive keys of the render's photo and mask (null when the task has no render, e.g. `no_water_view`), the
+ * imagery sources the render used (core, wide, DEM) and the water IoU threshold of its light.
+ */
+export type PlaceImageSubjectView = {
+  type: "place_image";
+  geoObjectId: string;
+  placeId: string;
+  publicId: string | null;
+  name: string | null;
+  kind: PlaceKind;
+  slot: string;
+  key: string;
+  context: PlaceImageTaskContext;
+  candidateKey: string | null;
+  photoKey: string | null;
+  maskKey: string | null;
+  sources: ImagerySource[];
+  threshold: number;
+};
 
 /**
  * A `comparison_deviation` task: the place, the compared attribute and the own value as compared (`ownDisplay`).
@@ -343,6 +371,7 @@ const subjectNameSql = sql<string | null>`coalesce(${reviewTasks.context}->>'nam
         when 'comparison' then ${placeNameSql(sql`(case when ${reviewTasks.context}->>'placeId' ~ ${UUID_SQL} then (${reviewTasks.context}->>'placeId')::uuid end)`)}
         when 'profile_attribute' then ${displayNameSql(subjectPart(1))}
         when 'profile_summary' then ${displayNameSql(subjectPart(1))}
+        when 'place_image' then ${displayNameSql(subjectPart(1))}
         when 'geo_object_pair' then concat_ws(' / ', ${displayNameSql(subjectPart(1))}, ${displayNameSql(subjectPart(2))})
         when 'job' then ${reviewTasks.context}->>'queue'
       end)`;
@@ -457,6 +486,9 @@ export async function reviewTaskDetail(db: Db, id: string): Promise<ReviewTaskDe
       break;
     case "comparison":
       subject = await comparisonSubject(db, context);
+      break;
+    case "place_image":
+      subject = await placeImageSubject(db, task.subjectId, context);
       break;
     default:
       subject = { type: "missing" };
@@ -600,6 +632,49 @@ async function comparisonSubject(db: Db, context: Record<string, unknown>): Prom
     profileVersion: c.profileVersion,
     evaluationRunId: c.evaluationRunId,
     ownDisplay: c.ownDisplay,
+  };
+}
+
+async function placeImageSubject(db: Db, subjectId: string, context: Record<string, unknown>): Promise<ReviewSubject> {
+  const [geoObjectId, slot] = [subjectId.slice(0, 36), subjectId.slice(37)];
+  if (!isUuid(geoObjectId) || subjectId[36] !== ":" || slot === "" || typeof context.key !== "string") return { type: "missing" };
+  const c = context as PlaceImageTaskContext;
+  const [place] = await db
+    .select({ id: places.id, publicId: places.publicId, kind: places.kind, name: displayNameSql(places.geoObjectId) })
+    .from(places)
+    .where(and(eq(places.geoObjectId, geoObjectId), isNull(places.validTo), isNull(places.mergedIntoId)))
+    .orderBy(places.id)
+    .limit(1);
+  if (!place) return { type: "missing" };
+  const [render] =
+    typeof c.renderId === "string" && isUuid(c.renderId)
+      ? await db
+          .select({ photoKey: placeRenders.photoKey, maskKey: placeRenders.maskKey, imageryTileIds: placeRenders.imageryTileIds, demTileIds: placeRenders.demTileIds })
+          .from(placeRenders)
+          .where(eq(placeRenders.id, c.renderId))
+      : [];
+  const tileIds = render ? [...render.imageryTileIds, ...render.demTileIds] : [];
+  const tiles =
+    tileIds.length === 0
+      ? []
+      : await db.select({ id: imageryTiles.id, source: imageryTiles.source, blank: imageryTiles.blank }).from(imageryTiles).where(inArray(imageryTiles.id, tileIds));
+  const used = tiles.filter((t) => !t.blank).sort((a, b) => tileIds.indexOf(a.id) - tileIds.indexOf(b.id));
+  const light = c.light === "evening" ? "evening" : "midday";
+  return {
+    type: "place_image",
+    geoObjectId,
+    placeId: place.id,
+    publicId: place.publicId,
+    name: place.name,
+    kind: place.kind,
+    slot,
+    key: c.key,
+    context: c,
+    candidateKey: typeof c.candidateKey === "string" ? c.candidateKey : null,
+    photoKey: render?.photoKey ?? null,
+    maskKey: render?.maskKey ?? null,
+    sources: [...new Set(used.map((t) => t.source))],
+    threshold: getConfig().images.check.minWaterIoU[light],
   };
 }
 

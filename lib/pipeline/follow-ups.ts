@@ -5,6 +5,8 @@ import { createLogger } from "@/lib/logger";
 import { startConsolidationRun } from "./consolidation/run";
 import { startUploadFetchRun } from "./fetch/run";
 import { startGeometryRun } from "./geometry-run";
+import { startImageRun } from "./images-run";
+import type { ImageView } from "./images/generate";
 import { startTextRun } from "./text/run";
 import { RunScopeNotReady, type RunScopeReason } from "./tile-scope";
 
@@ -97,6 +99,20 @@ export async function afterPlaceMerge(
     createLogger("follow-up").error({ geoObjectId: input.dropGeoObjectId, err: e }, "merged object not settled after a place merge");
   }
   return consolidateAfter(db, boss, { geoObjectIds: [input.keepGeoObjectId], triggeredBy: input.triggeredBy });
+}
+
+/**
+ * After „Neu erzeugen“ on a place image (spec 13): an image run of the place's slot at the chosen zoom, with `force` so
+ * the decided task carrying the same key does not skip it.
+ */
+export function imageRunAfter(
+  db: Db,
+  boss: BossGetter,
+  input: { geoObjectId: string; view: ImageView; force: boolean; triggeredBy: string },
+): Promise<FollowUp> {
+  return followUp("image", { geoObjectId: input.geoObjectId, slot: input.view.slot }, async () =>
+    startImageRun(db, await boss(), { geoObjectId: input.geoObjectId, view: input.view, force: input.force }, input.triggeredBy),
+  );
 }
 
 /** The upload run of an archived PDF (convert, chunk, embed). Uploading the same file again starts it again. */

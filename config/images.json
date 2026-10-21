@@ -1,0 +1,25 @@
+{
+  "sources": {
+    "ktimatologio": { "kind": "wms", "countries": ["GR"], "url": "http://gis.ktimanet.gr/wms/wmsopen/wmsserver.aspx", "layer": "BASEMAP", "format": "image/jpeg", "resolutionM": 0.5, "maxRequestPx": 2048, "watermarked": true, "license": "CC-BY-3.0", "attribution": "Luftbild © Hellenic Cadastre (CC BY 3.0)", "acquiredAt": null, "timeoutSeconds": 60, "ratePerMinute": 30 },
+    "sentinel2": { "kind": "wms", "countries": "*", "url": "https://tiles.maps.eox.at/wms", "layer": "s2cloudless", "format": "image/jpeg", "resolutionM": 10, "maxRequestPx": 2048, "watermarked": false, "license": "CC-BY-4.0", "attribution": "Sentinel-2 cloudless 2016 © EOX (CC BY 4.0)", "acquiredAt": "2016-07-01", "timeoutSeconds": 60, "ratePerMinute": 30 },
+    "copernicus_dem": { "kind": "cog", "countries": "*", "urlTemplate": "https://copernicus-dem-30m.s3.amazonaws.com/{name}/{name}.tif", "resolutionM": 30, "license": "Copernicus-DEM", "attribution": "Gelände © DLR/Airbus, Copernicus", "acquiredAt": null, "timeoutSeconds": 300, "ratePerMinute": 10, "maxBytes": 120000000 }
+  },
+  "delivery": { "ktimatologio": false, "sentinel2": true, "copernicus_dem": true },
+  "window": { "coreSizeM": 1500, "wideMarginDeg": 0.06, "coreGridM": 4, "wideGridM": 15, "wideSinkM": 3, "whiteThreshold": 245 },
+  "camera": { "tiltDeg": 30, "fovDeg": 50, "width": 1536, "height": 1024, "rotateStepDeg": 10, "defaultZoom": "z1",
+              "zooms": { "z1": { "heightM": 260 }, "z2": { "heightM": 160 }, "z3": { "heightM": 100 } } },
+  "render": { "maxSourcePixelOnScreen": 5, "rendererVersion": "render-1", "timeoutSeconds": 120 },
+  "light": { "townRadiusM": 1500, "townPlaces": ["town", "village"], "nearTown": "midday",
+             "byKind": { "anchorage": "midday", "mooring_field": "midday", "marina": "evening", "port": "evening" } },
+  "scene": {
+    "anchorage": { "en": "a sheltered bay with its shore, beach or rocks and the slopes behind", "de": "Bucht mit Ufer und Hängen" },
+    "mooring_field": { "en": "a bay with a mooring buoy field, its shore and the slopes behind", "de": "Bucht mit Bojenfeld" },
+    "marina": { "en": "a marina with harbour basins, breakwaters and floating pontoons", "de": "Marina mit Becken und Stegen" },
+    "port": { "en": "a harbour town with its quay, waterfront promenade and houses", "de": "Hafenort mit Kai und Promenade" },
+    "near_town": { "en": "a sheltered anchorage with yachts at anchor in front of a town", "de": "Ankerplatz vor einem Ort" }
+  },
+  "check": { "minWaterIoU": { "midday": 0.8, "evening": 0.6 }, "maxAttempts": 2, "waterColour": { "blueOverRedMin": 25, "greenTolerance": 10 } },
+  "pipeline": { "maxGenerationsPerRun": 50 },
+  "composition": { "nearTown": { "foregroundM": 450 } },
+  "output": { "jpegQuality": 85, "license": "periplus", "credit": "Illustration: Periplus", "altPrefix": "KI-Illustration:" }
+}

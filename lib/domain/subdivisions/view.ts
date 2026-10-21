@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
+import { hasCoreImagery, imageCoverage, type ImageCoverage } from "@/lib/domain/images/view";
 
 /*
  * The admin view „Länder und Landesteile“ (spec 14 „Admin-UI“): every valid subdivision grouped by country, with its
@@ -155,12 +156,16 @@ export type SubdivisionDetail = SubdivisionRow & {
   areas: Array<{ id: string; publicId: string | null; name: string }>;
   counts: { confirmedPlaces: number; candidates: number; geoObjects: number };
   runs: Array<{ id: string; kind: string; status: string; stages: string[]; createdAt: string; triggeredBy: string }>;
+  /** Title image coverage of its spots (spec 13). */
+  images: ImageCoverage;
+  /** Its country has a detailed aerial source (`hasCoreImagery`), so its spots get images and „Titelbilder erzeugen“ is offered. */
+  coreImagery: boolean;
 };
 
 /**
  * One subdivision for its detail page: the row of the tree, its scope tiles (coast tiles meeting its polygon; `label`:
  * labelled with it), the sailing areas linked to them, counts of its objects and its last 20 runs. Null for an
- * unknown key.
+ * unknown key. `images`: the image coverage of its spots (`imageCoverage`).
  */
 export async function subdivisionDetail(db: Db, key: string): Promise<SubdivisionDetail | null> {
   const { rows } = await db.execute<Row>(subdivisionRowsSql(sql`s.key = ${key}`));
@@ -194,9 +199,12 @@ export async function subdivisionDetail(db: Db, key: string): Promise<Subdivisio
     where scope_type = 'subdivision' and scope_id = ${key}
     order by created_at desc limit 20
   `);
+  const { rows: idRows } = await db.execute<{ id: string }>(sql`select id from subdivisions where key = ${key} and valid_to is null`);
   const collator = new Intl.Collator("de");
   return {
     ...row,
+    images: await imageCoverage(db, idRows[0]!.id),
+    coreImagery: hasCoreImagery(country),
     country,
     whole,
     countryName: countryName(country),

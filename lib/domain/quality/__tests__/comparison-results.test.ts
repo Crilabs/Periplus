@@ -185,7 +185,7 @@ describe("comparison results", () => {
       const [task] = await tasksOf(tx, placeId);
 
       const result = await decideReviewTask(tx, { taskId: task!.id, decision: { action }, decidedBy: "admin@test" });
-      expect(result).toEqual({ documentVersionIds: [], consolidate: null });
+      expect(result).toEqual({ documentVersionIds: [], consolidate: null, regenerateImage: null });
 
       const rows = await resultsOf(tx, placeId);
       expect(rows).toHaveLength(2);

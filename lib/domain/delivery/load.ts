@@ -1,5 +1,6 @@
 import { sql, type SQL } from "drizzle-orm";
-import type { DeliveryConfig } from "@/lib/config/schemas";
+import { getConfig } from "@/lib/config";
+import type { DeliveryConfig, ImagesConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import type { GeoObjectType, PlaceKind, PlaceStatus, PoiCategory } from "@/lib/db/schema/geo";
 import type { DocType } from "@/lib/db/schema/sources";
@@ -7,9 +8,11 @@ import { popularityForSubdivision } from "@/lib/domain/consolidation/derived/pop
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 import { deliveryNames } from "@/lib/domain/gazetteer/names";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
+import { imageBlockedBy, imageSources } from "@/lib/domain/images/delivery-gate";
 import { utmSridFor } from "@/lib/domain/geometry/projection";
 import { latestProfiles, validAtAlias } from "@/lib/domain/timeline";
 import type {
+  DeliverableImage,
   LonLat,
   PassageSource,
   PoiSource,
@@ -57,6 +60,7 @@ export async function loadSubdivisionScope(
   subdivisionId: string,
   cfg: DeliveryConfig,
   today: string,
+  imagesCfg: ImagesConfig = getConfig().images,
 ): Promise<SubdivisionScope> {
   const tileIds = await subdivisionTileIds(db, subdivisionId);
   const tileArray = arrayParam(tileIds, "text");
@@ -80,6 +84,7 @@ export async function loadSubdivisionScope(
   // regions too: their facts and character rest on documents, which the forbidden-domain check needs (final review I-2)
   const regionsWithProfile = regionRows.map((r) => r.geoObjectId).filter((id) => profiles.has(id));
   const sources = await loadSources(db, [...withProfile, ...regionsWithProfile], profiles);
+  const images = await loadPlaceImages(db, [...spotRows, ...poiRows].map((r) => r.geoObjectId), today, imagesCfg);
 
   const spots: SpotSource[] = spotRows.map((r) => ({
     ...r,
@@ -88,12 +93,14 @@ export async function loadSubdivisionScope(
     summary: summaries.get(r.geoObjectId) ?? null,
     popularity: popularity.get(r.geoObjectId) ?? null,
     sources: sources.get(r.geoObjectId) ?? [],
+    images: images.get(r.geoObjectId) ?? [],
   }));
   const pois: PoiSource[] = poiRows.map((r) => ({
     ...r,
     profile: profiles.get(r.geoObjectId) ?? null,
     summary: summaries.get(r.geoObjectId) ?? null,
     sources: sources.get(r.geoObjectId) ?? [],
+    images: images.get(r.geoObjectId) ?? [],
   }));
   const regions: RegionSource[] = regionRows.map((r) => ({
     ...r,
@@ -196,7 +203,7 @@ async function loadTiles(db: Db, subdivisionId: string, tileArray: SQL, cfg: Del
   }));
 }
 
-type SpotRow = Omit<SpotSource, "names" | "profile" | "summary" | "popularity" | "sources">;
+type SpotRow = Omit<SpotSource, "names" | "profile" | "summary" | "popularity" | "sources" | "images">;
 
 async function loadSpotRows(db: Db, subdivisionId: string, cfg: DeliveryConfig, today: string): Promise<SpotRow[]> {
   const { rows } = await db.execute<{
@@ -264,7 +271,7 @@ async function loadMerged(db: Db, subdivisionId: string): Promise<SubdivisionSco
   return rows.map((r) => ({ publicId: r.public_id, mergedIntoPublicId: r.target_public_id }));
 }
 
-type PoiRow = Omit<PoiSource, "profile" | "summary" | "sources">;
+type PoiRow = Omit<PoiSource, "profile" | "summary" | "sources" | "images">;
 
 async function loadPoiRows(db: Db, subdivisionId: string, today: string): Promise<PoiRow[]> {
   const { rows } = await db.execute<{
@@ -448,6 +455,90 @@ async function loadSummaries(
 
 /** A fact id (uuid); input ids of computations and POIs (`computation:…`, `poi:…`) name no document. */
 const FACT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const IMAGE_SLOT = /^(?:title|view-[1-9]\d*)$/;
+const round2 = (n: number) => Number(n.toFixed(2));
+
+/**
+ * The deliverable current images of the geo objects on `today` (spec 13), best first: rank, then sort order, then slot.
+ * An image is deliverable only when every source of its render's tiles has `images.delivery[source] === true`
+ * (`imageBlockedBy`; a blank tile is no source), it has a license and an attribution, and its slot is a contract slot.
+ * An object without a deliverable image has no entry.
+ */
+export async function loadPlaceImages(
+  db: Db,
+  geoObjectIds: string[],
+  today: string,
+  cfg: Pick<ImagesConfig, "delivery">,
+): Promise<Map<string, DeliverableImage[]>> {
+  const out = new Map<string, DeliverableImage[]>();
+  if (geoObjectIds.length === 0) return out;
+  const { rows } = await db.execute<{
+    id: string;
+    geo_object_id: string;
+    kind: DeliverableImage["kind"];
+    slot: string;
+    sort_order: number;
+    rank: number;
+    file_key: string;
+    width: number;
+    height: number;
+    alt: string;
+    light: DeliverableImage["light"];
+    observed_at: string | null;
+    license: string | null;
+    attribution: string | null;
+    lon: number | null;
+    lat: number | null;
+    camera_height_m: number | null;
+    view_bearing_deg: number | null;
+    camera_tilt_deg: number | null;
+    camera_fov_deg: number | null;
+  }>(sql`
+    select i.id, i.geo_object_id, i.kind, i.slot, i.sort_order, i.rank, i.file_key, i.width, i.height, i.alt, i.light,
+           i.observed_at::text as observed_at, i.license, i.attribution,
+           ST_X(i.camera_position) as lon, ST_Y(i.camera_position) as lat, i.camera_height_m, i.view_bearing_deg,
+           i.camera_tilt_deg, i.camera_fov_deg
+    from place_images i
+    where i.geo_object_id = any(${arrayParam(geoObjectIds, "uuid")}) and ${validAtAlias("i", today)}
+    order by i.rank, i.sort_order, i.slot
+  `);
+  const sources = await imageSources(db, rows.map((r) => r.id));
+  for (const r of rows) {
+    if (!IMAGE_SLOT.test(r.slot) || !r.license || !r.attribution) continue;
+    if (imageBlockedBy(sources.get(r.id) ?? [], cfg.delivery).length > 0) continue;
+    const located =
+      r.lon !== null && r.lat !== null && r.camera_height_m !== null && r.view_bearing_deg !== null && r.camera_tilt_deg !== null && r.camera_fov_deg !== null;
+    const image: DeliverableImage = {
+      id: r.id,
+      slot: r.slot,
+      sortOrder: r.sort_order,
+      rank: r.rank,
+      kind: r.kind,
+      fileKey: r.file_key,
+      width: r.width,
+      height: r.height,
+      alt: r.alt,
+      light: r.light,
+      observedAt: r.observed_at,
+      license: r.license,
+      attribution: r.attribution,
+      camera: located
+        ? {
+            position: [round(Number(r.lon), 5), round(Number(r.lat), 5)],
+            heightM: round2(Number(r.camera_height_m)),
+            viewBearingDeg: round2(Number(r.view_bearing_deg)) % 360,
+            tiltDeg: round2(Number(r.camera_tilt_deg)),
+            fovDeg: round2(Number(r.camera_fov_deg)),
+          }
+        : null,
+    };
+    const list = out.get(r.geo_object_id);
+    if (list) list.push(image);
+    else out.set(r.geo_object_id, [image]);
+  }
+  return out;
+}
 
 /**
  * The facts a profile value rests on: for a list attribute the ids of its delivered entries (`entryFactIds`, the flat

@@ -126,7 +126,7 @@ describe("importOsm", () => {
       );
 
       expect(seen).toHaveLength(1);
-      const ql = decodeURIComponent(seen[0]!.body!.replace(/^data=/, ""));
+      const ql = decodeURIComponent(String(seen[0]!.body).replace(/^data=/, ""));
       // Area box 24.9-25.3 E x 35.2-35.5 N plus 5 km.
       const box = /\(([\d.]+),([\d.]+),([\d.]+),([\d.]+)\);/.exec(ql)!.slice(1).map(Number);
       expect(box[0]).toBeCloseTo(35.2 - 5 / 111.32, 6);

@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "periplus:contract/2.1/weather-points.schema.json",
+  "title": "Periplus Data Contract 2.1 – weather-points.json",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "2.1"
+    },
+    "subdivision": {
+      "type": "string",
+      "pattern": "^sd_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "dataVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "points": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^wp_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "position": {
+            "type": "object",
+            "properties": {
+              "lat": {
+                "type": "number",
+                "minimum": -90,
+                "maximum": 90,
+                "description": "Decimal degrees (WGS84) with at most 5 decimals"
+              },
+              "lon": {
+                "type": "number",
+                "minimum": -180,
+                "maximum": 180,
+                "description": "Decimal degrees (WGS84) with at most 5 decimals"
+              }
+            },
+            "required": [
+              "lat",
+              "lon"
+            ],
+            "additionalProperties": false
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "region",
+              "channel",
+              "cape"
+            ]
+          },
+          "regionId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^rg_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "position",
+          "kind",
+          "regionId"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "subdivision",
+    "dataVersion",
+    "generatedAt",
+    "points"
+  ],
+  "additionalProperties": false
+}

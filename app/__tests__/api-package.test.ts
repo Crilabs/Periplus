@@ -12,6 +12,7 @@ import { sha256Hex } from "@/lib/domain/delivery/serialize";
 import { shingleHashes } from "@/lib/domain/documents/shingles";
 import { newId } from "@/lib/domain/ids";
 import { decideAccess } from "@/lib/security/access";
+import { seedImage } from "@/test/fixtures/delivery/images";
 import { insertProfile, provenanceEntry } from "@/test/consolidation";
 import { testDb, withRollback } from "@/test/db";
 import { seedDeliverySubdivision, SPOT_A_ATTRIBUTES, spotAProvenance, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
@@ -39,6 +40,7 @@ vi.mock("@/lib/db/client", async (importActual) => ({
 const subdivisionsRoute = await import("../api/v2/subdivisions/route");
 const packageRoute = await import("../api/v2/subdivisions/[subdivision]/package/route");
 const fileRoute = await import("../api/v2/subdivisions/[subdivision]/package/[file]/route");
+const imageRoute = await import("../api/v2/subdivisions/[subdivision]/package/images/[file]/route");
 const schemaRoute = await import("../api/v2/schema/[version]/[file]/route");
 const schemaRouteV1 = await import("../api/v1/schema/[version]/[file]/route");
 
@@ -53,6 +55,10 @@ const getPackage = (subdivision: string, key?: string, headers?: Record<string, 
   packageRoute.GET(request(`/subdivisions/${subdivision}/package`, key, headers), { params: Promise.resolve({ subdivision }) });
 const getFile = (subdivision: string, file: string, key?: string, query = "", headers?: Record<string, string>) =>
   fileRoute.GET(request(`/subdivisions/${subdivision}/package/${encodeURIComponent(file)}${query}`, key, headers), {
+    params: Promise.resolve({ subdivision, file }),
+  });
+const getImage = (subdivision: string, file: string, key?: string, query = "", headers?: Record<string, string>) =>
+  imageRoute.GET(request(`/subdivisions/${subdivision}/package/images/${encodeURIComponent(file)}${query}`, key, headers), {
     params: Promise.resolve({ subdivision, file }),
   });
 const getSchema = (version: string, file: string, key?: string) =>
@@ -154,7 +160,7 @@ describe("GET /api/v2/subdivisions", () => {
       const before = await getSubdivisions(key);
       expect(before.status).toBe(200);
       const listed = (await before.json()) as { schemaVersion: string; subdivisions: Array<{ id: string }> };
-      expect(listed.schemaVersion).toBe("2.0");
+      expect(listed.schemaVersion).toBe("2.1");
       expect(listed.subdivisions.find((s) => s.id === f.subdivisionPublicId)).toEqual({
         id: f.subdivisionPublicId,
         key: f.subdivisionKey,
@@ -278,7 +284,7 @@ describe("GET /api/v2/subdivisions/[subdivision]/package/[file]", () => {
           expect(sha256Hex(bytes), entry.name).toBe(entry.sha256);
           expect(bytes.byteLength).toBe(entry.bytes);
           expect(bytes).toEqual(await archive.get(prefix + entry.name));
-          expect(res.headers.get("periplus-schema-version")).toBe("2.0");
+          expect(res.headers.get("periplus-schema-version")).toBe("2.1");
           expect(res.headers.get("periplus-data-version")).toBe("1");
           expect(res.headers.get("content-type")).toBe(entry.name === "coast.geojson" ? "application/geo+json" : "application/json");
           expect(res.headers.get("etag")).toBe(`"${entry.sha256.slice(0, 32)}"`);
@@ -411,6 +417,55 @@ describe("GET /api/v2/subdivisions/[subdivision]/package/[file]", () => {
     }));
 });
 
+describe("GET /api/v2/subdivisions/[subdivision]/package/images/[file]", () => {
+  const JPG = "jpeg bytes of the title image";
+  const bytes = new TextEncoder().encode(JPG);
+  /** The title image of spot A in the built package. */
+  let NAME = "";
+
+  /** A package with the title image of A (sources Sentinel-2 and the DEM: delivered). */
+  async function withImage(tx: Db, archive: Archive, f: DeliveryFixture) {
+    await seedImage(tx, f, archive, { content: JPG });
+    NAME = `${f.places.A.publicId}-title.jpg`;
+    await build(tx, archive, f);
+  }
+
+  it("serves a listed package image as image/jpeg with the hash as ETag and the same caching as the files", () =>
+    withRollback(async (tx) => {
+      const { f, archive, key } = await setup(tx);
+      await withImage(tx, archive, f);
+      const res = await getImage(f.subdivisionPublicId, NAME, key);
+      expect(res.status).toBe(200);
+      expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes);
+      expect(res.headers.get("content-type")).toBe("image/jpeg");
+      expect(res.headers.get("etag")).toBe(`"${sha256Hex(bytes).slice(0, 32)}"`);
+      expect(res.headers.get("cache-control")).toBe("private, max-age=60");
+      expect(res.headers.get("periplus-data-version")).toBe("1");
+      const again = await getImage(f.subdivisionPublicId, NAME, key, "?dataVersion=1", { "if-none-match": res.headers.get("etag")! });
+      expect(again.status).toBe(304);
+    }));
+
+  it("needs a key; an unlisted image, a malformed name and a traversal are 404", () =>
+    withRollback(async (tx) => {
+      const { f, archive, key } = await setup(tx);
+      await withImage(tx, archive, f);
+      expect((await getImage(f.subdivisionPublicId, NAME)).status).toBe(401);
+      for (const file of ["sp_01J9ZD00000000000000000002-title.jpg", "secrets.jpg", "../spots.json", "sp_01J9ZD00000000000000000001-title.png", "sp_01J9ZD00000000000000000001-view-0.jpg", "spots.json"]) {
+        expect((await getImage(f.subdivisionPublicId, file, key)).status, file).toBe(404);
+      }
+      expect((await getImage(f.subdivisionPublicId, NAME, key, "?dataVersion=abc")).status).toBe(400);
+      expect((await getImage(f.subdivisionPublicId, NAME, key, "?dataVersion=7")).status).toBe(404);
+    }));
+
+  it("the existing file URLs keep working and still refuse an image name", () =>
+    withRollback(async (tx) => {
+      const { f, archive, key } = await setup(tx);
+      await withImage(tx, archive, f);
+      expect((await getFile(f.subdivisionPublicId, "spots.json", key)).status).toBe(200);
+      expect((await getFile(f.subdivisionPublicId, `images/${NAME}`, key)).status).toBe(404);
+    }));
+});
+
 describe("GET /api/v2/schema/[version]/[file]", () => {
   it("the schema endpoint returns the checked-in JSON schema of every published version; /api/v1 still serves 1.0", () =>
     withRollback(async (tx) => {
@@ -422,6 +477,7 @@ describe("GET /api/v2/schema/[version]/[file]", () => {
         });
       for (const file of ["spots.schema.json", "manifest.schema.json", "coast.schema.json", "changes.schema.json"]) {
         for (const [version, res] of [
+          ["2.1", await getSchema("2.1", file, key)],
           ["2.0", await getSchema("2.0", file, key)],
           ["1.0", await getSchema("1.0", file, key)],
           ["1.0", await v1("1.0", file)],

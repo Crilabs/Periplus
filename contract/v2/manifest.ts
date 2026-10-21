@@ -1,9 +1,10 @@
 import { z } from "zod";
+import { imageFile } from "./image";
 import { areal, CONTRACT_FILES, count, httpUrl, isoDate, isoDateTime, latitude, longitude, publicId } from "./common";
 
 /** `manifest.json`: what the package is, for which subdivision (Landesteil), with which files and licences. */
 export const manifestSchema = z.strictObject({
-  schemaVersion: z.literal("2.0"),
+  schemaVersion: z.literal("2.1"),
   subdivision: z.strictObject({
     id: publicId("sd"),
     key: z.string().min(1),
@@ -50,7 +51,7 @@ export const manifestSchema = z.strictObject({
     }),
   ),
   files: z.array(
-    z.strictObject({ name: z.enum(CONTRACT_FILES), sha256: z.string().regex(/^[0-9a-f]{64}$/), bytes: count }),
+    z.strictObject({ name: z.union([z.enum(CONTRACT_FILES), imageFile]), sha256: z.string().regex(/^[0-9a-f]{64}$/), bytes: count }),
   ),
 });
 

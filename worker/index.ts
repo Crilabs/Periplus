@@ -6,12 +6,15 @@ import { workerHeartbeats } from "@/lib/db/schema";
 import { closeRenderer } from "@/lib/adapters/fetch/browser";
 import { getArchive } from "@/lib/adapters/s3";
 import { createAnthropicClient } from "@/lib/ai/anthropic";
+import { getTransport } from "@/lib/adapters/http";
+import { createOpenAiImageModel } from "@/lib/adapters/openai-image";
 import { assertEmbeddingDimension } from "@/lib/pipeline/embed";
 import { assertSimulationEnv } from "@/lib/domain/revisit/guard";
 import { getEnv } from "@/lib/env";
 import { createBoss } from "@/lib/jobs/boss";
 import { BATCH_HANDLERS } from "@/lib/jobs/batch-handlers";
 import { setModelClientFactory } from "@/lib/jobs/handlers/ai-batch";
+import { setImageModelFactory } from "@/lib/pipeline/images/model";
 import { DEAD_LETTER_QUEUE, ensureQueues, QUEUES } from "@/lib/jobs/queues";
 import { clearReadyMarker, touchReadyMarker } from "@/lib/jobs/ready-marker";
 import { HANDLERS } from "@/lib/jobs/registry";
@@ -39,6 +42,9 @@ async function main(): Promise<void> {
   await ensureQueues(boss, config.queues);
   // Batch jobs submit and collect message batches through this client (the key is read on first use).
   setModelClientFactory((jobDb) => createAnthropicClient(jobDb, config));
+  // Image jobs paint over their renders through this model (the key is read on first use).
+  const imageModel = createOpenAiImageModel(getTransport(), config);
+  setImageModelFactory(() => imageModel);
   const workers = await startWorkers(boss, db, HANDLERS, config.queues, { batchHandlers: BATCH_HANDLERS });
 
   const host = hostname();

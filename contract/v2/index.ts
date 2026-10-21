@@ -12,6 +12,7 @@ export * from "./common";
 export * from "./changes";
 export * from "./coast";
 export * from "./highlight";
+export * from "./image";
 export * from "./manifest";
 export * from "./region";
 export * from "./spot";

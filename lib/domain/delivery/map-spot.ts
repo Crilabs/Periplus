@@ -6,6 +6,7 @@ import type { AttributeProvenance, ProvenanceOrigin } from "@/lib/domain/consoli
 import { SECTORS } from "@/lib/domain/facts/schema-types";
 import { isForbiddenUrl } from "@/lib/domain/sources/forbidden-domains";
 import { round5 } from "./geo";
+import { mapImages } from "./map-image";
 import type { SourceRefRow, SpotSource } from "./types";
 import {
   aggregateProvenance,
@@ -108,6 +109,10 @@ export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
   },
   highlightIds: { attributes: [], note: "context (highlights counting the spot)" },
   externalRefs: { attributes: [], note: "osm_id, wikidata_id; googlePlaceIds {} until M8" },
+  images: {
+    attributes: [],
+    note: "the current images of the place (rank, sort order, slot) whose render sources are all switched on for delivery (images.delivery); file images/<public id>-<slot>.jpg, camera from the camera columns",
+  },
   summary: {
     attributes: [],
     note: "the ok summary; below validation.lowConfidence the note is appended, without summary 'Wenig belegt.'",
@@ -252,6 +257,7 @@ export function mapSpot(
     highlightIds: ctx.highlightIds,
     externalRefs: { googlePlaceIds: {}, osmId: src.osmId, wikidataId: src.wikidataId },
     summary: mapSummary(src.summary, profile?.confidence ?? null, ctx.cfg),
+    images: mapImages(src.publicId, src.images),
     sources: sources.sources,
     provenance: provenance(p, has, {
       anchorPosition: anchor !== undefined,

@@ -10,6 +10,7 @@ export const reviewKindEnum = pgEnum("review_kind", [
   "coast_tile_without_area",
   "uncertain_change",
   "comparison_deviation",
+  "place_image",
 ]);
 export const reviewStatusEnum = pgEnum("review_status", ["open", "decided", "dismissed"]);
 

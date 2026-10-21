@@ -90,6 +90,16 @@ describe("fixtures-record CLI", () => {
     expect(() => parseArgs(["--subdivision", "saronic", "--nominatim", "Kolona", "q025:813:510"])).toThrow(/usage/);
   });
 
+  it("--imagery takes a longitude and a latitude and stands alone", () => {
+    expect(parseArgs(["--imagery", "22.995", "37.49"])).toEqual({ imagery: { lon: 22.995, lat: 37.49 } });
+    expect(() => parseArgs(["--imagery", "22.995"])).toThrow(/usage/);
+    expect(() => parseArgs(["--imagery", "east", "37.49"])).toThrow(/usage/);
+    expect(() => parseArgs(["--imagery", "200", "37.49"])).toThrow(/usage/);
+    expect(() => parseArgs(["--imagery", "22.995", "95"])).toThrow(/usage/);
+    expect(() => parseArgs(["--imagery", "22.995", "37.49", "--subdivision", "saronic"])).toThrow(/usage/);
+    expect(() => parseArgs(["--subdivision", "saronic", "--imagery", "22.995", "37.49"])).toThrow(/usage/);
+  });
+
   it("--ai takes a model task, at most 5 answers and a cost ceiling, and stands alone", () => {
     expect(parseArgs(["--ai", "extract-facts"])).toEqual({ ai: { task: "extract-facts", limit: 5, maxEur: 1 } });
     expect(parseArgs(["--ai", "extract-facts", "--limit", "5", "--max-eur", "1"])).toEqual({ ai: { task: "extract-facts", limit: 5, maxEur: 1 } });
