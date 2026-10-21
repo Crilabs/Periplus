@@ -54,7 +54,7 @@ async function prepassForms(db: Db, versionId: string, cfg: MentionsConfig, affi
  * `tile_geo_objects` (never of a `country`, `sea` or `admin_region`, which expand differently), plus the scope tiles of
  * every valid subdivision whose admin region (`geo_object_id`) the text names.
  */
-async function prepassTiles(db: Db, versionId: string, cfg: MentionsConfig, affixes: NameAffixesConfig): Promise<string[]> {
+export async function prepassTiles(db: Db, versionId: string, cfg: MentionsConfig, affixes: NameAffixesConfig): Promise<string[]> {
   const forms = await prepassForms(db, versionId, cfg, affixes);
   if (forms.length === 0) return [];
   const { rows } = await db.execute<{ id: string; type: string }>(sql`

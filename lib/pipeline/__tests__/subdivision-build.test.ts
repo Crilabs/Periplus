@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { runs, subdivisions } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
+import { GAZETTEER_STAGES } from "@/lib/pipeline/gazetteer/stages";
 import { afterBuildRunEnded, queueCountry, startSubdivisionBuild, SUBDIVISION_BUILD_STAGES } from "@/lib/pipeline/subdivision-build";
 import { withRollback } from "@/test/db";
 import { insertTestSubdivision } from "@/test/text";
@@ -33,6 +34,13 @@ const buildRuns = (tx: Db, key: string) =>
 const subdivision = async (tx: Db, key: string) => (await tx.select().from(subdivisions).where(eq(subdivisions.key, key)))[0]!;
 
 describe("SUBDIVISION_BUILD_STAGES", () => {
+  it("has mentions.reread right after the gazetteer stages", () => {
+    const stages: readonly string[] = SUBDIVISION_BUILD_STAGES;
+    expect(stages.indexOf("mentions.reread")).toBe(GAZETTEER_STAGES.length);
+    expect(stages[stages.indexOf("mentions.reread") + 1]).toBe(stages[GAZETTEER_STAGES.length + 1]);
+    expect(stages.slice(0, GAZETTEER_STAGES.length)).toEqual([...GAZETTEER_STAGES]);
+  });
+
   it("has areas.import after geometry and before discovery.area", () => {
     const stages: readonly string[] = SUBDIVISION_BUILD_STAGES;
     const i = stages.indexOf("areas.import");

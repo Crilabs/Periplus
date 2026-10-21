@@ -8,6 +8,7 @@ export const QUEUES = [
   "gazetteer.build",
   "gazetteer.coarse",
   "subdivisions.build",
+  "mentions.reread",
   "seed.tile",
   "datasets.import",
   "areas.import",
