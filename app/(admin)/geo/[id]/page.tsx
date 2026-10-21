@@ -14,6 +14,7 @@ import {
   NAME_ORIGIN_LABELS,
   PLACE_KIND_LABELS,
   PLACE_STATUS_LABELS,
+  POI_CATEGORY_LABELS,
   runScopeError,
 } from "../../_components/labels";
 import { MentionsPanel } from "../../_components/mentions-panel";
@@ -106,13 +107,22 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
       <PageHeader
         title={
           <>
-            {o.name ?? o.id} <span className="font-normal text-muted">({GEO_OBJECT_TYPE_LABELS[o.type]})</span>
+            {o.name ?? o.id}{" "}
+            <span className="font-normal text-muted">
+              ({GEO_OBJECT_TYPE_LABELS[o.type]}
+              {o.category ? ` · ${POI_CATEGORY_LABELS[o.category]}` : ""})
+            </span>
           </>
         }
         back={{ href: "/map", label: "Karte" }}
         meta={
           <>
             <Badge>{GEO_OBJECT_TYPE_LABELS[o.type]}</Badge>
+            {o.category && (
+              <Badge tone="accent" title="Kategorie">
+                {POI_CATEGORY_LABELS[o.category]}
+              </Badge>
+            )}
             <Badge tone="neutral" title="Herkunft">
               {GEO_ORIGIN_LABELS[o.origin]}
             </Badge>
