@@ -305,6 +305,7 @@ describe("buildProfile", () => {
           sources: [{ key: "source:a", weight: 1 }, { key: "source:b", weight: 1 }],
           sitelinks: null,
           category: "food",
+          kinds: [],
           spotCandidates: [
             { placeId: "sp_far", distanceNm: 30 },
             { placeId: "sp_b", distanceNm: 8 },
@@ -353,9 +354,9 @@ describe("buildProfile", () => {
 
     const sources = [{ key: "source:b", weight: 0.4 }, { key: "source:a", weight: 1 }, { key: "source:a", weight: 0.5 }];
     const spots = [{ placeId: "sp_c", distanceNm: 3 }, { placeId: "sp_a", distanceNm: 3 }, { placeId: "sp_b", distanceNm: 1 }, { placeId: "sp_far", distanceNm: 40 }];
-    const base = buildProfile(poiInput({ sources, sitelinks: 12, category: "beach", spotCandidates: spots }));
+    const base = buildProfile(poiInput({ sources, sitelinks: 12, category: "beach", kinds: ["tourism=viewpoint", "amenity=bench"], spotCandidates: spots }));
     for (let seed = 1; seed <= 10; seed++) {
-      const shuffled = buildProfile(poiInput({ sources: shuffle(sources, seed), sitelinks: 12, category: "beach", spotCandidates: shuffle(spots, seed) }));
+      const shuffled = buildProfile(poiInput({ sources: shuffle(sources, seed), sitelinks: 12, category: "beach", kinds: shuffle(["tourism=viewpoint", "amenity=bench"], seed), spotCandidates: shuffle(spots, seed) }));
       expect(shuffled, `seed ${seed}`).toEqual(base);
     }
   });

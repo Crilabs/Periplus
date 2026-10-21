@@ -94,7 +94,7 @@ describe("loadDerivedInputs", () => {
   it("a poi gets confirmed places within 50 nm as candidates, a candidate place is not one", () =>
     withRollback(async (tx) => {
       const poi = await object(tx, "poi", { category: "culture" });
-      await tx.execute(sql`update geo_objects set wikidata_id = 'Q940000001' where id = ${poi}`);
+      await tx.execute(sql`update geo_objects set wikidata_id = 'Q940000001', tags = '{"historic":"castle","wikidata_class":"Q839954"}' where id = ${poi}`);
       await tx.insert(wikidataSitelinks).values({ wikidataId: "Q940000001", sitelinks: 37, fetchedAt: new Date() });
       const near = await placeAt(tx, LON, LAT + 10 * NM_LAT);
       const nearer = await placeAt(tx, LON, LAT + 3 * NM_LAT);
@@ -118,6 +118,7 @@ describe("loadDerivedInputs", () => {
       expect(d.importance).toMatchObject({
         sitelinks: 37,
         category: "culture",
+        kinds: ["historic=castle", "wikidata:Q839954"],
         sources: [
           { key: `source:${guide}`, weight: 0.5 },
           { key: `source:${forum}`, weight: 0.4 },
@@ -138,7 +139,7 @@ describe("loadDerivedInputs", () => {
   it("a poi without a sitelink count has sitelinks null, one without a category no importance", () =>
     withRollback(async (tx) => {
       const poi = await object(tx, "poi", { category: "culture" });
-      expect((await derived(tx, poi)).importance).toMatchObject({ sitelinks: null, sources: [] });
+      expect((await derived(tx, poi)).importance).toMatchObject({ sitelinks: null, sources: [], kinds: [] });
       const plain = await object(tx, "poi");
       expect(await derived(tx, plain)).toEqual({ quietness: null, importance: null });
     }));

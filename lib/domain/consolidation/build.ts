@@ -354,7 +354,7 @@ export function buildProfile(input: BuildProfileInput): BuiltProfile {
     const sourceKeys = sortedUnique(d.sources.map((s) => s.key));
     const sources = [...new Map([...d.sources].sort((a, b) => cmp(a.key, b.key) || a.weight - b.weight).map((s) => [s.key, s.weight]))]
       .map(([key, weight]) => ({ key, weight }));
-    const decided = { score: imp.score, sources, sitelinks: d.sitelinks, category: d.category };
+    const decided = { score: imp.score, sources, sitelinks: d.sitelinks, category: d.category, kinds: sortedUnique(d.kinds) };
     setDerived("derived.importance", imp.importance, fixedProvenance("derived", { sourceKeys }, decided));
     setDerived("derived.radius_nm", imp.radiusNm, fixedProvenance("derived", { sourceKeys }, { importance: imp.importance, ...decided }));
     const spotIds = spotIdsWithin(d.spotCandidates, imp.radiusNm, cfg.importance.maxSpotIds);

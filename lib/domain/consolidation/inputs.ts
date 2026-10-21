@@ -11,6 +11,7 @@ import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { effectiveVersionMeta, type EffectiveVersionMeta } from "@/lib/domain/mentions/classification";
 import { validAtAlias } from "@/lib/domain/timeline";
+import { poiKinds } from "./derived/importance";
 import type { QuietnessParts } from "./derived/quietness";
 import { applyRule } from "./rules";
 import type { ConflictResolution, ConsolidationInput, RuleName } from "./types";
@@ -583,6 +584,8 @@ export type DerivedInputs = {
     sources: Array<{ key: string; weight: number }>;
     sitelinks: number | null;
     category: PoiCategory;
+    /** `poiKinds` of its tags (importance `tagBonus`, spec 16). */
+    kinds: string[];
     spotCandidates: Array<{ placeId: string; distanceNm: number }>;
   } | null;
 };
@@ -598,7 +601,7 @@ export type DerivedInputs = {
  *   `quietness.ferryTraffic` (the parent and its supporting input ids cited); otherwise null.
  * - POI: the independent sources with a mention of it or of an object merged into it (`source:<id>`, weight
  *   `sources.weight`; rejected and ended sources left out), its Wikidata sitelink count (null without an item or a
- *   loaded count), its category (no category → no importance) and the spot candidates: confirmed, valid, unmerged
+ *   loaded count), its category (no category → no importance), its kinds (`poiKinds` of its tags) and the spot candidates: confirmed, valid, unmerged
  *   places with a public id within the largest radius of meaning (`max(importance.radiusNm)`, ruling M5-E-R2), by
  *   their public id (`sp_…`), distance over `::geography` / 1852, rounded to 3 decimals.
  * - Any other level: nothing.
@@ -690,8 +693,8 @@ async function parentOf(db: Db, geoObjectId: string): Promise<string | null> {
 
 async function importanceInputs(db: Db, geoObjectId: string, opts: LoadInputsOptions): Promise<DerivedInputs["importance"]> {
   const { today, cfg } = opts;
-  const { rows: poi } = await db.execute<{ category: PoiCategory | null; sitelinks: number | null }>(sql`
-    select o.category::text as category, w.sitelinks
+  const { rows: poi } = await db.execute<{ category: PoiCategory | null; sitelinks: number | null; tags: Record<string, unknown> }>(sql`
+    select o.category::text as category, w.sitelinks, o.tags
     from geo_objects o
     left join wikidata_sitelinks w on w.wikidata_id = o.wikidata_id
     where o.id = ${geoObjectId}
@@ -731,6 +734,7 @@ async function importanceInputs(db: Db, geoObjectId: string, opts: LoadInputsOpt
     sources: sourceRows.map((r) => ({ key: `source:${r.id}`, weight: Number(r.weight) })),
     sitelinks: poi[0]!.sitelinks === null ? null : Number(poi[0]!.sitelinks),
     category,
+    kinds: poiKinds(poi[0]!.tags),
     spotCandidates: spots.map((r) => ({ placeId: r.public_id, distanceNm: Number(r.distance_nm) })),
   };
 }
