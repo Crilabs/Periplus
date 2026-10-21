@@ -1,5 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
-import type { AppConfig } from "@/lib/config";
+import { getConfig, type AppConfig } from "@/lib/config";
 import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import type { PlaceKind, PlaceStatus, PoiCategory } from "@/lib/db/schema/geo";
@@ -9,6 +9,8 @@ import { levelFor } from "@/lib/domain/facts/levels";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
+import { loadHighlightCandidates } from "@/lib/domain/highlights/candidates";
+import type { HighlightCandidate, TextName } from "@/lib/domain/highlights/select";
 import { effectiveVersionMeta, type EffectiveVersionMeta } from "@/lib/domain/mentions/classification";
 import { validAtAlias } from "@/lib/domain/timeline";
 import { poiKinds } from "./derived/importance";
@@ -588,6 +590,12 @@ export type DerivedInputs = {
     kinds: string[];
     spotCandidates: Array<{ placeId: string; distanceNm: number }>;
   } | null;
+  /**
+   * Places only (spec 16): the highlight candidates and unassigned text names (`loadHighlightCandidates`) and the
+   * duplicate distance (`delivery.validation.highlightDuplicateM`); absent for other levels and for rules without
+   * `highlights` (v1).
+   */
+  highlights?: { candidates: HighlightCandidate[]; textNames: TextName[]; duplicateM: number } | null;
 };
 
 /**
@@ -598,7 +606,8 @@ export type DerivedInputs = {
  *   the place position (the nearest lane cited), otherwise the `ferry_traffic` of the nearest parent that has inputs
  *   for it, loaded with an attribute filter and evaluated with its schema rule on the same run date (ruling M5-P17:
  *   not the parent's stored profile, which may be built later in the same run) and mapped by
- *   `quietness.ferryTraffic` (the parent and its supporting input ids cited); otherwise null.
+ *   `quietness.ferryTraffic` (the parent and its supporting input ids cited); otherwise null. Its highlight
+ *   candidates and text names (`loadHighlightCandidates`, spec 16), null when the rules version has no `highlights`.
  * - POI: the independent sources with a mention of it or of an object merged into it (`source:<id>`, weight
  *   `sources.weight`; rejected and ended sources left out), its Wikidata sitelink count (null without an item or a
  *   loaded count), its category (no category → no importance), its kinds (`poiKinds` of its tags) and the spot candidates: confirmed, valid, unmerged
@@ -612,9 +621,23 @@ export async function loadDerivedInputs(
   ctx: ProfileContext,
   opts: LoadInputsOptions,
 ): Promise<DerivedInputs> {
-  if (ctx.level === "place" && ctx.place) return { quietness: await quietnessInputs(db, geoObjectId, ctx.place.position, opts), importance: null };
+  if (ctx.level === "place" && ctx.place) {
+    return {
+      quietness: await quietnessInputs(db, geoObjectId, ctx.place.position, opts),
+      importance: null,
+      highlights: await highlightInputs(db, geoObjectId, opts),
+    };
+  }
   if (ctx.level === "poi") return { quietness: null, importance: await importanceInputs(db, geoObjectId, opts) };
   return { quietness: null, importance: null };
+}
+
+/** The highlight inputs of a place; null when the rules version has no `highlights` (v1 selects nothing). */
+async function highlightInputs(db: Db, geoObjectId: string, opts: LoadInputsOptions): Promise<DerivedInputs["highlights"]> {
+  if (!opts.cfg.highlights) return null;
+  const appConfig = opts.appConfig ?? getConfig();
+  const { candidates, textNames } = await loadHighlightCandidates(db, geoObjectId, opts.cfg, opts.today, appConfig);
+  return { candidates, textNames, duplicateM: appConfig.delivery.validation.highlightDuplicateM };
 }
 
 async function quietnessInputs(

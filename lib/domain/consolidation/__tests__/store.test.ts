@@ -2,7 +2,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { changeEvents, evaluationProfiles, places, profiles, reviewDecisions, reviewTasks } from "@/lib/db/schema";
+import { changeEvents, evaluationProfiles, geoObjects, highlightSelections, places, profiles, reviewDecisions, reviewTasks } from "@/lib/db/schema";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
 import { newId } from "@/lib/domain/ids";
 import { insertComputation, insertPlace, insertSource, insertTextFact } from "@/test/consolidation";
@@ -431,5 +431,61 @@ describe("consolidateGeo", () => {
     } finally {
       await cleanup();
     }
+  });
+
+  describe("highlight selections (spec 16)", () => {
+    // far from every other test's POIs (synthetic, outside the pilot box)
+    const LON = -140.3;
+    const LAT = -45.7;
+    const LAT_PER_KM = 1 / 111.1;
+    const culture = (tx: Db, name: string, km: number) =>
+      insertNamedObject(tx, { type: "poi", category: "culture", names: [{ name }], lon: LON, lat: LAT + km * LAT_PER_KM });
+    const selectionOf = (tx: Db, placeObjectId: string) =>
+      tx
+        .select({ poi: highlightSelections.poiGeoObjectId, category: highlightSelections.category, rank: highlightSelections.rank, distanceKm: highlightSelections.distanceKm, profileVersion: highlightSelections.profileVersion })
+        .from(highlightSelections)
+        .where(eq(highlightSelections.placeGeoObjectId, placeObjectId))
+        .orderBy(asc(highlightSelections.rank));
+
+    it("storing a place profile replaces its highlight_selections rows", () =>
+      withRollback(async (tx) => {
+        const { objectId } = await insertPlace(tx, { lon: LON, lat: LAT, name: "Highlightbucht" });
+        const a = await culture(tx, "Kastro", 0.3);
+        const b = await culture(tx, "Moni", 0.6);
+        const stale = await culture(tx, "Weit weg", 30);
+        await tx.insert(highlightSelections).values({ placeGeoObjectId: objectId, poiGeoObjectId: stale, category: "culture", rank: 1, distanceKm: 30, profileVersion: 0 });
+
+        expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "created", version: 1 });
+        const first = await selectionOf(tx, objectId);
+        expect(first.map((r) => [r.poi, r.category, r.rank, r.profileVersion])).toEqual([
+          [a, "culture", 1, 1],
+          [b, "culture", 2, 1],
+        ]);
+        expect(first[0]!.distanceKm).toBeCloseTo(0.3, 1);
+        const [v1] = await versionsOf(tx, objectId);
+        expect(v1!.attributes["derived.highlights"]).toEqual({ culture: { ids: [a, b], level: "none" } });
+
+        // an evaluation run writes its profile only, never the selection
+        await tx.update(geoObjects).set({ validTo: today }).where(eq(geoObjects.id, a));
+        const runId = await insertTestRun(tx);
+        await consolidateGeo(tx, objectId, { runId, mode: "evaluation", rulesVersion: "v2", today });
+        expect((await selectionOf(tx, objectId)).map((r) => r.poi)).toEqual([a, b]);
+
+        // the next regular run replaces the rows: the ended POI drops out
+        expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "created", version: 2 });
+        expect((await selectionOf(tx, objectId)).map((r) => [r.poi, r.rank, r.profileVersion])).toEqual([[b, 1, 2]]);
+      }));
+
+    it("a merged place has no selection rows", () =>
+      withRollback(async (tx) => {
+        const { objectId, placeId } = await insertPlace(tx, { lon: LON, lat: LAT, name: "Mergebucht" });
+        const a = await culture(tx, "Kastro", 0.3);
+        await consolidateGeo(tx, objectId, { today });
+        expect((await selectionOf(tx, objectId)).map((r) => r.poi)).toEqual([a]);
+        const target = await insertPlace(tx, { lon: LON, lat: LAT, name: "Ziel" });
+        await tx.update(places).set({ status: "rejected", statusReason: "merged", mergedIntoId: target.placeId }).where(eq(places.id, placeId));
+        expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "skipped" });
+        expect(await selectionOf(tx, objectId)).toEqual([]);
+      }));
   });
 });

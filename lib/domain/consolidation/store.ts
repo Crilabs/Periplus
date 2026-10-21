@@ -3,6 +3,8 @@ import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { changeEvents, evaluationProfiles, profiles, reviewTasks } from "@/lib/db/schema";
 import { canonicalJson } from "@/lib/domain/facts/schema";
+import type { CategorySelection } from "@/lib/domain/highlights/select";
+import { deleteHighlightSelections, replaceHighlightSelections, type HighlightsValue } from "@/lib/domain/highlights/selections";
 import { createReviewTask, OpenTaskVanished } from "@/lib/domain/review";
 import { runDate as runDateOf } from "@/lib/domain/runs";
 import { latestProfile } from "@/lib/domain/timeline";
@@ -112,6 +114,8 @@ async function openDraftTask(tx: Db, draft: TaskDraft, subjectId: string, contex
  *   - otherwise the draft opens a task on `<geoObjectId>:<attribute>` (context with `key` and `geoObjectId`) and
  *     writes its event;
  *   - an open task no draft of this run matches is dismissed (`context.dismissedReason` `superseded`).
+ * - `regular`, a place: its `highlight_selections` rows are replaced by the `derived.highlights` of the profile as
+ *   stored (new or kept version, spec 16); an ended, merged or rejected place loses its rows.
  * - `evaluation`: upserts `evaluation_profiles (runId, geoObjectId)` with `opts.rulesVersion`: the profile as a regular
  *   run would write it (after the comparison with the valid profile, so uncertain values stay); no profile, event or
  *   task.
@@ -136,7 +140,11 @@ export async function consolidateGeo(db: Db, geoObjectId: string, opts: Consolid
     const context = await loadContext(tx, geoObjectId, cfg, today);
     if (context === null) {
       // an ended, merged or rejected object: its open profile tasks are moot, its last profile stays as history
-      if (mode === "regular") await dismissTasks(tx, [...(await lockOpenTasks(tx, geoObjectId)).values()].map((t) => t.id), "object_ended");
+      if (mode === "regular") {
+        await dismissTasks(tx, [...(await lockOpenTasks(tx, geoObjectId)).values()].map((t) => t.id), "object_ended");
+        // an ended, merged or rejected place selects no highlights any more (spec 16)
+        await deleteHighlightSelections(tx, geoObjectId);
+      }
       return { status: "skipped", version: null, events: 0, tasks: 0 };
     }
 
@@ -190,6 +198,17 @@ export async function consolidateGeo(db: Db, geoObjectId: string, opts: Consolid
         rulesVersion: profile.rulesVersion,
         runId: opts.runId ?? null,
       });
+    }
+
+    if (context.level === "place" && context.place && version !== null) {
+      // the selection of the profile as stored (spec 16), replaced on every regular consolidation of the place
+      await replaceHighlightSelections(
+        tx,
+        geoObjectId,
+        version,
+        profile.attributes["derived.highlights"] as HighlightsValue | undefined,
+        profile.provenance["derived.highlights"]?.derivedFrom as Partial<Record<string, CategorySelection>> | undefined,
+      );
     }
 
     const events: EventDraft[] = [...diff.events];

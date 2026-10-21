@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import type { ConsolidationConfig } from "@/lib/config/schemas";
+import type { PoiCategory } from "@/lib/db/schema/geo";
 import { canonicalJson, getFactSchema } from "@/lib/domain/facts/schema";
+import { selectHighlights } from "@/lib/domain/highlights/select";
 import { profileConfidence } from "./derived/confidence";
 import { importanceOf, spotIdsWithin } from "./derived/importance";
 import { type OccupancyWord, quietnessScore, type QuietnessWord } from "./derived/quietness";
@@ -229,7 +231,9 @@ export function profileContentHash(p: Pick<BuiltProfile, "attributes" | "provena
  * 4. identity (`gazetteer`, rule `identity`, confidence 1): `geo.name`, `geo.parent_id`, `geo.geometry_hash`; places
  *    `place.kind`, `place.status`, `place.position` (6 decimals), `exclude` in the contract's vocabulary
  *    (`exclude.ts`), citing the restricted area and the `prohibitions` entry that excluded the place;
- * 5. derived values (`derived`, the deciding inputs in `derivedFrom`): places `derived.quietness`, `derived.season`;
+ * 5. derived values (`derived`, the deciding inputs in `derivedFrom`): places `derived.quietness`, `derived.season`,
+ *    `derived.highlights` (spec 16: per category the selected ids in rank order and the level; `derivedFrom` holds the
+ *    `CategorySelection` per category, `poiIds` the selected POIs);
  *    POIs `derived.importance`, `derived.radius_nm`, `derived.spot_ids`;
  * 6. gaps: level attributes without a value, except `gaps.ignore[place.kind]`, with the computation's reason or
  *    `no_facts`; then the missing derived values (`derived.quietness` `too_few_parts`, `derived.importance`
@@ -347,6 +351,18 @@ export function buildProfile(input: BuildProfileInput): BuiltProfile {
     }
     const hints = seasonHints(results);
     if (hints.length > 0) setDerived("derived.season", hints, fixedProvenance("derived", cite(provenance, ["season_notes"])));
+    // spec 16: rules without `highlights` (v1) select nothing; no category in reach → no attribute, no gap
+    if (cfg.highlights && derived.highlights) {
+      const h = derived.highlights;
+      const selections = selectHighlights(h.candidates, h.textNames, cfg.highlights, h.duplicateM);
+      const categories = Object.keys(selections).sort() as PoiCategory[];
+      if (categories.length > 0) {
+        const value = Object.fromEntries(categories.map((c) => [c, { ids: selections[c]!.ids, level: selections[c]!.level }]));
+        const derivedFrom = Object.fromEntries(categories.map((c) => [c, selections[c]!]));
+        const poiIds = sortedUnique(categories.flatMap((c) => selections[c]!.ids));
+        setDerived("derived.highlights", value, fixedProvenance("derived", { poiIds }, derivedFrom));
+      }
+    }
   }
   if (context.level === "poi" && derived.importance) {
     const d = derived.importance;

@@ -5,6 +5,7 @@ import { takesFactsSql } from "@/lib/domain/facts/levels";
 import { runDate } from "@/lib/domain/runs";
 import { subdivisionTilesSql } from "@/lib/domain/gazetteer/tiles-ensure";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
+import { consolidationConfigFor } from "./active-rules";
 
 /*
  * What a run consolidates (plan Task 16): the geo objects of its scope, and whether its quote fidelity blocks it.
@@ -63,12 +64,50 @@ const consolidatable = (day: string) => sql`${validObject(day)} and ${takesFacts
  *   the profile in the same run);
  * - otherwise as a text run.
  * Except for `geoObjectIds`, only valid, unmerged objects that take facts (a settlement would only be skipped). Validity
- * is judged on `today`, default the run date (`runDate`, final review M-7), as `consolidateGeo` judges it.
+ * is judged on `today`, default the run date (`runDate`, final review M-7), as `consolidateGeo` judges it. Except for
+ * `geoObjectIds` too, a POI is replaced by the places within the largest highlight reach of it (`poisToPlaces`, spec 16):
+ * its importance feeds their selection, its own profile comes from the highlights stage.
  */
 export async function consolidationTargets(db: Db, run: { id: string; params: Record<string, unknown> }, today?: string): Promise<string[]> {
   const p = run.params;
   if (!Array.isArray(p.documentVersionIds) && Array.isArray(p.geoObjectIds)) return sorted(strings(p.geoObjectIds));
   const day = today ?? (await runDate(db, run.id));
+  return poisToPlaces(db, await scopeTargets(db, run, day), day, p.rulesVersion);
+}
+
+/**
+ * Spec 16: a POI target leaves the geo stage; the places whose selection it may change take its place, i.e. the geo
+ * objects of the valid, unmerged, not rejected places within `max(highlights.reachKm)` of it (distance from the place's
+ * anchor, else its position, as `loadHighlightCandidates` measures), themselves consolidatable on `day`. Rules
+ * without `highlights` (v1) keep the POI targets.
+ */
+async function poisToPlaces(db: Db, targets: string[], day: string, rulesVersion: unknown): Promise<string[]> {
+  if (targets.length === 0) return targets;
+  const highlights = (await consolidationConfigFor(db, rulesVersion)).highlights;
+  if (!highlights) return targets;
+  const reachM = Math.max(...highlights.reachKm) * 1000;
+  const { rows } = await db.execute<{ id: string; poi: boolean }>(sql`
+    with t as (
+      select o.id, o.geom, o.type = 'poi' as poi
+      from geo_objects o where o.id = any(${sql.param(targets)}::uuid[])
+    )
+    select t.id, false as poi from t where not t.poi
+    union
+    select distinct o.id, false from t
+    join places pl on pl.merged_into_id is null and pl.status <> 'rejected'
+      and pl.valid_from <= ${day}::date and (pl.valid_to is null or pl.valid_to > ${day}::date)
+      -- cheap box test first, then the exact distance in metres
+      and coalesce(pl.anchor_position, pl.position) && ST_Expand(t.geom, ${reachM}::float8 / (111320 * greatest(cos(radians(ST_Y(ST_Centroid(t.geom)))), 0.1)))
+      and ST_DWithin(t.geom::geography, coalesce(pl.anchor_position, pl.position)::geography, ${reachM}::float8)
+    join geo_objects o on o.id = pl.geo_object_id and ${consolidatable(day)}
+    where t.poi
+  `);
+  return ids(rows);
+}
+
+/** The geo objects of the run's scope (see `consolidationTargets`), POIs included. */
+async function scopeTargets(db: Db, run: { id: string; params: Record<string, unknown> }, day: string): Promise<string[]> {
+  const p = run.params;
   if (!Array.isArray(p.documentVersionIds) && (await isRevisitRun(db, run.id))) {
     // A revisit stopped before `revisit.freeze` evaluated nothing: only the objects of pages its crawl found gone,
     // never the subdivision its `subdivisionKey` names (ruling M7-G-R4).

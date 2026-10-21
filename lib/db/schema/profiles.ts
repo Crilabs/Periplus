@@ -18,13 +18,13 @@ import {
 } from "drizzle-orm/pg-core";
 import type { AttributeProvenance, ConflictNote, ProfileGap } from "@/lib/domain/consolidation/types";
 import { newId } from "@/lib/domain/ids";
-import { geoObjects } from "./geo";
+import { geoObjects, poiCategoryEnum } from "./geo";
 import { runs } from "./ops";
 
 /*
  * Consolidated profiles (spec 07). profiles, change_events and profile_summaries are append-only
  * (forbid_mutation trigger, drizzle/0032_profile_triggers.sql); evaluation_profiles,
- * place_discovery_requests and wikidata_sitelinks are working state.
+ * place_discovery_requests, wikidata_sitelinks and highlight_selections are working state.
  */
 
 export const changeTypeEnum = pgEnum("change_type", [
@@ -178,3 +178,29 @@ export const wikidataSitelinks = pgTable("wikidata_sitelinks", {
   sitelinks: integer("sitelinks").notNull(),
   fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
 });
+
+/**
+ * Working state (spec 16): the highlights a place's newest profile selected (`derived.highlights`), one row per
+ * selected POI, replaced whenever the place is consolidated (regular runs only) and deleted when the place ends or is
+ * merged. `rank` is the 1-based position within its category; `profile_version` the place profile it came from.
+ */
+export const highlightSelections = pgTable(
+  "highlight_selections",
+  {
+    placeGeoObjectId: uuid("place_geo_object_id")
+      .notNull()
+      .references(() => geoObjects.id),
+    poiGeoObjectId: uuid("poi_geo_object_id")
+      .notNull()
+      .references(() => geoObjects.id),
+    category: poiCategoryEnum("category").notNull(),
+    rank: integer("rank").notNull(),
+    distanceKm: real("distance_km").notNull(),
+    profileVersion: integer("profile_version").notNull(),
+  },
+  (t) => [
+    primaryKey({ name: "highlight_selections_pk", columns: [t.placeGeoObjectId, t.poiGeoObjectId] }),
+    index("highlight_selections_poi_idx").on(t.poiGeoObjectId),
+    check("highlight_selections_rank_positive", sql`${t.rank} >= 1`),
+  ],
+);

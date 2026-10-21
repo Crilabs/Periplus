@@ -175,6 +175,8 @@ describe("loadDerivedInputs", () => {
           ferryBasis: { kind: "lane", restrictedAreaId: nearest },
         },
         importance: null,
+        // the place's highlight inputs (spec 16); other tests may commit POIs nearby
+        highlights: { candidates: expect.any(Array), textNames: expect.any(Array), duplicateM: 500 },
       });
     }));
 
