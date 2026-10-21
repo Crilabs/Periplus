@@ -58,3 +58,7 @@ B5, B7 (behoben), B6, B8, B9, B10 (offen) – siehe `befunde.md`.
 ## Tor
 
 **Nicht bestanden, Entscheidung Christian nötig:** keine systematischen Fehler in Typ oder Landesteil-Zuordnung, aber (1) die Paar-Flut aus Athener POIs (B8) macht das Review des Landesteils unpraktikabel, (2) Wikidata-Häfen als Buchten und nicht erkannte Dubletten erzeugen doppelte Ortskandidaten (B9), (3) Buchten im Wasser hängen am Landesteil statt an der Insel (B10). Für die Probekachel ist P2/P3 trotzdem aussagekräftig; deshalb habe ich weitergemacht.
+
+## Zweiter Durchgang (21.10.2026, nach Plan 16)
+
+Lauf `01a15e2c…` (nach Fix B16), 31 min. `check:gazetteer`: 56 Küstenkacheln, **191** offene Paar-Aufgaben (vorher 1.542 – keine POI-Paare mehr, Plan 16), 442 Objekte ohne de/en/el-Namen. POI-Kandidaten bleiben 20.178 (OSM) und 2.062 (Wikidata): das Zentrum Athens liegt in 20 km zum Meer; die Begrenzung geschieht in der Auswahl je Ort, nicht im Gazetteer. Probekachel: Zählung, Landesteil-Zuordnung, Namensabdeckung und Navily-Abgleich identisch mit dem ersten Durchgang (Befunde B9, B10 bestehen weiter).

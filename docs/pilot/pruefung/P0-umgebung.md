@@ -52,3 +52,15 @@ B1 (behoben), B2 (offen), B3 (offen), B4 (behoben) – siehe `befunde.md`.
 ## Tor
 
 **Bestanden** mit offenem B2 (betrifft nur Gaza) und B3 (Runbook). Landesteile `GR-I` und `GR-J` vorhanden und plausibel.
+
+## Zweiter Durchgang (21.10.2026, nach Plan 16 „Highlights je Ort“)
+
+Datenbank geleert bis auf Benutzer (Wunsch Christian: „bestehende Daten verwerfen“), Migrationen bis 0064.
+
+| Schritt | Ergebnis |
+| --- | --- |
+| Nur `gazetteer.coarse` (Lauf `01a15df1…`) | 1 von 25 Ländern fertig, dann viele HTTP 502 von Overpass (B15) und „land polygons missing“ (B14: der Grob-Gazetteer braucht seit PR 12 Landpolygone); Lauf beendet. Länder mit Grenzen: 19 (u. a. GR vollständig: 90 Einheiten), Inseln/Golfe/Orte des Grob-Gazetteers fehlen noch |
+| Landpolygone `--mediterranean` | 26.388 |
+| Nur `subdivisions.build` | 45 s; 93 aktive + 2 ausgeschlossene Landesteile (statt 111: Länder mit fehlgeschlagenem Grob-Gazetteer fehlen); alle 13 griechischen vorhanden |
+
+Tor für die Probekachel: **bestanden** (GR-I vollständig). Grob-Gazetteer der übrigen Länder wird nach P3 nachgeholt (nicht parallel, B16).

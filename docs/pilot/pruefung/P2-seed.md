@@ -26,3 +26,7 @@ Je benannte Bucht, Hafen und Marina der Kachel ein Kandidat: etwa 30 Ankerplätz
 ## Kosten
 
 0 €.
+
+## Zweiter Durchgang (21.10.2026, nach Plan 16)
+
+Lauf `01a15e49…`, 15 s, identisch mit dem ersten Durchgang: 38 Kandidaten (30 Ankerplätze, 7 Marinas, 1 Hafen); Navily-Häfen 7/7/11 von 17 in 300/500/1.000 m, Ankerplätze 15/27/47 von 89; 7 Kandidaten an Land; dieselben Dubletten und Wikidata-Häfen als Bucht (B9). Kandidaten-Review offen für Christian.
