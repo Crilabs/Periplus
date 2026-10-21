@@ -86,21 +86,28 @@ async function poisToPlaces(db: Db, targets: string[], day: string, rulesVersion
   const highlights = (await consolidationConfigFor(db, rulesVersion)).highlights;
   if (!highlights) return targets;
   const reachM = Math.max(...highlights.reachKm) * 1000;
-  const { rows } = await db.execute<{ id: string; poi: boolean }>(sql`
+  // one box per POI target; the places with an anchor by `anchor_position && box`, the others by `position && box`, so
+  // each side uses its gist index (places_anchor_position_gist, places_position_gist); then the exact distance in metres
+  const { rows } = await db.execute<{ id: string }>(sql`
     with t as (
-      select o.id, o.geom, o.type = 'poi' as poi
+      select o.id, o.geom, o.type = 'poi' as poi,
+             ST_Expand(o.geom, ${reachM}::float8 / (111320 * greatest(cos(radians(ST_Y(ST_Centroid(o.geom)))), 0.1))) as box
       from geo_objects o where o.id = any(${sql.param(targets)}::uuid[])
     )
-    select t.id, false as poi from t where not t.poi
+    select t.id from t where not t.poi
     union
-    select distinct o.id, false from t
-    join places pl on pl.merged_into_id is null and pl.status <> 'rejected'
-      and pl.valid_from <= ${day}::date and (pl.valid_to is null or pl.valid_to > ${day}::date)
-      -- cheap box test first, then the exact distance in metres
-      and coalesce(pl.anchor_position, pl.position) && ST_Expand(t.geom, ${reachM}::float8 / (111320 * greatest(cos(radians(ST_Y(ST_Centroid(t.geom)))), 0.1)))
-      and ST_DWithin(t.geom::geography, coalesce(pl.anchor_position, pl.position)::geography, ${reachM}::float8)
+    select o.id from t
+    cross join lateral (
+      select p.geo_object_id, p.anchor_position as pt, p.merged_into_id, p.status, p.valid_from, p.valid_to
+      from places p where p.anchor_position && t.box
+      union all
+      select p.geo_object_id, p.position, p.merged_into_id, p.status, p.valid_from, p.valid_to
+      from places p where p.position && t.box and p.anchor_position is null
+    ) pl
     join geo_objects o on o.id = pl.geo_object_id and ${consolidatable(day)}
-    where t.poi
+    where t.poi and ST_DWithin(t.geom::geography, pl.pt::geography, ${reachM}::float8)
+      and pl.merged_into_id is null and pl.status <> 'rejected'
+      and pl.valid_from <= ${day}::date and (pl.valid_to is null or pl.valid_to > ${day}::date)
   `);
   return ids(rows);
 }

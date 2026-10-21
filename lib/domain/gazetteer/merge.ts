@@ -3,6 +3,7 @@ import type { GazetteerConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geoNames, geoObjects, places, type GeoObjectType, type GeoOrigin } from "@/lib/db/schema";
 import { dismissTasks, lockOpenPlaceTasks } from "@/lib/domain/consolidation/task-locks";
+import { dropHighlightSelectionsOf } from "@/lib/domain/highlights/selections";
 import { createReviewTask, hasDecidedTask } from "@/lib/domain/review";
 import { addNames, ensureFallbackNames, isGreek, normalizeName, transliterateElot743 } from "./names";
 
@@ -230,6 +231,8 @@ export async function mergeGeoObjects(db: Db, keepId: string, dropId: string): P
       .update(geoObjects)
       .set({ mergedIntoId: keepId, validTo: sql`current_date`, updatedAt: sql`now()` })
       .where(eq(geoObjects.id, dropId));
+    // the dropped object neither selects nor is a highlight any more (spec 16)
+    await dropHighlightSelectionsOf(tx, dropId);
     const takeOver = {
       ...(keep.osmId === null && drop.osmId !== null ? { osmId: drop.osmId } : {}),
       ...(keep.wikidataId === null && drop.wikidataId !== null ? { wikidataId: drop.wikidataId } : {}),

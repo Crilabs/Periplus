@@ -4,6 +4,9 @@ import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { changeEvents, evaluationProfiles, geoObjects, highlightSelections, places, profiles, reviewDecisions, reviewTasks } from "@/lib/db/schema";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
+import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
+import { selectedPoiIds } from "@/lib/domain/highlights/selections";
+import { setPlaceStatusByAdmin } from "@/lib/domain/place-status";
 import { newId } from "@/lib/domain/ids";
 import { insertComputation, insertPlace, insertSource, insertTextFact } from "@/test/consolidation";
 import { testDb, withRollback } from "@/test/db";
@@ -476,16 +479,46 @@ describe("consolidateGeo", () => {
         expect((await selectionOf(tx, objectId)).map((r) => [r.poi, r.rank, r.profileVersion])).toEqual([[b, 1, 2]]);
       }));
 
-    it("a merged place has no selection rows", () =>
+    it("a merged place has no selection rows; a merged POI is no selected highlight", () =>
       withRollback(async (tx) => {
         const { objectId, placeId } = await insertPlace(tx, { lon: LON, lat: LAT, name: "Mergebucht" });
-        const a = await culture(tx, "Kastro", 0.3);
-        await consolidateGeo(tx, objectId, { today });
-        expect((await selectionOf(tx, objectId)).map((r) => r.poi)).toEqual([a]);
         const target = await insertPlace(tx, { lon: LON, lat: LAT, name: "Ziel" });
-        await tx.update(places).set({ status: "rejected", statusReason: "merged", mergedIntoId: target.placeId }).where(eq(places.id, placeId));
-        expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "skipped" });
+        const a = await culture(tx, "Kastro", 0.3);
+        const b = await culture(tx, "Moni", 0.6);
+        const twin = await culture(tx, "Moni Twin", 0.61);
+        for (const id of [objectId, target.objectId]) await consolidateGeo(tx, id, { today });
+        expect((await selectionOf(tx, objectId)).map((r) => r.poi)).toEqual([a, b, twin]);
+        expect(await selectedPoiIds(tx, [objectId, target.objectId])).toEqual([a, b, twin].sort());
+
+        // the gazetteer merge (as the review merge and „Zusammenführen“ do) drops the merged object's rows at once
+        await mergeGeoObjects(tx, target.objectId, objectId);
+        const [merged] = await tx.select({ status: places.status }).from(places).where(eq(places.id, placeId));
+        expect(merged!.status).toBe("rejected");
         expect(await selectionOf(tx, objectId)).toEqual([]);
+        // a merged POI leaves every selection
+        await mergeGeoObjects(tx, b, twin);
+        expect((await selectionOf(tx, target.objectId)).map((r) => r.poi)).toEqual([a, b]);
+        expect(await selectedPoiIds(tx, [objectId, target.objectId])).toEqual([a, b].sort());
+      }));
+
+    it("a rejected or ended place selects nothing", () =>
+      withRollback(async (tx) => {
+        const rejected = await insertPlace(tx, { lon: LON, lat: LAT, name: "Verworfen" });
+        const ended = await insertPlace(tx, { lon: LON, lat: LAT, name: "Beendet" });
+        const a = await culture(tx, "Kastro", 0.3);
+        for (const p of [rejected, ended]) await consolidateGeo(tx, p.objectId, { today });
+        expect(await selectedPoiIds(tx, [rejected.objectId, ended.objectId])).toEqual([a]);
+
+        // „Verwerfen“ deletes the rows at once
+        await setPlaceStatusByAdmin(tx, { placeId: rejected.placeId, status: "rejected", from: "confirmed", decidedBy: "test" });
+        expect(await selectionOf(tx, rejected.objectId)).toEqual([]);
+
+        // an ended place: its rows no longer count, and its next consolidation deletes them
+        await tx.update(places).set({ validTo: today }).where(eq(places.id, ended.placeId));
+        expect(await selectionOf(tx, ended.objectId)).toHaveLength(1);
+        expect(await selectedPoiIds(tx, [ended.objectId])).toEqual([]);
+        await consolidateGeo(tx, ended.objectId, { today });
+        expect(await selectionOf(tx, ended.objectId)).toEqual([]);
       }));
   });
 });

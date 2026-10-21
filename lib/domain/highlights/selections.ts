@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq, or, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { highlightSelections, type PoiCategory } from "@/lib/db/schema";
 import type { CategorySelection, HighlightLevel } from "./select";
@@ -39,12 +39,34 @@ export async function deleteHighlightSelections(tx: Db, placeGeoObjectId: string
   await tx.delete(highlightSelections).where(eq(highlightSelections.placeGeoObjectId, placeGeoObjectId));
 }
 
-/** The POIs the given places selected, sorted, without duplicates. */
+/**
+ * Deletes every row of a geo object that ends as a whole (a gazetteer merge drops it): as the selecting place and as
+ * a selected POI. The surviving object's places select again at their next consolidation.
+ */
+export async function dropHighlightSelectionsOf(tx: Db, geoObjectId: string): Promise<void> {
+  await tx
+    .delete(highlightSelections)
+    .where(or(eq(highlightSelections.placeGeoObjectId, geoObjectId), eq(highlightSelections.poiGeoObjectId, geoObjectId)));
+}
+
+/**
+ * The POIs the given places selected, sorted, without duplicates. Safety net beside the deletes on merge, rejection
+ * and end: only rows of a valid, unmerged, not rejected place on a valid, unmerged geo object, selecting a valid,
+ * unmerged POI, count (validity on the database date).
+ */
 export async function selectedPoiIds(db: Db, placeGeoObjectIds: string[]): Promise<string[]> {
   if (placeGeoObjectIds.length === 0) return [];
-  const rows = await db
-    .selectDistinct({ id: highlightSelections.poiGeoObjectId })
-    .from(highlightSelections)
-    .where(inArray(highlightSelections.placeGeoObjectId, placeGeoObjectIds));
-  return rows.map((r) => r.id).sort();
+  const { rows } = await db.execute<{ id: string }>(sql`
+    select distinct hs.poi_geo_object_id as id
+    from highlight_selections hs
+    join geo_objects po on po.id = hs.place_geo_object_id and po.merged_into_id is null
+      and po.valid_from <= current_date and (po.valid_to is null or po.valid_to > current_date)
+    join places pl on pl.geo_object_id = po.id and pl.merged_into_id is null and pl.status <> 'rejected'
+      and pl.valid_from <= current_date and (pl.valid_to is null or pl.valid_to > current_date)
+    join geo_objects o on o.id = hs.poi_geo_object_id and o.merged_into_id is null
+      and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
+    where hs.place_geo_object_id = any(${sql.param(placeGeoObjectIds)}::uuid[])
+    order by 1
+  `);
+  return rows.map((r) => r.id);
 }

@@ -115,7 +115,7 @@ async function openDraftTask(tx: Db, draft: TaskDraft, subjectId: string, contex
  *     writes its event;
  *   - an open task no draft of this run matches is dismissed (`context.dismissedReason` `superseded`).
  * - `regular`, a place: its `highlight_selections` rows are replaced by the `derived.highlights` of the profile as
- *   stored (new or kept version, spec 16); an ended, merged or rejected place loses its rows.
+ *   stored (new or kept version, spec 16); an object without a valid place (ended, merged, rejected) loses its rows.
  * - `evaluation`: upserts `evaluation_profiles (runId, geoObjectId)` with `opts.rulesVersion`: the profile as a regular
  *   run would write it (after the comparison with the valid profile, so uncertain values stay); no profile, event or
  *   task.
@@ -209,6 +209,9 @@ export async function consolidateGeo(db: Db, geoObjectId: string, opts: Consolid
         profile.attributes["derived.highlights"] as HighlightsValue | undefined,
         profile.provenance["derived.highlights"]?.derivedFrom as Partial<Record<string, CategorySelection>> | undefined,
       );
+    } else {
+      // no valid place (any more) on this object, e.g. its place row ended: it selects nothing
+      await deleteHighlightSelections(tx, geoObjectId);
     }
 
     const events: EventDraft[] = [...diff.events];
