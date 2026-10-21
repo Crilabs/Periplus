@@ -18,6 +18,7 @@ import {
   runScopeError,
 } from "../../_components/labels";
 import { MentionsPanel } from "../../_components/mentions-panel";
+import { MiniMap } from "../../_components/mini-map";
 import {
   Badge,
   Button,
@@ -174,6 +175,11 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
         </div>
 
         <div className="space-y-6">
+          <Panel flush className="overflow-hidden [&_[aria-label=Kartenausschnitt]]:h-[18rem]">
+            <MiniMap
+              features={{ type: "FeatureCollection", features: [{ type: "Feature", geometry: o.geometry, properties: { role: "subject" } }] }}
+            />
+          </Panel>
           <Panel title="Eckdaten">
             <DescriptionList
               columns={1}
