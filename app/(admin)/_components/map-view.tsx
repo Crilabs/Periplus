@@ -73,6 +73,8 @@ type Visibility = {
   tiles: boolean;
   restricted: boolean;
   geoTypes: GeoObjectType[];
+  /** Show every highlight candidate, not only the highlights a place selected. */
+  allPois: boolean;
   placeStatuses: PlaceStatus[];
 };
 
@@ -272,6 +274,7 @@ export function MapView({ subdivisions = [] }: { subdivisions?: SubdivisionOptio
     tiles: true,
     restricted: true,
     geoTypes: GEO_TYPES,
+    allPois: false,
     placeStatuses: PLACE_STATUSES,
   });
   const visibilityRef = useRef(visibility);
@@ -304,9 +307,10 @@ export function MapView({ subdivisions = [] }: { subdivisions?: SubdivisionOptio
         LAYERS.filter((layer) => isOn(layer, visibilityRef.current)).map(async (layer) => {
           // geo objects are filtered by type on the server, so the cap counts only the types shown (UI-12)
           const types = layer === "geo-objects" ? `&types=${visibilityRef.current.geoTypes.join(",")}` : "";
+          const allPois = layer === "geo-objects" && visibilityRef.current.allPois ? "&allPois=1" : "";
           const subdivision = layer === "areas" && visibilityRef.current.areaSubdivision ? `&subdivision=${encodeURIComponent(visibilityRef.current.areaSubdivision)}` : "";
           try {
-            const res = await fetch(`/map-data/${layer}?bbox=${bbox}${types}${subdivision}`, { signal: controller.signal, cache: "no-store" });
+            const res = await fetch(`/map-data/${layer}?bbox=${bbox}${types}${allPois}${subdivision}`, { signal: controller.signal, cache: "no-store" });
             if (!res.ok) return { layer, ok: false, truncated: false };
             const data = (await res.json()) as GeoJSON.FeatureCollection & { truncated?: boolean };
             m.getSource<GeoJSONSource>(layer)?.setData(data);
@@ -357,7 +361,7 @@ export function MapView({ subdivisions = [] }: { subdivisions?: SubdivisionOptio
     if (!m?.getLayer("places-point")) return;
     applyVisibility(m, visibility);
     // Newly switched-on layers have no data for the current view yet; other geo-object types need a new query.
-    if (LAYERS.some((layer) => isOn(layer, visibility) && !isOn(layer, before)) || visibility.geoTypes !== before.geoTypes || visibility.areaSubdivision !== before.areaSubdivision) reload.current();
+    if (LAYERS.some((layer) => isOn(layer, visibility) && !isOn(layer, before)) || visibility.geoTypes !== before.geoTypes || visibility.allPois !== before.allPois || visibility.areaSubdivision !== before.areaSubdivision) reload.current();
   }, [visibility]);
 
   return (
@@ -624,6 +628,9 @@ function LayerPanel({
               onClick={() => onChange({ ...v, geoTypes: toggle(v.geoTypes, t) })}
             />
           ))}
+          {v.geoTypes.includes("poi") && (
+            <Chip label="alle Highlight-Kandidaten" pressed={v.allPois} onClick={() => onChange({ ...v, allPois: !v.allPois })} />
+          )}
         </Group>
 
         <details className="group px-2 text-xs text-muted">

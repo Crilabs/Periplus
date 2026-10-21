@@ -33,6 +33,7 @@ import {
   NAME_HINT_LABELS,
   NAME_ORIGIN_LABELS,
   PLACE_KIND_LABELS,
+  languageLabel,
   PLACE_STATUS_LABELS,
   POI_CATEGORY_LABELS,
   RESTRICTED_KIND_LABELS,
@@ -162,7 +163,7 @@ function ObjectFacts({ o }: { o: GeoObjectView }) {
                     <li key={i}>
                       {n.name}{" "}
                       <span className="text-xs text-muted">
-                        ({n.language}, {NAME_ORIGIN_LABELS[n.origin]})
+                        ({languageLabel(n.language)}, {NAME_ORIGIN_LABELS[n.origin]})
                       </span>
                     </li>
                   ))}

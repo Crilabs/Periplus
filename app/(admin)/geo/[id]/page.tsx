@@ -11,6 +11,7 @@ import { requireAdmin } from "@/lib/security/require-admin";
 import {
   GEO_OBJECT_TYPE_LABELS,
   GEO_ORIGIN_LABELS,
+  languageLabel,
   NAME_ORIGIN_LABELS,
   PLACE_KIND_LABELS,
   PLACE_STATUS_LABELS,
@@ -264,7 +265,7 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
                     {detail.names.map((n) => (
                       <tr key={`${n.name}|${n.language}|${n.origin}|${n.validFrom}`} className={cx(trClass, !n.valid && "text-muted")}>
                         <td className={tdClass}>{n.name}</td>
-                        <td className={tdClass}>{n.language}</td>
+                        <td className={tdClass}>{languageLabel(n.language)}</td>
                         <td className={tdClass}>{SCRIPT_LABELS[n.script]}</td>
                         <td className={tdClass}>{NAME_ORIGIN_LABELS[n.origin]}</td>
                         <td className={tdClass}>{n.isPreferred ? "Ja" : "Nein"}</td>
@@ -284,7 +285,7 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
                 {shownNames.map((n) => (
                   <li key={`${n.name}|${n.language}|${n.origin}|${n.validFrom}`} className="flex items-center justify-between gap-3 px-4 py-2">
                     <span className="min-w-0 break-words">
-                      {n.name} <span className="text-xs text-muted">{n.language}</span>
+                      {n.name} <span className="text-xs text-muted">{languageLabel(n.language)}</span>
                     </span>
                     {n.isPreferred && <Badge tone="accent">bevorzugt</Badge>}
                   </li>

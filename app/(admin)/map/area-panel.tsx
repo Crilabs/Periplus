@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { AreaDetail } from "@/lib/domain/areas/view";
-import { GEO_OBJECT_TYPE_LABELS } from "../_components/labels";
+import { GEO_OBJECT_TYPE_LABELS, languageLabel } from "../_components/labels";
 import { countryName } from "@/lib/domain/subdivisions/country-name";
 import { cx } from "../_components/ui";
 
@@ -80,7 +80,7 @@ export function AreaPanel({ areaId, fallbackName }: { areaId: string; fallbackNa
         <ul className="space-y-0.5">
           {languages.map((language) => (
             <li key={language} className="flex gap-2">
-              <span className="w-6 shrink-0 text-muted uppercase">{language}</span>
+              <span className={cx("shrink-0 text-muted", language === "und" ? "min-w-6" : "w-6 uppercase")}>{languageLabel(language)}</span>
               <span className="min-w-0">
                 {d.names
                   .filter((n) => n.language === language)

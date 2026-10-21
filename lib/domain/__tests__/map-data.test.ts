@@ -15,6 +15,7 @@ import {
 } from "@/lib/db/schema";
 import { tileBbox, tileIdFor, type Bbox } from "@/lib/domain/tiles";
 import { mapDataRequest, mapLayer } from "@/lib/domain/map-data";
+import { replaceHighlightSelections } from "@/lib/domain/highlights/selections";
 import { insertTestSubdivision } from "@/test/text";
 import { withRollback } from "@/test/db";
 
@@ -212,6 +213,25 @@ describe("mapLayer", () => {
       expect(bays.truncated).toBe(false);
       expect((await mapLayer(tx, "geo-objects", BOX, { limit: 1 })).truncated).toBe(true);
       expect((await mapLayer(tx, "geo-objects", BOX, { types: [] })).features).toEqual([]);
+    }));
+
+  it("the geo-object layer shows only POIs a place selected as highlights, all of them with allPois", () =>
+    withRollback(async (tx) => {
+      const selected = await insertObject(tx, { type: "poi", geom: point(LON + 0.01, LAT + 0.03), names: [["Gewählt", "el", true]] });
+      const other = await insertObject(tx, { type: "poi", geom: point(LON + 0.02, LAT + 0.03), names: [["Kandidat", "el", true]] });
+      const bay = await insertObject(tx, { type: "bay", geom: point(LON + 0.03, LAT + 0.03) });
+      const placeObject = await insertObject(tx, { type: "bay", geom: point(LON, LAT + 0.03) });
+      await tx.insert(places).values({ geoObjectId: placeObject, kind: "anchorage", status: "confirmed", position: sql`${geomFromGeoJson(point(LON, LAT + 0.03))}` });
+      await replaceHighlightSelections(tx, placeObject, 1, { beach: { ids: [selected], level: "none" } }, {
+        beach: { ids: [selected], level: "none", candidates: [{ geoObjectId: selected, importance: 3, score: 1, distanceKm: 1 }], textNames: [] },
+      });
+      const featureIds = async (opts: Parameters<typeof mapLayer>[3]) => ids(await mapLayer(tx, "geo-objects", BOX, opts));
+      expect(await featureIds({ types: ["poi"] })).toEqual([selected]);
+      expect(await featureIds({ types: ["poi"], allPois: true })).toEqual([selected, other].sort());
+      expect(await featureIds({ types: ["poi", "bay"] })).toEqual([selected, bay, placeObject].sort());
+      // the limit counts only what is shown
+      const limited = await mapLayer(tx, "geo-objects", BOX, { types: ["poi"], limit: 1 });
+      expect(limited.truncated).toBe(false);
     }));
 
   it("restricted-areas layer returns only valid areas in the bbox with anchoringBan", () =>
