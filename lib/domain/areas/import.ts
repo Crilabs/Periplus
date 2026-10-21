@@ -31,6 +31,11 @@ export type AreaImportReport = {
   waiting: Array<{ key: string; resolved: number; unresolved: string[] }>;
   /** Subdivision keys of the file that name no valid subdivision; the area imports from its other keys. */
   unknownSubdivisions: Array<{ key: string; subdivision: string }>;
+  /**
+   * Keys whose valid area (by key or by alias) another country's file imported (`tags.importCountry`): the area is
+   * neither taken over nor changed; the key is skipped until one of both files gives it up.
+   */
+  conflicts: Array<{ key: string; otherCountry: string }>;
 };
 
 function entriesOf(area: ImportedArea): MemberEntry[] {
@@ -43,7 +48,7 @@ function entriesOf(area: ImportedArea): MemberEntry[] {
 /**
  * Imports one file inside the caller's transaction. Per area: the valid area by `config_key = key`, else by a legacy
  * key whose alias is `key` (its `config_key` becomes `key`, id and public id stay), else an ended area of the key, which
- * is revived when a polygon exists; members resolved in the file's subdivisions; the polygon. Without polygon and
+ * is revived when a polygon exists (a valid area another country's file imported is a conflict and skipped); members resolved in the file's subdivisions; the polygon. Without polygon and
  * without an area the area waits; without polygon but with an area its geometry and members stay and the rest is
  * updated. A revived area counts as `updated`. Areas of `file.country` not in the file end on `today`.
  */
@@ -56,13 +61,20 @@ export async function importAreaFile(db: Db, file: AreaFile, cfg: AppConfig, tod
     ended: [],
     waiting: [],
     unknownSubdivisions: [],
+    conflicts: [],
   };
   for (const area of file.areas) {
+    const found = await findArea(db, area.key, cfg.areas.aliases, file.country);
+    const otherCountry = found && !found.ended ? found.tags.importCountry : undefined;
+    // A pilot area (no importCountry) may be taken over; an area of another country's file may not.
+    if (typeof otherCountry === "string" && otherCountry !== file.country) {
+      report.conflicts.push({ key: area.key, otherCountry });
+      continue;
+    }
     const scope = await scopeSubdivisionIds(db, area.subdivisions, cfg);
     for (const subdivision of scope.unknown) report.unknownSubdivisions.push({ key: area.key, subdivision });
     const { resolved, unresolved } = await resolveAreaMembers(db, entriesOf(area), scope.ids, cfg);
     const polygon = await computeAreaPolygon(db, resolved.map((r) => r.geoObjectId), cfg);
-    const found = await findArea(db, area.key, cfg.areas.aliases, file.country);
     // An ended area comes back only with a polygon; until then the key waits like a new one.
     const existing = found && (!found.ended || polygon) ? found : null;
     if (!polygon && !existing) {

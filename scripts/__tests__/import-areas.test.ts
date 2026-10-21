@@ -19,6 +19,22 @@ function writeScene(): string {
 const areaCount = async (db: Parameters<typeof runImport>[0]) =>
   (await db.execute<{ n: number }>(sql`select count(*)::int as n from geo_objects where type = 'area' and config_key in (${sql.join(sceneFile().areas.map((a) => sql`${a.key}`), sql`, `)})`)).rows[0]!.n;
 
+describe("formatReport", () => {
+  it("lists waiting areas, unknown subdivisions and conflicts", () => {
+    const lines = formatReport({
+      country: "GR",
+      created: [],
+      updated: [],
+      unchanged: [],
+      ended: [],
+      waiting: [],
+      unknownSubdivisions: [],
+      conflicts: [{ key: "ionian", otherCountry: "AL" }],
+    });
+    expect(lines).toContain("  conflict ionian: area of AL, skipped");
+  });
+});
+
 describe("parseArgs", () => {
   it("reads --file and --dry-run, defaults to all files and a real run", () => {
     expect(parseArgs(["--file", "x.json", "--dry-run"])).toEqual({ file: "x.json", dryRun: true });

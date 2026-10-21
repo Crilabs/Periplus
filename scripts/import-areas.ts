@@ -31,6 +31,7 @@ export function formatReport(r: AreaImportReport): string[] {
   ];
   for (const w of r.waiting) lines.push(`  waiting ${w.key}: ${w.resolved} resolved, unresolved: ${w.unresolved.join(", ") || "-"}`);
   for (const u of r.unknownSubdivisions) lines.push(`  unknown subdivision ${u.subdivision} in ${u.key}`);
+  for (const c of r.conflicts) lines.push(`  conflict ${c.key}: area of ${c.otherCountry}, skipped`);
   return lines;
 }
 

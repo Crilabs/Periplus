@@ -284,4 +284,38 @@ describe("importAreaFile", () => {
         unresolvedMembers: [{ name: "Nowhere", type: "cape", role: "boundary" }],
       });
     }));
+
+  it("does not take over a valid area another country's file imported: a conflict, by key or by alias", () =>
+    withRollback(async (db) => {
+      await insertScene(db);
+      const other = (configKey: string) =>
+        db
+          .insert(geoObjects)
+          .values({
+            type: "area",
+            origin: "import",
+            configKey,
+            publicId: newPublicId("ar"),
+            tags: { importCountry: "XY" },
+            geom: sql`ST_Multi(ST_MakeEnvelope(10.1, 40.1, 10.4, 40.4, 4326))`,
+          })
+          .returning({ id: geoObjects.id });
+      const [byKey] = await other("velani-coast");
+      const [byAlias] = await other("saronic");
+      const file = sceneFile();
+      file.areas.push(sceneArea("saronic-gulf", { members: [["Velani", "harbour"], ["Dorkasi", "harbour"]] }));
+      const report = await importAreaFile(db, file, cfg, await today(db));
+      expect(report.conflicts).toEqual([
+        { key: "velani-coast", otherCountry: "XY" },
+        { key: "saronic-gulf", otherCountry: "XY" },
+      ]);
+      expect([...report.created, ...report.updated, ...report.unchanged]).not.toContain("velani-coast");
+      expect([...report.created, ...report.updated, ...report.unchanged]).not.toContain("saronic-gulf");
+      for (const [key, row] of [["velani-coast", byKey], ["saronic", byAlias]] as const) {
+        const after = (await area(db, key))!;
+        expect(after.id).toBe(row!.id);
+        expect(after.tags).toEqual({ importCountry: "XY" });
+        expect(after.valid_to).toBeNull();
+      }
+    }));
 });
