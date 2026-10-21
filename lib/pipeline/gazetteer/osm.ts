@@ -8,7 +8,7 @@ import { geomFromGeoJson } from "@/lib/db/geometry";
 import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
 import { bufferBbox, landCoverage } from "@/lib/domain/gazetteer/land";
 import { classifyOsm, osmNames } from "@/lib/domain/gazetteer/osm-classify";
-import { nearSea } from "@/lib/domain/gazetteer/sea-distance";
+import { assertSeasPresent, nearSea } from "@/lib/domain/gazetteer/sea-distance";
 import { upsertGeoObject, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
 import { createLogger } from "@/lib/logger";
 
@@ -104,6 +104,8 @@ export async function importOsm(
   if ((await landCoverage(db, bbox)) === 0) {
     throw new Error(`land polygons missing for ${scope.key} – run npm run import:land-polygons`);
   }
+
+  await assertSeasPresent(db, bbox, gazetteer.poiCoastDistanceKm, scope.key);
 
   // Fetch outside the import transaction: a rollback must not drop the external_calls row.
   const ql = buildGazetteerQuery(bbox, categories, gazetteer.overpass.timeoutSeconds);

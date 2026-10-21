@@ -8,7 +8,7 @@ import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
 import { bufferBbox } from "@/lib/domain/gazetteer/land";
 import { findMatch, openPairTask, resolveMergedByExternalId, typeGroup } from "@/lib/domain/gazetteer/merge";
 import { addNames, type NameDraft } from "@/lib/domain/gazetteer/names";
-import { nearSea } from "@/lib/domain/gazetteer/sea-distance";
+import { assertSeasPresent, nearSea } from "@/lib/domain/gazetteer/sea-distance";
 import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
 import { createLogger } from "@/lib/logger";
 
@@ -118,6 +118,8 @@ export async function importWikidata(
   const { gazetteer, categories } = getConfig();
   const { classes, languages } = gazetteer.wikidata;
   const bbox = bufferBbox(scope.bbox, gazetteer.bboxBufferKm);
+
+  await assertSeasPresent(db, bbox, gazetteer.poiCoastDistanceKm, scope.key);
 
   // Fetch outside the import transaction: a rollback must not drop the external_calls row.
   const sparql = buildWikidataQuery(bbox, Object.keys(classes), languages);

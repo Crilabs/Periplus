@@ -320,6 +320,16 @@ describe("importOsm", () => {
       expect(seen).toHaveLength(0);
     }));
 
+  it("missing IHO seas fails with a clear message before any request", () =>
+    withRollback(async (db) => {
+      await db.insert(landPolygons).values(LAND.map((p) => ({ geom: sql`${geomFromGeoJson(p)}`, datasetVersion: "test" })));
+      const seen: HttpRequest[] = [];
+      await expect(
+        importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({ elements: ELEMENTS }, seen), archive }),
+      ).rejects.toThrow("IHO seas missing for osm-test");
+      expect(seen).toHaveLength(0);
+    }));
+
   it("a 429 from overpass leaves the database untouched and throws RetryableHttpError", () =>
     withRollback(async (db) => {
       await prepare(db);

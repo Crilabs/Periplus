@@ -1,5 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
+import { bufferBbox } from "@/lib/domain/gazetteer/land";
+import type { Bbox } from "@/lib/domain/tiles";
 
 /** Vertex limit of a sea piece; IHO sea polygons have up to ~200,000 points, too many for a per-point distance. */
 const SEA_PART_VERTICES = 128;
@@ -39,4 +41,18 @@ export async function nearSea(
         where ST_DWithin(n.geom::geography, pt.g::geography, ${km * 1000}))`);
     return new Set(rows.map((r) => r.key));
   });
+}
+
+/**
+ * Throws when no valid IHO sea (`type` `sea`, origin `marine_regions`) intersects `bbox` plus `km`: `nearSea` would
+ * silently drop every POI. Run it before an import that filters POIs by the sea distance.
+ */
+export async function assertSeasPresent(db: Db, bbox: Bbox, km: number, key: string): Promise<void> {
+  const [w, s, e, n] = bufferBbox(bbox, km);
+  const { rows } = await db.execute<{ found: boolean }>(sql`
+    select exists (
+      select 1 from geo_objects g
+      where g.type = 'sea' and g.origin = 'marine_regions' and g.valid_to is null
+        and g.geom && ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)) as found`);
+  if (!rows[0]!.found) throw new Error(`IHO seas missing for ${key} – run „Landesteile neu bilden“ (gazetteer.coarse) first`);
 }

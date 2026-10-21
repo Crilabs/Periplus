@@ -259,6 +259,13 @@ describe("importWikidata", () => {
       expect(row!.tags).toEqual({ wikidata_class: "Q44613" });
     }));
 
+  it("missing IHO seas fails with a clear message before any request", () =>
+    withRollback(async (db) => {
+      const seen: HttpRequest[] = [];
+      await expect(run(db, allRows(), seen)).rejects.toThrow("IHO seas missing for wikidata-test");
+      expect(seen).toHaveLength(0);
+    }));
+
   it("skips a wikidata POI farther than poiCoastDistanceKm from the sea", () =>
     withRollback(async (db) => {
       await prepare(db);

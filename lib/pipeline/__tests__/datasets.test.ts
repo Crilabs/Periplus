@@ -57,6 +57,13 @@ async function* landFixture(): AsyncGenerator<LandFeature> {
 async function prepareArea(db: Db): Promise<string> {
   await importLandPolygons(db, landFixture(), bufferBbox(AEGINA_WEST_BOX, getConfig().gazetteer.landBufferKm), "fixture");
   const { subdivisionId } = await insertAeginaWest(db);
+  // IHO sea over the whole box: the POI sea-distance filter keeps every recorded POI.
+  const [w, s, e, n] = bufferBbox(AEGINA_WEST_BOX, 1);
+  await db.insert(geoObjects).values({
+    type: "sea",
+    origin: "marine_regions",
+    geom: sql`ST_Multi(ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326))`,
+  });
   await ensureSubdivisionTiles(db, subdivisionId);
   return subdivisionId;
 }
