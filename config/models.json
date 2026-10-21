@@ -17,7 +17,7 @@
     },
     "extract-route": { "model": "claude-sonnet-5-5", "promptVersion": 1, "effort": "medium", "maxTokens": 16000 },
     "summarize-profile": { "model": "claude-sonnet-5-5", "promptVersion": 1, "effort": "low", "maxTokens": 4096 },
-    "check-place-image": { "model": "claude-haiku-5-5", "promptVersion": 1, "effort": "low", "maxTokens": 512 }
+    "check-place-image": { "model": "claude-haiku-5-5", "promptVersion": 1, "effort": "low", "maxTokens": 512, "timeoutSeconds": 60 }
   },
   "imageTasks": {
     "generate-place-image": { "model": "gpt-image-2.5-sunburst", "promptVersion": 1, "size": "1536x1024", "quality": "high", "timeoutSeconds": 300 }

@@ -36,23 +36,29 @@ describe("images config", () => {
     expect(c.models.pricesEurPerImage["gpt-image-2.5-sunburst"]!.high).toBe(0.25);
   });
 
-  it("images.place job expiry covers the render, every edit and the checks", () => {
+  it("images.place job expiry covers the render, every edit with its watermark check, and the margin", () => {
     const c = getConfig();
     const task = c.models.imageTasks["generate-place-image"]!;
-    const worstCase = c.images.render.timeoutSeconds + c.images.check.maxAttempts * task.timeoutSeconds + 120;
+    const check = c.models.tasks["check-place-image"]!;
+    // the check has its own short timeout, not the 600 s of a text call
+    expect(check.timeoutSeconds).toBe(60);
+    const worstCase = c.images.render.timeoutSeconds + c.images.check.maxAttempts * (task.timeoutSeconds + check.timeoutSeconds!) + 120;
+    expect(worstCase).toBe(960);
     expect(c.queues["images.place"]!.expireInSeconds).toBeGreaterThanOrEqual(worstCase);
 
-    // one edit timeout more than the expiry allows
+    // one second less than the worst case is refused
     const queues = structuredClone(loadConfig("config").queues) as Record<string, Record<string, unknown>>;
     queues["images.place"] = { ...queues["images.place"], expireInSeconds: worstCase - 1 };
-    expect(() => loadConfig(configWith("queues", queues))).toThrow(/queues\.json: images\.place\.expireInSeconds .* below the worst case/);
+    expect(() => loadConfig(configWith("queues", queues))).toThrow(/queues\.json: images\.place\.expireInSeconds 959 is below the worst case of an image job, 960 s/);
+    // without its own timeout the check counts at callTimeoutSeconds (600): 120 + 2 × (300 + 600) + 120 = 2040
+    const models = structuredClone(loadConfig("config").models) as { tasks: Record<string, Record<string, unknown>>; imageTasks: Record<string, Record<string, unknown>> };
+    delete models.tasks["check-place-image"]!.timeoutSeconds;
+    const dir = configWith("models", models);
+    expect(() => loadConfig(dir)).toThrow(/images\.place\.expireInSeconds 1200 is below the worst case of an image job, 2040 s/);
     // the pg-boss default of 900 s counts when the queue sets none
-    const models = structuredClone(loadConfig("config").models) as { imageTasks: Record<string, Record<string, unknown>> };
-    models.imageTasks["generate-place-image"] = { ...models.imageTasks["generate-place-image"], timeoutSeconds: 600 };
-    delete queues["images.place"]!.expireInSeconds;
-    const dir = configWith("queues", queues);
-    writeFileSync(join(dir, "models.json"), JSON.stringify(models));
-    expect(() => loadConfig(dir)).toThrow(/images\.place\.expireInSeconds 900 is below/);
+    const bare = structuredClone(loadConfig("config").queues) as Record<string, Record<string, unknown>>;
+    delete bare["images.place"]!.expireInSeconds;
+    expect(() => loadConfig(configWith("queues", bare))).toThrow(/images\.place\.expireInSeconds 900 is below/);
   });
 
   it("delivery switch needs every source", () => {

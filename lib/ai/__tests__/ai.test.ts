@@ -127,6 +127,10 @@ describe("anthropic client", () => {
       expect(rows[0]).toMatchObject({ service: "anthropic", operation: "system.echo", unit: "tokens", meta: expect.objectContaining({ error: "Request timed out." }) });
       expect(Number(rows[0]!.costEur)).toBe(0);
       expect(create).toHaveBeenCalledWith(expect.anything(), { maxRetries: 0, timeout: 600_000 });
+      // a task with its own timeoutSeconds (the watermark check inside an image job) gets that instead of callTimeoutSeconds
+      const shortEcho = { ...config, models: { ...config.models, tasks: { ...config.models.tasks, "system.echo": { ...config.models.tasks["system.echo"]!, timeoutSeconds: 60 } } } };
+      await expect(createAnthropicClient(tx, shortEcho, { sdk: api, now: () => now }).call(echoTask, { text: "x" }, { stage })).rejects.toThrow("Request timed out.");
+      expect(create).toHaveBeenLastCalledWith(expect.anything(), { maxRetries: 0, timeout: 60_000 });
     }));
 
   it("never builds the real SDK under test (OPS-7)", () =>

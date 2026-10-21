@@ -129,26 +129,31 @@ function readConsolidation(dir: string, version: string): VersionedConsolidation
 
 /** Seconds a job may stay active before pg-boss expires it when the queue sets no `expireInSeconds`. */
 const PG_BOSS_DEFAULT_EXPIRE_SECONDS = 900;
-/** Seconds an image job needs beyond the render and the edits: water and watermark checks, the task write. */
+/** Seconds an image job needs beyond the render, the edits and the watermark checks: the water check, the task write. */
 const IMAGE_JOB_MARGIN_SECONDS = 120;
 const IMAGE_TASK = "generate-place-image";
+const IMAGE_CHECK_TASK = "check-place-image";
 
 /**
  * pg-boss must not expire an `images.place` job (and hand it out again beside the one still running) before its worst
- * case ends: the render at `images.render.timeoutSeconds`, `images.check.maxAttempts` image edits at the task's
- * `timeoutSeconds`, and the checks. The three values live in three files, so the check is here, not in a schema.
+ * case ends: the render at `images.render.timeoutSeconds`, then `images.check.maxAttempts` times an image edit at the
+ * image task's `timeoutSeconds` plus a watermark check at the check task's `timeoutSeconds` (default
+ * `callTimeoutSeconds`), and the margin. The values live in three files, so the check is here, not in a schema.
  */
 function checkImageJobExpiry(dir: string, config: Pick<AppConfig, "queues" | "images" | "models">): void {
   const task = config.models.imageTasks[IMAGE_TASK];
   if (!task) throw new Error(`Invalid config ${join(dir, "models.json")}: imageTasks has no ${IMAGE_TASK}`);
+  const check = config.models.tasks[IMAGE_CHECK_TASK];
+  if (!check) throw new Error(`Invalid config ${join(dir, "models.json")}: tasks has no ${IMAGE_CHECK_TASK}`);
+  const checkTimeout = check.timeoutSeconds ?? config.models.callTimeoutSeconds;
   const expire = config.queues["images.place"]?.expireInSeconds ?? PG_BOSS_DEFAULT_EXPIRE_SECONDS;
   const render = config.images.render.timeoutSeconds;
-  const edits = config.images.check.maxAttempts * task.timeoutSeconds;
-  const needed = render + edits + IMAGE_JOB_MARGIN_SECONDS;
+  const attempts = config.images.check.maxAttempts;
+  const needed = render + attempts * (task.timeoutSeconds + checkTimeout) + IMAGE_JOB_MARGIN_SECONDS;
   if (expire < needed) {
     throw new Error(
       `Invalid config ${join(dir, "queues.json")}: images.place.expireInSeconds ${expire} is below the worst case of an image job, ` +
-        `${needed} s (render ${render} + ${config.images.check.maxAttempts} edits × ${task.timeoutSeconds} + ${IMAGE_JOB_MARGIN_SECONDS} for the checks)`,
+        `${needed} s (render ${render} + ${attempts} × (edit ${task.timeoutSeconds} + watermark check ${checkTimeout}) + ${IMAGE_JOB_MARGIN_SECONDS})`,
     );
   }
 }

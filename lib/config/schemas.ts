@@ -54,6 +54,8 @@ const modelTaskSchema = z.strictObject({
   maxTokens: z.number().int().min(1),
   /** Marks the rendered system prompt for prompt caching; only for tasks whose system prompt is identical per request. */
   cacheSystem: z.boolean().default(false),
+  /** Longest real-time call of this task (default `callTimeoutSeconds`); a short one for a check inside a long job. */
+  timeoutSeconds: z.number().int().positive().optional(),
   /** Model decision of the task (e.g. after the model comparison), shown on the settings page. */
   decision: z.strictObject({ status: z.enum(["provisional", "decided"]), note: z.string().trim().min(1) }).optional(),
 });
