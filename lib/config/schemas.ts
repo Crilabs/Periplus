@@ -325,6 +325,8 @@ export const gazetteerSchema = z.strictObject({
     gulfMinAreaKm2: z.number().nonnegative(),
     coastDistanceKm: z.number().positive(),
   }),
+  /** A gazetteer POI counts as a place's POI (and is kept at import) within this distance of the coast (spec 16). */
+  poiCoastDistanceKm: z.number().positive(),
   /** Radius around an object's centroid within which a subdivision's land counts for the assignment (spec 14). */
   subdivisionRadiusM: z.number().positive(),
   islandParentBufferM: z.number().nonnegative(),
@@ -945,9 +947,26 @@ export const consolidationSchema = z.strictObject({
       /** Radius of meaning per importance level, nautical miles. */
       radiusNm: z.array(positive).length(5),
       maxSpotIds: positiveInt,
+      /** Importance bonus per OSM tag (`<key>=<value>`) or Wikidata class (`wikidata:<Qid>`); optional: v1 predates it. */
+      tagBonus: z.record(z.string(), z.number().nonnegative()).optional(),
     })
     .refine((i) => ascending(i.thresholds), "importance thresholds must ascend")
     .refine((i) => ascending(i.radiusNm), "importance radii must ascend"),
+  /** Highlight selection per place (spec 16); optional: v1 predates it. */
+  highlights: z
+    .strictObject({
+      maxPerCategory: positiveInt,
+      /** Reach in km per importance level 1–5 (index = importance − 1). */
+      reachKm: z.array(positive).length(5),
+      /** Weight per importance level 1–5 for the highlight level of a place. */
+      levelWeights: z.array(z.number().nonnegative()).length(5),
+      /** Weighted-sum limits between the levels none / some / many. */
+      levelThresholds: z.array(z.number()).length(2),
+      /** Importance given to a POI that a text names but no source rates. */
+      textNameImportance: z.number().int().min(1).max(5),
+    })
+    .refine((h) => ascending(h.levelThresholds), "highlight level thresholds must ascend")
+    .optional(),
   severity: z.strictObject({
     safety: z.array(attributePattern),
     /** A shelter sector changing by more than this is a safety change. */

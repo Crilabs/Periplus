@@ -160,13 +160,13 @@ describe("consolidation run", () => {
       const rec = recordingBoss();
       const { id } = await startConsolidationRun(tx, rec.boss, { scope: { comparisonSetSubdivision: subdivisionKey }, evaluation: true, triggeredBy: "test" });
       const [run] = await tx.select().from(runs).where(eq(runs.id, id));
-      expect(run).toMatchObject({ kind: "reprocess", scopeType: "system", stages: [CONSOLIDATION_GEO_STAGE], params: { comparisonSetSubdivision: subdivisionKey, evaluation: true, rulesVersion: "v1" } });
+      expect(run).toMatchObject({ kind: "reprocess", scopeType: "system", stages: [CONSOLIDATION_GEO_STAGE], params: { comparisonSetSubdivision: subdivisionKey, evaluation: true, rulesVersion: "v2" } });
       expect(await consolidationTargets(tx, { id, params: run!.params as Record<string, unknown> })).toEqual([inSet.objectId]);
-      expect(rec.inserted.map((j) => [j.queue, j.data.geoObjectId, j.data.mode, j.data.rulesVersion])).toEqual([["consolidation.geo", inSet.objectId, "evaluation", "v1"]]);
+      expect(rec.inserted.map((j) => [j.queue, j.data.geoObjectId, j.data.mode, j.data.rulesVersion])).toEqual([["consolidation.geo", inSet.objectId, "evaluation", "v2"]]);
 
       for (const job of rec.inserted) await consolidateGeoJob(tx, job.data as never);
       const evaluated = await tx.select().from(evaluationProfiles).where(eq(evaluationProfiles.runId, id));
-      expect(evaluated.map((e) => [e.geoObjectId, e.rulesVersion])).toEqual([[inSet.objectId, "v1"]]);
+      expect(evaluated.map((e) => [e.geoObjectId, e.rulesVersion])).toEqual([[inSet.objectId, "v2"]]);
       expect(evaluated[0]!.attributes).toMatchObject({ holding: "good" });
       expect(await profileRuns(tx, [inSet.objectId])).toEqual([]);
       expect(await tx.select().from(changeEvents).where(eq(changeEvents.geoObjectId, inSet.objectId))).toEqual([]);
@@ -368,7 +368,7 @@ describe("consolidation run", () => {
       const started = await catchUpConsolidation(tx, rec.boss, textRun, "admin", { afterRecheck: true });
       expect(started.status).toBe("started");
       const [catchUp] = await tx.select().from(runs).where(eq(runs.id, (started as { consolidationRunId: string }).consolidationRunId));
-      expect(catchUp!.params).toEqual({ geoObjectIds: [a.objectId], rulesVersion: "v1" });
+      expect(catchUp!.params).toEqual({ geoObjectIds: [a.objectId], rulesVersion: "v2" });
     }));
 
   it("after a recheck a run that consolidated before its late block consolidates again; one still to consolidate is left alone", () =>
