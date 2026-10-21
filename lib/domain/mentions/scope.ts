@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { MentionsConfig, NameAffixesConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
+import { areaOfSerpScopeSql } from "@/lib/domain/areas/store";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import { tileNeighbours } from "@/lib/domain/tiles";
@@ -53,7 +54,7 @@ async function prepassForms(db: Db, versionId: string, cfg: MentionsConfig, affi
  * `tile_geo_objects` (never of a `country`, `sea` or `admin_region`, which expand differently), plus the scope tiles of
  * every valid subdivision whose admin region (`geo_object_id`) the text names.
  */
-async function prepassTiles(db: Db, versionId: string, cfg: MentionsConfig, affixes: NameAffixesConfig): Promise<string[]> {
+export async function prepassTiles(db: Db, versionId: string, cfg: MentionsConfig, affixes: NameAffixesConfig): Promise<string[]> {
   const forms = await prepassForms(db, versionId, cfg, affixes);
   if (forms.length === 0) return [];
   const { rows } = await db.execute<{ id: string; type: string }>(sql`
@@ -80,6 +81,15 @@ async function prepassTiles(db: Db, versionId: string, cfg: MentionsConfig, affi
     for (const sub of subs) for (const id of await subdivisionTileIds(db, sub.id)) tiles.add(id);
   }
   return [...tiles];
+}
+
+/**
+ * The tiles a text's prepass gives the candidate space: `prepassTiles` plus `neighbourRing` rings of neighbours (empty
+ * when the prepass touches nothing). The one definition `candidateTiles` and the re-read of a new subdivision share.
+ */
+export async function prepassCandidateTiles(db: Db, versionId: string, cfg: MentionsConfig, affixes: NameAffixesConfig): Promise<string[]> {
+  const tiles = await prepassTiles(db, versionId, cfg, affixes);
+  return tiles.length > 0 ? withNeighbours(tiles, cfg.neighbourRing) : [];
 }
 
 /** (b) Tiles of the objects mentioned in earlier versions (fetched before this one) of the same document. */
@@ -118,8 +128,7 @@ async function sourceTiles(db: Db, versionId: string): Promise<string[]> {
     where q.level = 'place'
     union
     select t.id from q
-    join geo_objects a on a.type = 'area' and a.config_key = q.scope_id and ${validNow("a")}
-    join tile_geo_objects tgo on tgo.geo_object_id = a.id
+    join tile_geo_objects tgo on tgo.geo_object_id = ${areaOfSerpScopeSql(sql`q.scope_id`)}
     join tiles t on t.id = tgo.tile_id and ${validNow("t")}
     where q.level = 'area'
   `);
@@ -161,13 +170,13 @@ export async function candidateTiles(
   ctx: { nameAffixes: NameAffixesConfig; subdivisionKeys: readonly string[] },
 ): Promise<{ tiles: string[]; basis: CandidateBasis }> {
   const steps: Array<[CandidateBasis, () => Promise<string[]>]> = [
-    ["prepass", () => prepassTiles(db, versionId, cfg, ctx.nameAffixes)],
+    ["prepass", () => prepassCandidateTiles(db, versionId, cfg, ctx.nameAffixes)],
     ["history", () => historyTiles(db, versionId)],
     ["source", () => sourceTiles(db, versionId)],
   ];
   for (const [basis, tilesOf] of steps) {
     const tiles = await tilesOf();
-    if (tiles.length > 0) return { tiles: withNeighbours(tiles, cfg.neighbourRing), basis };
+    if (tiles.length > 0) return { tiles: basis === "prepass" ? tiles : withNeighbours(tiles, cfg.neighbourRing), basis };
   }
   return { tiles: [...new Set(await fallbackTiles(db, ctx.subdivisionKeys))].sort(), basis: "fallback" };
 }

@@ -6,6 +6,8 @@ import { createDb, type Db } from "../lib/db/client";
 import { geomFromGeoJson } from "../lib/db/geometry";
 import { loadConfig } from "../lib/config";
 import {
+  areaEvidence,
+  areaMembers,
   chunks,
   deliveries,
   documents,
@@ -24,6 +26,8 @@ import {
   runs,
   sources,
   subdivisions,
+  tileGeoObjects,
+  tiles,
 } from "../lib/db/schema";
 import { consolidateGeo } from "../lib/domain/consolidation/store";
 import { buildDelivery } from "../lib/domain/delivery/build";
@@ -447,6 +451,61 @@ async function ensureE2eSubdivision(db: Db): Promise<void> {
   });
 }
 
+/** Key of the imported Revier of the areas spec, inside `GR-E2E`. */
+export const E2E_AREA_KEY = "e2e-revier";
+export const E2E_AREA_QUOTE = "Das Revier Attika (E2E) ist ein ruhiges Segelrevier.";
+
+/**
+ * The areas spec needs an imported Revier in the e2e subdivision: `e2e-revier` „E2E-Revier“ over 26.05–26.2 E × 40.05–40.2 N
+ * (inside `GR-E2E`, outside the pilot box), with German and English names, one resolved member (a harbour), one open
+ * member, a relation, evidence and a link to the subdivision's coast tile. Committed once (geo objects are never deleted).
+ */
+async function ensureE2eArea(db: Db): Promise<void> {
+  const [found] = await db.select({ id: geoObjects.id }).from(geoObjects).where(and(eq(geoObjects.configKey, E2E_AREA_KEY), isNull(geoObjects.validTo)));
+  if (found) return;
+  const [sub] = await db.select({ id: subdivisions.id }).from(subdivisions).where(and(eq(subdivisions.key, E2E_SUBDIVISION_KEY), isNull(subdivisions.validTo)));
+  await db.transaction(async (tx) => {
+    const named = async (id: string, name: string, language: string, isPreferred: boolean) =>
+      tx.insert(geoNames).values({ geoObjectId: id, name, nameNormalized: name.toLowerCase(), language, script: "latin", origin: "manual", isPreferred });
+    const polygon = sql`ST_Multi(ST_MakeEnvelope(26.05, 40.05, 26.2, 40.2, 4326))`;
+    const [harbour] = await tx
+      .insert(geoObjects)
+      .values({ type: "harbour", origin: "manual", geom: sql`ST_SetSRID(ST_MakePoint(26.1, 40.1), 4326)` })
+      .returning({ id: geoObjects.id });
+    await named(harbour!.id, "E2E-Hafen", "de", true);
+    const [neighbour] = await tx
+      .insert(geoObjects)
+      .values({ type: "area", origin: "import", configKey: "e2e-nachbar", publicId: newPublicId("ar"), geom: sql`ST_Multi(ST_MakeEnvelope(26.15, 40.15, 26.24, 40.24, 4326))`, tags: { importCountry: "GR" } })
+      .returning({ id: geoObjects.id });
+    await named(neighbour!.id, "E2E-Nachbarrevier", "de", true);
+    const [area] = await tx
+      .insert(geoObjects)
+      .values({
+        type: "area",
+        origin: "import",
+        configKey: E2E_AREA_KEY,
+        publicId: newPublicId("ar"),
+        geom: polygon,
+        tags: {
+          boundary: "Von der Nordküste bis zur Südspitze.",
+          notes: "Nur für den E2E-Test.",
+          polygonOrigin: "hull",
+          importCountry: "GR",
+          unresolvedMembers: [{ name: "E2E-Geisterhafen", type: "harbour", role: "member" }],
+          related: [{ key: "e2e-nachbar", relation: "overlaps" }],
+        },
+      })
+      .returning({ id: geoObjects.id });
+    await named(area!.id, "E2E-Revier", "de", true);
+    await named(area!.id, "E2E Sailing Area", "en", true);
+    await tx.insert(areaMembers).values({ areaId: area!.id, geoObjectId: harbour!.id, role: "member", name: "E2E Harbour" });
+    await tx.insert(areaEvidence).values({ areaId: area!.id, url: "https://example.invalid/e2e-revier", publisher: "E2E-Verlag", language: "de", quote: E2E_AREA_QUOTE, fileGeneratedAt: "2026-10-20" });
+    const tileId = "q025:824:520"; // 26.0-26.25 E x 40.0-40.25 N, the box of GR-E2E
+    await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(26.0, 40.0, 26.25, 40.25, 4326)`, subdivisionId: sub!.id, hasCoast: true }).onConflictDoNothing();
+    await tx.insert(tileGeoObjects).values([{ tileId, geoObjectId: area!.id }, { tileId, geoObjectId: neighbour!.id }]).onConflictDoNothing();
+  });
+}
+
 /**
  * The synthetic delivery subdivision of the deliveries spec (ruling M6-P29): the delivery fixture's layout committed
  * once under key `XT-E2E-DELIVERY` (`E2E_SHIFT`, away from every other test box) and its package built here, only when
@@ -544,6 +603,7 @@ export default async function globalSetup(): Promise<void> {
     process.env.E2E_SHELTER_QUOTE = SHELTER_LATER_QUOTE;
     process.env.E2E_DELIVERY_SUBDIVISION = await ensureDeliverySubdivision(db);
     await ensureE2eSubdivision(db);
+    await ensureE2eArea(db);
   } finally {
     await close();
   }

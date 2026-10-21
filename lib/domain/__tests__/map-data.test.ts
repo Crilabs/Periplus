@@ -7,13 +7,14 @@ import {
   geoObjects,
   places,
   restrictedAreas,
+  tileGeoObjects,
   tiles,
   type GeoObjectType,
   type PlaceStatus,
   type RestrictedKind,
 } from "@/lib/db/schema";
 import { tileBbox, tileIdFor, type Bbox } from "@/lib/domain/tiles";
-import { mapLayer } from "@/lib/domain/map-data";
+import { mapDataRequest, mapLayer } from "@/lib/domain/map-data";
 import { insertTestSubdivision } from "@/test/text";
 import { withRollback } from "@/test/db";
 
@@ -124,7 +125,7 @@ describe("mapLayer", () => {
       await insertPlace(tx, "Ended", LON + 0.004, LAT, "candidate", "2020-01-01");
 
       const areas = await mapLayer(tx, "areas", BOX);
-      expect(areas.features.find((f) => f.properties!.id === area)!.properties).toEqual({ id: area, key, name: "Testrevier" });
+      expect(areas.features.find((f) => f.properties!.id === area)!.properties).toEqual({ id: area, key, name: "Testrevier", subdivisionKeys: null, polygonOrigin: null });
 
       const subdivisionLayer = await mapLayer(tx, "subdivisions", BOX);
       expect(subdivisionLayer.features.find((f) => f.properties!.key === "XT-MAP")!.properties).toEqual({ key: "XT-MAP", country: "XT", status: "active", name: null });
@@ -141,6 +142,27 @@ describe("mapLayer", () => {
         placeCount: 3,
         candidateCount: 2,
       });
+    }));
+
+  it("areas layer carries key and subdivision keys and filters by subdivision", () =>
+    withRollback(async (tx) => {
+      const subA = await insertTestSubdivision(tx, "XT-MAPA", [LON - 0.5, LAT - 0.5, LON + 0.5, LAT + 0.5], { country: "XT" });
+      await insertTestSubdivision(tx, "XT-MAPB", [LON + 5, LAT + 5, LON + 6, LAT + 6], { country: "XT" });
+      const linked = await insertObject(tx, { type: "area", geom: square(LON - 0.1, LAT - 0.1, 0.2), configKey: "xt-linked", names: [["Verbunden", "de", true]] });
+      const loose = await insertObject(tx, { type: "area", geom: square(LON + 0.02, LAT + 0.02, 0.02), configKey: "xt-loose", names: [["Lose", "de", true]] });
+      await tx.update(geoObjects).set({ tags: { polygonOrigin: "hull" } }).where(sql`${geoObjects.id} = ${linked}`);
+      const tileId = tileIdFor(LON, LAT);
+      const [w, s] = tileBbox(tileId);
+      await tx.insert(tiles).values({ id: tileId, bbox: sql`${geomFromGeoJson(square(w, s, 0.25))}`, subdivisionId: subA.id, hasCoast: true });
+      await tx.insert(tileGeoObjects).values({ tileId, geoObjectId: linked });
+
+      const all = await mapLayer(tx, "areas", BOX);
+      expect(all.features.find((f) => f.properties!.id === linked)!.properties).toEqual({
+        id: linked, key: "xt-linked", name: "Verbunden", subdivisionKeys: "XT-MAPA", polygonOrigin: "hull",
+      });
+      expect(all.features.find((f) => f.properties!.id === loose)!.properties!.subdivisionKeys).toBeNull();
+      expect(ids(await mapLayer(tx, "areas", BOX, { subdivision: "XT-MAPA" }))).toEqual([linked]);
+      expect(ids(await mapLayer(tx, "areas", BOX, { subdivision: "XT-MAPB" }))).toEqual([]);
     }));
 
   it("places carry status and kind", () =>
@@ -239,4 +261,13 @@ describe("mapLayer", () => {
       const fc = await mapLayer(tx, "restricted-areas", BOX);
       expect(ids(fc)).not.toContain(ended!.id);
     }));
+});
+
+describe("mapDataRequest", () => {
+  const base = { layer: "areas", bbox: "27,33,27.1,33.1" };
+  it("accepts an optional subdivision key and rejects an empty one", () => {
+    expect(mapDataRequest.parse({ ...base, subdivision: "GR-ATT" }).subdivision).toBe("GR-ATT");
+    expect(mapDataRequest.parse(base).subdivision).toBeUndefined();
+    expect(mapDataRequest.safeParse({ ...base, subdivision: "" }).success).toBe(false);
+  });
 });

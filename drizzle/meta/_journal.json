@@ -428,6 +428,20 @@
       "when": 1792533485924,
       "tag": "0060_place_images_slots",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1792546532025,
+      "tag": "0061_areas_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1792546535469,
+      "tag": "0062_areas_triggers",
+      "breakpoints": true
     }
   ]
 }

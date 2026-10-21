@@ -13,6 +13,7 @@ export const ROUTE_POLICY: Record<string, RouteRule> = {
   "/readyz": { kind: "public" },
   "/map": { kind: "admin" },
   "/map-data/[layer]": { kind: "admin" },
+  "/map/area-detail/[id]": { kind: "admin" },
   "/subdivisions": { kind: "admin" },
   "/subdivisions/[key]": { kind: "admin" },
   "/runs": { kind: "admin" },

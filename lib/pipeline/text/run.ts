@@ -17,6 +17,7 @@ import { DISAMBIGUATE_STAGE } from "./disambiguate";
 import { EXTRACT_STAGE } from "./extract";
 import { GEOCODE_STAGE } from "./geocode";
 import { MENTIONS_STAGE } from "./mentions";
+import { rereadVersions } from "./reread";
 import { ROUTE_STAGE } from "./routes";
 import { freezeTextRunParams, type TextRunParams } from "./versions";
 
@@ -124,6 +125,52 @@ export async function startReprocessRun(
   await assertSelectionReady(db, selection);
   const params = { ...(await freezeTextRunParams(db, selection, config)), rulesVersion: await activeRulesVersion(db) };
   return startRun(db, boss, { kind: "reprocess", scope: scopeOf(selection), stages: [...TEXT_RUN_STAGES], params, triggeredBy: input.triggeredBy });
+}
+
+/**
+ * Starts the re-read of a subdivision's build (spec 14 „Nachlesen beim Start eines Landesteils“): kind `reprocess`,
+ * scope subdivision, every text stage over exactly `documentVersionIds`, params `rematch: true`, so stage 6 adds the
+ * mentions of the new gazetteer (nothing that exists) and only those are disambiguated and extracted. No versions, no
+ * run (returns null).
+ */
+export async function startRereadRun(
+  db: Db,
+  boss: PgBoss,
+  input: { subdivisionKey: string; documentVersionIds: string[]; triggeredBy: string; buildRunId?: string },
+): Promise<{ id: string } | null> {
+  if (input.documentVersionIds.length === 0) return null;
+  const params = {
+    subdivisionKey: input.subdivisionKey,
+    documentVersionIds: [...new Set(input.documentVersionIds)].sort(),
+    rematch: true as const,
+    ...(input.buildRunId ? { buildRunId: input.buildRunId } : {}),
+  };
+  await assertSelectionReady(db, params);
+  return startRun(db, boss, {
+    kind: "reprocess",
+    scope: scopeOf(params),
+    stages: [...TEXT_RUN_STAGES],
+    params: { ...params, rulesVersion: await activeRulesVersion(db) },
+    triggeredBy: input.triggeredBy,
+  });
+}
+
+/** Stage `mentions.reread`: selects the versions touching the subdivision and starts their re-read run; null when none does. */
+export async function startRereadForSubdivision(
+  db: Db,
+  boss: PgBoss,
+  subdivisionKey: string,
+  config: AppConfig = getConfig(),
+  buildRunId?: string,
+): Promise<{ id: string; versions: number } | null> {
+  if (buildRunId) {
+    // a retry of the stage must not start a second run (the run row and its first job commit separately)
+    const { rows } = await db.execute(sql`select 1 from runs where kind = 'reprocess' and params ->> 'buildRunId' = ${buildRunId} limit 1`);
+    if (rows.length > 0) return null;
+  }
+  const documentVersionIds = await rereadVersions(db, subdivisionKey, config);
+  const run = await startRereadRun(db, boss, { subdivisionKey, documentVersionIds, triggeredBy: "system", ...(buildRunId ? { buildRunId } : {}) });
+  return run ? { id: run.id, versions: documentVersionIds.length } : null;
 }
 
 /** The stages of a model comparison run: the extraction with both models, then the quote check of both runs. */

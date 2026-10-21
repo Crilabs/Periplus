@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { runs, subdivisions } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
+import { GAZETTEER_STAGES } from "@/lib/pipeline/gazetteer/stages";
 import { afterBuildRunEnded, queueCountry, startSubdivisionBuild, SUBDIVISION_BUILD_STAGES } from "@/lib/pipeline/subdivision-build";
 import { withRollback } from "@/test/db";
 import { insertTestSubdivision } from "@/test/text";
@@ -31,6 +32,20 @@ const buildRuns = (tx: Db, key: string) =>
   tx.select().from(runs).where(and(eq(runs.kind, "full"), eq(runs.scopeType, "subdivision"), eq(runs.scopeId, key)));
 
 const subdivision = async (tx: Db, key: string) => (await tx.select().from(subdivisions).where(eq(subdivisions.key, key)))[0]!;
+
+describe("SUBDIVISION_BUILD_STAGES", () => {
+  it("starts with the gazetteer stages", () => {
+    expect(SUBDIVISION_BUILD_STAGES.slice(0, GAZETTEER_STAGES.length)).toEqual([...GAZETTEER_STAGES]);
+  });
+
+  it("has areas.import after geometry, then mentions.reread (Reviere of this build count in its prepass), then discovery.area", () => {
+    const stages: readonly string[] = SUBDIVISION_BUILD_STAGES;
+    const i = stages.indexOf("areas.import");
+    expect(i).toBeGreaterThan(stages.indexOf("geometry.compute"));
+    expect(stages.indexOf("mentions.reread")).toBe(i + 1);
+    expect(stages.indexOf("discovery.area")).toBe(i + 2);
+  });
+});
 
 describe("startSubdivisionBuild", () => {
   it("starts one full run with the build stages and plans its first stage", () =>

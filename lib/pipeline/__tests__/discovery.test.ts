@@ -98,14 +98,15 @@ async function insertIsland(tx: Db, tileId: string, name: string): Promise<void>
 }
 
 /** Subdivision, area object over both tiles, tiles A (island Alpha) and B (islands Beta and another Alpha). */
-async function seedArea(tx: Db): Promise<void> {
+async function seedArea(tx: Db): Promise<string> {
   const subId = await insertSubdivision(tx);
   await insertTile(tx, TILE_A, null, subId);
   await insertTile(tx, TILE_B, null, subId);
-  await insertArea(tx, [TILE_A, TILE_B]);
+  const areaId = await insertArea(tx, [TILE_A, TILE_B]);
   await insertIsland(tx, TILE_A, "Alpha");
   await insertIsland(tx, TILE_B, "Beta");
   await insertIsland(tx, TILE_B, "Alpha");
+  return areaId;
 }
 
 const keywords = (job: Record<string, unknown>) => (job.queries as Array<{ keyword: string }>).map((q) => q.keyword);
@@ -160,7 +161,7 @@ describe("discovery stages", () => {
 
   it("the area job makes the area queries up to the cap, one after another", () =>
     withRollback(async (tx) => {
-      await seedArea(tx);
+      const areaId = await seedArea(tx);
       const body = readFileSync("test/fixtures/http/dataforseo/hand/organic-20-paa.json");
       const requests: HttpRequest[] = [];
       const transport: Transport = async (req) => {
@@ -169,7 +170,7 @@ describe("discovery stages", () => {
       };
       const result = await discoverArea(tx, SUB_KEY, { transport, archive: memoryArchive() }, { db: tx });
       expect(result).toEqual({ queries: 3, searched: 3, reused: 0 });
-      const rows = await tx.select({ keyword: serpQueries.keyword }).from(serpQueries).where(eq(serpQueries.scopeId, AREA_KEY));
+      const rows = await tx.select({ keyword: serpQueries.keyword }).from(serpQueries).where(eq(serpQueries.scopeId, areaId));
       expect(rows.map((r) => r.keyword).sort()).toEqual(["Revierführer Testrevier", "Test Gulf anchorages", "Törnbericht Testrevier"]);
       expect(requests).toHaveLength(3);
     }));

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { getConfig, type AppConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { listApiClients } from "@/lib/domain/api-clients";
+import { loadAreaFiles } from "@/lib/domain/areas/file";
 import { activationOf, consolidationConfigFor, extractionVersion } from "@/lib/domain/consolidation/active-rules";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
@@ -95,6 +96,26 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
   const apiClients = await listApiClients(db);
   const { gazetteer, ...configured } = getConfig();
   const subdivisionsCfg = configured.subdivisions;
+  const areasCfg = configured.areas;
+  const areaFiles = await loadAreaFiles();
+  const areaRows: [string, string][] = [
+    ["Mindestens aufgelöste Mitglieder", `${areasCfg.minMembers} (darunter „wartet auf Gazetteer“)`],
+    [
+      "Polygon",
+      `Puffer ${areasCfg.polygon.bufferNm} sm, konkave Hülle ${areasCfg.polygon.concaveRatio}, höchstens ${areasCfg.polygon.inlandCutM} m ins Land, Golf deckt ab ${areasCfg.polygon.gulfCoverShare}`,
+    ],
+    ["Nachbarring Mitgliedersuche", `${areasCfg.neighbourRing} Kachel(n)`],
+    [
+      "Mitgliedstypen",
+      Object.entries(areasCfg.memberTypes)
+        .map(([type, order]) => `${type} → ${order.join(" vor ")}`)
+        .join("; "),
+    ],
+    [
+      "Alte Schlüssel",
+      Object.entries(areasCfg.aliases).map(([from, to]) => `${from} → ${to}`).join(", ") || "keine",
+    ],
+  ];
   // the active rules version: the newest released activation, else active.json (ruling M7-P10)
   const consolidation = await consolidationConfigFor(db);
   const rulesActivation = await activationOf(db, "consolidation_rules", consolidation.version);
@@ -288,6 +309,40 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
               ))}
           </tbody>
         </Table>
+      </Panel>
+
+      <Panel
+        title="Reviere"
+        description="Reviere liefert der Revier-Bot als Datei je Land (config/area-imports/); Periplus übernimmt seinen Stand, Korrekturen passieren dort. Import: npm run areas:import. Werte aus config/areas.json."
+        className="mb-6"
+      >
+        <Pairs rows={areaRows} />
+        <div className="mt-4 border-t border-line pt-4">
+          {areaFiles.length === 0 ? (
+            <p className="text-sm text-muted">Noch keine Datei des Revier-Bots in config/area-imports/.</p>
+          ) : (
+            <Table>
+              <thead>
+                <tr>
+                  <th className={thClass}>Land</th>
+                  <th className={thClass}>Stand der Datei</th>
+                  <th className={`${thClass} text-right`}>Reviere</th>
+                </tr>
+              </thead>
+              <tbody>
+                {areaFiles.map((f) => (
+                  <tr key={f.country} className={trClass}>
+                    <td className={tdClass}>
+                      <span className="font-medium">{countryName(f.country)}</span> <Mono>{f.country}</Mono>
+                    </td>
+                    <td className={cx(tdClass, "whitespace-nowrap tabular-nums")}>{f.generatedAt}</td>
+                    <td className={cx(tdClass, "text-right tabular-nums")}>{f.areas.length}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          )}
+        </div>
       </Panel>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-2">
