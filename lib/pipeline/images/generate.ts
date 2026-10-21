@@ -219,8 +219,8 @@ async function withSlotLock<T>(lockDb: Db, geoObjectId: string, slot: string, fn
 /**
  * The newest render of the place recorded with `key` by the current renderer version whose photo and mask are still
  * archived, or null: the same imagery, camera and renderer give the same pixels, so a retried job does not render
- * again. Not for a forced job („Neu erzeugen“ at the same zoom): its candidates are named by render and attempt, a
- * new render keeps them apart from the decided task's.
+ * again. Not for a forced job („Neu erzeugen“ at the same zoom): that job renders anew on purpose, and its candidate
+ * keys are unique per generation anyway.
  */
 async function existingRender(
   db: Db,
