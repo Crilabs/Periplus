@@ -188,7 +188,7 @@ Ergebnis der letzten Prüfung (nach Abnahme eintragen): _Datum: offen, restore-c
 
 ## Umstellung auf Landesteile (einmalig, Teil-Spec 14)
 Der Pilot lief über die konfigurierten Reviere `saronic` und `argolic` (`config/areas/`, entfernt). Reihenfolge, Befehle auf dem Server mit dem `dc`-Alias vom Anfang dieses Runbooks:
-1. **Deployen** (Migrationen bis 0062 laufen mit; die Migrationen des Reviere-Zweigs sind 0061_areas_schema und 0062_areas_triggers, 0058–0060 gehören dem Ortsbilder-Zweig. Drizzle wendet nur Migrationen an, deren Journal-`when` später liegt als die zuletzt angewendete: erst Ortsbilder mergen und deployen, oder der später gemergte Zweig stempelt seine `when`-Werte neu; offene Aufgaben „Küstenkachel ohne Revier“ werden dabei hinfällig).
+1. **Deployen** (Migrationen bis 0062 laufen mit: 0061_areas_schema und 0062_areas_triggers folgen auf die Ortsbilder-Migrationen 0058–0060; offene Aufgaben „Küstenkachel ohne Revier“ werden dabei hinfällig).
 2. **Landpolygone für das Mittelmeer** importieren (Abschnitt „Landpolygone“, `--mediterranean`). Die Box hängt an den Meeren: ist `gazetteer.coarse` noch nie gelaufen, zuerst Schritt 3 starten und den Import danach wiederholen.
 3. **„Länder und Landesteile“ → „Landesteile neu bilden“**: Stufen `gazetteer.coarse` (Meere, Länder, Verwaltungseinheiten) und `subdivisions.build`. Lauf abwarten.
 4. **Liste prüfen** auf `/subdivisions`: je Land die erwarteten Landesteile, ausgeschlossene mit Grund, Griechenland mit Kykladen und Dodekanes. Abweichungen in `config/subdivisions.json` nachziehen, deployen, Schritt 3 wiederholen.
