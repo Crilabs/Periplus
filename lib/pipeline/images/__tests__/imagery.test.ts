@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { writeArrayBuffer } from "geotiff";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
@@ -8,7 +8,7 @@ import { getConfig } from "@/lib/config";
 import { externalCalls, imageryTiles } from "@/lib/db/schema";
 import { makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import { newId } from "@/lib/domain/ids";
-import { ensureImagery } from "@/lib/pipeline/images/imagery";
+import { currentAerialTiles, ensureImagery } from "@/lib/pipeline/images/imagery";
 
 /** Just west of 23° E (outside the pilot box): the wide window crosses into the next DEM tile. */
 const PLACE = { geoObjectId: newId(), lon: 22.995, lat: 37.49, country: "GR" };
@@ -76,6 +76,21 @@ describe("ensureImagery", () => {
       expect(row!.bytes).toBeGreaterThan(0);
       const calls = await tx.select().from(externalCalls).where(eq(externalCalls.service, "ktimatologio"));
       expect(calls.length).toBeGreaterThanOrEqual(4);
+    });
+  });
+
+  it("currentAerialTiles reads the stored core and wide refs without a request, null while one is missing", async () => {
+    await withRollback(async (tx) => {
+      expect(await currentAerialTiles(tx, PLACE)).toBeNull();
+      const set = await ensureImagery(tx, memoryArchive(), await syntheticTransport({ blankCadastre: true }), PLACE, { db: tx });
+      const current = await currentAerialTiles(tx, PLACE);
+      expect(current!.core.map((t) => t.id)).toEqual(set.core.map((t) => t.id));
+      expect(current!.wide.map((t) => t.id)).toEqual(set.wide.map((t) => t.id));
+      expect(current!.core.every((t) => t.blank && t.resolutionM === 0.5)).toBe(true);
+      expect(current!.wide[0]).toMatchObject({ source: "sentinel2", blank: false, resolutionM: 10 });
+      // a tile ended (new imagery) makes the lookup null again
+      await tx.execute(sql`update imagery_tiles set valid_to = now() where id = ${set.core[0]!.id}`);
+      expect(await currentAerialTiles(tx, PLACE)).toBeNull();
     });
   });
 

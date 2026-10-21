@@ -19,7 +19,7 @@ import {
   GEOMETRY_CONSOLIDATION_STAGES,
 } from "@/lib/pipeline/consolidation/stages";
 import { consolidateAfter } from "@/lib/pipeline/follow-ups";
-import { generatePlaceImage, keyDone } from "@/lib/pipeline/images/generate";
+import { generatePlaceImage, keyDone, type ImageView } from "@/lib/pipeline/images/generate";
 import { setImageModelFactory } from "@/lib/pipeline/images/model";
 import { imageJobs, imageTargets, nextViewSlot } from "@/lib/pipeline/images/stage";
 import { IMAGES_STAGE } from "@/lib/pipeline/images/stage-name";
@@ -47,7 +47,8 @@ import { memoryArchive } from "@/test/s3";
  */
 
 const cfg = getConfig();
-const TITLE = { slot: "title", zoom: "z1" as const };
+/** The automatic title view: no zoom, the composition and the imagery choose it (`titleZoomFor`). */
+const TITLE: ImageView = { slot: "title" };
 const RENDER_TIMEOUT_MS = 180_000;
 
 function recordingBoss() {
@@ -91,12 +92,15 @@ async function subdivisionRun(tx: Db, subdivisionKey: string) {
   return { id: run.id, params: { images: { subdivisionKey } } as Record<string, unknown> };
 }
 
-/** Generates the title image of `objectId` once (stub renderer, `config` default the repo's), so its imagery and task exist. */
-async function generateTitle(tx: Db, objectId: string, runId: string, force?: boolean, config?: AppConfig) {
+/**
+ * Generates the title image of `objectId` once (stub renderer, `config` default the repo's, a green cadastre unless
+ * `blankCadastre`), so its imagery and task exist.
+ */
+async function generateTitle(tx: Db, objectId: string, runId: string, force?: boolean, config?: AppConfig, blankCadastre = false) {
   await generatePlaceImage(
     tx,
     { geoObjectId: objectId, view: TITLE, runId, force },
-    { archive: memoryArchive(), transport: await syntheticImageryTransport(), imageModel: await imageModel(GOOD), model: checker(false), render: stubRender, config },
+    { archive: memoryArchive(), transport: await syntheticImageryTransport({ blankCadastre }), imageModel: await imageModel(GOOD), model: checker(false), render: stubRender, config },
   );
   const [task] = await imageTasksOf(tx, `${objectId}:title`);
   return task!;
@@ -121,6 +125,22 @@ describe("imageTargets", () => {
       const run = await subdivisionRun(tx, sd.key);
       expect(await imageTargets(tx, run)).toEqual([{ geoObjectId: spot.objectId, view: TITLE }]);
       await generateTitle(tx, spot.objectId, run.id);
+      expect(await imageTargets(tx, run)).toEqual([]);
+    });
+  });
+
+  it("plan and job agree on the key and zoom with a blank cadastre (z1) as with a fine one (z2)", async () => {
+    await withRollback(async (tx) => {
+      const sd = await insertImageSubdivision(tx);
+      const fine = await insertSpot(tx, sd.id);
+      const blank = await insertSpot(tx, sd.id, { lon: IMAGE_LON + 0.1 });
+      const run = await subdivisionRun(tx, sd.key);
+      expect((await imageTargets(tx, run)).map((t) => t.geoObjectId).sort()).toEqual([fine.objectId, blank.objectId].sort());
+      const fineTask = await generateTitle(tx, fine.objectId, run.id);
+      const blankTask = await generateTitle(tx, blank.objectId, run.id, undefined, undefined, true);
+      expect(fineTask.context.zoom).toBe("z2");
+      expect(blankTask.context.zoom).toBe("z1");
+      // the plan reads the same zoom from the tiles the job stored, so both keys are done
       expect(await imageTargets(tx, run)).toEqual([]);
     });
   });

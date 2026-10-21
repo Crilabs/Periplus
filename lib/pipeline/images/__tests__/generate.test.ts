@@ -13,7 +13,7 @@ import { landPolygons, reviewTasks } from "@/lib/db/schema";
 import { BudgetExceeded } from "@/lib/domain/costs";
 import { decideReviewTask } from "@/lib/domain/review-decisions";
 import { createRun } from "@/lib/domain/runs";
-import { generatePlaceImage, generationKey, slotLockKey } from "@/lib/pipeline/images/generate";
+import { generatePlaceImage, generationKey, slotLockKey, type ImageView } from "@/lib/pipeline/images/generate";
 import { IMAGES_STAGE } from "@/lib/pipeline/images/stage-name";
 import { testDb, withRollback } from "@/test/db";
 import {
@@ -39,9 +39,9 @@ import { memoryArchive } from "@/test/s3";
 
 const cfg = getConfig();
 
-async function fixture(tx: Db, kind: "anchorage" | "marina" = "anchorage") {
+async function fixture(tx: Db, kind: "anchorage" | "marina" = "anchorage", o: { lon?: number } = {}) {
   const sd = await insertImageSubdivision(tx);
-  const spot = await insertSpot(tx, sd.id, { kind });
+  const spot = await insertSpot(tx, sd.id, { kind, ...o });
   const run = await createRun(tx, { kind: "stage", scope: { type: "system", id: "test" }, stages: [IMAGES_STAGE], triggeredBy: "test" });
   return { ...spot, runId: run.id };
 }
@@ -52,7 +52,8 @@ async function deps(archive: Archive, imageModelAnswers: MockImageModel, model: 
 
 const taskOf = imageTasksOf;
 
-const TITLE = { slot: "title", zoom: "z1" as const };
+/** The automatic title view: no zoom, the composition and the imagery choose it (`titleZoomFor`). */
+const TITLE: ImageView = { slot: "title" };
 
 /** The candidate key of attempt `n` (a pattern) of a generation over `renderId`: `<renderId>-<generation id>-<n>.jpg`. */
 const candidateKeyOf = (geoObjectId: string, renderId: string, n: string) => new RegExp(`^imagery/candidates/${geoObjectId}/${renderId}-[0-9a-f-]{36}-${n}\\.jpg$`);
@@ -85,7 +86,7 @@ describe("generatePlaceImage", () => {
       expect(images.calls).toHaveLength(2);
       const [task] = await taskOf(tx, `${f.objectId}:title`);
       expect(task!.subject_type).toBe("place_image");
-      expect(task!.context).toMatchObject({ slot: "title", passed: false, attempts: 2, waterIoU: 0, light: "midday", zoom: "z1", azimuthOverride: null, watermarkVisible: false });
+      expect(task!.context).toMatchObject({ slot: "title", passed: false, attempts: 2, waterIoU: 0, light: "midday", zoom: "z2", azimuthOverride: null, watermarkVisible: false });
       expect(task!.context.candidateKey).toMatch(candidateKeyOf(f.objectId, task!.context.renderId!, "[12]"));
       expect(archive.contentType(task!.context.candidateKey!)).toBe("image/jpeg");
     });
@@ -107,14 +108,37 @@ describe("generatePlaceImage", () => {
       expect(c).toMatchObject({ slot: "title", passed: true, attempts: 1, waterIoU: 1, watermarkVisible: false, model: task0.model, promptVersion: task0.promptVersion, allowedZooms: ["z1", "z2", "z3"] });
       expect(c.candidateKey).toMatch(candidateKeyOf(f.objectId, c.renderId!, "1"));
       expect(c.alt.startsWith("KI-Illustration:")).toBe(true);
-      // camera details: rays longest towards the south, so the camera looks north; the shore 400 m north puts the
-      // target (bay head) 280 m north of the centre and the camera 450 m before it, still south of the centre
+      // camera details: rays longest towards the south, so the camera looks north; the open-water title image takes
+      // z2 (0.5 m cadastre), the shore 400 m north puts the target 475 m north of the centre and the camera 277 m
+      // before it: 198 m north of the centre, over the bay before its shoreline
+      expect(c.zoom).toBe("z2");
       expect(c.camera!.viewBearingDeg).toBeCloseTo(0, 6);
-      expect(c.camera!.heightM).toBe(260);
-      expect(c.camera!.position[1]).toBeLessThan(IMAGE_LAT);
+      expect(c.camera!.heightM).toBe(160);
+      expect(c.camera!.position[1]).toBeGreaterThan(IMAGE_LAT);
+      expect(c.camera!.position[1]).toBeLessThan(IMAGE_LAT + 400 / 110_960);
       // the key stored with the render is the task's key
       const { rows } = await tx.execute<{ generation_key: string }>(sql`select generation_key from place_renders where id = ${c.renderId}`);
       expect(rows[0]!.generation_key).toBe(c.key);
+    });
+  });
+
+  it("title view takes z1 when the cadastre is blank (Sentinel-2 only); an explicit zoom wins", async () => {
+    await withRollback(async (tx) => {
+      const f = await fixture(tx);
+      const archive = memoryArchive();
+      const blank = { ...(await deps(archive, await imageModel(GOOD), checker(false))), transport: await syntheticImageryTransport({ blankCadastre: true }) };
+      const result = await generatePlaceImage(tx, { geoObjectId: f.objectId, view: TITLE, runId: f.runId }, blank);
+      expect(result.status).toBe("review");
+      const [task] = await taskOf(tx, `${f.objectId}:title`);
+      expect(task!.context).toMatchObject({ zoom: "z1", allowedZooms: ["z1"] });
+      expect(task!.context.camera!.heightM).toBe(260);
+
+      // „Neu erzeugen“ at z1 over the fine cadastre (another spot, 0.1° east of the blank tiles): z1 as asked,
+      // although the imagery would allow z2
+      const g = await fixture(tx, "anchorage", { lon: IMAGE_LON + 0.1 });
+      await generatePlaceImage(tx, { geoObjectId: g.objectId, view: { slot: "title", zoom: "z1" }, runId: g.runId }, await deps(archive, await imageModel(GOOD), checker(false)));
+      const [explicit] = await taskOf(tx, `${g.objectId}:title`);
+      expect(explicit!.context).toMatchObject({ zoom: "z1", allowedZooms: ["z1", "z2", "z3"] });
     });
   });
 

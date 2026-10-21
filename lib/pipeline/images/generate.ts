@@ -13,12 +13,12 @@ import { passesGeometry, toJpeg, waterIoU } from "@/lib/domain/images/checks";
 import { lightFor } from "@/lib/domain/images/light";
 import { loadPlaceImageInput, type PlaceImageInput } from "@/lib/domain/images/place-input";
 import { altText, buildPlacePrompt } from "@/lib/domain/images/prompt";
-import { allowedZooms, cameraDetails, planRender, type CameraDetails, type RenderCamera } from "@/lib/domain/images/render-plan";
+import { allowedZooms, cameraDetails, planRender, titleZoomFor, type CameraDetails, type RenderCamera } from "@/lib/domain/images/render-plan";
 import { createReviewTask, hasDecidedTask } from "@/lib/domain/review";
 import { dismissTasks } from "@/lib/domain/consolidation/task-locks";
 import { valueFingerprint } from "@/lib/domain/review-decisions";
 import { createLogger } from "@/lib/logger";
-import { ensureImagery, type ImagerySet } from "./imagery";
+import { ensureImagery, type AerialTiles } from "./imagery";
 import { renderAndStore } from "./render";
 import { IMAGES_STAGE } from "./stage-name";
 
@@ -39,13 +39,17 @@ const errorMessage = (e: unknown): string => (e instanceof Error ? `${e.name}: $
 export type ImageStageConfig = Pick<AppConfig, "images" | "models" | "delivery">;
 
 /**
- * Which image of a place: its slot (`title` from the pipeline, `view-<n>` added by an admin), the zoom level and, for
- * an additional view, the bearing the camera rotation starts at (`planRender`'s `azimuthOverride`).
+ * Which image of a place: its slot (`title` from the pipeline, `view-<n>` added by an admin), the zoom level (an
+ * admin's choice; without one the composition and the imagery choose it, `titleZoomFor`) and, for an additional
+ * view, the bearing the camera rotation starts at (`planRender`'s `azimuthOverride`).
  */
-export type ImageView = { slot: string; zoom: ZoomLevel; azimuthDeg?: number };
+export type ImageView = { slot: string; zoom?: ZoomLevel; azimuthDeg?: number };
 
-/** The automatic view: the title image at the default zoom. */
-export const titleView = (cfg: Pick<AppConfig, "images"> = getConfig()): ImageView => ({ slot: "title", zoom: cfg.images.camera.defaultZoom });
+/** A view with its zoom settled (`initialZoom`, `resolveView`): what the key, the task context and the render carry. */
+export type ResolvedImageView = ImageView & { zoom: ZoomLevel };
+
+/** The automatic view: the title image, its zoom from the composition and the imagery. */
+export const titleView = (): ImageView => ({ slot: "title" });
 
 /** Context of a `place_image` review task (subject `<geoObjectId>:<slot>`); the review approval (Task 9) reads it. */
 export type PlaceImageTaskContext = {
@@ -101,7 +105,7 @@ export function imageTaskOf(cfg: Pick<AppConfig, "models">): { model: string; pr
 }
 
 /** The generation key of `view` of a planned place for the aerial tiles `imageryTileIds` (none for `no_water_view`). */
-export function keyFor(input: PlaceImageInput, view: ImageView, imageryTileIds: string[], cfg: ImageStageConfig): string {
+export function keyFor(input: PlaceImageInput, view: ResolvedImageView, imageryTileIds: string[], cfg: ImageStageConfig): string {
   const { model, promptVersion } = imageTaskOf(cfg);
   return generationKey({
     imageryTileIds,
@@ -118,6 +122,40 @@ export function keyFor(input: PlaceImageInput, view: ImageView, imageryTileIds: 
 
 /** The image of `place` with its imagery windows centred on the camera target (the render and its imagery agree). */
 export const atTarget = (place: PlaceImageInput, camera: RenderCamera): PlaceImageInput => ({ ...place, lon: camera.target[0], lat: camera.target[1] });
+
+/** The zoom the plan of `view` starts at: the view's own, else the wanted title zoom of the composition (`titleZoomFor`). */
+export const initialZoom = (place: PlaceImageInput, view: ImageView, cfg: ImagesConfig): ZoomLevel => view.zoom ?? titleZoomFor(place, null, cfg);
+
+export type ResolvedView<T extends AerialTiles> =
+  | { ok: true; zoom: ZoomLevel; camera: RenderCamera; imagery: T }
+  | { ok: false; zoom: ZoomLevel; reason: "no_water_view" };
+
+/**
+ * Zoom, camera and imagery of `view` of `place` after its first plan `first` (at `initialZoom`): the imagery around
+ * the camera target (`imageryAt`: `ensureImagery` in the job, the current tiles in the plan; `null` from the plan's
+ * lookup, a tile missing, ends in `null`: the key cannot be known without a request). When the view has no zoom of
+ * its own and that imagery's finest resolution allows another level than the wanted one (`titleZoomFor`: a blank
+ * cadastre leaves Sentinel-2, so z1), the plan at that level and the imagery around its target, once (z1 is always
+ * allowed). The job and the plan take the same steps, so their keys agree.
+ */
+export async function resolveView<T extends AerialTiles>(
+  db: Db,
+  place: PlaceImageInput,
+  view: ImageView,
+  first: { zoom: ZoomLevel; camera: RenderCamera },
+  cfg: ImagesConfig,
+  imageryAt: (target: PlaceImageInput) => Promise<T | null>,
+): Promise<ResolvedView<T> | null> {
+  const imagery = await imageryAt(atTarget(place, first.camera));
+  if (imagery === null) return null;
+  if (view.zoom !== undefined) return { ok: true, ...first, imagery };
+  const zoom = titleZoomFor(place, finestResolution(imagery), cfg);
+  if (zoom === first.zoom) return { ok: true, ...first, imagery };
+  const plan = await planRender(db, place, zoom, cfg, view.azimuthDeg ?? null);
+  if (!plan.ok) return { ok: false, zoom, reason: "no_water_view" };
+  const again = await imageryAt(atTarget(place, plan.camera));
+  return again === null ? null : { ok: true, zoom, camera: plan.camera, imagery: again };
+}
 
 /**
  * Whether `key` is done for `slot` of the place: a current image of the slot, an open task or a decided task carries
@@ -274,14 +312,17 @@ export type GenerateResult = { status: "review" | "no_water_view" | "skipped"; a
 
 /**
  * Generates one image of a place and puts it up for review:
- * 1. the place's input (`loadPlaceImageInput`) and camera (`planRender` at `view.zoom`, rotation from
- *    `view.azimuthDeg`); `no_water_view` → a task without candidate, no imagery, no render; without a usable image
- *    model (`ImageModel.available`: no `OPENAI_API_KEY`) → `skipped` before anything is downloaded or rendered;
+ * 1. the place's input (`loadPlaceImageInput`) and camera (`planRender` at `view.zoom`, else the wanted title zoom
+ *    of the composition, rotation from `view.azimuthDeg`); `no_water_view` → a task without candidate, no imagery,
+ *    no render; without a usable image model (`ImageModel.available`: no `OPENAI_API_KEY`) → `skipped` before
+ *    anything is downloaded or rendered;
  * 2. under the slot lock (`withSlotLock`; held by another job → `skipped`, that job makes the task): the imagery
  *    around the camera target (`ensureImagery`; a near-town target lies between the anchorage and the town, so the
- *    town is in the core window) and the generation key from the tiles it returned; a key already done (`keyDone`,
- *    checked again under the lock: a retried job, or a decision taken meanwhile; with `force` a decided task does
- *    not count) → `skipped`;
+ *    town is in the core window), for a title view without a zoom of its own the zoom that imagery allows
+ *    (`resolveView`: a blank cadastre → z1, with the plan and the imagery of that level; no water view there →
+ *    the task of step 1), and the generation key from the tiles; a key already done (`keyDone`, checked again under
+ *    the lock: a retried job, or a decision taken meanwhile; with `force` a decided task does not count) →
+ *    `skipped`;
  * 3. the render (`renderAndStore`, recording the key), unless a retried job finds the one it made for the key with
  *    its photo and mask still archived (`existingRender`; a forced job renders anew);
  * 4. up to `check.maxAttempts` image edits: water IoU against the render mask, and, when the core imagery is
@@ -312,15 +353,15 @@ export async function generatePlaceImage(
   const light = lightFor(place, icfg);
   const { model, promptVersion } = imageTaskOf(cfg);
   const azimuthOverride = view.azimuthDeg ?? null;
-  const base = { slot: view.slot, azimuthOverride, light, zoom: view.zoom, model, promptVersion, alt: altText(place, light, cfg) };
-
-  const plan = await planRender(db, place, view.zoom, icfg, azimuthOverride);
-  if (!plan.ok) {
-    const key = keyFor(place, view, [], cfg);
+  const base = { slot: view.slot, azimuthOverride, light, model, promptVersion, alt: altText(place, light, cfg) };
+  /** The task of a place without a camera over water at `zoom`; `skipped` when its key is done already. */
+  const noWaterView = async (zoom: ZoomLevel): Promise<GenerateResult> => {
+    const key = keyFor(place, { ...view, zoom }, [], cfg);
     if (await keyDone(db, input.geoObjectId, view.slot, key, input.force)) return { status: "skipped", attempts: 0, waterIoU: null };
     await putUpForReview(db, input.geoObjectId, {
       ...base,
       key,
+      zoom,
       camera: null,
       renderId: null,
       candidateKey: null,
@@ -332,7 +373,11 @@ export async function generatePlaceImage(
       reason: "no_water_view",
     });
     return { status: "no_water_view", attempts: 0, waterIoU: null };
-  }
+  };
+
+  const firstZoom = initialZoom(place, view, icfg);
+  const plan = await planRender(db, place, firstZoom, icfg, azimuthOverride);
+  if (!plan.ok) return noWaterView(firstZoom);
 
   if (!deps.imageModel.available()) {
     // the plan asked the same; a job that still runs (the key vanished meanwhile) must not download and render for nothing
@@ -341,19 +386,16 @@ export async function generatePlaceImage(
   }
   if (!input.runId) throw new Error("generating a place image needs the run id (place_renders.run_id)");
   const runId = input.runId;
-  const { camera } = plan;
   // steps 2 to 5 under the slot lock: a second job of the same slot (another run, a retry of an expired job) skips
   const generated = await withSlotLock(deps.lockDb ?? db, input.geoObjectId, view.slot, async (): Promise<GenerateResult> => {
-    const target = atTarget(place, camera);
-    const imagery = await ensureImagery(
-      db,
-      deps.archive,
-      deps.transport,
-      { geoObjectId: place.geoObjectId, lon: target.lon, lat: target.lat, country },
-      { db, runId, stage: IMAGES_STAGE },
-      icfg,
+    const resolved = await resolveView(db, place, view, { zoom: firstZoom, camera: plan.camera }, icfg, (target) =>
+      ensureImagery(db, deps.archive, deps.transport, { geoObjectId: place.geoObjectId, lon: target.lon, lat: target.lat, country }, { db, runId, stage: IMAGES_STAGE }, icfg),
     );
-    const key = keyFor(place, view, aerialIds(imagery), cfg);
+    if (resolved === null) throw new Error("ensureImagery returned no imagery");
+    if (!resolved.ok) return noWaterView(resolved.zoom);
+    const { zoom, camera, imagery } = resolved;
+    const target = atTarget(place, camera);
+    const key = keyFor(place, { ...view, zoom }, aerialIds(imagery), cfg);
     if (await keyDone(db, input.geoObjectId, view.slot, key, input.force)) return { status: "skipped", attempts: 0, waterIoU: null };
 
     // a retried job (the edit failed, pg-boss expired the job) takes the render it already made for the key
@@ -424,6 +466,7 @@ export async function generatePlaceImage(
     await putUpForReview(db, input.geoObjectId, {
       ...base,
       key,
+      zoom,
       camera: cameraDetails(camera),
       renderId: render.renderId,
       candidateKey,
@@ -447,10 +490,10 @@ export async function generatePlaceImage(
 }
 
 /** Ids of the aerial tiles (core and wide) of an imagery set: the tiles of the generation key. */
-export const aerialIds = (imagery: Pick<ImagerySet, "core" | "wide">): string[] => [...imagery.core, ...imagery.wide].map((t) => t.id);
+export const aerialIds = (imagery: AerialTiles): string[] => [...imagery.core, ...imagery.wide].map((t) => t.id);
 
 /** The finest resolution the render shows in its core: the non-blank aerial tiles, else the satellite image. */
-function finestResolution(imagery: ImagerySet): number {
+export function finestResolution(imagery: AerialTiles): number {
   const used = [...imagery.core.filter((t) => !t.blank), ...imagery.wide];
   return used.length > 0 ? Math.min(...used.map((t) => t.resolutionM)) : Number.POSITIVE_INFINITY;
 }
