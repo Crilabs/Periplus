@@ -294,6 +294,8 @@ export const gazetteerSchema = z.strictObject({
     endpoint: z.url(),
     timeoutSeconds: z.number().int().positive(),
     ratePerMinute: z.number().positive(),
+    /** Relations with more member points are skipped: assembling the Aegean Sea (678,000 points) exhausted the database. */
+    maxRelationPoints: z.number().int().positive(),
   }),
   /** Marine Regions WFS (IHO sea areas, spec 14). */
   marineRegions: z.strictObject({

@@ -7,6 +7,7 @@ import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects, landPolygons, rateLimits } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
+import { getConfig } from "@/lib/config";
 import { importOsm } from "@/lib/pipeline/gazetteer/osm";
 import { withRollback } from "@/test/db";
 import { testArchive } from "@/test/s3";
@@ -244,6 +245,34 @@ describe("importOsm", () => {
         .from(geoObjects)
         .where(inArray(geoObjects.osmId, [osm("relation", 31)]));
       expect(row).toEqual({ type: "POLYGON", holes: 1 });
+    }));
+
+  it("skips a relation with more member points than overpass.maxRelationPoints and imports the rest", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      const cfg = getConfig().gazetteer.overpass;
+      const before = cfg.maxRelationPoints;
+      cfg.maxRelationPoints = 6;
+      try {
+        const sea: OverpassElement = {
+          type: "relation",
+          id: ID + 41,
+          tags: { type: "multipolygon", place: "sea", name: "Huge Sea" },
+          members: [
+            { type: "way", ref: 1, role: "outer", geometry: pts([[24.9, 35.36], [25.3, 35.36], [25.3, 35.5], [24.9, 35.5]]) },
+            { type: "way", ref: 2, role: "outer", geometry: pts([[24.9, 35.5], [24.9, 35.43], [24.9, 35.36]]) },
+          ],
+        };
+        const result = await importOsm(
+          db,
+          { scope: scope(), runId: newId() },
+          { transport: transport({ elements: [sea, ELEMENTS[0]!] }), archive },
+        );
+        expect(result).toMatchObject({ created: 1, skipped: 1 });
+        expect((await objects(db, [osm("relation", 41), osm("relation", 1)])).map((r) => r.osmId)).toEqual([osm("relation", 1)]);
+      } finally {
+        cfg.maxRelationPoints = before;
+      }
     }));
 
   it("missing land polygons fails with a clear message", () =>

@@ -51,6 +51,11 @@ export function elementGeometry(el: OverpassElement): GeoObjectDraft["geometry"]
   return lines.length > 0 ? { lines } : null;
 }
 
+/** Number of member way points of a relation; 0 for nodes and ways. */
+function relationPoints(el: OverpassElement): number {
+  return el.type === "relation" ? (el.members ?? []).reduce((n, m) => n + (m.geometry?.length ?? 0), 0) : 0;
+}
+
 /**
  * The geometry lies within `distanceM` of non-land: its geography buffer of `distanceM` is not fully
  * covered by the union of the land polygons around it. Cut lines between land pieces (the split
@@ -103,6 +108,12 @@ export async function importOsm(
       const cls = classifyOsm(tags, categories, el.type);
       const geometry = cls && elementGeometry(el);
       if (!cls || !geometry) {
+        result.skipped++;
+        continue;
+      }
+      const points = relationPoints(el);
+      if (points > gazetteer.overpass.maxRelationPoints) {
+        getLog().warn({ osmId: `${el.type}/${el.id}`, points }, "skipped osm relation above overpass.maxRelationPoints");
         result.skipped++;
         continue;
       }
