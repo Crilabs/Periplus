@@ -21,15 +21,17 @@ export async function loadAdminUnits(db: Db, mrgids: number[]): Promise<AdminUni
     wikidata: string | null;
     touches: boolean;
   }>(sql`
+    -- The seas are cut into small pieces and padded by 2 km once; a geography distance between whole
+    -- coastlines (millions of points with real OSM data) took longer than 20 minutes.
+    WITH sea AS MATERIALIZED (
+      SELECT ST_Buffer(ST_Subdivide(s.geom, 512)::geography, 2000)::geometry AS geom
+      FROM geo_objects s
+      WHERE s.type = 'sea' AND s.origin = 'marine_regions' AND s.valid_to IS NULL
+        AND s.tags->>'mrgid' IN (${sql.join(mrgids.map((m) => sql`${String(m)}`), sql`, `)})
+    )
     SELECT g.id, g.tags->>'country' AS country, g.admin_level, g.tags->>'ISO3166-2' AS iso, g.osm_id,
            coalesce(g.wikidata_id, g.tags->>'wikidata') AS wikidata,
-           EXISTS (
-             SELECT 1 FROM geo_objects s
-             WHERE s.type = 'sea' AND s.origin = 'marine_regions' AND s.valid_to IS NULL
-               AND s.tags->>'mrgid' IN (${sql.join(mrgids.map((m) => sql`${String(m)}`), sql`, `)})
-               AND ST_DWithin(s.geom, g.geom, 0.05)
-               AND ST_DWithin(s.geom::geography, g.geom::geography, 2000)
-           ) AS touches
+           EXISTS (SELECT 1 FROM sea WHERE ST_Intersects(sea.geom, g.geom)) AS touches
     FROM geo_objects g
     WHERE g.type IN ('country', 'admin_region') AND g.valid_to IS NULL AND g.osm_id LIKE 'relation/%'
       AND g.tags ? 'country' AND g.admin_level IS NOT NULL

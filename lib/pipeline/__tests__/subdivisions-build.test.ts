@@ -7,7 +7,7 @@ import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geoObjects, subdivisions } from "@/lib/db/schema";
 import type { PlannedSubdivision } from "@/lib/domain/subdivisions/plan";
-import { applySubdivisionPlan } from "@/lib/domain/subdivisions/store";
+import { applySubdivisionPlan, loadAdminUnits } from "@/lib/domain/subdivisions/store";
 import { importCoarse, importSeas } from "@/lib/pipeline/gazetteer/coarse";
 import { buildSubdivisions } from "@/lib/pipeline/subdivisions";
 import { startSubdivisionsBuildRun } from "@/lib/pipeline/subdivisions-run";
@@ -201,6 +201,30 @@ describe("applySubdivisionPlan", () => {
       const { rows } = await tx.execute<{ area: number }>(sql`SELECT ST_Area(geom::geography)::float AS area FROM geo_objects WHERE id = ${made!.id}::uuid`);
       expect(rows[0]!.area).toBeGreaterThan(1.5e10);
       expect(await applySubdivisionPlan(tx, [group], LATER)).toMatchObject({ unchanged: 1, replaced: 0 });
+    });
+  });
+});
+
+describe("loadAdminUnits", () => {
+  it("marks units within 2 km of a configured sea as touching it, farther ones and unconfigured seas not", async () => {
+    await withRollback(async (tx) => {
+      const insertSea = (mrgid: number, box: [number, number, number, number]) =>
+        tx.execute(sql.raw(`
+          INSERT INTO geo_objects (id, type, origin, tags, geom)
+          VALUES (gen_random_uuid(), 'sea', 'marine_regions', '{"mrgid": "${mrgid}"}'::jsonb, ST_Multi(${square(...box)}))`));
+      await insertSea(mrgids[0]!, [10, 45, 10.5, 46]);
+      await insertSea(999_999, [11.5, 45, 12, 46]);
+      // At 45.5 N, 0.01 degrees of longitude are about 780 m.
+      const overlapping = await insertUnit(tx, [10.4, 45.2, 10.45, 45.8]);
+      const near = await insertUnit(tx, [10.52, 45.2, 10.6, 45.8]);
+      const far = await insertUnit(tx, [10.53, 45.2, 10.6, 45.8]);
+      const nextToOtherSea = await insertUnit(tx, [11.3, 45.2, 11.49, 45.8]);
+      const units = await loadAdminUnits(tx, mrgids);
+      const touches = (id: string) => units.find((u) => u.geoObjectId === id)?.touchesMediterranean;
+      expect(touches(overlapping)).toBe(true);
+      expect(touches(near)).toBe(true);
+      expect(touches(far)).toBe(false);
+      expect(touches(nextToOtherSea)).toBe(false);
     });
   });
 });
