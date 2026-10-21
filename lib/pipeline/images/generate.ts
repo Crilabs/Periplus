@@ -29,7 +29,8 @@ import { IMAGES_STAGE } from "./stage-name";
  */
 
 const TASK = "generate-place-image";
-const log = createLogger("images.place");
+let logger: ReturnType<typeof createLogger> | undefined;
+const getLog = () => (logger ??= createLogger("images.place"));
 
 /** `<name>: <message>` of an error (anything else as text), for a task context. */
 const errorMessage = (e: unknown): string => (e instanceof Error ? `${e.name}: ${e.message}` : String(e));
@@ -332,7 +333,7 @@ export async function generatePlaceImage(
 
   if (!deps.imageModel.available()) {
     // the plan asked the same; a job that still runs (the key vanished meanwhile) must not download and render for nothing
-    log.warn({ geoObjectId: input.geoObjectId, slot: view.slot }, "no usable image model (OPENAI_API_KEY missing?): place image skipped");
+    getLog().warn({ geoObjectId: input.geoObjectId, slot: view.slot }, "no usable image model (OPENAI_API_KEY missing?): place image skipped");
     return { status: "skipped", attempts: 0, waterIoU: null };
   }
   if (!input.runId) throw new Error("generating a place image needs the run id (place_renders.run_id)");
@@ -371,7 +372,7 @@ export async function generatePlaceImage(
     const interrupt = (n: number, step: string, e: unknown) => {
       interrupted = { attempt: n, error: errorMessage(e) };
       interruptedBy = e;
-      log.warn({ geoObjectId: place.geoObjectId, slot: view.slot, attempt: n, step, err: e }, "image attempt interrupted, earlier attempts go up for review");
+      getLog().warn({ geoObjectId: place.geoObjectId, slot: view.slot, attempt: n, step, err: e }, "image attempt interrupted, earlier attempts go up for review");
     };
     for (let n = 1; n <= icfg.check.maxAttempts; n++) {
       made = n;
@@ -436,7 +437,7 @@ export async function generatePlaceImage(
     return { status: "review", attempts: made, waterIoU: chosen?.iou ?? null };
   });
   if (generated === null) {
-    log.info({ geoObjectId: input.geoObjectId, slot: view.slot }, "another job holds the slot lock, skipped");
+    getLog().info({ geoObjectId: input.geoObjectId, slot: view.slot }, "another job holds the slot lock, skipped");
     return { status: "skipped", attempts: 0, waterIoU: null };
   }
   return generated;

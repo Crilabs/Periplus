@@ -14,7 +14,8 @@ import { atTarget, keyDone, keyFor, titleView, type ImageStageConfig, type Image
 import { currentAerialTileIds } from "./imagery";
 import { imageModelAvailable } from "./model";
 
-const log = createLogger("images.place");
+let logger: ReturnType<typeof createLogger> | undefined;
+const getLog = () => (logger ??= createLogger("images.place"));
 
 /*
  * Plan of stage `images.place` (spec 13): which places of a run get an image generated. A run started for images
@@ -107,7 +108,7 @@ export async function imageTargets(
 ): Promise<ImageTarget[]> {
   if (run.params.evaluation === true || simulationActive()) return [];
   if (!imageModelAvailable(db, env)) {
-    log.warn({ runId: run.id }, "no usable image model (OPENAI_API_KEY missing?): the run generates no place images");
+    getLog().warn({ runId: run.id }, "no usable image model (OPENAI_API_KEY missing?): the run generates no place images");
     return [];
   }
   const scope = run.params.images as ImageRunScope | undefined;
