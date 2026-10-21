@@ -2,7 +2,13 @@ import { simulationActive } from "@/lib/adapters/simulation";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import { consolidationBlocked } from "@/lib/domain/consolidation/targets";
 import { consolidateGeoJob, consolidationGeoJobs } from "@/lib/pipeline/consolidation/geo";
-import { CONSOLIDATION_FOLLOWUP_STAGE, CONSOLIDATION_GEO_STAGE, CONSOLIDATION_SUMMARY_STAGE } from "@/lib/pipeline/consolidation/stages";
+import { consolidationHighlightJobs } from "@/lib/pipeline/consolidation/highlights";
+import {
+  CONSOLIDATION_FOLLOWUP_STAGE,
+  CONSOLIDATION_GEO_STAGE,
+  CONSOLIDATION_HIGHLIGHTS_STAGE,
+  CONSOLIDATION_SUMMARY_STAGE,
+} from "@/lib/pipeline/consolidation/stages";
 import { summarizeProfile, summaryJobs } from "@/lib/pipeline/consolidation/summary";
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import { modelClientFor } from "./ai-batch";
@@ -18,6 +24,16 @@ export const consolidationGeoStage: StageDefinition = {
 export const consolidationGeoHandler: JobHandler<JobData> = async (data, ctx) => {
   const result = await consolidateGeoJob(ctx.db, data);
   ctx.log.info({ geoObjectId: data.geoObjectId, ...result }, "geo object consolidated");
+};
+
+/**
+ * Stage `consolidation.highlights` (spec 16): one job per POI the run's places selected (`consolidationHighlightJobs`);
+ * its jobs are `consolidation.geo` jobs, run by `consolidationGeoHandler`.
+ */
+export const consolidationHighlightsStage: StageDefinition = {
+  name: CONSOLIDATION_HIGHLIGHTS_STAGE,
+  queue: "consolidation.highlights",
+  plan: consolidationHighlightJobs,
 };
 
 /** Stage `consolidation.summary`: one job per profile version to summarize (`summaryTargets`). */

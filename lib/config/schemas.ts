@@ -338,6 +338,8 @@ export const gazetteerSchema = z.strictObject({
     uncertainDistanceFactor: z.number().min(1),
     wikidataLinkDistanceM: z.number().positive(),
     geonamesNewObjectRadiusM: z.number().positive(),
+    /** Spec 16: two selected highlights of a category with similar names closer than this get a pair task. */
+    highlightPairM: z.number().positive(),
   }),
   noAnchoringKinds: z.array(z.enum(restrictedKindEnum.enumValues)),
 });

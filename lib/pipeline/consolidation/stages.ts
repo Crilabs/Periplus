@@ -8,6 +8,12 @@ import { IMAGES_STAGE } from "@/lib/pipeline/images/stage-name";
 /** Stage consolidating the run's geo objects (one job per object, `consolidateGeo`). */
 export const CONSOLIDATION_GEO_STAGE = "consolidation.geo";
 
+/**
+ * Stage consolidating the POIs the run's places selected as highlights (spec 16, one job per POI, `consolidateGeo`),
+ * right after `consolidation.geo`; it also opens pair tasks among selected highlights with similar names.
+ */
+export const CONSOLIDATION_HIGHLIGHTS_STAGE = "consolidation.highlights";
+
 /** Stage of the profile summaries (one job per new profile version). */
 export const CONSOLIDATION_SUMMARY_STAGE = "consolidation.summary";
 
@@ -19,12 +25,18 @@ export const CONSOLIDATION_FOLLOWUP_STAGE = "consolidation.followup";
  * the title images of the spots the run consolidated (`images.place`, spec 13), so every newly confirmed spot gets one;
  * a `stagesOnly` run (e.g. „Summary neu erzeugen") leaves it out unless it names it.
  */
-export const CONSOLIDATION_STAGES = [CONSOLIDATION_GEO_STAGE, CONSOLIDATION_SUMMARY_STAGE, CONSOLIDATION_FOLLOWUP_STAGE, IMAGES_STAGE] as const;
+export const CONSOLIDATION_STAGES = [
+  CONSOLIDATION_GEO_STAGE,
+  CONSOLIDATION_HIGHLIGHTS_STAGE,
+  CONSOLIDATION_SUMMARY_STAGE,
+  CONSOLIDATION_FOLLOWUP_STAGE,
+  IMAGES_STAGE,
+] as const;
 
 /**
- * The consolidation stages a geometry run appends (final review I-2): profile, summary and title images. A paid source
- * discovery (`consolidation.followup`, DataForSEO) is never a side effect of recomputing geometry; it runs with
- * consolidation and text runs. The images stage is here because a place only becomes an image target once it has a
+ * The consolidation stages a geometry run appends (final review I-2): profile, highlights, summary and title images. A
+ * paid source discovery (`consolidation.followup`, DataForSEO) is never a side effect of recomputing geometry; it runs
+ * with consolidation and text runs. The images stage is here because a place only becomes an image target once it has a
  * fetch computation, which a geometry run brings.
  */
-export const GEOMETRY_CONSOLIDATION_STAGES = [CONSOLIDATION_GEO_STAGE, CONSOLIDATION_SUMMARY_STAGE, IMAGES_STAGE] as const;
+export const GEOMETRY_CONSOLIDATION_STAGES = [CONSOLIDATION_GEO_STAGE, CONSOLIDATION_HIGHLIGHTS_STAGE, CONSOLIDATION_SUMMARY_STAGE, IMAGES_STAGE] as const;

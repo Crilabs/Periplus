@@ -69,7 +69,8 @@
     "distanceM": { "bay": 300, "settlement": 500, "harbour": 300, "default": 500 },
     "uncertainDistanceFactor": 2,
     "wikidataLinkDistanceM": 1000,
-    "geonamesNewObjectRadiusM": 500
+    "geonamesNewObjectRadiusM": 500,
+    "highlightPairM": 2000
   },
   "noAnchoringKinds": ["military", "cable", "firing_area", "aquaculture"]
 }

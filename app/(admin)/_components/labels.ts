@@ -78,6 +78,11 @@ export const STAGE_STATUS_LABELS: Record<RunStageStatus, string> = {
   finished: "Abgeschlossen",
 };
 
+/** German names of stages whose technical name alone says little, shown beside it on the run page. */
+export const STAGE_LABELS: Partial<Record<string, string>> = {
+  "consolidation.highlights": "Highlights konsolidieren",
+};
+
 export const SCOPE_TYPE_LABELS: Record<RunScopeType, string> = {
   tile: "Kachel",
   area: "Gebiet",

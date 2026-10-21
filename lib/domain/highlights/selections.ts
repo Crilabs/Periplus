@@ -1,4 +1,4 @@
-import { eq, or, sql } from "drizzle-orm";
+import { eq, or, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { highlightSelections, type PoiCategory } from "@/lib/db/schema";
 import type { CategorySelection, HighlightLevel } from "./select";
@@ -50,23 +50,43 @@ export async function dropHighlightSelectionsOf(tx: Db, geoObjectId: string): Pr
 }
 
 /**
- * The POIs the given places selected, sorted, without duplicates. Safety net beside the deletes on merge, rejection
- * and end: only rows of a valid, unmerged, not rejected place on a valid, unmerged geo object, selecting a valid,
- * unmerged POI, count (validity on the database date).
+ * The selection rows (alias `hs`) that count: of a valid, unmerged, not rejected place on a valid, unmerged geo object,
+ * selecting a valid, unmerged POI (validity on the database date). Safety net beside the deletes on merge, rejection
+ * and end.
  */
+const countingSelections = sql`
+  highlight_selections hs
+  join geo_objects po on po.id = hs.place_geo_object_id and po.merged_into_id is null
+    and po.valid_from <= current_date and (po.valid_to is null or po.valid_to > current_date)
+  join places pl on pl.geo_object_id = po.id and pl.merged_into_id is null and pl.status <> 'rejected'
+    and pl.valid_from <= current_date and (pl.valid_to is null or pl.valid_to > current_date)
+  join geo_objects o on o.id = hs.poi_geo_object_id and o.merged_into_id is null
+    and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
+`;
+
+/** The POIs the given places selected, sorted, without duplicates (only rows that count, see `countingSelections`). */
 export async function selectedPoiIds(db: Db, placeGeoObjectIds: string[]): Promise<string[]> {
   if (placeGeoObjectIds.length === 0) return [];
   const { rows } = await db.execute<{ id: string }>(sql`
     select distinct hs.poi_geo_object_id as id
-    from highlight_selections hs
-    join geo_objects po on po.id = hs.place_geo_object_id and po.merged_into_id is null
-      and po.valid_from <= current_date and (po.valid_to is null or po.valid_to > current_date)
-    join places pl on pl.geo_object_id = po.id and pl.merged_into_id is null and pl.status <> 'rejected'
-      and pl.valid_from <= current_date and (pl.valid_to is null or pl.valid_to > current_date)
-    join geo_objects o on o.id = hs.poi_geo_object_id and o.merged_into_id is null
-      and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
+    from ${countingSelections}
     where hs.place_geo_object_id = any(${sql.param(placeGeoObjectIds)}::uuid[])
     order by 1
   `);
   return rows.map((r) => r.id);
 }
+
+/** Of the given geo objects, the POIs any place selected (a highlight), sorted, without duplicates. */
+export async function selectedAnywhere(db: Db, poiGeoObjectIds: string[]): Promise<string[]> {
+  if (poiGeoObjectIds.length === 0) return [];
+  const { rows } = await db.execute<{ id: string }>(sql`
+    select distinct hs.poi_geo_object_id as id
+    from ${countingSelections}
+    where hs.poi_geo_object_id = any(${sql.param(poiGeoObjectIds)}::uuid[])
+    order by 1
+  `);
+  return rows.map((r) => r.id);
+}
+
+/** SQL condition: the POI `poiId` is a highlight of some place (a selection row that counts). */
+export const isSelectedSql = (poiId: SQL) => sql`exists (select 1 from ${countingSelections} where hs.poi_geo_object_id = ${poiId})`;

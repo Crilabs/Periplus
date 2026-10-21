@@ -28,10 +28,18 @@ export async function consolidationGeoJobs(db: Db, run: { id: string; params: Re
   }
   // A failed run revived after all consolidates now: no marker (ruling M5-H-R2).
   await clearConsolidationSkipped(db, run.id);
+  return consolidateJobs(run, await consolidationTargets(db, run));
+}
+
+/**
+ * One `consolidateGeoJob` job per geo object (`key` = its id) with the run's mode, frozen rules version and an
+ * evaluation run's extraction candidate (shared by `consolidation.geo` and `consolidation.highlights`).
+ */
+export function consolidateJobs(run: { params: Record<string, unknown> }, geoObjectIds: string[]): JobData[] {
   const mode = run.params.evaluation === true ? "evaluation" : "regular";
   const rulesVersion = typeof run.params.rulesVersion === "string" ? run.params.rulesVersion : undefined;
   const extraction = mode === "evaluation" ? extractionSchema.optional().parse(run.params.extraction) : undefined;
-  return (await consolidationTargets(db, run)).map((geoObjectId) => ({
+  return geoObjectIds.map((geoObjectId) => ({
     key: geoObjectId,
     geoObjectId,
     mode,
@@ -51,7 +59,7 @@ const jobSchema = z.object({
   extraction: extractionSchema.optional(),
 });
 
-/** Job of `consolidation.geo`: consolidates `data.geoObjectId` for the run (run date from the run row). */
+/** Job of `consolidation.geo` and `consolidation.highlights`: consolidates `data.geoObjectId` for the run (run date from the run row). */
 export async function consolidateGeoJob(db: Db, data: JobData): Promise<ConsolidateResult> {
   const job = jobSchema.parse(data);
   return consolidateGeo(db, job.geoObjectId, { runId: job.runId, mode: job.mode, rulesVersion: job.rulesVersion, extraction: job.extraction });

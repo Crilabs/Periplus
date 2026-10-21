@@ -10,6 +10,7 @@ import { consolidationTargets } from "@/lib/domain/consolidation/targets";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 import { levelFor } from "@/lib/domain/facts/levels";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
+import { selectedAnywhere } from "@/lib/domain/highlights/selections";
 import { createReviewTask } from "@/lib/domain/review";
 import type { JobData } from "@/lib/jobs/worker";
 import { CONSOLIDATION_SUMMARY_STAGE } from "./stages";
@@ -33,7 +34,10 @@ type Target = { geoObjectId: string; version: number };
 /**
  * The profile versions to summarize for a run: the versions this run created (newest per object), or with
  * `params.stagesOnly` (a summary run started for given objects, e.g. "Neu erzeugen" after a failed summary) the newest
- * version of each target of the run (`consolidationTargets`: its `geoObjectIds`, tile, subdivision or comparison set). Kept: objects whose fact level is in `summary.levels` and versions without an
+ * version of each target of the run (`consolidationTargets`: its `geoObjectIds`, tile, subdivision or comparison set).
+ * Either way they include the POIs the highlights stage consolidated (their profiles carry the run). Kept: objects
+ * whose fact level is in `summary.levels`, a POI only when some place selected it as a highlight (`selectedAnywhere`;
+ * rules without `highlights` keep every POI, spec 16), and versions without an
  * `ok` summary of the current prompt version; with `params.regenerateSummary` („Summary neu erzeugen“, ruling M6-H-R1)
  * also versions with one.
  */
@@ -57,10 +61,13 @@ export async function summaryTargets(db: Db, run: { id: string; params: Record<s
   }
   const prompt = promptVersion();
   const regenerate = run.params.regenerateSummary === true;
+  // spec 16: with highlights rules only a POI some place selected (a highlight) gets a summary
+  const highlights = cfg.highlights ? new Set(await selectedAnywhere(db, candidates.map((c) => c.geoObjectId))) : null;
   const targets: Target[] = [];
   for (const c of candidates) {
     const level = await levelFor(db, c.geoObjectId);
     if (level === null || !(cfg.summary.levels as readonly string[]).includes(level)) continue;
+    if (level === "poi" && highlights && !highlights.has(c.geoObjectId)) continue;
     if (regenerate) {
       targets.push(c);
       continue;
