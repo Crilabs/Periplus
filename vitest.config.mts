@@ -48,6 +48,23 @@ const DELIVERY_FIXTURE_TESTS = [
  */
 const REVISIT_FIXTURE_TESTS = ["lib/pipeline/__tests__/revisit-run.test.ts", "scripts/__tests__/draft-scenario.test.ts"];
 
+/**
+ * Tests that run the imagery fetch (`ensureImagery`, via `generatePlaceImage` or the images stage) inside a `withRollback`
+ * transaction. Their tiles have fixed keys (the same WMS cells and the same 1° DEM tile for every test spot) and
+ * `httpCall` takes its rate token from the bucket rows `http:ktimatologio`, `http:sentinel2` and `http:copernicus_dem`:
+ * the transaction keeps those rows and the unique tile keys locked until the test ends, so two such tests in parallel
+ * wait on each other, beyond the test timeout when the runner is slow. One worker runs these files in turn.
+ */
+const IMAGERY_TESTS = [
+  "app/(admin)/__tests__/place-image-actions.test.ts",
+  "app/(admin)/__tests__/review-place-image.test.ts",
+  "lib/domain/images/__tests__/approve.test.ts",
+  "lib/pipeline/images/__tests__/generate.test.ts",
+  "lib/pipeline/images/__tests__/imagery.test.ts",
+  "lib/pipeline/images/__tests__/model.test.ts",
+  "lib/pipeline/images/__tests__/stage.test.ts",
+];
+
 export default defineConfig({
   resolve: {
     alias: { "@": fileURLToPath(new URL(".", import.meta.url)) },
@@ -62,13 +79,14 @@ export default defineConfig({
         test: {
           name: "default",
           include: ["**/__tests__/**/*.test.{ts,tsx}", "test/**/*.test.ts"],
-          exclude: ["node_modules/**", ".next/**", ".claude/**", ...PILOT_RUN_TESTS, ...DELIVERY_FIXTURE_TESTS, ...REVISIT_FIXTURE_TESTS],
+          exclude: ["node_modules/**", ".next/**", ".claude/**", ...PILOT_RUN_TESTS, ...DELIVERY_FIXTURE_TESTS, ...REVISIT_FIXTURE_TESTS, ...IMAGERY_TESTS],
         },
       },
       {
         extends: true,
         test: { name: "delivery-fixture", include: DELIVERY_FIXTURE_TESTS, fileParallelism: false, env: { PERIPLUS_TEST_PROJECT: "delivery-fixture" } },
       },
+      { extends: true, test: { name: "imagery", include: IMAGERY_TESTS, fileParallelism: false } },
       { extends: true, test: { name: "revisit-fixture", include: REVISIT_FIXTURE_TESTS, fileParallelism: false } },
       // Long pilot-area runs hold rows (pilot tiles, configured areas) other test files write too:
       // run them after everything else instead of beside it.
