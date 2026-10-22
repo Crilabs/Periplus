@@ -69,5 +69,9 @@
     "wikidataLinkDistanceM": 1000,
     "geonamesNewObjectRadiusM": 500
   },
-  "noAnchoringKinds": ["military", "cable", "firing_area", "aquaculture"]
+  "noAnchoringKinds": ["military", "cable", "firing_area", "aquaculture"],
+  "commercialHarbourTags": {
+    "harbour:category": ["ferry", "fishing", "industrial", "cargo", "container", "naval"],
+    "seamark:harbour:category": ["fishing", "ferry_terminal", "container", "bulk", "tanker", "roro", "naval"]
+  }
 }

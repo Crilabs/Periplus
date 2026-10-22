@@ -71,6 +71,7 @@ const DELIVERY_GROUPS: Record<Exclude<keyof AppConfig["delivery"], "schemaVersio
   validation: "Validierung",
   severity: "Schwere",
   api: "API",
+  confirmation: "Bestätigung nach Beleg",
 };
 
 /** A target of `config/quality.json` in German: shares as percent, cost in euro, review effort in minutes. */

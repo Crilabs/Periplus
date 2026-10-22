@@ -70,5 +70,23 @@
       "fields": ["spots.json#/spots/*/images", "highlights.json#/highlights/*/images"]
     }
   ],
-  "api": { "cacheMaxAgeSeconds": 60 }
+  "api": { "cacheMaxAgeSeconds": 60 },
+  "confirmation": {
+    "aloneTypes": ["pilot_guide", "authority"],
+    "pairTypes": ["trip_report", "forum", "travel_guide", "other"],
+    "pairMinDomains": 2,
+    "ownSiteTypes": ["marina"],
+    "berthAttributes": [
+      "berthable",
+      "mooring.types",
+      "mooring.buoys",
+      "mooring.line_ashore_required",
+      "depth.anchoring_min",
+      "depth.anchoring_max",
+      "seabed",
+      "holding",
+      "shelter.*"
+    ],
+    "routeStops": true
+  }
 }

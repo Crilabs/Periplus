@@ -552,7 +552,7 @@ type EffortGroup = { tasks: number; decided: number; minutes: number; counted: b
 
 /**
  * Subject types of tasks that are no review work (ruling M7-D-R3): a removed profile entry (ruling M7-P14) and the admin
- * actions that write a task decided on creation (place merge, position and anchor correction, header status change). Reported in `byKind`
+ * actions that write a task decided on creation (place merge, position and anchor correction, header status change, kind switch by evidence). Reported in `byKind`
  * under their subject type, never counted.
  */
 export const PSEUDO_TASK_SUBJECT_TYPES: ReadonlySet<string> = new Set([
@@ -561,6 +561,7 @@ export const PSEUDO_TASK_SUBJECT_TYPES: ReadonlySet<string> = new Set([
   "place_position",
   "place_anchor",
   "place_status",
+  "place_kind",
 ]);
 
 /**

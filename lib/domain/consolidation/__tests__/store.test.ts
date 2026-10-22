@@ -271,6 +271,35 @@ describe("consolidateGeo", () => {
       await expect(consolidateGeo(tx, objectId, { mode: "evaluation", rulesVersion: "v1" })).rejects.toThrow(/runId and rulesVersion/);
     }));
 
+  it("a candidate confirmed by evidence is confirmed in the profile of the same run and emits place_new (spec 17)", () =>
+    withRollback(async (tx) => {
+      const { objectId, placeId } = await insertPlace(tx, { status: "candidate" });
+      await insertTextFact(tx, objectId, await insertSource(tx, "pilot_guide"), { attribute: "holding", value: "good", docType: "pilot_guide" });
+      const runId = await insertTestRun(tx);
+      const r = await consolidateGeo(tx, objectId, { runId });
+      expect(r).toMatchObject({ status: "created", version: 1 });
+      const [v1] = await versionsOf(tx, objectId);
+      expect(v1!.attributes).toMatchObject({ "place.status": "confirmed", holding: "good" });
+      expect((await eventsOf(tx, objectId)).map((e) => [e.type, e.newValue])).toEqual([["place_new", "confirmed"]]);
+      const [place] = await tx.select({ status: places.status }).from(places).where(eq(places.id, placeId));
+      expect(place!.status).toBe("confirmed");
+    }));
+
+  it("an evaluation run never confirms or switches the kind (spec 17)", () =>
+    withRollback(async (tx) => {
+      const { objectId, placeId } = await insertPlace(tx, { status: "candidate" });
+      await insertTextFact(tx, objectId, await insertSource(tx, "pilot_guide"), { attribute: "holding", value: "good", docType: "pilot_guide" });
+      await insertTextFact(tx, objectId, await insertSource(tx, "pilot_guide"), { attribute: "place.kind_evidence", value: "marina", docType: "pilot_guide" });
+      const runId = await insertTestRun(tx);
+      await consolidateGeo(tx, objectId, { runId, mode: "evaluation", rulesVersion: getConfig().consolidation.version, today });
+      const [place] = await tx.select({ status: places.status, kind: places.kind, publicId: places.publicId }).from(places).where(eq(places.id, placeId));
+      expect(place).toEqual({ status: "candidate", kind: "anchorage", publicId: null });
+      const decisions = await tx.select().from(reviewTasks).where(eq(reviewTasks.subjectId, placeId));
+      expect(decisions).toEqual([]);
+      const [row] = await tx.select().from(evaluationProfiles).where(eq(evaluationProfiles.geoObjectId, objectId));
+      expect(row!.attributes).toMatchObject({ "place.status": "candidate", "place.kind": "anchorage" });
+    }));
+
   it("depth scenario: two contradicting 0.6 texts leave the profile and create no event", () =>
     withRollback(async (tx) => {
       const objectId = await anchorage(tx);

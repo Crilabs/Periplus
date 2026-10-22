@@ -336,6 +336,11 @@ export const gazetteerSchema = z.strictObject({
     geonamesNewObjectRadiusM: z.number().positive(),
   }),
   noAnchoringKinds: z.array(z.enum(restrictedKindEnum.enumValues)),
+  /**
+   * OSM tag values that make a harbour clearly commercial (spec 17 Belegregel `port`): a `port` place whose geo object
+   * carries one of them, and no `leisure=marina`, is confirmed by rule `osm_commercial`.
+   */
+  commercialHarbourTags: z.record(z.string().min(1), z.array(z.string().min(1)).min(1)),
 });
 
 /** `config/fact-schema/active.json`: the fact schema version new facts are written with. */
@@ -1073,6 +1078,21 @@ export const deliverySchema = z.strictObject({
     }),
   ),
   api: z.strictObject({ cacheMaxAgeSeconds: z.number().int().nonnegative() }),
+  /**
+   * Confirmation by evidence (spec 17 „Bestätigung nach Beleg“): which source types confirm a place alone, which count
+   * as one of `pairMinDomains` documents of distinct domains, whose own website confirms its marina, and which place
+   * attributes (exact keys or `prefix.*`) are a berth fact. Route stops of trip reports count when `routeStops`.
+   */
+  confirmation: z
+    .strictObject({
+      aloneTypes: z.array(z.enum(DOC_TYPES)),
+      pairTypes: z.array(z.enum(DOC_TYPES)),
+      pairMinDomains: z.number().int().min(2),
+      ownSiteTypes: z.array(z.enum(DOC_TYPES)),
+      berthAttributes: z.array(z.string().regex(/^[a-z_]+(\.[a-zA-Z_]+)*(\.\*)?$/, "must be an attribute key or prefix.*")).min(1),
+      routeStops: z.boolean(),
+    })
+    .refine((c) => !c.ownSiteTypes.some((t) => c.aloneTypes.includes(t) || c.pairTypes.includes(t)), "ownSiteTypes count only for the bound place"),
 });
 
 export type ModelsConfig = z.infer<typeof modelsSchema>;
