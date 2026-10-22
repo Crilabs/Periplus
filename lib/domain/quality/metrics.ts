@@ -737,7 +737,7 @@ export async function placesPerTileMetric(db: Db, subdivisionKey: string, cfg: Q
 
 type PlaceRow = { place_id: string; geo_object_id: string; kind: string; status: string };
 
-/** Candidate and confirmed places of the scope valid on `today`, with the facts the metrics below ask about. */
+/** The places of the scope of one of `statuses` valid on `today`, with the facts the metrics below ask about. */
 async function scopePlaces(db: Db, s: ResolvedScope, today: string, statuses: string[]): Promise<PlaceRow[]> {
   const { rows } = await db.execute<PlaceRow>(sql`
     select p.id as place_id, p.geo_object_id, p.kind::text as kind, p.status::text as status
@@ -754,8 +754,9 @@ async function scopePlaces(db: Db, s: ResolvedScope, today: string, statuses: st
  * `place_status` task with a `confirm` decision by `system`). `details { candidates, autoConfirmed, manualConfirmed,
  * withoutEvidence, kindChanged, deliveredByKind }`: `withoutEvidence` are candidates without a fact of a berth attribute
  * and without a route stop (nothing to confirm them on); `kindChanged` the places whose kind the system switched;
- * `deliveredByKind` the confirmed places per kind by the `berthable` the delivery gives them (the profile's value, else
- * the derivation of spec 17): yes, no or unknown. No confirmed place → null.
+ * `deliveredByKind` the places of a delivered status (`delivery.spots.statuses`: confirmed and no_anchoring, final
+ * review 7) per kind by the `berthable` the delivery gives them (the profile's value, else the derivation of spec 17):
+ * yes, no or unknown. No confirmed place → null.
  */
 export async function placeConfirmationMetric(db: Db, scope: QualityScope, opts: { today?: string; cfg?: AppConfig } = {}): Promise<MetricResult> {
   const empty = { candidates: 0, autoConfirmed: 0, manualConfirmed: 0, withoutEvidence: 0, kindChanged: 0, deliveredByKind: {} };
@@ -796,9 +797,10 @@ export async function placeConfirmationMetric(db: Db, scope: QualityScope, opts:
     withoutEvidence = Number(rows[0]!.n);
   }
 
-  const profiles = await latestProfiles(db, confirmed.map((p) => p.geo_object_id));
+  const delivered = await scopePlaces(db, s, today, cfg.delivery.spots.statuses);
+  const profiles = await latestProfiles(db, delivered.map((p) => p.geo_object_id));
   const deliveredByKind: Record<string, { yes: number; no: number; unknown: number }> = {};
-  for (const p of confirmed) {
+  for (const p of delivered) {
     const fact = (profiles.get(p.geo_object_id)?.attributes as Record<string, unknown> | undefined)?.["berthable"];
     const berthable = typeof fact === "boolean" ? fact : derivedBerthable(p.kind, p.status);
     const entry = (deliveredByKind[p.kind] ??= { yes: 0, no: 0, unknown: 0 });

@@ -591,6 +591,19 @@ describe("place metrics (specs 16, 17)", () => {
       expect((await placeConfirmationMetric(tx, { subdivisionKey: "XT-unknown" })).value).toBeNull();
     }));
 
+  it("place_confirmation: deliveredByKind also counts delivered no_anchoring places as berthable no (final review 7)", () =>
+    withRollback(async (tx) => {
+      const { subdivisionKey, addPlace } = await subdivision(tx);
+      const ok = await addPlace();
+      const banned = await addPlace({ status: "no_anchoring" });
+      await addPlace({ status: "rejected" });
+      await tx.update(places).set({ kind: "marina" }).where(eq(places.id, ok.placeId));
+      await tx.update(places).set({ kind: "marina" }).where(eq(places.id, banned.placeId));
+      const r = await placeConfirmationMetric(tx, { subdivisionKey }, { today: "2026-10-20" });
+      expect(r.value).toBe(0);
+      expect(r.details).toMatchObject({ candidates: 0, autoConfirmed: 0, manualConfirmed: 1, deliveredByKind: { marina: { yes: 1, no: 1, unknown: 0 } } });
+    }));
+
   it("place_websites: marinas and ports with a website by source, fetched = bound start URL with a document version", () =>
     withRollback(async (tx) => {
       const { subdivisionKey, addPlace } = await subdivision(tx);
