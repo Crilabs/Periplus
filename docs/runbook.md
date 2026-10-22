@@ -510,7 +510,7 @@ Einmalig beim Ausrollen dieser Version. Neu: Fact-Schema v3 (`berthable`, `place
 
 Reihenfolge: Deploy, dann die einmaligen Schritte (Regelversion v2, `pois:reclassify`), dann die Schritte je Landesteil (Pilot: `GR-I` Attika, danach `GR-J` Peloponnes).
 
-1. **Deploy** (Migrationen 0063–0066, `npm run db:migrate`): ab hier ist Schema v3 aktiv; Text-Facts zählen erst wieder nach „Reprozessieren“ (Schritt 6), weil nur Extraktionsläufe mit dem aktiven Schema zählen (Abschnitt „Konsolidierung“).
+1. **Deploy** (Migrationen 0063–0066, `npm run db:migrate`): ab hier ist Schema v3 aktiv; Text-Facts zählen erst wieder nach „Reprozessieren“ (Schritt 6), weil nur Extraktionsläufe mit dem aktiven Schema zählen (Abschnitt „Konsolidierung“). Schon die erste Konsolidierung nach dem Deploy (jeder Lauf mit `consolidation.geo`, auch vor jedem Reprozess) kann Häfen mit eindeutig gewerblichen OSM-Tags ohne `leisure=marina` bestätigen (Regel `osm_commercial`, auf der Ort-Seite „Automatisch bestätigt“): dafür braucht es keine Facts.
 
 Einmalig, nach dem Deploy:
 
@@ -520,6 +520,6 @@ Einmalig, nach dem Deploy:
 Je Landesteil:
 
 4. **Läufe → „Gazetteer aufbauen“**: liest Website-Tags (`website`, `contact:website`) und Wikidata `P856` ein (Abweichung 1).
-5. **Läufe → „Marina-Websites suchen“**: findet die Websites der Marinas und Häfen (OSM, Wikidata, sonst Google-Suche mit KI-Prüfung), gibt sie als Quellen frei, ruft sie ab, bindet sie an den Ort und extrahiert die Seiten mit Schema v3. Kostet Suchen (`dataforseo`) und Extraktion (`anthropic`).
+5. **Läufe → „Marina-Websites suchen“**: findet die Websites der Marinas und Häfen (OSM, Wikidata, sonst Google-Suche mit KI-Prüfung), gibt sie als Quellen frei, ruft sie ab, bindet sie an den Ort und extrahiert die Seiten mit Schema v3. Kostet Suchen (`dataforseo`) und Extraktion (`anthropic`). **Zwischen Schritt 5 und Schritt 6 keine Lieferung bauen:** der Lauf konsolidiert die Orte mit Website neu, und deren Profile tragen bis zum Reprozessieren nur die Facts der Website-Seiten (Schema v3); alle anderen Text-Facts zählen erst wieder nach Schritt 6.
 6. **Läufe → „Reprozessieren für Landesteil“**: vorher die Schätzung im Dialog „Lauf starten …“ ansehen (sie erscheint, sobald der Landesteil gewählt ist: Erwähnungen × mittlere Kosten je Erwähnung der letzten 5 Extraktionsläufe; ohne Folgesuche und Bilder). Der Lauf extrahiert jede Erwähnung neu mit Schema v3, konsolidiert (bestätigt und stellt die Ortsart nach Beleg um) und führt danach die bezahlte Folgesuche (`consolidation.followup`, DataForSEO) und die Titelbilder (`images.place`, OpenAI) aus. Budgets `anthropic`, `dataforseo` und `openai` vorher prüfen.
 7. **„Qualität“**: Messen und die Zeilen `place_confirmation` (Anteil automatisch bestätigter Orte, davon Ortsart geändert, gelieferter `berthable` je Ortsart), `place_websites` (Marinas und Häfen mit Website, je Herkunft, abgerufen) und `marina_services` (Marinas mit Kraftstoff und Wasser) prüfen; dann Lieferung („Paket bauen“, Abschnitt „Lieferung“). Bild-Zeilen von Orten ohne öffentliche ID, die vor dieser Version gerendert wurden, bleiben als ungenutzte Zeilen stehen; sie müssen nicht aufgeräumt werden.
