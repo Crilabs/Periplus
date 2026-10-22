@@ -279,6 +279,9 @@ const METRIC_NAMES: Record<MetricKey, string> = {
   highlight_share: "Anteil Orte mit Highlight",
   recent_observation_share: "Anteil Orte mit aktueller Beobachtung",
   places_per_tile: "Orte je Kachel",
+  place_confirmation: "Automatisch bestätigte Orte",
+  place_websites: "Marinas und Häfen mit Website",
+  marina_services: "Marinas mit Kraftstoff und Wasser",
 };
 
 /**

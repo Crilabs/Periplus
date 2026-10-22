@@ -11,8 +11,11 @@ import {
   factPrecisionMetric,
   highlightShareMetric,
   multiDocumentMetric,
+  marinaServicesMetric,
   multiSourceMetric,
+  placeConfirmationMetric,
   placesPerTileMetric,
+  placeWebsitesMetric,
   quoteFidelityMetric,
   recentObservationShareMetric,
   reviewEffortMetrics,
@@ -104,6 +107,9 @@ export async function computeQualitySnapshot(
       highlight!,
       recent!,
       await placesPerTileMetric(tx, subdivisionKey, cfg, { today }),
+      await placeConfirmationMetric(tx, scope, { today }),
+      await placeWebsitesMetric(tx, scope, { today }),
+      await marinaServicesMetric(tx, scope, { today }),
     ];
     const rows: Array<typeof qualitySnapshots.$inferInsert> = subdivision.map((m) => ({
       runId: input.runId,

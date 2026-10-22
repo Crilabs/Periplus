@@ -80,7 +80,7 @@ describe("qualityDashboard", () => {
       expect(row("review_minutes_per_100")).toMatchObject({ pilot: null, full: 30, statusPilot: "no_target", statusFull: "missed" });
       expect(row("multi_document")).toMatchObject({ value: null, statusPilot: "no_value", statusFull: "no_value" });
       expect(row("highlight_share")).toMatchObject({ statusPilot: "no_target", statusFull: "no_target" });
-      expect(d.rows.map((r) => r.metric)).toHaveLength(14);
+      expect(d.rows.map((r) => r.metric)).toHaveLength(17);
       expect(d.tiles).toEqual([
         { tileId: west, metrics: { coverage: 1 }, places: 42, outsideTarget: true },
         { tileId: east, metrics: { coverage: null }, places: 5, outsideTarget: true },

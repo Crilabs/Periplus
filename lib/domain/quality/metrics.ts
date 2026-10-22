@@ -3,6 +3,7 @@ import { getConfig, type AppConfig } from "@/lib/config";
 import type { QualityConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { COMPARISON_ATTRIBUTES, places, type ComparisonAttribute, type MetricKey } from "@/lib/db/schema";
+import { derivedBerthable } from "@/lib/domain/consolidation/berthable";
 import { countingSourceSql, mergedChainsSql } from "@/lib/domain/consolidation/inputs";
 import { activeExtractionRunIdSql } from "@/lib/domain/extraction/active-run";
 import { belegtreue } from "@/lib/domain/extraction/fidelity";
@@ -727,4 +728,176 @@ export async function placesPerTileMetric(db: Db, subdivisionKey: string, cfg: Q
       endedTiles,
     },
   };
+}
+
+/*
+ * Place metrics (specs 16 and 17): how the automatic confirmation, the websites and the marina services come out for a
+ * subdivision. Counts only, no values of any reference (Grundprinzip 9).
+ */
+
+type PlaceRow = { place_id: string; geo_object_id: string; kind: string; status: string };
+
+/** Candidate and confirmed places of the scope valid on `today`, with the facts the metrics below ask about. */
+async function scopePlaces(db: Db, s: ResolvedScope, today: string, statuses: string[]): Promise<PlaceRow[]> {
+  const { rows } = await db.execute<PlaceRow>(sql`
+    select p.id as place_id, p.geo_object_id, p.kind::text as kind, p.status::text as status
+    from places p join geo_objects g on g.id = p.geo_object_id
+    where ${s.inScope} and p.status::text in (select value from jsonb_array_elements_text(${JSON.stringify(statuses)}::jsonb))
+      and ${validPlaceOn(today)}
+    order by p.id
+  `);
+  return rows;
+}
+
+/**
+ * Bestätigung (spec 17): the share of the confirmed places of the scope that the system confirmed (a decided
+ * `place_status` task with a `confirm` decision by `system`). `details { candidates, autoConfirmed, manualConfirmed,
+ * withoutEvidence, kindChanged, deliveredByKind }`: `withoutEvidence` are candidates without a fact of a berth attribute
+ * and without a route stop (nothing to confirm them on); `kindChanged` the places whose kind the system switched;
+ * `deliveredByKind` the confirmed places per kind by the `berthable` the delivery gives them (the profile's value, else
+ * the derivation of spec 17): yes, no or unknown. No confirmed place → null.
+ */
+export async function placeConfirmationMetric(db: Db, scope: QualityScope, opts: { today?: string; cfg?: AppConfig } = {}): Promise<MetricResult> {
+  const empty = { candidates: 0, autoConfirmed: 0, manualConfirmed: 0, withoutEvidence: 0, kindChanged: 0, deliveredByKind: {} };
+  const s = await resolveScope(db, scope);
+  if (!s) return { metric: "place_confirmation", value: null, details: empty };
+  const today = opts.today ?? utcToday();
+  const cfg = opts.cfg ?? getConfig();
+  const placeRows = await scopePlaces(db, s, today, ["candidate", "confirmed"]);
+  const confirmed = placeRows.filter((p) => p.status === "confirmed");
+  const candidates = placeRows.filter((p) => p.status === "candidate");
+  const ids = (rows: PlaceRow[]) => JSON.stringify(rows.map((p) => p.place_id));
+
+  const system = async (rows: PlaceRow[], subjectType: string, action?: string) => {
+    if (rows.length === 0) return new Set<string>();
+    const { rows: found } = await db.execute<{ id: string }>(sql`
+      select distinct t.subject_id as id
+      from review_tasks t join review_decisions d on d.task_id = t.id
+      where t.kind = 'place_candidate' and t.subject_type = ${subjectType} and d.decided_by = 'system'
+        ${action ? sql`and d.decision->>'action' = ${action}` : sql``}
+        and t.subject_id in (select value from jsonb_array_elements_text(${ids(rows)}::jsonb))
+    `);
+    return new Set(found.map((r) => r.id));
+  };
+  const auto = await system(confirmed, "place_status", "confirm");
+  const kindChanged = await system(placeRows, "place_kind", "set_kind");
+
+  const patterns = cfg.delivery.confirmation.berthAttributes.map((a) => (a.endsWith(".*") ? `${a.slice(0, -1)}%` : a));
+  let withoutEvidence = 0;
+  if (candidates.length > 0) {
+    const { rows } = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n
+      from places p
+      where p.id in (select value::uuid from jsonb_array_elements_text(${ids(candidates)}::jsonb))
+        and not exists (select 1 from facts f where f.geo_object_id = p.geo_object_id
+                        and f.attribute like any (select value from jsonb_array_elements_text(${JSON.stringify(patterns)}::jsonb)))
+        and not exists (select 1 from route_stops rs where rs.geo_object_id = p.geo_object_id)
+    `);
+    withoutEvidence = Number(rows[0]!.n);
+  }
+
+  const profiles = await latestProfiles(db, confirmed.map((p) => p.geo_object_id));
+  const deliveredByKind: Record<string, { yes: number; no: number; unknown: number }> = {};
+  for (const p of confirmed) {
+    const fact = (profiles.get(p.geo_object_id)?.attributes as Record<string, unknown> | undefined)?.["berthable"];
+    const berthable = typeof fact === "boolean" ? fact : derivedBerthable(p.kind, p.status);
+    const entry = (deliveredByKind[p.kind] ??= { yes: 0, no: 0, unknown: 0 });
+    entry[berthable === true ? "yes" : berthable === false ? "no" : "unknown"]++;
+  }
+  const sortedKinds = Object.fromEntries(Object.entries(deliveredByKind).sort(([a], [b]) => (a < b ? -1 : 1)));
+  return {
+    metric: "place_confirmation",
+    value: share(auto.size, confirmed.length),
+    details: {
+      candidates: candidates.length,
+      autoConfirmed: auto.size,
+      manualConfirmed: confirmed.length - auto.size,
+      withoutEvidence,
+      kindChanged: kindChanged.size,
+      deliveredByKind: sortedKinds,
+    },
+  };
+}
+
+/**
+ * Websites (spec 16 C): the share of the marinas and ports (candidate or confirmed) of the scope with a website (their
+ * newest `place_websites` row). `details { withWebsite, bySource { osm, wikidata, serp }, fetched }`: `fetched` counts
+ * those whose website is a bound start URL (a source) with at least one document version. No marina or port → null.
+ */
+export async function placeWebsitesMetric(db: Db, scope: QualityScope, opts: { today?: string } = {}): Promise<MetricResult> {
+  const bySource = { osm: 0, wikidata: 0, serp: 0 };
+  const s = await resolveScope(db, scope);
+  if (!s) return { metric: "place_websites", value: null, details: { withWebsite: 0, bySource, fetched: 0 } };
+  const { rows } = await db.execute<{ origin: keyof typeof bySource | null; fetched: boolean | null }>(sql`
+    with scope_places as (
+      select p.id from places p join geo_objects g on g.id = p.geo_object_id
+      where ${s.inScope} and p.status in ('candidate', 'confirmed') and p.kind in ('marina', 'port') and ${validPlaceOn(opts.today ?? utcToday())}
+    ),
+    current_site as (
+      select distinct on (w.place_id) w.place_id, w.origin::text as origin, w.bound, w.source_id
+      from place_websites w where w.place_id in (select id from scope_places)
+      order by w.place_id, w.created_at desc, w.id desc
+    )
+    select cs.origin,
+      (cs.bound and cs.source_id is not null and exists (
+        select 1 from documents d join document_versions v on v.document_id = d.id where d.source_id = cs.source_id
+      )) as fetched
+    from current_site cs
+  `);
+  const total = await db.execute<{ n: number }>(sql`
+    select count(*)::int as n from places p join geo_objects g on g.id = p.geo_object_id
+    where ${s.inScope} and p.status in ('candidate', 'confirmed') and p.kind in ('marina', 'port') and ${validPlaceOn(opts.today ?? utcToday())}
+  `);
+  for (const r of rows) if (r.origin) bySource[r.origin]++;
+  return {
+    metric: "place_websites",
+    value: share(rows.length, Number(total.rows[0]!.n)),
+    details: { withWebsite: rows.length, bySource, fetched: rows.filter((r) => r.fetched === true).length },
+  };
+}
+
+/**
+ * Marina services (spec 16): the share of the confirmed marinas of the scope whose profile has a `services.fuel` and a
+ * `services.water` value. `details { fuel, water, fromWebsite }`: marinas with either value, and marinas whose value rests on a
+ * fact of a page of their own website (a source bound to the place). No confirmed marina → null.
+ */
+export async function marinaServicesMetric(db: Db, scope: QualityScope, opts: { today?: string } = {}): Promise<MetricResult> {
+  const s = await resolveScope(db, scope);
+  if (!s) return { metric: "marina_services", value: null, details: { fuel: 0, water: 0, fromWebsite: 0 } };
+  const marinas = (await scopePlaces(db, s, opts.today ?? utcToday(), ["confirmed"])).filter((p) => p.kind === "marina");
+  const profiles = await latestProfiles(db, marinas.map((p) => p.geo_object_id));
+  const attrs = ["services.fuel", "services.water"] as const;
+  const has = (p: PlaceRow, key: string) => {
+    const v = (profiles.get(p.geo_object_id)?.attributes as Record<string, unknown> | undefined)?.[key];
+    return v !== undefined && v !== null;
+  };
+  let fuel = 0;
+  let water = 0;
+  let both = 0;
+  const candidatesForWebsite: Array<{ placeId: string; factIds: string[] }> = [];
+  for (const p of marinas) {
+    const f = has(p, attrs[0]);
+    const w = has(p, attrs[1]);
+    if (f) fuel++;
+    if (w) water++;
+    if (f && w) both++;
+    const provenance = (profiles.get(p.geo_object_id)?.provenance ?? {}) as Record<string, { factIds?: string[] }>;
+    const factIds = attrs.filter((a) => has(p, a)).flatMap((a) => provenance[a]?.factIds ?? []);
+    if (factIds.length > 0) candidatesForWebsite.push({ placeId: p.place_id, factIds });
+  }
+  let fromWebsite = 0;
+  if (candidatesForWebsite.length > 0) {
+    const { rows } = await db.execute<{ n: number }>(sql`
+      select count(distinct c.place_id)::int as n
+      from jsonb_to_recordset(${JSON.stringify(candidatesForWebsite.flatMap((c) => c.factIds.map((factId) => ({ place_id: c.placeId, fact_id: factId }))))}::jsonb)
+        as c(place_id uuid, fact_id uuid)
+      join facts f on f.id = c.fact_id
+      join mentions m on m.id = f.mention_id
+      join document_versions v on v.id = m.document_version_id
+      join documents d on d.id = v.document_id
+      where exists (select 1 from place_websites w where w.place_id = c.place_id and w.bound and w.source_id = d.source_id)
+    `);
+    fromWebsite = Number(rows[0]!.n);
+  }
+  return { metric: "marina_services", value: share(both, marinas.length), details: { fuel, water, fromWebsite } };
 }

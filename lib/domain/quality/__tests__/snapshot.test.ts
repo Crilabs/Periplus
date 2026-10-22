@@ -62,16 +62,16 @@ async function measurementRun(tx: Db, subdivisionKey: string, label: string, win
 const rowsOf = (tx: Db, runId: string) => tx.select().from(qualitySnapshots).where(eq(qualitySnapshots.runId, runId));
 
 describe("computeQualitySnapshot", () => {
-  it("a measurement writes subdivision rows for 13 metrics and tile rows for 8", () =>
+  it("a measurement writes subdivision rows for 16 metrics and tile rows for 8", () =>
     withRollback(async (tx) => {
       const { subdivisionKey, tileIds, window } = await scene(tx);
       const runId = await measurementRun(tx, subdivisionKey, "Lauf 1", window);
       const r = await computeQualitySnapshot(tx, { runId, subdivisionKey, window, today: "2026-10-20", cfg: quality });
-      // 13 subdivision metrics: every key but coverage_navily, multi_document included (ruling M7-P30)
-      expect(SUBDIVISION_METRICS).toHaveLength(13);
+      // 16 subdivision metrics (the place metrics of specs 16 and 17 among them): every key but coverage_navily, multi_document included (ruling M7-P30)
+      expect(SUBDIVISION_METRICS).toHaveLength(16);
       // multi_document is the acceptance metric (ruling M7-P12), so tiles have it too (ruling M7-D-R1)
       expect(TILE_METRICS).toContain("multi_document");
-      expect(r).toEqual({ rows: 13 + 2 * 8, skipped: false });
+      expect(r).toEqual({ rows: 16 + 2 * 8, skipped: false });
 
       const rows = await rowsOf(tx, runId);
       const subRows = rows.filter((x) => x.scopeType === "subdivision");
@@ -134,7 +134,7 @@ describe("computeQualitySnapshot", () => {
       const job = { key: subdivisionKey, subdivisionKey, runId, stage: QUALITY_MEASURE_STAGE };
       await qualityMeasureHandler(job, ctx as unknown as JobContext);
       const first = (await rowsOf(tx, runId)).length;
-      expect(first).toBe(13 + 2 * 8);
+      expect(first).toBe(16 + 2 * 8);
       await qualityMeasureHandler(job, ctx as unknown as JobContext);
       expect((await rowsOf(tx, runId)).length).toBe(first);
       expect(logs).toEqual([

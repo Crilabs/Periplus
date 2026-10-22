@@ -7,7 +7,10 @@ import {
   COMPARISON_ATTRIBUTES,
   comparisonResults,
   comparisonSet,
+  placeWebsites,
   places,
+  reviewDecisions,
+  reviewTasks,
   routes,
   routeStops,
   sources,
@@ -24,7 +27,9 @@ import {
   insertExtraction,
   insertMention,
   insertMentionFact,
+  insertProfile,
   insertSource,
+  provenanceEntry,
   type TestMention,
 } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
@@ -32,6 +37,9 @@ import { insertNamedObject, insertTestExtractionRun, insertTestRun, insertTestSu
 import { comparisonValues, loadComparisonSubjects } from "../comparison-values";
 import {
   coverageMetric,
+  marinaServicesMetric,
+  placeConfirmationMetric,
+  placeWebsitesMetric,
   factPrecisionMetric,
   multiDocumentMetric,
   multiSourceMetric,
@@ -534,5 +542,111 @@ describe("tile scope", () => {
       // a set member whose geo object is not of the subdivision does not count for it (ruling M7-C-R1)
       await addPlace({ inSet: true, at: { lon: 62.0, lat: 35.2 } });
       expect((await coverageMetric(tx, { subdivisionKey })).details).toEqual({ set: 5, confirmed: 4 });
+    }));
+});
+
+describe("place metrics (specs 16, 17)", () => {
+  /** An automatic (or manual) decision on the place: a decided pseudo task with its decision row. */
+  async function decide(tx: Db, placeId: string, subjectType: "place_status" | "place_kind", decidedBy: string, decision: Record<string, unknown>) {
+    const [t] = await tx
+      .insert(reviewTasks)
+      .values({ kind: "place_candidate", subjectType, subjectId: placeId, context: {}, status: "decided" })
+      .returning({ id: reviewTasks.id });
+    await tx.insert(reviewDecisions).values({ taskId: t!.id, decision, decidedBy });
+  }
+
+  it("place_confirmation: 2 auto, 1 manual and 1 candidate; share of auto among confirmed, kinds and delivery", () =>
+    withRollback(async (tx) => {
+      const { subdivisionKey, addPlace } = await subdivision(tx);
+      const a = await addPlace();
+      const b = await addPlace();
+      const c = await addPlace();
+      await addPlace({ status: "candidate" });
+      const port = await addPlace();
+      await tx.update(places).set({ kind: "marina" }).where(eq(places.id, a.placeId));
+      await tx.update(places).set({ kind: "marina" }).where(eq(places.id, b.placeId));
+      await tx.update(places).set({ kind: "port" }).where(eq(places.id, port.placeId));
+      for (const x of [a, b]) await decide(tx, x.placeId, "place_status", "system", { action: "confirm", auto: true, rule: "alone", factIds: [], documentIds: [], routeStopIds: [] });
+      await decide(tx, port.placeId, "place_status", "system", { action: "confirm", auto: true, rule: "osm_commercial", factIds: [], documentIds: [], routeStopIds: [] });
+      await decide(tx, port.placeId, "place_kind", "system", { action: "set_kind", auto: true, kind: "port", factIds: [] });
+      await decide(tx, c.placeId, "place_status", "admin@test", { action: "confirm" });
+      // delivery: an explicit berthable fact beats the derivation
+      await insertProfile(tx, c.objectId, { berthable: false }, {});
+
+      const r = await placeConfirmationMetric(tx, { subdivisionKey }, { today: "2026-10-20" });
+      expect(r.metric).toBe("place_confirmation");
+      expect(r.value).toBeCloseTo(3 / 4);
+      expect(r.details).toEqual({
+        candidates: 1,
+        autoConfirmed: 3,
+        manualConfirmed: 1,
+        withoutEvidence: 1,
+        kindChanged: 1,
+        deliveredByKind: {
+          anchorage: { yes: 0, no: 1, unknown: 0 },
+          marina: { yes: 2, no: 0, unknown: 0 },
+          port: { yes: 0, no: 1, unknown: 0 },
+        },
+      });
+      expect((await placeConfirmationMetric(tx, { subdivisionKey: "XT-unknown" })).value).toBeNull();
+    }));
+
+  it("place_websites: marinas and ports with a website by source, fetched = bound start URL with a document version", () =>
+    withRollback(async (tx) => {
+      const { subdivisionKey, addPlace } = await subdivision(tx);
+      const m1 = await addPlace();
+      const m2 = await addPlace({ status: "candidate" });
+      const m3 = await addPlace();
+      const other = await addPlace();
+      for (const x of [m1, m2]) await tx.update(places).set({ kind: "marina" }).where(eq(places.id, x.placeId));
+      await tx.update(places).set({ kind: "port" }).where(eq(places.id, m3.placeId));
+      const fetched = await insertTestVersion(tx, ["Fuel and water."]);
+      const row = (x: { placeId: string; objectId: string }, origin: "osm" | "wikidata" | "serp", extra: Partial<typeof placeWebsites.$inferInsert> = {}) => ({
+        placeId: x.placeId,
+        geoObjectId: x.objectId,
+        url: `https://${newId()}.test.invalid/`,
+        urlNormalized: newId(),
+        origin,
+        bound: false,
+        ...extra,
+      });
+      await tx.insert(placeWebsites).values([
+        row(m1, "osm", { bound: true, sourceId: fetched.sourceId }),
+        row(m2, "serp", { bound: true, sourceId: await insertSource(tx) }),
+        row(other, "wikidata"),
+      ]);
+      const r = await placeWebsitesMetric(tx, { subdivisionKey }, { today: "2026-10-20" });
+      expect(r.metric).toBe("place_websites");
+      expect(r.value).toBeCloseTo(2 / 3);
+      expect(r.details).toEqual({ withWebsite: 2, bySource: { osm: 1, wikidata: 0, serp: 1 }, fetched: 1 });
+    }));
+
+  it("marina_services: confirmed marinas with fuel and water; fuel only does not count; fromWebsite", () =>
+    withRollback(async (tx) => {
+      const { subdivisionKey, addPlace } = await subdivision(tx);
+      const m1 = await addPlace();
+      const m2 = await addPlace();
+      const candidate = await addPlace({ status: "candidate" });
+      for (const x of [m1, m2, candidate]) await tx.update(places).set({ kind: "marina" }).where(eq(places.id, x.placeId));
+      const site = await insertMention(tx, m1.objectId);
+      const fact = await insertMentionFact(tx, m1.objectId, site, await insertExtraction(tx, m1.objectId, site), { attribute: "services.fuel", value: true });
+      await tx.insert(placeWebsites).values({
+        placeId: m1.placeId,
+        geoObjectId: m1.objectId,
+        url: "https://m1.test.invalid/",
+        urlNormalized: "m1.test.invalid/",
+        origin: "osm",
+        bound: true,
+        sourceId: (await tx.execute<{ source_id: string }>(sql`select d.source_id from document_versions v join documents d on d.id = v.document_id where v.id = ${site.versionId}`)).rows[0]!.source_id,
+      });
+      const prov = { "services.fuel": provenanceEntry("text", { factIds: [fact] }), "services.water": provenanceEntry("text", { factIds: [fact] }) };
+      await insertProfile(tx, m1.objectId, { "services.fuel": true, "services.water": false }, prov);
+      await insertProfile(tx, m2.objectId, { "services.fuel": true }, {});
+      await insertProfile(tx, candidate.objectId, { "services.fuel": true, "services.water": true }, {});
+
+      const r = await marinaServicesMetric(tx, { subdivisionKey }, { today: "2026-10-20" });
+      expect(r.metric).toBe("marina_services");
+      expect(r.value).toBeCloseTo(1 / 2);
+      expect(r.details).toEqual({ fuel: 2, water: 1, fromWebsite: 1 });
     }));
 });

@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { getDb } from "@/lib/db/client";
+import { getConfig } from "@/lib/config";
+import { estimateReprocessCostEur } from "@/lib/domain/extraction/reprocess-estimate";
 import { listRuns } from "@/lib/domain/runs";
 import { listSubdivisionOptions } from "@/lib/domain/subdivisions/store";
 import { requireAdmin } from "@/lib/security/require-admin";
@@ -8,7 +10,7 @@ import { Dialog } from "../_components/dialog";
 import { runScopeError } from "../_components/labels";
 import { RunsTable } from "../_components/runs-table";
 import { SubdivisionOptions } from "../_components/subdivision-options";
-import { Button, cx, inputClass, Notice, PageHeader, Panel } from "../_components/ui";
+import { Button, cx, fmt, inputClass, Notice, PageHeader, Panel } from "../_components/ui";
 import {
   startDatasetImportAction,
   startGazetteerAction,
@@ -103,7 +105,12 @@ export default async function Page({ searchParams }: PageProps<"/runs">) {
   await requireAdmin();
   const error = runScopeError((await searchParams).error);
   const runs = await listRuns(getDb(), { limit: 50 });
-  const subdivisionOptions = <SubdivisionOptions options={await listSubdivisionOptions(getDb())} />;
+  const options = await listSubdivisionOptions(getDb());
+  const subdivisionOptions = <SubdivisionOptions options={options} />;
+  // the reprocess estimate per subdivision (spec 17 „Einführung“): mentions × mean cost per mention of the last runs
+  const estimates = await Promise.all(
+    options.map(async (o) => ({ ...o, ...(await estimateReprocessCostEur(getDb(), o.key, getConfig()).catch(() => null)) })),
+  );
   return (
     <>
       <AutoRefresh intervalMs={5000} />
@@ -148,6 +155,18 @@ export default async function Page({ searchParams }: PageProps<"/runs">) {
                         {run.name}
                       </h3>
                       <p className="mt-0.5 leading-relaxed text-muted text-pretty">{run.description}</p>
+                      {run.id === "reprocess" && (
+                        <ul className="mt-1.5 space-y-0.5 text-xs text-muted" data-testid="reprocess-estimate">
+                          {estimates.map((e) => (
+                            <li key={e.key}>
+                              {e.name}: {fmt.int(e.mentions ?? 0)} Erwähnungen,{" "}
+                              {e.estimateEur != null
+                                ? `Schätzung etwa ${fmt.eur(e.estimateEur)} (Extraktion, ${fmt.eur(e.costPerMentionEur!, 4)} je Erwähnung; ohne Folgesuche und Bilder)`
+                                : "keine Schätzung (noch kein Extraktionslauf mit Kosten)"}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
                     <form action={run.action} className="flex flex-wrap items-end gap-2">
                       <label htmlFor={`${run.id}-scope`} className="sr-only">
