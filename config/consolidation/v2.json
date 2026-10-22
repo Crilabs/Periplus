@@ -73,7 +73,7 @@
   "severity": {
     "safety": ["exclude", "max_draft", "max_length", "hazards", "restricted_zones", "prohibitions", "depth.*"],
     "shelterDelta": 0.2,
-    "notable": ["services.*", "highlight.*", "occupancy", "mooring.buoys"]
+    "notable": ["services.*", "highlight.*", "occupancy", "mooring.buoys", "berthable"]
   },
   "gaps": {
     "ignore": {
