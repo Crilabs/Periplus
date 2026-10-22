@@ -10,6 +10,7 @@ import { embedChunksStage } from "./handlers/embed";
 import { fetchSourceStage, fetchUrlStage } from "./handlers/fetch";
 import { detectBaysStage, geometryPlaceStage } from "./handlers/geometry";
 import { imagesPlaceStage } from "./handlers/images";
+import { placeWebsiteFreezeStage, placeWebsiteStage } from "./handlers/place-website";
 import {
   gazetteerGeonamesStage,
   gazetteerHierarchyStage,
@@ -45,6 +46,8 @@ export const STAGES: Record<string, StageDefinition> = {
   [subdivisionsBuildStage.name]: subdivisionsBuildStage,
   [mentionsRereadStage.name]: mentionsRereadStage,
   [seedTileStage.name]: seedTileStage,
+  [placeWebsiteStage.name]: placeWebsiteStage,
+  [placeWebsiteFreezeStage.name]: placeWebsiteFreezeStage,
   [datasetsImportStage.name]: datasetsImportStage,
   [areaImportStage.name]: areaImportStage,
   [detectBaysStage.name]: detectBaysStage,

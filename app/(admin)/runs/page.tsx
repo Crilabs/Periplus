@@ -14,6 +14,7 @@ import {
   startGazetteerAction,
   startGeometryAction,
   startPingRun,
+  startPlaceWebsiteAction,
   startReprocessAction,
   startRevisitAction,
   startSeedAction,
@@ -47,6 +48,14 @@ const RUNS: ScopedRun[] = [
       "Legt aus Buchten, Häfen und Marinas der Küstenkacheln Ortskandidaten an. Braucht einen Gazetteer-Lauf für den Landesteil.",
     action: startSeedAction,
     button: "Seed für Landesteil",
+  },
+  {
+    id: "place-websites",
+    name: "Marina-Websites",
+    description:
+      "Sucht für Marinas und Häfen des Landesteils die eigene Website (aus OSM und Wikidata, sonst über die Google-Suche mit KI-Prüfung), gibt sie als Quellen frei, ruft sie ab und wertet die neuen Seiten aus. Braucht einen Seed-Lauf.",
+    action: startPlaceWebsiteAction,
+    button: "Marina-Websites suchen",
   },
   {
     id: "datasets",

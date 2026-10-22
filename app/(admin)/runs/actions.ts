@@ -9,6 +9,7 @@ import { getBoss } from "@/lib/jobs/boss";
 import { startDatasetImportRun } from "@/lib/pipeline/datasets-run";
 import { startGazetteerRun } from "@/lib/pipeline/gazetteer/stages";
 import { startGeometryRun } from "@/lib/pipeline/geometry-run";
+import { startPlaceWebsiteRun } from "@/lib/pipeline/place-website-run";
 import { startRevisitRun } from "@/lib/pipeline/revisit-run";
 import { startRun } from "@/lib/pipeline/runs";
 import { startSeedRun } from "@/lib/pipeline/seed";
@@ -122,4 +123,16 @@ export async function startRevisitAction(input: FormData | { subdivisionKey: str
   const db = getDb();
   const boss = await getBoss();
   await startAndRedirect(() => startRevisitRun(db, boss, { subdivisionKey, triggeredBy: admin.email }), "/runs");
+}
+
+/**
+ * „Marina-Websites suchen“ (spec 16 C „Crawl“): finds the websites of the subdivision's marinas and ports, approves them
+ * as sources, crawls them and evaluates the new pages; refusals return to the runs page.
+ */
+export async function startPlaceWebsiteAction(input: FormData | { subdivisionKey: string }): Promise<void> {
+  const admin = await requireAdmin();
+  const { subdivisionKey } = subdivisionSchema.parse(fields(input));
+  const db = getDb();
+  const boss = await getBoss();
+  await startAndRedirect(() => startPlaceWebsiteRun(db, boss, { subdivisionKey }, admin.email), "/runs");
 }

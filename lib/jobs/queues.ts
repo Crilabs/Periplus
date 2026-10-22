@@ -10,6 +10,8 @@ export const QUEUES = [
   "subdivisions.build",
   "mentions.reread",
   "seed.tile",
+  "places.website",
+  "places.website.freeze",
   "datasets.import",
   "areas.import",
   "geometry.compute",

@@ -73,6 +73,8 @@ const queueConfig = {
   "subdivisions.build": { concurrency: 1, retryLimit: 1, retryDelaySeconds: 0, retryBackoff: false },
   "mentions.reread": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "seed.tile": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "places.website": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "places.website.freeze": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "datasets.import": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "areas.import": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "geometry.compute": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },

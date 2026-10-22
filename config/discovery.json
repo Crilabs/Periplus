@@ -21,6 +21,17 @@
     ]
   },
   "bay": { "minAnchorAreaM2": 20000, "minWikidataNames": 2 },
+  "placeWebsite": {
+    "templates": [
+      { "template": "{name} marina", "lang": "en", "locationCode": 2826 },
+      { "template": "{name} {island} marina", "lang": "en", "locationCode": 2826 },
+      { "template": "μαρίνα {name}", "lang": "el", "locationCode": 2300 }
+    ],
+    "maxResults": 5,
+    "retryDays": 180,
+    "minConfidence": 0.8,
+    "crawl": { "maxDepth": 2, "maxPagesPerStartUrl": 30 }
+  },
   "proposals": {
     "minSerpHits": 3,
     "minLinkingSources": 2,

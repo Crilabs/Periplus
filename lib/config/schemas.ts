@@ -662,6 +662,19 @@ export const discoverySchema = z.strictObject({
   templates: z.strictObject({ area: z.array(queryTemplateSchema), tile: z.array(queryTemplateSchema) }),
   /** A named bay becomes a tile query with an anchor area of at least this size or this many Wikidata names. */
   bay: z.strictObject({ minAnchorAreaM2: z.number().positive(), minWikidataNames: positiveInt }),
+  /**
+   * Finding the website of a marina or port by Google search (spec 16 C): the templates (`{name}`, optionally
+   * `{island}`: the island the place lies on; a template whose name or island is missing in its language is skipped),
+   * the hits checked per place, the days before a place without website is searched again, the model's confidence a hit
+   * needs, and the crawl rules of a new `place_website` source (depth, pages per start URL).
+   */
+  placeWebsite: z.strictObject({
+    templates: z.array(queryTemplateSchema),
+    maxResults: positiveInt,
+    retryDays: positiveInt,
+    minConfidence: z.number().min(0).max(1),
+    crawl: z.strictObject({ maxDepth: z.number().int().min(0).max(10), maxPagesPerStartUrl: positiveInt }),
+  }),
   proposals: z.strictObject({
     minSerpHits: positiveInt,
     minLinkingSources: positiveInt,

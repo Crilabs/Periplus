@@ -11,6 +11,7 @@ import { embedChunksHandler } from "./handlers/embed";
 import { fetchSourceHandler, fetchUrlHandler } from "./handlers/fetch";
 import { gazetteerHandler } from "./handlers/gazetteer";
 import { imagesPlaceHandler } from "./handlers/images";
+import { placeWebsiteFreezeHandler, placeWebsiteHandler } from "./handlers/place-website";
 import { gazetteerCoarseHandler, subdivisionsBuildHandler } from "./handlers/subdivisions";
 import { detectBaysHandler, geometryPlaceHandler } from "./handlers/geometry";
 import { qualityMeasureHandler } from "./handlers/quality";
@@ -47,6 +48,8 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "subdivisions.build": subdivisionsBuildHandler,
   "mentions.reread": mentionsRereadHandler,
   "seed.tile": seedTileHandler,
+  "places.website": placeWebsiteHandler,
+  "places.website.freeze": placeWebsiteFreezeHandler,
   "datasets.import": datasetsImportHandler,
   "areas.import": areaImportHandler,
   "geometry.compute": geometryPlaceHandler,
