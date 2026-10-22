@@ -1,3 +1,4 @@
+import { getConfig } from "@/lib/config";
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
@@ -140,7 +141,7 @@ describe("setAnchorAction", () => {
           kind: "stage",
           scope: { type: "place", id: scene.placeId },
           stages: ["geometry.place", ...GEOMETRY_CONSOLIDATION_STAGES],
-          params: { placeIds: [scene.placeId], rulesVersion: "v1" },
+          params: { placeIds: [scene.placeId], rulesVersion: getConfig().consolidation.version },
           triggeredBy: ADMIN,
         }),
       );
@@ -200,7 +201,7 @@ describe("„Profil neu berechnen“", () => {
       expect(startRun.mock.calls[0]![2]).toMatchObject({
         kind: "stage",
         scope: { type: "place", id: scene.placeId },
-        stages: ["consolidation.geo", "consolidation.summary", "consolidation.followup", "images.place"],
+        stages: ["consolidation.geo", "consolidation.highlights", "consolidation.summary", "consolidation.followup", "images.place"],
         params: { geoObjectIds: [scene.geoObjectId] },
         triggeredBy: ADMIN,
       });

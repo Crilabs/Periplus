@@ -94,6 +94,8 @@ describe("geo view", () => {
         wikidataId: "Q999999991",
       });
       expect(detail?.object.osmId).toMatch(/^relation\//);
+      // The geometry for the page's map, as GeoJSON.
+      expect(detail?.object.geometry.type).toMatch(/Polygon|Point/);
       expect(detail?.names).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ name: "Testinsel", language: "de", script: "latin", origin: "manual", isPreferred: true, valid: true }),

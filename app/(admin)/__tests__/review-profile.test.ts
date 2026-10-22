@@ -1,3 +1,4 @@
+import { getConfig } from "@/lib/config";
 import { and, eq, sql } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
@@ -213,7 +214,7 @@ describe("review of a profile attribute", () => {
       };
       await decideAction(form({ taskId: await failedTask(objectId), decision: JSON.stringify({ action: "regenerate_summary" }) }));
       const started = await tx.select().from(runs).where(eq(runs.triggeredBy, "admin@example.invalid"));
-      expect(started.map((r) => [r.stages, r.params])).toEqual([[[CONSOLIDATION_SUMMARY_STAGE], { geoObjectIds: [objectId], rulesVersion: "v1", stagesOnly: [CONSOLIDATION_SUMMARY_STAGE] }]]);
+      expect(started.map((r) => [r.stages, r.params])).toEqual([[[CONSOLIDATION_SUMMARY_STAGE], { geoObjectIds: [objectId], rulesVersion: getConfig().consolidation.version, stagesOnly: [CONSOLIDATION_SUMMARY_STAGE] }]]);
 
       // a settlement takes no facts: the decision stands, no run starts, the action still redirects onwards
       const settlement = await insertNamedObject(tx, { type: "settlement", names: [{ name: "Summarydorf" }], lon: 21.0, lat: 35.2 });

@@ -126,6 +126,8 @@ export const spotSchema = z.strictObject({
     lastObserved: isoDate.nullable(),
   }),
   highlightIds: z.array(publicId("hl")).optional(),
+  /** Per category with at least one highlight or candidate in reach: how much there is beyond the highlights; contract 2.2. */
+  highlightLevels: z.partialRecord(highlightCategory, z.enum(["none", "some", "many"])).optional(),
   externalRefs: z
     .strictObject({
       googlePlaceIds: z.partialRecord(highlightCategory, z.array(googlePlaceId)),

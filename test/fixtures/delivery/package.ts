@@ -5,8 +5,8 @@ import type { DeliveryPackage } from "@/lib/domain/delivery/types";
 /*
  * A small valid package (no database rows): the second delivery of an area around 21.0° E / 35.2° N. An island (one
  * land polygon, its coastline), anchorage A 0.3 nm off its south coast, marina M off its east coast (referenced by no
- * other object, so a broken M touches one check only), the taverna highlight 7 nm north of A (importance 2, radius
- * 10 nm), the island as region, one weather point. Previous package: A, M, highlight and region at version 1 and spot
+ * other object, so a broken M touches one check only), the taverna highlight 7 nm north of A (importance 2, selected
+ * by A), the island as region, one weather point. Previous package: A, M, highlight and region at version 1 and spot
  * X, which is gone now; A rose to version 2. `validPackage()` passes every check with `PREVIOUS` as predecessor.
  */
 
@@ -21,11 +21,14 @@ export const OTHER_HL = "hl_01J9ZD00000000000000000009";
 export const REGION = "rg_01J9ZD00000000000000000001";
 export const WEATHER_POINT = "wp_01J9ZD00000000000000000001";
 
+/** The delivered spots selecting each highlight (`mapHighlights` `selectors`, the validation's `highlightSelectors`). */
+export const HIGHLIGHT_SELECTORS: ReadonlyMap<string, string[]> = new Map([[HIGHLIGHT, [SPOT_A]]]);
+
 /** On the island, 2 nm north of its south coast (more than `maxWaterDistanceNm` from water). */
 export const INLAND_2NM = { lat: 35.23333, lon: 21.05 };
 
 const GENERATED_AT = "2026-10-20T06:00:00.000Z";
-const envelope = { schemaVersion: "2.1" as const, subdivision: SUBDIVISION_ID, dataVersion: 2, generatedAt: GENERATED_AT };
+const envelope = { schemaVersion: "2.2" as const, subdivision: SUBDIVISION_ID, dataVersion: 2, generatedAt: GENERATED_AT };
 const island: [number, number][] = [
   [21.0, 35.2],
   [21.1, 35.2],
@@ -123,7 +126,7 @@ const weatherPoint: WeatherPoint = {
 export function validPackage(): DeliveryPackage {
   return structuredClone({
     manifest: {
-      schemaVersion: "2.1",
+      schemaVersion: "2.2",
       subdivision: {
         id: SUBDIVISION_ID,
         key: "XT-NISIDA",

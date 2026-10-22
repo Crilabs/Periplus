@@ -32,17 +32,18 @@ const PERDIKA = "node/1854238899";
  * settlements; since Wikidata links by ID and tag before matching by name, Q141142371 "Nisida Troizinas"
  * becomes its own settlement with a pair task in run 1 (instead of only in run 2).
  */
+// Valid objects; Wikidata and GeoNames objects merged into their OSM counterpart by the system (autoPairDecision) count once.
 const EXPECTED_BY_TYPE = {
   sea: 1,
   gulf: 1,
-  island: 15,
+  island: 11,
   islet: 14,
   coast_section: 3,
-  cape: 42,
+  cape: 38,
   strait: 5,
-  bay: 39,
+  bay: 37,
   harbour: 14,
-  settlement: 84,
+  settlement: 79,
   poi: 424,
 };
 
@@ -57,6 +58,13 @@ async function* landFixture(): AsyncGenerator<LandFeature> {
 async function importLand(db: Db): Promise<void> {
   const box = bufferBbox(AEGINA_WEST_BOX, getConfig().gazetteer.landBufferKm);
   await importLandPolygons(db, landFixture(), box, "fixture");
+  // IHO sea over the whole box: the POI sea-distance filter keeps every recorded POI.
+  const [w, s, e, n] = bufferBbox(AEGINA_WEST_BOX, 1);
+  await db.insert(geoObjects).values({
+    type: "sea",
+    origin: "marine_regions",
+    geom: sql`ST_Multi(ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326))`,
+  });
 }
 
 const stubBoss = {} as PgBoss;
@@ -87,7 +95,7 @@ async function runGazetteer(db: Db): Promise<void> {
 async function importedByType(db: Db): Promise<Record<string, number>> {
   const { rows } = await db.execute<{ type: string; n: number }>(sql`
     select type, count(*)::int as n from geo_objects
-    where valid_to is null and origin <> 'manual' and created_at = now()
+    where valid_to is null and origin not in ('manual', 'marine_regions') and created_at = now()
     group by type`);
   return Object.fromEntries(rows.map((r) => [r.type, r.n]));
 }

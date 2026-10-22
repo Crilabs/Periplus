@@ -294,6 +294,8 @@ export const gazetteerSchema = z.strictObject({
     endpoint: z.url(),
     timeoutSeconds: z.number().int().positive(),
     ratePerMinute: z.number().positive(),
+    /** Relations with more member points are skipped: assembling the Aegean Sea (678,000 points) exhausted the database. */
+    maxRelationPoints: z.number().int().positive(),
   }),
   /** Marine Regions WFS (IHO sea areas, spec 14). */
   marineRegions: z.strictObject({
@@ -323,6 +325,8 @@ export const gazetteerSchema = z.strictObject({
     gulfMinAreaKm2: z.number().nonnegative(),
     coastDistanceKm: z.number().positive(),
   }),
+  /** A gazetteer POI counts as a place's POI (and is kept at import) within this distance of the coast (spec 16). */
+  poiCoastDistanceKm: z.number().positive(),
   /** Radius around an object's centroid within which a subdivision's land counts for the assignment (spec 14). */
   subdivisionRadiusM: z.number().positive(),
   islandParentBufferM: z.number().nonnegative(),
@@ -334,6 +338,10 @@ export const gazetteerSchema = z.strictObject({
     uncertainDistanceFactor: z.number().min(1),
     wikidataLinkDistanceM: z.number().positive(),
     geonamesNewObjectRadiusM: z.number().positive(),
+    /** Spec 16: two selected highlights of a category with similar names closer than this get a pair task. */
+    highlightPairM: z.number().positive(),
+    /** Decides a pair of geo objects without a person where the sources make it clear (`autoPairDecision`). */
+    autoDecidePairs: z.boolean(),
   }),
   noAnchoringKinds: z.array(z.enum(restrictedKindEnum.enumValues)),
 });
@@ -658,6 +666,10 @@ export const discoverySchema = z.strictObject({
     costPerQueryEur: eur,
     ratePerMinute: z.number().positive(),
     timeoutMs: positiveInt,
+    /** Further attempts of one search after a transient task error (40101) before the search is given up. */
+    taskRetries: z.number().int().nonnegative(),
+    /** Pause before the first further attempt; it doubles with each attempt. */
+    taskRetryDelayMs: z.number().int().nonnegative(),
   }),
   templates: z.strictObject({ area: z.array(queryTemplateSchema), tile: z.array(queryTemplateSchema) }),
   /** A named bay becomes a tile query with an anchor area of at least this size or this many Wikidata names. */
@@ -943,9 +955,26 @@ export const consolidationSchema = z.strictObject({
       /** Radius of meaning per importance level, nautical miles. */
       radiusNm: z.array(positive).length(5),
       maxSpotIds: positiveInt,
+      /** Importance bonus per OSM tag (`<key>=<value>`) or Wikidata class (`wikidata:<Qid>`); optional: v1 predates it. */
+      tagBonus: z.record(z.string(), z.number().nonnegative()).optional(),
     })
     .refine((i) => ascending(i.thresholds), "importance thresholds must ascend")
     .refine((i) => ascending(i.radiusNm), "importance radii must ascend"),
+  /** Highlight selection per place (spec 16); optional: v1 predates it. */
+  highlights: z
+    .strictObject({
+      maxPerCategory: positiveInt,
+      /** Reach in km per importance level 1–5 (index = importance − 1). */
+      reachKm: z.array(positive).length(5),
+      /** Weight per importance level 1–5 for the highlight level of a place. */
+      levelWeights: z.array(z.number().nonnegative()).length(5),
+      /** Weighted-sum limits between the levels none / some / many. */
+      levelThresholds: z.array(z.number()).length(2),
+      /** Importance given to a POI that a text names but no source rates. */
+      textNameImportance: z.number().int().min(1).max(5),
+    })
+    .refine((h) => ascending(h.levelThresholds), "highlight level thresholds must ascend")
+    .optional(),
   severity: z.strictObject({
     safety: z.array(attributePattern),
     /** A shelter sector changing by more than this is a safety change. */

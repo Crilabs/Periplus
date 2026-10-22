@@ -39,19 +39,19 @@ describe("quietnessScore minParts (M5-E-R2)", () => {
 describe("importanceOf", () => {
   const five = Array.from({ length: 5 }, (_, n) => ({ key: `source:${n}`, weight: 0.7 }));
   it.each([
-    [{ sources: [], sitelinks: null, category: "food" }, 1, 5],
-    [{ sources: [{ key: "a", weight: 1 }, { key: "b", weight: 1 }], sitelinks: null, category: "food" }, 3, 20],
-    [{ sources: five, sitelinks: 60, category: "culture" }, 5, 50],
+    [{ sources: [], sitelinks: null, category: "food", kinds: [] }, 1, 5],
+    [{ sources: [{ key: "a", weight: 1 }, { key: "b", weight: 1 }], sitelinks: null, category: "food", kinds: [] }, 3, 20],
+    [{ sources: five, sitelinks: 60, category: "culture", kinds: [] }, 5, 50],
   ])("importance %#", (i, importance, radiusNm) => expect(importanceOf(i as never, cfg)).toMatchObject({ importance, radiusNm }));
 
   it("a source key counts once, with its largest weight", () => {
-    const r = importanceOf({ sources: [{ key: "a", weight: 0.4 }, { key: "a", weight: 0.9 }], sitelinks: 15, category: "beach" }, cfg);
-    // 0.9 + 1.5 + 0.5
-    expect(r).toEqual({ importance: 3, score: 2.9, radiusNm: 20 });
+    const r = importanceOf({ sources: [{ key: "a", weight: 0.4 }, { key: "a", weight: 0.9 }], sitelinks: 15, category: "beach", kinds: [] }, cfg);
+    // 0.9 + 15 / 30 + 0.5
+    expect(r).toEqual({ importance: 2, score: 1.9, radiusNm: 10 });
   });
 
   it("sitelink points are capped", () => {
-    expect(importanceOf({ sources: [], sitelinks: 500, category: "food" }, cfg).score).toBe(2);
+    expect(importanceOf({ sources: [], sitelinks: 500, category: "food", kinds: [] }, cfg).score).toBe(5);
   });
 });
 

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import * as v1 from "./v1";
 import * as v2 from "./v2_0";
+import * as v21 from "./v2_1";
 import {
   changesFileSchema,
   coastCollectionSchema,
@@ -18,11 +19,12 @@ import {
  * Periplus Data Contract (spec 08, spec 14, spec 13). The zod schemas in `contract/v2/` are the source of the current version;
  * the JSON schemas under `contract/schema/<version>/` are generated from them (`npm run contract:generate`); every
  * checked-in version is served by `GET /api/v2/schema/<version>/<file>` (and `/api/v1/schema/…`) from `contract/schema/published.ts`. Versions
- * 1.0 (packages per configured area, `contract/v1/`) and 2.0 (before the images, `contract/v2_0/`) stay reproducible from
- * their frozen copies and stay published; 2.1 adds `images` and image files to 2.0 (minor, additive).
+ * 1.0 (packages per configured area, `contract/v1/`), 2.0 (before the images, `contract/v2_0/`) and 2.1 (before the
+ * highlight levels, `contract/v2_1/`) stay reproducible from their frozen copies and stay published; 2.1 adds `images`
+ * and image files to 2.0, 2.2 adds `spot.highlightLevels` to 2.1 (spec 16; both minor, additive).
  */
 
-export const SCHEMA_VERSION = "2.1";
+export const SCHEMA_VERSION = "2.2";
 export { CONTRACT_FILES, IMAGE_FILE_PATTERN };
 export type { ContractFile };
 export type {
@@ -77,9 +79,21 @@ const CONTRACT_SCHEMAS_V2_0: Record<ContractFile, z.ZodType> = {
   "changes.json": v2.changesFileSchema,
 };
 
+/** The zod schemas of the superseded version 2.1, kept to pin its published JSON schemas. */
+const CONTRACT_SCHEMAS_V2_1: Record<ContractFile, z.ZodType> = {
+  "manifest.json": v21.manifestSchema,
+  "spots.json": v21.spotsFileSchema,
+  "highlights.json": v21.highlightsFileSchema,
+  "regions.json": v21.regionsFileSchema,
+  "coast.geojson": v21.coastCollectionSchema,
+  "weather-points.json": v21.weatherPointsFileSchema,
+  "changes.json": v21.changesFileSchema,
+};
+
 const SCHEMAS_BY_VERSION: Readonly<Record<string, Record<ContractFile, z.ZodType>>> = {
   "1.0": CONTRACT_SCHEMAS_V1,
   "2.0": CONTRACT_SCHEMAS_V2_0,
+  "2.1": CONTRACT_SCHEMAS_V2_1,
   [SCHEMA_VERSION]: CONTRACT_SCHEMAS,
 };
 
@@ -90,7 +104,7 @@ export function jsonSchemaFileName(file: ContractFile): string {
 
 const FILE_BY_SCHEMA_NAME = new Map<string, ContractFile>(CONTRACT_FILES.map((f) => [jsonSchemaFileName(f), f]));
 
-/** The JSON schema (draft 2020-12) of a contract file, e.g. ("2.1", "spots.schema.json"); null for anything else. */
+/** The JSON schema (draft 2020-12) of a contract file, e.g. ("2.2", "spots.schema.json"); null for anything else. */
 export function contractJsonSchema(version: string, fileName: string): object | null {
   if (!Object.hasOwn(SCHEMAS_BY_VERSION, version)) return null;
   const file = FILE_BY_SCHEMA_NAME.get(fileName);

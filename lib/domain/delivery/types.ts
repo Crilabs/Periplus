@@ -89,6 +89,8 @@ export type PoiSource = {
   sources: SourceRefRow[];
   /** The deliverable current images, best first (rank, sort order, slot). */
   images: DeliverableImage[];
+  /** The places selecting the POI as a highlight (spec 16), with the selection's distance; by place geo object id. */
+  selectedBy: Array<{ placeGeoObjectId: string; distanceKm: number }>;
 };
 
 export type RegionSource = {

@@ -16,6 +16,8 @@ type Answer = { status_code?: number; status_message?: string; tasks?: Task[] | 
 const OK = 20000;
 /** Task status codes in the 40xxx range that are transient on DataForSEO's side and worth retrying. */
 const RETRYABLE_TASK_CODES: ReadonlySet<number> = new Set([40101]);
+/** "Task completed with partial results": the items it has are used; without any it counts as transient. */
+const PARTIAL_RESULTS = 40106;
 
 function parseAnswer(res: HttpResponse): Answer {
   try {
@@ -47,10 +49,31 @@ function authorization(): string {
  * `dataforseo` budget at `cfg.costPerQueryEur` per HTTP 200 answer: DataForSEO bills a task that ends in an
  * error status too.
  * Returns the raw answer and its organic items only. A task status `40xxx` is an `HttpError` (the request is
- * wrong) except the transient codes in `RETRYABLE_TASK_CODES` (40101, a search-engine-side error); those, `50xxx`
+ * wrong) except the transient codes in `RETRYABLE_TASK_CODES` (40101, a search-engine-side error): such a search is
+ * repeated up to `cfg.taskRetries` times (pause `cfg.taskRetryDelayMs`, doubling) before it fails. A 40106 task
+ * (partial results) returns the items it has; without any it is transient like 40101. Those, `50xxx`
  * and unreadable answers are `RetryableHttpError`.
  */
 export async function searchOrganic(
+  transport: Transport,
+  q: { keyword: string; languageCode: string; locationCode: number },
+  ctx: CallContext,
+  cfg: DiscoveryConfig["serp"],
+): Promise<{ raw: Uint8Array; items: SerpItem[] }> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await searchOnce(transport, q, ctx, cfg);
+    } catch (error) {
+      if (!(error instanceof TransientTaskError) || attempt >= cfg.taskRetries) throw error;
+      await new Promise((resolve) => setTimeout(resolve, cfg.taskRetryDelayMs * 2 ** attempt));
+    }
+  }
+}
+
+/** A transient task status (`RETRYABLE_TASK_CODES`): `searchOrganic` repeats the search before giving up. */
+class TransientTaskError extends RetryableHttpError {}
+
+async function searchOnce(
   transport: Transport,
   q: { keyword: string; languageCode: string; locationCode: number },
   ctx: CallContext,
@@ -80,9 +103,12 @@ export async function searchOrganic(
 
   const answer = parseAnswer(res);
   const { code, message } = statusOf(answer);
-  if (code !== OK) {
+  const partialItems = code === PARTIAL_RESULTS && (answer.tasks?.[0]?.result?.[0]?.items?.length ?? 0) > 0;
+  if (code !== OK && !partialItems) {
     const text = `dataforseo status ${code} for "${q.keyword}": ${message}`;
-    if (code >= 40000 && code < 50000 && !RETRYABLE_TASK_CODES.has(code)) throw new HttpError(text, code);
+    if (code === PARTIAL_RESULTS) throw new TransientTaskError(text, code);
+    if (RETRYABLE_TASK_CODES.has(code)) throw new TransientTaskError(text, code);
+    if (code >= 40000 && code < 50000) throw new HttpError(text, code);
     throw new RetryableHttpError(text, code);
   }
 

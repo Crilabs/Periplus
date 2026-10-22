@@ -54,6 +54,7 @@ const CONSOLIDATION_GROUPS: Record<Exclude<keyof AppConfig["consolidation"], "ve
   profileConfidenceGroups: "Profil-Konfidenz: Attribute je Gruppe",
   quietness: "Ruhe",
   importance: "Bedeutung",
+  highlights: "Highlights je Ort",
   severity: "Schwere",
   gaps: "Lücken",
   followup: "Folgeaufträge",

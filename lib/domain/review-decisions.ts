@@ -32,6 +32,7 @@ import { attributeDef, canonicalJson, InvalidFactValue, UnknownAttribute, valida
 import { assignParentOf } from "@/lib/domain/gazetteer/hierarchy";
 import { dismissTasks, lockOpenPlaceTasks, lockOpenTasks } from "@/lib/domain/consolidation/task-locks";
 import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
+import { deleteHighlightSelections } from "@/lib/domain/highlights/selections";
 import { addNames, isGreek, transliterateElot743, type NameDraft } from "@/lib/domain/gazetteer/names";
 import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
 import { newPublicId } from "@/lib/domain/ids";
@@ -682,6 +683,8 @@ const text = (v: unknown): string => (typeof v === "string" ? v : "?");
 async function applyPlaceStatus(tx: Db, task: Task, status: "rejected" | "no_anchoring"): Promise<string> {
   const place = await lockPlace(tx, task.subjectId);
   await tx.update(places).set({ status, statusReason: "review" }).where(eq(places.id, place.id));
+  // a rejected place selects no highlights any more (spec 16); an excluded one stays a place and keeps them
+  if (status === "rejected") await deleteHighlightSelections(tx, place.geoObjectId);
   return place.geoObjectId;
 }
 

@@ -12,6 +12,7 @@ import type { Bbox } from "@/lib/domain/tiles";
 import { BBOX_TOLERANCE, MAP_FEATURE_LIMIT, MAX_BBOX_DEGREES, NOT_IN_GEO_OBJECT_LAYER } from "@/lib/domain/map-limits";
 import { areaSubdivisionsSql } from "@/lib/domain/areas/view";
 import { validAt } from "@/lib/domain/timeline";
+import { isSelectedSql } from "@/lib/domain/highlights/selections";
 
 export const MAP_LAYERS = ["subdivisions", "seas", "areas", "tiles", "geo-objects", "places", "restricted-areas"] as const;
 
@@ -51,6 +52,8 @@ export const mapDataRequest = z.object({
   bbox: bboxParam,
   types: typesParam.optional(),
   subdivision: subdivisionParam.optional(),
+  /** `?allPois=1` of the geo-object layer: every POI candidate, not only the selected highlights. */
+  allPois: z.enum(["1"]).optional(),
 });
 
 /** A layer's features plus `truncated` (a GeoJSON foreign member): more rows than the cap intersect the view. */
@@ -65,7 +68,7 @@ const envelope = ([west, south, east, north]: Bbox): SQL =>
 const intersects = (geom: AnyColumn, bbox: Bbox): SQL =>
   sql`(${geom} && ${envelope(bbox)} and ST_Intersects(${geom}, ${envelope(bbox)}))`;
 
-function layerQuery(layer: MapLayer, bbox: Bbox, limit: number, types?: GeoObjectType[], subdivision?: string): SQL {
+function layerQuery(layer: MapLayer, bbox: Bbox, limit: number, types?: GeoObjectType[], subdivision?: string, allPois?: boolean): SQL {
   switch (layer) {
     case "subdivisions":
       return sql`
@@ -133,6 +136,7 @@ function layerQuery(layer: MapLayer, bbox: Bbox, limit: number, types?: GeoObjec
         from ${geoObjects}
         where ${geoObjects.type}::text <> all(${`{${NOT_IN_GEO_OBJECT_LAYER.join(",")}}`}::text[]) and ${validAt(geoObjects)} and ${intersects(geoObjects.geom, bbox)}
           ${types ? sql`and ${geoObjects.type}::text = any(${`{${types.join(",")}}`}::text[])` : sql``}
+          ${allPois ? sql`` : sql`and (${geoObjects.type} <> 'poi' or ${isSelectedSql(sql`${geoObjects.id}`)})`}
         order by ${geoObjects.id}
         limit ${limit}`;
     case "places":
@@ -183,7 +187,7 @@ function configuredAnchoringBan(): AnchoringBanConfig {
  * `truncated` when more intersect it (UI-12: the map says so instead of silently dropping objects).
  * `geo-objects` leaves out areas and seas (own layers), countries and admin regions (shown as `subdivisions`) and, with
  * `types`, keeps only those types. `areas` carry `subdivisionKeys` (comma-joined keys of the subdivisions their scope tiles belong to) and
- * `polygonOrigin`; with `subdivision` (a key) only the areas touching it. `subdivisions` and `seas` are simplified outlines; tiles carry their `subdivisionKey`. Tile counts: `placeCount` all valid places of the tile,
+ * `polygonOrigin`; POIs only when a place selected them as highlights (`isSelectedSql`) unless `allPois`; with `subdivision` (a key) only the areas touching it. `subdivisions` and `seas` are simplified outlines; tiles carry their `subdivisionKey`. Tile counts: `placeCount` all valid places of the tile,
  * `candidateCount` those still `candidate`. `restricted-areas` carry `anchoringBan` by `opts.anchoringBan`
  * (default: the configured rule). `places` carry `profileConfidence` and `profileClass` of the newest profile version
  * of their geo object (its class by that version's rules), both null without a profile (or without a profile
@@ -193,10 +197,10 @@ export async function mapLayer(
   db: Db,
   layer: MapLayer,
   bbox: Bbox,
-  opts: { limit?: number; anchoringBan?: AnchoringBanConfig; types?: GeoObjectType[]; subdivision?: string } = {},
+  opts: { limit?: number; anchoringBan?: AnchoringBanConfig; types?: GeoObjectType[]; subdivision?: string; allPois?: boolean } = {},
 ): Promise<MapLayerData> {
   const limit = opts.limit ?? MAP_FEATURE_LIMIT;
-  const { rows: fetched } = await db.execute<Row>(layerQuery(layer, bbox, limit + 1, layer === "geo-objects" ? opts.types : undefined, layer === "areas" ? opts.subdivision : undefined));
+  const { rows: fetched } = await db.execute<Row>(layerQuery(layer, bbox, limit + 1, layer === "geo-objects" ? opts.types : undefined, layer === "areas" ? opts.subdivision : undefined, opts.allPois));
   const truncated = fetched.length > limit;
   const rows = fetched.slice(0, limit);
   if (layer === "restricted-areas") {

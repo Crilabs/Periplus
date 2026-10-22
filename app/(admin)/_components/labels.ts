@@ -54,6 +54,9 @@ export {
   SHELTER_SCALE_WORDS,
 } from "@/lib/domain/facts/labels";
 
+/** The language of a name for display: `und` (ISO 639 „undetermined“, an OSM `name` without language) reads „unbekannt“. */
+export const languageLabel = (code: string): string => (code === "und" ? "unbekannt" : code);
+
 /** German display labels for English enum values. Typed as complete records, so a new enum value fails typecheck. */
 
 export const RUN_KIND_LABELS: Record<RunKind, string> = {
@@ -76,6 +79,11 @@ export const STAGE_STATUS_LABELS: Record<RunStageStatus, string> = {
   pending: "Ausstehend",
   running: "Läuft",
   finished: "Abgeschlossen",
+};
+
+/** German names of stages whose technical name alone says little, shown beside it on the run page. */
+export const STAGE_LABELS: Partial<Record<string, string>> = {
+  "consolidation.highlights": "Highlights konsolidieren",
 };
 
 export const SCOPE_TYPE_LABELS: Record<RunScopeType, string> = {
@@ -634,7 +642,7 @@ export const CHECK_LABELS: Record<CheckName, string> = {
   exclude_reason: "Ausgeschlossener Spot mit Grund",
   berth_months: "„Saisonal voll“ mit mindestens einem Monat",
   low_confidence_note: "Geringe Konfidenz mit Hinweis „wenig belegt“",
-  highlight_radius: "Highlight mit Spot im Bedeutungsradius",
+  highlight_selected: "Highlight nur an Spots, die es ausgewählt haben",
   spot_duplicates: "Keine zwei Spots derselben Art näher als 150 m",
   highlight_duplicates: "Keine zwei Highlights gleichen Namens näher als 500 m",
   verbatim_text: "Kein Text länger als 15 Wörter aus einer Quelle",

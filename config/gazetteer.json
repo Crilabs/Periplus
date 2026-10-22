@@ -2,7 +2,8 @@
   "overpass": {
     "endpoint": "https://overpass-api.de/api/interpreter",
     "timeoutSeconds": 180,
-    "ratePerMinute": 2
+    "ratePerMinute": 2,
+    "maxRelationPoints": 250000
   },
   "marineRegions": {
     "endpoint": "https://geo.vliz.be/geoserver/MarineRegions/wfs",
@@ -57,6 +58,7 @@
   "bboxBufferKm": 5,
   "landBufferKm": 55,
   "coastDistanceM": 2000,
+  "poiCoastDistanceKm": 20,
   "coarse": { "placeTypes": ["city", "town"], "islandMinAreaKm2": 1, "gulfMinAreaKm2": 20, "coastDistanceKm": 5 },
   "subdivisionRadiusM": 30000,
   "islandParentBufferM": 200,
@@ -67,7 +69,9 @@
     "distanceM": { "bay": 300, "settlement": 500, "harbour": 300, "default": 500 },
     "uncertainDistanceFactor": 2,
     "wikidataLinkDistanceM": 1000,
-    "geonamesNewObjectRadiusM": 500
+    "geonamesNewObjectRadiusM": 500,
+    "highlightPairM": 2000,
+    "autoDecidePairs": true
   },
   "noAnchoringKinds": ["military", "cable", "firing_area", "aquaculture"]
 }

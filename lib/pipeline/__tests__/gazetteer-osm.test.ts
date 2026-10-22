@@ -7,6 +7,8 @@ import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects, landPolygons, rateLimits } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
+import { getConfig } from "@/lib/config";
+import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
 import { importOsm } from "@/lib/pipeline/gazetteer/osm";
 import { withRollback } from "@/test/db";
 import { testArchive } from "@/test/s3";
@@ -66,6 +68,14 @@ function transport(payload: unknown, seen: HttpRequest[] = [], status = 200): Tr
 
 /** Land polygon of the area and a full overpass token bucket, both rolled back with the test. */
 async function prepare(db: Db): Promise<void> {
+  // IHO sea north of the land, over the whole box.
+  const sea = await upsertGeoObject(db, {
+    type: "sea",
+    origin: "marine_regions",
+    geometry: { type: "Polygon", coordinates: [[[24.5, 35.35], [25.7, 35.35], [25.7, 35.9], [24.5, 35.9], [24.5, 35.35]]] },
+    names: [],
+  });
+  if ("skipped" in sea) throw new Error(sea.skipped);
   await db.insert(landPolygons).values(LAND.map((p) => ({ geom: sql`${geomFromGeoJson(p)}`, datasetVersion: "test" })));
   await db
     .insert(rateLimits)
@@ -132,6 +142,33 @@ describe("importOsm", () => {
       expect(box[0]).toBeCloseTo(35.2 - 5 / 111.32, 6);
       expect(box[3]).toBeLessThan(25.3 + 0.06);
       expect(box[3]).toBeGreaterThan(25.3 + 0.05);
+    }));
+
+  it("skips a POI farther than poiCoastDistanceKm from the sea, keeps a settlement rule unchanged", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      // Land reaches 34.9 N: 35.05 N is ~38 km from the sea (35.35 N), 35.25 N ~11 km.
+      const elements: OverpassElement[] = [
+        { type: "node", id: ID + 21, lat: 35.05, lon: 25.1, tags: { amenity: "restaurant", name: "Far Taverna" } },
+        { type: "node", id: ID + 22, lat: 35.25, lon: 25.1, tags: { amenity: "restaurant", name: "Near Taverna" } },
+        { type: "node", id: ID + 23, lat: 35.345, lon: 25.1, tags: { place: "village", name: "Coastal" } },
+        { type: "node", id: ID + 24, lat: 35.1, lon: 25.1, tags: { place: "village", name: "Inland" } },
+      ];
+      const result = await importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({ elements }), archive });
+      expect(result).toMatchObject({ created: 2, skipped: 2 });
+      const rows = await objects(db, [osm("node", 21), osm("node", 22), osm("node", 23), osm("node", 24)]);
+      expect(rows.map((r) => r.osmId).sort()).toEqual([osm("node", 22), osm("node", 23)]);
+    }));
+
+  it("keeps man_made=lighthouse in tags", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      const elements: OverpassElement[] = [
+        { type: "node", id: ID + 25, lat: 35.34, lon: 25.1, tags: { man_made: "lighthouse", amenity: "restaurant", name: "Leuchtturm" } },
+      ];
+      await importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({ elements }), archive });
+      const [row] = await objects(db, [osm("node", 25)]);
+      expect(row?.tags).toMatchObject({ man_made: "lighthouse" });
     }));
 
   it("a second run with the same answer creates and updates nothing", () =>
@@ -246,6 +283,34 @@ describe("importOsm", () => {
       expect(row).toEqual({ type: "POLYGON", holes: 1 });
     }));
 
+  it("skips a relation with more member points than overpass.maxRelationPoints and imports the rest", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      const cfg = getConfig().gazetteer.overpass;
+      const before = cfg.maxRelationPoints;
+      cfg.maxRelationPoints = 6;
+      try {
+        const sea: OverpassElement = {
+          type: "relation",
+          id: ID + 41,
+          tags: { type: "multipolygon", place: "sea", name: "Huge Sea" },
+          members: [
+            { type: "way", ref: 1, role: "outer", geometry: pts([[24.9, 35.36], [25.3, 35.36], [25.3, 35.5], [24.9, 35.5]]) },
+            { type: "way", ref: 2, role: "outer", geometry: pts([[24.9, 35.5], [24.9, 35.43], [24.9, 35.36]]) },
+          ],
+        };
+        const result = await importOsm(
+          db,
+          { scope: scope(), runId: newId() },
+          { transport: transport({ elements: [sea, ELEMENTS[0]!] }), archive },
+        );
+        expect(result).toMatchObject({ created: 1, skipped: 1 });
+        expect((await objects(db, [osm("relation", 41), osm("relation", 1)])).map((r) => r.osmId)).toEqual([osm("relation", 1)]);
+      } finally {
+        cfg.maxRelationPoints = before;
+      }
+    }));
+
   it("missing land polygons fails with a clear message", () =>
     withRollback(async (db) => {
       const seen: HttpRequest[] = [];
@@ -255,12 +320,22 @@ describe("importOsm", () => {
       expect(seen).toHaveLength(0);
     }));
 
+  it("missing IHO seas fails with a clear message before any request", () =>
+    withRollback(async (db) => {
+      await db.insert(landPolygons).values(LAND.map((p) => ({ geom: sql`${geomFromGeoJson(p)}`, datasetVersion: "test" })));
+      const seen: HttpRequest[] = [];
+      await expect(
+        importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({ elements: ELEMENTS }, seen), archive }),
+      ).rejects.toThrow("IHO seas missing for osm-test");
+      expect(seen).toHaveLength(0);
+    }));
+
   it("a 429 from overpass leaves the database untouched and throws RetryableHttpError", () =>
     withRollback(async (db) => {
       await prepare(db);
       // Only rows this transaction wrote (`created_at = now()`): other test files commit geo rows meanwhile.
       const written = async () => ({
-        objects: (await db.select({ n: sql<number>`count(*)::int` }).from(geoObjects).where(sql`${geoObjects.createdAt} = now()`))[0]!.n,
+        objects: (await db.select({ n: sql<number>`count(*)::int` }).from(geoObjects).where(sql`${geoObjects.createdAt} = now() and ${geoObjects.type} <> 'sea'`))[0]!.n,
         names: (await db.select({ n: sql<number>`count(*)::int` }).from(geoNames).where(sql`${geoNames.createdAt} = now()`))[0]!.n,
       });
       await expect(

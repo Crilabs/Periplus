@@ -23,7 +23,8 @@ import { insertNamedObject, insertTestTile } from "@/test/text";
  *   B  anchorage without `shelter.W` (incomplete)
  *   C  `no_anchoring` inside the military area (`restricted:military:<id>`)
  *   K  candidate (not delivered); O a confirmed place of no subdivision in the third tile (not delivered)
- *   T  POI taverna (`derived.importance` 2) 1 nm south of A, on the island
+ *   T  POI taverna (`derived.importance` 2) 1 nm south of A, on the island, selected by A and M (`highlight_selections`;
+ *      M's profile also carries it as `derived.highlights`)
  *
  * Public ids are fixed (snapshot tests) unless `shift` is set; `shift` moves everything east (`lon`) and north (`lat`)
  * by that many degrees (multiples of 0.25 keep the two-tile layout) so a second subdivision (own `key`) fits into the same transaction.
@@ -391,12 +392,25 @@ async function seedSubdivision(tx: Db, opts: SeedOptions): Promise<DeliveryFixtu
   );
   await tx.insert(profileSummaries).values({ geoObjectId: A.geoObjectId, profileVersion: 1, text: SPOT_A_SUMMARY, status: "ok", attempts: 1, model: "test", promptVersion: 1 });
 
+  const posT: [number, number] = [posA[0], Number((posA[1] - LAT_PER_NM).toFixed(6))];
+  const poiPublicId = id("hl", 1);
+  const poiId = await insertNamedObject(tx, { type: "poi", names: [{ name: "Taverna Vathi" }], lon: posT[0], lat: posT[1], category: "food", tiles: [west], subdivisionId });
+  await tx.update(geoObjects).set({ publicId: poiPublicId }).where(sql`${geoObjects.id} = ${poiId}`);
+  await insertProfile(tx, poiId, { "derived.importance": 2 }, { "derived.importance": provenanceEntry("derived", { confidence: 1 }) }, { confidence: null });
+
   const posM: [number, number] = [x(21.3), y(35.1)];
   const M = await place({ lon: posM[0], lat: posM[1], name: "Marina Test", type: "harbour", kind: "marina", publicId: id("sp", 2), tile: east });
   const sectors = (value: number, omit: string[] = []) =>
     Object.fromEntries(Object.keys(SPOT_A_SHELTER).filter((s) => !omit.includes(s)).map((s) => [`shelter.${s}`, value]));
   const computedProvenance = (keys: string[]) => Object.fromEntries(keys.map((k) => [k, provenanceEntry("computed")]));
-  const marina = { "place.kind": "marina", "place.status": "confirmed", exclude: { excluded: false, reason: null, detail: null }, ...sectors(0.9), occupancy: { "7": "full", "8": "full" } };
+  const marina = {
+    "place.kind": "marina",
+    "place.status": "confirmed",
+    exclude: { excluded: false, reason: null, detail: null },
+    ...sectors(0.9),
+    occupancy: { "7": "full", "8": "full" },
+    "derived.highlights": { food: { ids: [poiId], level: "some" } },
+  };
   await insertProfile(tx, M.geoObjectId, marina, computedProvenance(Object.keys(marina)), { sourcesCount: 1, confidence: 0.6 });
 
   const B = await place({ lon: x(21.08), lat: y(35.16), name: "Ormos B", publicId: id("sp", 3), tile: west });
@@ -415,14 +429,16 @@ async function seedSubdivision(tx: Db, opts: SeedOptions): Promise<DeliveryFixtu
   const excludedC = { "place.kind": "anchorage", "place.status": "no_anchoring", exclude: { excluded: true, reason: "military", detail: null }, ...sectors(0.5) };
   await insertProfile(tx, C.geoObjectId, excludedC, computedProvenance(Object.keys(excludedC)), { confidence: 0.4 });
 
+  // A and M select the taverna (spec 16; M's profile carries the selection, A's fixed attributes do not)
+  await tx.execute(sql`
+    insert into highlight_selections (place_geo_object_id, poi_geo_object_id, category, rank, distance_km, profile_version)
+    select p.id, t.id, 'food', 1, ST_Distance(p.centroid::geography, t.centroid::geography) / 1000, 1
+    from geo_objects p, geo_objects t
+    where p.id in (${A.geoObjectId}, ${M.geoObjectId}) and t.id = ${poiId}`);
+
   const K = await place({ lon: x(21.22), lat: y(35.2), name: "Kandidat", status: "candidate", publicId: null, tile: west });
   const O = await place({ lon: x(21.6), lat: y(35.1), name: "Elsewhere", publicId: id("sp", 5), tile: outsideTileId, subdivisionId: null });
 
-  const posT: [number, number] = [posA[0], Number((posA[1] - LAT_PER_NM).toFixed(6))];
-  const poiPublicId = id("hl", 1);
-  const poiId = await insertNamedObject(tx, { type: "poi", names: [{ name: "Taverna Vathi" }], lon: posT[0], lat: posT[1], category: "food", tiles: [west], subdivisionId });
-  await tx.update(geoObjects).set({ publicId: poiPublicId }).where(sql`${geoObjects.id} = ${poiId}`);
-  await insertProfile(tx, poiId, { "derived.importance": 2 }, { "derived.importance": provenanceEntry("derived", { confidence: 1 }) }, { confidence: null });
 
   return {
     subdivisionId,

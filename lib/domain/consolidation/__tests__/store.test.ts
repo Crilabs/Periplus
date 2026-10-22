@@ -2,10 +2,13 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { changeEvents, evaluationProfiles, places, profiles, reviewDecisions, reviewTasks } from "@/lib/db/schema";
-import { consolidateGeo } from "@/lib/domain/consolidation/store";
+import { changeEvents, evaluationProfiles, geoObjects, highlightSelections, places, profiles, reviewDecisions, reviewTasks } from "@/lib/db/schema";
+import { consolidateGeo, reselectHighlights } from "@/lib/domain/consolidation/store";
+import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
+import { selectedPoiIds } from "@/lib/domain/highlights/selections";
+import { setPlaceStatusByAdmin } from "@/lib/domain/place-status";
 import { newId } from "@/lib/domain/ids";
-import { insertComputation, insertPlace, insertSource, insertTextFact } from "@/test/consolidation";
+import { insertComputation, insertMention, insertPlace, insertSource, insertTextFact } from "@/test/consolidation";
 import { testDb, withRollback } from "@/test/db";
 import { insertNamedObject, insertTestRun } from "@/test/text";
 
@@ -431,5 +434,132 @@ describe("consolidateGeo", () => {
     } finally {
       await cleanup();
     }
+  });
+
+  describe("highlight selections (spec 16)", () => {
+    // far from every other test's POIs (synthetic, outside the pilot box)
+    const LON = -140.3;
+    const LAT = -45.7;
+    const LAT_PER_KM = 1 / 111.1;
+    const culture = (tx: Db, name: string, km: number) =>
+      insertNamedObject(tx, { type: "poi", category: "culture", names: [{ name }], lon: LON, lat: LAT + km * LAT_PER_KM });
+    const selectionOf = (tx: Db, placeObjectId: string) =>
+      tx
+        .select({ poi: highlightSelections.poiGeoObjectId, category: highlightSelections.category, rank: highlightSelections.rank, distanceKm: highlightSelections.distanceKm, profileVersion: highlightSelections.profileVersion })
+        .from(highlightSelections)
+        .where(eq(highlightSelections.placeGeoObjectId, placeObjectId))
+        .orderBy(asc(highlightSelections.rank));
+
+    it("storing a place profile replaces its highlight_selections rows", () =>
+      withRollback(async (tx) => {
+        const { objectId } = await insertPlace(tx, { lon: LON, lat: LAT, name: "Highlightbucht" });
+        const a = await culture(tx, "Kastro", 0.3);
+        const b = await culture(tx, "Moni", 0.6);
+        const stale = await culture(tx, "Weit weg", 30);
+        await tx.insert(highlightSelections).values({ placeGeoObjectId: objectId, poiGeoObjectId: stale, category: "culture", rank: 1, distanceKm: 30, profileVersion: 0 });
+
+        expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "created", version: 1 });
+        const first = await selectionOf(tx, objectId);
+        expect(first.map((r) => [r.poi, r.category, r.rank, r.profileVersion])).toEqual([
+          [a, "culture", 1, 1],
+          [b, "culture", 2, 1],
+        ]);
+        expect(first[0]!.distanceKm).toBeCloseTo(0.3, 1);
+        const [v1] = await versionsOf(tx, objectId);
+        expect(v1!.attributes["derived.highlights"]).toEqual({ culture: { ids: [a, b], level: "none" } });
+
+        // an evaluation run writes its profile only, never the selection
+        await tx.update(geoObjects).set({ validTo: today }).where(eq(geoObjects.id, a));
+        const runId = await insertTestRun(tx);
+        await consolidateGeo(tx, objectId, { runId, mode: "evaluation", rulesVersion: "v2", today });
+        expect((await selectionOf(tx, objectId)).map((r) => r.poi)).toEqual([a, b]);
+
+        // the next regular run replaces the rows: the ended POI drops out
+        expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "created", version: 2 });
+        expect((await selectionOf(tx, objectId)).map((r) => [r.poi, r.rank, r.profileVersion])).toEqual([[b, 1, 2]]);
+      }));
+
+    it("a score change of an unselected candidate that keeps ids and level writes no new version (final review I1)", () =>
+      withRollback(async (tx) => {
+        const { objectId } = await insertPlace(tx, { lon: LON, lat: LAT, name: "Gleichbucht" });
+        const castles: string[] = [];
+        for (let i = 0; i < 5; i++) {
+          const id = await culture(tx, `Kastro ${i}`, 1 + i * 0.5);
+          await tx.update(geoObjects).set({ tags: { historic: "castle" } }).where(eq(geoObjects.id, id));
+          castles.push(id);
+        }
+        const chapel = await culture(tx, "Agios Nikolaos", 0.5);
+        expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "created", version: 1 });
+        const [v1] = await versionsOf(tx, objectId);
+        expect(v1!.attributes["derived.highlights"]).toEqual({ culture: { ids: castles, level: "none" } });
+
+        // a text source now names the chapel: its score rises, its importance, the ids and the level stay
+        await insertMention(tx, chapel, { sourceId: await insertSource(tx, "other", 0.3) });
+        expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "unchanged", version: 1 });
+        expect(await versionsOf(tx, objectId)).toHaveLength(1);
+      }));
+
+    it("reselectHighlights skips a place without a profile and one of other rules; it writes only derived.highlights (final review C1)", () =>
+      withRollback(async (tx) => {
+        const { objectId } = await insertPlace(tx, { lon: LON, lat: LAT, name: "Auswahlbucht" });
+        const a = await culture(tx, "Kastro", 0.3);
+        expect(await reselectHighlights(tx, objectId, { today })).toMatchObject({ status: "skipped" });
+        expect(await versionsOf(tx, objectId)).toHaveLength(0);
+
+        await consolidateGeo(tx, objectId, { today, rulesVersion: "v1" });
+        expect(await reselectHighlights(tx, objectId, { today })).toMatchObject({ status: "skipped" });
+        expect(await versionsOf(tx, objectId)).toHaveLength(1);
+
+        await consolidateGeo(tx, objectId, { today });
+        const b = await culture(tx, "Moni", 0.6);
+        expect(await reselectHighlights(tx, objectId, { today })).toMatchObject({ status: "created", version: 3 });
+        const [, v2, v3] = await versionsOf(tx, objectId);
+        expect(v3!.attributes["derived.highlights"]).toEqual({ culture: { ids: [a, b], level: "none" } });
+        expect({ ...v3!.attributes, "derived.highlights": null }).toEqual({ ...v2!.attributes, "derived.highlights": null });
+        expect((await selectionOf(tx, objectId)).map((r) => [r.poi, r.profileVersion])).toEqual([[a, 3], [b, 3]]);
+        expect(await reselectHighlights(tx, objectId, { today })).toMatchObject({ status: "unchanged", version: 3 });
+      }));
+
+    it("a merged place has no selection rows; a merged POI is no selected highlight", () =>
+      withRollback(async (tx) => {
+        const { objectId, placeId } = await insertPlace(tx, { lon: LON, lat: LAT, name: "Mergebucht" });
+        const target = await insertPlace(tx, { lon: LON, lat: LAT, name: "Ziel" });
+        const a = await culture(tx, "Kastro", 0.3);
+        const b = await culture(tx, "Moni", 0.6);
+        const twin = await culture(tx, "Moni Twin", 0.61);
+        for (const id of [objectId, target.objectId]) await consolidateGeo(tx, id, { today });
+        expect((await selectionOf(tx, objectId)).map((r) => r.poi)).toEqual([a, b, twin]);
+        expect(await selectedPoiIds(tx, [objectId, target.objectId])).toEqual([a, b, twin].sort());
+
+        // the gazetteer merge (as the review merge and „Zusammenführen“ do) drops the merged object's rows at once
+        await mergeGeoObjects(tx, target.objectId, objectId);
+        const [merged] = await tx.select({ status: places.status }).from(places).where(eq(places.id, placeId));
+        expect(merged!.status).toBe("rejected");
+        expect(await selectionOf(tx, objectId)).toEqual([]);
+        // a merged POI leaves every selection
+        await mergeGeoObjects(tx, b, twin);
+        expect((await selectionOf(tx, target.objectId)).map((r) => r.poi)).toEqual([a, b]);
+        expect(await selectedPoiIds(tx, [objectId, target.objectId])).toEqual([a, b].sort());
+      }));
+
+    it("a rejected or ended place selects nothing", () =>
+      withRollback(async (tx) => {
+        const rejected = await insertPlace(tx, { lon: LON, lat: LAT, name: "Verworfen" });
+        const ended = await insertPlace(tx, { lon: LON, lat: LAT, name: "Beendet" });
+        const a = await culture(tx, "Kastro", 0.3);
+        for (const p of [rejected, ended]) await consolidateGeo(tx, p.objectId, { today });
+        expect(await selectedPoiIds(tx, [rejected.objectId, ended.objectId])).toEqual([a]);
+
+        // „Verwerfen“ deletes the rows at once
+        await setPlaceStatusByAdmin(tx, { placeId: rejected.placeId, status: "rejected", from: "confirmed", decidedBy: "test" });
+        expect(await selectionOf(tx, rejected.objectId)).toEqual([]);
+
+        // an ended place: its rows no longer count, and its next consolidation deletes them
+        await tx.update(places).set({ validTo: today }).where(eq(places.id, ended.placeId));
+        expect(await selectionOf(tx, ended.objectId)).toHaveLength(1);
+        expect(await selectedPoiIds(tx, [ended.objectId])).toEqual([]);
+        await consolidateGeo(tx, ended.objectId, { today });
+        expect(await selectionOf(tx, ended.objectId)).toEqual([]);
+      }));
   });
 });

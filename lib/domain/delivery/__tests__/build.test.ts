@@ -1,10 +1,10 @@
 import { asc, eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Archive } from "@/lib/adapters/s3";
-import type { ChangesFile, Manifest, SpotsFile } from "@/contract";
+import type { ChangesFile, HighlightsFile, Manifest, SpotsFile } from "@/contract";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { deliveredObjects, deliveries, documents, places, profileSummaries, textShingles } from "@/lib/db/schema";
+import { deliveredObjects, deliveries, documents, highlightSelections, places, profileSummaries, textShingles } from "@/lib/db/schema";
 import { shingleHashes } from "@/lib/domain/documents/shingles";
 import { newId } from "@/lib/domain/ids";
 import { insertExtraction, insertMention, insertMentionFact, insertProfile, provenanceEntry } from "@/test/consolidation";
@@ -172,7 +172,7 @@ describe("buildDelivery", () => {
         id: result.deliveryId,
         status: "valid",
         dataVersion: 1,
-        schemaVersion: "2.1",
+        schemaVersion: "2.2",
         storagePrefix: prefixOf(f, 1),
         previousDeliveryId: null,
         triggeredBy: "test",
@@ -304,6 +304,42 @@ describe("buildDelivery", () => {
 
       // a third build carries the same content: nothing changed
       expect(await buildDelivery(tx, archive, f.subdivisionId, { now: new Date("2040-06-03T08:00:00Z"), inCallerTransaction: true })).toMatchObject({ status: "unchanged" });
+    });
+  });
+
+  it("a no longer selected highlight is removed in the change feed and returns with the same hl_ id (spec 16 review focus 4)", async () => {
+    await withRollback(async (tx) => {
+      const archive = memoryArchive();
+      const f = await seedDeliverySubdivision(tx);
+      await buildDelivery(tx, archive, f.subdivisionId, { now: NOW, inCallerTransaction: true });
+      const first = await readJson<HighlightsFile>(archive, `${prefixOf(f, 1)}highlights.json`);
+      const before = first.highlights.find((h) => h.id === f.poiPublicId)!;
+      expect(before.spotIds).toEqual([f.places.A.publicId, f.places.M.publicId]);
+
+      // no place selects the taverna any more (a re-selection after a stronger candidate appeared)
+      const rows = await tx.select().from(highlightSelections).where(eq(highlightSelections.poiGeoObjectId, f.poiId));
+      expect(rows).toHaveLength(2);
+      await tx.delete(highlightSelections).where(eq(highlightSelections.poiGeoObjectId, f.poiId));
+      const second = await buildDelivery(tx, archive, f.subdivisionId, { now: new Date("2040-06-02T08:00:00Z"), inCallerTransaction: true });
+      expect(second).toMatchObject({ status: "valid", dataVersion: 2 });
+      expect((await readJson<HighlightsFile>(archive, `${prefixOf(f, 2)}highlights.json`)).highlights).toEqual([]);
+      expect((await readJson<ChangesFile>(archive, `${prefixOf(f, 2)}changes.json`)).changes.find((c) => c.objectId === f.poiPublicId)).toMatchObject({
+        objectType: "highlight",
+        event: "removed",
+      });
+      // the spots no longer name it
+      const spots = await readJson<SpotsFile>(archive, `${prefixOf(f, 2)}spots.json`);
+      expect(spots.spots.flatMap((s) => s.highlightIds ?? [])).not.toContain(f.poiPublicId);
+
+      // selected again: the same hl_ id comes back
+      await tx.insert(highlightSelections).values(rows);
+      const third = await buildDelivery(tx, archive, f.subdivisionId, { now: new Date("2040-06-03T08:00:00Z"), inCallerTransaction: true });
+      expect(third).toMatchObject({ status: "valid", dataVersion: 3 });
+      const back = (await readJson<HighlightsFile>(archive, `${prefixOf(f, 3)}highlights.json`)).highlights;
+      expect(back.map((h) => h.id)).toEqual([f.poiPublicId]);
+      expect(back[0]!.spotIds).toEqual(before.spotIds);
+      const changes = (await readJson<ChangesFile>(archive, `${prefixOf(f, 3)}changes.json`)).changes;
+      expect(changes.find((c) => c.objectId === f.poiPublicId)?.event).not.toBe("removed");
     });
   });
 

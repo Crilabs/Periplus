@@ -4,7 +4,7 @@ import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { getEnv, type Env } from "@/lib/env";
 import { profiles } from "@/lib/db/schema";
-import { consolidationTargets } from "@/lib/domain/consolidation/targets";
+import { consolidationTargets, reselectionTargets } from "@/lib/domain/consolidation/targets";
 import { loadPlaceImageInput } from "@/lib/domain/images/place-input";
 import { planRender } from "@/lib/domain/images/render-plan";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
@@ -34,7 +34,8 @@ export type ImageTarget = { geoObjectId: string; view: ImageView; force?: true }
 /**
  * The objects a text, geometry or consolidation run consolidated, as `summaryTargets` derives them: the objects of the
  * profile versions the run created, and with `params.stagesOnly` or `params.geoObjectIds` also the run's targets
- * (`consolidationTargets`): a decision's follow-up names its objects, whether or not their profile changed.
+ * (`consolidationTargets`): a decision's follow-up names its objects, whether or not their profile changed. Never the
+ * places the run only re-selected (`reselectionTargets`, final review C1): a new selection is no reason for an image.
  */
 async function consolidatedObjects(db: Db, run: { id: string; params: Record<string, unknown> }): Promise<string[]> {
   const rows = await db
@@ -46,6 +47,7 @@ async function consolidatedObjects(db: Db, run: { id: string; params: Record<str
   if (Array.isArray(run.params.stagesOnly) || (Array.isArray(run.params.geoObjectIds) && !Array.isArray(run.params.documentVersionIds))) {
     for (const id of await consolidationTargets(db, run)) ids.add(id);
   }
+  for (const id of await reselectionTargets(db, run)) ids.delete(id);
   return [...ids];
 }
 
