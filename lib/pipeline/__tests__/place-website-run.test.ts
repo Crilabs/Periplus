@@ -4,8 +4,9 @@ import { describe, expect, it } from "vitest";
 import { MockModel } from "@/lib/ai/mock";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { geoObjects, placeWebsites, places, runs } from "@/lib/db/schema";
+import { crawlFrontier, geoObjects, placeWebsites, places, runs } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
+import { createRun } from "@/lib/domain/runs";
 import { tileIdFor } from "@/lib/domain/tiles";
 import { STAGES } from "@/lib/jobs/stages";
 import { FETCH_RUN_STAGES } from "@/lib/pipeline/fetch/run";
@@ -100,6 +101,36 @@ describe("runPlaceWebsiteJob and the freeze", () => {
       expect(await tx.select().from(placeWebsites).where(eq(placeWebsites.placeId, place.placeId))).toHaveLength(1);
       // the fetch.source stage of the run plans that source
       expect(await STAGES["fetch.source"]!.plan(tx, { id: runId, params })).toEqual([{ key: first.sourceId, sourceId: first.sourceId }]);
+    }));
+
+  it("a website the build attached (without crawl) is fetched by the next button run, and once crawled not again", () =>
+    withRollback(async (tx) => {
+      const url = `https://www.lambda-${newId()}.example/`;
+      const place = await setup(tx, url);
+      // the build's places.website stage: attaches, crawls nothing
+      const { id: buildId } = await createRun(tx, {
+        kind: "full",
+        scope: { type: "subdivision", id: SUB },
+        stages: [PLACE_WEBSITE_STAGE],
+        params: { subdivisionKey: SUB },
+        triggeredBy: "t",
+      });
+      const deps = { transport: async () => { throw new Error("no network"); }, archive: memoryArchive(), model: new MockModel({}) };
+      const attached = await runPlaceWebsiteJob(tx, { ...place, runId: buildId }, deps);
+      expect(attached.sourceId).toBeTruthy();
+
+      const { boss, inserted } = recordingBoss();
+      const { id: first } = await startPlaceWebsiteRun(tx, boss, { subdivisionKey: SUB }, "t");
+      expect(inserted.filter((j) => j.queue === "places.website")).toEqual([]);
+      expect((await paramsOf(tx, first)).sourceIds).toEqual([attached.sourceId]);
+
+      // its crawl fetched the start URL; the run ends
+      await tx.insert(crawlFrontier).values({ sourceId: attached.sourceId!, url, urlNormalized: url, status: "fetched", lastRunId: first });
+      await tx.update(runs).set({ status: "finished" }).where(eq(runs.id, first));
+      const { id: second } = await startPlaceWebsiteRun(tx, recordingBoss().boss, { subdivisionKey: SUB }, "t");
+      const params = await paramsOf(tx, second);
+      expect(params.sourceIds).toEqual([]);
+      expect(params.skippedSourceIds).toBeUndefined();
     }));
 
   it("freezes exactly the pending versions of the run's sources", () =>

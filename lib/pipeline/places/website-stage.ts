@@ -21,10 +21,52 @@ export type PlaceWebsiteJobResult = {
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 
-/** Plan of the stage `places.website`: one job per place of `params.subdivisionKey` without website (`placesNeedingWebsite`). */
-export async function planPlaceWebsites(db: Db, run: { params: Record<string, unknown> }) {
+/**
+ * The current approved sources of the subdivision's recorded websites not crawled yet: places of kind marina or port
+ * (valid, unmerged, in the subdivision as `placesNeedingWebsite` judges it) whose current `place_websites` row has a
+ * source, and whose start URL (`url_normalized`) has no `crawl_frontier` row with status `fetched` for that source.
+ * So a website the subdivision build attached (which does not crawl) is fetched by the next „Marina-Websites suchen“.
+ */
+export async function uncrawledWebsiteSources(db: Db, subdivisionKey: string): Promise<string[]> {
+  const { rows } = await db.execute<{ id: string }>(sql`
+    with cur as (
+      select distinct on (w.place_id) w.place_id, w.source_id, w.url_normalized
+      from place_websites w
+      order by w.place_id, w.created_at desc, w.id desc
+    )
+    select distinct s.id
+    from cur
+    join places p on p.id = cur.place_id
+    join geo_objects o on o.id = p.geo_object_id and o.merged_into_id is null
+      and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
+    left join tiles t on t.id = p.tile_id
+    join subdivisions sd on sd.id = coalesce(o.subdivision_id, t.subdivision_id) and sd.key = ${subdivisionKey} and sd.valid_to is null
+    join sources s on s.id = cur.source_id and s.status = 'approved' and s.valid_to is null
+    where p.merged_into_id is null and p.valid_from <= current_date and (p.valid_to is null or p.valid_to > current_date)
+      and p.kind in ('marina', 'port') and p.status in ('candidate', 'confirmed')
+      and not exists (
+        select 1 from crawl_frontier f
+        where f.source_id = s.id and f.url_normalized = cur.url_normalized and f.status = 'fetched'
+      )
+    order by s.id
+  `);
+  return rows.map((r) => r.id);
+}
+
+/**
+ * Plan of the stage `places.website`: one job per place of `params.subdivisionKey` without website
+ * (`placesNeedingWebsite`). In a run that crawls (`fetch.url` among its stages) the sources of the subdivision's
+ * recorded websites not crawled yet (`uncrawledWebsiteSources`) join the run's `sourceIds` at once (`addRunSources`,
+ * with its rule for sources another crawl fetches).
+ */
+export async function planPlaceWebsites(db: Db, run: { id: string; params: Record<string, unknown> }) {
   const key = run.params.subdivisionKey;
   if (typeof key !== "string" || key === "") throw new Error("subdivisionKey is required");
+  const [row] = await db.select({ stages: runs.stages }).from(runs).where(eq(runs.id, run.id));
+  if (row?.stages.includes(FETCH_URL_STAGE)) {
+    const pending = await uncrawledWebsiteSources(db, key);
+    if (pending.length > 0) await addRunSources(db, run.id, pending);
+  }
   return (await placesNeedingWebsite(db, key)).map((p) => ({ key: p.placeId, placeId: p.placeId, geoObjectId: p.geoObjectId }));
 }
 
