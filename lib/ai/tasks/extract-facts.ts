@@ -31,7 +31,7 @@ export type ExtractFactsInput = {
   observedAt: string;
   /** The unit's chunks in text order, numbered from 1. */
   chunks: Array<{ n: number; text: string }>;
-  /** The text is the object's own website (the unit's mention is `bound`, spec 16): "our marina" is then the object. */
+  /** The text is the object's own website (the unit's mention is `bound`, spec 15): "our marina" is then the object. */
   boundToWebsite: boolean;
 };
 

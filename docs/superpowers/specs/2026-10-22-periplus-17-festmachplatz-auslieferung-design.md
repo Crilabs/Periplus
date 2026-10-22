@@ -1,6 +1,6 @@
 # Periplus 17 – Ortsarten, Festmachplatz und Auslieferung nach Beleg
 
-Stand: 22.10.2026 · Gehört zu: `2026-10-18-periplus-design.md` · Hängt zusammen mit: Teil-Spec 16 (Marina-Website) · Ändert: Teil-Spec 03 (Seed: Ortsart als Vorschlag), 02/07 (Fact-Schema: `berthable`, Ortsart aus Belegen), 08 (Liefervertrag: `berthable`, `contact`; Auslieferungsregel), 09 (Admin: Herkunft der Bestätigung), 13 (Ortsbilder: nur ausgelieferte Orte)
+Stand: 22.10.2026 · Gehört zu: `2026-10-18-periplus-design.md` · Hängt zusammen mit: Teil-Spec 15 (Marina-Website) · Ändert: Teil-Spec 03 (Seed: Ortsart als Vorschlag), 02/07 (Fact-Schema: `berthable`, Ortsart aus Belegen), 08 (Liefervertrag: `berthable`, `contact`; Auslieferungsregel), 09 (Admin: Herkunft der Bestätigung), 13 (Ortsbilder: nur ausgelieferte Orte)
 
 ## Zweck
 
@@ -44,11 +44,11 @@ Neues Attribut `berthable` auf Ebene Ort, Boolean, Regel `latest_observation`, n
 
 Wie bei `services.fuel` gilt: Ein fehlendes Zitat ergibt kein „nein“. Ein Ja braucht ein Zitat wie „visitor berths“, „we anchored in …“, „moored at the town quay“; ein Nein ein Zitat wie „private moorings only“, „no berths for visiting yachts“.
 
-Kommt mit dem Fact-Schema v3 aus Teil-Spec 16, Teil B (gleicher Versionswechsel, ein Reprozessieren).
+Kommt mit dem Fact-Schema v3 aus Teil-Spec 15, Teil B (gleicher Versionswechsel, ein Reprozessieren).
 
 ## Einführung (Christian)
 
-Teil-Spec 16 und 17 gehen **zusammen live**; das Reprozessieren aller Landesteile mit Fact-Schema v3 gehört zum Vorhaben. Keine Teilregel mit v2 vorab. Die automatische Bestätigung wird je Landesteil erst eingeschaltet, wenn dessen Reprozessieren durch ist (Claude: sonst fehlen die Belege, weil v2-Facts unter v3 nicht mehr zählen, und Orte würden zu spät oder mit falschem `berthable` bestätigt).
+Teil-Spec 15 und 17 gehen **zusammen live**; das Reprozessieren aller Landesteile mit Fact-Schema v3 gehört zum Vorhaben. Keine Teilregel mit v2 vorab. Die automatische Bestätigung wird je Landesteil erst eingeschaltet, wenn dessen Reprozessieren durch ist (Claude: sonst fehlen die Belege, weil v2-Facts unter v3 nicht mehr zählen, und Orte würden zu spät oder mit falschem `berthable` bestätigt).
 
 ### Ableitung ohne Fact (Claude)
 
@@ -79,7 +79,7 @@ Bisher setzt nur ein Mensch `confirmed`. Neu bestätigt die Konsolidierung einen
 | Ortsart | Bestätigt, wenn |
 | --- | --- |
 | `anchorage`, `mooring_field` | Festmach-Beleg aus Quellen (siehe unten) |
-| `marina` | die eigene Website ist von der KI als Freizeithafen mit Gastliegeplätzen ausgewertet (Teil-Spec 16, Teil C) **oder** Festmach-Beleg aus Quellen |
+| `marina` | die eigene Website ist von der KI als Freizeithafen mit Gastliegeplätzen ausgewertet (Teil-Spec 15, Teil C) **oder** Festmach-Beleg aus Quellen |
 | `port` | Beleg aus einer Quelle oder der Website, dass es ein gewerblicher Hafen ist (`place.kind_evidence = port` oder `berthable = false` mit Hafen-Bezug), oder OSM-Tags, die eindeutig gewerblich sind (Claude: `harbour:category` = ferry/fishing/industrial/cargo ohne `leisure=marina`) |
 
 **Festmach-Beleg (Christian hat dem Vorschlag zugestimmt):** mindestens ein Fact mit wörtlichem Zitat, der zeigt, dass eine Crew dort festgemacht hat oder festmachen kann (`berthable = true`, `mooring.types`, `anchoring.*`, Grund, Schutz aus Text, Bojen), oder ein Routen-Stopp eines Törnberichts, und zwar aus
@@ -95,7 +95,7 @@ Voreinstellung der Quelltypen (`config/source-types.json`; Claude):
 | --- | --- |
 | `pilot_guide`, `authority` | allein |
 | `trip_report`, `forum`, `travel_guide`, `other` | als eines von zwei Dokumenten verschiedener Domains |
-| `marina` | nur für den Ort, an den die Website gebunden ist (Teil-Spec 16), nie für Orte in der Nähe |
+| `marina` | nur für den Ort, an den die Website gebunden ist (Teil-Spec 15), nie für Orte in der Nähe |
 | `dataset` | nicht |
 
 ### Wann nicht automatisch bestätigt wird (Claude)
@@ -126,10 +126,10 @@ Jede automatische Bestätigung schreibt wie die Quellen-Autofreigabe (Teil-Spec 
 
 ## Liefervertrag
 
-Vertrag 2.2, nur additive Felder:
+Vertrag 2.3 (2.2 ist die Highlight-Stufe aus Teil-Spec 16), nur additive Felder:
 
 - `spot.berthable: boolean | null` – Festmachplatz für Charter-Crews; `null` = unbekannt.
-- `spot.contact: { vhf: string | null, phone: string | null, url: string | null } | null` – Anmeldung bei Marina oder Hafen. Das Fact-Attribut `contact` gibt es schon (Fact-Schema v2), es wird heute nicht geliefert. Quelle vor allem die Marina-Website (Teil-Spec 16).
+- `spot.contact: { vhf: string | null, phone: string | null, url: string | null } | null` – Anmeldung bei Marina oder Hafen. Das Fact-Attribut `contact` gibt es schon (Fact-Schema v2), es wird heute nicht geliefert. Quelle vor allem die Marina-Website (Teil-Spec 15).
 - Doku von `kind` mit den Definitionen der Tabelle oben.
 
 ## Folgen, die bewusst in Kauf genommen werden

@@ -1,7 +1,9 @@
 import { derivedBerthable } from "./berthable";
 import { createHash } from "node:crypto";
 import type { ConsolidationConfig } from "@/lib/config/schemas";
+import type { PoiCategory } from "@/lib/db/schema/geo";
 import { canonicalJson, getFactSchema } from "@/lib/domain/facts/schema";
+import { selectHighlights } from "@/lib/domain/highlights/select";
 import { profileConfidence } from "./derived/confidence";
 import { importanceOf, spotIdsWithin } from "./derived/importance";
 import { type OccupancyWord, quietnessScore, type QuietnessWord } from "./derived/quietness";
@@ -222,6 +224,26 @@ export function profileContentHash(p: Pick<BuiltProfile, "attributes" | "provena
 }
 
 /**
+ * The attribute `derived.highlights` of a place (spec 16) from its highlight inputs: per category the selected ids in
+ * rank order and the level; the provenance cites the selected POIs and holds the `CategorySelection` per category in
+ * `derivedFrom`. Null for rules without `highlights` (v1), without inputs or without any category in reach. Shared by
+ * `buildProfile` and the selection-only update (`reselectHighlights`).
+ */
+export function highlightsAttribute(
+  inputs: DerivedInputs["highlights"],
+  cfg: ConsolidationConfig,
+): { value: Record<string, { ids: string[]; level: string }>; provenance: AttributeProvenance } | null {
+  if (!cfg.highlights || !inputs) return null;
+  const selections = selectHighlights(inputs.candidates, inputs.textNames, cfg.highlights, inputs.duplicateM);
+  const categories = Object.keys(selections).sort() as PoiCategory[];
+  if (categories.length === 0) return null;
+  const value = Object.fromEntries(categories.map((c) => [c, { ids: selections[c]!.ids, level: selections[c]!.level }]));
+  const derivedFrom = Object.fromEntries(categories.map((c) => [c, selections[c]!]));
+  const poiIds = sortedUnique(categories.flatMap((c) => selections[c]!.ids));
+  return { value, provenance: fixedProvenance("derived", { poiIds }, derivedFrom) };
+}
+
+/**
  * The profile of one geo object (spec 07, plan Task 10):
  * 1. inputs sorted by (attribute, observedAt, fact or POI id), then each attribute of the level through its schema rule;
  * 2. a value ≠ null goes to `attributes` with its provenance; a conflict to `conflicts` with the resolution of a decided
@@ -230,8 +252,9 @@ export function profileContentHash(p: Pick<BuiltProfile, "attributes" | "provena
  * 4. identity (`gazetteer`, rule `identity`, confidence 1): `geo.name`, `geo.parent_id`, `geo.geometry_hash`; places
  *    `place.kind`, `place.status`, `place.position` (6 decimals), `exclude` in the contract's vocabulary
  *    (`exclude.ts`), citing the restricted area and the `prohibitions` entry that excluded the place;
- * 5. derived values (`derived`, the deciding inputs in `derivedFrom`): places `derived.quietness`, `derived.season`, and
- *    `berthable` when no fact gave one (spec 17);
+ * 5. derived values (`derived`, the deciding inputs in `derivedFrom`): places `derived.quietness`, `derived.season`,
+ *    `derived.highlights` (spec 16: per category the selected ids in rank order and the level; `derivedFrom` holds the
+ *    `CategorySelection` per category, `poiIds` the selected POIs), and `berthable` when no fact gave one (spec 17);
  *    POIs `derived.importance`, `derived.radius_nm`, `derived.spot_ids`;
  * 6. gaps: level attributes without a value, except `gaps.ignore[place.kind]`, with the computation's reason or
  *    `no_facts`; then the missing derived values (`derived.quietness` `too_few_parts`, `derived.importance`
@@ -349,6 +372,9 @@ export function buildProfile(input: BuildProfileInput): BuiltProfile {
     }
     const hints = seasonHints(results);
     if (hints.length > 0) setDerived("derived.season", hints, fixedProvenance("derived", cite(provenance, ["season_notes"])));
+    // spec 16: rules without `highlights` (v1) select nothing; no category in reach → no attribute, no gap
+    const highlights = highlightsAttribute(derived.highlights, cfg);
+    if (highlights) setDerived("derived.highlights", highlights.value, highlights.provenance);
   }
   if (context.level === "poi" && derived.importance) {
     const d = derived.importance;
@@ -356,7 +382,7 @@ export function buildProfile(input: BuildProfileInput): BuiltProfile {
     const sourceKeys = sortedUnique(d.sources.map((s) => s.key));
     const sources = [...new Map([...d.sources].sort((a, b) => cmp(a.key, b.key) || a.weight - b.weight).map((s) => [s.key, s.weight]))]
       .map(([key, weight]) => ({ key, weight }));
-    const decided = { score: imp.score, sources, sitelinks: d.sitelinks, category: d.category };
+    const decided = { score: imp.score, sources, sitelinks: d.sitelinks, category: d.category, kinds: sortedUnique(d.kinds) };
     setDerived("derived.importance", imp.importance, fixedProvenance("derived", { sourceKeys }, decided));
     setDerived("derived.radius_nm", imp.radiusNm, fixedProvenance("derived", { sourceKeys }, { importance: imp.importance, ...decided }));
     const spotIds = spotIdsWithin(d.spotCandidates, imp.radiusNm, cfg.importance.maxSpotIds);

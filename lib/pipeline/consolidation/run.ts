@@ -6,7 +6,7 @@ import { runStages, runs } from "@/lib/db/schema";
 import { activeRulesVersion } from "@/lib/domain/consolidation/active-rules";
 import type { ExtractionCandidate } from "@/lib/domain/consolidation/inputs";
 import { clearConsolidationCatchUp, consolidationSkipOf, recordConsolidationCatchUp } from "@/lib/domain/consolidation/skipped";
-import { consolidationBlocked, consolidationTargets, type ConsolidationParams } from "@/lib/domain/consolidation/targets";
+import { consolidationBlocked, consolidationScope, type ConsolidationParams } from "@/lib/domain/consolidation/targets";
 import { levelFor } from "@/lib/domain/facts/levels";
 import { validAtAlias } from "@/lib/domain/timeline";
 import { createRun, failRun, type RunScope } from "@/lib/domain/runs";
@@ -162,7 +162,7 @@ export type CatchUpResult =
 
 /**
  * „Konsolidierung nachholen“ (ruling M5-H-R2): starts the consolidation a run skipped (its stored marker,
- * `consolidationSkipOf`), as a consolidation run over the run's targets (`consolidationTargets`), once its quote
+ * `consolidationSkipOf`), as a consolidation run over the run's targets with its POIs (`consolidationScope`), once its quote
  * fidelity no longer blocks it. With `afterRecheck` (a „Belegtreue neu prüfen“ that just committed, ruling M5-H-R2 I-1)
  * it also consolidates a run that had consolidated before a later block (late results) and one caught up on already,
  * since the recheck made facts active that no profile has seen; it leaves alone a run whose `consolidation.geo` is
@@ -199,7 +199,8 @@ export async function catchUpConsolidation(
       if (skip.catchUpRunId) return { status: "already", consolidationRunId: skip.catchUpRunId };
     }
     if (await consolidationBlocked(tx, runId)) return { status: "blocked" };
-    const targets = await consolidationTargets(tx, { id: runId, params });
+    // with its POIs: the explicit catch-up run consolidates them and re-selects their neighbours (spec 16)
+    const targets = await consolidationScope(tx, { id: runId, params });
     if (targets.length === 0) return { status: "no_targets" };
     // the catch-up consolidates with the rules version the skipped run froze at its start (ruling M7-E-R1)
     const rulesVersion = typeof params.rulesVersion === "string" ? params.rulesVersion : undefined;

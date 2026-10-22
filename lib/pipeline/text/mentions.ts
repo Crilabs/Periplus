@@ -32,7 +32,7 @@ import { frozenRunVersions } from "./versions";
  * carried chunks of the version too, as the name may sit in one: there it adds only what the original chunk does not
  * have (objects it does not mention, spans it neither mentions nor holds as ambiguous), stored on the version's own
  * carried chunk, and collects no place hints (the original collected them).
- * A page under the start URL of a place's own website (`boundGeoObjectFor`, spec 16 C) gets one more mention per
+ * A page under the start URL of a place's own website (`boundGeoObjectFor`, spec 15 C) gets one more mention per
  * chunk, zero-length and `bound`, right after the sure hits and in the same transaction.
  */
 

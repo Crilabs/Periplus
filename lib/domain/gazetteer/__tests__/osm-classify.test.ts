@@ -92,7 +92,7 @@ describe("osmNames", () => {
   });
 });
 
-describe("categoryForTags (spec 16 A: highlights for trip planning only)", () => {
+describe("categoryForTags (spec 15 A: highlights for trip planning only)", () => {
   it.each([
     ["fuel", { amenity: "fuel" }, null],
     ["pharmacy", { amenity: "pharmacy" }, null],

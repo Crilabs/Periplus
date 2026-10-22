@@ -1,14 +1,15 @@
 import { readFileSync } from "node:fs";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects, places, reviewTasks, type GeoObjectType } from "@/lib/db/schema";
-import { findMatch, mergeGeoObjects, openPairTask, resolveMergedByExternalId } from "@/lib/domain/gazetteer/merge";
+import { AUTO_DECIDER, autoDecideOpenPairTasks, findMatch, mergeGeoObjects, openPairTask, resolveMergedByExternalId } from "@/lib/domain/gazetteer/merge";
 import { upsertGeoObject, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
 import { createReviewTask } from "@/lib/domain/review";
 import { withRollback } from "@/test/db";
+import { pairTaskOf } from "@/test/gazetteer";
 
 const rules = getConfig().gazetteer.merge;
 
@@ -322,8 +323,9 @@ describe("resolveMergedByExternalId", () => {
 describe("openPairTask", () => {
   it("openPairTask is idempotent and respects a decided 'distinct'", async () => {
     await withRollback(async (tx) => {
-      const a = await insert(tx, "bay", ["Ormos Klima"], point(offset(0)));
-      const b = await insert(tx, "bay", ["Ormos Klima"], point(offset(450)));
+      // two OSM objects: a person decides
+      const a = await insert(tx, "bay", ["Ormos Klima"], point(offset(0)), { osmId: "node/9170000001" });
+      const b = await insert(tx, "bay", ["Ormos Klima"], point(offset(450)), { osmId: "node/9170000002" });
       const subjectId = [a, b].sort().join(":");
       const context = { similarity: 1, distanceM: 450, source: "wikidata" as const };
 
@@ -346,4 +348,83 @@ describe("openPairTask", () => {
       expect(after[0]!.status).toBe("decided");
     });
   });
+
+  const context = { similarity: 0.6, distanceM: 300, source: "wikidata" as const };
+  const external = (tx: Db, names: string[], northM: number, origin: "wikidata" | "geonames" = "wikidata") =>
+    insert(tx, "settlement", names, point(offset(northM)), { origin, names: names.map((name) => ({ name, language: "und", origin })) });
+
+  it("an OSM object and an external one are decided 'same' by the system, the OSM object keeps", async () => {
+    await withRollback(async (tx) => {
+      const osm = await insert(tx, "settlement", ["Panorama"], point(offset(0)), { osmId: "node/9170000003" });
+      const wd = await external(tx, ["Agia Paraskevi"], 300);
+      expect(await openPairTask(tx, osm, wd, context)).toBe("same");
+      expect(await pairTaskOf(tx, osm, wd)).toEqual({ status: "decided", action: "same", decidedBy: AUTO_DECIDER });
+      const [dropped] = await tx.select({ mergedIntoId: geoObjects.mergedIntoId }).from(geoObjects).where(eq(geoObjects.id, wd));
+      expect(dropped!.mergedIntoId).toBe(osm);
+    });
+  });
+
+  it("two external objects are 'same' from trigramMin on and 'distinct' below", async () => {
+    await withRollback(async (tx) => {
+      const a = await external(tx, ["Prasonisi"], 0);
+      const b = await external(tx, ["Prasonisi"], 50, "geonames");
+      expect(await openPairTask(tx, a, b, { ...context, similarity: rules.trigramMin })).toBe("same");
+      const c = await external(tx, ["Megali Kyra"], 1000);
+      const d = await external(tx, ["Mikri Kyra"], 1400);
+      expect(await openPairTask(tx, c, d, { ...context, similarity: rules.trigramMin - 0.01 })).toBe("distinct");
+      expect(await pairTaskOf(tx, c, d)).toEqual({ status: "decided", action: "distinct", decidedBy: AUTO_DECIDER });
+      const valid = await tx.select({ id: geoObjects.id }).from(geoObjects).where(and(inArray(geoObjects.id, [c, d]), isNull(geoObjects.mergedIntoId)));
+      expect(valid).toHaveLength(2);
+    });
+  });
+
+  it("a pair whose object carries a place, and a highlight pair, stay with a person", async () => {
+    await withRollback(async (tx) => {
+      const objectId = await insert(tx, "bay", ["Klima"], point(offset(0)), { osmId: "node/9170000005" });
+      await insertPlace(tx, objectId);
+      const wd = await insert(tx, "bay", ["Klima"], point(offset(200)), { origin: "wikidata", names: [{ name: "Klima", language: "und", origin: "wikidata" }] });
+      expect(await openPairTask(tx, objectId, wd, context)).toBeNull();
+      expect(await pairTaskOf(tx, objectId, wd)).toMatchObject({ status: "open" });
+
+      const osm = await insert(tx, "poi", ["Kritikos"], point(offset(2000)), { osmId: "node/9170000004", category: "culture" });
+      const ext = await insert(tx, "poi", ["Kritikos"], point(offset(2100)), { origin: "wikidata", category: "culture", names: [{ name: "Kritikos", language: "und", origin: "wikidata" }] });
+      expect(await openPairTask(tx, osm, ext, { ...context, source: "computed" })).toBeNull();
+      expect(await pairTaskOf(tx, osm, ext)).toMatchObject({ status: "open" });
+    });
+  });
 });
+
+describe("autoDecideOpenPairTasks", () => {
+  it("decides the open pair tasks the rule knows, dismisses those whose object ended, leaves the others open", async () => {
+    await withRollback(async (tx) => {
+      const external = (names: string[], northM: number) =>
+        insert(tx, "bay", names, point(offset(northM)), { origin: "wikidata", names: names.map((name) => ({ name, language: "und", origin: "wikidata" })) });
+      const osm = await insert(tx, "bay", ["Panorama"], point(offset(0)), { osmId: "node/9170000010" });
+      const wd = await external(["Agia Paraskevi"], 300);
+      const wd2 = await external(["Epano Epidavros"], 600);
+      const [osmA, osmB] = [
+        await insert(tx, "bay", ["Kalami"], point(offset(5000)), { osmId: "node/9170000011" }),
+        await insert(tx, "bay", ["Kalamaki"], point(offset(5200)), { osmId: "node/9170000012" }),
+      ];
+      // tasks opened before the rule existed
+      const open = (a: string, b: string, similarity: number) =>
+        createReviewTask(tx, {
+          kind: "place_candidate",
+          subjectType: "geo_object_pair",
+          subjectId: [a, b].sort().join(":"),
+          context: { similarity, distanceM: 300, source: "wikidata", geoObjectIds: [a, b].sort() },
+        });
+      await open(osm, wd, 0.53);
+      await open(wd, wd2, 0.9);
+      await open(osmA, osmB, 0.7);
+
+      const result = await autoDecideOpenPairTasks(tx, rules);
+      // a bay takes facts: the survivor is consolidated
+      expect(result).toEqual({ same: 1, distinct: 0, dismissed: 1, open: 1, kept: [osm] });
+      expect(await pairTaskOf(tx, osm, wd)).toEqual({ status: "decided", action: "same", decidedBy: AUTO_DECIDER });
+      expect(await pairTaskOf(tx, wd, wd2)).toEqual({ status: "dismissed", action: null, decidedBy: null });
+      expect(await pairTaskOf(tx, osmA, osmB)).toEqual({ status: "open", action: null, decidedBy: null });
+    });
+  });
+});
+

@@ -24,7 +24,7 @@ import { memoryArchive } from "@/test/s3";
 import { insertNamedObject, insertTestSource, insertTestSubdivision, insertTestTile, insertTestVersion } from "@/test/text";
 
 /*
- * Stage `places.website` and the run „Marina-Websites suchen“ (spec 16 C „Crawl“): one job per place without website,
+ * Stage `places.website` and the run „Marina-Websites suchen“ (spec 15 C „Crawl“): one job per place without website,
  * the touched sources go into the run's `sourceIds` for its crawl, and the freeze before the text stages takes exactly
  * the pending versions of those sources. Synthetic objects at 27.6° E / 34.1° N.
  */

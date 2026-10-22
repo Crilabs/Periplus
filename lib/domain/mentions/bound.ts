@@ -5,7 +5,7 @@ import { jsonUuids } from "./scope";
 import type { ChunkRef } from "./store";
 
 /*
- * Binding to the place (spec 16 C „Bindung an den Ort“): every page under the start URL of a place's own website
+ * Binding to the place (spec 15 C „Bindung an den Ort“): every page under the start URL of a place's own website
  * (`place_websites` row with `bound`) says something about that place, with or without its name. Such a page gets one
  * zero-length mention per chunk (`match_kind = 'bound'`), so its extraction units cover the whole page and the facts
  * hang on a mention of the place.

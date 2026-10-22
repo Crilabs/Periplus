@@ -201,7 +201,7 @@ describe("„Profil neu berechnen“", () => {
       expect(startRun.mock.calls[0]![2]).toMatchObject({
         kind: "stage",
         scope: { type: "place", id: scene.placeId },
-        stages: ["consolidation.geo", "consolidation.summary", "consolidation.followup", "images.place"],
+        stages: ["consolidation.geo", "consolidation.highlights", "consolidation.summary", "consolidation.followup", "images.place"],
         params: { geoObjectIds: [scene.geoObjectId] },
         triggeredBy: ADMIN,
       });

@@ -160,7 +160,7 @@ describe("stage mentions.batch", () => {
       ]);
     }));
 
-  describe("bound mentions (spec 16 C)", () => {
+  describe("bound mentions (spec 15 C)", () => {
     /** A page at `url` of a version with the given chunk texts; its document is the one `insertTestVersion` made. */
     async function pageAt(tx: Db, url: string, texts: string[]) {
       const v = await insertTestVersion(tx, texts);

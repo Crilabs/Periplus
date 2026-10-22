@@ -1,4 +1,4 @@
-# Periplus 16 + 17 – Marina-Websites, Festmachplatz, Auslieferung nach Beleg Implementation Plan
+# Periplus 15 + 17 – Marina-Websites, Festmachplatz, Auslieferung nach Beleg Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** Next.js 16 (App Router, server actions), TypeScript, Drizzle + SQL migrations, Postgres/PostGIS, pg-boss, zod 4, vitest against real Postgres, MockModel, DataForSEO via the existing adapter.
 
-**Spec:** `docs/superpowers/specs/2026-10-21-periplus-16-marina-services-design.md` (Teil A–C, revised 22.10.) and `docs/superpowers/specs/2026-10-22-periplus-17-festmachplatz-auslieferung-design.md`. Both go live together, including reprocessing every subdivision with fact schema v3 (Christian, 22.10.2026).
+**Spec:** `docs/superpowers/specs/2026-10-21-periplus-15-marina-services-design.md` (Teil A–C, revised 22.10.) and `docs/superpowers/specs/2026-10-22-periplus-17-festmachplatz-auslieferung-design.md`. Both go live together, including reprocessing every subdivision with fact schema v3 (Christian, 22.10.2026).
 
 ## Global Constraints
 
@@ -26,7 +26,7 @@
 
 ## Deviations from the specs (decided here, flag in the PR)
 
-1. Spec 16 „Bestand aus archivierten Overpass-Antworten nachtragen“ → the rollout reruns `gazetteer.osm` and `gazetteer.wikidata` per subdivision instead (free, rate-limited, no archive listing needed; the S3 adapter has no `list`).
+1. Spec 15 „Bestand aus archivierten Overpass-Antworten nachtragen“ → the rollout reruns `gazetteer.osm` and `gazetteer.wikidata` per subdivision instead (free, rate-limited, no archive listing needed; the S3 adapter has no `list`).
 2. Spec 17 „Ortsart-Wechsel als neue Zeile oder Update“ → update in place; `places_history` already records `kind` changes (trigger `places_record_history`).
 3. Spec 17 „Routen-Stopp eines Törnberichts“ counts only when its mention's (version, geo object) has an active extraction run (`activeExtractionRunIdSql`), so nothing confirms on v2 leftovers before the subdivision is reprocessed. This replaces a per-subdivision switch for „erst nach dem Reprozessieren“.
 4. Images: `eligibleSpots` additionally requires `public_id is not null`, so images follow delivery exactly (today a seed-excluded place without public id gets an image but is not delivered).
@@ -41,7 +41,7 @@
 
 ---
 
-### Task 1: Highlight categories cleanup (spec 16 Teil A)
+### Task 1: Highlight categories cleanup (spec 15 Teil A)
 
 **Files:**
 - Modify: `config/categories.json` (`supply` = `shop: [supermarket, convenience]`; drop the `amenity` fuel/pharmacy/atm/drinking_water rule, `shop=scuba_diving`, `bakery`, `butcher`; `active` = `tourism=viewpoint`), `lib/domain/gazetteer/osm-classify.ts` (export `categoryForTags`), `contract/v2/spot.ts` (`.describe()` of `services.shop`: „Supermarket or mini market nearby or by text“)
@@ -56,7 +56,7 @@
 - [ ] **Step 2: Run** `npx vitest run lib/domain/gazetteer lib/domain/delivery/__tests__/map-spot.test.ts` → FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** → PASS; typecheck, lint.
-- [ ] **Step 5: Commit** `feat(gazetteer): highlight categories for trip planning only, reclassify stored POIs (spec 16 A)`.
+- [ ] **Step 5: Commit** `feat(gazetteer): highlight categories for trip planning only, reclassify stored POIs (spec 15 A)`.
 
 ### Task 2: Website addresses from OSM and Wikidata, `place_websites`
 
@@ -72,7 +72,7 @@
 
 - [ ] **Step 1: Failing tests:** OSM fixture with `website` keeps it in `tags`; Wikidata fold returns P856; `knownWebsites` order and filtering (facebook.com, booking.com, google.* dropped, `ftp:` dropped); `place_websites` rejects UPDATE/DELETE; enum values `place_website` accepted for `source_origin` and `serp_level`.
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement.** **Step 4: Run** → PASS; typecheck, lint.
-- [ ] **Step 5: Commit** `feat(places): website addresses from OSM and Wikidata, place_websites table (spec 16 C)`.
+- [ ] **Step 5: Commit** `feat(places): website addresses from OSM and Wikidata, place_websites table (spec 15 C)`.
 
 ### Task 3: Fact schema v3 and extraction prompt v6
 
@@ -92,7 +92,7 @@
 
 - [ ] **Step 1: Failing tests:** v3 differs from v2 exactly in `services.fuel`, `services.water` descriptions and the two new keys; `attributesForPrompt("place","v3")` contains „A petrol station in town does not count“; every v3 key has a German label; prompt renders `bound_note` only when `boundToWebsite`; config loads with active v3 (`checkUnionKeys` passes).
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement.** **Step 4: Run** `npx vitest run lib/domain/facts lib/ai app/(admin)/__tests__/fact-labels.test.ts lib/config` → PASS; then the full suite `npx vitest run` (v3 active must not break consolidation fixtures; fix fixtures that hardcode v2 by pinning their version, not by changing assertions); typecheck, lint.
-- [ ] **Step 5: Commit** `feat(facts): fact schema v3 with berthable, kind evidence and sharpened fuel/water, extract-facts prompt v6 (specs 16 B, 17)`.
+- [ ] **Step 5: Commit** `feat(facts): fact schema v3 with berthable, kind evidence and sharpened fuel/water, extract-facts prompt v6 (specs 15 B, 17)`.
 
 ### Task 4: Find and approve marina websites (stage `places.website`)
 
@@ -112,7 +112,7 @@
 
 - [ ] **Step 1: Failing tests (DataForSEO fixture transport, MockModel):** known OSM website → `known`, no SERP call (count `external_calls`); no website → SERP, neighbour-marina hit rejected by the mock (`isOwnSite:false`), second hit accepted → `serp` with quote (Review Focus 1); accepted but quote not in page text → rejected; nothing accepted → `none`, no review task, a second call within 180 days → `searched_recently` without SERP; rejected place not listed by `placesNeedingWebsite`; `attachPlaceWebsite` for new domain / approved domain (start URL added, `maxPages` +30, type kept) / proposed domain (approved, task decided by `system`) / rejected domain (no source); same URL for two places → both `bound = false` (Review Focus 2); `domainCandidates` ignores `place_website` SERP results; build stage order has `places.website` after `seed.tile`; action requires admin and redirects to `/runs`.
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement.** **Step 4: Run** → PASS; typecheck, lint.
-- [ ] **Step 5: Commit** `feat(places): find marina websites via OSM, Wikidata or Google search with AI check, approve them as sources (spec 16 C)`.
+- [ ] **Step 5: Commit** `feat(places): find marina websites via OSM, Wikidata or Google search with AI check, approve them as sources (spec 15 C)`.
 
 ### Task 5: Bound mentions for place websites
 
@@ -128,7 +128,7 @@
 
 - [ ] **Step 1: Failing tests:** page under a bound start URL without the marina's name → one bound mention per chunk and one unit covering all chunks (two parts for 8 chunks with `maxChunksPerUnit` 6); page of a chain under the other place's start URL → bound to that place; URL used by two places (`bound = false`) → no bound mention; rematch is idempotent; bound and name mention of the same object share one unit group; `unitInputs` sets `boundToWebsite` true only for such units.
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement.** **Step 4: Run** → PASS; typecheck, lint.
-- [ ] **Step 5: Commit** `feat(mentions): pages of a place's own website are bound to the place and extracted whole (spec 16 C)`.
+- [ ] **Step 5: Commit** `feat(mentions): pages of a place's own website are bound to the place and extracted whole (spec 15 C)`.
 
 ### Task 6: Confirmation by evidence (spec 17)
 
@@ -173,7 +173,7 @@
 ### Task 8: Admin, quality metrics, cost estimate, runbook
 
 **Files:**
-- Modify: `lib/domain/geo-view.ts` (`PlaceDetail.autoDecision: { action: "confirm" | "no_anchoring" | "set_kind"; rule; decidedAt; factIds; documentIds; routeStopIds } | null`, `PlaceDetail.website: { url; origin; bound } | null`), `app/(admin)/places/[id]/page.tsx` (Eckdaten: „Automatisch bestätigt am <Datum> (Regel: <Label>)“ with links to the documents; „Website“ with origin label; „Festmachplatz“ ja/nein/unbekannt from the profile), labels (`AUTO_RULE_LABELS`: alone „Revierführer/Behörde“, pair „Zwei unabhängige Berichte“, own_website „Eigene Website“, commercial_port „Quelle: gewerblicher Hafen“, osm_commercial „OSM: gewerblicher Hafen“), `lib/db/schema/quality.ts` (`METRIC_KEYS` + `place_confirmation`, `place_websites`, `marina_services`) + migration `0066_quality_metrics_places.sql` (re-add the CHECK, pattern 0046), `lib/domain/quality/{metrics,snapshot,dashboard,reports}.ts`, `app/(admin)/quality/page.tsx`, `app/(admin)/runs/page.tsx` (reprocess dialog shows the estimate), `docs/runbook.md` (new section „Umstellung auf Fact-Schema v3 und Bestätigung nach Beleg (Teil-Spec 16/17)“)
+- Modify: `lib/domain/geo-view.ts` (`PlaceDetail.autoDecision: { action: "confirm" | "no_anchoring" | "set_kind"; rule; decidedAt; factIds; documentIds; routeStopIds } | null`, `PlaceDetail.website: { url; origin; bound } | null`), `app/(admin)/places/[id]/page.tsx` (Eckdaten: „Automatisch bestätigt am <Datum> (Regel: <Label>)“ with links to the documents; „Website“ with origin label; „Festmachplatz“ ja/nein/unbekannt from the profile), labels (`AUTO_RULE_LABELS`: alone „Revierführer/Behörde“, pair „Zwei unabhängige Berichte“, own_website „Eigene Website“, commercial_port „Quelle: gewerblicher Hafen“, osm_commercial „OSM: gewerblicher Hafen“), `lib/db/schema/quality.ts` (`METRIC_KEYS` + `place_confirmation`, `place_websites`, `marina_services`) + migration `0066_quality_metrics_places.sql` (re-add the CHECK, pattern 0046), `lib/domain/quality/{metrics,snapshot,dashboard,reports}.ts`, `app/(admin)/quality/page.tsx`, `app/(admin)/runs/page.tsx` (reprocess dialog shows the estimate), `docs/runbook.md` (new section „Umstellung auf Fact-Schema v3 und Bestätigung nach Beleg (Teil-Spec 15/17)“)
 - Create: `lib/domain/extraction/reprocess-estimate.ts`
 - Test: `lib/domain/__tests__/geo-view.test.ts`, `lib/domain/quality/__tests__/metrics.test.ts`, `lib/domain/extraction/__tests__/reprocess-estimate.test.ts`, Playwright `e2e/places.spec.ts` (auto line visible)
 
@@ -193,4 +193,4 @@
 
 - [ ] **Step 1: Failing tests:** place detail returns the system decision with rule and evidence ids, and the current website; metrics on a fixture subdivision (2 auto, 1 manual, 1 candidate; one marina with OSM website, one with SERP website; fuel only) give the expected values and details; estimate = mentions × mean cost, null without stats; e2e: auto-confirmed place shows „Automatisch bestätigt“.
 - [ ] **Step 2: Run** → FAIL. **Step 3: Implement.** **Step 4: Run** → PASS; typecheck, lint; `npm run build`.
-- [ ] **Step 5: Commit** `feat(admin): show automatic confirmation and place website, quality metrics and reprocess estimate, runbook for the v3 rollout (specs 16, 17)`.
+- [ ] **Step 5: Commit** `feat(admin): show automatic confirmation and place website, quality metrics and reprocess estimate, runbook for the v3 rollout (specs 15, 17)`.

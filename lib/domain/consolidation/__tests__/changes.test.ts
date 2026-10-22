@@ -71,10 +71,10 @@ describe("severityFor", () => {
     ["occupancy", { "7": "full" }, { "7": "moderate" }, "notable"],
   ])("severity of %s %j → %j is %s", (a, o, n, s) => expect(severityFor(a, o, n, cfg)).toBe(s));
 
-  it("rules v2: berthable is notable, contact stays info (final review 8)", () => {
-    const v2 = getConsolidationConfig("v2");
-    expect(severityFor("berthable", true, false, v2)).toBe("notable");
-    expect(severityFor("contact", { url: "https://a.example/" }, { url: "https://b.example/" }, v2)).toBe("info");
+  it("rules v3: berthable is notable, contact stays info (final review 8)", () => {
+    const v3 = getConsolidationConfig("v3");
+    expect(severityFor("berthable", true, false, v3)).toBe("notable");
+    expect(severityFor("contact", { url: "https://a.example/" }, { url: "https://b.example/" }, v3)).toBe("info");
   });
 });
 

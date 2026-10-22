@@ -97,6 +97,7 @@ const queueConfig = {
   "extraction.route": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "extraction.check": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "consolidation.geo": { concurrency: 4, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
+  "consolidation.highlights": { concurrency: 4, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "consolidation.summary": { concurrency: 2, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "consolidation.followup": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },
   "images.place": { concurrency: 1, retryLimit: 2, retryDelaySeconds: 0, retryBackoff: false },

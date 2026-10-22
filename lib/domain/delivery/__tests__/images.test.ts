@@ -6,7 +6,7 @@ import { getConfig, type ImagesConfig } from "@/lib/config";
 import { deliveries, placeImages } from "@/lib/db/schema";
 import { imageAttributionTexts, imageBlockedBy, imageSources } from "@/lib/domain/images/delivery-gate";
 import { withRollback } from "@/test/db";
-import { breakPackage, SPOT_A, validPackage, PREVIOUS } from "@/test/fixtures/delivery/package";
+import { breakPackage, HIGHLIGHT_SELECTORS, SPOT_A, validPackage, PREVIOUS } from "@/test/fixtures/delivery/package";
 import { seedImage } from "@/test/fixtures/delivery/images";
 import { seedDeliverySubdivision, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
 import { memoryArchive } from "@/test/s3";
@@ -99,7 +99,7 @@ describe("images in the package", () => {
       expect(detail!.files.at(-1)).toEqual({ name: file, sha256: sha256Hex(stored), bytes: stored.byteLength });
       const manifest = await readJson<Manifest>(archive, `${prefixOf(f, 1)}manifest.json`);
       expect(manifest.files.at(-1)).toEqual({ name: file, sha256: sha256Hex(stored), bytes: stored.byteLength });
-      expect(manifest.schemaVersion).toBe("2.2");
+      expect(manifest.schemaVersion).toBe("2.3");
       expect(manifest.licenses.map((l) => l.name)).toEqual(expect.arrayContaining(["CC-BY-3.0", "CC-BY-4.0", "Copernicus-DEM"]));
       // the object: schema order, camera from the columns
       const spot = spotA(await readJson<SpotsFile>(archive, `${prefixOf(f, 1)}spots.json`), f);
@@ -183,7 +183,7 @@ describe("image validation", () => {
       findCopies: async () => 0,
       forbiddenSources: [],
       cfg: getConfig().delivery,
-      radiusNm: getConfig().consolidation.importance.radiusNm,
+      highlightSelectors: HIGHLIGHT_SELECTORS,
       imageAttribution,
       ...deps,
     });

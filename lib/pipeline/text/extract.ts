@@ -223,7 +223,7 @@ export async function unitInputs(db: Db, unitIds: string[], config: AppConfig = 
   const chunkRows = chunkIds.length === 0 ? [] : await db.select({ id: chunks.id, text: chunks.text }).from(chunks).where(inArray(chunks.id, chunkIds));
   const texts = new Map(chunkRows.map((c) => [c.id, c.text]));
   const objects = await candidateDetails(db, [...new Set(units.map((u) => u.geoObjectId))]);
-  // A unit with a bound mention covers a page of the place's own website (spec 16 C).
+  // A unit with a bound mention covers a page of the place's own website (spec 15 C).
   const mentionIds = [...new Set(units.flatMap((u) => u.mentionIds))];
   const boundMentions = new Set(
     mentionIds.length === 0

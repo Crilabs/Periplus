@@ -12,7 +12,7 @@ import { withRollback } from "@/test/db";
 import { insertTestRun } from "@/test/text";
 
 /*
- * Spec 16 C „Freigabe“ and „Bindung an den Ort“: a found website becomes (or joins) an approved source without a review
+ * Spec 15 C „Freigabe“ and „Bindung an den Ort“: a found website becomes (or joins) an approved source without a review
  * task; paused and rejected domains are passed over; a start URL several places share, and an authority domain, bind
  * no place. Every domain is `<name>-<uuid>.example`, every row rolled back.
  */

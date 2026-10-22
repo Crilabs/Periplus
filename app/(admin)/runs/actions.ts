@@ -129,7 +129,7 @@ export async function startRevisitAction(input: FormData | { subdivisionKey: str
 }
 
 /**
- * „Marina-Websites suchen“ (spec 16 C „Crawl“): finds the websites of the subdivision's marinas and ports, approves them
+ * „Marina-Websites suchen“ (spec 15 C „Crawl“): finds the websites of the subdivision's marinas and ports, approves them
  * as sources, crawls them and evaluates the new pages; refusals return to the runs page.
  */
 export async function startPlaceWebsiteAction(input: FormData | { subdivisionKey: string }): Promise<void> {

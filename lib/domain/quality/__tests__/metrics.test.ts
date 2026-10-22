@@ -545,7 +545,7 @@ describe("tile scope", () => {
     }));
 });
 
-describe("place metrics (specs 16, 17)", () => {
+describe("place metrics (specs 15, 17)", () => {
   /** An automatic (or manual) decision on the place: a decided pseudo task with its decision row. */
   async function decide(tx: Db, placeId: string, subjectType: "place_status" | "place_kind", decidedBy: string, decision: Record<string, unknown>) {
     const [t] = await tx

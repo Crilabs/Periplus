@@ -1,4 +1,4 @@
-# Periplus 16 – Marina-Services: Diesel und Wasser von der Marina-Website, schlankere Highlights
+# Periplus 15 – Marina-Services: Diesel und Wasser von der Marina-Website, schlankere Highlights
 
 Stand: 21.10.2026 · Gehört zu: `2026-10-18-periplus-design.md` · Ändert: Teil-Spec 03 (Gazetteer: Website-Adresse, Kategorien-Zuordnung), 05 (Quellen: Marina-Website als eigene Herkunft), 06 (Erwähnungen und Extraktion: Bindung an den Ort), 02/07 (Fact-Schema: Bedeutung von `services.fuel` und `services.water`), 08 (Bedeutung von `services.shop`)
 
@@ -60,7 +60,7 @@ Ein Zitat, das nur eine Tankstelle im Ort oder einen Dorfbrunnen nennt, ergibt k
 
 Fact-Schema-Versionen werden nicht in place geändert (Konvention, einmal mit Begründung gebrochen, siehe Kopf von `config/fact-schema/v2.ts`). Die geschärfte Bedeutung kommt deshalb als **Fact-Schema v3**: v2 plus die zwei neuen Beschreibungen, sonst gleich. Folge: Mit `active.json` = v3 zählen alle bisherigen Text-Facts nicht mehr (`eligibleRunSql`), bis reprozessiert ist.
 
-Entschieden (Christian, 22.10.2026): v3 enthält auch die Attribute aus Teil-Spec 17 (`berthable`, `place.kind_evidence`). Das Reprozessieren aller Landesteile mit v3 **gehört zu diesem Vorhaben**; Teil-Spec 16 und 17 gehen zusammen live. Reihenfolge je Landesteil: v3 aktiv, Marina-Websites abrufen (Teil C), Stufen 6 bis 8 über alle Dokumentversionen, dann Lieferung. Kosten werden je Landesteil wie bei jedem Lauf erfasst; vor dem ersten Landesteil eine Schätzung aus der Zahl der Erwähnungen auf der Läufe-Seite (Claude).
+Entschieden (Christian, 22.10.2026): v3 enthält auch die Attribute aus Teil-Spec 17 (`berthable`, `place.kind_evidence`). Das Reprozessieren aller Landesteile mit v3 **gehört zu diesem Vorhaben**; Teil-Spec 15 und 17 gehen zusammen live. Reihenfolge je Landesteil: v3 aktiv, Marina-Websites abrufen (Teil C), Stufen 6 bis 8 über alle Dokumentversionen, dann Lieferung. Kosten werden je Landesteil wie bei jedem Lauf erfasst; vor dem ersten Landesteil eine Schätzung aus der Zahl der Erwähnungen auf der Läufe-Seite (Claude).
 
 ## Teil C: Marina-Website abrufen
 

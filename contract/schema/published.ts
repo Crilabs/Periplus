@@ -5,6 +5,13 @@ import manifest10 from "./1.0/manifest.schema.json";
 import regions10 from "./1.0/regions.schema.json";
 import spots10 from "./1.0/spots.schema.json";
 import weatherPoints10 from "./1.0/weather-points.schema.json";
+import changes23 from "./2.3/changes.schema.json";
+import coast23 from "./2.3/coast.schema.json";
+import highlights23 from "./2.3/highlights.schema.json";
+import manifest23 from "./2.3/manifest.schema.json";
+import regions23 from "./2.3/regions.schema.json";
+import spots23 from "./2.3/spots.schema.json";
+import weatherPoints23 from "./2.3/weather-points.schema.json";
 import changes22 from "./2.2/changes.schema.json";
 import coast22 from "./2.2/coast.schema.json";
 import highlights22 from "./2.2/highlights.schema.json";
@@ -69,6 +76,15 @@ export const PUBLISHED_SCHEMAS: Readonly<Record<string, Readonly<Record<string, 
     "coast.schema.json": coast22,
     "weather-points.schema.json": weatherPoints22,
     "changes.schema.json": changes22,
+  },
+  "2.3": {
+    "manifest.schema.json": manifest23,
+    "spots.schema.json": spots23,
+    "highlights.schema.json": highlights23,
+    "regions.schema.json": regions23,
+    "coast.schema.json": coast23,
+    "weather-points.schema.json": weatherPoints23,
+    "changes.schema.json": changes23,
   },
 };
 

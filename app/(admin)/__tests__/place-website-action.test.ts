@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 
 /*
- * „Marina-Websites suchen“ on /runs (spec 16 C „Crawl“): the action checks the subdivision key, starts the run as the
+ * „Marina-Websites suchen“ on /runs (spec 15 C „Crawl“): the action checks the subdivision key, starts the run as the
  * admin and opens it; a refused start returns to /runs with its reason. The starter is tested in
  * lib/pipeline/__tests__/place-website-run.test.ts.
  */

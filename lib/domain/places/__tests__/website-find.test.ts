@@ -15,7 +15,7 @@ import { memoryArchive } from "@/test/s3";
 import { insertNamedObject, insertTestRun, insertTestSubdivision, insertTestTile } from "@/test/text";
 
 /*
- * Spec 16 C, „Herkunft der Adresse“ and „Ist das die Website dieses Ortes?“: a known OSM/Wikidata address wins without
+ * Spec 15 C, „Herkunft der Adresse“ and „Ist das die Website dieses Ortes?“: a known OSM/Wikidata address wins without
  * search; otherwise the Google search (DataForSEO through a fixture transport) and the model check (MockModel) pick
  * the first hit that is the place's own site. Synthetic objects at 27.1° E / 34.1° N (outside the pilot box).
  */

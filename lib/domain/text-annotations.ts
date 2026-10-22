@@ -19,7 +19,7 @@ export const QUOTE_CONTEXT_CHARS = 200;
 
 export type ChunkMention = { id: string; geoObjectId: string; name: string | null; matchKind: MatchKind; confidence: number };
 
-/** A place the chunk's page is bound to (spec 16 C): shown as a line above the text, never as a span. */
+/** A place the chunk's page is bound to (spec 15 C): shown as a line above the text, never as a span. */
 export type ChunkBound = { id: string; geoObjectId: string; name: string | null };
 
 export type ChunkFact = {

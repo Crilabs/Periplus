@@ -20,6 +20,7 @@ function jsonTransport(payload: unknown, seen: HttpRequest[] = []): Transport {
 const cfg = (): typeof config.gazetteer.overpass => ({
   endpoint: `https://overpass.example.invalid/${newId()}`,
   timeoutSeconds: 180,
+  maxRelationPoints: 250_000,
   ratePerMinute: 1_000_000,
 });
 

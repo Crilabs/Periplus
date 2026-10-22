@@ -31,7 +31,7 @@ import { chunks, docTypeEnum, documentVersions, sources } from "./sources";
  * Triggers: drizzle/0024_text_triggers.sql.
  */
 
-/** `bound`: a page of a place's own website, one zero-length mention per chunk (spec 16 C). */
+/** `bound`: a page of a place's own website, one zero-length mention per chunk (spec 15 C). */
 export const matchKindEnum = pgEnum("match_kind", ["deterministic", "model", "review", "bound"]);
 /**
  * Extraction state of a mention: `pending` until a run claims it (`done`, ruling M4-P17), `skipped` for objects without

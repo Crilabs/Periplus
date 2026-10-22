@@ -1,7 +1,7 @@
 import { httpUrl } from "@/contract/v2/common";
 import type { SpotBody } from "@/contract";
 import type { DeliveryConfig } from "@/lib/config/schemas";
-import type { PlaceKind } from "@/lib/db/schema/geo";
+import type { PlaceKind, PoiCategory } from "@/lib/db/schema/geo";
 import { derivedBerthable } from "@/lib/domain/consolidation/berthable";
 import { excludeValue, type ExcludeValue } from "@/lib/domain/consolidation/exclude";
 import type { AttributeProvenance, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
@@ -17,6 +17,7 @@ import {
   HAZARD_DE,
   NO_SHELTER_NOTE_DE,
   HAZARD_KIND,
+  HIGHLIGHT_CATEGORY,
   HOLDING,
   MOORING_TYPE,
   ORIGIN,
@@ -117,7 +118,11 @@ export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
     attributes: ["derived.quietness"],
     note: "profile confidence ?? 0, popularity ?? 0, quietness, profile sources count, newest text/observed date; 3 decimals",
   },
-  highlightIds: { attributes: [], note: "context (highlights counting the spot)" },
+  highlightIds: { attributes: [], note: "context (highlights counting the spot, in the spot's derived.highlights order: categories sorted, rank order)" },
+  highlightLevels: {
+    attributes: ["derived.highlights"],
+    note: "per category of derived.highlights its level (none/some/many), categories sorted; none listed or no valid level → field absent (spec 16)",
+  },
   externalRefs: { attributes: [], note: "osm_id, wikidata_id; googlePlaceIds {} until M8" },
   images: {
     attributes: [],
@@ -270,6 +275,7 @@ export function mapSpot(
       lastObserved: lastObserved(Object.values(p)),
     },
     highlightIds: ctx.highlightIds,
+    highlightLevels: highlightLevels(a["derived.highlights"]),
     externalRefs: { googlePlaceIds: {}, osmId: src.osmId, wikidataId: src.wikidataId },
     summary: mapSummary(src.summary, profile?.confidence ?? null, ctx.cfg),
     images: mapImages(src.publicId, src.images),
@@ -388,6 +394,22 @@ function berth(value: unknown, isHarbour: boolean, prov: AttributeProvenance | u
   const full = months.filter((e) => e.level === "full").map((e) => e.month);
   const status = full.length > 0 ? "seasonFull" : months.length > 0 ? "usuallySpace" : "unknown";
   return { status, months: full, sourcesCount: months.length > 0 ? (prov?.sourceKeys.length ?? 0) : 0, bookable: null };
+}
+
+const HIGHLIGHT_LEVELS = new Set(["none", "some", "many"]);
+
+/** `derived.highlights` (spec 16) → per category its level, categories sorted; none valid → undefined. */
+function highlightLevels(value: unknown): SpotBody["highlightLevels"] {
+  if (!isRecord(value)) return undefined;
+  const entries = Object.keys(value)
+    .filter((c): c is PoiCategory => Object.hasOwn(HIGHLIGHT_CATEGORY, c))
+    .flatMap((c) => {
+      const entry = value[c];
+      const level = isRecord(entry) ? entry.level : undefined;
+      return typeof level === "string" && HIGHLIGHT_LEVELS.has(level) ? [[HIGHLIGHT_CATEGORY[c], level as "none" | "some" | "many"] as const] : [];
+    })
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 function occupancy(value: unknown): SpotBody["occupancy"] {

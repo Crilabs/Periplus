@@ -731,7 +731,7 @@ export async function placesPerTileMetric(db: Db, subdivisionKey: string, cfg: Q
 }
 
 /*
- * Place metrics (specs 16 and 17): how the automatic confirmation, the websites and the marina services come out for a
+ * Place metrics (specs 15 and 17): how the automatic confirmation, the websites and the marina services come out for a
  * subdivision. Counts only, no values of any reference (Grundprinzip 9).
  */
 
@@ -822,7 +822,7 @@ export async function placeConfirmationMetric(db: Db, scope: QualityScope, opts:
 }
 
 /**
- * Websites (spec 16 C): the share of the marinas and ports (candidate or confirmed) of the scope with a website (their
+ * Websites (spec 15 C): the share of the marinas and ports (candidate or confirmed) of the scope with a website (their
  * newest `place_websites` row). `details { withWebsite, bySource { osm, wikidata, serp }, fetched }`: `fetched` counts
  * those whose website is a bound start URL (a source) with at least one document version. No marina or port → null.
  */
@@ -859,7 +859,7 @@ export async function placeWebsitesMetric(db: Db, scope: QualityScope, opts: { t
 }
 
 /**
- * Marina services (spec 16): the share of the confirmed marinas of the scope whose profile has a `services.fuel` and a
+ * Marina services (spec 15): the share of the confirmed marinas of the scope whose profile has a `services.fuel` and a
  * `services.water` value. `details { fuel, water, fromWebsite }`: marinas with either value, and marinas whose value rests on a
  * fact of a page of their own website (a source bound to the place). No confirmed marina → null.
  */

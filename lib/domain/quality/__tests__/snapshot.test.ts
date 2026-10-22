@@ -67,7 +67,7 @@ describe("computeQualitySnapshot", () => {
       const { subdivisionKey, tileIds, window } = await scene(tx);
       const runId = await measurementRun(tx, subdivisionKey, "Lauf 1", window);
       const r = await computeQualitySnapshot(tx, { runId, subdivisionKey, window, today: "2026-10-20", cfg: quality });
-      // 16 subdivision metrics (the place metrics of specs 16 and 17 among them): every key but coverage_navily, multi_document included (ruling M7-P30)
+      // 16 subdivision metrics (the place metrics of specs 15 and 17 among them): every key but coverage_navily, multi_document included (ruling M7-P30)
       expect(SUBDIVISION_METRICS).toHaveLength(16);
       // multi_document is the acceptance metric (ruling M7-P12), so tiles have it too (ruling M7-D-R1)
       expect(TILE_METRICS).toContain("multi_document");

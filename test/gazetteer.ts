@@ -32,3 +32,17 @@ export async function pairTasksOf(db: Db, objectIds: string[]): Promise<Array<{ 
     )
     .orderBy(reviewTasks.id);
 }
+
+/** The pair task of `a` and `b` with its decision (`action`, `decidedBy`), or undefined without one. */
+export async function pairTaskOf(
+  db: Db,
+  a: string,
+  b: string,
+): Promise<{ status: string; action: string | null; decidedBy: string | null } | undefined> {
+  const { rows } = await db.execute<{ status: string; action: string | null; decided_by: string | null }>(sql`
+    select t.status, d.decision->>'action' as action, d.decided_by
+    from review_tasks t left join review_decisions d on d.task_id = t.id
+    where t.kind = 'place_candidate' and t.subject_id = ${[a, b].sort().join(":")}`);
+  const [row] = rows;
+  return row && { status: row.status, action: row.action, decidedBy: row.decided_by };
+}

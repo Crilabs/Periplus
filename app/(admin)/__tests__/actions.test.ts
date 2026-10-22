@@ -256,7 +256,7 @@ describe("admin server actions", () => {
         expect.objectContaining({
           kind: "stage",
           scope: { type: "tile", id: tileId },
-          stages: ["consolidation.geo", "consolidation.summary", "consolidation.followup", "images.place"],
+          stages: ["consolidation.geo", "consolidation.highlights", "consolidation.summary", "consolidation.followup", "images.place"],
           params: { tileId, rulesVersion: getConfig().consolidation.version },
           triggeredBy: "admin@example.invalid",
         }),

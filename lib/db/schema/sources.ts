@@ -344,7 +344,7 @@ export const placeWebsiteOriginEnum = pgEnum("place_website_origin", ["osm", "wi
 export type PlaceWebsiteOrigin = (typeof placeWebsiteOriginEnum.enumValues)[number];
 
 /**
- * Append-only: the official website of a place and where it came from (spec 16 C). The current website of a place is
+ * Append-only: the official website of a place and where it came from (spec 15 C). The current website of a place is
  * its newest row; `bound` marks a row whose domain became (or already was) a source bound to the place.
  */
 export const placeWebsites = pgTable(

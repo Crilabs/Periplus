@@ -305,6 +305,7 @@ describe("buildProfile", () => {
           sources: [{ key: "source:a", weight: 1 }, { key: "source:b", weight: 1 }],
           sitelinks: null,
           category: "food",
+          kinds: [],
           spotCandidates: [
             { placeId: "sp_far", distanceNm: 30 },
             { placeId: "sp_b", distanceNm: 8 },
@@ -353,9 +354,9 @@ describe("buildProfile", () => {
 
     const sources = [{ key: "source:b", weight: 0.4 }, { key: "source:a", weight: 1 }, { key: "source:a", weight: 0.5 }];
     const spots = [{ placeId: "sp_c", distanceNm: 3 }, { placeId: "sp_a", distanceNm: 3 }, { placeId: "sp_b", distanceNm: 1 }, { placeId: "sp_far", distanceNm: 40 }];
-    const base = buildProfile(poiInput({ sources, sitelinks: 12, category: "beach", spotCandidates: spots }));
+    const base = buildProfile(poiInput({ sources, sitelinks: 12, category: "beach", kinds: ["tourism=viewpoint", "amenity=bench"], spotCandidates: spots }));
     for (let seed = 1; seed <= 10; seed++) {
-      const shuffled = buildProfile(poiInput({ sources: shuffle(sources, seed), sitelinks: 12, category: "beach", spotCandidates: shuffle(spots, seed) }));
+      const shuffled = buildProfile(poiInput({ sources: shuffle(sources, seed), sitelinks: 12, category: "beach", kinds: shuffle(["tourism=viewpoint", "amenity=bench"], seed), spotCandidates: shuffle(spots, seed) }));
       expect(shuffled, `seed ${seed}`).toEqual(base);
     }
   });
@@ -509,5 +510,49 @@ describe("buildProfile", () => {
     expect(ferryOnly.gaps).toContainEqual({ attribute: "derived.quietness", reason: "too_few_parts" });
     expect(buildProfile({ ...s, inputs: [], derived: noDerived }).gaps).toContainEqual({ attribute: "derived.quietness", reason: "too_few_parts" });
     expect(buildProfile(s).gaps.map((g) => g.attribute)).not.toContain("derived.quietness");
+  });
+
+  it("place profile gets derived.highlights with ids and level", () => {
+    const poi = (id: string, importance: 1 | 2 | 3 | 4 | 5, score: number, distanceKm: number) => ({
+      geoObjectId: id,
+      category: "culture" as const,
+      name: id,
+      nameNormalized: id,
+      importance,
+      score,
+      distanceKm,
+      lon: 21.1,
+      lat: 35.2 + distanceKm / 111,
+    });
+    const candidates = [poi("poi-b", 3, 1.2, 2), poi("poi-a", 4, 2.5, 10), poi("poi-far", 1, 0.1, 15)];
+    const textNames = [{ category: "beach" as const, nameNormalized: "chrysi ammos" }];
+    const p = buildProfile({ ...scenario(), derived: { quietness: null, importance: null, highlights: { candidates, textNames, duplicateM: 500 } } });
+    expect(p.attributes["derived.highlights"]).toEqual({ culture: { ids: ["poi-a", "poi-b"], level: "none" }, beach: { ids: [], level: "none" } });
+    const prov = p.provenance["derived.highlights"]!;
+    expect(prov).toMatchObject({ origin: "derived", rule: "derived", poiIds: ["poi-a", "poi-b"] });
+    expect(prov.derivedFrom).toEqual({
+      culture: {
+        ids: ["poi-a", "poi-b"],
+        level: "none",
+        candidates: [
+          { geoObjectId: "poi-a", importance: 4, score: 2.5, distanceKm: 10 },
+          { geoObjectId: "poi-b", importance: 3, score: 1.2, distanceKm: 2 },
+        ],
+        textNames: [],
+      },
+      beach: { ids: [], level: "none", candidates: [], textNames: ["chrysi ammos"] },
+    });
+  });
+
+  it("place without candidates has no derived.highlights", () => {
+    const empty = buildProfile({ ...scenario(), derived: { quietness: null, importance: null, highlights: { candidates: [], textNames: [], duplicateM: 500 } } });
+    expect(empty.attributes["derived.highlights"]).toBeUndefined();
+    expect(empty.provenance["derived.highlights"]).toBeUndefined();
+    expect(empty.gaps.map((g) => g.attribute)).not.toContain("derived.highlights");
+    // a rules version without highlights (v1) selects nothing, whatever the inputs
+    const v1 = { ...cfg, highlights: undefined };
+    const poi = { geoObjectId: "poi-a", category: "culture" as const, name: "A", nameNormalized: "a", importance: 4 as const, score: 2.5, distanceKm: 1, lon: 21.1, lat: 35.2 };
+    const old = buildProfile({ ...scenario(), cfg: v1, derived: { quietness: null, importance: null, highlights: { candidates: [poi], textNames: [], duplicateM: 500 } } });
+    expect(old.attributes["derived.highlights"]).toBeUndefined();
   });
 });

@@ -21,6 +21,7 @@ import {
   RUN_KIND_LABELS,
   RUN_NOTICE_LABELS,
   SCOPE_TYPE_LABELS,
+  STAGE_LABELS,
   STAGE_STATUS_LABELS,
 } from "../../_components/labels";
 import { RunStatusBadge } from "../../_components/runs-table";
@@ -292,6 +293,7 @@ export default async function Page({ params, searchParams }: PageProps<"/runs/[i
                     <span className="flex items-center gap-2">
                       <span className="w-5 text-xs text-muted tabular-nums">{s.ordinal + 1}.</span>
                       <Mono>{s.stage}</Mono>
+                      {STAGE_LABELS[s.stage] && <span className="text-muted">{STAGE_LABELS[s.stage]}</span>}
                       <Badge tone={STAGE_STATUS_TONES[s.status]}>{STAGE_STATUS_LABELS[s.status]}</Badge>
                     </span>
                     <span className="text-xs text-muted tabular-nums">

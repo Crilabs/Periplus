@@ -3,7 +3,7 @@ import type { AttributeDef, FactSchema } from "@/lib/domain/facts/schema-types";
 import { factSchemaV2, textOnly } from "./v2";
 
 /*
- * Fact schema v3 (specs 16 B and 17): v2 plus, on level `place`, `berthable` (can a charter crew on passage moor here)
+ * Fact schema v3 (specs 15 B and 17): v2 plus, on level `place`, `berthable` (can a charter crew on passage moor here)
  * and `place.kind_evidence` (the place kind the source states), and sharper descriptions of `services.fuel` and
  * `services.water` (a petrol station or a village fountain does not count). Every other definition is v2's, unchanged;
  * the other levels are v2's objects. A changed description is a new version because the prompt lists it and extraction

@@ -57,9 +57,9 @@ export const spotSchema = z.strictObject({
       "mooringField: a place where a recreational boat moors to a buoy. " +
       "port: commercial or industrial harbour (ferries, freight, fishing, shipyard) without berths for recreational boats.",
   ),
-  /** Whether a charter crew passing through can moor here (anchor, visitor berth or quay, free buoy); null = unknown; contract 2.2. */
+  /** Whether a charter crew passing through can moor here (anchor, visitor berth or quay, free buoy); null = unknown; contract 2.3. */
   berthable: z.boolean().nullable().describe("Charter crew can moor here on a short stay"),
-  /** How to register with the marina or harbour (VHF channel, phone, website); null when nothing is known; contract 2.2. */
+  /** How to register with the marina or harbour (VHF channel, phone, website); null when nothing is known; contract 2.3. */
   contact: z
     .strictObject({ vhf: z.string().nullable(), phone: z.string().nullable(), url: httpUrl.nullable() })
     .nullable()
@@ -139,6 +139,8 @@ export const spotSchema = z.strictObject({
     lastObserved: isoDate.nullable(),
   }),
   highlightIds: z.array(publicId("hl")).optional(),
+  /** Per category with at least one highlight or candidate in reach: how much there is beyond the highlights; contract 2.2. */
+  highlightLevels: z.partialRecord(highlightCategory, z.enum(["none", "some", "many"])).optional(),
   externalRefs: z
     .strictObject({
       googlePlaceIds: z.partialRecord(highlightCategory, z.array(googlePlaceId)),

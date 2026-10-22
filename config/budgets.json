@@ -1,8 +1,8 @@
 {
-  "anthropic": { "dailyEur": 20 },
+  "anthropic": { "dailyEur": 5 },
   "voyage": { "dailyEur": 5 },
   "dataforseo": { "dailyEur": 10 },
-  "firecrawl": { "dailyEur": 5 },
+  "firecrawl": { "dailyEur": 2 },
   "jina": { "dailyEur": 5 },
   "openai": { "dailyEur": 10 }
 }

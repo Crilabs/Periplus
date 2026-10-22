@@ -1,8 +1,8 @@
 import { z } from "zod";
 import type { Db } from "@/lib/db/client";
-import { consolidateGeo, type ConsolidateResult } from "@/lib/domain/consolidation/store";
+import { consolidateGeo, reselectHighlights, type ConsolidateResult } from "@/lib/domain/consolidation/store";
 import { clearConsolidationSkipped, markConsolidationSkipped } from "@/lib/domain/consolidation/skipped";
-import { consolidationBlocked, consolidationTargets } from "@/lib/domain/consolidation/targets";
+import { consolidationBlocked, consolidationTargets, reselectionTargets } from "@/lib/domain/consolidation/targets";
 import type { JobData } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
 
@@ -17,7 +17,9 @@ import { createLogger } from "@/lib/logger";
  * `consolidation blocked by quote fidelity` and stored as the run's skip marker, `markConsolidationSkipped`), else one
  * job per target carrying the mode (`evaluation` for an evaluation run), the rules version the run froze at its start
  * (text, geometry and consolidation runs, ruling M7-E-R1; only a run from before that has none, and its consolidation
- * takes the active one, `activeRulesVersion`) and an evaluation run's extraction candidate.
+ * takes the active one, `activeRulesVersion`) and an evaluation run's extraction candidate. A regular run adds one job
+ * with `reselect` per place whose highlight selection a POI of the run may change (`reselectionTargets`, spec 16): it
+ * only re-selects (`reselectHighlights`, final review C1); an evaluation run re-selects nothing.
  */
 export async function consolidationGeoJobs(db: Db, run: { id: string; params: Record<string, unknown> }): Promise<JobData[]> {
   if (await consolidationBlocked(db, run.id)) {
@@ -28,10 +30,20 @@ export async function consolidationGeoJobs(db: Db, run: { id: string; params: Re
   }
   // A failed run revived after all consolidates now: no marker (ruling M5-H-R2).
   await clearConsolidationSkipped(db, run.id);
+  const jobs = consolidateJobs(run, await consolidationTargets(db, run));
+  if (run.params.evaluation === true) return jobs;
+  return [...jobs, ...consolidateJobs(run, await reselectionTargets(db, run)).map((j) => ({ ...j, reselect: true }))];
+}
+
+/**
+ * One `consolidateGeoJob` job per geo object (`key` = its id) with the run's mode, frozen rules version and an
+ * evaluation run's extraction candidate (shared by `consolidation.geo` and `consolidation.highlights`).
+ */
+export function consolidateJobs(run: { params: Record<string, unknown> }, geoObjectIds: string[]): JobData[] {
   const mode = run.params.evaluation === true ? "evaluation" : "regular";
   const rulesVersion = typeof run.params.rulesVersion === "string" ? run.params.rulesVersion : undefined;
   const extraction = mode === "evaluation" ? extractionSchema.optional().parse(run.params.extraction) : undefined;
-  return (await consolidationTargets(db, run)).map((geoObjectId) => ({
+  return geoObjectIds.map((geoObjectId) => ({
     key: geoObjectId,
     geoObjectId,
     mode,
@@ -49,10 +61,15 @@ const jobSchema = z.object({
   mode: z.enum(["regular", "evaluation"]),
   rulesVersion: z.string().min(1).optional(),
   extraction: extractionSchema.optional(),
+  reselect: z.literal(true).optional(),
 });
 
-/** Job of `consolidation.geo`: consolidates `data.geoObjectId` for the run (run date from the run row). */
+/**
+ * Job of `consolidation.geo` and `consolidation.highlights`: consolidates `data.geoObjectId` for the run (run date from
+ * the run row); with `reselect` only its highlight selection (`reselectHighlights`).
+ */
 export async function consolidateGeoJob(db: Db, data: JobData): Promise<ConsolidateResult> {
   const job = jobSchema.parse(data);
+  if (job.reselect) return reselectHighlights(db, job.geoObjectId, { runId: job.runId, rulesVersion: job.rulesVersion });
   return consolidateGeo(db, job.geoObjectId, { runId: job.runId, mode: job.mode, rulesVersion: job.rulesVersion, extraction: job.extraction });
 }

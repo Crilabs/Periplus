@@ -3,14 +3,17 @@ import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { changeEvents, evaluationProfiles, profiles, reviewTasks } from "@/lib/db/schema";
 import { canonicalJson } from "@/lib/domain/facts/schema";
+import type { CategorySelection } from "@/lib/domain/highlights/select";
+import { deleteHighlightSelections, replaceHighlightSelections, type HighlightsValue } from "@/lib/domain/highlights/selections";
 import { createReviewTask, OpenTaskVanished } from "@/lib/domain/review";
 import { runDate as runDateOf } from "@/lib/domain/runs";
 import { latestProfile } from "@/lib/domain/timeline";
 import { createLogger } from "@/lib/logger";
 import { consolidationConfigFor } from "./active-rules";
-import { buildProfile } from "./build";
+import { buildProfile, highlightsAttribute, profileContentHash } from "./build";
 import { diffProfiles, type EventDraft, type TaskDraft } from "./changes";
-import { candidateAppConfig, loadContext, loadDerivedInputs, loadInputs, type ExtractionCandidate, type LoadInputsOptions } from "./inputs";
+import { profileConfidence } from "./derived/confidence";
+import { candidateAppConfig, highlightInputs, loadContext, loadDerivedInputs, loadInputs, type ExtractionCandidate, type LoadInputsOptions } from "./inputs";
 import { dismissTasks, lockOpenTasks, subjectPrefix } from "./task-locks";
 import { applyAutoStatus } from "@/lib/domain/places/auto-status";
 
@@ -115,6 +118,8 @@ async function openDraftTask(tx: Db, draft: TaskDraft, subjectId: string, contex
  *   - otherwise the draft opens a task on `<geoObjectId>:<attribute>` (context with `key` and `geoObjectId`) and
  *     writes its event;
  *   - an open task no draft of this run matches is dismissed (`context.dismissedReason` `superseded`).
+ * - `regular`, a place: its `highlight_selections` rows are replaced by the `derived.highlights` of the profile as
+ *   stored (new or kept version, spec 16); an object without a valid place (ended, merged, rejected) loses its rows.
  * - `evaluation`: upserts `evaluation_profiles (runId, geoObjectId)` with `opts.rulesVersion`: the profile as a regular
  *   run would write it (after the comparison with the valid profile, so uncertain values stay); no profile, event or
  *   task.
@@ -139,7 +144,11 @@ export async function consolidateGeo(db: Db, geoObjectId: string, opts: Consolid
     const context = await loadContext(tx, geoObjectId, cfg, today);
     if (context === null) {
       // an ended, merged or rejected object: its open profile tasks are moot, its last profile stays as history
-      if (mode === "regular") await dismissTasks(tx, [...(await lockOpenTasks(tx, geoObjectId)).values()].map((t) => t.id), "object_ended");
+      if (mode === "regular") {
+        await dismissTasks(tx, [...(await lockOpenTasks(tx, geoObjectId)).values()].map((t) => t.id), "object_ended");
+        // an ended, merged or rejected place selects no highlights any more (spec 16)
+        await deleteHighlightSelections(tx, geoObjectId);
+      }
       return { status: "skipped", version: null, events: 0, tasks: 0 };
     }
 
@@ -200,6 +209,20 @@ export async function consolidateGeo(db: Db, geoObjectId: string, opts: Consolid
       });
     }
 
+    if (context.level === "place" && context.place && version !== null) {
+      // the selection of the profile as stored (spec 16), replaced on every regular consolidation of the place
+      await replaceHighlightSelections(
+        tx,
+        geoObjectId,
+        version,
+        profile.attributes["derived.highlights"] as HighlightsValue | undefined,
+        profile.provenance["derived.highlights"]?.derivedFrom as Partial<Record<string, CategorySelection>> | undefined,
+      );
+    } else {
+      // no valid place (any more) on this object, e.g. its place row ended: it selects nothing
+      await deleteHighlightSelections(tx, geoObjectId);
+    }
+
     const events: EventDraft[] = [...diff.events];
     let opened = 0;
     const openTasks = await lockOpenTasks(tx, geoObjectId);
@@ -240,5 +263,80 @@ export async function consolidateGeo(db: Db, geoObjectId: string, opts: Consolid
       );
     }
     return { status: diff.versionNeeded ? "created" : "unchanged", version, events: events.length, tasks: opened };
+  });
+}
+
+/**
+ * Re-selection of a place's highlights only (spec 16 „Aktualität“, final review C1): a place within reach of a POI of a
+ * run, outside the run's own targets (`reselectionTargets`), gets its selection computed again, not a full
+ * consolidation. Under the profile lock in READ COMMITTED, like `consolidateGeo`:
+ * - skipped: no valid place on the object (its selection rows go, as in `consolidateGeo`), rules without `highlights`,
+ *   no profile yet or a newest profile of another rules version (its next consolidation selects in full);
+ * - the same `derived.highlights` value (ids and level per category) as the newest profile: no version, its selection
+ *   rows are refreshed (`unchanged`);
+ * - another value: a new version (previous + 1, `valid_from` as in `consolidateGeo`, `run_id`) that is the newest
+ *   profile with only `derived.highlights` replaced (or removed), confidence and content hash recomputed, and its
+ *   selection rows (`created`). No change event and no review task: `consolidateGeo` writes none for the attribute
+ *   either.
+ */
+export async function reselectHighlights(
+  db: Db,
+  geoObjectId: string,
+  opts: Pick<ConsolidateOptions, "runId" | "today" | "rulesVersion"> = {},
+): Promise<ConsolidateResult> {
+  const skipped: ConsolidateResult = { status: "skipped", version: null, events: 0, tasks: 0 };
+  const appConfig = getConfig();
+  const cfg = await consolidationConfigFor(db, opts.rulesVersion);
+  if (!cfg.highlights) return skipped;
+  return db.transaction(async (tx) => {
+    const { rows: isolation } = await tx.execute<{ level: string }>(sql`select current_setting('transaction_isolation') as level`);
+    if (isolation[0]?.level !== "read committed") {
+      throw new Error(`reselectHighlights must run in READ COMMITTED, not ${isolation[0]?.level}`);
+    }
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`profile:${geoObjectId}`}))`);
+    const today = await runDate(tx, opts);
+    const context = await loadContext(tx, geoObjectId, cfg, today);
+    if (context === null || context.level !== "place" || !context.place) {
+      await deleteHighlightSelections(tx, geoObjectId);
+      return skipped;
+    }
+    const prev = await latestProfile(tx, geoObjectId);
+    if (!prev || prev.rulesVersion !== cfg.version) return skipped;
+
+    const inputs = await highlightInputs(tx, geoObjectId, { cfg, schemaVersion: appConfig.factSchema.version, appConfig, today });
+    const next = highlightsAttribute(inputs, cfg);
+    const derivedFrom = next?.provenance.derivedFrom as Partial<Record<string, CategorySelection>> | undefined;
+    if (canonicalJson(prev.attributes["derived.highlights"] ?? null) === canonicalJson(next?.value ?? null)) {
+      await replaceHighlightSelections(tx, geoObjectId, prev.version, next?.value as HighlightsValue | undefined, derivedFrom);
+      return { status: "unchanged", version: prev.version, events: 0, tasks: 0 };
+    }
+
+    const attributes = { ...prev.attributes };
+    const provenance = { ...prev.provenance };
+    delete attributes["derived.highlights"];
+    delete provenance["derived.highlights"];
+    if (next) {
+      attributes["derived.highlights"] = next.value;
+      provenance["derived.highlights"] = next.provenance;
+    }
+    const version = prev.version + 1;
+    await tx.insert(profiles).values({
+      geoObjectId,
+      version,
+      validFrom: prev.validFrom > today ? prev.validFrom : today,
+      attributes,
+      provenance,
+      conflicts: prev.conflicts,
+      gaps: prev.gaps,
+      sourcesCount: prev.sourcesCount,
+      documentsCount: prev.documentsCount,
+      confidence: profileConfidence(provenance, cfg),
+      contentHash: profileContentHash({ attributes, provenance, conflicts: prev.conflicts }),
+      factSchemaVersion: prev.factSchemaVersion,
+      rulesVersion: prev.rulesVersion,
+      runId: opts.runId ?? null,
+    });
+    await replaceHighlightSelections(tx, geoObjectId, version, next?.value as HighlightsValue | undefined, derivedFrom);
+    return { status: "created", version, events: 0, tasks: 0 };
   });
 }

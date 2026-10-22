@@ -2,7 +2,7 @@ import type { StageDefinition } from "@/lib/pipeline/runs";
 import { areaImportStage } from "./handlers/areas";
 import { mentionsRereadStage } from "./handlers/reread";
 import { compareConvertersStage } from "./handlers/compare";
-import { consolidationFollowupStage, consolidationGeoStage, consolidationSummaryStage } from "./handlers/consolidation";
+import { consolidationFollowupStage, consolidationGeoStage, consolidationHighlightsStage, consolidationSummaryStage } from "./handlers/consolidation";
 import { datasetsImportStage } from "./handlers/datasets";
 import { deliveryBuildStage } from "./handlers/delivery";
 import { discoveryAreaStage, discoveryPlaceStage, discoveryProposeStage, discoveryTileStage } from "./handlers/discovery";
@@ -69,6 +69,7 @@ export const STAGES: Record<string, StageDefinition> = {
   [extractionRouteStage.name]: extractionRouteStage,
   [extractionCheckStage.name]: extractionCheckStage,
   [consolidationGeoStage.name]: consolidationGeoStage,
+  [consolidationHighlightsStage.name]: consolidationHighlightsStage,
   [consolidationSummaryStage.name]: consolidationSummaryStage,
   [consolidationFollowupStage.name]: consolidationFollowupStage,
   [imagesPlaceStage.name]: imagesPlaceStage,

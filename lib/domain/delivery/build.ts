@@ -182,7 +182,6 @@ async function assemble(
   const previous = await previousPackage(tx, input.archive, input.subdivisionId);
   const draft = await draftSubdivision(tx, input.subdivisionId, today, {
     cfg,
-    radiusNm: consolidation.importance.radiusNm,
     poiConfidence: consolidation.poiConfidence,
     images: imagesCfg,
     scopeTransform: input.scopeTransform,
@@ -266,7 +265,7 @@ async function assemble(
     ],
     cfg,
     imageAttribution: imageAttributionTexts(imagesCfg),
-    radiusNm: consolidation.importance.radiusNm,
+    highlightSelectors: draft.highlightSelectors,
     warnings: buildWarnings({
       spots: draft.spots.map((s) => ({ id: s.body.id, warnings: s.warnings })),
       omittedSpots: draft.omittedSpots,

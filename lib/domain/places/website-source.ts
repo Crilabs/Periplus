@@ -12,7 +12,7 @@ import { setSourceStatus } from "@/lib/domain/sources/store";
 import { normalizeUrl, registrableDomain } from "@/lib/domain/sources/urls";
 
 /*
- * Approval of a place's website and its binding to the place (spec 16 C „Freigabe“, „Crawl“, „Bindung an den Ort“).
+ * Approval of a place's website and its binding to the place (spec 15 C „Freigabe“, „Crawl“, „Bindung an den Ort“).
  * The address of a place becomes (or joins) an approved source without a review task; the `place_websites` row records
  * it and whether the source's pages are bound to the place.
  */
@@ -40,7 +40,7 @@ const normalized = (url: string, cfg: AttachConfig) => normalizeUrl(url, cfg.fet
 /**
  * Adds `url` to the start URLs of the (locked) source unless it is one already. A source whose start list is empty
  * crawled its root (`https://<domain>/`), which stays a start URL. A `place_website` source gets
- * `crawl.maxPagesPerStartUrl` more pages per start URL (30 × n); a source of another origin keeps its rules (spec 16 C
+ * `crawl.maxPagesPerStartUrl` more pages per start URL (30 × n); a source of another origin keeps its rules (spec 15 C
  * „Crawl“: „Kommt die Start-URL zu einer bestehenden Quelle, gelten deren Regeln“).
  */
 async function addStartUrl(tx: Db, sourceId: string, url: string, cfg: AttachConfig): Promise<void> {
@@ -64,7 +64,7 @@ async function addStartUrl(tx: Db, sourceId: string, url: string, cfg: AttachCon
 }
 
 /**
- * The approved source the website `url` belongs to, by registrable domain (spec 16 C „Freigabe“):
+ * The approved source the website `url` belongs to, by registrable domain (spec 15 C „Freigabe“):
  * - none: a new approved source of origin `place_website`, of `type` (`marina`; `authority` for a domain the source
  *   finding recognises as one), weight and change rate of that type, start URL `url`, depth `crawl.maxDepth`,
  *   `crawl.maxPagesPerStartUrl` pages;
@@ -125,7 +125,7 @@ async function approvedSourceFor(tx: Db, url: string, type: DocType, cfg: Attach
 
 /**
  * Records the website of a place (append-only `place_websites` row) and approves its source (`approvedSourceFor`;
- * none on a forbidden domain). `bound` (the source's pages below the start URL belong to the place, spec 16 C
+ * none on a forbidden domain). `bound` (the source's pages below the start URL belong to the place, spec 15 C
  * „Bindung an den Ort“) is false without a source, for an `authority` domain (`suggestType`; created as `authority`,
  * not `marina`) and for a start URL another place's current website already has (by `bindingKey`): then that place's
  * binding ends too, by a new row of it with `bound` false (a municipality or port authority page for several harbours

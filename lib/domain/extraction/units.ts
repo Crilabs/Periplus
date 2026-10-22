@@ -78,7 +78,7 @@ export async function planUnits(
       continue;
     }
     const byOrdinal = chunksByVersion.get(versionId) ?? new Map<number, string>();
-    // A page of a place's own website (spec 16 C) is extracted whole: a bound mention takes every chunk of the version.
+    // A page of a place's own website (spec 15 C) is extracted whole: a bound mention takes every chunk of the version.
     const ordinals = new Set<number>(group.some((m) => m.match_kind === "bound") ? byOrdinal.keys() : []);
     for (const m of group) {
       for (let o = m.ordinal - cfg.neighbourChunks; o <= m.ordinal + cfg.neighbourChunks; o++) {

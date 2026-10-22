@@ -1,0 +1,310 @@
+{
+  "version": "0.1.20250101",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "1.2 sec.",
+  "cost": 0.002,
+  "tasks_count": 1,
+  "tasks_error": 0,
+  "tasks": [
+    {
+      "id": "10190800-0000-0000-0000-000000000001",
+      "status_code": 40106,
+      "status_message": "Task completed with partial results. Some pages could not be retrieved after several retry attempts.",
+      "time": "1.1 sec.",
+      "cost": 0.002,
+      "result_count": 1,
+      "path": [
+        "v3",
+        "serp",
+        "google",
+        "organic",
+        "live",
+        "regular"
+      ],
+      "data": {
+        "api": "serp",
+        "function": "live",
+        "se": "google",
+        "se_type": "organic",
+        "keyword": "anchorage hand",
+        "language_code": "en",
+        "location_code": 2826,
+        "depth": 20
+      },
+      "result": [
+        {
+          "keyword": "anchorage hand",
+          "type": "organic",
+          "se_domain": "google.co.uk",
+          "location_code": 2826,
+          "language_code": "en",
+          "check_url": "https://www.google.co.uk/search?q=anchorage+hand",
+          "datetime": "2026-10-19 08:00:00 +00:00",
+          "spell": null,
+          "item_types": [
+            "organic",
+            "people_also_ask"
+          ],
+          "se_results_count": 1000,
+          "items_count": 21,
+          "items": [
+            {
+              "type": "organic",
+              "rank_group": 1,
+              "rank_absolute": 1,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site1.example",
+              "title": "Result 1",
+              "url": "https://www.site1.example/page-1?utm_source=x",
+              "breadcrumb": "https://www.site1.example",
+              "description": "Snippet 1"
+            },
+            {
+              "type": "organic",
+              "rank_group": 2,
+              "rank_absolute": 2,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site2.example",
+              "title": "Result 2",
+              "url": "https://www.site2.example/page-2?utm_source=x",
+              "breadcrumb": "https://www.site2.example",
+              "description": "Snippet 2"
+            },
+            {
+              "type": "organic",
+              "rank_group": 3,
+              "rank_absolute": 3,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site3.example",
+              "title": "Result 3",
+              "url": "https://www.site3.example/page-3?utm_source=x",
+              "breadcrumb": "https://www.site3.example",
+              "description": "Snippet 3"
+            },
+            {
+              "type": "organic",
+              "rank_group": 4,
+              "rank_absolute": 4,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site4.example",
+              "title": "Result 4",
+              "url": "https://www.site4.example/page-4?utm_source=x",
+              "breadcrumb": "https://www.site4.example",
+              "description": "Snippet 4"
+            },
+            {
+              "type": "organic",
+              "rank_group": 5,
+              "rank_absolute": 5,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site5.example",
+              "title": "Result 5",
+              "url": "https://www.site5.example/page-5?utm_source=x",
+              "breadcrumb": "https://www.site5.example",
+              "description": "Snippet 5"
+            },
+            {
+              "type": "organic",
+              "rank_group": 6,
+              "rank_absolute": 6,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site6.example",
+              "title": "Result 6",
+              "url": "https://www.site6.example/page-6?utm_source=x",
+              "breadcrumb": "https://www.site6.example",
+              "description": "Snippet 6"
+            },
+            {
+              "type": "organic",
+              "rank_group": 7,
+              "rank_absolute": 7,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site7.example",
+              "title": "Result 7",
+              "url": "https://www.site7.example/page-7?utm_source=x",
+              "breadcrumb": "https://www.site7.example",
+              "description": "Snippet 7"
+            },
+            {
+              "type": "organic",
+              "rank_group": 8,
+              "rank_absolute": 8,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site8.example",
+              "title": "Result 8",
+              "url": "https://www.site8.example/page-8?utm_source=x",
+              "breadcrumb": "https://www.site8.example",
+              "description": "Snippet 8"
+            },
+            {
+              "type": "organic",
+              "rank_group": 9,
+              "rank_absolute": 9,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site9.example",
+              "title": "Result 9",
+              "url": "https://www.site9.example/page-9?utm_source=x",
+              "breadcrumb": "https://www.site9.example",
+              "description": "Snippet 9"
+            },
+            {
+              "type": "organic",
+              "rank_group": 10,
+              "rank_absolute": 10,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site10.example",
+              "title": "Result 10",
+              "url": "https://www.site10.example/page-10?utm_source=x",
+              "breadcrumb": "https://www.site10.example",
+              "description": "Snippet 10"
+            },
+            {
+              "type": "organic",
+              "rank_group": 11,
+              "rank_absolute": 11,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site11.example",
+              "title": "Result 11",
+              "url": "https://www.site11.example/page-11?utm_source=x",
+              "breadcrumb": "https://www.site11.example",
+              "description": "Snippet 11"
+            },
+            {
+              "type": "organic",
+              "rank_group": 12,
+              "rank_absolute": 12,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site12.example",
+              "title": "Result 12",
+              "url": "https://www.site12.example/page-12?utm_source=x",
+              "breadcrumb": "https://www.site12.example",
+              "description": "Snippet 12"
+            },
+            {
+              "type": "organic",
+              "rank_group": 13,
+              "rank_absolute": 13,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site13.example",
+              "title": "Result 13",
+              "url": "https://www.site13.example/page-13?utm_source=x",
+              "breadcrumb": "https://www.site13.example",
+              "description": "Snippet 13"
+            },
+            {
+              "type": "organic",
+              "rank_group": 14,
+              "rank_absolute": 14,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site14.example",
+              "title": "Result 14",
+              "url": "https://www.site14.example/page-14?utm_source=x",
+              "breadcrumb": "https://www.site14.example",
+              "description": "Snippet 14"
+            },
+            {
+              "type": "organic",
+              "rank_group": 15,
+              "rank_absolute": 15,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site15.example",
+              "title": "Result 15",
+              "url": "https://www.site15.example/page-15?utm_source=x",
+              "breadcrumb": "https://www.site15.example",
+              "description": "Snippet 15"
+            },
+            {
+              "type": "organic",
+              "rank_group": 16,
+              "rank_absolute": 16,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site16.example",
+              "title": "Result 16",
+              "url": "https://www.site16.example/page-16?utm_source=x",
+              "breadcrumb": "https://www.site16.example",
+              "description": "Snippet 16"
+            },
+            {
+              "type": "organic",
+              "rank_group": 17,
+              "rank_absolute": 17,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site17.example",
+              "title": "Result 17",
+              "url": "https://www.site17.example/page-17?utm_source=x",
+              "breadcrumb": "https://www.site17.example",
+              "description": "Snippet 17"
+            },
+            {
+              "type": "organic",
+              "rank_group": 18,
+              "rank_absolute": 18,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site18.example",
+              "title": "Result 18",
+              "url": "https://www.site18.example/page-18?utm_source=x",
+              "breadcrumb": "https://www.site18.example",
+              "description": "Snippet 18"
+            },
+            {
+              "type": "organic",
+              "rank_group": 19,
+              "rank_absolute": 19,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site19.example",
+              "title": "Result 19",
+              "url": "https://www.site19.example/page-19?utm_source=x",
+              "breadcrumb": "https://www.site19.example",
+              "description": "Snippet 19"
+            },
+            {
+              "type": "organic",
+              "rank_group": 20,
+              "rank_absolute": 20,
+              "position": "left",
+              "xpath": "/html/body",
+              "domain": "site20.example",
+              "title": "Result 20",
+              "url": "https://www.site20.example/page-20?utm_source=x",
+              "breadcrumb": "https://www.site20.example",
+              "description": "Snippet 20"
+            },
+            {
+              "type": "people_also_ask",
+              "rank_group": 1,
+              "rank_absolute": 21,
+              "position": "left",
+              "xpath": "/html/body",
+              "items": [
+                {
+                  "type": "people_also_ask_element",
+                  "title": "Where to anchor?"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

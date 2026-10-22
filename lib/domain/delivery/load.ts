@@ -7,6 +7,7 @@ import type { DocType } from "@/lib/db/schema/sources";
 import { popularityForSubdivision } from "@/lib/domain/consolidation/derived/popularity";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 import { deliveryNames } from "@/lib/domain/gazetteer/names";
+import { countingSelectionsAt } from "@/lib/domain/highlights/selections";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { imageBlockedBy, imageSources } from "@/lib/domain/images/delivery-gate";
 import { utmSridFor } from "@/lib/domain/geometry/projection";
@@ -273,6 +274,11 @@ async function loadMerged(db: Db, subdivisionId: string): Promise<SubdivisionSco
 
 type PoiRow = Omit<PoiSource, "profile" | "summary" | "sources" | "images">;
 
+/**
+ * The highlights of the subdivision (spec 16): POIs of the subdivision that a place of the subdivision selected
+ * (`highlight_selections`, only rows that count on `today`), each with every such selecting place and its distance.
+ * Unselected POI candidates are never loaded.
+ */
 async function loadPoiRows(db: Db, subdivisionId: string, today: string): Promise<PoiRow[]> {
   const { rows } = await db.execute<{
     geo_object_id: string;
@@ -282,12 +288,16 @@ async function loadPoiRows(db: Db, subdivisionId: string, today: string): Promis
     lat: number;
     osm_id: string | null;
     wikidata_id: string | null;
+    selected_by: Array<{ placeGeoObjectId: string; distanceKm: number }>;
   }>(sql`
     select o.id as geo_object_id, o.public_id, o.category,
-           ST_X(o.centroid) as lon, ST_Y(o.centroid) as lat, o.osm_id, o.wikidata_id
-    from geo_objects o
-    where o.type = 'poi' and o.public_id is not null and o.category is not null and o.merged_into_id is null
-      and ${validAtAlias("o", today)} and o.subdivision_id = ${subdivisionId}
+           ST_X(o.centroid) as lon, ST_Y(o.centroid) as lat, o.osm_id, o.wikidata_id,
+           json_agg(json_build_object('placeGeoObjectId', hs.place_geo_object_id, 'distanceKm', hs.distance_km)
+                    order by hs.place_geo_object_id) as selected_by
+    from ${countingSelectionsAt(today)}
+    where o.type = 'poi' and o.public_id is not null and o.category is not null
+      and o.subdivision_id = ${subdivisionId} and po.subdivision_id = ${subdivisionId}
+    group by o.id
     order by o.public_id
   `);
   const names = await deliveryNames(db, rows.map((r) => r.geo_object_id), today);
@@ -299,6 +309,7 @@ async function loadPoiRows(db: Db, subdivisionId: string, today: string): Promis
     position: point(r.lon, r.lat),
     osmId: r.osm_id,
     wikidataId: r.wikidata_id,
+    selectedBy: r.selected_by.map((x) => ({ placeGeoObjectId: x.placeGeoObjectId, distanceKm: Number(x.distanceKm) })),
   }));
 }
 

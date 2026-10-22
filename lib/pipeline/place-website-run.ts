@@ -10,7 +10,7 @@ import { TEXT_RUN_STAGES } from "@/lib/pipeline/text/run";
 // registry through ./fetch/run and ./text/run, which would close an import cycle through the handler.
 
 /**
- * The stages of „Marina-Websites suchen“ (spec 16 C „Crawl“): find and approve the websites, crawl the touched sources,
+ * The stages of „Marina-Websites suchen“ (spec 15 C „Crawl“): find and approve the websites, crawl the touched sources,
  * freeze their new versions, then every text stage up to the consolidation.
  */
 export const PLACE_WEBSITE_RUN_STAGES = [PLACE_WEBSITE_STAGE, ...FETCH_RUN_STAGES, PLACE_WEBSITE_FREEZE_STAGE, ...TEXT_RUN_STAGES];

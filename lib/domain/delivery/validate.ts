@@ -29,7 +29,7 @@ export const CHECK_NAMES = [
   "exclude_reason",
   "berth_months",
   "low_confidence_note",
-  "highlight_radius",
+  "highlight_selected",
   "spot_duplicates",
   "highlight_duplicates",
   "verbatim_text",
@@ -60,8 +60,11 @@ export type ValidationDeps = {
    * attribution must contain one of each. Without it the check `image_attribution` has nothing to hold the images to.
    */
   imageAttribution?: { aerial: string[]; terrain: string[] };
-  /** Radius of meaning per importance 1–5, nautical miles (`consolidation.importance.radiusNm`). */
-  radiusNm: number[];
+  /**
+   * Per delivered highlight the delivered spots selecting it (`mapHighlights` `selectors`, spec 16): `spotIds` may name
+   * no other spot.
+   */
+  highlightSelectors: ReadonlyMap<string, readonly string[]>;
   /** Build warnings (`buildWarnings`), passed into the report. */
   warnings?: Finding[];
 };
@@ -278,18 +281,23 @@ const lowConfidenceNote: Check = ({ pkg, deps }) => {
   ];
 };
 
-/** A listed category and a delivered, unmerged, not excluded spot within the radius of meaning (ruling M6-P5). */
-const highlightRadius: Check = ({ pkg, deps }) => {
-  const counting = new Map(spotsOf(pkg).filter((s) => s.mergedInto === null && !s.exclude.excluded).map((s) => [s.id, s.position]));
+/**
+ * A listed category, at least one spot, and every spot of `spotIds` a delivered, unmerged, not excluded spot that
+ * selected the highlight (ruling M6-P5, spec 16).
+ */
+const highlightSelected: Check = ({ pkg, deps }) => {
+  const counting = new Set(spotsOf(pkg).filter((s) => s.mergedInto === null && !s.exclude.excluded).map((s) => s.id));
   const categories = new Set<string>(highlightCategory.options);
   const out: Finding[] = [];
   highlightsOf(pkg).forEach((h, i) => {
     if (!categories.has(h.category)) out.push(finding(HIGHLIGHTS, h.id, `/highlights/${i}/category`, `Kategorie ${h.category} nicht in der Liste`));
-    const radius = deps.radiusNm[h.importance - 1];
-    const within = radius !== undefined && h.spotIds.some((id) => counting.has(id) && distanceNm(h.position, counting.get(id)!) <= radius);
-    if (!within) {
-      out.push(finding(HIGHLIGHTS, h.id, `/highlights/${i}/spotIds`, `Kein Spot im Bedeutungsradius (${radius === undefined ? "Bedeutung unbekannt" : `${fmt(radius)} sm`})`));
-    }
+    if (h.spotIds.length === 0) out.push(finding(HIGHLIGHTS, h.id, `/highlights/${i}/spotIds`, "Kein gelieferter Spot wählt das Highlight aus"));
+    const selectors = new Set(deps.highlightSelectors.get(h.id) ?? []);
+    h.spotIds.forEach((id, j) => {
+      const path = `/highlights/${i}/spotIds/${j}`;
+      if (!counting.has(id)) out.push(finding(HIGHLIGHTS, h.id, path, `${id} ist kein gelieferter, nicht ausgeschlossener Spot`));
+      else if (!selectors.has(id)) out.push(finding(HIGHLIGHTS, h.id, path, `${id} wählt das Highlight nicht aus`));
+    });
   });
   return out;
 };
@@ -562,7 +570,7 @@ const CHECKS: Record<CheckName, Check> = {
   exclude_reason: excludeReason,
   berth_months: berthMonths,
   low_confidence_note: lowConfidenceNote,
-  highlight_radius: highlightRadius,
+  highlight_selected: highlightSelected,
   spot_duplicates: spotDuplicates,
   highlight_duplicates: highlightDuplicates,
   verbatim_text: verbatimText,
@@ -619,7 +627,7 @@ const HIGHLIGHT_DROPPED_DE: Record<DroppedHighlight["reason"], string> = {
   no_profile: "Nicht geliefert: kein Profil",
   not_existing: "Nicht geliefert: existiert laut Profil nicht mehr",
   no_importance: "Nicht geliefert: keine Bedeutung",
-  no_spot_in_radius: "Nicht geliefert: kein Spot im Bedeutungsradius",
+  not_selected: "Nicht geliefert: von keinem gelieferten Spot ausgewählt",
   duplicate: "Nicht geliefert: Dublette",
 };
 

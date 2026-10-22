@@ -4,7 +4,7 @@ import { getConfig } from "../lib/config";
 import { createDb } from "../lib/db/client";
 import { reclassifyPois } from "../lib/domain/gazetteer/poi-reclassify";
 
-// Re-applies config/categories.json to the stored OSM POIs (spec 16 A):
+// Re-applies config/categories.json to the stored OSM POIs (spec 15 A):
 //   npm run pois:reclassify -- [--dry-run]
 // It starts nothing: afterwards the rollout reruns consolidation for the affected places.
 

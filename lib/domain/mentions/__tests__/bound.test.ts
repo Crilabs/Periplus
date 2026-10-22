@@ -9,7 +9,7 @@ import { insertPlace } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 
 /*
- * Spec 16 C „Bindung an den Ort“: the geo object a page URL is bound to, by the longest start URL among the places'
+ * Spec 15 C „Bindung an den Ort“: the geo object a page URL is bound to, by the longest start URL among the places'
  * current website rows. Hosts are `<uuid>.example`, every row rolled back.
  */
 

@@ -1,4 +1,4 @@
--- METRIC_KEYS gains place_confirmation, place_websites and marina_services (specs 16 and 17).
+-- METRIC_KEYS gains place_confirmation, place_websites and marina_services (specs 15 and 17).
 ALTER TABLE quality_snapshots DROP CONSTRAINT quality_snapshots_metric_check;
 --> statement-breakpoint
 ALTER TABLE quality_snapshots ADD CONSTRAINT quality_snapshots_metric_check CHECK (metric in (

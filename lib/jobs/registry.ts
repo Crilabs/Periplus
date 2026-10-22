@@ -72,6 +72,8 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "extraction.route": extractRoutesHandler,
   "extraction.check": checkExtractionRunHandler,
   "consolidation.geo": consolidationGeoHandler,
+  // its jobs are geo jobs of the selected POIs (spec 16)
+  "consolidation.highlights": consolidationGeoHandler,
   "consolidation.summary": consolidationSummaryHandler,
   "consolidation.followup": consolidationFollowupHandler,
   "images.place": imagesPlaceHandler,

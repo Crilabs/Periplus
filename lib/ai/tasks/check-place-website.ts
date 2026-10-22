@@ -3,7 +3,7 @@ import type { PlaceKind } from "@/lib/db/schema";
 import type { ModelTask } from "../types";
 
 /*
- * Is this search hit the website of this place (spec 16 C „Ist das die Website dieses Ortes?“)? Only for addresses
+ * Is this search hit the website of this place (spec 15 C „Ist das die Website dieses Ortes?“)? Only for addresses
  * from the Google search: a hit can be a neighbouring marina, a charter company or a travel portal. Input: the place's
  * names and position, its kind as the seed guessed it, and the hit's page text; output: yes/no, a verbatim quote that
  * names the place, a confidence. The caller accepts a yes only with a confident, verifiable quote (`acceptWebsiteCheck`).

@@ -13,6 +13,9 @@ const ISLANDS: GeoObjectType[] = ["island", "islet"];
 const PLACED_TYPES: GeoObjectType[] = [...LOCAL_TYPES, ...ISLANDS, "archipelago", "gulf", "coast_section"];
 /** Large water bodies whose centroid may lie far offshore: they take the nearest land without the radius limit. */
 const FAR_TYPES: GeoObjectType[] = ["gulf", "archipelago", "strait", "channel"];
+/** Vertices per piece of a subdivision's land, and how many pieces nearest by plain distance get the exact one. */
+const LAND_PART_VERTICES = 128;
+const NEAREST_LAND_PARTS = 10;
 /** Polygons of these types are no tile content: a mention reaches their tiles through the hierarchy and the sea. */
 const UNTILED_TYPES: GeoObjectType[] = ["country", "admin_region", "sea"];
 
@@ -137,27 +140,37 @@ function parentRules(): { types: GeoObjectType[]; parent: SQL; filter?: SQL }[] 
 
 /**
  * Sets `geo_objects.subdivision_id` of the valid objects `c` that pass `filter` to the subdivision whose land
- * (`land_geom`) is nearest to the centroid, within `gazetteer.subdivisionRadiusM` (bbox prefilter, then distance; ties by
- * key; gulfs, archipelagos, straits and channels take the nearest land at any distance); null when no land is that near. Only changed rows are written.
+ * (`land_geom`) is nearest to the centroid, within `gazetteer.subdivisionRadiusM` (ties by key; gulfs, archipelagos,
+ * straits and channels take the nearest land at any distance); null when no land is that near. Only changed rows are
+ * written. The land is cut into small indexed pieces first: a geography distance to whole coastlines (85,000 points
+ * for Attica) took over an hour for one subdivision; the exact distance is computed for the nearest pieces only.
  */
 async function setSubdivisions(db: Db, filter: SQL): Promise<number> {
   const radiusM = getConfig().gazetteer.subdivisionRadiusM;
-  const res = await db.execute(sql`
-    with target as (
-      select c.id, (
-        select s.id from subdivisions s
-        where s.valid_to is null and s.land_geom is not null
-          and (c.type in ${FAR_TYPES} or (
-            s.land_geom && ST_Expand(c.centroid, ${radiusM / 50_000})
-            and ST_DWithin(s.land_geom::geography, c.centroid::geography, ${radiusM})))
-        order by ST_Distance(s.land_geom::geography, c.centroid::geography), s.key limit 1) as subdivision_id
-      from geo_objects c
-      where c.valid_to is null and c.merged_into_id is null and c.type in ${PLACED_TYPES} and ${filter}
-    )
-    update geo_objects o set subdivision_id = t.subdivision_id, updated_at = now()
-    from target t
-    where o.id = t.id and o.subdivision_id is distinct from t.subdivision_id`);
-  return res.rowCount ?? 0;
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`drop table if exists pg_temp.subdivision_land_parts`);
+    await tx.execute(sql`
+      create temp table subdivision_land_parts on commit drop as
+      select s.id, s.key, ST_Subdivide(s.land_geom, ${LAND_PART_VERTICES}) as geom
+      from subdivisions s where s.valid_to is null and s.land_geom is not null`);
+    await tx.execute(sql`create index on subdivision_land_parts using gist (geom)`);
+    await tx.execute(sql`analyze subdivision_land_parts`);
+    const res = await tx.execute(sql`
+      with target as (
+        select c.id, (
+          select q.id from (
+            select p.id, p.key, p.geom from subdivision_land_parts p
+            order by p.geom <-> c.centroid limit ${NEAREST_LAND_PARTS}) q
+          where c.type in ${FAR_TYPES} or ST_DWithin(q.geom::geography, c.centroid::geography, ${radiusM})
+          order by ST_Distance(q.geom::geography, c.centroid::geography), q.key limit 1) as subdivision_id
+        from geo_objects c
+        where c.valid_to is null and c.merged_into_id is null and c.type in ${PLACED_TYPES} and ${filter}
+      )
+      update geo_objects o set subdivision_id = t.subdivision_id, updated_at = now()
+      from target t
+      where o.id = t.id and o.subdivision_id is distinct from t.subdivision_id`);
+    return res.rowCount ?? 0;
+  });
 }
 
 /** Sets `sea_id` of the valid objects `c` that pass `filter`: the smallest sea polygon covering the centroid, else the nearest. */

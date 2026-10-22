@@ -1,5 +1,5 @@
 /*
- * Names of the marina website stages (spec 16 C): constants only, so domain code, the subdivision build and the run
+ * Names of the marina website stages (spec 15 C): constants only, so domain code, the subdivision build and the run
  * starter can name them without an import cycle through the stage registry.
  */
 

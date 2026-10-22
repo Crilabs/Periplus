@@ -5,7 +5,7 @@ import type { DeliveryConfig, ImagesConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { loadSubdivisionScope } from "./load";
 import { imageFiles, type ImageFile } from "./map-image";
-import { highlightIdsBySpot, mapHighlights, type DroppedHighlight } from "./map-highlight";
+import { highlightIdsBySpot, mapHighlights, rankedHighlightIds, type DroppedHighlight } from "./map-highlight";
 import { assignRegions, mapRegion, namedRegions, regionIdAt } from "./map-region";
 import { mapSources, mapSpot, type SpotWarning } from "./map-spot";
 import type { LonLat, RegionSource, SubdivisionScope } from "./types";
@@ -30,6 +30,8 @@ export type SubdivisionDraft = {
   droppedHighlights: DroppedHighlight[];
   /** Forbidden-domain links behind delivered highlights (ruling M6-D-R2). */
   highlightForbiddenSources: Array<{ id: string; urls: string[] }>;
+  /** Per delivered highlight every delivered spot selecting it (the validation's `highlightSelectors`, spec 16). */
+  highlightSelectors: Map<string, string[]>;
   regions: Array<DraftObject<RegionBody>>;
   /** Forbidden-domain links behind delivered regions' facts and character (final review I-2). */
   regionForbiddenSources: Array<{ id: string; urls: string[] }>;
@@ -44,8 +46,6 @@ export type SubdivisionDraft = {
 /** Defaults: the delivery configuration and the active consolidation rules. */
 export type DraftOptions = {
   cfg?: DeliveryConfig;
-  /** Radius of meaning per importance 1–5 (`consolidation.importance.radiusNm`). */
-  radiusNm?: number[];
   /** Highlight confidence without a profile value (`consolidation.poiConfidence`, ruling M6-P7). */
   poiConfidence?: number;
   /** Which sources' images are delivered (`images.delivery`); default the configuration. */
@@ -76,7 +76,6 @@ function ordered(scope: SubdivisionScope): SubdivisionScope {
 export async function draftSubdivision(db: Db, subdivisionId: string, today: string, opts: DraftOptions = {}): Promise<SubdivisionDraft> {
   const cfg = opts.cfg ?? getConfig().delivery;
   const consolidation = await consolidationConfigFor(db);
-  const radiusNm = opts.radiusNm ?? consolidation.importance.radiusNm;
   const poiConfidence = opts.poiConfidence ?? consolidation.poiConfidence;
   const loaded = await loadSubdivisionScope(db, subdivisionId, cfg, today, opts.images);
   const scope = ordered(opts.scopeTransform ? opts.scopeTransform(loaded) : loaded);
@@ -84,11 +83,11 @@ export async function draftSubdivision(db: Db, subdivisionId: string, today: str
   // Which spots the package delivers, and which of them are excluded: the context (region, highlights) does not
   // decide that, so a first pass without it finds them.
   const omittedSpots: OmittedSpot[] = [];
-  const delivered: Array<{ src: SubdivisionScope["spots"][number]; id: string; position: LonLat; excluded: boolean }> = [];
+  const delivered: Array<{ src: SubdivisionScope["spots"][number]; id: string; geoObjectId: string; position: LonLat; excluded: boolean }> = [];
   for (const src of scope.spots) {
     const mapped = mapSpot(src, { regionId: null, highlightIds: [], cfg });
     if ("omitted" in mapped) omittedSpots.push({ id: src.publicId, reason: mapped.omitted });
-    else delivered.push({ src, id: mapped.spot.id, position: mapped.spot.position, excluded: mapped.spot.exclude.excluded });
+    else delivered.push({ src, id: mapped.spot.id, geoObjectId: src.geoObjectId, position: mapped.spot.position, excluded: mapped.spot.exclude.excluded });
   }
 
   const named = namedRegions(scope.regions);
@@ -97,10 +96,20 @@ export async function draftSubdivision(db: Db, subdivisionId: string, today: str
 
   const mappedHighlights = mapHighlights(
     scope.pois,
-    delivered.map((s) => ({ id: s.id, position: s.position, mergedInto: null, excluded: s.excluded })),
-    { radiusNm, cfg, poiConfidence, regionIdFor },
+    delivered.map((s) => ({ id: s.id, geoObjectId: s.geoObjectId, position: s.position, mergedInto: null, excluded: s.excluded })),
+    { cfg, poiConfidence, regionIdFor },
   );
-  const highlightIds = highlightIdsBySpot(mappedHighlights.highlights, delivered);
+  // a spot lists its highlights in its own selection order (spec 16); a merged duplicate stands for the one it went into
+  const poiPublicIds = new Map(scope.pois.map((p) => [p.geoObjectId, p.publicId]));
+  const into = new Map(mappedHighlights.dropped.flatMap((d) => (d.into ? [[d.id, d.into] as const] : [])));
+  const publicIdOf = (geoObjectId: string) => {
+    const id = poiPublicIds.get(geoObjectId);
+    return id === undefined ? undefined : (into.get(id) ?? id);
+  };
+  const highlightIds = highlightIdsBySpot(
+    mappedHighlights.highlights,
+    delivered.map((s) => ({ id: s.id, excluded: s.excluded, ranked: rankedHighlightIds(s.src.profile?.attributes["derived.highlights"], publicIdOf) })),
+  );
 
   const spots: DraftSpot[] = delivered.map((s) => {
     const mapped = mapSpot(s.src, { regionId: regionIdBySpot.get(s.id) ?? null, highlightIds: highlightIds.get(s.id) ?? [], cfg });
@@ -127,6 +136,7 @@ export async function draftSubdivision(db: Db, subdivisionId: string, today: str
     highlights: mappedHighlights.highlights.map((body) => ({ body, geoObjectId: poiGeoObjectIds.get(body.id)! })),
     droppedHighlights: mappedHighlights.dropped,
     highlightForbiddenSources: mappedHighlights.forbiddenSources,
+    highlightSelectors: mappedHighlights.selectors,
     regions,
     regionForbiddenSources: named.regions.flatMap((r) => {
       const urls = mapSources(r.sources, cfg).forbidden;

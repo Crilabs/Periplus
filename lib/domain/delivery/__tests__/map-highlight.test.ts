@@ -8,8 +8,7 @@ import type { LonLat, PoiSource } from "../types";
 
 const cfg = loadConfig("config").delivery;
 const consolidation = getConsolidationConfig();
-const radiusNm = consolidation.importance.radiusNm;
-const ctx = { radiusNm, cfg, poiConfidence: consolidation.poiConfidence, regionIdFor: () => null };
+const ctx = { cfg, poiConfidence: consolidation.poiConfidence, regionIdFor: () => null };
 
 const LAT_PER_NM = 1 / 60;
 const ORIGIN: LonLat = { lon: 21.1, lat: 35.1 };
@@ -35,7 +34,18 @@ function profile(attributes: Record<string, unknown>, provenance: Record<string,
   };
 }
 
-function poi(n: number, o: { importance?: unknown; position?: LonLat; name?: string; attributes?: Record<string, unknown>; profile?: Partial<ProfileSnapshot> | null } = {}): PoiSource {
+/** `selectedBy`: [spot number, distance km] of the places selecting the POI; default spot 1 at 1 km. */
+function poi(
+  n: number,
+  o: {
+    importance?: unknown;
+    position?: LonLat;
+    name?: string;
+    attributes?: Record<string, unknown>;
+    profile?: Partial<ProfileSnapshot> | null;
+    selectedBy?: Array<[number, number]>;
+  } = {},
+): PoiSource {
   return {
     geoObjectId: `g${n}`,
     publicId: id("hl", n),
@@ -55,11 +65,13 @@ function poi(n: number, o: { importance?: unknown; position?: LonLat; name?: str
     summary: null,
     sources: [],
     images: [],
+    selectedBy: (o.selectedBy ?? [[1, 1]]).map(([spotN, distanceKm]) => ({ placeGeoObjectId: `p${spotN}`, distanceKm })),
   };
 }
 
 const spot = (n: number, position: LonLat, patch: Partial<HighlightSpot> = {}): HighlightSpot => ({
   id: id("sp", n),
+  geoObjectId: `p${n}`,
   position,
   mergedInto: null,
   excluded: false,
@@ -72,31 +84,66 @@ describe("mapHighlights", () => {
     const delivered = { ...poi(1), sources: [navily, { url: "https://example.org/a", docType: "trip_report" as const, observedAt: "2026-06-01" }] };
     const dropped = { ...poi(2, { profile: null }), sources: [navily] };
     const out = mapHighlights([delivered, dropped], [spot(1, north(3))], ctx);
+    expect(out.dropped).toEqual([{ id: id("hl", 2), reason: "no_profile" }]);
     expect(out.highlights.map((h) => h.sources)).toEqual([[{ url: "https://example.org/a", kind: "tripReport", observedAt: "2026-06-01" }]]);
     expect(out.forbiddenSources).toEqual([{ id: id("hl", 1), urls: [navily.url] }]);
   });
 
-  it("importance 2 gives radius 10 nm and spots sorted by distance", () => {
-    const spots = [spot(1, north(9)), spot(2, north(11)), spot(3, north(3))];
-    const { highlights, dropped } = mapHighlights([poi(1, { importance: 2 })], spots, ctx);
+  it("highlight spotIds are the selecting spots by distance (spec 16)", () => {
+    // spot 4 lies next to the POI but does not select it; the importance plays no part
+    const spots = [spot(1, north(9)), spot(2, north(11)), spot(3, north(3)), spot(4, north(0.1))];
+    const selectedBy: Array<[number, number]> = [[1, 16.7], [2, 20.4], [3, 5.6]];
+    const { highlights, dropped, selectors } = mapHighlights([poi(1, { importance: 1, selectedBy })], spots, ctx);
     expect(dropped).toEqual([]);
     expect(highlights).toHaveLength(1);
-    expect(highlights[0]!.importance).toBe(2);
-    expect(highlights[0]!.spotIds).toEqual([id("sp", 3), id("sp", 1)]);
-    // importance 1 (5 nm) keeps only the near spot
-    expect(mapHighlights([poi(1, { importance: 1 })], spots, ctx).highlights[0]!.spotIds).toEqual([id("sp", 3)]);
+    expect(highlights[0]!.importance).toBe(1);
+    expect(highlights[0]!.spotIds).toEqual([id("sp", 3), id("sp", 1), id("sp", 2)]);
+    expect(selectors.get(id("hl", 1))).toEqual([id("sp", 3), id("sp", 1), id("sp", 2)]);
   });
 
   it("equal distances sort by spot id and the list stops at highlights.maxSpotIds", () => {
     const spots = [spot(7, north(1)), spot(5, north(1)), spot(6, north(0.5))];
-    expect(mapHighlights([poi(1)], spots, ctx).highlights[0]!.spotIds).toEqual([id("sp", 6), id("sp", 5), id("sp", 7)]);
-    const capped = mapHighlights([poi(1)], spots, { ...ctx, cfg: { ...cfg, highlights: { maxSpotIds: 2 } } }).highlights[0]!;
-    expect(capped.spotIds).toEqual([id("sp", 6), id("sp", 5)]);
+    const selectedBy: Array<[number, number]> = [[7, 1.8], [5, 1.8], [6, 0.9]];
+    expect(mapHighlights([poi(1, { selectedBy })], spots, ctx).highlights[0]!.spotIds).toEqual([id("sp", 6), id("sp", 5), id("sp", 7)]);
+    const capped = mapHighlights([poi(1, { selectedBy })], spots, { ...ctx, cfg: { ...cfg, highlights: { maxSpotIds: 2 } } });
+    expect(capped.highlights[0]!.spotIds).toEqual([id("sp", 6), id("sp", 5)]);
+    // the validation's selectors are not capped
+    expect(capped.selectors.get(id("hl", 1))).toEqual([id("sp", 6), id("sp", 5), id("sp", 7)]);
   });
 
-  it("merged and excluded spots never count (ruling M6-P5)", () => {
+  it("excluded or merged selecting spot is left out (ruling M6-P5, spec 16 review focus 2)", () => {
     const spots = [spot(1, north(1), { mergedInto: id("sp", 3) }), spot(2, north(2), { excluded: true }), spot(3, north(4))];
-    expect(mapHighlights([poi(1)], spots, ctx).highlights[0]!.spotIds).toEqual([id("sp", 3)]);
+    const selectedBy: Array<[number, number]> = [[1, 1.8], [2, 3.7], [3, 7.4]];
+    const { highlights, selectors } = mapHighlights([poi(1, { selectedBy })], spots, ctx);
+    expect(highlights[0]!.spotIds).toEqual([id("sp", 3)]);
+    expect(selectors.get(id("hl", 1))).toEqual([id("sp", 3)]);
+    // selected only by the merged and the excluded spot: not delivered
+    const only = mapHighlights([poi(1, { selectedBy: [[1, 1.8], [2, 3.7]] })], spots, ctx);
+    expect(only.highlights).toEqual([]);
+    expect(only.dropped).toEqual([{ id: id("hl", 1), reason: "not_selected" }]);
+  });
+
+  it("two spots 30 m apart selecting one POI give one highlight with both ids by distance (review focus 3)", () => {
+    const spots = [spot(1, north(1)), spot(2, north(1 + 30 / 1852))];
+    const { highlights, dropped } = mapHighlights([poi(1, { position: north(2), selectedBy: [[1, 1.852], [2, 1.822]] })], spots, ctx);
+    expect(dropped).toEqual([]);
+    expect(highlights.map((h) => h.id)).toEqual([id("hl", 1)]);
+    expect(highlights[0]!.spotIds).toEqual([id("sp", 2), id("sp", 1)]);
+  });
+
+  it("unselected POI is dropped with not_selected, before its missing profile", () => {
+    const spots = [spot(1, north(1))];
+    // no selection at all; selected only by a place that is no delivered spot
+    const { highlights, dropped } = mapHighlights(
+      [poi(1, { profile: null, selectedBy: [] }), poi(2, { selectedBy: [[9, 1]] })],
+      spots,
+      ctx,
+    );
+    expect(highlights).toEqual([]);
+    expect(dropped).toEqual([
+      { id: id("hl", 1), reason: "not_selected" },
+      { id: id("hl", 2), reason: "not_selected" },
+    ]);
   });
 
   it("a highlight losing its only spot is dropped and the spot loses the highlight id", () => {
@@ -108,17 +155,21 @@ describe("mapHighlights", () => {
     const after = [spot(1, north(3), { excluded: true })];
     const second = mapHighlights([poi(1)], after, ctx);
     expect(second.highlights).toEqual([]);
-    expect(second.dropped).toEqual([{ id: id("hl", 1), reason: "no_spot_in_radius" }]);
+    expect(second.dropped).toEqual([{ id: id("hl", 1), reason: "not_selected" }]);
     expect(highlightIdsBySpot(second.highlights, after).get(id("sp", 1))).toEqual([]);
   });
 
-  it("highlightIdsBySpot inverts spotIds by distance and gives an excluded spot none", () => {
+  it("highlightIdsBySpot inverts spotIds in the spot's rank order and gives an excluded spot none", () => {
     const spots = [spot(1, ORIGIN), spot(2, north(0.5), { excluded: true })];
-    const near = poi(1, { position: north(1) });
-    const far = poi(2, { position: north(4), name: "Kloster" });
+    const near = poi(1, { position: north(1), selectedBy: [[1, 1.8], [2, 1]] });
+    const far = poi(2, { position: north(4), name: "Kloster", selectedBy: [[1, 7.4], [2, 6.5]] });
     const { highlights } = mapHighlights([far, near], spots, ctx);
-    const bySpot = highlightIdsBySpot(highlights, spots);
-    expect(bySpot.get(id("sp", 1))).toEqual([id("hl", 1), id("hl", 2)]);
+    // the spot ranks the far one first (its selection order), not the near one
+    const ranked = [{ ...spots[0]!, ranked: [id("hl", 2), id("hl", 1)] }, spots[1]!];
+    const bySpot = highlightIdsBySpot(highlights, ranked);
+    expect(bySpot.get(id("sp", 1))).toEqual([id("hl", 2), id("hl", 1)]);
+    // without a ranking (no derived.highlights): by id
+    expect(highlightIdsBySpot(highlights, spots).get(id("sp", 1))).toEqual([id("hl", 1), id("hl", 2)]);
     expect(bySpot.get(id("sp", 2))).toEqual([]);
     // even a hand-built highlight naming an excluded spot leaves the excluded spot without highlights
     const forced = highlightIdsBySpot([{ ...highlights[0]!, spotIds: [id("sp", 2)] }], spots);
@@ -126,22 +177,23 @@ describe("mapHighlights", () => {
   });
 
   it("two 'Taverna Nikos' 300 m apart merge into the more important one", () => {
-    const a = poi(2, { importance: 2, position: ORIGIN });
-    const b = poi(1, { importance: 3, position: north(300 / 1852), name: "TAVERNA  Nikos!" });
+    const a = poi(2, { importance: 2, position: ORIGIN, selectedBy: [[2, 25.9]] });
+    const b = poi(1, { importance: 3, position: north(300 / 1852), name: "TAVERNA  Nikos!", selectedBy: [[1, 4.0]] });
     const spots = [spot(1, north(-2)), spot(2, north(14))];
     const { highlights, dropped } = mapHighlights([a, b], spots, ctx);
     expect(highlights.map((h) => h.id)).toEqual([id("hl", 1)]);
     expect(dropped).toEqual([{ id: id("hl", 2), reason: "duplicate", into: id("hl", 1) }]);
-    // the union of both spot lists, re-sorted by distance to the kept highlight
+    // the union of both spot lists, re-sorted by distance; the selectors carry the duplicate's spots too
     expect(highlights[0]!.spotIds).toEqual([id("sp", 1), id("sp", 2)]);
   });
 
   it("equal importance keeps the smaller id; 600 m apart or another name stays separate", () => {
-    // spot 2 lies 9.9 nm south of hl 2 only: within its 10 nm, outside hl 1's
+    // spot 2 selects hl 2 only
     const spots = [spot(1, north(1)), spot(2, north(-9.9))];
-    const same = mapHighlights([poi(2), poi(1, { position: north(300 / 1852) })], spots, ctx);
+    const same = mapHighlights([poi(2, { selectedBy: [[1, 1.8], [2, 18.3]] }), poi(1, { position: north(300 / 1852) })], spots, ctx);
     expect(same.dropped).toEqual([{ id: id("hl", 2), reason: "duplicate", into: id("hl", 1) }]);
     expect(same.highlights[0]!.spotIds).toEqual([id("sp", 1), id("sp", 2)]);
+    expect(same.selectors.get(id("hl", 1))).toEqual([id("sp", 1), id("sp", 2)]);
     const apart = mapHighlights([poi(2), poi(1, { position: north(600 / 1852) })], spots, ctx);
     expect(apart.highlights).toHaveLength(2);
     const other = mapHighlights([poi(2), poi(1, { name: "Taverna Maria" })], spots, ctx);

@@ -62,6 +62,8 @@ export type GeoObjectDetail = {
     mergedIntoId: string | null;
     validFrom: string;
     validTo: string | null;
+    /** For the page's map; simplified to about 50 m so large regions stay small. */
+    geometry: GeoJSON.Geometry;
   };
   names: Array<{
     name: string;
@@ -219,6 +221,7 @@ export async function geoObjectDetail(db: Db, id: string): Promise<GeoObjectDeta
       mergedIntoId: geoObjects.mergedIntoId,
       validFrom: geoObjects.validFrom,
       validTo: geoObjects.validTo,
+      geometry: asGeoJson(sql`ST_SimplifyPreserveTopology(${geoObjects.geom}, 0.0005)`),
     })
     .from(geoObjects)
     .where(eq(geoObjects.id, id));

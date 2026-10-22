@@ -189,6 +189,12 @@ const FIELD_CASES: Record<keyof SpotBody, () => void> = {
     expect(mapped().highlightIds).toEqual([HL]);
     expect(mapped(spotA(), { highlightIds: [] }).highlightIds).toEqual([]);
   },
+  highlightLevels: () => {
+    // spot A of the fixture has no selection
+    expect(mapped().highlightLevels).toBeUndefined();
+    const levels = { town: { ids: ["g9"], level: "some" }, culture: { ids: ["g1", "g2"], level: "many" }, food: { ids: [], level: "none" } };
+    expect(mapped(spotA({ attributes: { "derived.highlights": levels } })).highlightLevels).toEqual({ culture: "many", food: "none", town: "some" });
+  },
   externalRefs: () => expect(mapped().externalRefs).toEqual({ googlePlaceIds: {}, osmId: "way/123456789", wikidataId: null }),
   images: () => {
     expect(mapped().images).toBeUndefined();
@@ -248,6 +254,22 @@ describe("mapSpot", () => {
   it("the Teil-B-like spot A parses as a contract spot", () => {
     const spot = { ...mapped(), profileVersion: 1, validFrom: "2026-10-19" };
     expect(spotSchema.safeParse(spot).error?.issues).toBeUndefined();
+  });
+
+  it("spot.highlightLevels maps derived.highlights, categories sorted (spec 16)", () => {
+    const value = { food: { ids: ["g3"], level: "none" }, beach: { ids: ["g4", "g5"], level: "many" }, culture: { ids: [], level: "some" } };
+    const spot = mapped(spotA({ attributes: { "derived.highlights": value } }));
+    expect(spot.highlightLevels).toEqual({ beach: "many", culture: "some", food: "none" });
+    expect(Object.keys(spot.highlightLevels!)).toEqual(["beach", "culture", "food"]);
+    expect(parses(spot)).toBeUndefined();
+  });
+
+  it("empty derived.highlights → no highlightLevels (spec 16 review focus 1)", () => {
+    for (const value of [{}, null, undefined, "x", [], { food: { ids: [], level: "lots" } }]) {
+      const spot = mapped(spotA({ attributes: { "derived.highlights": value } }));
+      expect(spot.highlightLevels, JSON.stringify(value)).toBeUndefined();
+      expect("highlightLevels" in spot, JSON.stringify(value)).toBe(false);
+    }
   });
 
   it("without a profile the spot is omitted as no_profile", () => {

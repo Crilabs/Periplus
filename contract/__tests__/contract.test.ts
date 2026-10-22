@@ -125,7 +125,7 @@ describe("Periplus Data Contract v2", () => {
   });
 
   it("names one JSON schema file per contract file", () => {
-    expect(SCHEMA_VERSION).toBe("2.2");
+    expect(SCHEMA_VERSION).toBe("2.3");
     expect(CONTRACT_FILES.map(jsonSchemaFileName)).toEqual([
       "manifest.schema.json",
       "spots.schema.json",
@@ -137,7 +137,7 @@ describe("Periplus Data Contract v2", () => {
     ]);
   });
 
-  it.each(["1.0", "2.0", "2.1", "2.2"])("checked-in JSON schemas of %s equal the generated ones", (version) => {
+  it.each(["1.0", "2.0", "2.1", "2.2", "2.3"])("checked-in JSON schemas of %s equal the generated ones", (version) => {
     for (const f of CONTRACT_FILES) {
       expect(readJson(`contract/schema/${version}/${jsonSchemaFileName(f)}`), f).toEqual(
         contractJsonSchema(version, jsonSchemaFileName(f)),
@@ -199,6 +199,22 @@ describe("Periplus Data Contract v2", () => {
     }
   });
 
+  it("2.2 validates highlightLevels", () => {
+    expect(spotSchema.safeParse({ ...ex, highlightLevels: { culture: "many", food: "none", beach: "some" } }).success).toBe(true);
+    expect(spotSchema.safeParse({ ...ex, highlightLevels: {} }).success).toBe(true);
+    expect(spotSchema.safeParse(omit({ ...ex, highlightLevels: { food: "none" } }, "highlightLevels")).success).toBe(true);
+    for (const [name, highlightLevels] of [
+      ["an unknown level", { food: "lots" }],
+      ["an unknown category", { museums: "some" }],
+      ["a list", ["some"]],
+    ] as const) {
+      expect(spotSchema.safeParse({ ...ex, highlightLevels }).success, name).toBe(false);
+    }
+    // 2.1 does not know the field
+    expect(JSON.stringify(contractJsonSchema("2.1", "spots.schema.json"))).not.toContain("highlightLevels");
+    expect(JSON.stringify(contractJsonSchema("2.2", "spots.schema.json"))).toContain("highlightLevels");
+  });
+
   it("the 2.1 manifest lists image files beside the contract files", () => {
     const manifest = SAMPLE_FILES["manifest.json"];
     const entry = { name: `images/${ex.id}-title.jpg`, sha256: "a".repeat(64), bytes: 10 };
@@ -229,14 +245,14 @@ describe("Periplus Data Contract v2", () => {
     expect(JSON.stringify(contractJsonSchema("2.1", "spots.schema.json"))).toContain("images");
   });
 
-  // the 2.1 files as published (sha256 of the checked-in bytes): 2.2 is additive, 2.1 never changes
+  // the 2.1 files as published on 2026-10-21: 2.2 is additive, 2.1 never changes
   const FROZEN_2_1: Record<string, string> = {
     "changes.schema.json": "24082f23f053ce6c100011d90e157c9e8a0df9bb2e305a7b4e8f96466da5dfd9",
     "coast.schema.json": "c1d8ce6edf126a97a3e3871e1eeff8135c2e3a0086bf8ed917cc51e16e0c39d9",
     "highlights.schema.json": "e2d8cdfaa65326cd2a26ee5f34e097180e7f8084435a44342478a4d76defc9b5",
     "manifest.schema.json": "aea97978f9dd76899e7c08350ac522504db9d1627b8b14db61c13a057911edec",
     "regions.schema.json": "052a6c75b26896743c10af319e3c86e59c829bb7ebd82da46dc00122f9b9ea03",
-    "spots.schema.json": "3e267a82c9d05a2a5cecf6adf86d94b32c43830ea2440719d1298b89d10270a9",
+    "spots.schema.json": "579ec293c6aadcd7fb6630164a2eadb748857b23654b22acd66317a0335e23fe",
     "weather-points.schema.json": "e301bbfcd06b0c93d4895350f0e250e1393b42e0a337476ad65ae42fdf2b6f4d",
   };
 
@@ -246,12 +262,32 @@ describe("Periplus Data Contract v2", () => {
       expect(createHash("sha256").update(readFileSync(`contract/schema/2.1/${file}`)).digest("hex"), file).toBe(sha);
       expect(publishedJsonSchema("2.1", file), file).toEqual(readJson(`contract/schema/2.1/${file}`));
     }
-    // 2.1 knows neither berthable nor contact
-    expect(JSON.stringify(contractJsonSchema("2.1", "spots.schema.json"))).not.toContain("berthable");
-    expect(JSON.stringify(contractJsonSchema("2.2", "spots.schema.json"))).toContain("berthable");
   });
 
-  it("2.2 spot carries berthable and contact (each nullable, required)", () => {
+  // the 2.2 files as published on 2026-10-22 (sha256 of the checked-in bytes): 2.3 is additive, 2.2 never changes
+  const FROZEN_2_2: Record<string, string> = {
+    "changes.schema.json": "8b29c4688284e7dbac10ef2b17d01473d7c1fe0deacd1b730e9635f5f033a3e2",
+    "coast.schema.json": "0f3f14def652befbde09c3c7542aa22f4de9497cb26646c6f88e8b15baeb8dcf",
+    "highlights.schema.json": "8b4bbfa76d9eb0915e0c67109d276fa8089ba762dd5a1a249dbbe8a4f5e6c41c",
+    "manifest.schema.json": "78d876c90ae0fa2e80715b0125178b4655fee0c470f0bf66c5bd96201463b204",
+    "regions.schema.json": "571088c5166f38882a54f63669ca6b5a56b8eb3ee6d27d9472e0923027830970",
+    "spots.schema.json": "8c1f96553beefe97a1a76dffe123aa5e8b6760160e3561d183108a4a65d45e8d",
+    "weather-points.schema.json": "ead00fd4e22cb3a7297496f92a0e4ae5c379acdb450f28d7fb561b59c0bd76a7",
+  };
+
+  it("2.2 schema files are unchanged", () => {
+    expect(readdirSync("contract/schema/2.2").sort()).toEqual(Object.keys(FROZEN_2_2).sort());
+    for (const [file, sha] of Object.entries(FROZEN_2_2)) {
+      expect(createHash("sha256").update(readFileSync(`contract/schema/2.2/${file}`)).digest("hex"), file).toBe(sha);
+      expect(publishedJsonSchema("2.2", file), file).toEqual(readJson(`contract/schema/2.2/${file}`));
+    }
+    // 2.1 and 2.2 know neither berthable nor contact
+    expect(JSON.stringify(contractJsonSchema("2.1", "spots.schema.json"))).not.toContain("berthable");
+    expect(JSON.stringify(contractJsonSchema("2.2", "spots.schema.json"))).not.toContain("berthable");
+    expect(JSON.stringify(contractJsonSchema("2.3", "spots.schema.json"))).toContain("berthable");
+  });
+
+  it("2.3 spot carries berthable and contact (each nullable, required)", () => {
     expect(spotSchema.safeParse(ex).success).toBe(true);
     expect(spotSchema.safeParse({ ...ex, berthable: null, contact: null }).success).toBe(true);
     expect(spotSchema.safeParse({ ...ex, berthable: false, contact: { vhf: null, phone: null, url: null } }).success).toBe(true);
@@ -261,15 +297,15 @@ describe("Periplus Data Contract v2", () => {
     for (const url of ["javascript:alert(1)", "ftp://marina.example", "upload://doc"]) {
       expect(spotSchema.safeParse({ ...ex, contact: { vhf: null, phone: null, url } }).success, url).toBe(false);
     }
-    expect(JSON.stringify(contractJsonSchema("2.2", "spots.schema.json"))).toContain("^https?://");
+    expect(JSON.stringify(contractJsonSchema("2.3", "spots.schema.json"))).toContain("^https?://");
     expect(spotSchema.safeParse({ ...ex, contact: { vhf: "71", phone: null, url: null, extra: 1 } }).success).toBe(false);
   });
 
   it("a generated JSON schema carries its id and title", () => {
-    expect(contractJsonSchema("2.2", "spots.schema.json")).toMatchObject({
+    expect(contractJsonSchema("2.3", "spots.schema.json")).toMatchObject({
       $schema: "https://json-schema.org/draft/2020-12/schema",
-      $id: "periplus:contract/2.2/spots.schema.json",
-      title: "Periplus Data Contract 2.2 – spots.json",
+      $id: "periplus:contract/2.3/spots.schema.json",
+      title: "Periplus Data Contract 2.3 – spots.json",
     });
   });
 

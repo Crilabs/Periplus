@@ -12,6 +12,7 @@ import { mergeCandidates, type MergeCandidate } from "@/lib/domain/place-merge";
 import { ADMIN_PLACE_STATUSES } from "@/lib/domain/place-status";
 import { placeDetail } from "@/lib/domain/geo-view";
 import { placeGeometry } from "@/lib/domain/geometry-view";
+import { placeHighlightsView } from "@/lib/domain/highlights/view";
 import { placeImageView } from "@/lib/domain/images/view";
 import { timelineView } from "@/lib/domain/profile-timeline";
 import { profileAttributeFacts, profileView } from "@/lib/domain/profile-view";
@@ -47,6 +48,7 @@ import { mergePlaceAction, recomputePlaceProfileAction } from "./actions";
 import { DeliveryTab } from "./delivery-tab";
 import { FactsTab } from "./facts-tab";
 import { GeometryTab } from "./geometry-tab";
+import { HighlightsPanel } from "./highlights-panel";
 import { ImageTab } from "./image-tab";
 import { ProfileTab } from "./profile-tab";
 import { StatusActions } from "./status-actions";
@@ -106,6 +108,7 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
   const { place: p, openReviewTask: task } = detail;
   const geometry = tab === "geometry" ? await placeGeometry(db, p.id) : null;
   const facts = tab === "facts" ? await geoFacts(db, p.geoObjectId, { runs }) : null;
+  const highlights = tab === "overview" ? await placeHighlightsView(db, p.geoObjectId) : [];
   const attr = textParam.parse(sp.attr);
   const active = !p.validTo && !p.mergedIntoId;
   const mergeable = active && p.status === "confirmed";
@@ -225,7 +228,7 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
           positionNotice={positionStatus ? { status: positionStatus, runId: uuidParam.parse(sp.run) } : undefined}
         />
       ) : (
-        <Overview detail={detail} />
+        <Overview detail={detail} highlights={highlights} />
       )}
     </>
   );
@@ -367,7 +370,7 @@ function AutoDecisionLine({ decision }: { decision: NonNullable<Detail["autoDeci
   );
 }
 
-function Overview({ detail }: { detail: Detail }) {
+function Overview({ detail, highlights }: { detail: Detail; highlights: Awaited<ReturnType<typeof placeHighlightsView>> }) {
   const p = detail.place;
   const point: GeoJSON.FeatureCollection = {
     type: "FeatureCollection",
@@ -442,6 +445,8 @@ function Overview({ detail }: { detail: Detail }) {
             ]}
           />
         </Panel>
+
+        <HighlightsPanel categories={highlights} />
 
         <Panel title="Statusverlauf" flush>
           {detail.statusHistory.length === 0 ? (

@@ -13,7 +13,7 @@ import { createLogger } from "@/lib/logger";
 import type { Bbox } from "@/lib/domain/tiles";
 import { assignParents, assignSeas, assignSubdivisions } from "@/lib/domain/gazetteer/hierarchy";
 import { landCoverage } from "@/lib/domain/gazetteer/land";
-import { elementGeometry, keptTags, nearCoast } from "./osm";
+import { elementGeometry, keptTags, nearCoast, relationPoints } from "./osm";
 
 export const COARSE_STAGE = "gazetteer.coarse";
 
@@ -232,7 +232,8 @@ export async function importCoarseFeatures(
   const ctx = { db, runId: deps.runId, stage: COARSE_STAGE };
   const date = (deps.now ?? new Date()).toISOString().slice(0, 10);
   const ql = buildCoarseFeatureQuery(country, cfg, gazetteer.overpass.timeoutSeconds);
-  const { raw, elements } = await overpassQuery(deps.transport, ql, ctx, deps.overpass ?? gazetteer.overpass);
+  const overpassCfg = deps.overpass ?? gazetteer.overpass;
+  const { raw, elements } = await overpassQuery(deps.transport, ql, ctx, overpassCfg);
   await deps.archive?.put(`datasets/overpass/features/${country}/${date}.json`, raw, "application/json");
 
   const result = await db.transaction(async (tx) => {
@@ -247,6 +248,11 @@ export async function importCoarseFeatures(
       const classified = classifyOsm(tags, categories, el.type);
       const geometry = classified && elementGeometry(el);
       if (!classified || !geometry) continue;
+      const points = relationPoints(el);
+      if (points > overpassCfg.maxRelationPoints) {
+        getLog().warn({ osmId, points }, "skipped coarse relation above overpass.maxRelationPoints");
+        continue;
+      }
       const type = classified.type;
       let key: keyof typeof counts;
       if (type === "island") {

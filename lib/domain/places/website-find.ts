@@ -25,7 +25,7 @@ import { PLACE_WEBSITE_STAGE } from "@/lib/pipeline/places/stage-name";
 import { knownWebsites } from "./websites";
 
 /*
- * Finding the website of a marina or port (spec 16 C „Welche Orte“, „Herkunft der Adresse“, „Ist das die Website
+ * Finding the website of a marina or port (spec 15 C „Welche Orte“, „Herkunft der Adresse“, „Ist das die Website
  * dieses Ortes?“): an address OSM or Wikidata already gives wins; otherwise a Google search (DataForSEO, level
  * `place_website`) whose hits the model checks one by one, the first confident yes with a verifiable quote wins. A
  * miss writes nothing but the search itself: no review task, and no new search before `placeWebsite.retryDays`.
@@ -59,7 +59,7 @@ export type FoundWebsite = {
 };
 
 /**
- * The places that need a website (spec 16 C „Welche Orte“): valid, unmerged places of kind `marina` or `port` with
+ * The places that need a website (spec 15 C „Welche Orte“): valid, unmerged places of kind `marina` or `port` with
  * status `candidate` or `confirmed` whose valid geo object belongs to the subdivision (its `subdivision_id`, else the
  * label of the place's tile), without any `place_websites` row. Ordered by place id. An unknown subdivision throws.
  */
@@ -157,7 +157,7 @@ const domainOf = (url: string): string | null => {
 };
 
 /**
- * The model's yes counts (spec 16 C): `isOwnSite`, confidence at least `minConfidence`, and a non-empty quote that is
+ * The model's yes counts (spec 15 C): `isOwnSite`, confidence at least `minConfidence`, and a non-empty quote that is
  * on the page (verbatim after the quote normalisation of the fact check: Markdown, whitespace and typography; case and
  * accents kept) and names the place (one of `names` as whole words, compared without case and accents).
  */
@@ -286,7 +286,7 @@ async function pageText(db: Db, url: string, deps: FindDeps, ctx: { runId: strin
 }
 
 /**
- * Finds the website of one place (spec 16 C):
+ * Finds the website of one place (spec 15 C):
  * 1. A known address (`knownWebsites`: OSM `website`, `contact:website`, Wikidata P856), the first one whose domain is
  *    not a rejected source: `known`, no search, no model.
  * 2. Else, when a `place_website` search for the geo object of another run is younger than `placeWebsite.retryDays`:

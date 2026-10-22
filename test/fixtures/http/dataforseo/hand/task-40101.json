@@ -1,0 +1,38 @@
+{
+  "version": "0.1.20250101",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "time": "1.2 sec.",
+  "cost": 0,
+  "tasks_count": 1,
+  "tasks_error": 1,
+  "tasks": [
+    {
+      "id": "10190800-0000-0000-0000-000000000002",
+      "status_code": 40101,
+      "status_message": "Internal SE Server Error.",
+      "time": "0 sec.",
+      "cost": 0,
+      "result_count": 0,
+      "path": [
+        "v3",
+        "serp",
+        "google",
+        "organic",
+        "live",
+        "regular"
+      ],
+      "data": {
+        "api": "serp",
+        "function": "live",
+        "se": "google",
+        "se_type": "organic",
+        "keyword": "anchorage hand",
+        "language_code": "en",
+        "location_code": 1,
+        "depth": 20
+      },
+      "result": null
+    }
+  ]
+}

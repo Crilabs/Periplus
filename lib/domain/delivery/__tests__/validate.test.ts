@@ -10,12 +10,14 @@ import { withRollback } from "@/test/db";
 import {
   breakPackage,
   HIGHLIGHT,
+  HIGHLIGHT_SELECTORS,
   INLAND_2NM,
   offsetSouth,
   OTHER_HL,
   OTHER_SP,
   PREVIOUS,
   SPOT_A,
+  SPOT_M,
   SPOT_X,
   validPackage,
 } from "@/test/fixtures/delivery/package";
@@ -33,7 +35,7 @@ function validate(pkg: DeliveryPackage, deps: Partial<ValidationDeps> = {}): Pro
     findCopies: async () => 0,
     forbiddenSources: [],
     cfg,
-    radiusNm: config.consolidation.importance.radiusNm,
+    highlightSelectors: HIGHLIGHT_SELECTORS,
     ...deps,
   });
 }
@@ -88,8 +90,8 @@ describe("validatePackage", () => {
     ["exclude_reason", (p) => void (spots(p)[1]!.exclude = { excluded: true, reason: null, detail: null })],
     ["berth_months", (p) => void (spots(p)[1]!.berth = { status: "seasonFull", months: [], sourcesCount: 1, bookable: null })],
     ["low_confidence_note", (p) => void (spots(p)[0]!.score.confidence = 0.2)],
-    // A is 7 nm away, importance 1 has a radius of 5 nm
-    ["highlight_radius", (p) => void (highlights(p)[0]!.importance = 1)],
+    // the marina is delivered but does not select the highlight (spec 16)
+    ["highlight_selected", (p) => void (highlights(p)[0]!.spotIds = [SPOT_M])],
     [
       "spot_duplicates",
       (p) => {
@@ -104,6 +106,7 @@ describe("validatePackage", () => {
         highlights(p).push({ ...highlights(p)[0]!, id: OTHER_HL, name: "TAVERNA VATHI", position: offsetSouth(highlights(p)[0]!.position, 300) });
         created(p, "highlight", OTHER_HL);
       },
+      { highlightSelectors: new Map([...HIGHLIGHT_SELECTORS, [OTHER_HL, [SPOT_A]]]) },
     ],
     ["verbatim_text", () => {}, { findCopies: async (text: string) => (text.startsWith("Tiefe Bucht") ? 16 : 0) }],
     [
@@ -188,9 +191,21 @@ describe("validatePackage", () => {
     expect(failed(await validate(textSource))).toEqual([]);
   });
 
-  it("highlight_radius counts no excluded or merged spot (ruling M6-P5)", async () => {
+  it("highlight_selected counts no excluded or merged spot (ruling M6-P5)", async () => {
     const excluded = breakPackage(validPackage(), (p) => void (spots(p)[0]!.exclude = { excluded: true, reason: "military", detail: null }));
-    expect(failed(await validate(excluded))).toEqual(["highlight_radius"]);
+    expect(failed(await validate(excluded))).toEqual(["highlight_selected"]);
+  });
+
+  it("highlight_selected: every spotId selects the highlight, and there is one (spec 16)", async () => {
+    const report = await validate(validPackage(), { highlightSelectors: new Map() });
+    expect(failed(report)).toEqual(["highlight_selected"]);
+    expect(findings(report, "highlight_selected")).toEqual([
+      expect.objectContaining({ objectId: HIGHLIGHT, path: "/highlights/0/spotIds/0", message: `${SPOT_A} wählt das Highlight nicht aus` }),
+    ]);
+    const empty = breakPackage(validPackage(), (p) => void (highlights(p)[0]!.spotIds = []));
+    expect(findings(await validate(empty), "highlight_selected")).toEqual([
+      expect.objectContaining({ objectId: HIGHLIGHT, path: "/highlights/0/spotIds", message: "Kein gelieferter Spot wählt das Highlight aus" }),
+    ]);
   });
 
   it("an excluded spot is no duplicate of a usable one of the same kind (validation review M-8)", async () => {

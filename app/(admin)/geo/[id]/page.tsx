@@ -11,12 +11,15 @@ import { requireAdmin } from "@/lib/security/require-admin";
 import {
   GEO_OBJECT_TYPE_LABELS,
   GEO_ORIGIN_LABELS,
+  languageLabel,
   NAME_ORIGIN_LABELS,
   PLACE_KIND_LABELS,
   PLACE_STATUS_LABELS,
+  POI_CATEGORY_LABELS,
   runScopeError,
 } from "../../_components/labels";
 import { MentionsPanel } from "../../_components/mentions-panel";
+import { MiniMap } from "../../_components/mini-map";
 import {
   Badge,
   Button,
@@ -106,13 +109,22 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
       <PageHeader
         title={
           <>
-            {o.name ?? o.id} <span className="font-normal text-muted">({GEO_OBJECT_TYPE_LABELS[o.type]})</span>
+            {o.name ?? o.id}{" "}
+            <span className="font-normal text-muted">
+              ({GEO_OBJECT_TYPE_LABELS[o.type]}
+              {o.category ? ` · ${POI_CATEGORY_LABELS[o.category]}` : ""})
+            </span>
           </>
         }
         back={{ href: "/map", label: "Karte" }}
         meta={
           <>
             <Badge>{GEO_OBJECT_TYPE_LABELS[o.type]}</Badge>
+            {o.category && (
+              <Badge tone="accent" title="Kategorie">
+                {POI_CATEGORY_LABELS[o.category]}
+              </Badge>
+            )}
             <Badge tone="neutral" title="Herkunft">
               {GEO_ORIGIN_LABELS[o.origin]}
             </Badge>
@@ -164,6 +176,11 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
         </div>
 
         <div className="space-y-6">
+          <Panel flush className="overflow-hidden [&_[aria-label=Kartenausschnitt]]:h-[18rem]">
+            <MiniMap
+              features={{ type: "FeatureCollection", features: [{ type: "Feature", geometry: o.geometry, properties: { role: "subject" } }] }}
+            />
+          </Panel>
           <Panel title="Eckdaten">
             <DescriptionList
               columns={1}
@@ -248,7 +265,7 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
                     {detail.names.map((n) => (
                       <tr key={`${n.name}|${n.language}|${n.origin}|${n.validFrom}`} className={cx(trClass, !n.valid && "text-muted")}>
                         <td className={tdClass}>{n.name}</td>
-                        <td className={tdClass}>{n.language}</td>
+                        <td className={tdClass}>{languageLabel(n.language)}</td>
                         <td className={tdClass}>{SCRIPT_LABELS[n.script]}</td>
                         <td className={tdClass}>{NAME_ORIGIN_LABELS[n.origin]}</td>
                         <td className={tdClass}>{n.isPreferred ? "Ja" : "Nein"}</td>
@@ -268,7 +285,7 @@ export default async function Page({ params, searchParams }: PageProps<"/geo/[id
                 {shownNames.map((n) => (
                   <li key={`${n.name}|${n.language}|${n.origin}|${n.validFrom}`} className="flex items-center justify-between gap-3 px-4 py-2">
                     <span className="min-w-0 break-words">
-                      {n.name} <span className="text-xs text-muted">{n.language}</span>
+                      {n.name} <span className="text-xs text-muted">{languageLabel(n.language)}</span>
                     </span>
                     {n.isPreferred && <Badge tone="accent">bevorzugt</Badge>}
                   </li>

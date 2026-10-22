@@ -1,7 +1,8 @@
 import { z } from "zod";
-import type { CallContext, Transport } from "@/lib/adapters/http";
+import { RetryableHttpError, type CallContext, type Transport } from "@/lib/adapters/http";
 import type { Archive } from "@/lib/adapters/s3";
 import { getConfig, type AppConfig } from "@/lib/config";
+import { createLogger } from "@/lib/logger";
 import type { Db } from "@/lib/db/client";
 import { serpLevelEnum } from "@/lib/db/schema";
 import { areaQueries, capQueries, placeQueries, queryKey, tileQueries, type DiscoveryQuery } from "@/lib/domain/discovery/queries";
@@ -29,18 +30,34 @@ export const discoveryQuerySchema = z.strictObject({
   tileId: z.string().min(1).optional(),
 });
 
-export type SearchSummary = { queries: number; searched: number; reused: number };
+export type SearchSummary = { queries: number; searched: number; reused: number; failed: number };
 
-/** Runs the queries one after another (`runQuery`: reuse within 30 days, else search and store). */
+/**
+ * Runs the queries one after another (`runQuery`: reuse within 30 days, else search and store). A query that still
+ * fails transiently after the adapter's own attempts (`RetryableHttpError`, e.g. DataForSEO 40101) is logged and
+ * skipped: it has no stored result, so the next run searches it again. When no query succeeded at all, the last
+ * error is thrown, so the job is retried (an outage, not a single bad keyword). Other errors (budget, a wrong
+ * request) end the job at once.
+ */
 export async function runQueries(db: Db, queries: DiscoveryQuery[], deps: Deps, ctx: CallContext): Promise<SearchSummary> {
   let searched = 0;
   let reused = 0;
+  let failed = 0;
+  let lastError: unknown;
   for (const q of queries) {
-    const result = await runQuery(db, q, deps, ctx);
-    if (result.reused) reused += 1;
-    else searched += 1;
+    try {
+      const result = await runQuery(db, q, deps, ctx);
+      if (result.reused) reused += 1;
+      else searched += 1;
+    } catch (error) {
+      if (!(error instanceof RetryableHttpError)) throw error;
+      failed += 1;
+      lastError = error;
+      createLogger("discovery").warn({ keyword: q.keyword, languageCode: q.languageCode, err: error }, "search skipped after transient errors");
+    }
   }
-  return { queries: queries.length, searched, reused };
+  if (failed > 0 && searched + reused === 0) throw lastError;
+  return { queries: queries.length, searched, reused, failed };
 }
 
 /** The area queries of a subdivision a run makes: `areaQueries` cut to `maxQueriesPerRun`. */

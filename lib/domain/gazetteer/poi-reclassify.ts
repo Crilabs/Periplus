@@ -11,7 +11,7 @@ export type ReclassifyResult = { cleared: number; changed: number; geoObjectIds:
 type PoiRow = { id: string; category: PoiCategory | null; tags: Record<string, string> };
 
 /**
- * Re-applies `categories.osm` to the stored OSM POIs (spec 16 A): valid, unmerged `poi` rows of origin `osm` with
+ * Re-applies `categories.osm` to the stored OSM POIs (spec 15 A): valid, unmerged `poi` rows of origin `osm` with
  * tags (Wikidata and review POIs carry none and keep their category). A POI whose category differs gets the new one,
  * or none (delivery then drops it). Returns the ids of the geo objects with a place within `poiRadiusM` of a changed
  * POI: their profiles are stale and need a new consolidation. `dryRun` counts only and writes nothing.

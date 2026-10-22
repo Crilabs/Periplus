@@ -301,6 +301,7 @@ describe("loadConfig", () => {
     expect(c.gazetteer.geonames.featureCodes.PPLA2).toBe("settlement");
     expect(c.gazetteer.merge.distanceM.default).toBe(500);
     expect(c.gazetteer.landBufferKm).toBe(55);
+    expect(c.gazetteer.poiCoastDistanceKm).toBe(20);
     expect(c.gazetteer.noAnchoringKinds).toEqual(["military", "cable", "firing_area", "aquaculture"]);
   });
 
@@ -536,9 +537,33 @@ describe("consolidation rules", () => {
     return rules;
   };
 
-  it("the active rules version is v2 with the spec values", () => {
+  it("consolidation v3 is active and has highlights", () => {
     const c = getConfig().consolidation;
-    expect(c.version).toBe("v2");
+    expect(c.version).toBe("v3");
+    expect(c.highlights?.maxPerCategory).toBe(5);
+    expect(c.highlights?.reachKm).toEqual([1, 1, 5, 20, 20]);
+    expect(c.highlights?.levelWeights).toEqual([0.005, 0.2, 1, 3, 6]);
+    expect(c.highlights?.textNameImportance).toBe(2);
+    const [low, high] = c.highlights!.levelThresholds;
+    expect(low).toBeLessThan(high!);
+    expect(c.importance.tagBonus?.["historic=castle"]).toBe(2);
+    expect(c.importance.tagBonus?.["wikidata:Q39715"]).toBe(1);
+  });
+
+  it("highlights rejects reachKm of length 4 and descending level thresholds", () => {
+    const withHighlights = (patch: (h: NonNullable<ReturnType<typeof rulesFile>["highlights"]>) => void) => {
+      const c = rulesFile();
+      patch(c.highlights!);
+      return () => loadConfig(fixtureDir({ consolidation: { v2: c }, consolidationActive: { version: "v2" } }));
+    };
+    expect(withHighlights(() => {})).not.toThrow();
+    expect(withHighlights((h) => (h.reachKm = [1, 1, 5, 20]))).toThrow(/consolidation\/v2\.json.*highlights/);
+    expect(withHighlights((h) => (h.levelThresholds = [6, 1]))).toThrow(/consolidation\/v2\.json.*highlights/);
+  });
+
+  it("the v1 rules still validate and carry the spec values", () => {
+    const c = getConsolidationConfig("v1");
+    expect(c.version).toBe("v1");
     expect(c).toMatchObject({
       recency: { halfLifeYears: 3 },
       precision: 3,
@@ -585,17 +610,18 @@ describe("consolidation rules", () => {
 
   it("getConsolidationConfig reads the active version by default and a named one on demand", () => {
     expect(getConsolidationConfig()).toEqual(getConfig().consolidation);
-    const v3 = { ...rulesFile(), conflict: { minRatio: 2 } };
-    const dir = fixtureDir({ consolidation: { v2: rulesFile(), v3 } });
-    expect(loadConfig(dir).consolidation.version).toBe("v2");
-    expect(getConsolidationConfig("v3", dir)).toMatchObject({ version: "v3", conflict: { minRatio: 2 } });
+    const active = repoConfig.consolidation.version;
+    const later = { ...rulesFile(), conflict: { minRatio: 2 } };
+    const dir = fixtureDir({ consolidation: { [active]: rulesFile(), v99: later } });
+    expect(loadConfig(dir).consolidation.version).toBe(active);
+    expect(getConsolidationConfig("v99", dir)).toMatchObject({ version: "v99", conflict: { minRatio: 2 } });
   });
 
   it("quietness weights must be positive and importance thresholds ascending", () => {
     const withRules = (patch: (c: ReturnType<typeof rulesFile>) => void) => {
       const c = rulesFile();
       patch(c);
-      return () => loadConfig(fixtureDir({ consolidation: { v2: c } }));
+      return () => loadConfig(fixtureDir({ consolidation: { v2: c }, consolidationActive: { version: "v2" } }));
     };
     expect(withRules((c) => (c.quietness.weights.ferry = 0))).toThrow(/consolidation\/v2\.json.*quietness\.weights/);
     expect(withRules((c) => (c.quietness.weights.ferry = 0.2))).toThrow(/quietness\.weights.*sum to 1/);
@@ -618,7 +644,7 @@ describe("consolidation rules", () => {
     const withKeys = (keys: Record<string, string[]>) => () => {
       const c = rulesFile();
       c.rules.union.keys = keys;
-      return loadConfig(fixtureDir({ consolidation: { v2: c } }));
+      return loadConfig(fixtureDir({ consolidation: { v2: c }, consolidationActive: { version: "v2" } }));
     };
     expect(withKeys({ hazards: ["kind", "nmae"] })).toThrow(/consolidation\/v2\.json.*"hazards".*"nmae"/);
     // A key on an entry that is no object (a list of enum values) cannot identify anything.
@@ -650,7 +676,7 @@ describe("consolidation rules", () => {
 describe("delivery configuration", () => {
   it("the delivery config carries the spec values", () => {
     expect(getConfig().delivery).toMatchObject({
-      schemaVersion: "2.2",
+      schemaVersion: "2.3",
       coast: { marginNm: 2, simplifyToleranceM: 10 },
       validation: {
         maxWaterDistanceNm: 1.5,
