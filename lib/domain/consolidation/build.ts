@@ -1,3 +1,4 @@
+import { derivedBerthable } from "./berthable";
 import { createHash } from "node:crypto";
 import type { ConsolidationConfig } from "@/lib/config/schemas";
 import { canonicalJson, getFactSchema } from "@/lib/domain/facts/schema";
@@ -90,13 +91,6 @@ function dateMinusDays(date: string, days: number): string {
 }
 
 /** Provenance of a value the profile build sets itself (identity: gazetteer; derived values). */
-/** Spec 17: no anchoring or a port → false; a confirmed anchorage, marina or mooring field → true; else no value. */
-function derivedBerthable(kind: string, status: string): boolean | null {
-  if (status === "no_anchoring" || kind === "port") return false;
-  if (status === "confirmed" && ["anchorage", "marina", "mooring_field"].includes(kind)) return true;
-  return null;
-}
-
 function fixedProvenance(
   origin: "gazetteer" | "derived",
   cites: Partial<Pick<AttributeProvenance, "factIds" | "sourceKeys" | "computationIds" | "poiIds">> = {},

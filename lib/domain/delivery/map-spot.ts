@@ -1,6 +1,8 @@
+import { httpUrl } from "@/contract/v2/common";
 import type { SpotBody } from "@/contract";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import type { PlaceKind } from "@/lib/db/schema/geo";
+import { derivedBerthable } from "@/lib/domain/consolidation/berthable";
 import { excludeValue, type ExcludeValue } from "@/lib/domain/consolidation/exclude";
 import type { AttributeProvenance, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
@@ -235,11 +237,14 @@ export function mapSpot(
   const anchor = isHarbour ? undefined : anchorPosition(a["anchor_position"], p["anchor_position"], warnings);
   const depthValue = depth(a, p, warnings);
 
+  // a stored profile without the value (consolidated before fact schema v3) delivers the derivation of spec 17
+  const berthableFact = typeof a["berthable"] === "boolean" ? a["berthable"] : null;
+  const berthable = berthableFact ?? derivedBerthable(placeKind, src.status);
   const sources = mapSources(src.sources, ctx.cfg);
   const spot: SpotBody = {
     id: src.publicId,
     kind: SPOT_KIND[placeKind],
-    berthable: typeof a["berthable"] === "boolean" ? a["berthable"] : null,
+    berthable,
     contact: contact(a["contact"]),
     name: nameless ? ctx.cfg.spots.excludedFallbackName : src.name,
     names: src.names.length > 0 ? src.names : undefined,
@@ -269,7 +274,7 @@ export function mapSpot(
     summary: mapSummary(src.summary, profile?.confidence ?? null, ctx.cfg),
     images: mapImages(src.publicId, src.images),
     sources: sources.sources,
-    provenance: provenance(p, has, {
+    provenance: provenance(berthableFact === null && berthable !== null ? { ...p, berthable: DERIVED_PROVENANCE } : p, berthableFact === null && berthable !== null ? (k) => k === "berthable" || has(k) : has, {
       anchorPosition: anchor !== undefined,
       depth: depthValue !== undefined,
       banExcludes,
@@ -282,11 +287,31 @@ export function mapSpot(
   return { spot: withoutUndefined(spot), warnings, forbiddenSources: sources.forbidden };
 }
 
+/** Provenance of a `berthable` the delivery derives itself (no fact, no stored derivation). */
+const DERIVED_PROVENANCE: AttributeProvenance = {
+  origin: "derived",
+  rule: "derived",
+  confidence: 1,
+  confidenceClass: "high",
+  observedAt: null,
+  lastConfirmedAt: null,
+  factIds: [],
+  sourceKeys: [],
+  computationIds: [],
+  poiIds: [],
+  expired: false,
+  onlyGoneSources: false,
+  conflictKey: null,
+  observedMonths: [],
+};
+
 /** The contact fact as the contract's `contact`; null when it is missing or all three parts are empty. */
 function contact(value: unknown): SpotBody["contact"] {
   if (!isRecord(value)) return null;
   const part = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v : null);
-  const out = { vhf: part(value.vhf), phone: part(value.phone), url: part(value.url) };
+  // only http(s) links are delivered (a javascript: or ftp: url is dropped)
+  const url = part(value.url);
+  const out = { vhf: part(value.vhf), phone: part(value.phone), url: url !== null && httpUrl.safeParse(url).success ? url : null };
   return out.vhf === null && out.phone === null && out.url === null ? null : out;
 }
 

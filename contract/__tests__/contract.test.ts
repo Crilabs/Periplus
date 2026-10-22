@@ -258,6 +258,10 @@ describe("Periplus Data Contract v2", () => {
     expect(spotSchema.safeParse(omit(ex, "berthable")).success).toBe(false);
     expect(spotSchema.safeParse(omit(ex, "contact")).success).toBe(false);
     expect(spotSchema.safeParse({ ...ex, contact: { vhf: "71", phone: null, url: "not a url" } }).success).toBe(false);
+    for (const url of ["javascript:alert(1)", "ftp://marina.example", "upload://doc"]) {
+      expect(spotSchema.safeParse({ ...ex, contact: { vhf: null, phone: null, url } }).success, url).toBe(false);
+    }
+    expect(JSON.stringify(contractJsonSchema("2.2", "spots.schema.json"))).toContain("^https?://");
     expect(spotSchema.safeParse({ ...ex, contact: { vhf: "71", phone: null, url: null, extra: 1 } }).success).toBe(false);
   });
 

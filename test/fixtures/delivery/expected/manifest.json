@@ -141,8 +141,8 @@
   "files": [
     {
       "name": "spots.json",
-      "sha256": "08924bb0d781daabff7fcd0abe7954ae6bad76c629d7289231a88d67d8c60f06",
-      "bytes": 9747
+      "sha256": "fd4858ceb603d570295e0ae13d827984498361450052b54bda2721859618c9fc",
+      "bytes": 10114
     },
     {
       "name": "highlights.json",

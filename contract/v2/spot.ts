@@ -4,6 +4,7 @@ import {
   count,
   googlePlaceId,
   highlightCategory,
+  httpUrl,
   isoDate,
   latitude,
   latLon,
@@ -60,7 +61,7 @@ export const spotSchema = z.strictObject({
   berthable: z.boolean().nullable().describe("Charter crew can moor here on a short stay"),
   /** How to register with the marina or harbour (VHF channel, phone, website); null when nothing is known; contract 2.2. */
   contact: z
-    .strictObject({ vhf: z.string().nullable(), phone: z.string().nullable(), url: z.url().nullable() })
+    .strictObject({ vhf: z.string().nullable(), phone: z.string().nullable(), url: httpUrl.nullable() })
     .nullable()
     .describe("How to call the marina or harbour"),
   /** Display name, Latin script preferred (Teil B): German, English, the own Latin name, else the ELOT 743 transliteration of the preferred Greek name (never of an old or alternate name). */
