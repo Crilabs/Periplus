@@ -43,7 +43,7 @@ const EXPECTED_BY_TYPE = {
   bay: 39,
   harbour: 14,
   settlement: 84,
-  poi: 424,
+  poi: 387, // was 424 before spec 16 A dropped fuel, pharmacy, atm, drinking water, bakery, butcher and scuba shops
 };
 
 type LandFeature = GeoJSON.Feature<GeoJSON.Polygon | GeoJSON.MultiPolygon>;

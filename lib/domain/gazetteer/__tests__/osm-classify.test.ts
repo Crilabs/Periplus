@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "@/lib/config";
-import { classifyOsm, osmNames } from "@/lib/domain/gazetteer/osm-classify";
+import { categoryForTags, classifyOsm, osmNames } from "@/lib/domain/gazetteer/osm-classify";
 
 const { categories } = loadConfig();
 
@@ -89,5 +89,30 @@ describe("osmNames", () => {
 
   it("a Latin name has language und", () => {
     expect(osmNames({ name: "Perdika" })).toEqual([{ name: "Perdika", language: "und", origin: "osm" }]);
+  });
+});
+
+describe("categoryForTags (spec 16 A: highlights for trip planning only)", () => {
+  it.each([
+    ["fuel", { amenity: "fuel" }, null],
+    ["pharmacy", { amenity: "pharmacy" }, null],
+    ["atm", { amenity: "atm" }, null],
+    ["drinking water", { amenity: "drinking_water" }, null],
+    ["bakery", { shop: "bakery" }, null],
+    ["butcher", { shop: "butcher" }, null],
+    ["scuba diving shop", { shop: "scuba_diving" }, null],
+    ["convenience", { shop: "convenience" }, "supply"],
+    ["supermarket", { shop: "supermarket" }, "supply"],
+    ["restaurant", { amenity: "restaurant" }, "food"],
+    ["viewpoint", { tourism: "viewpoint" }, "active"],
+    ["fuel and convenience", { amenity: "fuel", shop: "convenience" }, "supply"],
+  ])("%s", (_label, tags, expected) => {
+    expect(categoryForTags(tags, categories)).toBe(expected);
+  });
+
+  it("classifyOsm needs a name, categoryForTags does not", () => {
+    expect(classifyOsm({ shop: "supermarket" }, categories)).toBeNull();
+    expect(categoryForTags({ shop: "supermarket" }, categories)).toBe("supply");
+    expect(classifyOsm({ shop: "bakery", name: "Bäcker" }, categories)).toBeNull();
   });
 });

@@ -456,7 +456,8 @@
                   "no",
                   "seasonal",
                   "unknown"
-                ]
+                ],
+                "description": "Supermarket or mini market nearby or by text"
               },
               "taverna": {
                 "type": "string",

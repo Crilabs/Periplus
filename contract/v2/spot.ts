@@ -94,7 +94,7 @@ export const spotSchema = z.strictObject({
       electricity: service,
       fuel: service,
       showers: service,
-      shop: service,
+      shop: service.describe("Supermarket or mini market nearby or by text"),
       taverna: service,
       wifi: service,
       dinghyLanding: service,

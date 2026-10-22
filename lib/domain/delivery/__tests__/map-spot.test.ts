@@ -360,6 +360,11 @@ describe("mapSpot", () => {
     expect(mapped(spotA({ drop: ["swell_protection"] })).shelter.swell).toBe(0.1);
   });
 
+  it("services.shop is unknown when only a fuel station is nearby (no supply highlight)", () => {
+    const s = mapped(spotA({ drop: ["highlight.supply"], attributes: { "services.fuel": true } }));
+    expect(s.services).toMatchObject({ shop: "unknown", fuel: "yes" });
+  });
+
   it("a missing sector omits the spot as shelter_incomplete", () => {
     expect(mapSpot(spotA({ drop: ["shelter.W"] }), ctx)).toEqual({ omitted: "shelter_incomplete" });
   });
