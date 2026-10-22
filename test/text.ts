@@ -1,3 +1,4 @@
+import { loadConfig } from "@/lib/config";
 import { eq, sql } from "drizzle-orm";
 import type { PgInsertValue } from "drizzle-orm/pg-core";
 import { geomFromGeoJson } from "@/lib/db/geometry";
@@ -113,7 +114,7 @@ export async function insertTestExtractionRun(
       task: "extract-facts",
       model: "claude-sonnet-5-5",
       promptVersion: 1,
-      factSchemaVersion: "v2",
+      factSchemaVersion: loadConfig("config").factSchema.version,
       runId: values.runId ?? (await insertTestRun(tx)),
       ...values,
     })

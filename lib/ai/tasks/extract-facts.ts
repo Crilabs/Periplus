@@ -31,7 +31,12 @@ export type ExtractFactsInput = {
   observedAt: string;
   /** The unit's chunks in text order, numbered from 1. */
   chunks: Array<{ n: number; text: string }>;
+  /** The text is the object's own website (the unit's mention is `bound`, spec 16): "our marina" is then the object. */
+  boundToWebsite: boolean;
 };
+
+/** The prompt line (`{{bound_note}}`) for a text that is the object's own website; empty otherwise. */
+export const BOUND_NOTE = `This text is the object's own website: statements about "our marina", "the marina" or "the harbour" are about the object.`;
 
 export type ExtractedFact = {
   attribute: string;
@@ -125,5 +130,6 @@ export const extractFactsTask: ModelTask<ExtractFactsInput, ExtractFactsOutput> 
     doc_type: input.docType,
     observed_at: input.observedAt,
     chunks: chunkBlocks(input.chunks),
+    bound_note: input.boundToWebsite ? BOUND_NOTE : "",
   }),
 };

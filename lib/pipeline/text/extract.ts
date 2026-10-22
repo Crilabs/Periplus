@@ -242,6 +242,7 @@ export async function unitInputs(db: Db, unitIds: string[], config: AppConfig = 
       docType: meta.docType,
       observedAt: meta.observedAt,
       chunks: unitTexts.map((text, i) => ({ n: i + 1, text: text! })),
+      boundToWebsite: false,
     });
   }
   for (const id of unitIds) if (!units.some((u) => u.id === id)) getLog().warn({ unitId: id }, "extraction unit missing, left out of the batch");

@@ -1,10 +1,13 @@
 import { eq, inArray } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { computations, facts, geoObjects } from "@/lib/db/schema";
 import { withRollback } from "@/test/db";
 import { recordComputation, latestComputations } from "../computations";
+
+const ACTIVE = getConfig().factSchema.version;
 
 /** Synthetic bay outside the pilot box (21.0° E / 35.2° N). */
 async function insertBay(tx: Db): Promise<string> {
@@ -47,8 +50,8 @@ describe("recordComputation", () => {
       expect(comps[0]).toMatchObject({ id: r.id, kind: "shelter", rulesVersion: "geometry-1", outputs: { rays: [1, 2, 3] } });
       expect(comps[0]!.inputsHash).toMatch(/^[0-9a-f]{64}$/);
       expect(fs.map((f) => [f.attribute, f.value, f.confidence, f.factSchemaVersion, f.geoObjectId, f.observedAt]).sort()).toEqual([
-        ["shelter.N", 0.8, 0.5, "v2", id, "2026-10-19"],
-        ["swell_protection", 0.3, 0.4, "v2", id, "2026-10-19"],
+        ["shelter.N", 0.8, 0.5, ACTIVE, id, "2026-10-19"],
+        ["swell_protection", 0.3, 0.4, ACTIVE, id, "2026-10-19"],
       ]);
       expect(fs.every((f) => f.computationId === r.id && f.mentionId === null && f.reviewDecisionId === null)).toBe(true);
     });

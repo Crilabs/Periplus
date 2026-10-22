@@ -1,5 +1,6 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { changeEvents, evaluationProfiles, places, profiles, reviewDecisions, reviewTasks } from "@/lib/db/schema";
@@ -266,7 +267,7 @@ describe("consolidateGeo", () => {
       expect(await tasksOf(tx, objectId, "holding")).toEqual([]);
       const rows = await tx.select().from(evaluationProfiles).where(eq(evaluationProfiles.geoObjectId, objectId));
       expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ runId, rulesVersion: "v1", factSchemaVersion: "v2", attributes: { "shelter.N": 0.6, holding: "good" } });
+      expect(rows[0]).toMatchObject({ runId, rulesVersion: "v1", factSchemaVersion: getConfig().factSchema.version, attributes: { "shelter.N": 0.6, holding: "good" } });
       await expect(consolidateGeo(tx, objectId, { mode: "evaluation", rulesVersion: "v1" })).rejects.toThrow(/runId and rulesVersion/);
     }));
 

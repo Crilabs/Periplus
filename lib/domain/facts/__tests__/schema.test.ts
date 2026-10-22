@@ -32,7 +32,7 @@ describe("fact schema v1", () => {
   });
 
   it("defaults to the active version and rejects an unknown one", () => {
-    expect(getFactSchema().version).toBe("v2");
+    expect(getFactSchema().version).toBe("v3");
     expect(() => getFactSchema("v99")).toThrow(/v99/);
   });
 

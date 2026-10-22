@@ -29,6 +29,8 @@ import { insertNamedObject, insertTestExtractionRun, insertTestRun, insertTestVe
  */
 
 const extractFacts = loadConfig("config").models.tasks["extract-facts"]!;
+/** The active fact schema version: fixtures that mean "the active schema" use it, so a schema switch breaks no test. */
+const ACTIVE_SCHEMA = loadConfig("config").factSchema.version;
 const QUOTE = "good holding in sand";
 const TEXT = `Kolona: ${QUOTE}.`;
 
@@ -122,7 +124,7 @@ export async function insertMentionFact(
       observedAt: o.observedAt ?? "2026-10-19",
       confidence: o.confidence ?? 0.8,
       extractionRunId,
-      factSchemaVersion: "v2",
+      factSchemaVersion: ACTIVE_SCHEMA,
     })
     .returning({ id: facts.id });
   return row!.id;
@@ -167,7 +169,7 @@ export async function insertComputation(
         computationId: c!.id,
         observedAt: createdAt.toISOString().slice(0, 10),
         confidence: o.confidence ?? 0.55,
-        factSchemaVersion: "v2",
+        factSchemaVersion: ACTIVE_SCHEMA,
       })),
     )
     .returning({ id: facts.id });
@@ -233,7 +235,7 @@ export async function insertProfile(
       documentsCount: opts.documentsCount ?? 0,
       confidence: opts.confidence === undefined ? 0.8 : opts.confidence,
       contentHash: newId(),
-      factSchemaVersion: "v2",
+      factSchemaVersion: ACTIVE_SCHEMA,
       rulesVersion: "test",
     })
     .returning({ id: profiles.id });

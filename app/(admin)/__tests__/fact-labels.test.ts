@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { factSchemaV1 } from "@/config/fact-schema/v1";
 import { EXPOSURE_SCALE, factSchemaV2, TEXT_SCALE } from "@/config/fact-schema/v2";
+import { factSchemaV3 } from "@/config/fact-schema/v3";
 import {
   EXPOSURE_SCALE_WORDS,
   FACT_ATTRIBUTE_LABELS,
@@ -10,8 +11,8 @@ import {
 } from "../_components/labels";
 
 describe("fact labels", () => {
-  it("every attribute of fact schema v1 and v2 has a German label", () => {
-    const keys = new Set([factSchemaV1, factSchemaV2].flatMap((schema) => Object.values(schema.levels).flatMap((defs) => defs.map((d) => d.key))));
+  it("every attribute of fact schema v1 to v3 has a German label", () => {
+    const keys = new Set([factSchemaV1, factSchemaV2, factSchemaV3].flatMap((schema) => Object.values(schema.levels).flatMap((defs) => defs.map((d) => d.key))));
     const missing = [...keys].filter((k) => !FACT_ATTRIBUTE_LABELS[k]);
     expect(missing).toEqual([]);
     expect(FACT_ATTRIBUTE_LABELS["shelter.NE"]).toBe("Schutz aus NO");

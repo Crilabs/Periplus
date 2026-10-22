@@ -75,7 +75,7 @@ const fact = (f: Partial<ExtractedFact>): ExtractedFact => ({
 const factsOf = (tx: Db, extractionRunId: string) => tx.select().from(facts).where(eq(facts.extractionRunId, extractionRunId));
 
 describe("processFactOutput", () => {
-  it("a verified fact is stored with mention, quote offsets and schema v2", () =>
+  it("a verified fact is stored with mention, quote offsets and the active schema", () =>
     withRollback(async (tx) => {
       const s = await scene(tx);
       const stats = await processFactOutput(tx, s.unit, { facts: [fact({})] }, config);
@@ -94,7 +94,7 @@ describe("processFactOutput", () => {
         quoteEnd: start + "Holding is good in sand".length,
         observedAt: "2026-10-19",
         confidence: 0.9,
-        factSchemaVersion: "v2",
+        factSchemaVersion: config.factSchema.version,
       });
     }));
 
