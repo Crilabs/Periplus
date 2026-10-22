@@ -340,6 +340,8 @@ export const gazetteerSchema = z.strictObject({
     geonamesNewObjectRadiusM: z.number().positive(),
     /** Spec 16: two selected highlights of a category with similar names closer than this get a pair task. */
     highlightPairM: z.number().positive(),
+    /** Decides a pair of geo objects without a person where the sources make it clear (`autoPairDecision`). */
+    autoDecidePairs: z.boolean(),
   }),
   noAnchoringKinds: z.array(z.enum(restrictedKindEnum.enumValues)),
 });

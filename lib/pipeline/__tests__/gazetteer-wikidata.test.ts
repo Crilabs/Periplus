@@ -3,13 +3,13 @@ import { describe, expect, it } from "vitest";
 import { makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
 import type { Db } from "@/lib/db/client";
-import { geoNames, geoObjects, rateLimits, reviewTasks } from "@/lib/db/schema";
-import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
+import { geomFromGeoJson } from "@/lib/db/geometry";
+import { geoNames, geoObjects, places, rateLimits, reviewTasks } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { upsertGeoObject, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
 import { importWikidata } from "@/lib/pipeline/gazetteer/wikidata";
 import { withRollback } from "@/test/db";
-import { createdInThisTransaction, ownGeoObjectIds, pairTasksOf } from "@/test/gazetteer";
+import { createdInThisTransaction, ownGeoObjectIds, pairTaskOf, pairTasksOf } from "@/test/gazetteer";
 
 // Synthetic subdivision scope outside the pilot box 23.0-23.75 E x 37.0-38.0 N.
 function scope(): GazetteerScope {
@@ -202,21 +202,27 @@ describe("importWikidata", () => {
       expect(await byWikidata(db, q(5))).toEqual([]);
     }));
 
-  it("uncertain match opens a pair task", () =>
+  it("an uncertain match with an OSM object is decided 'same' by the system and merged into the OSM object", () =>
     withRollback(async (db) => {
       const ids = await prepare(db);
       const result = await run(db, ITEMS.cape);
       expect(result).toMatchObject({ linked: 0, created: 1, uncertain: 1 });
-      const [cape] = await byWikidata(db, q(4));
-      expect(cape).toMatchObject({ type: "cape", origin: "wikidata", osmId: null });
+      const [created] = await db
+        .select({ id: geoObjects.id, mergedIntoId: geoObjects.mergedIntoId, origin: geoObjects.origin })
+        .from(geoObjects)
+        .where(and(eq(geoObjects.wikidataId, q(4)), eq(geoObjects.origin, "wikidata")));
       const osmCape = ids[osm("node", 4)]!;
-      const subjectId = [cape!.id, osmCape].sort().join(":");
-      const tasks = await db.select().from(reviewTasks).where(eq(reviewTasks.subjectId, subjectId));
-      expect(tasks).toHaveLength(1);
-      expect(tasks[0]).toMatchObject({ kind: "place_candidate", subjectType: "geo_object_pair", status: "open" });
-      expect(tasks[0]!.context).toMatchObject({ source: "wikidata", similarity: 1 });
-      expect((tasks[0]!.context as { distanceM: number }).distanceM).toBeGreaterThan(1000);
-      expect((tasks[0]!.context as { distanceM: number }).distanceM).toBeLessThan(2000);
+      expect(created).toMatchObject({ mergedIntoId: osmCape });
+      expect(await pairTaskOf(db, created!.id, osmCape)).toEqual({ status: "decided", action: "same", decidedBy: "system" });
+      const [task] = await db.select().from(reviewTasks).where(eq(reviewTasks.subjectId, [created!.id, osmCape].sort().join(":")));
+      expect(task!.context).toMatchObject({ source: "wikidata", similarity: 1 });
+      expect((task!.context as { distanceM: number }).distanceM).toBeGreaterThan(1000);
+      expect((task!.context as { distanceM: number }).distanceM).toBeLessThan(2000);
+      // the OSM cape keeps and takes over the item's QID and names
+      expect(await byWikidata(db, q(4))).toMatchObject([{ id: osmCape, osmId: osm("node", 4) }]);
+      expect(await names(db, osmCape)).toEqual(
+        expect.arrayContaining([{ name: "Akrotiri Kavos", language: "en", origin: "wikidata", isPreferred: false }]),
+      );
     }));
 
   it("an uncertain match between two POIs opens no pair task", () =>
@@ -241,13 +247,15 @@ describe("importWikidata", () => {
       expect(await pairTasksOf(db, [monastery!.id, existing.id])).toEqual([]);
     }));
 
-  it("an uncertain match between two bays still opens a pair task", () =>
+  it("an uncertain match with a bay that carries a place opens a pair task for a person", () =>
     withRollback(async (db) => {
       const ids = await prepare(db);
-      await db.update(geoObjects).set({ wikidataId: q(7) }).where(eq(geoObjects.id, ids[osm("node", 2)]!));
+      const osmBay = ids[osm("node", 2)]!;
+      await db.update(geoObjects).set({ wikidataId: q(7) }).where(eq(geoObjects.id, osmBay));
+      await db.insert(places).values({ geoObjectId: osmBay, kind: "anchorage", status: "confirmed", position: geomFromGeoJson({ type: "Point", coordinates: [26.2, 35.75] }) });
       expect(await run(db, ITEMS.bay)).toMatchObject({ created: 1, uncertain: 1 });
       const [bay] = await byWikidata(db, q(2));
-      expect(await pairTasksOf(db, [bay!.id])).toHaveLength(1);
+      expect(await pairTaskOf(db, bay!.id, osmBay)).toEqual({ status: "open", action: null, decidedBy: null });
     }));
 
   it("a wikidata POI stores its class as tags.wikidata_class", () =>
@@ -274,7 +282,7 @@ describe("importWikidata", () => {
       expect(await byWikidata(db, q(32))).toEqual([]);
     }));
 
-  it("same match whose object carries another QID creates a new object and a pair task", () =>
+  it("same match whose object carries another QID creates a new object, merged into the OSM object by the system", () =>
     withRollback(async (db) => {
       const ids = await prepare(db);
       const osmBay = ids[osm("node", 2)]!;
@@ -282,17 +290,15 @@ describe("importWikidata", () => {
 
       const result = await run(db, ITEMS.bay);
       expect(result).toMatchObject({ linked: 0, created: 1, uncertain: 1 });
-      const [bay] = await byWikidata(db, q(2));
-      expect(bay).toMatchObject({ type: "bay", origin: "wikidata", osmId: null });
-      expect(bay!.id).not.toBe(osmBay);
+      const [bay] = await db
+        .select({ id: geoObjects.id, mergedIntoId: geoObjects.mergedIntoId })
+        .from(geoObjects)
+        .where(eq(geoObjects.wikidataId, q(2)));
+      expect(bay).toMatchObject({ mergedIntoId: osmBay });
+      // the OSM bay keeps its own QID
       const [osmRow] = await db.select({ wikidataId: geoObjects.wikidataId }).from(geoObjects).where(eq(geoObjects.id, osmBay));
       expect(osmRow!.wikidataId).toBe(q(7));
-      const tasks = await db
-        .select()
-        .from(reviewTasks)
-        .where(eq(reviewTasks.subjectId, [bay!.id, osmBay].sort().join(":")));
-      expect(tasks).toHaveLength(1);
-      expect(tasks[0]!.context).toMatchObject({ source: "wikidata", similarity: 1 });
+      expect(await pairTaskOf(db, bay!.id, osmBay)).toEqual({ status: "decided", action: "same", decidedBy: "system" });
     }));
 
   it("an item merged into an object with another QID links to the survivor on the next run", () =>
@@ -301,10 +307,8 @@ describe("importWikidata", () => {
       const osmCape = ids[osm("node", 4)]!;
       await db.update(geoObjects).set({ wikidataId: q(6) }).where(eq(geoObjects.id, osmCape));
 
+      // decided "same" by the system: the wikidata cape is merged into the OSM cape, which keeps its own QID
       expect(await run(db, ITEMS.cape)).toMatchObject({ created: 1, uncertain: 1 });
-      const [cape] = await byWikidata(db, q(4));
-      // A reviewer decided "same": the wikidata cape is merged into the OSM cape, which keeps its own QID.
-      await mergeGeoObjects(db, osmCape, cape!.id);
       expect(await byWikidata(db, q(4))).toEqual([]);
 
       const count = async () => ({
@@ -385,7 +389,8 @@ describe("importWikidata", () => {
       ];
       expect(await run(db, items)).toMatchObject({ linked: 1, created: 1, uncertain: 1 });
       expect(await byWikidata(db, q(9))).toMatchObject([{ id: village.id }]);
-      expect(await run(db, items)).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0, skipped: 0 });
+      // q(10) was merged into the village by the system: the rerun links it to its survivor, nothing else
+      expect(await run(db, items)).toEqual({ linked: 1, created: 0, uncertain: 0, names: 0, skipped: 0 });
     }));
 
   it("second run changes nothing", () =>
@@ -421,7 +426,8 @@ describe("importWikidata", () => {
         tasks: await pairTasksOf(db, objectIds),
       });
       const before = await snapshot();
-      expect(before.objects.map((o) => o.wikidataId).sort()).toEqual([q(1), q(2), q(3), q(4), null].sort());
+      // the wikidata cape was merged into the OSM cape, which took over its QID
+      expect(before.objects.map((o) => o.wikidataId).sort()).toEqual([q(1), q(2), q(3), q(4), q(4)].sort());
       const second = await run(db);
       expect(second).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0, skipped: 0 });
       expect(await snapshot()).toEqual(before);

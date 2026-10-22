@@ -32,17 +32,18 @@ const PERDIKA = "node/1854238899";
  * settlements; since Wikidata links by ID and tag before matching by name, Q141142371 "Nisida Troizinas"
  * becomes its own settlement with a pair task in run 1 (instead of only in run 2).
  */
+// Valid objects; Wikidata and GeoNames objects merged into their OSM counterpart by the system (autoPairDecision) count once.
 const EXPECTED_BY_TYPE = {
   sea: 1,
   gulf: 1,
-  island: 15,
+  island: 11,
   islet: 14,
   coast_section: 3,
-  cape: 42,
+  cape: 38,
   strait: 5,
-  bay: 39,
+  bay: 37,
   harbour: 14,
-  settlement: 84,
+  settlement: 79,
   poi: 424,
 };
 

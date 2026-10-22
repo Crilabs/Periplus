@@ -461,7 +461,7 @@ describe("importSitelinks", () => {
       await importWikidata(db, { scope, runId }, { transport: replay });
       await assignSubdivisionTiles(db, scope.subdivisionId);
 
-      expect(await importSitelinks(db, { scope: await scopeOf(db), runId }, { transport: replay })).toEqual({ fetched: 123, reused: 0 });
+      expect(await importSitelinks(db, { scope: await scopeOf(db), runId }, { transport: replay })).toEqual({ fetched: 121, reused: 0 });
       const rows = await db
         .select({ id: wikidataSitelinks.wikidataId, n: wikidataSitelinks.sitelinks })
         .from(wikidataSitelinks)

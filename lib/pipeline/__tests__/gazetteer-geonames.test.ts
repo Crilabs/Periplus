@@ -4,13 +4,12 @@ import type { GeonamesAltName, GeonamesRow, GeonamesSource } from "@/lib/adapter
 import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
 import type { Db } from "@/lib/db/client";
 import { geoNames, geoObjects, reviewTasks } from "@/lib/db/schema";
-import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
 import { newId } from "@/lib/domain/ids";
 import { upsertGeoObject, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
 import type { Bbox } from "@/lib/domain/tiles";
 import { importGeonames } from "@/lib/pipeline/gazetteer/geonames";
 import { withRollback } from "@/test/db";
-import { createdInThisTransaction, pairTasksOf } from "@/test/gazetteer";
+import { createdInThisTransaction, pairTaskOf, pairTasksOf } from "@/test/gazetteer";
 
 // Synthetic subdivision scope outside the pilot box 23.0-23.75 E x 37.0-38.0 N.
 function scope(): GazetteerScope {
@@ -193,10 +192,8 @@ describe("importGeonames", () => {
       const osmCape = ids[osm("node", 4)]!;
       await db.update(geoObjects).set({ geonamesId: gn(6) }).where(eq(geoObjects.id, osmCape));
 
+      // decided "same" by the system: the GeoNames cape is merged into the OSM cape, which keeps its own ID
       expect(await run(db, [ROWS.nearCape])).toMatchObject({ created: 1, skipped: 0 });
-      const [cape] = await byGeonames(db, gn(4));
-      // A reviewer decided "same": the GeoNames cape is merged into the OSM cape, which keeps its own ID.
-      await mergeGeoObjects(db, osmCape, cape!.id);
       expect(await byGeonames(db, gn(4))).toEqual([]);
 
       const capes = async () =>
@@ -211,16 +208,22 @@ describe("importGeonames", () => {
       );
     }));
 
-  it("an uncertain match that ends as a new cape opens one pair task", () =>
+  it("an uncertain match with an OSM cape ends as a new cape, merged into the OSM cape by the system", () =>
     withRollback(async (db) => {
       const ids = await prepare(db);
+      const osmCape = ids[osm("node", 4)]!;
       const result = await run(db, [ROWS.nearCape]);
       expect(result).toMatchObject({ linked: 0, created: 1, skipped: 0, uncertain: 1 });
-      const [cape] = await byGeonames(db, gn(4));
-      const subjectId = [cape!.id, ids[osm("node", 4)]!].sort().join(":");
+      const [cape] = await db
+        .select({ id: geoObjects.id, mergedIntoId: geoObjects.mergedIntoId })
+        .from(geoObjects)
+        .where(and(eq(geoObjects.geonamesId, gn(4)), eq(geoObjects.origin, "geonames")));
+      expect(cape).toMatchObject({ mergedIntoId: osmCape });
+      expect(await byGeonames(db, gn(4))).toMatchObject([{ id: osmCape }]);
+      const subjectId = [cape!.id, osmCape].sort().join(":");
       const tasks = await db.select().from(reviewTasks).where(eq(reviewTasks.subjectId, subjectId));
       expect(tasks).toHaveLength(1);
-      expect(tasks[0]).toMatchObject({ kind: "place_candidate", subjectType: "geo_object_pair", status: "open" });
+      expect(await pairTaskOf(db, cape!.id, osmCape)).toEqual({ status: "decided", action: "same", decidedBy: "system" });
       expect(tasks[0]!.context).toMatchObject({ source: "geonames", similarity: 1 });
       const distanceM = (tasks[0]!.context as { distanceM: number }).distanceM;
       expect(distanceM).toBeGreaterThan(500);
@@ -258,7 +261,8 @@ describe("importGeonames", () => {
       });
       const before = await snapshot();
       expect(before.tasks).toBe(1);
-      expect(before.objects.map((o) => o.geonamesId).sort()).toEqual([gn(1), gn(3), gn(4), null].sort());
+      // the GeoNames cape was merged into the OSM cape, which took over its ID
+      expect(before.objects.map((o) => o.geonamesId).sort()).toEqual([gn(1), gn(3), gn(4), gn(4)].sort());
       const second = await run(db);
       expect(second).toEqual({ linked: 0, created: 0, skipped: 1, uncertain: 0, names: 0 });
       expect(await snapshot()).toEqual(before);

@@ -1,10 +1,12 @@
 import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
-import type { GazetteerConfig } from "@/lib/config";
+import { getConfig, type GazetteerConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { geoNames, geoObjects, places, type GeoObjectType, type GeoOrigin } from "@/lib/db/schema";
+import { geoNames, geoObjects, places, reviewTasks, type GeoObjectType, type GeoOrigin } from "@/lib/db/schema";
 import { dismissTasks, lockOpenPlaceTasks } from "@/lib/domain/consolidation/task-locks";
+import { levelFor } from "@/lib/domain/facts/levels";
 import { dropHighlightSelectionsOf } from "@/lib/domain/highlights/selections";
 import { createReviewTask, hasDecidedTask } from "@/lib/domain/review";
+import { decideReviewTask, TaskNotOpen } from "@/lib/domain/review-decisions";
 import { addNames, ensureFallbackNames, isGreek, normalizeName, transliterateElot743 } from "./names";
 
 /** An object from another source; `names` raw, normalized internally. */
@@ -118,26 +120,121 @@ function better(a: Found, b: Found): boolean {
   return a.distanceM < b.distanceM;
 }
 
+/** Who decides an automatically decided pair (`review_decisions.decided_by`). */
+export const AUTO_DECIDER = "system";
+
+/**
+ * The decision the sources make clear for an uncertain pair, or null when a person decides. OSM is the master for
+ * every type but anchorages (spec 12 addendum): an OSM object and an object known only from Wikidata or GeoNames are
+ * `same` (the OSM object keeps, the other adds its names and IDs); two objects without OSM are `same` from
+ * `rules.trigramMin` name similarity on, else `distinct`. A person decides a pair of two OSM objects, a pair one of
+ * whose objects carries a place (anchorage, harbour), and a highlight pair (source `computed`, spec 16).
+ */
+export async function autoPairDecision(
+  db: Db,
+  geoObjectIds: string[],
+  context: { similarity: number; source: GeoOrigin },
+  rules: MergeRules,
+): Promise<"same" | "distinct" | null> {
+  if (!rules.autoDecidePairs || context.source === "computed") return null;
+  const objects = await db
+    .select({ osmId: geoObjects.osmId, placeId: places.id })
+    .from(geoObjects)
+    .leftJoin(places, eq(places.geoObjectId, geoObjects.id))
+    .where(and(inArray(geoObjects.id, geoObjectIds), isNull(geoObjects.validTo), isNull(geoObjects.mergedIntoId)));
+  if (objects.length !== 2 || objects.some((o) => o.placeId !== null)) return null;
+  const osm = objects.filter((o) => o.osmId !== null).length;
+  if (osm === 2) return null;
+  if (osm === 1) return "same";
+  return context.similarity >= rules.trigramMin ? "same" : "distinct";
+}
+
 /**
  * Opens a `place_candidate` review task for an uncertain pair of geo objects (`subjectType
  * "geo_object_pair"`, `subjectId "<smaller id>:<larger id>"`), unless one is open already or a task for the
- * pair was ever decided (e.g. "distinct").
+ * pair was ever decided (e.g. "distinct"). When `autoPairDecision` knows the answer, the task is decided at once by
+ * `AUTO_DECIDER` (a `same` merges the pair); returns that decision, else null.
  */
 export async function openPairTask(
   db: Db,
   a: string,
   b: string,
   context: { similarity: number; distanceM: number; source: GeoOrigin },
-): Promise<void> {
+): Promise<"same" | "distinct" | null> {
   const geoObjectIds = [a, b].sort();
   const subjectId = geoObjectIds.join(":");
-  if (await hasDecidedTask(db, "place_candidate", subjectId)) return;
-  await createReviewTask(db, {
+  if (await hasDecidedTask(db, "place_candidate", subjectId)) return null;
+  const task = await createReviewTask(db, {
     kind: "place_candidate",
     subjectType: "geo_object_pair",
     subjectId,
     context: { ...context, geoObjectIds },
   });
+  const action = await autoPairDecision(db, geoObjectIds, context, getConfig().gazetteer.merge);
+  if (!action) return null;
+  await decideReviewTask(db, { taskId: task.id, decision: { action }, decidedBy: AUTO_DECIDER });
+  return action;
+}
+
+/**
+ * Decides every open pair task that `autoPairDecision` knows the answer to (by `AUTO_DECIDER`, oldest first, one
+ * transaction per task), for pair tasks opened before the rule existed. A task one of whose objects ended meanwhile
+ * (merged by an earlier decision of the same pass) is dismissed (`object_ended`). Returns the counts and the objects
+ * that kept a merged object and take facts (to consolidate: the merged object may have brought facts).
+ */
+export async function autoDecideOpenPairTasks(
+  db: Db,
+  rules: MergeRules,
+): Promise<{ same: number; distinct: number; dismissed: number; open: number; kept: string[] }> {
+  const tasks = await db
+    .select({ id: reviewTasks.id, subjectId: reviewTasks.subjectId, context: reviewTasks.context })
+    .from(reviewTasks)
+    .where(and(eq(reviewTasks.kind, "place_candidate"), eq(reviewTasks.subjectType, "geo_object_pair"), eq(reviewTasks.status, "open")))
+    .orderBy(reviewTasks.createdAt, reviewTasks.id);
+  const result = { same: 0, distinct: 0, dismissed: 0, open: 0, kept: [] as string[] };
+  for (const task of tasks) {
+    const ids = task.subjectId.split(":");
+    const context = task.context as { similarity?: unknown; source?: unknown };
+    const valid = await db
+      .select({ id: geoObjects.id })
+      .from(geoObjects)
+      .where(and(inArray(geoObjects.id, ids), isNull(geoObjects.validTo), isNull(geoObjects.mergedIntoId)));
+    if (valid.length !== 2) {
+      const dismissed = await db.transaction(async (tx) => {
+        const [open] = await tx
+          .select({ id: reviewTasks.id })
+          .from(reviewTasks)
+          .where(and(eq(reviewTasks.id, task.id), eq(reviewTasks.status, "open")))
+          .for("update");
+        if (open) await dismissTasks(tx, [open.id], "object_ended");
+        return open !== undefined;
+      });
+      if (dismissed) result.dismissed++;
+      continue;
+    }
+    const action = await autoPairDecision(
+      db,
+      ids,
+      { similarity: Number(context.similarity ?? 0), source: context.source as GeoOrigin },
+      rules,
+    );
+    if (!action) {
+      result.open++;
+      continue;
+    }
+    let consolidate: { geoObjectId: string } | null;
+    try {
+      ({ consolidate } = await decideReviewTask(db, { taskId: task.id, decision: { action }, decidedBy: AUTO_DECIDER }));
+    } catch (e) {
+      // a person decided it meanwhile
+      if (e instanceof TaskNotOpen) continue;
+      throw e;
+    }
+    result[action]++;
+    if (consolidate && (await levelFor(db, consolidate.geoObjectId)) !== null) result.kept.push(consolidate.geoObjectId);
+  }
+  result.kept = [...new Set(result.kept)];
+  return result;
 }
 
 /** External ID columns of `geo_objects` that `resolveMergedByExternalId` follows. */
