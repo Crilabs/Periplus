@@ -56,6 +56,14 @@ type FieldRule = { attributes: string[]; note: string };
 export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
   id: { attributes: [], note: "places.public_id" },
   kind: { attributes: ["place.kind"], note: "SPOT_KIND; without the identity key the place's kind" },
+  berthable: {
+    attributes: ["berthable"],
+    note: "the berthable value of the profile (a fact, else derived from kind and status, spec 17); null when it has none",
+  },
+  contact: {
+    attributes: ["contact"],
+    note: "vhf, phone and url of the contact fact; null when the fact is missing or all three are empty",
+  },
   name: {
     attributes: ["geo.name"],
     note: "display name (de, en, any); without a valid name the spot is omitted (no_name), an excluded one is delivered with spots.excludedFallbackName (ruling M6-C-R1)",
@@ -231,6 +239,8 @@ export function mapSpot(
   const spot: SpotBody = {
     id: src.publicId,
     kind: SPOT_KIND[placeKind],
+    berthable: typeof a["berthable"] === "boolean" ? a["berthable"] : null,
+    contact: contact(a["contact"]),
     name: nameless ? ctx.cfg.spots.excludedFallbackName : src.name,
     names: src.names.length > 0 ? src.names : undefined,
     position: { lat: round5(src.position.lat), lon: round5(src.position.lon) },
@@ -270,6 +280,14 @@ export function mapSpot(
     mergedInto: null,
   };
   return { spot: withoutUndefined(spot), warnings, forbiddenSources: sources.forbidden };
+}
+
+/** The contact fact as the contract's `contact`; null when it is missing or all three parts are empty. */
+function contact(value: unknown): SpotBody["contact"] {
+  if (!isRecord(value)) return null;
+  const part = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v : null);
+  const out = { vhf: part(value.vhf), phone: part(value.phone), url: part(value.url) };
+  return out.vhf === null && out.phone === null && out.url === null ? null : out;
 }
 
 function anchorPosition(
@@ -435,6 +453,8 @@ function provenance(
     limits: LIMIT_ATTRIBUTES,
     mooring: MOORING_ATTRIBUTES,
     ...Object.fromEntries((Object.keys(SERVICE_ATTRIBUTE) as Service[]).map((s) => [`services.${s}`, [SERVICE_ATTRIBUTE[s]]])),
+    berthable: ["berthable"],
+    contact: ["contact"],
     occupancy: ["occupancy"],
     exclude: o.banExcludes ? ["exclude", "prohibitions"] : ["exclude"],
     hazards: o.prohibitionHazard ? ["hazards", "prohibitions"] : ["hazards"],

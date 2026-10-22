@@ -354,6 +354,17 @@ describe("imageTargets", () => {
   });
 });
 
+describe("image targets follow delivery (spec 17)", () => {
+  it("a no_anchoring place without a public id is no target, one with a public id is", async () => {
+    await withRollback(async (tx) => {
+      const sd = await insertImageSubdivision(tx);
+      await insertSpot(tx, sd.id, { status: "no_anchoring", publicId: false });
+      const delivered = await insertSpot(tx, sd.id, { lat: IMAGE_LAT + 0.05, status: "no_anchoring" });
+      expect(await imageTargets(tx, await subdivisionRun(tx, sd.key))).toEqual([{ geoObjectId: delivered.objectId, view: TITLE }]);
+    });
+  });
+});
+
 describe("image runs", () => {
   it("startImageRun for an additional view plans one job in the next free slot", async () => {
     await withRollback(async (tx) => {

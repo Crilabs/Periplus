@@ -50,7 +50,19 @@ export const hazardKind = z.enum([
 
 export const spotSchema = z.strictObject({
   id: publicId("sp"),
-  kind: spotKind,
+  kind: spotKind.describe(
+    "marina: leisure harbour where recreational boats berth, including the town quay of an island harbour where yachts moor stern-to without operator or website, even if ferries also use the mole. " +
+      "anchorage: a place where one can anchor. " +
+      "mooringField: a place where a recreational boat moors to a buoy. " +
+      "port: commercial or industrial harbour (ferries, freight, fishing, shipyard) without berths for recreational boats.",
+  ),
+  /** Whether a charter crew passing through can moor here (anchor, visitor berth or quay, free buoy); null = unknown; contract 2.2. */
+  berthable: z.boolean().nullable().describe("Charter crew can moor here on a short stay"),
+  /** How to register with the marina or harbour (VHF channel, phone, website); null when nothing is known; contract 2.2. */
+  contact: z
+    .strictObject({ vhf: z.string().nullable(), phone: z.string().nullable(), url: z.url().nullable() })
+    .nullable()
+    .describe("How to call the marina or harbour"),
   /** Display name, Latin script preferred (Teil B): German, English, the own Latin name, else the ELOT 743 transliteration of the preferred Greek name (never of an old or alternate name). */
   name: z.string().min(1),
   /** `lang` is a BCP 47 tag (`el`, `en`, `de`, …); the transliteration of a Greek name is `el-Latn`, script `latin`. */

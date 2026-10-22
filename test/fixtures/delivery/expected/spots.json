@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "2.1",
+  "schemaVersion": "2.2",
   "subdivision": "sd_01J9ZD00000000000000000001",
   "dataVersion": 1,
   "generatedAt": "2040-06-01T08:00:00.000Z",
@@ -7,6 +7,8 @@
     {
       "id": "sp_01J9ZD00000000000000000001",
       "kind": "anchorage",
+      "berthable": null,
+      "contact": null,
       "name": "Vathi Bay",
       "names": [
         {
@@ -240,6 +242,8 @@
     {
       "id": "sp_01J9ZD00000000000000000002",
       "kind": "marina",
+      "berthable": null,
+      "contact": null,
       "name": "Marina Test",
       "names": [
         {
@@ -346,6 +350,8 @@
     {
       "id": "sp_01J9ZD00000000000000000004",
       "kind": "anchorage",
+      "berthable": null,
+      "contact": null,
       "name": "Ormos C",
       "names": [
         {

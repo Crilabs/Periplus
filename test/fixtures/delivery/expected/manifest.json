@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "2.1",
+  "schemaVersion": "2.2",
   "subdivision": {
     "id": "sd_01J9ZD00000000000000000001",
     "key": "XT-DELIVERY",
@@ -141,17 +141,17 @@
   "files": [
     {
       "name": "spots.json",
-      "sha256": "4a7ed5b3453cfc83e1b0a83f6d80d2399fb685d3b7386c2752a059bec3419cd8",
-      "bytes": 9603
+      "sha256": "08924bb0d781daabff7fcd0abe7954ae6bad76c629d7289231a88d67d8c60f06",
+      "bytes": 9747
     },
     {
       "name": "highlights.json",
-      "sha256": "2489a71243ffb355ef12e8f9de9b3c382a7603e6b2dc8fa5b25185fcdd4c3136",
+      "sha256": "1b6f6d229fa44b129ba89f4746d6c420cfbced58fce6fa44a90e7772143e83e9",
       "bytes": 843
     },
     {
       "name": "regions.json",
-      "sha256": "b15c5d28a8c5202491103e1e3f151619fc376a0227cf5a68c193cb8d29926d65",
+      "sha256": "e0716e94ff5e1f3ce279ff9e5e6a5c9a40e231e3b0511755e313a4739658cc55",
       "bytes": 1971
     },
     {
@@ -161,7 +161,7 @@
     },
     {
       "name": "weather-points.json",
-      "sha256": "99f8a6979bd5a86af92f92d2f948c31f29ff739bc840b2fa1d2b8c645c491e79",
+      "sha256": "9ee06cdcc65754899196e14515fc0f27cf3f77da84a5c0e69ca28578fd08c2e0",
       "bytes": 603
     }
   ]

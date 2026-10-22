@@ -101,6 +101,23 @@ const marina = (attributes: Record<string, unknown> = {}) =>
 const FIELD_CASES: Record<keyof SpotBody, () => void> = {
   id: () => expect(mapped().id).toBe("sp_01J9ZD00000000000000000001"),
   kind: () => expect(mapped().kind).toBe("anchorage"),
+  berthable: () => {
+    expect(mapped().berthable).toBeNull();
+    const derived = mapped(spotA({ attributes: { berthable: true }, provenance: { berthable: provenanceEntry("derived", { confidence: 1 }) } }));
+    expect(derived.berthable).toBe(true);
+    expect(derived.provenance["berthable"]).toMatchObject({ source: "computed" });
+    expect(mapped(spotA({ attributes: { berthable: false } })).berthable).toBe(false);
+  },
+  contact: () => {
+    expect(mapped().contact).toBeNull();
+    expect(mapped(spotA({ attributes: { contact: { vhf: "71", phone: "+30 22980 12345", url: "https://marina.example" } } })).contact).toEqual({
+      vhf: "71",
+      phone: "+30 22980 12345",
+      url: "https://marina.example",
+    });
+    expect(mapped(spotA({ attributes: { contact: { vhf: "71", phone: null, url: null } } })).contact).toEqual({ vhf: "71", phone: null, url: null });
+    expect(mapped(spotA({ attributes: { contact: { vhf: null, phone: null, url: null } } })).contact).toBeNull();
+  },
   name: () => expect(mapped().name).toBe("Vathi Bay"),
   names: () => {
     expect(mapped().names).toEqual(spotA().names);
@@ -346,6 +363,14 @@ describe("mapSpot", () => {
       { kind: "other", text: "Gefahr" },
       { kind: "other", text: "Gefahr: Ammos" },
     ]);
+  });
+
+  it("a spot with berthable and contact validates against the contract; a non-berthable port too", () => {
+    const withContact = mapped(spotA({ attributes: { berthable: true, contact: { vhf: "71", phone: null, url: "https://marina.example" } } }));
+    expect(spotSchema.safeParse({ ...withContact, profileVersion: 1, validFrom: "2026-10-19" }).error?.issues).toBeUndefined();
+    const port = mapped(spotA({ attributes: { "place.kind": "port", berthable: false } }));
+    expect(port).toMatchObject({ kind: "port", berthable: false, contact: null });
+    expect(spotSchema.safeParse({ ...port, profileVersion: 1, validFrom: "2026-10-19" }).error?.issues).toBeUndefined();
   });
 
   it("kind mooring_field maps to mooringField", () => {

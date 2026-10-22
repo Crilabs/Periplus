@@ -84,7 +84,7 @@ describe("review of a place image", () => {
       const s = detail!.subject;
       if (s.type !== "place_image") throw new Error(`subject ${s.type}`);
       expect(s).toMatchObject({
-        place: { geoObjectId: t.objectId, placeId: t.placeId, name: "Bildbucht", publicId: null, kind: "anchorage", composition: "open_water", cove: null, town: null },
+        place: { geoObjectId: t.objectId, placeId: t.placeId, name: "Bildbucht", publicId: expect.stringMatching(/^sp_/), kind: "anchorage", composition: "open_water", cove: null, town: null },
         slot: "title",
         key: t.task.context.key,
         candidateKey: t.task.context.candidateKey,

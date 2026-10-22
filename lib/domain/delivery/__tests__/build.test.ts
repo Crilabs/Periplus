@@ -172,7 +172,7 @@ describe("buildDelivery", () => {
         id: result.deliveryId,
         status: "valid",
         dataVersion: 1,
-        schemaVersion: "2.1",
+        schemaVersion: "2.2",
         storagePrefix: prefixOf(f, 1),
         previousDeliveryId: null,
         triggeredBy: "test",

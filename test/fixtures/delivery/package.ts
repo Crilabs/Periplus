@@ -25,7 +25,7 @@ export const WEATHER_POINT = "wp_01J9ZD00000000000000000001";
 export const INLAND_2NM = { lat: 35.23333, lon: 21.05 };
 
 const GENERATED_AT = "2026-10-20T06:00:00.000Z";
-const envelope = { schemaVersion: "2.1" as const, subdivision: SUBDIVISION_ID, dataVersion: 2, generatedAt: GENERATED_AT };
+const envelope = { schemaVersion: "2.2" as const, subdivision: SUBDIVISION_ID, dataVersion: 2, generatedAt: GENERATED_AT };
 const island: [number, number][] = [
   [21.0, 35.2],
   [21.1, 35.2],
@@ -66,6 +66,8 @@ const spotA: Spot = {
 const marina: Spot = {
   id: SPOT_M,
   kind: "marina",
+  berthable: true,
+  contact: null,
   name: "Marina Nisida",
   position: { lat: 35.25, lon: 21.105 },
   shelter: { sectors: { N: 0.9, NE: 0.9, E: 0.9, SE: 0.9, S: 0.9, SW: 0.9, W: 0.9, NW: 0.9 }, swell: 0.9, source: "computed" },
@@ -123,7 +125,7 @@ const weatherPoint: WeatherPoint = {
 export function validPackage(): DeliveryPackage {
   return structuredClone({
     manifest: {
-      schemaVersion: "2.1",
+      schemaVersion: "2.2",
       subdivision: {
         id: SUBDIVISION_ID,
         key: "XT-NISIDA",

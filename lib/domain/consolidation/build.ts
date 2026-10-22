@@ -90,6 +90,13 @@ function dateMinusDays(date: string, days: number): string {
 }
 
 /** Provenance of a value the profile build sets itself (identity: gazetteer; derived values). */
+/** Spec 17: no anchoring or a port → false; a confirmed anchorage, marina or mooring field → true; else no value. */
+function derivedBerthable(kind: string, status: string): boolean | null {
+  if (status === "no_anchoring" || kind === "port") return false;
+  if (status === "confirmed" && ["anchorage", "marina", "mooring_field"].includes(kind)) return true;
+  return null;
+}
+
 function fixedProvenance(
   origin: "gazetteer" | "derived",
   cites: Partial<Pick<AttributeProvenance, "factIds" | "sourceKeys" | "computationIds" | "poiIds">> = {},
@@ -229,7 +236,8 @@ export function profileContentHash(p: Pick<BuiltProfile, "attributes" | "provena
  * 4. identity (`gazetteer`, rule `identity`, confidence 1): `geo.name`, `geo.parent_id`, `geo.geometry_hash`; places
  *    `place.kind`, `place.status`, `place.position` (6 decimals), `exclude` in the contract's vocabulary
  *    (`exclude.ts`), citing the restricted area and the `prohibitions` entry that excluded the place;
- * 5. derived values (`derived`, the deciding inputs in `derivedFrom`): places `derived.quietness`, `derived.season`;
+ * 5. derived values (`derived`, the deciding inputs in `derivedFrom`): places `derived.quietness`, `derived.season`, and
+ *    `berthable` when no fact gave one (spec 17);
  *    POIs `derived.importance`, `derived.radius_nm`, `derived.spot_ids`;
  * 6. gaps: level attributes without a value, except `gaps.ignore[place.kind]`, with the computation's reason or
  *    `no_facts`; then the missing derived values (`derived.quietness` `too_few_parts`, `derived.importance`
@@ -370,6 +378,16 @@ export function buildProfile(input: BuildProfileInput): BuiltProfile {
     );
   } else if (context.level === "poi") {
     gaps.push({ attribute: "derived.importance", reason: "no_category" });
+  }
+
+  // berthable without a fact: a derived value of the place (spec 17, "Ableitung ohne Fact"); a fact always wins
+  if (context.level === "place" && context.place && !("berthable" in attributes) && defs.some((d) => d.key === "berthable")) {
+    const berthable = derivedBerthable(context.place.kind, context.place.status);
+    if (berthable !== null) {
+      setDerived("berthable", berthable, fixedProvenance("derived", {}, { kind: context.place.kind, status: context.place.status }));
+      const gap = gaps.findIndex((g) => g.attribute === "berthable");
+      if (gap >= 0) gaps.splice(gap, 1);
+    }
   }
 
   // 7–8

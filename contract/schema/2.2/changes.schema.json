@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "periplus:contract/2.2/changes.schema.json",
+  "title": "Periplus Data Contract 2.2 – changes.json",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "2.2"
+    },
+    "subdivision": {
+      "type": "string",
+      "pattern": "^sd_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "dataVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "previousDataVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "objectType": {
+            "type": "string",
+            "enum": [
+              "spot",
+              "highlight",
+              "region"
+            ]
+          },
+          "objectId": {
+            "type": "string",
+            "pattern": "^(sp|hl|rg)_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "event": {
+            "type": "string",
+            "enum": [
+              "created",
+              "updated",
+              "excluded",
+              "merged",
+              "removed"
+            ]
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "notable",
+              "safety"
+            ]
+          },
+          "summary": {
+            "type": "object",
+            "properties": {
+              "de": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "de"
+            ],
+            "additionalProperties": false
+          },
+          "profileVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "objectType",
+          "objectId",
+          "event",
+          "fields",
+          "severity",
+          "summary",
+          "profileVersion"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "subdivision",
+    "dataVersion",
+    "generatedAt",
+    "previousDataVersion",
+    "changes"
+  ],
+  "additionalProperties": false
+}
