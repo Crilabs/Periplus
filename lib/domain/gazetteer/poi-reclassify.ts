@@ -13,15 +13,17 @@ type PoiRow = { id: string; category: PoiCategory | null; tags: Record<string, s
 /**
  * Re-applies `categories.osm` to the stored OSM POIs (spec 15 A): valid, unmerged `poi` rows of origin `osm` with
  * tags (Wikidata and review POIs carry none and keep their category). A POI whose category differs gets the new one,
- * or none (delivery then drops it). Returns the ids of the geo objects with a place within `poiRadiusM` of a changed
- * POI: their profiles are stale and need a new consolidation. `dryRun` counts only and writes nothing.
+ * or none (delivery then drops it). Returns the ids of the geo objects with a place within reach of a changed POI:
+ * `poiRadiusM` (highlight facts) or, when the rules select highlights (spec 16), the largest `highlights.reachKm`. Their
+ * profiles and highlight selections are stale and need a new consolidation. `dryRun` counts only and writes nothing.
  */
 export async function reclassifyPois(
   db: Db,
   categories: CategoriesConfig,
   opts: { dryRun?: boolean; radiusM?: number } = {},
 ): Promise<ReclassifyResult> {
-  const radiusM = opts.radiusM ?? (await consolidationConfigFor(db)).rules.highlight.poiRadiusM;
+  const rules = await consolidationConfigFor(db);
+  const radiusM = opts.radiusM ?? Math.max(rules.rules.highlight.poiRadiusM, ...(rules.highlights?.reachKm ?? []).map((km) => km * 1000));
   const { rows } = await db.execute<PoiRow>(sql`
     select o.id, o.category::text as category, o.tags
     from geo_objects o
