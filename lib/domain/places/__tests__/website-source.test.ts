@@ -161,6 +161,19 @@ describe("attachPlaceWebsite", () => {
       expect((source.crawlRules as CrawlRules).maxPages).toBe(30);
     }));
 
+  it("start URLs differing only in scheme, www. or trailing slash count as the same for two places (final review 2)", () =>
+    withRollback(async (tx) => {
+      const runId = await insertTestRun(tx);
+      const domain = `town-${newId()}.example`;
+      const a = await insertPlace(tx, { type: "harbour", name: "Epsilon" });
+      const b = await insertPlace(tx, { type: "harbour", name: "Zeta" });
+      const first = await attachPlaceWebsite(tx, { placeId: a.placeId, geoObjectId: a.objectId, url: `http://www.${domain}`, origin: "osm", runId }, cfg());
+      expect(first.bound).toBe(true);
+      const second = await attachPlaceWebsite(tx, { placeId: b.placeId, geoObjectId: b.objectId, url: `https://${domain}/`, origin: "osm", runId }, cfg());
+      expect(second.bound).toBe(false);
+      expect((await rowsOf(tx, a.placeId))[0]).toMatchObject({ bound: false });
+    }));
+
   it("an authority domain is not created as a marina source and binds nothing", () =>
     withRollback(async (tx) => {
       const runId = await insertTestRun(tx);

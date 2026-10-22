@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { documents, documentVersions, mentions } from "@/lib/db/schema";
 import { jsonUuids } from "./scope";
@@ -16,7 +16,24 @@ const MAX_MERGE_HOPS = 10;
 
 type Candidate = { place_id: string; url_normalized: string };
 
-/** Whether `url` lies under the start URL `start`: same prefix, ending on a path boundary. */
+/** Scheme and a leading `www.` of a normalised URL (dropped by the binding key). */
+const SCHEME_WWW = "^[a-z][a-z0-9+.-]*://(www\\.)?";
+
+/**
+ * The canonical binding key of a normalised URL (final review 2): scheme dropped, a leading `www.` dropped, trailing
+ * slashes dropped. `http://www.marina.gr` and `https://marina.gr/` are the same start URL; a page under either is under
+ * both. Used for the binding (`boundGeoObjectFor`) and for the shared start URL of several places (`attachPlaceWebsite`).
+ */
+export function bindingKey(urlNormalized: string): string {
+  return urlNormalized.replace(new RegExp(SCHEME_WWW, "i"), "").replace(/\/+$/, "");
+}
+
+/** `bindingKey` in SQL, of the text expression `url`. */
+export function bindingKeySql(url: SQL): SQL {
+  return sql`rtrim(regexp_replace(${url}, ${SCHEME_WWW}, '', 'i'), '/')`;
+}
+
+/** Whether `url` lies under the start URL `start` (both binding keys): same prefix, ending on a path boundary. */
 function isUnder(url: string, start: string): boolean {
   if (!url.startsWith(start)) return false;
   if (start.endsWith("/") || url.length === start.length) return true;
@@ -26,22 +43,23 @@ function isUnder(url: string, start: string): boolean {
 /**
  * The geo object a page is bound to: that of the place whose current `place_websites` row has `bound = true`, is not
  * of an `authority` source and whose start URL is the longest prefix of `urlNormalized` (path prefix on the same
- * host). A merged place resolves to the one it was merged into; null when there is none, when two places tie, or when
+ * host, compared by `bindingKey`: scheme and `www.` do not matter). A merged place resolves to the one it was merged into; null when there is none, when two places tie, or when
  * the place is rejected.
  */
 export async function boundGeoObjectFor(db: Db, urlNormalized: string): Promise<string | null> {
+  const key = bindingKey(urlNormalized);
   const { rows } = await db.execute<Candidate>(sql`
     select c.place_id, c.url_normalized
     from (
       select distinct on (w.place_id) w.place_id, w.url_normalized, w.bound, w.source_id
       from place_websites w
-      where w.place_id in (select place_id from place_websites where starts_with(${urlNormalized}, url_normalized))
+      where w.place_id in (select place_id from place_websites where starts_with(${key}, ${bindingKeySql(sql`url_normalized`)}))
       order by w.place_id, w.created_at desc, w.id desc
     ) c
     left join sources s on s.id = c.source_id
-    where c.bound and s.type is distinct from 'authority' and starts_with(${urlNormalized}, c.url_normalized)
+    where c.bound and s.type is distinct from 'authority' and starts_with(${key}, ${bindingKeySql(sql`c.url_normalized`)})
   `);
-  const under = rows.filter((r) => isUnder(urlNormalized, r.url_normalized));
+  const under = rows.map((r) => ({ place_id: r.place_id, key: bindingKey(r.url_normalized) })).filter((r) => isUnder(key, r.key));
   if (under.length === 0) return null;
 
   // Resolve merged places to their survivors; the same survivor reached twice is one place.
@@ -49,7 +67,7 @@ export async function boundGeoObjectFor(db: Db, urlNormalized: string): Promise<
   for (const r of under) {
     const placeId = await survivorOf(db, r.place_id);
     if (placeId === null) continue;
-    const length = Math.max(r.url_normalized.length, survivors.get(placeId)?.length ?? 0);
+    const length = Math.max(r.key.length, survivors.get(placeId)?.length ?? 0);
     survivors.set(placeId, { placeId, length });
   }
   const longest = Math.max(...[...survivors.values()].map((s) => s.length));

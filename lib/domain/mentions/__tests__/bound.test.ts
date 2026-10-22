@@ -40,6 +40,24 @@ describe("boundGeoObjectFor", () => {
       expect(await boundGeoObjectFor(tx, `https://other-${h}/en/`)).toBeNull();
     }));
 
+  it("scheme, a leading www. and a trailing slash do not matter: subpages under the redirected host are bound (final review 2)", () =>
+    withRollback(async (tx) => {
+      const h = host();
+      const a = await insertPlace(tx, { type: "harbour", name: "Alpha" });
+      await website(tx, a, `http://www.${h}/`);
+      expect(await boundGeoObjectFor(tx, `https://${h}/`)).toBe(a.objectId);
+      expect(await boundGeoObjectFor(tx, `https://${h}/berths`)).toBe(a.objectId);
+      expect(await boundGeoObjectFor(tx, `http://www.${h}/berths?lang=en`)).toBe(a.objectId);
+      expect(await boundGeoObjectFor(tx, `https://shop.${h}/berths`)).toBeNull();
+
+      const b = await insertPlace(tx, { type: "harbour", name: "Beta" });
+      const g = host();
+      await website(tx, b, `https://${g}/marina/`);
+      expect(await boundGeoObjectFor(tx, `http://www.${g}/marina`)).toBe(b.objectId);
+      expect(await boundGeoObjectFor(tx, `http://www.${g}/marina/prices`)).toBe(b.objectId);
+      expect(await boundGeoObjectFor(tx, `https://${g}/marinas`)).toBeNull();
+    }));
+
   it("a start URL without a trailing slash matches on a path boundary only", () =>
     withRollback(async (tx) => {
       const h = host();

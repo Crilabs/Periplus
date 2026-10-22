@@ -7,6 +7,7 @@ import { openTaskFor } from "@/lib/domain/review";
 import { decideReviewTask, sourceSettingsKey } from "@/lib/domain/review-decisions";
 import { crawlRulesSchema, DEFAULT_CRAWL_RULES } from "@/lib/domain/sources/crawl-rules";
 import { isForbiddenHost, isForbiddenUrl } from "@/lib/domain/sources/forbidden-domains";
+import { bindingKey, bindingKeySql } from "@/lib/domain/mentions/bound";
 import { setSourceStatus } from "@/lib/domain/sources/store";
 import { normalizeUrl, registrableDomain } from "@/lib/domain/sources/urls";
 
@@ -126,9 +127,10 @@ async function approvedSourceFor(tx: Db, url: string, type: DocType, cfg: Attach
  * Records the website of a place (append-only `place_websites` row) and approves its source (`approvedSourceFor`;
  * none on a forbidden domain). `bound` (the source's pages below the start URL belong to the place, spec 16 C
  * „Bindung an den Ort“) is false without a source, for an `authority` domain (`suggestType`; created as `authority`,
- * not `marina`) and for a start URL another place's current website already has: then that place's binding ends too,
- * by a new row of it with `bound` false (a municipality or port authority page for several harbours binds none).
- * Serialised per normalised URL, so two places attaching the same URL at once see each other.
+ * not `marina`) and for a start URL another place's current website already has (by `bindingKey`): then that place's
+ * binding ends too, by a new row of it with `bound` false (a municipality or port authority page for several harbours
+ * binds none).
+ * Serialised per binding key, so two places attaching the same URL at once see each other.
  */
 export async function attachPlaceWebsite(
   tx: Db,
@@ -136,7 +138,9 @@ export async function attachPlaceWebsite(
   cfg: AttachConfig = getConfig(),
 ): Promise<{ sourceId: string | null; bound: boolean }> {
   const urlNormalized = normalized(input.url, cfg);
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`place-website:${urlNormalized}`}))`);
+  // one start URL whatever its scheme, `www.` or trailing slash (`bindingKey`, final review 2)
+  const key = bindingKey(urlNormalized);
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`place-website:${key}`}))`);
   const domain = registrableDomain(urlNormalized);
   const authority = suggestType([input.url], cfg.discovery.proposals) === "authority";
   const forbidden = isForbiddenHost(domain, cfg.delivery.forbiddenDomains) || isForbiddenUrl(input.url, cfg.delivery.forbiddenDomains);
@@ -148,9 +152,9 @@ export async function attachPlaceWebsite(
       select distinct on (w.place_id) w.id, w.place_id, w.url_normalized, w.bound
       from place_websites w
       where w.place_id <> ${input.placeId}::uuid
-        and w.place_id in (select place_id from place_websites where url_normalized = ${urlNormalized})
+        and w.place_id in (select place_id from place_websites where ${bindingKeySql(sql`url_normalized`)} = ${key})
       order by w.place_id, w.created_at desc, w.id desc
-    ) c where c.url_normalized = ${urlNormalized}
+    ) c where ${bindingKeySql(sql`c.url_normalized`)} = ${key}
   `);
   for (const other of others.filter((o) => o.bound)) {
     const [row] = await tx.select().from(placeWebsites).where(eq(placeWebsites.id, other.id));
