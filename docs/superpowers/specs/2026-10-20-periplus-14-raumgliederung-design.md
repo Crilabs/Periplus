@@ -11,13 +11,13 @@ Diese Spec trennt die Rollen:
 | Baustein | Rolle | Überlappung | Lückenlos | Herkunft |
 | --- | --- | --- | --- | --- |
 | **Kachel** | Arbeitseinheit: Stand, Zyklus, Priorität (wie bisher) | nein | ja (Raster) | Raster |
-| **Landesteil** | Aufbau Landesteil für Landesteil, Gliederung, Elternkette, Kennzahlen, Lieferumfang (bis Teil-Spec 15) | nein | ja | Verwaltungsgrenzen (OSM, Wikidata) |
+| **Landesteil** | Aufbau Landesteil für Landesteil, Gliederung, Elternkette, Kennzahlen, Lieferumfang (bis Teil-Spec 18) | nein | ja | Verwaltungsgrenzen (OSM, Wikidata) |
 | **Revier** | Namen für Quellenfindung und Erwähnungen | ja | nein | per KI vorgeschlagen, Freigabe nach Bahnen, Korrektur in der Karte |
 | **Meer** | oberste Ebene, Suchname | nein | ja | IHO-Meeresgebiete |
 
 Ein Revier ist ab jetzt **ein Name, unter dem Segler über ein Gebiet schreiben**: ein fester Schlüssel, 1–n Namen und ein Polygon. Daten hängen nicht am Revier.
 
-Der Endnutzer sieht weder Landesteil noch Revier; er wählt beim Abnehmer eine Heimatmarina (Entscheidung Christian). Die Lieferung nach Umkreis statt je Gebiet ist Gegenstand von Teil-Spec 15; bis dahin ist der Landesteil der Paketumfang.
+Der Endnutzer sieht weder Landesteil noch Revier; er wählt beim Abnehmer eine Heimatmarina (Entscheidung Christian). Die Lieferung nach Umkreis statt je Gebiet ist Gegenstand von Teil-Spec 18; bis dahin ist der Landesteil der Paketumfang.
 
 ## Entscheidungen
 
@@ -173,13 +173,13 @@ Die Schritte 4 bis 7 laufen, wie heute, je Kachel und Kachelblock und warten auf
 
 ## Folgen für Konsolidierung, Lieferung, Qualität
 
-- `popularity` (Teil-Spec 07): normiert innerhalb des Landesteils statt des Reviers. Teil-Spec 15 ersetzt das durch eine feste Nachbarschaft je Ort.
+- `popularity` (Teil-Spec 07): normiert innerhalb des Landesteils statt des Reviers. Teil-Spec 18 ersetzt das durch eine feste Nachbarschaft je Ort.
 - Paket (Teil-Spec 08): Umfang ist der Landesteil; Inhalt sind die Orte und Highlights mit `geo_objects.subdivision_id` = Landesteil. Pfad `deliveries/<subdivision-key>/<dataVersion>/`. **Vertragsversion 2.0** (Entscheidung Claude: die Umbenennung trifft jede Datei, also Major; es gibt noch keinen Abnehmer):
   - `area` wird überall `subdivision`: Hülle jeder Datei (`contract/v1/common.ts`), `manifest.subdivision` (Schlüssel, `sd_`-ID, Namen, Polygon, Bounding Box), Change-Feed je Landesteil.
   - `region.parentId` fällt auf Land oder Verwaltungseinheit zurück, nicht mehr auf das Revier.
   - Neu `manifest.areas`: die Reviere, die den Landesteil berühren (`ar_`-ID, Schlüssel, Namen), nur zur Information.
   - Wechselt ein Ort den Landesteil (nur durch Korrektur der Landzuordnung), erscheint er im alten Feed als entfernt und im neuen als neu; seine `sp_`-ID bleibt.
-  - Teil-Spec 15 legt fest, ob die Lieferung nach Umkreis eine weitere Major-Version braucht.
+  - Teil-Spec 18 legt fest, ob die Lieferung nach Umkreis eine weitere Major-Version braucht.
 - **Teilweise gebaute Landesteile:** Ein Paket enthält, was bisher bearbeitet ist; das Manifest führt die Kacheln mit Stand (wie v1). Gebaut wird auf Knopfdruck wie heute, unabhängig vom Fortschritt. (Entscheidung Claude.)
 - Kennzahlen und Vergleichssatz (Teil-Spec 10): je Landesteil statt je Revier; `comparison_set.area_id` wird `subdivision_id`.
 - Revier-Facts (`meltemi_exposure`, `ferry_traffic`, `charter_base`): bleiben am Revier-Objekt (Grundprinzip 8), Konsolidierung unverändert; überlappende Reviere tragen ihre Facts unabhängig.
@@ -256,5 +256,5 @@ Entschieden beim Bau (Plan 14b): `ST_ConcaveHull` mit Verhältnis 0,3 (`config/a
 
 - Ob OSM-Verwaltungsgrenzen der ersten Ebene in allen Anrainerstaaten Inseln vollständig einschließen (in manchen Ländern enden sie an der Küstenlinie); Rückfall ist die Landzuordnung, geprüft wird beim ersten `subdivisions.build`.
 - Schlüssel ohne ISO-Code (z. B. Keserwan-Jbeil, britische Stützpunktgebiete auf Zypern) und abweichende OSM-Codes (Libyen) vergibt `config/subdivisions.json` von Hand.
-- Ob nach Pilot und erstem Ausbau der nächste Landesteil automatisch startet (Nachfrage aus Teil-Spec 15 als Priorität).
-- Teil-Spec 15 (Lieferung nach Umkreis um eine Heimatmarina) wartet auf die Frage, ob Abnehmer offline an Bord ein Paket brauchen oder online abfragen.
+- Ob nach Pilot und erstem Ausbau der nächste Landesteil automatisch startet (Nachfrage aus Teil-Spec 18 als Priorität).
+- Teil-Spec 18 (Lieferung nach Umkreis um eine Heimatmarina; noch nicht geschrieben, die Nummer 15 ging an die Marina-Services) wartet auf die Frage, ob Abnehmer offline an Bord ein Paket brauchen oder online abfragen.
