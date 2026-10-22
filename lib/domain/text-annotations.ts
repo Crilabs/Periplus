@@ -19,6 +19,9 @@ export const QUOTE_CONTEXT_CHARS = 200;
 
 export type ChunkMention = { id: string; geoObjectId: string; name: string | null; matchKind: MatchKind; confidence: number };
 
+/** A place the chunk's page is bound to (spec 16 C): shown as a line above the text, never as a span. */
+export type ChunkBound = { id: string; geoObjectId: string; name: string | null };
+
 export type ChunkFact = {
   id: string;
   geoObjectId: string;
@@ -41,6 +44,8 @@ export type ChunkAnnotations = {
   carriedFrom: string | null;
   spans: Span[];
   mentions: ChunkMention[];
+  /** The places of the chunk's bound mentions (zero-length, `match_kind = 'bound'`), not in `mentions` or `spans`. */
+  bound: ChunkBound[];
   facts: ChunkFact[];
 };
 
@@ -128,7 +133,9 @@ export async function versionAnnotations(db: Db, versionId: string, cfg: AppConf
   const out: ChunkAnnotations[] = [];
   for (const c of chunkRows) {
     const from = new Set(sources.get(c.id));
-    const ms = mentionRows.filter((m) => from.has(m.chunk_id));
+    const named = mentionRows.filter((m) => from.has(m.chunk_id));
+    const ms = named.filter((m) => m.match_kind !== "bound");
+    const bound = named.filter((m) => m.match_kind === "bound");
     const fs = factRows.filter((f) => from.has(f.chunk_id));
     const facts: ChunkFact[] = [];
     for (const f of fs) {
@@ -167,6 +174,7 @@ export async function versionAnnotations(db: Db, versionId: string, cfg: AppConf
         matchKind: m.match_kind,
         confidence: Number(m.confidence),
       })),
+      bound: bound.map((m) => ({ id: m.id, geoObjectId: m.geo_object_id, name: m.name })),
       facts,
     });
   }

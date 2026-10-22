@@ -26,6 +26,7 @@ import {
   extractUnits,
   planExtraction,
   unitInput,
+  unitInputs,
 } from "@/lib/pipeline/text/extract";
 import { matchVersion } from "@/lib/pipeline/text/mentions";
 import { endRunByAdmin } from "@/lib/pipeline/runs";
@@ -777,5 +778,32 @@ describe("stage extraction.mention", () => {
       // an extraction run planned on v1 keeps v1's attribute list, whatever is active now
       await tx.update(extractionRuns).set({ factSchemaVersion: "v1" }).where(eq(extractionRuns.id, job!.extractionRunId as string));
       expect(await systemOf()).not.toMatch(/^holding — /m);
+    }));
+
+  it("boundToWebsite is true only for units of a bound mention", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx);
+      const bound = await insertNamedObject(tx, { type: "harbour", names: [{ name: "Marina Alpha" }], lon: 21.01, lat: 35.2 });
+      for (const chunkId of s.chunkIds) {
+        await tx.insert(mentions).values({
+          documentVersionId: s.versionId,
+          chunkId,
+          geoObjectId: bound,
+          surface: "",
+          charStart: 0,
+          charEnd: 0,
+          observedAt: "2026-10-19",
+          confidence: 1,
+          matchKind: "bound",
+        });
+      }
+      const params = { documentVersionIds: [s.versionId] };
+      const runId = await startRun(tx, params);
+      const jobs = await planExtraction(tx, { id: runId, params }, config);
+      const unitIds = jobs.flatMap((j) => j.unitIds as string[]);
+      const inputs = await unitInputs(tx, unitIds, config);
+      const rows = await tx.select().from(extractionUnits).where(inArray(extractionUnits.id, unitIds));
+      expect(rows.map((u) => u.geoObjectId).sort()).toEqual([s.kolona, bound].sort());
+      for (const u of rows) expect(inputs.get(u.id)!.boundToWebsite, u.geoObjectId).toBe(u.geoObjectId === bound);
     }));
 });

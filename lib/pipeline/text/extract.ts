@@ -4,7 +4,7 @@ import { extractFactsTask, type ExtractFactsInput } from "@/lib/ai/tasks/extract
 import type { ModelTask } from "@/lib/ai/types";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { chunks, extractionRuns, extractionUnits, facts, type ExtractionPurpose } from "@/lib/db/schema";
+import { chunks, extractionRuns, extractionUnits, facts, mentions, type ExtractionPurpose } from "@/lib/db/schema";
 import { mentionsExtractedBefore } from "@/lib/domain/extraction/active-run";
 import { comparisonMentionIds } from "@/lib/domain/extraction/comparison";
 import { failUnitMentions } from "@/lib/domain/extraction/unit-status";
@@ -223,6 +223,13 @@ export async function unitInputs(db: Db, unitIds: string[], config: AppConfig = 
   const chunkRows = chunkIds.length === 0 ? [] : await db.select({ id: chunks.id, text: chunks.text }).from(chunks).where(inArray(chunks.id, chunkIds));
   const texts = new Map(chunkRows.map((c) => [c.id, c.text]));
   const objects = await candidateDetails(db, [...new Set(units.map((u) => u.geoObjectId))]);
+  // A unit with a bound mention covers a page of the place's own website (spec 16 C).
+  const mentionIds = [...new Set(units.flatMap((u) => u.mentionIds))];
+  const boundMentions = new Set(
+    mentionIds.length === 0
+      ? []
+      : (await db.select({ id: mentions.id }).from(mentions).where(and(inArray(mentions.id, mentionIds), eq(mentions.matchKind, "bound")))).map((r) => r.id),
+  );
   const metas = new Map<string, Awaited<ReturnType<typeof effectiveVersionMeta>>>();
   for (const versionId of new Set(units.map((u) => u.documentVersionId))) metas.set(versionId, await effectiveVersionMeta(db, versionId));
   for (const u of units) {
@@ -242,7 +249,7 @@ export async function unitInputs(db: Db, unitIds: string[], config: AppConfig = 
       docType: meta.docType,
       observedAt: meta.observedAt,
       chunks: unitTexts.map((text, i) => ({ n: i + 1, text: text! })),
-      boundToWebsite: false,
+      boundToWebsite: u.mentionIds.some((id) => boundMentions.has(id)),
     });
   }
   for (const id of unitIds) if (!units.some((u) => u.id === id)) getLog().warn({ unitId: id }, "extraction unit missing, left out of the batch");

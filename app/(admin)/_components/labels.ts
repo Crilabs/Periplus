@@ -423,6 +423,7 @@ export const MATCH_KIND_LABELS: Record<MatchKind, string> = {
   deterministic: "Namensabgleich",
   model: "Modell",
   review: "Prüfung",
+  bound: "Website des Ortes",
 };
 
 export const EXTRACTION_RUN_STATUS_LABELS: Record<ExtractionRunStatus, string> = {

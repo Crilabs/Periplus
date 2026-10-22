@@ -128,4 +128,18 @@ describe("quoteContext", () => {
     const long = "Donaudampfschifffahrt QUOTE";
     expect(quoteContext(long, 22, 27, 5).before).toBe("… ");
   });
+
+  it("a bound mention is listed apart, never as a span or a mention", () =>
+    withRollback(async (tx) => {
+      const marina = await insertNamedObject(tx, { type: "harbour", names: [{ name: "Marina Alpha" }], lon: 21.1, lat: 35.1 });
+      const v = await insertTestVersion(tx, [TEXT]);
+      const [m] = await tx
+        .insert(mentions)
+        .values({ documentVersionId: v.versionId, chunkId: v.chunkIds[0]!, geoObjectId: marina, surface: "", charStart: 0, charEnd: 0, observedAt: "2026-10-19", confidence: 1, matchKind: "bound" })
+        .returning({ id: mentions.id });
+      const [chunk] = await versionAnnotations(tx, v.versionId, config);
+      expect(chunk!.spans).toEqual([]);
+      expect(chunk!.mentions).toEqual([]);
+      expect(chunk!.bound).toEqual([{ id: m!.id, geoObjectId: marina, name: "Marina Alpha" }]);
+    }));
 });

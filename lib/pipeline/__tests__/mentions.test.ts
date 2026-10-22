@@ -6,7 +6,9 @@ import { withRollback } from "@/test/db";
 import { insertNamedObject, insertTestRun, insertTestTile, insertTestVersion } from "@/test/text";
 import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { ambiguousMatches, mentions, pipelinePasses, unmatchedNames, type GeoObjectType } from "@/lib/db/schema";
+import { ambiguousMatches, documents, mentions, pipelinePasses, placeWebsites, unmatchedNames, type GeoObjectType } from "@/lib/db/schema";
+import { insertPlace } from "@/test/consolidation";
+import { planUnits } from "@/lib/domain/extraction/units";
 import { mentionsConfigKey } from "@/lib/domain/mentions/store";
 import { createRun } from "@/lib/domain/runs";
 import { newId } from "@/lib/domain/ids";
@@ -157,4 +159,73 @@ describe("stage mentions.batch", () => {
         { key: "mentions:2", versionIds: sorted.slice(4) },
       ]);
     }));
+
+  describe("bound mentions (spec 16 C)", () => {
+    /** A page at `url` of a version with the given chunk texts; its document is the one `insertTestVersion` made. */
+    async function pageAt(tx: Db, url: string, texts: string[]) {
+      const v = await insertTestVersion(tx, texts);
+      await tx.update(documents).set({ url, urlNormalized: url }).where(eq(documents.id, v.documentId));
+      return v;
+    }
+    const website = (tx: Db, p: { placeId: string; objectId: string }, url: string, bound = true) =>
+      tx.insert(placeWebsites).values({ placeId: p.placeId, geoObjectId: p.objectId, url, urlNormalized: url, origin: "osm", bound });
+    const texts = Array.from({ length: 8 }, (_, i) => `Fuel is available at the quay, part ${i}.`);
+
+    it("a page under a bound start URL gets one zero-length bound mention per chunk, without the name", () =>
+      withRollback(async (tx) => {
+        const runId = await insertTestRun(tx);
+        const place = await insertPlace(tx, { type: "harbour", name: "Marina Alpha" });
+        const host = `https://${newId()}.example`;
+        await website(tx, place, `${host}/en/`);
+        const v = await pageAt(tx, `${host}/en/services`, texts);
+        const counts = await matchVersion(tx, v.versionId, { runId, cfg: config });
+        expect(counts.mentions).toBe(8);
+        const ms = await tx.select().from(mentions).where(eq(mentions.documentVersionId, v.versionId));
+        expect(ms.map((m) => m.chunkId).sort()).toEqual([...v.chunkIds].sort());
+        for (const m of ms) {
+          expect(m).toMatchObject({ geoObjectId: place.objectId, surface: "", charStart: 0, charEnd: 0, confidence: 1, matchKind: "bound", typeHint: null, observedAt: "2026-10-19", runId });
+        }
+        // one unit over all chunks: two parts of at most maxChunksPerUnit (6) for 8 chunks
+        const { units } = await planUnits(tx, ms.map((m) => m.id), config.extraction.unit);
+        expect(units.map((u) => u.chunkIds.length)).toEqual([6, 4]);
+      }));
+
+    it("a chain's page under another place's start URL is bound to that place", () =>
+      withRollback(async (tx) => {
+        const runId = await insertTestRun(tx);
+        const chain = await insertPlace(tx, { type: "harbour", name: "Chain HQ" });
+        const local = await insertPlace(tx, { type: "harbour", name: "Local Marina" });
+        const host = `https://${newId()}.example`;
+        await website(tx, chain, `${host}/`);
+        await website(tx, local, `${host}/marinas/local/`);
+        const v = await pageAt(tx, `${host}/marinas/local/fuel`, ["Fuel quay."]);
+        await matchVersion(tx, v.versionId, { runId, cfg: config });
+        const ms = await tx.select().from(mentions).where(eq(mentions.documentVersionId, v.versionId));
+        expect(ms.map((m) => [m.geoObjectId, m.matchKind])).toEqual([[local.objectId, "bound"]]);
+      }));
+
+    it("a start URL shared by several places (bound = false) binds no mention", () =>
+      withRollback(async (tx) => {
+        const runId = await insertTestRun(tx);
+        const a = await insertPlace(tx, { type: "harbour", name: "Alpha" });
+        const host = `https://${newId()}.example`;
+        await website(tx, a, `${host}/`, false);
+        const v = await pageAt(tx, `${host}/x`, ["Fuel quay."]);
+        expect(await matchVersion(tx, v.versionId, { runId, cfg: config })).toMatchObject({ mentions: 0 });
+        expect(await tx.select().from(mentions).where(eq(mentions.documentVersionId, v.versionId))).toEqual([]);
+      }));
+
+    it("a rematch adds no second bound mention", () =>
+      withRollback(async (tx) => {
+        const runId = await insertTestRun(tx);
+        const place = await insertPlace(tx, { type: "harbour", name: "Marina Alpha" });
+        const host = `https://${newId()}.example`;
+        await website(tx, place, `${host}/`);
+        const v = await pageAt(tx, `${host}/x`, texts.slice(0, 3));
+        await matchVersion(tx, v.versionId, { runId, cfg: config });
+        expect(await matchVersion(tx, v.versionId, { runId, cfg: config })).toMatchObject({ mentions: 0 });
+        expect(await matchVersion(tx, v.versionId, { runId, cfg: config, rematch: true })).toMatchObject({ mentions: 0 });
+        expect(await tx.select().from(mentions).where(eq(mentions.documentVersionId, v.versionId))).toHaveLength(3);
+      }));
+  });
 });

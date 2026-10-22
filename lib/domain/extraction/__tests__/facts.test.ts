@@ -514,4 +514,33 @@ describe("processFactOutput", () => {
       expect(await completeUnit(tx, await unitOf("regular"), emptyFactStats(), { inputTokens: 0, outputTokens: 0 }, 0)).toBe(true);
       expect(await statuses()).toEqual(["done", "done"]);
     }));
+
+  it("a fact in a chunk with only a zero-length bound mention hangs on that bound mention", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx, "Holding is good in mud near the quay.");
+      const bound: string[] = [];
+      // chunk 1 holds a name mention at offset 0 (the unique index leaves no room for a bound one there)
+      for (const chunkId of [s.chunkIds[0]!, s.chunkIds[2]!]) {
+        const [m] = await tx
+          .insert(mentions)
+          .values({
+            documentVersionId: s.versionId,
+            chunkId,
+            geoObjectId: s.bay,
+            surface: "",
+            charStart: 0,
+            charEnd: 0,
+            observedAt: "2026-10-19",
+            confidence: 1,
+            matchKind: "bound",
+          })
+          .returning({ id: mentions.id });
+        bound.push(m!.id);
+      }
+      const unit: ProcessUnit = { ...s.unit, mentionIds: [...s.mentionIds, ...bound] };
+      // chunk 3 has no name mention: the quote there belongs to that chunk's bound mention
+      await processFactOutput(tx, unit, { facts: [fact({ quote: "Holding is good in mud", chunk: 3 })] }, config);
+      const [f] = await factsOf(tx, unit.extractionRunId);
+      expect(f?.mentionId).toBe(bound[1]);
+    }));
 });

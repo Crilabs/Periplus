@@ -112,4 +112,55 @@ describe("planUnits", () => {
         ].sort(),
       );
     }));
+
+  it("a group with a bound mention takes every chunk of the version, in parts of maxChunksPerUnit", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx, 8);
+      const ids: string[] = [];
+      for (const chunkId of s.chunkIds) {
+        const [row] = await tx
+          .insert(mentions)
+          .values({
+            documentVersionId: s.versionId,
+            chunkId,
+            geoObjectId: s.geoObjectId,
+            surface: "",
+            charStart: 0,
+            charEnd: 0,
+            observedAt: "2026-10-19",
+            confidence: 1,
+            matchKind: "bound",
+          })
+          .returning({ id: mentions.id });
+        ids.push(row!.id);
+      }
+      const { units } = await planUnits(tx, ids, UNIT);
+      expect(units).toHaveLength(2);
+      expect(units[0]!.chunkIds).toEqual(s.chunkIds.slice(0, 6));
+      expect(units[1]!.chunkIds).toEqual(s.chunkIds.slice(4, 8));
+      expect(units.flatMap((u) => u.mentionIds).sort()).toEqual([...ids].sort());
+    }));
+
+  it("a bound and a name mention of one object share one unit group; a single bound mention covers the whole version", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx, 8);
+      const [name] = await mentionAt(tx, s, [1]);
+      const [bound] = await tx
+        .insert(mentions)
+        .values({
+          documentVersionId: s.versionId,
+          chunkId: s.chunkIds[6]!,
+          geoObjectId: s.geoObjectId,
+          surface: "",
+          charStart: 0,
+          charEnd: 0,
+          observedAt: "2026-10-19",
+          confidence: 1,
+          matchKind: "bound",
+        })
+        .returning({ id: mentions.id });
+      const { units } = await planUnits(tx, [name!, bound!.id], UNIT);
+      expect(units.map((u) => u.chunkIds)).toEqual([s.chunkIds.slice(0, 6), s.chunkIds.slice(4, 8)]);
+      expect(units.flatMap((u) => u.mentionIds).sort()).toEqual([name!, bound!.id].sort());
+    }));
 });

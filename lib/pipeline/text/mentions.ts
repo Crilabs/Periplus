@@ -2,6 +2,7 @@ import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { chunks } from "@/lib/db/schema";
+import { boundGeoObjectOfVersion, storeBoundMention } from "@/lib/domain/mentions/bound";
 import { effectiveVersionMeta } from "@/lib/domain/mentions/classification";
 import { findNameHits, nameFormsOf, resolveHits, setTrigramThreshold, type MatchHit, type ResolvedMatch } from "@/lib/domain/mentions/match";
 import { linkTextOnly, ngrams } from "@/lib/domain/mentions/ngrams";
@@ -31,6 +32,8 @@ import { frozenRunVersions } from "./versions";
  * carried chunks of the version too, as the name may sit in one: there it adds only what the original chunk does not
  * have (objects it does not mention, spans it neither mentions nor holds as ambiguous), stored on the version's own
  * carried chunk, and collects no place hints (the original collected them).
+ * A page under the start URL of a place's own website (`boundGeoObjectFor`, spec 16 C) gets one more mention per
+ * chunk, zero-length and `bound`, right after the sure hits and in the same transaction.
  */
 
 export const MENTIONS_STAGE = MATCH_PASS_STAGE;
@@ -58,6 +61,8 @@ type ChunkResult = {
   sure: MatchHit[];
   ambiguous: Extract<ResolvedMatch, { kind: "ambiguous" }>[];
   hints: UnmatchedDraft[];
+  /** The chunk gets a bound mention (a page of a place's own website; not when its original already mentions the place). */
+  bound: boolean;
 };
 
 type Span = { start: number; end: number };
@@ -129,6 +134,7 @@ export async function matchVersion(
       .orderBy(asc(chunks.ordinal));
     const origins = await originRows(tx, rows.flatMap((r) => (r.origin ? [r.origin] : [])));
 
+    const boundObject = await boundGeoObjectOfVersion(tx, versionId);
     const results: ChunkResult[] = [];
     for (const chunk of rows) {
       // Links count with their text only: no n-gram and no place hint from a URL (offsets stay those of the chunk).
@@ -146,6 +152,7 @@ export async function matchVersion(
           sure: sure.filter((h) => !origin.objects.has(h.geoObjectId) && !origin.spans.some((o) => overlaps(h, o))),
           ambiguous: ambiguous.filter((a) => !origin.spans.some((o) => overlaps(a, o))),
           hints: [],
+          bound: boundObject !== null && !origin.objects.has(boundObject),
         });
         continue;
       }
@@ -155,6 +162,7 @@ export async function matchVersion(
         sure,
         ambiguous,
         hints: nameHints(text, cfg.nameAffixes, cfg.mentions.nameHintStopWords).filter((h) => !resolved.some((r) => overlaps(h, spanOf(r)))),
+        bound: boundObject !== null,
       });
     }
 
@@ -179,6 +187,8 @@ export async function matchVersion(
         r.sure.map((hit) => ({ hit, surface: r.text.slice(hit.start, hit.end) })),
         meta.observedAt,
       );
+      // Every chunk of a page under the place's own website: a zero-length mention, so the page is extracted whole.
+      if (r.bound && boundObject !== null && (await storeBoundMention(tx, ref, boundObject, meta.observedAt))) counts.mentions++;
     }
     // A span is a mention or waits for the disambiguation, never both (a rematch with another configuration may turn
     // a sure hit ambiguous or an ambiguous one sure): an ambiguous span over an existing mention is not stored, and a
