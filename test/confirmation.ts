@@ -1,7 +1,7 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { extractionUnits, geoObjects, mentions, places, routes, routeStops, type DocType, type PlaceKind, type PlaceStatus } from "@/lib/db/schema";
+import { documents, extractionUnits, geoObjects, mentions, places, placeWebsites, routes, routeStops, type DocType, type PlaceKind, type PlaceStatus } from "@/lib/db/schema";
 import { insertExtraction, insertMention, insertMentionFact, insertPlace, insertSource, type TestMention } from "@/test/consolidation";
 import { insertTestExtractionRun, insertTestRun, insertTestVersion } from "@/test/text";
 
@@ -80,7 +80,8 @@ export async function routeStopOf(
 
 /**
  * A fact on a name mention of a page of type `docType` (default `marina`) whose second chunk carries a `bound` mention of
- * the object when `bound` (ruling R4: the version is bound to the place, the fact may sit on a name mention).
+ * the object when `bound` (ruling R4: the version is bound to the place, the fact may sit on a name mention); then the
+ * object's place also gets a current bound `place_websites` row whose start URL is the page's URL.
  */
 export async function pageFact(
   tx: Db,
@@ -99,6 +100,11 @@ export async function pageFact(
     await tx
       .insert(mentions)
       .values({ documentVersionId: v.versionId, chunkId: v.chunkIds[1]!, geoObjectId: objectId, surface: "", charStart: 0, charEnd: 0, observedAt: "2026-10-19", confidence: 1, matchKind: "bound" });
+    const [doc] = await tx.select({ url: documents.urlNormalized }).from(documents).where(eq(documents.id, v.documentId));
+    const [place] = await tx.select({ id: places.id }).from(places).where(and(eq(places.geoObjectId, objectId), isNull(places.validTo)));
+    if (place) {
+      await tx.insert(placeWebsites).values({ placeId: place.id, geoObjectId: objectId, url: doc!.url, urlNormalized: doc!.url, origin: "osm", sourceId, bound: true });
+    }
   }
   const m: TestMention = { versionId: v.versionId, chunkId: v.chunkIds[0]!, mentionId: name!.id, documentId: v.documentId, text };
   const extractionRunId = await insertExtraction(tx, objectId, m);

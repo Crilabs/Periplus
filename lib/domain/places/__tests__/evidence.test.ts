@@ -1,12 +1,13 @@
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import type { PlaceKind } from "@/lib/db/schema";
+import { placeWebsites, type PlaceKind } from "@/lib/db/schema";
 import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
 import { loadInputs } from "@/lib/domain/consolidation/inputs";
 import { attributeIn } from "@/lib/domain/consolidation/weights";
 import { getFactSchema } from "@/lib/domain/facts/schema";
+import { newId } from "@/lib/domain/ids";
 import { berthEvidence } from "@/lib/domain/places/evidence";
 import { factFrom, pageFact, placeOf, routeStopOf } from "@/test/confirmation";
 import { insertSource } from "@/test/consolidation";
@@ -115,6 +116,24 @@ describe("berthEvidence", () => {
       const noVisitors = await placeOf(tx, { kind: "marina" });
       await pageFact(tx, noVisitors.objectId, { bound: true, value: false });
       expect(await evidenceOf(tx, noVisitors, "marina")).toBeNull();
+    }));
+
+  it("own_website needs the place's current website row bound and covering the page (final review 4)", () =>
+    withRollback(async (tx) => {
+      // the binding ended (another place took the same start URL): the old bound mention no longer counts
+      const ended = await placeOf(tx, { kind: "marina" });
+      await pageFact(tx, ended.objectId, { bound: true });
+      const [row] = await tx.select().from(placeWebsites).where(eq(placeWebsites.placeId, ended.placeId));
+      await tx.insert(placeWebsites).values({ ...row!, id: undefined, createdAt: new Date(Date.now() + 1000), bound: false });
+      expect(await evidenceOf(tx, ended, "marina")).toBeNull();
+
+      // the place's website moved to another address: the page is no longer under it
+      const moved = await placeOf(tx, { kind: "marina" });
+      await pageFact(tx, moved.objectId, { bound: true });
+      const [m] = await tx.select().from(placeWebsites).where(eq(placeWebsites.placeId, moved.placeId));
+      const elsewhere = `https://${newId()}.test.invalid/`;
+      await tx.insert(placeWebsites).values({ ...m!, id: undefined, createdAt: new Date(Date.now() + 1000), url: elsewhere, urlNormalized: elsewhere });
+      expect(await evidenceOf(tx, moved, "marina")).toBeNull();
     }));
 
   it("a marina is also confirmed by berth evidence from sources", () =>

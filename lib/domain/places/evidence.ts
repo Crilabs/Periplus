@@ -3,6 +3,7 @@ import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import type { DocType, PlaceKind } from "@/lib/db/schema";
 import { activeExtractionRunIdSql } from "@/lib/domain/extraction/active-run";
+import { boundGeoObjectFor } from "@/lib/domain/mentions/bound";
 import { jsonUuids } from "@/lib/domain/mentions/scope";
 import { countingSourceSql, mergedChainSql } from "@/lib/domain/consolidation/inputs";
 import type { ConsolidationInput } from "@/lib/domain/consolidation/types";
@@ -19,7 +20,8 @@ import { attributeIn } from "@/lib/domain/consolidation/weights";
  *   an `aloneTypes` document confirms alone; items of `pairMinDomains` distinct sources (one source per registrable
  *   domain) of `pairTypes` or `aloneTypes` documents confirm as a pair. `ownSiteTypes` (marina pages) never count here.
  * - Own website (marina only): a `berthable = true` fact from a document version bound to this place (a `bound`
- *   mention of the object, ruling R4: the version is bound, the fact may sit on a name mention).
+ *   mention of the object, ruling R4: the version is bound, the fact may sit on a name mention) whose document the
+ *   place's current website still binds (`boundGeoObjectFor`).
  * - Port: the consolidated `place.kind_evidence` is `port`, or a `berthable = false` fact (`commercial_port`), both
  *   only from documents whose type counts for the place (`countingTextInputs`); or the object carries a commercial
  *   harbour tag and no `leisure=marina` (`osm_commercial`).
@@ -93,12 +95,19 @@ function sourceEvidence(items: Item[], cfg: AppConfig): Evidence | null {
   return null;
 }
 
-/** Of the facts `factIds`, those whose document version has a `bound` mention of the object (or one merged into it). */
+/**
+ * Of the facts `factIds`, those whose document version has a `bound` mention of the object (or one merged into it) and
+ * whose document is still bound to the object now (`boundGeoObjectFor`, final review 4): the place's current website
+ * row is bound and its start URL covers the document's URL. A bound mention stored once does not count after the
+ * binding ended or the website moved.
+ */
 async function boundFactIds(tx: Db, geoObjectId: string, factIds: string[]): Promise<Set<string>> {
   if (factIds.length === 0) return new Set();
-  const { rows } = await tx.execute<{ id: string }>(sql`
-    select f.id from facts f
+  const { rows } = await tx.execute<{ id: string; url_normalized: string }>(sql`
+    select f.id, d.url_normalized from facts f
     join mentions m on m.id = f.mention_id
+    join document_versions v on v.id = m.document_version_id
+    join documents d on d.id = v.document_id
     where f.id in ${jsonUuids(factIds)}
       and exists (
         select 1 from mentions b
@@ -106,7 +115,13 @@ async function boundFactIds(tx: Db, geoObjectId: string, factIds: string[]): Pro
           and b.geo_object_id in ${mergedChainSql(geoObjectId)}
       )
   `);
-  return new Set(rows.map((r) => r.id));
+  const boundTo = new Map<string, string | null>();
+  const out = new Set<string>();
+  for (const r of rows) {
+    if (!boundTo.has(r.url_normalized)) boundTo.set(r.url_normalized, await boundGeoObjectFor(tx, r.url_normalized));
+    if (boundTo.get(r.url_normalized) === geoObjectId) out.add(r.id);
+  }
+  return out;
 }
 
 /** Whether the OSM tags name a clearly commercial harbour (`commercialHarbourTags`) and no marina. */
