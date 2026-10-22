@@ -92,6 +92,12 @@ async function link(db: Db, id: string, qid: string): Promise<boolean> {
   return updated.length > 0;
 }
 
+/** Stores the item's `P856` on the object (`website_wikidata`); a rerun overwrites it, no history (not a core column). */
+async function setWebsite(db: Db, id: string, website: string | undefined): Promise<void> {
+  if (website === undefined) return;
+  await db.update(geoObjects).set({ websiteWikidata: website }).where(eq(geoObjects.id, id));
+}
+
 /**
  * Stage `gazetteer.wikidata` (Spec 03, step 2): queries WDQS for items of the configured classes in the
  * subdivision box plus `bboxBufferKm` and, in one transaction, per item: (1) an object with this `wikidata_id`
@@ -130,6 +136,7 @@ export async function importWikidata(
       if (known) {
         if (known.merged) result.linked++;
         result.names += await addNames(tx, known.id, names);
+        await setWebsite(tx, known.id, item.website);
         continue;
       }
 
@@ -138,6 +145,7 @@ export async function importWikidata(
         await link(tx, tagged, item.id);
         result.linked++;
         result.names += await addNames(tx, tagged, names);
+        await setWebsite(tx, tagged, item.website);
         continue;
       }
       unlinked.push({ item, cls, names });
@@ -154,6 +162,7 @@ export async function importWikidata(
       if (match.kind === "same" && (await link(tx, match.id, item.id))) {
         result.linked++;
         result.names += await addNames(tx, match.id, names);
+        await setWebsite(tx, match.id, item.website);
         continue;
       }
       if (match.kind === "none" && !CREATE_WITHOUT_MATCH.has(cls.type)) continue;
@@ -171,6 +180,7 @@ export async function importWikidata(
       }
       result.created++;
       result.names += created.names;
+      await setWebsite(tx, created.id, item.website);
       if (match.kind !== "none") {
         await openPairTask(tx, created.id, match.id, {
           similarity: match.similarity,

@@ -93,8 +93,9 @@ export function suggestCrawlRules(urls: string[]): CrawlRules {
   };
 }
 
-const ignored = (domain: string, ignoreDomains: string[]) =>
-  ignoreDomains.some((i) => domain === i || domain.endsWith(`.${i}`));
+/** `domain` is one of `cfg.ignoreDomains` or a subdomain of one. */
+export const isIgnoredDomain = (domain: string, cfg: Pick<ProposalsConfig, "ignoreDomains">) =>
+  cfg.ignoreDomains.some((i) => domain === i || domain.endsWith(`.${i}`));
 
 /**
  * Domains to propose: at least `minSerpHits` SERP hits (a URL found again by a later search of the same query
@@ -132,7 +133,7 @@ export async function domainCandidates(
 
   const linkingSources = new Map(linked.rows.map((r) => [r.domain, r.n]));
   let domains = [...new Set([...serp.rows.map((r) => r.domain), ...linkingSources.keys()])].filter(
-    (d) => !ignored(d, cfg.ignoreDomains) && !isForbiddenHost(d, forbiddenDomains),
+    (d) => !isIgnoredDomain(d, cfg) && !isForbiddenHost(d, forbiddenDomains),
   );
   if (domains.length === 0) return [];
   const known = await db.select({ domain: sources.domain }).from(sources).where(inArray(sources.domain, domains));

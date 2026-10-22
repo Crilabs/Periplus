@@ -231,6 +231,7 @@ export const SOURCE_ORIGIN_LABELS: Record<SourceOrigin, string> = {
   linkgraph: "Linkgraph",
   whitelist: "Whitelist",
   manual: "Manuell",
+  place_website: "Website des Ortes",
 };
 
 export const DOCUMENT_STATUS_LABELS: Record<DocumentStatus, string> = {

@@ -35,6 +35,8 @@ describe("buildWikidataQuery", () => {
     expect(q).toContain("?item wdt:P31/wdt:P279* ?class");
     expect(q).toContain('IN ("de", "en")');
     expect(q).toContain("wdt:P402 ?osmRel");
+    expect(q).toContain("OPTIONAL { ?item wdt:P856 ?website }");
+    expect(q.split("\n")[0]).toContain("?website");
   });
 
   it("rejects a malformed class id", () => {
@@ -45,7 +47,7 @@ describe("buildWikidataQuery", () => {
 describe("wikidataQuery", () => {
   it("wikidataQuery groups labels and aliases per item", async () => {
     const rows = [
-      { item: uri("Q1"), class: uri("Q23442"), coord: point(23.42, 37.74), name: lit("Ägina"), lang: lit("de"), isAlias: bool(false), osmRel: lit("1234") },
+      { item: uri("Q1"), class: uri("Q23442"), coord: point(23.42, 37.74), name: lit("Ägina"), lang: lit("de"), isAlias: bool(false), osmRel: lit("1234"), website: lit("https://aegina.example/") },
       { item: uri("Q1"), class: uri("Q23442"), coord: point(23.42, 37.74), name: lit("Aegina"), lang: lit("en"), isAlias: bool(false), osmRel: lit("1234") },
       { item: uri("Q1"), class: uri("Q23442"), coord: point(23.42, 37.74), name: lit("Egina"), lang: lit("en"), isAlias: bool(true), osmRel: lit("1234") },
       { item: uri("Q1"), class: uri("Q33837"), coord: point(23.42, 37.74), name: lit("Ägina"), lang: lit("de"), isAlias: bool(false), osmRel: lit("1234") },
@@ -73,6 +75,7 @@ describe("wikidataQuery", () => {
           { language: "en", value: "Egina", alias: true },
         ],
         osmRelationId: "1234",
+        website: "https://aegina.example/",
       },
       { id: "Q2", classes: ["Q39594"], lon: 23.5, lat: 37.6, labels: [] },
     ]);

@@ -44,7 +44,7 @@ const ELEMENTS: OverpassElement[] = [
     nodes: [1, 2, 3],
     geometry: pts([[25.15, 35.35], [25.17, 35.36], [25.19, 35.35]]),
   },
-  { type: "node", id: ID + 3, lat: 35.352, lon: 25.12, tags: { leisure: "marina", name: "Test Marina" } },
+  { type: "node", id: ID + 3, lat: 35.352, lon: 25.12, tags: { leisure: "marina", name: "Test Marina", website: "https://marina.example/", "contact:website": "https://contact.example/", "harbour:category": "marina", phone: "123" } },
   { type: "node", id: ID + 4, lat: 35.345, lon: 25.1, tags: { place: "village", name: "Παραλία" } },
   { type: "node", id: ID + 5, lat: 35.3, lon: 25.1, tags: { place: "village", name: "Mesogeia" } },
   { type: "node", id: ID + 6, lat: 35.348, lon: 25.11, tags: { amenity: "restaurant", name: "Taverna Test" } },
@@ -106,6 +106,13 @@ describe("importOsm", () => {
       // Tag whitelist: name, type and source are not kept.
       expect(byOsm.get(osm("relation", 1))?.tags).toEqual({ place: "island", wikidata: "Q999" });
       expect(byOsm.get(osm("way", 2))?.tags).toEqual({ natural: "bay" });
+      // website, contact:website and harbour:category are kept (spec 16 C); phone is not.
+      expect(byOsm.get(osm("node", 3))?.tags).toEqual({
+        leisure: "marina",
+        website: "https://marina.example/",
+        "contact:website": "https://contact.example/",
+        "harbour:category": "marina",
+      });
 
       const [island] = await db
         .select({ type: sql<string>`GeometryType(${geoObjects.geom})` })

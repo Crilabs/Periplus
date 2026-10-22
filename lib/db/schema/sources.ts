@@ -20,6 +20,7 @@ import {
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { newId } from "@/lib/domain/ids";
+import { geoObjects, places } from "./geo";
 import { runs } from "./ops";
 
 /*
@@ -45,7 +46,7 @@ export const docTypeEnum = pgEnum("doc_type", [
 export const sourceStatusEnum = pgEnum("source_status", ["proposed", "approved", "rejected", "paused"]);
 export const sourceFormatEnum = pgEnum("source_format", ["html", "pdf", "table", "geodata"]);
 export const changeRateEnum = pgEnum("change_rate", ["high", "normal", "static"]);
-export const sourceOriginEnum = pgEnum("source_origin", ["serp", "linkgraph", "whitelist", "manual"]);
+export const sourceOriginEnum = pgEnum("source_origin", ["serp", "linkgraph", "whitelist", "manual", "place_website"]);
 export const documentStatusEnum = pgEnum("document_status", ["active", "gone"]);
 export const observedAtBasisEnum = pgEnum("observed_at_basis", ["explicit", "published", "fetched"]);
 export const frontierStatusEnum = pgEnum("frontier_status", ["queued", "fetched", "skipped", "failed"]);
@@ -233,7 +234,7 @@ export const crawlFrontier = pgTable(
   (t) => [uniqueIndex("crawl_frontier_source_id_url_normalized_unique").on(t.sourceId, t.urlNormalized)],
 );
 
-export const serpLevelEnum = pgEnum("serp_level", ["area", "tile", "place"]);
+export const serpLevelEnum = pgEnum("serp_level", ["area", "tile", "place", "place_website"]);
 export type SerpLevel = (typeof serpLevelEnum.enumValues)[number];
 
 /** Working state: one row per SERP search actually made (a reused query writes none); raw answer in S3. */
@@ -337,4 +338,38 @@ export const converterOutputs = pgTable(
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("converter_outputs_sample_id_converter_unique").on(t.sampleId, t.converter)],
+);
+
+export const placeWebsiteOriginEnum = pgEnum("place_website_origin", ["osm", "wikidata", "serp"]);
+export type PlaceWebsiteOrigin = (typeof placeWebsiteOriginEnum.enumValues)[number];
+
+/**
+ * Append-only: the official website of a place and where it came from (spec 16 C). The current website of a place is
+ * its newest row; `bound` marks a row whose domain became (or already was) a source bound to the place.
+ */
+export const placeWebsites = pgTable(
+  "place_websites",
+  {
+    id: uuid("id").primaryKey().$defaultFn(newId),
+    placeId: uuid("place_id")
+      .notNull()
+      .references(() => places.id),
+    geoObjectId: uuid("geo_object_id")
+      .notNull()
+      .references(() => geoObjects.id),
+    url: text("url").notNull(),
+    urlNormalized: text("url_normalized").notNull(),
+    origin: placeWebsiteOriginEnum("origin").notNull(),
+    serpQueryId: uuid("serp_query_id").references(() => serpQueries.id),
+    quote: text("quote"),
+    confidence: real("confidence"),
+    sourceId: uuid("source_id").references(() => sources.id),
+    bound: boolean("bound").notNull(),
+    runId: uuid("run_id").references(() => runs.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("place_websites_place_id_created_at_idx").on(t.placeId, t.createdAt.desc()),
+    index("place_websites_url_normalized_idx").on(t.urlNormalized),
+  ],
 );

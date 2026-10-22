@@ -17,7 +17,7 @@ let logger: ReturnType<typeof createLogger> | undefined;
 const getLog = () => (logger ??= createLogger("gazetteer.osm"));
 
 /** OSM tag keys kept in `geo_objects.tags`; `seamark:*` by prefix. */
-const KEPT_TAGS = new Set(["place", "natural", "leisure", "harbour", "mooring", "historic", "tourism", "amenity", "shop", "wikidata"]);
+const KEPT_TAGS = new Set(["place", "natural", "leisure", "harbour", "mooring", "historic", "tourism", "amenity", "shop", "wikidata", "website", "contact:website", "harbour:category"]);
 
 export function keptTags(tags: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(tags).filter(([k]) => KEPT_TAGS.has(k) || k.startsWith("seamark:")));

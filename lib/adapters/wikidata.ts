@@ -9,6 +9,8 @@ export type WikidataItem = {
   lat: number;
   labels: Array<{ language: string; value: string; alias: boolean }>;
   osmRelationId?: string;
+  /** `P856`, official website. */
+  website?: string;
 };
 
 const QID = /^Q\d+$/;
@@ -23,7 +25,7 @@ export function buildWikidataQuery(bbox: Bbox, classes: string[], languages: str
   for (const l of languages) if (!LANGUAGE.test(l)) throw new Error(`invalid language ${l}`);
   const [west, south, east, north] = bbox;
   const langs = languages.map((l) => `"${l}"`).join(", ");
-  return `SELECT ?item ?class ?coord ?name ?lang ?isAlias ?osmRel WHERE {
+  return `SELECT ?item ?class ?coord ?name ?lang ?isAlias ?osmRel ?website WHERE {
   SERVICE wikibase:box {
     ?item wdt:P625 ?coord .
     bd:serviceParam wikibase:cornerSouthWest "Point(${west} ${south})"^^geo:wktLiteral .
@@ -39,12 +41,13 @@ export function buildWikidataQuery(bbox: Bbox, classes: string[], languages: str
     FILTER(?lang IN (${langs}))
   }
   OPTIONAL { ?item wdt:P402 ?osmRel . }
+  OPTIONAL { ?item wdt:P856 ?website }
 }
 `;
 }
 
 type Binding = { type: string; value: string; datatype?: string; "xml:lang"?: string };
-type Row = Partial<Record<"item" | "class" | "coord" | "name" | "lang" | "isAlias" | "osmRel", Binding>>;
+type Row = Partial<Record<"item" | "class" | "coord" | "name" | "lang" | "isAlias" | "osmRel" | "website", Binding>>;
 
 const WKT_POINT = /^Point\(\s*(-?[\d.eE+-]+)\s+(-?[\d.eE+-]+)\s*\)$/i;
 
@@ -107,6 +110,7 @@ export async function wikidataQuery(
       }
     }
     if (row.osmRel && item.osmRelationId === undefined) item.osmRelationId = row.osmRel.value;
+    if (row.website && item.website === undefined) item.website = row.website.value;
   }
   return [...items.values()];
 }
