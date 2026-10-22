@@ -75,14 +75,7 @@
     "shelterDelta": 0.2,
     "notable": ["services.*", "highlight.*", "occupancy", "mooring.buoys"]
   },
-  "gaps": {
-    "ignore": {
-      "anchorage": ["contact", "prices", "capacity", "place.kind_evidence"],
-      "port": ["place.kind_evidence"],
-      "marina": ["place.kind_evidence"],
-      "mooring_field": ["contact", "place.kind_evidence"]
-    }
-  },
+  "gaps": { "ignore": { "anchorage": ["contact", "prices", "capacity"], "mooring_field": ["contact"] } },
   "followup": { "minDocuments": 2, "cooldownDays": 90, "maxPlacesPerRun": 30 },
   "summary": { "levels": ["place", "poi"], "sentences": { "place": [2, 4], "poi": [1, 2] }, "maxAttempts": 3, "lowConfidence": 0.3 }
 }

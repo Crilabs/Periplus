@@ -536,9 +536,9 @@ describe("consolidation rules", () => {
     return rules;
   };
 
-  it("the active rules version is v1 with the spec values", () => {
+  it("the active rules version is v2 with the spec values", () => {
     const c = getConfig().consolidation;
-    expect(c.version).toBe("v1");
+    expect(c.version).toBe("v2");
     expect(c).toMatchObject({
       recency: { halfLifeYears: 3 },
       precision: 3,
@@ -585,32 +585,32 @@ describe("consolidation rules", () => {
 
   it("getConsolidationConfig reads the active version by default and a named one on demand", () => {
     expect(getConsolidationConfig()).toEqual(getConfig().consolidation);
-    const v2 = { ...rulesFile(), conflict: { minRatio: 2 } };
-    const dir = fixtureDir({ consolidation: { v1: rulesFile(), v2 } });
-    expect(loadConfig(dir).consolidation.version).toBe("v1");
-    expect(getConsolidationConfig("v2", dir)).toMatchObject({ version: "v2", conflict: { minRatio: 2 } });
+    const v3 = { ...rulesFile(), conflict: { minRatio: 2 } };
+    const dir = fixtureDir({ consolidation: { v2: rulesFile(), v3 } });
+    expect(loadConfig(dir).consolidation.version).toBe("v2");
+    expect(getConsolidationConfig("v3", dir)).toMatchObject({ version: "v3", conflict: { minRatio: 2 } });
   });
 
   it("quietness weights must be positive and importance thresholds ascending", () => {
     const withRules = (patch: (c: ReturnType<typeof rulesFile>) => void) => {
       const c = rulesFile();
       patch(c);
-      return () => loadConfig(fixtureDir({ consolidation: { v1: c } }));
+      return () => loadConfig(fixtureDir({ consolidation: { v2: c } }));
     };
-    expect(withRules((c) => (c.quietness.weights.ferry = 0))).toThrow(/consolidation\/v1\.json.*quietness\.weights/);
+    expect(withRules((c) => (c.quietness.weights.ferry = 0))).toThrow(/consolidation\/v2\.json.*quietness\.weights/);
     expect(withRules((c) => (c.quietness.weights.ferry = 0.2))).toThrow(/quietness\.weights.*sum to 1/);
     expect(withRules((c) => delete (c.quietness.weights as Partial<typeof c.quietness.weights>).ferry)).toThrow(
       /quietness\.weights/,
     );
     expect(withRules((c) => Object.assign(c.profileConfidence, { bogus: 0 }))).toThrow(/profileConfidence/);
     expect(withRules((c) => (c.importance.thresholds = [2, 1, 3.5, 5]))).toThrow(
-      /consolidation\/v1\.json.*importance/,
+      /consolidation\/v2\.json.*importance/,
     );
     // One radius per importance level: four thresholds separate five levels.
-    expect(withRules((c) => (c.importance.radiusNm = [5, 10, 20, 35]))).toThrow(/consolidation\/v1\.json.*importance/);
-    expect(withRules((c) => ((c.confidence.classes[2] as { min: number }).min = 0.1))).toThrow(/consolidation\/v1\.json.*confidence/);
-    expect(withRules((c) => (c.summary.sentences.place = [4, 2]))).toThrow(/consolidation\/v1\.json.*summary/);
-    expect(withRules((c) => Object.assign(c, { bogus: 1 }))).toThrow(/consolidation\/v1\.json/);
+    expect(withRules((c) => (c.importance.radiusNm = [5, 10, 20, 35]))).toThrow(/consolidation\/v2\.json.*importance/);
+    expect(withRules((c) => ((c.confidence.classes[2] as { min: number }).min = 0.1))).toThrow(/consolidation\/v2\.json.*confidence/);
+    expect(withRules((c) => (c.summary.sentences.place = [4, 2]))).toThrow(/consolidation\/v2\.json.*summary/);
+    expect(withRules((c) => Object.assign(c, { bogus: 1 }))).toThrow(/consolidation\/v2\.json/);
     expect(withRules(() => {})).not.toThrow();
   });
 
@@ -618,9 +618,9 @@ describe("consolidation rules", () => {
     const withKeys = (keys: Record<string, string[]>) => () => {
       const c = rulesFile();
       c.rules.union.keys = keys;
-      return loadConfig(fixtureDir({ consolidation: { v1: c } }));
+      return loadConfig(fixtureDir({ consolidation: { v2: c } }));
     };
-    expect(withKeys({ hazards: ["kind", "nmae"] })).toThrow(/consolidation\/v1\.json.*"hazards".*"nmae"/);
+    expect(withKeys({ hazards: ["kind", "nmae"] })).toThrow(/consolidation\/v2\.json.*"hazards".*"nmae"/);
     // A key on an entry that is no object (a list of enum values) cannot identify anything.
     expect(withKeys({ "mooring.types": ["kind"] })).toThrow(/"mooring\.types".*"kind"/);
     expect(withKeys({ no_such_attribute: [] })).toThrow(/no_such_attribute.*fact schema v3/);

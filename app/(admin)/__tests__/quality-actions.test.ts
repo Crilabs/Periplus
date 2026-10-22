@@ -82,7 +82,7 @@ async function setPlace(tx: Db): Promise<{ placeId: string; geoObjectId: string;
 async function finishEvaluation(tx: Db, runId: string, subdivisionKey: string) {
   for (const s of await loadComparisonSubjects(tx, subdivisionKey)) {
     const [p] = await tx.select({ geoObjectId: places.geoObjectId }).from(places).where(eq(places.id, s.placeId));
-    await tx.insert(evaluationProfiles).values({ runId, geoObjectId: p!.geoObjectId, rulesVersion: "v1", factSchemaVersion: "v2", attributes: ATTRIBUTES, provenance: {}, contentHash: "h" });
+    await tx.insert(evaluationProfiles).values({ runId, geoObjectId: p!.geoObjectId, rulesVersion: getConfig().consolidation.version, factSchemaVersion: getConfig().factSchema.version, attributes: ATTRIBUTES, provenance: {}, contentHash: "h" });
     await tx.insert(comparisonResults).values({
       placeId: s.placeId,
       attribute: "services.water",
@@ -176,7 +176,7 @@ describe("startEvaluationAction and activateCandidateAction", () => {
       expect(redirect).toHaveBeenLastCalledWith(`/quality?subdivision=${key}&error=invalid_input`);
       await startEvaluationAction({ subdivisionKey: key, rulesVersion: "latest" });
       expect(redirect).toHaveBeenLastCalledWith(`/quality?subdivision=${key}&error=invalid_input`);
-      await startEvaluationAction(form({ subdivisionKey: key, rulesVersion: "v1", model: "", promptVersion: "" }));
+      await startEvaluationAction(form({ subdivisionKey: key, rulesVersion: getConfig().consolidation.version, model: "", promptVersion: "" }));
       expect(redirect).toHaveBeenLastCalledWith(`/quality?subdivision=${key}&error=comparison_set_empty`);
       expect(await started(tx)).toEqual([]);
     }));
@@ -184,7 +184,7 @@ describe("startEvaluationAction and activateCandidateAction", () => {
   it("activation is refused while the gate is closed and writes its row once it passes", () =>
     withRollback(async (tx) => {
       current = tx;
-      const { evaluationRunId, subdivisionKey } = await evaluated(tx, { rulesVersion: "v1", candidate: { rulesVersion: "v1" } });
+      const { evaluationRunId, subdivisionKey } = await evaluated(tx, { rulesVersion: getConfig().consolidation.version, candidate: { rulesVersion: getConfig().consolidation.version } });
       await tx.update(runs).set({ status: "running" }).where(eq(runs.id, evaluationRunId));
       await activateCandidateAction(form({ subdivisionKey, evaluationRunId }));
       expect(redirect).toHaveBeenLastCalledWith(`/quality?subdivision=${subdivisionKey}&error=regression_gate_closed`);
@@ -200,7 +200,7 @@ describe("startEvaluationAction and activateCandidateAction", () => {
   it("an empty comparison set never activates (ruling M7-E-R2)", () =>
     withRollback(async (tx) => {
       current = tx;
-      const { evaluationRunId, placeId, subdivisionKey } = await evaluated(tx, { rulesVersion: "v1", candidate: { rulesVersion: "v1", extraction: OPUS } });
+      const { evaluationRunId, placeId, subdivisionKey } = await evaluated(tx, { rulesVersion: getConfig().consolidation.version, candidate: { rulesVersion: getConfig().consolidation.version, extraction: OPUS } });
       await tx.delete(comparisonSet).where(eq(comparisonSet.placeId, placeId));
       await activateCandidateAction({ subdivisionKey, evaluationRunId });
       expect(redirect).toHaveBeenLastCalledWith(`/quality?subdivision=${subdivisionKey}&error=regression_gate_closed`);
