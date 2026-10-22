@@ -263,4 +263,36 @@ describe("geo view", () => {
       });
       expect(detail?.website).toEqual({ url: "https://b.test.invalid/", origin: "serp", bound: false });
     }));
+
+  it("placeDetail shows the automatic decision only while the newest status (or kind) decision is the system's (final review 6)", () =>
+    withRollback(async (tx) => {
+      const c = await insertChain(tx);
+      const [place] = await tx
+        .insert(places)
+        .values({ geoObjectId: c.bay, kind: "marina", status: "confirmed", position: geomFromGeoJson(point(LON, LAT)) })
+        .returning({ id: places.id });
+      const id = place!.id;
+      const decide = async (subjectType: "place_status" | "place_kind" | "place", decidedBy: string, at: string, decision: Record<string, unknown>) => {
+        const [task] = await tx
+          .insert(reviewTasks)
+          .values({ kind: "place_candidate", subjectType, subjectId: id, context: {}, status: "decided" })
+          .returning({ id: reviewTasks.id });
+        await tx.insert(reviewDecisions).values({ taskId: task!.id, decidedBy, decidedAt: new Date(at), decision });
+      };
+      await decide("place_kind", "system", "2026-10-19T10:00:00Z", { action: "set_kind", kind: "marina", auto: true, factIds: [] });
+      await decide("place_status", "system", "2026-10-20T10:00:00Z", { action: "confirm", auto: true, rule: "own_website", factIds: [], documentIds: [], routeStopIds: [] });
+      expect((await placeDetail(tx, id))?.autoDecision).toMatchObject({ action: "confirm" });
+
+      // the admin rejects in the header and confirms again: the status is the admin's, the older kind switch stays shown
+      await decide("place_status", "admin@test.invalid", "2026-10-21T10:00:00Z", { action: "reject" });
+      expect((await placeDetail(tx, id))?.autoDecision).toMatchObject({ action: "set_kind" });
+
+      // an admin confirmation in a review (with a kind) also overrides the kind switch
+      await decide("place", "admin@test.invalid", "2026-10-22T10:00:00Z", { action: "confirm", kind: "marina" });
+      expect((await placeDetail(tx, id))?.autoDecision).toBeNull();
+
+      // a newer system confirmation shows again
+      await decide("place_status", "system", "2026-10-23T10:00:00Z", { action: "confirm", auto: true, rule: "alone", factIds: [], documentIds: [], routeStopIds: [] });
+      expect((await placeDetail(tx, id))?.autoDecision).toMatchObject({ action: "confirm", rule: "alone" });
+    }));
 });

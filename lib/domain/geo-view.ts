@@ -272,17 +272,25 @@ export async function geoObjectDetail(db: Db, id: string): Promise<GeoObjectDeta
   return { object, names, ancestors, children, place, tileIds: tileRows.map((r) => r.tileId) };
 }
 
-/** The newest decision of `system` on the place: a `place_status` decision, else a `place_kind` one; null for none. */
+const STATUS_ACTIONS = new Set(["confirm", "reject", "no_anchoring"]);
+
+/**
+ * The automatic decision the place page shows (final review 6): the newest status decision of the place (a
+ * `place_status` decision by anyone, or a `confirm` / `reject` / `no_anchoring` decision of a review task on the place)
+ * when `system` made it; else the newest kind decision (a `place_kind` decision, or a review `confirm`, which sets the
+ * kind) when `system` made it; null otherwise. An admin's later decision hides the system's.
+ */
 async function latestAutoDecision(db: Db, placeId: string): Promise<AutoDecision | null> {
-  const { rows } = await db.execute<{ decision: Record<string, unknown>; decided_at: Date | string }>(sql`
-    select d.decision, d.decided_at
+  const { rows } = await db.execute<{ subject_type: string; decision: Record<string, unknown>; decided_by: string; decided_at: Date | string }>(sql`
+    select t.subject_type, d.decision, d.decided_by, d.decided_at
     from review_tasks t join review_decisions d on d.task_id = t.id
-    where t.kind = 'place_candidate' and t.subject_type in ('place_status', 'place_kind') and t.subject_id = ${placeId}
-      and d.decided_by = 'system'
-    order by (t.subject_type = 'place_status') desc, d.decided_at desc, d.id desc
-    limit 1
+    where t.kind = 'place_candidate' and t.subject_type in ('place', 'place_status', 'place_kind') and t.subject_id = ${placeId}
+    order by d.decided_at desc, d.id desc
   `);
-  const row = rows[0];
+  const action = (r: (typeof rows)[number]) => r.decision.action;
+  const status = rows.find((r) => r.subject_type === "place_status" || (r.subject_type === "place" && STATUS_ACTIONS.has(action(r) as string)));
+  const kind = rows.find((r) => r.subject_type === "place_kind" || (r.subject_type === "place" && action(r) === "confirm"));
+  const row = status?.decided_by === "system" ? status : kind?.decided_by === "system" ? kind : null;
   if (!row) return null;
   const ids = (key: string) => (Array.isArray(row.decision[key]) ? (row.decision[key] as string[]) : []);
   return {
