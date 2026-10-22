@@ -4,7 +4,9 @@ import { describe, expect, it } from "vitest";
 import { MockModel } from "@/lib/ai/mock";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { crawlFrontier, geoObjects, placeWebsites, places, runs } from "@/lib/db/schema";
+import { getConfig } from "@/lib/config";
+import { crawlFrontier, documents, geoObjects, mentions, placeWebsites, places, runs } from "@/lib/db/schema";
+import { mentionsConfigKey, recordMatchPass } from "@/lib/domain/mentions/store";
 import { newId } from "@/lib/domain/ids";
 import { createRun } from "@/lib/domain/runs";
 import { tileIdFor } from "@/lib/domain/tiles";
@@ -14,6 +16,7 @@ import { PLACE_WEBSITE_RUN_STAGES, startPlaceWebsiteRun } from "@/lib/pipeline/p
 import { PLACE_WEBSITE_FREEZE_STAGE, PLACE_WEBSITE_STAGE } from "@/lib/pipeline/places/stage-name";
 import { freezePlaceWebsiteRun, runPlaceWebsiteJob } from "@/lib/pipeline/places/website-stage";
 import { SUBDIVISION_BUILD_STAGES } from "@/lib/pipeline/subdivision-build";
+import { matchVersion } from "@/lib/pipeline/text/mentions";
 import { TEXT_RUN_STAGES } from "@/lib/pipeline/text/run";
 import { SEED_STAGE } from "@/lib/pipeline/tile-scope";
 import { withRollback } from "@/test/db";
@@ -148,5 +151,58 @@ describe("runPlaceWebsiteJob and the freeze", () => {
       expect((await paramsOf(tx, runId)).documentVersionIds).toEqual([mine.versionId]);
       // a retried freeze keeps the list
       expect((await freezePlaceWebsiteRun(tx, runId)).frozenBefore).toBe(true);
+    }));
+
+  it("takes the matched versions under a newly bound start URL without a bound mention, and the match binds them (final review 3)", () =>
+    withRollback(async (tx) => {
+      const host = `mu-${newId()}.example`;
+      const place = await setup(tx, `http://www.${host}`);
+      const cfg = getConfig();
+      // pages of the domain fetched and matched before the website was attached (the start URL counts as fetched)
+      const source = await insertTestSource(tx);
+      const page = async (path: string) => {
+        const url = `https://${host}${path}`;
+        const [doc] = await tx.insert(documents).values({ sourceId: source, url, urlNormalized: url, docType: "marina" }).returning({ id: documents.id });
+        const v = await insertTestVersion(tx, ["Visitor berths all year, water and power on the pontoons."], { sourceId: source, documentId: doc!.id });
+        await recordMatchPass(tx, v.versionId, mentionsConfigKey(cfg), null);
+        return v;
+      };
+      const berths = await page("/berths");
+      const done = await page("/prices");
+      await tx.insert(mentions).values({ documentVersionId: done.versionId, chunkId: done.chunkIds[0]!, geoObjectId: place.geoObjectId, surface: "", charStart: 0, charEnd: 0, observedAt: "2026-10-19", confidence: 1, matchKind: "bound" });
+      const elsewhere = await insertTestVersion(tx, ["Something else."], { sourceId: source });
+      await recordMatchPass(tx, elsewhere.versionId, mentionsConfigKey(cfg), null);
+
+      const { boss } = recordingBoss();
+      const { id: runId } = await startPlaceWebsiteRun(tx, boss, { subdivisionKey: SUB }, "t");
+      const deps = { transport: async () => { throw new Error("no network"); }, archive: memoryArchive(), model: new MockModel({}) };
+      const attached = await runPlaceWebsiteJob(tx, { ...place, runId }, deps);
+      expect(attached).toMatchObject({ outcome: "known", bound: true });
+      await tx.update(runs).set({ params: { ...(await paramsOf(tx, runId)), sourceIds: [attached.sourceId, source] } }).where(eq(runs.id, runId));
+
+      const frozen = await freezePlaceWebsiteRun(tx, runId);
+      expect(frozen.documentVersionIds).toEqual([berths.versionId]);
+      await matchVersion(tx, berths.versionId, { runId, cfg });
+      const bound = await tx.select({ geoObjectId: mentions.geoObjectId }).from(mentions).where(eq(mentions.documentVersionId, berths.versionId));
+      expect(bound).toEqual([{ geoObjectId: place.geoObjectId }]);
+    }));
+
+  it("a website the build attached to a source whose start URL was fetched before: the next run binds its old pages (final review 3)", () =>
+    withRollback(async (tx) => {
+      const url = `https://www.nu-${newId()}.example/`;
+      const place = await setup(tx, url);
+      const cfg = getConfig();
+      const { id: buildId } = await createRun(tx, { kind: "full", scope: { type: "subdivision", id: SUB }, stages: [PLACE_WEBSITE_STAGE], params: { subdivisionKey: SUB }, triggeredBy: "t" });
+      const deps = { transport: async () => { throw new Error("no network"); }, archive: memoryArchive(), model: new MockModel({}) };
+      const attached = await runPlaceWebsiteJob(tx, { ...place, runId: buildId }, deps);
+      await tx.insert(crawlFrontier).values({ sourceId: attached.sourceId!, url, urlNormalized: url, status: "fetched", lastRunId: buildId });
+      const pageUrl = `${url}fuel`;
+      const [doc] = await tx.insert(documents).values({ sourceId: attached.sourceId!, url: pageUrl, urlNormalized: pageUrl, docType: "marina" }).returning({ id: documents.id });
+      const v = await insertTestVersion(tx, ["Diesel at the fuel dock."], { sourceId: attached.sourceId!, documentId: doc!.id });
+      await recordMatchPass(tx, v.versionId, mentionsConfigKey(cfg), null);
+
+      const { id: runId } = await startPlaceWebsiteRun(tx, recordingBoss().boss, { subdivisionKey: SUB }, "t");
+      expect((await paramsOf(tx, runId)).sourceIds).toEqual([]);
+      expect((await freezePlaceWebsiteRun(tx, runId)).documentVersionIds).toEqual([v.versionId]);
     }));
 });

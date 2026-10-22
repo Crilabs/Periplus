@@ -104,6 +104,36 @@ export async function boundGeoObjectOfVersion(db: Db, versionId: string): Promis
 }
 
 /**
+ * The current versions of active documents of the sources `sourceIds` that lie under a currently bound start URL
+ * (`boundGeoObjectFor` names an object) but have no `bound` mention yet, in id order (final review 3): pages fetched and
+ * matched before the website was attached (an already approved source, a start URL fetched before) are not pending, so a
+ * marina website run takes them in explicitly; the match adds their bound mentions idempotently (`storeBoundMention`)
+ * and the extraction only the new mentions.
+ */
+export async function unboundVersionsUnderBoundStarts(db: Db, sourceIds: string[]): Promise<string[]> {
+  if (sourceIds.length === 0) return [];
+  const { rows } = await db.execute<{ id: string; url_normalized: string }>(sql`
+    with cur as (
+      select distinct on (w.place_id) w.place_id, w.url_normalized, w.bound
+      from place_websites w
+      order by w.place_id, w.created_at desc, w.id desc
+    )
+    select v.id, d.url_normalized
+    from documents d
+    join document_versions v on v.id = d.current_version_id
+    where d.status = 'active' and d.valid_to is null and d.source_id in ${jsonUuids(sourceIds)}
+      and exists (
+        select 1 from cur where cur.bound and starts_with(${bindingKeySql(sql`d.url_normalized`)}, ${bindingKeySql(sql`cur.url_normalized`)})
+      )
+      and not exists (select 1 from mentions m where m.document_version_id = v.id and m.match_kind = 'bound')
+    order by v.id
+  `);
+  const out: string[] = [];
+  for (const r of rows) if ((await boundGeoObjectFor(db, r.url_normalized)) !== null) out.push(r.id);
+  return out;
+}
+
+/**
  * One bound mention of the object on the chunk: zero length at the start (`surface` empty, `confidence` 1, no type
  * hint). Idempotent through the mentions' unique index; returns whether it is new.
  */

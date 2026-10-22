@@ -3,6 +3,7 @@ import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { places, runs } from "@/lib/db/schema";
 import { findPlaceWebsite, placesNeedingWebsite, type FindDeps, type FoundWebsite, type PlaceRef } from "@/lib/domain/places/website-find";
+import { unboundVersionsUnderBoundStarts } from "@/lib/domain/mentions/bound";
 import { attachPlaceWebsite } from "@/lib/domain/places/website-source";
 import { currentPlaceWebsite } from "@/lib/domain/places/websites";
 import { FETCH_URL_STAGE } from "@/lib/pipeline/fetch/url";
@@ -22,15 +23,15 @@ export type PlaceWebsiteJobResult = {
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 
 /**
- * The current approved sources of the subdivision's recorded websites not crawled yet: places of kind marina or port
- * (valid, unmerged, in the subdivision as `placesNeedingWebsite` judges it) whose current `place_websites` row has a
- * source, and whose start URL (`url_normalized`) has no `crawl_frontier` row with status `fetched` for that source.
- * So a website the subdivision build attached (which does not crawl) is fetched by the next „Marina-Websites suchen“.
+ * The current approved sources of the subdivision's recorded websites: places of kind marina or port (valid, unmerged,
+ * in the subdivision as `placesNeedingWebsite` judges it) whose current `place_websites` row has a source. With
+ * `uncrawled` only those whose start URL (`url_normalized`) has no `crawl_frontier` row with status `fetched` for that
+ * source; with `bound` only rows with `bound`.
  */
-export async function uncrawledWebsiteSources(db: Db, subdivisionKey: string): Promise<string[]> {
+async function websiteSources(db: Db, subdivisionKey: string, o: { uncrawled?: boolean; bound?: boolean }): Promise<string[]> {
   const { rows } = await db.execute<{ id: string }>(sql`
     with cur as (
-      select distinct on (w.place_id) w.place_id, w.source_id, w.url_normalized
+      select distinct on (w.place_id) w.place_id, w.source_id, w.url_normalized, w.bound
       from place_websites w
       order by w.place_id, w.created_at desc, w.id desc
     )
@@ -44,13 +45,27 @@ export async function uncrawledWebsiteSources(db: Db, subdivisionKey: string): P
     join sources s on s.id = cur.source_id and s.status = 'approved' and s.valid_to is null
     where p.merged_into_id is null and p.valid_from <= current_date and (p.valid_to is null or p.valid_to > current_date)
       and p.kind in ('marina', 'port') and p.status in ('candidate', 'confirmed')
-      and not exists (
+      ${o.bound ? sql`and cur.bound` : sql``}
+      ${
+        o.uncrawled
+          ? sql`and not exists (
         select 1 from crawl_frontier f
         where f.source_id = s.id and f.url_normalized = cur.url_normalized and f.status = 'fetched'
-      )
+      )`
+          : sql``
+      }
     order by s.id
   `);
   return rows.map((r) => r.id);
+}
+
+/**
+ * The current approved sources of the subdivision's recorded websites not crawled yet (`websiteSources` with
+ * `uncrawled`). So a website the subdivision build attached (which does not crawl) is fetched by the next
+ * „Marina-Websites suchen“.
+ */
+export async function uncrawledWebsiteSources(db: Db, subdivisionKey: string): Promise<string[]> {
+  return websiteSources(db, subdivisionKey, { uncrawled: true });
 }
 
 /**
@@ -150,7 +165,11 @@ export type PlaceWebsiteFreeze = { documentVersionIds: string[]; frozenBefore: b
 /**
  * Freezes a marina website run once its crawl has finished (pattern of `freezeRevisitRun`, ruling M4-E-R2): the text
  * stages take exactly the pending versions of the run's sources (`textRunVersions({ pending, sourceIds })`), not the
- * subdivision of its `subdivisionKey`. Idempotent: a retried job keeps the list a former attempt wrote.
+ * subdivision of its `subdivisionKey`, plus the current versions under a bound start URL that have no bound mention
+ * yet (`unboundVersionsUnderBoundStarts`, final review 3: pages matched before the website was attached), of the run's
+ * sources and of the sources of the subdivision's bound websites (a website the build attached to a source whose start
+ * URL was fetched before never joins `sourceIds`).
+ * Idempotent: a retried job keeps the list a former attempt wrote.
  */
 export async function freezePlaceWebsiteRun(db: Db, runId: string, cfg: AppConfig = getConfig()): Promise<PlaceWebsiteFreeze> {
   return db.transaction(async (tx) => {
@@ -158,7 +177,12 @@ export async function freezePlaceWebsiteRun(db: Db, runId: string, cfg: AppConfi
     if (!run) throw new Error(`run ${runId} not found`);
     const params = (run.params ?? {}) as Record<string, unknown>;
     if (Array.isArray(params.documentVersionIds)) return { documentVersionIds: strings(params.documentVersionIds), frozenBefore: true };
-    const documentVersionIds = await textRunVersions(tx, { pending: true, sourceIds: strings(params.sourceIds) }, cfg);
+    const sourceIds = strings(params.sourceIds);
+    const pending = await textRunVersions(tx, { pending: true, sourceIds }, cfg);
+    const key = typeof params.subdivisionKey === "string" ? params.subdivisionKey : null;
+    const boundSources = key ? await websiteSources(tx, key, { bound: true }) : [];
+    const unbound = await unboundVersionsUnderBoundStarts(tx, [...new Set([...sourceIds, ...boundSources])]);
+    const documentVersionIds = [...new Set([...pending, ...unbound])].sort();
     await tx
       .update(runs)
       .set({ params: { ...params, documentVersionIds } })
