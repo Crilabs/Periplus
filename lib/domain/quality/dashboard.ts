@@ -33,6 +33,9 @@ export const METRIC_UNITS: Record<MetricKey, MetricUnit> = {
   highlight_share: "share",
   recent_observation_share: "share",
   places_per_tile: "count",
+  place_confirmation: "share",
+  place_websites: "share",
+  marina_services: "share",
 };
 
 export type DashboardRow = {

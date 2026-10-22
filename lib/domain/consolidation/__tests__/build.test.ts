@@ -361,6 +361,47 @@ describe("buildProfile", () => {
     }
   });
 
+  describe("berthable derivation (spec 17)", () => {
+    const withPlace = (kind: string, status: string, inputs: ConsolidationInput[] = []) =>
+      buildProfile({
+        ...scenario(),
+        schemaVersion: "v3",
+        inputs,
+        context: context({ place: { ...context().place!, kind: kind as never, status: status as never } }),
+      });
+
+    it("a confirmed anchorage, marina or mooring field without a fact is berthable, derived", () => {
+      for (const kind of ["anchorage", "marina", "mooring_field"]) {
+        const p = withPlace(kind, "confirmed");
+        expect(p.attributes["berthable"], kind).toBe(true);
+        expect(p.provenance["berthable"], kind).toMatchObject({ origin: "derived", rule: "derived", derivedFrom: { kind, status: "confirmed" } });
+        expect(p.gaps.map((g) => g.attribute), kind).not.toContain("berthable");
+      }
+    });
+
+    it("a port and a no_anchoring place of any kind is not berthable", () => {
+      expect(withPlace("port", "confirmed").attributes["berthable"]).toBe(false);
+      expect(withPlace("marina", "no_anchoring").attributes["berthable"]).toBe(false);
+      expect(withPlace("anchorage", "no_anchoring").attributes["berthable"]).toBe(false);
+      expect(withPlace("marina", "no_anchoring").provenance["berthable"]).toMatchObject({ origin: "derived" });
+    });
+
+    it("a candidate (or another status) gets no value", () => {
+      for (const status of ["candidate", "rejected", "abandoned"]) {
+        const p = withPlace("anchorage", status);
+        expect(p.attributes["berthable"], status).toBeUndefined();
+        expect(p.provenance["berthable"], status).toBeUndefined();
+      }
+    });
+
+    it("a fact always wins over the derivation", () => {
+      const fact = text({ attribute: "berthable", value: false, sourceKey: "source:guide", sourceWeight: 0.9, observedAt: "2026-08-01" });
+      const p = withPlace("mooring_field", "confirmed", [fact]);
+      expect(p.attributes["berthable"]).toBe(false);
+      expect(p.provenance["berthable"]).toMatchObject({ origin: "text", sourceKeys: ["source:guide"] });
+    });
+  });
+
   it("an anchorage does not list contact as a gap", () => {
     const anchorage = buildProfile({ ...scenario(), inputs: [] });
     expect(anchorage.gaps.map((g) => g.attribute)).not.toContain("contact");

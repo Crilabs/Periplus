@@ -119,7 +119,7 @@ export const areal = z.discriminatedUnion("type", [geoPolygon, geoMultiPolygon])
 
 /** Envelope of every object file of a package (all but manifest and coast). */
 export const fileEnvelope = {
-  schemaVersion: z.literal("2.2"),
+  schemaVersion: z.literal("2.3"),
   subdivision: publicId("sd"),
   dataVersion: z.number().int().min(1),
   generatedAt: isoDateTime,

@@ -33,7 +33,7 @@ import { activateCandidate, compareEvaluation, listEvaluations, NotAnEvaluationR
 
 /*
  * The regression gate (spec 10, plan Task 10, rulings M7-P10/P11): old/new comparison over a comparison set of two
- * places with evaluation profiles inserted directly, activation and the rules resolver. A released rules version „v3“
+ * places with evaluation profiles inserted directly, activation and the rules resolver. A released rules version „v80“
  * exists for this file only (a copy of v1, mocked into the config module), so an activation can name a version other
  * than active.json's. Synthetic subdivision at 21.0° E / 35.2° N, every row in withRollback.
  */
@@ -45,15 +45,15 @@ vi.mock("@/lib/config", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/config")>();
   return {
     ...real,
-    consolidationVersions: (dir?: string) => [...real.consolidationVersions(dir), "v3"],
+    consolidationVersions: (dir?: string) => [...real.consolidationVersions(dir), "v80"],
     getConsolidationConfig: (version?: string, dir?: string) => {
       configReads.push(version);
-      return version === "v3" ? { ...real.getConsolidationConfig(real.getConfig().consolidation.version, dir), version: "v3" } : real.getConsolidationConfig(version, dir);
+      return version === "v80" ? { ...real.getConsolidationConfig(real.getConfig().consolidation.version, dir), version: "v80" } : real.getConsolidationConfig(version, dir);
     },
   };
 });
 
-/** The active rules version (config/consolidation/active.json); „v3“ below is a later released version made up by the mock. */
+/** The active rules version (config/consolidation/active.json); „v80“ below is a later released version made up by the mock. */
 const ACTIVE_RULES = getConfig().consolidation.version;
 
 const navily = getConfig().quality.navily;
@@ -91,9 +91,9 @@ async function scene(tx: Db, next: Array<Record<string, unknown>> = BASE, curren
     [1, "services.water", "deviation_confirmed_own"],
   ];
   for (const [i, attribute, result] of outcomes) await addResult(tx, sub.subdivisionKey, places[i]!.placeId, attribute, result);
-  const runId = await evaluationRunRow(tx, sub.subdivisionKey, { rulesVersion: "v3", candidate: { rulesVersion: "v3" } });
+  const runId = await evaluationRunRow(tx, sub.subdivisionKey, { rulesVersion: "v80", candidate: { rulesVersion: "v80" } });
   for (const [i, p] of places.entries()) {
-    await tx.insert(evaluationProfiles).values({ runId, geoObjectId: p.geoObjectId, rulesVersion: "v3", factSchemaVersion: "v2", attributes: next[i]!, provenance: {}, contentHash: `h${i}` });
+    await tx.insert(evaluationProfiles).values({ runId, geoObjectId: p.geoObjectId, rulesVersion: "v80", factSchemaVersion: "v2", attributes: next[i]!, provenance: {}, contentHash: `h${i}` });
   }
   return { ...sub, places, runId };
 }
@@ -137,7 +137,7 @@ describe("compareEvaluation and activateCandidate", () => {
       expect(c.changed).toEqual([]);
       expect(c.next.precision).toBe(c.old.precision);
       expect(c.old).toEqual({ precision: 1, coverage: 1, compared: 6 });
-      expect(c).toMatchObject({ candidate: { rulesVersion: "v3" }, status: "finished", passes: true, reasons: [] });
+      expect(c).toMatchObject({ candidate: { rulesVersion: "v80" }, status: "finished", passes: true, reasons: [] });
     }));
 
   it("a changed value is pending and blocks activation", () =>
@@ -200,8 +200,8 @@ describe("compareEvaluation and activateCandidate", () => {
       const sub = await insertQualitySubdivision(tx, [{ lon: 21.01, lat: 35.2 }]);
       const place = await sub.addPlace({ inSet: true });
       await insertProfile(tx, place.geoObjectId, BASE[0]!, {});
-      const runId = await evaluationRunRow(tx, sub.subdivisionKey, { rulesVersion: "v3", candidate: { rulesVersion: "v3" } });
-      await tx.insert(evaluationProfiles).values({ runId, geoObjectId: place.geoObjectId, rulesVersion: "v3", factSchemaVersion: "v2", attributes: BASE[0]!, provenance: {}, contentHash: "h" });
+      const runId = await evaluationRunRow(tx, sub.subdivisionKey, { rulesVersion: "v80", candidate: { rulesVersion: "v80" } });
+      await tx.insert(evaluationProfiles).values({ runId, geoObjectId: place.geoObjectId, rulesVersion: "v80", factSchemaVersion: "v2", attributes: BASE[0]!, provenance: {}, contentHash: "h" });
       const c = await compareEvaluation(tx, runId);
       expect(c).toMatchObject({ next: { compared: 0 }, pending: 0, passes: false, reasons: ["Kein geprüfter Vergleichswert – erst Werte im Navily-Abgleich prüfen"] });
       await expect(activateCandidate(tx, { evaluationRunId: runId, activatedBy: "a" })).rejects.toThrow(RegressionGateClosed);
@@ -261,7 +261,7 @@ describe("compareEvaluation and activateCandidate", () => {
       await activateCandidate(tx, { evaluationRunId: runId, activatedBy: "admin@test.invalid" }); // a double click
       const rows = await activations(tx);
       expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ kind: "consolidation_rules", version: "v3", evaluationRunId: runId, activatedBy: "admin@test.invalid" });
+      expect(rows[0]).toMatchObject({ kind: "consolidation_rules", version: "v80", evaluationRunId: runId, activatedBy: "admin@test.invalid" });
       // numbers only (Grundprinzip 9)
       expect(rows[0]!.comparison).toEqual({
         old: { precision: 1, coverage: 1, compared: 6 },
@@ -269,8 +269,8 @@ describe("compareEvaluation and activateCandidate", () => {
         changed: 0,
         pending: 0,
       });
-      expect(await activeRulesVersion(tx)).toBe("v3");
-      expect((await consolidationConfigFor(tx)).version).toBe("v3");
+      expect(await activeRulesVersion(tx)).toBe("v80");
+      expect((await consolidationConfigFor(tx)).version).toBe("v80");
       expect((await consolidationConfigFor(tx, ACTIVE_RULES)).version).toBe(ACTIVE_RULES);
       expect((await listEvaluations(tx, (await runParams(tx, runId)).comparisonSetSubdivision as string))[0]).toMatchObject({ runId, activated: ["consolidation_rules"] });
     }));
@@ -279,9 +279,9 @@ describe("compareEvaluation and activateCandidate", () => {
     withRollback(async (tx) => {
       const { subdivisionKey, places, runId: older } = await scene(tx);
       // a second evaluation of the same set, activated first
-      const newer = await evaluationRunRow(tx, subdivisionKey, { rulesVersion: "v3", candidate: { rulesVersion: "v3" } });
+      const newer = await evaluationRunRow(tx, subdivisionKey, { rulesVersion: "v80", candidate: { rulesVersion: "v80" } });
       for (const [i, p] of places.entries()) {
-        await tx.insert(evaluationProfiles).values({ runId: newer, geoObjectId: p.geoObjectId, rulesVersion: "v3", factSchemaVersion: "v2", attributes: BASE[i]!, provenance: {}, contentHash: `n${i}` });
+        await tx.insert(evaluationProfiles).values({ runId: newer, geoObjectId: p.geoObjectId, rulesVersion: "v80", factSchemaVersion: "v2", attributes: BASE[i]!, provenance: {}, contentHash: `n${i}` });
       }
       await activateCandidate(tx, { evaluationRunId: newer, activatedBy: "a" });
       const reason = "Nach dieser Bewertung wurde eine andere Konfiguration aktiviert – neu bewerten";
@@ -310,13 +310,13 @@ describe("activeRulesVersion (ruling M7-P10)", () => {
       expect((await runParams(tx, before.id)).rulesVersion).toBe(ACTIVE_RULES);
       await activateCandidate(tx, { evaluationRunId: runId, activatedBy: "a" });
       const after = await startConsolidationRun(tx, rec.boss, { scope: { geoObjectIds: [places[0]!.geoObjectId] }, triggeredBy: "test" });
-      expect((await runParams(tx, after.id)).rulesVersion).toBe("v3");
-      expect(rec.inserted.filter((j) => j.queue === "consolidation.geo").map((j) => j.data.rulesVersion)).toEqual([ACTIVE_RULES, "v3"]);
+      expect((await runParams(tx, after.id)).rulesVersion).toBe("v80");
+      expect(rec.inserted.filter((j) => j.queue === "consolidation.geo").map((j) => j.data.rulesVersion)).toEqual([ACTIVE_RULES, "v80"]);
       // a consolidation without a version (a place merge) takes the active one
       const result = await consolidateGeo(tx, places[1]!.geoObjectId);
       expect(result.status).toBe("created");
       const [profile] = await tx.select({ rulesVersion: profiles.rulesVersion }).from(profiles).where(eq(profiles.geoObjectId, places[1]!.geoObjectId)).orderBy(sql`version desc`).limit(1);
-      expect(profile!.rulesVersion).toBe("v3");
+      expect(profile!.rulesVersion).toBe("v80");
     }));
 
   it("an activated version without config file falls back to active.json", () =>
@@ -326,12 +326,12 @@ describe("activeRulesVersion (ruling M7-P10)", () => {
         tx.insert(configActivations).values({ kind: "consolidation_rules", version, evaluationRunId: runId, comparison: {}, activatedBy: "test", activatedAt: sql`clock_timestamp()` });
       await activate("v99");
       expect(await activeRulesVersion(tx)).toBe(ACTIVE_RULES);
-      await activate("v3");
+      await activate("v80");
       await activate("v98"); // newest, but not released: the newest released one counts
-      expect(await activeRulesVersion(tx)).toBe("v3");
+      expect(await activeRulesVersion(tx)).toBe("v80");
       // an extraction approval is no rules activation
       await tx.insert(configActivations).values({ kind: "extraction", version: "v1", evaluationRunId: runId, comparison: {}, activatedBy: "test", activatedAt: sql`clock_timestamp()` });
-      expect(await activeRulesVersion(tx)).toBe("v3");
+      expect(await activeRulesVersion(tx)).toBe("v80");
     }));
 
   it("getConsolidationConfig() without a version and getConfig().consolidation are read by the resolver only", () => {
@@ -417,9 +417,9 @@ describe("extraction candidates (ruling M7-P11)", () => {
 describe("frozen rules version (ruling M7-E-R1)", () => {
   /** Activates v2 as a deliberate activation would (a row in config_activations). */
   async function activateV2(tx: Db, subdivisionKey: string) {
-    const evaluationRunId = await evaluationRunRow(tx, subdivisionKey, { rulesVersion: "v3", candidate: { rulesVersion: "v3" } });
-    await tx.insert(configActivations).values({ kind: "consolidation_rules", version: "v3", evaluationRunId, comparison: {}, activatedBy: "test", activatedAt: sql`clock_timestamp()` });
-    expect(await activeRulesVersion(tx)).toBe("v3");
+    const evaluationRunId = await evaluationRunRow(tx, subdivisionKey, { rulesVersion: "v80", candidate: { rulesVersion: "v80" } });
+    await tx.insert(configActivations).values({ kind: "consolidation_rules", version: "v80", evaluationRunId, comparison: {}, activatedBy: "test", activatedAt: sql`clock_timestamp()` });
+    expect(await activeRulesVersion(tx)).toBe("v80");
   }
 
   /** A text run started under v1 whose extraction run holds a verified fact of a set place (its consolidation target). */
@@ -472,7 +472,7 @@ describe("frozen rules version (ruling M7-E-R1)", () => {
       configReads.length = 0;
       await requestPlaceDiscovery(tx, rec.boss, text.runId);
       expect(configReads).toContain(ACTIVE_RULES);
-      expect(configReads).not.toContain("v3");
+      expect(configReads).not.toContain("v80");
     }));
 
   it("a catch-up consolidates with the rules version of the run it catches up", () =>

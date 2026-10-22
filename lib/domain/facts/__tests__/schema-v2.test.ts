@@ -14,10 +14,6 @@ const RESTRICTION_HIT = {
 };
 
 describe("fact schema v2", () => {
-  it("is the active version", () => {
-    expect(getFactSchema().version).toBe("v2");
-  });
-
   it("v2 keeps every v1 key and value schema", () => {
     const v1 = getFactSchema("v1").levels.place;
     const v2 = new Map(getFactSchema("v2").levels.place.map((d) => [d.key, d]));

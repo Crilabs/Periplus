@@ -6,6 +6,7 @@ import { requireAdmin } from "@/lib/security/require-admin";
 import { AutoRefresh } from "../_components/auto-refresh";
 import { Dialog } from "../_components/dialog";
 import { runScopeError } from "../_components/labels";
+import { ReprocessForm } from "./reprocess-form";
 import { RunsTable } from "../_components/runs-table";
 import { SubdivisionOptions } from "../_components/subdivision-options";
 import { Button, cx, inputClass, Notice, PageHeader, Panel } from "../_components/ui";
@@ -14,6 +15,7 @@ import {
   startGazetteerAction,
   startGeometryAction,
   startPingRun,
+  startPlaceWebsiteAction,
   startReprocessAction,
   startRevisitAction,
   startSeedAction,
@@ -47,6 +49,14 @@ const RUNS: ScopedRun[] = [
       "Legt aus Buchten, Häfen und Marinas der Küstenkacheln Ortskandidaten an. Braucht einen Gazetteer-Lauf für den Landesteil.",
     action: startSeedAction,
     button: "Seed für Landesteil",
+  },
+  {
+    id: "place-websites",
+    name: "Marina-Websites",
+    description:
+      "Sucht für Marinas und Häfen des Landesteils die eigene Website (aus OSM und Wikidata, sonst über die Google-Suche mit KI-Prüfung), gibt sie als Quellen frei, ruft sie ab und wertet die neuen Seiten aus. Braucht einen Seed-Lauf.",
+    action: startPlaceWebsiteAction,
+    button: "Marina-Websites suchen",
   },
   {
     id: "datasets",
@@ -94,7 +104,9 @@ export default async function Page({ searchParams }: PageProps<"/runs">) {
   await requireAdmin();
   const error = runScopeError((await searchParams).error);
   const runs = await listRuns(getDb(), { limit: 50 });
-  const subdivisionOptions = <SubdivisionOptions options={await listSubdivisionOptions(getDb())} />;
+  const options = await listSubdivisionOptions(getDb());
+  const subdivisionOptions = <SubdivisionOptions options={options} />;
+
   return (
     <>
       <AutoRefresh intervalMs={5000} />
@@ -140,6 +152,9 @@ export default async function Page({ searchParams }: PageProps<"/runs">) {
                       </h3>
                       <p className="mt-0.5 leading-relaxed text-muted text-pretty">{run.description}</p>
                     </div>
+                    {run.id === "reprocess" ? (
+                      <ReprocessForm options={options} action={run.action} button={run.button} />
+                    ) : (
                     <form action={run.action} className="flex flex-wrap items-end gap-2">
                       <label htmlFor={`${run.id}-scope`} className="sr-only">
                         Landesteil
@@ -156,6 +171,7 @@ export default async function Page({ searchParams }: PageProps<"/runs">) {
                         {run.button}
                       </Button>
                     </form>
+                    )}
                   </li>
                 ))}
               </ol>

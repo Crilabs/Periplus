@@ -38,7 +38,7 @@ function robotsTransport(texts: Record<string, string | number> = {}): Transport
   return transport;
 }
 
-type Hit = { url: string; rank?: number; keyword?: string; languageCode?: string };
+type Hit = { url: string; rank?: number; keyword?: string; languageCode?: string; level?: "area" | "place_website" };
 
 /** One SERP query per hit (distinct keywords), each with one result on `domain`. */
 async function insertHits(tx: Db, domain: string, hits: Hit[]): Promise<void> {
@@ -50,7 +50,7 @@ async function insertHits(tx: Db, domain: string, hits: Hit[]): Promise<void> {
         languageCode: hit.languageCode ?? "en",
         locationCode: 2826,
         depth: 20,
-        level: "area",
+        level: hit.level ?? "area",
         scopeId: "saronic",
         rawKey: `serp/2026-10-19/${newId()}.json`,
         fetchedAt: new Date(),
@@ -111,6 +111,20 @@ async function tasksOf(tx: Db, sourceId: string) {
 }
 
 describe("proposeSources", () => {
+  it("hits of a marina website search (level place_website) never make a domain a candidate", () =>
+    withRollback(async (tx) => {
+      const domain = testDomain();
+      await insertHits(tx, domain, pages(domain, 4).map((p) => ({ ...p, level: "place_website" as const })));
+      expect((await domainCandidates(tx, proposals())).map((c) => c.domain)).not.toContain(domain);
+      // the same hits from a discovery search count as before
+      const other = testDomain();
+      await insertHits(tx, other, [...pages(other, 2), ...pages(other, 2, "/x/").map((p) => ({ ...p, level: "place_website" as const }))]);
+      expect((await domainCandidates(tx, proposals())).map((c) => c.domain)).not.toContain(other);
+      await insertHits(tx, other, pages(other, 1, "/y/"));
+      const candidate = (await domainCandidates(tx, proposals())).find((c) => c.domain === other);
+      expect(candidate?.hits.map((h) => h.url).sort()).toEqual([`https://${other}/blog/p0`, `https://${other}/blog/p1`, `https://${other}/y/0`]);
+    }));
+
   it("a domain with 3 hits becomes a proposed source with an open source_approval task", () =>
     withRollback(async (tx) => {
       const domain = testDomain();

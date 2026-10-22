@@ -129,6 +129,8 @@ export const geoObjects = pgTable("geo_objects", {
    * tourism, amenity, shop, wikidata). Not a core column: changes write no history.
    */
   tags: jsonb("tags").notNull().default({}),
+  /** `P856` (official website) of the linked Wikidata item; its own column because an OSM upsert replaces `tags`. */
+  websiteWikidata: text("website_wikidata"),
   mergedIntoId: uuid("merged_into_id").references((): AnyPgColumn => geoObjects.id),
   validFrom: validFrom(),
   validTo: validTo(),

@@ -15,6 +15,7 @@ import { diffProfiles, type EventDraft, type TaskDraft } from "./changes";
 import { profileConfidence } from "./derived/confidence";
 import { candidateAppConfig, highlightInputs, loadContext, loadDerivedInputs, loadInputs, type ExtractionCandidate, type LoadInputsOptions } from "./inputs";
 import { dismissTasks, lockOpenTasks, subjectPrefix } from "./task-locks";
+import { applyAutoStatus } from "@/lib/domain/places/auto-status";
 
 /*
  * Consolidation of one geo object (spec 07 "Ablauf"): load, build, compare with the valid profile, and write a new
@@ -104,7 +105,9 @@ async function openDraftTask(tx: Db, draft: TaskDraft, subjectId: string, contex
  *
  * Steps: context (`null` → `skipped`; a regular run then dismisses the object's open `conflict` / `uncertain_change`
  * tasks with `context.dismissedReason` `object_ended`: a merged or rejected object keeps its last profile as history,
- * never delivered, final review M-6), inputs, derived inputs, `buildProfile`, `latestProfile`, `diffProfiles`.
+ * never delivered, final review M-6), inputs, derived inputs, (regular runs of a place) confirmation and kind switch by
+ * evidence (`applyAutoStatus`, spec 17; the context then carries the place as changed), `buildProfile`,
+ * `latestProfile`, `diffProfiles`.
  * - `regular`: on `versionNeeded` a new version (previous + 1, `valid_from` = the later of the run date and the
  *   previous `valid_from`, `run_id`); the events carry the new or else the existing version (an attribute event
  *   without a new version is an error). Review tasks (ruling M5-P9, M5-F-R2, M5-F-R3 I-4):
@@ -152,6 +155,11 @@ export async function consolidateGeo(db: Db, geoObjectId: string, opts: Consolid
     const loadOpts: LoadInputsOptions = { cfg, schemaVersion, appConfig, today };
     const { inputs } = await loadInputs(tx, geoObjectId, loadOpts);
     const derived = await loadDerivedInputs(tx, geoObjectId, context, loadOpts);
+    if (mode === "regular" && context.place) {
+      // spec 17: confirmation and kind switch by evidence, so this run's profile carries them (and `place_new`)
+      const auto = await applyAutoStatus(tx, context, inputs, appConfig, new Date(), { rules: cfg, today });
+      if (auto.place) context.place = { ...context.place, ...auto.place };
+    }
     const built = buildProfile({ inputs, context, derived, today, cfg, schemaVersion, rulesVersion: cfg.version });
     const prev = await latestProfile(tx, geoObjectId);
     const diff = diffProfiles(prev, built, { cfg, level: context.level, context, today });

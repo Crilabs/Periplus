@@ -101,6 +101,29 @@ const marina = (attributes: Record<string, unknown> = {}) =>
 const FIELD_CASES: Record<keyof SpotBody, () => void> = {
   id: () => expect(mapped().id).toBe("sp_01J9ZD00000000000000000001"),
   kind: () => expect(mapped().kind).toBe("anchorage"),
+  berthable: () => {
+    // no fact and no stored value: derived at delivery from kind and status (spec 17)
+    expect(mapped().berthable).toBe(true);
+    expect(mapped().provenance["berthable"]).toMatchObject({ source: "computed", confidence: 1 });
+    const derived = mapped(spotA({ attributes: { berthable: true }, provenance: { berthable: provenanceEntry("derived", { confidence: 1 }) } }));
+    expect(derived.berthable).toBe(true);
+    expect(derived.provenance["berthable"]).toMatchObject({ source: "computed" });
+    expect(mapped(spotA({ attributes: { berthable: false } })).berthable).toBe(false);
+  },
+  contact: () => {
+    expect(mapped().contact).toBeNull();
+    for (const url of ["javascript:alert(1)", "ftp://marina.example/x", "upload://doc"]) {
+      expect(mapped(spotA({ attributes: { contact: { vhf: null, phone: null, url } } })).contact, url).toBeNull();
+      expect(mapped(spotA({ attributes: { contact: { vhf: "71", phone: null, url } } })).contact, url).toEqual({ vhf: "71", phone: null, url: null });
+    }
+    expect(mapped(spotA({ attributes: { contact: { vhf: "71", phone: "+30 22980 12345", url: "https://marina.example" } } })).contact).toEqual({
+      vhf: "71",
+      phone: "+30 22980 12345",
+      url: "https://marina.example",
+    });
+    expect(mapped(spotA({ attributes: { contact: { vhf: "71", phone: null, url: null } } })).contact).toEqual({ vhf: "71", phone: null, url: null });
+    expect(mapped(spotA({ attributes: { contact: { vhf: null, phone: null, url: null } } })).contact).toBeNull();
+  },
   name: () => expect(mapped().name).toBe("Vathi Bay"),
   names: () => {
     expect(mapped().names).toEqual(spotA().names);
@@ -193,6 +216,7 @@ const FIELD_CASES: Record<keyof SpotBody, () => void> = {
     expect(Object.keys(mapped().provenance).sort()).toEqual(
       [
         "anchorPosition",
+        "berthable",
         "depth",
         "exclude",
         "hazards",
@@ -294,7 +318,8 @@ describe("mapSpot", () => {
     expect(spot.exclude).toEqual({ excluded: true, reason: "military", detail: "Militärisches Sperrgebiet (ausgeschlossen – keine Schutzwerte)" });
     expect(spot.shelter).toEqual({ sectors: { N: 0, NE: 0, E: 0, SE: 0, S: 0, SW: 0, W: 0, NW: 0 }, swell: 0, source: "computed" });
     expect(spot.score).toEqual({ confidence: 0, popularity: 0.55, quietness: null, sourcesCount: 0, lastObserved: null });
-    expect(spot.provenance).toEqual({});
+    // only the delivery's own derivation of berthable (spec 17), no profile values
+    expect(spot.provenance).toEqual({ berthable: { source: "computed", confidence: 1, observedAt: null } });
     expect(warnings).toEqual([]);
     expect(parses(spot)).toBeUndefined();
   });
@@ -370,6 +395,33 @@ describe("mapSpot", () => {
     ]);
   });
 
+  it("a spot with berthable and contact validates against the contract; a non-berthable port too", () => {
+    const withContact = mapped(spotA({ attributes: { berthable: true, contact: { vhf: "71", phone: null, url: "https://marina.example" } } }));
+    expect(spotSchema.safeParse({ ...withContact, profileVersion: 1, validFrom: "2026-10-19" }).error?.issues).toBeUndefined();
+    const port = mapped(spotA({ attributes: { "place.kind": "port", berthable: false } }));
+    expect(port).toMatchObject({ kind: "port", berthable: false, contact: null });
+    expect(spotSchema.safeParse({ ...port, profileVersion: 1, validFrom: "2026-10-19" }).error?.issues).toBeUndefined();
+  });
+
+  it("berthable without a stored value follows the derivation table; a stored value and a fact win (spec 17)", () => {
+    const cases: Array<[string, string, boolean | null]> = [
+      ["anchorage", "confirmed", true],
+      ["marina", "confirmed", true],
+      ["mooring_field", "confirmed", true],
+      ["port", "confirmed", false],
+      ["anchorage", "no_anchoring", false],
+      ["marina", "no_anchoring", false],
+    ];
+    for (const [kind, status, expected] of cases) {
+      const src = spotA({ attributes: { "place.kind": kind }, src: { kind: kind as never, status: status as never } });
+      expect(mapped(src).berthable, `${kind}/${status}`).toBe(expected);
+    }
+    const candidate = spotA({ src: { status: "candidate" } });
+    expect(mapped(candidate).berthable).toBeNull();
+    expect(mapped(candidate).provenance["berthable"]).toBeUndefined();
+    expect(mapped(spotA({ attributes: { "place.kind": "mooring_field", berthable: false } , src: { kind: "mooring_field" } })).berthable).toBe(false);
+  });
+
   it("kind mooring_field maps to mooringField", () => {
     expect(mapped(spotA({ attributes: { "place.kind": "mooring_field" } })).kind).toBe("mooringField");
     // without the identity key the place row's kind counts
@@ -380,6 +432,11 @@ describe("mapSpot", () => {
     expect(mapped().shelter).toEqual({ sectors: { N: 0.9, NE: 0.8, E: 0.4, SE: 0.1, S: 0.2, SW: 0.7, W: 0.9, NW: 0.95 }, swell: 0.5, source: "computed+text" });
     // without swell protection: the minimum of the sectors
     expect(mapped(spotA({ drop: ["swell_protection"] })).shelter.swell).toBe(0.1);
+  });
+
+  it("services.shop is unknown when only a fuel station is nearby (no supply highlight)", () => {
+    const s = mapped(spotA({ drop: ["highlight.supply"], attributes: { "services.fuel": true } }));
+    expect(s.services).toMatchObject({ shop: "unknown", fuel: "yes" });
   });
 
   it("a missing sector omits the spot as shelter_incomplete", () => {

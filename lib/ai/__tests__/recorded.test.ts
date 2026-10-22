@@ -63,6 +63,7 @@ describe("recorded extract-facts answers", () => {
         docType: "pilot_guide",
         observedAt: "2026-10-19",
         chunks: [{ n: 1, text: "Kolona is a quiet bay. Holding is good in sand, depth 6 m." }],
+        boundToWebsite: false,
       };
       const output = extractFactsTask.output.parse({
         facts: [

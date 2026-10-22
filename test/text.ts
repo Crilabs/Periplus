@@ -1,7 +1,9 @@
+import { loadConfig } from "@/lib/config";
 import { eq, sql } from "drizzle-orm";
 import type { PgInsertValue } from "drizzle-orm/pg-core";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import type { PoiCategory } from "@/lib/db/schema/geo";
+import type { DocType } from "@/lib/db/schema/sources";
 import {
   chunks,
   documents,
@@ -113,7 +115,7 @@ export async function insertTestExtractionRun(
       task: "extract-facts",
       model: "claude-sonnet-5-5",
       promptVersion: 1,
-      factSchemaVersion: "v2",
+      factSchemaVersion: loadConfig("config").factSchema.version,
       runId: values.runId ?? (await insertTestRun(tx)),
       ...values,
     })
@@ -236,12 +238,13 @@ export async function insertNamedObject(tx: Db, o: TestNamedObject): Promise<str
 
 /**
  * A new document version whose chunks hold `texts` (one chunk each, `carried` maps a chunk index to the chunk it is
- * carried over from). `documentId` adds the version to an existing document; the version becomes current.
+ * carried over from). `documentId` adds the version to an existing document; the version becomes current. `docType`
+ * is the version's fetch-time type (default `trip_report`).
  */
 export async function insertTestVersion(
   tx: Db,
   texts: string[],
-  opts: { sourceId?: string; documentId?: string; carried?: Record<number, string>; observedAt?: string; fetchedAt?: Date } = {},
+  opts: { sourceId?: string; documentId?: string; carried?: Record<number, string>; observedAt?: string; fetchedAt?: Date; docType?: DocType } = {},
 ): Promise<{ sourceId: string; documentId: string; versionId: string; chunkIds: string[] }> {
   const sourceId = opts.sourceId ?? (await insertTestSource(tx));
   let documentId = opts.documentId;
@@ -262,7 +265,7 @@ export async function insertTestVersion(
       mdKey: `archive/${documentId}/${newId()}.md`,
       observedAt: opts.observedAt ?? "2026-10-19",
       observedAtBasis: "fetched",
-      docType: "trip_report",
+      docType: opts.docType ?? "trip_report",
       converter: "local",
       charCount: full.length,
     })

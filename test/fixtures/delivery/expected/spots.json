@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "2.2",
+  "schemaVersion": "2.3",
   "subdivision": "sd_01J9ZD00000000000000000001",
   "dataVersion": 1,
   "generatedAt": "2040-06-01T08:00:00.000Z",
@@ -7,6 +7,8 @@
     {
       "id": "sp_01J9ZD00000000000000000001",
       "kind": "anchorage",
+      "berthable": true,
+      "contact": null,
       "name": "Vathi Bay",
       "names": [
         {
@@ -206,6 +208,11 @@
           "confidence": 0.7,
           "observedAt": "2025-06-10"
         },
+        "berthable": {
+          "source": "computed",
+          "confidence": 1,
+          "observedAt": null
+        },
         "occupancy": {
           "source": "text",
           "confidence": 0.7,
@@ -240,6 +247,8 @@
     {
       "id": "sp_01J9ZD00000000000000000002",
       "kind": "marina",
+      "berthable": true,
+      "contact": null,
       "name": "Marina Test",
       "names": [
         {
@@ -330,6 +339,11 @@
           "confidence": 0.8,
           "observedAt": null
         },
+        "berthable": {
+          "source": "computed",
+          "confidence": 1,
+          "observedAt": null
+        },
         "occupancy": {
           "source": "computed",
           "confidence": 0.8,
@@ -349,6 +363,8 @@
     {
       "id": "sp_01J9ZD00000000000000000004",
       "kind": "anchorage",
+      "berthable": false,
+      "contact": null,
       "name": "Ormos C",
       "names": [
         {
@@ -419,6 +435,11 @@
         "shelter": {
           "source": "computed",
           "confidence": 0.8,
+          "observedAt": null
+        },
+        "berthable": {
+          "source": "computed",
+          "confidence": 1,
           "observedAt": null
         },
         "exclude": {

@@ -1,0 +1,1 @@
+ALTER TYPE match_kind ADD VALUE IF NOT EXISTS 'bound';

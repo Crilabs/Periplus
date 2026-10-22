@@ -99,7 +99,7 @@ describe("images in the package", () => {
       expect(detail!.files.at(-1)).toEqual({ name: file, sha256: sha256Hex(stored), bytes: stored.byteLength });
       const manifest = await readJson<Manifest>(archive, `${prefixOf(f, 1)}manifest.json`);
       expect(manifest.files.at(-1)).toEqual({ name: file, sha256: sha256Hex(stored), bytes: stored.byteLength });
-      expect(manifest.schemaVersion).toBe("2.2");
+      expect(manifest.schemaVersion).toBe("2.3");
       expect(manifest.licenses.map((l) => l.name)).toEqual(expect.arrayContaining(["CC-BY-3.0", "CC-BY-4.0", "Copernicus-DEM"]));
       // the object: schema order, camera from the columns
       const spot = spotA(await readJson<SpotsFile>(archive, `${prefixOf(f, 1)}spots.json`), f);

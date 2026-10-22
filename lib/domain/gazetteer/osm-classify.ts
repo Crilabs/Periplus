@@ -60,10 +60,16 @@ export function classifyOsm(
   if (seamark && ANCHORAGE_SEAMARKS.has(seamark)) return { type: "bay" };
   if (place && SETTLEMENT_PLACES.has(place)) return { type: "settlement" };
 
+  const category = categoryForTags(tags, categories);
+  return category ? { type: "poi", category } : null;
+}
+
+/** The category of the first matching rule of `categories.osm`, null when none matches. No name check. */
+export function categoryForTags(tags: Record<string, string>, categories: CategoriesConfig): PoiCategory | null {
   for (const rule of categories.osm) {
     const value = tags[rule.key];
     if (value === undefined) continue;
-    if (rule.values === "*" || rule.values.includes(value)) return { type: "poi", category: rule.category };
+    if (rule.values === "*" || rule.values.includes(value)) return rule.category;
   }
   return null;
 }

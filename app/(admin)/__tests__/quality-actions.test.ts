@@ -85,7 +85,7 @@ async function setPlace(tx: Db): Promise<{ placeId: string; geoObjectId: string;
 async function finishEvaluation(tx: Db, runId: string, subdivisionKey: string) {
   for (const s of await loadComparisonSubjects(tx, subdivisionKey)) {
     const [p] = await tx.select({ geoObjectId: places.geoObjectId }).from(places).where(eq(places.id, s.placeId));
-    await tx.insert(evaluationProfiles).values({ runId, geoObjectId: p!.geoObjectId, rulesVersion: "v1", factSchemaVersion: "v2", attributes: ATTRIBUTES, provenance: {}, contentHash: "h" });
+    await tx.insert(evaluationProfiles).values({ runId, geoObjectId: p!.geoObjectId, rulesVersion: getConfig().consolidation.version, factSchemaVersion: getConfig().factSchema.version, attributes: ATTRIBUTES, provenance: {}, contentHash: "h" });
     await tx.insert(comparisonResults).values({
       placeId: s.placeId,
       attribute: "services.water",
@@ -179,7 +179,7 @@ describe("startEvaluationAction and activateCandidateAction", () => {
       expect(redirect).toHaveBeenLastCalledWith(`/quality?subdivision=${key}&error=invalid_input`);
       await startEvaluationAction({ subdivisionKey: key, rulesVersion: "latest" });
       expect(redirect).toHaveBeenLastCalledWith(`/quality?subdivision=${key}&error=invalid_input`);
-      await startEvaluationAction(form({ subdivisionKey: key, rulesVersion: "v1", model: "", promptVersion: "" }));
+      await startEvaluationAction(form({ subdivisionKey: key, rulesVersion: getConfig().consolidation.version, model: "", promptVersion: "" }));
       expect(redirect).toHaveBeenLastCalledWith(`/quality?subdivision=${key}&error=comparison_set_empty`);
       expect(await started(tx)).toEqual([]);
     }));

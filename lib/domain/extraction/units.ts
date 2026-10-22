@@ -10,7 +10,7 @@ import { jsonUuids } from "@/lib/domain/mentions/scope";
  * of the object's mentions in one version plus `neighbourChunks` chunks on each side (by ordinal, same version); a
  * group of more than `maxChunksPerUnit` chunks is cut into parts of at most that many chunks, so a model request stays
  * bounded. Neighbouring parts share the chunks at their boundary (2 × `neighbourChunks`), so no mention loses its
- * neighbour context to a cut. A mention of an object that takes no facts (`levelFor` null: a settlement without a place) is skipped.
+ * neighbour context to a cut. A group with a `bound` mention (a page of the place's own website) holds every chunk of the version. A mention of an object that takes no facts (`levelFor` null: a settlement without a place) is skipped.
  */
 
 export type ExtractionUnitDraft = {
@@ -24,7 +24,7 @@ export type ExtractionUnitDraft = {
   chunkIds: string[];
 };
 
-type MentionRow = { id: string; version_id: string; geo_object_id: string; ordinal: number; char_start: number };
+type MentionRow = { id: string; version_id: string; geo_object_id: string; ordinal: number; char_start: number; match_kind: string };
 type ChunkRow = { id: string; version_id: string; ordinal: number };
 
 /**
@@ -39,7 +39,7 @@ export async function planUnits(
 ): Promise<{ units: ExtractionUnitDraft[]; skipped: string[] }> {
   if (mentionIds.length === 0) return { units: [], skipped: [] };
   const { rows: mentionRows } = await db.execute<MentionRow>(sql`
-    select m.id, m.document_version_id as version_id, m.geo_object_id, c.ordinal, m.char_start
+    select m.id, m.document_version_id as version_id, m.geo_object_id, c.ordinal, m.char_start, m.match_kind
     from mentions m join chunks c on c.id = m.chunk_id
     where m.id in ${jsonUuids(mentionIds)}
     order by m.document_version_id, m.geo_object_id, c.ordinal, m.char_start, m.id
@@ -78,7 +78,8 @@ export async function planUnits(
       continue;
     }
     const byOrdinal = chunksByVersion.get(versionId) ?? new Map<number, string>();
-    const ordinals = new Set<number>();
+    // A page of a place's own website (spec 15 C) is extracted whole: a bound mention takes every chunk of the version.
+    const ordinals = new Set<number>(group.some((m) => m.match_kind === "bound") ? byOrdinal.keys() : []);
     for (const m of group) {
       for (let o = m.ordinal - cfg.neighbourChunks; o <= m.ordinal + cfg.neighbourChunks; o++) {
         if (byOrdinal.has(o)) ordinals.add(o);

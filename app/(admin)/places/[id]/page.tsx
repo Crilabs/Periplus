@@ -19,12 +19,14 @@ import { profileAttributeFacts, profileView } from "@/lib/domain/profile-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { Dialog } from "../../_components/dialog";
 import {
+  AUTO_RULE_LABELS,
   mergeError,
   PLACE_KIND_LABELS,
   PLACE_STATUS_LABELS,
   placeStatusError,
   REVIEW_KIND_LABELS,
   runScopeError,
+  WEBSITE_ORIGIN_LABELS,
 } from "../../_components/labels";
 import { MentionsPanel } from "../../_components/mentions-panel";
 import { MiniMap } from "../../_components/mini-map";
@@ -339,6 +341,35 @@ async function TimelineTabView({ placeId, geoObjectId, version, asOf, attr, conf
   );
 }
 
+/** „Automatisch bestätigt am <Datum> (Regel: <Label>)“ with links to the documents the decision rests on. */
+function AutoDecisionLine({ decision }: { decision: NonNullable<Detail["autoDecision"]> }) {
+  const date = fmt.date(decision.decidedAt);
+  const rule = decision.rule ? (AUTO_RULE_LABELS[decision.rule] ?? decision.rule) : null;
+  const text =
+    decision.action === "confirm"
+      ? `Automatisch bestätigt am ${date}`
+      : decision.action === "no_anchoring"
+        ? `Automatisch als Ankerverbot eingestuft am ${date}`
+        : `Ortsart automatisch geändert am ${date}`;
+  return (
+    <span data-testid="auto-decision">
+      {text}
+      {rule && ` (Regel: ${rule})`}
+      {decision.documentIds.length > 0 && (
+        <span className="mt-1 block text-xs">
+          Belege:{" "}
+          {decision.documentIds.map((id, i) => (
+            <span key={id}>
+              {i > 0 && ", "}
+              <TextLink href={`/documents/${id}`}>Dokument {i + 1}</TextLink>
+            </span>
+          ))}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function Overview({ detail, highlights }: { detail: Detail; highlights: Awaited<ReturnType<typeof placeHighlightsView>> }) {
   const p = detail.place;
   const point: GeoJSON.FeatureCollection = {
@@ -357,6 +388,32 @@ function Overview({ detail, highlights }: { detail: Detail; highlights: Awaited<
             columns={1}
             items={[
               { label: "Statusgrund", value: p.statusReason ?? "–", hint: "Warum der Ort diesen Status hat" },
+              detail.autoDecision && {
+                label: "Automatische Entscheidung",
+                value: <AutoDecisionLine decision={detail.autoDecision} />,
+                hint: "Das System hat den Ort nach Beleg entschieden; die Belege sind verlinkt",
+              },
+              {
+                label: "Festmachplatz",
+                value: detail.berthable === null ? "unbekannt" : detail.berthable ? "ja" : "nein",
+                hint: "Ob man hier festmachen kann: Wert des Profils, sonst aus Ortsart und Status abgeleitet",
+              },
+              {
+                label: "Website",
+                value: detail.website ? (
+                  <span>
+                    <a href={detail.website.url} target="_blank" rel="noreferrer noopener" className="break-all text-accent hover:underline">
+                      {detail.website.url}
+                    </a>{" "}
+                    <span className="text-xs text-muted">
+                      ({WEBSITE_ORIGIN_LABELS[detail.website.origin]}
+                      {detail.website.bound ? ", als Quelle gebunden" : ""})
+                    </span>
+                  </span>
+                ) : (
+                  "–"
+                ),
+              },
               { label: "Position", value: <Mono>{coord(p.position.lat, p.position.lon)}</Mono> },
               {
                 label: "Öffentliche ID",

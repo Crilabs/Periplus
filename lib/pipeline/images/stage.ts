@@ -53,7 +53,8 @@ async function consolidatedObjects(db: Db, run: { id: string; params: Record<str
 
 /**
  * Of the objects `scope` selects, the spots that get images, sorted by id: a current, unmerged place with status in
- * `delivery.spots.statuses` (any kind: anchorage, mooring field, marina, port), a fetch computation (without one the
+ * `delivery.spots.statuses` (any kind: anchorage, mooring field, marina, port) and a public id (so images follow delivery
+ * exactly: a seed-excluded place without one is not delivered, spec 17), a fetch computation (without one the
  * camera has no direction; the next geometry run brings the place in) and a subdivision whose country has a core
  * source (the cadastre: Greece in Stufe 1).
  */
@@ -68,6 +69,7 @@ async function eligibleSpots(db: Db, scope: SQL, cfg: ImageStageConfig): Promise
     join subdivisions s on s.id = o.subdivision_id
     where ${scope} and p.valid_to is null and p.merged_into_id is null
       and p.status::text = any(${statuses}::text[])
+      and p.public_id is not null
       and ${country}
       and exists (select 1 from computations c where c.geo_object_id = p.geo_object_id and c.kind = 'fetch')
     order by p.geo_object_id`);

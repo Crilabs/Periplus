@@ -8,7 +8,7 @@ import { MockModel } from "@/lib/ai/mock";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoObjects, placeRenders, places, type PlaceKind, type PlaceStatus } from "@/lib/db/schema";
-import { newId } from "@/lib/domain/ids";
+import { newId, newPublicId } from "@/lib/domain/ids";
 import type { PlaceImageTaskContext } from "@/lib/pipeline/images/generate";
 import type { renderAndStore } from "@/lib/pipeline/images/render";
 import { insertComputation, insertPlace } from "@/test/consolidation";
@@ -88,9 +88,11 @@ export async function insertImageSubdivision(tx: Db, country = "GR"): Promise<{ 
 export async function insertSpot(
   tx: Db,
   subdivisionId: string,
-  o: { lon?: number; lat?: number; kind?: PlaceKind; status?: PlaceStatus; fetch?: boolean; name?: string; anchor?: { lon: number; lat: number } } = {},
+  o: { lon?: number; lat?: number; kind?: PlaceKind; status?: PlaceStatus; fetch?: boolean; name?: string; anchor?: { lon: number; lat: number }; publicId?: false } = {},
 ): Promise<{ objectId: string; placeId: string }> {
   const spot = await insertPlace(tx, { lon: o.lon ?? IMAGE_LON, lat: o.lat ?? IMAGE_LAT, status: o.status, name: o.name });
+  // delivered places have a public id (spec 17); `publicId: false` is a place that is not delivered (a seed-excluded one)
+  if (o.publicId !== false) await tx.update(places).set({ publicId: newPublicId("sp") }).where(eq(places.id, spot.placeId));
   if (o.kind) await tx.update(places).set({ kind: o.kind }).where(eq(places.id, spot.placeId));
   if (o.anchor) {
     await tx.update(places).set({ anchorPosition: geomFromGeoJson({ type: "Point", coordinates: [o.anchor.lon, o.anchor.lat] }) }).where(eq(places.id, spot.placeId));

@@ -64,6 +64,9 @@ export const METRIC_KEYS = [
   "highlight_share",
   "recent_observation_share",
   "places_per_tile",
+  "place_confirmation",
+  "place_websites",
+  "marina_services",
 ] as const;
 export type MetricKey = (typeof METRIC_KEYS)[number];
 

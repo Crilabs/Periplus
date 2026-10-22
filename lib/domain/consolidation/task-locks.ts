@@ -29,7 +29,7 @@ export async function lockOpenTasks(tx: Db, geoObjectId: string): Promise<Map<st
 }
 
 /** Dismisses the (locked) tasks `ids` with `context.dismissedReason` `reason`. */
-export async function dismissTasks(tx: Db, ids: string[], reason: "superseded" | "object_ended"): Promise<void> {
+export async function dismissTasks(tx: Db, ids: string[], reason: "superseded" | "object_ended" | "auto_confirmed"): Promise<void> {
   if (ids.length === 0) return;
   await tx.execute(sql`
     update review_tasks set status = 'dismissed', context = context || ${JSON.stringify({ dismissedReason: reason })}::jsonb

@@ -140,7 +140,7 @@ const seasonNotes: AttributeDef = {
   description: "Seasonal note: the months it applies to and what applies (open, closed, crowded, meltemi)",
 };
 
-const textOnly = (key: string, value: z.ZodType, rule: string, description: string): AttributeDef => ({
+export const textOnly = (key: string, value: z.ZodType, rule: string, description: string): AttributeDef => ({
   key,
   value,
   rule,

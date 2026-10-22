@@ -1,6 +1,8 @@
+import { httpUrl } from "@/contract/v2/common";
 import type { SpotBody } from "@/contract";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import type { PlaceKind, PoiCategory } from "@/lib/db/schema/geo";
+import { derivedBerthable } from "@/lib/domain/consolidation/berthable";
 import { excludeValue, type ExcludeValue } from "@/lib/domain/consolidation/exclude";
 import type { AttributeProvenance, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
@@ -57,6 +59,14 @@ type FieldRule = { attributes: string[]; note: string };
 export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
   id: { attributes: [], note: "places.public_id" },
   kind: { attributes: ["place.kind"], note: "SPOT_KIND; without the identity key the place's kind" },
+  berthable: {
+    attributes: ["berthable"],
+    note: "the berthable value of the profile (a fact, else derived from kind and status, spec 17); null when it has none",
+  },
+  contact: {
+    attributes: ["contact"],
+    note: "vhf, phone and url of the contact fact; null when the fact is missing or all three are empty",
+  },
   name: {
     attributes: ["geo.name"],
     note: "display name (de, en, any); without a valid name the spot is omitted (no_name), an excluded one is delivered with spots.excludedFallbackName (ruling M6-C-R1)",
@@ -232,10 +242,15 @@ export function mapSpot(
   const anchor = isHarbour ? undefined : anchorPosition(a["anchor_position"], p["anchor_position"], warnings);
   const depthValue = depth(a, p, warnings);
 
+  // a stored profile without the value (consolidated before fact schema v3) delivers the derivation of spec 17
+  const berthableFact = typeof a["berthable"] === "boolean" ? a["berthable"] : null;
+  const berthable = berthableFact ?? derivedBerthable(placeKind, src.status);
   const sources = mapSources(src.sources, ctx.cfg);
   const spot: SpotBody = {
     id: src.publicId,
     kind: SPOT_KIND[placeKind],
+    berthable,
+    contact: contact(a["contact"]),
     name: nameless ? ctx.cfg.spots.excludedFallbackName : src.name,
     names: src.names.length > 0 ? src.names : undefined,
     position: { lat: round5(src.position.lat), lon: round5(src.position.lon) },
@@ -265,7 +280,7 @@ export function mapSpot(
     summary: mapSummary(src.summary, profile?.confidence ?? null, ctx.cfg),
     images: mapImages(src.publicId, src.images),
     sources: sources.sources,
-    provenance: provenance(p, has, {
+    provenance: provenance(berthableFact === null && berthable !== null ? { ...p, berthable: DERIVED_PROVENANCE } : p, berthableFact === null && berthable !== null ? (k) => k === "berthable" || has(k) : has, {
       anchorPosition: anchor !== undefined,
       depth: depthValue !== undefined,
       banExcludes,
@@ -276,6 +291,34 @@ export function mapSpot(
     mergedInto: null,
   };
   return { spot: withoutUndefined(spot), warnings, forbiddenSources: sources.forbidden };
+}
+
+/** Provenance of a `berthable` the delivery derives itself (no fact, no stored derivation). */
+const DERIVED_PROVENANCE: AttributeProvenance = {
+  origin: "derived",
+  rule: "derived",
+  confidence: 1,
+  confidenceClass: "high",
+  observedAt: null,
+  lastConfirmedAt: null,
+  factIds: [],
+  sourceKeys: [],
+  computationIds: [],
+  poiIds: [],
+  expired: false,
+  onlyGoneSources: false,
+  conflictKey: null,
+  observedMonths: [],
+};
+
+/** The contact fact as the contract's `contact`; null when it is missing or all three parts are empty. */
+function contact(value: unknown): SpotBody["contact"] {
+  if (!isRecord(value)) return null;
+  const part = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v : null);
+  // only http(s) links are delivered (a javascript: or ftp: url is dropped)
+  const url = part(value.url);
+  const out = { vhf: part(value.vhf), phone: part(value.phone), url: url !== null && httpUrl.safeParse(url).success ? url : null };
+  return out.vhf === null && out.phone === null && out.url === null ? null : out;
 }
 
 function anchorPosition(
@@ -457,6 +500,8 @@ function provenance(
     limits: LIMIT_ATTRIBUTES,
     mooring: MOORING_ATTRIBUTES,
     ...Object.fromEntries((Object.keys(SERVICE_ATTRIBUTE) as Service[]).map((s) => [`services.${s}`, [SERVICE_ATTRIBUTE[s]]])),
+    berthable: ["berthable"],
+    contact: ["contact"],
     occupancy: ["occupancy"],
     exclude: o.banExcludes ? ["exclude", "prohibitions"] : ["exclude"],
     hazards: o.prohibitionHazard ? ["hazards", "prohibitions"] : ["hazards"],

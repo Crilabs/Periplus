@@ -48,7 +48,7 @@ const SERVICE_LABELS: Record<string, string> = {
 };
 
 /**
- * German labels of the fact attributes (every key of fact schema v1 and v2, all levels; ruling M4-P22): the sector
+ * German labels of the fact attributes (every key of fact schema v1 to v3, all levels; ruling M4-P22): the sector
  * templates `shelter.<S>` and `fetch.<S>` via `SECTOR_LABELS`, `highlight.<category>` via `POI_CATEGORY_LABELS`, the
  * `services.*` keys.
  */
@@ -91,6 +91,8 @@ export const FACT_ATTRIBUTE_LABELS: Record<string, string> = {
   sea_state: "Seegang",
   exists: "Existiert",
   dinghy_access: "Mit dem Dingi erreichbar",
+  berthable: "Festmachplatz",
+  "place.kind_evidence": "Ortsart laut Quelle",
 };
 
 /** The label of a fact attribute; the key itself for an unknown one. */

@@ -1,3 +1,4 @@
+import { derivedBerthable } from "./berthable";
 import { createHash } from "node:crypto";
 import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { PoiCategory } from "@/lib/db/schema/geo";
@@ -253,7 +254,7 @@ export function highlightsAttribute(
  *    (`exclude.ts`), citing the restricted area and the `prohibitions` entry that excluded the place;
  * 5. derived values (`derived`, the deciding inputs in `derivedFrom`): places `derived.quietness`, `derived.season`,
  *    `derived.highlights` (spec 16: per category the selected ids in rank order and the level; `derivedFrom` holds the
- *    `CategorySelection` per category, `poiIds` the selected POIs);
+ *    `CategorySelection` per category, `poiIds` the selected POIs), and `berthable` when no fact gave one (spec 17);
  *    POIs `derived.importance`, `derived.radius_nm`, `derived.spot_ids`;
  * 6. gaps: level attributes without a value, except `gaps.ignore[place.kind]`, with the computation's reason or
  *    `no_facts`; then the missing derived values (`derived.quietness` `too_few_parts`, `derived.importance`
@@ -397,6 +398,16 @@ export function buildProfile(input: BuildProfileInput): BuiltProfile {
     );
   } else if (context.level === "poi") {
     gaps.push({ attribute: "derived.importance", reason: "no_category" });
+  }
+
+  // berthable without a fact: a derived value of the place (spec 17, "Ableitung ohne Fact"); a fact always wins
+  if (context.level === "place" && context.place && !("berthable" in attributes) && defs.some((d) => d.key === "berthable")) {
+    const berthable = derivedBerthable(context.place.kind, context.place.status);
+    if (berthable !== null) {
+      setDerived("berthable", berthable, fixedProvenance("derived", {}, { kind: context.place.kind, status: context.place.status }));
+      const gap = gaps.findIndex((g) => g.attribute === "berthable");
+      if (gap >= 0) gaps.splice(gap, 1);
+    }
   }
 
   // 7–8

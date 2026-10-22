@@ -2,9 +2,11 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { Point, Polygon } from "geojson";
 import type { Db } from "@/lib/db/client";
 import { asGeoJson } from "@/lib/db/geometry";
-import { externalCalls, geoNames, geoObjects, places, reviewTasks, runs, tileGeoObjects, tiles, type GeoObjectType, type GeoOrigin, type NameOrigin, type NameScript, type PlaceKind, type PlaceStatus, type PoiCategory, type ReviewKind, type RunKind, type RunScopeType, type RunStatus, subdivisions } from "@/lib/db/schema";
+import { externalCalls, geoNames, geoObjects, places, reviewTasks, runs, tileGeoObjects, tiles, type GeoObjectType, type GeoOrigin, type NameOrigin, type NameScript, type PlaceKind, type PlaceWebsiteOrigin, type PlaceStatus, type PoiCategory, type ReviewKind, type RunKind, type RunScopeType, type RunStatus, subdivisions } from "@/lib/db/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
-import { validAt } from "@/lib/domain/timeline";
+import { currentPlaceWebsite } from "@/lib/domain/places/websites";
+import { derivedBerthable } from "@/lib/domain/consolidation/berthable";
+import { latestProfile, validAt } from "@/lib/domain/timeline";
 
 /** Runs shown on a tile page. */
 export const TILE_RUNS = 10;
@@ -98,6 +100,21 @@ export type PlaceDetail = {
   openReviewTask: { id: string; kind: ReviewKind } | null;
   /** Status changes newest first: `status` is the status the place had until `changedAt`. */
   statusHistory: Array<{ status: PlaceStatus; changedAt: Date }>;
+  /** The newest automatic decision of the system (spec 17): status decisions before kind switches; null for none. */
+  autoDecision: AutoDecision | null;
+  /** The place's current website (newest `place_websites` row); null for none. */
+  website: { url: string; origin: PlaceWebsiteOrigin; bound: boolean } | null;
+  /** The `berthable` the delivery gives the place: the profile's value, else the derivation of spec 17; null = unknown. */
+  berthable: boolean | null;
+};
+
+export type AutoDecision = {
+  action: "confirm" | "no_anchoring" | "set_kind";
+  rule: string | null;
+  decidedAt: Date;
+  factIds: string[];
+  documentIds: string[];
+  routeStopIds: string[];
 };
 
 /** True for a valid tile with this id. */
@@ -258,6 +275,37 @@ export async function geoObjectDetail(db: Db, id: string): Promise<GeoObjectDeta
   return { object, names, ancestors, children, place, tileIds: tileRows.map((r) => r.tileId) };
 }
 
+const STATUS_ACTIONS = new Set(["confirm", "reject", "no_anchoring"]);
+
+/**
+ * The automatic decision the place page shows (final review 6): the newest status decision of the place (a
+ * `place_status` decision by anyone, or a `confirm` / `reject` / `no_anchoring` decision of a review task on the place)
+ * when `system` made it; else the newest kind decision (a `place_kind` decision, or a review `confirm`, which sets the
+ * kind) when `system` made it; null otherwise. An admin's later decision hides the system's.
+ */
+async function latestAutoDecision(db: Db, placeId: string): Promise<AutoDecision | null> {
+  const { rows } = await db.execute<{ subject_type: string; decision: Record<string, unknown>; decided_by: string; decided_at: Date | string }>(sql`
+    select t.subject_type, d.decision, d.decided_by, d.decided_at
+    from review_tasks t join review_decisions d on d.task_id = t.id
+    where t.kind = 'place_candidate' and t.subject_type in ('place', 'place_status', 'place_kind') and t.subject_id = ${placeId}
+    order by d.decided_at desc, d.id desc
+  `);
+  const action = (r: (typeof rows)[number]) => r.decision.action;
+  const status = rows.find((r) => r.subject_type === "place_status" || (r.subject_type === "place" && STATUS_ACTIONS.has(action(r) as string)));
+  const kind = rows.find((r) => r.subject_type === "place_kind" || (r.subject_type === "place" && action(r) === "confirm"));
+  const row = status?.decided_by === "system" ? status : kind?.decided_by === "system" ? kind : null;
+  if (!row) return null;
+  const ids = (key: string) => (Array.isArray(row.decision[key]) ? (row.decision[key] as string[]) : []);
+  return {
+    action: row.decision.action as AutoDecision["action"],
+    rule: typeof row.decision.rule === "string" ? row.decision.rule : null,
+    decidedAt: new Date(row.decided_at),
+    factIds: ids("factIds"),
+    documentIds: ids("documentIds"),
+    routeStopIds: ids("routeStopIds"),
+  };
+}
+
 /** A place with its open review task and status history; null when unknown. */
 export async function placeDetail(db: Db, id: string): Promise<PlaceDetail | null> {
   const [place] = await db
@@ -296,10 +344,15 @@ export async function placeDetail(db: Db, id: string): Promise<PlaceDetail | nul
     where status is distinct from next_status
     order by changed_at desc, history_id desc`);
   const [lon, lat] = (place.position as Point).coordinates;
+  const website = await currentPlaceWebsite(db, id);
+  const berthableFact = ((await latestProfile(db, place.geoObjectId))?.attributes as Record<string, unknown> | undefined)?.["berthable"];
   return {
     place: { ...place, position: { lon: lon!, lat: lat! } },
     openReviewTask: task,
     statusHistory: history.rows.map((r) => ({ status: r.status, changedAt: new Date(r.changed_at) })),
+    autoDecision: await latestAutoDecision(db, id),
+    website: website ? { url: website.url, origin: website.origin, bound: website.bound } : null,
+    berthable: typeof berthableFact === "boolean" ? berthableFact : derivedBerthable(place.kind, place.status),
   };
 }
 

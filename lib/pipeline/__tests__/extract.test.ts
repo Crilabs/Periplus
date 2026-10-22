@@ -26,6 +26,7 @@ import {
   extractUnits,
   planExtraction,
   unitInput,
+  unitInputs,
 } from "@/lib/pipeline/text/extract";
 import { matchVersion } from "@/lib/pipeline/text/mentions";
 import { endRunByAdmin } from "@/lib/pipeline/runs";
@@ -153,7 +154,7 @@ describe("stage extraction.mention", () => {
       const kolona = s.mentions.filter((m) => m.geoObjectId === s.kolona).map((m) => m.id);
       expect(await statusOf(tx, kolona)).toEqual(["done", "done", "done"]);
       const [run] = await tx.select().from(extractionRuns).where(eq(extractionRuns.runId, runId));
-      expect(run).toMatchObject({ task: "extract-facts", model: "claude-sonnet-5-5", promptVersion: 5, factSchemaVersion: "v2", purpose: "regular" });
+      expect(run).toMatchObject({ task: "extract-facts", model: "claude-sonnet-5-5", promptVersion: 6, factSchemaVersion: "v3", purpose: "regular" });
       const units = await tx.select().from(extractionUnits).where(eq(extractionUnits.extractionRunId, run!.id));
       expect(units.map((u) => [u.geoObjectId, u.status, u.mentionIds.length])).toEqual([[s.kolona, "done", 3]]);
       expect(units[0]!.stats).toMatchObject({ proposed: 1, stored: 1 });
@@ -366,13 +367,14 @@ describe("stage extraction.mention", () => {
     const system = (limits: ExtractFactsInput["limits"]) =>
       (buildParams(extractFactsTask, {
         level: "place",
-        factSchemaVersion: "v2",
+        factSchemaVersion: config.factSchema.version,
         maxFacts: 40,
         limits,
         object: { name: "X", type: "bay", parents: [] },
         docType: "trip_report",
         observedAt: "2026-10-19",
         chunks: [{ n: 1, text: "t" }],
+        boundToWebsite: false,
       }, taskConfig, "claude-sonnet-5-5").system as Array<{ text: string }>)[0]!.text;
     const repo = system({ quoteMinChars: config.extraction.quote.minChars, quoteMaxChars: config.extraction.quote.maxChars, nameMaxChars: config.extraction.properNameMaxChars });
     expect(repo).toContain("at least 12 and at most 300 characters");
@@ -389,19 +391,20 @@ describe("stage extraction.mention", () => {
     for (const level of levels) {
       const input: ExtractFactsInput = {
         level,
-        factSchemaVersion: "v2",
+        factSchemaVersion: config.factSchema.version,
         maxFacts: 40,
         limits: { quoteMinChars: 12, quoteMaxChars: 300, nameMaxChars: 80 },
         object: { name: "X", type: "bay", parents: [] },
         docType: "trip_report",
         observedAt: "2026-10-19",
         chunks: [{ n: 1, text: "t" }],
+        boundToWebsite: false,
       };
       const system = (buildParams(extractFactsTask, input, taskConfig, "claude-sonnet-5-5").system as Array<{ text: string }>)[0]!.text;
       const rule = system.split("\n").find((l) => l.startsWith("- Every proper name must appear in the fact's quote"));
       expect(rule, level).toBeDefined();
       expect(rule).toContain("`poi_name`");
-      const named = getFactSchema("v2").levels[level].filter((d) => d.textNames).map((d) => d.key);
+      const named = getFactSchema().levels[level].filter((d) => d.textNames).map((d) => d.key);
       for (const key of named) {
         expect(rule, `${level} ${key}`).toContain(`\`${key}\``);
         covered.add(key);
@@ -418,13 +421,14 @@ describe("stage extraction.mention", () => {
     for (const level of levels) {
       const input: ExtractFactsInput = {
         level,
-        factSchemaVersion: "v2",
+        factSchemaVersion: config.factSchema.version,
         maxFacts: 40,
         limits: { quoteMinChars: 12, quoteMaxChars: 300, nameMaxChars: 80 },
         object: { name: "X", type: "bay", parents: [] },
         docType: "trip_report",
         observedAt: "2026-10-19",
         chunks: [{ n: 1, text: "t" }],
+        boundToWebsite: false,
       };
       const system = (buildParams(extractFactsTask, input, taskConfig, "claude-sonnet-5-5").system as Array<{ text: string }>)[0]!.text;
       const lines = system.split("\n");
@@ -432,41 +436,42 @@ describe("stage extraction.mention", () => {
       expect(listRule, level).toBeDefined();
       expect(listRule).toContain("one fact per entry");
       expect(listRule).toContain("its own verbatim quote");
-      const listKeys = getFactSchema("v2").levels[level].filter((d) => d.origins.includes("text") && (d.rule === "union" || d.rule === "prohibitions")).map((d) => d.key);
+      const listKeys = getFactSchema().levels[level].filter((d) => d.origins.includes("text") && (d.rule === "union" || d.rule === "prohibitions")).map((d) => d.key);
       for (const key of listKeys) {
         expect(listRule, `${level} ${key}`).toContain(`\`${key}\``);
         covered.add(key);
       }
       // scalar attributes and seabed (a composition, not entries) are never named as list attributes
-      for (const d of getFactSchema("v2").levels[level].filter((d) => !listKeys.includes(d.key))) expect(listRule).not.toContain(`\`${d.key}\``);
+      for (const d of getFactSchema().levels[level].filter((d) => !listKeys.includes(d.key))) expect(listRule).not.toContain(`\`${d.key}\``);
       expect(lines.some((l) => l.startsWith("- Give every other attribute at most once"))).toBe(true);
       expect(system).not.toContain("Give each attribute at most once");
     }
     expect([...covered].sort()).toEqual(["charter_bases", "hazards", "mooring.types", "prohibitions", "restricted_zones", "season_notes", "supply_ports", "wind_systems"]);
   });
 
-  it("prompt v5 keeps every safety list entry first when the fact limit would be reached", () => {
+  it("prompt v6 keeps every safety list entry first when the fact limit would be reached", () => {
     const taskConfig = config.models.tasks["extract-facts"]!;
-    expect(taskConfig.promptVersion).toBe(5);
+    expect(taskConfig.promptVersion).toBe(6);
     const levels = ["place", "area", "island", "cape_strait", "poi"] as const;
     const covered = new Set<string>();
     for (const level of levels) {
       const input: ExtractFactsInput = {
         level,
-        factSchemaVersion: "v2",
+        factSchemaVersion: config.factSchema.version,
         maxFacts: 40,
         limits: { quoteMinChars: 12, quoteMaxChars: 300, nameMaxChars: 80 },
         object: { name: "X", type: "bay", parents: [] },
         docType: "trip_report",
         observedAt: "2026-10-19",
         chunks: [{ n: 1, text: "t" }],
+        boundToWebsite: false,
       };
       const system = (buildParams(extractFactsTask, input, taskConfig, "claude-sonnet-5-5").system as Array<{ text: string }>)[0]!.text;
       const limitLine = system.split("\n").find((l) => l.startsWith("At most 40 facts."));
       expect(limitLine, level).toBeDefined();
       expect(limitLine).toContain("keep every entry of the safety lists first");
       expect(limitLine).toContain("Never drop a safety entry to stay under the limit.");
-      const safetyKeys = getFactSchema("v2")
+      const safetyKeys = getFactSchema()
         .levels[level].filter((d) => d.origins.includes("text") && ["prohibitions", "hazards", "restricted_zones"].includes(d.key))
         .map((d) => d.key);
       for (const key of safetyKeys) {
@@ -773,5 +778,32 @@ describe("stage extraction.mention", () => {
       // an extraction run planned on v1 keeps v1's attribute list, whatever is active now
       await tx.update(extractionRuns).set({ factSchemaVersion: "v1" }).where(eq(extractionRuns.id, job!.extractionRunId as string));
       expect(await systemOf()).not.toMatch(/^holding — /m);
+    }));
+
+  it("boundToWebsite is true only for units of a bound mention", () =>
+    withRollback(async (tx) => {
+      const s = await scene(tx);
+      const bound = await insertNamedObject(tx, { type: "harbour", names: [{ name: "Marina Alpha" }], lon: 21.01, lat: 35.2 });
+      for (const chunkId of s.chunkIds) {
+        await tx.insert(mentions).values({
+          documentVersionId: s.versionId,
+          chunkId,
+          geoObjectId: bound,
+          surface: "",
+          charStart: 0,
+          charEnd: 0,
+          observedAt: "2026-10-19",
+          confidence: 1,
+          matchKind: "bound",
+        });
+      }
+      const params = { documentVersionIds: [s.versionId] };
+      const runId = await startRun(tx, params);
+      const jobs = await planExtraction(tx, { id: runId, params }, config);
+      const unitIds = jobs.flatMap((j) => j.unitIds as string[]);
+      const inputs = await unitInputs(tx, unitIds, config);
+      const rows = await tx.select().from(extractionUnits).where(inArray(extractionUnits.id, unitIds));
+      expect(rows.map((u) => u.geoObjectId).sort()).toEqual([s.kolona, bound].sort());
+      for (const u of rows) expect(inputs.get(u.id)!.boundToWebsite, u.geoObjectId).toBe(u.geoObjectId === bound);
     }));
 });

@@ -2,6 +2,7 @@ import { z } from "zod";
 import * as v1 from "./v1";
 import * as v2 from "./v2_0";
 import * as v21 from "./v2_1";
+import * as v22 from "./v2_2";
 import {
   changesFileSchema,
   coastCollectionSchema,
@@ -19,12 +20,13 @@ import {
  * Periplus Data Contract (spec 08, spec 14, spec 13). The zod schemas in `contract/v2/` are the source of the current version;
  * the JSON schemas under `contract/schema/<version>/` are generated from them (`npm run contract:generate`); every
  * checked-in version is served by `GET /api/v2/schema/<version>/<file>` (and `/api/v1/schema/…`) from `contract/schema/published.ts`. Versions
- * 1.0 (packages per configured area, `contract/v1/`), 2.0 (before the images, `contract/v2_0/`) and 2.1 (before the
- * highlight levels, `contract/v2_1/`) stay reproducible from their frozen copies and stay published; 2.1 adds `images`
- * and image files to 2.0, 2.2 adds `spot.highlightLevels` to 2.1 (spec 16; both minor, additive).
+ * 1.0 (packages per configured area, `contract/v1/`), 2.0 (before the images, `contract/v2_0/`), 2.1 (before the
+ * highlight levels, `contract/v2_1/`) and 2.2 (before berthable and contact, `contract/v2_2/`) stay reproducible from
+ * their frozen copies and stay published; 2.1 adds `images` and image files to 2.0, 2.2 adds `spot.highlightLevels` to
+ * 2.1 (spec 16), 2.3 adds `spot.berthable` and `spot.contact` to 2.2 (spec 17; all minor, additive).
  */
 
-export const SCHEMA_VERSION = "2.2";
+export const SCHEMA_VERSION = "2.3";
 export { CONTRACT_FILES, IMAGE_FILE_PATTERN };
 export type { ContractFile };
 export type {
@@ -90,10 +92,22 @@ const CONTRACT_SCHEMAS_V2_1: Record<ContractFile, z.ZodType> = {
   "changes.json": v21.changesFileSchema,
 };
 
+/** The zod schemas of the superseded version 2.2, kept to pin its published JSON schemas. */
+const CONTRACT_SCHEMAS_V2_2: Record<ContractFile, z.ZodType> = {
+  "manifest.json": v22.manifestSchema,
+  "spots.json": v22.spotsFileSchema,
+  "highlights.json": v22.highlightsFileSchema,
+  "regions.json": v22.regionsFileSchema,
+  "coast.geojson": v22.coastCollectionSchema,
+  "weather-points.json": v22.weatherPointsFileSchema,
+  "changes.json": v22.changesFileSchema,
+};
+
 const SCHEMAS_BY_VERSION: Readonly<Record<string, Record<ContractFile, z.ZodType>>> = {
   "1.0": CONTRACT_SCHEMAS_V1,
   "2.0": CONTRACT_SCHEMAS_V2_0,
   "2.1": CONTRACT_SCHEMAS_V2_1,
+  "2.2": CONTRACT_SCHEMAS_V2_2,
   [SCHEMA_VERSION]: CONTRACT_SCHEMAS,
 };
 
@@ -104,7 +118,7 @@ export function jsonSchemaFileName(file: ContractFile): string {
 
 const FILE_BY_SCHEMA_NAME = new Map<string, ContractFile>(CONTRACT_FILES.map((f) => [jsonSchemaFileName(f), f]));
 
-/** The JSON schema (draft 2020-12) of a contract file, e.g. ("2.2", "spots.schema.json"); null for anything else. */
+/** The JSON schema (draft 2020-12) of a contract file, e.g. ("2.3", "spots.schema.json"); null for anything else. */
 export function contractJsonSchema(version: string, fileName: string): object | null {
   if (!Object.hasOwn(SCHEMAS_BY_VERSION, version)) return null;
   const file = FILE_BY_SCHEMA_NAME.get(fileName);

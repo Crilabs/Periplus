@@ -239,6 +239,7 @@ export const SOURCE_ORIGIN_LABELS: Record<SourceOrigin, string> = {
   linkgraph: "Linkgraph",
   whitelist: "Whitelist",
   manual: "Manuell",
+  place_website: "Website des Ortes",
 };
 
 export const DOCUMENT_STATUS_LABELS: Record<DocumentStatus, string> = {
@@ -430,6 +431,7 @@ export const MATCH_KIND_LABELS: Record<MatchKind, string> = {
   deterministic: "Namensabgleich",
   model: "Modell",
   review: "Prüfung",
+  bound: "Website des Ortes",
 };
 
 export const EXTRACTION_RUN_STATUS_LABELS: Record<ExtractionRunStatus, string> = {
@@ -781,4 +783,23 @@ export const METRIC_LABELS: Record<MetricKey, string> = {
   highlight_share: "Anteil Orte mit Highlight",
   recent_observation_share: "Anteil Orte mit aktueller Beobachtung",
   places_per_tile: "Orte je Kachel",
+  place_confirmation: "Automatisch bestätigte Orte",
+  place_websites: "Marinas und Häfen mit Website",
+  marina_services: "Marinas mit Kraftstoff und Wasser",
+};
+
+/** The rule that confirmed a place automatically (spec 17). */
+export const AUTO_RULE_LABELS: Record<string, string> = {
+  alone: "Revierführer/Behörde",
+  pair: "Zwei unabhängige Berichte",
+  own_website: "Eigene Website",
+  commercial_port: "Quelle: gewerblicher Hafen",
+  osm_commercial: "OSM: gewerblicher Hafen",
+};
+
+/** Where a place's website came from (spec 15 C). */
+export const WEBSITE_ORIGIN_LABELS: Record<"osm" | "wikidata" | "serp", string> = {
+  osm: "OSM",
+  wikidata: "Wikidata",
+  serp: "Google-Suche",
 };

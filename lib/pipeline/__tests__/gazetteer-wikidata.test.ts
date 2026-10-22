@@ -194,6 +194,17 @@ describe("importWikidata", () => {
       expect(result.names).toBe(rows.length);
     }));
 
+  it("stores P856 as website_wikidata on a linked and on a created object", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      const site = (rows: typeof ITEMS.island, url: string) => rows.map((r) => ({ ...r, website: lit(url) }));
+      await run(db, [...site(ITEMS.island, "https://island.example/"), ...site(ITEMS.monastery, "https://moni.example/")]);
+      const website = async (id: string) =>
+        (await db.select({ w: geoObjects.websiteWikidata }).from(geoObjects).where(eq(geoObjects.wikidataId, id)))[0]?.w;
+      expect(await website(q(1))).toBe("https://island.example/");
+      expect(await website(q(3))).toBe("https://moni.example/");
+    }));
+
   it("skips a settlement without OSM counterpart", () =>
     withRollback(async (db) => {
       await prepare(db);

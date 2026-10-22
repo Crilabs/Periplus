@@ -183,19 +183,19 @@ describe("loadConfig", () => {
   });
 
   it("loads the active fact schema version", () => {
-    expect(loadConfig("config").factSchema).toEqual({ version: "v2" });
+    expect(loadConfig("config").factSchema).toEqual({ version: "v3" });
   });
 
   it("the config loader and the fact-schema access know the same fact schema versions", () => {
-    expect(Object.keys(FACT_SCHEMAS).sort()).toEqual(["v1", "v2"]);
+    expect(Object.keys(FACT_SCHEMAS).sort()).toEqual(["v1", "v2", "v3"]);
     for (const [version, schema] of Object.entries(FACT_SCHEMAS)) {
       expect(getFactSchema(version)).toBe(schema);
       expect(schema.version).toBe(version);
     }
     // the active one loads; a version outside the map is unknown to both
-    expect(loadConfig(fixtureDir({ factSchema: { version: "v2" } })).factSchema).toEqual({ version: "v2" });
-    expect(() => loadConfig(fixtureDir({ factSchema: { version: "v3" } }))).toThrow(/unknown fact schema version v3/);
-    expect(() => getFactSchema("v3")).toThrow(/Unknown fact schema version v3/);
+    expect(loadConfig(fixtureDir({ factSchema: { version: "v3" } })).factSchema).toEqual({ version: "v3" });
+    expect(() => loadConfig(fixtureDir({ factSchema: { version: "v4" } }))).toThrow(/unknown fact schema version v4/);
+    expect(() => getFactSchema("v4")).toThrow(/Unknown fact schema version v4/);
   });
 
   it("rejects a malformed fact schema version", () => {
@@ -415,7 +415,7 @@ describe("text configuration", () => {
   it("the extraction model is one of the compared models, with a recorded decision status", () => {
     // Model and decision status change at the M4 acceptance (Christian decides in config/models.json): not pinned here.
     const task = cfg.models.tasks["extract-facts"]!;
-    expect(task).toMatchObject({ promptVersion: 5, effort: "medium", maxTokens: 16000, cacheSystem: true });
+    expect(task).toMatchObject({ promptVersion: 6, effort: "medium", maxTokens: 16000, cacheSystem: true });
     expect(cfg.models.comparison.models).toContain(task.model);
     expect(["provisional", "decided"]).toContain(task.decision?.status);
   });
@@ -537,9 +537,9 @@ describe("consolidation rules", () => {
     return rules;
   };
 
-  it("consolidation v2 is active and has highlights", () => {
+  it("consolidation v3 is active and has highlights", () => {
     const c = getConfig().consolidation;
-    expect(c.version).toBe("v2");
+    expect(c.version).toBe("v3");
     expect(c.highlights?.maxPerCategory).toBe(5);
     expect(c.highlights?.reachKm).toEqual([1, 1, 5, 20, 20]);
     expect(c.highlights?.levelWeights).toEqual([0.005, 0.2, 1, 3, 6]);
@@ -610,17 +610,18 @@ describe("consolidation rules", () => {
 
   it("getConsolidationConfig reads the active version by default and a named one on demand", () => {
     expect(getConsolidationConfig()).toEqual(getConfig().consolidation);
-    const v3 = { ...rulesFile(), conflict: { minRatio: 2 } };
-    const dir = fixtureDir({ consolidation: { v2: rulesFile(), v3 } });
-    expect(loadConfig(dir).consolidation.version).toBe("v2");
-    expect(getConsolidationConfig("v3", dir)).toMatchObject({ version: "v3", conflict: { minRatio: 2 } });
+    const active = repoConfig.consolidation.version;
+    const later = { ...rulesFile(), conflict: { minRatio: 2 } };
+    const dir = fixtureDir({ consolidation: { [active]: rulesFile(), v99: later } });
+    expect(loadConfig(dir).consolidation.version).toBe(active);
+    expect(getConsolidationConfig("v99", dir)).toMatchObject({ version: "v99", conflict: { minRatio: 2 } });
   });
 
   it("quietness weights must be positive and importance thresholds ascending", () => {
     const withRules = (patch: (c: ReturnType<typeof rulesFile>) => void) => {
       const c = rulesFile();
       patch(c);
-      return () => loadConfig(fixtureDir({ consolidation: { v2: c } }));
+      return () => loadConfig(fixtureDir({ consolidation: { v2: c }, consolidationActive: { version: "v2" } }));
     };
     expect(withRules((c) => (c.quietness.weights.ferry = 0))).toThrow(/consolidation\/v2\.json.*quietness\.weights/);
     expect(withRules((c) => (c.quietness.weights.ferry = 0.2))).toThrow(/quietness\.weights.*sum to 1/);
@@ -643,12 +644,12 @@ describe("consolidation rules", () => {
     const withKeys = (keys: Record<string, string[]>) => () => {
       const c = rulesFile();
       c.rules.union.keys = keys;
-      return loadConfig(fixtureDir({ consolidation: { v2: c } }));
+      return loadConfig(fixtureDir({ consolidation: { v2: c }, consolidationActive: { version: "v2" } }));
     };
     expect(withKeys({ hazards: ["kind", "nmae"] })).toThrow(/consolidation\/v2\.json.*"hazards".*"nmae"/);
     // A key on an entry that is no object (a list of enum values) cannot identify anything.
     expect(withKeys({ "mooring.types": ["kind"] })).toThrow(/"mooring\.types".*"kind"/);
-    expect(withKeys({ no_such_attribute: [] })).toThrow(/no_such_attribute.*fact schema v2/);
+    expect(withKeys({ no_such_attribute: [] })).toThrow(/no_such_attribute.*fact schema v3/);
     expect(withKeys({ hazards: ["kind", "name"] })).not.toThrow();
   });
 
@@ -675,7 +676,7 @@ describe("consolidation rules", () => {
 describe("delivery configuration", () => {
   it("the delivery config carries the spec values", () => {
     expect(getConfig().delivery).toMatchObject({
-      schemaVersion: "2.2",
+      schemaVersion: "2.3",
       coast: { marginNm: 2, simplifyToleranceM: 10 },
       validation: {
         maxWaterDistanceNm: 1.5,

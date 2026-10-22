@@ -4,7 +4,7 @@ import { areal, CONTRACT_FILES, count, httpUrl, isoDate, isoDateTime, latitude, 
 
 /** `manifest.json`: what the package is, for which subdivision (Landesteil), with which files and licences. */
 export const manifestSchema = z.strictObject({
-  schemaVersion: z.literal("2.2"),
+  schemaVersion: z.literal("2.3"),
   subdivision: z.strictObject({
     id: publicId("sd"),
     key: z.string().min(1),

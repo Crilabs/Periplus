@@ -8,6 +8,8 @@ import type { Spot, SpotsFile } from "@/contract";
 export const TEIL_B_EXAMPLE: Spot = {
   id: "sp_01J9X4K2M7Q8R5T6V7W8X9Y0Z1",
   kind: "anchorage",
+  berthable: true,
+  contact: { vhf: "71", phone: "+30 22980 12345", url: "https://example.org/vathi" },
   name: "Ormos Vathi",
   names: [
     { lang: "el", name: "Όρμος Βαθύ", script: "greek" },
@@ -71,7 +73,7 @@ export const TEIL_B_EXAMPLE: Spot = {
 
 export function spotsFile(spots: unknown[]): SpotsFile {
   return {
-    schemaVersion: "2.2",
+    schemaVersion: "2.3",
     subdivision: "sd_01J9X4M0A1B2C3D4E5F6G7H8J9",
     dataVersion: 1,
     generatedAt: "2026-10-19T08:00:00.000Z",

@@ -29,6 +29,8 @@ import { insertNamedObject, insertTestExtractionRun, insertTestRun, insertTestVe
  */
 
 const extractFacts = loadConfig("config").models.tasks["extract-facts"]!;
+/** The active fact schema version: fixtures that mean "the active schema" use it, so a schema switch breaks no test. */
+const ACTIVE_SCHEMA = loadConfig("config").factSchema.version;
 const QUOTE = "good holding in sand";
 const TEXT = `Kolona: ${QUOTE}.`;
 
@@ -66,10 +68,10 @@ export type TestMention = { versionId: string; chunkId: string; mentionId: strin
 export async function insertMention(
   db: Db,
   objectId: string,
-  o: { sourceId?: string; documentId?: string; observedAt?: string; text?: string; undatedVersion?: boolean; runId?: string } = {},
+  o: { sourceId?: string; documentId?: string; observedAt?: string; text?: string; undatedVersion?: boolean; runId?: string; docType?: DocType } = {},
 ): Promise<TestMention> {
   const text = o.text ?? TEXT;
-  const v = await insertTestVersion(db, [text], { sourceId: o.sourceId, documentId: o.documentId, observedAt: o.undatedVersion ? undefined : o.observedAt });
+  const v = await insertTestVersion(db, [text], { sourceId: o.sourceId, documentId: o.documentId, observedAt: o.undatedVersion ? undefined : o.observedAt, docType: o.docType });
   const [m] = await db
     .insert(mentions)
     .values({ documentVersionId: v.versionId, chunkId: v.chunkIds[0]!, geoObjectId: objectId, surface: "Kolona", charStart: 0, charEnd: 6, observedAt: o.observedAt ?? "2026-10-19", confidence: 1, matchKind: "deterministic", runId: o.runId ?? null })
@@ -122,7 +124,7 @@ export async function insertMentionFact(
       observedAt: o.observedAt ?? "2026-10-19",
       confidence: o.confidence ?? 0.8,
       extractionRunId,
-      factSchemaVersion: "v2",
+      factSchemaVersion: ACTIVE_SCHEMA,
     })
     .returning({ id: facts.id });
   return row!.id;
@@ -131,16 +133,16 @@ export async function insertMentionFact(
 /**
  * A text fact of the object: a new document of `sourceId` whose one chunk mentions it, a finished extraction run with
  * a done unit (the active run), and the fact with a verified quote. An `observedAt` other than the version's fetch
- * date (2026-10-19) is a stated observation date (`dateKnown`).
+ * date (2026-10-19) is a stated observation date (`dateKnown`). `docType` is the version's type (default `trip_report`).
  */
 export async function insertTextFact(
   db: Db,
   objectId: string,
   sourceId: string,
-  f: { attribute: string; value: unknown; observedAt?: string; confidence?: number },
+  f: { attribute: string; value: unknown; observedAt?: string; confidence?: number; docType?: DocType },
 ): Promise<string> {
   const observedAt = f.observedAt ?? "2026-10-19";
-  const m = await insertMention(db, objectId, { sourceId, observedAt, undatedVersion: true });
+  const m = await insertMention(db, objectId, { sourceId, observedAt, undatedVersion: true, docType: f.docType });
   return insertMentionFact(db, objectId, m, await insertExtraction(db, objectId, m), { ...f, observedAt });
 }
 
@@ -167,7 +169,7 @@ export async function insertComputation(
         computationId: c!.id,
         observedAt: createdAt.toISOString().slice(0, 10),
         confidence: o.confidence ?? 0.55,
-        factSchemaVersion: "v2",
+        factSchemaVersion: ACTIVE_SCHEMA,
       })),
     )
     .returning({ id: facts.id });
@@ -233,7 +235,7 @@ export async function insertProfile(
       documentsCount: opts.documentsCount ?? 0,
       confidence: opts.confidence === undefined ? 0.8 : opts.confidence,
       contentHash: newId(),
-      factSchemaVersion: "v2",
+      factSchemaVersion: ACTIVE_SCHEMA,
       rulesVersion: "test",
     })
     .returning({ id: profiles.id });

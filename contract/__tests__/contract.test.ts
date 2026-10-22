@@ -81,6 +81,8 @@ describe("Periplus Data Contract v2", () => {
     const required = {
       id: ex.id,
       kind: "port",
+      berthable: false,
+      contact: null,
       name: "Limani",
       position: ex.position,
       shelter: ex.shelter,
@@ -123,7 +125,7 @@ describe("Periplus Data Contract v2", () => {
   });
 
   it("names one JSON schema file per contract file", () => {
-    expect(SCHEMA_VERSION).toBe("2.2");
+    expect(SCHEMA_VERSION).toBe("2.3");
     expect(CONTRACT_FILES.map(jsonSchemaFileName)).toEqual([
       "manifest.schema.json",
       "spots.schema.json",
@@ -135,7 +137,7 @@ describe("Periplus Data Contract v2", () => {
     ]);
   });
 
-  it.each(["1.0", "2.0", "2.1", "2.2"])("checked-in JSON schemas of %s equal the generated ones", (version) => {
+  it.each(["1.0", "2.0", "2.1", "2.2", "2.3"])("checked-in JSON schemas of %s equal the generated ones", (version) => {
     for (const f of CONTRACT_FILES) {
       expect(readJson(`contract/schema/${version}/${jsonSchemaFileName(f)}`), f).toEqual(
         contractJsonSchema(version, jsonSchemaFileName(f)),
@@ -262,11 +264,48 @@ describe("Periplus Data Contract v2", () => {
     }
   });
 
+  // the 2.2 files as published on 2026-10-22 (sha256 of the checked-in bytes): 2.3 is additive, 2.2 never changes
+  const FROZEN_2_2: Record<string, string> = {
+    "changes.schema.json": "8b29c4688284e7dbac10ef2b17d01473d7c1fe0deacd1b730e9635f5f033a3e2",
+    "coast.schema.json": "0f3f14def652befbde09c3c7542aa22f4de9497cb26646c6f88e8b15baeb8dcf",
+    "highlights.schema.json": "8b4bbfa76d9eb0915e0c67109d276fa8089ba762dd5a1a249dbbe8a4f5e6c41c",
+    "manifest.schema.json": "78d876c90ae0fa2e80715b0125178b4655fee0c470f0bf66c5bd96201463b204",
+    "regions.schema.json": "571088c5166f38882a54f63669ca6b5a56b8eb3ee6d27d9472e0923027830970",
+    "spots.schema.json": "8c1f96553beefe97a1a76dffe123aa5e8b6760160e3561d183108a4a65d45e8d",
+    "weather-points.schema.json": "ead00fd4e22cb3a7297496f92a0e4ae5c379acdb450f28d7fb561b59c0bd76a7",
+  };
+
+  it("2.2 schema files are unchanged", () => {
+    expect(readdirSync("contract/schema/2.2").sort()).toEqual(Object.keys(FROZEN_2_2).sort());
+    for (const [file, sha] of Object.entries(FROZEN_2_2)) {
+      expect(createHash("sha256").update(readFileSync(`contract/schema/2.2/${file}`)).digest("hex"), file).toBe(sha);
+      expect(publishedJsonSchema("2.2", file), file).toEqual(readJson(`contract/schema/2.2/${file}`));
+    }
+    // 2.1 and 2.2 know neither berthable nor contact
+    expect(JSON.stringify(contractJsonSchema("2.1", "spots.schema.json"))).not.toContain("berthable");
+    expect(JSON.stringify(contractJsonSchema("2.2", "spots.schema.json"))).not.toContain("berthable");
+    expect(JSON.stringify(contractJsonSchema("2.3", "spots.schema.json"))).toContain("berthable");
+  });
+
+  it("2.3 spot carries berthable and contact (each nullable, required)", () => {
+    expect(spotSchema.safeParse(ex).success).toBe(true);
+    expect(spotSchema.safeParse({ ...ex, berthable: null, contact: null }).success).toBe(true);
+    expect(spotSchema.safeParse({ ...ex, berthable: false, contact: { vhf: null, phone: null, url: null } }).success).toBe(true);
+    expect(spotSchema.safeParse(omit(ex, "berthable")).success).toBe(false);
+    expect(spotSchema.safeParse(omit(ex, "contact")).success).toBe(false);
+    expect(spotSchema.safeParse({ ...ex, contact: { vhf: "71", phone: null, url: "not a url" } }).success).toBe(false);
+    for (const url of ["javascript:alert(1)", "ftp://marina.example", "upload://doc"]) {
+      expect(spotSchema.safeParse({ ...ex, contact: { vhf: null, phone: null, url } }).success, url).toBe(false);
+    }
+    expect(JSON.stringify(contractJsonSchema("2.3", "spots.schema.json"))).toContain("^https?://");
+    expect(spotSchema.safeParse({ ...ex, contact: { vhf: "71", phone: null, url: null, extra: 1 } }).success).toBe(false);
+  });
+
   it("a generated JSON schema carries its id and title", () => {
-    expect(contractJsonSchema("2.2", "spots.schema.json")).toMatchObject({
+    expect(contractJsonSchema("2.3", "spots.schema.json")).toMatchObject({
       $schema: "https://json-schema.org/draft/2020-12/schema",
-      $id: "periplus:contract/2.2/spots.schema.json",
-      title: "Periplus Data Contract 2.2 – spots.json",
+      $id: "periplus:contract/2.3/spots.schema.json",
+      title: "Periplus Data Contract 2.3 – spots.json",
     });
   });
 

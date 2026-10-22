@@ -21,8 +21,11 @@ import {
   imageryTiles,
   placeImages,
   placeRenders,
+  placeWebsites,
   places,
   profiles,
+  reviewDecisions,
+  reviewTasks,
   runs,
   sources,
   subdivisions,
@@ -558,6 +561,43 @@ async function ensureDeliverySubdivision(db: Db): Promise<string> {
 }
 
 /**
+ * A confirmed marina the system confirmed on its own website (spec 17): the decided `place_status` pseudo task with its
+ * `system` decision and the place's website row, unique per run. Returns the place id.
+ */
+async function createAutoConfirmedScene(db: Db): Promise<string> {
+  const name = `E2E Auto Marina ${new Date().toISOString()}`;
+  const geom = sql`${geomFromGeoJson({ type: "Point", coordinates: [27.93, 34.93] })}`;
+  return db.transaction(async (tx) => {
+    const [object] = await tx.insert(geoObjects).values({ type: "bay", origin: "manual", geom }).returning({ id: geoObjects.id });
+    await tx
+      .insert(geoNames)
+      .values({ geoObjectId: object!.id, name, nameNormalized: name.toLowerCase(), language: "en", script: "latin", origin: "manual" });
+    const [place] = await tx
+      .insert(places)
+      .values({ geoObjectId: object!.id, kind: "marina", status: "confirmed", publicId: newPublicId("sp"), position: geom })
+      .returning({ id: places.id });
+    const [task] = await tx
+      .insert(reviewTasks)
+      .values({ kind: "place_candidate", subjectType: "place_status", subjectId: place!.id, context: { previous: "candidate" }, status: "decided" })
+      .returning({ id: reviewTasks.id });
+    await tx.insert(reviewDecisions).values({
+      taskId: task!.id,
+      decidedBy: "system",
+      decision: { action: "confirm", auto: true, rule: "own_website", factIds: [], documentIds: [], routeStopIds: [] },
+    });
+    await tx.insert(placeWebsites).values({
+      placeId: place!.id,
+      geoObjectId: object!.id,
+      url: "https://marina.e2e.test.invalid/",
+      urlNormalized: "marina.e2e.test.invalid/",
+      origin: "osm",
+      bound: false,
+    });
+    return place!.id;
+  });
+}
+
+/**
  * Creates the e2e admin in the TEST database unless it already exists (idempotent) and a fresh place candidate
  * for the review test; its name is passed to the tests as E2E_REVIEW_PLACE. A proposed source for the sources test
  * (E2E_SOURCE_DOMAIN, task E2E_SOURCE_TASK). The synthetic delivery subdivision with its valid package (E2E_DELIVERY_SUBDIVISION).
@@ -599,6 +639,7 @@ export default async function globalSetup(): Promise<void> {
     process.env.E2E_IMAGE_TASK = (await createPlaceImageScene(db)).taskId;
     process.env.E2E_IMAGE_PLACE = await createApprovedImageScene(db);
     process.env.E2E_REMOVAL_PLACE = await createRemovalScene(db);
+    process.env.E2E_AUTO_PLACE = await createAutoConfirmedScene(db);
     process.env.E2E_FACT_QUOTE = FACT_QUOTE;
     process.env.E2E_SHELTER_QUOTE = SHELTER_LATER_QUOTE;
     process.env.E2E_DELIVERY_SUBDIVISION = await ensureDeliverySubdivision(db);

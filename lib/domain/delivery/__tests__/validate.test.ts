@@ -59,6 +59,23 @@ describe("validatePackage", () => {
     expect(report.warnings).toEqual([]);
   });
 
+  it("a package with a commercial port (berthable false, no contact) passes every check (spec 17)", async () => {
+    const pkg = validPackage();
+    spots(pkg)[1]!.kind = "port";
+    spots(pkg)[1]!.berthable = false;
+    spots(pkg)[1]!.contact = null;
+    expect(failed(await validate(pkg))).toEqual([]);
+  });
+
+  it("a highlight naming a spot that is not in the package (a candidate is never delivered) fails references (spec 17)", async () => {
+    const candidate = "sp_01J9X4K2M7Q8R5T6V7W8X9Y0Z9";
+    const pkg = validPackage();
+    highlights(pkg)[0]!.spotIds = [...highlights(pkg)[0]!.spotIds, candidate];
+    const report = await validate(pkg);
+    expect(failed(report)).toContain("references");
+    expect(JSON.stringify(findings(report, "references"))).toContain(candidate);
+  });
+
   const cases: Array<[CheckName, Patch, Partial<ValidationDeps>?]> = [
     // six decimals: only zod knows the five-decimal rule (ruling M6-P23)
     ["json_schema", (p) => void (spots(p)[0]!.position.lat = 35.195001)],

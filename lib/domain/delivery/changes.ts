@@ -206,6 +206,8 @@ function eventSeverity(type: DeliveredObjectType, fields: string[], events: Obje
 export const FIELD_LABELS_DE: Record<keyof SpotBody | keyof HighlightBody | keyof RegionBody, string> = {
   id: "Kennung",
   kind: "Art",
+  berthable: "Festmachplatz",
+  contact: "Kontakt",
   name: "Name",
   names: "Namen",
   position: "Position",

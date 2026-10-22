@@ -19,8 +19,8 @@ export function serpRawKey(q: Pick<DiscoveryQuery, "keyword" | "languageCode" | 
 
 /**
  * Runs one discovery query. The same `(keyword, language, location)` searched within `reuseDays` is reused
- * (no call, no row). Otherwise searches (a tile query with `ctx.tileId` = its tile, a place query with the place's
- * tile `q.tileId`, so costs show per tile),
+ * (no call, no row). Otherwise searches (a tile query with `ctx.tileId` = its tile, a place or place website query
+ * with the place's tile `q.tileId`, so costs show per tile),
  * archives the raw answer under `serpRawKey` and writes one `serp_queries` row with its organic `serp_results`
  * (results whose URL is not http(s) are skipped).
  */
@@ -55,7 +55,7 @@ export async function runQuery(
     return { queryId: prior.id, reused: true, results: count!.n };
   }
 
-  const tileId = q.level === "tile" ? q.scopeId : q.level === "place" ? q.tileId : undefined;
+  const tileId = q.level === "tile" ? q.scopeId : q.level === "place" || q.level === "place_website" ? q.tileId : undefined;
   const callCtx = tileId ? { ...ctx, tileId } : ctx;
   const { raw, items } = await searchOrganic(deps.transport, q, callCtx, discovery.serp);
   const rawKey = serpRawKey(q, now);

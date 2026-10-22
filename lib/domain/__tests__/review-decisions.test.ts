@@ -1063,7 +1063,7 @@ describe("profile attribute decisions (conflict, uncertain_change)", () => {
       const [decision] = await tx.select({ id: reviewDecisions.id }).from(reviewDecisions).where(eq(reviewDecisions.taskId, taskId));
       const reviewFacts = await tx.select().from(facts).where(eq(facts.reviewDecisionId, decision!.id));
       expect(reviewFacts).toHaveLength(1);
-      expect(reviewFacts[0]).toMatchObject({ geoObjectId: objectId, attribute: "holding", value: "poor", confidence: 0.95, observedAt: today, factSchemaVersion: "v2" });
+      expect(reviewFacts[0]).toMatchObject({ geoObjectId: objectId, attribute: "holding", value: "poor", confidence: 0.95, observedAt: today, factSchemaVersion: getConfig().factSchema.version });
 
       expect(await consolidateGeo(tx, objectId, { today })).toMatchObject({ status: "created", tasks: 0 });
       const profile = await latest(tx, objectId);

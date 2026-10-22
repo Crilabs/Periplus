@@ -343,6 +343,20 @@ function Annotations({ chunks }: { chunks: ChunkAnnotations[] }) {
             Chunk {c.ordinal}
             {c.carriedFrom ? " · übernommen (Erwähnungen und Zitate des Ursprungs)" : ""}
           </h3>
+          {c.bound.length > 0 && (
+            <p className="border-b border-line px-4 py-2 text-xs text-muted">
+              {c.bound.map((b, i) => (
+                <span key={b.id}>
+                  {i > 0 && ", "}
+                  An Ort gebunden:{" "}
+                  <Link href={`/geo/${b.geoObjectId}`} className="font-medium text-accent hover:underline">
+                    {b.name ?? b.geoObjectId}
+                  </Link>{" "}
+                  ({MATCH_KIND_LABELS.bound})
+                </span>
+              ))}
+            </p>
+          )}
           <p className="max-w-[72ch] px-4 py-3 text-[0.9375rem] leading-7">
             <AnnotatedText text={c.text} spans={c.spans} />
           </p>
