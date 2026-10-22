@@ -143,4 +143,29 @@ describe("berthEvidence", () => {
       await factFrom(tx, fishing.objectId, { docType: "pilot_guide" });
       expect(await evidenceOf(tx, fishing, "port")).toBeNull();
     }));
+
+  it("port evidence follows the source-type table: no dataset, no neighbour's marina page, but the bound own site (fix round 1)", () =>
+    withRollback(async (tx) => {
+      const dataset = await placeOf(tx, { kind: "port" });
+      await factFrom(tx, dataset.objectId, { docType: "dataset", attribute: "place.kind_evidence", value: "port" });
+      await factFrom(tx, dataset.objectId, { docType: "dataset", attribute: "berthable", value: false });
+      expect(await evidenceOf(tx, dataset, "port")).toBeNull();
+
+      // a neighbouring marina's site: „the ferry harbour next door has no visitor berths“
+      const neighbour = await placeOf(tx, { kind: "port" });
+      await pageFact(tx, neighbour.objectId, { bound: false, attribute: "berthable", value: false });
+      await pageFact(tx, neighbour.objectId, { bound: false, attribute: "place.kind_evidence", value: "port" });
+      expect(await evidenceOf(tx, neighbour, "port")).toBeNull();
+
+      const own = await placeOf(tx, { kind: "port" });
+      const f = await pageFact(tx, own.objectId, { bound: true, attribute: "berthable", value: false });
+      expect(await evidenceOf(tx, own, "port")).toEqual({ rule: "commercial_port", factIds: [f.factId], documentIds: [f.documentId], routeStopIds: [] });
+    }));
+
+  it("a bound page of a dataset never confirms a marina", () =>
+    withRollback(async (tx) => {
+      const place = await placeOf(tx, { kind: "marina" });
+      await pageFact(tx, place.objectId, { bound: true, docType: "dataset" });
+      expect(await evidenceOf(tx, place, "marina")).toBeNull();
+    }));
 });

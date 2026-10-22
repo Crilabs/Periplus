@@ -20,8 +20,9 @@ import { attributeIn } from "@/lib/domain/consolidation/weights";
  *   domain) of `pairTypes` or `aloneTypes` documents confirm as a pair. `ownSiteTypes` (marina pages) never count here.
  * - Own website (marina only): a `berthable = true` fact from a document version bound to this place (a `bound`
  *   mention of the object, ruling R4: the version is bound, the fact may sit on a name mention).
- * - Port: the consolidated `place.kind_evidence` is `port`, or a `berthable = false` fact (`commercial_port`); or the
- *   object carries a commercial harbour tag and no `leisure=marina` (`osm_commercial`).
+ * - Port: the consolidated `place.kind_evidence` is `port`, or a `berthable = false` fact (`commercial_port`), both
+ *   only from documents whose type counts for the place (`countingTextInputs`); or the object carries a commercial
+ *   harbour tag and no `leisure=marina` (`osm_commercial`).
  */
 
 export type EvidenceRule = "alone" | "pair" | "own_website" | "commercial_port" | "osm_commercial";
@@ -115,17 +116,33 @@ export function isCommercialHarbour(tags: Record<string, string>, cfg: AppConfig
 }
 
 /**
+ * Of the text inputs, those whose document type may count for the place (spec 17 Quelltyp-Tabelle): `aloneTypes` and
+ * `pairTypes` documents; `ownSiteTypes` documents (marina pages) only when their version is bound to the object
+ * (`boundFactIds`), never for a place nearby; anything else (a dataset) never. Drives the port rule and the kind switch.
+ */
+export async function countingTextInputs(tx: Db, geoObjectId: string, inputs: ConsolidationInput[], cfg: AppConfig): Promise<ConsolidationInput[]> {
+  const c = cfg.delivery.confirmation;
+  const sourceTypes = new Set<DocType>([...c.aloneTypes, ...c.pairTypes]);
+  const ownSite = new Set<DocType>(c.ownSiteTypes);
+  const text = inputs.filter(isText);
+  const onOwnSite = text.filter((i) => i.sourceType !== null && ownSite.has(i.sourceType));
+  const bound = await boundFactIds(tx, geoObjectId, onOwnSite.map((i) => i.factId!));
+  return text.filter((i) => i.sourceType !== null && (sourceTypes.has(i.sourceType) || (ownSite.has(i.sourceType) && bound.has(i.factId!))));
+}
+
+/**
  * The evidence that confirms the place under its kind's rule (see the module comment), or null. `inputs` are the
  * consolidation inputs of the place's geo object (`loadInputs`): only text facts of active runs count.
- * `subject.kindEvidence` is the consolidated `place.kind_evidence`; when it is undefined, a `place.kind_evidence` text
- * input of `port` counts instead.
+ * `subject.kindEvidence` is the consolidated `place.kind_evidence` (of the counting inputs, `countingTextInputs`); when
+ * it is undefined, a counting `place.kind_evidence` text input of `port` counts instead.
  */
 export async function berthEvidence(tx: Db, subject: EvidenceSubject, inputs: ConsolidationInput[], cfg: AppConfig): Promise<Evidence | null> {
   const text = inputs.filter(isText);
   if (subject.kind === "port") {
-    const kindInputs = text.filter((i) => i.attribute === "place.kind_evidence");
+    const counting = await countingTextInputs(tx, subject.geoObjectId, text, cfg);
+    const kindInputs = counting.filter((i) => i.attribute === "place.kind_evidence");
     const portByKind = subject.kindEvidence === undefined || subject.kindEvidence === "port" ? kindInputs.filter((i) => i.value === "port") : [];
-    const notBerthable = text.filter((i) => i.attribute === "berthable" && i.value === false);
+    const notBerthable = counting.filter((i) => i.attribute === "berthable" && i.value === false);
     const commercial = [...portByKind, ...notBerthable];
     if (commercial.length > 0) return evidenceOf("commercial_port", commercial.map(itemOf));
     if (isCommercialHarbour(subject.tags, cfg)) return evidenceOf("osm_commercial", []);
@@ -133,7 +150,10 @@ export async function berthEvidence(tx: Db, subject: EvidenceSubject, inputs: Co
   }
 
   if (subject.kind === "marina") {
-    const yes = text.filter((i) => i.attribute === "berthable" && i.value === true);
+    // the place's own website: a bound page (of an own-site type or any type that counts), never a dataset
+    const c = cfg.delivery.confirmation;
+    const types = new Set<DocType>([...c.ownSiteTypes, ...c.aloneTypes, ...c.pairTypes]);
+    const yes = text.filter((i) => i.attribute === "berthable" && i.value === true && i.sourceType !== null && types.has(i.sourceType));
     const bound = await boundFactIds(tx, subject.geoObjectId, yes.map((i) => i.factId!));
     const own = yes.filter((i) => bound.has(i.factId!));
     if (own.length > 0) return evidenceOf("own_website", own.map(itemOf));

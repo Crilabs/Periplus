@@ -10,7 +10,7 @@ import { dismissTasks, lockOpenPlaceTasks, lockOpenTasks } from "@/lib/domain/co
 import type { ConsolidationInput, RuleName } from "@/lib/domain/consolidation/types";
 import { recheckExclusion } from "@/lib/domain/geometry/restrictions";
 import { newPublicId } from "@/lib/domain/ids";
-import { berthEvidence, type Evidence } from "./evidence";
+import { berthEvidence, countingTextInputs, type Evidence } from "./evidence";
 
 /*
  * Confirmation and kind switch by evidence (spec 17 „Bestätigung nach Beleg“, „Ortsart aus Belegen“), run inside
@@ -67,9 +67,11 @@ export function consolidatedKindEvidence(
 /**
  * Whether an admin chose the place's kind (spec 17): a decided `place_candidate` task on the place whose `confirm`
  * decision names another kind than the task's `context.kind` (the seed's proposal), or a `place_kind` decision not by
- * `system`. A confirmation that took the proposal does not lock the kind; a task without a proposal cannot tell.
+ * `system`, or a place an admin created with its kind („Ort anlegen“, `create_place` on a name candidate: the only way a
+ * geo object of origin `text` comes about; the decision is found by the name it gave the object). A confirmation that
+ * took the proposal does not lock the kind; a task without a proposal cannot tell.
  */
-async function kindChosenByAdmin(tx: Db, placeId: string): Promise<boolean> {
+async function kindChosenByAdmin(tx: Db, placeId: string, geoObjectId: string): Promise<boolean> {
   const { rows } = await tx.execute<{ locked: boolean }>(sql`
     select exists (
       select 1 from review_tasks t join review_decisions d on d.task_id = t.id
@@ -77,6 +79,12 @@ async function kindChosenByAdmin(tx: Db, placeId: string): Promise<boolean> {
         and ((t.subject_type = 'place' and d.decision->>'action' = 'confirm' and t.context ? 'kind'
               and d.decision->>'kind' is distinct from t.context->>'kind')
           or (t.subject_type = 'place_kind' and d.decided_by <> ${SYSTEM_ACTOR}))
+    ) or exists (
+      select 1 from geo_objects o
+      join geo_names n on n.geo_object_id = o.id and n.origin = 'text'
+      join review_decisions d on d.decision->>'action' = 'create_place' and d.decision->>'name' = n.name
+      join review_tasks t on t.id = d.task_id and t.kind = 'place_candidate' and t.subject_type = 'name_candidate'
+      where o.id = ${geoObjectId} and o.origin = 'text'
     ) as locked
   `);
   return rows[0]?.locked === true;
@@ -108,7 +116,7 @@ async function recordDecision(tx: Db, placeId: string, subjectType: "place_kind"
  * caller holds:
  * 1. only a valid, unmerged place; lock order (M5-P9, as the place merge): the object's open profile tasks, the
  *    place's open tasks, then the place row;
- * 2. kind switch: the consolidated `place.kind_evidence` differs from the place's kind and no admin chose the kind →
+ * 2. kind switch: the consolidated `place.kind_evidence` (of documents whose type counts, `countingTextInputs`) differs from the place's kind and no admin chose the kind →
  *    the kind changes, recorded as a `place_kind` decision `{ action: "set_kind", kind, auto, factIds }`;
  * 3. confirmation only for a `candidate` without an open duplicate review and with evidence (`berthEvidence`);
  * 4. the restricted areas of the newest geometry are checked while the place is still a candidate (`recheckExclusion`):
@@ -127,11 +135,13 @@ export async function applyAutoStatus(
 ): Promise<AutoStatusOutcome> {
   const known = context.place;
   if (!known) return { action: "none" };
-  const kindEvidence = consolidatedKindEvidence(inputs, context, cfg, opts);
-  if (known.status !== "candidate" && (!kindEvidence || kindEvidence.kind === known.kind)) return { action: "none" };
-
   const geoObjectId = await geoObjectOf(tx, known.id);
   if (!geoObjectId) return { action: "none" };
+  // only documents whose type counts for this place may switch its kind (a dataset or a neighbour's marina page never)
+  const kindInputs = await countingTextInputs(tx, geoObjectId, inputs.filter((i) => i.attribute === KIND_EVIDENCE), cfg);
+  const kindEvidence = consolidatedKindEvidence(kindInputs, context, cfg, opts);
+  if (known.status !== "candidate" && (!kindEvidence || kindEvidence.kind === known.kind)) return { action: "none" };
+
   await lockOpenTasks(tx, geoObjectId);
   const placeTaskIds = await lockOpenPlaceTasks(tx, known.id);
   const [place] = await tx
@@ -143,7 +153,7 @@ export async function applyAutoStatus(
 
   let kind = place.kind;
   let kindChanged = false;
-  if (kindEvidence && kindEvidence.kind !== place.kind && !(await kindChosenByAdmin(tx, place.id))) {
+  if (kindEvidence && kindEvidence.kind !== place.kind && !(await kindChosenByAdmin(tx, place.id, geoObjectId))) {
     await tx.update(places).set({ kind: kindEvidence.kind, updatedAt: sql`now()` }).where(eq(places.id, place.id));
     await recordDecision(tx, place.id, "place_kind", place.kind, { action: "set_kind", kind: kindEvidence.kind, auto: true, factIds: kindEvidence.factIds }, now);
     kind = kindEvidence.kind;

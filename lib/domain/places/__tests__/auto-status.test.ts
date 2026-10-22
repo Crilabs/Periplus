@@ -2,11 +2,13 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { documents, places, restrictedAreas, reviewDecisions, reviewTasks } from "@/lib/db/schema";
+import { documents, geoNames, nameCandidates, places, restrictedAreas, reviewDecisions, reviewTasks, tiles } from "@/lib/db/schema";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
-import { newPublicId } from "@/lib/domain/ids";
+import { newId, newPublicId } from "@/lib/domain/ids";
+import { decideReviewTask } from "@/lib/domain/review-decisions";
+import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
 import { createReviewTask } from "@/lib/domain/review";
-import { factFrom, placeOf } from "@/test/confirmation";
+import { factFrom, pageFact, placeOf } from "@/test/confirmation";
 import { insertComputation } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 
@@ -169,5 +171,53 @@ describe("applyAutoStatus (in consolidateGeo)", () => {
       await factFrom(tx, proposal.objectId, { attribute: "place.kind_evidence", value: "port" });
       await consolidateGeo(tx, proposal.objectId);
       expect(await placeRow(tx, proposal.placeId)).toMatchObject({ kind: "port", status: "confirmed" });
+    }));
+
+  it("only documents whose type counts switch a kind: no dataset, no neighbour's marina page; the bound own site does (fix round 1)", () =>
+    withRollback(async (tx) => {
+      const dataset = await placeOf(tx, { kind: "marina" });
+      await factFrom(tx, dataset.objectId, { docType: "dataset", attribute: "place.kind_evidence", value: "port" });
+      await consolidateGeo(tx, dataset.objectId);
+      expect(await placeRow(tx, dataset.placeId)).toMatchObject({ kind: "marina", status: "candidate" });
+
+      const neighbour = await placeOf(tx, { kind: "marina" });
+      await pageFact(tx, neighbour.objectId, { bound: false, attribute: "place.kind_evidence", value: "port" });
+      await consolidateGeo(tx, neighbour.objectId);
+      expect(await placeRow(tx, neighbour.placeId)).toMatchObject({ kind: "marina", status: "candidate" });
+      expect(await autoDecisions(tx, neighbour.placeId)).toEqual([]);
+
+      const own = await placeOf(tx, { kind: "marina" });
+      await pageFact(tx, own.objectId, { bound: true, attribute: "place.kind_evidence", value: "port" });
+      await consolidateGeo(tx, own.objectId);
+      expect(await placeRow(tx, own.placeId)).toMatchObject({ kind: "port", status: "confirmed" });
+    }));
+
+  it("the kind of a place an admin created („Ort anlegen“, create_place) is never switched (fix round 1)", () =>
+    withRollback(async (tx) => {
+      const tileId = tileIdFor(21.0, 35.2);
+      const [w, s, e, n] = tileBbox(tileId);
+      await tx.insert(tiles).values({ id: tileId, bbox: sql`ST_MakeEnvelope(${w}, ${s}, ${e}, ${n}, 4326)`, hasCoast: true }).onConflictDoNothing();
+      const name = `Adminhafen ${newId().slice(-6)}`;
+      const [candidate] = await tx
+        .insert(nameCandidates)
+        .values({ nameNormalized: name.toLowerCase(), displayName: name, hint: "harbour", tileId, status: "review", documents: 2, sources: 2 })
+        .returning({ id: nameCandidates.id });
+      const task = await createReviewTask(tx, { kind: "place_candidate", subjectType: "name_candidate", subjectId: candidate!.id, context: { name, tileId } });
+      await decideReviewTask(tx, {
+        taskId: task.id,
+        decision: { action: "create_place", kind: "marina", position: { lon: 21.0, lat: 35.2 }, name, language: "en" },
+        decidedBy: "admin@test.invalid",
+      });
+      const [created] = await tx
+        .select({ objectId: places.geoObjectId, placeId: places.id })
+        .from(places)
+        .innerJoin(geoNames, eq(geoNames.geoObjectId, places.geoObjectId))
+        .where(and(eq(geoNames.name, name), eq(geoNames.origin, "text")));
+      expect(await placeRow(tx, created!.placeId)).toMatchObject({ kind: "marina", status: "confirmed" });
+
+      await factFrom(tx, created!.objectId, { docType: "pilot_guide", attribute: "place.kind_evidence", value: "port" });
+      await consolidateGeo(tx, created!.objectId);
+      expect((await placeRow(tx, created!.placeId)).kind).toBe("marina");
+      expect(await autoDecisions(tx, created!.placeId)).toEqual([]);
     }));
 });
