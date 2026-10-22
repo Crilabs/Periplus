@@ -19,3 +19,15 @@ test("the place page shows the automatic confirmation with its rule, the website
   await expect(page.getByText("(OSM)")).toBeVisible();
   await expect(page.getByText("Festmachplatz")).toBeVisible();
 });
+
+test("the reprocess dialog shows the estimate of the chosen subdivision on demand", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByLabel("E-Mail").fill(E2E_EMAIL);
+  await page.getByLabel("Passwort").fill(E2E_PASSWORD);
+  await page.getByRole("button", { name: "Anmelden" }).click();
+  await expect(page.getByRole("heading", { name: "Übersicht" })).toBeVisible();
+
+  await page.goto("/runs");
+  await page.getByRole("button", { name: "Lauf starten …" }).click();
+  await expect(page.getByTestId("reprocess-estimate")).toContainText("Erwähnungen");
+});

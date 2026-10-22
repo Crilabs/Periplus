@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getDb, type Db } from "@/lib/db/client";
+import { getConfig } from "@/lib/config";
+import { estimateReprocessCostEur, type ReprocessEstimate } from "@/lib/domain/extraction/reprocess-estimate";
 import { tileExists } from "@/lib/domain/geo-view";
 import { getBoss } from "@/lib/jobs/boss";
 import { startDatasetImportRun } from "@/lib/pipeline/datasets-run";
@@ -14,6 +16,7 @@ import { startRevisitRun } from "@/lib/pipeline/revisit-run";
 import { startRun } from "@/lib/pipeline/runs";
 import { startSeedRun } from "@/lib/pipeline/seed";
 import { startReprocessRun, startTextRun } from "@/lib/pipeline/text/run";
+import { createLogger } from "@/lib/logger";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { startAndRedirect } from "../_components/run-start";
 
@@ -135,4 +138,18 @@ export async function startPlaceWebsiteAction(input: FormData | { subdivisionKey
   const db = getDb();
   const boss = await getBoss();
   await startAndRedirect(() => startPlaceWebsiteRun(db, boss, { subdivisionKey }, admin.email), "/runs");
+}
+
+/**
+ * The cost estimate of „Reprozessieren“ for one subdivision, asked by the start dialog when a subdivision is chosen (not
+ * on every refresh of the runs page). A failure is logged and reported as `ok: false`, never as „no estimate“.
+ */
+export async function reprocessEstimateAction(subdivisionKey: string): Promise<{ ok: true; estimate: ReprocessEstimate } | { ok: false }> {
+  await requireAdmin();
+  try {
+    return { ok: true, estimate: await estimateReprocessCostEur(getDb(), subdivisionKeySchema.parse(subdivisionKey), getConfig()) };
+  } catch (error) {
+    createLogger("runs").error({ err: error, subdivisionKey }, "reprocess estimate failed");
+    return { ok: false };
+  }
 }
