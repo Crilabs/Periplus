@@ -119,6 +119,21 @@ describe("applyAutoStatus (in consolidateGeo)", () => {
       }
     }));
 
+  it("rejected, no_anchoring and abandoned places never switch kind; a confirmed one does (final review 5)", () =>
+    withRollback(async (tx) => {
+      for (const status of ["rejected", "no_anchoring", "abandoned"] as const) {
+        const place = await placeOf(tx, { status, kind: "marina" });
+        await factFrom(tx, place.objectId, { attribute: "place.kind_evidence", value: "anchorage" });
+        await consolidateGeo(tx, place.objectId);
+        expect(await placeRow(tx, place.placeId), status).toMatchObject({ status, kind: "marina" });
+        expect(await autoDecisions(tx, place.placeId)).toEqual([]);
+      }
+      const confirmed = await placeOf(tx, { status: "confirmed", kind: "marina", publicId: newPublicId("sp") });
+      await factFrom(tx, confirmed.objectId, { attribute: "place.kind_evidence", value: "anchorage" });
+      await consolidateGeo(tx, confirmed.objectId);
+      expect(await placeRow(tx, confirmed.placeId)).toMatchObject({ status: "confirmed", kind: "anchorage" });
+    }));
+
   it("a confirmed place whose only evidence document is gone stays confirmed (Review Focus 5)", () =>
     withRollback(async (tx) => {
       const place = await placeOf(tx);
@@ -171,6 +186,33 @@ describe("applyAutoStatus (in consolidateGeo)", () => {
       await factFrom(tx, proposal.objectId, { attribute: "place.kind_evidence", value: "port" });
       await consolidateGeo(tx, proposal.objectId);
       expect(await placeRow(tx, proposal.placeId)).toMatchObject({ kind: "port", status: "confirmed" });
+    }));
+
+  it("after an automatic switch the open seed task proposes the new kind: the seed kind locks, the default does not (final review 1)", () =>
+    withRollback(async (tx) => {
+      // admin picks the seed's old kind against the switched one → locked, never switched back
+      const back = await placeOf(tx, { kind: "marina" });
+      const backSeed = await seedTask(tx, back.placeId, back.objectId, "marina");
+      await factFrom(tx, back.objectId, { attribute: "place.kind_evidence", value: "anchorage" });
+      await consolidateGeo(tx, back.objectId);
+      expect(await placeRow(tx, back.placeId)).toMatchObject({ kind: "anchorage", status: "candidate" });
+      const backTask = await taskRow(tx, backSeed.id);
+      expect(backTask).toMatchObject({ status: "open", context: expect.objectContaining({ kind: "anchorage" }) });
+      await decideReviewTask(tx, { taskId: backSeed.id, decision: { action: "confirm", kind: "marina" }, decidedBy: "admin@test.invalid" });
+      await consolidateGeo(tx, back.objectId);
+      expect(await placeRow(tx, back.placeId)).toMatchObject({ kind: "marina", status: "confirmed" });
+
+      // admin takes the default (the switched kind) → not locked, later evidence may switch it
+      const taken = await placeOf(tx, { kind: "marina" });
+      const takenSeed = await seedTask(tx, taken.placeId, taken.objectId, "marina");
+      await factFrom(tx, taken.objectId, { attribute: "place.kind_evidence", value: "anchorage", observedAt: "2026-10-01" });
+      await consolidateGeo(tx, taken.objectId);
+      await decideReviewTask(tx, { taskId: takenSeed.id, decision: { action: "confirm", kind: "anchorage" }, decidedBy: "admin@test.invalid" });
+      await consolidateGeo(tx, taken.objectId);
+      expect((await placeRow(tx, taken.placeId)).kind).toBe("anchorage");
+      await factFrom(tx, taken.objectId, { attribute: "place.kind_evidence", value: "mooring_field", observedAt: "2026-10-15" });
+      await consolidateGeo(tx, taken.objectId);
+      expect((await placeRow(tx, taken.placeId)).kind).toBe("mooring_field");
     }));
 
   it("only documents whose type counts switch a kind: no dataset, no neighbour's marina page; the bound own site does (fix round 1)", () =>

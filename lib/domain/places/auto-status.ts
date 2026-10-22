@@ -22,6 +22,8 @@ import { berthEvidence, countingTextInputs, type Evidence } from "./evidence";
 
 export const SYSTEM_ACTOR = "system";
 const KIND_EVIDENCE = "place.kind_evidence";
+/** Only a candidate or a confirmed place switches its kind by evidence (final review 5); a rejected, `no_anchoring` or abandoned one never. */
+const KIND_SWITCH_STATUSES: ReadonlySet<PlaceStatus> = new Set<PlaceStatus>(["candidate", "confirmed"]);
 
 export type AutoStatusOutcome = {
   action: "none" | "confirmed" | "no_anchoring" | "kind_changed";
@@ -102,6 +104,20 @@ async function hasOpenPairTask(tx: Db, geoObjectId: string): Promise<boolean> {
   return rows[0]?.open === true;
 }
 
+/**
+ * After an automatic kind switch, the open (locked) tasks on the place that carry a proposal (`context.kind`) propose the
+ * new kind (final review 1): the confirm form defaults to the place's current kind, so taking that default must not read
+ * as an admin choice, and picking the old seed kind must (`kindChosenByAdmin`). `review_tasks` context is not
+ * append-only (as `dismissTasks`).
+ */
+async function reproposeKind(tx: Db, taskIds: string[], kind: PlaceKind): Promise<void> {
+  if (taskIds.length === 0) return;
+  await tx.execute(sql`
+    update review_tasks set context = context || ${JSON.stringify({ kind })}::jsonb
+    where id in (${sql.join(taskIds.map((id) => sql`${id}`), sql`, `)}) and status = 'open' and context ? 'kind'
+  `);
+}
+
 /** One decided pseudo task on the place with its `system` decision. */
 async function recordDecision(tx: Db, placeId: string, subjectType: "place_kind" | "place_status", previous: string, decision: Record<string, unknown>, now: Date) {
   const [task] = await tx
@@ -116,8 +132,9 @@ async function recordDecision(tx: Db, placeId: string, subjectType: "place_kind"
  * caller holds:
  * 1. only a valid, unmerged place; lock order (M5-P9, as the place merge): the object's open profile tasks, the
  *    place's open tasks, then the place row;
- * 2. kind switch: the consolidated `place.kind_evidence` (of documents whose type counts, `countingTextInputs`) differs from the place's kind and no admin chose the kind →
- *    the kind changes, recorded as a `place_kind` decision `{ action: "set_kind", kind, auto, factIds }`;
+ * 2. kind switch (only a `candidate` or `confirmed` place): the consolidated `place.kind_evidence` (of documents whose type counts, `countingTextInputs`) differs from the place's kind and no admin chose the kind →
+ *    the kind changes, recorded as a `place_kind` decision `{ action: "set_kind", kind, auto, factIds }`, and the place's
+ *    open tasks with a proposal propose the new kind (`reproposeKind`);
  * 3. confirmation only for a `candidate` without an open duplicate review and with evidence (`berthEvidence`);
  * 4. the restricted areas of the newest geometry are checked while the place is still a candidate (`recheckExclusion`):
  *    a banned place becomes `no_anchoring` (reason set by it) and gets its public id; otherwise `confirmed` with its
@@ -140,7 +157,7 @@ export async function applyAutoStatus(
   // only documents whose type counts for this place may switch its kind (a dataset or a neighbour's marina page never)
   const kindInputs = await countingTextInputs(tx, geoObjectId, inputs.filter((i) => i.attribute === KIND_EVIDENCE), cfg);
   const kindEvidence = consolidatedKindEvidence(kindInputs, context, cfg, opts);
-  if (known.status !== "candidate" && (!kindEvidence || kindEvidence.kind === known.kind)) return { action: "none" };
+  if (known.status !== "candidate" && (!kindEvidence || kindEvidence.kind === known.kind || !KIND_SWITCH_STATUSES.has(known.status))) return { action: "none" };
 
   await lockOpenTasks(tx, geoObjectId);
   const placeTaskIds = await lockOpenPlaceTasks(tx, known.id);
@@ -153,9 +170,10 @@ export async function applyAutoStatus(
 
   let kind = place.kind;
   let kindChanged = false;
-  if (kindEvidence && kindEvidence.kind !== place.kind && !(await kindChosenByAdmin(tx, place.id, geoObjectId))) {
+  if (kindEvidence && kindEvidence.kind !== place.kind && KIND_SWITCH_STATUSES.has(place.status) && !(await kindChosenByAdmin(tx, place.id, geoObjectId))) {
     await tx.update(places).set({ kind: kindEvidence.kind, updatedAt: sql`now()` }).where(eq(places.id, place.id));
     await recordDecision(tx, place.id, "place_kind", place.kind, { action: "set_kind", kind: kindEvidence.kind, auto: true, factIds: kindEvidence.factIds }, now);
+    await reproposeKind(tx, placeTaskIds, kindEvidence.kind);
     kind = kindEvidence.kind;
     kindChanged = true;
   }
