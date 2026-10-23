@@ -18,8 +18,16 @@ async function todayOf(tx: Db): Promise<string> {
   return rows[0]!.d;
 }
 
-async function seedPlace(tx: Db, subdivisionId: string, nmNorth: number, sources: number, status: PlaceStatus = "confirmed"): Promise<string> {
-  const lat = LAT + nmNorth / 60;
+async function seedPlace(
+  tx: Db,
+  subdivisionId: string,
+  nmNorth: number,
+  sources: number,
+  status: PlaceStatus = "confirmed",
+  at: { lon: number; lat: number } = { lon: LON, lat: LAT },
+): Promise<string> {
+  const lat = at.lat + nmNorth / 60;
+  const LON = at.lon;
   const geoObjectId = await insertNamedObject(tx, { type: "bay", names: [{ name: "Test bay" }], lon: LON, lat, subdivisionId });
   const { rows } = await tx.execute<{ id: string }>(sql`select tile_id_for(ST_SetSRID(ST_MakePoint(${LON}, ${lat}), 4326)) as id`);
   await insertTestTile(tx, rows[0]!.id);
@@ -53,6 +61,20 @@ describe("popularityForPlaces", () => {
       expect(p.get(a)).toBe(0);
       expect(p.get(b)).toBeCloseTo(1); // the candidate does not count towards the maximum
       expect(p.has(cand)).toBe(false);
+    });
+  });
+
+  it("the longitude prefilter widens with latitude: 49 nm east-west at 69° N still counts, 51 nm does not", async () => {
+    await withRollback(async (tx) => {
+      const x = await insertTestSubdivision(tx, "XT-POP-N", [19, 68, 26, 70]);
+      const lat = 69;
+      const degPerNm = 1 / 60 / Math.cos((lat * Math.PI) / 180);
+      const a = await seedPlace(tx, x.id, 0, 1, "confirmed", { lon: 21, lat });
+      const near = await seedPlace(tx, x.id, 0, 8, "confirmed", { lon: 21 + 49 * degPerNm, lat });
+      const far = await seedPlace(tx, x.id, 0, 99, "confirmed", { lon: 21 - 51 * degPerNm, lat });
+      const p = await popularityForPlaces(tx, [a], await todayOf(tx), 50);
+      expect(p.get(a)).toBeCloseTo(Math.log(2) / Math.log(9));
+      expect(near).not.toBe(far);
     });
   });
 });

@@ -28,24 +28,45 @@ export async function popularityForPlaces(
   neighbourhoodNm: number,
 ): Promise<Map<string, number>> {
   if (geoObjectIds.length === 0) return new Map();
+  // Cheap geometry box before the geography distance (which casts and cannot use a geometry index). The set is driven
+  // from `places` (a few thousand confirmed rows), not from `geo_objects_centroid_gist`: nearly every geo object lies
+  // in the box (measured on dev: 22960 of 29182), so the index would only feed the expensive distance. The box is
+  // a superset of the geography circle: latitude degrees from nm/60 with a 1 % margin (a degree of latitude spans at
+  // least 110.57 km on the spheroid against the 111.12 km the nm/60 rule assumes); longitude degrees widen with
+  // 1/cos(latitude), taken at the box's far edge and capped at 89° so the divisor never vanishes (correct beyond
+  // 70° latitude and far outside the Mediterranean). It ignores the antimeridian. The exact ST_DWithin on geography
+  // below is the final filter, so the box only has to be generous, never tight.
+  const dLat = (neighbourhoodNm / 60) * 1.01;
   const { rows } = await db.execute<{ geo_object_id: string; sources_count: number; max_count: number }>(sql`
-    with valid as (
-      select distinct on (pr.geo_object_id) pr.geo_object_id, pr.sources_count, o.centroid
+    select a.geo_object_id, a.sources_count, nb.max_count
+    from (
+      select p.geo_object_id, pr.sources_count, o.centroid
       from places p
       join tiles t on t.id = p.tile_id
        and t.valid_from <= ${today}::date and (t.valid_to is null or t.valid_to > ${today}::date)
       join geo_objects o on o.id = p.geo_object_id and o.merged_into_id is null
        and o.valid_from <= ${today}::date and (o.valid_to is null or o.valid_to > ${today}::date)
-      join profiles pr on pr.geo_object_id = p.geo_object_id
+      cross join lateral (select sources_count from profiles where geo_object_id = p.geo_object_id order by version desc limit 1) pr
+      where p.geo_object_id = any(${sql.param(geoObjectIds)}::uuid[])
+        and p.status = 'confirmed' and p.merged_into_id is null
+        and p.valid_from <= ${today}::date and (p.valid_to is null or p.valid_to > ${today}::date)
+    ) a
+    cross join lateral (
+      select max(pr.sources_count) as max_count
+      from places p
+      join geo_objects o on o.id = p.geo_object_id and o.merged_into_id is null
+       and o.valid_from <= ${today}::date and (o.valid_to is null or o.valid_to > ${today}::date)
+      join tiles t on t.id = p.tile_id
+       and t.valid_from <= ${today}::date and (t.valid_to is null or t.valid_to > ${today}::date)
+      cross join lateral (select sources_count from profiles where geo_object_id = o.id order by version desc limit 1) pr
       where p.status = 'confirmed' and p.merged_into_id is null
         and p.valid_from <= ${today}::date and (p.valid_to is null or p.valid_to > ${today}::date)
-      order by pr.geo_object_id, pr.version desc
-    )
-    select a.geo_object_id, a.sources_count, max(b.sources_count) as max_count
-    from valid a
-    join valid b on ST_DWithin(a.centroid::geography, b.centroid::geography, ${neighbourhoodNm * METRES_PER_NM})
-    where a.geo_object_id = any(${sql.param(geoObjectIds)}::uuid[])
-    group by a.geo_object_id, a.sources_count
+        and o.centroid && ST_Expand(
+          a.centroid,
+          ${dLat} / greatest(cos(radians(least(abs(ST_Y(a.centroid)) + ${dLat}, 89))), 0.0175),
+          ${dLat})
+        and ST_DWithin(a.centroid::geography, o.centroid::geography, ${neighbourhoodNm * METRES_PER_NM})
+    ) nb
   `);
   return new Map(rows.map((r) => [r.geo_object_id, popularity(Number(r.sources_count), Number(r.max_count))]));
 }
