@@ -38,6 +38,7 @@ const DELIVERY_FIXTURE_TESTS = [
   "lib/domain/delivery/__tests__/view.test.ts",
   "lib/domain/delivery/__tests__/weather-points.test.ts",
   "lib/domain/delivery/radius/__tests__/build.test.ts",
+  "lib/domain/delivery/radius/__tests__/changes.test.ts",
   "lib/pipeline/__tests__/delivery-run.test.ts",
   "scripts/__tests__/delivery-consume.test.ts",
   "scripts/__tests__/migrate-subdivisions.test.ts",
