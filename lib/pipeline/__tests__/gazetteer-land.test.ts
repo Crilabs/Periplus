@@ -29,6 +29,8 @@ const BOX: [number, number, number, number] = [29.0, 32.0, 29.5, 32.25];
 const NEIGHBOUR_BOX: [number, number, number, number] = [29.5, 32.0, 30.0, 32.25];
 const EMPTY_BOX: [number, number, number, number] = [30.0, 32.0, 30.5, 32.25];
 const TILE = tileIdFor(29.1, 32.1);
+/** A tile of the neighbour subdivision, where a far-ring castle of B lies. */
+const NEIGHBOUR_TILE = tileIdFor(29.6, 32.05);
 
 const A = { lon: 29.1, lat: 32.1 };
 const M_PER_DEG = 111_195;
@@ -53,9 +55,11 @@ const N = {
   tower: 12, // 10 km south, Q…12, 2 sitelinks
   fort: 13, // 10 km south, no wikidata tag
   famousTaverna: 14, // 10 km north, with wikidata: food is not a far category
+  neighbourCastle: 15, // in the neighbour subdivision's tile, 11 km from B, Q…15, 7 sitelinks
+  noGeometry: 16, // a way without geometry
 } as const;
 const MONASTERY = 21; // a Wikidata item 8 km south, 3 km west, 25 sitelinks
-const SITELINKS: Record<string, number> = { [qid(N.castle)]: 12, [qid(N.tower)]: 2, [qid(N.famousTaverna)]: 30, [qid(MONASTERY)]: 25 };
+const SITELINKS: Record<string, number> = { [qid(N.castle)]: 12, [qid(N.tower)]: 2, [qid(N.famousTaverna)]: 30, [qid(MONASTERY)]: 25, [qid(N.neighbourCastle)]: 7 };
 
 const C = { lon: 29.25, lat: 32.2 };
 const B = { lon: 29.48, lat: 32.1 };
@@ -68,12 +72,14 @@ const NEAR: OverpassElement[] = [
   node(N.harbourPier, at(300, 0), { man_made: "pier", harbour: "yes", name: "Molos" }),
   node(N.cafeAtC, at(500, 0, C), { amenity: "cafe", name: "Kafeneio" }),
   node(N.sharedTaverna, { lon: 29.5, lat: 32.1 }, { amenity: "restaurant", name: "Taverna Synoro" }),
+  { type: "way", id: ID + N.noGeometry, tags: { amenity: "cafe", name: "Kafe Choris" } },
 ];
 const FAR: OverpassElement[] = [
   node(N.castle, at(0, -10_000), { historic: "castle", name: "Kastro", wikidata: qid(N.castle) }),
   node(N.tower, at(1000, -10_000), { historic: "tower", name: "Pyrgos", wikidata: qid(N.tower) }),
   node(N.fort, at(-2000, -10_000), { historic: "fort", name: "Frourio" }),
   node(N.famousTaverna, at(0, 10_000), { amenity: "restaurant", name: "Taverna Diasimi", wikidata: qid(N.famousTaverna) }),
+  node(N.neighbourCastle, { lon: 29.6, lat: 32.05 }, { historic: "castle", name: "Kastro Geitona", wikidata: qid(N.neighbourCastle) }),
 ];
 const MONASTERY_AT = at(-3000, -8000);
 const WDQS_BINDINGS = [
@@ -90,15 +96,36 @@ const ALL_OSM = [...NEAR, ...FAR].map((e) => `node/${e.id}`);
 
 type Seen = { overpass: string[]; wdqs: string[]; entities: string[] };
 
+type FakeOptions = {
+  /** Elements added to every near answer. */
+  extraNear?: OverpassElement[];
+  /** Far queries over a box at least this many degrees wide answer 504 (so only its quadrants succeed). */
+  failFarFromDeg?: number;
+  /** Refills the token buckets before each answer, so many calls in one test never wait for a token. */
+  refill?: () => Promise<void>;
+};
+
+/** Box `[west, south, east, north]` of an Overpass land query. */
+const qlBox = (ql: string) => {
+  const [s, w, n, e] = /\(([-\d.]+),([-\d.]+),([-\d.]+),([-\d.]+)\);/.exec(ql)!.slice(1).map(Number);
+  return [w!, s!, e!, n!];
+};
+
 /** Overpass (near query without, far query with the `wikidata` filter), WDQS and `wbgetentities`. */
-function transport(seen: Seen = { overpass: [], wdqs: [], entities: [] }): Transport {
+function transport(seen: Seen = { overpass: [], wdqs: [], entities: [] }, opts: FakeOptions = {}): Transport {
   const cfg = getConfig().gazetteer;
-  const json = (v: unknown) => makeResponse(200, new TextEncoder().encode(JSON.stringify(v)));
+  const json = (v: unknown, status = 200) => makeResponse(status, new TextEncoder().encode(JSON.stringify(v)));
   return async (req: HttpRequest) => {
+    await opts.refill?.();
     if (req.url === cfg.overpass.endpoint) {
       const ql = decodeURIComponent(String(req.body).replace(/^data=/, ""));
       seen.overpass.push(ql);
-      return json({ elements: ql.includes('["wikidata"]') ? FAR : NEAR });
+      const far = ql.includes('["wikidata"]');
+      if (far && opts.failFarFromDeg !== undefined) {
+        const [w, , e] = qlBox(ql);
+        if (e! - w! >= opts.failFarFromDeg) return json({ error: "gateway timeout" }, 504);
+      }
+      return json({ elements: far ? FAR : [...NEAR, ...(opts.extraNear ?? [])] });
     }
     if (req.url.startsWith(cfg.wikidata.endpoint)) {
       seen.wdqs.push(decodeURIComponent(req.url));
@@ -145,6 +172,7 @@ async function prepare(db: Db): Promise<Fixture> {
   const neighbour = await insertTestSubdivision(db, NEIGHBOUR, NEIGHBOUR_BOX);
   await insertTestSubdivision(db, EMPTY, EMPTY_BOX);
   await insertTestTile(db, TILE);
+  await insertTestTile(db, NEIGHBOUR_TILE);
   return {
     subId: sub.id,
     neighbourId: neighbour.id,
@@ -159,10 +187,16 @@ const NOW = new Date("2026-10-24T10:00:00Z");
 const archive = testArchive();
 beforeAll(() => archive.ensureBucket());
 
-async function run(db: Db, key: string, seen?: Seen, placeIds?: string[]) {
+async function run(db: Db, key: string, seen?: Seen, placeIds?: string[], opts: FakeOptions = {}) {
   await fullBuckets(db);
-  return importLandThings(db, { scope: await gazetteerScope(db, key), runId: newId(), now: NOW, ...(placeIds ? { placeIds } : {}) }, { transport: transport(seen), archive, sleep: async () => {} });
+  return importLandThings(
+    db,
+    { scope: await gazetteerScope(db, key), runId: newId(), now: NOW, ...(placeIds ? { placeIds } : {}) },
+    { transport: transport(seen, { refill: () => fullBuckets(db), ...opts }), archive, sleep: async () => {} },
+  );
 }
+
+const ZERO = { skippedLarge: 0, skippedGeometry: 0, splits: 0 };
 
 async function stored(db: Db) {
   const rows = await db
@@ -197,11 +231,13 @@ describe("importLandThings", () => {
       const f = await prepare(db);
       const seen: Seen = { overpass: [], wdqs: [], entities: [] };
       const result = await run(db, KEY, seen);
-      expect(result).toEqual({ boxes: 1, near: 3, far: 2, created: 5, outsideRing: 4, belowSitelinks: 1, wrongType: 1 });
+      expect(result).toEqual({ boxes: 1, near: 3, far: 3, created: 6, outsideRing: 4, belowSitelinks: 1, wrongType: 1, ...ZERO, skippedGeometry: 1 });
 
       const rows = await stored(db);
       const byOsm = new Map(rows.map((r) => [r.osmId, r]));
-      expect([...byOsm.keys()].filter(Boolean).sort()).toEqual([osmId(N.taverna), osmId(N.busStop), osmId(N.sharedTaverna), osmId(N.castle)].sort());
+      expect([...byOsm.keys()].filter(Boolean).sort()).toEqual(
+        [osmId(N.taverna), osmId(N.busStop), osmId(N.sharedTaverna), osmId(N.castle), osmId(N.neighbourCastle)].sort(),
+      );
       expect(byOsm.get(osmId(N.busStop))).toMatchObject({ type: "poi", category: "transport" });
       // the castle is linked to its Wikidata item by its tag, so N4a finds its sitelinks
       expect(byOsm.get(osmId(N.castle))).toMatchObject({ type: "poi", category: "culture", wikidataId: qid(N.castle) });
@@ -228,6 +264,57 @@ describe("importLandThings", () => {
       expect(taverna.subdivisionId).toBe(f.subId);
       const tileLinks = await db.select().from(tileGeoObjects).where(eq(tileGeoObjects.geoObjectId, taverna.id));
       expect(tileLinks.map((l) => l.tileId)).toEqual([TILE]);
+
+      // a far object in the neighbour's tile: that tile link and the neighbour's subdivision
+      const neighbourCastle = byOsm.get(osmId(N.neighbourCastle))!;
+      expect(neighbourCastle.subdivisionId).toBe(f.neighbourId);
+      const neighbourLinks = await db.select().from(tileGeoObjects).where(eq(tileGeoObjects.geoObjectId, neighbourCastle.id));
+      expect(neighbourLinks.map((l) => l.tileId)).toEqual([NEIGHBOUR_TILE]);
+    }));
+
+  it("assigns only its own objects: a skeleton object of the neighbour in the far band stays as it is", () =>
+    withRollback(async (db) => {
+      const f = await prepare(db);
+      // deliberately stale: no subdivision, no parent, no tile link, although it lies in the neighbour's land and tile
+      const bay = await insertNamedObject(db, { type: "bay", names: [{ name: "Ormos Geitona" }], lon: 29.6, lat: 32.15 });
+      const settlement = await insertNamedObject(db, { type: "settlement", names: [{ name: "Chorio" }], lon: 29.2, lat: 32.15, subdivisionId: f.neighbourId });
+      await run(db, KEY);
+      const [row] = await db.select().from(geoObjects).where(eq(geoObjects.id, bay));
+      expect(row).toMatchObject({ subdivisionId: null, parentId: null, seaId: null });
+      expect(await db.select().from(tileGeoObjects).where(eq(tileGeoObjects.geoObjectId, bay))).toEqual([]);
+      // one in this subdivision's own tile is not reassigned or linked either
+      const [other] = await db.select().from(geoObjects).where(eq(geoObjects.id, settlement));
+      expect(other).toMatchObject({ subdivisionId: f.neighbourId, parentId: null });
+      expect(await db.select().from(tileGeoObjects).where(eq(tileGeoObjects.geoObjectId, settlement))).toEqual([]);
+    }));
+
+  it("a far box that keeps failing is asked again as four quadrants, and the stage still succeeds", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      const seen: Seen = { overpass: [], wdqs: [], entities: [] };
+      const result = await run(db, KEY, seen, undefined, { failFarFromDeg: 0.5 });
+      expect(result).toMatchObject({ splits: 1, far: 3, created: 6, belowSitelinks: 1 });
+      const far = seen.overpass.filter((q) => q.includes('["wikidata"]'));
+      const retries = getConfig().gazetteer.overpass.retries;
+      expect(far).toHaveLength(retries + 1 + 4);
+      expect(far.slice(retries + 1).every((q) => qlBox(q)[2]! - qlBox(q)[0]! < 0.5)).toBe(true);
+      expect(await archive.exists(`datasets/overpass/land/${KEY}/2026-10-24-far-0.q3.json`)).toBe(true);
+    }));
+
+  it("counts and skips a relation above maxRelationPoints", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      const points = getConfig().gazetteer.overpass.maxRelationPoints + 1;
+      const p = at(0, 300);
+      const huge: OverpassElement = {
+        type: "relation",
+        id: ID + 30,
+        tags: { type: "multipolygon", natural: "beach" },
+        members: [{ type: "way", ref: 1, role: "outer", geometry: Array.from({ length: points }, () => ({ lat: p.lat, lon: p.lon })) }],
+      };
+      const result = await run(db, KEY, undefined, undefined, { extraNear: [huge] });
+      expect(result).toMatchObject({ skippedLarge: 1, skippedGeometry: 1, near: 3 });
+      expect(await db.select().from(geoObjects).where(eq(geoObjects.osmId, `relation/${ID + 30}`))).toEqual([]);
     }));
 
   it("N4a finds the taverna on foot and the castle by bus (bus stop on foot)", () =>
@@ -272,8 +359,8 @@ describe("importLandThings", () => {
     withRollback(async (db) => {
       const f = await prepare(db);
       const result = await run(db, KEY, undefined, [f.b]);
-      expect(result).toMatchObject({ boxes: 1, near: 1, far: 0, created: 1 });
-      expect((await stored(db)).map((r) => r.osmId)).toEqual([osmId(N.sharedTaverna)]);
+      expect(result).toMatchObject({ boxes: 1, near: 1, far: 1, created: 2 });
+      expect((await stored(db)).map((r) => r.osmId).sort()).toEqual([osmId(N.sharedTaverna), osmId(N.neighbourCastle)].sort());
     }));
 
   it("a subdivision without candidates: no boxes, no request", () =>
@@ -281,7 +368,7 @@ describe("importLandThings", () => {
       await prepare(db);
       const seen: Seen = { overpass: [], wdqs: [], entities: [] };
       const result = await run(db, EMPTY, seen);
-      expect(result).toEqual({ boxes: 0, near: 0, far: 0, created: 0, outsideRing: 0, belowSitelinks: 0, wrongType: 0 });
+      expect(result).toEqual({ boxes: 0, near: 0, far: 0, created: 0, outsideRing: 0, belowSitelinks: 0, wrongType: 0, ...ZERO });
       expect(seen).toEqual({ overpass: [], wdqs: [], entities: [] });
     }));
 });

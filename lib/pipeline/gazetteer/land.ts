@@ -1,5 +1,5 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
-import type { CallContext, Transport } from "@/lib/adapters/http";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { RetryableHttpError, type CallContext, type Transport } from "@/lib/adapters/http";
 import { buildLandQuery, overpassQueryRetrying, type OverpassElement } from "@/lib/adapters/overpass";
 import type { Archive } from "@/lib/adapters/s3";
 import { buildWikidataQuery, wikidataQuery, type WikidataItem } from "@/lib/adapters/wikidata";
@@ -7,13 +7,15 @@ import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geoObjects, type GeoObjectType } from "@/lib/db/schema";
 import { classifyOsm, osmNames } from "@/lib/domain/gazetteer/osm-classify";
+import { assignObjects } from "@/lib/domain/gazetteer/hierarchy";
+import { quadrants } from "@/lib/domain/gazetteer/land";
+import { ensureFallbackNames } from "@/lib/domain/gazetteer/names";
 import { landRings, ringBoxes, withinRing, type RingCenter } from "@/lib/domain/gazetteer/rings";
 import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
 import { upsertGeoObject, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
 import { researchCandidates } from "@/lib/domain/research/candidates";
 import type { Bbox } from "@/lib/domain/tiles";
 import { createLogger } from "@/lib/logger";
-import { buildHierarchy } from "@/lib/pipeline/gazetteer/hierarchy";
 import { elementGeometry, keptTags, relationPoints } from "@/lib/pipeline/gazetteer/osm";
 import { importWikidataItems } from "@/lib/pipeline/gazetteer/wikidata";
 import { ensureSitelinkCounts } from "@/lib/pipeline/sitelinks";
@@ -72,13 +74,6 @@ async function linkByTag(db: Db, id: string, qid: string): Promise<void> {
     );
 }
 
-const unionBox = (boxes: Bbox[]): Bbox => [
-  Math.min(...boxes.map((b) => b[0])),
-  Math.min(...boxes.map((b) => b[1])),
-  Math.max(...boxes.map((b) => b[2])),
-  Math.max(...boxes.map((b) => b[3])),
-];
-
 export type LandThingsResult = {
   boxes: number;
   near: number;
@@ -87,6 +82,12 @@ export type LandThingsResult = {
   outsideRing: number;
   belowSitelinks: number;
   wrongType: number;
+  /** Relations above `overpass.maxRelationPoints`, not stored. */
+  skippedLarge: number;
+  /** Elements without usable geometry or point, not stored. */
+  skippedGeometry: number;
+  /** Ring boxes split into quadrants after their query kept failing. */
+  splits: number;
 };
 
 type Accepted = { ring: "near" | "far"; draft: GeoObjectDraft; qid?: string };
@@ -107,10 +108,12 @@ type Accepted = { ring: "near" | "far"; draft: GeoObjectDraft; qid?: string };
  * go to `wikidata_sitelinks` (`ensureSitelinkCounts`, reused within `datasets.sitelinks.reuseDays`), and an OSM object
  * gets its tag as `wikidata_id` unless another object carries it. Wikidata items go through `importWikidataItems`
  * (creating only POIs). Raw Overpass answers are archived under
- * `datasets/overpass/land/<key>/<date>-<ring>-<i>.json`. The stored objects are upserted in one transaction (upsert by
- * `osm_id` / `wikidata_id`, so a rerun or a neighbour subdivision creates no duplicates), then `buildHierarchy` assigns
- * subdivision, sea, parents and tile links over the subdivision box widened to the ring boxes. Without centers nothing
- * is fetched.
+ * `datasets/overpass/land/<key>/<date>-<ring>-<i>.json` (a quadrant adds `.q<j>`). The stored objects are upserted in one transaction (upsert by
+ * `osm_id` / `wikidata_id`, so a rerun or a neighbour subdivision creates no duplicates), then `assignObjects` sets
+ * subdivision, sea, parents and tile links (every valid tile they meet, also a neighbour's) of exactly the stored
+ * objects, plus their fallback names; no other object is touched. A ring box whose query keeps failing is split into
+ * quadrants (`splits`); relations above `maxRelationPoints` (`skippedLarge`) and elements without usable geometry
+ * (`skippedGeometry`) are logged and counted. Without centers nothing is fetched.
  */
 export async function importLandThings(
   db: Db,
@@ -121,7 +124,18 @@ export async function importLandThings(
   const { gazetteer, categories, research } = getConfig();
   const { land, overpass } = gazetteer;
   const state = research.state;
-  const result: LandThingsResult = { boxes: 0, near: 0, far: 0, created: 0, outsideRing: 0, belowSitelinks: 0, wrongType: 0 };
+  const result: LandThingsResult = {
+    boxes: 0,
+    near: 0,
+    far: 0,
+    created: 0,
+    outsideRing: 0,
+    belowSitelinks: 0,
+    wrongType: 0,
+    skippedLarge: 0,
+    skippedGeometry: 0,
+    splits: 0,
+  };
 
   const centers = await ringCenters(db, input.placeIds ? { placeIds: input.placeIds } : { subdivisionKey: scope.key });
   if (centers.length === 0) return result;
@@ -136,14 +150,34 @@ export async function importLandThings(
   const date = (input.now ?? new Date()).toISOString().slice(0, 10);
   const farRules = categories.osm.filter((r) => state.transportCategories.includes(r.category));
   const elements = new Map<string, OverpassElement>();
-  const fetchRing = async (ring: "near" | "far", boxes: Bbox[]) => {
-    for (const [i, box] of boxes.entries()) {
-      const ql = buildLandQuery(box, ring === "near" ? categories.osm : farRules, overpass.timeoutSeconds, ring === "far");
-      const part = `${ring}-${i}`;
-      const { raw, elements: els } = await overpassQueryRetrying(deps.transport, ql, ctx, overpass, { part, sleep: deps.sleep });
-      await deps.archive.put(`datasets/overpass/land/${scope.key}/${date}-${part}.json`, raw, "application/json");
-      for (const el of els) if (!elements.has(`${el.type}/${el.id}`)) elements.set(`${el.type}/${el.id}`, el);
+  /**
+   * Asks the ring query for `box`. A box that still fails retryably after its retries is asked again per quadrant
+   * (`<part>.q<i>`), recursively while its larger edge is at least `overpass.minBlockDeg` (as the coarse import, B15).
+   */
+  const ask = async (ring: "near" | "far", part: string, box: Bbox): Promise<void> => {
+    const ql = buildLandQuery(box, ring === "near" ? categories.osm : farRules, overpass.timeoutSeconds, ring === "far");
+    let answer: Awaited<ReturnType<typeof overpassQueryRetrying>>;
+    try {
+      answer = await overpassQueryRetrying(deps.transport, ql, ctx, overpass, { part: `${scope.key} ${part}`, sleep: deps.sleep });
+    } catch (error) {
+      if (!(error instanceof RetryableHttpError)) throw error;
+      if (Math.max(box[2] - box[0], box[3] - box[1]) < overpass.minBlockDeg) {
+        throw new RetryableHttpError(
+          `gazetteer.land ${scope.key}: overpass part ${part} failed and is not split below overpass.minBlockDeg (${overpass.minBlockDeg}°): ${error.message}`,
+          error.status,
+          { cause: error },
+        );
+      }
+      result.splits++;
+      getLog().warn({ subdivisionKey: scope.key, part }, "split failed land Overpass box into quadrants");
+      for (const [q, child] of quadrants(box).entries()) await ask(ring, `${part}.q${q}`, child);
+      return;
     }
+    await deps.archive.put(`datasets/overpass/land/${scope.key}/${date}-${part}.json`, answer.raw, "application/json");
+    for (const el of answer.elements) if (!elements.has(`${el.type}/${el.id}`)) elements.set(`${el.type}/${el.id}`, el);
+  };
+  const fetchRing = async (ring: "near" | "far", boxes: Bbox[]) => {
+    for (const [i, box] of boxes.entries()) await ask(ring, `${ring}-${i}`, box);
   };
   await fetchRing("near", nearBoxes);
   await fetchRing("far", farBoxes);
@@ -168,10 +202,15 @@ export async function importLandThings(
     }
     const geometry = elementGeometry(el);
     const point = elementPoint(el);
-    if (!geometry || !point) continue;
+    if (!geometry || !point) {
+      getLog().warn({ osmId }, "skipped land element without geometry");
+      result.skippedGeometry++;
+      continue;
+    }
     const points = relationPoints(el);
     if (points > overpass.maxRelationPoints) {
       getLog().warn({ osmId, points }, "skipped osm relation above overpass.maxRelationPoints");
+      result.skippedLarge++;
       continue;
     }
     const qid = tags.wikidata !== undefined && QID.test(tags.wikidata) ? tags.wikidata : undefined;
@@ -204,13 +243,17 @@ export async function importLandThings(
     else result.belowSitelinks++;
   }
 
+  // the objects this call stored or linked; only they are assigned afterwards
+  const ids = new Set<string>();
   await db.transaction(async (tx) => {
     for (const a of accepted) {
       const r = await upsertGeoObject(tx, a.draft);
       if ("skipped" in r) {
         getLog().warn({ osmId: a.draft.osmId, reason: r.skipped }, "skipped osm element with unusable geometry");
+        result.skippedGeometry++;
         continue;
       }
+      ids.add(r.id);
       result[a.ring]++;
       if (r.created) result.created++;
       if (a.qid) await linkByTag(tx, r.id, a.qid);
@@ -219,8 +262,21 @@ export async function importLandThings(
     const wd = await importWikidataItems(tx, wikidataItems, { classes, categories: categories.wikidata, allowCreate: new Set<GeoObjectType>(["poi"]) });
     result.far += wikidataItems.length - wd.skipped;
     result.created += wd.created;
+    result.skippedGeometry += wd.skipped;
+    if (wikidataItems.length > 0) {
+      const rows = await tx
+        .select({ id: geoObjects.id })
+        .from(geoObjects)
+        .where(and(inArray(geoObjects.wikidataId, wikidataItems.map((i) => i.id)), isNull(geoObjects.validTo), isNull(geoObjects.mergedIntoId)));
+      for (const row of rows) ids.add(row.id);
+    }
   });
 
-  await buildHierarchy(db, { ...scope, bbox: unionBox([scope.bbox, ...farBoxes]) });
+  // Subdivision, sea, parents, tile links (also in a neighbour's tiles) and fallback names of these objects only (N7 4.4).
+  await db.transaction(async (tx) => {
+    const stored = [...ids].sort();
+    await assignObjects(tx, stored);
+    await ensureFallbackNames(tx, stored);
+  });
   return result;
 }

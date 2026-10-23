@@ -218,6 +218,35 @@ export async function assignParents(db: Db, bbox: Bbox): Promise<{ updated: numb
 }
 
 /**
+ * The hierarchy for exactly the objects `ids` (the stage `gazetteer.land`, N7 4.4): subdivision, sea and parent of each
+ * by the same rules as `assignSubdivisions`, `assignSeas` and `assignParents`, then tile links into every valid tile
+ * the object intersects (added, never removed: other tiles' links stay as they are). No other object is touched.
+ * Returns the updates of each step and the new links.
+ */
+export async function assignObjects(
+  db: Db,
+  ids: string[],
+): Promise<{ subdivisions: number; seas: number; updated: number; links: number }> {
+  if (ids.length === 0) return { subdivisions: 0, seas: 0, updated: 0, links: 0 };
+  const only = sql`c.id in ${ids}`;
+  const subdivisions = await setSubdivisions(db, only);
+  const seas = await setSeas(db, only);
+  let updated = 0;
+  for (const rule of parentRules()) {
+    updated += await setParents(db, rule.types, sql`${only} and ${rule.filter ?? sql`true`}`, rule.parent);
+  }
+  const res = await db.execute(sql`
+    insert into tile_geo_objects (tile_id, geo_object_id)
+    select t.id, o.id
+    from geo_objects o
+    join tiles t on t.bbox && o.geom and ST_Intersects(t.bbox, o.geom)
+    where o.id in ${ids} and t.valid_to is null and o.valid_to is null and o.merged_into_id is null
+      and o.type not in ${UNTILED_TYPES}
+    on conflict do nothing`);
+  return { subdivisions, seas, updated, links: res.rowCount ?? 0 };
+}
+
+/**
  * Sets the parent of the one valid object `objectId` by the same hierarchy rule as `assignParents`, after its
  * subdivision and sea (for an object created outside a gazetteer run, such as a new name from texts). Returns its
  * parent id (null for none, or when the object is not valid).

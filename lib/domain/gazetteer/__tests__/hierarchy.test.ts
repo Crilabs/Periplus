@@ -4,6 +4,7 @@ import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoObjects, landPolygons, subdivisions, tileGeoObjects, type GeoObjectType } from "@/lib/db/schema";
 import {
+  assignObjects,
   assignParentOf,
   assignParents,
   assignSeas,
@@ -343,6 +344,35 @@ describe("assignParentOf", () => {
       expect(await assignParentOf(db, bay)).toBe(regionId);
       expect(await subdivisionOf(db, bay)).toBe(subdivisionId);
       expect(await seaOf(db, bay)).toBe(sea);
+    }));
+});
+
+describe("assignObjects", () => {
+  it("assigns subdivision, sea, parent and tile links of the given objects only; links are added, never rewritten", () =>
+    withRollback(async (db) => {
+      const { regionId, subdivisionId } = await setup(db);
+      const sea = await insert(db, "sea", box(24.0, 34.0, 27.0, 37.0), { origin: "manual" });
+      await db.insert(landPolygons).values({ geom: sql`ST_MakeEnvelope(25.0, 35.0, 25.5, 35.5, 4326)`, datasetVersion: "test" });
+      await ensureSubdivisionTiles(db, subdivisionId);
+      const poi = await insert(db, "poi", point(25.4, 35.4), { category: "food" });
+      const other = await insert(db, "bay", point(25.3, 35.3));
+      const kept = await insert(db, "bay", point(25.1, 35.1));
+      await db.insert(tileGeoObjects).values({ tileId: tileIdFor(25.1, 35.1), geoObjectId: kept });
+
+      const r = await assignObjects(db, [poi]);
+      expect(r).toMatchObject({ subdivisions: 1, seas: 1, links: 1 });
+      expect(await subdivisionOf(db, poi)).toBe(subdivisionId);
+      expect(await seaOf(db, poi)).toBe(sea);
+      expect(await parentOf(db, poi)).toBe(regionId);
+      const links = await db.select({ tileId: tileGeoObjects.tileId, id: tileGeoObjects.geoObjectId }).from(tileGeoObjects);
+      expect(links.filter((l) => l.id === poi).map((l) => l.tileId)).toEqual([tileIdFor(25.4, 35.4)]);
+      // other objects stay as they are, their links too
+      expect(await subdivisionOf(db, other)).toBeNull();
+      expect(await parentOf(db, other)).toBeNull();
+      expect(links.filter((l) => l.id === kept).map((l) => l.tileId)).toEqual([tileIdFor(25.1, 35.1)]);
+      // a rerun adds nothing
+      expect(await assignObjects(db, [poi])).toEqual({ subdivisions: 0, seas: 0, updated: 0, links: 0 });
+      expect(await assignObjects(db, [])).toEqual({ subdivisions: 0, seas: 0, updated: 0, links: 0 });
     }));
 });
 
