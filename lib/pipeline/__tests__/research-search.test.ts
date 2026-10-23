@@ -141,15 +141,23 @@ describe("searchCandidate: bound marina website (N3b)", () => {
       expect(await tx.select().from(researchHits).where(eq(researchHits.placeId, placeId))).toHaveLength(0);
     }));
 
-  it("upgrades a search hit on the same URL to origin place_website", () =>
+  it("upgrades an existing search hit on the same URL to origin place_website (same row)", () =>
     withRollback(async (tx) => {
       const { placeId, objectId } = await seed(tx, "Vathi");
-      await website(tx, placeId, objectId, "https://marina.example/");
       const runId = await insertTestRun(tx);
-      await searchCandidate(tx, placeId, { transport: fakeTransport(["https://marina.example/"]), archive: memoryArchive() }, { db: tx, runId });
-      const pos = (await tx.select().from(researchHits).where(eq(researchHits.placeId, placeId))).filter((h) => h.purpose === "positive" && h.urlNormalized === "https://marina.example/");
-      expect(pos).toHaveLength(1);
-      expect(pos[0]!.origin).toBe("place_website");
+      const [q] = await tx
+        .insert(serpQueries)
+        .values({ keyword: `up ${newId()}`, languageCode: "en", locationCode: 2826, depth: 20, level: "research", scopeId: placeId, rawKey: `k/${newId()}`, fetchedAt: new Date() })
+        .returning({ id: serpQueries.id });
+      await tx.insert(serpResults).values({ serpQueryId: q!.id, rank: 3, url: "https://marina.example/", urlNormalized: "https://marina.example/", domain: "marina.example", title: "t", snippet: "s" });
+      await recordHits(tx, { placeId, geoObjectId: objectId, serpQueryIds: [q!.id], purpose: "positive", runId }, getConfig().research);
+      const [before] = await tx.select().from(researchHits).where(eq(researchHits.placeId, placeId));
+      expect(before!.origin).toBe("serp");
+      await website(tx, placeId, objectId, "https://marina.example/");
+      expect(await recordWebsiteHit(tx, { placeId, geoObjectId: objectId, runId })).toBe(0);
+      const rows = await tx.select().from(researchHits).where(eq(researchHits.placeId, placeId));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ id: before!.id, origin: "place_website", rank: 3 });
     }));
 
   it("records nothing for a place without a bound website", () =>

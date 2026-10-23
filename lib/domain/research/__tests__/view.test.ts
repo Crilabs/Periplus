@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { berthFacts, berthSignals, documents, pageAssessments, places, researchFetches, researchHits, researchRouteStops, researchUnits, serpQueries, serpResults } from "@/lib/db/schema";
+import { berthFacts, placeWebsites, berthSignals, documents, pageAssessments, places, researchFetches, researchHits, researchRouteStops, researchUnits, serpQueries, serpResults } from "@/lib/db/schema";
 import { activeRouteExtractor } from "@/lib/domain/research/assign";
 import { factAttributeLabel, formatFactValue } from "@/lib/domain/facts/labels";
 import { activeExtractor } from "@/lib/domain/research/confirmation";
@@ -46,10 +46,22 @@ async function seedSources(tx: Db, placeId: string, objectId: string, domains: s
 }
 
 describe("researchView", () => {
+  it("labels an own-website hit only while the binding is current; an upgraded row keeps its search keyword", () =>
+    withRollback(async (tx) => {
+      const { placeId, objectId } = await insertPlace(tx, { status: "candidate" });
+      await hit(tx, placeId, objectId, "https://marina.example/", 3, "positive", "Vathi marina");
+      await tx.update(researchHits).set({ origin: "place_website" }).where(eq(researchHits.placeId, placeId));
+      await tx.insert(placeWebsites).values({ placeId, geoObjectId: objectId, url: "https://marina.example/", urlNormalized: "https://marina.example/", origin: "osm", bound: true, createdAt: new Date("2025-01-01") });
+      expect((await researchView(tx, placeId)).rows[0]).toMatchObject({ ownWebsite: true, keyword: "Vathi marina", rank: 3 });
+      await tx.insert(placeWebsites).values({ placeId, geoObjectId: objectId, url: "https://marina.example/", urlNormalized: "https://marina.example/", origin: "osm", bound: false, createdAt: new Date("2026-01-01") });
+      expect((await researchView(tx, placeId)).rows[0]).toMatchObject({ ownWebsite: false, keyword: "Vathi marina", purpose: "positive" });
+    }));
+
   it("lists a hit of the place's own website (no search behind it) as a search-linked row without keyword (N3b)", () =>
     withRollback(async (tx) => {
       const { placeId, objectId } = await insertPlace(tx, { status: "candidate" });
       await tx.insert(researchHits).values({ placeId, geoObjectId: objectId, urlNormalized: "https://marina.example/", domain: "marina.example", rank: 0, purpose: "positive", origin: "place_website" });
+      await tx.insert(placeWebsites).values({ placeId, geoObjectId: objectId, url: "https://marina.example/", urlNormalized: "https://marina.example/", origin: "osm", bound: true });
       const view = await researchView(tx, placeId);
       expect(view.rows).toHaveLength(1);
       expect(view.rows[0]).toMatchObject({ url: "https://marina.example/", link: "search", rank: 0, purpose: "positive", keyword: null, ownWebsite: true });
