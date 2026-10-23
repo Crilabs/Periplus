@@ -2,9 +2,12 @@ name: ci
 
 # Pull requests run on pull_request; push only for main (a PR branch would otherwise run twice).
 on:
+  # Docs-only changes (specs, plans, README) run nothing; prompts under config/ are .md too and still count.
   pull_request:
+    paths-ignore: ["docs/**", "*.md"]
   push:
     branches: [main]
+    paths-ignore: ["docs/**", "*.md"]
 
 # Least privilege by default; only the deploy job may push images.
 permissions:
@@ -14,10 +17,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+# Three independent jobs instead of one long chain: static checks, the unit tests in shards, build plus e2e.
 jobs:
-  check:
+  static:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -27,16 +31,6 @@ jobs:
       - run: npm ci
       - name: Deploy script tests
         run: npm run test:ops
-      - name: Start test services
-        run: |
-          docker compose -f docker/compose.dev.yml up -d --build --wait db-test s3
-          for _ in $(seq 1 30); do
-            if curl -s -o /dev/null http://localhost:8333; then exit 0; fi
-            sleep 2
-          done
-          echo "s3 did not become reachable" >&2
-          docker compose -f docker/compose.dev.yml logs s3
-          exit 1
       - run: npm run lint
       - run: npm run typecheck
       # lib/db/schema and drizzle/ stay in sync: a schema change without its migration makes generate write one.
@@ -48,10 +42,51 @@ jobs:
             git status --porcelain drizzle >&2
             exit 1
           fi
-      # Before the unit tests: the converter tests render pages in Chromium, the PDF tests run pdftotext.
+
+  # Each shard has its own test Postgres, so the shards also do not wait on each other's rows.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Start test services
+        run: bash .github/scripts/start-test-services.sh
+      # The converter tests render pages in Chromium, the PDF tests run pdftotext.
       - run: npx playwright install --with-deps chromium
       - run: sudo apt-get update && sudo apt-get install -y poppler-utils
-      - run: npm test
+      - run: npx vitest run --shard=${{ matrix.shard }}/3
+      - name: Service logs on failure
+        if: failure()
+        run: docker compose -f docker/compose.dev.yml logs --no-color --tail 200
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Start test services
+        run: bash .github/scripts/start-test-services.sh
+      - run: npx playwright install --with-deps chromium
+      # Next's incremental build cache; a hit only speeds the build up, a stale one is ignored by Next.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .next/cache
+          key: next-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: next-${{ hashFiles('package-lock.json') }}-
       - run: npm run build
       # Against the build above (no second build), served standalone like the web image.
       - run: npm run test:e2e
@@ -63,7 +98,7 @@ jobs:
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: check
+    needs: [static, test, e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
