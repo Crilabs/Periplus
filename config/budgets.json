@@ -1,5 +1,5 @@
 {
-  "anthropic": { "dailyEur": 40 },
+  "anthropic": { "dailyEur": 80 },
   "voyage": { "dailyEur": 5 },
   "dataforseo": { "dailyEur": 10 },
   "firecrawl": { "dailyEur": 2 },
