@@ -265,21 +265,36 @@ describe("getRadiusPackage", () => {
       expect(spotIds).not.toContain(EAST.spot);
     }));
 
-  it("a dangling mergedInto or highlightIds reference throws, and no package is stored", { timeout: 60_000 }, () =>
+  it("a merged spot follows its target; a dangling mergedInto or highlightIds reference throws and stores nothing", { timeout: 60_000 }, () =>
     withRollback(async (tx) => {
       const { f, eastId, archive } = await setup(tx, { east: false });
+      const marina = f.places.M.publicId!;
       const far = (p: { lat: number; lon: number }) => ({ ...p, lat: p.lat + 2 });
-      // version 1: the east anchorage (13.5 nm from M) merged into the east marina, moved 2° north (outside 25 nm)
+      // version 1: the east anchorage (13.5 nm from M) merged into the east marina, moved 2° north (outside 25 nm): the
+      // anchorage follows its target out of the package, the build succeeds
       const merged = eastPackage();
       const spots = merged.files["spots.json"].spots;
       const marinaE = spots.find((s) => s.id === EAST.marina)!;
       marinaE.position = far(marinaE.position);
       spots.find((s) => s.id === EAST.spot)!.mergedInto = EAST.marina;
       await storeSubdivisionPackage(tx, archive, { subdivisionId: eastId, pkg: merged, dataVersion: 1 });
-      await expect(tx.transaction((sp) => getRadiusPackage(sp, archive, { marina: f.places.M.publicId!, days: 1, now: NOW }))).rejects.toThrow(
-        new RegExp(`references outside the package: .*${EAST.spot} → ${EAST.marina}`),
+      const v1 = await getRadiusPackage(tx, archive, { marina, days: 1, now: NOW });
+      isRow(v1);
+      const v1Spots = (await readJson<SpotsFile>(archive, v1, "spots.json")).spots.map((s) => s.id);
+      expect(v1Spots).toContain(marina);
+      expect(v1Spots).not.toContain(EAST.spot);
+      expect(v1Spots).not.toContain(EAST.marina);
+
+      // version 2: the anchorage merged into a spot that is in no package
+      const dangling = eastPackage();
+      const ghost = newPublicId("sp");
+      dangling.files["spots.json"].spots.find((s) => s.id === EAST.spot)!.mergedInto = ghost;
+      await storeSubdivisionPackage(tx, archive, { subdivisionId: eastId, pkg: dangling, dataVersion: 2 });
+      await expect(tx.transaction((sp) => getRadiusPackage(sp, archive, { marina, days: 1, now: NOW }))).rejects.toThrow(
+        new RegExp(`references outside the package: .*${EAST.spot} → ${ghost}`),
       );
-      // version 2: the anchorage lists the highlight, which only the far marina selects and which lies far away
+
+      // version 3: the anchorage lists the highlight, which only the far marina selects and which lies far away
       const listed = eastPackage();
       const marina2 = listed.files["spots.json"].spots.find((s) => s.id === EAST.marina)!;
       marina2.position = far(marina2.position);
@@ -287,11 +302,12 @@ describe("getRadiusPackage", () => {
       highlight.spotIds = [EAST.marina];
       highlight.position = far(highlight.position);
       expect(listed.files["spots.json"].spots.find((s) => s.id === EAST.spot)!.highlightIds).toEqual([EAST.highlight]);
-      await storeSubdivisionPackage(tx, archive, { subdivisionId: eastId, pkg: listed, dataVersion: 2 });
-      await expect(tx.transaction((sp) => getRadiusPackage(sp, archive, { marina: f.places.M.publicId!, days: 1, now: NOW }))).rejects.toThrow(
+      await storeSubdivisionPackage(tx, archive, { subdivisionId: eastId, pkg: listed, dataVersion: 3 });
+      await expect(tx.transaction((sp) => getRadiusPackage(sp, archive, { marina, days: 1, now: NOW }))).rejects.toThrow(
         new RegExp(`references outside the package: .*${EAST.spot} → ${EAST.highlight}`),
       );
-      expect(await tx.select().from(radiusPackages).where(eq(radiusPackages.homeMarinaPublicId, f.places.M.publicId!))).toEqual([]);
+      // only the package of version 1 is stored
+      expect((await tx.select().from(radiusPackages).where(eq(radiusPackages.homeMarinaPublicId, marina))).map((r) => r.id)).toEqual([v1.id]);
     }));
 
   it("rejects an anchorage, an unknown spot and an invalid trip length", { timeout: 60_000 }, () =>

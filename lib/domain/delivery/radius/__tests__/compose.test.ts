@@ -142,20 +142,49 @@ describe("composeRadiusPackage", () => {
 
   it("takes a region that only crosses the circle, with its parent chain, and trims its spotIds", () => {
     const out = composeRadiusPackage(input([p1(), p2()]), cfg);
-    expect(ids(regionsOf(out))).toEqual([REGION, RG_EDGE, RG_PARENT, RG_GRANDPARENT].sort());
+    // RG_FAR only as the region of the weather point WP_FAR_REGION
+    expect(ids(regionsOf(out))).toEqual([REGION, RG_EDGE, RG_PARENT, RG_GRANDPARENT, RG_FAR].sort());
     expect(regionsOf(out).find((r) => r.id === RG_EDGE)!.spotIds).toEqual([P2_IN]);
   });
 
   it("pulls in the region of an included spot even if it does not touch the circle", () => {
     const pkg = p2();
+    pkg.weatherPoints.find((w) => w.id === WP_FAR_REGION)!.regionId = null;
+    expect(ids(regionsOf(composeRadiusPackage(input([p1(), pkg]), cfg)))).not.toContain(RG_FAR);
     pkg.spots[0]!.regionId = RG_FAR;
     const out = composeRadiusPackage(input([p1(), pkg]), cfg);
     expect(ids(regionsOf(out))).toContain(RG_FAR);
   });
 
-  it("takes weather points within R + marginNm whose region is included", () => {
-    const out = composeRadiusPackage(input([p1(), p2()]), cfg);
-    expect(ids(out.files["weather-points.json"].points)).toEqual([WEATHER_POINT, WP_MARGIN].sort());
+  it("takes every weather point within R + marginNm and pulls in its region with the parent chain", () => {
+    const pkg = p2();
+    pkg.regions.find((r) => r.id === RG_FAR)!.parentId = RG_GRANDPARENT;
+    const out = composeRadiusPackage(input([p1(), pkg]), cfg);
+    expect(ids(out.files["weather-points.json"].points)).toEqual([WEATHER_POINT, WP_MARGIN, WP_FAR_REGION].sort());
+    expect(ids(regionsOf(out))).toEqual(expect.arrayContaining([RG_FAR, RG_GRANDPARENT]));
+    expectValidFiles(out);
+  });
+
+  it("drops a weather point whose region is in no package, with a warning", () => {
+    const pkg = p2();
+    pkg.regions = pkg.regions.filter((r) => r.id !== RG_FAR);
+    const out = composeRadiusPackage(input([p1(), pkg]), cfg);
+    expect(ids(out.files["weather-points.json"].points)).not.toContain(WP_FAR_REGION);
+    expect(out.warnings).toEqual([`${RG_FAR}: referenced but in no subdivision package`]);
+  });
+
+  it("a merged spot follows its target: inside with its target outside it is dropped, outside with its target inside it is kept", () => {
+    const pkg = p2();
+    const [inside, outside] = pkg.spots as [Spot, Spot];
+    inside.mergedInto = P2_OUT;
+    let out = composeRadiusPackage(input([p1(), pkg]), cfg);
+    expect(ids(out.files["spots.json"].spots)).toEqual([SPOT_A, SPOT_M].sort());
+
+    inside.mergedInto = null;
+    outside.mergedInto = P2_IN;
+    out = composeRadiusPackage(input([p1(), pkg]), cfg);
+    expect(ids(out.files["spots.json"].spots)).toEqual([SPOT_A, SPOT_M, P2_IN, P2_OUT].sort());
+    expect(regionsOf(out).find((r) => r.id === RG_EDGE)!.spotIds).toEqual([P2_IN, P2_OUT]);
   });
 
   it("a region in both packages: once, the higher profileVersion, spotIds the union trimmed to included spots", () => {

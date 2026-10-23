@@ -1,4 +1,4 @@
-import { SCHEMA_VERSION, type Manifest } from "@/contract";
+import { SCHEMA_VERSION, type Manifest, type Spot } from "@/contract";
 import type { DeliveryConfig } from "@/lib/config";
 import { distanceNm } from "../geo";
 import { circleBbox, circlePolygon, regionTouchesCircle, tileTouchesCircle } from "./geometry";
@@ -74,19 +74,22 @@ export function composeRadiusPackage(input: RadiusInput, cfg: DeliveryConfig): C
   const regions = merge(packages, (p) => p.regions, warnings);
   const points = merge(packages, (p) => p.weatherPoints, warnings);
 
-  // spots: position in the circle
-  const keptSpots = [...spots.values()].filter((m) => inCircle(m.value.position));
+  // spots: position in the circle; a merged spot follows its target (kept exactly when the target is kept)
+  const keptSpots = [...spots.values()].filter((m) => inCircle(mergeTarget(spots, m).value.position));
   const spotIn = new Set(keptSpots.map((m) => m.value.id));
   const trim = (ids: string[]) => ids.filter((id) => spotIn.has(id));
 
   // highlights: assigned to an included spot, or in the circle
   const keptHighlights = [...highlights.values()].filter((m) => m.spotIds.some((id) => spotIn.has(id)) || inCircle(m.value.position));
 
-  // regions: touching the circle, every region of an included spot or highlight, and their parent chains
+  // weather points: in the circle plus the coast margin (their regions are pulled in below)
+  const nearPoints = [...points.values()].filter((m) => inCircle(m.value.position, cfg.coast.marginNm));
+
+  // regions: touching the circle, every region of an included spot, highlight or weather point, and their parent chains
   const regionIn = new Set<string>();
   const queue = [
     ...[...regions.values()].filter((m) => regionTouchesCircle(m.value, center, r)).map((m) => m.value.id),
-    ...[...keptSpots, ...keptHighlights].flatMap((m) => (m.value.regionId ? [m.value.regionId] : [])),
+    ...[...keptSpots, ...keptHighlights, ...nearPoints].flatMap((m) => (m.value.regionId ? [m.value.regionId] : [])),
   ];
   for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
     if (regionIn.has(id)) continue;
@@ -100,10 +103,8 @@ export function composeRadiusPackage(input: RadiusInput, cfg: DeliveryConfig): C
   }
   const keptRegions = [...regionIn].map((id) => regions.get(id)!);
 
-  // weather points: in the circle plus the coast margin, region none or included
-  const keptPoints = [...points.values()].filter(
-    (m) => inCircle(m.value.position, cfg.coast.marginNm) && (m.value.regionId === null || regionIn.has(m.value.regionId)),
-  );
+  // a weather point whose region is in no package is left out (the warning above names the region)
+  const keptPoints = nearPoints.filter((m) => m.value.regionId === null || regionIn.has(m.value.regionId));
 
   const envelope = { schemaVersion: SCHEMA_VERSION, scope: { type: "radius", key: input.key }, generatedAt: input.generatedAt } as const;
   return {
@@ -134,6 +135,23 @@ export function composeRadiusPackage(input: RadiusInput, cfg: DeliveryConfig): C
     imageFiles: imagesOf([...keptSpots, ...keptHighlights]),
     warnings,
   };
+}
+
+/**
+ * The spot whose position decides whether `m` is included: `m` itself, or for a merged spot the end of its `mergedInto`
+ * chain. A target in no package (or a cycle) leaves the last spot reached; the reference check then names a dangling
+ * target.
+ */
+function mergeTarget(spots: Map<string, Merged<Spot>>, m: Merged<Spot>): Merged<Spot> {
+  const seen = new Set<string>([m.value.id]);
+  let current = m;
+  while (current.value.mergedInto) {
+    const next = spots.get(current.value.mergedInto);
+    if (!next || seen.has(next.value.id)) break;
+    seen.add(next.value.id);
+    current = next;
+  }
+  return current;
 }
 
 /** The images of the included spots and highlights (`images/<id>-<slot>.jpg`), from the package their version came from. */
