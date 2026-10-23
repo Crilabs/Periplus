@@ -138,3 +138,15 @@ export function countryBlocks([west, south, east, north]: Bbox, blockDeg: number
   }
   return blocks;
 }
+
+/** The four quadrants of `bbox`: south-west, south-east, north-west, north-east. */
+export function quadrants([west, south, east, north]: Bbox): Bbox[] {
+  const x = (west + east) / 2;
+  const y = (south + north) / 2;
+  return [
+    [west, south, x, y],
+    [x, south, east, y],
+    [west, y, x, north],
+    [x, y, east, north],
+  ];
+}

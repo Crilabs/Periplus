@@ -26,6 +26,7 @@ const cfg = (): typeof config.gazetteer.overpass => ({
   retries: 4,
   retryDelaySeconds: 60,
   blockDeg: 2,
+  minBlockDeg: 0.5,
 });
 
 describe("buildGazetteerQuery", () => {

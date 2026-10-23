@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { makeResponse, type Transport } from "@/lib/adapters/http";
+import { RetryableHttpError, makeResponse, type Transport } from "@/lib/adapters/http";
 import { fixtureTransport } from "@/lib/adapters/http-fixtures";
 import type { Db } from "@/lib/db/client";
 import { subdivisions } from "@/lib/db/schema";
@@ -57,7 +57,7 @@ describe("importCoarseFeatures", () => {
         VALUES (gen_random_uuid(), 'sea', 'marine_regions', ${JSON.stringify({ mrgid: String(getConfig().subdivisions.mediterranean.marineRegionsMrgids[0]) })}::jsonb,
                 ST_Multi(ST_GeomFromText('POLYGON((13.5 35.0, 15.5 35.0, 15.5 36.5, 13.5 36.5, 13.5 35.0))', 4326))) RETURNING id`);
       const result = await importCoarseFeatures(tx, "MT", { transport: fixtureTransport(), overpass });
-      expect(result).toEqual({ islands: 3, archipelagos: 1, gulfs: 0, towns: 20 });
+      expect(result).toEqual({ islands: 3, archipelagos: 1, gulfs: 0, towns: 20, splits: 0, blocksSkipped: 0 });
 
       const features = [["Malta", "island"], ["Għawdex", "island"], ["Kemmuna", "island"], ["Il-Gżejjer Maltin", "archipelago"], ["Valletta", "settlement"]] as const;
       for (const [name, type] of features) {
@@ -90,28 +90,95 @@ describe("importCoarseFeatures", () => {
     });
   }, 120_000);
 
-  it("asks once per kind and block, and counts an element that lies in two blocks once", async () => {
-    const elements = [{ type: "way", id: 9_100_010, tags: { place: "island", name: "Border Island" }, geometry: ring(14.2, 35.9, 14.4, 36.0) }];
+  /**
+   * Answers every query with `elements`, except those `fails` picks (HTTP 502). Records the decoded bodies. With
+   * `retries: 0` a 502 fails the part at once; blocks of 0.5 degrees cut the 1.1 x 0.5 MT polygon into 3 x 1.
+   */
+  const splitting = (fails: (ql: string) => boolean, elements: unknown[] = []) => {
+    const bodies: string[] = [];
+    const transport: Transport = async (req) => {
+      const ql = decodeURIComponent(String(req.body));
+      bodies.push(ql);
+      return fails(ql) ? makeResponse(502, new TextEncoder().encode("busy")) : makeResponse(200, new TextEncoder().encode(JSON.stringify({ elements })));
+    };
+    return { bodies, transport };
+  };
+  const adaptive = { ...overpass, retries: 0, blockDeg: 0.5, minBlockDeg: 0.25 };
+  const isIslands = (ql: string) => ql.includes("island");
+  const boxed = (ql: string) => ql.includes("(area.c)(");
+
+  it("asks each kind once for the whole country when all answer (B15)", async () => {
+    const { bodies, transport } = splitting(() => false);
+    await withRollback(async (tx) => {
+      await setUpMalta(tx);
+      const result = await importCoarseFeatures(tx, "MT", { transport, overpass: adaptive });
+      expect(bodies).toHaveLength(3);
+      expect(bodies.some(boxed)).toBe(false);
+      expect(result).toMatchObject({ splits: 0, blocksSkipped: 0 });
+    });
+  }, 120_000);
+
+  it("asks a kind that fails for the whole country again per block, the other kinds not", async () => {
+    const { bodies, transport } = splitting((ql) => isIslands(ql) && !boxed(ql));
+    await withRollback(async (tx) => {
+      await setUpMalta(tx);
+      const result = await importCoarseFeatures(tx, "MT", { transport, overpass: adaptive });
+      expect(bodies.filter((ql) => isIslands(ql) && boxed(ql))).toHaveLength(3);
+      expect(bodies.filter((ql) => !isIslands(ql))).toHaveLength(2);
+      expect(bodies.filter((ql) => !isIslands(ql)).some(boxed)).toBe(false);
+      expect(result).toMatchObject({ splits: 1 });
+    });
+  }, 120_000);
+
+  it("splits a block that keeps failing into its quadrants", async () => {
+    const { bodies, transport } = splitting((ql) => isIslands(ql) && (!boxed(ql) || ql.includes("(area.c)(35.7,14,36.2,14.5)")));
+    await withRollback(async (tx) => {
+      await setUpMalta(tx);
+      const result = await importCoarseFeatures(tx, "MT", { transport, overpass: adaptive });
+      expect(bodies.filter(isIslands)).toHaveLength(1 + 3 + 4);
+      expect(bodies.some((ql) => ql.includes("(area.c)(35.7,14,35.95,14.25)"))).toBe(true);
+      expect(bodies.some((ql) => ql.includes("(area.c)(35.95,14.25,36.2,14.5)"))).toBe(true);
+      expect(result).toMatchObject({ splits: 2 });
+    });
+  }, 120_000);
+
+  it("fails the country, naming the part, when a block below overpass.minBlockDeg still fails", async () => {
+    const { transport } = splitting(isIslands);
+    await withRollback(async (tx) => {
+      await setUpMalta(tx);
+      const error: unknown = await importCoarseFeatures(tx, "MT", { transport, overpass: adaptive }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(RetryableHttpError);
+      expect((error as Error).message).toMatch(/overpass part islands#b0\.q0 failed and is not split below overpass\.minBlockDeg/);
+    });
+  }, 120_000);
+
+  it("never splits an error that is not retryable", async () => {
     const bodies: string[] = [];
     const transport: Transport = async (req) => {
       bodies.push(decodeURIComponent(String(req.body)));
-      return makeResponse(200, new TextEncoder().encode(JSON.stringify({ elements })));
+      return makeResponse(400, new TextEncoder().encode("bad query"));
     };
     await withRollback(async (tx) => {
       await setUpMalta(tx);
-      // The synthetic MT polygon is 1.1 x 0.5 degrees: blocks of 0.5 degrees make 3 x 1.
-      const result = await importCoarseFeatures(tx, "MT", { transport, overpass: { ...overpass, blockDeg: 0.5 } });
-      expect(bodies).toHaveLength(3 * 3);
-      expect(result).toEqual({ islands: 1, archipelagos: 0, gulfs: 0, towns: 0 });
+      const error: unknown = await importCoarseFeatures(tx, "MT", { transport, overpass: adaptive }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(RetryableHttpError);
+      expect(bodies).toHaveLength(1);
+    });
+  }, 120_000);
+
+  it("counts an element that lies in two blocks once", async () => {
+    const elements = [{ type: "way", id: 9_100_010, tags: { place: "island", name: "Border Island" }, geometry: ring(14.4, 35.9, 14.6, 36.0) }];
+    const { transport } = splitting((ql) => isIslands(ql) && !boxed(ql), elements);
+    await withRollback(async (tx) => {
+      await setUpMalta(tx);
+      const result = await importCoarseFeatures(tx, "MT", { transport, overpass: adaptive });
+      expect(result).toEqual({ islands: 1, archipelagos: 0, gulfs: 0, towns: 0, splits: 1, blocksSkipped: 0 });
     });
   }, 120_000);
 
   it("asks no block that misses the country polygon", async () => {
-    const bodies: string[] = [];
-    const transport: Transport = async (req) => {
-      bodies.push(decodeURIComponent(String(req.body)));
-      return makeResponse(200, new TextEncoder().encode(JSON.stringify({ elements: [] })));
-    };
+    const { bodies, transport } = splitting((ql) => isIslands(ql) && !boxed(ql));
     await withRollback(async (tx) => {
       await setUpMalta(tx);
       // A far-off second piece widens the box to 14.0–17.0: of its six 0.5-degree blocks, 15.5–16.0 and 16.0–16.5 lie
@@ -119,9 +186,20 @@ describe("importCoarseFeatures", () => {
       await tx.execute(sql`INSERT INTO geo_objects (id, type, origin, admin_level, tags, geom)
         VALUES (gen_random_uuid(), 'country', 'osm', 2, '{"country":"MT","ISO3166-1":"MT"}'::jsonb,
                 ST_Multi(ST_GeomFromText('POLYGON((16.8 35.8, 17.0 35.8, 17.0 35.9, 16.8 35.9, 16.8 35.8))', 4326)))`);
-      await importCoarseFeatures(tx, "MT", { transport, overpass: { ...overpass, blockDeg: 0.5 } });
-      expect(bodies).toHaveLength(3 * 4);
+      const result = await importCoarseFeatures(tx, "MT", { transport, overpass: adaptive });
+      expect(bodies.filter(boxed)).toHaveLength(4);
       expect(bodies.some((b) => b.includes(",15.5,") || b.includes(",16,"))).toBe(false);
+      expect(result).toMatchObject({ splits: 1, blocksSkipped: 2 });
+    });
+  }, 120_000);
+
+  it("fails loudly when the country object is no polygon", async () => {
+    const { bodies, transport } = splitting(() => false);
+    await withRollback(async (tx) => {
+      await tx.execute(sql`INSERT INTO geo_objects (id, type, origin, admin_level, tags, geom)
+        VALUES (gen_random_uuid(), 'country', 'osm', 2, '{"country":"MT","ISO3166-1":"MT"}'::jsonb, ST_SetSRID(ST_MakePoint(14.5, 35.9), 4326))`);
+      await expect(importCoarseFeatures(tx, "MT", { transport, overpass: adaptive })).rejects.toThrow(/country object is no polygon \(ST_Point\)/);
+      expect(bodies).toHaveLength(0);
     });
   }, 120_000);
 
@@ -138,7 +216,7 @@ describe("importCoarseFeatures", () => {
     const transport: Transport = async () => makeResponse(200, new TextEncoder().encode(JSON.stringify({ elements })));
     await withRollback(async (tx) => {
       await setUpMalta(tx);
-      expect(await importCoarseFeatures(tx, "MT", { transport, overpass })).toEqual({ islands: 1, archipelagos: 0, gulfs: 1, towns: 0 });
+      expect(await importCoarseFeatures(tx, "MT", { transport, overpass })).toEqual({ islands: 1, archipelagos: 0, gulfs: 1, towns: 0, splits: 0, blocksSkipped: 0 });
       expect(await malta(tx, "Great Test Bay")).toMatchObject([{ type: "bay" }]);
       expect(await malta(tx, "Test Island")).toMatchObject([{ type: "island" }]);
       for (const n of ["Tiny Test Bay", "Test Rock", "Inland Test Town"]) expect(await malta(tx, n), n).toHaveLength(0);
@@ -159,7 +237,7 @@ describe("importCoarseFeatures", () => {
     const transport: Transport = async () => makeResponse(200, new TextEncoder().encode(JSON.stringify({ elements })));
     await withRollback(async (tx) => {
       await setUpMalta(tx);
-      expect(await importCoarseFeatures(tx, "MT", { transport, overpass: limited })).toEqual({ islands: 1, archipelagos: 0, gulfs: 0, towns: 0 });
+      expect(await importCoarseFeatures(tx, "MT", { transport, overpass: limited })).toEqual({ islands: 1, archipelagos: 0, gulfs: 0, towns: 0, splits: 0, blocksSkipped: 0 });
       expect(await malta(tx, "Huge Test Archipelago")).toHaveLength(0);
     });
   }, 120_000);

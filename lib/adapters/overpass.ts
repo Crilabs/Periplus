@@ -138,40 +138,40 @@ export function buildBoundaryQueries(country: string, levels: number[], timeoutS
   ];
 }
 
+/** The kinds the coarse feature import asks Overpass for, one query each (B15). */
+export const COARSE_KINDS = ["islands", "bays", "towns"] as const;
+export type CoarseKind = (typeof COARSE_KINDS)[number];
+
 /**
- * The coarse feature queries of one country as parts (B15), named `<kind>#<block index>`: per kind and per block the
- * query inside the country's `admin_level=2` area and the block's box, with full geometry. `islands`: islands and
+ * The coarse feature query of one kind for one country (B15): inside the country's `admin_level=2` area and, when
+ * given, `box` (a block of a part that failed for the whole country), with full geometry. `islands`: islands and
  * archipelagos; `bays`: named bays (the caller keeps the large ones as gulfs); `towns`: the nodes of `cfg.placeTypes`.
- * One query for a whole large country overloaded the public Overpass server (HTTP 502). `country` is an ISO 3166-1
- * alpha-2 code.
+ * One query for all kinds of a large country overloaded the public Overpass server (HTTP 502). `country` is an
+ * ISO 3166-1 alpha-2 code.
  */
-export function buildCoarseFeatureQueries(
+export function buildCoarseKindQuery(
   country: string,
   cfg: GazetteerConfig["coarse"],
+  kind: CoarseKind,
   timeoutSeconds: number,
-  blocks: Bbox[],
-): OverpassPart[] {
-  const cc = qlString(country);
+  box?: Bbox,
+): string {
   const places = cfg.placeTypes.map((t) => qlString(regexLiteral(t))).join("|");
-  const kinds: Array<[string, string[]]> = [
-    ["islands", ['way[place~"^(island|archipelago)$"]', 'relation[place~"^(island|archipelago)$"]']],
-    ["bays", ["way[natural=bay][name]", "relation[natural=bay][name]"]],
-    ["towns", [`node[place~"^(${places})$"]`]],
-  ];
-  return kinds.flatMap(([kind, statements]) =>
-    blocks.map(([west, south, east, north], index) => ({
-      part: `${kind}#${index}`,
-      ql: [
-        `[out:json][timeout:${timeoutSeconds}];`,
-        `area["ISO3166-1"="${cc}"][admin_level=2]->.c;`,
-        "(",
-        ...statements.map((st) => `  ${st}(area.c)(${south},${west},${north},${east});`),
-        ");",
-        "out geom;",
-        "",
-      ].join("\n"),
-    })),
-  );
+  const statements = {
+    islands: ['way[place~"^(island|archipelago)$"]', 'relation[place~"^(island|archipelago)$"]'],
+    bays: ["way[natural=bay][name]", "relation[natural=bay][name]"],
+    towns: [`node[place~"^(${places})$"]`],
+  }[kind];
+  const filter = box ? `(area.c)(${box[1]},${box[0]},${box[3]},${box[2]})` : "(area.c)";
+  return [
+    `[out:json][timeout:${timeoutSeconds}];`,
+    `area["ISO3166-1"="${qlString(country)}"][admin_level=2]->.c;`,
+    "(",
+    ...statements.map((st) => `  ${st}${filter};`),
+    ");",
+    "out geom;",
+    "",
+  ].join("\n");
 }
 
 /** Overpass QL for single relations by OSM id (the `extra` entries of the subdivision config), full geometry. */

@@ -1,29 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { buildCoarseFeatureQueries } from "@/lib/adapters/overpass";
+import { buildCoarseKindQuery, COARSE_KINDS } from "@/lib/adapters/overpass";
 import { loadConfig } from "@/lib/config";
 
 const { coarse } = loadConfig().gazetteer;
 
-describe("buildCoarseFeatureQueries", () => {
-  it("one query per kind and block inside the country area and the block's box (B15)", () => {
-    const parts = buildCoarseFeatureQueries("MT", coarse, 180, [[14, 35, 15, 36], [15, 35, 16, 36]]);
-    expect(parts.map((p) => p.part)).toEqual(["islands#0", "islands#1", "bays#0", "bays#1", "towns#0", "towns#1"]);
-    for (const { ql } of parts) {
+describe("buildCoarseKindQuery", () => {
+  it("one query per kind inside the country area (B15)", () => {
+    expect(COARSE_KINDS).toEqual(["islands", "bays", "towns"]);
+    for (const kind of COARSE_KINDS) {
+      const ql = buildCoarseKindQuery("MT", coarse, kind, 180);
       expect(ql.startsWith("[out:json][timeout:180];")).toBe(true);
       expect(ql).toContain('area["ISO3166-1"="MT"][admin_level=2]->.c;');
       expect(ql.trimEnd().endsWith("out geom;")).toBe(true);
     }
-    expect(parts[1]!.ql).toContain('way[place~"^(island|archipelago)$"](area.c)(35,15,36,16);');
-    expect(parts[1]!.ql).toContain('relation[place~"^(island|archipelago)$"](area.c)(35,15,36,16);');
-    expect(parts[1]!.ql).not.toContain("natural=bay");
-    expect(parts[2]!.ql).toContain("way[natural=bay][name](area.c)(35,14,36,15);");
-    expect(parts[2]!.ql).toContain("relation[natural=bay][name](area.c)(35,14,36,15);");
-    expect(parts[4]!.ql).toContain('node[place~"^(city|town)$"](area.c)(35,14,36,15);');
-    expect(parts[4]!.ql).not.toContain("island");
+    const islands = buildCoarseKindQuery("MT", coarse, "islands", 180);
+    expect(islands).toContain('way[place~"^(island|archipelago)$"](area.c);');
+    expect(islands).toContain('relation[place~"^(island|archipelago)$"](area.c);');
+    expect(islands).not.toContain("natural=bay");
+    expect(buildCoarseKindQuery("MT", coarse, "bays", 180)).toContain("relation[natural=bay][name](area.c);");
+    const towns = buildCoarseKindQuery("MT", coarse, "towns", 180);
+    expect(towns).toContain('node[place~"^(city|town)$"](area.c);');
+    expect(towns).not.toContain("island");
+  });
+
+  it("limits a block to its box (south, west, north, east)", () => {
+    const ql = buildCoarseKindQuery("MT", coarse, "bays", 180, [14, 35, 15, 36]);
+    expect(ql).toContain("way[natural=bay][name](area.c)(35,14,36,15);");
+    expect(ql).toContain("relation[natural=bay][name](area.c)(35,14,36,15);");
   });
 
   it("takes the town place values from the configuration", () => {
-    const parts = buildCoarseFeatureQueries("GR", { ...coarse, placeTypes: ["city"] }, 60, [[20, 36, 22, 38]]);
-    expect(parts.find((p) => p.part === "towns#0")!.ql).toContain('node[place~"^(city)$"](area.c)(36,20,38,22);');
+    expect(buildCoarseKindQuery("GR", { ...coarse, placeTypes: ["city"] }, "towns", 60)).toContain('node[place~"^(city)$"](area.c);');
   });
 });

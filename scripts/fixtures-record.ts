@@ -13,7 +13,7 @@ import { fetchTransport, makeResponse, RetryableHttpError, type Transport } from
 import { fixtureTransport, recordingTransport } from "../lib/adapters/http-fixtures";
 import { fetchSeas } from "../lib/adapters/marine-regions";
 import { searchNominatim } from "../lib/adapters/nominatim";
-import { buildBoundaryQueries, buildCoarseFeatureQueries, buildRelationQuery, overpassQuery, type OverpassPart } from "../lib/adapters/overpass";
+import { buildBoundaryQueries, buildCoarseKindQuery, buildRelationQuery, COARSE_KINDS, overpassQuery, type OverpassPart } from "../lib/adapters/overpass";
 import { demTileNames, fetchDemTile } from "../lib/adapters/copernicus-dem";
 import { fetchWmsImage, wmsGrid } from "../lib/adapters/wms";
 import { runPdftotext } from "../lib/adapters/pdf";
@@ -42,7 +42,7 @@ import { gazetteerScope } from "../lib/domain/gazetteer/scope";
 import { ensureSubdivisionTiles } from "../lib/domain/gazetteer/tiles-ensure";
 import { subdivisionByKey } from "../lib/domain/subdivisions/store";
 import { AEGINA_WEST_BOX, AEGINA_WEST_KEY, insertAeginaWest } from "../test/fixtures/subdivisions/aegina-west";
-import { bufferBbox, countryBlocks, importLandPolygons } from "../lib/domain/gazetteer/land";
+import { bufferBbox, importLandPolygons } from "../lib/domain/gazetteer/land";
 import { createRun } from "../lib/domain/runs";
 import { ensureWhitelistSources, getSource, sourceIdByDomain } from "../lib/domain/sources/store";
 import { parseTileId, TILE_SIZE, type Bbox } from "../lib/domain/tiles";
@@ -432,18 +432,11 @@ async function recordImagery(lon: number, lat: number): Promise<void> {
 }
 
 /**
- * The box the coarse feature parts of a country are recorded for, where a test does not use the country relation's
- * bounds: `gazetteer-coarse.test.ts` stores a synthetic MT polygon, whose box covers all of Malta's land.
- */
-const COARSE_FEATURE_BOXES: Record<string, Bbox> = { MT: [14.0, 35.7, 15.1, 36.2] };
-
-/**
  * Records the coarse boundary fixtures of spec 14, part by part as `importCoarse` and `importCoarseFeatures` ask
  * (B15): per country the boundary parts (the country relation, or the configured `countryRelation`, and one query per
- * configured level), the `extra` relations of that country, the coarse feature parts (islands, bays, towns) per
- * `overpass.blockDeg` block of the country relation's bounds (or `COARSE_FEATURE_BOXES`; unlike the pipeline, blocks
- * outside the country polygon are recorded too), and the Marine Regions IHO seas of `mediterranean.marineRegionsMrgids`.
- * Calls are booked in the `*_scratch` database of `DATABASE_URL`.
+ * configured level), the `extra` relations of that country, one coarse feature query per kind (islands, bays, towns)
+ * for the whole country (the blocks a failing kind is split into are not recorded), and the Marine Regions IHO seas of
+ * `mediterranean.marineRegionsMrgids`. Calls are booked in the `*_scratch` database of `DATABASE_URL`.
  */
 async function recordCoarse(countries: string[]): Promise<void> {
   const url = assertScratchUrl(process.env.DATABASE_URL);
@@ -463,18 +456,13 @@ async function recordCoarse(countries: string[]): Promise<void> {
       if (entry.countryRelation) parts.push({ part: "country-relation", ql: buildRelationQuery([entry.countryRelation], timeout) });
       const extra = subdivisions.extra.filter((e) => e.country === country).map((e) => e.osmRelationId);
       if (extra.length > 0) parts.push({ part: "extra", ql: buildRelationQuery(extra, timeout) });
-      let bounds: Bbox | undefined;
       for (const { part, ql } of parts) {
         const { elements } = await ask(`${country} ${part}`, ql);
         out(`boundaries ${country} ${part}: ${elements.length} relations`);
-        const own = part === "country" || part === "country-relation" ? elements[0]?.bounds : undefined;
-        if (own) bounds = [own.minlon, own.minlat, own.maxlon, own.maxlat];
       }
-      const box = COARSE_FEATURE_BOXES[country] ?? bounds;
-      if (!box) throw new Error(`no bounds for country ${country}`);
-      for (const { part, ql } of buildCoarseFeatureQueries(country, gazetteer.coarse, timeout, countryBlocks(box, gazetteer.overpass.blockDeg))) {
-        const { elements } = await ask(`${country} ${part}`, ql);
-        out(`features ${country} ${part}: ${elements.length} elements`);
+      for (const kind of COARSE_KINDS) {
+        const { elements } = await ask(`${country} ${kind}`, buildCoarseKindQuery(country, gazetteer.coarse, kind, timeout));
+        out(`features ${country} ${kind}: ${elements.length} elements`);
       }
     }
     const mrgids = subdivisions.mediterranean.marineRegionsMrgids;

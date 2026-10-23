@@ -1,10 +1,11 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
-import type { Transport } from "@/lib/adapters/http";
+import { RetryableHttpError, type Transport } from "@/lib/adapters/http";
 import { fetchSeas } from "@/lib/adapters/marine-regions";
 import {
   buildBoundaryQueries,
-  buildCoarseFeatureQueries,
+  buildCoarseKindQuery,
   buildRelationQuery,
+  COARSE_KINDS,
   overpassQueryRetrying,
   type OverpassElement,
   type OverpassPart,
@@ -18,7 +19,7 @@ import { classifyOsm, osmNames } from "@/lib/domain/gazetteer/osm-classify";
 import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
 import { createLogger } from "@/lib/logger";
 import type { Bbox } from "@/lib/domain/tiles";
-import { countryBlocks, landCoverage } from "@/lib/domain/gazetteer/land";
+import { countryBlocks, landCoverage, quadrants } from "@/lib/domain/gazetteer/land";
 import { elementGeometry, keptTags, nearCoast, relationPoints } from "./osm";
 
 export const COARSE_STAGE = "gazetteer.coarse";
@@ -257,7 +258,7 @@ export async function countryBbox(db: Db, country: string): Promise<Bbox | null>
  * nothing (the queries are limited to the country area), but a scattered country spans a huge box: France with its
  * overseas regions, Spain with the Canaries (B15).
  */
-async function blocksInCountry(db: Db, country: string, blocks: Bbox[]): Promise<Bbox[]> {
+async function blocksInCountry(db: Db, country: string, blocks: Bbox[]): Promise<Array<{ index: number; box: Bbox }>> {
   if (blocks.length === 0) return [];
   const envelopes = sql.join(
     blocks.map(([w, s, e, n], i) => sql`(${i}::int, ST_MakeEnvelope(${w}::float8, ${s}::float8, ${e}::float8, ${n}::float8, 4326))`),
@@ -268,7 +269,16 @@ async function blocksInCountry(db: Db, country: string, blocks: Bbox[]): Promise
     WHERE EXISTS (SELECT 1 FROM geo_objects g
                   WHERE g.type = 'country' AND g.valid_to IS NULL AND g.tags->>'country' = ${country} AND ST_Intersects(g.geom, b.env))
     ORDER BY b.i`);
-  return rows.map((r) => blocks[r.i]!);
+  return rows.map((r) => ({ index: r.i, box: blocks[r.i]! }));
+}
+
+/** The geometry types of the valid country objects of `country` that are no (multi)polygon. */
+async function nonAreaCountryTypes(db: Db, country: string): Promise<string[]> {
+  const { rows } = await db.execute<{ t: string }>(sql`
+    SELECT DISTINCT ST_GeometryType(geom) AS t FROM geo_objects
+    WHERE type = 'country' AND valid_to IS NULL AND tags->>'country' = ${country}
+      AND ST_GeometryType(geom) NOT IN ('ST_Polygon', 'ST_MultiPolygon')`);
+  return rows.map((r) => r.t);
 }
 
 /**
@@ -278,30 +288,67 @@ async function blocksInCountry(db: Db, country: string, blocks: Bbox[]): Promise
  * the gazetteer store with the fine gazetteer's classifier, so a feature the fine run imported is updated, not
  * duplicated. `deps.overpass` replaces the configured Overpass settings (tests lift the rate limit). Subdivision, sea
  * and parent are assigned later, by the stage `subdivisions.assign` after `subdivisions.build` (`assignCoarse`): here
- * neither the subdivisions nor, in a first run, the seas exist yet (B3, B14). Returns the stored counts.
+ * neither the subdivisions nor, in a first run, the seas exist yet (B3, B14). Overpass is asked once per kind for
+ * the whole country; only a kind that keeps failing is asked again per block (B15). Throws when the country object
+ * is no (multi)polygon. Returns the stored counts, the number of splits and of blocks skipped outside the country.
  */
 export async function importCoarseFeatures(
   db: Db,
   country: string,
   deps: Deps & { overpass?: GazetteerConfig["overpass"] },
-): Promise<{ islands: number; archipelagos: number; gulfs: number; towns: number }> {
+): Promise<{ islands: number; archipelagos: number; gulfs: number; towns: number; splits: number; blocksSkipped: number }> {
   const { gazetteer, categories } = getConfig();
   const cfg = gazetteer.coarse;
   countryConfig(country);
   const bbox = await countryBbox(db, country);
   if (!bbox) throw new Error(`gazetteer.coarse ${country}: no country object – run the boundary import first`);
+  const nonArea = await nonAreaCountryTypes(db, country);
+  if (nonArea.length > 0) {
+    throw new Error(`gazetteer.coarse ${country}: the country object is no polygon (${nonArea.join(", ")}) – its blocks would be degenerate; repair the boundary import first`);
+  }
   const ctx = { db, runId: deps.runId, stage: COARSE_STAGE };
   const date = (deps.now ?? new Date()).toISOString().slice(0, 10);
   const overpassCfg = deps.overpass ?? gazetteer.overpass;
-  const blocks = await blocksInCountry(db, country, countryBlocks(bbox, overpassCfg.blockDeg));
-  const parts = buildCoarseFeatureQueries(country, cfg, gazetteer.overpass.timeoutSeconds, blocks);
-  // An element on a block border comes in several answers; the loop below stores each osm_id once.
+  const timeout = overpassCfg.timeoutSeconds;
   const elements: OverpassElement[] = [];
-  for (const { part, ql } of parts) {
-    const answer = await overpassQueryRetrying(deps.transport, ql, ctx, overpassCfg, { part: `${country} ${part}`, sleep: deps.sleep });
-    await deps.archive?.put(`datasets/overpass/features/${country}/${date}-${part}.json`, answer.raw, "application/json");
-    elements.push(...answer.elements);
-  }
+  const stats = { splits: 0, blocksSkipped: 0 };
+
+  /** The blocks of `boxes` that meet the country polygon; the others are counted and logged. */
+  const inCountry = async (part: string, boxes: Bbox[]) => {
+    const kept = await blocksInCountry(db, country, boxes);
+    stats.blocksSkipped += boxes.length - kept.length;
+    getLog().info({ country, part, blocks: boxes.length, asked: kept.length }, "coarse blocks filtered by the country polygon");
+    return kept;
+  };
+  /**
+   * Asks `part` for `box` (none = the whole country). A part that still fails retryably after its retries is asked
+   * again per block: the whole country per `blockDeg` block, a block per quadrant, down to `minBlockDeg` (B15).
+   */
+  const ask = async (kind: (typeof COARSE_KINDS)[number], part: string, box: Bbox | undefined): Promise<void> => {
+    const ql = buildCoarseKindQuery(country, cfg, kind, timeout, box);
+    try {
+      const answer = await overpassQueryRetrying(deps.transport, ql, ctx, overpassCfg, { part: `${country} ${part}`, sleep: deps.sleep });
+      await deps.archive?.put(`datasets/overpass/features/${country}/${date}-${part}.json`, answer.raw, "application/json");
+      elements.push(...answer.elements);
+      return;
+    } catch (error) {
+      if (!(error instanceof RetryableHttpError)) throw error;
+      if (box && Math.max(box[2] - box[0], box[3] - box[1]) / 2 < overpassCfg.minBlockDeg) {
+        throw new RetryableHttpError(
+          `gazetteer.coarse ${country}: overpass part ${part} failed and is not split below overpass.minBlockDeg (${overpassCfg.minBlockDeg}°): ${error.message}`,
+          error.status,
+          { cause: error },
+        );
+      }
+      const children = await inCountry(part, box ? quadrants(box) : countryBlocks(bbox, overpassCfg.blockDeg));
+      stats.splits++;
+      getLog().warn({ country, part, level: box ? "quadrant" : "block", children: children.length }, "split failed coarse Overpass part");
+      for (const { index, box: child } of children) await ask(kind, box ? `${part}.q${index}` : `${part}#b${index}`, child);
+    }
+  };
+  // Each kind for the whole country first; an element on a block border comes in several answers, the loop below
+  // stores each osm_id once.
+  for (const kind of COARSE_KINDS) await ask(kind, kind, undefined);
 
   const result = await db.transaction(async (tx) => {
     const counts = { islands: 0, archipelagos: 0, gulfs: 0, towns: 0 };
@@ -349,5 +396,5 @@ export async function importCoarseFeatures(
     }
     return counts;
   });
-  return result;
+  return { ...result, ...stats };
 }

@@ -317,8 +317,12 @@ export const gazetteerSchema = z.strictObject({
     /** Repeats of a part that failed retryably (429, 502, 504, timeout); the wait doubles per attempt (B15). */
     retries: z.number().int().min(0),
     retryDelaySeconds: z.number().positive(),
-    /** Edge length in degrees of the blocks the coarse feature queries of a country are split into (B15). */
+    /**
+     * Edge length in degrees of the blocks a coarse feature query is split into when it fails for the whole country
+     * (B15); a block that fails is split into quadrants down to `minBlockDeg`.
+     */
     blockDeg: z.number().positive(),
+    minBlockDeg: z.number().positive(),
   }),
   /** Marine Regions WFS (IHO sea areas, spec 14). */
   marineRegions: z.strictObject({
