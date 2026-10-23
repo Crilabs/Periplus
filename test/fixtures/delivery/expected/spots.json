@@ -1,7 +1,10 @@
 {
-  "schemaVersion": "2.3",
-  "subdivision": "sd_01J9ZD00000000000000000001",
-  "dataVersion": 1,
+  "schemaVersion": "3.0",
+  "scope": {
+    "type": "subdivision",
+    "id": "sd_01J9ZD00000000000000000001",
+    "dataVersion": 1
+  },
   "generatedAt": "2040-06-01T08:00:00.000Z",
   "spots": [
     {

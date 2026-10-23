@@ -7,6 +7,7 @@ import { CHECK_LABELS, DELIVERY_STATUS_LABELS, runScopeError } from "../_compone
 import {
   Badge,
   Button,
+  ButtonLink,
   cx,
   EmptyState,
   FilterChips,
@@ -58,6 +59,7 @@ export default async function Page({ searchParams }: PageProps<"/deliveries">) {
     <>
       <PageHeader
         title="Lieferungen"
+        actions={<ButtonLink href="/deliveries/radius">Umkreis-Paket</ButtonLink>}
         description="Je Landesteil ein Paket nach dem Liefervertrag: bauen, den Validierungsbericht prüfen, Dateien herunterladen. Ein Paket enthält, was im Landesteil bisher bearbeitet ist. Nur gültige Pakete gehen über die API hinaus; abgelehnte bleiben zur Diagnose gespeichert."
       />
       {error && (

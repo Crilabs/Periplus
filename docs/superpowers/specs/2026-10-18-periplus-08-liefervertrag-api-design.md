@@ -2,6 +2,8 @@
 
 Stand: 18.10.2026 · Gehört zu: `2026-10-18-periplus-design.md` · Meilensteine: M6 (Paket, Profile, Changes), M8 (voller Endpunktsatz, Meldungen, Partner) · Quell-Spec: Teil A „Schnittstelle zur Törn-App“; Teil B vollständig
 
+> **Stand ab Vertrag 3.0:** Die Liefer-API liegt unter `/api/v3` (`/api/v2` entfällt); Manifest und Dateikopf tragen einen `scope` (Landesteil oder Umkreis um eine Heimatmarina), dazu kommen `/radius/package`, `/radius/changes` und `/home-marinas`. Beschrieben in `2026-10-23-periplus-18-umkreis-lieferung-design.md`; die Angaben zu Version und Pfaden unten gelten, soweit dort nicht geändert.
+
 ## Zweck und Verhältnis zu Teil B
 
 Teil B der Quell-Spec ist die fachliche Grundlage dieses Vertrags: Lieferprinzip mit vier Regeln, Paket je Revier, Felder und Wertebereiche von Spot, Highlight und Region, Küste und Wetterpunkte, Versionierung, Change-Feed, Validierungsregeln. Sie gelten unverändert, mit diesen Ausnahmen (Entscheidung Christian: DSTAP war Prototyp, keine Kompatibilität nötig):
