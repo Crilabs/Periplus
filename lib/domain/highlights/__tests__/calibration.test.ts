@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { consolidationSchema } from "@/lib/config/schemas";
-import type { PoiCategory } from "@/lib/db/schema/geo";
+import type { HighlightCategory } from "@/lib/db/schema/geo";
 import { importanceOf, type ImportanceInput } from "@/lib/domain/consolidation/derived/importance";
 import { highlightsConfig, selectHighlights, type HighlightCandidate } from "../select";
 
@@ -68,7 +68,7 @@ describe("importance calibration (spec 16 „Wichtigkeit“)", () => {
 /** A candidate of `category` built through `importanceOf`. */
 function cand(id: string, p: Poi, distanceKm: number): HighlightCandidate {
   const imp = importanceOf({ sources: [], ...p }, consolidation);
-  return { geoObjectId: id, category: p.category as PoiCategory, name: id, nameNormalized: id, importance: imp.importance, score: imp.score, distanceKm, lon: 25, lat: 36 };
+  return { geoObjectId: id, category: p.category as HighlightCategory, name: id, nameNormalized: id, importance: imp.importance, score: imp.score, distanceKm, lon: 25, lat: 36 };
 }
 const many = (prefix: string, n: number, p: Poi, distanceKm: number) => Array.from({ length: n }, (_, i) => cand(`${prefix}${i}`, p, distanceKm));
 

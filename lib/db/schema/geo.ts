@@ -56,7 +56,12 @@ export const geoOriginEnum = pgEnum("geo_origin", [
   "import",
 ]);
 export const subdivisionStatusEnum = pgEnum("subdivision_status", ["active", "excluded"]);
-export const poiCategoryEnum = pgEnum("poi_category", ["food", "supply", "beach", "nature", "active", "culture", "town"]);
+/**
+ * Category of a POI. The first seven are the highlight categories (spec 16); `bakery`, `transport` and `landing` are
+ * landside categories for the berth state (plan N4a) and never become highlights.
+ */
+export const poiCategoryEnum = pgEnum("poi_category", ["food", "supply", "beach", "nature", "active", "culture", "town", "bakery", "transport", "landing"]);
+export const HIGHLIGHT_CATEGORIES = ["food", "supply", "beach", "nature", "active", "culture", "town"] as const;
 export const nameOriginEnum = pgEnum("name_origin", [
   "osm",
   "geonames",
@@ -86,7 +91,10 @@ export const seabedTypeEnum = pgEnum("seabed_type", ["sand", "mud", "gravel", "r
 export type GeoObjectType = (typeof geoObjectTypeEnum.enumValues)[number];
 export type SubdivisionStatus = (typeof subdivisionStatusEnum.enumValues)[number];
 export type GeoOrigin = (typeof geoOriginEnum.enumValues)[number];
+/** Every category a POI can carry, as stored. */
 export type PoiCategory = (typeof poiCategoryEnum.enumValues)[number];
+/** The highlight categories: the part of `PoiCategory` that profiles, highlights and the delivery know. */
+export type HighlightCategory = (typeof HIGHLIGHT_CATEGORIES)[number];
 export type NameOrigin = (typeof nameOriginEnum.enumValues)[number];
 export type NameScript = (typeof nameScriptEnum.enumValues)[number];
 export type PlaceKind = (typeof placeKindEnum.enumValues)[number];

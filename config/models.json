@@ -18,6 +18,7 @@
     "assess-page": { "model": "claude-sonnet-5-5", "promptVersion": 1, "effort": "medium", "maxTokens": 4096 },
     "extract-route": { "model": "claude-sonnet-5-5", "promptVersion": 1, "effort": "medium", "maxTokens": 16000 },
     "extract-berth": { "model": "claude-sonnet-5-5", "promptVersion": 2, "effort": "medium", "maxTokens": 16000, "cacheSystem": true },
+    "bundle-facts": { "model": "claude-sonnet-5-5", "promptVersion": 1, "effort": "low", "maxTokens": 8000 },
     "summarize-profile": { "model": "claude-sonnet-5-5", "promptVersion": 1, "effort": "low", "maxTokens": 4096 },
     "check-place-image": { "model": "claude-haiku-5-5", "promptVersion": 1, "effort": "low", "maxTokens": 512, "timeoutSeconds": 60 },
     "check-place-website": { "model": "claude-haiku-5-5", "promptVersion": 1, "effort": "low", "maxTokens": 512 }

@@ -8,7 +8,7 @@ import type {
   sourceKind,
   spotKind,
 } from "@/contract/v2";
-import type { PlaceKind, PoiCategory, RestrictedKind } from "@/lib/db/schema/geo";
+import type { HighlightCategory, PlaceKind, RestrictedKind } from "@/lib/db/schema/geo";
 import type { DocType } from "@/lib/db/schema/sources";
 import type { AttributeProvenance, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
 
@@ -71,7 +71,7 @@ export const HAZARD_KIND: Record<HazardKindInternal, ContractHazardKind> = {
 };
 
 /** POI category → highlight category; `quiet` has no POI (Teil B: it is the spot's `score.quietness`). */
-export const HIGHLIGHT_CATEGORY: Record<PoiCategory, ContractHighlightCategory> = {
+export const HIGHLIGHT_CATEGORY: Record<HighlightCategory, ContractHighlightCategory> = {
   food: "food",
   supply: "supply",
   beach: "beach",

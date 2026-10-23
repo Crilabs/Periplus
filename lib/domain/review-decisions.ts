@@ -18,7 +18,7 @@ import {
   nameCandidates,
   placeKindEnum,
   places,
-  poiCategoryEnum,
+  HIGHLIGHT_CATEGORIES,
   reviewDecisions,
   reviewTasks,
   sources,
@@ -602,7 +602,7 @@ const HINT_TYPES: Record<string, GeoObjectType> = {
  */
 export function newNameObjectType(hint: string | null, kind: PlaceKind): { type: GeoObjectType; category: PoiCategory | null } {
   if (hint?.startsWith("poi:")) {
-    const category = z.enum(poiCategoryEnum.enumValues).safeParse(hint.slice(4));
+    const category = z.enum(HIGHLIGHT_CATEGORIES).safeParse(hint.slice(4));
     if (category.success) return { type: "poi", category: category.data };
   }
   const type = hint ? HINT_TYPES[hint] : undefined;

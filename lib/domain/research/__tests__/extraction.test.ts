@@ -195,6 +195,19 @@ describe("storeExtraction", () => {
       expect(row).toMatchObject({ subjectName: null, subjectCategory: "restaurant" });
     }));
 
+  it("gives a landside fact without a kept name and category the category other", () =>
+    withRollback(async (tx) => {
+      const unit = await unitOf(tx);
+      const out = empty();
+      out.facts.push({
+        about: "landside", subject_name: "Taverna Thalassa", subject_category: null,
+        statement: "A beach taverna offers fish to visiting crews.", quote: "Taverna Nikos at the beach serves fresh fish", observed_at: null, tone: "positive", safety: false,
+      });
+      await storeExtraction(tx, unit, out, cfg);
+      const [row] = await tx.select().from(berthFacts).where(eq(berthFacts.unitId, unit.id));
+      expect(row).toMatchObject({ subjectName: null, subjectCategory: "other" });
+    }));
+
   it("drops a signal with a confidence outside 0 to 1", () =>
     withRollback(async (tx) => {
       const unit = await unitOf(tx);

@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { belegtreue } from "@/lib/domain/extraction/fidelity";
 import { takesFactsSql } from "@/lib/domain/facts/levels";
+import { inHighlightCategories } from "@/lib/domain/highlights/categories";
 import { runDate } from "@/lib/domain/runs";
 import { subdivisionTilesSql } from "@/lib/domain/gazetteer/tiles-ensure";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
@@ -114,7 +115,8 @@ export async function reselectionTargets(db: Db, run: { id: string; params: Reco
       select o.geom,
              ST_Expand(o.geom, ${reachM}::float8 / (111320 * greatest(cos(radians(ST_Y(ST_Centroid(o.geom)))), 0.1))) as box
       from geo_objects o
-      where o.type = 'poi' and (o.id = any(${sql.param(scope)}::uuid[]) or o.merged_into_id = any(${sql.param(scope)}::uuid[]))
+      where o.type = 'poi' and ${inHighlightCategories(sql.raw("o.category"))}
+        and (o.id = any(${sql.param(scope)}::uuid[]) or o.merged_into_id = any(${sql.param(scope)}::uuid[]))
     )
     select distinct o.id from t
     cross join lateral (

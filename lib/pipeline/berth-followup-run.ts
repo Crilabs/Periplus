@@ -1,6 +1,8 @@
 import { sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import type { Db } from "@/lib/db/client";
+import { activeRulesVersion } from "@/lib/domain/consolidation/active-rules";
+import { RESEARCH_STATE_STAGE } from "@/lib/pipeline/research/state";
 import { IMAGES_STAGE } from "@/lib/pipeline/images/stage-name";
 import { startRun } from "@/lib/pipeline/runs";
 
@@ -12,9 +14,10 @@ export const BERTH_FOLLOWUP_SCOPE = "berth-followup";
 
 /**
  * The stages of the follow-up run of a newly confirmed berth (spec 5.7b). N2: the title images of the berths
- * (`images.place` with `params.images.geoObjectIds`); N4 adds landing places, reachables and the land research.
+ * (`images.place` with `params.images.geoObjectIds`), preceded by the berth state (`research.state`: core values, landing
+ * points, reachable and bundled facts; the rules version is frozen in `params.rulesVersion`); N4b adds the land research.
  */
-export const BERTH_FOLLOWUP_STAGES = [IMAGES_STAGE] as const;
+export const BERTH_FOLLOWUP_STAGES = [RESEARCH_STATE_STAGE, IMAGES_STAGE] as const;
 
 /**
  * Starts the follow-up run of berths that just became `confirmed` (kind `event`, scope `system`/`berth-followup`):
@@ -35,7 +38,7 @@ export async function startBerthFollowupRun(db: Db, boss: PgBoss, placeIds: stri
     kind: "event",
     scope: { type: "system", id: BERTH_FOLLOWUP_SCOPE },
     stages: [...BERTH_FOLLOWUP_STAGES],
-    params: { placeIds: rows.map((r) => r.id), images: { geoObjectIds } },
+    params: { placeIds: rows.map((r) => r.id), images: { geoObjectIds }, rulesVersion: await activeRulesVersion(db) },
     triggeredBy,
   });
 }

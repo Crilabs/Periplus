@@ -297,6 +297,11 @@ describe("loadConfig", () => {
   it("loads categories and gazetteer settings", () => {
     const c = loadConfig("config");
     expect(c.categories.wikidata.Q40080).toBe("beach");
+    expect(c.categories.osm).toContainEqual({ key: "shop", values: ["bakery"], category: "bakery" });
+    expect(c.categories.osm).toContainEqual({ key: "highway", values: ["bus_stop"], category: "transport" });
+    expect(c.categories.osm).toContainEqual({ key: "amenity", values: ["bus_station", "taxi", "ferry_terminal"], category: "transport" });
+    expect(c.categories.osm).toContainEqual({ key: "man_made", values: ["pier"], category: "landing" });
+    expect(c.categories.osm).toContainEqual({ key: "leisure", values: ["slipway"], category: "landing" });
     expect(c.categories.osm).toContainEqual({ key: "historic", values: "*", category: "culture" });
     expect(c.gazetteer.overpass.timeoutSeconds).toBe(180);
     expect(c.gazetteer.wikidata.classes.Q23442).toBe("island");

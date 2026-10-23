@@ -7,7 +7,7 @@ import type {
   SpotsFile,
   WeatherPointsFile,
 } from "@/contract";
-import type { GeoObjectType, PlaceKind, PlaceStatus, PoiCategory } from "@/lib/db/schema/geo";
+import type { GeoObjectType, PlaceKind, PlaceStatus, HighlightCategory } from "@/lib/db/schema/geo";
 import type { DocType } from "@/lib/db/schema/sources";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 
@@ -79,7 +79,7 @@ export type MergedSpot = { publicId: string; mergedIntoPublicId: string };
 export type PoiSource = {
   geoObjectId: string;
   publicId: string;
-  category: PoiCategory;
+  category: HighlightCategory;
   name: string;
   position: LonLat;
   osmId: string | null;

@@ -1,10 +1,18 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { sources } from "@/lib/db/schema";
 import { crawlRulesSchema } from "@/lib/domain/sources/crawl-rules";
 import { assertAllowedSourceDomain } from "@/lib/domain/sources/forbidden-domains";
 import { getSource, type Source } from "@/lib/domain/sources/store";
+
+/**
+ * Source alias `alias` still counts for research evidence and the berth state: not ended by an admin (`valid_to`
+ * unset). A `rejected` or `paused` status does not exclude it: `rejected` comes from the retired domain-level source
+ * review (relevance, not page quality), and research judges each page by itself. Ending a source thus removes its
+ * confirmation evidence and its core values.
+ */
+export const liveResearchSourceSql = (alias: string) => sql`${sql.raw(alias)}.valid_to is null`;
 
 /** Crawl rules of a research source: a page is fetched on its own, nothing is crawled from it. */
 function researchCrawlRules(ratePerMinute: number) {

@@ -100,7 +100,7 @@ const PAGE = {
 };
 
 describe("research run", () => {
-  it("registers the seven stages and queues, in order", () => {
+  it("registers the eight stages and queues, in order", () => {
     expect(RESEARCH_STAGES).toEqual([
       RESEARCH_SEARCH_STAGE,
       RESEARCH_FETCH_STAGE,
@@ -109,8 +109,9 @@ describe("research run", () => {
       RESEARCH_ROUTES_STAGE,
       RESEARCH_DISCOVER_STAGE,
       RESEARCH_CONFIRM_STAGE,
+      "research.state",
     ]);
-    expect([...RESEARCH_STAGES]).toEqual(["research.search", "research.fetch", "research.assess", "research.extract", "research.routes", "research.discover", "research.confirm"]);
+    expect([...RESEARCH_STAGES]).toEqual(["research.search", "research.fetch", "research.assess", "research.extract", "research.routes", "research.discover", "research.confirm", "research.state"]);
     for (const name of RESEARCH_STAGES) {
       expect(STAGES[name]?.queue).toBe(name);
       expect(QUEUES).toContain(name);
