@@ -37,7 +37,10 @@ export type GateMeasurement = {
   subdivisionKey: string;
   /** All places of the subdivision (the scope of the conflict tasks). */
   scopePlaceIds: string[];
-  /** Spots in the subdivision's tiles, the ones counted (spots of the border buffer are matched, not counted). */
+  /** Tiles of the subdivision with at least one valid place (worked on), and all tiles of the subdivision. */
+  builtTiles: number;
+  totalTiles: number;
+  /** Spots in the worked-on tiles, the ones counted (spots of the border buffer are matched, not counted). */
   spotCount: number;
   rows: GateRow[];
   /** Per threshold: the confirmed places with a human decision (berth or not). */
@@ -55,8 +58,11 @@ export type GateMeasurement = {
    * delivered, but not backed by the rule. While there is one, the gate is not passed.
    */
   unbacked: string[];
-  /** The smallest threshold with correctness 100 % and no open conflict; null when there is none. */
+  /** The smallest threshold with correctness 100 %, no open conflict and at least `gate.minConfirmed` confirmed places; null when there is none. */
   passedAt: number | null;
+  /** When no threshold passes only for want of a sample: the confirmed count of the first threshold that is perfect but below `gate.minConfirmed`. */
+  tooFewConfirmed: number | null;
+  minConfirmed: number;
   /** The smallest threshold with open conflicts (where `--sync-conflicts` asks); null when none has. */
   conflictThreshold: number | null;
 };
@@ -107,23 +113,34 @@ async function subdivisionPlaces(db: Db, subdivisionKey: string): Promise<Array<
 }
 
 /**
- * The subdivision's tiles as two predicates on a point: `inside` one of its tiles (the spots counted), or `matchable`:
- * inside or within `bufferM` of one (the spots matched, so a place near the edge still finds its spot just outside).
- * The buffer is checked against the neighbour tiles only (a tile is far wider than any matching radius).
+ * The worked-on tiles of the subdivision (those with at least one valid place; a tile seeded with zero candidates does
+ * not count, it has nothing to deliver) as two predicates on a point: `inside` one of them (the spots counted), or
+ * `matchable`: inside or within `bufferM` of one (the spots matched, so a place near the edge still finds its spot just
+ * outside). The buffer is checked against the neighbour tiles only (a tile is far wider than any matching radius).
  */
-async function subdivisionTileAreas(db: Db, subdivisionKey: string, bufferM: number): Promise<{ inside: (p: LonLat) => boolean; matchable: (p: LonLat) => boolean }> {
+async function subdivisionTileAreas(
+  db: Db,
+  subdivisionKey: string,
+  bufferM: number,
+): Promise<{ inside: (p: LonLat) => boolean; matchable: (p: LonLat) => boolean; built: number; total: number }> {
   const sub = await requireSubdivision(db, subdivisionKey);
-  const ids = new Set(await subdivisionTileIds(db, sub.id));
+  const all = await subdivisionTileIds(db, sub.id);
+  const worked = await db
+    .selectDistinct({ tileId: places.tileId })
+    .from(places)
+    .innerJoin(geoObjects, eq(geoObjects.id, places.geoObjectId))
+    .where(and(eq(geoObjects.subdivisionId, sub.id), isNull(places.mergedIntoId), validAt(places), inArray(places.tileId, all)));
+  const ids = new Set(worked.map((r) => r.tileId!));
   const inside = (p: LonLat) => ids.has(tileIdFor(p.lon, p.lat));
   const nearTile = (p: LonLat, id: string) => {
     const [west, south, east, north] = tileBbox(id);
     return distanceM(p, { lon: Math.min(Math.max(p.lon, west), east), lat: Math.min(Math.max(p.lat, south), north) }) <= bufferM;
   };
-  return { inside, matchable: (p) => inside(p) || tileNeighbours(tileIdFor(p.lon, p.lat)).some((id) => ids.has(id) && nearTile(p, id)) };
+  return { inside, matchable: (p) => inside(p) || tileNeighbours(tileIdFor(p.lon, p.lat)).some((id) => ids.has(id) && nearTile(p, id)), built: ids.size, total: all.length };
 }
 
 /**
- * Measures the gate of the subdivision against the loaded reference spots: the spots inside the subdivision's tiles
+ * Measures the gate of the subdivision against the loaded reference spots: the spots inside the subdivision's worked-on tiles
  * count, those within `quality.navily.maxRadiusM` of them are matched as well (`subdivisionTileAreas`). Everything is read
  * in one read-only, repeatable-read transaction (one snapshot); pass the top-level `db`, a nested transaction would not
  * honour it. Also counts the places delivered as confirmed now that the rule at `confirmation.minIndependentSources`
@@ -172,11 +189,16 @@ async function measureIn(tx: Db, input: { subdivisionKey: string; spots: NavilyS
       }),
     );
   }
-  const passedAt = evaluated.rows.find((r) => r.confirmed > 0 && r.correctness === 1 && r.conflicts === 0)?.threshold ?? null;
+  const minConfirmed = cfg.research.gate.minConfirmed;
+  const perfect = evaluated.rows.filter((r) => r.confirmed > 0 && r.correctness === 1 && r.conflicts === 0);
+  const passedAt = perfect.find((r) => r.confirmed >= minConfirmed)?.threshold ?? null;
+  const tooFewConfirmed = passedAt === null ? (perfect[0]?.confirmed ?? null) : null;
   const conflictThreshold = evaluated.rows.find((r) => r.conflicts > 0)?.threshold ?? null;
   return {
     subdivisionKey,
     scopePlaceIds: base.map((p) => p.placeId),
+    builtTiles: area.built,
+    totalTiles: area.total,
     spotCount: counted,
     rows: evaluated.rows,
     decided,
@@ -186,6 +208,8 @@ async function measureIn(tx: Db, input: { subdivisionKey: string; spots: NavilyS
     deliveredThreshold,
     unbacked,
     passedAt,
+    tooFewConfirmed,
+    minConfirmed,
     conflictThreshold,
   };
 }
@@ -197,6 +221,7 @@ export function gateOutcome(m: GateMeasurement): string {
   }
   if (m.passedAt !== null) return `Tor bestanden bei N=${m.passedAt}`;
   if (m.rows.every((r) => r.confirmed === 0)) return "Tor nicht bestanden: bei keiner Schwelle ist ein Platz bestätigt";
+  if (m.tooFewConfirmed !== null) return `Tor nicht bestanden: zu wenige bestätigte Plätze (${m.tooFewConfirmed} von mindestens ${m.minConfirmed})`;
   const open = m.rows.reduce((sum, r) => sum + r.conflicts, 0);
   return open > 0
     ? "Tor nicht bestanden: bei keiner Schwelle sind alle bestätigten Plätze korrekt, es gibt offene Konflikte"
@@ -211,7 +236,9 @@ export function renderGateReport(m: GateMeasurement, generatedAt: Date): string 
   const lines = [
     `# Navily-Tor ${m.subdivisionKey}`,
     "",
-    `Stand: ${generatedAt.toISOString().slice(0, 10)}. Gemessen wird, welche Plätze bei jeder Schwelle unabhängiger Quellen bestätigt wären, gegen die Referenz (${m.spotCount} Spots im Landesteil). Die Referenz ist nie Datenquelle, sie misst nur.`,
+    `Stand: ${generatedAt.toISOString().slice(0, 10)}. Gemessen wird, welche Plätze bei jeder Schwelle unabhängiger Quellen bestätigt wären, gegen die Referenz (${m.spotCount} Spots in den bearbeiteten Kacheln des Landesteils). Die Referenz ist nie Datenquelle, sie misst nur.`,
+    "",
+    `Bearbeitete Kacheln: ${m.builtTiles} von ${m.totalTiles}. Nur Spots in bearbeiteten Kacheln (mit mindestens einem Platz) zählen; das Tor gilt nur mit mindestens ${m.minConfirmed} bestätigten Plätzen.`,
     "",
     "## Ergebnis je Schwelle",
     "",
@@ -238,8 +265,8 @@ export function renderGateReport(m: GateMeasurement, generatedAt: Date): string 
     "## Gewählte Schwelle",
     "",
     m.passedAt !== null
-      ? `Kleinste Schwelle mit Korrektheit 100 % ohne offene Konflikte: **N=${m.passedAt}**. ${gateOutcome(m)}.`
-      : `${gateOutcome(m)}. Gewählt wird die kleinste Schwelle mit Korrektheit 100 % ohne offene Konflikte; bisher gibt es keine.`,
+      ? `Kleinste Schwelle mit Korrektheit 100 % ohne offene Konflikte und genug bestätigten Plätzen: **N=${m.passedAt}**. ${gateOutcome(m)}.`
+      : `${gateOutcome(m)}. Gewählt wird die kleinste Schwelle mit Korrektheit 100 % ohne offene Konflikte und mit mindestens ${m.minConfirmed} bestätigten Plätzen; bisher gibt es keine.`,
     "",
   ];
   const lower = m.passedAt === null ? [] : m.rows.filter((r) => r.threshold < m.passedAt! && r.conflicts > 0).map((r) => `N=${r.threshold}`);

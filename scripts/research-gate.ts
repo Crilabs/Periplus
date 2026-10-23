@@ -97,6 +97,7 @@ export async function runGate(
   const lines = [
     `report: ${args.report}`,
     `lists: ${args.outDir}`,
+    `Bearbeitete Kacheln: ${m.builtTiles} von ${m.totalTiles}`,
     `spots in ${args.subdivision}: ${m.spotCount}`,
     `confirmed without rule backing (N=${m.deliveredThreshold}): ${m.unbacked.length}`,
     gateOutcome(m),

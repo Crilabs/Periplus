@@ -1432,6 +1432,8 @@ export const researchSchema = z
         chosenThreshold: z.number().int().min(1).nullable(),
         /** A confirmed place matched to a reference spot of its kind farther than this is a position error (as `quality.navily.positionToleranceM`). */
         maxPositionDeviationM: z.number().positive(),
+        /** The gate is passed only with at least this many confirmed places: a perfect score on a handful proves nothing. */
+        minConfirmed: z.number().int().min(1),
       })
       .refine((g) => g.thresholds.every((n, i) => i === 0 || n > g.thresholds[i - 1]!), { error: "gate thresholds must be strictly ascending" })
       .refine((g) => !g.released || (g.chosenThreshold !== null && g.thresholds.includes(g.chosenThreshold)), {
