@@ -117,7 +117,7 @@ describe("research run", () => {
       for (const job of inserted) {
         await searchCandidate(tx, job.data.placeId as string, { transport, archive }, { db: tx, runId, stage: RESEARCH_SEARCH_STAGE });
       }
-      expect(await tx.select().from(researchHits).where(eq(researchHits.urlNormalized, url))).toHaveLength(4) // per candidate and purpose;
+      expect(await tx.select().from(researchHits).where(eq(researchHits.urlNormalized, url))).toHaveLength(4); // per candidate and purpose
 
       // fetch
       inserted.length = 0;
@@ -166,9 +166,29 @@ describe("research run", () => {
     withRollback(async (tx) => {
       await insertTestSubdivision(tx, "GR-XR4", [21.0, 35.0, 21.5, 35.5], { country: "GR" });
       const { boss, inserted } = recordingBoss();
-      await expect(startResearchRun(tx, boss, { subdivisionKey: "GR-XR4" }, "test")).rejects.toBeInstanceOf(RunScopeNotReady);
-      await expect(startResearchRun(tx, boss, { placeIds: [newId()] }, "test")).rejects.toBeInstanceOf(RunScopeNotReady);
+      await expect(startResearchRun(tx, boss, { subdivisionKey: "GR-XR4" }, "test")).rejects.toMatchObject({ reason: "no_research_candidates" });
+      await expect(startResearchRun(tx, boss, { placeIds: [newId()] }, "test")).rejects.toMatchObject({ reason: "no_research_candidates" });
       await expect(startResearchRun(tx, boss, { subdivisionKey: "XD-NOPE" }, "test")).rejects.toThrow("Unbekannter Landesteil XD-NOPE");
       expect(inserted).toEqual([]);
+    }));
+
+  it("refuses a second run of the same scope while one is queued or running, but not another scope or after its end", () =>
+    withRollback(async (tx) => {
+      const [a, b] = await seedCandidates(tx, "GR-XR5");
+      const { boss, inserted } = recordingBoss();
+      const first = await startResearchRun(tx, boss, { subdivisionKey: "GR-XR5" }, "test");
+      const count = inserted.length;
+      const refused = startResearchRun(tx, boss, { subdivisionKey: "GR-XR5" }, "test");
+      await expect(refused).rejects.toBeInstanceOf(RunScopeNotReady);
+      await expect(refused).rejects.toMatchObject({ reason: "research_run_active" });
+      expect(inserted).toHaveLength(count);
+      // a place list is another scope; a second list sharing a place is refused, a disjoint one is not
+      const list = await startResearchRun(tx, boss, { placeIds: [a!] }, "test");
+      await expect(startResearchRun(tx, boss, { placeIds: [a!, b!] }, "test")).rejects.toMatchObject({ reason: "research_run_active" });
+      await expect(startResearchRun(tx, boss, { placeIds: [b!] }, "test")).resolves.toBeDefined();
+      // once the run ended a new one starts
+      await tx.update(runs).set({ status: "finished", finishedAt: new Date() }).where(eq(runs.id, first.id));
+      await expect(startResearchRun(tx, boss, { subdivisionKey: "GR-XR5" }, "test")).resolves.toBeDefined();
+      expect(list.id).not.toBe(first.id);
     }));
 });

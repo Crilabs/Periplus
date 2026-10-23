@@ -1,10 +1,10 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import type { Db } from "@/lib/db/client";
 import { documents, runs, sources } from "@/lib/db/schema";
 import { createRun } from "@/lib/domain/runs";
 import { requireSubdivision } from "@/lib/domain/subdivisions/store";
-import { ensureWhitelistSources, sourceIdByDomain } from "@/lib/domain/sources/store";
+import { crawlableSourceIds, ensureWhitelistSources, sourceIdByDomain } from "@/lib/domain/sources/store";
 import { EMBED_STAGE } from "../embed";
 import { enqueueStage, startRun } from "../runs";
 import { WIKIVOYAGE_DOMAIN, WIKIVOYAGE_STAGE } from "../sources/wikivoyage";
@@ -36,12 +36,7 @@ export async function startFetchRun(
 ): Promise<{ id: string; skipped: string[] }> {
   let sourceIds: string[];
   if (input.sourceIds === "approved") {
-    sourceIds = (
-      await db
-        .select({ id: sources.id })
-        .from(sources)
-        .where(and(eq(sources.status, "approved"), isNull(sources.validTo)))
-    ).map((s) => s.id);
+    sourceIds = await crawlableSourceIds(db);
     if (sourceIds.length === 0) throw new RunScopeNotReady("no_approved_sources", "No source is approved yet");
   } else {
     sourceIds = [...new Set(input.sourceIds)];
@@ -95,12 +90,12 @@ export async function startExclusiveFetchRun(
   return { id: created.id, skipped: created.skipped };
 }
 
-/** Every source of `sourceIds` exists, is current (not ended) and approved, else `RunScopeNotReady` `source_not_approved`. */
+/** Every source of `sourceIds` exists, is current (not ended), approved and no research source (never crawled), else `RunScopeNotReady` `source_not_approved`. */
 async function assertApproved(db: Db, sourceIds: string[]): Promise<void> {
   const approved = await db
     .select({ id: sources.id })
     .from(sources)
-    .where(and(inArray(sources.id, sourceIds), eq(sources.status, "approved"), isNull(sources.validTo)));
+    .where(and(inArray(sources.id, sourceIds), eq(sources.status, "approved"), isNull(sources.validTo), ne(sources.origin, "research")));
   if (approved.length !== sourceIds.length) {
     const ok = new Set(approved.map((s) => s.id));
     throw new RunScopeNotReady("source_not_approved", `Sources not approved: ${sourceIds.filter((id) => !ok.has(id)).join(", ")}`);

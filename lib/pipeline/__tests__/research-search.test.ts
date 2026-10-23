@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { places, researchHits, serpQueries, serpResults, type PlaceStatus } from "@/lib/db/schema";
+import { externalCalls, places, researchHits, serpQueries, serpResults, type PlaceStatus } from "@/lib/db/schema";
 import { researchCandidates } from "@/lib/domain/research/candidates";
 import { newId } from "@/lib/domain/ids";
 import { getConfig } from "@/lib/config";
@@ -71,6 +71,19 @@ describe("searchCandidate", () => {
       expect(requests.length).toBe(before);
       expect(second.hits).toBe(0);
       expect(await tx.select().from(researchHits).where(eq(researchHits.placeId, placeId))).toHaveLength(hits.length);
+    }));
+
+  it("books the cost of a research query on the candidate's tile", () =>
+    withRollback(async (tx) => {
+      const { placeId } = await seed(tx, "Vathi");
+      const [{ tileId }] = (await tx.select({ tileId: places.tileId }).from(places).where(eq(places.id, placeId))) as [{ tileId: string | null }];
+      expect(tileId).toBeTruthy();
+      const runId = await insertTestRun(tx);
+      const first = await searchCandidate(tx, placeId, { transport: fakeTransport(["https://sailblog.example/vathi"]), archive: memoryArchive() }, { db: tx, runId });
+      const calls = await tx.select().from(externalCalls).where(eq(externalCalls.runId, runId));
+      expect(first.queries).toBeGreaterThan(0);
+      expect(calls).toHaveLength(first.queries);
+      expect(calls.map((c) => c.tileId)).toEqual(calls.map(() => tileId));
     }));
 
   it("a candidate without names yields queries 0, hits 0", () =>

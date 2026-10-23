@@ -86,3 +86,22 @@ export const pageAssessments = pgTable(
     ),
   ],
 );
+
+export const researchFetchOutcomeEnum = pgEnum("research_fetch_outcome", ["stored", "unchanged", "skipped", "gone", "failed"]);
+export type ResearchFetchOutcome = (typeof researchFetchOutcomeEnum.enumValues)[number];
+
+/** Append-only: what the fetch of one hit URL came to in a run (one row per attempt; the newest is the current one). */
+export const researchFetches = pgTable(
+  "research_fetches",
+  {
+    id: uuid("id").primaryKey().$defaultFn(newId),
+    urlNormalized: text("url_normalized").notNull(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => runs.id),
+    outcome: researchFetchOutcomeEnum("outcome").notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("research_fetches_url_normalized_created_at_idx").on(t.urlNormalized, t.createdAt), index("research_fetches_run_id_idx").on(t.runId)],
+);

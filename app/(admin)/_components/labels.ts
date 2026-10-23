@@ -336,6 +336,8 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   geo_object_not_consolidatable: "Geo-Objekt ist unbekannt, beendet, zusammengeführt oder hat keine Fact-Ebene",
   comparison_set_empty: "Der Vergleichssatz des Reviers ist leer",
   geo_object_without_place: "Geo-Objekt hat keinen gültigen Ort",
+  no_research_candidates: "Keine Kandidaten für die Recherche",
+  research_run_active: "Für diesen Umfang wartet oder läuft schon eine Recherche – erst ihr Ende abwarten",
   measurement_label_taken: "Bezeichnung schon vergeben",
   measurement_label_invalid: "Bezeichnung fehlt oder ist länger als 40 Zeichen",
   measurement_window_empty: "Der Zeitraum ist leer – „von“ muss vor „bis“ liegen",
@@ -816,4 +818,12 @@ export const WEBSITE_ORIGIN_LABELS: Record<"osm" | "wikidata" | "serp", string> 
   osm: "OSM",
   wikidata: "Wikidata",
   serp: "Google-Suche",
+};
+
+/** Reasons a research page was not fetched (`research_fetches.reason`), for „nicht geholt: …“; unknown ones are shown as stored. */
+export const RESEARCH_FETCH_REASON_LABELS: Record<string, string> = {
+  forbidden_domain: "gesperrte Domain",
+  robots: "robots.txt verbietet es",
+  too_large: "Seite zu groß",
+  blocked_address: "Adresse gesperrt",
 };

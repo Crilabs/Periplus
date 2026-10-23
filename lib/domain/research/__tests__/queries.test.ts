@@ -36,6 +36,13 @@ describe("buildResearchQueries", () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 
+  it("has a negative query in every language of the positive templates, it and fr included", () => {
+    const qs = buildResearchQueries("p1", { ...base, names: { en: "Vathi", de: "Vathi", it: "Vathi", fr: "Vathi", el: "Βαθύ" }, countryCode: "GR" }, cfg, "negative");
+    expect(qs.map((q) => q.keyword)).toEqual(
+      expect.arrayContaining(["Vathi anchoring prohibited", "Vathi Ankerverbot", "Vathi divieto di ancoraggio", "Vathi interdiction de mouillage"]),
+    );
+  });
+
   it("negative uses only the negative templates", () => {
     const qs = buildResearchQueries("p1", base, cfg, "negative");
     expect(qs.map((q) => q.keyword).sort()).toEqual(["Vathi anchoring prohibited", "Βαθύ απαγόρευση αγκυροβολίας"].sort());

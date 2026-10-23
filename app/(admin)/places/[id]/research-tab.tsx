@@ -1,8 +1,16 @@
 import type { ResearchRow } from "@/lib/domain/research/view";
-import { PAGE_KIND_LABELS } from "../../_components/labels";
+import { PAGE_KIND_LABELS, RESEARCH_FETCH_REASON_LABELS } from "../../_components/labels";
 import { Badge, EmptyState, Panel, Table, tdClass, TextLink, thClass, trClass } from "../../_components/ui";
 
 const PURPOSE_LABELS = { positive: "Bestätigung", negative: "Negativsuche" } as const;
+
+/** „nicht geholt: <Grund>“ for a hit without assessment whose newest fetch did not store or confirm a page. */
+function notFetched(r: ResearchRow): string | null {
+  const f = r.fetch;
+  if (!f || f.outcome === "stored" || f.outcome === "unchanged") return null;
+  const reason = f.reason ? (RESEARCH_FETCH_REASON_LABELS[f.reason] ?? f.reason) : f.outcome;
+  return `nicht geholt: ${reason}`;
+}
 
 /**
  * Tab „Recherche“ of the place page (plan N1): the search hits of the berth with search term, page kind, first-hand
@@ -48,7 +56,7 @@ export function ResearchTab({ rows }: { rows: ResearchRow[] }) {
                   </a>
                 )}
               </td>
-              <td className={tdClass}>{r.assessment ? PAGE_KIND_LABELS[r.assessment.pageKind] : "–"}</td>
+              <td className={tdClass}>{r.assessment ? PAGE_KIND_LABELS[r.assessment.pageKind] : notFetched(r) ?? "–"}</td>
               <td className={tdClass}>
                 {r.assessment && (
                   <span className="flex flex-wrap gap-1">

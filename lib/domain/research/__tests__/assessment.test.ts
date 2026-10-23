@@ -42,6 +42,16 @@ describe("storeAssessment", () => {
       expect(row).toMatchObject({ observedAt: "2024-06-15", observedAtBasis: "explicit", observedAtReason: "we anchored in June 2024" });
     }));
 
+  it("keeps the reason only for an explicit date", () =>
+    withRollback(async (tx) => {
+      const { versionId } = await insertTestVersion(tx, ["x"]);
+      const row = await store(tx, versionId, out({ observed_at: "2024-06-10", observed_at_explicit: false, observed_at_reason: "model made this up" }), "2024-07-01");
+      expect(row).toMatchObject({ observedAtBasis: "published", observedAtReason: null });
+      const { versionId: other } = await insertTestVersion(tx, ["y"]);
+      const unreadable = await store(tx, other, out({ observed_at: "Juni 2024", observed_at_explicit: true, observed_at_reason: "June" }), null);
+      expect(unreadable).toMatchObject({ observedAtBasis: "fetched", observedAtReason: null });
+    }));
+
   it("ignores a date that is not explicit", () =>
     withRollback(async (tx) => {
       const { versionId } = await insertTestVersion(tx, ["x"]);
@@ -60,7 +70,7 @@ describe("storeAssessment", () => {
     withRollback(async (tx) => {
       const { versionId } = await insertTestVersion(tx, ["x"]);
       const berths = Array.from({ length: 60 }, (_, i) => ({ name: `Bay ${i}`, island: null, kind: "anchorage" as const }));
-      const row = await store(tx, versionId, out({ observed_at_reason: "r".repeat(500), berths }), null);
+      const row = await store(tx, versionId, out({ observed_at: "2024-06", observed_at_explicit: true, observed_at_reason: "r".repeat(500), berths }), null);
       expect(row.observedAtReason).toHaveLength(300);
       expect(row.berths).toHaveLength(50);
     }));

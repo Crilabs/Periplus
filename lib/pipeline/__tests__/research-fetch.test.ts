@@ -7,7 +7,7 @@ import { makeResponse, type Transport } from "@/lib/adapters/http";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { documents, documentVersions, places, sources } from "@/lib/db/schema";
+import { documents, documentVersions, places, researchFetches, sources } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { ensureResearchSource } from "@/lib/domain/research/sources";
 import { registrableDomain } from "@/lib/domain/sources/urls";
@@ -156,6 +156,33 @@ describe("fetchResearchPage", () => {
       s.set("/vathi", HTML_PAGE);
       const result = await fetchResearchPage(tx, s.url("/vathi"), deps(), await run(tx));
       expect(result).toEqual({ outcome: "skipped", versionId: null, reason: "robots" });
+    }));
+
+  it("skips a forbidden domain without a source, a document or a request", () =>
+    withRollback(async (tx) => {
+      const url = "https://www.navily.com/anchorage/vathi";
+      const result = await fetchResearchPage(tx, url, { ...deps(), transport: noNetwork }, await run(tx));
+      expect(result).toEqual({ outcome: "skipped", versionId: null, reason: "forbidden_domain" });
+      expect(await tx.select().from(sources).where(eq(sources.domain, "navily.com"))).toHaveLength(0);
+      expect(await tx.select().from(documents).where(eq(documents.url, url))).toHaveLength(0);
+    }));
+
+  it("records the outcome of every fetch in research_fetches, one row per attempt", () =>
+    withRollback(async (tx) => {
+      const s = newSite();
+      s.set("/vathi", HTML_PAGE);
+      const url = s.url("/vathi");
+      const ctx = await run(tx);
+      expect((await fetchResearchPage(tx, url, deps(), ctx)).outcome).toBe("stored");
+      expect((await fetchResearchPage(tx, url, deps(), ctx)).outcome).toBe("unchanged");
+      const forbidden = "https://www.navily.com/x";
+      await fetchResearchPage(tx, forbidden, { ...deps(), transport: noNetwork }, ctx);
+      const rows = await tx.select().from(researchFetches).where(eq(researchFetches.runId, ctx.runId)).orderBy(researchFetches.createdAt, researchFetches.id);
+      expect(rows.map((r) => [r.urlNormalized === url ? "page" : "navily", r.outcome, r.reason])).toEqual([
+        ["page", "stored", null],
+        ["page", "unchanged", null],
+        ["navily", "skipped", "forbidden_domain"],
+      ]);
     }));
 });
 

@@ -10,6 +10,7 @@ const row = (over: Partial<ResearchRow> = {}): ResearchRow => ({
   purpose: "positive",
   keyword: "Kolona anchorage",
   documentId: "00000000-0000-4000-8000-000000000001",
+  fetch: null,
   assessment: { pageKind: "trip_report", firstHand: true, generated: false, observedAt: "2025-06-15", berths: ["Vathi", "Kolona"] },
   ...over,
 });
@@ -40,5 +41,20 @@ describe("ResearchTab", () => {
     expect(html).not.toContain("erste Hand");
     expect(html).toContain('href="https://blog.test.invalid/kolona"');
     expect(html).not.toContain("/documents/");
+  });
+
+  it("says why a hit without assessment was not fetched", () => {
+    const html = renderToStaticMarkup(
+      <ResearchTab
+        rows={[
+          row({ documentId: null, assessment: null, fetch: { outcome: "skipped", reason: "robots" } }),
+          row({ url: "https://b.test.invalid/x", documentId: null, assessment: null, fetch: { outcome: "failed", reason: "HTTP 503" } }),
+          row({ url: "https://c.test.invalid/x", documentId: null, assessment: null, fetch: null }),
+        ]}
+      />,
+    );
+    expect(html).toContain("nicht geholt: robots.txt verbietet es");
+    expect(html).toContain("nicht geholt: HTTP 503");
+    expect(html.match(/nicht geholt/g)).toHaveLength(2);
   });
 });

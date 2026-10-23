@@ -12,7 +12,7 @@ import { assessPages, planResearchAssess, RESEARCH_ASSESS_QUEUE, RESEARCH_ASSESS
 import { fetchResearchPage, planResearchFetch, RESEARCH_FETCH_STAGE } from "@/lib/pipeline/research/fetch";
 import { planResearchSearch, RESEARCH_SEARCH_STAGE, searchCandidate } from "@/lib/pipeline/research/search";
 import { modelClientFor } from "./ai-batch";
-import { crawlRenderPage, simulatedFetchDeps, simulatedFetcherFor } from "./fetch";
+import { crawlRenderPage } from "./fetch";
 
 /** Stage `research.search`: one job per candidate of the run (`run.params.subdivisionKey` or `placeIds`). */
 export const researchSearchStage: StageDefinition = {
@@ -53,23 +53,21 @@ export const researchFetchHandler: JobHandler<JobData> = async (data, ctx) => {
   const { url } = fetchJobSchema.parse(data);
   const runId = runIdOf(data);
   const cfg = getConfig().fetch;
-  const simulated = await simulatedFetcherFor(getEnv(), (loaded) => ctx.log.info(loaded, "simulation scenario loaded"));
-  const deps = simulated
-    ? simulatedFetchDeps(simulated, cfg)
-    : {
-        transport: getCrawlTransport(),
-        converters: createConverters({ transport: getTransport(), renderPage: crawlRenderPage(), cfg }),
-        pdf: { pdftotext: runPdftotext, model: getEnv().ANTHROPIC_API_KEY ? modelClientFor(ctx.db) : undefined },
-      };
+  // No simulation branch: a research fetch always goes to the real web (`fetchResearchPage` does not read `deps.simulated`).
+  const deps = {
+    transport: getCrawlTransport(),
+    converters: createConverters({ transport: getTransport(), renderPage: crawlRenderPage(), cfg }),
+    pdf: { pdftotext: runPdftotext, model: getEnv().ANTHROPIC_API_KEY ? modelClientFor(ctx.db) : undefined },
+  };
   const result = await fetchResearchPage(ctx.db, url, { ...deps, archive: getArchive(), enqueue: async () => 0 }, { db: ctx.db, runId, stage: data.stage });
   ctx.log.info({ url, ...result }, "research page fetched");
 };
 
 const assessJobSchema = z.object({
-  runId: z.string().uuid(),
+  runId: z.uuid(),
   stage: z.string().min(1),
   key: z.string().min(1),
-  documentVersionIds: z.array(z.string().uuid()).min(1),
+  documentVersionIds: z.array(z.uuid()).min(1),
 });
 
 /** Sends one job's page versions to `assess-page` as a message batch; the poll job stores the assessments. */

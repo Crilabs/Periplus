@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { documents, pageAssessments, researchHits, serpQueries, serpResults } from "@/lib/db/schema";
+import { documents, pageAssessments, researchFetches, researchHits, serpQueries, serpResults } from "@/lib/db/schema";
 import { activeAssessor } from "@/lib/domain/research/assessment";
 import { researchView } from "@/lib/domain/research/view";
 import { insertPlace } from "@/test/consolidation";
@@ -45,12 +45,23 @@ describe("researchView", () => {
         documentId: assessed.documentId,
         assessment: { pageKind: "trip_report", firstHand: true, generated: false, observedAt: "2025-06-15", berths: ["Vathi", "Kolona"] },
       });
-      expect(rows[2]).toMatchObject({ documentId: null, assessment: null });
+      expect(rows[2]).toMatchObject({ documentId: null, assessment: null, fetch: null });
     }));
 
   it("is empty for a place without hits", () =>
     withRollback(async (tx) => {
       const { placeId } = await insertPlace(tx);
       expect(await researchView(tx, placeId)).toEqual([]);
+    }));
+
+  it("carries the newest fetch outcome of the page", () =>
+    withRollback(async (tx) => {
+      const { placeId, objectId } = await insertPlace(tx, { status: "candidate" });
+      const runId = await insertTestRun(tx);
+      const url = "https://fetched.test.invalid/p";
+      await hit(tx, placeId, objectId, url, 1, "positive", "Kolona anchorage");
+      await tx.insert(researchFetches).values({ urlNormalized: url, runId, outcome: "failed", reason: "HTTP 503", createdAt: new Date("2026-10-01") });
+      await tx.insert(researchFetches).values({ urlNormalized: url, runId, outcome: "skipped", reason: "robots", createdAt: new Date("2026-10-02") });
+      expect((await researchView(tx, placeId))[0]!.fetch).toEqual({ outcome: "skipped", reason: "robots" });
     }));
 });

@@ -41,7 +41,8 @@ export async function storeAssessment(
   meta: { model: string; promptVersion: number; runId: string; fetchedAt: Date; publishedAt: string | null },
 ): Promise<void> {
   const { observedAt, basis } = observation(out, meta, getConfig().extraction.earliestDate);
-  const reason = out.observed_at_reason?.trim().slice(0, MAX_REASON_CHARS) || null;
+  // The reason justifies an explicit date only; for any other basis it would contradict the stored date.
+  const reason = basis === "explicit" ? out.observed_at_reason?.trim().slice(0, MAX_REASON_CHARS) || null : null;
   await db
     .insert(pageAssessments)
     .values({

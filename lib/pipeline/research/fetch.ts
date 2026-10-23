@@ -3,7 +3,7 @@ import { BlockedUrlError } from "@/lib/adapters/fetch/ssrf";
 import { HttpError, type CallContext } from "@/lib/adapters/http";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { documents, documentVersions, researchHits } from "@/lib/db/schema";
+import { documents, documentVersions, researchFetches, researchHits } from "@/lib/db/schema";
 import { markChecked, markGone } from "@/lib/domain/documents/store";
 import { researchCandidates } from "@/lib/domain/research/candidates";
 import { ensureResearchSource } from "@/lib/domain/research/sources";
@@ -63,7 +63,8 @@ export async function planResearchFetch(db: Db, run: { id: string; params: Recor
  * has none; an existing source of any status is used as it is (no status check: a page is judged by itself). No
  * frontier, no links. A 404/410 of a known document goes through `markGone` (`gone` once it turns gone, else
  * `failed`; an already gone one stays `failed`), without a document it is `failed`; a body over `fetch.maxRawBytes` is `skipped` (`too_large`), as are a
- * robots.txt refusal (`robots`), an offsite redirect, a blocked address and a PDF/format that cannot be stored.
+ * robots.txt refusal (`robots`), an offsite redirect, a blocked address and a PDF/format that cannot be stored. Every
+ * outcome is recorded in `research_fetches` (a thrown error is not: the job retries).
  */
 export async function fetchResearchPage(
   db: Db,
@@ -71,6 +72,14 @@ export async function fetchResearchPage(
   deps: FetchUrlDeps,
   ctx: CallContext & { runId: string },
 ): Promise<ResearchFetchResult> {
+  const result = await fetchPage(db, url, deps, ctx);
+  // The outcome is kept (append-only) so a run can be measured and the place tab can say why a hit has no page.
+  const urlNormalized = normalizeUrl(url, getConfig().fetch.trackingParams) ?? url;
+  await db.insert(researchFetches).values({ urlNormalized, runId: ctx.runId, outcome: result.outcome, reason: result.reason ?? null });
+  return result;
+}
+
+async function fetchPage(db: Db, url: string, deps: FetchUrlDeps, ctx: CallContext & { runId: string }): Promise<ResearchFetchResult> {
   const cfg = getConfig().fetch;
   const fetchedAt = (deps.now ?? (() => new Date()))();
   const urlNormalized = normalizeUrl(url, cfg.trackingParams) ?? url;

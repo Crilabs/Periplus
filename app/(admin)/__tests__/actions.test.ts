@@ -424,7 +424,7 @@ describe("admin server actions", () => {
       const sub = await insertTestSubdivision(tx, "XQ-RES", [40.0, 30.0, 40.5, 30.25], { country: "XQ" });
       await startSubdivisionResearchAction(form({ subdivisionKey: "XQ-RES" }));
       expect(startRun).not.toHaveBeenCalled();
-      expect(redirect).toHaveBeenLastCalledWith("/subdivisions/XQ-RES?error=geo_object_without_place");
+      expect(redirect).toHaveBeenLastCalledWith("/subdivisions/XQ-RES?error=no_research_candidates");
       const { objectId } = await insertPlace(tx, { status: "candidate" });
       await tx.update(geoObjects).set({ subdivisionId: sub.id }).where(eq(geoObjects.id, objectId));
       await startSubdivisionResearchAction(form({ subdivisionKey: "XQ-RES" }));

@@ -18,7 +18,7 @@ import { FETCH_RUN_STAGES, startExclusiveFetchRun, startFetchRun, startTestCrawl
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
 import { FETCH_SOURCE_STAGE, prepareSourceCrawl } from "@/lib/pipeline/fetch/source";
 import { decodeHtml, FETCH_URL_STAGE, fetchUrl, followLinks, planFetchUrls, type FetchUrlDeps } from "@/lib/pipeline/fetch/url";
-import { getSource } from "@/lib/domain/sources/store";
+import { crawlableSourceIds, getSource } from "@/lib/domain/sources/store";
 import { testDb, withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
 import { startSiteServer, type SiteServer } from "@/test/site-server";
@@ -740,6 +740,25 @@ describe("crawl run starters", () => {
       expect((await getRun(tx, id))!.scope).toEqual({ type: "source", id: "approved" });
       const [row] = await tx.select().from(runs).where(eq(runs.id, id));
       expect((row!.params as { sourceIds: string[] }).sourceIds).toContain(sourceId);
+    });
+  });
+
+  it("an approved research source is neither crawled by \"approved\" nor accepted by id nor prepared", async () => {
+    await withRollback(async (tx) => {
+      const crawled = await insertSource(tx, newSite(), {});
+      const research = await insertSource(tx, newSite(), {});
+      await tx.update(sources).set({ origin: "research" }).where(eq(sources.id, research));
+      const { boss, inserted } = recordingBoss();
+      const { id } = await startFetchRun(tx, boss, { sourceIds: "approved", triggeredBy: "admin" });
+      const [row] = await tx.select().from(runs).where(eq(runs.id, id));
+      const planned = (row!.params as { sourceIds: string[] }).sourceIds;
+      expect(planned).toContain(crawled);
+      expect(planned).not.toContain(research);
+      expect(inserted.map((j) => (j.data as { sourceId: string }).sourceId)).not.toContain(research);
+      await expect(startFetchRun(tx, boss, { sourceIds: [research], triggeredBy: "admin" })).rejects.toMatchObject({ reason: "source_not_approved" });
+      expect(await crawlableSourceIds(tx)).not.toContain(research);
+      const prepared = await prepareSourceCrawl(tx, research, { transport: noNetwork, archive: memoryArchive() }, { db: tx, runId: id });
+      expect(prepared.status).toBe("not_approved");
     });
   });
 
