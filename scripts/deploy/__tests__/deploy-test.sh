@@ -19,7 +19,7 @@ if [ "${IMAGE_TAG:-}" = "${FAKE_FAIL_TAG:-}" ]; then
   case "${FAKE_FAIL:-}:$args" in
     pull:*" pull") exit 1 ;;
     migrate:*" run --rm migrate") exit 1 ;;
-    up:*" up -d --wait --wait-timeout 180 web worker caddy") exit 1 ;;
+    up:*" up -d --wait --wait-timeout 180 web worker") exit 1 ;;
     ready:*" exec -T web "*) exit 1 ;;
     worker:*" exec -T worker "*) exit 1 ;;
   esac
@@ -53,7 +53,7 @@ assert_rolled_back() {
   local before="$FAILURES"
   [ "$RC" -eq 1 ] || fail "expected exit 1, got $RC"
   [ "$(cat "$APP/.deployed-tag")" = "oldsha" ] || fail ".deployed-tag changed to $(cat "$APP/.deployed-tag")"
-  grep -qx 'IMAGE_TAG=oldsha compose --env-file .env -f docker/compose.prod.yml up -d --wait --wait-timeout 180 postgres web worker caddy' "$LOG" \
+  grep -qx 'IMAGE_TAG=oldsha compose --env-file .env -f docker/compose.prod.yml up -d --wait --wait-timeout 180 postgres web worker' "$LOG" \
     || fail "no rollback 'up' with previous tag oldsha"
   grep -q 'rollback to oldsha ok' "$APP/out.log" || fail "rollback not reported ok"
   [ "$FAILURES" -eq "$before" ] && pass
@@ -69,7 +69,7 @@ grep -q '^IMAGE_TAG=oldsha' "$LOG" && fail "unexpected rollback"
 
 run_case migrate-fails migrate
 assert_rolled_back
-grep -q '^IMAGE_TAG=newsha .* up -d --wait --wait-timeout 180 web worker caddy$' "$LOG" && fail "web/worker/caddy started with new tag after failed migrate"
+grep -q '^IMAGE_TAG=newsha .* up -d --wait --wait-timeout 180 web worker$' "$LOG" && fail "web/worker started with new tag after failed migrate"
 
 run_case pull-fails pull
 assert_rolled_back

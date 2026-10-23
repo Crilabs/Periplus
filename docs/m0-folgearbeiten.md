@@ -32,6 +32,8 @@ Die Spalte „Fällig“ sagt, was vorher erledigt sein muss:
 
 **Problem:** Änderungen an `docker/compose.prod.yml` (z. B. das neue `stop_grace_period: 60s`) oder `docker/Caddyfile` kommen nach dem Bootstrap nie auf dem Server an.
 
+**Seit dem geteilten Server:** `docker/Caddyfile` ist ein Site-Block im Caddy des Servers (`/etc/caddy/periplus.caddy`, gehört root). Der Benutzer `periplus` kann ihn nicht ändern; er bleibt manuell (Runbook 5b). Der Vorschlag betrifft nur noch `compose.prod.yml`.
+
 **Vorschlag:** Der Deploy-Job kopiert `docker/compose.prod.yml` und `docker/Caddyfile` pro Commit (z. B. nach `releases/<sha>/`), verlinkt sie als aktuelle Version und behält die vorherige für den Rollback; `deploy.sh` nutzt bei Rollback die Dateien des Ziel-Commits.
 
 ## 4. Kein Weg zum Sperren von Zugängen (vor M1) – erledigt
