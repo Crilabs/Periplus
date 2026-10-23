@@ -94,7 +94,13 @@ export async function runGate(
   await writeFile(args.report, renderGateReport(m, opts.now));
   await mkdir(args.outDir, { recursive: true });
   for (const [threshold, csv] of renderGateLists(m)) await writeFile(path.join(args.outDir, `n3-tor-n${threshold}.csv`), csv);
-  const lines = [`report: ${args.report}`, `lists: ${args.outDir}`, `spots in ${args.subdivision}: ${m.spotCount}`, gateOutcome(m)];
+  const lines = [
+    `report: ${args.report}`,
+    `lists: ${args.outDir}`,
+    `spots in ${args.subdivision}: ${m.spotCount}`,
+    `confirmed without rule backing (N=${m.deliveredThreshold}): ${m.unbacked.length}`,
+    gateOutcome(m),
+  ];
   if (args.syncConflicts) {
     const threshold = m.conflictThreshold;
     const synced = await syncConflictTasks(db, threshold === null ? [] : (m.conflicts.get(threshold) ?? []), threshold ?? cfg.research.gate.thresholds[0]!, m.scopePlaceIds);

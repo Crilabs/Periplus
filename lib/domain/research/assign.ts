@@ -1,9 +1,9 @@
 import { alias } from "drizzle-orm/pg-core";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { resolveTaskModel } from "@/lib/ai/cost";
 import { getConfig, type AppConfig, type NameAffixesConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { documents, documentVersions, geoNames, geoObjects, pageAssessments, places, researchHits, researchRouteStops } from "@/lib/db/schema";
+import { documents, documentVersions, geoNames, geoObjects, pageAssessments, places, researchHits, researchRouteStops, researchUnits } from "@/lib/db/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { stripAffix } from "@/lib/domain/mentions/affixes";
 import { activeAssessor } from "./assessment";
@@ -22,6 +22,29 @@ import type { Archive } from "@/lib/adapters/s3";
  */
 
 export type ResearchUnitPlan = { documentVersionId: string; placeIds: string[] };
+
+/** The skip reason of a unit whose page does not name its berth (N3 task 0). */
+export const NOT_NAMED_REASON = "Liegeplatz auf der Seite nicht genannt";
+
+/** The model and prompt version that extracts berths now (task `extract-berth`). */
+export function activeBerthExtractor(config: AppConfig = getConfig()): { model: string; promptVersion: number } {
+  const { model, taskConfig } = resolveTaskModel(config, "extract-berth");
+  return { model, promptVersion: taskConfig.promptVersion };
+}
+
+/** `fn` over `items` with at most `limit` calls in flight; results in input order. */
+async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
 
 /** The model and prompt version that extracts routes now (task `extract-route`); route stops of others do not count. */
 export function activeRouteExtractor(config: AppConfig = getConfig()): { model: string; promptVersion: number } {
@@ -71,18 +94,21 @@ export async function unitsForPlaces(db: Db, placeIds: string[], cfg: AppConfig,
 }
 
 /**
- * `unitsForPlaces` plus the versions it judged (current, actively assessed, not generated, a page of one of the
- * places): a unit of such a version for a place not in `units` no longer qualifies. A version whose Markdown is
- * missing from the archive cannot be judged by its text; its searched places stay in (extraction skips them as
- * missing Markdown, retryably).
+ * `unitsForPlaces` plus the pairs it judged: each version judged (current, actively assessed, not generated, a page of
+ * one of the places) with each place searched on it (a hit or a route stop). A unit of such a pair not in `units` no
+ * longer qualifies; units of other places (a nearby match, maybe of another run's search) are not judged here. A
+ * version whose Markdown is missing from the archive cannot be judged by its text; its searched places stay in
+ * (extraction skips them as missing Markdown, retryably). The Markdown is read only for pairs not judged by it before:
+ * a pair whose unit (active extractor) is `done` or skipped as not named keeps that outcome, since the version's text
+ * does not change; the rest is read `research.extraction.markdownReadConcurrency` at a time.
  */
 export async function planUnits(
   db: Db,
   placeIds: string[],
   cfg: AppConfig,
   archive: Pick<Archive, "get">,
-): Promise<{ units: ResearchUnitPlan[]; judgedVersions: string[] }> {
-  const none = { units: [], judgedVersions: [] };
+): Promise<{ units: ResearchUnitPlan[]; judgedPairs: Array<{ documentVersionId: string; placeId: string }> }> {
+  const none = { units: [], judgedPairs: [] };
   if (placeIds.length === 0) return none;
   const { model, promptVersion } = activeAssessor(cfg);
 
@@ -143,18 +169,46 @@ export async function planUnits(
   }
   const named = new Set<string>(); // `version:place` found in the Markdown
   if (needText.size > 0) {
-    const keys = await db
-      .select({ id: documentVersions.id, mdKey: documentVersions.mdKey })
-      .from(documentVersions)
-      .where(inArray(documentVersions.id, [...needText.keys()]));
-    for (const k of keys) {
+    // pairs judged by their text before: a done unit was named, a unit skipped as not named was not
+    const extractor = activeBerthExtractor(cfg);
+    const known = await db
+      .select({ versionId: researchUnits.documentVersionId, placeId: researchUnits.placeId, status: researchUnits.status })
+      .from(researchUnits)
+      .where(
+        and(
+          inArray(researchUnits.documentVersionId, [...needText.keys()]),
+          eq(researchUnits.model, extractor.model),
+          eq(researchUnits.promptVersion, extractor.promptVersion),
+          or(eq(researchUnits.status, "done"), and(eq(researchUnits.status, "skipped"), eq(researchUnits.reason, NOT_NAMED_REASON))),
+        ),
+      );
+    const judgedBefore = new Set<string>();
+    for (const k of known) {
+      const key = `${k.versionId}:${k.placeId}`;
+      if (!needText.get(k.versionId)?.includes(k.placeId)) continue;
+      judgedBefore.add(key);
+      if (k.status === "done") named.add(key);
+    }
+    for (const [versionId, ids] of needText) {
+      const left = ids.filter((id) => !judgedBefore.has(`${versionId}:${id}`));
+      if (left.length === 0) needText.delete(versionId);
+      else needText.set(versionId, left);
+    }
+    const keys =
+      needText.size === 0
+        ? []
+        : await db
+            .select({ id: documentVersions.id, mdKey: documentVersions.mdKey })
+            .from(documentVersions)
+            .where(inArray(documentVersions.id, [...needText.keys()]));
+    await mapLimited(keys, cfg.research.extraction.markdownReadConcurrency, async (k) => {
       const body = await archive.get(k.mdKey);
       const md = body === null ? null : new TextDecoder().decode(body);
       for (const placeId of needText.get(k.id)!) {
         // no Markdown: undecidable here, the unit stays and extraction skips it as missing Markdown
         if (md === null || namesOccur(md, own.get(placeId)?.names ?? [])) named.add(`${k.id}:${placeId}`);
       }
-    }
+    });
   }
 
   const units = assessments
@@ -172,7 +226,7 @@ export async function planUnits(
     })
     .filter((u) => u.placeIds.length > 0)
     .sort((x, y) => (x.documentVersionId < y.documentVersionId ? -1 : x.documentVersionId > y.documentVersionId ? 1 : 0));
-  return { units, judgedVersions: assessments.map((a) => a.versionId) };
+  return { units, judgedPairs: assessments.flatMap((a) => [...searched.get(a.versionId)!].map((placeId) => ({ documentVersionId: a.versionId, placeId }))) };
 }
 
 export type NamedPlace = { placeId: string; names: string[]; islands: string[] };

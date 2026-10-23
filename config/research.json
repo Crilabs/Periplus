@@ -28,7 +28,7 @@
   "assessWords": 6000,
   "skipDomains": ["navily.com", "google.com", "youtube.com", "facebook.com", "instagram.com", "pinterest.com", "tripadvisor.*", "booking.com", "amazon.com", "getyourguide.com", "rome2rio.com", "alamy.com"],
   "source": { "weight": 0.5, "ratePerMinute": 20 },
-  "extraction": { "factSchema": "v4", "placeRadiusKm": 15, "maxUnitWords": 12000, "windowWords": 600, "maxSharedWords": 8, "routeMaxStops": 40, "maxAttempts": 3 },
+  "extraction": { "factSchema": "v4", "placeRadiusKm": 15, "maxUnitWords": 12000, "windowWords": 600, "maxSharedWords": 8, "routeMaxStops": 40, "maxAttempts": 3, "markdownReadConcurrency": 8 },
   "confirmation": {
     "minIndependentSources": 2,
     "minSignalConfidence": 0.7,
@@ -41,6 +41,6 @@
     "corridorAloneConfirms": false,
     "copyMinSharedWords": 12
   },
-  "gate": { "subdivision": "GR-I", "thresholds": [2, 3, 4, 5], "released": false, "chosenThreshold": null },
+  "gate": { "subdivision": "GR-I", "thresholds": [2, 3, 4, 5], "released": false, "chosenThreshold": null, "maxPositionDeviationM": 150 },
   "discovery": { "corridorBufferKm": 3, "minNameSimilarity": 0.8, "vetoSimilarity": 0.4, "maxLegKm": 25, "maxLegDays": 3, "corroboratingDomains": 2 }
 }

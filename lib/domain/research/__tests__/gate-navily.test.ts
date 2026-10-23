@@ -28,14 +28,14 @@ function place(placeId: string, names: string[], position: LonLat, o: { confirme
     hasNames: o.hasNames ?? names.length > 0, hasHits: o.hasHits ?? true,
   };
 }
-const run = (places: In[], spots: NavilySpot[], decisions: Record<string, "berth" | "not_berth"> = {}) =>
-  evaluateGate({ thresholds: [2, 3, 4, 5], places, spots, decisions: new Map(Object.entries(decisions)) }, cfg);
+const run = (places: In[], spots: NavilySpot[], decisions: Record<string, "berth" | "not_berth"> = {}, inArea?: (p: LonLat) => boolean) =>
+  evaluateGate({ thresholds: [2, 3, 4, 5], places, spots, decisions: new Map(Object.entries(decisions)), inArea }, cfg);
 const row = (r: ReturnType<typeof run>, n: number) => r.rows.find((x) => x.threshold === n)!;
 
 describe("evaluateGate", () => {
   it("a confirmed place on a spot of its kind is correct", () => {
     const r = run([place("p1", ["Alpha"], AT)], [spot({ name: "Alpha" })]);
-    expect(row(r, 2)).toEqual({ threshold: 2, confirmed: 1, correct: 1, wrongKind: 0, conflicts: 0, decidedNotBerth: 0, correctness: 1 });
+    expect(row(r, 2)).toEqual({ threshold: 2, confirmed: 1, correct: 1, wrongKind: 0, wrongPosition: 0, conflicts: 0, decidedNotBerth: 0, correctness: 1 });
     expect(r.conflicts.get(2)).toEqual([]);
     expect(r.misses.get(2)).toEqual([]);
   });
@@ -59,7 +59,7 @@ describe("evaluateGate", () => {
 
   it("a threshold confirming nothing has correctness null, not 100 % (Review Focus)", () => {
     const r = run([place("p1", ["Alpha"], AT, { confirmedUpTo: 3 })], [spot({ name: "Alpha" })]);
-    expect(row(r, 4)).toEqual({ threshold: 4, confirmed: 0, correct: 0, wrongKind: 0, conflicts: 0, decidedNotBerth: 0, correctness: null });
+    expect(row(r, 4)).toEqual({ threshold: 4, confirmed: 0, correct: 0, wrongKind: 0, wrongPosition: 0, conflicts: 0, decidedNotBerth: 0, correctness: null });
     expect(row(r, 3).correctness).toBe(1);
   });
 
@@ -71,9 +71,44 @@ describe("evaluateGate", () => {
     expect(r.conflicts.get(3)).toEqual([]);
   });
 
-  it("a confirmed bay matched only to a harbour spot is wrongKind, not correct", () => {
+  it("a confirmed bay matched by name to a harbour spot is wrongKind, not correct", () => {
     const r = run([place("p1", ["Gamma"], AT)], [spot({ name: "Gamma", kind: "port" })]);
     expect(row(r, 2)).toMatchObject({ confirmed: 1, correct: 0, wrongKind: 1, conflicts: 0, correctness: 0 });
+    expect(r.misses.get(2)).toEqual([]);
+  });
+
+  it("a spot of another kind matched by distance only (name below nameMin) is a conflict, not wrongKind (revised ruling)", () => {
+    const r = run([place("p1", ["Beta"], north(100))], [spot({ name: "Gamma", kind: "port" })]);
+    expect(row(r, 2)).toMatchObject({ confirmed: 1, correct: 0, wrongKind: 0, conflicts: 1 });
+    expect(r.conflicts.get(2)).toEqual(["p1"]);
+    expect(r.errors.get(2)).toEqual([]);
+    const decided = run([place("p1", ["Beta"], north(100))], [spot({ name: "Gamma", kind: "port" })], { p1: "berth" });
+    expect(row(decided, 2)).toMatchObject({ correct: 1, conflicts: 0, wrongKind: 0 });
+  });
+
+  it("a spot of unknown kind is a conflict even when the name matches (revised ruling)", () => {
+    const r = run([place("p1", ["Gamma"], AT)], [spot({ name: "Gamma", kind: null })]);
+    expect(row(r, 2)).toMatchObject({ confirmed: 1, correct: 0, wrongKind: 0, conflicts: 1 });
+    expect(r.conflicts.get(2)).toEqual(["p1"]);
+  });
+
+  it("a matched spot of its kind farther than gate.maxPositionDeviationM is a position error; within it correct", () => {
+    expect(cfg.research.gate.maxPositionDeviationM).toBe(150);
+    const far = run([place("p1", ["Alpha"], north(300))], [spot({ name: "Alpha" })]);
+    expect(row(far, 2)).toMatchObject({ confirmed: 1, correct: 0, wrongPosition: 1, conflicts: 0, correctness: 0 });
+    expect(far.errors.get(2)).toEqual([{ placeId: "p1", kind: "position", spotIndex: 0, distanceM: expect.closeTo(300, 0) }]);
+    expect(far.misses.get(2)).toEqual([]);
+    const near = run([place("p1", ["Alpha"], north(140))], [spot({ name: "Alpha" })]);
+    expect(row(near, 2)).toMatchObject({ correct: 1, wrongPosition: 0 });
+    // a human "berth" does not clear a position error
+    expect(row(run([place("p1", ["Alpha"], north(300))], [spot({ name: "Alpha" })], { p1: "berth" }), 2)).toMatchObject({ correct: 0, wrongPosition: 1 });
+  });
+
+  it("spots outside the area (the buffer) are matched, but never counted as misses", () => {
+    const inside = (p: LonLat) => p.lat <= AT.lat + 0.001;
+    const edge = spot({ name: "Alpha", ...north(140) });
+    const r = run([place("p1", ["Alpha"], north(100))], [edge, spot({ name: "Delta", ...north(5000) })], {}, inside);
+    expect(row(r, 2)).toMatchObject({ confirmed: 1, correct: 1, conflicts: 0 });
     expect(r.misses.get(2)).toEqual([]);
   });
 

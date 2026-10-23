@@ -18,7 +18,8 @@ export const NOT_BERTH_REASON = "Kein Liegeplatz laut Prüfung (Navily-Test)";
 /**
  * Makes the open research-conflict tasks match `conflictPlaceIds`: one open task per place (none twice, none again for a
  * place a human decided already), and an open task of a place that is no conflict any more is dismissed with
- * `context.dismissedReason` `no_longer_conflict`. `threshold`: the confirmation threshold the conflict was found at.
+ * `context.dismissedReason` `no_longer_conflict`. `threshold`: the confirmation threshold the conflict was found at
+ (`context.threshold`, brought up to date on the open tasks found again).
  * Only tasks of `scopePlaceIds` (the places of the measured subdivision) are dismissed or counted; those of other places
  * stay. Returns the tasks created and the open ones of the scope after the sync.
  */
@@ -41,6 +42,13 @@ export async function syncConflictTasks(db: Db, conflictPlaceIds: string[], thre
     for (const placeId of wanted) {
       const task = await createReviewTask(tx, { kind: "research_conflict", subjectType: RESEARCH_CONFLICT_SUBJECT, subjectId: placeId, context: { threshold } });
       if (task.created) created++;
+    }
+    // an open task found again: its threshold is the one of this measurement
+    if (wanted.length > 0) {
+      await tx
+        .update(reviewTasks)
+        .set({ context: sql`${reviewTasks.context} || ${JSON.stringify({ threshold })}::jsonb` })
+        .where(and(eq(reviewTasks.kind, "research_conflict"), eq(reviewTasks.status, "open"), inArray(reviewTasks.subjectId, wanted)));
     }
     const inScope = scope.length === 0 ? sql`false` : inArray(reviewTasks.subjectId, scope);
     await tx

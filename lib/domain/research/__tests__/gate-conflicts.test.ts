@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { places, reviewDecisions, reviewTasks } from "@/lib/db/schema";
+import { createReviewTask } from "@/lib/domain/review";
 import { decideReviewTask } from "@/lib/domain/review-decisions";
 import { applyBerthVerdicts } from "@/lib/domain/research/confirmation";
 import { gateDecisions, NOT_BERTH_REASON, syncConflictTasks } from "@/lib/domain/research/gate-conflicts";
@@ -29,6 +30,16 @@ describe("syncConflictTasks", () => {
       const [task] = await tasksOf(tx, a.placeId);
       expect(task).toMatchObject({ subjectType: "research_conflict", status: "open", context: { threshold: 2 } });
       expect(await tasksOf(tx, a.placeId)).toHaveLength(1);
+    }));
+
+  it("brings the threshold of an open task up to date on a re-sync", () =>
+    withRollback(async (tx) => {
+      const a = await placeOf(tx);
+      await syncConflictTasks(tx, [a.placeId], 3, [a.placeId]);
+      expect(await syncConflictTasks(tx, [a.placeId], 2, [a.placeId])).toEqual({ created: 0, open: 1 });
+      const tasks = await tasksOf(tx, a.placeId);
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0]).toMatchObject({ status: "open", context: { threshold: 2 } });
     }));
 
   it("closes the task of a place that is no conflict any more, with the reason", () =>
@@ -81,6 +92,21 @@ describe("deciding a conflict", () => {
 
       expect(await applyBerthVerdicts(tx, [place.placeId], NOW, config)).toEqual([]);
       expect((await tx.select().from(places).where(eq(places.id, place.placeId)))[0]!.status).toBe("rejected");
+    }));
+
+  it("„Kein Liegeplatz“ stamps updatedAt and dismisses the place's other open tasks", () =>
+    withRollback(async (tx) => {
+      const place = await placeOf(tx);
+      const old = new Date("2020-01-01T00:00:00Z");
+      await tx.update(places).set({ updatedAt: old }).where(eq(places.id, place.placeId));
+      const other = await createReviewTask(tx, { kind: "place_candidate", subjectType: "place", subjectId: place.placeId, context: { reason: "seed" } });
+      await syncConflictTasks(tx, [place.placeId], 2, [place.placeId]);
+      const [task] = await tasksOf(tx, place.placeId);
+      await decideReviewTask(tx, { taskId: task!.id, decision: { action: "not_berth" }, decidedBy: "admin@test.invalid" });
+      const [row] = await tx.select().from(places).where(eq(places.id, place.placeId));
+      expect(row!.updatedAt.getTime()).toBeGreaterThan(old.getTime());
+      const [after] = await tx.select().from(reviewTasks).where(eq(reviewTasks.id, other.id));
+      expect(after).toMatchObject({ status: "dismissed", context: { dismissedReason: "superseded" } });
     }));
 
   it("„Liegeplatz“ keeps the status and stores the decision", () =>

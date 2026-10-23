@@ -1,6 +1,5 @@
 import { and, asc, eq, inArray, isNull, lt, ne, notExists, notInArray, or, sql } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
-import { resolveTaskModel } from "@/lib/ai/cost";
 import { extractBerthTask, type ExtractBerthInput } from "@/lib/ai/tasks/extract-berth";
 import type { ModelTask } from "@/lib/ai/types";
 import { getConfig, type AppConfig } from "@/lib/config";
@@ -8,7 +7,7 @@ import type { Db } from "@/lib/db/client";
 import { aiBatches, aiBatchItems, documentVersions, geoNames, pageAssessments, places, researchUnits } from "@/lib/db/schema";
 import type { ObservedAtBasis } from "@/lib/db/schema/sources";
 import { activeAssessor } from "@/lib/domain/research/assessment";
-import { berthNameMatches, planUnits } from "@/lib/domain/research/assign";
+import { activeBerthExtractor, berthNameMatches, NOT_NAMED_REASON, planUnits } from "@/lib/domain/research/assign";
 import { researchCandidates } from "@/lib/domain/research/candidates";
 import { berthAttributes, noDrops, storeExtraction } from "@/lib/domain/research/extraction";
 import { candidateNames } from "@/lib/domain/research/queries";
@@ -34,7 +33,6 @@ export const RESEARCH_EXTRACT_QUEUE = "research.extract" satisfies QueueName;
 const SUBJECT = "research_unit";
 /** The skip reason of a generated page: such a unit is never planned again (the others are). */
 const GENERATED_REASON = "page is generated text";
-const NOT_NAMED_REASON = "Liegeplatz auf der Seite nicht genannt";
 
 let logger: ReturnType<typeof createLogger> | undefined;
 const getLog = () => (logger ??= createLogger("pipeline.research.extract"));
@@ -52,8 +50,7 @@ export type ExtractItemInput = ExtractBerthInput & { offsetRuns: OffsetRun[] | n
 
 /** The model and prompt version the configuration extracts with now. */
 export function activeExtractor(config: AppConfig = getConfig()): { model: string; promptVersion: number } {
-  const { model, taskConfig } = resolveTaskModel(config, extractBerthTask.name);
-  return { model, promptVersion: taskConfig.promptVersion };
+  return activeBerthExtractor(config);
 }
 
 /**
@@ -62,8 +59,8 @@ export function activeExtractor(config: AppConfig = getConfig()): { model: strin
  * goes into a job, `unitsPerBatch` per job. A `failed` unit that failed fewer than `research.extraction.maxAttempts`
  * times and a unit `skipped` for missing Markdown or assessment are set back to `pending` first; a `done` unit, one
  * failed that often and one skipped as generated text are not planned again. A searched place gets a unit only for a
- * page that names it (`planUnits`, which reads the Markdown from `archive`); a pending or done unit of a judged page
- * that no longer qualifies is `skipped` as not named. A unit whose Markdown is missing is skipped by extraction, retryably.
+ * page that names it (`planUnits`, which reads the Markdown from `archive`); a pending or done unit of a judged pair
+ * (a page and a place searched on it) that no longer qualifies is `skipped` as not named. A unit whose Markdown is missing is skipped by extraction, retryably.
  */
 export async function planResearchExtract(
   db: Db,
@@ -72,24 +69,29 @@ export async function planResearchExtract(
   archive: Pick<Archive, "get">,
 ): Promise<JobData[]> {
   const placeIds = await researchCandidates(db, researchScope(run.params));
-  const { units: plans, judgedVersions } = await planUnits(db, placeIds, config, archive);
+  const { units: plans, judgedPairs } = await planUnits(db, placeIds, config, archive);
   const pairs = plans.flatMap((p) => p.placeIds.map((placeId) => ({ documentVersionId: p.documentVersionId, placeId })));
   const { model, promptVersion } = activeExtractor(config);
-  // a pending or done unit of a judged page whose berth the page does not name (any more) is swept: skipped, no evidence
+  // a pending or done unit of a judged pair (a page and a place searched on it) whose berth the page does not name
+  // (any more) is swept: skipped, no evidence; units of other places of the page (nearby matches) are not judged here
   const kept = new Set(pairs.map((p) => `${p.documentVersionId}:${p.placeId}`));
-  const stale = judgedVersions.length === 0 ? [] : await db
+  const judged = new Set(judgedPairs.map((p) => `${p.documentVersionId}:${p.placeId}`));
+  const stale = judgedPairs.length === 0 ? [] : await db
     .select({ id: researchUnits.id, documentVersionId: researchUnits.documentVersionId, placeId: researchUnits.placeId })
     .from(researchUnits)
     .where(
       and(
-        inArray(researchUnits.placeId, placeIds),
-        inArray(researchUnits.documentVersionId, judgedVersions),
+        inArray(researchUnits.placeId, [...new Set(judgedPairs.map((p) => p.placeId))]),
+        inArray(researchUnits.documentVersionId, [...new Set(judgedPairs.map((p) => p.documentVersionId))]),
         eq(researchUnits.model, model),
         eq(researchUnits.promptVersion, promptVersion),
         inArray(researchUnits.status, ["pending", "done"]),
       ),
     );
-  for (const u of stale) if (!kept.has(`${u.documentVersionId}:${u.placeId}`)) await sweepUnit(db, u.id);
+  for (const u of stale) {
+    const key = `${u.documentVersionId}:${u.placeId}`;
+    if (judged.has(key) && !kept.has(key)) await sweepUnit(db, u.id);
+  }
   if (pairs.length === 0) return [];
   await db
     .insert(researchUnits)

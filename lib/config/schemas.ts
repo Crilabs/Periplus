@@ -1403,6 +1403,8 @@ export const researchSchema = z
       routeMaxStops: z.number().int().positive(),
       /** A failed research unit is planned again until it failed this often. */
       maxAttempts: z.number().int().positive(),
+      /** How many archived Markdown files the unit planning reads at a time (N3 task 0). */
+      markdownReadConcurrency: z.number().int().positive(),
     }),
     /** When a berth counts as confirmed from its signals (plan N2, task 6). */
     confirmation: z.strictObject({
@@ -1428,6 +1430,8 @@ export const researchSchema = z
         /** Whether the gate is passed and the chosen threshold released for other subdivisions. */
         released: z.boolean(),
         chosenThreshold: z.number().int().min(1).nullable(),
+        /** A confirmed place matched to a reference spot of its kind farther than this is a position error (as `quality.navily.positionToleranceM`). */
+        maxPositionDeviationM: z.number().positive(),
       })
       .refine((g) => g.thresholds.every((n, i) => i === 0 || n > g.thresholds[i - 1]!), { error: "gate thresholds must be strictly ascending" })
       .refine((g) => !g.released || (g.chosenThreshold !== null && g.thresholds.includes(g.chosenThreshold)), {
@@ -1448,6 +1452,10 @@ export const researchSchema = z
     }),
   })
   .superRefine((c, ctx) => {
+    // a released gate is released for the threshold that delivers: the rule must confirm with the chosen threshold
+    if (c.gate.released && c.confirmation.minIndependentSources !== c.gate.chosenThreshold) {
+      ctx.addIssue({ code: "custom", path: ["confirmation", "minIndependentSources"], message: "a released gate needs minIndependentSources equal to gate.chosenThreshold" });
+    }
     for (const k of c.confirmation.negativeKinds) {
       if (c.confirmation.positiveKinds.includes(k)) {
         ctx.addIssue({ code: "custom", path: ["confirmation", "negativeKinds"], message: `signal kind ${k} is both positive and negative` });

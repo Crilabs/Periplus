@@ -6,8 +6,6 @@ import type { ExtractBerthInput, ExtractBerthOutput } from "@/lib/ai/tasks/extra
 import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { aiBatches, berthSignals, documents, documentVersions, pageAssessments, researchHits, researchUnits, serpQueries, serpResults } from "@/lib/db/schema";
-import { loadEvidence } from "@/lib/domain/research/confirmation";
-import { researchView } from "@/lib/domain/research/view";
 import { activeAssessor } from "@/lib/domain/research/assessment";
 import { noDrops } from "@/lib/domain/research/extraction";
 import { newId } from "@/lib/domain/ids";
@@ -290,21 +288,71 @@ describe("research.extract", () => {
     return { ypsilon, versionId: v.versionId, archiveWith, archive: archiveWith(text) };
   }
 
-  it("sweeps a done unit whose page does not name the berth: skipped, its signal counts for nothing", () =>
+  it("does not read the Markdown again for a version whose unit is done or skipped as not named: the unit stays", () =>
     withRollback(async (tx) => {
-      const { ypsilon, versionId, archive } = await xylaPage(tx, "We anchored in Xyla Bay for the night.");
       const { model, promptVersion } = activeExtractor(config);
-      const [unit] = await tx.insert(researchUnits).values({ documentVersionId: versionId, placeId: ypsilon.placeId, model, promptVersion, status: "done", dropped: noDrops(), runId: await insertTestRun(tx) }).returning({ id: researchUnits.id });
-      await tx.insert(berthSignals).values({ unitId: unit!.id, placeId: ypsilon.placeId, documentVersionId: versionId, kind: "anchored", firstHand: true, confidence: 0.9, quote: "We anchored in Xyla Bay", quoteStart: 3, quoteEnd: 26, observedAt: "2024-06-15", observedAtBasis: "explicit" });
-      expect((await loadEvidence(tx, [ypsilon.placeId], config)).get(ypsilon.placeId)).toHaveLength(1);
+      for (const status of ["done", "skipped"] as const) {
+        const { ypsilon, versionId, archiveWith } = await xylaPage(tx, "We anchored in Xyla Bay for the night.");
+        const [unit] = await tx
+          .insert(researchUnits)
+          .values({ documentVersionId: versionId, placeId: ypsilon.placeId, model, promptVersion, status, reason: status === "skipped" ? "Liegeplatz auf der Seite nicht genannt" : null, dropped: noDrops(), runId: await insertTestRun(tx) })
+          .returning({ id: researchUnits.id });
+        const reads: string[] = [];
+        const archive = { get: async (key: string) => { reads.push(key); return archiveWith("We anchored off Ypsilon.").get(key); } };
+        const runId = await runWithStage(tx, [ypsilon.placeId]);
+        expect(await planResearchExtract(tx, { id: runId, params: { placeIds: [ypsilon.placeId] } }, config, archive), status).toEqual([]);
+        expect(reads, status).toEqual([]);
+        const [after] = await tx.select().from(researchUnits).where(eq(researchUnits.id, unit!.id));
+        expect(after!.status, status).toBe(status);
+      }
+    }));
 
+  it("reads the Markdown of many versions in parallel, at most 8 at a time", () =>
+    withRollback(async (tx) => {
+      const ypsilon = await insertPlace(tx, { name: "Ypsilon", lon: 30.5, lat: 40.6, status: "candidate" });
+      const { model: assessor, promptVersion } = activeAssessor(config);
+      const runRef = await insertTestRun(tx);
+      for (let i = 0; i < 12; i++) {
+        const v = await insertTestVersion(tx, ["x"]);
+        const [doc] = await tx.select().from(documents).where(eq(documents.id, v.documentId));
+        await hit(tx, ypsilon.placeId, ypsilon.objectId, doc!.urlNormalized);
+        await tx.insert(pageAssessments).values({
+          documentVersionId: v.versionId, model: assessor, promptVersion, pageKind: "trip_report", firstHand: true, generated: false,
+          observedAt: "2024-06-15", observedAtBasis: "explicit", berths: [{ name: "Xyla Bay", island: null, kind: "anchorage" }], runId: runRef,
+        });
+      }
+      let inFlight = 0;
+      let peak = 0;
+      const archive = {
+        get: async () => {
+          inFlight++;
+          peak = Math.max(peak, inFlight);
+          await new Promise((r) => setTimeout(r, 5));
+          inFlight--;
+          return new TextEncoder().encode("We anchored off Ypsilon.");
+        },
+      };
       const runId = await runWithStage(tx, [ypsilon.placeId]);
-      expect(await planResearchExtract(tx, { id: runId, params: { placeIds: [ypsilon.placeId] } }, config, archive)).toEqual([]);
+      const jobs = await planResearchExtract(tx, { id: runId, params: { placeIds: [ypsilon.placeId] } }, config, archive);
+      expect(jobs.flatMap((j) => j.unitIds as string[])).toHaveLength(12);
+      expect(peak).toBeGreaterThan(1);
+      expect(peak).toBeLessThanOrEqual(8);
+    }));
+
+  it("does not sweep a unit of a place that is no searched place of the judged page (a nearby match of another run)", () =>
+    withRollback(async (tx) => {
+      const { vathi, versionId, archive } = await seed(tx);
+      // in this run's scope, but neither searched on the page nor near Vathi: its unit came from another run's nearby matching
+      const zeta = await insertPlace(tx, { name: "Zeta", lon: 31.0, lat: 40.2, status: "candidate" });
+      const { model, promptVersion } = activeExtractor(config);
+      const [unit] = await tx
+        .insert(researchUnits)
+        .values({ documentVersionId: versionId, placeId: zeta.placeId, model, promptVersion, status: "done", dropped: noDrops(), runId: await insertTestRun(tx) })
+        .returning({ id: researchUnits.id });
+      const runId = await runWithStage(tx, [vathi, zeta.placeId]);
+      await planResearchExtract(tx, { id: runId, params: { placeIds: [vathi, zeta.placeId] } }, config, archive);
       const [after] = await tx.select().from(researchUnits).where(eq(researchUnits.id, unit!.id));
-      expect(after).toMatchObject({ status: "skipped", reason: "Liegeplatz auf der Seite nicht genannt" });
-      expect((await loadEvidence(tx, [ypsilon.placeId], config)).get(ypsilon.placeId) ?? []).toEqual([]);
-      const view = await researchView(tx, ypsilon.placeId);
-      expect(JSON.stringify(view)).not.toContain("We anchored in Xyla Bay");
+      expect(after!.status).toBe("done");
     }));
 
   it("drops a batch answer that arrives for a unit swept to skipped", () =>

@@ -100,7 +100,7 @@ export const reviewDecisionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("approve_image") }),
   z.object({ action: z.literal("regenerate_image"), zoom: z.enum(["z1", "z2", "z3"]).optional() }),
   z.object({ action: z.literal("no_image") }),
-  // research_conflict / research_conflict: the place is a berth (status stays), or is none (rejected)
+  // research_conflict: the place is a berth (status stays), or is none (rejected)
   z.object({ action: z.literal("berth") }),
   z.object({ action: z.literal("not_berth") }),
 ]);
@@ -264,8 +264,13 @@ export async function decideReviewTask(
     if (task.subjectType === RESEARCH_CONFLICT_SUBJECT) {
       // „Kein Liegeplatz“ rejects the place for good (the research never confirms a rejected place); „Liegeplatz“ only records
       if (decision.action === "berth") return { documentVersionIds: [], consolidate: null, regenerateImage: null };
+      // Lock order (M5-F-R4): the place's open tasks, then the place. `lockOpenPlaceTasks` takes only the tasks on the
+      // place itself (`subject_type = 'place'`), not this research_conflict task, which the decision holds already; a
+      // rejected place has nothing left to decide there, so they are dismissed as superseded.
+      const openPlaceTasks = await lockOpenPlaceTasks(tx, task.subjectId);
       const place = await lockPlace(tx, task.subjectId);
-      await tx.update(places).set({ status: "rejected", statusReason: NOT_BERTH_REASON }).where(eq(places.id, place.id));
+      await tx.update(places).set({ status: "rejected", statusReason: NOT_BERTH_REASON, updatedAt: sql`now()` }).where(eq(places.id, place.id));
+      await dismissTasks(tx, openPlaceTasks, "superseded");
       await deleteHighlightSelections(tx, place.geoObjectId);
       return { documentVersionIds: [], consolidate: { geoObjectId: place.geoObjectId }, regenerateImage: null };
     }
