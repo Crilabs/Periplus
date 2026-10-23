@@ -31,7 +31,7 @@ describe("research schema", () => {
         .insert(serpResults)
         .values({ serpQueryId: q!.id, rank: 1, url: "https://a.test/p", urlNormalized: "a.test/p", domain: "a.test", title: "t", snippet: "s" })
         .returning({ id: serpResults.id });
-      const hit = (purpose: "positive" | "negative") => ({
+      const hit = (purpose: "positive" | "negative" | "landside") => ({
         placeId,
         geoObjectId: objectId,
         serpQueryId: q!.id,
@@ -45,6 +45,7 @@ describe("research schema", () => {
       await tx.insert(researchHits).values(hit("positive"));
       expect(await rejectionMessage(tx, (t) => t.insert(researchHits).values(hit("positive")))).toContain("research_hits_place_id_url_normalized_purpose_unique");
       await tx.insert(researchHits).values(hit("negative"));
+      await tx.insert(researchHits).values(hit("landside"));
     }));
 
   it("allows one assessment per version, model and prompt version", () =>

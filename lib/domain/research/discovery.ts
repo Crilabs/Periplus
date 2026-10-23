@@ -212,7 +212,7 @@ export async function matchStops(db: Db, documentVersionId: string, cfg: AppConf
     join places p on p.id = h.place_id
     join documents d on d.url_normalized = h.url_normalized
     join document_versions v on v.document_id = d.id
-    where v.id = ${documentVersionId}::uuid`);
+    where v.id = ${documentVersionId}::uuid and h.purpose <> 'landside'`);
   const pagePlaces = hits.map((h) => h.place_id);
   const radiusKm = cfg.research.extraction.placeRadiusKm;
   let pagePool: NamedPlace[] | undefined;

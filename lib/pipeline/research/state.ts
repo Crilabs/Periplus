@@ -6,6 +6,7 @@ import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import type { VersionedConsolidationConfig } from "@/lib/config/schemas";
 import { aiBatches, aiBatchItems, berthStates, places } from "@/lib/db/schema";
+import type { BerthStateLanding } from "@/lib/db/schema/research-state";
 import { researchCandidates } from "@/lib/domain/research/candidates";
 import { landingPoints } from "@/lib/domain/research/landing";
 import { hasTransportFact, reachable } from "@/lib/domain/research/reach";
@@ -30,6 +31,14 @@ import { researchScope } from "./search";
 
 export const RESEARCH_STATE_STAGE = "research.state";
 export const RESEARCH_STATE_QUEUE = "research.state" satisfies QueueName;
+
+/**
+ * Stage `research.state_facts` (plan N4b): only the bundling of the facts, no state build. It ends the follow-up run's
+ * land research: the landside facts that came since `research.state` are bundled with the berth facts. A stage cannot
+ * repeat in a run (`run_stages` is unique per run and stage), hence this second stage over the same bundling jobs.
+ */
+export const RESEARCH_STATE_FACTS_STAGE = "research.state_facts";
+export const RESEARCH_STATE_FACTS_QUEUE = "research.state_facts" satisfies QueueName;
 
 const SUBJECT = "place";
 
@@ -177,6 +186,39 @@ export async function planResearchState(db: Db, run: { id: string; params: Recor
 }
 
 /**
+ * Plan of the stage `research.state_facts`: per confirmed place one job refreshing `nearby` (`{ key: "nearby:<id>", placeId }`,
+ * `refreshNearby`), then the bundling jobs of the facts (`planBundleFacts`).
+ */
+export async function planResearchStateFacts(db: Db, run: { id: string; params: Record<string, unknown> }, config: AppConfig = getConfig()): Promise<JobData[]> {
+  const ids = await statePlaces(db, run.params);
+  return [...ids.map((id): JobData => ({ key: `nearby:${id}`, placeId: id })), ...(await planBundleFacts(db, ids, config))];
+}
+
+/** What is reachable from the landing points, given the facts left standing (subjects they name, bus/taxi they prove). */
+async function nearbyOf(db: Db, placeId: string, landing: BerthStateLanding[], config: AppConfig) {
+  const facts = await standingFacts(db, placeId, config);
+  const factSubjects = facts.flatMap((f) => (f.subject === "landside" && f.subjectName ? [f.subjectName] : []));
+  return reachable(db, landing, config, { transportFact: hasTransportFact(facts, config.research.state.transportKeywords), factSubjects });
+}
+
+/**
+ * Refreshes only `berth_states.nearby` of the place from its stored landing points and the standing facts (the landside
+ * facts of the follow-up chain came after the state build). Core, facts and landing are never touched; a place that is no
+ * longer confirmed (or valid), or has no state row, is skipped.
+ */
+export async function refreshNearby(db: Db, placeId: string, config: AppConfig = getConfig()): Promise<{ refreshed: boolean }> {
+  const [row] = await db
+    .select({ landing: berthStates.landing, status: places.status, validTo: places.validTo, mergedIntoId: places.mergedIntoId })
+    .from(berthStates)
+    .innerJoin(places, eq(places.id, berthStates.placeId))
+    .where(eq(berthStates.placeId, placeId));
+  if (!row || row.status !== "confirmed" || row.validTo !== null || row.mergedIntoId !== null) return { refreshed: false };
+  const nearby = await nearbyOf(db, placeId, row.landing, config);
+  await db.update(berthStates).set({ nearby, updatedAt: new Date() }).where(eq(berthStates.placeId, placeId));
+  return { refreshed: true };
+}
+
+/**
  * Builds the state of one berth: core values with gaps (`decideCore` over `coreInputs`, by the frozen `rules`), landing
  * points and what is reachable from them, upserted into `berth_states`. The facts column belongs to the bundling and
  * is never touched here. A place that is no longer confirmed (or valid) is skipped; its row stays as it is.
@@ -199,9 +241,7 @@ export async function buildBerthState(
   const { core, gaps } = decideCore(await coreInputs(db, placeId, config, ctx.rules), { kind: place.kind, status: place.status }, { config, rules: ctx.rules, today });
   const landing = await landingPoints(db, placeId, config);
   // the facts left standing after the bundling: a superseded fact neither names a POI nor opens transport
-  const facts = await standingFacts(db, placeId, config);
-  const factSubjects = facts.flatMap((f) => (f.subject === "landside" && f.subjectName ? [f.subjectName] : []));
-  const nearby = await reachable(db, landing, config, { transportFact: hasTransportFact(facts, config.research.state.transportKeywords), factSubjects });
+  const nearby = await nearbyOf(db, placeId, landing, config);
   const now = new Date();
   await db
     .insert(berthStates)

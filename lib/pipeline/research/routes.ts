@@ -82,7 +82,7 @@ async function reportsToRoute(db: Db, placeIds: string[], config: AppConfig): Pr
     join documents d on d.url_normalized = h.url_normalized
     join page_assessments a on a.document_version_id = d.current_version_id
       and a.model = ${assessor.model} and a.prompt_version = ${assessor.promptVersion}
-    where h.place_id in ${jsonUuids(placeIds)} and a.generated = false and a.page_kind = 'trip_report'
+    where h.place_id in ${jsonUuids(placeIds)} and h.purpose <> 'landside' and a.generated = false and a.page_kind = 'trip_report'
       and not exists (select 1 from research_route_stops s where s.document_version_id = d.current_version_id
         and s.model = ${route.model} and s.prompt_version = ${route.promptVersion})
       and not exists (select 1 ${items} and b.status not in ('distributed', 'failed'))
@@ -266,7 +266,7 @@ export async function planResearchDiscover(
   const { rows } = await db.execute<{ id: string }>(sql`
     select distinct d.current_version_id as id
     from research_hits h join documents d on d.url_normalized = h.url_normalized
-    where h.place_id in ${jsonUuids(placeIds)}
+    where h.place_id in ${jsonUuids(placeIds)} and h.purpose <> 'landside'
       and exists (select 1 from research_route_stops s where s.document_version_id = d.current_version_id
         and s.model = ${route.model} and s.prompt_version = ${route.promptVersion} and s.place_id is null)
     order by id`);

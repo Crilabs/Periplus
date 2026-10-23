@@ -1388,6 +1388,12 @@ const researchTemplateSchema = z.strictObject({
   lang: z.string().min(1),
 });
 
+const landsideTemplateSchema = z.strictObject({
+  /** `{subject}`: the name of a town, sight or settlement near a berth (required). */
+  template: z.string().refine((t) => t.includes("{subject}"), { error: "template must contain {subject}" }),
+  lang: z.string().min(1),
+});
+
 /** Per-berth research (spec 18): search templates, languages by country, SERP location codes and limits. */
 export const researchSchema = z
   .strictObject({
@@ -1401,6 +1407,18 @@ export const researchSchema = z
       negative: z.array(researchTemplateSchema),
     }),
     maxHitsPerCandidate: z.number().int().positive(),
+    /** Landside research (plan N4b): searches for the towns and sights around a confirmed berth. */
+    landside: z.strictObject({
+      templates: z.array(landsideTemplateSchema).min(1),
+      /** At most this many subjects (towns, sights) per berth, besides the nearest settlement. */
+      maxSubjectsPerPlace: z.number().int().positive(),
+      /** Hits taken over per subject's query set. */
+      maxHitsPerSubject: z.number().int().positive(),
+      /** The nearest settlement is a subject only within this distance (metres) of the berth. */
+      settlementMaxM: z.number().positive(),
+      /** A landside fact whose statement or quote contains one of these words (whole words, case and accents ignored) is about boats at the water and is dropped. */
+      boatKeywords: z.array(z.string().min(1)).min(1),
+    }),
     refetchDays: z.number().int().positive(),
     assessWords: z.number().int().positive(),
     /** Domains whose hits are not taken over; `label.*` skips that registrable label on every public suffix (`tripadvisor.*`). */
@@ -1510,6 +1528,11 @@ export const researchSchema = z
         if (!(lang in c.locationCodes)) {
           ctx.addIssue({ code: "custom", path: ["languagesByCountry", country, i], message: `language ${lang} has no locationCodes entry` });
         }
+      }
+    }
+    for (const [i, t] of c.landside.templates.entries()) {
+      if (!(t.lang in c.locationCodes)) {
+        ctx.addIssue({ code: "custom", path: ["landside", "templates", i, "lang"], message: `language ${t.lang} has no locationCodes entry` });
       }
     }
     for (const purpose of ["positive", "negative"] as const) {

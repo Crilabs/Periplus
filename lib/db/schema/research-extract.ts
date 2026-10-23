@@ -11,6 +11,8 @@ import { documentVersions, observedAtBasisEnum } from "./sources";
  */
 
 export const researchUnitStatusEnum = pgEnum("research_unit_status", ["pending", "done", "failed", "skipped"]);
+/** What a unit reads a page for: the berth itself, or the landside (things around the berth: never a berth proof). */
+export const researchUnitKindEnum = pgEnum("research_unit_kind", ["berth", "landside"]);
 export const berthSignalKindEnum = pgEnum("berth_signal_kind", [
   "anchored",
   "moored_buoy",
@@ -23,6 +25,7 @@ export const berthSignalKindEnum = pgEnum("berth_signal_kind", [
   "closed",
 ]);
 export const toneEnum = pgEnum("tone", ["positive", "negative", "neutral"]);
+export type ResearchUnitKind = (typeof researchUnitKindEnum.enumValues)[number];
 export type ResearchUnitStatus = (typeof researchUnitStatusEnum.enumValues)[number];
 export type BerthSignalKind = (typeof berthSignalKindEnum.enumValues)[number];
 export type Tone = (typeof toneEnum.enumValues)[number];
@@ -42,6 +45,7 @@ export const researchUnits = pgTable(
       .references(() => places.id),
     model: text("model").notNull(),
     promptVersion: integer("prompt_version").notNull(),
+    kind: researchUnitKindEnum("kind").notNull().default("berth"),
     status: researchUnitStatusEnum("status").notNull(),
     reason: text("reason"),
     dropped: jsonb("dropped").$type<DroppedCounts>().notNull(),
@@ -51,7 +55,7 @@ export const researchUnits = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex("research_units_version_place_model_prompt_unique").on(t.documentVersionId, t.placeId, t.model, t.promptVersion),
+    uniqueIndex("research_units_version_place_model_prompt_kind_unique").on(t.documentVersionId, t.placeId, t.model, t.promptVersion, t.kind),
     index("research_units_place_id_idx").on(t.placeId),
   ],
 );

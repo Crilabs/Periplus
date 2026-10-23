@@ -7,11 +7,13 @@ import type { Tone } from "@/lib/db/schema/research-extract";
 import { registrableDomain } from "@/lib/domain/sources/urls";
 import { activeAssessor } from "./assessment";
 import { activeExtractor } from "./confirmation";
+import { activeLandsideExtractor } from "./landside-extraction";
 import { liveResearchSourceSql } from "./sources";
 
 /*
  * Free facts of a berth state (plan N4a task 3): the statements of done units of the active `extract-berth` model and
- * prompt, bundled by the model into groups of equivalent facts (`bundle-facts`). The bundling writes no text: the
+ * prompt and, as landside facts, of done landside units of the active `extract-landside` (plan N4b: the one place where
+ * both kinds of unit count), bundled by the model into groups of equivalent facts (`bundle-facts`). The bundling writes no text: the
  * representative of a group is an existing `berth_facts` row, and the ids a newer fact of the group contradicts are
  * left out. The free facts are read as the core values are (`coreInputs`): the document's current version, a page with
  * an active, not generated assessment, a live source.
@@ -34,6 +36,7 @@ type FactRow = {
 /** The free facts of the place, oldest observation first (ties by id). */
 export async function freeFacts(db: Db, placeId: string, config: AppConfig): Promise<FreeFact[]> {
   const extractor = activeExtractor(config);
+  const landside = activeLandsideExtractor(config);
   const assessor = activeAssessor(config);
   const { rows } = await db.execute<FactRow>(sql`
     select f.id, f.statement, f.subject_name, f.subject_category, f.observed_at::text as observed_at, f.tone::text as tone, f.safety, d.url
@@ -43,7 +46,9 @@ export async function freeFacts(db: Db, placeId: string, config: AppConfig): Pro
     join sources src on src.id = d.source_id
     join page_assessments a on a.document_version_id = f.document_version_id and a.model = ${assessor.model} and a.prompt_version = ${assessor.promptVersion}
     where f.place_id = ${placeId} and f.statement is not null
-      and u.status = 'done' and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion}
+      and u.status = 'done'
+      and ((u.kind = 'berth' and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion})
+        or (u.kind = 'landside' and u.model = ${landside.model} and u.prompt_version = ${landside.promptVersion}))
       and a.generated = false and ${liveResearchSourceSql("src")}
     order by f.observed_at, f.id`);
   return rows.map((r) => {

@@ -81,7 +81,7 @@ export async function coreInputs(db: Db, placeId: string, config: AppConfig, rul
     join sources src on src.id = d.source_id
     join page_assessments a on a.document_version_id = f.document_version_id and a.model = ${assessor.model} and a.prompt_version = ${assessor.promptVersion}
     where f.place_id = ${placeId} and f.attribute is not null
-      and u.status = 'done' and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion}
+      and u.kind = 'berth' and u.status = 'done' and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion}
       and a.generated = false and ${liveResearchSourceSql("src")}
     order by f.id`);
 

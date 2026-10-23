@@ -28,6 +28,8 @@ export type SignalPageOpts = {
   pageKind?: PageKind;
   /** How the page is linked to the place: a search hit (default), a route stop matched by name or by the corridor, or none. */
   link?: "search" | "name" | "corridor" | "none";
+  /** The purpose of the search hit of a `search` link (default `positive`). */
+  hitPurpose?: "positive" | "negative" | "landside";
   unitStatus?: "done" | "failed";
   unitModel?: string;
   quote?: string;
@@ -51,7 +53,7 @@ export async function signalPage(tx: Db, config: AppConfig, place: { placeId: st
       .values({ keyword: "k", languageCode: "en", locationCode: 2300, depth: 10, level: "place", scopeId: place.objectId, rawKey: `serp/x/${url}.json`, fetchedAt: new Date() })
       .returning({ id: serpQueries.id });
     const [r] = await tx.insert(serpResults).values({ serpQueryId: q!.id, rank: 1, url, urlNormalized: url, domain: o.domain, title: "t", snippet: "s" }).returning({ id: serpResults.id });
-    await tx.insert(researchHits).values({ placeId: place.placeId, geoObjectId: place.objectId, serpQueryId: q!.id, serpResultId: r!.id, urlNormalized: url, domain: o.domain, rank: 1, purpose: "positive" });
+    await tx.insert(researchHits).values({ placeId: place.placeId, geoObjectId: place.objectId, serpQueryId: q!.id, serpResultId: r!.id, urlNormalized: url, domain: o.domain, rank: 1, purpose: o.hitPurpose ?? "positive" });
   } else if (link !== "none") {
     const route = activeRouteExtractor(config);
     await tx.insert(researchRouteStops).values({

@@ -3,7 +3,7 @@ import type { FactRow, ResearchRow, ResearchViewData, SignalRow } from "@/lib/do
 import { PAGE_KIND_LABELS, PLACE_STATUS_LABELS, RESEARCH_FETCH_REASON_LABELS, SIGNAL_KIND_LABELS, TONE_LABELS } from "../../_components/labels";
 import { Badge, EmptyState, Panel, Table, tdClass, TextLink, thClass, trClass } from "../../_components/ui";
 
-const PURPOSE_LABELS = { positive: "Bestätigung", negative: "Negativsuche" } as const;
+const PURPOSE_LABELS = { positive: "Bestätigung", negative: "Negativsuche", landside: "Landsuche" } as const;
 
 /** Column „Zweck“: the search purposes of a hit, else how the page is linked to the berth. */
 function purposeText(r: ResearchRow): string {

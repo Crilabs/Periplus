@@ -217,7 +217,7 @@ export async function loadEvidence(db: Db, placeIds: string[], config: AppConfig
   const { rows } = await db.execute<SignalRow>(sql`
     select s.id, s.place_id, s.document_version_id, s.kind::text as kind, s.first_hand, s.confidence, s.observed_at::text as observed_at, s.observed_at_basis::text as observed_at_basis,
       s.quote, v.content_hash, d.url, a.page_kind::text as page_kind, a.generated, a.berths,
-      exists (select 1 from research_hits h where h.place_id = s.place_id and h.url_normalized = d.url_normalized) as search_hit,
+      exists (select 1 from research_hits h where h.place_id = s.place_id and h.purpose <> 'landside' and h.url_normalized = d.url_normalized) as search_hit,
       ${stop("name")} as name_stop,
       ${stop("corridor")} as corridor_stop
     from berth_signals s
@@ -226,7 +226,7 @@ export async function loadEvidence(db: Db, placeIds: string[], config: AppConfig
     join documents d on d.id = v.document_id
     join sources src on src.id = d.source_id
     join page_assessments a on a.document_version_id = s.document_version_id and a.model = ${assessor.model} and a.prompt_version = ${assessor.promptVersion}
-    where s.place_id in (${ids}) and u.status = 'done' and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion}
+    where s.place_id in (${ids}) and u.kind = 'berth' and u.status = 'done' and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion}
       and ${liveResearchSourceSql("src")}
       and (d.current_version_id = s.document_version_id or s.kind::text in (${negativeKinds}))
     order by s.place_id, s.id`);

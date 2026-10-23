@@ -105,7 +105,7 @@ async function hintTexts(db: Db, placeId: string, config: AppConfig): Promise<Be
     join sources src on src.id = d.source_id
     join page_assessments a on a.document_version_id = h.document_version_id and a.model = ${assessor.model} and a.prompt_version = ${assessor.promptVersion}
     where h.place_id = ${placeId}
-      and u.status = 'done' and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion}
+      and u.kind = 'berth' and u.status = 'done' and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion}
       and a.generated = false and ${liveResearchSourceSql("src")}
     order by h.observed_at, h.id`);
   // the same hint of several pages counts once

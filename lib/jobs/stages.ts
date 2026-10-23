@@ -17,6 +17,9 @@ import {
   researchFetchStage,
   researchRoutesStage,
   researchSearchStage,
+  researchLandsideExtractStage,
+  researchLandsideSearchStage,
+  researchStateFactsStage,
   researchStateStage,
 } from "./handlers/research";
 import { imagesPlaceStage } from "./handlers/images";
@@ -76,6 +79,9 @@ export const STAGES: Record<string, StageDefinition> = {
   [researchDiscoverStage.name]: researchDiscoverStage,
   [researchConfirmStage.name]: researchConfirmStage,
   [researchStateStage.name]: researchStateStage,
+  [researchStateFactsStage.name]: researchStateFactsStage,
+  [researchLandsideSearchStage.name]: researchLandsideSearchStage,
+  [researchLandsideExtractStage.name]: researchLandsideExtractStage,
   [embedChunksStage.name]: embedChunksStage,
   [wikivoyageStage.name]: wikivoyageStage,
   [compareConvertersStage.name]: compareConvertersStage,

@@ -22,6 +22,11 @@ import { RESEARCH_CONFIRM_STAGE } from "@/lib/pipeline/research/confirm";
 import { extractUnits, planResearchExtract, RESEARCH_EXTRACT_STAGE } from "@/lib/pipeline/research/extract";
 import { startConsolidationRun } from "@/lib/pipeline/consolidation/run";
 import { RESEARCH_STAGES } from "@/lib/pipeline/research-run";
+import { planResearchAssess } from "@/lib/pipeline/research/assess";
+import { planResearchFetch } from "@/lib/pipeline/research/fetch";
+import { HANDLERS } from "@/lib/jobs/registry";
+import { STAGES } from "@/lib/jobs/stages";
+import { QUEUES } from "@/lib/jobs/queues";
 import { insertPlace } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
@@ -42,6 +47,59 @@ function recordingBoss() {
 }
 
 const ctxFor = (db: Db, boss: PgBoss): JobContext => ({ db, boss, log: createLogger("test"), jobId: newId() });
+
+describe("follow-up chain with the land research (N4b)", () => {
+  it("runs state, landside search, fetch, assess, landside extraction, fact bundling and images, each stage once", () => {
+    expect([...BERTH_FOLLOWUP_STAGES]).toEqual([
+      "research.state",
+      "research.landside_search",
+      "research.fetch",
+      "research.assess",
+      "research.landside_extract",
+      "research.state_facts",
+      "images.place",
+    ]);
+    expect(new Set(BERTH_FOLLOWUP_STAGES).size).toBe(BERTH_FOLLOWUP_STAGES.length);
+  });
+
+  it("the research run per subdivision has no landside stage", () => {
+    expect(RESEARCH_STAGES.filter((s) => s.includes("landside") || (s as string) === "research.state_facts")).toEqual([]);
+  });
+
+  it("every stage of the chain is registered with a queue that has a handler and a config entry", () => {
+    for (const stage of BERTH_FOLLOWUP_STAGES) {
+      const def = STAGES[stage];
+      expect(def, stage).toBeDefined();
+      expect(QUEUES).toContain(def!.queue);
+      expect(HANDLERS[def!.queue], stage).toBeDefined();
+      expect((base.queues as Record<string, unknown>)[def!.queue], stage).toBeDefined();
+    }
+  });
+
+  it("the run starts with all stages and fetch and assess plan the landside hits of the run's places", () =>
+    withRollback(async (tx) => {
+      const place = await insertPlace(tx, { name: "Vathi", status: "confirmed" });
+      const { boss } = recordingBoss();
+      const started = await startBerthFollowupRun(tx, boss, [place.placeId], "test");
+      const stages = await tx.select().from(runStages).where(eq(runStages.runId, started!.id));
+      expect(stages).toHaveLength(BERTH_FOLLOWUP_STAGES.length);
+      const archive = memoryArchive();
+      const versionId = await page(tx, place, "town-guide.example", archive);
+      await tx.update(researchHits).set({ purpose: "landside" }).where(eq(researchHits.placeId, place.placeId));
+      // a landside hit whose page was never fetched: the fetch plans it
+      const url = "https://www.town-guide.example/never-fetched";
+      const [q] = await tx
+        .insert(serpQueries)
+        .values({ keyword: "k", languageCode: "en", locationCode: 2300, depth: 10, level: "place", scopeId: place.objectId, rawKey: "serp/landside.json", fetchedAt: new Date() })
+        .returning({ id: serpQueries.id });
+      const [r] = await tx.insert(serpResults).values({ serpQueryId: q!.id, rank: 1, url, urlNormalized: url, domain: "town-guide.example", title: "t", snippet: "s" }).returning({ id: serpResults.id });
+      await tx.insert(researchHits).values({ placeId: place.placeId, geoObjectId: place.objectId, serpQueryId: q!.id, serpResultId: r!.id, urlNormalized: url, domain: "town-guide.example", rank: 1, purpose: "landside" });
+      const run = { id: started!.id, params: { placeIds: [place.placeId] } };
+      expect((await planResearchFetch(tx, run)).map((j) => j.url)).toEqual([url]);
+      await tx.delete(pageAssessments).where(eq(pageAssessments.documentVersionId, versionId));
+      expect((await planResearchAssess(tx, run)).flatMap((j) => j.documentVersionIds as string[])).toEqual([versionId]);
+    }));
+});
 
 describe("startBerthFollowupRun", () => {
   it("starts an event run of scope system/berth-followup with the images stage for the places' objects", () =>

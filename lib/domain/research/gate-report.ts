@@ -78,7 +78,7 @@ async function subdivisionPlaces(db: Db, subdivisionKey: string): Promise<Array<
       status: places.status,
       statusReason: places.statusReason,
       position: asGeoJson(places.position),
-      hasHits: sql<boolean>`exists (select 1 from ${researchHits} where ${researchHits.placeId} = ${places.id})`,
+      hasHits: sql<boolean>`exists (select 1 from ${researchHits} where ${researchHits.placeId} = ${places.id} and ${researchHits.purpose} <> 'landside')`,
     })
     .from(places)
     .innerJoin(geoObjects, eq(geoObjects.id, places.geoObjectId))

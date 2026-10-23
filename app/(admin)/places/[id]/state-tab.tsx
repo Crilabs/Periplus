@@ -12,6 +12,7 @@ const LANDING_LABELS: Record<BerthLandingKind, string> = {
   shore: "Ufer",
   text: "Hinweis aus Text",
 };
+const FACT_ORIGIN_LABELS = { berth: "Liegeplatz-Seite", landside: "Landseite" } as const;
 const ACCESS_LABELS = { foot: "zu Fuß", transport: "Bus/Taxi" } as const;
 
 const coord = (lat: number, lon: number) => `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
@@ -19,7 +20,7 @@ const de = (n: number, digits = 0) => n.toLocaleString("de-DE", { maximumFractio
 
 /**
  * Tab „Stand“ of the place page (plan N4a): the current picture of a confirmed berth. Core values with their origin
- * (berechnet, Text, Regel), the gaps, the bundled facts with date, tone, number of sources and the safety marker, the
+ * (berechnet, Text, Regel), the gaps, the bundled facts with date, tone, number of sources, origin (Liegeplatz-Seite or Landseite) and the safety marker, the
  * landing points and what is reachable on land (category, distance, on foot or by bus/taxi).
  */
 export function StateTab({ view }: { view: BerthStateView | null }) {
@@ -96,6 +97,7 @@ export function StateTab({ view }: { view: BerthStateView | null }) {
                 <th className={thClass}>Datum</th>
                 <th className={thClass}>Tonfall</th>
                 <th className={thClass}>Quellen</th>
+                <th className={thClass}>Herkunft</th>
               </tr>
             </thead>
             <tbody>
@@ -115,6 +117,7 @@ export function StateTab({ view }: { view: BerthStateView | null }) {
                   <td className={tdClass}>{f.observedAt}</td>
                   <td className={tdClass}>{f.tone ? TONE_LABELS[f.tone] : "–"}</td>
                   <td className={tdClass}>{f.mentions}</td>
+                  <td className={tdClass}>{f.origin ? <Badge tone={f.origin === "landside" ? "accent" : "neutral"}>{FACT_ORIGIN_LABELS[f.origin]}</Badge> : "–"}</td>
                 </tr>
               ))}
             </tbody>
