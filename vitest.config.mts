@@ -65,6 +65,9 @@ const IMAGERY_TESTS = [
   "lib/pipeline/images/__tests__/stage.test.ts",
 ];
 
+/** Fallback is the shared test database; a session with its own database pair sets TEST_DATABASE_URL (docker/compose.isolated.yml). */
+const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL ?? "postgres://periplus:periplus@localhost:5434/periplus_test";
+
 export default defineConfig({
   resolve: {
     alias: { "@": fileURLToPath(new URL(".", import.meta.url)) },
@@ -98,8 +101,8 @@ export default defineConfig({
     env: {
       NODE_ENV: "test",
       LOG_LEVEL: "silent",
-      TEST_DATABASE_URL: "postgres://periplus:periplus@localhost:5434/periplus_test",
-      DATABASE_URL: "postgres://periplus:periplus@localhost:5434/periplus_test",
+      TEST_DATABASE_URL: TEST_DATABASE_URL,
+      DATABASE_URL: TEST_DATABASE_URL,
       S3_ENDPOINT: "http://localhost:8333",
       S3_REGION: "us-east-1",
       S3_BUCKET: "periplus-test",

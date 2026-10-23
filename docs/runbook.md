@@ -169,6 +169,15 @@ Ergebnis der letzten Prüfung (nach Abnahme eintragen): _Datum: offen, restore-c
 - Compose-Layout auf dem Server: `.env` neben `docker/`; `compose.prod.yml` liest `../.env`.
 - `PERIPLUS_RENDERER` (Standard `playwright`): Der Worker rendert Seiten mit `render: auto`/`always` in Headless-Chromium. `PERIPLUS_RENDERER=off` in `.env` schaltet das Rendern ab (z. B. wenn Chromium abstürzt oder zu viel Speicher braucht); Seiten werden dann nur aus dem HTTP-Text konvertiert. Danach `dc up -d worker`.
 
+## Parallele Entwicklung mit eigener Datenbank
+
+Mehrere Sitzungen, die dieselbe Entwicklungs- (5433) und Test-Datenbank (5434) nutzen, stören sich gegenseitig, und ein Speicherabsturz kann den Postgres der anderen treffen. Wer parallel arbeitet, startet ein eigenes Paar: `npm run services:isolated:up` (Compose-Projekt `periplus-isolated`, Entwicklung auf 5435, Test auf 5436; Ports über `PERIPLUS_DB_PORT` und `PERIPLUS_DB_TEST_PORT` änderbar). Die Container haben Speichergrenzen (2 GB und 1 GB); ein Absturz bleibt im eigenen Container. Den S3 teilt man weiter (Port 8333), aber mit eigenem Bucket.
+
+- `.env.local` des Worktrees (nicht eingecheckt): `DATABASE_URL=postgres://periplus:periplus@localhost:5435/periplus` und ein eigener `S3_BUCKET`.
+- Migrieren: `DATABASE_URL=postgres://periplus:periplus@localhost:5435/periplus npm run db:migrate`.
+- Tests: `TEST_DATABASE_URL=postgres://periplus:periplus@localhost:5436/periplus_test npx vitest run …`. Ohne die Variable greift der Rückfall auf 5434.
+- Abbauen: `npm run services:isolated:down`.
+
 ## Länder und Landesteile (`config/subdivisions.json`)
 - Ein **Landesteil** (Code `subdivision`, ID `sd_…`, Schlüssel nach ISO 3166-2, z. B. `GR-I` Attika) ist eine Verwaltungseinheit erster Ebene mit Mittelmeerküste oder ein Kleinstaat als Ganzes. Er ist Laufumfang, Elternobjekt seiner Geo-Objekte und Liefereinheit. Ein **Revier** (`ar_…`) ist nur noch ein Name für ein Seegebiet, außerhalb der Hierarchie und nicht mehr Laufumfang (Teil-Spec 14; Reviere liefert der Revier-Bot, siehe Abschnitt „Reviere“).
 - `config/subdivisions.json` legt je Land fest: OSM-Ebene der Einheiten (`firstLevel`, `whole` für Kleinstaaten), Quellsprachen, Saison, Zyklus, Ausschluss mit Grund (Libyen, Syrien, Gaza). Dazu Teilungen (`split`, z. B. Südliche Ägäis → Kykladen, Dodekanes), Zusammenlegungen, zusätzliche Einheiten (`extra`, Nordzypern), Einheiten ohne Mittelmeerküste (`notMediterranean`), Schlüssel für Einheiten ohne ISO-Kennung (`keyOverrides`), Abweichungen je Landesteil (`overrides`, darunter die Küstenabschnitte) und `retiredAreaKeys` (die früheren Revier-Schlüssel mit dem Landesteil, den eine Fehlermeldung stattdessen nennt). Die Datei wird beim Start mit zod geprüft.

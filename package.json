@@ -9,6 +9,8 @@
     "lint": "eslint . --max-warnings 0",
     "services:up": "docker compose -f docker/compose.dev.yml up -d --build",
     "services:down": "docker compose -f docker/compose.dev.yml down",
+    "services:isolated:up": "docker compose -f docker/compose.isolated.yml up -d --build",
+    "services:isolated:down": "docker compose -f docker/compose.isolated.yml down",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
