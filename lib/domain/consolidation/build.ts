@@ -78,7 +78,7 @@ const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const sortedUnique = (values: Array<string | null>) => [...new Set(values.filter((v): v is string => v !== null && v !== ""))].sort();
 
 /** Inputs by (attribute, observedAt, fact or POI id), then the remaining ids and the source: a total order. */
-function byAttributeDateId(a: ConsolidationInput, b: ConsolidationInput): number {
+export function byAttributeDateId(a: ConsolidationInput, b: ConsolidationInput): number {
   return (
     cmp(a.attribute, b.attribute) ||
     cmp(a.observedAt, b.observedAt) ||

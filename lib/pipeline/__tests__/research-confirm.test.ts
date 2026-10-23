@@ -9,6 +9,7 @@ import {
   restrictedAreas,
   reviewDecisions,
   reviewTasks,
+  sources,
 } from "@/lib/db/schema";
 import { newId, newPublicId } from "@/lib/domain/ids";
 import { setPlaceStatusByAdmin } from "@/lib/domain/place-status";
@@ -257,6 +258,21 @@ describe("applyBerthVerdicts", () => {
       expect((await loadEvidence(tx, [place.placeId], config)).get(place.placeId)!.map((e) => e.quote)).toEqual([quote, quote]);
       expect(await applyBerthVerdicts(tx, [place.placeId], NOW, config)).toEqual([]);
       expect(await placeRow(tx, place.placeId)).toMatchObject({ status: "candidate", statusReason: "1 von 2 unabhängigen Quellen (gleicher Text: a.example + b.example)" });
+    }));
+
+  it("signals of a rejected or ended source give no evidence (Quelle beenden)", () =>
+    withRollback(async (tx) => {
+      const place = await placeOf(tx);
+      const sourceOf = async (versionId: string) =>
+        (await tx.execute<{ id: string }>(sql`select d.source_id as id from document_versions v join documents d on d.id = v.document_id where v.id = ${versionId}`)).rows[0]!.id;
+      const a = await signalPage(tx, place, { domain: "a.example" });
+      const b = await signalPage(tx, place, { domain: "b.example" });
+      await signalPage(tx, place, { domain: "c.example" });
+      expect((await loadEvidence(tx, [place.placeId], config)).get(place.placeId)).toHaveLength(3);
+      await tx.update(sources).set({ status: "rejected" }).where(eq(sources.id, await sourceOf(a.versionId)));
+      await tx.update(sources).set({ validTo: "2026-10-01" }).where(eq(sources.id, await sourceOf(b.versionId)));
+      expect((await loadEvidence(tx, [place.placeId], config)).get(place.placeId)!.map((e) => e.domain)).toEqual(["c.example"]);
+      expect(await applyBerthVerdicts(tx, [place.placeId], NOW, config)).toEqual([]);
     }));
 
   it("only signals of done units of the active extract-berth model count; the page's active assessment decides its kind", () =>

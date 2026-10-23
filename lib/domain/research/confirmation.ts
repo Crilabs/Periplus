@@ -11,6 +11,7 @@ import { hasOpenPairTask, recordDecision, SYSTEM_ACTOR } from "@/lib/domain/plac
 import { registrableDomain } from "@/lib/domain/sources/urls";
 import { activeAssessor } from "./assessment";
 import { activeRouteExtractor, berthNameMatches, placeNames } from "./assign";
+import { liveResearchSourceSql } from "./sources";
 import { copiesSource } from "./verbatim";
 
 /*
@@ -196,8 +197,9 @@ type SignalRow = {
 /**
  * The evidence of each place: the signals of its done research units of the active `extract-berth` model and
  * prompt, with the page's active assessment (kind, generated), its registrable domain and its link to the place. A
- * page without an active assessment gives no evidence. A page linked by a corridor route stop only (no search hit,
- * no name stop) is still name-linked when one of its assessed berths matches a (not provisional) name of the place.
+ * page without an active assessment, or of a rejected or ended source, gives no evidence. A page linked by a corridor
+ * route stop only (no search hit, no name stop) is still name-linked when one of its assessed berths matches a (not
+ * provisional) name of the place.
  */
 export async function loadEvidence(db: Db, placeIds: string[], config: AppConfig = getConfig()): Promise<Map<string, Evidence[]>> {
   const out = new Map<string, Evidence[]>();
@@ -220,8 +222,10 @@ export async function loadEvidence(db: Db, placeIds: string[], config: AppConfig
     join research_units u on u.id = s.unit_id
     join document_versions v on v.id = s.document_version_id
     join documents d on d.id = v.document_id
+    join sources src on src.id = d.source_id
     join page_assessments a on a.document_version_id = s.document_version_id and a.model = ${assessor.model} and a.prompt_version = ${assessor.promptVersion}
     where s.place_id in (${ids}) and u.status = 'done' and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion}
+      and ${liveResearchSourceSql("src")}
     order by s.place_id, s.id`);
 
   const corridorOnly = rows.filter((r) => !r.search_hit && !r.name_stop && r.corridor_stop);
