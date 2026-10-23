@@ -41,7 +41,7 @@ export function withinRing(point: { lon: number; lat: number }, centers: RingCen
 }
 
 /** Edge lengths in km of a box (east-west at the latitude nearest the equator, the longest). */
-function extentKm([west, south, east, north]: Bbox): { widthKm: number; heightKm: number } {
+export function boxExtentKm([west, south, east, north]: Bbox): { widthKm: number; heightKm: number } {
   const lat = south <= 0 && north >= 0 ? 0 : Math.min(Math.abs(south), Math.abs(north));
   return { widthKm: ((east - west) * M_PER_DEG * Math.cos(rad(lat))) / 1000, heightKm: ((north - south) * M_PER_DEG) / 1000 };
 }
@@ -57,7 +57,7 @@ export function ringBoxes(centers: RingCenter[], radiusM: number, maxBoxKm: numb
   const groups: Bbox[] = [];
   for (const c of sorted) {
     const i = groups.findIndex(([w, s, e, n]) => {
-      const { widthKm, heightKm } = extentKm([Math.min(w, c.lon), Math.min(s, c.lat), Math.max(e, c.lon), Math.max(n, c.lat)]);
+      const { widthKm, heightKm } = boxExtentKm([Math.min(w, c.lon), Math.min(s, c.lat), Math.max(e, c.lon), Math.max(n, c.lat)]);
       return widthKm <= maxBoxKm && heightKm <= maxBoxKm;
     });
     if (i < 0) {

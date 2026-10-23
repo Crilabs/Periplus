@@ -342,12 +342,14 @@ export const gazetteerSchema = z.strictObject({
   /**
    * The stage `gazetteer.land` (N7 4.4, 4.6): candidates are grouped into query boxes of at most `maxBoxKm` per edge;
    * `marginM` widens both rings (radii from `research.state`, `landRings`) for the extent of the anchor area around
-   * the candidate point; `wikidataClasses` are the Wikidata classes of the far ring (POIs, category from
+   * the candidate point; `minSplitKm` is the floor for splitting a failing box; `wikidataClasses` are the Wikidata classes of the far ring (POIs, category from
    * `categories.wikidata`).
    */
   land: z.strictObject({
     maxBoxKm: z.number().positive(),
     marginM: z.number().nonnegative(),
+    /** A ring box whose query keeps failing is split into quadrants while they stay at least this long on their larger edge. */
+    minSplitKm: z.number().positive(),
     wikidataClasses: z.array(wikidataQid).min(1),
   }),
   geonames: z.strictObject({

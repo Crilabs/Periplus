@@ -10,7 +10,7 @@ import { classifyOsm, osmNames } from "@/lib/domain/gazetteer/osm-classify";
 import { assignObjects } from "@/lib/domain/gazetteer/hierarchy";
 import { quadrants } from "@/lib/domain/gazetteer/land";
 import { ensureFallbackNames } from "@/lib/domain/gazetteer/names";
-import { landRings, ringBoxes, withinRing, type RingCenter } from "@/lib/domain/gazetteer/rings";
+import { boxExtentKm, landRings, ringBoxes, withinRing, type RingCenter } from "@/lib/domain/gazetteer/rings";
 import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
 import { upsertGeoObject, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
 import { researchCandidates } from "@/lib/domain/research/candidates";
@@ -152,7 +152,8 @@ export async function importLandThings(
   const elements = new Map<string, OverpassElement>();
   /**
    * Asks the ring query for `box`. A box that still fails retryably after its retries is asked again per quadrant
-   * (`<part>.q<i>`), recursively while its larger edge is at least `overpass.minBlockDeg` (as the coarse import, B15).
+   * (`<part>.q<i>`, as the coarse import, B15), recursively while the quadrants stay at least `gazetteer.land.minSplitKm`
+   * long on their larger edge; below that the job fails naming the part.
    */
   const ask = async (ring: "near" | "far", part: string, box: Bbox): Promise<void> => {
     const ql = buildLandQuery(box, ring === "near" ? categories.osm : farRules, overpass.timeoutSeconds, ring === "far");
@@ -161,9 +162,10 @@ export async function importLandThings(
       answer = await overpassQueryRetrying(deps.transport, ql, ctx, overpass, { part: `${scope.key} ${part}`, sleep: deps.sleep });
     } catch (error) {
       if (!(error instanceof RetryableHttpError)) throw error;
-      if (Math.max(box[2] - box[0], box[3] - box[1]) < overpass.minBlockDeg) {
+      const { widthKm, heightKm } = boxExtentKm(box);
+      if (Math.max(widthKm, heightKm) / 2 < land.minSplitKm) {
         throw new RetryableHttpError(
-          `gazetteer.land ${scope.key}: overpass part ${part} failed and is not split below overpass.minBlockDeg (${overpass.minBlockDeg}°): ${error.message}`,
+          `gazetteer.land ${scope.key}: overpass part ${part} failed and is not split below gazetteer.land.minSplitKm (${land.minSplitKm} km): ${error.message}`,
           error.status,
           { cause: error },
         );

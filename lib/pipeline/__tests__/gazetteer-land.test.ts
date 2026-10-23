@@ -6,6 +6,7 @@ import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoObjects, places, rateLimits, tileGeoObjects, wikidataSitelinks, type PlaceStatus } from "@/lib/db/schema";
+import { boxExtentKm } from "@/lib/domain/gazetteer/rings";
 import { gazetteerScope } from "@/lib/domain/gazetteer/scope";
 import { newId } from "@/lib/domain/ids";
 import { reachable } from "@/lib/domain/research/reach";
@@ -101,6 +102,8 @@ type FakeOptions = {
   extraNear?: OverpassElement[];
   /** Far queries over a box at least this many degrees wide answer 504 (so only its quadrants succeed). */
   failFarFromDeg?: number;
+  /** Near queries over a box at least this many km wide answer 504. */
+  failNearFromKm?: number;
   /** Refills the token buckets before each answer, so many calls in one test never wait for a token. */
   refill?: () => Promise<void>;
 };
@@ -124,6 +127,9 @@ function transport(seen: Seen = { overpass: [], wdqs: [], entities: [] }, opts: 
       if (far && opts.failFarFromDeg !== undefined) {
         const [w, , e] = qlBox(ql);
         if (e! - w! >= opts.failFarFromDeg) return json({ error: "gateway timeout" }, 504);
+      }
+      if (!far && opts.failNearFromKm !== undefined && boxExtentKm(qlBox(ql) as [number, number, number, number]).widthKm >= opts.failNearFromKm) {
+        return json({ error: "gateway timeout" }, 504);
       }
       return json({ elements: far ? FAR : [...NEAR, ...(opts.extraNear ?? [])] });
     }
@@ -299,6 +305,34 @@ describe("importLandThings", () => {
       expect(far).toHaveLength(retries + 1 + 4);
       expect(far.slice(retries + 1).every((q) => qlBox(q)[2]! - qlBox(q)[0]! < 0.5)).toBe(true);
       expect(await archive.exists(`datasets/overpass/land/${KEY}/2026-10-24-far-0.q3.json`)).toBe(true);
+    }));
+
+  it("a full-size near box that keeps failing is split twice down to quadrants of about 11 km", () =>
+    withRollback(async (db) => {
+      const f = await prepare(db);
+      // a second candidate 39.9 km east of A: one near box of about 44.7 km x 4.8 km
+      const e = await place(db, f.subId, at(39_900, 0), "Ormos Epsilon", "candidate");
+      const seen: Seen = { overpass: [], wdqs: [], entities: [] };
+      const result = await run(db, KEY, seen, [f.a, e], { failNearFromKm: 15 });
+      const near = seen.overpass.filter((q) => !q.includes('["wikidata"]'));
+      const attempts = getConfig().gazetteer.overpass.retries + 1;
+      expect(boxExtentKm(qlBox(near[0]!) as [number, number, number, number]).widthKm).toBeCloseTo(44.7, 0);
+      // the box (44.7 km) and its four quadrants (22.4 km) fail every attempt; the 16 quadrants of those (11.2 km) answer
+      expect(result.splits).toBe(5);
+      expect(near).toHaveLength(attempts + 4 * attempts + 16);
+      // the taverna and bus stop of A, the shared taverna 2.3 km from E
+      expect(result).toMatchObject({ near: 3 });
+      expect(await archive.exists(`datasets/overpass/land/${KEY}/2026-10-24-near-0.q3.q3.json`)).toBe(true);
+    }));
+
+  it("a near box failing down to gazetteer.land.minSplitKm fails the job naming the part", () =>
+    withRollback(async (db) => {
+      const f = await prepare(db);
+      const e = await place(db, f.subId, at(39_900, 0), "Ormos Epsilon", "candidate");
+      // 44.7 -> 22.4 -> 11.2 -> 5.6 km; quadrants of 2.8 km would be below the 5 km floor
+      await expect(run(db, KEY, undefined, [f.a, e], { failNearFromKm: 0 })).rejects.toThrow(
+        /overpass part near-0\.q0\.q0\.q0 failed and is not split below gazetteer\.land\.minSplitKm \(5 km\)/,
+      );
     }));
 
   it("counts and skips a relation above maxRelationPoints", () =>

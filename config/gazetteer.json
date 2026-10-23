@@ -57,6 +57,7 @@
   "land": {
     "maxBoxKm": 40,
     "marginM": 300,
+    "minSplitKm": 5,
     "wikidataClasses": ["Q839954", "Q44613", "Q39715", "Q33506", "Q40080"]
   },
   "bboxBufferKm": 5,
