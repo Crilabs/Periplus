@@ -17,6 +17,7 @@ import {
   researchFetchHandler,
   researchRoutesHandler,
   researchSearchHandler,
+  researchStateHandler,
 } from "./handlers/research";
 import { researchConfirmHandler } from "./handlers/research-confirm";
 import { imagesPlaceHandler } from "./handlers/images";
@@ -76,6 +77,7 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "research.routes": researchRoutesHandler,
   "research.discover": researchDiscoverHandler,
   "research.confirm": researchConfirmHandler,
+  "research.state": researchStateHandler,
   "embed.chunks": embedChunksHandler,
   "sources.wikivoyage": wikivoyageHandler,
   "compare.converters": compareConvertersHandler,

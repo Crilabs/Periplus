@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { createConverters } from "@/lib/adapters/fetch";
 import { getCrawlTransport } from "@/lib/adapters/fetch/guarded";
@@ -5,6 +6,8 @@ import { getTransport } from "@/lib/adapters/http";
 import { runPdftotext } from "@/lib/adapters/pdf";
 import { getArchive } from "@/lib/adapters/s3";
 import { getConfig } from "@/lib/config";
+import { runs } from "@/lib/db/schema";
+import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
 import { getEnv } from "@/lib/env";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import type { StageDefinition } from "@/lib/pipeline/runs";
@@ -21,6 +24,7 @@ import {
   RESEARCH_ROUTES_STAGE,
 } from "@/lib/pipeline/research/routes";
 import { fetchResearchPage, planResearchFetch, RESEARCH_FETCH_STAGE } from "@/lib/pipeline/research/fetch";
+import { buildBerthState, bundleFactsJob, planResearchState, RESEARCH_STATE_QUEUE, RESEARCH_STATE_STAGE } from "@/lib/pipeline/research/state";
 import { planResearchSearch, RESEARCH_SEARCH_STAGE, searchCandidate } from "@/lib/pipeline/research/search";
 import { modelClientFor } from "./ai-batch";
 import { crawlRenderPage } from "./fetch";
@@ -72,6 +76,13 @@ export const researchConfirmStage: StageDefinition = {
   name: RESEARCH_CONFIRM_STAGE,
   queue: "research.confirm",
   plan: () => planResearchConfirm(),
+};
+
+/** Stage `research.state`: the state of each confirmed berth of the run (build jobs and fact bundling batches). */
+export const researchStateStage: StageDefinition = {
+  name: RESEARCH_STATE_STAGE,
+  queue: RESEARCH_STATE_QUEUE,
+  plan: (db, run) => planResearchState(db, run),
 };
 
 const runIdOf = (data: JobData): string => z.string().min(1).parse(data.runId);
@@ -164,4 +175,27 @@ const discoverJobSchema = z.object({
 /** Assigns the open route stops of one page to places (`matchStops`). */
 export const researchDiscoverHandler: JobHandler<JobData> = async (data, ctx) => {
   await discoverStops(ctx.db, discoverJobSchema.parse(data));
+};
+
+const stateBuildSchema = z.object({ runId: z.uuid(), placeId: z.uuid() });
+const stateBundleSchema = z.object({ runId: z.uuid(), stage: z.string().min(1), key: z.string().min(1), placeIds: z.array(z.uuid()).min(1) });
+
+/**
+ * Job of `research.state`: a job with `placeIds` sends those berths' free facts to `bundle-facts` as a message batch
+ * (the poll job stores the bundled facts); a job with `placeId` builds the berth's state (core values, landing points,
+ * reachable) with the rules version the run froze at its start (`params.rulesVersion`, else the active one).
+ */
+export const researchStateHandler: JobHandler<JobData> = async (data, ctx) => {
+  if (Array.isArray(data.placeIds)) {
+    const job = stateBundleSchema.parse(data);
+    const result = await bundleFactsJob(ctx.db, { model: modelClientFor(ctx.db), boss: ctx.boss }, job, RESEARCH_STATE_QUEUE);
+    ctx.log.info({ places: job.placeIds.length, ...result }, "fact bundling batch submitted");
+    return;
+  }
+  const { runId, placeId } = stateBuildSchema.parse(data);
+  const [run] = await ctx.db.select({ params: runs.params }).from(runs).where(eq(runs.id, runId));
+  if (!run) throw new Error(`run ${runId} does not exist`);
+  const rules = await consolidationConfigFor(ctx.db, (run.params as Record<string, unknown>).rulesVersion);
+  const result = await buildBerthState(ctx.db, placeId, { runId, rules });
+  ctx.log.info({ placeId, ...result }, "berth state");
 };

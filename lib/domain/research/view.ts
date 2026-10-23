@@ -1,13 +1,17 @@
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { berthFacts, berthSignals, documents, pageAssessments, placeWebsites, places, researchFetches, researchHits, researchUnits, serpQueries } from "@/lib/db/schema";
+import { berthFacts, berthStates, berthSignals, documents, geoObjects, pageAssessments, placeWebsites, places, researchFetches, researchHits, researchUnits, serpQueries } from "@/lib/db/schema";
+import type { BerthStateFact, BerthStateLanding, BerthStateOrigin } from "@/lib/db/schema/research-state";
+import { displayNameSql } from "@/lib/domain/gazetteer/names";
+import type { PoiCategory } from "@/lib/db/schema";
 import type { PageKind, ResearchFetchOutcome, ResearchPurpose } from "@/lib/db/schema/research";
 import type { BerthSignalKind, Tone } from "@/lib/db/schema/research-extract";
 import type { ObservedAtBasis } from "@/lib/db/schema/sources";
 import { getConfig } from "@/lib/config";
 import { activeAssessor } from "./assessment";
 import type { PlaceStatus } from "@/lib/db/schema";
-import { factAttributeLabel, formatFactValue } from "@/lib/domain/facts/labels";
+import { getFactSchema } from "@/lib/domain/facts/schema";
+import { factAttributeLabel, formatFactValue, POI_CATEGORY_LABELS } from "@/lib/domain/facts/labels";
 import { registrableDomain } from "@/lib/domain/sources/urls";
 import { activeRouteExtractor } from "./assign";
 import { activeExtractor, decideBerth, loadEvidence, type Verdict } from "./confirmation";
@@ -264,4 +268,48 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
     }))
     .sort((x, y) => (x.link === y.link ? (x.url < y.url ? -1 : x.url > y.url ? 1 : 0) : x.link === "neighbour" ? -1 : 1));
   return { status: place.status, statusReason: place.statusReason, verdict, rows: [...byUrl.values(), ...others] };
+}
+
+export type StateCoreRow = { attribute: string; label: string; value: string; origin: BerthStateOrigin; confidence: number; observedAt: string | null };
+export type StateNearbyRow = { geoObjectId: string; name: string | null; category: PoiCategory; categoryLabel: string; distanceM: number; access: "foot" | "transport" };
+
+/** The state of a confirmed berth as the tab „Stand“ shows it: formatted core values with their origin, gaps, facts, landing points and reachable things. */
+export type BerthStateView = {
+  status: PlaceStatus;
+  updatedAt: Date;
+  runId: string | null;
+  core: StateCoreRow[];
+  gaps: Array<{ attribute: string; label: string }>;
+  facts: BerthStateFact[];
+  landing: BerthStateLanding[];
+  nearby: StateNearbyRow[];
+};
+
+/** The state row of a place with its values formatted and the reachable objects named; null while no state was built. */
+export async function berthStateView(db: Db, placeId: string): Promise<BerthStateView | null> {
+  const [row] = await db
+    .select({ state: berthStates, status: places.status })
+    .from(berthStates)
+    .innerJoin(places, eq(places.id, berthStates.placeId))
+    .where(eq(berthStates.placeId, placeId));
+  if (!row) return null;
+  const { state } = row;
+  const defs = getFactSchema(getConfig().research.extraction.factSchema).levels.place.map((d) => d.key);
+  const order = (k: string) => (defs.includes(k) ? defs.indexOf(k) : defs.length);
+  const core = Object.entries(state.core)
+    .map(([attribute, v]): StateCoreRow => ({ attribute, label: factAttributeLabel(attribute), value: formatFactValue(attribute, v.value), origin: v.origin, confidence: v.confidence, observedAt: v.observedAt }))
+    .sort((a, b) => order(a.attribute) - order(b.attribute) || a.attribute.localeCompare(b.attribute));
+  const ids = [...new Set(state.nearby.map((n) => n.geoObjectId))];
+  const names = ids.length === 0 ? [] : await db.select({ id: geoObjects.id, name: displayNameSql(geoObjects.id) }).from(geoObjects).where(inArray(geoObjects.id, ids));
+  const nameOf = new Map(names.map((n) => [n.id, n.name]));
+  return {
+    status: row.status,
+    updatedAt: state.updatedAt,
+    runId: state.runId,
+    core,
+    gaps: state.gaps.map((attribute) => ({ attribute, label: factAttributeLabel(attribute) })),
+    facts: [...state.facts].sort((a, b) => (a.observedAt < b.observedAt ? 1 : a.observedAt > b.observedAt ? -1 : a.factId < b.factId ? -1 : 1)),
+    landing: state.landing,
+    nearby: state.nearby.map((n) => ({ ...n, name: nameOf.get(n.geoObjectId) ?? null, categoryLabel: POI_CATEGORY_LABELS[n.category] })),
+  };
 }

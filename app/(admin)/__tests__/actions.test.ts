@@ -444,7 +444,7 @@ describe("admin server actions", () => {
       expect(startRun).toHaveBeenCalledWith(
         expect.anything(),
         expect.anything(),
-        expect.objectContaining({ scope: { type: "subdivision", id: "XQ-RES" }, params: { subdivisionKey: "XQ-RES" }, triggeredBy: "admin@example.invalid" }),
+        expect.objectContaining({ scope: { type: "subdivision", id: "XQ-RES" }, params: { subdivisionKey: "XQ-RES", rulesVersion: expect.any(String) }, triggeredBy: "admin@example.invalid" }),
       );
       expect(redirect).toHaveBeenLastCalledWith("/runs/run-1");
       currentDb = db;
