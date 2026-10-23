@@ -267,8 +267,8 @@ async function textInputs(
   return inputs;
 }
 
-/** The facts of the newest computation per kind (`computed:<kind>`), confirmed on the computation's date. */
-async function computedInputs(db: Db, geoObjectId: string, cfg: ConsolidationConfig): Promise<ConsolidationInput[]> {
+/** The facts of the newest computation per kind (`computed:<kind>`), confirmed on the computation's date; also the berth state's computed inputs (N4a). */
+export async function computedInputs(db: Db, geoObjectId: string, cfg: ConsolidationConfig): Promise<ConsolidationInput[]> {
   const inputs: ConsolidationInput[] = [];
   for (const c of (await latestComputations(db, geoObjectId)).values()) {
     for (const f of c.facts) {

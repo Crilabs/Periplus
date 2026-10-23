@@ -38,6 +38,7 @@ describe("research config", () => {
       transportCategories: ["culture", "town", "nature", "beach"],
       transportMinSitelinks: 5,
       alwaysCategories: ["food", "supply", "bakery", "beach", "transport"],
+      textConfidence: 0.8,
     });
     const bad = valid();
     bad.state.alwaysCategories.push("bogus" as never);

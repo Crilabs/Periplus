@@ -1469,6 +1469,8 @@ export const researchSchema = z
       transportMinSitelinks: z.number().int().nonnegative(),
       /** Categories always listed when within foot distance. */
       alwaysCategories: z.array(poiCategory).min(1),
+      /** Confidence of a structured text fact (checked quote) as a core value input. */
+      textConfidence: z.number().min(0).max(1),
     }),
   })
   .superRefine((c, ctx) => {
