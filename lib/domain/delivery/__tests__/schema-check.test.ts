@@ -17,6 +17,15 @@ describe("checkJsonSchema", () => {
     for (const file of CONTRACT_FILES) expect(checkJsonSchema(file, SAMPLE_FILES[file]), file).toEqual([]);
   });
 
+  it("the published manifest schema ties dataVersion to the coverage status (delivered has one, missing none)", () => {
+    const manifest = SAMPLE_FILES["manifest.json"] as { coverage: Array<Record<string, unknown>> };
+    const withEntry = (entry: Record<string, unknown>) => ({ ...manifest, coverage: [{ ...manifest.coverage[0]!, ...entry }] });
+    expect(checkJsonSchema("manifest.json", withEntry({ status: "delivered", dataVersion: 3 }))).toEqual([]);
+    expect(checkJsonSchema("manifest.json", withEntry({ status: "missing", dataVersion: null }))).toEqual([]);
+    expect(checkJsonSchema("manifest.json", withEntry({ status: "missing", dataVersion: 3 }))).not.toEqual([]);
+    expect(checkJsonSchema("manifest.json", withEntry({ status: "delivered", dataVersion: null }))).not.toEqual([]);
+  });
+
   it("reports every error, foreign fields and wrong formats included", () => {
     const bad = { ...ex, rating: 4.5, validFrom: "15.10.2026", sources: [{ url: "no url", kind: "tripReport", observedAt: "2025-06-10" }] };
     const errors = checkJsonSchema("spots.json", spotsFile([bad]));

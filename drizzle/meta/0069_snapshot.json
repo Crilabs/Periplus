@@ -1,5 +1,5 @@
 {
-  "id": "4ab427a8-739e-4a94-a1d1-5280feac343c",
+  "id": "7c992003-697b-497c-b9a0-15cb452a0da6",
   "prevId": "3e204c22-4873-4738-85f7-5a217959b663",
   "version": "7",
   "dialect": "postgresql",
@@ -9286,8 +9286,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.page_assessments": {
-      "name": "page_assessments",
+    "public.radius_package_requests": {
+      "name": "radius_package_requests",
       "schema": "",
       "columns": {
         "id": {
@@ -9296,79 +9296,23 @@
           "primaryKey": true,
           "notNull": true
         },
-        "document_version_id": {
-          "name": "document_version_id",
+        "radius_package_id": {
+          "name": "radius_package_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
-        "model": {
-          "name": "model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "prompt_version": {
-          "name": "prompt_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "page_kind": {
-          "name": "page_kind",
-          "type": "page_kind",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "first_hand": {
-          "name": "first_hand",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "generated": {
-          "name": "generated",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "language": {
-          "name": "language",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "observed_at": {
-          "name": "observed_at",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "observed_at_basis": {
-          "name": "observed_at_basis",
-          "type": "observed_at_basis",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "observed_at_reason": {
-          "name": "observed_at_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "berths": {
-          "name": "berths",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "run_id": {
-          "name": "run_id",
+        "api_client_id": {
+          "name": "api_client_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
         },
         "created_at": {
           "name": "created_at",
@@ -9379,174 +9323,11 @@
         }
       },
       "indexes": {
-        "page_assessments_version_model_prompt_unique": {
-          "name": "page_assessments_version_model_prompt_unique",
+        "radius_package_requests_package_idx": {
+          "name": "radius_package_requests_package_idx",
           "columns": [
             {
-              "expression": "document_version_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "model",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "prompt_version",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "page_assessments_document_version_id_document_versions_id_fk": {
-          "name": "page_assessments_document_version_id_document_versions_id_fk",
-          "tableFrom": "page_assessments",
-          "tableTo": "document_versions",
-          "columnsFrom": [
-            "document_version_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "page_assessments_run_id_runs_id_fk": {
-          "name": "page_assessments_run_id_runs_id_fk",
-          "tableFrom": "page_assessments",
-          "tableTo": "runs",
-          "columnsFrom": [
-            "run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.research_hits": {
-      "name": "research_hits",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "place_id": {
-          "name": "place_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "geo_object_id": {
-          "name": "geo_object_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "serp_query_id": {
-          "name": "serp_query_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "serp_result_id": {
-          "name": "serp_result_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "url_normalized": {
-          "name": "url_normalized",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "domain": {
-          "name": "domain",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "rank": {
-          "name": "rank",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "purpose": {
-          "name": "purpose",
-          "type": "research_purpose",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "run_id": {
-          "name": "run_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "research_hits_place_id_url_normalized_purpose_unique": {
-          "name": "research_hits_place_id_url_normalized_purpose_unique",
-          "columns": [
-            {
-              "expression": "place_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "url_normalized",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "purpose",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "research_hits_url_normalized_idx": {
-          "name": "research_hits_url_normalized_idx",
-          "columns": [
-            {
-              "expression": "url_normalized",
+              "expression": "radius_package_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -9559,12 +9340,12 @@
         }
       },
       "foreignKeys": {
-        "research_hits_place_id_places_id_fk": {
-          "name": "research_hits_place_id_places_id_fk",
-          "tableFrom": "research_hits",
-          "tableTo": "places",
+        "radius_package_requests_radius_package_id_radius_packages_id_fk": {
+          "name": "radius_package_requests_radius_package_id_radius_packages_id_fk",
+          "tableFrom": "radius_package_requests",
+          "tableTo": "radius_packages",
           "columnsFrom": [
-            "place_id"
+            "radius_package_id"
           ],
           "columnsTo": [
             "id"
@@ -9572,51 +9353,12 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "research_hits_geo_object_id_geo_objects_id_fk": {
-          "name": "research_hits_geo_object_id_geo_objects_id_fk",
-          "tableFrom": "research_hits",
-          "tableTo": "geo_objects",
+        "radius_package_requests_api_client_id_api_clients_id_fk": {
+          "name": "radius_package_requests_api_client_id_api_clients_id_fk",
+          "tableFrom": "radius_package_requests",
+          "tableTo": "api_clients",
           "columnsFrom": [
-            "geo_object_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "research_hits_serp_query_id_serp_queries_id_fk": {
-          "name": "research_hits_serp_query_id_serp_queries_id_fk",
-          "tableFrom": "research_hits",
-          "tableTo": "serp_queries",
-          "columnsFrom": [
-            "serp_query_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "research_hits_serp_result_id_serp_results_id_fk": {
-          "name": "research_hits_serp_result_id_serp_results_id_fk",
-          "tableFrom": "research_hits",
-          "tableTo": "serp_results",
-          "columnsFrom": [
-            "serp_result_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "research_hits_run_id_runs_id_fk": {
-          "name": "research_hits_run_id_runs_id_fk",
-          "tableFrom": "research_hits",
-          "tableTo": "runs",
-          "columnsFrom": [
-            "run_id"
+            "api_client_id"
           ],
           "columnsTo": [
             "id"
@@ -9627,6 +9369,140 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "radius_package_requests_kind": {
+          "name": "radius_package_requests_kind",
+          "value": "\"radius_package_requests\".\"kind\" IN ('package', 'file', 'changes')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.radius_packages": {
+      "name": "radius_packages",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "home_marina_public_id": {
+          "name": "home_marina_public_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "days": {
+          "name": "days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "radius_nm": {
+          "name": "radius_nm",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "coverage": {
+          "name": "coverage",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "schema_version": {
+          "name": "schema_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "generated_at": {
+          "name": "generated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "storage_prefix": {
+          "name": "storage_prefix",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "file_hashes": {
+          "name": "file_hashes",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "object_counts": {
+          "name": "object_counts",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "warnings": {
+          "name": "warnings",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "radius_packages_marina_days_idx": {
+          "name": "radius_packages_marina_days_idx",
+          "columns": [
+            {
+              "expression": "home_marina_public_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "days",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "radius_packages_key_unique": {
+          "name": "radius_packages_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "key"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -9921,8 +9797,7 @@
         "area",
         "tile",
         "place",
-        "place_website",
-        "research"
+        "place_website"
       ]
     },
     "public.source_format": {
@@ -9943,8 +9818,7 @@
         "linkgraph",
         "whitelist",
         "manual",
-        "place_website",
-        "research"
+        "place_website"
       ]
     },
     "public.source_status": {
@@ -10177,28 +10051,6 @@
       "values": [
         "photo",
         "ai_illustration"
-      ]
-    },
-    "public.page_kind": {
-      "name": "page_kind",
-      "schema": "public",
-      "values": [
-        "trip_report",
-        "pilot_guide",
-        "marina",
-        "authority",
-        "forum",
-        "travel_guide",
-        "listing",
-        "other"
-      ]
-    },
-    "public.research_purpose": {
-      "name": "research_purpose",
-      "schema": "public",
-      "values": [
-        "positive",
-        "negative"
       ]
     }
   },

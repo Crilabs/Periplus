@@ -3,6 +3,7 @@ import * as v1 from "./v1";
 import * as v2 from "./v2_0";
 import * as v21 from "./v2_1";
 import * as v22 from "./v2_2";
+import * as v23 from "./v2_3";
 import {
   changesFileSchema,
   coastCollectionSchema,
@@ -23,10 +24,12 @@ import {
  * 1.0 (packages per configured area, `contract/v1/`), 2.0 (before the images, `contract/v2_0/`), 2.1 (before the
  * highlight levels, `contract/v2_1/`) and 2.2 (before berthable and contact, `contract/v2_2/`) stay reproducible from
  * their frozen copies and stay published; 2.1 adds `images` and image files to 2.0, 2.2 adds `spot.highlightLevels` to
- * 2.1 (spec 16), 2.3 adds `spot.berthable` and `spot.contact` to 2.2 (spec 17; all minor, additive).
+ * 2.1 (spec 16), 2.3 adds `spot.berthable` and `spot.contact` to 2.2 (spec 17; all minor, additive). Version 2.3
+ * (before the scope, `contract/v2_3/`) is frozen the same way. 3.0 adds `scope` and `coverage` (spec 18; major: the
+ * manifest loses `subdivision`, `dataVersion` and `previousDataVersion`, the file envelope loses `subdivision` and `dataVersion`).
  */
 
-export const SCHEMA_VERSION = "2.3";
+export const SCHEMA_VERSION = "3.0";
 export { CONTRACT_FILES, IMAGE_FILE_PATTERN };
 export type { ContractFile };
 export type {
@@ -38,7 +41,10 @@ export type {
   HighlightBody,
   PlaceImage,
   HighlightsFile,
+  CoverageEntry,
+  FileScope,
   Manifest,
+  ManifestScope,
   Region,
   RegionBody,
   RegionsFile,
@@ -103,11 +109,23 @@ const CONTRACT_SCHEMAS_V2_2: Record<ContractFile, z.ZodType> = {
   "changes.json": v22.changesFileSchema,
 };
 
+/** The zod schemas of the superseded version 2.3, kept to pin its published JSON schemas. */
+const CONTRACT_SCHEMAS_V2_3: Record<ContractFile, z.ZodType> = {
+  "manifest.json": v23.manifestSchema,
+  "spots.json": v23.spotsFileSchema,
+  "highlights.json": v23.highlightsFileSchema,
+  "regions.json": v23.regionsFileSchema,
+  "coast.geojson": v23.coastCollectionSchema,
+  "weather-points.json": v23.weatherPointsFileSchema,
+  "changes.json": v23.changesFileSchema,
+};
+
 const SCHEMAS_BY_VERSION: Readonly<Record<string, Record<ContractFile, z.ZodType>>> = {
   "1.0": CONTRACT_SCHEMAS_V1,
   "2.0": CONTRACT_SCHEMAS_V2_0,
   "2.1": CONTRACT_SCHEMAS_V2_1,
   "2.2": CONTRACT_SCHEMAS_V2_2,
+  "2.3": CONTRACT_SCHEMAS_V2_3,
   [SCHEMA_VERSION]: CONTRACT_SCHEMAS,
 };
 
@@ -118,7 +136,7 @@ export function jsonSchemaFileName(file: ContractFile): string {
 
 const FILE_BY_SCHEMA_NAME = new Map<string, ContractFile>(CONTRACT_FILES.map((f) => [jsonSchemaFileName(f), f]));
 
-/** The JSON schema (draft 2020-12) of a contract file, e.g. ("2.3", "spots.schema.json"); null for anything else. */
+/** The JSON schema (draft 2020-12) of a contract file, e.g. ("3.0", "spots.schema.json"); null for anything else. */
 export function contractJsonSchema(version: string, fileName: string): object | null {
   if (!Object.hasOwn(SCHEMAS_BY_VERSION, version)) return null;
   const file = FILE_BY_SCHEMA_NAME.get(fileName);
