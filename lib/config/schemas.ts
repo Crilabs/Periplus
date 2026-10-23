@@ -1481,6 +1481,8 @@ export const researchSchema = z
     state: z.strictObject({
       /** A landing object (pier, slipway, beach) counts for the berth up to this distance. */
       landingRadiusM: z.number().positive(),
+      /** Without a landing object, the nearest shore point counts as landing only up to this distance from the anchor position. */
+      shoreMaxM: z.number().positive(),
       /** Walking distance limit; the straight line counts times `detourFactor`. */
       footMaxM: z.number().positive(),
       detourFactor: z.number().min(1),

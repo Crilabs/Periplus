@@ -22,6 +22,8 @@ export type BerthStateFact = {
   tone: Tone | null;
   safety: boolean;
   mentions: number;
+  /** The ids of the facts the stored fact stands for: its group's ids (superseded ones included), else its own id. Missing in rows written before. */
+  memberIds?: string[];
 };
 export type BerthLandingKind = "harbour" | "pier" | "slipway" | "beach" | "shore" | "text";
 export type BerthStateLanding = { kind: BerthLandingKind; lon: number | null; lat: number | null; geoObjectId: string | null; description: string | null };

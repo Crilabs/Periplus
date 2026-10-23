@@ -53,9 +53,9 @@ describe("startBerthFollowupRun", () => {
       expect(started).not.toBeNull();
       const [run] = await tx.select().from(runs).where(eq(runs.id, started!.id));
       expect(run).toMatchObject({ kind: "event", scopeType: "system", scopeId: BERTH_FOLLOWUP_SCOPE });
-      expect(run!.params).toEqual({ placeIds: [a.placeId, b.placeId].sort(), images: { geoObjectIds: [a.objectId, b.objectId].sort() } });
+      expect(run!.params).toEqual({ placeIds: [a.placeId, b.placeId].sort(), images: { geoObjectIds: [a.objectId, b.objectId].sort() }, rulesVersion: expect.any(String) });
       const stages = await tx.select().from(runStages).where(eq(runStages.runId, started!.id));
-      expect(stages.map((s) => s.stage)).toEqual([...BERTH_FOLLOWUP_STAGES]);
+      expect(stages.sort((x, y) => x.ordinal - y.ordinal).map((s) => s.stage)).toEqual([...BERTH_FOLLOWUP_STAGES]);
     }));
 
   it("returns null without places, unknown places or ended places", () =>
@@ -169,9 +169,12 @@ describe("research.confirm handler", () => {
       expect(followups[0]!.params).toMatchObject({ placeIds: [place.placeId], images: { geoObjectIds: [place.objectId] } });
       const consolidations = (await tx.select().from(runs)).filter((r) => (r.params as { geoObjectIds?: string[] }).geoObjectIds?.[0] === place.objectId);
       expect(consolidations).toHaveLength(1);
-      // the jobs this handler caused: the follow-up run's image stage plans no job (no image model) and ends the run;
-      // the consolidation enqueues the geo job of the object
-      expect(inserted.slice(before).map((j) => [j.queue, j.data.geoObjectId])).toEqual([["consolidation.geo", place.objectId]]);
+      // the jobs this handler caused: the follow-up run's state job of the berth (the image stage after it plans no job
+      // without an image model), and the consolidation's geo job of the object
+      expect(inserted.slice(before).map((j) => [j.queue, j.data.geoObjectId ?? j.data.placeId])).toEqual([
+        ["research.state", place.placeId],
+        ["consolidation.geo", place.objectId],
+      ]);
 
       const view = await researchView(tx, place.placeId);
       expect(view.verdict).toMatchObject({ status: "confirmed", independentSources: ["sail-a.example", "sail-b.example"] });

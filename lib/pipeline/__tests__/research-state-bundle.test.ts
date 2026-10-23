@@ -3,17 +3,21 @@ import type { PgBoss } from "pg-boss";
 import { describe, expect, it } from "vitest";
 import { MockModel } from "@/lib/ai/mock";
 import type { BundleFactsInput } from "@/lib/ai/tasks/bundle-facts";
-import { loadConfig, type AppConfig } from "@/lib/config";
+import { getConfig, getConsolidationConfig, loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { aiBatches, berthStates } from "@/lib/db/schema";
+import { geomFromGeoJson } from "@/lib/db/geometry";
+import { aiBatches, berthStates, places, sources } from "@/lib/db/schema";
+import { addNames } from "@/lib/domain/gazetteer/names";
 import { newId } from "@/lib/domain/ids";
 import { beginStage, createRun } from "@/lib/domain/runs";
 import { BATCH_HANDLERS } from "@/lib/jobs/batch-handlers";
 import { pollBatch } from "@/lib/pipeline/batches";
-import { bundleFactsBatchEntry, bundleFactsJob, planBundleFacts } from "@/lib/pipeline/research/state";
+import { standingFacts, storeStateFacts } from "@/lib/domain/research/state-facts";
+import { buildBerthState, bundleFactsBatchEntry, bundleFactsJob, planBundleFacts } from "@/lib/pipeline/research/state";
 import { insertPlace } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { seedPage, seedStatement } from "@/test/research-state";
+import { insertTestGeoObject } from "@/test/text";
 
 const base = loadConfig("config");
 const config: AppConfig = { ...base, budgets: { ...base.budgets, anthropic: { dailyEur: 1000 } } };
@@ -96,6 +100,66 @@ describe("fact bundling batch", () => {
       expect(second.state!.facts.map((f) => f.factId)).not.toContain(b);
     }));
 
+  it("a failed item after an earlier bundling adds the facts that came since as single ones, a new safety fact included", () =>
+    withRollback(async (tx) => {
+      const { placeId } = await insertPlace(tx);
+      const a = await seedStatement(tx, placeId, await seedPage(tx, config, placeId, { domain: "a.example" }), { statement: "One" });
+      const b = await seedStatement(tx, placeId, await seedPage(tx, config, placeId, { domain: "b.example" }), { statement: "Two" });
+      await bundle(tx, placeId, (input) => ({ groups: [{ ids: input.facts.map((f) => f.id), representative: a, superseded: [] }] }));
+      const rock = await seedStatement(tx, placeId, await seedPage(tx, config, placeId, { domain: "c.example" }), { statement: "Rock at the entrance", tone: "negative", safety: true });
+      const { state } = await bundle(tx, placeId, () => ({ groups: "none" }));
+      expect(state!.facts.map((f) => [f.factId, f.mentions, f.safety])).toEqual([[a, 2, false], [rock, 1, true]]);
+      expect(state!.facts.map((f) => f.factId)).not.toContain(b);
+    }));
+
+  it("the stored facts carry their group's member ids, a single fact its own id", () =>
+    withRollback(async (tx) => {
+      const { placeId } = await insertPlace(tx);
+      const a = await seedStatement(tx, placeId, await seedPage(tx, config, placeId, { domain: "a.example" }), { statement: "One", observedAt: "2024-06-01" });
+      const b = await seedStatement(tx, placeId, await seedPage(tx, config, placeId, { domain: "b.example" }), { statement: "Two", observedAt: "2025-06-01" });
+      const c = await seedStatement(tx, placeId, await seedPage(tx, config, placeId, { domain: "c.example" }), { statement: "Three" });
+      const { state } = await bundle(tx, placeId, () => ({ groups: [{ ids: [a, b], representative: b, superseded: [a] }] }));
+      expect(state!.facts.map((f) => [f.factId, [...(f.memberIds ?? [])].sort()])).toEqual([[b, [a, b].sort()], [c, [c]]]);
+    }));
+
+  it("a representative whose source ended and a failed next bundling: a still-free safety member comes back as a single", () =>
+    withRollback(async (tx) => {
+      const { placeId } = await insertPlace(tx);
+      const repPage = await seedPage(tx, config, placeId, { domain: "a.example" });
+      const rep = await seedStatement(tx, placeId, repPage, { statement: "Rocky entrance, keep north" });
+      const rock = await seedStatement(tx, placeId, await seedPage(tx, config, placeId, { domain: "b.example" }), { statement: "Rock at the entrance", safety: true });
+      const first = await bundle(tx, placeId, () => ({ groups: [{ ids: [rep, rock], representative: rep, superseded: [] }] }));
+      expect(first.state!.facts.map((f) => f.factId)).toEqual([rep]);
+      await tx.update(sources).set({ validTo: "2026-10-01" }).where(eq(sources.id, repPage.sourceId));
+      // a new fact since, so the next bundling sends a request (two free facts) that fails
+      const later = await seedStatement(tx, placeId, await seedPage(tx, config, placeId, { domain: "c.example" }), { statement: "Taverna open", observedAt: "2026-06-01" });
+      const { state, batches } = await bundle(tx, placeId, () => ({ groups: "none" }));
+      expect(batches.length).toBeGreaterThan(0);
+      expect(state!.facts.map((f) => [f.factId, f.safety, f.mentions])).toEqual([[rock, true, 1], [later, false, 1]]);
+    }));
+
+  it("an old stored row without member ids never loses a free fact", () =>
+    withRollback(async (tx) => {
+      const { placeId } = await insertPlace(tx);
+      const a = await seedStatement(tx, placeId, await seedPage(tx, config, placeId, { domain: "a.example" }), { statement: "One" });
+      const b = await seedStatement(tx, placeId, await seedPage(tx, config, placeId, { domain: "b.example" }), { statement: "Two" });
+      const first = await bundle(tx, placeId, () => ({ groups: [{ ids: [a, b], representative: a, superseded: [] }] }));
+      // a row written before member ids existed
+      await storeStateFacts(tx, placeId, first.state!.facts.map((f) => ({ ...f, memberIds: undefined })));
+      const { state } = await bundle(tx, placeId, () => ({ groups: "none" }));
+      expect(state!.facts.map((f) => f.factId)).toEqual([a, b]);
+    }));
+
+  it("the standing facts do not depend on the active bundler: after a prompt change a group member stays hidden", () =>
+    withRollback(async (tx) => {
+      const { placeId } = await insertPlace(tx);
+      const a = await seedStatement(tx, placeId, await seedPage(tx, config, placeId, { domain: "a.example" }), { statement: "One" });
+      const b = await seedStatement(tx, placeId, await seedPage(tx, config, placeId, { domain: "b.example" }), { statement: "Two" });
+      await bundle(tx, placeId, () => ({ groups: [{ ids: [a, b], representative: a, superseded: [] }] }));
+      const changed: AppConfig = { ...config, models: { ...config.models, tasks: { ...config.models.tasks, "bundle-facts": { ...config.models.tasks["bundle-facts"]!, promptVersion: 2 } } } };
+      expect((await standingFacts(tx, placeId, changed)).map((f) => [f.factId, f.mentions])).toEqual([[a, 2]]);
+    }));
+
   it("a berth with one fact is stored without a request; one without facts gets no row", () =>
     withRollback(async (tx) => {
       const one = (await insertPlace(tx)).placeId;
@@ -135,5 +199,28 @@ describe("fact bundling batch", () => {
         bundleFactsJob(tx, { model, boss, config }, { runId: await runWithStage(tx), stage: STAGE, key: "bundle:0", placeIds: job!.placeIds as string[] }, QUEUE);
       expect((await send()).submitted).toBe(1);
       expect((await send()).submitted).toBe(0);
+    }));
+  it("the state build reads the bundled facts: a POI named only by a superseded fact is not listed", () =>
+    withRollback(async (tx) => {
+      const { placeId } = await insertPlace(tx, { type: "harbour" });
+      await tx.update(places).set({ kind: "marina" }).where(eq(places.id, placeId));
+      const kayak = await insertTestGeoObject(tx, { type: "poi", category: "active", tags: {}, geom: geomFromGeoJson({ type: "Point", coordinates: [21.0, 35.2 + 300 / 111_195] }) });
+      await addNames(tx, kayak, [{ name: "Kayak Nikos", language: "en", origin: "osm" }]);
+      const old = await seedStatement(tx, placeId, await seedPage(tx, config, placeId, { domain: "a.example" }), {
+        statement: "Kayaks to hire", subjectName: "Kayak Nikos", subjectCategory: "rental", observedAt: "2019-06-01", tone: "positive",
+      });
+      const now = await seedStatement(tx, placeId, await seedPage(tx, config, placeId, { domain: "b.example" }), {
+        statement: "Boat hire closed", subjectName: "Old boat hire", subjectCategory: "rental", observedAt: "2025-06-01", tone: "negative",
+      });
+      const rules = getConsolidationConfig(getConfig().consolidation.version);
+      const nearbyAfterBuild = async () => {
+        await buildBerthState(tx, placeId, { runId: null, rules, config, today: "2026-10-23" });
+        return (await tx.select().from(berthStates).where(eq(berthStates.placeId, placeId)))[0]!.nearby.map((n) => n.geoObjectId);
+      };
+      // not bundled yet: every free fact counts
+      expect(await nearbyAfterBuild()).toContain(kayak);
+      // bundled: the older fact is superseded by the newer one and names nothing any more
+      await bundle(tx, placeId, () => ({ groups: [{ ids: [old, now], representative: now, superseded: [old] }] }));
+      expect(await nearbyAfterBuild()).not.toContain(kayak);
     }));
 });

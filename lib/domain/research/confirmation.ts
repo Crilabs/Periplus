@@ -197,7 +197,8 @@ type SignalRow = {
 /**
  * The evidence of each place: the signals of its done research units of the active `extract-berth` model and
  * prompt, with the page's active assessment (kind, generated), its registrable domain and its link to the place. A
- * page without an active assessment, or of an ended source, gives no evidence. A page linked by a corridor
+ * page without an active assessment, or of an ended source, gives no evidence. A positive signal counts only from the
+ * current version of its page, a negative one from any version (ruling: a ban once seen keeps blocking). A page linked by a corridor
  * route stop only (no search hit, no name stop) is still name-linked when one of its assessed berths matches a (not
  * provisional) name of the place.
  */
@@ -208,6 +209,7 @@ export async function loadEvidence(db: Db, placeIds: string[], config: AppConfig
   const assessor = activeAssessor(config);
   const route = activeRouteExtractor(config);
   const ids = sql.join(placeIds.map((id) => sql`${id}::uuid`), sql`, `);
+  const negativeKinds = sql.join(config.research.confirmation.negativeKinds.map((k) => sql`${k}`), sql`, `);
   const stop = (match: "name" | "corridor") => sql`exists (
     select 1 from research_route_stops rs
     where rs.document_version_id = s.document_version_id and rs.place_id = s.place_id and rs.match = ${match}
@@ -226,6 +228,7 @@ export async function loadEvidence(db: Db, placeIds: string[], config: AppConfig
     join page_assessments a on a.document_version_id = s.document_version_id and a.model = ${assessor.model} and a.prompt_version = ${assessor.promptVersion}
     where s.place_id in (${ids}) and u.status = 'done' and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion}
       and ${liveResearchSourceSql("src")}
+      and (d.current_version_id = s.document_version_id or s.kind::text in (${negativeKinds}))
     order by s.place_id, s.id`);
 
   const corridorOnly = rows.filter((r) => !r.search_hit && !r.name_stop && r.corridor_stop);

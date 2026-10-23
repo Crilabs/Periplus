@@ -29,6 +29,7 @@ export const QUEUES = [
   "research.routes",
   "research.discover",
   "research.confirm",
+  "research.state",
   "embed.chunks",
   "sources.wikivoyage",
   "compare.converters",

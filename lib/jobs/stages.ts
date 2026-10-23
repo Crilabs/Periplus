@@ -17,6 +17,7 @@ import {
   researchFetchStage,
   researchRoutesStage,
   researchSearchStage,
+  researchStateStage,
 } from "./handlers/research";
 import { imagesPlaceStage } from "./handlers/images";
 import { placeWebsiteFreezeStage, placeWebsiteStage } from "./handlers/place-website";
@@ -76,6 +77,7 @@ export const STAGES: Record<string, StageDefinition> = {
   [researchRoutesStage.name]: researchRoutesStage,
   [researchDiscoverStage.name]: researchDiscoverStage,
   [researchConfirmStage.name]: researchConfirmStage,
+  [researchStateStage.name]: researchStateStage,
   [embedChunksStage.name]: embedChunksStage,
   [wikivoyageStage.name]: wikivoyageStage,
   [compareConvertersStage.name]: compareConvertersStage,

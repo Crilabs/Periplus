@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { getConfig } from "@/lib/config";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { landPolygons, landingHints, places } from "@/lib/db/schema";
+import { landPolygons, landingHints, places, sources } from "@/lib/db/schema";
 import { landingPoints } from "@/lib/domain/research/landing";
 import { insertPlace } from "@/test/consolidation";
 import { seedPage, seedVersion } from "@/test/research-state";
@@ -73,8 +73,8 @@ describe("landingPoints", () => {
   it("nothing near: the nearest shore point of the land polygon", async () => {
     await withRollback(async (tx) => {
       const { placeId } = await insertPlace(tx);
-      // land starting about 1 km east of the berth
-      const lonE = LON + 1000 / (M_PER_DEG * Math.cos((LAT * Math.PI) / 180));
+      // land starting about 700 m east of the berth
+      const lonE = LON + 700 / (M_PER_DEG * Math.cos((LAT * Math.PI) / 180));
       await tx.insert(landPolygons).values({
         geom: geomFromGeoJson({ type: "Polygon", coordinates: [[[lonE, LAT - 0.01], [lonE + 0.02, LAT - 0.01], [lonE + 0.02, LAT + 0.01], [lonE, LAT + 0.01], [lonE, LAT - 0.01]]] }),
         datasetVersion: "test",
@@ -84,6 +84,31 @@ describe("landingPoints", () => {
       expect(out[0]).toMatchObject({ kind: "shore", geoObjectId: null, description: null });
       expect(out[0]!.lon).toBeCloseTo(lonE, 5);
       expect(out[0]!.lat).toBeCloseTo(LAT, 5);
+    });
+  });
+
+  it("a shore beyond shoreMaxM is no landing point", async () => {
+    await withRollback(async (tx) => {
+      const { placeId } = await insertPlace(tx);
+      const lonE = LON + 5000 / (M_PER_DEG * Math.cos((LAT * Math.PI) / 180));
+      await tx.insert(landPolygons).values({
+        geom: geomFromGeoJson({ type: "Polygon", coordinates: [[[lonE, LAT - 0.01], [lonE + 0.02, LAT - 0.01], [lonE + 0.02, LAT + 0.01], [lonE, LAT + 0.01], [lonE, LAT - 0.01]]] }),
+        datasetVersion: "test",
+      });
+      expect(await landingPoints(tx, placeId, config)).toEqual([]);
+    });
+  });
+
+  it("the same hint of two pages counts once", async () => {
+    await withRollback(async (tx) => {
+      const { placeId } = await insertPlace(tx);
+      const a = await seedPage(tx, config, placeId);
+      const b = await seedPage(tx, config, placeId);
+      const row = (p: { unitId: string; versionId: string }, description: string) => ({
+        unitId: p.unitId, placeId, documentVersionId: p.versionId, description, quote: "q", quoteStart: 0, quoteEnd: 1, observedAt: "2025-06-15",
+      });
+      await tx.insert(landingHints).values([row(a, "Small quay on the left"), row(b, "small quay on the left ")]);
+      expect(await texts(tx, placeId)).toHaveLength(1);
     });
   });
 
@@ -109,6 +134,20 @@ describe("landingPoints", () => {
       await seedVersion(tx, config, placeId, first.documentId);
       await tx.insert(landingHints).values({ unitId: first.unitId, placeId, documentVersionId: first.versionId, description: "old hint", quote: "q", quoteStart: 0, quoteEnd: 1, observedAt: "2025-06-15" });
       expect(await texts(tx, placeId)).toEqual([]);
+    });
+  });
+  it("a hint of an ended source or a generated page does not count (the evidence filters of the free facts)", async () => {
+    await withRollback(async (tx) => {
+      const { placeId } = await insertPlace(tx);
+      const live = await seedPage(tx, config, placeId);
+      const ended = await seedPage(tx, config, placeId);
+      const generated = await seedPage(tx, config, placeId, { generated: true });
+      const row = (p: { unitId: string; versionId: string }, description: string) => ({
+        unitId: p.unitId, placeId, documentVersionId: p.versionId, description, quote: "q", quoteStart: 0, quoteEnd: 1, observedAt: "2025-06-15",
+      });
+      await tx.insert(landingHints).values([row(live, "live hint"), row(ended, "hint of an ended source"), row(generated, "hint of a generated page")]);
+      await tx.update(sources).set({ validTo: "2026-10-01" }).where(eq(sources.id, ended.sourceId));
+      expect((await texts(tx, placeId)).map((t) => t.description)).toEqual(["live hint"]);
     });
   });
 });
