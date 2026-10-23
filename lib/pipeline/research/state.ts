@@ -1,7 +1,6 @@
 import { and, asc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { bundleFactsTask, type BundleFactsInput } from "@/lib/ai/tasks/bundle-facts";
 import type { ModelTask } from "@/lib/ai/types";
-import { resolveTaskModel } from "@/lib/ai/cost";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import type { VersionedConsolidationConfig } from "@/lib/config/schemas";
@@ -10,7 +9,7 @@ import { researchCandidates } from "@/lib/domain/research/candidates";
 import { landingPoints } from "@/lib/domain/research/landing";
 import { hasTransportFact, reachable } from "@/lib/domain/research/reach";
 import { coreInputs, decideCore } from "@/lib/domain/research/state-core";
-import { bundleFacts, bundleInput, freeFacts, storeStateFacts } from "@/lib/domain/research/state-facts";
+import { activeBundler, bundleFacts, bundleInput, freeFacts, standingFacts, storeStateFacts } from "@/lib/domain/research/state-facts";
 import type { QueueName } from "@/lib/jobs/queues";
 import type { JobData } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
@@ -24,7 +23,7 @@ import { researchScope } from "./search";
  * Batch part of the stage `research.state` (plan N4a task 3): the free facts of each berth go out as one request per
  * berth (`bundle-facts`), as message batches of at most `extraction.unitsPerBatch` berths per job. A berth with fewer
  * than two free facts has nothing to bundle and is stored directly. The batch handler stores the bundled facts in
- * `berth_states.facts`; a broken answer stores the free facts one by one, a failed item keeps the earlier bundling (else one by one). The other columns of the state (core values, landing,
+ * `berth_states.facts`; a broken answer stores the free facts one by one, a failed item keeps the earlier bundling and adds the facts that came since (`standingFacts`). The other columns of the state (core values, landing,
  * nearby) are built per berth by `buildBerthState` (task 6), which never writes `facts`.
  */
 
@@ -39,12 +38,6 @@ const getLog = () => (logger ??= createLogger("pipeline.research.state"));
 const task = bundleFactsTask as ModelTask<unknown, unknown>;
 
 export type BundleFactsJob = { runId: string; stage: string; key: string; placeIds: string[] };
-
-/** The model and prompt version the configuration bundles with now. */
-export function activeBundler(config: AppConfig): { model: string; promptVersion: number } {
-  const { model, taskConfig } = resolveTaskModel(config, bundleFactsTask.name);
-  return { model, promptVersion: taskConfig.promptVersion };
-}
 
 /**
  * Plan of the bundling: the given places with at least one free fact, or with facts stored in their state that may
@@ -129,8 +122,8 @@ async function storeBundle(db: Db, placeId: string, offered: BundleFactsInput["f
 /**
  * Batch handler of `bundle-facts`: stores one berth's bundled facts. Only a result of the poll's active model and
  * prompt version (`ctx.config`) writes; a stale one is dropped and logged. An answer with a broken group drops that
- * group (`validGroups`); one that does not fit the schema stores the facts one by one. An item that failed keeps the
- * facts stored earlier that are still free, and stores one by one only where nothing was stored.
+ * group (`validGroups`); one that does not fit the schema stores the facts one by one. An item that failed stores the
+ * standing facts (`standingFacts`): the earlier bundling where it still stands, plus the facts that came since.
  */
 export const bundleFactsBatchEntry: BatchHandlerEntry = {
   task,
@@ -149,15 +142,8 @@ export const bundleFactsBatchEntry: BatchHandlerEntry = {
     getLog().warn({ placeId: item.subjectId, error: item.error }, "fact bundling failed");
     // The fail hook gets no poll configuration; `getConfig()` is the configuration the poll job runs with in production
     // (the same loaded one it passes as `ctx.config`), and the free facts depend on it only through the active models.
-    const free = await freeFacts(db, item.subjectId, getConfig());
-    const [row] = await db.select({ facts: berthStates.facts }).from(berthStates).where(eq(berthStates.placeId, item.subjectId));
-    if (row && row.facts.length > 0) {
-      // keep the earlier bundling where it still stands; a failed run must not undo it
-      const stillFree = new Set(free.map((f) => f.id));
-      await storeStateFacts(db, item.subjectId, row.facts.filter((f) => stillFree.has(f.factId)));
-      return;
-    }
-    await storeStateFacts(db, item.subjectId, bundleFacts(free, [], null));
+    // A failed run must not undo the earlier bundling, nor hide a fact that came since (`standingFacts`).
+    await storeStateFacts(db, item.subjectId, await standingFacts(db, item.subjectId, getConfig()));
   },
 };
 
@@ -205,9 +191,10 @@ export async function buildBerthState(
   const today = ctx.today ?? new Date().toISOString().slice(0, 10);
   const { core, gaps } = decideCore(await coreInputs(db, placeId, config, ctx.rules), { kind: place.kind, status: place.status }, { config, rules: ctx.rules, today });
   const landing = await landingPoints(db, placeId, config);
-  const free = await freeFacts(db, placeId, config);
-  const factSubjects = free.flatMap((f) => (f.subject === "landside" && f.subjectName ? [f.subjectName] : []));
-  const nearby = await reachable(db, landing, config, { transportFact: hasTransportFact(free, config.research.state.transportKeywords), factSubjects });
+  // the facts left standing after the bundling: a superseded fact neither names a POI nor opens transport
+  const facts = await standingFacts(db, placeId, config);
+  const factSubjects = facts.flatMap((f) => (f.subject === "landside" && f.subjectName ? [f.subjectName] : []));
+  const nearby = await reachable(db, landing, config, { transportFact: hasTransportFact(facts, config.research.state.transportKeywords), factSubjects });
   const now = new Date();
   await db
     .insert(berthStates)

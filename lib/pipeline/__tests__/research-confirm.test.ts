@@ -21,6 +21,7 @@ import { confirmBerths, planResearchConfirm, RESEARCH_CONFIRM_STAGE, researchCha
 import { insertComputation } from "@/test/consolidation";
 import { placeOf } from "@/test/confirmation";
 import { withRollback } from "@/test/db";
+import { insertTestVersion } from "@/test/text";
 import { signalPage as sharedSignalPage, type SignalPageOpts } from "@/test/research-signals";
 
 /*
@@ -273,6 +274,21 @@ describe("applyBerthVerdicts", () => {
       await tx.update(sources).set({ validTo: "2026-10-01" }).where(eq(sources.id, await sourceOf(b.versionId)));
       expect((await loadEvidence(tx, [place.placeId], config)).get(place.placeId)!.map((e) => e.domain).sort()).toEqual(["a.example", "c.example"]);
       expect(await applyBerthVerdicts(tx, [place.placeId], NOW, config)).toEqual([{ placeId: place.placeId, from: "candidate", to: "confirmed" }]);
+    }));
+
+  it("a positive signal counts only from the current version of its page, a negative one from any version (ruling)", () =>
+    withRollback(async (tx) => {
+      const place = await placeOf(tx);
+      const pos = await signalPage(tx, place, { domain: "a.example" });
+      const neg = await signalPage(tx, place, { domain: "b.example", kind: "closed" });
+      const ids = async () => ((await loadEvidence(tx, [place.placeId], config)).get(place.placeId) ?? []).map((e) => e.signalId).sort();
+      expect(await ids()).toEqual([pos.signalId, neg.signalId].sort());
+      // both pages get a newer version: the old positive no longer stands, the old negative keeps blocking
+      for (const v of [pos.versionId, neg.versionId]) {
+        const { rows } = await tx.execute<{ id: string }>(sql`select document_id as id from document_versions where id = ${v}`);
+        await insertTestVersion(tx, ["newer"], { documentId: rows[0]!.id });
+      }
+      expect(await ids()).toEqual([neg.signalId]);
     }));
 
   it("only signals of done units of the active extract-berth model count; the page's active assessment decides its kind", () =>

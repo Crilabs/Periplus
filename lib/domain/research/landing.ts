@@ -2,7 +2,9 @@ import { sql } from "drizzle-orm";
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import type { BerthLandingKind, BerthStateLanding } from "@/lib/db/schema/research-state";
+import { activeAssessor } from "./assessment";
 import { activeExtractor } from "./confirmation";
+import { liveResearchSourceSql } from "./sources";
 
 /*
  * Landing points of a berth (spec 5.7, plan N4a task 4). A marina or port is its own landing point. Otherwise the
@@ -88,16 +90,23 @@ async function nearestShore(db: Db, from: { lon: number; lat: number }, maxM: nu
   return rows[0] ?? null;
 }
 
-/** The landing hints of done units of the active extractor on the current version, oldest observation first. */
+/**
+ * The landing hints, read as the free facts are (`freeFacts`): done units of the active extractor, the document's
+ * current version, a page with an active, not generated assessment, a live source. Oldest observation first.
+ */
 async function hintTexts(db: Db, placeId: string, config: AppConfig): Promise<BerthStateLanding[]> {
   const extractor = activeExtractor(config);
+  const assessor = activeAssessor(config);
   const { rows } = await db.execute<{ description: string }>(sql`
     select h.description
     from landing_hints h
     join research_units u on u.id = h.unit_id
     join documents d on d.current_version_id = h.document_version_id
+    join sources src on src.id = d.source_id
+    join page_assessments a on a.document_version_id = h.document_version_id and a.model = ${assessor.model} and a.prompt_version = ${assessor.promptVersion}
     where h.place_id = ${placeId}
       and u.status = 'done' and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion}
+      and a.generated = false and ${liveResearchSourceSql("src")}
     order by h.observed_at, h.id`);
   // the same hint of several pages counts once
   const seen = new Set<string>();

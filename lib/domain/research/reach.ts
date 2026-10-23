@@ -4,12 +4,13 @@ import type { Db } from "@/lib/db/client";
 import type { PoiCategory } from "@/lib/db/schema";
 import type { BerthStateLanding, BerthStateNearby } from "@/lib/db/schema/research-state";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
-import { freeFacts } from "./state-facts";
+import type { Tone } from "@/lib/db/schema/research-extract";
+import { standingFacts } from "./state-facts";
 
 /*
  * What is reachable on land from a berth (spec 5.7, plan N4a task 5). The distance is the straight line times
  * `state.detourFactor` from the nearest positioned landing point. On foot: every POI but a landing object within
- * `footMaxM`. By transport: when a transport POI is within foot distance or a free fact proves bus or taxi at the
+ * `footMaxM`. By transport: when a transport POI is within foot distance or a standing fact proves bus or taxi at the
  * berth, the POIs of `transportCategories` up to `transportMaxM` with at least `transportMinSitelinks` Wikidata
  * sitelinks. Nearest first, at most `PER_CATEGORY` per category.
  */
@@ -57,17 +58,27 @@ export function classifyNearby(candidates: NearbyCandidate[], state: AppConfig["
   });
 }
 
-/** Whether a free fact's subject category (trimmed, lower case) contains one of the `keywords` (lower case). Pure. */
-export function hasTransportFact(facts: Array<{ subjectCategory: string | null }>, keywords: string[]): boolean {
-  return facts.some((f) => {
+type TransportFactInput = { factId: string; subjectCategory: string | null; tone: Tone | null; observedAt: string };
+
+/**
+ * Whether the facts prove bus, taxi or ferry at the berth: of the facts whose subject category (trimmed, lower case)
+ * contains one of the `keywords`, the newest decides, and a negative one (no taxi, the bus was discontinued) closes the
+ * access; of several on the newest date, any negative one closes it. Pass the facts left standing after the bundling
+ * (`standingFacts`), so a superseded fact never decides. Pure.
+ */
+export function hasTransportFact(facts: TransportFactInput[], keywords: string[]): boolean {
+  const transport = facts.filter((f) => {
     const category = f.subjectCategory?.trim().toLowerCase();
     return !!category && keywords.some((k) => category.includes(k.toLowerCase()));
   });
+  if (transport.length === 0) return false;
+  const newest = transport.reduce((max, f) => (f.observedAt > max ? f.observedAt : max), transport[0]!.observedAt);
+  return transport.every((f) => f.observedAt !== newest || f.tone !== "negative");
 }
 
-/** Whether a free fact of the place (done unit, active extractor, current version) proves bus, taxi or ferry there. */
+/** Whether the standing facts of the place (`standingFacts`) prove bus, taxi or ferry there. */
 export async function transportFactIn(db: Db, placeId: string, config: AppConfig): Promise<boolean> {
-  return hasTransportFact(await freeFacts(db, placeId, config), config.research.state.transportKeywords);
+  return hasTransportFact(await standingFacts(db, placeId, config), config.research.state.transportKeywords);
 }
 
 /** The POIs around the positioned landing points and their access; without a positioned landing point, none. */

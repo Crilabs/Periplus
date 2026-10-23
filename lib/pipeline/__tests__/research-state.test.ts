@@ -3,9 +3,11 @@ import type { PgBoss } from "pg-boss";
 import { describe, expect, it } from "vitest";
 import { getConfig, getConsolidationConfig, loadConfig, type AppConfig } from "@/lib/config";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { berthStates, places, runs } from "@/lib/db/schema";
+import { berthStates, places, runs, wikidataSitelinks } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { createRun } from "@/lib/domain/runs";
+import { MockModel } from "@/lib/ai/mock";
+import { setModelClientFactory } from "@/lib/jobs/handlers/ai-batch";
 import { HANDLERS } from "@/lib/jobs/registry";
 import { STAGES } from "@/lib/jobs/stages";
 import type { JobContext } from "@/lib/jobs/worker";
@@ -138,5 +140,57 @@ describe("research.state stage", () => {
       expect(inserted.map((j) => [j.queue, j.data.placeId])).toEqual([["research.state", a.placeId]]);
       await HANDLERS["research.state"](inserted[0]!.data as never, ctxFor(tx, boss));
       expect(await tx.select().from(berthStates).where(eq(berthStates.placeId, a.placeId))).toHaveLength(1);
+    }));
+  it("the bundling job (placeIds) of the handler stores a berth with one fact without a request; a job without places fails", () =>
+    withRollback(async (tx) => {
+      const a = await marina(tx);
+      const fact = await seedStatement(tx, a.placeId, await seedPage(tx, config, a.placeId), { statement: "Taverna by the quay" });
+      const runId = (await createRun(tx, { kind: "stage", scope: { type: "system", id: `s-${newId()}` }, stages: [RESEARCH_STATE_STAGE], triggeredBy: "test" })).id;
+      const { boss } = recordingBoss();
+      setModelClientFactory(() => new MockModel({}));
+      try {
+        await HANDLERS["research.state"]({ runId, stage: RESEARCH_STATE_STAGE, key: "bundle:0", placeIds: [a.placeId] }, ctxFor(tx, boss));
+        const [row] = await tx.select().from(berthStates).where(eq(berthStates.placeId, a.placeId));
+        expect(row!.facts.map((f) => [f.factId, f.mentions])).toEqual([[fact, 1]]);
+        // the bundling branch never builds core values
+        expect(row!.core).toEqual({});
+        await expect(HANDLERS["research.state"]({ runId, stage: RESEARCH_STATE_STAGE, key: "bundle:1", placeIds: [] }, ctxFor(tx, boss))).rejects.toThrow();
+      } finally {
+        setModelClientFactory(undefined);
+      }
+    }));
+
+  it("storing facts skips a berth that is no longer confirmed: no row is created, an existing one stays", () =>
+    withRollback(async (tx) => {
+      const gone = await marina(tx, "candidate");
+      const fact = await seedStatement(tx, gone.placeId, await seedPage(tx, config, gone.placeId), { statement: "Taverna by the quay" });
+      const stored = { factId: fact, subject: "berth" as const, subjectName: null, subjectCategory: null, statement: "Taverna by the quay", observedAt: "2025-06-15", tone: null, safety: false, mentions: 1 };
+      await storeStateFacts(tx, gone.placeId, [stored]);
+      expect(await tx.select().from(berthStates).where(eq(berthStates.placeId, gone.placeId))).toHaveLength(0);
+
+      const was = await marina(tx);
+      await storeStateFacts(tx, was.placeId, [stored]);
+      await tx.update(places).set({ status: "candidate" }).where(eq(places.id, was.placeId));
+      await storeStateFacts(tx, was.placeId, []);
+      const [row] = await tx.select().from(berthStates).where(eq(berthStates.placeId, was.placeId));
+      expect(row!.facts.map((f) => f.factId)).toEqual([fact]);
+    }));
+
+  it("a newer negative transport fact closes bus and taxi access (bus discontinued 2025 after the bus of 2019)", () =>
+    withRollback(async (tx) => {
+      const a = await marina(tx);
+      const wikidataId = `Q${Math.floor(Math.random() * 1e12)}`;
+      const monastery = await insertTestGeoObject(tx, { type: "poi", category: "culture", tags: {}, wikidataId, geom: geomFromGeoJson({ type: "Point", coordinates: [LON, LAT + 5000 / 111_195] }) });
+      await tx.insert(wikidataSitelinks).values({ wikidataId, sitelinks: 9, fetchedAt: new Date() });
+      const page = await seedPage(tx, config, a.placeId);
+      await seedStatement(tx, a.placeId, page, { statement: "A bus runs to town", subjectName: "Bus", subjectCategory: "bus", observedAt: "2019-06-01", tone: "positive" });
+      const runId = (await createRun(tx, { kind: "stage", scope: { type: "system", id: `s-${newId()}` }, stages: [RESEARCH_STATE_STAGE], triggeredBy: "test" })).id;
+      const access = async () => (await tx.select().from(berthStates).where(eq(berthStates.placeId, a.placeId)))[0]!.nearby.find((n) => n.geoObjectId === monastery)?.access;
+
+      await buildBerthState(tx, a.placeId, { runId, rules, config, today: "2026-10-23" });
+      expect(await access()).toBe("transport");
+      await seedStatement(tx, a.placeId, page, { statement: "The bus was discontinued", subjectName: "Bus", subjectCategory: "bus", observedAt: "2025-06-01", tone: "negative" });
+      await buildBerthState(tx, a.placeId, { runId, rules, config, today: "2026-10-23" });
+      expect(await access()).toBeUndefined();
     }));
 });

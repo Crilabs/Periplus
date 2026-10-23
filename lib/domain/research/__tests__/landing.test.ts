@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { getConfig } from "@/lib/config";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { landPolygons, landingHints, places } from "@/lib/db/schema";
+import { landPolygons, landingHints, places, sources } from "@/lib/db/schema";
 import { landingPoints } from "@/lib/domain/research/landing";
 import { insertPlace } from "@/test/consolidation";
 import { seedPage, seedVersion } from "@/test/research-state";
@@ -134,6 +134,20 @@ describe("landingPoints", () => {
       await seedVersion(tx, config, placeId, first.documentId);
       await tx.insert(landingHints).values({ unitId: first.unitId, placeId, documentVersionId: first.versionId, description: "old hint", quote: "q", quoteStart: 0, quoteEnd: 1, observedAt: "2025-06-15" });
       expect(await texts(tx, placeId)).toEqual([]);
+    });
+  });
+  it("a hint of an ended source or a generated page does not count (the evidence filters of the free facts)", async () => {
+    await withRollback(async (tx) => {
+      const { placeId } = await insertPlace(tx);
+      const live = await seedPage(tx, config, placeId);
+      const ended = await seedPage(tx, config, placeId);
+      const generated = await seedPage(tx, config, placeId, { generated: true });
+      const row = (p: { unitId: string; versionId: string }, description: string) => ({
+        unitId: p.unitId, placeId, documentVersionId: p.versionId, description, quote: "q", quoteStart: 0, quoteEnd: 1, observedAt: "2025-06-15",
+      });
+      await tx.insert(landingHints).values([row(live, "live hint"), row(ended, "hint of an ended source"), row(generated, "hint of a generated page")]);
+      await tx.update(sources).set({ validTo: "2026-10-01" }).where(eq(sources.id, ended.sourceId));
+      expect((await texts(tx, placeId)).map((t) => t.description)).toEqual(["live hint"]);
     });
   });
 });

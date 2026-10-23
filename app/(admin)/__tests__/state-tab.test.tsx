@@ -45,6 +45,23 @@ describe("StateTab", () => {
     expect(html).not.toContain("Nicht mehr bestätigt");
   });
 
+  it("names the confidence column „Konfidenz“ and writes it with a German decimal comma", () => {
+    const html = renderToStaticMarkup(<StateTab view={view()} />);
+    expect(html).toMatch(/<th[^>]*>Konfidenz<\/th>/);
+    expect(html).not.toMatch(/<th[^>]*>Sicherheit<\/th>/);
+    expect(html).toContain("0,55");
+    expect(html).not.toContain("0.55");
+  });
+
+  it("marks only the safety fact with the safety badge", () => {
+    const html = renderToStaticMarkup(<StateTab view={view()} />);
+    expect(html.match(/Sicherheitshinweis/g)).toHaveLength(1);
+    const rows = html.split("<tr").filter((r) => r.includes("Sicherheitshinweis"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("Felsen am Eingang");
+    expect(rows[0]).not.toContain("Taverne geschlossen");
+  });
+
   it("says when the place is no longer confirmed", () => {
     expect(renderToStaticMarkup(<StateTab view={view({ status: "candidate" })} />)).toContain("Nicht mehr bestätigt");
   });

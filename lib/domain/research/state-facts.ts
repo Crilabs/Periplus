@@ -1,8 +1,9 @@
-import { eq, sql } from "drizzle-orm";
-import type { BundleFactInput, BundleFactsOutput } from "@/lib/ai/tasks/bundle-facts";
+import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { resolveTaskModel } from "@/lib/ai/cost";
+import { bundleFactsTask, type BundleFactInput, type BundleFactsInput, type BundleFactsOutput } from "@/lib/ai/tasks/bundle-facts";
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { berthStates, type BerthStateFact } from "@/lib/db/schema";
+import { aiBatches, aiBatchItems, berthStates, places, type BerthStateFact } from "@/lib/db/schema";
 import type { Tone } from "@/lib/db/schema/research-extract";
 import { registrableDomain } from "@/lib/domain/sources/urls";
 import { activeAssessor } from "./assessment";
@@ -138,12 +139,61 @@ export function bundleFacts(free: FreeFact[], offered: Array<{ id: string; obser
   return free.flatMap((f) => (out.has(f.id) ? [out.get(f.id)!] : covered.has(f.id) ? [] : [stored(f, 1)]));
 }
 
+/** The model and prompt version the configuration bundles with now. */
+export function activeBundler(config: AppConfig): { model: string; promptVersion: number } {
+  const { model, taskConfig } = resolveTaskModel(config, bundleFactsTask.name);
+  return { model, promptVersion: taskConfig.promptVersion };
+}
+
+/** The fact ids the place's last bundling of the active bundler was given (its newest distributed item); none without one. */
+async function lastOffered(db: Db, placeId: string, config: AppConfig): Promise<string[]> {
+  const active = activeBundler(config);
+  const [item] = await db
+    .select({ input: aiBatchItems.input })
+    .from(aiBatchItems)
+    .innerJoin(aiBatches, eq(aiBatches.id, aiBatchItems.batchId))
+    .where(
+      and(
+        eq(aiBatchItems.subjectType, "place"),
+        eq(aiBatchItems.subjectId, placeId),
+        eq(aiBatchItems.status, "succeeded"),
+        isNotNull(aiBatchItems.distributedAt),
+        eq(aiBatches.task, bundleFactsTask.name),
+        eq(aiBatches.model, active.model),
+        eq(aiBatches.promptVersion, active.promptVersion),
+      ),
+    )
+    .orderBy(desc(aiBatchItems.distributedAt), desc(aiBatchItems.id))
+    .limit(1);
+  return item ? (item.input as BundleFactsInput).facts.map((f) => f.id) : [];
+}
+
+/**
+ * The facts of the place as they stand now, without a new bundling: the stored bundled facts that are still free, and
+ * every free fact the stored bundling has not seen (neither stored nor given to its last bundling, so neither a member
+ * of a group nor superseded) as a single fact. Without stored facts, the free facts one by one. Ordered as the free
+ * facts. A superseded fact never comes back; a new one (a new safety fact) is never lost.
+ */
+export async function standingFacts(db: Db, placeId: string, config: AppConfig): Promise<BerthStateFact[]> {
+  const free = await freeFacts(db, placeId, config);
+  const [row] = await db.select({ facts: berthStates.facts }).from(berthStates).where(eq(berthStates.placeId, placeId));
+  const kept = new Map((row?.facts ?? []).map((f) => [f.factId, f]));
+  const seen = new Set([...kept.keys(), ...(kept.size > 0 ? await lastOffered(db, placeId, config) : [])]);
+  return free.flatMap((f) => (kept.has(f.id) ? [kept.get(f.id)!] : seen.has(f.id) ? [] : [stored(f, 1)]));
+}
+
 /**
  * Writes the bundled facts of the place into `berth_states.facts`: the row is created with empty core values, gaps,
  * landing and nearby when it does not exist yet (the state stage fills them), and only `facts` is changed on an
- * existing one (no row is created for no facts). The state stage's own upsert must leave `facts` alone.
+ * existing one (no row is created for no facts). The state stage's own upsert must leave `facts` alone. A place that
+ * is no longer confirmed (or valid) is skipped, as by the state stage: no row is created, an existing one stays.
  */
 export async function storeStateFacts(db: Db, placeId: string, facts: BerthStateFact[]): Promise<void> {
+  const [place] = await db
+    .select({ id: places.id })
+    .from(places)
+    .where(and(eq(places.id, placeId), eq(places.status, "confirmed"), isNull(places.validTo), isNull(places.mergedIntoId)));
+  if (!place) return;
   if (facts.length === 0) {
     // nothing to show: clear a row that exists, create none
     await db.update(berthStates).set({ facts }).where(eq(berthStates.placeId, placeId));

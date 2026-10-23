@@ -143,12 +143,40 @@ describe("things without facts (spec 5.7)", () => {
 });
 
 describe("transport fact", () => {
+  const fact = (subjectCategory: string | null, o: { tone?: "positive" | "negative" | "neutral" | null; observedAt?: string; factId?: string } = {}) => ({
+    factId: o.factId ?? "f",
+    subjectCategory,
+    tone: o.tone ?? null,
+    observedAt: o.observedAt ?? "2025-06-15",
+  });
+
   it("a subject category containing a configured keyword counts, normalized", () => {
     const k = config.research.state.transportKeywords;
-    expect(hasTransportFact([{ subjectCategory: "Bus stop" }], k)).toBe(true);
-    expect(hasTransportFact([{ subjectCategory: " TAXI " }], k)).toBe(true);
-    expect(hasTransportFact([{ subjectCategory: "Λεωφορείο" }], k)).toBe(true);
-    expect(hasTransportFact([{ subjectCategory: "food" }, { subjectCategory: null }], k)).toBe(false);
+    expect(hasTransportFact([fact("Bus stop")], k)).toBe(true);
+    expect(hasTransportFact([fact(" TAXI ")], k)).toBe(true);
+    expect(hasTransportFact([fact("Λεωφορείο")], k)).toBe(true);
+    expect(hasTransportFact([fact("food"), fact(null)], k)).toBe(false);
+  });
+
+  it("a negative transport fact does not open access: „Kein Taxi im Ort“", () => {
+    const k = config.research.state.transportKeywords;
+    expect(hasTransportFact([fact("taxi", { tone: "negative" })], k)).toBe(false);
+  });
+
+  it("the newest transport fact decides: a bus discontinued in 2025 closes the bus of 2019, a newer bus reopens it", () => {
+    const k = config.research.state.transportKeywords;
+    const bus2019 = fact("bus", { tone: "positive", observedAt: "2019-06-01", factId: "a" });
+    const stopped2025 = fact("bus", { tone: "negative", observedAt: "2025-06-01", factId: "b" });
+    expect(hasTransportFact([bus2019, stopped2025], k)).toBe(false);
+    expect(hasTransportFact([stopped2025, bus2019], k)).toBe(false);
+    expect(hasTransportFact([bus2019, stopped2025, fact("taxi", { observedAt: "2026-05-01", factId: "c" })], k)).toBe(true);
+    // a newer fact about food does not decide about transport
+    expect(hasTransportFact([bus2019, stopped2025, fact("food", { tone: "positive", observedAt: "2026-05-01", factId: "d" })], k)).toBe(false);
+  });
+
+  it("on the same date a negative transport fact wins", () => {
+    const k = config.research.state.transportKeywords;
+    expect(hasTransportFact([fact("bus", { tone: "positive", factId: "a" }), fact("taxi", { tone: "negative", factId: "b" })], k)).toBe(false);
   });
 
   it("is read from free facts of done units of the active extractor", async () => {

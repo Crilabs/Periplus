@@ -15,6 +15,7 @@ const LANDING_LABELS: Record<BerthLandingKind, string> = {
 const ACCESS_LABELS = { foot: "zu Fuß", transport: "Bus/Taxi" } as const;
 
 const coord = (lat: number, lon: number) => `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+const de = (n: number, digits = 0) => n.toLocaleString("de-DE", { maximumFractionDigits: digits });
 
 /**
  * Tab „Stand“ of the place page (plan N4a): the current picture of a confirmed berth. Core values with their origin
@@ -48,7 +49,7 @@ export function StateTab({ view }: { view: BerthStateView | null }) {
                 <th className={thClass}>Merkmal</th>
                 <th className={thClass}>Wert</th>
                 <th className={thClass}>Herkunft</th>
-                <th className={thClass}>Sicherheit</th>
+                <th className={thClass}>Konfidenz</th>
                 <th className={thClass}>Beobachtet</th>
               </tr>
             </thead>
@@ -60,7 +61,7 @@ export function StateTab({ view }: { view: BerthStateView | null }) {
                   <td className={tdClass}>
                     <Badge tone={c.origin === "text" ? "accent" : "neutral"}>{ORIGIN_LABELS[c.origin]}</Badge>
                   </td>
-                  <td className={tdClass}>{c.confidence.toFixed(2)}</td>
+                  <td className={tdClass}>{de(c.confidence, 2)}</td>
                   <td className={tdClass}>{c.observedAt ?? "–"}</td>
                 </tr>
               ))}
