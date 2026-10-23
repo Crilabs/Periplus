@@ -80,6 +80,7 @@ export async function startWorkers(
       );
     });
     log.warn({ queue, jobId: job.id, service: err.service, priorAttempts }, "budget exceeded, queue paused and job deferred");
+    deferredIn.add(queue);
     void syncControls();
   }
 
@@ -164,6 +165,12 @@ export async function startWorkers(
   }
 
   const active = new Set<QueueName>();
+  /**
+   * Queues this process deferred jobs in. A pause set and lifted between two control checks is never seen as such
+   * (the queue stays active), so a running queue in this set releases its deferred jobs too; otherwise they would wait
+   * for the pause's original end (next UTC midnight).
+   */
+  const deferredIn = new Set<QueueName>();
   let syncing: Promise<void> = Promise.resolve();
   let stopped = false;
 
@@ -176,6 +183,7 @@ export async function startWorkers(
         await boss.offWork(queue, { wait: false });
         log.info({ queue }, "queue paused, worker stopped");
       } else if (!paused && !active.has(queue)) {
+        deferredIn.delete(queue);
         await releaseDeferred(queue);
         await boss.work<JobData>(
           queue,
@@ -186,6 +194,10 @@ export async function startWorkers(
         );
         active.add(queue);
         log.info({ queue }, "queue worker started");
+      } else if (!paused && deferredIn.has(queue)) {
+        deferredIn.delete(queue);
+        await releaseDeferred(queue);
+        log.info({ queue }, "pause lifted before it was seen, deferred jobs released");
       }
     }
   }

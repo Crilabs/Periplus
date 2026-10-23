@@ -1,3 +1,10 @@
+import changes30 from "./3.0/changes.schema.json";
+import coast30 from "./3.0/coast.schema.json";
+import highlights30 from "./3.0/highlights.schema.json";
+import manifest30 from "./3.0/manifest.schema.json";
+import regions30 from "./3.0/regions.schema.json";
+import spots30 from "./3.0/spots.schema.json";
+import weatherPoints30 from "./3.0/weather-points.schema.json";
 import changes10 from "./1.0/changes.schema.json";
 import coast10 from "./1.0/coast.schema.json";
 import highlights10 from "./1.0/highlights.schema.json";
@@ -85,6 +92,15 @@ export const PUBLISHED_SCHEMAS: Readonly<Record<string, Readonly<Record<string, 
     "coast.schema.json": coast23,
     "weather-points.schema.json": weatherPoints23,
     "changes.schema.json": changes23,
+  },
+  "3.0": {
+    "manifest.schema.json": manifest30,
+    "spots.schema.json": spots30,
+    "highlights.schema.json": highlights30,
+    "regions.schema.json": regions30,
+    "coast.schema.json": coast30,
+    "weather-points.schema.json": weatherPoints30,
+    "changes.schema.json": changes30,
   },
 };
 
