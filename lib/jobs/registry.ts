@@ -17,6 +17,9 @@ import {
   researchFetchHandler,
   researchRoutesHandler,
   researchSearchHandler,
+  researchLandsideExtractHandler,
+  researchLandsideSearchHandler,
+  researchStateFactsHandler,
   researchStateHandler,
 } from "./handlers/research";
 import { researchConfirmHandler } from "./handlers/research-confirm";
@@ -78,6 +81,9 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "research.discover": researchDiscoverHandler,
   "research.confirm": researchConfirmHandler,
   "research.state": researchStateHandler,
+  "research.state_facts": researchStateFactsHandler,
+  "research.landside_search": researchLandsideSearchHandler,
+  "research.landside_extract": researchLandsideExtractHandler,
   "embed.chunks": embedChunksHandler,
   "sources.wikivoyage": wikivoyageHandler,
   "compare.converters": compareConvertersHandler,

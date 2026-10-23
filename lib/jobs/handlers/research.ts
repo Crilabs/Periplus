@@ -24,7 +24,23 @@ import {
   RESEARCH_ROUTES_STAGE,
 } from "@/lib/pipeline/research/routes";
 import { fetchResearchPage, planResearchFetch, RESEARCH_FETCH_STAGE } from "@/lib/pipeline/research/fetch";
-import { buildBerthState, bundleFactsJob, planResearchState, RESEARCH_STATE_QUEUE, RESEARCH_STATE_STAGE } from "@/lib/pipeline/research/state";
+import {
+  buildBerthState,
+  bundleFactsJob,
+  planResearchState,
+  planResearchStateFacts,
+  RESEARCH_STATE_FACTS_QUEUE,
+  RESEARCH_STATE_FACTS_STAGE,
+  RESEARCH_STATE_QUEUE,
+  RESEARCH_STATE_STAGE,
+} from "@/lib/pipeline/research/state";
+import { planLandsideSearch, RESEARCH_LANDSIDE_SEARCH_STAGE, searchLandside } from "@/lib/pipeline/research/landside-search";
+import {
+  extractLandsideUnits,
+  planLandsideExtract,
+  RESEARCH_LANDSIDE_EXTRACT_QUEUE,
+  RESEARCH_LANDSIDE_EXTRACT_STAGE,
+} from "@/lib/pipeline/research/landside-extract";
 import { planResearchSearch, RESEARCH_SEARCH_STAGE, searchCandidate } from "@/lib/pipeline/research/search";
 import { modelClientFor } from "./ai-batch";
 import { crawlRenderPage } from "./fetch";
@@ -83,6 +99,27 @@ export const researchStateStage: StageDefinition = {
   name: RESEARCH_STATE_STAGE,
   queue: RESEARCH_STATE_QUEUE,
   plan: (db, run) => planResearchState(db, run),
+};
+
+/** Stage `research.state_facts`: only the fact bundling of the run's confirmed berths (the end of the follow-up chain). */
+export const researchStateFactsStage: StageDefinition = {
+  name: RESEARCH_STATE_FACTS_STAGE,
+  queue: RESEARCH_STATE_FACTS_QUEUE,
+  plan: (db, run) => planResearchStateFacts(db, run),
+};
+
+/** Stage `research.landside_search`: one job per confirmed place of the run (follow-up chain only). */
+export const researchLandsideSearchStage: StageDefinition = {
+  name: RESEARCH_LANDSIDE_SEARCH_STAGE,
+  queue: "research.landside_search",
+  plan: (db, run) => planLandsideSearch(db, run),
+};
+
+/** Stage `research.landside_extract`: the landside units of the run's confirmed places, as message batches. */
+export const researchLandsideExtractStage: StageDefinition = {
+  name: RESEARCH_LANDSIDE_EXTRACT_STAGE,
+  queue: RESEARCH_LANDSIDE_EXTRACT_QUEUE,
+  plan: (db, run) => planLandsideExtract(db, run, getConfig(), getArchive()),
 };
 
 const runIdOf = (data: JobData): string => z.string().min(1).parse(data.runId);
@@ -198,4 +235,27 @@ export const researchStateHandler: JobHandler<JobData> = async (data, ctx) => {
   const rules = await consolidationConfigFor(ctx.db, (run.params as Record<string, unknown>).rulesVersion);
   const result = await buildBerthState(ctx.db, placeId, { runId, rules });
   ctx.log.info({ placeId, ...result }, "berth state");
+};
+
+/** Job of `research.state_facts`: sends those berths' free facts to `bundle-facts` as a message batch (also the follow-on job). */
+export const researchStateFactsHandler: JobHandler<JobData> = async (data, ctx) => {
+  const job = stateBundleSchema.parse(data);
+  const result = await bundleFactsJob(ctx.db, { model: modelClientFor(ctx.db), boss: ctx.boss }, job, RESEARCH_STATE_FACTS_QUEUE);
+  ctx.log.info({ places: job.placeIds.length, ...result }, "fact bundling batch submitted");
+};
+
+const landsideSearchSchema = z.object({ placeId: z.uuid() });
+
+/** Searches the landside queries of one confirmed berth and records the hits (purpose `landside`). */
+export const researchLandsideSearchHandler: JobHandler<JobData> = async (data, ctx) => {
+  const { placeId } = landsideSearchSchema.parse(data);
+  const result = await searchLandside(ctx.db, placeId, { transport: getTransport(), archive: getArchive() }, { db: ctx.db, runId: runIdOf(data), stage: data.stage });
+  ctx.log.info({ placeId, ...result }, "landside searched");
+};
+
+/** Sends one job's landside units to `extract-landside` as a message batch; the poll job stores the facts. */
+export const researchLandsideExtractHandler: JobHandler<JobData> = async (data, ctx) => {
+  const job = extractJobSchema.parse(data);
+  const result = await extractLandsideUnits(ctx.db, { model: modelClientFor(ctx.db), boss: ctx.boss, archive: getArchive() }, job);
+  ctx.log.info({ units: job.unitIds.length, ...result }, "landside extraction batch submitted");
 };

@@ -31,6 +31,14 @@ import { researchScope } from "./search";
 export const RESEARCH_STATE_STAGE = "research.state";
 export const RESEARCH_STATE_QUEUE = "research.state" satisfies QueueName;
 
+/**
+ * Stage `research.state_facts` (plan N4b): only the bundling of the facts, no state build. It ends the follow-up run's
+ * land research: the landside facts that came since `research.state` are bundled with the berth facts. A stage cannot
+ * repeat in a run (`run_stages` is unique per run and stage), hence this second stage over the same bundling jobs.
+ */
+export const RESEARCH_STATE_FACTS_STAGE = "research.state_facts";
+export const RESEARCH_STATE_FACTS_QUEUE = "research.state_facts" satisfies QueueName;
+
 const SUBJECT = "place";
 
 let logger: ReturnType<typeof createLogger> | undefined;
@@ -174,6 +182,11 @@ export async function statePlaces(db: Db, params: Record<string, unknown>): Prom
 export async function planResearchState(db: Db, run: { id: string; params: Record<string, unknown> }, config: AppConfig = getConfig()): Promise<JobData[]> {
   const ids = await statePlaces(db, run.params);
   return [...ids.map((id): JobData => ({ key: `state:${id}`, placeId: id })), ...(await planBundleFacts(db, ids, config))];
+}
+
+/** Plan of the stage `research.state_facts`: the bundling jobs of the run's confirmed places (`planBundleFacts`). */
+export async function planResearchStateFacts(db: Db, run: { id: string; params: Record<string, unknown> }, config: AppConfig = getConfig()): Promise<JobData[]> {
+  return planBundleFacts(db, await statePlaces(db, run.params), config);
 }
 
 /**

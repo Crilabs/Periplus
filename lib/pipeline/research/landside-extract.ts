@@ -36,8 +36,7 @@ import { researchScope } from "./search";
  */
 
 export const RESEARCH_LANDSIDE_EXTRACT_STAGE = "research.landside_extract";
-/** The queue is registered with the stage (plan N4b task 4); until then the name is not yet a `QueueName`. */
-export const RESEARCH_LANDSIDE_EXTRACT_QUEUE = "research.landside_extract" as unknown as QueueName;
+export const RESEARCH_LANDSIDE_EXTRACT_QUEUE = "research.landside_extract" satisfies QueueName;
 const SUBJECT = "research_unit";
 
 let logger: ReturnType<typeof createLogger> | undefined;

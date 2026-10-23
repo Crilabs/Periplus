@@ -14,8 +14,8 @@ const view = (over: Partial<BerthStateView> = {}): BerthStateView => ({
   ],
   gaps: [{ attribute: "seabed", label: "Meeresboden" }],
   facts: [
-    { factId: "f1", subject: "landside", subjectName: "Taverna Nikos", subjectCategory: "food", statement: "Taverne geschlossen", observedAt: "2025-06-15", tone: "negative", safety: false, mentions: 2 },
-    { factId: "f2", subject: "berth", subjectName: null, subjectCategory: null, statement: "Felsen am Eingang", observedAt: "2024-06-15", tone: null, safety: true, mentions: 1 },
+    { factId: "f1", subject: "landside", subjectName: "Taverna Nikos", subjectCategory: "food", statement: "Taverne geschlossen", observedAt: "2025-06-15", tone: "negative", safety: false, mentions: 2, origin: "landside" },
+    { factId: "f2", subject: "berth", subjectName: null, subjectCategory: null, statement: "Felsen am Eingang", observedAt: "2024-06-15", tone: null, safety: true, mentions: 1, origin: "berth" },
   ],
   landing: [
     { kind: "pier", lon: 21.0, lat: 35.2, geoObjectId: null, description: null },
@@ -35,7 +35,7 @@ describe("StateTab", () => {
 
   it("shows core values with their origin, gaps, facts, landing points and reachable things in German", () => {
     const html = renderToStaticMarkup(<StateTab view={view()} />);
-    for (const text of ["Ankergrund", "Text", "berechnet", "Regel", "Meeresboden", "Taverne geschlossen", "Taverna Nikos", "negativ", "Sicherheit", "Steg", "Hinweis aus Text", "Dinghy am Strand links"]) {
+    for (const text of ["Ankergrund", "Text", "berechnet", "Regel", "Meeresboden", "Taverne geschlossen", "Taverna Nikos", "negativ", "Sicherheit", "Liegeplatz-Seite", "Landseite", "Steg", "Hinweis aus Text", "Dinghy am Strand links"]) {
       expect(html).toContain(text);
     }
     expect(html).toContain("Bushaltestelle");
