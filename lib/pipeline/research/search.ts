@@ -14,14 +14,17 @@ import { runQueries } from "@/lib/pipeline/discovery";
 
 export const RESEARCH_SEARCH_STAGE = "research.search";
 
+/** The candidates a run covers: `params.subdivisionKey` or `params.placeIds`. */
+export function researchScope(params: Record<string, unknown>): { subdivisionKey: string } | { placeIds: string[] } {
+  const { subdivisionKey, placeIds } = params;
+  if (typeof subdivisionKey === "string") return { subdivisionKey };
+  if (Array.isArray(placeIds) && placeIds.every((id) => typeof id === "string")) return { placeIds: placeIds as string[] };
+  throw new Error("subdivisionKey or placeIds is required");
+}
+
 /** Plan of the stage `research.search`: one job per candidate of `params.subdivisionKey` or `params.placeIds`. */
 export async function planResearchSearch(db: Db, run: { id: string; params: Record<string, unknown> }): Promise<JobData[]> {
-  const { subdivisionKey, placeIds } = run.params;
-  let scope: { subdivisionKey: string } | { placeIds: string[] };
-  if (typeof subdivisionKey === "string") scope = { subdivisionKey };
-  else if (Array.isArray(placeIds) && placeIds.every((id) => typeof id === "string")) scope = { placeIds: placeIds as string[] };
-  else throw new Error("subdivisionKey or placeIds is required");
-  return (await researchCandidates(db, scope)).map((placeId) => ({ key: placeId, placeId }));
+  return (await researchCandidates(db, researchScope(run.params))).map((placeId) => ({ key: placeId, placeId }));
 }
 
 /**
