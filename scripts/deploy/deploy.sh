@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Deploys an image tag on the server. Run on the server via: ssh deploy@host bash -s <sha> < deploy.sh
+# Deploys an image tag on the server. Run on the server via: ssh periplus@host bash -s <sha> < deploy.sh
 # Rollback = run it again with the previous sha.
 # Any failing step (pull, migrate, up, /readyz, worker ready) rolls back to the previous tag and exits 1.
+# The whole body is one group: bash reads it completely before running it, and every command in it gets /dev/null
+# as stdin. Fed through `bash -s`, the script itself is stdin, and `docker compose up` would otherwise swallow the
+# rest of it and the deploy would end after `up` with exit 0, without the ready check and .deployed-tag.
+{
 set -euo pipefail
 
 NEW_TAG="${1:?usage: deploy.sh <image-tag>}"
@@ -41,7 +45,7 @@ release() {
   "${COMPOSE[@]}" up -d postgres || { echo "step failed: up postgres" >&2; return 1; }
   "${COMPOSE[@]}" --profile migrate run --rm migrate || { echo "step failed: migrate" >&2; return 1; }
   # --wait: until the services with a healthcheck (the worker) are healthy; fails when one turns unhealthy or exits.
-  "${COMPOSE[@]}" up -d --wait --wait-timeout 180 web worker caddy || { echo "step failed: up web worker caddy" >&2; return 1; }
+  "${COMPOSE[@]}" up -d --wait --wait-timeout 180 web worker || { echo "step failed: up web worker" >&2; return 1; }
   wait_ready || { echo "step failed: /readyz or worker not ready within 60 s" >&2; return 1; }
 }
 
@@ -60,7 +64,7 @@ if [ -n "$PREVIOUS_TAG" ] && [ "$PREVIOUS_TAG" != "$NEW_TAG" ]; then
   echo "rolling back to $PREVIOUS_TAG" >&2
   # Migrations are not reverted; they must stay backward compatible with the previous release.
   export IMAGE_TAG="$PREVIOUS_TAG"
-  if "${COMPOSE[@]}" up -d --wait --wait-timeout 180 postgres web worker caddy && wait_ready; then
+  if "${COMPOSE[@]}" up -d --wait --wait-timeout 180 postgres web worker && wait_ready; then
     echo "rollback to $PREVIOUS_TAG ok" >&2
   else
     echo "rollback to $PREVIOUS_TAG is NOT ready" >&2
@@ -69,3 +73,4 @@ else
   echo "no previous tag to roll back to" >&2
 fi
 exit 1
+} </dev/null

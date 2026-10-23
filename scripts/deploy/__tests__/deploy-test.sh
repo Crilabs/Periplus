@@ -8,18 +8,21 @@ DEPLOY="$HERE/../deploy.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# Every case feeds the script through stdin, as CI does (`ssh … bash -s <sha> < deploy.sh`).
 # Fake binaries: docker logs "IMAGE_TAG=<tag> <args>" and fails the step named in FAKE_FAIL
 # (pull | migrate | up | ready | worker) while IMAGE_TAG equals FAKE_FAIL_TAG. sleep is a no-op.
 mkdir -p "$WORK/bin"
 cat > "$WORK/bin/docker" <<'FAKE'
 #!/usr/bin/env bash
+# Like the real `docker compose up`, read stdin to its end.
+cat > /dev/null
 args="$*"
 printf 'IMAGE_TAG=%s %s\n' "${IMAGE_TAG:-}" "$args" >> "$FAKE_LOG"
 if [ "${IMAGE_TAG:-}" = "${FAKE_FAIL_TAG:-}" ]; then
   case "${FAKE_FAIL:-}:$args" in
     pull:*" pull") exit 1 ;;
     migrate:*" run --rm migrate") exit 1 ;;
-    up:*" up -d --wait --wait-timeout 180 web worker caddy") exit 1 ;;
+    up:*" up -d --wait --wait-timeout 180 web worker") exit 1 ;;
     ready:*" exec -T web "*) exit 1 ;;
     worker:*" exec -T worker "*) exit 1 ;;
   esac
@@ -45,7 +48,7 @@ run_case() {
   printf 'oldsha\n' > "$APP/.deployed-tag"
   RC=0
   PATH="$WORK/bin:$PATH" PERIPLUS_APP_DIR="$APP" FAKE_LOG="$LOG" FAKE_FAIL="$2" FAKE_FAIL_TAG=newsha \
-    bash "$DEPLOY" newsha > "$APP/out.log" 2>&1 || RC=$?
+    bash -s newsha < "$DEPLOY" > "$APP/out.log" 2>&1 || RC=$?
 }
 
 # Shared assertions for every failing step.
@@ -53,7 +56,7 @@ assert_rolled_back() {
   local before="$FAILURES"
   [ "$RC" -eq 1 ] || fail "expected exit 1, got $RC"
   [ "$(cat "$APP/.deployed-tag")" = "oldsha" ] || fail ".deployed-tag changed to $(cat "$APP/.deployed-tag")"
-  grep -qx 'IMAGE_TAG=oldsha compose --env-file .env -f docker/compose.prod.yml up -d --wait --wait-timeout 180 postgres web worker caddy' "$LOG" \
+  grep -qx 'IMAGE_TAG=oldsha compose --env-file .env -f docker/compose.prod.yml up -d --wait --wait-timeout 180 postgres web worker' "$LOG" \
     || fail "no rollback 'up' with previous tag oldsha"
   grep -q 'rollback to oldsha ok' "$APP/out.log" || fail "rollback not reported ok"
   [ "$FAILURES" -eq "$before" ] && pass
@@ -69,7 +72,7 @@ grep -q '^IMAGE_TAG=oldsha' "$LOG" && fail "unexpected rollback"
 
 run_case migrate-fails migrate
 assert_rolled_back
-grep -q '^IMAGE_TAG=newsha .* up -d --wait --wait-timeout 180 web worker caddy$' "$LOG" && fail "web/worker/caddy started with new tag after failed migrate"
+grep -q '^IMAGE_TAG=newsha .* up -d --wait --wait-timeout 180 web worker$' "$LOG" && fail "web/worker started with new tag after failed migrate"
 
 run_case pull-fails pull
 assert_rolled_back

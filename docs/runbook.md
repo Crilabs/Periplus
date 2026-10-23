@@ -1,6 +1,6 @@
 # Periplus Runbook
 
-Betrieb des Produktivsystems (Hetzner-Server, Docker Compose, Caddy). Alle Pfade auf dem Server liegen unter `/opt/periplus`.
+Betrieb des Produktivsystems unter `https://periplus.marvoy.app` (Hetzner-Server `app-server`, 188.245.181.182, Docker Compose). Der Server ist geteilt: Andere Apps laufen dort mit pm2, und TLS macht der Caddy des Servers (systemd), nicht ein Container. Alle Pfade von Periplus auf dem Server liegen unter `/opt/periplus`, Benutzer ist `periplus`.
 
 Auf dem Server vor manuellen Compose-Befehlen immer:
 
@@ -13,11 +13,11 @@ alias dc='docker compose --env-file .env -f docker/compose.prod.yml'
 ## Einrichtung (einmalig, manuell)
 
 ### 1. Server (Mensch)
-1. Hetzner-Cloud-Server mit Ubuntu 24.04 anlegen, eigenen SSH-Key hinterlegen.
-2. SSH-Schlüsselpaar für den Deploy-Benutzer erzeugen: `ssh-keygen -t ed25519 -f deploy_key -N ""` (privater Schlüssel wird GitHub-Secret `DEPLOY_SSH_KEY`).
+1. Ubuntu-24.04-Server mit laufendem Caddy (systemd-Unit `caddy`, Hauptdatei `/etc/caddy/Caddyfile`) und root-Zugang per SSH-Schlüssel.
+2. SSH-Schlüsselpaar für den Benutzer `periplus` erzeugen: `ssh-keygen -t ed25519 -f deploy_key -N ""` (privater Schlüssel wird GitHub-Secret `DEPLOY_SSH_KEY`).
 3. Repo (oder nur `docker/` und `scripts/`) auf den Server kopieren, z. B. `scp -r docker scripts deploy_key.pub root@<host>:/root/periplus-src/`, dann:
    `sudo bash /root/periplus-src/scripts/server/bootstrap.sh /root/periplus-src/deploy_key.pub`
-4. Bootstrap installiert Docker, legt Benutzer `deploy` an, öffnet ufw (22/80/443), schaltet SSH-Passwort-Login ab (Drop-in `/etc/ssh/sshd_config.d/00-periplus.conf`, vor `50-cloud-init.conf` gelesen; der Bootstrap bricht ab, wenn `sshd -T` nicht `passwordauthentication no` meldet), aktiviert unattended-upgrades, legt `/opt/periplus` mit `compose.prod.yml`, `Caddyfile` und einer `.env`-Vorlage (chmod 600) an und richtet den Backup-Cron (02:30 UTC) ein.
+4. Bootstrap installiert Docker, legt Benutzer `periplus` an (Gruppe `docker`; bewusst nicht der geteilte Benutzer `deploy` der anderen Apps, denn `docker` heißt praktisch root), aktiviert unattended-upgrades, legt `/opt/periplus` mit `compose.prod.yml` und einer `.env`-Vorlage (chmod 600) an, richtet den Backup-Cron (02:30 UTC) ein und bindet `docker/Caddyfile` als `/etc/caddy/periplus.caddy` per `import` in den Caddy des Servers ein (erst `caddy validate`, bei Fehler wird die alte Datei wiederhergestellt und nicht neu geladen). Firewall und SSH-Einstellungen des geteilten Servers fasst er nicht an.
 5. `known_hosts`-Eintrag für das Secret ermitteln: `ssh-keyscan -t ed25519 <host>`.
 
 ### 2. Hetzner Object Storage (Mensch)
@@ -26,13 +26,13 @@ alias dc='docker compose --env-file .env -f docker/compose.prod.yml'
 - Endpoint, Region und Schlüssel in `/opt/periplus/.env` eintragen (`S3_*`).
 
 ### 3. Storage Box (Mensch)
-- Storage Box bestellen, SSH-Zugang aktivieren (Port 23). Eigenen Schlüssel für Backups erzeugen und in der Box hinterlegen; privaten Schlüssel als `/home/deploy/.ssh/id_storagebox` (chmod 600) auf den Server legen.
-- Als `deploy` einmal verbinden, damit der Host-Key bekannt ist: `ssh -p 23 -i ~/.ssh/id_storagebox <user>@<host>`. restic und rclone prüfen den Host-Key gegen `/home/deploy/.ssh/known_hosts`; ohne diesen Eintrag schlägt das Backup fehl.
-- `~/.ssh/config` von `deploy`: `Host <storagebox-host>` mit `Port 23` und `IdentityFile ~/.ssh/id_storagebox`, damit restic über sftp verbindet.
+- Storage Box bestellen, SSH-Zugang aktivieren (Port 23). Eigenen Schlüssel für Backups erzeugen und in der Box hinterlegen; privaten Schlüssel als `/home/periplus/.ssh/id_storagebox` (chmod 600) auf den Server legen.
+- Als `periplus` einmal verbinden, damit der Host-Key bekannt ist: `ssh -p 23 -i ~/.ssh/id_storagebox <user>@<host>`. restic und rclone prüfen den Host-Key gegen `/home/periplus/.ssh/known_hosts`; ohne diesen Eintrag schlägt das Backup fehl.
+- `~/.ssh/config` von `periplus`: `Host <storagebox-host>` mit `Port 23` und `IdentityFile ~/.ssh/id_storagebox`, damit restic über sftp verbindet.
 - In `.env` setzen: `RESTIC_REPOSITORY`, `RESTIC_PASSWORD` (sicher aufbewahren, ohne ihn sind Backups unbrauchbar), `STORAGEBOX_HOST`, `STORAGEBOX_USER`. Repository einmalig initialisieren: `set -a; . ./.env; set +a; restic init`.
 
 ### 4. DNS (Mensch)
-A-Record (und AAAA falls vorhanden) der Domain auf die Server-IP. `PERIPLUS_DOMAIN` in `.env` setzen. Caddy holt das Zertifikat automatisch.
+A-Record (und AAAA falls vorhanden) von `periplus.marvoy.app` auf die Server-IP, bevor der Bootstrap Caddy neu lädt. Caddy holt das Zertifikat automatisch. Die Domain steht in `docker/Caddyfile`.
 
 ### 5. GitHub-Secrets (Mensch)
 Im Repo `Crilabs/Periplus` unter Settings, Secrets and variables, Actions:
@@ -45,24 +45,24 @@ Die Images liegen in `ghcr.io/crilabs/periplus-{web,worker,postgres}`. Der Deplo
 ### 5a. Registry-Login auf dem Server (Mensch, einmalig)
 Der Server zieht die Images mit einem eigenen, dauerhaften Nur-Lese-Zugang:
 1. Auf GitHub ein Token anlegen, das nur Pakete lesen darf: Classic PAT mit ausschließlich `read:packages` (oder fine-grained Token mit Packages: Read für die Organisation `crilabs`). Ablaufdatum setzen und im Kalender vormerken.
-2. Auf dem Server als `deploy` (nicht als root, sonst landet der Login in `/root/.docker`) einmalig anmelden:
+2. Auf dem Server als `periplus` (nicht als root, sonst landet der Login in `/root/.docker`) einmalig anmelden:
    ```bash
-   sudo -iu deploy
+   sudo -iu periplus
    read -rs TOKEN   # Token einfügen, Enter
    echo "$TOKEN" | docker login ghcr.io -u <github-user> --password-stdin
    unset TOKEN
    ```
-   Der Login liegt danach in `/home/deploy/.docker/config.json` und gilt für automatische Deploys, manuelle Rollbacks und `restore-check.sh`.
+   Der Login liegt danach in `/home/periplus/.docker/config.json` und gilt für automatische Deploys, manuelle Rollbacks und `restore-check.sh`.
 3. Läuft das Token ab, schlagen Deploys beim `pull` fehl (automatischer Rollback, Exit 1). Dann neues Token anlegen und Schritt 2 wiederholen.
 
 ### 5b. Caddy (Grenzen am Rand)
-`docker/Caddyfile` begrenzt Anfragekörper: 101 MiB nur auf einer Quellen-Seite (PDF-Upload, die App selbst nimmt bis 100 MiB), sonst 1 MB (Login, Formulare, API); größere Anfragen beantwortet Caddy mit 413, bevor der Web-Server sie puffert. Die Datei kommt nur beim Bootstrap auf den Server (`docs/m0-folgearbeiten.md` §3): nach einer Änderung `docker/Caddyfile` nach `/opt/periplus/docker/Caddyfile` kopieren und `dc restart caddy`.
+`docker/Caddyfile` begrenzt Anfragekörper: 101 MiB nur auf einer Quellen-Seite (PDF-Upload, die App selbst nimmt bis 100 MiB), sonst 1 MB (Login, Formulare, API); größere Anfragen beantwortet Caddy mit 413, bevor der Web-Server sie puffert. Die Datei ist ein Site-Block im Caddy des Servers und kommt nur beim Bootstrap dorthin (`docs/m0-folgearbeiten.md` §3): nach einer Änderung als root `docker/Caddyfile` nach `/etc/caddy/periplus.caddy` kopieren, `caddy validate --config /etc/caddy/Caddyfile` und `systemctl reload caddy`. Ein Fehler darin trifft alle Sites des Servers, deshalb immer erst validieren. `web` ist nur auf `127.0.0.1:3500` veröffentlicht; Caddy leitet dorthin weiter.
 
 ### 6. `.env` ausfüllen
 Alle Werte in `/opt/periplus/.env` setzen. `SESSION_SECRET`: `openssl rand -base64 48`. `POSTGRES_PASSWORD` und das Passwort in `DATABASE_URL` müssen übereinstimmen. Werte ohne Anführungszeichen schreiben.
 
 ## Erstes Deployment
-Auf `main` mergen: der Job `deploy` baut und pusht die drei Images mit dem Tag des Commits und führt `scripts/deploy/deploy.sh <sha>` auf dem Server aus (pull, Migration, Neustart von web/worker/caddy mit `up --wait`, Warten auf `/readyz` und auf die Bereit-Marke des Workers bis 60 s, bei Fehler automatischer Rollback auf den vorigen Tag). Die Bereit-Marke `/tmp/periplus-worker-ready` schreibt der Worker, wenn seine Startprüfungen bestanden sind (Umgebung, Embedding-Dimension, Bucket, Queues), und erneuert sie mit jedem Heartbeat; ein Worker, der beim Start scheitert und in der Neustartschleife hängt, lässt den Deploy deshalb scheitern. Der Compose-Healthcheck des Workers prüft dieselbe Marke; er wirkt auf dem Server erst, wenn dort `docker/compose.prod.yml` aktualisiert ist (`docs/m0-folgearbeiten.md` §3), die Prüfung in `deploy.sh` wirkt sofort. Danach `https://<domain>/readyz` aufrufen: erwartet `{"status":"ok"}`.
+Auf `main` mergen: der Job `deploy` baut und pusht die drei Images mit dem Tag des Commits und führt `scripts/deploy/deploy.sh <sha>` auf dem Server aus (pull, Migration, Neustart von web/worker mit `up --wait`, Warten auf `/readyz` und auf die Bereit-Marke des Workers bis 60 s, bei Fehler automatischer Rollback auf den vorigen Tag). Die Bereit-Marke `/tmp/periplus-worker-ready` schreibt der Worker, wenn seine Startprüfungen bestanden sind (Umgebung, Embedding-Dimension, Bucket, Queues), und erneuert sie mit jedem Heartbeat; ein Worker, der beim Start scheitert und in der Neustartschleife hängt, lässt den Deploy deshalb scheitern. Der Compose-Healthcheck des Workers prüft dieselbe Marke; er wirkt auf dem Server erst, wenn dort `docker/compose.prod.yml` aktualisiert ist (`docs/m0-folgearbeiten.md` §3), die Prüfung in `deploy.sh` wirkt sofort. Danach `https://<domain>/readyz` aufrufen: erwartet `{"status":"ok"}`.
 
 ## Ersten Admin anlegen
 Das Web-Image ist standalone (`node server.js`, kein tsx). Deshalb über den Worker-Container. Das Passwort wird von stdin gelesen:
@@ -101,8 +101,8 @@ Unbekannte E-Mail bzw. unbekannter oder bereits gesperrter Name endet mit Fehler
 ```bash
 dc logs -f worker
 dc logs -f web
-dc logs -f caddy
 ```
+Caddy (als root): `/var/log/caddy/periplus.log`, `journalctl -u caddy`.
 Backup-Log: `/opt/periplus/backup.log`.
 
 ## Vor dem ersten Deploy mit Migration 0048 (Präfix der Public-IDs)
@@ -139,7 +139,7 @@ Eine frühere Version erneut ausrollen:
 ```bash
 bash /opt/periplus/scripts/deploy/deploy.sh <previous sha>
 ```
-(oder aus Actions heraus per Re-Run). Das funktioniert jederzeit, auch lange nach dem Deploy-Job, weil der Server mit seinem eigenen Nur-Lese-Login (Abschnitt 5a) zieht; die Images müssen in ghcr.io noch vorhanden sein. Der aktuell ausgerollte Tag steht in `.deployed-tag`; ein fehlgeschlagener Deploy (pull, Migration, Start, `/readyz` oder Worker nicht bereit) überschreibt ihn nicht und rollt automatisch auf ihn zurück. Migrationen werden nicht zurückgedreht; sie müssen zur Vorversion abwärtskompatibel bleiben. Ausnahme 0048: eine Version vor f3bc00d vergibt bei einem Typwechsel über die ID-Familie hinweg (z. B. POI → Insel) keine neue ID; ihr OSM-Import des Landesteils scheitert dann am CHECK (Job schlägt fehl, nichts wird halb geschrieben). Auf einer solchen Version nur so kurz wie nötig bleiben. Falls `deploy.sh` nicht auf dem Server liegt: `ssh deploy@<host> bash -s <sha> < scripts/deploy/deploy.sh`.
+(oder aus Actions heraus per Re-Run). Das funktioniert jederzeit, auch lange nach dem Deploy-Job, weil der Server mit seinem eigenen Nur-Lese-Login (Abschnitt 5a) zieht; die Images müssen in ghcr.io noch vorhanden sein. Der aktuell ausgerollte Tag steht in `.deployed-tag`; ein fehlgeschlagener Deploy (pull, Migration, Start, `/readyz` oder Worker nicht bereit) überschreibt ihn nicht und rollt automatisch auf ihn zurück. Migrationen werden nicht zurückgedreht; sie müssen zur Vorversion abwärtskompatibel bleiben. Ausnahme 0048: eine Version vor f3bc00d vergibt bei einem Typwechsel über die ID-Familie hinweg (z. B. POI → Insel) keine neue ID; ihr OSM-Import des Landesteils scheitert dann am CHECK (Job schlägt fehl, nichts wird halb geschrieben). Auf einer solchen Version nur so kurz wie nötig bleiben. Falls `deploy.sh` nicht auf dem Server liegt: `ssh periplus@<host> bash -s <sha> < scripts/deploy/deploy.sh`.
 
 Rollback auf eine Version vor fb5278c (Worker ohne Bereitschaftsmarker): `deploy.sh` wartet auf den Marker `/tmp/periplus-worker-ready`, den ein älterer Worker nie schreibt, und meldet ihn als „nicht bereit“ (und `up --wait` wartet vergeblich auf die Healthcheck des neuen `compose.prod.yml`). Eine solche Version nicht mit `deploy.sh` ausrollen, sondern von Hand (Vorspann oben, `dc`-Alias): `export IMAGE_TAG=<sha>`, `dc pull`, `dc up -d web worker caddy` (ohne `--wait`; die Healthcheck des Workers bleibt „unhealthy“, das stoppt ihn nicht), dann `dc logs -f worker` und `/readyz` prüfen und `<sha>` in `.deployed-tag` schreiben. Solange der Server nicht live ist, betrifft das nur das Übergangsfenster (Wave-2-Review M-3, geparkt).
 
@@ -162,10 +162,10 @@ Rollback auf eine Version vor fb5278c (Worker ohne Bereitschaftsmarker): `deploy
   ```
   Ein Paketbau, dessen Vorgänger-Snapshot vor dem eigenen liegt, bricht mit „transaction ids went back“ ab, statt ein Paket mit falschen Schweregraden zu liefern; nach dem Schritt oben „Paket bauen“ wiederholen. Ein Restore in den laufenden Cluster (Befehl darüber) braucht das nicht.
 
-Ergebnis der letzten Prüfung (nach Abnahme eintragen): _Datum: offen, restore-check: offen_
+Ergebnis der letzten Prüfung (nach Abnahme eintragen): _Datum: 2026-10-23, restore-check: ok (erstes Backup, Snapshot `9e92e101`, 1 Benutzer wiederhergestellt)_
 
 ## Hinweise
-- Caddy darf **kein** `trusted_proxies` setzen. Das Login-Rate-Limit nutzt den ersten `X-Forwarded-For`-Eintrag; das ist nur korrekt, solange Caddy diesen Header mit der echten Client-Adresse überschreibt.
+- `trusted_proxies` im Caddy des Servers enthält nur die Cloudflare-Bereiche (für andere Sites); `periplus.marvoy.app` läuft nicht über Cloudflare. Die Liste darf nicht erweitert werden: Das Login-Rate-Limit nutzt den ersten `X-Forwarded-For`-Eintrag; das ist nur korrekt, solange Caddy diesen Header mit der echten Client-Adresse überschreibt.
 - Compose-Layout auf dem Server: `.env` neben `docker/`; `compose.prod.yml` liest `../.env`.
 - `PERIPLUS_RENDERER` (Standard `playwright`): Der Worker rendert Seiten mit `render: auto`/`always` in Headless-Chromium. `PERIPLUS_RENDERER=off` in `.env` schaltet das Rendern ab (z. B. wenn Chromium abstürzt oder zu viel Speicher braucht); Seiten werden dann nur aus dem HTTP-Text konvertiert. Danach `dc up -d worker`.
 
@@ -508,7 +508,7 @@ Stufe 10 (Teil-Spec 10): Kennzahlen, Navily-Vergleich, Regression und simulierte
 Ein Klon der Datenbank (`periplus_sim`), ein eigener Worker und ein eigenes Archiv-Präfix (`S3_WRITE_PREFIX`); der Simulations-Adapter liefert für die Szenario-URLs die bearbeiteten Inhalte, für alle anderen URLs „unverändert“. Eine Simulation erreicht außer Anthropic und Voyage keinen externen Dienst. **Revisit frühestens am Tag nach dem letzten Paketbau**, sonst trennt `asOf` die Stände nicht. **Budget je Datenbank:** Der Sim-Worker prüft und bucht seine Anthropic- und Voyage-Kosten nur in `periplus_sim` (der Klon kopiert `external_calls` einmal, danach laufen beide Bücher getrennt). Das Tagesbudget der Entwicklungsdatenbank sieht diese Ausgaben nicht und umgekehrt, obwohl beide denselben Schlüssel nutzen: an einem Tag mit Simulation und Entwicklungs-Text-Lauf könnten zusammen bis zu zweimal `dailyEur` ausgegeben werden. Deshalb am Simulationstag keinen Text-Lauf und keinen Embedding-Lauf in der Entwicklungsdatenbank starten (erwartet für die Simulation: 1–3 €); die Simulation schreibt bewusst nie in die echte Datenbank.
 - **Lokal** (Compose-Dienst `db`): Entwicklungs-Worker stoppen → `npm run sim:clone` (`-- --force` ersetzt einen Klon) → `.env.sim` aus `.env.sim.example` (übrige Werte aus `.env.local`, `S3_WRITE_PREFIX=sim/<datum>/`) → `npm run sim:draft-scenario -- --subdivision GR-I --out data/sim/scenario.json` → Szenario prüfen (Christian; nur unter `data/sim/`, nie einchecken; keine „neue Seite“) → `npm run sim:worker` → zweimal `npm run sim:revisit -- --subdivision GR-I --scenario data/sim/scenario.json` → Paket in der Simulation bauen → `npm run sim:verify -- --subdivision GR-I --scenario data/sim/scenario.json --base-url http://localhost:3001 --out docs/pilot/<datum>-revisit.json` mit dem Schlüssel der Simulation in `PERIPLUS_API_KEY` (nie `--key`; nur gegen `localhost`) (Exit 0: 10 von 10, keine unerwarteten, „asOf ok“).
 - **Simulations-Web** nicht mit `next dev` im selben Ordner wie der Entwicklungsserver (Next 16 sperrt `.next/dev/lock`): eigener Worktree (`git worktree add ../periplus-sim HEAD`, dort `npm ci`, `.env.sim` als `.env.local`, `data/sim/scenario.json` kopieren, `npm run build && npx next start -p 3001`).
-- **Server** (`docker/compose.prod.yml`, Dienst `postgres`): das Skript liegt nach dem Bootstrap nicht auf dem Server (nur `scripts/ops` und `scripts/deploy`), deshalb zuerst kopieren: `ssh deploy@<host> mkdir -p /opt/periplus/scripts/sim && scp scripts/sim/clone.sh deploy@<host>:/opt/periplus/scripts/sim/`; dann in `/opt/periplus`: `bash scripts/sim/clone.sh --env-file .env --compose-file docker/compose.prod.yml --service postgres --db-user <POSTGRES_USER>` (ohne `--env-file` bricht Compose an `${POSTGRES_PASSWORD:?}` ab); Sim-Worker und Sim-CLIs mit denselben drei Sim-Werten als Variablen über der `.env` des Servers, z. B. `dc run --rm -e DATABASE_URL=<…/periplus_sim> -e PERIPLUS_SIMULATION=/data/sim/scenario.json -e S3_WRITE_PREFIX=sim/<datum>/ -v /tmp/sim:/data/sim:ro worker node --import tsx worker/index.ts` (ebenso `scripts/sim/revisit.ts …` und `scripts/sim/verify.ts …`, jedes Mal dieselben Werte); das Szenario nur auf dem Server außerhalb des Repos ablegen (`/tmp/sim`) und danach löschen. Auf dem Server vorher prüfen, dass der Sim-Worker den echten Worker nicht ersetzt (eigener Container, `--rm`).
+- **Server** (`docker/compose.prod.yml`, Dienst `postgres`): das Skript liegt nach dem Bootstrap nicht auf dem Server (nur `scripts/ops` und `scripts/deploy`), deshalb zuerst kopieren: `ssh periplus@<host> mkdir -p /opt/periplus/scripts/sim && scp scripts/sim/clone.sh periplus@<host>:/opt/periplus/scripts/sim/`; dann in `/opt/periplus`: `bash scripts/sim/clone.sh --env-file .env --compose-file docker/compose.prod.yml --service postgres --db-user <POSTGRES_USER>` (ohne `--env-file` bricht Compose an `${POSTGRES_PASSWORD:?}` ab); Sim-Worker und Sim-CLIs mit denselben drei Sim-Werten als Variablen über der `.env` des Servers, z. B. `dc run --rm -e DATABASE_URL=<…/periplus_sim> -e PERIPLUS_SIMULATION=/data/sim/scenario.json -e S3_WRITE_PREFIX=sim/<datum>/ -v /tmp/sim:/data/sim:ro worker node --import tsx worker/index.ts` (ebenso `scripts/sim/revisit.ts …` und `scripts/sim/verify.ts …`, jedes Mal dieselben Werte); das Szenario nur auf dem Server außerhalb des Repos ablegen (`/tmp/sim`) und danach löschen. Auf dem Server vorher prüfen, dass der Sim-Worker den echten Worker nicht ersetzt (eigener Container, `--rm`).
 - **Aufräumen**: Sim-Worker und Sim-Web stoppen, `dropdb periplus_sim` (lokal `docker compose -f docker/compose.dev.yml exec db dropdb -U periplus periplus_sim`, Server `dc exec postgres dropdb -U <POSTGRES_USER> periplus_sim`), Präfix `sim/<datum>/` im Bucket löschen, Entwicklungs-Worker wieder starten.
 
 ### Berichte
