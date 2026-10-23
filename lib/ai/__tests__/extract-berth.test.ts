@@ -30,9 +30,11 @@ describe("extract-berth", () => {
 
   it("prompt v2 defines no_space as permanent only; often full is a free negative fact", () => {
     const { system } = loadPrompt("extract-berth", 2);
-    expect(system).toMatch(/`no_space` only when the text says the place can no longer be used to lie at permanently/);
+    expect(system).toMatch(/`no_space` \(only when the text says the place can no longer be used to lie at permanently/);
     for (const phrase of ["often full", "come early", "little room"]) expect(system).toContain(phrase);
     expect(system).toContain("fish farm");
+    expect(system).toContain("for a marina or port the permanent loss of its guest berths");
+    expect(system).toContain("is `closed`, not `no_space`");
     expect(loadPrompt("extract-berth", 1).system).not.toContain("come early");
   });
 

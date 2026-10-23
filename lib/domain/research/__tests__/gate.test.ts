@@ -60,6 +60,20 @@ describe("verdictsByThreshold", () => {
       for (const n of [2, 3, 5]) expect(v.get(n)!.get(place.placeId)!.status, `N=${n}`).toBe("no_anchoring");
     }));
 
+  it("a marina with a younger no_space is confirmed at N=2 (harbourIgnoredNegativeKinds), a bay is not", () =>
+    withRollback(async (tx) => {
+      const key = await setup(tx);
+      const marina = await placeIn(tx, key, { kind: "marina" });
+      const bay = await placeIn(tx, key);
+      await signalPage(tx, marina, { domain: "marina-x.example", kind: "listed_as_berth", firstHand: false, pageKind: "marina", observedAt: "2024-01-01" });
+      await signalPage(tx, marina, { domain: "sail-a.example", kind: "berthed", observedAt: "2024-06-01" });
+      for (const d of ["a", "b"]) await signalPage(tx, bay, { domain: `${d}.example`, observedAt: "2024-06-01" });
+      for (const place of [marina, bay]) await signalPage(tx, place, { domain: "forum.example", kind: "no_space", firstHand: false, pageKind: "forum", observedAt: "2025-08-01" });
+      const v = await verdictsByThreshold(tx, key, [2], config);
+      expect(v.get(2)!.get(marina.placeId)!.status).toBe("confirmed");
+      expect(v.get(2)!.get(bay.placeId)!.status).toBe("candidate");
+    }));
+
   it("a status an admin set stands at every threshold, except a confirmation against an authority ban", () =>
     withRollback(async (tx) => {
       const key = await setup(tx);
