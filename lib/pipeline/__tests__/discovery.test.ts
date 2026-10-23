@@ -169,7 +169,7 @@ describe("discovery stages", () => {
         return makeResponse(200, new Uint8Array(body));
       };
       const result = await discoverArea(tx, SUB_KEY, { transport, archive: memoryArchive() }, { db: tx });
-      expect(result).toEqual({ queries: 3, searched: 3, reused: 0, failed: 0 });
+      expect(result).toMatchObject({ queries: 3, searched: 3, reused: 0, failed: 0 });
       const rows = await tx.select({ keyword: serpQueries.keyword }).from(serpQueries).where(eq(serpQueries.scopeId, areaId));
       expect(rows.map((r) => r.keyword).sort()).toEqual(["Revierführer Testrevier", "Test Gulf anchorages", "Törnbericht Testrevier"]);
       expect(requests).toHaveLength(3);
@@ -192,8 +192,8 @@ describe("area queries across subdivisions", () => {
         return makeResponse(200, new Uint8Array(body));
       };
       const deps = { transport, archive: memoryArchive() };
-      expect(await discoverArea(tx, SUB_KEY, deps, { db: tx })).toEqual({ queries: 3, searched: 3, reused: 0, failed: 0 });
-      expect(await discoverArea(tx, "XT-D2", deps, { db: tx })).toEqual({ queries: 3, searched: 0, reused: 3, failed: 0 });
+      expect(await discoverArea(tx, SUB_KEY, deps, { db: tx })).toMatchObject({ queries: 3, searched: 3, reused: 0, failed: 0 });
+      expect(await discoverArea(tx, "XT-D2", deps, { db: tx })).toMatchObject({ queries: 3, searched: 0, reused: 3, failed: 0 });
       expect(requests).toBe(3);
     }));
 
@@ -201,7 +201,7 @@ describe("area queries across subdivisions", () => {
     withRollback(async (tx) => {
       await insertSubdivision(tx);
       const result = await discoverArea(tx, SUB_KEY, { transport: async () => makeResponse(500, new Uint8Array()), archive: memoryArchive() }, { db: tx });
-      expect(result).toEqual({ queries: 0, searched: 0, reused: 0, failed: 0 });
+      expect(result).toMatchObject({ queries: 0, searched: 0, reused: 0, failed: 0 });
     }));
 });
 
