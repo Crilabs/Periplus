@@ -30,7 +30,7 @@ async function runWithStage(tx: Db): Promise<string> {
 /** Bundles the place's facts with `answer` (from the facts the model saw), polling until the batch is done. */
 async function bundle(tx: Db, placeId: string, answer: (input: BundleFactsInput) => unknown, cfg: AppConfig = config) {
   const runId = await runWithStage(tx);
-  const model = new MockModel({ "bundle-facts": (input) => answer(input as BundleFactsInput) });
+  const model = new MockModel({ "bundle-facts": (input) => answer(input as BundleFactsInput) }, { batchIdPrefix: `mock-${newId()}-` });
   const [job] = await planBundleFacts(tx, [placeId], cfg);
   const result = await bundleFactsJob(tx, { model, boss, config: cfg }, { runId, stage: STAGE, key: job!.key as string, placeIds: job!.placeIds as string[] }, QUEUE);
   // a retryable failure is resubmitted once as a follow-up batch of its own: poll until every batch of the run is done
@@ -82,6 +82,18 @@ describe("fact bundling batch", () => {
       await seedStatement(tx, placeId, await seedPage(tx, config, placeId, { domain: "b.example" }), { statement: "Two" });
       const { state } = await bundle(tx, placeId, () => ({ groups: "none" }));
       expect(state!.facts.map((f) => f.statement).sort()).toEqual(["One", "Two"]);
+    }));
+
+  it("a failed item keeps the earlier bundling that is still free; without one the facts go one by one", () =>
+    withRollback(async (tx) => {
+      const { placeId } = await insertPlace(tx);
+      const a = await seedStatement(tx, placeId, await seedPage(tx, config, placeId, { domain: "a.example" }), { statement: "One" });
+      const b = await seedStatement(tx, placeId, await seedPage(tx, config, placeId, { domain: "b.example" }), { statement: "Two" });
+      const first = await bundle(tx, placeId, (input) => ({ groups: [{ ids: input.facts.map((f) => f.id), representative: a, superseded: [] }] }));
+      expect(first.state!.facts).toEqual([expect.objectContaining({ factId: a, mentions: 2 })]);
+      const second = await bundle(tx, placeId, () => ({ groups: "none" }));
+      expect(second.state!.facts).toEqual([expect.objectContaining({ factId: a, mentions: 2 })]);
+      expect(second.state!.facts.map((f) => f.factId)).not.toContain(b);
     }));
 
   it("a berth with one fact is stored without a request; one without facts gets no row", () =>

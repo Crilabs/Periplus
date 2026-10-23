@@ -19,7 +19,7 @@ describe("bundle-facts", () => {
     expect(user).toContain("f1 | 2019-07-01 | positive | landside: Taverna Nikos | good taverna");
     expect(user).toContain("f2 | 2025-07-01 | no tone | the berth | Quiet at night");
     expect(() => renderPrompt(prompt.system, vars)).not.toThrow();
-    for (const phrase of ["NEWER", "never write", "exactly once"]) expect(prompt.system.toLowerCase()).toContain(phrase.toLowerCase());
+    for (const phrase of ["NEWER", "never write", "exactly once", "ALWAYS belong in one group", "open versus closed", "good taverna", "taverna closed", "do not contradict"]) expect(prompt.system.toLowerCase()).toContain(phrase.toLowerCase());
   });
 
   it("has an output schema structured outputs accept", () => {

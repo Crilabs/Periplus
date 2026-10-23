@@ -43,6 +43,25 @@ describe("bundleFacts", () => {
     ]);
   });
 
+  it("safety survives: any standing member's safety is kept, a superseded one's is not", () => {
+    const facts = [
+      free("a", { observedAt: "2024-01-01", safety: true, tone: "negative" }),
+      free("b", { observedAt: "2025-01-01", tone: "neutral" }),
+      free("c", { observedAt: "2023-01-01", safety: true, tone: "negative" }),
+    ];
+    const [kept] = bundleFacts(facts, offered(facts), [{ ids: ["a", "b"], representative: "b", superseded: [] }]);
+    // the model chose the neutral fact; the negative safety member represents the group instead
+    expect(kept).toMatchObject({ factId: "a", safety: true, tone: "negative", mentions: 2 });
+    const [dropped] = bundleFacts(facts, offered(facts), [{ ids: ["c", "a", "b"], representative: "b", superseded: ["c", "a"] }]);
+    expect(dropped).toMatchObject({ factId: "b", safety: false, tone: "neutral" });
+  });
+
+  it("safety of a non-negative member is carried by the chosen representative", () => {
+    const facts = [free("x", { safety: true, tone: "neutral" }), free("y", { observedAt: "2026-01-01", tone: "positive" })];
+    const [out] = bundleFacts(facts, offered(facts), [{ ids: ["x", "y"], representative: "y", superseded: [] }]);
+    expect(out).toMatchObject({ factId: "y", safety: true, tone: "positive" });
+  });
+
   it("without an answer every fact stands alone with one mention, in order", () => {
     const facts = [free("a"), free("b")];
     expect(bundleFacts(facts, offered(facts), null).map((f) => [f.factId, f.mentions])).toEqual([["a", 1], ["b", 1]]);

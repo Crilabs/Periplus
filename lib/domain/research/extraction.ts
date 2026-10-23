@@ -163,13 +163,16 @@ export async function storeExtraction(db: Db, unit: ExtractionUnit, out: Extract
     }
     // A proper name of a thing on land counts only when the quote contains it.
     const subjectName = landside ? trimmed(f.subject_name, MAX_SUBJECT_CHARS) : null;
+    const nameKept = subjectName && nameInQuote(subjectName, f.quote) ? subjectName : null;
+    // A landside fact always keeps a category, so "landside" stays derivable from the stored row (state facts).
+    const subjectCategory = landside ? (trimmed(f.subject_category, MAX_SUBJECT_CHARS) ?? (nameKept ? null : "other")) : null;
     factRows.push({
       ...owner,
       ...at,
       ...dated(f.observed_at),
       statement,
-      subjectName: subjectName && nameInQuote(subjectName, f.quote) ? subjectName : null,
-      subjectCategory: landside ? trimmed(f.subject_category, MAX_SUBJECT_CHARS) : null,
+      subjectName: nameKept,
+      subjectCategory,
       tone: f.tone,
       safety: f.safety,
     });

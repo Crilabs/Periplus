@@ -18,7 +18,7 @@ import { submitStageJobBatch } from "@/lib/pipeline/text/stage-batch";
  * Batch part of the stage `research.state` (plan N4a task 3): the free facts of each berth go out as one request per
  * berth (`bundle-facts`), as message batches of at most `extraction.unitsPerBatch` berths per job. A berth with fewer
  * than two free facts has nothing to bundle and is stored directly. The batch handler stores the bundled facts in
- * `berth_states.facts`; a failed or broken answer stores the free facts one by one. The stage registration and the
+ * `berth_states.facts`; a broken answer stores the free facts one by one, a failed item keeps the earlier bundling (else one by one). The stage registration and the
  * other columns of the state (core values, landing, nearby) are task 6.
  */
 
@@ -120,7 +120,8 @@ async function storeBundle(db: Db, placeId: string, offered: BundleFactsInput["f
 /**
  * Batch handler of `bundle-facts`: stores one berth's bundled facts. Only a result of the poll's active model and
  * prompt version (`ctx.config`) writes; a stale one is dropped and logged. An answer with a broken group drops that
- * group (`validGroups`); one that does not fit the schema stores the facts one by one, as does an item that failed.
+ * group (`validGroups`); one that does not fit the schema stores the facts one by one. An item that failed keeps the
+ * facts stored earlier that are still free, and stores one by one only where nothing was stored.
  */
 export const bundleFactsBatchEntry: BatchHandlerEntry = {
   task,
@@ -136,8 +137,17 @@ export const bundleFactsBatchEntry: BatchHandlerEntry = {
     await storeBundle(db, item.subjectId, offered, parsed.success ? parsed.data.groups : null, ctx.config);
   },
   fail: async (db, item) => {
-    getLog().warn({ placeId: item.subjectId, error: item.error }, "fact bundling failed, facts stored one by one");
-    // a failed item has no input at hand here: every free fact stands alone
-    await storeBundle(db, item.subjectId, [], null, getConfig());
+    getLog().warn({ placeId: item.subjectId, error: item.error }, "fact bundling failed");
+    // The fail hook gets no poll configuration; `getConfig()` is the configuration the poll job runs with in production
+    // (the same loaded one it passes as `ctx.config`), and the free facts depend on it only through the active models.
+    const free = await freeFacts(db, item.subjectId, getConfig());
+    const [row] = await db.select({ facts: berthStates.facts }).from(berthStates).where(eq(berthStates.placeId, item.subjectId));
+    if (row && row.facts.length > 0) {
+      // keep the earlier bundling where it still stands; a failed run must not undo it
+      const stillFree = new Set(free.map((f) => f.id));
+      await storeStateFacts(db, item.subjectId, row.facts.filter((f) => stillFree.has(f.factId)));
+      return;
+    }
+    await storeStateFacts(db, item.subjectId, bundleFacts(free, [], null));
   },
 };

@@ -114,7 +114,8 @@ function stored(f: FreeFact, mentions: number): BerthStateFact {
  * The bundled facts of a berth: per valid group (`validGroups`) its representative with `mentions` the number of
  * distinct registrable domains of the group's facts, without the superseded ones (they are contradicted, so their
  * sources do not stand behind the representative); every free fact outside a valid group stands alone with one
- * mention. `groups` null (no or a broken answer) bundles nothing. A fact that is no longer free (`free` is the
+ * mention. The representative carries `safety` of any member left standing, and is a negative safety member when
+ * there is one (safety facts stay visible). `groups` null (no or a broken answer) bundles nothing. A fact that is no longer free (`free` is the
  * current set) leaves its group; a group whose representative is gone dissolves into single facts. Ordered as `free`.
  * Pure.
  */
@@ -123,13 +124,16 @@ export function bundleFacts(free: FreeFact[], offered: Array<{ id: string; obser
   const covered = new Set<string>();
   const out = new Map<string, BerthStateFact>();
   for (const g of groups ? validGroups(offered, groups) : []) {
-    const rep = byId.get(g.representative);
-    if (!rep) continue;
     const superseded = new Set(g.superseded);
-    const members = g.ids.filter((id) => byId.has(id));
-    for (const id of members) covered.add(id);
-    const domains = new Set(members.filter((id) => !superseded.has(id)).map((id) => byId.get(id)!.domain));
-    out.set(rep.id, stored(rep, domains.size));
+    const members = g.ids.filter((id) => byId.has(id) && !superseded.has(id)).map((id) => byId.get(id)!);
+    const named = byId.get(g.representative);
+    if (!named) continue;
+    for (const id of g.ids) if (byId.has(id)) covered.add(id);
+    // A negative safety fact stays visible: it represents the group when the model's choice is not one (newest first).
+    const warning = [...members].reverse().find((m) => m.safety && m.tone === "negative");
+    const rep = named.safety && named.tone === "negative" ? named : (warning ?? named);
+    const domains = new Set(members.map((m) => m.domain));
+    out.set(rep.id, { ...stored(rep, domains.size), safety: members.some((m) => m.safety) });
   }
   return free.flatMap((f) => (out.has(f.id) ? [out.get(f.id)!] : covered.has(f.id) ? [] : [stored(f, 1)]));
 }
