@@ -169,7 +169,7 @@ describe("discovery stages", () => {
         return makeResponse(200, new Uint8Array(body));
       };
       const result = await discoverArea(tx, SUB_KEY, { transport, archive: memoryArchive() }, { db: tx });
-      expect(result).toMatchObject({ queries: 3, searched: 3, reused: 0, failed: 0 });
+      expect(result).toMatchObject({ queries: 3, searched: 3, reused: 0, failed: 0, queryIds: expect.toSatisfy((ids: string[]) => ids.length === 3) });
       const rows = await tx.select({ keyword: serpQueries.keyword }).from(serpQueries).where(eq(serpQueries.scopeId, areaId));
       expect(rows.map((r) => r.keyword).sort()).toEqual(["Revierführer Testrevier", "Test Gulf anchorages", "Törnbericht Testrevier"]);
       expect(requests).toHaveLength(3);

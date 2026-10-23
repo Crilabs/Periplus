@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import { makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { places, researchHits, serpQueries, type PlaceStatus } from "@/lib/db/schema";
+import { places, researchHits, serpQueries, serpResults, type PlaceStatus } from "@/lib/db/schema";
 import { researchCandidates } from "@/lib/domain/research/candidates";
 import { newId } from "@/lib/domain/ids";
+import { getConfig } from "@/lib/config";
+import { recordHits } from "@/lib/domain/research/hits";
 import { planResearchSearch, searchCandidate } from "@/lib/pipeline/research/search";
 import { withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
@@ -108,5 +110,38 @@ describe("researchCandidates", () => {
       expect(jobs).toEqual([{ key: a.placeId, placeId: a.placeId }]);
       const byIds = await planResearchSearch(tx, { id: newId(), params: { placeIds: [a.placeId] } });
       expect(byIds).toEqual(jobs);
+    }));
+});
+
+describe("recordHits cap", () => {
+  it("keeps the best ranks across all queries, not the first query's ranks", () =>
+    withRollback(async (tx) => {
+      const { placeId, objectId } = await seed(tx, "Vathi");
+      const runId = await insertTestRun(tx);
+      const ids: string[] = [];
+      for (const q of ["A", "B"]) {
+        const [row] = await tx
+          .insert(serpQueries)
+          .values({ keyword: `cap ${q} ${newId()}`, languageCode: "en", locationCode: 2826, depth: 20, level: "research", scopeId: placeId, rawKey: `k/${newId()}`, fetchedAt: new Date() })
+          .returning({ id: serpQueries.id });
+        ids.push(row!.id);
+        await tx.insert(serpResults).values(
+          [1, 2, 3, 4, 5].map((rank) => ({
+            serpQueryId: row!.id,
+            rank,
+            url: `https://${q.toLowerCase()}${rank}.example/p`,
+            urlNormalized: `https://${q.toLowerCase()}${rank}.example/p`,
+            domain: `${q.toLowerCase()}${rank}.example`,
+            title: "t",
+            snippet: "s",
+          })),
+        );
+      }
+      const cfg = { ...getConfig().research, maxHitsPerCandidate: 3 };
+      const input = { placeId, geoObjectId: objectId, serpQueryIds: ids, purpose: "positive" as const, runId };
+      expect(await recordHits(tx, input, cfg)).toBe(3);
+      const hits = await tx.select().from(researchHits).where(eq(researchHits.placeId, placeId));
+      expect(hits.map((h) => h.urlNormalized).sort()).toEqual(["https://a1.example/p", "https://a2.example/p", "https://b1.example/p"]);
+      expect(await recordHits(tx, input, cfg)).toBe(0);
     }));
 });

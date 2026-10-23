@@ -48,9 +48,7 @@ export async function searchCandidate(
     if (planned.length === 0) continue;
     const summary = await runQueries(db, planned, deps, callCtx);
     queries += summary.queries;
-    for (const serpQueryId of summary.queryIds) {
-      hits += await recordHits(db, { placeId, geoObjectId: place.geoObjectId, serpQueryId, purpose, runId: ctx.runId }, cfg);
-    }
+    hits += await recordHits(db, { placeId, geoObjectId: place.geoObjectId, serpQueryIds: summary.queryIds, purpose, runId: ctx.runId }, cfg);
   }
   return { queries, hits };
 }
