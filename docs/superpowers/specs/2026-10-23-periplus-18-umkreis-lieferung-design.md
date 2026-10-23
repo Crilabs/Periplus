@@ -64,7 +64,7 @@ Das Umkreis-Paket wird **aus den aktuellen gültigen Landesteil-Paketen zusammen
 
 1. Die Landesteile bestimmen, deren Polygon den Kreis schneidet.
 2. Je Landesteil das aktuelle gültige Paket lesen (S3, `deliveries`). Hat ein Landesteil kein gültiges Paket, ist er eine **Lücke** (unten).
-3. Objekte nach den Regeln oben auswählen. Ein Objekt, das in zwei Landesteil-Paketen steht (Regionen an der Grenze, Elternkette), wird einmal übernommen; die Fassungen müssen gleich sein, sonst schlägt der Bau fehl (Bericht nennt das Objekt).
+3. Objekte nach den Regeln oben auswählen. Ein Objekt, das in zwei Landesteil-Paketen steht (eine Region an der Grenze, ein Ort, der durch Korrektur den Landesteil gewechselt hat, solange der alte noch nicht neu gebaut ist), wird einmal übernommen: die Fassung mit der höheren `profileVersion`, bei Gleichstand die aus dem jünger gebauten Paket. Die `spotIds` von Regionen und Highlights werden über alle Fassungen vereinigt und auf die enthaltenen Spots gekürzt. Weichen die Fassungen sonst ab, steht das als Warnung im Bericht des Umkreis-Pakets; der Bau scheitert daran nicht. (Claude: ein Fehlschlag würde jede Marina an dieser Grenze blockieren, bis beide Landesteile neu gebaut sind.)
 4. Küste und Wetterpunkte aus den Landesteil-Dateien vereinigen und auf den Kreis zuschneiden.
 5. Validieren: Schema jeder Datei und die Verweisregeln aus Teil-Spec 08 (jeder `spotId` eines Highlights, jeder `parentId` einer Region zeigt auf ein Objekt im Paket). Die inhaltlichen Prüfungen (15-Wörter-Regel, fremde Inhalte, Wertebereiche) sind schon an den Landesteil-Paketen gelaufen und werden nicht wiederholt.
 
@@ -145,9 +145,9 @@ Fehler: unbekannte oder nicht ausgelieferte Marina → 404, `days` außerhalb 1�
 
 - Radius: 7 Tage → 175 sm, 1 Tag → 25 sm, 0 und 29 Tage → Fehler.
 - Auswahl: Spot knapp innerhalb und knapp außerhalb des Kreises; Highlight außerhalb, aber einem Spot innerhalb zugeordnet (enthalten, `spotIds` gekürzt); Region, die den Kreis nur schneidet (enthalten mit Elternkette).
-- Zwei Landesteile: Kreis über eine Landesteil-Grenze enthält die Orte beider; ein gemeinsames Objekt erscheint einmal; abweichende Fassungen lassen den Bau scheitern.
+- Zwei Landesteile: Kreis über eine Landesteil-Grenze enthält die Orte beider; ein gemeinsames Objekt erscheint einmal, in der Fassung mit der höheren `profileVersion`, mit vereinigten `spotIds`; eine sonstige Abweichung ist eine Warnung.
 - Lücke: ein berührter Landesteil ohne Paket erscheint in `coverage` als `missing`, seine Küstenkacheln in `tiles` mit `lastRunAt: null`.
-- Kein neuer Wert: jedes Objekt im Umkreis-Paket ist byte-gleich mit seiner Fassung im Landesteil-Paket (bis auf gekürzte `spotIds`).
+- Kein neuer Wert: jedes Objekt im Umkreis-Paket ist gleich einer seiner Fassungen in den Landesteil-Paketen (bis auf die `spotIds`).
 - Zwischenspeicher: gleiche Eingaben bauen einmal; neue `dataVersion` eines beteiligten Landesteils ergibt einen neuen Schlüssel.
 - Änderungen: Ort rückt durch Korrektur aus dem Kreis → `removed`; neu aufgebauter Landesteil → seine Orte als `created`; Änderung an einem Ort im Kreis → `updated` aus dem Landesteil-Feed; die IDs aus altem Paket plus Änderungen ergeben die IDs des neuen Pakets.
 - `popularity`: zwei Orte an einer Landesteil-Grenze, Nachbarschaft über die Grenze; Wert gleich, egal welches Paket ihn liefert; Ort ohne Nachbarn mit Quellen → 1 bei n > 0.
