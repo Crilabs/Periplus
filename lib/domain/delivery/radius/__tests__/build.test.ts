@@ -248,6 +248,52 @@ describe("getRadiusPackage", () => {
       expect(await tx.select().from(radiusPackages).where(and(eq(radiusPackages.homeMarinaPublicId, marina), eq(radiusPackages.days, 7)))).toHaveLength(3);
     }));
 
+  it("an excluded subdivision the circle touches is missing, though it has an old valid package", { timeout: 60_000 }, () =>
+    withRollback(async (tx) => {
+      const { f, eastId, archive } = await setup(tx, { east: true });
+      await tx.update(subdivisions).set({ status: "excluded" }).where(eq(subdivisions.id, eastId));
+      const row = await getRadiusPackage(tx, archive, { marina: f.places.M.publicId!, days: 7, now: NOW });
+      isRow(row);
+      expect(row.coverage).toEqual([
+        expect.objectContaining({ id: f.subdivisionPublicId, status: "delivered", dataVersion: 1 }),
+        { id: EAST.subdivisionId, key: EAST.key, name: EAST.name, status: "missing", dataVersion: null },
+      ]);
+      const manifest = await readJson<Manifest>(archive, row, "manifest.json");
+      expect(manifest.tiles).toContainEqual({ id: EAST.tileId, lastRunAt: null, profilesAsOf: null });
+      // nothing of its package is in the radius package
+      const spotIds = (await readJson<SpotsFile>(archive, row, "spots.json")).spots.map((s) => s.id);
+      expect(spotIds).not.toContain(EAST.spot);
+    }));
+
+  it("a dangling mergedInto or highlightIds reference throws, and no package is stored", { timeout: 60_000 }, () =>
+    withRollback(async (tx) => {
+      const { f, eastId, archive } = await setup(tx, { east: false });
+      const far = (p: { lat: number; lon: number }) => ({ ...p, lat: p.lat + 2 });
+      // version 1: the east anchorage (13.5 nm from M) merged into the east marina, moved 2° north (outside 25 nm)
+      const merged = eastPackage();
+      const spots = merged.files["spots.json"].spots;
+      const marinaE = spots.find((s) => s.id === EAST.marina)!;
+      marinaE.position = far(marinaE.position);
+      spots.find((s) => s.id === EAST.spot)!.mergedInto = EAST.marina;
+      await storeSubdivisionPackage(tx, archive, { subdivisionId: eastId, pkg: merged, dataVersion: 1 });
+      await expect(tx.transaction((sp) => getRadiusPackage(sp, archive, { marina: f.places.M.publicId!, days: 1, now: NOW }))).rejects.toThrow(
+        new RegExp(`references outside the package: .*${EAST.spot} → ${EAST.marina}`),
+      );
+      // version 2: the anchorage lists the highlight, which only the far marina selects and which lies far away
+      const listed = eastPackage();
+      const marina2 = listed.files["spots.json"].spots.find((s) => s.id === EAST.marina)!;
+      marina2.position = far(marina2.position);
+      const highlight = listed.files["highlights.json"].highlights[0]!;
+      highlight.spotIds = [EAST.marina];
+      highlight.position = far(highlight.position);
+      expect(listed.files["spots.json"].spots.find((s) => s.id === EAST.spot)!.highlightIds).toEqual([EAST.highlight]);
+      await storeSubdivisionPackage(tx, archive, { subdivisionId: eastId, pkg: listed, dataVersion: 2 });
+      await expect(tx.transaction((sp) => getRadiusPackage(sp, archive, { marina: f.places.M.publicId!, days: 1, now: NOW }))).rejects.toThrow(
+        new RegExp(`references outside the package: .*${EAST.spot} → ${EAST.highlight}`),
+      );
+      expect(await tx.select().from(radiusPackages).where(eq(radiusPackages.homeMarinaPublicId, f.places.M.publicId!))).toEqual([]);
+    }));
+
   it("rejects an anchorage, an unknown spot and an invalid trip length", { timeout: 60_000 }, () =>
     withRollback(async (tx) => {
       const { f, archive } = await setup(tx, { east: false });

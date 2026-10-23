@@ -178,8 +178,9 @@ function radiusManifest(composed: ComposedRadius, files: RadiusFiles, images: Ma
 
 /**
  * Every file against its contract schema, and every reference inside the package (spec 08 Teil B): each `spotIds` entry
- * of a highlight or region names an included spot, each `regionId` of a spot, highlight or weather point and each
- * `parentId` of a region an included region. Throws on the first failing file or the list of broken references.
+ * of a highlight or region and each `mergedInto` of a spot names an included spot, each `highlightIds` entry of a spot an
+ * included highlight, each `regionId` of a spot, highlight or weather point and each `parentId` of a region an included
+ * region. Throws on the first failing file or the list of broken references.
  */
 function checkPackage(key: string, manifest: Manifest, files: RadiusFiles): void {
   const all: Array<[ContractFile, unknown]> = [["manifest.json", manifest], ...(Object.entries(files) as Array<[ContractFile, unknown]>)];
@@ -190,13 +191,18 @@ function checkPackage(key: string, manifest: Manifest, files: RadiusFiles): void
     }
   }
   const spotIds = new Set(files["spots.json"].spots.map((s) => s.id));
+  const highlightIds = new Set(files["highlights.json"].highlights.map((h) => h.id));
   const regionIds = new Set(files["regions.json"].regions.map((r) => r.id));
   const broken: string[] = [];
   const region = (owner: string, id: string | null | undefined) => {
     if (id != null && !regionIds.has(id)) broken.push(`${owner} → ${id}`);
   };
   const spots = (owner: string, ids: string[]) => ids.forEach((id) => spotIds.has(id) || broken.push(`${owner} → ${id}`));
-  for (const s of files["spots.json"].spots) region(s.id, s.regionId);
+  for (const s of files["spots.json"].spots) {
+    region(s.id, s.regionId);
+    (s.highlightIds ?? []).forEach((id) => highlightIds.has(id) || broken.push(`${s.id} → ${id}`));
+    if (s.mergedInto != null && !spotIds.has(s.mergedInto)) broken.push(`${s.id} → ${s.mergedInto}`);
+  }
   for (const h of files["highlights.json"].highlights) {
     spots(h.id, h.spotIds);
     region(h.id, h.regionId);

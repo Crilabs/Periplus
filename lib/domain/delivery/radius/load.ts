@@ -54,14 +54,15 @@ export type RadiusCoverage = {
 };
 
 /**
- * The active subdivisions valid today whose polygon intersects the circle (`ST_Intersects`), each delivered with the
- * data version of its current valid package or missing, sorted by key; and the valid coast tiles of the missing ones
- * that intersect the circle.
+ * The subdivisions valid today whose polygon intersects the circle (`ST_Intersects`), sorted by key: an active one is
+ * delivered with the data version of its current valid package or missing without one; a subdivision that is not
+ * active (excluded) is missing even with an old valid package (spec 18, "Lücken"). And the valid coast tiles of the
+ * missing ones that intersect the circle.
  */
 export async function radiusCoverage(db: Db, circle: GeoJSON.Polygon): Promise<RadiusCoverage> {
   const geom = sql`ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(circle)}), 4326)`;
   const { rows } = await db.execute<{ id: string; public_id: string; key: string; geo_object_id: string; data_version: number | null }>(sql`
-    select s.id, s.public_id, s.key, s.geo_object_id, d.data_version
+    select s.id, s.public_id, s.key, s.geo_object_id, case when s.status = 'active' then d.data_version end as data_version
     from subdivisions s
     left join lateral (
       select d.data_version from deliveries d
@@ -69,7 +70,7 @@ export async function radiusCoverage(db: Db, circle: GeoJSON.Polygon): Promise<R
       order by d.data_version desc
       limit 1
     ) d on true
-    where s.status = 'active' and ${validAtAlias("s")} and s.geom && ${geom} and ST_Intersects(s.geom, ${geom})
+    where ${validAtAlias("s")} and s.geom && ${geom} and ST_Intersects(s.geom, ${geom})
     order by s.key, s.id
   `);
   const names = await deliveryNames(db, rows.map((r) => r.geo_object_id));
