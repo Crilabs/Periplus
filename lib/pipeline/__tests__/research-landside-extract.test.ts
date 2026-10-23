@@ -150,9 +150,13 @@ describe("research.landside_extract", () => {
           facts: [
             { subject_name: "Taverna Kyma", subject_category: "restaurant", statement: "A fish taverna at the harbour open in summer.", quote: "Taverna Kyma is open from May to October and serves fresh fish", observed_at: null, tone: "positive", safety: false },
             { subject_name: null, subject_category: "  ", statement: "The village grocery closes in the early afternoon.", quote: "The little grocery next to it shuts at two in the afternoon", observed_at: null, tone: "neutral", safety: false },
-            // the model strays: this is about the berth; it can only become a fact, never evidence
-            { subject_name: null, subject_category: "other", statement: "The crew stayed in the bay for two nights.", quote: "We anchored in the bay below the village for two nights", observed_at: null, tone: "positive", safety: false },
-            { subject_name: "Taverna Nikos", subject_category: "restaurant", statement: "Not in the text.", quote: "this quote is not on the page at all", observed_at: null, tone: "neutral", safety: false },
+            // the model strays: this is about boats at the water; it is dropped (and could never be evidence)
+            { subject_name: null, subject_category: "other", statement: "The crew anchored in the bay for two nights.", quote: "We anchored in the bay below the village for two nights", observed_at: null, tone: "positive", safety: false },
+            // a statement that copies the page word for word is dropped
+            { subject_name: null, subject_category: "shop", statement: "Taverna Kyma is open from May to October and serves fresh fish at the harbour", quote: "The little grocery next to it shuts at two in the afternoon", observed_at: null, tone: "neutral", safety: false },
+            // a name the quote does not contain is not kept; the fact stays with its category
+            { subject_name: "Taverna Nikos", subject_category: "restaurant", statement: "A second taverna is said to be near the harbour.", quote: "serves fresh fish at the harbour", observed_at: null, tone: "neutral", safety: false },
+            { subject_name: "Taverna Rita", subject_category: "restaurant", statement: "Not in the text.", quote: "this quote is not on the page at all", observed_at: null, tone: "neutral", safety: false },
           ],
         }),
       });
@@ -169,10 +173,10 @@ describe("research.landside_extract", () => {
       expect(await pollBatch(tx, { model, boss, config, handlers: BATCH_HANDLERS }, batch!.id)).toBe("distributed");
 
       const facts = await tx.select().from(berthFacts).where(eq(berthFacts.documentVersionId, v));
-      // a blank category becomes "other"; the fact whose quote is not on the page is dropped
-      expect(facts.map((f) => `${f.subjectName ?? "-"}:${f.subjectCategory}:${f.attribute ?? "-"}`).sort()).toEqual(["-:other:-", "-:other:-", "Taverna Kyma:restaurant:-"]);
+      // a blank category becomes "other"; dropped: the boat fact, the copied statement and the fact whose quote is not on the page
+      expect(facts.map((f) => `${f.subjectName ?? "-"}:${f.subjectCategory}:${f.attribute ?? "-"}`).sort()).toEqual(["-:other:-", "-:restaurant:-", "Taverna Kyma:restaurant:-"]);
       const [unit] = await tx.select().from(researchUnits).where(eq(researchUnits.id, unitIds[0]!));
-      expect(unit).toMatchObject({ status: "done", dropped: { quote: 1, value: 0, verbatim: 0, attribution: 0 } });
+      expect(unit).toMatchObject({ status: "done", dropped: { quote: 1, value: 1, verbatim: 1, attribution: 0 } });
 
       expect(await tx.select().from(berthSignals).where(eq(berthSignals.placeId, placeId))).toHaveLength(0);
       expect(await tx.select().from(landingHints).where(eq(landingHints.placeId, placeId))).toHaveLength(0);

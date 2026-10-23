@@ -143,6 +143,10 @@ describe("research config", () => {
     expect(c.landside.maxSubjectsPerPlace).toBe(5);
     expect(c.landside.maxHitsPerSubject).toBe(10);
     expect(c.landside.settlementMaxM).toBe(10000);
+    expect(c.landside.boatKeywords).toEqual(expect.arrayContaining(["anchored", "Anker", "buoy"]));
+    const noWords = valid();
+    noWords.landside.boatKeywords = [];
+    expect(researchSchema.safeParse(noWords).success).toBe(false);
     expect(c.landside.templates.map((t) => t.template)).toEqual([
       "{subject} things to do",
       "{subject} taverna",

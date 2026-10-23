@@ -75,26 +75,42 @@ describe("landside units and berth evidence", () => {
       expect((await standingFacts(tx, placeId, config)).map((f) => f.factId).sort()).toEqual([a, b].sort());
     }));
 
-  it("the research view shows the landside facts of a page but no berth signal from it", () =>
+  it("the research view shows landside facts and no berth signal of a landside page, and no linked row for a landside unit", () =>
     withRollback(async (tx) => {
       const { placeId, objectId } = await insertPlace(tx, { status: "confirmed" });
-      const landside = await seedPage(tx, config, placeId, { kind: "landside" });
-      await seedStatement(tx, placeId, landside, { statement: "Taverna by the beach", subjectName: "Taverna Kyma", subjectCategory: "restaurant" });
-      await signal(tx, placeId, landside);
-      const [doc] = await tx
-        .select({ url: documents.urlNormalized, geo: documents.id })
-        .from(documentVersions)
-        .innerJoin(documents, eq(documents.id, documentVersions.documentId))
-        .where(eq(documentVersions.id, landside.versionId));
-      const [q] = await tx
-        .insert(serpQueries)
-        .values({ keyword: "k", languageCode: "en", locationCode: 2300, depth: 10, level: "place", scopeId: objectId, rawKey: "serp/x/landside.json", fetchedAt: new Date() })
-        .returning({ id: serpQueries.id });
-      const [r] = await tx.insert(serpResults).values({ serpQueryId: q!.id, rank: 1, url: doc!.url, urlNormalized: doc!.url, domain: "guide.example", title: "t", snippet: "s" }).returning({ id: serpResults.id });
-      await tx.insert(researchHits).values({ placeId, geoObjectId: objectId, serpQueryId: q!.id, serpResultId: r!.id, urlNormalized: doc!.url, domain: "guide.example", rank: 1, purpose: "landside" });
-      const row = (await researchView(tx, placeId)).rows.find((r) => r.url === doc!.url);
-      expect(row?.factCount).toBe(1);
-      expect(row?.signals).toEqual([]);
-      expect(row?.signalCount).toBe(0);
+      const urlOf = async (p: Page) => {
+        const [doc] = await tx
+          .select({ url: documents.urlNormalized })
+          .from(documentVersions)
+          .innerJoin(documents, eq(documents.id, documentVersions.documentId))
+          .where(eq(documentVersions.id, p.versionId));
+        return doc!.url;
+      };
+      const landsideHit = async (url: string) => {
+        const [q] = await tx
+          .insert(serpQueries)
+          .values({ keyword: "k", languageCode: "en", locationCode: 2300, depth: 10, level: "place", scopeId: objectId, rawKey: `serp/x/${url}.json`, fetchedAt: new Date() })
+          .returning({ id: serpQueries.id });
+        const [r] = await tx.insert(serpResults).values({ serpQueryId: q!.id, rank: 1, url, urlNormalized: url, domain: "guide.example", title: "t", snippet: "s" }).returning({ id: serpResults.id });
+        await tx.insert(researchHits).values({ placeId, geoObjectId: objectId, serpQueryId: q!.id, serpResultId: r!.id, urlNormalized: url, domain: "guide.example", rank: 1, purpose: "landside" });
+      };
+      // a hit page whose landside unit carries the berth extractor's model and prompt version: its signal must not show
+      const signalPage = await seedPage(tx, config, placeId, asBerth);
+      await signal(tx, placeId, signalPage);
+      await landsideHit(await urlOf(signalPage));
+      // a hit page with a real landside unit: its fact shows
+      const factPage = await seedPage(tx, config, placeId, { kind: "landside" });
+      await seedStatement(tx, placeId, factPage, { statement: "Taverna by the beach", subjectName: "Taverna Kyma", subjectCategory: "restaurant" });
+      await landsideHit(await urlOf(factPage));
+      // a page that is no hit, only a landside unit (berth model and prompt version): not a linked page of the berth
+      const unlinked = await seedPage(tx, config, placeId, asBerth);
+      await signal(tx, placeId, unlinked);
+
+      const rows = (await researchView(tx, placeId)).rows;
+      const urls = { signal: await urlOf(signalPage), fact: await urlOf(factPage), unlinked: await urlOf(unlinked) };
+      const byUrl = (url: string) => rows.find((r) => r.url === url);
+      expect(byUrl(urls.signal)).toMatchObject({ signalCount: 0, signals: [] });
+      expect(byUrl(urls.fact)).toMatchObject({ factCount: 1 });
+      expect(byUrl(urls.unlinked)).toBeUndefined();
     }));
 });

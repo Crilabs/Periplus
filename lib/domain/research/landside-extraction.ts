@@ -147,7 +147,7 @@ export async function planLandsideUnits(
  * Stores the verified facts of one landside unit's answer with the checks of the berth extraction (`storeExtraction`:
  * quote found in the unit text, statement not copied, a name only when the quote has it) and marks the unit done. The
  * answer is mapped to a berth answer without core values, signals and landing hints, so nothing of the page can become
- * evidence of a berth; every fact is a landside fact and keeps a category (`other` when empty).
+ * evidence of a berth; a fact that speaks of boats at the water (`landside.boatKeywords`) is dropped; every fact is a landside fact and keeps a category (`other` when empty).
  */
 export async function storeLandsideExtraction(
   db: Db,
@@ -155,11 +155,19 @@ export async function storeLandsideExtraction(
   out: ExtractLandsideOutput,
   config: AppConfig,
 ): Promise<ExtractionStats> {
+  // a statement about boats at the water (anchoring, mooring ...) is no landside fact: dropped, counted as a value drop
+  const keywords = config.research.landside.boatKeywords;
+  const landside = out.facts.filter((f) => !namesOccur(`${f.statement}\n${f.quote}`, keywords));
+  const boats = out.facts.length - landside.length;
   const mapped: ExtractBerthOutput = {
     core: [],
     signals: [],
     landing: [],
-    facts: out.facts.map((f) => ({ ...f, about: "landside" as const, subject_category: f.subject_category.trim() || "other" })),
+    facts: landside.map((f) => ({ ...f, about: "landside" as const, subject_category: f.subject_category.trim() || "other" })),
   };
-  return storeExtraction(db, { ...unit, names: [], otherBerths: [] }, mapped, config);
+  const stats = await storeExtraction(db, { ...unit, names: [], otherBerths: [] }, mapped, config);
+  if (boats === 0) return stats;
+  stats.dropped.value += boats;
+  await db.update(researchUnits).set({ dropped: stats.dropped }).where(eq(researchUnits.id, unit.id));
+  return stats;
 }

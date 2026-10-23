@@ -1403,6 +1403,8 @@ export const researchSchema = z
       maxHitsPerSubject: z.number().int().positive(),
       /** The nearest settlement is a subject only within this distance (metres) of the berth. */
       settlementMaxM: z.number().positive(),
+      /** A landside fact whose statement or quote contains one of these words (whole words, case and accents ignored) is about boats at the water and is dropped. */
+      boatKeywords: z.array(z.string().min(1)).min(1),
     }),
     refetchDays: z.number().int().positive(),
     assessWords: z.number().int().positive(),

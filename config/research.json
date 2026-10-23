@@ -34,7 +34,13 @@
     ],
     "maxSubjectsPerPlace": 5,
     "maxHitsPerSubject": 10,
-    "settlementMaxM": 10000
+    "settlementMaxM": 10000,
+    "boatKeywords": [
+      "anchor", "anchors", "anchored", "anchoring", "anchorage", "anchorages", "moor", "moored", "mooring", "moorings", "buoy", "buoys", "berth", "berths", "berthed",
+      "Anker", "Ankern", "geankert", "Ankerplatz", "Boje", "Bojen", "Liegeplatz", "Liegeplätze", "Festmachen",
+      "ancora", "ancorare", "ancorato", "ancoraggio", "ormeggio", "ormeggiare", "boa", "boe",
+      "αγκυροβόλιο", "αγκυροβόλια", "αγκυροβολώ", "μουριάζω"
+    ]
   },
   "refetchDays": 90,
   "assessWords": 6000,
