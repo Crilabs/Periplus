@@ -57,7 +57,7 @@ describe("importCoarseFeatures", () => {
         VALUES (gen_random_uuid(), 'sea', 'marine_regions', ${JSON.stringify({ mrgid: String(getConfig().subdivisions.mediterranean.marineRegionsMrgids[0]) })}::jsonb,
                 ST_Multi(ST_GeomFromText('POLYGON((13.5 35.0, 15.5 35.0, 15.5 36.5, 13.5 36.5, 13.5 35.0))', 4326))) RETURNING id`);
       const result = await importCoarseFeatures(tx, "MT", { transport: fixtureTransport(), overpass });
-      expect(result).toEqual({ islands: 3, archipelagos: 1, gulfs: 0, towns: 20, splits: 0, blocksSkipped: 0 });
+      expect(result).toEqual({ islands: 3, archipelagos: 1, gulfs: 0, towns: 20, splits: 0, blocksSkipped: 0, skippedLarge: 0 });
 
       const features = [["Malta", "island"], ["Għawdex", "island"], ["Kemmuna", "island"], ["Il-Gżejjer Maltin", "archipelago"], ["Valletta", "settlement"]] as const;
       for (const [name, type] of features) {
@@ -114,7 +114,7 @@ describe("importCoarseFeatures", () => {
       const result = await importCoarseFeatures(tx, "MT", { transport, overpass: adaptive });
       expect(bodies).toHaveLength(3);
       expect(bodies.some(boxed)).toBe(false);
-      expect(result).toMatchObject({ splits: 0, blocksSkipped: 0 });
+      expect(result).toMatchObject({ splits: 0, blocksSkipped: 0, skippedLarge: 0 });
     });
   }, 120_000);
 
@@ -173,7 +173,7 @@ describe("importCoarseFeatures", () => {
     await withRollback(async (tx) => {
       await setUpMalta(tx);
       const result = await importCoarseFeatures(tx, "MT", { transport, overpass: adaptive });
-      expect(result).toEqual({ islands: 1, archipelagos: 0, gulfs: 0, towns: 0, splits: 1, blocksSkipped: 0 });
+      expect(result).toEqual({ islands: 1, archipelagos: 0, gulfs: 0, towns: 0, splits: 1, blocksSkipped: 0, skippedLarge: 0 });
     });
   }, 120_000);
 
@@ -216,14 +216,14 @@ describe("importCoarseFeatures", () => {
     const transport: Transport = async () => makeResponse(200, new TextEncoder().encode(JSON.stringify({ elements })));
     await withRollback(async (tx) => {
       await setUpMalta(tx);
-      expect(await importCoarseFeatures(tx, "MT", { transport, overpass })).toEqual({ islands: 1, archipelagos: 0, gulfs: 1, towns: 0, splits: 0, blocksSkipped: 0 });
+      expect(await importCoarseFeatures(tx, "MT", { transport, overpass })).toEqual({ islands: 1, archipelagos: 0, gulfs: 1, towns: 0, splits: 0, blocksSkipped: 0, skippedLarge: 0 });
       expect(await malta(tx, "Great Test Bay")).toMatchObject([{ type: "bay" }]);
       expect(await malta(tx, "Test Island")).toMatchObject([{ type: "island" }]);
       for (const n of ["Tiny Test Bay", "Test Rock", "Inland Test Town"]) expect(await malta(tx, n), n).toHaveLength(0);
     });
   }, 120_000);
 
-  it("skips a relation with more member points than overpass.maxRelationPoints", async () => {
+  it("skips a relation with more member points than overpass.maxRelationPoints and counts it in skippedLarge", async () => {
     const limited = { ...overpass, maxRelationPoints: 6 };
     const elements = [
       {
@@ -237,7 +237,7 @@ describe("importCoarseFeatures", () => {
     const transport: Transport = async () => makeResponse(200, new TextEncoder().encode(JSON.stringify({ elements })));
     await withRollback(async (tx) => {
       await setUpMalta(tx);
-      expect(await importCoarseFeatures(tx, "MT", { transport, overpass: limited })).toEqual({ islands: 1, archipelagos: 0, gulfs: 0, towns: 0, splits: 0, blocksSkipped: 0 });
+      expect(await importCoarseFeatures(tx, "MT", { transport, overpass: limited })).toEqual({ islands: 1, archipelagos: 0, gulfs: 0, towns: 0, splits: 0, blocksSkipped: 0, skippedLarge: 1 });
       expect(await malta(tx, "Huge Test Archipelago")).toHaveLength(0);
     });
   }, 120_000);

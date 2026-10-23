@@ -210,21 +210,18 @@ describe("assignParents", () => {
       expect(await parentOf(db, sectionId)).toBe(regionId);
     }));
 
-  it("an OSM coast section is a parent only up to coastSectionMaxAreaKm2", () =>
+  it("only a configured coast section is a parent: one without config_key is none, whatever its size (B6)", () =>
     withRollback(async (db) => {
-      const { regionId } = await setup(db);
-      // A peninsula of ~28,000 km2 (the Peloponnese class) without config_key: never a parent.
-      const large = await insert(db, "coast_section", box(24.6, 34.5, 25.9, 35.9));
+      const { regionId, sectionId } = await setup(db);
+      // An OSM-like section of ~230 km2 without config_key around the bay: no parent.
+      await insert(db, "coast_section", box(25.3, 35.3, 25.45, 35.45));
       const bay = await insert(db, "bay", point(25.4, 35.4));
+      // A bay in the configured section keeps it, even inside a smaller (~16 km2) section without config_key.
+      await insert(db, "coast_section", box(25.38, 35.03, 25.42, 35.07));
+      const sectionBay = await insert(db, "bay", point(25.4, 35.05));
       await assignAll(db);
       expect(await parentOf(db, bay)).toBe(regionId);
-
-      // A peninsula of ~230 km2 without config_key: parent like a configured section.
-      const small = await insert(db, "coast_section", box(25.3, 35.3, 25.45, 35.45));
-      await assignAll(db);
-      expect(await parentOf(db, bay)).toBe(small);
-      expect(await parentOf(db, small)).not.toBe(large);
-      expect(await parentOf(db, small)).toBe(regionId);
+      expect(await parentOf(db, sectionBay)).toBe(sectionId);
     }));
 
   it("island gets its subdivision's admin region, or its archipelago", () =>

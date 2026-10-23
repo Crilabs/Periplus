@@ -8,7 +8,6 @@ import { geomFromGeoJson } from "@/lib/db/geometry";
 import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
 import { bufferBbox, landCoverage } from "@/lib/domain/gazetteer/land";
 import { classifyOsm, osmNames } from "@/lib/domain/gazetteer/osm-classify";
-import { assertSeasPresent, nearSea } from "@/lib/domain/gazetteer/sea-distance";
 import { upsertGeoObject, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
 import { createLogger } from "@/lib/logger";
 
@@ -91,27 +90,20 @@ export async function nearCoast(db: Db, geometry: GeoObjectDraft["geometry"], di
   return rows[0]!.near;
 }
 
-/** One point of a geometry (a node, else the first vertex), enough for a distance of kilometres. */
-function samplePoint(geometry: GeoObjectDraft["geometry"]): { lon: number; lat: number } {
-  if ("lines" in geometry) return { lon: geometry.lines[0]!.coordinates[0]![0]!, lat: geometry.lines[0]!.coordinates[0]![1]! };
-  let c: unknown = (geometry as GeoJSON.Point | GeoJSON.LineString | GeoJSON.Polygon).coordinates;
-  while (Array.isArray(c) && Array.isArray(c[0])) c = c[0];
-  const [lon, lat] = c as number[];
-  return { lon: lon!, lat: lat! };
-}
-
 /**
- * Stage `gazetteer.osm` (Spec 03, step 1): queries Overpass for the subdivision box plus `bboxBufferKm`,
- * archives the raw answer under `datasets/overpass/<subdivision key>/<YYYY-MM-DD>.json` and upserts every
- * classified, named element in one transaction (all or nothing). Settlements are kept only within
- * `coastDistanceM` of the water, POIs only within `poiCoastDistanceKm` of an IHO sea. An element whose geometry cannot be repaired is logged and skipped.
- * Requires land polygons for the box.
+ * Stage `gazetteer.osm` (Spec 03, step 1; N7 4.3/4.4): queries Overpass for the skeleton of the subdivision box plus
+ * `bboxBufferKm` (`buildGazetteerQuery`), archives the raw answer under
+ * `datasets/overpass/<subdivision key>/<YYYY-MM-DD>.json` and upserts every classified, named element in one
+ * transaction (all or nothing). Settlements are kept only within `coastDistanceM` of the water. POIs are not stored
+ * here (the stage around the candidates loads them); one in the answer counts as `skipped`. A relation with more
+ * member points than `overpass.maxRelationPoints` is logged and counted in `skippedLarge`. An element whose geometry
+ * cannot be repaired is logged and skipped. Requires land polygons for the box.
  */
 export async function importOsm(
   db: Db,
   input: { scope: GazetteerScope; runId: string; now?: Date },
   deps: { transport: Transport; archive: Archive; sleep?: (ms: number) => Promise<void> },
-): Promise<{ created: number; updated: number; skipped: number; names: number }> {
+): Promise<{ created: number; updated: number; skipped: number; skippedLarge: number; names: number }> {
   const { scope, runId } = input;
   const { gazetteer, categories } = getConfig();
   const bbox = bufferBbox(scope.bbox, gazetteer.bboxBufferKm);
@@ -120,25 +112,18 @@ export async function importOsm(
     throw new Error(`land polygons missing for ${scope.key} – run npm run import:land-polygons`);
   }
 
-  await assertSeasPresent(db, bbox, gazetteer.poiCoastDistanceKm, scope.key);
-
   // Fetch outside the import transaction: a rollback must not drop the external_calls row.
-  const ql = buildGazetteerQuery(bbox, categories, gazetteer.overpass.timeoutSeconds);
+  const ql = buildGazetteerQuery(bbox, gazetteer.overpass.timeoutSeconds);
   const { raw, elements } = await overpassQueryRetrying(deps.transport, ql, { db, runId, stage: OSM_STAGE }, gazetteer.overpass, { part: "osm", sleep: deps.sleep });
   const date = (input.now ?? new Date()).toISOString().slice(0, 10);
   await deps.archive.put(`datasets/overpass/${scope.key}/${date}.json`, raw, "application/json");
 
   return db.transaction(async (tx) => {
-    const result = { created: 0, updated: 0, skipped: 0, names: 0 };
-    const seaPoints = elements.flatMap((el) => {
-      const geometry = classifyOsm(el.tags ?? {}, categories, el.type)?.type === "poi" ? elementGeometry(el) : null;
-      return geometry ? [{ key: `${el.type}/${el.id}`, ...samplePoint(geometry) }] : [];
-    });
-    const poiNearSea = await nearSea(tx, seaPoints, gazetteer.poiCoastDistanceKm);
+    const result = { created: 0, updated: 0, skipped: 0, skippedLarge: 0, names: 0 };
     for (const el of elements) {
       const tags = el.tags ?? {};
       const cls = classifyOsm(tags, categories, el.type);
-      const geometry = cls && elementGeometry(el);
+      const geometry = cls && cls.type !== "poi" && elementGeometry(el);
       if (!cls || !geometry) {
         result.skipped++;
         continue;
@@ -146,7 +131,7 @@ export async function importOsm(
       const points = relationPoints(el);
       if (points > gazetteer.overpass.maxRelationPoints) {
         getLog().warn({ osmId: `${el.type}/${el.id}`, points }, "skipped osm relation above overpass.maxRelationPoints");
-        result.skipped++;
+        result.skippedLarge++;
         continue;
       }
       if (cls.type === "settlement" && !(await nearCoast(tx, geometry, gazetteer.coastDistanceM))) {
@@ -154,10 +139,6 @@ export async function importOsm(
         continue;
       }
       const osmId = `${el.type}/${el.id}`;
-      if (cls.type === "poi" && !poiNearSea.has(osmId)) {
-        result.skipped++;
-        continue;
-      }
       const r = await upsertGeoObject(tx, {
         ...cls,
         origin: "osm",

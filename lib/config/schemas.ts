@@ -352,12 +352,9 @@ export const gazetteerSchema = z.strictObject({
     gulfMinAreaKm2: z.number().nonnegative(),
     coastDistanceKm: z.number().positive(),
   }),
-  /** A gazetteer POI counts as a place's POI (and is kept at import) within this distance of the coast (spec 16). */
-  poiCoastDistanceKm: z.number().positive(),
   /** Radius around an object's centroid within which a subdivision's land counts for the assignment (spec 14). */
   subdivisionRadiusM: z.number().positive(),
   islandParentBufferM: z.number().nonnegative(),
-  coastSectionMaxAreaKm2: z.number().positive(),
   merge: z.strictObject({
     trigramMin: z.number().min(0).max(1),
     uncertainTrigramMin: z.number().min(0).max(1),

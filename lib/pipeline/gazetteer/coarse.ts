@@ -290,13 +290,14 @@ async function nonAreaCountryTypes(db: Db, country: string): Promise<string[]> {
  * and parent are assigned later, by the stage `subdivisions.assign` after `subdivisions.build` (`assignCoarse`): here
  * neither the subdivisions nor, in a first run, the seas exist yet (B3, B14). Overpass is asked once per kind for
  * the whole country; only a kind that keeps failing is asked again per block (B15). Throws when the country object
- * is no (multi)polygon. Returns the stored counts, the number of splits and of blocks skipped outside the country.
+ * is no (multi)polygon. Returns the stored counts, the number of splits, of blocks skipped outside the country and of
+ * relations skipped above `overpass.maxRelationPoints` (`skippedLarge`).
  */
 export async function importCoarseFeatures(
   db: Db,
   country: string,
   deps: Deps & { overpass?: GazetteerConfig["overpass"] },
-): Promise<{ islands: number; archipelagos: number; gulfs: number; towns: number; splits: number; blocksSkipped: number }> {
+): Promise<{ islands: number; archipelagos: number; gulfs: number; towns: number; splits: number; blocksSkipped: number; skippedLarge: number }> {
   const { gazetteer, categories } = getConfig();
   const cfg = gazetteer.coarse;
   countryConfig(country);
@@ -311,7 +312,7 @@ export async function importCoarseFeatures(
   const overpassCfg = deps.overpass ?? gazetteer.overpass;
   const timeout = overpassCfg.timeoutSeconds;
   const elements: OverpassElement[] = [];
-  const stats = { splits: 0, blocksSkipped: 0 };
+  const stats = { splits: 0, blocksSkipped: 0, skippedLarge: 0 };
 
   /** The blocks of `boxes` that meet the country polygon; the others are counted and logged. */
   const inCountry = async (part: string, boxes: Bbox[]) => {
@@ -365,6 +366,7 @@ export async function importCoarseFeatures(
       const points = relationPoints(el);
       if (points > overpassCfg.maxRelationPoints) {
         getLog().warn({ osmId, points }, "skipped coarse relation above overpass.maxRelationPoints");
+        stats.skippedLarge++;
         continue;
       }
       const type = classified.type;

@@ -12,11 +12,9 @@ describe("classifyOsm", () => {
     ["anchorage seamark", { "seamark:type": "anchorage", name: "Anchorage A" }, { type: "bay" }],
     ["island", { place: "island", name: "Αίγινα" }, { type: "island" }],
     ["islet", { place: "islet", "name:en": "Small Rock" }, { type: "islet" }],
-    ["sea", { place: "sea", name: "Saronic" }, { type: "sea" }],
     ["gulf", { place: "gulf", name: "Σαρωνικός Κόλπος" }, { type: "gulf" }],
     ["cape", { natural: "cape", name: "Akra" }, { type: "cape" }],
     ["strait", { natural: "strait", name: "Stenó" }, { type: "strait" }],
-    ["peninsula", { natural: "peninsula", name: "Methana" }, { type: "coast_section" }],
     ["bay", { natural: "bay", name: "Όρμος Κλήμα" }, { type: "bay" }],
     ["village", { place: "village", name: "Perdika" }, { type: "settlement" }],
     ["city", { place: "city", name: "Valletta" }, { type: "settlement" }],
@@ -24,6 +22,13 @@ describe("classifyOsm", () => {
     ["ruins", { historic: "ruins", name: "Temple" }, { type: "poi", category: "culture" }],
   ])("%s", (_label, tags, expected) => {
     expect(classifyOsm(tags, categories)).toEqual(expected);
+  });
+
+  it("a sea and a peninsula are no gazetteer objects (B5, B6): seas come from Marine Regions, coast sections from config", () => {
+    expect(classifyOsm({ place: "sea", name: "Aegean Sea" }, categories)).toBeNull();
+    expect(classifyOsm({ place: "sea", name: "Aegean Sea" }, categories, "relation")).toBeNull();
+    expect(classifyOsm({ natural: "peninsula", name: "Peloponnese" }, categories)).toBeNull();
+    expect(classifyOsm({ natural: "peninsula", name: "Peloponnese" }, categories, "relation")).toBeNull();
   });
 
   it("an unnamed bay is null", () => {

@@ -308,7 +308,10 @@ describe("loadConfig", () => {
     expect(c.gazetteer.geonames.featureCodes.PPLA2).toBe("settlement");
     expect(c.gazetteer.merge.distanceM.default).toBe(500);
     expect(c.gazetteer.landBufferKm).toBe(55);
-    expect(c.gazetteer.poiCoastDistanceKm).toBe(20);
+    expect(c.gazetteer).not.toHaveProperty("poiCoastDistanceKm");
+    expect(c.gazetteer).not.toHaveProperty("coastSectionMaxAreaKm2");
+    // The skeleton has no POI classes (N7, B8): the stage around the candidates brings its own.
+    expect(Object.values(c.gazetteer.wikidata.classes)).not.toContain("poi");
     expect(c.gazetteer.noAnchoringKinds).toEqual(["military", "cable", "firing_area", "aquaculture"]);
   });
 

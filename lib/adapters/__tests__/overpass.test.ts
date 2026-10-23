@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { testDb } from "@/test/db";
-import { loadConfig } from "@/lib/config";
+import type { GazetteerConfig } from "@/lib/config";
 import { newId } from "@/lib/domain/ids";
 import { countryBlocks } from "@/lib/domain/gazetteer/land";
 import { RetryableHttpError, makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import { buildGazetteerQuery, overpassQuery, overpassQueryRetrying } from "@/lib/adapters/overpass";
 
 const db = testDb();
-const config = loadConfig();
 
 function jsonTransport(payload: unknown, seen: HttpRequest[] = []): Transport {
   return async (req) => {
@@ -18,7 +17,7 @@ function jsonTransport(payload: unknown, seen: HttpRequest[] = []): Transport {
 }
 
 // The rate-limit bucket "http:overpass" is shared across tests; a huge rate keeps it from ever blocking.
-const cfg = (): typeof config.gazetteer.overpass => ({
+const cfg = (): GazetteerConfig["overpass"] => ({
   endpoint: `https://overpass.example.invalid/${newId()}`,
   timeoutSeconds: 180,
   maxRelationPoints: 250_000,
@@ -30,22 +29,22 @@ const cfg = (): typeof config.gazetteer.overpass => ({
 });
 
 describe("buildGazetteerQuery", () => {
-  it("buildGazetteerQuery puts the bbox in south,west,north,east order and includes every category rule", () => {
-    const ql = buildGazetteerQuery([23.0, 37.5, 23.25, 37.75], config.categories, 180);
+  it("buildGazetteerQuery puts the bbox in south,west,north,east order and asks for the skeleton only", () => {
+    const ql = buildGazetteerQuery([23.0, 37.5, 23.25, 37.75], 180);
     expect(ql.startsWith("[out:json][timeout:180];")).toBe(true);
-    expect(ql).toContain('relation["place"~"sea|gulf"](37.5,23,37.75,23.25);');
+    expect(ql).toContain('relation["place"="gulf"](37.5,23,37.75,23.25);');
     expect(ql).toContain('relation["natural"="bay"](37.5,23,37.75,23.25);');
     expect(ql).toContain('way["natural"="bay"](37.5,23,37.75,23.25);');
     expect(ql).toContain('nwr["place"~"^(island|islet|archipelago)$"](37.5,23,37.75,23.25);');
     expect(ql).toContain('node["place"~"^(town|village|hamlet)$"](37.5,23,37.75,23.25);');
-    expect(ql).toContain('nwr["natural"~"^(bay|cape|strait|peninsula)$"](37.5,23,37.75,23.25);');
+    expect(ql).toContain('nwr["natural"~"^(bay|cape|strait)$"](37.5,23,37.75,23.25);');
     expect(ql).toContain('nwr["leisure"="marina"](37.5,23,37.75,23.25);');
     expect(ql).toContain('nwr["seamark:type"~"^(harbour|anchorage|mooring|small_craft_facility)$"](37.5,23,37.75,23.25);');
     expect(ql).toContain('nwr["harbour"](37.5,23,37.75,23.25);');
-    for (const rule of config.categories.osm) {
-      const filter = rule.values === "*" ? `["${rule.key}"]` : `["${rule.key}"~"^(${rule.values.join("|")})$"]`;
-      expect(ql).toContain(`nwr${filter}["name"](37.5,23,37.75,23.25);`);
-    }
+    // No seas (Marine Regions), no peninsulas (coast sections come from config), no POI category rules (B5, B6, B8).
+    expect(ql).not.toContain("peninsula");
+    expect(ql).not.toContain('place"~"sea');
+    expect(ql).not.toContain("amenity");
     expect(ql.trimEnd().endsWith("\nout geom;")).toBe(true);
   });
 });

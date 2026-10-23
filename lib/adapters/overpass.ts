@@ -1,4 +1,4 @@
-import type { CategoriesConfig, GazetteerConfig } from "@/lib/config";
+import type { GazetteerConfig } from "@/lib/config";
 import type { Bbox } from "@/lib/domain/tiles";
 import { RetryableHttpError, httpCall, type CallContext, type Transport } from "./http";
 
@@ -24,48 +24,35 @@ function regexLiteral(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/**
- * Overpass QL for the gazetteer sources of one box (Spec 03, step 1): seas and gulfs, bays, islands,
- * coastal settlements, capes, straits, harbours, marinas and the named POIs of every category rule.
- */
-export function buildGazetteerQuery(bbox: Bbox, categories: CategoriesConfig, timeoutSeconds: number): string {
-  const [west, south, east, north] = bbox;
-  const box = `(${south},${west},${north},${east})`;
-  const statements = [
-    'relation["place"~"sea|gulf"]',
-    'relation["natural"="bay"]',
-    'way["natural"="bay"]',
-    'nwr["place"~"^(island|islet|archipelago)$"]',
-    'node["place"~"^(town|village|hamlet)$"]',
-    'nwr["natural"~"^(bay|cape|strait|peninsula)$"]',
-    'nwr["seamark:type"~"^(harbour|anchorage|mooring|small_craft_facility)$"]',
-    'nwr["leisure"="marina"]',
-    'nwr["harbour"]',
-    ...categories.osm.map((rule) => {
-      const key = qlString(rule.key);
-      const filter =
-        rule.values === "*"
-          ? `["${key}"]`
-          : `["${key}"~"^(${rule.values.map((v) => qlString(regexLiteral(v))).join("|")})$"]`;
-      return `nwr${filter}["name"]`;
-    }),
-  ];
-  return [
-    `[out:json][timeout:${timeoutSeconds}];`,
-    "(",
-    ...statements.map((s) => `  ${s}${box};`),
-    ");",
-    "out geom;",
-    "",
-  ].join("\n");
-}
-
 /** `[out:json]` query for `statements`, each limited to `bbox`, answered with full geometry. */
 function boxQuery(statements: string[], bbox: Bbox, timeoutSeconds: number): string {
   const [west, south, east, north] = bbox;
   const box = `(${south},${west},${north},${east})`;
   return [`[out:json][timeout:${timeoutSeconds}];`, "(", ...statements.map((s) => `  ${s}${box};`), ");", "out geom;", ""].join(
     "\n",
+  );
+}
+
+/**
+ * Overpass QL for the gazetteer skeleton of one box (Spec 03, step 1; N7 4.3/4.4): gulfs and bays, islands, coastal
+ * settlements, capes, straits, harbours, marinas and anchorage seamarks. No seas (they come from Marine Regions only),
+ * no peninsulas (coast sections come from the configuration) and no POIs (the stage around the candidates loads them).
+ */
+export function buildGazetteerQuery(bbox: Bbox, timeoutSeconds: number): string {
+  return boxQuery(
+    [
+      'relation["place"="gulf"]',
+      'relation["natural"="bay"]',
+      'way["natural"="bay"]',
+      'nwr["place"~"^(island|islet|archipelago)$"]',
+      'node["place"~"^(town|village|hamlet)$"]',
+      'nwr["natural"~"^(bay|cape|strait)$"]',
+      'nwr["seamark:type"~"^(harbour|anchorage|mooring|small_craft_facility)$"]',
+      'nwr["leisure"="marina"]',
+      'nwr["harbour"]',
+    ],
+    bbox,
+    timeoutSeconds,
   );
 }
 

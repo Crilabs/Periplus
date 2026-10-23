@@ -34,19 +34,17 @@ function smallestCovering(types: GeoObjectType[], extra: SQL = sql``): SQL {
 }
 
 /**
- * The smallest island or islet whose polygon lies within `bufferM` of the child's centroid, or coast
- * section covering it. A coast section without `config_key` (an OSM peninsula) counts only up to
- * `maxSectionKm2`: the Peloponnese or the Balkans are no useful parent; objects there fall through to the
- * subdivision rule. The bbox prefilter (`bufferM / 50 km` per degree over-covers longitude up to ~60°) keeps
- * the GiST index in play.
+ * The smallest island or islet whose polygon lies within `bufferM` of the child's centroid, or configured coast
+ * section (`config_key`) covering it. A coast section without `config_key` is no parent (N7 4.3, B6): OSM
+ * peninsulas are no longer imported, and an older one such as the Peloponnese is no useful parent. The bbox prefilter
+ * (`bufferM / 50 km` per degree over-covers longitude up to ~60°) keeps the GiST index in play.
  */
-function smallestIslandOrSection(bufferM: number, maxSectionKm2: number): SQL {
+function smallestIslandOrSection(bufferM: number): SQL {
   return sql`(select p.id from geo_objects p
     where ${CANDIDATE} and (
       (p.type in ${ISLANDS} and p.geom && ST_Expand(c.centroid, ${bufferM / 50_000})
         and ST_DWithin(p.geom::geography, c.centroid::geography, ${bufferM}))
-      or (p.type = 'coast_section' and ST_Covers(p.geom, c.centroid)
-        and (p.config_key is not null or ST_Area(p.geom::geography) <= ${maxSectionKm2 * 1e6}))
+      or (p.type = 'coast_section' and p.config_key is not null and ST_Covers(p.geom, c.centroid))
     )
     order by ST_Area(p.geom::geography), p.id limit 1)`;
 }
@@ -104,8 +102,8 @@ function isUnitRegion(a: string): SQL {
  * 4. `archipelago`, `gulf` → the geo object of its subdivision.
  * 5. `island`, `islet` → smallest containing `archipelago`, else the geo object of its subdivision.
  * 6. bay, harbour, settlement, poi, cape, strait, channel → smallest island/islet polygon within
- *    `islandParentBufferM` or coast section containing the centroid (without `config_key` only up to
- *    `coastSectionMaxAreaKm2`); else the geo object of its subdivision.
+ *    `islandParentBufferM` or configured coast section (`config_key`) containing the centroid; else the geo object
+ *    of its subdivision.
  * The sea is no parent; `assignSeas` sets `sea_id` beside it.
  */
 function parentRules(): { types: GeoObjectType[]; parent: SQL; filter?: SQL }[] {
@@ -133,7 +131,7 @@ function parentRules(): { types: GeoObjectType[]; parent: SQL; filter?: SQL }[] 
     { types: ISLANDS, parent: sql`coalesce(${smallestCovering(["archipelago"])}, ${SUBDIVISION_OBJECT})` },
     {
       types: LOCAL_TYPES,
-      parent: sql`coalesce(${smallestIslandOrSection(gazetteer.islandParentBufferM, gazetteer.coastSectionMaxAreaKm2)}, ${SUBDIVISION_OBJECT})`,
+      parent: sql`coalesce(${smallestIslandOrSection(gazetteer.islandParentBufferM)}, ${SUBDIVISION_OBJECT})`,
     },
   ];
 }

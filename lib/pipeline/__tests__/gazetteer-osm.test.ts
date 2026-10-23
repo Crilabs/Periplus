@@ -8,8 +8,7 @@ import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects, landPolygons, rateLimits } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { getConfig } from "@/lib/config";
-import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
-import { importOsm } from "@/lib/pipeline/gazetteer/osm";
+import { importOsm, keptTags } from "@/lib/pipeline/gazetteer/osm";
 import { withRollback } from "@/test/db";
 import { testArchive } from "@/test/s3";
 
@@ -56,8 +55,9 @@ const ELEMENTS: OverpassElement[] = [
   { type: "node", id: ID + 10, lat: 35.34, lon: 25.11, tags: { amenity: "bench", name: "Bench" } },
 ];
 
-const IMPORTED = [osm("relation", 1), osm("way", 2), osm("node", 3), osm("node", 4), osm("node", 6), osm("node", 8), osm("node", 9)];
-const ALL = [...IMPORTED, osm("node", 5), osm("node", 7), osm("node", 10)];
+// The taverna (node 6) is a POI: the skeleton import skips it (B8; POIs come from the stage around the candidates).
+const IMPORTED = [osm("relation", 1), osm("way", 2), osm("node", 3), osm("node", 4), osm("node", 8), osm("node", 9)];
+const ALL = [...IMPORTED, osm("node", 5), osm("node", 6), osm("node", 7), osm("node", 10)];
 
 function transport(payload: unknown, seen: HttpRequest[] = [], status = 200): Transport {
   return async (req) => {
@@ -66,16 +66,8 @@ function transport(payload: unknown, seen: HttpRequest[] = [], status = 200): Tr
   };
 }
 
-/** Land polygon of the area and a full overpass token bucket, both rolled back with the test. */
+/** Land polygon of the area and a full overpass token bucket, both rolled back with the test. No IHO sea: the skeleton needs none. */
 async function prepare(db: Db): Promise<void> {
-  // IHO sea north of the land, over the whole box.
-  const sea = await upsertGeoObject(db, {
-    type: "sea",
-    origin: "marine_regions",
-    geometry: { type: "Polygon", coordinates: [[[24.5, 35.35], [25.7, 35.35], [25.7, 35.9], [24.5, 35.9], [24.5, 35.35]]] },
-    names: [],
-  });
-  if ("skipped" in sea) throw new Error(sea.skipped);
   await db.insert(landPolygons).values(LAND.map((p) => ({ geom: sql`${geomFromGeoJson(p)}`, datasetVersion: "test" })));
   await db
     .insert(rateLimits)
@@ -94,13 +86,13 @@ const archive = testArchive();
 beforeAll(() => archive.ensureBucket());
 
 describe("importOsm", () => {
-  it("imports the fixture: island, bay, marina, coastal village and taverna, not the inland village", () =>
+  it("imports the fixture: island, bay, marina and coastal village, not the inland village or the taverna", () =>
     withRollback(async (db) => {
       await prepare(db);
       const seen: HttpRequest[] = [];
       const result = await importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({ elements: ELEMENTS }, seen), archive });
-      expect(result).toMatchObject({ created: 7, updated: 0, skipped: 3 });
-      expect(result.names).toBeGreaterThan(7);
+      expect(result).toMatchObject({ created: 6, updated: 0, skipped: 4, skippedLarge: 0 });
+      expect(result.names).toBeGreaterThan(6);
 
       const rows = await objects(db);
       const byOsm = new Map(rows.map((r) => [r.osmId, r]));
@@ -109,7 +101,6 @@ describe("importOsm", () => {
       expect(byOsm.get(osm("way", 2))).toMatchObject({ type: "bay", tags: { natural: "bay" } });
       expect(byOsm.get(osm("node", 3))?.type).toBe("harbour");
       expect(byOsm.get(osm("node", 4))?.type).toBe("settlement");
-      expect(byOsm.get(osm("node", 6))).toMatchObject({ type: "poi", category: "food" });
       expect(byOsm.get(osm("node", 8))?.type).toBe("cape");
       expect(byOsm.get(osm("node", 9))?.type).toBe("bay");
 
@@ -149,34 +140,32 @@ describe("importOsm", () => {
       expect(box[0]).toBeCloseTo(35.2 - 5 / 111.32, 6);
       expect(box[3]).toBeLessThan(25.3 + 0.06);
       expect(box[3]).toBeGreaterThan(25.3 + 0.05);
+      // The skeleton only: no peninsulas, seas or POI category rules (B5, B6, B8).
+      expect(ql).not.toContain("peninsula");
+      expect(ql).not.toContain('place"~"sea');
+      expect(ql).not.toContain("amenity");
     }));
 
-  it("skips a POI farther than poiCoastDistanceKm from the sea, keeps a settlement rule unchanged", () =>
+  it("stores no POI: a named restaurant in the answer is skipped, the settlement rule is unchanged", () =>
     withRollback(async (db) => {
       await prepare(db);
-      // Land reaches 34.9 N: 35.05 N is ~38 km from the sea (35.35 N), 35.25 N ~11 km.
       const elements: OverpassElement[] = [
-        { type: "node", id: ID + 21, lat: 35.05, lon: 25.1, tags: { amenity: "restaurant", name: "Far Taverna" } },
-        { type: "node", id: ID + 22, lat: 35.25, lon: 25.1, tags: { amenity: "restaurant", name: "Near Taverna" } },
+        { type: "node", id: ID + 22, lat: 35.345, lon: 25.11, tags: { amenity: "restaurant", name: "Near Taverna" } },
         { type: "node", id: ID + 23, lat: 35.345, lon: 25.1, tags: { place: "village", name: "Coastal" } },
         { type: "node", id: ID + 24, lat: 35.1, lon: 25.1, tags: { place: "village", name: "Inland" } },
       ];
       const result = await importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({ elements }), archive });
-      expect(result).toMatchObject({ created: 2, skipped: 2 });
-      const rows = await objects(db, [osm("node", 21), osm("node", 22), osm("node", 23), osm("node", 24)]);
-      expect(rows.map((r) => r.osmId).sort()).toEqual([osm("node", 22), osm("node", 23)]);
+      expect(result).toMatchObject({ created: 1, skipped: 2 });
+      const rows = await objects(db, [osm("node", 22), osm("node", 23), osm("node", 24)]);
+      expect(rows.map((r) => r.osmId)).toEqual([osm("node", 23)]);
     }));
 
-  it("keeps man_made=lighthouse in tags", () =>
-    withRollback(async (db) => {
-      await prepare(db);
-      const elements: OverpassElement[] = [
-        { type: "node", id: ID + 25, lat: 35.34, lon: 25.1, tags: { man_made: "lighthouse", amenity: "restaurant", name: "Leuchtturm" } },
-      ];
-      await importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({ elements }), archive });
-      const [row] = await objects(db, [osm("node", 25)]);
-      expect(row?.tags).toMatchObject({ man_made: "lighthouse" });
-    }));
+  it("keptTags keeps man_made (lighthouse) and seamark tags, drops the rest", () => {
+    expect(keptTags({ man_made: "lighthouse", name: "Leuchtturm", "seamark:type": "light_major", phone: "1" })).toEqual({
+      man_made: "lighthouse",
+      "seamark:type": "light_major",
+    });
+  });
 
   it("a second run with the same answer creates and updates nothing", () =>
     withRollback(async (db) => {
@@ -185,7 +174,7 @@ describe("importOsm", () => {
       const deps = { transport: transport({ elements: ELEMENTS }), archive };
       await importOsm(db, input, deps);
       const second = await importOsm(db, input, deps);
-      expect(second).toEqual({ created: 0, updated: 0, skipped: 3, names: 0 });
+      expect(second).toEqual({ created: 0, updated: 0, skipped: 4, skippedLarge: 0, names: 0 });
     }));
 
   it("archives the raw overpass response under datasets/overpass/<subdivision key>/<date>.json", () =>
@@ -245,7 +234,7 @@ describe("importOsm", () => {
         { scope: scope(), runId: newId() },
         { transport: transport({ elements: [...ELEMENTS, bowtie, broken] }), archive },
       );
-      expect(result).toMatchObject({ created: 8, updated: 0, skipped: 4 });
+      expect(result).toMatchObject({ created: 7, updated: 0, skipped: 5 });
       const rows = await objects(db, [...ALL, osm("way", 11), osm("way", 12)]);
       expect(rows.map((r) => r.osmId).sort()).toEqual([...IMPORTED, osm("way", 11)].sort());
       const [repaired] = await db
@@ -290,17 +279,17 @@ describe("importOsm", () => {
       expect(row).toEqual({ type: "POLYGON", holes: 1 });
     }));
 
-  it("skips a relation with more member points than overpass.maxRelationPoints and imports the rest", () =>
+  it("skips a relation with more member points than overpass.maxRelationPoints, counts it in skippedLarge and imports the rest", () =>
     withRollback(async (db) => {
       await prepare(db);
       const cfg = getConfig().gazetteer.overpass;
       const before = cfg.maxRelationPoints;
       cfg.maxRelationPoints = 6;
       try {
-        const sea: OverpassElement = {
+        const huge: OverpassElement = {
           type: "relation",
           id: ID + 41,
-          tags: { type: "multipolygon", place: "sea", name: "Huge Sea" },
+          tags: { type: "multipolygon", place: "gulf", name: "Huge Gulf" },
           members: [
             { type: "way", ref: 1, role: "outer", geometry: pts([[24.9, 35.36], [25.3, 35.36], [25.3, 35.5], [24.9, 35.5]]) },
             { type: "way", ref: 2, role: "outer", geometry: pts([[24.9, 35.5], [24.9, 35.43], [24.9, 35.36]]) },
@@ -309,9 +298,9 @@ describe("importOsm", () => {
         const result = await importOsm(
           db,
           { scope: scope(), runId: newId() },
-          { transport: transport({ elements: [sea, ELEMENTS[0]!] }), archive },
+          { transport: transport({ elements: [huge, ELEMENTS[0]!] }), archive },
         );
-        expect(result).toMatchObject({ created: 1, skipped: 1 });
+        expect(result).toMatchObject({ created: 1, skipped: 0, skippedLarge: 1 });
         expect((await objects(db, [osm("relation", 41), osm("relation", 1)])).map((r) => r.osmId)).toEqual([osm("relation", 1)]);
       } finally {
         cfg.maxRelationPoints = before;
@@ -324,16 +313,6 @@ describe("importOsm", () => {
       await expect(
         importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({ elements: ELEMENTS }, seen), archive }),
       ).rejects.toThrow("land polygons missing for osm-test – run npm run import:land-polygons");
-      expect(seen).toHaveLength(0);
-    }));
-
-  it("missing IHO seas fails with a clear message before any request", () =>
-    withRollback(async (db) => {
-      await db.insert(landPolygons).values(LAND.map((p) => ({ geom: sql`${geomFromGeoJson(p)}`, datasetVersion: "test" })));
-      const seen: HttpRequest[] = [];
-      await expect(
-        importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({ elements: ELEMENTS }, seen), archive }),
-      ).rejects.toThrow("IHO seas missing for osm-test");
       expect(seen).toHaveLength(0);
     }));
 

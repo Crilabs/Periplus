@@ -28,10 +28,11 @@ function namedGulf(tags: Record<string, string>): boolean {
 
 /**
  * Gazetteer type of an OSM object by its tags, first match wins: administrative boundary relation (spec 14:
- * `admin_level=2` country, other levels admin_region, carrying `adminLevel`), sea, gulf (also a bay relation named
- * "Gulf"/"Κόλπος"), island/islet/archipelago, cape, strait, peninsula (coast section), bay, harbour
- * (marina, harbour seamark, `harbour=*`), anchorage/mooring seamark (bay), city/town/village/hamlet
- * (settlement), then the first category rule (poi). Objects without a non-empty `name`/`name:<lang>` are null.
+ * `admin_level=2` country, other levels admin_region, carrying `adminLevel`), gulf (also a bay relation named
+ * "Gulf"/"Κόλπος"), island/islet/archipelago, cape, strait, bay, harbour (marina, harbour seamark, `harbour=*`),
+ * anchorage/mooring seamark (bay), city/town/village/hamlet (settlement), then the first category rule (poi).
+ * `place=sea` and `natural=peninsula` are null (N7 4.3, B5/B6): seas come from Marine Regions only, coast sections
+ * from the configuration only. Objects without a non-empty `name`/`name:<lang>` are null.
  */
 export function classifyOsm(
   tags: Record<string, string>,
@@ -46,13 +47,12 @@ export function classifyOsm(
     const adminLevel = Number(tags.admin_level);
     return { type: adminLevel === 2 ? "country" : "admin_region", adminLevel };
   }
-  if (place === "sea") return { type: "sea" };
+  if (place === "sea" || natural === "peninsula") return null;
   if (place === "gulf") return { type: "gulf" };
   if (elementType === "relation" && natural === "bay" && namedGulf(tags)) return { type: "gulf" };
   if (place && ISLAND_PLACES.has(place)) return { type: place as GeoObjectType };
   if (natural === "cape") return { type: "cape" };
   if (natural === "strait") return { type: "strait" };
-  if (natural === "peninsula") return { type: "coast_section" };
   if (natural === "bay") return { type: "bay" };
   if (leisure === "marina" || (seamark && HARBOUR_SEAMARKS.has(seamark)) || (harbour && harbour !== "no")) {
     return { type: "harbour" };

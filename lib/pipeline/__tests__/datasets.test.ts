@@ -57,7 +57,7 @@ async function* landFixture(): AsyncGenerator<LandFeature> {
 async function prepareArea(db: Db): Promise<string> {
   await importLandPolygons(db, landFixture(), bufferBbox(AEGINA_WEST_BOX, getConfig().gazetteer.landBufferKm), "fixture");
   const { subdivisionId } = await insertAeginaWest(db);
-  // IHO sea over the whole box: the POI sea-distance filter keeps every recorded POI.
+  // IHO sea over the whole box, as the gazetteer.seas stage leaves it.
   const [w, s, e, n] = bufferBbox(AEGINA_WEST_BOX, 1);
   await db.insert(geoObjects).values({
     type: "sea",
@@ -461,7 +461,9 @@ describe("importSitelinks", () => {
       await importWikidata(db, { scope, runId }, { transport: replay });
       await assignSubdivisionTiles(db, scope.subdivisionId);
 
-      expect(await importSitelinks(db, { scope: await scopeOf(db), runId }, { transport: replay })).toEqual({ fetched: 121, reused: 0 });
+      // 91 since N7 Task 4 (121 before): the skeleton has no Wikidata POIs. The sitelink fixtures were cut offline to the
+      // two batches of the remaining items (the same recorded answers, regrouped).
+      expect(await importSitelinks(db, { scope: await scopeOf(db), runId }, { transport: replay })).toEqual({ fetched: 91, reused: 0 });
       const rows = await db
         .select({ id: wikidataSitelinks.wikidataId, n: wikidataSitelinks.sitelinks })
         .from(wikidataSitelinks)
@@ -473,7 +475,7 @@ describe("importSitelinks", () => {
         { id: "Q539983", n: 39 },
       ]);
       const calls = await db.select().from(externalCalls).where(eq(externalCalls.runId, runId));
-      expect(calls.filter((c) => c.operation === "sitelink_counts")).toHaveLength(3);
+      expect(calls.filter((c) => c.operation === "sitelink_counts")).toHaveLength(2);
     }));
 
   it("an ended object or one outside the area's tiles is not asked for", () =>

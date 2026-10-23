@@ -227,7 +227,6 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
     ["Puffer Land", `${gazetteer.landBufferKm} km`],
     ["Küstenabstand", `${gazetteer.coastDistanceM} m`],
     ["Puffer Insel-Elternobjekt", `${gazetteer.islandParentBufferM} m`],
-    ["Max. Fläche OSM-Küstenabschnitt als Elternobjekt", `${gazetteer.coastSectionMaxAreaKm2} km²`],
     ["Trigramm-Ähnlichkeit (sicher)", String(gazetteer.merge.trigramMin)],
     ["Trigramm-Ähnlichkeit (unsicher)", String(gazetteer.merge.uncertainTrigramMin)],
     [
