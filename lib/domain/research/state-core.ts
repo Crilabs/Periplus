@@ -59,10 +59,10 @@ type TextRow = {
  * The inputs of the berth's core values, restricted to the attributes of the research fact schema (v4): the facts of
  * the newest computation per kind of the place's geo object (as the consolidation reads them, weight
  * `rules.weights.computed`), and its structured text facts of done units of the active extractor on the current
- * version of a page with an active, not generated assessment, of a source neither rejected nor ended. A text input is
- * one source per registrable domain, weighs as its page kind's document type, has confidence `state.textConfidence`,
- * and is confirmed on its observation date; a fetch date (basis `fetched`) is no observation date. Sorted by
- * attribute, date and id (`byAttributeDateId`, as the profile build).
+ * version of a page with an active, not generated assessment, of a source not ended (a rejected one still counts). A
+ * text input is one source per registrable domain, weighs as its page kind's document type, has confidence
+ * `state.textConfidence`, and is confirmed on its observation date; a fetch date (basis `fetched`) is no observation
+ * date. Sorted by attribute, date and id (`byAttributeDateId`, as the profile build).
  */
 export async function coreInputs(db: Db, placeId: string, config: AppConfig, rules: VersionedConsolidationConfig): Promise<ConsolidationInput[]> {
   const known = new Set(getFactSchema(config.research.extraction.factSchema).levels.place.map((d) => d.key));

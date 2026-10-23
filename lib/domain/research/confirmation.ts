@@ -197,7 +197,7 @@ type SignalRow = {
 /**
  * The evidence of each place: the signals of its done research units of the active `extract-berth` model and
  * prompt, with the page's active assessment (kind, generated), its registrable domain and its link to the place. A
- * page without an active assessment, or of a rejected or ended source, gives no evidence. A page linked by a corridor
+ * page without an active assessment, or of an ended source, gives no evidence. A page linked by a corridor
  * route stop only (no search hit, no name stop) is still name-linked when one of its assessed berths matches a (not
  * provisional) name of the place.
  */

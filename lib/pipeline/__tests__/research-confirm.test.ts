@@ -260,7 +260,7 @@ describe("applyBerthVerdicts", () => {
       expect(await placeRow(tx, place.placeId)).toMatchObject({ status: "candidate", statusReason: "1 von 2 unabhängigen Quellen (gleicher Text: a.example + b.example)" });
     }));
 
-  it("signals of a rejected or ended source give no evidence (Quelle beenden)", () =>
+  it("signals of an ended source give no evidence (Quelle beenden); an old rejected domain still counts", () =>
     withRollback(async (tx) => {
       const place = await placeOf(tx);
       const sourceOf = async (versionId: string) =>
@@ -271,8 +271,8 @@ describe("applyBerthVerdicts", () => {
       expect((await loadEvidence(tx, [place.placeId], config)).get(place.placeId)).toHaveLength(3);
       await tx.update(sources).set({ status: "rejected" }).where(eq(sources.id, await sourceOf(a.versionId)));
       await tx.update(sources).set({ validTo: "2026-10-01" }).where(eq(sources.id, await sourceOf(b.versionId)));
-      expect((await loadEvidence(tx, [place.placeId], config)).get(place.placeId)!.map((e) => e.domain)).toEqual(["c.example"]);
-      expect(await applyBerthVerdicts(tx, [place.placeId], NOW, config)).toEqual([]);
+      expect((await loadEvidence(tx, [place.placeId], config)).get(place.placeId)!.map((e) => e.domain).sort()).toEqual(["a.example", "c.example"]);
+      expect(await applyBerthVerdicts(tx, [place.placeId], NOW, config)).toEqual([{ placeId: place.placeId, from: "candidate", to: "confirmed" }]);
     }));
 
   it("only signals of done units of the active extract-berth model count; the page's active assessment decides its kind", () =>

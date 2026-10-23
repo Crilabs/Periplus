@@ -225,7 +225,7 @@ describe("coreInputs", () => {
       expect((await coreInputs(tx, placeId, config, rules)).map((i) => i.factId)).toEqual([current]);
     }));
 
-  it("leaves out facts of a rejected or ended source", () =>
+  it("leaves out facts of an ended source; an old rejected domain still counts", () =>
     withRollback(async (tx) => {
       const { placeId } = await insertPlace(tx);
       const rejected = await page(tx, placeId, { domain: "a.example" });
@@ -235,7 +235,7 @@ describe("coreInputs", () => {
       expect(await coreInputs(tx, placeId, config, rules)).toHaveLength(3);
       await tx.update(sources).set({ status: "rejected" }).where(eq(sources.id, rejected.sourceId));
       await tx.update(sources).set({ validTo: "2026-10-01" }).where(eq(sources.id, ended.sourceId));
-      expect((await coreInputs(tx, placeId, config, rules)).map((i) => i.sourceKey)).toEqual(["c.example"]);
+      expect((await coreInputs(tx, placeId, config, rules)).map((i) => i.sourceKey).sort()).toEqual(["a.example", "c.example"]);
     }));
 
   it("two subdomains of one domain are one source: no second-source bonus", () =>

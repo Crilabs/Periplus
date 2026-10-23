@@ -7,14 +7,12 @@ import { assertAllowedSourceDomain } from "@/lib/domain/sources/forbidden-domain
 import { getSource, type Source } from "@/lib/domain/sources/store";
 
 /**
- * Source alias `alias` still counts for research evidence and the berth state: not rejected and not ended (`valid_to`
- * unset), as `countingSourceSql` of the consolidation, without a run date. Ending or rejecting a source thus removes
- * its confirmation evidence and its core values.
+ * Source alias `alias` still counts for research evidence and the berth state: not ended by an admin (`valid_to`
+ * unset). A `rejected` or `paused` status does not exclude it: `rejected` comes from the retired domain-level source
+ * review (relevance, not page quality), and research judges each page by itself. Ending a source thus removes its
+ * confirmation evidence and its core values.
  */
-export const liveResearchSourceSql = (alias: string) => {
-  const s = sql.raw(alias);
-  return sql`${s}.status <> 'rejected' and ${s}.valid_to is null`;
-};
+export const liveResearchSourceSql = (alias: string) => sql`${sql.raw(alias)}.valid_to is null`;
 
 /** Crawl rules of a research source: a page is fetched on its own, nothing is crawled from it. */
 function researchCrawlRules(ratePerMinute: number) {
