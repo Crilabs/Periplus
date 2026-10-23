@@ -4,35 +4,23 @@ import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import {
-  berthSignals,
-  documents,
   pageAssessments,
   places,
-  researchHits,
-  researchRouteStops,
-  researchUnits,
   restrictedAreas,
   reviewDecisions,
   reviewTasks,
-  serpQueries,
-  serpResults,
-  type BerthSignalKind,
-  type PageKind,
 } from "@/lib/db/schema";
 import { newId, newPublicId } from "@/lib/domain/ids";
 import { setPlaceStatusByAdmin } from "@/lib/domain/place-status";
 import { createReviewTask } from "@/lib/domain/review";
-import { activeAssessor } from "@/lib/domain/research/assessment";
-import { activeRouteExtractor } from "@/lib/domain/research/assign";
 import { recordDecision } from "@/lib/domain/places/auto-status";
 import { applyBerthVerdicts, loadEvidence } from "@/lib/domain/research/confirmation";
 import { createRun } from "@/lib/domain/runs";
-import { activeExtractor } from "@/lib/pipeline/research/extract";
 import { confirmBerths, planResearchConfirm, RESEARCH_CONFIRM_STAGE, researchChanges } from "@/lib/pipeline/research/confirm";
 import { insertComputation } from "@/test/consolidation";
 import { placeOf } from "@/test/confirmation";
 import { withRollback } from "@/test/db";
-import { insertTestRun, insertTestSource, insertTestVersion } from "@/test/text";
+import { signalPage as sharedSignalPage, type SignalPageOpts } from "@/test/research-signals";
 
 /*
  * `applyBerthVerdicts` and the stage `research.confirm` (plan N2 task 6, spec 5.6) against real Postgres: signals
@@ -42,60 +30,7 @@ import { insertTestRun, insertTestSource, insertTestVersion } from "@/test/text"
 const config: AppConfig = loadConfig("config");
 const NOW = new Date("2026-10-23T12:00:00Z");
 
-type PageOpts = {
-  domain: string;
-  kind?: BerthSignalKind;
-  firstHand?: boolean;
-  confidence?: number;
-  observedAt?: string;
-  observedAtBasis?: "explicit" | "fetched";
-  pageKind?: PageKind;
-  /** How the page is linked to the place: a search hit (default), a route stop matched by name or by the corridor, or none. */
-  link?: "search" | "name" | "corridor" | "none";
-  unitStatus?: "done" | "failed";
-  unitModel?: string;
-  quote?: string;
-};
-
-/** One page of `domain` with an active assessment, a research unit of the place and one signal in it. */
-async function signalPage(tx: Db, place: { placeId: string; objectId: string }, o: PageOpts): Promise<{ signalId: string; versionId: string }> {
-  const sourceId = await insertTestSource(tx);
-  const url = `https://www.${o.domain}/${newId()}`;
-  const [doc] = await tx.insert(documents).values({ sourceId, url, urlNormalized: url, docType: "trip_report" }).returning({ id: documents.id });
-  const { versionId } = await insertTestVersion(tx, ["x"], { documentId: doc!.id });
-  const assessor = activeAssessor(config);
-  await tx.insert(pageAssessments).values({
-    documentVersionId: versionId, model: assessor.model, promptVersion: assessor.promptVersion, pageKind: o.pageKind ?? "trip_report", firstHand: true,
-    generated: false, observedAt: o.observedAt ?? "2024-06-15", observedAtBasis: "explicit", berths: [], runId: await insertTestRun(tx),
-  });
-  const link = o.link ?? "search";
-  if (link === "search") {
-    const [q] = await tx
-      .insert(serpQueries)
-      .values({ keyword: "k", languageCode: "en", locationCode: 2300, depth: 10, level: "place", scopeId: place.objectId, rawKey: `serp/x/${url}.json`, fetchedAt: new Date() })
-      .returning({ id: serpQueries.id });
-    const [r] = await tx.insert(serpResults).values({ serpQueryId: q!.id, rank: 1, url, urlNormalized: url, domain: o.domain, title: "t", snippet: "s" }).returning({ id: serpResults.id });
-    await tx.insert(researchHits).values({ placeId: place.placeId, geoObjectId: place.objectId, serpQueryId: q!.id, serpResultId: r!.id, urlNormalized: url, domain: o.domain, rank: 1, purpose: "positive" });
-  } else if (link !== "none") {
-    const route = activeRouteExtractor(config);
-    await tx.insert(researchRouteStops).values({
-      documentVersionId: versionId, seq: 1, name: "Bay", quote: "q", observedAt: o.observedAt ?? "2024-06-15", placeId: place.placeId, match: link, model: route.model, promptVersion: route.promptVersion,
-    });
-  }
-  const extractor = activeExtractor(config);
-  const [unit] = await tx
-    .insert(researchUnits)
-    .values({ documentVersionId: versionId, placeId: place.placeId, model: o.unitModel ?? extractor.model, promptVersion: extractor.promptVersion, status: o.unitStatus ?? "done", dropped: { quote: 0, value: 0, verbatim: 0, attribution: 0 } })
-    .returning({ id: researchUnits.id });
-  const [signal] = await tx
-    .insert(berthSignals)
-    .values({
-      unitId: unit!.id, placeId: place.placeId, documentVersionId: versionId, kind: o.kind ?? "anchored", firstHand: o.firstHand ?? true, confidence: o.confidence ?? 0.9,
-      quote: o.quote ?? "We anchored here", quoteStart: 0, quoteEnd: 16, observedAt: o.observedAt ?? "2024-06-15", observedAtBasis: o.observedAtBasis ?? "explicit",
-    })
-    .returning({ id: berthSignals.id });
-  return { signalId: signal!.id, versionId };
-}
+const signalPage = (tx: Db, place: { placeId: string; objectId: string }, o: SignalPageOpts) => sharedSignalPage(tx, config, place, o);
 
 const placeRow = async (tx: Db, id: string) => (await tx.select().from(places).where(eq(places.id, id)))[0]!;
 

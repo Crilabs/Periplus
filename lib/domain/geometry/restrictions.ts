@@ -264,21 +264,30 @@ const storedHitSchema = z.object({
 });
 
 /**
- * Right after a restricted-area review of a confirmed place is decided „Trotz Sperrgebiet bestätigen“ (wave-1 review
- * M-2, GR-12): the banning hits of the place's newest `restriction` computation whose area is still valid go through
- * `applyExclusion` again, so an area the last geometry run found while the task was open opens the next task at once
- * instead of at the next geometry run. An area loaded after that run still needs „Geometrie für Revier“.
+ * The banning hits of the place's newest `restriction` computation whose area is still valid (`exclusionsFor`); reads
+ * only. Empty without a stored computation, with a broken one or when no area bans anchoring.
  */
-export async function recheckExclusion(tx: Db, place: { id: string; geoObjectId: string }, minShare: number): Promise<ExclusionOutcome> {
+export async function pendingExclusionHits(tx: Db, place: { geoObjectId: string }, minShare: number): Promise<RestrictionHit[]> {
   const fact = (await latestComputations(tx, place.geoObjectId)).get("restriction")?.facts.find((f) => f.attribute === "prohibitions");
   const parsed = z.array(storedHitSchema).safeParse(fact?.value ?? []);
-  if (!parsed.success) return "unchanged";
+  if (!parsed.success) return [];
   const hits = exclusionsFor(parsed.data, minShare);
-  if (hits.length === 0) return "unchanged";
+  if (hits.length === 0) return [];
   const valid = await tx
     .select({ id: restrictedAreas.id })
     .from(restrictedAreas)
     .where(and(inArray(restrictedAreas.id, hits.map((h) => h.restrictedAreaId)), validAt(restrictedAreas)));
   const ids = new Set(valid.map((r) => r.id));
-  return applyExclusion(tx, place.id, hits.filter((h) => ids.has(h.restrictedAreaId)));
+  return hits.filter((h) => ids.has(h.restrictedAreaId));
+}
+
+/**
+ * Right after a restricted-area review of a confirmed place is decided „Trotz Sperrgebiet bestätigen“ (wave-1 review
+ * M-2, GR-12): the banning hits of the place's newest `restriction` computation whose area is still valid
+ * (`pendingExclusionHits`) go through `applyExclusion` again, so an area the last geometry run found while the task was
+ * open opens the next task at once instead of at the next geometry run. An area loaded after that run still needs
+ * „Geometrie für Revier“.
+ */
+export async function recheckExclusion(tx: Db, place: { id: string; geoObjectId: string }, minShare: number): Promise<ExclusionOutcome> {
+  return applyExclusion(tx, place.id, await pendingExclusionHits(tx, place, minShare));
 }

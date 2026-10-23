@@ -3,51 +3,52 @@ import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { places } from "@/lib/db/schema";
 import { researchCandidates } from "./candidates";
-import { adminStatusStands, decideBerth, isDecidedStatus, loadEvidence, statusSetByAdmin, type Verdict } from "./confirmation";
+import { ADMIN_SET_REASON, adjustVerdict, loadEvidence, type Verdict } from "./confirmation";
 
 /*
- * The reference gate (plan N3): which places the confirmation rule would confirm at each threshold of independent
- * sources, decided on the same evidence and without writing anything.
+ * The reference gate (plan N3): which places the confirmation rule would deliver as confirmed at each threshold of
+ * independent sources, decided on the same evidence and without writing anything.
  */
 
 /**
  * The verdict of each researched place of the subdivision (`researchCandidates`) at each threshold `n`
- * (`minIndependentSources: n`), keyed by threshold, then place id. The evidence is loaded once. The status rules are
- * those of `applyBerthVerdicts`: a status an admin set stands (as its own status) at every threshold, except an admin's
- * confirmation against an authority ban, which the rule decides; a place of a final status (`rejected`, `abandoned`,
- * `no_anchoring`) is not a candidate and is left out. Reads only: no status, decision or task is written, and the
- * checks that wait for a duplicate review or a restricted area (`applyVerdict`) are not applied.
+ * (`minIndependentSources: n`), keyed by threshold, then place id, all read in one read-only transaction (one snapshot).
+ * The verdict is what `applyBerthVerdicts` would deliver (`adjustVerdict`, shared with it): the rule, a status an admin
+ * set standing (as its own status, reason `ADMIN_SET_REASON`), a confirmation held by an open duplicate review, a
+ * candidate in a banning restricted area `no_anchoring`. A place of a final status (`rejected`, `abandoned`,
+ * `no_anchoring`) is not a candidate and is left out, except the places in `opts.includePlaceIds` (those with a human gate
+ * decision): they get the pure rule verdict (`ruleOnly`) whatever their status, so they stay in the count. Writes nothing.
  */
 export async function verdictsByThreshold(
   db: Db,
   subdivisionKey: string,
   thresholds: number[],
   cfg: AppConfig,
+  opts: { includePlaceIds?: string[] } = {},
 ): Promise<Map<number, Map<string, Verdict>>> {
-  const ids = await researchCandidates(db, { subdivisionKey });
-  const evidence = await loadEvidence(db, ids, cfg);
-  const rows =
-    ids.length === 0
-      ? []
-      : await db.select({ id: places.id, kind: places.kind, status: places.status, geoObjectId: places.geoObjectId }).from(places).where(inArray(places.id, ids));
-  const adminSet = new Map<string, boolean>();
-  for (const r of rows) adminSet.set(r.id, isDecidedStatus(r.status) && (await statusSetByAdmin(db, r.id, r.geoObjectId)));
+  return db.transaction(
+    async (tx) => {
+      const candidateIds = await researchCandidates(tx, { subdivisionKey });
+      const included = new Set(opts.includePlaceIds ?? []);
+      const ids = [...new Set([...candidateIds, ...included])].sort();
+      const evidence = await loadEvidence(tx, ids, cfg);
+      const rows = ids.length === 0 ? [] : await tx.select({ id: places.id, kind: places.kind, status: places.status, geoObjectId: places.geoObjectId }).from(places).where(inArray(places.id, ids));
 
-  const out = new Map<number, Map<string, Verdict>>();
-  for (const n of thresholds) {
-    const byPlace = new Map<string, Verdict>();
-    for (const r of rows) {
-      if (!isDecidedStatus(r.status)) continue;
-      const e = evidence.get(r.id) ?? [];
-      const verdict = decideBerth(r.kind, e, { ...cfg.research.confirmation, minIndependentSources: n });
-      byPlace.set(
-        r.id,
-        adminSet.get(r.id) && adminStatusStands(r.status, verdict, e)
-          ? { status: r.status as "candidate" | "confirmed", reason: "Status von einem Admin gesetzt", independentSources: verdict.independentSources, blockingSignalId: null, signalIds: [] }
-          : verdict,
-      );
-    }
-    out.set(n, byPlace);
-  }
-  return out;
+      const out = new Map<number, Map<string, Verdict>>(thresholds.map((n) => [n, new Map()]));
+      for (const n of thresholds) {
+        const rule = { ...cfg, research: { ...cfg.research, confirmation: { ...cfg.research.confirmation, minIndependentSources: n } } };
+        for (const r of rows) {
+          const adjusted = await adjustVerdict(tx, { id: r.id, geoObjectId: r.geoObjectId, kind: r.kind, status: r.status }, evidence.get(r.id) ?? [], rule, { ruleOnly: included.has(r.id) });
+          out.get(n)!.set(
+            r.id,
+            adjusted.stands
+              ? { status: r.status as "candidate" | "confirmed", reason: ADMIN_SET_REASON, independentSources: adjusted.verdict.independentSources, blockingSignalId: null, signalIds: [] }
+              : { ...adjusted.verdict, status: adjusted.to, reason: adjusted.reason },
+          );
+        }
+      }
+      return out;
+    },
+    { accessMode: "read only", isolationLevel: "repeatable read" },
+  );
 }

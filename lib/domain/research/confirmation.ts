@@ -5,7 +5,7 @@ import type { Db } from "@/lib/db/client";
 import { places, type BerthSignalKind, type PageKind, type PlaceKind, type PlaceStatus } from "@/lib/db/schema";
 import type { ObservedAtBasis } from "@/lib/db/schema/sources";
 import { dismissTasks, lockOpenPlaceTasks } from "@/lib/domain/consolidation/task-locks";
-import { recheckExclusion } from "@/lib/domain/geometry/restrictions";
+import { applyExclusion, pendingExclusionHits, type RestrictionHit } from "@/lib/domain/geometry/restrictions";
 import { newPublicId } from "@/lib/domain/ids";
 import { hasOpenPairTask, recordDecision, SYSTEM_ACTOR } from "@/lib/domain/places/auto-status";
 import { registrableDomain } from "@/lib/domain/sources/urls";
@@ -256,7 +256,7 @@ export async function loadEvidence(db: Db, placeIds: string[], config: AppConfig
  * task, or a `place` review task decided `confirm` / `reject` / `no_anchoring`) is not by `system`; without one, a
  * place an admin created („Ort anlegen“, `create_place`, as `kindChosenByAdmin` in auto-status).
  */
-export async function statusSetByAdmin(tx: Db, placeId: string, geoObjectId: string): Promise<boolean> {
+async function statusSetByAdmin(tx: Db, placeId: string, geoObjectId: string): Promise<boolean> {
   const { rows } = await tx.execute<{ decided_by: string }>(sql`
     select d.decided_by
     from review_decisions d join review_tasks t on t.id = d.task_id
@@ -281,7 +281,7 @@ export async function statusSetByAdmin(tx: Db, placeId: string, geoObjectId: str
  * Whether a status an admin set stands against the verdict: always, except an admin's `confirmed` the rule blocks by
  * an authority ban (ruling: the anti-goal beats the admin). Shared by `applyVerdict` and the gate's `verdictsByThreshold`.
  */
-export function adminStatusStands(status: PlaceStatus, verdict: Verdict, evidence: Evidence[]): boolean {
+function adminStatusStands(status: PlaceStatus, verdict: Verdict, evidence: Evidence[]): boolean {
   const blocking = evidence.find((e) => e.signalId === verdict.blockingSignalId);
   const authorityBan = blocking?.kind === "prohibited" && blocking.pageKind === "authority";
   return !(status === "confirmed" && authorityBan);
@@ -294,6 +294,51 @@ export function isDecidedStatus(status: PlaceStatus): boolean {
 
 /** The statuses this rule decides on; `rejected`, `abandoned` and `no_anchoring` (whoever set it) are final here. */
 const DECIDED_STATUSES: ReadonlySet<PlaceStatus> = new Set<PlaceStatus>(["candidate", "confirmed"]);
+
+/** The reason of a verdict a restricted area ban set (`adjustVerdict`) and of one an admin's status gave (the gate reads them back). */
+export const RESTRICTED_REASON = "Sperrgebiet";
+export const ADMIN_SET_REASON = "Status von einem Admin gesetzt";
+
+export type AdjustedVerdict =
+  /** An admin's status stands against the rule. */
+  | { stands: true; verdict: Verdict }
+  | { stands: false; verdict: Verdict; to: Verdict["status"]; reason: string; exclusionHits: RestrictionHit[]; overridesAdmin: boolean };
+
+/**
+ * What the rule delivers for a place, read only (shared by `applyVerdict`, which writes it, and the gate's
+ * `verdictsByThreshold`, which only measures it): the verdict (`decideBerth`), then an admin's status stands except an
+ * admin confirmation against an authority ban, then a candidate to be confirmed waits while a duplicate review of its
+ * object is open (stays `candidate`) or becomes `no_anchoring` when a banning restricted area still holds it
+ * (`exclusionHits`). `ruleOnly`: the pure rule for a place of a final status or whose status an admin set (the gate
+ * measures a place a human decided as if it were a candidate): no admin check, adjusted as a candidate.
+ */
+export async function adjustVerdict(
+  tx: Db,
+  place: { id: string; geoObjectId: string; kind: PlaceKind; status: PlaceStatus },
+  evidence: Evidence[],
+  cfg: AppConfig,
+  o: { ruleOnly?: boolean } = {},
+): Promise<AdjustedVerdict> {
+  const verdict = decideBerth(place.kind, evidence, cfg.research.confirmation);
+  const overridesAdmin = !o.ruleOnly && (await statusSetByAdmin(tx, place.id, place.geoObjectId));
+  if (overridesAdmin && adminStatusStands(place.status, verdict, evidence)) return { stands: true, verdict };
+  let to: Verdict["status"] = verdict.status;
+  let reason = verdict.reason;
+  let exclusionHits: RestrictionHit[] = [];
+  if (to === "confirmed" && (o.ruleOnly || place.status === "candidate")) {
+    if (await hasOpenPairTask(tx, place.geoObjectId)) {
+      to = "candidate";
+      reason = `offene Dubletten-Prüfung (${verdict.reason})`;
+    } else {
+      exclusionHits = await pendingExclusionHits(tx, place, cfg.geometry.restriction.minShare);
+      if (exclusionHits.length > 0) {
+        to = "no_anchoring";
+        reason = RESTRICTED_REASON;
+      }
+    }
+  }
+  return { stands: false, verdict, to, reason, exclusionHits, overridesAdmin };
+}
 
 const ACTION: Record<Verdict["status"], string> = { confirmed: "confirm", candidate: "candidate", no_anchoring: "no_anchoring" };
 
@@ -318,24 +363,12 @@ async function applyVerdict(tx: Db, placeId: string, evidence: Evidence[], now: 
     .for("update");
   if (!place || !isDecidedStatus(place.status)) return null;
 
-  const verdict = decideBerth(place.kind, evidence, cfg.research.confirmation);
-  // an admin's status stands, except a confirmation against an authority ban
-  const overridesAdmin = await statusSetByAdmin(tx, place.id, place.geoObjectId);
-  if (overridesAdmin && adminStatusStands(place.status, verdict, evidence)) return null;
-  let to: Verdict["status"] = verdict.status;
-  let reason = verdict.reason;
-  // a candidate inside a restricted area: `applyExclusion` set `no_anchoring` with its own reason (`restricted:<kind>:<id>`)
-  let excluded = false;
-  if (to === "confirmed" && place.status === "candidate") {
-    if (await hasOpenPairTask(tx, place.geoObjectId)) {
-      to = "candidate";
-      reason = `offene Dubletten-Prüfung (${verdict.reason})`;
-    } else if ((await recheckExclusion(tx, { id: place.id, geoObjectId: place.geoObjectId }, cfg.geometry.restriction.minShare)) === "excluded") {
-      to = "no_anchoring";
-      reason = "Sperrgebiet";
-      excluded = true;
-    }
-  }
+  const adjusted = await adjustVerdict(tx, place, evidence, cfg);
+  if (adjusted.stands) return null;
+  const { verdict, to, reason, overridesAdmin } = adjusted;
+  // a candidate inside a restricted area: `applyExclusion` sets `no_anchoring` with its own reason (`restricted:<kind>:<id>`)
+  const excluded = adjusted.exclusionHits.length > 0;
+  if (excluded) await applyExclusion(tx, place.id, adjusted.exclusionHits);
   const wantedReason = to === "confirmed" ? null : reason;
   if (to === place.status) {
     if (wantedReason !== place.statusReason) await tx.update(places).set({ statusReason: wantedReason, updatedAt: sql`now()` }).where(eq(places.id, place.id));
