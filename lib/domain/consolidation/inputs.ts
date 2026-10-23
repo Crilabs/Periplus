@@ -2,13 +2,14 @@ import { sql, type SQL } from "drizzle-orm";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
-import type { PlaceKind, PlaceStatus, PoiCategory } from "@/lib/db/schema/geo";
+import { HIGHLIGHT_CATEGORIES, type HighlightCategory, type PlaceKind, type PlaceStatus } from "@/lib/db/schema/geo";
 import { activeExtractionRun } from "@/lib/domain/extraction/active-run";
 import { latestComputations } from "@/lib/domain/facts/computations";
 import { levelFor } from "@/lib/domain/facts/levels";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
+import { inHighlightCategories } from "@/lib/domain/highlights/categories";
 import { loadHighlightCandidates } from "@/lib/domain/highlights/candidates";
 import type { HighlightCandidate, TextName } from "@/lib/domain/highlights/select";
 import { effectiveVersionMeta, type EffectiveVersionMeta } from "@/lib/domain/mentions/classification";
@@ -344,7 +345,7 @@ async function poiInputs(db: Db, geoObjectId: string, cfg: ConsolidationConfig, 
            ${displayNameSql(sql`o.id`, today)} as name
     from places p
     join geo_objects o
-      on o.type = 'poi' and o.category is not null and o.merged_into_id is null
+      on o.type = 'poi' and ${inHighlightCategories(sql.raw("o.category"))} and o.merged_into_id is null
      and ${validAtAlias("o", today)}
      -- box prefilter (index), then the exact distance in metres
      and o.geom && ST_Expand(p.position, ${radiusM}::float8 / (111320 * cos(radians(ST_Y(p.position)))))
@@ -585,7 +586,7 @@ export type DerivedInputs = {
   importance: {
     sources: Array<{ key: string; weight: number }>;
     sitelinks: number | null;
-    category: PoiCategory;
+    category: HighlightCategory;
     /** `poiKinds` of its tags (importance `tagBonus`, spec 16). */
     kinds: string[];
     spotCandidates: Array<{ placeId: string; distanceNm: number }>;
@@ -716,14 +717,14 @@ async function parentOf(db: Db, geoObjectId: string): Promise<string | null> {
 
 async function importanceInputs(db: Db, geoObjectId: string, opts: LoadInputsOptions): Promise<DerivedInputs["importance"]> {
   const { today, cfg } = opts;
-  const { rows: poi } = await db.execute<{ category: PoiCategory | null; sitelinks: number | null; tags: Record<string, unknown> }>(sql`
+  const { rows: poi } = await db.execute<{ category: HighlightCategory | null; sitelinks: number | null; tags: Record<string, unknown> }>(sql`
     select o.category::text as category, w.sitelinks, o.tags
     from geo_objects o
     left join wikidata_sitelinks w on w.wikidata_id = o.wikidata_id
     where o.id = ${geoObjectId}
   `);
   const category = poi[0]?.category ?? null;
-  if (category === null) return null;
+  if (category === null || !(HIGHLIGHT_CATEGORIES as readonly string[]).includes(category)) return null;
 
   const { rows: sourceRows } = await db.execute<{ id: string; weight: number }>(sql`
     select distinct s.id, s.weight

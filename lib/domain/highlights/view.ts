@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import type { PoiCategory } from "@/lib/db/schema";
+import { HIGHLIGHT_CATEGORIES, type HighlightCategory } from "@/lib/db/schema";
 import { POI_CATEGORY_LABELS } from "@/lib/domain/facts/labels";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { latestProfile } from "@/lib/domain/timeline";
@@ -15,7 +15,7 @@ import type { HighlightsValue } from "./selections";
 export const HIGHLIGHT_LEVEL_LABELS: Record<HighlightLevel, string> = { none: "nur das", some: "einiges mehr", many: "sehr viel mehr" };
 
 export type PlaceHighlights = {
-  category: PoiCategory;
+  category: HighlightCategory;
   label: string;
   level: HighlightLevel;
   levelLabel: string;
@@ -31,7 +31,7 @@ export async function placeHighlightsView(db: Db, placeGeoObjectId: string): Pro
   const profile = await latestProfile(db, placeGeoObjectId);
   const value = profile?.attributes["derived.highlights"] as HighlightsValue | undefined;
   if (!value) return [];
-  const derivedFrom = (profile!.provenance["derived.highlights"]?.derivedFrom ?? {}) as Partial<Record<PoiCategory, { candidates?: StoredCandidate[] }>>;
+  const derivedFrom = (profile!.provenance["derived.highlights"]?.derivedFrom ?? {}) as Partial<Record<HighlightCategory, { candidates?: StoredCandidate[] }>>;
   const ids = Object.values(value).flatMap((v) => v?.ids ?? []);
   const names = new Map<string, string | null>();
   if (ids.length > 0) {
@@ -40,7 +40,7 @@ export async function placeHighlightsView(db: Db, placeGeoObjectId: string): Pro
     );
     for (const r of rows) names.set(r.id, r.name);
   }
-  return (Object.keys(POI_CATEGORY_LABELS) as PoiCategory[]).flatMap((category) => {
+  return HIGHLIGHT_CATEGORIES.flatMap((category) => {
     const sel = value[category];
     if (!sel) return [];
     const candidates = derivedFrom[category]?.candidates ?? [];

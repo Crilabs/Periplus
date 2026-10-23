@@ -1,7 +1,7 @@
 import { derivedBerthable } from "./berthable";
 import { createHash } from "node:crypto";
 import type { ConsolidationConfig } from "@/lib/config/schemas";
-import type { PoiCategory } from "@/lib/db/schema/geo";
+import type { HighlightCategory } from "@/lib/db/schema/geo";
 import { canonicalJson, getFactSchema } from "@/lib/domain/facts/schema";
 import { selectHighlights } from "@/lib/domain/highlights/select";
 import { profileConfidence } from "./derived/confidence";
@@ -235,7 +235,7 @@ export function highlightsAttribute(
 ): { value: Record<string, { ids: string[]; level: string }>; provenance: AttributeProvenance } | null {
   if (!cfg.highlights || !inputs) return null;
   const selections = selectHighlights(inputs.candidates, inputs.textNames, cfg.highlights, inputs.duplicateM);
-  const categories = Object.keys(selections).sort() as PoiCategory[];
+  const categories = Object.keys(selections).sort() as HighlightCategory[];
   if (categories.length === 0) return null;
   const value = Object.fromEntries(categories.map((c) => [c, { ids: selections[c]!.ids, level: selections[c]!.level }]));
   const derivedFrom = Object.fromEntries(categories.map((c) => [c, selections[c]!]));

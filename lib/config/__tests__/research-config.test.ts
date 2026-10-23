@@ -28,6 +28,25 @@ describe("research config", () => {
     expect(researchSchema.safeParse(d).success).toBe(false);
   });
 
+  it("loads the state start values and rejects an unknown always category", () => {
+    const c = getConfig().research;
+    expect(c.state).toEqual({
+      landingRadiusM: 600,
+      footMaxM: 1500,
+      detourFactor: 1.4,
+      transportMaxM: 15000,
+      transportCategories: ["culture", "town", "nature", "beach"],
+      transportMinSitelinks: 5,
+      alwaysCategories: ["food", "supply", "bakery", "beach", "transport"],
+    });
+    const bad = valid();
+    bad.state.alwaysCategories.push("bogus" as never);
+    expect(researchSchema.safeParse(bad).success).toBe(false);
+    const neg = valid();
+    neg.state.footMaxM = -1;
+    expect(researchSchema.safeParse(neg).success).toBe(false);
+  });
+
   it("loads extraction, confirmation and discovery start values", () => {
     const c = getConfig().research;
     expect(c.extraction).toEqual({ factSchema: "v4", placeRadiusKm: 15, maxUnitWords: 12000, windowWords: 600, maxSharedWords: 8, routeMaxStops: 40, maxAttempts: 3, markdownReadConcurrency: 8 });

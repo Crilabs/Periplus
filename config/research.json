@@ -43,5 +43,6 @@
     "copyMinSharedWords": 12
   },
   "gate": { "subdivision": "GR-I", "thresholds": [2, 3, 4, 5], "released": false, "chosenThreshold": null, "maxPositionDeviationM": 150, "minConfirmed": 25 },
-  "discovery": { "corridorBufferKm": 3, "minNameSimilarity": 0.8, "vetoSimilarity": 0.4, "maxLegKm": 25, "maxLegDays": 3, "corroboratingDomains": 2 }
+  "discovery": { "corridorBufferKm": 3, "minNameSimilarity": 0.8, "vetoSimilarity": 0.4, "maxLegKm": 25, "maxLegDays": 3, "corroboratingDomains": 2 },
+  "state": { "landingRadiusM": 600, "footMaxM": 1500, "detourFactor": 1.4, "transportMaxM": 15000, "transportCategories": ["culture", "town", "nature", "beach"], "transportMinSitelinks": 5, "alwaysCategories": ["food", "supply", "bakery", "beach", "transport"] }
 }

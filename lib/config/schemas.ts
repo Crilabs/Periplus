@@ -4,6 +4,7 @@ import {
   geoObjectTypeEnum,
   placeKindEnum,
   placeStatusEnum,
+  HIGHLIGHT_CATEGORIES,
   poiCategoryEnum,
   restrictedKindEnum,
   seabedTypeEnum,
@@ -966,8 +967,8 @@ export const consolidationSchema = z.strictObject({
       sitelinksPerPoint: positive,
       maxSitelinkPoints: z.number().nonnegative(),
       categoryBonus: z.strictObject(
-        Object.fromEntries(poiCategoryEnum.enumValues.map((c) => [c, z.number().nonnegative()])) as Record<
-          (typeof poiCategoryEnum.enumValues)[number],
+        Object.fromEntries(HIGHLIGHT_CATEGORIES.map((c) => [c, z.number().nonnegative()])) as Record<
+          (typeof HIGHLIGHT_CATEGORIES)[number],
           z.ZodNumber
         >,
       ),
@@ -1453,6 +1454,21 @@ export const researchSchema = z
       maxLegDays: z.number().int().nonnegative(),
       /** A research name stays provisional until route stops of this many registrable domains gave it. */
       corroboratingDomains: z.number().int().positive(),
+    }),
+    /** Current state per berth (plan N4a): landing, landside objects and their access. */
+    state: z.strictObject({
+      /** A landing object (pier, slipway, beach) counts for the berth up to this distance. */
+      landingRadiusM: z.number().positive(),
+      /** Walking distance limit; the straight line counts times `detourFactor`. */
+      footMaxM: z.number().positive(),
+      detourFactor: z.number().min(1),
+      /** Farthest object reached by public transport or taxi. */
+      transportMaxM: z.number().positive(),
+      /** Only objects of these categories with at least `transportMinSitelinks` Wikidata sitelinks count as reached by transport. */
+      transportCategories: z.array(poiCategory).min(1),
+      transportMinSitelinks: z.number().int().nonnegative(),
+      /** Categories always listed when within foot distance. */
+      alwaysCategories: z.array(poiCategory).min(1),
     }),
   })
   .superRefine((c, ctx) => {

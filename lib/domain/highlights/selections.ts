@@ -1,7 +1,7 @@
 import { eq, or, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { validAtAlias } from "@/lib/domain/timeline";
-import { highlightSelections, type PoiCategory } from "@/lib/db/schema";
+import { highlightSelections, type HighlightCategory } from "@/lib/db/schema";
 import type { CategorySelection, HighlightLevel } from "./select";
 
 /*
@@ -10,7 +10,7 @@ import type { CategorySelection, HighlightLevel } from "./select";
  */
 
 /** The profile attribute `derived.highlights`: per category the selected ids in rank order and the level. */
-export type HighlightsValue = Partial<Record<PoiCategory, { ids: string[]; level: HighlightLevel }>>;
+export type HighlightsValue = Partial<Record<HighlightCategory, { ids: string[]; level: HighlightLevel }>>;
 
 /**
  * Replaces the selection rows of the place with those of its profile `version`: `value` is its `derived.highlights`
@@ -21,15 +21,15 @@ export async function replaceHighlightSelections(
   placeGeoObjectId: string,
   version: number,
   value: HighlightsValue | undefined,
-  selections: Partial<Record<PoiCategory, CategorySelection>> | undefined,
+  selections: Partial<Record<HighlightCategory, CategorySelection>> | undefined,
 ): Promise<void> {
   await deleteHighlightSelections(tx, placeGeoObjectId);
   const rows = Object.entries(value ?? {}).flatMap(([category, sel]) => {
-    const distance = new Map((selections?.[category as PoiCategory]?.candidates ?? []).map((c) => [c.geoObjectId, c.distanceKm]));
+    const distance = new Map((selections?.[category as HighlightCategory]?.candidates ?? []).map((c) => [c.geoObjectId, c.distanceKm]));
     return (sel?.ids ?? []).map((poiGeoObjectId, i) => {
       const distanceKm = distance.get(poiGeoObjectId);
       if (distanceKm === undefined) throw new Error(`highlight ${poiGeoObjectId} of ${placeGeoObjectId} has no candidate distance`);
-      return { placeGeoObjectId, poiGeoObjectId, category: category as PoiCategory, rank: i + 1, distanceKm, profileVersion: version };
+      return { placeGeoObjectId, poiGeoObjectId, category: category as HighlightCategory, rank: i + 1, distanceKm, profileVersion: version };
     });
   });
   if (rows.length > 0) await tx.insert(highlightSelections).values(rows);
