@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { runs } from "@/lib/db/schema";
@@ -35,4 +35,32 @@ export async function confirmBerths(db: Db, job: ConfirmJob, config: AppConfig =
   const transitions = await applyBerthVerdicts(db, placeIds, now, config);
   getLog().info({ runId: job.runId, places: placeIds.length, transitions: transitions.length }, "berths decided");
   return transitions;
+}
+
+/**
+ * The places of the run's candidates the research rule moved since the run began (a `place_status` decision `rule:
+ * research` of `system` at or after the run's creation, less 5 minutes for the clock difference between the app and the database), with their current state: `changed` objects for the
+ * consolidation, `confirmed` places (still `confirmed`, with a public id) for the follow-up run. Read from the
+ * database rather than from `confirmBerths`' result, so a retried job (which changes nothing any more) redoes its
+ * follow-ups.
+ */
+export async function researchChanges(db: Db, runId: string): Promise<{ changed: Array<{ placeId: string; geoObjectId: string }>; confirmed: string[] }> {
+  const [run] = await db.select({ params: runs.params, createdAt: runs.createdAt }).from(runs).where(eq(runs.id, runId));
+  if (!run) throw new Error(`run ${runId} does not exist`);
+  const placeIds = await researchCandidates(db, researchScope(run.params as Record<string, unknown>));
+  if (placeIds.length === 0) return { changed: [], confirmed: [] };
+  const ids = sql.join(placeIds.map((id) => sql`${id}`), sql`, `);
+  const { rows } = await db.execute<{ id: string; geo_object_id: string; status: string; public_id: string | null }>(sql`
+    select p.id, p.geo_object_id, p.status::text as status, p.public_id
+    from places p
+    where p.id::text in (${ids})
+      and exists (
+        select 1 from review_tasks t join review_decisions d on d.task_id = t.id
+        where t.kind = 'place_candidate' and t.subject_type = 'place_status' and t.subject_id = p.id::text
+          and d.decided_by = 'system' and d.decision->>'rule' = 'research' and d.decided_at >= ${run.createdAt}::timestamptz - interval '5 minutes')
+    order by p.id`);
+  return {
+    changed: rows.map((r) => ({ placeId: r.id, geoObjectId: r.geo_object_id })),
+    confirmed: rows.filter((r) => r.status === "confirmed" && r.public_id !== null).map((r) => r.id),
+  };
 }

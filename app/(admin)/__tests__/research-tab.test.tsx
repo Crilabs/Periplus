@@ -8,6 +8,7 @@ const row = (over: Partial<ResearchRow> = {}): ResearchRow => ({
   domain: "blog.test.invalid",
   rank: 2,
   purpose: "positive",
+  purposes: ["positive"],
   keyword: "Kolona anchorage",
   documentId: "00000000-0000-4000-8000-000000000001",
   fetch: null,
@@ -28,7 +29,13 @@ const verdict = (over: Partial<ResearchViewData["verdict"]> = {}): ResearchViewD
   ...over,
 });
 
-const view = (rows: ResearchRow[], v = verdict()): ResearchViewData => ({ verdict: v, rows });
+const view = (rows: ResearchRow[], v = verdict(), over: Partial<ResearchViewData> = {}): ResearchViewData => ({
+  status: v.status,
+  statusReason: null,
+  verdict: v,
+  rows,
+  ...over,
+});
 
 describe("ResearchTab", () => {
   it("shows the empty state", () => {
@@ -49,7 +56,7 @@ describe("ResearchTab", () => {
 
   it("marks generated pages, negative searches, and links an unfetched hit to the external URL", () => {
     const html = renderToStaticMarkup(
-      <ResearchTab view={view([row({ purpose: "negative", documentId: null, assessment: { pageKind: "other", firstHand: false, generated: true, observedAt: "2024-01-01", berths: [] } })])} />,
+      <ResearchTab view={view([row({ purpose: "negative", purposes: ["negative"], documentId: null, assessment: { pageKind: "other", firstHand: false, generated: true, observedAt: "2024-01-01", berths: [] } })])} />,
     );
     expect(html).toContain("Negativsuche");
     expect(html).toContain("SEO/KI");
@@ -80,10 +87,33 @@ describe("ResearchTab", () => {
     expect(html).toContain("Bestätigt: 2 unabhängige Quellen (a.example, b.example)");
   });
 
+  it("says confirmed only when the place is confirmed; otherwise its status and reason, and what the rule says", () => {
+    const confirmedVerdict = verdict({ status: "confirmed", independentSources: ["a.example", "b.example"], reason: "bestätigt" });
+    const blocked = renderToStaticMarkup(<ResearchTab view={view([row()], confirmedVerdict, { status: "no_anchoring", statusReason: "Sperrgebiet" })} />);
+    expect(blocked).not.toContain("Bestätigt:");
+    expect(blocked).toContain("Kein Ankerplatz: Sperrgebiet");
+    expect(blocked).toContain("Regel ergibt: bestätigt, 2 unabhängige Quellen (a.example, b.example)");
+
+    const admin = renderToStaticMarkup(<ResearchTab view={view([row()], verdict({ reason: "0 von 2 unabhängigen Quellen" }), { status: "confirmed" })} />);
+    expect(admin).toContain("Bestätigt (von Hand)");
+    expect(admin).toContain("Regel ergibt: 0 von 2 unabhängigen Quellen");
+    expect(admin).not.toContain("Bestätigt:");
+
+    const same = renderToStaticMarkup(<ResearchTab view={view([row()], confirmedVerdict)} />);
+    expect(same).not.toContain("Regel ergibt");
+  });
+
   it("shows the reason when not confirmed, also without hits", () => {
-    const html = renderToStaticMarkup(<ResearchTab view={view([], verdict({ reason: "Ankerverbot der Behörde vom 2026-05-01" }))} />);
+    const html = renderToStaticMarkup(
+      <ResearchTab view={view([], verdict({ reason: "Ankerverbot der Behörde vom 2026-05-01" }), { statusReason: "Ankerverbot der Behörde vom 2026-05-01" })} />,
+    );
     expect(html).toContain("Nicht bestätigt: Ankerverbot der Behörde vom 2026-05-01");
     expect(html).toContain("Noch keine Recherche für diesen Liegeplatz.");
+  });
+
+  it("shows both purposes of a page listed once", () => {
+    const html = renderToStaticMarkup(<ResearchTab view={view([row({ purposes: ["positive", "negative"] })])} />);
+    expect(html).toContain("Bestätigung, Negativsuche");
   });
 
   it("lists the signals and facts of a page with kind, first hand, confidence, date, quote, subject and tone", () => {

@@ -1,12 +1,9 @@
 import { Fragment } from "react";
 import type { FactRow, ResearchRow, ResearchViewData, SignalRow } from "@/lib/domain/research/view";
-import { PAGE_KIND_LABELS, RESEARCH_FETCH_REASON_LABELS, SIGNAL_KIND_LABELS, TONE_LABELS } from "../../_components/labels";
+import { PAGE_KIND_LABELS, PLACE_STATUS_LABELS, RESEARCH_FETCH_REASON_LABELS, SIGNAL_KIND_LABELS, TONE_LABELS } from "../../_components/labels";
 import { Badge, EmptyState, Panel, Table, tdClass, TextLink, thClass, trClass } from "../../_components/ui";
 
-const PURPOSE_LABELS = {
-  positive: "Bestätigung",
-  negative: "Negativsuche",
-} as const;
+const PURPOSE_LABELS = { positive: "Bestätigung", negative: "Negativsuche" } as const;
 
 /** „nicht geholt: <Grund>“ for a hit without assessment whose newest fetch did not store or confirm a page. */
 function notFetched(r: ResearchRow): string | null {
@@ -35,16 +32,36 @@ function FactLine({ f }: { f: FactRow }) {
   );
 }
 
-/** The header line: the confirmation rule's verdict with its sources or its reason. */
-function VerdictLine({ verdict }: { verdict: ResearchViewData["verdict"] }) {
-  const text =
-    verdict.status === "confirmed"
-      ? `Bestätigt: ${verdict.independentSources.length} unabhängige Quellen (${verdict.independentSources.join(", ")})`
-      : `Nicht bestätigt: ${verdict.reason}`;
+/** What the rule says, in German: the sources of a confirmation, else the reason. */
+function ruleText(verdict: ResearchViewData["verdict"]): string {
+  return verdict.status === "confirmed"
+    ? `bestätigt, ${verdict.independentSources.length} unabhängige Quellen (${verdict.independentSources.join(", ")})`
+    : verdict.reason;
+}
+
+/**
+ * The header: the place's actual status (confirmed only when it is; a rule-confirmed place shows its sources) with its
+ * reason, and „Regel ergibt: …“ below when the rule's verdict differs from the status (admin-set, final, held by a
+ * duplicate review or inside a restricted area).
+ */
+function VerdictLine({ view }: { view: ResearchViewData }) {
+  const { status, statusReason, verdict } = view;
+  let text: string;
+  if (status === "confirmed") {
+    text =
+      verdict.status === "confirmed"
+        ? `Bestätigt: ${verdict.independentSources.length} unabhängige Quellen (${verdict.independentSources.join(", ")})`
+        : "Bestätigt (von Hand)";
+  } else if (status === "candidate") {
+    text = `Nicht bestätigt: ${statusReason ?? verdict.reason}`;
+  } else {
+    text = statusReason ? `${PLACE_STATUS_LABELS[status]}: ${statusReason}` : PLACE_STATUS_LABELS[status];
+  }
   return (
-    <p className="mb-3 text-sm font-medium" data-testid="research-verdict">
-      {text}
-    </p>
+    <div className="mb-3 text-sm" data-testid="research-verdict">
+      <p className="font-medium">{text}</p>
+      {verdict.status !== status && <p className="text-muted">Regel ergibt: {ruleText(verdict)}</p>}
+    </div>
   );
 }
 
@@ -54,11 +71,11 @@ function VerdictLine({ verdict }: { verdict: ResearchViewData["verdict"] }) {
  * and the number of signals and facts, and below each page its signals and facts with their quotes.
  */
 export function ResearchTab({ view }: { view: ResearchViewData }) {
-  const { rows, verdict } = view;
+  const { rows } = view;
   if (rows.length === 0) {
     return (
       <>
-        <VerdictLine verdict={verdict} />
+        <VerdictLine view={view} />
         <Panel>
           <EmptyState title="Noch keine Recherche für diesen Liegeplatz." />
         </Panel>
@@ -67,7 +84,7 @@ export function ResearchTab({ view }: { view: ResearchViewData }) {
   }
   return (
     <>
-      <VerdictLine verdict={verdict} />
+      <VerdictLine view={view} />
       <Panel flush>
         <Table>
           <thead>
@@ -87,7 +104,7 @@ export function ResearchTab({ view }: { view: ResearchViewData }) {
             {rows.map((r) => (
               <Fragment key={`${r.purpose}:${r.url}`}>
                 <tr className={trClass}>
-                  <td className={tdClass}>{PURPOSE_LABELS[r.purpose]}</td>
+                  <td className={tdClass}>{r.purposes.map((p) => PURPOSE_LABELS[p]).join(", ")}</td>
                   <td className={tdClass}>{r.rank}</td>
                   <td className={tdClass}>{r.keyword}</td>
                   <td className={tdClass}>

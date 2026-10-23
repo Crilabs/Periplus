@@ -1,4 +1,3 @@
-import { inArray } from "drizzle-orm";
 import { z } from "zod";
 import { createConverters } from "@/lib/adapters/fetch";
 import { getCrawlTransport } from "@/lib/adapters/fetch/guarded";
@@ -6,12 +5,11 @@ import { getTransport } from "@/lib/adapters/http";
 import { runPdftotext } from "@/lib/adapters/pdf";
 import { getArchive } from "@/lib/adapters/s3";
 import { getConfig } from "@/lib/config";
-import { places } from "@/lib/db/schema";
 import { getEnv } from "@/lib/env";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import { assessPages, planResearchAssess, RESEARCH_ASSESS_QUEUE, RESEARCH_ASSESS_STAGE } from "@/lib/pipeline/research/assess";
-import { confirmBerths, planResearchConfirm, RESEARCH_CONFIRM_STAGE } from "@/lib/pipeline/research/confirm";
+import { planResearchConfirm, RESEARCH_CONFIRM_STAGE } from "@/lib/pipeline/research/confirm";
 import { RESEARCH_EXTRACT_QUEUE, RESEARCH_EXTRACT_STAGE, extractUnits, planResearchExtract } from "@/lib/pipeline/research/extract";
 import {
   discoverStops,
@@ -166,67 +164,4 @@ const discoverJobSchema = z.object({
 /** Assigns the open route stops of one page to places (`matchStops`). */
 export const researchDiscoverHandler: JobHandler<JobData> = async (data, ctx) => {
   await discoverStops(ctx.db, discoverJobSchema.parse(data));
-};
-
-const confirmJobSchema = z.object({
-  runId: z.uuid(),
-  stage: z.string().min(1),
-  key: z.string().min(1),
-});
-
-/**
- * Applies the confirmation rule (`confirmBerths`). After the status changes committed: the follow-up run of the berths
- * that became `confirmed` (spec 5.7b; a change away from `confirmed` starts none, the delivery filters on it) and a
- * consolidation of the changed places' objects, so profiles and `place_new` follow (the consolidation no longer
- * confirms). The run starters are imported on demand: they reach the stage registry, which imports this module. A
- * starter that fails is logged, not retried: the transitions are final and a retry of the job would not see them again.
- */
-export const researchConfirmHandler: JobHandler<JobData> = async (data, ctx) => {
-  const job = confirmJobSchema.parse(data);
-  const transitions = await confirmBerths(ctx.db, job);
-  if (transitions.length === 0) return;
-  const log = ctx.log;
-  const confirmed = transitions.filter((t) => t.to === "confirmed").map((t) => t.placeId);
-  if (confirmed.length > 0) {
-    try {
-      const { startBerthFollowupRun } = await import("@/lib/pipeline/berth-followup-run");
-      const run = await startBerthFollowupRun(ctx.db, ctx.boss, confirmed, "system");
-      log.info(
-        {
-          runId: job.runId,
-          followupRunId: run?.id ?? null,
-          places: confirmed.length,
-        },
-        "follow-up run of confirmed berths started",
-      );
-    } catch (err) {
-      log.error({ err, runId: job.runId, places: confirmed }, "follow-up run of confirmed berths not started");
-    }
-  }
-  try {
-    const changed = await ctx.db
-      .select({ geoObjectId: places.geoObjectId })
-      .from(places)
-      .where(
-        inArray(
-          places.id,
-          transitions.map((t) => t.placeId),
-        ),
-      );
-    const { startConsolidationRun } = await import("@/lib/pipeline/consolidation/run");
-    const run = await startConsolidationRun(ctx.db, ctx.boss, {
-      scope: { geoObjectIds: changed.map((c) => c.geoObjectId) },
-      triggeredBy: "system",
-    });
-    log.info(
-      {
-        runId: job.runId,
-        consolidationRunId: run.id,
-        places: transitions.length,
-      },
-      "consolidation of changed berths started",
-    );
-  } catch (err) {
-    log.error({ err, runId: job.runId }, "consolidation of changed berths not started");
-  }
 };

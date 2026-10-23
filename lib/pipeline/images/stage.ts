@@ -100,7 +100,8 @@ async function plannedKey(db: Db, geoObjectId: string, view: ImageView, cfg: Ima
 
 /**
  * The images a run generates, at most `images.pipeline.maxGenerationsPerRun`. Candidates: for a run from
- * `startImageRun` the title images of the subdivision's spots, or the one place and view it names; for any other run
+ * `startImageRun` the title images of the subdivision's spots, or the one place and view it names; for the follow-up
+ * run of confirmed berths (`params.images.geoObjectIds`) the title images of those objects; for any other run
  * the title images of the objects it consolidated (`consolidatedObjects`). Of those, the eligible spots
  * (`eligibleSpots`) whose current generation key is not done yet (`keyDone`: a current image of the slot, an open or a
  * decided task with that key; a forced scope passes over the decided task). Since the key depends on the imagery tiles, it is computed from the current

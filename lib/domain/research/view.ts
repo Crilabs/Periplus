@@ -6,6 +6,8 @@ import type { BerthSignalKind, Tone } from "@/lib/db/schema/research-extract";
 import type { ObservedAtBasis } from "@/lib/db/schema/sources";
 import { getConfig } from "@/lib/config";
 import { activeAssessor } from "./assessment";
+import type { PlaceStatus } from "@/lib/db/schema";
+import { factAttributeLabel, formatFactValue } from "@/lib/domain/facts/labels";
 import { activeExtractor, decideBerth, loadEvidence, type Verdict } from "./confirmation";
 
 export type SignalRow = {
@@ -31,7 +33,10 @@ export type ResearchRow = {
   url: string;
   domain: string;
   rank: number;
+  /** `positive` when the page is a hit of a confirmation search, else `negative`; `rank` and `keyword` are of that hit. */
   purpose: ResearchPurpose;
+  /** Every purpose the page was found for, positive first. */
+  purposes: ResearchPurpose[];
   keyword: string;
   documentId: string | null;
   /** The newest fetch attempt of the page (null while none was made). */
@@ -51,6 +56,9 @@ export type ResearchRow = {
 };
 
 export type ResearchViewData = {
+  /** The place's actual status and its reason (admin-set, final, duplicate-held or restricted places differ from the verdict). */
+  status: PlaceStatus;
+  statusReason: string | null;
   /** The confirmation rule applied to the place's evidence now (what `research.confirm` would decide). */
   verdict: Verdict;
   rows: ResearchRow[];
@@ -63,7 +71,7 @@ export type ResearchViewData = {
  * (positive) before negative search, then by rank.
  */
 export async function researchView(db: Db, placeId: string): Promise<ResearchViewData> {
-  const [place] = await db.select({ kind: places.kind }).from(places).where(eq(places.id, placeId));
+  const [place] = await db.select({ kind: places.kind, status: places.status, statusReason: places.statusReason }).from(places).where(eq(places.id, placeId));
   if (!place) throw new Error(`place ${placeId} does not exist`);
   const cfg = getConfig();
   const verdict = decideBerth(place.kind, (await loadEvidence(db, [placeId], cfg)).get(placeId) ?? [], cfg.research.confirmation);
@@ -91,9 +99,7 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
       : await db
           .select()
           .from(pageAssessments)
-          .where(
-            and(inArray(pageAssessments.documentVersionId, versionIds), eq(pageAssessments.model, model), eq(pageAssessments.promptVersion, promptVersion)),
-          );
+          .where(and(inArray(pageAssessments.documentVersionId, versionIds), eq(pageAssessments.model, model), eq(pageAssessments.promptVersion, promptVersion)));
   const byVersion = new Map(assessments.map((a) => [a.documentVersionId, a]));
 
   const urls = [...new Set(hits.map((h) => h.url))];
@@ -101,11 +107,7 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
     urls.length === 0
       ? []
       : await db
-          .selectDistinctOn([researchFetches.urlNormalized], {
-            url: researchFetches.urlNormalized,
-            outcome: researchFetches.outcome,
-            reason: researchFetches.reason,
-          })
+          .selectDistinctOn([researchFetches.urlNormalized], { url: researchFetches.urlNormalized, outcome: researchFetches.outcome, reason: researchFetches.reason })
           .from(researchFetches)
           .where(inArray(researchFetches.urlNormalized, urls))
           .orderBy(researchFetches.urlNormalized, desc(researchFetches.createdAt), desc(researchFetches.id));
@@ -160,7 +162,7 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
   const factsOf = new Map<string, FactRow[]>();
   for (const f of factRows) {
     const fact: FactRow = {
-      statement: f.statement ?? `${f.attribute}: ${JSON.stringify(f.value)}`,
+      statement: f.statement ?? `${factAttributeLabel(f.attribute!)}: ${formatFactValue(f.attribute!, f.value)}`,
       subject: f.subject,
       observedAt: f.observedAt,
       tone: f.tone,
@@ -179,17 +181,12 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
         domain: h.domain,
         rank: h.rank,
         purpose: h.purpose,
+        purposes: [h.purpose],
         keyword: h.keyword,
         documentId: h.documentId,
         fetch: fetchOf.get(h.url) ?? null,
         assessment: a
-          ? {
-              pageKind: a.pageKind,
-              firstHand: a.firstHand,
-              generated: a.generated,
-              observedAt: a.observedAt,
-              berths: a.berths.map((b) => b.name),
-            }
+          ? { pageKind: a.pageKind, firstHand: a.firstHand, generated: a.generated, observedAt: a.observedAt, berths: a.berths.map((b) => b.name) }
           : null,
         signals,
         facts,
@@ -198,5 +195,12 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
       };
     })
     .sort((x, y) => (x.purpose === y.purpose ? x.rank - y.rank : x.purpose === "positive" ? -1 : 1));
-  return { verdict, rows };
+  // a URL found by a positive and a negative search is one page: shown once, with both purposes
+  const byUrl = new Map<string, ResearchRow>();
+  for (const r of rows) {
+    const seen = byUrl.get(r.url);
+    if (seen) seen.purposes.push(r.purpose);
+    else byUrl.set(r.url, r);
+  }
+  return { status: place.status, statusReason: place.statusReason, verdict, rows: [...byUrl.values()] };
 }

@@ -12,13 +12,13 @@ import { fetchSourceHandler, fetchUrlHandler } from "./handlers/fetch";
 import { gazetteerHandler } from "./handlers/gazetteer";
 import {
   researchAssessHandler,
-  researchConfirmHandler,
   researchDiscoverHandler,
   researchExtractHandler,
   researchFetchHandler,
   researchRoutesHandler,
   researchSearchHandler,
 } from "./handlers/research";
+import { researchConfirmHandler } from "./handlers/research-confirm";
 import { imagesPlaceHandler } from "./handlers/images";
 import { placeWebsiteFreezeHandler, placeWebsiteHandler } from "./handlers/place-website";
 import { gazetteerCoarseHandler, subdivisionsBuildHandler } from "./handlers/subdivisions";
