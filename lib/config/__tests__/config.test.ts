@@ -693,6 +693,8 @@ describe("delivery configuration", () => {
       regions: { types: ["island", "archipelago", "coast_section", "gulf", "channel"], pointRadiusNm: 2 },
       weather: { regionBufferNm: 3, capeOffsetNm: 1, capeLandRadiusM: 2000 },
       highlights: { maxSpotIds: 50 },
+      radius: { nmPerDay: 50, returnFactor: 0.5, minDays: 1, maxDays: 28 },
+      popularity: { neighbourhoodNm: 50 },
       validation: { harbourMinShelter: 0.8, lowConfidenceNote: "wenig belegt" },
       severity: { shelterDelta: 0.2 },
       api: { cacheMaxAgeSeconds: 60 },

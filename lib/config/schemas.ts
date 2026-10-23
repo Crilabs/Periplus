@@ -1070,6 +1070,17 @@ export const deliverySchema = z.strictObject({
     capeOffsetNm: positive,
     capeLandRadiusM: positive,
   }),
+  /** Radius delivery (spec 18): radius = `nmPerDay × days × returnFactor`, `days` within `minDays`–`maxDays`. */
+  radius: z
+    .strictObject({
+      nmPerDay: positive,
+      returnFactor: positive,
+      minDays: positiveInt,
+      maxDays: positiveInt,
+    })
+    .refine((r) => r.minDays <= r.maxDays, "minDays must not exceed maxDays"),
+  /** `popularity` is normalised within this distance of each place, across subdivisions (spec 18), nautical miles. */
+  popularity: z.strictObject({ neighbourhoodNm: positive }),
   highlights: z.strictObject({ maxSpotIds: positiveInt }),
   validation: z.strictObject({
     maxWaterDistanceNm: positive,

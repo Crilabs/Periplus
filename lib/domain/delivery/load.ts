@@ -4,7 +4,7 @@ import type { DeliveryConfig, ImagesConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import type { GeoObjectType, PlaceKind, PlaceStatus, PoiCategory } from "@/lib/db/schema/geo";
 import type { DocType } from "@/lib/db/schema/sources";
-import { popularityForSubdivision } from "@/lib/domain/consolidation/derived/popularity";
+import { popularityForPlaces } from "@/lib/domain/consolidation/derived/popularity";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 import { deliveryNames } from "@/lib/domain/gazetteer/names";
 import { countingSelectionsAt } from "@/lib/domain/highlights/selections";
@@ -79,7 +79,7 @@ export async function loadSubdivisionScope(
   const objectIds = [...spotRows, ...poiRows, ...regionRows].map((r) => r.geoObjectId);
   const profiles = await latestProfiles(db, [...objectIds, ...passages.map((p) => p.geoObjectId)]);
   const names = await loadNames(db, [loaded.geoObjectId, ...areaRows.map((a) => a.geoObjectId), ...objectIds], today);
-  const popularity = await popularityForSubdivision(db, subdivisionId, today);
+  const popularity = await popularityForPlaces(db, spotRows.map((r) => r.geoObjectId), today, cfg.popularity.neighbourhoodNm);
   const withProfile = [...spotRows, ...poiRows].map((r) => r.geoObjectId).filter((id) => profiles.has(id));
   const summaries = await loadSummaries(db, withProfile, profiles);
   // regions too: their facts and character rest on documents, which the forbidden-domain check needs (final review I-2)

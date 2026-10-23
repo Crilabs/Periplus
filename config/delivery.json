@@ -16,6 +16,8 @@
     "character": { "meltemiHigh": 0.6, "meltemiLow": 0.3 }
   },
   "weather": { "regionBufferNm": 3, "regionMinWaterShare": 0.05, "capeOffsetNm": 1, "capeLandRadiusM": 2000 },
+  "radius": { "nmPerDay": 50, "returnFactor": 0.5, "minDays": 1, "maxDays": 28 },
+  "popularity": { "neighbourhoodNm": 50 },
   "highlights": { "maxSpotIds": 50 },
   "validation": {
     "maxWaterDistanceNm": 1.5,
