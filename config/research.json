@@ -24,6 +24,17 @@
     ]
   },
   "maxHitsPerCandidate": 40,
+  "landside": {
+    "templates": [
+      { "template": "{subject} things to do", "lang": "en" },
+      { "template": "{subject} taverna", "lang": "en" },
+      { "template": "{subject} beach", "lang": "en" },
+      { "template": "{subject} Sehenswürdigkeiten", "lang": "de" },
+      { "template": "{subject} cosa vedere", "lang": "it" }
+    ],
+    "maxSubjectsPerPlace": 5,
+    "maxHitsPerSubject": 10
+  },
   "refetchDays": 90,
   "assessWords": 6000,
   "skipDomains": ["navily.com", "google.com", "youtube.com", "facebook.com", "instagram.com", "pinterest.com", "tripadvisor.*", "booking.com", "amazon.com", "getyourguide.com", "rome2rio.com", "alamy.com"],

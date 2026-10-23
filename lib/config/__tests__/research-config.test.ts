@@ -137,4 +137,23 @@ describe("research config", () => {
   it("accepts the shipped config", () => {
     expect(researchSchema.safeParse(valid()).success).toBe(true);
   });
+
+  it("loads the landside start values and rejects a template without {subject} or an unknown language", () => {
+    const c = getConfig().research;
+    expect(c.landside.maxSubjectsPerPlace).toBe(5);
+    expect(c.landside.maxHitsPerSubject).toBe(10);
+    expect(c.landside.templates.map((t) => t.template)).toEqual([
+      "{subject} things to do",
+      "{subject} taverna",
+      "{subject} beach",
+      "{subject} Sehenswürdigkeiten",
+      "{subject} cosa vedere",
+    ]);
+    const bad = valid();
+    bad.landside.templates.push({ template: "things to do", lang: "en" });
+    expect(researchSchema.safeParse(bad).success).toBe(false);
+    const lang = valid();
+    lang.landside.templates.push({ template: "{subject} x", lang: "nl" });
+    expect(researchSchema.safeParse(lang).success).toBe(false);
+  });
 });
