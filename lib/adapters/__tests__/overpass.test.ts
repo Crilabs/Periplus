@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import { testDb } from "@/test/db";
 import { loadConfig } from "@/lib/config";
 import { newId } from "@/lib/domain/ids";
+import { countryBlocks } from "@/lib/domain/gazetteer/land";
 import { RetryableHttpError, makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
-import { buildGazetteerQuery, overpassQuery } from "@/lib/adapters/overpass";
+import { buildGazetteerQuery, overpassQuery, overpassQueryRetrying } from "@/lib/adapters/overpass";
 
 const db = testDb();
 const config = loadConfig();
@@ -22,6 +23,9 @@ const cfg = (): typeof config.gazetteer.overpass => ({
   timeoutSeconds: 180,
   maxRelationPoints: 250_000,
   ratePerMinute: 1_000_000,
+  retries: 4,
+  retryDelaySeconds: 60,
+  blockDeg: 2,
 });
 
 describe("buildGazetteerQuery", () => {
@@ -66,5 +70,65 @@ describe("overpassQuery", () => {
     await expect(overpassQuery(jsonTransport("<html>busy</html>"), "x", { db }, cfg())).rejects.toBeInstanceOf(
       RetryableHttpError,
     );
+  });
+});
+
+describe("overpassQueryRetrying", () => {
+  const ok = JSON.stringify({ elements: [{ type: "node", id: 1, lat: 1, lon: 2 }] });
+  const failing = (statuses: number[], seen: number[] = []): Transport => async () => {
+    const status = statuses[seen.length] ?? 200;
+    seen.push(status);
+    return makeResponse(status, new TextEncoder().encode(status === 200 ? ok : "busy"));
+  };
+
+  it("repeats after 502 with a doubling wait and returns the answer", async () => {
+    const seen: number[] = [];
+    const sleeps: number[] = [];
+    const res = await overpassQueryRetrying(failing([502, 502], seen), "x", { db }, cfg(), { sleep: async (ms) => void sleeps.push(ms) });
+    expect(res.elements).toHaveLength(1);
+    expect(seen).toHaveLength(3);
+    expect(sleeps).toEqual([60_000, 120_000]);
+  });
+
+  it("names the part after the last attempt", async () => {
+    const seen: number[] = [];
+    const error: unknown = await overpassQueryRetrying(failing([502, 502, 502, 502, 502], seen), "x", { db }, cfg(), {
+      sleep: async () => {},
+      part: "islands#3",
+    }).catch((e: unknown) => e);
+    expect((error as Error).message).toMatch(/overpass part islands#3 failed after 5 attempts/);
+    // still retryable: a later job attempt may find the server free
+    expect(error).toBeInstanceOf(RetryableHttpError);
+    expect(seen).toHaveLength(5);
+  });
+
+  it("repeats a remark with a runtime error", async () => {
+    const remark = JSON.stringify({ elements: [], remark: "runtime error: Query timed out" });
+    let calls = 0;
+    const transport: Transport = async () => makeResponse(200, new TextEncoder().encode(calls++ === 0 ? remark : ok));
+    expect((await overpassQueryRetrying(transport, "x", { db }, cfg(), { sleep: async () => {} })).elements).toHaveLength(1);
+  });
+
+  it("does not repeat an error that is not retryable", async () => {
+    const seen: number[] = [];
+    await expect(overpassQueryRetrying(failing([400], seen), "x", { db }, cfg(), { sleep: async () => {} })).rejects.not.toBeInstanceOf(RetryableHttpError);
+    expect(seen).toHaveLength(1);
+  });
+});
+
+describe("countryBlocks", () => {
+  it("covers [19, 34, 29, 42] with 5 x 4 blocks of 2 degrees", () => {
+    const blocks = countryBlocks([19, 34, 29, 42], 2);
+    expect(blocks).toHaveLength(20);
+    expect(Math.min(...blocks.map((b) => b[0]))).toBe(19);
+    expect(Math.min(...blocks.map((b) => b[1]))).toBe(34);
+    expect(Math.max(...blocks.map((b) => b[2]))).toBe(29);
+    expect(Math.max(...blocks.map((b) => b[3]))).toBe(42);
+    expect(blocks.reduce((sum, [w, s, e, n]) => sum + (e - w) * (n - s), 0)).toBe(80);
+  });
+
+  it("ends the last block at the box edge and gives a small box one block", () => {
+    expect(countryBlocks([14, 35.7, 15.1, 36.2], 2)).toEqual([[14, 35.7, 15.1, 36.2]]);
+    expect(countryBlocks([0, 0, 3, 1], 2)).toEqual([[0, 0, 2, 1], [2, 0, 3, 1]]);
   });
 });

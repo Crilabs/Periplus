@@ -116,3 +116,25 @@ export function mediterraneanBbox(bufferKm: number): Bbox {
     Math.ceil(n / TILE_SIZE) * TILE_SIZE,
   ];
 }
+
+/**
+ * Splits `bbox` into blocks of at most `blockDeg` degrees per side, from the south-west corner, row by row; the last
+ * column and row end exactly at the box edge, so the blocks cover the box without gaps.
+ */
+export function countryBlocks([west, south, east, north]: Bbox, blockDeg: number): Bbox[] {
+  const steps = (from: number, to: number) => Math.max(1, Math.ceil((to - from) / blockDeg - 1e-9));
+  const columns = steps(west, east);
+  const rows = steps(south, north);
+  const blocks: Bbox[] = [];
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      blocks.push([
+        west + column * blockDeg,
+        south + row * blockDeg,
+        column === columns - 1 ? east : west + (column + 1) * blockDeg,
+        row === rows - 1 ? north : south + (row + 1) * blockDeg,
+      ]);
+    }
+  }
+  return blocks;
+}

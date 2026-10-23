@@ -3,7 +3,10 @@
     "endpoint": "https://overpass-api.de/api/interpreter",
     "timeoutSeconds": 180,
     "ratePerMinute": 2,
-    "maxRelationPoints": 250000
+    "maxRelationPoints": 250000,
+    "retries": 4,
+    "retryDelaySeconds": 60,
+    "blockDeg": 2
   },
   "marineRegions": {
     "endpoint": "https://geo.vliz.be/geoserver/MarineRegions/wfs",

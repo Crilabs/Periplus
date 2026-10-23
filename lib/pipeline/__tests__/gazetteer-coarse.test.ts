@@ -90,6 +90,41 @@ describe("importCoarseFeatures", () => {
     });
   }, 120_000);
 
+  it("asks once per kind and block, and counts an element that lies in two blocks once", async () => {
+    const elements = [{ type: "way", id: 9_100_010, tags: { place: "island", name: "Border Island" }, geometry: ring(14.2, 35.9, 14.4, 36.0) }];
+    const bodies: string[] = [];
+    const transport: Transport = async (req) => {
+      bodies.push(decodeURIComponent(String(req.body)));
+      return makeResponse(200, new TextEncoder().encode(JSON.stringify({ elements })));
+    };
+    await withRollback(async (tx) => {
+      await setUpMalta(tx);
+      // The synthetic MT polygon is 1.1 x 0.5 degrees: blocks of 0.5 degrees make 3 x 1.
+      const result = await importCoarseFeatures(tx, "MT", { transport, overpass: { ...overpass, blockDeg: 0.5 } });
+      expect(bodies).toHaveLength(3 * 3);
+      expect(result).toEqual({ islands: 1, archipelagos: 0, gulfs: 0, towns: 0 });
+    });
+  }, 120_000);
+
+  it("asks no block that misses the country polygon", async () => {
+    const bodies: string[] = [];
+    const transport: Transport = async (req) => {
+      bodies.push(decodeURIComponent(String(req.body)));
+      return makeResponse(200, new TextEncoder().encode(JSON.stringify({ elements: [] })));
+    };
+    await withRollback(async (tx) => {
+      await setUpMalta(tx);
+      // A far-off second piece widens the box to 14.0–17.0: of its six 0.5-degree blocks, 15.5–16.0 and 16.0–16.5 lie
+      // in neither piece.
+      await tx.execute(sql`INSERT INTO geo_objects (id, type, origin, admin_level, tags, geom)
+        VALUES (gen_random_uuid(), 'country', 'osm', 2, '{"country":"MT","ISO3166-1":"MT"}'::jsonb,
+                ST_Multi(ST_GeomFromText('POLYGON((16.8 35.8, 17.0 35.8, 17.0 35.9, 16.8 35.9, 16.8 35.8))', 4326)))`);
+      await importCoarseFeatures(tx, "MT", { transport, overpass: { ...overpass, blockDeg: 0.5 } });
+      expect(bodies).toHaveLength(3 * 4);
+      expect(bodies.some((b) => b.includes(",15.5,") || b.includes(",16,"))).toBe(false);
+    });
+  }, 120_000);
+
   it("keeps a large bay as bay; drops a small island, a small bay and a town away from the coast", async () => {
     const element = (type: "way" | "node", id: number, tags: Record<string, string>, geometry?: ReturnType<typeof ring>, at?: [number, number]) =>
       geometry ? { type, id, tags, geometry } : { type, id, tags, lat: at![0], lon: at![1] };

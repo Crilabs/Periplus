@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { Transport } from "@/lib/adapters/http";
-import { buildGazetteerQuery, overpassQuery, type OverpassElement } from "@/lib/adapters/overpass";
+import { buildGazetteerQuery, overpassQueryRetrying, type OverpassElement } from "@/lib/adapters/overpass";
 import type { Archive } from "@/lib/adapters/s3";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
@@ -110,7 +110,7 @@ function samplePoint(geometry: GeoObjectDraft["geometry"]): { lon: number; lat: 
 export async function importOsm(
   db: Db,
   input: { scope: GazetteerScope; runId: string; now?: Date },
-  deps: { transport: Transport; archive: Archive },
+  deps: { transport: Transport; archive: Archive; sleep?: (ms: number) => Promise<void> },
 ): Promise<{ created: number; updated: number; skipped: number; names: number }> {
   const { scope, runId } = input;
   const { gazetteer, categories } = getConfig();
@@ -124,7 +124,7 @@ export async function importOsm(
 
   // Fetch outside the import transaction: a rollback must not drop the external_calls row.
   const ql = buildGazetteerQuery(bbox, categories, gazetteer.overpass.timeoutSeconds);
-  const { raw, elements } = await overpassQuery(deps.transport, ql, { db, runId, stage: OSM_STAGE }, gazetteer.overpass);
+  const { raw, elements } = await overpassQueryRetrying(deps.transport, ql, { db, runId, stage: OSM_STAGE }, gazetteer.overpass, { part: "osm", sleep: deps.sleep });
   const date = (input.now ?? new Date()).toISOString().slice(0, 10);
   await deps.archive.put(`datasets/overpass/${scope.key}/${date}.json`, raw, "application/json");
 

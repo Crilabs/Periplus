@@ -1,4 +1,4 @@
-import { inArray, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import { RetryableHttpError, makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
 import type { OverpassElement } from "@/lib/adapters/overpass";
@@ -345,9 +345,15 @@ describe("importOsm", () => {
         objects: (await db.select({ n: sql<number>`count(*)::int` }).from(geoObjects).where(sql`${geoObjects.createdAt} = now() and ${geoObjects.type} <> 'sea'`))[0]!.n,
         names: (await db.select({ n: sql<number>`count(*)::int` }).from(geoNames).where(sql`${geoNames.createdAt} = now()`))[0]!.n,
       });
-      await expect(
-        importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({}, [], 429), archive }),
-      ).rejects.toBeInstanceOf(RetryableHttpError);
+      // Each part is asked `overpass.retries` more times; the skipped wait refills the bucket, as the real one would.
+      const seen: HttpRequest[] = [];
+      const sleep = async () => {
+        await db.update(rateLimits).set({ tokens: 1_000_000, updatedAt: new Date() }).where(eq(rateLimits.key, "http:overpass"));
+      };
+      const error: unknown = await importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({}, seen, 429), archive, sleep }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(RetryableHttpError);
+      expect((error as Error).message).toMatch(/overpass part osm failed after 5 attempts/);
+      expect(seen).toHaveLength(getConfig().gazetteer.overpass.retries + 1);
       expect(await written()).toEqual({ objects: 0, names: 0 });
       expect(await objects(db)).toEqual([]);
     }));

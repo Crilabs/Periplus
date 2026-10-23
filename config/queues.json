@@ -3,7 +3,7 @@
   "run.advance": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
   "tiles.ensure": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },
   "gazetteer.build": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 120, "retryBackoff": true },
-  "gazetteer.coarse": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 120, "retryBackoff": true },
+  "gazetteer.coarse": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 120, "retryBackoff": true, "expireInSeconds": 72000 },
   "subdivisions.build": { "concurrency": 1, "retryLimit": 1, "retryDelaySeconds": 120, "retryBackoff": true, "expireInSeconds": 3600 },
   "mentions.reread": { "concurrency": 1, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true, "expireInSeconds": 3600 },
   "seed.tile": { "concurrency": 2, "retryLimit": 2, "retryDelaySeconds": 60, "retryBackoff": true },

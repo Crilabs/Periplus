@@ -1,7 +1,14 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { Transport } from "@/lib/adapters/http";
 import { fetchSeas } from "@/lib/adapters/marine-regions";
-import { buildBoundaryQuery, buildCoarseFeatureQuery, buildRelationQuery, overpassQuery, type OverpassElement } from "@/lib/adapters/overpass";
+import {
+  buildBoundaryQueries,
+  buildCoarseFeatureQueries,
+  buildRelationQuery,
+  overpassQueryRetrying,
+  type OverpassElement,
+  type OverpassPart,
+} from "@/lib/adapters/overpass";
 import type { Archive } from "@/lib/adapters/s3";
 import { countryConfig, getConfig, type GazetteerConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
@@ -11,7 +18,7 @@ import { classifyOsm, osmNames } from "@/lib/domain/gazetteer/osm-classify";
 import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
 import { createLogger } from "@/lib/logger";
 import type { Bbox } from "@/lib/domain/tiles";
-import { landCoverage } from "@/lib/domain/gazetteer/land";
+import { countryBlocks, landCoverage } from "@/lib/domain/gazetteer/land";
 import { elementGeometry, keptTags, nearCoast, relationPoints } from "./osm";
 
 export const COARSE_STAGE = "gazetteer.coarse";
@@ -37,7 +44,7 @@ export function coarseCountries(params: Record<string, unknown>): string[] {
 let logger: ReturnType<typeof createLogger> | undefined;
 const getLog = () => (logger ??= createLogger("gazetteer.coarse"));
 
-type Deps = { transport: Transport; archive?: Archive; runId?: string; now?: Date };
+type Deps = { transport: Transport; archive?: Archive; runId?: string; now?: Date; sleep?: (ms: number) => Promise<void> };
 
 /**
  * Imports the IHO sea polygons of `subdivisions.mediterranean.marineRegionsMrgids` as geo objects of type `sea`
@@ -131,13 +138,14 @@ export async function importCoarse(
 
   const answers: OverpassElement[][] = [];
   const timeout = gazetteer.overpass.timeoutSeconds;
-  const queries: Array<{ suffix: string; ql: string }> = [];
-  if (!countryRelation || levels.length > 0) queries.push({ suffix: "", ql: buildBoundaryQuery(country, levels, timeout) });
-  if (countryRelation) queries.push({ suffix: "-country", ql: buildRelationQuery([countryRelation], timeout) });
-  if (extras.length > 0) queries.push({ suffix: "-extra", ql: buildRelationQuery(extras, timeout) });
-  for (const { suffix, ql } of queries) {
-    const { raw, elements } = await overpassQuery(deps.transport, ql, ctx, gazetteer.overpass);
-    await deps.archive?.put(`datasets/overpass/boundaries/${country}/${date}${suffix}.json`, raw, "application/json");
+  // One query per part (the country relation, each level), each repeated on its own (B15). A configured country
+  // relation replaces the ISO-tagged one; without lower levels nothing else is asked.
+  const queries: OverpassPart[] = buildBoundaryQueries(country, levels, timeout).filter((q) => !(countryRelation && q.part === "country"));
+  if (countryRelation) queries.push({ part: "country-relation", ql: buildRelationQuery([countryRelation], timeout) });
+  if (extras.length > 0) queries.push({ part: "extra", ql: buildRelationQuery(extras, timeout) });
+  for (const { part, ql } of queries) {
+    const { raw, elements } = await overpassQueryRetrying(deps.transport, ql, ctx, gazetteer.overpass, { part: `${country} ${part}`, sleep: deps.sleep });
+    await deps.archive?.put(`datasets/overpass/boundaries/${country}/${date}-${part}.json`, raw, "application/json");
     answers.push(elements);
   }
   const elements = answers.flat();
@@ -245,6 +253,25 @@ export async function countryBbox(db: Db, country: string): Promise<Bbox | null>
 }
 
 /**
+ * The blocks that meet the stored country polygon of `country`, in their order. A block outside it would only return
+ * nothing (the queries are limited to the country area), but a scattered country spans a huge box: France with its
+ * overseas regions, Spain with the Canaries (B15).
+ */
+async function blocksInCountry(db: Db, country: string, blocks: Bbox[]): Promise<Bbox[]> {
+  if (blocks.length === 0) return [];
+  const envelopes = sql.join(
+    blocks.map(([w, s, e, n], i) => sql`(${i}::int, ST_MakeEnvelope(${w}::float8, ${s}::float8, ${e}::float8, ${n}::float8, 4326))`),
+    sql`, `,
+  );
+  const { rows } = await db.execute<{ i: number }>(sql`
+    SELECT b.i FROM (VALUES ${envelopes}) AS b(i, env)
+    WHERE EXISTS (SELECT 1 FROM geo_objects g
+                  WHERE g.type = 'country' AND g.valid_to IS NULL AND g.tags->>'country' = ${country} AND ST_Intersects(g.geom, b.env))
+    ORDER BY b.i`);
+  return rows.map((r) => blocks[r.i]!);
+}
+
+/**
  * Coarse features of one country (plan 14b), run after `importCoarse` so the country polygon exists: islands from
  * `islandMinAreaKm2` (smaller ones are left to the fine gazetteer), archipelagos, named gulfs and bays from
  * `gulfMinAreaKm2` (with the classifier's type), and towns (`coarse.placeTypes`) within `coastDistanceKm` of the water. Stored by `osm_id` through
@@ -265,10 +292,16 @@ export async function importCoarseFeatures(
   if (!bbox) throw new Error(`gazetteer.coarse ${country}: no country object – run the boundary import first`);
   const ctx = { db, runId: deps.runId, stage: COARSE_STAGE };
   const date = (deps.now ?? new Date()).toISOString().slice(0, 10);
-  const ql = buildCoarseFeatureQuery(country, cfg, gazetteer.overpass.timeoutSeconds);
   const overpassCfg = deps.overpass ?? gazetteer.overpass;
-  const { raw, elements } = await overpassQuery(deps.transport, ql, ctx, overpassCfg);
-  await deps.archive?.put(`datasets/overpass/features/${country}/${date}.json`, raw, "application/json");
+  const blocks = await blocksInCountry(db, country, countryBlocks(bbox, overpassCfg.blockDeg));
+  const parts = buildCoarseFeatureQueries(country, cfg, gazetteer.overpass.timeoutSeconds, blocks);
+  // An element on a block border comes in several answers; the loop below stores each osm_id once.
+  const elements: OverpassElement[] = [];
+  for (const { part, ql } of parts) {
+    const answer = await overpassQueryRetrying(deps.transport, ql, ctx, overpassCfg, { part: `${country} ${part}`, sleep: deps.sleep });
+    await deps.archive?.put(`datasets/overpass/features/${country}/${date}-${part}.json`, answer.raw, "application/json");
+    elements.push(...answer.elements);
+  }
 
   const result = await db.transaction(async (tx) => {
     const counts = { islands: 0, archipelagos: 0, gulfs: 0, towns: 0 };
