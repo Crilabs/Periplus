@@ -145,7 +145,7 @@ function nearestMention(located: Located, unitMentions: UnitMention[], ordinalOf
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
 
 /** Whether `name` occurs in `quote`, both normalized like the quote check (case kept, ruling M4-P21). */
-function nameInQuote(name: string, quote: string): boolean {
+export function nameInQuote(name: string, quote: string): boolean {
   const n = normalizeForQuote(name).text.trim();
   return n.length > 0 && normalizeForQuote(quote).text.includes(n);
 }

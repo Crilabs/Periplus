@@ -109,3 +109,26 @@ export function unitText(
   });
   return { text, offset };
 }
+
+/** A run of an offset map: `length` characters from markdown index `start` on, or `start = -1` for separator characters. */
+export type OffsetRun = [start: number, length: number];
+
+/** The offset map of `unitText` as runs (compact enough to keep with a batch item); `null` stays `null`. */
+export function offsetRuns(offset: number[] | null): OffsetRun[] | null {
+  if (offset === null) return null;
+  const runs: OffsetRun[] = [];
+  for (const at of offset) {
+    const last = runs.at(-1);
+    if (last && (at === -1 ? last[0] === -1 : last[0] !== -1 && last[0] + last[1] === at)) last[1]++;
+    else runs.push([at, 1]);
+  }
+  return runs;
+}
+
+/** The offset map back from its runs (`offsetRuns`). */
+export function expandOffsetRuns(runs: OffsetRun[] | null): number[] | null {
+  if (runs === null) return null;
+  const offset: number[] = [];
+  for (const [start, length] of runs) for (let k = 0; k < length; k++) offset.push(start === -1 ? -1 : start + k);
+  return offset;
+}
