@@ -139,8 +139,13 @@ export async function getRadiusPackage(
         .returning();
       return inserted!;
     }));
-  await db.insert(radiusPackageRequests).values({ radiusPackageId: row.id, apiClientId: req.apiClientId ?? null, kind: req.kind ?? "package" });
+  await recordRadiusRequest(db, row.id, req.apiClientId, req.kind ?? "package");
   return row;
+}
+
+/** One `radius_package_requests` row: the client asked for (a file of) the package `packageId`. */
+export async function recordRadiusRequest(db: Db, packageId: string, apiClientId: string | undefined, kind: RadiusRequestKind): Promise<void> {
+  await db.insert(radiusPackageRequests).values({ radiusPackageId: packageId, apiClientId: apiClientId ?? null, kind });
 }
 
 type RadiusFiles = ComposedRadius["files"] & { "coast.geojson": Awaited<ReturnType<typeof clipCoast>> };

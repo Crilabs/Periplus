@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChangeEntry, Manifest } from "@/contract";
 import type { Archive } from "@/lib/adapters/s3";
@@ -10,6 +11,8 @@ import { newId } from "@/lib/domain/ids";
 import { testDb, withRollback } from "@/test/db";
 import { seedDeliverySubdivision } from "@/test/fixtures/delivery/subdivision";
 import { memoryArchive } from "@/test/s3";
+import { eastPackage, insertSecondSubdivision, storeSubdivisionPackage } from "@/test/fixtures/delivery/radius";
+import { radiusPackageRequests, radiusPackages } from "@/lib/db/schema";
 
 /*
  * The radius delivery API (spec 18, plan Task 7): package, files, changes and home marinas under `/api/v3`, called
@@ -147,6 +150,31 @@ describe("GET /api/v3/radius/package/{file}", () => {
     }));
 });
 
+describe("radius package requests", () => {
+  it("a file fetched after a subdivision got a new delivery serves the pinned package and logs on it", () =>
+    withRollback(async (tx) => {
+      const { key, marina, archive } = await setup(tx);
+      const east = await insertSecondSubdivision(tx);
+      const body = (await (await getPackage(`?marina=${marina}&days=1`, key)).json()) as Manifest & { links: Record<string, string> };
+      const spots = body.files.find((f) => f.name === "spots.json")!;
+      const query = new URL(`http://x${body.links["spots.json"]}`).search;
+      const ofMarina = () => tx.select().from(radiusPackages).where(eq(radiusPackages.homeMarinaPublicId, marina));
+      const pinned = (await ofMarina())[0]!;
+      // the east subdivision gets a package: the current key for marina and days is another one now
+      await storeSubdivisionPackage(tx, archive, { subdivisionId: east.id, pkg: eastPackage(), dataVersion: 1 });
+      const res = await getFile("spots.json", query, key);
+      expect(res.status).toBe(200);
+      expect(sha256Hex(new Uint8Array(await res.arrayBuffer()))).toBe(spots.sha256);
+      expect(await ofMarina()).toHaveLength(1);
+      const requests = await tx.select().from(radiusPackageRequests).where(eq(radiusPackageRequests.radiusPackageId, pinned.id));
+      expect(requests.map((r) => [r.radiusPackageId, r.kind])).toEqual([
+        [pinned.id, "package"],
+        [pinned.id, "file"],
+      ]);
+      expect(requests[0]!.apiClientId).not.toBeNull();
+    }));
+});
+
 describe("GET /api/v3/radius/changes", () => {
   it("is empty for the current key and 400 invalid_since for an unknown one", () =>
     withRollback(async (tx) => {
@@ -169,7 +197,7 @@ describe("GET /api/v3/home-marinas", () => {
   it("lists the fixture marina and no anchorage", () =>
     withRollback(async (tx) => {
       const { key, marina, f } = await setup(tx);
-      const res = await getHome("", key);
+      const res = await getHome("?bbox=20,34,23,36", key);
       expect(res.status).toBe(200);
       const body = (await res.json()) as { schemaVersion: string; marinas: Array<{ id: string; name: string; position: { lon: number; lat: number }; subdivision: string }> };
       expect(body.schemaVersion).toBe("3.0");

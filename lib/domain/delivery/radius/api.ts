@@ -1,7 +1,7 @@
 import type { Manifest } from "@/contract";
 import type { Archive } from "@/lib/adapters/s3";
 import type { Db } from "@/lib/db/client";
-import { getRadiusPackage, radiusPackageByKey, readRadiusFile, type RadiusPackageRow } from "./build";
+import { radiusPackageByKey, readRadiusFile, recordRadiusRequest, type RadiusPackageRow } from "./build";
 
 /*
  * What the radius routes answer (spec 18, spec 14): the manifest with links and one stored file pinned to a package key.
@@ -28,19 +28,18 @@ export async function radiusManifest(archive: Archive, row: RadiusPackageRow): P
 
 /**
  * One file of the package `key` for `marina` and `days`: `invalid_key` when the key is missing or belongs to another
- * marina or trip length, `invalid_days` / `marina_not_found` as for the package (the marina must still be a delivered
- * home marina), null for a file the package does not list. Records the request as kind `file`.
+ * marina or trip length, null for a file the package does not list. The package is the pinned one, never rebuilt or
+ * replaced by the current one; records the request on it as kind `file`.
  */
 export async function radiusFile(
   db: Db,
   archive: Archive,
   req: RadiusRef & { key: string | null; file: string; apiClientId?: string },
-): Promise<{ bytes: Uint8Array; sha256: string; schemaVersion: string } | "invalid_key" | "invalid_days" | "marina_not_found" | null> {
+): Promise<{ bytes: Uint8Array; sha256: string; schemaVersion: string } | "invalid_key" | null> {
   const pinned = req.key ? await radiusPackageByKey(db, req.key) : null;
   if (!pinned || pinned.homeMarinaPublicId !== req.marina || pinned.days !== req.days) return "invalid_key";
-  const current = await getRadiusPackage(db, archive, { marina: req.marina, days: req.days, apiClientId: req.apiClientId, kind: "file" });
-  if (typeof current === "string") return current;
   const bytes = await readRadiusFile(archive, pinned, req.file);
   if (bytes === null) return null;
+  await recordRadiusRequest(db, pinned.id, req.apiClientId, "file");
   return { bytes, sha256: pinned.fileHashes[req.file]!.sha256, schemaVersion: pinned.schemaVersion };
 }

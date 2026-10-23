@@ -17,8 +17,7 @@ const handler = withApiClient<Ctx>("delivery:read", async (req, client, ctx) => 
   if (!marina) return apiError(400, "invalid_parameter", "marina is required.");
   const found = await radiusFile(getDb(), deliveryArchive(), { marina, days: parseDays(params.get("days")), key: params.get("key"), file, apiClientId: client.id });
   if (found === "invalid_key") return apiError(400, "invalid_key", "key must be the key of a package for this marina and days.");
-  if (found === "invalid_days") return apiError(400, "invalid_days", "days must be an integer from 1 to 28.");
-  if (found === "marina_not_found" || found === null) return apiNotFound();
+  if (found === null) return apiNotFound();
   return apiBody(req, found.bytes, { schemaVersion: found.schemaVersion, dataVersion: null, contentType: contentTypeOf(file), maxAgeSeconds: cacheMaxAgeSeconds(), sha256: found.sha256 });
 });
 
