@@ -120,4 +120,4 @@ jobs:
         env:
           HOST: ${{ secrets.DEPLOY_HOST }}
           SHA: ${{ github.sha }}
-        run: ssh -i ~/.ssh/id_deploy "deploy@$HOST" bash -s "$SHA" < scripts/deploy/deploy.sh
+        run: ssh -i ~/.ssh/id_deploy "periplus@$HOST" bash -s "$SHA" < scripts/deploy/deploy.sh
