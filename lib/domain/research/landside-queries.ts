@@ -38,6 +38,7 @@ export async function landsideSubjects(db: Db, placeId: string, cfg: LandsideCon
   const nearest = await db.execute<{ id: string }>(sql`
     select g.id from geo_objects g, places p
     where p.id = ${placeId} and g.type = 'settlement' and g.valid_to is null and g.merged_into_id is null
+      and g.centroid && ST_Expand(p.position, ${cfg.settlementMaxM}::float8 / (111000 * cos(radians(least(abs(ST_Y(p.position)), 85)))) * 1.2)
       and ST_DWithin(g.centroid::geography, p.position::geography, ${cfg.settlementMaxM})
     order by g.centroid::geography <-> p.position::geography, g.id
   `);

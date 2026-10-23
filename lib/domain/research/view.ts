@@ -318,8 +318,8 @@ async function factOrigins(db: Db, facts: BerthStateFact[]): Promise<Map<string,
     for (const r of rows) kinds.set(r.id, r.kind);
   }
   const origins = new Map<string, StateFactOrigin>();
-  for (const [factId, ids] of members) {
-    const own = ids.flatMap((id) => (kinds.has(id) ? [kinds.get(id)!] : []));
+  for (const [factId, memberIds] of members) {
+    const own = memberIds.flatMap((id) => (kinds.has(id) ? [kinds.get(id)!] : []));
     origins.set(factId, own.length === 0 ? null : own.includes("berth") ? "berth" : "landside");
   }
   return origins;

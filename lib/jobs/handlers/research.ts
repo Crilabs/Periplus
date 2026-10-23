@@ -29,6 +29,7 @@ import {
   bundleFactsJob,
   planResearchState,
   planResearchStateFacts,
+  refreshNearby,
   RESEARCH_STATE_FACTS_QUEUE,
   RESEARCH_STATE_FACTS_STAGE,
   RESEARCH_STATE_QUEUE,
@@ -237,8 +238,13 @@ export const researchStateHandler: JobHandler<JobData> = async (data, ctx) => {
   ctx.log.info({ placeId, ...result }, "berth state");
 };
 
-/** Job of `research.state_facts`: sends those berths' free facts to `bundle-facts` as a message batch (also the follow-on job). */
+/** Job of `research.state_facts`: a job with `placeId` refreshes the berth's `nearby`; one with `placeIds` sends those berths' free facts to `bundle-facts` as a message batch (also the follow-on job). */
 export const researchStateFactsHandler: JobHandler<JobData> = async (data, ctx) => {
+  if (!Array.isArray(data.placeIds)) {
+    const { placeId } = z.object({ placeId: z.uuid() }).parse(data);
+    ctx.log.info({ placeId, ...(await refreshNearby(ctx.db, placeId)) }, "nearby refreshed");
+    return;
+  }
   const job = stateBundleSchema.parse(data);
   const result = await bundleFactsJob(ctx.db, { model: modelClientFor(ctx.db), boss: ctx.boss }, job, RESEARCH_STATE_FACTS_QUEUE);
   ctx.log.info({ places: job.placeIds.length, ...result }, "fact bundling batch submitted");

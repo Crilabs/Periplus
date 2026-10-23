@@ -3,7 +3,7 @@ import type { PgBoss } from "pg-boss";
 import { describe, expect, it } from "vitest";
 import { getConfig, getConsolidationConfig, loadConfig, type AppConfig } from "@/lib/config";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { berthStates, places, runs, wikidataSitelinks } from "@/lib/db/schema";
+import { berthStates, geoNames, places, runs, wikidataSitelinks } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { createRun } from "@/lib/domain/runs";
 import { MockModel } from "@/lib/ai/mock";
@@ -14,7 +14,7 @@ import type { JobContext } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
 import { BERTH_FOLLOWUP_STAGES, startBerthFollowupRun } from "@/lib/pipeline/berth-followup-run";
 import { IMAGES_STAGE } from "@/lib/pipeline/images/stage-name";
-import { buildBerthState, planResearchState, RESEARCH_STATE_STAGE, statePlaces } from "@/lib/pipeline/research/state";
+import { buildBerthState, planResearchState, planResearchStateFacts, refreshNearby, RESEARCH_STATE_STAGE, statePlaces } from "@/lib/pipeline/research/state";
 import { RESEARCH_STAGES } from "@/lib/pipeline/research-run";
 import { storeStateFacts } from "@/lib/domain/research/state-facts";
 import { insertPlace } from "@/test/consolidation";
@@ -52,7 +52,8 @@ describe("research.state stage", () => {
     expect(RESEARCH_STAGES).toHaveLength(8);
     expect(RESEARCH_STAGES[7]).toBe(RESEARCH_STATE_STAGE);
     expect(RESEARCH_STAGES[6]).toBe("research.confirm");
-    expect([...BERTH_FOLLOWUP_STAGES]).toEqual([RESEARCH_STATE_STAGE, IMAGES_STAGE]);
+    expect(BERTH_FOLLOWUP_STAGES[0]).toBe(RESEARCH_STATE_STAGE);
+    expect(BERTH_FOLLOWUP_STAGES.at(-1)).toBe(IMAGES_STAGE);
     expect(STAGES[RESEARCH_STATE_STAGE]?.queue).toBe("research.state");
     expect(HANDLERS["research.state"]).toBeTypeOf("function");
     expect(getConfig().queues["research.state"]).toBeDefined();
@@ -194,3 +195,58 @@ describe("research.state stage", () => {
       expect(await access()).toBeUndefined();
     }));
 });
+
+describe("research.state_facts stage (N4b)", () => {
+  const stateRow = (placeId: string, landing: unknown[] = [{ kind: "harbour", lon: LON, lat: LAT, geoObjectId: null, description: null }]) =>
+    ({ placeId, core: { berthable: { value: true, confidence: 1, origin: "rule", observedAt: null, factIds: [] } }, gaps: ["seabed"], facts: [], landing, nearby: [] }) as typeof berthStates.$inferInsert;
+
+  it("plans a nearby job per confirmed place before the bundling jobs", () =>
+    withRollback(async (tx) => {
+      const a = await marina(tx);
+      await seedStatement(tx, a.placeId, await seedPage(tx, config, a.placeId), { statement: "Taverna by the quay" });
+      const jobs = await planResearchStateFacts(tx, { id: newId(), params: { placeIds: [a.placeId] } }, config);
+      expect(jobs).toEqual([{ key: `nearby:${a.placeId}`, placeId: a.placeId }, { key: "bundle:0", placeIds: [a.placeId] }]);
+    }));
+
+  it("a landside fact naming a POI puts it into nearby, and only nearby changes", () =>
+    withRollback(async (tx) => {
+      const a = await marina(tx);
+      const poi = await insertTestGeoObject(tx, { type: "poi", category: "active", tags: {}, geom: geomFromGeoJson({ type: "Point", coordinates: [LON, LAT + 300 / 111_195] }) });
+      await tx.insert(geoNames).values({ geoObjectId: poi, name: "Kyma Dive Center", nameNormalized: "kyma dive center", language: "en", script: "latin", origin: "osm" });
+      await tx.insert(berthStates).values(stateRow(a.placeId));
+      expect((await refreshNearby(tx, a.placeId, config)).refreshed).toBe(true);
+      const nearbyIds = async () => (await tx.select().from(berthStates).where(eq(berthStates.placeId, a.placeId)))[0]!.nearby.map((n) => n.geoObjectId);
+      expect(await nearbyIds()).not.toContain(poi);
+      await seedStatement(tx, a.placeId, await seedPage(tx, config, a.placeId, { kind: "landside" }), { statement: "Kyma Dive Center is open", subjectName: "Kyma Dive Center", subjectCategory: "active" });
+      await refreshNearby(tx, a.placeId, config);
+      expect(await nearbyIds()).toContain(poi);
+      const [row] = await tx.select().from(berthStates).where(eq(berthStates.placeId, a.placeId));
+      expect(row).toMatchObject({ gaps: ["seabed"], facts: [], landing: [expect.objectContaining({ kind: "harbour" })] });
+      expect(row!.core.berthable).toBeDefined();
+    }));
+
+  it("a landside taxi fact opens transport access to a well known sight", () =>
+    withRollback(async (tx) => {
+      const a = await marina(tx);
+      const wikidataId = `Q${Math.floor(Math.random() * 1e12)}`;
+      const monastery = await insertTestGeoObject(tx, { type: "poi", category: "culture", tags: {}, wikidataId, geom: geomFromGeoJson({ type: "Point", coordinates: [LON, LAT + 5000 / 111_195] }) });
+      await tx.insert(wikidataSitelinks).values({ wikidataId, sitelinks: 9, fetchedAt: new Date() });
+      await tx.insert(berthStates).values(stateRow(a.placeId));
+      const access = async () => (await tx.select().from(berthStates).where(eq(berthStates.placeId, a.placeId)))[0]!.nearby.find((n) => n.geoObjectId === monastery)?.access;
+      await refreshNearby(tx, a.placeId, config);
+      expect(await access()).toBeUndefined();
+      await seedStatement(tx, a.placeId, await seedPage(tx, config, a.placeId, { kind: "landside" }), { statement: "A taxi waits at the quay", subjectName: "Taxi", subjectCategory: "taxi", tone: "positive" });
+      await refreshNearby(tx, a.placeId, config);
+      expect(await access()).toBe("transport");
+    }));
+
+  it("skips a place without a state row or no longer confirmed", () =>
+    withRollback(async (tx) => {
+      const a = await marina(tx);
+      expect((await refreshNearby(tx, a.placeId, config)).refreshed).toBe(false);
+      await tx.insert(berthStates).values(stateRow(a.placeId));
+      await tx.update(places).set({ status: "candidate" }).where(eq(places.id, a.placeId));
+      expect((await refreshNearby(tx, a.placeId, config)).refreshed).toBe(false);
+    }));
+});
+
