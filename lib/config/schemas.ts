@@ -1412,6 +1412,8 @@ export const researchSchema = z
       minSignalConfidence: z.number().min(0).max(1),
       positiveKinds: z.array(z.enum(berthSignalKindEnum.enumValues)).min(1),
       negativeKinds: z.array(z.enum(berthSignalKindEnum.enumValues)).min(1),
+      /** Negative kinds a marina or port (`officialPlaceKinds`) ignores: „no space“ of a harbour is a seasonal fact, not a closure. A subset of `negativeKinds`. */
+      harbourIgnoredNegativeKinds: z.array(z.enum(berthSignalKindEnum.enumValues)),
       countingPageKinds: z.array(z.enum(pageKindEnum.enumValues)).min(1),
       listedAsBerthPageKinds: z.array(z.enum(pageKindEnum.enumValues)),
       officialPageKinds: z.array(z.enum(pageKindEnum.enumValues)),
@@ -1461,6 +1463,11 @@ export const researchSchema = z
     for (const k of c.confirmation.negativeKinds) {
       if (c.confirmation.positiveKinds.includes(k)) {
         ctx.addIssue({ code: "custom", path: ["confirmation", "negativeKinds"], message: `signal kind ${k} is both positive and negative` });
+      }
+    }
+    for (const k of c.confirmation.harbourIgnoredNegativeKinds) {
+      if (!c.confirmation.negativeKinds.includes(k)) {
+        ctx.addIssue({ code: "custom", path: ["confirmation", "harbourIgnoredNegativeKinds"], message: `signal kind ${k} is not a negative kind` });
       }
     }
     for (const [country, langs] of Object.entries(c.languagesByCountry)) {

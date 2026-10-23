@@ -191,6 +191,28 @@ describe("decideBerth", () => {
     expect(decide("port", [official, ev({ kind: "listed_as_berth", firstHand: false, pageKind: "marina", domain: "marina-x.example" })], cfg).status).toBe("candidate");
   });
 
+  it("a marina or port ignores a younger no_space; a bay with it stays blocked", () => {
+    const official = ev({ kind: "listed_as_berth", firstHand: false, pageKind: "marina", domain: "marina-x.example", observedAt: "2024-01-01" });
+    const stay = ev({ kind: "berthed", domain: "sail-a.example", observedAt: "2024-06-01" });
+    const full = ev({ kind: "no_space", firstHand: false, pageKind: "forum", domain: "forum.example", observedAt: "2025-08-01" });
+    for (const kind of ["marina", "port"] as const) {
+      expect(decide(kind, [official, stay, full], cfg)).toMatchObject({ status: "confirmed", blockingSignalId: null });
+    }
+    const bay = [ev({ domain: "a.example", observedAt: "2024-01-01" }), ev({ domain: "b.example", observedAt: "2024-06-01" }), full];
+    for (const kind of ["anchorage", "mooring_field"] as const) {
+      expect(decide(kind, bay, cfg)).toMatchObject({ status: "candidate", blockingSignalId: full.signalId });
+    }
+  });
+
+  it("a marina still honours the other negatives (closed) and the ignored set is configurable", () => {
+    const official = ev({ kind: "listed_as_berth", firstHand: false, pageKind: "marina", domain: "marina-x.example", observedAt: "2024-01-01" });
+    const stay = ev({ kind: "berthed", domain: "sail-a.example", observedAt: "2024-06-01" });
+    const closed = ev({ kind: "closed", firstHand: false, pageKind: "forum", domain: "forum.example", observedAt: "2025-08-01" });
+    expect(decide("marina", [official, stay, closed], cfg).status).toBe("candidate");
+    const full = ev({ kind: "no_space", firstHand: false, pageKind: "forum", domain: "forum.example", observedAt: "2025-08-01" });
+    expect(decide("marina", [official, stay, full], { ...cfg, harbourIgnoredNegativeKinds: [] }).status).toBe("candidate");
+  });
+
   it("a marina without an official page is a candidate even with two reports", () => {
     const v = decide("marina", [ev({ kind: "berthed", domain: "a.example" }), ev({ kind: "berthed", domain: "b.example" })], cfg);
     expect(v).toMatchObject({ status: "candidate", reason: "keine offizielle Seite (Marina oder Behörde)" });

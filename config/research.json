@@ -34,6 +34,7 @@
     "minSignalConfidence": 0.7,
     "positiveKinds": ["anchored", "moored_buoy", "berthed", "listed_as_berth"],
     "negativeKinds": ["prohibited", "buoys_private", "no_space", "unsafe", "closed"],
+    "harbourIgnoredNegativeKinds": ["no_space"],
     "countingPageKinds": ["trip_report", "pilot_guide", "forum", "marina", "authority"],
     "listedAsBerthPageKinds": ["pilot_guide"],
     "officialPageKinds": ["marina", "authority"],

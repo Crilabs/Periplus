@@ -121,7 +121,8 @@ const byDateThenId = (a: Evidence, b: Evidence) => a.observedAt.localeCompare(b.
  *    unless `corridorAloneConfirms`);
  * 4. a counting `prohibited` from the authority blocks whatever its age (a ban holds until the authority lifts it):
  *    `no_anchoring`, for an `officialPlaceKinds` place (marina, port) `candidate` (a harbour's anchoring ban does not
- *    mean no berths); any other counting negative blocks when it is at least as young as every dated counting positive
+ *    mean no berths); a kind in `harbourIgnoredNegativeKinds` (`no_space`) does not count for such a place (a harbour
+ *    often being full is no closure); any other counting negative blocks when it is at least as young as every dated counting positive
  *    (an undated positive, dated by its fetch, never overrides a dated negative) → `candidate`;
  * 5. an anchorage or mooring field is confirmed by `minIndependentSources` sources, an `officialPlaceKinds` place by an
  *    official page plus another domain;
@@ -145,7 +146,8 @@ export function decideBerth(placeKind: PlaceKind, evidence: Evidence[], cfg: Con
   });
 
   const official = cfg.officialPlaceKinds.includes(placeKind);
-  const negatives = counting.filter((e) => cfg.negativeKinds.includes(e.kind)).sort(byDateThenId);
+  const ignored = official ? cfg.harbourIgnoredNegativeKinds : [];
+  const negatives = counting.filter((e) => cfg.negativeKinds.includes(e.kind) && !ignored.includes(e.kind)).sort(byDateThenId);
   const ban = negatives.filter((e) => e.kind === "prohibited" && e.pageKind === "authority").at(-1);
   if (ban) return verdict(official ? "candidate" : "no_anchoring", `Ankerverbot laut Behörde (${ban.observedAt})`, ban);
   const newestPositive = positives

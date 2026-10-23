@@ -67,6 +67,13 @@ describe("research config", () => {
     expect(researchSchema.safeParse(c).success).toBe(false);
   });
 
+  it("rejects a harbour-ignored kind that is not a negative kind", () => {
+    const c = valid();
+    expect(c.confirmation.harbourIgnoredNegativeKinds).toEqual(["no_space"]);
+    c.confirmation.harbourIgnoredNegativeKinds.push("anchored");
+    expect(researchSchema.safeParse(c).success).toBe(false);
+  });
+
   it("rejects an unknown fact schema version", () => {
     const c = valid();
     c.extraction.factSchema = "v99";

@@ -16,8 +16,8 @@ const input: ExtractBerthInput = {
 };
 
 describe("extract-berth", () => {
-  it("renders every variable of prompt v1; the berth-specific part stays in the user prompt", () => {
-    const prompt = loadPrompt("extract-berth", 1);
+  it("renders every variable of prompt v2; the berth-specific part stays in the user prompt", () => {
+    const prompt = loadPrompt("extract-berth", 2);
     const vars = extractBerthTask.variables(input);
     const system = renderPrompt(prompt.system, vars);
     const user = renderPrompt(prompt.user, vars);
@@ -26,6 +26,14 @@ describe("extract-berth", () => {
     expect(system).not.toContain("Meganisi");
     expect(user).toContain("Berth: Vathi (anchorage) – on Meganisi; also called Ormos Vathi");
     expect(user).toContain("Other berths on this page: Agios Georgios");
+  });
+
+  it("prompt v2 defines no_space as permanent only; often full is a free negative fact", () => {
+    const { system } = loadPrompt("extract-berth", 2);
+    expect(system).toMatch(/`no_space` only when the text says the place can no longer be used to lie at permanently/);
+    for (const phrase of ["often full", "come early", "little room"]) expect(system).toContain(phrase);
+    expect(system).toContain("fish farm");
+    expect(loadPrompt("extract-berth", 1).system).not.toContain("come early");
   });
 
   it("has an output schema structured outputs accept", () => {
