@@ -12,9 +12,9 @@
 
 ## Global Constraints
 
-- Branch `feat/n7-raumgliederung` (Worktree `.claude/worktrees/n7-raumgliederung`), Basis `4a75918` wie N1. Kein Rebase auf `main` während der Arbeit.
+- Branch `feat/n7-raumgliederung` (Worktree `.claude/worktrees/n7-raumgliederung`) baut auf dem Stapel der Neuausrichtung auf: `feat/n4a-stand` (`a639bf6`, enthält N1–N3b) ist hineingemergt. Neue Stände von N4a werden per Merge nachgezogen, nicht per Rebase. Dateien der Recherche (`lib/domain/research`, `lib/pipeline/research`, `config/research.json`) liest N7 nur; Änderungen dort gehören zu den N-Plänen.
 - **Nie** gegen die geteilten Datenbanken 5433 (Dev) und 5434 (Test) arbeiten. N7 nutzt eigene Container: Dev 5435, Test 5436 (Task 1). Jeder Testlauf mit `TEST_DATABASE_URL=postgres://periplus:periplus@localhost:5436/periplus_test`.
-- Migration nur in Task 5 (`drizzle/0069_poi_categories_land.sql`, additiv). Wer später nach `main` kommt, rebased und nummeriert neu (N1: `0069_research`, Umkreis-Lieferung: `0069_radius_packages`).
+- Keine Migration geplant (Kategorien und Enum kommen aus N4a, `0076_research_state.sql`). Braucht eine Aufgabe doch eine, bekommt sie die nächste Nummer nach dem Stapel (heute 0077) und wird beim Mergen nach dem Stapel neu nummeriert.
 - Schwellen, Radien, Kategorien, Klassen nur in `config/` (`gazetteer.json`, `categories.json`, `subdivisions.json`, `queues.json`), Schemas in `lib/config/schemas.ts`.
 - Fachlogik in `lib/domain/gazetteer`, `lib/domain/subdivisions`, `lib/pipeline/gazetteer`; Job-Handler (`lib/jobs/handlers`) und Seiten dünn.
 - Externe Dienste nur über `lib/adapters`; Tests rufen nie das Netz (Fake-`Transport` wie in `lib/pipeline/__tests__/gazetteer-osm.test.ts`).
@@ -152,35 +152,31 @@ Expected: PASS. `docker ps` zeigt `periplus-isolated-db-1` auf 5435 und `…-db-
 
 ---
 
-### Task 5: Kategorien für Dinge an Land, ohne Namen wo sinnvoll
+### Task 5: Dinge an Land ohne Namen, wo Crews sie brauchen
+
+N4a hat die Kategorien `bakery`, `transport`, `landing` samt Enum-Migration (`0076_research_state.sql`) und Regeln in `config/categories.json` schon eingeführt. N7 ergänzt nur, was N4a offen gelassen hat: unbenannte Objekte.
 
 **Files:**
-- Create: `drizzle/0069_poi_categories_land.sql` (über `npx drizzle-kit generate`; Inhalt `ALTER TYPE poi_category ADD VALUE 'transport'; … 'landing';`)
-- Modify: `lib/db/schema/geo.ts:59`, `config/categories.json`, `lib/config/schemas.ts` (`categoriesSchema`), `lib/domain/gazetteer/osm-classify.ts`, `app/(admin)/_components/labels.ts` (deutsche Namen der neuen Kategorien), alle `Record<PoiCategory, …>`-Stellen, die `tsc` meldet
+- Modify: `config/categories.json`, `lib/config/schemas.ts` (`categoriesSchema`), `lib/domain/gazetteer/osm-classify.ts`
 - Test: `lib/domain/gazetteer/__tests__/osm-classify.test.ts`
 
 **Interfaces:**
 - Produces:
-  - `PoiCategory` um `transport` und `landing` erweitert.
-  - Regel in `categories.osm` mit zwei optionalen Feldern: `ring: "near" | "far"` (Standard `near`) und `unnamed: boolean` (Standard `false`).
-  - Neue Regeln:
-    - `shop=bakery` → `supply`.
-    - `highway=bus_stop`, `amenity=bus_station`, `amenity=taxi`, `amenity=ferry_terminal` → `transport`, `unnamed: true`.
-    - `man_made=pier`, `leisure=slipway`, `man_made=jetty` → `landing`, `unnamed: true`.
-    - `highway=footway|path` mit `access` nicht `no` und mit `beach`-Bezug: Der Builder prüft, ob es dafür ein belastbares OSM-Tag gibt. Gibt es keins, entfällt „Strandzugang“ in N7 und wird als offen notiert.
-  - Bestehende Regeln für `historic=*`, `tourism=museum`, `man_made=lighthouse`, `natural` (außer `beach`) und `tourism=viewpoint` bekommen `ring: "far"`.
-  - `classifyOsm(tags, categories, elementType)` prüft den Namen erst nach der Kategorie-Regel. Ein unbenanntes Objekt kommt nur durch, wenn die passende Regel `unnamed: true` trägt. Alle Gerüst-Typen bleiben namenspflichtig.
+  - Regel in `categories.osm` mit optionalem Feld `unnamed: boolean` (Standard `false`). `unnamed: true` tragen die Regeln der Kategorien `transport` und `landing` sowie `natural=beach`; unbenannte Strände sind als Anlandestelle und als Erreichbares nützlich, N4a liest sie (`landing.ts`: `category in ('landing', 'beach')`).
+  - `man_made=jetty` → `landing` (neu, `unnamed: true`).
+  - `classifyOsm(tags, categories, elementType)` prüft den Namen erst nach der Kategorie-Regel. Ein unbenanntes Objekt kommt nur durch, wenn die passende Regel `unnamed: true` trägt. Alle Gerüst-Typen bleiben namenspflichtig. Die bestehende N4a-Erwartung „`classifyOsm` braucht einen Namen, `categoryForTags` nicht“ (für `shop=supermarket`) bleibt gültig.
 
 - [ ] **Step 1: Write the failing tests** (`osm-classify.test.ts`):
   - `{ highway: "bus_stop" }` → `{ type: "poi", category: "transport" }`.
+  - `{ natural: "beach" }` → `{ type: "poi", category: "beach" }`.
+  - `{ man_made: "jetty" }` → `{ type: "poi", category: "landing" }`.
   - `{ amenity: "restaurant" }` ohne Namen → `null`.
-  - `{ man_made: "pier" }` → `{ type: "poi", category: "landing" }`.
   - `{ natural: "bay" }` ohne Namen → `null` (Gerüst bleibt namenspflichtig).
   - `{ man_made: "pier", harbour: "yes", name: "X" }` → `harbour` (unverändert; Task 6 filtert).
 - [ ] **Step 2: Run, verify fail.**
-- [ ] **Step 3: Implement**, Migration erzeugen und gegen 5436 anwenden (der Test-Setup migriert).
-- [ ] **Step 4: Run, verify pass**; `npx tsc --noEmit` ohne Fehler.
-- [ ] **Step 5: Commit** — `feat(gazetteer): transport and landing categories, unnamed only where crews need it`
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run, verify pass**, dazu `lib/domain/research/__tests__/landing.test.ts` und `reach.test.ts` (N4a darf nicht brechen); `npx tsc --noEmit` ohne Fehler.
+- [ ] **Step 5: Commit** — `feat(gazetteer): unnamed bus stops, taxi stands, piers and beaches`
 
 ---
 
@@ -191,24 +187,20 @@ Expected: PASS. `docker ps` zeigt `periplus-isolated-db-1` auf 5435 und `…-db-
 - Modify: `lib/adapters/overpass.ts` (`buildLandQuery`), `lib/adapters/wikidata.ts` (`buildWikidataQuery` mit optionalem `minSitelinks`), `config/gazetteer.json` + Schema (`land`), `lib/jobs/handlers/gazetteer.ts`, `lib/jobs/stages.ts`, `lib/jobs/registry.ts`, `lib/pipeline/subdivision-build.ts` (`SUBDIVISION_BUILD_STAGES`), `lib/pipeline/gazetteer/stages.ts` (`startLandRun`), `app/(admin)/subdivisions/[key]/` (Schaltfläche „Dinge an Land laden“), `lib/pipeline/tile-scope.ts` (Grund `subdivision_without_candidates`)
 
 **Interfaces:**
-- Consumes: `importWikidataItems` (Task 4), `classifyOsm` mit `ring`/`unnamed` (Task 5), `overpassQueryRetrying` (Task 3), `sitelinkCounts` und Tabelle `wikidata_sitelinks` (bestehend), `buildHierarchy(db, scope)` (bestehend).
+- Consumes: `importWikidataItems` (Task 4), `classifyOsm` mit `unnamed` (Task 5), `research.state` aus N4a, `overpassQueryRetrying` (Task 3), `sitelinkCounts` und Tabelle `wikidata_sitelinks` (bestehend), `buildHierarchy(db, scope)` (bestehend).
 - Produces:
-  - Konfiguration `gazetteer.land`:
-    - `nearRadiusM`: 2100
-    - `farRadiusM`: 15000
-    - `maxBoxKm`: 40
-    - `minSitelinks`: 5
-    - `farPlaceTypes`: `["town", "village"]`
-    - `wikidataClasses`: die bisherigen POI-Klassen aus `wikidata.classes`, mit Kategorie
+  - Konfiguration `gazetteer.land`: `maxBoxKm` 40, `marginM` 300 (Spielraum für die Ausdehnung der Ankerfläche um den Kandidatenpunkt), `wikidataClasses`: die bisherigen POI-Klassen aus `wikidata.classes`.
+  - Radien werden **nicht** neu konfiguriert, sondern aus den N4a-Werten (`config/research.json`, `state`) abgeleitet, damit der Umkreis nie kleiner wird als das, was N4a sucht: `landRings(state: ResearchConfig["state"], marginM: number): { nearM: number; farM: number }` (rein, in `rings.ts`) mit `nearM = marginM + landingRadiusM + footMaxM` (Start 2.400 m) und `farM = marginM + landingRadiusM + transportMaxM` (Start 15.900 m). Fußweg und Bus/Taxi sind bei N4a Luftlinie × `detourFactor`; die Luftlinie bis `footMaxM` bzw. `transportMaxM` ist deshalb eine obere Grenze.
   - `LAND_STAGE = "gazetteer.land"` (Queue `gazetteer.build`).
   - `type RingCenter = { placeId: string; lon: number; lat: number }`.
   - `ringBoxes(centers: RingCenter[], radiusM: number, maxBoxKm: number): Bbox[]` (rein): Zentren werden gierig zu Boxen höchstens `maxBoxKm` Kantenlänge gruppiert, jede Box um `radiusM` erweitert. Jedes Zentrum liegt in genau einer Box.
   - `withinRing(point: { lon: number; lat: number }, centers: RingCenter[], radiusM: number): boolean` (rein, Haversine).
-  - `ringCenters(db: Db, scope: { subdivisionId: string } | { placeIds: string[] }): Promise<RingCenter[]>`: Orte gültig, nicht zusammengeführt, Status `candidate` oder `confirmed` (wie N1), in den Kacheln des Landesteils. Position = Ankerposition, falls berechnet, sonst Schwerpunkt des Geo-Objekts.
+  - `ringCenters(db: Db, scope: { subdivisionKey: string } | { placeIds: string[] }): Promise<RingCenter[]>`: die Kandidaten aus `researchCandidates(db, scope)` (N1, `lib/domain/research/candidates.ts`) – eine Definition für Recherche und Umkreis. Position = `places.anchor_position`, sonst `places.position` (wie N4a `landing.ts`).
   - `importLandThings(db: Db, input: { scope: GazetteerScope; runId: string; placeIds?: string[]; now?: Date }, deps: { transport: Transport; archive: Archive; sleep?: (ms: number) => Promise<void> }): Promise<{ boxes: number; near: number; far: number; created: number; outsideRing: number; belowSitelinks: number; wrongType: number }>`.
-    - Nahbereich: Overpass je Box mit den `near`-Regeln, Elemente nur innerhalb `nearRadiusM` eines Zentrums.
-    - Fernbereich: Overpass je Box mit `farPlaceTypes` und den `far`-Regeln, nur Elemente mit `wikidata`-Tag. Dazu Wikidata je Box mit `wikidataClasses` und `minSitelinks` im SPARQL (`wikibase:sitelinks`). Für OSM-Objekte mit `wikidata`-Tag holt `sitelinkCounts` die Zahl (Cache `wikidata_sitelinks` wie `lib/pipeline/datasets.ts`); unter `minSitelinks` → `belowSitelinks`.
-    - Gespeichert werden nur `poi` und `settlement`; jeder andere Typ zählt als `wrongType`.
+    - Nahbereich: Overpass je Box mit den `near`-Regeln, Elemente nur innerhalb `nearM` eines Zentrums; Regeln aller Kategorien.
+    - Fernbereich: Overpass je Box mit den Regeln der Kategorien aus `research.state.transportCategories`, nur Elemente mit `wikidata`-Tag. Dazu Wikidata je Box mit `wikidataClasses` und `transportMinSitelinks` im SPARQL (`wikibase:sitelinks`). Für OSM-Objekte mit `wikidata`-Tag holt `sitelinkCounts` die Zahl; unter `transportMinSitelinks` → `belowSitelinks`.
+    - Sitelink-Zahlen jedes gespeicherten Objekts mit `wikidata_id` (beide Ringe) kommen in die Tabelle `wikidata_sitelinks`, mit derselben Wiederverwendung wie `lib/pipeline/datasets.ts` (`datasets.sitelinks.reuseDays`). N4a (`lib/domain/research/reach.ts`) liest die Sitelinks von dort.
+    - Gespeichert wird nur `poi`; jeder andere Typ zählt als `wrongType`.
     - Wikidata-Items laufen über `importWikidataItems` mit `allowCreate = {poi}`.
     - Rohantworten werden archiviert unter `datasets/overpass/land/<key>/<date>-<ring>-<i>.json`.
     - Danach in derselben Job-Ausführung `buildHierarchy(db, scope)`.
@@ -217,12 +209,14 @@ Expected: PASS. `docker ps` zeigt `periplus-isolated-db-1` auf 5435 und `…-db-
 
 - [ ] **Step 1: Write the failing tests**
   - `rings.test.ts`:
-    - Drei Zentren 1 km auseinander ergeben bei `maxBoxKm` 40 genau eine Box, die alle drei plus 2.100 m umfasst.
+    - `landRings` mit den N4a-Startwerten und `marginM` 300 ergibt `{ nearM: 2400, farM: 15900 }`.
+    - Drei Zentren 1 km auseinander ergeben bei `maxBoxKm` 40 genau eine Box, die alle drei plus 2.400 m umfasst.
     - Zwei Zentren 100 km auseinander ergeben zwei Boxen.
-    - `withinRing` liefert für einen Punkt 2.000 m neben dem Zentrum `true`, 2.200 m daneben `false`.
+    - `withinRing` liefert für einen Punkt 2.300 m neben dem Zentrum bei 2.400 m `true`, 2.500 m daneben `false`.
   - `gazetteer-land.test.ts` (`withRollback`, Land und Meer wie in `gazetteer-osm.test.ts`, ein Landesteil mit Kacheln, zwei Kandidaten-Orte und ein `no_anchoring`-Ort, Fake-Transport für Overpass und WDQS):
     - **Nahbereich:** Taverne (benannt) 1 km vom Kandidaten wird angelegt. Eine Taverne 5 km entfernt zählt als `outsideRing`. Eine unbenannte Bushaltestelle 500 m entfernt wird angelegt.
-    - **Fernbereich:** Ein OSM-`historic=castle` 10 km entfernt mit `wikidata=Q1` und 12 Sitelinks wird angelegt. Mit 2 Sitelinks zählt es als `belowSitelinks`, ohne `wikidata`-Tag wird es gar nicht angelegt.
+    - **Fernbereich:** Ein OSM-`historic=castle` 10 km entfernt mit `wikidata=Q1` und 12 Sitelinks wird angelegt, und `wikidata_sitelinks` hat für `Q1` die Zahl 12. Mit 2 Sitelinks zählt es als `belowSitelinks`, ohne `wikidata`-Tag wird es gar nicht angelegt. Eine Taverne 10 km entfernt mit `wikidata` wird nicht angelegt (`food` steht nicht in `transportCategories`).
+    - **Zusammenspiel mit N4a:** Nach `importLandThings` findet `reachable` (`lib/domain/research/reach.ts`) für den Kandidaten die Taverne zu Fuß und die Burg mit Bus (bei Bushaltestelle in Fußweite).
     - **Falscher Typ:** Ein `man_made=pier` mit `harbour=yes` und Namen wird nicht als `harbour` angelegt (`wrongType` = 1).
     - **Nicht recherchierte Orte:** Der `no_anchoring`-Ort erzeugt kein Zentrum.
     - **Wiederholung:** Ein zweiter Aufruf liefert `created: 0`, die Zahl der POIs bleibt gleich.

@@ -135,7 +135,7 @@ usw. zählen nicht.
   - **Nahbereich** (Startwert 2,1 km Luftlinie = 1,5 km Fußweg × Umwegfaktor 1,4): Tavernen, Restaurants, Cafés,
     Bars, Supermärkte, Läden, Bäcker, Märkte, Strände, Bushaltestellen, Taxistände, Fähranleger und mögliche
     Anlandestellen (Steg, Pier, Slipanlage, Strandzugang).
-  - **Fernbereich** (Startwert 15 km): nur Orte und Sehenswertes, und Sehenswertes nur mit Wikidata-Bezug und
+  - **Fernbereich** (Startwert 15 km; zu Radien und Kategorien siehe 4.6): nur Orte und Sehenswertes, und Sehenswertes nur mit Wikidata-Bezug und
     mindestens N Sitelinks (Startwert 5, Konfiguration; Entscheidung Claude). Ein OSM-Objekt ohne `wikidata`-Tag zählt
     im Fernbereich nicht. Die Sitelinks holt die neue Stufe selbst vor dem Filter; heute holt sie erst die
     Datensatz-Stufe nach dem Gazetteer. Teil-Spec 16 kennt keine reine Sitelink-Schwelle, ihre Wichtigkeit braucht
@@ -169,6 +169,22 @@ usw. zählen nicht.
 | B10 Buchten und Eilande vor einer Insel hängen am Landesteil | Elternregel: nächste Insel innerhalb eines Abstands (Startwert einige hundert Meter, Konfiguration) statt nur Inselfläche + 200 m |
 | B11 Status „0 von 13 aufgebaut“ trotz gelaufener Stufen | Seite „Länder und Landesteile“ zeigt je Landesteil, welche Stufen zuletzt wann gelaufen sind (auch Einzelläufe), ein laufender Landesteil ist erkennbar; Länder mit begonnenem Landesteil sind aufgeklappt |
 | B13 Sprachcode `und` | wird als „ohne Sprache“ angezeigt |
+
+### 4.6 Abstimmung mit dem Stapel der Neuausrichtung (Nachtrag beim Start der Umsetzung)
+
+Während N7 geplant wurde, sind N1–N4a weitergelaufen. N7 baut deshalb auf `feat/n4a-stand` auf (hineingemergt) und
+übernimmt von dort statt doppelt zu bauen:
+
+- **Kategorien:** `bakery`, `transport`, `landing` samt Enum-Migration und Regeln hat N4a eingeführt. N7 ergänzt nur
+  unbenannte Objekte (Bus, Taxi, Fähre, Steg, Slip, Strand).
+- **Radien:** N7 konfiguriert keine eigenen Ringe. Es leitet sie aus `config/research.json` (`state`) ab:
+  Anlanderadius + Fußweg bzw. Anlanderadius + Bus/Taxi, plus ein kleiner Spielraum. So wird der Umkreis nie
+  kleiner als das, was N4a (`reach.ts`, `landing.ts`) darin sucht.
+- **Fernbereich:** die Kategorien `state.transportCategories` ab `state.transportMinSitelinks`, wie N4a sie liest. Orte
+  im Fernbereich entfallen, denn N4a nutzt sie nicht. Die Sitelinks schreibt N7 in `wikidata_sitelinks`, die Tabelle,
+  aus der N4a liest.
+- **Kandidaten:** Es gilt dieselbe Definition wie in der Recherche (`researchCandidates`, N1).
+- **Keine eigene Migration.**
 
 ## 5. Entwicklungsumgebung
 
