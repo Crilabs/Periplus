@@ -142,6 +142,7 @@ describe("research config", () => {
     const c = getConfig().research;
     expect(c.landside.maxSubjectsPerPlace).toBe(5);
     expect(c.landside.maxHitsPerSubject).toBe(10);
+    expect(c.landside.settlementMaxM).toBe(10000);
     expect(c.landside.templates.map((t) => t.template)).toEqual([
       "{subject} things to do",
       "{subject} taverna",

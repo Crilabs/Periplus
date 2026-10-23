@@ -1,5 +1,5 @@
 import { alias } from "drizzle-orm/pg-core";
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { resolveTaskModel } from "@/lib/ai/cost";
 import { getConfig, type AppConfig, type NameAffixesConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
@@ -117,7 +117,7 @@ export async function planUnits(
     .selectDistinct({ placeId: researchHits.placeId, versionId: documents.currentVersionId, urlNormalized: researchHits.urlNormalized, origin: researchHits.origin })
     .from(researchHits)
     .innerJoin(documents, eq(documents.urlNormalized, researchHits.urlNormalized))
-    .where(inArray(researchHits.placeId, placeIds));
+    .where(and(inArray(researchHits.placeId, placeIds), ne(researchHits.purpose, "landside")));
   const route = activeRouteExtractor(cfg);
   const stopRows = await db
     .selectDistinct({ placeId: sql<string>`${researchRouteStops.placeId}`, versionId: researchRouteStops.documentVersionId })

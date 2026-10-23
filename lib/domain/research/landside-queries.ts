@@ -11,13 +11,11 @@ export type LandsideSubject = { name: string; lang: string; geoObjectId: string 
 
 /** The categories of `berth_states.nearby` that make a landside subject: towns and sights. */
 const SUBJECT_CATEGORIES = ["town", "culture"];
-/** The nearest settlements looked at: the nearest one may have no name in any template language. */
-const NEAREST_SETTLEMENTS = 3;
 
 /**
  * What a berth's landside is searched for: from `berth_states.nearby` the towns and sights with the most Wikidata
  * sitelinks (ties: nearer first), at most `maxSubjectsPerPlace`, plus always the nearest settlement of the place's
- * position. Each is named in every language of the landside templates it has a (non-provisional) name in; an
+ * position within `settlementMaxM`. Each is named in every language of the landside templates it has a (non-provisional) name in; an
  * object without such a name is no subject. A place without a state or without `nearby` has the nearest settlement only.
  */
 export async function landsideSubjects(db: Db, placeId: string, cfg: LandsideConfig): Promise<LandsideSubject[]> {
@@ -40,8 +38,8 @@ export async function landsideSubjects(db: Db, placeId: string, cfg: LandsideCon
   const nearest = await db.execute<{ id: string }>(sql`
     select g.id from geo_objects g, places p
     where p.id = ${placeId} and g.type = 'settlement' and g.valid_to is null and g.merged_into_id is null
-    order by g.centroid <-> p.position, g.id
-    limit ${NEAREST_SETTLEMENTS}
+      and ST_DWithin(g.centroid::geography, p.position::geography, ${cfg.settlementMaxM})
+    order by g.centroid::geography <-> p.position::geography, g.id
   `);
   const settlements = nearest.rows.map((r) => r.id);
 
@@ -54,7 +52,7 @@ export async function landsideSubjects(db: Db, placeId: string, cfg: LandsideCon
     });
 
   const out = ranked.flatMap(subjectsOf);
-  // the nearest settlement that has a name; one already among the ranked subjects is not repeated
+  // the nearest settlement within `settlementMaxM` that has a name; one already among the ranked subjects is not repeated
   const nearestNamed = settlements.find((id) => subjectsOf(id).length > 0);
   if (nearestNamed && !ranked.includes(nearestNamed)) out.push(...subjectsOf(nearestNamed));
   return out;

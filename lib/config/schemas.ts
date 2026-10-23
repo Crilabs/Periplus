@@ -1401,6 +1401,8 @@ export const researchSchema = z
       maxSubjectsPerPlace: z.number().int().positive(),
       /** Hits taken over per subject's query set. */
       maxHitsPerSubject: z.number().int().positive(),
+      /** The nearest settlement is a subject only within this distance (metres) of the berth. */
+      settlementMaxM: z.number().positive(),
     }),
     refetchDays: z.number().int().positive(),
     assessWords: z.number().int().positive(),

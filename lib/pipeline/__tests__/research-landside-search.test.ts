@@ -61,8 +61,8 @@ async function poi(tx: Db, subId: string, name: string, category: PoiCategory, l
   return id;
 }
 
-async function settlement(tx: Db, subId: string, name: string, lon: number) {
-  return insertNamedObject(tx, { type: "settlement", names: [{ name, language: "en" }], lon, lat: 35.2, subdivisionId: subId });
+async function settlement(tx: Db, subId: string, name: string | null, lon: number) {
+  return insertNamedObject(tx, { type: "settlement", names: name ? [{ name, language: "en" }] : [], lon, lat: 35.2, subdivisionId: subId });
 }
 
 async function state(tx: Db, placeId: string, nearby: Array<{ geoObjectId: string; category: PoiCategory; distanceM: number }>) {
@@ -118,6 +118,19 @@ describe("landsideSubjects", () => {
       expect(await landsideSubjects(tx, placeId, cfg().landside)).toEqual([{ name: "Near Village", lang: "en", geoObjectId: near }]);
       await state(tx, placeId, []);
       expect(await landsideSubjects(tx, placeId, cfg().landside)).toHaveLength(1);
+    }));
+
+  it("picks the nearest settlement with a name within settlementMaxM, however many unnamed ones are nearer; none beyond the limit", () =>
+    withRollback(async (tx) => {
+      const sub = await base(tx);
+      const placeId = await seedPlace(tx, sub, 21.1);
+      // 0.001 deg longitude at 35.2 N is about 91 m
+      for (const lon of [21.1005, 21.101, 21.1015, 21.102]) await settlement(tx, sub, null, lon);
+      const named = await settlement(tx, sub, "Named Village", 21.11);
+      const beyond = await settlement(tx, sub, "Beyond Village", 21.4);
+      expect(beyond).toBeTruthy();
+      expect(await landsideSubjects(tx, placeId, cfg().landside)).toEqual([{ name: "Named Village", lang: "en", geoObjectId: named }]);
+      expect(await landsideSubjects(tx, placeId, { ...cfg().landside, settlementMaxM: 500 })).toEqual([]);
     }));
 
   it("is empty without nearby and without a settlement", () =>

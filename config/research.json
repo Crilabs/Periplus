@@ -33,7 +33,8 @@
       { "template": "{subject} cosa vedere", "lang": "it" }
     ],
     "maxSubjectsPerPlace": 5,
-    "maxHitsPerSubject": 10
+    "maxHitsPerSubject": 10,
+    "settlementMaxM": 10000
   },
   "refetchDays": 90,
   "assessWords": 6000,

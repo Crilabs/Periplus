@@ -217,7 +217,7 @@ export async function loadEvidence(db: Db, placeIds: string[], config: AppConfig
   const { rows } = await db.execute<SignalRow>(sql`
     select s.id, s.place_id, s.document_version_id, s.kind::text as kind, s.first_hand, s.confidence, s.observed_at::text as observed_at, s.observed_at_basis::text as observed_at_basis,
       s.quote, v.content_hash, d.url, a.page_kind::text as page_kind, a.generated, a.berths,
-      exists (select 1 from research_hits h where h.place_id = s.place_id and h.url_normalized = d.url_normalized) as search_hit,
+      exists (select 1 from research_hits h where h.place_id = s.place_id and h.purpose <> 'landside' and h.url_normalized = d.url_normalized) as search_hit,
       ${stop("name")} as name_stop,
       ${stop("corridor")} as corridor_stop
     from berth_signals s

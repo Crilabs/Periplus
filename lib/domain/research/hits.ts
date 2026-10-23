@@ -59,7 +59,8 @@ export async function recordHits(
 /**
  * Takes over the results of the landside searches of one place as hits of purpose `landside`: per subject (its
  * `serpQueryIds`) at most `landside.maxHitsPerSubject` hits, existing hits of the subject's queries counted, the best
- * ranks first; without `skipDomains` and forbidden domains; a URL the place already has as a landside hit is not
+ * ranks first (a URL found for several subjects goes to the first subject in the given order, i.e. the ranking of
+ * `landsideSubjects`); without `skipDomains` and forbidden domains; a URL the place already has as a landside hit is not
  * repeated (a repeated call adds nothing). Returns the number of new rows.
  */
 export async function recordLandsideHits(
