@@ -1,14 +1,14 @@
 import { eq, sql, type InferSelectModel } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
 import { CONTRACT_FILES, CONTRACT_SCHEMAS, SCHEMA_VERSION, type ContractFile, type CoverageEntry, type Manifest } from "@/contract";
-import { getConfig } from "@/lib/config";
+import { getConfig, type DeliveryConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { radiusPackageRequests, radiusPackages } from "@/lib/db/schema/radius";
 import { contentTypeOf, serializeFile, sha256Hex } from "../serialize";
 import { clipCoast } from "./coast";
 import { composeRadiusPackage } from "./compose";
 import { circlePolygon, radiusNm } from "./geometry";
-import { loadSourcePackage, radiusCoverage, resolveHomeMarina } from "./load";
+import { isHomeMarina, loadSourcePackage, radiusCoverage, resolveHomeMarina } from "./load";
 import type { ComposedRadius } from "./types";
 
 /*
@@ -26,15 +26,22 @@ export type RadiusRequestKind = "package" | "file" | "changes";
 type FileHashes = Record<string, { sha256: string; bytes: number }>;
 
 /**
- * The cache key: the first 16 hex characters of the sha256 over `marina|days|radiusNm|schemaVersion|` and the coverage
- * sorted by key, each entry `id:dataVersion` (`id:missing` for a missing subdivision), joined by `|`.
+ * The revision of the radius build. Bump it whenever a change to compose, coast clipping, coverage or the checks
+ * changes the output for the same inputs: it is part of the cache key, so cached packages built by older code are not
+ * served again.
+ */
+export const RADIUS_BUILD_REVISION = 1;
+
+/**
+ * The cache key: the first 16 hex characters of the sha256 over `marina|days|radiusNm|schemaVersion|revision|` and the
+ * coverage sorted by key, each entry `id:dataVersion` (`id:missing` for a missing subdivision), joined by `|`.
  */
 export function radiusPackageKey(input: { marina: string; days: number; radiusNm: number; coverage: CoverageEntry[]; schemaVersion: string }): string {
   const coverage = [...input.coverage]
     .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
     .map((c) => `${c.id}:${c.dataVersion ?? "missing"}`)
     .join("|");
-  const text = `${input.marina}|${input.days}|${input.radiusNm}|${input.schemaVersion}|${coverage}`;
+  const text = `${input.marina}|${input.days}|${input.radiusNm}|${input.schemaVersion}|${RADIUS_BUILD_REVISION}|${coverage}`;
   return sha256Hex(new TextEncoder().encode(text)).slice(0, 16);
 }
 
@@ -61,16 +68,40 @@ export async function getRadiusPackage(
     if (e instanceof RangeError) return "invalid_days";
     throw e;
   }
+  // the home marina and the coverage are read one after the other: when a new package of the marina's subdivision
+  // lands in between, the centre does not match the package the key names, so it is resolved once more
+  let row: RadiusPackageRow | "stale" | "marina_not_found" = "stale";
+  for (let attempt = 0; attempt < 2 && row === "stale"; attempt++) {
+    row = await findOrBuild(db, archive, req, r, cfg);
+  }
+  if (row === "stale" || row === "marina_not_found") return "marina_not_found";
+  await recordRadiusRequest(db, row.id, req.apiClientId, req.kind ?? "package");
+  return row;
+}
+
+/**
+ * The stored package for the marina's current centre and coverage, built under the key's lock when there is none;
+ * `"stale"` when the loaded package of the marina's subdivision does not deliver the marina as resolved (resolved
+ * from another version), `"marina_not_found"` as in `getRadiusPackage`.
+ */
+async function findOrBuild(
+  db: Db,
+  archive: Archive,
+  req: { marina: string; days: number; now?: Date },
+  r: number,
+  cfg: DeliveryConfig,
+): Promise<RadiusPackageRow | "stale" | "marina_not_found"> {
   const home = await resolveHomeMarina(db, archive, req.marina);
   if (!home) return "marina_not_found";
   const circle = circlePolygon(home.spot.position, r);
-  const coverage = await radiusCoverage(db, circle);
+  // spots belong to the subdivision of the nearest land within gazetteer.subdivisionRadiusM (metres; 1852 m per nm)
+  const coverage = await radiusCoverage(db, circle, circlePolygon(home.spot.position, r + getConfig().gazetteer.subdivisionRadiusM / 1852));
   // the marina's subdivision is always touched; without its package the marina is not delivered
   if (!coverage.delivered.some((d) => d.subdivisionId === home.subdivisionId)) return "marina_not_found";
   const entries = [...coverage.delivered.map((d) => d.entry), ...coverage.missing];
   const key = radiusPackageKey({ marina: req.marina, days: req.days, radiusNm: r, coverage: entries, schemaVersion: SCHEMA_VERSION });
 
-  const row =
+  return (
     (await radiusPackageByKey(db, key)) ??
     (await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`radius:${key}`}))`);
@@ -82,6 +113,12 @@ export async function getRadiusPackage(
       const packages = (
         await Promise.all(coverage.delivered.map((d) => loadSourcePackage(tx, archive, d.subdivisionId, d.entry)))
       ).sort((a, b) => (a.coverage.key < b.coverage.key ? -1 : a.coverage.key > b.coverage.key ? 1 : 0));
+      // the centre must be the marina as the loaded package of its subdivision delivers it
+      const homeSubdivision = coverage.delivered.find((d) => d.subdivisionId === home.subdivisionId)!.entry.id;
+      const loaded = packages.find((p) => p.coverage.id === homeSubdivision)?.spots.find((s) => s.id === req.marina);
+      if (!loaded || !isHomeMarina(loaded) || loaded.position.lat !== home.spot.position.lat || loaded.position.lon !== home.spot.position.lon) {
+        return "stale" as const;
+      }
       const composed = composeRadiusPackage(
         {
           key,
@@ -138,9 +175,8 @@ export async function getRadiusPackage(
         })
         .returning();
       return inserted!;
-    }));
-  await recordRadiusRequest(db, row.id, req.apiClientId, req.kind ?? "package");
-  return row;
+    }))
+  );
 }
 
 /** One `radius_package_requests` row: the client asked for (a file of) the package `packageId`. */

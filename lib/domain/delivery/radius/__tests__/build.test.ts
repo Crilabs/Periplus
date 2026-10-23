@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Archive } from "@/lib/adapters/s3";
 import { CONTRACT_SCHEMAS, SCHEMA_VERSION, type CoastCollection, type ContractFile, type Manifest, type SpotsFile } from "@/contract";
 import { manifestSchema } from "@/contract/v2";
@@ -22,9 +22,16 @@ import { buildDelivery } from "../../build";
 import { distanceNm } from "../../geo";
 import { sha256Hex } from "../../serialize";
 import type { DeliveryPackage } from "../../types";
-import { getRadiusPackage, radiusPackageByKey, radiusPackageKey, readRadiusFile, type RadiusPackageRow } from "../build";
+import { getRadiusPackage, RADIUS_BUILD_REVISION, radiusPackageByKey, radiusPackageKey, readRadiusFile, type RadiusPackageRow } from "../build";
 import { clipCoast } from "../coast";
 import { circlePolygon, destination } from "../geometry";
+import * as load from "../load";
+
+// the home marina's resolution, replaceable per test (a stale centre read from an older package)
+vi.mock("../load", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../load")>();
+  return { ...actual, resolveHomeMarina: vi.fn(actual.resolveHomeMarina) };
+});
 
 /*
  * Radius packages built, stored and cached (spec 18, plan Task 5) on the delivery fixture (its package built for real)
@@ -80,8 +87,9 @@ describe("radiusPackageKey", () => {
   ];
   const input = { marina: "sp_01J9ZD00000000000000000002", days: 7, radiusNm: 175, coverage, schemaVersion: "3.0" };
 
-  it("is the first 16 hex characters of the sha256 over marina, days, radius, version and the sorted coverage", () => {
-    const text = "sp_01J9ZD00000000000000000002|7|175|3.0|sd_01J9ZD00000000000000000001:missing|sd_01J9ZE00000000000000000001:3";
+  it("is the first 16 hex characters of the sha256 over marina, days, radius, version, build revision and the sorted coverage", () => {
+    expect(RADIUS_BUILD_REVISION).toBe(1);
+    const text = "sp_01J9ZD00000000000000000002|7|175|3.0|1|sd_01J9ZD00000000000000000001:missing|sd_01J9ZE00000000000000000001:3";
     expect(radiusPackageKey(input)).toBe(sha256Hex(new TextEncoder().encode(text)).slice(0, 16));
     expect(radiusPackageKey({ ...input, coverage: [...coverage].reverse() })).toBe(radiusPackageKey(input));
   });
@@ -308,6 +316,52 @@ describe("getRadiusPackage", () => {
       );
       // only the package of version 1 is stored
       expect((await tx.select().from(radiusPackages).where(eq(radiusPackages.homeMarinaPublicId, marina))).map((r) => r.id)).toEqual([v1.id]);
+    }));
+
+  it("a subdivision whose polygon lies outside the circle but whose spot lies inside it is touched (buffer gazetteer.subdivisionRadiusM)", { timeout: 60_000 }, () =>
+    withRollback(async (tx) => {
+      const { f, archive } = await setup(tx, { east: false });
+      // M at 21.3° E / 35.1° N, 1 day = 25 nm; the north subdivision starts 30 nm north of M
+      const subdivision = { publicId: newPublicId("sd"), key: `XT-RADIUS-NORTH-${newId()}`, name: "Nordlandesteil" };
+      const north = await insertNamedSubdivision(tx, { ...subdivision, box: [21.0, 35.6, 21.5, 35.8] });
+      const ids = randomPackageIds(subdivision, "q025:805:502");
+      // its anchorage (spot A of the package, 21.05° E / 35.195° N) moved to 23 nm north of M: inside the circle
+      await storeSubdivisionPackage(tx, archive, { subdivisionId: north.id, pkg: eastPackage(ids, { lon: 0.25, lat: 0.28833 }), dataVersion: 1 });
+      const row = await getRadiusPackage(tx, archive, { marina: f.places.M.publicId!, days: 1, now: NOW });
+      isRow(row);
+      expect(row.coverage.map((c) => c.id)).toContain(subdivision.publicId);
+      const spotIds = (await readJson<SpotsFile>(archive, row, "spots.json")).spots.map((s) => s.id);
+      expect(spotIds).toContain(ids.spot);
+    }));
+
+  it("a home marina read from another package version than the coverage is resolved again once, else not found", { timeout: 60_000 }, () =>
+    withRollback(async (tx) => {
+      const { f, archive } = await setup(tx, { east: false });
+      const marina = f.places.M.publicId!;
+      const resolve = vi.mocked(load.resolveHomeMarina);
+      const actual = await vi.importActual<typeof import("../load")>("../load");
+      // a stale read: the marina 1 nm further north, as an older package might have held it
+      const stale: typeof actual.resolveHomeMarina = async (...args) => {
+        const home = await actual.resolveHomeMarina(...args);
+        return home && { ...home, spot: { ...home.spot, position: { ...home.spot.position, lat: Math.round((home.spot.position.lat + 1 / 60) * 1e5) / 1e5 } } };
+      };
+      try {
+        // once stale, then current: the package is built around the current position
+        resolve.mockImplementationOnce(stale);
+        const row = await getRadiusPackage(tx, archive, { marina, days: 1, now: NOW });
+        isRow(row);
+        const manifest = await readJson<Manifest>(archive, row, "manifest.json");
+        const spots = (await readJson<SpotsFile>(archive, row, "spots.json")).spots;
+        expect(manifest.scope.type === "radius" && manifest.scope.center).toEqual(spots.find((s) => s.id === marina)!.position);
+
+        // stale twice: not found, nothing stored for these days
+        resolve.mockImplementationOnce(stale).mockImplementationOnce(stale);
+        expect(await getRadiusPackage(tx, archive, { marina, days: 2, now: NOW })).toBe("marina_not_found");
+        expect(await tx.select().from(radiusPackages).where(and(eq(radiusPackages.homeMarinaPublicId, marina), eq(radiusPackages.days, 2)))).toEqual([]);
+      } finally {
+        resolve.mockReset();
+        resolve.mockImplementation(actual.resolveHomeMarina);
+      }
     }));
 
   it("rejects an anchorage, an unknown spot and an invalid trip length", { timeout: 60_000 }, () =>

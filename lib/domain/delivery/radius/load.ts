@@ -59,13 +59,18 @@ export type RadiusCoverage = {
 };
 
 /**
- * The subdivisions valid today whose polygon intersects the circle (`ST_Intersects`), sorted by key: an active one is
- * delivered with the data version of its current valid package or missing without one; a subdivision that is not
- * active (excluded) is missing even with an old valid package (spec 18, "Lücken"). And the valid coast tiles of the
- * missing ones that intersect the circle.
+ * The subdivisions valid today whose polygon intersects `touching`, sorted by key: an active one is delivered with the
+ * data version of its current valid package or missing without one; a subdivision that is not active (excluded) is
+ * missing even with an old valid package (spec 18, "Lücken"). And the valid coast tiles of the missing ones that
+ * intersect `circle`.
+ *
+ * `touching` is the circle widened by `gazetteer.subdivisionRadiusM`: a spot belongs to the subdivision whose land is
+ * nearest within that distance (`setSubdivisions`), so a spot inside the circle can belong to a subdivision whose
+ * polygon lies just outside it.
  */
-export async function radiusCoverage(db: Db, circle: GeoJSON.Polygon): Promise<RadiusCoverage> {
+export async function radiusCoverage(db: Db, circle: GeoJSON.Polygon, touching: GeoJSON.Polygon): Promise<RadiusCoverage> {
   const geom = sql`ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(circle)}), 4326)`;
+  const wide = sql`ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(touching)}), 4326)`;
   const { rows } = await db.execute<{ id: string; public_id: string; key: string; geo_object_id: string; data_version: number | null }>(sql`
     select s.id, s.public_id, s.key, s.geo_object_id, case when s.status = 'active' then d.data_version end as data_version
     from subdivisions s
@@ -75,7 +80,7 @@ export async function radiusCoverage(db: Db, circle: GeoJSON.Polygon): Promise<R
       order by d.data_version desc
       limit 1
     ) d on true
-    where ${validAtAlias("s")} and s.geom && ${geom} and ST_Intersects(s.geom, ${geom})
+    where ${validAtAlias("s")} and s.geom && ${wide} and ST_Intersects(s.geom, ${wide})
     order by s.key, s.id
   `);
   const names = await deliveryNames(db, rows.map((r) => r.geo_object_id));
