@@ -217,7 +217,7 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
       ) : tab === "image" ? (
         <ImageTabView placeId={p.id} geoObjectId={p.geoObjectId} editable={active} notice={imageNoticeParam.parse(sp.imageNotice)} zoomRefused={sp.imageError === "zoom"} />
       ) : tab === "research" ? (
-        <ResearchTab rows={await researchView(db, p.id)} />
+        <ResearchTab view={await researchView(db, p.id)} />
       ) : tab === "delivery" ? (
         <DeliveryTabView placeId={p.id} />
       ) : tab === "sources" ? (

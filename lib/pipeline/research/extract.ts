@@ -30,8 +30,7 @@ import { researchScope } from "./search";
  */
 
 export const RESEARCH_EXTRACT_STAGE = "research.extract";
-// The queue is registered with the stage (plan N2, task 7, which removes this cast); until then it is only the target of follow-on jobs.
-export const RESEARCH_EXTRACT_QUEUE = "research.extract" as QueueName;
+export const RESEARCH_EXTRACT_QUEUE = "research.extract" satisfies QueueName;
 const SUBJECT = "research_unit";
 
 let logger: ReturnType<typeof createLogger> | undefined;

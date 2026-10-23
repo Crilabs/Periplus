@@ -17,6 +17,9 @@ import { STAGES } from "@/lib/jobs/stages";
 import { pollBatch } from "@/lib/pipeline/batches";
 import type { FetchUrlDeps } from "@/lib/pipeline/fetch/url";
 import { RESEARCH_ASSESS_STAGE, assessPages } from "@/lib/pipeline/research/assess";
+import { RESEARCH_CONFIRM_STAGE } from "@/lib/pipeline/research/confirm";
+import { RESEARCH_EXTRACT_STAGE } from "@/lib/pipeline/research/extract";
+import { RESEARCH_DISCOVER_STAGE, RESEARCH_ROUTES_STAGE } from "@/lib/pipeline/research/routes";
 import { RESEARCH_FETCH_STAGE, fetchResearchPage } from "@/lib/pipeline/research/fetch";
 import { RESEARCH_SEARCH_STAGE, searchCandidate } from "@/lib/pipeline/research/search";
 import { RESEARCH_STAGES, startResearchRun } from "@/lib/pipeline/research-run";
@@ -85,8 +88,17 @@ const PAGE = {
 };
 
 describe("research run", () => {
-  it("registers the three stages and queues", () => {
-    expect(RESEARCH_STAGES).toEqual([RESEARCH_SEARCH_STAGE, RESEARCH_FETCH_STAGE, RESEARCH_ASSESS_STAGE]);
+  it("registers the seven stages and queues, in order", () => {
+    expect(RESEARCH_STAGES).toEqual([
+      RESEARCH_SEARCH_STAGE,
+      RESEARCH_FETCH_STAGE,
+      RESEARCH_ASSESS_STAGE,
+      RESEARCH_EXTRACT_STAGE,
+      RESEARCH_ROUTES_STAGE,
+      RESEARCH_DISCOVER_STAGE,
+      RESEARCH_CONFIRM_STAGE,
+    ]);
+    expect([...RESEARCH_STAGES]).toEqual(["research.search", "research.fetch", "research.assess", "research.extract", "research.routes", "research.discover", "research.confirm"]);
     for (const name of RESEARCH_STAGES) {
       expect(STAGES[name]?.queue).toBe(name);
       expect(QUEUES).toContain(name);

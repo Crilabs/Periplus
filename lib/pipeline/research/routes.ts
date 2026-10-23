@@ -32,8 +32,7 @@ import { researchScope } from "./search";
 
 export const RESEARCH_ROUTES_STAGE = "research.routes";
 export const RESEARCH_DISCOVER_STAGE = "research.discover";
-// The queues are registered with the stages (plan N2, task 7, which removes these casts).
-export const RESEARCH_ROUTES_QUEUE = "research.routes" as QueueName;
+export const RESEARCH_ROUTES_QUEUE = "research.routes" satisfies QueueName;
 const SUBJECT = "research_route_section";
 
 let logger: ReturnType<typeof createLogger> | undefined;

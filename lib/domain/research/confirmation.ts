@@ -127,7 +127,7 @@ export function decideBerth(placeKind: PlaceKind, evidence: Evidence[], cfg: Con
 }
 
 /** The model and prompt version `extract-berth` reads with now; only signals of its done units count. */
-function activeExtractor(config: AppConfig): { model: string; promptVersion: number } {
+export function activeExtractor(config: AppConfig): { model: string; promptVersion: number } {
   const { model, taskConfig } = resolveTaskModel(config, "extract-berth");
   return { model, promptVersion: taskConfig.promptVersion };
 }

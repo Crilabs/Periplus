@@ -30,6 +30,7 @@ import type {
 import type { ChangeSeverity, ChangeType, SummaryStatus } from "@/lib/db/schema/profiles";
 import type { DeliveryStatus } from "@/lib/db/schema/deliveries";
 import type { PageKind } from "@/lib/db/schema/research";
+import type { BerthSignalKind, Tone } from "@/lib/db/schema/research-extract";
 import type { ComparisonAttribute, ComparisonMethod, ComparisonResultValue, MetricKey } from "@/lib/db/schema/quality";
 import type { ChangeEntry, ContractFile } from "@/contract";
 import type { CheckName } from "@/lib/domain/delivery/validate";
@@ -118,6 +119,22 @@ export const PAGE_KIND_LABELS: Record<PageKind, string> = {
   listing: "Liste",
   other: "Sonstiges",
 };
+
+/** Kind of a research signal on a berth (spec 5.6). */
+export const SIGNAL_KIND_LABELS: Record<BerthSignalKind, string> = {
+  anchored: "geankert",
+  moored_buoy: "an Boje gelegen",
+  berthed: "festgemacht",
+  listed_as_berth: "als Liegeplatz geführt",
+  prohibited: "Verbot/Sperrgebiet",
+  buoys_private: "Bojen privat",
+  no_space: "kein Platz",
+  unsafe: "unsicher",
+  closed: "geschlossen/Bauarbeiten",
+};
+
+/** Tendency of an extracted fact. */
+export const TONE_LABELS: Record<Tone, string> = { positive: "positiv", neutral: "neutral", negative: "negativ" };
 
 export const PLACE_KIND_LABELS: Record<PlaceKind, string> = {
   anchorage: "Ankerplatz",

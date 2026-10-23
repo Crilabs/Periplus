@@ -9,7 +9,15 @@ import { discoveryAreaStage, discoveryPlaceStage, discoveryProposeStage, discove
 import { embedChunksStage } from "./handlers/embed";
 import { fetchSourceStage, fetchUrlStage } from "./handlers/fetch";
 import { detectBaysStage, geometryPlaceStage } from "./handlers/geometry";
-import { researchAssessStage, researchFetchStage, researchSearchStage } from "./handlers/research";
+import {
+  researchAssessStage,
+  researchConfirmStage,
+  researchDiscoverStage,
+  researchExtractStage,
+  researchFetchStage,
+  researchRoutesStage,
+  researchSearchStage,
+} from "./handlers/research";
 import { imagesPlaceStage } from "./handlers/images";
 import { placeWebsiteFreezeStage, placeWebsiteStage } from "./handlers/place-website";
 import {
@@ -62,6 +70,10 @@ export const STAGES: Record<string, StageDefinition> = {
   [researchSearchStage.name]: researchSearchStage,
   [researchFetchStage.name]: researchFetchStage,
   [researchAssessStage.name]: researchAssessStage,
+  [researchExtractStage.name]: researchExtractStage,
+  [researchRoutesStage.name]: researchRoutesStage,
+  [researchDiscoverStage.name]: researchDiscoverStage,
+  [researchConfirmStage.name]: researchConfirmStage,
   [embedChunksStage.name]: embedChunksStage,
   [wikivoyageStage.name]: wikivoyageStage,
   [compareConvertersStage.name]: compareConvertersStage,

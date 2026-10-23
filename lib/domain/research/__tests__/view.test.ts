@@ -1,7 +1,9 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { documents, pageAssessments, researchFetches, researchHits, serpQueries, serpResults } from "@/lib/db/schema";
+import { berthFacts, berthSignals, documents, pageAssessments, researchFetches, researchHits, researchUnits, serpQueries, serpResults } from "@/lib/db/schema";
+import { activeExtractor } from "@/lib/domain/research/confirmation";
+import { getConfig } from "@/lib/config";
 import { activeAssessor } from "@/lib/domain/research/assessment";
 import { researchView } from "@/lib/domain/research/view";
 import { insertPlace } from "@/test/consolidation";
@@ -38,7 +40,7 @@ describe("researchView", () => {
       await hit(tx, placeId, objectId, "https://neg.test.invalid/p", 1, "negative", "Kolona anchorage not allowed");
       await hit(tx, placeId, objectId, await urlOf(assessed.documentId), 3, "positive", "Kolona anchorage");
 
-      const rows = await researchView(tx, placeId);
+      const { rows } = await researchView(tx, placeId);
       expect(rows.map((r) => [r.purpose, r.rank])).toEqual([["positive", 2], ["positive", 3], ["negative", 1]]);
       expect(rows[0]).toMatchObject({ documentId: unassessed.documentId, assessment: null, keyword: "Kolona anchorage", domain: "test.invalid" });
       expect(rows[1]).toMatchObject({
@@ -51,7 +53,7 @@ describe("researchView", () => {
   it("is empty for a place without hits", () =>
     withRollback(async (tx) => {
       const { placeId } = await insertPlace(tx);
-      expect(await researchView(tx, placeId)).toEqual([]);
+      expect((await researchView(tx, placeId)).rows).toEqual([]);
     }));
 
   it("carries the newest fetch outcome of the page", () =>
@@ -62,6 +64,63 @@ describe("researchView", () => {
       await hit(tx, placeId, objectId, url, 1, "positive", "Kolona anchorage");
       await tx.insert(researchFetches).values({ urlNormalized: url, runId, outcome: "failed", reason: "HTTP 503", createdAt: new Date("2026-10-01") });
       await tx.insert(researchFetches).values({ urlNormalized: url, runId, outcome: "skipped", reason: "robots", createdAt: new Date("2026-10-02") });
-      expect((await researchView(tx, placeId))[0]!.fetch).toEqual({ outcome: "skipped", reason: "robots" });
+      expect((await researchView(tx, placeId)).rows[0]!.fetch).toEqual({ outcome: "skipped", reason: "robots" });
+    }));
+
+  it("carries the verdict, and per page the signals and facts of the active extraction", () =>
+    withRollback(async (tx) => {
+      const { placeId, objectId } = await insertPlace(tx, { status: "candidate" });
+      const page = await insertTestVersion(tx, ["x"]);
+      const [doc] = await tx.select().from(documents).where(eq(documents.id, page.documentId));
+      const { model, promptVersion } = activeAssessor();
+      await tx.insert(pageAssessments).values({
+        documentVersionId: page.versionId, model, promptVersion, pageKind: "trip_report", firstHand: true, generated: false, observedAt: "2025-06-15",
+        observedAtBasis: "explicit", berths: [], runId: await insertTestRun(tx),
+      });
+      await hit(tx, placeId, objectId, doc!.urlNormalized, 1, "positive", "Kolona anchorage");
+      const ex = activeExtractor(getConfig());
+      const unit = async (m: string) =>
+        (await tx.insert(researchUnits).values({ documentVersionId: page.versionId, placeId, model: m, promptVersion: ex.promptVersion, status: "done", dropped: { quote: 0, value: 0, verbatim: 0, attribution: 0 } }).returning({ id: researchUnits.id }))[0]!.id;
+      const active = await unit(ex.model);
+      const stale = await unit("old-model");
+      const at = { documentVersionId: page.versionId, placeId, quoteStart: 0, quoteEnd: 5, observedAt: "2025-06-15", observedAtBasis: "explicit" as const };
+      await tx.insert(berthSignals).values([
+        { ...at, unitId: active, kind: "anchored", firstHand: true, confidence: 0.9, quote: "We anchored here" },
+        { ...at, unitId: stale, kind: "berthed", firstHand: true, confidence: 0.9, quote: "stale answer" },
+      ]);
+      await tx.insert(berthFacts).values([
+        { ...at, unitId: active, statement: "Good holding on sand", quote: "good holding", tone: "positive" },
+        { ...at, unitId: active, attribute: "holding", value: "sand", subjectName: "Taverna Nikos", quote: "sand" },
+      ]);
+
+      const view = await researchView(tx, placeId);
+      expect(view.verdict.status).toBe("candidate");
+      expect(view.verdict.reason).toMatch(/unabhängigen Quellen/);
+      const [row] = view.rows;
+      expect(row).toMatchObject({ signalCount: 1, factCount: 2 });
+      expect(row!.signals).toEqual([{ kind: "anchored", firstHand: true, confidence: 0.9, observedAt: "2025-06-15", observedAtBasis: "explicit", quote: "We anchored here" }]);
+      expect(row!.facts.map((f) => [f.statement, f.subject, f.tone])).toEqual(expect.arrayContaining([["Good holding on sand", null, "positive"]]));
+      expect(row!.facts.find((f) => f.subject === "Taverna Nikos")).toBeDefined();
+    }));
+
+  it("says confirmed with the sources of two independent domains", () =>
+    withRollback(async (tx) => {
+      const { placeId, objectId } = await insertPlace(tx, { status: "candidate" });
+      const { model, promptVersion } = activeAssessor();
+      const ex = activeExtractor(getConfig());
+      for (const domain of ["sail-a.example", "sail-b.example"]) {
+        const url = `https://www.${domain}/p`;
+        const [sourceDoc] = await tx.insert(documents).values({ sourceId: (await insertTestVersion(tx, ["y"])).sourceId, url, urlNormalized: url, docType: "trip_report" }).returning({ id: documents.id });
+        const page = await insertTestVersion(tx, ["x"], { documentId: sourceDoc!.id });
+        await tx.insert(pageAssessments).values({
+          documentVersionId: page.versionId, model, promptVersion, pageKind: "trip_report", firstHand: true, generated: false, observedAt: "2025-06-15",
+          observedAtBasis: "explicit", berths: [], runId: await insertTestRun(tx),
+        });
+        await hit(tx, placeId, objectId, url, 1, "positive", "Kolona anchorage");
+        const [u] = await tx.insert(researchUnits).values({ documentVersionId: page.versionId, placeId, model: ex.model, promptVersion: ex.promptVersion, status: "done", dropped: { quote: 0, value: 0, verbatim: 0, attribution: 0 } }).returning({ id: researchUnits.id });
+        await tx.insert(berthSignals).values({ unitId: u!.id, documentVersionId: page.versionId, placeId, kind: "anchored", firstHand: true, confidence: 0.9, quote: "We anchored", quoteStart: 0, quoteEnd: 5, observedAt: "2025-06-15", observedAtBasis: "explicit" });
+      }
+      const { verdict } = await researchView(tx, placeId);
+      expect(verdict).toMatchObject({ status: "confirmed", independentSources: ["sail-a.example", "sail-b.example"] });
     }));
 });
