@@ -80,9 +80,10 @@ Land zugeordnet wird, und die Zuordnung zu Landesteilen läuft erst nach `subdiv
 
 **Ein Land scheitert** (Entscheidung Claude): `subdivisions.build` baut nur, wenn für alle konfigurierten Länder die
 Grob-Daten vorliegen. Sonst bricht die Stufe mit der Liste der fehlenden Länder ab, denn mit einer Lücke würde Land an
-der Grenze dem falschen Landesteil zugeordnet (wie bei Gaza, B2). Nachgeholt wird über das bestehende Wiederbeleben des
-gescheiterten Jobs, kein neuer Lauftyp. Heute scheitert eine Stufe erst, wenn alle Jobs scheitern
-(`lib/domain/runs.ts`); die Prüfung in `subdivisions.build` schließt diese Lücke.
+der Grenze dem falschen Landesteil zugeordnet (wie bei Gaza, B2). Nachgeholt wird mit demselben Lauf, beschränkt auf
+die fehlenden Länder (Parameter `countries`); `gazetteer.coarse` plant dann nur diese, `subdivisions.build` prüft wieder
+alle. Heute scheitert eine Stufe erst, wenn alle Jobs scheitern (`lib/domain/runs.ts`); die Prüfung in
+`subdivisions.build` schließt diese Lücke.
 
 ### 4.2 Overpass je Land in tragbaren Stücken (B15)
 
@@ -115,13 +116,14 @@ Künftig:
 **Heute:** `gazetteer.osm` und `gazetteer.wikidata` laden POIs für die ganze Box eines Landesteils plus 5 km, sofern
 sie höchstens `poiCoastDistanceKm` (20 km) von einem Meer liegen, also auch die Athener Innenstadt.
 
-**Welcher Lauf** (Entscheidung Claude): Die Stufen des Gazetteer-Laufs (`GAZETTEER_STAGES`) werden zum
-**Gerüst-Lauf** eines Landesteils: `tiles.ensure` → `gazetteer.osm` → `gazetteer.wikidata` → `gazetteer.geonames` →
-`gazetteer.hierarchy` → `seed.tile` → **neu** Dinge an Land → Zuordnung der neuen Objekte. Die Hierarchie muss vor dem
-Seed laufen, weil der Seed `tile_geo_objects` liest. Die neuen Dinge an Land brauchen danach ebenfalls ihre Zuordnung,
-entweder in der neuen Stufe selbst oder in einem zweiten, auf neue Objekte beschränkten Hierarchie-Durchgang
-(Builder). Der Lauf „Aufbauen“ (`SUBDIVISION_BUILD_STAGES`) übernimmt diese Folge, statt den Seed getrennt zu führen.
-„Minuten statt Stunden“ (2.2) wird am Gerüst-Lauf gemessen; Datensätze, Geometrie, Quellenfindung usw. zählen nicht.
+**Welcher Lauf** (Entscheidung Claude, beim Planen korrigiert): Der Seed braucht die Sperrflächen aus der
+Datensatz-Stufe (`no_anchoring`) und kann deshalb nicht in den Gazetteer-Lauf wandern. Die neue Stufe
+`gazetteer.land` steht im Lauf „Aufbauen“ (`SUBDIVISION_BUILD_STAGES`) direkt nach `seed.tile`. Zusätzlich gibt es einen
+eigenen Lauf „Dinge an Land“ für einen Landesteil oder einzelne Kandidaten. Die Zuordnung der neuen Objekte (Landesteil,
+Meer, Eltern, Kacheln) übernimmt die Stufe selbst am Ende, ein zweiter Durchgang von `gazetteer.hierarchy` ist nicht
+nötig. Eine Stufe darf je Lauf nur einmal vorkommen (`run_stages` eindeutig je Lauf und Stufe). „Minuten statt
+Stunden“ (2.2) wird an den Gazetteer-Stufen und an `gazetteer.land` gemessen; Datensätze, Geometrie, Quellenfindung
+usw. zählen nicht.
 
 **Künftig:**
 
@@ -143,7 +145,7 @@ entweder in der neuen Stufe selbst oder in einem zweiten, auf neue Objekte besch
     Taxistände werden auch ohne `name` gespeichert. Sie sind für Crews auch namenlos nützlich, und meistens haben sie
     keinen Namen. Heute verwirft `classifyOsm` alles ohne Namen; für diese Kategorien wird das geändert (Anzeige als
     Kategorie, kein erfundener Name). Für alle übrigen Kategorien bleibt der Name Pflicht.
-  - **Nur Dinge an Land** (Entscheidung Claude): Die neue Stufe schreibt ausschließlich POIs. Ein Fähranleger oder Steg
+  - **Nur Dinge an Land** (Entscheidung Claude): Die neue Stufe schreibt ausschließlich POIs und, im Fernbereich, Orte. Ein Fähranleger oder Steg
     mit `harbour=*` oder Hafen-Seezeichen, den der Klassifikator als `harbour` erkennen würde, wird von ihr nicht als
     Hafen angelegt. Häfen kommen nur aus dem Gerüst, sonst würde der nächste Seed daraus Kandidaten machen.
   - Radien, Kategorien je Ring und Schwellen in Konfiguration (`config/categories.json` um Bus, Taxi, Fähre, Bäcker und
@@ -210,7 +212,7 @@ Spalten); Aufteilung in Aufgaben und PRs; Wahl des dritten Prüf-Landesteils.
 B13 wie in 4.5; eigene Dev-DB für N7; Plan vor Code.
 
 **Claude** (änderbar): Mittelmeer-Box in Konfiguration statt aus den Meeren; `subdivisions.build` wartet auf alle
-Länder, Nachholen über Wiederbeleben; Gazetteer-Lauf wird Gerüst-Lauf mit Seed und Dingen an Land; zwei Ringe
+Länder, Nachholen per Lauf nur für die fehlenden Länder; Dinge an Land als Stufe nach dem Seed in „Aufbauen“ und als eigener Lauf; zwei Ringe
 (2,1 km / 15 km) mit Sehenswertem im Fernring nur ab 5 Sitelinks; Anlandestellen, Bus und Taxi auch ohne Namen; die neue
 Stufe schreibt nur POIs; Anlandestellen, Bus, Taxi, Fähre und Bäcker als Kategorien schon
 in N7; kein eigener Overpass-Spiegel; Speicherlimit je N7-Container; Prüfung an drei schweren Landesteilen statt am
