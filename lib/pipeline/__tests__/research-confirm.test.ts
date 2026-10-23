@@ -28,7 +28,7 @@ import { recordDecision } from "@/lib/domain/places/auto-status";
 import { applyBerthVerdicts, loadEvidence } from "@/lib/domain/research/confirmation";
 import { createRun } from "@/lib/domain/runs";
 import { activeExtractor } from "@/lib/pipeline/research/extract";
-import { confirmBerths, planResearchConfirm, RESEARCH_CONFIRM_STAGE } from "@/lib/pipeline/research/confirm";
+import { confirmBerths, planResearchConfirm, RESEARCH_CONFIRM_STAGE, researchChanges } from "@/lib/pipeline/research/confirm";
 import { insertComputation } from "@/test/consolidation";
 import { placeOf } from "@/test/confirmation";
 import { withRollback } from "@/test/db";
@@ -54,6 +54,7 @@ type PageOpts = {
   link?: "search" | "name" | "corridor" | "none";
   unitStatus?: "done" | "failed";
   unitModel?: string;
+  quote?: string;
 };
 
 /** One page of `domain` with an active assessment, a research unit of the place and one signal in it. */
@@ -90,7 +91,7 @@ async function signalPage(tx: Db, place: { placeId: string; objectId: string }, 
     .insert(berthSignals)
     .values({
       unitId: unit!.id, placeId: place.placeId, documentVersionId: versionId, kind: o.kind ?? "anchored", firstHand: o.firstHand ?? true, confidence: o.confidence ?? 0.9,
-      quote: "We anchored here", quoteStart: 0, quoteEnd: 16, observedAt: o.observedAt ?? "2024-06-15", observedAtBasis: o.observedAtBasis ?? "explicit",
+      quote: o.quote ?? "We anchored here", quoteStart: 0, quoteEnd: 16, observedAt: o.observedAt ?? "2024-06-15", observedAtBasis: o.observedAtBasis ?? "explicit",
     })
     .returning({ id: berthSignals.id });
   return { signalId: signal!.id, versionId };
@@ -124,6 +125,7 @@ describe("applyBerthVerdicts", () => {
           decision: {
             action: "confirm", auto: true, rule: "research", reason: "2 unabhängige Quellen: sail-a.example, sail-b.example",
             sources: ["sail-a.example", "sail-b.example"], signalIds: [a.signalId, b.signalId].sort(), blockingSignalId: null,
+            runId: null,
           },
           decidedBy: "system",
         },
@@ -216,6 +218,38 @@ describe("applyBerthVerdicts", () => {
       expect((await placeRow(tx, excluded.placeId)).status).toBe("no_anchoring");
     }));
 
+  it("an authority ban demotes an admin-confirmed anchorage to no_anchoring and an admin-confirmed marina to candidate (ruling, final review 5)", () =>
+    withRollback(async (tx) => {
+      const ADMIN_AT = new Date("2026-01-01T00:00:00Z");
+      for (const [kind, to] of [["anchorage", "no_anchoring"], ["mooring_field", "no_anchoring"], ["marina", "candidate"], ["port", "candidate"]] as const) {
+        const place = await placeOf(tx, { kind });
+        await setPlaceStatusByAdmin(tx, { placeId: place.placeId, status: "confirmed", from: "candidate", decidedBy: "admin@test.invalid", now: ADMIN_AT });
+        const ban = await signalPage(tx, place, { domain: "port-police.example", kind: "prohibited", firstHand: false, pageKind: "authority", observedAt: "2025-06-01" });
+        expect(await applyBerthVerdicts(tx, [place.placeId], NOW, config), kind).toEqual([{ placeId: place.placeId, from: "confirmed", to }]);
+        expect(await placeRow(tx, place.placeId), kind).toMatchObject({ status: to, statusReason: "Ankerverbot laut Behörde (2025-06-01)" });
+        expect((await statusDecisions(tx, place.placeId)).at(-1), kind).toMatchObject({
+          decidedBy: "system",
+          decision: { action: to === "no_anchoring" ? "no_anchoring" : "candidate", auto: true, rule: "research", overridesAdmin: true, blockingSignalId: ban.signalId },
+        });
+      }
+    }));
+
+  it("other admin-set statuses stay: a forum negative on an admin-confirmed place, a ban on an admin-set candidate (final review 5)", () =>
+    withRollback(async (tx) => {
+      const ADMIN_AT = new Date("2026-01-01T00:00:00Z");
+      const confirmed = await placeOf(tx);
+      await setPlaceStatusByAdmin(tx, { placeId: confirmed.placeId, status: "confirmed", from: "candidate", decidedBy: "admin@test.invalid", now: ADMIN_AT });
+      await signalPage(tx, confirmed, { domain: "forum.example", kind: "buoys_private", firstHand: false, pageKind: "forum", observedAt: "2026-06-01" });
+      expect(await applyBerthVerdicts(tx, [confirmed.placeId], NOW, config)).toEqual([]);
+      expect((await placeRow(tx, confirmed.placeId)).status).toBe("confirmed");
+
+      const candidate = await placeOf(tx, { status: "confirmed" });
+      await setPlaceStatusByAdmin(tx, { placeId: candidate.placeId, status: "rejected", from: "confirmed", decidedBy: "admin@test.invalid", now: ADMIN_AT });
+      await signalPage(tx, candidate, { domain: "port-police.example", kind: "prohibited", firstHand: false, pageKind: "authority" });
+      expect(await applyBerthVerdicts(tx, [candidate.placeId], NOW, config)).toEqual([]);
+      expect((await placeRow(tx, candidate.placeId)).status).toBe("rejected");
+    }));
+
   it("a no_anchoring of a seed (restricted, no decision) stays", () =>
     withRollback(async (tx) => {
       const place = await placeOf(tx, { status: "no_anchoring" });
@@ -279,6 +313,17 @@ describe("applyBerthVerdicts", () => {
       expect((await loadEvidence(tx, [place.placeId], config)).get(place.placeId)!.map((e) => e.link)).toEqual(["name"]);
     }));
 
+  it("two domains quoting the same copied sentence are one source: no confirmation (final review 3)", () =>
+    withRollback(async (tx) => {
+      const place = await placeOf(tx);
+      const quote = "The bay offers good holding in sand at 5 to 8 m and shelter from the meltemi.";
+      await signalPage(tx, place, { domain: "a.example", quote });
+      await signalPage(tx, place, { domain: "b.example", quote });
+      expect((await loadEvidence(tx, [place.placeId], config)).get(place.placeId)!.map((e) => e.quote)).toEqual([quote, quote]);
+      expect(await applyBerthVerdicts(tx, [place.placeId], NOW, config)).toEqual([]);
+      expect(await placeRow(tx, place.placeId)).toMatchObject({ status: "candidate", statusReason: "1 von 2 unabhängigen Quellen (gleicher Text: a.example + b.example)" });
+    }));
+
   it("only signals of done units of the active extract-berth model count; the page's active assessment decides its kind", () =>
     withRollback(async (tx) => {
       const place = await placeOf(tx);
@@ -292,6 +337,28 @@ describe("applyBerthVerdicts", () => {
 });
 
 describe("research.confirm stage", () => {
+  it("researchChanges reads the decisions of this run only, a demotion to no_anchoring included (final review 6)", () =>
+    withRollback(async (tx) => {
+      const confirmed = await placeOf(tx);
+      await signalPage(tx, confirmed, { domain: "a.example" });
+      await signalPage(tx, confirmed, { domain: "b.example" });
+      const banned = await placeOf(tx, { status: "confirmed", publicId: newPublicId("sp") });
+      await signalPage(tx, banned, { domain: "port-police.example", kind: "prohibited", firstHand: false, pageKind: "authority" });
+      const run = async (placeIds: string[]) =>
+        (await createRun(tx, { kind: "reprocess", scope: { type: "system", id: `confirm-${newId()}` }, stages: [RESEARCH_CONFIRM_STAGE], params: { placeIds }, triggeredBy: "test" })).id;
+
+      const first = await run([confirmed.placeId]);
+      await confirmBerths(tx, { runId: first, stage: RESEARCH_CONFIRM_STAGE, key: "confirm" }, config, NOW);
+      expect((await statusDecisions(tx, confirmed.placeId))[0]!.decision).toMatchObject({ runId: first });
+      expect(await researchChanges(tx, first)).toEqual({ changed: [{ placeId: confirmed.placeId, geoObjectId: confirmed.objectId }], confirmed: [confirmed.placeId] });
+
+      // a second run right after: the first run's confirmation is not its change; the ban's demotion is
+      const second = await run([confirmed.placeId, banned.placeId]);
+      await confirmBerths(tx, { runId: second, stage: RESEARCH_CONFIRM_STAGE, key: "confirm" }, config, NOW);
+      expect((await placeRow(tx, banned.placeId)).status).toBe("no_anchoring");
+      expect(await researchChanges(tx, second)).toEqual({ changed: [{ placeId: banned.placeId, geoObjectId: banned.objectId }], confirmed: [] });
+    }));
+
   it("plans one job and confirms the run's candidates", () =>
     withRollback(async (tx) => {
       const place = await placeOf(tx);

@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, ne, notExists, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lt, ne, notExists, notInArray, or, sql } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
 import { resolveTaskModel } from "@/lib/ai/cost";
 import { extractBerthTask, type ExtractBerthInput } from "@/lib/ai/tasks/extract-berth";
@@ -8,7 +8,7 @@ import type { Db } from "@/lib/db/client";
 import { aiBatches, aiBatchItems, documentVersions, geoNames, pageAssessments, places, researchUnits } from "@/lib/db/schema";
 import type { ObservedAtBasis } from "@/lib/db/schema/sources";
 import { activeAssessor } from "@/lib/domain/research/assessment";
-import { unitsForPlaces } from "@/lib/domain/research/assign";
+import { berthNameMatches, unitsForPlaces } from "@/lib/domain/research/assign";
 import { researchCandidates } from "@/lib/domain/research/candidates";
 import { berthAttributes, noDrops, storeExtraction } from "@/lib/domain/research/extraction";
 import { candidateNames } from "@/lib/domain/research/queries";
@@ -32,6 +32,8 @@ import { researchScope } from "./search";
 export const RESEARCH_EXTRACT_STAGE = "research.extract";
 export const RESEARCH_EXTRACT_QUEUE = "research.extract" satisfies QueueName;
 const SUBJECT = "research_unit";
+/** The skip reason of a generated page: such a unit is never planned again (the others are). */
+const GENERATED_REASON = "page is generated text";
 
 let logger: ReturnType<typeof createLogger> | undefined;
 const getLog = () => (logger ??= createLogger("pipeline.research.extract"));
@@ -56,7 +58,9 @@ export function activeExtractor(config: AppConfig = getConfig()): { model: strin
 /**
  * Plan of the stage `research.extract`: the research units of the run's candidates (`unitsForPlaces`) are created as
  * `pending` for the active model and prompt version (an existing unit stays as it is), and every unit still pending
- * goes into a job, `unitsPerBatch` per job. Units already `done` or `failed` are not planned again.
+ * goes into a job, `unitsPerBatch` per job. A `failed` unit that failed fewer than `research.extraction.maxAttempts`
+ * times and a unit `skipped` for missing Markdown or assessment are set back to `pending` first; a `done` unit, one
+ * failed that often and one skipped as generated text are not planned again.
  */
 export async function planResearchExtract(
   db: Db,
@@ -73,6 +77,21 @@ export async function planResearchExtract(
     .values(pairs.map((p) => ({ ...p, model, promptVersion, status: "pending" as const, dropped: noDrops(), runId: run.id })))
     .onConflictDoNothing();
   const wanted = new Set(pairs.map((p) => `${p.documentVersionId}:${p.placeId}`));
+  // retry: a failed unit below `maxAttempts`, and a unit skipped for want of Markdown or an assessment (not a generated page)
+  await db
+    .update(researchUnits)
+    .set({ status: "pending", reason: null })
+    .where(
+      and(
+        inArray(sql`${researchUnits.documentVersionId}::text || ':' || ${researchUnits.placeId}::text`, [...wanted]),
+        eq(researchUnits.model, model),
+        eq(researchUnits.promptVersion, promptVersion),
+        or(
+          and(eq(researchUnits.status, "failed"), lt(researchUnits.attempts, config.research.extraction.maxAttempts)),
+          and(eq(researchUnits.status, "skipped"), ne(researchUnits.reason, GENERATED_REASON)),
+        ),
+      ),
+    );
   const rows = await db
     .select({ id: researchUnits.id, documentVersionId: researchUnits.documentVersionId, placeId: researchUnits.placeId })
     .from(researchUnits)
@@ -167,7 +186,7 @@ async function skipUnit(db: Db, unitId: string, reason: string): Promise<void> {
 
 /**
  * The batch items of the units, in the given order: the unit text of the page around the berth's names, the other
- * berths of the page (the other units of the version), the page's kind and observation date from its active
+ * berths of the page (the other units of the version and the assessed berths that do not match this one), the page's kind and observation date from its active
  * assessment. A unit whose page has no active, not generated assessment or whose Markdown is missing is marked
  * `skipped` with the reason and not sent.
  */
@@ -187,6 +206,7 @@ export async function extractInputs(db: Db, archive: Pick<Archive, "get">, ids: 
       generated: pageAssessments.generated,
       observedAt: pageAssessments.observedAt,
       observedAtBasis: pageAssessments.observedAtBasis,
+      assessedBerths: pageAssessments.berths,
     })
     .from(researchUnits)
     .innerJoin(documentVersions, eq(documentVersions.id, researchUnits.documentVersionId))
@@ -215,7 +235,7 @@ export async function extractInputs(db: Db, archive: Pick<Archive, "get">, ids: 
     const unit = byId.get(id);
     if (!unit) continue;
     if (!unit.pageKind || unit.generated || !unit.observedAt || !unit.observedAtBasis) {
-      await skipUnit(db, id, unit.generated ? "page is generated text" : "page has no active assessment");
+      await skipUnit(db, id, unit.generated ? GENERATED_REASON : "page has no active assessment");
       continue;
     }
     if (!markdown.has(unit.mdKey)) {
@@ -228,12 +248,20 @@ export async function extractInputs(db: Db, archive: Pick<Archive, "get">, ids: 
       continue;
     }
     const berth = berths.get(unit.placeId)!;
+    // the other berths: those of the sibling units, and those the page's assessment names that are not this berth
+    // (a berth without a candidate has no unit, but a quote naming only it must still not count here)
+    const islands = berth.island ? [berth.island] : [];
+    const assessedOthers = (unit.assessedBerths ?? [])
+      .filter((b) => !berthNameMatches(b, berth.names, config.nameAffixes, islands))
+      .map((b) => b.name);
     const otherBerths = [
       ...new Set(
-        siblings
-          .filter((s) => s.versionId === unit.versionId && s.placeId !== unit.placeId && s.model === unit.model && s.promptVersion === unit.promptVersion)
-          .map((s) => berths.get(s.placeId)?.name)
-          .filter((n): n is string => !!n && n !== berth.name),
+        [
+          ...siblings
+            .filter((s) => s.versionId === unit.versionId && s.placeId !== unit.placeId && s.model === unit.model && s.promptVersion === unit.promptVersion)
+            .map((s) => berths.get(s.placeId)?.name),
+          ...assessedOthers,
+        ].filter((n): n is string => !!n && n !== berth.name),
       ),
     ].sort();
     const { text, offset } = unitText(md, berth.names, config.research.extraction);
@@ -276,12 +304,12 @@ export async function extractUnits(
   });
 }
 
-/** Marks a unit failed with the reason; a unit already done stays done (idempotent). */
+/** Marks a unit failed with the reason and counts the attempt; a unit already done or failed stays as it is (idempotent). */
 async function failUnit(db: Db, unitId: string, reason: string | null): Promise<void> {
   const rows = await db
     .update(researchUnits)
-    .set({ status: "failed", reason: reason ?? "failed" })
-    .where(and(eq(researchUnits.id, unitId), ne(researchUnits.status, "done")))
+    .set({ status: "failed", reason: reason ?? "failed", attempts: sql`${researchUnits.attempts} + 1` })
+    .where(and(eq(researchUnits.id, unitId), notInArray(researchUnits.status, ["done", "failed"])))
     .returning({ id: researchUnits.id });
   if (rows.length > 0) getLog().warn({ unitId, reason }, "research unit failed");
 }

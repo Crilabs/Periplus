@@ -45,6 +45,8 @@ export const researchUnits = pgTable(
     status: researchUnitStatusEnum("status").notNull(),
     reason: text("reason"),
     dropped: jsonb("dropped").$type<DroppedCounts>().notNull(),
+    /** How often the unit's item failed; a failed unit is planned again below `research.extraction.maxAttempts`. */
+    attempts: integer("attempts").notNull().default(0),
     runId: uuid("run_id").references(() => runs.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

@@ -5,6 +5,13 @@ import { Badge, EmptyState, Panel, Table, tdClass, TextLink, thClass, trClass } 
 
 const PURPOSE_LABELS = { positive: "Bestätigung", negative: "Negativsuche" } as const;
 
+/** Column „Zweck“: the search purposes of a hit, else how the page is linked to the berth. */
+function purposeText(r: ResearchRow): string {
+  if (r.link === "neighbour") return "Treffer eines Nachbarn";
+  if (r.link === "route") return "Routenhalt";
+  return r.purposes.map((p) => PURPOSE_LABELS[p]).join(", ");
+}
+
 /** „nicht geholt: <Grund>“ for a hit without assessment whose newest fetch did not store or confirm a page. */
 function notFetched(r: ResearchRow): string | null {
   const f = r.fetch;
@@ -67,7 +74,7 @@ function VerdictLine({ view }: { view: ResearchViewData }) {
 
 /**
  * Tab „Recherche“ of the place page (plan N1, N2): the verdict of the confirmation rule on top, then the search hits
- * of the berth with search term, page kind, first-hand and SEO/AI flags, observation date, the berths the page names
+ * of the berth and the pages linked to it by a neighbour's hit or a route stop, with search term, page kind, first-hand and SEO/AI flags, observation date, the berths the page names
  * and the number of signals and facts, and below each page its signals and facts with their quotes.
  */
 export function ResearchTab({ view }: { view: ResearchViewData }) {
@@ -102,11 +109,11 @@ export function ResearchTab({ view }: { view: ResearchViewData }) {
           </thead>
           <tbody>
             {rows.map((r) => (
-              <Fragment key={`${r.purpose}:${r.url}`}>
+              <Fragment key={r.url}>
                 <tr className={trClass}>
-                  <td className={tdClass}>{r.purposes.map((p) => PURPOSE_LABELS[p]).join(", ")}</td>
-                  <td className={tdClass}>{r.rank}</td>
-                  <td className={tdClass}>{r.keyword}</td>
+                  <td className={tdClass}>{purposeText(r)}</td>
+                  <td className={tdClass}>{r.rank ?? "–"}</td>
+                  <td className={tdClass}>{r.keyword ?? "–"}</td>
                   <td className={tdClass}>
                     {r.documentId ? (
                       <TextLink href={`/documents/${r.documentId}`} title={r.url}>

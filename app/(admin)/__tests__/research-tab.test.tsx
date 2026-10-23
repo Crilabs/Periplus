@@ -6,6 +6,7 @@ import { ResearchTab } from "../places/[id]/research-tab";
 const row = (over: Partial<ResearchRow> = {}): ResearchRow => ({
   url: "https://blog.test.invalid/kolona",
   domain: "blog.test.invalid",
+  link: "search",
   rank: 2,
   purpose: "positive",
   purposes: ["positive"],
@@ -109,6 +110,15 @@ describe("ResearchTab", () => {
     );
     expect(html).toContain("Nicht bestätigt: Ankerverbot der Behörde vom 2026-05-01");
     expect(html).toContain("Noch keine Recherche für diesen Liegeplatz.");
+  });
+
+  it("labels a page linked by a neighbour's hit or a route stop, without rank and search term (final review 7)", () => {
+    const linked = (link: "neighbour" | "route", url: string) => row({ url, link, rank: null, purpose: null, purposes: [], keyword: null });
+    const html = renderToStaticMarkup(<ResearchTab view={view([linked("neighbour", "https://n.test.invalid/x"), linked("route", "https://r.test.invalid/x")])} />);
+    expect(html).toContain("Treffer eines Nachbarn");
+    expect(html).toContain("Routenhalt");
+    expect(html).not.toContain("Kolona anchorage");
+    expect(html).not.toContain("Bestätigung");
   });
 
   it("shows both purposes of a page listed once", () => {

@@ -18,7 +18,7 @@ export type CandidateNames = {
 
 /**
  * The queries of one candidate for one purpose: per template (of a language searched in the candidate's country)
- * the candidate's name in the template's language and, for `{island}`, the island's name in that language; a
+ * the candidate's name in the template's language (for `{name}`) and the island's name in that language (for `{island}`); a
  * template without the name it needs yields no query. `priority` is the index of the template, deduplicated over
  * `queryKey` (the lowest priority wins). `tileId` books the cost on the candidate's tile.
  */
@@ -32,10 +32,14 @@ export function buildResearchQueries(
   const byKey = new Map<string, DiscoveryQuery>();
   for (const [priority, t] of cfg.templates[purpose].entries()) {
     if (!languages.includes(t.lang)) continue;
-    const name = input.names[t.lang];
     const locationCode = cfg.locationCodes[t.lang];
-    if (!name || locationCode === undefined) continue;
-    let keyword = t.template.replaceAll("{name}", name);
+    if (locationCode === undefined) continue;
+    let keyword = t.template;
+    if (keyword.includes("{name}")) {
+      const name = input.names[t.lang];
+      if (!name) continue;
+      keyword = keyword.replaceAll("{name}", name);
+    }
     if (keyword.includes("{island}")) {
       const island = input.island?.[t.lang];
       if (!island) continue;

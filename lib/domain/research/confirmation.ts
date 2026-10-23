@@ -11,6 +11,7 @@ import { hasOpenPairTask, recordDecision, SYSTEM_ACTOR } from "@/lib/domain/plac
 import { registrableDomain } from "@/lib/domain/sources/urls";
 import { activeAssessor } from "./assessment";
 import { activeRouteExtractor, berthNameMatches, placeNames } from "./assign";
+import { copiesSource } from "./verbatim";
 
 /*
  * Confirmation of a berth by its research signals (spec 5.6, plan N2 task 6). The rule (`decideBerth`) is pure;
@@ -38,13 +39,20 @@ export type Evidence = {
   generated: boolean;
   /** The strongest link of the page to the place. */
   link: EvidenceLink;
+  /** The signal's quote: positives quoting the same copied text are one source. */
+  quote: string;
+  /** Content hash of the page version (`document_versions.content_hash`): the same page on two domains is one source. */
+  pageHash: string | null;
 };
 
 export type Verdict = {
   status: "confirmed" | "candidate" | "no_anchoring";
   /** German, for the admin UI. */
   reason: string;
-  /** The domains of the counting positive signals, sorted. */
+  /**
+   * The independent sources of the counting positive signals, sorted: one entry per group of domains that copy each
+   * other (`a.example + b.example`), else the domain.
+   */
   independentSources: string[];
   blockingSignalId: string | null;
   /** The signals that decided: the counting positive ones and the blocking one, sorted. */
@@ -72,6 +80,34 @@ function isSource(e: Evidence, placeKind: PlaceKind, cfg: ConfirmationConfig): b
   return e.firstHand;
 }
 
+/**
+ * The independent sources among the positives (spec 5.6 „Kopien zählen als eine Quelle“): domains are grouped when a
+ * positive of one and a positive of the other share `maxSharedWords` consecutive words in their quotes (`copiesSource`;
+ * a shared run is symmetric) or come from the same page content (content hash). One entry per group, its domains
+ * sorted and joined by ` + `; sorted.
+ */
+function sourceGroups(positives: Evidence[], maxSharedWords: number): string[] {
+  const parent = new Map<string, string>();
+  const find = (d: string): string => {
+    const p = parent.get(d) ?? d;
+    if (p === d) return d;
+    const root = find(p);
+    parent.set(d, root);
+    return root;
+  };
+  for (const e of positives) parent.set(e.domain, parent.get(e.domain) ?? e.domain);
+  for (const [i, a] of positives.entries()) {
+    for (const b of positives.slice(i + 1)) {
+      if (a.domain === b.domain || find(a.domain) === find(b.domain)) continue;
+      const samePage = a.pageHash !== null && a.pageHash === b.pageHash;
+      if (samePage || copiesSource(a.quote, b.quote, maxSharedWords)) parent.set(find(a.domain), find(b.domain));
+    }
+  }
+  const groups = new Map<string, string[]>();
+  for (const d of [...parent.keys()].sort()) (groups.get(find(d)) ?? groups.set(find(d), []).get(find(d))!).push(d);
+  return [...groups.values()].map((g) => g.join(" + ")).sort();
+}
+
 const byDateThenId = (a: Evidence, b: Evidence) => a.observedAt.localeCompare(b.observedAt) || a.signalId.localeCompare(b.signalId);
 
 /**
@@ -79,7 +115,8 @@ const byDateThenId = (a: Evidence, b: Evidence) => a.observedAt.localeCompare(b.
  * 1. a signal counts only with `confidence ≥ minSignalConfidence`, from a not generated page of a counting page kind;
  * 2. positive are first-hand `anchored` / `moored_buoy` / `berthed` and `listed_as_berth` from a listing page kind
  *    (for a marina or port also from an official page);
- * 3. independent sources are the distinct domains of the counting positive signals; positives of pages linked only by
+ * 3. independent sources are the distinct domains of the counting positive signals, domains that copy each other
+ *    (shared quote text of `maxSharedWords` words, or the same page content) counting as one; positives of pages linked only by
  *    a route corridor count only beside one from a page linked by search hit or name (discovery alone never confirms,
  *    unless `corridorAloneConfirms`);
  * 4. a counting `prohibited` from the authority blocks whatever its age (a ban holds until the authority lifts it):
@@ -90,17 +127,19 @@ const byDateThenId = (a: Evidence, b: Evidence) => a.observedAt.localeCompare(b.
  *    official page plus another domain;
  * 6. otherwise `candidate`, with the reason.
  */
-export function decideBerth(placeKind: PlaceKind, evidence: Evidence[], cfg: ConfirmationConfig): Verdict {
+export function decideBerth(placeKind: PlaceKind, evidence: Evidence[], cfg: ConfirmationConfig, maxSharedWords: number): Verdict {
   const counting = evidence.filter((e) => e.confidence >= cfg.minSignalConfidence && !e.generated && cfg.countingPageKinds.includes(e.pageKind));
   const sources = counting.filter((e) => isSource(e, placeKind, cfg));
   const anchored = cfg.corridorAloneConfirms || sources.some((e) => e.link !== "corridor");
   const positives = anchored ? sources : [];
-  const domains = [...new Set(positives.map((e) => e.domain))].sort();
+  const groups = sourceGroups(positives, maxSharedWords);
+  const copies = groups.filter((g) => g.includes(" + "));
+  const copyNote = copies.length > 0 ? ` (gleicher Text: ${copies.join("; ")})` : "";
   const positiveIds = positives.map((e) => e.signalId);
   const verdict = (status: Verdict["status"], reason: string, blocking: Evidence | null = null): Verdict => ({
     status,
     reason,
-    independentSources: domains,
+    independentSources: groups,
     blockingSignalId: blocking?.signalId ?? null,
     signalIds: [...new Set([...positiveIds, ...(blocking ? [blocking.signalId] : [])])].sort(),
   });
@@ -119,11 +158,11 @@ export function decideBerth(placeKind: PlaceKind, evidence: Evidence[], cfg: Con
   if (official) {
     const officialDomains = new Set(positives.filter((e) => cfg.officialPageKinds.includes(e.pageKind)).map((e) => e.domain));
     if (officialDomains.size === 0) return verdict("candidate", "keine offizielle Seite (Marina oder Behörde)");
-    if (domains.length < 2) return verdict("candidate", "keine weitere unabhängige Quelle neben der offiziellen Seite");
-    return verdict("confirmed", `offizielle Seite und weitere Quelle: ${domains.join(", ")}`);
+    if (groups.length < 2) return verdict("candidate", `keine weitere unabhängige Quelle neben der offiziellen Seite${copyNote}`);
+    return verdict("confirmed", `offizielle Seite und weitere Quelle: ${groups.join(", ")}`);
   }
-  if (domains.length >= cfg.minIndependentSources) return verdict("confirmed", `${domains.length} unabhängige Quellen: ${domains.join(", ")}`);
-  return verdict("candidate", `${domains.length} von ${cfg.minIndependentSources} unabhängigen Quellen`);
+  if (groups.length >= cfg.minIndependentSources) return verdict("confirmed", `${groups.length} unabhängige Quellen: ${groups.join(", ")}`);
+  return verdict("candidate", `${groups.length} von ${cfg.minIndependentSources} unabhängigen Quellen${copyNote}`);
 }
 
 /** The model and prompt version `extract-berth` reads with now; only signals of its done units count. */
@@ -142,6 +181,8 @@ type SignalRow = {
   observed_at: string;
   observed_at_basis: ObservedAtBasis;
   url: string;
+  quote: string;
+  content_hash: string;
   page_kind: PageKind;
   generated: boolean;
   berths: Array<{ name: string; island: string | null }>;
@@ -169,7 +210,7 @@ export async function loadEvidence(db: Db, placeIds: string[], config: AppConfig
       and rs.model = ${route.model} and rs.prompt_version = ${route.promptVersion})`;
   const { rows } = await db.execute<SignalRow>(sql`
     select s.id, s.place_id, s.document_version_id, s.kind::text as kind, s.first_hand, s.confidence, s.observed_at::text as observed_at, s.observed_at_basis::text as observed_at_basis,
-      d.url, a.page_kind::text as page_kind, a.generated, a.berths,
+      s.quote, v.content_hash, d.url, a.page_kind::text as page_kind, a.generated, a.berths,
       exists (select 1 from research_hits h where h.place_id = s.place_id and h.url_normalized = d.url_normalized) as search_hit,
       ${stop("name")} as name_stop,
       ${stop("corridor")} as corridor_stop
@@ -202,6 +243,8 @@ export async function loadEvidence(db: Db, placeIds: string[], config: AppConfig
       pageKind: r.page_kind,
       generated: r.generated,
       link: link(r),
+      quote: r.quote,
+      pageHash: r.content_hash,
     };
     (out.get(r.place_id) ?? out.set(r.place_id, []).get(r.place_id)!).push(e);
   }
@@ -243,23 +286,29 @@ export type BerthTransition = { placeId: string; from: PlaceStatus; to: PlaceSta
 
 /**
  * Decides one place in the caller's transaction. Lock order (M5-F-R4): the place's open tasks, then the place row.
- * Left alone: an ended or merged place, `rejected`, `abandoned` and `no_anchoring`, and a status an admin set. A
- * confirmation waits while a duplicate review of the object is open,
+ * Left alone: an ended or merged place, `rejected`, `abandoned` and `no_anchoring`, and a status an admin set, except
+ * an admin's `confirmed` the rule blocks by an authority ban (ruling: demoted like any other, `overridesAdmin: true`).
+ * A confirmation waits while a duplicate review of the object is open,
  * and re-checks the restricted areas first: a place inside one becomes `no_anchoring` there instead. Each change is a
- * `place_status` system decision `{ action, auto, rule: "research", reason, sources, signalIds, blockingSignalId }`;
+ * `place_status` system decision `{ action, auto, rule: "research", reason, sources, signalIds, blockingSignalId, runId }`;
  * `confirmed` and `no_anchoring` get a public id; a confirmation dismisses the place's open tasks (`auto_confirmed`).
  * Without a change of status, only the reason is brought up to date.
  */
-async function applyVerdict(tx: Db, placeId: string, evidence: Evidence[], now: Date, cfg: AppConfig): Promise<BerthTransition | null> {
+async function applyVerdict(tx: Db, placeId: string, evidence: Evidence[], now: Date, cfg: AppConfig, runId: string | null): Promise<BerthTransition | null> {
   const taskIds = await lockOpenPlaceTasks(tx, placeId);
   const [place] = await tx
     .select({ id: places.id, geoObjectId: places.geoObjectId, kind: places.kind, status: places.status, statusReason: places.statusReason, publicId: places.publicId })
     .from(places)
     .where(and(eq(places.id, placeId), isNull(places.validTo), isNull(places.mergedIntoId)))
     .for("update");
-  if (!place || !DECIDED_STATUSES.has(place.status) || (await statusSetByAdmin(tx, place.id, place.geoObjectId))) return null;
+  if (!place || !DECIDED_STATUSES.has(place.status)) return null;
 
-  const verdict = decideBerth(place.kind, evidence, cfg.research.confirmation);
+  const verdict = decideBerth(place.kind, evidence, cfg.research.confirmation, cfg.research.extraction.maxSharedWords);
+  // an admin's status stands, except a confirmation against an authority ban (ruling: the anti-goal beats the admin)
+  const blocking = evidence.find((e) => e.signalId === verdict.blockingSignalId);
+  const authorityBan = blocking?.kind === "prohibited" && blocking.pageKind === "authority";
+  const overridesAdmin = await statusSetByAdmin(tx, place.id, place.geoObjectId);
+  if (overridesAdmin && !(place.status === "confirmed" && authorityBan)) return null;
   let to: Verdict["status"] = verdict.status;
   let reason = verdict.reason;
   // a candidate inside a restricted area: `applyExclusion` set `no_anchoring` with its own reason (`restricted:<kind>:<id>`)
@@ -291,6 +340,8 @@ async function applyVerdict(tx: Db, placeId: string, evidence: Evidence[], now: 
     sources: verdict.independentSources,
     signalIds: verdict.signalIds,
     blockingSignalId: verdict.blockingSignalId,
+    runId,
+    ...(overridesAdmin ? { overridesAdmin: true } : {}),
   }, now);
   if (to === "confirmed" && taskIds.length > 0) {
     const { rows: open } = await tx.execute<{ id: string }>(sql`
@@ -302,14 +353,21 @@ async function applyVerdict(tx: Db, placeId: string, evidence: Evidence[], now: 
 
 /**
  * Applies the confirmation rule to the places (spec 5.6), one transaction per place, in id order; returns the status
- * changes (for the follow-up run of newly confirmed berths, plan N2 task 7).
+ * changes (for the follow-up run of newly confirmed berths, plan N2 task 7). `runId`: the research run deciding, written
+ * into each decision (`researchChanges` reads them back by it).
  */
-export async function applyBerthVerdicts(db: Db, placeIds: string[], now: Date, cfg: AppConfig = getConfig()): Promise<BerthTransition[]> {
+export async function applyBerthVerdicts(
+  db: Db,
+  placeIds: string[],
+  now: Date,
+  cfg: AppConfig = getConfig(),
+  runId: string | null = null,
+): Promise<BerthTransition[]> {
   const ids = [...new Set(placeIds)].sort();
   const evidence = await loadEvidence(db, ids, cfg);
   const out: BerthTransition[] = [];
   for (const placeId of ids) {
-    const t = await db.transaction((tx) => applyVerdict(tx, placeId, evidence.get(placeId) ?? [], now, cfg));
+    const t = await db.transaction((tx) => applyVerdict(tx, placeId, evidence.get(placeId) ?? [], now, cfg, runId));
     if (t) out.push(t);
   }
   return out;

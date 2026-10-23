@@ -1369,7 +1369,8 @@ export const areaImportFileSchema = z
   });
 
 const researchTemplateSchema = z.strictObject({
-  template: z.string().includes("{name}", { error: "template must contain {name}" }),
+  /** `{name}`: the berth's name; `{island}`: its island's name (a template with only `{island}` searches the island's trip reports). */
+  template: z.string().refine((t) => t.includes("{name}") || t.includes("{island}"), { error: "template must contain {name} or {island}" }),
   lang: z.string().min(1),
 });
 
@@ -1388,6 +1389,7 @@ export const researchSchema = z
     maxHitsPerCandidate: z.number().int().positive(),
     refetchDays: z.number().int().positive(),
     assessWords: z.number().int().positive(),
+    /** Domains whose hits are not taken over; `label.*` skips that registrable label on every public suffix (`tripadvisor.*`). */
     skipDomains: z.array(z.string().min(1)),
     /** The source created for a research hit page (domain without a source). */
     source: z.strictObject({ weight: z.number().min(0).max(1), ratePerMinute: z.number().min(1).max(120) }),
@@ -1399,6 +1401,8 @@ export const researchSchema = z
       windowWords: z.number().int().positive(),
       maxSharedWords: z.number().int().positive(),
       routeMaxStops: z.number().int().positive(),
+      /** A failed research unit is planned again until it failed this often. */
+      maxAttempts: z.number().int().positive(),
     }),
     /** When a berth counts as confirmed from its signals (plan N2, task 6). */
     confirmation: z.strictObject({

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { berthFacts, berthSignals, documents, pageAssessments, places, researchFetches, researchHits, researchUnits, serpQueries } from "@/lib/db/schema";
 import type { PageKind, ResearchFetchOutcome, ResearchPurpose } from "@/lib/db/schema/research";
@@ -8,6 +8,8 @@ import { getConfig } from "@/lib/config";
 import { activeAssessor } from "./assessment";
 import type { PlaceStatus } from "@/lib/db/schema";
 import { factAttributeLabel, formatFactValue } from "@/lib/domain/facts/labels";
+import { registrableDomain } from "@/lib/domain/sources/urls";
+import { activeRouteExtractor } from "./assign";
 import { activeExtractor, decideBerth, loadEvidence, type Verdict } from "./confirmation";
 
 export type SignalRow = {
@@ -29,15 +31,23 @@ export type FactRow = {
   quote: string;
 };
 
+/**
+ * How the page belongs to the place: a search hit of it, a hit of a neighbouring berth that names it (its research
+ * unit, `unitsForPlaces`), or a route stop pointing to it.
+ */
+export type ResearchLink = "search" | "neighbour" | "route";
+
 export type ResearchRow = {
   url: string;
   domain: string;
-  rank: number;
+  link: ResearchLink;
+  /** Rank, purpose and keyword of the search hit; null (purposes empty) for a page linked otherwise. */
+  rank: number | null;
   /** `positive` when the page is a hit of a confirmation search, else `negative`; `rank` and `keyword` are of that hit. */
-  purpose: ResearchPurpose;
+  purpose: ResearchPurpose | null;
   /** Every purpose the page was found for, positive first. */
   purposes: ResearchPurpose[];
-  keyword: string;
+  keyword: string | null;
   documentId: string | null;
   /** The newest fetch attempt of the page (null while none was made). */
   fetch: { outcome: ResearchFetchOutcome; reason: string | null } | null;
@@ -65,16 +75,18 @@ export type ResearchViewData = {
 };
 
 /**
- * The research hits of a place with the search term, the archived document (null while not fetched) and the
+ * The pages of a place: its research hits with the search term, the archived document (null while not fetched) and the
  * assessment of its current version by the active model and prompt version (null while not assessed) and the
- * outcome of its newest fetch attempt (`research_fetches`). Confirmation
- * (positive) before negative search, then by rank.
+ * outcome of its newest fetch attempt (`research_fetches`), confirmation (positive) before negative search, then by
+ * rank; after them every other page whose signals can count for the place, so the verdict's evidence is all shown:
+ * pages with a research unit of the place (a neighbour's hit naming it) and pages with a route stop pointing to it
+ * (active extraction and route model), by link and URL.
  */
 export async function researchView(db: Db, placeId: string): Promise<ResearchViewData> {
   const [place] = await db.select({ kind: places.kind, status: places.status, statusReason: places.statusReason }).from(places).where(eq(places.id, placeId));
   if (!place) throw new Error(`place ${placeId} does not exist`);
   const cfg = getConfig();
-  const verdict = decideBerth(place.kind, (await loadEvidence(db, [placeId], cfg)).get(placeId) ?? [], cfg.research.confirmation);
+  const verdict = decideBerth(place.kind, (await loadEvidence(db, [placeId], cfg)).get(placeId) ?? [], cfg.research.confirmation, cfg.research.extraction.maxSharedWords);
 
   const hits = await db
     .select({
@@ -91,7 +103,25 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
     .leftJoin(documents, eq(documents.urlNormalized, researchHits.urlNormalized))
     .where(eq(researchHits.placeId, placeId));
 
-  const versionIds = hits.flatMap((h) => (h.versionId ? [h.versionId] : []));
+  // pages linked otherwise: a route stop to the place, else a research unit of it; the current version where it has one
+  const extractor = activeExtractor(cfg);
+  const route = activeRouteExtractor(cfg);
+  const hitUrls = new Set(hits.map((h) => h.url));
+  const { rows: linkedRows } = await db.execute<{ url: string; document_id: string; version_id: string; link: "neighbour" | "route" }>(sql`
+    select distinct on (d.url_normalized) d.url_normalized as url, d.id as document_id, x.version_id, x.link
+    from (
+      select rs.document_version_id as version_id, 'route' as link from research_route_stops rs
+      where rs.place_id = ${placeId} and rs.model = ${route.model} and rs.prompt_version = ${route.promptVersion}
+      union all
+      select u.document_version_id, 'neighbour' from research_units u
+      where u.place_id = ${placeId} and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion}
+    ) x
+    join document_versions v on v.id = x.version_id
+    join documents d on d.id = v.document_id
+    order by d.url_normalized, (x.version_id = d.current_version_id) desc, (x.link = 'route') desc`);
+  const linked = linkedRows.filter((l) => !hitUrls.has(l.url));
+
+  const versionIds = [...hits.flatMap((h) => (h.versionId ? [h.versionId] : [])), ...linked.map((l) => l.version_id)];
   const { model, promptVersion } = activeAssessor(getConfig());
   const assessments =
     versionIds.length === 0
@@ -102,7 +132,7 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
           .where(and(inArray(pageAssessments.documentVersionId, versionIds), eq(pageAssessments.model, model), eq(pageAssessments.promptVersion, promptVersion)));
   const byVersion = new Map(assessments.map((a) => [a.documentVersionId, a]));
 
-  const urls = [...new Set(hits.map((h) => h.url))];
+  const urls = [...new Set([...hits.map((h) => h.url), ...linked.map((l) => l.url)])];
   const attempts =
     urls.length === 0
       ? []
@@ -113,7 +143,6 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
           .orderBy(researchFetches.urlNormalized, desc(researchFetches.createdAt), desc(researchFetches.id));
   const fetchOf = new Map(attempts.map((f) => [f.url, { outcome: f.outcome, reason: f.reason }]));
 
-  const extractor = activeExtractor(cfg);
   const unitOf = and(
     eq(researchUnits.id, berthSignals.unitId),
     eq(researchUnits.model, extractor.model),
@@ -171,36 +200,54 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
     (factsOf.get(f.versionId) ?? factsOf.set(f.versionId, []).get(f.versionId)!).push(fact);
   }
 
+  const pageOf = (versionId: string | null) => {
+    const a = versionId ? byVersion.get(versionId) : undefined;
+    const signals = (versionId ? signalsOf.get(versionId) : undefined) ?? [];
+    const facts = (versionId ? factsOf.get(versionId) : undefined) ?? [];
+    return {
+      assessment: a
+        ? { pageKind: a.pageKind, firstHand: a.firstHand, generated: a.generated, observedAt: a.observedAt, berths: a.berths.map((b) => b.name) }
+        : null,
+      signals,
+      facts,
+      signalCount: signals.length,
+      factCount: facts.length,
+    };
+  };
   const rows = hits
-    .map((h): ResearchRow => {
-      const a = h.versionId ? byVersion.get(h.versionId) : undefined;
-      const signals = (h.versionId ? signalsOf.get(h.versionId) : undefined) ?? [];
-      const facts = (h.versionId ? factsOf.get(h.versionId) : undefined) ?? [];
-      return {
-        url: h.url,
-        domain: h.domain,
-        rank: h.rank,
-        purpose: h.purpose,
-        purposes: [h.purpose],
-        keyword: h.keyword,
-        documentId: h.documentId,
-        fetch: fetchOf.get(h.url) ?? null,
-        assessment: a
-          ? { pageKind: a.pageKind, firstHand: a.firstHand, generated: a.generated, observedAt: a.observedAt, berths: a.berths.map((b) => b.name) }
-          : null,
-        signals,
-        facts,
-        signalCount: signals.length,
-        factCount: facts.length,
-      };
-    })
-    .sort((x, y) => (x.purpose === y.purpose ? x.rank - y.rank : x.purpose === "positive" ? -1 : 1));
+    .map((h): ResearchRow => ({
+      url: h.url,
+      domain: h.domain,
+      link: "search",
+      rank: h.rank,
+      purpose: h.purpose,
+      purposes: [h.purpose],
+      keyword: h.keyword,
+      documentId: h.documentId,
+      fetch: fetchOf.get(h.url) ?? null,
+      ...pageOf(h.versionId),
+    }))
+    .sort((x, y) => (x.purpose === y.purpose ? x.rank! - y.rank! : x.purpose === "positive" ? -1 : 1));
   // a URL found by a positive and a negative search is one page: shown once, with both purposes
   const byUrl = new Map<string, ResearchRow>();
   for (const r of rows) {
     const seen = byUrl.get(r.url);
-    if (seen) seen.purposes.push(r.purpose);
+    if (seen) seen.purposes.push(r.purpose!);
     else byUrl.set(r.url, r);
   }
-  return { status: place.status, statusReason: place.statusReason, verdict, rows: [...byUrl.values()] };
+  const others = linked
+    .map((l): ResearchRow => ({
+      url: l.url,
+      domain: registrableDomain(l.url),
+      link: l.link,
+      rank: null,
+      purpose: null,
+      purposes: [],
+      keyword: null,
+      documentId: l.document_id,
+      fetch: fetchOf.get(l.url) ?? null,
+      ...pageOf(l.version_id),
+    }))
+    .sort((x, y) => (x.link === y.link ? (x.url < y.url ? -1 : x.url > y.url ? 1 : 0) : x.link === "neighbour" ? -1 : 1));
+  return { status: place.status, statusReason: place.statusReason, verdict, rows: [...byUrl.values(), ...others] };
 }

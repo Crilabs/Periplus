@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { berthFacts, berthSignals, documents, pageAssessments, places, researchFetches, researchHits, researchUnits, serpQueries, serpResults } from "@/lib/db/schema";
+import { berthFacts, berthSignals, documents, pageAssessments, places, researchFetches, researchHits, researchRouteStops, researchUnits, serpQueries, serpResults } from "@/lib/db/schema";
+import { activeRouteExtractor } from "@/lib/domain/research/assign";
 import { factAttributeLabel, formatFactValue } from "@/lib/domain/facts/labels";
 import { activeExtractor } from "@/lib/domain/research/confirmation";
 import { getConfig } from "@/lib/config";
@@ -186,5 +187,42 @@ describe("researchView", () => {
       const fact = rows.find((r) => r.url === url)!.facts[0]!;
       expect(fact.statement).toBe(`${factAttributeLabel("holding")}: ${formatFactValue("holding", "good")}`);
       expect(fact.statement).not.toContain("\"");
+    }));
+
+  it("shows every page behind the verdict: pages linked by a neighbour's hit (unit) and by a route stop (final review 7)", () =>
+    withRollback(async (tx) => {
+      const { placeId, objectId } = await insertPlace(tx, { status: "candidate" });
+      const ex = activeExtractor(getConfig());
+      const route = activeRouteExtractor(getConfig());
+      const { model, promptVersion } = activeAssessor();
+      // a page that is a hit of the place, a page that is only a neighbour's hit (unit of this place), a page linked by a route stop
+      const [own] = await seedSources(tx, placeId, objectId, ["own.example"]);
+      const linked = async (domain: string) => {
+        const url = `https://www.${domain}/p`;
+        const [doc] = await tx.insert(documents).values({ sourceId: (await insertTestVersion(tx, ["y"])).sourceId, url, urlNormalized: url, docType: "trip_report" }).returning({ id: documents.id });
+        const page = await insertTestVersion(tx, ["x"], { documentId: doc!.id });
+        await tx.insert(pageAssessments).values({
+          documentVersionId: page.versionId, model, promptVersion, pageKind: "trip_report", firstHand: true, generated: false, observedAt: "2025-06-15",
+          observedAtBasis: "explicit", berths: [{ name: "Kolona", island: null, kind: "anchorage" }], runId: await insertTestRun(tx),
+        });
+        const [u] = await tx.insert(researchUnits).values({ documentVersionId: page.versionId, placeId, model: ex.model, promptVersion: ex.promptVersion, status: "done", dropped: { quote: 0, value: 0, verbatim: 0, attribution: 0 } }).returning({ id: researchUnits.id });
+        await tx.insert(berthSignals).values({ unitId: u!.id, documentVersionId: page.versionId, placeId, kind: "anchored", firstHand: true, confidence: 0.9, quote: `We anchored (${domain})`, quoteStart: 0, quoteEnd: 5, observedAt: "2025-06-15", observedAtBasis: "explicit" });
+        return { url, documentId: doc!.id, versionId: page.versionId };
+      };
+      const neighbour = await linked("neighbour.example");
+      const routed = await linked("route.example");
+      await tx.insert(researchRouteStops).values({ documentVersionId: routed.versionId, seq: 1, name: "Kolona", quote: "q", observedAt: "2025-06-15", placeId, match: "name", model: route.model, promptVersion: route.promptVersion });
+
+      const view = await researchView(tx, placeId);
+      expect(view.verdict).toMatchObject({ status: "confirmed" });
+      expect(view.rows.map((r) => [r.url, r.link])).toEqual([
+        [own!.url, "search"],
+        [neighbour.url, "neighbour"],
+        [routed.url, "route"],
+      ]);
+      const n = view.rows.find((r) => r.link === "neighbour")!;
+      expect(n).toMatchObject({ documentId: neighbour.documentId, rank: null, keyword: null, purpose: null, purposes: [], signalCount: 1, domain: "neighbour.example" });
+      expect(n.assessment).toMatchObject({ pageKind: "trip_report", berths: ["Kolona"] });
+      expect(view.rows.find((r) => r.link === "route")!.signals.map((s) => s.quote)).toEqual(["We anchored (route.example)"]);
     }));
 });

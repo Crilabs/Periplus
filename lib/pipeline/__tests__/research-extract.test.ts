@@ -145,9 +145,45 @@ describe("research.extract", () => {
         batch: { id: newId(), model: "claude-sonnet-5-5", promptVersion: 1, runId, stage: RESEARCH_EXTRACT_STAGE },
       });
       const [row] = await tx.select().from(researchUnits).where(eq(researchUnits.id, unitId));
-      expect(row).toMatchObject({ status: "failed", reason: "stop_reason max_tokens" });
-      const again = await planResearchExtract(tx, { id: runId, params: { placeIds: [vathi] } }, config);
-      expect(again.flatMap((j) => j.unitIds as string[])).not.toContain(unitId);
+      expect(row).toMatchObject({ status: "failed", reason: "stop_reason max_tokens", attempts: 1 });
+    }));
+
+  it("plans a failed unit again until it failed research.extraction.maxAttempts times (final review 2)", () =>
+    withRollback(async (tx) => {
+      const { vathi } = await seed(tx);
+      const runId = await insertTestRun(tx);
+      const [job] = await planResearchExtract(tx, { id: runId, params: { placeIds: [vathi] } }, config);
+      const unitId = (job!.unitIds as string[])[0]!;
+      const fail = () =>
+        extractBerthBatchEntry.fail!(tx, {
+          id: newId(), subjectType: "research_unit", subjectId: unitId, error: "stop_reason max_tokens", usage: { inputTokens: 0, outputTokens: 0 }, costEur: 0,
+          batch: { id: newId(), model: "claude-sonnet-5-5", promptVersion: 1, runId, stage: RESEARCH_EXTRACT_STAGE },
+        });
+      expect(config.research.extraction.maxAttempts).toBe(3);
+      for (let attempt = 1; attempt < 3; attempt++) {
+        await fail();
+        const again = await planResearchExtract(tx, { id: runId, params: { placeIds: [vathi] } }, config);
+        expect(again.flatMap((j) => j.unitIds as string[])).toContain(unitId);
+        expect((await tx.select().from(researchUnits).where(eq(researchUnits.id, unitId)))[0]).toMatchObject({ status: "pending", reason: null, attempts: attempt });
+      }
+      await fail();
+      const last = await planResearchExtract(tx, { id: runId, params: { placeIds: [vathi] } }, config);
+      expect(last.flatMap((j) => j.unitIds as string[])).not.toContain(unitId);
+      expect((await tx.select().from(researchUnits).where(eq(researchUnits.id, unitId)))[0]).toMatchObject({ status: "failed", attempts: 3 });
+    }));
+
+  it("plans a unit skipped for missing markdown or assessment again, one skipped as generated not (final review 2)", () =>
+    withRollback(async (tx) => {
+      const { vathi } = await seed(tx);
+      const runId = await insertTestRun(tx);
+      const [job] = await planResearchExtract(tx, { id: runId, params: { placeIds: [vathi] } }, config);
+      const [a, b] = job!.unitIds as string[];
+      await tx.update(researchUnits).set({ status: "skipped", reason: "archived markdown missing (k)" }).where(eq(researchUnits.id, a!));
+      await tx.update(researchUnits).set({ status: "skipped", reason: "page is generated text" }).where(eq(researchUnits.id, b!));
+      const again = (await planResearchExtract(tx, { id: runId, params: { placeIds: [vathi] } }, config)).flatMap((j) => j.unitIds as string[]);
+      expect(again).toEqual([a]);
+      await tx.update(researchUnits).set({ status: "skipped", reason: "page has no active assessment" }).where(eq(researchUnits.id, a!));
+      expect((await planResearchExtract(tx, { id: runId, params: { placeIds: [vathi] } }, config)).flatMap((j) => j.unitIds as string[])).toEqual([a]);
     }));
 
   it("plans nothing for a generated page", () =>
@@ -180,6 +216,38 @@ describe("research.extract", () => {
       expect(unit).toMatchObject({ status: "done", dropped: { quote: 0, value: 0, verbatim: 0, attribution: 1 } });
     }));
 
+  it("treats a berth the page's assessment names (no candidate of it) as another berth: its quote is dropped (final review 1)", () =>
+    withRollback(async (tx) => {
+      // a hit page of Ypsilon whose assessment names only Xyla; Xyla is no candidate, so no sibling unit exists
+      const ypsilon = await insertPlace(tx, { name: "Ypsilon", lon: 30.5, lat: 40.6, status: "candidate" });
+      const v = await insertTestVersion(tx, ["x"]);
+      const [doc] = await tx.select().from(documents).where(eq(documents.id, v.documentId));
+      await hit(tx, ypsilon.placeId, ypsilon.objectId, doc!.urlNormalized);
+      const { model: assessor, promptVersion } = activeAssessor(config);
+      await tx.insert(pageAssessments).values({
+        documentVersionId: v.versionId, model: assessor, promptVersion, pageKind: "trip_report", firstHand: true, generated: false,
+        observedAt: "2024-06-15", observedAtBasis: "explicit", berths: [{ name: "Xyla Bay", island: null, kind: "anchorage" }], runId: await insertTestRun(tx),
+      });
+      const archive = memoryArchive();
+      const [row] = await tx.select({ mdKey: documentVersions.mdKey }).from(documentVersions).where(eq(documentVersions.id, v.versionId));
+      const text = "# Ypsilon and beyond\n\nWe passed Ypsilon in the morning.\n\nWe anchored in Xyla Bay for the night, good holding in sand.";
+      await archive.put(row!.mdKey, new TextEncoder().encode(text), "text/markdown");
+
+      const runId = await runWithStage(tx, [ypsilon.placeId]);
+      const [job] = await planResearchExtract(tx, { id: runId, params: { placeIds: [ypsilon.placeId] } }, config);
+      expect(job!.unitIds).toHaveLength(1);
+      const model = new MockModel({
+        "extract-berth": () => ({ core: [], facts: [], landing: [], signals: [{ kind: "anchored", first_hand: true, confidence: 0.9, quote: "We anchored in Xyla Bay for the night", observed_at: null }] }),
+      });
+      await extractUnits(tx, { model, boss, config, archive }, { runId, stage: RESEARCH_EXTRACT_STAGE, key: job!.key as string, unitIds: job!.unitIds as string[] });
+      const [batch] = await tx.select().from(aiBatches).where(eq(aiBatches.runId, runId));
+      expect((model.batchRequests(batch!.providerBatchId!)![0]!.input as ExtractBerthInput).otherBerths).toEqual(["Xyla Bay"]);
+      expect(await pollBatch(tx, { model, boss, config, handlers: BATCH_HANDLERS }, batch!.id)).toBe("distributed");
+      expect(await tx.select().from(berthSignals).where(eq(berthSignals.placeId, ypsilon.placeId))).toHaveLength(0);
+      const [unit] = await tx.select().from(researchUnits).where(eq(researchUnits.placeId, ypsilon.placeId));
+      expect(unit).toMatchObject({ status: "done", dropped: { quote: 0, value: 0, verbatim: 0, attribution: 1 } });
+    }));
+
   it("marks a unit whose markdown is missing skipped with the reason", () =>
     withRollback(async (tx) => {
       const { vathi } = await seed(tx);
@@ -190,7 +258,6 @@ describe("research.extract", () => {
       expect(result.submitted).toBe(0);
       const units = await tx.select().from(researchUnits).where(inArray(researchUnits.id, job!.unitIds as string[]));
       expect(units.every((u) => u.status === "skipped" && u.reason?.startsWith("archived markdown missing"))).toBe(true);
-      expect(await planResearchExtract(tx, { id: runId, params: { placeIds: [vathi] } }, config)).toEqual([]);
     }));
 
   it("does not send a unit a second time while another run's batch holds it", () =>
