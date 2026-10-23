@@ -39,7 +39,7 @@ describe("bundleFacts", () => {
     ];
     const out = bundleFacts(facts, offered(facts), [{ ids: ["old", "new"], representative: "new", superseded: ["old"] }]);
     expect(out).toEqual([
-      { factId: "new", subject: "landside", subjectName: "Taverna Nikos", subjectCategory: "food", statement: "taverna closed", observedAt: "2025-07-01", tone: "negative", safety: false, mentions: 1 },
+      { factId: "new", subject: "landside", subjectName: "Taverna Nikos", subjectCategory: "food", statement: "taverna closed", observedAt: "2025-07-01", tone: "negative", safety: false, mentions: 1, memberIds: ["old", "new"] },
     ]);
   });
 

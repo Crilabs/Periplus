@@ -1,9 +1,8 @@
-import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
-import { resolveTaskModel } from "@/lib/ai/cost";
-import { bundleFactsTask, type BundleFactInput, type BundleFactsInput, type BundleFactsOutput } from "@/lib/ai/tasks/bundle-facts";
+import { and, eq, isNull, sql } from "drizzle-orm";
+import type { BundleFactInput, BundleFactsOutput } from "@/lib/ai/tasks/bundle-facts";
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { aiBatches, aiBatchItems, berthStates, places, type BerthStateFact } from "@/lib/db/schema";
+import { berthStates, places, type BerthStateFact } from "@/lib/db/schema";
 import type { Tone } from "@/lib/db/schema/research-extract";
 import { registrableDomain } from "@/lib/domain/sources/urls";
 import { activeAssessor } from "./assessment";
@@ -97,7 +96,7 @@ export function validGroups(offered: Array<{ id: string; observedAt: string }>, 
   return valid;
 }
 
-function stored(f: FreeFact, mentions: number): BerthStateFact {
+function stored(f: FreeFact, mentions: number, memberIds: string[] = [f.id]): BerthStateFact {
   return {
     factId: f.id,
     subject: f.subject,
@@ -108,6 +107,7 @@ function stored(f: FreeFact, mentions: number): BerthStateFact {
     tone: f.tone,
     safety: f.safety,
     mentions,
+    memberIds,
   };
 }
 
@@ -116,7 +116,8 @@ function stored(f: FreeFact, mentions: number): BerthStateFact {
  * distinct registrable domains of the group's facts, without the superseded ones (they are contradicted, so their
  * sources do not stand behind the representative); every free fact outside a valid group stands alone with one
  * mention. The representative carries `safety` of any member left standing, and is a negative safety member when
- * there is one (safety facts stay visible). `groups` null (no or a broken answer) bundles nothing. A fact that is no longer free (`free` is the
+ * there is one (safety facts stay visible). Each stored fact keeps the ids it stands for (`memberIds`: the group's ids,
+ * superseded ones included, or its own). `groups` null (no or a broken answer) bundles nothing. A fact that is no longer free (`free` is the
  * current set) leaves its group; a group whose representative is gone dissolves into single facts. Ordered as `free`.
  * Pure.
  */
@@ -134,51 +135,24 @@ export function bundleFacts(free: FreeFact[], offered: Array<{ id: string; obser
     const warning = [...members].reverse().find((m) => m.safety && m.tone === "negative");
     const rep = named.safety && named.tone === "negative" ? named : (warning ?? named);
     const domains = new Set(members.map((m) => m.domain));
-    out.set(rep.id, { ...stored(rep, domains.size), safety: members.some((m) => m.safety) });
+    out.set(rep.id, { ...stored(rep, domains.size, g.ids), safety: members.some((m) => m.safety) });
   }
   return free.flatMap((f) => (out.has(f.id) ? [out.get(f.id)!] : covered.has(f.id) ? [] : [stored(f, 1)]));
 }
 
-/** The model and prompt version the configuration bundles with now. */
-export function activeBundler(config: AppConfig): { model: string; promptVersion: number } {
-  const { model, taskConfig } = resolveTaskModel(config, bundleFactsTask.name);
-  return { model, promptVersion: taskConfig.promptVersion };
-}
-
-/** The fact ids the place's last bundling of the active bundler was given (its newest distributed item); none without one. */
-async function lastOffered(db: Db, placeId: string, config: AppConfig): Promise<string[]> {
-  const active = activeBundler(config);
-  const [item] = await db
-    .select({ input: aiBatchItems.input })
-    .from(aiBatchItems)
-    .innerJoin(aiBatches, eq(aiBatches.id, aiBatchItems.batchId))
-    .where(
-      and(
-        eq(aiBatchItems.subjectType, "place"),
-        eq(aiBatchItems.subjectId, placeId),
-        eq(aiBatchItems.status, "succeeded"),
-        isNotNull(aiBatchItems.distributedAt),
-        eq(aiBatches.task, bundleFactsTask.name),
-        eq(aiBatches.model, active.model),
-        eq(aiBatches.promptVersion, active.promptVersion),
-      ),
-    )
-    .orderBy(desc(aiBatchItems.distributedAt), desc(aiBatchItems.id))
-    .limit(1);
-  return item ? (item.input as BundleFactsInput).facts.map((f) => f.id) : [];
-}
-
 /**
  * The facts of the place as they stand now, without a new bundling: the stored bundled facts that are still free, and
- * every free fact the stored bundling has not seen (neither stored nor given to its last bundling, so neither a member
- * of a group nor superseded) as a single fact. Without stored facts, the free facts one by one. Ordered as the free
- * facts. A superseded fact never comes back; a new one (a new safety fact) is never lost.
+ * every free fact none of them stands for (`memberIds`, else its own id in a row written before) as a single fact.
+ * Without stored facts, the free facts one by one. Ordered as the free facts. A superseded fact or a member of a
+ * standing group never comes back; a member whose representative is gone (its source ended) and a new fact are never
+ * lost.
  */
 export async function standingFacts(db: Db, placeId: string, config: AppConfig): Promise<BerthStateFact[]> {
   const free = await freeFacts(db, placeId, config);
+  const freeIds = new Set(free.map((f) => f.id));
   const [row] = await db.select({ facts: berthStates.facts }).from(berthStates).where(eq(berthStates.placeId, placeId));
-  const kept = new Map((row?.facts ?? []).map((f) => [f.factId, f]));
-  const seen = new Set([...kept.keys(), ...(kept.size > 0 ? await lastOffered(db, placeId, config) : [])]);
+  const kept = new Map((row?.facts ?? []).filter((f) => freeIds.has(f.factId)).map((f) => [f.factId, f]));
+  const seen = new Set([...kept.values()].flatMap((f) => f.memberIds ?? [f.factId]));
   return free.flatMap((f) => (kept.has(f.id) ? [kept.get(f.id)!] : seen.has(f.id) ? [] : [stored(f, 1)]));
 }
 

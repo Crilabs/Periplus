@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { bundleFactsTask, type BundleFactsInput } from "@/lib/ai/tasks/bundle-facts";
 import type { ModelTask } from "@/lib/ai/types";
+import { resolveTaskModel } from "@/lib/ai/cost";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import type { VersionedConsolidationConfig } from "@/lib/config/schemas";
@@ -9,7 +10,7 @@ import { researchCandidates } from "@/lib/domain/research/candidates";
 import { landingPoints } from "@/lib/domain/research/landing";
 import { hasTransportFact, reachable } from "@/lib/domain/research/reach";
 import { coreInputs, decideCore } from "@/lib/domain/research/state-core";
-import { activeBundler, bundleFacts, bundleInput, freeFacts, standingFacts, storeStateFacts } from "@/lib/domain/research/state-facts";
+import { bundleFacts, bundleInput, freeFacts, standingFacts, storeStateFacts } from "@/lib/domain/research/state-facts";
 import type { QueueName } from "@/lib/jobs/queues";
 import type { JobData } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
@@ -38,6 +39,12 @@ const getLog = () => (logger ??= createLogger("pipeline.research.state"));
 const task = bundleFactsTask as ModelTask<unknown, unknown>;
 
 export type BundleFactsJob = { runId: string; stage: string; key: string; placeIds: string[] };
+
+/** The model and prompt version the configuration bundles with now. */
+export function activeBundler(config: AppConfig): { model: string; promptVersion: number } {
+  const { model, taskConfig } = resolveTaskModel(config, bundleFactsTask.name);
+  return { model, promptVersion: taskConfig.promptVersion };
+}
 
 /**
  * Plan of the bundling: the given places with at least one free fact, or with facts stored in their state that may
