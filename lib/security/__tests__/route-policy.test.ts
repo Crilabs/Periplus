@@ -13,6 +13,11 @@ const DELIVERY_ROUTES = [
   "/api/v3/schema/[version]/[file]",
   "/api/v3/subdivisions/[subdivision]/changes",
   "/api/v3/spots/[id]",
+  "/api/v3/radius/package",
+  "/api/v3/radius/package/[file]",
+  "/api/v3/radius/package/images/[file]",
+  "/api/v3/radius/changes",
+  "/api/v3/home-marinas",
 ];
 
 const ROUTE_FILES = /^(page|route)\.(tsx?|jsx?)$/;

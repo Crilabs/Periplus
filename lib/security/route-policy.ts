@@ -49,6 +49,11 @@ export const ROUTE_POLICY: Record<string, RouteRule> = {
   "/api/v3/schema/[version]/[file]": { kind: "api", scope: "delivery:read" },
   "/api/v3/subdivisions/[subdivision]/changes": { kind: "api", scope: "delivery:read" },
   "/api/v3/spots/[id]": { kind: "api", scope: "delivery:read" },
+  "/api/v3/radius/package": { kind: "api", scope: "delivery:read" },
+  "/api/v3/radius/package/[file]": { kind: "api", scope: "delivery:read" },
+  "/api/v3/radius/package/images/[file]": { kind: "api", scope: "delivery:read" },
+  "/api/v3/radius/changes": { kind: "api", scope: "delivery:read" },
+  "/api/v3/home-marinas": { kind: "api", scope: "delivery:read" },
 };
 
 const ENCODED_SEPARATOR = /%(2f|5c)/i;

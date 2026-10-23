@@ -22,6 +22,7 @@ const PILOT_RUN_TESTS = [
 const DELIVERY_FIXTURE_TESTS = [
   "app/__tests__/api-changes-spots.test.ts",
   "app/__tests__/api-package.test.ts",
+  "app/__tests__/api-radius.test.ts",
   "app/(admin)/__tests__/delivery-actions.test.ts",
   "app/(admin)/__tests__/place-actions.test.ts",
   "lib/domain/__tests__/place-merge.test.ts",

@@ -42,8 +42,13 @@ export async function resolveHomeMarina(db: Db, archive: Archive, publicId: stri
   const delivery = await validDelivery(db, subdivisionId);
   if (!delivery) return null;
   const spot = (await readJsonFile<SpotsFile>(archive, delivery, "spots.json")).spots.find((s) => s.id === publicId);
-  if (!spot || spot.kind !== "marina" || spot.exclude?.excluded || spot.mergedInto) return null;
+  if (!spot || !isHomeMarina(spot)) return null;
   return { spot, subdivisionId };
+}
+
+/** A home marina (spec 18): a delivered spot of kind `marina` that is not excluded and not merged into another spot. */
+export function isHomeMarina(spot: Spot): boolean {
+  return spot.kind === "marina" && !spot.exclude?.excluded && !spot.mergedInto;
 }
 
 export type RadiusCoverage = {
