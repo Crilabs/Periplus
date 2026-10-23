@@ -9,3 +9,4 @@ export * from "./profiles";
 export * from "./deliveries";
 export * from "./quality";
 export * from "./images";
+export * from "./research";

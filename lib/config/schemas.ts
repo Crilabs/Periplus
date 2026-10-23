@@ -1198,6 +1198,7 @@ export type AppConfig = {
   consolidation: VersionedConsolidationConfig;
   delivery: DeliveryConfig;
   images: ImagesConfig;
+  research: ResearchConfig;
 };
 
 const imageryLightSchema = z.enum(["midday", "evening"]);
@@ -1363,3 +1364,43 @@ export const areaImportFileSchema = z
       }
     }
   });
+
+const researchTemplateSchema = z.strictObject({
+  template: z.string().includes("{name}", { error: "template must contain {name}" }),
+  lang: z.string().min(1),
+});
+
+/** Per-berth research (spec 18): search templates, languages by country, SERP location codes and limits. */
+export const researchSchema = z
+  .strictObject({
+    /** Languages searched per country (ISO 3166-1 alpha-2); `default` applies to every other country. */
+    languagesByCountry: z.record(z.string(), z.array(z.string().min(1)).min(1)).refine((m) => "default" in m, {
+      error: "languagesByCountry needs a default entry",
+    }),
+    locationCodes: z.record(z.string().min(1), z.number().int().positive()),
+    templates: z.strictObject({
+      positive: z.array(researchTemplateSchema).min(1),
+      negative: z.array(researchTemplateSchema),
+    }),
+    maxHitsPerCandidate: z.number().int().positive(),
+    refetchDays: z.number().int().positive(),
+    assessWords: z.number().int().positive(),
+    skipDomains: z.array(z.string().min(1)),
+  })
+  .superRefine((c, ctx) => {
+    for (const [country, langs] of Object.entries(c.languagesByCountry)) {
+      for (const [i, lang] of langs.entries()) {
+        if (!(lang in c.locationCodes)) {
+          ctx.addIssue({ code: "custom", path: ["languagesByCountry", country, i], message: `language ${lang} has no locationCodes entry` });
+        }
+      }
+    }
+    for (const purpose of ["positive", "negative"] as const) {
+      for (const [i, t] of c.templates[purpose].entries()) {
+        if (!(t.lang in c.locationCodes)) {
+          ctx.addIssue({ code: "custom", path: ["templates", purpose, i, "lang"], message: `language ${t.lang} has no locationCodes entry` });
+        }
+      }
+    }
+  });
+export type ResearchConfig = z.infer<typeof researchSchema>;
