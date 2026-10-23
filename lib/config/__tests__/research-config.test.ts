@@ -39,6 +39,7 @@ describe("research config", () => {
       transportMinSitelinks: 5,
       alwaysCategories: ["food", "supply", "bakery", "beach", "transport"],
       textConfidence: 0.8,
+      transportKeywords: ["bus", "taxi", "ferry", "bahn", "fähre", "λεωφορείο", "ταξί", "φέρι", "πλοίο"],
     });
     const bad = valid();
     bad.state.alwaysCategories.push("bogus" as never);

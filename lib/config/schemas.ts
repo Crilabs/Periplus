@@ -1471,6 +1471,8 @@ export const researchSchema = z
       alwaysCategories: z.array(poiCategory).min(1),
       /** Confidence of a structured text fact (checked quote) as a core value input. */
       textConfidence: z.number().min(0).max(1),
+      /** A free fact whose subject category contains one of these (lower case) proves public transport or a taxi at the berth. */
+      transportKeywords: z.array(z.string().min(1)).min(1),
     }),
   })
   .superRefine((c, ctx) => {
