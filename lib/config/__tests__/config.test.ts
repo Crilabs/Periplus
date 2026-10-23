@@ -189,15 +189,15 @@ describe("loadConfig", () => {
   });
 
   it("the config loader and the fact-schema access know the same fact schema versions", () => {
-    expect(Object.keys(FACT_SCHEMAS).sort()).toEqual(["v1", "v2", "v3"]);
+    expect(Object.keys(FACT_SCHEMAS).sort()).toEqual(["v1", "v2", "v3", "v4"]);
     for (const [version, schema] of Object.entries(FACT_SCHEMAS)) {
       expect(getFactSchema(version)).toBe(schema);
       expect(schema.version).toBe(version);
     }
     // the active one loads; a version outside the map is unknown to both
     expect(loadConfig(fixtureDir({ factSchema: { version: "v3" } })).factSchema).toEqual({ version: "v3" });
-    expect(() => loadConfig(fixtureDir({ factSchema: { version: "v4" } }))).toThrow(/unknown fact schema version v4/);
-    expect(() => getFactSchema("v4")).toThrow(/Unknown fact schema version v4/);
+    expect(() => loadConfig(fixtureDir({ factSchema: { version: "v99" } }))).toThrow(/unknown fact schema version v99/);
+    expect(() => getFactSchema("v99")).toThrow(/Unknown fact schema version v99/);
   });
 
   it("rejects a malformed fact schema version", () => {

@@ -4,7 +4,10 @@ import type { Db } from "@/lib/db/client";
 import { researchCandidates } from "@/lib/domain/research/candidates";
 import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { RESEARCH_ASSESS_STAGE } from "./research/assess";
+import { RESEARCH_CONFIRM_STAGE } from "./research/confirm";
+import { RESEARCH_EXTRACT_STAGE } from "./research/extract";
 import { RESEARCH_FETCH_STAGE } from "./research/fetch";
+import { RESEARCH_DISCOVER_STAGE, RESEARCH_ROUTES_STAGE } from "./research/routes";
 import { RESEARCH_SEARCH_STAGE } from "./research/search";
 import { startRun } from "./runs";
 import { RunScopeNotReady } from "./tile-scope";
@@ -16,7 +19,15 @@ import { RunScopeNotReady } from "./tile-scope";
 export const RESEARCH_RUN_SCOPE = "places";
 
 /** The stages of the run "Recherche", in order. */
-export const RESEARCH_STAGES = [RESEARCH_SEARCH_STAGE, RESEARCH_FETCH_STAGE, RESEARCH_ASSESS_STAGE] as const;
+export const RESEARCH_STAGES = [
+  RESEARCH_SEARCH_STAGE,
+  RESEARCH_FETCH_STAGE,
+  RESEARCH_ASSESS_STAGE,
+  RESEARCH_EXTRACT_STAGE,
+  RESEARCH_ROUTES_STAGE,
+  RESEARCH_DISCOVER_STAGE,
+  RESEARCH_CONFIRM_STAGE,
+] as const;
 
 /**
  * The id of a queued or running research run of the same scope: for a subdivision the run of that subdivision, for
@@ -37,7 +48,7 @@ async function activeResearchRun(db: Db, input: { subdivisionKey: string } | { p
 }
 
 /**
- * Starts the run "Recherche" for all candidates of a subdivision or for the given places: search, fetch and assess.
+ * Starts the run "Recherche" for all candidates of a subdivision or for the given places: search, fetch, assess, extract, routes, discover and confirm.
  * Checked before the run exists (`RunScopeNotReady`): the subdivision exists, the input has candidates
  * (`no_research_candidates`) and no research run of the same scope is queued or running (`research_run_active`).
  */

@@ -109,7 +109,8 @@ export type PlaceDetail = {
 };
 
 export type AutoDecision = {
-  action: "confirm" | "no_anchoring" | "set_kind";
+  /** `candidate`: the research rule withdrew a confirmation (plan N2). */
+  action: "confirm" | "no_anchoring" | "candidate" | "set_kind";
   rule: string | null;
   decidedAt: Date;
   factIds: string[];

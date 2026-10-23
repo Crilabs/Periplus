@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createConverters } from "@/lib/adapters/fetch";
@@ -8,7 +8,14 @@ import { MockModel } from "@/lib/ai/mock";
 import { getConfig, loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { aiBatches, documents, pageAssessments, places, researchHits, runs, runStages } from "@/lib/db/schema";
+import { aiBatches, documents, pageAssessments, places, researchHits, researchRouteStops, researchUnits, reviewDecisions, runs, runStages } from "@/lib/db/schema";
+import type { ExtractBerthInput, ExtractBerthOutput } from "@/lib/ai/tasks/extract-berth";
+import type { ExtractRouteInput, ExtractRouteOutput } from "@/lib/ai/tasks/extract-route";
+import { confirmAndFollowUp } from "@/lib/jobs/handlers/research-confirm";
+import { createLogger } from "@/lib/logger";
+import { researchChanges } from "@/lib/pipeline/research/confirm";
+import { extractUnits } from "@/lib/pipeline/research/extract";
+import { discoverStops, extractResearchRoutes } from "@/lib/pipeline/research/routes";
 import { newId } from "@/lib/domain/ids";
 import { BATCH_HANDLERS } from "@/lib/jobs/batch-handlers";
 import { HANDLERS } from "@/lib/jobs/registry";
@@ -17,6 +24,9 @@ import { STAGES } from "@/lib/jobs/stages";
 import { pollBatch } from "@/lib/pipeline/batches";
 import type { FetchUrlDeps } from "@/lib/pipeline/fetch/url";
 import { RESEARCH_ASSESS_STAGE, assessPages } from "@/lib/pipeline/research/assess";
+import { RESEARCH_CONFIRM_STAGE } from "@/lib/pipeline/research/confirm";
+import { RESEARCH_EXTRACT_STAGE } from "@/lib/pipeline/research/extract";
+import { RESEARCH_DISCOVER_STAGE, RESEARCH_ROUTES_STAGE } from "@/lib/pipeline/research/routes";
 import { RESEARCH_FETCH_STAGE, fetchResearchPage } from "@/lib/pipeline/research/fetch";
 import { RESEARCH_SEARCH_STAGE, searchCandidate } from "@/lib/pipeline/research/search";
 import { RESEARCH_STAGES, startResearchRun } from "@/lib/pipeline/research-run";
@@ -85,8 +95,17 @@ const PAGE = {
 };
 
 describe("research run", () => {
-  it("registers the three stages and queues", () => {
-    expect(RESEARCH_STAGES).toEqual([RESEARCH_SEARCH_STAGE, RESEARCH_FETCH_STAGE, RESEARCH_ASSESS_STAGE]);
+  it("registers the seven stages and queues, in order", () => {
+    expect(RESEARCH_STAGES).toEqual([
+      RESEARCH_SEARCH_STAGE,
+      RESEARCH_FETCH_STAGE,
+      RESEARCH_ASSESS_STAGE,
+      RESEARCH_EXTRACT_STAGE,
+      RESEARCH_ROUTES_STAGE,
+      RESEARCH_DISCOVER_STAGE,
+      RESEARCH_CONFIRM_STAGE,
+    ]);
+    expect([...RESEARCH_STAGES]).toEqual(["research.search", "research.fetch", "research.assess", "research.extract", "research.routes", "research.discover", "research.confirm"]);
     for (const name of RESEARCH_STAGES) {
       expect(STAGES[name]?.queue).toBe(name);
       expect(QUEUES).toContain(name);
@@ -190,5 +209,119 @@ describe("research run", () => {
       await tx.update(runs).set({ status: "finished", finishedAt: new Date() }).where(eq(runs.id, first.id));
       await expect(startResearchRun(tx, boss, { subdivisionKey: "GR-XR5" }, "test")).resolves.toBeDefined();
       expect(list.id).not.toBe(first.id);
+    }));
+
+  it("runs all seven stages; a second run extracts only the pages discovery linked and changes nothing more (final review 4)", () =>
+    withRollback(async (tx) => {
+      const [vathi, kalo] = await seedCandidates(tx, "GR-XR6");
+      const port = new URL(site.origin).port;
+      const host = () => `${newId()}.invalid`;
+      // two trip reports of Vathi on two domains, in their own words; only the first sails on to Kalo
+      const pageA = { host: host(), text: "We anchored in Vathi in June 2024, good holding in sand. Next day we sailed to Kalo and anchored there for lunch." };
+      const pageB = { host: host(), text: "Spent two nights at anchor in Vathi in July 2024, the holding was superb and the water clear." };
+      const urlOf = (p: { host: string }) => `http://${p.host}:${port}/trip`;
+      for (const p of [pageA, pageB]) {
+        site.set("/trip", { body: `<!doctype html><html><head><title>Trip</title></head><body><article><h1>Trip</h1>${`<p>${p.text}</p>`.repeat(3)}</article></body></html>`, headers: { "content-type": "text/html; charset=utf-8" } }, p.host);
+      }
+      // the SERP finds both pages for Vathi's searches, nothing for Kalo's
+      const transport: Transport = async (req) => {
+        const keyword = (JSON.parse(String(req.body)) as Array<{ keyword: string }>)[0]!.keyword;
+        return makeResponse(200, serp(keyword.includes("Vathi") ? [urlOf(pageA), urlOf(pageB)] : []));
+      };
+      const archive = memoryArchive();
+      const model = new MockModel({
+        "assess-page": () => ({
+          page_kind: "trip_report", first_hand: true, generated: false, language: "en", observed_at: "2024-06", observed_at_explicit: true,
+          observed_at_reason: "in June 2024", berths: [{ name: "Vathi", island: null, kind: "anchorage" }],
+        }),
+        "extract-route": (input): ExtractRouteOutput => {
+          const { text } = input as ExtractRouteInput;
+          const stops: ExtractRouteOutput["stops"] = [];
+          if (text.includes("We anchored in Vathi")) stops.push({ name: "Vathi", date: "2024-06-15", mooring: "anchor", quote: "We anchored in Vathi in June 2024", leg: null });
+          if (text.includes("at anchor in Vathi")) stops.push({ name: "Vathi", date: "2024-07-15", mooring: "anchor", quote: "Spent two nights at anchor in Vathi", leg: null });
+          if (text.includes("sailed to Kalo")) stops.push({ name: "Kalo", date: null, mooring: "anchor", quote: "Next day we sailed to Kalo and anchored there", leg: null });
+          return { stops };
+        },
+        "extract-berth": (input): ExtractBerthOutput => {
+          const { berth, text } = input as ExtractBerthInput;
+          const signal = (quote: string) => ({ core: [], facts: [], landing: [], signals: [{ kind: "anchored" as const, first_hand: true, confidence: 0.9, quote, observed_at: null }] });
+          if (berth.name === "Kalo") return signal("we sailed to Kalo and anchored there");
+          return signal(text.includes("We anchored in Vathi") ? "We anchored in Vathi in June 2024" : "Spent two nights at anchor in Vathi");
+        },
+      });
+      const fetchDeps: FetchUrlDeps = {
+        transport: siteTransport,
+        archive,
+        converters: createConverters({ transport: noNetwork, cfg: getConfig().fetch }),
+        pdf: { pdftotext: async () => "" },
+        isAllowed: async () => true,
+        enqueue: async () => 0,
+      };
+      const deps = { model, boss: recordingBoss().boss, config, archive };
+      const pollAll = async (runId: string) => {
+        for (const b of await tx.select().from(aiBatches).where(and(eq(aiBatches.runId, runId), ne(aiBatches.status, "distributed")))) {
+          expect(await pollBatch(tx, { model, boss: deps.boss, config, handlers: BATCH_HANDLERS }, b.id)).toBe("distributed");
+        }
+      };
+
+      /** One research run through its seven stages; returns its id and the units its extraction planned. */
+      async function researchRun(searchTransport: Transport) {
+        const { boss, inserted } = recordingBoss();
+        const { id: runId } = await startResearchRun(tx, boss, { subdivisionKey: "GR-XR6" }, "test");
+        const jobs = async (stage: string) => {
+          inserted.length = 0;
+          await enqueueStage(tx, boss, runId, stage);
+          return inserted.filter((j) => j.queue === stage).map((j) => j.data);
+        };
+        for (const job of inserted.filter((j) => j.queue === RESEARCH_SEARCH_STAGE)) {
+          await searchCandidate(tx, job.data.placeId as string, { transport: searchTransport, archive }, { db: tx, runId, stage: RESEARCH_SEARCH_STAGE });
+        }
+        for (const job of await jobs(RESEARCH_FETCH_STAGE)) {
+          await fetchResearchPage(tx, job.url as string, fetchDeps, { db: tx, runId, stage: RESEARCH_FETCH_STAGE });
+        }
+        for (const job of await jobs(RESEARCH_ASSESS_STAGE)) {
+          await assessPages(tx, { ...deps, boss }, { runId, stage: RESEARCH_ASSESS_STAGE, key: job.key as string, documentVersionIds: job.documentVersionIds as string[] });
+        }
+        await pollAll(runId);
+        const extractJobs = await jobs(RESEARCH_EXTRACT_STAGE);
+        for (const job of extractJobs) {
+          await extractUnits(tx, { ...deps, boss }, { runId, stage: RESEARCH_EXTRACT_STAGE, key: job.key as string, unitIds: job.unitIds as string[] });
+        }
+        await pollAll(runId);
+        for (const job of await jobs(RESEARCH_ROUTES_STAGE)) {
+          await extractResearchRoutes(tx, { ...deps, boss }, { runId, stage: RESEARCH_ROUTES_STAGE, key: job.key as string, versionIds: job.versionIds as string[] });
+        }
+        await pollAll(runId);
+        for (const job of await jobs(RESEARCH_DISCOVER_STAGE)) {
+          await discoverStops(tx, { runId, stage: RESEARCH_DISCOVER_STAGE, key: job.key as string, documentVersionId: job.documentVersionId as string }, config);
+        }
+        const [confirmJob] = await jobs(RESEARCH_CONFIRM_STAGE);
+        await confirmAndFollowUp({ runId, stage: RESEARCH_CONFIRM_STAGE, key: confirmJob!.key as string }, { db: tx, boss, log: createLogger("test"), jobId: newId() });
+        await tx.update(runs).set({ status: "finished", finishedAt: new Date() }).where(eq(runs.id, runId));
+        return { runId, unitIds: extractJobs.flatMap((j) => j.unitIds as string[]) };
+      }
+      const placeOfUnits = async (ids: string[]) =>
+        ids.length === 0 ? [] : (await tx.select({ placeId: researchUnits.placeId }).from(researchUnits).where(inArray(researchUnits.id, ids))).map((u) => u.placeId).sort();
+
+      // run 1: Vathi's two pages are extracted for Vathi only, the route links page A to Kalo, Vathi is confirmed
+      const first = await researchRun(transport);
+      expect(await placeOfUnits(first.unitIds)).toEqual([vathi, vathi]);
+      const kaloStops = await tx.select().from(researchRouteStops).where(eq(researchRouteStops.placeId, kalo!));
+      expect(kaloStops.map((s) => [s.name, s.match])).toEqual([["Kalo", "name"]]);
+      const statusOf = async (id: string) => (await tx.select({ status: places.status }).from(places).where(eq(places.id, id)))[0]!.status;
+      expect([await statusOf(vathi!), await statusOf(kalo!)]).toEqual(["confirmed", "candidate"]);
+      expect(await researchChanges(tx, first.runId)).toMatchObject({ confirmed: [vathi] });
+      const decisions = (await tx.select().from(reviewDecisions)).length;
+
+      // run 2: the SERP is reused (no network), nothing is fetched or assessed again, only Kalo's unit on page A is
+      // extracted (one source, still a candidate), and confirm changes nothing
+      const second = await researchRun(noNetwork);
+      const [pageAVersion] = await tx.select({ id: documents.currentVersionId }).from(documents).where(eq(documents.urlNormalized, urlOf(pageA)));
+      const units = await tx.select().from(researchUnits).where(inArray(researchUnits.id, second.unitIds));
+      expect(units.map((u) => [u.placeId, u.documentVersionId, u.status])).toEqual([[kalo, pageAVersion!.id, "done"]]);
+      expect([await statusOf(vathi!), await statusOf(kalo!)]).toEqual(["confirmed", "candidate"]);
+      expect(await researchChanges(tx, second.runId)).toEqual({ changed: [], confirmed: [] });
+      expect((await tx.select().from(reviewDecisions)).length).toBe(decisions);
+      expect((await tx.select({ statusReason: places.statusReason }).from(places).where(eq(places.id, kalo!)))[0]!.statusReason).toBe("1 von 2 unabhängigen Quellen");
     }));
 });

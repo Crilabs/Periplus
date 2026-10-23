@@ -20,6 +20,13 @@ describe("buildResearchQueries", () => {
     expect(qs.some((q) => q.keyword.includes("{"))).toBe(false);
   });
 
+  it("fills an island-only template without the berth's name in that language, and skips it without an island", () => {
+    const qs = buildResearchQueries("p1", { ...base, island: { en: "Methana", de: "Methana" } }, cfg, "positive");
+    expect(qs).toContainEqual(expect.objectContaining({ keyword: "Törn Methana Ankerbucht", languageCode: "de" }));
+    const none = buildResearchQueries("p1", { ...base, island: null }, cfg, "positive");
+    expect(none.some((q) => q.keyword.startsWith("Törn"))).toBe(false);
+  });
+
   it("makes no el query for a country without el", () => {
     const qs = buildResearchQueries("p1", { ...base, countryCode: "XX" }, cfg, "positive");
     expect(qs.some((q) => q.languageCode === "el")).toBe(false);

@@ -9,6 +9,17 @@ import { getEnv } from "@/lib/env";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import { assessPages, planResearchAssess, RESEARCH_ASSESS_QUEUE, RESEARCH_ASSESS_STAGE } from "@/lib/pipeline/research/assess";
+import { planResearchConfirm, RESEARCH_CONFIRM_STAGE } from "@/lib/pipeline/research/confirm";
+import { RESEARCH_EXTRACT_QUEUE, RESEARCH_EXTRACT_STAGE, extractUnits, planResearchExtract } from "@/lib/pipeline/research/extract";
+import {
+  discoverStops,
+  extractResearchRoutes,
+  planResearchDiscover,
+  planResearchRoutes,
+  RESEARCH_DISCOVER_STAGE,
+  RESEARCH_ROUTES_QUEUE,
+  RESEARCH_ROUTES_STAGE,
+} from "@/lib/pipeline/research/routes";
 import { fetchResearchPage, planResearchFetch, RESEARCH_FETCH_STAGE } from "@/lib/pipeline/research/fetch";
 import { planResearchSearch, RESEARCH_SEARCH_STAGE, searchCandidate } from "@/lib/pipeline/research/search";
 import { modelClientFor } from "./ai-batch";
@@ -33,6 +44,34 @@ export const researchAssessStage: StageDefinition = {
   name: RESEARCH_ASSESS_STAGE,
   queue: RESEARCH_ASSESS_QUEUE,
   plan: (db, run) => planResearchAssess(db, run),
+};
+
+/** Stage `research.extract`: the research units (page version × berth) of the run's candidates, as message batches. */
+export const researchExtractStage: StageDefinition = {
+  name: RESEARCH_EXTRACT_STAGE,
+  queue: RESEARCH_EXTRACT_QUEUE,
+  plan: (db, run) => planResearchExtract(db, run),
+};
+
+/** Stage `research.routes`: the route sections of the trip reports among the run's hit pages, as message batches. */
+export const researchRoutesStage: StageDefinition = {
+  name: RESEARCH_ROUTES_STAGE,
+  queue: RESEARCH_ROUTES_QUEUE,
+  plan: (db, run) => planResearchRoutes(db, run),
+};
+
+/** Stage `research.discover`: one job per page with open route stops. */
+export const researchDiscoverStage: StageDefinition = {
+  name: RESEARCH_DISCOVER_STAGE,
+  queue: "research.discover",
+  plan: (db, run) => planResearchDiscover(db, run),
+};
+
+/** Stage `research.confirm`: one job applying the confirmation rule to the run's candidates. */
+export const researchConfirmStage: StageDefinition = {
+  name: RESEARCH_CONFIRM_STAGE,
+  queue: "research.confirm",
+  plan: () => planResearchConfirm(),
 };
 
 const runIdOf = (data: JobData): string => z.string().min(1).parse(data.runId);
@@ -75,4 +114,54 @@ export const researchAssessHandler: JobHandler<JobData> = async (data, ctx) => {
   const job = assessJobSchema.parse(data);
   const result = await assessPages(ctx.db, { model: modelClientFor(ctx.db), boss: ctx.boss, archive: getArchive() }, job);
   ctx.log.info({ versions: job.documentVersionIds.length, ...result }, "page assessment batch submitted");
+};
+
+const extractJobSchema = z.object({
+  runId: z.uuid(),
+  stage: z.string().min(1),
+  key: z.string().min(1),
+  unitIds: z.array(z.uuid()).min(1),
+});
+
+/** Sends one job's research units to `extract-berth` as a message batch; the poll job stores the extractions. */
+export const researchExtractHandler: JobHandler<JobData> = async (data, ctx) => {
+  const job = extractJobSchema.parse(data);
+  const result = await extractUnits(ctx.db, { model: modelClientFor(ctx.db), boss: ctx.boss, archive: getArchive() }, job);
+  ctx.log.info({ units: job.unitIds.length, ...result }, "berth extraction batch submitted");
+};
+
+const routesJobSchema = z
+  .object({
+    runId: z.uuid(),
+    stage: z.string().min(1),
+    key: z.string().min(1),
+    versionIds: z.array(z.uuid()).optional(),
+    sectionIds: z.array(z.string().min(1)).optional(),
+  })
+  .refine((j) => (j.versionIds?.length ?? 0) + (j.sectionIds?.length ?? 0) > 0, "a route job needs versions or sections");
+
+/** Sends one job's trip report sections to `extract-route` as a message batch; the poll job stores the stops. */
+export const researchRoutesHandler: JobHandler<JobData> = async (data, ctx) => {
+  const job = routesJobSchema.parse(data);
+  const result = await extractResearchRoutes(ctx.db, { model: modelClientFor(ctx.db), boss: ctx.boss, archive: getArchive() }, job);
+  ctx.log.info(
+    {
+      versions: job.versionIds?.length ?? 0,
+      sections: job.sectionIds?.length ?? 0,
+      ...result,
+    },
+    "research route batch submitted",
+  );
+};
+
+const discoverJobSchema = z.object({
+  runId: z.uuid(),
+  stage: z.string().min(1),
+  key: z.string().min(1),
+  documentVersionId: z.uuid(),
+});
+
+/** Assigns the open route stops of one page to places (`matchStops`). */
+export const researchDiscoverHandler: JobHandler<JobData> = async (data, ctx) => {
+  await discoverStops(ctx.db, discoverJobSchema.parse(data));
 };

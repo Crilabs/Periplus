@@ -11,3 +11,4 @@ export * from "./quality";
 export * from "./images";
 export * from "./radius";
 export * from "./research";
+export * from "./research-extract";

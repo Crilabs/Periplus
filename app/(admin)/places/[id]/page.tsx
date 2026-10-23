@@ -20,7 +20,6 @@ import { profileAttributeFacts, profileView } from "@/lib/domain/profile-view";
 import { requireAdmin } from "@/lib/security/require-admin";
 import { Dialog } from "../../_components/dialog";
 import {
-  AUTO_RULE_LABELS,
   mergeError,
   PLACE_KIND_LABELS,
   PLACE_STATUS_LABELS,
@@ -46,6 +45,7 @@ import {
   type Tone,
 } from "../../_components/ui";
 import { mergePlaceAction, recomputePlaceProfileAction } from "./actions";
+import { AutoDecisionLine } from "./auto-decision";
 import { DeliveryTab } from "./delivery-tab";
 import { FactsTab } from "./facts-tab";
 import { GeometryTab } from "./geometry-tab";
@@ -217,7 +217,7 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
       ) : tab === "image" ? (
         <ImageTabView placeId={p.id} geoObjectId={p.geoObjectId} editable={active} notice={imageNoticeParam.parse(sp.imageNotice)} zoomRefused={sp.imageError === "zoom"} />
       ) : tab === "research" ? (
-        <ResearchTab rows={await researchView(db, p.id)} />
+        <ResearchTab view={await researchView(db, p.id)} />
       ) : tab === "delivery" ? (
         <DeliveryTabView placeId={p.id} />
       ) : tab === "sources" ? (
@@ -343,35 +343,6 @@ async function TimelineTabView({ placeId, geoObjectId, version, asOf, attr, conf
       asOfInvalid={t.asOfInvalid}
       links={{ geoObjectId, placeId, confirm, attrHref: (a) => `${baseHref}${shown}${a ? `&attr=${encodeURIComponent(a)}` : ""}` }}
     />
-  );
-}
-
-/** „Automatisch bestätigt am <Datum> (Regel: <Label>)“ with links to the documents the decision rests on. */
-function AutoDecisionLine({ decision }: { decision: NonNullable<Detail["autoDecision"]> }) {
-  const date = fmt.date(decision.decidedAt);
-  const rule = decision.rule ? (AUTO_RULE_LABELS[decision.rule] ?? decision.rule) : null;
-  const text =
-    decision.action === "confirm"
-      ? `Automatisch bestätigt am ${date}`
-      : decision.action === "no_anchoring"
-        ? `Automatisch als Ankerverbot eingestuft am ${date}`
-        : `Ortsart automatisch geändert am ${date}`;
-  return (
-    <span data-testid="auto-decision">
-      {text}
-      {rule && ` (Regel: ${rule})`}
-      {decision.documentIds.length > 0 && (
-        <span className="mt-1 block text-xs">
-          Belege:{" "}
-          {decision.documentIds.map((id, i) => (
-            <span key={id}>
-              {i > 0 && ", "}
-              <TextLink href={`/documents/${id}`}>Dokument {i + 1}</TextLink>
-            </span>
-          ))}
-        </span>
-      )}
-    </span>
   );
 }
 

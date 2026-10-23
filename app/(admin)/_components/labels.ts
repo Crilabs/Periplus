@@ -30,6 +30,7 @@ import type {
 import type { ChangeSeverity, ChangeType, SummaryStatus } from "@/lib/db/schema/profiles";
 import type { DeliveryStatus } from "@/lib/db/schema/deliveries";
 import type { PageKind } from "@/lib/db/schema/research";
+import type { BerthSignalKind, Tone } from "@/lib/db/schema/research-extract";
 import type { ComparisonAttribute, ComparisonMethod, ComparisonResultValue, MetricKey } from "@/lib/db/schema/quality";
 import type { ChangeEntry, ContractFile } from "@/contract";
 import type { CheckName } from "@/lib/domain/delivery/validate";
@@ -119,6 +120,22 @@ export const PAGE_KIND_LABELS: Record<PageKind, string> = {
   other: "Sonstiges",
 };
 
+/** Kind of a research signal on a berth (spec 5.6). */
+export const SIGNAL_KIND_LABELS: Record<BerthSignalKind, string> = {
+  anchored: "geankert",
+  moored_buoy: "an Boje gelegen",
+  berthed: "festgemacht",
+  listed_as_berth: "als Liegeplatz geführt",
+  prohibited: "Verbot/Sperrgebiet",
+  buoys_private: "Bojen privat",
+  no_space: "kein Platz",
+  unsafe: "unsicher",
+  closed: "geschlossen/Bauarbeiten",
+};
+
+/** Tendency of an extracted fact. */
+export const TONE_LABELS: Record<Tone, string> = { positive: "positiv", neutral: "neutral", negative: "negativ" };
+
 export const PLACE_KIND_LABELS: Record<PlaceKind, string> = {
   anchorage: "Ankerplatz",
   port: "Hafen",
@@ -192,6 +209,7 @@ export const NAME_ORIGIN_LABELS: Record<NameOrigin, string> = {
   transliteration: "Transliteration",
   fallback: "Ersatz",
   import: "Revier-Bot",
+  research: "Recherche",
 };
 
 export const GAP_REASON_LABELS: Record<GapReason, string> = {
@@ -804,13 +822,14 @@ export const METRIC_LABELS: Record<MetricKey, string> = {
   marina_services: "Marinas mit Kraftstoff und Wasser",
 };
 
-/** The rule that confirmed a place automatically (spec 17). */
+/** The rule that set a place's status automatically (spec 17; `research`: the confirmation rule of plan N2). */
 export const AUTO_RULE_LABELS: Record<string, string> = {
   alone: "Revierführer/Behörde",
   pair: "Zwei unabhängige Berichte",
   own_website: "Eigene Website",
   commercial_port: "Quelle: gewerblicher Hafen",
   osm_commercial: "OSM: gewerblicher Hafen",
+  research: "Recherche",
 };
 
 /** Where a place's website came from (spec 15 C). */

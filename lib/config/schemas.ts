@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FACT_SCHEMAS } from "@/config/fact-schema";
 import {
   geoObjectTypeEnum,
   placeKindEnum,
@@ -9,6 +10,8 @@ import {
   type GeoObjectType,
   type PlaceKind,
 } from "@/lib/db/schema/geo";
+import { pageKindEnum } from "@/lib/db/schema/research";
+import { berthSignalKindEnum } from "@/lib/db/schema/research-extract";
 import { changeRateEnum, DOC_TYPES, type ChangeRate, type DocType } from "@/lib/db/schema/sources";
 import { CONTRACT_FILES, SCHEMA_VERSION } from "@/contract";
 import { PROVENANCE_SOURCES, RADIUS_MAX_DAYS } from "@/contract/v2";
@@ -1379,7 +1382,8 @@ export const areaImportFileSchema = z
   });
 
 const researchTemplateSchema = z.strictObject({
-  template: z.string().includes("{name}", { error: "template must contain {name}" }),
+  /** `{name}`: the berth's name; `{island}`: its island's name (a template with only `{island}` searches the island's trip reports). */
+  template: z.string().refine((t) => t.includes("{name}") || t.includes("{island}"), { error: "template must contain {name} or {island}" }),
   lang: z.string().min(1),
 });
 
@@ -1398,11 +1402,55 @@ export const researchSchema = z
     maxHitsPerCandidate: z.number().int().positive(),
     refetchDays: z.number().int().positive(),
     assessWords: z.number().int().positive(),
+    /** Domains whose hits are not taken over; `label.*` skips that registrable label on every public suffix (`tripadvisor.*`). */
     skipDomains: z.array(z.string().min(1)),
     /** The source created for a research hit page (domain without a source). */
     source: z.strictObject({ weight: z.number().min(0).max(1), ratePerMinute: z.number().min(1).max(120) }),
+    /** Extraction per page and place (plan N2). */
+    extraction: z.strictObject({
+      factSchema: z.string().refine((v) => v in FACT_SCHEMAS, { error: "unknown fact schema version" }),
+      placeRadiusKm: z.number().positive(),
+      maxUnitWords: z.number().int().positive(),
+      windowWords: z.number().int().positive(),
+      maxSharedWords: z.number().int().positive(),
+      routeMaxStops: z.number().int().positive(),
+      /** A failed research unit is planned again until it failed this often. */
+      maxAttempts: z.number().int().positive(),
+    }),
+    /** When a berth counts as confirmed from its signals (plan N2, task 6). */
+    confirmation: z.strictObject({
+      minIndependentSources: z.number().int().min(1),
+      minSignalConfidence: z.number().min(0).max(1),
+      positiveKinds: z.array(z.enum(berthSignalKindEnum.enumValues)).min(1),
+      negativeKinds: z.array(z.enum(berthSignalKindEnum.enumValues)).min(1),
+      countingPageKinds: z.array(z.enum(pageKindEnum.enumValues)).min(1),
+      listedAsBerthPageKinds: z.array(z.enum(pageKindEnum.enumValues)),
+      officialPageKinds: z.array(z.enum(pageKindEnum.enumValues)),
+      /** Place kinds confirmed by an official page plus another domain (marinas, ports); the others by independent sources. */
+      officialPlaceKinds: z.array(z.enum(placeKindEnum.enumValues)),
+      /** Whether pages linked to a place only by a route corridor count without a search- or name-linked source (ruling: no). */
+      corridorAloneConfirms: z.boolean(),
+    }),
+    /** Matching route stops to places. */
+    discovery: z.strictObject({
+      corridorBufferKm: z.number().positive(),
+      minNameSimilarity: z.number().min(0).max(1),
+      /** A named corridor candidate this similar to the stop (or matching it by name) blocks naming an unnamed bay. */
+      vetoSimilarity: z.number().min(0).max(1),
+      /** The corridor step applies only to a straight leg prev → next of at most this length. */
+      maxLegKm: z.number().positive(),
+      /** … and only when the dates of the previous and the next stop are at most this many days apart. */
+      maxLegDays: z.number().int().nonnegative(),
+      /** A research name stays provisional until route stops of this many registrable domains gave it. */
+      corroboratingDomains: z.number().int().positive(),
+    }),
   })
   .superRefine((c, ctx) => {
+    for (const k of c.confirmation.negativeKinds) {
+      if (c.confirmation.positiveKinds.includes(k)) {
+        ctx.addIssue({ code: "custom", path: ["confirmation", "negativeKinds"], message: `signal kind ${k} is both positive and negative` });
+      }
+    }
     for (const [country, langs] of Object.entries(c.languagesByCountry)) {
       for (const [i, lang] of langs.entries()) {
         if (!(lang in c.locationCodes)) {

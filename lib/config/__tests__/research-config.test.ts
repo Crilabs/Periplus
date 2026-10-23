@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getConfig } from "../index";
+import { isForbiddenUrl } from "@/lib/domain/sources/forbidden-domains";
 import { researchSchema } from "../schemas";
 
 const valid = () => structuredClone(getConfig().research);
@@ -25,6 +26,55 @@ describe("research config", () => {
     const d = valid();
     d.languagesByCountry.default!.push("nl");
     expect(researchSchema.safeParse(d).success).toBe(false);
+  });
+
+  it("loads extraction, confirmation and discovery start values", () => {
+    const c = getConfig().research;
+    expect(c.extraction).toEqual({ factSchema: "v4", placeRadiusKm: 15, maxUnitWords: 12000, windowWords: 600, maxSharedWords: 8, routeMaxStops: 40, maxAttempts: 3 });
+    expect(c.confirmation.minIndependentSources).toBe(2);
+    expect(c.confirmation.minSignalConfidence).toBe(0.7);
+    expect(c.confirmation.positiveKinds).toEqual(["anchored", "moored_buoy", "berthed", "listed_as_berth"]);
+    expect(c.discovery).toEqual({ corridorBufferKm: 3, minNameSimilarity: 0.8, vetoSimilarity: 0.4, maxLegKm: 25, maxLegDays: 3, corroboratingDomains: 2 });
+  });
+
+  it("rejects a kind that is both positive and negative", () => {
+    const c = valid();
+    c.confirmation.negativeKinds.push("anchored");
+    expect(researchSchema.safeParse(c).success).toBe(false);
+  });
+
+  it("rejects an unknown fact schema version", () => {
+    const c = valid();
+    c.extraction.factSchema = "v99";
+    expect(researchSchema.safeParse(c).success).toBe(false);
+  });
+
+  it("skips aggregator and stock-photo domains, TripAdvisor on every country domain (N1 probe)", () => {
+    const { skipDomains } = getConfig().research;
+    for (const url of ["https://www.tripadvisor.com/x", "https://www.tripadvisor.de/x", "https://www.tripadvisor.co.uk/x", "https://www.tripadvisor.com.au/x", "https://www.tripadvisor.gr/x", "https://www.getyourguide.com/x", "https://www.rome2rio.com/x", "https://www.alamy.com/x"]) {
+      expect(isForbiddenUrl(url, skipDomains), url).toBe(true);
+    }
+    expect(isForbiddenUrl("https://www.sailing-blog.example/tripadvisor", skipDomains)).toBe(false);
+  });
+
+  it("has search templates aimed at trip reports (N1 probe)", () => {
+    const templates = getConfig().research.templates.positive;
+    expect(templates).toEqual(
+      expect.arrayContaining([
+        { template: "{name} sailing blog", lang: "en" },
+        { template: "{name} anchored overnight", lang: "en" },
+        { template: "Törn {island} Ankerbucht", lang: "de" },
+        { template: "{name} vela ancoraggio", lang: "it" },
+      ]),
+    );
+  });
+
+  it("accepts a template with only {island}, rejects one with neither {name} nor {island}", () => {
+    const c = valid();
+    c.templates.positive.push({ template: "Törn {island}", lang: "de" });
+    expect(researchSchema.safeParse(c).success).toBe(true);
+    c.templates.positive.push({ template: "Törn Ankerbucht", lang: "de" });
+    expect(researchSchema.safeParse(c).success).toBe(false);
   });
 
   it("accepts the shipped config", () => {
