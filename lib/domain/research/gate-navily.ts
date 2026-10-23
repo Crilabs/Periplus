@@ -25,6 +25,9 @@ export type MissReason = "no_candidate" | "matched_elsewhere" | "admin" | "unnam
 
 export type GatePlace = MatchPlace & { verdicts: Map<number, Verdict>; hasNames: boolean; hasHits: boolean; status: PlaceStatus; statusReason: string | null };
 
+/** A confirmed place counted as an error: a spot of another kind, or a human "no berth" decision (`spotIndex` null without a spot). */
+export type GateError = { placeId: string; kind: "wrong_kind" | "not_berth"; spotIndex: number | null; distanceM: number | null };
+
 export type GateMiss = { spotIndex: number; reason: MissReason; placeId: string | null };
 
 /** Why the candidate of a spot is not confirmed at the threshold. */
@@ -54,25 +57,32 @@ function reasonOf(p: GatePlace, threshold: number): MissReason {
 export function evaluateGate(
   input: { thresholds: number[]; places: GatePlace[]; spots: NavilySpot[]; decisions: Map<string, "berth" | "not_berth"> },
   cfg: Pick<AppConfig, "quality" | "nameAffixes">,
-): { rows: GateRow[]; misses: Map<number, GateMiss[]>; conflicts: Map<number, string[]> } {
+): { rows: GateRow[]; misses: Map<number, GateMiss[]>; conflicts: Map<number, string[]>; errors: Map<number, GateError[]> } {
   const { thresholds, places, spots, decisions } = input;
   const navily = cfg.quality.navily;
   const rows: GateRow[] = [];
   const misses = new Map<number, GateMiss[]>();
   const conflicts = new Map<number, string[]>();
+  const errors = new Map<number, GateError[]>();
 
   for (const threshold of thresholds) {
     const confirmed = places.filter((p) => p.verdicts.get(threshold)?.status === "confirmed").map((p) => ({ ...p, status: "confirmed" as const }));
     const matches = matchPlacesToSpots(confirmed, spots, navily, cfg.nameAffixes);
     const row: GateRow = { threshold, confirmed: confirmed.length, correct: 0, wrongKind: 0, conflicts: 0, decidedNotBerth: 0, correctness: null };
     const open: string[] = [];
+    const errs: GateError[] = [];
     for (const [i, p] of confirmed.entries()) {
       const spotIndex = matches[i]!.spotIndex;
       const spot = spotIndex === null ? null : spots[spotIndex]!;
       const decision = decisions.get(p.placeId);
-      if (spot && !kindCompatible(p.kind, spot.kind)) row.wrongKind += 1;
-      else if (decision === "not_berth") row.decidedNotBerth += 1;
-      else if (spot || decision === "berth") row.correct += 1;
+      const at = { spotIndex, distanceM: matches[i]!.distanceM };
+      if (spot && !kindCompatible(p.kind, spot.kind)) {
+        row.wrongKind += 1;
+        errs.push({ placeId: p.placeId, kind: "wrong_kind", ...at });
+      } else if (decision === "not_berth") {
+        row.decidedNotBerth += 1;
+        errs.push({ placeId: p.placeId, kind: "not_berth", ...at });
+      } else if (spot || decision === "berth") row.correct += 1;
       else {
         row.conflicts += 1;
         open.push(p.placeId);
@@ -81,6 +91,7 @@ export function evaluateGate(
     row.correctness = row.confirmed === 0 ? null : row.correct / row.confirmed;
     rows.push(row);
     conflicts.set(threshold, open);
+    errors.set(threshold, errs);
 
     const matchedPlaces = new Set(matches.filter((m) => m.spotIndex !== null).map((m) => m.placeId));
     const pool = places.filter((p) => !matchedPlaces.has(p.placeId)).map((p) => ({ ...p, status: "candidate" as const }));
@@ -97,5 +108,5 @@ export function evaluateGate(
       }),
     );
   }
-  return { rows, misses, conflicts };
+  return { rows, misses, conflicts, errors };
 }

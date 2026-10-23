@@ -19,9 +19,11 @@ export const NOT_BERTH_REASON = "Kein Liegeplatz laut Prüfung (Navily-Test)";
  * Makes the open research-conflict tasks match `conflictPlaceIds`: one open task per place (none twice, none again for a
  * place a human decided already), and an open task of a place that is no conflict any more is dismissed with
  * `context.dismissedReason` `no_longer_conflict`. `threshold`: the confirmation threshold the conflict was found at.
- * Returns the tasks created and the open ones after the sync.
+ * Only tasks of `scopePlaceIds` (the places of the measured subdivision) are dismissed or counted; those of other places
+ * stay. Returns the tasks created and the open ones of the scope after the sync.
  */
-export async function syncConflictTasks(db: Db, conflictPlaceIds: string[], threshold: number): Promise<{ created: number; open: number }> {
+export async function syncConflictTasks(db: Db, conflictPlaceIds: string[], threshold: number, scopePlaceIds: string[]): Promise<{ created: number; open: number }> {
+  const scope = [...new Set([...scopePlaceIds, ...conflictPlaceIds])];
   const ids = [...new Set(conflictPlaceIds)].sort();
   return db.transaction(async (tx) => {
     const decided = new Set(
@@ -40,6 +42,7 @@ export async function syncConflictTasks(db: Db, conflictPlaceIds: string[], thre
       const task = await createReviewTask(tx, { kind: "research_conflict", subjectType: RESEARCH_CONFLICT_SUBJECT, subjectId: placeId, context: { threshold } });
       if (task.created) created++;
     }
+    const inScope = scope.length === 0 ? sql`false` : inArray(reviewTasks.subjectId, scope);
     await tx
       .update(reviewTasks)
       .set({ status: "dismissed", context: sql`${reviewTasks.context} || ${JSON.stringify({ dismissedReason: "no_longer_conflict" })}::jsonb` })
@@ -47,13 +50,14 @@ export async function syncConflictTasks(db: Db, conflictPlaceIds: string[], thre
         and(
           eq(reviewTasks.kind, "research_conflict"),
           eq(reviewTasks.status, "open"),
+          inScope,
           wanted.length === 0 ? undefined : notInArray(reviewTasks.subjectId, wanted),
         ),
       );
     const [{ n } = { n: 0 }] = await tx
       .select({ n: sql<number>`count(*)::int` })
       .from(reviewTasks)
-      .where(and(eq(reviewTasks.kind, "research_conflict"), eq(reviewTasks.status, "open")));
+      .where(and(eq(reviewTasks.kind, "research_conflict"), eq(reviewTasks.status, "open"), inScope));
     return { created, open: n };
   });
 }

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { eq } from "drizzle-orm";
@@ -15,7 +15,7 @@ import { insertPlace } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { signalPage } from "@/test/research-signals";
 import { insertTestSubdivision, insertTestTile } from "@/test/text";
-import { parseArgs, runGate, type GateArgs } from "../research-gate";
+import { isInsideRepo, parseArgs, runGate, type GateArgs } from "../research-gate";
 
 /* The gate CLI against real Postgres with synthetic spots in a temp dir; the invented names must never reach the report. */
 
@@ -28,39 +28,43 @@ afterAll(async () => {
 const spot = (over: Partial<NavilySpot>): NavilySpot => ({ lat: 35.2, lon: 21.0, prot: null, seabeds: null, name: null, kind: "mooring", type: null, water: null, shop: null, ...over });
 const INVENTED = /Zzyzx|Qwoxx|Vrrmpf|\b35\.2\d*|\b21\.\d+|\b25\.\d+/;
 
-async function setup(tx: Db) {
+type SetupOpts = { wrongKind?: boolean; knownDomains?: number; signals?: boolean };
+
+async function setup(tx: Db, o: SetupOpts = {}) {
   const key = `XT-${newId()}`;
   const sub = await insertTestSubdivision(tx, key, [20.9, 35.0, 21.5, 35.5]);
   await insertTestTile(tx, tileIdFor(21.0, 35.2), null, sub.id);
-  const place = async (name: string, lon: number) => {
+  const place = async (name: string, lon: number, domains: number) => {
     const p = await insertPlace(tx, { name, lon, lat: 35.2, status: "candidate" });
     await tx.update(geoObjects).set({ subdivisionId: sub.id }).where(eq(geoObjects.id, p.objectId));
-    for (const d of ["a", "b"]) await signalPage(tx, cfg, p, { domain: `${d}.example` });
+    for (const d of ["a", "b", "c", "d"].slice(0, o.signals === false ? 0 : domains)) await signalPage(tx, cfg, p, { domain: `${d}.example` });
     return p;
   };
-  const known = await place("Zzyzx Cove", 21.0);
-  const unknown = await place("Qwoxx Bay", 21.05);
+  const known = await place("Zzyzx Cove", 21.0, o.knownDomains ?? 2);
+  const unknown = await place("Qwoxx Bay", 21.05, 2);
+  const wrong = o.wrongKind ? await place("Wrxxy Pier", 21.15, 2) : null;
   const dir = await mkdtemp(path.join(os.tmpdir(), "n3-gate-test-"));
   dirs.push(dir);
   const spotFile = path.join(dir, "spots.json");
-  const { writeFile } = await import("node:fs/promises");
   await writeFile(
     spotFile,
     JSON.stringify([
+      spot({ name: "Elsewhere Bight", lon: 25.5 }), // outside the subdivision's tiles, first: filtered and file indexes differ
       spot({ name: "Zzyzx Cove" }),
       spot({ name: "Vrrmpf Haven", lon: 21.1 }),
-      spot({ name: "Elsewhere Bight", lon: 25.5 }), // outside the subdivision's tiles
+      ...(wrong ? [spot({ name: "Wrxxy Pier", lon: 21.15, kind: "port" })] : []),
     ]),
   );
   const args: GateArgs = { subdivision: key, navily: spotFile, outDir: path.join(dir, "lists"), report: path.join(dir, "report", "n3-tor.md"), syncConflicts: false };
-  return { key, known, unknown, args, dir, spots: await loadNavilySpots(spotFile) };
+  return { key, known, unknown, wrong, args, dir, spots: await loadNavilySpots(spotFile) };
 }
 
 describe("research-gate parseArgs", () => {
   it("reads subdivision, path, directories and the sync switch; defaults outside the repo and to the committed report", () => {
-    const a = parseArgs(["--subdivision", "GR-I", "--navily", "/tmp/s.json", "--out-dir", "/tmp/o", "--sync-conflicts"], {});
-    expect(a).toMatchObject({ subdivision: "GR-I", navily: "/tmp/s.json", outDir: "/tmp/o", syncConflicts: true, report: path.join("docs", "pilot", "neuausrichtung", "n3-tor.md") });
-    const d = parseArgs(["--subdivision", "GR-I"], { NAVILY_SPOTS_PATH: "/tmp/env.json" });
+    const root = path.join(path.sep, "some", "repo");
+    const a = parseArgs(["--subdivision", "GR-I", "--navily", "/tmp/s.json", "--out-dir", "/tmp/o", "--sync-conflicts"], {}, root);
+    expect(a).toMatchObject({ subdivision: "GR-I", navily: "/tmp/s.json", outDir: "/tmp/o", syncConflicts: true, report: path.join(root, "docs", "pilot", "neuausrichtung", "n3-tor.md") });
+    const d = parseArgs(["--subdivision", "GR-I"], { NAVILY_SPOTS_PATH: "/tmp/env.json" }, root);
     expect(d).toMatchObject({ navily: "/tmp/env.json", syncConflicts: false });
     expect(d.outDir.startsWith(os.tmpdir())).toBe(true);
   });
@@ -82,6 +86,7 @@ describe("runGate", () => {
       expect(lines.join("\n")).toMatch(/Tor nicht bestanden/);
       expect(lines.join("\n")).toMatch(/1 created, 1 open/);
       expect(lines.join("\n")).toContain("spots in " + s.args.subdivision + ": 2");
+      expect(lines.join("\n")).not.toMatch(INVENTED);
 
       const report = await readFile(s.args.report, "utf8");
       expect(report).toMatch(/\| 2 \| 2 \| 1 \| 0 \| 1 \| 0 \| 0 \| 50 % \|/);
@@ -95,7 +100,7 @@ describe("runGate", () => {
       expect(files).toEqual(["n3-tor-n2.csv", "n3-tor-n3.csv", "n3-tor-n4.csv", "n3-tor-n5.csv"]);
       const csv = await readFile(path.join(s.args.outDir, "n3-tor-n2.csv"), "utf8");
       expect(csv).toContain(`conflict,${s.unknown.placeId},`);
-      expect(csv).toMatch(/^miss,,no_candidate,,1$/m);
+      expect(csv).toMatch(/^miss,,no_candidate,,2$/m); // the file index, not the index among the spots of the subdivision
       expect(csv).not.toMatch(/Zzyzx|Qwoxx|Vrrmpf/);
 
       const [task] = await tx.select().from(reviewTasks).where(eq(reviewTasks.subjectId, s.unknown.placeId));
@@ -106,9 +111,59 @@ describe("runGate", () => {
       expect(await readFile(s.args.report, "utf8")).toMatch(/\| 2 \| 2 \| 2 \| 0 \| 0 \| 1 \| 0 \| 100 % \|/);
     }));
 
+  it("a spot of another kind is an error in the report, the outcome and the lists", () =>
+    withRollback(async (tx) => {
+      const s = await setup(tx, { wrongKind: true });
+      const now = new Date("2026-10-23T12:00:00Z");
+      const lines = await runGate(tx, s.args, s.spots, cfg, { now, repoRoot: process.cwd() });
+      expect(lines.join("\n")).toMatch(/Tor nicht bestanden/);
+      const report = await readFile(s.args.report, "utf8");
+      expect(report).toMatch(/\| 2 \| 3 \| 1 \| 1 \| 1 \| 0 \| 0 \| 33\.3 % \|/);
+      expect(report).not.toMatch(INVENTED);
+      const csv = await readFile(path.join(s.args.outDir, "n3-tor-n2.csv"), "utf8");
+      expect(csv).toMatch(new RegExp(`^error,${s.wrong!.placeId},wrong_kind,\\d+,3$`, "m"));
+      // a human "berth" decision on the open conflict does not clear the wrong kind
+      const [task] = await runGate(tx, { ...s.args, syncConflicts: true }, s.spots, cfg, { now, repoRoot: process.cwd() }).then(() => tx.select().from(reviewTasks).where(eq(reviewTasks.subjectId, s.unknown.placeId)));
+      await decideReviewTask(tx, { taskId: task!.id, decision: { action: "berth" }, decidedBy: "admin@test.invalid" });
+      const again = await runGate(tx, s.args, s.spots, cfg, { now, repoRoot: process.cwd() });
+      expect(again.join("\n")).toMatch(/Tor nicht bestanden: bei keiner Schwelle sind alle bestätigten Plätze korrekt$/m);
+    }));
+
+  it("says so when no threshold confirms anything", () =>
+    withRollback(async (tx) => {
+      const s = await setup(tx, { signals: false });
+      const lines = await runGate(tx, s.args, s.spots, cfg, { now: new Date(), repoRoot: process.cwd() });
+      expect(lines.join("\n")).toContain("Tor nicht bestanden: bei keiner Schwelle ist ein Platz bestätigt");
+      expect(await readFile(s.args.report, "utf8")).toMatch(/\| 2 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| n\/a \|/);
+    }));
+
+  it("passing at N=3 notes the open conflicts at the lower threshold", () =>
+    withRollback(async (tx) => {
+      const s = await setup(tx, { knownDomains: 3 });
+      const lines = await runGate(tx, s.args, s.spots, cfg, { now: new Date(), repoRoot: process.cwd() });
+      expect(lines.join("\n")).toContain("Tor bestanden bei N=3");
+      expect(await readFile(s.args.report, "utf8")).toContain("Bei kleineren Schwellen (N=2) gibt es noch offene Konflikte");
+    }));
+
   it("refuses an out dir inside the repository", () =>
     withRollback(async (tx) => {
       const s = await setup(tx);
-      await expect(runGate(tx, { ...s.args, outDir: path.join(process.cwd(), "tmp-lists") }, s.spots, cfg, { now: new Date(), repoRoot: process.cwd() })).rejects.toThrow(/outside the repository/);
+      const root = process.cwd();
+      const link = path.join(s.dir, "link");
+      await symlink(root, link);
+      for (const outDir of [path.join(root, "tmp-lists"), path.join(root, "..lists"), path.join(link, "lists"), root, path.join(root, "x", "..", "y")]) {
+        await expect(runGate(tx, { ...s.args, outDir }, s.spots, cfg, { now: new Date(), repoRoot: root }), outDir).rejects.toThrow(/outside the repository/);
+      }
     }));
+
+  it("isInsideRepo: names starting with dots are inside, siblings and the parent are not, a case variant is inside on macOS", async () => {
+    const root = path.join(os.tmpdir(), "n3-root-x");
+    await mkdir(root, { recursive: true });
+    dirs.push(root);
+    expect(await isInsideRepo(path.join(root, "..lists"), root)).toBe(true);
+    expect(await isInsideRepo(path.join(root, "a", "b"), root)).toBe(true);
+    expect(await isInsideRepo(`${root}-sibling`, root)).toBe(false);
+    expect(await isInsideRepo(path.dirname(root), root)).toBe(false);
+    if (process.platform === "darwin") expect(await isInsideRepo(path.join(root.toUpperCase(), "z"), root)).toBe(true);
+  });
 });

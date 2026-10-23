@@ -234,13 +234,25 @@ describe("research run", () => {
       await expect(startResearchRun(tx, boss, { placeIds: [outside!] }, "test", openGate)).resolves.toBeDefined();
     }));
 
-  it("with the committed config the gate is closed: GR-J is refused, GR-I passes the switch (N3)", () =>
+  it("with the committed config the gate is closed: another subdivision is refused before any lookup (N3)", () =>
     withRollback(async (tx) => {
       const { boss } = recordingBoss();
       expect(config.research.gate).toMatchObject({ subdivision: "GR-I", released: false });
       await expect(startResearchRun(tx, boss, { subdivisionKey: "GR-J" }, "test")).rejects.toMatchObject({ reason: "research_gate_closed" });
-      const gateSub = startResearchRun(tx, boss, { subdivisionKey: "GR-I" }, "test");
-      await expect(gateSub).rejects.not.toMatchObject({ reason: "research_gate_closed" });
+    }));
+
+  it("while the gate is closed a place list with a place that has no subdivision is refused", () =>
+    withRollback(async (tx) => {
+      const [inGate] = await seedCandidates(tx, "GR-XG3", ["Vathi"]);
+      const objectId = await insertNamedObject(tx, { type: "bay", names: [{ name: "Loose" }], lon: 21.2, lat: 35.2 });
+      const [loose] = await tx
+        .insert(places)
+        .values({ geoObjectId: objectId, kind: "anchorage", status: "candidate", position: geomFromGeoJson({ type: "Point", coordinates: [21.2, 35.2] }) })
+        .returning({ id: places.id });
+      const { boss } = recordingBoss();
+      const closed = closedGate("GR-XG3");
+      await expect(startResearchRun(tx, boss, { placeIds: [inGate!, loose!.id] }, "test", closed)).rejects.toMatchObject({ reason: "research_gate_closed" });
+      await expect(startResearchRun(tx, boss, { placeIds: [inGate!] }, "test", closed)).resolves.toBeDefined();
     }));
 
   it("the gate switch's German label exists", () => {

@@ -24,8 +24,8 @@ describe("syncConflictTasks", () => {
     withRollback(async (tx) => {
       const a = await placeOf(tx);
       const b = await placeOf(tx);
-      expect(await syncConflictTasks(tx, [a.placeId, b.placeId], 2)).toEqual({ created: 2, open: 2 });
-      expect(await syncConflictTasks(tx, [a.placeId, b.placeId], 2)).toEqual({ created: 0, open: 2 });
+      expect(await syncConflictTasks(tx, [a.placeId, b.placeId], 2, [a.placeId, b.placeId])).toEqual({ created: 2, open: 2 });
+      expect(await syncConflictTasks(tx, [a.placeId, b.placeId], 2, [a.placeId, b.placeId])).toEqual({ created: 0, open: 2 });
       const [task] = await tasksOf(tx, a.placeId);
       expect(task).toMatchObject({ subjectType: "research_conflict", status: "open", context: { threshold: 2 } });
       expect(await tasksOf(tx, a.placeId)).toHaveLength(1);
@@ -35,19 +35,30 @@ describe("syncConflictTasks", () => {
     withRollback(async (tx) => {
       const a = await placeOf(tx);
       const b = await placeOf(tx);
-      await syncConflictTasks(tx, [a.placeId, b.placeId], 2);
-      expect(await syncConflictTasks(tx, [a.placeId], 2)).toEqual({ created: 0, open: 1 });
+      await syncConflictTasks(tx, [a.placeId, b.placeId], 2, [a.placeId, b.placeId]);
+      expect(await syncConflictTasks(tx, [a.placeId], 2, [a.placeId, b.placeId])).toEqual({ created: 0, open: 1 });
       expect((await tasksOf(tx, b.placeId))[0]).toMatchObject({ status: "dismissed", context: { dismissedReason: "no_longer_conflict" } });
       expect((await tasksOf(tx, a.placeId))[0]!.status).toBe("open");
+    }));
+
+  it("only touches the tasks of the given scope: another subdivision's open task survives", () =>
+    withRollback(async (tx) => {
+      const mine = await placeOf(tx);
+      const other = await placeOf(tx);
+      await syncConflictTasks(tx, [other.placeId], 2, [other.placeId]);
+      expect(await syncConflictTasks(tx, [mine.placeId], 2, [mine.placeId])).toEqual({ created: 1, open: 1 });
+      expect((await tasksOf(tx, other.placeId))[0]!.status).toBe("open");
+      expect(await syncConflictTasks(tx, [], 2, [mine.placeId])).toEqual({ created: 0, open: 0 });
+      expect((await tasksOf(tx, other.placeId))[0]!.status).toBe("open");
     }));
 
   it("does not ask again for a place a human decided", () =>
     withRollback(async (tx) => {
       const a = await placeOf(tx);
-      await syncConflictTasks(tx, [a.placeId], 2);
+      await syncConflictTasks(tx, [a.placeId], 2, [a.placeId]);
       const [task] = await tasksOf(tx, a.placeId);
       await decideReviewTask(tx, { taskId: task!.id, decision: { action: "berth" }, decidedBy: "admin@test.invalid" });
-      expect(await syncConflictTasks(tx, [a.placeId], 2)).toEqual({ created: 0, open: 0 });
+      expect(await syncConflictTasks(tx, [a.placeId], 2, [a.placeId])).toEqual({ created: 0, open: 0 });
       expect(await tasksOf(tx, a.placeId)).toHaveLength(1);
     }));
 });
@@ -57,7 +68,7 @@ describe("deciding a conflict", () => {
     withRollback(async (tx) => {
       const place = await placeOf(tx);
       for (const d of ["a", "b", "c"]) await signalPage(tx, place, { domain: `${d}.example` });
-      await syncConflictTasks(tx, [place.placeId], 2);
+      await syncConflictTasks(tx, [place.placeId], 2, [place.placeId]);
       const [task] = await tasksOf(tx, place.placeId);
 
       const result = await decideReviewTask(tx, { taskId: task!.id, decision: { action: "not_berth" }, decidedBy: "admin@test.invalid" });
@@ -75,7 +86,7 @@ describe("deciding a conflict", () => {
   it("„Liegeplatz“ keeps the status and stores the decision", () =>
     withRollback(async (tx) => {
       const place = await placeOf(tx);
-      await syncConflictTasks(tx, [place.placeId], 2);
+      await syncConflictTasks(tx, [place.placeId], 2, [place.placeId]);
       const [task] = await tasksOf(tx, place.placeId);
       const result = await decideReviewTask(tx, { taskId: task!.id, decision: { action: "berth" }, decidedBy: "admin@test.invalid" });
       expect(result.consolidate).toBeNull();
@@ -85,7 +96,7 @@ describe("deciding a conflict", () => {
   it("other actions do not fit the task", () =>
     withRollback(async (tx) => {
       const place = await placeOf(tx);
-      await syncConflictTasks(tx, [place.placeId], 2);
+      await syncConflictTasks(tx, [place.placeId], 2, [place.placeId]);
       const [task] = await tasksOf(tx, place.placeId);
       await expect(decideReviewTask(tx, { taskId: task!.id, decision: { action: "reject" }, decidedBy: "x" })).rejects.toThrow(/does not fit/);
     }));
@@ -98,7 +109,7 @@ describe("gateDecisions", () => {
       const no = await placeOf(tx);
       const open = await placeOf(tx);
       const none = await placeOf(tx);
-      await syncConflictTasks(tx, [yes.placeId, no.placeId, open.placeId], 2);
+      await syncConflictTasks(tx, [yes.placeId, no.placeId, open.placeId], 2, [yes.placeId, no.placeId, open.placeId]);
       for (const [p, action] of [[yes, "berth"], [no, "not_berth"]] as const) {
         const [task] = await tasksOf(tx, p.placeId);
         await decideReviewTask(tx, { taskId: task!.id, decision: { action }, decidedBy: "admin@test.invalid" });

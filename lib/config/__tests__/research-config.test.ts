@@ -46,6 +46,12 @@ describe("research config", () => {
     expect(researchSchema.safeParse({ ...c, gate: { ...c.gate, released: true, chosenThreshold: 3 } }).success).toBe(true);
   });
 
+  it("rejects gate thresholds that are not strictly ascending (the report's chosen threshold is the first match)", () => {
+    const c = getConfig().research;
+    for (const thresholds of [[3, 2, 4], [2, 2, 3]]) expect(researchSchema.safeParse({ ...c, gate: { ...c.gate, thresholds } }).success, thresholds.join()).toBe(false);
+    expect(researchSchema.safeParse({ ...c, gate: { ...c.gate, thresholds: [2, 5] } }).success).toBe(true);
+  });
+
   it("rejects a kind that is both positive and negative", () => {
     const c = valid();
     c.confirmation.negativeKinds.push("anchored");

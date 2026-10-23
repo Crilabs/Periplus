@@ -92,6 +92,17 @@ describe("evaluateGate", () => {
     expect(r.conflicts.get(2)).toEqual([]);
   });
 
+  it("lists the error places per threshold: wrong kind with its spot, not_berth without one", () => {
+    const places = [place("w", ["Gamma"], AT), place("n", ["B"], north(6000)), place("ok", ["Alpha"], north(9000))];
+    const spots = [spot({ name: "Gamma", kind: "port" }), spot({ name: "Alpha", ...north(9000) })];
+    const r = run(places, spots, { n: "not_berth" });
+    expect(r.errors.get(2)).toEqual([
+      { placeId: "w", kind: "wrong_kind", spotIndex: 0, distanceM: expect.any(Number) },
+      { placeId: "n", kind: "not_berth", spotIndex: null, distanceM: null },
+    ]);
+    expect(r.errors.get(5)!.map((e) => e.placeId)).toEqual(["w", "n"]);
+  });
+
   it("a rejected place with a not_berth decision stays in the count as an error", () => {
     const r = run([place("p1", ["Alpha"], AT, { status: "rejected" }), place("p2", ["Beta"], north(3000))], [spot({ name: "Alpha" })], { p1: "not_berth" });
     expect(row(r, 2)).toMatchObject({ confirmed: 2, correct: 0, decidedNotBerth: 1, conflicts: 1 });

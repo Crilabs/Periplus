@@ -1429,6 +1429,7 @@ export const researchSchema = z
         released: z.boolean(),
         chosenThreshold: z.number().int().min(1).nullable(),
       })
+      .refine((g) => g.thresholds.every((n, i) => i === 0 || n > g.thresholds[i - 1]!), { error: "gate thresholds must be strictly ascending" })
       .refine((g) => !g.released || (g.chosenThreshold !== null && g.thresholds.includes(g.chosenThreshold)), {
         error: "a released gate needs a chosenThreshold among the thresholds",
       }),

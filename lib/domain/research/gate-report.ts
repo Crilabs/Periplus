@@ -33,6 +33,8 @@ export const MISS_REASON_LABELS: Record<MissReason, string> = {
 
 export type GateMeasurement = {
   subdivisionKey: string;
+  /** All places of the subdivision (the scope of the conflict tasks). */
+  scopePlaceIds: string[];
   /** Spots in the subdivision's tiles, the ones the evaluation used. */
   spotCount: number;
   rows: GateRow[];
@@ -42,6 +44,8 @@ export type GateMeasurement = {
   misses: Map<number, Array<{ spotIndex: number; reason: MissReason; placeId: string | null; distanceM: number | null }>>;
   /** Per threshold: the confirmed places without a spot and without a decision. */
   conflicts: Map<number, string[]>;
+  /** Per threshold: the error places (spot of another kind, human "no berth"), with the file index of their spot. */
+  errors: Map<number, Array<{ placeId: string; kind: "wrong_kind" | "not_berth"; spotIndex: number | null; distanceM: number | null }>>;
   /** The smallest threshold with correctness 100 % and no open conflict; null when there is none. */
   passedAt: number | null;
   /** The smallest threshold with open conflicts (where `--sync-conflicts` asks); null when none has. */
@@ -117,7 +121,12 @@ export async function measureGate(db: Db, input: { subdivisionKey: string; spots
   const evaluated = evaluateGate({ thresholds, places: gatePlaces, spots, decisions }, cfg);
   const decided = new Map<number, number>();
   const misses: GateMeasurement["misses"] = new Map();
+  const errors: GateMeasurement["errors"] = new Map();
   for (const n of thresholds) {
+    errors.set(
+      n,
+      (evaluated.errors.get(n) ?? []).map((e) => ({ ...e, spotIndex: e.spotIndex === null ? null : indexes[e.spotIndex]!, distanceM: e.distanceM === null ? null : Math.round(e.distanceM) })),
+    );
     decided.set(n, gatePlaces.filter((p) => p.verdicts.get(n)?.status === "confirmed" && decisions.has(p.placeId)).length);
     misses.set(
       n,
@@ -129,7 +138,7 @@ export async function measureGate(db: Db, input: { subdivisionKey: string; spots
   }
   const passedAt = evaluated.rows.find((r) => r.confirmed > 0 && r.correctness === 1 && r.conflicts === 0)?.threshold ?? null;
   const conflictThreshold = evaluated.rows.find((r) => r.conflicts > 0)?.threshold ?? null;
-  return { subdivisionKey, spotCount: spots.length, rows: evaluated.rows, decided, misses, conflicts: evaluated.conflicts, passedAt, conflictThreshold };
+  return { subdivisionKey, scopePlaceIds: base.map((p) => p.placeId), spotCount: spots.length, rows: evaluated.rows, decided, misses, conflicts: evaluated.conflicts, errors, passedAt, conflictThreshold };
 }
 
 /** The one-line outcome the CLI prints: „Tor bestanden bei N=…“ or „Tor nicht bestanden: …“. */
@@ -166,7 +175,7 @@ export function renderGateReport(m: GateMeasurement, generatedAt: Date): string 
       (reason) => `| ${MISS_REASON_LABELS[reason]} | ${thresholds.map((n) => m.misses.get(n)!.filter((x) => x.reason === reason).length).join(" | ")} |`,
     ),
     "",
-    "Die Einzellisten (Platz-ID, Grund, Abstand, Spot-Index) liegen nur außerhalb des Repos (`--out-dir`).",
+    "Die Einzellisten (Fehlliste, Fehler und Konflikte: Platz-ID, Grund, Abstand, Spot-Index) liegen nur außerhalb des Repos (`--out-dir`).",
     "",
     "## Gewählte Schwelle",
     "",
@@ -175,6 +184,8 @@ export function renderGateReport(m: GateMeasurement, generatedAt: Date): string 
       : `${gateOutcome(m)}. Gewählt wird die kleinste Schwelle mit Korrektheit 100 % ohne offene Konflikte; bisher gibt es keine.`,
     "",
   ];
+  const lower = m.passedAt === null ? [] : m.rows.filter((r) => r.threshold < m.passedAt! && r.conflicts > 0).map((r) => `N=${r.threshold}`);
+  if (lower.length > 0) lines.push(`Hinweis: Bei kleineren Schwellen (${lower.join(", ")}) gibt es noch offene Konflikte; das Tor gilt erst für die gewählte Schwelle.`, "");
   return lines.join("\n");
 }
 
@@ -184,6 +195,7 @@ export function renderGateLists(m: GateMeasurement): Map<number, string> {
   for (const r of m.rows) {
     const lines = ["kind,place_id,reason,distance_m,spot_index"];
     for (const x of m.misses.get(r.threshold) ?? []) lines.push(`miss,${x.placeId ?? ""},${x.reason},${x.distanceM ?? ""},${x.spotIndex}`);
+    for (const e of m.errors.get(r.threshold) ?? []) lines.push(`error,${e.placeId},${e.kind},${e.distanceM ?? ""},${e.spotIndex ?? ""}`);
     for (const id of m.conflicts.get(r.threshold) ?? []) lines.push(`conflict,${id},not_in_reference,,`);
     out.set(r.threshold, `${lines.join("\n")}\n`);
   }
