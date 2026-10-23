@@ -226,7 +226,7 @@ export async function loadEvidence(db: Db, placeIds: string[], config: AppConfig
     join documents d on d.id = v.document_id
     join sources src on src.id = d.source_id
     join page_assessments a on a.document_version_id = s.document_version_id and a.model = ${assessor.model} and a.prompt_version = ${assessor.promptVersion}
-    where s.place_id in (${ids}) and u.status = 'done' and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion}
+    where s.place_id in (${ids}) and u.kind = 'berth' and u.status = 'done' and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion}
       and ${liveResearchSourceSql("src")}
       and (d.current_version_id = s.document_version_id or s.kind::text in (${negativeKinds}))
     order by s.place_id, s.id`);

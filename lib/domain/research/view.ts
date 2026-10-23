@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { berthFacts, berthStates, berthSignals, documents, geoObjects, pageAssessments, placeWebsites, places, researchFetches, researchHits, researchUnits, serpQueries } from "@/lib/db/schema";
 import type { BerthStateFact, BerthStateLanding, BerthStateOrigin } from "@/lib/db/schema/research-state";
@@ -15,6 +15,7 @@ import { factAttributeLabel, formatFactValue, POI_CATEGORY_LABELS } from "@/lib/
 import { registrableDomain } from "@/lib/domain/sources/urls";
 import { activeRouteExtractor } from "./assign";
 import { activeExtractor, decideBerth, loadEvidence, type Verdict } from "./confirmation";
+import { activeLandsideExtractor } from "./landside-extraction";
 
 export type SignalRow = {
   kind: BerthSignalKind;
@@ -120,6 +121,7 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
 
   // pages linked otherwise: a route stop to the place, else a research unit of it; the current version where it has one
   const extractor = activeExtractor(cfg);
+  const landside = activeLandsideExtractor(cfg);
   const route = activeRouteExtractor(cfg);
   const hitUrls = new Set(hits.map((h) => h.url));
   const { rows: linkedRows } = await db.execute<{ url: string; document_id: string; version_id: string; link: "neighbour" | "route" }>(sql`
@@ -129,7 +131,7 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
       where rs.place_id = ${placeId} and rs.model = ${route.model} and rs.prompt_version = ${route.promptVersion}
       union all
       select u.document_version_id, 'neighbour' from research_units u
-      where u.place_id = ${placeId} and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion}
+      where u.place_id = ${placeId} and u.kind = 'berth' and u.model = ${extractor.model} and u.prompt_version = ${extractor.promptVersion}
     ) x
     join document_versions v on v.id = x.version_id
     join documents d on d.id = v.document_id
@@ -160,6 +162,7 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
 
   const unitOf = and(
     eq(researchUnits.id, berthSignals.unitId),
+    eq(researchUnits.kind, "berth"),
     eq(researchUnits.model, extractor.model),
     eq(researchUnits.promptVersion, extractor.promptVersion),
     eq(researchUnits.status, "done"),
@@ -198,7 +201,14 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
           .from(berthFacts)
           .innerJoin(
             researchUnits,
-            and(eq(researchUnits.id, berthFacts.unitId), eq(researchUnits.model, extractor.model), eq(researchUnits.promptVersion, extractor.promptVersion), eq(researchUnits.status, "done")),
+            and(
+              eq(researchUnits.id, berthFacts.unitId),
+              eq(researchUnits.status, "done"),
+              or(
+                and(eq(researchUnits.kind, "berth"), eq(researchUnits.model, extractor.model), eq(researchUnits.promptVersion, extractor.promptVersion)),
+                and(eq(researchUnits.kind, "landside"), eq(researchUnits.model, landside.model), eq(researchUnits.promptVersion, landside.promptVersion)),
+              ),
+            ),
           )
           .where(and(eq(berthFacts.placeId, placeId), inArray(berthFacts.documentVersionId, versionIds)))
           .orderBy(asc(berthFacts.observedAt), asc(berthFacts.id));

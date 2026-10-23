@@ -32,7 +32,7 @@ export const RESEARCH_EXTRACT_STAGE = "research.extract";
 export const RESEARCH_EXTRACT_QUEUE = "research.extract" satisfies QueueName;
 const SUBJECT = "research_unit";
 /** The skip reason of a generated page: such a unit is never planned again (the others are). */
-const GENERATED_REASON = "page is generated text";
+export const GENERATED_REASON = "page is generated text";
 
 let logger: ReturnType<typeof createLogger> | undefined;
 const getLog = () => (logger ??= createLogger("pipeline.research.extract"));
@@ -83,6 +83,7 @@ export async function planResearchExtract(
       and(
         inArray(researchUnits.placeId, [...new Set(judgedPairs.map((p) => p.placeId))]),
         inArray(researchUnits.documentVersionId, [...new Set(judgedPairs.map((p) => p.documentVersionId))]),
+        eq(researchUnits.kind, "berth"),
         eq(researchUnits.model, model),
         eq(researchUnits.promptVersion, promptVersion),
         inArray(researchUnits.status, ["pending", "done"]),
@@ -105,6 +106,7 @@ export async function planResearchExtract(
     .where(
       and(
         inArray(sql`${researchUnits.documentVersionId}::text || ':' || ${researchUnits.placeId}::text`, [...wanted]),
+        eq(researchUnits.kind, "berth"),
         eq(researchUnits.model, model),
         eq(researchUnits.promptVersion, promptVersion),
         or(
@@ -119,6 +121,7 @@ export async function planResearchExtract(
     .where(
       and(
         inArray(researchUnits.documentVersionId, [...new Set(pairs.map((p) => p.documentVersionId))]),
+        eq(researchUnits.kind, "berth"),
         eq(researchUnits.model, model),
         eq(researchUnits.promptVersion, promptVersion),
         eq(researchUnits.status, "pending"),
@@ -147,6 +150,7 @@ async function openUnits(db: Db, ids: string[], config: AppConfig): Promise<stri
     .where(
       and(
         inArray(researchUnits.id, ids),
+        eq(researchUnits.kind, "berth"),
         eq(researchUnits.status, "pending"),
         eq(researchUnits.model, model),
         eq(researchUnits.promptVersion, promptVersion),
@@ -206,7 +210,7 @@ async function sweepUnit(db: Db, unitId: string): Promise<void> {
 }
 
 /** Marks a pending unit `skipped` with the reason: it is never sent. */
-async function skipUnit(db: Db, unitId: string, reason: string): Promise<void> {
+export async function skipUnit(db: Db, unitId: string, reason: string): Promise<void> {
   await db
     .update(researchUnits)
     .set({ status: "skipped", reason })
@@ -248,12 +252,12 @@ export async function extractInputs(db: Db, archive: Pick<Archive, "get">, ids: 
         eq(pageAssessments.promptVersion, assessor.promptVersion),
       ),
     )
-    .where(inArray(researchUnits.id, ids));
+    .where(and(inArray(researchUnits.id, ids), eq(researchUnits.kind, "berth")));
   const versionIds = [...new Set(units.map((u) => u.versionId))];
   const siblings = versionIds.length === 0 ? [] : await db
     .select({ versionId: researchUnits.documentVersionId, placeId: researchUnits.placeId, model: researchUnits.model, promptVersion: researchUnits.promptVersion })
     .from(researchUnits)
-    .where(and(inArray(researchUnits.documentVersionId, versionIds), ne(researchUnits.status, "skipped")));
+    .where(and(inArray(researchUnits.documentVersionId, versionIds), eq(researchUnits.kind, "berth"), ne(researchUnits.status, "skipped")));
   const berths = await berthsOf(db, [...new Set([...units.map((u) => u.placeId), ...siblings.map((s) => s.placeId)])]);
   const attributes = berthAttributes(config.research.extraction.factSchema);
   const { minChars, maxChars } = config.extraction.quote;
@@ -335,7 +339,7 @@ export async function extractUnits(
 }
 
 /** Marks a unit failed with the reason and counts the attempt; a unit already done or failed stays as it is (idempotent). */
-async function failUnit(db: Db, unitId: string, reason: string | null): Promise<void> {
+export async function failUnit(db: Db, unitId: string, reason: string | null): Promise<void> {
   const rows = await db
     .update(researchUnits)
     .set({ status: "failed", reason: reason ?? "failed", attempts: sql`${researchUnits.attempts} + 1` })
@@ -361,6 +365,7 @@ export const extractBerthBatchEntry: BatchHandlerEntry = {
     const [unit] = await db.select().from(researchUnits).where(eq(researchUnits.id, item.subjectId)).for("update");
     if (!unit) throw new Error(`research unit ${item.subjectId} does not exist`);
     if (unit.status === "done" || unit.status === "skipped") return; // a swept unit is not resurrected
+    if (unit.kind !== "berth") throw new Error(`research unit ${unit.id} is no berth unit`);
     const parsed = extractBerthTask.output.safeParse(item.output);
     if (!parsed.success) return failUnit(db, unit.id, `answer does not fit the output schema: ${parsed.error.message}`);
     const input = item.input as ExtractItemInput;

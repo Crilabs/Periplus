@@ -195,6 +195,7 @@ export async function planUnits(
       .where(
         and(
           inArray(researchUnits.documentVersionId, [...needText.keys()]),
+          eq(researchUnits.kind, "berth"),
           eq(researchUnits.model, extractor.model),
           eq(researchUnits.promptVersion, extractor.promptVersion),
           or(eq(researchUnits.status, "done"), and(eq(researchUnits.status, "skipped"), eq(researchUnits.reason, NOT_NAMED_REASON))),
