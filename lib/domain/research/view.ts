@@ -99,7 +99,7 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
       versionId: documents.currentVersionId,
     })
     .from(researchHits)
-    .innerJoin(serpQueries, eq(serpQueries.id, researchHits.serpQueryId))
+    .leftJoin(serpQueries, eq(serpQueries.id, researchHits.serpQueryId))
     .leftJoin(documents, eq(documents.urlNormalized, researchHits.urlNormalized))
     .where(eq(researchHits.placeId, placeId));
 

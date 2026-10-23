@@ -37,6 +37,18 @@ async function hit(tx: Db, placeId: string, geoObjectId: string, url: string) {
   await tx.insert(researchHits).values({ placeId, geoObjectId, serpQueryId: q!.id, serpResultId: r!.id, urlNormalized: url, domain: "test.invalid", rank: 1, purpose: "positive" });
 }
 
+async function ownWebsitePage(tx: Db, placeId: string, objectId: string, berths: string[]) {
+  const v = await insertTestVersion(tx, ["x"]);
+  const url = (await tx.select().from(documents).where(eq(documents.id, v.documentId)))[0]!.urlNormalized;
+  await tx.insert(researchHits).values({ placeId, geoObjectId: objectId, urlNormalized: url, domain: "test.invalid", rank: 0, purpose: "positive", origin: "place_website" });
+  const { model, promptVersion } = activeAssessor();
+  await tx.insert(pageAssessments).values({
+    documentVersionId: v.versionId, model, promptVersion, pageKind: "marina", firstHand: false, generated: false,
+    observedAt: "2025-06-15", observedAtBasis: "explicit", berths: berths.map((name) => ({ name, island: null, kind: "marina" as const })), runId: await insertTestRun(tx),
+  });
+  return v.versionId;
+}
+
 async function assessedPage(tx: Db, placeId: string, objectId: string, berths: string[], generated = false, assess = true, texts: string[] = ["x"]) {
   const v = await insertTestVersion(tx, texts);
   const url = (await tx.select().from(documents).where(eq(documents.id, v.documentId)))[0]!.urlNormalized;
@@ -79,6 +91,22 @@ describe("unitsForPlaces", () => {
       const v = await assessedPage(tx, y.placeId, y.objectId, ["Zulu"], false, true, [text]);
       const archive = await archiveOf(tx, v, text);
       expect(await unitsForPlaces(tx, [y.placeId], getConfig(), archive)).toEqual([]);
+    }));
+
+  it("gives a place a unit for its own website even when the page names it nowhere (N3b)", () =>
+    withRollback(async (tx) => {
+      const y = await insertPlace(tx, { name: "Ypsilon", lon: 21.0, status: "candidate" });
+      const v = await ownWebsitePage(tx, y.placeId, y.objectId, ["Zulu Marina"]);
+      const archive = await archiveOf(tx, v, "Welcome to our harbour. Berths for visiting yachts.");
+      expect(await unitsForPlaces(tx, [y.placeId], getConfig(), archive)).toEqual([{ documentVersionId: v, placeIds: [y.placeId] }]);
+    }));
+
+  it("keeps the naming rule for an ordinary search hit with the same text (N3b)", () =>
+    withRollback(async (tx) => {
+      const y = await insertPlace(tx, { name: "Ypsilon", lon: 21.0, status: "candidate" });
+      const text = "Welcome to our harbour. Berths for visiting yachts.";
+      const v = await assessedPage(tx, y.placeId, y.objectId, ["Zulu Marina"], false, true, [text]);
+      expect(await unitsForPlaces(tx, [y.placeId], getConfig(), await archiveOf(tx, v, text))).toEqual([]);
     }));
 
   it("keeps a searched place when the page's Markdown is missing (undecidable; extraction skips it as missing Markdown)", () =>

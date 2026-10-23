@@ -46,6 +46,15 @@ async function seedSources(tx: Db, placeId: string, objectId: string, domains: s
 }
 
 describe("researchView", () => {
+  it("lists a hit of the place's own website (no search behind it) as a search-linked row without keyword (N3b)", () =>
+    withRollback(async (tx) => {
+      const { placeId, objectId } = await insertPlace(tx, { status: "candidate" });
+      await tx.insert(researchHits).values({ placeId, geoObjectId: objectId, urlNormalized: "https://marina.example/", domain: "marina.example", rank: 0, purpose: "positive", origin: "place_website" });
+      const view = await researchView(tx, placeId);
+      expect(view.rows).toHaveLength(1);
+      expect(view.rows[0]).toMatchObject({ url: "https://marina.example/", link: "search", rank: 0, purpose: "positive", keyword: null });
+    }));
+
   it("lists assessed and unassessed hits, positive before negative, by rank", () =>
     withRollback(async (tx) => {
       const { placeId, objectId } = await insertPlace(tx, { status: "candidate" });

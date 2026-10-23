@@ -31,6 +31,20 @@ function ev(o: Partial<Evidence> = {}): Evidence {
   };
 }
 
+describe("decideBerth: official website of the place (N3b)", () => {
+  const website = (o: Partial<Evidence> = {}) =>
+    ev({ kind: "listed_as_berth", firstHand: false, pageKind: "marina", domain: "marina.example", link: "search", quote: "Visitor berths available", ...o });
+
+  it("the website alone does not confirm a marina", () => {
+    expect(decide("marina", [website()], cfg)).toMatchObject({ status: "candidate", independentSources: ["marina.example"] });
+  });
+
+  it("the website listing visitor berths plus one independent trip report confirms", () => {
+    const v = decide("marina", [website(), ev({ domain: "sail-a.example" })], cfg);
+    expect(v).toMatchObject({ status: "confirmed", independentSources: ["marina.example", "sail-a.example"] });
+  });
+});
+
 describe("decideBerth", () => {
   it("two domains with a first-hand anchored signal confirm an anchorage", () => {
     const v = decide("anchorage", [ev({ domain: "sail-a.example" }), ev({ domain: "sail-b.example" })], cfg);

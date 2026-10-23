@@ -16,7 +16,7 @@ import type { Archive } from "@/lib/adapters/s3";
  * berths nearby; each such candidate within the extraction radius whose name matches an assessed berth of the page
  * becomes part of the page's research unit. Names are compared normalized and without generic affixes, never fuzzy.
  * A page is also a page of every place one of its route stops points to (`research_route_stops`, plan N2 task 5).
- * A page found by searching a place is only a unit of that place when it names the berth (N3 task 0): the page's
+ * A page of the place's own website counts without that (N3b). A page found by searching a place is only a unit of that place when it names the berth (N3 task 0): the page's
  * assessment names a berth matching the place, or the page's Markdown (read from the `archive`) contains one of
  * the place's names as whole words. A quote that names no berth must never count as evidence for the searched one.
  */
@@ -114,7 +114,7 @@ export async function planUnits(
 
   // version -> searched places (hits of these places on the version's document)
   const hitRows = await db
-    .selectDistinct({ placeId: researchHits.placeId, versionId: documents.currentVersionId })
+    .selectDistinct({ placeId: researchHits.placeId, versionId: documents.currentVersionId, origin: researchHits.origin })
     .from(researchHits)
     .innerJoin(documents, eq(documents.urlNormalized, researchHits.urlNormalized))
     .where(inArray(researchHits.placeId, placeIds));
@@ -136,7 +136,11 @@ export async function planUnits(
     (searched.get(h.versionId) ?? searched.set(h.versionId, new Set()).get(h.versionId)!).add(h.placeId);
   }
   if (searched.size === 0) return none;
-  const stopPairs = new Set(stopRows.map((s) => `${s.versionId}:${s.placeId}`));
+  // a page of the place's own website is the official page of the place: it counts without naming the berth (N3b)
+  const stopPairs = new Set([
+    ...stopRows.map((s) => `${s.versionId}:${s.placeId}`),
+    ...hitRows.filter((h) => h.origin === "place_website").map((h) => `${h.versionId}:${h.placeId}`),
+  ]);
 
   const assessments = await db
     .select({ versionId: pageAssessments.documentVersionId, berths: pageAssessments.berths })
