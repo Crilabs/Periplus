@@ -64,7 +64,9 @@ cp -p "$CADDY_MAIN" "$CADDY_MAIN.bak-periplus"
 [ -e "$CADDY_SITE" ] && cp -p "$CADDY_SITE" "$CADDY_SITE.bak-periplus"
 install -m 644 "$REPO_DIR/docker/Caddyfile" "$CADDY_SITE"
 grep -qxF "import $CADDY_SITE" "$CADDY_MAIN" || printf '\n# Periplus (scripts/server/bootstrap.sh)\nimport %s\n' "$CADDY_SITE" >> "$CADDY_MAIN"
-if ! caddy validate --config "$CADDY_MAIN" --adapter caddyfile; then
+# As the service user: validate opens the log files, so as root it would create them unreadable for Caddy and
+# hide exactly that error until the reload.
+if ! runuser -u caddy -- caddy validate --config "$CADDY_MAIN" --adapter caddyfile; then
   mv "$CADDY_MAIN.bak-periplus" "$CADDY_MAIN"
   if [ -e "$CADDY_SITE.bak-periplus" ]; then mv "$CADDY_SITE.bak-periplus" "$CADDY_SITE"; else rm -f "$CADDY_SITE"; fi
   echo "caddy validate failed; $CADDY_MAIN restored, Caddy not reloaded" >&2
