@@ -32,14 +32,25 @@ function namedGulf(tags: Record<string, string>): boolean {
  * "Gulf"/"Κόλπος"), island/islet/archipelago, cape, strait, bay, harbour (marina, harbour seamark, `harbour=*`),
  * anchorage/mooring seamark (bay), city/town/village/hamlet (settlement), then the first category rule (poi).
  * `place=sea` and `natural=peninsula` are null (N7 4.3, B5/B6): seas come from Marine Regions only, coast sections
- * from the configuration only. Objects without a non-empty `name`/`name:<lang>` are null.
+ * from the configuration only. The name is checked after the type: an object without a non-empty `name`/`name:<lang>`
+ * is null unless it is a poi whose rule carries `unnamed: true` (N7: bus stops, taxi stands, piers, beaches); skeleton
+ * types always need a name.
  */
 export function classifyOsm(
   tags: Record<string, string>,
   categories: CategoriesConfig,
   elementType?: OsmElementType,
 ): OsmClass | null {
-  if (!hasName(tags)) return null;
+  const osmClass = classifyByTags(tags, categories, elementType);
+  if (!osmClass || hasName(tags)) return osmClass;
+  return osmClass.type === "poi" && ruleForTags(tags, categories)?.unnamed ? osmClass : null;
+}
+
+function classifyByTags(
+  tags: Record<string, string>,
+  categories: CategoriesConfig,
+  elementType?: OsmElementType,
+): OsmClass | null {
   const { place, natural, leisure, harbour } = tags;
   const seamark = tags["seamark:type"];
 
@@ -64,14 +75,20 @@ export function classifyOsm(
   return category ? { type: "poi", category } : null;
 }
 
-/** The category of the first matching rule of `categories.osm`, null when none matches. No name check. */
-export function categoryForTags(tags: Record<string, string>, categories: CategoriesConfig): PoiCategory | null {
+type CategoryRule = CategoriesConfig["osm"][number];
+
+function ruleForTags(tags: Record<string, string>, categories: CategoriesConfig): CategoryRule | null {
   for (const rule of categories.osm) {
     const value = tags[rule.key];
     if (value === undefined) continue;
-    if (rule.values === "*" || rule.values.includes(value)) return rule.category;
+    if (rule.values === "*" || rule.values.includes(value)) return rule;
   }
   return null;
+}
+
+/** The category of the first matching rule of `categories.osm`, null when none matches. No name check. */
+export function categoryForTags(tags: Record<string, string>, categories: CategoriesConfig): PoiCategory | null {
+  return ruleForTags(tags, categories)?.category ?? null;
 }
 
 /**

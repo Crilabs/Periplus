@@ -297,6 +297,8 @@ export const categoriesSchema = z.strictObject({
       key: z.string().min(1),
       values: z.union([z.literal("*"), z.array(z.string().min(1)).min(1)]),
       category: poiCategory,
+      /** The rule also classifies objects without a name (N7: bus stops, taxi stands, piers, beaches). */
+      unnamed: z.boolean().default(false),
     }),
   ),
   wikidata: z.record(wikidataQid, poiCategory),

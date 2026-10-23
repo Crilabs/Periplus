@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoNames, geoObjects, places } from "@/lib/db/schema";
 import { isPublicId } from "@/lib/domain/ids";
+import { ensureFallbackNames } from "@/lib/domain/gazetteer/names";
 import { upsertGeoObject as upsertOrSkip, type GeoObjectDraft } from "@/lib/domain/gazetteer/store";
 import type { Db } from "@/lib/db/client";
 import { withRollback } from "@/test/db";
@@ -90,6 +91,26 @@ describe("upsertGeoObject", () => {
       expect(rows).toHaveLength(1);
       const history = await db.execute(sql`SELECT 1 FROM geo_objects_history WHERE row_id = ${first.id}`);
       expect(history.rows).toHaveLength(0);
+    }));
+
+  it("stores an unnamed bus stop without inventing a name (N7)", () =>
+    withRollback(async (db) => {
+      const draft: GeoObjectDraft = {
+        type: "poi",
+        category: "transport",
+        origin: "osm",
+        osmId: osmId("node"),
+        tags: { highway: "bus_stop" },
+        geometry: { type: "Point", coordinates: [25.05, 35.35] },
+        names: [],
+      };
+      const r = await upsertGeoObject(db, draft);
+      expect(r).toMatchObject({ created: true, names: 0 });
+      expect(await ensureFallbackNames(db, [r.id])).toBe(0);
+      const names = await db.select().from(geoNames).where(eq(geoNames.geoObjectId, r.id));
+      expect(names).toEqual([]);
+      const [row] = await db.select().from(geoObjects).where(eq(geoObjects.id, r.id));
+      expect(row).toMatchObject({ type: "poi", category: "transport" });
     }));
 
   it("updates a changed geometry and writes history", () =>
