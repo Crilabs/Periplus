@@ -189,7 +189,7 @@ describe("loadConfig", () => {
   });
 
   it("the config loader and the fact-schema access know the same fact schema versions", () => {
-    expect(Object.keys(FACT_SCHEMAS).sort()).toEqual(["v1", "v2", "v3"]);
+    expect(Object.keys(FACT_SCHEMAS).sort()).toEqual(["v1", "v2", "v3", "v4"]);
     for (const [version, schema] of Object.entries(FACT_SCHEMAS)) {
       expect(getFactSchema(version)).toBe(schema);
       expect(schema.version).toBe(version);
