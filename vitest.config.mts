@@ -91,6 +91,9 @@ export default defineConfig({
     environment: "node",
     // All files share one test Postgres; beyond 8 workers they only wait on each other and hit the 5 s timeout.
     maxWorkers: 8,
+    // Even at 8 workers a database test sometimes waits longer than 5 s on a busy runner and fails although it
+    // passes on its own; 15 s keeps CI green without hiding a hang.
+    testTimeout: 15_000,
     projects: [
       {
         extends: true,
