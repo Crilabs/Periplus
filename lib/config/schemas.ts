@@ -1386,6 +1386,8 @@ export const researchSchema = z
     refetchDays: z.number().int().positive(),
     assessWords: z.number().int().positive(),
     skipDomains: z.array(z.string().min(1)),
+    /** The source created for a research hit page (domain without a source). */
+    source: z.strictObject({ weight: z.number().min(0).max(1), ratePerMinute: z.number().min(1).max(120) }),
   })
   .superRefine((c, ctx) => {
     for (const [country, langs] of Object.entries(c.languagesByCountry)) {

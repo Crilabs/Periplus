@@ -62,7 +62,7 @@ export async function planResearchFetch(db: Db, run: { id: string; params: Recor
  * Job `research.fetch`: fetches, converts and archives one hit page. The page's domain gets a research source when it
  * has none; an existing source of any status is used as it is (no status check: a page is judged by itself). No
  * frontier, no links. A 404/410 of a known document goes through `markGone` (`gone` once it turns gone, else
- * `failed`), without a document it is `failed`; a body over `fetch.maxRawBytes` is `skipped` (`too_large`), as are a
+ * `failed`; an already gone one stays `failed`), without a document it is `failed`; a body over `fetch.maxRawBytes` is `skipped` (`too_large`), as are a
  * robots.txt refusal (`robots`), an offsite redirect, a blocked address and a PDF/format that cannot be stored.
  */
 export async function fetchResearchPage(
@@ -103,7 +103,8 @@ export async function fetchResearchPage(
       const reason = `HTTP ${res.status}`;
       if (!doc) return { outcome: "failed", versionId: null, reason };
       const marked = await markGone(db, doc.id, fetchedAt, cfg.goneAfter);
-      return marked.gone ? { outcome: "gone", versionId: null, reason } : { outcome: "failed", versionId: null, reason };
+      // `gone` only on the transition active -> gone (as the crawl's recordMiss).
+      return marked.gone && doc.status === "active" ? { outcome: "gone", versionId: null, reason } : { outcome: "failed", versionId: null, reason };
     }
     const declared = Number(res.headers["content-length"]);
     if (res.truncated || res.body.byteLength > cfg.maxRawBytes || declared > cfg.maxRawBytes) return skipped("too_large");
@@ -123,6 +124,7 @@ export async function fetchResearchPage(
         fetchedAt,
         ratePerMinute: fetched.ratePerMinute,
         isUpload: false,
+        allowPdf: true,
       },
       deps,
       ctx,

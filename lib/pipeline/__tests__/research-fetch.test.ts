@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createConverters } from "@/lib/adapters/fetch";
@@ -112,6 +113,20 @@ describe("fetchResearchPage", () => {
       expect(await tx.select().from(documents).where(eq(documents.url, url))).toHaveLength(0);
     }));
 
+  it("converts a PDF although the existing source has pdf: false", () =>
+    withRollback(async (tx) => {
+      const s = newSite();
+      const pdf = new Uint8Array(readFileSync("test/fixtures/pdf/two-pages.pdf"));
+      const layout = readFileSync("test/fixtures/pdf/layout-sample.txt", "utf8");
+      s.set("/guide.pdf", { body: pdf, headers: { "content-type": "application/pdf" } });
+      const url = s.url("/guide.pdf");
+      await tx
+        .insert(sources)
+        .values({ domain: registrableDomain(url), name: "Old", type: "forum", weight: 0.3, status: "approved", crawlRules: { startUrls: [], pdf: false }, origin: "manual" });
+      const result = await fetchResearchPage(tx, url, { ...deps(), pdf: { pdftotext: async () => layout } }, await run(tx));
+      expect(result.outcome).toBe("stored");
+    }));
+
   it("a 404 without a document fails and creates none; a 404 of a known document goes through markGone", () =>
     withRollback(async (tx) => {
       const s = newSite();
@@ -130,6 +145,8 @@ describe("fetchResearchPage", () => {
       expect(second).toMatchObject({ outcome: "gone", reason: "HTTP 404" });
       const [doc] = await tx.select().from(documents).where(eq(documents.url, known));
       expect(doc).toMatchObject({ status: "gone", consecutiveGone: 2 });
+      // already gone: no second transition
+      expect(await fetchResearchPage(tx, known, deps(), ctx)).toEqual({ outcome: "failed", versionId: null, reason: "HTTP 404" });
     }));
 
   it("a robots.txt refusal is skipped with reason robots", () =>

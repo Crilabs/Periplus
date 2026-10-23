@@ -21,5 +21,6 @@
   "maxHitsPerCandidate": 40,
   "refetchDays": 90,
   "assessWords": 6000,
-  "skipDomains": ["navily.com", "google.com", "youtube.com", "facebook.com", "instagram.com", "pinterest.com", "tripadvisor.com", "booking.com", "amazon.com"]
+  "skipDomains": ["navily.com", "google.com", "youtube.com", "facebook.com", "instagram.com", "pinterest.com", "tripadvisor.com", "booking.com", "amazon.com"],
+  "source": { "weight": 0.5, "ratePerMinute": 20 }
 }

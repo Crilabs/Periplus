@@ -25,6 +25,8 @@ export type FetchedPage = {
   fetchedAt: Date;
   ratePerMinute: number;
   isUpload: boolean;
+  /** Convert a PDF although the source's rules say `pdf: false` (research fetches; an upload is always allowed). */
+  allowPdf?: boolean;
 };
 
 export type StoredPage =
@@ -55,7 +57,7 @@ export async function convertAndStore(
   let html: string | null = null;
   let hint: string | null = null;
   if (format.kind === "pdf") {
-    if (!source.crawlRules.pdf && !page.isUpload) return { kind: "skipped", reason: "pdf_disabled" };
+    if (!source.crawlRules.pdf && !page.isUpload && !page.allowPdf) return { kind: "skipped", reason: "pdf_disabled" };
     const pdf = await convertPdf(raw, { ...deps.pdf, cfg: cfg.pdf, archive: deps.archive }, { runId: ctx.runId, stage: ctx.stage, sourceId: source.id });
     markdown = pdf.markdown;
     converter = pdf.converter;

@@ -7,17 +7,9 @@ import { assertAllowedSourceDomain } from "@/lib/domain/sources/forbidden-domain
 import { getSource, type Source } from "@/lib/domain/sources/store";
 
 /** Crawl rules of a research source: a page is fetched on its own, nothing is crawled from it. */
-const RESEARCH_CRAWL_RULES = crawlRulesSchema.parse({
-  startUrls: [],
-  allow: [],
-  deny: [],
-  maxDepth: 0,
-  maxPages: 1,
-  ratePerMinute: 20,
-  render: "auto",
-  converter: "auto",
-  pdf: true,
-});
+function researchCrawlRules(ratePerMinute: number) {
+  return crawlRulesSchema.parse({ startUrls: [], allow: [], deny: [], maxDepth: 0, maxPages: 1, ratePerMinute, render: "auto", converter: "auto", pdf: true });
+}
 
 async function currentSource(db: Db, domain: string): Promise<Source | null> {
   const [row] = await db
@@ -37,10 +29,11 @@ async function currentSource(db: Db, domain: string): Promise<Source | null> {
 export async function ensureResearchSource(db: Db, domain: string): Promise<Source> {
   const known = await currentSource(db, domain);
   if (known) return known;
-  assertAllowedSourceDomain(domain, getConfig().delivery.forbiddenDomains);
+  const cfg = getConfig();
+  assertAllowedSourceDomain(domain, cfg.delivery.forbiddenDomains);
   const [inserted] = await db
     .insert(sources)
-    .values({ domain, name: domain, type: "other", weight: 0.5, status: "approved", crawlRules: RESEARCH_CRAWL_RULES, origin: "research" })
+    .values({ domain, name: domain, type: "other", weight: cfg.research.source.weight, status: "approved", crawlRules: researchCrawlRules(cfg.research.source.ratePerMinute), origin: "research" })
     .onConflictDoNothing()
     .returning({ id: sources.id });
   const source = inserted ? await getSource(db, inserted.id) : await currentSource(db, domain);

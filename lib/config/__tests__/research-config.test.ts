@@ -9,6 +9,7 @@ describe("research config", () => {
     const c = getConfig().research;
     expect(c.templates.positive.length).toBeGreaterThan(0);
     expect(c.skipDomains).toContain("navily.com");
+    expect(c.source).toEqual({ weight: 0.5, ratePerMinute: 20 });
   });
 
   it("rejects a template without {name}", () => {
