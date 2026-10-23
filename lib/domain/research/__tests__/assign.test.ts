@@ -2,9 +2,9 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { documents, pageAssessments, researchHits, serpQueries, serpResults } from "@/lib/db/schema";
+import { documents, pageAssessments, researchHits, researchRouteStops, serpQueries, serpResults } from "@/lib/db/schema";
 import { activeAssessor } from "@/lib/domain/research/assessment";
-import { berthNameMatches, unitsForPlaces } from "@/lib/domain/research/assign";
+import { activeRouteExtractor, berthNameMatches, unitsForPlaces } from "@/lib/domain/research/assign";
 import { insertPlace } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { insertTestRun, insertTestVersion } from "@/test/text";
@@ -79,5 +79,21 @@ describe("unitsForPlaces", () => {
       await assessedPage(tx, a.placeId, a.objectId, ["Alpha", "Bravo"]);
       const units = await unitsForPlaces(tx, [a.placeId], getConfig());
       expect(units[0]!.placeIds).toEqual([a.placeId]);
+    }));
+
+  it("adds a place a route stop of the page points to, for the active route model and prompt only", () =>
+    withRollback(async (tx) => {
+      const a = await insertPlace(tx, { name: "Alpha", lon: 21.0, status: "candidate" });
+      const far = await insertPlace(tx, { name: "Echo", lon: 21.9, status: "candidate" });
+      const stale = await insertPlace(tx, { name: "Foxtrot", lon: 22.3, status: "candidate" });
+      const versionId = await assessedPage(tx, a.placeId, a.objectId, ["Alpha"]);
+      const { model, promptVersion } = activeRouteExtractor(getConfig());
+      await tx.insert(researchRouteStops).values([
+        { documentVersionId: versionId, seq: 0, name: "Ormos Echo", quote: "q", observedAt: "2025-06-15", placeId: far.placeId, match: "corridor", model, promptVersion },
+        { documentVersionId: versionId, seq: 1, name: "Foxtrot", quote: "q", observedAt: "2025-06-15", placeId: stale.placeId, match: "name", model, promptVersion: promptVersion + 1 },
+      ]);
+      expect(await unitsForPlaces(tx, [far.placeId], getConfig())).toEqual([{ documentVersionId: versionId, placeIds: [far.placeId] }]);
+      expect(await unitsForPlaces(tx, [stale.placeId], getConfig())).toEqual([]);
+      expect((await unitsForPlaces(tx, [a.placeId, far.placeId], getConfig()))[0]!.placeIds).toEqual([a.placeId, far.placeId].sort());
     }));
 });

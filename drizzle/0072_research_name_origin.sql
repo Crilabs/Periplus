@@ -1,0 +1,1 @@
+ALTER TYPE "public"."name_origin" ADD VALUE 'research';

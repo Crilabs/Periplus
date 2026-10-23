@@ -67,6 +67,7 @@ export const nameOriginEnum = pgEnum("name_origin", [
   "transliteration",
   "fallback",
   "import",
+  "research",
 ]);
 export const areaMemberRoleEnum = pgEnum("area_member_role", ["member", "boundary"]);
 export const nameScriptEnum = pgEnum("name_script", ["latin", "greek"]);

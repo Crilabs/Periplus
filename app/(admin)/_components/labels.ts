@@ -192,6 +192,7 @@ export const NAME_ORIGIN_LABELS: Record<NameOrigin, string> = {
   transliteration: "Transliteration",
   fallback: "Ersatz",
   import: "Revier-Bot",
+  research: "Recherche",
 };
 
 export const GAP_REASON_LABELS: Record<GapReason, string> = {
