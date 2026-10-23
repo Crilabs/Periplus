@@ -1,9 +1,9 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Archive } from "@/lib/adapters/s3";
-import type { ChangeEntry, ChangesFile, HighlightsFile, RegionsFile, SpotsFile } from "@/contract";
+import type { ChangeEntry, ChangesFile, HighlightsFile, Manifest, RegionsFile, SpotsFile } from "@/contract";
 import type { Db } from "@/lib/db/client";
-import { radiusPackageRequests, subdivisions } from "@/lib/db/schema";
+import { radiusPackageRequests, radiusPackages, subdivisions } from "@/lib/db/schema";
 import { withRollback } from "@/test/db";
 import { EAST, eastPackage, insertSecondSubdivision, storeSubdivisionPackage } from "@/test/fixtures/delivery/radius";
 import { seedDeliverySubdivision, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
@@ -77,6 +77,54 @@ function withChanges(pkg: DeliveryPackage, changes: ChangeEntry[]): DeliveryPack
   const { schemaVersion, scope, generatedAt } = pkg.files["spots.json"];
   const file: ChangesFile = { schemaVersion, scope, generatedAt, previousDataVersion: 1, changes };
   return { ...pkg, files: { ...pkg.files, "changes.json": file } };
+}
+
+/** The stored package of a subdivision delivery as a `DeliveryPackage` (to store a changed next version). */
+async function storedPackage(archive: Archive, prefix: string): Promise<DeliveryPackage> {
+  const read = async (file: string) => JSON.parse(decoder.decode((await archive.get(prefix + file))!)) as unknown;
+  const files = Object.fromEntries(
+    await Promise.all(["spots.json", "highlights.json", "regions.json", "coast.geojson", "weather-points.json"].map(async (f) => [f, await read(f)] as const)),
+  );
+  return { manifest: (await read("manifest.json")) as Manifest, files: files as DeliveryPackage["files"] };
+}
+
+/**
+ * Ruling M6-P13 on two subdivisions: the east anchorage moves to the fixture's subdivision (B), which delivers it with
+ * `profileVersion + 1` from its version 2 on (feed `created`); the east subdivision (A) keeps delivering it stale until
+ * its version 2 drops it (feed `removed`). `oldAfterB`: the old radius package is built after B's version 2.
+ */
+async function movedBetweenSubdivisions(tx: Db, oldAfterB: boolean) {
+  const { f, marina, eastId, archive } = await setup(tx, { east: true });
+  const stale = eastPackage().files["spots.json"].spots.find((s) => s.id === EAST.spot)!;
+  const moved = { ...structuredClone(stale), profileVersion: stale.profileVersion + 1 };
+  const created: ChangeEntry = {
+    objectType: "spot",
+    objectId: EAST.spot,
+    event: "created",
+    fields: [],
+    severity: "info",
+    summary: { de: "Neu im Paket." },
+    profileVersion: moved.profileVersion,
+  };
+  const b2 = await storedPackage(archive, `deliveries/${f.subdivisionKey}/1/`);
+  b2.files["spots.json"].spots.push(moved);
+  const storeB2 = () => storeSubdivisionPackage(tx, archive, { subdivisionId: f.subdivisionId, pkg: withChanges(b2, [created]), dataVersion: 2 });
+
+  if (oldAfterB) await storeB2();
+  const old = await getRadiusPackage(tx, archive, { marina, days: DAYS, now: NOW });
+  isRow(old);
+  if (!oldAfterB) await storeB2();
+  const a2 = eastPackage();
+  a2.files["spots.json"].spots = a2.files["spots.json"].spots.filter((s) => s.id !== EAST.spot);
+  const removed: ChangeEntry = { ...created, event: "removed", severity: "notable", summary: { de: "Nicht mehr im Paket." }, profileVersion: stale.profileVersion };
+  await storeSubdivisionPackage(tx, archive, { subdivisionId: eastId, pkg: withChanges(a2, [removed]), dataVersion: 2 });
+
+  const result = await radiusChangesSince(tx, archive, { marina, days: DAYS, since: old.key });
+  isChanges(result);
+  const current = await getRadiusPackage(tx, archive, { marina, days: DAYS, now: NOW });
+  isRow(current);
+  const version = async (row: RadiusPackageRow) => (await readJson<SpotsFile>(archive, row, "spots.json")).spots.find((s) => s.id === EAST.spot)?.profileVersion;
+  return { archive, old, current, result, versions: [await version(old), await version(current)], moved };
 }
 
 const UNRELATED = "sp_01J9ZE0000000000000000000Z";
@@ -198,6 +246,48 @@ describe("radiusChangesSince", () => {
       const current = await getRadiusPackage(tx, archive, { marina, days: DAYS, now: NOW });
       isRow(current);
       await expectConsistent(archive, old, current, result.changes);
+    }));
+
+  it("a spot moved between subdivisions, in both packages at the same version, has no entry (not the stale `removed`)", { timeout: 60_000 }, () =>
+    withRollback(async (tx) => {
+      const { archive, old, current, result, versions, moved } = await movedBetweenSubdivisions(tx, true);
+      expect(versions).toEqual([moved.profileVersion, moved.profileVersion]);
+      expect(result.changes.filter((c) => c.objectId === EAST.spot)).toEqual([]);
+      await expectConsistent(archive, old, current, result.changes);
+    }));
+
+  it("a spot moved between subdivisions at a new version is `updated`, never `created` or `removed`", { timeout: 60_000 }, () =>
+    withRollback(async (tx) => {
+      const { archive, old, current, result, versions, moved } = await movedBetweenSubdivisions(tx, false);
+      expect(versions).toEqual([moved.profileVersion - 1, moved.profileVersion]);
+      expect(result.changes.filter((c) => c.objectId === EAST.spot)).toEqual([
+        {
+          objectType: "spot",
+          objectId: EAST.spot,
+          event: "updated",
+          fields: [],
+          severity: "info",
+          summary: { de: "Geändert." },
+          profileVersion: moved.profileVersion,
+        },
+      ]);
+      await expectConsistent(archive, old, current, result.changes);
+    }));
+
+  it("a subdivision whose feed cannot be read from the old version is `invalid_since`", { timeout: 60_000 }, () =>
+    withRollback(async (tx) => {
+      const { marina, eastId, archive } = await setup(tx, { east: true });
+      const old = await getRadiusPackage(tx, archive, { marina, days: DAYS, now: NOW });
+      isRow(old);
+
+      // the old package names a version above the subdivision's current one (version gone back)
+      const ahead = old.coverage.map((c) => (c.id === EAST.subdivisionId ? { ...c, dataVersion: 5 } : c));
+      await tx.insert(radiusPackages).values({ ...old, id: undefined, key: "ffffffffffffffff", coverage: ahead });
+      expect(await radiusChangesSince(tx, archive, { marina, days: DAYS, since: "ffffffffffffffff" })).toBe("invalid_since");
+
+      // version 2 is not valid: the subdivision's valid versions jump from 1 to 3
+      await storeSubdivisionPackage(tx, archive, { subdivisionId: eastId, pkg: withChanges(eastPackage(), []), dataVersion: 3 });
+      expect(await radiusChangesSince(tx, archive, { marina, days: DAYS, since: old.key })).toBe("invalid_since");
     }));
 
   it("(e) `since` of a package for other days or another marina, or an unknown key, is `invalid_since`", { timeout: 60_000 }, () =>
