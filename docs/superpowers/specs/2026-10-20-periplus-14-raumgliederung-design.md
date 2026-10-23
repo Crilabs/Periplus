@@ -257,4 +257,4 @@ Entschieden beim Bau (Plan 14b): `ST_ConcaveHull` mit Verhältnis 0,3 (`config/a
 - Ob OSM-Verwaltungsgrenzen der ersten Ebene in allen Anrainerstaaten Inseln vollständig einschließen (in manchen Ländern enden sie an der Küstenlinie); Rückfall ist die Landzuordnung, geprüft wird beim ersten `subdivisions.build`.
 - Schlüssel ohne ISO-Code (z. B. Keserwan-Jbeil, britische Stützpunktgebiete auf Zypern) und abweichende OSM-Codes (Libyen) vergibt `config/subdivisions.json` von Hand.
 - Ob nach Pilot und erstem Ausbau der nächste Landesteil automatisch startet (Nachfrage aus Teil-Spec 18 als Priorität).
-- Teil-Spec 18 (Lieferung nach Umkreis um eine Heimatmarina; noch nicht geschrieben, die Nummer 15 ging an die Marina-Services) wartet auf die Frage, ob Abnehmer offline an Bord ein Paket brauchen oder online abfragen.
+- Erledigt durch Teil-Spec 18 (Lieferung nach Umkreis um eine Heimatmarina, offline an Bord; die Nummer 15 ging an die Marina-Services).
