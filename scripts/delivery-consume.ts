@@ -9,7 +9,7 @@ import type { ContractFile, Manifest } from "../contract";
 /*
  * Consumer check of a subdivision package (plan M6 Task 15): what a foreign consumer sees, through the API only. Fetches the
  * current manifest, every linked file, checks each file's sha256 against the manifest and validates it with its own
- * Ajv (draft 2020-12) against the schema served by `GET /api/v2/schema/<version>/<file>`. No database, no project code
+ * Ajv (draft 2020-12) against the schema served by `GET /api/v3/schema/<version>/<file>`. No database, no project code
  * except types.
  */
 
@@ -38,7 +38,7 @@ async function failure(res: Response, what: string): Promise<string> {
 }
 
 /**
- * The URL of an API link under `base` (no trailing slash): a root-relative link (`/api/v2/…`) is appended to the base
+ * The URL of an API link under `base` (no trailing slash): a root-relative link (`/api/v3/…`) is appended to the base
  * URL, so a path prefix (`https://host/periplus`) is kept (final review M-4); an absolute link must have the base URL's
  * origin, else null — the key is never sent to another host (bundle H review).
  */
@@ -75,10 +75,19 @@ export async function consumePackage(input: {
   const base = input.baseUrl.replace(/\/+$/, "");
   const get = (url: string) => doFetch(url, { headers: { authorization: `Bearer ${input.key}`, accept: "application/json" } });
 
-  const packagePath = `/api/v2/subdivisions/${encodeURIComponent(input.subdivision)}/package`;
+  const packagePath = `/api/v3/subdivisions/${encodeURIComponent(input.subdivision)}/package`;
   const res = await get(resolveLink(base, packagePath)!);
   if (res.status !== 200) throw new Error(await failure(res, packagePath));
   const { links, ...manifest } = (await res.json()) as PackageBody;
+  // a contract 3.0 manifest names its scope; checked before any file is fetched
+  const scope = (manifest as { scope?: { type?: unknown } }).scope;
+  if (scope == null || typeof scope !== "object") {
+    throw new Error(
+      `${packagePath} answered a manifest that has no scope (schemaVersion ${String(manifest.schemaVersion)}); a contract 3.0 subdivision package needs one`,
+    );
+  }
+  if (manifest.scope.type !== "subdivision") throw new Error(`${packagePath} answered a ${String(scope.type)} package, not a subdivision package`);
+  const dataVersion = manifest.scope.dataVersion;
 
   const ajv = addFormats(new Ajv2020({ allErrors: true, strict: true }));
   const expected = new Map(manifest.files.map((f) => [f.name, f.sha256]));
@@ -106,7 +115,7 @@ export async function consumePackage(input: {
     }
     const sha256Ok = name === "manifest.json" ? isDeepStrictEqual(data, manifest) : expected.get(name) === sha256(bytes);
 
-    const schemaPath = `/api/v2/schema/${encodeURIComponent(manifest.schemaVersion)}/${schemaName(name)}`;
+    const schemaPath = `/api/v3/schema/${encodeURIComponent(manifest.schemaVersion)}/${schemaName(name)}`;
     const schemaRes = await get(resolveLink(base, schemaPath)!);
     if (schemaRes.status !== 200) {
       files.push({ name, sha256Ok, schemaErrors: [await failure(schemaRes, schemaPath)] });
@@ -124,7 +133,7 @@ export async function consumePackage(input: {
     if (!files.some((f) => f.name === name)) files.push({ name, sha256Ok: false, schemaErrors: ["no link in the package"] });
   }
   return {
-    dataVersion: manifest.dataVersion,
+    dataVersion,
     files,
     ok: files.length > 0 && files.every((f) => f.sha256Ok && f.schemaErrors.length === 0),
   };

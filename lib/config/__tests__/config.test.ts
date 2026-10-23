@@ -676,7 +676,7 @@ describe("consolidation rules", () => {
 describe("delivery configuration", () => {
   it("the delivery config carries the spec values", () => {
     expect(getConfig().delivery).toMatchObject({
-      schemaVersion: "2.3",
+      schemaVersion: "3.0",
       coast: { marginNm: 2, simplifyToleranceM: 10 },
       validation: {
         maxWaterDistanceNm: 1.5,
@@ -693,6 +693,8 @@ describe("delivery configuration", () => {
       regions: { types: ["island", "archipelago", "coast_section", "gulf", "channel"], pointRadiusNm: 2 },
       weather: { regionBufferNm: 3, capeOffsetNm: 1, capeLandRadiusM: 2000 },
       highlights: { maxSpotIds: 50 },
+      radius: { nmPerDay: 50, returnFactor: 0.5, minDays: 1, maxDays: 28 },
+      popularity: { neighbourhoodNm: 50 },
       validation: { harbourMinShelter: 0.8, lowConfidenceNote: "wenig belegt" },
       severity: { shelterDelta: 0.2 },
       api: { cacheMaxAgeSeconds: 60 },
@@ -732,6 +734,9 @@ describe("delivery configuration", () => {
     expect(withDelivery((d) => (d.licenses[0]!.files = ["land.json" as never]))).toThrow(/delivery\.json.*files/);
     expect(withDelivery((d) => (d.licenses[0]!.fields = ["land.json#/name"]))).toThrow(/delivery\.json.*fields/);
     expect(withDelivery((d) => (d.build.lockTimeoutMs = 0))).toThrow(/delivery\.json.*lockTimeoutMs/);
+    // the contract caps a radius package's days at 28 (manifest scope `days`)
+    expect(withDelivery((d) => (d.radius.maxDays = 29))).toThrow(/delivery\.json.*maxDays.*28/);
+    expect(withDelivery((d) => (d.radius.maxDays = 14))).not.toThrow();
     expect(withDelivery((d) => Object.assign(d, { bogus: 1 }))).toThrow(/delivery\.json/);
   });
 });

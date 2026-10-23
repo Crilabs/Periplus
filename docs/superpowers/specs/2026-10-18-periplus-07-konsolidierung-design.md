@@ -39,7 +39,7 @@ Aus allen Facts, Berechnungen, Beobachtungen und Review-Entscheidungen eines Geo
 
 ## Abgeleitete Werte
 
-- **`popularity`** (0–1): Zahl unabhängiger Quellen mit Erwähnung, logarithmisch normiert innerhalb des Reviers (Maximum des Reviers = 1).
+- **`popularity`** (0–1): Zahl unabhängiger Quellen mit Erwähnung, logarithmisch normiert innerhalb des Reviers (Maximum des Reviers = 1). *Seit Teil-Spec 18 gilt statt des Reviers eine feste Nachbarschaft von 50 sm um jeden Ort, über Landesteile hinweg (Maximum der Nachbarschaft = 1).*
 - **`quietness`** (0–1): aus Abstand zu Siedlung und Straße (Computation), Belegung im Juli/August, Text-Facts zu Ruhe/Lärm/Partybooten, Fähr- und Ausflugsbootverkehr; Formel in `config/consolidation.json`.
 - **`importance`** eines POI (1–5): aus Zahl und Gewicht der Quellen, Wikidata-Sitelinks und Kategorie; Schwellen in Konfiguration. Bedeutungsradius 5/10/20/35/50 sm wie Liefervertrag; `spotIds` = bestätigte Orte im Radius, nach Distanz.
 - **Saisonhinweise:** aus `observed_at`-Monaten und Text-Facts mit Monatsangaben.

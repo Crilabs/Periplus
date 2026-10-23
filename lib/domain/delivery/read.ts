@@ -143,6 +143,11 @@ export async function readManifest(archive: Archive, row: DeliveryRow): Promise<
   return readJsonFile<Manifest>(archive, row, "manifest.json");
 }
 
+/** The subdivision a manifest describes, with its data version; null for a radius package (contract 3.0). */
+export function manifestSubdivision(m: Manifest): { id: string; key: string; dataVersion: number } | null {
+  return m.scope.type === "subdivision" ? { id: m.scope.subdivision.id, key: m.scope.subdivision.key, dataVersion: m.scope.dataVersion } : null;
+}
+
 /** A JSON file of a valid delivery, parsed; throws when the delivery lacks it. */
 export async function readJsonFile<T>(archive: Archive, row: DeliveryRow, file: ContractFile): Promise<T> {
   const bytes = await readDeliveryFile(archive, row, file);
@@ -183,27 +188,28 @@ export type PackageLinks = Record<string, string>;
 /**
  * The subdivision's current package (`GET /subdivisions/{subdivision}/package`): its manifest plus `links` to every
  * file it has (`deliveryFiles`: the contract files and the image files), pinned to its data version. Null for an
- * unknown subdivision or one without a valid delivery.
+ * unknown subdivision or one without a valid delivery. `schemaVersion` is the stored delivery's own contract version
+ * (an older package keeps the version it was built with).
  */
 export async function currentPackage(
   db: Db,
   archive: Archive,
   subdivisionRef: string,
-): Promise<{ body: Manifest & { links: PackageLinks }; dataVersion: number } | null> {
+): Promise<{ body: Manifest & { links: PackageLinks }; dataVersion: number; schemaVersion: string } | null> {
   const subdivision = await resolveSubdivision(db, subdivisionRef);
   const row = subdivision && (await validDelivery(db, subdivision.id));
   if (!subdivision || !row) return null;
   const manifest = await readManifest(archive, row);
   const links: PackageLinks = Object.fromEntries(
-    deliveryFiles(row).map((f) => [f, `/api/v2/subdivisions/${subdivision.publicId}/package/${f}?dataVersion=${row.dataVersion}`]),
+    deliveryFiles(row).map((f) => [f, `/api/v3/subdivisions/${subdivision.publicId}/package/${f}?dataVersion=${row.dataVersion}`]),
   );
-  return { body: { ...manifest, links }, dataVersion: row.dataVersion! };
+  return { body: { ...manifest, links }, dataVersion: row.dataVersion!, schemaVersion: row.schemaVersion };
 }
 
 /**
  * One file of the subdivision's valid package of `dataVersion` (default the current one), byte for byte as stored, with
  * its recorded sha256 (checked against the bytes; the route's ETag, so they are not hashed twice). Null for an unknown
- * subdivision, an unknown version or a file the package does not have.
+ * subdivision, an unknown version or a file the package does not have. `schemaVersion` is the stored delivery's own.
  */
 export async function packageFile(
   db: Db,
@@ -211,13 +217,13 @@ export async function packageFile(
   subdivisionRef: string,
   file: string,
   dataVersion?: number,
-): Promise<{ bytes: Uint8Array; sha256: string; dataVersion: number } | null> {
+): Promise<{ bytes: Uint8Array; sha256: string; dataVersion: number; schemaVersion: string } | null> {
   const subdivision = await resolveSubdivision(db, subdivisionRef);
   const row = subdivision && (await validDelivery(db, subdivision.id, dataVersion));
   if (!subdivision || !row) return null;
   const bytes = await readDeliveryFile(archive, row, file);
   // readDeliveryFile checked the bytes against this hash
-  return bytes === null ? null : { bytes, sha256: row.fileHashes[file]!.sha256, dataVersion: row.dataVersion! };
+  return bytes === null ? null : { bytes, sha256: row.fileHashes[file]!.sha256, dataVersion: row.dataVersion!, schemaVersion: row.schemaVersion };
 }
 
 /**
