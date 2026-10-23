@@ -72,6 +72,7 @@ import { NameCandidateCreate } from "./name-candidate";
 import { DecisionPanel, Disclosure, Kbd, MapLegend } from "./parts";
 import { PlaceConfirm } from "./place-confirm";
 import { PlaceImageDecision } from "./place-image-decision";
+import { ResearchConflictDecision } from "./research-conflict-decision";
 import { ProfileDecision } from "./profile-decision";
 
 /** The tab title: the task's kind and subject (UI-15). */
@@ -234,6 +235,7 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
               ? `: ${subject.place.name ?? subject.place.id} – ${COMPARISON_ATTRIBUTE_LABELS[subject.attribute]}`
               : ""}
             {subject.type === "place_image" ? `: ${subject.place.name ?? subject.place.placeId}` : ""}
+            {subject.type === "research_conflict" ? `: ${subject.place.name ?? subject.place.id}` : ""}
           </>
         }
         meta={
@@ -314,6 +316,8 @@ export default async function Page({ params, searchParams }: PageProps<"/review/
         {subject.type === "comparison" && <ComparisonDecision subject={subject} features={features} {...props} open={open} />}
 
         {subject.type === "place_image" && <PlaceImageDecision subject={subject} {...props} open={open} />}
+
+        {subject.type === "research_conflict" && <ResearchConflictDecision subject={subject} features={features} {...props} open={open} />}
 
         {subject.type === "place" && (
           <>

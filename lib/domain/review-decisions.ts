@@ -29,6 +29,7 @@ import {
   type SourceStatus,
 } from "@/lib/db/schema";
 import { attributeDef, canonicalJson, InvalidFactValue, UnknownAttribute, validateFactValue } from "@/lib/domain/facts/schema";
+import { NOT_BERTH_REASON, RESEARCH_CONFLICT_SUBJECT } from "@/lib/domain/research/gate-conflicts";
 import { assignParentOf } from "@/lib/domain/gazetteer/hierarchy";
 import { dismissTasks, lockOpenPlaceTasks, lockOpenTasks } from "@/lib/domain/consolidation/task-locks";
 import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
@@ -99,6 +100,9 @@ export const reviewDecisionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("approve_image") }),
   z.object({ action: z.literal("regenerate_image"), zoom: z.enum(["z1", "z2", "z3"]).optional() }),
   z.object({ action: z.literal("no_image") }),
+  // research_conflict / research_conflict: the place is a berth (status stays), or is none (rejected)
+  z.object({ action: z.literal("berth") }),
+  z.object({ action: z.literal("not_berth") }),
 ]);
 
 export type ReviewDecision = z.infer<typeof reviewDecisionSchema>;
@@ -162,6 +166,7 @@ const ALLOWED: Record<string, readonly Action[]> = {
   "source_approval/source": ["approve", "reject"],
   "comparison_deviation/comparison": ["own_correct", "navily_correct", "unclear"],
   "place_image/place_image": ["approve_image", "regenerate_image", "no_image"],
+  "research_conflict/research_conflict": ["berth", "not_berth"],
 };
 
 export type DecideDeps = {
@@ -255,6 +260,14 @@ export async function decideReviewTask(
       const action = decision.action as "own_correct" | "navily_correct" | "unclear";
       await appendReviewOutcome(tx, { context: context.data, action, taskId: task.id, decidedBy: input.decidedBy, now });
       return { documentVersionIds: [], consolidate: null, regenerateImage: null };
+    }
+    if (task.subjectType === RESEARCH_CONFLICT_SUBJECT) {
+      // „Kein Liegeplatz“ rejects the place for good (the research never confirms a rejected place); „Liegeplatz“ only records
+      if (decision.action === "berth") return { documentVersionIds: [], consolidate: null, regenerateImage: null };
+      const place = await lockPlace(tx, task.subjectId);
+      await tx.update(places).set({ status: "rejected", statusReason: NOT_BERTH_REASON }).where(eq(places.id, place.id));
+      await deleteHighlightSelections(tx, place.geoObjectId);
+      return { documentVersionIds: [], consolidate: { geoObjectId: place.geoObjectId }, regenerateImage: null };
     }
     if (task.subjectType === PLACE_IMAGE_SUBJECT) {
       const regenerateImage = await applyPlaceImageDecision(tx, task, decision, decisionRow!.id, now, { archive: deps.archive });
@@ -440,6 +453,9 @@ async function apply(tx: Db, task: Task, decision: ReviewDecision, deps: DecideD
     case "regenerate_image":
     case "no_image":
       throw new DecisionNotAllowed(`action ${decision.action} needs a place image`);
+    case "berth":
+    case "not_berth":
+      throw new DecisionNotAllowed(`action ${decision.action} needs a research conflict`);
   }
 }
 

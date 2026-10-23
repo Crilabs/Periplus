@@ -106,6 +106,7 @@ export const REVIEW_KIND_LABELS: Record<ReviewKind, string> = {
   uncertain_change: "Unsichere Änderung",
   comparison_deviation: "Vergleichsabweichung",
   place_image: "Titelbild",
+  research_conflict: "Recherche-Konflikt",
 };
 
 /** Kind of a researched page (page assessment, spec 18). */
