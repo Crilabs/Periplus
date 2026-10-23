@@ -297,7 +297,7 @@ describe("validatePackage", () => {
     const first = breakPackage(validPackage(), (p) => {
       delete p.files["changes.json"];
       p.manifest.scope = { ...subdivisionScope(p), dataVersion: 1, previousDataVersion: null };
-      p.manifest.coverage = p.manifest.coverage.map((c) => ({ ...c, dataVersion: 1 }));
+      p.manifest.coverage = p.manifest.coverage.map((c) => ({ ...c, status: "delivered" as const, dataVersion: 1 }));
       for (const f of [p.files["spots.json"], p.files["highlights.json"], p.files["regions.json"], p.files["weather-points.json"]]) {
         f.scope = { type: "subdivision", id: SUBDIVISION_ID, dataVersion: 1 };
       }

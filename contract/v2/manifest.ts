@@ -24,19 +24,15 @@ export const subdivisionRef = z.strictObject({
   polygon: areal,
 });
 
-/** Which subdivisions a package covers and at which data version; `delivered` has a version, `missing` has none. */
-export const coverageEntry = z
-  .strictObject({
-    id: publicId("sd"),
-    key: z.string().min(1),
-    name: z.string().min(1),
-    status: z.enum(["delivered", "missing"]),
-    dataVersion: z.number().int().min(1).nullable(),
-  })
-  .refine((c) => (c.status === "delivered") === (c.dataVersion !== null), {
-    message: "delivered needs a dataVersion, missing has none",
-    path: ["dataVersion"],
-  });
+/**
+ * Which subdivisions a package covers and at which data version: `delivered` has a version, `missing` has none. A union
+ * on `status`, so the published JSON schema states the rule too.
+ */
+const coverageBase = { id: publicId("sd"), key: z.string().min(1), name: z.string().min(1) };
+export const coverageEntry = z.discriminatedUnion("status", [
+  z.strictObject({ ...coverageBase, status: z.literal("delivered"), dataVersion: z.number().int().min(1) }),
+  z.strictObject({ ...coverageBase, status: z.literal("missing"), dataVersion: z.null() }),
+]);
 
 /** The longest trip a radius package can be built for (spec 18): `config/delivery.json` `radius.maxDays` stays within it. */
 export const RADIUS_MAX_DAYS = 28;

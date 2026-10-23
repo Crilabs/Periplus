@@ -301,48 +301,74 @@
       "minItems": 1,
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "pattern": "^sd_[0-9A-HJKMNP-TV-Z]{26}$"
-          },
-          "key": {
-            "type": "string",
-            "minLength": 1
-          },
-          "name": {
-            "type": "string",
-            "minLength": 1
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "delivered",
-              "missing"
-            ]
-          },
-          "dataVersion": {
-            "anyOf": [
-              {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^sd_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              "key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "type": "string",
+                "const": "delivered"
+              },
+              "dataVersion": {
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "id",
+              "key",
+              "name",
+              "status",
+              "dataVersion"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^sd_[0-9A-HJKMNP-TV-Z]{26}$"
               },
-              {
+              "key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "type": "string",
+                "const": "missing"
+              },
+              "dataVersion": {
                 "type": "null"
               }
-            ]
+            },
+            "required": [
+              "id",
+              "key",
+              "name",
+              "status",
+              "dataVersion"
+            ],
+            "additionalProperties": false
           }
-        },
-        "required": [
-          "id",
-          "key",
-          "name",
-          "status",
-          "dataVersion"
-        ],
-        "additionalProperties": false
+        ]
       }
     },
     "areas": {

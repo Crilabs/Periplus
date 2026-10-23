@@ -281,7 +281,7 @@ describe("radiusChangesSince", () => {
       isRow(old);
 
       // the old package names a version above the subdivision's current one (version gone back)
-      const ahead = old.coverage.map((c) => (c.id === EAST.subdivisionId ? { ...c, dataVersion: 5 } : c));
+      const ahead = old.coverage.map((c) => (c.id === EAST.subdivisionId ? { ...c, status: "delivered" as const, dataVersion: 5 } : c));
       await tx.insert(radiusPackages).values({ ...old, id: undefined, key: "ffffffffffffffff", coverage: ahead });
       expect(await radiusChangesSince(tx, archive, { marina, days: DAYS, since: "ffffffffffffffff" })).toBe("invalid_since");
 

@@ -156,7 +156,7 @@ export async function storeSubdivisionPackage(
   if (scope.type !== "subdivision") throw new Error("a subdivision package has a subdivision scope");
   scope.dataVersion = input.dataVersion;
   scope.previousDataVersion = input.dataVersion > 1 ? input.dataVersion - 1 : null;
-  pkg.manifest.coverage = pkg.manifest.coverage.map((c) => ({ ...c, dataVersion: input.dataVersion }));
+  pkg.manifest.coverage = pkg.manifest.coverage.map((c) => ({ ...c, status: "delivered" as const, dataVersion: input.dataVersion }));
   pkg.manifest.generatedAt = generatedAt;
   for (const file of Object.values(pkg.files)) {
     if ("scope" in file) Object.assign(file, { scope: { type: "subdivision", id: scope.subdivision.id, dataVersion: input.dataVersion }, generatedAt });
