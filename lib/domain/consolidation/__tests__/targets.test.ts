@@ -51,6 +51,16 @@ describe("consolidationTargets with POIs (spec 16)", () => {
       expect(await consolidationScope(tx, run, today)).toEqual([castle]);
     }));
 
+  it("a landside POI in the scope re-selects no place (it is never a highlight)", () =>
+    withRollback(async (tx) => {
+      await insertPlace(tx, { lon: LON, lat: LAT, name: "Nahbucht" });
+      const bakery = await insertNamedObject(tx, { type: "poi", category: "bakery", names: [{ name: "Baeckerei" }], lon: LON, lat: LAT + 2 * LAT_PER_KM });
+      const runId = await insertTestRun(tx);
+      const m = await insertMention(tx, bakery, { sourceId: await insertSource(tx), runId });
+      expect(await reselectionTargets(tx, { id: runId, params: { documentVersionIds: [m.versionId] } }, today)).toEqual([]);
+      expect(await reselectionTargets(tx, { id: newId(), params: { geoObjectIds: [bakery] } }, today)).toEqual([]);
+    }));
+
   it("a tile run excludes POIs", () =>
     withRollback(async (tx) => {
       await insertTestTile(tx, TILE);
