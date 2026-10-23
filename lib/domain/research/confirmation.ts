@@ -5,7 +5,7 @@ import type { Db } from "@/lib/db/client";
 import { places, type BerthSignalKind, type PageKind, type PlaceKind, type PlaceStatus } from "@/lib/db/schema";
 import type { ObservedAtBasis } from "@/lib/db/schema/sources";
 import { dismissTasks, lockOpenPlaceTasks } from "@/lib/domain/consolidation/task-locks";
-import { recheckExclusion } from "@/lib/domain/geometry/restrictions";
+import { applyExclusion, pendingExclusionHits, type RestrictionHit } from "@/lib/domain/geometry/restrictions";
 import { newPublicId } from "@/lib/domain/ids";
 import { hasOpenPairTask, recordDecision, SYSTEM_ACTOR } from "@/lib/domain/places/auto-status";
 import { registrableDomain } from "@/lib/domain/sources/urls";
@@ -82,11 +82,11 @@ function isSource(e: Evidence, placeKind: PlaceKind, cfg: ConfirmationConfig): b
 
 /**
  * The independent sources among the positives (spec 5.6 „Kopien zählen als eine Quelle“): domains are grouped when a
- * positive of one and a positive of the other share `maxSharedWords` consecutive words in their quotes (`copiesSource`;
+ * positive of one and a positive of the other share `copyMinSharedWords` consecutive words in their quotes (`copiesSource`;
  * a shared run is symmetric) or come from the same page content (content hash). One entry per group, its domains
  * sorted and joined by ` + `; sorted.
  */
-function sourceGroups(positives: Evidence[], maxSharedWords: number): string[] {
+function sourceGroups(positives: Evidence[], copyMinSharedWords: number): string[] {
   const parent = new Map<string, string>();
   const find = (d: string): string => {
     const p = parent.get(d) ?? d;
@@ -100,7 +100,7 @@ function sourceGroups(positives: Evidence[], maxSharedWords: number): string[] {
     for (const b of positives.slice(i + 1)) {
       if (a.domain === b.domain || find(a.domain) === find(b.domain)) continue;
       const samePage = a.pageHash !== null && a.pageHash === b.pageHash;
-      if (samePage || copiesSource(a.quote, b.quote, maxSharedWords)) parent.set(find(a.domain), find(b.domain));
+      if (samePage || copiesSource(a.quote, b.quote, copyMinSharedWords)) parent.set(find(a.domain), find(b.domain));
     }
   }
   const groups = new Map<string, string[]>();
@@ -116,7 +116,7 @@ const byDateThenId = (a: Evidence, b: Evidence) => a.observedAt.localeCompare(b.
  * 2. positive are first-hand `anchored` / `moored_buoy` / `berthed` and `listed_as_berth` from a listing page kind
  *    (for a marina or port also from an official page);
  * 3. independent sources are the distinct domains of the counting positive signals, domains that copy each other
- *    (shared quote text of `maxSharedWords` words, or the same page content) counting as one; positives of pages linked only by
+ *    (shared quote text of `copyMinSharedWords` words, or the same page content) counting as one; positives of pages linked only by
  *    a route corridor count only beside one from a page linked by search hit or name (discovery alone never confirms,
  *    unless `corridorAloneConfirms`);
  * 4. a counting `prohibited` from the authority blocks whatever its age (a ban holds until the authority lifts it):
@@ -127,12 +127,12 @@ const byDateThenId = (a: Evidence, b: Evidence) => a.observedAt.localeCompare(b.
  *    official page plus another domain;
  * 6. otherwise `candidate`, with the reason.
  */
-export function decideBerth(placeKind: PlaceKind, evidence: Evidence[], cfg: ConfirmationConfig, maxSharedWords: number): Verdict {
+export function decideBerth(placeKind: PlaceKind, evidence: Evidence[], cfg: ConfirmationConfig): Verdict {
   const counting = evidence.filter((e) => e.confidence >= cfg.minSignalConfidence && !e.generated && cfg.countingPageKinds.includes(e.pageKind));
   const sources = counting.filter((e) => isSource(e, placeKind, cfg));
   const anchored = cfg.corridorAloneConfirms || sources.some((e) => e.link !== "corridor");
   const positives = anchored ? sources : [];
-  const groups = sourceGroups(positives, maxSharedWords);
+  const groups = sourceGroups(positives, cfg.copyMinSharedWords);
   const copies = groups.filter((g) => g.includes(" + "));
   const copyNote = copies.length > 0 ? ` (gleicher Text: ${copies.join("; ")})` : "";
   const positiveIds = positives.map((e) => e.signalId);
@@ -277,8 +277,68 @@ async function statusSetByAdmin(tx: Db, placeId: string, geoObjectId: string): P
   return created[0]?.admin === true;
 }
 
+/**
+ * Whether a status an admin set stands against the verdict: always, except an admin's `confirmed` the rule blocks by
+ * an authority ban (ruling: the anti-goal beats the admin). Shared by `applyVerdict` and the gate's `verdictsByThreshold`.
+ */
+function adminStatusStands(status: PlaceStatus, verdict: Verdict, evidence: Evidence[]): boolean {
+  const blocking = evidence.find((e) => e.signalId === verdict.blockingSignalId);
+  const authorityBan = blocking?.kind === "prohibited" && blocking.pageKind === "authority";
+  return !(status === "confirmed" && authorityBan);
+}
+
+/** Whether the rule re-decides a place of this status (`candidate`, `confirmed`); the others are final here. */
+export function isDecidedStatus(status: PlaceStatus): boolean {
+  return DECIDED_STATUSES.has(status);
+}
+
 /** The statuses this rule decides on; `rejected`, `abandoned` and `no_anchoring` (whoever set it) are final here. */
 const DECIDED_STATUSES: ReadonlySet<PlaceStatus> = new Set<PlaceStatus>(["candidate", "confirmed"]);
+
+/** The reason of a verdict a restricted area ban set (`adjustVerdict`) and of one an admin's status gave (the gate reads them back). */
+export const RESTRICTED_REASON = "Sperrgebiet";
+export const ADMIN_SET_REASON = "Status von einem Admin gesetzt";
+
+export type AdjustedVerdict =
+  /** An admin's status stands against the rule. */
+  | { stands: true; verdict: Verdict }
+  | { stands: false; verdict: Verdict; to: Verdict["status"]; reason: string; exclusionHits: RestrictionHit[]; overridesAdmin: boolean };
+
+/**
+ * What the rule delivers for a place, read only (shared by `applyVerdict`, which writes it, and the gate's
+ * `verdictsByThreshold`, which only measures it): the verdict (`decideBerth`), then an admin's status stands except an
+ * admin confirmation against an authority ban, then a candidate to be confirmed waits while a duplicate review of its
+ * object is open (stays `candidate`) or becomes `no_anchoring` when a banning restricted area still holds it
+ * (`exclusionHits`). `ruleOnly`: the pure rule for a place of a final status or whose status an admin set (the gate
+ * measures a place a human decided as if it were a candidate): no admin check, adjusted as a candidate.
+ */
+export async function adjustVerdict(
+  tx: Db,
+  place: { id: string; geoObjectId: string; kind: PlaceKind; status: PlaceStatus },
+  evidence: Evidence[],
+  cfg: AppConfig,
+  o: { ruleOnly?: boolean } = {},
+): Promise<AdjustedVerdict> {
+  const verdict = decideBerth(place.kind, evidence, cfg.research.confirmation);
+  const overridesAdmin = !o.ruleOnly && (await statusSetByAdmin(tx, place.id, place.geoObjectId));
+  if (overridesAdmin && adminStatusStands(place.status, verdict, evidence)) return { stands: true, verdict };
+  let to: Verdict["status"] = verdict.status;
+  let reason = verdict.reason;
+  let exclusionHits: RestrictionHit[] = [];
+  if (to === "confirmed" && (o.ruleOnly || place.status === "candidate")) {
+    if (await hasOpenPairTask(tx, place.geoObjectId)) {
+      to = "candidate";
+      reason = `offene Dubletten-Prüfung (${verdict.reason})`;
+    } else {
+      exclusionHits = await pendingExclusionHits(tx, place, cfg.geometry.restriction.minShare);
+      if (exclusionHits.length > 0) {
+        to = "no_anchoring";
+        reason = RESTRICTED_REASON;
+      }
+    }
+  }
+  return { stands: false, verdict, to, reason, exclusionHits, overridesAdmin };
+}
 
 const ACTION: Record<Verdict["status"], string> = { confirmed: "confirm", candidate: "candidate", no_anchoring: "no_anchoring" };
 
@@ -301,28 +361,14 @@ async function applyVerdict(tx: Db, placeId: string, evidence: Evidence[], now: 
     .from(places)
     .where(and(eq(places.id, placeId), isNull(places.validTo), isNull(places.mergedIntoId)))
     .for("update");
-  if (!place || !DECIDED_STATUSES.has(place.status)) return null;
+  if (!place || !isDecidedStatus(place.status)) return null;
 
-  const verdict = decideBerth(place.kind, evidence, cfg.research.confirmation, cfg.research.extraction.maxSharedWords);
-  // an admin's status stands, except a confirmation against an authority ban (ruling: the anti-goal beats the admin)
-  const blocking = evidence.find((e) => e.signalId === verdict.blockingSignalId);
-  const authorityBan = blocking?.kind === "prohibited" && blocking.pageKind === "authority";
-  const overridesAdmin = await statusSetByAdmin(tx, place.id, place.geoObjectId);
-  if (overridesAdmin && !(place.status === "confirmed" && authorityBan)) return null;
-  let to: Verdict["status"] = verdict.status;
-  let reason = verdict.reason;
-  // a candidate inside a restricted area: `applyExclusion` set `no_anchoring` with its own reason (`restricted:<kind>:<id>`)
-  let excluded = false;
-  if (to === "confirmed" && place.status === "candidate") {
-    if (await hasOpenPairTask(tx, place.geoObjectId)) {
-      to = "candidate";
-      reason = `offene Dubletten-Prüfung (${verdict.reason})`;
-    } else if ((await recheckExclusion(tx, { id: place.id, geoObjectId: place.geoObjectId }, cfg.geometry.restriction.minShare)) === "excluded") {
-      to = "no_anchoring";
-      reason = "Sperrgebiet";
-      excluded = true;
-    }
-  }
+  const adjusted = await adjustVerdict(tx, place, evidence, cfg);
+  if (adjusted.stands) return null;
+  const { verdict, to, reason, overridesAdmin } = adjusted;
+  // a candidate inside a restricted area: `applyExclusion` sets `no_anchoring` with its own reason (`restricted:<kind>:<id>`)
+  const excluded = adjusted.exclusionHits.length > 0;
+  if (excluded) await applyExclusion(tx, place.id, adjusted.exclusionHits);
   const wantedReason = to === "confirmed" ? null : reason;
   if (to === place.status) {
     if (wantedReason !== place.statusReason) await tx.update(places).set({ statusReason: wantedReason, updatedAt: sql`now()` }).where(eq(places.id, place.id));

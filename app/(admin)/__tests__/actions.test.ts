@@ -26,6 +26,19 @@ const retryFailedJob = vi.fn();
 const endRunByAdmin = vi.fn();
 
 vi.mock("@/lib/security/require-admin", () => ({ requireAdmin: () => requireAdmin() }));
+// the research test subdivision is the gate subdivision: research elsewhere waits for the released gate (N3)
+vi.mock("@/lib/config", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/config")>();
+  let cached: ReturnType<typeof actual.getConfig> | undefined;
+  return {
+    ...actual,
+    getConfig: () => {
+      const c = actual.getConfig();
+      cached ??= { ...c, research: { ...c.research, gate: { ...c.research.gate, subdivision: "XQ-RES" } } };
+      return cached;
+    },
+  };
+});
 vi.mock("@/lib/db/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/client")>()),
   getDb: () => currentDb,

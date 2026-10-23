@@ -218,7 +218,7 @@ describe("matchStops", () => {
       const other = await routedPage(tx, hydra, ["Livadi"], { url: "https://www.elsewhere-c.net/x" });
       expect(await matchStops(tx, other, config)).toEqual({ byName: 0, byCorridor: 0, open: 1 });
       // but the page linked through its stop is a page of the bay
-      expect((await unitsForPlaces(tx, [bay.placeId], config)).map((u) => u.documentVersionId)).toEqual([first]);
+      expect((await unitsForPlaces(tx, [bay.placeId], config, { get: async () => null })).map((u) => u.documentVersionId)).toEqual([first]);
 
       // the same domain again does not corroborate it
       const same = await routedPage(tx, hydra, route, { url: "https://blog.sailing-a.com/two" });

@@ -11,6 +11,7 @@ export const reviewKindEnum = pgEnum("review_kind", [
   "uncertain_change",
   "comparison_deviation",
   "place_image",
+  "research_conflict",
 ]);
 export const reviewStatusEnum = pgEnum("review_status", ["open", "decided", "dismissed"]);
 

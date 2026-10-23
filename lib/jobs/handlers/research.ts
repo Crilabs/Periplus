@@ -50,7 +50,7 @@ export const researchAssessStage: StageDefinition = {
 export const researchExtractStage: StageDefinition = {
   name: RESEARCH_EXTRACT_STAGE,
   queue: RESEARCH_EXTRACT_QUEUE,
-  plan: (db, run) => planResearchExtract(db, run),
+  plan: (db, run) => planResearchExtract(db, run, getConfig(), getArchive()),
 };
 
 /** Stage `research.routes`: the route sections of the trip reports among the run's hit pages, as message batches. */

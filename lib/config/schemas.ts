@@ -1382,8 +1382,8 @@ export const areaImportFileSchema = z
   });
 
 const researchTemplateSchema = z.strictObject({
-  /** `{name}`: the berth's name; `{island}`: its island's name (a template with only `{island}` searches the island's trip reports). */
-  template: z.string().refine((t) => t.includes("{name}") || t.includes("{island}"), { error: "template must contain {name} or {island}" }),
+  /** `{name}`: the berth's name (required: a query without it would hit pages that name no berth); `{island}`: its island's name. */
+  template: z.string().refine((t) => t.includes("{name}"), { error: "template must contain {name}" }),
   lang: z.string().min(1),
 });
 
@@ -1416,6 +1416,8 @@ export const researchSchema = z
       routeMaxStops: z.number().int().positive(),
       /** A failed research unit is planned again until it failed this often. */
       maxAttempts: z.number().int().positive(),
+      /** How many archived Markdown files the unit planning reads at a time (N3 task 0). */
+      markdownReadConcurrency: z.number().int().positive(),
     }),
     /** When a berth counts as confirmed from its signals (plan N2, task 6). */
     confirmation: z.strictObject({
@@ -1430,7 +1432,24 @@ export const researchSchema = z
       officialPlaceKinds: z.array(z.enum(placeKindEnum.enumValues)),
       /** Whether pages linked to a place only by a route corridor count without a search- or name-linked source (ruling: no). */
       corridorAloneConfirms: z.boolean(),
+      /** Two sources whose positive quotes share this many consecutive words are copies and count as one (spec 5.6). */
+      copyMinSharedWords: z.number().int().positive(),
     }),
+    /** The reference gate (plan N3): the subdivision measured, the thresholds compared and the released threshold. */
+    gate: z
+      .strictObject({
+        subdivision: z.string().min(1),
+        thresholds: z.array(z.number().int().min(1)).min(1),
+        /** Whether the gate is passed and the chosen threshold released for other subdivisions. */
+        released: z.boolean(),
+        chosenThreshold: z.number().int().min(1).nullable(),
+        /** A confirmed place matched to a reference spot of its kind farther than this is a position error (as `quality.navily.positionToleranceM`). */
+        maxPositionDeviationM: z.number().positive(),
+      })
+      .refine((g) => g.thresholds.every((n, i) => i === 0 || n > g.thresholds[i - 1]!), { error: "gate thresholds must be strictly ascending" })
+      .refine((g) => !g.released || (g.chosenThreshold !== null && g.thresholds.includes(g.chosenThreshold)), {
+        error: "a released gate needs a chosenThreshold among the thresholds",
+      }),
     /** Matching route stops to places. */
     discovery: z.strictObject({
       corridorBufferKm: z.number().positive(),
@@ -1446,6 +1465,10 @@ export const researchSchema = z
     }),
   })
   .superRefine((c, ctx) => {
+    // a released gate is released for the threshold that delivers: the rule must confirm with the chosen threshold
+    if (c.gate.released && c.confirmation.minIndependentSources !== c.gate.chosenThreshold) {
+      ctx.addIssue({ code: "custom", path: ["confirmation", "minIndependentSources"], message: "a released gate needs minIndependentSources equal to gate.chosenThreshold" });
+    }
     for (const k of c.confirmation.negativeKinds) {
       if (c.confirmation.positiveKinds.includes(k)) {
         ctx.addIssue({ code: "custom", path: ["confirmation", "negativeKinds"], message: `signal kind ${k} is both positive and negative` });

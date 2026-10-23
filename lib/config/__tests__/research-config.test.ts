@@ -30,11 +30,34 @@ describe("research config", () => {
 
   it("loads extraction, confirmation and discovery start values", () => {
     const c = getConfig().research;
-    expect(c.extraction).toEqual({ factSchema: "v4", placeRadiusKm: 15, maxUnitWords: 12000, windowWords: 600, maxSharedWords: 8, routeMaxStops: 40, maxAttempts: 3 });
+    expect(c.extraction).toEqual({ factSchema: "v4", placeRadiusKm: 15, maxUnitWords: 12000, windowWords: 600, maxSharedWords: 8, routeMaxStops: 40, maxAttempts: 3, markdownReadConcurrency: 8 });
     expect(c.confirmation.minIndependentSources).toBe(2);
     expect(c.confirmation.minSignalConfidence).toBe(0.7);
     expect(c.confirmation.positiveKinds).toEqual(["anchored", "moored_buoy", "berthed", "listed_as_berth"]);
     expect(c.discovery).toEqual({ corridorBufferKm: 3, minNameSimilarity: 0.8, vetoSimilarity: 0.4, maxLegKm: 25, maxLegDays: 3, corroboratingDomains: 2 });
+  });
+
+  it("loads the gate and rejects a released gate without a chosen threshold among the thresholds", () => {
+    const c = getConfig().research;
+    expect(c.gate).toEqual({ subdivision: "GR-I", thresholds: [2, 3, 4, 5], released: false, chosenThreshold: null, maxPositionDeviationM: 150 });
+    for (const chosenThreshold of [null, 9]) {
+      expect(researchSchema.safeParse({ ...c, gate: { ...c.gate, released: true, chosenThreshold } }).success).toBe(false);
+    }
+    expect(researchSchema.safeParse({ ...c, gate: { ...c.gate, released: true, chosenThreshold: 2 } }).success).toBe(true);
+  });
+
+  it("a released gate must deliver with its chosen threshold: confirmation.minIndependentSources equals it", () => {
+    const c = getConfig().research;
+    const released = { ...c, gate: { ...c.gate, released: true, chosenThreshold: 3 } };
+    expect(researchSchema.safeParse({ ...released, confirmation: { ...c.confirmation, minIndependentSources: 2 } }).success).toBe(false);
+    expect(researchSchema.safeParse({ ...released, confirmation: { ...c.confirmation, minIndependentSources: 3 } }).success).toBe(true);
+    expect(researchSchema.safeParse({ ...c, gate: { ...c.gate, released: false, chosenThreshold: 3 } }).success).toBe(true);
+  });
+
+  it("rejects gate thresholds that are not strictly ascending (the report's chosen threshold is the first match)", () => {
+    const c = getConfig().research;
+    for (const thresholds of [[3, 2, 4], [2, 2, 3]]) expect(researchSchema.safeParse({ ...c, gate: { ...c.gate, thresholds } }).success, thresholds.join()).toBe(false);
+    expect(researchSchema.safeParse({ ...c, gate: { ...c.gate, thresholds: [2, 5] } }).success).toBe(true);
   });
 
   it("rejects a kind that is both positive and negative", () => {
@@ -63,18 +86,22 @@ describe("research config", () => {
       expect.arrayContaining([
         { template: "{name} sailing blog", lang: "en" },
         { template: "{name} anchored overnight", lang: "en" },
-        { template: "Törn {island} Ankerbucht", lang: "de" },
+        { template: "{name} {island} Törnbericht", lang: "de" },
         { template: "{name} vela ancoraggio", lang: "it" },
       ]),
     );
   });
 
-  it("accepts a template with only {island}, rejects one with neither {name} nor {island}", () => {
+  it("rejects a template with only {island} (it would find pages that name no berth)", () => {
     const c = valid();
     c.templates.positive.push({ template: "Törn {island}", lang: "de" });
-    expect(researchSchema.safeParse(c).success).toBe(true);
-    c.templates.positive.push({ template: "Törn Ankerbucht", lang: "de" });
     expect(researchSchema.safeParse(c).success).toBe(false);
+  });
+
+  it("has no shipped template without {name}, and a copy threshold of 12 words", () => {
+    const c = getConfig().research;
+    for (const t of [...c.templates.positive, ...c.templates.negative]) expect(t.template).toContain("{name}");
+    expect(c.confirmation.copyMinSharedWords).toBe(12);
   });
 
   it("accepts the shipped config", () => {
