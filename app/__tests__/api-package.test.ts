@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Manifest, SpotsFile } from "@/contract";
 import type { Archive } from "@/lib/adapters/s3";
@@ -20,7 +20,7 @@ import { deleteTestObjects, memoryArchive, testArchive } from "@/test/s3";
 import { insertTestVersion } from "@/test/text";
 
 /*
- * The delivery API's subdivision, package, file and schema endpoints (plan Task 11, contract 2.0 under `/api/v2`),
+ * The delivery API's subdivision, package, file and schema endpoints (plan Task 11, contract 3.0 under `/api/v3`),
  * called directly with the test transaction as database (ruling M6-P21) and packages built by `buildDelivery` on the
  * fixture subdivision. Build dates lie in
  * the future: the fixture's geo rows are valid from the database's `current_date`.
@@ -37,16 +37,16 @@ vi.mock("@/lib/db/client", async (importActual) => ({
   getDb: () => db,
 }));
 
-const subdivisionsRoute = await import("../api/v2/subdivisions/route");
-const packageRoute = await import("../api/v2/subdivisions/[subdivision]/package/route");
-const fileRoute = await import("../api/v2/subdivisions/[subdivision]/package/[file]/route");
-const imageRoute = await import("../api/v2/subdivisions/[subdivision]/package/images/[file]/route");
-const schemaRoute = await import("../api/v2/schema/[version]/[file]/route");
+const subdivisionsRoute = await import("../api/v3/subdivisions/route");
+const packageRoute = await import("../api/v3/subdivisions/[subdivision]/package/route");
+const fileRoute = await import("../api/v3/subdivisions/[subdivision]/package/[file]/route");
+const imageRoute = await import("../api/v3/subdivisions/[subdivision]/package/images/[file]/route");
+const schemaRoute = await import("../api/v3/schema/[version]/[file]/route");
 const schemaRouteV1 = await import("../api/v1/schema/[version]/[file]/route");
 
 const NOW = new Date("2040-06-01T08:00:00Z");
 const LATER = new Date("2040-06-02T08:00:00Z");
-const BASE = "http://localhost/api/v2";
+const BASE = "http://localhost/api/v3";
 
 const request = (path: string, key?: string, headers: Record<string, string> = {}) =>
   new Request(`${BASE}${path}`, { headers: { ...(key ? { authorization: `Bearer ${key}` } : {}), ...headers } });
@@ -153,14 +153,14 @@ describe("delivery API: authentication", () => {
     }));
 });
 
-describe("GET /api/v2/subdivisions", () => {
+describe("GET /api/v3/subdivisions", () => {
   it("lists the subdivision with the data version, bbox and build time of its latest valid package", () =>
     withRollback(async (tx) => {
       const { f, archive, key } = await setup(tx);
       const before = await getSubdivisions(key);
       expect(before.status).toBe(200);
       const listed = (await before.json()) as { schemaVersion: string; subdivisions: Array<{ id: string }> };
-      expect(listed.schemaVersion).toBe("2.3");
+      expect(listed.schemaVersion).toBe("3.0");
       expect(listed.subdivisions.find((s) => s.id === f.subdivisionPublicId)).toEqual({
         id: f.subdivisionPublicId,
         key: f.subdivisionKey,
@@ -205,7 +205,7 @@ describe("GET /api/v2/subdivisions", () => {
     }));
 });
 
-describe("GET /api/v2/subdivisions/[subdivision]/package", () => {
+describe("GET /api/v3/subdivisions/[subdivision]/package", () => {
   it("the package manifest links every file of the current data version", () =>
     withRollback(async (tx) => {
       const { f, archive, key } = await setup(tx);
@@ -226,7 +226,7 @@ describe("GET /api/v2/subdivisions/[subdivision]/package", () => {
           Object.fromEntries(
             ["manifest.json", "spots.json", "highlights.json", "regions.json", "coast.geojson", "weather-points.json", "changes.json"].map((file) => [
               file,
-              `/api/v2/subdivisions/${f.subdivisionPublicId}/package/${file}?dataVersion=2`,
+              `/api/v3/subdivisions/${f.subdivisionPublicId}/package/${file}?dataVersion=2`,
             ]),
           ),
         );
@@ -262,9 +262,25 @@ describe("GET /api/v2/subdivisions/[subdivision]/package", () => {
       }
       expect((await getFile(f.subdivisionPublicId, "manifest.json", key, "?dataVersion=1")).status).toBe(200);
     }));
+
+  it("a stored package of an older contract version is served with its own Periplus-Schema-Version", () =>
+    withRollback(async (tx) => {
+      const { f, archive, key } = await setup(tx);
+      await build(tx, archive, f);
+      // deliveries are append-only; the test transaction plays a package stored before the contract moved to 3.0
+      await tx.execute(sql`alter table deliveries disable trigger deliveries_append_only`);
+      await tx.execute(sql`update deliveries set schema_version = '2.3'`);
+      await tx.execute(sql`alter table deliveries enable trigger deliveries_append_only`);
+
+      expect((await getPackage(f.subdivisionPublicId, key)).headers.get("periplus-schema-version")).toBe("2.3");
+      expect((await getFile(f.subdivisionPublicId, "spots.json", key)).headers.get("periplus-schema-version")).toBe("2.3");
+      expect((await getFile(f.subdivisionPublicId, "manifest.json", key, "?dataVersion=1")).headers.get("periplus-schema-version")).toBe("2.3");
+      // the other endpoints speak the current contract
+      expect((await getSubdivisions(key)).headers.get("periplus-schema-version")).toBe("3.0");
+    }));
 });
 
-describe("GET /api/v2/subdivisions/[subdivision]/package/[file]", () => {
+describe("GET /api/v3/subdivisions/[subdivision]/package/[file]", () => {
   it("a file is served byte-identical to the manifest hash with schema and data version headers", async () => {
     // the one S3 round trip: the files go to the test bucket and are deleted afterwards
     const archive = testArchive();
@@ -284,7 +300,7 @@ describe("GET /api/v2/subdivisions/[subdivision]/package/[file]", () => {
           expect(sha256Hex(bytes), entry.name).toBe(entry.sha256);
           expect(bytes.byteLength).toBe(entry.bytes);
           expect(bytes).toEqual(await archive.get(prefix + entry.name));
-          expect(res.headers.get("periplus-schema-version")).toBe("2.3");
+          expect(res.headers.get("periplus-schema-version")).toBe("3.0");
           expect(res.headers.get("periplus-data-version")).toBe("1");
           expect(res.headers.get("content-type")).toBe(entry.name === "coast.geojson" ? "application/geo+json" : "application/json");
           expect(res.headers.get("etag")).toBe(`"${entry.sha256.slice(0, 32)}"`);
@@ -331,15 +347,15 @@ describe("GET /api/v2/subdivisions/[subdivision]/package/[file]", () => {
       const { f, archive, key } = await setup(tx);
       await build(tx, archive, f);
       // the proxy rejects an encoded separator before any route runs
-      expect(decideAccess({ pathname: `/api/v2/subdivisions/${f.subdivisionPublicId}/package/..%2fspots.json`, session: null, hasBearer: true })).toEqual({
+      expect(decideAccess({ pathname: `/api/v3/subdivisions/${f.subdivisionPublicId}/package/..%2fspots.json`, session: null, hasBearer: true })).toEqual({
         action: "deny",
         status: 404,
       });
-      expect(decideAccess({ pathname: `/api/v2/subdivisions/${f.subdivisionPublicId}/package/../spots.json`, session: null, hasBearer: true })).toEqual({
+      expect(decideAccess({ pathname: `/api/v3/subdivisions/${f.subdivisionPublicId}/package/../spots.json`, session: null, hasBearer: true })).toEqual({
         action: "deny",
         status: 404,
       });
-      expect(decideAccess({ pathname: `/api/v2/subdivisions/${f.subdivisionPublicId}/package/secrets.json`, session: null, hasBearer: true })).toEqual({
+      expect(decideAccess({ pathname: `/api/v3/subdivisions/${f.subdivisionPublicId}/package/secrets.json`, session: null, hasBearer: true })).toEqual({
         action: "allow",
       });
       // the route serves contract files only
@@ -417,7 +433,7 @@ describe("GET /api/v2/subdivisions/[subdivision]/package/[file]", () => {
     }));
 });
 
-describe("GET /api/v2/subdivisions/[subdivision]/package/images/[file]", () => {
+describe("GET /api/v3/subdivisions/[subdivision]/package/images/[file]", () => {
   const JPG = "jpeg bytes of the title image";
   const bytes = new TextEncoder().encode(JPG);
   /** The title image of spot A in the built package. */
@@ -466,7 +482,7 @@ describe("GET /api/v2/subdivisions/[subdivision]/package/images/[file]", () => {
     }));
 });
 
-describe("GET /api/v2/schema/[version]/[file]", () => {
+describe("GET /api/v3/schema/[version]/[file]", () => {
   it("the schema endpoint returns the checked-in JSON schema of every published version; /api/v1 still serves 1.0", () =>
     withRollback(async (tx) => {
       db = tx;
@@ -491,7 +507,7 @@ describe("GET /api/v2/schema/[version]/[file]", () => {
         }
       }
       for (const [version, file] of [
-        ["3.0", "spots.schema.json"],
+        ["4.0", "spots.schema.json"],
         ["1.0", "secrets.schema.json"],
         ["1.0", "spots.json"],
         ["1.0", "../spots.schema.json"],

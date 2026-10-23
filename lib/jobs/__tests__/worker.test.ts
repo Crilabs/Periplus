@@ -26,11 +26,24 @@ import { BATCH_HANDLERS } from "@/lib/jobs/batch-handlers";
 import { setModelClientFactory } from "@/lib/jobs/handlers/ai-batch";
 import { submitStageBatch } from "@/lib/pipeline/batches";
 
-/** Shared with the module mocks below: keys whose review task creation throws, and captured worker error logs. */
+/**
+ * Shared with the module mocks below: keys whose review task creation throws, captured worker error logs, and whether
+ * the worker misses every queue pause (a pause set and lifted between two of its control checks).
+ */
 const probe = vi.hoisted(() => ({
   failReviewFor: new Set<string>(),
   workerErrors: [] as Array<{ obj: Record<string, unknown>; msg?: string }>,
+  missPauses: false,
 }));
+
+vi.mock("@/lib/jobs/controls", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/lib/jobs/controls")>();
+  return {
+    ...original,
+    isQueuePaused: async (...args: Parameters<typeof original.isQueuePaused>) =>
+      probe.missPauses ? false : original.isQueuePaused(...args),
+  };
+});
 
 vi.mock("@/lib/domain/review", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/domain/review")>();
@@ -418,6 +431,31 @@ describe("worker", () => {
 
     await resumeQueue(db, "system.ping", "test");
     await waitFor(async () => (await getRun(db, id))!.status === "finished", 20_000);
+    expect((await getRun(db, id))!.stages[0]).toMatchObject({ total: 1, done: 1, failed: 0 });
+  }, 40_000);
+
+  it("a budget pause lifted before the worker saw it still releases the deferred job", async () => {
+    const { id } = await createRun(db, {
+      kind: "system",
+      scope: scope(),
+      stages: ["ping"],
+      params: {},
+      triggeredBy: "test",
+    });
+    await beginStage(db, id, "ping", 1);
+    probe.missPauses = true;
+    try {
+      await enqueueStageJobs(boss, "system.ping", id, "ping", [{ key: "0", budgetOnce: true }]);
+      // The worker keeps the queue running: it never sees the pause, only the job deferred to the pause's end.
+      await waitFor(
+        async () => (await boss.findJobs<JobData>("system.ping", { data: { runId: id, budgetDeferred: true }, queued: true })).length === 1,
+        15_000,
+      );
+      await resumeQueue(db, "system.ping", "test");
+      await waitFor(async () => (await getRun(db, id))!.status === "finished", 10_000);
+    } finally {
+      probe.missPauses = false;
+    }
     expect((await getRun(db, id))!.stages[0]).toMatchObject({ total: 1, done: 1, failed: 0 });
   }, 40_000);
 

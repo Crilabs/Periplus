@@ -31,10 +31,10 @@ vi.mock("@/lib/db/client", async (importActual) => ({
   getDb: () => db,
 }));
 
-const changesRoute = await import("../api/v2/subdivisions/[subdivision]/changes/route");
-const spotsRoute = await import("../api/v2/spots/[id]/route");
+const changesRoute = await import("../api/v3/subdivisions/[subdivision]/changes/route");
+const spotsRoute = await import("../api/v3/spots/[id]/route");
 
-const BASE = "http://localhost/api/v2";
+const BASE = "http://localhost/api/v3";
 const day = (d: string) => new Date(`${d}T08:00:00Z`);
 
 const request = (path: string, key: string | undefined, headers: Record<string, string> = {}) =>
@@ -109,7 +109,7 @@ describe("changes and spots: authentication", () => {
     }));
 });
 
-describe("GET /api/v2/subdivisions/[subdivision]/changes", () => {
+describe("GET /api/v3/subdivisions/[subdivision]/changes", () => {
   it("changes since 1 merge the change files of versions 2 and 3", () =>
     withRollback(async (tx) => {
       const { f, archive, key } = await setup(tx);
@@ -123,7 +123,7 @@ describe("GET /api/v2/subdivisions/[subdivision]/changes", () => {
       expect(res.status).toBe(200);
       expect(res.headers.get("periplus-data-version")).toBe("3");
       const body = (await res.json()) as { schemaVersion: string; subdivision: string; since: number; dataVersion: number; changes: ChangeEntry[] };
-      expect(body).toMatchObject({ schemaVersion: "2.3", subdivision: f.subdivisionPublicId, since: 1, dataVersion: 3 });
+      expect(body).toMatchObject({ schemaVersion: "3.0", subdivision: f.subdivisionPublicId, since: 1, dataVersion: 3 });
       expect(body.changes).toEqual(mergeChanges([await changesOf(archive, f, 2), await changesOf(archive, f, 3)]));
       // A: updated (safety) in 2, merged in 3 → one entry, the last event, the highest severity, the last version
       expect(body.changes.find((c) => c.objectId === f.places.A.publicId!)).toMatchObject({ event: "merged", severity: "safety", profileVersion: 3, fields: [] });
@@ -141,7 +141,7 @@ describe("GET /api/v2/subdivisions/[subdivision]/changes", () => {
       await build(tx, archive, f, "2040-06-01");
       const current = await getChanges(f.subdivisionPublicId, key, "?since=1");
       expect(current.status).toBe(200);
-      expect(await current.json()).toEqual({ schemaVersion: "2.3", subdivision: f.subdivisionPublicId, since: 1, dataVersion: 1, changes: [] });
+      expect(await current.json()).toEqual({ schemaVersion: "3.0", subdivision: f.subdivisionPublicId, since: 1, dataVersion: 1, changes: [] });
       // the same parser as dataVersion: no sign, no leading zeros
       for (const query of ["?since=0", "", "?since=", "?since=abc", "?since=1.5", "?since=-1", "?since=1e0", "?since=01", "?since=+1"]) {
         const res = await getChanges(f.subdivisionPublicId, key, query);
@@ -171,7 +171,7 @@ describe("GET /api/v2/subdivisions/[subdivision]/changes", () => {
     }));
 });
 
-describe("GET /api/v2/spots/[id]", () => {
+describe("GET /api/v3/spots/[id]", () => {
   it("asOf returns the spot version delivered on that date", () =>
     withRollback(async (tx) => {
       const { f, archive, key } = await setup(tx);
@@ -185,11 +185,11 @@ describe("GET /api/v2/spots/[id]", () => {
         return { header: res.headers.get("periplus-data-version"), body: (await res.json()) as { schemaVersion: string; subdivision: string; dataVersion: number; spot: Spot } };
       };
       const early = await asOf("?asOf=2040-06-10");
-      expect(early.body).toEqual({ schemaVersion: "2.3", subdivision: f.subdivisionPublicId, dataVersion: 1, spot: await spotOf(archive, f, 1, a) });
+      expect(early.body).toEqual({ schemaVersion: "3.0", subdivision: f.subdivisionPublicId, dataVersion: 1, spot: await spotOf(archive, f, 1, a) });
       expect(early.body.spot).toMatchObject({ profileVersion: 1, validFrom: "2040-06-01" });
       expect(early.header).toBe("1");
       expect((await asOf("?asOf=2040-06-01")).body.spot.profileVersion).toBe(1);
-      expect((await asOf("?asOf=2040-06-15")).body).toEqual({ schemaVersion: "2.3", subdivision: f.subdivisionPublicId, dataVersion: 2, spot: await spotOf(archive, f, 2, a) });
+      expect((await asOf("?asOf=2040-06-15")).body).toEqual({ schemaVersion: "3.0", subdivision: f.subdivisionPublicId, dataVersion: 2, spot: await spotOf(archive, f, 2, a) });
       expect((await asOf("")).body).toMatchObject({ dataVersion: 2, spot: { profileVersion: 2, validFrom: "2040-06-15" } });
       // an unchanged spot keeps the content of the delivery that introduced its version
       expect((await (await getSpot(f.places.M.publicId!, key)).json()) as { dataVersion: number }).toMatchObject({ dataVersion: 1, spot: { profileVersion: 1 } });
@@ -258,7 +258,7 @@ describe("GET /api/v2/spots/[id]", () => {
       ]) {
         const res = await call();
         expect(res.status).toBe(200);
-        expect(res.headers.get("periplus-schema-version")).toBe("2.3");
+        expect(res.headers.get("periplus-schema-version")).toBe("3.0");
         expect(res.headers.get("periplus-data-version")).toBe("1");
         expect(res.headers.get("cache-control")).toBe("private, max-age=60");
         expect(res.headers.get("vary")).toBe("Authorization");

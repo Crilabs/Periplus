@@ -1,10 +1,10 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
-import { getConsolidationConfig } from "@/lib/config";
+import { getConfig, getConsolidationConfig } from "@/lib/config";
 import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { computations, profiles, profileSummaries, type SummaryStatus } from "@/lib/db/schema";
-import { popularityForSubdivision } from "@/lib/domain/consolidation/derived/popularity";
+import { popularityForPlaces } from "@/lib/domain/consolidation/derived/popularity";
 import { formatProfileValue, profileAttributeLabel, ruleLabel } from "@/lib/domain/consolidation/format";
 import { prohibitionEntryKey } from "@/lib/domain/consolidation/rules/prohibitions";
 import { unionEntryKey } from "@/lib/domain/consolidation/rules/union";
@@ -210,21 +210,13 @@ async function chosenSnapshot(db: Db, geoObjectId: string, opts: { version?: num
   return latestProfile(db, geoObjectId);
 }
 
-/** The subdivision of the object (`geo_objects.subdivision_id`, nearest land); null before the hierarchy stage ran. */
-async function subdivisionOf(db: Db, geoObjectId: string): Promise<string | null> {
-  const { rows } = await db.execute<{ subdivision_id: string | null }>(sql`
-    select subdivision_id from geo_objects where id = ${geoObjectId}
-  `);
-  return rows[0]?.subdivision_id ?? null;
-}
-
 const isIdentity = (p: AttributeProvenance) => p.rule === "identity" && p.origin === "gazetteer";
 
 /**
  * The profile of a geo object for the admin pages: `version`, or the profile as of `asOf` (`YYYY-MM-DD`, validated:
  * an impossible date throws), else the newest version; null without a profile (or none on that date). Rows in fact
  * schema order (unknown keys and `exclude` after them, by name); identity fields (`geo.*`, `place.*`) go to the head,
- * derived values (`derived.*`) to their own list. `popularity` is read now (it depends on the subdivision, ruling M5-E-R2
+ * derived values (`derived.*`) to their own list. `popularity` is read now (it depends on the neighbourhood, ruling M5-E-R2
  * NOTE M6); `today` defaults to the UTC date.
  */
 export async function profileView(
@@ -260,8 +252,7 @@ export async function profileView(
     .filter((k) => k === "exclude" || (!isIdentity(snapshot.provenance[k]!) && snapshot.provenance[k]!.rule !== "derived"))
     .map((k) => buildRow(k, snapshot, cfg, tasks, latest));
 
-  const subdivisionId = await subdivisionOf(db, geoObjectId);
-  const popularity = subdivisionId ? ((await popularityForSubdivision(db, subdivisionId, today)).get(geoObjectId) ?? null) : null;
+  const popularity = (await popularityForPlaces(db, [geoObjectId], today, getConfig().delivery.popularity.neighbourhoodNm)).get(geoObjectId) ?? null;
   const [summary] = await db
     .select({ text: profileSummaries.text, status: profileSummaries.status })
     .from(profileSummaries)

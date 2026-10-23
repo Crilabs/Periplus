@@ -117,10 +117,20 @@ export const geoMultiLineString = z.strictObject({
 });
 export const areal = z.discriminatedUnion("type", [geoPolygon, geoMultiPolygon]);
 
+/** The 16 hex characters of a radius package's key (spec 18). */
+export const RADIUS_KEY_PATTERN = /^[0-9a-f]{16}$/;
+export const radiusKey = z.string().regex(RADIUS_KEY_PATTERN, "must be 16 lower-case hex characters");
+
+/** What an object file belongs to (contract 3.0): a subdivision at a data version, or a radius package by its key. */
+export const fileScope = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("subdivision"), id: publicId("sd"), dataVersion: z.number().int().min(1) }),
+  z.strictObject({ type: z.literal("radius"), key: radiusKey }),
+]);
+export type FileScope = z.infer<typeof fileScope>;
+
 /** Envelope of every object file of a package (all but manifest and coast). */
 export const fileEnvelope = {
-  schemaVersion: z.literal("2.3"),
-  subdivision: publicId("sd"),
-  dataVersion: z.number().int().min(1),
+  schemaVersion: z.literal("3.0"),
+  scope: fileScope,
   generatedAt: isoDateTime,
 };

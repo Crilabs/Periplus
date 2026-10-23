@@ -66,7 +66,7 @@ export type SpotSource = {
   profile: ProfileSnapshot | null;
   /** The `ok` summary of the latest profile version (highest prompt version), ruling M6-P9. */
   summary: string | null;
-  /** `popularityForSubdivision` on the build date; null for a place outside its map (ruling M6-P8). */
+  /** `popularityForPlaces` on the build date (fixed neighbourhood across subdivisions, spec 18); null for a place outside its map (ruling M6-P8). */
   popularity: number | null;
   sources: SourceRefRow[];
   /** The deliverable current images, best first (rank, sort order, slot). */
