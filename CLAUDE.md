@@ -8,10 +8,10 @@ Admin-Oberfläche. Keine Endnutzer, keine Mandanten.
 ## Was gilt
 
 - **Fachlich maßgebend:** `docs/superpowers/specs/2026-10-23-periplus-neuausrichtung-design.md`
-  (Liegeplatz als Mittelpunkt, Bestätigung, aktueller Stand, Vertrag 3.0). Wo sie nichts sagt, gelten
+  (Liegeplatz als Mittelpunkt, Bestätigung, aktueller Stand, Vertrag 4.0). Wo sie nichts sagt, gelten
   `.idea/datendienst-spec.md` und die Abweichungen in Abschnitt 4 des Gesamtdesigns.
 - **Wie gebaut wird:** `docs/superpowers/specs/2026-10-18-periplus-design.md` (Stack, Struktur, Glossar) und die
-  Teil-Specs, soweit die Neuausrichtung sie nicht ersetzt (ersetzt: 03 teilweise, 05–08, 10, 11, 16–18).
+  Teil-Specs, soweit die Neuausrichtung sie nicht ersetzt (ersetzt: 03 teilweise, 05–08, 10, 11, 16, 17; Spec 18 Umkreis-Lieferung bleibt).
 - Sicherheit zuerst: geliefert wird nur ein bestätigter Liegeplatz; im Zweifel nicht liefern.
 - DSTAP war nur der erste Prototyp; der Liefervertrag ist abnehmerneutral, keine Kompatibilität mit DSTAP.
 - Schlank bleiben: von Caloga/Contexta nur übernehmen, was hier trägt; keine Designery-Infrastruktur

@@ -1,6 +1,6 @@
 # Periplus – Neuausrichtung: vom Liegeplatz aus
 
-Stand: 23.10.2026 · Status: Entwurf zur Freigabe · Ersetzt in den unten genannten Punkten die Quell-Spec (`.idea/datendienst-spec.md`), das Gesamtdesign (`2026-10-18-periplus-design.md`) und die Teil-Specs 03, 05–08, 10, 11, 16, 17 und 18
+Stand: 23.10.2026 · Status: Entwurf zur Freigabe · Ersetzt in den unten genannten Punkten die Quell-Spec (`.idea/datendienst-spec.md`), das Gesamtdesign (`2026-10-18-periplus-design.md`) und die Teil-Specs 03, 05–08, 10, 11, 16 und 17; Spec 18 (Umkreis-Lieferung) bleibt gültig
 
 ## 1. Warum
 
@@ -36,7 +36,7 @@ Periplus erzeugt **keine Texte** für Endnutzer; die App generiert sie aus den F
 
 **Ziele**
 
-1. Griechenland Anfang November 2026, das ganze Mittelmeer bis Februar 2027 (Christian). Qualität geht vor Termin (Christian); „Anfang November“ ist ein Ziel, kein fester Termin. „Griechenland steht“ heißt: Paket im Vertrag 3.0 für alle griechischen Landesteile, nach bestandenem Probelauf (Abschnitt 9). Das Neue wird neben dem Alten gebaut, die alten Textstufen werden nicht mehr gestartet und am Ende in einem Zug entfernt (Entscheidung Claude: Facts hängen per Fremdschlüssel an Erwähnungen, Konsolidierung, Bilder und Lieferung an Facts und Profilen; ein Rückbau zuerst ließe das System ohne lauffähigen Stand und ohne Tests als Netz).
+1. Griechenland Anfang November 2026, das ganze Mittelmeer bis Februar 2027 (Christian). Qualität geht vor Termin (Christian); „Anfang November“ ist ein Ziel, kein fester Termin. „Griechenland steht“ heißt: Paket im Vertrag 4.0 für alle griechischen Landesteile, nach bestandenem Probelauf (Abschnitt 9). Das Neue wird neben dem Alten gebaut, die alten Textstufen werden nicht mehr gestartet und am Ende in einem Zug entfernt (Entscheidung Claude: Facts hängen per Fremdschlüssel an Erwähnungen, Konsolidierung, Bilder und Lieferung an Facts und Profilen; ein Rückbau zuerst ließe das System ohne lauffähigen Stand und ohne Tests als Netz).
 2. Ein sauberes, schlankes System: was dem alten Ansatz diente, wird entfernt, nicht abgeschaltet mitgeschleppt (Christian).
 3. Qualität vor Kosten: Recherche darf je Liegeplatz kosten, was die Treffsicherheit erhöht; Maßstab ist der Einkaufspreis lizenzierter Daten wie Navily (Christian). Kosten bleiben je Kandidat und Stufe sichtbar; das Budget in `config/budgets.json` ist Notbremse gegen Fehler, keine Sparvorgabe. Ohne menschliche Freigabe im Dauerbetrieb.
 4. Ein neuer Landesteil ist Konfiguration und Laufzeit, kein Code (bleibt aus dem Gesamtdesign).
@@ -150,7 +150,7 @@ Wie Teil-Spec 13, aber nur für **bestätigte** Liegeplätze (behebt B17).
 
 ### 5.9 Lieferung
 
-Ein Paket je Landesteil mit dem aktuellen Stand, abgerufen über die API mit Schlüssel. Neuer Vertrag (Abschnitt 7.3). Kein Change-Feed; die App lädt bei neuer Paketversion das ganze Paket des Landesteils. Die Umkreis-Lieferung aus Spec 18 (Branch `feat/umkreis-lieferung`) wird auf dem neuen Vertrag neu bewertet, nicht übernommen.
+Ein Paket je Landesteil mit dem aktuellen Stand, abgerufen über die API mit Schlüssel. Neuer Vertrag (Abschnitt 7.3). Die **Umkreis-Lieferung** aus Spec 18 (Branch `feat/umkreis-lieferung`, Vertrag 3.0, `/api/v3`) bleibt die Lieferform für die App: sie setzt aus den Landesteil-Paketen ein Paket um eine Heimatmarina zusammen, unabhängig vom Inhalt der Liegeplätze (Christian). Kein eigener Change-Feed mehr: fällt er mit dem Rückbau weg, melden die Änderungs-Endpunkte „neu laden“ (`invalid_since`), und die App lädt das Paket neu.
 
 ### 5.10 Aktualisierung
 
@@ -186,9 +186,9 @@ Nur noch, was gerechnet, gefiltert oder abgesichert werden muss: Art des Liegepl
 - **Entfällt:** Erwähnungen, mehrdeutige Treffer, Text-Schnipsel, nicht zugeordnete Namen, Rücknahmen, Chunks und Embeddings (sofern die Extraktion je Seite ohne sie auskommt, Builder prüft), Crawl-Front, Linkgraph, Quellen-Bewertungen auf Domain-Ebene, Profilversionen, Änderungsereignisse, Profil-Zusammenfassungen, History-Tabellen und `record_history`-Trigger, Lösch- und Änderungsschutz auf Tabellen, die nicht nur anfügend sein müssen.
 - **Nur anfügend bleiben:** Dokumentversionen (Archiv) und Kosten-Ledger. Fakten werden nicht mehr gegen Löschen geschützt, aber mit Lauf und Prompt-Version gespeichert.
 
-### 7.3 Liefervertrag 3.0
+### 7.3 Liefervertrag 4.0
 
-Je Landesteil ein Paket; je Liegeplatz:
+Baut auf der Hülle von Vertrag 3.0 auf (Spec 18: `scope` Landesteil oder Umkreis, Abdeckung, `/api/v3`); Pakete je Landesteil und je Umkreis. Je Liegeplatz:
 
 - `id`, `kind`, Namen (mehrsprachig), Position, Ankerposition, Landesteil, Reviere
 - Kernwerte (7.1) mit Konfidenz
@@ -197,7 +197,7 @@ Je Landesteil ein Paket; je Liegeplatz:
 - `nearby`: Liste der erreichbaren Dinge an Land `{ id, category, names, position, distanceM, access (foot | transport) }`; deren Fakten stehen in `facts` mit `subject` = ihre ID
 - `image` (Teil-Spec 13)
 
-Nicht im Vertrag: Quellen, Zitate, Versionen, Change-Feed, Zusammenfassungen, Highlight-Stufen (`highlightLevels`), `popularity` (Builder prüft, ob ein Ersatz aus der Zahl unabhängiger Belege nötig ist; Entscheidung Claude: zunächst weglassen). Die bisherigen Vertragsversionen 1.0–2.3 werden nicht weiter bedient.
+Nicht im Vertrag: Quellen, Zitate, Versionen, Change-Feed, Zusammenfassungen, Highlight-Stufen (`highlightLevels`). `popularity` (seit Spec 18 je 50-sm-Nachbarschaft) bleibt, bis der Builder in Plan 5 entscheidet, ob die Zahl unabhängiger Belege sie ersetzt. Die Vertragsversionen 1.0–2.3 werden nicht weiter bedient, 3.0 bis zur Umstellung auf 4.0.
 
 ## 8. Abgleich mit dem Code
 
@@ -220,7 +220,7 @@ Nicht im Vertrag: Quellen, Zitate, Versionen, Change-Feed, Zusammenfassungen, Hi
 | Highlights (`lib/domain/highlights`, Spec 16) | Luftlinie, Top 5, Stufen | **umbauen** zu „Erreichbares an Land“ ab Anlandestelle (5.7) |
 | Marina-Services, Festmachplatz (Spec 15, 17) | Teil von Schema und Lieferung | **aufgehen** in Kernwerten und Bestätigung |
 | Ortsbilder (`lib/domain/images`, `pipeline/images`, Spec 13) | trägt | **bleibt**, nur bestätigte Liegeplätze (Christian) |
-| Lieferung (`lib/domain/delivery`, `contract/`, `app/api/v2`) | Vertrag 2.x, Change-Feed, Versionierung | **umbauen** zu Vertrag 3.0 (7.3); Paketbau, Validierung, Archiv bleiben; `changes`, `versioning`, alte Vertragsversionen entfallen |
+| Lieferung (`lib/domain/delivery`, `contract/`, `app/api/v2`) | Vertrag 2.x, Change-Feed, Versionierung | **umbauen** zu Vertrag 4.0 (7.3); Paketbau, Validierung, Archiv bleiben; `changes`, `versioning`, alte Vertragsversionen entfallen |
 | Qualität (`lib/domain/quality`, Spec 10, 12) | Kennzahlen, Navily-Abgleich | **bleibt schlank**: Navily-Test als Freigabe-Tor mit Fehlliste und Konflikt-Review, Kosten je bestätigtem Liegeplatz; Kennzahlen des alten Ansatzes entfallen |
 | Revisit-Simulation (`lib/domain/revisit`, `pipeline/revisit*`) | Zeitachse prüfen | **entfällt** |
 | Konverter- und Modellvergleich (`compare-converters*`, `app/(admin)/compare`) | Einmalentscheidungen | **entfällt** (Entscheidungen stehen in `config/`) |
@@ -229,13 +229,13 @@ Nicht im Vertrag: Quellen, Zitate, Versionen, Change-Feed, Zusammenfassungen, Hi
 ## 9. Umstellung
 
 - **Daten:** In der Dev-Datenbank sind 10 Liegeplätze bestätigt; ein Neuanfang ist billig. Produktion hat keine Abnehmer und wird aus der neuen Basis neu aufgesetzt; das Archiv (Dokumente, Versionen, S3-Objekte) wird per Skript übernommen, Review-Entscheidungen und Status des alten Ansatzes nicht (Entscheidung Claude). Der Probelauf läuft in Produktion, die Entwicklung lokal. Das Archiv (1.778 Dokumente) wird übernommen und kann für die neue Extraktion wiederverwendet werden. Ob die 70 Migrationen zu einer neuen Basis zusammengefasst werden, entscheidet der Builder (Empfehlung Claude: ja, eine neue Basis-Migration; die Produktion hat noch keine Abnehmer).
-- **Laufende Arbeit:** `pruefung/echtdaten` (63 Commits, v. a. Rücknahmen, Klärung, „Neu prüfen“) wird nicht nach `main` übernommen; einzelne Fixes, die weiter tragen (z. B. Gazetteer, Raumgliederung), werden gezielt übernommen. `feat/umkreis-lieferung` ruht (5.9). `fix/flaky-tests` nur, soweit die betroffenen Tests bleiben.
+- **Laufende Arbeit:** `pruefung/echtdaten` (63 Commits, v. a. Rücknahmen, Klärung, „Neu prüfen“) wird nicht nach `main` übernommen; einzelne Fixes, die weiter tragen (z. B. Gazetteer, Raumgliederung), werden gezielt übernommen. `feat/umkreis-lieferung` wird nach grüner Testsuite gegen das aktuelle `main` und einer Gesamtprüfung gemergt (5.9, Christian). `fix/flaky-tests` nur, soweit die betroffenen Tests bleiben.
 - **Dokumente:** Dieses Dokument wird fachlich maßgebend. `CLAUDE.md` („Was gilt“) wird angepasst; die Quell-Spec gilt nur noch, wo dieses Dokument nichts sagt. Abschnitt 4 und 10 des Gesamtdesigns werden auf diese Neuausrichtung verwiesen.
-- **Reihenfolge** (Entscheidung Claude, je ein Umsetzungsplan): (1) Recherche je Kandidat und Seitenbewertung, (2) Extraktion neu und Bestätigung, (3) Navily-Test Saronischer Golf (Abschnitt 6) bis 100 %, zunächst auf Bestätigung und Lage, (4) aktueller Stand und Erreichbares, (5) Vertrag 3.0 und UI, (6) Rückbau des alten Ansatzes und neue Basis-Migration, (7) Raumgliederung stabil fürs Mittelmeer (unabhängig, parallel möglich); danach Griechenland. Die riskanteste Annahme (Bestätigung schafft 100 % gegen Navily) wird damit zuerst geprüft.
+- **Reihenfolge** (Entscheidung Claude, je ein Umsetzungsplan): (1) Recherche je Kandidat und Seitenbewertung, (2) Extraktion neu und Bestätigung, (3) Navily-Test Saronischer Golf (Abschnitt 6) bis 100 %, zunächst auf Bestätigung und Lage, (4) aktueller Stand und Erreichbares, (5) Vertrag 4.0 und UI, (6) Rückbau des alten Ansatzes und neue Basis-Migration, (7) Raumgliederung stabil fürs Mittelmeer (unabhängig, parallel möglich); danach Griechenland. Die riskanteste Annahme (Bestätigung schafft 100 % gegen Navily) wird damit zuerst geprüft.
 
 ## 10. Entscheidungen
 
-**Christian:** Liegeplatz als Mittelpunkt; nur Erreichbares an Land zählt, mit Bus und Taxi auch weiter; Kern = Schutz, Grund, Gebühren, Verfügbarkeit, Erfahrungen; Erfahrungen auch für Dinge an Land aus Berichten; Ankerplätze und Bojenfelder brauchen mindestens zwei unabhängige Quellen, eher 3–5, Alter spielt für die Geographie kaum eine Rolle; Navily-Test im Saronischen Golf mit 100 % als Tor, von Navily unbekannte Bestätigungen entscheidet ein Mensch, sonst keine menschliche Freigabe; Kosten je Liegeplatz dürfen hoch sein (Maßstab: Einkauf von Navily-Daten); Zeitachse unwichtig, aktueller Stand reicht; ganzes Mittelmeer, Griechenland Anfang November, Qualität vor Termin, sauberes System statt Weiterflicken; mindestens eine Bestätigung, im Zweifel nicht liefern (Sicherheit); freie, unstrukturierte Fakten; die App bekommt einzelne Fakten und generiert Texte selbst; keine Quellen in der Lieferung; Ortsbilder bleiben; Reviere, Landesteile, Qualität bleiben, Autofreigabe entfällt.
+**Christian:** Liegeplatz als Mittelpunkt; nur Erreichbares an Land zählt, mit Bus und Taxi auch weiter; Kern = Schutz, Grund, Gebühren, Verfügbarkeit, Erfahrungen; Erfahrungen auch für Dinge an Land aus Berichten; Ankerplätze und Bojenfelder brauchen mindestens zwei unabhängige Quellen, eher 3–5, Alter spielt für die Geographie kaum eine Rolle; Navily-Test im Saronischen Golf mit 100 % als Tor, von Navily unbekannte Bestätigungen entscheidet ein Mensch, sonst keine menschliche Freigabe; Kosten je Liegeplatz dürfen hoch sein (Maßstab: Einkauf von Navily-Daten); Zeitachse unwichtig, aktueller Stand reicht; ganzes Mittelmeer, Griechenland Anfang November, Qualität vor Termin, sauberes System statt Weiterflicken; mindestens eine Bestätigung, im Zweifel nicht liefern (Sicherheit); freie, unstrukturierte Fakten; die App bekommt einzelne Fakten und generiert Texte selbst; keine Quellen in der Lieferung; Ortsbilder bleiben; Umkreis-Lieferung (Spec 18) bleibt; Reviere, Landesteile, Qualität bleiben, Autofreigabe entfällt.
 
 **Claude** (änderbar): was als Quelle und als unabhängig zählt (5.6); Marinas: offizielle Seite plus eine weitere Quelle; Unsicheres zählt nicht und erzeugt keine Review-Aufgabe; Schwelle N per Navily-Test aus 2–5 bestimmen; Mindestinhalt eines gelieferten Platzes; Lokalisierung unbekannter Namen über Routen-Korridor; Seitenbewertung je Seite statt Domain; Fakten englisch; Anlandestelle aus Berichten, OSM, Geometrie; Reichweiten 1,5 km zu Fuß, 15 km mit Bus/Taxi; `popularity` und Highlight-Stufen entfallen; Kernwerte-Liste (7.1); Neuanfang der Dev-Daten mit Übernahme des Archivs; Reihenfolge der Umstellung.
 
