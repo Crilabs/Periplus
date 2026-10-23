@@ -1,6 +1,8 @@
-import { sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
+import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
+import { geoObjects, places, subdivisions } from "@/lib/db/schema";
 import { researchCandidates } from "@/lib/domain/research/candidates";
 import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { RESEARCH_ASSESS_STAGE } from "./research/assess";
@@ -48,16 +50,40 @@ async function activeResearchRun(db: Db, input: { subdivisionKey: string } | { p
 }
 
 /**
+ * The gate switch (plan N3): while `research.gate.released` is false only the gate subdivision is researched. Refuses
+ * (`research_gate_closed`) another subdivision, and a place list with a place outside the gate subdivision.
+ */
+async function requireGateOpenFor(db: Db, input: { subdivisionKey: string } | { placeIds: string[] }, gate: AppConfig["research"]["gate"]): Promise<void> {
+  if (gate.released) return;
+  const closed = () => new RunScopeNotReady("research_gate_closed", `Research outside ${gate.subdivision} waits for the reference gate`);
+  if ("subdivisionKey" in input) {
+    if (input.subdivisionKey !== gate.subdivision) throw closed();
+    return;
+  }
+  if (input.placeIds.length === 0) return;
+  const rows = await db
+    .select({ key: subdivisions.key })
+    .from(places)
+    .leftJoin(geoObjects, eq(geoObjects.id, places.geoObjectId))
+    .leftJoin(subdivisions, eq(subdivisions.id, geoObjects.subdivisionId))
+    .where(inArray(places.id, input.placeIds));
+  if (rows.some((r) => r.key !== gate.subdivision)) throw closed();
+}
+
+/**
  * Starts the run "Recherche" for all candidates of a subdivision or for the given places: search, fetch, assess, extract, routes, discover and confirm.
  * Checked before the run exists (`RunScopeNotReady`): the subdivision exists, the input has candidates
- * (`no_research_candidates`) and no research run of the same scope is queued or running (`research_run_active`).
+ * (`no_research_candidates`) and no research run of the same scope is queued or running (`research_run_active`); while the
+ * reference gate is closed, only the gate subdivision (`research_gate_closed`, see `requireGateOpenFor`).
  */
 export async function startResearchRun(
   db: Db,
   boss: PgBoss,
   input: { subdivisionKey: string } | { placeIds: string[] },
   triggeredBy: string,
+  cfg: Pick<AppConfig, "research"> = getConfig(),
 ): Promise<{ id: string }> {
+  await requireGateOpenFor(db, input, cfg.research.gate);
   if ("subdivisionKey" in input) await requireSubdivision(db, input.subdivisionKey);
   if ((await researchCandidates(db, input)).length === 0) {
     throw new RunScopeNotReady("no_research_candidates", "No candidates for the research");

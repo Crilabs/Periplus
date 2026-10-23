@@ -35,6 +35,7 @@ export type RunScopeReason =
   | "geo_object_without_place"
   | "no_research_candidates"
   | "research_run_active"
+  | "research_gate_closed"
   | "measurement_label_taken"
   | "measurement_label_invalid"
   | "measurement_window_empty"

@@ -357,6 +357,7 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   geo_object_without_place: "Geo-Objekt hat keinen gültigen Ort",
   no_research_candidates: "Keine Kandidaten für die Recherche",
   research_run_active: "Für diesen Umfang wartet oder läuft schon eine Recherche – erst ihr Ende abwarten",
+  research_gate_closed: "Recherche erst nach bestandenem Navily-Test für weitere Landesteile",
   measurement_label_taken: "Bezeichnung schon vergeben",
   measurement_label_invalid: "Bezeichnung fehlt oder ist länger als 40 Zeichen",
   measurement_window_empty: "Der Zeitraum ist leer – „von“ muss vor „bis“ liegen",

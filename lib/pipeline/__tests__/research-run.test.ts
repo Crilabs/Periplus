@@ -29,6 +29,7 @@ import { RESEARCH_EXTRACT_STAGE } from "@/lib/pipeline/research/extract";
 import { RESEARCH_DISCOVER_STAGE, RESEARCH_ROUTES_STAGE } from "@/lib/pipeline/research/routes";
 import { RESEARCH_FETCH_STAGE, fetchResearchPage } from "@/lib/pipeline/research/fetch";
 import { RESEARCH_SEARCH_STAGE, searchCandidate } from "@/lib/pipeline/research/search";
+import { RUN_SCOPE_REASON_LABELS } from "@/app/(admin)/_components/labels";
 import { RESEARCH_STAGES, startResearchRun } from "@/lib/pipeline/research-run";
 import { enqueueStage } from "@/lib/pipeline/runs";
 import { RunScopeNotReady } from "@/lib/pipeline/tile-scope";
@@ -53,6 +54,10 @@ const noNetwork: Transport = async (req) => {
 };
 const base = loadConfig("config");
 const config: AppConfig = { ...base, budgets: { ...base.budgets, anthropic: { dailyEur: 1000 } } };
+
+/** The research config with the reference gate released: starts of any subdivision are allowed. */
+const openGate = { research: { ...config.research, gate: { ...config.research.gate, released: true, chosenThreshold: 2 } } };
+const closedGate = (subdivision: string) => ({ research: { ...config.research, gate: { ...config.research.gate, subdivision, released: false, chosenThreshold: null } } });
 
 function recordingBoss() {
   const inserted: Array<{ queue: string; data: Record<string, unknown> }> = [];
@@ -118,7 +123,7 @@ describe("research run", () => {
     withRollback(async (tx) => {
       const placeIds = await seedCandidates(tx, "GR-XR2");
       const { boss, inserted } = recordingBoss();
-      const { id: runId } = await startResearchRun(tx, boss, { subdivisionKey: "GR-XR2" }, "test");
+      const { id: runId } = await startResearchRun(tx, boss, { subdivisionKey: "GR-XR2" }, "test", openGate);
 
       const [run] = await tx.select().from(runs).where(eq(runs.id, runId));
       expect(run).toMatchObject({ kind: "stage", scopeType: "subdivision", scopeId: "GR-XR2", params: { subdivisionKey: "GR-XR2" } });
@@ -175,7 +180,7 @@ describe("research run", () => {
     withRollback(async (tx) => {
       const [placeId] = await seedCandidates(tx, "GR-XR3", ["Vathi"]);
       const { boss, inserted } = recordingBoss();
-      const { id } = await startResearchRun(tx, boss, { placeIds: [placeId!] }, "test");
+      const { id } = await startResearchRun(tx, boss, { placeIds: [placeId!] }, "test", openGate);
       const [run] = await tx.select().from(runs).where(eq(runs.id, id));
       expect(run).toMatchObject({ kind: "stage", scopeType: "system", scopeId: "places", params: { placeIds: [placeId] } });
       expect(inserted).toHaveLength(1);
@@ -185,9 +190,9 @@ describe("research run", () => {
     withRollback(async (tx) => {
       await insertTestSubdivision(tx, "GR-XR4", [21.0, 35.0, 21.5, 35.5], { country: "GR" });
       const { boss, inserted } = recordingBoss();
-      await expect(startResearchRun(tx, boss, { subdivisionKey: "GR-XR4" }, "test")).rejects.toMatchObject({ reason: "no_research_candidates" });
-      await expect(startResearchRun(tx, boss, { placeIds: [newId()] }, "test")).rejects.toMatchObject({ reason: "no_research_candidates" });
-      await expect(startResearchRun(tx, boss, { subdivisionKey: "XD-NOPE" }, "test")).rejects.toThrow("Unbekannter Landesteil XD-NOPE");
+      await expect(startResearchRun(tx, boss, { subdivisionKey: "GR-XR4" }, "test", openGate)).rejects.toMatchObject({ reason: "no_research_candidates" });
+      await expect(startResearchRun(tx, boss, { placeIds: [newId()] }, "test", openGate)).rejects.toMatchObject({ reason: "no_research_candidates" });
+      await expect(startResearchRun(tx, boss, { subdivisionKey: "XD-NOPE" }, "test", openGate)).rejects.toThrow("Unbekannter Landesteil XD-NOPE");
       expect(inserted).toEqual([]);
     }));
 
@@ -195,21 +200,52 @@ describe("research run", () => {
     withRollback(async (tx) => {
       const [a, b] = await seedCandidates(tx, "GR-XR5");
       const { boss, inserted } = recordingBoss();
-      const first = await startResearchRun(tx, boss, { subdivisionKey: "GR-XR5" }, "test");
+      const first = await startResearchRun(tx, boss, { subdivisionKey: "GR-XR5" }, "test", openGate);
       const count = inserted.length;
-      const refused = startResearchRun(tx, boss, { subdivisionKey: "GR-XR5" }, "test");
+      const refused = startResearchRun(tx, boss, { subdivisionKey: "GR-XR5" }, "test", openGate);
       await expect(refused).rejects.toBeInstanceOf(RunScopeNotReady);
       await expect(refused).rejects.toMatchObject({ reason: "research_run_active" });
       expect(inserted).toHaveLength(count);
       // a place list is another scope; a second list sharing a place is refused, a disjoint one is not
-      const list = await startResearchRun(tx, boss, { placeIds: [a!] }, "test");
-      await expect(startResearchRun(tx, boss, { placeIds: [a!, b!] }, "test")).rejects.toMatchObject({ reason: "research_run_active" });
-      await expect(startResearchRun(tx, boss, { placeIds: [b!] }, "test")).resolves.toBeDefined();
+      const list = await startResearchRun(tx, boss, { placeIds: [a!] }, "test", openGate);
+      await expect(startResearchRun(tx, boss, { placeIds: [a!, b!] }, "test", openGate)).rejects.toMatchObject({ reason: "research_run_active" });
+      await expect(startResearchRun(tx, boss, { placeIds: [b!] }, "test", openGate)).resolves.toBeDefined();
       // once the run ended a new one starts
       await tx.update(runs).set({ status: "finished", finishedAt: new Date() }).where(eq(runs.id, first.id));
-      await expect(startResearchRun(tx, boss, { subdivisionKey: "GR-XR5" }, "test")).resolves.toBeDefined();
+      await expect(startResearchRun(tx, boss, { subdivisionKey: "GR-XR5" }, "test", openGate)).resolves.toBeDefined();
       expect(list.id).not.toBe(first.id);
     }));
+
+  it("the gate switch: while closed only the gate subdivision (or its places) may be researched, once released any (N3)", () =>
+    withRollback(async (tx) => {
+      const [inGate] = await seedCandidates(tx, "GR-XG1", ["Vathi"]);
+      const [outside] = await seedCandidates(tx, "GR-XG2", ["Kalo"]);
+      const { boss, inserted } = recordingBoss();
+      const closed = closedGate("GR-XG1");
+      const refused = startResearchRun(tx, boss, { subdivisionKey: "GR-XG2" }, "test", closed);
+      await expect(refused).rejects.toBeInstanceOf(RunScopeNotReady);
+      await expect(refused).rejects.toMatchObject({ reason: "research_gate_closed" });
+      await expect(startResearchRun(tx, boss, { placeIds: [outside!] }, "test", closed)).rejects.toMatchObject({ reason: "research_gate_closed" });
+      await expect(startResearchRun(tx, boss, { placeIds: [inGate!, outside!] }, "test", closed)).rejects.toMatchObject({ reason: "research_gate_closed" });
+      expect(inserted).toEqual([]);
+      await expect(startResearchRun(tx, boss, { subdivisionKey: "GR-XG1" }, "test", closed)).resolves.toBeDefined();
+      await expect(startResearchRun(tx, boss, { placeIds: [inGate!] }, "test", closed)).resolves.toBeDefined();
+      await expect(startResearchRun(tx, boss, { subdivisionKey: "GR-XG2" }, "test", openGate)).resolves.toBeDefined();
+      await expect(startResearchRun(tx, boss, { placeIds: [outside!] }, "test", openGate)).resolves.toBeDefined();
+    }));
+
+  it("with the committed config the gate is closed: GR-J is refused, GR-I passes the switch (N3)", () =>
+    withRollback(async (tx) => {
+      const { boss } = recordingBoss();
+      expect(config.research.gate).toMatchObject({ subdivision: "GR-I", released: false });
+      await expect(startResearchRun(tx, boss, { subdivisionKey: "GR-J" }, "test")).rejects.toMatchObject({ reason: "research_gate_closed" });
+      const gateSub = startResearchRun(tx, boss, { subdivisionKey: "GR-I" }, "test");
+      await expect(gateSub).rejects.not.toMatchObject({ reason: "research_gate_closed" });
+    }));
+
+  it("the gate switch's German label exists", () => {
+    expect(RUN_SCOPE_REASON_LABELS.research_gate_closed).toBe("Recherche erst nach bestandenem Navily-Test für weitere Landesteile");
+  });
 
   it("runs all seven stages; a second run extracts only the pages discovery linked and changes nothing more (final review 4)", () =>
     withRollback(async (tx) => {
@@ -267,7 +303,7 @@ describe("research run", () => {
       /** One research run through its seven stages; returns its id and the units its extraction planned. */
       async function researchRun(searchTransport: Transport) {
         const { boss, inserted } = recordingBoss();
-        const { id: runId } = await startResearchRun(tx, boss, { subdivisionKey: "GR-XR6" }, "test");
+        const { id: runId } = await startResearchRun(tx, boss, { subdivisionKey: "GR-XR6" }, "test", openGate);
         const jobs = async (stage: string) => {
           inserted.length = 0;
           await enqueueStage(tx, boss, runId, stage);
