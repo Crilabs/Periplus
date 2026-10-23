@@ -24,6 +24,7 @@ import { buildChanges, eventSeverities } from "./changes";
 import { buildCoast } from "./coast";
 import { draftSubdivision, type SubdivisionDraft } from "./draft";
 import type { ImageFile } from "./map-image";
+import { manifestSubdivision } from "./read";
 import { contentDigest, contentTypeOf, serializeFile, sha256Hex } from "./serialize";
 import { currentSnapshot, openBuildSnapshot, type BuildSnapshot } from "./snapshot";
 import type { DeliveryPackage, SubdivisionScope } from "./types";
@@ -228,7 +229,11 @@ async function assemble(
     changes = buildChanges({ objects, removed, previousBodies, eventSeverity, cfg: cfg.severity });
   }
 
-  const envelope = { schemaVersion: SCHEMA_VERSION, subdivision: draft.scope.subdivision.publicId, dataVersion, generatedAt: input.generatedAt } as const;
+  const envelope = {
+    schemaVersion: SCHEMA_VERSION,
+    scope: { type: "subdivision", id: draft.scope.subdivision.publicId, dataVersion },
+    generatedAt: input.generatedAt,
+  } as const;
   const versioned = (type: VersionedObject["type"]) =>
     objects
       .filter((o) => o.type === type)
@@ -301,17 +306,21 @@ function buildManifest(
   const listed = CONTRACT_FILES.filter((f): f is Exclude<ContractFile, "manifest.json"> => f !== "manifest.json" && files[f as keyof typeof files] !== undefined);
   return {
     schemaVersion: SCHEMA_VERSION,
-    subdivision: {
-      id: scope.subdivision.publicId,
-      key: scope.subdivision.key,
-      name: scope.subdivision.name,
-      names: scope.subdivision.names,
-      // 2D positions with 5 decimals from ST_AsGeoJSON (loader)
-      polygon: scope.subdivision.polygon as Manifest["subdivision"]["polygon"],
+    scope: {
+      type: "subdivision",
+      subdivision: {
+        id: scope.subdivision.publicId,
+        key: scope.subdivision.key,
+        name: scope.subdivision.name,
+        names: scope.subdivision.names,
+        // 2D positions with 5 decimals from ST_AsGeoJSON (loader)
+        polygon: scope.subdivision.polygon as Extract<Manifest["scope"], { type: "subdivision" }>["subdivision"]["polygon"],
+      },
+      dataVersion: o.dataVersion,
+      previousDataVersion: o.previousDataVersion,
     },
+    coverage: [{ id: scope.subdivision.publicId, key: scope.subdivision.key, name: scope.subdivision.name, status: "delivered", dataVersion: o.dataVersion }],
     areas: scope.areas.map((a) => ({ id: a.publicId, key: a.key, names: a.names })),
-    dataVersion: o.dataVersion,
-    previousDataVersion: o.previousDataVersion,
     generatedAt: o.generatedAt,
     bbox: scope.subdivision.bbox,
     tiles: scope.tiles.map((t) => ({ id: t.id, lastRunAt: t.lastRunAt, profilesAsOf: t.profilesAsOf })),
@@ -402,7 +411,7 @@ export async function buildDelivery(db: Db, archive: Archive, subdivisionId: str
     if (status === "unchanged") {
       await wtx.insert(deliveries).values({ ...row, dataVersion: null, storagePrefix: null });
     } else {
-      const key = a.pkg.manifest.subdivision.key;
+      const key = manifestSubdivision(a.pkg.manifest)!.key;
       const storagePrefix = status === "valid" ? `deliveries/${key}/${a.dataVersion}/` : `deliveries/${key}/rejected/${deliveryId}/`;
       const fileHashes: Record<string, { sha256: string; bytes: number }> = {};
       const stored: Array<[ContractFile, unknown]> = [

@@ -160,7 +160,7 @@ describe("GET /api/v2/subdivisions", () => {
       const before = await getSubdivisions(key);
       expect(before.status).toBe(200);
       const listed = (await before.json()) as { schemaVersion: string; subdivisions: Array<{ id: string }> };
-      expect(listed.schemaVersion).toBe("2.3");
+      expect(listed.schemaVersion).toBe("3.0");
       expect(listed.subdivisions.find((s) => s.id === f.subdivisionPublicId)).toEqual({
         id: f.subdivisionPublicId,
         key: f.subdivisionKey,
@@ -284,7 +284,7 @@ describe("GET /api/v2/subdivisions/[subdivision]/package/[file]", () => {
           expect(sha256Hex(bytes), entry.name).toBe(entry.sha256);
           expect(bytes.byteLength).toBe(entry.bytes);
           expect(bytes).toEqual(await archive.get(prefix + entry.name));
-          expect(res.headers.get("periplus-schema-version")).toBe("2.3");
+          expect(res.headers.get("periplus-schema-version")).toBe("3.0");
           expect(res.headers.get("periplus-data-version")).toBe("1");
           expect(res.headers.get("content-type")).toBe(entry.name === "coast.geojson" ? "application/geo+json" : "application/json");
           expect(res.headers.get("etag")).toBe(`"${entry.sha256.slice(0, 32)}"`);
@@ -491,7 +491,7 @@ describe("GET /api/v2/schema/[version]/[file]", () => {
         }
       }
       for (const [version, file] of [
-        ["3.0", "spots.schema.json"],
+        ["4.0", "spots.schema.json"],
         ["1.0", "secrets.schema.json"],
         ["1.0", "spots.json"],
         ["1.0", "../spots.schema.json"],

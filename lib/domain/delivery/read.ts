@@ -143,6 +143,11 @@ export async function readManifest(archive: Archive, row: DeliveryRow): Promise<
   return readJsonFile<Manifest>(archive, row, "manifest.json");
 }
 
+/** The subdivision a manifest describes, with its data version; null for a radius package (contract 3.0). */
+export function manifestSubdivision(m: Manifest): { id: string; key: string; dataVersion: number } | null {
+  return m.scope.type === "subdivision" ? { id: m.scope.subdivision.id, key: m.scope.subdivision.key, dataVersion: m.scope.dataVersion } : null;
+}
+
 /** A JSON file of a valid delivery, parsed; throws when the delivery lacks it. */
 export async function readJsonFile<T>(archive: Archive, row: DeliveryRow, file: ContractFile): Promise<T> {
   const bytes = await readDeliveryFile(archive, row, file);

@@ -154,7 +154,7 @@ describe("buildDelivery", () => {
       expect(archive.keys()).toEqual(FILES.map((file) => `${prefixOf(f, 1)}${file}`).sort());
 
       const manifest = await readJson<Manifest>(archive, `${prefixOf(f, 1)}manifest.json`);
-      expect(manifest).toMatchObject({ dataVersion: 1, previousDataVersion: null, generatedAt: NOW.toISOString() });
+      expect(manifest).toMatchObject({ scope: { type: "subdivision", dataVersion: 1, previousDataVersion: null }, generatedAt: NOW.toISOString() });
       expect(manifest.objectCounts).toEqual({ spots: 3, highlights: 1, regions: 2, weatherPoints: 2, coastFeatures: manifest.objectCounts.coastFeatures, changes: 0 });
       // every other file with its hash and size, in contract order
       expect(manifest.files.map((x) => x.name)).toEqual(FILES.slice(1));
@@ -172,7 +172,7 @@ describe("buildDelivery", () => {
         id: result.deliveryId,
         status: "valid",
         dataVersion: 1,
-        schemaVersion: "2.3",
+        schemaVersion: "3.0",
         storagePrefix: prefixOf(f, 1),
         previousDeliveryId: null,
         triggeredBy: "test",
@@ -246,7 +246,7 @@ describe("buildDelivery", () => {
       expect(second.report.ok).toBe(true);
 
       const changes = await readJson<ChangesFile>(archive, `${prefixOf(f, 2)}changes.json`);
-      expect(changes).toMatchObject({ dataVersion: 2, previousDataVersion: 1, subdivision: f.subdivisionPublicId });
+      expect(changes).toMatchObject({ scope: { type: "subdivision", id: f.subdivisionPublicId, dataVersion: 2 }, previousDataVersion: 1 });
       expect(changes.changes).toEqual([
         {
           objectType: "spot",
@@ -259,7 +259,7 @@ describe("buildDelivery", () => {
         },
       ]);
       const manifest = await readJson<Manifest>(archive, `${prefixOf(f, 2)}manifest.json`);
-      expect(manifest).toMatchObject({ dataVersion: 2, previousDataVersion: 1 });
+      expect(manifest).toMatchObject({ scope: { type: "subdivision", dataVersion: 2, previousDataVersion: 1 } });
       expect(manifest.objectCounts.changes).toBe(1);
       expect(manifest.files.map((x) => x.name)).toContain("changes.json");
 
@@ -465,7 +465,7 @@ describe("buildDelivery", () => {
       const prefix = `deliveries/${f.subdivisionKey}/rejected/${rejected.deliveryId}/`;
       expect(archive.keys()).toEqual(FILES.map((file) => `${prefix}${file}`).sort());
       // the stored files carry the version the package would have had
-      expect(await readJson<Manifest>(archive, `${prefix}manifest.json`)).toMatchObject({ dataVersion: 1, previousDataVersion: null });
+      expect(await readJson<Manifest>(archive, `${prefix}manifest.json`)).toMatchObject({ scope: { type: "subdivision", dataVersion: 1, previousDataVersion: null } });
       const [row] = await deliveryRows(tx, f.subdivisionId);
       expect(row).toMatchObject({ id: rejected.deliveryId, status: "rejected", dataVersion: null, storagePrefix: prefix });
       expect(await objectRows(tx, f.subdivisionId)).toEqual([]);
@@ -567,7 +567,7 @@ describe("buildDelivery", () => {
       expect(second.report.checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["verbatim_text"]);
       const prefix = `deliveries/${f.subdivisionKey}/rejected/${second.deliveryId}/`;
       expect(archive.keys().filter((k) => k.startsWith(prefix))).toEqual([...FILES, "changes.json"].map((file) => `${prefix}${file}`).sort());
-      expect(await readJson<Manifest>(archive, `${prefix}manifest.json`)).toMatchObject({ dataVersion: 2, previousDataVersion: 1 });
+      expect(await readJson<Manifest>(archive, `${prefix}manifest.json`)).toMatchObject({ scope: { type: "subdivision", dataVersion: 2, previousDataVersion: 1 } });
       expect((await readJson<ChangesFile>(archive, `${prefix}changes.json`)).changes).toEqual([]);
       const rows = await deliveryRows(tx, f.subdivisionId);
       expect(rows.map((r) => r.status)).toEqual(["valid", "rejected"]);

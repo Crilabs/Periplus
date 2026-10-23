@@ -10,7 +10,7 @@ import {
   SCHEMA_VERSION,
   type Spot,
 } from "@/contract";
-import { changeEntrySchema, coastFeatureSchema, highlightSchema, manifestSchema, regionSchema, spotSchema } from "@/contract/v2";
+import { changeEntrySchema, coastFeatureSchema, coverageEntry, highlightSchema, manifestSchema, regionSchema, spotSchema } from "@/contract/v2";
 import { PUBLISHED_SCHEMAS, publishedJsonSchema } from "@/contract/schema/published";
 import { TEIL_B_EXAMPLE } from "./fixtures";
 import { SAMPLE_FILES } from "./samples";
@@ -23,7 +23,53 @@ const omit = <T extends object, K extends keyof T>(o: T, key: K): Omit<T, K> => 
   return copy;
 };
 
+const SUBDIVISION_ID = "sd_01J9X4M0A1B2C3D4E5F6G7H8J9";
+const SPOT_M = "sp_01J9ZD00000000000000000002";
+/** A closed ring of five positions with five decimals. */
+const CIRCLE_FIXTURE = {
+  type: "Polygon" as const,
+  coordinates: [
+    [
+      [23.4, 38.1],
+      [24.3, 37.5],
+      [23.4, 36.9],
+      [22.5, 37.5],
+      [23.4, 38.1],
+    ],
+  ],
+};
+
 describe("Periplus Data Contract v2", () => {
+  it("3.0 manifest takes a subdivision scope and a radius scope", () => {
+    const base = SAMPLE_FILES["manifest.json"];
+    expect(manifestSchema.safeParse(base).success).toBe(true);
+    const radius = {
+      ...base,
+      scope: {
+        type: "radius",
+        key: "0123456789abcdef",
+        homeMarina: { id: SPOT_M, name: "Marina" },
+        center: { lat: 37.5, lon: 23.4 },
+        days: 7,
+        radiusNm: 175,
+        circle: CIRCLE_FIXTURE,
+      },
+      objectCounts: { ...base.objectCounts, changes: 0 },
+    };
+    expect(manifestSchema.safeParse(radius).success).toBe(true);
+    expect(manifestSchema.safeParse({ ...base, subdivision: base.scope }).success).toBe(false); // strict: no 2.3 field
+  });
+  it("coverage: delivered needs a data version, missing has none", () => {
+    expect(coverageEntry.safeParse({ id: SUBDIVISION_ID, key: "XT", name: "X", status: "missing", dataVersion: 3 }).success).toBe(false);
+    expect(coverageEntry.safeParse({ id: SUBDIVISION_ID, key: "XT", name: "X", status: "delivered", dataVersion: null }).success).toBe(false);
+    expect(coverageEntry.safeParse({ id: SUBDIVISION_ID, key: "XT", name: "X", status: "delivered", dataVersion: 3 }).success).toBe(true);
+    expect(coverageEntry.safeParse({ id: SUBDIVISION_ID, key: "XT", name: "X", status: "missing", dataVersion: null }).success).toBe(true);
+  });
+  it("publishes 2.3 and 3.0", () => {
+    expect(publishedJsonSchema("2.3", "manifest.schema.json")).not.toBeNull();
+    expect(publishedJsonSchema("3.0", "manifest.schema.json")).toEqual(contractJsonSchema("3.0", "manifest.schema.json"));
+  });
+
   it("parses the Teil B example spot adapted to v2", () => {
     // Example of .idea/datendienst-spec.md Teil B; adaptations: regionId and highlight id as valid 26-char ULIDs
     expect(spotSchema.parse(TEIL_B_EXAMPLE).shelter.sectors.NW).toBe(0.95);
@@ -125,7 +171,7 @@ describe("Periplus Data Contract v2", () => {
   });
 
   it("names one JSON schema file per contract file", () => {
-    expect(SCHEMA_VERSION).toBe("2.3");
+    expect(SCHEMA_VERSION).toBe("3.0");
     expect(CONTRACT_FILES.map(jsonSchemaFileName)).toEqual([
       "manifest.schema.json",
       "spots.schema.json",
@@ -137,7 +183,7 @@ describe("Periplus Data Contract v2", () => {
     ]);
   });
 
-  it.each(["1.0", "2.0", "2.1", "2.2", "2.3"])("checked-in JSON schemas of %s equal the generated ones", (version) => {
+  it.each(["1.0", "2.0", "2.1", "2.2", "2.3", "3.0"])("checked-in JSON schemas of %s equal the generated ones", (version) => {
     for (const f of CONTRACT_FILES) {
       expect(readJson(`contract/schema/${version}/${jsonSchemaFileName(f)}`), f).toEqual(
         contractJsonSchema(version, jsonSchemaFileName(f)),
@@ -147,14 +193,16 @@ describe("Periplus Data Contract v2", () => {
 
   it("2.0 names the subdivision where 1.0 named the area", () => {
     const manifest = SAMPLE_FILES["manifest.json"];
-    expect(manifest.subdivision).toMatchObject({ key: "GR-I" });
-    expect(manifestSchema.safeParse({ ...manifest, area: manifest.subdivision }).success).toBe(false);
-    expect(manifestSchema.safeParse({ ...manifest, subdivision: { ...manifest.subdivision, id: manifest.areas[0]!.id } }).success).toBe(false);
+    const { scope } = manifest;
+    if (scope.type !== "subdivision") throw new Error("sample is a subdivision package");
+    expect(scope.subdivision).toMatchObject({ key: "GR-I" });
+    expect(manifestSchema.safeParse({ ...manifest, area: scope.subdivision }).success).toBe(false);
+    expect(manifestSchema.safeParse({ ...manifest, scope: { ...scope, subdivision: { ...scope.subdivision, id: manifest.areas[0]!.id } } }).success).toBe(false);
     expect(manifestSchema.safeParse({ ...manifest, schemaVersion: "1.0" }).success).toBe(false);
     const envelopeOnly = { ...SAMPLE_FILES["spots.json"], area: manifest.areas[0]!.id };
     expect(CONTRACT_SCHEMAS["spots.json"].safeParse(envelopeOnly).success).toBe(false);
     const regions = SAMPLE_FILES["regions.json"];
-    expect(CONTRACT_SCHEMAS["regions.json"].safeParse({ ...regions, subdivision: manifest.areas[0]!.id }).success).toBe(false);
+    expect(CONTRACT_SCHEMAS["regions.json"].safeParse({ ...regions, scope: { type: "subdivision", id: manifest.areas[0]!.id, dataVersion: 2 } }).success).toBe(false);
   });
 
   it("the 2.0 manifest lists the touching areas by ar_ id", () => {
@@ -302,10 +350,10 @@ describe("Periplus Data Contract v2", () => {
   });
 
   it("a generated JSON schema carries its id and title", () => {
-    expect(contractJsonSchema("2.3", "spots.schema.json")).toMatchObject({
+    expect(contractJsonSchema("3.0", "spots.schema.json")).toMatchObject({
       $schema: "https://json-schema.org/draft/2020-12/schema",
-      $id: "periplus:contract/2.3/spots.schema.json",
-      title: "Periplus Data Contract 2.3 – spots.json",
+      $id: "periplus:contract/3.0/spots.schema.json",
+      title: "Periplus Data Contract 3.0 – spots.json",
     });
   });
 
@@ -318,13 +366,13 @@ describe("Periplus Data Contract v2", () => {
       for (const file of files) expect(publishedJsonSchema(version, file), `${version}/${file}`).toEqual(readJson(`contract/schema/${version}/${file}`));
     }
     expect(Object.keys(PUBLISHED_SCHEMAS[SCHEMA_VERSION]!)).toEqual(CONTRACT_FILES.map(jsonSchemaFileName));
-    for (const [version, file] of [["3.0", "spots.schema.json"], ["2.0", "spots.json"], ["1.0", "spots.json"], ["1.0", "constructor"], ["__proto__", "spots.schema.json"]]) {
+    for (const [version, file] of [["4.0", "spots.schema.json"], ["2.0", "spots.json"], ["1.0", "spots.json"], ["1.0", "constructor"], ["__proto__", "spots.schema.json"]]) {
       expect(publishedJsonSchema(version!, file!), `${version}/${file}`).toBeNull();
     }
   });
 
   it("an unknown version or file yields null", () => {
-    expect(contractJsonSchema("3.0", "spots.schema.json")).toBeNull();
+    expect(contractJsonSchema("4.0", "spots.schema.json")).toBeNull();
     expect(contractJsonSchema("2.0", "spots.json")).toBeNull();
     expect(contractJsonSchema("1.0", "../package.json")).toBeNull();
     expect(contractJsonSchema("__proto__", "spots.schema.json")).toBeNull();

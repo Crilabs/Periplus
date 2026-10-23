@@ -19,6 +19,7 @@ import {
   SPOT_A,
   SPOT_M,
   SPOT_X,
+  SUBDIVISION_ID,
   validPackage,
 } from "@/test/fixtures/delivery/package";
 import { insertTestVersion } from "@/test/text";
@@ -28,6 +29,13 @@ import { buildWarnings, CHECK_NAMES, failedChecksSummary, spotsInMilitaryAreas, 
 const config = loadConfig("config");
 const cfg = config.delivery;
 const imagesCfg = config.images;
+const OTHER_SD = "sd_01J9ZD00000000000000000009";
+
+/** The manifest's subdivision scope (the fixture is one). */
+function subdivisionScope(p: DeliveryPackage): Extract<DeliveryPackage["manifest"]["scope"], { type: "subdivision" }> {
+  if (p.manifest.scope.type !== "subdivision") throw new Error("fixture is a subdivision package");
+  return p.manifest.scope;
+}
 
 function validate(pkg: DeliveryPackage, deps: Partial<ValidationDeps> = {}): Promise<ValidationReport> {
   return validatePackage(pkg, {
@@ -132,7 +140,7 @@ describe("validatePackage", () => {
     ],
     // the spot's values draw on a navily document the mapper kept out of `sources` (ruling M6-D-R2)
     ["foreign_content", () => {}, { forbiddenSources: [{ file: "spots.json", objectId: SPOT_A, urls: ["https://www.navily.com/port/vathi"] }] }],
-    ["data_version", (p) => void (p.files["spots.json"].dataVersion = 3)],
+    ["data_version", (p) => void (p.files["spots.json"].scope = { type: "subdivision", id: SUBDIVISION_ID, dataVersion: 3 })],
     ["changes_complete", (p) => void p.files["changes.json"]!.changes.pop()],
   ];
 
@@ -240,10 +248,23 @@ describe("validatePackage", () => {
 
   it("data_version: the previous version plus 1, not just greater (validation review M-4)", async () => {
     const skip = breakPackage(validPackage(), (p) => {
-      p.manifest.dataVersion = 3;
-      for (const f of [p.files["spots.json"], p.files["highlights.json"], p.files["regions.json"], p.files["weather-points.json"], p.files["changes.json"]!]) f.dataVersion = 3;
+      p.manifest.scope = { ...subdivisionScope(p), dataVersion: 3 };
+      for (const f of [p.files["spots.json"], p.files["highlights.json"], p.files["regions.json"], p.files["weather-points.json"], p.files["changes.json"]!]) {
+        f.scope = { type: "subdivision", id: SUBDIVISION_ID, dataVersion: 3 };
+      }
     });
-    expect(findings(await validate(skip), "data_version")).toEqual([expect.objectContaining({ path: "/dataVersion", message: "Datenversion 3 statt 2 (die vorige plus 1)" })]);
+    expect(findings(await validate(skip), "data_version")).toEqual([expect.objectContaining({ path: "/scope/dataVersion", message: "Datenversion 3 statt 2 (die vorige plus 1)" })]);
+  });
+
+  it("data_version: a file head naming another subdivision than the manifest's scope is a finding", async () => {
+    const report = await validate(
+      breakPackage(validPackage(), (p) => void (p.files["spots.json"].scope = { type: "subdivision", id: OTHER_SD, dataVersion: 2 })),
+    );
+    expect(findings(report, "data_version")).toEqual([
+      expect.objectContaining({ file: "spots.json", path: "/scope/id", message: `Landesteil ${OTHER_SD} statt ${SUBDIVISION_ID} wie im Manifest` }),
+    ]);
+    const type = await validate(breakPackage(validPackage(), (p) => void (p.files["spots.json"].scope = { type: "radius", key: "0123456789abcdef" })));
+    expect(findings(type, "data_version")).toEqual([expect.objectContaining({ file: "spots.json", path: "/scope/type" })]);
   });
 
   it("references: a removed object needs not be in the package, any other change entry does", async () => {
@@ -275,9 +296,11 @@ describe("validatePackage", () => {
   it("the first delivery: data version ≥ 1 without a predecessor and no changes.json", async () => {
     const first = breakPackage(validPackage(), (p) => {
       delete p.files["changes.json"];
-      p.manifest.dataVersion = 1;
-      p.manifest.previousDataVersion = null;
-      for (const f of [p.files["spots.json"], p.files["highlights.json"], p.files["regions.json"], p.files["weather-points.json"]]) f.dataVersion = 1;
+      p.manifest.scope = { ...subdivisionScope(p), dataVersion: 1, previousDataVersion: null };
+      p.manifest.coverage = p.manifest.coverage.map((c) => ({ ...c, dataVersion: 1 }));
+      for (const f of [p.files["spots.json"], p.files["highlights.json"], p.files["regions.json"], p.files["weather-points.json"]]) {
+        f.scope = { type: "subdivision", id: SUBDIVISION_ID, dataVersion: 1 };
+      }
     });
     expect(failed(await validate(first, { previous: null }))).toEqual([]);
     expect(failed(await validate(validPackage(), { previous: null }))).toEqual(["data_version", "changes_complete"]);
