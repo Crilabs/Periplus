@@ -1,5 +1,6 @@
 import type { Manifest } from "@/contract";
 import type { Archive } from "@/lib/adapters/s3";
+import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { radiusPackageByKey, readRadiusFile, recordRadiusRequest, type RadiusPackageRow } from "./build";
 
@@ -12,6 +13,12 @@ export type RadiusRef = { marina: string; days: number };
 /** The trip length of a query value: the number, `NaN` for a missing or non-numeric one (`getRadiusPackage` rejects it as `invalid_days`). */
 export function parseDays(value: string | null): number {
   return value === null || value.trim() === "" ? Number.NaN : Number(value);
+}
+
+/** The 400 message for `invalid_days`, with the range from `config/delivery.json` `radius`. */
+export function invalidDaysMessage(): string {
+  const { minDays, maxDays } = getConfig().delivery.radius;
+  return `days must be an integer from ${minDays} to ${maxDays}.`;
 }
 
 /** File name → API URL, pinned to the package `key`. */

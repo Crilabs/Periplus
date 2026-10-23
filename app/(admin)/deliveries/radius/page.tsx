@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { z } from "zod";
+import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db/client";
 import { deliveryArchive } from "@/lib/domain/delivery/archive";
 import { listHomeMarinas } from "@/lib/domain/delivery/radius/home-marinas";
@@ -44,6 +45,20 @@ const OBJECT_LABELS: Array<[string, string]> = [
   ["coastFeatures", "Küstenobjekte"],
 ];
 
+/** The preview, or the error of a failing build or read (shown on the page, not as a bare 500). */
+function previewOrError(
+  db: ReturnType<typeof getDb>,
+  archive: ReturnType<typeof deliveryArchive>,
+  marina: string,
+  days: number,
+): Promise<Awaited<ReturnType<typeof previewRadius>> | { error: string }> {
+  return previewRadius(db, archive, marina, days).catch((e: unknown) => {
+    const error = e instanceof Error ? e.message : String(e);
+    log.error({ marina, days, reason: error }, "radius preview failed");
+    return { error };
+  });
+}
+
 export default async function Page({ searchParams }: PageProps<"/deliveries/radius">) {
   await requireAdmin();
   const sp = await searchParams;
@@ -52,6 +67,7 @@ export default async function Page({ searchParams }: PageProps<"/deliveries/radi
   const page = pageParam.parse(sp.page);
   const db = getDb();
   const archive = deliveryArchive();
+  const { minDays, maxDays, nmPerDay, returnFactor } = getConfig().delivery.radius;
 
   // an unreadable package must not take the cached list and the preview down: show the error, offer no marinas
   const homeMarinas = listHomeMarinas(db, archive).then(
@@ -65,9 +81,10 @@ export default async function Page({ searchParams }: PageProps<"/deliveries/radi
   const [{ list: marinas, error: marinasError }, packages, preview] = await Promise.all([
     homeMarinas,
     listRadiusPackages(db, page),
-    marina && days !== undefined ? previewRadius(db, archive, marina, days) : Promise.resolve(null),
+    marina && days !== undefined ? previewOrError(db, archive, marina, days) : Promise.resolve(null),
   ]);
-  const result = preview && typeof preview !== "string" ? preview : null;
+  const result = preview && typeof preview !== "string" && !("error" in preview) ? preview : null;
+  const previewError = preview && typeof preview !== "string" && "error" in preview ? preview.error : null;
   const features = result ? await radiusMapFeatures(db, result.manifest) : null;
   const missing = result?.manifest.coverage.filter((c) => c.status === "missing") ?? [];
 
@@ -76,7 +93,7 @@ export default async function Page({ searchParams }: PageProps<"/deliveries/radi
       <PageHeader
         title="Umkreis-Paket"
         back={{ href: "/deliveries", label: "Lieferungen" }}
-        description="Prüfung vor dem ersten Abnehmer: das Paket, das ein Abnehmer für eine Heimatmarina und eine Törndauer bekäme. Radius = 50 sm × Tage ÷ 2. Die Vorschau baut das Paket, falls es noch nicht zwischengespeichert ist."
+        description={`Prüfung vor dem ersten Abnehmer: das Paket, das ein Abnehmer für eine Heimatmarina und eine Törndauer bekäme. Radius = ${fmt.int(nmPerDay)} sm × Tage × ${String(returnFactor).replace(".", ",")}. Die Vorschau baut das Paket, falls es noch nicht zwischengespeichert ist.`}
       />
 
       <Panel title="Vorschau" className="mb-6">
@@ -93,8 +110,8 @@ export default async function Page({ searchParams }: PageProps<"/deliveries/radi
               ))}
             </select>
           </Field>
-          <Field label="Tage" hint="1 bis 28">
-            <input name="days" type="number" min={1} max={28} step={1} defaultValue={days ?? 7} required className={cx(inputClass, "w-24")} />
+          <Field label="Tage" hint={`${minDays} bis ${maxDays}`}>
+            <input name="days" type="number" min={minDays} max={maxDays} step={1} defaultValue={days ?? Math.min(7, maxDays)} required className={cx(inputClass, "w-24")} />
           </Field>
           <Button variant="primary">Vorschau</Button>
         </form>
@@ -107,7 +124,14 @@ export default async function Page({ searchParams }: PageProps<"/deliveries/radi
 
         {typeof preview === "string" && (
           <Notice tone="danger" className="mt-4">
-            {preview === "invalid_days" ? "Tage müssen eine ganze Zahl von 1 bis 28 sein." : "Marina nicht gefunden: sie ist in keinem gültigen Paket als Marina geliefert."}
+            {preview === "invalid_days"
+              ? `Tage müssen eine ganze Zahl von ${minDays} bis ${maxDays} sein.`
+              : "Marina nicht gefunden: sie ist in keinem gültigen Paket als Marina geliefert."}
+          </Notice>
+        )}
+        {previewError && (
+          <Notice tone="danger" className="mt-4">
+            Die Vorschau ist fehlgeschlagen: {previewError}
           </Notice>
         )}
       </Panel>

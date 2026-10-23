@@ -38,6 +38,7 @@ export const ROUTE_POLICY: Record<string, RouteRule> = {
   "/deliveries/[id]": { kind: "admin" },
   "/deliveries/[id]/files/[file]": { kind: "admin" },
   "/deliveries/[id]/files/images/[file]": { kind: "admin" },
+  "/deliveries/radius": { kind: "admin" },
   "/images/file": { kind: "admin" },
   "/api/v1/ping": { kind: "api", scope: "delivery:read" },
   "/api/v1/schema/[version]/[file]": { kind: "api", scope: "delivery:read" },

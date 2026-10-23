@@ -38,6 +38,9 @@ export const coverageEntry = z
     path: ["dataVersion"],
   });
 
+/** The longest trip a radius package can be built for (spec 18): `config/delivery.json` `radius.maxDays` stays within it. */
+export const RADIUS_MAX_DAYS = 28;
+
 /** What the package is: one subdivision, or the radius around a home marina (spec 18). */
 export const manifestScope = z.discriminatedUnion("type", [
   z.strictObject({
@@ -51,7 +54,7 @@ export const manifestScope = z.discriminatedUnion("type", [
     key: radiusKey,
     homeMarina: z.strictObject({ id: publicId("sp"), name: z.string().min(1) }),
     center: latLon,
-    days: z.number().int().min(1).max(28),
+    days: z.number().int().min(1).max(RADIUS_MAX_DAYS),
     radiusNm: z.number().positive(),
     circle: geoPolygon,
   }),

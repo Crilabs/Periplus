@@ -734,6 +734,9 @@ describe("delivery configuration", () => {
     expect(withDelivery((d) => (d.licenses[0]!.files = ["land.json" as never]))).toThrow(/delivery\.json.*files/);
     expect(withDelivery((d) => (d.licenses[0]!.fields = ["land.json#/name"]))).toThrow(/delivery\.json.*fields/);
     expect(withDelivery((d) => (d.build.lockTimeoutMs = 0))).toThrow(/delivery\.json.*lockTimeoutMs/);
+    // the contract caps a radius package's days at 28 (manifest scope `days`)
+    expect(withDelivery((d) => (d.radius.maxDays = 29))).toThrow(/delivery\.json.*maxDays.*28/);
+    expect(withDelivery((d) => (d.radius.maxDays = 14))).not.toThrow();
     expect(withDelivery((d) => Object.assign(d, { bogus: 1 }))).toThrow(/delivery\.json/);
   });
 });

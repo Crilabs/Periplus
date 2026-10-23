@@ -99,7 +99,10 @@ describe("GET /api/v3/radius/package", () => {
       for (const days of ["0", "7.5", "29", "abc", ""]) {
         const res = await getPackage(`?marina=${marina}&days=${days}`, key);
         expect(res.status, days).toBe(400);
-        expect(((await res.json()) as { error: { code: string } }).error.code).toBe("invalid_days");
+        expect(((await res.json()) as { error: { code: string; message: string } }).error).toMatchObject({
+          code: "invalid_days",
+          message: "days must be an integer from 1 to 28.",
+        });
       }
       expect((await getPackage(`?marina=${marina}`, key)).status).toBe(400);
     }));
