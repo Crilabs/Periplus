@@ -86,7 +86,7 @@ function isSource(e: Evidence, placeKind: PlaceKind, cfg: ConfirmationConfig): b
  * a shared run is symmetric) or come from the same page content (content hash). One entry per group, its domains
  * sorted and joined by ` + `; sorted.
  */
-function sourceGroups(positives: Evidence[], maxSharedWords: number): string[] {
+function sourceGroups(positives: Evidence[], copyMinSharedWords: number): string[] {
   const parent = new Map<string, string>();
   const find = (d: string): string => {
     const p = parent.get(d) ?? d;
@@ -100,7 +100,7 @@ function sourceGroups(positives: Evidence[], maxSharedWords: number): string[] {
     for (const b of positives.slice(i + 1)) {
       if (a.domain === b.domain || find(a.domain) === find(b.domain)) continue;
       const samePage = a.pageHash !== null && a.pageHash === b.pageHash;
-      if (samePage || copiesSource(a.quote, b.quote, maxSharedWords)) parent.set(find(a.domain), find(b.domain));
+      if (samePage || copiesSource(a.quote, b.quote, copyMinSharedWords)) parent.set(find(a.domain), find(b.domain));
     }
   }
   const groups = new Map<string, string[]>();

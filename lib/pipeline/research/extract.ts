@@ -8,7 +8,7 @@ import type { Db } from "@/lib/db/client";
 import { aiBatches, aiBatchItems, documentVersions, geoNames, pageAssessments, places, researchUnits } from "@/lib/db/schema";
 import type { ObservedAtBasis } from "@/lib/db/schema/sources";
 import { activeAssessor } from "@/lib/domain/research/assessment";
-import { berthNameMatches, unitsForPlaces } from "@/lib/domain/research/assign";
+import { berthNameMatches, planUnits } from "@/lib/domain/research/assign";
 import { researchCandidates } from "@/lib/domain/research/candidates";
 import { berthAttributes, noDrops, storeExtraction } from "@/lib/domain/research/extraction";
 import { candidateNames } from "@/lib/domain/research/queries";
@@ -62,26 +62,34 @@ export function activeExtractor(config: AppConfig = getConfig()): { model: strin
  * goes into a job, `unitsPerBatch` per job. A `failed` unit that failed fewer than `research.extraction.maxAttempts`
  * times and a unit `skipped` for missing Markdown or assessment are set back to `pending` first; a `done` unit, one
  * failed that often and one skipped as generated text are not planned again. A searched place gets a unit only for a
- * page that names it (`unitsForPlaces`, which reads the Markdown from `archive`; without one only the assessment
- * counts); a pending unit that no longer qualifies is `skipped` as not named.
+ * page that names it (`planUnits`, which reads the Markdown from `archive`); a pending or done unit of a judged page
+ * that no longer qualifies is `skipped` as not named. A unit whose Markdown is missing is skipped by extraction, retryably.
  */
 export async function planResearchExtract(
   db: Db,
   run: { id: string; params: Record<string, unknown> },
   config: AppConfig = getConfig(),
-  archive?: Pick<Archive, "get">,
+  archive: Pick<Archive, "get">,
 ): Promise<JobData[]> {
   const placeIds = await researchCandidates(db, researchScope(run.params));
-  const plans = await unitsForPlaces(db, placeIds, config, archive);
+  const { units: plans, judgedVersions } = await planUnits(db, placeIds, config, archive);
   const pairs = plans.flatMap((p) => p.placeIds.map((placeId) => ({ documentVersionId: p.documentVersionId, placeId })));
   const { model, promptVersion } = activeExtractor(config);
-  // with an archive to read the text from: a pending unit whose page does not name the berth (any more) is never sent
+  // a pending or done unit of a judged page whose berth the page does not name (any more) is swept: skipped, no evidence
   const kept = new Set(pairs.map((p) => `${p.documentVersionId}:${p.placeId}`));
-  const stale = !archive ? [] : await db
+  const stale = judgedVersions.length === 0 ? [] : await db
     .select({ id: researchUnits.id, documentVersionId: researchUnits.documentVersionId, placeId: researchUnits.placeId })
     .from(researchUnits)
-    .where(and(inArray(researchUnits.placeId, placeIds), eq(researchUnits.model, model), eq(researchUnits.promptVersion, promptVersion), eq(researchUnits.status, "pending")));
-  for (const u of stale) if (!kept.has(`${u.documentVersionId}:${u.placeId}`)) await skipUnit(db, u.id, NOT_NAMED_REASON);
+    .where(
+      and(
+        inArray(researchUnits.placeId, placeIds),
+        inArray(researchUnits.documentVersionId, judgedVersions),
+        eq(researchUnits.model, model),
+        eq(researchUnits.promptVersion, promptVersion),
+        inArray(researchUnits.status, ["pending", "done"]),
+      ),
+    );
+  for (const u of stale) if (!kept.has(`${u.documentVersionId}:${u.placeId}`)) await sweepUnit(db, u.id);
   if (pairs.length === 0) return [];
   await db
     .insert(researchUnits)
@@ -184,6 +192,15 @@ async function berthsOf(db: Db, placeIds: string[]): Promise<Map<string, Berth>>
     out.set(placeId, { name, names: names.length > 0 ? names : [name], kind, island });
   }
   return out;
+}
+
+/** Marks a pending or done unit whose page does not name its berth `skipped`; evidence readers only count `done` units. */
+async function sweepUnit(db: Db, unitId: string): Promise<void> {
+  await db
+    .update(researchUnits)
+    .set({ status: "skipped", reason: NOT_NAMED_REASON })
+    .where(and(eq(researchUnits.id, unitId), inArray(researchUnits.status, ["pending", "done"])));
+  getLog().warn({ unitId, reason: NOT_NAMED_REASON }, "research unit skipped");
 }
 
 /** Marks a pending unit `skipped` with the reason: it is never sent. */
@@ -341,7 +358,7 @@ export const extractBerthBatchEntry: BatchHandlerEntry = {
     }
     const [unit] = await db.select().from(researchUnits).where(eq(researchUnits.id, item.subjectId)).for("update");
     if (!unit) throw new Error(`research unit ${item.subjectId} does not exist`);
-    if (unit.status === "done") return;
+    if (unit.status === "done" || unit.status === "skipped") return; // a swept unit is not resurrected
     const parsed = extractBerthTask.output.safeParse(item.output);
     if (!parsed.success) return failUnit(db, unit.id, `answer does not fit the output schema: ${parsed.error.message}`);
     const input = item.input as ExtractItemInput;

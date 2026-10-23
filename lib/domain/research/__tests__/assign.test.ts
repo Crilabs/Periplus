@@ -57,6 +57,8 @@ async function archiveOf(tx: Db, versionId: string, text: string) {
   return { get: async (key: string) => (key === v!.mdKey ? new TextEncoder().encode(text) : null) };
 }
 
+const noArchive = { get: async () => null };
+
 describe("unitsForPlaces", () => {
   // 0.05 deg longitude at 35.2 N is about 4.5 km; 0.45 deg about 41 km
   it("adds nearby candidates named on the page, not distant ones", () =>
@@ -66,7 +68,7 @@ describe("unitsForPlaces", () => {
       await insertPlace(tx, { name: "Bravo", lon: 21.45, lat: 35.2, status: "candidate" });
       await insertPlace(tx, { name: "Delta", lon: 21.02, lat: 35.2, status: "candidate" });
       const versionId = await assessedPage(tx, a.placeId, a.objectId, ["Alpha", "Bravo"]);
-      const units = await unitsForPlaces(tx, [a.placeId], getConfig());
+      const units = await unitsForPlaces(tx, [a.placeId], getConfig(), noArchive);
       expect(units).toEqual([{ documentVersionId: versionId, placeIds: [a.placeId, b.placeId].sort() }]);
     }));
 
@@ -77,7 +79,13 @@ describe("unitsForPlaces", () => {
       const v = await assessedPage(tx, y.placeId, y.objectId, ["Zulu"], false, true, [text]);
       const archive = await archiveOf(tx, v, text);
       expect(await unitsForPlaces(tx, [y.placeId], getConfig(), archive)).toEqual([]);
-      expect(await unitsForPlaces(tx, [y.placeId], getConfig())).toEqual([]);
+    }));
+
+  it("keeps a searched place when the page's Markdown is missing (undecidable; extraction skips it as missing Markdown)", () =>
+    withRollback(async (tx) => {
+      const y = await insertPlace(tx, { name: "Ypsilon", lon: 21.0, status: "candidate" });
+      const v = await assessedPage(tx, y.placeId, y.objectId, ["Zulu"]);
+      expect(await unitsForPlaces(tx, [y.placeId], getConfig(), noArchive)).toEqual([{ documentVersionId: v, placeIds: [y.placeId] }]);
     }));
 
   it("gives a searched place a unit when only the text names it (whole words, accent-insensitive)", () =>
@@ -96,7 +104,7 @@ describe("unitsForPlaces", () => {
       const a = await insertPlace(tx, { name: "Alpha", status: "candidate" });
       await assessedPage(tx, a.placeId, a.objectId, ["Alpha"], true);
       await assessedPage(tx, a.placeId, a.objectId, ["Alpha"], false, false);
-      expect(await unitsForPlaces(tx, [a.placeId], getConfig())).toEqual([]);
+      expect(await unitsForPlaces(tx, [a.placeId], getConfig(), noArchive)).toEqual([]);
     }));
 
   it("ignores rejected neighbours", () =>
@@ -104,7 +112,7 @@ describe("unitsForPlaces", () => {
       const a = await insertPlace(tx, { name: "Alpha", lon: 21.0, status: "candidate" });
       await insertPlace(tx, { name: "Bravo", lon: 21.055, status: "rejected" });
       await assessedPage(tx, a.placeId, a.objectId, ["Alpha", "Bravo"]);
-      const units = await unitsForPlaces(tx, [a.placeId], getConfig());
+      const units = await unitsForPlaces(tx, [a.placeId], getConfig(), noArchive);
       expect(units[0]!.placeIds).toEqual([a.placeId]);
     }));
 
@@ -119,8 +127,8 @@ describe("unitsForPlaces", () => {
         { documentVersionId: versionId, seq: 0, name: "Ormos Echo", quote: "q", observedAt: "2025-06-15", placeId: far.placeId, match: "corridor", model, promptVersion },
         { documentVersionId: versionId, seq: 1, name: "Foxtrot", quote: "q", observedAt: "2025-06-15", placeId: stale.placeId, match: "name", model, promptVersion: promptVersion + 1 },
       ]);
-      expect(await unitsForPlaces(tx, [far.placeId], getConfig())).toEqual([{ documentVersionId: versionId, placeIds: [far.placeId] }]);
-      expect(await unitsForPlaces(tx, [stale.placeId], getConfig())).toEqual([]);
-      expect((await unitsForPlaces(tx, [a.placeId, far.placeId], getConfig()))[0]!.placeIds).toEqual([a.placeId, far.placeId].sort());
+      expect(await unitsForPlaces(tx, [far.placeId], getConfig(), noArchive)).toEqual([{ documentVersionId: versionId, placeIds: [far.placeId] }]);
+      expect(await unitsForPlaces(tx, [stale.placeId], getConfig(), noArchive)).toEqual([]);
+      expect((await unitsForPlaces(tx, [a.placeId, far.placeId], getConfig(), noArchive))[0]!.placeIds).toEqual([a.placeId, far.placeId].sort());
     }));
 });

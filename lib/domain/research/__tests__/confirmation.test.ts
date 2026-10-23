@@ -253,6 +253,14 @@ describe("decideBerth: copies count as one source (spec 5.6, final review 3)", (
     expect(one).toMatchObject({ status: "candidate", independentSources: ["a.example + b.example"] });
   });
 
+  it("exactly 12 shared words is a copy (12 or more), 11 is not", () => {
+    const twelve = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima";
+    const eleven = twelve.split(" ").slice(0, 11).join(" ");
+    const pair = (run: string) => decide("anchorage", [ev({ domain: "a.example", quote: `We read: ${run} and left.` }), ev({ domain: "b.example", quote: `They wrote ${run}, then sailed on.` })]);
+    expect(pair(twelve)).toMatchObject({ status: "candidate", independentSources: ["a.example + b.example"] });
+    expect(pair(eleven)).toMatchObject({ status: "confirmed", independentSources: ["a.example", "b.example"] });
+  });
+
   it("a copy pair plus a third own source confirms with two sources", () => {
     const v = decide("anchorage", [ev({ domain: "a.example", quote: copied }), ev({ domain: "b.example", quote: copied }), ev({ domain: "c.example" })]);
     expect(v).toMatchObject({ status: "confirmed", independentSources: ["a.example + b.example", "c.example"] });

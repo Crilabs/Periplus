@@ -17,7 +17,7 @@ import type { Archive } from "@/lib/adapters/s3";
  * becomes part of the page's research unit. Names are compared normalized and without generic affixes, never fuzzy.
  * A page is also a page of every place one of its route stops points to (`research_route_stops`, plan N2 task 5).
  * A page found by searching a place is only a unit of that place when it names the berth (N3 task 0): the page's
- * assessment names a berth matching the place, or (with an `archive` to read from) the page's Markdown contains one of
+ * assessment names a berth matching the place, or the page's Markdown (read from the `archive`) contains one of
  * the place's names as whole words. A quote that names no berth must never count as evidence for the searched one.
  */
 
@@ -66,13 +66,24 @@ export function berthNameMatches(
  * matches an assessed berth of the page; a searched place only when the page names it (see above). A current version with a route stop (active route model and prompt) pointing
  * to one of the places counts as a hit of that place. Sorted by version, places by id.
  */
-export async function unitsForPlaces(
+export async function unitsForPlaces(db: Db, placeIds: string[], cfg: AppConfig, archive: Pick<Archive, "get">): Promise<ResearchUnitPlan[]> {
+  return (await planUnits(db, placeIds, cfg, archive)).units;
+}
+
+/**
+ * `unitsForPlaces` plus the versions it judged (current, actively assessed, not generated, a page of one of the
+ * places): a unit of such a version for a place not in `units` no longer qualifies. A version whose Markdown is
+ * missing from the archive cannot be judged by its text; its searched places stay in (extraction skips them as
+ * missing Markdown, retryably).
+ */
+export async function planUnits(
   db: Db,
   placeIds: string[],
-  cfg: AppConfig = getConfig(),
-  archive?: Pick<Archive, "get">,
-): Promise<ResearchUnitPlan[]> {
-  if (placeIds.length === 0) return [];
+  cfg: AppConfig,
+  archive: Pick<Archive, "get">,
+): Promise<{ units: ResearchUnitPlan[]; judgedVersions: string[] }> {
+  const none = { units: [], judgedVersions: [] };
+  if (placeIds.length === 0) return none;
   const { model, promptVersion } = activeAssessor(cfg);
 
   // version -> searched places (hits of these places on the version's document)
@@ -98,7 +109,7 @@ export async function unitsForPlaces(
     if (!h.versionId) continue;
     (searched.get(h.versionId) ?? searched.set(h.versionId, new Set()).get(h.versionId)!).add(h.placeId);
   }
-  if (searched.size === 0) return [];
+  if (searched.size === 0) return none;
   const stopPairs = new Set(stopRows.map((s) => `${s.versionId}:${s.placeId}`));
 
   const assessments = await db
@@ -131,22 +142,22 @@ export async function unitsForPlaces(
     }
   }
   const named = new Set<string>(); // `version:place` found in the Markdown
-  if (archive && needText.size > 0) {
+  if (needText.size > 0) {
     const keys = await db
       .select({ id: documentVersions.id, mdKey: documentVersions.mdKey })
       .from(documentVersions)
       .where(inArray(documentVersions.id, [...needText.keys()]));
     for (const k of keys) {
       const body = await archive.get(k.mdKey);
-      if (body === null) continue;
-      const md = new TextDecoder().decode(body);
+      const md = body === null ? null : new TextDecoder().decode(body);
       for (const placeId of needText.get(k.id)!) {
-        if (namesOccur(md, own.get(placeId)?.names ?? [])) named.add(`${k.id}:${placeId}`);
+        // no Markdown: undecidable here, the unit stays and extraction skips it as missing Markdown
+        if (md === null || namesOccur(md, own.get(placeId)?.names ?? [])) named.add(`${k.id}:${placeId}`);
       }
     }
   }
 
-  return assessments
+  const units = assessments
     .map((a): ResearchUnitPlan => {
       const ids = new Set<string>();
       for (const placeId of searched.get(a.versionId)!) {
@@ -161,6 +172,7 @@ export async function unitsForPlaces(
     })
     .filter((u) => u.placeIds.length > 0)
     .sort((x, y) => (x.documentVersionId < y.documentVersionId ? -1 : x.documentVersionId > y.documentVersionId ? 1 : 0));
+  return { units, judgedVersions: assessments.map((a) => a.versionId) };
 }
 
 export type NamedPlace = { placeId: string; names: string[]; islands: string[] };

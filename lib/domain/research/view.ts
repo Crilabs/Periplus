@@ -147,6 +147,7 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
     eq(researchUnits.id, berthSignals.unitId),
     eq(researchUnits.model, extractor.model),
     eq(researchUnits.promptVersion, extractor.promptVersion),
+    eq(researchUnits.status, "done"),
   );
   const signalRows =
     versionIds.length === 0
@@ -182,7 +183,7 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
           .from(berthFacts)
           .innerJoin(
             researchUnits,
-            and(eq(researchUnits.id, berthFacts.unitId), eq(researchUnits.model, extractor.model), eq(researchUnits.promptVersion, extractor.promptVersion)),
+            and(eq(researchUnits.id, berthFacts.unitId), eq(researchUnits.model, extractor.model), eq(researchUnits.promptVersion, extractor.promptVersion), eq(researchUnits.status, "done")),
           )
           .where(and(eq(berthFacts.placeId, placeId), inArray(berthFacts.documentVersionId, versionIds)))
           .orderBy(asc(berthFacts.observedAt), asc(berthFacts.id));

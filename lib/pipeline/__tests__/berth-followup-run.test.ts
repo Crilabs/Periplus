@@ -145,7 +145,7 @@ describe("research.confirm handler", () => {
       // before extraction there is no evidence
       expect((await researchView(tx, place.placeId)).verdict.status).toBe("candidate");
 
-      const jobs = await planResearchExtract(tx, { id: runId, params: { placeIds: [place.placeId] } }, config);
+      const jobs = await planResearchExtract(tx, { id: runId, params: { placeIds: [place.placeId] } }, config, memoryArchive());
       const model = new MockModel({
         "extract-berth": (): ExtractBerthOutput => ({
           core: [], facts: [], landing: [],
