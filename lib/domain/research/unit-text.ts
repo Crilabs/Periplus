@@ -69,7 +69,8 @@ function wordAt(words: Word[], pos: number): number {
  * The text a unit (a berth candidate) is extracted from. Up to `maxUnitWords` words the whole markdown
  * (`offset: null`). Longer texts yield only the windows of `windowWords` words before and after every occurrence of
  * one of `names` (found case- and accent-insensitively, whole words, through inline markup), overlapping or touching
- * windows merged, in document order, joined by `\n\n[…]\n\n`. Without any occurrence: the first `maxUnitWords` words.
+ * windows merged, in document order, joined by `\n\n[…]\n\n`, at most `maxUnitWords` words in all (later windows are
+ * cut off). Without any occurrence: the first `maxUnitWords` words.
  *
  * `offset[i]` is the index in `markdown` of character `i` of `text`; the characters of the separators are `-1`
  * (they belong to no place of the document; a quote can never span them, `locateQuote` rejects an ellipsis).
@@ -94,10 +95,19 @@ export function unitText(
     else merged.push([...span]);
   }
   if (merged.length === 0) merged.push([0, cfg.maxUnitWords - 1]);
+  // At most `maxUnitWords` words in all: windows in document order, the last one cut to what is left.
+  let left = cfg.maxUnitWords;
+  const kept: Array<[number, number]> = [];
+  for (const [lo, hi] of merged) {
+    if (left <= 0) break;
+    const end = Math.min(hi, lo + left - 1);
+    kept.push([lo, end]);
+    left -= end - lo + 1;
+  }
 
   let text = "";
   const offset: number[] = [];
-  merged.forEach(([lo, hi], n) => {
+  kept.forEach(([lo, hi], n) => {
     if (n > 0) {
       text += GAP;
       for (let k = 0; k < GAP.length; k++) offset.push(-1);

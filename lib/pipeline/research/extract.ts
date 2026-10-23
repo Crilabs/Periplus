@@ -1,16 +1,16 @@
-import { and, asc, eq, inArray, isNull, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, notExists, notInArray, sql } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
 import { resolveTaskModel } from "@/lib/ai/cost";
 import { extractBerthTask, type ExtractBerthInput } from "@/lib/ai/tasks/extract-berth";
 import type { ModelTask } from "@/lib/ai/types";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { documentVersions, geoNames, pageAssessments, places, researchUnits } from "@/lib/db/schema";
+import { aiBatches, aiBatchItems, documentVersions, geoNames, pageAssessments, places, researchUnits } from "@/lib/db/schema";
 import type { ObservedAtBasis } from "@/lib/db/schema/sources";
 import { activeAssessor } from "@/lib/domain/research/assessment";
 import { unitsForPlaces } from "@/lib/domain/research/assign";
 import { researchCandidates } from "@/lib/domain/research/candidates";
-import { berthAttributes, storeExtraction } from "@/lib/domain/research/extraction";
+import { berthAttributes, noDrops, storeExtraction } from "@/lib/domain/research/extraction";
 import { candidateNames } from "@/lib/domain/research/queries";
 import { expandOffsetRuns, offsetRuns, unitText, type OffsetRun } from "@/lib/domain/research/unit-text";
 import type { QueueName } from "@/lib/jobs/queues";
@@ -71,7 +71,7 @@ export async function planResearchExtract(
   const { model, promptVersion } = activeExtractor(config);
   await db
     .insert(researchUnits)
-    .values(pairs.map((p) => ({ ...p, model, promptVersion, status: "pending" as const, dropped: { quote: 0, value: 0, verbatim: 0 }, runId: run.id })))
+    .values(pairs.map((p) => ({ ...p, model, promptVersion, status: "pending" as const, dropped: noDrops(), runId: run.id })))
     .onConflictDoNothing();
   const wanted = new Set(pairs.map((p) => `${p.documentVersionId}:${p.placeId}`));
   const rows = await db
@@ -95,7 +95,10 @@ export async function planResearchExtract(
   return jobs;
 }
 
-/** Of `ids`, the units still pending for the active model and prompt version, in the given order. */
+/**
+ * Of `ids`, the units still pending for the active model and prompt version, in the given order, without those that
+ * are already in an unfinished batch of the task (another run's job may have sent them; they must not go out twice).
+ */
 async function openUnits(db: Db, ids: string[], config: AppConfig): Promise<string[]> {
   if (ids.length === 0) return [];
   const { model, promptVersion } = activeExtractor(config);
@@ -103,7 +106,26 @@ async function openUnits(db: Db, ids: string[], config: AppConfig): Promise<stri
     .select({ id: researchUnits.id })
     .from(researchUnits)
     .where(
-      and(inArray(researchUnits.id, ids), eq(researchUnits.status, "pending"), eq(researchUnits.model, model), eq(researchUnits.promptVersion, promptVersion)),
+      and(
+        inArray(researchUnits.id, ids),
+        eq(researchUnits.status, "pending"),
+        eq(researchUnits.model, model),
+        eq(researchUnits.promptVersion, promptVersion),
+        notExists(
+          db
+            .select({ one: aiBatchItems.id })
+            .from(aiBatchItems)
+            .innerJoin(aiBatches, eq(aiBatches.id, aiBatchItems.batchId))
+            .where(
+              and(
+                eq(aiBatchItems.subjectType, SUBJECT),
+                eq(aiBatchItems.subjectId, sql`${researchUnits.id}::text`),
+                eq(aiBatches.task, extractBerthTask.name),
+                notInArray(aiBatches.status, ["distributed", "failed"]),
+              ),
+            ),
+        ),
+      ),
     );
   const open = new Set(rows.map((r) => r.id));
   return ids.filter((id) => open.has(id));
@@ -135,10 +157,20 @@ async function berthsOf(db: Db, placeIds: string[]): Promise<Map<string, Berth>>
   return out;
 }
 
+/** Marks a pending unit `skipped` with the reason: it is never sent. */
+async function skipUnit(db: Db, unitId: string, reason: string): Promise<void> {
+  await db
+    .update(researchUnits)
+    .set({ status: "skipped", reason })
+    .where(and(eq(researchUnits.id, unitId), eq(researchUnits.status, "pending")));
+  getLog().warn({ unitId, reason }, "research unit skipped");
+}
+
 /**
  * The batch items of the units, in the given order: the unit text of the page around the berth's names, the other
  * berths of the page (the other units of the version), the page's kind and observation date from its active
- * assessment. A unit whose page has no active, not generated assessment or whose Markdown is missing is skipped.
+ * assessment. A unit whose page has no active, not generated assessment or whose Markdown is missing is marked
+ * `skipped` with the reason and not sent.
  */
 export async function extractInputs(db: Db, archive: Pick<Archive, "get">, ids: string[], config: AppConfig): Promise<BatchItemInput[]> {
   if (ids.length === 0) return [];
@@ -184,7 +216,7 @@ export async function extractInputs(db: Db, archive: Pick<Archive, "get">, ids: 
     const unit = byId.get(id);
     if (!unit) continue;
     if (!unit.pageKind || unit.generated || !unit.observedAt || !unit.observedAtBasis) {
-      getLog().warn({ unitId: id, versionId: unit.versionId }, "page without an active, not generated assessment, unit not extracted");
+      await skipUnit(db, id, unit.generated ? "page is generated text" : "page has no active assessment");
       continue;
     }
     if (!markdown.has(unit.mdKey)) {
@@ -193,7 +225,7 @@ export async function extractInputs(db: Db, archive: Pick<Archive, "get">, ids: 
     }
     const md = markdown.get(unit.mdKey);
     if (md === null || md === undefined) {
-      getLog().warn({ unitId: id, mdKey: unit.mdKey }, "archived markdown missing, unit not extracted");
+      await skipUnit(db, id, `archived markdown missing (${unit.mdKey})`);
       continue;
     }
     const berth = berths.get(unit.placeId)!;
@@ -281,6 +313,8 @@ export const extractBerthBatchEntry: BatchHandlerEntry = {
         id: unit.id,
         placeId: unit.placeId,
         documentVersionId: unit.documentVersionId,
+        names: input.berth.names,
+        otherBerths: input.otherBerths,
         text: input.text,
         offset: expandOffsetRuns(input.offsetRuns),
         observedAt: input.observedAt,

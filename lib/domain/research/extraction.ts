@@ -16,7 +16,10 @@ import { copiesSource } from "./verbatim";
  * Stores what the model extracted from one research unit (plan N2). Every element must carry a quote that
  * `locateQuote` finds in the unit text (the text the model saw), else it is dropped (`dropped.quote`); a core value
  * must fit its v4 attribute (`dropped.value`); a statement or landing description must not copy
- * `research.extraction.maxSharedWords` consecutive words of the unit text (`dropped.verbatim`). Quote positions are
+ * `research.extraction.maxSharedWords` consecutive words of the unit text (`dropped.verbatim`); a berth-scoped element
+ * (core value, berth fact, signal, landing hint) whose quote names another berth of the page and none of this berth's
+ * names belongs to that berth, not this one (`dropped.attribution`). A confidence outside [0, 1] is invalid
+ * (`dropped.value`). Quote positions are
  * stored as indexes in the page's Markdown (through the unit's offset map). Each element is dated by its own
  * `observed_at` when that is a plausible date (a month becomes day 15), else by the page's observation date.
  */
@@ -39,6 +42,10 @@ export type ExtractionUnit = {
   id: string;
   placeId: string;
   documentVersionId: string;
+  /** The names of this berth (`ExtractBerthInput.berth.names`). */
+  names: string[];
+  /** The other berths the page treats (`ExtractBerthInput.otherBerths`). */
+  otherBerths: string[];
   /** The unit text the model saw. */
   text: string;
   /** Unit text index → Markdown index (`unitText`); `null`: the unit text is the whole Markdown. */
@@ -47,6 +54,9 @@ export type ExtractionUnit = {
   observedAtBasis: ObservedAtBasis;
   fetchedAt: Date;
 };
+
+/** No drops yet. */
+export const noDrops = (): DroppedCounts => ({ quote: 0, value: 0, verbatim: 0, attribution: 0 });
 
 export type ExtractionStats = { facts: number; signals: number; landing: number; dropped: DroppedCounts };
 
@@ -60,7 +70,6 @@ function parseValue(value: unknown): unknown {
   }
 }
 
-const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
 const trimmed = (s: string | null, max: number): string | null => {
   const t = s?.trim() ?? "";
   return t === "" ? null : t.slice(0, max);
@@ -71,7 +80,7 @@ const trimmed = (s: string | null, max: number): string | null => {
  * transaction. Returns what was stored and what was dropped.
  */
 export async function storeExtraction(db: Db, unit: ExtractionUnit, out: ExtractBerthOutput, cfg: AppConfig): Promise<ExtractionStats> {
-  const dropped: DroppedCounts = { quote: 0, value: 0, verbatim: 0 };
+  const dropped = noDrops();
   const { factSchema, maxSharedWords } = cfg.research.extraction;
   const earliest = cfg.extraction.earliestDate;
 
@@ -89,6 +98,9 @@ export async function storeExtraction(db: Db, unit: ExtractionUnit, out: Extract
     const own = plausibleDate(value, unit.fetchedAt, earliest, true);
     return own ? { observedAt: own, observedAtBasis: "explicit" } : { observedAt: unit.observedAt, observedAtBasis: unit.observedAtBasis };
   };
+  /** Whether the quote names another berth of the page but none of this berth's names. */
+  const otherBerthOnly = (quote: string): boolean =>
+    unit.otherBerths.some((n) => nameInQuote(n, quote)) && !unit.names.some((n) => nameInQuote(n, quote));
   const owner = { unitId: unit.id, placeId: unit.placeId, documentVersionId: unit.documentVersionId };
 
   const factRows: Array<typeof berthFacts.$inferInsert> = [];
@@ -97,6 +109,10 @@ export async function storeExtraction(db: Db, unit: ExtractionUnit, out: Extract
     const at = locate(c.quote);
     if (!at) {
       dropped.quote++;
+      continue;
+    }
+    if (otherBerthOnly(c.quote)) {
+      dropped.attribution++;
       continue;
     }
     const checked = validateTextFact("place", c.attribute, parseValue(c.value), factSchema);
@@ -131,6 +147,11 @@ export async function storeExtraction(db: Db, unit: ExtractionUnit, out: Extract
       dropped.quote++;
       continue;
     }
+    const landside = f.about === "landside";
+    if (!landside && otherBerthOnly(f.quote)) {
+      dropped.attribution++;
+      continue;
+    }
     const statement = trimmed(f.statement, MAX_TEXT_CHARS);
     if (!statement) {
       dropped.value++;
@@ -140,13 +161,14 @@ export async function storeExtraction(db: Db, unit: ExtractionUnit, out: Extract
       dropped.verbatim++;
       continue;
     }
-    const landside = f.about === "landside";
+    // A proper name of a thing on land counts only when the quote contains it.
+    const subjectName = landside ? trimmed(f.subject_name, MAX_SUBJECT_CHARS) : null;
     factRows.push({
       ...owner,
       ...at,
       ...dated(f.observed_at),
       statement,
-      subjectName: landside ? trimmed(f.subject_name, MAX_SUBJECT_CHARS) : null,
+      subjectName: subjectName && nameInQuote(subjectName, f.quote) ? subjectName : null,
       subjectCategory: landside ? trimmed(f.subject_category, MAX_SUBJECT_CHARS) : null,
       tone: f.tone,
       safety: f.safety,
@@ -160,11 +182,15 @@ export async function storeExtraction(db: Db, unit: ExtractionUnit, out: Extract
       dropped.quote++;
       continue;
     }
-    if (!Number.isFinite(s.confidence)) {
+    if (otherBerthOnly(s.quote)) {
+      dropped.attribution++;
+      continue;
+    }
+    if (!Number.isFinite(s.confidence) || s.confidence < 0 || s.confidence > 1) {
       dropped.value++;
       continue;
     }
-    signalRows.push({ ...owner, ...at, ...dated(s.observed_at), kind: s.kind, firstHand: s.first_hand, confidence: clamp01(s.confidence) });
+    signalRows.push({ ...owner, ...at, ...dated(s.observed_at), kind: s.kind, firstHand: s.first_hand, confidence: s.confidence });
   }
 
   const landingRows: Array<typeof landingHints.$inferInsert> = [];
@@ -172,6 +198,10 @@ export async function storeExtraction(db: Db, unit: ExtractionUnit, out: Extract
     const at = locate(l.quote);
     if (!at) {
       dropped.quote++;
+      continue;
+    }
+    if (otherBerthOnly(l.quote)) {
+      dropped.attribution++;
       continue;
     }
     const description = trimmed(l.description, MAX_TEXT_CHARS);

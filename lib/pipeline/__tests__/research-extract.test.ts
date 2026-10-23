@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { describe, expect, it } from "vitest";
 import { MockModel } from "@/lib/ai/mock";
@@ -156,5 +156,54 @@ describe("research.extract", () => {
       const runId = await insertTestRun(tx);
       expect(await planResearchExtract(tx, { id: runId, params: { placeIds: [vathi] } }, config)).toEqual([]);
       expect(await tx.select().from(researchUnits).where(eq(researchUnits.documentVersionId, versionId))).toHaveLength(0);
+    }));
+
+  it("never stores a signal at a berth whose quote names only the other berth (Review Focus)", () =>
+    withRollback(async (tx) => {
+      const { vathi, agios, archive } = await seed(tx);
+      const runId = await runWithStage(tx, [vathi]);
+      const [job] = await planResearchExtract(tx, { id: runId, params: { placeIds: [vathi] } }, config);
+      // for Vathi the model wrongly reports the buoy at Agios Georgios
+      const model = new MockModel({
+        "extract-berth": (input) => {
+          const { berth } = input as ExtractBerthInput;
+          const quote = "Next day we sailed across to Agios Georgios and picked up one of the buoys";
+          const signals = berth.name === "Vathi" ? [{ kind: "moored_buoy", first_hand: true, confidence: 0.9, quote, observed_at: null }] : [];
+          return { core: [], facts: [], signals, landing: [] };
+        },
+      });
+      await extractUnits(tx, { model, boss, config, archive }, { runId, stage: RESEARCH_EXTRACT_STAGE, key: job!.key as string, unitIds: job!.unitIds as string[] });
+      const [batch] = await tx.select().from(aiBatches).where(eq(aiBatches.runId, runId));
+      expect(await pollBatch(tx, { model, boss, config, handlers: BATCH_HANDLERS }, batch!.id)).toBe("distributed");
+      expect(await tx.select().from(berthSignals).where(inArray(berthSignals.placeId, [vathi, agios]))).toHaveLength(0);
+      const [unit] = await tx.select().from(researchUnits).where(and(inArray(researchUnits.id, job!.unitIds as string[]), eq(researchUnits.placeId, vathi)));
+      expect(unit).toMatchObject({ status: "done", dropped: { quote: 0, value: 0, verbatim: 0, attribution: 1 } });
+    }));
+
+  it("marks a unit whose markdown is missing skipped with the reason", () =>
+    withRollback(async (tx) => {
+      const { vathi } = await seed(tx);
+      const runId = await runWithStage(tx, [vathi]);
+      const [job] = await planResearchExtract(tx, { id: runId, params: { placeIds: [vathi] } }, config);
+      const model = new MockModel({ "extract-berth": reply });
+      const result = await extractUnits(tx, { model, boss, config, archive: memoryArchive() }, { runId, stage: RESEARCH_EXTRACT_STAGE, key: job!.key as string, unitIds: job!.unitIds as string[] });
+      expect(result.submitted).toBe(0);
+      const units = await tx.select().from(researchUnits).where(inArray(researchUnits.id, job!.unitIds as string[]));
+      expect(units.every((u) => u.status === "skipped" && u.reason?.startsWith("archived markdown missing"))).toBe(true);
+      expect(await planResearchExtract(tx, { id: runId, params: { placeIds: [vathi] } }, config)).toEqual([]);
+    }));
+
+  it("does not send a unit a second time while another run's batch holds it", () =>
+    withRollback(async (tx) => {
+      const { vathi, archive } = await seed(tx);
+      const model = new MockModel({ "extract-berth": reply });
+      const first = await runWithStage(tx, [vathi]);
+      const [job] = await planResearchExtract(tx, { id: first, params: { placeIds: [vathi] } }, config);
+      expect((await extractUnits(tx, { model, boss, config, archive }, { runId: first, stage: RESEARCH_EXTRACT_STAGE, key: job!.key as string, unitIds: job!.unitIds as string[] })).submitted).toBe(2);
+
+      const second = await runWithStage(tx, [vathi]);
+      const [again] = await planResearchExtract(tx, { id: second, params: { placeIds: [vathi] } }, config);
+      expect(again!.unitIds).toEqual(job!.unitIds);
+      expect((await extractUnits(tx, { model, boss, config, archive }, { runId: second, stage: RESEARCH_EXTRACT_STAGE, key: again!.key as string, unitIds: again!.unitIds as string[] })).submitted).toBe(0);
     }));
 });

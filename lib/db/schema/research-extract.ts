@@ -27,8 +27,8 @@ export type ResearchUnitStatus = (typeof researchUnitStatusEnum.enumValues)[numb
 export type BerthSignalKind = (typeof berthSignalKindEnum.enumValues)[number];
 export type Tone = (typeof toneEnum.enumValues)[number];
 
-/** How many model deliveries were dropped, by reason. */
-export type DroppedCounts = { quote: number; value: number; verbatim: number };
+/** How many model deliveries were dropped, by reason (`attribution`: the quote names another berth of the page, not this one). */
+export type DroppedCounts = { quote: number; value: number; verbatim: number; attribution: number };
 
 export const researchUnits = pgTable(
   "research_units",

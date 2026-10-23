@@ -42,7 +42,7 @@ export type ExtractBerthOutput = {
     tone: "positive" | "negative" | "neutral";
     safety: boolean;
   }>;
-  /** `confidence` 0–1 (clamped on receipt). */
+  /** `confidence` 0–1 (a signal outside is dropped on receipt). */
   signals: Array<{ kind: BerthSignalKind; first_hand: boolean; confidence: number; quote: string; observed_at: string | null }>;
   landing: Array<{ description: string; quote: string }>;
 };

@@ -23,7 +23,7 @@ async function seed(tx: Db) {
   const { versionId } = await insertTestVersion(tx, ["Text."]);
   const [unit] = await tx
     .insert(researchUnits)
-    .values({ documentVersionId: versionId, placeId, model: "m", promptVersion: 1, status: "done", dropped: { quote: 0, value: 0, verbatim: 0 }, runId })
+    .values({ documentVersionId: versionId, placeId, model: "m", promptVersion: 1, status: "done", dropped: { quote: 0, value: 0, verbatim: 0, attribution: 0 }, runId })
     .returning({ id: researchUnits.id });
   return { placeId, runId, versionId, unitId: unit!.id };
 }
@@ -33,7 +33,7 @@ describe("research extract schema", () => {
     withRollback(async (tx) => {
       const s = await seed(tx);
       const again = () =>
-        tx.insert(researchUnits).values({ documentVersionId: s.versionId, placeId: s.placeId, model: "m", promptVersion: 1, status: "pending", dropped: { quote: 0, value: 0, verbatim: 0 } });
+        tx.insert(researchUnits).values({ documentVersionId: s.versionId, placeId: s.placeId, model: "m", promptVersion: 1, status: "pending", dropped: { quote: 0, value: 0, verbatim: 0, attribution: 0 } });
       expect(await rejectionMessage(tx, again)).toContain("research_units_version_place_model_prompt_unique");
     }));
 

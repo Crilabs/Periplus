@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { unitText } from "@/lib/domain/research/unit-text";
 
-const cfg = { maxUnitWords: 1000, windowWords: 600 };
+const cfg = { maxUnitWords: 3000, windowWords: 600 };
 const filler = (n: number, tag: string) => Array.from({ length: n }, (_, i) => `${tag}${i}`).join(" ");
 
 describe("unitText", () => {
@@ -65,6 +65,16 @@ describe("unitText", () => {
     expect(text).not.toContain("Vathia");
   });
 
+  it("caps a text with many occurrences at maxUnitWords words, windows in document order", () => {
+    // a name every 1,200 words in an 80,000-word text
+    const md = Array.from({ length: 80000 }, (_, i) => (i % 1200 === 0 ? "Vathi" : `w${i}`)).join(" ");
+    const { text, offset } = unitText(md, ["Vathi"], { maxUnitWords: 12000, windowWords: 600 });
+    expect(text.split(/\s+/).length).toBeLessThanOrEqual(12000);
+    expect(text.startsWith("Vathi w1 w2")).toBe(true);
+    expect(offset).toHaveLength(text.length);
+    expect(md.slice(offset![0]!, offset![0]! + 5)).toBe("Vathi");
+  });
+
   it("uses the first words when no name occurs", () => {
     const md = filler(3000, "w");
     const { text, offset } = unitText(md, ["Vathi"], { maxUnitWords: 1000, windowWords: 600 });
@@ -76,6 +86,6 @@ describe("unitText", () => {
 
   it("uses the first words for empty names too", () => {
     const md = filler(3000, "w");
-    expect(unitText(md, [""], cfg).text.split(/\s+/)).toHaveLength(1000);
+    expect(unitText(md, [""], { maxUnitWords: 1000, windowWords: 600 }).text.split(/\s+/)).toHaveLength(1000);
   });
 });
