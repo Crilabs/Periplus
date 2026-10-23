@@ -79,6 +79,15 @@ export async function consumePackage(input: {
   const res = await get(resolveLink(base, packagePath)!);
   if (res.status !== 200) throw new Error(await failure(res, packagePath));
   const { links, ...manifest } = (await res.json()) as PackageBody;
+  // a contract 3.0 manifest names its scope; checked before any file is fetched
+  const scope = (manifest as { scope?: { type?: unknown } }).scope;
+  if (scope == null || typeof scope !== "object") {
+    throw new Error(
+      `${packagePath} answered a manifest that has no scope (schemaVersion ${String(manifest.schemaVersion)}); a contract 3.0 subdivision package needs one`,
+    );
+  }
+  if (manifest.scope.type !== "subdivision") throw new Error(`${packagePath} answered a ${String(scope.type)} package, not a subdivision package`);
+  const dataVersion = manifest.scope.dataVersion;
 
   const ajv = addFormats(new Ajv2020({ allErrors: true, strict: true }));
   const expected = new Map(manifest.files.map((f) => [f.name, f.sha256]));
@@ -123,9 +132,8 @@ export async function consumePackage(input: {
   for (const name of expected.keys()) {
     if (!files.some((f) => f.name === name)) files.push({ name, sha256Ok: false, schemaErrors: ["no link in the package"] });
   }
-  if (manifest.scope.type !== "subdivision") throw new Error(`${packagePath} answered a ${manifest.scope.type} package, not a subdivision package`);
   return {
-    dataVersion: manifest.scope.dataVersion,
+    dataVersion,
     files,
     ok: files.length > 0 && files.every((f) => f.sha256Ok && f.schemaErrors.length === 0),
   };

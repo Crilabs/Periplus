@@ -216,6 +216,26 @@ describe("buildDelivery", () => {
     });
   });
 
+  it("a stored package of an older contract version with identical content gets a new package of this version", async () => {
+    await withRollback(async (tx) => {
+      const archive = memoryArchive();
+      const f = await seedDeliverySubdivision(tx);
+      const first = await buildDelivery(tx, archive, f.subdivisionId, { now: NOW, inCallerTransaction: true });
+      expect(first).toMatchObject({ status: "valid", dataVersion: 1 });
+      // the package as a 2.3 deployment stored it: same content, older contract version
+      await tx.execute(sql`alter table deliveries disable trigger deliveries_append_only`);
+      await tx.update(deliveries).set({ schemaVersion: "2.3" }).where(eq(deliveries.id, first.deliveryId));
+      await tx.execute(sql`alter table deliveries enable trigger deliveries_append_only`);
+      const second = await buildDelivery(tx, archive, f.subdivisionId, { now: new Date(NOW.getTime() + 86_400_000), inCallerTransaction: true });
+      expect(second).toMatchObject({ status: "valid", dataVersion: 2 });
+      const rows = await deliveryRows(tx, f.subdivisionId);
+      expect(rows.map((r) => [r.status, r.schemaVersion])).toEqual([
+        ["valid", "2.3"],
+        ["valid", "3.0"],
+      ]);
+    });
+  });
+
   it("shuffled load order gives identical files", async () => {
     const build = (transform?: (s: SubdivisionScope) => SubdivisionScope) =>
       withRollback(async (tx) => {

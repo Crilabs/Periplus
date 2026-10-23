@@ -209,6 +209,8 @@ async function assemble(
 
   const unchanged =
     previous !== null &&
+    // a new contract version always makes a new package, even for unchanged content
+    previous.delivery.schemaVersion === SCHEMA_VERSION &&
     removed.length === 0 &&
     objects.every((o) => o.status === "same") &&
     contentDigest(coast.features) === previous.coastDigest &&

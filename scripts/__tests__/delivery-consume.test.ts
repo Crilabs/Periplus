@@ -150,6 +150,26 @@ describe("consumePackage", () => {
       expect(result.ok).toBe(false);
     }));
 
+  it("a manifest without scope or with a radius scope is refused before any file is fetched", () =>
+    withRollback(async (tx) => {
+      const { f, key } = await builtSubdivision(tx);
+      for (const [rewrite, message] of [
+        [(m: Record<string, unknown>) => void delete m.scope, /has no scope \(schemaVersion 3\.0\); a contract 3\.0 subdivision package needs one/],
+        [(m: Record<string, unknown>) => void (m.scope = { type: "radius", key: "0123456789abcdef" }), /answered a radius package, not a subdivision package/],
+      ] as const) {
+        const paths: string[] = [];
+        const tamper = (path: string, bytes: Uint8Array) => {
+          paths.push(path);
+          if (!path.endsWith("/package")) return bytes;
+          const body = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+          rewrite(body);
+          return new TextEncoder().encode(JSON.stringify(body));
+        };
+        await expect(consumePackage({ baseUrl: BASE, key, subdivision: f.subdivisionKey, fetch: routeFetch(tamper) })).rejects.toThrow(message);
+        expect(paths.every((p) => p.endsWith("/package"))).toBe(true);
+      }
+    }));
+
   it("a wrong key or a subdivision without package throws with the API's error", () =>
     withRollback(async (tx) => {
       const { f, key } = await builtSubdivision(tx);
