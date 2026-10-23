@@ -10,6 +10,7 @@ import { discoveryAreaHandler, discoveryPlaceHandler, discoveryProposeHandler, d
 import { embedChunksHandler } from "./handlers/embed";
 import { fetchSourceHandler, fetchUrlHandler } from "./handlers/fetch";
 import { gazetteerHandler } from "./handlers/gazetteer";
+import { researchAssessHandler, researchFetchHandler, researchSearchHandler } from "./handlers/research";
 import { imagesPlaceHandler } from "./handlers/images";
 import { placeWebsiteFreezeHandler, placeWebsiteHandler } from "./handlers/place-website";
 import { gazetteerCoarseHandler, subdivisionsBuildHandler } from "./handlers/subdivisions";
@@ -60,6 +61,9 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "discovery.place": discoveryPlaceHandler,
   "fetch.source": fetchSourceHandler,
   "fetch.url": fetchUrlHandler,
+  "research.search": researchSearchHandler,
+  "research.fetch": researchFetchHandler,
+  "research.assess": researchAssessHandler,
   "embed.chunks": embedChunksHandler,
   "sources.wikivoyage": wikivoyageHandler,
   "compare.converters": compareConvertersHandler,

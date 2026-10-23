@@ -26,8 +26,7 @@ import { researchScope } from "./search";
  */
 
 export const RESEARCH_ASSESS_STAGE = "research.assess";
-// The queue is registered with the stage (plan N1, task 5); until then it is only the target of follow-on jobs.
-export const RESEARCH_ASSESS_QUEUE = "research.assess" as QueueName;
+export const RESEARCH_ASSESS_QUEUE = "research.assess" satisfies QueueName;
 const SUBJECT = "document_version";
 
 let logger: ReturnType<typeof createLogger> | undefined;
