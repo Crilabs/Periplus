@@ -57,6 +57,57 @@ export async function recordHits(
 }
 
 /**
+ * Takes over the results of the landside searches of one place as hits of purpose `landside`: per subject (its
+ * `serpQueryIds`) at most `landside.maxHitsPerSubject` hits, existing hits of the subject's queries counted, the best
+ * ranks first; without `skipDomains` and forbidden domains; a URL the place already has as a landside hit is not
+ * repeated (a repeated call adds nothing). Returns the number of new rows.
+ */
+export async function recordLandsideHits(
+  db: Db,
+  input: { placeId: string; geoObjectId: string; subjects: Array<{ serpQueryIds: string[] }>; runId: string },
+  cfg: ResearchConfig,
+): Promise<number> {
+  const forbidden = getConfig().delivery.forbiddenDomains;
+  const existing = await db
+    .select({ urlNormalized: researchHits.urlNormalized, serpQueryId: researchHits.serpQueryId })
+    .from(researchHits)
+    .where(and(eq(researchHits.placeId, input.placeId), eq(researchHits.purpose, "landside")));
+  const seen = new Set(existing.map((e) => e.urlNormalized));
+  const rows = [];
+  for (const subject of input.subjects) {
+    if (subject.serpQueryIds.length === 0) continue;
+    const own = new Set(subject.serpQueryIds);
+    let room = cfg.landside.maxHitsPerSubject - existing.filter((e) => e.serpQueryId !== null && own.has(e.serpQueryId)).length;
+    if (room <= 0) continue;
+    const order = new Map(subject.serpQueryIds.map((id, i) => [id, i]));
+    const results = (await db.select().from(serpResults).where(inArray(serpResults.serpQueryId, subject.serpQueryIds))).sort(
+      (a, b) => a.rank - b.rank || order.get(a.serpQueryId)! - order.get(b.serpQueryId)! || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    );
+    for (const r of results) {
+      if (room === 0) break;
+      if (seen.has(r.urlNormalized)) continue;
+      if (isForbiddenUrl(r.urlNormalized, cfg.skipDomains) || isForbiddenUrl(r.urlNormalized, forbidden)) continue;
+      seen.add(r.urlNormalized);
+      room--;
+      rows.push({
+        placeId: input.placeId,
+        geoObjectId: input.geoObjectId,
+        serpQueryId: r.serpQueryId,
+        serpResultId: r.id,
+        urlNormalized: r.urlNormalized,
+        domain: r.domain,
+        rank: r.rank,
+        purpose: "landside" as const,
+        runId: input.runId,
+      });
+    }
+  }
+  if (rows.length === 0) return 0;
+  const inserted = await db.insert(researchHits).values(rows).onConflictDoNothing().returning({ id: researchHits.id });
+  return inserted.length;
+}
+
+/**
  * The newest website row of the place, when it is bound (`place_websites.bound`), as a positive hit of rank 0 and origin
  * `place_website`, without a search behind it: the official page of the place (N3b). Not counted against
  * `maxHitsPerCandidate`; a URL the place already has as a positive hit adds nothing. Returns the number of new rows.
