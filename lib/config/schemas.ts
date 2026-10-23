@@ -1420,6 +1420,18 @@ export const researchSchema = z
       /** Two sources whose positive quotes share this many consecutive words are copies and count as one (spec 5.6). */
       copyMinSharedWords: z.number().int().positive(),
     }),
+    /** The reference gate (plan N3): the subdivision measured, the thresholds compared and the released threshold. */
+    gate: z
+      .strictObject({
+        subdivision: z.string().min(1),
+        thresholds: z.array(z.number().int().min(1)).min(1),
+        /** Whether the gate is passed and the chosen threshold released for other subdivisions. */
+        released: z.boolean(),
+        chosenThreshold: z.number().int().min(1).nullable(),
+      })
+      .refine((g) => !g.released || (g.chosenThreshold !== null && g.thresholds.includes(g.chosenThreshold)), {
+        error: "a released gate needs a chosenThreshold among the thresholds",
+      }),
     /** Matching route stops to places. */
     discovery: z.strictObject({
       corridorBufferKm: z.number().positive(),

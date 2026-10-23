@@ -37,6 +37,15 @@ describe("research config", () => {
     expect(c.discovery).toEqual({ corridorBufferKm: 3, minNameSimilarity: 0.8, vetoSimilarity: 0.4, maxLegKm: 25, maxLegDays: 3, corroboratingDomains: 2 });
   });
 
+  it("loads the gate and rejects a released gate without a chosen threshold among the thresholds", () => {
+    const c = getConfig().research;
+    expect(c.gate).toEqual({ subdivision: "GR-I", thresholds: [2, 3, 4, 5], released: false, chosenThreshold: null });
+    for (const chosenThreshold of [null, 9]) {
+      expect(researchSchema.safeParse({ ...c, gate: { ...c.gate, released: true, chosenThreshold } }).success).toBe(false);
+    }
+    expect(researchSchema.safeParse({ ...c, gate: { ...c.gate, released: true, chosenThreshold: 3 } }).success).toBe(true);
+  });
+
   it("rejects a kind that is both positive and negative", () => {
     const c = valid();
     c.confirmation.negativeKinds.push("anchored");
