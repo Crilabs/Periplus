@@ -2,6 +2,10 @@
 # Deploys an image tag on the server. Run on the server via: ssh periplus@host bash -s <sha> < deploy.sh
 # Rollback = run it again with the previous sha.
 # Any failing step (pull, migrate, up, /readyz, worker ready) rolls back to the previous tag and exits 1.
+# The whole body is one group: bash reads it completely before running it, and every command in it gets /dev/null
+# as stdin. Fed through `bash -s`, the script itself is stdin, and `docker compose up` would otherwise swallow the
+# rest of it and the deploy would end after `up` with exit 0, without the ready check and .deployed-tag.
+{
 set -euo pipefail
 
 NEW_TAG="${1:?usage: deploy.sh <image-tag>}"
@@ -69,3 +73,4 @@ else
   echo "no previous tag to roll back to" >&2
 fi
 exit 1
+} </dev/null

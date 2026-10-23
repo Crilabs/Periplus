@@ -8,11 +8,14 @@ DEPLOY="$HERE/../deploy.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# Every case feeds the script through stdin, as CI does (`ssh … bash -s <sha> < deploy.sh`).
 # Fake binaries: docker logs "IMAGE_TAG=<tag> <args>" and fails the step named in FAKE_FAIL
 # (pull | migrate | up | ready | worker) while IMAGE_TAG equals FAKE_FAIL_TAG. sleep is a no-op.
 mkdir -p "$WORK/bin"
 cat > "$WORK/bin/docker" <<'FAKE'
 #!/usr/bin/env bash
+# Like the real `docker compose up`, read stdin to its end.
+cat > /dev/null
 args="$*"
 printf 'IMAGE_TAG=%s %s\n' "${IMAGE_TAG:-}" "$args" >> "$FAKE_LOG"
 if [ "${IMAGE_TAG:-}" = "${FAKE_FAIL_TAG:-}" ]; then
@@ -45,7 +48,7 @@ run_case() {
   printf 'oldsha\n' > "$APP/.deployed-tag"
   RC=0
   PATH="$WORK/bin:$PATH" PERIPLUS_APP_DIR="$APP" FAKE_LOG="$LOG" FAKE_FAIL="$2" FAKE_FAIL_TAG=newsha \
-    bash "$DEPLOY" newsha > "$APP/out.log" 2>&1 || RC=$?
+    bash -s newsha < "$DEPLOY" > "$APP/out.log" 2>&1 || RC=$?
 }
 
 # Shared assertions for every failing step.
