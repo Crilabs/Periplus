@@ -7,7 +7,7 @@ import { METRIC_KEYS } from "@/lib/db/schema/quality";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { countryConfig, getConfig, getConsolidationConfig, loadConfig } from "../index";
-import { modelsSchema, queuesSchema } from "../schemas";
+import { gazetteerSchema, modelsSchema, queuesSchema } from "../schemas";
 
 const repoConfig = loadConfig("config");
 
@@ -754,6 +754,19 @@ describe("queue configuration", () => {
     const entry = { concurrency: 8, retryLimit: 2, retryDelaySeconds: 120, retryBackoff: true };
     expect(queuesSchema.safeParse({ "fetch.url": { ...entry, expireInSeconds: 3600 } }).success).toBe(true);
     expect(queuesSchema.safeParse({ "fetch.url": { ...entry, expireInSecond: 3600 } }).success).toBe(false);
+  });
+});
+
+describe("gazetteer overpass configuration", () => {
+  it("rejects a minBlockDeg above blockDeg (B15)", () => {
+    const gazetteer = loadConfig("config").gazetteer;
+    const with_ = (blockDeg: number, minBlockDeg: number) =>
+      gazetteerSchema.safeParse({ ...gazetteer, overpass: { ...gazetteer.overpass, blockDeg, minBlockDeg } });
+    expect(with_(2, 0.5).success).toBe(true);
+    expect(with_(2, 2).success).toBe(true);
+    const result = with_(1, 2);
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toMatch(/minBlockDeg must not exceed blockDeg/);
   });
 });
 

@@ -323,7 +323,7 @@ export const gazetteerSchema = z.strictObject({
      */
     blockDeg: z.number().positive(),
     minBlockDeg: z.number().positive(),
-  }),
+  }).refine((o) => o.minBlockDeg <= o.blockDeg, { message: "minBlockDeg must not exceed blockDeg", path: ["minBlockDeg"] }),
   /** Marine Regions WFS (IHO sea areas, spec 14). */
   marineRegions: z.strictObject({
     endpoint: z.url(),
