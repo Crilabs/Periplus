@@ -7,7 +7,9 @@ import { subdivisions } from "@/lib/db/schema";
 import { getConfig } from "@/lib/config";
 import { newPublicId } from "@/lib/domain/ids";
 import { applySubdivisionPlan } from "@/lib/domain/subdivisions/store";
+import { gazetteerCoarseStage, gazetteerSeasStage } from "@/lib/jobs/handlers/subdivisions";
 import { importCoarseFeatures } from "@/lib/pipeline/gazetteer/coarse";
+import { assignCoarse } from "@/lib/pipeline/subdivisions";
 import { withRollback } from "@/test/db";
 
 // The bucket "http:overpass" is shared across test files; a huge rate keeps these tests (a mock of `takeToken` does not reach http.ts, which the setup loads first) from ever sleeping on it.
@@ -34,8 +36,8 @@ async function setUpMalta(tx: Db): Promise<string> {
 }
 
 async function malta(tx: Db, name: string, type?: string) {
-  const { rows } = await tx.execute<{ id: string; type: string; subdivision_id: string | null; osm_id: string; updated_at: string }>(sql`
-    SELECT DISTINCT o.id, o.type, o.subdivision_id, o.osm_id, o.updated_at FROM geo_objects o
+  const { rows } = await tx.execute<{ id: string; type: string; subdivision_id: string | null; sea_id: string | null; osm_id: string; updated_at: string }>(sql`
+    SELECT DISTINCT o.id, o.type, o.subdivision_id, o.sea_id, o.osm_id, o.updated_at FROM geo_objects o
     JOIN geo_names n ON n.geo_object_id = o.id
     WHERE o.valid_to IS NULL AND o.origin = 'osm' AND o.osm_id IS NOT NULL AND n.name = ${name}
       AND o.type NOT IN ('country', 'admin_region')`);
@@ -47,17 +49,22 @@ const ring = (w: number, s: number, e: number, n: number) => [
 ];
 
 describe("importCoarseFeatures", () => {
-  it("MT: Malta, Gozo, Comino, the archipelago and Valletta, with the Malta subdivision; a second import changes nothing", async () => {
+  it("MT: Malta, Gozo, Comino, the archipelago and Valletta, without subdivision or sea until assignCoarse; a second import changes nothing", async () => {
     await withRollback(async (tx) => {
       await setUpMalta(tx);
       const [sd] = await tx.select({ id: subdivisions.id }).from(subdivisions).where(and(eq(subdivisions.key, "MT-T"), isNull(subdivisions.validTo)));
+      const sea = await tx.execute<{ id: string }>(sql`INSERT INTO geo_objects (id, type, origin, tags, geom)
+        VALUES (gen_random_uuid(), 'sea', 'marine_regions', ${JSON.stringify({ mrgid: String(getConfig().subdivisions.mediterranean.marineRegionsMrgids[0]) })}::jsonb,
+                ST_Multi(ST_GeomFromText('POLYGON((13.5 35.0, 15.5 35.0, 15.5 36.5, 13.5 36.5, 13.5 35.0))', 4326))) RETURNING id`);
       const result = await importCoarseFeatures(tx, "MT", { transport: fixtureTransport(), overpass });
       expect(result).toEqual({ islands: 3, archipelagos: 1, gulfs: 0, towns: 20 });
 
-      for (const [name, type] of [["Malta", "island"], ["Għawdex", "island"], ["Kemmuna", "island"], ["Il-Gżejjer Maltin", "archipelago"], ["Valletta", "settlement"]] as const) {
+      const features = [["Malta", "island"], ["Għawdex", "island"], ["Kemmuna", "island"], ["Il-Gżejjer Maltin", "archipelago"], ["Valletta", "settlement"]] as const;
+      for (const [name, type] of features) {
         const rows = await malta(tx, name, type);
         expect(rows, name).toHaveLength(1);
-        expect(rows[0]).toMatchObject({ type, subdivision_id: sd!.id });
+        // The assignment is a stage of its own after subdivisions.build (B3, B14).
+        expect(rows[0]).toMatchObject({ type, subdivision_id: null, sea_id: null });
       }
       // relation/20354542 "MALTA" is a place=island multipolygon of two rings of 6 and 7 points (a few metres wide):
       // below islandMinAreaKm2, so it stays with the fine gazetteer.
@@ -75,6 +82,11 @@ describe("importCoarseFeatures", () => {
 
       expect(await importCoarseFeatures(tx, "MT", { transport: fixtureTransport(), overpass })).toEqual(result);
       expect((await maltaRows()).rows).toEqual(snapshot.rows);
+
+      await assignCoarse(tx, "MT");
+      for (const [name, type] of features) {
+        expect((await malta(tx, name, type))[0], name).toMatchObject({ subdivision_id: sd!.id, sea_id: sea.rows[0]!.id });
+      }
     });
   }, 120_000);
 
@@ -153,6 +165,27 @@ describe("importCoarseFeatures", () => {
   it("fails before any query when the country is not stored", async () => {
     await withRollback(async (tx) => {
       await expect(importCoarseFeatures(tx, "MT", { transport: fixtureTransport(), overpass })).rejects.toThrow(/no country object/);
+    });
+  });
+});
+
+describe("stages gazetteer.seas and gazetteer.coarse", () => {
+  const run = (params: Record<string, unknown>) => ({ id: "00000000-0000-0000-0000-000000000000", params });
+
+  it("seas are one job of their own stage, before the countries", async () => {
+    await withRollback(async (tx) => {
+      expect(gazetteerSeasStage).toMatchObject({ name: "gazetteer.seas", queue: "gazetteer.coarse" });
+      expect(await gazetteerSeasStage.plan(tx, run({}))).toEqual([{ key: "seas" }]);
+    });
+  });
+
+  it("plans one job per configured country and no seas job; params.countries limits it", async () => {
+    await withRollback(async (tx) => {
+      const all = await gazetteerCoarseStage.plan(tx, run({}));
+      expect(all).toEqual(Object.keys(getConfig().subdivisions.countries).map((country) => ({ key: country, country })));
+      expect(all.map((j) => j.key)).not.toContain("seas");
+      expect(await gazetteerCoarseStage.plan(tx, run({ countries: ["GR"] }))).toEqual([{ key: "GR", country: "GR" }]);
+      await expect(gazetteerCoarseStage.plan(tx, run({ countries: ["XX"] }))).rejects.toThrow(/XX/);
     });
   });
 });

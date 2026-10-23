@@ -189,8 +189,17 @@ const coastSectionsSchema = z.array(coastSectionSchema).superRefine((sections, c
 /** Which unit is a Landesteil, per country, and how the OSM units are split, merged, added or left out (spec 14). */
 export const subdivisionsConfigSchema = z
   .strictObject({
-    /** IHO sea areas counted as Mediterranean (Marine Regions ids); the Sea of Marmara is not among them. */
-    mediterranean: z.strictObject({ marineRegionsMrgids: z.array(z.number().int().positive()).min(1) }),
+    mediterranean: z.strictObject({
+      /** IHO sea areas counted as Mediterranean (Marine Regions ids); the Sea of Marmara is not among them. */
+      marineRegionsMrgids: z.array(z.number().int().positive()).min(1),
+      /**
+       * [west, south, east, north] covering those seas: the box of the land polygon import (plus `landBufferKm`), so
+       * the import needs no seas in the database (B3, B14).
+       */
+      bbox: z
+        .tuple([z.number().min(-180).max(180), z.number().min(-90).max(90), z.number().min(-180).max(180), z.number().min(-90).max(90)])
+        .refine(([w, s, e, n]) => w < e && s < n, "bbox must be [west, south, east, north] with west < east and south < north"),
+    }),
     countries: z.record(
       iso2,
       z.strictObject({
@@ -202,6 +211,11 @@ export const subdivisionsConfigSchema = z
         cycleDays: z.number().int().min(1),
         status: subdivisionStatus.optional(),
         statusReason: z.string().trim().min(1).optional(),
+        /**
+         * OSM relation id of the country itself, when its relation is no `boundary=administrative` + `admin_level=2`
+         * (Palestine: `boundary=disputed`, B2). Stored as the country regardless of its tags.
+         */
+        countryRelation: z.number().int().positive().optional(),
       }),
     ),
     /** A first-level unit split into groups of second-level units (by Wikidata id). */

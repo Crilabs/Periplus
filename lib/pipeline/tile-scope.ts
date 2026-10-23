@@ -13,6 +13,7 @@ export type RunScopeReason =
   | "tile_without_subdivision"
   | "bathymetry_missing"
   | "land_missing"
+  | "unknown_country"
   | "place_not_computable"
   | "no_approved_sources"
   | "source_not_approved"

@@ -11,7 +11,8 @@
       3315,
       4279,
       4280
-    ]
+    ],
+    "bbox": [-6.1, 30.0, 36.3, 45.9]
   },
   "countries": {
     "ES": {
@@ -254,7 +255,8 @@
       },
       "cycleDays": 30,
       "status": "excluded",
-      "statusReason": "Gaza, Sperrgebiet"
+      "statusReason": "Gaza, Sperrgebiet",
+      "countryRelation": 1703814
     },
     "EG": {
       "firstLevel": 4,

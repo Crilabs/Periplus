@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { countrySummaryText, SUBDIVISION_STATUSES, subdivisionTree, type SubdivisionRow, type SubdivisionStatus } from "@/lib/domain/subdivisions/view";
 import { requireAdmin } from "@/lib/security/require-admin";
+import { runScopeError } from "../_components/labels";
 import {
   Badge,
   Button,
@@ -10,6 +11,7 @@ import {
   EmptyState,
   FilterChips,
   fmt,
+  inputClass,
   Mono,
   Notice,
   numClass,
@@ -92,6 +94,7 @@ export default async function Page({ searchParams }: PageProps<"/subdivisions">)
   const sp = await searchParams;
   const status = statusParam.parse(sp.status);
   const queued = queuedParam.parse(sp.queued);
+  const error = runScopeError(sp.error);
   const tree = await subdivisionTree(getDb());
   const filtered = tree
     .map((c) => ({ ...c, subdivisions: status ? c.subdivisions.filter((s) => s.status === status) : c.subdivisions }))
@@ -105,13 +108,25 @@ export default async function Page({ searchParams }: PageProps<"/subdivisions">)
         title="Länder und Landesteile"
         description="Je Land seine Landesteile mit Mittelmeerküste. „Aufbauen“ startet Gazetteer, Datensätze, Seed, Geometrie und Discovery für einen Landesteil; „Alle offenen aufbauen“ stellt die nicht begonnenen Landesteile eines Landes nacheinander in die Warteschlange. Abruf, Texte und Paket bleiben eigene Läufe."
         actions={
-          <form action={rebuildSubdivisionsAction}>
-            <Button title="Lädt Meere, Länder und Verwaltungseinheiten neu und bildet daraus die Landesteile. Aufgebaute Landesteile bleiben, wie sie sind.">
+          <form action={rebuildSubdivisionsAction} className="flex items-center gap-2">
+            <input
+              name="countries"
+              aria-label="nur Länder"
+              placeholder="nur Länder, z. B. PS LY"
+              title="Leer: alle Länder. Sonst nur diese Länder neu laden (Ländercodes), etwa nach einem gescheiterten Land; die Landesteile werden trotzdem aus allen Ländern gebildet."
+              className={cx(inputClass, "w-48")}
+            />
+            <Button title="Lädt Meere, Länder, Verwaltungseinheiten und Grob-Merkmale neu, bildet daraus die Landesteile und ordnet die Grob-Objekte Meeren, Landesteilen und Eltern zu. Aufgebaute Landesteile bleiben, wie sie sind. Braucht die Landpolygone.">
               Landesteile neu bilden
             </Button>
           </form>
         }
       />
+      {error && (
+        <Notice tone="danger" title="Lauf nicht gestartet" className="mb-6">
+          {error}.
+        </Notice>
+      )}
       {queued !== undefined && (
         <Notice tone="ok" className="mb-6">
           {queued === 0 ? "Nichts Neues in die Warteschlange gestellt." : `${queued} Landesteile in die Warteschlange gestellt.`}
@@ -129,7 +144,7 @@ export default async function Page({ searchParams }: PageProps<"/subdivisions">)
       {tree.length === 0 ? (
         <Panel>
           <EmptyState title="Noch keine Landesteile">
-            „Landesteile neu bilden“ lädt Meere, Länder und Verwaltungseinheiten (Grob-Gazetteer) und bildet daraus die Landesteile.
+            Zuerst die Landpolygone importieren (Runbook „Erstinstallation Raumgliederung“). Dann lädt „Landesteile neu bilden“ Meere, Länder und Verwaltungseinheiten (Grob-Gazetteer) und bildet daraus die Landesteile.
           </EmptyState>
         </Panel>
       ) : filtered.length === 0 ? (

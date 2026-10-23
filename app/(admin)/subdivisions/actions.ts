@@ -40,15 +40,32 @@ export async function queueCountryAction(input: FormData | { country: string }):
   redirect(`/subdivisions?queued=${queued}&country=${country}`);
 }
 
+/** „nur Länder“: country codes separated by commas or spaces, any case; empty for all countries. */
+const rebuildSchema = z.object({
+  countries: z
+    .string()
+    .optional()
+    .transform((v) => (v ?? "").split(/[\s,;]+/).filter(Boolean).map((c) => c.toUpperCase()))
+    .pipe(z.array(z.string().regex(/^[A-Z]{2}$/))),
+});
+
 /**
- * „Landesteile neu bilden“: the system run of the coarse gazetteer (seas, countries, admin regions) and
- * `subdivisions.build`; built subdivisions are never replaced, only reported. Goes to the run.
+ * „Landesteile neu bilden“: the system run of seas, coarse gazetteer (countries, admin regions, coarse features),
+ * `subdivisions.build` and the assignment of the coarse objects; built subdivisions are never replaced, only reported.
+ * „nur Länder“ fetches only these countries again (one that failed). Goes to the run; without land polygons or with an
+ * unconfigured country it comes back to the list with a German message.
  */
-export async function rebuildSubdivisionsAction(): Promise<void> {
+export async function rebuildSubdivisionsAction(input: FormData | { countries?: string } = {}): Promise<void> {
   const admin = await requireAdmin();
-  const { id } = await startSubdivisionsBuildRun(getDb(), await getBoss(), admin.email);
-  revalidatePath("/runs");
-  redirect(`/runs/${id}`);
+  const parsed = rebuildSchema.safeParse(fields(input));
+  if (!parsed.success) return redirect("/subdivisions?error=unknown_country");
+  const { countries } = parsed.data;
+  const db = getDb();
+  const boss = await getBoss();
+  await startAndRedirect(
+    () => startSubdivisionsBuildRun(db, boss, admin.email, countries.length > 0 ? { countries } : {}),
+    "/subdivisions",
+  );
 }
 
 /**

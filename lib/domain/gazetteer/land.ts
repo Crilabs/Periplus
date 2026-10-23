@@ -103,20 +103,12 @@ export async function landCoverage(db: Db, bbox: Bbox): Promise<number> {
 }
 
 /**
- * The box land polygons are imported for (spec 14): the union of the extents of the configured Mediterranean seas
- * plus `bufferKm`, snapped outward to the tile grid. Needs the seas (`importSeas`); throws without them.
+ * The box land polygons are imported for (spec 14): `subdivisions.mediterranean.bbox` (which covers the configured
+ * Mediterranean seas) plus `bufferKm`, snapped outward to the tile grid. Reads no data, so the land import can run on an
+ * empty database before the first run "Landesteile neu bilden" (B3, B14).
  */
-export async function mediterraneanBbox(db: Db, bufferKm: number): Promise<Bbox> {
-  const mrgids = getConfig().subdivisions.mediterranean.marineRegionsMrgids.map(String);
-  const { rows } = await db.execute<{ w: number | null; s: number; e: number; n: number }>(sql`
-    SELECT ST_XMin(x.b) AS w, ST_YMin(x.b) AS s, ST_XMax(x.b) AS e, ST_YMax(x.b) AS n
-    FROM (SELECT ST_Extent(geom)::geometry AS b FROM geo_objects
-          WHERE type = 'sea' AND origin = 'marine_regions' AND valid_to IS NULL
-            AND tags->>'mrgid' IN (${sql.join(mrgids.map((m) => sql`${m}`), sql`, `)})) x
-    WHERE x.b IS NOT NULL`);
-  const r = rows[0];
-  if (!r || r.w === null) throw new Error("Mediterranean seas missing – run the stage gazetteer.coarse first");
-  const [w, s, e, n] = bufferBbox([r.w, r.s, r.e, r.n], bufferKm);
+export function mediterraneanBbox(bufferKm: number): Bbox {
+  const [w, s, e, n] = bufferBbox(getConfig().subdivisions.mediterranean.bbox, bufferKm);
   return [
     Math.floor(w / TILE_SIZE) * TILE_SIZE,
     Math.floor(s / TILE_SIZE) * TILE_SIZE,
