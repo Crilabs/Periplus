@@ -33,7 +33,9 @@
     "negativeKinds": ["prohibited", "buoys_private", "no_space", "unsafe", "closed"],
     "countingPageKinds": ["trip_report", "pilot_guide", "forum", "marina", "authority"],
     "listedAsBerthPageKinds": ["pilot_guide"],
-    "officialPageKinds": ["marina", "authority"]
+    "officialPageKinds": ["marina", "authority"],
+    "officialPlaceKinds": ["marina", "port"],
+    "corridorAloneConfirms": false
   },
   "discovery": { "corridorBufferKm": 3, "minNameSimilarity": 0.8, "vetoSimilarity": 0.4, "maxLegKm": 25, "maxLegDays": 3, "corroboratingDomains": 2 }
 }

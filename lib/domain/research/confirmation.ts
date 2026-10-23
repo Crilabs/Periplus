@@ -3,6 +3,7 @@ import { resolveTaskModel } from "@/lib/ai/cost";
 import { getConfig, type AppConfig, type ResearchConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { places, type BerthSignalKind, type PageKind, type PlaceKind, type PlaceStatus } from "@/lib/db/schema";
+import type { ObservedAtBasis } from "@/lib/db/schema/sources";
 import { dismissTasks, lockOpenPlaceTasks } from "@/lib/domain/consolidation/task-locks";
 import { recheckExclusion } from "@/lib/domain/geometry/restrictions";
 import { newPublicId } from "@/lib/domain/ids";
@@ -29,6 +30,8 @@ export type Evidence = {
   firstHand: boolean;
   confidence: number;
   observedAt: string;
+  /** How `observedAt` was found; `fetched`: the page has no date, the fetch dates it. */
+  observedAtBasis: ObservedAtBasis;
   /** Registrable domain of the page. */
   domain: string;
   pageKind: PageKind;
@@ -60,13 +63,11 @@ const NEGATIVE_LABEL: Record<BerthSignalKind, string> = {
   closed: "geschlossen",
 };
 
-const OFFICIAL_KINDS: ReadonlySet<PlaceKind> = new Set<PlaceKind>(["marina", "port"]);
-
 /** Whether a positive signal is a source: a first-hand stay, or a listing by a page kind that lists berths (official pages for marinas and ports). */
 function isSource(e: Evidence, placeKind: PlaceKind, cfg: ConfirmationConfig): boolean {
   if (!cfg.positiveKinds.includes(e.kind)) return false;
   if (e.kind === "listed_as_berth") {
-    return cfg.listedAsBerthPageKinds.includes(e.pageKind) || (OFFICIAL_KINDS.has(placeKind) && cfg.officialPageKinds.includes(e.pageKind));
+    return cfg.listedAsBerthPageKinds.includes(e.pageKind) || (cfg.officialPlaceKinds.includes(placeKind) && cfg.officialPageKinds.includes(e.pageKind));
   }
   return e.firstHand;
 }
@@ -79,17 +80,20 @@ const byDateThenId = (a: Evidence, b: Evidence) => a.observedAt.localeCompare(b.
  * 2. positive are first-hand `anchored` / `moored_buoy` / `berthed` and `listed_as_berth` from a listing page kind
  *    (for a marina or port also from an official page);
  * 3. independent sources are the distinct domains of the counting positive signals; positives of pages linked only by
- *    a route corridor count only beside one from a page linked by search hit or name (discovery alone never confirms);
- * 4. a counting negative signal at least as young as every counting positive blocks: `prohibited` from the authority
- *    → `no_anchoring`, any other → `candidate`;
- * 5. an anchorage or mooring field is confirmed by `minIndependentSources` sources, a marina or port by an official
- *    page plus another domain;
+ *    a route corridor count only beside one from a page linked by search hit or name (discovery alone never confirms,
+ *    unless `corridorAloneConfirms`);
+ * 4. a counting `prohibited` from the authority blocks whatever its age (a ban holds until the authority lifts it):
+ *    `no_anchoring`, for an `officialPlaceKinds` place (marina, port) `candidate` (a harbour's anchoring ban does not
+ *    mean no berths); any other counting negative blocks when it is at least as young as every dated counting positive
+ *    (an undated positive, dated by its fetch, never overrides a dated negative) → `candidate`;
+ * 5. an anchorage or mooring field is confirmed by `minIndependentSources` sources, an `officialPlaceKinds` place by an
+ *    official page plus another domain;
  * 6. otherwise `candidate`, with the reason.
  */
 export function decideBerth(placeKind: PlaceKind, evidence: Evidence[], cfg: ConfirmationConfig): Verdict {
   const counting = evidence.filter((e) => e.confidence >= cfg.minSignalConfidence && !e.generated && cfg.countingPageKinds.includes(e.pageKind));
   const sources = counting.filter((e) => isSource(e, placeKind, cfg));
-  const anchored = sources.some((e) => e.link !== "corridor");
+  const anchored = cfg.corridorAloneConfirms || sources.some((e) => e.link !== "corridor");
   const positives = anchored ? sources : [];
   const domains = [...new Set(positives.map((e) => e.domain))].sort();
   const positiveIds = positives.map((e) => e.signalId);
@@ -101,19 +105,20 @@ export function decideBerth(placeKind: PlaceKind, evidence: Evidence[], cfg: Con
     signalIds: [...new Set([...positiveIds, ...(blocking ? [blocking.signalId] : [])])].sort(),
   });
 
-  const newestPositive = positives.reduce<string | null>((max, e) => (max === null || e.observedAt > max ? e.observedAt : max), null);
-  const blocking = counting
-    .filter((e) => cfg.negativeKinds.includes(e.kind) && (newestPositive === null || e.observedAt >= newestPositive))
-    .sort(byDateThenId);
-  const ban = blocking.filter((e) => e.kind === "prohibited" && e.pageKind === "authority").at(-1);
-  if (ban) return verdict("no_anchoring", `Ankerverbot laut Behörde (${ban.observedAt})`, ban);
-  const negative = blocking.at(-1);
+  const official = cfg.officialPlaceKinds.includes(placeKind);
+  const negatives = counting.filter((e) => cfg.negativeKinds.includes(e.kind)).sort(byDateThenId);
+  const ban = negatives.filter((e) => e.kind === "prohibited" && e.pageKind === "authority").at(-1);
+  if (ban) return verdict(official ? "candidate" : "no_anchoring", `Ankerverbot laut Behörde (${ban.observedAt})`, ban);
+  const newestPositive = positives
+    .filter((e) => e.observedAtBasis !== "fetched")
+    .reduce<string | null>((max, e) => (max === null || e.observedAt > max ? e.observedAt : max), null);
+  const negative = negatives.filter((e) => newestPositive === null || e.observedAt >= newestPositive).at(-1);
   if (negative) return verdict("candidate", `jüngerer Negativbeleg: ${NEGATIVE_LABEL[negative.kind]} (${negative.domain}, ${negative.observedAt})`, negative);
 
   if (!anchored && sources.length > 0) return verdict("candidate", "nur über Routen-Korridor gefunden");
-  if (OFFICIAL_KINDS.has(placeKind)) {
-    const official = new Set(positives.filter((e) => cfg.officialPageKinds.includes(e.pageKind)).map((e) => e.domain));
-    if (official.size === 0) return verdict("candidate", "keine offizielle Seite (Marina oder Behörde)");
+  if (official) {
+    const officialDomains = new Set(positives.filter((e) => cfg.officialPageKinds.includes(e.pageKind)).map((e) => e.domain));
+    if (officialDomains.size === 0) return verdict("candidate", "keine offizielle Seite (Marina oder Behörde)");
     if (domains.length < 2) return verdict("candidate", "keine weitere unabhängige Quelle neben der offiziellen Seite");
     return verdict("confirmed", `offizielle Seite und weitere Quelle: ${domains.join(", ")}`);
   }
@@ -135,6 +140,7 @@ type SignalRow = {
   first_hand: boolean;
   confidence: number;
   observed_at: string;
+  observed_at_basis: ObservedAtBasis;
   url: string;
   page_kind: PageKind;
   generated: boolean;
@@ -162,7 +168,7 @@ export async function loadEvidence(db: Db, placeIds: string[], config: AppConfig
     where rs.document_version_id = s.document_version_id and rs.place_id = s.place_id and rs.match = ${match}
       and rs.model = ${route.model} and rs.prompt_version = ${route.promptVersion})`;
   const { rows } = await db.execute<SignalRow>(sql`
-    select s.id, s.place_id, s.document_version_id, s.kind::text as kind, s.first_hand, s.confidence, s.observed_at::text as observed_at,
+    select s.id, s.place_id, s.document_version_id, s.kind::text as kind, s.first_hand, s.confidence, s.observed_at::text as observed_at, s.observed_at_basis::text as observed_at_basis,
       d.url, a.page_kind::text as page_kind, a.generated, a.berths,
       exists (select 1 from research_hits h where h.place_id = s.place_id and h.url_normalized = d.url_normalized) as search_hit,
       ${stop("name")} as name_stop,
@@ -191,6 +197,7 @@ export async function loadEvidence(db: Db, placeIds: string[], config: AppConfig
       firstHand: r.first_hand,
       confidence: Number(r.confidence),
       observedAt: r.observed_at,
+      observedAtBasis: r.observed_at_basis,
       domain: registrableDomain(r.url),
       pageKind: r.page_kind,
       generated: r.generated,
@@ -201,24 +208,21 @@ export async function loadEvidence(db: Db, placeIds: string[], config: AppConfig
   return out;
 }
 
-/** Who set the place's current status: an admin, this rule, or something else (seed, old auto-confirmation, merge). */
-type StatusControl = "admin" | "research" | "other";
-
 /**
- * The newest status decision on the place (a `place_status` pseudo task, or a `place` review task decided
- * `confirm` / `reject` / `no_anchoring`) tells who set it; without one, a place an admin created („Ort anlegen“,
- * `create_place`, as `kindChosenByAdmin` in auto-status) counts as set by the admin.
+ * Whether an admin set the place's current status: the newest status decision on the place (a `place_status` pseudo
+ * task, or a `place` review task decided `confirm` / `reject` / `no_anchoring`) is not by `system`; without one, a
+ * place an admin created („Ort anlegen“, `create_place`, as `kindChosenByAdmin` in auto-status).
  */
-async function statusControl(tx: Db, placeId: string, geoObjectId: string): Promise<StatusControl> {
-  const { rows } = await tx.execute<{ decided_by: string; rule: string | null }>(sql`
-    select d.decided_by, d.decision->>'rule' as rule
+async function statusSetByAdmin(tx: Db, placeId: string, geoObjectId: string): Promise<boolean> {
+  const { rows } = await tx.execute<{ decided_by: string }>(sql`
+    select d.decided_by
     from review_decisions d join review_tasks t on t.id = d.task_id
     where t.kind = 'place_candidate' and t.subject_id = ${placeId}
       and (t.subject_type = 'place_status' or (t.subject_type = 'place' and d.decision->>'action' in ('confirm', 'reject', 'no_anchoring')))
     order by d.decided_at desc, d.id desc
     limit 1`);
   const newest = rows[0];
-  if (newest) return newest.decided_by !== SYSTEM_ACTOR ? "admin" : newest.rule === "research" ? "research" : "other";
+  if (newest) return newest.decided_by !== SYSTEM_ACTOR;
   const { rows: created } = await tx.execute<{ admin: boolean }>(sql`
     select exists (
       select 1 from geo_objects o
@@ -227,8 +231,11 @@ async function statusControl(tx: Db, placeId: string, geoObjectId: string): Prom
       join review_tasks t on t.id = d.task_id and t.kind = 'place_candidate' and t.subject_type = 'name_candidate'
       where o.id = ${geoObjectId} and o.origin = 'text'
     ) as admin`);
-  return created[0]?.admin === true ? "admin" : "other";
+  return created[0]?.admin === true;
 }
+
+/** The statuses this rule decides on; `rejected`, `abandoned` and `no_anchoring` (whoever set it) are final here. */
+const DECIDED_STATUSES: ReadonlySet<PlaceStatus> = new Set<PlaceStatus>(["candidate", "confirmed"]);
 
 const ACTION: Record<Verdict["status"], string> = { confirmed: "confirm", candidate: "candidate", no_anchoring: "no_anchoring" };
 
@@ -236,8 +243,8 @@ export type BerthTransition = { placeId: string; from: PlaceStatus; to: PlaceSta
 
 /**
  * Decides one place in the caller's transaction. Lock order (M5-F-R4): the place's open tasks, then the place row.
- * Left alone: an ended or merged place, `rejected` and `abandoned`, a status an admin set, a `no_anchoring` this rule
- * did not set (restricted area, review, merge). A confirmation waits while a duplicate review of the object is open,
+ * Left alone: an ended or merged place, `rejected`, `abandoned` and `no_anchoring`, and a status an admin set. A
+ * confirmation waits while a duplicate review of the object is open,
  * and re-checks the restricted areas first: a place inside one becomes `no_anchoring` there instead. Each change is a
  * `place_status` system decision `{ action, auto, rule: "research", reason, sources, signalIds, blockingSignalId }`;
  * `confirmed` and `no_anchoring` get a public id; a confirmation dismisses the place's open tasks (`auto_confirmed`).
@@ -250,36 +257,29 @@ async function applyVerdict(tx: Db, placeId: string, evidence: Evidence[], now: 
     .from(places)
     .where(and(eq(places.id, placeId), isNull(places.validTo), isNull(places.mergedIntoId)))
     .for("update");
-  if (!place || place.status === "rejected" || place.status === "abandoned") return null;
-  const control = await statusControl(tx, place.id, place.geoObjectId);
-  if (control === "admin" || (place.status === "no_anchoring" && control !== "research")) return null;
+  if (!place || !DECIDED_STATUSES.has(place.status) || (await statusSetByAdmin(tx, place.id, place.geoObjectId))) return null;
 
   const verdict = decideBerth(place.kind, evidence, cfg.research.confirmation);
   let to: Verdict["status"] = verdict.status;
   let reason = verdict.reason;
-  // a place inside a restricted area: `applyExclusion` set `no_anchoring` with its own reason (`restricted:<kind>:<id>`)
+  // a candidate inside a restricted area: `applyExclusion` set `no_anchoring` with its own reason (`restricted:<kind>:<id>`)
   let excluded = false;
-  if (to === "confirmed" && place.status !== "confirmed") {
+  if (to === "confirmed" && place.status === "candidate") {
     if (await hasOpenPairTask(tx, place.geoObjectId)) {
       to = "candidate";
       reason = `offene Dubletten-Prüfung (${verdict.reason})`;
-    } else {
-      // the restricted areas apply to a candidate only (`applyExclusion`)
-      if (place.status !== "candidate") await tx.update(places).set({ status: "candidate" }).where(eq(places.id, place.id));
-      if ((await recheckExclusion(tx, { id: place.id, geoObjectId: place.geoObjectId }, cfg.geometry.restriction.minShare)) === "excluded") {
-        to = "no_anchoring";
-        reason = "Sperrgebiet";
-        excluded = true;
-      }
+    } else if ((await recheckExclusion(tx, { id: place.id, geoObjectId: place.geoObjectId }, cfg.geometry.restriction.minShare)) === "excluded") {
+      to = "no_anchoring";
+      reason = "Sperrgebiet";
+      excluded = true;
     }
   }
-  const statusReason = excluded ? {} : { statusReason: to === "confirmed" ? null : reason };
+  const wantedReason = to === "confirmed" ? null : reason;
   if (to === place.status) {
-    if (!excluded && statusReason.statusReason !== place.statusReason) {
-      await tx.update(places).set({ ...statusReason, updatedAt: sql`now()` }).where(eq(places.id, place.id));
-    }
+    if (wantedReason !== place.statusReason) await tx.update(places).set({ statusReason: wantedReason, updatedAt: sql`now()` }).where(eq(places.id, place.id));
     return null;
   }
+  const statusReason = excluded ? {} : { statusReason: wantedReason };
 
   const publicId = to === "candidate" ? place.publicId : (place.publicId ?? newPublicId("sp"));
   await tx.update(places).set({ status: to, ...statusReason, publicId, updatedAt: sql`now()` }).where(eq(places.id, place.id));

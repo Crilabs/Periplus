@@ -18,6 +18,7 @@ function ev(o: Partial<Evidence> = {}): Evidence {
     firstHand: true,
     confidence: 0.9,
     observedAt: "2024-06-15",
+    observedAtBasis: "explicit",
     domain: "sail-a.example",
     pageKind: "trip_report",
     generated: false,
@@ -115,7 +116,7 @@ describe("decideBerth", () => {
 
   it("a negative dated by the fetch (observation = fetch date) blocks dated older positives (Review Focus)", () => {
     // the page has no date, so its observation is the fetch date (2026-10-19): younger than the dated reports
-    const neg = ev({ kind: "closed", firstHand: false, pageKind: "trip_report", domain: "undated.example", observedAt: "2026-10-19" });
+    const neg = ev({ kind: "closed", firstHand: false, pageKind: "trip_report", domain: "undated.example", observedAt: "2026-10-19", observedAtBasis: "fetched" });
     const v = decideBerth("anchorage", [ev({ domain: "a.example", observedAt: "2024-06-01" }), ev({ domain: "b.example", observedAt: "2025-06-01" }), neg], cfg);
     expect(v).toMatchObject({ status: "candidate", blockingSignalId: neg.signalId });
   });
@@ -129,6 +130,45 @@ describe("decideBerth", () => {
     ]) {
       expect(decideBerth("anchorage", [...pos, neg], cfg).status).toBe("confirmed");
     }
+  });
+
+  it("an authority prohibition blocks whatever its age: older than every positive, an anchorage or mooring field is no_anchoring", () => {
+    for (const kind of ["anchorage", "mooring_field"] as const) {
+      const ban = ev({ kind: "prohibited", firstHand: false, pageKind: "authority", domain: "gov.example", observedAt: "2020-01-01" });
+      const v = decideBerth(kind, [ban, ev({ domain: "a.example", observedAt: "2024-07-01" }), ev({ domain: "b.example", observedAt: "2025-07-01" })], cfg);
+      expect(v, kind).toMatchObject({ status: "no_anchoring", blockingSignalId: ban.signalId, reason: "Ankerverbot laut Behörde (2020-01-01)" });
+    }
+  });
+
+  it("an authority prohibition on a marina or port keeps it a candidate (no confirmation, no exclusion)", () => {
+    for (const kind of ["marina", "port"] as const) {
+      const ban = ev({ kind: "prohibited", firstHand: false, pageKind: "authority", domain: "gov.example", observedAt: "2020-01-01" });
+      const official = ev({ kind: "listed_as_berth", firstHand: false, pageKind: "marina", domain: "marina-x.example", observedAt: "2025-01-01" });
+      const v = decideBerth(kind, [ban, official, ev({ kind: "berthed", domain: "sail-a.example", observedAt: "2025-07-01" })], cfg);
+      expect(v, kind).toMatchObject({ status: "candidate", blockingSignalId: ban.signalId, reason: "Ankerverbot laut Behörde (2020-01-01)" });
+    }
+  });
+
+  it("an undated positive (dated by its fetch) never overrides a dated negative", () => {
+    const neg = ev({ kind: "buoys_private", firstHand: false, pageKind: "forum", domain: "forum.example", observedAt: "2024-08-01" });
+    const undated = ev({ domain: "b.example", observedAt: "2026-10-19", observedAtBasis: "fetched" });
+    const v = decideBerth("anchorage", [ev({ domain: "a.example", observedAt: "2023-07-01" }), undated, neg], cfg);
+    expect(v).toMatchObject({ status: "candidate", blockingSignalId: neg.signalId });
+    // only undated positives: any counting negative blocks
+    expect(decideBerth("anchorage", [undated, ev({ domain: "c.example", observedAt: "2026-10-19", observedAtBasis: "fetched" }), neg], cfg).status).toBe("candidate");
+  });
+
+  it("a dated authority ban beside two positives (one undated) stays blocked", () => {
+    const ban = ev({ kind: "prohibited", firstHand: false, pageKind: "authority", domain: "gov.example", observedAt: "2025-06-01" });
+    const v = decideBerth("anchorage", [ev({ domain: "a.example", observedAt: "2024-07-01" }), ev({ domain: "b.example", observedAt: "2026-10-19", observedAtBasis: "fetched" }), ban], cfg);
+    expect(v).toMatchObject({ status: "no_anchoring", blockingSignalId: ban.signalId });
+  });
+
+  it("the switches come from the configuration: officialPlaceKinds and corridorAloneConfirms", () => {
+    const two = [ev({ kind: "berthed", domain: "a.example" }), ev({ kind: "berthed", domain: "b.example" })];
+    expect(decideBerth("marina", two, { ...cfg, officialPlaceKinds: [] }).status).toBe("confirmed");
+    const corridor = [ev({ domain: "a.example", link: "corridor" }), ev({ domain: "b.example", link: "corridor" })];
+    expect(decideBerth("anchorage", corridor, { ...cfg, corridorAloneConfirms: true }).status).toBe("confirmed");
   });
 
   it("a prohibition not from the authority makes it a candidate, not no_anchoring", () => {

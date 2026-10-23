@@ -1409,6 +1409,10 @@ export const researchSchema = z
       countingPageKinds: z.array(z.enum(pageKindEnum.enumValues)).min(1),
       listedAsBerthPageKinds: z.array(z.enum(pageKindEnum.enumValues)),
       officialPageKinds: z.array(z.enum(pageKindEnum.enumValues)),
+      /** Place kinds confirmed by an official page plus another domain (marinas, ports); the others by independent sources. */
+      officialPlaceKinds: z.array(z.enum(placeKindEnum.enumValues)),
+      /** Whether pages linked to a place only by a route corridor count without a search- or name-linked source (ruling: no). */
+      corridorAloneConfirms: z.boolean(),
     }),
     /** Matching route stops to places. */
     discovery: z.strictObject({

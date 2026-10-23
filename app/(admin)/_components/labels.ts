@@ -805,13 +805,14 @@ export const METRIC_LABELS: Record<MetricKey, string> = {
   marina_services: "Marinas mit Kraftstoff und Wasser",
 };
 
-/** The rule that confirmed a place automatically (spec 17). */
+/** The rule that set a place's status automatically (spec 17; `research`: the confirmation rule of plan N2). */
 export const AUTO_RULE_LABELS: Record<string, string> = {
   alone: "Revierführer/Behörde",
   pair: "Zwei unabhängige Berichte",
   own_website: "Eigene Website",
   commercial_port: "Quelle: gewerblicher Hafen",
   osm_commercial: "OSM: gewerblicher Hafen",
+  research: "Recherche",
 };
 
 /** Where a place's website came from (spec 15 C). */

@@ -24,6 +24,7 @@ import { setPlaceStatusByAdmin } from "@/lib/domain/place-status";
 import { createReviewTask } from "@/lib/domain/review";
 import { activeAssessor } from "@/lib/domain/research/assessment";
 import { activeRouteExtractor } from "@/lib/domain/research/assign";
+import { recordDecision } from "@/lib/domain/places/auto-status";
 import { applyBerthVerdicts, loadEvidence } from "@/lib/domain/research/confirmation";
 import { createRun } from "@/lib/domain/runs";
 import { activeExtractor } from "@/lib/pipeline/research/extract";
@@ -47,6 +48,7 @@ type PageOpts = {
   firstHand?: boolean;
   confidence?: number;
   observedAt?: string;
+  observedAtBasis?: "explicit" | "fetched";
   pageKind?: PageKind;
   /** How the page is linked to the place: a search hit (default), a route stop matched by name or by the corridor, or none. */
   link?: "search" | "name" | "corridor" | "none";
@@ -88,7 +90,7 @@ async function signalPage(tx: Db, place: { placeId: string; objectId: string }, 
     .insert(berthSignals)
     .values({
       unitId: unit!.id, placeId: place.placeId, documentVersionId: versionId, kind: o.kind ?? "anchored", firstHand: o.firstHand ?? true, confidence: o.confidence ?? 0.9,
-      quote: "We anchored here", quoteStart: 0, quoteEnd: 16, observedAt: o.observedAt ?? "2024-06-15", observedAtBasis: "explicit",
+      quote: "We anchored here", quoteStart: 0, quoteEnd: 16, observedAt: o.observedAt ?? "2024-06-15", observedAtBasis: o.observedAtBasis ?? "explicit",
     })
     .returning({ id: berthSignals.id });
   return { signalId: signal!.id, versionId };
@@ -163,6 +165,32 @@ describe("applyBerthVerdicts", () => {
       expect(await placeRow(tx, place.placeId)).toMatchObject({ status: "no_anchoring", statusReason: "Ankerverbot laut Behörde (2025-06-01)" });
       const decisions = await statusDecisions(tx, place.placeId);
       expect(decisions.at(-1)!.decision).toMatchObject({ action: "no_anchoring", rule: "research", blockingSignalId: ban.signalId });
+    }));
+
+  it("a younger negative from a forum, dated by its fetch, withdraws a confirmation (Review Focus „Abrufdatum“)", () =>
+    withRollback(async (tx) => {
+      const place = await placeOf(tx);
+      await signalPage(tx, place, { domain: "a.example", observedAt: "2023-07-01" });
+      await signalPage(tx, place, { domain: "b.example", observedAt: "2024-07-01" });
+      await applyBerthVerdicts(tx, [place.placeId], NOW, config);
+      const { publicId } = await placeRow(tx, place.placeId);
+      expect(publicId).toMatch(/^sp_/);
+
+      const neg = await signalPage(tx, place, { domain: "forum.example", kind: "buoys_private", firstHand: false, pageKind: "forum", observedAt: "2026-10-19", observedAtBasis: "fetched" });
+      expect((await loadEvidence(tx, [place.placeId], config)).get(place.placeId)!.find((e) => e.signalId === neg.signalId)).toMatchObject({ observedAtBasis: "fetched" });
+      expect(await applyBerthVerdicts(tx, [place.placeId], NOW, config)).toEqual([{ placeId: place.placeId, from: "confirmed", to: "candidate" }]);
+      expect(await placeRow(tx, place.placeId)).toMatchObject({ status: "candidate", statusReason: "jüngerer Negativbeleg: Bojen privat (forum.example, 2026-10-19)", publicId });
+      expect((await statusDecisions(tx, place.placeId)).at(-1)!.decision).toMatchObject({ action: "candidate", rule: "research", blockingSignalId: neg.signalId });
+    }));
+
+  it("a no_anchoring place is never re-decided, also one this rule set, whatever the evidence", () =>
+    withRollback(async (tx) => {
+      const place = await placeOf(tx, { status: "no_anchoring" });
+      await recordDecision(tx, place.placeId, "place_status", "candidate", { action: "no_anchoring", auto: true, rule: "research" }, new Date("2026-01-01T00:00:00Z"));
+      for (const d of ["a", "b", "c"]) await signalPage(tx, place, { domain: `${d}.example`, observedAt: "2026-06-01" });
+      expect(await applyBerthVerdicts(tx, [place.placeId], NOW, config)).toEqual([]);
+      expect((await placeRow(tx, place.placeId)).status).toBe("no_anchoring");
+      expect(await statusDecisions(tx, place.placeId)).toHaveLength(1);
     }));
 
   it("rejected and abandoned places and a status an admin set stay as they are", () =>
