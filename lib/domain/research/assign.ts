@@ -7,6 +7,7 @@ import { documents, geoNames, geoObjects, pageAssessments, places, researchHits,
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { stripAffix } from "@/lib/domain/mentions/affixes";
 import { activeAssessor } from "./assessment";
+import { provisionalNameIds } from "./provisional-names";
 
 /*
  * Assigns assessed pages to berth candidates (plan N2): a page that is a research hit of place A may name other
@@ -139,16 +140,21 @@ async function nearbyCandidates(db: Db, placeIds: string[], radiusKm: number): P
   return result;
 }
 
-/** The valid names of each place's geo object and, for a place on an island, the island's names; places without a name are left out. */
+/**
+ * The valid names of each place's geo object and, for a place on an island, the island's names; provisional research
+ * names (`provisionalNameIds`) are left out, and so are places without another name.
+ */
 export async function placeNames(db: Db, placeIds: string[]): Promise<Map<string, NamedPlace>> {
   const byPlace = new Map<string, NamedPlace>();
   if (placeIds.length === 0) return byPlace;
   const names = await db
-    .select({ placeId: places.id, name: geoNames.name })
+    .select({ placeId: places.id, geoObjectId: places.geoObjectId, id: geoNames.id, name: geoNames.name })
     .from(places)
     .innerJoin(geoNames, eq(geoNames.geoObjectId, places.geoObjectId))
     .where(and(inArray(places.id, placeIds), isNull(geoNames.validTo)));
+  const provisional = await provisionalNameIds(db, [...new Set(names.map((n) => n.geoObjectId))]);
   for (const n of names) {
+    if (provisional.has(n.id)) continue;
     (byPlace.get(n.placeId) ?? byPlace.set(n.placeId, { placeId: n.placeId, names: [], islands: [] }).get(n.placeId)!).names.push(n.name);
   }
   const island = alias(geoObjects, "island");

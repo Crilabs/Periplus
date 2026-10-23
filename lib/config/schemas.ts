@@ -1411,7 +1411,18 @@ export const researchSchema = z
       officialPageKinds: z.array(z.enum(pageKindEnum.enumValues)),
     }),
     /** Matching route stops to places. */
-    discovery: z.strictObject({ corridorBufferKm: z.number().positive(), minNameSimilarity: z.number().min(0).max(1) }),
+    discovery: z.strictObject({
+      corridorBufferKm: z.number().positive(),
+      minNameSimilarity: z.number().min(0).max(1),
+      /** A named corridor candidate this similar to the stop (or matching it by name) blocks naming an unnamed bay. */
+      vetoSimilarity: z.number().min(0).max(1),
+      /** The corridor step applies only to a straight leg prev → next of at most this length. */
+      maxLegKm: z.number().positive(),
+      /** … and only when the dates of the previous and the next stop are at most this many days apart. */
+      maxLegDays: z.number().int().nonnegative(),
+      /** A research name stays provisional until route stops of this many registrable domains gave it. */
+      corroboratingDomains: z.number().int().positive(),
+    }),
   })
   .superRefine((c, ctx) => {
     for (const k of c.confirmation.negativeKinds) {

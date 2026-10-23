@@ -1,9 +1,10 @@
-import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { countryConfig, getConfig, type DiscoveryConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { facts, geoNames, geoObjects, subdivisions, tileGeoObjects, tiles, type SerpLevel } from "@/lib/db/schema";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
+import { provisionalNameIds } from "@/lib/domain/research/provisional-names";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import { validAt } from "@/lib/domain/timeline";
 import { createLogger } from "@/lib/logger";
@@ -31,11 +32,12 @@ const TILE_PRIORITY: Record<string, number> = { island: 1, islet: 1, archipelago
 
 /**
  * The preferred valid name per language of each object: preferred first, then real names before fallbacks
- * and transliterations, then alphabetical.
+ * and transliterations, then alphabetical. Provisional research names (`provisionalNameIds`) are left out.
  */
 export async function namesByLanguage(db: Db, objectIds: string[], languages: string[]): Promise<Map<string, Map<string, string>>> {
   const out = new Map<string, Map<string, string>>();
   if (objectIds.length === 0 || languages.length === 0) return out;
+  const provisional = await provisionalNameIds(db, objectIds);
   const rows = await db
     .selectDistinctOn([geoNames.geoObjectId, geoNames.language], {
       geoObjectId: geoNames.geoObjectId,
@@ -43,7 +45,14 @@ export async function namesByLanguage(db: Db, objectIds: string[], languages: st
       name: geoNames.name,
     })
     .from(geoNames)
-    .where(and(inArray(geoNames.geoObjectId, objectIds), inArray(geoNames.language, languages), validAt(geoNames)))
+    .where(
+      and(
+        inArray(geoNames.geoObjectId, objectIds),
+        inArray(geoNames.language, languages),
+        validAt(geoNames),
+        provisional.size > 0 ? notInArray(geoNames.id, [...provisional]) : undefined,
+      ),
+    )
     .orderBy(
       geoNames.geoObjectId,
       geoNames.language,

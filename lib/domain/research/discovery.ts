@@ -2,9 +2,9 @@ import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import type { ExtractRouteOutput } from "@/lib/ai/tasks/extract-route";
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { documentVersions, pageAssessments, places, researchRouteStops } from "@/lib/db/schema";
+import { documentVersions, geoNames, pageAssessments, places, researchRouteStops } from "@/lib/db/schema";
 import { locateQuote } from "@/lib/domain/extraction/quote";
-import { addNames } from "@/lib/domain/gazetteer/names";
+import { isGreek, normalizeName } from "@/lib/domain/gazetteer/names";
 import { plausibleDate } from "@/lib/domain/mentions/classification";
 import { jsonUuids } from "@/lib/domain/mentions/scope";
 import { activeAssessor } from "./assessment";
@@ -72,7 +72,7 @@ export async function storeRouteStops(
   return { stored: rows.length, dropped };
 }
 
-type Stop = { id: string; name: string; placeId: string | null };
+type Stop = { id: string; name: string; placeId: string | null; observedAt: string };
 
 /** The language of a page: its active assessment's, else the version's, else `und`. */
 async function pageLanguage(db: Db, documentVersionId: string, cfg: AppConfig): Promise<string> {
@@ -132,45 +132,68 @@ async function similarities(db: Db, name: string, named: NamedPlace[], cfg: AppC
 
 type CorridorMatch = { placeId: string; nameIt: { geoObjectId: string } | null };
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 /**
  * The candidate in the corridor (`discovery.corridorBufferKm` around the straight line between the places of the
- * previous and the next stop) the stop means: of the `anchorage`/`mooring_field` candidates (status `candidate`), the
- * only one whose name is similar enough (`discovery.minNameSimilarity`); without such a one, the only unnamed one,
- * which then gets the stop's name. Otherwise null.
+ * previous and the next stop) the stop means. Only for a plausible leg: the straight line is at most
+ * `discovery.maxLegKm` long and the two stops are dated at most `discovery.maxLegDays` apart. Of the
+ * `anchorage`/`mooring_field` candidates (status `candidate`), the only one whose name is similar enough
+ * (`discovery.minNameSimilarity`); without such a one, the only unnamed one (provisional research names do not count
+ * as names), which then gets the stop's name, unless a named candidate matches the stop by name or reaches
+ * `discovery.vetoSimilarity` (the stop may well mean it). Otherwise null.
  */
-async function corridorMatch(db: Db, name: string, prev: string, next: string, cfg: AppConfig): Promise<CorridorMatch | null> {
-  const { corridorBufferKm, minNameSimilarity } = cfg.research.discovery;
+async function corridorMatch(db: Db, stop: Stop, prev: Stop, next: Stop, cfg: AppConfig): Promise<CorridorMatch | null> {
+  const { corridorBufferKm, minNameSimilarity, vetoSimilarity, maxLegKm, maxLegDays } = cfg.research.discovery;
+  if (Math.abs(Date.parse(next.observedAt) - Date.parse(prev.observedAt)) > maxLegDays * DAY_MS) return null;
   const { rows } = await db.execute<{ id: string; geo_object_id: string }>(sql`
     select c.id, c.geo_object_id from ${places} c, ${places} a, ${places} b
-    where a.id = ${prev}::uuid and b.id = ${next}::uuid and c.id <> a.id and c.id <> b.id
+    where a.id = ${prev.placeId}::uuid and b.id = ${next.placeId}::uuid and c.id <> a.id and c.id <> b.id
+      and ST_Distance(a.position::geography, b.position::geography) <= ${maxLegKm * 1000}::float8
       and c.merged_into_id is null and c.valid_to is null and c.status = 'candidate' and c.kind in ('anchorage', 'mooring_field')
       and ST_DWithin(c.position::geography, ST_MakeLine(a.position, b.position)::geography, ${corridorBufferKm * 1000}::float8)`);
   if (rows.length === 0) return null;
   const named = await placeNames(db, rows.map((r) => r.id));
-  const sims = await similarities(db, name, [...named.values()], cfg);
+  const sims = await similarities(db, stop.name, [...named.values()], cfg);
   const similar = [...sims].filter(([, s]) => s >= minNameSimilarity).map(([id]) => id);
   if (similar.length === 1) return { placeId: similar[0]!, nameIt: null };
   if (similar.length > 1) return null;
+  const vetoed = [...named.values()].some(
+    (p) => (sims.get(p.placeId) ?? 0) >= vetoSimilarity || berthNameMatches({ name: stop.name, island: null }, p.names, cfg.nameAffixes, p.islands),
+  );
+  if (vetoed) return null;
   const unnamed = rows.filter((r) => !named.has(r.id));
   return unnamed.length === 1 ? { placeId: unnamed[0]!.id, nameIt: { geoObjectId: unnamed[0]!.geo_object_id } } : null;
+}
+
+/** Gives an unnamed bay the stop's name as a provisional research name: never preferred, no transliteration. */
+async function addResearchName(db: Db, geoObjectId: string, name: string, language: string): Promise<void> {
+  const clean = name.trim().replace(/\s+/g, " ");
+  await db
+    .insert(geoNames)
+    .values({ geoObjectId, name: clean, nameNormalized: normalizeName(clean), language, script: isGreek(clean) ? "greek" : "latin", origin: "research", isPreferred: false })
+    .onConflictDoNothing();
 }
 
 /**
  * Assigns the open route stops of a page version (active route model and prompt) to places (spec 5.5), repeated until
  * nothing changes:
- * 1. by name (`berthNameMatches`): the only place (not `rejected`) of that name within `extraction.placeRadiusKm` of
- *    the assigned neighbour stops, else within that radius of the page's own places (its research hits) or in their
- *    subdivisions → `match = name`;
- * 2. else, when the previous and the next stop are assigned, the corridor candidate (`corridorMatch`) →
- *    `match = corridor`; an unnamed one gets the stop's name in the page's language (`origin research`). A named
- *    candidate is never renamed.
+ * 0. anchors: a stop naming exactly one of the page's own places (its research hits) → `match = name`;
+ * 1. by name (`berthNameMatches`, provisional research names left out) when a neighbour stop is assigned: the only
+ *    place (not `rejected`) of that name within `extraction.placeRadiusKm` of the assigned neighbours → `match = name`;
+ *    with zero or several, the stop waits (a stop with an assigned neighbour never falls back to the page area);
+ * 2. when the previous and the next stop are assigned, the corridor candidate (`corridorMatch`) → `match = corridor`;
+ *    an unnamed one gets the stop's name in the page's language as a provisional research name. A named candidate is
+ *    never renamed;
+ * 3. only when 1 and 2 change nothing: the first open stop without an assigned neighbour, by name, the only place
+ *    within that radius of the page's own places or in their subdivisions → `match = name`; then again from 1.
  * Otherwise the stop stays open. No status changes. Pages linked here are extracted by the next research run (the
  * stage order is extract → routes → discover → confirm). Returns the stops assigned now and those still open.
  */
 export async function matchStops(db: Db, documentVersionId: string, cfg: AppConfig): Promise<{ byName: number; byCorridor: number; open: number }> {
   const { model, promptVersion } = activeRouteExtractor(cfg);
   const stops: Stop[] = await db
-    .select({ id: researchRouteStops.id, name: researchRouteStops.name, placeId: researchRouteStops.placeId })
+    .select({ id: researchRouteStops.id, name: researchRouteStops.name, placeId: researchRouteStops.placeId, observedAt: researchRouteStops.observedAt })
     .from(researchRouteStops)
     .where(
       and(
@@ -183,8 +206,10 @@ export async function matchStops(db: Db, documentVersionId: string, cfg: AppConf
   const result = { byName: 0, byCorridor: 0, open: 0 };
   if (stops.every((s) => s.placeId !== null)) return result;
 
-  const { rows: hits } = await db.execute<{ place_id: string }>(sql`
-    select distinct h.place_id from research_hits h
+  const { rows: hits } = await db.execute<{ place_id: string; usable: boolean }>(sql`
+    select distinct h.place_id, (p.merged_into_id is null and p.valid_to is null and p.status <> 'rejected') as usable
+    from research_hits h
+    join places p on p.id = h.place_id
     join documents d on d.url_normalized = h.url_normalized
     join document_versions v on v.document_id = d.id
     where v.id = ${documentVersionId}::uuid`);
@@ -193,43 +218,76 @@ export async function matchStops(db: Db, documentVersionId: string, cfg: AppConf
   let pagePool: NamedPlace[] | undefined;
   let language: string | undefined;
 
-  const assign = async (stop: Stop, placeId: string, match: "name" | "corridor") => {
-    await db
+  /** Assigns the stop unless another job did first; counts only an update that took effect. */
+  const assign = async (stop: Stop, placeId: string, match: "name" | "corridor"): Promise<boolean> => {
+    const updated = await db
       .update(researchRouteStops)
       .set({ placeId, match })
-      .where(and(eq(researchRouteStops.id, stop.id), isNull(researchRouteStops.placeId)));
+      .where(and(eq(researchRouteStops.id, stop.id), isNull(researchRouteStops.placeId)))
+      .returning({ id: researchRouteStops.id });
+    if (updated.length === 0) {
+      const [now] = await db.select({ placeId: researchRouteStops.placeId }).from(researchRouteStops).where(eq(researchRouteStops.id, stop.id));
+      stop.placeId = now?.placeId ?? null;
+      return false;
+    }
     stop.placeId = placeId;
     if (match === "name") result.byName++;
     else result.byCorridor++;
+    return true;
   };
+
+  const pageMatch = async (stop: Stop): Promise<string | null> => {
+    pagePool ??= await namedPool(db, pagePlaces, radiusKm, pagePlaces);
+    return onlyNameMatch(pagePool, stop.name, cfg);
+  };
+  const neighboursOf = (i: number) => [stops[i - 1]?.placeId, stops[i + 1]?.placeId].filter((id): id is string => !!id);
+
+  // Anchors: stops that name one of the places the page was found for.
+  const anchors = [...(await placeNames(db, hits.filter((h) => h.usable).map((h) => h.place_id))).values()];
+  for (const stop of stops) {
+    if (stop.placeId) continue;
+    const placeId = onlyNameMatch(anchors, stop.name, cfg);
+    if (placeId) await assign(stop, placeId, "name");
+  }
 
   for (let changed = true; changed; ) {
     changed = false;
-    for (const [i, stop] of stops.entries()) {
-      if (stop.placeId) continue;
-      const neighbours = [stops[i - 1]?.placeId, stops[i + 1]?.placeId].filter((id): id is string => !!id);
-      let placeId = neighbours.length > 0 ? onlyNameMatch(await namedPool(db, neighbours, radiusKm), stop.name, cfg) : null;
-      if (!placeId) {
-        pagePool ??= await namedPool(db, pagePlaces, radiusKm, pagePlaces);
-        placeId = onlyNameMatch(pagePool, stop.name, cfg);
+    // 1. by name near the assigned neighbours; a stop with an assigned neighbour never falls back to the page area
+    for (let progress = true; progress; ) {
+      progress = false;
+      for (const [i, stop] of stops.entries()) {
+        const neighbours = neighboursOf(i);
+        if (stop.placeId || neighbours.length === 0) continue;
+        const placeId = onlyNameMatch(await namedPool(db, neighbours, radiusKm), stop.name, cfg);
+        if (placeId) {
+          await assign(stop, placeId, "name");
+          progress = changed = true;
+        }
       }
+    }
+    // 2. corridor between two assigned neighbours
+    for (const [i, stop] of stops.entries()) {
+      const prev = stops[i - 1];
+      const next = stops[i + 1];
+      if (stop.placeId || !prev?.placeId || !next?.placeId) continue;
+      const found = await corridorMatch(db, stop, prev, next, cfg);
+      if (!found) continue;
+      if ((await assign(stop, found.placeId, "corridor")) && found.nameIt) {
+        language ??= await pageLanguage(db, documentVersionId, cfg);
+        await addResearchName(db, found.nameIt.geoObjectId, stop.name, language);
+      }
+      changed = true;
+    }
+    if (changed) continue;
+    // 3. by name in the page area, for the first open stop (in route order) without an assigned neighbour; then again from 1
+    for (const [i, stop] of stops.entries()) {
+      if (stop.placeId || neighboursOf(i).length > 0) continue;
+      const placeId = await pageMatch(stop);
       if (placeId) {
         await assign(stop, placeId, "name");
         changed = true;
+        break;
       }
-    }
-    for (const [i, stop] of stops.entries()) {
-      const prev = stops[i - 1]?.placeId;
-      const next = stops[i + 1]?.placeId;
-      if (stop.placeId || !prev || !next) continue;
-      const found = await corridorMatch(db, stop.name, prev, next, cfg);
-      if (!found) continue;
-      if (found.nameIt) {
-        language ??= await pageLanguage(db, documentVersionId, cfg);
-        await addNames(db, found.nameIt.geoObjectId, [{ name: stop.name, language, origin: "research" }]);
-      }
-      await assign(stop, found.placeId, "corridor");
-      changed = true;
     }
   }
   result.open = stops.filter((s) => !s.placeId).length;

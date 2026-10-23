@@ -35,5 +35,5 @@
     "listedAsBerthPageKinds": ["pilot_guide"],
     "officialPageKinds": ["marina", "authority"]
   },
-  "discovery": { "corridorBufferKm": 3, "minNameSimilarity": 0.8 }
+  "discovery": { "corridorBufferKm": 3, "minNameSimilarity": 0.8, "vetoSimilarity": 0.4, "maxLegKm": 25, "maxLegDays": 3, "corroboratingDomains": 2 }
 }

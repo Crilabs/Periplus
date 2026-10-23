@@ -33,7 +33,7 @@ describe("research config", () => {
     expect(c.confirmation.minIndependentSources).toBe(2);
     expect(c.confirmation.minSignalConfidence).toBe(0.7);
     expect(c.confirmation.positiveKinds).toEqual(["anchored", "moored_buoy", "berthed", "listed_as_berth"]);
-    expect(c.discovery).toEqual({ corridorBufferKm: 3, minNameSimilarity: 0.8 });
+    expect(c.discovery).toEqual({ corridorBufferKm: 3, minNameSimilarity: 0.8, vetoSimilarity: 0.4, maxLegKm: 25, maxLegDays: 3, corroboratingDomains: 2 });
   });
 
   it("rejects a kind that is both positive and negative", () => {
