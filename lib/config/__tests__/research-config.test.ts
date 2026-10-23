@@ -32,6 +32,7 @@ describe("research config", () => {
     const c = getConfig().research;
     expect(c.state).toEqual({
       landingRadiusM: 600,
+      shoreMaxM: 1000,
       footMaxM: 1500,
       detourFactor: 1.4,
       transportMaxM: 15000,

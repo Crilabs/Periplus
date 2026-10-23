@@ -73,8 +73,8 @@ describe("landingPoints", () => {
   it("nothing near: the nearest shore point of the land polygon", async () => {
     await withRollback(async (tx) => {
       const { placeId } = await insertPlace(tx);
-      // land starting about 1 km east of the berth
-      const lonE = LON + 1000 / (M_PER_DEG * Math.cos((LAT * Math.PI) / 180));
+      // land starting about 700 m east of the berth
+      const lonE = LON + 700 / (M_PER_DEG * Math.cos((LAT * Math.PI) / 180));
       await tx.insert(landPolygons).values({
         geom: geomFromGeoJson({ type: "Polygon", coordinates: [[[lonE, LAT - 0.01], [lonE + 0.02, LAT - 0.01], [lonE + 0.02, LAT + 0.01], [lonE, LAT + 0.01], [lonE, LAT - 0.01]]] }),
         datasetVersion: "test",
@@ -84,6 +84,31 @@ describe("landingPoints", () => {
       expect(out[0]).toMatchObject({ kind: "shore", geoObjectId: null, description: null });
       expect(out[0]!.lon).toBeCloseTo(lonE, 5);
       expect(out[0]!.lat).toBeCloseTo(LAT, 5);
+    });
+  });
+
+  it("a shore beyond shoreMaxM is no landing point", async () => {
+    await withRollback(async (tx) => {
+      const { placeId } = await insertPlace(tx);
+      const lonE = LON + 5000 / (M_PER_DEG * Math.cos((LAT * Math.PI) / 180));
+      await tx.insert(landPolygons).values({
+        geom: geomFromGeoJson({ type: "Polygon", coordinates: [[[lonE, LAT - 0.01], [lonE + 0.02, LAT - 0.01], [lonE + 0.02, LAT + 0.01], [lonE, LAT + 0.01], [lonE, LAT - 0.01]]] }),
+        datasetVersion: "test",
+      });
+      expect(await landingPoints(tx, placeId, config)).toEqual([]);
+    });
+  });
+
+  it("the same hint of two pages counts once", async () => {
+    await withRollback(async (tx) => {
+      const { placeId } = await insertPlace(tx);
+      const a = await seedPage(tx, config, placeId);
+      const b = await seedPage(tx, config, placeId);
+      const row = (p: { unitId: string; versionId: string }, description: string) => ({
+        unitId: p.unitId, placeId, documentVersionId: p.versionId, description, quote: "q", quoteStart: 0, quoteEnd: 1, observedAt: "2025-06-15",
+      });
+      await tx.insert(landingHints).values([row(a, "Small quay on the left"), row(b, "small quay on the left ")]);
+      expect(await texts(tx, placeId)).toHaveLength(1);
     });
   });
 
