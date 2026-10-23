@@ -29,6 +29,7 @@ import type {
 } from "@/lib/db/schema";
 import type { ChangeSeverity, ChangeType, SummaryStatus } from "@/lib/db/schema/profiles";
 import type { DeliveryStatus } from "@/lib/db/schema/deliveries";
+import type { PageKind } from "@/lib/db/schema/research";
 import type { ComparisonAttribute, ComparisonMethod, ComparisonResultValue, MetricKey } from "@/lib/db/schema/quality";
 import type { ChangeEntry, ContractFile } from "@/contract";
 import type { CheckName } from "@/lib/domain/delivery/validate";
@@ -104,6 +105,18 @@ export const REVIEW_KIND_LABELS: Record<ReviewKind, string> = {
   uncertain_change: "Unsichere Änderung",
   comparison_deviation: "Vergleichsabweichung",
   place_image: "Titelbild",
+};
+
+/** Kind of a researched page (page assessment, spec 18). */
+export const PAGE_KIND_LABELS: Record<PageKind, string> = {
+  trip_report: "Törnbericht",
+  pilot_guide: "Revierführer",
+  marina: "Marina",
+  authority: "Behörde",
+  forum: "Forum",
+  travel_guide: "Reiseführer",
+  listing: "Liste",
+  other: "Sonstiges",
 };
 
 export const PLACE_KIND_LABELS: Record<PlaceKind, string> = {
@@ -240,6 +253,7 @@ export const SOURCE_ORIGIN_LABELS: Record<SourceOrigin, string> = {
   whitelist: "Whitelist",
   manual: "Manuell",
   place_website: "Website des Ortes",
+  research: "Recherche",
 };
 
 export const DOCUMENT_STATUS_LABELS: Record<DocumentStatus, string> = {
