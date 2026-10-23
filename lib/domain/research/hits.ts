@@ -57,18 +57,19 @@ export async function recordHits(
 }
 
 /**
- * The newest bound website of the place (`place_websites.bound`) as a positive hit of rank 0 and origin
+ * The newest website row of the place, when it is bound (`place_websites.bound`), as a positive hit of rank 0 and origin
  * `place_website`, without a search behind it: the official page of the place (N3b). Not counted against
  * `maxHitsPerCandidate`; a URL the place already has as a positive hit adds nothing. Returns the number of new rows.
  */
 export async function recordWebsiteHit(db: Db, input: { placeId: string; geoObjectId: string; runId: string }): Promise<number> {
   const [site] = await db
-    .select({ urlNormalized: placeWebsites.urlNormalized })
+    .select({ urlNormalized: placeWebsites.urlNormalized, bound: placeWebsites.bound })
     .from(placeWebsites)
-    .where(and(eq(placeWebsites.placeId, input.placeId), eq(placeWebsites.bound, true)))
+    .where(eq(placeWebsites.placeId, input.placeId))
     .orderBy(desc(placeWebsites.createdAt), desc(placeWebsites.id))
     .limit(1);
-  if (!site) return 0;
+  // the newest row decides: a binding that ended (newer unbound row) gives no official page
+  if (!site || !site.bound) return 0;
   const inserted = await db
     .insert(researchHits)
     .values({
@@ -83,5 +84,17 @@ export async function recordWebsiteHit(db: Db, input: { placeId: string; geoObje
     })
     .onConflictDoNothing()
     .returning({ id: researchHits.id });
+  // a search already found this URL as a positive hit: it is the place's own website all the same
+  await db
+    .update(researchHits)
+    .set({ origin: "place_website" })
+    .where(
+      and(
+        eq(researchHits.placeId, input.placeId),
+        eq(researchHits.urlNormalized, site.urlNormalized),
+        eq(researchHits.purpose, "positive"),
+        eq(researchHits.origin, "serp"),
+      ),
+    );
   return inserted.length;
 }

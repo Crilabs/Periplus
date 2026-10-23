@@ -1,9 +1,9 @@
 import { alias } from "drizzle-orm/pg-core";
-import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { resolveTaskModel } from "@/lib/ai/cost";
 import { getConfig, type AppConfig, type NameAffixesConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { documents, documentVersions, geoNames, geoObjects, pageAssessments, places, researchHits, researchRouteStops, researchUnits } from "@/lib/db/schema";
+import { documents, documentVersions, geoNames, geoObjects, pageAssessments, placeWebsites, places, researchHits, researchRouteStops, researchUnits } from "@/lib/db/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { stripAffix } from "@/lib/domain/mentions/affixes";
 import { activeAssessor } from "./assessment";
@@ -114,7 +114,7 @@ export async function planUnits(
 
   // version -> searched places (hits of these places on the version's document)
   const hitRows = await db
-    .selectDistinct({ placeId: researchHits.placeId, versionId: documents.currentVersionId, origin: researchHits.origin })
+    .selectDistinct({ placeId: researchHits.placeId, versionId: documents.currentVersionId, urlNormalized: researchHits.urlNormalized, origin: researchHits.origin })
     .from(researchHits)
     .innerJoin(documents, eq(documents.urlNormalized, researchHits.urlNormalized))
     .where(inArray(researchHits.placeId, placeIds));
@@ -136,11 +136,23 @@ export async function planUnits(
     (searched.get(h.versionId) ?? searched.set(h.versionId, new Set()).get(h.versionId)!).add(h.placeId);
   }
   if (searched.size === 0) return none;
-  // a page of the place's own website is the official page of the place: it counts without naming the berth (N3b)
-  const stopPairs = new Set([
-    ...stopRows.map((s) => `${s.versionId}:${s.placeId}`),
-    ...hitRows.filter((h) => h.origin === "place_website").map((h) => `${h.versionId}:${h.placeId}`),
-  ]);
+  const stopPairs = new Set(stopRows.map((s) => `${s.versionId}:${s.placeId}`));
+  // a page of the place's own website (its newest website row, still bound, same URL) is the official page of the
+  // place: it counts without naming the berth, unless its assessment names berths (then none matched, see `official`)
+  const newestSite = await db
+    .selectDistinctOn([placeWebsites.placeId], { placeId: placeWebsites.placeId, urlNormalized: placeWebsites.urlNormalized, bound: placeWebsites.bound })
+    .from(placeWebsites)
+    .where(inArray(placeWebsites.placeId, placeIds))
+    .orderBy(placeWebsites.placeId, desc(placeWebsites.createdAt), desc(placeWebsites.id));
+  const siteOf = new Map(newestSite.map((w) => [w.placeId, w]));
+  const ownSitePairs = new Set(
+    hitRows
+      .filter((h) => {
+        const w = siteOf.get(h.placeId);
+        return h.origin === "place_website" && !!w && w.bound && w.urlNormalized === h.urlNormalized;
+      })
+      .map((h) => `${h.versionId}:${h.placeId}`),
+  );
 
   const assessments = await db
     .select({ versionId: pageAssessments.documentVersionId, berths: pageAssessments.berths })
@@ -165,10 +177,12 @@ export async function planUnits(
     const p = own.get(placeId);
     return !p || !a.berths.some((b) => berthNameMatches(b, p.names, affixes, p.islands));
   };
+  // an own-website page whose assessment names berths but none of them the place is about another berth: no exemption
+  const official = (a: { versionId: string; berths: unknown[] }, placeId: string) => ownSitePairs.has(`${a.versionId}:${placeId}`) && a.berths.length === 0;
   const needText = new Map<string, string[]>(); // version -> places to look for in the text
   for (const a of assessments) {
     for (const placeId of searched.get(a.versionId)!) {
-      if (!stopPairs.has(`${a.versionId}:${placeId}`) && unnamed(a, placeId)) (needText.get(a.versionId) ?? needText.set(a.versionId, []).get(a.versionId)!).push(placeId);
+      if (!stopPairs.has(`${a.versionId}:${placeId}`) && !official(a, placeId) && unnamed(a, placeId)) (needText.get(a.versionId) ?? needText.set(a.versionId, []).get(a.versionId)!).push(placeId);
     }
   }
   const named = new Set<string>(); // `version:place` found in the Markdown
@@ -219,7 +233,7 @@ export async function planUnits(
     .map((a): ResearchUnitPlan => {
       const ids = new Set<string>();
       for (const placeId of searched.get(a.versionId)!) {
-        if (stopPairs.has(`${a.versionId}:${placeId}`) || !unnamed(a, placeId) || named.has(`${a.versionId}:${placeId}`)) ids.add(placeId);
+        if (stopPairs.has(`${a.versionId}:${placeId}`) || official(a, placeId) || !unnamed(a, placeId) || named.has(`${a.versionId}:${placeId}`)) ids.add(placeId);
       }
       for (const s of searched.get(a.versionId)!) {
         for (const c of near.get(s) ?? []) {

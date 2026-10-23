@@ -9,6 +9,7 @@ const PURPOSE_LABELS = { positive: "Bestätigung", negative: "Negativsuche" } as
 function purposeText(r: ResearchRow): string {
   if (r.link === "neighbour") return "Treffer eines Nachbarn";
   if (r.link === "route") return "Routenhalt";
+  if (r.ownWebsite) return "eigene Website";
   return r.purposes.map((p) => PURPOSE_LABELS[p]).join(", ");
 }
 

@@ -7,7 +7,7 @@ import { externalCalls, placeWebsites, places, researchHits, serpQueries, serpRe
 import { researchCandidates } from "@/lib/domain/research/candidates";
 import { newId } from "@/lib/domain/ids";
 import { getConfig } from "@/lib/config";
-import { recordHits } from "@/lib/domain/research/hits";
+import { recordHits, recordWebsiteHit } from "@/lib/domain/research/hits";
 import { planResearchSearch, searchCandidate } from "@/lib/pipeline/research/search";
 import { withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
@@ -102,12 +102,11 @@ async function website(tx: Db, placeId: string, geoObjectId: string, url: string
 }
 
 describe("searchCandidate: bound marina website (N3b)", () => {
-  it("records the newest bound website as a positive rank-0 hit of origin place_website, without a serp query", () =>
+  it("records the newest website as a positive rank-0 hit of origin place_website when it is bound, without a serp query", () =>
     withRollback(async (tx) => {
       const { placeId, objectId } = await seed(tx, "Vathi");
       await website(tx, placeId, objectId, "https://old-marina.example/", { createdAt: new Date("2024-01-01") });
       await website(tx, placeId, objectId, "https://marina.example/", { createdAt: new Date("2025-01-01") });
-      await website(tx, placeId, objectId, "https://unbound.example/", { bound: false, createdAt: new Date("2026-01-01") });
       const runId = await insertTestRun(tx);
       const deps = { transport: fakeTransport(["https://sailblog.example/vathi"]), archive: memoryArchive() };
       await searchCandidate(tx, placeId, deps, { db: tx, runId });
@@ -118,7 +117,7 @@ describe("searchCandidate: bound marina website (N3b)", () => {
       expect((await tx.select().from(researchHits).where(eq(researchHits.placeId, placeId))).filter((h) => h.origin === "place_website")).toHaveLength(1);
     }));
 
-  it("does not count against maxHitsPerCandidate,", () =>
+  it("does not count against maxHitsPerCandidate", () =>
     withRollback(async (tx) => {
       const { placeId, objectId } = await seed(tx, "Vathi");
       await website(tx, placeId, objectId, "https://marina.example/");
@@ -129,9 +128,28 @@ describe("searchCandidate: bound marina website (N3b)", () => {
         .returning({ id: serpQueries.id });
       await tx.insert(serpResults).values([1, 2].map((rank) => ({ serpQueryId: q!.id, rank, url: `https://s${rank}.example/p`, urlNormalized: `https://s${rank}.example/p`, domain: `s${rank}.example`, title: "t", snippet: "s" })));
       const cfg = { ...getConfig().research, maxHitsPerCandidate: 2 };
-      const { recordWebsiteHit } = await import("@/lib/domain/research/hits");
       expect(await recordWebsiteHit(tx, { placeId, geoObjectId: objectId, runId })).toBe(1);
       expect(await recordHits(tx, { placeId, geoObjectId: objectId, serpQueryIds: [q!.id], purpose: "positive", runId }, cfg)).toBe(2);
+    }));
+
+  it("records nothing when the newest website row is unbound, even if an older one was bound", () =>
+    withRollback(async (tx) => {
+      const { placeId, objectId } = await seed(tx, "Vathi");
+      await website(tx, placeId, objectId, "https://marina.example/", { createdAt: new Date("2025-01-01") });
+      await website(tx, placeId, objectId, "https://marina.example/", { bound: false, createdAt: new Date("2026-01-01") });
+      expect(await recordWebsiteHit(tx, { placeId, geoObjectId: objectId, runId: await insertTestRun(tx) })).toBe(0);
+      expect(await tx.select().from(researchHits).where(eq(researchHits.placeId, placeId))).toHaveLength(0);
+    }));
+
+  it("upgrades a search hit on the same URL to origin place_website", () =>
+    withRollback(async (tx) => {
+      const { placeId, objectId } = await seed(tx, "Vathi");
+      await website(tx, placeId, objectId, "https://marina.example/");
+      const runId = await insertTestRun(tx);
+      await searchCandidate(tx, placeId, { transport: fakeTransport(["https://marina.example/"]), archive: memoryArchive() }, { db: tx, runId });
+      const pos = (await tx.select().from(researchHits).where(eq(researchHits.placeId, placeId))).filter((h) => h.purpose === "positive" && h.urlNormalized === "https://marina.example/");
+      expect(pos).toHaveLength(1);
+      expect(pos[0]!.origin).toBe("place_website");
     }));
 
   it("records nothing for a place without a bound website", () =>

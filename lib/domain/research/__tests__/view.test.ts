@@ -52,7 +52,7 @@ describe("researchView", () => {
       await tx.insert(researchHits).values({ placeId, geoObjectId: objectId, urlNormalized: "https://marina.example/", domain: "marina.example", rank: 0, purpose: "positive", origin: "place_website" });
       const view = await researchView(tx, placeId);
       expect(view.rows).toHaveLength(1);
-      expect(view.rows[0]).toMatchObject({ url: "https://marina.example/", link: "search", rank: 0, purpose: "positive", keyword: null });
+      expect(view.rows[0]).toMatchObject({ url: "https://marina.example/", link: "search", rank: 0, purpose: "positive", keyword: null, ownWebsite: true });
     }));
 
   it("lists assessed and unassessed hits, positive before negative, by rank", () =>

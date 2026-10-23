@@ -11,6 +11,7 @@ const row = (over: Partial<ResearchRow> = {}): ResearchRow => ({
   purpose: "positive",
   purposes: ["positive"],
   keyword: "Kolona anchorage",
+  ownWebsite: false,
   documentId: "00000000-0000-4000-8000-000000000001",
   fetch: null,
   assessment: { pageKind: "trip_report", firstHand: true, generated: false, observedAt: "2025-06-15", berths: ["Vathi", "Kolona"] },
@@ -42,6 +43,11 @@ describe("ResearchTab", () => {
   it("shows the empty state", () => {
     const html = renderToStaticMarkup(<ResearchTab view={view([])} />);
     expect(html).toContain("Noch keine Recherche für diesen Liegeplatz.");
+  });
+
+  it("labels the place's own website", () => {
+    const html = renderToStaticMarkup(<ResearchTab view={view([row({ ownWebsite: true, rank: 0, keyword: null })])} />);
+    expect(html).toContain("eigene Website");
   });
 
   it("renders a first-hand row with German labels and a link to the document", () => {

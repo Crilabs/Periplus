@@ -48,6 +48,8 @@ export type ResearchRow = {
   /** Every purpose the page was found for, positive first. */
   purposes: ResearchPurpose[];
   keyword: string | null;
+  /** The page is the place's own website (a hit without a search behind it). */
+  ownWebsite: boolean;
   documentId: string | null;
   /** The newest fetch attempt of the page (null while none was made). */
   fetch: { outcome: ResearchFetchOutcome; reason: string | null } | null;
@@ -95,6 +97,7 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
       rank: researchHits.rank,
       purpose: researchHits.purpose,
       keyword: serpQueries.keyword,
+      origin: researchHits.origin,
       documentId: documents.id,
       versionId: documents.currentVersionId,
     })
@@ -224,6 +227,7 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
       purpose: h.purpose,
       purposes: [h.purpose],
       keyword: h.keyword,
+      ownWebsite: h.origin === "place_website",
       documentId: h.documentId,
       fetch: fetchOf.get(h.url) ?? null,
       ...pageOf(h.versionId),
@@ -245,6 +249,7 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
       purpose: null,
       purposes: [],
       keyword: null,
+      ownWebsite: false,
       documentId: l.document_id,
       fetch: fetchOf.get(l.url) ?? null,
       ...pageOf(l.version_id),

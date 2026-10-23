@@ -45,6 +45,14 @@ describe("decideBerth: official website of the place (N3b)", () => {
   });
 });
 
+describe("decideBerth: own website and search page of one domain (N3b)", () => {
+  it("count as one source", () => {
+    const own = ev({ kind: "listed_as_berth", firstHand: false, pageKind: "marina", domain: "marina.example", link: "search" });
+    const found = ev({ kind: "listed_as_berth", firstHand: false, pageKind: "marina", domain: "marina.example", link: "search", quote: "Gästeliegeplätze am Steg" });
+    expect(decide("marina", [own, found], cfg)).toMatchObject({ status: "candidate", independentSources: ["marina.example"] });
+  });
+});
+
 describe("decideBerth", () => {
   it("two domains with a first-hand anchored signal confirm an anchorage", () => {
     const v = decide("anchorage", [ev({ domain: "sail-a.example" }), ev({ domain: "sail-b.example" })], cfg);
