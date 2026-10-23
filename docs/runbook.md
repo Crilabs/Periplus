@@ -162,7 +162,7 @@ Rollback auf eine Version vor fb5278c (Worker ohne Bereitschaftsmarker): `deploy
   ```
   Ein Paketbau, dessen Vorgänger-Snapshot vor dem eigenen liegt, bricht mit „transaction ids went back“ ab, statt ein Paket mit falschen Schweregraden zu liefern; nach dem Schritt oben „Paket bauen“ wiederholen. Ein Restore in den laufenden Cluster (Befehl darüber) braucht das nicht.
 
-Ergebnis der letzten Prüfung (nach Abnahme eintragen): _Datum: offen, restore-check: offen_
+Ergebnis der letzten Prüfung (nach Abnahme eintragen): _Datum: 2026-10-23, restore-check: ok (erstes Backup, Snapshot `9e92e101`, 1 Benutzer wiederhergestellt)_
 
 ## Hinweise
 - `trusted_proxies` im Caddy des Servers enthält nur die Cloudflare-Bereiche (für andere Sites); `periplus.marvoy.app` läuft nicht über Cloudflare. Die Liste darf nicht erweitert werden: Das Login-Rate-Limit nutzt den ersten `X-Forwarded-For`-Eintrag; das ist nur korrekt, solange Caddy diesen Header mit der echten Client-Adresse überschreibt.
