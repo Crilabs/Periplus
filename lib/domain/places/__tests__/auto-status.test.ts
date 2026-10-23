@@ -2,7 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { documents, geoNames, nameCandidates, places, restrictedAreas, reviewDecisions, reviewTasks, tiles } from "@/lib/db/schema";
+import { geoNames, nameCandidates, places, restrictedAreas, reviewDecisions, reviewTasks, tiles } from "@/lib/db/schema";
 import { consolidateGeo } from "@/lib/domain/consolidation/store";
 import { newId, newPublicId } from "@/lib/domain/ids";
 import { decideReviewTask } from "@/lib/domain/review-decisions";
@@ -13,8 +13,8 @@ import { insertComputation } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 
 /*
- * Confirmation and kind switch by evidence during consolidation (spec 17 „Bestätigung nach Beleg“, „Ortsart aus
- * Belegen“, „Vorrang und Dauer“), through `consolidateGeo` as the pipeline runs it.
+ * Kind switch by evidence during consolidation (spec 17 „Ortsart aus Belegen“, „Vorrang und Dauer“), through
+ * `consolidateGeo` as the pipeline runs it. The old confirmation by evidence is switched off (plan N2 task 6).
  */
 
 const placeRow = async (tx: Db, id: string) => (await tx.select().from(places).where(eq(places.id, id)))[0]!;
@@ -35,26 +35,17 @@ const seedTask = (tx: Db, placeId: string, objectId: string, kind = "anchorage")
 const taskRow = async (tx: Db, id: string) => (await tx.select().from(reviewTasks).where(eq(reviewTasks.id, id)))[0]!;
 
 describe("applyAutoStatus (in consolidateGeo)", () => {
-  it("a pilot guide's anchoring fact confirms a candidate: rule alone, decided by system, sp_ id, seed task dismissed", () =>
+  it("a pilot guide's anchoring fact no longer confirms a candidate: no decision, the seed task stays open (plan N2 task 6)", () =>
     withRollback(async (tx) => {
       const place = await placeOf(tx);
       const seed = await seedTask(tx, place.placeId, place.objectId);
-      const f = await factFrom(tx, place.objectId, { docType: "pilot_guide" });
+      await factFrom(tx, place.objectId, { docType: "pilot_guide" });
+      await factFrom(tx, place.objectId, { docType: "pilot_guide" });
       await consolidateGeo(tx, place.objectId);
 
-      const row = await placeRow(tx, place.placeId);
-      expect(row).toMatchObject({ status: "confirmed", statusReason: null, kind: "anchorage" });
-      expect(row.publicId).toMatch(/^sp_/);
-      expect(await autoDecisions(tx, place.placeId)).toEqual([
-        {
-          subjectType: "place_status",
-          status: "decided",
-          context: { previous: "candidate" },
-          decision: { action: "confirm", auto: true, rule: "alone", factIds: [f.factId], documentIds: [f.documentId], routeStopIds: [] },
-          decidedBy: "system",
-        },
-      ]);
-      expect(await taskRow(tx, seed.id)).toMatchObject({ status: "dismissed", context: expect.objectContaining({ dismissedReason: "auto_confirmed" }) });
+      expect(await placeRow(tx, place.placeId)).toMatchObject({ status: "candidate", statusReason: null, publicId: null, kind: "anchorage" });
+      expect(await autoDecisions(tx, place.placeId)).toEqual([]);
+      expect((await taskRow(tx, seed.id)).status).toBe("open");
     }));
 
   it("one trip report leaves the place a candidate with its seed task open", () =>
@@ -68,27 +59,10 @@ describe("applyAutoStatus (in consolidateGeo)", () => {
       expect((await taskRow(tx, seed.id)).status).toBe("open");
     }));
 
-  it("an open pair review waits, also when the place's object is the larger id (Review Focus 4); the pair task stays", () =>
+  it("a candidate inside a restricted area with evidence is no longer set no_anchoring from text (plan N2 task 6)", () =>
     withRollback(async (tx) => {
       const place = await placeOf(tx);
       await factFrom(tx, place.objectId, { docType: "pilot_guide" });
-      // the place's object as the larger id of the pair
-      const subjectId = `00000000-0000-4000-8000-000000000000:${place.objectId}`;
-      const pair = await createReviewTask(tx, { kind: "place_candidate", subjectType: "geo_object_pair", subjectId, context: {} });
-      await consolidateGeo(tx, place.objectId);
-      expect((await placeRow(tx, place.placeId)).status).toBe("candidate");
-      expect((await taskRow(tx, pair.id)).status).toBe("open");
-
-      // decided: the next consolidation confirms
-      await tx.update(reviewTasks).set({ status: "decided" }).where(eq(reviewTasks.id, pair.id));
-      await consolidateGeo(tx, place.objectId);
-      expect((await placeRow(tx, place.placeId)).status).toBe("confirmed");
-    }));
-
-  it("a candidate inside a restricted area becomes no_anchoring with an sp_ id", () =>
-    withRollback(async (tx) => {
-      const place = await placeOf(tx);
-      const f = await factFrom(tx, place.objectId, { docType: "pilot_guide" });
       const square: GeoJSON.Polygon = { type: "Polygon", coordinates: [[[20.99, 35.19], [21.01, 35.19], [21.01, 35.21], [20.99, 35.21], [20.99, 35.19]]] };
       const [area] = await tx.insert(restrictedAreas).values({ kind: "military", geom: sql`${geomFromGeoJson(square)}` }).returning({ id: restrictedAreas.id });
       await insertComputation(tx, place.objectId, "restriction", {
@@ -96,16 +70,8 @@ describe("applyAutoStatus (in consolidateGeo)", () => {
       });
       await consolidateGeo(tx, place.objectId);
 
-      const row = await placeRow(tx, place.placeId);
-      expect(row).toMatchObject({ status: "no_anchoring", statusReason: `restricted:military:${area!.id}` });
-      expect(row.publicId).toMatch(/^sp_/);
-      expect(await autoDecisions(tx, place.placeId)).toEqual([
-        expect.objectContaining({
-          subjectType: "place_status",
-          decision: { action: "no_anchoring", auto: true, rule: "alone", factIds: [f.factId], documentIds: [f.documentId], routeStopIds: [] },
-          decidedBy: "system",
-        }),
-      ]);
+      expect(await placeRow(tx, place.placeId)).toMatchObject({ status: "candidate", publicId: null });
+      expect(await autoDecisions(tx, place.placeId)).toEqual([]);
     }));
 
   it("rejected, no_anchoring and abandoned places never change status by new evidence", () =>
@@ -134,28 +100,14 @@ describe("applyAutoStatus (in consolidateGeo)", () => {
       expect(await placeRow(tx, confirmed.placeId)).toMatchObject({ status: "confirmed", kind: "anchorage" });
     }));
 
-  it("a confirmed place whose only evidence document is gone stays confirmed (Review Focus 5)", () =>
-    withRollback(async (tx) => {
-      const place = await placeOf(tx);
-      const f = await factFrom(tx, place.objectId, { docType: "pilot_guide" });
-      await consolidateGeo(tx, place.objectId);
-      const confirmed = await placeRow(tx, place.placeId);
-      expect(confirmed.status).toBe("confirmed");
-
-      await tx.update(documents).set({ status: "gone" }).where(eq(documents.id, f.documentId));
-      await consolidateGeo(tx, place.objectId);
-      expect(await placeRow(tx, place.placeId)).toMatchObject({ status: "confirmed", publicId: confirmed.publicId });
-      expect(await autoDecisions(tx, place.placeId)).toHaveLength(1);
-    }));
-
-  it("place.kind_evidence port turns a seed marina into a port (place_kind decision) and confirms it as commercial", () =>
+  it("place.kind_evidence port turns a seed marina into a port (place_kind decision); the status stays (plan N2 task 6)", () =>
     withRollback(async (tx) => {
       const place = await placeOf(tx, { kind: "marina" });
       await seedTask(tx, place.placeId, place.objectId, "marina");
       const k = await factFrom(tx, place.objectId, { attribute: "place.kind_evidence", value: "port" });
       await consolidateGeo(tx, place.objectId);
 
-      expect(await placeRow(tx, place.placeId)).toMatchObject({ kind: "port", status: "confirmed" });
+      expect(await placeRow(tx, place.placeId)).toMatchObject({ kind: "port", status: "candidate" });
       expect(await autoDecisions(tx, place.placeId)).toEqual([
         {
           subjectType: "place_kind",
@@ -164,7 +116,6 @@ describe("applyAutoStatus (in consolidateGeo)", () => {
           decision: { action: "set_kind", kind: "port", auto: true, factIds: [k.factId] },
           decidedBy: "system",
         },
-        expect.objectContaining({ subjectType: "place_status", decision: expect.objectContaining({ action: "confirm", rule: "commercial_port" }) }),
       ]);
     }));
 
@@ -231,7 +182,7 @@ describe("applyAutoStatus (in consolidateGeo)", () => {
       const own = await placeOf(tx, { kind: "marina" });
       await pageFact(tx, own.objectId, { bound: true, attribute: "place.kind_evidence", value: "port" });
       await consolidateGeo(tx, own.objectId);
-      expect(await placeRow(tx, own.placeId)).toMatchObject({ kind: "port", status: "confirmed" });
+      expect(await placeRow(tx, own.placeId)).toMatchObject({ kind: "port", status: "candidate" });
     }));
 
   it("the kind of a place an admin created („Ort anlegen“, create_place) is never switched (fix round 1)", () =>
