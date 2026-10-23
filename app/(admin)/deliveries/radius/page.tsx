@@ -27,8 +27,6 @@ import {
 } from "../../_components/ui";
 import { RadiusMap, RadiusZipButton } from "./radius-map";
 
-const log = createLogger("admin-radius");
-
 export const metadata: Metadata = { title: "Umkreis-Paket" };
 
 const pageParam = z.coerce.number().int().min(1).catch(1);
@@ -54,7 +52,7 @@ function previewOrError(
 ): Promise<Awaited<ReturnType<typeof previewRadius>> | { error: string }> {
   return previewRadius(db, archive, marina, days).catch((e: unknown) => {
     const error = e instanceof Error ? e.message : String(e);
-    log.error({ marina, days, reason: error }, "radius preview failed");
+    createLogger("admin-radius").error({ marina, days, reason: error }, "radius preview failed");
     return { error };
   });
 }
@@ -74,7 +72,7 @@ export default async function Page({ searchParams }: PageProps<"/deliveries/radi
     (list) => ({ list, error: null as string | null }),
     (e: unknown) => {
       const error = e instanceof Error ? e.message : String(e);
-      log.error({ reason: error }, "home marinas could not be listed");
+      createLogger("admin-radius").error({ reason: error }, "home marinas could not be listed");
       return { list: [], error };
     },
   );
