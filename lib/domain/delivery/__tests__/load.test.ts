@@ -58,7 +58,7 @@ describe("loadSubdivisionScope", () => {
       });
       expect(a.profile).toMatchObject({ version: 1, confidence: 0.72, sourcesCount: 3 });
       expect(a.profile!.attributes["shelter.NW"]).toBe(0.95);
-      // popularity on the build date: A has the most sources of the subdivision's confirmed places
+      // popularity on the build date: A has the most sources of the confirmed places within the 50 nm neighbourhood
       expect(a.popularity).toBe(1);
       const c = scope.spots.find((s) => s.publicId === C.publicId)!;
       expect(c).toMatchObject({ status: "no_anchoring", statusReason: `restricted:military:${f.restrictedAreaId}`, popularity: null });

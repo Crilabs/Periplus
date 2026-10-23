@@ -11,7 +11,7 @@ import {
 } from "@/lib/db/schema/geo";
 import { changeRateEnum, DOC_TYPES, type ChangeRate, type DocType } from "@/lib/db/schema/sources";
 import { CONTRACT_FILES, SCHEMA_VERSION } from "@/contract";
-import { PROVENANCE_SOURCES } from "@/contract/v2";
+import { PROVENANCE_SOURCES, RADIUS_MAX_DAYS } from "@/contract/v2";
 import { COPY_SHINGLE_WORDS } from "@/lib/domain/documents/shingles";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { CONVERTERS, crawlRulesPatchSchema, regexPattern } from "@/lib/domain/sources/crawl-rules";
@@ -1070,6 +1070,19 @@ export const deliverySchema = z.strictObject({
     capeOffsetNm: positive,
     capeLandRadiusM: positive,
   }),
+  /** Radius delivery (spec 18): radius = `nmPerDay × days × returnFactor`, `days` within `minDays`–`maxDays`. */
+  radius: z
+    .strictObject({
+      nmPerDay: positive,
+      returnFactor: positive,
+      minDays: positiveInt,
+      maxDays: positiveInt,
+    })
+    .refine((r) => r.minDays <= r.maxDays, "minDays must not exceed maxDays")
+    // 28 is the contract's ceiling (manifest scope `days`); a longer trip would make packages the contract refuses
+    .refine((r) => r.maxDays <= RADIUS_MAX_DAYS, { message: `maxDays must not exceed the contract's ${RADIUS_MAX_DAYS}`, path: ["maxDays"] }),
+  /** `popularity` is normalised within this distance of each place, across subdivisions (spec 18), nautical miles. */
+  popularity: z.strictObject({ neighbourhoodNm: positive }),
   highlights: z.strictObject({ maxSpotIds: positiveInt }),
   validation: z.strictObject({
     maxWaterDistanceNm: positive,

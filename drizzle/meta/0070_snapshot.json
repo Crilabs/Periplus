@@ -1,6 +1,6 @@
 {
-  "id": "564b6830-603a-4904-8a7e-8f624292794c",
-  "prevId": "4ab427a8-739e-4a94-a1d1-5280feac343c",
+  "id": "26aeaa00-4b95-439f-904c-1d1af77344b6",
+  "prevId": "7c992003-697b-497c-b9a0-15cb452a0da6",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -60,17 +60,17 @@
       "uniqueConstraints": {
         "api_clients_name_unique": {
           "name": "api_clients_name_unique",
-          "nullsNotDistinct": false,
           "columns": [
             "name"
-          ]
+          ],
+          "nullsNotDistinct": false
         },
         "api_clients_key_hash_unique": {
           "name": "api_clients_key_hash_unique",
-          "nullsNotDistinct": false,
           "columns": [
             "key_hash"
-          ]
+          ],
+          "nullsNotDistinct": false
         }
       },
       "policies": {},
@@ -138,9 +138,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "login_attempts_ip_at_idx": {
           "name": "login_attempts_ip_at_idx",
@@ -159,9 +159,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -219,10 +219,10 @@
       "uniqueConstraints": {
         "users_email_unique": {
           "name": "users_email_unique",
-          "nullsNotDistinct": false,
           "columns": [
             "email"
-          ]
+          ],
+          "nullsNotDistinct": false
         }
       },
       "policies": {},
@@ -333,9 +333,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "external_calls_source_id_at_idx": {
           "name": "external_calls_source_id_at_idx",
@@ -354,9 +354,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "external_calls_run_id_idx": {
           "name": "external_calls_run_id_idx",
@@ -369,9 +369,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "external_calls_tile_id_at_idx": {
           "name": "external_calls_tile_id_at_idx",
@@ -390,9 +390,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -450,15 +450,15 @@
         "job_outcomes_run_id_runs_id_fk": {
           "name": "job_outcomes_run_id_runs_id_fk",
           "tableFrom": "job_outcomes",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -620,26 +620,26 @@
         "run_stages_run_id_runs_id_fk": {
           "name": "run_stages_run_id_runs_id_fk",
           "tableFrom": "run_stages",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "run_stages_run_id_stage_unique": {
           "name": "run_stages_run_id_stage_unique",
-          "nullsNotDistinct": false,
           "columns": [
             "run_id",
             "stage"
-          ]
+          ],
+          "nullsNotDistinct": false
         }
       },
       "policies": {},
@@ -848,24 +848,24 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "review_decisions_task_id_review_tasks_id_fk": {
           "name": "review_decisions_task_id_review_tasks_id_fk",
           "tableFrom": "review_decisions",
-          "tableTo": "review_tasks",
           "columnsFrom": [
             "task_id"
           ],
+          "tableTo": "review_tasks",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -951,10 +951,10 @@
             }
           ],
           "isUnique": true,
-          "where": "\"review_tasks\".\"status\" = 'open'",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"review_tasks\".\"status\" = 'open'",
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -1043,9 +1043,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "area_evidence_area_id_idx": {
           "name": "area_evidence_area_id_idx",
@@ -1058,24 +1058,24 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "area_evidence_area_id_geo_objects_id_fk": {
           "name": "area_evidence_area_id_geo_objects_id_fk",
           "tableFrom": "area_evidence",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "area_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1138,37 +1138,37 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "area_members_area_id_geo_objects_id_fk": {
           "name": "area_members_area_id_geo_objects_id_fk",
           "tableFrom": "area_members",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "area_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "area_members_geo_object_id_geo_objects_id_fk": {
           "name": "area_members_geo_object_id_geo_objects_id_fk",
           "tableFrom": "area_members",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -1252,9 +1252,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -1305,41 +1305,41 @@
         "comparison_set_place_id_places_id_fk": {
           "name": "comparison_set_place_id_places_id_fk",
           "tableFrom": "comparison_set",
-          "tableTo": "places",
           "columnsFrom": [
             "place_id"
           ],
+          "tableTo": "places",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "comparison_set_area_id_geo_objects_id_fk": {
           "name": "comparison_set_area_id_geo_objects_id_fk",
           "tableFrom": "comparison_set",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "area_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "comparison_set_subdivision_id_subdivisions_id_fk": {
           "name": "comparison_set_subdivision_id_subdivisions_id_fk",
           "tableFrom": "comparison_set",
-          "tableTo": "subdivisions",
           "columnsFrom": [
             "subdivision_id"
           ],
+          "tableTo": "subdivisions",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1454,10 +1454,10 @@
             }
           ],
           "isUnique": true,
-          "where": "\"geo_names\".\"valid_to\" is null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"geo_names\".\"valid_to\" is null",
+          "concurrently": false
         },
         "geo_names_geo_object_id_idx": {
           "name": "geo_names_geo_object_id_idx",
@@ -1470,9 +1470,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "geo_names_name_normalized_trgm": {
           "name": "geo_names_name_normalized_trgm",
@@ -1486,24 +1486,24 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "gin",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "geo_names_geo_object_id_geo_objects_id_fk": {
           "name": "geo_names_geo_object_id_geo_objects_id_fk",
           "tableFrom": "geo_names",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1565,8 +1565,8 @@
           "primaryKey": false,
           "notNull": false,
           "generated": {
-            "as": "ST_PointOnSurface(\"geom\")",
-            "type": "stored"
+            "type": "stored",
+            "as": "ST_PointOnSurface(\"geom\")"
           }
         },
         "osm_id": {
@@ -1672,9 +1672,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "geo_objects_osm_id_valid_unique": {
           "name": "geo_objects_osm_id_valid_unique",
@@ -1687,10 +1687,10 @@
             }
           ],
           "isUnique": true,
-          "where": "\"geo_objects\".\"valid_to\" is null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"geo_objects\".\"valid_to\" is null",
+          "concurrently": false
         },
         "geo_objects_wikidata_id_valid_unique": {
           "name": "geo_objects_wikidata_id_valid_unique",
@@ -1703,10 +1703,10 @@
             }
           ],
           "isUnique": true,
-          "where": "\"geo_objects\".\"valid_to\" is null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"geo_objects\".\"valid_to\" is null",
+          "concurrently": false
         },
         "geo_objects_geonames_id_valid_unique": {
           "name": "geo_objects_geonames_id_valid_unique",
@@ -1719,10 +1719,10 @@
             }
           ],
           "isUnique": true,
-          "where": "\"geo_objects\".\"valid_to\" is null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"geo_objects\".\"valid_to\" is null",
+          "concurrently": false
         },
         "geo_objects_config_key_valid_unique": {
           "name": "geo_objects_config_key_valid_unique",
@@ -1735,10 +1735,10 @@
             }
           ],
           "isUnique": true,
-          "where": "\"geo_objects\".\"valid_to\" is null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"geo_objects\".\"valid_to\" is null",
+          "concurrently": false
         },
         "geo_objects_parent_id_idx": {
           "name": "geo_objects_parent_id_idx",
@@ -1751,9 +1751,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "geo_objects_subdivision_id_idx": {
           "name": "geo_objects_subdivision_id_idx",
@@ -1766,10 +1766,10 @@
             }
           ],
           "isUnique": false,
-          "where": "\"geo_objects\".\"subdivision_id\" is not null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"geo_objects\".\"subdivision_id\" is not null",
+          "concurrently": false
         },
         "geo_objects_sea_id_idx": {
           "name": "geo_objects_sea_id_idx",
@@ -1782,10 +1782,10 @@
             }
           ],
           "isUnique": false,
-          "where": "\"geo_objects\".\"sea_id\" is not null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"geo_objects\".\"sea_id\" is not null",
+          "concurrently": false
         },
         "geo_objects_merged_into_id_idx": {
           "name": "geo_objects_merged_into_id_idx",
@@ -1798,10 +1798,10 @@
             }
           ],
           "isUnique": false,
-          "where": "\"geo_objects\".\"merged_into_id\" is not null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"geo_objects\".\"merged_into_id\" is not null",
+          "concurrently": false
         },
         "geo_objects_geom_gist": {
           "name": "geo_objects_geom_gist",
@@ -1814,9 +1814,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "gist",
-          "with": {}
+          "concurrently": false
         },
         "geo_objects_centroid_gist": {
           "name": "geo_objects_centroid_gist",
@@ -1829,63 +1829,63 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "gist",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "geo_objects_parent_id_geo_objects_id_fk": {
           "name": "geo_objects_parent_id_geo_objects_id_fk",
           "tableFrom": "geo_objects",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "parent_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "geo_objects_subdivision_id_subdivisions_id_fk": {
           "name": "geo_objects_subdivision_id_subdivisions_id_fk",
           "tableFrom": "geo_objects",
-          "tableTo": "subdivisions",
           "columnsFrom": [
             "subdivision_id"
           ],
+          "tableTo": "subdivisions",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "geo_objects_sea_id_geo_objects_id_fk": {
           "name": "geo_objects_sea_id_geo_objects_id_fk",
           "tableFrom": "geo_objects",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "sea_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "geo_objects_merged_into_id_geo_objects_id_fk": {
           "name": "geo_objects_merged_into_id_geo_objects_id_fk",
           "tableFrom": "geo_objects",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "merged_into_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1936,9 +1936,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "gist",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -2067,9 +2067,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "places_public_id_unique": {
           "name": "places_public_id_unique",
@@ -2082,9 +2082,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "places_tile_id_idx": {
           "name": "places_tile_id_idx",
@@ -2097,9 +2097,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "places_position_gist": {
           "name": "places_position_gist",
@@ -2112,9 +2112,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "gist",
-          "with": {}
+          "concurrently": false
         },
         "places_anchor_position_gist": {
           "name": "places_anchor_position_gist",
@@ -2127,37 +2127,37 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "gist",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "places_geo_object_id_geo_objects_id_fk": {
           "name": "places_geo_object_id_geo_objects_id_fk",
           "tableFrom": "places",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "places_merged_into_id_places_id_fk": {
           "name": "places_merged_into_id_places_id_fk",
           "tableFrom": "places",
-          "tableTo": "places",
           "columnsFrom": [
             "merged_into_id"
           ],
+          "tableTo": "places",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2234,24 +2234,24 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "gist",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "restricted_areas_source_id_sources_id_fk": {
           "name": "restricted_areas_source_id_sources_id_fk",
           "tableFrom": "restricted_areas",
-          "tableTo": "sources",
           "columnsFrom": [
             "source_id"
           ],
+          "tableTo": "sources",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2314,9 +2314,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "gist",
-          "with": {}
+          "concurrently": false
         },
         "roads_osm_id_unique": {
           "name": "roads_osm_id_unique",
@@ -2329,9 +2329,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -2408,9 +2408,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "gist",
-          "with": {}
+          "concurrently": false
         },
         "seabed_polygons_subdivision_key_idx": {
           "name": "seabed_polygons_subdivision_key_idx",
@@ -2423,9 +2423,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -2547,9 +2547,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "subdivisions_key_valid_unique": {
           "name": "subdivisions_key_valid_unique",
@@ -2562,10 +2562,10 @@
             }
           ],
           "isUnique": true,
-          "where": "\"subdivisions\".\"valid_to\" is null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"subdivisions\".\"valid_to\" is null",
+          "concurrently": false
         },
         "subdivisions_geom_gist": {
           "name": "subdivisions_geom_gist",
@@ -2578,9 +2578,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "gist",
-          "with": {}
+          "concurrently": false
         },
         "subdivisions_land_geom_gist": {
           "name": "subdivisions_land_geom_gist",
@@ -2593,24 +2593,24 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "gist",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "subdivisions_geo_object_id_geo_objects_id_fk": {
           "name": "subdivisions_geo_object_id_geo_objects_id_fk",
           "tableFrom": "subdivisions",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2653,37 +2653,37 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "tile_geo_objects_tile_id_tiles_id_fk": {
           "name": "tile_geo_objects_tile_id_tiles_id_fk",
           "tableFrom": "tile_geo_objects",
-          "tableTo": "tiles",
           "columnsFrom": [
             "tile_id"
           ],
+          "tableTo": "tiles",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "tile_geo_objects_geo_object_id_geo_objects_id_fk": {
           "name": "tile_geo_objects_geo_object_id_geo_objects_id_fk",
           "tableFrom": "tile_geo_objects",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -2794,9 +2794,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "gist",
-          "with": {}
+          "concurrently": false
         },
         "tiles_area_id_idx": {
           "name": "tiles_area_id_idx",
@@ -2809,9 +2809,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "tiles_subdivision_id_idx": {
           "name": "tiles_subdivision_id_idx",
@@ -2824,37 +2824,37 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "tiles_area_id_geo_objects_id_fk": {
           "name": "tiles_area_id_geo_objects_id_fk",
           "tableFrom": "tiles",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "area_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "tiles_subdivision_id_subdivisions_id_fk": {
           "name": "tiles_subdivision_id_subdivisions_id_fk",
           "tableFrom": "tiles",
-          "tableTo": "subdivisions",
           "columnsFrom": [
             "subdivision_id"
           ],
+          "tableTo": "subdivisions",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2949,37 +2949,37 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "computations_geo_object_id_geo_objects_id_fk": {
           "name": "computations_geo_object_id_geo_objects_id_fk",
           "tableFrom": "computations",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "computations_run_id_runs_id_fk": {
           "name": "computations_run_id_runs_id_fk",
           "tableFrom": "computations",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -3145,9 +3145,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "facts_computation_attribute_unique": {
           "name": "facts_computation_attribute_unique",
@@ -3166,10 +3166,10 @@
             }
           ],
           "isUnique": true,
-          "where": "\"facts\".\"computation_id\" is not null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"facts\".\"computation_id\" is not null",
+          "concurrently": false
         },
         "facts_review_decision_attribute_unique": {
           "name": "facts_review_decision_attribute_unique",
@@ -3188,10 +3188,10 @@
             }
           ],
           "isUnique": true,
-          "where": "\"facts\".\"review_decision_id\" is not null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"facts\".\"review_decision_id\" is not null",
+          "concurrently": false
         },
         "facts_geo_object_attribute_observed_idx": {
           "name": "facts_geo_object_attribute_observed_idx",
@@ -3216,9 +3216,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "facts_extraction_run_id_idx": {
           "name": "facts_extraction_run_id_idx",
@@ -3231,89 +3231,89 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "facts_geo_object_id_geo_objects_id_fk": {
           "name": "facts_geo_object_id_geo_objects_id_fk",
           "tableFrom": "facts",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "facts_mention_id_mentions_id_fk": {
           "name": "facts_mention_id_mentions_id_fk",
           "tableFrom": "facts",
-          "tableTo": "mentions",
           "columnsFrom": [
             "mention_id"
           ],
+          "tableTo": "mentions",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "facts_computation_id_computations_id_fk": {
           "name": "facts_computation_id_computations_id_fk",
           "tableFrom": "facts",
-          "tableTo": "computations",
           "columnsFrom": [
             "computation_id"
           ],
+          "tableTo": "computations",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "facts_review_decision_id_review_decisions_id_fk": {
           "name": "facts_review_decision_id_review_decisions_id_fk",
           "tableFrom": "facts",
-          "tableTo": "review_decisions",
           "columnsFrom": [
             "review_decision_id"
           ],
+          "tableTo": "review_decisions",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "facts_quote_chunk_id_chunks_id_fk": {
           "name": "facts_quote_chunk_id_chunks_id_fk",
           "tableFrom": "facts",
-          "tableTo": "chunks",
           "columnsFrom": [
             "quote_chunk_id"
           ],
+          "tableTo": "chunks",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "facts_extraction_run_id_extraction_runs_id_fk": {
           "name": "facts_extraction_run_id_extraction_runs_id_fk",
           "tableFrom": "facts",
-          "tableTo": "extraction_runs",
           "columnsFrom": [
             "extraction_run_id"
           ],
+          "tableTo": "extraction_runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -3455,9 +3455,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "chunks_text_hash_idx": {
           "name": "chunks_text_hash_idx",
@@ -3470,9 +3470,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "chunks_text_normalized_trgm": {
           "name": "chunks_text_normalized_trgm",
@@ -3486,9 +3486,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "gin",
-          "with": {}
+          "concurrently": false
         },
         "chunks_embedding_hnsw": {
           "name": "chunks_embedding_hnsw",
@@ -3502,37 +3502,37 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "hnsw",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "chunks_document_version_id_document_versions_id_fk": {
           "name": "chunks_document_version_id_document_versions_id_fk",
           "tableFrom": "chunks",
-          "tableTo": "document_versions",
           "columnsFrom": [
             "document_version_id"
           ],
+          "tableTo": "document_versions",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "chunks_carried_from_chunk_id_chunks_id_fk": {
           "name": "chunks_carried_from_chunk_id_chunks_id_fk",
           "tableFrom": "chunks",
-          "tableTo": "chunks",
           "columnsFrom": [
             "carried_from_chunk_id"
           ],
+          "tableTo": "chunks",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -3641,24 +3641,24 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "converter_outputs_sample_id_converter_samples_id_fk": {
           "name": "converter_outputs_sample_id_converter_samples_id_fk",
           "tableFrom": "converter_outputs",
-          "tableTo": "converter_samples",
           "columnsFrom": [
             "sample_id"
           ],
+          "tableTo": "converter_samples",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -3708,25 +3708,25 @@
         "converter_samples_source_id_sources_id_fk": {
           "name": "converter_samples_source_id_sources_id_fk",
           "tableFrom": "converter_samples",
-          "tableTo": "sources",
           "columnsFrom": [
             "source_id"
           ],
+          "tableTo": "sources",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "converter_samples_url_normalized_unique": {
           "name": "converter_samples_url_normalized_unique",
-          "nullsNotDistinct": false,
           "columns": [
             "url_normalized"
-          ]
+          ],
+          "nullsNotDistinct": false
         }
       },
       "policies": {},
@@ -3821,37 +3821,37 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "crawl_frontier_source_id_sources_id_fk": {
           "name": "crawl_frontier_source_id_sources_id_fk",
           "tableFrom": "crawl_frontier",
-          "tableTo": "sources",
           "columnsFrom": [
             "source_id"
           ],
+          "tableTo": "sources",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "crawl_frontier_last_run_id_runs_id_fk": {
           "name": "crawl_frontier_last_run_id_runs_id_fk",
           "tableFrom": "crawl_frontier",
-          "tableTo": "runs",
           "columnsFrom": [
             "last_run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -4075,50 +4075,50 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "document_versions_document_id_documents_id_fk": {
           "name": "document_versions_document_id_documents_id_fk",
           "tableFrom": "document_versions",
-          "tableTo": "documents",
           "columnsFrom": [
             "document_id"
           ],
+          "tableTo": "documents",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "document_versions_run_id_runs_id_fk": {
           "name": "document_versions_run_id_runs_id_fk",
           "tableFrom": "document_versions",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "document_versions_classified_run_id_runs_id_fk": {
           "name": "document_versions_classified_run_id_runs_id_fk",
           "tableFrom": "document_versions",
-          "tableTo": "runs",
           "columnsFrom": [
             "classified_run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -4248,9 +4248,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "documents_source_id_idx": {
           "name": "documents_source_id_idx",
@@ -4263,37 +4263,37 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "documents_source_id_sources_id_fk": {
           "name": "documents_source_id_sources_id_fk",
           "tableFrom": "documents",
-          "tableTo": "sources",
           "columnsFrom": [
             "source_id"
           ],
+          "tableTo": "sources",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "documents_current_version_id_document_versions_id_fk": {
           "name": "documents_current_version_id_document_versions_id_fk",
           "tableFrom": "documents",
-          "tableTo": "document_versions",
           "columnsFrom": [
             "current_version_id"
           ],
+          "tableTo": "document_versions",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -4344,37 +4344,37 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "outlinks_from_source_id_sources_id_fk": {
           "name": "outlinks_from_source_id_sources_id_fk",
           "tableFrom": "outlinks",
-          "tableTo": "sources",
           "columnsFrom": [
             "from_source_id"
           ],
+          "tableTo": "sources",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "outlinks_run_id_runs_id_fk": {
           "name": "outlinks_run_id_runs_id_fk",
           "tableFrom": "outlinks",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -4495,9 +4495,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "place_websites_url_normalized_idx": {
           "name": "place_websites_url_normalized_idx",
@@ -4510,76 +4510,76 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "place_websites_place_id_places_id_fk": {
           "name": "place_websites_place_id_places_id_fk",
           "tableFrom": "place_websites",
-          "tableTo": "places",
           "columnsFrom": [
             "place_id"
           ],
+          "tableTo": "places",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "place_websites_geo_object_id_geo_objects_id_fk": {
           "name": "place_websites_geo_object_id_geo_objects_id_fk",
           "tableFrom": "place_websites",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "place_websites_serp_query_id_serp_queries_id_fk": {
           "name": "place_websites_serp_query_id_serp_queries_id_fk",
           "tableFrom": "place_websites",
-          "tableTo": "serp_queries",
           "columnsFrom": [
             "serp_query_id"
           ],
+          "tableTo": "serp_queries",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "place_websites_source_id_sources_id_fk": {
           "name": "place_websites_source_id_sources_id_fk",
           "tableFrom": "place_websites",
-          "tableTo": "sources",
           "columnsFrom": [
             "source_id"
           ],
+          "tableTo": "sources",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "place_websites_run_id_runs_id_fk": {
           "name": "place_websites_run_id_runs_id_fk",
           "tableFrom": "place_websites",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -4684,24 +4684,24 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "serp_queries_run_id_runs_id_fk": {
           "name": "serp_queries_run_id_runs_id_fk",
           "tableFrom": "serp_queries",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -4775,9 +4775,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "serp_results_serp_query_id_idx": {
           "name": "serp_results_serp_query_id_idx",
@@ -4790,24 +4790,24 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "serp_results_serp_query_id_serp_queries_id_fk": {
           "name": "serp_results_serp_query_id_serp_queries_id_fk",
           "tableFrom": "serp_results",
-          "tableTo": "serp_queries",
           "columnsFrom": [
             "serp_query_id"
           ],
+          "tableTo": "serp_queries",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -4941,10 +4941,10 @@
             }
           ],
           "isUnique": true,
-          "where": "\"sources\".\"valid_to\" is null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"sources\".\"valid_to\" is null",
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -4988,24 +4988,24 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "text_shingles_chunk_id_chunks_id_fk": {
           "name": "text_shingles_chunk_id_chunks_id_fk",
           "tableFrom": "text_shingles",
-          "tableTo": "chunks",
           "columnsFrom": [
             "chunk_id"
           ],
+          "tableTo": "chunks",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -5133,24 +5133,24 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "ai_batch_items_batch_id_ai_batches_id_fk": {
           "name": "ai_batch_items_batch_id_ai_batches_id_fk",
           "tableFrom": "ai_batch_items",
-          "tableTo": "ai_batches",
           "columnsFrom": [
             "batch_id"
           ],
+          "tableTo": "ai_batches",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -5312,35 +5312,35 @@
             }
           ],
           "isUnique": true,
-          "where": "\"ai_batches\".\"status\" not in ('distributed', 'failed')",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"ai_batches\".\"status\" not in ('distributed', 'failed')",
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "ai_batches_run_id_runs_id_fk": {
           "name": "ai_batches_run_id_runs_id_fk",
           "tableFrom": "ai_batches",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "ai_batches_provider_batch_id_unique": {
           "name": "ai_batches_provider_batch_id_unique",
-          "nullsNotDistinct": false,
           "columns": [
             "provider_batch_id"
-          ]
+          ],
+          "nullsNotDistinct": false
         }
       },
       "policies": {},
@@ -5457,50 +5457,50 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "ambiguous_matches_document_version_id_document_versions_id_fk": {
           "name": "ambiguous_matches_document_version_id_document_versions_id_fk",
           "tableFrom": "ambiguous_matches",
-          "tableTo": "document_versions",
           "columnsFrom": [
             "document_version_id"
           ],
+          "tableTo": "document_versions",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "ambiguous_matches_chunk_id_chunks_id_fk": {
           "name": "ambiguous_matches_chunk_id_chunks_id_fk",
           "tableFrom": "ambiguous_matches",
-          "tableTo": "chunks",
           "columnsFrom": [
             "chunk_id"
           ],
+          "tableTo": "chunks",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "ambiguous_matches_run_id_runs_id_fk": {
           "name": "ambiguous_matches_run_id_runs_id_fk",
           "tableFrom": "ambiguous_matches",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -5629,37 +5629,37 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "extraction_runs_comparison_id_model_comparisons_id_fk": {
           "name": "extraction_runs_comparison_id_model_comparisons_id_fk",
           "tableFrom": "extraction_runs",
-          "tableTo": "model_comparisons",
           "columnsFrom": [
             "comparison_id"
           ],
+          "tableTo": "model_comparisons",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "extraction_runs_run_id_runs_id_fk": {
           "name": "extraction_runs_run_id_runs_id_fk",
           "tableFrom": "extraction_runs",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -5804,50 +5804,50 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "extraction_units_extraction_run_id_extraction_runs_id_fk": {
           "name": "extraction_units_extraction_run_id_extraction_runs_id_fk",
           "tableFrom": "extraction_units",
-          "tableTo": "extraction_runs",
           "columnsFrom": [
             "extraction_run_id"
           ],
+          "tableTo": "extraction_runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "extraction_units_document_version_id_document_versions_id_fk": {
           "name": "extraction_units_document_version_id_document_versions_id_fk",
           "tableFrom": "extraction_units",
-          "tableTo": "document_versions",
           "columnsFrom": [
             "document_version_id"
           ],
+          "tableTo": "document_versions",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "extraction_units_geo_object_id_geo_objects_id_fk": {
           "name": "extraction_units_geo_object_id_geo_objects_id_fk",
           "tableFrom": "extraction_units",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -5991,9 +5991,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "mentions_geo_object_id_idx": {
           "name": "mentions_geo_object_id_idx",
@@ -6006,9 +6006,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "mentions_document_version_id_idx": {
           "name": "mentions_document_version_id_idx",
@@ -6021,63 +6021,63 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "mentions_document_version_id_document_versions_id_fk": {
           "name": "mentions_document_version_id_document_versions_id_fk",
           "tableFrom": "mentions",
-          "tableTo": "document_versions",
           "columnsFrom": [
             "document_version_id"
           ],
+          "tableTo": "document_versions",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "mentions_chunk_id_chunks_id_fk": {
           "name": "mentions_chunk_id_chunks_id_fk",
           "tableFrom": "mentions",
-          "tableTo": "chunks",
           "columnsFrom": [
             "chunk_id"
           ],
+          "tableTo": "chunks",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "mentions_geo_object_id_geo_objects_id_fk": {
           "name": "mentions_geo_object_id_geo_objects_id_fk",
           "tableFrom": "mentions",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "mentions_run_id_runs_id_fk": {
           "name": "mentions_run_id_runs_id_fk",
           "tableFrom": "mentions",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -6139,15 +6139,15 @@
         "model_comparison_ratings_comparison_id_model_comparisons_id_fk": {
           "name": "model_comparison_ratings_comparison_id_model_comparisons_id_fk",
           "tableFrom": "model_comparison_ratings",
-          "tableTo": "model_comparisons",
           "columnsFrom": [
             "comparison_id"
           ],
+          "tableTo": "model_comparisons",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -6212,54 +6212,54 @@
         "model_comparison_units_comparison_id_model_comparisons_id_fk": {
           "name": "model_comparison_units_comparison_id_model_comparisons_id_fk",
           "tableFrom": "model_comparison_units",
-          "tableTo": "model_comparisons",
           "columnsFrom": [
             "comparison_id"
           ],
+          "tableTo": "model_comparisons",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "model_comparison_units_document_version_id_document_versions_id_fk": {
           "name": "model_comparison_units_document_version_id_document_versions_id_fk",
           "tableFrom": "model_comparison_units",
-          "tableTo": "document_versions",
           "columnsFrom": [
             "document_version_id"
           ],
+          "tableTo": "document_versions",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "model_comparison_units_geo_object_id_geo_objects_id_fk": {
           "name": "model_comparison_units_geo_object_id_geo_objects_id_fk",
           "tableFrom": "model_comparison_units",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "model_comparison_units_source_id_sources_id_fk": {
           "name": "model_comparison_units_source_id_sources_id_fk",
           "tableFrom": "model_comparison_units",
-          "tableTo": "sources",
           "columnsFrom": [
             "source_id"
           ],
+          "tableTo": "sources",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -6331,15 +6331,15 @@
         "model_comparisons_run_id_runs_id_fk": {
           "name": "model_comparisons_run_id_runs_id_fk",
           "tableFrom": "model_comparisons",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -6448,24 +6448,24 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "name_candidates_tile_id_tiles_id_fk": {
           "name": "name_candidates_tile_id_tiles_id_fk",
           "tableFrom": "name_candidates",
-          "tableTo": "tiles",
           "columnsFrom": [
             "tile_id"
           ],
+          "tableTo": "tiles",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -6515,28 +6515,28 @@
         "pipeline_passes_document_version_id_document_versions_id_fk": {
           "name": "pipeline_passes_document_version_id_document_versions_id_fk",
           "tableFrom": "pipeline_passes",
-          "tableTo": "document_versions",
           "columnsFrom": [
             "document_version_id"
           ],
+          "tableTo": "document_versions",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "pipeline_passes_run_id_runs_id_fk": {
           "name": "pipeline_passes_run_id_runs_id_fk",
           "tableFrom": "pipeline_passes",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -6658,63 +6658,63 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "route_stops_route_id_routes_id_fk": {
           "name": "route_stops_route_id_routes_id_fk",
           "tableFrom": "route_stops",
-          "tableTo": "routes",
           "columnsFrom": [
             "route_id"
           ],
+          "tableTo": "routes",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "route_stops_geo_object_id_geo_objects_id_fk": {
           "name": "route_stops_geo_object_id_geo_objects_id_fk",
           "tableFrom": "route_stops",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "route_stops_mention_id_mentions_id_fk": {
           "name": "route_stops_mention_id_mentions_id_fk",
           "tableFrom": "route_stops",
-          "tableTo": "mentions",
           "columnsFrom": [
             "mention_id"
           ],
+          "tableTo": "mentions",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "route_stops_quote_chunk_id_chunks_id_fk": {
           "name": "route_stops_quote_chunk_id_chunks_id_fk",
           "tableFrom": "route_stops",
-          "tableTo": "chunks",
           "columnsFrom": [
             "quote_chunk_id"
           ],
+          "tableTo": "chunks",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -6782,37 +6782,37 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "routes_document_version_id_document_versions_id_fk": {
           "name": "routes_document_version_id_document_versions_id_fk",
           "tableFrom": "routes",
-          "tableTo": "document_versions",
           "columnsFrom": [
             "document_version_id"
           ],
+          "tableTo": "document_versions",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "routes_extraction_run_id_extraction_runs_id_fk": {
           "name": "routes_extraction_run_id_extraction_runs_id_fk",
           "tableFrom": "routes",
-          "tableTo": "extraction_runs",
           "columnsFrom": [
             "extraction_run_id"
           ],
+          "tableTo": "extraction_runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -6899,63 +6899,63 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "unmatched_names_document_version_id_document_versions_id_fk": {
           "name": "unmatched_names_document_version_id_document_versions_id_fk",
           "tableFrom": "unmatched_names",
-          "tableTo": "document_versions",
           "columnsFrom": [
             "document_version_id"
           ],
+          "tableTo": "document_versions",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "unmatched_names_chunk_id_chunks_id_fk": {
           "name": "unmatched_names_chunk_id_chunks_id_fk",
           "tableFrom": "unmatched_names",
-          "tableTo": "chunks",
           "columnsFrom": [
             "chunk_id"
           ],
+          "tableTo": "chunks",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "unmatched_names_source_id_sources_id_fk": {
           "name": "unmatched_names_source_id_sources_id_fk",
           "tableFrom": "unmatched_names",
-          "tableTo": "sources",
           "columnsFrom": [
             "source_id"
           ],
+          "tableTo": "sources",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "unmatched_names_tile_id_tiles_id_fk": {
           "name": "unmatched_names_tile_id_tiles_id_fk",
           "tableFrom": "unmatched_names",
-          "tableTo": "tiles",
           "columnsFrom": [
             "tile_id"
           ],
+          "tableTo": "tiles",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -7070,47 +7070,47 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "change_events_geo_object_id_geo_objects_id_fk": {
           "name": "change_events_geo_object_id_geo_objects_id_fk",
           "tableFrom": "change_events",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "change_events_run_id_runs_id_fk": {
           "name": "change_events_run_id_runs_id_fk",
           "tableFrom": "change_events",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
         "change_events_seq_unique": {
           "name": "change_events_seq_unique",
-          "nullsNotDistinct": false,
           "columns": [
             "seq"
-          ]
+          ],
+          "nullsNotDistinct": false
         }
       },
       "policies": {},
@@ -7176,28 +7176,28 @@
         "evaluation_profiles_run_id_runs_id_fk": {
           "name": "evaluation_profiles_run_id_runs_id_fk",
           "tableFrom": "evaluation_profiles",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "evaluation_profiles_geo_object_id_geo_objects_id_fk": {
           "name": "evaluation_profiles_geo_object_id_geo_objects_id_fk",
           "tableFrom": "evaluation_profiles",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -7268,37 +7268,37 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "highlight_selections_place_geo_object_id_geo_objects_id_fk": {
           "name": "highlight_selections_place_geo_object_id_geo_objects_id_fk",
           "tableFrom": "highlight_selections",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "place_geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "highlight_selections_poi_geo_object_id_geo_objects_id_fk": {
           "name": "highlight_selections_poi_geo_object_id_geo_objects_id_fk",
           "tableFrom": "highlight_selections",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "poi_geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -7368,37 +7368,37 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "place_discovery_requests_geo_object_id_geo_objects_id_fk": {
           "name": "place_discovery_requests_geo_object_id_geo_objects_id_fk",
           "tableFrom": "place_discovery_requests",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "place_discovery_requests_run_id_runs_id_fk": {
           "name": "place_discovery_requests_run_id_runs_id_fk",
           "tableFrom": "place_discovery_requests",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -7498,44 +7498,44 @@
             },
             {
               "expression": "coalesce(\"run_id\", '00000000-0000-0000-0000-000000000000'::uuid)",
-              "asc": true,
               "isExpression": true,
+              "asc": true,
               "nulls": "last"
             }
           ],
           "isUnique": true,
-          "where": "\"profile_summaries\".\"status\" = 'ok'",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"profile_summaries\".\"status\" = 'ok'",
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "profile_summaries_geo_object_id_geo_objects_id_fk": {
           "name": "profile_summaries_geo_object_id_geo_objects_id_fk",
           "tableFrom": "profile_summaries",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "profile_summaries_run_id_runs_id_fk": {
           "name": "profile_summaries_run_id_runs_id_fk",
           "tableFrom": "profile_summaries",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -7679,9 +7679,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "profiles_geo_object_valid_from_idx": {
           "name": "profiles_geo_object_valid_from_idx",
@@ -7706,37 +7706,37 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "profiles_geo_object_id_geo_objects_id_fk": {
           "name": "profiles_geo_object_id_geo_objects_id_fk",
           "tableFrom": "profiles",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "profiles_run_id_runs_id_fk": {
           "name": "profiles_run_id_runs_id_fk",
           "tableFrom": "profiles",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -7883,10 +7883,10 @@
             }
           ],
           "isUnique": true,
-          "where": "\"delivered_objects\".\"object_type\" IN ('spot', 'highlight')",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"delivered_objects\".\"object_type\" IN ('spot', 'highlight')",
+          "concurrently": false
         },
         "delivered_objects_area_region_version_unique": {
           "name": "delivered_objects_area_region_version_unique",
@@ -7911,10 +7911,10 @@
             }
           ],
           "isUnique": true,
-          "where": "\"delivered_objects\".\"object_type\" = 'region'",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"delivered_objects\".\"object_type\" = 'region'",
+          "concurrently": false
         },
         "delivered_objects_subdivision_region_version_unique": {
           "name": "delivered_objects_subdivision_region_version_unique",
@@ -7939,10 +7939,10 @@
             }
           ],
           "isUnique": true,
-          "where": "\"delivered_objects\".\"object_type\" = 'region' AND \"delivered_objects\".\"subdivision_id\" IS NOT NULL",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"delivered_objects\".\"object_type\" = 'region' AND \"delivered_objects\".\"subdivision_id\" IS NOT NULL",
+          "concurrently": false
         },
         "delivered_objects_public_valid_from_idx": {
           "name": "delivered_objects_public_valid_from_idx",
@@ -7961,63 +7961,63 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "delivered_objects_area_id_geo_objects_id_fk": {
           "name": "delivered_objects_area_id_geo_objects_id_fk",
           "tableFrom": "delivered_objects",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "area_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "delivered_objects_subdivision_id_subdivisions_id_fk": {
           "name": "delivered_objects_subdivision_id_subdivisions_id_fk",
           "tableFrom": "delivered_objects",
-          "tableTo": "subdivisions",
           "columnsFrom": [
             "subdivision_id"
           ],
+          "tableTo": "subdivisions",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "delivered_objects_geo_object_id_geo_objects_id_fk": {
           "name": "delivered_objects_geo_object_id_geo_objects_id_fk",
           "tableFrom": "delivered_objects",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "delivered_objects_first_delivery_id_deliveries_id_fk": {
           "name": "delivered_objects_first_delivery_id_deliveries_id_fk",
           "tableFrom": "delivered_objects",
-          "tableTo": "deliveries",
           "columnsFrom": [
             "first_delivery_id"
           ],
+          "tableTo": "deliveries",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -8177,10 +8177,10 @@
             }
           ],
           "isUnique": true,
-          "where": "\"deliveries\".\"data_version\" IS NOT NULL",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"deliveries\".\"data_version\" IS NOT NULL",
+          "concurrently": false
         },
         "deliveries_subdivision_data_version_unique": {
           "name": "deliveries_subdivision_data_version_unique",
@@ -8199,10 +8199,10 @@
             }
           ],
           "isUnique": true,
-          "where": "\"deliveries\".\"data_version\" IS NOT NULL AND \"deliveries\".\"subdivision_id\" IS NOT NULL",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"deliveries\".\"data_version\" IS NOT NULL AND \"deliveries\".\"subdivision_id\" IS NOT NULL",
+          "concurrently": false
         },
         "deliveries_area_created_idx": {
           "name": "deliveries_area_created_idx",
@@ -8221,9 +8221,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "deliveries_subdivision_created_idx": {
           "name": "deliveries_subdivision_created_idx",
@@ -8242,63 +8242,63 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "deliveries_area_id_geo_objects_id_fk": {
           "name": "deliveries_area_id_geo_objects_id_fk",
           "tableFrom": "deliveries",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "area_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "deliveries_subdivision_id_subdivisions_id_fk": {
           "name": "deliveries_subdivision_id_subdivisions_id_fk",
           "tableFrom": "deliveries",
-          "tableTo": "subdivisions",
           "columnsFrom": [
             "subdivision_id"
           ],
+          "tableTo": "subdivisions",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "deliveries_previous_delivery_id_deliveries_id_fk": {
           "name": "deliveries_previous_delivery_id_deliveries_id_fk",
           "tableFrom": "deliveries",
-          "tableTo": "deliveries",
           "columnsFrom": [
             "previous_delivery_id"
           ],
+          "tableTo": "deliveries",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "deliveries_run_id_runs_id_fk": {
           "name": "deliveries_run_id_runs_id_fk",
           "tableFrom": "deliveries",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -8439,50 +8439,50 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "comparison_results_place_id_places_id_fk": {
           "name": "comparison_results_place_id_places_id_fk",
           "tableFrom": "comparison_results",
-          "tableTo": "places",
           "columnsFrom": [
             "place_id"
           ],
+          "tableTo": "places",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "comparison_results_evaluation_run_id_runs_id_fk": {
           "name": "comparison_results_evaluation_run_id_runs_id_fk",
           "tableFrom": "comparison_results",
-          "tableTo": "runs",
           "columnsFrom": [
             "evaluation_run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "comparison_results_review_task_id_review_tasks_id_fk": {
           "name": "comparison_results_review_task_id_review_tasks_id_fk",
           "tableFrom": "comparison_results",
-          "tableTo": "review_tasks",
           "columnsFrom": [
             "review_task_id"
           ],
+          "tableTo": "review_tasks",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -8553,15 +8553,15 @@
         "config_activations_evaluation_run_id_runs_id_fk": {
           "name": "config_activations_evaluation_run_id_runs_id_fk",
           "tableFrom": "config_activations",
-          "tableTo": "runs",
           "columnsFrom": [
             "evaluation_run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -8660,9 +8660,9 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         },
         "quality_snapshots_scope_metric_created_idx": {
           "name": "quality_snapshots_scope_metric_created_idx",
@@ -8693,24 +8693,24 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "quality_snapshots_run_id_runs_id_fk": {
           "name": "quality_snapshots_run_id_runs_id_fk",
           "tableFrom": "quality_snapshots",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -8856,10 +8856,10 @@
             }
           ],
           "isUnique": true,
-          "where": "\"imagery_tiles\".\"valid_to\" is null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"imagery_tiles\".\"valid_to\" is null",
+          "concurrently": false
         },
         "imagery_tiles_bbox_gist": {
           "name": "imagery_tiles_bbox_gist",
@@ -8872,9 +8872,9 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "gist",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {},
@@ -9089,51 +9089,51 @@
             }
           ],
           "isUnique": true,
-          "where": "\"place_images\".\"valid_to\" is null",
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "where": "\"place_images\".\"valid_to\" is null",
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "place_images_geo_object_id_geo_objects_id_fk": {
           "name": "place_images_geo_object_id_geo_objects_id_fk",
           "tableFrom": "place_images",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "place_images_render_id_place_renders_id_fk": {
           "name": "place_images_render_id_place_renders_id_fk",
           "tableFrom": "place_images",
-          "tableTo": "place_renders",
           "columnsFrom": [
             "render_id"
           ],
+          "tableTo": "place_renders",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "place_images_review_decision_id_review_decisions_id_fk": {
           "name": "place_images_review_decision_id_review_decisions_id_fk",
           "tableFrom": "place_images",
-          "tableTo": "review_decisions",
           "columnsFrom": [
             "review_decision_id"
           ],
+          "tableTo": "review_decisions",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -9247,37 +9247,37 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
         "place_renders_geo_object_id_geo_objects_id_fk": {
           "name": "place_renders_geo_object_id_geo_objects_id_fk",
           "tableFrom": "place_renders",
-          "tableTo": "geo_objects",
           "columnsFrom": [
             "geo_object_id"
           ],
+          "tableTo": "geo_objects",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
         "place_renders_run_id_runs_id_fk": {
           "name": "place_renders_run_id_runs_id_fk",
           "tableFrom": "place_renders",
-          "tableTo": "runs",
           "columnsFrom": [
             "run_id"
           ],
+          "tableTo": "runs",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -9286,8 +9286,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.page_assessments": {
-      "name": "page_assessments",
+    "public.radius_package_requests": {
+      "name": "radius_package_requests",
       "schema": "",
       "columns": {
         "id": {
@@ -9296,79 +9296,23 @@
           "primaryKey": true,
           "notNull": true
         },
-        "document_version_id": {
-          "name": "document_version_id",
+        "radius_package_id": {
+          "name": "radius_package_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
-        "model": {
-          "name": "model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "prompt_version": {
-          "name": "prompt_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "page_kind": {
-          "name": "page_kind",
-          "type": "page_kind",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "first_hand": {
-          "name": "first_hand",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "generated": {
-          "name": "generated",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "language": {
-          "name": "language",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "observed_at": {
-          "name": "observed_at",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "observed_at_basis": {
-          "name": "observed_at_basis",
-          "type": "observed_at_basis",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "observed_at_reason": {
-          "name": "observed_at_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "berths": {
-          "name": "berths",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "run_id": {
-          "name": "run_id",
+        "api_client_id": {
+          "name": "api_client_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
         },
         "created_at": {
           "name": "created_at",
@@ -9379,70 +9323,63 @@
         }
       },
       "indexes": {
-        "page_assessments_version_model_prompt_unique": {
-          "name": "page_assessments_version_model_prompt_unique",
+        "radius_package_requests_package_idx": {
+          "name": "radius_package_requests_package_idx",
           "columns": [
             {
-              "expression": "document_version_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "model",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "prompt_version",
+              "expression": "radius_package_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             }
           ],
-          "isUnique": true,
-          "concurrently": false,
+          "isUnique": false,
+          "with": {},
           "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
       "foreignKeys": {
-        "page_assessments_document_version_id_document_versions_id_fk": {
-          "name": "page_assessments_document_version_id_document_versions_id_fk",
-          "tableFrom": "page_assessments",
-          "tableTo": "document_versions",
+        "radius_package_requests_radius_package_id_radius_packages_id_fk": {
+          "name": "radius_package_requests_radius_package_id_radius_packages_id_fk",
+          "tableFrom": "radius_package_requests",
           "columnsFrom": [
-            "document_version_id"
+            "radius_package_id"
           ],
+          "tableTo": "radius_packages",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         },
-        "page_assessments_run_id_runs_id_fk": {
-          "name": "page_assessments_run_id_runs_id_fk",
-          "tableFrom": "page_assessments",
-          "tableTo": "runs",
+        "radius_package_requests_api_client_id_api_clients_id_fk": {
+          "name": "radius_package_requests_api_client_id_api_clients_id_fk",
+          "tableFrom": "radius_package_requests",
           "columnsFrom": [
-            "run_id"
+            "api_client_id"
           ],
+          "tableTo": "api_clients",
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "radius_package_requests_kind": {
+          "name": "radius_package_requests_kind",
+          "value": "\"radius_package_requests\".\"kind\" IN ('package', 'file', 'changes')"
+        }
+      },
       "isRLSEnabled": false
     },
-    "public.research_fetches": {
-      "name": "research_fetches",
+    "public.radius_packages": {
+      "name": "radius_packages",
       "schema": "",
       "columns": {
         "id": {
@@ -9451,30 +9388,72 @@
           "primaryKey": true,
           "notNull": true
         },
-        "url_normalized": {
-          "name": "url_normalized",
+        "key": {
+          "name": "key",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "run_id": {
-          "name": "run_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "outcome": {
-          "name": "outcome",
-          "type": "research_fetch_outcome",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "reason": {
-          "name": "reason",
+        "home_marina_public_id": {
+          "name": "home_marina_public_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
+        },
+        "days": {
+          "name": "days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "radius_nm": {
+          "name": "radius_nm",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "coverage": {
+          "name": "coverage",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "schema_version": {
+          "name": "schema_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "generated_at": {
+          "name": "generated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "storage_prefix": {
+          "name": "storage_prefix",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "file_hashes": {
+          "name": "file_hashes",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "object_counts": {
+          "name": "object_counts",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "warnings": {
+          "name": "warnings",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
         },
         "created_at": {
           "name": "created_at",
@@ -9485,11 +9464,17 @@
         }
       },
       "indexes": {
-        "research_fetches_url_normalized_created_at_idx": {
-          "name": "research_fetches_url_normalized_created_at_idx",
+        "radius_packages_marina_days_idx": {
+          "name": "radius_packages_marina_days_idx",
           "columns": [
             {
-              "expression": "url_normalized",
+              "expression": "home_marina_public_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "days",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -9497,238 +9482,27 @@
             {
               "expression": "created_at",
               "isExpression": false,
-              "asc": true,
+              "asc": false,
               "nulls": "last"
             }
           ],
           "isUnique": false,
-          "concurrently": false,
+          "with": {},
           "method": "btree",
-          "with": {}
-        },
-        "research_fetches_run_id_idx": {
-          "name": "research_fetches_run_id_idx",
-          "columns": [
-            {
-              "expression": "run_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
+          "concurrently": false
         }
       },
-      "foreignKeys": {
-        "research_fetches_run_id_runs_id_fk": {
-          "name": "research_fetches_run_id_runs_id_fk",
-          "tableFrom": "research_fetches",
-          "tableTo": "runs",
-          "columnsFrom": [
-            "run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.research_hits": {
-      "name": "research_hits",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "place_id": {
-          "name": "place_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "geo_object_id": {
-          "name": "geo_object_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "serp_query_id": {
-          "name": "serp_query_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "serp_result_id": {
-          "name": "serp_result_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "url_normalized": {
-          "name": "url_normalized",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "domain": {
-          "name": "domain",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "rank": {
-          "name": "rank",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "purpose": {
-          "name": "purpose",
-          "type": "research_purpose",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "run_id": {
-          "name": "run_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "research_hits_place_id_url_normalized_purpose_unique": {
-          "name": "research_hits_place_id_url_normalized_purpose_unique",
+      "uniqueConstraints": {
+        "radius_packages_key_unique": {
+          "name": "radius_packages_key_unique",
           "columns": [
-            {
-              "expression": "place_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "url_normalized",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "purpose",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
+            "key"
           ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "research_hits_url_normalized_idx": {
-          "name": "research_hits_url_normalized_idx",
-          "columns": [
-            {
-              "expression": "url_normalized",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
+          "nullsNotDistinct": false
         }
       },
-      "foreignKeys": {
-        "research_hits_place_id_places_id_fk": {
-          "name": "research_hits_place_id_places_id_fk",
-          "tableFrom": "research_hits",
-          "tableTo": "places",
-          "columnsFrom": [
-            "place_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "research_hits_geo_object_id_geo_objects_id_fk": {
-          "name": "research_hits_geo_object_id_geo_objects_id_fk",
-          "tableFrom": "research_hits",
-          "tableTo": "geo_objects",
-          "columnsFrom": [
-            "geo_object_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "research_hits_serp_query_id_serp_queries_id_fk": {
-          "name": "research_hits_serp_query_id_serp_queries_id_fk",
-          "tableFrom": "research_hits",
-          "tableTo": "serp_queries",
-          "columnsFrom": [
-            "serp_query_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "research_hits_serp_result_id_serp_results_id_fk": {
-          "name": "research_hits_serp_result_id_serp_results_id_fk",
-          "tableFrom": "research_hits",
-          "tableTo": "serp_results",
-          "columnsFrom": [
-            "serp_result_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "research_hits_run_id_runs_id_fk": {
-          "name": "research_hits_run_id_runs_id_fk",
-          "tableFrom": "research_hits",
-          "tableTo": "runs",
-          "columnsFrom": [
-            "run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -10023,8 +9797,7 @@
         "area",
         "tile",
         "place",
-        "place_website",
-        "research"
+        "place_website"
       ]
     },
     "public.source_format": {
@@ -10045,8 +9818,7 @@
         "linkgraph",
         "whitelist",
         "manual",
-        "place_website",
-        "research"
+        "place_website"
       ]
     },
     "public.source_status": {
@@ -10280,46 +10052,13 @@
         "photo",
         "ai_illustration"
       ]
-    },
-    "public.page_kind": {
-      "name": "page_kind",
-      "schema": "public",
-      "values": [
-        "trip_report",
-        "pilot_guide",
-        "marina",
-        "authority",
-        "forum",
-        "travel_guide",
-        "listing",
-        "other"
-      ]
-    },
-    "public.research_fetch_outcome": {
-      "name": "research_fetch_outcome",
-      "schema": "public",
-      "values": [
-        "stored",
-        "unchanged",
-        "skipped",
-        "gone",
-        "failed"
-      ]
-    },
-    "public.research_purpose": {
-      "name": "research_purpose",
-      "schema": "public",
-      "values": [
-        "positive",
-        "negative"
-      ]
     }
   },
   "schemas": {},
+  "views": {},
   "sequences": {},
   "roles": {},
   "policies": {},
-  "views": {},
   "_meta": {
     "columns": {},
     "schemas": {},
