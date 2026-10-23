@@ -39,7 +39,8 @@ describe("research config", () => {
 
   it("loads the gate and rejects a released gate without a chosen threshold among the thresholds", () => {
     const c = getConfig().research;
-    expect(c.gate).toEqual({ subdivision: "GR-I", thresholds: [2, 3, 4, 5], released: false, chosenThreshold: null, maxPositionDeviationM: 150 });
+    expect(c.gate).toEqual({ subdivision: "GR-I", thresholds: [2, 3, 4, 5], released: false, chosenThreshold: null, maxPositionDeviationM: 150, minConfirmed: 25 });
+    for (const minConfirmed of [0, 1.5]) expect(researchSchema.safeParse({ ...c, gate: { ...c.gate, minConfirmed } }).success, String(minConfirmed)).toBe(false);
     for (const chosenThreshold of [null, 9]) {
       expect(researchSchema.safeParse({ ...c, gate: { ...c.gate, released: true, chosenThreshold } }).success).toBe(false);
     }
@@ -63,6 +64,13 @@ describe("research config", () => {
   it("rejects a kind that is both positive and negative", () => {
     const c = valid();
     c.confirmation.negativeKinds.push("anchored");
+    expect(researchSchema.safeParse(c).success).toBe(false);
+  });
+
+  it("rejects a harbour-ignored kind that is not a negative kind", () => {
+    const c = valid();
+    expect(c.confirmation.harbourIgnoredNegativeKinds).toEqual(["no_space"]);
+    c.confirmation.harbourIgnoredNegativeKinds.push("anchored");
     expect(researchSchema.safeParse(c).success).toBe(false);
   });
 

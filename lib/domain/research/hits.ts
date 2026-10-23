@@ -1,9 +1,10 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { ResearchConfig } from "@/lib/config/schemas";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { researchHits, serpResults } from "@/lib/db/schema";
+import { placeWebsites, researchHits, serpResults } from "@/lib/db/schema";
 import { isForbiddenUrl } from "@/lib/domain/sources/forbidden-domains";
+import { registrableDomain } from "@/lib/domain/sources/urls";
 
 /**
  * Takes over the results of all searches of one candidate and purpose as hits: without `skipDomains` and forbidden
@@ -19,10 +20,11 @@ export async function recordHits(
 ): Promise<number> {
   const forbidden = getConfig().delivery.forbiddenDomains;
   const existing = await db
-    .select({ urlNormalized: researchHits.urlNormalized })
+    .select({ urlNormalized: researchHits.urlNormalized, origin: researchHits.origin })
     .from(researchHits)
     .where(and(eq(researchHits.placeId, input.placeId), eq(researchHits.purpose, input.purpose)));
-  let room = cfg.maxHitsPerCandidate - existing.length;
+  // the cap counts search hits only: the place's own website (origin `place_website`) is outside it
+  let room = cfg.maxHitsPerCandidate - existing.filter((e) => e.origin === "serp").length;
   if (room <= 0 || input.serpQueryIds.length === 0) return 0;
   const seen = new Set(existing.map((e) => e.urlNormalized));
 
@@ -51,5 +53,48 @@ export async function recordHits(
   }
   if (rows.length === 0) return 0;
   const inserted = await db.insert(researchHits).values(rows).onConflictDoNothing().returning({ id: researchHits.id });
+  return inserted.length;
+}
+
+/**
+ * The newest website row of the place, when it is bound (`place_websites.bound`), as a positive hit of rank 0 and origin
+ * `place_website`, without a search behind it: the official page of the place (N3b). Not counted against
+ * `maxHitsPerCandidate`; a URL the place already has as a positive hit adds nothing. Returns the number of new rows.
+ */
+export async function recordWebsiteHit(db: Db, input: { placeId: string; geoObjectId: string; runId: string }): Promise<number> {
+  const [site] = await db
+    .select({ urlNormalized: placeWebsites.urlNormalized, bound: placeWebsites.bound })
+    .from(placeWebsites)
+    .where(eq(placeWebsites.placeId, input.placeId))
+    .orderBy(desc(placeWebsites.createdAt), desc(placeWebsites.id))
+    .limit(1);
+  // the newest row decides: a binding that ended (newer unbound row) gives no official page
+  if (!site || !site.bound) return 0;
+  const inserted = await db
+    .insert(researchHits)
+    .values({
+      placeId: input.placeId,
+      geoObjectId: input.geoObjectId,
+      urlNormalized: site.urlNormalized,
+      domain: registrableDomain(site.urlNormalized),
+      rank: 0,
+      purpose: "positive",
+      origin: "place_website",
+      runId: input.runId,
+    })
+    .onConflictDoNothing()
+    .returning({ id: researchHits.id });
+  // a search already found this URL as a positive hit: it is the place's own website all the same
+  await db
+    .update(researchHits)
+    .set({ origin: "place_website" })
+    .where(
+      and(
+        eq(researchHits.placeId, input.placeId),
+        eq(researchHits.urlNormalized, site.urlNormalized),
+        eq(researchHits.purpose, "positive"),
+        eq(researchHits.origin, "serp"),
+      ),
+    );
   return inserted.length;
 }

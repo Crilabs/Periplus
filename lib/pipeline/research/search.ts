@@ -5,7 +5,7 @@ import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { places } from "@/lib/db/schema";
 import { researchCandidates } from "@/lib/domain/research/candidates";
-import { recordHits } from "@/lib/domain/research/hits";
+import { recordHits, recordWebsiteHit } from "@/lib/domain/research/hits";
 import { buildResearchQueries, candidateNames } from "@/lib/domain/research/queries";
 import type { JobData } from "@/lib/jobs/worker";
 import { runQueries } from "@/lib/pipeline/discovery";
@@ -30,7 +30,7 @@ export async function planResearchSearch(db: Db, run: { id: string; params: Reco
 /**
  * Job `research.search`: the positive and negative queries of one candidate (`runQueries`: reuse within
  * `serp.reuseDays`, a transiently failing query is skipped), then the hits of every searched or reused query. A
- * candidate without a name has no queries.
+ * candidate without a name has no queries. The place's own bound website is a positive hit first (N3b).
  */
 export async function searchCandidate(
   db: Db,
@@ -45,7 +45,7 @@ export async function searchCandidate(
   const callCtx = { ...ctx, stage: ctx.stage ?? RESEARCH_SEARCH_STAGE };
 
   let queries = 0;
-  let hits = 0;
+  let hits = await recordWebsiteHit(db, { placeId, geoObjectId: place.geoObjectId, runId: ctx.runId });
   for (const purpose of ["positive", "negative"] as const) {
     const planned = buildResearchQueries(placeId, input, cfg, purpose);
     if (planned.length === 0) continue;

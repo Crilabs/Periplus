@@ -1,9 +1,9 @@
 import { alias } from "drizzle-orm/pg-core";
-import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { resolveTaskModel } from "@/lib/ai/cost";
 import { getConfig, type AppConfig, type NameAffixesConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { documents, documentVersions, geoNames, geoObjects, pageAssessments, places, researchHits, researchRouteStops, researchUnits } from "@/lib/db/schema";
+import { documents, documentVersions, geoNames, geoObjects, pageAssessments, placeWebsites, places, researchHits, researchRouteStops, researchUnits } from "@/lib/db/schema";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { stripAffix } from "@/lib/domain/mentions/affixes";
 import { activeAssessor } from "./assessment";
@@ -16,7 +16,7 @@ import type { Archive } from "@/lib/adapters/s3";
  * berths nearby; each such candidate within the extraction radius whose name matches an assessed berth of the page
  * becomes part of the page's research unit. Names are compared normalized and without generic affixes, never fuzzy.
  * A page is also a page of every place one of its route stops points to (`research_route_stops`, plan N2 task 5).
- * A page found by searching a place is only a unit of that place when it names the berth (N3 task 0): the page's
+ * A page of the place's own website counts without that (N3b). A page found by searching a place is only a unit of that place when it names the berth (N3 task 0): the page's
  * assessment names a berth matching the place, or the page's Markdown (read from the `archive`) contains one of
  * the place's names as whole words. A quote that names no berth must never count as evidence for the searched one.
  */
@@ -114,7 +114,7 @@ export async function planUnits(
 
   // version -> searched places (hits of these places on the version's document)
   const hitRows = await db
-    .selectDistinct({ placeId: researchHits.placeId, versionId: documents.currentVersionId })
+    .selectDistinct({ placeId: researchHits.placeId, versionId: documents.currentVersionId, urlNormalized: researchHits.urlNormalized, origin: researchHits.origin })
     .from(researchHits)
     .innerJoin(documents, eq(documents.urlNormalized, researchHits.urlNormalized))
     .where(inArray(researchHits.placeId, placeIds));
@@ -137,6 +137,22 @@ export async function planUnits(
   }
   if (searched.size === 0) return none;
   const stopPairs = new Set(stopRows.map((s) => `${s.versionId}:${s.placeId}`));
+  // a page of the place's own website (its newest website row, still bound, same URL) is the official page of the
+  // place: it counts without naming the berth, unless its assessment names berths (then none matched, see `official`)
+  const newestSite = await db
+    .selectDistinctOn([placeWebsites.placeId], { placeId: placeWebsites.placeId, urlNormalized: placeWebsites.urlNormalized, bound: placeWebsites.bound })
+    .from(placeWebsites)
+    .where(inArray(placeWebsites.placeId, placeIds))
+    .orderBy(placeWebsites.placeId, desc(placeWebsites.createdAt), desc(placeWebsites.id));
+  const siteOf = new Map(newestSite.map((w) => [w.placeId, w]));
+  const ownSitePairs = new Set(
+    hitRows
+      .filter((h) => {
+        const w = siteOf.get(h.placeId);
+        return h.origin === "place_website" && !!w && w.bound && w.urlNormalized === h.urlNormalized;
+      })
+      .map((h) => `${h.versionId}:${h.placeId}`),
+  );
 
   const assessments = await db
     .select({ versionId: pageAssessments.documentVersionId, berths: pageAssessments.berths })
@@ -161,10 +177,12 @@ export async function planUnits(
     const p = own.get(placeId);
     return !p || !a.berths.some((b) => berthNameMatches(b, p.names, affixes, p.islands));
   };
+  // an own-website page whose assessment names berths but none of them the place is about another berth: no exemption
+  const official = (a: { versionId: string; berths: unknown[] }, placeId: string) => ownSitePairs.has(`${a.versionId}:${placeId}`) && a.berths.length === 0;
   const needText = new Map<string, string[]>(); // version -> places to look for in the text
   for (const a of assessments) {
     for (const placeId of searched.get(a.versionId)!) {
-      if (!stopPairs.has(`${a.versionId}:${placeId}`) && unnamed(a, placeId)) (needText.get(a.versionId) ?? needText.set(a.versionId, []).get(a.versionId)!).push(placeId);
+      if (!stopPairs.has(`${a.versionId}:${placeId}`) && !official(a, placeId) && unnamed(a, placeId)) (needText.get(a.versionId) ?? needText.set(a.versionId, []).get(a.versionId)!).push(placeId);
     }
   }
   const named = new Set<string>(); // `version:place` found in the Markdown
@@ -215,7 +233,7 @@ export async function planUnits(
     .map((a): ResearchUnitPlan => {
       const ids = new Set<string>();
       for (const placeId of searched.get(a.versionId)!) {
-        if (stopPairs.has(`${a.versionId}:${placeId}`) || !unnamed(a, placeId) || named.has(`${a.versionId}:${placeId}`)) ids.add(placeId);
+        if (stopPairs.has(`${a.versionId}:${placeId}`) || official(a, placeId) || !unnamed(a, placeId) || named.has(`${a.versionId}:${placeId}`)) ids.add(placeId);
       }
       for (const s of searched.get(a.versionId)!) {
         for (const c of near.get(s) ?? []) {

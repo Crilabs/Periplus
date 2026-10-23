@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { documents, documentVersions, pageAssessments, researchHits, researchRouteStops, serpQueries, serpResults } from "@/lib/db/schema";
+import { documents, documentVersions, pageAssessments, placeWebsites, researchHits, researchRouteStops, serpQueries, serpResults } from "@/lib/db/schema";
 import { activeAssessor } from "@/lib/domain/research/assessment";
 import { activeRouteExtractor, berthNameMatches, unitsForPlaces } from "@/lib/domain/research/assign";
 import { insertPlace } from "@/test/consolidation";
@@ -35,6 +35,19 @@ async function hit(tx: Db, placeId: string, geoObjectId: string, url: string) {
     .returning({ id: serpQueries.id });
   const [r] = await tx.insert(serpResults).values({ serpQueryId: q!.id, rank: 1, url, urlNormalized: url, domain: "test.invalid", title: "t", snippet: "s" }).returning({ id: serpResults.id });
   await tx.insert(researchHits).values({ placeId, geoObjectId, serpQueryId: q!.id, serpResultId: r!.id, urlNormalized: url, domain: "test.invalid", rank: 1, purpose: "positive" });
+}
+
+async function ownWebsitePage(tx: Db, placeId: string, objectId: string, berths: string[], site: { bound?: boolean } | null = {}) {
+  const v = await insertTestVersion(tx, ["x"]);
+  const url = (await tx.select().from(documents).where(eq(documents.id, v.documentId)))[0]!.urlNormalized;
+  if (site) await tx.insert(placeWebsites).values({ placeId, geoObjectId: objectId, url, urlNormalized: url, origin: "osm", bound: site.bound ?? true });
+  await tx.insert(researchHits).values({ placeId, geoObjectId: objectId, urlNormalized: url, domain: "test.invalid", rank: 0, purpose: "positive", origin: "place_website" });
+  const { model, promptVersion } = activeAssessor();
+  await tx.insert(pageAssessments).values({
+    documentVersionId: v.versionId, model, promptVersion, pageKind: "marina", firstHand: false, generated: false,
+    observedAt: "2025-06-15", observedAtBasis: "explicit", berths: berths.map((name) => ({ name, island: null, kind: "marina" as const })), runId: await insertTestRun(tx),
+  });
+  return v.versionId;
 }
 
 async function assessedPage(tx: Db, placeId: string, objectId: string, berths: string[], generated = false, assess = true, texts: string[] = ["x"]) {
@@ -79,6 +92,43 @@ describe("unitsForPlaces", () => {
       const v = await assessedPage(tx, y.placeId, y.objectId, ["Zulu"], false, true, [text]);
       const archive = await archiveOf(tx, v, text);
       expect(await unitsForPlaces(tx, [y.placeId], getConfig(), archive)).toEqual([]);
+    }));
+
+  it("gives a place a unit for its own website even when the page names it nowhere (N3b)", () =>
+    withRollback(async (tx) => {
+      const y = await insertPlace(tx, { name: "Ypsilon", lon: 21.0, status: "candidate" });
+      const v = await ownWebsitePage(tx, y.placeId, y.objectId, []);
+      const archive = await archiveOf(tx, v, "Welcome to our harbour. Berths for visiting yachts.");
+      expect(await unitsForPlaces(tx, [y.placeId], getConfig(), archive)).toEqual([{ documentVersionId: v, placeIds: [y.placeId] }]);
+    }));
+
+  it("needs the name again when the own-website page's assessment names only another berth", () =>
+    withRollback(async (tx) => {
+      const y = await insertPlace(tx, { name: "Ypsilon", lon: 21.0, status: "candidate" });
+      const v = await ownWebsitePage(tx, y.placeId, y.objectId, ["Zulu Marina"]);
+      const archive = await archiveOf(tx, v, "Zulu Marina welcomes you.");
+      expect(await unitsForPlaces(tx, [y.placeId], getConfig(), archive)).toEqual([]);
+    }));
+
+  it("needs the name again when the binding ended or the website URL changed", () =>
+    withRollback(async (tx) => {
+      const y = await insertPlace(tx, { name: "Ypsilon", lon: 21.0, status: "candidate" });
+      const v = await ownWebsitePage(tx, y.placeId, y.objectId, [], { bound: true });
+      const url = (await tx.select().from(placeWebsites).where(eq(placeWebsites.placeId, y.placeId)))[0]!.urlNormalized;
+      const archive = await archiveOf(tx, v, "Welcome. Berths for visiting yachts.");
+      expect(await unitsForPlaces(tx, [y.placeId], getConfig(), archive)).toHaveLength(1);
+      await tx.insert(placeWebsites).values({ placeId: y.placeId, geoObjectId: y.objectId, url, urlNormalized: url, origin: "osm", bound: false, createdAt: new Date(Date.now() + 1000) });
+      expect(await unitsForPlaces(tx, [y.placeId], getConfig(), archive)).toEqual([]);
+      await tx.insert(placeWebsites).values({ placeId: y.placeId, geoObjectId: y.objectId, url: "https://other.example/", urlNormalized: "https://other.example/", origin: "osm", bound: true, createdAt: new Date(Date.now() + 2000) });
+      expect(await unitsForPlaces(tx, [y.placeId], getConfig(), archive)).toEqual([]);
+    }));
+
+  it("keeps the naming rule for an ordinary search hit with the same text (N3b)", () =>
+    withRollback(async (tx) => {
+      const y = await insertPlace(tx, { name: "Ypsilon", lon: 21.0, status: "candidate" });
+      const text = "Welcome to our harbour. Berths for visiting yachts.";
+      const v = await assessedPage(tx, y.placeId, y.objectId, ["Zulu Marina"], false, true, [text]);
+      expect(await unitsForPlaces(tx, [y.placeId], getConfig(), await archiveOf(tx, v, text))).toEqual([]);
     }));
 
   it("keeps a searched place when the page's Markdown is missing (undecidable; extraction skips it as missing Markdown)", () =>

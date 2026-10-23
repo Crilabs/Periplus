@@ -34,6 +34,7 @@
     "minSignalConfidence": 0.7,
     "positiveKinds": ["anchored", "moored_buoy", "berthed", "listed_as_berth"],
     "negativeKinds": ["prohibited", "buoys_private", "no_space", "unsafe", "closed"],
+    "harbourIgnoredNegativeKinds": ["no_space"],
     "countingPageKinds": ["trip_report", "pilot_guide", "forum", "marina", "authority"],
     "listedAsBerthPageKinds": ["pilot_guide"],
     "officialPageKinds": ["marina", "authority"],
@@ -41,6 +42,6 @@
     "corridorAloneConfirms": false,
     "copyMinSharedWords": 12
   },
-  "gate": { "subdivision": "GR-I", "thresholds": [2, 3, 4, 5], "released": false, "chosenThreshold": null, "maxPositionDeviationM": 150 },
+  "gate": { "subdivision": "GR-I", "thresholds": [2, 3, 4, 5], "released": false, "chosenThreshold": null, "maxPositionDeviationM": 150, "minConfirmed": 25 },
   "discovery": { "corridorBufferKm": 3, "minNameSimilarity": 0.8, "vetoSimilarity": 0.4, "maxLegKm": 25, "maxLegDays": 3, "corroboratingDomains": 2 }
 }

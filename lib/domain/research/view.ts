@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { berthFacts, berthSignals, documents, pageAssessments, places, researchFetches, researchHits, researchUnits, serpQueries } from "@/lib/db/schema";
+import { berthFacts, berthSignals, documents, pageAssessments, placeWebsites, places, researchFetches, researchHits, researchUnits, serpQueries } from "@/lib/db/schema";
 import type { PageKind, ResearchFetchOutcome, ResearchPurpose } from "@/lib/db/schema/research";
 import type { BerthSignalKind, Tone } from "@/lib/db/schema/research-extract";
 import type { ObservedAtBasis } from "@/lib/db/schema/sources";
@@ -48,6 +48,8 @@ export type ResearchRow = {
   /** Every purpose the page was found for, positive first. */
   purposes: ResearchPurpose[];
   keyword: string | null;
+  /** The page is the place's own website (a hit without a search behind it). */
+  ownWebsite: boolean;
   documentId: string | null;
   /** The newest fetch attempt of the page (null while none was made). */
   fetch: { outcome: ResearchFetchOutcome; reason: string | null } | null;
@@ -95,13 +97,22 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
       rank: researchHits.rank,
       purpose: researchHits.purpose,
       keyword: serpQueries.keyword,
+      origin: researchHits.origin,
       documentId: documents.id,
       versionId: documents.currentVersionId,
     })
     .from(researchHits)
-    .innerJoin(serpQueries, eq(serpQueries.id, researchHits.serpQueryId))
+    .leftJoin(serpQueries, eq(serpQueries.id, researchHits.serpQueryId))
     .leftJoin(documents, eq(documents.urlNormalized, researchHits.urlNormalized))
     .where(eq(researchHits.placeId, placeId));
+
+  // the label „eigene Website“ follows the CURRENT binding: the newest website row, bound, with the hit's URL
+  const [site] = await db
+    .select({ urlNormalized: placeWebsites.urlNormalized, bound: placeWebsites.bound })
+    .from(placeWebsites)
+    .where(eq(placeWebsites.placeId, placeId))
+    .orderBy(desc(placeWebsites.createdAt), desc(placeWebsites.id))
+    .limit(1);
 
   // pages linked otherwise: a route stop to the place, else a research unit of it; the current version where it has one
   const extractor = activeExtractor(cfg);
@@ -224,6 +235,7 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
       purpose: h.purpose,
       purposes: [h.purpose],
       keyword: h.keyword,
+      ownWebsite: h.origin === "place_website" && !!site && site.bound && site.urlNormalized === h.url,
       documentId: h.documentId,
       fetch: fetchOf.get(h.url) ?? null,
       ...pageOf(h.versionId),
@@ -245,6 +257,7 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
       purpose: null,
       purposes: [],
       keyword: null,
+      ownWebsite: false,
       documentId: l.document_id,
       fetch: fetchOf.get(l.url) ?? null,
       ...pageOf(l.version_id),

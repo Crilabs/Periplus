@@ -31,6 +31,28 @@ function ev(o: Partial<Evidence> = {}): Evidence {
   };
 }
 
+describe("decideBerth: official website of the place (N3b)", () => {
+  const website = (o: Partial<Evidence> = {}) =>
+    ev({ kind: "listed_as_berth", firstHand: false, pageKind: "marina", domain: "marina.example", link: "search", quote: "Visitor berths available", ...o });
+
+  it("the website alone does not confirm a marina", () => {
+    expect(decide("marina", [website()], cfg)).toMatchObject({ status: "candidate", independentSources: ["marina.example"] });
+  });
+
+  it("the website listing visitor berths plus one independent trip report confirms", () => {
+    const v = decide("marina", [website(), ev({ domain: "sail-a.example" })], cfg);
+    expect(v).toMatchObject({ status: "confirmed", independentSources: ["marina.example", "sail-a.example"] });
+  });
+});
+
+describe("decideBerth: own website and search page of one domain (N3b)", () => {
+  it("count as one source", () => {
+    const own = ev({ kind: "listed_as_berth", firstHand: false, pageKind: "marina", domain: "marina.example", link: "search" });
+    const found = ev({ kind: "listed_as_berth", firstHand: false, pageKind: "marina", domain: "marina.example", link: "search", quote: "Gästeliegeplätze am Steg" });
+    expect(decide("marina", [own, found], cfg)).toMatchObject({ status: "candidate", independentSources: ["marina.example"] });
+  });
+});
+
 describe("decideBerth", () => {
   it("two domains with a first-hand anchored signal confirm an anchorage", () => {
     const v = decide("anchorage", [ev({ domain: "sail-a.example" }), ev({ domain: "sail-b.example" })], cfg);
@@ -189,6 +211,28 @@ describe("decideBerth", () => {
     });
     expect(decide("marina", [official], cfg)).toMatchObject({ status: "candidate", reason: "keine weitere unabhängige Quelle neben der offiziellen Seite" });
     expect(decide("port", [official, ev({ kind: "listed_as_berth", firstHand: false, pageKind: "marina", domain: "marina-x.example" })], cfg).status).toBe("candidate");
+  });
+
+  it("a marina or port ignores a younger no_space; a bay with it stays blocked", () => {
+    const official = ev({ kind: "listed_as_berth", firstHand: false, pageKind: "marina", domain: "marina-x.example", observedAt: "2024-01-01" });
+    const stay = ev({ kind: "berthed", domain: "sail-a.example", observedAt: "2024-06-01" });
+    const full = ev({ kind: "no_space", firstHand: false, pageKind: "forum", domain: "forum.example", observedAt: "2025-08-01" });
+    for (const kind of ["marina", "port"] as const) {
+      expect(decide(kind, [official, stay, full], cfg)).toMatchObject({ status: "confirmed", blockingSignalId: null });
+    }
+    const bay = [ev({ domain: "a.example", observedAt: "2024-01-01" }), ev({ domain: "b.example", observedAt: "2024-06-01" }), full];
+    for (const kind of ["anchorage", "mooring_field"] as const) {
+      expect(decide(kind, bay, cfg)).toMatchObject({ status: "candidate", blockingSignalId: full.signalId });
+    }
+  });
+
+  it("a marina still honours the other negatives (closed) and the ignored set is configurable", () => {
+    const official = ev({ kind: "listed_as_berth", firstHand: false, pageKind: "marina", domain: "marina-x.example", observedAt: "2024-01-01" });
+    const stay = ev({ kind: "berthed", domain: "sail-a.example", observedAt: "2024-06-01" });
+    const closed = ev({ kind: "closed", firstHand: false, pageKind: "forum", domain: "forum.example", observedAt: "2025-08-01" });
+    expect(decide("marina", [official, stay, closed], cfg).status).toBe("candidate");
+    const full = ev({ kind: "no_space", firstHand: false, pageKind: "forum", domain: "forum.example", observedAt: "2025-08-01" });
+    expect(decide("marina", [official, stay, full], { ...cfg, harbourIgnoredNegativeKinds: [] }).status).toBe("candidate");
   });
 
   it("a marina without an official page is a candidate even with two reports", () => {

@@ -1,4 +1,5 @@
-import { boolean, date, index, integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, check, date, index, integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { newId } from "@/lib/domain/ids";
 import { geoObjects, places } from "./geo";
 import { runs } from "./ops";
@@ -21,6 +22,8 @@ export const pageKindEnum = pgEnum("page_kind", [
   "listing",
   "other",
 ]);
+/** Where a research hit comes from: a search result, or the place's own bound website (N3b). */
+export const researchHitOriginEnum = pgEnum("research_hit_origin", ["serp", "place_website"]);
 export type ResearchPurpose = (typeof researchPurposeEnum.enumValues)[number];
 export type PageKind = (typeof pageKindEnum.enumValues)[number];
 
@@ -38,12 +41,10 @@ export const researchHits = pgTable(
     geoObjectId: uuid("geo_object_id")
       .notNull()
       .references(() => geoObjects.id),
-    serpQueryId: uuid("serp_query_id")
-      .notNull()
-      .references(() => serpQueries.id),
-    serpResultId: uuid("serp_result_id")
-      .notNull()
-      .references(() => serpResults.id),
+    /** Null for a hit of origin `place_website`. */
+    serpQueryId: uuid("serp_query_id").references(() => serpQueries.id),
+    serpResultId: uuid("serp_result_id").references(() => serpResults.id),
+    origin: researchHitOriginEnum("origin").notNull().default("serp"),
     urlNormalized: text("url_normalized").notNull(),
     domain: text("domain").notNull(),
     rank: integer("rank").notNull(),
@@ -54,6 +55,10 @@ export const researchHits = pgTable(
   (t) => [
     uniqueIndex("research_hits_place_id_url_normalized_purpose_unique").on(t.placeId, t.urlNormalized, t.purpose),
     index("research_hits_url_normalized_idx").on(t.urlNormalized),
+    check(
+      "research_hits_serp_ids_when_serp",
+      sql`${t.origin} <> 'serp' OR (${t.serpQueryId} IS NOT NULL AND ${t.serpResultId} IS NOT NULL)`,
+    ),
   ],
 );
 

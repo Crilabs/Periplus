@@ -1425,6 +1425,8 @@ export const researchSchema = z
       minSignalConfidence: z.number().min(0).max(1),
       positiveKinds: z.array(z.enum(berthSignalKindEnum.enumValues)).min(1),
       negativeKinds: z.array(z.enum(berthSignalKindEnum.enumValues)).min(1),
+      /** Negative kinds a marina or port (`officialPlaceKinds`) ignores: „no space“ of a harbour is a seasonal fact, not a closure. A subset of `negativeKinds`. */
+      harbourIgnoredNegativeKinds: z.array(z.enum(berthSignalKindEnum.enumValues)),
       countingPageKinds: z.array(z.enum(pageKindEnum.enumValues)).min(1),
       listedAsBerthPageKinds: z.array(z.enum(pageKindEnum.enumValues)),
       officialPageKinds: z.array(z.enum(pageKindEnum.enumValues)),
@@ -1445,6 +1447,8 @@ export const researchSchema = z
         chosenThreshold: z.number().int().min(1).nullable(),
         /** A confirmed place matched to a reference spot of its kind farther than this is a position error (as `quality.navily.positionToleranceM`). */
         maxPositionDeviationM: z.number().positive(),
+        /** The gate is passed only with at least this many confirmed places: a perfect score on a handful proves nothing. */
+        minConfirmed: z.number().int().min(1),
       })
       .refine((g) => g.thresholds.every((n, i) => i === 0 || n > g.thresholds[i - 1]!), { error: "gate thresholds must be strictly ascending" })
       .refine((g) => !g.released || (g.chosenThreshold !== null && g.thresholds.includes(g.chosenThreshold)), {
@@ -1472,6 +1476,11 @@ export const researchSchema = z
     for (const k of c.confirmation.negativeKinds) {
       if (c.confirmation.positiveKinds.includes(k)) {
         ctx.addIssue({ code: "custom", path: ["confirmation", "negativeKinds"], message: `signal kind ${k} is both positive and negative` });
+      }
+    }
+    for (const k of c.confirmation.harbourIgnoredNegativeKinds) {
+      if (!c.confirmation.negativeKinds.includes(k)) {
+        ctx.addIssue({ code: "custom", path: ["confirmation", "harbourIgnoredNegativeKinds"], message: `signal kind ${k} is not a negative kind` });
       }
     }
     for (const [country, langs] of Object.entries(c.languagesByCountry)) {

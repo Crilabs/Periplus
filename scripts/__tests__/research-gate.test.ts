@@ -19,7 +19,9 @@ import { isInsideRepo, parseArgs, runGate, type GateArgs } from "../research-gat
 
 /* The gate CLI against real Postgres with synthetic spots in a temp dir; the invented names must never reach the report. */
 
-const cfg = getConfig();
+const realCfg = getConfig();
+/** The test setups confirm a handful of places; the minimum sample is lowered to 1 except in the test of the minimum itself. */
+const cfg = { ...realCfg, research: { ...realCfg.research, gate: { ...realCfg.research.gate, minConfirmed: 1 } } };
 const dirs: string[] = [];
 afterAll(async () => {
   for (const d of dirs) await rm(d, { recursive: true, force: true });
@@ -28,7 +30,7 @@ afterAll(async () => {
 const spot = (over: Partial<NavilySpot>): NavilySpot => ({ lat: 35.2, lon: 21.0, prot: null, seabeds: null, name: null, kind: "mooring", type: null, water: null, shop: null, ...over });
 const INVENTED = /Zzyzx|Qwoxx|Vrrmpf|\b35\.2\d*|\b21\.\d+|\b25\.\d+/;
 
-type SetupOpts = { wrongKind?: boolean; knownDomains?: number; signals?: boolean; knownLat?: number; edge?: boolean; unbacked?: boolean };
+type SetupOpts = { wrongKind?: boolean; knownDomains?: number; signals?: boolean; knownLat?: number; edge?: boolean; unbacked?: boolean; unseeded?: boolean };
 
 async function setup(tx: Db, o: SetupOpts = {}) {
   const key = `XT-${newId()}`;
@@ -40,6 +42,8 @@ async function setup(tx: Db, o: SetupOpts = {}) {
     for (const d of ["a", "b", "c", "d"].slice(0, o.signals === false ? 0 : domains)) await signalPage(tx, cfg, p, { domain: `${d}.example` });
     return p;
   };
+  // a tile of the subdivision without any place (not worked on): its spots neither count nor are listed as misses
+  if (o.unseeded) await insertTestTile(tx, tileIdFor(21.4, 35.2), null, sub.id);
   const known = await place("Zzyzx Cove", 21.0, o.knownDomains ?? 2, o.knownLat);
   const unknown = await place("Qwoxx Bay", 21.05, 2);
   const wrong = o.wrongKind ? await place("Wrxxy Pier", 21.15, 2) : null;
@@ -57,6 +61,7 @@ async function setup(tx: Db, o: SetupOpts = {}) {
       spot({ name: "Zzyzx Cove" }),
       spot({ name: "Vrrmpf Haven", lon: 21.1 }),
       ...(wrong ? [spot({ name: "Wrxxy Pier", lon: 21.15, kind: "port" })] : []),
+      ...(o.unseeded ? [spot({ name: "Vrrmpf Far", lon: 21.4 })] : []),
       ...(edge ? [spot({ name: "Zzyzx Edge", lon: 20.9998, lat: 35.1 })] : []),
     ]),
   );
@@ -147,6 +152,32 @@ describe("runGate", () => {
       expect(report).toContain("Geliefert bestätigt, aber von der Regel (N=2) nicht gedeckt: 1");
       expect(report).not.toContain("Tor bestanden");
       expect(report).not.toContain(s.unbacked!.placeId);
+    }));
+
+  it("a tile without places is not worked on: its spots are not counted nor listed; the report names built tiles and the count line", () =>
+    withRollback(async (tx) => {
+      const s = await setup(tx, { unseeded: true });
+      const lines = (await runGate(tx, s.args, s.spots, cfg, { now: new Date(), repoRoot: process.cwd() })).join("\n");
+      expect(lines).toContain("spots in " + s.args.subdivision + ": 2");
+      expect(lines).toContain("Bearbeitete Kacheln: 1 von 2");
+      const report = await readFile(s.args.report, "utf8");
+      expect(report).toContain("Bearbeitete Kacheln: 1 von 2");
+      expect(report).toMatch(/kein Kandidat in der Nähe \| 1 \|/);
+      const csv = await readFile(path.join(s.args.outDir, "n3-tor-n2.csv"), "utf8");
+      expect(csv.match(/^miss,/gm)).toHaveLength(1);
+    }));
+
+  it("a perfect gate below gate.minConfirmed confirmed places is not passed", () =>
+    withRollback(async (tx) => {
+      const s = await setup(tx, { knownDomains: 3 });
+      const { unknown } = s;
+      const [task] = await runGate(tx, { ...s.args, syncConflicts: true }, s.spots, cfg, { now: new Date(), repoRoot: process.cwd() }).then(() => tx.select().from(reviewTasks).where(eq(reviewTasks.subjectId, unknown.placeId)));
+      await decideReviewTask(tx, { taskId: task!.id, decision: { action: "berth" }, decidedBy: "admin@test.invalid" });
+      expect((await runGate(tx, s.args, s.spots, cfg, { now: new Date(), repoRoot: process.cwd() })).join("\n")).toContain("Tor bestanden bei N=2");
+      const lines = (await runGate(tx, s.args, s.spots, realCfg, { now: new Date(), repoRoot: process.cwd() })).join("\n");
+      expect(lines).toContain(`Tor nicht bestanden: zu wenige bestätigte Plätze (2 von mindestens ${realCfg.research.gate.minConfirmed})`);
+      expect(lines).not.toContain("Tor bestanden");
+      expect(await readFile(s.args.report, "utf8")).not.toContain("Tor bestanden");
     }));
 
   it("a place near the edge finds its spot just outside the tiles; that spot is not counted", () =>
