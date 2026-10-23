@@ -11,6 +11,7 @@ import { GEOMETRY_CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stag
 import { testDb, withRollback } from "@/test/db";
 import { AEGINA_WEST_KEY, insertAeginaWest } from "@/test/fixtures/subdivisions/aegina-west";
 import { buildBayScene } from "@/test/geometry/scene";
+import { insertPlace } from "@/test/consolidation";
 import { insertTestSubdivision } from "@/test/text";
 
 const db = testDb();
@@ -25,6 +26,19 @@ const retryFailedJob = vi.fn();
 const endRunByAdmin = vi.fn();
 
 vi.mock("@/lib/security/require-admin", () => ({ requireAdmin: () => requireAdmin() }));
+// the research test subdivision is the gate subdivision: research elsewhere waits for the released gate (N3)
+vi.mock("@/lib/config", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/config")>();
+  let cached: ReturnType<typeof actual.getConfig> | undefined;
+  return {
+    ...actual,
+    getConfig: () => {
+      const c = actual.getConfig();
+      cached ??= { ...c, research: { ...c.research, gate: { ...c.research.gate, subdivision: "XQ-RES" } } };
+      return cached;
+    },
+  };
+});
 vi.mock("@/lib/db/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/client")>()),
   getDb: () => currentDb,
@@ -53,7 +67,7 @@ import { consolidateTileAction, geometryTileAction, seedTileAction } from "../ti
 import { pauseQueueAction, resumeQueueAction } from "../jobs/actions";
 import { endRunAction, retryJobAction } from "../runs/[id]/actions";
 import { saveComparisonSelectionAction } from "../quality/actions";
-import { buildSubdivisionAction, queueCountryAction } from "../subdivisions/actions";
+import { buildSubdivisionAction, queueCountryAction, startSubdivisionResearchAction } from "../subdivisions/actions";
 
 const form = (fields: Record<string, string>) => {
   const data = new FormData();
@@ -412,6 +426,27 @@ describe("admin server actions", () => {
       expect(redirect).toHaveBeenLastCalledWith("/runs/run-1");
       await expect(buildSubdivisionAction({ subdivisionKey: "XQ-EXC" })).rejects.toThrow("Landesteil XQ-EXC ist ausgeschlossen");
       expect(startRun).toHaveBeenCalledTimes(1);
+      currentDb = db;
+    }));
+
+  it("startSubdivisionResearchAction starts a research run; a subdivision without candidates comes back with a reason", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      requireAdmin.mockResolvedValue({ email: "admin@example.invalid" });
+      startRun.mockResolvedValue({ id: "run-1" });
+      const sub = await insertTestSubdivision(tx, "XQ-RES", [40.0, 30.0, 40.5, 30.25], { country: "XQ" });
+      await startSubdivisionResearchAction(form({ subdivisionKey: "XQ-RES" }));
+      expect(startRun).not.toHaveBeenCalled();
+      expect(redirect).toHaveBeenLastCalledWith("/subdivisions/XQ-RES?error=no_research_candidates");
+      const { objectId } = await insertPlace(tx, { status: "candidate" });
+      await tx.update(geoObjects).set({ subdivisionId: sub.id }).where(eq(geoObjects.id, objectId));
+      await startSubdivisionResearchAction(form({ subdivisionKey: "XQ-RES" }));
+      expect(startRun).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ scope: { type: "subdivision", id: "XQ-RES" }, params: { subdivisionKey: "XQ-RES" }, triggeredBy: "admin@example.invalid" }),
+      );
+      expect(redirect).toHaveBeenLastCalledWith("/runs/run-1");
       currentDb = db;
     }));
 

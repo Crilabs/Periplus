@@ -32,6 +32,7 @@ type Overrides = {
   extraction?: unknown;
   delivery?: unknown;
   images?: unknown;
+  research?: unknown;
   subdivisions?: unknown;
   areas?: unknown;
   /** `consolidation/active.json`. */
@@ -63,6 +64,7 @@ function fixtureDir(overrides: Overrides): string {
     extraction: overrides.extraction ?? repoConfig.extraction,
     delivery: overrides.delivery ?? repoConfig.delivery,
     images: overrides.images ?? repoConfig.images,
+    research: overrides.research ?? repoConfig.research,
     subdivisions: overrides.subdivisions ?? repoConfig.subdivisions,
     areas: overrides.areas ?? repoConfig.areas,
   };
@@ -187,15 +189,15 @@ describe("loadConfig", () => {
   });
 
   it("the config loader and the fact-schema access know the same fact schema versions", () => {
-    expect(Object.keys(FACT_SCHEMAS).sort()).toEqual(["v1", "v2", "v3"]);
+    expect(Object.keys(FACT_SCHEMAS).sort()).toEqual(["v1", "v2", "v3", "v4"]);
     for (const [version, schema] of Object.entries(FACT_SCHEMAS)) {
       expect(getFactSchema(version)).toBe(schema);
       expect(schema.version).toBe(version);
     }
     // the active one loads; a version outside the map is unknown to both
     expect(loadConfig(fixtureDir({ factSchema: { version: "v3" } })).factSchema).toEqual({ version: "v3" });
-    expect(() => loadConfig(fixtureDir({ factSchema: { version: "v4" } }))).toThrow(/unknown fact schema version v4/);
-    expect(() => getFactSchema("v4")).toThrow(/Unknown fact schema version v4/);
+    expect(() => loadConfig(fixtureDir({ factSchema: { version: "v99" } }))).toThrow(/unknown fact schema version v99/);
+    expect(() => getFactSchema("v99")).toThrow(/Unknown fact schema version v99/);
   });
 
   it("rejects a malformed fact schema version", () => {
@@ -295,6 +297,11 @@ describe("loadConfig", () => {
   it("loads categories and gazetteer settings", () => {
     const c = loadConfig("config");
     expect(c.categories.wikidata.Q40080).toBe("beach");
+    expect(c.categories.osm).toContainEqual({ key: "shop", values: ["bakery"], category: "bakery" });
+    expect(c.categories.osm).toContainEqual({ key: "highway", values: ["bus_stop"], category: "transport" });
+    expect(c.categories.osm).toContainEqual({ key: "amenity", values: ["bus_station", "taxi", "ferry_terminal"], category: "transport" });
+    expect(c.categories.osm).toContainEqual({ key: "man_made", values: ["pier"], category: "landing" });
+    expect(c.categories.osm).toContainEqual({ key: "leisure", values: ["slipway"], category: "landing" });
     expect(c.categories.osm).toContainEqual({ key: "historic", values: "*", category: "culture" });
     expect(c.gazetteer.overpass.timeoutSeconds).toBe(180);
     expect(c.gazetteer.wikidata.classes.Q23442).toBe("island");

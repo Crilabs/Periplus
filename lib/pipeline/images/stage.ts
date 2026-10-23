@@ -27,7 +27,7 @@ const getLog = () => (logger ??= createLogger("images.place"));
  * `params.images` of a run from `startImageRun`. `force` (one place and view, after „Neu erzeugen“): a decided task
  * with the view's key does not make it done (`keyDone`).
  */
-export type ImageRunScope = { subdivisionKey: string } | { geoObjectId: string; view: ImageView; force?: boolean };
+export type ImageRunScope = { subdivisionKey: string } | { geoObjectId: string; view: ImageView; force?: boolean } | { geoObjectIds: string[] };
 
 export type ImageTarget = { geoObjectId: string; view: ImageView; force?: true };
 
@@ -100,7 +100,8 @@ async function plannedKey(db: Db, geoObjectId: string, view: ImageView, cfg: Ima
 
 /**
  * The images a run generates, at most `images.pipeline.maxGenerationsPerRun`. Candidates: for a run from
- * `startImageRun` the title images of the subdivision's spots, or the one place and view it names; for any other run
+ * `startImageRun` the title images of the subdivision's spots, or the one place and view it names; for the follow-up
+ * run of confirmed berths (`params.images.geoObjectIds`) the title images of those objects; for any other run
  * the title images of the objects it consolidated (`consolidatedObjects`). Of those, the eligible spots
  * (`eligibleSpots`) whose current generation key is not done yet (`keyDone`: a current image of the slot, an open or a
  * decided task with that key; a forced scope passes over the decided task). Since the key depends on the imagery tiles, it is computed from the current
@@ -125,6 +126,10 @@ export async function imageTargets(
   if (scope && "geoObjectId" in scope) {
     const ok = await eligibleSpots(db, inIds([scope.geoObjectId]), cfg);
     candidates = ok.map((geoObjectId) => ({ geoObjectId, view: scope.view, ...(scope.force === true ? { force: true as const } : {}) }));
+  } else if (scope && "geoObjectIds" in scope) {
+    const ids = scope.geoObjectIds.length === 0 ? [] : await eligibleSpots(db, inIds(scope.geoObjectIds), cfg);
+    const view = titleView();
+    candidates = ids.map((geoObjectId) => ({ geoObjectId, view }));
   } else {
     let ids: string[];
     if (scope && "subdivisionKey" in scope) {

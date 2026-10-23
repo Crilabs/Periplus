@@ -6,6 +6,7 @@ import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { getBoss } from "@/lib/jobs/boss";
 import { startImageRun } from "@/lib/pipeline/images-run";
+import { startResearchRun } from "@/lib/pipeline/research-run";
 import { queueCountry, startSubdivisionBuild } from "@/lib/pipeline/subdivision-build";
 import { startSubdivisionsBuildRun } from "@/lib/pipeline/subdivisions-run";
 import { requireAdmin } from "@/lib/security/require-admin";
@@ -60,4 +61,16 @@ export async function startSubdivisionImagesAction(input: FormData | { subdivisi
   const db = getDb();
   const boss = await getBoss();
   await startAndRedirect(() => startImageRun(db, boss, { subdivisionKey }, admin.email), `/subdivisions/${encodeURIComponent(subdivisionKey)}`);
+}
+
+/**
+ * „Recherche starten“ for one Landesteil: a research run (search, fetch, assess) of its candidate berths. Goes to the
+ * run; a Landesteil without candidates comes back with a German message.
+ */
+export async function startSubdivisionResearchAction(input: FormData | { subdivisionKey: string }): Promise<void> {
+  const admin = await requireAdmin();
+  const { subdivisionKey } = buildSchema.parse(fields(input));
+  const db = getDb();
+  const boss = await getBoss();
+  await startAndRedirect(() => startResearchRun(db, boss, { subdivisionKey }, admin.email), `/subdivisions/${encodeURIComponent(subdivisionKey)}`);
 }

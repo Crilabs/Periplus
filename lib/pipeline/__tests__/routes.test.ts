@@ -14,6 +14,7 @@ import { aiBatches, aiBatchItems, documentVersions, extractionRuns, mentions, ro
 import { newId } from "@/lib/domain/ids";
 import { beginStage, createRun } from "@/lib/domain/runs";
 import { tileIdFor } from "@/lib/domain/tiles";
+import { BATCH_HANDLERS } from "@/lib/jobs/batch-handlers";
 import { pollBatch, type BatchHandlerEntry } from "@/lib/pipeline/batches";
 import { checkExtractionRun } from "@/lib/pipeline/text/check";
 import { extractRoutes, planRoutes, ROUTE_STAGE, routeSectionBatchEntry, type RouteJob } from "@/lib/pipeline/text/routes";
@@ -29,7 +30,8 @@ const config: AppConfig = {
   budgets: { ...base.budgets, anthropic: { dailyEur: 1000 } },
   extraction: { ...base.extraction, routeSectionWords: 20 },
 };
-const HANDLERS: Record<string, BatchHandlerEntry> = { "extract-route": routeSectionBatchEntry };
+// The real table: `extract-route` items of `extraction.route` go through the shared dispatcher (`research.routes` uses the task too).
+const HANDLERS: Record<string, BatchHandlerEntry> = BATCH_HANDLERS;
 
 const CHUNKS = [
   "# Day 1\n\nWe left Ermioni early and anchored in Kolona Bay for the night.",

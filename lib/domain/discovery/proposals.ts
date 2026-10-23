@@ -99,7 +99,7 @@ export const isIgnoredDomain = (domain: string, cfg: Pick<ProposalsConfig, "igno
 
 /**
  * Domains to propose: at least `minSerpHits` SERP hits (a URL found again by a later search of the same query
- * counts once; the marina website search, level `place_website`, never counts: its hits are checked one by one), or linked from at least `minLinkingSources` distinct approved sources in each one's newest
+ * counts once; the marina website search, level `place_website`, and the berth research, level `research`, never count: their hits are checked one by one), or linked from at least `minLinkingSources` distinct approved sources in each one's newest
  * crawl run. Without `ignoreDomains` and `forbiddenDomains` (equal or subdomain; a forbidden domain is never proposed,
  * ruling M6-D-R2) and without every domain that has a `sources` row (any status, ended ones too). Ordered by domain;
  * hits by rank, then URL.
@@ -113,7 +113,7 @@ export async function domainCandidates(
     with hits as (
       select distinct r.domain, q.keyword, q.language_code, q.location_code, r.url_normalized
       from serp_results r join serp_queries q on q.id = r.serp_query_id
-      where q.level <> 'place_website'
+      where q.level not in ('place_website', 'research')
     )
     select domain from hits group by domain having count(*) >= ${cfg.minSerpHits}
   `);
@@ -146,7 +146,7 @@ export async function domainCandidates(
     select distinct on (q.keyword, q.language_code, q.location_code, r.url_normalized)
       r.domain, r.url, q.keyword, q.language_code as "languageCode", r.rank, r.title, r.snippet
     from serp_results r join serp_queries q on q.id = r.serp_query_id
-    where q.level <> 'place_website' and r.domain in (${sql.join(
+    where q.level not in ('place_website', 'research') and r.domain in (${sql.join(
       domains.map((d) => sql`${d}`),
       sql`, `,
     )})

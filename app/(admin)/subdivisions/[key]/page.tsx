@@ -22,7 +22,7 @@ import {
   thClass,
   trClass,
 } from "../../_components/ui";
-import { buildSubdivisionAction, startSubdivisionImagesAction } from "../actions";
+import { buildSubdivisionAction, startSubdivisionImagesAction, startSubdivisionResearchAction } from "../actions";
 import { SUBDIVISION_STATUS_TONES } from "../status";
 
 export async function generateMetadata({ params }: PageProps<"/subdivisions/[key]">): Promise<Metadata> {
@@ -64,6 +64,12 @@ export default async function Page({ params, searchParams }: PageProps<"/subdivi
                   </Button>
                 </form>
               )}
+              <form action={startSubdivisionResearchAction}>
+                <input type="hidden" name="subdivisionKey" value={d.key} />
+                <Button title="Startet einen Lauf, der zu jedem Kandidaten und bestätigten Ort dieses Landesteils im Netz recherchiert: Suche, Abruf der Trefferseiten und Bewertung je Seite.">
+                  Recherche starten
+                </Button>
+              </form>
               {d.status !== "läuft" && (
                 <form action={buildSubdivisionAction}>
                   <input type="hidden" name="subdivisionKey" value={d.key} />

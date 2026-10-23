@@ -43,6 +43,7 @@ import { canonicalJson } from "@/lib/domain/facts/schema";
 import { factViewsByIds, geoFacts, type FactView } from "@/lib/domain/geo-facts";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { loadImagePlaceInfo, type ImagePlaceInfo } from "@/lib/domain/images/place-info";
+import { researchView, type SignalRow } from "@/lib/domain/research/view";
 import { candidateObjects, withNeighbours } from "@/lib/domain/mentions/scope";
 import {
   afterInQueue,
@@ -231,7 +232,28 @@ export type ReviewSubject =
     }
   | ComparisonSubjectView
   | PlaceImageSubjectView
+  | ResearchConflictSubjectView
   | { type: "missing" };
+
+/**
+ * A `research_conflict` task (plan N3): a confirmed place the reference gate does not know. The place, the threshold the
+ * conflict was found at, the verdict now and the pages with signals (quote, domain). Nothing of the reference is shown.
+ */
+export type ResearchConflictSubjectView = {
+  type: "research_conflict";
+  place: {
+    id: string;
+    publicId: string | null;
+    name: string | null;
+    kind: PlaceKind;
+    status: PlaceStatus;
+    statusReason: string | null;
+    position: LonLat;
+  };
+  threshold: number | null;
+  verdict: { status: string; reason: string; independentSources: string[] };
+  evidence: Array<{ url: string; domain: string; signals: SignalRow[] }>;
+};
 
 /**
  * A `place_image` task (spec 13): the place (`ImagePlaceInfo`: name, ids, points, composition), the slot, the task's
@@ -370,6 +392,7 @@ const subjectNameSql = sql<string | null>`coalesce(${reviewTasks.context}->>'nam
         when 'profile_attribute' then ${displayNameSql(subjectPart(1))}
         when 'profile_summary' then ${displayNameSql(subjectPart(1))}
         when 'place_image' then ${displayNameSql(subjectPart(1))}
+        when 'research_conflict' then ${placeNameSql(subjectPart(1))}
         when 'geo_object_pair' then concat_ws(' / ', ${displayNameSql(subjectPart(1))}, ${displayNameSql(subjectPart(2))})
         when 'job' then ${reviewTasks.context}->>'queue'
       end)`;
@@ -487,6 +510,9 @@ export async function reviewTaskDetail(db: Db, id: string): Promise<ReviewTaskDe
       break;
     case "place_image":
       subject = await placeImageSubject(db, task.subjectId, context);
+      break;
+    case "research_conflict":
+      subject = await researchConflictSubject(db, task.subjectId, context);
       break;
     default:
       subject = { type: "missing" };
@@ -630,6 +656,31 @@ async function comparisonSubject(db: Db, context: Record<string, unknown>): Prom
     profileVersion: c.profileVersion,
     evaluationRunId: c.evaluationRunId,
     ownDisplay: c.ownDisplay,
+  };
+}
+
+async function researchConflictSubject(db: Db, placeId: string, context: Record<string, unknown>): Promise<ReviewSubject> {
+  if (!isUuid(placeId)) return { type: "missing" };
+  const [place] = await db
+    .select({
+      id: places.id,
+      publicId: places.publicId,
+      name: displayNameSql(places.geoObjectId),
+      kind: places.kind,
+      status: places.status,
+      statusReason: places.statusReason,
+      position: asGeoJson(places.position),
+    })
+    .from(places)
+    .where(eq(places.id, placeId));
+  if (!place) return { type: "missing" };
+  const view = await researchView(db, placeId);
+  return {
+    type: "research_conflict",
+    place: { ...place, position: lonLat(place.position as Point) },
+    threshold: typeof context.threshold === "number" ? context.threshold : null,
+    verdict: { status: view.verdict.status, reason: view.verdict.reason, independentSources: view.verdict.independentSources },
+    evidence: view.rows.filter((r) => r.signals.length > 0).map((r) => ({ url: r.url, domain: r.domain, signals: r.signals })),
   };
 }
 
@@ -1015,7 +1066,7 @@ export function detailFeatures(detail: ReviewTaskDetail): GeoJSON.FeatureCollect
     for (const o of s.objects) features.push(feature(o.geom, "subject", o.names[0]?.name ?? null));
   } else if (s.type === "tile") {
     features.push(feature(s.tile.bbox, "subject", s.tile.id));
-  } else if (s.type === "comparison") {
+  } else if (s.type === "comparison" || s.type === "research_conflict") {
     features.push(feature(point(s.place.position), "subject", s.place.name));
   } else if (s.type === "name_candidate") {
     if (s.tile) features.push(feature(s.tile.bbox, "subject", s.tile.id));

@@ -144,6 +144,20 @@ Die Schwelle N, die Zahl der Jahre für „jünger“ bei Negativbelegen und die
   - Zu jedem Ding an Land gehören die Fakten, die sich darauf beziehen. Ein Fakt über ein Ding an Land, das im Gerüst nicht gefunden wird („Taverne Nikos am Strand“), hängt am Liegeplatz und trägt den Namen des Dings als Text (`subjectName`), ohne Position; Koordinaten werden nicht geraten (Entscheidung Claude). Ein Ding an Land ohne Fakten wird nur geliefert, wenn es erreichbar ist und zu einer Kategorie gehört, die für Crews immer zählt (Laden, Bäcker, Taverne, Strand, Bus, Taxi, Fähre); Sehenswertes ohne Fakt nur ab einer Mindest-Wichtigkeit (Wikidata-Sitelinks, wie Teil-Spec 16). Liste und Schwellen in Konfiguration.
 - **Lückenliste:** Kernwerte ohne Wert, als Anlass für gezielte Nachrecherche.
 
+### 5.7a Landrecherche je bestätigtem Liegeplatz
+
+Die Berichte über einen Liegeplatz nennen oft nur, was direkt am Ufer liegt. Deshalb bekommt jeder bestätigte Liegeplatz eine **eigene Recherche für die Landseite** (Christian):
+
+- **Suche** mit den Namen der erreichbaren Orte und Dinge an Land (5.7) und Vorlagen wie „{ort} things to do“, „{ort} taverna“, „{ort} beach“, „{sehenswürdigkeit}“, mehrsprachig wie in 5.3; Vorlagen und Grenzen in `config/research.json` (eigener Abschnitt `landside`).
+- **Quellen auch außerhalb der Seglerwelt:** Reiseblogs, Wikivoyage, Ortsseiten, Reiseführer (Christian). SEO- und KI-Seiten bleiben ausgeschlossen (Seitenbewertung wie 5.3).
+- **Extraktion** freier Fakten zu den Dingen an Land mit denselben Regeln (Zitat, Datum, eigene Worte, Bezug auf ein Ding an Land oder dessen Namen).
+- **Eine Quelle reicht** für einen Fakt über ein Ding an Land: daran hängt keine Sicherheitsfrage (Entscheidung Claude).
+- Nur für bestätigte Liegeplätze; ein Ort, der von mehreren Liegeplätzen erreichbar ist, wird einmal recherchiert und gilt für alle.
+
+### 5.7b Folgekette bei Bestätigung
+
+Wird ein Liegeplatz bestätigt – im Lauf je Landesteil oder jederzeit später, etwa weil bei einer Aktualisierung ein weiterer Beleg auftaucht –, startet **automatisch** eine Folgekette für diesen Liegeplatz (Christian): Anlandestellen und Erreichbares (5.7), Landrecherche (5.7a), Ortsbild (5.8), danach steht er im nächsten Paket. Wird ein Liegeplatz entzogen (Negativbeleg), fällt er sofort aus der Lieferung; seine Landdaten bleiben für eine spätere Wiederbestätigung erhalten.
+
 ### 5.8 Ortsbild
 
 Wie Teil-Spec 13, aber nur für **bestätigte** Liegeplätze (behebt B17).
@@ -231,13 +245,25 @@ Nicht im Vertrag: Quellen, Zitate, Versionen, Change-Feed, Zusammenfassungen, Hi
 - **Daten:** In der Dev-Datenbank sind 10 Liegeplätze bestätigt; ein Neuanfang ist billig. Produktion hat keine Abnehmer und wird aus der neuen Basis neu aufgesetzt; das Archiv (Dokumente, Versionen, S3-Objekte) wird per Skript übernommen, Review-Entscheidungen und Status des alten Ansatzes nicht (Entscheidung Claude). Der Probelauf läuft in Produktion, die Entwicklung lokal. Das Archiv (1.778 Dokumente) wird übernommen und kann für die neue Extraktion wiederverwendet werden. Ob die 70 Migrationen zu einer neuen Basis zusammengefasst werden, entscheidet der Builder (Empfehlung Claude: ja, eine neue Basis-Migration; die Produktion hat noch keine Abnehmer).
 - **Laufende Arbeit:** `pruefung/echtdaten` (63 Commits, v. a. Rücknahmen, Klärung, „Neu prüfen“) wird nicht nach `main` übernommen; einzelne Fixes, die weiter tragen (z. B. Gazetteer, Raumgliederung), werden gezielt übernommen. `feat/umkreis-lieferung` wird nach grüner Testsuite gegen das aktuelle `main` und einer Gesamtprüfung gemergt (5.9, Christian). `fix/flaky-tests` nur, soweit die betroffenen Tests bleiben.
 - **Dokumente:** Dieses Dokument wird fachlich maßgebend. `CLAUDE.md` („Was gilt“) wird angepasst; die Quell-Spec gilt nur noch, wo dieses Dokument nichts sagt. Abschnitt 4 und 10 des Gesamtdesigns werden auf diese Neuausrichtung verwiesen.
-- **Reihenfolge** (Entscheidung Claude, je ein Umsetzungsplan): (1) Recherche je Kandidat und Seitenbewertung, (2) Extraktion neu und Bestätigung, (3) Navily-Test Saronischer Golf (Abschnitt 6) bis 100 %, zunächst auf Bestätigung und Lage, (4) aktueller Stand und Erreichbares, (5) Vertrag 4.0 und UI, (6) Rückbau des alten Ansatzes und neue Basis-Migration, (7) Raumgliederung stabil fürs Mittelmeer (unabhängig, parallel möglich); danach Griechenland. Die riskanteste Annahme (Bestätigung schafft 100 % gegen Navily) wird damit zuerst geprüft.
+- **Roadmap** (Entscheidung Claude, je ein Umsetzungsplan unter `docs/superpowers/plans/2026-10-23-periplus-nN-*.md`; N = Neuausrichtung):
+
+| Plan | Inhalt | Ergebnis | Hängt ab von |
+| --- | --- | --- | --- |
+| N1 | Recherche je Kandidat und Seitenbewertung (5.3) | Trefferseiten je Kandidat archiviert und bewertet | – |
+| N2 | Extraktion neu und Bestätigung (5.4–5.6), Auslöser der Folgekette (5.7b) | bestätigte Liegeplätze mit Belegen | N1 |
+| N3 | Navily-Test Saronischer Golf (Abschnitt 6) | Tor: 100 % korrekt, Schwelle N, Fehlliste | N2 |
+| N4 | Aktueller Stand, Anlandestellen, Erreichbares, Landrecherche (5.7, 5.7a) | vollständiger Stand je Liegeplatz | N2 |
+| N5 | Vertrag 4.0 und UI (7.3, 8) | lieferbar über Landesteil- und Umkreis-Paket | N4 |
+| N6 | Rückbau des alten Ansatzes, neue Basis-Migration (7.2, 8, 9) | schlanke Codebasis | N5 |
+| N7 | Raumgliederung robust fürs Mittelmeer (5.1, B1–B16) | Mittelmeer-fähig | – (parallel) |
+
+  Danach Griechenland, dann Landesteil für Landesteil das Mittelmeer. N3 ist das Tor: verfehlt der Test 100 %, wird N2 nachgeschärft, bevor N4 und N5 darauf aufbauen. Die riskanteste Annahme wird damit zuerst geprüft.
 
 ## 10. Entscheidungen
 
-**Christian:** Liegeplatz als Mittelpunkt; nur Erreichbares an Land zählt, mit Bus und Taxi auch weiter; Kern = Schutz, Grund, Gebühren, Verfügbarkeit, Erfahrungen; Erfahrungen auch für Dinge an Land aus Berichten; Ankerplätze und Bojenfelder brauchen mindestens zwei unabhängige Quellen, eher 3–5, Alter spielt für die Geographie kaum eine Rolle; Navily-Test im Saronischen Golf mit 100 % als Tor, von Navily unbekannte Bestätigungen entscheidet ein Mensch, sonst keine menschliche Freigabe; Kosten je Liegeplatz dürfen hoch sein (Maßstab: Einkauf von Navily-Daten); Zeitachse unwichtig, aktueller Stand reicht; ganzes Mittelmeer, Griechenland Anfang November, Qualität vor Termin, sauberes System statt Weiterflicken; mindestens eine Bestätigung, im Zweifel nicht liefern (Sicherheit); freie, unstrukturierte Fakten; die App bekommt einzelne Fakten und generiert Texte selbst; keine Quellen in der Lieferung; Ortsbilder bleiben; Umkreis-Lieferung (Spec 18) bleibt; Reviere, Landesteile, Qualität bleiben, Autofreigabe entfällt.
+**Christian:** Liegeplatz als Mittelpunkt; nur Erreichbares an Land zählt, mit Bus und Taxi auch weiter; Kern = Schutz, Grund, Gebühren, Verfügbarkeit, Erfahrungen; Erfahrungen auch für Dinge an Land aus Berichten; Ankerplätze und Bojenfelder brauchen mindestens zwei unabhängige Quellen, eher 3–5, Alter spielt für die Geographie kaum eine Rolle; Navily-Test im Saronischen Golf mit 100 % als Tor, von Navily unbekannte Bestätigungen entscheidet ein Mensch, sonst keine menschliche Freigabe; Kosten je Liegeplatz dürfen hoch sein (Maßstab: Einkauf von Navily-Daten); Zeitachse unwichtig, aktueller Stand reicht; ganzes Mittelmeer, Griechenland Anfang November, Qualität vor Termin, sauberes System statt Weiterflicken; mindestens eine Bestätigung, im Zweifel nicht liefern (Sicherheit); freie, unstrukturierte Fakten; die App bekommt einzelne Fakten und generiert Texte selbst; keine Quellen in der Lieferung; Ortsbilder bleiben; Umkreis-Lieferung (Spec 18) bleibt; eigene Landrecherche je bestätigtem Liegeplatz, auch aus Quellen außerhalb der Seglerwelt; automatische Folgekette bei jeder Bestätigung; Reviere, Landesteile, Qualität bleiben, Autofreigabe entfällt.
 
-**Claude** (änderbar): was als Quelle und als unabhängig zählt (5.6); Marinas: offizielle Seite plus eine weitere Quelle; Unsicheres zählt nicht und erzeugt keine Review-Aufgabe; Schwelle N per Navily-Test aus 2–5 bestimmen; Mindestinhalt eines gelieferten Platzes; Lokalisierung unbekannter Namen über Routen-Korridor; Seitenbewertung je Seite statt Domain; Fakten englisch; Anlandestelle aus Berichten, OSM, Geometrie; Reichweiten 1,5 km zu Fuß, 15 km mit Bus/Taxi; `popularity` und Highlight-Stufen entfallen; Kernwerte-Liste (7.1); Neuanfang der Dev-Daten mit Übernahme des Archivs; Reihenfolge der Umstellung.
+**Claude** (änderbar): was als Quelle und als unabhängig zählt (5.6); Marinas: offizielle Seite plus eine weitere Quelle; eine Quelle reicht für Fakten über Dinge an Land; Unsicheres zählt nicht und erzeugt keine Review-Aufgabe; Schwelle N per Navily-Test aus 2–5 bestimmen; Mindestinhalt eines gelieferten Platzes; Lokalisierung unbekannter Namen über Routen-Korridor; Seitenbewertung je Seite statt Domain; Fakten englisch; Anlandestelle aus Berichten, OSM, Geometrie; Reichweiten 1,5 km zu Fuß, 15 km mit Bus/Taxi; `popularity` und Highlight-Stufen entfallen; Kernwerte-Liste (7.1); Neuanfang der Dev-Daten mit Übernahme des Archivs; Reihenfolge der Umstellung.
 
 ## 11. Dem Builder überlassen
 

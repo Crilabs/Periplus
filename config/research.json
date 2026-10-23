@@ -1,0 +1,48 @@
+{
+  "languagesByCountry": { "GR": ["el", "en", "de", "it", "fr"], "default": ["en", "de", "it", "fr"] },
+  "locationCodes": { "el": 2300, "en": 2826, "de": 2276, "it": 2380, "fr": 2250, "es": 2724, "hr": 2191, "tr": 2792 },
+  "templates": {
+    "positive": [
+      { "template": "{name} anchorage", "lang": "en" },
+      { "template": "{name} {island} anchorage", "lang": "en" },
+      { "template": "{name} sailing", "lang": "en" },
+      { "template": "{name} sailing blog", "lang": "en" },
+      { "template": "{name} anchored overnight", "lang": "en" },
+      { "template": "{name} Ankerplatz", "lang": "de" },
+      { "template": "{name} {island} Törnbericht", "lang": "de" },
+      { "template": "{name} ancoraggio", "lang": "it" },
+      { "template": "{name} vela ancoraggio", "lang": "it" },
+      { "template": "{name} mouillage", "lang": "fr" },
+      { "template": "{name} αγκυροβόλιο", "lang": "el" }
+    ],
+    "negative": [
+      { "template": "{name} anchoring prohibited", "lang": "en" },
+      { "template": "{name} Ankerverbot", "lang": "de" },
+      { "template": "{name} divieto di ancoraggio", "lang": "it" },
+      { "template": "{name} interdiction de mouillage", "lang": "fr" },
+      { "template": "{name} απαγόρευση αγκυροβολίας", "lang": "el" }
+    ]
+  },
+  "maxHitsPerCandidate": 40,
+  "refetchDays": 90,
+  "assessWords": 6000,
+  "skipDomains": ["navily.com", "google.com", "youtube.com", "facebook.com", "instagram.com", "pinterest.com", "tripadvisor.*", "booking.com", "amazon.com", "getyourguide.com", "rome2rio.com", "alamy.com"],
+  "source": { "weight": 0.5, "ratePerMinute": 20 },
+  "extraction": { "factSchema": "v4", "placeRadiusKm": 15, "maxUnitWords": 12000, "windowWords": 600, "maxSharedWords": 8, "routeMaxStops": 40, "maxAttempts": 3, "markdownReadConcurrency": 8 },
+  "confirmation": {
+    "minIndependentSources": 2,
+    "minSignalConfidence": 0.7,
+    "positiveKinds": ["anchored", "moored_buoy", "berthed", "listed_as_berth"],
+    "negativeKinds": ["prohibited", "buoys_private", "no_space", "unsafe", "closed"],
+    "harbourIgnoredNegativeKinds": ["no_space"],
+    "countingPageKinds": ["trip_report", "pilot_guide", "forum", "marina", "authority"],
+    "listedAsBerthPageKinds": ["pilot_guide"],
+    "officialPageKinds": ["marina", "authority"],
+    "officialPlaceKinds": ["marina", "port"],
+    "corridorAloneConfirms": false,
+    "copyMinSharedWords": 12
+  },
+  "gate": { "subdivision": "GR-I", "thresholds": [2, 3, 4, 5], "released": false, "chosenThreshold": null, "maxPositionDeviationM": 150, "minConfirmed": 25 },
+  "discovery": { "corridorBufferKm": 3, "minNameSimilarity": 0.8, "vetoSimilarity": 0.4, "maxLegKm": 25, "maxLegDays": 3, "corroboratingDomains": 2 },
+  "state": { "landingRadiusM": 600, "footMaxM": 1500, "detourFactor": 1.4, "transportMaxM": 15000, "transportCategories": ["culture", "town", "nature", "beach"], "transportMinSitelinks": 5, "alwaysCategories": ["food", "supply", "bakery", "beach", "transport"], "textConfidence": 0.8, "transportKeywords": ["bus", "taxi", "ferry", "bahn", "fähre", "λεωφορείο", "ταξί", "φέρι", "πλοίο"] }
+}

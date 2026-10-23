@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Archive } from "@/lib/adapters/s3";
 import { getConfig, type AppConfig } from "@/lib/config";
@@ -349,4 +349,16 @@ export async function uploadPdf(
   if (doc.created) return { documentId: doc.id, sourceId: source.id, created: true };
   const [existing] = await db.select({ sourceId: documents.sourceId }).from(documents).where(eq(documents.id, doc.id));
   return { documentId: doc.id, sourceId: existing!.sourceId, created: false };
+}
+
+/**
+ * The IDs of the current sources a crawl or revisit run takes: approved, not ended, and not of origin `research`
+ * (research sources only hold single hit pages fetched on their own; they are never crawled from their domain root).
+ */
+export async function crawlableSourceIds(db: Db): Promise<string[]> {
+  const rows = await db
+    .select({ id: sources.id })
+    .from(sources)
+    .where(and(eq(sources.status, "approved"), isNull(sources.validTo), ne(sources.origin, "research")));
+  return rows.map((r) => r.id);
 }

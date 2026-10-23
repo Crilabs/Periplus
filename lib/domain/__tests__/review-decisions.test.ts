@@ -32,6 +32,7 @@ import { listOpenTasks } from "@/lib/domain/review-view";
 import {
   DecisionNotAllowed,
   decideReviewTask,
+  newNameObjectType,
   nextOpenTask,
   reviewDecisionSchema,
   sourceSettingsKey,
@@ -172,6 +173,14 @@ const GREEK_HEX: [string, string][] = [
 
 const decide = (tx: Db, taskId: string, decision: ReviewDecision, extra: { openedAt?: Date; now?: Date } = {}) =>
   decideReviewTask(tx, { taskId, decision, decidedBy: ADMIN, ...extra });
+
+describe("newNameObjectType", () => {
+  it("takes a highlight category from a poi hint and ignores landside categories", () => {
+    expect(newNameObjectType("poi:culture", "anchorage")).toEqual({ type: "poi", category: "culture" });
+    expect(newNameObjectType("poi:bakery", "anchorage")).toEqual({ type: "bay", category: null });
+    expect(newNameObjectType("poi:landing", "marina")).toEqual({ type: "harbour", category: null });
+  });
+});
 
 describe("reviewDecisionSchema", () => {
   it("accepts the documented decisions and rejects unknown actions", () => {

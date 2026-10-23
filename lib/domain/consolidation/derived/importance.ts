@@ -1,5 +1,5 @@
 import type { ConsolidationConfig } from "@/lib/config/schemas";
-import type { PoiCategory } from "@/lib/db/schema/geo";
+import type { HighlightCategory } from "@/lib/db/schema/geo";
 import { roundTo } from "../weights";
 
 /*
@@ -10,7 +10,7 @@ import { roundTo } from "../weights";
 export type ImportanceInput = {
   sources: Array<{ key: string; weight: number }>;
   sitelinks: number | null;
-  category: PoiCategory;
+  category: HighlightCategory;
   /** The POI's kinds (`poiKinds`): `<key>=<value>` OSM tags and `wikidata:<Qid>` (spec 16). */
   kinds: string[];
 };

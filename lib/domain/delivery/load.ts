@@ -2,7 +2,7 @@ import { sql, type SQL } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import type { DeliveryConfig, ImagesConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
-import type { GeoObjectType, PlaceKind, PlaceStatus, PoiCategory } from "@/lib/db/schema/geo";
+import type { GeoObjectType, HighlightCategory, PlaceKind, PlaceStatus } from "@/lib/db/schema/geo";
 import type { DocType } from "@/lib/db/schema/sources";
 import { popularityForSubdivision } from "@/lib/domain/consolidation/derived/popularity";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
@@ -283,7 +283,7 @@ async function loadPoiRows(db: Db, subdivisionId: string, today: string): Promis
   const { rows } = await db.execute<{
     geo_object_id: string;
     public_id: string;
-    category: PoiCategory;
+    category: HighlightCategory;
     lon: number;
     lat: number;
     osm_id: string | null;

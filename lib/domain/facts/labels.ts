@@ -15,6 +15,9 @@ export const POI_CATEGORY_LABELS: Record<PoiCategory, string> = {
   active: "Aktiv",
   culture: "Kultur",
   town: "Ort",
+  bakery: "Bäckerei",
+  transport: "Verkehr",
+  landing: "Anlandestelle",
 };
 
 export const SECTOR_LABELS: Record<Sector, string> = {

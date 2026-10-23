@@ -105,8 +105,8 @@ async function openDraftTask(tx: Db, draft: TaskDraft, subjectId: string, contex
  *
  * Steps: context (`null` → `skipped`; a regular run then dismisses the object's open `conflict` / `uncertain_change`
  * tasks with `context.dismissedReason` `object_ended`: a merged or rejected object keeps its last profile as history,
- * never delivered, final review M-6), inputs, derived inputs, (regular runs of a place) confirmation and kind switch by
- * evidence (`applyAutoStatus`, spec 17; the context then carries the place as changed), `buildProfile`,
+ * never delivered, final review M-6), inputs, derived inputs, (regular runs of a place) the kind switch by evidence
+ * (`applyAutoStatus`, spec 17; the context then carries the place as changed), `buildProfile`,
  * `latestProfile`, `diffProfiles`.
  * - `regular`: on `versionNeeded` a new version (previous + 1, `valid_from` = the later of the run date and the
  *   previous `valid_from`, `run_id`); the events carry the new or else the existing version (an attribute event
@@ -156,7 +156,7 @@ export async function consolidateGeo(db: Db, geoObjectId: string, opts: Consolid
     const { inputs } = await loadInputs(tx, geoObjectId, loadOpts);
     const derived = await loadDerivedInputs(tx, geoObjectId, context, loadOpts);
     if (mode === "regular" && context.place) {
-      // spec 17: confirmation and kind switch by evidence, so this run's profile carries them (and `place_new`)
+      // spec 17: kind switch by evidence, so this run's profile carries it (the status is set by the research confirmation, plan N2)
       const auto = await applyAutoStatus(tx, context, inputs, appConfig, new Date(), { rules: cfg, today });
       if (auto.place) context.place = { ...context.place, ...auto.place };
     }

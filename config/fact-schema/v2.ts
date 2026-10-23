@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { poiCategoryEnum } from "@/lib/db/schema/geo";
+import { HIGHLIGHT_CATEGORIES } from "@/lib/db/schema/geo";
 import type { AttributeDef, FactSchema } from "@/lib/domain/facts/schema-types";
 import { factSchemaV1, SEABED_TYPES } from "./v1";
 
@@ -182,7 +182,7 @@ const place: AttributeDef[] = [
     textOnly(`services.${service}`, z.boolean(), "latest_observation", `Whether ${service.replace("_", " ")} is available`),
   ),
   hazards,
-  ...poiCategoryEnum.enumValues.map((category) =>
+  ...HIGHLIGHT_CATEGORIES.map((category) =>
     textOnly(
       `highlight.${category}`,
       z.strictObject({ present: z.boolean(), names: z.array(properName).max(10) }),
