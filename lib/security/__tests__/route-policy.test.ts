@@ -3,16 +3,16 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { matchRoute, normalizePath, ROUTE_POLICY } from "../route-policy";
 
-/** The delivery API routes (spec 08, spec 14: contract 2.0 under `/api/v2`; the 1.0 schemas stay under `/api/v1`). */
+/** The delivery API routes (spec 08, spec 14: contract 3.0 under `/api/v3`; the 1.0 schemas stay under `/api/v1`). */
 const DELIVERY_ROUTES = [
   "/api/v1/schema/[version]/[file]",
-  "/api/v2/ping",
-  "/api/v2/subdivisions",
-  "/api/v2/subdivisions/[subdivision]/package",
-  "/api/v2/subdivisions/[subdivision]/package/[file]",
-  "/api/v2/schema/[version]/[file]",
-  "/api/v2/subdivisions/[subdivision]/changes",
-  "/api/v2/spots/[id]",
+  "/api/v3/ping",
+  "/api/v3/subdivisions",
+  "/api/v3/subdivisions/[subdivision]/package",
+  "/api/v3/subdivisions/[subdivision]/package/[file]",
+  "/api/v3/schema/[version]/[file]",
+  "/api/v3/subdivisions/[subdivision]/changes",
+  "/api/v3/spots/[id]",
 ];
 
 const ROUTE_FILES = /^(page|route)\.(tsx?|jsx?)$/;
@@ -46,18 +46,23 @@ describe("ROUTE_POLICY", () => {
     expect(ROUTE_POLICY["/api/v1/ping"]).toEqual({ kind: "api", scope: "delivery:read" });
   });
 
+  it("moved the delivery API from /api/v2 to /api/v3", () => {
+    expect(Object.keys(ROUTE_POLICY).some((r) => r.startsWith("/api/v2/"))).toBe(false);
+    expect(ROUTE_POLICY["/api/v3/subdivisions"]).toEqual({ kind: "api", scope: "delivery:read" });
+  });
+
   it("every new api route is in the route policy with the delivery:read scope", () => {
     for (const route of DELIVERY_ROUTES) {
       expect(ROUTE_POLICY[route], route).toEqual({ kind: "api", scope: "delivery:read" });
     }
     for (const [path, pattern] of [
-      ["/api/v2/subdivisions", "/api/v2/subdivisions"],
-      ["/api/v2/subdivisions/sd_X/package", "/api/v2/subdivisions/[subdivision]/package"],
-      ["/api/v2/subdivisions/GR-I/package/spots.json", "/api/v2/subdivisions/[subdivision]/package/[file]"],
+      ["/api/v3/subdivisions", "/api/v3/subdivisions"],
+      ["/api/v3/subdivisions/sd_X/package", "/api/v3/subdivisions/[subdivision]/package"],
+      ["/api/v3/subdivisions/GR-I/package/spots.json", "/api/v3/subdivisions/[subdivision]/package/[file]"],
       ["/api/v1/schema/1.0/spots.schema.json", "/api/v1/schema/[version]/[file]"],
-      ["/api/v2/schema/2.0/spots.schema.json", "/api/v2/schema/[version]/[file]"],
-      ["/api/v2/subdivisions/GR-I/changes", "/api/v2/subdivisions/[subdivision]/changes"],
-      ["/api/v2/spots/sp_X", "/api/v2/spots/[id]"],
+      ["/api/v3/schema/2.0/spots.schema.json", "/api/v3/schema/[version]/[file]"],
+      ["/api/v3/subdivisions/GR-I/changes", "/api/v3/subdivisions/[subdivision]/changes"],
+      ["/api/v3/spots/sp_X", "/api/v3/spots/[id]"],
     ] as const) {
       expect(matchRoute(path)?.pattern, path).toBe(pattern);
     }

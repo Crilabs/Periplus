@@ -4,7 +4,7 @@ import { withApiClient } from "@/lib/api/handler";
 import { apiBody, apiNotFound } from "@/lib/api/respond";
 import { cacheMaxAgeSeconds } from "@/lib/domain/delivery/read";
 
-type Ctx = RouteContext<"/api/v2/schema/[version]/[file]">;
+type Ctx = RouteContext<"/api/v3/schema/[version]/[file]">;
 
 /** The JSON schema of a contract file (spec 08 `GET /schema/{version}/{file}`, e.g. `2.0/spots.schema.json`), of every published version. */
 const handler = withApiClient<Ctx>("delivery:read", async (req, _client, ctx) => {

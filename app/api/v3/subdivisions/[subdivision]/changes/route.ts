@@ -5,7 +5,7 @@ import { apiBody, apiError, apiNotFound } from "@/lib/api/respond";
 import { getDb } from "@/lib/db/client";
 import { cacheMaxAgeSeconds, changesSince, deliveryArchive, parseDataVersion, resolveSubdivision } from "@/lib/domain/delivery/read";
 
-type Ctx = RouteContext<"/api/v2/subdivisions/[subdivision]/changes">;
+type Ctx = RouteContext<"/api/v3/subdivisions/[subdivision]/changes">;
 
 const INVALID_SINCE = "since must be a data version from 1 up to the current one.";
 

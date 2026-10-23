@@ -5,7 +5,7 @@ import { apiBody, apiError, apiNotFound } from "@/lib/api/respond";
 import { getDb } from "@/lib/db/client";
 import { cacheMaxAgeSeconds, deliveryArchive, isCalendarDate, isSpotId, spotAsOf } from "@/lib/domain/delivery/read";
 
-type Ctx = RouteContext<"/api/v2/spots/[id]">;
+type Ctx = RouteContext<"/api/v3/spots/[id]">;
 
 /**
  * A spot as delivered on `?asOf=YYYY-MM-DD`, without it the latest delivered version (spec 08 `GET /spots/{id}`), with

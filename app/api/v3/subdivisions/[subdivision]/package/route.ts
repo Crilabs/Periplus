@@ -1,11 +1,10 @@
 import { connection } from "next/server";
-import { SCHEMA_VERSION } from "@/contract";
 import { withApiClient } from "@/lib/api/handler";
 import { apiBody, apiError, apiNotFound } from "@/lib/api/respond";
 import { getDb } from "@/lib/db/client";
 import { cacheMaxAgeSeconds, currentPackage, deliveryArchive } from "@/lib/domain/delivery/read";
 
-type Ctx = RouteContext<"/api/v2/subdivisions/[subdivision]/package">;
+type Ctx = RouteContext<"/api/v3/subdivisions/[subdivision]/package">;
 
 /** The subdivision's current manifest with links to its files (spec 08, spec 14 `GET /subdivisions/{subdivision}/package`). */
 const handler = withApiClient<Ctx>("delivery:read", async (req, _client, ctx) => {
@@ -15,7 +14,7 @@ const handler = withApiClient<Ctx>("delivery:read", async (req, _client, ctx) =>
   }
   const pkg = await currentPackage(getDb(), deliveryArchive(), (await ctx.params).subdivision);
   if (!pkg) return apiNotFound();
-  return apiBody(req, pkg.body, { schemaVersion: SCHEMA_VERSION, dataVersion: pkg.dataVersion, maxAgeSeconds: cacheMaxAgeSeconds() });
+  return apiBody(req, pkg.body, { schemaVersion: pkg.schemaVersion, dataVersion: pkg.dataVersion, maxAgeSeconds: cacheMaxAgeSeconds() });
 });
 
 export async function GET(req: Request, ctx: Ctx): Promise<Response> {

@@ -1,12 +1,11 @@
 import { connection } from "next/server";
-import { SCHEMA_VERSION } from "@/contract";
 import { withApiClient } from "@/lib/api/handler";
 import { apiBody, apiError, apiNotFound } from "@/lib/api/respond";
 import { getDb } from "@/lib/db/client";
 import { contentTypeOf } from "@/lib/domain/delivery/serialize";
 import { cacheMaxAgeSeconds, deliveryArchive, isImageFile, packageFile, parseDataVersion } from "@/lib/domain/delivery/read";
 
-type Ctx = RouteContext<"/api/v2/subdivisions/[subdivision]/package/images/[file]">;
+type Ctx = RouteContext<"/api/v3/subdivisions/[subdivision]/package/images/[file]">;
 
 /** One image file `images/<public id>-<slot>.jpg` of the current or `?dataVersion=` package, as stored (spec 13); like `package/[file]`. */
 const handler = withApiClient<Ctx>("delivery:read", async (req, _client, ctx) => {
@@ -19,7 +18,7 @@ const handler = withApiClient<Ctx>("delivery:read", async (req, _client, ctx) =>
   const found = await packageFile(getDb(), deliveryArchive(), subdivision, file, dataVersion);
   if (!found) return apiNotFound();
   return apiBody(req, found.bytes, {
-    schemaVersion: SCHEMA_VERSION,
+    schemaVersion: found.schemaVersion,
     dataVersion: found.dataVersion,
     contentType: contentTypeOf(file),
     maxAgeSeconds: cacheMaxAgeSeconds(),

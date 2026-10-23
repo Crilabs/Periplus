@@ -9,7 +9,7 @@ import type { ContractFile, Manifest } from "../contract";
 /*
  * Consumer check of a subdivision package (plan M6 Task 15): what a foreign consumer sees, through the API only. Fetches the
  * current manifest, every linked file, checks each file's sha256 against the manifest and validates it with its own
- * Ajv (draft 2020-12) against the schema served by `GET /api/v2/schema/<version>/<file>`. No database, no project code
+ * Ajv (draft 2020-12) against the schema served by `GET /api/v3/schema/<version>/<file>`. No database, no project code
  * except types.
  */
 
@@ -38,7 +38,7 @@ async function failure(res: Response, what: string): Promise<string> {
 }
 
 /**
- * The URL of an API link under `base` (no trailing slash): a root-relative link (`/api/v2/…`) is appended to the base
+ * The URL of an API link under `base` (no trailing slash): a root-relative link (`/api/v3/…`) is appended to the base
  * URL, so a path prefix (`https://host/periplus`) is kept (final review M-4); an absolute link must have the base URL's
  * origin, else null — the key is never sent to another host (bundle H review).
  */
@@ -75,7 +75,7 @@ export async function consumePackage(input: {
   const base = input.baseUrl.replace(/\/+$/, "");
   const get = (url: string) => doFetch(url, { headers: { authorization: `Bearer ${input.key}`, accept: "application/json" } });
 
-  const packagePath = `/api/v2/subdivisions/${encodeURIComponent(input.subdivision)}/package`;
+  const packagePath = `/api/v3/subdivisions/${encodeURIComponent(input.subdivision)}/package`;
   const res = await get(resolveLink(base, packagePath)!);
   if (res.status !== 200) throw new Error(await failure(res, packagePath));
   const { links, ...manifest } = (await res.json()) as PackageBody;
@@ -106,7 +106,7 @@ export async function consumePackage(input: {
     }
     const sha256Ok = name === "manifest.json" ? isDeepStrictEqual(data, manifest) : expected.get(name) === sha256(bytes);
 
-    const schemaPath = `/api/v2/schema/${encodeURIComponent(manifest.schemaVersion)}/${schemaName(name)}`;
+    const schemaPath = `/api/v3/schema/${encodeURIComponent(manifest.schemaVersion)}/${schemaName(name)}`;
     const schemaRes = await get(resolveLink(base, schemaPath)!);
     if (schemaRes.status !== 200) {
       files.push({ name, sha256Ok, schemaErrors: [await failure(schemaRes, schemaPath)] });

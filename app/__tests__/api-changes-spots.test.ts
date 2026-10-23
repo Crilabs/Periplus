@@ -31,10 +31,10 @@ vi.mock("@/lib/db/client", async (importActual) => ({
   getDb: () => db,
 }));
 
-const changesRoute = await import("../api/v2/subdivisions/[subdivision]/changes/route");
-const spotsRoute = await import("../api/v2/spots/[id]/route");
+const changesRoute = await import("../api/v3/subdivisions/[subdivision]/changes/route");
+const spotsRoute = await import("../api/v3/spots/[id]/route");
 
-const BASE = "http://localhost/api/v2";
+const BASE = "http://localhost/api/v3";
 const day = (d: string) => new Date(`${d}T08:00:00Z`);
 
 const request = (path: string, key: string | undefined, headers: Record<string, string> = {}) =>
@@ -109,7 +109,7 @@ describe("changes and spots: authentication", () => {
     }));
 });
 
-describe("GET /api/v2/subdivisions/[subdivision]/changes", () => {
+describe("GET /api/v3/subdivisions/[subdivision]/changes", () => {
   it("changes since 1 merge the change files of versions 2 and 3", () =>
     withRollback(async (tx) => {
       const { f, archive, key } = await setup(tx);
@@ -171,7 +171,7 @@ describe("GET /api/v2/subdivisions/[subdivision]/changes", () => {
     }));
 });
 
-describe("GET /api/v2/spots/[id]", () => {
+describe("GET /api/v3/spots/[id]", () => {
   it("asOf returns the spot version delivered on that date", () =>
     withRollback(async (tx) => {
       const { f, archive, key } = await setup(tx);
