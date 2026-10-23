@@ -1,11 +1,14 @@
 "use server";
 
 import { zipSync } from "fflate";
+import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { deliveryArchive } from "@/lib/domain/delivery/archive";
 import { readRadiusFile } from "@/lib/domain/delivery/radius/build";
 import { previewRadius } from "@/lib/domain/delivery/radius/view";
 import { requireAdmin } from "@/lib/security/require-admin";
+
+const inputSchema = z.object({ marina: z.string().min(1), days: z.number().int() });
 
 /**
  * „Als ZIP laden“: every stored file of the radius package for `marina` and `days` (built first if not yet cached) as
@@ -16,8 +19,10 @@ export async function downloadRadiusZip(
   days: number,
 ): Promise<{ filename: string; zip: Uint8Array } | "marina_not_found" | "invalid_days"> {
   await requireAdmin();
+  const input = inputSchema.safeParse({ marina, days });
+  if (!input.success) return "invalid_days";
   const archive = deliveryArchive();
-  const preview = await previewRadius(getDb(), archive, marina, days);
+  const preview = await previewRadius(getDb(), archive, input.data.marina, input.data.days);
   if (typeof preview === "string") return preview;
   const files: Record<string, Uint8Array> = {};
   for (const name of Object.keys(preview.row.fileHashes)) {

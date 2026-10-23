@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db/client";
 import { deliveryArchive } from "@/lib/domain/delivery/archive";
 import { listHomeMarinas } from "@/lib/domain/delivery/radius/home-marinas";
 import { listRadiusPackages, previewRadius, radiusMapFeatures, RADIUS_PACKAGES_PAGE_SIZE } from "@/lib/domain/delivery/radius/view";
+import { createLogger } from "@/lib/logger";
 import { requireAdmin } from "@/lib/security/require-admin";
 import {
   Badge,
@@ -24,6 +25,8 @@ import {
   trClass,
 } from "../../_components/ui";
 import { RadiusMap, RadiusZipButton } from "./radius-map";
+
+const log = createLogger("admin-radius");
 
 export const metadata: Metadata = { title: "Umkreis-Paket" };
 
@@ -50,8 +53,17 @@ export default async function Page({ searchParams }: PageProps<"/deliveries/radi
   const db = getDb();
   const archive = deliveryArchive();
 
-  const [marinas, packages, preview] = await Promise.all([
-    listHomeMarinas(db, archive),
+  // an unreadable package must not take the cached list and the preview down: show the error, offer no marinas
+  const homeMarinas = listHomeMarinas(db, archive).then(
+    (list) => ({ list, error: null as string | null }),
+    (e: unknown) => {
+      const error = e instanceof Error ? e.message : String(e);
+      log.error({ reason: error }, "home marinas could not be listed");
+      return { list: [], error };
+    },
+  );
+  const [{ list: marinas, error: marinasError }, packages, preview] = await Promise.all([
+    homeMarinas,
     listRadiusPackages(db, page),
     marina && days !== undefined ? previewRadius(db, archive, marina, days) : Promise.resolve(null),
   ]);
@@ -86,7 +98,12 @@ export default async function Page({ searchParams }: PageProps<"/deliveries/radi
           </Field>
           <Button variant="primary">Vorschau</Button>
         </form>
-        {marinas.length === 0 && <p className="mt-3 text-sm text-muted">Noch keine Heimatmarina in einem gültigen Paket.</p>}
+        {marinasError && (
+          <Notice tone="danger" className="mt-4">
+            Heimatmarinas konnten nicht gelesen werden, die Auswahl ist leer: {marinasError}. Eine Vorschau geht weiter über <Mono>?marina=sp_…&amp;days=…</Mono>.
+          </Notice>
+        )}
+        {!marinasError && marinas.length === 0 && <p className="mt-3 text-sm text-muted">Noch keine Heimatmarina in einem gültigen Paket.</p>}
 
         {typeof preview === "string" && (
           <Notice tone="danger" className="mt-4">
