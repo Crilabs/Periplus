@@ -32,6 +32,7 @@ type Overrides = {
   extraction?: unknown;
   delivery?: unknown;
   images?: unknown;
+  research?: unknown;
   subdivisions?: unknown;
   areas?: unknown;
   /** `consolidation/active.json`. */
@@ -63,6 +64,7 @@ function fixtureDir(overrides: Overrides): string {
     extraction: overrides.extraction ?? repoConfig.extraction,
     delivery: overrides.delivery ?? repoConfig.delivery,
     images: overrides.images ?? repoConfig.images,
+    research: overrides.research ?? repoConfig.research,
     subdivisions: overrides.subdivisions ?? repoConfig.subdivisions,
     areas: overrides.areas ?? repoConfig.areas,
   };

@@ -24,6 +24,7 @@ import {
   nameAffixesSchema,
   qualitySchema,
   queuesSchema,
+  researchSchema,
   restrictionsSchema,
   sourceTypesSchema,
   subdivisionsConfigSchema,
@@ -57,6 +58,7 @@ export type {
   NameAffixesConfig,
   QualityConfig,
   QueueConfig,
+  ResearchConfig,
   RestrictionsConfig,
   SourceTypesConfig,
   SubdivisionsConfig,
@@ -186,6 +188,7 @@ export function loadConfig(dir = "config"): AppConfig {
     consolidation: readConsolidation(dir, readJson(dir, "consolidation/active", consolidationActiveSchema).version),
     delivery: readJson(dir, "delivery", deliverySchema),
     images: readJson(dir, "images", imagesSchema),
+    research: readJson(dir, "research", researchSchema),
   };
   checkImageJobExpiry(dir, config);
   return config;

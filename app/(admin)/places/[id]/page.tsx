@@ -13,6 +13,7 @@ import { ADMIN_PLACE_STATUSES } from "@/lib/domain/place-status";
 import { placeDetail } from "@/lib/domain/geo-view";
 import { placeGeometry } from "@/lib/domain/geometry-view";
 import { placeHighlightsView } from "@/lib/domain/highlights/view";
+import { researchView } from "@/lib/domain/research/view";
 import { placeImageView } from "@/lib/domain/images/view";
 import { timelineView } from "@/lib/domain/profile-timeline";
 import { profileAttributeFacts, profileView } from "@/lib/domain/profile-view";
@@ -51,6 +52,7 @@ import { GeometryTab } from "./geometry-tab";
 import { HighlightsPanel } from "./highlights-panel";
 import { ImageTab } from "./image-tab";
 import { ProfileTab } from "./profile-tab";
+import { ResearchTab } from "./research-tab";
 import { StatusActions } from "./status-actions";
 import { TimelineTab } from "./timeline-tab";
 
@@ -75,6 +77,7 @@ const TABS = {
   overview: "Übersicht",
   geometry: "Geometrie",
   facts: "Facts",
+  research: "Recherche",
   profile: "Profil",
   image: "Bilder",
   timeline: "Zeitachse",
@@ -213,6 +216,8 @@ export default async function Page({ params, searchParams }: PageProps<"/places/
         <TimelineTabView placeId={p.id} geoObjectId={p.geoObjectId} version={versionParam.parse(sp.v)} asOf={textParam.parse(sp.asOf)} attr={attr} confirm={textParam.parse(sp.confirm)} />
       ) : tab === "image" ? (
         <ImageTabView placeId={p.id} geoObjectId={p.geoObjectId} editable={active} notice={imageNoticeParam.parse(sp.imageNotice)} zoomRefused={sp.imageError === "zoom"} />
+      ) : tab === "research" ? (
+        <ResearchTab rows={await researchView(db, p.id)} />
       ) : tab === "delivery" ? (
         <DeliveryTabView placeId={p.id} />
       ) : tab === "sources" ? (

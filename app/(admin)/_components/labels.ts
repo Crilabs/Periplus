@@ -29,6 +29,7 @@ import type {
 } from "@/lib/db/schema";
 import type { ChangeSeverity, ChangeType, SummaryStatus } from "@/lib/db/schema/profiles";
 import type { DeliveryStatus } from "@/lib/db/schema/deliveries";
+import type { PageKind } from "@/lib/db/schema/research";
 import type { ComparisonAttribute, ComparisonMethod, ComparisonResultValue, MetricKey } from "@/lib/db/schema/quality";
 import type { ChangeEntry, ContractFile } from "@/contract";
 import type { CheckName } from "@/lib/domain/delivery/validate";
@@ -104,6 +105,18 @@ export const REVIEW_KIND_LABELS: Record<ReviewKind, string> = {
   uncertain_change: "Unsichere Änderung",
   comparison_deviation: "Vergleichsabweichung",
   place_image: "Titelbild",
+};
+
+/** Kind of a researched page (page assessment, spec 18). */
+export const PAGE_KIND_LABELS: Record<PageKind, string> = {
+  trip_report: "Törnbericht",
+  pilot_guide: "Revierführer",
+  marina: "Marina",
+  authority: "Behörde",
+  forum: "Forum",
+  travel_guide: "Reiseführer",
+  listing: "Liste",
+  other: "Sonstiges",
 };
 
 export const PLACE_KIND_LABELS: Record<PlaceKind, string> = {
@@ -240,6 +253,7 @@ export const SOURCE_ORIGIN_LABELS: Record<SourceOrigin, string> = {
   whitelist: "Whitelist",
   manual: "Manuell",
   place_website: "Website des Ortes",
+  research: "Recherche",
 };
 
 export const DOCUMENT_STATUS_LABELS: Record<DocumentStatus, string> = {
@@ -322,6 +336,8 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   geo_object_not_consolidatable: "Geo-Objekt ist unbekannt, beendet, zusammengeführt oder hat keine Fact-Ebene",
   comparison_set_empty: "Der Vergleichssatz des Reviers ist leer",
   geo_object_without_place: "Geo-Objekt hat keinen gültigen Ort",
+  no_research_candidates: "Keine Kandidaten für die Recherche",
+  research_run_active: "Für diesen Umfang wartet oder läuft schon eine Recherche – erst ihr Ende abwarten",
   measurement_label_taken: "Bezeichnung schon vergeben",
   measurement_label_invalid: "Bezeichnung fehlt oder ist länger als 40 Zeichen",
   measurement_window_empty: "Der Zeitraum ist leer – „von“ muss vor „bis“ liegen",
@@ -802,4 +818,12 @@ export const WEBSITE_ORIGIN_LABELS: Record<"osm" | "wikidata" | "serp", string> 
   osm: "OSM",
   wikidata: "Wikidata",
   serp: "Google-Suche",
+};
+
+/** Reasons a research page was not fetched (`research_fetches.reason`), for „nicht geholt: …“; unknown ones are shown as stored. */
+export const RESEARCH_FETCH_REASON_LABELS: Record<string, string> = {
+  forbidden_domain: "gesperrte Domain",
+  robots: "robots.txt verbietet es",
+  too_large: "Seite zu groß",
+  blocked_address: "Adresse gesperrt",
 };

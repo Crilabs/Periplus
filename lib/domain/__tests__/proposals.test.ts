@@ -38,7 +38,7 @@ function robotsTransport(texts: Record<string, string | number> = {}): Transport
   return transport;
 }
 
-type Hit = { url: string; rank?: number; keyword?: string; languageCode?: string; level?: "area" | "place_website" };
+type Hit = { url: string; rank?: number; keyword?: string; languageCode?: string; level?: "area" | "place_website" | "research" };
 
 /** One SERP query per hit (distinct keywords), each with one result on `domain`. */
 async function insertHits(tx: Db, domain: string, hits: Hit[]): Promise<void> {
@@ -123,6 +123,18 @@ describe("proposeSources", () => {
       await insertHits(tx, other, pages(other, 1, "/y/"));
       const candidate = (await domainCandidates(tx, proposals())).find((c) => c.domain === other);
       expect(candidate?.hits.map((h) => h.url).sort()).toEqual([`https://${other}/blog/p0`, `https://${other}/blog/p1`, `https://${other}/y/0`]);
+    }));
+
+  it("hits of a berth research (level research) never make a domain a candidate", () =>
+    withRollback(async (tx) => {
+      const domain = testDomain();
+      await insertHits(tx, domain, pages(domain, 4).map((p) => ({ ...p, level: "research" as const })));
+      expect((await domainCandidates(tx, proposals())).map((c) => c.domain)).not.toContain(domain);
+      // research hits do not add to a discovery candidate, nor appear among its hits
+      await insertHits(tx, domain, pages(domain, 2, "/d/"));
+      await insertHits(tx, domain, pages(domain, 1, "/e/"));
+      const candidate = (await domainCandidates(tx, proposals())).find((c) => c.domain === domain);
+      expect(candidate?.hits.every((h) => !h.url.includes("/blog/"))).toBe(true);
     }));
 
   it("a domain with 3 hits becomes a proposed source with an open source_approval task", () =>

@@ -1,4 +1,5 @@
 import type { BatchHandlerEntry } from "@/lib/pipeline/batches";
+import { assessPageBatchEntry } from "@/lib/pipeline/research/assess";
 import { classificationBatchEntry } from "@/lib/pipeline/text/classify";
 import { disambiguationBatchEntry } from "@/lib/pipeline/text/disambiguate";
 import { extractFactsBatchEntry } from "@/lib/pipeline/text/extract";
@@ -15,4 +16,5 @@ export const BATCH_HANDLERS: Record<string, BatchHandlerEntry> = {
   [disambiguationBatchEntry.task.name]: disambiguationBatchEntry,
   [extractFactsBatchEntry.task.name]: extractFactsBatchEntry,
   [routeSectionBatchEntry.task.name]: routeSectionBatchEntry,
+  [assessPageBatchEntry.task.name]: assessPageBatchEntry,
 };

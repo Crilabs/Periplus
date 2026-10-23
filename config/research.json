@@ -1,0 +1,28 @@
+{
+  "languagesByCountry": { "GR": ["el", "en", "de", "it", "fr"], "default": ["en", "de", "it", "fr"] },
+  "locationCodes": { "el": 2300, "en": 2826, "de": 2276, "it": 2380, "fr": 2250, "es": 2724, "hr": 2191, "tr": 2792 },
+  "templates": {
+    "positive": [
+      { "template": "{name} anchorage", "lang": "en" },
+      { "template": "{name} {island} anchorage", "lang": "en" },
+      { "template": "{name} sailing", "lang": "en" },
+      { "template": "{name} Ankerplatz", "lang": "de" },
+      { "template": "{name} {island} Törnbericht", "lang": "de" },
+      { "template": "{name} ancoraggio", "lang": "it" },
+      { "template": "{name} mouillage", "lang": "fr" },
+      { "template": "{name} αγκυροβόλιο", "lang": "el" }
+    ],
+    "negative": [
+      { "template": "{name} anchoring prohibited", "lang": "en" },
+      { "template": "{name} Ankerverbot", "lang": "de" },
+      { "template": "{name} divieto di ancoraggio", "lang": "it" },
+      { "template": "{name} interdiction de mouillage", "lang": "fr" },
+      { "template": "{name} απαγόρευση αγκυροβολίας", "lang": "el" }
+    ]
+  },
+  "maxHitsPerCandidate": 40,
+  "refetchDays": 90,
+  "assessWords": 6000,
+  "skipDomains": ["navily.com", "google.com", "youtube.com", "facebook.com", "instagram.com", "pinterest.com", "tripadvisor.com", "booking.com", "amazon.com"],
+  "source": { "weight": 0.5, "ratePerMinute": 20 }
+}

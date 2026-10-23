@@ -33,6 +33,8 @@ export type RunScopeReason =
   | "geo_object_not_consolidatable"
   | "comparison_set_empty"
   | "geo_object_without_place"
+  | "no_research_candidates"
+  | "research_run_active"
   | "measurement_label_taken"
   | "measurement_label_invalid"
   | "measurement_window_empty"

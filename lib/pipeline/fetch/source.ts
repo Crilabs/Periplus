@@ -33,7 +33,7 @@ export async function prepareSourceCrawl(
 ): Promise<PreparedCrawl> {
   const source = await getSource(db, sourceId);
   // Re-checked here (ruling M3-E-R2): the source may have been paused or ended since the run started.
-  if (!source || source.validTo !== null || source.status !== "approved") return { status: "not_approved", startUrls: 0, robots: null };
+  if (!source || source.validTo !== null || source.status !== "approved" || source.origin === "research") return { status: "not_approved", startUrls: 0, robots: null };
   const rules = source.crawlRules;
   const startUrls = rules.startUrls.length > 0 ? rules.startUrls : [`https://${source.domain}/`];
   const callCtx = { ...ctx, db, sourceId };

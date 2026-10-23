@@ -30,7 +30,8 @@ export const discoveryQuerySchema = z.strictObject({
   tileId: z.string().min(1).optional(),
 });
 
-export type SearchSummary = { queries: number; searched: number; reused: number; failed: number };
+/** `queryIds`: the `serp_queries` of every query that was searched or reused, in query order. */
+export type SearchSummary = { queries: number; searched: number; reused: number; failed: number; queryIds: string[] };
 
 /**
  * Runs the queries one after another (`runQuery`: reuse within 30 days, else search and store). A query that still
@@ -44,9 +45,11 @@ export async function runQueries(db: Db, queries: DiscoveryQuery[], deps: Deps, 
   let reused = 0;
   let failed = 0;
   let lastError: unknown;
+  const queryIds: string[] = [];
   for (const q of queries) {
     try {
       const result = await runQuery(db, q, deps, ctx);
+      queryIds.push(result.queryId);
       if (result.reused) reused += 1;
       else searched += 1;
     } catch (error) {
@@ -57,7 +60,7 @@ export async function runQueries(db: Db, queries: DiscoveryQuery[], deps: Deps, 
     }
   }
   if (failed > 0 && searched + reused === 0) throw lastError;
-  return { queries: queries.length, searched, reused, failed };
+  return { queries: queries.length, searched, reused, failed, queryIds };
 }
 
 /** The area queries of a subdivision a run makes: `areaQueries` cut to `maxQueriesPerRun`. */

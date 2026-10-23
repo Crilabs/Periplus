@@ -1,10 +1,9 @@
-import { and, eq, isNull } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { simulationActive } from "@/lib/adapters/simulation";
 import type { Db } from "@/lib/db/client";
-import { sources } from "@/lib/db/schema";
 import { activeRulesVersion } from "@/lib/domain/consolidation/active-rules";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
+import { crawlableSourceIds } from "@/lib/domain/sources/store";
 import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { CONSOLIDATION_FOLLOWUP_STAGE } from "@/lib/pipeline/consolidation/stages";
 import { FETCH_RUN_STAGES, startExclusiveFetchRun } from "@/lib/pipeline/fetch/run";
@@ -50,14 +49,7 @@ export async function startRevisitRun(
   if (input.maxPages !== undefined && !(Number.isInteger(input.maxPages) && input.maxPages >= 1)) {
     throw new Error("maxPages must be a positive integer");
   }
-  const sourceIds = (
-    await db
-      .select({ id: sources.id })
-      .from(sources)
-      .where(and(eq(sources.status, "approved"), isNull(sources.validTo)))
-  )
-    .map((s) => s.id)
-    .sort();
+  const sourceIds = (await crawlableSourceIds(db)).sort();
   if (sourceIds.length === 0) throw new RunScopeNotReady("no_approved_sources", "No source is approved yet");
   const rulesVersion = await activeRulesVersion(db);
   const stages = revisitStages();
