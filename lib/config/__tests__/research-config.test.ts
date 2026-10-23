@@ -27,6 +27,27 @@ describe("research config", () => {
     expect(researchSchema.safeParse(d).success).toBe(false);
   });
 
+  it("loads extraction, confirmation and discovery start values", () => {
+    const c = getConfig().research;
+    expect(c.extraction).toEqual({ factSchema: "v4", placeRadiusKm: 15, maxUnitWords: 12000, windowWords: 600, maxSharedWords: 8, routeMaxStops: 40 });
+    expect(c.confirmation.minIndependentSources).toBe(2);
+    expect(c.confirmation.minSignalConfidence).toBe(0.7);
+    expect(c.confirmation.positiveKinds).toEqual(["anchored", "moored_buoy", "berthed", "listed_as_berth"]);
+    expect(c.discovery).toEqual({ corridorBufferKm: 3, minNameSimilarity: 0.8 });
+  });
+
+  it("rejects a kind that is both positive and negative", () => {
+    const c = valid();
+    c.confirmation.negativeKinds.push("anchored");
+    expect(researchSchema.safeParse(c).success).toBe(false);
+  });
+
+  it("rejects an unknown fact schema version", () => {
+    const c = valid();
+    c.extraction.factSchema = "v99";
+    expect(researchSchema.safeParse(c).success).toBe(false);
+  });
+
   it("accepts the shipped config", () => {
     expect(researchSchema.safeParse(valid()).success).toBe(true);
   });

@@ -498,6 +498,13 @@
       "when": 1792767054902,
       "tag": "0070_research_fetches",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1792770651646,
+      "tag": "0071_research_extract",
+      "breakpoints": true
     }
   ]
 }

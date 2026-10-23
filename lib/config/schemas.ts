@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FACT_SCHEMAS } from "@/config/fact-schema";
 import {
   geoObjectTypeEnum,
   placeKindEnum,
@@ -9,6 +10,8 @@ import {
   type GeoObjectType,
   type PlaceKind,
 } from "@/lib/db/schema/geo";
+import { pageKindEnum } from "@/lib/db/schema/research";
+import { berthSignalKindEnum } from "@/lib/db/schema/research-extract";
 import { changeRateEnum, DOC_TYPES, type ChangeRate, type DocType } from "@/lib/db/schema/sources";
 import { CONTRACT_FILES, SCHEMA_VERSION } from "@/contract";
 import { PROVENANCE_SOURCES } from "@/contract/v2";
@@ -1388,8 +1391,34 @@ export const researchSchema = z
     skipDomains: z.array(z.string().min(1)),
     /** The source created for a research hit page (domain without a source). */
     source: z.strictObject({ weight: z.number().min(0).max(1), ratePerMinute: z.number().min(1).max(120) }),
+    /** Extraction per page and place (plan N2). */
+    extraction: z.strictObject({
+      factSchema: z.string().refine((v) => v in FACT_SCHEMAS, { error: "unknown fact schema version" }),
+      placeRadiusKm: z.number().positive(),
+      maxUnitWords: z.number().int().positive(),
+      windowWords: z.number().int().positive(),
+      maxSharedWords: z.number().int().positive(),
+      routeMaxStops: z.number().int().positive(),
+    }),
+    /** When a berth counts as confirmed from its signals (plan N2, task 6). */
+    confirmation: z.strictObject({
+      minIndependentSources: z.number().int().min(1),
+      minSignalConfidence: z.number().min(0).max(1),
+      positiveKinds: z.array(z.enum(berthSignalKindEnum.enumValues)).min(1),
+      negativeKinds: z.array(z.enum(berthSignalKindEnum.enumValues)).min(1),
+      countingPageKinds: z.array(z.enum(pageKindEnum.enumValues)).min(1),
+      listedAsBerthPageKinds: z.array(z.enum(pageKindEnum.enumValues)),
+      officialPageKinds: z.array(z.enum(pageKindEnum.enumValues)),
+    }),
+    /** Matching route stops to places. */
+    discovery: z.strictObject({ corridorBufferKm: z.number().positive(), minNameSimilarity: z.number().min(0).max(1) }),
   })
   .superRefine((c, ctx) => {
+    for (const k of c.confirmation.negativeKinds) {
+      if (c.confirmation.positiveKinds.includes(k)) {
+        ctx.addIssue({ code: "custom", path: ["confirmation", "negativeKinds"], message: `signal kind ${k} is both positive and negative` });
+      }
+    }
     for (const [country, langs] of Object.entries(c.languagesByCountry)) {
       for (const [i, lang] of langs.entries()) {
         if (!(lang in c.locationCodes)) {

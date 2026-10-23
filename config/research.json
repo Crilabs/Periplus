@@ -24,5 +24,16 @@
   "refetchDays": 90,
   "assessWords": 6000,
   "skipDomains": ["navily.com", "google.com", "youtube.com", "facebook.com", "instagram.com", "pinterest.com", "tripadvisor.com", "booking.com", "amazon.com"],
-  "source": { "weight": 0.5, "ratePerMinute": 20 }
+  "source": { "weight": 0.5, "ratePerMinute": 20 },
+  "extraction": { "factSchema": "v4", "placeRadiusKm": 15, "maxUnitWords": 12000, "windowWords": 600, "maxSharedWords": 8, "routeMaxStops": 40 },
+  "confirmation": {
+    "minIndependentSources": 2,
+    "minSignalConfidence": 0.7,
+    "positiveKinds": ["anchored", "moored_buoy", "berthed", "listed_as_berth"],
+    "negativeKinds": ["prohibited", "buoys_private", "no_space", "unsafe", "closed"],
+    "countingPageKinds": ["trip_report", "pilot_guide", "forum", "marina", "authority"],
+    "listedAsBerthPageKinds": ["pilot_guide"],
+    "officialPageKinds": ["marina", "authority"]
+  },
+  "discovery": { "corridorBufferKm": 3, "minNameSimilarity": 0.8 }
 }
