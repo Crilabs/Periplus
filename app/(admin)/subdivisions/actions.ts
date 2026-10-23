@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
 import { getBoss } from "@/lib/jobs/boss";
+import { startLandRun } from "@/lib/pipeline/gazetteer/stages";
 import { startImageRun } from "@/lib/pipeline/images-run";
 import { startResearchRun } from "@/lib/pipeline/research-run";
 import { queueCountry, startSubdivisionBuild } from "@/lib/pipeline/subdivision-build";
@@ -90,4 +91,16 @@ export async function startSubdivisionResearchAction(input: FormData | { subdivi
   const db = getDb();
   const boss = await getBoss();
   await startAndRedirect(() => startResearchRun(db, boss, { subdivisionKey }, admin.email), `/subdivisions/${encodeURIComponent(subdivisionKey)}`);
+}
+
+/**
+ * „Dinge an Land laden“ for one Landesteil: a run of the stage `gazetteer.land` (N7 4.4) around its research
+ * candidates. Goes to the run; a Landesteil without candidates comes back with a German message.
+ */
+export async function startSubdivisionLandAction(input: FormData | { subdivisionKey: string }): Promise<void> {
+  const admin = await requireAdmin();
+  const { subdivisionKey } = buildSchema.parse(fields(input));
+  const db = getDb();
+  const boss = await getBoss();
+  await startAndRedirect(() => startLandRun(db, boss, { subdivisionKey }, admin.email), `/subdivisions/${encodeURIComponent(subdivisionKey)}`);
 }

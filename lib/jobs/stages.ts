@@ -24,6 +24,7 @@ import { placeWebsiteFreezeStage, placeWebsiteStage } from "./handlers/place-web
 import {
   gazetteerGeonamesStage,
   gazetteerHierarchyStage,
+  gazetteerLandStage,
   gazetteerOsmStage,
   gazetteerWikidataStage,
 } from "./handlers/gazetteer";
@@ -52,6 +53,7 @@ export const STAGES: Record<string, StageDefinition> = {
   [gazetteerWikidataStage.name]: gazetteerWikidataStage,
   [gazetteerGeonamesStage.name]: gazetteerGeonamesStage,
   [gazetteerHierarchyStage.name]: gazetteerHierarchyStage,
+  [gazetteerLandStage.name]: gazetteerLandStage,
   [gazetteerSeasStage.name]: gazetteerSeasStage,
   [gazetteerCoarseStage.name]: gazetteerCoarseStage,
   [subdivisionsBuildStage.name]: subdivisionsBuildStage,

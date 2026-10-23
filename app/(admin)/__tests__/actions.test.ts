@@ -67,7 +67,7 @@ import { consolidateTileAction, geometryTileAction, seedTileAction } from "../ti
 import { pauseQueueAction, resumeQueueAction } from "../jobs/actions";
 import { endRunAction, retryJobAction } from "../runs/[id]/actions";
 import { saveComparisonSelectionAction } from "../quality/actions";
-import { buildSubdivisionAction, queueCountryAction, startSubdivisionResearchAction } from "../subdivisions/actions";
+import { buildSubdivisionAction, queueCountryAction, startSubdivisionLandAction, startSubdivisionResearchAction } from "../subdivisions/actions";
 
 const form = (fields: Record<string, string>) => {
   const data = new FormData();
@@ -445,6 +445,27 @@ describe("admin server actions", () => {
         expect.anything(),
         expect.anything(),
         expect.objectContaining({ scope: { type: "subdivision", id: "XQ-RES" }, params: { subdivisionKey: "XQ-RES", rulesVersion: expect.any(String) }, triggeredBy: "admin@example.invalid" }),
+      );
+      expect(redirect).toHaveBeenLastCalledWith("/runs/run-1");
+      currentDb = db;
+    }));
+
+  it("startSubdivisionLandAction starts a gazetteer.land run; a subdivision without candidates comes back with a reason", () =>
+    withRollback(async (tx) => {
+      currentDb = tx;
+      requireAdmin.mockResolvedValue({ email: "admin@example.invalid" });
+      startRun.mockResolvedValue({ id: "run-1" });
+      const sub = await insertTestSubdivision(tx, "XQ-LAND", [40.0, 30.0, 40.5, 30.25], { country: "XQ" });
+      await startSubdivisionLandAction(form({ subdivisionKey: "XQ-LAND" }));
+      expect(startRun).not.toHaveBeenCalled();
+      expect(redirect).toHaveBeenLastCalledWith("/subdivisions/XQ-LAND?error=subdivision_without_candidates");
+      const { objectId } = await insertPlace(tx, { status: "candidate" });
+      await tx.update(geoObjects).set({ subdivisionId: sub.id }).where(eq(geoObjects.id, objectId));
+      await startSubdivisionLandAction(form({ subdivisionKey: "XQ-LAND" }));
+      expect(startRun).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ kind: "stage", scope: { type: "subdivision", id: "XQ-LAND" }, stages: ["gazetteer.land"], params: { subdivisionKey: "XQ-LAND" }, triggeredBy: "admin@example.invalid" }),
       );
       expect(redirect).toHaveBeenLastCalledWith("/runs/run-1");
       currentDb = db;

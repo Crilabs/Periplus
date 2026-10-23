@@ -339,6 +339,17 @@ export const gazetteerSchema = z.strictObject({
     classes: z.record(wikidataQid, geoObjectType),
     ratePerMinute: z.number().positive(),
   }),
+  /**
+   * The stage `gazetteer.land` (N7 4.4, 4.6): candidates are grouped into query boxes of at most `maxBoxKm` per edge;
+   * `marginM` widens both rings (radii from `research.state`, `landRings`) for the extent of the anchor area around
+   * the candidate point; `wikidataClasses` are the Wikidata classes of the far ring (POIs, category from
+   * `categories.wikidata`).
+   */
+  land: z.strictObject({
+    maxBoxKm: z.number().positive(),
+    marginM: z.number().nonnegative(),
+    wikidataClasses: z.array(wikidataQid).min(1),
+  }),
   geonames: z.strictObject({
     baseUrl: z.url(),
     featureCodes: z.record(z.string().regex(/^[A-Z0-9]+$/), geoObjectType),

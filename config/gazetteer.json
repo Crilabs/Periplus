@@ -54,6 +54,11 @@
     },
     "refreshDays": 30
   },
+  "land": {
+    "maxBoxKm": 40,
+    "marginM": 300,
+    "wikidataClasses": ["Q839954", "Q44613", "Q39715", "Q33506", "Q40080"]
+  },
   "bboxBufferKm": 5,
   "landBufferKm": 55,
   "coastDistanceM": 2000,

@@ -28,6 +28,8 @@ const KEPT_TAGS = new Set([
   "amenity",
   "shop",
   "man_made",
+  // bus stops (N7 4.4): `reclassifyPois` re-derives a POI's category from the kept tags
+  "highway",
   "wikidata",
   "website",
   "contact:website",

@@ -5,10 +5,8 @@ import { fetchCoverage, fetchWfsFeatures } from "@/lib/adapters/emodnet";
 import type { CallContext, Transport } from "@/lib/adapters/http";
 import { buildCablesQuery, buildRoadsQuery, overpassQuery, type OverpassElement } from "@/lib/adapters/overpass";
 import type { Archive } from "@/lib/adapters/s3";
-import { sitelinkCounts } from "@/lib/adapters/wikidata";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { wikidataSitelinks } from "@/lib/db/schema";
 import type { GazetteerScope } from "@/lib/domain/gazetteer/scope";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { bufferBbox } from "@/lib/domain/gazetteer/land";
@@ -23,6 +21,7 @@ import { replaceRoads, type RoadFeature } from "@/lib/domain/geometry/roads";
 import { classifySeabed, replaceSeabed, type SeabedFeature } from "@/lib/domain/geometry/seabed";
 import { tileBbox, tileNeighbours, type Bbox } from "@/lib/domain/tiles";
 import { createLogger } from "@/lib/logger";
+import { ensureSitelinkCounts } from "@/lib/pipeline/sitelinks";
 import { seedTileIds } from "@/lib/pipeline/tile-scope";
 
 export const DATASETS_STAGE = "datasets.import";
@@ -347,49 +346,29 @@ export async function importRoads(
   return { roads: stored, removed, version };
 }
 
-/** Rows per upsert statement of sitelink counts. */
-const SITELINK_UPSERT_ROWS = 1000;
-
 /**
  * Wikidata sitelink counts (importance signal, ruling M5-P1) of the valid, unmerged objects with a `wikidata_id` in
- * the subdivision's tiles: a count fetched within `datasets.sitelinks.reuseDays` is reused without a call, the others are
- * fetched (50 per request) and upserted with `fetched_at` = now; an item Wikidata no longer knows counts 0.
+ * the subdivision's tiles, through `ensureSitelinkCounts`: a count fetched within `datasets.sitelinks.reuseDays` is
+ * reused without a call, the others are fetched and upserted; an item Wikidata no longer knows counts 0.
  */
 export async function importSitelinks(
   db: Db,
   input: DatasetImportInput,
   deps: Pick<DatasetImportDeps, "transport">,
 ): Promise<{ fetched: number; reused: number }> {
-  const { datasets, gazetteer } = getConfig();
   const tileIds = await subdivisionTileIds(db, input.scope.subdivisionId);
   if (tileIds.length === 0) throw new Error(`subdivision ${input.scope.key} has no tiles; build its gazetteer first`);
-  const now = input.now ?? new Date();
-  const { rows } = await db.execute<{ qid: string; fresh: boolean }>(sql`
-    select o.wikidata_id as qid,
-           bool_or(coalesce(s.fetched_at > ${now.toISOString()}::timestamptz - make_interval(days => ${datasets.sitelinks.reuseDays}::int), false)) as fresh
+  const { rows } = await db.execute<{ qid: string }>(sql`
+    select distinct o.wikidata_id as qid
     from geo_objects o
     join tile_geo_objects tg on tg.geo_object_id = o.id
     join tiles t on t.id = tg.tile_id
-    left join wikidata_sitelinks s on s.wikidata_id = o.wikidata_id
     where t.id in (select value from jsonb_array_elements_text(${JSON.stringify(tileIds)}::jsonb)) and t.valid_from <= current_date and (t.valid_to is null or t.valid_to > current_date)
       and o.wikidata_id is not null and o.merged_into_id is null
       and o.valid_from <= current_date and (o.valid_to is null or o.valid_to > current_date)
-    group by o.wikidata_id
     order by o.wikidata_id`);
-  const stale = rows.filter((r) => !r.fresh).map((r) => r.qid);
-  if (stale.length > 0) {
-    const counts = await sitelinkCounts(deps.transport, stale, callContext(db, input), gazetteer.wikidata);
-    for (let i = 0; i < stale.length; i += SITELINK_UPSERT_ROWS) {
-      await db
-        .insert(wikidataSitelinks)
-        .values(stale.slice(i, i + SITELINK_UPSERT_ROWS).map((id) => ({ wikidataId: id, sitelinks: counts.get(id) ?? 0, fetchedAt: now })))
-        .onConflictDoUpdate({
-          target: wikidataSitelinks.wikidataId,
-          set: { sitelinks: sql`excluded.sitelinks`, fetchedAt: sql`excluded.fetched_at` },
-        });
-    }
-  }
-  return { fetched: stale.length, reused: rows.length - stale.length };
+  const { fetched, reused } = await ensureSitelinkCounts(db, rows.map((r) => r.qid), deps, callContext(db, input), input.now ?? new Date());
+  return { fetched, reused };
 }
 
 /** Runs the import of one dataset kind for one subdivision. */

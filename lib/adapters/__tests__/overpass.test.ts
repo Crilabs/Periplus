@@ -4,7 +4,7 @@ import type { GazetteerConfig } from "@/lib/config";
 import { newId } from "@/lib/domain/ids";
 import { countryBlocks } from "@/lib/domain/gazetteer/land";
 import { RetryableHttpError, makeResponse, type HttpRequest, type Transport } from "@/lib/adapters/http";
-import { buildGazetteerQuery, overpassQuery, overpassQueryRetrying } from "@/lib/adapters/overpass";
+import { buildGazetteerQuery, buildLandQuery, overpassQuery, overpassQueryRetrying } from "@/lib/adapters/overpass";
 
 const db = testDb();
 
@@ -46,6 +46,27 @@ describe("buildGazetteerQuery", () => {
     expect(ql).not.toContain('place"~"sea');
     expect(ql).not.toContain("amenity");
     expect(ql.trimEnd().endsWith("\nout geom;")).toBe(true);
+  });
+});
+
+describe("buildLandQuery", () => {
+  const rules = [
+    { key: "amenity", values: ["restaurant", "cafe"] },
+    { key: "historic", values: "*" as const },
+  ];
+
+  it("one statement per rule, values anchored, in south,west,north,east order", () => {
+    const ql = buildLandQuery([23.0, 37.5, 23.25, 37.75], rules, 180);
+    expect(ql).toContain('nwr["amenity"~"^(restaurant|cafe)$"](37.5,23,37.75,23.25);');
+    expect(ql).toContain('nwr["historic"](37.5,23,37.75,23.25);');
+    expect(ql).not.toContain("wikidata");
+    expect(ql.trimEnd().endsWith("\nout geom;")).toBe(true);
+  });
+
+  it("the far ring asks only for elements with a wikidata tag", () => {
+    const ql = buildLandQuery([23.0, 37.5, 23.25, 37.75], rules, 180, true);
+    expect(ql).toContain('nwr["historic"]["wikidata"](37.5,23,37.75,23.25);');
+    expect(ql).toContain('nwr["amenity"~"^(restaurant|cafe)$"]["wikidata"](37.5,23,37.75,23.25);');
   });
 });
 

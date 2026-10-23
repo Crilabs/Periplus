@@ -332,6 +332,7 @@ export const RUN_SCOPE_REASON_LABELS: Record<RunScopeReason, string> = {
   area_without_geo_object: "Revier hat noch kein Geo-Objekt – zuerst „Gazetteer aufbauen“",
   area_without_coast_tiles: "Revier hat noch keine Küstenkacheln – zuerst „Gazetteer aufbauen“",
   subdivision_without_coast_tiles: "Landesteil hat noch keine Küstenkacheln – zuerst „Gazetteer aufbauen“",
+  subdivision_without_candidates: "Landesteil hat noch keine Kandidaten – zuerst „Aufbauen“ (Seed)",
   tile_without_subdivision: "Kachel gehört zu keinem Landesteil – Suchsprachen unbekannt",
   bathymetry_missing: "Bathymetrie fehlt – zuerst „Datensätze laden“",
   land_missing: "Landpolygone fehlen – zuerst die Landpolygone importieren (npm run import:land-polygons -- --mediterranean)",

@@ -22,7 +22,7 @@ import {
   thClass,
   trClass,
 } from "../../_components/ui";
-import { buildSubdivisionAction, startSubdivisionImagesAction, startSubdivisionResearchAction } from "../actions";
+import { buildSubdivisionAction, startSubdivisionImagesAction, startSubdivisionLandAction, startSubdivisionResearchAction } from "../actions";
 import { SUBDIVISION_STATUS_TONES } from "../status";
 
 export async function generateMetadata({ params }: PageProps<"/subdivisions/[key]">): Promise<Metadata> {
@@ -64,6 +64,12 @@ export default async function Page({ params, searchParams }: PageProps<"/subdivi
                   </Button>
                 </form>
               )}
+              <form action={startSubdivisionLandAction}>
+                <input type="hidden" name="subdivisionKey" value={d.key} />
+                <Button title="Startet einen Lauf, der die Dinge an Land um die Kandidaten und bestätigten Orte dieses Landesteils lädt: im Nahbereich Tavernen, Läden, Strände, Bushaltestellen und Anlandestellen, im Fernbereich bekannte Sehenswürdigkeiten mit Wikidata-Bezug.">
+                  Dinge an Land laden
+                </Button>
+              </form>
               <form action={startSubdivisionResearchAction}>
                 <input type="hidden" name="subdivisionKey" value={d.key} />
                 <Button title="Startet einen Lauf, der zu jedem Kandidaten und bestätigten Ort dieses Landesteils im Netz recherchiert: Suche, Abruf der Trefferseiten und Bewertung je Seite.">

@@ -56,6 +56,27 @@ export function buildGazetteerQuery(bbox: Bbox, timeoutSeconds: number): string 
   );
 }
 
+/** One tag rule of `categories.osm` as the land query reads it: key and its values (`"*"`: any value). */
+export type LandQueryRule = { key: string; values: string[] | "*" };
+
+/**
+ * Overpass QL for the things on land of one ring box (stage `gazetteer.land`, N7 4.4): nodes, ways and relations of
+ * every rule (one statement each, values as an anchored alternation), answered with full geometry. `requireWikidata`
+ * (the far ring) keeps only elements with a `wikidata` tag.
+ */
+export function buildLandQuery(bbox: Bbox, rules: LandQueryRule[], timeoutSeconds: number, requireWikidata = false): string {
+  const wikidata = requireWikidata ? '["wikidata"]' : "";
+  return boxQuery(
+    rules.map((r) => {
+      const key = qlString(r.key);
+      const filter = r.values === "*" ? `["${key}"]` : `["${key}"~"^(${r.values.map((v) => qlString(regexLiteral(v))).join("|")})$"]`;
+      return `nwr${filter}${wikidata}`;
+    }),
+    bbox,
+    timeoutSeconds,
+  );
+}
+
 /** Overpass QL for the road ways of `highways` in a box. */
 export function buildRoadsQuery(bbox: Bbox, highways: string[], timeoutSeconds: number): string {
   const values = highways.map((h) => qlString(regexLiteral(h))).join("|");

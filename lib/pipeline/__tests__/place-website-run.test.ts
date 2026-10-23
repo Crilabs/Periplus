@@ -60,9 +60,10 @@ async function setup(tx: Db, website?: string) {
 const paramsOf = async (tx: Db, id: string) => (await tx.select({ params: runs.params }).from(runs).where(eq(runs.id, id)))[0]!.params as Record<string, unknown>;
 
 describe("places.website in the subdivision build", () => {
-  it("comes right after seed.tile", () => {
+  it("comes right after seed.tile and the things on land around its candidates (gazetteer.land, N7)", () => {
     const stages = [...SUBDIVISION_BUILD_STAGES] as string[];
-    expect(stages.indexOf(PLACE_WEBSITE_STAGE)).toBe(stages.indexOf(SEED_STAGE) + 1);
+    expect(stages.indexOf(PLACE_WEBSITE_STAGE)).toBe(stages.indexOf(SEED_STAGE) + 2);
+    expect(stages[stages.indexOf(SEED_STAGE) + 1]).toBe("gazetteer.land");
   });
 });
 

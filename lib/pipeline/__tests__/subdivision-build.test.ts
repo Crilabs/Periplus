@@ -4,8 +4,10 @@ import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { runs, subdivisions } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
-import { GAZETTEER_STAGES } from "@/lib/pipeline/gazetteer/stages";
+import { LAND_STAGE } from "@/lib/pipeline/gazetteer/land";
+import { GAZETTEER_STAGES, startLandRun } from "@/lib/pipeline/gazetteer/stages";
 import { afterBuildRunEnded, queueCountry, startSubdivisionBuild, SUBDIVISION_BUILD_STAGES } from "@/lib/pipeline/subdivision-build";
+import { RunScopeNotReady, SEED_STAGE } from "@/lib/pipeline/tile-scope";
 import { withRollback } from "@/test/db";
 import { insertTestSubdivision } from "@/test/text";
 
@@ -45,6 +47,25 @@ describe("SUBDIVISION_BUILD_STAGES", () => {
     expect(stages.indexOf("mentions.reread")).toBe(i + 1);
     expect(stages.indexOf("discovery.area")).toBe(i + 2);
   });
+});
+
+describe("stage gazetteer.land", () => {
+  it("runs in the build directly after seed.tile", () => {
+    const stages: readonly string[] = SUBDIVISION_BUILD_STAGES;
+    expect(LAND_STAGE).toBe("gazetteer.land");
+    expect(stages.indexOf(LAND_STAGE)).toBe(stages.indexOf(SEED_STAGE) + 1);
+  });
+
+  it("startLandRun refuses a subdivision without candidates before the run exists", () =>
+    withRollback(async (tx) => {
+      const { boss, inserted } = recordingBoss();
+      await insertTestSubdivision(tx, "XQ-L1", box(0), { country: "XQ" });
+      const started = startLandRun(tx, boss, { subdivisionKey: "XQ-L1" }, "a@test.invalid");
+      await expect(started).rejects.toBeInstanceOf(RunScopeNotReady);
+      await expect(started).rejects.toMatchObject({ reason: "subdivision_without_candidates" });
+      expect(inserted).toEqual([]);
+      expect(await tx.select().from(runs).where(eq(runs.scopeId, "XQ-L1"))).toEqual([]);
+    }));
 });
 
 describe("startSubdivisionBuild", () => {

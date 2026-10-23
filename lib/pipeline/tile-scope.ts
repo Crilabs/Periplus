@@ -10,6 +10,7 @@ export type RunScopeReason =
   | "area_without_geo_object"
   | "area_without_coast_tiles"
   | "subdivision_without_coast_tiles"
+  | "subdivision_without_candidates"
   | "tile_without_subdivision"
   | "bathymetry_missing"
   | "land_missing"
