@@ -45,7 +45,7 @@ Diese Spec legt fest, wie Periplus ein Paket für **einen Umkreis um eine Heimat
 
 ## Was im Paket steht
 
-Das Umkreis-Paket hat **dieselben Dateien** wie ein Landesteil-Paket (`manifest.json`, `spots.json`, `highlights.json`, `regions.json`, `coast.geojson`, `weather-points.json`, Bilder, ab einem Folgepaket `changes.json`) und dieselben Objektformate. Eine App, die ein Landesteil-Paket lesen kann, liest auch ein Umkreis-Paket; nur das Manifest unterscheidet sich (unten).
+Das Umkreis-Paket hat **dieselben Dateien** wie ein Landesteil-Paket (`manifest.json`, `spots.json`, `highlights.json`, `regions.json`, `coast.geojson`, `weather-points.json`, Bilder) und dieselben Objektformate, aber **kein `changes.json`**: Änderungen holt die App über die API (unten). Eine App, die ein Landesteil-Paket lesen kann, liest auch ein Umkreis-Paket; nur Manifest und Dateikopf (`scope`) unterscheiden sich (unten).
 
 Inhalt:
 
@@ -83,10 +83,12 @@ Die App kann so „hier fehlen noch Daten“ anzeigen. Ein Paket, in dem der Lan
 
 ## Änderungen nach dem Törn
 
-Das Manifest trägt statt einer einzigen `dataVersion` die Versionen der Landesteile (`coverage[].dataVersion`). Die App fragt mit diesen Versionen nach Änderungen:
+Jedes Umkreis-Paket hat einen Schlüssel (`scope.key` im Manifest und in jeder Datei). Die App fragt mit dem Schlüssel ihres Pakets nach Änderungen:
 
-- `GET …/radius/changes?marina=&days=&since=<sd-key>:<version>,…` liefert die zusammengeführten Änderungen der beteiligten Landesteile seit diesen Versionen, beschränkt auf Objekte, die im Kreis liegen oder lagen (ein Ort, der durch Korrektur aus dem Kreis rückt, erscheint als `removed`).
-- Ein Landesteil, der seit dem Paket neu aufgebaut wurde (vorher `missing`), liefert alle seine Objekte im Kreis als `created`.
+- `GET /radius/changes?marina=&days=&since=<key>` vergleicht das Paket `since` (aus dem Zwischenspeicher) mit dem aktuellen Paket für Marina und Tage (wird bei Bedarf gebaut) und liefert:
+  - die zusammengeführten Änderungen der beteiligten Landesteile zwischen den Versionen beider Pakete (`mergeChanges` wie bei `/subdivisions/{sd}/changes`), beschränkt auf Objekte, die in einem der beiden Pakete stehen;
+  - für ein Objekt, das nur im neuen Paket steht und keine solche Änderung hat, `created` (z. B. ein Landesteil, der vorher `missing` war, oder ein Ort, der durch Korrektur in den Kreis rückt); für eines, das nur im alten steht, `removed`. Beide mit `severity: info`, leerem `fields`, der `profileVersion` des Objekts und `summary.de` „Neu im Umkreis“ bzw. „Nicht mehr im Umkreis“.
+- Antwort: `{ schemaVersion, since, key, changes }`; `since` gleich dem aktuellen Schlüssel ergibt keine Änderungen, ein unbekannter Schlüssel oder einer für andere Marina oder Tage ist 400.
 - Alternativ lädt die App einfach das aktuelle Paket neu; beides muss zum selben Stand führen.
 
 ## `popularity` mit fester Nachbarschaft (ändert Teil-Spec 07 und 14)
@@ -105,12 +107,12 @@ Neu: **Nachbarschaft je Ort** = alle bestätigten Orte im Umkreis von `popularit
 
 Das Manifest bekommt einen Umfang, der Landesteil oder Umkreis sein kann. Das ändert eine Pflichtangabe jedes Manifests, also neue Hauptversion **3.0**. (Claude, wie bei 2.0: es gibt noch keinen Abnehmer.)
 
-- `manifest.scope`: entweder `{ type: "subdivision", subdivision: {…wie bisher} }` oder `{ type: "radius", homeMarina: { id, name }, center: [lon, lat], days, radiusNm, circle: <Polygon> }`.
-- `manifest.subdivision` entfällt (steckt in `scope`).
+- `manifest.scope`: entweder `{ type: "subdivision", subdivision: {…wie bisher in 2.3}, dataVersion, previousDataVersion }` oder `{ type: "radius", key, homeMarina: { id, name }, center: { lat, lon }, days, radiusNm, circle: <Polygon> }`.
+- `manifest.subdivision`, `manifest.dataVersion` und `manifest.previousDataVersion` entfallen (stecken in `scope`).
 - `manifest.coverage` (oben) in beiden Fällen; beim Landesteil-Paket mit genau einem Eintrag.
-- `manifest.dataVersion` und `previousDataVersion` bleiben für Landesteil-Pakete; für Umkreis-Pakete entfallen sie zugunsten von `coverage[].dataVersion`.
-- `bbox`, `tiles`, `areas`, `objectCounts`, `licenses`, `files` unverändert. `licenses` werden aus den beteiligten Paketen vereinigt.
-- Alle übrigen Dateien bleiben unverändert gegenüber 2.3 bis auf `schemaVersion`.
+- `bbox`, `tiles`, `areas`, `generatedAt`, `objectCounts`, `licenses`, `files` unverändert. Beim Umkreis-Paket: `bbox` des Kreises, `areas` und `licenses` aus den beteiligten Paketen vereinigt, `objectCounts.changes = 0`.
+- **Dateikopf** aller übrigen JSON-Dateien: statt `subdivision` und `dataVersion` ein `scope`, entweder `{ type: "subdivision", id: "sd_…", dataVersion }` oder `{ type: "radius", key }`; `schemaVersion` und `generatedAt` bleiben. `changes.json` (nur Landesteil-Pakete) behält `previousDataVersion`.
+- Die Objekte selbst (Spot, Highlight, Region, Wetterpunkt, Küste) bleiben unverändert gegenüber 2.3.
 - Schemas unter `contract/schema/3.0/`, die alten Versionen bleiben abrufbar wie bisher.
 
 ## API (`/api/v3`)
@@ -121,9 +123,9 @@ Das Manifest bekommt einen Umfang, der Landesteil oder Umkreis sein kann. Das ä
 | `GET /radius/package?marina=&days=` | Manifest des Umkreis-Pakets mit Links auf die Dateien (baut oder liest aus dem Zwischenspeicher) |
 | `GET /radius/package/{file}?marina=&days=&key=` | eine Datei dieses Pakets; `key` aus dem Manifest, damit Manifest und Dateien zum selben Stand gehören |
 | `GET /radius/changes?marina=&days=&since=` | Änderungen seit den Landesteil-Versionen (oben) |
-| `/subdivisions/…` | wie in `/api/v2`, im Format 3.0; Landesteil-Pakete bleiben als Lieferweg für Partner erhalten |
+| `/subdivisions/…`, `/spots/{id}`, `/schema/…`, `/ping` | wie bisher unter `/api/v2`; Landesteil-Pakete bleiben als Lieferweg für Partner erhalten |
 
-Fehler: unbekannte oder nicht ausgelieferte Marina → 404, `days` außerhalb 1–28 → 400. Authentifizierung, Rate-Limit, `ETag`, Fehlerformat wie Teil-Spec 08. `/api/v2` bleibt bis zum ersten Abnehmer bestehen und wird danach abgeschaltet. (Claude.)
+Fehler: unbekannte oder nicht ausgelieferte Marina → 404, `days` außerhalb 1–28 → 400. Authentifizierung, Rate-Limit, `ETag`, Fehlerformat wie Teil-Spec 08. `/api/v3` **ersetzt** `/api/v2` (die Routen ziehen um); es gibt noch keinen Abnehmer. Gespeicherte Pakete älterer Versionen bleiben abrufbar, mit ihrer eigenen `schemaVersion`. (Claude.)
 
 ## Admin-UI (ändert Teil-Spec 09)
 
@@ -147,7 +149,7 @@ Fehler: unbekannte oder nicht ausgelieferte Marina → 404, `days` außerhalb 1�
 - Lücke: ein berührter Landesteil ohne Paket erscheint in `coverage` als `missing`, seine Küstenkacheln in `tiles` mit `lastRunAt: null`.
 - Kein neuer Wert: jedes Objekt im Umkreis-Paket ist byte-gleich mit seiner Fassung im Landesteil-Paket (bis auf gekürzte `spotIds`).
 - Zwischenspeicher: gleiche Eingaben bauen einmal; neue `dataVersion` eines beteiligten Landesteils ergibt einen neuen Schlüssel.
-- Änderungen: Ort rückt durch Korrektur aus dem Kreis → `removed`; neu aufgebauter Landesteil → seine Orte als `created`; Änderungen + altes Paket = neues Paket.
+- Änderungen: Ort rückt durch Korrektur aus dem Kreis → `removed`; neu aufgebauter Landesteil → seine Orte als `created`; Änderung an einem Ort im Kreis → `updated` aus dem Landesteil-Feed; die IDs aus altem Paket plus Änderungen ergeben die IDs des neuen Pakets.
 - `popularity`: zwei Orte an einer Landesteil-Grenze, Nachbarschaft über die Grenze; Wert gleich, egal welches Paket ihn liefert; Ort ohne Nachbarn mit Quellen → 1 bei n > 0.
 - Vertrag 3.0: Schema-Tests für beide `scope`-Arten; alte Schemas weiter abrufbar.
 
