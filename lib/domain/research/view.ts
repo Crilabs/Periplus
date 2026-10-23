@@ -86,7 +86,7 @@ export async function researchView(db: Db, placeId: string): Promise<ResearchVie
   const [place] = await db.select({ kind: places.kind, status: places.status, statusReason: places.statusReason }).from(places).where(eq(places.id, placeId));
   if (!place) throw new Error(`place ${placeId} does not exist`);
   const cfg = getConfig();
-  const verdict = decideBerth(place.kind, (await loadEvidence(db, [placeId], cfg)).get(placeId) ?? [], cfg.research.confirmation, cfg.research.extraction.maxSharedWords);
+  const verdict = decideBerth(place.kind, (await loadEvidence(db, [placeId], cfg)).get(placeId) ?? [], cfg.research.confirmation);
 
   const hits = await db
     .select({

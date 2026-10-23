@@ -34,6 +34,7 @@ export const RESEARCH_EXTRACT_QUEUE = "research.extract" satisfies QueueName;
 const SUBJECT = "research_unit";
 /** The skip reason of a generated page: such a unit is never planned again (the others are). */
 const GENERATED_REASON = "page is generated text";
+const NOT_NAMED_REASON = "Liegeplatz auf der Seite nicht genannt";
 
 let logger: ReturnType<typeof createLogger> | undefined;
 const getLog = () => (logger ??= createLogger("pipeline.research.extract"));
@@ -60,18 +61,28 @@ export function activeExtractor(config: AppConfig = getConfig()): { model: strin
  * `pending` for the active model and prompt version (an existing unit stays as it is), and every unit still pending
  * goes into a job, `unitsPerBatch` per job. A `failed` unit that failed fewer than `research.extraction.maxAttempts`
  * times and a unit `skipped` for missing Markdown or assessment are set back to `pending` first; a `done` unit, one
- * failed that often and one skipped as generated text are not planned again.
+ * failed that often and one skipped as generated text are not planned again. A searched place gets a unit only for a
+ * page that names it (`unitsForPlaces`, which reads the Markdown from `archive`; without one only the assessment
+ * counts); a pending unit that no longer qualifies is `skipped` as not named.
  */
 export async function planResearchExtract(
   db: Db,
   run: { id: string; params: Record<string, unknown> },
   config: AppConfig = getConfig(),
+  archive?: Pick<Archive, "get">,
 ): Promise<JobData[]> {
   const placeIds = await researchCandidates(db, researchScope(run.params));
-  const plans = await unitsForPlaces(db, placeIds, config);
+  const plans = await unitsForPlaces(db, placeIds, config, archive);
   const pairs = plans.flatMap((p) => p.placeIds.map((placeId) => ({ documentVersionId: p.documentVersionId, placeId })));
-  if (pairs.length === 0) return [];
   const { model, promptVersion } = activeExtractor(config);
+  // with an archive to read the text from: a pending unit whose page does not name the berth (any more) is never sent
+  const kept = new Set(pairs.map((p) => `${p.documentVersionId}:${p.placeId}`));
+  const stale = !archive ? [] : await db
+    .select({ id: researchUnits.id, documentVersionId: researchUnits.documentVersionId, placeId: researchUnits.placeId })
+    .from(researchUnits)
+    .where(and(inArray(researchUnits.placeId, placeIds), eq(researchUnits.model, model), eq(researchUnits.promptVersion, promptVersion), eq(researchUnits.status, "pending")));
+  for (const u of stale) if (!kept.has(`${u.documentVersionId}:${u.placeId}`)) await skipUnit(db, u.id, NOT_NAMED_REASON);
+  if (pairs.length === 0) return [];
   await db
     .insert(researchUnits)
     .values(pairs.map((p) => ({ ...p, model, promptVersion, status: "pending" as const, dropped: noDrops(), runId: run.id })))

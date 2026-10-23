@@ -53,6 +53,11 @@ function nameRanges(markdown: string, names: string[]): Array<[number, number]> 
   return ranges;
 }
 
+/** Whether one of the names occurs in the markdown (same whole-word, case- and accent-insensitive search as `unitText`). */
+export function namesOccur(markdown: string, names: string[]): boolean {
+  return nameRanges(markdown, names).length > 0;
+}
+
 /** Index of the word that contains `pos`, else the next one (the last word when none follows). */
 function wordAt(words: Word[], pos: number): number {
   let lo = 0;

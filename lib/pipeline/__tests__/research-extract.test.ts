@@ -7,11 +7,12 @@ import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { aiBatches, berthSignals, documents, documentVersions, pageAssessments, researchHits, researchUnits, serpQueries, serpResults } from "@/lib/db/schema";
 import { activeAssessor } from "@/lib/domain/research/assessment";
+import { noDrops } from "@/lib/domain/research/extraction";
 import { newId } from "@/lib/domain/ids";
 import { beginStage, createRun } from "@/lib/domain/runs";
 import { BATCH_HANDLERS } from "@/lib/jobs/batch-handlers";
 import { pollBatch } from "@/lib/pipeline/batches";
-import { extractBerthBatchEntry, extractUnits, planResearchExtract, RESEARCH_EXTRACT_STAGE } from "@/lib/pipeline/research/extract";
+import { activeExtractor, extractBerthBatchEntry, extractUnits, planResearchExtract, RESEARCH_EXTRACT_STAGE } from "@/lib/pipeline/research/extract";
 import { insertPlace } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
@@ -234,7 +235,9 @@ describe("research.extract", () => {
       await archive.put(row!.mdKey, new TextEncoder().encode(text), "text/markdown");
 
       const runId = await runWithStage(tx, [ypsilon.placeId]);
-      const [job] = await planResearchExtract(tx, { id: runId, params: { placeIds: [ypsilon.placeId] } }, config);
+      // the assessment does not name Ypsilon; the text does, so the page is its unit
+      expect(await planResearchExtract(tx, { id: runId, params: { placeIds: [ypsilon.placeId] } }, config)).toEqual([]);
+      const [job] = await planResearchExtract(tx, { id: runId, params: { placeIds: [ypsilon.placeId] } }, config, archive);
       expect(job!.unitIds).toHaveLength(1);
       const model = new MockModel({
         "extract-berth": () => ({ core: [], facts: [], landing: [], signals: [{ kind: "anchored", first_hand: true, confidence: 0.9, quote: "We anchored in Xyla Bay for the night", observed_at: null }] }),
@@ -246,6 +249,28 @@ describe("research.extract", () => {
       expect(await tx.select().from(berthSignals).where(eq(berthSignals.placeId, ypsilon.placeId))).toHaveLength(0);
       const [unit] = await tx.select().from(researchUnits).where(eq(researchUnits.placeId, ypsilon.placeId));
       expect(unit).toMatchObject({ status: "done", dropped: { quote: 0, value: 0, verbatim: 0, attribution: 1 } });
+    }));
+
+  it("skips a pending unit of a searched place whose page does not name it in the text either", () =>
+    withRollback(async (tx) => {
+      const ypsilon = await insertPlace(tx, { name: "Ypsilon", lon: 30.5, lat: 40.6, status: "candidate" });
+      const v = await insertTestVersion(tx, ["x"]);
+      const [doc] = await tx.select().from(documents).where(eq(documents.id, v.documentId));
+      await hit(tx, ypsilon.placeId, ypsilon.objectId, doc!.urlNormalized);
+      const { model: assessor, promptVersion } = activeAssessor(config);
+      await tx.insert(pageAssessments).values({
+        documentVersionId: v.versionId, model: assessor, promptVersion, pageKind: "trip_report", firstHand: true, generated: false,
+        observedAt: "2024-06-15", observedAtBasis: "explicit", berths: [{ name: "Xyla Bay", island: null, kind: "anchorage" }], runId: await insertTestRun(tx),
+      });
+      const archive = memoryArchive();
+      const [row] = await tx.select({ mdKey: documentVersions.mdKey }).from(documentVersions).where(eq(documentVersions.id, v.versionId));
+      await archive.put(row!.mdKey, new TextEncoder().encode("We anchored in Xyla Bay for the night."), "text/markdown");
+      const { model, promptVersion: extractVersion } = activeExtractor(config);
+      await tx.insert(researchUnits).values({ documentVersionId: v.versionId, placeId: ypsilon.placeId, model, promptVersion: extractVersion, status: "pending", dropped: noDrops(), runId: await insertTestRun(tx) });
+      const runId = await runWithStage(tx, [ypsilon.placeId]);
+      expect(await planResearchExtract(tx, { id: runId, params: { placeIds: [ypsilon.placeId] } }, config, archive)).toEqual([]);
+      const [unit] = await tx.select().from(researchUnits).where(eq(researchUnits.placeId, ypsilon.placeId));
+      expect(unit).toMatchObject({ status: "skipped", reason: "Liegeplatz auf der Seite nicht genannt" });
     }));
 
   it("marks a unit whose markdown is missing skipped with the reason", () =>

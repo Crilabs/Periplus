@@ -82,7 +82,7 @@ function isSource(e: Evidence, placeKind: PlaceKind, cfg: ConfirmationConfig): b
 
 /**
  * The independent sources among the positives (spec 5.6 „Kopien zählen als eine Quelle“): domains are grouped when a
- * positive of one and a positive of the other share `maxSharedWords` consecutive words in their quotes (`copiesSource`;
+ * positive of one and a positive of the other share `copyMinSharedWords` consecutive words in their quotes (`copiesSource`;
  * a shared run is symmetric) or come from the same page content (content hash). One entry per group, its domains
  * sorted and joined by ` + `; sorted.
  */
@@ -116,7 +116,7 @@ const byDateThenId = (a: Evidence, b: Evidence) => a.observedAt.localeCompare(b.
  * 2. positive are first-hand `anchored` / `moored_buoy` / `berthed` and `listed_as_berth` from a listing page kind
  *    (for a marina or port also from an official page);
  * 3. independent sources are the distinct domains of the counting positive signals, domains that copy each other
- *    (shared quote text of `maxSharedWords` words, or the same page content) counting as one; positives of pages linked only by
+ *    (shared quote text of `copyMinSharedWords` words, or the same page content) counting as one; positives of pages linked only by
  *    a route corridor count only beside one from a page linked by search hit or name (discovery alone never confirms,
  *    unless `corridorAloneConfirms`);
  * 4. a counting `prohibited` from the authority blocks whatever its age (a ban holds until the authority lifts it):
@@ -127,12 +127,12 @@ const byDateThenId = (a: Evidence, b: Evidence) => a.observedAt.localeCompare(b.
  *    official page plus another domain;
  * 6. otherwise `candidate`, with the reason.
  */
-export function decideBerth(placeKind: PlaceKind, evidence: Evidence[], cfg: ConfirmationConfig, maxSharedWords: number): Verdict {
+export function decideBerth(placeKind: PlaceKind, evidence: Evidence[], cfg: ConfirmationConfig): Verdict {
   const counting = evidence.filter((e) => e.confidence >= cfg.minSignalConfidence && !e.generated && cfg.countingPageKinds.includes(e.pageKind));
   const sources = counting.filter((e) => isSource(e, placeKind, cfg));
   const anchored = cfg.corridorAloneConfirms || sources.some((e) => e.link !== "corridor");
   const positives = anchored ? sources : [];
-  const groups = sourceGroups(positives, maxSharedWords);
+  const groups = sourceGroups(positives, cfg.copyMinSharedWords);
   const copies = groups.filter((g) => g.includes(" + "));
   const copyNote = copies.length > 0 ? ` (gleicher Text: ${copies.join("; ")})` : "";
   const positiveIds = positives.map((e) => e.signalId);
@@ -303,7 +303,7 @@ async function applyVerdict(tx: Db, placeId: string, evidence: Evidence[], now: 
     .for("update");
   if (!place || !DECIDED_STATUSES.has(place.status)) return null;
 
-  const verdict = decideBerth(place.kind, evidence, cfg.research.confirmation, cfg.research.extraction.maxSharedWords);
+  const verdict = decideBerth(place.kind, evidence, cfg.research.confirmation);
   // an admin's status stands, except a confirmation against an authority ban (ruling: the anti-goal beats the admin)
   const blocking = evidence.find((e) => e.signalId === verdict.blockingSignalId);
   const authorityBan = blocking?.kind === "prohibited" && blocking.pageKind === "authority";

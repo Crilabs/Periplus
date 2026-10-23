@@ -9,7 +9,7 @@ import { decideBerth, type Evidence } from "@/lib/domain/research/confirmation";
 
 const config = loadConfig("config");
 const cfg = config.research.confirmation;
-const decide = (kind: Parameters<typeof decideBerth>[0], evidence: Evidence[], c = cfg) => decideBerth(kind, evidence, c, config.research.extraction.maxSharedWords);
+const decide = (kind: Parameters<typeof decideBerth>[0], evidence: Evidence[], c = cfg) => decideBerth(kind, evidence, c);
 
 let seq = 0;
 function ev(o: Partial<Evidence> = {}): Evidence {
@@ -241,6 +241,16 @@ describe("decideBerth: copies count as one source (spec 5.6, final review 3)", (
   it("the same page on two domains (same content hash) is one source", () => {
     const v = decide("anchorage", [ev({ domain: "a.example", pageHash: "h1" }), ev({ domain: "b.example", pageHash: "h1" })]);
     expect(v).toMatchObject({ status: "candidate", independentSources: ["a.example + b.example"] });
+  });
+
+  it("quotes sharing 9 words are two sources (below the copy threshold of 12), 13 words are one", () => {
+    expect(config.research.confirmation.copyMinSharedWords).toBe(12);
+    const nine = "alpha bravo charlie delta echo foxtrot golf hotel india";
+    const thirteen = `${nine} juliet kilo lima mike`;
+    const two = decide("anchorage", [ev({ domain: "a.example", quote: `We read: ${nine} and left.` }), ev({ domain: "b.example", quote: `They wrote ${nine}, then sailed on.` })]);
+    expect(two).toMatchObject({ status: "confirmed", independentSources: ["a.example", "b.example"] });
+    const one = decide("anchorage", [ev({ domain: "a.example", quote: `We read: ${thirteen} and left.` }), ev({ domain: "b.example", quote: `They wrote ${thirteen}, then sailed on.` })]);
+    expect(one).toMatchObject({ status: "candidate", independentSources: ["a.example + b.example"] });
   });
 
   it("a copy pair plus a third own source confirms with two sources", () => {

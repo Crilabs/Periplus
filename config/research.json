@@ -10,7 +10,6 @@
       { "template": "{name} anchored overnight", "lang": "en" },
       { "template": "{name} Ankerplatz", "lang": "de" },
       { "template": "{name} {island} Törnbericht", "lang": "de" },
-      { "template": "Törn {island} Ankerbucht", "lang": "de" },
       { "template": "{name} ancoraggio", "lang": "it" },
       { "template": "{name} vela ancoraggio", "lang": "it" },
       { "template": "{name} mouillage", "lang": "fr" },
@@ -39,7 +38,8 @@
     "listedAsBerthPageKinds": ["pilot_guide"],
     "officialPageKinds": ["marina", "authority"],
     "officialPlaceKinds": ["marina", "port"],
-    "corridorAloneConfirms": false
+    "corridorAloneConfirms": false,
+    "copyMinSharedWords": 12
   },
   "discovery": { "corridorBufferKm": 3, "minNameSimilarity": 0.8, "vetoSimilarity": 0.4, "maxLegKm": 25, "maxLegDays": 3, "corroboratingDomains": 2 }
 }

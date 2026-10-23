@@ -1369,8 +1369,8 @@ export const areaImportFileSchema = z
   });
 
 const researchTemplateSchema = z.strictObject({
-  /** `{name}`: the berth's name; `{island}`: its island's name (a template with only `{island}` searches the island's trip reports). */
-  template: z.string().refine((t) => t.includes("{name}") || t.includes("{island}"), { error: "template must contain {name} or {island}" }),
+  /** `{name}`: the berth's name (required: a query without it would hit pages that name no berth); `{island}`: its island's name. */
+  template: z.string().refine((t) => t.includes("{name}"), { error: "template must contain {name}" }),
   lang: z.string().min(1),
 });
 
@@ -1417,6 +1417,8 @@ export const researchSchema = z
       officialPlaceKinds: z.array(z.enum(placeKindEnum.enumValues)),
       /** Whether pages linked to a place only by a route corridor count without a search- or name-linked source (ruling: no). */
       corridorAloneConfirms: z.boolean(),
+      /** Two sources whose positive quotes share this many consecutive words are copies and count as one (spec 5.6). */
+      copyMinSharedWords: z.number().int().positive(),
     }),
     /** Matching route stops to places. */
     discovery: z.strictObject({

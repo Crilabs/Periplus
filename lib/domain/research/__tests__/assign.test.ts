@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { documents, pageAssessments, researchHits, researchRouteStops, serpQueries, serpResults } from "@/lib/db/schema";
+import { documents, documentVersions, pageAssessments, researchHits, researchRouteStops, serpQueries, serpResults } from "@/lib/db/schema";
 import { activeAssessor } from "@/lib/domain/research/assessment";
 import { activeRouteExtractor, berthNameMatches, unitsForPlaces } from "@/lib/domain/research/assign";
 import { insertPlace } from "@/test/consolidation";
@@ -37,8 +37,8 @@ async function hit(tx: Db, placeId: string, geoObjectId: string, url: string) {
   await tx.insert(researchHits).values({ placeId, geoObjectId, serpQueryId: q!.id, serpResultId: r!.id, urlNormalized: url, domain: "test.invalid", rank: 1, purpose: "positive" });
 }
 
-async function assessedPage(tx: Db, placeId: string, objectId: string, berths: string[], generated = false, assess = true) {
-  const v = await insertTestVersion(tx, ["x"]);
+async function assessedPage(tx: Db, placeId: string, objectId: string, berths: string[], generated = false, assess = true, texts: string[] = ["x"]) {
+  const v = await insertTestVersion(tx, texts);
   const url = (await tx.select().from(documents).where(eq(documents.id, v.documentId)))[0]!.urlNormalized;
   await hit(tx, placeId, objectId, url);
   if (assess) {
@@ -49,6 +49,12 @@ async function assessedPage(tx: Db, placeId: string, objectId: string, berths: s
     });
   }
   return v.versionId;
+}
+
+/** An archive that serves `text` under the version's Markdown key. */
+async function archiveOf(tx: Db, versionId: string, text: string) {
+  const [v] = await tx.select({ mdKey: documentVersions.mdKey }).from(documentVersions).where(eq(documentVersions.id, versionId));
+  return { get: async (key: string) => (key === v!.mdKey ? new TextEncoder().encode(text) : null) };
 }
 
 describe("unitsForPlaces", () => {
@@ -62,6 +68,27 @@ describe("unitsForPlaces", () => {
       const versionId = await assessedPage(tx, a.placeId, a.objectId, ["Alpha", "Bravo"]);
       const units = await unitsForPlaces(tx, [a.placeId], getConfig());
       expect(units).toEqual([{ documentVersionId: versionId, placeIds: [a.placeId, b.placeId].sort() }]);
+    }));
+
+  it("gives a searched place no unit when the page names it neither in the assessment nor in the text", () =>
+    withRollback(async (tx) => {
+      const y = await insertPlace(tx, { name: "Ypsilon", lon: 21.0, status: "candidate" });
+      const text = "We sailed around Zulu and had a lovely time.";
+      const v = await assessedPage(tx, y.placeId, y.objectId, ["Zulu"], false, true, [text]);
+      const archive = await archiveOf(tx, v, text);
+      expect(await unitsForPlaces(tx, [y.placeId], getConfig(), archive)).toEqual([]);
+      expect(await unitsForPlaces(tx, [y.placeId], getConfig())).toEqual([]);
+    }));
+
+  it("gives a searched place a unit when only the text names it (whole words, accent-insensitive)", () =>
+    withRollback(async (tx) => {
+      const y = await insertPlace(tx, { name: "Ypsilon", lon: 21.0, status: "candidate" });
+      const text = "Wir ankerten vor YPSÍLON und blieben die Nacht.";
+      const v = await assessedPage(tx, y.placeId, y.objectId, ["Zulu"], false, true, [text]);
+      expect(await unitsForPlaces(tx, [y.placeId], getConfig(), await archiveOf(tx, v, text))).toEqual([{ documentVersionId: v, placeIds: [y.placeId] }]);
+      const w = await assessedPage(tx, y.placeId, y.objectId, ["Zulu"], false, true, ["Ypsilonia is another place."]);
+      const both = { get: async (key: string) => (await archiveOf(tx, v, text).then((a) => a.get(key))) ?? (await archiveOf(tx, w, "Ypsilonia is another place.").then((a) => a.get(key))) };
+      expect(await unitsForPlaces(tx, [y.placeId], getConfig(), both)).toEqual([{ documentVersionId: v, placeIds: [y.placeId] }]);
     }));
 
   it("yields no unit for generated or unassessed pages", () =>
