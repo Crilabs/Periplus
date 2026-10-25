@@ -1,11 +1,9 @@
-import { getConfig } from "@/lib/config";
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
 import { facts, geoObjects, places, reviewDecisions, reviewTasks } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
 import { createReviewTask } from "@/lib/domain/review";
-import { GEOMETRY_CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
 import { testDb, withRollback } from "@/test/db";
 import { seedDeliverySubdivision as seedFixture } from "@/test/fixtures/delivery/subdivision";
 import { buildBayScene } from "@/test/geometry/scene";
@@ -140,8 +138,8 @@ describe("setAnchorAction", () => {
         expect.objectContaining({
           kind: "stage",
           scope: { type: "place", id: scene.placeId },
-          stages: ["geometry.place", ...GEOMETRY_CONSOLIDATION_STAGES],
-          params: { placeIds: [scene.placeId], rulesVersion: getConfig().consolidation.version },
+          stages: ["geometry.place"],
+          params: { placeIds: [scene.placeId] },
           triggeredBy: ADMIN,
         }),
       );

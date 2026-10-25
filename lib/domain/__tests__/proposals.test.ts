@@ -9,8 +9,8 @@ import {
   domainCandidates,
   proposeSources,
   suggestCrawlRules,
-  suggestType,
 } from "@/lib/domain/discovery/proposals";
+import { suggestType } from "@/lib/domain/sources/type-hints";
 import { newId } from "@/lib/domain/ids";
 import { createRun } from "@/lib/domain/runs";
 import { DEFAULT_CRAWL_RULES } from "@/lib/domain/sources/crawl-rules";

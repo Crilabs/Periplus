@@ -4,6 +4,7 @@ import type { Point } from "geojson";
 import type { QualityConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import {
+  berthStates,
   comparisonSet,
   evaluationProfiles,
   geoNames,
@@ -20,7 +21,6 @@ import { canonicalJson } from "@/lib/domain/facts/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import type { LonLat } from "@/lib/domain/geometry/water";
 import type { BerthStateNearby, BerthStateValue } from "@/lib/db/schema/research-state";
-import { latestProfiles } from "@/lib/domain/timeline";
 import { validAt } from "@/lib/db/valid-at";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 
@@ -33,7 +33,7 @@ export { COMPARISON_ATTRIBUTES, type ComparisonAttribute };
  * new check.
  */
 
-/** A place of the comparison set with the profile attributes it is compared on. */
+/** A place of the comparison set with the attributes it is compared on (from its berth state). */
 export type ComparisonSubject = {
   placeId: string;
   publicId: string | null;
@@ -42,12 +42,12 @@ export type ComparisonSubject = {
   names: string[];
   kind: PlaceKind;
   status: PlaceStatus;
-  /** Profile attribute `place.position` (else `places.position`). */
+  /** The place point (`places.position`). */
   position: LonLat;
-  /** Profile attribute `anchor_position` (consolidated, incl. the admin's anchor); null without one. Ignored for ports and marinas. */
+  /** `places.anchor_position` (incl. the admin's anchor); null without one. Ignored for ports and marinas. */
   anchorPosition: LonLat | null;
   attributes: Record<string, unknown>;
-  /** The profile version compared; null for an evaluation profile or without a profile. */
+  /** Always null since the berth state (no versions); kept for outcomes recorded on profile versions (`comparison_results.profile_version`). */
   profileVersion: number | null;
 };
 
@@ -188,9 +188,10 @@ export function comparisonValues(s: ComparisonSubject, cfg: NavilyConfig): Recor
 }
 
 /**
- * The places of the subdivision's comparison set (any status: existence compares it), sorted by name. Attributes from the
- * newest profile, or with `evaluationRunId` from that run's `evaluation_profiles` (then `profileVersion` null);
- * without a profile the attributes are empty. An unknown subdivision has no set: empty list.
+ * The places of the subdivision's comparison set (any status: existence compares it), sorted by name. Attributes from
+ * the place's berth state (`attributesFromState`, as the gate reads it); a place without a state has none. With
+ * `evaluationRunId` (the old evaluation runs, removed with them) from that run's `evaluation_profiles`. An unknown
+ * subdivision has no set: empty list.
  */
 export async function loadComparisonSubjects(
   db: Db,
@@ -208,6 +209,7 @@ export async function loadComparisonSubjects(
       kind: places.kind,
       status: places.status,
       position: asGeoJson(places.position),
+      anchorPosition: asGeoJson(places.anchorPosition),
     })
     .from(comparisonSet)
     .innerJoin(places, eq(places.id, comparisonSet.placeId))
@@ -223,21 +225,37 @@ export async function loadComparisonSubjects(
   const namesOf = new Map<string, string[]>();
   for (const n of nameRows) namesOf.set(n.geoObjectId, [...(namesOf.get(n.geoObjectId) ?? []), n.name]);
 
-  const profileOf = new Map<string, { attributes: Record<string, unknown>; version: number | null }>();
+  const attributesOf = new Map<string, Record<string, unknown>>();
+  const evaluated = new Set<string>();
   if (opts.evaluationRunId) {
-    const evaluated = await db
+    const evaluations = await db
       .select({ geoObjectId: evaluationProfiles.geoObjectId, attributes: evaluationProfiles.attributes })
       .from(evaluationProfiles)
       .where(and(eq(evaluationProfiles.runId, opts.evaluationRunId), inArray(evaluationProfiles.geoObjectId, objectIds)));
-    for (const e of evaluated) profileOf.set(e.geoObjectId, { attributes: e.attributes, version: null });
+    for (const e of evaluations) {
+      attributesOf.set(e.geoObjectId, e.attributes);
+      evaluated.add(e.geoObjectId);
+    }
   } else {
-    for (const [id, p] of await latestProfiles(db, objectIds)) profileOf.set(id, { attributes: p.attributes, version: p.version });
+    const states = await db
+      .select({ placeId: berthStates.placeId, core: berthStates.core, nearby: berthStates.nearby })
+      .from(berthStates)
+      .where(inArray(berthStates.placeId, rows.map((r) => r.placeId)));
+    const byPlace = new Map(states.map((s) => [s.placeId, attributesFromState(s.core, s.nearby)]));
+    for (const r of rows) {
+      const attributes = byPlace.get(r.placeId);
+      if (attributes) attributesOf.set(r.geoObjectId, attributes);
+    }
   }
 
+  const point = (g: unknown): LonLat | null => {
+    if (!g) return null;
+    const [lon, lat] = (g as Point).coordinates as [number, number];
+    return { lon, lat };
+  };
   const subjects = rows.map((r): ComparisonSubject => {
-    const profile = profileOf.get(r.geoObjectId);
-    const attributes = profile?.attributes ?? {};
-    const [lon, lat] = (r.position as Point).coordinates as [number, number];
+    const attributes = attributesOf.get(r.geoObjectId) ?? {};
+    const evaluation = evaluated.has(r.geoObjectId);
     return {
       placeId: r.placeId,
       publicId: r.publicId,
@@ -245,10 +263,10 @@ export async function loadComparisonSubjects(
       names: namesOf.get(r.geoObjectId) ?? [],
       kind: r.kind,
       status: r.status,
-      position: lonLatOf(attributes["place.position"]) ?? { lon, lat },
-      anchorPosition: lonLatOf(attributes["anchor_position"]),
+      position: (evaluation ? lonLatOf(attributes["place.position"]) : null) ?? point(r.position)!,
+      anchorPosition: opts.evaluationRunId ? (evaluation ? lonLatOf(attributes["anchor_position"]) : null) : point(r.anchorPosition),
       attributes,
-      profileVersion: profile?.version ?? null,
+      profileVersion: null,
     };
   });
   return subjects.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "") || a.placeId.localeCompare(b.placeId));

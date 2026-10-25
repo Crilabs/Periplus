@@ -10,6 +10,7 @@ import { profileEntryKey } from "@/lib/domain/profile-view";
 import type { EvaluationCandidate } from "@/lib/domain/consolidation/targets";
 import { latestComparisonResults } from "./comparison-results";
 import { comparisonValues, loadComparisonSubjects } from "./comparison-values";
+import { loadProfileSubjects } from "./profile-subjects";
 import { coverageMetric, factPrecisionMetric } from "./metrics";
 
 /*
@@ -108,7 +109,7 @@ export async function compareEvaluation(db: Db, evaluationRunId: string): Promis
   ];
 
   const navily = getConfig().quality.navily;
-  const current = new Map((await loadComparisonSubjects(db, run.subdivisionKey)).map((s) => [s.placeId, s]));
+  const current = new Map((await loadProfileSubjects(db, run.subdivisionKey)).map((s) => [s.placeId, s]));
   const evaluated = await loadComparisonSubjects(db, run.subdivisionKey, { evaluationRunId });
   const latest = await latestComparisonResults(db, evaluated.map((s) => s.placeId));
   const changed: RegressionComparison["changed"] = [];

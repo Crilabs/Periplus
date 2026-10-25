@@ -7,7 +7,6 @@ import { geomFromGeoJson } from "@/lib/db/geometry";
 import { newId } from "@/lib/domain/ids";
 import { createReviewTask } from "@/lib/domain/review";
 import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
-import { GEOMETRY_CONSOLIDATION_STAGES } from "@/lib/pipeline/consolidation/stages";
 import { testDb, withRollback } from "@/test/db";
 import { AEGINA_WEST_KEY, insertAeginaWest } from "@/test/fixtures/subdivisions/aegina-west";
 import { buildBayScene } from "@/test/geometry/scene";
@@ -351,9 +350,8 @@ describe("admin server actions", () => {
       const expected = expect.objectContaining({
         kind: "stage",
         scope: { type: "tile", id: scene.tileId },
-        stages: ["geometry.detect_bays", "geometry.place", ...GEOMETRY_CONSOLIDATION_STAGES],
-        // the rules version active at the start, frozen for the run's consolidation (ruling M7-E-R1)
-        params: { tileIds: [scene.tileId], rulesVersion: getConfig().consolidation.version },
+        stages: ["geometry.detect_bays", "geometry.place"],
+        params: { tileIds: [scene.tileId] },
         triggeredBy: "admin@example.invalid",
       });
 

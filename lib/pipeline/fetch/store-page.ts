@@ -109,7 +109,6 @@ export async function convertAndStore(
       lastModified: page.lastModified,
       runId: ctx.runId,
     },
-    cfg.chunk,
   );
   return { kind: "stored", documentId, versionId: stored.versionId, outcome: stored.outcome, html, pageUrl };
 }

@@ -12,6 +12,7 @@ import { latestProfiles } from "@/lib/domain/timeline";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import { latestComparisonResults } from "./comparison-results";
 import { comparisonValues, loadComparisonSubjects } from "./comparison-values";
+import { loadProfileSubjects } from "./profile-subjects";
 
 /*
  * Quality metrics I (spec 10 „Kennzahlen“, ruling M7-P12): one function per metric, each a value (null when it cannot
@@ -167,7 +168,9 @@ export async function factPrecisionMetric(
   opts: { evaluationRunId?: string } = {},
 ): Promise<MetricResult> {
   const cfg = getConfig().quality.navily;
-  let subjects = await loadComparisonSubjects(db, scope.subdivisionKey, { evaluationRunId: opts.evaluationRunId });
+  let subjects = opts.evaluationRunId
+    ? await loadComparisonSubjects(db, scope.subdivisionKey, { evaluationRunId: opts.evaluationRunId })
+    : await loadProfileSubjects(db, scope.subdivisionKey);
   if (scope.tileId && subjects.length > 0) {
     const inTile = await db
       .select({ id: places.id })

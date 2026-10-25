@@ -6,7 +6,8 @@ import { createRun } from "@/lib/domain/runs";
 import { QUALITY_MEASURE_STAGE } from "@/lib/pipeline/quality-stages";
 import { withRollback } from "@/test/db";
 import { insertQualitySubdivision } from "@/test/quality";
-import { comparisonValues, loadComparisonSubjects } from "../comparison-values";
+import { comparisonValues } from "../comparison-values";
+import { loadProfileSubjects } from "../profile-subjects";
 import { detailNumbers, HISTORY_SIZE, qualityDashboard } from "../dashboard";
 
 // The dashboard of a synthetic subdivision at 21.0° E / 35.2° N with snapshot rows inserted directly, rolled back.
@@ -62,7 +63,7 @@ describe("qualityDashboard", () => {
         { [west]: { coverage: 1 }, [east]: { coverage: null } },
       );
       const p = await addPlace({ inSet: true });
-      const subject = (await loadComparisonSubjects(tx, subdivisionKey))[0]!;
+      const subject = (await loadProfileSubjects(tx, subdivisionKey))[0]!;
       await tx.insert(comparisonResults).values({
         placeId: p.placeId,
         attribute: "existence",

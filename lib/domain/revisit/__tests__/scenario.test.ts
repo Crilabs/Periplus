@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { crawlFrontier, sources } from "@/lib/db/schema";
 import { newId } from "@/lib/domain/ids";
@@ -157,7 +156,6 @@ async function recordedDocument(tx: Db, archive: ReturnType<typeof memoryArchive
       etag: null,
       lastModified: null,
     },
-    getConfig().fetch.chunk,
   );
   return { sourceId: source!.id, documentId: doc.id };
 }
@@ -261,6 +259,5 @@ async function record(tx: Db, archive: ReturnType<typeof memoryArchive>, documen
       etag: null,
       lastModified: null,
     },
-    getConfig().fetch.chunk,
   );
 }

@@ -16,9 +16,7 @@ import type { JobContext } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
 import { requestPlaceDiscovery } from "@/lib/pipeline/consolidation/followup";
 import { summaryJobs } from "@/lib/pipeline/consolidation/summary";
-import { startGeometryRun } from "@/lib/pipeline/geometry-run";
 import { startTextRun } from "@/lib/pipeline/text/run";
-import { buildBayScene } from "@/test/geometry/scene";
 import { createRun } from "@/lib/domain/runs";
 import { CONSOLIDATION_GEO_STAGE } from "@/lib/pipeline/consolidation/stages";
 import { consolidateGeoJob, consolidationGeoJobs } from "@/lib/pipeline/consolidation/geo";
@@ -29,6 +27,7 @@ import { insertExtraction, insertMention, insertMentionFact, insertProfile, inse
 import { withRollback } from "@/test/db";
 import { insertQualitySubdivision } from "@/test/quality";
 import { comparisonValues, loadComparisonSubjects } from "../comparison-values";
+import { loadProfileSubjects } from "../profile-subjects";
 import { activateCandidate, compareEvaluation, listEvaluations, NotAnEvaluationRun, RegressionGateClosed } from "../regression";
 
 /*
@@ -113,7 +112,8 @@ async function evaluationRunRow(tx: Db, subdivisionKey: string, params: Record<s
 
 /** An outcome for the place's current own value (or, with `evaluationRunId`, its value in that run's profile). */
 async function addResult(tx: Db, subdivisionKey: string, placeId: string, attribute: ComparisonAttribute, result: ComparisonResultValue, evaluationRunId?: string) {
-  const subject = (await loadComparisonSubjects(tx, subdivisionKey, { evaluationRunId })).find((s) => s.placeId === placeId)!;
+  const subjects = evaluationRunId ? await loadComparisonSubjects(tx, subdivisionKey, { evaluationRunId }) : await loadProfileSubjects(tx, subdivisionKey);
+  const subject = subjects.find((s) => s.placeId === placeId)!;
   await tx.insert(comparisonResults).values({
     placeId,
     attribute,
@@ -436,16 +436,14 @@ describe("frozen rules version (ruling M7-E-R1)", () => {
   const noModel = { call: async () => { throw new Error("no model call in this test"); } } as unknown as ModelClient;
   const ctx = (tx: Db): JobContext => ({ db: tx, boss: recordingBoss().boss, log: createLogger("test"), jobId: "job" });
 
-  it("text and geometry runs started before an activation keep the old version on their geo, summary and follow-up jobs", () =>
+  it("a text run started before an activation keeps the old version on their geo, summary and follow-up jobs", () =>
     withRollback(async (tx) => {
       const rec = recordingBoss();
       const text = await textRunScene(tx, rec);
-      const bay = await buildBayScene(tx);
-      const geometry = await startGeometryRun(tx, rec.boss, { placeId: bay.placeId }, "test");
-      for (const id of [text.runId, geometry.id]) expect((await runParams(tx, id)).rulesVersion).toBe(ACTIVE_RULES);
+      expect((await runParams(tx, text.runId)).rulesVersion).toBe(ACTIVE_RULES);
       await activateV2(tx, text.subdivisionKey);
 
-      for (const id of [text.runId, geometry.id]) {
+      for (const id of [text.runId]) {
         const run = { id, params: await runParams(tx, id) };
         const geoJobs = await consolidationGeoJobs(tx, run);
         expect(geoJobs.length).toBeGreaterThan(0);

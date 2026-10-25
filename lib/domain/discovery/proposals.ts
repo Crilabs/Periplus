@@ -4,11 +4,12 @@ import { HttpError, RetryableHttpError, type CallContext, type Transport } from 
 import type { Archive } from "@/lib/adapters/s3";
 import { getConfig, type AppConfig, type DiscoveryConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { sources, type DocType, type SourceOrigin } from "@/lib/db/schema";
+import { sources, type SourceOrigin } from "@/lib/db/schema";
 import { createReviewTask } from "@/lib/domain/review";
 import { DEFAULT_CRAWL_RULES, type CrawlRules } from "@/lib/domain/sources/crawl-rules";
 import { isForbiddenHost } from "@/lib/domain/sources/forbidden-domains";
 import { robotsForRun, robotsSummary, type RobotsSummary } from "@/lib/domain/sources/robots";
+import { httpUrls, isIgnoredDomain, suggestType } from "@/lib/domain/sources/type-hints";
 import { safeDecode } from "@/lib/domain/sources/urls";
 import { createLogger } from "@/lib/logger";
 
@@ -40,32 +41,7 @@ function byFrequency(values: string[]): Array<{ value: string; count: number }> 
     .sort((a, b) => b.count - a.count || cmp(a.value, b.value));
 }
 
-function httpUrls(urls: string[]): URL[] {
-  return urls.flatMap((u) => {
-    try {
-      const url = new URL(u);
-      return url.protocol === "http:" || url.protocol === "https:" ? [url] : [];
-    } catch {
-      return [];
-    }
-  });
-}
-
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-/**
- * The first type hint (in config order) whose pattern matches `host + pathname` (case-insensitive, path decoded)
- * of at least half of the URLs; `defaultType` without URLs or without such a hint.
- */
-export function suggestType(urls: string[], cfg: ProposalsConfig): DocType {
-  const targets = httpUrls(urls).map((u) => u.hostname + safeDecode(u.pathname));
-  if (targets.length === 0) return cfg.defaultType;
-  for (const hint of cfg.typeHints) {
-    const re = new RegExp(hint.pattern, "i");
-    if (targets.filter((t) => re.test(t)).length * 2 >= targets.length) return hint.type;
-  }
-  return cfg.defaultType;
-}
 
 /**
  * Crawl rules from the URL patterns of the hits (no model): the most frequent host; the first path segments of the
@@ -92,10 +68,6 @@ export function suggestCrawlRules(urls: string[]): CrawlRules {
     allow: [`^/(${segments.map((s) => escapeRegex(s.decoded)).join("|")})/`],
   };
 }
-
-/** `domain` is one of `cfg.ignoreDomains` or a subdomain of one. */
-export const isIgnoredDomain = (domain: string, cfg: Pick<ProposalsConfig, "ignoreDomains">) =>
-  cfg.ignoreDomains.some((i) => domain === i || domain.endsWith(`.${i}`));
 
 /**
  * Domains to propose: at least `minSerpHits` SERP hits (a URL found again by a later search of the same query

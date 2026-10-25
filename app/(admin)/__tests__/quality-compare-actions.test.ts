@@ -12,7 +12,7 @@ import { comparisonValues, loadComparisonSubjects } from "@/lib/domain/quality/c
 import { subdivisionComparisonView } from "@/lib/domain/quality/navily-compare";
 import { loadNavilySpots } from "@/lib/domain/quality/navily-sample";
 import { getConfig } from "@/lib/config";
-import { insertProfile, provenanceEntry } from "@/test/consolidation";
+import { insertBerthState } from "@/test/berth-state";
 import { testDb, withRollback } from "@/test/db";
 import { NAVILY_MARKERS, rowsWrittenInTransaction } from "@/test/quality";
 import { insertNamedObject, insertTestSubdivision } from "@/test/text";
@@ -110,7 +110,9 @@ async function setUp(tx: Db) {
     "services.water": false,
     "highlight.supply": { present: false },
   };
-  await insertProfile(tx, objectId, attributes, { "shelter.N": provenanceEntry("computed") }, { version: 2 });
+  // the berth state carries the core values only; position and supply come from the place and its surroundings
+  const { "place.position": _position, "highlight.supply": _supply, ...core } = attributes; // eslint-disable-line @typescript-eslint/no-unused-vars
+  await insertBerthState(tx, place!.id, core);
   return { placeId: place!.id };
 }
 
@@ -152,7 +154,7 @@ describe("/quality/compare actions", () => {
       const rows = await resultsOf(tx, placeId);
       expect(rows).toHaveLength(16);
       expect(rows.every((x) => x.method === "proposal_confirmed" && x.checkedBy === ADMIN)).toBe(true);
-      expect(rows.every((x) => x.profileVersion === 2 && x.evaluationRunId === null)).toBe(true);
+      expect(rows.every((x) => x.profileVersion === null && x.evaluationRunId === null)).toBe(true);
       const byAttribute = Object.fromEntries(rows.map((x) => [x.attribute, x.result]));
       expect(byAttribute).toMatchObject({
         existence: "match",
@@ -183,7 +185,7 @@ describe("/quality/compare actions", () => {
       expect(r).toMatchObject({ ok: true, tasks: 1 });
       const tasks = await tasksOf(tx, placeId);
       expect(tasks).toHaveLength(1);
-      expect(tasks[0]!.context).toMatchObject({ attribute: "services.water", ownDisplay: "nein", profileVersion: 2 });
+      expect(tasks[0]!.context).toMatchObject({ attribute: "services.water", ownDisplay: "nein", profileVersion: null });
       // Grundprinzip 9: every row this transaction wrote, of any place or subject
       const written = await rowsWrittenInTransaction(tx);
       expect(written.length).toBeGreaterThanOrEqual(17);
@@ -200,9 +202,8 @@ describe("/quality/compare actions", () => {
       expect(r).toEqual({ ok: false, code: "stale" });
       expectCodesAndCounts(r);
       expect(await resultsOf(tx, placeId)).toEqual([]);
-      // the profile changes after the page was rendered: the shown digest is stale too
-      const [place] = await tx.select({ objectId: places.geoObjectId }).from(places).where(eq(places.id, placeId));
-      await insertProfile(tx, place!.objectId, { "services.water": true }, {}, { version: 3, validFrom: "2026-10-20" });
+      // the berth state changes after the page was rendered: the shown digest is stale too
+      await insertBerthState(tx, placeId, { "services.water": true });
       expect(await acceptProposalsAction({ placeId, subdivisionKey: SUBDIVISION, digest: shown })).toEqual({ ok: false, code: "stale" });
       expect(await resultsOf(tx, placeId)).toEqual([]);
       // a missing digest is invalid input
@@ -251,7 +252,7 @@ describe("/quality/compare actions", () => {
       expect(r).toEqual({ ok: true, written: 1, tasks: 1 });
       expectCodesAndCounts(r);
       const rows = await resultsOf(tx, placeId);
-      expect(rows).toMatchObject([{ attribute: "depth", result: "deviation", method: "manual", checkedBy: ADMIN, valueHash, profileVersion: 2 }]);
+      expect(rows).toMatchObject([{ attribute: "depth", result: "deviation", method: "manual", checkedBy: ADMIN, valueHash, profileVersion: null }]);
       expect(await tasksOf(tx, placeId)).toHaveLength(1);
     }));
 

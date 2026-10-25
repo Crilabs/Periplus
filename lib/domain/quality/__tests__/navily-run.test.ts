@@ -8,7 +8,7 @@ import { comparisonResults, comparisonSet, places, qualitySnapshots, reviewTasks
 import { newId } from "@/lib/domain/ids";
 import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
 import { QUALITY_MEASURE_STAGE } from "@/lib/pipeline/quality-stages";
-import { insertProfile, provenanceEntry } from "@/test/consolidation";
+import { insertBerthState } from "@/test/berth-state";
 import { withRollback } from "@/test/db";
 import { NAVILY_MARKERS, rowsWrittenInTransaction } from "@/test/quality";
 import { insertNamedObject, insertTestSubdivision } from "@/test/text";
@@ -64,7 +64,7 @@ async function scene(tx: Db) {
   const kolona = await addPlace("Kolona", 41.0, 35.2);
   const poros = await addPlace("Poros", 41.0506, 35.2504, "port");
   const agios = await addPlace("Agios", 41.08, 35.22);
-  await insertProfile(tx, kolona.objectId, { "services.water": true, "shelter.N": 0.9 }, { "shelter.N": provenanceEntry("computed") }, { version: 1 });
+  await insertBerthState(tx, kolona.placeId, { "services.water": true, "shelter.N": 0.9 });
   const placeIds = [kolona.placeId, poros.placeId, agios.placeId];
   return { subdivisionKey, kolona, poros, agios, placeIds };
 }

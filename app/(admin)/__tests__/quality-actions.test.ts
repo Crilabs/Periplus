@@ -4,7 +4,8 @@ import { getConfig, loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { comparisonResults, comparisonSet, configActivations, evaluationProfiles, places, runs } from "@/lib/db/schema";
 import { geomFromGeoJson } from "@/lib/db/geometry";
-import { comparisonValues, loadComparisonSubjects } from "@/lib/domain/quality/comparison-values";
+import { comparisonValues } from "@/lib/domain/quality/comparison-values";
+import { loadProfileSubjects } from "@/lib/domain/quality/profile-subjects";
 import { insertProfile } from "@/test/consolidation";
 import { insertNamedObject, insertTestSubdivision } from "@/test/text";
 import { newId } from "@/lib/domain/ids";
@@ -83,7 +84,7 @@ async function setPlace(tx: Db): Promise<{ placeId: string; geoObjectId: string;
  * place's current values, and a `match` for its water value, so the comparison passes.
  */
 async function finishEvaluation(tx: Db, runId: string, subdivisionKey: string) {
-  for (const s of await loadComparisonSubjects(tx, subdivisionKey)) {
+  for (const s of await loadProfileSubjects(tx, subdivisionKey)) {
     const [p] = await tx.select({ geoObjectId: places.geoObjectId }).from(places).where(eq(places.id, s.placeId));
     await tx.insert(evaluationProfiles).values({ runId, geoObjectId: p!.geoObjectId, rulesVersion: getConfig().consolidation.version, factSchemaVersion: getConfig().factSchema.version, attributes: ATTRIBUTES, provenance: {}, contentHash: "h" });
     await tx.insert(comparisonResults).values({

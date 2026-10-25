@@ -65,7 +65,6 @@ async function seed(tx: Db, archive: ReturnType<typeof memoryArchive>, pages: st
         etag: null,
         lastModified: null,
       },
-      getConfig().fetch.chunk,
     );
     docs[page] = { id: doc.id, url };
   }
@@ -327,6 +326,5 @@ async function record(tx: Db, archive: ReturnType<typeof memoryArchive>, documen
       etag: null,
       lastModified: null,
     },
-    getConfig().fetch.chunk,
   );
 }

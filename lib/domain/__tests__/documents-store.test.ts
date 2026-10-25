@@ -1,7 +1,7 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { chunks, documents, documentVersions, sources, textShingles } from "@/lib/db/schema";
+import { chunks, documents, documentVersions, sources } from "@/lib/db/schema";
 import {
   archiveKey,
   ensureDocument,
@@ -14,7 +14,6 @@ import { newId } from "@/lib/domain/ids";
 import { testDb, withRollback } from "@/test/db";
 import { memoryArchive } from "@/test/s3";
 
-const cfg = { targetWords: 500, maxWords: 800, maxOverlapWords: 200 };
 const db = testDb();
 
 const sentence = (topic: string, n: number) =>
@@ -104,14 +103,12 @@ describe("ensureDocument", () => {
 });
 
 describe("storeFetched", () => {
-  it("the first fetch writes raw and md, a version and its chunks", async () => {
+  it("the first fetch writes raw and md and a version, no chunks, shingles or embeddings", async () => {
     const archive = memoryArchive();
     await withRollback(async (tx) => {
       const { documentId } = await newDocument(tx);
-      const result = await storeFetched(tx, archive, documentId, content(page(), at(0), { etag: '"v1"' }), cfg);
+      const result = await storeFetched(tx, archive, documentId, content(page(), at(0), { etag: '"v1"' }));
       expect(result.outcome).toBe("new_version");
-      expect(result.chunks.created).toBeGreaterThan(0);
-      expect(result.chunks.carried).toBe(0);
 
       const [version] = await versionsOf(tx, documentId);
       expect(version!.id).toBe(result.versionId);
@@ -123,10 +120,7 @@ describe("storeFetched", () => {
       expect(archive.keys()).toEqual([version!.mdKey, version!.rawKey].sort());
       expect(new TextDecoder().decode((await archive.get(version!.mdKey))!)).toMatch(/^# Harbour guide\n/);
 
-      const stored = await chunksOf(tx, version!.id);
-      expect(stored).toHaveLength(result.chunks.created);
-      const shingles = await tx.select().from(textShingles).where(inArray(textShingles.chunkId, stored.map((c) => c.id)));
-      expect(shingles.length).toBeGreaterThan(0);
+      expect(await chunksOf(tx, version!.id)).toEqual([]);
 
       const doc = await documentRow(tx, documentId);
       expect(doc.currentVersionId).toBe(version!.id);
@@ -139,11 +133,11 @@ describe("storeFetched", () => {
     const archive = memoryArchive();
     await withRollback(async (tx) => {
       const { documentId } = await newDocument(tx);
-      const first = await storeFetched(tx, archive, documentId, content(page(), at(0)), cfg);
+      const first = await storeFetched(tx, archive, documentId, content(page(), at(0)));
       const keys = archive.keys();
       // Trailing blanks and extra blank lines normalize away.
-      const again = await storeFetched(tx, archive, documentId, content(`${page()}  \n\n\n`, at(5), { etag: '"v2"' }), cfg);
-      expect(again).toEqual({ outcome: "unchanged", versionId: first.versionId, chunks: { created: 0, carried: 0 } });
+      const again = await storeFetched(tx, archive, documentId, content(`${page()}  \n\n\n`, at(5), { etag: '"v2"' }));
+      expect(again).toEqual({ outcome: "unchanged", versionId: first.versionId });
       expect(await versionsOf(tx, documentId)).toHaveLength(1);
       expect(archive.keys()).toEqual(keys);
       const doc = await documentRow(tx, documentId);
@@ -152,37 +146,24 @@ describe("storeFetched", () => {
     });
   });
 
-  it("a changed paragraph writes a diff and carries the other chunks with their embeddings", async () => {
+  it("a changed paragraph writes a diff against the previous version", async () => {
     const archive = memoryArchive();
     await withRollback(async (tx) => {
       const { documentId } = await newDocument(tx);
-      const first = await storeFetched(tx, archive, documentId, content(page(), at(0)), cfg);
-      const firstChunks = await chunksOf(tx, first.versionId);
-      const vector = Array.from({ length: 1024 }, (_, i) => (i === 0 ? 1 : 0));
-      await tx.update(chunks).set({ embedding: vector, embeddingModel: "voyage-test" }).where(eq(chunks.id, firstChunks[0]!.id));
-
-      const second = await storeFetched(tx, archive, documentId, content(page(true), at(10)), cfg);
+      await storeFetched(tx, archive, documentId, content(page(), at(0)));
+      const second = await storeFetched(tx, archive, documentId, content(page(true), at(10)));
       expect(second.outcome).toBe("new_version");
-      expect(second.chunks.carried).toBe(firstChunks.length - 1);
-      expect(second.chunks.created).toBe(firstChunks.length);
 
       const [, version] = await versionsOf(tx, documentId);
       expect(version!.diffKey).toMatch(/\.diff$/);
       const diff = new TextDecoder().decode((await archive.get(version!.diffKey!))!);
       expect(diff).toContain("-The east anchorage");
       expect(diff).toContain("+The changed east anchorage");
-
-      const next = await chunksOf(tx, second.versionId);
-      expect(next[0]!.carriedFromChunkId).toBe(firstChunks[0]!.id);
-      expect(next[0]!.embeddingModel).toBe("voyage-test");
-      expect(next[0]!.embedding).toEqual(vector);
-      const changed = next.find((c) => c.text.includes("changed east"));
-      expect(changed!.carriedFromChunkId).toBeNull();
-      expect(changed!.embedding).toBeNull();
+      expect(await chunksOf(tx, second.versionId)).toEqual([]);
     });
   });
 
-  it("a store whose current version is replaced meanwhile diffs and carries against the new current version", async () => {
+  it("a store whose current version is replaced meanwhile diffs against the new current version", async () => {
     const base = memoryArchive();
     let interleave: (() => Promise<unknown>) | null = null;
     // The first diff write of the slow store lets another store of different content finish in between.
@@ -199,19 +180,16 @@ describe("storeFetched", () => {
     };
     await withRollback(async (tx) => {
       const { documentId } = await newDocument(tx);
-      await storeFetched(tx, archive, documentId, content(page(), at(0)), cfg);
+      await storeFetched(tx, archive, documentId, content(page(), at(0)));
       let middle: Awaited<ReturnType<typeof storeFetched>> | undefined;
-      interleave = async () => (middle = await storeFetched(tx, archive, documentId, content(page(true), at(5)), cfg));
-      const last = await storeFetched(tx, archive, documentId, content(`${page(true)}\n\nA closing note.`, at(10)), cfg);
+      interleave = async () => (middle = await storeFetched(tx, archive, documentId, content(page(true), at(5))));
+      const last = await storeFetched(tx, archive, documentId, content(`${page(true)}\n\nA closing note.`, at(10)));
 
       const versions = await versionsOf(tx, documentId);
       expect(versions.map((v) => v.id)).toEqual([versions[0]!.id, middle!.versionId, last.versionId]);
       const diff = new TextDecoder().decode((await archive.get(versions[2]!.diffKey!))!);
       expect(diff).toContain(versions[1]!.mdKey);
       expect(diff).not.toContain("-The east anchorage");
-      // The section only the middle version has is carried from it.
-      const changedIn = async (versionId: string) => (await chunksOf(tx, versionId)).find((c) => c.text.includes("changed east"))!;
-      expect((await changedIn(last.versionId)).carriedFromChunkId).toBe((await changedIn(middle!.versionId)).id);
       expect((await documentRow(tx, documentId)).currentVersionId).toBe(last.versionId);
     });
   });
@@ -220,10 +198,10 @@ describe("storeFetched", () => {
     const archive = memoryArchive();
     await withRollback(async (tx) => {
       const { documentId } = await newDocument(tx);
-      const a = await storeFetched(tx, archive, documentId, content(page(), at(0)), cfg);
-      await storeFetched(tx, archive, documentId, content(page(true), at(10)), cfg);
-      const back = await storeFetched(tx, archive, documentId, content(page(), at(20)), cfg);
-      expect(back).toEqual({ outcome: "reverted", versionId: a.versionId, chunks: { created: 0, carried: 0 } });
+      const a = await storeFetched(tx, archive, documentId, content(page(), at(0)));
+      await storeFetched(tx, archive, documentId, content(page(true), at(10)));
+      const back = await storeFetched(tx, archive, documentId, content(page(), at(20)));
+      expect(back).toEqual({ outcome: "reverted", versionId: a.versionId });
       expect(await versionsOf(tx, documentId)).toHaveLength(2);
       const doc = await documentRow(tx, documentId);
       expect(doc.currentVersionId).toBe(a.versionId);
@@ -236,28 +214,13 @@ describe("storeFetched", () => {
     const archive = memoryArchive();
     const { documentId } = await newDocument(db);
     const results = await Promise.all([
-      storeFetched(db, archive, documentId, content(page(), at(0)), cfg),
-      storeFetched(db, archive, documentId, content(page(), at(1)), cfg),
+      storeFetched(db, archive, documentId, content(page(), at(0))),
+      storeFetched(db, archive, documentId, content(page(), at(1))),
     ]);
     expect(results.map((r) => r.outcome).sort()).toEqual(["new_version", "unchanged"]);
     expect(results[0]!.versionId).toBe(results[1]!.versionId);
     expect(await versionsOf(db, documentId)).toHaveLength(1);
     expect((await documentRow(db, documentId)).currentVersionId).toBe(results[0]!.versionId);
-  });
-
-  it("shingles are written only for chunks that were not carried", async () => {
-    const archive = memoryArchive();
-    await withRollback(async (tx) => {
-      const { documentId } = await newDocument(tx);
-      await storeFetched(tx, archive, documentId, content(page(), at(0)), cfg);
-      const second = await storeFetched(tx, archive, documentId, content(page(true), at(10)), cfg);
-      const next = await chunksOf(tx, second.versionId);
-      for (const chunk of next) {
-        const rows = await tx.select().from(textShingles).where(eq(textShingles.chunkId, chunk.id));
-        if (chunk.carriedFromChunkId) expect(rows, chunk.text.slice(0, 40)).toHaveLength(0);
-        else expect(rows.length, chunk.text.slice(0, 40)).toBeGreaterThan(0);
-      }
-    });
   });
 
   it("stores language, published date, final url and run-independent fields", async () => {
@@ -269,7 +232,6 @@ describe("storeFetched", () => {
         archive,
         documentId,
         content(page(), at(0), { publishedAt: "2025-05-01", finalUrl: "https://x.test.invalid/b", rawExt: "pdf", contentType: "application/pdf", converter: "pdftotext" }),
-        cfg,
       );
       const [version] = await tx.select().from(documentVersions).where(eq(documentVersions.id, r.versionId));
       expect(version).toMatchObject({
@@ -293,7 +255,7 @@ describe("markGone and markChecked", () => {
     const archive = memoryArchive();
     await withRollback(async (tx) => {
       const { documentId } = await newDocument(tx);
-      await storeFetched(tx, archive, documentId, content(page(), at(0)), cfg);
+      await storeFetched(tx, archive, documentId, content(page(), at(0)));
       expect(await markGone(tx, documentId, at(1), 2)).toEqual({ gone: false, consecutive: 1 });
       expect((await documentRow(tx, documentId)).status).toBe("active");
       expect(await markGone(tx, documentId, at(2), 2)).toEqual({ gone: true, consecutive: 2 });
@@ -302,7 +264,7 @@ describe("markGone and markChecked", () => {
       expect(gone.validTo).toBeNull();
       expect(gone.lastCheckedAt).toEqual(at(2));
 
-      const back = await storeFetched(tx, archive, documentId, content(page(), at(3)), cfg);
+      const back = await storeFetched(tx, archive, documentId, content(page(), at(3)));
       expect(back.outcome).toBe("unchanged");
       const active = await documentRow(tx, documentId);
       expect(active).toMatchObject({ status: "active", consecutiveGone: 0 });

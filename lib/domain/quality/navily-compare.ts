@@ -11,7 +11,6 @@ import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import { tileIdFor } from "@/lib/domain/tiles";
-import { latestProfiles } from "@/lib/domain/timeline";
 import { validAt } from "@/lib/db/valid-at";
 import {
   latestComparisonResults,
@@ -25,7 +24,6 @@ import {
   comparedPosition,
   comparisonValues,
   loadComparisonSubjects,
-  lonLatOf,
   type ComparisonAttribute,
   type ComparisonSubject,
   type ComparisonValue,
@@ -68,6 +66,7 @@ export async function confirmedSubdivisionPlaces(db: Db, subdivisionKey: string)
       name: displayNameSql(places.geoObjectId),
       kind: places.kind,
       position: asGeoJson(places.position),
+      anchorPosition: asGeoJson(places.anchorPosition),
     })
     .from(places)
     .innerJoin(geoObjects, eq(geoObjects.id, places.geoObjectId))
@@ -82,17 +81,16 @@ export async function confirmedSubdivisionPlaces(db: Db, subdivisionKey: string)
     .orderBy(asc(geoNames.geoObjectId), asc(geoNames.name));
   const namesOf = new Map<string, string[]>();
   for (const n of nameRows) namesOf.set(n.geoObjectId, [...(namesOf.get(n.geoObjectId) ?? []), n.name]);
-  const profileOf = await latestProfiles(db, objectIds);
   return rows.map((r) => {
     const [lon, lat] = (r.position as Point).coordinates as [number, number];
-    const attributes = profileOf.get(r.geoObjectId)?.attributes ?? {};
+    const anchor = r.anchorPosition ? ((r.anchorPosition as Point).coordinates as [number, number]) : null;
     return {
       placeId: r.placeId,
       name: r.name,
       kind: r.kind,
       status: "confirmed" as const,
-      position: lonLatOf(attributes["place.position"]) ?? { lon, lat },
-      anchorPosition: lonLatOf(attributes["anchor_position"]),
+      position: { lon, lat },
+      anchorPosition: anchor ? { lon: anchor[0], lat: anchor[1] } : null,
       names: namesOf.get(r.geoObjectId) ?? [],
     };
   });
@@ -291,7 +289,7 @@ export type SubdivisionComparisonView = {
 
 /**
  * The comparison of the subdivision's set: own values, proposals (with spots) and their digest, the newest outcome per
- * current value hash (`carried` when it was recorded on another profile version or evaluation run) and the coverage
+ * current value hash (`carried` when it was recorded on another profile version or evaluation run: an outcome from before the berth state) and the coverage
  * of the subdivision's spots from the same matching the proposals use (set plus all confirmed places of the subdivision).
  */
 export async function subdivisionComparisonView(

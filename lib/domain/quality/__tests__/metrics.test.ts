@@ -34,7 +34,8 @@ import {
 } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { insertNamedObject, insertTestExtractionRun, insertTestRun, insertTestSubdivision, insertTestVersion } from "@/test/text";
-import { comparisonValues, loadComparisonSubjects } from "../comparison-values";
+import { comparisonValues } from "../comparison-values";
+import { loadProfileSubjects } from "../profile-subjects";
 import {
   coverageMetric,
   marinaServicesMetric,
@@ -120,7 +121,7 @@ async function addResult(
   result: ComparisonResultValue,
   o: { method?: "manual" | "proposal_auto" | "proposal_confirmed" | "review"; valueHash?: string } = {},
 ) {
-  const subject = (await loadComparisonSubjects(tx, subdivisionKey)).find((s) => s.placeId === placeId)!;
+  const subject = (await loadProfileSubjects(tx, subdivisionKey)).find((s) => s.placeId === placeId)!;
   await tx.insert(comparisonResults).values({
     placeId,
     attribute,

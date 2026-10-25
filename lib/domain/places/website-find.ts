@@ -8,7 +8,7 @@ import type { ModelClient } from "@/lib/ai/types";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geoNames, serpResults, sources, type PlaceKind, type PlaceWebsiteOrigin } from "@/lib/db/schema";
-import { isIgnoredDomain } from "@/lib/domain/discovery/proposals";
+import { isIgnoredDomain } from "@/lib/domain/sources/type-hints";
 import { dedupeQueries, namesByLanguage, type DiscoveryQuery } from "@/lib/domain/search/queries";
 import { runQuery } from "@/lib/domain/discovery/serp";
 import { normalizeForQuote } from "@/lib/domain/research/text/quote";

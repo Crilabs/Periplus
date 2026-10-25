@@ -5,7 +5,7 @@ import { MockModel } from "@/lib/ai/mock";
 import type { ExtractBerthOutput } from "@/lib/ai/tasks/extract-berth";
 import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { aiBatches, berthSignals, documents, geoObjects, researchUnits, documentVersions, pageAssessments, places, researchHits, runs, runStages, serpQueries, serpResults } from "@/lib/db/schema";
+import { aiBatches, berthSignals, documents, researchUnits, documentVersions, pageAssessments, places, researchHits, runs, runStages, serpQueries, serpResults } from "@/lib/db/schema";
 import { activeExtractor } from "@/lib/domain/research/confirmation";
 import { newId } from "@/lib/domain/ids";
 import { activeAssessor } from "@/lib/domain/research/assessment";
@@ -20,7 +20,6 @@ import { pollBatch } from "@/lib/pipeline/batches";
 import { imageTargets } from "@/lib/pipeline/images/stage";
 import { RESEARCH_CONFIRM_STAGE } from "@/lib/pipeline/research/confirm";
 import { extractUnits, planResearchExtract, RESEARCH_EXTRACT_STAGE } from "@/lib/pipeline/research/extract";
-import { startConsolidationRun } from "@/lib/pipeline/consolidation/run";
 import { RESEARCH_STAGES } from "@/lib/pipeline/research-run";
 import { planResearchAssess } from "@/lib/pipeline/research/assess";
 import { planResearchFetch } from "@/lib/pipeline/research/fetch";
@@ -179,12 +178,12 @@ async function researchRun(tx: Db, placeIds: string[]): Promise<string> {
 }
 
 const confirmJob = (runId: string) => ({ runId, stage: RESEARCH_CONFIRM_STAGE, key: "confirm" });
-const realStarters = { followup: startBerthFollowupRun, consolidation: startConsolidationRun };
+const realStarters = { followup: startBerthFollowupRun };
 const consolidationRunsOf = async (tx: Db, objectId: string) =>
   (await tx.select().from(runs)).filter((r) => (r.params as { geoObjectIds?: string[] }).geoObjectIds?.includes(objectId));
 
 describe("research.confirm handler", () => {
-  it("extracts two independent sources, confirms the berth, starts the follow-up run and a consolidation, and the tab says why", () =>
+  it("extracts two independent sources, confirms the berth, starts the follow-up run (no consolidation), and the tab says why", () =>
     withRollback(async (tx) => {
       const place = await insertPlace(tx, { name: "Vathi", lon: 30.0, lat: 40.2, status: "candidate" });
       const archive = memoryArchive();
@@ -225,21 +224,17 @@ describe("research.confirm handler", () => {
       const followups = await tx.select().from(runs).where(eq(runs.scopeId, BERTH_FOLLOWUP_SCOPE));
       expect(followups).toHaveLength(1);
       expect(followups[0]!.params).toMatchObject({ placeIds: [place.placeId], images: { geoObjectIds: [place.objectId] } });
-      const consolidations = (await tx.select().from(runs)).filter((r) => (r.params as { geoObjectIds?: string[] }).geoObjectIds?.[0] === place.objectId);
-      expect(consolidations).toHaveLength(1);
+      expect(await consolidationRunsOf(tx, place.objectId)).toHaveLength(0);
       // the jobs this handler caused: the follow-up run's state job of the berth (the image stage after it plans no job
-      // without an image model), and the consolidation's geo job of the object
-      expect(inserted.slice(before).map((j) => [j.queue, j.data.geoObjectId ?? j.data.placeId])).toEqual([
-        ["research.state", place.placeId],
-        ["consolidation.geo", place.objectId],
-      ]);
+      // without an image model), nothing of a consolidation
+      expect(inserted.slice(before).map((j) => [j.queue, j.data.geoObjectId ?? j.data.placeId])).toEqual([["research.state", place.placeId]]);
 
       const view = await researchView(tx, place.placeId);
       expect(view.verdict).toMatchObject({ status: "confirmed", independentSources: ["sail-a.example", "sail-b.example"] });
       expect(view.rows.map((r) => r.signalCount)).toEqual([1, 1]);
     }));
 
-  it("starts no follow-up run when a berth drops out of confirmed, but consolidates it", () =>
+  it("starts no follow-up run when a berth drops out of confirmed (and no consolidation)", () =>
     withRollback(async (tx) => {
       const place = await insertPlace(tx, { name: "Vathi", lon: 30.0, lat: 40.2, status: "confirmed" });
       await tx.update(places).set({ publicId: "sp_test0001" }).where(eq(places.id, place.placeId));
@@ -254,10 +249,10 @@ describe("research.confirm handler", () => {
       await researchConfirmHandler({ runId, stage: RESEARCH_CONFIRM_STAGE, key: "confirm" }, ctxFor(tx, boss));
       expect(await tx.select().from(places).where(eq(places.id, place.placeId))).toMatchObject([{ status: "candidate" }]);
       expect(await tx.select().from(runs).where(eq(runs.scopeId, BERTH_FOLLOWUP_SCOPE))).toHaveLength(0);
-      expect((await tx.select().from(runs)).filter((r) => (r.params as { geoObjectIds?: string[] }).geoObjectIds?.[0] === place.objectId)).toHaveLength(1);
+      expect(await consolidationRunsOf(tx, place.objectId)).toHaveLength(0);
     }));
 
-  it("a starter failure makes the job throw after both starters were tried; the retry starts the follow-up although no transition remains", () =>
+  it("a starter failure makes the job throw; the retry starts the follow-up although no transition remains", () =>
     withRollback(async (tx) => {
       const place = await insertPlace(tx, { name: "Vathi", lon: 30.0, lat: 40.2, status: "candidate" });
       const archive = memoryArchive();
@@ -266,33 +261,14 @@ describe("research.confirm handler", () => {
       const { boss } = recordingBoss();
       const runId = await researchRun(tx, [place.placeId]);
 
-      const failing = { followup: async () => { throw new Error("boom"); }, consolidation: startConsolidationRun };
+      const failing = { followup: async () => { throw new Error("boom"); } };
       await expect(confirmAndFollowUp(confirmJob(runId), ctxFor(tx, boss), failing)).rejects.toThrow("boom");
       expect(await tx.select().from(places).where(eq(places.id, place.placeId))).toMatchObject([{ status: "confirmed" }]);
       expect(await tx.select().from(runs).where(eq(runs.scopeId, BERTH_FOLLOWUP_SCOPE))).toHaveLength(0);
-      expect(await consolidationRunsOf(tx, place.objectId)).toHaveLength(1); // the other starter was still tried
 
       // retry: confirmBerths finds nothing to change, the follow-up is derived from the database
       await confirmAndFollowUp(confirmJob(runId), ctxFor(tx, boss), realStarters);
       expect(await tx.select().from(runs).where(eq(runs.scopeId, BERTH_FOLLOWUP_SCOPE))).toHaveLength(1);
-    }));
-
-  it("one non-consolidatable place does not block the consolidation of the others", () =>
-    withRollback(async (tx) => {
-      const good = await insertPlace(tx, { name: "Vathi", lon: 30.0, lat: 40.2, status: "candidate" });
-      const bad = await insertPlace(tx, { name: "Kalo", lon: 30.1, lat: 40.2, status: "candidate" });
-      const archive = memoryArchive();
-      for (const p of [good, bad]) {
-        await evidence(tx, p, `a-${p.placeId}.example`, archive);
-        await evidence(tx, p, `b-${p.placeId}.example`, archive);
-      }
-      await tx.update(geoObjects).set({ validTo: "2020-01-01" }).where(eq(geoObjects.id, bad.objectId));
-      const { boss } = recordingBoss();
-      const runId = await researchRun(tx, [good.placeId, bad.placeId]);
-
-      await confirmAndFollowUp(confirmJob(runId), ctxFor(tx, boss), realStarters);
-      expect(await consolidationRunsOf(tx, good.objectId)).toHaveLength(1);
-      expect(await consolidationRunsOf(tx, bad.objectId)).toHaveLength(0);
     }));
 });
 

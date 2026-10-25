@@ -16,6 +16,7 @@ import { urlAllowed } from "@/lib/domain/sources/crawl-rules";
 import { getSource, type Source } from "@/lib/domain/sources/store";
 import { normalizeUrl, registrableDomain } from "@/lib/domain/sources/urls";
 import { decodeHtml, fetchFollowing, UPLOAD_PREFIX, urlJobKey, type FetchUrlDeps, type FetchUrlOutcome } from "./page";
+import { chunkStoredVersion } from "./legacy-chunks";
 import { FETCH_SOURCE_STAGE } from "./source";
 import { convertAndStore } from "./store-page";
 import type { JobData } from "@/lib/jobs/worker";
@@ -298,8 +299,8 @@ async function fetchSimulated(
       simulated: true,
       runId,
     },
-    cfg.chunk,
   );
+  if (stored.outcome === "new_version") await chunkStoredVersion(db, archive, stored.versionId);
   await setFrontier(db, sourceId, urlNormalized, runId, "fetched", null);
   return { outcome: stored.outcome, newUrls: 0 };
 }
@@ -399,6 +400,7 @@ export async function fetchUrl(db: Db, job: FetchUrlJob, deps: FetchUrlDeps, ctx
     );
     if (result.kind === "skipped") return stop("skipped", "skipped", result.reason);
     const { html, pageUrl } = result;
+    if (result.outcome === "new_version") await chunkStoredVersion(db, deps.archive, result.versionId);
 
     // Links are followed for every HTML fetch, also when the content is unchanged or reverted.
     const links = html !== null ? extractLinks(html, pageUrl, cfg.trackingParams) : [];

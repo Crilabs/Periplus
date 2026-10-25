@@ -12,7 +12,6 @@ import { mentionsRereadStage } from "@/lib/jobs/handlers/reread";
 import { mentionsRereadHandler } from "@/lib/jobs/handlers/reread-start";
 import type { JobContext } from "@/lib/jobs/worker";
 import { SUBDIVISION_BUILD_STAGES } from "@/lib/pipeline/subdivision-build";
-import { GAZETTEER_STAGES } from "@/lib/pipeline/gazetteer/stages";
 import { matchVersions, planMentions } from "@/lib/pipeline/text/mentions";
 import { prefilteredVersions, prefilterNames, rereadVersions } from "@/lib/pipeline/text/reread";
 import { startRereadRun, TEXT_RUN_STAGES } from "@/lib/pipeline/text/run";
@@ -66,10 +65,8 @@ const bayMentions = (tx: Db, versionId: string, bay: string) =>
   tx.select({ id: mentions.id }).from(mentions).where(and(eq(mentions.documentVersionId, versionId), eq(mentions.geoObjectId, bay)));
 
 describe("mentions re-read", () => {
-  it("has the stage after the gazetteer stages and the Revier import in a build, as one job on its own queue", async () => {
-    const stages: readonly string[] = SUBDIVISION_BUILD_STAGES;
-    expect(stages.indexOf("mentions.reread")).toBeGreaterThan(GAZETTEER_STAGES.length - 1);
-    expect(stages.indexOf("mentions.reread")).toBe(stages.indexOf("areas.import") + 1);
+  it("is no stage of the subdivision build any more (N6), but one job on its own queue", async () => {
+    expect(([...SUBDIVISION_BUILD_STAGES] as string[]).includes("mentions.reread")).toBe(false);
     expect(mentionsRereadStage).toMatchObject({ name: "mentions.reread", queue: "mentions.reread" });
     expect(await mentionsRereadStage.plan({} as never, { id: "r", params: { subdivisionKey: "XT-RB" } })).toEqual([{ key: "XT-RB", subdivisionKey: "XT-RB" }]);
   });

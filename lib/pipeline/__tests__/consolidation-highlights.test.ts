@@ -10,7 +10,6 @@ import { decideReviewTask } from "@/lib/domain/review-decisions";
 import { tileIdFor } from "@/lib/domain/tiles";
 import { latestProfile } from "@/lib/domain/timeline";
 import { STAGES } from "@/lib/jobs/stages";
-import { GEOMETRY_RUN_STAGES } from "@/lib/pipeline/geometry-run";
 import { consolidateGeoJob } from "@/lib/pipeline/consolidation/geo";
 import { openHighlightPairTasks } from "@/lib/pipeline/consolidation/highlights";
 import { CONSOLIDATION_GEO_STAGE, CONSOLIDATION_HIGHLIGHTS_STAGE, CONSOLIDATION_STAGES, CONSOLIDATION_SUMMARY_STAGE } from "@/lib/pipeline/consolidation/stages";
@@ -187,8 +186,6 @@ describe("stage consolidation.highlights (spec 16)", () => {
       // follow-up discovery and images look at the run's own targets only: the bay is in neither
       expect(await consolidationTargets(tx, run)).not.toContain(bay.objectId);
       expect((await imageTargets(tx, run)).map((t) => t.geoObjectId)).not.toContain(bay.objectId);
-      // (a run that consolidates the bay itself would target its image)
-      expect((await imageTargets(tx, await runOver(tx, [bay.objectId]))).map((t) => t.geoObjectId)).toContain(bay.objectId);
       // its visible profile content changed: the new version may get a summary
       expect((await summaryTargets(tx, run)).map((t) => t.geoObjectId)).toContain(bay.objectId);
 
@@ -221,11 +218,10 @@ describe("stage consolidation.highlights (spec 16)", () => {
       expect(await selectedPoiIds(tx, [bay.objectId])).toEqual([keep]);
     }));
 
-  it("text, geometry and consolidateAfter runs list consolidation.highlights after consolidation.geo", () =>
+  it("text and consolidateAfter runs list consolidation.highlights after consolidation.geo", () =>
     withRollback(async (tx) => {
       const after = (stages: readonly string[]) => stages[stages.indexOf(CONSOLIDATION_GEO_STAGE) + 1];
       expect(after(TEXT_RUN_STAGES)).toBe(CONSOLIDATION_HIGHLIGHTS_STAGE);
-      expect(after(GEOMETRY_RUN_STAGES)).toBe(CONSOLIDATION_HIGHLIGHTS_STAGE);
 
       const bay = await insertPlace(tx, { lon: LON, lat: LAT, name: "Folgebucht" });
       const started = await consolidateAfter(tx, recordingBoss(), { geoObjectIds: [bay.objectId], triggeredBy: "test" });

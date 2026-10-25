@@ -2,12 +2,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { eq, sql } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
-import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { crawlFrontier, geoNames, geoObjects, landPolygons, places, sources, subdivisions, tileGeoObjects, tiles, type DocType, type GeoObjectType } from "@/lib/db/schema";
 import type { PlaceKind } from "@/lib/db/schema/geo";
 import { ensureDocument, storeFetched } from "@/lib/domain/documents/store";
+import { chunkStoredVersion } from "@/lib/pipeline/fetch/legacy-chunks";
 import { recordComputation } from "@/lib/domain/facts/computations";
 import { addNames } from "@/lib/domain/gazetteer/names";
 import { tileBbox } from "@/lib/domain/tiles";
@@ -257,7 +257,8 @@ export async function addRevisitDocument(
       etag: null,
       lastModified: null,
     },
-    getConfig().fetch.chunk,
   );
+  // the old text stages read chunks; `storeFetched` writes none (N6)
+  await chunkStoredVersion(tx, archive, stored.versionId);
   return { id: doc.id, url, versionId: stored.versionId };
 }
