@@ -43,7 +43,8 @@ const EXPECTED_BY_TYPE = {
   islet: 14,
   cape: 38,
   strait: 5,
-  bay: 37,
+  // 3 Wikidata items that are a harbour and a bay are harbours without OSM counterpart, no longer bays (B9)
+  bay: 34,
   harbour: 14,
   settlement: 79,
 };

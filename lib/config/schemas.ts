@@ -304,10 +304,11 @@ export const categoriesSchema = z.strictObject({
   wikidata: z.record(wikidataQid, poiCategory),
 });
 
-const distanceMSchema = z.strictObject({
-  default: z.number().positive(),
-  ...Object.fromEntries(geoObjectTypeEnum.enumValues.map((t) => [t, z.number().positive().optional()])),
-} as { default: z.ZodNumber } & Record<GeoObjectType, z.ZodOptional<z.ZodNumber>>);
+/** An optional distance in metres per geo object type. */
+const distanceMByType = Object.fromEntries(
+  geoObjectTypeEnum.enumValues.map((t) => [t, z.number().positive().optional()]),
+) as Record<GeoObjectType, z.ZodOptional<z.ZodNumber>>;
+const distanceMSchema = z.strictObject({ default: z.number().positive(), ...distanceMByType });
 
 export const gazetteerSchema = z.strictObject({
   overpass: z.strictObject({
@@ -370,10 +371,20 @@ export const gazetteerSchema = z.strictObject({
   /** Radius around an object's centroid within which a subdivision's land counts for the assignment (spec 14). */
   subdivisionRadiusM: z.number().positive(),
   islandParentBufferM: z.number().nonnegative(),
+  /**
+   * A bay, islet or cape without island within `islandParentBufferM` takes the nearest island within this distance,
+   * unless land outside every island polygon is nearer (B10).
+   */
+  islandParentNearestM: z.number().nonnegative(),
   merge: z.strictObject({
     trigramMin: z.number().min(0).max(1),
     uncertainTrigramMin: z.number().min(0).max(1),
     distanceM: distanceMSchema,
+    /**
+     * Per type, the distance within which a name of similarity `≥ trigramMin` is still the same object (B9: a Wikidata
+     * point lies up to ~1 km from the OSM bay); the distance used is the larger of this and `distanceM`.
+     */
+    similarNameDistanceM: z.strictObject(distanceMByType),
     uncertainDistanceFactor: z.number().min(1),
     wikidataLinkDistanceM: z.number().positive(),
     geonamesNewObjectRadiusM: z.number().positive(),

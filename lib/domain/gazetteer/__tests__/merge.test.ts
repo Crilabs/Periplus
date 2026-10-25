@@ -70,13 +70,13 @@ describe("findMatch", () => {
     });
   });
 
-  it("same name 450 m apart for a bay → uncertain (threshold 300, factor 2)", async () => {
+  it("same name 450 m apart for a harbour → uncertain (threshold 300, factor 2)", async () => {
     await withRollback(async (tx) => {
-      const id = await insert(tx, "bay", ["Ormos Klima"], point(offset(0)));
-      const match = await findMatch(tx, { type: "bay", point: offset(450), names: ["Ormos Klima"] }, rules);
+      const id = await insert(tx, "harbour", ["Limani Klima"], point(offset(0)));
+      const match = await findMatch(tx, { type: "harbour", point: offset(450), names: ["Limani Klima"] }, rules);
       expect(match).toMatchObject({ kind: "uncertain", id, similarity: 1 });
       // Beyond d × factor (600 m) nothing matches.
-      expect(await findMatch(tx, { type: "bay", point: offset(650), names: ["Ormos Klima"] }, rules)).toEqual({
+      expect(await findMatch(tx, { type: "harbour", point: offset(650), names: ["Limani Klima"] }, rules)).toEqual({
         kind: "none",
       });
     });
@@ -153,6 +153,52 @@ describe("findMatch", () => {
       const input = { type: "cape" as const, point: offset(0), names: ["Akrotiri Test"] };
       expect(await findMatch(tx, input, rules)).toMatchObject({ kind: "uncertain", id: far });
       expect(await findMatch(tx, input, rules, { distanceM: 1000 })).toMatchObject({ kind: "same", id: far });
+    });
+  });
+
+  it("a bay with a similar name 900 m away is the same (similarNameDistanceM, B9)", async () => {
+    await withRollback(async (tx) => {
+      expect(rules.similarNameDistanceM.bay).toBe(1500);
+      const id = await insert(tx, "bay", ["Ligea Bay"], point(offset(0)));
+      const match = await findMatch(tx, { type: "bay", point: offset(900), names: ["Ligea Bay"] }, rules);
+      expect(match).toMatchObject({ kind: "same", id, similarity: 1 });
+    });
+  });
+
+  it("the same bay input 1,700 m away is uncertain, beyond the extended distance x factor nothing", async () => {
+    await withRollback(async (tx) => {
+      const id = await insert(tx, "bay", ["Ligea Bay"], point(offset(0)));
+      expect(await findMatch(tx, { type: "bay", point: offset(1700), names: ["Ligea Bay"] }, rules)).toMatchObject({
+        kind: "uncertain",
+        id,
+      });
+      expect(await findMatch(tx, { type: "bay", point: offset(3100), names: ["Ligea Bay"] }, rules)).toEqual({
+        kind: "none",
+      });
+    });
+  });
+
+  it("a weakly similar bay name (Ligea / Liyea, below trigramMin) keeps today's rules", async () => {
+    await withRollback(async (tx) => {
+      const { rows } = await tx.execute<{ s: number }>(sql`select similarity('ligea bay', 'liyea bay') as s`);
+      expect(Number(rows[0]!.s)).toBeLessThan(rules.trigramMin);
+      const id = await insert(tx, "bay", ["Ligea Bay"], point(offset(0)));
+      expect(await findMatch(tx, { type: "bay", point: offset(200), names: ["Liyea Bay"] }, rules)).toMatchObject({
+        kind: "uncertain",
+        id,
+      });
+      expect(await findMatch(tx, { type: "bay", point: offset(900), names: ["Liyea Bay"] }, rules)).toEqual({ kind: "none" });
+    });
+  });
+
+  it("a settlement 900 m away stays with today's rules (uncertain within d x factor)", async () => {
+    await withRollback(async (tx) => {
+      expect(rules.similarNameDistanceM.settlement).toBeUndefined();
+      const id = await insert(tx, "settlement", ["Testchori"], point(offset(0)));
+      expect(await findMatch(tx, { type: "settlement", point: offset(900), names: ["Testchori"] }, rules)).toMatchObject({
+        kind: "uncertain",
+        id,
+      });
     });
   });
 });

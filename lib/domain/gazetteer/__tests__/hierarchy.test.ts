@@ -172,7 +172,7 @@ describe("assignParents", () => {
       await setup(db);
       const island = await insert(db, "island", ISLAND);
       const bay = await insert(db, "bay", point(25.15, 35.3011)); // ~120 m north of the shore
-      const far = await insert(db, "bay", point(25.15, 35.303)); // ~330 m: outside the 200 m buffer
+      const far = await insert(db, "bay", point(25.15, 35.3108)); // ~1.2 km: outside the buffer and islandParentNearestM
       const r = await assignAll(db);
       expect(r.updated).toBeGreaterThan(0);
       expect(await parentOf(db, bay)).toBe(island);
@@ -181,6 +181,59 @@ describe("assignParents", () => {
       // Unchanged rerun writes nothing.
       expect(await assignParents(db, HT)).toEqual({ updated: 0 });
     }));
+
+  describe("nearest island within islandParentNearestM (B10)", () => {
+    // ISLAND's north shore is 35.30 N; 0.0054 degree latitude is ~600 m. The island's own land is in land_polygons
+    // too: it lies within the island polygon and does not count as mainland.
+    const OFF = 35.3054;
+    async function land(db: Db, polygon: Polygon) {
+      await db.insert(landPolygons).values({ geom: sql`${geomFromGeoJson(polygon)}`, datasetVersion: "test" });
+    }
+
+    it("a bay, islet and cape 600 m off the island and 3 km from the mainland get the island", () =>
+      withRollback(async (db) => {
+        await setup(db);
+        const island = await insert(db, "island", ISLAND);
+        await land(db, ISLAND);
+        await land(db, box(25.0, 35.333, 25.5, 35.5)); // mainland ~3 km north of the bay
+        const bay = await insert(db, "bay", point(25.15, OFF));
+        // a point islet (Wikidata, GeoNames) on its own rock: land no island polygon covers, but no mainland
+        const islet = await insert(db, "islet", point(25.14, OFF));
+        await land(db, box(25.1395, 35.305, 25.1405, 35.3058));
+        const cape = await insert(db, "cape", point(25.16, OFF));
+        await assignAll(db);
+        for (const id of [bay, islet, cape]) expect(await parentOf(db, id)).toBe(island);
+        expect(await assignParents(db, HT)).toEqual({ updated: 0 });
+        // the same rule for the objects of the stage gazetteer.land
+        const landed = await insert(db, "bay", point(25.17, OFF));
+        await assignObjects(db, [landed]);
+        expect(await parentOf(db, landed)).toBe(island);
+      }));
+
+    it("a bay 600 m off the island but 300 m from the mainland keeps the subdivision", () =>
+      withRollback(async (db) => {
+        const { regionId } = await setup(db);
+        await insert(db, "island", ISLAND);
+        await land(db, ISLAND);
+        await land(db, box(25.0, 35.3081, 25.5, 35.5)); // mainland ~300 m north of the bay
+        const bay = await insert(db, "bay", point(25.15, OFF));
+        const islet = await insert(db, "islet", point(25.14, OFF));
+        await assignAll(db);
+        expect(await parentOf(db, bay)).toBe(regionId);
+        expect(await parentOf(db, islet)).toBe(regionId);
+      }));
+
+    it("a bay 1,500 m off the island keeps the subdivision", () =>
+      withRollback(async (db) => {
+        const { regionId } = await setup(db);
+        await insert(db, "island", ISLAND);
+        await land(db, ISLAND);
+        await land(db, box(25.0, 35.345, 25.5, 35.5)); // mainland ~3.5 km north of the bay
+        const bay = await insert(db, "bay", point(25.15, 35.3135));
+        await assignAll(db);
+        expect(await parentOf(db, bay)).toBe(regionId);
+      }));
+  });
 
   it("a point island does not act as parent", () =>
     withRollback(async (db) => {

@@ -44,12 +44,13 @@ function searchKeys(names: string[]): string[] {
 /**
  * Looks for a valid, unmerged object of the same type group (`island`/`islet` together, else the same
  * type) that is the input object. Distance `d` = `opts.distanceM`, else `rules.distanceM[type]`, else the
- * default. "Within distance" means `≤ d` between the input point and the candidate's centroid; for an
+ * default; for a similarity `≥ trigramMin` it is `D = max(d, rules.similarNameDistanceM[type])` (B9), else `d`.
+ * "Within distance" means `≤` that distance between the input point and the candidate's centroid; for an
  * island/islet candidate with an area geometry it means the point lies in the polygon (its distance is then
  * measured to the polygon). Similarity = the highest pg_trgm similarity over all valid names of the candidate
- * and all input names (with transliterations). `same`: similarity `≥ trigramMin` and within distance;
- * `uncertain`: (`≥ trigramMin` and `≤ d × uncertainDistanceFactor`) or (`≥ uncertainTrigramMin` and within
- * distance). Of several candidates `same` wins over `uncertain`, then the higher similarity, then the
+ * and all input names (with transliterations). `same`: similarity `≥ trigramMin` and within `D`;
+ * `uncertain`: (`≥ trigramMin` and `≤ D × uncertainDistanceFactor`) or (`≥ uncertainTrigramMin` and within
+ * `d`). Of several candidates `same` wins over `uncertain`, then the higher similarity, then the
  * smaller distance. With `opts.excludeGeonamesOnly`, objects known only from GeoNames (origin `geonames`, no
  * OSM or Wikidata ID) are no candidates.
  */
@@ -62,7 +63,9 @@ export async function findMatch(
   const keys = searchKeys(input.names);
   if (keys.length === 0) return { kind: "none" };
   const d = opts?.distanceM ?? rules.distanceM[input.type] ?? rules.distanceM.default;
-  const maxM = d * rules.uncertainDistanceFactor;
+  // the distance for a strong name match (similarity ≥ trigramMin)
+  const strongD = Math.max(d, rules.similarNameDistanceM[input.type] ?? 0);
+  const maxM = strongD * rules.uncertainDistanceFactor;
   const islandGroup = ISLAND_GROUP.includes(input.type);
   const types = typeGroup(input.type);
   const excludeGeonamesOnly = opts?.excludeGeonamesOnly
@@ -76,15 +79,16 @@ export async function findMatch(
     sql`, `,
   )}]::text[]`;
 
-  const { rows } = await db.execute<{ id: string; similarity: number; distance_m: number; within: boolean }>(sql`
+  const { rows } = await db.execute<{ id: string; similarity: number; distance_m: number; polygon: boolean; within: boolean }>(sql`
     with p as (select ST_SetSRID(ST_MakePoint(${lon}, ${lat}), 4326) as g)
-    select c.id, c.similarity, c.distance_m, c.within
+    select c.id, c.similarity, c.distance_m, c.polygon, c.within
     from (
       select o.id,
              (select max(similarity(n.name_normalized, k))
               from geo_names n, unnest(${keyArray}) k
               where n.geo_object_id = o.id and n.valid_to is null) as similarity,
              x.distance_m,
+             x.polygon,
              case when x.polygon then ST_Covers(o.geom, p.g) else x.distance_m <= ${d} end as within
       from geo_objects o
       cross join p
@@ -105,8 +109,9 @@ export async function findMatch(
     const similarity = Number(row.similarity);
     const distanceM = Number(row.distance_m);
     const strong = similarity >= rules.trigramMin;
+    const withinStrong = row.polygon ? row.within : distanceM <= strongD;
     const kind: Found["kind"] | undefined =
-      strong && row.within ? "same" : (strong && distanceM <= maxM) || row.within ? "uncertain" : undefined;
+      strong && withinStrong ? "same" : (strong && distanceM <= maxM) || row.within ? "uncertain" : undefined;
     if (!kind) continue;
     const candidate: Found = { kind, id: row.id, similarity, distanceM };
     if (!best || better(candidate, best)) best = candidate;

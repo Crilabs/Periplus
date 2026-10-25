@@ -227,6 +227,7 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
     ["Puffer Land", `${gazetteer.landBufferKm} km`],
     ["Küstenabstand", `${gazetteer.coastDistanceM} m`],
     ["Puffer Insel-Elternobjekt", `${gazetteer.islandParentBufferM} m`],
+    ["Nächste Insel als Elternobjekt bis", `${gazetteer.islandParentNearestM} m`],
     ["Trigramm-Ähnlichkeit (sicher)", String(gazetteer.merge.trigramMin)],
     ["Trigramm-Ähnlichkeit (unsicher)", String(gazetteer.merge.uncertainTrigramMin)],
     [
@@ -234,6 +235,12 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
       Object.entries(gazetteer.merge.distanceM)
         .map(([type, m]) => `${type === "default" ? "sonst" : type} ${m} m`)
         .join(", "),
+    ],
+    [
+      "Zusammenführungsabstand bei ähnlichem Namen",
+      Object.entries(gazetteer.merge.similarNameDistanceM)
+        .map(([type, m]) => `${type} ${m} m`)
+        .join(", ") || "–",
     ],
     ["Faktor Abstand (unsicher)", String(gazetteer.merge.uncertainDistanceFactor)],
     ["Wikidata-Verknüpfung bis", `${gazetteer.merge.wikidataLinkDistanceM} m`],

@@ -225,6 +225,26 @@ describe("importWikidata", () => {
       expect(await byWikidata(db, q(5))).toEqual([]);
     }));
 
+  it("an item that is a harbour and a bay is a harbour: without OSM counterpart it is not created (B9)", () =>
+    withRollback(async (db) => {
+      await prepare(db);
+      const port = [...rows(q(40), "Q39594", 26.25, 35.8, [["Dokimi Port", "en"]]), ...rows(q(40), "Q44782", 26.25, 35.8, [["Dokimi Port", "en"]])];
+      expect(await run(db, port)).toEqual({ linked: 0, created: 0, uncertain: 0, names: 0, skipped: 0 });
+      expect(await byWikidata(db, q(40))).toEqual([]);
+      // Classes in the other order: still a harbour, which links to the OSM harbour of the same name.
+      const harbour = await upsertGeoObject(db, {
+        type: "harbour",
+        origin: "osm",
+        osmId: osm("node", 40),
+        geometry: { type: "Point", coordinates: [26.25, 35.8] },
+        names: [{ name: "Dokimi Port", language: "en", origin: "osm" }],
+      });
+      if ("skipped" in harbour) throw new Error(harbour.skipped);
+      const reversed = [...rows(q(40), "Q44782", 26.25, 35.8, [["Dokimi Port", "en"]]), ...rows(q(40), "Q39594", 26.25, 35.8, [["Dokimi Port", "en"]])];
+      expect(await run(db, reversed)).toMatchObject({ linked: 1, created: 0 });
+      expect(await byWikidata(db, q(40))).toEqual([expect.objectContaining({ id: harbour.id, type: "harbour" })]);
+    }));
+
   it("an uncertain match with an OSM object is decided 'same' by the system and merged into the OSM object", () =>
     withRollback(async (db) => {
       const ids = await prepare(db);

@@ -66,10 +66,12 @@
   "coarse": { "placeTypes": ["city", "town"], "islandMinAreaKm2": 1, "gulfMinAreaKm2": 20, "coastDistanceKm": 5 },
   "subdivisionRadiusM": 30000,
   "islandParentBufferM": 200,
+  "islandParentNearestM": 1000,
   "merge": {
     "trigramMin": 0.8,
     "uncertainTrigramMin": 0.5,
     "distanceM": { "bay": 300, "settlement": 500, "harbour": 300, "default": 500 },
+    "similarNameDistanceM": { "bay": 1500 },
     "uncertainDistanceFactor": 2,
     "wikidataLinkDistanceM": 1000,
     "geonamesNewObjectRadiusM": 500,

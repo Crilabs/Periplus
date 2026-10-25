@@ -26,13 +26,32 @@ export type WikidataImportResult = { linked: number; created: number; uncertain:
 
 type Classified = { type: GeoObjectType; category?: PoiCategory; wikidataClass?: string };
 
-/** Type (and POI category) of the first class in config order that the item has. */
+/**
+ * Types that win when an item has classes of several types, in this order; every other type after them (B9: a
+ * Wikidata port is often also a bay and would otherwise become one more anchorage candidate). Type logic, not a
+ * threshold: it stays in code.
+ */
+const TYPE_PRECEDENCE: GeoObjectType[] = ["harbour", "bay"];
+
+function precedence(type: GeoObjectType): number {
+  const i = TYPE_PRECEDENCE.indexOf(type);
+  return i === -1 ? TYPE_PRECEDENCE.length : i;
+}
+
+/**
+ * Type (and POI category) of the item's class whose type comes first in `TYPE_PRECEDENCE` (`harbour` before `bay`
+ * before all others); among equals the first in config order.
+ */
 function classify(
   item: WikidataItem,
   classes: Record<string, GeoObjectType>,
   categories: Record<string, PoiCategory>,
 ): Classified | null {
-  const cls = Object.keys(classes).find((c) => item.classes.includes(c));
+  let cls: string | undefined;
+  for (const c of Object.keys(classes)) {
+    if (!item.classes.includes(c)) continue;
+    if (cls === undefined || precedence(classes[c]!) < precedence(classes[cls]!)) cls = c;
+  }
   if (!cls) return null;
   const type = classes[cls]!;
   if (type !== "poi") return { type };
@@ -111,7 +130,8 @@ async function setWebsite(db: Db, id: string, website: string | undefined): Prom
 
 /**
  * The per-item import of `gazetteer.wikidata` (Spec 03, step 2), for the caller's transaction `tx`. Per item of a class
- * in `opts.classes` (first class in config order wins; a POI class gets its category from `opts.categories`):
+ * in `opts.classes` (`harbour` before `bay` before other types, else first class in config order: `classify`; a POI
+ * class gets its category from `opts.categories`):
  * (1) an object with this `wikidata_id` gets the names (for an object merged away with it, its survivor gets them and
  * counts as linked); (2) else an object of a compatible type whose OSM tag `wikidata` names the item is linked;
  * (3) else `findMatch` within `wikidataLinkDistanceM`, ignoring objects known only from GeoNames: `same` links (unless

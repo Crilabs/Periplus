@@ -462,8 +462,9 @@ describe("importSitelinks", () => {
       await assignSubdivisionTiles(db, scope.subdivisionId);
 
       // 91 since N7 Task 4 (121 before): the skeleton has no Wikidata POIs. The sitelink fixtures were cut offline to the
-      // two batches of the remaining items (the same recorded answers, regrouped).
-      expect(await importSitelinks(db, { scope: await scopeOf(db), runId }, { transport: replay })).toEqual({ fetched: 91, reused: 0 });
+      // two batches of the remaining items (the same recorded answers, regrouped). 90 since Task 7 (B9): "Agistri Port"
+      // (Q25168410) is a harbour without OSM counterpart and no longer a bay; its batch was cut the same way.
+      expect(await importSitelinks(db, { scope: await scopeOf(db), runId }, { transport: replay })).toEqual({ fetched: 90, reused: 0 });
       const rows = await db
         .select({ id: wikidataSitelinks.wikidataId, n: wikidataSitelinks.sitelinks })
         .from(wikidataSitelinks)
