@@ -5,7 +5,7 @@ import { MockModel } from "@/lib/ai/mock";
 import type { ExtractBerthOutput } from "@/lib/ai/tasks/extract-berth";
 import { loadConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { aiBatches, berthSignals, documents, researchUnits, documentVersions, pageAssessments, places, researchHits, runs, runStages, serpQueries, serpResults } from "@/lib/db/schema";
+import { aiBatches, berthSignals, documents, geoObjects, researchUnits, documentVersions, pageAssessments, places, researchHits, runs, runStages, serpQueries, serpResults } from "@/lib/db/schema";
 import { activeExtractor } from "@/lib/domain/research/confirmation";
 import { newId } from "@/lib/domain/ids";
 import { activeAssessor } from "@/lib/domain/research/assessment";
@@ -20,11 +20,7 @@ import { pollBatch } from "@/lib/pipeline/batches";
 import { imageTargets } from "@/lib/pipeline/images/stage";
 import { RESEARCH_CONFIRM_STAGE } from "@/lib/pipeline/research/confirm";
 import { extractUnits, planResearchExtract, RESEARCH_EXTRACT_STAGE } from "@/lib/pipeline/research/extract";
-<<<<<<< HEAD
-=======
-import { startConsolidationRun } from "@/lib/pipeline/consolidation/run";
 import { startDeliveryRun } from "@/lib/pipeline/delivery-run";
->>>>>>> feat/n5-vertrag-4
 import { RESEARCH_STAGES } from "@/lib/pipeline/research-run";
 import { planResearchAssess } from "@/lib/pipeline/research/assess";
 import { planResearchFetch } from "@/lib/pipeline/research/fetch";
@@ -183,11 +179,7 @@ async function researchRun(tx: Db, placeIds: string[]): Promise<string> {
 }
 
 const confirmJob = (runId: string) => ({ runId, stage: RESEARCH_CONFIRM_STAGE, key: "confirm" });
-<<<<<<< HEAD
-const realStarters = { followup: startBerthFollowupRun };
-=======
-const realStarters = { followup: startBerthFollowupRun, consolidation: startConsolidationRun, delivery: startDeliveryRun };
->>>>>>> feat/n5-vertrag-4
+const realStarters = { followup: startBerthFollowupRun, delivery: startDeliveryRun };
 const consolidationRunsOf = async (tx: Db, objectId: string) =>
   (await tx.select().from(runs)).filter((r) => (r.params as { geoObjectIds?: string[] }).geoObjectIds?.includes(objectId));
 
@@ -261,9 +253,6 @@ describe("research.confirm handler", () => {
       expect(await consolidationRunsOf(tx, place.objectId)).toHaveLength(0);
     }));
 
-<<<<<<< HEAD
-  it("a starter failure makes the job throw; the retry starts the follow-up although no transition remains", () =>
-=======
   it("a withdrawal starts a delivery build of its subdivision (F2); a candidate that stays one starts none", () =>
     withRollback(async (tx) => {
       const sd = await insertTestSubdivision(tx, "GR-XW1", [29.5, 39.5, 30.5, 41]);
@@ -309,8 +298,7 @@ describe("research.confirm handler", () => {
       expect(await tx.select().from(places).where(eq(places.id, gone.placeId))).toMatchObject([{ status: "candidate" }]);
     }));
 
-  it("a starter failure makes the job throw after both starters were tried; the retry starts the follow-up although no transition remains", () =>
->>>>>>> feat/n5-vertrag-4
+  it("a starter failure makes the job throw the retry starts the follow-up although no transition remains", () =>
     withRollback(async (tx) => {
       const place = await insertPlace(tx, { name: "Vathi", lon: 30.0, lat: 40.2, status: "candidate" });
       const archive = memoryArchive();
@@ -319,11 +307,7 @@ describe("research.confirm handler", () => {
       const { boss } = recordingBoss();
       const runId = await researchRun(tx, [place.placeId]);
 
-<<<<<<< HEAD
-      const failing = { followup: async () => { throw new Error("boom"); } };
-=======
-      const failing = { followup: async () => { throw new Error("boom"); }, consolidation: startConsolidationRun, delivery: startDeliveryRun };
->>>>>>> feat/n5-vertrag-4
+      const failing = { followup: async () => { throw new Error("boom"); }, delivery: startDeliveryRun };
       await expect(confirmAndFollowUp(confirmJob(runId), ctxFor(tx, boss), failing)).rejects.toThrow("boom");
       expect(await tx.select().from(places).where(eq(places.id, place.placeId))).toMatchObject([{ status: "confirmed" }]);
       expect(await tx.select().from(runs).where(eq(runs.scopeId, BERTH_FOLLOWUP_SCOPE))).toHaveLength(0);
