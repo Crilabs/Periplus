@@ -31,6 +31,7 @@
     "compare:navily": "tsx --env-file-if-exists=.env.local scripts/compare-navily.ts",
     "pdf:compare": "tsx --env-file-if-exists=.env.local scripts/pdf-compare.ts",
     "report:converters": "tsx --env-file-if-exists=.env.local scripts/converter-report.ts",
+    "archive:migrate": "tsx --env-file-if-exists=.env.local scripts/migrate-archive.ts",
     "check:sources": "tsx --env-file-if-exists=.env.local scripts/check-sources.ts",
     "compare:models": "tsx --env-file-if-exists=.env.local scripts/compare-models.ts",
     "report:models": "tsx --env-file-if-exists=.env.local scripts/model-report.ts",
