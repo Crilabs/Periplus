@@ -72,6 +72,7 @@
     "uncertainTrigramMin": 0.5,
     "distanceM": { "bay": 300, "settlement": 500, "harbour": 300, "default": 500 },
     "similarNameDistanceM": { "bay": 1500 },
+    "genericBayWords": ["ormos", "όρμος", "ορμος", "bay", "baie", "baia", "kolpos", "κόλπος", "κολπος", "cove", "uvala", "zaljev", "limani", "λιμάνι"],
     "uncertainDistanceFactor": 2,
     "wikidataLinkDistanceM": 1000,
     "geonamesNewObjectRadiusM": 500,

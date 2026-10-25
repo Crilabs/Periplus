@@ -156,38 +156,72 @@ describe("findMatch", () => {
     });
   });
 
-  it("a bay with a similar name 900 m away is the same (similarNameDistanceM, B9)", async () => {
+  it("bay names compare without generic bay words: the pilot pairs Ormos Valariou / Valariou Bay (731 m) and Ormos Taktikoupoleos / Taktikoupoleos Bay (1,045 m) are the same (B9)", async () => {
     await withRollback(async (tx) => {
       expect(rules.similarNameDistanceM.bay).toBe(1500);
-      const id = await insert(tx, "bay", ["Ligea Bay"], point(offset(0)));
-      const match = await findMatch(tx, { type: "bay", point: offset(900), names: ["Ligea Bay"] }, rules);
-      expect(match).toMatchObject({ kind: "same", id, similarity: 1 });
+      const valariou = await insert(tx, "bay", ["Ormos Valariou"], point(offset(0)));
+      expect(await findMatch(tx, { type: "bay", point: offset(731), names: ["Valariou Bay"] }, rules)).toMatchObject({
+        kind: "same",
+        id: valariou,
+        similarity: 1,
+      });
+      const taktikoupoleos = await insert(tx, "bay", ["Ormos Taktikoupoleos"], point(offset(5000)));
+      expect(
+        await findMatch(tx, { type: "bay", point: offset(5000 + 1045), names: ["Taktikoupoleos Bay"] }, rules),
+      ).toMatchObject({ kind: "same", id: taktikoupoleos, similarity: 1 });
+      // A Greek name through its transliteration: Όρμος → ormos is stripped as well.
+      const greek = await insert(tx, "bay", ["Όρμος Βαλαρίου"], point(offset(10000)));
+      expect(await findMatch(tx, { type: "bay", point: offset(10000 + 731), names: ["Valariou Bay"] }, rules)).toMatchObject({
+        kind: "same",
+        id: greek,
+        similarity: 1,
+      });
+      // A name of generic words only keeps its unstripped form.
+      const ormos = await insert(tx, "bay", ["Ormos"], point(offset(15000)));
+      expect(await findMatch(tx, { type: "bay", point: offset(15000 + 100), names: ["Ormos"] }, rules)).toMatchObject({
+        kind: "same",
+        id: ormos,
+        similarity: 1,
+      });
     });
   });
 
-  it("the same bay input 1,700 m away is uncertain, beyond the extended distance x factor nothing", async () => {
+  it("Ormos Agia Marina / Ormos Agia Anna 800 m apart are not the same and get no pair: the generic word carries no similarity", async () => {
     await withRollback(async (tx) => {
-      const id = await insert(tx, "bay", ["Ligea Bay"], point(offset(0)));
-      expect(await findMatch(tx, { type: "bay", point: offset(1700), names: ["Ligea Bay"] }, rules)).toMatchObject({
-        kind: "uncertain",
-        id,
-      });
-      expect(await findMatch(tx, { type: "bay", point: offset(3100), names: ["Ligea Bay"] }, rules)).toEqual({
-        kind: "none",
-      });
+      const { rows } = await tx.execute<{ s: number }>(sql`select similarity('agia marina', 'agia anna') as s`);
+      expect(Number(rows[0]!.s)).toBeLessThan(rules.uncertainTrigramMin);
+      await insert(tx, "bay", ["Ormos Agia Marina"], point(offset(0)));
+      expect(await findMatch(tx, { type: "bay", point: offset(800), names: ["Ormos Agia Anna"] }, rules)).toEqual({ kind: "none" });
+      // Nor within the plain distance: with the shared word the names looked similar enough for a pair.
+      expect(await findMatch(tx, { type: "bay", point: offset(200), names: ["Ormos Agia Anna"] }, rules)).toEqual({ kind: "none" });
     });
   });
 
-  it("a weakly similar bay name (Ligea / Liyea, below trigramMin) keeps today's rules", async () => {
+  it("the uncertain band is not widened (max(D, d x factor)): 1,700 m is uncertain with the Wikidata link distance, none with the bay default", async () => {
     await withRollback(async (tx) => {
-      const { rows } = await tx.execute<{ s: number }>(sql`select similarity('ligea bay', 'liyea bay') as s`);
-      expect(Number(rows[0]!.s)).toBeLessThan(rules.trigramMin);
-      const id = await insert(tx, "bay", ["Ligea Bay"], point(offset(0)));
-      expect(await findMatch(tx, { type: "bay", point: offset(200), names: ["Liyea Bay"] }, rules)).toMatchObject({
-        kind: "uncertain",
-        id,
-      });
-      expect(await findMatch(tx, { type: "bay", point: offset(900), names: ["Liyea Bay"] }, rules)).toEqual({ kind: "none" });
+      const id = await insert(tx, "bay", ["Ormos Klima"], point(offset(0)));
+      const input = (northM: number) => ({ type: "bay" as const, point: offset(northM), names: ["Ormos Klima"] });
+      // d = 1,000 (wikidataLinkDistanceM), D = 1,500: uncertain up to 2,000 m
+      expect(rules.wikidataLinkDistanceM).toBe(1000);
+      const link = { distanceM: rules.wikidataLinkDistanceM };
+      expect(await findMatch(tx, input(1700), rules, link)).toMatchObject({ kind: "uncertain", id });
+      expect(await findMatch(tx, input(2100), rules, link)).toEqual({ kind: "none" });
+      // d = 300 (bay default): D = 1,500 is the whole band
+      expect(await findMatch(tx, input(1400), rules)).toMatchObject({ kind: "same", id });
+      expect(await findMatch(tx, input(1700), rules)).toEqual({ kind: "none" });
+      // An identical name 2,500 m away is nothing: no pair, so nothing merges it automatically.
+      expect(await findMatch(tx, input(2500), rules)).toEqual({ kind: "none" });
+    });
+  });
+
+  it("Ligea Bay (OSM) / Liyea Bay (Wikidata), a transliteration pair, is deliberately not merged: none at the measured 1,057 m, as today", async () => {
+    await withRollback(async (tx) => {
+      // Without the shared generic word the names lie below uncertainTrigramMin: no pair at any distance.
+      const { rows } = await tx.execute<{ s: number }>(sql`select similarity('ligea', 'liyea') as s`);
+      expect(Number(rows[0]!.s)).toBeLessThan(rules.uncertainTrigramMin);
+      await insert(tx, "bay", ["Ligea Bay"], point(offset(0)));
+      expect(await findMatch(tx, { type: "bay", point: offset(1057), names: ["Liyea Bay"] }, rules)).toEqual({ kind: "none" });
+      expect(await findMatch(tx, { type: "bay", point: offset(200), names: ["Liyea Bay"] }, rules)).toEqual({ kind: "none" });
     });
   });
 

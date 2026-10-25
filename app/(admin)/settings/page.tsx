@@ -242,6 +242,7 @@ export default async function Page({ searchParams }: PageProps<"/settings">) {
         .map(([type, m]) => `${type} ${m} m`)
         .join(", ") || "–",
     ],
+    ["Allgemeine Buchtwörter", gazetteer.merge.genericBayWords.join(", ")],
     ["Faktor Abstand (unsicher)", String(gazetteer.merge.uncertainDistanceFactor)],
     ["Wikidata-Verknüpfung bis", `${gazetteer.merge.wikidataLinkDistanceM} m`],
     ["GeoNames neues Objekt ab", `${gazetteer.merge.geonamesNewObjectRadiusM} m`],

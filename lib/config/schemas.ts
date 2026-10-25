@@ -385,6 +385,11 @@ export const gazetteerSchema = z.strictObject({
      * point lies up to ~1 km from the OSM bay); the distance used is the larger of this and `distanceM`.
      */
     similarNameDistanceM: z.strictObject(distanceMByType),
+    /**
+     * Words a bay name carries in any language (B9): stripped token-wise from both sides (normalized) before the trigram
+     * comparison of bays in `findMatch`, so "Ormos Valariou" and "Valariou Bay" are one name.
+     */
+    genericBayWords: z.array(z.string().min(1)),
     uncertainDistanceFactor: z.number().min(1),
     wikidataLinkDistanceM: z.number().positive(),
     geonamesNewObjectRadiusM: z.number().positive(),

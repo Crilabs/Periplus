@@ -308,6 +308,9 @@ describe("loadConfig", () => {
     expect(c.gazetteer.wikidata.classes.Q23442).toBe("island");
     expect(c.gazetteer.geonames.featureCodes.PPLA2).toBe("settlement");
     expect(c.gazetteer.merge.distanceM.default).toBe(500);
+    // Generic bay words are stripped token-wise from normalized names: each must normalize to one non-empty token.
+    expect(c.gazetteer.merge.genericBayWords).toContain("ormos");
+    for (const word of c.gazetteer.merge.genericBayWords) expect(normalizeName(word)).toMatch(/^\S+$/);
     expect(c.gazetteer.landBufferKm).toBe(55);
     expect(c.gazetteer).not.toHaveProperty("poiCoastDistanceKm");
     expect(c.gazetteer).not.toHaveProperty("coastSectionMaxAreaKm2");

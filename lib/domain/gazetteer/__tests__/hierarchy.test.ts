@@ -223,6 +223,22 @@ describe("assignParents", () => {
         expect(await parentOf(db, islet)).toBe(regionId);
       }));
 
+    it("a bay with a rock islet 300 m away and an island 600 m away gets the island", () =>
+      withRollback(async (db) => {
+        await setup(db);
+        const island = await insert(db, "island", ISLAND);
+        await land(db, ISLAND);
+        await land(db, box(25.0, 35.333, 25.5, 35.5)); // mainland ~3 km north of the bay
+        // an islet polygon ~310 m north of the bay: outside the buffer, nearer than the island
+        const rock = box(25.149, 35.3082, 25.151, 35.3086);
+        const islet = await insert(db, "islet", rock);
+        await land(db, rock);
+        const bay = await insert(db, "bay", point(25.15, OFF));
+        await assignAll(db);
+        expect(await parentOf(db, bay)).toBe(island);
+        expect(await parentOf(db, islet)).toBe(island);
+      }));
+
     it("a bay 1,500 m off the island keeps the subdivision", () =>
       withRollback(async (db) => {
         const { regionId } = await setup(db);

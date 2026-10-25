@@ -43,8 +43,10 @@ const EXPECTED_BY_TYPE = {
   islet: 14,
   cape: 38,
   strait: 5,
-  // 3 Wikidata items that are a harbour and a bay are harbours without OSM counterpart, no longer bays (B9)
-  bay: 34,
+  // B9: 3 Wikidata items that are a harbour and a bay are harbours without OSM counterpart, no longer bays (37 → 34);
+  // the GeoNames entries "Ormos Valariou" and "Ormos Taktikoupoleos" link to the Wikidata bays "Valariou Bay" and
+  // "Taktikoupoleos Bay" once bay names compare without generic words (34 → 32).
+  bay: 32,
   harbour: 14,
   settlement: 79,
 };

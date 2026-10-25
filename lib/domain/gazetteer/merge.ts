@@ -41,6 +41,17 @@ function searchKeys(names: string[]): string[] {
   return [...keys];
 }
 
+/** The generic words normalized like the names they are stripped from, each one token, without duplicates. */
+function genericWords(words: string[]): string[] {
+  return [...new Set(words.map(normalizeName))].filter((w) => w !== "");
+}
+
+/** The normalized `name` without the tokens in `words`; the name itself when nothing would be left. */
+function stripGenericWords(name: string, words: string[]): string {
+  const kept = name.split(" ").filter((w) => !words.includes(w)).join(" ");
+  return kept === "" ? name : kept;
+}
+
 /**
  * Looks for a valid, unmerged object of the same type group (`island`/`islet` together, else the same
  * type) that is the input object. Distance `d` = `opts.distanceM`, else `rules.distanceM[type]`, else the
@@ -48,11 +59,13 @@ function searchKeys(names: string[]): string[] {
  * "Within distance" means `≤` that distance between the input point and the candidate's centroid; for an
  * island/islet candidate with an area geometry it means the point lies in the polygon (its distance is then
  * measured to the polygon). Similarity = the highest pg_trgm similarity over all valid names of the candidate
- * and all input names (with transliterations). `same`: similarity `≥ trigramMin` and within `D`;
- * `uncertain`: (`≥ trigramMin` and `≤ D × uncertainDistanceFactor`) or (`≥ uncertainTrigramMin` and within
- * `d`). Of several candidates `same` wins over `uncertain`, then the higher similarity, then the
- * smaller distance. With `opts.excludeGeonamesOnly`, objects known only from GeoNames (origin `geonames`, no
- * OSM or Wikidata ID) are no candidates.
+ * and all input names (with transliterations); a bay's names are compared on both sides without the generic
+ * words of `rules.genericBayWords` ("Ormos Valariou" ~ "Valariou Bay"), a name of generic words only as it is.
+ * `same`: similarity `≥ trigramMin` and within `D`; `uncertain`: (`≥ trigramMin` and
+ * `≤ max(D, d × uncertainDistanceFactor)`) or (`≥ uncertainTrigramMin` and within `d`). Of several candidates
+ * `same` wins over `uncertain`, then the higher similarity, then the smaller distance. With
+ * `opts.excludeGeonamesOnly`, objects known only from GeoNames (origin `geonames`, no OSM or Wikidata ID) are no
+ * candidates.
  */
 export async function findMatch(
   db: Db,
@@ -60,12 +73,14 @@ export async function findMatch(
   rules: MergeRules,
   opts?: { distanceM?: number; excludeGeonamesOnly?: boolean },
 ): Promise<Match> {
-  const keys = searchKeys(input.names);
+  const generic = input.type === "bay" ? genericWords(rules.genericBayWords) : [];
+  const keys = [...new Set(searchKeys(input.names).map((k) => stripGenericWords(k, generic)))];
   if (keys.length === 0) return { kind: "none" };
   const d = opts?.distanceM ?? rules.distanceM[input.type] ?? rules.distanceM.default;
-  // the distance for a strong name match (similarity ≥ trigramMin)
+  // the distance for a strong name match (similarity ≥ trigramMin), and the band of its uncertain match: not wider
+  // than today's d × factor unless D itself reaches farther
   const strongD = Math.max(d, rules.similarNameDistanceM[input.type] ?? 0);
-  const maxM = strongD * rules.uncertainDistanceFactor;
+  const maxM = Math.max(strongD, d * rules.uncertainDistanceFactor);
   const islandGroup = ISLAND_GROUP.includes(input.type);
   const types = typeGroup(input.type);
   const excludeGeonamesOnly = opts?.excludeGeonamesOnly
@@ -74,17 +89,22 @@ export async function findMatch(
   const { lon, lat } = input.point;
   const dLat = maxM / MIN_M_PER_DEG;
   const dLon = maxM / (MIN_M_PER_DEG * Math.max(Math.cos((lat * Math.PI) / 180), 0.01));
-  const keyArray = sql`array[${sql.join(
-    keys.map((k) => sql`${k}`),
-    sql`, `,
-  )}]::text[]`;
+  const textArray = (values: string[]) => sql`array[${sql.join(values.map((v) => sql`${v}`), sql`, `)}]::text[]`;
+  const keyArray = textArray(keys);
+  // the candidate's normalized name as compared: a bay's without the generic words, unless nothing would be left
+  const candidateName =
+    generic.length > 0
+      ? sql`coalesce(nullif(array_to_string(array(
+          select w from unnest(string_to_array(n.name_normalized, ' ')) w where w <> all(${textArray(generic)})), ' '), ''),
+          n.name_normalized)`
+      : sql`n.name_normalized`;
 
   const { rows } = await db.execute<{ id: string; similarity: number; distance_m: number; polygon: boolean; within: boolean }>(sql`
     with p as (select ST_SetSRID(ST_MakePoint(${lon}, ${lat}), 4326) as g)
     select c.id, c.similarity, c.distance_m, c.polygon, c.within
     from (
       select o.id,
-             (select max(similarity(n.name_normalized, k))
+             (select max(similarity(${candidateName}, k))
               from geo_names n, unnest(${keyArray}) k
               where n.geo_object_id = o.id and n.valid_to is null) as similarity,
              x.distance_m,
