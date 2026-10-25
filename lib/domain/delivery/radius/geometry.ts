@@ -1,4 +1,4 @@
-import type { Region } from "@/contract";
+import type { Region } from "@/contract/v3_0";
 import type { DeliveryConfig } from "@/lib/config";
 import { tileBbox } from "@/lib/domain/tiles";
 import { distanceNm, distanceToPolygonNm, EARTH_RADIUS_NM, round5 } from "../geo";

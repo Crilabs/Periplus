@@ -1,6 +1,6 @@
 import { eq, sql, type InferSelectModel } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
-import { CONTRACT_FILES, CONTRACT_SCHEMAS, SCHEMA_VERSION, type ContractFile, type CoverageEntry, type Manifest } from "@/contract";
+import { CONTRACT_FILES, CONTRACT_SCHEMAS, SCHEMA_VERSION, type ContractFile, type CoverageEntry, type Manifest } from "@/contract/v3_0";
 import { getConfig, type DeliveryConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { radiusPackageRequests, radiusPackages } from "@/lib/db/schema/radius";

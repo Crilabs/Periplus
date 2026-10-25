@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gt, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Archive } from "@/lib/adapters/s3";
-import { CONTRACT_FILES, IMAGE_FILE_PATTERN, type ChangeEntry, type ChangesFile, type ContractFile, type Manifest, type Spot, type SpotsFile } from "@/contract";
+import { CONTRACT_FILES, IMAGE_FILE_PATTERN, type ChangeEntry, type ChangesFile, type ContractFile, type Manifest, type Spot, type SpotsFile } from "@/contract/v3_0";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { deliveries } from "@/lib/db/schema/deliveries";

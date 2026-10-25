@@ -1,6 +1,6 @@
 import { and, count, eq, gt, lte } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
-import type { ChangeEntry, HighlightsFile, RegionsFile, SpotsFile } from "@/contract";
+import type { ChangeEntry, HighlightsFile, RegionsFile, SpotsFile } from "@/contract/v3_0";
 import type { Db } from "@/lib/db/client";
 import { deliveries } from "@/lib/db/schema";
 import { mergeChanges } from "../changes";

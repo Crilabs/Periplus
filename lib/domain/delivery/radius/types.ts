@@ -1,15 +1,4 @@
-import type {
-  CoverageEntry,
-  Highlight,
-  HighlightsFile,
-  Manifest,
-  Region,
-  RegionsFile,
-  Spot,
-  SpotsFile,
-  WeatherPoint,
-  WeatherPointsFile,
-} from "@/contract";
+import type { CoverageEntry, Highlight, HighlightsFile, Manifest, Region, RegionsFile, Spot, SpotsFile, WeatherPoint, WeatherPointsFile } from "@/contract/v3_0";
 
 /*
  * Input and output of `composeRadiusPackage` (spec 18, "Woraus es gebaut wird"): the current valid packages of the

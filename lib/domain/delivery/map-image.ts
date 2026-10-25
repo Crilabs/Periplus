@@ -1,4 +1,4 @@
-import type { PlaceImage } from "@/contract";
+import type { PlaceImage } from "@/contract/v3_0";
 import type { DeliverableImage } from "./types";
 
 /*

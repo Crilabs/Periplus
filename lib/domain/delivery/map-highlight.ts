@@ -1,4 +1,4 @@
-import type { HighlightBody } from "@/contract";
+import type { HighlightBody } from "@/contract/v3_0";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { distanceNm, round5 } from "./geo";

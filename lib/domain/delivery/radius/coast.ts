@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import type { CoastCollection, CoastFeature } from "@/contract";
+import type { CoastCollection, CoastFeature } from "@/contract/v3_0";
 import type { Db } from "@/lib/db/client";
 import { utmSridFor } from "@/lib/domain/geometry/projection";
 import { onGrid, simplified, sortFeatures } from "../coast";

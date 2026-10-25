@@ -1,5 +1,5 @@
-import { CONTRACT_SCHEMAS, type CoastCollection, type ContractFile, type FileScope, type Highlight, type Spot } from "@/contract";
-import { GOOGLE_PLACE_ID_PATTERN, highlightCategory, OSM_ID_PATTERN, WIKIDATA_ID_PATTERN } from "@/contract/v2";
+import { CONTRACT_SCHEMAS, type CoastCollection, type ContractFile, type FileScope, type Highlight, type Spot } from "@/contract/v3_0";
+import { GOOGLE_PLACE_ID_PATTERN, highlightCategory, OSM_ID_PATTERN, WIKIDATA_ID_PATTERN } from "@/contract/v3_0";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
 import { normalizeName } from "@/lib/domain/gazetteer/names";

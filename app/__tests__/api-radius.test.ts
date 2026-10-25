@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChangeEntry, Manifest } from "@/contract";
+import type { ChangeEntry, Manifest } from "@/contract/v3_0";
 import type { Archive } from "@/lib/adapters/s3";
 import type { Db } from "@/lib/db/client";
 import { createApiClient } from "@/lib/domain/api-clients";

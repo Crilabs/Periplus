@@ -1,6 +1,6 @@
-import type { RegionBody } from "@/contract";
+import type { RegionBody } from "@/contract/v3_0";
 import type { z } from "zod";
-import type { regionType } from "@/contract/v2";
+import type { regionType } from "@/contract/v3_0";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import { distanceNm, distanceToPolygonNm, round5 } from "./geo";
 import type { LonLat, PassageSource, RegionSource } from "./types";

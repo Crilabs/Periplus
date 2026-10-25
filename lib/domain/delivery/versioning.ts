@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { sql } from "drizzle-orm";
-import type { HighlightBody, RegionBody, SpotBody } from "@/contract";
+import type { HighlightBody, RegionBody, SpotBody } from "@/contract/v3_0";
 import type { Db } from "@/lib/db/client";
 import type { DeliveredObjectType } from "@/lib/db/schema/deliveries";
 import { canonicalJson } from "@/lib/domain/facts/schema";

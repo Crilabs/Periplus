@@ -1,4 +1,4 @@
-import type { Manifest } from "@/contract";
+import type { Manifest } from "@/contract/v3_0";
 import type { Archive } from "@/lib/adapters/s3";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";

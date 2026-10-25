@@ -1,5 +1,5 @@
 import { and, inArray, sql } from "drizzle-orm";
-import type { ChangeEntry, HighlightBody, RegionBody, SpotBody } from "@/contract";
+import type { ChangeEntry, HighlightBody, RegionBody, SpotBody } from "@/contract/v3_0";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { changeEvents, type ChangeSeverity, type ChangeType } from "@/lib/db/schema";

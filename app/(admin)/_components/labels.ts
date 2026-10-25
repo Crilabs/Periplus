@@ -32,7 +32,7 @@ import type { DeliveryStatus } from "@/lib/db/schema/deliveries";
 import type { PageKind } from "@/lib/db/schema/research";
 import type { BerthSignalKind, Tone } from "@/lib/db/schema/research-extract";
 import type { ComparisonAttribute, ComparisonMethod, ComparisonResultValue, MetricKey } from "@/lib/db/schema/quality";
-import type { ChangeEntry, ContractFile } from "@/contract";
+import type { ChangeEntry, ContractFile } from "@/contract/v3_0";
 import type { CheckName } from "@/lib/domain/delivery/validate";
 import type { PreviewOmission } from "@/lib/domain/delivery/view";
 import type { MergeRefusal } from "@/lib/domain/place-merge";

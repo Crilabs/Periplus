@@ -10,13 +10,11 @@ import {
   latLon,
   longitude,
   month,
+  nearbyCategory,
   osmId,
   provenanceSource,
   publicId,
-  sourceRef,
-  textDe,
   unit,
-  versionFields,
   wikidataId,
 } from "./common";
 import { placeImageSchema } from "./image";
@@ -48,6 +46,47 @@ export const hazardKind = z.enum([
   "fishFarm",
   "other",
 ]);
+
+/**
+ * A free fact about the spot or about something on land (contract 4.0). A landside fact points at the `nearby` entry of
+ * its object by `id`; without a match it carries only the `name` the text gave (coordinates are never guessed).
+ */
+export const factSchema = z
+    .strictObject({
+    id: publicId("fc"),
+    subject: z.discriminatedUnion("kind", [
+      z.strictObject({ kind: z.literal("spot") }),
+      z.strictObject({ kind: z.literal("landside"), id: publicId("hl").nullable(), name: z.string().min(1).nullable() }),
+    ]),
+    text: z.string().min(1),
+    observedAt: isoDate.nullable(),
+    tone: z.enum(["positive", "negative", "neutral"]).nullable(),
+    safety: z.boolean(),
+    mentions: count,
+  })
+  .refine((f) => f.subject.kind === "spot" || f.subject.id !== null || f.subject.name !== null, {
+    message: "a landside fact needs an id or a name",
+    path: ["subject"],
+  });
+
+/** Where a dinghy or a crew can get ashore: a mapped point or a description. */
+export const landingPointSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.enum(["harbour", "pier", "slipway", "beach", "shore"]), position: latLon }),
+  z.strictObject({ kind: z.literal("text"), description: z.string().min(1) }),
+]);
+
+/** Something reachable on land from the spot, by its public `hl_` id. */
+export const nearbyEntrySchema = z.strictObject({
+  id: publicId("hl"),
+  category: nearbyCategory,
+  name: z.string().min(1),
+  names: z
+    .array(z.strictObject({ lang: z.string().min(2), name: z.string().min(1), script: z.enum(["latin", "greek"]) }))
+    .optional(),
+  position: latLon,
+  distanceM: count,
+  access: z.enum(["foot", "transport"]),
+});
 
 export const spotSchema = z.strictObject({
   id: publicId("sp"),
@@ -138,9 +177,6 @@ export const spotSchema = z.strictObject({
     sourcesCount: count,
     lastObserved: isoDate.nullable(),
   }),
-  highlightIds: z.array(publicId("hl")).optional(),
-  /** Per category with at least one highlight or candidate in reach: how much there is beyond the highlights; contract 2.2. */
-  highlightLevels: z.partialRecord(highlightCategory, z.enum(["none", "some", "many"])).optional(),
   externalRefs: z
     .strictObject({
       googlePlaceIds: z.partialRecord(highlightCategory, z.array(googlePlaceId)),
@@ -148,10 +184,8 @@ export const spotSchema = z.strictObject({
       wikidataId: wikidataId.nullable(),
     })
     .optional(),
-  summary: textDe.optional(),
   /** Title and further views, best first (rank, sort order, slot); contract 2.1. */
   images: z.array(placeImageSchema).min(1).optional(),
-  sources: z.array(sourceRef).optional(),
   /** Per attribute, flat (`shelter`, `services.taverna` …). */
   provenance: z.record(
     z.string().min(1),
@@ -159,9 +193,18 @@ export const spotSchema = z.strictObject({
   ),
   regionId: publicId("rg").nullable().optional(),
   mergedInto: publicId("sp").nullable(),
-  ...versionFields,
+  /** Date of the berth state the spot was built from; null for an excluded spot without a state (contract 4.0). */
+  asOf: isoDate.nullable(),
+  /** Core value keys the state has no value for, so the app can show the gap (contract 4.0). */
+  gaps: z.array(z.string().min(1)),
+  facts: z.array(factSchema),
+  landingPoints: z.array(landingPointSchema),
+  nearby: z.array(nearbyEntrySchema),
 });
 
 export type Spot = z.infer<typeof spotSchema>;
-/** A spot without its version fields: what the content hash is taken over. */
-export type SpotBody = Omit<Spot, "profileVersion" | "validFrom">;
+export type Fact = z.infer<typeof factSchema>;
+export type LandingPoint = z.infer<typeof landingPointSchema>;
+export type NearbyEntry = z.infer<typeof nearbyEntrySchema>;
+/** A spot without `asOf`: what the content hash is taken over. */
+export type SpotBody = Omit<Spot, "asOf">;

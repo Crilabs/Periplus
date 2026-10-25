@@ -1,17 +1,7 @@
 import { and, desc, eq, sql, type InferSelectModel } from "drizzle-orm";
 import { PgTransaction } from "drizzle-orm/pg-core";
 import type { Archive } from "@/lib/adapters/s3";
-import {
-  CONTRACT_FILES,
-  SCHEMA_VERSION,
-  type ChangeEntry,
-  type ContractFile,
-  type Highlight,
-  type Manifest,
-  type Region,
-  type Spot,
-  type SpotBody,
-} from "@/contract";
+import { CONTRACT_FILES, SCHEMA_VERSION, type ChangeEntry, type ContractFile, type Highlight, type Manifest, type Region, type Spot, type SpotBody } from "@/contract/v3_0";
 import { getConfig } from "@/lib/config";
 import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
 import type { DeliveryConfig, ImagesConfig } from "@/lib/config/schemas";

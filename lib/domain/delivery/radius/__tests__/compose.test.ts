@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Highlight, Region, Spot } from "@/contract";
-import { highlightsFileSchema, manifestSchema, regionsFileSchema, spotsFileSchema, weatherPointsFileSchema } from "@/contract/v2";
+import type { Highlight, Region, Spot } from "@/contract/v3_0";
+import { highlightsFileSchema, manifestSchema, regionsFileSchema, spotsFileSchema, weatherPointsFileSchema } from "@/contract/v3_0";
 import { getConfig } from "@/lib/config";
 import type { DeliveryPackage } from "@/lib/domain/delivery/types";
 import { HIGHLIGHT, REGION, SPOT_A, SPOT_M, SUBDIVISION_ID, WEATHER_POINT, validPackage } from "@/test/fixtures/delivery/package";

@@ -1,4 +1,4 @@
-import type { HighlightBody, RegionBody, SpotBody } from "@/contract";
+import type { HighlightBody, RegionBody, SpotBody } from "@/contract/v3_0";
 import { getConfig } from "@/lib/config";
 import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
 import type { DeliveryConfig, ImagesConfig } from "@/lib/config/schemas";

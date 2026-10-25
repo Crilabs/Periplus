@@ -1,7 +1,7 @@
 import { asc, eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Archive } from "@/lib/adapters/s3";
-import type { ChangesFile, HighlightsFile, Manifest, SpotsFile } from "@/contract";
+import type { ChangesFile, HighlightsFile, Manifest, SpotsFile } from "@/contract/v3_0";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { deliveredObjects, deliveries, documents, highlightSelections, places, profileSummaries, textShingles } from "@/lib/db/schema";

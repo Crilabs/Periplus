@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { eq, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Manifest, SpotsFile } from "@/contract";
+import type { Manifest, SpotsFile } from "@/contract/v3_0";
 import type { Archive } from "@/lib/adapters/s3";
 import type { Db } from "@/lib/db/client";
 import { deliveries, profileSummaries, textShingles } from "@/lib/db/schema";
@@ -507,7 +507,7 @@ describe("GET /api/v3/schema/[version]/[file]", () => {
         }
       }
       for (const [version, file] of [
-        ["4.0", "spots.schema.json"],
+        ["5.0", "spots.schema.json"],
         ["1.0", "secrets.schema.json"],
         ["1.0", "spots.json"],
         ["1.0", "../spots.schema.json"],

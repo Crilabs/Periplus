@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import type { SpotsFile } from "@/contract";
+import type { SpotsFile } from "@/contract/v3_0";
 import { profileSummaries, tiles } from "@/lib/db/schema";
 import { mergePlaceInto } from "@/lib/domain/place-merge";
 import { insertProfile, provenanceEntry } from "@/test/consolidation";

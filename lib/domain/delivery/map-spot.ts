@@ -1,5 +1,5 @@
-import { httpUrl } from "@/contract/v2/common";
-import type { SpotBody } from "@/contract";
+import { httpUrl } from "@/contract/v3_0/common";
+import type { SpotBody } from "@/contract/v3_0";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import type { PlaceKind, HighlightCategory } from "@/lib/db/schema/geo";
 import { derivedBerthable } from "@/lib/domain/consolidation/berthable";

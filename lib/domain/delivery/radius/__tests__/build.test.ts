@@ -1,8 +1,8 @@
 import { and, eq, sql } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
 import type { Archive } from "@/lib/adapters/s3";
-import { CONTRACT_SCHEMAS, SCHEMA_VERSION, type CoastCollection, type ContractFile, type Manifest, type SpotsFile } from "@/contract";
-import { manifestSchema } from "@/contract/v2";
+import { CONTRACT_SCHEMAS, SCHEMA_VERSION, type CoastCollection, type ContractFile, type Manifest, type SpotsFile } from "@/contract/v3_0";
+import { manifestSchema } from "@/contract/v3_0";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geoObjects, radiusPackageRequests, radiusPackages, subdivisions } from "@/lib/db/schema";

@@ -1,12 +1,4 @@
-import type {
-  ChangesFile,
-  CoastCollection,
-  HighlightsFile,
-  Manifest,
-  RegionsFile,
-  SpotsFile,
-  WeatherPointsFile,
-} from "@/contract";
+import type { ChangesFile, CoastCollection, HighlightsFile, Manifest, RegionsFile, SpotsFile, WeatherPointsFile } from "@/contract/v3_0";
 import type { GeoObjectType, PlaceKind, PlaceStatus, HighlightCategory } from "@/lib/db/schema/geo";
 import type { DocType } from "@/lib/db/schema/sources";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";

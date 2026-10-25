@@ -1,5 +1,5 @@
-import type { Highlight, Region, Spot, WeatherPoint } from "@/contract";
-import { TEIL_B_EXAMPLE } from "@/contract/__tests__/fixtures";
+import type { Highlight, Region, Spot, WeatherPoint } from "@/contract/v3_0";
+import { TEIL_B_EXAMPLE } from "@/contract/__tests__/fixtures-v3_0";
 import type { DeliveryPackage } from "@/lib/domain/delivery/types";
 
 /*

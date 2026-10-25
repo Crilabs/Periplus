@@ -1,13 +1,5 @@
 import { sql } from "drizzle-orm";
-import type {
-  CoastCollection,
-  CoverageEntry,
-  HighlightsFile,
-  RegionsFile,
-  Spot,
-  SpotsFile,
-  WeatherPointsFile,
-} from "@/contract";
+import type { CoastCollection, CoverageEntry, HighlightsFile, RegionsFile, Spot, SpotsFile, WeatherPointsFile } from "@/contract/v3_0";
 import type { Archive } from "@/lib/adapters/s3";
 import type { Db } from "@/lib/db/client";
 import { deliveryNames } from "@/lib/domain/gazetteer/names";

@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import type { SpotBody } from "@/contract";
-import { TEIL_B_EXAMPLE } from "@/contract/__tests__/fixtures";
+import type { SpotBody } from "@/contract/v3_0";
+import { TEIL_B_EXAMPLE } from "@/contract/__tests__/fixtures-v3_0";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { deliveredObjects, deliveries, geoObjects } from "@/lib/db/schema";

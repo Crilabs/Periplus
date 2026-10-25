@@ -1,6 +1,6 @@
 import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
-import type { ChangeEntry, ChangesFile, Spot, SpotBody } from "@/contract";
+import type { ChangeEntry, ChangesFile, Spot, SpotBody } from "@/contract/v3_0";
 import type { Db } from "@/lib/db/client";
 import { deliveredObjects, deliveries, geoObjects, places, subdivisions, type DeliveryStatus } from "@/lib/db/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";

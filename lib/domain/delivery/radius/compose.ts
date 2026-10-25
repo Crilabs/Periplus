@@ -1,4 +1,4 @@
-import { SCHEMA_VERSION, type Manifest, type Spot } from "@/contract";
+import { SCHEMA_VERSION, type Manifest, type Spot } from "@/contract/v3_0";
 import type { DeliveryConfig } from "@/lib/config";
 import { distanceNm } from "../geo";
 import { circleBbox, circlePolygon, regionTouchesCircle, tileTouchesCircle } from "./geometry";

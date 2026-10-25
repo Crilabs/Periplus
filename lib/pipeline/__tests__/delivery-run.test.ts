@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ChangesFile, Manifest, SpotsFile } from "@/contract";
+import type { ChangesFile, Manifest, SpotsFile } from "@/contract/v3_0";
 import type { Db } from "@/lib/db/client";
 import { deliveries, geoObjects, profiles, profileSummaries, runs, subdivisions, textShingles } from "@/lib/db/schema";
 import { setDeliveryArchive } from "@/lib/domain/delivery/archive";

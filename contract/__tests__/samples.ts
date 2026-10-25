@@ -1,7 +1,5 @@
 import type {
-  ChangesFile,
   CoastCollection,
-  HighlightsFile,
   Manifest,
   RegionsFile,
   SpotsFile,
@@ -12,9 +10,8 @@ import { spotsFile, TEIL_B_EXAMPLE } from "./fixtures";
 const SUBDIVISION = "sd_01J9X4M0A1B2C3D4E5F6G7H8J9";
 const AREA = "ar_01J9X4M0A1B2C3D4E5F6G7H8JA";
 const REGION = "rg_01J9X4KZ0A1B2C3D4E5F6G7H8J";
-const HIGHLIGHT = "hl_01J9X4KQ3P2N1M0Z9K8J7H6G5F";
 const envelope = {
-  schemaVersion: "3.0" as const,
+  schemaVersion: "4.0" as const,
   scope: { type: "subdivision" as const, id: SUBDIVISION, dataVersion: 2 },
   generatedAt: "2026-10-19T08:00:00.000Z",
 };
@@ -32,14 +29,12 @@ const square: [number, number][][] = [
 export const SAMPLE_FILES: {
   "manifest.json": Manifest;
   "spots.json": SpotsFile;
-  "highlights.json": HighlightsFile;
   "regions.json": RegionsFile;
   "coast.geojson": CoastCollection;
   "weather-points.json": WeatherPointsFile;
-  "changes.json": ChangesFile;
 } = {
   "manifest.json": {
-    schemaVersion: "3.0",
+    schemaVersion: "4.0",
     scope: {
       type: "subdivision",
       subdivision: {
@@ -60,10 +55,10 @@ export const SAMPLE_FILES: {
     generatedAt: "2026-10-19T08:00:00.000Z",
     bbox: [23, 37, 23.75, 38],
     tiles: [
-      { id: "q025:812:508", lastRunAt: "2026-10-18T22:10:00.000Z", profilesAsOf: "2026-10-18" },
-      { id: "q025:813:508", lastRunAt: null, profilesAsOf: null },
+      { id: "q025:812:508", lastRunAt: "2026-10-18T22:10:00.000Z", statesAsOf: "2026-10-18" },
+      { id: "q025:813:508", lastRunAt: null, statesAsOf: null },
     ],
-    objectCounts: { spots: 1, highlights: 1, regions: 1, weatherPoints: 1, coastFeatures: 3, changes: 1 },
+    objectCounts: { spots: 1, regions: 1, weatherPoints: 1, coastFeatures: 3 },
     licenses: [
       {
         name: "ODbL-1.0",
@@ -76,27 +71,6 @@ export const SAMPLE_FILES: {
     files: [{ name: "spots.json", sha256: "a".repeat(64), bytes: 1234 }],
   },
   "spots.json": { ...spotsFile([TEIL_B_EXAMPLE]), scope: envelope.scope },
-  "highlights.json": {
-    ...envelope,
-    highlights: [
-      {
-        id: HIGHLIGHT,
-        name: "Taverna Vathi",
-        category: "food",
-        importance: 2,
-        position: { lat: 37.6085, lon: 23.3399 },
-        spotIds: [TEIL_B_EXAMPLE.id],
-        regionId: REGION,
-        season: { months: [6, 7, 8, 9] },
-        summary: { de: "Taverne am Strand." },
-        sources: [{ url: "https://example.org/vathi", kind: "travelGuide", observedAt: "2025-05-01" }],
-        externalRefs: { googlePlaceId: null, osmId: "node/42", wikidataId: null },
-        score: { confidence: 0.6, sourcesCount: 1, lastObserved: "2025-05-01" },
-        profileVersion: 1,
-        validFrom: "2026-10-19",
-      },
-    ],
-  },
   "regions.json": {
     ...envelope,
     regions: [
@@ -146,21 +120,6 @@ export const SAMPLE_FILES: {
         position: { lat: 37.62, lon: 23.3 },
         kind: "region",
         regionId: REGION,
-      },
-    ],
-  },
-  "changes.json": {
-    ...envelope,
-    previousDataVersion: 1,
-    changes: [
-      {
-        objectType: "spot",
-        objectId: TEIL_B_EXAMPLE.id,
-        event: "updated",
-        fields: ["shelter"],
-        severity: "safety",
-        summary: { de: "Schutz aus Südost geändert." },
-        profileVersion: 3,
       },
     ],
   },

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { SpotBody } from "@/contract";
-import { spotSchema } from "@/contract/v2";
+import type { SpotBody } from "@/contract/v3_0";
+import { spotSchema } from "@/contract/v3_0";
 import { loadConfig } from "@/lib/config";
 import { excludeValue } from "@/lib/domain/consolidation/exclude";
 import type { AttributeProvenance, ProfileSnapshot, ProvenanceOrigin } from "@/lib/domain/consolidation/types";

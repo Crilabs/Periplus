@@ -1,5 +1,5 @@
 import { connection } from "next/server";
-import { SCHEMA_VERSION } from "@/contract";
+import { SCHEMA_VERSION } from "@/contract/v3_0";
 import { withApiClient } from "@/lib/api/handler";
 import { apiBody, apiError } from "@/lib/api/respond";
 import { getDb } from "@/lib/db/client";

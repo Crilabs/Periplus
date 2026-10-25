@@ -1,6 +1,6 @@
 import { desc, eq, sql } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
-import type { CoverageEntry, Manifest } from "@/contract";
+import type { CoverageEntry, Manifest } from "@/contract/v3_0";
 import type { Db } from "@/lib/db/client";
 import { radiusPackageRequests, radiusPackages } from "@/lib/db/schema/radius";
 import { getRadiusPackage, readRadiusFile, type RadiusPackageRow } from "./build";

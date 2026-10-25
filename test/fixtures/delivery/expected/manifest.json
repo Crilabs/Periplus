@@ -113,7 +113,8 @@
         "spots.json#/spots/*/name",
         "spots.json#/spots/*/names",
         "spots.json#/spots/*/externalRefs/osmId",
-        "highlights.json#/highlights/*/name",
+        "spots.json#/spots/*/nearby/*/name",
+        "spots.json#/spots/*/nearby/*/names",
         "regions.json#/regions/*/name",
         "regions.json#/regions/*/names",
         "regions.json#/regions/*/polygon"
@@ -125,8 +126,7 @@
       "url": "https://creativecommons.org/licenses/by/3.0/",
       "files": [],
       "fields": [
-        "spots.json#/spots/*/images",
-        "highlights.json#/highlights/*/images"
+        "spots.json#/spots/*/images"
       ]
     },
     {
@@ -135,8 +135,7 @@
       "url": "https://creativecommons.org/licenses/by/4.0/",
       "files": [],
       "fields": [
-        "spots.json#/spots/*/images",
-        "highlights.json#/highlights/*/images"
+        "spots.json#/spots/*/images"
       ]
     },
     {
@@ -145,8 +144,7 @@
       "url": "https://spacedata.copernicus.eu/collections/copernicus-digital-elevation-model",
       "files": [],
       "fields": [
-        "spots.json#/spots/*/images",
-        "highlights.json#/highlights/*/images"
+        "spots.json#/spots/*/images"
       ]
     }
   ],

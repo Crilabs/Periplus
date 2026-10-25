@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { CONTRACT_FILES } from "@/contract";
-import { spotsFile, TEIL_B_EXAMPLE } from "@/contract/__tests__/fixtures";
-import { SAMPLE_FILES } from "@/contract/__tests__/samples";
+import { CONTRACT_FILES } from "@/contract/v3_0";
+import { spotsFile, TEIL_B_EXAMPLE } from "@/contract/__tests__/fixtures-v3_0";
+import { SAMPLE_FILES } from "@/contract/__tests__/samples-v3_0";
 import { checkJsonSchema } from "../schema-check";
 
 const ex = TEIL_B_EXAMPLE;

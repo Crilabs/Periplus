@@ -1,0 +1,1430 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "periplus:contract/4.0/spots.schema.json",
+  "title": "Periplus Data Contract 4.0 – spots.json",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "4.0"
+    },
+    "scope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "subdivision"
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^sd_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "dataVersion": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "dataVersion"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "radius"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{16}$"
+            }
+          },
+          "required": [
+            "type",
+            "key"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "spots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^sp_[0-9A-HJKMNP-TV-Z]{26}$"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "anchorage",
+              "port",
+              "marina",
+              "mooringField"
+            ],
+            "description": "marina: leisure harbour where recreational boats berth, including the town quay of an island harbour where yachts moor stern-to without operator or website, even if ferries also use the mole. anchorage: a place where one can anchor. mooringField: a place where a recreational boat moors to a buoy. port: commercial or industrial harbour (ferries, freight, fishing, shipyard) without berths for recreational boats."
+          },
+          "berthable": {
+            "description": "Charter crew can moor here on a short stay",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "contact": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "vhf": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "phone": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "url": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uri",
+                        "pattern": "^https?://"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "vhf",
+                  "phone",
+                  "url"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How to call the marina or harbour"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "lang": {
+                  "type": "string",
+                  "minLength": 2
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "script": {
+                  "type": "string",
+                  "enum": [
+                    "latin",
+                    "greek"
+                  ]
+                }
+              },
+              "required": [
+                "lang",
+                "name",
+                "script"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "position": {
+            "type": "object",
+            "properties": {
+              "lat": {
+                "type": "number",
+                "minimum": -90,
+                "maximum": 90,
+                "description": "Decimal degrees (WGS84) with at most 5 decimals"
+              },
+              "lon": {
+                "type": "number",
+                "minimum": -180,
+                "maximum": 180,
+                "description": "Decimal degrees (WGS84) with at most 5 decimals"
+              }
+            },
+            "required": [
+              "lat",
+              "lon"
+            ],
+            "additionalProperties": false
+          },
+          "anchorPosition": {
+            "type": "object",
+            "properties": {
+              "lat": {
+                "type": "number",
+                "minimum": -90,
+                "maximum": 90,
+                "description": "Decimal degrees (WGS84) with at most 5 decimals"
+              },
+              "lon": {
+                "type": "number",
+                "minimum": -180,
+                "maximum": 180,
+                "description": "Decimal degrees (WGS84) with at most 5 decimals"
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "computed",
+                  "text",
+                  "observed",
+                  "review"
+                ]
+              }
+            },
+            "required": [
+              "lat",
+              "lon",
+              "confidence",
+              "source"
+            ],
+            "additionalProperties": false
+          },
+          "shelter": {
+            "type": "object",
+            "properties": {
+              "sectors": {
+                "type": "object",
+                "properties": {
+                  "N": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "NE": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "E": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "SE": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "S": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "SW": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "W": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "NW": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "required": [
+                  "N",
+                  "NE",
+                  "E",
+                  "SE",
+                  "S",
+                  "SW",
+                  "W",
+                  "NW"
+                ],
+                "additionalProperties": false
+              },
+              "swell": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "source": {
+                "type": "string",
+                "pattern": "^(?:computed(?:\\+text)?(?:\\+observed)?(?:\\+review)?|text(?:\\+observed)?(?:\\+review)?|observed(?:\\+review)?|review)$"
+              }
+            },
+            "required": [
+              "sectors",
+              "swell",
+              "source"
+            ],
+            "additionalProperties": false
+          },
+          "depth": {
+            "type": "object",
+            "properties": {
+              "min": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "max": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "anchoring": {
+                "type": "object",
+                "properties": {
+                  "min": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "max": {
+                    "anyOf": [
+                      {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "min",
+                  "max"
+                ],
+                "additionalProperties": false
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "source": {
+                "type": "string",
+                "pattern": "^(?:computed(?:\\+text)?(?:\\+observed)?(?:\\+review)?|text(?:\\+observed)?(?:\\+review)?|observed(?:\\+review)?|review)$"
+              }
+            },
+            "required": [
+              "min",
+              "max",
+              "anchoring",
+              "confidence",
+              "source"
+            ],
+            "additionalProperties": false
+          },
+          "seabed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "sand",
+                    "mud",
+                    "weed",
+                    "rock",
+                    "gravel",
+                    "mixed"
+                  ]
+                },
+                "share": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                }
+              },
+              "required": [
+                "type",
+                "share"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "holding": {
+            "type": "string",
+            "enum": [
+              "good",
+              "fair",
+              "poor",
+              "unknown"
+            ]
+          },
+          "limits": {
+            "type": "object",
+            "properties": {
+              "maxDraft": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "maxLength": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "capacity": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "maxDraft",
+              "maxLength",
+              "capacity"
+            ],
+            "additionalProperties": false
+          },
+          "mooring": {
+            "type": "object",
+            "properties": {
+              "types": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "anchor",
+                    "buoy",
+                    "sternTo",
+                    "alongside",
+                    "lineAshore"
+                  ]
+                }
+              },
+              "buoys": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "lineAshoreRequired": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "types",
+              "buoys",
+              "lineAshoreRequired"
+            ],
+            "additionalProperties": false
+          },
+          "services": {
+            "type": "object",
+            "properties": {
+              "water": {
+                "type": "string",
+                "enum": [
+                  "yes",
+                  "no",
+                  "seasonal",
+                  "unknown"
+                ]
+              },
+              "electricity": {
+                "type": "string",
+                "enum": [
+                  "yes",
+                  "no",
+                  "seasonal",
+                  "unknown"
+                ]
+              },
+              "fuel": {
+                "type": "string",
+                "enum": [
+                  "yes",
+                  "no",
+                  "seasonal",
+                  "unknown"
+                ]
+              },
+              "showers": {
+                "type": "string",
+                "enum": [
+                  "yes",
+                  "no",
+                  "seasonal",
+                  "unknown"
+                ]
+              },
+              "shop": {
+                "type": "string",
+                "enum": [
+                  "yes",
+                  "no",
+                  "seasonal",
+                  "unknown"
+                ],
+                "description": "Supermarket or mini market nearby or by text"
+              },
+              "taverna": {
+                "type": "string",
+                "enum": [
+                  "yes",
+                  "no",
+                  "seasonal",
+                  "unknown"
+                ]
+              },
+              "wifi": {
+                "type": "string",
+                "enum": [
+                  "yes",
+                  "no",
+                  "seasonal",
+                  "unknown"
+                ]
+              },
+              "dinghyLanding": {
+                "type": "string",
+                "enum": [
+                  "yes",
+                  "no",
+                  "seasonal",
+                  "unknown"
+                ]
+              }
+            },
+            "required": [
+              "water",
+              "electricity",
+              "fuel",
+              "showers",
+              "shop",
+              "taverna",
+              "wifi",
+              "dinghyLanding"
+            ],
+            "additionalProperties": false
+          },
+          "berth": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "oftenFull",
+                  "seasonFull",
+                  "usuallySpace",
+                  "unknown"
+                ]
+              },
+              "months": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 12
+                }
+              },
+              "sourcesCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "bookable": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "status",
+              "months",
+              "sourcesCount",
+              "bookable"
+            ],
+            "additionalProperties": false
+          },
+          "occupancy": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "month": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 12
+                },
+                "level": {
+                  "type": "string",
+                  "enum": [
+                    "empty",
+                    "moderate",
+                    "full",
+                    "unknown"
+                  ]
+                }
+              },
+              "required": [
+                "month",
+                "level"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "exclude": {
+            "type": "object",
+            "properties": {
+              "excluded": {
+                "type": "boolean"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "anchoringProhibited",
+                      "military",
+                      "cable",
+                      "protectedArea",
+                      "ferryLane",
+                      "unsafe",
+                      "aquaculture"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "detail": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "excluded",
+              "reason",
+              "detail"
+            ],
+            "additionalProperties": false
+          },
+          "hazards": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "rock",
+                    "shoal",
+                    "cable",
+                    "wreck",
+                    "ferryTraffic",
+                    "gusts",
+                    "swellEntry",
+                    "current",
+                    "fishFarm",
+                    "other"
+                  ]
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "kind",
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "seasonNote": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "months": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 12
+                  }
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "months",
+                "text"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "score": {
+            "type": "object",
+            "properties": {
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "popularity": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "quietness": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sourcesCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "lastObserved": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "confidence",
+              "popularity",
+              "quietness",
+              "sourcesCount",
+              "lastObserved"
+            ],
+            "additionalProperties": false
+          },
+          "externalRefs": {
+            "type": "object",
+            "properties": {
+              "googlePlaceIds": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "enum": [
+                    "food",
+                    "supply",
+                    "beach",
+                    "nature",
+                    "active",
+                    "culture",
+                    "town",
+                    "quiet"
+                  ]
+                },
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{10,}$"
+                  }
+                }
+              },
+              "osmId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^(node|way|relation)\\/\\d+$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "wikidataId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^Q\\d+$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "googlePlaceIds",
+              "osmId",
+              "wikidataId"
+            ],
+            "additionalProperties": false
+          },
+          "images": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "photo",
+                    "ai_illustration"
+                  ]
+                },
+                "slot": {
+                  "type": "string",
+                  "pattern": "^(?:title|view-[1-9]\\d*)$"
+                },
+                "file": {
+                  "type": "string",
+                  "pattern": "^images\\/(?:sp|hl)_[0-9A-HJKMNP-TV-Z]{26}-(?:title|view-[1-9]\\d*)\\.jpg$"
+                },
+                "width": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "height": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "alt": {
+                  "type": "object",
+                  "properties": {
+                    "de": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "de"
+                  ],
+                  "additionalProperties": false
+                },
+                "light": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "midday",
+                        "evening"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "observedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "license": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "attribution": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sourceUrl": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uri",
+                      "pattern": "^https?://"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "camera": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "position": {
+                          "type": "array",
+                          "prefixItems": [
+                            {
+                              "type": "number",
+                              "minimum": -180,
+                              "maximum": 180,
+                              "description": "Decimal degrees (WGS84) with at most 5 decimals"
+                            },
+                            {
+                              "type": "number",
+                              "minimum": -90,
+                              "maximum": 90,
+                              "description": "Decimal degrees (WGS84) with at most 5 decimals"
+                            }
+                          ],
+                          "items": false,
+                          "minItems": 2,
+                          "maxItems": 2
+                        },
+                        "heightM": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "viewBearingDeg": {
+                          "type": "number",
+                          "minimum": 0,
+                          "exclusiveMaximum": 360
+                        },
+                        "tiltDeg": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 90
+                        },
+                        "fovDeg": {
+                          "type": "number",
+                          "exclusiveMinimum": 0,
+                          "exclusiveMaximum": 180
+                        }
+                      },
+                      "required": [
+                        "position",
+                        "heightM",
+                        "viewBearingDeg",
+                        "tiltDeg",
+                        "fovDeg"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "slot",
+                "file",
+                "width",
+                "height",
+                "alt",
+                "light",
+                "observedAt",
+                "license",
+                "attribution",
+                "sourceUrl",
+                "camera"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "provenance": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "minLength": 1
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "computed",
+                    "text",
+                    "observed",
+                    "review"
+                  ]
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "observedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "source",
+                "confidence",
+                "observedAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "regionId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^rg_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mergedInto": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^sp_[0-9A-HJKMNP-TV-Z]{26}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "asOf": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gaps": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "facts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^fc_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "subject": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "spot"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "landside"
+                        },
+                        "id": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "pattern": "^hl_[0-9A-HJKMNP-TV-Z]{26}$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "name": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "id",
+                        "name"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "observedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "tone": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "positive",
+                        "negative",
+                        "neutral"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "safety": {
+                  "type": "boolean"
+                },
+                "mentions": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "id",
+                "subject",
+                "text",
+                "observedAt",
+                "tone",
+                "safety",
+                "mentions"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "landingPoints": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "harbour",
+                        "pier",
+                        "slipway",
+                        "beach",
+                        "shore"
+                      ]
+                    },
+                    "position": {
+                      "type": "object",
+                      "properties": {
+                        "lat": {
+                          "type": "number",
+                          "minimum": -90,
+                          "maximum": 90,
+                          "description": "Decimal degrees (WGS84) with at most 5 decimals"
+                        },
+                        "lon": {
+                          "type": "number",
+                          "minimum": -180,
+                          "maximum": 180,
+                          "description": "Decimal degrees (WGS84) with at most 5 decimals"
+                        }
+                      },
+                      "required": [
+                        "lat",
+                        "lon"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "position"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "text"
+                    },
+                    "description": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "description"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "nearby": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^hl_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "category": {
+                  "type": "string",
+                  "enum": [
+                    "food",
+                    "supply",
+                    "beach",
+                    "nature",
+                    "active",
+                    "culture",
+                    "town",
+                    "quiet",
+                    "bakery",
+                    "transport"
+                  ]
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "names": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "lang": {
+                        "type": "string",
+                        "minLength": 2
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "script": {
+                        "type": "string",
+                        "enum": [
+                          "latin",
+                          "greek"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "lang",
+                      "name",
+                      "script"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "position": {
+                  "type": "object",
+                  "properties": {
+                    "lat": {
+                      "type": "number",
+                      "minimum": -90,
+                      "maximum": 90,
+                      "description": "Decimal degrees (WGS84) with at most 5 decimals"
+                    },
+                    "lon": {
+                      "type": "number",
+                      "minimum": -180,
+                      "maximum": 180,
+                      "description": "Decimal degrees (WGS84) with at most 5 decimals"
+                    }
+                  },
+                  "required": [
+                    "lat",
+                    "lon"
+                  ],
+                  "additionalProperties": false
+                },
+                "distanceM": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "access": {
+                  "type": "string",
+                  "enum": [
+                    "foot",
+                    "transport"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "category",
+                "name",
+                "position",
+                "distanceM",
+                "access"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "berthable",
+          "contact",
+          "name",
+          "position",
+          "shelter",
+          "limits",
+          "exclude",
+          "score",
+          "provenance",
+          "mergedInto",
+          "asOf",
+          "gaps",
+          "facts",
+          "landingPoints",
+          "nearby"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "scope",
+    "generatedAt",
+    "spots"
+  ],
+  "additionalProperties": false
+}

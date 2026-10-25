@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
-import { CONTRACT_FILES, type ContractFile } from "@/contract";
+import { CONTRACT_FILES, type ContractFile } from "@/contract/v3_0";
 import type { Db } from "@/lib/db/client";
 import { deliveredObjects, deliveries, geoNames, subdivisions, tiles } from "@/lib/db/schema";
 import { newPublicId } from "@/lib/domain/ids";

@@ -9,7 +9,7 @@ import { newPublicId } from "@/lib/domain/ids";
 import { insertMention, insertMentionFact, insertExtraction, insertProfile, provenanceEntry } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
 import { seedDeliverySubdivision, spotAProvenance, SPOT_A_ATTRIBUTES } from "@/test/fixtures/delivery/subdivision";
-import { spotSchema } from "@/contract/v2";
+import { spotSchema } from "@/contract/v3_0";
 import { insertNamedObject, insertTestRun, insertTestSubdivision } from "@/test/text";
 import { SubdivisionNotFound, arrayParam, loadSubdivisionScope } from "../load";
 import { mapSpot } from "../map-spot";

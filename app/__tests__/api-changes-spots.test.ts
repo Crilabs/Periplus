@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChangeEntry, ChangesFile, Spot, SpotsFile } from "@/contract";
+import type { ChangeEntry, ChangesFile, Spot, SpotsFile } from "@/contract/v3_0";
 import type { Archive } from "@/lib/adapters/s3";
 import type { Db } from "@/lib/db/client";
 import { places, profileSummaries, subdivisions } from "@/lib/db/schema";
