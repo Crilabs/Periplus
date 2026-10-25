@@ -37,7 +37,6 @@ const formatBytes = (n: number) => (n >= 1_048_576 ? `${(n / 1_048_576).toFixed(
 
 const OBJECT_LABELS: Array<[string, string]> = [
   ["spots", "Spots"],
-  ["highlights", "Highlights"],
   ["regions", "Regionen"],
   ["weatherPoints", "Wetterpunkte"],
   ["coastFeatures", "Küstenobjekte"],
@@ -175,6 +174,14 @@ export default async function Page({ searchParams }: PageProps<"/deliveries/radi
                       <span>{fmt.int(result.manifest.objectCounts[k as keyof typeof result.manifest.objectCounts] ?? 0)}</span>
                     </li>
                   ))}
+                  <li className="flex justify-between gap-3">
+                    <span>Fakten in den Spots</span>
+                    <span>{fmt.int(result.spotStats.facts)}</span>
+                  </li>
+                  <li className="flex justify-between gap-3">
+                    <span>Dinge an Land in den Spots</span>
+                    <span>{fmt.int(result.spotStats.nearby)}</span>
+                  </li>
                 </ul>
               </div>
               <div>

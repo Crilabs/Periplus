@@ -31,9 +31,9 @@ export const metadata: Metadata = { title: "Lieferungen" };
 /** Object counts of a row in a short, fixed order. */
 const COUNT_LABELS: Array<[string, string]> = [
   ["spots", "Spots"],
-  ["highlights", "Highlights"],
   ["regions", "Regionen"],
-  ["changes", "Änderungen"],
+  ["weatherPoints", "Wetterpunkte"],
+  ["coastFeatures", "Küstenobjekte"],
 ];
 
 const pageParam = z.coerce.number().int().min(1).catch(1);
