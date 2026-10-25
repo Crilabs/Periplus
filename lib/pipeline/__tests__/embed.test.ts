@@ -229,6 +229,8 @@ describe("startEmbedBackfillRun", () => {
           return jobs.map((j) => j.id);
         },
       } as unknown as PgBoss;
+      // a chunk without an embedding: without one the run plans nothing and ends at once, so no second start is refused
+      await insertChunks(tx, await insertVersion(tx, await insertSource(tx), null), ["Unembedded chunk"]);
       const { id } = await startEmbedBackfillRun(tx, boss, "embed-test");
       const [run] = await tx.select().from(runs).where(eq(runs.id, id));
       expect(run).toMatchObject({ stages: [EMBED_STAGE], params: { all: true }, scopeType: "system", scopeId: "embeddings" });
