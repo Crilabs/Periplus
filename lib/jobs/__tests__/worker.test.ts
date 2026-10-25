@@ -449,17 +449,17 @@ describe("worker", () => {
     probe.missPauses = true;
     try {
       await enqueueStageJobs(boss, "system.ping", id, "ping", [{ key: "0", budgetOnce: true }]);
-      // The worker keeps the queue running: it never sees the pause, only the job deferred to the pause's end.
-      await waitFor(
-        async () => (await boss.findJobs<JobData>("system.ping", { data: { runId: id, budgetDeferred: true }, queued: true })).length === 1,
-        15_000,
-      );
-      await resumeQueue(db, "system.ping", "test");
-      await waitFor(async () => (await getRun(db, id))!.status === "finished", 10_000);
+      // The worker keeps the queue running and never sees the pause, so it releases the job it deferred to the pause's
+      // end (next UTC midnight) at once; waiting for the deferred job to sit queued would race that release.
+      await waitFor(async () => (await getRun(db, id))!.status === "finished", 15_000);
     } finally {
       probe.missPauses = false;
+      // The pause is real in the database: lift it even when the wait failed, or every later test on this queue stalls.
+      await resumeQueue(db, "system.ping", "test");
     }
     expect((await getRun(db, id))!.stages[0]).toMatchObject({ total: 1, done: 1, failed: 0 });
+    // It finished through the deferred job, not the first attempt.
+    expect(await boss.findJobs<JobData>("system.ping", { data: { runId: id, budgetDeferred: true } })).toHaveLength(1);
   }, 40_000);
 
   it("retry moves the job back and the later success flips the outcome", async () => {
