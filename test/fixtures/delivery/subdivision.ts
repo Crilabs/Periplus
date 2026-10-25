@@ -146,6 +146,14 @@ export async function seedBerthState(
   });
 }
 
+/** The core values of a place's berth state changed (as a research run rewriting it does): `patch` sets each key's value, `updatedAt` is the new state date. */
+export async function changeBerthCore(tx: Db, placeId: string, patch: Record<string, unknown>, updatedAt: Date): Promise<void> {
+  const [row] = await tx.select().from(berthStates).where(eq(berthStates.placeId, placeId));
+  const core = { ...row!.core };
+  for (const [key, value] of Object.entries(patch)) core[key] = { ...core[key]!, value };
+  await tx.update(berthStates).set({ core, updatedAt }).where(eq(berthStates.placeId, placeId));
+}
+
 export type FixturePlace = { placeId: string; geoObjectId: string; publicId: string | null };
 
 export type DeliveryFixture = {
@@ -470,8 +478,10 @@ async function seedSubdivision(tx: Db, opts: SeedOptions): Promise<DeliveryFixtu
   // Berth states (contract 4.0): A complete with facts, a landing point and the taverna nearby; M with shelter only;
   // B without `shelter.W`; C (no_anchoring) and K have none.
   await tx.execute(sql`update places set anchor_position = ST_SetSRID(ST_MakePoint(${posAnchor.lon}, ${posAnchor.lat}), 4326) where id = ${A.placeId}`);
+  // fixed fact ids: they reach the package files (`fc_…`), so a snapshot test needs them stable
+  let factNo = 0;
   const stateFact = (patch: Partial<BerthStateFact>): BerthStateFact => ({
-    factId: newId(), subject: "berth", subjectName: null, subjectCategory: null, statement: "x", observedAt: "2025-06-10", tone: null, safety: false, mentions: 1, ...patch,
+    factId: `0199f0a0-0000-7000-8000-00000000f${String(++factNo).padStart(3, "0")}`, subject: "berth", subjectName: null, subjectCategory: null, statement: "x", observedAt: "2025-06-10", tone: null, safety: false, mentions: 1, ...patch,
   });
   await seedBerthState(tx, A.placeId, {
     core: spotACore(factId),

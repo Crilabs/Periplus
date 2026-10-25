@@ -1,4 +1,4 @@
-import type { ChangesFile, CoastCollection, HighlightsFile, Manifest, RegionsFile, SpotsFile, WeatherPointsFile } from "@/contract/v3_0";
+import type { CoastCollection, Manifest, RegionsFile, SpotsFile, WeatherPointsFile } from "@/contract/v2";
 import type { GeoObjectType, PlaceKind, PlaceStatus, HighlightCategory } from "@/lib/db/schema/geo";
 import type { berthStates } from "@/lib/db/schema/research-state";
 import type { DocType } from "@/lib/db/schema/sources";
@@ -143,15 +143,13 @@ export type SubdivisionScope = {
   passages: PassageSource[];
 };
 
-/** A package as built and validated (spec 08): the manifest and its files; `changes.json` from the second delivery on. */
+/** A package as built and validated (contract 4.0): the manifest and its files; no highlights, no change feed. */
 export type DeliveryPackage = {
   manifest: Manifest;
   files: {
     "spots.json": SpotsFile;
-    "highlights.json": HighlightsFile;
     "regions.json": RegionsFile;
     "coast.geojson": CoastCollection;
     "weather-points.json": WeatherPointsFile;
-    "changes.json"?: ChangesFile;
   };
 };

@@ -6,9 +6,8 @@ import { deliveredObjects, deliveries, geoNames, subdivisions, tiles } from "@/l
 import { newPublicId } from "@/lib/domain/ids";
 import { manifestSubdivision } from "@/lib/domain/delivery/read";
 import { contentTypeOf, serializeFile, sha256Hex } from "@/lib/domain/delivery/serialize";
-import type { DeliveryPackage } from "@/lib/domain/delivery/types";
 import { insertTestSubdivision, insertTestTile } from "@/test/text";
-import { AREA_ID, HIGHLIGHT, REGION, SPOT_A, SPOT_M, SUBDIVISION_ID, validPackage, WEATHER_POINT } from "./package";
+import { AREA_ID, HIGHLIGHT, REGION, SPOT_A, SPOT_M, SUBDIVISION_ID, validPackage, WEATHER_POINT, type DeliveryPackage } from "./package";
 
 /*
  * Radius package tests (spec 18): subdivision packages stored as a build would store them, without a build. A second

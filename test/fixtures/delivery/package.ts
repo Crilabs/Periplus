@@ -1,6 +1,18 @@
-import type { Highlight, Region, Spot, WeatherPoint } from "@/contract/v3_0";
+import type { ChangesFile, CoastCollection, Highlight, HighlightsFile, Manifest, Region, RegionsFile, Spot, SpotsFile, WeatherPoint, WeatherPointsFile } from "@/contract/v3_0";
 import { TEIL_B_EXAMPLE } from "@/contract/__tests__/fixtures-v3_0";
-import type { DeliveryPackage } from "@/lib/domain/delivery/types";
+
+/** A 3.0 package (highlights, change feed): what the radius composition still reads until task 4 moves it to 4.0 (`package-v4.ts`). */
+export type DeliveryPackage = {
+  manifest: Manifest;
+  files: {
+    "spots.json": SpotsFile;
+    "highlights.json": HighlightsFile;
+    "regions.json": RegionsFile;
+    "coast.geojson": CoastCollection;
+    "weather-points.json": WeatherPointsFile;
+    "changes.json"?: ChangesFile;
+  };
+};
 
 /*
  * A small valid package (no database rows): the second delivery of an area around 21.0° E / 35.2° N. An island (one

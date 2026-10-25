@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import { eq, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Manifest, SpotsFile } from "@/contract/v3_0";
+import type { Manifest, SpotsFile } from "@/contract";
 import type { Archive } from "@/lib/adapters/s3";
 import type { Db } from "@/lib/db/client";
-import { deliveries, profileSummaries, textShingles } from "@/lib/db/schema";
+import { berthStates, deliveries, textShingles } from "@/lib/db/schema";
 import { createApiClient, revokeApiClient } from "@/lib/domain/api-clients";
 import { buildDelivery } from "@/lib/domain/delivery/build";
 import { setDeliveryArchive } from "@/lib/domain/delivery/read";
@@ -13,14 +13,13 @@ import { shingleHashes } from "@/lib/domain/documents/shingles";
 import { newId } from "@/lib/domain/ids";
 import { decideAccess } from "@/lib/security/access";
 import { seedImage } from "@/test/fixtures/delivery/images";
-import { insertProfile, provenanceEntry } from "@/test/consolidation";
 import { testDb, withRollback } from "@/test/db";
-import { seedDeliverySubdivision, SPOT_A_ATTRIBUTES, spotAProvenance, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
+import { changeBerthCore, seedDeliverySubdivision, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
 import { deleteTestObjects, memoryArchive, testArchive } from "@/test/s3";
 import { insertTestVersion } from "@/test/text";
 
 /*
- * The delivery API's subdivision, package, file and schema endpoints (plan Task 11, contract 3.0 under `/api/v3`),
+ * The delivery API's subdivision, package, file and schema endpoints (plan Task 11; the routes move to `/api/v4` in task 5),
  * called directly with the test transaction as database (ruling M6-P21) and packages built by `buildDelivery` on the
  * fixture subdivision. Build dates lie in
  * the future: the fixture's geo rows are valid from the database's `current_date`.
@@ -77,41 +76,19 @@ async function setup(tx: Db, archive: Archive = memoryArchive()) {
   return { f, archive, key };
 }
 
-/** A second profile version of A with a changed east shelter: the next build is data version 2. */
-async function changeA(tx: Db, f: DeliveryFixture): Promise<void> {
-  await insertProfile(
-    tx,
-    f.places.A.geoObjectId,
-    { ...SPOT_A_ATTRIBUTES, anchor_position: { lon: 21.1301, lat: 35.1445 }, "place.position": { lon: f.positions.A[0], lat: f.positions.A[1] }, "shelter.E": 0.8 },
-    { ...spotAProvenance(f.factId), "place.position": provenanceEntry("gazetteer", { confidence: 1 }) },
-    { version: 2, sourcesCount: 3, documentsCount: 1, confidence: 0.72 },
-  );
-  await tx.insert(profileSummaries).values({
-    geoObjectId: f.places.A.geoObjectId,
-    profileVersion: 2,
-    text: "Tiefe Bucht mit gutem Schutz von West bis Nord, Sandgrund mit Seegras.",
-    status: "ok",
-    attempts: 1,
-    model: "test",
-    promptVersion: 1,
-  });
-}
+/** A's berth state rewritten with a changed east shelter: the next build is data version 2. */
+const changeA = (tx: Db, f: DeliveryFixture) => changeBerthCore(tx, f.places.A.placeId, { "shelter.E": 0.8 }, new Date("2026-10-23T08:00:00Z"));
 
-/** A's summary becomes a 16-word copy of an archived text: the next build is rejected (`verbatim_text`). */
-async function copySummaryOfA(tx: Db, f: DeliveryFixture, profileVersion = 1): Promise<void> {
+/** A's landside fact becomes a 16-word copy of an archived text: the next build is rejected (`verbatim_text`). */
+async function copyFactOfA(tx: Db, f: DeliveryFixture): Promise<void> {
   const salt = newId().replace(/-/g, "").replace(/\d/g, (d) => "ghijklmnop"[Number(d)]!);
   const words = Array.from({ length: 30 }, (_, i) => `${salt}${"abcdefghijklmnopqrstuvwxyz"[i % 26]}`);
   const v = await insertTestVersion(tx, [words.join(" ")]);
   await tx.insert(textShingles).values(shingleHashes(words.join(" "), 15).map((shingleHash) => ({ shingleHash, chunkId: v.chunkIds[0]! })));
-  await tx.insert(profileSummaries).values({
-    geoObjectId: f.places.A.geoObjectId,
-    profileVersion,
-    text: `Die Bucht: ${words.slice(2, 18).join(" ")}.`,
-    status: "ok",
-    attempts: 1,
-    model: "test",
-    promptVersion: 9,
-  });
+  const [row] = await tx.select().from(berthStates).where(eq(berthStates.placeId, f.places.A.placeId));
+  const statement = `Die Bucht: ${words.slice(2, 18).join(" ")}.`;
+  const facts = row!.facts.map((x) => (x.subject === "landside" ? { ...x, statement } : x));
+  await tx.update(berthStates).set({ facts, updatedAt: new Date("2026-10-23T08:00:00Z") }).where(eq(berthStates.placeId, f.places.A.placeId));
 }
 
 beforeEach(() => {
@@ -224,7 +201,7 @@ describe("GET /api/v3/subdivisions/[subdivision]/package", () => {
         expect(manifest).toEqual(stored);
         expect(links).toEqual(
           Object.fromEntries(
-            ["manifest.json", "spots.json", "highlights.json", "regions.json", "coast.geojson", "weather-points.json", "changes.json"].map((file) => [
+            ["manifest.json", "spots.json", "regions.json", "coast.geojson", "weather-points.json"].map((file) => [
               file,
               `/api/v3/subdivisions/${f.subdivisionPublicId}/package/${file}?dataVersion=2`,
             ]),
@@ -233,7 +210,7 @@ describe("GET /api/v3/subdivisions/[subdivision]/package", () => {
       }
     }));
 
-  it("the first package has no changes.json link; an unknown subdivision or one without a package is 404", () =>
+  it("a package links no changes.json and no highlights.json; an unknown subdivision or one without a package is 404", () =>
     withRollback(async (tx) => {
       const { f, archive, key } = await setup(tx);
       const none = await getPackage(f.subdivisionPublicId, key);
@@ -242,7 +219,8 @@ describe("GET /api/v3/subdivisions/[subdivision]/package", () => {
       await build(tx, archive, f);
       const body = (await (await getPackage(f.subdivisionPublicId, key)).json()) as { links: Record<string, string> };
       expect(Object.keys(body.links)).not.toContain("changes.json");
-      expect(Object.keys(body.links)).toHaveLength(6);
+      expect(Object.keys(body.links)).not.toContain("highlights.json");
+      expect(Object.keys(body.links)).toHaveLength(5);
       expect((await getPackage("sd_01J9ZD00000000000000000999", key)).status).toBe(404);
       expect((await getPackage("XT-UNKNOWN", key)).status).toBe(404);
       // an island, a sailing area or its key is no subdivision
@@ -291,7 +269,7 @@ describe("GET /api/v3/subdivisions/[subdivision]/package/[file]", () => {
         const { f, key } = await setup(tx, archive);
         await build(tx, archive, f);
         const prefix = `deliveries/${f.subdivisionKey}/1/`;
-        keys.push(...["manifest.json", "spots.json", "highlights.json", "regions.json", "coast.geojson", "weather-points.json"].map((n) => prefix + n));
+        keys.push(...["manifest.json", "spots.json", "regions.json", "coast.geojson", "weather-points.json"].map((n) => prefix + n));
         const manifest = (await (await getFile(f.subdivisionPublicId, "manifest.json", key)).json()) as Manifest;
         for (const entry of manifest.files) {
           const res = await getFile(f.subdivisionPublicId, entry.name, key);
@@ -300,7 +278,8 @@ describe("GET /api/v3/subdivisions/[subdivision]/package/[file]", () => {
           expect(sha256Hex(bytes), entry.name).toBe(entry.sha256);
           expect(bytes.byteLength).toBe(entry.bytes);
           expect(bytes).toEqual(await archive.get(prefix + entry.name));
-          expect(res.headers.get("periplus-schema-version")).toBe("3.0");
+          // the stored package's own contract version
+          expect(res.headers.get("periplus-schema-version")).toBe("4.0");
           expect(res.headers.get("periplus-data-version")).toBe("1");
           expect(res.headers.get("content-type")).toBe(entry.name === "coast.geojson" ? "application/geo+json" : "application/json");
           expect(res.headers.get("etag")).toBe(`"${entry.sha256.slice(0, 32)}"`);
@@ -322,13 +301,13 @@ describe("GET /api/v3/subdivisions/[subdivision]/package/[file]", () => {
         expect(res.status, query).toBe(200);
         return { version: res.headers.get("periplus-data-version"), a: ((await res.json()) as SpotsFile).spots.find((s) => s.id === f.places.A.publicId)! };
       };
-      expect(await spotA("")).toMatchObject({ version: "2", a: { profileVersion: 2 } });
-      expect(await spotA("?dataVersion=1")).toMatchObject({ version: "1", a: { profileVersion: 1, validFrom: "2040-06-01" } });
+      expect(await spotA("")).toMatchObject({ version: "2", a: { asOf: "2026-10-23" } });
+      expect(await spotA("?dataVersion=1")).toMatchObject({ version: "1", a: { asOf: "2026-10-20" } });
       const v1 = new Uint8Array(await (await getFile(f.subdivisionPublicId, "spots.json", key, "?dataVersion=1")).arrayBuffer());
       expect(v1).toEqual(await archive.get(`deliveries/${f.subdivisionKey}/1/spots.json`));
-      // the first package has no change file
+      // contract 4.0 has no change file, in no version
       expect((await getFile(f.subdivisionPublicId, "changes.json", key, "?dataVersion=1")).status).toBe(404);
-      expect((await getFile(f.subdivisionPublicId, "changes.json", key, "?dataVersion=2")).status).toBe(200);
+      expect((await getFile(f.subdivisionPublicId, "changes.json", key, "?dataVersion=2")).status).toBe(404);
 
       for (const bad of ["0", "-1", "01", "1.0", "abc", "", "1e1"]) {
         const res = await getFile(f.subdivisionPublicId, "spots.json", key, `?dataVersion=${bad}`);
@@ -411,7 +390,7 @@ describe("GET /api/v3/subdivisions/[subdivision]/package/[file]", () => {
     withRollback(async (tx) => {
       const archive = memoryArchive();
       const { f, key } = await setup(tx, archive);
-      await copySummaryOfA(tx, f);
+      await copyFactOfA(tx, f);
       expect(await build(tx, archive, f)).toMatchObject({ status: "rejected", dataVersion: null });
       expect(archive.keys().some((k) => k.includes("/rejected/"))).toBe(true);
       expect((await getPackage(f.subdivisionPublicId, key)).status).toBe(404);
@@ -425,7 +404,7 @@ describe("GET /api/v3/subdivisions/[subdivision]/package/[file]", () => {
     withRollback(async (tx) => {
       const { f, archive, key } = await setup(tx);
       await build(tx, archive, f);
-      await copySummaryOfA(tx, f);
+      await copyFactOfA(tx, f);
       expect(await build(tx, archive, f, LATER)).toMatchObject({ status: "rejected" });
       const res = await getPackage(f.subdivisionPublicId, key);
       expect(res.headers.get("periplus-data-version")).toBe("1");

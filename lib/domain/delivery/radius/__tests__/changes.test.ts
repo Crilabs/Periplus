@@ -9,7 +9,7 @@ import { EAST, eastPackage, insertSecondSubdivision, storeSubdivisionPackage } f
 import { seedDeliverySubdivision, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
 import { memoryArchive } from "@/test/s3";
 import { buildDelivery } from "../../build";
-import type { DeliveryPackage } from "../../types";
+import type { DeliveryPackage } from "@/test/fixtures/delivery/package";
 import { getRadiusPackage, readRadiusFile, type RadiusPackageRow } from "../build";
 import { radiusChangesSince } from "../changes";
 

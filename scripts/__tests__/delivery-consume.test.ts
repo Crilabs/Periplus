@@ -87,7 +87,7 @@ describe("consumePackage", () => {
       const result = await consumePackage({ baseUrl: `${BASE}/`, key, subdivision: f.subdivisionKey, fetch: routeFetch() });
       expect(result.dataVersion).toBe(1);
       expect(result.files.map((x) => x.name).sort()).toEqual(
-        ["coast.geojson", "highlights.json", "manifest.json", "regions.json", "spots.json", "weather-points.json"].sort(),
+        ["coast.geojson", "manifest.json", "regions.json", "spots.json", "weather-points.json"].sort(),
       );
       for (const file of result.files) expect(file).toEqual({ name: file.name, sha256Ok: true, schemaErrors: [] });
       expect(result.ok).toBe(true);
@@ -128,7 +128,7 @@ describe("consumePackage", () => {
       const { f, key } = await builtSubdivision(tx);
       const result = await consumePackage({ baseUrl: `${BASE}/periplus/`, key, subdivision: f.subdivisionKey, fetch: routeFetch(undefined, "/periplus") });
       expect(result.ok).toBe(true);
-      expect(result.files).toHaveLength(6);
+      expect(result.files).toHaveLength(5);
     }));
 
   it("a manifest link to another origin is not fetched, so the key never leaves the base URL's host (bundle H review)", () =>
@@ -154,7 +154,7 @@ describe("consumePackage", () => {
     withRollback(async (tx) => {
       const { f, key } = await builtSubdivision(tx);
       for (const [rewrite, message] of [
-        [(m: Record<string, unknown>) => void delete m.scope, /has no scope \(schemaVersion 3\.0\); a contract 3\.0 subdivision package needs one/],
+        [(m: Record<string, unknown>) => void delete m.scope, /has no scope \(schemaVersion 4\.0\); a subdivision package needs one/],
         [(m: Record<string, unknown>) => void (m.scope = { type: "radius", key: "0123456789abcdef" }), /answered a radius package, not a subdivision package/],
       ] as const) {
         const paths: string[] = [];

@@ -18,7 +18,7 @@ import {
   type ObjectEvents,
 } from "../changes";
 import { openBuildSnapshot, type BuildSnapshot } from "../snapshot";
-import { assignVersions, contentHash, type DeliveredEntry } from "../versioning";
+import { assignVersions, contentHash, type DeliveredEntry, type ObjectDraft } from "../versioning";
 
 const cfg = loadConfig("config").delivery;
 const BODY: SpotBody = Object.fromEntries(
@@ -41,7 +41,7 @@ const entry = (body: object, patch: Partial<DeliveredEntry> = {}): DeliveredEntr
 /** The changes of one spot from `before` (delivered at version 2) to `after`. */
 function changesOf(before: SpotBody | null, after: SpotBody | null, events = new Map<string, ObjectEvents>()): ChangeEntry[] {
   const latest = new Map(before ? [[SP, entry(before)]] : []);
-  const { objects, removed } = assignVersions(after ? [{ type: "spot", id: SP, geoObjectId: GEO, body: after }] : [], latest, TODAY);
+  const { objects, removed } = assignVersions((after ? [{ type: "spot", id: SP, geoObjectId: GEO, body: after }] : []) as unknown as ObjectDraft[], latest, TODAY);
   return buildChanges({ objects, removed, previousBodies: new Map(before ? [[SP, before]] : []), eventSeverity: events, cfg: cfg.severity });
 }
 
@@ -190,13 +190,13 @@ describe("buildChanges", () => {
       ...spots.map((id) => ({ type: "spot" as const, id, geoObjectId: null, body: { ...BODY, id } })),
       { type: "highlight" as const, id: hl, geoObjectId: null, body: { ...BODY, id: hl } as never },
     ];
-    const { objects, removed } = assignVersions(drafts, new Map(), TODAY);
+    const { objects, removed } = assignVersions(drafts as unknown as ObjectDraft[], new Map(), TODAY);
     const out = buildChanges({ objects, removed, previousBodies: new Map(), eventSeverity: new Map(), cfg: cfg.severity });
     expect(out.map((e) => e.objectId)).toEqual([hl, spots[1], spots[0]]);
   });
 
   it("an update without the previous body is an error", () => {
-    const { objects, removed } = assignVersions([{ type: "spot", id: SP, geoObjectId: GEO, body: sectors(0.1) }], new Map([[SP, entry(BODY)]]), TODAY);
+    const { objects, removed } = assignVersions([{ type: "spot", id: SP, geoObjectId: GEO, body: sectors(0.1) }] as unknown as ObjectDraft[], new Map([[SP, entry(BODY)]]), TODAY);
     expect(() => buildChanges({ objects, removed, previousBodies: new Map(), eventSeverity: new Map(), cfg: cfg.severity })).toThrow(/previous body/);
   });
 

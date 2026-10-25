@@ -1,15 +1,16 @@
 import { asc, eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Archive } from "@/lib/adapters/s3";
-import type { ChangesFile, HighlightsFile, Manifest, SpotsFile } from "@/contract/v3_0";
+import type { Manifest, SpotsFile } from "@/contract";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { deliveredObjects, deliveries, documents, highlightSelections, places, profileSummaries, textShingles } from "@/lib/db/schema";
+import { berthStates, deliveredObjects, deliveries, places, textShingles } from "@/lib/db/schema";
+import type { BerthStateFact } from "@/lib/db/schema/research-state";
 import { shingleHashes } from "@/lib/domain/documents/shingles";
 import { newId } from "@/lib/domain/ids";
-import { insertExtraction, insertMention, insertMentionFact, insertProfile, provenanceEntry } from "@/test/consolidation";
+import { insertProfile, provenanceEntry } from "@/test/consolidation";
 import { startWhileLocked, testDb, withRollback } from "@/test/db";
-import { seedDeliverySubdivision, SPOT_A_ATTRIBUTES, SPOT_A_SUMMARY, spotAProvenance, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
+import { seedDeliverySubdivision, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
 import { deleteTestObjects, memoryArchive, testArchive } from "@/test/s3";
 import { insertTestVersion } from "@/test/text";
 import { SubdivisionNotFound } from "../load";
@@ -25,7 +26,7 @@ import type { SubdivisionScope } from "../types";
 
 const NOW = new Date("2040-06-01T08:00:00Z");
 const EXPECTED = "../../../../test/fixtures/delivery/expected";
-const FILES = ["manifest.json", "spots.json", "highlights.json", "regions.json", "coast.geojson", "weather-points.json"];
+const FILES = ["manifest.json", "spots.json", "regions.json", "coast.geojson", "weather-points.json"];
 
 const decode = (bytes: Uint8Array | null) => (bytes === null ? null : new TextDecoder().decode(bytes));
 async function readJson<T>(archive: Archive, key: string): Promise<T> {
@@ -46,16 +47,18 @@ async function objectRows(tx: Db, subdivisionId: string) {
     .orderBy(asc(deliveredObjects.publicId), asc(deliveredObjects.profileVersion));
 }
 
-/** A second profile version of A with `patch` applied to its attributes, its summary carried over. */
-async function changeA(tx: Db, f: DeliveryFixture, patch: Record<string, unknown>): Promise<void> {
-  await insertProfile(
-    tx,
-    f.places.A.geoObjectId,
-    { ...SPOT_A_ATTRIBUTES, anchor_position: { lon: 21.1301, lat: 35.1445 }, "place.position": { lon: f.positions.A[0], lat: f.positions.A[1] }, ...patch },
-    { ...spotAProvenance(f.factId), "place.position": provenanceEntry("gazetteer", { confidence: 1 }) },
-    { version: 2, sourcesCount: 3, documentsCount: 1, confidence: 0.72 },
-  );
-  await tx.insert(profileSummaries).values({ geoObjectId: f.places.A.geoObjectId, profileVersion: 2, text: SPOT_A_SUMMARY, status: "ok", attempts: 1, model: "test", promptVersion: 1 });
+/** The berth state of A rewritten (as the research does): `patch` of its core values and/or its facts, `updatedAt` as given. */
+async function rewriteStateA(tx: Db, f: DeliveryFixture, o: { core?: Record<string, unknown>; facts?: BerthStateFact[]; updatedAt: Date }): Promise<void> {
+  const [row] = await tx.select().from(berthStates).where(eq(berthStates.placeId, f.places.A.placeId));
+  const core = { ...row!.core };
+  for (const [key, value] of Object.entries(o.core ?? {})) core[key] = { ...core[key]!, value };
+  await tx.update(berthStates).set({ core, facts: o.facts ?? row!.facts, updatedAt: o.updatedAt }).where(eq(berthStates.placeId, f.places.A.placeId));
+}
+
+/** The facts of A's state with the statement of the landside fact replaced. */
+async function factsOfA(tx: Db, f: DeliveryFixture, statement: string): Promise<BerthStateFact[]> {
+  const [row] = await tx.select().from(berthStates).where(eq(berthStates.placeId, f.places.A.placeId));
+  return row!.facts.map((x) => (x.subject === "landside" ? { ...x, statement } : x));
 }
 
 /** `n` words no other text has (a uuid salt in letters plus a running suffix). */
@@ -88,13 +91,25 @@ function seededShuffle(seed: number): <T>(list: T[]) => T[] {
   };
 }
 
-/** Two more sources on every POI and one more name on every region, so every inner list has two or more. */
+/** One more name on every region and a second landside fact and thing on land on A's state, so every inner list has two or more. */
 function withExtras(scope: SubdivisionScope): SubdivisionScope {
-  const extra = (id: string) =>
-    [1, 2].map((n) => ({ url: `https://extra-${n}-${id.toLowerCase()}.test.invalid/page`, docType: "forum" as const, observedAt: `2025-0${n}-01` }));
   return {
     ...scope,
-    pois: scope.pois.map((p) => ({ ...p, sources: [...p.sources, ...extra(p.publicId)] })),
+    spots: scope.spots.map((s) =>
+      s.state && s.state.facts.length > 0
+        ? {
+            ...s,
+            state: {
+              ...s.state,
+              facts: [
+                ...s.state.facts,
+                { ...s.state.facts[0]!, factId: "0199f0a0-0000-7000-8000-00000000e001", statement: "Another note about the anchorage.", observedAt: "2025-07-01", mentions: 1 },
+                { ...s.state.facts[0]!, factId: "0199f0a0-0000-7000-8000-00000000e002", statement: "A third note about the anchorage.", observedAt: "2025-07-01", mentions: 1 },
+              ],
+            },
+          }
+        : s,
+    ),
     regions: scope.regions.map((r) => ({ ...r, names: [...r.names, { lang: "fr", name: `${r.name} (fr)` }] })),
   };
 }
@@ -107,9 +122,14 @@ function shuffled(scope: SubdivisionScope): SubdivisionScope {
     subdivision: { ...scope.subdivision, names: mix(scope.subdivision.names) },
     areas: mix(scope.areas).map((a) => ({ ...a, names: mix(a.names) })),
     tiles: mix(scope.tiles),
-    spots: mix(scope.spots).map((s) => ({ ...s, names: mix(s.names), nearbyObjects: mix(s.nearbyObjects) })),
+    spots: mix(scope.spots).map((s) => ({
+      ...s,
+      names: mix(s.names),
+      nearbyObjects: mix(s.nearbyObjects),
+      state: s.state && { ...s.state, facts: mix(s.state.facts), nearby: mix(s.state.nearby), gaps: mix(s.state.gaps) },
+    })),
     merged: mix(scope.merged),
-    pois: mix(scope.pois).map((p) => ({ ...p, sources: mix(p.sources) })),
+    pois: mix(scope.pois),
     regions: mix(scope.regions).map((r) => ({ ...r, names: mix(r.names) })),
     passages: mix(scope.passages),
   };
@@ -144,7 +164,7 @@ describe("buildDelivery", () => {
     for (const key of keys) expect(await archive.exists(key), key).toBe(false);
   });
 
-  it("the first package has data version 1, no changes.json and versions 1", async () => {
+  it("the first package has data version 1, no change feed and no version fields", async () => {
     await withRollback(async (tx) => {
       const archive = memoryArchive();
       const f = await seedDeliverySubdivision(tx);
@@ -153,8 +173,11 @@ describe("buildDelivery", () => {
       expect(archive.keys()).toEqual(FILES.map((file) => `${prefixOf(f, 1)}${file}`).sort());
 
       const manifest = await readJson<Manifest>(archive, `${prefixOf(f, 1)}manifest.json`);
-      expect(manifest).toMatchObject({ scope: { type: "subdivision", dataVersion: 1, previousDataVersion: null }, generatedAt: NOW.toISOString() });
-      expect(manifest.objectCounts).toEqual({ spots: 3, highlights: 1, regions: 2, weatherPoints: 2, coastFeatures: manifest.objectCounts.coastFeatures, changes: 0 });
+      expect(manifest).toMatchObject({ schemaVersion: "4.0", scope: { type: "subdivision", dataVersion: 1, previousDataVersion: null }, generatedAt: NOW.toISOString() });
+      expect(manifest.objectCounts).toEqual({ spots: 3, regions: 2, weatherPoints: 2, coastFeatures: manifest.objectCounts.coastFeatures });
+      // the tile date is the newest berth state of the tile's spots (A 2026-10-20 in the west, M 2026-10-19 in the east)
+      expect(manifest.tiles.map((t) => t.statesAsOf)).toEqual(expect.arrayContaining(["2026-10-20", "2026-10-19"]));
+      expect(manifest.tiles.every((t) => !("profilesAsOf" in t))).toBe(true);
       // every other file with its hash and size, in contract order
       expect(manifest.files.map((x) => x.name)).toEqual(FILES.slice(1));
       for (const entry of manifest.files) {
@@ -171,7 +194,7 @@ describe("buildDelivery", () => {
         id: result.deliveryId,
         status: "valid",
         dataVersion: 1,
-        schemaVersion: "3.0",
+        schemaVersion: "4.0",
         storagePrefix: prefixOf(f, 1),
         previousDeliveryId: null,
         triggeredBy: "test",
@@ -183,16 +206,39 @@ describe("buildDelivery", () => {
 
       const objects = await objectRows(tx, f.subdivisionId);
       const spots = await readJson<SpotsFile>(archive, `${prefixOf(f, 1)}spots.json`);
-      expect(objects).toHaveLength(spots.spots.length + 1 + 2);
+      expect(objects).toHaveLength(spots.spots.length + 2);
       for (const o of objects) expect(o).toMatchObject({ profileVersion: 1, removed: false, validFrom: "2040-06-01", firstDeliveryId: result.deliveryId });
-      expect(spots.spots.every((s) => s.profileVersion === 1 && s.validFrom === "2040-06-01")).toBe(true);
       expect(objects.find((o) => o.publicId === f.places.A.publicId)).toMatchObject({ objectType: "spot", geoObjectId: f.places.A.geoObjectId });
+      // the objects carry no version fields; a spot carries the date of its berth state
+      for (const s of spots.spots) {
+        expect(s).not.toHaveProperty("profileVersion");
+        expect(s).not.toHaveProperty("validFrom");
+      }
+      expect(spots.spots.map((s) => [s.id, s.asOf])).toEqual(
+        expect.arrayContaining([
+          [f.places.A.publicId, "2026-10-20"],
+          [f.places.M.publicId, "2026-10-19"],
+          [f.places.C.publicId, null],
+        ]),
+      );
 
       const previous = await previousPackage(tx, archive, f.subdivisionId);
       expect(previous!.delivery.id).toBe(result.deliveryId);
       expect([...previous!.spots.keys()]).toEqual(spots.spots.map((s) => s.id));
-      expect(previous!.highlights.has(f.poiPublicId)).toBe(true);
       expect(previous!.regions.has(f.islandPublicId)).toBe(true);
+    });
+  });
+
+  it("no source, link, domain, summary or highlight anywhere in the package files (review focus)", async () => {
+    await withRollback(async (tx) => {
+      const archive = memoryArchive();
+      const f = await seedDeliverySubdivision(tx);
+      expect(await buildDelivery(tx, archive, f.subdivisionId, { now: NOW, inCallerTransaction: true })).toMatchObject({ status: "valid" });
+      for (const file of FILES.filter((x) => x !== "manifest.json" && x !== "coast.geojson")) {
+        const text = decode(await archive.get(`${prefixOf(f, 1)}${file}`))!;
+        expect(text, file).not.toMatch(/https?:\/\/|www\./i);
+        expect(text, file).not.toMatch(/"(sources|summary|highlightIds|highlightLevels|profileVersion|validFrom|url)"/);
+      }
     });
   });
 
@@ -221,16 +267,16 @@ describe("buildDelivery", () => {
       const f = await seedDeliverySubdivision(tx);
       const first = await buildDelivery(tx, archive, f.subdivisionId, { now: NOW, inCallerTransaction: true });
       expect(first).toMatchObject({ status: "valid", dataVersion: 1 });
-      // the package as a 2.3 deployment stored it: same content, older contract version
+      // the package as a 3.0 deployment stored it: older contract version (its files are never read as the base of this one)
       await tx.execute(sql`alter table deliveries disable trigger deliveries_append_only`);
-      await tx.update(deliveries).set({ schemaVersion: "2.3" }).where(eq(deliveries.id, first.deliveryId));
+      await tx.update(deliveries).set({ schemaVersion: "3.0" }).where(eq(deliveries.id, first.deliveryId));
       await tx.execute(sql`alter table deliveries enable trigger deliveries_append_only`);
       const second = await buildDelivery(tx, archive, f.subdivisionId, { now: new Date(NOW.getTime() + 86_400_000), inCallerTransaction: true });
       expect(second).toMatchObject({ status: "valid", dataVersion: 2 });
       const rows = await deliveryRows(tx, f.subdivisionId);
       expect(rows.map((r) => [r.status, r.schemaVersion])).toEqual([
-        ["valid", "2.3"],
         ["valid", "3.0"],
+        ["valid", "4.0"],
       ]);
     });
   });
@@ -248,55 +294,51 @@ describe("buildDelivery", () => {
     expect(mixed.map(([k]) => k)).toEqual(plain.map(([k]) => k));
     expect(mixed).toEqual(plain);
     // the extras reached the files, so the shuffled inner lists count
-    const spots = plain.find(([k]) => k.endsWith("spots.json"))![1]!;
-    expect(spots).toContain("https://extra-2-");
+    expect(plain.find(([k]) => k.endsWith("spots.json"))![1]).toContain("A third note about the anchorage.");
     expect(plain.find(([k]) => k.endsWith("regions.json"))![1]).toContain("(fr)");
   });
 
-  it("a changed shelter value gives data version 2 with one updated change and severity safety", async () => {
+  it("a changed shelter value in the state gives data version 2 and a new asOf for that spot only", async () => {
     await withRollback(async (tx) => {
       const archive = memoryArchive();
       const f = await seedDeliverySubdivision(tx);
       const first = await buildDelivery(tx, archive, f.subdivisionId, { now: NOW, inCallerTransaction: true });
-      await changeA(tx, f, { "shelter.E": 0.8 });
+      await rewriteStateA(tx, f, { core: { "shelter.E": 0.8 }, updatedAt: new Date("2026-10-23T08:00:00Z") });
       const later = new Date("2040-06-02T08:00:00Z");
       const second = await buildDelivery(tx, archive, f.subdivisionId, { now: later, inCallerTransaction: true });
       expect(second).toMatchObject({ status: "valid", dataVersion: 2 });
       expect(second.report.ok).toBe(true);
-
-      const changes = await readJson<ChangesFile>(archive, `${prefixOf(f, 2)}changes.json`);
-      expect(changes).toMatchObject({ scope: { type: "subdivision", id: f.subdivisionPublicId, dataVersion: 2 }, previousDataVersion: 1 });
-      expect(changes.changes).toEqual([
-        {
-          objectType: "spot",
-          objectId: f.places.A.publicId,
-          event: "updated",
-          fields: ["shelter.sectors.E"],
-          severity: "safety",
-          summary: { de: "Geändert: Schutz." },
-          profileVersion: 2,
-        },
-      ]);
+      // no change feed in 4.0
+      expect(archive.keys().filter((k) => k.startsWith(prefixOf(f, 2))).sort()).toEqual(FILES.map((file) => `${prefixOf(f, 2)}${file}`).sort());
       const manifest = await readJson<Manifest>(archive, `${prefixOf(f, 2)}manifest.json`);
       expect(manifest).toMatchObject({ scope: { type: "subdivision", dataVersion: 2, previousDataVersion: 1 } });
-      expect(manifest.objectCounts.changes).toBe(1);
-      expect(manifest.files.map((x) => x.name)).toContain("changes.json");
+      expect(manifest.files.map((x) => x.name)).not.toContain("changes.json");
 
       const spots = await readJson<SpotsFile>(archive, `${prefixOf(f, 2)}spots.json`);
       const a = spots.spots.find((s) => s.id === f.places.A.publicId)!;
-      expect(a).toMatchObject({ profileVersion: 2, validFrom: "2040-06-02" });
       expect(a.shelter.sectors.E).toBe(0.8);
-      // an unchanged spot keeps its version and date
-      expect(spots.spots.find((s) => s.id === f.places.M.publicId)).toMatchObject({ profileVersion: 1, validFrom: "2040-06-01" });
+      expect(a.asOf).toBe("2026-10-23");
+      expect(spots.spots.find((s) => s.id === f.places.M.publicId)!.asOf).toBe("2026-10-19");
 
       const rows = await deliveryRows(tx, f.subdivisionId);
       expect(rows[1]).toMatchObject({ id: second.deliveryId, previousDeliveryId: first.deliveryId, dataVersion: 2 });
+      // only the changed spot got a new object version
       const added = (await objectRows(tx, f.subdivisionId)).filter((o) => o.firstDeliveryId === second.deliveryId);
       expect(added).toEqual([expect.objectContaining({ publicId: f.places.A.publicId, profileVersion: 2, validFrom: "2040-06-02", removed: false })]);
     });
   });
 
-  it("a merged place keeps its last content with mergedInto and event merged", async () => {
+  it("a state rewritten with the same content keeps the package unchanged", async () => {
+    await withRollback(async (tx) => {
+      const archive = memoryArchive();
+      const f = await seedDeliverySubdivision(tx);
+      await buildDelivery(tx, archive, f.subdivisionId, { now: NOW, inCallerTransaction: true });
+      await rewriteStateA(tx, f, { updatedAt: new Date("2026-10-23T08:00:00Z") });
+      expect(await buildDelivery(tx, archive, f.subdivisionId, { now: new Date("2040-06-02T08:00:00Z"), inCallerTransaction: true })).toMatchObject({ status: "unchanged" });
+    });
+  });
+
+  it("a merged place keeps its last content with mergedInto", async () => {
     await withRollback(async (tx) => {
       const archive = memoryArchive();
       const f = await seedDeliverySubdivision(tx);
@@ -308,57 +350,28 @@ describe("buildDelivery", () => {
       expect(second).toMatchObject({ status: "valid", dataVersion: 2 });
       expect(second.report.ok).toBe(true);
       const after = (await readJson<SpotsFile>(archive, `${prefixOf(f, 2)}spots.json`)).spots.find((s) => s.id === f.places.A.publicId)!;
-      expect({ ...after, validFrom: before.validFrom }).toEqual({ ...before, mergedInto: f.places.M.publicId, profileVersion: 2 });
-      expect(after.validFrom).toBe("2040-06-02");
-
-      const changes = await readJson<ChangesFile>(archive, `${prefixOf(f, 2)}changes.json`);
-      expect(changes.changes.find((c) => c.objectId === f.places.A.publicId)).toMatchObject({
-        event: "merged",
-        severity: "notable",
-        summary: { de: `Zusammengelegt mit ${f.places.M.publicId}.` },
-        profileVersion: 2,
-      });
-      // the highlight no longer counts the merged spot
-      expect(changes.changes.find((c) => c.objectId === f.poiPublicId)).toMatchObject({ event: "updated", fields: ["spotIds"] });
+      // the merged spot keeps its last body and its date, carries no images and names its target
+      expect(after).toEqual({ ...before, mergedInto: f.places.M.publicId });
+      expect(Object.keys(after)).toEqual(Object.keys(before));
 
       // a third build carries the same content: nothing changed
       expect(await buildDelivery(tx, archive, f.subdivisionId, { now: new Date("2040-06-03T08:00:00Z"), inCallerTransaction: true })).toMatchObject({ status: "unchanged" });
     });
   });
 
-  it("a no longer selected highlight is removed in the change feed and returns with the same hl_ id (spec 16 review focus 4)", async () => {
+  it("a place taken back from confirmed is missing in the next package and removed in the object versions (review focus 3)", async () => {
     await withRollback(async (tx) => {
       const archive = memoryArchive();
       const f = await seedDeliverySubdivision(tx);
       await buildDelivery(tx, archive, f.subdivisionId, { now: NOW, inCallerTransaction: true });
-      const first = await readJson<HighlightsFile>(archive, `${prefixOf(f, 1)}highlights.json`);
-      const before = first.highlights.find((h) => h.id === f.poiPublicId)!;
-      expect(before.spotIds).toEqual([f.places.A.publicId, f.places.M.publicId]);
+      expect((await readJson<SpotsFile>(archive, `${prefixOf(f, 1)}spots.json`)).spots.map((s) => s.id)).toContain(f.places.M.publicId);
 
-      // no place selects the taverna any more (a re-selection after a stronger candidate appeared)
-      const rows = await tx.select().from(highlightSelections).where(eq(highlightSelections.poiGeoObjectId, f.poiId));
-      expect(rows).toHaveLength(2);
-      await tx.delete(highlightSelections).where(eq(highlightSelections.poiGeoObjectId, f.poiId));
+      await tx.update(places).set({ status: "rejected" }).where(eq(places.id, f.places.M.placeId));
       const second = await buildDelivery(tx, archive, f.subdivisionId, { now: new Date("2040-06-02T08:00:00Z"), inCallerTransaction: true });
       expect(second).toMatchObject({ status: "valid", dataVersion: 2 });
-      expect((await readJson<HighlightsFile>(archive, `${prefixOf(f, 2)}highlights.json`)).highlights).toEqual([]);
-      expect((await readJson<ChangesFile>(archive, `${prefixOf(f, 2)}changes.json`)).changes.find((c) => c.objectId === f.poiPublicId)).toMatchObject({
-        objectType: "highlight",
-        event: "removed",
-      });
-      // the spots no longer name it
-      const spots = await readJson<SpotsFile>(archive, `${prefixOf(f, 2)}spots.json`);
-      expect(spots.spots.flatMap((s) => s.highlightIds ?? [])).not.toContain(f.poiPublicId);
-
-      // selected again: the same hl_ id comes back
-      await tx.insert(highlightSelections).values(rows);
-      const third = await buildDelivery(tx, archive, f.subdivisionId, { now: new Date("2040-06-03T08:00:00Z"), inCallerTransaction: true });
-      expect(third).toMatchObject({ status: "valid", dataVersion: 3 });
-      const back = (await readJson<HighlightsFile>(archive, `${prefixOf(f, 3)}highlights.json`)).highlights;
-      expect(back.map((h) => h.id)).toEqual([f.poiPublicId]);
-      expect(back[0]!.spotIds).toEqual(before.spotIds);
-      const changes = (await readJson<ChangesFile>(archive, `${prefixOf(f, 3)}changes.json`)).changes;
-      expect(changes.find((c) => c.objectId === f.poiPublicId)?.event).not.toBe("removed");
+      expect((await readJson<SpotsFile>(archive, `${prefixOf(f, 2)}spots.json`)).spots.map((s) => s.id)).not.toContain(f.places.M.publicId);
+      const removed = (await objectRows(tx, f.subdivisionId)).find((o) => o.publicId === f.places.M.publicId && o.removed);
+      expect(removed).toMatchObject({ contentHash: "removed", profileVersion: 2, firstDeliveryId: second.deliveryId });
     });
   });
 
@@ -373,8 +386,6 @@ describe("buildDelivery", () => {
       expect(second).toMatchObject({ status: "valid", dataVersion: 2 });
       const spots = await readJson<SpotsFile>(archive, `${prefixOf(f, 2)}spots.json`);
       expect(spots.spots.map((s) => s.id)).not.toContain(f.places.A.publicId);
-      const changes = await readJson<ChangesFile>(archive, `${prefixOf(f, 2)}changes.json`);
-      expect(changes.changes.find((c) => c.objectId === f.places.A.publicId)).toMatchObject({ event: "removed", profileVersion: 2 });
       expect(second.report.warnings).toContainEqual(
         expect.objectContaining({ file: "spots.json", objectId: f.places.A.publicId, message: `Zusammengelegt mit ${f.places.B.publicId}, das nicht geliefert wird: als entfernt gemeldet` }),
       );
@@ -383,7 +394,7 @@ describe("buildDelivery", () => {
     });
   });
 
-  it("an incomplete-shelter place is not delivered and appears as warning", async () => {
+  it("a place without a complete state is not delivered and appears as warning; an excluded one is delivered without a state", async () => {
     await withRollback(async (tx) => {
       const archive = memoryArchive();
       const f = await seedDeliverySubdivision(tx);
@@ -394,36 +405,10 @@ describe("buildDelivery", () => {
         file: "spots.json",
         objectId: f.places.B.publicId,
         path: null,
-        message: "Nicht geliefert: Schutzwerte unvollständig oder ohne Herkunft",
+        message: "Nicht geliefert: Schutz oder Ankerposition fehlt im Stand",
       });
-      // the excluded place is delivered with its reason and gets no highlights
-      expect(spots.spots.find((s) => s.id === f.places.C.publicId)).toMatchObject({ exclude: { excluded: true, reason: "military" }, highlightIds: [] });
-    });
-  });
-
-  it("a region fact from a forbidden domain rejects the package under regions.json (final review I-2)", async () => {
-    await withRollback(async (tx) => {
-      const f = await seedDeliverySubdivision(tx);
-      const m = await insertMention(tx, f.islandId, { observedAt: "2026-05-01" });
-      const fact = await insertMentionFact(tx, f.islandId, m, await insertExtraction(tx, f.islandId, m), { attribute: "meltemi_exposure", value: 0.7 });
-      const navily = "https://www.navily.com/region/nisida";
-      await tx.update(documents).set({ url: navily, urlNormalized: navily }).where(eq(documents.id, m.documentId));
-      await insertProfile(
-        tx,
-        f.islandId,
-        { meltemi_exposure: 0.7, ferry_traffic: "high", charter_bases: ["X"] },
-        {
-          meltemi_exposure: provenanceEntry("text", { confidence: 0.6, factIds: [fact] }),
-          ferry_traffic: provenanceEntry("text", { confidence: 0.6 }),
-          charter_bases: provenanceEntry("text", { confidence: 0.6 }),
-        },
-        { version: 2, confidence: null },
-      );
-      const result = await buildDelivery(tx, memoryArchive(), f.subdivisionId, { now: NOW, inCallerTransaction: true });
-      expect(result.status).toBe("rejected");
-      expect(result.report.checks.find((c) => c.name === "foreign_content")!.findings).toEqual([
-        expect.objectContaining({ file: "regions.json", objectId: f.islandPublicId, message: `Werte aus einer Quelle einer gesperrten Domain (${navily})` }),
-      ]);
+      // the excluded place is delivered with its reason, no state date and no free parts
+      expect(spots.spots.find((s) => s.id === f.places.C.publicId)).toMatchObject({ exclude: { excluded: true, reason: "military" }, asOf: null, facts: [], nearby: [] });
     });
   });
 
@@ -453,29 +438,29 @@ describe("buildDelivery", () => {
     });
   });
 
-  it("a value whose only forbidden document is gone still rejects the package (final review M-1)", async () => {
+  it("a fact with a link or a domain name rejects the package under foreign_content (review focus 5)", async () => {
     await withRollback(async (tx) => {
       const f = await seedDeliverySubdivision(tx);
-      const navily = "https://www.navily.com/port/vathi";
-      await tx.update(documents).set({ url: navily, urlNormalized: navily, status: "gone" }).where(eq(documents.id, f.documentId));
+      await rewriteStateA(tx, f, { facts: await factsOfA(tx, f, "Details at sailing-guide.example.com and www.example.org."), updatedAt: new Date("2026-10-20T08:00:00Z") });
       const result = await buildDelivery(tx, memoryArchive(), f.subdivisionId, { now: NOW, inCallerTransaction: true });
       expect(result.status).toBe("rejected");
+      expect(result.report.checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["foreign_content"]);
       expect(result.report.checks.find((c) => c.name === "foreign_content")!.findings).toEqual([
-        expect.objectContaining({ file: "spots.json", objectId: f.places.A.publicId, message: `Werte aus einer Quelle einer gesperrten Domain (${navily})` }),
+        expect.objectContaining({ file: "spots.json", objectId: f.places.A.publicId, message: "Text enthält einen Link" }),
       ]);
     });
   });
 
-  it("a summary with a copied 16-word passage rejects the package; files lie under rejected/, data version stays", async () => {
+  it("a fact with a copied 16-word passage rejects the package; files lie under rejected/, data version stays (review focus 1)", async () => {
     await withRollback(async (tx) => {
       const archive = memoryArchive();
       const f = await seedDeliverySubdivision(tx);
       const words = saltedWords(30);
       const v = await insertTestVersion(tx, [words.join(" ")]);
       await tx.insert(textShingles).values(shingleHashes(words.join(" "), 15).map((shingleHash) => ({ shingleHash, chunkId: v.chunkIds[0]! })));
-      const summary = (text: string, promptVersion: number) =>
-        tx.insert(profileSummaries).values({ geoObjectId: f.places.A.geoObjectId, profileVersion: 1, text, status: "ok", attempts: 1, model: "test", promptVersion });
-      await summary(`Die Bucht: ${words.slice(2, 18).join(" ")}.`, 2);
+      const setFact = async (statement: string) =>
+        rewriteStateA(tx, f, { facts: await factsOfA(tx, f, statement), updatedAt: new Date("2026-10-20T08:00:00Z") });
+      await setFact(`Die Bucht: ${words.slice(2, 18).join(" ")}.`);
 
       const rejected = await buildDelivery(tx, archive, f.subdivisionId, { now: NOW, inCallerTransaction: true });
       expect(rejected).toMatchObject({ status: "rejected", dataVersion: null });
@@ -490,7 +475,7 @@ describe("buildDelivery", () => {
       expect(await objectRows(tx, f.subdivisionId)).toEqual([]);
 
       // fixed: the next build is the subdivision's first valid package
-      await summary(SPOT_A_SUMMARY, 3);
+      await setFact("The taverna on the beach serves fresh fish.");
       const valid = await buildDelivery(tx, archive, f.subdivisionId, { now: NOW, inCallerTransaction: true });
       expect(valid).toMatchObject({ status: "valid", dataVersion: 1 });
       expect((await deliveryRows(tx, f.subdivisionId)).find((r) => r.id === valid.deliveryId)).toMatchObject({ previousDeliveryId: null });
@@ -565,17 +550,9 @@ describe("buildDelivery", () => {
     await withRollback(async (tx) => {
       const archive = memoryArchive();
       const f = await seedDeliverySubdivision(tx);
-      // A's summary: 16 words of a text that is archived only after the first package
+      // A's landside fact: 16 words of a text that is archived only after the first package
       const words = saltedWords(30);
-      await tx.insert(profileSummaries).values({
-        geoObjectId: f.places.A.geoObjectId,
-        profileVersion: 1,
-        text: `Die Bucht: ${words.slice(2, 18).join(" ")}.`,
-        status: "ok",
-        attempts: 1,
-        model: "test",
-        promptVersion: 2,
-      });
+      await rewriteStateA(tx, f, { facts: await factsOfA(tx, f, `Die Bucht: ${words.slice(2, 18).join(" ")}.`), updatedAt: new Date("2026-10-20T08:00:00Z") });
       const first = await buildDelivery(tx, archive, f.subdivisionId, { now: NOW, inCallerTransaction: true });
       expect(first).toMatchObject({ status: "valid", dataVersion: 1 });
 
@@ -585,9 +562,8 @@ describe("buildDelivery", () => {
       expect(second).toMatchObject({ status: "rejected", dataVersion: null });
       expect(second.report.checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["verbatim_text"]);
       const prefix = `deliveries/${f.subdivisionKey}/rejected/${second.deliveryId}/`;
-      expect(archive.keys().filter((k) => k.startsWith(prefix))).toEqual([...FILES, "changes.json"].map((file) => `${prefix}${file}`).sort());
+      expect(archive.keys().filter((k) => k.startsWith(prefix))).toEqual(FILES.map((file) => `${prefix}${file}`).sort());
       expect(await readJson<Manifest>(archive, `${prefix}manifest.json`)).toMatchObject({ scope: { type: "subdivision", dataVersion: 2, previousDataVersion: 1 } });
-      expect((await readJson<ChangesFile>(archive, `${prefix}changes.json`)).changes).toEqual([]);
       const rows = await deliveryRows(tx, f.subdivisionId);
       expect(rows.map((r) => r.status)).toEqual(["valid", "rejected"]);
       expect(rows[1]).toMatchObject({ id: second.deliveryId, dataVersion: null, storagePrefix: prefix, previousDeliveryId: first.deliveryId });

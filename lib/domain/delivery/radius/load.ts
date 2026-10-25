@@ -126,7 +126,8 @@ export async function loadSourcePackage(
     highlights: highlights.highlights,
     regions: regions.regions,
     weatherPoints: points.points,
-    tiles: manifest.tiles,
+    // interim: the radius package is still 3.0 (task 4); the tile date is the 4.0 `statesAsOf`
+    tiles: manifest.tiles.map((t) => ({ id: t.id, lastRunAt: t.lastRunAt, profilesAsOf: t.statesAsOf })),
     areas: manifest.areas,
     licenses: manifest.licenses,
     imageFiles: manifest.files.filter((f) => isImageFile(f.name)),

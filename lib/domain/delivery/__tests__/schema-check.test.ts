@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { CONTRACT_FILES } from "@/contract/v3_0";
-import { spotsFile, TEIL_B_EXAMPLE } from "@/contract/__tests__/fixtures-v3_0";
-import { SAMPLE_FILES } from "@/contract/__tests__/samples-v3_0";
+import { CONTRACT_FILES } from "@/contract";
+import { spotsFile, TEIL_B_EXAMPLE } from "@/contract/__tests__/fixtures";
+import { SAMPLE_FILES } from "@/contract/__tests__/samples";
 import { checkJsonSchema } from "../schema-check";
 
 const ex = TEIL_B_EXAMPLE;
@@ -27,27 +27,29 @@ describe("checkJsonSchema", () => {
   });
 
   it("reports every error, foreign fields and wrong formats included", () => {
-    const bad = { ...ex, rating: 4.5, validFrom: "15.10.2026", sources: [{ url: "no url", kind: "tripReport", observedAt: "2025-06-10" }] };
+    const bad = { ...ex, rating: 4.5, sources: [{ url: "https://example.org", kind: "tripReport", observedAt: "2025-06-10" }], asOf: "15.10.2026" };
     const errors = checkJsonSchema("spots.json", spotsFile([bad]));
-    expect(errors.map((e) => e.path)).toEqual(
-      expect.arrayContaining(["/spots/0", "/spots/0/validFrom", "/spots/0/sources/0/url"]),
-    );
-    expect(errors.find((e) => e.path === "/spots/0")!.message).toMatch(/additional properties/);
+    expect(errors.map((e) => e.path)).toEqual(expect.arrayContaining(["/spots/0", "/spots/0/asOf"]));
+    expect(errors.filter((e) => e.path === "/spots/0").map((e) => e.message).join(" ")).toMatch(/additional properties/);
   });
 
-  it("the published schemas reject non-http source links and foreign provenance sources", () => {
+  it("the published schemas reject the 3.0 fields of a spot (sources, summary, version fields, highlight ids)", () => {
+    const paths = (extra: Record<string, unknown>) => checkJsonSchema("spots.json", spotsFile([{ ...ex, ...extra }])).map((e) => e.path);
+    for (const field of ["sources", "summary", "profileVersion", "validFrom", "highlightIds", "highlightLevels"]) {
+      expect(paths({ [field]: field === "sources" ? [] : "x" }), field).toContain("/spots/0");
+    }
+  });
+
+  it("the published schemas reject non-http contact links and foreign provenance sources", () => {
     const bad = {
       ...ex,
       shelter: { ...ex.shelter, source: "navily" },
-      sources: [
-        { url: "upload://" + "a".repeat(64), kind: "pilotGuide", observedAt: "2025-06-10" },
-        { url: "javascript:alert(1)", kind: "forum", observedAt: "2025-06-10" },
-      ],
+      contact: { vhf: null, phone: null, url: "upload://" + "a".repeat(64) },
     };
     const paths = checkJsonSchema("spots.json", spotsFile([bad])).map((e) => e.path);
-    expect(paths).toEqual(
-      expect.arrayContaining(["/spots/0/shelter/source", "/spots/0/sources/0/url", "/spots/0/sources/1/url"]),
-    );
+    expect(paths).toEqual(expect.arrayContaining(["/spots/0/shelter/source", "/spots/0/contact/url"]));
+    const js = checkJsonSchema("spots.json", spotsFile([{ ...ex, contact: { vhf: null, phone: null, url: "javascript:alert(1)" } }])).map((e) => e.path);
+    expect(js).toContain("/spots/0/contact/url");
   });
 
   it("the published schemas take combined sources in contract order only", () => {

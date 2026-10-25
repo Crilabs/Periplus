@@ -79,11 +79,11 @@ export async function consumePackage(input: {
   const res = await get(resolveLink(base, packagePath)!);
   if (res.status !== 200) throw new Error(await failure(res, packagePath));
   const { links, ...manifest } = (await res.json()) as PackageBody;
-  // a contract 3.0 manifest names its scope; checked before any file is fetched
+  // a manifest since contract 3.0 names its scope; checked before any file is fetched
   const scope = (manifest as { scope?: { type?: unknown } }).scope;
   if (scope == null || typeof scope !== "object") {
     throw new Error(
-      `${packagePath} answered a manifest that has no scope (schemaVersion ${String(manifest.schemaVersion)}); a contract 3.0 subdivision package needs one`,
+      `${packagePath} answered a manifest that has no scope (schemaVersion ${String(manifest.schemaVersion)}); a subdivision package needs one`,
     );
   }
   if (manifest.scope.type !== "subdivision") throw new Error(`${packagePath} answered a ${String(scope.type)} package, not a subdivision package`);

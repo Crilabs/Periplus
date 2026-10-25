@@ -2,14 +2,12 @@ import { httpUrl } from "@/contract/v2/common";
 import type { SpotBody } from "@/contract/v2";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import type { PlaceKind } from "@/lib/db/schema/geo";
-import type { AttributeProvenance } from "@/lib/domain/consolidation/types";
 import { excludeValue, type ExcludeReason } from "@/lib/domain/consolidation/exclude";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
-import { isForbiddenUrl } from "@/lib/domain/sources/forbidden-domains";
 import { round5 } from "./geo";
 import { mapImages } from "./map-image";
 import { mapFacts, mapLandingPoints, mapNearby, type DeliveredNearby } from "./map-facts";
-import type { SourceRefRow, SpotSource } from "./types";
+import type { SpotSource } from "./types";
 import {
   aggregateProvenance,
   combineSource,
@@ -21,10 +19,8 @@ import {
   MOORING_TYPE,
   ORIGIN,
   SEASON_DE,
-  SOURCE_KIND,
   SPOT_KIND,
   type ContractHazardKind,
-  type ContractSourceKind,
   type ProvenanceInfo,
   type SeasonKind,
 } from "./vocab";
@@ -131,7 +127,7 @@ export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
   provenance: { attributes: [], note: "aggregateProvenance per contract field group, from the core values' origin, confidence and date" },
   regionId: { attributes: [], note: "context (assigned region)" },
   mergedInto: { attributes: [], note: "null; merged spots are carried by the build" },
-  gaps: { attributes: [], note: "berth_states.gaps, as stored (core value keys without a value)" },
+  gaps: { attributes: [], note: "berth_states.gaps, sorted (core value keys without a value)" },
   facts: { attributes: [], note: "mapFacts: the state's facts, statement and date, safety marked; a landside fact assigned to its nearby entry by name (E3)" },
   landingPoints: { attributes: [], note: "mapLandingPoints: the state's landing points (position with kind, or description)" },
   nearby: { attributes: [], note: "mapNearby: the state's things on land with a public hl_ id (E1), nearest first" },
@@ -268,7 +264,7 @@ export function mapSpot(src: SpotSource, ctx: { regionId: string | null; cfg: De
     }),
     regionId: ctx.regionId,
     mergedInto: null,
-    gaps: state?.gaps ?? [],
+    gaps: [...(state?.gaps ?? [])].sort(),
     facts: mappedFacts.facts,
     landingPoints: mapLandingPoints(state?.landing ?? []),
     nearby: nearby.delivered.map((n) => n.entry),
@@ -399,49 +395,6 @@ function seasonNotes(hints: Array<{ kind: string; months: number[] }>, seasonalB
     notes.push({ months: [...(ban.months as number[])].sort((x, y) => x - y), text: EXCLUDE_REASON_DE.anchoringProhibited });
   }
   return notes.length > 0 ? notes : undefined;
-}
-
-/** The newest observation date of a text or observed value (Teil B `score.lastObserved`; highlight). */
-export function lastObserved(entries: Array<Pick<AttributeProvenance, "origin" | "observedAt">>): string | null {
-  const dates = entries
-    .filter((e) => e.origin === "text" || e.origin === "observed")
-    .map((e) => e.observedAt?.slice(0, 10) ?? null)
-    .filter((d): d is string => d !== null);
-  return dates.length === 0 ? null : dates.reduce((x, y) => (y > x ? y : x));
-}
-
-/**
- * Teil B "score.confidence unter 0,3 … summary.de mit dem Hinweis 'wenig belegt'": below `validation.lowConfidence`
- * (a profile without confidence counts as low, ruling M6-P9) the note is appended unless the text has it; without a
- * summary a low-confidence spot gets the note as its summary, any other spot none. Highlights use the same rule (the contract 4.0 spot has no summary).
- */
-export function mapSummary(text: string | null, confidence: number | null, cfg: DeliveryConfig): { de: string } | undefined {
-  const note = cfg.validation.lowConfidenceNote;
-  const low = round3(confidence ?? 0) < cfg.validation.lowConfidence;
-  if (text === null || text.trim() === "") return low ? { de: `${note.charAt(0).toUpperCase()}${note.slice(1)}.` } : undefined;
-  if (!low || text.toLowerCase().includes(note.toLowerCase())) return { de: text };
-  return { de: `${text} (${note})` };
-}
-
-/**
- * Contract `sources` (spot and highlight): public http(s) links only (an uploaded document's `upload://` URL never
- * leaves Periplus, ruling M6-A-R2), none of `forbiddenDomains`, newest observation first, at most `spots.maxSources`;
- * no gone document; omitted when none is left. The links of forbidden domains, gone documents included (final review
- * M-1), come back as `forbidden`: values drawn from such a document must not be delivered, so the validation blocks the
- * package (`foreign_content`, ruling M6-D-R2).
- */
-export function mapSources(
-  rows: SourceRefRow[],
-  cfg: DeliveryConfig,
-): { sources: Array<{ url: string; kind: ContractSourceKind; observedAt: string }> | undefined; forbidden: string[] } {
-  const web = rows.filter((r) => /^https?:\/\//.test(r.url));
-  const forbidden = [...new Set(web.filter((r) => isForbiddenUrl(r.url, cfg.forbiddenDomains)).map((r) => r.url))].sort();
-  const kept = web
-    .filter((r) => r.gone !== true && !isForbiddenUrl(r.url, cfg.forbiddenDomains))
-    .sort((x, y) => (x.observedAt !== y.observedAt ? (x.observedAt < y.observedAt ? 1 : -1) : x.url < y.url ? -1 : x.url > y.url ? 1 : 0))
-    .slice(0, cfg.spots.maxSources)
-    .map((r) => ({ url: r.url, kind: SOURCE_KIND[r.docType], observedAt: r.observedAt }));
-  return { sources: kept.length > 0 ? kept : undefined, forbidden };
 }
 
 /** Flat contract provenance per field group (`shelter`, `services.taverna` …), each `aggregateProvenance`. */

@@ -247,7 +247,7 @@ const FIELD_CASES: Record<keyof SpotBody, () => void> = {
   mergedInto: () => expect(mapped().mergedInto).toBeNull(),
   gaps: () => {
     expect(mapped().gaps).toEqual(["prices"]);
-    expect(mapped(spotA({ state: { gaps: ["prices", "contact"] } })).gaps).toEqual(["prices", "contact"]);
+    expect(mapped(spotA({ state: { gaps: ["prices", "contact"] } })).gaps).toEqual(["contact", "prices"]);
     expect(mapped(excludedC({ state: null })).gaps).toEqual([]);
   },
   facts: () => {

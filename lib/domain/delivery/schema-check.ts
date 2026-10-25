@@ -1,7 +1,6 @@
 import { Ajv2020, type ValidateFunction } from "ajv/dist/2020";
 import addFormats from "ajv-formats";
-import { contractJsonSchema, jsonSchemaFileName } from "@/contract";
-import { SCHEMA_VERSION, type ContractFile } from "@/contract/v3_0";
+import { contractJsonSchema, jsonSchemaFileName, SCHEMA_VERSION, type ContractFile } from "@/contract";
 
 /*
  * JSON-schema check of a package file against the published schema of the contract version (spec 08: ajv, in

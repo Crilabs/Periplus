@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Archive } from "@/lib/adapters/s3";
+import { eq } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { profileSummaries, textShingles } from "@/lib/db/schema";
+import { berthStates, textShingles } from "@/lib/db/schema";
 import { shingleHashes } from "@/lib/domain/documents/shingles";
 import { newId } from "@/lib/domain/ids";
 import { latestDeliveries } from "@/lib/domain/overview";
-import { insertProfile, provenanceEntry } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
-import { seedDeliverySubdivision, SPOT_A_ATTRIBUTES, SPOT_A_SUMMARY, spotAProvenance, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
+import { changeBerthCore, seedDeliverySubdivision, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
 import { memoryArchive } from "@/test/s3";
 import { insertTestVersion } from "@/test/text";
 import { buildDelivery } from "../build";
@@ -22,25 +22,24 @@ const day = (d: string) => new Date(`${d}T08:00:00Z`);
 const build = (tx: Db, archive: Archive, f: DeliveryFixture, date: string) =>
   buildDelivery(tx, archive, f.subdivisionId, { now: day(date), inCallerTransaction: true });
 
-/** A second profile version of A with a changed east shelter. */
-async function changeA(tx: Db, f: DeliveryFixture, profileVersion = 2, summary = SPOT_A_SUMMARY): Promise<void> {
-  await insertProfile(
-    tx,
-    f.places.A.geoObjectId,
-    { ...SPOT_A_ATTRIBUTES, anchor_position: { lon: 21.1301, lat: 35.1445 }, "place.position": { lon: f.positions.A[0], lat: f.positions.A[1] }, "shelter.E": 0.8 },
-    { ...spotAProvenance(f.factId), "place.position": provenanceEntry("gazetteer", { confidence: 1 }) },
-    { version: profileVersion, sourcesCount: 3, documentsCount: 1, confidence: 0.72 },
-  );
-  await tx.insert(profileSummaries).values({ geoObjectId: f.places.A.geoObjectId, profileVersion, text: summary, status: "ok", attempts: 1, model: "test", promptVersion: 1 });
-}
+/** A's berth state rewritten with a changed east shelter. */
+const changeA = (tx: Db, f: DeliveryFixture) => changeBerthCore(tx, f.places.A.placeId, { "shelter.E": 0.8 }, new Date("2026-10-23T08:00:00Z"));
 
-/** A 16-word run of a freshly archived text (its shingles stored): as A's summary it fails `verbatim_text`. */
+/** A 16-word run of a freshly archived text (its shingles stored): as the statement of A's landside fact it fails `verbatim_text`. */
 async function copiedText(tx: Db): Promise<string> {
   const salt = newId().replace(/-/g, "").replace(/\d/g, (d) => "ghijklmnop"[Number(d)]!);
   const words = Array.from({ length: 30 }, (_, i) => `${salt}${"abcdefghijklmnopqrstuvwxyz"[i % 26]}`);
   const v = await insertTestVersion(tx, [words.join(" ")]);
   await tx.insert(textShingles).values(shingleHashes(words.join(" "), 15).map((shingleHash) => ({ shingleHash, chunkId: v.chunkIds[0]! })));
   return `Die Bucht: ${words.slice(2, 18).join(" ")}.`;
+}
+
+/** A's landside fact now states `copiedText`: the next package fails `verbatim_text`. */
+async function copyIntoFact(tx: Db, f: DeliveryFixture): Promise<void> {
+  const statement = await copiedText(tx);
+  const [row] = await tx.select().from(berthStates).where(eq(berthStates.placeId, f.places.A.placeId));
+  const facts = row!.facts.map((x) => (x.subject === "landside" ? { ...x, statement } : x));
+  await tx.update(berthStates).set({ facts, updatedAt: new Date("2026-10-23T08:00:00Z") }).where(eq(berthStates.placeId, f.places.A.placeId));
 }
 
 describe("listDeliveries", () => {
@@ -67,7 +66,7 @@ describe("listDeliveries", () => {
         [v1.deliveryId, "valid", 1],
       ]);
       expect(rows[1]).toMatchObject({ scopeName: "Testlandesteil", failedChecks: [], runId: null, generatedAt: day("2040-06-02") });
-      expect(rows[1]!.objectCounts).toMatchObject({ spots: expect.any(Number), changes: 1 });
+      expect(rows[1]!.objectCounts).toEqual({ spots: 3, regions: 2, weatherPoints: 2, coastFeatures: expect.any(Number) });
       // the second page of this subdivision is empty; the list of all subdivisions starts with these rows: every other delivery row
       // is older (the only test that commits deliveries, delivery-run.test, runs before or after this file in the
       // sequential project delivery-fixture, never beside it)
@@ -92,58 +91,55 @@ describe("deliveryDetail", () => {
       const archive = memoryArchive();
       const f = await seedDeliverySubdivision(tx);
       await build(tx, archive, f, "2040-06-01");
-      await changeA(tx, f, 2, await copiedText(tx));
+      await copyIntoFact(tx, f);
       const rejected = await build(tx, archive, f, "2040-06-02");
       expect(rejected.status).toBe("rejected");
 
-      const detail = (await deliveryDetail(tx, archive, rejected.deliveryId))!;
+      const detail = (await deliveryDetail(tx, rejected.deliveryId))!;
       expect(detail).toMatchObject({ scopeName: "Testlandesteil", scopePublicId: f.subdivisionPublicId });
       const failed = detail.report.checks.filter((c) => !c.ok);
       expect(failed.map((c) => c.name)).toEqual(["verbatim_text"]);
       expect(failed[0]!.findings[0]).toMatchObject({ file: "spots.json", objectId: f.places.A.publicId });
       expect(detail.objectLinks[f.places.A.publicId!]).toBe(`/places/${f.places.A.placeId}`);
-      // the rejected package's changes: its diff to the valid previous package
-      expect(detail.changes?.find((c) => c.objectId === f.places.A.publicId)).toMatchObject({ event: "updated", severity: "safety" });
-      expect(detail.files.map((x) => x.name)).toEqual(["manifest.json", "spots.json", "highlights.json", "regions.json", "coast.geojson", "weather-points.json", "changes.json"]);
+      expect(detail.files.map((x) => x.name)).toEqual(["manifest.json", "spots.json", "regions.json", "coast.geojson", "weather-points.json"]);
       expect(detail.files[1]).toEqual({ name: "spots.json", ...detail.row.fileHashes["spots.json"]! });
 
       // a rejected package's file is a download for diagnosis
       const file = (await deliveryDownload(tx, archive, rejected.deliveryId, "spots.json"))!;
       expect(file.filename).toBe(`${f.subdivisionPublicId}-rejected-spots.json`);
       expect(file.bytes).toEqual(await archive.get(`deliveries/${f.subdivisionKey}/rejected/${rejected.deliveryId}/spots.json`));
-      expect(await deliveryDetail(tx, archive, newId())).toBeNull();
+      expect(await deliveryDetail(tx, newId())).toBeNull();
     }));
 
-  it("a first package has no changes, an unchanged build no files", () =>
+  it("an unchanged build has no files, a valid one its contract files", () =>
     withRollback(async (tx) => {
       const archive = memoryArchive();
       const f = await seedDeliverySubdivision(tx);
       const v1 = await build(tx, archive, f, "2040-06-01");
       const same = await build(tx, archive, f, "2040-06-02");
-      expect((await deliveryDetail(tx, archive, v1.deliveryId))!.changes).toBeNull();
+      expect((await deliveryDetail(tx, v1.deliveryId))!.files.map((x) => x.name)).toEqual(["manifest.json", "spots.json", "regions.json", "coast.geojson", "weather-points.json"]);
       expect((await deliveryDownload(tx, archive, v1.deliveryId, "coast.geojson"))!).toMatchObject({
         filename: `${f.subdivisionPublicId}-1-coast.geojson`,
         contentType: "application/geo+json",
       });
       expect(await deliveryDownload(tx, archive, v1.deliveryId, "changes.json")).toBeNull();
-      const unchanged = (await deliveryDetail(tx, archive, same.deliveryId))!;
-      expect(unchanged).toMatchObject({ changes: null, files: [] });
+      const unchanged = (await deliveryDetail(tx, same.deliveryId))!;
+      expect(unchanged).toMatchObject({ files: [] });
       expect(unchanged.report.ok).toBe(true);
       expect(await deliveryDownload(tx, archive, same.deliveryId, "spots.json")).toBeNull();
     }));
 
-  it("a package file lost in S3 does not hide the report", () =>
+  it("the detail comes from the delivery row, so a package file lost in S3 does not hide the report", () =>
     withRollback(async (tx) => {
       const archive = memoryArchive();
       const f = await seedDeliverySubdivision(tx);
       await build(tx, archive, f, "2040-06-01");
       await changeA(tx, f);
       const v2 = await build(tx, archive, f, "2040-06-02");
-      const empty = memoryArchive();
-      const detail = (await deliveryDetail(tx, empty, v2.deliveryId))!;
-      expect(detail).toMatchObject({ changes: null, archiveError: expect.stringMatching(/changes.json .* is missing/) });
+      const detail = (await deliveryDetail(tx, v2.deliveryId))!;
       expect(detail.report.ok).toBe(true);
-      expect(detail.files).toHaveLength(7);
-      expect((await deliveryDetail(tx, archive, v2.deliveryId))!.archiveError).toBeNull();
+      expect(detail.files).toHaveLength(5);
+      // the download reads the archive: a lost file is an error there, never served as another one
+      await expect(deliveryDownload(tx, memoryArchive(), v2.deliveryId, "spots.json")).rejects.toThrow(/is missing/);
     }));
 });

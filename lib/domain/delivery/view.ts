@@ -1,6 +1,6 @@
 import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
-import type { ChangeEntry, ChangesFile, Spot, SpotBody } from "@/contract/v3_0";
+import type { Spot, SpotBody } from "@/contract";
 import type { Db } from "@/lib/db/client";
 import { deliveredObjects, deliveries, geoObjects, places, subdivisions, type DeliveryStatus } from "@/lib/db/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
@@ -12,8 +12,8 @@ import type { CheckName, Finding, ValidationReport } from "./validate";
 import { contentHash } from "./versioning";
 
 /*
- * What the admin sees of deliveries (spec 08, spec 14): the list per subdivision, one delivery with its report,
- * changes and files (rejected packages too, for diagnosis), a file as download, and the place page's delivery tab.
+ * What the admin sees of deliveries (spec 08, spec 14): the list per subdivision, one delivery with its report
+ * and files (rejected packages too, for diagnosis), a file as download, and the place page's delivery tab.
  * Reads only; never builds, never writes S3.
  */
 
@@ -129,20 +129,14 @@ export type DeliveryDetail = {
   /** The subdivision's `sd_` id (a pilot package: the area's `ar_` id). */
   scopePublicId: string;
   report: ValidationReport;
-  /** `changes.json` of the package (also of a rejected one, as its diff to the previous package); null without one. */
-  changes: ChangeEntry[] | null;
-  /** Why `changes.json` could not be read (missing in S3 or not matching its hash); null when it could. */
-  archiveError: string | null;
   /** Every stored file (`deliveryFiles`: the contract files, then the image files `images/…`) with its recorded hash. */
   files: Array<{ name: string; sha256: string; bytes: number }>;
-  /** Public id of an object named in the report or the changes → its admin page (`/places/…`, `/geo/…`). */
+  /** Public id of an object named in the report → its admin page (`/places/…`, `/geo/…`). */
   objectLinks: Record<string, string>;
 };
 
-const decoder = new TextDecoder();
-
-/** One delivery with its validation report, changes and files; null for an unknown id. */
-export async function deliveryDetail(db: Db, archive: Archive, id: string): Promise<DeliveryDetail | null> {
+/** One delivery with its validation report and files; null for an unknown id. */
+export async function deliveryDetail(db: Db, id: string): Promise<DeliveryDetail | null> {
   const [found] = await db
     .select({
       row: deliveries,
@@ -159,27 +153,15 @@ export async function deliveryDetail(db: Db, archive: Archive, id: string): Prom
   const { row } = found;
   const scopePublicId = found.subdivisionPublicId ?? found.areaPublicId ?? row.id;
   const report = row.validationReport as ValidationReport;
-  let changes: ChangeEntry[] | null = null;
-  let archiveError: string | null = null;
-  try {
-    const bytes = await readStoredFile(archive, row, "changes.json");
-    changes = bytes === null ? null : (JSON.parse(decoder.decode(bytes)) as ChangesFile).changes;
-  } catch (e) {
-    // a lost or altered file must not hide the report: the page says so instead
-    archiveError = e instanceof Error ? e.message : String(e);
-  }
   const files = deliveryFiles(row).map((name) => ({ name, ...row.fileHashes[name]! }));
   const named = new Set<string>();
   const findings: Finding[] = [...(report.checks ?? []).flatMap((c) => c.findings), ...(report.warnings ?? [])];
   for (const f of findings) if (f.objectId) named.add(f.objectId);
-  for (const c of changes ?? []) named.add(c.objectId);
   return {
     row,
     scopeName: found.subdivisionName ?? found.areaName ?? scopePublicId,
     scopePublicId,
     report,
-    changes,
-    archiveError,
     files,
     objectLinks: await objectLinks(db, [...named]),
   };
@@ -244,8 +226,8 @@ export type PlaceDelivery = {
 /**
  * The place page's delivery tab: the spot as last delivered (`spotAsOf`), the spot the next package of the place's
  * subdivision would deliver (`draftSubdivision` on `today`, default the database's date; the build's own assembly, ruling M6-P27:
- * no S3, no versions), whether it differs from the delivered one (`contentHash` without the version fields), and every
- * contract version of the spot. A place without public id has nothing to show.
+ * no S3, no versions), whether it differs from the delivered one (`contentHash` without `asOf`), and every
+ * object version of the spot. A place without public id has nothing to show.
  */
 export async function placeDelivery(db: Db, archive: Archive, placeId: string, opts: { today?: string } = {}): Promise<PlaceDelivery> {
   // the database's date, as `spotAsOf` and the validity of the geo rows (review minor 6)
@@ -295,10 +277,9 @@ export async function placeDelivery(db: Db, archive: Archive, placeId: string, o
   return { delivered, preview, history };
 }
 
-/** The content hash of a delivered spot: its stored body without the version fields, as the build hashes it. */
+/** The content hash of a delivered spot: its stored body without `asOf`, as the build hashes it. */
 function deliveredContentHash(spot: Spot): string {
   const body: Record<string, unknown> = { ...spot };
-  delete body.profileVersion;
-  delete body.validFrom;
+  delete body.asOf;
   return contentHash(body);
 }

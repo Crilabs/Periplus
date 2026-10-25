@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import type { SpotBody } from "@/contract/v3_0";
-import { TEIL_B_EXAMPLE } from "@/contract/__tests__/fixtures-v3_0";
+import type { SpotBody } from "@/contract";
+import { TEIL_B_EXAMPLE } from "@/contract/__tests__/fixtures";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { deliveredObjects, deliveries, geoObjects } from "@/lib/db/schema";
@@ -10,9 +10,7 @@ import { withRollback } from "@/test/db";
 import { insertTestSubdivision } from "@/test/text";
 import { assignVersions, contentHash, latestDelivered, type DeliveredEntry, type ObjectDraft } from "../versioning";
 
-const BODY: SpotBody = Object.fromEntries(
-  Object.entries(TEIL_B_EXAMPLE).filter(([k]) => k !== "profileVersion" && k !== "validFrom"),
-) as SpotBody;
+const BODY = Object.fromEntries(Object.entries(TEIL_B_EXAMPLE).filter(([k]) => k !== "asOf")) as SpotBody;
 const SP = BODY.id;
 const SP2 = "sp_01J9X4K2M7Q8R5T6V7W8X9Y0Z2";
 const GEO = "01a15602-0000-7000-8000-000000000001";

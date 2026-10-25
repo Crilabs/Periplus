@@ -1,18 +1,17 @@
 import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import type { SpotsFile } from "@/contract/v3_0";
-import { profileSummaries, tiles } from "@/lib/db/schema";
+import type { SpotsFile } from "@/contract";
+import { tiles } from "@/lib/db/schema";
 import { mergePlaceInto } from "@/lib/domain/place-merge";
-import { insertProfile, provenanceEntry } from "@/test/consolidation";
 import { withRollback } from "@/test/db";
-import { seedDeliverySubdivision, SPOT_A_ATTRIBUTES, SPOT_A_SUMMARY, spotAProvenance } from "@/test/fixtures/delivery/subdivision";
+import { changeBerthCore, seedDeliverySubdivision } from "@/test/fixtures/delivery/subdivision";
 import { memoryArchive } from "@/test/s3";
 import { buildDelivery } from "../build";
 import { placeDelivery } from "../view";
 
 /*
  * The place page's delivery tab (plan Task 14): the delivered spot, the preview of the next package from the build's
- * own assembly (`draftArea`, ruling M6-P27) and the contract versions. Built today: the fixture's geo rows are valid
+ * own assembly (`draftArea`, ruling M6-P27) and the object versions. Built today: the fixture's geo rows are valid
  * from the database's `current_date`, and the preview is drafted on the same day.
  */
 
@@ -31,26 +30,19 @@ describe("placeDelivery", () => {
 
       const tab = await placeDelivery(tx, archive, f.places.A.placeId, { today });
       expect(tab.delivered).toEqual({ spot: a, dataVersion: 1, deliveryId: built.deliveryId });
-      const body: Record<string, unknown> = { ...a };
-      delete body.profileVersion;
-      delete body.validFrom;
+      // the preview is the body: the spot without its state date
+      const { asOf, ...body } = a;
+      expect(asOf).toBe("2026-10-20");
       expect(tab.preview).toEqual({ spot: body, differs: false });
       expect(tab.history).toEqual([{ profileVersion: 1, validFrom: today, removed: false, deliveryId: built.deliveryId }]);
     }));
 
-  it("a newer profile shows a differing preview", () =>
+  it("a newer berth state shows a differing preview", () =>
     withRollback(async (tx) => {
       const archive = memoryArchive();
       const f = await seedDeliverySubdivision(tx);
       await buildDelivery(tx, archive, f.subdivisionId, { now, inCallerTransaction: true });
-      await insertProfile(
-        tx,
-        f.places.A.geoObjectId,
-        { ...SPOT_A_ATTRIBUTES, anchor_position: { lon: 21.1301, lat: 35.1445 }, "place.position": { lon: f.positions.A[0], lat: f.positions.A[1] }, "shelter.E": 0.8 },
-        { ...spotAProvenance(f.factId), "place.position": provenanceEntry("gazetteer", { confidence: 1 }) },
-        { version: 2, sourcesCount: 3, documentsCount: 1, confidence: 0.72 },
-      );
-      await tx.insert(profileSummaries).values({ geoObjectId: f.places.A.geoObjectId, profileVersion: 2, text: SPOT_A_SUMMARY, status: "ok", attempts: 1, model: "test", promptVersion: 1 });
+      await changeBerthCore(tx, f.places.A.placeId, { "shelter.E": 0.8 }, new Date("2026-10-23T08:00:00Z"));
 
       const tab = await placeDelivery(tx, archive, f.places.A.placeId, { today });
       expect(tab.delivered?.spot.shelter.sectors.E).toBe(0.4);
@@ -68,7 +60,7 @@ describe("placeDelivery", () => {
       await buildDelivery(tx, archive, f.subdivisionId, { now, inCallerTransaction: true });
       expect(await placeDelivery(tx, archive, f.places.K.placeId, { today })).toEqual({ delivered: null, preview: null, history: [] });
       // a confirmed place the package leaves out, and one that belongs to no subdivision
-      expect(await placeDelivery(tx, archive, f.places.B.placeId, { today })).toEqual({ delivered: null, preview: { omitted: "shelter_incomplete" }, history: [] });
+      expect(await placeDelivery(tx, archive, f.places.B.placeId, { today })).toEqual({ delivered: null, preview: { omitted: "incomplete_core" }, history: [] });
       expect(await placeDelivery(tx, archive, f.places.O.placeId, { today })).toEqual({ delivered: null, preview: { omitted: "no_subdivision" }, history: [] });
     }));
 

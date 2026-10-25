@@ -21,7 +21,7 @@ import { memoryArchive } from "@/test/s3";
 import { buildDelivery } from "../../build";
 import { distanceNm } from "../../geo";
 import { sha256Hex } from "../../serialize";
-import type { DeliveryPackage } from "../../types";
+import type { DeliveryPackage } from "@/test/fixtures/delivery/package";
 import { getRadiusPackage, RADIUS_BUILD_REVISION, radiusPackageByKey, radiusPackageKey, readRadiusFile, type RadiusPackageRow } from "../build";
 import { clipCoast } from "../coast";
 import { circlePolygon, destination } from "../geometry";

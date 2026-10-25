@@ -1,7 +1,9 @@
 import { and, asc, desc, eq, gt, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Archive } from "@/lib/adapters/s3";
-import { CONTRACT_FILES, IMAGE_FILE_PATTERN, type ChangeEntry, type ChangesFile, type ContractFile, type Manifest, type Spot, type SpotsFile } from "@/contract/v3_0";
+import { CONTRACT_FILES, IMAGE_FILE_PATTERN, type ContractFile, type Manifest, type Spot, type SpotsFile } from "@/contract";
+// interim: the change feed of 3.0 packages; `changesSince` goes with its callers (tasks 4 and 5)
+import type { ChangeEntry, ChangesFile } from "@/contract/v3_0";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { deliveries } from "@/lib/db/schema/deliveries";
@@ -106,8 +108,7 @@ export async function validDelivery(db: Db, subdivisionId: string, dataVersion?:
 }
 
 /**
- * The files a delivery has: the contract files in contract order (`changes.json` only from the second package on),
- * then its image files (`images/<public id>-<slot>.jpg`, contract 2.1, sorted by name). Both the API (`currentPackage`)
+ * The files a delivery has: the contract files in contract order, then its image files (`images/<public id>-<slot>.jpg`, contract 2.1, sorted by name). Both the API (`currentPackage`)
  * and the admin package page link every one of them.
  */
 export function deliveryFiles(row: DeliveryRow): string[] {
@@ -143,13 +144,13 @@ export async function readManifest(archive: Archive, row: DeliveryRow): Promise<
   return readJsonFile<Manifest>(archive, row, "manifest.json");
 }
 
-/** The subdivision a manifest describes, with its data version; null for a radius package (contract 3.0). */
-export function manifestSubdivision(m: Manifest): { id: string; key: string; dataVersion: number } | null {
+/** The subdivision a manifest describes, with its data version; null for a radius package. */
+export function manifestSubdivision(m: Pick<Manifest, "scope">): { id: string; key: string; dataVersion: number } | null {
   return m.scope.type === "subdivision" ? { id: m.scope.subdivision.id, key: m.scope.subdivision.key, dataVersion: m.scope.dataVersion } : null;
 }
 
 /** A JSON file of a valid delivery, parsed; throws when the delivery lacks it. */
-export async function readJsonFile<T>(archive: Archive, row: DeliveryRow, file: ContractFile): Promise<T> {
+export async function readJsonFile<T>(archive: Archive, row: DeliveryRow, file: string): Promise<T> {
   const bytes = await readDeliveryFile(archive, row, file);
   if (bytes === null) throw new Error(`delivery ${row.id} has no ${file}`);
   return JSON.parse(new TextDecoder().decode(bytes)) as T;

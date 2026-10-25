@@ -2,14 +2,11 @@ import type { z } from "zod";
 import type {
   excludeReason,
   hazardKind,
-  highlightCategory,
   provenanceSource,
   restrictedAreaReason,
-  sourceKind,
   spotKind,
-} from "@/contract/v3_0";
-import type { HighlightCategory, PlaceKind, RestrictedKind } from "@/lib/db/schema/geo";
-import type { DocType } from "@/lib/db/schema/sources";
+} from "@/contract/v2";
+import type { PlaceKind, RestrictedKind } from "@/lib/db/schema/geo";
 import type { AttributeProvenance, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
 
 /*
@@ -19,11 +16,9 @@ import type { AttributeProvenance, ProvenanceOrigin } from "@/lib/domain/consoli
  */
 
 export type ContractSpotKind = z.infer<typeof spotKind>;
-export type ContractSourceKind = z.infer<typeof sourceKind>;
 export type ContractExcludeReason = z.infer<typeof excludeReason>;
 export type ContractHazardKind = z.infer<typeof hazardKind>;
 export type ContractSource = z.infer<typeof provenanceSource>;
-export type ContractHighlightCategory = z.infer<typeof highlightCategory>;
 export type ContractRestrictedReason = z.infer<typeof restrictedAreaReason>;
 
 type MooringType = "anchor" | "buoy" | "lines_ashore" | "stern_to" | "alongside" | "pontoon";
@@ -36,17 +31,6 @@ export const SPOT_KIND: Record<PlaceKind, ContractSpotKind> = {
   port: "port",
   marina: "marina",
   mooring_field: "mooringField",
-};
-
-export const SOURCE_KIND: Record<DocType, ContractSourceKind> = {
-  pilot_guide: "pilotGuide",
-  trip_report: "tripReport",
-  forum: "forum",
-  marina: "marina",
-  authority: "authority",
-  dataset: "dataset",
-  travel_guide: "travelGuide",
-  other: "other",
 };
 
 /** A pontoon berth is moored stern-to in the contract's terms. */
@@ -68,17 +52,6 @@ export const HAZARD_KIND: Record<HazardKindInternal, ContractHazardKind> = {
   swell: "swellEntry",
   fish_farm: "fishFarm",
   other: "other",
-};
-
-/** POI category → highlight category; `quiet` has no POI (Teil B: it is the spot's `score.quietness`). */
-export const HIGHLIGHT_CATEGORY: Record<HighlightCategory, ContractHighlightCategory> = {
-  food: "food",
-  supply: "supply",
-  beach: "beach",
-  nature: "nature",
-  active: "active",
-  culture: "culture",
-  town: "town",
 };
 
 /** Restricted area kind → `coast.geojson` reason; a firing area is `military`, as in `spot.exclude` (M6-A-R2). */

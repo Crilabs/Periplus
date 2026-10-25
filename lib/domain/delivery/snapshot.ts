@@ -3,11 +3,10 @@ import { PgTransaction } from "drizzle-orm/pg-core";
 import type { Db } from "@/lib/db/client";
 
 /*
- * The snapshot a package is built from (ruling M6-D-R3). The build reads profiles, tile dates, popularity and the
- * change events in one REPEATABLE READ read-only transaction; the snapshot of that transaction is stored in
- * `deliveries.change_snapshot`, and the change events of package N are exactly those visible in snapshot N and not in
- * snapshot N−1 (`eventSeverities`). So the window lines up with what the package contains: a transaction the build
- * saw lands in this package's window, one still in flight lands in the next one.
+ * The snapshot a package is built from (ruling M6-D-R3). The build reads berth states, tile dates and popularity in
+ * one REPEATABLE READ read-only transaction; the snapshot of that transaction is stored in `deliveries.change_snapshot`
+ * (the stored column and its name stay; contract 4.0 has no change feed that reads it). So the package holds exactly what
+ * that snapshot saw: a transaction the build saw lands in this package, one still in flight lands in the next one.
  */
 
 /** `pg_snapshot` text (`xmin:xmax:xip,…`) and its `xmin` (kept as `deliveries.change_xmin`). */

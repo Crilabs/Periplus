@@ -64,7 +64,7 @@ export function DeliveryTab({ view }: { view: PlaceDelivery }) {
             {delivered ? <Json value={delivered.spot} label="Gelieferter Spot" /> : <p className="text-sm text-muted">Noch nicht geliefert.</p>}
           </Panel>
           {next?.differs && (
-            <Panel title="Vorschau nächstes Paket" description="Ohne Versionsfelder: Version und „gültig ab“ vergibt erst der Bau.">
+            <Panel title="Vorschau nächstes Paket" description="Der Spot, den der nächste Bau liefern würde (ohne Stand-Datum).">
               <Json value={next.spot} label="Vorschau des Spots" />
             </Panel>
           )}
@@ -76,8 +76,7 @@ export function DeliveryTab({ view }: { view: PlaceDelivery }) {
               <DescriptionList
                 columns={1}
                 items={[
-                  { label: "Vertragsversion des Spots", value: <span className="tabular-nums">{delivered.spot.profileVersion}</span>, hint: "Steigt nur, wenn sich der gelieferte Spot ändert" },
-                  { label: "Gültig ab", value: delivered.spot.validFrom },
+                  { label: "Stand des Platzes", value: delivered.spot.asOf ?? "–", hint: "Datum der Liegeplatz-Bestätigung, aus der der Spot gebaut wurde" },
                   { label: "Datenversion des Pakets", value: <span className="tabular-nums">{delivered.dataVersion}</span> },
                   { label: "Lieferung", value: <TextLink href={`/deliveries/${delivered.deliveryId}`}>Zur Lieferung</TextLink> },
                   { label: "Öffentliche ID", value: <Mono>{delivered.spot.id}</Mono> },

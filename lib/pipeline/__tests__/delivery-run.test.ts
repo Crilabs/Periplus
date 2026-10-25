@@ -1,9 +1,9 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { PgBoss } from "pg-boss";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ChangesFile, Manifest, SpotsFile } from "@/contract/v3_0";
+import type { Manifest, SpotsFile } from "@/contract";
 import type { Db } from "@/lib/db/client";
-import { deliveries, geoObjects, profiles, profileSummaries, runs, subdivisions, textShingles } from "@/lib/db/schema";
+import { berthStates, deliveries, geoObjects, runs, subdivisions, textShingles } from "@/lib/db/schema";
 import { setDeliveryArchive } from "@/lib/domain/delivery/archive";
 import { buildDelivery } from "@/lib/domain/delivery/build";
 import { sha256Hex } from "@/lib/domain/delivery/serialize";
@@ -15,7 +15,6 @@ import type { JobContext } from "@/lib/jobs/worker";
 import { STAGES } from "@/lib/jobs/stages";
 import { DELIVERY_STAGE } from "@/lib/pipeline/delivery";
 import { startDeliveryRun } from "@/lib/pipeline/delivery-run";
-import { insertProfile } from "@/test/consolidation";
 import { testDb, withRollback } from "@/test/db";
 import { COMMITTED_SHIFT, endCommittedDeliverySubdivision, seedDeliverySubdivision, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
 import { deleteTestObjects, testArchive, testObjectContentType } from "@/test/s3";
@@ -162,7 +161,7 @@ describe("delivery build on the pool (committed, ruling M6-E-R2)", () => {
 
       // 2. a change committed after the build opened its snapshot is neither in the package nor in its window
       const words = Array.from({ length: 16 }, (_, i) => `p${newId().replace(/-/g, "").replace(/\d/g, "")}${"abcdefghijklmnop"[i]}`);
-      const [latest] = await db.select().from(profiles).where(eq(profiles.geoObjectId, f.places.A.geoObjectId)).orderBy(desc(profiles.version)).limit(1);
+      const [state] = await db.select().from(berthStates).where(eq(berthStates.placeId, f.places.A.placeId));
       let concurrent: { xid: string } | undefined;
       const probe = await buildDelivery(db, archive, f.subdivisionId, {
         afterSnapshot: async (tx) => {
@@ -172,13 +171,10 @@ describe("delivery build on the pool (committed, ruling M6-E-R2)", () => {
           );
           expect(rows[0]).toEqual({ ro: "on", iso: "repeatable read" });
           concurrent = await committedXact(db, async (other) => {
-            await insertProfile(other, f!.places.A.geoObjectId, { ...latest!.attributes, "shelter.E": 0.8 }, latest!.provenance, {
-              version: 2,
-              sourcesCount: 3,
-              documentsCount: 1,
-              confidence: 0.72,
-            });
-            await other.insert(profileSummaries).values({ geoObjectId: f!.places.A.geoObjectId, profileVersion: 2, text: `Die Bucht: ${words.join(" ")}.`, status: "ok", attempts: 1, model: "test", promptVersion: 1 });
+            // the research rewrites A's state: a changed east shelter and a landside fact that will turn out copied
+            const core = { ...state!.core, "shelter.E": { ...state!.core["shelter.E"]!, value: 0.8 } };
+            const facts = state!.facts.map((x) => (x.subject === "landside" ? { ...x, statement: `Die Bucht: ${words.join(" ")}.` } : x));
+            await other.update(berthStates).set({ core, facts, updatedAt: new Date("2026-10-23T08:00:00Z") }).where(eq(berthStates.placeId, f!.places.A.placeId));
           });
         },
       });
@@ -187,7 +183,7 @@ describe("delivery build on the pool (committed, ruling M6-E-R2)", () => {
       expect(await visible(concurrent!.xid, probe.deliveryId)).toBe(false);
       expect(await visible(seeded.xid, probe.deliveryId)).toBe(true);
 
-      // 3. the next build reads it: data version 2 with A changed, in a window that now holds the change
+      // 3. the next build reads it: data version 2 with A changed
       const second = jobContext(db, runId);
       await deliveryBuildHandler(job, second.ctx);
       expect(second.logs).toEqual([{ level: "info", msg: "delivery built", fields: expect.objectContaining({ status: "valid", dataVersion: 2 }) }]);
@@ -195,11 +191,10 @@ describe("delivery build on the pool (committed, ruling M6-E-R2)", () => {
       expect(v2).toMatchObject({ dataVersion: 2, previousDeliveryId: v1.id });
       expect(await visible(concurrent!.xid, v2.id)).toBe(true);
       const a = (await readJson<SpotsFile>(`${v2.storagePrefix}spots.json`)).spots.find((s) => s.id === f!.places.A.publicId)!;
-      expect(a).toMatchObject({ profileVersion: 2, shelter: { sectors: { E: 0.8 } } });
-      const changes = await readJson<ChangesFile>(`${v2.storagePrefix}changes.json`);
-      expect(changes.changes.find((c) => c.objectId === f!.places.A.publicId)).toMatchObject({ event: "updated", profileVersion: 2 });
+      expect(a).toMatchObject({ asOf: "2026-10-23", shelter: { sectors: { E: 0.8 } } });
+      expect(v2.fileHashes).not.toHaveProperty("changes.json");
 
-      // 4. the same content once A's summary turns out copied: rejected and logged as a warning, not unchanged
+      // 4. the same content once A's fact statement turns out copied: rejected and logged as a warning, not unchanged
       const archived = await insertTestVersion(db, [`Vorher ${words.join(" ")} nachher.`]);
       chunkIds.push(...archived.chunkIds);
       await db.insert(textShingles).values(shingleHashes(words.join(" "), 15).map((shingleHash) => ({ shingleHash, chunkId: archived.chunkIds[0]! })));
