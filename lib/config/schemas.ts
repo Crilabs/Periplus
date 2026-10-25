@@ -1,17 +1,21 @@
 import { z } from "zod";
+import { FACT_SCHEMAS } from "@/config/fact-schema";
 import {
   geoObjectTypeEnum,
   placeKindEnum,
   placeStatusEnum,
+  HIGHLIGHT_CATEGORIES,
   poiCategoryEnum,
   restrictedKindEnum,
   seabedTypeEnum,
   type GeoObjectType,
   type PlaceKind,
 } from "@/lib/db/schema/geo";
+import { pageKindEnum } from "@/lib/db/schema/research";
+import { berthSignalKindEnum } from "@/lib/db/schema/research-extract";
 import { changeRateEnum, DOC_TYPES, type ChangeRate, type DocType } from "@/lib/db/schema/sources";
 import { CONTRACT_FILES, SCHEMA_VERSION } from "@/contract";
-import { PROVENANCE_SOURCES } from "@/contract/v2";
+import { PROVENANCE_SOURCES, RADIUS_MAX_DAYS } from "@/contract/v2";
 import { COPY_SHINGLE_WORDS } from "@/lib/domain/documents/shingles";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
 import { CONVERTERS, crawlRulesPatchSchema, regexPattern } from "@/lib/domain/sources/crawl-rules";
@@ -963,8 +967,8 @@ export const consolidationSchema = z.strictObject({
       sitelinksPerPoint: positive,
       maxSitelinkPoints: z.number().nonnegative(),
       categoryBonus: z.strictObject(
-        Object.fromEntries(poiCategoryEnum.enumValues.map((c) => [c, z.number().nonnegative()])) as Record<
-          (typeof poiCategoryEnum.enumValues)[number],
+        Object.fromEntries(HIGHLIGHT_CATEGORIES.map((c) => [c, z.number().nonnegative()])) as Record<
+          (typeof HIGHLIGHT_CATEGORIES)[number],
           z.ZodNumber
         >,
       ),
@@ -1070,6 +1074,19 @@ export const deliverySchema = z.strictObject({
     capeOffsetNm: positive,
     capeLandRadiusM: positive,
   }),
+  /** Radius delivery (spec 18): radius = `nmPerDay × days × returnFactor`, `days` within `minDays`–`maxDays`. */
+  radius: z
+    .strictObject({
+      nmPerDay: positive,
+      returnFactor: positive,
+      minDays: positiveInt,
+      maxDays: positiveInt,
+    })
+    .refine((r) => r.minDays <= r.maxDays, "minDays must not exceed maxDays")
+    // 28 is the contract's ceiling (manifest scope `days`); a longer trip would make packages the contract refuses
+    .refine((r) => r.maxDays <= RADIUS_MAX_DAYS, { message: `maxDays must not exceed the contract's ${RADIUS_MAX_DAYS}`, path: ["maxDays"] }),
+  /** `popularity` is normalised within this distance of each place, across subdivisions (spec 18), nautical miles. */
+  popularity: z.strictObject({ neighbourhoodNm: positive }),
   highlights: z.strictObject({ maxSpotIds: positiveInt }),
   validation: z.strictObject({
     maxWaterDistanceNm: positive,
@@ -1198,6 +1215,7 @@ export type AppConfig = {
   consolidation: VersionedConsolidationConfig;
   delivery: DeliveryConfig;
   images: ImagesConfig;
+  research: ResearchConfig;
 };
 
 const imageryLightSchema = z.enum(["midday", "evening"]);
@@ -1363,3 +1381,166 @@ export const areaImportFileSchema = z
       }
     }
   });
+
+const researchTemplateSchema = z.strictObject({
+  /** `{name}`: the berth's name (required: a query without it would hit pages that name no berth); `{island}`: its island's name. */
+  template: z.string().refine((t) => t.includes("{name}"), { error: "template must contain {name}" }),
+  lang: z.string().min(1),
+});
+
+const landsideTemplateSchema = z.strictObject({
+  /** `{subject}`: the name of a town, sight or settlement near a berth (required). */
+  template: z.string().refine((t) => t.includes("{subject}"), { error: "template must contain {subject}" }),
+  lang: z.string().min(1),
+});
+
+/** Per-berth research (spec 18): search templates, languages by country, SERP location codes and limits. */
+export const researchSchema = z
+  .strictObject({
+    /** Languages searched per country (ISO 3166-1 alpha-2); `default` applies to every other country. */
+    languagesByCountry: z.record(z.string(), z.array(z.string().min(1)).min(1)).refine((m) => "default" in m, {
+      error: "languagesByCountry needs a default entry",
+    }),
+    locationCodes: z.record(z.string().min(1), z.number().int().positive()),
+    templates: z.strictObject({
+      positive: z.array(researchTemplateSchema).min(1),
+      negative: z.array(researchTemplateSchema),
+    }),
+    maxHitsPerCandidate: z.number().int().positive(),
+    /** Landside research (plan N4b): searches for the towns and sights around a confirmed berth. */
+    landside: z.strictObject({
+      templates: z.array(landsideTemplateSchema).min(1),
+      /** At most this many subjects (towns, sights) per berth, besides the nearest settlement. */
+      maxSubjectsPerPlace: z.number().int().positive(),
+      /** Hits taken over per subject's query set. */
+      maxHitsPerSubject: z.number().int().positive(),
+      /** The nearest settlement is a subject only within this distance (metres) of the berth. */
+      settlementMaxM: z.number().positive(),
+      /** A landside fact whose statement or quote contains one of these words (whole words, case and accents ignored) is about boats at the water and is dropped. */
+      boatKeywords: z.array(z.string().min(1)).min(1),
+    }),
+    refetchDays: z.number().int().positive(),
+    assessWords: z.number().int().positive(),
+    /** Domains whose hits are not taken over; `label.*` skips that registrable label on every public suffix (`tripadvisor.*`). */
+    skipDomains: z.array(z.string().min(1)),
+    /** The source created for a research hit page (domain without a source). */
+    source: z.strictObject({ weight: z.number().min(0).max(1), ratePerMinute: z.number().min(1).max(120) }),
+    /** Extraction per page and place (plan N2). */
+    extraction: z.strictObject({
+      factSchema: z.string().refine((v) => v in FACT_SCHEMAS, { error: "unknown fact schema version" }),
+      placeRadiusKm: z.number().positive(),
+      maxUnitWords: z.number().int().positive(),
+      windowWords: z.number().int().positive(),
+      maxSharedWords: z.number().int().positive(),
+      routeMaxStops: z.number().int().positive(),
+      /** A failed research unit is planned again until it failed this often. */
+      maxAttempts: z.number().int().positive(),
+      /** How many archived Markdown files the unit planning reads at a time (N3 task 0). */
+      markdownReadConcurrency: z.number().int().positive(),
+    }),
+    /** When a berth counts as confirmed from its signals (plan N2, task 6). */
+    confirmation: z.strictObject({
+      minIndependentSources: z.number().int().min(1),
+      minSignalConfidence: z.number().min(0).max(1),
+      positiveKinds: z.array(z.enum(berthSignalKindEnum.enumValues)).min(1),
+      negativeKinds: z.array(z.enum(berthSignalKindEnum.enumValues)).min(1),
+      /** Negative kinds a marina or port (`officialPlaceKinds`) ignores: „no space“ of a harbour is a seasonal fact, not a closure. A subset of `negativeKinds`. */
+      harbourIgnoredNegativeKinds: z.array(z.enum(berthSignalKindEnum.enumValues)),
+      countingPageKinds: z.array(z.enum(pageKindEnum.enumValues)).min(1),
+      listedAsBerthPageKinds: z.array(z.enum(pageKindEnum.enumValues)),
+      officialPageKinds: z.array(z.enum(pageKindEnum.enumValues)),
+      /** Place kinds confirmed by an official page plus another domain (marinas, ports); the others by independent sources. */
+      officialPlaceKinds: z.array(z.enum(placeKindEnum.enumValues)),
+      /** Whether pages linked to a place only by a route corridor count without a search- or name-linked source (ruling: no). */
+      corridorAloneConfirms: z.boolean(),
+      /** Two sources whose positive quotes share this many consecutive words are copies and count as one (spec 5.6). */
+      copyMinSharedWords: z.number().int().positive(),
+    }),
+    /** The reference gate (plan N3): the subdivision measured, the thresholds compared and the released threshold. */
+    gate: z
+      .strictObject({
+        subdivision: z.string().min(1),
+        thresholds: z.array(z.number().int().min(1)).min(1),
+        /** Whether the gate is passed and the chosen threshold released for other subdivisions. */
+        released: z.boolean(),
+        chosenThreshold: z.number().int().min(1).nullable(),
+        /** A confirmed place matched to a reference spot of its kind farther than this is a position error (as `quality.navily.positionToleranceM`). */
+        maxPositionDeviationM: z.number().positive(),
+        /** The gate is passed only with at least this many confirmed places: a perfect score on a handful proves nothing. */
+        minConfirmed: z.number().int().min(1),
+      })
+      .refine((g) => g.thresholds.every((n, i) => i === 0 || n > g.thresholds[i - 1]!), { error: "gate thresholds must be strictly ascending" })
+      .refine((g) => !g.released || (g.chosenThreshold !== null && g.thresholds.includes(g.chosenThreshold)), {
+        error: "a released gate needs a chosenThreshold among the thresholds",
+      }),
+    /** Matching route stops to places. */
+    discovery: z.strictObject({
+      corridorBufferKm: z.number().positive(),
+      minNameSimilarity: z.number().min(0).max(1),
+      /** A named corridor candidate this similar to the stop (or matching it by name) blocks naming an unnamed bay. */
+      vetoSimilarity: z.number().min(0).max(1),
+      /** The corridor step applies only to a straight leg prev → next of at most this length. */
+      maxLegKm: z.number().positive(),
+      /** … and only when the dates of the previous and the next stop are at most this many days apart. */
+      maxLegDays: z.number().int().nonnegative(),
+      /** A research name stays provisional until route stops of this many registrable domains gave it. */
+      corroboratingDomains: z.number().int().positive(),
+    }),
+    /** Current state per berth (plan N4a): landing, landside objects and their access. */
+    state: z.strictObject({
+      /** A landing object (pier, slipway, beach) counts for the berth up to this distance. */
+      landingRadiusM: z.number().positive(),
+      /** Without a landing object, the nearest shore point counts as landing only up to this distance from the anchor position. */
+      shoreMaxM: z.number().positive(),
+      /** Walking distance limit; the straight line counts times `detourFactor`. */
+      footMaxM: z.number().positive(),
+      detourFactor: z.number().min(1),
+      /** Farthest object reached by public transport or taxi. */
+      transportMaxM: z.number().positive(),
+      /** Only objects of these categories with at least `transportMinSitelinks` Wikidata sitelinks count as reached by transport. */
+      transportCategories: z.array(poiCategory).min(1),
+      transportMinSitelinks: z.number().int().nonnegative(),
+      /** Categories always listed when within foot distance. */
+      alwaysCategories: z.array(poiCategory).min(1),
+      /** Confidence of a structured text fact (checked quote) as a core value input. */
+      textConfidence: z.number().min(0).max(1),
+      /** A free fact whose subject category contains one of these (lower case) proves public transport or a taxi at the berth. */
+      transportKeywords: z.array(z.string().min(1)).min(1),
+    }),
+  })
+  .superRefine((c, ctx) => {
+    // a released gate is released for the threshold that delivers: the rule must confirm with the chosen threshold
+    if (c.gate.released && c.confirmation.minIndependentSources !== c.gate.chosenThreshold) {
+      ctx.addIssue({ code: "custom", path: ["confirmation", "minIndependentSources"], message: "a released gate needs minIndependentSources equal to gate.chosenThreshold" });
+    }
+    for (const k of c.confirmation.negativeKinds) {
+      if (c.confirmation.positiveKinds.includes(k)) {
+        ctx.addIssue({ code: "custom", path: ["confirmation", "negativeKinds"], message: `signal kind ${k} is both positive and negative` });
+      }
+    }
+    for (const k of c.confirmation.harbourIgnoredNegativeKinds) {
+      if (!c.confirmation.negativeKinds.includes(k)) {
+        ctx.addIssue({ code: "custom", path: ["confirmation", "harbourIgnoredNegativeKinds"], message: `signal kind ${k} is not a negative kind` });
+      }
+    }
+    for (const [country, langs] of Object.entries(c.languagesByCountry)) {
+      for (const [i, lang] of langs.entries()) {
+        if (!(lang in c.locationCodes)) {
+          ctx.addIssue({ code: "custom", path: ["languagesByCountry", country, i], message: `language ${lang} has no locationCodes entry` });
+        }
+      }
+    }
+    for (const [i, t] of c.landside.templates.entries()) {
+      if (!(t.lang in c.locationCodes)) {
+        ctx.addIssue({ code: "custom", path: ["landside", "templates", i, "lang"], message: `language ${t.lang} has no locationCodes entry` });
+      }
+    }
+    for (const purpose of ["positive", "negative"] as const) {
+      for (const [i, t] of c.templates[purpose].entries()) {
+        if (!(t.lang in c.locationCodes)) {
+          ctx.addIssue({ code: "custom", path: ["templates", purpose, i, "lang"], message: `language ${t.lang} has no locationCodes entry` });
+        }
+      }
+    }
+  });
+export type ResearchConfig = z.infer<typeof researchSchema>;

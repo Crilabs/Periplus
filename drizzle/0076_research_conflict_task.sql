@@ -1,0 +1,1 @@
+ALTER TYPE "public"."review_kind" ADD VALUE 'research_conflict';

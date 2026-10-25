@@ -13,7 +13,11 @@ const SUBDIVISION = "sd_01J9X4M0A1B2C3D4E5F6G7H8J9";
 const AREA = "ar_01J9X4M0A1B2C3D4E5F6G7H8JA";
 const REGION = "rg_01J9X4KZ0A1B2C3D4E5F6G7H8J";
 const HIGHLIGHT = "hl_01J9X4KQ3P2N1M0Z9K8J7H6G5F";
-const envelope = { schemaVersion: "2.3" as const, subdivision: SUBDIVISION, dataVersion: 2, generatedAt: "2026-10-19T08:00:00.000Z" };
+const envelope = {
+  schemaVersion: "3.0" as const,
+  scope: { type: "subdivision" as const, id: SUBDIVISION, dataVersion: 2 },
+  generatedAt: "2026-10-19T08:00:00.000Z",
+};
 const square: [number, number][][] = [
   [
     [23.3, 37.6],
@@ -35,20 +39,24 @@ export const SAMPLE_FILES: {
   "changes.json": ChangesFile;
 } = {
   "manifest.json": {
-    schemaVersion: "2.3",
-    subdivision: {
-      id: SUBDIVISION,
-      key: "GR-I",
-      name: "Attika",
-      names: [
-        { lang: "en", name: "Attica" },
-        { lang: "el", name: "Αττική" },
-      ],
-      polygon: { type: "Polygon", coordinates: square },
+    schemaVersion: "3.0",
+    scope: {
+      type: "subdivision",
+      subdivision: {
+        id: SUBDIVISION,
+        key: "GR-I",
+        name: "Attika",
+        names: [
+          { lang: "en", name: "Attica" },
+          { lang: "el", name: "Αττική" },
+        ],
+        polygon: { type: "Polygon", coordinates: square },
+      },
+      dataVersion: 2,
+      previousDataVersion: 1,
     },
+    coverage: [{ id: SUBDIVISION, key: "GR-I", name: "Attika", status: "delivered", dataVersion: 2 }],
     areas: [{ id: AREA, key: "saronic", names: [{ lang: "en", name: "Saronic Gulf" }] }],
-    dataVersion: 2,
-    previousDataVersion: 1,
     generatedAt: "2026-10-19T08:00:00.000Z",
     bbox: [23, 37, 23.75, 38],
     tiles: [
@@ -67,7 +75,7 @@ export const SAMPLE_FILES: {
     ],
     files: [{ name: "spots.json", sha256: "a".repeat(64), bytes: 1234 }],
   },
-  "spots.json": { ...spotsFile([TEIL_B_EXAMPLE]), dataVersion: 2 },
+  "spots.json": { ...spotsFile([TEIL_B_EXAMPLE]), scope: envelope.scope },
   "highlights.json": {
     ...envelope,
     highlights: [

@@ -1,4 +1,4 @@
-import { CONTRACT_SCHEMAS, type CoastCollection, type ContractFile, type Highlight, type Spot } from "@/contract";
+import { CONTRACT_SCHEMAS, type CoastCollection, type ContractFile, type FileScope, type Highlight, type Spot } from "@/contract";
 import { GOOGLE_PLACE_ID_PATTERN, highlightCategory, OSM_ID_PATTERN, WIKIDATA_ID_PATTERN } from "@/contract/v2";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
@@ -143,7 +143,15 @@ const ids: Check = ({ pkg }) => {
     if (other !== undefined) out.push(finding(file, id, path, `Kennung doppelt (auch in ${other})`));
     else seen.set(id, file);
   };
-  visit(MANIFEST, pkg.manifest.subdivision.id, "/subdivision/id", "sd");
+  const scope = pkg.manifest.scope;
+  // the scope's own id may repeat elsewhere by design (the subdivision in its coverage entry, the home marina among the spots)
+  const own = scope.type === "subdivision" ? scope.subdivision.id : scope.homeMarina.id;
+  if (scope.type === "subdivision") visit(MANIFEST, own, "/scope/subdivision/id", "sd");
+  else if (!isPublicId(own, "sp")) out.push(finding(MANIFEST, own, "/scope/homeMarina/id", "Kennung ohne gültiges Präfix sp_ und ULID"));
+  pkg.manifest.coverage.forEach((c, i) => {
+    if (scope.type === "subdivision" && c.id === own) return;
+    visit(MANIFEST, c.id, `/coverage/${i}/id`, "sd");
+  });
   pkg.manifest.areas.forEach((a, i) => visit(MANIFEST, a.id, `/areas/${i}/id`, "ar"));
   spotsOf(pkg).forEach((s, i) => visit(SPOTS, s.id, `/spots/${i}/id`, "sp"));
   highlightsOf(pkg).forEach((h, i) => visit(HIGHLIGHTS, h.id, `/highlights/${i}/id`, "hl"));
@@ -484,20 +492,24 @@ const foreignContent: Check = ({ pkg, deps }) => {
 
 /**
  * Teil B "dataVersion ist größer als die vorherige", "je Landesteil um 1 steigend": the previous one + 1 (1 for the first
- * package); every file names the manifest's version, subdivision and schema.
+ * package); every file's `scope` names the manifest's scope (type, subdivision or key, data version) and its schema.
+ * A radius package has no data version of its own (its key stands for the versions it is made of).
  */
 const dataVersion: Check = ({ pkg, deps }) => {
   const out: Finding[] = [];
   const m = pkg.manifest;
+  const scope = m.scope;
   const previous = deps.previous?.dataVersion ?? null;
-  const expected = (previous ?? 0) + 1;
-  if (m.dataVersion !== expected) {
-    out.push(finding(MANIFEST, null, "/dataVersion", `Datenversion ${m.dataVersion} statt ${expected} (die vorige plus 1)`));
+  if (scope.type === "subdivision") {
+    const expected = (previous ?? 0) + 1;
+    if (scope.dataVersion !== expected) {
+      out.push(finding(MANIFEST, null, "/scope/dataVersion", `Datenversion ${scope.dataVersion} statt ${expected} (die vorige plus 1)`));
+    }
+    if (scope.previousDataVersion !== previous) {
+      out.push(finding(MANIFEST, null, "/scope/previousDataVersion", `Vorige Datenversion ${scope.previousDataVersion ?? "keine"} statt ${previous ?? "keine"}`));
+    }
   }
-  if (m.previousDataVersion !== previous) {
-    out.push(finding(MANIFEST, null, "/previousDataVersion", `Vorige Datenversion ${m.previousDataVersion ?? "keine"} statt ${previous ?? "keine"}`));
-  }
-  const envelopes: Array<[ContractFile, { dataVersion: number; subdivision: string; schemaVersion: string } | undefined]> = [
+  const envelopes: Array<[ContractFile, { scope: FileScope; schemaVersion: string } | undefined]> = [
     [SPOTS, pkg.files[SPOTS]],
     [HIGHLIGHTS, pkg.files[HIGHLIGHTS]],
     [REGIONS, pkg.files[REGIONS]],
@@ -506,8 +518,14 @@ const dataVersion: Check = ({ pkg, deps }) => {
   ];
   for (const [file, e] of envelopes) {
     if (!e) continue;
-    if (e.dataVersion !== m.dataVersion) out.push(finding(file, null, "/dataVersion", `Datenversion ${e.dataVersion} statt ${m.dataVersion} wie im Manifest`));
-    if (e.subdivision !== m.subdivision.id) out.push(finding(file, null, "/subdivision", `Landesteil ${e.subdivision} statt ${m.subdivision.id} wie im Manifest`));
+    const head = e.scope;
+    if (head.type !== scope.type) out.push(finding(file, null, "/scope/type", `Geltungsbereich ${head.type} statt ${scope.type} wie im Manifest`));
+    else if (head.type === "subdivision" && scope.type === "subdivision") {
+      if (head.id !== scope.subdivision.id) out.push(finding(file, null, "/scope/id", `Landesteil ${head.id} statt ${scope.subdivision.id} wie im Manifest`));
+      if (head.dataVersion !== scope.dataVersion) out.push(finding(file, null, "/scope/dataVersion", `Datenversion ${head.dataVersion} statt ${scope.dataVersion} wie im Manifest`));
+    } else if (head.type === "radius" && scope.type === "radius" && head.key !== scope.key) {
+      out.push(finding(file, null, "/scope/key", `Schlüssel ${head.key} statt ${scope.key} wie im Manifest`));
+    }
     if (e.schemaVersion !== m.schemaVersion) out.push(finding(file, null, "/schemaVersion", `Vertragsversion ${e.schemaVersion} statt ${m.schemaVersion} wie im Manifest`));
   }
   const changes = pkg.files[CHANGES];
@@ -523,6 +541,7 @@ const dataVersion: Check = ({ pkg, deps }) => {
  * previous version).
  */
 const changesComplete: Check = ({ pkg, deps }) => {
+  if (pkg.manifest.scope.type !== "subdivision") return [];
   const out: Finding[] = [];
   const file = pkg.files[CHANGES];
   if (deps.previous === null) {

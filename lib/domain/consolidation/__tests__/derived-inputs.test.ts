@@ -5,7 +5,7 @@ import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { computations, facts, geoObjects, mentions, places, profiles, restrictedAreas, reviewDecisions, reviewTasks, sources, wikidataSitelinks } from "@/lib/db/schema";
 import type { GeoObjectType, PlaceStatus } from "@/lib/db/schema/geo";
-import { popularityForSubdivision } from "@/lib/domain/consolidation/derived/popularity";
+import { popularityForPlaces } from "@/lib/domain/consolidation/derived/popularity";
 import { loadContext, loadDerivedInputs, loadInputs } from "@/lib/domain/consolidation/inputs";
 import { newId } from "@/lib/domain/ids";
 import { testDb, withRollback } from "@/test/db";
@@ -235,8 +235,8 @@ async function profile(tx: Db, objectId: string, version: number, sourcesCount: 
   });
 }
 
-describe("popularityForSubdivision", () => {
-  it("popularity normalises within the subdivision of the place, not the tile label", () =>
+describe("popularityForPlaces", () => {
+  it("popularity normalises within the neighbourhood across subdivisions, not the tile label", () =>
     withRollback(async (tx) => {
       const home = await insertTestSubdivision(tx, `XT-${newId()}`, [22.0, 35.0, 22.5, 35.25]);
       const neighbour = await insertTestSubdivision(tx, `XT-${newId()}`, [22.0, 35.25, 22.5, 35.5]);
@@ -256,17 +256,20 @@ describe("popularityForSubdivision", () => {
       await profile(tx, other.id, 1, 99);
       await profile(tx, unassigned.id, 1, 80);
 
-      const homeValues = await popularityForSubdivision(tx, home.id, opts.today);
-      expect([...homeValues.keys()].sort()).toEqual([a.id, b.id].sort());
-      expect(homeValues.get(a.id)).toBe(1);
-      expect(homeValues.get(b.id)).toBeCloseTo(0.5, 3);
-      const neighbourValues = await popularityForSubdivision(tx, neighbour.id, opts.today);
-      expect([...neighbourValues.keys()]).toEqual([other.id]);
-      expect(neighbourValues.get(other.id)).toBe(1);
+      // all four lie within 50 nm of each other: one neighbourhood across both subdivisions, maximum 99 (`other`)
+      const values = await popularityForPlaces(tx, [a.id, b.id, other.id, unassigned.id], opts.today, 50);
+      expect([...values.keys()].sort()).toEqual([a.id, b.id, other.id, unassigned.id].sort());
+      expect(values.get(other.id)).toBe(1);
+      expect(values.get(a.id)).toBeCloseTo(Math.log(16) / Math.log(100), 6);
+      expect(values.get(b.id)).toBeCloseTo(Math.log(4) / Math.log(100), 6);
+      // a neighbourhood too small to reach the others: each place alone is its own maximum
+      const alone = await popularityForPlaces(tx, [a.id, b.id], opts.today, 0.1);
+      expect(alone.get(a.id)).toBe(1);
+      expect(alone.get(b.id)).toBe(1);
     }));
 });
 
-describe("popularityForSubdivision on the run date", () => {
+describe("popularityForPlaces on the run date", () => {
   it("counts confirmed places valid on the date, with a valid geo object; the newest sources_count per place", () =>
     withRollback(async (tx) => {
       const home = await insertTestSubdivision(tx, `XT-${newId()}`, [22.0, 35.0, 22.5, 35.25]);
@@ -295,7 +298,8 @@ describe("popularityForSubdivision on the run date", () => {
       await profile(tx, future.id, 1, 70);
       await tx.execute(sql`update places set valid_from = ${opts.today}::date + 1 where geo_object_id = ${future.id}`);
 
-      const p = await popularityForSubdivision(tx, home.id, opts.today);
+      const ids = [a, b, none, rejected, candidate, endedObject, future].map((o) => o.id);
+      const p = await popularityForPlaces(tx, ids, opts.today, 50);
       expect([...p.keys()].sort()).toEqual([a.id, b.id].sort());
       expect(p.get(a.id)).toBe(1);
       expect(p.get(b.id)).toBeCloseTo(0.5, 3);

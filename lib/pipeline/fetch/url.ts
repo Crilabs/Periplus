@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { and, asc, count, eq, inArray, ne, sql } from "drizzle-orm";
-import { resolveConverter, type Converter, type ConverterName } from "@/lib/adapters/fetch";
+import { type Converter, type ConverterName } from "@/lib/adapters/fetch";
 import type { SimulatedFetcher } from "@/lib/adapters/fetch/simulated";
 import { BlockedUrlError, isPublicHttpUrl } from "@/lib/adapters/fetch/ssrf";
 import { HttpError, httpCall, RetryableHttpError, type CallContext, type HttpResponse, type Transport } from "@/lib/adapters/http";
-import { convertPdf, type runPdftotext } from "@/lib/adapters/pdf";
+import { type runPdftotext } from "@/lib/adapters/pdf";
 import type { Archive } from "@/lib/adapters/s3";
 import type { ModelClient } from "@/lib/ai/types";
 import { getConfig } from "@/lib/config";
@@ -13,8 +13,7 @@ import { crawlFrontier, documents, documentVersions, jobOutcomes, outlinks, sour
 import { detectLanguage } from "@/lib/domain/documents/language";
 import { extractLinks } from "@/lib/domain/documents/links";
 import { extractPublishedAt } from "@/lib/domain/documents/metadata";
-import { ensureDocument, markChecked, markGone, storeFetched } from "@/lib/domain/documents/store";
-import { structuredToMarkdown } from "@/lib/domain/documents/structured";
+import { markChecked, markGone, storeFetched } from "@/lib/domain/documents/store";
 import { editBase } from "@/lib/domain/revisit/scenario";
 import { extendStage, stageAcceptsJobs } from "@/lib/domain/runs";
 import { urlAllowed } from "@/lib/domain/sources/crawl-rules";
@@ -22,6 +21,7 @@ import { effectiveRate, robotsForRun } from "@/lib/domain/sources/robots";
 import { getSource, type Source } from "@/lib/domain/sources/store";
 import { normalizeUrl, registrableDomain } from "@/lib/domain/sources/urls";
 import { FETCH_SOURCE_STAGE } from "./source";
+import { convertAndStore } from "./store-page";
 import type { JobData } from "@/lib/jobs/worker";
 
 // No import of ../runs here: the job handlers import this module (import cycle through the stage registry).
@@ -536,74 +536,21 @@ export async function fetchUrl(db: Db, job: FetchUrlJob, deps: FetchUrlDeps, ctx
       ratePerMinute = fetched.ratePerMinute;
     }
 
-    const pageUrl = finalUrl ?? job.url;
-    const format = formatOf(contentType, pageUrl);
-    let markdown: string;
-    let converter: string;
-    let rawExt: string;
-    let html: string | null = null;
-    let hint: string | null = null;
-    if (format.kind === "pdf") {
-      if (!source.crawlRules.pdf && !isUpload) return stop("skipped", "skipped", "pdf_disabled");
-      const pdf = await convertPdf(raw, { ...deps.pdf, cfg: cfg.pdf, archive: deps.archive }, { runId: ctx.runId, stage: ctx.stage, sourceId: source.id });
-      markdown = pdf.markdown;
-      converter = pdf.converter;
-      rawExt = "pdf";
-    } else if (format.kind === "structured") {
-      markdown = structuredToMarkdown(raw, format.type);
-      converter = "structured";
-      rawExt = format.type;
-    } else if (format.kind === "html") {
-      html = decodeHtml(raw, contentType);
-      const name = resolveConverter(source.crawlRules, source.domain, cfg);
-      // A render requests the page again: it waits for the same per-domain bucket as the fetch.
-      const rate = { key: `domain:${registrableDomain(pageUrl)}`, perMinute: ratePerMinute, maxWaitMs: cfg.maxRateWaitMs };
-      const converted = await deps.converters[name].convert(
-        { url: pageUrl, html: name === "local" ? html : null, boilerplateSelectors: source.crawlRules.boilerplateSelectors, render: source.crawlRules.render, rate },
-        callCtx,
-      );
-      // A render that scripts or a meta refresh moved to another site is not this source's page (like an offsite
-      // redirect of the HTTP fetch).
-      if (converted.finalUrl && registrableDomain(converted.finalUrl) !== registrableDomain(pageUrl)) {
-        return stop("skipped", "skipped", "redirect_offsite");
-      }
-      markdown = converted.markdown;
-      converter = name;
-      hint = converted.publishedHint;
-      rawExt = "html";
-    } else {
-      return stop("skipped", "skipped", "unsupported_type");
-    }
-
-    const documentId =
-      doc?.id ?? (await ensureDocument(db, { sourceId: source.id, url: job.url, urlNormalized, docType: source.type })).id;
-    const stored = await storeFetched(
+    const result = await convertAndStore(
       db,
-      deps.archive,
-      documentId,
-      {
-        fetchedAt,
-        raw,
-        rawExt,
-        contentType,
-        finalUrl,
-        markdown,
-        converter,
-        language: detectLanguage(markdown, cfg.languages),
-        publishedAt: extractPublishedAt({ html, url: pageUrl, hint, fetchedAt }),
-        docType: source.type,
-        etag,
-        lastModified,
-        runId: ctx.runId,
-      },
-      cfg.chunk,
+      source,
+      { url: job.url, urlNormalized, documentId: doc?.id ?? null, raw, contentType, finalUrl, etag, lastModified, fetchedAt, ratePerMinute, isUpload },
+      deps,
+      ctx,
     );
+    if (result.kind === "skipped") return stop("skipped", "skipped", result.reason);
+    const { html, pageUrl } = result;
 
     // Links are followed for every HTML fetch, also when the content is unchanged or reverted.
     const links = html !== null ? extractLinks(html, pageUrl, cfg.trackingParams) : [];
     const maxPages = job.maxPages ?? source.crawlRules.maxPages;
     const newUrls = await followLinks(db, source, { urlNormalized, depth: job.depth, links }, maxPages, deps, ctx.runId);
-    return { outcome: stored.outcome, newUrls };
+    return { outcome: result.outcome, newUrls };
   } catch (error) {
     // A blocked address may be a passing DNS answer: the row stays queued (ruling M3-C-R5).
     if (error instanceof BlockedUrlError) return stop("skipped", "queued", "blocked_address");

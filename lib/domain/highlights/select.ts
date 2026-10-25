@@ -1,5 +1,5 @@
 import type { ConsolidationConfig } from "@/lib/config/schemas";
-import type { PoiCategory } from "@/lib/db/schema";
+import type { HighlightCategory } from "@/lib/db/schema";
 import { distanceNm } from "@/lib/domain/delivery/geo";
 
 /*
@@ -12,7 +12,7 @@ export type HighlightLevel = "none" | "some" | "many";
 
 export type HighlightCandidate = {
   geoObjectId: string;
-  category: PoiCategory;
+  category: HighlightCategory;
   name: string | null;
   nameNormalized: string | null;
   importance: 1 | 2 | 3 | 4 | 5;
@@ -22,7 +22,7 @@ export type HighlightCandidate = {
   lat: number;
 };
 
-export type TextName = { category: PoiCategory; nameNormalized: string };
+export type TextName = { category: HighlightCategory; nameNormalized: string };
 
 export type CategorySelection = {
   ids: string[];
@@ -70,9 +70,9 @@ export function selectHighlights(
   textNames: TextName[],
   cfg: HighlightsConfig,
   duplicateM: number,
-): Partial<Record<PoiCategory, CategorySelection>> {
-  const categories = new Set<PoiCategory>([...candidates.map((c) => c.category), ...textNames.map((t) => t.category)]);
-  const result: Partial<Record<PoiCategory, CategorySelection>> = {};
+): Partial<Record<HighlightCategory, CategorySelection>> {
+  const categories = new Set<HighlightCategory>([...candidates.map((c) => c.category), ...textNames.map((t) => t.category)]);
+  const result: Partial<Record<HighlightCategory, CategorySelection>> = {};
   const weight = (importance: number) => cfg.levelWeights[importance - 1] as number;
   const [someFrom, manyFrom] = cfg.levelThresholds as [number, number];
 

@@ -6,18 +6,17 @@ import { placeKindEnum, places, reviewDecisions, reviewTasks, type PlaceKind, ty
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import type { ProfileContext } from "@/lib/domain/consolidation/inputs";
 import { applyRule } from "@/lib/domain/consolidation/rules";
-import { dismissTasks, lockOpenPlaceTasks, lockOpenTasks } from "@/lib/domain/consolidation/task-locks";
+import { lockOpenPlaceTasks, lockOpenTasks } from "@/lib/domain/consolidation/task-locks";
 import type { ConsolidationInput, RuleName } from "@/lib/domain/consolidation/types";
-import { recheckExclusion } from "@/lib/domain/geometry/restrictions";
-import { newPublicId } from "@/lib/domain/ids";
-import { berthEvidence, countingTextInputs, type Evidence } from "./evidence";
+import { countingTextInputs } from "./evidence";
 
 /*
- * Confirmation and kind switch by evidence (spec 17 „Bestätigung nach Beleg“, „Ortsart aus Belegen“), run inside
- * `consolidateGeo` (regular mode) after the inputs are loaded and before the profile is built, so the profile of the same
- * run carries the new status and kind (and `place_new`). Every change is recorded like an admin decision: a decided
- * `place_candidate` pseudo task (`place_kind` / `place_status`) with one `review_decisions` row by `system` carrying
- * `auto: true`, the rule and the evidence ids.
+ * Kind switch by evidence (spec 17 „Ortsart aus Belegen“), run inside `consolidateGeo` (regular mode) after the inputs
+ * are loaded and before the profile is built, so the profile of the same run carries the new kind. The change is
+ * recorded like an admin decision: a decided `place_candidate` pseudo task (`place_kind`) with one `review_decisions`
+ * row by `system` carrying `auto: true` and the evidence ids. The old confirmation by evidence (and the `no_anchoring`
+ * it set from text) is switched off: a berth is confirmed by the research rule only (`lib/domain/research/confirmation`,
+ * spec N 5.6), which records its status changes the same way (`recordDecision`).
  */
 
 export const SYSTEM_ACTOR = "system";
@@ -26,10 +25,9 @@ const KIND_EVIDENCE = "place.kind_evidence";
 const KIND_SWITCH_STATUSES: ReadonlySet<PlaceStatus> = new Set<PlaceStatus>(["candidate", "confirmed"]);
 
 export type AutoStatusOutcome = {
-  action: "none" | "confirmed" | "no_anchoring" | "kind_changed";
-  /** The place's kind after the step (set when it changed or the place was confirmed). */
+  action: "none" | "kind_changed";
+  /** The place's kind after the step (set when it changed). */
   kind?: PlaceKind;
-  evidence?: Evidence;
   /** The place row after the step, for the profile context (set unless `none`). */
   place?: { kind: PlaceKind; status: PlaceStatus; statusReason: string | null; publicId: string | null };
 };
@@ -93,7 +91,7 @@ async function kindChosenByAdmin(tx: Db, placeId: string, geoObjectId: string): 
 }
 
 /** Whether an open duplicate review (`geo_object_pair`) names the object on either side. */
-async function hasOpenPairTask(tx: Db, geoObjectId: string): Promise<boolean> {
+export async function hasOpenPairTask(tx: Db, geoObjectId: string): Promise<boolean> {
   const { rows } = await tx.execute<{ open: boolean }>(sql`
     select exists (
       select 1 from review_tasks
@@ -118,8 +116,8 @@ async function reproposeKind(tx: Db, taskIds: string[], kind: PlaceKind): Promis
   `);
 }
 
-/** One decided pseudo task on the place with its `system` decision. */
-async function recordDecision(tx: Db, placeId: string, subjectType: "place_kind" | "place_status", previous: string, decision: Record<string, unknown>, now: Date) {
+/** One decided pseudo task on the place with its `system` decision (also used by the research confirmation). */
+export async function recordDecision(tx: Db, placeId: string, subjectType: "place_kind" | "place_status", previous: string, decision: Record<string, unknown>, now: Date) {
   const [task] = await tx
     .insert(reviewTasks)
     .values({ kind: "place_candidate", subjectType, subjectId: placeId, context: { previous }, status: "decided" })
@@ -128,19 +126,14 @@ async function recordDecision(tx: Db, placeId: string, subjectType: "place_kind"
 }
 
 /**
- * Applies the evidence to the place of `context` (spec 17), in the caller's transaction, under the profile lock the
- * caller holds:
+ * Applies the kind evidence to the place of `context` (spec 17), in the caller's transaction, under the profile lock
+ * the caller holds:
  * 1. only a valid, unmerged place; lock order (M5-P9, as the place merge): the object's open profile tasks, the
  *    place's open tasks, then the place row;
  * 2. kind switch (only a `candidate` or `confirmed` place): the consolidated `place.kind_evidence` (of documents whose type counts, `countingTextInputs`) differs from the place's kind and no admin chose the kind →
  *    the kind changes, recorded as a `place_kind` decision `{ action: "set_kind", kind, auto, factIds }`, and the place's
- *    open tasks with a proposal propose the new kind (`reproposeKind`);
- * 3. confirmation only for a `candidate` without an open duplicate review and with evidence (`berthEvidence`);
- * 4. the restricted areas of the newest geometry are checked while the place is still a candidate (`recheckExclusion`):
- *    a banned place becomes `no_anchoring` (reason set by it) and gets its public id; otherwise `confirmed` with its
- *    public id. Either is recorded as a `place_status` decision with the rule and the evidence ids;
- * 5. the place's open tasks on subject `place` are dismissed (`auto_confirmed`); duplicate reviews stay.
- * `rejected`, `no_anchoring`, `confirmed` and `abandoned` places never change status here.
+ *    open tasks with a proposal propose the new kind (`reproposeKind`).
+ * The status never changes here (plan N2 task 6: the research confirmation decides it).
  */
 export async function applyAutoStatus(
   tx: Db,
@@ -157,7 +150,7 @@ export async function applyAutoStatus(
   // only documents whose type counts for this place may switch its kind (a dataset or a neighbour's marina page never)
   const kindInputs = await countingTextInputs(tx, geoObjectId, inputs.filter((i) => i.attribute === KIND_EVIDENCE), cfg);
   const kindEvidence = consolidatedKindEvidence(kindInputs, context, cfg, opts);
-  if (known.status !== "candidate" && (!kindEvidence || kindEvidence.kind === known.kind || !KIND_SWITCH_STATUSES.has(known.status))) return { action: "none" };
+  if (!kindEvidence || kindEvidence.kind === known.kind || !KIND_SWITCH_STATUSES.has(known.status)) return { action: "none" };
 
   await lockOpenTasks(tx, geoObjectId);
   const placeTaskIds = await lockOpenPlaceTasks(tx, known.id);
@@ -168,57 +161,16 @@ export async function applyAutoStatus(
     .for("update");
   if (!place) return { action: "none" };
 
-  let kind = place.kind;
-  let kindChanged = false;
-  if (kindEvidence && kindEvidence.kind !== place.kind && KIND_SWITCH_STATUSES.has(place.status) && !(await kindChosenByAdmin(tx, place.id, geoObjectId))) {
+  if (kindEvidence.kind !== place.kind && KIND_SWITCH_STATUSES.has(place.status) && !(await kindChosenByAdmin(tx, place.id, geoObjectId))) {
     await tx.update(places).set({ kind: kindEvidence.kind, updatedAt: sql`now()` }).where(eq(places.id, place.id));
     await recordDecision(tx, place.id, "place_kind", place.kind, { action: "set_kind", kind: kindEvidence.kind, auto: true, factIds: kindEvidence.factIds }, now);
     await reproposeKind(tx, placeTaskIds, kindEvidence.kind);
-    kind = kindEvidence.kind;
-    kindChanged = true;
+    return { action: "kind_changed", kind: kindEvidence.kind, place: { kind: kindEvidence.kind, status: place.status, statusReason: place.statusReason, publicId: place.publicId } };
   }
-  const settled = async (action: AutoStatusOutcome["action"], evidence?: Evidence): Promise<AutoStatusOutcome> => {
-    if (action === "none") return { action };
-    const [row] = await tx
-      .select({ kind: places.kind, status: places.status, statusReason: places.statusReason, publicId: places.publicId })
-      .from(places)
-      .where(eq(places.id, place.id));
-    return { action, kind: row!.kind, ...(evidence ? { evidence } : {}), place: row! };
-  };
-  const unconfirmed = kindChanged ? "kind_changed" : "none";
-
-  if (place.status !== "candidate" || (await hasOpenPairTask(tx, geoObjectId))) return settled(unconfirmed);
-  const tags = await tagsOf(tx, geoObjectId);
-  const evidence = await berthEvidence(tx, { geoObjectId, placeId: place.id, kind, tags, today: opts.today, kindEvidence: kindEvidence?.kind ?? null }, inputs, cfg);
-  if (!evidence) return settled(unconfirmed);
-
-  const exclusion = await recheckExclusion(tx, { id: place.id, geoObjectId }, cfg.geometry.restriction.minShare);
-  const action = exclusion === "excluded" ? "no_anchoring" : "confirm";
-  await tx
-    .update(places)
-    .set(
-      action === "confirm"
-        ? { status: "confirmed", statusReason: null, publicId: place.publicId ?? newPublicId("sp"), updatedAt: sql`now()` }
-        : { publicId: place.publicId ?? newPublicId("sp"), updatedAt: sql`now()` },
-    )
-    .where(eq(places.id, place.id));
-  await recordDecision(tx, place.id, "place_status", place.status, { action, auto: true, rule: evidence.rule, factIds: evidence.factIds, documentIds: evidence.documentIds, routeStopIds: evidence.routeStopIds }, now);
-
-  if (placeTaskIds.length > 0) {
-    const { rows: open } = await tx.execute<{ id: string }>(sql`
-      select id from review_tasks where id in (${sql.join(placeTaskIds.map((id) => sql`${id}`), sql`, `)}) and status = 'open' order by id
-    `);
-    await dismissTasks(tx, open.map((r) => r.id), "auto_confirmed");
-  }
-  return settled(action === "confirm" ? "confirmed" : "no_anchoring", evidence);
+  return { action: "none" };
 }
 
 async function geoObjectOf(tx: Db, placeId: string): Promise<string | null> {
   const [row] = await tx.select({ geoObjectId: places.geoObjectId }).from(places).where(eq(places.id, placeId));
   return row?.geoObjectId ?? null;
-}
-
-async function tagsOf(tx: Db, geoObjectId: string): Promise<Record<string, string>> {
-  const { rows } = await tx.execute<{ tags: Record<string, string> | null }>(sql`select tags from geo_objects where id = ${geoObjectId}`);
-  return rows[0]?.tags ?? {};
 }

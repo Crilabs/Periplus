@@ -27,6 +27,7 @@
     "check:geometry": "tsx --env-file-if-exists=.env.local scripts/check-geometry.ts",
     "fixtures:record": "tsx --env-file-if-exists=.env.local scripts/fixtures-record.ts",
     "smoke:ai": "tsx --env-file-if-exists=.env.local scripts/smoke-ai.ts",
+    "research:gate": "tsx --env-file-if-exists=.env.local scripts/research-gate.ts",
     "compare:navily": "tsx --env-file-if-exists=.env.local scripts/compare-navily.ts",
     "pdf:compare": "tsx --env-file-if-exists=.env.local scripts/pdf-compare.ts",
     "report:converters": "tsx --env-file-if-exists=.env.local scripts/converter-report.ts",

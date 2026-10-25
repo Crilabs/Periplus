@@ -1,7 +1,7 @@
 import { httpUrl } from "@/contract/v2/common";
 import type { SpotBody } from "@/contract";
 import type { DeliveryConfig } from "@/lib/config/schemas";
-import type { PlaceKind, PoiCategory } from "@/lib/db/schema/geo";
+import type { PlaceKind, HighlightCategory } from "@/lib/db/schema/geo";
 import { derivedBerthable } from "@/lib/domain/consolidation/berthable";
 import { excludeValue, type ExcludeValue } from "@/lib/domain/consolidation/exclude";
 import type { AttributeProvenance, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
@@ -402,7 +402,7 @@ const HIGHLIGHT_LEVELS = new Set(["none", "some", "many"]);
 function highlightLevels(value: unknown): SpotBody["highlightLevels"] {
   if (!isRecord(value)) return undefined;
   const entries = Object.keys(value)
-    .filter((c): c is PoiCategory => Object.hasOwn(HIGHLIGHT_CATEGORY, c))
+    .filter((c): c is HighlightCategory => Object.hasOwn(HIGHLIGHT_CATEGORY, c))
     .flatMap((c) => {
       const entry = value[c];
       const level = isRecord(entry) ? entry.level : undefined;

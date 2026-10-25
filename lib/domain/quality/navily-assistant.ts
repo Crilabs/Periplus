@@ -58,7 +58,7 @@ export function nameSimilarity(ownNames: string[], spotName: string | null, affi
 }
 
 /** Harbours (`port`, `marina`) pair with a Navily `port`, all other kinds with a Navily `mooring`. */
-function kindCompatible(kind: MatchPlace["kind"], navilyKind: NavilySpot["kind"]): boolean {
+export function kindCompatible(kind: MatchPlace["kind"], navilyKind: NavilySpot["kind"]): boolean {
   return navilyKind === (kind === "port" || kind === "marina" ? "port" : "mooring");
 }
 

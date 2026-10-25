@@ -32,6 +32,7 @@ type Overrides = {
   extraction?: unknown;
   delivery?: unknown;
   images?: unknown;
+  research?: unknown;
   subdivisions?: unknown;
   areas?: unknown;
   /** `consolidation/active.json`. */
@@ -63,6 +64,7 @@ function fixtureDir(overrides: Overrides): string {
     extraction: overrides.extraction ?? repoConfig.extraction,
     delivery: overrides.delivery ?? repoConfig.delivery,
     images: overrides.images ?? repoConfig.images,
+    research: overrides.research ?? repoConfig.research,
     subdivisions: overrides.subdivisions ?? repoConfig.subdivisions,
     areas: overrides.areas ?? repoConfig.areas,
   };
@@ -187,15 +189,15 @@ describe("loadConfig", () => {
   });
 
   it("the config loader and the fact-schema access know the same fact schema versions", () => {
-    expect(Object.keys(FACT_SCHEMAS).sort()).toEqual(["v1", "v2", "v3"]);
+    expect(Object.keys(FACT_SCHEMAS).sort()).toEqual(["v1", "v2", "v3", "v4"]);
     for (const [version, schema] of Object.entries(FACT_SCHEMAS)) {
       expect(getFactSchema(version)).toBe(schema);
       expect(schema.version).toBe(version);
     }
     // the active one loads; a version outside the map is unknown to both
     expect(loadConfig(fixtureDir({ factSchema: { version: "v3" } })).factSchema).toEqual({ version: "v3" });
-    expect(() => loadConfig(fixtureDir({ factSchema: { version: "v4" } }))).toThrow(/unknown fact schema version v4/);
-    expect(() => getFactSchema("v4")).toThrow(/Unknown fact schema version v4/);
+    expect(() => loadConfig(fixtureDir({ factSchema: { version: "v99" } }))).toThrow(/unknown fact schema version v99/);
+    expect(() => getFactSchema("v99")).toThrow(/Unknown fact schema version v99/);
   });
 
   it("rejects a malformed fact schema version", () => {
@@ -295,6 +297,11 @@ describe("loadConfig", () => {
   it("loads categories and gazetteer settings", () => {
     const c = loadConfig("config");
     expect(c.categories.wikidata.Q40080).toBe("beach");
+    expect(c.categories.osm).toContainEqual({ key: "shop", values: ["bakery"], category: "bakery" });
+    expect(c.categories.osm).toContainEqual({ key: "highway", values: ["bus_stop"], category: "transport" });
+    expect(c.categories.osm).toContainEqual({ key: "amenity", values: ["bus_station", "taxi", "ferry_terminal"], category: "transport" });
+    expect(c.categories.osm).toContainEqual({ key: "man_made", values: ["pier"], category: "landing" });
+    expect(c.categories.osm).toContainEqual({ key: "leisure", values: ["slipway"], category: "landing" });
     expect(c.categories.osm).toContainEqual({ key: "historic", values: "*", category: "culture" });
     expect(c.gazetteer.overpass.timeoutSeconds).toBe(180);
     expect(c.gazetteer.wikidata.classes.Q23442).toBe("island");
@@ -676,7 +683,7 @@ describe("consolidation rules", () => {
 describe("delivery configuration", () => {
   it("the delivery config carries the spec values", () => {
     expect(getConfig().delivery).toMatchObject({
-      schemaVersion: "2.3",
+      schemaVersion: "3.0",
       coast: { marginNm: 2, simplifyToleranceM: 10 },
       validation: {
         maxWaterDistanceNm: 1.5,
@@ -693,6 +700,8 @@ describe("delivery configuration", () => {
       regions: { types: ["island", "archipelago", "coast_section", "gulf", "channel"], pointRadiusNm: 2 },
       weather: { regionBufferNm: 3, capeOffsetNm: 1, capeLandRadiusM: 2000 },
       highlights: { maxSpotIds: 50 },
+      radius: { nmPerDay: 50, returnFactor: 0.5, minDays: 1, maxDays: 28 },
+      popularity: { neighbourhoodNm: 50 },
       validation: { harbourMinShelter: 0.8, lowConfidenceNote: "wenig belegt" },
       severity: { shelterDelta: 0.2 },
       api: { cacheMaxAgeSeconds: 60 },
@@ -732,6 +741,9 @@ describe("delivery configuration", () => {
     expect(withDelivery((d) => (d.licenses[0]!.files = ["land.json" as never]))).toThrow(/delivery\.json.*files/);
     expect(withDelivery((d) => (d.licenses[0]!.fields = ["land.json#/name"]))).toThrow(/delivery\.json.*fields/);
     expect(withDelivery((d) => (d.build.lockTimeoutMs = 0))).toThrow(/delivery\.json.*lockTimeoutMs/);
+    // the contract caps a radius package's days at 28 (manifest scope `days`)
+    expect(withDelivery((d) => (d.radius.maxDays = 29))).toThrow(/delivery\.json.*maxDays.*28/);
+    expect(withDelivery((d) => (d.radius.maxDays = 14))).not.toThrow();
     expect(withDelivery((d) => Object.assign(d, { bogus: 1 }))).toThrow(/delivery\.json/);
   });
 });

@@ -2,6 +2,11 @@
   "osm": [
     { "key": "amenity", "values": ["restaurant", "cafe", "bar", "pub", "fast_food"], "category": "food" },
     { "key": "shop", "values": ["supermarket", "convenience"], "category": "supply" },
+    { "key": "shop", "values": ["bakery"], "category": "bakery" },
+    { "key": "highway", "values": ["bus_stop"], "category": "transport" },
+    { "key": "amenity", "values": ["bus_station", "taxi", "ferry_terminal"], "category": "transport" },
+    { "key": "man_made", "values": ["pier"], "category": "landing" },
+    { "key": "leisure", "values": ["slipway"], "category": "landing" },
     { "key": "natural", "values": ["beach"], "category": "beach" },
     { "key": "leisure", "values": ["beach_resort"], "category": "beach" },
     { "key": "natural", "values": ["cave_entrance", "cliff", "reef", "spring", "peak"], "category": "nature" },

@@ -55,7 +55,7 @@ export async function runQuery(
     return { queryId: prior.id, reused: true, results: count!.n };
   }
 
-  const tileId = q.level === "tile" ? q.scopeId : q.level === "place" || q.level === "place_website" ? q.tileId : undefined;
+  const tileId = q.level === "tile" ? q.scopeId : q.level === "place" || q.level === "place_website" || q.level === "research" ? q.tileId : undefined;
   const callCtx = tileId ? { ...ctx, tileId } : ctx;
   const { raw, items } = await searchOrganic(deps.transport, q, callCtx, discovery.serp);
   const rawKey = serpRawKey(q, now);

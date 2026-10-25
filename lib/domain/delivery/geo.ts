@@ -6,7 +6,7 @@ import type { LonLat } from "./types";
  */
 
 /** Earth radius in nautical miles. */
-const EARTH_RADIUS_NM = 3440.065;
+export const EARTH_RADIUS_NM = 3440.065;
 const NM_PER_DEGREE = 60;
 const rad = (deg: number) => (deg * Math.PI) / 180;
 

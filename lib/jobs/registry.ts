@@ -10,6 +10,19 @@ import { discoveryAreaHandler, discoveryPlaceHandler, discoveryProposeHandler, d
 import { embedChunksHandler } from "./handlers/embed";
 import { fetchSourceHandler, fetchUrlHandler } from "./handlers/fetch";
 import { gazetteerHandler } from "./handlers/gazetteer";
+import {
+  researchAssessHandler,
+  researchDiscoverHandler,
+  researchExtractHandler,
+  researchFetchHandler,
+  researchRoutesHandler,
+  researchSearchHandler,
+  researchLandsideExtractHandler,
+  researchLandsideSearchHandler,
+  researchStateFactsHandler,
+  researchStateHandler,
+} from "./handlers/research";
+import { researchConfirmHandler } from "./handlers/research-confirm";
 import { imagesPlaceHandler } from "./handlers/images";
 import { placeWebsiteFreezeHandler, placeWebsiteHandler } from "./handlers/place-website";
 import { gazetteerCoarseHandler, subdivisionsBuildHandler } from "./handlers/subdivisions";
@@ -60,6 +73,17 @@ export const HANDLERS: Record<QueueName, JobHandler<JobData>> = {
   "discovery.place": discoveryPlaceHandler,
   "fetch.source": fetchSourceHandler,
   "fetch.url": fetchUrlHandler,
+  "research.search": researchSearchHandler,
+  "research.fetch": researchFetchHandler,
+  "research.assess": researchAssessHandler,
+  "research.extract": researchExtractHandler,
+  "research.routes": researchRoutesHandler,
+  "research.discover": researchDiscoverHandler,
+  "research.confirm": researchConfirmHandler,
+  "research.state": researchStateHandler,
+  "research.state_facts": researchStateFactsHandler,
+  "research.landside_search": researchLandsideSearchHandler,
+  "research.landside_extract": researchLandsideExtractHandler,
   "embed.chunks": embedChunksHandler,
   "sources.wikivoyage": wikivoyageHandler,
   "compare.converters": compareConvertersHandler,

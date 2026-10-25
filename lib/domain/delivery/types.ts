@@ -7,7 +7,7 @@ import type {
   SpotsFile,
   WeatherPointsFile,
 } from "@/contract";
-import type { GeoObjectType, PlaceKind, PlaceStatus, PoiCategory } from "@/lib/db/schema/geo";
+import type { GeoObjectType, PlaceKind, PlaceStatus, HighlightCategory } from "@/lib/db/schema/geo";
 import type { DocType } from "@/lib/db/schema/sources";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 
@@ -66,7 +66,7 @@ export type SpotSource = {
   profile: ProfileSnapshot | null;
   /** The `ok` summary of the latest profile version (highest prompt version), ruling M6-P9. */
   summary: string | null;
-  /** `popularityForSubdivision` on the build date; null for a place outside its map (ruling M6-P8). */
+  /** `popularityForPlaces` on the build date (fixed neighbourhood across subdivisions, spec 18); null for a place outside its map (ruling M6-P8). */
   popularity: number | null;
   sources: SourceRefRow[];
   /** The deliverable current images, best first (rank, sort order, slot). */
@@ -79,7 +79,7 @@ export type MergedSpot = { publicId: string; mergedIntoPublicId: string };
 export type PoiSource = {
   geoObjectId: string;
   publicId: string;
-  category: PoiCategory;
+  category: HighlightCategory;
   name: string;
   position: LonLat;
   osmId: string | null;

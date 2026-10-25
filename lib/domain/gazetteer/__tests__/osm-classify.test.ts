@@ -98,7 +98,13 @@ describe("categoryForTags (spec 15 A: highlights for trip planning only)", () =>
     ["pharmacy", { amenity: "pharmacy" }, null],
     ["atm", { amenity: "atm" }, null],
     ["drinking water", { amenity: "drinking_water" }, null],
-    ["bakery", { shop: "bakery" }, null],
+    ["bakery", { shop: "bakery" }, "bakery"],
+    ["bus stop", { highway: "bus_stop" }, "transport"],
+    ["bus station", { amenity: "bus_station" }, "transport"],
+    ["taxi", { amenity: "taxi" }, "transport"],
+    ["ferry terminal", { amenity: "ferry_terminal" }, "transport"],
+    ["pier", { man_made: "pier" }, "landing"],
+    ["slipway", { leisure: "slipway" }, "landing"],
     ["butcher", { shop: "butcher" }, null],
     ["scuba diving shop", { shop: "scuba_diving" }, null],
     ["convenience", { shop: "convenience" }, "supply"],
@@ -113,6 +119,6 @@ describe("categoryForTags (spec 15 A: highlights for trip planning only)", () =>
   it("classifyOsm needs a name, categoryForTags does not", () => {
     expect(classifyOsm({ shop: "supermarket" }, categories)).toBeNull();
     expect(categoryForTags({ shop: "supermarket" }, categories)).toBe("supply");
-    expect(classifyOsm({ shop: "bakery", name: "Bäcker" }, categories)).toBeNull();
+    expect(classifyOsm({ shop: "butcher", name: "Metzger" }, categories)).toBeNull();
   });
 });

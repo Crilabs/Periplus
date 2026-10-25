@@ -2,7 +2,8 @@ import { sql } from "drizzle-orm";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
-import { poiCategoryEnum, type PoiCategory } from "@/lib/db/schema/geo";
+import { HIGHLIGHT_CATEGORIES, type HighlightCategory } from "@/lib/db/schema/geo";
+import { inHighlightCategories } from "./categories";
 import { importanceOf, poiKinds } from "@/lib/domain/consolidation/derived/importance";
 import { countingSourceSql, mergedChainSql, mergedChainsSql } from "@/lib/domain/consolidation/inputs";
 import { activeExtractionRunIdSql } from "@/lib/domain/extraction/active-run";
@@ -23,11 +24,11 @@ export { poiKinds };
  */
 
 const HIGHLIGHT = "highlight.";
-const CATEGORIES = new Set<string>(poiCategoryEnum.enumValues);
+const CATEGORIES = new Set<string>(HIGHLIGHT_CATEGORIES);
 
 type CandidateRow = {
   id: string;
-  category: PoiCategory;
+  category: HighlightCategory;
   name: string | null;
   names: string[] | null;
   tags: Record<string, unknown>;
@@ -74,7 +75,7 @@ export async function loadHighlightCandidates(
            ST_X(o.centroid) as lon, ST_Y(o.centroid) as lat
     from anchor a
     join geo_objects o
-      on o.type = 'poi' and o.category is not null and o.merged_into_id is null and o.id <> ${placeGeoObjectId}
+      on o.type = 'poi' and ${inHighlightCategories(sql.raw("o.category"))} and o.merged_into_id is null and o.id <> ${placeGeoObjectId}
      and ${validAtAlias("o", today)}
      -- box prefilter (index), then the exact distance in metres
      and o.geom && ST_Expand(a.pt, ${reachM}::float8 / (111320 * greatest(cos(radians(ST_Y(a.pt))), 0.1)))
@@ -182,7 +183,7 @@ async function textNamesOf(
       for (let i = 1; i < left.length; i++) if (score(left[i]!) > score(left[best]!)) best = i;
       left.splice(best, 1);
     }
-    for (const n of left) found.set(`${category}\u0000${n}`, { category: category as PoiCategory, nameNormalized: n });
+    for (const n of left) found.set(`${category}\u0000${n}`, { category: category as HighlightCategory, nameNormalized: n });
   }
   return [...found.values()].sort((a, b) =>
     a.category < b.category ? -1 : a.category > b.category ? 1 : a.nameNormalized < b.nameNormalized ? -1 : a.nameNormalized > b.nameNormalized ? 1 : 0,
