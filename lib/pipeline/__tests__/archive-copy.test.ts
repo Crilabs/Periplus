@@ -154,9 +154,68 @@ describe("archive copy", () => {
     const { dir } = await exportSeeded();
     const orphan = JSON.parse((await readFile(path.join(dir, "documents.jsonl"), "utf8")).split("\n")[0]!) as Record<string, unknown>;
     await appendFile(path.join(dir, "documents.jsonl"), JSON.stringify({ ...orphan, id: newId(), sourceId: newId(), urlNormalized: "https://orphan.invalid/" }) + "\n");
+    const mf = JSON.parse(await readFile(path.join(dir, "manifest.json"), "utf8")) as { counts: Record<string, number> };
+    mf.counts.documents++;
+    await writeFile(path.join(dir, "manifest.json"), JSON.stringify(mf));
     await withRollback(async (tx) => {
       const report = await importArchive({ db: tx, archive: memoryArchive(), dir });
       expect(report.tables.documents.skippedNoParent).toBe(1);
+    });
+  });
+});
+
+describe("archive copy: reruns and conflicts", () => {
+  it("a rerun links the current version of documents inserted by an earlier run, never overwriting a link", async () => {
+    const { dir, seeded } = await exportSeeded();
+    const target = memoryArchive();
+    await withRollback(async (tx) => {
+      await importArchive({ db: tx, archive: target, dir });
+      // simulate an aborted run: the link is missing although document and versions are there
+      await tx.update(documents).set({ currentVersionId: null }).where(eq(documents.id, seeded.documentId));
+      const rerun = await importArchive({ db: tx, archive: target, dir });
+      expect(rerun.currentVersionsLinked).toBe(1);
+      expect((await presentIds(tx, seeded)).documents[0]!.cv).toBe(seeded.versionIds[1]);
+      // a link that is set stays, even when it differs
+      await tx.update(documents).set({ currentVersionId: seeded.versionIds[0]! }).where(eq(documents.id, seeded.documentId));
+      const again = await importArchive({ db: tx, archive: target, dir });
+      expect(again.currentVersionsLinked).toBe(0);
+      expect((await presentIds(tx, seeded)).documents[0]!.cv).toBe(seeded.versionIds[0]);
+    });
+  });
+
+  it("a row swallowed by another unique key counts as conflict and its children are skipped, not failed", async () => {
+    const { dir, seeded } = await exportSeeded();
+    await withRollback(async (tx) => {
+      const [src] = (await tx.select().from(sources).where(eq(sources.id, seeded.sourceId)));
+      expect(src).toBeUndefined();
+      // another source with the archive source's domain already lives in the target
+      const lines = (await readFile(path.join(dir, "sources.jsonl"), "utf8")).split("\n").filter(Boolean).map((l) => JSON.parse(l) as { id: string; domain: string });
+      const mine = lines.find((l) => l.id === seeded.sourceId)!;
+      await tx.insert(sources).values({ domain: mine.domain, name: "other", type: "trip_report", weight: 0.5, crawlRules: { startUrls: [] }, origin: "manual" });
+      const report = await importArchive({ db: tx, archive: memoryArchive(), dir });
+      expect(report.tables.sources.skippedConflict).toBe(1);
+      expect(report.tables.documents.skippedNoParent).toBeGreaterThanOrEqual(1);
+      expect((await presentIds(tx, seeded)).documents).toEqual([]);
+    });
+  });
+
+  it("an existing target object with different content is an error and its version is not inserted", async () => {
+    const { dir, seeded } = await exportSeeded();
+    const target = memoryArchive();
+    await target.put(seeded.keys[1]!, "foreign bytes", "text/plain");
+    await withRollback(async (tx) => {
+      const report = await importArchive({ db: tx, archive: target, dir });
+      expect(report.objectErrors).toEqual([{ key: seeded.keys[1], reason: expect.stringContaining("different content") }]);
+      expect((await presentIds(tx, seeded)).versions).toBe(1);
+      expect(new TextDecoder().decode((await target.get(seeded.keys[1]!))!)).toBe("foreign bytes");
+    });
+  });
+
+  it("fails when a table file has fewer rows than the manifest", async () => {
+    const { dir } = await exportSeeded();
+    await writeFile(path.join(dir, "serp_results.jsonl"), "");
+    await withRollback(async (tx) => {
+      await expect(importArchive({ db: tx, archive: memoryArchive(), dir })).rejects.toThrow(/manifest says/);
     });
   });
 });

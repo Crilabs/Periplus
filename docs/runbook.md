@@ -292,18 +292,19 @@ Wird `playwright` in `package.json` angehoben, muss das Basis-Image dieselbe Ver
 
 ### Archiv übernehmen
 Kopiert das Archiv (Quellen, Dokumente, Versionen samt S3-Objekten, Suchzwischenspeicher `serp_queries`/`serp_results`) von einer Umgebung in eine andere, z. B. Entwicklung nach Produktion. Die Produktions-Datenbank ist nur im Docker-Netz des Servers erreichbar, deshalb in zwei Schritten über ein Verzeichnis. Forschungstabellen (Läufe, Orte, Geo-Objekte) werden nicht kopiert; Verweise auf Läufe werden auf `NULL` gesetzt. Das Skript löscht nichts und fügt nur ein.
+0. **Vorbereitung**: den Branch mergen und deployen, damit das Worker-Image `scripts/migrate-archive.ts` enthält. Den Worker während des Imports stoppen (`dc stop worker`), damit er keine Quellen oder Dokumente mit gleicher Domain/URL einfügt, und danach wieder starten. `S3_WRITE_PREFIX` darf in `.env` nicht gesetzt sein; der Bucket muss existieren (das Skript legt keinen an).
 1. **Export** auf dem Entwicklungsrechner (liest dessen Datenbank und S3 laut `.env.local`; der Platz reicht für alle Objekte, etwa 2 GB bei 7 500 Dokumenten):
    ```bash
    npm run archive:migrate -- export --out /tmp/archive-export
    ```
    Ergebnis: je Tabelle `<tabelle>.jsonl`, `objects/<Schlüssel>` und `manifest.json` (Zahlen, SHA-256 je Objekt). Fehlt ein Objekt in S3, bleibt die Version bzw. Suche aus dem Export und wird im Manifest unter `skipped` gezählt.
-2. **Übertragen**: `rsync -a --partial /tmp/archive-export/ <server>:/opt/periplus/archive-import/` (ein unterbrochenes `rsync` einfach wiederholen).
+2. **Übertragen**: `rsync -a --partial /tmp/archive-export/ <server>:/opt/periplus/archive-import/` (ein unterbrochenes `rsync` einfach wiederholen; danach `rsync -anc` als Prüfung ohne Änderungen; Verzeichnis für den Container lesbar machen, z. B. `chmod -R a+rX`). Der Import bricht ab, wenn eine `.jsonl` weniger Zeilen hat als `manifest.json`.
 3. **Trockenlauf** auf dem Server, im Worker-Container mit Bind-Mount (Pfad im Container `/import`):
    ```bash
    dc run --rm -v /opt/periplus/archive-import:/import:ro worker node --import tsx scripts/migrate-archive.ts import --in /import --dry-run
    ```
    Gibt je Tabelle `before`, `after`, `read`, `inserted` (Trockenlauf: würde eingefügt), `existing`, übersprungene Zeilen (NOT-NULL-Verweis ins Leere, Objektfehler) und die Zahl der Objekte aus. Nichts wird geschrieben.
-4. **Import**: derselbe Befehl ohne `--dry-run` (der Bind-Mount darf `:ro` bleiben). Jedes Objekt wird vor dem Hochladen gegen sein SHA-256 geprüft; eine Version mit fehlerhaftem Objekt wird nicht eingefügt, der Fehler steht in der Ausgabe (`ERROR object …`, Exit 1). Bestehende Ids bleiben unverändert (`ON CONFLICT DO NOTHING`): ein zweiter Lauf fügt nichts ein und lässt sich nach einem Abbruch beliebig wiederholen. Wirkt `current_version_id` eines Dokuments erst nach den Versionen, setzt der Import es nur bei Dokumenten, die er selbst eingefügt hat.
+4. **Import**: derselbe Befehl ohne `--dry-run` (der Bind-Mount darf `:ro` bleiben). Jedes Objekt wird vor dem Hochladen gegen sein SHA-256 geprüft; eine Version mit fehlerhaftem Objekt wird nicht eingefügt, der Fehler steht in der Ausgabe (`ERROR object …`, Exit 1). Bestehende Ids bleiben unverändert (`ON CONFLICT DO NOTHING`): ein zweiter Lauf fügt nichts ein und lässt sich nach einem Abbruch beliebig wiederholen. `current_version_id` eines Dokuments setzt der Import nach den Versionen, nur wo es noch leer ist (auch bei einem Wiederholungslauf). Ein vorhandenes Objekt mit anderem Inhalt ist ein Objektfehler; eine Zeile, die an einem anderen eindeutigen Schlüssel (Domain, URL, Inhalts-Hash) scheitert, wird als „conflict“ gezählt, ihre Kinder als „no parent“. Exit 1 bei Objektfehlern oder übersprungenen Zeilen.
 5. **Zahlen vergleichen**: `inserted` (bzw. `after` minus `before`) je Tabelle gegen `counts` in `manifest.json` (bei leerer Produktion gleich, abzüglich der gemeldeten übersprungenen Zeilen); einen zweiten Lauf ausführen, der überall `inserted 0` meldet. Danach das Verzeichnis auf dem Server und lokal löschen.
 
 ### Budget-Stopp

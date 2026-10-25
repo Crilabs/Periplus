@@ -34,14 +34,18 @@ async function main(): Promise<void> {
   const { db, close } = createDb(url);
   const log = (line: string) => process.stdout.write(line + "\n");
   try {
+    // Keys in document_versions are unprefixed: a write prefix would store the objects elsewhere.
+    if (process.env.S3_WRITE_PREFIX) throw new Error("S3_WRITE_PREFIX is set: refusing to copy the archive");
     const archive = getArchive();
     if (args.command === "export") {
       await exportArchive({ db, archive, dir: args.dir, log });
     } else {
-      if (!args.dryRun) await archive.ensureBucket();
+      // Never create a bucket here: a misspelled S3_BUCKET must fail, not start an empty archive.
+      if (!(await archive.ping())) throw new Error("the S3 bucket is not reachable (check S3_ENDPOINT and S3_BUCKET)");
       const report = await importArchive({ db, archive, dir: args.dir, dryRun: args.dryRun, log });
       log(formatReport(report));
-      if (report.objectErrors.length > 0) process.exitCode = 1;
+      const skipped = Object.values(report.tables).reduce((n, t) => n + t.skippedNoParent + t.skippedConflict + t.skippedObjectError, 0);
+      if (report.objectErrors.length > 0 || skipped > 0) process.exitCode = 1;
     }
   } finally {
     await close();

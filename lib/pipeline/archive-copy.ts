@@ -192,6 +192,8 @@ export type TableReport = {
   existing: number;
   /** Rows left out: a NOT NULL foreign key points outside the archive and the target. */
   skippedNoParent: number;
+  /** Rows whose id is not in the target after the insert: another unique key (domain, URL, content hash) held a different row. */
+  skippedConflict: number;
   /** Document versions left out because an object is missing, corrupt or unreadable. */
   skippedObjectError: number;
 };
@@ -248,7 +250,7 @@ export async function importArchive(deps: {
   const manifest = JSON.parse(await readFile(path.join(dir, MANIFEST_FILE), "utf8")) as Manifest;
   if (manifest.format !== 1) throw new Error(`unknown manifest format ${String(manifest.format)}`);
 
-  const empty = (): TableReport => ({ before: 0, after: 0, read: 0, inserted: 0, existing: 0, skippedNoParent: 0, skippedObjectError: 0 });
+  const empty = (): TableReport => ({ before: 0, after: 0, read: 0, inserted: 0, existing: 0, skippedNoParent: 0, skippedConflict: 0, skippedObjectError: 0 });
   const report: ImportReport = {
     dryRun,
     tables: { sources: empty(), documents: empty(), document_versions: empty(), serp_queries: empty(), serp_results: empty() },
@@ -296,19 +298,22 @@ export async function importArchive(deps: {
     }
     if (bytes.length !== entry.size) return fail(`size ${bytes.length}, manifest ${entry.size}`);
     if (sha256(bytes) !== entry.sha256) return fail("SHA-256 mismatch");
-    if (await archive.exists(key)) {
-      report.objectsPresent++;
-    } else if (!dryRun) {
-      await archive.put(key, bytes, entry.contentType);
-      report.objectsUploaded++;
-    } else {
+    const present = await archive.exists(key);
+    if (present) {
+      // Never overwrite: an existing object must carry exactly the archived bytes, else the version would point at foreign content.
+      const theirs = await archive.get(key);
+      if (theirs && (theirs.length !== entry.size || sha256(theirs) !== entry.sha256)) return fail("target object exists with different content");
+    }
+    if (present) report.objectsPresent++;
+    else {
+      if (!dryRun) await archive.put(key, bytes, entry.contentType);
       report.objectsUploaded++;
     }
     objectOk.set(key, true);
     return true;
   }
 
-  const newDocuments: { id: string; currentVersionId: string }[] = [];
+  /** Archive document id -> its current version id (linked after the versions, also on a rerun). */
   const archiveCurrent = new Map<string, string>();
 
   for (const name of ARCHIVE_TABLES) {
@@ -341,11 +346,13 @@ export async function importArchive(deps: {
       if (valid.length === 0) continue;
       const ids = valid.map((r) => r.id as string);
       let inserted: string[];
+      let presentIds: Set<string>;
       if (dryRun) {
-        const present = new Set(
+        const there = new Set(
           (await db.select({ id: spec.table.id }).from(spec.table).where(inArray(spec.table.id, ids))).map((r) => r.id as string),
         );
-        inserted = ids.filter((id) => !present.has(id));
+        inserted = ids.filter((id) => !there.has(id));
+        presentIds = new Set(ids);
       } else {
         const res = await db
           .insert(spec.table)
@@ -353,40 +360,54 @@ export async function importArchive(deps: {
           .onConflictDoNothing()
           .returning({ id: spec.table.id });
         inserted = res.map((r) => r.id as string);
+        // A row counts as present by its id, not by the conflict count: another unique key may have swallowed it.
+        presentIds = new Set(
+          (await db.select({ id: spec.table.id }).from(spec.table).where(inArray(spec.table.id, ids))).map((r) => r.id as string),
+        );
       }
       rep.inserted += inserted.length;
-      rep.existing += valid.length - inserted.length;
-      for (const id of ids) known[name].add(id);
-      if (name === "documents") {
-        const fresh = new Set(inserted);
-        for (const id of fresh) {
-          const cv = archiveCurrent.get(id);
-          if (cv) newDocuments.push({ id, currentVersionId: cv });
-        }
-      }
+      rep.existing += presentIds.size - inserted.length;
+      rep.skippedConflict += ids.length - presentIds.size;
+      for (const id of presentIds) known[name].add(id);
+      if (name === "documents") for (const id of ids) if (!presentIds.has(id)) archiveCurrent.delete(id);
+    }
+    if (rep.read !== manifest.counts[name]) {
+      throw new Error(`${name}.jsonl has ${rep.read} rows, manifest says ${manifest.counts[name]} (incomplete transfer?)`);
     }
     log(`import ${name}: read ${rep.read}, inserted ${rep.inserted}`);
   }
 
-  // Documents inserted by this run get their current version now that the versions exist (an update of the document,
-  // never of a version). A document keeps no current version when its version was not copied.
-  for (const d of newDocuments) {
-    if (!known.document_versions.has(d.currentVersionId)) {
-      const [present] = await db
-        .select({ id: documentVersions.id })
-        .from(documentVersions)
-        .where(eq(documentVersions.id, d.currentVersionId));
-      if (!present) continue;
+  // Documents of the archive whose current version is still unset in the target get it now that the versions exist
+  // (an update of the document, never of a version; the IS NULL guard never overwrites a link). Covers reruns.
+  const pairs = [...archiveCurrent.entries()];
+  for (let i = 0; i < pairs.length; i += BATCH_SIZE) {
+    const chunk = pairs.slice(i, i + BATCH_SIZE);
+    const docRows = await db
+      .select({ id: documents.id, cv: documents.currentVersionId })
+      .from(documents)
+      .where(inArray(documents.id, chunk.map(([d]) => d)));
+    const docState = new Map(docRows.map((r) => [r.id, r.cv]));
+    const versionRows = await db
+      .select({ id: documentVersions.id })
+      .from(documentVersions)
+      .where(inArray(documentVersions.id, chunk.map(([, v]) => v)));
+    const versionThere = new Set(versionRows.map((r) => r.id));
+    for (const [docId, versionId] of chunk) {
+      const inTarget = docState.has(docId);
+      const unset = !inTarget || docState.get(docId) === null;
+      const versionOk = versionThere.has(versionId) || (dryRun && known.document_versions.has(versionId));
+      if (!unset || !versionOk) continue;
+      if (dryRun) {
+        report.currentVersionsLinked++;
+        continue;
+      }
+      const res = await db
+        .update(documents)
+        .set({ currentVersionId: versionId })
+        .where(and(eq(documents.id, docId), isNull(documents.currentVersionId)))
+        .returning({ id: documents.id });
+      report.currentVersionsLinked += res.length;
     }
-    if (dryRun) {
-      report.currentVersionsLinked++;
-      continue;
-    }
-    await db
-      .update(documents)
-      .set({ currentVersionId: d.currentVersionId })
-      .where(and(eq(documents.id, d.id), isNull(documents.currentVersionId)));
-    report.currentVersionsLinked++;
   }
 
   for (const name of ARCHIVE_TABLES) report.tables[name].after = await countRows(db, SPECS[name]);
@@ -394,10 +415,10 @@ export async function importArchive(deps: {
 }
 
 export function formatReport(report: ImportReport): string {
-  const lines = [report.dryRun ? "DRY RUN: nothing was written" : "import done", "table\tbefore\tafter\tread\tinserted\texisting\tskipped (no parent)\tskipped (object)"];
+  const lines = [report.dryRun ? "DRY RUN: nothing was written" : "import done", "table\tbefore\tafter\tread\tinserted\texisting\tskipped (no parent)\tskipped (conflict)\tskipped (object)"];
   for (const name of ARCHIVE_TABLES) {
     const t = report.tables[name];
-    lines.push(`${name}\t${t.before}\t${t.after}\t${t.read}\t${t.inserted}\t${t.existing}\t${t.skippedNoParent}\t${t.skippedObjectError}`);
+    lines.push(`${name}\t${t.before}\t${t.after}\t${t.read}\t${t.inserted}\t${t.existing}\t${t.skippedNoParent}\t${t.skippedConflict}\t${t.skippedObjectError}`);
   }
   lines.push(`objects: ${report.objectsUploaded} ${report.dryRun ? "to upload" : "uploaded"}, ${report.objectsPresent} already present, ${report.objectErrors.length} errors`);
   for (const e of report.objectErrors) lines.push(`ERROR object ${e.key}: ${e.reason}`);
