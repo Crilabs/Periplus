@@ -438,34 +438,75 @@ describe("buildDelivery", () => {
     });
   });
 
-  it("a fact with a link or a domain name rejects the package under foreign_content (review focus 5)", async () => {
+  it("a fact with a link or a domain name is dropped with a warning, the package stays valid (review focus 5, F3)", async () => {
     await withRollback(async (tx) => {
       const f = await seedDeliverySubdivision(tx);
       await rewriteStateA(tx, f, { facts: await factsOfA(tx, f, "Details at sailing-guide.example.com and www.example.org."), updatedAt: new Date("2026-10-20T08:00:00Z") });
-      const result = await buildDelivery(tx, memoryArchive(), f.subdivisionId, { now: NOW, inCallerTransaction: true });
-      expect(result.status).toBe("rejected");
-      expect(result.report.checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["foreign_content"]);
-      expect(result.report.checks.find((c) => c.name === "foreign_content")!.findings).toEqual([
-        expect.objectContaining({ file: "spots.json", objectId: f.places.A.publicId, message: "Text enthält einen Link" }),
-      ]);
+      const archive = memoryArchive();
+      const result = await buildDelivery(tx, archive, f.subdivisionId, { now: NOW, inCallerTransaction: true });
+      expect(result).toMatchObject({ status: "valid", dataVersion: 1 });
+      expect(result.report.ok).toBe(true);
+      const a = (await readJson<SpotsFile>(archive, `${prefixOf(f, 1)}spots.json`)).spots.find((s) => s.id === f.places.A.publicId)!;
+      expect(a.facts.map((x) => x.text)).toEqual(["Strong gusts come down the valley in the afternoon."]);
+      expect(result.report.warnings).toContainEqual(expect.objectContaining({ file: "spots.json", objectId: f.places.A.publicId, message: expect.stringContaining("Fakt mit wörtlich kopiertem Text oder fremdem Inhalt") }));
     });
   });
 
-  it("a fact with a copied 16-word passage rejects the package; files lie under rejected/, data version stays (review focus 1)", async () => {
+  it("a domain in a spot name still rejects the package under foreign_content (F3)", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliverySubdivision(tx);
+      const result = await buildDelivery(tx, memoryArchive(), f.subdivisionId, {
+        now: NOW,
+        inCallerTransaction: true,
+        scopeTransform: (scope) => ({ ...scope, spots: scope.spots.map((s) => (s.publicId === f.places.A.publicId ? { ...s, name: "Vathi Bay sailing-guide.example.com" } : s)) }),
+      });
+      expect(result.status).toBe("rejected");
+      expect(result.report.checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["foreign_content"]);
+    });
+  });
+
+  it("a copied 16-word fact is dropped with a warning; a copied safety fact warns safety_fact_dropped (review focus 1, F3)", async () => {
     await withRollback(async (tx) => {
       const archive = memoryArchive();
       const f = await seedDeliverySubdivision(tx);
       const words = saltedWords(30);
       const v = await insertTestVersion(tx, [words.join(" ")]);
       await tx.insert(textShingles).values(shingleHashes(words.join(" "), 15).map((shingleHash) => ({ shingleHash, chunkId: v.chunkIds[0]! })));
-      const setFact = async (statement: string) =>
-        rewriteStateA(tx, f, { facts: await factsOfA(tx, f, statement), updatedAt: new Date("2026-10-20T08:00:00Z") });
-      await setFact(`Die Bucht: ${words.slice(2, 18).join(" ")}.`);
+      const copied = `Die Bucht: ${words.slice(2, 18).join(" ")}.`;
+      await rewriteStateA(tx, f, { facts: await factsOfA(tx, f, copied), updatedAt: new Date("2026-10-20T08:00:00Z") });
 
-      const rejected = await buildDelivery(tx, archive, f.subdivisionId, { now: NOW, inCallerTransaction: true });
+      const first = await buildDelivery(tx, archive, f.subdivisionId, { now: NOW, inCallerTransaction: true });
+      expect(first).toMatchObject({ status: "valid", dataVersion: 1 });
+      expect(first.report.ok).toBe(true);
+      const a1 = (await readJson<SpotsFile>(archive, `${prefixOf(f, 1)}spots.json`)).spots.find((s) => s.id === f.places.A.publicId)!;
+      expect(a1.facts.map((x) => x.text)).toEqual(["Strong gusts come down the valley in the afternoon."]);
+      const dropped = first.report.warnings.filter((w) => w.message.startsWith("Fakt mit wörtlich kopiertem Text"));
+      expect(dropped).toEqual([expect.objectContaining({ file: "spots.json", objectId: f.places.A.publicId })]);
+      expect(first.report.warnings.some((w) => w.message.startsWith("Sicherheitsfakt mit"))).toBe(false);
+
+      // the safety fact copied: the loud warning
+      const [row] = await tx.select().from(berthStates).where(eq(berthStates.placeId, f.places.A.placeId));
+      const facts = row!.facts.map((x) => (x.safety ? { ...x, statement: copied } : x));
+      await rewriteStateA(tx, f, { facts, updatedAt: new Date("2026-10-21T08:00:00Z") });
+      const second = await buildDelivery(tx, archive, f.subdivisionId, { now: new Date("2040-06-02T08:00:00Z"), inCallerTransaction: true });
+      expect(second.status).toBe("valid");
+      const a2 = (await readJson<SpotsFile>(archive, `${prefixOf(f, 2)}spots.json`)).spots.find((s) => s.id === f.places.A.publicId)!;
+      expect(a2.facts.some((x) => x.safety)).toBe(false);
+      expect(second.report.warnings.filter((w) => w.message.startsWith("Sicherheitsfakt mit"))).toEqual([expect.objectContaining({ objectId: f.places.A.publicId })]);
+    });
+  });
+
+  it("a rejected package lies under rejected/, the data version stays; the next valid build is the first (F3: a name decides)", async () => {
+    await withRollback(async (tx) => {
+      const archive = memoryArchive();
+      const f = await seedDeliverySubdivision(tx);
+      const named = (scope: SubdivisionScope): SubdivisionScope => ({
+        ...scope,
+        spots: scope.spots.map((s) => (s.publicId === f.places.A.publicId ? { ...s, name: "Vathi Bay sailing-guide.example.com" } : s)),
+      });
+      const rejected = await buildDelivery(tx, archive, f.subdivisionId, { now: NOW, inCallerTransaction: true, scopeTransform: named });
       expect(rejected).toMatchObject({ status: "rejected", dataVersion: null });
       expect(rejected.report.ok).toBe(false);
-      expect(rejected.report.checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["verbatim_text"]);
       const prefix = `deliveries/${f.subdivisionKey}/rejected/${rejected.deliveryId}/`;
       expect(archive.keys()).toEqual(FILES.map((file) => `${prefix}${file}`).sort());
       // the stored files carry the version the package would have had
@@ -475,7 +516,6 @@ describe("buildDelivery", () => {
       expect(await objectRows(tx, f.subdivisionId)).toEqual([]);
 
       // fixed: the next build is the subdivision's first valid package
-      await setFact("The taverna on the beach serves fresh fish.");
       const valid = await buildDelivery(tx, archive, f.subdivisionId, { now: NOW, inCallerTransaction: true });
       expect(valid).toMatchObject({ status: "valid", dataVersion: 1 });
       expect((await deliveryRows(tx, f.subdivisionId)).find((r) => r.id === valid.deliveryId)).toMatchObject({ previousDeliveryId: null });
@@ -550,17 +590,17 @@ describe("buildDelivery", () => {
     await withRollback(async (tx) => {
       const archive = memoryArchive();
       const f = await seedDeliverySubdivision(tx);
-      // A's landside fact: 16 words of a text that is archived only after the first package
-      const words = saltedWords(30);
-      await rewriteStateA(tx, f, { facts: await factsOfA(tx, f, `Die Bucht: ${words.slice(2, 18).join(" ")}.`), updatedAt: new Date("2026-10-20T08:00:00Z") });
       const first = await buildDelivery(tx, archive, f.subdivisionId, { now: NOW, inCallerTransaction: true });
       expect(first).toMatchObject({ status: "valid", dataVersion: 1 });
 
-      const v = await insertTestVersion(tx, [words.join(" ")]);
-      await tx.insert(textShingles).values(shingleHashes(words.join(" "), 15).map((shingleHash) => ({ shingleHash, chunkId: v.chunkIds[0]! })));
-      const second = await buildDelivery(tx, archive, f.subdivisionId, { now: new Date("2040-06-02T08:00:00Z"), inCallerTransaction: true });
+      // a name with a domain (a name is no droppable item, F3): the content is unchanged, the check fails
+      const second = await buildDelivery(tx, archive, f.subdivisionId, {
+        now: new Date("2040-06-02T08:00:00Z"),
+        inCallerTransaction: true,
+        scopeTransform: (scope) => ({ ...scope, spots: scope.spots.map((s) => (s.publicId === f.places.A.publicId ? { ...s, names: [...s.names, { lang: "en", name: "sailing-guide.example.com", script: "latin" }] } : s)) }),
+      });
       expect(second).toMatchObject({ status: "rejected", dataVersion: null });
-      expect(second.report.checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["verbatim_text"]);
+      expect(second.report.checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["foreign_content"]);
       const prefix = `deliveries/${f.subdivisionKey}/rejected/${second.deliveryId}/`;
       expect(archive.keys().filter((k) => k.startsWith(prefix))).toEqual(FILES.map((file) => `${prefix}${file}`).sort());
       expect(await readJson<Manifest>(archive, `${prefix}manifest.json`)).toMatchObject({ scope: { type: "subdivision", dataVersion: 2, previousDataVersion: 1 } });

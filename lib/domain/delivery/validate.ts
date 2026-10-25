@@ -1,4 +1,4 @@
-import { CONTRACT_SCHEMAS, type CoastCollection, type ContractFile, type FileScope, type Spot } from "@/contract";
+import { CONTRACT_SCHEMAS, type CoastCollection, type ContractFile, type FileScope, type Spot, type SpotBody } from "@/contract";
 import { GOOGLE_PLACE_ID_PATTERN, OSM_ID_PATTERN, WIKIDATA_ID_PATTERN } from "@/contract/v2";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
@@ -344,17 +344,17 @@ class DependencyFailed extends Error {
  * `maxCopiedWords` (16 words or more). The copy checks run at most `copyCheckConcurrency` at once; any failure of one,
  * also a synchronous throw, is the database's, not the package's (rethrown, the build retries).
  */
-const verbatimText: Check = async ({ pkg, deps }) => {
-  const { maxCopiedWords, copyCheckConcurrency } = deps.cfg.validation;
-  const fields = displayTexts(pkg);
-  const texts = [...new Set(fields.map((f) => f.text))];
+/** The longest copied run per text; a failing lookup is the database's (`DependencyFailed`), no verdict on the package. */
+async function copiedRuns(texts: string[], deps: Pick<ValidationDeps, "findCopies" | "cfg">): Promise<Map<string, number>> {
+  const { copyCheckConcurrency } = deps.cfg.validation;
+  const unique = [...new Set(texts)];
   const runs = new Map<string, number>();
   let next = 0;
   // the first failure stops every worker: the build unwinds, no further query runs on its transaction
   let failed = false;
   const worker = async () => {
-    while (!failed && next < texts.length) {
-      const text = texts[next++]!;
+    while (!failed && next < unique.length) {
+      const text = unique[next++]!;
       try {
         runs.set(text, await Promise.resolve().then(() => deps.findCopies(text)));
       } catch (e) {
@@ -363,13 +363,55 @@ const verbatimText: Check = async ({ pkg, deps }) => {
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(copyCheckConcurrency, texts.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(copyCheckConcurrency, unique.length) }, worker));
+  return runs;
+}
+
+const verbatimText: Check = async ({ pkg, deps }) => {
+  const { maxCopiedWords } = deps.cfg.validation;
+  const fields = displayTexts(pkg);
+  const runs = await copiedRuns(fields.map((f) => f.text), deps);
   return fields.flatMap((f) =>
     runs.get(f.text)! > maxCopiedWords
       ? [finding(f.file, f.objectId, f.path, `Text enthält eine wörtliche Passage aus einer Quelle (mehr als ${maxCopiedWords} Wörter)`)]
       : [],
   );
 };
+
+/**
+ * Final review F3: a fact or a landing description that fails `verbatim_text` or `foreign_content` (a copied run, a
+ * link, a domain) is removed from its spot, with a warning (`fact_dropped`, `safety_fact_dropped`,
+ * `landing_description_dropped`), instead of rejecting the whole subdivision package. Runs on the mapped spots before
+ * versions; the checks still run over the finished package, so every other violation (a domain in a name, a copied
+ * hazard text) rejects as before. A failing copy lookup is the database's and is rethrown.
+ */
+export async function dropCopiedTexts(spots: Array<{ body: SpotBody; warnings: SpotWarning[] }>, deps: Pick<ValidationDeps, "findCopies" | "cfg">): Promise<void> {
+  const { maxCopiedWords } = deps.cfg.validation;
+  let runs: Map<string, number>;
+  try {
+    runs = await copiedRuns(
+      spots.flatMap((s) => [...s.body.facts.map((f) => f.text), ...s.body.landingPoints.flatMap((l) => (l.kind === "text" ? [l.description] : []))]),
+      deps,
+    );
+  } catch (e) {
+    throw e instanceof DependencyFailed ? e.original : e;
+  }
+  const bad = (text: string | null | undefined) =>
+    typeof text === "string" && text !== "" && ((runs.get(text) ?? 0) > maxCopiedWords || foreignTextMessage(text, deps.cfg) !== null);
+  for (const s of spots) {
+    const facts = s.body.facts.filter((f) => {
+      const drop = bad(f.text) || (f.subject.kind === "landside" && bad(f.subject.name));
+      if (drop) s.warnings.push({ code: f.safety ? "safety_fact_dropped" : "fact_dropped", factId: f.id });
+      return !drop;
+    });
+    const landingPoints = s.body.landingPoints.filter((l) => {
+      const drop = l.kind === "text" && bad(l.description);
+      if (drop) s.warnings.push({ code: "landing_description_dropped" });
+      return !drop;
+    });
+    s.body = { ...s.body, facts, landingPoints };
+  }
+}
 
 /**
  * Spec 13: the attribution of an AI illustration names the aerial and the terrain source it was made from (CC BY asks
@@ -388,6 +430,14 @@ const imageAttribution: Check = ({ pkg, deps }) => {
   spotsOf(pkg).forEach((s, i) => check(SPOTS, s.id, `/spots/${i}`, s.images));
   return out;
 };
+
+/** Why a text counts as foreign content (a link, a forbidden domain, a domain name), or null when it does not. */
+function foreignTextMessage(text: string, cfg: DeliveryConfig): string | null {
+  if (URL_IN_TEXT.test(text)) return "Text enthält einen Link";
+  if (mentionsForbiddenDomain(text, cfg.forbiddenDomains)) return "Text nennt eine gesperrte Domain";
+  const domain = domainIn(text, cfg.validation.domainTlds);
+  return domain !== null ? `Text enthält einen Domainnamen (${domain})` : null;
+}
 
 /**
  * Teil B "Keine fremden Inhalte" (contract 4.0: no source, no URL, no domain anywhere): external refs are ids only; no
@@ -410,12 +460,8 @@ const foreignContent: Check = ({ pkg, deps }) => {
     }
   });
   for (const f of [...displayTexts(pkg), ...nameTexts(pkg)]) {
-    if (URL_IN_TEXT.test(f.text)) out.push(finding(f.file, f.objectId, f.path, "Text enthält einen Link"));
-    else if (mentionsForbiddenDomain(f.text, forbidden)) out.push(finding(f.file, f.objectId, f.path, "Text nennt eine gesperrte Domain"));
-    else {
-      const domain = domainIn(f.text, deps.cfg.validation.domainTlds);
-      if (domain !== null) out.push(finding(f.file, f.objectId, f.path, `Text enthält einen Domainnamen (${domain})`));
-    }
+    const message = foreignTextMessage(f.text, deps.cfg);
+    if (message !== null) out.push(finding(f.file, f.objectId, f.path, message));
   }
   return out;
 };
@@ -506,6 +552,10 @@ const SPOT_WARNING_DE: Record<SpotWarning["code"], string> = {
   nearby_without_id: "Ding an Land ohne öffentliche ID, nicht geliefert",
   fact_without_subject: "Landfakt ohne Bezugsnamen, nicht geliefert",
   safety_fact_without_subject: "Sicherheitsfakt ohne Bezugsnamen, nicht geliefert: Sicherheitshinweis geht verloren",
+  contact_url_foreign: "Kontaktadresse nicht von der eigenen Website des Platzes, nicht geliefert",
+  fact_dropped: "Fakt mit wörtlich kopiertem Text oder fremdem Inhalt (Link, Domain), nicht geliefert",
+  safety_fact_dropped: "Sicherheitsfakt mit wörtlich kopiertem Text oder fremdem Inhalt (Link, Domain), nicht geliefert: Sicherheitshinweis geht verloren",
+  landing_description_dropped: "Anlandebeschreibung mit wörtlich kopiertem Text oder fremdem Inhalt (Link, Domain), nicht geliefert",
 };
 
 const WEATHER_DROPPED_DE: Record<DroppedWeatherPoint["reason"], string> = {
@@ -532,7 +582,7 @@ export function buildWarnings(input: {
   const out: Finding[] = [];
   for (const s of input.spots ?? []) {
     for (const w of s.warnings) {
-      out.push(finding(SPOTS, s.id, null, SPOT_WARNING_DE[w.code]));
+      out.push(finding(SPOTS, s.id, null, (w.code === "fact_dropped" || w.code === "safety_fact_dropped") ? `${SPOT_WARNING_DE[w.code]} (${w.factId})` : SPOT_WARNING_DE[w.code]));
     }
   }
   for (const s of input.omittedSpots ?? []) out.push(finding(SPOTS, s.id, null, SPOT_OMITTED_DE[s.reason]));

@@ -3,6 +3,7 @@ import type { SpotBody } from "@/contract/v2";
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import type { PlaceKind } from "@/lib/db/schema/geo";
 import { excludeValue, type ExcludeReason } from "@/lib/domain/consolidation/exclude";
+import { registrableDomain } from "@/lib/domain/sources/urls";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
 import { round5 } from "./geo";
 import { mapImages } from "./map-image";
@@ -66,7 +67,7 @@ export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
   },
   contact: {
     attributes: ["contact"],
-    note: "vhf, phone and url of the contact value; null when it is missing or all three are empty",
+    note: "vhf, phone and url of the contact value (the url only of the place\'s own bound website, else null with a warning); null when it is missing or all three are empty",
   },
   name: {
     attributes: [],
@@ -142,7 +143,11 @@ export type SpotWarning =
   | { code: "fallback_name" }
   | { code: "nearby_without_id"; geoObjectId: string }
   | { code: "fact_without_subject"; factId: string }
-  | { code: "safety_fact_without_subject"; factId: string };
+  | { code: "safety_fact_without_subject"; factId: string }
+  | { code: "contact_url_foreign" }
+  | { code: "fact_dropped"; factId: string }
+  | { code: "safety_fact_dropped"; factId: string }
+  | { code: "landing_description_dropped" };
 
 /**
  * An excluded spot is always delivered (Teil B "Ausgeschlossene Spots werden mit `exclude.excluded = true` und Grund
@@ -233,7 +238,7 @@ export function mapSpot(src: SpotSource, ctx: { regionId: string | null; cfg: De
     id: src.publicId,
     kind: SPOT_KIND[placeKind],
     berthable: typeof a["berthable"] === "boolean" ? (a["berthable"] as boolean) : null,
-    contact: contact(a["contact"]),
+    contact: contact(a["contact"], src.ownWebsiteDomain, warnings),
     name: nameless ? ctx.cfg.spots.excludedFallbackName : src.name,
     names: src.names.length > 0 ? src.names : undefined,
     position: { lat: round5(src.position.lat), lon: round5(src.position.lon) },
@@ -294,14 +299,32 @@ function score(state: SpotSource["state"], popularity: number | null, sourcesCou
   };
 }
 
-/** The contact value as the contract's `contact`; null when it is missing or all three parts are empty. */
-function contact(value: unknown): SpotBody["contact"] {
+/**
+ * The contact value as the contract's `contact`; null when it is missing or all three parts are empty. The url is
+ * delivered only when its registrable domain is the one of the place's own bound website (`place_websites`): a link
+ * from any other page is a third-party source and is dropped with a warning (final review F1).
+ */
+function contact(value: unknown, ownDomain: string | null, warnings: SpotWarning[]): SpotBody["contact"] {
   if (!isRecord(value)) return null;
   const part = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v : null);
   // only http(s) links are delivered (a javascript: or ftp: url is dropped)
-  const url = part(value.url);
-  const out = { vhf: part(value.vhf), phone: part(value.phone), url: url !== null && httpUrl.safeParse(url).success ? url : null };
+  const raw = part(value.url);
+  let url = raw !== null && httpUrl.safeParse(raw).success ? raw : null;
+  if (url !== null && !isOwnUrl(url, ownDomain)) {
+    warnings.push({ code: "contact_url_foreign" });
+    url = null;
+  }
+  const out = { vhf: part(value.vhf), phone: part(value.phone), url };
   return out.vhf === null && out.phone === null && out.url === null ? null : out;
+}
+
+function isOwnUrl(url: string, ownDomain: string | null): boolean {
+  if (ownDomain === null) return false;
+  try {
+    return registrableDomain(url).toLowerCase() === ownDomain.toLowerCase();
+  } catch {
+    return false;
+  }
 }
 
 /** Depths; confidence is the lowest of the present ones, the source their combination. */

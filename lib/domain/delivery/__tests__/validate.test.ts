@@ -22,7 +22,7 @@ import {
 } from "@/test/fixtures/delivery/package-v4";
 import { insertTestVersion } from "@/test/text";
 import type { DeliveryPackage } from "../types";
-import { buildWarnings, CHECK_NAMES, failedChecksSummary, spotsInMilitaryAreas, validatePackage, type CheckName, type ValidationDeps, type ValidationReport } from "../validate";
+import { buildWarnings, CHECK_NAMES, dropCopiedTexts, failedChecksSummary, spotsInMilitaryAreas, validatePackage, type CheckName, type ValidationDeps, type ValidationReport } from "../validate";
 
 const config = loadConfig("config");
 const cfg = config.delivery;
@@ -351,6 +351,25 @@ describe("validatePackage", () => {
       expect(failed(report)).toEqual(["verbatim_text"]);
       expect(findings(report, "verbatim_text")).toEqual([expect.objectContaining({ path: "/spots/0/landingPoints/1/description" })]);
     });
+  });
+
+  it("dropCopiedTexts removes a copied or foreign fact and landing description with a warning, nothing else (F3)", async () => {
+    const pkg = validPackage();
+    const a = spots(pkg)[0]!;
+    a.landingPoints = [...a.landingPoints, { kind: "text", description: "COPIED landing text" }, { kind: "text", description: "Visit www.example.org for the landing" }];
+    a.facts = a.facts.map((f) => (f.id === FACT_LANDSIDE ? { ...f, text: "COPIED fact text" } : f));
+    const before = { facts: a.facts.length, landing: a.landingPoints.length, name: a.name };
+    const draft = { body: a, warnings: [] as Array<{ code: string }> };
+    await dropCopiedTexts([draft as never], { findCopies: async (text) => (text.startsWith("COPIED") ? 16 : 0), cfg });
+    expect(draft.body.facts.map((f) => f.id)).not.toContain(FACT_LANDSIDE);
+    expect(draft.body.facts).toHaveLength(before.facts - 1);
+    expect(draft.body.landingPoints).toHaveLength(before.landing - 2);
+    expect(draft.body.name).toBe(before.name);
+    expect(draft.warnings.map((w) => w.code).sort()).toEqual(["fact_dropped", "landing_description_dropped", "landing_description_dropped"]);
+    // an 15-word run stays (the limit is more than 15 words)
+    const kept = { body: validPackage().files["spots.json"].spots[0]!, warnings: [] as never[] };
+    await dropCopiedTexts([kept], { findCopies: async () => 15, cfg });
+    expect(kept.warnings).toEqual([]);
   });
 
   it("an exact 15-word copy is no violation: Teil B forbids more than 15 words (validation review M-3)", async () => {

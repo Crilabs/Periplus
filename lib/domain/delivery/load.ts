@@ -13,6 +13,7 @@ import { countingSelectionsAt } from "@/lib/domain/highlights/selections";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { imageBlockedBy, imageSources } from "@/lib/domain/images/delivery-gate";
 import { utmSridFor } from "@/lib/domain/geometry/projection";
+import { registrableDomain } from "@/lib/domain/sources/urls";
 import { latestProfiles, validAtAlias } from "@/lib/domain/timeline";
 import type {
   BerthStateRow,
@@ -82,6 +83,7 @@ export async function loadSubdivisionScope(
   const areaRows = await loadAreas(db, tileArray, today);
 
   const states = await loadStates(db, spotRows.map((r) => r.placeId));
+  const ownDomains = await loadOwnWebsiteDomains(db, spotRows.map((r) => r.placeId));
   const evidence = await loadEvidence(db, spotRows.map((r) => r.placeId));
   const confirmationCfg = getConfig().research.confirmation;
   const nearbyObjectRows = await loadNearbyObjects(db, [...states.values()].flatMap((st) => st.nearby.map((n) => n.geoObjectId)), today);
@@ -101,6 +103,7 @@ export async function loadSubdivisionScope(
       ...r,
       names: names.get(r.geoObjectId) ?? [],
       state,
+      ownWebsiteDomain: ownDomains.get(r.placeId) ?? null,
       independentSources: decideBerth(r.kind, evidence.get(r.placeId) ?? [], confirmationCfg).independentSources.length,
       nearbyObjects: (state?.nearby ?? []).flatMap((n) => nearbyObjects.get(n.geoObjectId) ?? []),
       popularity: popularity.get(r.geoObjectId) ?? null,
@@ -212,7 +215,7 @@ async function loadTiles(db: Db, subdivisionId: string, tileArray: SQL, cfg: Del
   }));
 }
 
-type SpotRow = Omit<SpotSource, "names" | "state" | "independentSources" | "nearbyObjects" | "popularity" | "images">;
+type SpotRow = Omit<SpotSource, "names" | "state" | "ownWebsiteDomain" | "independentSources" | "nearbyObjects" | "popularity" | "images">;
 
 async function loadSpotRows(db: Db, subdivisionId: string, cfg: DeliveryConfig, today: string): Promise<SpotRow[]> {
   const anchorConfidence = getConfig().geometry.anchorArea.positionConfidence;
@@ -253,6 +256,30 @@ async function loadSpotRows(db: Db, subdivisionId: string, cfg: DeliveryConfig, 
     osmId: r.osm_id,
     wikidataId: r.wikidata_id,
   }));
+}
+
+/**
+ * The registrable domain of each place's current website (its newest `place_websites` row, as `currentPlaceWebsite`),
+ * only where that row is bound to the place; a place without one is absent. A contact url is delivered only on this domain.
+ */
+async function loadOwnWebsiteDomains(db: Db, placeIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (placeIds.length === 0) return out;
+  const { rows } = await db.execute<{ place_id: string; url: string; bound: boolean }>(sql`
+    select distinct on (place_id) place_id, url, bound
+    from place_websites
+    where place_id = any(${arrayParam(placeIds, "uuid")})
+    order by place_id, created_at desc, id desc
+  `);
+  for (const r of rows) {
+    if (!r.bound) continue;
+    try {
+      out.set(r.place_id, registrableDomain(r.url));
+    } catch {
+      // an unparsable address binds nothing
+    }
+  }
+  return out;
 }
 
 /** The berth states of the places, by place id (`berth_states`, one row per place). */
