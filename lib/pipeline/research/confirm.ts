@@ -60,3 +60,25 @@ export async function researchChanges(db: Db, runId: string): Promise<{ changed:
     confirmed: rows.filter((r) => r.status === "confirmed" && r.public_id !== null).map((r) => r.id),
   };
 }
+
+/**
+ * The keys of the subdivisions in which this run's research rule moved a place away from `confirmed` (a withdrawal:
+ * the place is `no_anchoring`, `candidate` or the like now; design 5.7b "fällt sofort aus der Lieferung"). The decision's
+ * pseudo task keeps the previous status (`context.previous`); a place confirmed again later in the run is not a withdrawal.
+ * Read from the database like `researchChanges`, so a retried job redoes the rebuild. Sorted, each key once.
+ */
+export async function withdrawnSubdivisions(db: Db, runId: string): Promise<string[]> {
+  const { rows } = await db.execute<{ key: string }>(sql`
+    select distinct s.key
+    from places p
+    join geo_objects g on g.id = p.geo_object_id
+    join subdivisions s on s.id = g.subdivision_id
+    where p.status <> 'confirmed'
+      and exists (
+        select 1 from review_tasks t join review_decisions d on d.task_id = t.id
+        where t.kind = 'place_candidate' and t.subject_type = 'place_status' and t.subject_id = p.id::text
+          and t.context->>'previous' = 'confirmed'
+          and d.decided_by = 'system' and d.decision->>'rule' = 'research' and d.decision->>'runId' = ${runId})
+    order by s.key`);
+  return rows.map((r) => r.key);
+}

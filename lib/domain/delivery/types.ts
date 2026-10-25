@@ -63,6 +63,8 @@ export type SpotSource = {
   state: BerthStateRow | null;
   /** The independent sources behind the confirmation, counted as the confirmation rule does (`decideBerth`); 0 without evidence. */
   independentSources: number;
+  /** Registrable domain of the place's current website when it is bound (`place_websites`); null without one. Only a contact url of this domain is delivered. */
+  ownWebsiteDomain: string | null;
   /** The computed anchor position of the place (`places.anchor_position`) with the configured confidence; null without one. */
   anchor: { lon: number; lat: number; confidence: number } | null;
   /** The geo objects the state's `nearby` entries point at (public id, names, position); an entry whose object is missing here is not delivered. */

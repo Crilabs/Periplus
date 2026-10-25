@@ -17,7 +17,7 @@ import { contentDigest, contentTypeOf, serializeFile, sha256Hex } from "./serial
 import { currentSnapshot, openBuildSnapshot } from "./snapshot";
 import type { DeliveryPackage, SubdivisionScope } from "./types";
 import { undeliveredSafety } from "./map-region";
-import { buildWarnings, spotsInMilitaryAreas, validatePackage, type ValidationReport } from "./validate";
+import { buildWarnings, dropCopiedTexts, spotsInMilitaryAreas, validatePackage, type ValidationReport } from "./validate";
 import { assignVersions, latestDelivered, type ObjectDraft, type RemovedObject, type VersionedObject } from "./versioning";
 import { buildWeatherPoints } from "./weather-points";
 
@@ -178,6 +178,15 @@ async function assemble(
     images: imagesCfg,
     scopeTransform: input.scopeTransform,
   });
+  // one lookup per text for the drop pass and the validation (the archive does not change within the snapshot)
+  const copies = new Map<string, Promise<number>>();
+  const findCopies = (text: string) => {
+    let run = copies.get(text);
+    if (run === undefined) copies.set(text, (run = findArchiveCopies(tx, text).then((c) => c.longestRun)));
+    return run;
+  };
+  // a copied or foreign fact or landing description leaves its spot with a warning instead of rejecting the package (F3)
+  await dropCopiedTexts(draft.spots, { findCopies, cfg });
   const imageBytes = await readImageFiles(input.archive, draft.imageFiles);
   const latest = await latestDelivered(tx, input.subdivisionId);
   const { carried, notCarried } = carryMerged(draft, previous);
@@ -232,7 +241,7 @@ async function assemble(
 
   const report = await validatePackage(pkg, {
     previous: previous ? { dataVersion: previousVersion! } : null,
-    findCopies: async (text) => (await findArchiveCopies(tx, text)).longestRun,
+    findCopies,
     cfg,
     imageAttribution: imageAttributionTexts(imagesCfg),
     warnings: buildWarnings({

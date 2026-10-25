@@ -1,15 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Archive } from "@/lib/adapters/s3";
-import { eq } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { berthStates, textShingles } from "@/lib/db/schema";
-import { shingleHashes } from "@/lib/domain/documents/shingles";
 import { newId } from "@/lib/domain/ids";
 import { latestDeliveries } from "@/lib/domain/overview";
 import { withRollback } from "@/test/db";
 import { changeBerthCore, seedDeliverySubdivision, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
 import { memoryArchive } from "@/test/s3";
-import { insertTestVersion } from "@/test/text";
 import { buildDelivery } from "../build";
 import { deliveryDetail, deliveryDownload, listDeliveries } from "../view";
 
@@ -24,23 +20,6 @@ const build = (tx: Db, archive: Archive, f: DeliveryFixture, date: string) =>
 
 /** A's berth state rewritten with a changed east shelter. */
 const changeA = (tx: Db, f: DeliveryFixture) => changeBerthCore(tx, f.places.A.placeId, { "shelter.E": 0.8 }, new Date("2026-10-23T08:00:00Z"));
-
-/** A 16-word run of a freshly archived text (its shingles stored): as the statement of A's landside fact it fails `verbatim_text`. */
-async function copiedText(tx: Db): Promise<string> {
-  const salt = newId().replace(/-/g, "").replace(/\d/g, (d) => "ghijklmnop"[Number(d)]!);
-  const words = Array.from({ length: 30 }, (_, i) => `${salt}${"abcdefghijklmnopqrstuvwxyz"[i % 26]}`);
-  const v = await insertTestVersion(tx, [words.join(" ")]);
-  await tx.insert(textShingles).values(shingleHashes(words.join(" "), 15).map((shingleHash) => ({ shingleHash, chunkId: v.chunkIds[0]! })));
-  return `Die Bucht: ${words.slice(2, 18).join(" ")}.`;
-}
-
-/** A's landside fact now states `copiedText`: the next package fails `verbatim_text`. */
-async function copyIntoFact(tx: Db, f: DeliveryFixture): Promise<void> {
-  const statement = await copiedText(tx);
-  const [row] = await tx.select().from(berthStates).where(eq(berthStates.placeId, f.places.A.placeId));
-  const facts = row!.facts.map((x) => (x.subject === "landside" ? { ...x, statement } : x));
-  await tx.update(berthStates).set({ facts, updatedAt: new Date("2026-10-23T08:00:00Z") }).where(eq(berthStates.placeId, f.places.A.placeId));
-}
 
 describe("listDeliveries", () => {
   it("listDeliveries shows each subdivision with its current version and rows newest first", () =>
@@ -91,14 +70,18 @@ describe("deliveryDetail", () => {
       const archive = memoryArchive();
       const f = await seedDeliverySubdivision(tx);
       await build(tx, archive, f, "2040-06-01");
-      await copyIntoFact(tx, f);
-      const rejected = await build(tx, archive, f, "2040-06-02");
+      // a name with a domain rejects the package (a copied fact would only be dropped, F3)
+      const rejected = await buildDelivery(tx, archive, f.subdivisionId, {
+        now: day("2040-06-02"),
+        inCallerTransaction: true,
+        scopeTransform: (scope) => ({ ...scope, spots: scope.spots.map((s) => (s.publicId === f.places.A.publicId ? { ...s, name: "Vathi Bay sailing-guide.example.com" } : s)) }),
+      });
       expect(rejected.status).toBe("rejected");
 
       const detail = (await deliveryDetail(tx, rejected.deliveryId))!;
       expect(detail).toMatchObject({ scopeName: "Testlandesteil", scopePublicId: f.subdivisionPublicId });
       const failed = detail.report.checks.filter((c) => !c.ok);
-      expect(failed.map((c) => c.name)).toEqual(["verbatim_text"]);
+      expect(failed.map((c) => c.name)).toEqual(["foreign_content"]);
       expect(failed[0]!.findings[0]).toMatchObject({ file: "spots.json", objectId: f.places.A.publicId });
       expect(detail.objectLinks[f.places.A.publicId!]).toBe(`/places/${f.places.A.placeId}`);
       expect(detail.files.map((x) => x.name)).toEqual(["manifest.json", "spots.json", "regions.json", "coast.geojson", "weather-points.json"]);

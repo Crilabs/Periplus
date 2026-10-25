@@ -194,21 +194,17 @@ describe("delivery build on the pool (committed, ruling M6-E-R2)", () => {
       expect(a).toMatchObject({ asOf: "2026-10-23", shelter: { sectors: { E: 0.8 } } });
       expect(v2.fileHashes).not.toHaveProperty("changes.json");
 
-      // 4. the same content once A's fact statement turns out copied: rejected and logged as a warning, not unchanged
+      // 4. the same content once A's fact statement turns out copied: the fact is dropped (F3), a new valid package, not unchanged
       const archived = await insertTestVersion(db, [`Vorher ${words.join(" ")} nachher.`]);
       chunkIds.push(...archived.chunkIds);
       await db.insert(textShingles).values(shingleHashes(words.join(" "), 15).map((shingleHash) => ({ shingleHash, chunkId: archived.chunkIds[0]! })));
       const third = jobContext(db, runId);
       await expect(deliveryBuildHandler(job, third.ctx)).resolves.toBeUndefined();
-      expect(third.logs).toEqual([
-        {
-          level: "warn",
-          msg: "delivery rejected",
-          fields: expect.objectContaining({ status: "rejected", dataVersion: null, failedChecks: 1, checks: ["verbatim_text"] }),
-        },
-      ]);
-      const rejected = await row(third.logs[0]!.fields.deliveryId as string);
-      expect(rejected).toMatchObject({ status: "rejected", dataVersion: null, previousDeliveryId: v2.id, storagePrefix: `deliveries/${f.subdivisionKey}/rejected/${rejected.id}/` });
+      expect(third.logs).toEqual([{ level: "info", msg: "delivery built", fields: expect.objectContaining({ status: "valid", dataVersion: 3 }) }]);
+      const v3 = await row(third.logs[0]!.fields.deliveryId as string);
+      expect(v3).toMatchObject({ status: "valid", dataVersion: 3, previousDeliveryId: v2.id });
+      const a3 = (await readJson<SpotsFile>(`${v3.storagePrefix}spots.json`)).spots.find((s) => s.id === f!.places.A.publicId)!;
+      expect(a3.facts.some((x) => x.text.includes(words[0]!))).toBe(false);
     } finally {
       if (f) {
         const stored = await db.select().from(deliveries).where(eq(deliveries.subdivisionId, f.subdivisionId));

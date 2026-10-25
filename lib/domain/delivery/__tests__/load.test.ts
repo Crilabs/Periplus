@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { geoNames, geoObjects, highlightSelections, places, subdivisions, tileGeoObjects, tiles } from "@/lib/db/schema";
+import { geoNames, geoObjects, highlightSelections, placeWebsites, places, subdivisions, tileGeoObjects, tiles } from "@/lib/db/schema";
 import { addNames } from "@/lib/domain/gazetteer/names";
 import { osmNames } from "@/lib/domain/gazetteer/osm-classify";
 import { newPublicId } from "@/lib/domain/ids";
@@ -113,6 +113,26 @@ describe("loadSubdivisionScope", () => {
       await tx.execute(sql`update geo_objects set valid_from = current_date - 5, valid_to = current_date - 1 where id = ${f.poiId}`);
       const ended = (await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx))).spots.find((s) => s.publicId === A.publicId)!;
       expect(ended.nearbyObjects).toEqual([]);
+    });
+  });
+
+  it("ownWebsiteDomain is the registrable domain of the newest place website, only when it is bound (F1)", async () => {
+    await withRollback(async (tx) => {
+      const f = await seedDeliverySubdivision(tx);
+      const { A, M } = f.places;
+      const domains = async () => {
+        const scope = await loadSubdivisionScope(tx, f.subdivisionId, cfg, await dbToday(tx));
+        return [A, M].map((p) => scope.spots.find((s) => s.publicId === p.publicId)!.ownWebsiteDomain);
+      };
+      expect(await domains()).toEqual([null, null]);
+      const site = (p: typeof A, url: string, bound: boolean, createdAt: string) =>
+        tx.insert(placeWebsites).values({ placeId: p.placeId, geoObjectId: p.geoObjectId, url, urlNormalized: url, origin: "osm", bound, createdAt: new Date(createdAt) });
+      await site(A, "https://www.marina-a.example/en/", true, "2026-10-01T08:00:00Z");
+      await site(M, "https://marina-m.example/", false, "2026-10-01T08:00:00Z");
+      expect(await domains()).toEqual(["marina-a.example", null]);
+      // the newest row counts: a later unbound one withdraws the binding
+      await site(A, "https://other.example/", false, "2026-10-02T08:00:00Z");
+      expect(await domains()).toEqual([null, null]);
     });
   });
 

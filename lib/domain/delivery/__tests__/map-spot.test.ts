@@ -89,6 +89,7 @@ function spotA(
         ? null
         : { placeId: "p", core, gaps: ["prices"], facts: [], landing: [], nearby: [nearbyEntry()], runId: null, updatedAt: UPDATED, ...o.state },
     nearbyObjects: [object()],
+    ownWebsiteDomain: "marina.example",
     independentSources: 1,
     popularity: 0.55,
     images: [],
@@ -138,6 +139,14 @@ const FIELD_CASES: Record<keyof SpotBody, () => void> = {
       url: "https://marina.example",
     });
     expect(mapped(spotA({ core: { contact: coreValue({ vhf: null, phone: null, url: null }) } })).contact).toBeNull();
+    // F1: only the url of the place's own bound website (registrable domain); any other is dropped with a warning
+    const withUrl = (url: string, own: string | null) =>
+      mappedWithWarnings(spotA({ core: { contact: coreValue({ vhf: "71", phone: null, url }) }, src: { ownWebsiteDomain: own } }));
+    expect(withUrl("https://www.marina.example/en/contact", "marina.example")).toMatchObject({ spot: { contact: { vhf: "71", url: "https://www.marina.example/en/contact" } }, warnings: [] });
+    for (const [url, own] of [["https://blog.example/marina-review", "marina.example"], ["https://marina.example", null], ["https://notmarina.example", "marina.example"]] as const) {
+      expect(withUrl(url, own), url).toMatchObject({ spot: { contact: { vhf: "71", phone: null, url: null } }, warnings: [{ code: "contact_url_foreign" }] });
+    }
+    expect(mappedWithWarnings(spotA({ core: { contact: coreValue({ vhf: null, phone: null, url: "https://blog.example/x" }) } })).spot.contact).toBeNull();
   },
   name: () => expect(mapped().name).toBe("Vathi Bay"),
   names: () => {

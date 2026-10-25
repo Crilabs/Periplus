@@ -4,19 +4,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Manifest, SpotsFile } from "@/contract";
 import type { Archive } from "@/lib/adapters/s3";
 import type { Db } from "@/lib/db/client";
-import { berthStates, deliveries, textShingles } from "@/lib/db/schema";
+import { deliveries, geoNames } from "@/lib/db/schema";
 import { createApiClient, revokeApiClient } from "@/lib/domain/api-clients";
 import { buildDelivery } from "@/lib/domain/delivery/build";
 import { setDeliveryArchive } from "@/lib/domain/delivery/read";
 import { sha256Hex } from "@/lib/domain/delivery/serialize";
-import { shingleHashes } from "@/lib/domain/documents/shingles";
 import { newId } from "@/lib/domain/ids";
 import { decideAccess } from "@/lib/security/access";
 import { seedImage } from "@/test/fixtures/delivery/images";
 import { testDb, withRollback } from "@/test/db";
 import { changeBerthCore, seedDeliverySubdivision, type DeliveryFixture } from "@/test/fixtures/delivery/subdivision";
 import { deleteTestObjects, memoryArchive, testArchive } from "@/test/s3";
-import { insertTestVersion } from "@/test/text";
 
 /*
  * The delivery API's subdivision, package, file and schema endpoints (plan Task 11; the routes move to `/api/v4` in task 5),
@@ -79,16 +77,9 @@ async function setup(tx: Db, archive: Archive = memoryArchive()) {
 /** A's berth state rewritten with a changed east shelter: the next build is data version 2. */
 const changeA = (tx: Db, f: DeliveryFixture) => changeBerthCore(tx, f.places.A.placeId, { "shelter.E": 0.8 }, new Date("2026-10-23T08:00:00Z"));
 
-/** A's landside fact becomes a 16-word copy of an archived text: the next build is rejected (`verbatim_text`). */
+/** A gets a second name that is a domain: the next build is rejected (`foreign_content`; a copied fact would only be dropped, F3). */
 async function copyFactOfA(tx: Db, f: DeliveryFixture): Promise<void> {
-  const salt = newId().replace(/-/g, "").replace(/\d/g, (d) => "ghijklmnop"[Number(d)]!);
-  const words = Array.from({ length: 30 }, (_, i) => `${salt}${"abcdefghijklmnopqrstuvwxyz"[i % 26]}`);
-  const v = await insertTestVersion(tx, [words.join(" ")]);
-  await tx.insert(textShingles).values(shingleHashes(words.join(" "), 15).map((shingleHash) => ({ shingleHash, chunkId: v.chunkIds[0]! })));
-  const [row] = await tx.select().from(berthStates).where(eq(berthStates.placeId, f.places.A.placeId));
-  const statement = `Die Bucht: ${words.slice(2, 18).join(" ")}.`;
-  const facts = row!.facts.map((x) => (x.subject === "landside" ? { ...x, statement } : x));
-  await tx.update(berthStates).set({ facts, updatedAt: new Date("2026-10-23T08:00:00Z") }).where(eq(berthStates.placeId, f.places.A.placeId));
+  await tx.insert(geoNames).values({ geoObjectId: f.places.A.geoObjectId, name: "sailing-guide.example.com", nameNormalized: "sailing-guide.example.com", language: "en", script: "latin", origin: "osm" });
 }
 
 beforeEach(() => {
