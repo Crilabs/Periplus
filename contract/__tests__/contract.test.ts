@@ -253,7 +253,6 @@ describe("Periplus Data Contract 4.0", () => {
     observedAt: "2016-07-01",
     license: "periplus",
     attribution: "Luftbild © X · Gelände © Y · Illustration: Periplus",
-    sourceUrl: null,
     camera: { position: [23.33, 37.6], heightM: 260, viewBearingDeg: 281.5, tiltDeg: 18, fovDeg: 50 },
   };
 

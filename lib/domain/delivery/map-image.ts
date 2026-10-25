@@ -26,7 +26,6 @@ export function mapImages(publicId: string, rows: DeliverableImage[]): PlaceImag
     observedAt: r.observedAt,
     license: r.license,
     attribution: r.attribution,
-    sourceUrl: null,
     camera: r.camera,
   }));
 }

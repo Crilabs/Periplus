@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isoDate, latitude, longitude, textDe, httpUrl } from "./common";
+import { isoDate, latitude, longitude, textDe } from "./common";
 
 /*
  * Title images of a place (contract 2.1, spec 13): a spot or highlight carries any number of images, one per slot. The
@@ -39,7 +39,6 @@ export const placeImageSchema = z.strictObject({
   observedAt: isoDate.nullable(),
   license: z.string().min(1),
   attribution: z.string().min(1),
-  sourceUrl: httpUrl.nullable(),
   camera: imageCameraSchema.nullable(),
 });
 

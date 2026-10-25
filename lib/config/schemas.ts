@@ -1102,6 +1102,8 @@ export const deliverySchema = z.strictObject({
     harbourShelterSources: z.array(z.enum(PROVENANCE_SOURCES)).min(1),
     /** Teil B "kein Textfeld mit mehr als 15 Wörtern wörtlich aus einer Quelle": the longest copied run allowed. */
     maxCopiedWords: z.number().int().min(COPY_SHINGLE_WORDS),
+    /** Top-level domains by which a bare domain name in a text is recognised (`foreign_content`): `example.com` blocks the package. */
+    domainTlds: z.array(z.string().regex(/^[a-z]{2,24}$/)).min(1),
     /** Copy checks (`text_shingles` queries) running at once. */
     copyCheckConcurrency: positiveInt,
     /** Below this `score.confidence` the summary must carry `lowConfidenceNote`. */

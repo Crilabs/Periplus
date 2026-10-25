@@ -115,7 +115,6 @@ describe("validatePackage", () => {
             observedAt: null,
             license: "periplus",
             attribution: `${imagesCfg.sources.sentinel2.attribution} · Illustration: Periplus`,
-            sourceUrl: null,
             camera: null,
           },
         ]),
@@ -232,6 +231,20 @@ describe("validatePackage", () => {
     expect(failed(await validate(validPackage(), { previous: null }))).toEqual(["data_version"]);
   });
 
+  const anImage = {
+    kind: "photo" as const,
+    slot: "title",
+    file: `images/${SPOT_A}-title.jpg`,
+    width: 1536,
+    height: 1024,
+    alt: { de: "Bucht" },
+    light: "midday" as const,
+    observedAt: null,
+    license: "x",
+    attribution: "x",
+    camera: null,
+  };
+
   /** Foreign content in each text the package carries: fact statements, landing descriptions and names. */
   const textFields: Array<[string, (p: DeliveryPackage, text: string) => void, string]> = [
     ["a fact statement", (p, t) => void (landsideFact(p).text = t), "/spots/0/facts/1/text"],
@@ -239,6 +252,14 @@ describe("validatePackage", () => {
     ["a spot name", (p, t) => void (spots(p)[0]!.name = t), "/spots/0/name"],
     ["a nearby name", (p, t) => void (spots(p)[0]!.nearby[0]!.name = t), "/spots/0/nearby/0/name"],
     ["a region name", (p, t) => void (p.files["regions.json"].regions[0]!.name = t), "/regions/0/name"],
+    ["a hazard text", (p, t) => void (spots(p)[0]!.hazards = [{ kind: "rock", text: t }]), "/spots/0/hazards/0/text"],
+    ["a season note", (p, t) => void (spots(p)[0]!.seasonNote = [{ months: [7], text: t }]), "/spots/0/seasonNote/0/text"],
+    ["an exclude detail", (p, t) => void (spots(p)[1]!.exclude = { excluded: true, reason: "military", detail: t }), "/spots/1/exclude/detail"],
+    ["an image alt", (p, t) => void (spots(p)[0]!.images = [{ ...anImage, alt: { de: t } }]), "/spots/0/images/0/alt/de"],
+    ["a region character", (p, t) => void (p.files["regions.json"].regions[0]!.character = { de: t }), "/regions/0/character/de"],
+    ["a weather point name", (p, t) => void (p.files["weather-points.json"].points[0]!.name = t), "/points/0/name"],
+    ["a contact phone", (p, t) => void (spots(p)[1]!.contact = { vhf: null, phone: t, url: null }), "/spots/1/contact/phone"],
+    ["a contact vhf", (p, t) => void (spots(p)[1]!.contact = { vhf: t, phone: null, url: null }), "/spots/1/contact/vhf"],
   ];
 
   it.each(textFields)("%s with a URL is foreign content", async (_label, set, path) => {
@@ -249,7 +270,7 @@ describe("validatePackage", () => {
   it.each(textFields)("%s with a bare domain name is foreign content, not only a forbidden one", async (_label, set, path) => {
     for (const text of ["Siehe sailing-guide.gr für Details", "Tipp von bucht-blog.com", "Kontakt: skipper@marina-info.eu"]) {
       const report = await validate(breakPackage(validPackage(), (p) => set(p, text)));
-      expect(findings(report, "foreign_content"), text).toEqual([expect.objectContaining({ path, message: "Text enthält einen Domainnamen" })]);
+      expect(findings(report, "foreign_content"), text).toEqual([expect.objectContaining({ path, message: expect.stringMatching(/^Text enthält einen Domainnamen \(.+\)$/) })]);
     }
   });
 
@@ -258,6 +279,23 @@ describe("validatePackage", () => {
     expect(findings(report, "foreign_content")).toEqual([expect.objectContaining({ path: "/spots/0/facts/1/text", message: "Text nennt eine gesperrte Domain" })]);
     const dot = await validate(breakPackage(validPackage(), (p) => void (landsideFact(p).text = "Laut Navily.COM. gut.")));
     expect(findings(dot, "foreign_content")).toEqual([expect.objectContaining({ message: "Text nennt eine gesperrte Domain" })]);
+  });
+
+  it("the finding names the matched domain; a missing space after a full stop is no domain", async () => {
+    const hit = await validate(breakPackage(validPackage(), (p) => void (landsideFact(p).text = "Mehr dazu: sailing-guide.gr")));
+    expect(findings(hit, "foreign_content")[0]!.message).toBe("Text enthält einen Domainnamen (sailing-guide.gr)");
+    const see = await validate(breakPackage(validPackage(), (p) => void (landsideFact(p).text = "see navily.com")));
+    expect(failed(see)).toEqual(["foreign_content"]);
+    const typo = await validate(breakPackage(validPackage(), (p) => void (landsideFact(p).text = "Der Anker hält gut, die Bucht ist geschützt.Es ist ruhig. Hafen.No problem.")));
+    expect(failed(typo)).toEqual([]);
+  });
+
+  it("contact.url is allowed unless it is of a forbidden domain; the domain TLDs are configured", async () => {
+    const withUrl = (url: string) => breakPackage(validPackage(), (p) => void (spots(p)[1]!.contact = { vhf: "71", phone: "+30 22980 12345", url }));
+    expect(failed(await validate(withUrl("https://www.marina-nisida.gr/")))).toEqual([]);
+    const bad = await validate(withUrl("https://www.navily.com/port/vathi"));
+    expect(findings(bad, "foreign_content")).toEqual([expect.objectContaining({ objectId: SPOT_M, path: "/spots/1/contact/url", message: "Kontaktadresse von einer gesperrten Domain" })]);
+    expect(cfg.validation.domainTlds).toEqual(expect.arrayContaining(["com", "gr", "de"]));
   });
 
   it("names and sentences that merely contain dots are no foreign content", async () => {

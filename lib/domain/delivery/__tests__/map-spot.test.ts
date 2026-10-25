@@ -219,7 +219,7 @@ const FIELD_CASES: Record<keyof SpotBody, () => void> = {
     expect(mapped().images).toBeUndefined();
     const image = { id: "i", slot: "title", sortOrder: 0, rank: 3, kind: "ai_illustration" as const, fileKey: "k", width: 1536, height: 1024, alt: "KI-Illustration: Bucht", light: "midday" as const, observedAt: null, license: "periplus", attribution: "x", camera: null };
     expect(mapped(spotA({ src: { images: [image] } })).images).toEqual([
-      { kind: "ai_illustration", slot: "title", file: "images/sp_01J9ZD00000000000000000001-title.jpg", width: 1536, height: 1024, alt: { de: "KI-Illustration: Bucht" }, light: "midday", observedAt: null, license: "periplus", attribution: "x", sourceUrl: null, camera: null },
+      { kind: "ai_illustration", slot: "title", file: "images/sp_01J9ZD00000000000000000001-title.jpg", width: 1536, height: 1024, alt: { de: "KI-Illustration: Bucht" }, light: "midday", observedAt: null, license: "periplus", attribution: "x", camera: null },
     ]);
   },
   provenance: () =>
