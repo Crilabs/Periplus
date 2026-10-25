@@ -78,7 +78,7 @@ export default async function Page({ params, searchParams }: PageProps<"/subdivi
                   Recherche starten
                 </Button>
               </form>
-              {d.status !== "läuft" && (
+              {!d.buildActive && (
                 <form action={buildSubdivisionAction}>
                   <input type="hidden" name="subdivisionKey" value={d.key} />
                   <Button variant="primary">Aufbauen</Button>
@@ -192,7 +192,7 @@ export default async function Page({ params, searchParams }: PageProps<"/subdivi
             <thead>
               <tr>
                 <th className={thClass}>Stufe</th>
-                <th className={thClass}>zuletzt beendet</th>
+                <th className={thClass}>Zuletzt beendet</th>
                 <th className={thClass}>Lauf</th>
               </tr>
             </thead>
@@ -208,7 +208,7 @@ export default async function Page({ params, searchParams }: PageProps<"/subdivi
                     <TextLink href={`/runs/${s.runId}`} className="font-mono text-[0.8125rem]" title={s.runId}>
                       {s.runId.slice(0, 8)}
                     </TextLink>
-                    <span className="ml-2 text-xs text-muted">{RUN_STATUS_LABELS[s.runStatus as RunStatus] ?? s.runStatus}</span>
+                    <span className="ml-2 text-xs text-muted">{RUN_STATUS_LABELS[s.runStatus]}</span>
                   </td>
                 </tr>
               ))}

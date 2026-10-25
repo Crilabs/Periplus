@@ -1,5 +1,6 @@
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
+import type { RunStatus } from "@/lib/db/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { hasCoreImagery, imageCoverage, type ImageCoverage } from "@/lib/domain/images/view";
 import { SUBDIVISION_BUILD_STAGES } from "@/lib/pipeline/subdivision-build";
@@ -45,6 +46,12 @@ export type SubdivisionRow = {
   name: string;
   status: SubdivisionStatus;
   statusReason: string | null;
+  /** The build stages finished in any run with the subdivision as scope, in build order; what `teilweise` rests on. */
+  partialStages: string[];
+  /** A build finished once (`built_at`). */
+  built: boolean;
+  /** A build (run of kind `full`) is queued or running; „Aufbauen“ would open it instead of starting a second one. */
+  buildActive: boolean;
   coastTiles: number;
   processedTiles: number;
   lastRunAt: string | null;
@@ -76,9 +83,9 @@ type Row = {
   status_reason: string | null;
   built_at: string | Date | null;
   queued_at: string | Date | null;
-  build_status: "queued" | "running" | "finished" | "failed" | null;
+  build_status: RunStatus | null;
   active_run: boolean;
-  partial: boolean;
+  partial_stages: string[];
   coast_tiles: number;
   processed_tiles: number;
   last_run_at: string | Date | null;
@@ -88,24 +95,50 @@ type Row = {
 /** The build stages as an SQL list, for `in (…)`. */
 const buildStagesSql = sql.join(SUBDIVISION_BUILD_STAGES.map((stage) => sql`${stage}`), sql`, `);
 
-const subdivisionRowsSql = (where: ReturnType<typeof sql>) => sql`
+/** The position of a stage in the build; any other stage sorts after all build stages. */
+function buildStageIndex(stage: string): number {
+  const i = (SUBDIVISION_BUILD_STAGES as readonly string[]).indexOf(stage);
+  return i === -1 ? SUBDIVISION_BUILD_STAGES.length : i;
+}
+
+/**
+ * The rows of the view. The run facts of all subdivisions come from one grouped scan over the runs with a subdivision
+ * as scope (`run_facts`, narrowed by `runScope`, e.g. to one key): a queued or running run, the status of the latest
+ * build, the last run and the finished build stages (joined from `run_stages`); the costs of those runs from one
+ * grouped join with `external_calls` (`run_costs`).
+ */
+const subdivisionRowsSql = (where: SQL, runScope: SQL = sql``) => sql`
+  with run_facts as (
+    select r.scope_id as key,
+           bool_or(r.status in ('queued', 'running')) as active_run,
+           (array_agg(r.status order by r.created_at desc) filter (where r.kind = 'full'))[1] as build_status,
+           max(r.created_at) as last_run_at,
+           array_remove(array_agg(distinct rs.stage), null) as partial_stages
+    from runs r
+    left join run_stages rs on rs.run_id = r.id and rs.status = 'finished' and rs.stage in (${buildStagesSql})
+    where r.scope_type = 'subdivision' ${runScope}
+    group by r.scope_id
+  ),
+  run_costs as (
+    select r.scope_id as key, sum(e.cost_eur) as cost_eur
+    from runs r
+    join external_calls e on e.run_id = r.id
+    where r.scope_type = 'subdivision' ${runScope}
+    group by r.scope_id
+  )
   select s.key, s.public_id, s.country, ${displayNameSql(sql`s.geo_object_id`)} as name,
          (o.type = 'country') as whole, s.status, s.status_reason, s.built_at, s.queued_at,
-         (select r.status from runs r where r.kind = 'full' and r.scope_type = 'subdivision' and r.scope_id = s.key
-          order by r.created_at desc limit 1) as build_status,
-         exists (select 1 from runs r
-                 where r.scope_type = 'subdivision' and r.scope_id = s.key and r.status in ('queued', 'running')) as active_run,
-         exists (select 1 from run_stages rs join runs r on r.id = rs.run_id
-                 where r.scope_type = 'subdivision' and r.scope_id = s.key and rs.status = 'finished'
-                   and rs.stage in (${buildStagesSql})) as partial,
+         rf.build_status, coalesce(rf.active_run, false) as active_run,
+         coalesce(rf.partial_stages, '{}'::text[]) as partial_stages,
          (select count(*)::int from tiles t where t.subdivision_id = s.id and t.has_coast and t.valid_to is null) as coast_tiles,
          (select count(*)::int from tiles t
           where t.subdivision_id = s.id and t.has_coast and t.valid_to is null and t.last_run_at is not null) as processed_tiles,
-         (select max(r.created_at) from runs r where r.scope_type = 'subdivision' and r.scope_id = s.key) as last_run_at,
-         (select coalesce(sum(e.cost_eur), 0) from external_calls e
-          where e.run_id in (select r.id from runs r where r.scope_type = 'subdivision' and r.scope_id = s.key)) as cost_eur
+         rf.last_run_at,
+         coalesce(rc.cost_eur, 0) as cost_eur
   from subdivisions s
   join geo_objects o on o.id = s.geo_object_id
+  left join run_facts rf on rf.key = s.key
+  left join run_costs rc on rc.key = s.key
   where s.valid_to is null and ${where}
 `;
 
@@ -114,6 +147,7 @@ function toRow(r: Row): { country: string; whole: boolean; row: SubdivisionRow }
 }
 
 function subdivisionRow(r: Row): SubdivisionRow {
+  const partialStages = [...r.partial_stages].sort((a, b) => buildStageIndex(a) - buildStageIndex(b));
   return {
     key: r.key,
     publicId: r.public_id,
@@ -123,9 +157,12 @@ function subdivisionRow(r: Row): SubdivisionRow {
       builtAt: r.built_at,
       latestBuild: r.build_status ? { status: r.build_status } : null,
       activeRun: r.active_run,
-      partial: r.partial,
+      partial: partialStages.length > 0,
     }),
     statusReason: r.status_reason,
+    partialStages,
+    built: r.built_at !== null,
+    buildActive: r.build_status === "queued" || r.build_status === "running",
     coastTiles: Number(r.coast_tiles),
     processedTiles: Number(r.processed_tiles),
     lastRunAt: r.last_run_at === null ? null : new Date(r.last_run_at).toISOString(),
@@ -168,6 +205,14 @@ export async function subdivisionTree(db: Db): Promise<CountryNode[]> {
 /** The statuses of a begun subdivision; a country with one is shown expanded (B11). */
 const BEGUN_STATUSES: readonly SubdivisionStatus[] = ["läuft", "teilweise", "aufgebaut", "fehlgeschlagen"];
 
+/**
+ * Whether „Alle offenen aufbauen“ would queue the subdivision – the predicate of `queueCountry`: active, never built,
+ * not queued, and no build queued or running. A run of another kind (research, things on land) does not stop it.
+ */
+export function isQueueable(s: Pick<SubdivisionRow, "status" | "built" | "queued" | "buildActive">): boolean {
+  return s.status !== "ausgeschlossen" && !s.built && !s.queued && !s.buildActive;
+}
+
 /** The short German summary of a country, e.g. „3 von 13 aufgebaut, 2 teilweise, 1 läuft“. */
 export function countrySummaryText(s: CountrySummary): string {
   const open = s.total - s.excluded;
@@ -184,7 +229,7 @@ export type StageHistoryEntry = {
   /** When the run ended; null while it still goes on (a later stage of it runs). */
   finishedAt: string | null;
   runId: string;
-  runStatus: string;
+  runStatus: RunStatus;
 };
 
 /**
@@ -192,16 +237,12 @@ export type StageHistoryEntry = {
  * the stage finished, with the run's end. Build stages first in build order, then other stages (research …) by name.
  */
 export async function subdivisionStageHistory(db: Db, key: string): Promise<StageHistoryEntry[]> {
-  const { rows } = await db.execute<{ stage: string; run_id: string; run_status: string; finished_at: string | Date | null }>(sql`
+  const { rows } = await db.execute<{ stage: string; run_id: string; run_status: RunStatus; finished_at: string | Date | null }>(sql`
     select distinct on (rs.stage) rs.stage, r.id as run_id, r.status as run_status, r.finished_at
     from run_stages rs join runs r on r.id = rs.run_id
     where r.scope_type = 'subdivision' and r.scope_id = ${key} and rs.status = 'finished'
     order by rs.stage, r.created_at desc
   `);
-  const order = (stage: string) => {
-    const i = (SUBDIVISION_BUILD_STAGES as readonly string[]).indexOf(stage);
-    return i === -1 ? SUBDIVISION_BUILD_STAGES.length : i;
-  };
   return rows
     .map((r) => ({
       stage: r.stage,
@@ -209,7 +250,7 @@ export async function subdivisionStageHistory(db: Db, key: string): Promise<Stag
       runId: r.run_id,
       runStatus: r.run_status,
     }))
-    .sort((a, b) => order(a.stage) - order(b.stage) || a.stage.localeCompare(b.stage));
+    .sort((a, b) => buildStageIndex(a.stage) - buildStageIndex(b.stage) || a.stage.localeCompare(b.stage));
 }
 
 export type SubdivisionDetail = SubdivisionRow & {
@@ -232,7 +273,7 @@ export type SubdivisionDetail = SubdivisionRow & {
  * unknown key. `images`: the image coverage of its spots (`imageCoverage`).
  */
 export async function subdivisionDetail(db: Db, key: string): Promise<SubdivisionDetail | null> {
-  const { rows } = await db.execute<Row>(subdivisionRowsSql(sql`s.key = ${key}`));
+  const { rows } = await db.execute<Row>(subdivisionRowsSql(sql`s.key = ${key}`, sql`and r.scope_id = ${key}`));
   if (!rows[0]) return null;
   const { country, whole, row } = toRow(rows[0]);
   const { rows: tileRows } = await db.execute<{ id: string; last_run_at: string | Date | null; label: boolean }>(sql`

@@ -1,9 +1,16 @@
 import type { Metadata } from "next";
 import { z } from "zod";
 import { getDb } from "@/lib/db/client";
-import { countrySummaryText, SUBDIVISION_STATUSES, subdivisionTree, type SubdivisionRow, type SubdivisionStatus } from "@/lib/domain/subdivisions/view";
+import {
+  countrySummaryText,
+  isQueueable,
+  SUBDIVISION_STATUSES,
+  subdivisionTree,
+  type SubdivisionRow,
+  type SubdivisionStatus,
+} from "@/lib/domain/subdivisions/view";
 import { requireAdmin } from "@/lib/security/require-admin";
-import { runScopeError } from "../_components/labels";
+import { runScopeError, STAGE_LABELS } from "../_components/labels";
 import {
   Badge,
   Button,
@@ -62,13 +69,18 @@ function SubdivisionRows({ rows, country }: { rows: SubdivisionRow[]; country: s
               </Badge>
               {s.queued && <span className="ml-2 text-xs text-muted">wartet</span>}
               {s.status === "ausgeschlossen" && s.statusReason && <p className="mt-1 text-xs text-muted">{s.statusReason}</p>}
+              {s.status === "teilweise" && (
+                <p className="mt-1 text-xs text-muted" title="Beendete Stufen des Aufbaus, auch aus Einzelläufen">
+                  Beendet: {s.partialStages.map((stage) => STAGE_LABELS[stage] ?? stage).join(", ")}
+                </p>
+              )}
             </td>
             <td className={cx(tdClass, numClass)}>{fmt.int(s.coastTiles)}</td>
             <td className={cx(tdClass, numClass)}>{fmt.int(s.processedTiles)}</td>
             <td className={cx(tdClass, "whitespace-nowrap")}>{fmt.dateTime(s.lastRunAt ? new Date(s.lastRunAt) : null)}</td>
             <td className={cx(tdClass, numClass)}>{fmt.eur(s.costEur)}</td>
             <td className={cx(tdClass, "text-right")}>
-              {s.status !== "ausgeschlossen" && s.status !== "läuft" && (
+              {s.status !== "ausgeschlossen" && !s.buildActive && (
                 <form action={buildSubdivisionAction}>
                   <input type="hidden" name="subdivisionKey" value={s.key} />
                   <Button
@@ -106,7 +118,7 @@ export default async function Page({ searchParams }: PageProps<"/subdivisions">)
     <>
       <PageHeader
         title="Länder und Landesteile"
-        description="Je Land seine Landesteile mit Mittelmeerküste. „Aufbauen“ startet Gazetteer, Datensätze, Seed, Geometrie und Discovery für einen Landesteil; „Alle offenen aufbauen“ stellt die nicht begonnenen Landesteile eines Landes nacheinander in die Warteschlange. Abruf, Texte und Paket bleiben eigene Läufe. „teilweise“: einzelne Stufen des Aufbaus sind beendet (Einzelläufe), der Aufbau als Ganzes nicht; „läuft“ gilt für jeden Lauf mit dem Landesteil als Umfang. Länder mit einem begonnenen Landesteil sind aufgeklappt."
+        description="Je Land seine Landesteile mit Mittelmeerküste. „Aufbauen“ startet Gazetteer, Datensätze, Seed, Geometrie und Discovery für einen Landesteil; „Alle offenen aufbauen“ stellt die noch nie aufgebauten Landesteile eines Landes – nicht begonnene, teilweise aufgebaute und fehlgeschlagene – nacheinander in die Warteschlange. Abruf, Texte und Paket bleiben eigene Läufe. „teilweise“: einzelne Stufen des Aufbaus sind beendet (Einzelläufe), der Aufbau als Ganzes nicht; „läuft“ gilt für jeden Lauf mit dem Landesteil als Umfang. Länder mit einem begonnenen Landesteil sind aufgeklappt."
         actions={
           <form action={rebuildSubdivisionsAction} className="flex items-center gap-2">
             <input
@@ -165,7 +177,7 @@ export default async function Page({ searchParams }: PageProps<"/subdivisions">)
                     </span>
                     <span className="mt-0.5 block text-sm text-muted">{countrySummaryText(c.summary)}</span>
                   </span>
-                  {!c.whole && c.subdivisions.some((s) => s.status === "nicht begonnen" && !s.queued) && (
+                  {!c.whole && c.subdivisions.some(isQueueable) && (
                     <form action={queueCountryAction}>
                       <input type="hidden" name="country" value={c.country} />
                       <Button size="sm" aria-label={`Alle offenen aufbauen: ${c.name}`}>
