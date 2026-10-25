@@ -1,6 +1,8 @@
 import type { AppConfig } from "@/lib/config";
-import type { PlaceStatus } from "@/lib/db/schema";
-import { coverageOfMatches, kindCompatible, matchPlacesToSpots, type MatchPlace } from "@/lib/domain/quality/navily-assistant";
+import { COMPARISON_ATTRIBUTES, type ComparisonAttribute, type PlaceStatus } from "@/lib/db/schema";
+import type { BerthStateNearby, BerthStateValue } from "@/lib/db/schema/research-state";
+import { attributesFromState, comparisonValues } from "@/lib/domain/quality/comparison-values";
+import { coverageOfMatches, kindCompatible, matchPlacesToSpots, proposeResults, type MatchPlace } from "@/lib/domain/quality/navily-assistant";
 import type { LonLat } from "@/lib/domain/geometry/water";
 import type { NavilySpot } from "@/lib/domain/quality/navily-sample";
 import { ADMIN_SET_REASON, RESTRICTED_REASON, type Verdict } from "./confirmation";
@@ -18,6 +20,8 @@ export type GateRow = {
   wrongKind: number;
   /** Matched to a spot of its kind, but farther from it than `gate.maxPositionDeviationM`. */
   wrongPosition: number;
+  /** Matched to a spot of its kind, but delivered a sector as clearly protected (≥ `gate.shelterErrorMin`) that the reference lists as not protected. */
+  wrongShelter: number;
   conflicts: number;
   decidedNotBerth: number;
   /** `correct / confirmed`; null when nothing is confirmed. */
@@ -26,16 +30,71 @@ export type GateRow = {
 
 export type MissReason = "no_candidate" | "matched_elsewhere" | "admin" | "unnamed_candidate" | "no_hits" | "too_few_sources" | "negative" | "restricted" | "rejected";
 
-export type GatePlace = MatchPlace & { verdicts: Map<number, Verdict>; hasNames: boolean; hasHits: boolean; status: PlaceStatus; statusReason: string | null };
+/** The current state of a berth as far as the gate reads it; null for a place without a `berth_states` row. */
+export type GateState = { core: Record<string, BerthStateValue>; nearby: BerthStateNearby[] };
+
+export type GatePlace = MatchPlace & {
+  verdicts: Map<number, Verdict>;
+  hasNames: boolean;
+  hasHits: boolean;
+  status: PlaceStatus;
+  statusReason: string | null;
+  state?: GateState | null;
+};
+
+/** The core values compared against the reference; existence and position the gate checks anyway, depth and food the reference does not have. */
+export const GATE_CORE_ATTRIBUTES: readonly ComparisonAttribute[] = COMPARISON_ATTRIBUTES.filter((a) => !["existence", "position", "depth", "highlight.food"].includes(a));
+
+/** Per core attribute over the confirmed places with a reference spot: how their own value stands against it. */
+export type CoreAgreementCount = { match: number; deviation: number; gap: number; notAtNavily: number; noState: number };
+export type CoreAgreement = Record<ComparisonAttribute, CoreAgreementCount>;
+
+export const emptyAgreement = (): CoreAgreement =>
+  Object.fromEntries(COMPARISON_ATTRIBUTES.map((a) => [a, { match: 0, deviation: 0, gap: 0, notAtNavily: 0, noState: 0 }])) as CoreAgreement;
 
 /**
- * A confirmed place counted as an error: a spot of another kind matched by name, a spot of its kind too far away, or a
- * human "no berth" decision (`spotIndex` null without a spot).
+ * A confirmed place counted as an error: a spot of another kind matched by name, a spot of its kind too far away, a
+ * sector delivered as protected that the reference does not list, or a human "no berth" decision (`spotIndex` null without a spot).
  */
 export type GateError = { placeId: string; kind: GateErrorKind; spotIndex: number | null; distanceM: number | null };
-export type GateErrorKind = "wrong_kind" | "position" | "not_berth";
+export type GateErrorKind = "wrong_kind" | "position" | "not_berth" | "shelter";
 
 export type GateMiss = { spotIndex: number; reason: MissReason; placeId: string | null };
+
+/**
+ * The first sector the place claims as clearly protected (shelter value ≥ `gate.shelterErrorMin`) that the spot's
+ * protection list lacks (case-insensitive); false without a state or without a list at the spot (nothing to compare).
+ */
+function claimsFalseShelter(state: GateState | null | undefined, spot: NavilySpot, minValue: number): boolean {
+  if (!state || spot.prot === null) return false;
+  const listed = new Set(spot.prot.map((p) => p.toLowerCase()));
+  return COMPARISON_ATTRIBUTES.some((a) => {
+    if (!a.startsWith("shelter.")) return false;
+    const v = state.core[a]?.value;
+    return typeof v === "number" && v >= minValue && !listed.has(a.slice("shelter.".length).toLowerCase());
+  });
+}
+
+/** Counts the core attributes of one place against its spot; a missing own value where the reference has one is a gap (not a deviation). */
+function countCore(into: CoreAgreement, p: GatePlace, spot: NavilySpot, navily: AppConfig["quality"]["navily"]): void {
+  if (!p.state) {
+    for (const a of GATE_CORE_ATTRIBUTES) into[a].noState += 1;
+    return;
+  }
+  const subject = {
+    placeId: p.placeId, publicId: null, name: null, names: p.names, kind: p.kind, status: p.status, position: p.position, anchorPosition: p.anchorPosition,
+    attributes: attributesFromState(p.state.core, p.state.nearby), profileVersion: null,
+  };
+  const values = comparisonValues(subject, navily);
+  const proposed = proposeResults(values, { position: p.position }, spot, navily);
+  for (const a of GATE_CORE_ATTRIBUTES) {
+    const r = proposed[a];
+    if (r === "match") into[a].match += 1;
+    else if (r === "not_at_navily") into[a].notAtNavily += 1;
+    else if (values[a].value === null) into[a].gap += 1;
+    else into[a].deviation += 1;
+  }
+}
 
 /** Why the candidate of a spot is not confirmed at the threshold. */
 function reasonOf(p: GatePlace, threshold: number): MissReason {
@@ -72,7 +131,7 @@ function reasonOf(p: GatePlace, threshold: number): MissReason {
 export function evaluateGate(
   input: { thresholds: number[]; places: GatePlace[]; spots: NavilySpot[]; decisions: Map<string, "berth" | "not_berth">; inArea?: (p: LonLat) => boolean },
   cfg: Pick<AppConfig, "quality" | "nameAffixes" | "research">,
-): { rows: GateRow[]; misses: Map<number, GateMiss[]>; conflicts: Map<number, string[]>; errors: Map<number, GateError[]> } {
+): { rows: GateRow[]; misses: Map<number, GateMiss[]>; conflicts: Map<number, string[]>; errors: Map<number, GateError[]>; core: Map<number, CoreAgreement> } {
   const { thresholds, places, spots, decisions } = input;
   const inArea = input.inArea ?? (() => true);
   const navily = cfg.quality.navily;
@@ -81,11 +140,13 @@ export function evaluateGate(
   const misses = new Map<number, GateMiss[]>();
   const conflicts = new Map<number, string[]>();
   const errors = new Map<number, GateError[]>();
+  const core = new Map<number, CoreAgreement>();
 
   for (const threshold of thresholds) {
     const confirmed = places.filter((p) => p.verdicts.get(threshold)?.status === "confirmed").map((p) => ({ ...p, status: "confirmed" as const }));
     const matches = matchPlacesToSpots(confirmed, spots, navily, cfg.nameAffixes);
-    const row: GateRow = { threshold, confirmed: confirmed.length, correct: 0, wrongKind: 0, wrongPosition: 0, conflicts: 0, decidedNotBerth: 0, correctness: null };
+    const row: GateRow = { threshold, confirmed: confirmed.length, correct: 0, wrongKind: 0, wrongPosition: 0, wrongShelter: 0, conflicts: 0, decidedNotBerth: 0, correctness: null };
+    const agreement = emptyAgreement();
     const open: string[] = [];
     const errs: GateError[] = [];
     for (const [i, p] of confirmed.entries()) {
@@ -93,6 +154,7 @@ export function evaluateGate(
       const spot = match.spotIndex === null ? null : spots[match.spotIndex]!;
       const compatible = spot !== null && kindCompatible(p.kind, spot.kind);
       const decision = decisions.get(p.placeId);
+      if (compatible) countCore(agreement, p, spot, navily);
       const at = { spotIndex: match.spotIndex, distanceM: match.distanceM };
       if (spot && spot.kind !== null && !compatible && (match.nameSimilarity ?? 0) >= navily.nameMin) {
         row.wrongKind += 1;
@@ -103,6 +165,9 @@ export function evaluateGate(
       } else if (decision === "not_berth") {
         row.decidedNotBerth += 1;
         errs.push({ placeId: p.placeId, kind: "not_berth", ...at });
+      } else if (compatible && claimsFalseShelter(p.state, spot, cfg.research.gate.shelterErrorMin)) {
+        row.wrongShelter += 1;
+        errs.push({ placeId: p.placeId, kind: "shelter", ...at });
       } else if (compatible || decision === "berth") row.correct += 1;
       else {
         row.conflicts += 1;
@@ -113,6 +178,7 @@ export function evaluateGate(
     rows.push(row);
     conflicts.set(threshold, open);
     errors.set(threshold, errs);
+    core.set(threshold, agreement);
 
     const matchedPlaces = new Set(matches.filter((m) => m.spotIndex !== null).map((m) => m.placeId));
     const pool = places.filter((p) => !matchedPlaces.has(p.placeId)).map((p) => ({ ...p, status: "candidate" as const }));
@@ -129,5 +195,5 @@ export function evaluateGate(
       }),
     );
   }
-  return { rows, misses, conflicts, errors };
+  return { rows, misses, conflicts, errors, core };
 }

@@ -3,17 +3,17 @@ import type { Point } from "geojson";
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { asGeoJson } from "@/lib/db/geometry";
-import { geoNames, geoObjects, places, researchHits } from "@/lib/db/schema";
+import { berthStates, geoNames, geoObjects, places, researchHits } from "@/lib/db/schema";
 import type { LonLat } from "@/lib/domain/geometry/water";
-import { comparedPosition, lonLatOf } from "@/lib/domain/quality/comparison-values";
+import { comparedPosition } from "@/lib/domain/quality/comparison-values";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { distanceM, type NavilySpot } from "@/lib/domain/quality/navily-sample";
 import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { tileBbox, tileIdFor, tileNeighbours } from "@/lib/domain/tiles";
-import { latestProfiles, validAt } from "@/lib/domain/timeline";
+import { validAt } from "@/lib/domain/timeline";
 import { verdictsIn } from "./gate";
 import { gateDecisions } from "./gate-conflicts";
-import { evaluateGate, type GateErrorKind, type GatePlace, type GateRow, type MissReason } from "./gate-navily";
+import { evaluateGate, emptyAgreement, GATE_CORE_ATTRIBUTES, type CoreAgreement, type GateErrorKind, type GatePlace, type GateRow, type MissReason } from "./gate-navily";
 
 /*
  * The reference gate as a measurement run (plan N3): loads the places of a subdivision, decides them per threshold,
@@ -33,6 +33,23 @@ export const MISS_REASON_LABELS: Record<MissReason, string> = {
   rejected: "abgelehnt oder aufgegeben",
 };
 
+/** German names of the error kinds in the lists and the report. */
+export const ERROR_KIND_LABELS: Record<GateErrorKind, string> = {
+  wrong_kind: "falsche Art",
+  position: "Position abweichend",
+  not_berth: "kein Liegeplatz",
+  shelter: "Schutz behauptet, bei der Referenz offen",
+};
+
+/** German names of the core attributes in the report. */
+const CORE_LABELS: Record<string, string> = {
+  seabed: "Grund",
+  "mooring.buoys": "Bojen",
+  "services.water": "Wasser",
+  "highlight.supply": "Versorgung",
+};
+const coreLabel = (a: string) => CORE_LABELS[a] ?? `Schutz ${a.slice("shelter.".length)}`;
+
 export type GateMeasurement = {
   subdivisionKey: string;
   /** All places of the subdivision (the scope of the conflict tasks). */
@@ -43,6 +60,8 @@ export type GateMeasurement = {
   /** Spots in the worked-on tiles, the ones counted (spots of the border buffer are matched, not counted). */
   spotCount: number;
   rows: GateRow[];
+  /** The core values against the reference at `deliveredThreshold`: the confirmed places with a spot, counted per attribute. */
+  coreAgreement: CoreAgreement;
   /** Per threshold: the confirmed places with a human decision (berth or not). */
   decided: Map<number, number>;
   /** Per threshold: the misses with the index of the spot in the loaded file; `distanceM` to the near candidate. */
@@ -63,11 +82,12 @@ export type GateMeasurement = {
   /** When no threshold passes only for want of a sample: the confirmed count of the first threshold that is perfect but below `gate.minConfirmed`. */
   tooFewConfirmed: number | null;
   minConfirmed: number;
+  shelterErrorMin: number;
   /** The smallest threshold with open conflicts (where `--sync-conflicts` asks); null when none has. */
   conflictThreshold: number | null;
 };
 
-/** All valid, unmerged places of the subdivision of any status, with the delivered positions (as `confirmedSubdivisionPlaces`). */
+/** All valid, unmerged places of the subdivision of any status, with the delivered positions (`places.position`, the anchor position) and the current state. */
 async function subdivisionPlaces(db: Db, subdivisionKey: string): Promise<Array<Omit<GatePlace, "verdicts" | "hasHits"> & { hasHits: boolean }>> {
   const sub = await requireSubdivision(db, subdivisionKey);
   const rows = await db
@@ -78,6 +98,7 @@ async function subdivisionPlaces(db: Db, subdivisionKey: string): Promise<Array<
       status: places.status,
       statusReason: places.statusReason,
       position: asGeoJson(places.position),
+      anchorPosition: asGeoJson(places.anchorPosition),
       hasHits: sql<boolean>`exists (select 1 from ${researchHits} where ${researchHits.placeId} = ${places.id} and ${researchHits.purpose} <> 'landside')`,
     })
     .from(places)
@@ -93,18 +114,21 @@ async function subdivisionPlaces(db: Db, subdivisionKey: string): Promise<Array<
     .orderBy(asc(geoNames.geoObjectId), asc(geoNames.name));
   const namesOf = new Map<string, string[]>();
   for (const n of nameRows) namesOf.set(n.geoObjectId, [...(namesOf.get(n.geoObjectId) ?? []), n.name]);
-  const profileOf = await latestProfiles(db, objectIds);
+  const stateOf = new Map(
+    (await db.select({ placeId: berthStates.placeId, core: berthStates.core, nearby: berthStates.nearby }).from(berthStates).where(inArray(berthStates.placeId, rows.map((r) => r.placeId)))).map((s) => [s.placeId, { core: s.core, nearby: s.nearby }]),
+  );
   return rows.map((r) => {
     const [lon, lat] = (r.position as Point).coordinates as [number, number];
-    const attributes = profileOf.get(r.geoObjectId)?.attributes ?? {};
+    const anchor = r.anchorPosition ? ((r.anchorPosition as Point).coordinates as [number, number]) : null;
     const names = namesOf.get(r.geoObjectId) ?? [];
     return {
       placeId: r.placeId,
       kind: r.kind,
       status: r.status,
       statusReason: r.statusReason,
-      position: lonLatOf(attributes["place.position"]) ?? { lon, lat },
-      anchorPosition: lonLatOf(attributes["anchor_position"]),
+      position: { lon, lat },
+      anchorPosition: anchor ? { lon: anchor[0], lat: anchor[1] } : null,
+      state: stateOf.get(r.placeId) ?? null,
       names,
       hasNames: names.length > 0,
       hasHits: r.hasHits,
@@ -201,6 +225,7 @@ async function measureIn(tx: Db, input: { subdivisionKey: string; spots: NavilyS
     totalTiles: area.total,
     spotCount: counted,
     rows: evaluated.rows,
+    coreAgreement: evaluated.core.get(deliveredThreshold) ?? emptyAgreement(),
     decided,
     misses,
     conflicts: evaluated.conflicts,
@@ -210,6 +235,7 @@ async function measureIn(tx: Db, input: { subdivisionKey: string; spots: NavilyS
     passedAt,
     tooFewConfirmed,
     minConfirmed,
+    shelterErrorMin: cfg.research.gate.shelterErrorMin,
     conflictThreshold,
   };
 }
@@ -242,15 +268,26 @@ export function renderGateReport(m: GateMeasurement, generatedAt: Date): string 
     "",
     "## Ergebnis je Schwelle",
     "",
-    "| Schwelle N | bestätigt | korrekt | falsche Art | Position abweichend | Konflikte offen | mit Entscheidung | davon „kein Liegeplatz“ | Korrektheit |",
-    "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    "| Schwelle N | bestätigt | korrekt | falsche Art | Position abweichend | Schutz falsch | Konflikte offen | mit Entscheidung | davon „kein Liegeplatz“ | Korrektheit |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ...m.rows.map(
-      (r) => `| ${r.threshold} | ${r.confirmed} | ${r.correct} | ${r.wrongKind} | ${r.wrongPosition} | ${r.conflicts} | ${m.decided.get(r.threshold) ?? 0} | ${r.decidedNotBerth} | ${percent(r)} |`,
+      (r) => `| ${r.threshold} | ${r.confirmed} | ${r.correct} | ${r.wrongKind} | ${r.wrongPosition} | ${r.wrongShelter} | ${r.conflicts} | ${m.decided.get(r.threshold) ?? 0} | ${r.decidedNotBerth} | ${percent(r)} |`,
     ),
     "",
     `Geliefert bestätigt, aber von der Regel (N=${m.deliveredThreshold}) nicht gedeckt: ${m.unbacked.length}. Solange es solche Plätze gibt, ist das Tor nicht bestanden.`,
     "",
-    "Kernwerte gegen die Referenz: noch nicht verglichen (bekannte Lücke).",
+    `Falsch geliefert gilt auch ein Sektor, den wir mit Schutzwert von mindestens ${String(m.shelterErrorMin).replace(".", ",")} als geschützt liefern, während die Referenz ihn nicht als geschützt nennt („${ERROR_KIND_LABELS.shelter}“); ein Platz mit so einem Sektor zählt nicht als korrekt.`,
+    "",
+    `## Kernwerte gegen die Referenz (N=${m.deliveredThreshold})`,
+    "",
+    "Verglichen werden die bestätigten Plätze mit Treffer in der Referenz. Übereinstimmung und Abweichung zählen, wo beide Seiten einen Wert haben; Lücke: die Referenz hat einen Wert, wir nicht; nicht bei Navily: die Referenz sagt nichts dazu; kein Stand: der Platz hat noch keinen Stand. Sonst wird nichts verglichen (Existenz und Position prüft das Tor selbst, Tiefe und Taverne hat die Referenz nicht). Nur der Schutzfehler bricht das Tor.",
+    "",
+    "| Kernwert | Übereinstimmung | Abweichung | Lücke | nicht bei Navily | kein Stand |",
+    "| --- | --- | --- | --- | --- | --- |",
+    ...GATE_CORE_ATTRIBUTES.map((a) => {
+      const c = m.coreAgreement[a];
+      return `| ${coreLabel(a)} | ${c.match} | ${c.deviation} | ${c.gap} | ${c.notAtNavily} | ${c.noState} |`;
+    }),
     "",
     "## Fehlliste: Spots ohne bestätigten Platz, nach Grund",
     "",

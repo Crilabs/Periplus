@@ -1466,6 +1466,8 @@ export const researchSchema = z
         chosenThreshold: z.number().int().min(1).nullable(),
         /** A confirmed place matched to a reference spot of its kind farther than this is a position error (as `quality.navily.positionToleranceM`). */
         maxPositionDeviationM: z.number().positive(),
+        /** A shelter value of at least this, delivered as protected where the reference lists the sector as not protected, is an error (a lower one only a deviation). */
+        shelterErrorMin: z.number().min(0).max(1),
         /** The gate is passed only with at least this many confirmed places: a perfect score on a handful proves nothing. */
         minConfirmed: z.number().int().min(1),
       })

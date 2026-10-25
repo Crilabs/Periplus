@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { getConfig } from "@/lib/config";
 import { canonicalJson } from "@/lib/domain/facts/schema";
-import { COMPARISON_ATTRIBUTES, comparisonValues, type ComparisonSubject } from "../comparison-values";
+import { attributesFromState, COMPARISON_ATTRIBUTES, comparisonValues, type ComparisonSubject } from "../comparison-values";
 
 const cfg = getConfig().quality.navily;
 
@@ -126,5 +126,27 @@ describe("comparisonValues", () => {
     expect(values["highlight.food"]).toMatchObject({ value: false, display: "nein" });
     const fewer = comparisonValues(subject({ "mooring.buoys": { present: true, count: 3, paid: null } }), cfg);
     expect(fewer["mooring.buoys"].hash).toBe(values["mooring.buoys"].hash);
+  });
+});
+
+describe("attributesFromState", () => {
+  const v = (value: unknown) => ({ value, confidence: 0.8, origin: "computed" as const, observedAt: null, factIds: [] });
+
+  it("maps the core values and the supply on foot into what comparisonValues reads", () => {
+    const attributes = attributesFromState(
+      { "shelter.N": v(0.9), seabed: v([{ type: "sand", share: 1 }]), "services.water": v(true), "mooring.buoys": v({ present: false }), "depth.min": v(3), unrelated: v(1) },
+      [{ geoObjectId: "g", category: "bakery", distanceM: 400, access: "foot" }],
+    );
+    expect(attributes).toEqual({ "shelter.N": 0.9, seabed: [{ type: "sand", share: 1 }], "services.water": true, "mooring.buoys": { present: false }, "highlight.supply": { present: true } });
+    const values = comparisonValues(subject(attributes), cfg);
+    expect(values["shelter.N"].value).toEqual({ protected: true });
+    expect(values.seabed.value).toEqual(["sand"]);
+    expect(values["highlight.supply"].value).toBe(true);
+  });
+
+  it("supply only counts on foot and for supply or bakery; no state value stays absent", () => {
+    const far = attributesFromState({}, [{ geoObjectId: "g", category: "supply", distanceM: 9000, access: "transport" }, { geoObjectId: "h", category: "food", distanceM: 100, access: "foot" }]);
+    expect(far).toEqual({ "highlight.supply": { present: false } });
+    expect(comparisonValues(subject(far), cfg)["services.water"].value).toBeNull();
   });
 });

@@ -3,7 +3,8 @@ import { getConfig } from "@/lib/config";
 import type { PlaceStatus } from "@/lib/db/schema";
 import type { LonLat } from "@/lib/domain/geometry/water";
 import type { NavilySpot } from "@/lib/domain/quality/navily-sample";
-import { evaluateGate } from "@/lib/domain/research/gate-navily";
+import type { BerthStateNearby } from "@/lib/db/schema/research-state";
+import { evaluateGate, type GateState } from "@/lib/domain/research/gate-navily";
 import { ADMIN_SET_REASON, RESTRICTED_REASON, type Verdict } from "@/lib/domain/research/confirmation";
 
 /* The gate evaluation (plan N3 task 2) is pure; only synthetic places and spots (never Navily data). */
@@ -30,12 +31,17 @@ function place(placeId: string, names: string[], position: LonLat, o: { confirme
 }
 const run = (places: In[], spots: NavilySpot[], decisions: Record<string, "berth" | "not_berth"> = {}, inArea?: (p: LonLat) => boolean) =>
   evaluateGate({ thresholds: [2, 3, 4, 5], places, spots, decisions: new Map(Object.entries(decisions)), inArea }, cfg);
+const berthState = (core: Record<string, number | boolean | object>, nearby: BerthStateNearby[] = []): GateState => ({
+  core: Object.fromEntries(Object.entries(core).map(([k, value]) => [k, { value, confidence: 0.8, origin: "computed" as const, observedAt: null, factIds: [] }])),
+  nearby,
+});
+const withState = (p: In, state: GateState | null): In => ({ ...p, state });
 const row = (r: ReturnType<typeof run>, n: number) => r.rows.find((x) => x.threshold === n)!;
 
 describe("evaluateGate", () => {
   it("a confirmed place on a spot of its kind is correct", () => {
     const r = run([place("p1", ["Alpha"], AT)], [spot({ name: "Alpha" })]);
-    expect(row(r, 2)).toEqual({ threshold: 2, confirmed: 1, correct: 1, wrongKind: 0, wrongPosition: 0, conflicts: 0, decidedNotBerth: 0, correctness: 1 });
+    expect(row(r, 2)).toEqual({ threshold: 2, confirmed: 1, correct: 1, wrongKind: 0, wrongPosition: 0, wrongShelter: 0, conflicts: 0, decidedNotBerth: 0, correctness: 1 });
     expect(r.conflicts.get(2)).toEqual([]);
     expect(r.misses.get(2)).toEqual([]);
   });
@@ -59,7 +65,7 @@ describe("evaluateGate", () => {
 
   it("a threshold confirming nothing has correctness null, not 100 % (Review Focus)", () => {
     const r = run([place("p1", ["Alpha"], AT, { confirmedUpTo: 3 })], [spot({ name: "Alpha" })]);
-    expect(row(r, 4)).toEqual({ threshold: 4, confirmed: 0, correct: 0, wrongKind: 0, wrongPosition: 0, conflicts: 0, decidedNotBerth: 0, correctness: null });
+    expect(row(r, 4)).toEqual({ threshold: 4, confirmed: 0, correct: 0, wrongKind: 0, wrongPosition: 0, wrongShelter: 0, conflicts: 0, decidedNotBerth: 0, correctness: null });
     expect(row(r, 3).correctness).toBe(1);
   });
 
@@ -180,5 +186,71 @@ describe("evaluateGate", () => {
       );
       expect(r.misses.get(2)).toEqual([{ spotIndex: 0, reason: "too_few_sources", placeId: "near" }]);
     });
+  });
+});
+
+describe("evaluateGate core values", () => {
+  const confirmed = (state: GateState | null) => [withState(place("p1", ["Alpha"], AT), state)];
+
+  it("a sector delivered as clearly protected (0.9) that the reference list lacks is a shelter error and breaks correctness", () => {
+    const r = run(confirmed(berthState({ "shelter.N": 0.9 })), [spot({ name: "Alpha", prot: ["S", "SW"] })]);
+    expect(row(r, 2)).toMatchObject({ confirmed: 1, correct: 0, wrongShelter: 1, conflicts: 0, correctness: 0 });
+    expect(r.errors.get(2)).toEqual([{ placeId: "p1", kind: "shelter", spotIndex: 0, distanceM: 0 }]);
+  });
+
+  it("the list is read case-insensitively: a listed sector is no error", () => {
+    const r = run(confirmed(berthState({ "shelter.N": 0.9 })), [spot({ name: "Alpha", prot: ["n"] })]);
+    expect(row(r, 2)).toMatchObject({ correct: 1, wrongShelter: 0 });
+  });
+
+  it("0.6 against the same list is a deviation, no error", () => {
+    const r = run(confirmed(berthState({ "shelter.N": 0.6 })), [spot({ name: "Alpha", prot: ["S"] })]);
+    expect(row(r, 2)).toMatchObject({ correct: 1, wrongShelter: 0 });
+    expect(r.errors.get(2)).toEqual([]);
+    expect(r.core.get(2)!["shelter.N"]).toEqual({ match: 0, deviation: 1, gap: 0, notAtNavily: 0, noState: 0 });
+  });
+
+  it("a reference without a protection list: no shelter comparison, no error", () => {
+    const r = run(confirmed(berthState({ "shelter.N": 0.95 })), [spot({ name: "Alpha", prot: null })]);
+    expect(row(r, 2)).toMatchObject({ correct: 1, wrongShelter: 0 });
+    expect(r.core.get(2)!["shelter.N"]).toMatchObject({ notAtNavily: 1, deviation: 0 });
+  });
+
+  it("a confirmed place without a state counts as no state, no crash, still correct", () => {
+    const r = run(confirmed(null), [spot({ name: "Alpha", prot: ["S"], water: true })]);
+    expect(row(r, 2)).toMatchObject({ correct: 1 });
+    const c = r.core.get(2)!;
+    expect(c["services.water"]).toEqual({ match: 0, deviation: 0, gap: 0, notAtNavily: 0, noState: 1 });
+    expect(c.seabed.noState).toBe(1);
+  });
+
+  it("counts match, deviation, gap (own value missing) and not at reference per attribute", () => {
+    const state = berthState(
+      { "shelter.S": 0.9, "services.water": false, seabed: [{ type: "sand", share: 1 }], "mooring.buoys": { present: true } },
+      [{ geoObjectId: "g", category: "supply", distanceM: 200, access: "foot" }],
+    );
+    const r = run(confirmed(state), [spot({ name: "Alpha", prot: ["S"], water: true, seabeds: [], shop: true, type: "anchorage" })]);
+    const c = r.core.get(2)!;
+    expect(c["shelter.S"].match).toBe(1);
+    expect(c["shelter.N"]).toMatchObject({ gap: 1, match: 0 }); // the reference says N is open, we have no value
+    expect(c["services.water"]).toMatchObject({ deviation: 1, match: 0 });
+    expect(c.seabed).toMatchObject({ notAtNavily: 1 });
+    expect(c["mooring.buoys"]).toMatchObject({ notAtNavily: 1 });
+    expect(c["highlight.supply"]).toMatchObject({ match: 1 });
+  });
+
+  it("a missing own value where the reference has one is a gap, not a deviation (K4); supply comes from nearby on foot", () => {
+    const state = berthState({}, [{ geoObjectId: "g", category: "bakery", distanceM: 300, access: "foot" }, { geoObjectId: "h", category: "supply", distanceM: 9000, access: "transport" }]);
+    const r = run(confirmed(state), [spot({ name: "Alpha", prot: ["S"], water: true, shop: true })]);
+    const c = r.core.get(2)!;
+    expect(c["services.water"]).toMatchObject({ gap: 1, deviation: 0 });
+    expect(c["highlight.supply"]).toMatchObject({ match: 1 });
+    expect(c["shelter.S"]).toMatchObject({ gap: 1, deviation: 0 });
+    for (const a of ["existence", "position", "depth", "highlight.food"] as const) expect(c[a]).toEqual({ match: 0, deviation: 0, gap: 0, notAtNavily: 0, noState: 0 });
+  });
+
+  it("the gate no longer reads the old profiles", async () => {
+    const { readFile } = await import("node:fs/promises");
+    expect(await readFile("lib/domain/research/gate-report.ts", "utf8")).not.toContain("latestProfiles");
   });
 });
