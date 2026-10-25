@@ -50,3 +50,17 @@
 - [ ] `docs/superpowers/plans/2026-10-24-periplus-n6-rueckbau.md` Task 2: Punkt „Tor (`gate-report.ts`)“ streichen (erledigt hier); übrig bleibt die Qualitätsseite (`navily-compare.ts`, `comparison-values.ts` `loadComparisonSubjects`) auf `berth_states`. Review Focus „Das Navily-Tor misst Kernwerte gegen `berth_states`“ bleibt als Prüfpunkt, mit Verweis auf diesen Plan.
 - [ ] `docs/pilot/neuausrichtung/n3-tor.md` bzw. Runbook-Abschnitt zum Tor: neue Fehlerart und Kernwert-Tabelle in zwei Sätzen.
 - [ ] commit `docs: gate core values (plan, runbook)`.
+
+### Task 3: Navily-Arten und Mindestabdeckung (Prüfplan Attika 2, T4 Step 0)
+
+Übernommen aus `docs/superpowers/plans/2026-10-25-periplus-testlauf-attika-2.md` (Branch `pruefung/attika-2`), A5 und A9, entschieden von Christian am 25.10.2026.
+
+**Files:** `config/quality.json` (`navily.excludedTypes: ["prohibited", "dry-berthing"]`, `navily.prohibitedTypes: ["prohibited"]`), `config/research.json` (`gate.minCoverage: 0.5`), `lib/config/schemas.ts`, `lib/domain/research/gate-navily.ts`, `lib/domain/research/gate-report.ts`; Tests `lib/domain/research/__tests__/gate-navily.test.ts`, `scripts/__tests__/research-gate.test.ts`.
+
+**Interfaces:**
+- `GateErrorKind` + `"prohibited"`: ein bestätigter Platz, der einem Spot mit `type` in `prohibitedTypes` zugeordnet ist, ist ein Fehler (nie „korrekt“).
+- Ein Abgleich auf einen Spot mit `type` in `excludedTypes` außerhalb `prohibitedTypes` (z. B. `dry-berthing`) ist ein Konflikt, kein Treffer.
+- Spots mit `type` in `excludedTypes` zählen nicht zum Nenner der Abdeckung und erscheinen nicht in der Fehlliste.
+- Abdeckung je Schwelle = korrekt zugeordnete Spots / Spots (ohne ausgeschlossene Arten) in bearbeiteten Kacheln; `gateOutcome` „bestanden“ verlangt zusätzlich `coverage ≥ gate.minCoverage`, sonst „nicht bestanden: Abdeckung n % (mindestens 50 %)“; der Bericht nennt die Abdeckung je Schwelle.
+
+- [ ] Steps: Tests (bestätigte Bucht 50 m neben synthetischem `prohibited`-Spot → Fehler `prohibited`, Korrektheit < 100 %; Marina neben `dry-berthing`-Spot → Konflikt; `prohibited`-Spot ohne Platz → nicht in der Fehlliste; 100 % korrekt bei 40 % Abdeckung → nicht bestanden; 100 % korrekt bei 50 % Abdeckung und ≥ 25 bestätigt → bestanden; Spots außerhalb bearbeiteter Kacheln zählen nicht), fail, implement, pass, tsc, lint, commit `feat(research): gate needs a minimum coverage of the reference; prohibited spots are errors`.
