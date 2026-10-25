@@ -13,7 +13,7 @@ import { tileBbox, tileIdFor, tileNeighbours } from "@/lib/domain/tiles";
 import { validAt } from "@/lib/domain/timeline";
 import { verdictsIn } from "./gate";
 import { gateDecisions } from "./gate-conflicts";
-import { evaluateGate, emptyAgreement, GATE_CORE_ATTRIBUTES, type CoreAgreement, type GateErrorKind, type GatePlace, type GateRow, type MissReason } from "./gate-navily";
+import { evaluateGate, emptyAgreement, isExcludedSpot, GATE_CORE_ATTRIBUTES, type CoreAgreement, type GateErrorKind, type GatePlace, type GateRow, type MissReason } from "./gate-navily";
 
 /*
  * The reference gate as a measurement run (plan N3): loads the places of a subdivision, decides them per threshold,
@@ -84,8 +84,8 @@ export type GateMeasurement = {
   tooFewConfirmed: number | null;
   minConfirmed: number;
   minCoverage: number;
-  /** When no threshold passes only for want of coverage: the coverage of the first threshold that is perfect with enough confirmed places. */
-  lowCoverage: number | null;
+  /** When no threshold passes only for want of coverage: every threshold that is perfect with enough confirmed places, with its coverage. */
+  lowCoverage: Array<{ threshold: number; coverage: number }> | null;
   shelterErrorMin: number;
   /** The smallest threshold with open conflicts (where `--sync-conflicts` asks); null when none has. */
   conflictThreshold: number | null;
@@ -185,8 +185,7 @@ async function measureIn(tx: Db, input: { subdivisionKey: string; spots: NavilyS
   const area = await subdivisionTileAreas(tx, subdivisionKey, cfg.quality.navily.maxRadiusM);
   const indexes = input.spots.flatMap((s, i) => (area.matchable(s) ? [i] : []));
   const spots = indexes.map((i) => input.spots[i]!);
-  const excluded = cfg.quality.navily.excludedTypes;
-  const counted = spots.filter((s) => area.inside(s) && !(s.type !== null && excluded.includes(s.type))).length;
+  const counted = spots.filter((s) => area.inside(s) && !isExcludedSpot(s, cfg.quality.navily)).length;
 
   const base = await subdivisionPlaces(tx, subdivisionKey);
   const decisions = await gateDecisions(tx, base.map((p) => p.placeId));
@@ -224,7 +223,7 @@ async function measureIn(tx: Db, input: { subdivisionKey: string; spots: NavilyS
   const sampled = perfect.filter((r) => r.confirmed >= minConfirmed);
   const passedAt = sampled.find((r) => (r.coverage ?? 0) >= minCoverage)?.threshold ?? null;
   const tooFewConfirmed = passedAt === null && sampled.length === 0 ? (perfect[0]?.confirmed ?? null) : null;
-  const lowCoverage = passedAt === null && sampled.length > 0 ? (sampled[0]!.coverage ?? 0) : null;
+  const lowCoverage = passedAt === null && sampled.length > 0 ? sampled.map((r) => ({ threshold: r.threshold, coverage: r.coverage ?? 0 })) : null;
   const conflictThreshold = evaluated.rows.find((r) => r.conflicts > 0)?.threshold ?? null;
   return {
     subdivisionKey,
@@ -258,7 +257,11 @@ export function gateOutcome(m: GateMeasurement): string {
   if (m.passedAt !== null) return `Tor bestanden bei N=${m.passedAt}`;
   if (m.rows.every((r) => r.confirmed === 0)) return "Tor nicht bestanden: bei keiner Schwelle ist ein Platz bestätigt";
   if (m.tooFewConfirmed !== null) return `Tor nicht bestanden: zu wenige bestätigte Plätze (${m.tooFewConfirmed} von mindestens ${m.minConfirmed})`;
-  if (m.lowCoverage !== null) return `Tor nicht bestanden: Abdeckung ${Math.round(m.lowCoverage * 100)} % (mindestens ${Math.round(m.minCoverage * 100)} %)`;
+  if (m.lowCoverage !== null) {
+    const floor = (x: number) => Math.floor(x * 100 + 1e-9);
+    const shown = m.lowCoverage.length === 1 ? `${floor(m.lowCoverage[0]!.coverage)} %` : m.lowCoverage.map((c) => `N=${c.threshold}: ${floor(c.coverage)} %`).join(", ");
+    return `Tor nicht bestanden: Abdeckung ${shown} (mindestens ${floor(m.minCoverage)} %)`;
+  }
   const open = m.rows.reduce((sum, r) => sum + r.conflicts, 0);
   return open > 0
     ? "Tor nicht bestanden: bei keiner Schwelle sind alle bestätigten Plätze korrekt, es gibt offene Konflikte"

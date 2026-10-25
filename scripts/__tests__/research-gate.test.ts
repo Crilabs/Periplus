@@ -223,7 +223,8 @@ describe("runGate", () => {
       const low = await setup(tx, { extraSpots: [far("Aaa Bight", 0), far("Bbb Bight", 1), far("Ccc Bight", 2), far("Ddd Dry", 3, "dry-berthing"), far("Eee Ban", 4, "prohibited")] });
       await decideUnknown(low);
       const lines = (await runGate(tx, low.args, low.spots, cfg, { now: new Date(), repoRoot: process.cwd() })).join("\n");
-      expect(lines).toContain("Tor nicht bestanden: Abdeckung 20 % (mindestens 50 %)");
+      expect(lines).toContain("(mindestens 50 %)");
+      expect(lines).toMatch(/Tor nicht bestanden: Abdeckung 20 % \(mindestens 50 %\)/);
       expect(lines).toContain("spots in " + low.args.subdivision + ": 5");
       const report = await readFile(low.args.report, "utf8");
       expect(report).toMatch(/\| 100 % \| 0 \| 20 % \|/);

@@ -5,6 +5,7 @@ import type { LonLat } from "@/lib/domain/geometry/water";
 import type { NavilySpot } from "@/lib/domain/quality/navily-sample";
 import type { BerthStateNearby } from "@/lib/db/schema/research-state";
 import { evaluateGate, type GateState } from "@/lib/domain/research/gate-navily";
+import { gateOutcome, type GateMeasurement } from "@/lib/domain/research/gate-report";
 import { ADMIN_SET_REASON, RESTRICTED_REASON, type Verdict } from "@/lib/domain/research/confirmation";
 
 /* The gate evaluation (plan N3 task 2) is pure; only synthetic places and spots (never Navily data). */
@@ -258,6 +259,28 @@ describe("evaluateGate core values", () => {
       expect(r.misses.get(2)).toEqual([]);
     });
 
+    it("a prohibited spot within reach is an error even when the match takes a nearer normal spot", () => {
+      const r = run([place("p1", ["Alpha"], AT)], [spot({ name: "Alpha", ...north(30) }), spot({ name: "Other", kind: null, type: "prohibited", ...north(-80) })]);
+      expect(row(r, 2)).toMatchObject({ confirmed: 1, correct: 0, wrongProhibited: 1, coverage: 0 });
+      expect(r.errors.get(2)).toEqual([{ placeId: "p1", kind: "prohibited", spotIndex: 1, distanceM: expect.closeTo(80, 0) }]);
+      // beyond gate.maxPositionDeviationM it is no error
+      const far = run([place("p1", ["Alpha"], AT)], [spot({ name: "Alpha", ...north(30) }), spot({ name: "Other", type: "prohibited", ...north(-400) })]);
+      expect(row(far, 2)).toMatchObject({ correct: 1, wrongProhibited: 0 });
+      // two places near the same ban are both errors
+      const two = run([place("p1", ["Alpha"], AT), place("p2", ["Beta"], north(20))], [spot({ name: "Gamma", type: "prohibited", ...north(60) })]);
+      expect(row(two, 2).wrongProhibited).toBe(2);
+    });
+
+    it("a match to an excluded, non-prohibited spot of another known kind is a conflict, never wrong_kind", () => {
+      const r = run([place("p1", ["Alpha"], north(50))], [spot({ name: "Alpha", kind: "port", type: "dry-berthing" })]);
+      expect(row(r, 2)).toMatchObject({ wrongKind: 0, conflicts: 1, correct: 0 });
+    });
+
+    it("a human berth decision stays correct on a dry-berthing spot but covers nothing", () => {
+      const r = run([place("p1", ["Alpha"], north(50))], [spot({ name: "Alpha", type: "dry-berthing" })], { p1: "berth" });
+      expect(row(r, 2)).toMatchObject({ correct: 1, conflicts: 0, coverage: null });
+    });
+
     it("a human berth decision does not clear a prohibited match", () => {
       const r = run([place("p1", ["Alpha"], north(50))], [spot({ name: "Alpha", type: "prohibited" })], { p1: "berth" });
       expect(row(r, 2)).toMatchObject({ correct: 0, wrongProhibited: 1 });
@@ -300,5 +323,28 @@ describe("evaluateGate core values", () => {
   it("the gate no longer reads the old profiles", async () => {
     const { readFile } = await import("node:fs/promises");
     expect(await readFile("lib/domain/research/gate-report.ts", "utf8")).not.toContain("latestProfiles");
+  });
+});
+
+describe("gateOutcome and coverage", () => {
+  const base = { unbacked: [], passedAt: null, tooFewConfirmed: null, minConfirmed: 25, minCoverage: 0.5, lowCoverage: null, rows: [{ confirmed: 30, conflicts: 0 }] } as unknown as GateMeasurement;
+
+  it("shows the coverage floored and lists every threshold below the minimum", () => {
+    const low = { ...base, lowCoverage: [{ threshold: 2, coverage: 0.496 }, { threshold: 3, coverage: 0.2 }] };
+    expect(gateOutcome(low)).toBe("Tor nicht bestanden: Abdeckung N=2: 49 %, N=3: 20 % (mindestens 50 %)");
+    expect(gateOutcome({ ...base, lowCoverage: [{ threshold: 2, coverage: 0.496 }] })).toBe("Tor nicht bestanden: Abdeckung 49 % (mindestens 50 %)");
+  });
+
+  it("30 confirmed places on 60 spots: all correct passes at exactly 50 % coverage, 29 of 60 does not; no spot at all never passes", () => {
+    const spotAt = (i: number) => spot({ name: `S${i}`, ...north(i * 2000) });
+    const spots = Array.from({ length: 60 }, (_, i) => spotAt(i));
+    const placesOf = (n: number) => Array.from({ length: n }, (_, i) => place(`p${i}`, [`S${i}`], north(i * 2000)));
+    const r30 = evaluateGate({ thresholds: [2], places: placesOf(30), spots, decisions: new Map() }, cfg);
+    expect(r30.rows[0]).toMatchObject({ confirmed: 30, correct: 30, correctness: 1, coverage: 0.5 });
+    expect(r30.rows[0]!.coverage! >= cfg.research.gate.minCoverage).toBe(true);
+    const r29 = evaluateGate({ thresholds: [2], places: placesOf(29), spots, decisions: new Map() }, cfg);
+    expect(r29.rows[0]!.coverage! >= cfg.research.gate.minCoverage).toBe(false);
+    const none = evaluateGate({ thresholds: [2], places: placesOf(3), spots: [], decisions: new Map(), inArea: () => true }, cfg);
+    expect(none.rows[0]!.coverage).toBeNull();
   });
 });

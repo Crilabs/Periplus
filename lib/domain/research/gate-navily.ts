@@ -1,10 +1,10 @@
 import type { AppConfig } from "@/lib/config";
 import { COMPARISON_ATTRIBUTES, type ComparisonAttribute, type PlaceStatus } from "@/lib/db/schema";
 import type { BerthStateNearby, BerthStateValue } from "@/lib/db/schema/research-state";
-import { attributesFromState, comparisonValues } from "@/lib/domain/quality/comparison-values";
+import { attributesFromState, comparedPosition, comparisonValues } from "@/lib/domain/quality/comparison-values";
 import { coverageOfMatches, kindCompatible, matchPlacesToSpots, proposeResults, type MatchPlace } from "@/lib/domain/quality/navily-assistant";
 import type { LonLat } from "@/lib/domain/geometry/water";
-import type { NavilySpot } from "@/lib/domain/quality/navily-sample";
+import { distanceM, type NavilySpot } from "@/lib/domain/quality/navily-sample";
 import { ADMIN_SET_REASON, RESTRICTED_REASON, type Verdict } from "./confirmation";
 
 /*
@@ -65,6 +65,9 @@ export type GateErrorKind = "wrong_kind" | "position" | "not_berth" | "shelter" 
 
 export type GateMiss = { spotIndex: number; reason: MissReason; placeId: string | null };
 
+/** Whether the spot's type is one of `quality.navily.excludedTypes` (no berth to find: not counted, never a hit). */
+export const isExcludedSpot = (s: NavilySpot, navily: Pick<AppConfig["quality"]["navily"], "excludedTypes">): boolean => s.type !== null && navily.excludedTypes.includes(s.type);
+
 /**
  * The first sector the place claims as clearly protected (shelter value ≥ `gate.shelterErrorMin`) that the spot's
  * protection list lacks (case-insensitive); false without a state or without a list at the spot (nothing to compare).
@@ -116,7 +119,8 @@ function reasonOf(p: GatePlace, threshold: number): MissReason {
 /**
  * Each threshold's own matching of the places it confirms there (a missing verdict is not confirmed;
  * `matchPlacesToSpots`). Per confirmed place, the first that applies:
- * - `wrongProhibited` (checked first, an error whatever a human decided): matched to a spot of a prohibited type;
+ * - `wrongProhibited` (checked first, an error whatever a human decided): a spot of a prohibited type within
+ *   `gate.maxPositionDeviationM` of the compared position (the anchor position for a field place), or matched to one;
  * - `wrongKind` (an error whatever a human decided): matched by name (similarity ≥ `quality.navily.nameMin`) to a spot
  *   whose kind is known and incompatible (revised ruling: a match by distance only, or to a spot of unknown kind, says
  *   nothing about the kind and is a conflict instead);
@@ -141,8 +145,18 @@ export function evaluateGate(
   const inArea = input.inArea ?? (() => true);
   const navily = cfg.quality.navily;
   const maxDeviation = cfg.research.gate.maxPositionDeviationM;
-  const isExcluded = (s: NavilySpot) => s.type !== null && navily.excludedTypes.includes(s.type);
+  const isExcluded = (s: NavilySpot) => isExcludedSpot(s, navily);
   const isProhibited = (s: NavilySpot) => s.type !== null && navily.prohibitedTypes.includes(s.type);
+  const nearestProhibited = (p: GatePlace): { spotIndex: number; distanceM: number } | null => {
+    const at = comparedPosition(p);
+    let best: { spotIndex: number; distanceM: number } | null = null;
+    for (const [i, s] of spots.entries()) {
+      if (!isProhibited(s)) continue;
+      const d = distanceM(at, s);
+      if (d <= maxDeviation && (best === null || d < best.distanceM)) best = { spotIndex: i, distanceM: d };
+    }
+    return best;
+  };
   const rows: GateRow[] = [];
   const misses = new Map<number, GateMiss[]>();
   const conflicts = new Map<number, string[]>();
@@ -166,10 +180,12 @@ export function evaluateGate(
       const decision = decisions.get(p.placeId);
       if (compatible) countCore(agreement, p, spot, navily);
       const at = { spotIndex: match.spotIndex, distanceM: match.distanceM };
-      if (spot && isProhibited(spot)) {
+      // independent of the matching: a prohibited spot within reach of the place's compared position is an error, whichever spot the match took
+      const ban = nearestProhibited(p) ?? (spot && isProhibited(spot) && match.distanceM !== null ? { spotIndex: match.spotIndex!, distanceM: match.distanceM } : null);
+      if (ban) {
         row.wrongProhibited += 1;
-        errs.push({ placeId: p.placeId, kind: "prohibited", ...at });
-      } else if (spot && spot.kind !== null && !kindOk && (match.nameSimilarity ?? 0) >= navily.nameMin) {
+        errs.push({ placeId: p.placeId, kind: "prohibited", spotIndex: ban.spotIndex, distanceM: ban.distanceM });
+      } else if (spot && spot.kind !== null && !kindOk && !isExcluded(spot) && (match.nameSimilarity ?? 0) >= navily.nameMin) {
         row.wrongKind += 1;
         errs.push({ placeId: p.placeId, kind: "wrong_kind", ...at });
       } else if (compatible && match.distanceM! > maxDeviation) {
@@ -182,6 +198,7 @@ export function evaluateGate(
         row.wrongShelter += 1;
         errs.push({ placeId: p.placeId, kind: "shelter", ...at });
       } else if (compatible || decision === "berth") {
+        // a human "berth" decision stays correct on a spot of an excluded type (dry berthing), but covers nothing
         row.correct += 1;
         if (compatible) covered.add(match.spotIndex!);
       }
