@@ -1,6 +1,6 @@
 import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { AttributeProvenance } from "../types";
-import { attributeIn, roundTo } from "../weights";
+import { attributeIn, roundTo } from "@/lib/domain/rules/weights";
 
 /*
  * Profile confidence (spec 07 "gewichteter Mittelwert über die Kernattribute (Schutz, Tiefe, Grund, Ausschluss)"),

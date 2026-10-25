@@ -6,11 +6,12 @@ import { chunks, extractionRuns, extractionUnits, facts, mentions, unmatchedName
 import { canonicalJson, getFactSchema, isEntryListAttribute, SAFETY_LIST_ATTRIBUTES, validateTextFact } from "@/lib/domain/facts/schema";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
-import { effectiveVersionMeta, plausibleDate } from "@/lib/domain/mentions/classification";
+import { effectiveVersionMeta } from "@/lib/domain/mentions/classification";
+import { plausibleDate } from "@/lib/domain/research/util/dates";
 import { findNameHits, type MatchHit, type NameForm } from "@/lib/domain/mentions/match";
 import { nameForms } from "@/lib/domain/mentions/ngrams";
 import { tileIdFor } from "@/lib/domain/tiles";
-import { locateQuote, normalizeForQuote } from "./quote";
+import { locateQuote, nameInQuote } from "@/lib/domain/research/text/quote";
 import { blockLateResults } from "./run-status";
 import { restoreUnitMentions } from "./unit-status";
 
@@ -143,12 +144,6 @@ function nearestMention(located: Located, unitMentions: UnitMention[], ordinalOf
 }
 
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
-
-/** Whether `name` occurs in `quote`, both normalized like the quote check (case kept, ruling M4-P21). */
-export function nameInQuote(name: string, quote: string): boolean {
-  const n = normalizeForQuote(name).text.trim();
-  return n.length > 0 && normalizeForQuote(quote).text.includes(n);
-}
 
 /**
  * The proper names of a kept highlight that the quote supports (ruling M4-G-R4): its `names` without those the quote

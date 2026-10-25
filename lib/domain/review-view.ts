@@ -34,7 +34,8 @@ import {
 } from "@/lib/db/schema";
 import { getConfig } from "@/lib/config";
 import type { PlaceImageTaskContext } from "@/lib/pipeline/images/generate";
-import type { AttributeProvenance, ConflictResolution, ConflictSide } from "@/lib/domain/consolidation/types";
+import type { AttributeProvenance } from "@/lib/domain/consolidation/types";
+import type { ConflictResolution, ConflictSide } from "@/lib/domain/rules/types";
 import type { ProposalRobots, SerpHit } from "@/lib/domain/discovery/proposals";
 import { formatReviewValue, profileAttributeLabel } from "@/lib/domain/consolidation/format";
 import { comparisonTaskContextSchema } from "@/lib/domain/quality/comparison-results";

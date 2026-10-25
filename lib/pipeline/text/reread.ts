@@ -2,7 +2,8 @@ import { sql } from "drizzle-orm";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
-import { jsonTexts, jsonUuids, prepassCandidateTiles, withNeighbours } from "@/lib/domain/mentions/scope";
+import { jsonTexts, prepassCandidateTiles, withNeighbours } from "@/lib/domain/mentions/scope";
+import { jsonUuids } from "@/lib/domain/research/util/json-uuids";
 import { MATCH_PASS_STAGE } from "@/lib/domain/mentions/store";
 import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 

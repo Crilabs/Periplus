@@ -2,7 +2,8 @@ import { sql } from "drizzle-orm";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { activeSubdivisionKeys } from "@/lib/domain/subdivisions/store";
-import { candidateObjects, candidateTiles, jsonUuids } from "./scope";
+import { candidateObjects, candidateTiles } from "./scope";
+import { jsonUuids } from "@/lib/domain/research/util/json-uuids";
 
 /*
  * Measurement for the open point "Kachelgrenzen (M4)" of the overall design: would a second ring of neighbour tiles in

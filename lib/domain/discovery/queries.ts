@@ -1,73 +1,18 @@
-import { and, asc, desc, eq, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { countryConfig, getConfig, type DiscoveryConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
-import { facts, geoNames, geoObjects, subdivisions, tileGeoObjects, tiles, type SerpLevel } from "@/lib/db/schema";
+import { facts, geoNames, geoObjects, subdivisions, tileGeoObjects, tiles } from "@/lib/db/schema";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
-import { provisionalNameIds } from "@/lib/domain/research/provisional-names";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
-import { validAt } from "@/lib/domain/timeline";
+import { validAt } from "@/lib/db/valid-at";
+import { dedupeQueries, namesByLanguage, type DiscoveryQuery } from "@/lib/domain/search/queries";
 import { createLogger } from "@/lib/logger";
-
-/**
- * One SERP search to make: `priority` orders tile queries (1 islands, 2 settlements, 3 bays; area queries 0; place
- * queries 1).
- */
-export type DiscoveryQuery = {
-  keyword: string;
-  languageCode: string;
-  locationCode: number;
-  level: SerpLevel;
-  /** Area `config_key` (`area`; plan 14b moves it to the id), tile id (`tile`) or geo object id (`place`). */
-  scopeId: string;
-  priority: number;
-  /** The tile a `place` query's cost is booked on (the place's tile, ruling M5-P12); unset for other levels. */
-  tileId?: string;
-};
 
 type Template = DiscoveryConfig["templates"]["area"][number];
 
 const AREA_PRIORITY = 0;
 const TILE_PRIORITY: Record<string, number> = { island: 1, islet: 1, archipelago: 1, settlement: 2, bay: 3 };
-
-/**
- * The preferred valid name per language of each object: preferred first, then real names before fallbacks
- * and transliterations, then alphabetical. Provisional research names (`provisionalNameIds`) are left out.
- */
-export async function namesByLanguage(db: Db, objectIds: string[], languages: string[]): Promise<Map<string, Map<string, string>>> {
-  const out = new Map<string, Map<string, string>>();
-  if (objectIds.length === 0 || languages.length === 0) return out;
-  const provisional = await provisionalNameIds(db, objectIds);
-  const rows = await db
-    .selectDistinctOn([geoNames.geoObjectId, geoNames.language], {
-      geoObjectId: geoNames.geoObjectId,
-      language: geoNames.language,
-      name: geoNames.name,
-    })
-    .from(geoNames)
-    .where(
-      and(
-        inArray(geoNames.geoObjectId, objectIds),
-        inArray(geoNames.language, languages),
-        validAt(geoNames),
-        provisional.size > 0 ? notInArray(geoNames.id, [...provisional]) : undefined,
-      ),
-    )
-    .orderBy(
-      geoNames.geoObjectId,
-      geoNames.language,
-      desc(geoNames.isPreferred),
-      asc(sql`${geoNames.origin} in ('fallback', 'transliteration')`),
-      geoNames.name,
-      geoNames.id,
-    );
-  for (const r of rows) {
-    const byLang = out.get(r.geoObjectId) ?? new Map<string, string>();
-    byLang.set(r.language, r.name);
-    out.set(r.geoObjectId, byLang);
-  }
-  return out;
-}
 
 /** Templates whose language the subdivision searches in. */
 export function templatesFor(templates: Template[], sourceLanguages: string[]): Template[] {
@@ -87,20 +32,6 @@ export function buildQueries(
     out.push({ keyword: t.template.replaceAll("{name}", name), languageCode: t.lang, locationCode: t.locationCode, ...base });
   }
   return out;
-}
-
-/** Identity of a search: `(keyword, languageCode, locationCode)`. */
-export const queryKey = (q: Pick<DiscoveryQuery, "keyword" | "languageCode" | "locationCode">) =>
-  `${q.keyword}\u0000${q.languageCode}\u0000${q.locationCode}`;
-
-/** One query per `(keyword, languageCode, locationCode)`, keeping the lowest priority. */
-export function dedupeQueries(queries: DiscoveryQuery[]): DiscoveryQuery[] {
-  const byKey = new Map<string, DiscoveryQuery>();
-  for (const q of queries) {
-    const prior = byKey.get(queryKey(q));
-    if (!prior || q.priority < prior.priority) byKey.set(queryKey(q), q);
-  }
-  return [...byKey.values()];
 }
 
 /** Priority of a place query (as islands among the tile queries). */

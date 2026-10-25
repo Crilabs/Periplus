@@ -15,7 +15,7 @@ import { seabedShares } from "@/lib/domain/geometry/seabed";
 import { opening, sectorFetch, shelterFromFetch, swellProtection } from "@/lib/domain/geometry/shelter";
 import { resolveOrigin, waterArea, type LonLat } from "@/lib/domain/geometry/water";
 import { tileBbox } from "@/lib/domain/tiles";
-import { validAt } from "@/lib/domain/timeline";
+import { validAt } from "@/lib/db/valid-at";
 import { RunScopeNotReady, seedTileIds } from "@/lib/pipeline/tile-scope";
 
 // No import of ./runs here: the job handler imports this module (import cycle through the stage registry).

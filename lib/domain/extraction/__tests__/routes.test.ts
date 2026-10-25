@@ -7,13 +7,10 @@ import { loadConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { mentions, places, routes, routeStops } from "@/lib/db/schema";
-import { assignStop, routeSections, storeRoute } from "@/lib/domain/extraction/routes";
+import { assignStop, storeRoute } from "@/lib/domain/extraction/routes";
 import { tileIdFor } from "@/lib/domain/tiles";
 
 const config = loadConfig("config");
-
-const words = (n: number, word = "sea") => Array.from({ length: n }, () => word).join(" ");
-const countWords = (s: string) => s.match(/\S+/g)?.length ?? 0;
 
 const CHUNKS = [
   "We left Ermioni early and anchored in Kolona Bay for the night.",
@@ -72,27 +69,6 @@ const stopsOf = async (tx: Db, versionId: string) =>
     .innerJoin(routes, eq(routes.id, routeStops.routeId))
     .where(eq(routes.documentVersionId, versionId))
     .orderBy(routeStops.ordinal);
-
-describe("route sections", () => {
-  it("a 45,000-word report is split at headings into sections of at most 20,000 words", () => {
-    const md = ["# Day 1", words(15000), "## Day 2", words(15000), "## Day 3", words(14991)].join("\n\n");
-    expect(countWords(md)).toBe(45000);
-    const sections = routeSections(md, 20000);
-    expect(sections).toHaveLength(3);
-    expect(sections.map((s) => s.split("\n")[0])).toEqual(["# Day 1", "## Day 2", "## Day 3"]);
-    for (const s of sections) expect(countWords(s)).toBeLessThanOrEqual(20000);
-    expect(sections.map(countWords).reduce((a, b) => a + b)).toBe(45000);
-
-    // up to the limit the whole text is one section; a part without a heading is cut hard by words
-    expect(routeSections(md, 45000)).toEqual([md]);
-    const plain = routeSections(words(45000), 20000);
-    expect(plain.map(countWords)).toEqual([20000, 20000, 5000]);
-    // short sections between headings are joined up to the limit
-    expect(routeSections(["# A", words(100), "# B", words(100), "#### not a split", words(100), "# C", words(30000)].join("\n\n"), 20000).map(countWords)).toEqual([
-      308, 20000, 10002,
-    ]);
-  });
-});
 
 describe("storeRoute", () => {
   it("stops keep their order across sections and get their mentioned place", () =>

@@ -2,12 +2,13 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import type { AppConfig } from "@/lib/config";
 import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
-import { placeKindEnum, places, reviewDecisions, reviewTasks, type PlaceKind, type PlaceStatus } from "@/lib/db/schema";
+import { placeKindEnum, places, type PlaceKind, type PlaceStatus } from "@/lib/db/schema";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import type { ProfileContext } from "@/lib/domain/consolidation/inputs";
-import { applyRule } from "@/lib/domain/consolidation/rules";
-import { lockOpenPlaceTasks, lockOpenTasks } from "@/lib/domain/consolidation/task-locks";
-import type { ConsolidationInput, RuleName } from "@/lib/domain/consolidation/types";
+import { recordDecision, SYSTEM_ACTOR } from "@/lib/domain/review/system-decisions";
+import { applyRule } from "@/lib/domain/rules";
+import { lockOpenPlaceTasks, lockOpenTasks } from "@/lib/domain/review/task-locks";
+import type { ConsolidationInput, RuleName } from "@/lib/domain/rules/types";
 import { countingTextInputs } from "./evidence";
 
 /*
@@ -19,7 +20,6 @@ import { countingTextInputs } from "./evidence";
  * spec N 5.6), which records its status changes the same way (`recordDecision`).
  */
 
-export const SYSTEM_ACTOR = "system";
 const KIND_EVIDENCE = "place.kind_evidence";
 /** Only a candidate or a confirmed place switches its kind by evidence (final review 5); a rejected, `no_anchoring` or abandoned one never. */
 const KIND_SWITCH_STATUSES: ReadonlySet<PlaceStatus> = new Set<PlaceStatus>(["candidate", "confirmed"]);
@@ -90,18 +90,6 @@ async function kindChosenByAdmin(tx: Db, placeId: string, geoObjectId: string): 
   return rows[0]?.locked === true;
 }
 
-/** Whether an open duplicate review (`geo_object_pair`) names the object on either side. */
-export async function hasOpenPairTask(tx: Db, geoObjectId: string): Promise<boolean> {
-  const { rows } = await tx.execute<{ open: boolean }>(sql`
-    select exists (
-      select 1 from review_tasks
-      where kind = 'place_candidate' and subject_type = 'geo_object_pair' and status = 'open'
-        and (split_part(subject_id, ':', 1) = ${geoObjectId} or split_part(subject_id, ':', 2) = ${geoObjectId})
-    ) as open
-  `);
-  return rows[0]?.open === true;
-}
-
 /**
  * After an automatic kind switch, the open (locked) tasks on the place that carry a proposal (`context.kind`) propose the
  * new kind (final review 1): the confirm form defaults to the place's current kind, so taking that default must not read
@@ -114,15 +102,6 @@ async function reproposeKind(tx: Db, taskIds: string[], kind: PlaceKind): Promis
     update review_tasks set context = context || ${JSON.stringify({ kind })}::jsonb
     where id in (${sql.join(taskIds.map((id) => sql`${id}`), sql`, `)}) and status = 'open' and context ? 'kind'
   `);
-}
-
-/** One decided pseudo task on the place with its `system` decision (also used by the research confirmation). */
-export async function recordDecision(tx: Db, placeId: string, subjectType: "place_kind" | "place_status", previous: string, decision: Record<string, unknown>, now: Date) {
-  const [task] = await tx
-    .insert(reviewTasks)
-    .values({ kind: "place_candidate", subjectType, subjectId: placeId, context: { previous }, status: "decided" })
-    .returning({ id: reviewTasks.id });
-  await tx.insert(reviewDecisions).values({ taskId: task!.id, decision, decidedBy: SYSTEM_ACTOR, decidedAt: now });
 }
 
 /**

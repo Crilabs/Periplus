@@ -3,7 +3,7 @@ import type { ExtractionConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { levelFor } from "@/lib/domain/facts/levels";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
-import { jsonUuids } from "@/lib/domain/mentions/scope";
+import { jsonUuids } from "@/lib/domain/research/util/json-uuids";
 
 /*
  * Extraction units (spec 06): "Einheit je (Dokumentversion, Geo-Objekt) mit Nachbar-Chunks". A unit holds the chunks

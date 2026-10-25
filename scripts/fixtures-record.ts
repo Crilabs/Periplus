@@ -34,7 +34,7 @@ import { getConfig, type AppConfig, type DiscoveryConfig } from "../lib/config";
 import { createDb, type Db } from "../lib/db/client";
 import { refuseSimulationEnv } from "../lib/domain/revisit/guard";
 import { extractionUnits, subdivisions } from "../lib/db/schema";
-import { namesByLanguage } from "../lib/domain/discovery/queries";
+import { namesByLanguage } from "../lib/domain/search/queries";
 import { planUnits } from "../lib/domain/extraction/units";
 import { effectiveVersionMeta } from "../lib/domain/mentions/classification";
 import { assignSubdivisionTiles } from "../lib/domain/gazetteer/hierarchy";

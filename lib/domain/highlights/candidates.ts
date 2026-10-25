@@ -9,7 +9,7 @@ import { countingSourceSql, mergedChainSql, mergedChainsSql } from "@/lib/domain
 import { activeExtractionRunIdSql } from "@/lib/domain/extraction/active-run";
 import { displayNameSql, normalizeName } from "@/lib/domain/gazetteer/names";
 import { trigramSimilarity } from "@/lib/domain/quality/trigram";
-import { validAtAlias } from "@/lib/domain/timeline";
+import { validAtAlias } from "@/lib/db/valid-at";
 import { highlightsConfig, type HighlightCandidate, type TextName } from "./select";
 
 export { poiKinds };

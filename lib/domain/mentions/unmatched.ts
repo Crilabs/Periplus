@@ -1,6 +1,6 @@
 import type { NameAffixesConfig } from "@/lib/config";
 import { normalizeName } from "@/lib/domain/gazetteer/names";
-import type { Hint } from "./affixes";
+import type { Hint } from "@/lib/domain/research/util/affixes";
 import { sentenceWords, type Word } from "./ngrams";
 
 /*

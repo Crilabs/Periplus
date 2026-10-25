@@ -1,7 +1,8 @@
 import { asc, desc, eq, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { changeEvents, profiles, type ChangeSeverity, type ChangeType } from "@/lib/db/schema";
-import type { ConfidenceClass, ProfileSnapshot } from "@/lib/domain/consolidation/types";
+import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
+import type { ConfidenceClass } from "@/lib/domain/rules/types";
 import { canonicalJson } from "@/lib/domain/facts/schema";
 import { asOfDate, profileView, type ProfileView } from "@/lib/domain/profile-view";
 import { profileVersion } from "@/lib/domain/timeline";

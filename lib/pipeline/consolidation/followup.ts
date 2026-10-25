@@ -6,7 +6,8 @@ import type { Db } from "@/lib/db/client";
 import { runs } from "@/lib/db/schema";
 import { thinPlaces } from "@/lib/domain/consolidation/followup";
 import { consolidationTargets } from "@/lib/domain/consolidation/targets";
-import { placeQueries, queryKey } from "@/lib/domain/discovery/queries";
+import { placeQueries } from "@/lib/domain/discovery/queries";
+import { queryKey } from "@/lib/domain/search/queries";
 import { runDate } from "@/lib/domain/runs";
 import { resumePlaceDiscoveryRun, startPlaceDiscoveryRun } from "@/lib/pipeline/discovery-run";
 

@@ -13,7 +13,7 @@ import { aiBatches, aiBatchItems, documents, documentVersions, pipelinePasses, r
 import { BudgetExceeded } from "@/lib/domain/costs";
 import { newId } from "@/lib/domain/ids";
 import { beginStage, createRun } from "@/lib/domain/runs";
-import { effectiveVersionMeta, firstWords, resolveObservedAt, storeClassification } from "../classification";
+import { effectiveVersionMeta, resolveObservedAt, storeClassification } from "../classification";
 import { pollBatch } from "@/lib/pipeline/batches";
 import { CLASSIFY_STAGE, classificationBatchEntry, classifyVersions, planClassify } from "@/lib/pipeline/text/classify";
 import { textRunVersions } from "@/lib/pipeline/text/versions";
@@ -111,11 +111,6 @@ describe("observed date", () => {
     expect(resolveObservedAt(answer({ observed_at: "2026-11", observed_at_explicit: true }), early, EARLIEST).basis).toBe("fetched");
     // a full day after the fetch date is not clamped
     expect(resolveObservedAt(answer({ observed_at: "2026-10-07", observed_at_explicit: true }), early, EARLIEST).basis).toBe("fetched");
-  });
-
-  it("firstWords keeps the text up to the n-th word", () => {
-    expect(firstWords("# Poros\n\nWir  ankerten vor Kolona.", 3)).toBe("# Poros\n\nWir");
-    expect(firstWords("kurz", 1500)).toBe("kurz");
   });
 });
 

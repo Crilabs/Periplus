@@ -1,4 +1,4 @@
-import { linkMarkup } from "@/lib/domain/extraction/quote";
+import { linkMarkup } from "@/lib/domain/research/text/quote";
 import { normalizeName, transliterateElot743 } from "@/lib/domain/gazetteer/names";
 
 /*

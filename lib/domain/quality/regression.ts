@@ -5,7 +5,7 @@ import { COMPARISON_ATTRIBUTES, configActivations, runs, type ComparisonAttribut
 import type { ConsolidationConfig } from "@/lib/config/schemas";
 import { activeRulesVersion, consolidationConfigFor, extractionVersion } from "@/lib/domain/consolidation/active-rules";
 import { formatProfileValue, profileAttributeLabel } from "@/lib/domain/consolidation/format";
-import { attributeIn } from "@/lib/domain/consolidation/weights";
+import { attributeIn } from "@/lib/domain/rules/weights";
 import { profileEntryKey } from "@/lib/domain/profile-view";
 import type { EvaluationCandidate } from "@/lib/domain/consolidation/targets";
 import { latestComparisonResults } from "./comparison-results";

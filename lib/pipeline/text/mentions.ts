@@ -7,7 +7,8 @@ import { effectiveVersionMeta } from "@/lib/domain/mentions/classification";
 import { findNameHits, nameFormsOf, resolveHits, setTrigramThreshold, type MatchHit, type ResolvedMatch } from "@/lib/domain/mentions/match";
 import { linkTextOnly, ngrams } from "@/lib/domain/mentions/ngrams";
 import { activeSubdivisionKeys } from "@/lib/domain/subdivisions/store";
-import { candidateObjects, candidateTiles, jsonTexts, jsonUuids } from "@/lib/domain/mentions/scope";
+import { candidateObjects, candidateTiles, jsonTexts } from "@/lib/domain/mentions/scope";
+import { jsonUuids } from "@/lib/domain/research/util/json-uuids";
 import {
   MATCH_PASS_STAGE,
   mentionSpans,

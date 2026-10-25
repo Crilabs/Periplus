@@ -3,7 +3,7 @@ import type { CategoriesConfig } from "@/lib/config";
 import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
 import type { Db } from "@/lib/db/client";
 import type { PoiCategory } from "@/lib/db/schema";
-import { validAtAlias } from "@/lib/domain/timeline";
+import { validAtAlias } from "@/lib/db/valid-at";
 import { categoryForTags } from "./osm-classify";
 
 export type ReclassifyResult = { cleared: number; changed: number; geoObjectIds: string[] };

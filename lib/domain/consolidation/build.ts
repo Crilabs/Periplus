@@ -1,4 +1,4 @@
-import { derivedBerthable } from "./berthable";
+import { derivedBerthable } from "@/lib/domain/rules/berthable";
 import { createHash } from "node:crypto";
 import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { HighlightCategory } from "@/lib/db/schema/geo";
@@ -10,26 +10,11 @@ import { type OccupancyWord, quietnessScore, type QuietnessWord } from "./derive
 import { hasObservedMonths, observedMonths, seasonHints } from "./derived/season";
 import { excludeValue, restrictionOf } from "./exclude";
 import type { DerivedInputs, ProfileContext } from "./inputs";
-import { applyRule } from "./rules";
-import type {
-  AttributeProvenance,
-  ConflictNote,
-  ConsolidationInput,
-  ProfileGap,
-  ProfileSnapshot,
-  RuleContext,
-  RuleName,
-  RuleResult,
-} from "./types";
-import {
-  attributeIn,
-  classMidpoint,
-  confidenceClass,
-  independentCount,
-  inputId,
-  lowerClass,
-  roundTo,
-} from "./weights";
+import { applyRule } from "@/lib/domain/rules";
+import { byAttributeDateId } from "@/lib/domain/rules/order";
+import type { AttributeProvenance, ProfileGap, ProfileSnapshot } from "./types";
+import type { ConflictNote, ConsolidationInput, RuleContext, RuleName, RuleResult } from "@/lib/domain/rules/types";
+import { attributeIn, classMidpoint, confidenceClass, independentCount, inputId, lowerClass, roundTo } from "@/lib/domain/rules/weights";
 
 /*
  * Builds one profile of a geo object from its inputs (spec 07 "Ablauf" steps 2–4): one rule per attribute of the
@@ -76,17 +61,6 @@ const POSITION_DIGITS = 6;
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const sortedUnique = (values: Array<string | null>) => [...new Set(values.filter((v): v is string => v !== null && v !== ""))].sort();
-
-/** Inputs by (attribute, observedAt, fact or POI id), then the remaining ids and the source: a total order. */
-export function byAttributeDateId(a: ConsolidationInput, b: ConsolidationInput): number {
-  return (
-    cmp(a.attribute, b.attribute) ||
-    cmp(a.observedAt, b.observedAt) ||
-    cmp(a.factId ?? a.poiId ?? "", b.factId ?? b.poiId ?? "") ||
-    cmp(inputId(a), inputId(b)) ||
-    cmp(a.sourceKey, b.sourceKey)
-  );
-}
 
 function dateMinusDays(date: string, days: number): string {
   return new Date(Date.parse(`${date.slice(0, 10)}T00:00:00Z`) - days * DAY_MS).toISOString().slice(0, 10);

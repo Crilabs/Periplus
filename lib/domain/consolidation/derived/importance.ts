@@ -1,6 +1,6 @@
 import type { ConsolidationConfig } from "@/lib/config/schemas";
 import type { HighlightCategory } from "@/lib/db/schema/geo";
-import { roundTo } from "../weights";
+import { roundTo } from "@/lib/domain/rules/weights";
 
 /*
  * `importance` 1–5 of a POI (spec 07): from the number and weight of its sources, Wikidata sitelinks and its category;

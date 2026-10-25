@@ -10,7 +10,7 @@ import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { urlAllowed } from "@/lib/domain/sources/crawl-rules";
 import { getSource, sourceIdByDomain, type Source } from "@/lib/domain/sources/store";
 import { normalizeUrl } from "@/lib/domain/sources/urls";
-import { validAt } from "@/lib/domain/timeline";
+import { validAt } from "@/lib/db/valid-at";
 
 // No import of ../runs here: the job handlers import this module (import cycle through the stage registry).
 

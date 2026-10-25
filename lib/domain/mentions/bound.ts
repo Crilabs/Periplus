@@ -1,7 +1,7 @@
 import { eq, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { documents, documentVersions, mentions } from "@/lib/db/schema";
-import { jsonUuids } from "./scope";
+import { jsonUuids } from "@/lib/domain/research/util/json-uuids";
 import type { ChunkRef } from "./store";
 
 /*

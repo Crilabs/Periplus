@@ -12,11 +12,11 @@ import { ambiguousMatches, chunks, mentions, type AmbiguousStatus, type GeoObjec
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { effectiveVersionMeta } from "@/lib/domain/mentions/classification";
 import type { MatchCandidate } from "@/lib/domain/mentions/match";
-import { jsonUuids } from "@/lib/domain/mentions/scope";
+import { jsonUuids } from "@/lib/domain/research/util/json-uuids";
 import type { JobData } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
 import type { BatchDeps, BatchHandlerEntry, BatchItemInput } from "@/lib/pipeline/batches";
-import { submitStageJobBatch } from "./stage-batch";
+import { submitStageJobBatch } from "@/lib/pipeline/stage-batch";
 import { frozenRunVersions } from "./versions";
 
 /*

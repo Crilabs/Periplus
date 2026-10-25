@@ -31,7 +31,7 @@ import {
 import { attributeDef, canonicalJson, InvalidFactValue, UnknownAttribute, validateFactValue } from "@/lib/domain/facts/schema";
 import { NOT_BERTH_REASON, RESEARCH_CONFLICT_SUBJECT } from "@/lib/domain/research/gate-conflicts";
 import { assignParentOf } from "@/lib/domain/gazetteer/hierarchy";
-import { dismissTasks, lockOpenPlaceTasks, lockOpenTasks } from "@/lib/domain/consolidation/task-locks";
+import { dismissTasks, lockOpenPlaceTasks, lockOpenTasks } from "@/lib/domain/review/task-locks";
 import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
 import { deleteHighlightSelections } from "@/lib/domain/highlights/selections";
 import { addNames, isGreek, transliterateElot743, type NameDraft } from "@/lib/domain/gazetteer/names";

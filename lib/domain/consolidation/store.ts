@@ -14,7 +14,7 @@ import { buildProfile, highlightsAttribute, profileContentHash } from "./build";
 import { diffProfiles, type EventDraft, type TaskDraft } from "./changes";
 import { profileConfidence } from "./derived/confidence";
 import { candidateAppConfig, highlightInputs, loadContext, loadDerivedInputs, loadInputs, type ExtractionCandidate, type LoadInputsOptions } from "./inputs";
-import { dismissTasks, lockOpenTasks, subjectPrefix } from "./task-locks";
+import { dismissTasks, lockOpenTasks, subjectPrefix } from "@/lib/domain/review/task-locks";
 import { applyAutoStatus } from "@/lib/domain/places/auto-status";
 
 /*

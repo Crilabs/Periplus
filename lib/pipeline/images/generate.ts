@@ -15,7 +15,7 @@ import { loadPlaceImageInput, type PlaceImageInput } from "@/lib/domain/images/p
 import { altText, buildPlacePrompt } from "@/lib/domain/images/prompt";
 import { allowedZooms, cameraDetails, planRender, titleZoomFor, type CameraDetails, type RenderCamera } from "@/lib/domain/images/render-plan";
 import { createReviewTask, hasDecidedTask } from "@/lib/domain/review";
-import { dismissTasks } from "@/lib/domain/consolidation/task-locks";
+import { dismissTasks } from "@/lib/domain/review/task-locks";
 import { valueFingerprint } from "@/lib/domain/review-decisions";
 import { createLogger } from "@/lib/logger";
 import { ensureImagery, type AerialTiles } from "./imagery";

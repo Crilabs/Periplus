@@ -2,7 +2,8 @@ import { sql } from "drizzle-orm";
 import type { MentionsConfig, NameAffixesConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import type { GeoObjectType } from "@/lib/db/schema";
-import { isStopName, stripAffix, type Hint } from "./affixes";
+import { isStopName } from "./affixes";
+import { stripAffix, type Hint } from "@/lib/domain/research/util/affixes";
 import { nameForms, type Ngram } from "./ngrams";
 
 /*

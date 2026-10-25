@@ -12,12 +12,12 @@ import { completeUnit, emptyFactStats, FACT_STAT_KEYS, processFactOutput, type F
 import { planUnits } from "@/lib/domain/extraction/units";
 import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { effectiveVersionMeta } from "@/lib/domain/mentions/classification";
-import { jsonUuids } from "@/lib/domain/mentions/scope";
+import { jsonUuids } from "@/lib/domain/research/util/json-uuids";
 import type { JobData } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
 import { batchOutcomeKey, type BatchDeps, type BatchHandlerEntry, type BatchItemInput } from "@/lib/pipeline/batches";
 import { candidateDetails } from "./disambiguate";
-import { submitStageJobBatch } from "./stage-batch";
+import { submitStageJobBatch } from "@/lib/pipeline/stage-batch";
 import { frozenRunVersions, textRunParamsSchema } from "./versions";
 
 /*

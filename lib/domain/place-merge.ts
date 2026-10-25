@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { reviewDecisions, reviewTasks, type PlaceKind } from "@/lib/db/schema";
-import { dismissTasks, lockOpenPlaceTasks, lockOpenTasks } from "@/lib/domain/consolidation/task-locks";
+import { dismissTasks, lockOpenPlaceTasks, lockOpenTasks } from "@/lib/domain/review/task-locks";
 import { mergeGeoObjects } from "@/lib/domain/gazetteer/merge";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 

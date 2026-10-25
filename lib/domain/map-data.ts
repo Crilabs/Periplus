@@ -5,13 +5,13 @@ import { getConfig, getConsolidationConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { asGeoJson } from "@/lib/db/geometry";
 import { geoObjects, geoObjectTypeEnum, places, restrictedAreas, subdivisions, tiles, type GeoObjectType, type RestrictedKind } from "@/lib/db/schema";
-import { confidenceClass } from "@/lib/domain/consolidation/weights";
+import { confidenceClass } from "@/lib/domain/rules/weights";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { isAnchoringBan, type AnchoringBanConfig } from "@/lib/domain/geometry/restrictions";
 import type { Bbox } from "@/lib/domain/tiles";
 import { BBOX_TOLERANCE, MAP_FEATURE_LIMIT, MAX_BBOX_DEGREES, NOT_IN_GEO_OBJECT_LAYER } from "@/lib/domain/map-limits";
 import { areaSubdivisionsSql } from "@/lib/domain/areas/view";
-import { validAt } from "@/lib/domain/timeline";
+import { validAt } from "@/lib/db/valid-at";
 import { isSelectedSql } from "@/lib/domain/highlights/selections";
 
 export const MAP_LAYERS = ["subdivisions", "seas", "areas", "tiles", "geo-objects", "places", "restricted-areas"] as const;

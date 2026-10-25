@@ -5,7 +5,7 @@ import type { Db } from "@/lib/db/client";
 import { placeWebsites, type PlaceKind } from "@/lib/db/schema";
 import { consolidationConfigFor } from "@/lib/domain/consolidation/active-rules";
 import { loadInputs } from "@/lib/domain/consolidation/inputs";
-import { attributeIn } from "@/lib/domain/consolidation/weights";
+import { attributeIn } from "@/lib/domain/rules/weights";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import { newId } from "@/lib/domain/ids";
 import { berthEvidence } from "@/lib/domain/places/evidence";

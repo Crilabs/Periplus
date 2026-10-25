@@ -4,70 +4,20 @@ import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { chunks, routes, routeStops } from "@/lib/db/schema";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
-import { effectiveVersionMeta, plausibleDate } from "@/lib/domain/mentions/classification";
+import { effectiveVersionMeta } from "@/lib/domain/mentions/classification";
+import { plausibleDate } from "@/lib/domain/research/util/dates";
 import { findNameHits, nameFormsOf } from "@/lib/domain/mentions/match";
 import { nameForms } from "@/lib/domain/mentions/ngrams";
-import { locateQuote } from "./quote";
+import { locateQuote } from "@/lib/domain/research/text/quote";
 import { blockLateResults } from "./run-status";
 
 /*
  * Routes of trip reports (spec 06): the stops of a voyage in order, each with a verbatim quote that the quote check
  * finds in a chunk of the version ("Ein Fact ohne wörtliches Zitat existiert nicht" holds for stops too), and the leg
  * to it only when its own quote is found. A stop gets the geo object the version mentions under its name, when exactly
- * one fits. Long reports are sent in sections (`routeSections`); their stops are joined in section order. Routes and
+ * one fits. Long reports are sent in sections (`routeSections`, `research/text`); their stops are joined in section order. Routes and
  * stops are append-only: one route per version and extraction run.
  */
-
-/** A Markdown heading of level 1 to 3 at a line start. */
-const HEADING = /^#{1,3}[ \t]+\S/gm;
-
-const wordCount = (s: string) => s.match(/\S+/g)?.length ?? 0;
-
-/** `text` cut hard into pieces of at most `maxWords` words, at word boundaries. */
-function cutByWords(text: string, maxWords: number): string[] {
-  const starts = [...text.matchAll(/\S+/g)].map((m) => m.index);
-  const pieces: string[] = [];
-  for (let i = 0; i < starts.length; i += maxWords) {
-    const end = i + maxWords < starts.length ? starts[i + maxWords]! : text.length;
-    pieces.push(text.slice(starts[i]!, end).trim());
-  }
-  return pieces;
-}
-
-/**
- * The sections a report goes to the route extraction in: the whole text up to `maxWords` words; above that, cut at
- * the headings of level 1 to 3 into blocks, consecutive blocks joined while they stay within `maxWords`; a block longer
- * than that (no heading to cut at) is cut hard by words. No section is empty or longer than `maxWords` words.
- */
-export function routeSections(md: string, maxWords: number): string[] {
-  if (wordCount(md) <= maxWords) return [md];
-  const cuts = [0, ...[...md.matchAll(HEADING)].map((m) => m.index).filter((i) => i > 0), md.length];
-  const blocks = cuts
-    .slice(0, -1)
-    .map((start, i) => md.slice(start, cuts[i + 1]).trim())
-    .filter((b) => b.length > 0);
-  const sections: string[] = [];
-  let current: string[] = [];
-  let currentWords = 0;
-  const flush = () => {
-    if (current.length > 0) sections.push(current.join("\n\n"));
-    current = [];
-    currentWords = 0;
-  };
-  for (const block of blocks) {
-    const n = wordCount(block);
-    if (n > maxWords) {
-      flush();
-      sections.push(...cutByWords(block, maxWords));
-      continue;
-    }
-    if (currentWords + n > maxWords) flush();
-    current.push(block);
-    currentWords += n;
-  }
-  flush();
-  return sections;
-}
 
 /**
  * The geo object a stop name means among the objects this version mentions (its own mentions and those on the

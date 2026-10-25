@@ -3,7 +3,7 @@ import { getConsolidationConfig } from "@/lib/config";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
 import { type BuildProfileInput, buildProfile } from "@/lib/domain/consolidation/build";
 import type { DerivedInputs, ProfileContext } from "@/lib/domain/consolidation/inputs";
-import type { ConsolidationInput } from "@/lib/domain/consolidation/types";
+import type { ConsolidationInput } from "@/lib/domain/rules/types";
 import { computed, review, text, TODAY } from "@/test/fixtures/consolidation/scenarios";
 
 /* buildProfile is pure: constructed inputs, context and derived inputs, no DB. */

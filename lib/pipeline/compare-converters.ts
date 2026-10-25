@@ -11,7 +11,7 @@ import { BudgetExceeded } from "@/lib/domain/costs";
 import { CONVERTERS } from "@/lib/domain/sources/crawl-rules";
 import { getSource } from "@/lib/domain/sources/store";
 import { registrableDomain } from "@/lib/domain/sources/urls";
-import { decodeHtml, fetchFollowing, formatOf } from "./fetch/url";
+import { decodeHtml, fetchFollowing, formatOf } from "@/lib/pipeline/fetch/page";
 
 // No import of ./runs here: the job handler imports this module (import cycle through the stage registry).
 

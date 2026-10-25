@@ -4,10 +4,10 @@ import type { Db } from "@/lib/db/client";
 import type { DocType, PlaceKind } from "@/lib/db/schema";
 import { activeExtractionRunIdSql } from "@/lib/domain/extraction/active-run";
 import { boundGeoObjectFor } from "@/lib/domain/mentions/bound";
-import { jsonUuids } from "@/lib/domain/mentions/scope";
+import { jsonUuids } from "@/lib/domain/research/util/json-uuids";
 import { countingSourceSql, mergedChainSql } from "@/lib/domain/consolidation/inputs";
-import type { ConsolidationInput } from "@/lib/domain/consolidation/types";
-import { attributeIn } from "@/lib/domain/consolidation/weights";
+import type { ConsolidationInput } from "@/lib/domain/rules/types";
+import { attributeIn } from "@/lib/domain/rules/weights";
 
 /*
  * The evidence that confirms a place (spec 17 „Belegregel je Ortsart“). Thresholds, source types and the attributes

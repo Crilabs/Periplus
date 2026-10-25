@@ -3,7 +3,8 @@ import { getConsolidationConfig } from "@/lib/config";
 import { type BuiltProfile, buildProfile } from "@/lib/domain/consolidation/build";
 import { diffProfiles, severityFor } from "@/lib/domain/consolidation/changes";
 import type { ProfileContext } from "@/lib/domain/consolidation/inputs";
-import type { ConsolidationInput, ProfileSnapshot } from "@/lib/domain/consolidation/types";
+import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
+import type { ConsolidationInput } from "@/lib/domain/rules/types";
 import { computed, review, text, TODAY } from "@/test/fixtures/consolidation/scenarios";
 
 /* diffProfiles and severityFor are pure: profiles built from constructed inputs, the previous one as stored (JSON). */

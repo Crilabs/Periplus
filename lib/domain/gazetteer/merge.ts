@@ -2,7 +2,7 @@ import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { getConfig, type GazetteerConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { geoNames, geoObjects, places, reviewTasks, type GeoObjectType, type GeoOrigin } from "@/lib/db/schema";
-import { dismissTasks, lockOpenPlaceTasks } from "@/lib/domain/consolidation/task-locks";
+import { dismissTasks, lockOpenPlaceTasks } from "@/lib/domain/review/task-locks";
 import { levelFor } from "@/lib/domain/facts/levels";
 import { dropHighlightSelectionsOf } from "@/lib/domain/highlights/selections";
 import { createReviewTask, hasDecidedTask } from "@/lib/domain/review";

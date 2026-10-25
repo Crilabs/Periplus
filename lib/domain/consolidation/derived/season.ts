@@ -1,4 +1,4 @@
-import type { RuleResult } from "../types";
+import type { RuleResult } from "@/lib/domain/rules/types";
 
 /*
  * Season hints (spec 07 "aus observed_at-Monaten und Text-Facts mit Monatsangaben"): the `season_notes` result per

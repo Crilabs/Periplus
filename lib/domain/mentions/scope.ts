@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import type { MentionsConfig, NameAffixesConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { areaOfSerpScopeSql } from "@/lib/domain/areas/store";
+import { jsonUuids } from "@/lib/domain/research/util/json-uuids";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import { tileNeighbours } from "@/lib/domain/tiles";
@@ -21,11 +22,6 @@ export type CandidateBasis = "prepass" | "history" | "source" | "fallback";
 /** `values` as a subquery of text rows, sent as one JSON parameter (no parameter limit for long lists). */
 export function jsonTexts(values: readonly string[]) {
   return sql`(select value from jsonb_array_elements_text(${JSON.stringify(values)}::jsonb))`;
-}
-
-/** `values` as a subquery of uuid rows. */
-export function jsonUuids(values: readonly string[]) {
-  return sql`(select value::uuid from jsonb_array_elements_text(${JSON.stringify(values)}::jsonb))`;
 }
 
 const validNow = (alias: string) =>

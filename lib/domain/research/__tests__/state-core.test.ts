@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { getConfig, getConsolidationConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { berthFacts, documents, pageAssessments, researchUnits, sources, type PageKind } from "@/lib/db/schema";
-import type { ConsolidationInput } from "@/lib/domain/consolidation/types";
+import type { ConsolidationInput } from "@/lib/domain/rules/types";
 import { activeAssessor } from "@/lib/domain/research/assessment";
 import { activeExtractor } from "@/lib/domain/research/confirmation";
 import { coreInputs, decideCore } from "@/lib/domain/research/state-core";

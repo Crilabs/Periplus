@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getConsolidationConfig } from "@/lib/config";
-import type { AttributeProvenance, RuleResult } from "@/lib/domain/consolidation/types";
+import type { AttributeProvenance } from "@/lib/domain/consolidation/types";
+import type { RuleResult } from "@/lib/domain/rules/types";
 import { computed, text } from "@/test/fixtures/consolidation/scenarios";
 import { profileConfidence } from "../confidence";
 import { importanceOf, spotIdsWithin } from "../importance";

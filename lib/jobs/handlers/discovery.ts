@@ -5,17 +5,8 @@ import { getArchive } from "@/lib/adapters/s3";
 import { requireSubdivision } from "@/lib/domain/subdivisions/store";
 import { proposeSources } from "@/lib/domain/discovery/proposals";
 import type { JobData, JobHandler } from "@/lib/jobs/worker";
-import {
-  discoverArea,
-  DISCOVERY_AREA_STAGE,
-  DISCOVERY_PLACE_STAGE,
-  DISCOVERY_PROPOSE_STAGE,
-  DISCOVERY_TILE_STAGE,
-  discoveryQuerySchema,
-  planPlaceDiscovery,
-  planTileDiscovery,
-  runQueries,
-} from "@/lib/pipeline/discovery";
+import { discoverArea, DISCOVERY_AREA_STAGE, DISCOVERY_PLACE_STAGE, DISCOVERY_PROPOSE_STAGE, DISCOVERY_TILE_STAGE, discoveryQuerySchema, planPlaceDiscovery, planTileDiscovery } from "@/lib/pipeline/discovery";
+import { runQueries } from "@/lib/domain/search/run-queries";
 import type { StageDefinition } from "@/lib/pipeline/runs";
 import { subdivisionKeyOf } from "./tiles";
 

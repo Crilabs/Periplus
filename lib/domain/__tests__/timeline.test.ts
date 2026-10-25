@@ -1,77 +1,9 @@
-import { and, inArray, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoObjects, profiles } from "@/lib/db/schema";
 import type { Db } from "@/lib/db/client";
-import { latestProfile, profileAsOf, validAt, validAtAlias } from "@/lib/domain/timeline";
-import { testDb, withRollback } from "@/test/db";
-
-describe("validAt", () => {
-  it("excludes rows that ended on the date and includes rows starting on it", async () => {
-    const db = testDb();
-    const geom = geomFromGeoJson({ type: "Point", coordinates: [23.4, 37.4] });
-    const rows = await db
-      .insert(geoObjects)
-      .values([
-        { type: "cape", origin: "manual", geom, validFrom: "2026-01-01", validTo: "2026-06-01" }, // ended on the date
-        { type: "cape", origin: "manual", geom, validFrom: "2026-06-01" }, // starts on the date
-        { type: "cape", origin: "manual", geom, validFrom: "2026-01-01", validTo: "2026-06-02" }, // ends after it
-        { type: "cape", origin: "manual", geom, validFrom: "2026-06-02" }, // starts after it
-      ])
-      .returning({ id: geoObjects.id });
-    const ids = rows.map((r) => r.id);
-
-    const valid = await db
-      .select({ id: geoObjects.id })
-      .from(geoObjects)
-      .where(and(inArray(geoObjects.id, ids), validAt(geoObjects, "2026-06-01")));
-
-    expect(valid.map((r) => r.id).sort()).toEqual([ids[1], ids[2]].sort());
-  });
-
-  it("validAtAlias is the same rule for a raw-SQL alias and refuses anything but an alias (DAT-5)", async () => {
-    await withRollback(async (tx) => {
-      const geom = geomFromGeoJson({ type: "Point", coordinates: [-160.4, -60.4] });
-      const rows = await tx
-        .insert(geoObjects)
-        .values([
-          { type: "cape", origin: "manual", geom, validFrom: "2026-01-01", validTo: "2026-06-01" },
-          { type: "cape", origin: "manual", geom, validFrom: "2026-06-01" },
-          { type: "cape", origin: "manual", geom, validFrom: "2026-06-02" },
-        ])
-        .returning({ id: geoObjects.id });
-      const ids = rows.map((r) => r.id);
-      const { rows: valid } = await tx.execute<{ id: string }>(
-        sql`select o.id from geo_objects o where o.id = any(${sql.param(ids)}::uuid[]) and ${validAtAlias("o", "2026-06-01")}`,
-      );
-      expect(valid.map((r) => r.id)).toEqual([ids[1]]);
-      const { rows: viaSql } = await tx.execute<{ id: string }>(
-        sql`select o.id from geo_objects o where o.id = any(${sql.param(ids)}::uuid[]) and ${validAtAlias("o", sql`'2026-06-02'::date`)}`,
-      );
-      expect(viaSql.map((r) => r.id).sort()).toEqual([ids[1], ids[2]].sort());
-      expect(() => validAtAlias("o; drop table x")).toThrow(/alias/);
-    });
-  });
-
-  it("defaults to the current date", async () => {
-    const db = testDb();
-    const geom = geomFromGeoJson({ type: "Point", coordinates: [23.4, 37.4] });
-    const rows = await db
-      .insert(geoObjects)
-      .values([
-        { type: "cape", origin: "manual", geom }, // valid from today
-        { type: "cape", origin: "manual", geom, validFrom: "2000-01-01", validTo: "2000-01-02" },
-      ])
-      .returning({ id: geoObjects.id });
-
-    const valid = await db
-      .select({ id: geoObjects.id })
-      .from(geoObjects)
-      .where(and(inArray(geoObjects.id, rows.map((r) => r.id)), validAt(geoObjects)));
-
-    expect(valid.map((r) => r.id)).toEqual([rows[0]!.id]);
-  });
-});
+import { latestProfile, profileAsOf } from "@/lib/domain/timeline";
+import { withRollback } from "@/test/db";
 
 // Synthetic data outside the pilot box (23.0-23.75 E x 37.0-38.0 N).
 async function insertProfiles(tx: Db, versions: Array<[number, string]>): Promise<string> {

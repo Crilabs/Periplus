@@ -1,6 +1,6 @@
 import { eq, or, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
-import { validAtAlias } from "@/lib/domain/timeline";
+import { validAtAlias } from "@/lib/db/valid-at";
 import { highlightSelections, type HighlightCategory } from "@/lib/db/schema";
 import type { CategorySelection, HighlightLevel } from "./select";
 

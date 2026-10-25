@@ -5,7 +5,7 @@ import { simulationActive } from "@/lib/adapters/simulation";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { nameCandidates, runs } from "@/lib/db/schema";
-import { jsonUuids } from "@/lib/domain/mentions/scope";
+import { jsonUuids } from "@/lib/domain/research/util/json-uuids";
 import { createReviewTask, hasDecidedTask, openTaskFor } from "@/lib/domain/review";
 import type { JobData } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";

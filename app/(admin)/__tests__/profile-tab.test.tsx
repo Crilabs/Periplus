@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type { ConflictSide, ProfileSnapshot } from "@/lib/domain/consolidation/types";
+import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
+import type { ConflictSide } from "@/lib/domain/rules/types";
 import type { AttributeFactsView, ProfileRow, ProfileView } from "@/lib/domain/profile-view";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }) }));

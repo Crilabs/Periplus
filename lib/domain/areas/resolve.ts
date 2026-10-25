@@ -6,7 +6,8 @@ import type { GeoObjectType } from "@/lib/db/schema";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { findNameHits, nameFormsOf, resolveHits, setTrigramThreshold, type MatchConfig } from "@/lib/domain/mentions/match";
 import { nameForms, type Ngram } from "@/lib/domain/mentions/ngrams";
-import { candidateObjects, jsonTexts, jsonUuids, withNeighbours } from "@/lib/domain/mentions/scope";
+import { candidateObjects, jsonTexts, withNeighbours } from "@/lib/domain/mentions/scope";
+import { jsonUuids } from "@/lib/domain/research/util/json-uuids";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 
 /*

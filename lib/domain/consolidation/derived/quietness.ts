@@ -1,5 +1,5 @@
 import type { ConsolidationConfig } from "@/lib/config/schemas";
-import { roundTo } from "../weights";
+import { roundTo } from "@/lib/domain/rules/weights";
 
 /*
  * `quietness` 0–1 (spec 07): distances to settlement and road (the quietness computation), occupancy in the

@@ -19,7 +19,8 @@ import { SEABED_TYPE_LABELS } from "@/lib/domain/facts/labels";
 import { canonicalJson } from "@/lib/domain/facts/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import type { LonLat } from "@/lib/domain/geometry/water";
-import { latestProfiles, validAt } from "@/lib/domain/timeline";
+import { latestProfiles } from "@/lib/domain/timeline";
+import { validAt } from "@/lib/db/valid-at";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 
 export { COMPARISON_ATTRIBUTES, type ComparisonAttribute };

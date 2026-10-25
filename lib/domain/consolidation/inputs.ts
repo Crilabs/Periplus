@@ -13,12 +13,13 @@ import { inHighlightCategories } from "@/lib/domain/highlights/categories";
 import { loadHighlightCandidates } from "@/lib/domain/highlights/candidates";
 import type { HighlightCandidate, TextName } from "@/lib/domain/highlights/select";
 import { effectiveVersionMeta, type EffectiveVersionMeta } from "@/lib/domain/mentions/classification";
-import { validAtAlias } from "@/lib/domain/timeline";
+import { computedInputs } from "@/lib/domain/rules/computed-inputs";
+import { validAtAlias } from "@/lib/db/valid-at";
 import { poiKinds } from "./derived/importance";
 import type { QuietnessParts } from "./derived/quietness";
-import { applyRule } from "./rules";
-import type { ConflictResolution, ConsolidationInput, RuleName } from "./types";
-import { inputId } from "./weights";
+import { applyRule } from "@/lib/domain/rules";
+import type { ConflictResolution, ConsolidationInput, RuleName } from "@/lib/domain/rules/types";
+import { inputId } from "@/lib/domain/rules/weights";
 
 /*
  * The inputs of a geo object's consolidation (spec 07 "Eingänge") and what the profile build knows beside them.
@@ -101,7 +102,6 @@ type BasisFactRow = { id: string; attribute: string; value: unknown; confidence:
 
 type PoiRow = { id: string; category: string; origin: string; valid_from: string; name: string | null };
 
-const utcDate = (d: Date) => d.toISOString().slice(0, 10);
 
 /**
  * For each root object (`roots`: a query with one uuid column `id`), the root and every object merged into it,
@@ -263,33 +263,6 @@ async function textInputs(
       computationId: null,
       poiId: null,
     });
-  }
-  return inputs;
-}
-
-/** The facts of the newest computation per kind (`computed:<kind>`), confirmed on the computation's date; also the berth state's computed inputs (N4a). */
-export async function computedInputs(db: Db, geoObjectId: string, cfg: ConsolidationConfig): Promise<ConsolidationInput[]> {
-  const inputs: ConsolidationInput[] = [];
-  for (const c of (await latestComputations(db, geoObjectId)).values()) {
-    for (const f of c.facts) {
-      inputs.push({
-        factId: f.id,
-        attribute: f.attribute,
-        value: f.value,
-        origin: "computed",
-        confidence: f.confidence,
-        observedAt: f.observedAt,
-        dateKnown: true,
-        sourceKey: `computed:${c.kind}`,
-        sourceWeight: cfg.weights.computed,
-        sourceType: null,
-        documentId: null,
-        gone: false,
-        lastConfirmedAt: utcDate(c.createdAt),
-        computationId: c.id,
-        poiId: null,
-      });
-    }
   }
   return inputs;
 }

@@ -8,7 +8,7 @@ import type { ExtractionCandidate } from "@/lib/domain/consolidation/inputs";
 import { clearConsolidationCatchUp, consolidationSkipOf, recordConsolidationCatchUp } from "@/lib/domain/consolidation/skipped";
 import { consolidationBlocked, consolidationScope, type ConsolidationParams } from "@/lib/domain/consolidation/targets";
 import { levelFor } from "@/lib/domain/facts/levels";
-import { validAtAlias } from "@/lib/domain/timeline";
+import { validAtAlias } from "@/lib/db/valid-at";
 import { createRun, failRun, type RunScope } from "@/lib/domain/runs";
 import { createLogger } from "@/lib/logger";
 import { enqueueStage, startRun } from "@/lib/pipeline/runs";

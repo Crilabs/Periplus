@@ -3,7 +3,7 @@ import { getConfig } from "@/lib/config";
 import type { ResearchConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { geoObjects, places, subdivisions } from "@/lib/db/schema";
-import { namesByLanguage, queryKey, type DiscoveryQuery } from "@/lib/domain/discovery/queries";
+import { namesByLanguage, queryKey, type DiscoveryQuery } from "@/lib/domain/search/queries";
 
 /** What the search templates of a candidate are filled from. */
 export type CandidateNames = {

@@ -16,7 +16,8 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import type { AttributeProvenance, ConflictNote, ProfileGap } from "@/lib/domain/consolidation/types";
+import type { AttributeProvenance, ProfileGap } from "@/lib/domain/consolidation/types";
+import type { ConflictNote } from "@/lib/domain/rules/types";
 import { newId } from "@/lib/domain/ids";
 import { geoObjects, poiCategoryEnum } from "./geo";
 import { runs } from "./ops";

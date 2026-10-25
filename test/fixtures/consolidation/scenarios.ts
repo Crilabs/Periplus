@@ -1,6 +1,6 @@
 import { beforeEach } from "vitest";
 import { getConsolidationConfig } from "@/lib/config";
-import type { ConsolidationInput, RuleContext } from "@/lib/domain/consolidation/types";
+import type { ConsolidationInput, RuleContext } from "@/lib/domain/rules/types";
 
 /*
  * Builders for consolidation inputs and rule contexts (pure rule tests, no DB). Defaults: today 2026-10-19, an

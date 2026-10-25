@@ -6,17 +6,11 @@ import type { Db } from "@/lib/db/client";
 import { computations, profiles, profileSummaries, type SummaryStatus } from "@/lib/db/schema";
 import { popularityForPlaces } from "@/lib/domain/consolidation/derived/popularity";
 import { formatProfileValue, profileAttributeLabel, ruleLabel } from "@/lib/domain/consolidation/format";
-import { prohibitionEntryKey } from "@/lib/domain/consolidation/rules/prohibitions";
-import { unionEntryKey } from "@/lib/domain/consolidation/rules/union";
-import type {
-  AttributeProvenance,
-  ConfidenceClass,
-  ConflictNote,
-  ProfileSnapshot,
-  ProvenanceOrigin,
-  RuleContext,
-} from "@/lib/domain/consolidation/types";
-import { attributeIn } from "@/lib/domain/consolidation/weights";
+import { prohibitionEntryKey } from "@/lib/domain/rules/prohibitions";
+import { unionEntryKey } from "@/lib/domain/rules/union";
+import type { AttributeProvenance, ProfileSnapshot, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
+import type { ConfidenceClass, ConflictNote, RuleContext } from "@/lib/domain/rules/types";
+import { attributeIn } from "@/lib/domain/rules/weights";
 import { getFactSchema } from "@/lib/domain/facts/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { factViewsByIds, type FactView } from "@/lib/domain/geo-facts";

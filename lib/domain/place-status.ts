@@ -2,7 +2,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { getConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { places, reviewDecisions, reviewTasks, type PlaceStatus } from "@/lib/db/schema";
-import { lockOpenPlaceTasks } from "@/lib/domain/consolidation/task-locks";
+import { lockOpenPlaceTasks } from "@/lib/domain/review/task-locks";
 import { recheckExclusion } from "@/lib/domain/geometry/restrictions";
 import { deleteHighlightSelections } from "@/lib/domain/highlights/selections";
 import { newPublicId } from "@/lib/domain/ids";

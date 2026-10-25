@@ -5,11 +5,13 @@ import type { ModelTask } from "@/lib/ai/types";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { documents, documentVersions } from "@/lib/db/schema";
-import { activeClassifier, firstWords, storeClassification } from "@/lib/domain/mentions/classification";
+import { activeClassifier, storeClassification } from "@/lib/domain/mentions/classification";
+import { firstWords } from "@/lib/domain/research/util/dates";
 import type { JobData } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
 import type { BatchDeps, BatchHandlerEntry, BatchItemInput } from "@/lib/pipeline/batches";
-import { submitStageJobBatch } from "./stage-batch";
+import { titleOf } from "@/lib/domain/documents/title";
+import { submitStageJobBatch } from "@/lib/pipeline/stage-batch";
 import { frozenRunVersions } from "./versions";
 
 /*
@@ -65,12 +67,6 @@ export async function planClassify(
     jobs.push({ key: `classify:${i}`, documentVersionIds: todo.slice(i * size, (i + 1) * size) });
   }
   return jobs;
-}
-
-/** The first ATX heading of the Markdown, as the document title. */
-export function titleOf(md: string): string | null {
-  const m = /^#{1,6}[ \t]+(.+?)[ \t#]*$/m.exec(md);
-  return m ? m[1]!.trim() : null;
 }
 
 /**

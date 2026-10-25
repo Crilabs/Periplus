@@ -5,18 +5,17 @@ import type { ModelTask } from "@/lib/ai/types";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { documentVersions, pageAssessments } from "@/lib/db/schema";
-import { routeSections } from "@/lib/domain/extraction/routes";
+import { routeSections } from "@/lib/domain/research/text/route-sections";
 import { activeAssessor } from "@/lib/domain/research/assessment";
 import { activeRouteExtractor } from "@/lib/domain/research/assign";
 import { researchCandidates } from "@/lib/domain/research/candidates";
 import { matchStops, storeRouteStops, type RouteSectionAnswer } from "@/lib/domain/research/discovery";
-import { jsonUuids } from "@/lib/domain/mentions/scope";
+import { jsonUuids } from "@/lib/domain/research/util/json-uuids";
 import type { QueueName } from "@/lib/jobs/queues";
 import type { JobData } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
 import type { BatchDeps, BatchHandlerEntry, BatchItemInput } from "@/lib/pipeline/batches";
-import { routeSectionBatchEntry } from "@/lib/pipeline/text/routes";
-import { submitStageJobBatch } from "@/lib/pipeline/text/stage-batch";
+import { submitStageJobBatch } from "@/lib/pipeline/stage-batch";
 import { researchScope } from "./search";
 
 // No import of ../runs here: the job handlers import this module (import cycle through the stage registry).
@@ -243,12 +242,15 @@ const researchRouteHandle: BatchHandlerEntry["handle"] = async (db, item, ctx) =
 };
 
 /**
- * Batch handler of `extract-route` for both stages that use the task: items of `research.routes` are stored as research
- * route stops, all others as before by `extraction.route` (`routeSectionBatchEntry`).
+ * Batch handler of `extract-route` for the items of `research.routes`, stored as research route stops. The task is
+ * shared with the old `extraction.route` stage; the job layer (`lib/jobs/batch-handlers.ts`) dispatches by stage.
  */
 export const extractRouteBatchEntry: BatchHandlerEntry = {
   task,
-  handle: (db, item, ctx) => (item.batch.stage === RESEARCH_ROUTES_STAGE ? researchRouteHandle(db, item, ctx) : routeSectionBatchEntry.handle(db, item, ctx)),
+  handle: async (db, item, ctx) => {
+    if (item.batch.stage !== RESEARCH_ROUTES_STAGE) throw new Error(`extract-route batch of stage ${item.batch.stage} is not a research routes batch`);
+    await researchRouteHandle(db, item, ctx);
+  },
 };
 
 /**

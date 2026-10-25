@@ -3,7 +3,7 @@ import { getConfig, type AppConfig } from "@/lib/config";
 import type { QualityConfig } from "@/lib/config/schemas";
 import type { Db } from "@/lib/db/client";
 import { COMPARISON_ATTRIBUTES, places, type ComparisonAttribute, type MetricKey } from "@/lib/db/schema";
-import { derivedBerthable } from "@/lib/domain/consolidation/berthable";
+import { derivedBerthable } from "@/lib/domain/rules/berthable";
 import { countingSourceSql, mergedChainsSql } from "@/lib/domain/consolidation/inputs";
 import { activeExtractionRunIdSql } from "@/lib/domain/extraction/active-run";
 import { belegtreue } from "@/lib/domain/extraction/fidelity";

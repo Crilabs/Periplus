@@ -6,14 +6,15 @@ import type { ModelTask } from "@/lib/ai/types";
 import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { documentVersions, extractionRuns, runs } from "@/lib/db/schema";
-import { routeSections, storeRoute } from "@/lib/domain/extraction/routes";
+import { storeRoute } from "@/lib/domain/extraction/routes";
+import { routeSections } from "@/lib/domain/research/text/route-sections";
 import { effectiveVersionMeta } from "@/lib/domain/mentions/classification";
-import { jsonUuids } from "@/lib/domain/mentions/scope";
+import { jsonUuids } from "@/lib/domain/research/util/json-uuids";
 import type { JobData } from "@/lib/jobs/worker";
 import { createLogger } from "@/lib/logger";
 import type { BatchDeps, BatchHandlerEntry, BatchItemInput } from "@/lib/pipeline/batches";
 import { ensureExtractionRun } from "./extract";
-import { submitStageJobBatch } from "./stage-batch";
+import { submitStageJobBatch } from "@/lib/pipeline/stage-batch";
 import { frozenRunVersions, textRunParamsSchema } from "./versions";
 
 /*

@@ -5,7 +5,7 @@ import { getConfig, type AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { pageAssessments } from "@/lib/db/schema";
 import type { ObservedAtBasis } from "@/lib/db/schema/sources";
-import { plausibleDate } from "@/lib/domain/mentions/classification";
+import { plausibleDate } from "@/lib/domain/research/util/dates";
 
 /*
  * Page assessment of a research hit (spec 18): one row per page version, model and prompt version. "Ohne explizites

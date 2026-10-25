@@ -1,12 +1,11 @@
 import { z } from "zod";
-import { RetryableHttpError, type CallContext, type Transport } from "@/lib/adapters/http";
-import type { Archive } from "@/lib/adapters/s3";
+import type { CallContext } from "@/lib/adapters/http";
 import { getConfig, type AppConfig } from "@/lib/config";
-import { createLogger } from "@/lib/logger";
 import type { Db } from "@/lib/db/client";
 import { serpLevelEnum } from "@/lib/db/schema";
-import { areaQueries, capQueries, placeQueries, queryKey, tileQueries, type DiscoveryQuery } from "@/lib/domain/discovery/queries";
-import { runQuery } from "@/lib/domain/discovery/serp";
+import { areaQueries, capQueries, placeQueries, tileQueries } from "@/lib/domain/discovery/queries";
+import { queryKey, type DiscoveryQuery } from "@/lib/domain/search/queries";
+import { runQueries, type SearchDeps, type SearchSummary } from "@/lib/domain/search/run-queries";
 import { seedTileIds } from "./tile-scope";
 
 // No import of ./runs here: the discovery job handlers import this module (import cycle through the stage registry).
@@ -18,7 +17,7 @@ export const DISCOVERY_PROPOSE_STAGE = "discovery.propose";
 /** Targeted source discovery for thin places (spec 07 Folgeaufträge, plan Task 15). */
 export const DISCOVERY_PLACE_STAGE = "discovery.place";
 
-type Deps = { transport: Transport; archive: Archive };
+type Deps = SearchDeps;
 
 export const discoveryQuerySchema = z.strictObject({
   keyword: z.string().min(1),
@@ -29,39 +28,6 @@ export const discoveryQuerySchema = z.strictObject({
   priority: z.number().int(),
   tileId: z.string().min(1).optional(),
 });
-
-/** `queryIds`: the `serp_queries` of every query that was searched or reused, in query order. */
-export type SearchSummary = { queries: number; searched: number; reused: number; failed: number; queryIds: string[] };
-
-/**
- * Runs the queries one after another (`runQuery`: reuse within 30 days, else search and store). A query that still
- * fails transiently after the adapter's own attempts (`RetryableHttpError`, e.g. DataForSEO 40101) is logged and
- * skipped: it has no stored result, so the next run searches it again. When no query succeeded at all, the last
- * error is thrown, so the job is retried (an outage, not a single bad keyword). Other errors (budget, a wrong
- * request) end the job at once.
- */
-export async function runQueries(db: Db, queries: DiscoveryQuery[], deps: Deps, ctx: CallContext): Promise<SearchSummary> {
-  let searched = 0;
-  let reused = 0;
-  let failed = 0;
-  let lastError: unknown;
-  const queryIds: string[] = [];
-  for (const q of queries) {
-    try {
-      const result = await runQuery(db, q, deps, ctx);
-      queryIds.push(result.queryId);
-      if (result.reused) reused += 1;
-      else searched += 1;
-    } catch (error) {
-      if (!(error instanceof RetryableHttpError)) throw error;
-      failed += 1;
-      lastError = error;
-      createLogger("discovery").warn({ keyword: q.keyword, languageCode: q.languageCode, err: error }, "search skipped after transient errors");
-    }
-  }
-  if (failed > 0 && searched + reused === 0) throw lastError;
-  return { queries: queries.length, searched, reused, failed, queryIds };
-}
 
 /** The area queries of a subdivision a run makes: `areaQueries` cut to `maxQueriesPerRun`. */
 async function plannedAreaQueries(db: Db, subdivisionKey: string): Promise<DiscoveryQuery[]> {

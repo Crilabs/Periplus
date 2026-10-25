@@ -11,7 +11,8 @@ import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { subdivisionTileIds } from "@/lib/domain/gazetteer/tiles-ensure";
 import { subdivisionByKey } from "@/lib/domain/subdivisions/store";
 import { tileIdFor } from "@/lib/domain/tiles";
-import { latestProfiles, validAt } from "@/lib/domain/timeline";
+import { latestProfiles } from "@/lib/domain/timeline";
+import { validAt } from "@/lib/db/valid-at";
 import {
   latestComparisonResults,
   lockComparisonPlace,

@@ -5,7 +5,8 @@ import { areaEvidence, areaMembers, geoNames, geoObjects } from "@/lib/db/schema
 import { addNames, isGreek, transliterateElot743 } from "@/lib/domain/gazetteer/names";
 import { publicIdFor } from "@/lib/domain/gazetteer/store";
 import { assignTiles } from "@/lib/domain/gazetteer/hierarchy";
-import { jsonTexts, jsonUuids } from "@/lib/domain/mentions/scope";
+import { jsonTexts } from "@/lib/domain/mentions/scope";
+import { jsonUuids } from "@/lib/domain/research/util/json-uuids";
 import type { ImportedArea } from "./file";
 import type { ResolvedMember } from "./resolve";
 

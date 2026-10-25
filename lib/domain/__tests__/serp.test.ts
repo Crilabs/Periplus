@@ -4,7 +4,7 @@ import { asc, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { makeResponse, type Transport } from "@/lib/adapters/http";
 import { externalCalls, serpQueries, serpResults } from "@/lib/db/schema";
-import type { DiscoveryQuery } from "@/lib/domain/discovery/queries";
+import type { DiscoveryQuery } from "@/lib/domain/search/queries";
 import { runQuery } from "@/lib/domain/discovery/serp";
 import { newId } from "@/lib/domain/ids";
 import { withRollback } from "@/test/db";

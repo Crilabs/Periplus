@@ -6,10 +6,10 @@ import type { FactLevel } from "@/lib/domain/facts/schema-types";
 import { type AttributeSupport, type BuiltProfile, conflictResolution, profileContentHash } from "./build";
 import { profileConfidence } from "./derived/confidence";
 import type { ProfileContext } from "./inputs";
-import { compareProhibitions, isComputedProhibition, prohibitionEntryKey } from "./rules/prohibitions";
-import { unionEntryKey } from "./rules/union";
+import { compareProhibitions, isComputedProhibition, prohibitionEntryKey } from "@/lib/domain/rules/prohibitions";
+import { unionEntryKey } from "@/lib/domain/rules/union";
 import type { AttributeProvenance, ProfileSnapshot } from "./types";
-import { attributeIn, classMidpoint, lowerClass, roundTo } from "./weights";
+import { attributeIn, classMidpoint, lowerClass, roundTo } from "@/lib/domain/rules/weights";
 
 /*
  * Change detection (spec 07 "Änderungserkennung"): the new profile against the valid one, attribute by attribute.

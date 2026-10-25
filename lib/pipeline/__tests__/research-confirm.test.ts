@@ -14,7 +14,7 @@ import {
 import { newId, newPublicId } from "@/lib/domain/ids";
 import { setPlaceStatusByAdmin } from "@/lib/domain/place-status";
 import { createReviewTask } from "@/lib/domain/review";
-import { recordDecision } from "@/lib/domain/places/auto-status";
+import { recordDecision } from "@/lib/domain/review/system-decisions";
 import { applyBerthVerdicts, loadEvidence } from "@/lib/domain/research/confirmation";
 import { createRun } from "@/lib/domain/runs";
 import { confirmBerths, planResearchConfirm, RESEARCH_CONFIRM_STAGE, researchChanges } from "@/lib/pipeline/research/confirm";

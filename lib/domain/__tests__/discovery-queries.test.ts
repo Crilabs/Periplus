@@ -13,7 +13,8 @@ import {
   type GeoObjectType,
   type NameOrigin,
 } from "@/lib/db/schema";
-import { areaQueries, capQueries, sourceLanguagesOfTile, tileQueries, type DiscoveryQuery } from "@/lib/domain/discovery/queries";
+import { areaQueries, capQueries, sourceLanguagesOfTile, tileQueries } from "@/lib/domain/discovery/queries";
+import { type DiscoveryQuery } from "@/lib/domain/search/queries";
 import { tileBbox, tileIdFor } from "@/lib/domain/tiles";
 import { withRollback } from "@/test/db";
 import { insertTestSubdivision } from "@/test/text";

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { formatProfileValue } from "@/lib/domain/consolidation/format";
-import type { ConfidenceClass, ConflictNote } from "@/lib/domain/consolidation/types";
+import type { ConfidenceClass, ConflictNote } from "@/lib/domain/rules/types";
 import type { AttributeFactsView, ProfileRow, ProfileView } from "@/lib/domain/profile-view";
 import { Dialog } from "../../_components/dialog";
 import {

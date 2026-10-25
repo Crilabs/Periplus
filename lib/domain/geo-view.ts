@@ -5,8 +5,9 @@ import { asGeoJson } from "@/lib/db/geometry";
 import { externalCalls, geoNames, geoObjects, places, reviewTasks, runs, tileGeoObjects, tiles, type GeoObjectType, type GeoOrigin, type NameOrigin, type NameScript, type PlaceKind, type PlaceWebsiteOrigin, type PlaceStatus, type PoiCategory, type ReviewKind, type RunKind, type RunScopeType, type RunStatus, subdivisions } from "@/lib/db/schema";
 import { displayNameSql } from "@/lib/domain/gazetteer/names";
 import { currentPlaceWebsite } from "@/lib/domain/places/websites";
-import { derivedBerthable } from "@/lib/domain/consolidation/berthable";
-import { latestProfile, validAt } from "@/lib/domain/timeline";
+import { derivedBerthable } from "@/lib/domain/rules/berthable";
+import { latestProfile } from "@/lib/domain/timeline";
+import { validAt } from "@/lib/db/valid-at";
 
 /** Runs shown on a tile page. */
 export const TILE_RUNS = 10;

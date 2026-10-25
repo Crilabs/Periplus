@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { extractionRuns } from "@/lib/db/schema";
-import { locateQuote } from "./quote";
+import { locateQuote } from "@/lib/domain/research/text/quote";
 
 /*
  * Belegtreue (spec 06, spec 10): "Anteil Facts mit `quote_verified = true` unter allen Text-Facts des Laufs; < 100 %

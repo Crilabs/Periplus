@@ -4,7 +4,7 @@ import type { AppConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { ambiguousMatches, mentions, pipelinePasses, unmatchedNames } from "@/lib/db/schema";
 import { canonicalJson } from "@/lib/domain/facts/schema";
-import type { Hint } from "./affixes";
+import type { Hint } from "@/lib/domain/research/util/affixes";
 import type { MatchCandidate, MatchHit } from "./match";
 
 /*
