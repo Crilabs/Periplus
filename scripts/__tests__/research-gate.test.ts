@@ -30,7 +30,7 @@ afterAll(async () => {
 const spot = (over: Partial<NavilySpot>): NavilySpot => ({ lat: 35.2, lon: 21.0, prot: null, seabeds: null, name: null, kind: "mooring", type: null, water: null, shop: null, ...over });
 const INVENTED = /Zzyzx|Qwoxx|Vrrmpf|\b35\.2\d*|\b21\.\d+|\b25\.\d+/;
 
-type SetupOpts = { wrongKind?: boolean; knownDomains?: number; signals?: boolean; knownLat?: number; edge?: boolean; unbacked?: boolean; unseeded?: boolean; shelter?: number; prot?: string[]; noStateRow?: boolean };
+type SetupOpts = { wrongKind?: boolean; knownDomains?: number; signals?: boolean; knownLat?: number; edge?: boolean; unbacked?: boolean; unseeded?: boolean; shelter?: number; prot?: string[]; noStateRow?: boolean; extraSpots?: NavilySpot[] };
 
 async function setup(tx: Db, o: SetupOpts = {}) {
   const key = `XT-${newId()}`;
@@ -67,6 +67,7 @@ async function setup(tx: Db, o: SetupOpts = {}) {
       spot({ name: "Zzyzx Cove", prot: o.prot ?? null }),
       spot({ name: "Vrrmpf Haven", lon: 21.1 }),
       ...(wrong ? [spot({ name: "Wrxxy Pier", lon: 21.15, kind: "port" })] : []),
+      ...(o.extraSpots ?? []),
       ...(o.unseeded ? [spot({ name: "Vrrmpf Far", lon: 21.4 })] : []),
       ...(edge ? [spot({ name: "Zzyzx Edge", lon: 20.9998, lat: 35.1 })] : []),
     ]),
@@ -209,6 +210,39 @@ describe("runGate", () => {
       expect(lines).toContain(`Tor nicht bestanden: zu wenige bestätigte Plätze (2 von mindestens ${realCfg.research.gate.minConfirmed})`);
       expect(lines).not.toContain("Tor bestanden");
       expect(await readFile(s.args.report, "utf8")).not.toContain("Tor bestanden");
+    }));
+
+  it("the gate needs gate.minCoverage: a perfect gate at 40 % coverage is not passed, at 50 % it is; excluded spots stay out of the count", () =>
+    withRollback(async (tx) => {
+      const decideUnknown = async (s: Awaited<ReturnType<typeof setup>>) => {
+        const [task] = await runGate(tx, { ...s.args, syncConflicts: true }, s.spots, cfg, { now: new Date(), repoRoot: process.cwd() }).then(() => tx.select().from(reviewTasks).where(eq(reviewTasks.subjectId, s.unknown.placeId)));
+        await decideReviewTask(tx, { taskId: task!.id, decision: { action: "berth" }, decidedBy: "admin@test.invalid" });
+      };
+      const far = (name: string, i: number, type: string | null = null) => spot({ name, lon: 21.0 + 0.002 * (i + 1), lat: 35.2005, type });
+      // spots in the tile: Zzyzx Cove (covered), Vrrmpf Haven, plus three more: 1 of 5 = 20 %, a dry-berthing and a prohibited spot do not count
+      const low = await setup(tx, { extraSpots: [far("Aaa Bight", 0), far("Bbb Bight", 1), far("Ccc Bight", 2), far("Ddd Dry", 3, "dry-berthing"), far("Eee Ban", 4, "prohibited")] });
+      await decideUnknown(low);
+      const lines = (await runGate(tx, low.args, low.spots, cfg, { now: new Date(), repoRoot: process.cwd() })).join("\n");
+      expect(lines).toContain("Tor nicht bestanden: Abdeckung 20 % (mindestens 50 %)");
+      expect(lines).toContain("spots in " + low.args.subdivision + ": 5");
+      const report = await readFile(low.args.report, "utf8");
+      expect(report).toMatch(/\| 100 % \| 0 \| 20 % \|/);
+      expect(report).not.toContain("Tor bestanden");
+      expect(report).not.toMatch(INVENTED);
+      // lowering the minimum to the reached coverage passes the same data
+      const ok = { ...cfg, research: { ...cfg.research, gate: { ...cfg.research.gate, minCoverage: 0.2 } } };
+      expect((await runGate(tx, low.args, low.spots, ok, { now: new Date(), repoRoot: process.cwd() })).join("\n")).toContain("Tor bestanden bei N=2");
+    }));
+
+  it("a place on a prohibited spot is a gate error in the report and the lists", () =>
+    withRollback(async (tx) => {
+      const s = await setup(tx, { extraSpots: [spot({ name: "Qwoxx Bay", lon: 21.05, type: "prohibited" })] });
+      const lines = (await runGate(tx, s.args, s.spots, cfg, { now: new Date(), repoRoot: process.cwd() })).join("\n");
+      expect(lines).toContain("Tor nicht bestanden");
+      const csv = await readFile(path.join(s.args.outDir, "n3-tor-n2.csv"), "utf8");
+      expect(csv).toContain(`error,${s.unknown.placeId},prohibited,`);
+      expect(csv).not.toMatch(/Zzyzx|Qwoxx|Vrrmpf/);
+      expect(await readFile(s.args.report, "utf8")).not.toMatch(INVENTED);
     }));
 
   it("a place near the edge finds its spot just outside the tiles; that spot is not counted", () =>

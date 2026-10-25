@@ -61,7 +61,8 @@ describe("research config", () => {
 
   it("loads the gate and rejects a released gate without a chosen threshold among the thresholds", () => {
     const c = getConfig().research;
-    expect(c.gate).toEqual({ subdivision: "GR-I", thresholds: [2, 3, 4, 5], released: false, chosenThreshold: null, maxPositionDeviationM: 150, shelterErrorMin: 0.7, minConfirmed: 25 });
+    expect(c.gate).toEqual({ subdivision: "GR-I", thresholds: [2, 3, 4, 5], released: false, chosenThreshold: null, maxPositionDeviationM: 150, shelterErrorMin: 0.7, minConfirmed: 25, minCoverage: 0.5 });
+    for (const minCoverage of [-0.1, 1.5]) expect(researchSchema.safeParse({ ...c, gate: { ...c.gate, minCoverage } }).success, String(minCoverage)).toBe(false);
     for (const minConfirmed of [0, 1.5]) expect(researchSchema.safeParse({ ...c, gate: { ...c.gate, minConfirmed } }).success, String(minConfirmed)).toBe(false);
     for (const chosenThreshold of [null, 9]) {
       expect(researchSchema.safeParse({ ...c, gate: { ...c.gate, released: true, chosenThreshold } }).success).toBe(false);

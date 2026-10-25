@@ -41,7 +41,7 @@ const row = (r: ReturnType<typeof run>, n: number) => r.rows.find((x) => x.thres
 describe("evaluateGate", () => {
   it("a confirmed place on a spot of its kind is correct", () => {
     const r = run([place("p1", ["Alpha"], AT)], [spot({ name: "Alpha" })]);
-    expect(row(r, 2)).toEqual({ threshold: 2, confirmed: 1, correct: 1, wrongKind: 0, wrongPosition: 0, wrongShelter: 0, conflicts: 0, decidedNotBerth: 0, correctness: 1 });
+    expect(row(r, 2)).toEqual({ threshold: 2, confirmed: 1, correct: 1, wrongKind: 0, wrongPosition: 0, wrongShelter: 0, wrongProhibited: 0, conflicts: 0, decidedNotBerth: 0, correctness: 1, coverage: 1 });
     expect(r.conflicts.get(2)).toEqual([]);
     expect(r.misses.get(2)).toEqual([]);
   });
@@ -65,7 +65,7 @@ describe("evaluateGate", () => {
 
   it("a threshold confirming nothing has correctness null, not 100 % (Review Focus)", () => {
     const r = run([place("p1", ["Alpha"], AT, { confirmedUpTo: 3 })], [spot({ name: "Alpha" })]);
-    expect(row(r, 4)).toEqual({ threshold: 4, confirmed: 0, correct: 0, wrongKind: 0, wrongPosition: 0, wrongShelter: 0, conflicts: 0, decidedNotBerth: 0, correctness: null });
+    expect(row(r, 4)).toEqual({ threshold: 4, confirmed: 0, correct: 0, wrongKind: 0, wrongPosition: 0, wrongShelter: 0, wrongProhibited: 0, conflicts: 0, decidedNotBerth: 0, correctness: null, coverage: 0 });
     expect(row(r, 3).correctness).toBe(1);
   });
 
@@ -247,6 +247,54 @@ describe("evaluateGate core values", () => {
     expect(c["highlight.supply"]).toMatchObject({ match: 1 });
     expect(c["shelter.S"]).toMatchObject({ gap: 1, deviation: 0 });
     for (const a of ["existence", "position", "depth", "highlight.food"] as const) expect(c[a]).toEqual({ match: 0, deviation: 0, gap: 0, notAtNavily: 0, noState: 0 });
+  });
+
+  describe("spot types and coverage", () => {
+    it("a bay beside a prohibited spot is an error and never correct; the spot is no miss and not in the coverage", () => {
+      expect(cfg.quality.navily.prohibitedTypes).toEqual(["prohibited"]);
+      const r = run([place("p1", ["Alpha"], north(50))], [spot({ name: "Alpha", kind: null, type: "prohibited" })]);
+      expect(row(r, 2)).toMatchObject({ confirmed: 1, correct: 0, wrongProhibited: 1, conflicts: 0, correctness: 0, coverage: null });
+      expect(r.errors.get(2)).toEqual([{ placeId: "p1", kind: "prohibited", spotIndex: 0, distanceM: expect.closeTo(50, 0) }]);
+      expect(r.misses.get(2)).toEqual([]);
+    });
+
+    it("a human berth decision does not clear a prohibited match", () => {
+      const r = run([place("p1", ["Alpha"], north(50))], [spot({ name: "Alpha", type: "prohibited" })], { p1: "berth" });
+      expect(row(r, 2)).toMatchObject({ correct: 0, wrongProhibited: 1 });
+    });
+
+    it("a marina beside a dry-berthing spot is a conflict, not a hit; the spot is not counted", () => {
+      const r = run([place("p1", ["Alpha"], north(50), { kind: "marina" })], [spot({ name: "Alpha", kind: "port", type: "dry-berthing" })]);
+      expect(row(r, 2)).toMatchObject({ confirmed: 1, correct: 0, wrongProhibited: 0, conflicts: 1, correctness: 0, coverage: null });
+      expect(r.conflicts.get(2)).toEqual(["p1"]);
+      expect(r.misses.get(2)).toEqual([]);
+      expect(r.core.get(2)!.seabed).toEqual({ match: 0, deviation: 0, gap: 0, notAtNavily: 0, noState: 0 });
+    });
+
+    it("a prohibited or dry-berthing spot without a place is not in the miss list", () => {
+      const r = run(
+        [place("p1", ["Alpha"], AT)],
+        [spot({ name: "Alpha" }), spot({ name: "Delta", ...north(5000), type: "prohibited" }), spot({ name: "Echo", ...north(8000), type: "dry-berthing" }), spot({ name: "Foxtrot", ...north(11000) })],
+      );
+      expect(r.misses.get(2)).toEqual([{ spotIndex: 3, reason: "no_candidate", placeId: null }]);
+      expect(row(r, 2).coverage).toBeCloseTo(0.5);
+    });
+
+    it("coverage is per threshold: correctly matched spots over spots in the area", () => {
+      const places = [place("p1", ["Alpha"], AT, { confirmedUpTo: 5 }), place("p2", ["Beta"], north(5000), { confirmedUpTo: 2 })];
+      const spots = [spot({ name: "Alpha" }), spot({ name: "Beta", ...north(5000) }), spot({ name: "Gamma", ...north(9000) }), spot({ name: "Delta", ...north(12000) })];
+      const r = run(places, spots);
+      expect(row(r, 2).coverage).toBeCloseTo(0.5);
+      expect(row(r, 3).coverage).toBeCloseTo(0.25);
+    });
+
+    it("an error match does not cover its spot; spots outside the area do not count", () => {
+      const inside = (p: LonLat) => p.lat <= AT.lat + 0.1;
+      const r = run([place("p1", ["Alpha"], north(300))], [spot({ name: "Alpha" }), spot({ name: "Far", ...north(30_000) })], {}, inside);
+      expect(row(r, 2)).toMatchObject({ wrongPosition: 1, coverage: 0 });
+      const ok = run([place("p1", ["Alpha"], AT)], [spot({ name: "Alpha" }), spot({ name: "Far", ...north(30_000) })], {}, inside);
+      expect(row(ok, 2).coverage).toBe(1);
+    });
   });
 
   it("the gate no longer reads the old profiles", async () => {

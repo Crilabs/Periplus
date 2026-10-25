@@ -39,6 +39,7 @@ export const ERROR_KIND_LABELS: Record<GateErrorKind, string> = {
   position: "Position abweichend",
   not_berth: "kein Liegeplatz",
   shelter: "Schutz behauptet, bei der Referenz offen",
+  prohibited: "Ankerverbot bei der Referenz",
 };
 
 /** German names of the core attributes in the report. */
@@ -77,11 +78,14 @@ export type GateMeasurement = {
    * delivered, but not backed by the rule. While there is one, the gate is not passed.
    */
   unbacked: string[];
-  /** The smallest threshold with correctness 100 %, no open conflict and at least `gate.minConfirmed` confirmed places; null when there is none. */
+  /** The smallest threshold with correctness 100 %, no open conflict, at least `gate.minConfirmed` confirmed places and `gate.minCoverage` coverage; null when there is none. */
   passedAt: number | null;
   /** When no threshold passes only for want of a sample: the confirmed count of the first threshold that is perfect but below `gate.minConfirmed`. */
   tooFewConfirmed: number | null;
   minConfirmed: number;
+  minCoverage: number;
+  /** When no threshold passes only for want of coverage: the coverage of the first threshold that is perfect with enough confirmed places. */
+  lowCoverage: number | null;
   shelterErrorMin: number;
   /** The smallest threshold with open conflicts (where `--sync-conflicts` asks); null when none has. */
   conflictThreshold: number | null;
@@ -181,7 +185,8 @@ async function measureIn(tx: Db, input: { subdivisionKey: string; spots: NavilyS
   const area = await subdivisionTileAreas(tx, subdivisionKey, cfg.quality.navily.maxRadiusM);
   const indexes = input.spots.flatMap((s, i) => (area.matchable(s) ? [i] : []));
   const spots = indexes.map((i) => input.spots[i]!);
-  const counted = spots.filter((s) => area.inside(s)).length;
+  const excluded = cfg.quality.navily.excludedTypes;
+  const counted = spots.filter((s) => area.inside(s) && !(s.type !== null && excluded.includes(s.type))).length;
 
   const base = await subdivisionPlaces(tx, subdivisionKey);
   const decisions = await gateDecisions(tx, base.map((p) => p.placeId));
@@ -215,8 +220,11 @@ async function measureIn(tx: Db, input: { subdivisionKey: string; spots: NavilyS
   }
   const minConfirmed = cfg.research.gate.minConfirmed;
   const perfect = evaluated.rows.filter((r) => r.confirmed > 0 && r.correctness === 1 && r.conflicts === 0);
-  const passedAt = perfect.find((r) => r.confirmed >= minConfirmed)?.threshold ?? null;
-  const tooFewConfirmed = passedAt === null ? (perfect[0]?.confirmed ?? null) : null;
+  const minCoverage = cfg.research.gate.minCoverage;
+  const sampled = perfect.filter((r) => r.confirmed >= minConfirmed);
+  const passedAt = sampled.find((r) => (r.coverage ?? 0) >= minCoverage)?.threshold ?? null;
+  const tooFewConfirmed = passedAt === null && sampled.length === 0 ? (perfect[0]?.confirmed ?? null) : null;
+  const lowCoverage = passedAt === null && sampled.length > 0 ? (sampled[0]!.coverage ?? 0) : null;
   const conflictThreshold = evaluated.rows.find((r) => r.conflicts > 0)?.threshold ?? null;
   return {
     subdivisionKey,
@@ -235,6 +243,8 @@ async function measureIn(tx: Db, input: { subdivisionKey: string; spots: NavilyS
     passedAt,
     tooFewConfirmed,
     minConfirmed,
+    minCoverage,
+    lowCoverage,
     shelterErrorMin: cfg.research.gate.shelterErrorMin,
     conflictThreshold,
   };
@@ -248,12 +258,14 @@ export function gateOutcome(m: GateMeasurement): string {
   if (m.passedAt !== null) return `Tor bestanden bei N=${m.passedAt}`;
   if (m.rows.every((r) => r.confirmed === 0)) return "Tor nicht bestanden: bei keiner Schwelle ist ein Platz bestätigt";
   if (m.tooFewConfirmed !== null) return `Tor nicht bestanden: zu wenige bestätigte Plätze (${m.tooFewConfirmed} von mindestens ${m.minConfirmed})`;
+  if (m.lowCoverage !== null) return `Tor nicht bestanden: Abdeckung ${Math.round(m.lowCoverage * 100)} % (mindestens ${Math.round(m.minCoverage * 100)} %)`;
   const open = m.rows.reduce((sum, r) => sum + r.conflicts, 0);
   return open > 0
     ? "Tor nicht bestanden: bei keiner Schwelle sind alle bestätigten Plätze korrekt, es gibt offene Konflikte"
     : "Tor nicht bestanden: bei keiner Schwelle sind alle bestätigten Plätze korrekt";
 }
 
+const coveragePercent = (r: GateRow) => (r.coverage === null ? "n/a" : `${Math.round(r.coverage * 1000) / 10} %`);
 const percent = (r: GateRow) => (r.correctness === null ? "n/a" : `${Math.round(r.correctness * 1000) / 10} %`);
 
 /** The committed report (German): counts only, no name, id, coordinate or value of the reference. */
@@ -264,14 +276,14 @@ export function renderGateReport(m: GateMeasurement, generatedAt: Date): string 
     "",
     `Stand: ${generatedAt.toISOString().slice(0, 10)}. Gemessen wird, welche Plätze bei jeder Schwelle unabhängiger Quellen bestätigt wären, gegen die Referenz (${m.spotCount} Spots in den bearbeiteten Kacheln des Landesteils). Die Referenz ist nie Datenquelle, sie misst nur.`,
     "",
-    `Bearbeitete Kacheln: ${m.builtTiles} von ${m.totalTiles}. Nur Spots in bearbeiteten Kacheln (mit mindestens einem Platz) zählen; das Tor gilt nur mit mindestens ${m.minConfirmed} bestätigten Plätzen.`,
+    `Bearbeitete Kacheln: ${m.builtTiles} von ${m.totalTiles}. Nur Spots in bearbeiteten Kacheln (mit mindestens einem Platz) zählen; Spots mit Ankerverbot oder Trockenliegeplatz zählen nicht zur Abdeckung und stehen nicht in der Fehlliste; ein Platz bei einem Ankerverbot ist ein Fehler, bei einem Trockenliegeplatz ein Konflikt. Das Tor gilt nur mit mindestens ${m.minConfirmed} bestätigten Plätzen und einer Abdeckung von mindestens ${Math.round(m.minCoverage * 100)} % (korrekt zugeordnete Spots je Schwelle).`,
     "",
     "## Ergebnis je Schwelle",
     "",
-    "| Schwelle N | bestätigt | korrekt | falsche Art | Position abweichend | Schutz falsch | Konflikte offen | mit Entscheidung | davon „kein Liegeplatz“ | Korrektheit |",
-    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    "| Schwelle N | bestätigt | korrekt | falsche Art | Position abweichend | Schutz falsch | Konflikte offen | mit Entscheidung | davon „kein Liegeplatz“ | Korrektheit | Ankerverbot | Abdeckung |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ...m.rows.map(
-      (r) => `| ${r.threshold} | ${r.confirmed} | ${r.correct} | ${r.wrongKind} | ${r.wrongPosition} | ${r.wrongShelter} | ${r.conflicts} | ${m.decided.get(r.threshold) ?? 0} | ${r.decidedNotBerth} | ${percent(r)} |`,
+      (r) => `| ${r.threshold} | ${r.confirmed} | ${r.correct} | ${r.wrongKind} | ${r.wrongPosition} | ${r.wrongShelter} | ${r.conflicts} | ${m.decided.get(r.threshold) ?? 0} | ${r.decidedNotBerth} | ${percent(r)} | ${r.wrongProhibited} | ${coveragePercent(r)} |`,
     ),
     "",
     `Geliefert bestätigt, aber von der Regel (N=${m.deliveredThreshold}) nicht gedeckt: ${m.unbacked.length}. Solange es solche Plätze gibt, ist das Tor nicht bestanden.`,
@@ -302,8 +314,8 @@ export function renderGateReport(m: GateMeasurement, generatedAt: Date): string 
     "## Gewählte Schwelle",
     "",
     m.passedAt !== null
-      ? `Kleinste Schwelle mit Korrektheit 100 % ohne offene Konflikte und genug bestätigten Plätzen: **N=${m.passedAt}**. ${gateOutcome(m)}.`
-      : `${gateOutcome(m)}. Gewählt wird die kleinste Schwelle mit Korrektheit 100 % ohne offene Konflikte und mit mindestens ${m.minConfirmed} bestätigten Plätzen; bisher gibt es keine.`,
+      ? `Kleinste Schwelle mit Korrektheit 100 % ohne offene Konflikte, genug bestätigten Plätzen und genug Abdeckung: **N=${m.passedAt}**. ${gateOutcome(m)}.`
+      : `${gateOutcome(m)}. Gewählt wird die kleinste Schwelle mit Korrektheit 100 % ohne offene Konflikte mit mindestens ${m.minConfirmed} bestätigten Plätzen und ausreichender Abdeckung; bisher gibt es keine.`,
     "",
   ];
   const lower = m.passedAt === null ? [] : m.rows.filter((r) => r.threshold < m.passedAt! && r.conflicts > 0).map((r) => `N=${r.threshold}`);

@@ -533,9 +533,13 @@ export const qualitySchema = z.strictObject({
     seabedShareMin: share,
     /** Depths are compared rounded to this step. */
     depthStepM: z.number().positive(),
+    /** Spot types of the reference that are not berths to find (gate: no coverage denominator, no miss; a match to one is a conflict). */
+    excludedTypes: z.array(z.string().min(1)),
+    /** The excluded types that mean an anchoring ban: a confirmed place matched to one is a gate error. */
+    prohibitedTypes: z.array(z.string().min(1)),
     /** `checked_by` of machine-accepted proposals. */
     proposalVersion: z.string().min(1).max(120),
-  }),
+  }).refine((n) => n.prohibitedTypes.every((t) => n.excludedTypes.includes(t)), { error: "prohibitedTypes must be part of excludedTypes", path: ["prohibitedTypes"] }),
   /** Mediterranean extrapolation of the cost report; `placesPerSubdivision` null = measured in the pilot. */
   extrapolation: z
     .strictObject({ subdivisionsMin: positiveInt, subdivisionsMax: positiveInt, placesPerSubdivision: positiveInt.nullable() })
@@ -1470,6 +1474,8 @@ export const researchSchema = z
         shelterErrorMin: z.number().min(0).max(1),
         /** The gate is passed only with at least this many confirmed places: a perfect score on a handful proves nothing. */
         minConfirmed: z.number().int().min(1),
+        /** The gate is passed only when the correctly matched reference spots (without excluded types) are at least this share of those in the worked-on tiles. */
+        minCoverage: share,
       })
       .refine((g) => g.thresholds.every((n, i) => i === 0 || n > g.thresholds[i - 1]!), { error: "gate thresholds must be strictly ascending" })
       .refine((g) => !g.released || (g.chosenThreshold !== null && g.thresholds.includes(g.chosenThreshold)), {
