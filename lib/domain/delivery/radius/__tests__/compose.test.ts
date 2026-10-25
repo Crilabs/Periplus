@@ -188,17 +188,37 @@ describe("composeRadiusPackage", () => {
     expect([...shared[0]!.spotIds].sort()).toEqual([SPOT_A, P2_IN].sort());
   });
 
-  it("a spot in both packages: the one with the later asOf wins, whatever the package age; else the younger package", () => {
-    const stale = p2();
+  describe("a spot in both packages", () => {
     const a = P1.files["spots.json"].spots.find((s) => s.id === SPOT_A)!;
-    const moved = { ...structuredClone(a), name: "Alte Bucht", asOf: "2026-09-01" };
-    stale.spots.push(moved);
-    const out = composeRadiusPackage(input([p1(), stale]), cfg);
-    expect(out.files["spots.json"].spots.find((s) => s.id === SPOT_A)!.name).toBe(a.name);
-    expect(out.warnings.some((w) => w.startsWith(SPOT_A))).toBe(true);
-    // equal asOf: the younger package (P2)
-    moved.asOf = a.asOf!;
-    expect(composeRadiusPackage(input([p1(), stale]), cfg).files["spots.json"].spots.find((s) => s.id === SPOT_A)!.name).toBe("Alte Bucht");
+    const excluded = (name: string): Spot => ({ ...structuredClone(a), name, asOf: null, exclude: { excluded: true, reason: "anchoringProhibited", detail: null } });
+    const confirmed = (name: string): Spot => ({ ...structuredClone(a), name });
+    const pick = (older: Spot | null, younger: Spot) => {
+      const old = p1();
+      if (older) old.spots = old.spots.map((s) => (s.id === SPOT_A ? older : s));
+      const young = p2();
+      young.spots.push(younger);
+      young.generatedAt = "2026-10-22T06:00:00.000Z";
+      const out = composeRadiusPackage(input([old, young]), cfg);
+      return { spot: out.files["spots.json"].spots.find((s) => s.id === SPOT_A)!, out };
+    };
+
+    it("older confirmed, younger excluded: excluded", () => {
+      const { spot, out } = pick(confirmed("Alt"), excluded("Neu"));
+      expect(spot.exclude?.excluded).toBe(true);
+      expect(out.warnings.some((w) => w.startsWith(SPOT_A))).toBe(true);
+    });
+
+    it("older excluded, younger confirmed: excluded", () => {
+      expect(pick(excluded("Alt"), confirmed("Neu")).spot.exclude?.excluded).toBe(true);
+    });
+
+    it("both confirmed: the younger package's copy, whatever the asOf", () => {
+      expect(pick({ ...confirmed("Alt"), asOf: "2026-10-30" }, { ...confirmed("Neu"), asOf: "2026-09-01" }).spot.name).toBe("Neu");
+    });
+
+    it("identical copies give no warning", () => {
+      expect(pick(confirmed("Gleich"), confirmed("Gleich")).out.warnings.some((w) => w.startsWith(SPOT_A))).toBe(false);
+    });
   });
 
   it("a region in both packages with another name: younger package wins, one warning", () => {

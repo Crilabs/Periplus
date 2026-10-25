@@ -150,11 +150,12 @@ describe("consumePackage", () => {
       expect(result.ok).toBe(false);
     }));
 
-  it("a manifest without scope or with a radius scope is refused before any file is fetched", () =>
+  it("a manifest without scope, of another contract version or with a radius scope is refused before any file is fetched", () =>
     withRollback(async (tx) => {
       const { f, key } = await builtSubdivision(tx);
       for (const [rewrite, message] of [
         [(m: Record<string, unknown>) => void delete m.scope, /has no scope \(schemaVersion 4\.0\); a subdivision package needs one/],
+        [(m: Record<string, unknown>) => void (m.schemaVersion = "3.0"), /answered a package of contract 3\.0, expected 4\.0/],
         [(m: Record<string, unknown>) => void (m.scope = { type: "radius", key: "0123456789abcdef" }), /answered a radius package, not a subdivision package/],
       ] as const) {
         const paths: string[] = [];

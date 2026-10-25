@@ -387,6 +387,16 @@ describe("getRadiusPackage", () => {
       expect(await getRadiusPackage(tx, archive, { marina, days: 2, now: NOW })).toBe("marina_not_found");
     }));
 
+  it("a stored row of another contract version is not served by its key", { timeout: 60_000 }, () =>
+    withRollback(async (tx) => {
+      const { f, archive } = await setup(tx, { east: false });
+      const row = await getRadiusPackage(tx, archive, { marina: f.places.M.publicId!, days: 1, now: NOW });
+      isRow(row);
+      await tx.insert(radiusPackages).values({ ...row, id: newId(), key: "00000000000000a3", schemaVersion: "3.0" });
+      expect(await radiusPackageByKey(tx, "00000000000000a3")).toBeNull();
+      expect(await radiusPackageByKey(tx, row.key)).toEqual(row);
+    }));
+
   it("readRadiusFile refuses bytes that do not match the recorded hash", { timeout: 60_000 }, () =>
     withRollback(async (tx) => {
       const { f, archive } = await setup(tx, { east: false });

@@ -1,4 +1,4 @@
-import { eq, sql, type InferSelectModel } from "drizzle-orm";
+import { and, eq, sql, type InferSelectModel } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
 import { CONTRACT_FILES, CONTRACT_SCHEMAS, SCHEMA_VERSION, type ContractFile, type CoverageEntry, type Manifest } from "@/contract";
 import { getConfig, type DeliveryConfig } from "@/lib/config";
@@ -46,7 +46,7 @@ export function radiusPackageKey(input: { marina: string; days: number; radiusNm
 }
 
 export async function radiusPackageByKey(db: Db, key: string): Promise<RadiusPackageRow | null> {
-  const [row] = await db.select().from(radiusPackages).where(eq(radiusPackages.key, key)).limit(1);
+  const [row] = await db.select().from(radiusPackages).where(and(eq(radiusPackages.key, key), eq(radiusPackages.schemaVersion, SCHEMA_VERSION))).limit(1);
   return row ?? null;
 }
 

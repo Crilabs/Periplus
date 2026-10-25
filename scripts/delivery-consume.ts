@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020";
 import addFormats from "ajv-formats";
-import type { ContractFile, Manifest } from "../contract";
+import { SCHEMA_VERSION, type ContractFile, type Manifest } from "../contract";
 
 /*
  * Consumer check of a subdivision package (plan M6 Task 15): what a foreign consumer sees, through the API only. Fetches the
@@ -85,6 +85,9 @@ export async function consumePackage(input: {
     throw new Error(
       `${packagePath} answered a manifest that has no scope (schemaVersion ${String(manifest.schemaVersion)}); a subdivision package needs one`,
     );
+  }
+  if (manifest.schemaVersion !== SCHEMA_VERSION) {
+    throw new Error(`${packagePath} answered a package of contract ${String(manifest.schemaVersion)}, expected ${SCHEMA_VERSION}; rebuild the subdivision`);
   }
   if (manifest.scope.type !== "subdivision") throw new Error(`${packagePath} answered a ${String(scope.type)} package, not a subdivision package`);
   const dataVersion = manifest.scope.dataVersion;

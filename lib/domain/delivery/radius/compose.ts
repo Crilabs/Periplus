@@ -12,7 +12,7 @@ import type { ComposedRadius, RadiusInput, SourcePackage } from "./types";
  * counts are added by the build after clipping and serialising.
  */
 
-type Versioned = { id: string; asOf?: string | null; spotIds?: string[] };
+type Versioned = { id: string; exclude?: { excluded: boolean }; spotIds?: string[] };
 
 /** One object over all packages: the version taken, the package it came from, the united `spotIds`. */
 type Merged<T> = { value: T; from: SourcePackage; spotIds: string[] };
@@ -35,8 +35,8 @@ function content(o: Versioned): string {
 }
 
 /**
- * Each object once: the one with the later `asOf` (spots; an object without one ranks lowest), on a tie the one from
- * the younger package, then by subdivision key. Versions that differ beyond `spotIds` add one warning per object.
+ * Each object once. Safety first: an excluded copy (spots) always beats a confirmed one; otherwise the copy from the
+ * younger package wins (`asOf` plays no part), then the subdivision key. Versions that differ beyond `spotIds` add one warning per object.
  */
 function merge<T extends Versioned>(
   packages: SourcePackage[],
@@ -51,7 +51,7 @@ function merge<T extends Versioned>(
   for (const [id, list] of versions) {
     const sorted = [...list].sort(
       (a, b) =>
-        cmp(b.value.asOf ?? "", a.value.asOf ?? "") ||
+        Number(b.value.exclude?.excluded ?? false) - Number(a.value.exclude?.excluded ?? false) ||
         Date.parse(b.from.generatedAt) - Date.parse(a.from.generatedAt) ||
         cmp(a.from.coverage.key, b.from.coverage.key),
     );
