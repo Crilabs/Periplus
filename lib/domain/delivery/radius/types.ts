@@ -1,4 +1,4 @@
-import type { CoverageEntry, Highlight, HighlightsFile, Manifest, Region, RegionsFile, Spot, SpotsFile, WeatherPoint, WeatherPointsFile } from "@/contract/v3_0";
+import type { CoverageEntry, Manifest, Region, RegionsFile, Spot, SpotsFile, WeatherPoint, WeatherPointsFile } from "@/contract";
 
 /*
  * Input and output of `composeRadiusPackage` (spec 18, "Woraus es gebaut wird"): the current valid packages of the
@@ -11,7 +11,6 @@ export type SourcePackage = {
   coverage: CoverageEntry & { status: "delivered" };
   generatedAt: string;
   spots: Spot[];
-  highlights: Highlight[];
   regions: Region[];
   weatherPoints: WeatherPoint[];
   tiles: Manifest["tiles"];
@@ -38,11 +37,10 @@ export type ComposedRadius = {
   manifestDraft: Omit<Manifest, "files" | "objectCounts">;
   files: {
     "spots.json": SpotsFile;
-    "highlights.json": HighlightsFile;
     "regions.json": RegionsFile;
     "weather-points.json": WeatherPointsFile;
   };
   imageFiles: SourcePackage["imageFiles"];
-  /** Shared objects whose versions differ beyond `spotIds`, `profileVersion` and `validFrom`; the build does not fail. */
+  /** Shared objects whose versions differ beyond `spotIds`; the build does not fail. */
   warnings: string[];
 };

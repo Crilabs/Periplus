@@ -193,7 +193,7 @@ async function spotVersion(tx: Db, subdivisionId: string, publicId: string, vers
 
 /**
  * The clone of `simClone` with packages around a finished revisit run on 2026-06-01 (ruling M7-P18 path): v1 before
- * it (2026-05-01), then TWO packages after it, v2 on 2026-06-08 and v3 on 2026-06-20; the spot changes in each.
+ * it (2026-05-01), then TWO packages after it, v2 on 2026-06-08 and v4 on 2026-06-20; the spot changes in each.
  */
 async function framedClone(tx: Db, o: { secondVersionFrom?: string; unchanged?: boolean } = {}) {
   const c = await simClone(tx);
@@ -216,7 +216,7 @@ async function framedClone(tx: Db, o: { secondVersionFrom?: string; unchanged?: 
 }
 
 /**
- * A fetch stub answering `body` for an asOf request and `current` (default: the clone's newest state, v3) for the
+ * A fetch stub answering `body` for an asOf request and `current` (default: the clone's newest state, v4) for the
  * request without asOf, recording the URLs asked for.
  */
 function apiStub(body: unknown, current: unknown = { dataVersion: 3, spot: undefined as unknown }) {
@@ -237,7 +237,7 @@ describe("simVerify asOf (ruling M7-P18, M7-G-R3)", () => {
       const api = apiStub({ schemaVersion: "1.0", subdivision: "ar_x", dataVersion: 1, spot: c.spot(1) }, { dataVersion: 3, spot: c.spot(3) });
       const report = await simVerify(tx, c.archive, withApi(c.subdivisionKey), { scenario: c.scenario, fetch: api.fetch });
       // first the newest state (only the simulation web has it), then the state before the revisit
-      expect(api.calls).toEqual([`http://localhost:3001/api/v3/spots/${c.publicId}`, `http://localhost:3001/api/v3/spots/${c.publicId}?asOf=2026-06-07`]);
+      expect(api.calls).toEqual([`http://localhost:3001/api/v4/spots/${c.publicId}`, `http://localhost:3001/api/v4/spots/${c.publicId}?asOf=2026-06-07`]);
       expect(report.asOf).toEqual({
         ok: true,
         asOf: "2026-06-07",
@@ -290,7 +290,7 @@ describe("simVerify asOf (ruling M7-P18, M7-G-R3)", () => {
         reason:
           "http://localhost:3001 ist nicht das Simulations-Web (Datenversion 1 statt 3 (Stand der Simulation nach dem Revisit)) – das Web aus dem eigenen Worktree mit .env.sim starten",
       });
-      expect(dev.calls).toEqual([`http://localhost:3001/api/v3/spots/${c.publicId}`]);
+      expect(dev.calls).toEqual([`http://localhost:3001/api/v4/spots/${c.publicId}`]);
       expect(report.passes).toBe(false);
     }));
 

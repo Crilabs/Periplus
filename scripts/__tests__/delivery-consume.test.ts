@@ -11,7 +11,7 @@ import { baseUrlWarning, consumePackage, parseArgs, resolveLink } from "../deliv
 
 /*
  * The consumer check against the real route handlers: a `fetch` stub maps the URLs `consumePackage` calls onto the
- * handlers of `app/api/v3`, which read the test transaction (ruling M6-P21) and an in-memory archive. Build dates lie
+ * handlers of `app/api/v4`, which read the test transaction (ruling M6-P21) and an in-memory archive. Build dates lie
  * in the future: the fixture's geo rows are valid from the database's `current_date`.
  */
 
@@ -26,9 +26,9 @@ vi.mock("@/lib/db/client", async (importActual) => ({
   getDb: () => db,
 }));
 
-const packageRoute = await import("@/app/api/v3/subdivisions/[subdivision]/package/route");
-const fileRoute = await import("@/app/api/v3/subdivisions/[subdivision]/package/[file]/route");
-const schemaRoute = await import("@/app/api/v3/schema/[version]/[file]/route");
+const packageRoute = await import("@/app/api/v4/subdivisions/[subdivision]/package/route");
+const fileRoute = await import("@/app/api/v4/subdivisions/[subdivision]/package/[file]/route");
+const schemaRoute = await import("@/app/api/v4/schema/[version]/[file]/route");
 
 const BASE = "https://periplus.test.invalid";
 const NOW = new Date("2040-06-01T08:00:00Z");
@@ -44,9 +44,9 @@ function routeFetch(tamper?: (path: string, bytes: Uint8Array) => Uint8Array, pr
     if (url.origin !== BASE) throw new Error(`unexpected origin ${url.origin}`);
     if (!url.pathname.startsWith(`${prefix}/`)) return new Response(null, { status: 404 });
     const parts = url.pathname.slice(prefix.length).split("/").map(decodeURIComponent);
-    // "", "api", "v3", …
-    const [, api, v3, kind, a, b, c] = parts;
-    if (api !== "api" || v3 !== "v3") return new Response(null, { status: 404 });
+    // "", "api", "v4", …
+    const [, api, v4, kind, a, b, c] = parts;
+    if (api !== "api" || v4 !== "v4") return new Response(null, { status: 404 });
     let res: Response;
     if (kind === "subdivisions" && b === "package" && c === undefined && parts.length === 6) {
       res = await packageRoute.GET(req, { params: Promise.resolve({ subdivision: a! }) });
@@ -137,7 +137,7 @@ describe("consumePackage", () => {
       const tamper = (path: string, bytes: Uint8Array) => {
         if (!path.endsWith("/package")) return bytes;
         const body = JSON.parse(new TextDecoder().decode(bytes)) as { links: Record<string, string> };
-        body.links["spots.json"] = "https://elsewhere.test.invalid/api/v3/subdivisions/x/package/spots.json";
+        body.links["spots.json"] = "https://elsewhere.test.invalid/api/v4/subdivisions/x/package/spots.json";
         return new TextEncoder().encode(JSON.stringify(body));
       };
       // routeFetch throws on any other origin: the run completes, so nothing was sent there
@@ -145,16 +145,17 @@ describe("consumePackage", () => {
       expect(result.files.find((x) => x.name === "spots.json")).toEqual({
         name: "spots.json",
         sha256Ok: false,
-        schemaErrors: ["link to another origin, not fetched: https://elsewhere.test.invalid/api/v3/subdivisions/x/package/spots.json"],
+        schemaErrors: ["link to another origin, not fetched: https://elsewhere.test.invalid/api/v4/subdivisions/x/package/spots.json"],
       });
       expect(result.ok).toBe(false);
     }));
 
-  it("a manifest without scope or with a radius scope is refused before any file is fetched", () =>
+  it("a manifest without scope, of another contract version or with a radius scope is refused before any file is fetched", () =>
     withRollback(async (tx) => {
       const { f, key } = await builtSubdivision(tx);
       for (const [rewrite, message] of [
         [(m: Record<string, unknown>) => void delete m.scope, /has no scope \(schemaVersion 4\.0\); a subdivision package needs one/],
+        [(m: Record<string, unknown>) => void (m.schemaVersion = "3.0"), /answered a package of contract 3\.0, expected 4\.0/],
         [(m: Record<string, unknown>) => void (m.scope = { type: "radius", key: "0123456789abcdef" }), /answered a radius package, not a subdivision package/],
       ] as const) {
         const paths: string[] = [];
@@ -182,11 +183,11 @@ describe("consumePackage", () => {
 
 describe("resolveLink and baseUrlWarning", () => {
   it("appends root-relative links to the base, accepts absolute links of the same origin only", () => {
-    expect(resolveLink("https://h.example/periplus", "/api/v3/subdivisions")).toBe("https://h.example/periplus/api/v3/subdivisions");
-    expect(resolveLink("https://h.example", "https://h.example/api/v3/x")).toBe("https://h.example/api/v3/x");
-    expect(resolveLink("https://h.example", "https://other.example/api/v3/x")).toBeNull();
-    expect(resolveLink("https://h.example", "//other.example/api/v3/x")).toBeNull();
-    expect(resolveLink("https://h.example", "http://h.example/api/v3/x")).toBeNull();
+    expect(resolveLink("https://h.example/periplus", "/api/v4/subdivisions")).toBe("https://h.example/periplus/api/v4/subdivisions");
+    expect(resolveLink("https://h.example", "https://h.example/api/v4/x")).toBe("https://h.example/api/v4/x");
+    expect(resolveLink("https://h.example", "https://other.example/api/v4/x")).toBeNull();
+    expect(resolveLink("https://h.example", "//other.example/api/v4/x")).toBeNull();
+    expect(resolveLink("https://h.example", "http://h.example/api/v4/x")).toBeNull();
   });
 
   it("warns on plain http except to localhost", () => {

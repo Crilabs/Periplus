@@ -28,6 +28,7 @@
     "harbourMinShelter": 0.8,
     "harbourShelterSources": ["text", "observed", "review"],
     "maxCopiedWords": 15,
+    "domainTlds": ["com", "net", "org", "gr", "de", "it", "fr", "es", "hr", "tr", "eu", "info", "io", "co", "uk"],
     "copyCheckConcurrency": 4,
     "lowConfidence": 0.3,
     "lowConfidenceNote": "wenig belegt"

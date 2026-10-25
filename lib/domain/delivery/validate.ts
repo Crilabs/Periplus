@@ -3,7 +3,7 @@ import { GOOGLE_PLACE_ID_PATTERN, OSM_ID_PATTERN, WIKIDATA_ID_PATTERN } from "@/
 import type { DeliveryConfig } from "@/lib/config/schemas";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
 import { isPublicId, type PublicIdPrefix } from "@/lib/domain/ids";
-import { mentionsForbiddenDomain } from "@/lib/domain/sources/forbidden-domains";
+import { isForbiddenUrl, mentionsForbiddenDomain } from "@/lib/domain/sources/forbidden-domains";
 import { distanceNm, distanceToLinesNm, pointInPolygon } from "./geo";
 import type { UndeliveredSafety } from "./map-region";
 import type { SpotWarning } from "./map-spot";
@@ -56,13 +56,14 @@ const METRES_PER_NM = 1852;
 const WEATHER_POINT_ID = /^wp_[0-9A-HJKMNP-TV-Z]{26}$/;
 const URL_IN_TEXT = /\bhttps?:\/\/|\bwww\.[\p{L}\p{N}-]+\.\p{L}/iu;
 /**
- * Top-level domains a bare domain name in a text ends in (`example.com`, `sailing-guide.gr`): any domain-like string
- * blocks the package, not only the forbidden domains (the contract carries no source, so no text may point to one). A
- * list, not "any dotted word", so a Greek abbreviation like `Ag.Nikolaos` stays a name.
+ * A bare domain name in a text (`example.com`, `sailing-guide.gr`, `a@b.eu`): a dotted word whose last label is one of
+ * `validation.domainTlds`, word-bounded, lowercase (so `geschützt.Es` is text). Not "any dotted word", so `Ag.Nikolaos` and a missing space after a full stop
+ * (`geschützt.Es`) stay text. Returns the matched string, or null.
  */
-const DOMAIN_TLDS =
-  "com|net|org|info|biz|edu|gov|int|eu|gr|de|at|ch|fr|it|es|pt|nl|be|uk|ie|se|no|dk|fi|pl|cz|hu|ro|bg|hr|si|rs|me|al|mk|tr|cy|mt|ru|ua|us|ca|au|nz|io|co|app|dev|blog|travel|sailing|yachts?|boats?|marina|online|site|shop|store|club|link|page|world|guide|news|wiki|xyz|tv|cc|ws|to|ly|gl|gd|gy|sh";
-const DOMAIN_IN_TEXT = new RegExp(String.raw`(?<![\p{L}\p{N}])[\p{L}\p{N}][\p{L}\p{N}.-]*\.(?:${DOMAIN_TLDS})(?![\p{L}\p{N}])`, "iu");
+function domainIn(text: string, tlds: readonly string[]): string | null {
+  const re = new RegExp(String.raw`(?<![\p{L}\p{N}])[\p{L}\p{N}][\p{L}\p{N}.-]*\.(?:${tlds.join("|")})(?![\p{L}\p{N}])`, "u");
+  return re.exec(text)?.[0] ?? null;
+}
 const HARBOUR_KINDS = new Set(["port", "marina"]);
 
 const SPOTS = "spots.json";
@@ -302,6 +303,8 @@ function displayTexts(pkg: DeliveryPackage): TextField[] {
     (s.hazards ?? []).forEach((h, j) => add(SPOTS, s.id, `/spots/${i}/hazards/${j}/text`, h.text));
     add(SPOTS, s.id, `/spots/${i}/exclude/detail`, s.exclude.detail);
     (s.images ?? []).forEach((img, j) => add(SPOTS, s.id, `/spots/${i}/images/${j}/alt/de`, img.alt.de));
+    add(SPOTS, s.id, `/spots/${i}/contact/vhf`, s.contact?.vhf);
+    add(SPOTS, s.id, `/spots/${i}/contact/phone`, s.contact?.phone);
   });
   regionsOf(pkg).forEach((r, i) => add(REGIONS, r.id, `/regions/${i}/character/de`, r.character?.de));
   return out;
@@ -398,6 +401,8 @@ const foreignContent: Check = ({ pkg, deps }) => {
   };
   spotsOf(pkg).forEach((s, i) => {
     const base = `/spots/${i}`;
+    // the operator's own site is the one URL a spot may carry (contact); never one of a forbidden domain
+    if (s.contact?.url != null && isForbiddenUrl(s.contact.url, forbidden)) out.push(finding(SPOTS, s.id, `${base}/contact/url`, "Kontaktadresse von einer gesperrten Domain"));
     ref(SPOTS, s.id, `${base}/externalRefs/osmId`, s.externalRefs?.osmId, OSM_ID_PATTERN, "OSM-Kennung");
     ref(SPOTS, s.id, `${base}/externalRefs/wikidataId`, s.externalRefs?.wikidataId, WIKIDATA_ID_PATTERN, "Wikidata-Kennung");
     for (const [category, list] of Object.entries(s.externalRefs?.googlePlaceIds ?? {})) {
@@ -407,7 +412,10 @@ const foreignContent: Check = ({ pkg, deps }) => {
   for (const f of [...displayTexts(pkg), ...nameTexts(pkg)]) {
     if (URL_IN_TEXT.test(f.text)) out.push(finding(f.file, f.objectId, f.path, "Text enthält einen Link"));
     else if (mentionsForbiddenDomain(f.text, forbidden)) out.push(finding(f.file, f.objectId, f.path, "Text nennt eine gesperrte Domain"));
-    else if (DOMAIN_IN_TEXT.test(f.text)) out.push(finding(f.file, f.objectId, f.path, "Text enthält einen Domainnamen"));
+    else {
+      const domain = domainIn(f.text, deps.cfg.validation.domainTlds);
+      if (domain !== null) out.push(finding(f.file, f.objectId, f.path, `Text enthält einen Domainnamen (${domain})`));
+    }
   }
   return out;
 };

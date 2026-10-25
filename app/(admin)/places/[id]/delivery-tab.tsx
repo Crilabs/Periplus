@@ -1,3 +1,4 @@
+import type { Spot } from "@/contract";
 import type { PlaceDelivery } from "@/lib/domain/delivery/view";
 import { PREVIEW_OMISSION_LABELS } from "../../_components/labels";
 import { Badge, DescriptionList, EmptyState, Mono, Notice, Panel, TextLink } from "../../_components/ui";
@@ -11,9 +12,84 @@ function Json({ value, label }: { value: unknown; label: string }) {
   );
 }
 
+const TONE_LABELS = { positive: "positiv", negative: "negativ", neutral: "neutral" } as const;
+const LANDING_LABELS = { harbour: "Hafen", pier: "Steg", slipway: "Slip", beach: "Strand", shore: "Ufer", text: "Beschreibung" } as const;
+const ACCESS_LABELS = { foot: "zu Fuß", transport: "mit Transport" } as const;
+
+/** What a spot of contract 4.0 says about the berth itself: facts, landing points, things on land, gaps. */
+export function SpotDetails({ spot }: { spot: Omit<Spot, "asOf"> }) {
+  const subjectOf = (f: Spot["facts"][number]) =>
+    f.subject.kind === "spot" ? "Spot" : (spot.nearby.find((n) => n.id === (f.subject.kind === "landside" ? f.subject.id : null))?.name ?? (f.subject.kind === "landside" ? f.subject.name : null) ?? "An Land");
+  return (
+    <div className="space-y-4 text-sm">
+      <section aria-label="Fakten">
+        <h3 className="mb-1.5 text-xs font-medium text-muted">Fakten ({spot.facts.length})</h3>
+        {spot.facts.length === 0 ? (
+          <p className="text-muted">Keine Fakten.</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {spot.facts.map((f) => (
+              <li key={f.id} className="rounded-md bg-sunken/60 px-2.5 py-1.5">
+                <p className="flex flex-wrap items-center gap-1.5">
+                  {f.safety && <Badge tone="danger">Sicherheit</Badge>}
+                  {f.tone && <Badge tone={f.tone === "negative" ? "warn" : f.tone === "positive" ? "ok" : "neutral"}>{TONE_LABELS[f.tone]}</Badge>}
+                  <span className="text-xs text-muted">
+                    {subjectOf(f)}
+                    {f.observedAt ? ` · ${f.observedAt}` : ""}
+                    {f.mentions > 1 ? ` · ${f.mentions} Erwähnungen` : ""}
+                  </span>
+                </p>
+                <p className="mt-1">{f.text}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <section aria-label="Anlandepunkte">
+        <h3 className="mb-1.5 text-xs font-medium text-muted">Anlandepunkte ({spot.landingPoints.length})</h3>
+        {spot.landingPoints.length === 0 ? (
+          <p className="text-muted">Keine Anlandepunkte.</p>
+        ) : (
+          <ul className="space-y-1">
+            {spot.landingPoints.map((l, i) => (
+              <li key={i}>
+                {LANDING_LABELS[l.kind]}:{" "}
+                {l.kind === "text" ? l.description : <span className="tabular-nums">{l.position.lat.toFixed(5)}, {l.position.lon.toFixed(5)}</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <section aria-label="An Land">
+        <h3 className="mb-1.5 text-xs font-medium text-muted">Dinge an Land ({spot.nearby.length})</h3>
+        {spot.nearby.length === 0 ? (
+          <p className="text-muted">Nichts an Land.</p>
+        ) : (
+          <ul className="space-y-1">
+            {spot.nearby.map((n) => (
+              <li key={n.id} className="flex flex-wrap justify-between gap-x-3">
+                <span>
+                  {n.name} <span className="text-xs text-muted">({n.category})</span>
+                </span>
+                <span className="tabular-nums text-muted">
+                  {n.distanceM} m · {ACCESS_LABELS[n.access]}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <section aria-label="Lücken">
+        <h3 className="mb-1.5 text-xs font-medium text-muted">Lücken ({spot.gaps.length})</h3>
+        {spot.gaps.length === 0 ? <p className="text-muted">Keine Lücken.</p> : <p>{spot.gaps.join(", ")}</p>}
+      </section>
+    </div>
+  );
+}
+
 /**
- * Tab „Lieferung“ of the place page (plan Task 14): the spot as last delivered (contract JSON, version, `validFrom`,
- * the delivery), the next package's spot when it differs, and every contract version of the spot.
+ * Tab „Lieferung“ of the place page (plan Task 14): the spot as last delivered (contract 4.0: facts, landing points,
+ * things on land, gaps, then the JSON), the next package's spot when it differs, and every delivery of the spot.
  */
 export function DeliveryTab({ view }: { view: PlaceDelivery }) {
   const { delivered, preview, history } = view;
@@ -61,18 +137,28 @@ export function DeliveryTab({ view }: { view: PlaceDelivery }) {
             title="Geliefert"
             description="Der Spot, wie ihn Abnehmer zuletzt bekommen haben (spots.json der Lieferung, die diese Version eingeführt hat)."
           >
-            {delivered ? <Json value={delivered.spot} label="Gelieferter Spot" /> : <p className="text-sm text-muted">Noch nicht geliefert.</p>}
+            {delivered ? (
+              <div className="space-y-4">
+                <SpotDetails spot={delivered.spot} />
+                <Json value={delivered.spot} label="Gelieferter Spot" />
+              </div>
+            ) : (
+              <p className="text-sm text-muted">Noch nicht geliefert.</p>
+            )}
           </Panel>
           {next?.differs && (
             <Panel title="Vorschau nächstes Paket" description="Der Spot, den der nächste Bau liefern würde (ohne Stand-Datum).">
-              <Json value={next.spot} label="Vorschau des Spots" />
+              <div className="space-y-4">
+                <SpotDetails spot={next.spot} />
+                <Json value={next.spot} label="Vorschau des Spots" />
+              </div>
             </Panel>
           )}
         </div>
 
         <div className="space-y-6">
           {delivered && (
-            <Panel title="Gelieferte Version">
+            <Panel title="Gelieferter Stand">
               <DescriptionList
                 columns={1}
                 items={[
@@ -84,15 +170,15 @@ export function DeliveryTab({ view }: { view: PlaceDelivery }) {
               />
             </Panel>
           )}
-          <Panel title="Versionen" flush>
+          <Panel title="Lieferungen des Spots" flush>
             {history.length === 0 ? (
-              <EmptyState title="Noch keine Version geliefert" />
+              <EmptyState title="Noch nicht geliefert" />
             ) : (
               <ol className="divide-y divide-line text-sm">
                 {history.map((h) => (
                   <li key={`${h.profileVersion}-${h.deliveryId}`} className="flex items-center justify-between gap-3 px-4 py-2.5">
                     <span className="flex items-center gap-2">
-                      <span className="font-medium tabular-nums">Version {h.profileVersion}</span>
+                      <span className="font-medium tabular-nums">Fassung {h.profileVersion}</span>
                       {h.removed && <Badge tone="neutral">Entfernt</Badge>}
                     </span>
                     <span className="flex items-center gap-3 text-xs text-muted">

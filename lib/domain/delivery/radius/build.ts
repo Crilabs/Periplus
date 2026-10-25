@@ -1,6 +1,6 @@
-import { eq, sql, type InferSelectModel } from "drizzle-orm";
+import { and, eq, sql, type InferSelectModel } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
-import { CONTRACT_FILES, CONTRACT_SCHEMAS, SCHEMA_VERSION, type ContractFile, type CoverageEntry, type Manifest } from "@/contract/v3_0";
+import { CONTRACT_FILES, CONTRACT_SCHEMAS, SCHEMA_VERSION, type ContractFile, type CoverageEntry, type Manifest } from "@/contract";
 import { getConfig, type DeliveryConfig } from "@/lib/config";
 import type { Db } from "@/lib/db/client";
 import { radiusPackageRequests, radiusPackages } from "@/lib/db/schema/radius";
@@ -26,11 +26,11 @@ export type RadiusRequestKind = "package" | "file" | "changes";
 type FileHashes = Record<string, { sha256: string; bytes: number }>;
 
 /**
- * The revision of the radius build. Bump it whenever a change to compose, coast clipping, coverage or the checks
+ * The revision of the radius build (2: composed from contract 4.0 packages). Bump it whenever a change to compose, coast clipping, coverage or the checks
  * changes the output for the same inputs: it is part of the cache key, so cached packages built by older code are not
  * served again.
  */
-export const RADIUS_BUILD_REVISION = 1;
+export const RADIUS_BUILD_REVISION = 2;
 
 /**
  * The cache key: the first 16 hex characters of the sha256 over `marina|days|radiusNm|schemaVersion|revision|` and the
@@ -46,7 +46,7 @@ export function radiusPackageKey(input: { marina: string; days: number; radiusNm
 }
 
 export async function radiusPackageByKey(db: Db, key: string): Promise<RadiusPackageRow | null> {
-  const [row] = await db.select().from(radiusPackages).where(eq(radiusPackages.key, key)).limit(1);
+  const [row] = await db.select().from(radiusPackages).where(and(eq(radiusPackages.key, key), eq(radiusPackages.schemaVersion, SCHEMA_VERSION))).limit(1);
   return row ?? null;
 }
 
@@ -186,7 +186,7 @@ export async function recordRadiusRequest(db: Db, packageId: string, apiClientId
 
 type RadiusFiles = ComposedRadius["files"] & { "coast.geojson": Awaited<ReturnType<typeof clipCoast>> };
 
-/** The full manifest: the composed draft with the object counts (no changes) and every file's hash, in contract order, then the images. */
+/** The full manifest: the composed draft with the object counts and every file's hash, in contract order, then the images. */
 function radiusManifest(composed: ComposedRadius, files: RadiusFiles, images: Map<string, Uint8Array>): Manifest {
   const d = composed.manifestDraft;
   const listed = CONTRACT_FILES.filter((f): f is keyof RadiusFiles => Object.hasOwn(files, f));
@@ -200,11 +200,9 @@ function radiusManifest(composed: ComposedRadius, files: RadiusFiles, images: Ma
     tiles: d.tiles,
     objectCounts: {
       spots: files["spots.json"].spots.length,
-      highlights: files["highlights.json"].highlights.length,
       regions: files["regions.json"].regions.length,
       weatherPoints: files["weather-points.json"].points.length,
       coastFeatures: files["coast.geojson"].features.length,
-      changes: 0,
     },
     licenses: d.licenses,
     files: [
@@ -219,9 +217,8 @@ function radiusManifest(composed: ComposedRadius, files: RadiusFiles, images: Ma
 
 /**
  * Every file against its contract schema, and every reference inside the package (spec 08 Teil B): each `spotIds` entry
- * of a highlight or region and each `mergedInto` of a spot names an included spot, each `highlightIds` entry of a spot an
- * included highlight, each `regionId` of a spot, highlight or weather point and each `parentId` of a region an included
- * region. Throws on the first failing file or the list of broken references.
+ * of a region and each `mergedInto` of a spot names an included spot, each `regionId` of a spot or weather point and
+ * each `parentId` of a region an included region. Throws on the first failing file or the list of broken references.
  */
 function checkPackage(key: string, manifest: Manifest, files: RadiusFiles): void {
   const all: Array<[ContractFile, unknown]> = [["manifest.json", manifest], ...(Object.entries(files) as Array<[ContractFile, unknown]>)];
@@ -232,7 +229,6 @@ function checkPackage(key: string, manifest: Manifest, files: RadiusFiles): void
     }
   }
   const spotIds = new Set(files["spots.json"].spots.map((s) => s.id));
-  const highlightIds = new Set(files["highlights.json"].highlights.map((h) => h.id));
   const regionIds = new Set(files["regions.json"].regions.map((r) => r.id));
   const broken: string[] = [];
   const region = (owner: string, id: string | null | undefined) => {
@@ -241,12 +237,7 @@ function checkPackage(key: string, manifest: Manifest, files: RadiusFiles): void
   const spots = (owner: string, ids: string[]) => ids.forEach((id) => spotIds.has(id) || broken.push(`${owner} → ${id}`));
   for (const s of files["spots.json"].spots) {
     region(s.id, s.regionId);
-    (s.highlightIds ?? []).forEach((id) => highlightIds.has(id) || broken.push(`${s.id} → ${id}`));
     if (s.mergedInto != null && !spotIds.has(s.mergedInto)) broken.push(`${s.id} → ${s.mergedInto}`);
-  }
-  for (const h of files["highlights.json"].highlights) {
-    spots(h.id, h.spotIds);
-    region(h.id, h.regionId);
   }
   for (const r of files["regions.json"].regions) {
     spots(r.id, r.spotIds);

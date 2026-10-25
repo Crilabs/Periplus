@@ -115,7 +115,6 @@ describe("images in the package", () => {
           observedAt: "2016-07-01",
           license: "periplus",
           attribution: image.attribution,
-          sourceUrl: null,
           camera: { position: [21.0449, 35.1201], heightM: 260, viewBearingDeg: 281.5, tiltDeg: 18.2, fovDeg: 50 },
         },
       ]);
@@ -196,7 +195,6 @@ describe("image validation", () => {
     observedAt: null,
     license: "periplus",
     attribution,
-    sourceUrl: null,
     camera: null,
   });
   const withImage = (img: ReturnType<typeof image>) => breakPackage(validPackage(), (p) => void (p.files["spots.json"].spots[0]!.images = [img]));

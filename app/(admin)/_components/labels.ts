@@ -32,7 +32,7 @@ import type { DeliveryStatus } from "@/lib/db/schema/deliveries";
 import type { PageKind } from "@/lib/db/schema/research";
 import type { BerthSignalKind, Tone } from "@/lib/db/schema/research-extract";
 import type { ComparisonAttribute, ComparisonMethod, ComparisonResultValue, MetricKey } from "@/lib/db/schema/quality";
-import type { ChangeEntry, ContractFile } from "@/contract/v3_0";
+import type { ContractFile } from "@/contract";
 import type { CheckName } from "@/lib/domain/delivery/validate";
 import type { PreviewOmission } from "@/lib/domain/delivery/view";
 import type { MergeRefusal } from "@/lib/domain/place-merge";
@@ -687,31 +687,13 @@ export const CHECK_LABELS: Record<CheckName, string> = {
   data_version: "Datenversion größer als die vorherige",
 };
 
-/** Events of `changes.json`. */
-export const CHANGE_EVENT_LABELS: Record<ChangeEntry["event"], string> = {
-  created: "Neu",
-  updated: "Geändert",
-  excluded: "Ausgeschlossen",
-  merged: "Zusammengelegt",
-  removed: "Entfernt",
-};
-
-/** Object types of `changes.json`. */
-export const CHANGE_OBJECT_TYPE_LABELS: Record<ChangeEntry["objectType"], string> = {
-  spot: "Spot",
-  highlight: "Highlight",
-  region: "Region",
-};
-
 /** What the files of a package hold. */
 export const CONTRACT_FILE_LABELS: Record<ContractFile, string> = {
   "manifest.json": "Manifest",
   "spots.json": "Spots",
-  "highlights.json": "Highlights",
   "regions.json": "Regionen",
   "coast.geojson": "Küste",
   "weather-points.json": "Wetterpunkte",
-  "changes.json": "Änderungen",
 };
 
 /** Why the next package would not deliver a place (place page, tab „Lieferung“). */

@@ -1,6 +1,6 @@
 import { desc, eq, sql } from "drizzle-orm";
 import type { Archive } from "@/lib/adapters/s3";
-import type { CoverageEntry, Manifest } from "@/contract/v3_0";
+import type { CoverageEntry, Manifest } from "@/contract";
 import type { Db } from "@/lib/db/client";
 import { radiusPackageRequests, radiusPackages } from "@/lib/db/schema/radius";
 import { getRadiusPackage, readRadiusFile, type RadiusPackageRow } from "./build";
@@ -16,7 +16,10 @@ export const RADIUS_PACKAGES_PAGE_SIZE = 50;
 /** Map colours per feature role, light enough for the dark base map; the page's legend uses the same. */
 export const ROLE_COLORS = { delivered: "#4ade80", missing: "#facc15", circle: "#60a5fa", marina: "#f87171" } as const;
 
-export type RadiusPreview = { row: RadiusPackageRow; manifest: Manifest; totalBytes: number };
+/** The facts and the things on land (`nearby`) over all spots of a package. */
+export type SpotStats = { facts: number; nearby: number };
+
+export type RadiusPreview = { row: RadiusPackageRow; manifest: Manifest; totalBytes: number; spotStats: SpotStats };
 
 /** The package a client would get for `marina` and `days` (built if not yet cached; no API client), its manifest and its total size. */
 export async function previewRadius(
@@ -31,7 +34,11 @@ export async function previewRadius(
   if (bytes === null) throw new Error(`radius package ${row.key} has no manifest.json`);
   const manifest = JSON.parse(new TextDecoder().decode(bytes)) as Manifest;
   const totalBytes = Object.values(row.fileHashes).reduce((sum, h) => sum + h.bytes, 0);
-  return { row, manifest, totalBytes };
+  const spotsBytes = await readRadiusFile(archive, row, "spots.json");
+  if (spotsBytes === null) throw new Error(`radius package ${row.key} has no spots.json`);
+  const { spots } = JSON.parse(new TextDecoder().decode(spotsBytes)) as { spots: Array<{ facts?: unknown[]; nearby?: unknown[] }> };
+  const spotStats = spots.reduce((sum, s) => ({ facts: sum.facts + (s.facts?.length ?? 0), nearby: sum.nearby + (s.nearby?.length ?? 0) }), { facts: 0, nearby: 0 });
+  return { row, manifest, totalBytes, spotStats };
 }
 
 export type RadiusPackageListRow = {

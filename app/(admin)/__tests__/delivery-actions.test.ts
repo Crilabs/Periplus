@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import type { PgBoss } from "pg-boss";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/db/client";
-import { profileSummaries, runs, textShingles } from "@/lib/db/schema";
+import { berthStates, runs, textShingles } from "@/lib/db/schema";
 import { authenticateApiClient, createApiClient, listApiClients } from "@/lib/domain/api-clients";
 import { setDeliveryArchive } from "@/lib/domain/delivery/archive";
 import { buildDelivery } from "@/lib/domain/delivery/build";
@@ -115,20 +115,15 @@ describe("GET /deliveries/[id]/files/[file]", () => {
       const archive = memoryArchive();
       setDeliveryArchive(archive);
       const f = await seedDeliverySubdivision(tx);
-      // A's summary is a 16-word copy of an archived text: the package is rejected
+      // A's landside fact states a 16-word copy of an archived text: the package is rejected
       const salt = newId().replace(/-/g, "").replace(/\d/g, (d) => "ghijklmnop"[Number(d)]!);
       const words = Array.from({ length: 30 }, (_, i) => `${salt}${"abcdefghijklmnopqrstuvwxyz"[i % 26]}`);
       const v = await insertTestVersion(tx, [words.join(" ")]);
       await tx.insert(textShingles).values(shingleHashes(words.join(" "), 15).map((shingleHash) => ({ shingleHash, chunkId: v.chunkIds[0]! })));
-      await tx.insert(profileSummaries).values({
-        geoObjectId: f.places.A.geoObjectId,
-        profileVersion: 1,
-        text: `Die Bucht: ${words.slice(2, 18).join(" ")}.`,
-        status: "ok",
-        attempts: 1,
-        model: "test",
-        promptVersion: 9,
-      });
+      const statement = `Die Bucht: ${words.slice(2, 18).join(" ")}.`;
+      const [state] = await tx.select().from(berthStates).where(eq(berthStates.placeId, f.places.A.placeId));
+      const facts = state!.facts.map((x) => (x.subject === "landside" ? { ...x, statement } : x));
+      await tx.update(berthStates).set({ facts }).where(eq(berthStates.placeId, f.places.A.placeId));
       const rejected = await buildDelivery(tx, archive, f.subdivisionId, { now: new Date("2040-06-01T08:00:00Z"), inCallerTransaction: true });
       expect(rejected.status).toBe("rejected");
 

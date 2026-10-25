@@ -36,16 +36,16 @@ vi.mock("@/lib/db/client", async (importActual) => ({
   getDb: () => db,
 }));
 
-const subdivisionsRoute = await import("../api/v3/subdivisions/route");
-const packageRoute = await import("../api/v3/subdivisions/[subdivision]/package/route");
-const fileRoute = await import("../api/v3/subdivisions/[subdivision]/package/[file]/route");
-const imageRoute = await import("../api/v3/subdivisions/[subdivision]/package/images/[file]/route");
-const schemaRoute = await import("../api/v3/schema/[version]/[file]/route");
+const subdivisionsRoute = await import("../api/v4/subdivisions/route");
+const packageRoute = await import("../api/v4/subdivisions/[subdivision]/package/route");
+const fileRoute = await import("../api/v4/subdivisions/[subdivision]/package/[file]/route");
+const imageRoute = await import("../api/v4/subdivisions/[subdivision]/package/images/[file]/route");
+const schemaRoute = await import("../api/v4/schema/[version]/[file]/route");
 const schemaRouteV1 = await import("../api/v1/schema/[version]/[file]/route");
 
 const NOW = new Date("2040-06-01T08:00:00Z");
 const LATER = new Date("2040-06-02T08:00:00Z");
-const BASE = "http://localhost/api/v3";
+const BASE = "http://localhost/api/v4";
 
 const request = (path: string, key?: string, headers: Record<string, string> = {}) =>
   new Request(`${BASE}${path}`, { headers: { ...(key ? { authorization: `Bearer ${key}` } : {}), ...headers } });
@@ -130,14 +130,14 @@ describe("delivery API: authentication", () => {
     }));
 });
 
-describe("GET /api/v3/subdivisions", () => {
+describe("GET /api/v4/subdivisions", () => {
   it("lists the subdivision with the data version, bbox and build time of its latest valid package", () =>
     withRollback(async (tx) => {
       const { f, archive, key } = await setup(tx);
       const before = await getSubdivisions(key);
       expect(before.status).toBe(200);
       const listed = (await before.json()) as { schemaVersion: string; subdivisions: Array<{ id: string }> };
-      expect(listed.schemaVersion).toBe("3.0");
+      expect(listed.schemaVersion).toBe("4.0");
       expect(listed.subdivisions.find((s) => s.id === f.subdivisionPublicId)).toEqual({
         id: f.subdivisionPublicId,
         key: f.subdivisionKey,
@@ -182,7 +182,7 @@ describe("GET /api/v3/subdivisions", () => {
     }));
 });
 
-describe("GET /api/v3/subdivisions/[subdivision]/package", () => {
+describe("GET /api/v4/subdivisions/[subdivision]/package", () => {
   it("the package manifest links every file of the current data version", () =>
     withRollback(async (tx) => {
       const { f, archive, key } = await setup(tx);
@@ -203,7 +203,7 @@ describe("GET /api/v3/subdivisions/[subdivision]/package", () => {
           Object.fromEntries(
             ["manifest.json", "spots.json", "regions.json", "coast.geojson", "weather-points.json"].map((file) => [
               file,
-              `/api/v3/subdivisions/${f.subdivisionPublicId}/package/${file}?dataVersion=2`,
+              `/api/v4/subdivisions/${f.subdivisionPublicId}/package/${file}?dataVersion=2`,
             ]),
           ),
         );
@@ -245,7 +245,7 @@ describe("GET /api/v3/subdivisions/[subdivision]/package", () => {
     withRollback(async (tx) => {
       const { f, archive, key } = await setup(tx);
       await build(tx, archive, f);
-      // deliveries are append-only; the test transaction plays a package stored before the contract moved to 3.0
+      // deliveries are append-only; the test transaction plays a package stored before the contract moved to 4.0
       await tx.execute(sql`alter table deliveries disable trigger deliveries_append_only`);
       await tx.execute(sql`update deliveries set schema_version = '2.3'`);
       await tx.execute(sql`alter table deliveries enable trigger deliveries_append_only`);
@@ -254,11 +254,11 @@ describe("GET /api/v3/subdivisions/[subdivision]/package", () => {
       expect((await getFile(f.subdivisionPublicId, "spots.json", key)).headers.get("periplus-schema-version")).toBe("2.3");
       expect((await getFile(f.subdivisionPublicId, "manifest.json", key, "?dataVersion=1")).headers.get("periplus-schema-version")).toBe("2.3");
       // the other endpoints speak the current contract
-      expect((await getSubdivisions(key)).headers.get("periplus-schema-version")).toBe("3.0");
+      expect((await getSubdivisions(key)).headers.get("periplus-schema-version")).toBe("4.0");
     }));
 });
 
-describe("GET /api/v3/subdivisions/[subdivision]/package/[file]", () => {
+describe("GET /api/v4/subdivisions/[subdivision]/package/[file]", () => {
   it("a file is served byte-identical to the manifest hash with schema and data version headers", async () => {
     // the one S3 round trip: the files go to the test bucket and are deleted afterwards
     const archive = testArchive();
@@ -326,15 +326,15 @@ describe("GET /api/v3/subdivisions/[subdivision]/package/[file]", () => {
       const { f, archive, key } = await setup(tx);
       await build(tx, archive, f);
       // the proxy rejects an encoded separator before any route runs
-      expect(decideAccess({ pathname: `/api/v3/subdivisions/${f.subdivisionPublicId}/package/..%2fspots.json`, session: null, hasBearer: true })).toEqual({
+      expect(decideAccess({ pathname: `/api/v4/subdivisions/${f.subdivisionPublicId}/package/..%2fspots.json`, session: null, hasBearer: true })).toEqual({
         action: "deny",
         status: 404,
       });
-      expect(decideAccess({ pathname: `/api/v3/subdivisions/${f.subdivisionPublicId}/package/../spots.json`, session: null, hasBearer: true })).toEqual({
+      expect(decideAccess({ pathname: `/api/v4/subdivisions/${f.subdivisionPublicId}/package/../spots.json`, session: null, hasBearer: true })).toEqual({
         action: "deny",
         status: 404,
       });
-      expect(decideAccess({ pathname: `/api/v3/subdivisions/${f.subdivisionPublicId}/package/secrets.json`, session: null, hasBearer: true })).toEqual({
+      expect(decideAccess({ pathname: `/api/v4/subdivisions/${f.subdivisionPublicId}/package/secrets.json`, session: null, hasBearer: true })).toEqual({
         action: "allow",
       });
       // the route serves contract files only
@@ -412,7 +412,7 @@ describe("GET /api/v3/subdivisions/[subdivision]/package/[file]", () => {
     }));
 });
 
-describe("GET /api/v3/subdivisions/[subdivision]/package/images/[file]", () => {
+describe("GET /api/v4/subdivisions/[subdivision]/package/images/[file]", () => {
   const JPG = "jpeg bytes of the title image";
   const bytes = new TextEncoder().encode(JPG);
   /** The title image of spot A in the built package. */
@@ -461,7 +461,7 @@ describe("GET /api/v3/subdivisions/[subdivision]/package/images/[file]", () => {
     }));
 });
 
-describe("GET /api/v3/schema/[version]/[file]", () => {
+describe("GET /api/v4/schema/[version]/[file]", () => {
   it("the schema endpoint returns the checked-in JSON schema of every published version; /api/v1 still serves 1.0", () =>
     withRollback(async (tx) => {
       db = tx;
@@ -472,6 +472,7 @@ describe("GET /api/v3/schema/[version]/[file]", () => {
         });
       for (const file of ["spots.schema.json", "manifest.schema.json", "coast.schema.json", "changes.schema.json"]) {
         for (const [version, res] of [
+          ["3.0", await getSchema("3.0", file, key)],
           ["2.3", await getSchema("2.3", file, key)],
           ["2.2", await getSchema("2.2", file, key)],
           ["2.1", await getSchema("2.1", file, key)],
@@ -484,6 +485,16 @@ describe("GET /api/v3/schema/[version]/[file]", () => {
           expect(res.headers.get("periplus-schema-version")).toBe(version);
           expect(res.headers.has("periplus-data-version")).toBe(false);
         }
+      }
+      // 4.0 has no highlights and no change feed: every other file, and the change answer is no file of the contract
+      for (const file of ["spots.schema.json", "manifest.schema.json", "coast.schema.json", "regions.schema.json", "weather-points.schema.json"]) {
+        const res = await getSchema("4.0", file, key);
+        expect(res.status, `4.0/${file}`).toBe(200);
+        expect(await res.text()).toBe(readFileSync(`contract/schema/4.0/${file}`, "utf8"));
+        expect(res.headers.get("periplus-schema-version")).toBe("4.0");
+      }
+      for (const file of ["highlights.schema.json", "changes.schema.json"]) {
+        expect((await getSchema("4.0", file, key)).status, `4.0/${file}`).toBe(404);
       }
       for (const [version, file] of [
         ["5.0", "spots.schema.json"],

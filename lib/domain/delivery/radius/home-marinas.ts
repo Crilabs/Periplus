@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import type { SpotsFile } from "@/contract/v3_0";
+import type { SpotsFile } from "@/contract";
 import type { Archive } from "@/lib/adapters/s3";
 import type { Db } from "@/lib/db/client";
 import { validAtAlias } from "@/lib/domain/timeline";
