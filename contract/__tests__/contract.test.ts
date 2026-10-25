@@ -188,6 +188,8 @@ describe("Periplus Data Contract 4.0", () => {
     expect(regionSchema.safeParse(region).success).toBe(true);
     expect(regionSchema.safeParse({ ...region, type: "coast_section" }).success).toBe(false);
     expect(regionSchema.safeParse({ ...region, radiusNm: 0 }).success).toBe(false);
+    expect(regionSchema.safeParse({ ...region, profileVersion: 1 }).success).toBe(false);
+    expect(regionSchema.safeParse({ ...region, validFrom: "2026-10-19" }).success).toBe(false);
     expect(regionSchema.safeParse({ ...region, parentId: "sp_01J9X4K2M7Q8R5T6V7W8X9Y0Z1" }).success).toBe(false);
     expect(regionSchema.safeParse({ ...region, parentId: "ar_01J9X4M0A1B2C3D4E5F6G7H8JA" }).success).toBe(false);
     expect(regionSchema.safeParse({ ...region, parentId: "rg_01J9X4KZ0A1B2C3D4E5F6G7H8J" }).success).toBe(true);
@@ -272,7 +274,7 @@ describe("Periplus Data Contract 4.0", () => {
     }
   });
 
-  it("2.2 validates highlightLevels (frozen 3.0 spot)", () => {
+  it("2.2 highlightLevels: the frozen 3.0 spot validates them, 4.0 has none", () => {
     const ex30 = TEIL_B_V3_0;
     const spot30 = v30.spotSchema;
     expect(spot30.safeParse({ ...ex30, highlightLevels: { culture: "many", food: "none", beach: "some" } }).success).toBe(true);
@@ -470,7 +472,7 @@ describe("Periplus Data Contract 4.0", () => {
       ["an empty description", [{ kind: "text", description: "" }]],
       ["a kind without a position", [{ kind: "beach" }]],
     ] as const) {
-      expect(spotSchema.safeParse({ ...ex, landingPoints }, ).success, name).toBe(false);
+      expect(spotSchema.safeParse({ ...ex, landingPoints }).success, name).toBe(false);
     }
   });
 

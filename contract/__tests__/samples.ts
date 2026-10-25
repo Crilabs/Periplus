@@ -86,8 +86,6 @@ export const SAMPLE_FILES: {
         spotIds: [TEIL_B_EXAMPLE.id],
         character: { de: "Vulkanische Halbinsel mit ruhigen Buchten." },
         facts: { meltemiExposure: 0.4, ferryTraffic: "light", charterBase: false, supplyPort: null },
-        profileVersion: 1,
-        validFrom: "2026-10-19",
       },
     ],
   },

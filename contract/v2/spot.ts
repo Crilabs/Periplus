@@ -47,12 +47,19 @@ export const hazardKind = z.enum([
   "other",
 ]);
 
+/** A name in one language and script; `lang` is a BCP 47 tag. */
+const localizedName = z.strictObject({
+  lang: z.string().min(2),
+  name: z.string().min(1),
+  script: z.enum(["latin", "greek"]),
+});
+
 /**
  * A free fact about the spot or about something on land (contract 4.0). A landside fact points at the `nearby` entry of
  * its object by `id`; without a match it carries only the `name` the text gave (coordinates are never guessed).
  */
 export const factSchema = z
-    .strictObject({
+  .strictObject({
     id: publicId("fc"),
     subject: z.discriminatedUnion("kind", [
       z.strictObject({ kind: z.literal("spot") }),
@@ -80,9 +87,7 @@ export const nearbyEntrySchema = z.strictObject({
   id: publicId("hl"),
   category: nearbyCategory,
   name: z.string().min(1),
-  names: z
-    .array(z.strictObject({ lang: z.string().min(2), name: z.string().min(1), script: z.enum(["latin", "greek"]) }))
-    .optional(),
+  names: z.array(localizedName).optional(),
   position: latLon,
   distanceM: count,
   access: z.enum(["foot", "transport"]),
@@ -106,9 +111,7 @@ export const spotSchema = z.strictObject({
   /** Display name, Latin script preferred (Teil B): German, English, the own Latin name, else the ELOT 743 transliteration of the preferred Greek name (never of an old or alternate name). */
   name: z.string().min(1),
   /** `lang` is a BCP 47 tag (`el`, `en`, `de`, …); the transliteration of a Greek name is `el-Latn`, script `latin`. */
-  names: z
-    .array(z.strictObject({ lang: z.string().min(2), name: z.string().min(1), script: z.enum(["latin", "greek"]) }))
-    .optional(),
+  names: z.array(localizedName).optional(),
   position: latLon,
   anchorPosition: z
     .strictObject({ lat: latitude, lon: longitude, confidence: unit, source: provenanceSource })

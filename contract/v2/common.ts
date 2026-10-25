@@ -78,18 +78,6 @@ export const highlightCategory = z.enum(["food", "supply", "beach", "nature", "a
 /** What can be reachable on land from a spot (contract 4.0): the highlight categories plus bakery and transport. */
 export const nearbyCategory = z.enum([...highlightCategory.options, "bakery", "transport"]);
 
-/** Version of a contract object and the date it holds from (regions only since contract 4.0; the spot carries `asOf`). */
-export const versionFields = {
-  profileVersion: z
-    .number()
-    .int()
-    .min(1)
-    .describe(
-      "Version of the contract object; rises only when the delivered object changes. Compare versions within one subdivision's feed only: an object moved to another subdivision keeps counting there, and the old subdivision's removal may carry a higher version than the new subdivision's live object",
-    ),
-  validFrom: isoDate,
-};
-
 /** GeoJSON position `[lon, lat]`. */
 const position = z.tuple([longitude, latitude]);
 const ring = z.array(position).min(4);
