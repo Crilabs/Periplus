@@ -16,7 +16,7 @@ import type { Db } from "@/lib/db/client";
 import { geomFromGeoJson } from "@/lib/db/geometry";
 import { geoObjects } from "@/lib/db/schema";
 import { classifyOsm, osmNames } from "@/lib/domain/gazetteer/osm-classify";
-import { upsertGeoObject } from "@/lib/domain/gazetteer/store";
+import { builtGeometry, upsertGeoObject } from "@/lib/domain/gazetteer/store";
 import { createLogger } from "@/lib/logger";
 import type { Bbox } from "@/lib/domain/tiles";
 import { countryBlocks, landCoverage, quadrants } from "@/lib/domain/gazetteer/land";
@@ -235,11 +235,14 @@ export async function importCoarse(
   });
 }
 
-/** Area in km2 of the polygon (or assembled ring lines) of `geometry`; 0 for a point or lines that enclose nothing. */
+/**
+ * Area in km2 of the polygon (or assembled ring lines) of `geometry`; 0 for a point or lines that enclose nothing.
+ * The assembly runs once (`builtGeometry`): inlined twice, the planner folded ST_BuildArea of the whole relation twice.
+ */
 async function areaKm2(db: Db, geometry: NonNullable<ReturnType<typeof elementGeometry>>): Promise<number> {
-  const g = "lines" in geometry ? sql`ST_BuildArea(ST_Collect(ARRAY[${sql.join(geometry.lines.map((l) => geomFromGeoJson(l)), sql`, `)}]))` : geomFromGeoJson(geometry);
   const { rows } = await db.execute<{ km2: number | null }>(sql`
-    SELECT CASE WHEN ST_Dimension(${g}) = 2 THEN ST_Area(ST_MakeValid(${g})::geography) / 1e6 ELSE 0 END AS km2`);
+    WITH ${builtGeometry(geometry)}
+    SELECT CASE WHEN ST_Dimension(g) = 2 THEN ST_Area(ST_MakeValid(g)::geography) / 1e6 ELSE 0 END AS km2 FROM built`);
   return rows[0]?.km2 ?? 0;
 }
 

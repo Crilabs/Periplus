@@ -50,27 +50,40 @@ function publicIdAfter(type: GeoObjectType, current: string | null): string | nu
 }
 
 /**
- * The draft geometry as EWKB hex, or why it is unusable. Lines become `ST_BuildArea(ST_Collect(…))`;
- * when they enclose no area, the centroid of the lines. An invalid geometry is repaired with
- * `ST_MakeValid`, keeping only parts of its own dimension (an area stays an area, a line a line);
- * when nothing valid remains, the reason is returned instead.
+ * The CTE chain `built(g)` that assembles a draft geometry once: lines become `ST_BuildArea(ST_Collect(…))`, lines
+ * that enclose no area the centroid of the lines; a GeoJSON geometry is taken as it is. Every step is a MATERIALIZED
+ * CTE, so the planner never pulls the expression up and constant-folds a copy per reference: as nested sub-selects,
+ * Postgres evaluated ST_BuildArea of a 225,000-point relation 18 times during planning (1.1 GB and 14 s for one
+ * upsert) and the 2 GB database was killed storing the Bay of Biscay (N7 check). Used as `WITH ${builtGeometry(g)} …
+ * FROM built`.
  */
+export function builtGeometry(geometry: GeoObjectDraft["geometry"]): SQL {
+  if (!("lines" in geometry)) return sql`built AS MATERIALIZED (SELECT ${geomFromGeoJson(geometry)} AS g)`;
+  const lines = sql.join(geometry.lines.map((l) => geomFromGeoJson(l)), sql`, `);
+  return sql`lines AS MATERIALIZED (SELECT ST_Collect(ARRAY[${lines}]) AS c),
+    area AS MATERIALIZED (SELECT c, ST_BuildArea(c) AS a FROM lines),
+    built AS MATERIALIZED (SELECT CASE WHEN a IS NULL OR ST_IsEmpty(a) THEN ST_Centroid(c) ELSE a END AS g FROM area)`;
+}
+
+/**
+ * The statement behind `resolveGeometry`: the built geometry as EWKB hex (`g`) and, when it is unusable, why
+ * (`reason`). An invalid geometry is repaired with `ST_MakeValid`, keeping only parts of its own dimension (an area
+ * stays an area, a line a line); when nothing valid remains, `g` is null. Each heavy function runs once (`builtGeometry`).
+ */
+export function resolveGeometrySql(geometry: GeoObjectDraft["geometry"]): SQL {
+  return sql`
+    WITH ${builtGeometry(geometry)},
+    checked AS MATERIALIZED (SELECT g, ST_IsValid(g) AS valid FROM built),
+    repaired AS MATERIALIZED (
+      SELECT CASE WHEN valid THEN g ELSE ST_CollectionExtract(ST_MakeValid(g), ST_Dimension(g) + 1) END AS r,
+             CASE WHEN valid THEN 'empty geometry' ELSE ST_IsValidReason(g) END AS reason
+      FROM checked)
+    SELECT CASE WHEN r IS NOT NULL AND NOT ST_IsEmpty(r) AND ST_IsValid(r) THEN r END AS g, reason FROM repaired`;
+}
+
+/** The draft geometry as EWKB hex, or why it is unusable (`resolveGeometrySql`). */
 async function resolveGeometry(db: Db, geometry: GeoObjectDraft["geometry"]): Promise<{ geom: string } | { invalid: string }> {
-  let expr: SQL;
-  if ("lines" in geometry) {
-    const lines = sql.join(geometry.lines.map((l) => geomFromGeoJson(l)), sql`, `);
-    expr = sql`(SELECT CASE WHEN a IS NULL OR ST_IsEmpty(a) THEN ST_Centroid(c) ELSE a END
-                FROM (SELECT c, ST_BuildArea(c) AS a FROM (SELECT ST_Collect(ARRAY[${lines}]) AS c) l) x)`;
-  } else {
-    expr = geomFromGeoJson(geometry);
-  }
-  const { rows } = await db.execute<{ g: string | null; reason: string }>(sql`
-    SELECT CASE WHEN r IS NOT NULL AND NOT ST_IsEmpty(r) AND ST_IsValid(r) THEN r END AS g, reason
-    FROM (
-      SELECT CASE WHEN ST_IsValid(g) THEN g ELSE ST_CollectionExtract(ST_MakeValid(g), ST_Dimension(g) + 1) END AS r,
-             CASE WHEN ST_IsValid(g) THEN 'empty geometry' ELSE ST_IsValidReason(g) END AS reason
-      FROM (SELECT ${expr} AS g) x
-    ) y`);
+  const { rows } = await db.execute<{ g: string | null; reason: string }>(resolveGeometrySql(geometry));
   const { g, reason } = rows[0]!;
   return g ? { geom: g } : { invalid: reason };
 }

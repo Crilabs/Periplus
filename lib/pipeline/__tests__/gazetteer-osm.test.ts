@@ -194,19 +194,16 @@ describe("importOsm", () => {
 
   it("no partial import: a failing upsert rolls back every object of the run", () =>
     withRollback(async (db) => {
-      // A real database failure on the last imported element, after six successful upserts.
-      await db.execute(sql`
-        CREATE FUNCTION test_fail_geo_object_insert() RETURNS trigger LANGUAGE plpgsql
-        AS $$ BEGIN RAISE EXCEPTION 'injected insert failure'; END $$`);
-      await db.execute(sql.raw(`
-        CREATE TRIGGER test_fail_geo_object_insert BEFORE INSERT ON geo_objects
-        FOR EACH ROW WHEN (NEW.osm_id = '${osm("node", 9)}') EXECUTE FUNCTION test_fail_geo_object_insert()`));
+      // A real database failure on the last imported element, after the earlier successful upserts: Postgres refuses a
+      // NUL character in jsonb and text. Data, not a trigger: CREATE TRIGGER took a table lock on geo_objects while this
+      // transaction also needed the shared rate_limits row, which deadlocked with other test files (N7 check).
       await prepare(db);
-      const error = await importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({ elements: ELEMENTS }), archive }).then(
+      const poisoned = ELEMENTS.map((e) => (e.id === ID + 9 ? { ...e, tags: { ...e.tags, name: "Test\u0000Anchorage" } } : e));
+      const error = await importOsm(db, { scope: scope(), runId: newId() }, { transport: transport({ elements: poisoned }), archive }).then(
         () => null,
         (e: unknown) => e as Error & { cause?: Error },
       );
-      expect(`${error?.message} ${error?.cause?.message}`).toContain("injected insert failure");
+      expect(`${error?.message} ${error?.cause?.message}`).toMatch(/\\u0000|0x00/);
       expect(await objects(db)).toEqual([]);
       const names = await db.execute(sql`SELECT 1 FROM geo_names WHERE name IN ('Test Marina', 'Taverna Test')`);
       expect(names.rows).toEqual([]);
