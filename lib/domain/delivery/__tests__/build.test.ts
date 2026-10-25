@@ -88,13 +88,12 @@ function seededShuffle(seed: number): <T>(list: T[]) => T[] {
   };
 }
 
-/** Two more sources on every spot and POI and one more name on every region, so every inner list has two or more. */
+/** Two more sources on every POI and one more name on every region, so every inner list has two or more. */
 function withExtras(scope: SubdivisionScope): SubdivisionScope {
   const extra = (id: string) =>
     [1, 2].map((n) => ({ url: `https://extra-${n}-${id.toLowerCase()}.test.invalid/page`, docType: "forum" as const, observedAt: `2025-0${n}-01` }));
   return {
     ...scope,
-    spots: scope.spots.map((s) => ({ ...s, sources: [...s.sources, ...extra(s.publicId)] })),
     pois: scope.pois.map((p) => ({ ...p, sources: [...p.sources, ...extra(p.publicId)] })),
     regions: scope.regions.map((r) => ({ ...r, names: [...r.names, { lang: "fr", name: `${r.name} (fr)` }] })),
   };
@@ -108,7 +107,7 @@ function shuffled(scope: SubdivisionScope): SubdivisionScope {
     subdivision: { ...scope.subdivision, names: mix(scope.subdivision.names) },
     areas: mix(scope.areas).map((a) => ({ ...a, names: mix(a.names) })),
     tiles: mix(scope.tiles),
-    spots: mix(scope.spots).map((s) => ({ ...s, names: mix(s.names), sources: mix(s.sources) })),
+    spots: mix(scope.spots).map((s) => ({ ...s, names: mix(s.names), nearbyObjects: mix(s.nearbyObjects) })),
     merged: mix(scope.merged),
     pois: mix(scope.pois).map((p) => ({ ...p, sources: mix(p.sources) })),
     regions: mix(scope.regions).map((r) => ({ ...r, names: mix(r.names) })),

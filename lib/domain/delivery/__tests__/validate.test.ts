@@ -435,11 +435,11 @@ describe("validatePackage", () => {
   });
 
   it("passes the build warnings through and warns about a missing summary (ruling M6-P9)", async () => {
-    const warnings = buildWarnings({ omittedSpots: [{ id: OTHER_SP, reason: "no_profile" }] });
+    const warnings = buildWarnings({ omittedSpots: [{ id: OTHER_SP, reason: "no_state" }] });
     const report = await validate(breakPackage(validPackage(), (p) => void delete spots(p)[1]!.summary), { warnings });
     expect(report.ok).toBe(true);
     expect(report.warnings).toEqual([
-      { file: "spots.json", objectId: OTHER_SP, path: null, message: "Nicht geliefert: kein Profil" },
+      { file: "spots.json", objectId: OTHER_SP, path: null, message: "Nicht geliefert: kein Stand" },
       { file: "spots.json", objectId: spots(validPackage())[1]!.id, path: "/spots/1/summary", message: "Zusammenfassung fehlt" },
     ]);
   });
@@ -450,12 +450,12 @@ describe("buildWarnings", () => {
     const geoObjectId = "01a15602-0000-7000-8000-000000000001";
     const out = buildWarnings({
       spots: [
-        { id: SPOT_A, warnings: [{ code: "missing_provenance", field: "depth" }, { code: "missing_provenance", field: "shelter" }] },
+        { id: SPOT_A, warnings: [{ code: "nearby_without_id", geoObjectId: "g1" }, { code: "fact_without_subject", factId: "f1" }] },
         { id: OTHER_SP, warnings: [{ code: "fallback_name" }] },
       ],
       omittedSpots: [
         { id: SPOT_X, reason: "no_name" },
-        { id: SPOT_X, reason: "shelter_incomplete" },
+        { id: SPOT_X, reason: "incomplete_core" },
       ],
       droppedHighlights: [
         { id: OTHER_HL, reason: "duplicate", into: HIGHLIGHT },
@@ -465,11 +465,11 @@ describe("buildWarnings", () => {
       droppedWeatherPoints: [{ geoObjectId, kind: "cape", reason: "no_water" }],
     });
     expect(out.map((f) => [f.file, f.objectId, f.message])).toEqual([
-      ["spots.json", SPOT_A, "Tiefe ohne Herkunft, nicht geliefert"],
-      ["spots.json", SPOT_A, "Schutzwerte ohne Herkunft geliefert (ausgeschlossener Spot)"],
+      ["spots.json", SPOT_A, "Ding an Land ohne öffentliche ID, nicht geliefert"],
+      ["spots.json", SPOT_A, "Landfakt ohne Bezugsnamen, nicht geliefert"],
       ["spots.json", OTHER_SP, "Ausgeschlossener Spot ohne gültigen Namen, mit Ersatznamen geliefert"],
       ["spots.json", SPOT_X, "Nicht geliefert: kein gültiger Name"],
-      ["spots.json", SPOT_X, "Nicht geliefert: Schutzwerte unvollständig oder ohne Herkunft"],
+      ["spots.json", SPOT_X, "Nicht geliefert: Schutz oder Ankerposition fehlt im Stand"],
       ["highlights.json", OTHER_HL, `Nicht geliefert: Dublette von ${HIGHLIGHT}`],
       ["highlights.json", OTHER_HL, "Nicht geliefert: existiert laut Profil nicht mehr"],
       ["regions.json", "rg_01J9ZD00000000000000000002", "Nicht geliefert: kein gültiger Name"],

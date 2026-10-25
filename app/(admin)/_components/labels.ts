@@ -720,8 +720,8 @@ export const CONTRACT_FILE_LABELS: Record<ContractFile, string> = {
 /** Why the next package would not deliver a place (place page, tab „Lieferung“). */
 export const PREVIEW_OMISSION_LABELS: Record<PreviewOmission, string> = {
   no_name: "Der Ort hat keinen gültigen Namen.",
-  no_profile: "Der Ort hat kein Profil.",
-  shelter_incomplete: "Die Schutzwerte sind unvollständig oder ohne Herkunft.",
+  no_state: "Der Ort hat keinen Stand.",
+  incomplete_core: "Im Stand fehlen Schutzwerte oder die Ankerposition.",
   no_subdivision: "Der Ort gehört zu keinem Landesteil.",
   merged: "Der Ort ist zusammengelegt. Das nächste Paket liefert ihn mit „zusammengelegt in“ (mergedInto) den Ort, in den er aufgegangen ist, sofern das letzte Paket des Landesteils ihn enthielt.",
   merged_removed:

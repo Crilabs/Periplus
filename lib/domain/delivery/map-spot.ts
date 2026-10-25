@@ -1,14 +1,14 @@
-import { httpUrl } from "@/contract/v3_0/common";
-import type { SpotBody } from "@/contract/v3_0";
+import { httpUrl } from "@/contract/v2/common";
+import type { SpotBody } from "@/contract/v2";
 import type { DeliveryConfig } from "@/lib/config/schemas";
-import type { PlaceKind, HighlightCategory } from "@/lib/db/schema/geo";
-import { derivedBerthable } from "@/lib/domain/consolidation/berthable";
-import { excludeValue, type ExcludeValue } from "@/lib/domain/consolidation/exclude";
-import type { AttributeProvenance, ProvenanceOrigin } from "@/lib/domain/consolidation/types";
+import type { PlaceKind } from "@/lib/db/schema/geo";
+import type { AttributeProvenance } from "@/lib/domain/consolidation/types";
+import { excludeValue, type ExcludeReason } from "@/lib/domain/consolidation/exclude";
 import { SECTORS } from "@/lib/domain/facts/schema-types";
 import { isForbiddenUrl } from "@/lib/domain/sources/forbidden-domains";
 import { round5 } from "./geo";
 import { mapImages } from "./map-image";
+import { mapFacts, mapLandingPoints, mapNearby, type DeliveredNearby } from "./map-facts";
 import type { SourceRefRow, SpotSource } from "./types";
 import {
   aggregateProvenance,
@@ -17,7 +17,6 @@ import {
   HAZARD_DE,
   NO_SHELTER_NOTE_DE,
   HAZARD_KIND,
-  HIGHLIGHT_CATEGORY,
   HOLDING,
   MOORING_TYPE,
   ORIGIN,
@@ -25,13 +24,16 @@ import {
   SOURCE_KIND,
   SPOT_KIND,
   type ContractHazardKind,
+  type ContractSourceKind,
+  type ProvenanceInfo,
   type SeasonKind,
 } from "./vocab";
 
 /*
- * Profile → contract spot (spec 08 "Feldzuordnung Profil → Spot: eine Tabelle … mit einem Test je Feld"). `SPOT_FIELDS`
- * names, per contract field, the profile attributes that feed it (also the basis of event severities, ruling M6-P2);
- * `mapSpot` applies the rules. Pure: no database, no quotes (sources are URLs, texts are vocabulary or summaries).
+ * Berth state → contract spot (spec 08 "Feldzuordnung … eine Tabelle … mit einem Test je Feld", design 7.3). `SPOT_FIELDS`
+ * names, per contract field, the core values of the state (fact schema v4 keys) that feed it (also the basis of event
+ * severities, ruling M6-P2); `mapSpot` applies the rules. Pure: no database, no quotes, no sources (a fact is its
+ * statement and a date).
  */
 
 const SHELTER_ATTRIBUTES = [...SECTORS.map((s) => `shelter.${s}`), "swell_protection"];
@@ -39,54 +41,57 @@ const DEPTH_ATTRIBUTES = ["depth.min", "depth.max", "depth.anchoring_min", "dept
 const LIMIT_ATTRIBUTES = ["max_draft", "max_length", "capacity"];
 const MOORING_ATTRIBUTES = ["mooring.types", "mooring.buoys", "mooring.line_ashore_required"];
 
-/** Contract service → profile attribute; `shop` and `taverna` come from the highlights nearby. */
+/** Contract service → core value key; `shop` and `taverna` come from the things on land (`nearby`), the rest has no key in fact schema v4. */
 const SERVICE_ATTRIBUTE = {
   water: "services.water",
   electricity: "services.electricity",
   fuel: "services.fuel",
   showers: "services.showers",
-  shop: "highlight.supply",
-  taverna: "highlight.food",
+  shop: null,
+  taverna: null,
   wifi: "services.wifi",
   dinghyLanding: "services.dinghy_landing",
 } as const;
 type Service = keyof typeof SERVICE_ATTRIBUTE;
-/** Services that close out of season: `yes` becomes `seasonal` when the place has an `open` season hint. */
+/** Services that close out of season: `yes` becomes `seasonal` when the state has an `open` season note. */
 const SEASONAL_SERVICES: Service[] = ["shop", "taverna"];
+/** The `nearby` categories (reached on foot) that stand for a shop, and for a taverna (E5). */
+const SHOP_CATEGORIES = ["supply", "bakery"];
+const TAVERNA_CATEGORIES = ["food"];
 
 type FieldRule = { attributes: string[]; note: string };
 
 export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
   id: { attributes: [], note: "places.public_id" },
-  kind: { attributes: ["place.kind"], note: "SPOT_KIND; without the identity key the place's kind" },
+  kind: { attributes: [], note: "SPOT_KIND of the place's kind" },
   berthable: {
     attributes: ["berthable"],
-    note: "the berthable value of the profile (a fact, else derived from kind and status, spec 17); null when it has none",
+    note: "the berthable value of the state (a fact, else derived from kind and status, spec 17); null when it has none",
   },
   contact: {
     attributes: ["contact"],
-    note: "vhf, phone and url of the contact fact; null when the fact is missing or all three are empty",
+    note: "vhf, phone and url of the contact value; null when it is missing or all three are empty",
   },
   name: {
-    attributes: ["geo.name"],
+    attributes: [],
     note: "display name (de, en, any); without a valid name the spot is omitted (no_name), an excluded one is delivered with spots.excludedFallbackName (ruling M6-C-R1)",
   },
-  names: { attributes: ["geo.name"], note: "valid names without fallbacks, the transliteration as el-Latn; omitted when none" },
-  position: { attributes: ["place.position"], note: "places.position, round5" },
+  names: { attributes: [], note: "valid names without fallbacks, the transliteration as el-Latn; omitted when none" },
+  position: { attributes: [], note: "places.position, round5" },
   anchorPosition: {
-    attributes: ["anchor_position"],
-    note: "omitted for port and marina; confidence and source (ORIGIN) from its provenance; without provenance omitted (warning missing_provenance)",
+    attributes: [],
+    note: "places.anchor_position with the configured position confidence, source computed; omitted for port and marina (their position is the harbour position); an anchorage or mooring field without one is omitted (incomplete_core)",
   },
   shelter: {
     attributes: SHELTER_ATTRIBUTES,
     note:
-      "a sector missing or without provenance omits the spot (shelter_incomplete); an excluded spot is delivered with a missing sector (or no profile) as 0 and 'ausgeschlossen – keine Schutzwerte' in exclude.detail; swell = swell_protection, else the sectors' minimum; source = combineSource, without any provenance ORIGIN.rule (computed, ruling M6-B-R3)",
+      "a sector missing omits the spot (incomplete_core); an excluded spot is delivered with a missing sector (or no state) as 0 and 'ausgeschlossen – keine Schutzwerte' in exclude.detail; swell = swell_protection, else the sectors' minimum; source = combineSource, without any state ORIGIN.rule (computed, ruling M6-B-R3)",
   },
   depth: {
     attributes: DEPTH_ATTRIBUTES,
-    note: "omitted without any depth, or when a depth has no provenance (warning missing_provenance); confidence = minimum, source = combineSource; depth.approach is not delivered (no Teil-B field)",
+    note: "omitted without any depth; confidence = minimum, source = combineSource; depth.approach is not delivered (no Teil-B field)",
   },
-  seabed: { attributes: ["seabed"], note: "types and shares as in the profile" },
+  seabed: { attributes: ["seabed"], note: "types and shares as in the state" },
   holding: { attributes: ["holding"], note: "HOLDING; missing → unknown" },
   limits: { attributes: LIMIT_ATTRIBUTES, note: "missing → null" },
   mooring: {
@@ -94,8 +99,8 @@ export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
     note: "MOORING_TYPE deduplicated and sorted; buoys present false → 0, else count; omitted without any mooring value",
   },
   services: {
-    attributes: [...Object.values(SERVICE_ATTRIBUTE), "derived.season"],
-    note: "true → yes, false → no, missing → unknown; shop/taverna yes → seasonal with an 'open' season hint",
+    attributes: ["services.water", "services.electricity", "services.fuel", "season_notes"],
+    note: "true → yes, false → no, missing → unknown; water, electricity and fuel from the state, shop (supply, bakery) and taverna (food) from the things on land reached on foot (E5); wifi, showers and dinghyLanding have no value in the state (unknown); shop/taverna yes → seasonal with an 'open' season note",
   },
   berth: {
     attributes: ["occupancy"],
@@ -103,65 +108,56 @@ export const SPOT_FIELDS: Record<keyof SpotBody, FieldRule> = {
   },
   occupancy: { attributes: ["occupancy"], note: "known months ascending; omitted without occupancy" },
   exclude: {
-    attributes: ["exclude", "prohibitions"],
-    note: "excluded = profile exclude, place status no_anchoring or a year-round text anchoring ban (months null or all 12); reason from the profile, else the status, else anchoringProhibited (rulings M6-P4, M6-B-R2); detail = EXCLUDE_REASON_DE; the text kinds swimming, fishing, fire, jet_ski and other are not delivered (no Teil-B field)",
+    attributes: ["prohibitions"],
+    note: "excluded = place status no_anchoring or a year-round text anchoring ban in the state (months null or all 12); reason from the status, else anchoringProhibited (rulings M6-P4, M6-B-R2); detail = EXCLUDE_REASON_DE; the text kinds swimming, fishing, fire, jet_ski and other are not delivered (no Teil-B field)",
   },
   hazards: {
     attributes: ["hazards", "prohibitions"],
     note: "HAZARD_KIND (unknown kind → other) with HAZARD_DE text and proper name; a computed ferry lane adds ferryTraffic (ruling M6-P11), a computed cable area cable; the other computed restrictions (military, protected area, aquaculture, firing area) show in coast.geojson only",
   },
   seasonNote: {
-    attributes: ["derived.season", "prohibitions"],
-    note: "SEASON_DE per season hint; a seasonal anchoring ban adds 'Ankerverbot'",
+    attributes: ["season_notes", "prohibitions"],
+    note: "SEASON_DE per season note; a seasonal anchoring ban adds 'Ankerverbot'",
   },
   score: {
-    attributes: ["derived.quietness"],
-    note: "profile confidence ?? 0, popularity ?? 0, quietness, profile sources count, newest text/observed date; 3 decimals",
-  },
-  highlightIds: { attributes: [], note: "context (highlights counting the spot, in the spot's derived.highlights order: categories sorted, rank order)" },
-  highlightLevels: {
-    attributes: ["derived.highlights"],
-    note: "per category of derived.highlights its level (none/some/many), categories sorted; none listed or no valid level → field absent (spec 16)",
+    attributes: [],
+    note: "confidence = mean of the confidences of the state's core values (rule values aside), 0 without; popularity ?? 0; quietness null (no value in the state); sourcesCount = distinct facts behind the core values and the facts; newest text date; 3 decimals",
   },
   externalRefs: { attributes: [], note: "osm_id, wikidata_id; googlePlaceIds {} until M8" },
   images: {
     attributes: [],
     note: "the current images of the place (rank, sort order, slot) whose render sources are all switched on for delivery (images.delivery); file images/<public id>-<slot>.jpg, camera from the camera columns",
   },
-  summary: {
-    attributes: [],
-    note: "the ok summary; below validation.lowConfidence the note is appended, without summary 'Wenig belegt.'",
-  },
-  sources: {
-    attributes: [],
-    note: "http(s) documents outside forbiddenDomains (those are reported to the validation, which blocks), newest first, at most spots.maxSources; kind = SOURCE_KIND",
-  },
-  provenance: { attributes: [], note: "aggregateProvenance per contract field group" },
+  provenance: { attributes: [], note: "aggregateProvenance per contract field group, from the core values' origin, confidence and date" },
   regionId: { attributes: [], note: "context (assigned region)" },
   mergedInto: { attributes: [], note: "null; merged spots are carried by the build" },
+  gaps: { attributes: [], note: "berth_states.gaps, as stored (core value keys without a value)" },
+  facts: { attributes: [], note: "mapFacts: the state's facts, statement and date, safety marked; a landside fact assigned to its nearby entry by name (E3)" },
+  landingPoints: { attributes: [], note: "mapLandingPoints: the state's landing points (position with kind, or description)" },
+  nearby: { attributes: [], note: "mapNearby: the state's things on land with a public hl_ id (E1), nearest first" },
 };
 
 /**
- * A profile value delivered without its provenance (ruling M6-B-R2 M-6): `anchorPosition` and `depth`, whose contract
- * values name their own source and confidence, are dropped; `shelter` (only on an excluded spot, any other is omitted)
- * keeps its values. An excluded spot without a valid name carries `spots.excludedFallbackName` (`fallback_name`). The
- * build reports them as validation warnings (Task 9).
+ * Not delivered, but reported (the build turns them into validation warnings, Task 3): an excluded spot without a valid
+ * name carries `spots.excludedFallbackName` (`fallback_name`); a thing on land without a public id is left out of
+ * `nearby` (`nearby_without_id`); a landside fact without a subject name is left out (`fact_without_subject`).
  */
 export type SpotWarning =
-  | { code: "missing_provenance"; field: "anchorPosition" | "depth" | "shelter" }
-  | { code: "fallback_name" };
+  | { code: "fallback_name" }
+  | { code: "nearby_without_id"; geoObjectId: string }
+  | { code: "fact_without_subject"; factId: string };
 
 /**
  * An excluded spot is always delivered (Teil B "Ausgeschlossene Spots werden mit `exclude.excluded = true` und Grund
- * geliefert", ruling M6-B-R2 I-2); any other spot without a profile or without all eight sectors (each with its
- * provenance) is omitted, which the build reports as a warning (`no_profile`, `shelter_incomplete`, ruling M6-P31).
- * A spot without a valid name is omitted (`no_name`, ruling M6-B-R1): the contract has no spot without a name. An
- * excluded one is delivered with the fallback name `spots.excludedFallbackName` instead, so the app learns it is
- * excluded (ruling M6-C-R1).
+ * geliefert", ruling M6-B-R2 I-2), also without a state; any other spot without a state is omitted (`no_state`), and
+ * one whose state lacks a shelter sector, or the anchor position of an anchorage or mooring field, is omitted
+ * (`incomplete_core`); the build reports both as warnings. A spot without a valid name is omitted (`no_name`,
+ * ruling M6-B-R1): the contract has no spot without a name. An excluded one is delivered with the fallback name
+ * `spots.excludedFallbackName` instead, so the app learns it is excluded (ruling M6-C-R1).
  */
 export type MappedSpot =
-  | { spot: SpotBody; warnings: SpotWarning[]; forbiddenSources: string[] }
-  | { omitted: "no_name" | "no_profile" | "shelter_incomplete" };
+  | { spot: SpotBody; asOf: string | null; warnings: SpotWarning[] }
+  | { omitted: "no_name" | "no_state" | "incomplete_core" };
 
 const round3 = (n: number) => Number(n.toFixed(3));
 const isRecord = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -173,19 +169,16 @@ type Prohibition = { kind?: unknown; months?: unknown; restrictedAreaId?: unknow
 /** A text ban without months, or one naming every month, holds all year (ruling M6-B-R2 M-2). */
 const allYear = (months: unknown) =>
   months === null || (Array.isArray(months) && Array.from({ length: 12 }, (_, i) => i + 1).every((m) => months.includes(m)));
-/** A computed prohibition: a restricted area over the place (fact schema v1 entry). */
+/** A computed prohibition: a restricted area over the place (fact schema entry). */
 const isComputed = (e: Prohibition) => typeof e.restrictedAreaId === "string";
 
-export function mapSpot(
-  src: SpotSource,
-  ctx: { regionId: string | null; highlightIds: string[]; cfg: DeliveryConfig },
-): MappedSpot {
-  const profile = src.profile;
-  const a: Record<string, unknown> = profile?.attributes ?? {};
-  const p: Record<string, AttributeProvenance> = profile?.provenance ?? {};
+export function mapSpot(src: SpotSource, ctx: { regionId: string | null; cfg: DeliveryConfig }): MappedSpot {
+  const state = src.state;
+  // the core values as the profile's attributes and provenance were read before: value, and origin/confidence/date
+  const a: Record<string, unknown> = Object.fromEntries(Object.entries(state?.core ?? {}).map(([k, v]) => [k, v.value]));
+  const p: Record<string, ProvenanceInfo> = Object.fromEntries(Object.entries(state?.core ?? {}).map(([k, v]) => [k, v]));
   const has = (key: string) => a[key] !== undefined && a[key] !== null;
-  const provenanceOf = (keys: string[]) => keys.filter(has).map((k) => p[k]).filter((e): e is AttributeProvenance => e !== undefined);
-  const originsOf = (keys: string[]): ProvenanceOrigin[] => provenanceOf(keys).map((e) => e.origin);
+  const provenanceOf = (keys: string[]) => keys.filter(has).map((k) => p[k]).filter((e): e is ProvenanceInfo => e !== undefined);
   const warnings: SpotWarning[] = [];
 
   const prohibitions = (Array.isArray(a["prohibitions"]) ? a["prohibitions"] : []) as Prohibition[];
@@ -195,38 +188,33 @@ export function mapSpot(
   const ferryLane = prohibitions.some((e) => e.kind === "ferry_lane");
   const cable = prohibitions.some((e) => e.kind === "cable" && isComputed(e));
 
-  // exclude (rulings M6-P4, M6-B-R2 I-1): the profile's exclude, the place status (a no_anchoring decision may be
-  // newer than the last consolidation) or a year-round text ban; the reason in that order.
-  const profileExclude = isRecord(a["exclude"]) ? (a["exclude"] as ExcludeValue) : null;
+  // exclude (rulings M6-P4, M6-B-R2 I-1): the place status or a year-round text ban; the reason in that order
   const statusExclude = excludeValue(src.status, src.statusReason);
-  const reason = profileExclude?.excluded
-    ? (profileExclude.reason ?? "anchoringProhibited")
-    : statusExclude.excluded
-      ? statusExclude.reason
-      : yearRoundBan
-        ? "anchoringProhibited"
-        : null;
+  const reason: ExcludeReason | null = statusExclude.excluded ? statusExclude.reason : yearRoundBan ? "anchoringProhibited" : null;
   const excluded = reason !== null;
-  const banExcludes = excluded && !profileExclude?.excluded && !statusExclude.excluded;
+  const banExcludes = excluded && !statusExclude.excluded;
 
   const nameless = src.name.trim() === "";
   if (nameless && !excluded) return { omitted: "no_name" };
   if (nameless) warnings.push({ code: "fallback_name" });
-  if (!profile && !excluded) return { omitted: "no_profile" };
+  if (!state && !excluded) return { omitted: "no_state" };
 
-  // shelter: all eight sectors, each with its provenance, or no spot; an excluded spot is delivered anyway, a missing
-  // sector as 0 (the worst value) with the note in `exclude.detail`
+  const placeKind = src.kind;
+  const isHarbour = HARBOUR_KINDS.includes(placeKind);
+
+  // shelter: all eight sectors, or no spot; an excluded spot is delivered anyway, a missing sector as 0 (the worst
+  // value) with the note in `exclude.detail`
   const sectorValues = SECTORS.map((s) => num(a[`shelter.${s}`]));
-  const unproven = SECTORS.some((s, i) => sectorValues[i] !== null && !p[`shelter.${s}`]);
   const missingSector = sectorValues.some((v) => v === null);
-  if ((missingSector || unproven) && !excluded) return { omitted: "shelter_incomplete" };
-  if (unproven) warnings.push({ code: "missing_provenance", field: "shelter" });
+  // the anchor position of an anchorage or mooring field (a harbour's position is its position)
+  const anchor = isHarbour ? undefined : anchorPosition(src.anchor);
+  if (!excluded && (missingSector || (!isHarbour && anchor === undefined))) return { omitted: "incomplete_core" };
   const filled = sectorValues.map((v) => v ?? 0);
-  const shelterOrigins = originsOf(SHELTER_ATTRIBUTES);
+  const shelterOrigins = provenanceOf(SHELTER_ATTRIBUTES).map((e) => e.origin);
   const shelter: SpotBody["shelter"] = {
     sectors: Object.fromEntries(SECTORS.map((s, i) => [s, filled[i]!])) as SpotBody["shelter"]["sectors"],
     swell: num(a["swell_protection"]) ?? Math.min(...filled),
-    // no sector with provenance (a zero-filled excluded spot): the source of the rule that filled it (ruling M6-B-R3)
+    // no sector with a value (a zero-filled excluded spot): the source of the rule that filled it (ruling M6-B-R3)
     source: shelterOrigins.length > 0 ? combineSource(shelterOrigins) : ORIGIN.rule,
   };
 
@@ -236,20 +224,18 @@ export function mapSpot(
     detail: reason ? (missingSector ? `${EXCLUDE_REASON_DE[reason]} (${NO_SHELTER_NOTE_DE})` : EXCLUDE_REASON_DE[reason]) : null,
   };
 
-  const placeKind = (typeof a["place.kind"] === "string" ? a["place.kind"] : src.kind) as PlaceKind;
-  const isHarbour = HARBOUR_KINDS.includes(placeKind);
-  const seasonHints = (Array.isArray(a["derived.season"]) ? a["derived.season"] : []) as Array<{ kind: string; months: number[] }>;
-  const anchor = isHarbour ? undefined : anchorPosition(a["anchor_position"], p["anchor_position"], warnings);
-  const depthValue = depth(a, p, warnings);
+  const seasonHints = (Array.isArray(a["season_notes"]) ? a["season_notes"] : []) as Array<{ kind: string; months: number[] }>;
+  const depthValue = depth(a, p);
 
-  // a stored profile without the value (consolidated before fact schema v3) delivers the derivation of spec 17
-  const berthableFact = typeof a["berthable"] === "boolean" ? a["berthable"] : null;
-  const berthable = berthableFact ?? derivedBerthable(placeKind, src.status);
-  const sources = mapSources(src.sources, ctx.cfg);
+  const nearby = mapNearby(state?.nearby ?? [], src.nearbyObjects);
+  const mappedFacts = mapFacts(state?.facts ?? [], nearby.delivered);
+  for (const w of nearby.warnings) warnings.push(w);
+  for (const w of mappedFacts.warnings) warnings.push(w);
+
   const spot: SpotBody = {
     id: src.publicId,
     kind: SPOT_KIND[placeKind],
-    berthable,
+    berthable: typeof a["berthable"] === "boolean" ? (a["berthable"] as boolean) : null,
     contact: contact(a["contact"]),
     name: nameless ? ctx.cfg.spots.excludedFallbackName : src.name,
     names: src.names.length > 0 ? src.names : undefined,
@@ -261,57 +247,57 @@ export function mapSpot(
     holding: HOLDING[a["holding"] as keyof typeof HOLDING] ?? "unknown",
     limits: { maxDraft: num(a["max_draft"]), maxLength: num(a["max_length"]), capacity: num(a["capacity"]) },
     mooring: mooring(a),
-    services: services(a, seasonHints.some((h) => h.kind === "open")),
-    berth: berth(a["occupancy"], isHarbour, p["occupancy"]),
+    services: services(a, nearby.delivered, seasonHints.some((h) => h.kind === "open")),
+    berth: berth(a["occupancy"], isHarbour, state?.core["occupancy"]?.factIds.length ?? 0),
     occupancy: occupancy(a["occupancy"]),
     exclude,
     hazards: hazards(a["hazards"], { ferryLane, cable }),
     seasonNote: seasonNotes(seasonHints, seasonalBans),
-    score: {
-      confidence: round3(profile?.confidence ?? 0),
-      popularity: round3(src.popularity ?? 0),
-      quietness: num(a["derived.quietness"]) === null ? null : round3(num(a["derived.quietness"])!),
-      sourcesCount: profile?.sourcesCount ?? 0,
-      lastObserved: lastObserved(Object.values(p)),
-    },
-    highlightIds: ctx.highlightIds,
-    highlightLevels: highlightLevels(a["derived.highlights"]),
+    score: score(state, src.popularity),
     externalRefs: { googlePlaceIds: {}, osmId: src.osmId, wikidataId: src.wikidataId },
-    summary: mapSummary(src.summary, profile?.confidence ?? null, ctx.cfg),
     images: mapImages(src.publicId, src.images),
-    sources: sources.sources,
-    provenance: provenance(berthableFact === null && berthable !== null ? { ...p, berthable: DERIVED_PROVENANCE } : p, berthableFact === null && berthable !== null ? (k) => k === "berthable" || has(k) : has, {
+    provenance: provenance(p, has, {
       anchorPosition: anchor !== undefined,
       depth: depthValue !== undefined,
       banExcludes,
       prohibitionHazard: ferryLane || cable,
       seasonalBan: seasonalBans.length > 0,
+      nearby: nearby.delivered,
     }),
     regionId: ctx.regionId,
     mergedInto: null,
+    gaps: state?.gaps ?? [],
+    facts: mappedFacts.facts,
+    landingPoints: mapLandingPoints(state?.landing ?? []),
+    nearby: nearby.delivered.map((n) => n.entry),
   };
-  return { spot: withoutUndefined(spot), warnings, forbiddenSources: sources.forbidden };
+  return { spot: withoutUndefined(spot), asOf: state ? state.updatedAt.toISOString().slice(0, 10) : null, warnings };
 }
 
-/** Provenance of a `berthable` the delivery derives itself (no fact, no stored derivation). */
-const DERIVED_PROVENANCE: AttributeProvenance = {
-  origin: "derived",
-  rule: "derived",
-  confidence: 1,
-  confidenceClass: "high",
-  observedAt: null,
-  lastConfirmedAt: null,
-  factIds: [],
-  sourceKeys: [],
-  computationIds: [],
-  poiIds: [],
-  expired: false,
-  onlyGoneSources: false,
-  conflictKey: null,
-  observedMonths: [],
-};
+/** The anchor position of the place as the contract's `anchorPosition`: the computed point with its configured confidence. */
+function anchorPosition(anchor: SpotSource["anchor"]): SpotBody["anchorPosition"] {
+  if (anchor === null) return undefined;
+  return { lat: round5(anchor.lat), lon: round5(anchor.lon), confidence: round3(anchor.confidence), source: ORIGIN.computed };
+}
 
-/** The contact fact as the contract's `contact`; null when it is missing or all three parts are empty. */
+/** The `score` block: confidence from the core values, evidence count and newest date from the state. */
+function score(state: SpotSource["state"], popularity: number | null): SpotBody["score"] {
+  const core = Object.values(state?.core ?? {});
+  const rated = core.filter((v) => v.origin !== "rule");
+  const evidence = new Set([...core.flatMap((v) => v.factIds), ...(state?.facts ?? []).flatMap((f) => f.memberIds ?? [f.factId])]);
+  const dates = [...core.filter((v) => v.origin === "text").map((v) => v.observedAt), ...(state?.facts ?? []).map((f) => f.observedAt)]
+    .map((d) => d?.slice(0, 10) ?? null)
+    .filter((d): d is string => d !== null);
+  return {
+    confidence: rated.length === 0 ? 0 : round3(rated.reduce((sum, v) => sum + v.confidence, 0) / rated.length),
+    popularity: round3(popularity ?? 0),
+    quietness: null,
+    sourcesCount: evidence.size,
+    lastObserved: dates.length === 0 ? null : dates.reduce((x, y) => (y > x ? y : x)),
+  };
+}
+
+/** The contact value as the contract's `contact`; null when it is missing or all three parts are empty. */
 function contact(value: unknown): SpotBody["contact"] {
   if (!isRecord(value)) return null;
   const part = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v : null);
@@ -321,35 +307,12 @@ function contact(value: unknown): SpotBody["contact"] {
   return out.vhf === null && out.phone === null && out.url === null ? null : out;
 }
 
-function anchorPosition(
-  value: unknown,
-  prov: AttributeProvenance | undefined,
-  warnings: SpotWarning[],
-): SpotBody["anchorPosition"] {
-  if (!isRecord(value) || num(value.lon) === null || num(value.lat) === null) return undefined;
-  if (!prov) {
-    warnings.push({ code: "missing_provenance", field: "anchorPosition" });
-    return undefined;
-  }
-  return {
-    lat: round5(value.lat as number),
-    lon: round5(value.lon as number),
-    confidence: round3(prov.confidence),
-    source: ORIGIN[prov.origin],
-  };
-}
-
-/** Depths; a present depth without provenance drops the field with a warning (ruling M6-B-R2 M-6). */
-function depth(a: Record<string, unknown>, p: Record<string, AttributeProvenance>, warnings: SpotWarning[]): SpotBody["depth"] {
+/** Depths; confidence is the lowest of the present ones, the source their combination. */
+function depth(a: Record<string, unknown>, p: Record<string, ProvenanceInfo>): SpotBody["depth"] {
   const present = DEPTH_ATTRIBUTES.filter((k) => num(a[k]) !== null);
   if (present.length === 0) return undefined;
-  const entries = present.map((k) => p[k]);
-  if (entries.some((e) => e === undefined)) {
-    warnings.push({ code: "missing_provenance", field: "depth" });
-    return undefined;
-  }
   const [min, max, anchoringMin, anchoringMax] = DEPTH_ATTRIBUTES.map((k) => num(a[k]));
-  const proven = entries as AttributeProvenance[];
+  const proven = present.map((k) => p[k]!);
   return {
     min,
     max,
@@ -370,10 +333,17 @@ function mooring(a: Record<string, unknown>): SpotBody["mooring"] {
   };
 }
 
-function services(a: Record<string, unknown>, openSeason: boolean): SpotBody["services"] {
+/** Whether a thing of one of `categories` is reached on foot (E5). */
+const reachedOnFoot = (nearby: DeliveredNearby[], categories: string[]) =>
+  nearby.some((n) => n.entry.access === "foot" && categories.includes(n.entry.category));
+
+function services(a: Record<string, unknown>, nearby: DeliveredNearby[], openSeason: boolean): SpotBody["services"] {
   const state = (service: Service): "yes" | "no" | "seasonal" | "unknown" => {
-    const raw = a[SERVICE_ATTRIBUTE[service]];
-    const value = isRecord(raw) ? raw.present : raw;
+    const key = SERVICE_ATTRIBUTE[service];
+    const raw = key === null ? undefined : a[key];
+    const own = isRecord(raw) ? raw.present : raw;
+    const value =
+      service === "shop" ? (reachedOnFoot(nearby, SHOP_CATEGORIES) ? true : undefined) : service === "taverna" ? (reachedOnFoot(nearby, TAVERNA_CATEGORIES) ? true : undefined) : own;
     if (value === true) return openSeason && SEASONAL_SERVICES.includes(service) ? "seasonal" : "yes";
     return value === false ? "no" : "unknown";
   };
@@ -388,28 +358,12 @@ const knownOccupancy = (value: unknown): Array<{ month: number; level: "empty" |
         .sort((x, y) => x.month - y.month)
     : [];
 
-function berth(value: unknown, isHarbour: boolean, prov: AttributeProvenance | undefined): SpotBody["berth"] {
+function berth(value: unknown, isHarbour: boolean, evidenceCount: number): SpotBody["berth"] {
   if (!isHarbour) return { status: "unknown", months: [], sourcesCount: 0, bookable: null };
   const months = knownOccupancy(value);
   const full = months.filter((e) => e.level === "full").map((e) => e.month);
   const status = full.length > 0 ? "seasonFull" : months.length > 0 ? "usuallySpace" : "unknown";
-  return { status, months: full, sourcesCount: months.length > 0 ? (prov?.sourceKeys.length ?? 0) : 0, bookable: null };
-}
-
-const HIGHLIGHT_LEVELS = new Set(["none", "some", "many"]);
-
-/** `derived.highlights` (spec 16) → per category its level, categories sorted; none valid → undefined. */
-function highlightLevels(value: unknown): SpotBody["highlightLevels"] {
-  if (!isRecord(value)) return undefined;
-  const entries = Object.keys(value)
-    .filter((c): c is HighlightCategory => Object.hasOwn(HIGHLIGHT_CATEGORY, c))
-    .flatMap((c) => {
-      const entry = value[c];
-      const level = isRecord(entry) ? entry.level : undefined;
-      return typeof level === "string" && HIGHLIGHT_LEVELS.has(level) ? [[HIGHLIGHT_CATEGORY[c], level as "none" | "some" | "many"] as const] : [];
-    })
-    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+  return { status, months: full, sourcesCount: months.length > 0 ? evidenceCount : 0, bookable: null };
 }
 
 function occupancy(value: unknown): SpotBody["occupancy"] {
@@ -446,8 +400,8 @@ function seasonNotes(hints: Array<{ kind: string; months: number[] }>, seasonalB
   return notes.length > 0 ? notes : undefined;
 }
 
-/** The newest observation date of a text or observed value (Teil B `score.lastObserved`; spot and highlight). */
-export function lastObserved(entries: AttributeProvenance[]): string | null {
+/** The newest observation date of a text or observed value (Teil B `score.lastObserved`; highlight). */
+export function lastObserved(entries: Array<Pick<AttributeProvenance, "origin" | "observedAt">>): string | null {
   const dates = entries
     .filter((e) => e.origin === "text" || e.origin === "observed")
     .map((e) => e.observedAt?.slice(0, 10) ?? null)
@@ -458,9 +412,9 @@ export function lastObserved(entries: AttributeProvenance[]): string | null {
 /**
  * Teil B "score.confidence unter 0,3 … summary.de mit dem Hinweis 'wenig belegt'": below `validation.lowConfidence`
  * (a profile without confidence counts as low, ruling M6-P9) the note is appended unless the text has it; without a
- * summary a low-confidence spot gets the note as its summary, any other spot none. Highlights use the same rule.
+ * summary a low-confidence spot gets the note as its summary, any other spot none. Highlights use the same rule (the contract 4.0 spot has no summary).
  */
-export function mapSummary(text: string | null, confidence: number | null, cfg: DeliveryConfig): SpotBody["summary"] {
+export function mapSummary(text: string | null, confidence: number | null, cfg: DeliveryConfig): { de: string } | undefined {
   const note = cfg.validation.lowConfidenceNote;
   const low = round3(confidence ?? 0) < cfg.validation.lowConfidence;
   if (text === null || text.trim() === "") return low ? { de: `${note.charAt(0).toUpperCase()}${note.slice(1)}.` } : undefined;
@@ -475,7 +429,10 @@ export function mapSummary(text: string | null, confidence: number | null, cfg: 
  * M-1), come back as `forbidden`: values drawn from such a document must not be delivered, so the validation blocks the
  * package (`foreign_content`, ruling M6-D-R2).
  */
-export function mapSources(rows: SourceRefRow[], cfg: DeliveryConfig): { sources: SpotBody["sources"]; forbidden: string[] } {
+export function mapSources(
+  rows: SourceRefRow[],
+  cfg: DeliveryConfig,
+): { sources: Array<{ url: string; kind: ContractSourceKind; observedAt: string }> | undefined; forbidden: string[] } {
   const web = rows.filter((r) => /^https?:\/\//.test(r.url));
   const forbidden = [...new Set(web.filter((r) => isForbiddenUrl(r.url, cfg.forbiddenDomains)).map((r) => r.url))].sort();
   const kept = web
@@ -488,9 +445,9 @@ export function mapSources(rows: SourceRefRow[], cfg: DeliveryConfig): { sources
 
 /** Flat contract provenance per field group (`shelter`, `services.taverna` …), each `aggregateProvenance`. */
 function provenance(
-  p: Record<string, AttributeProvenance>,
+  p: Record<string, ProvenanceInfo>,
   has: (key: string) => boolean,
-  o: { anchorPosition: boolean; depth: boolean; banExcludes: boolean; prohibitionHazard: boolean; seasonalBan: boolean },
+  o: { anchorPosition: boolean; depth: boolean; banExcludes: boolean; prohibitionHazard: boolean; seasonalBan: boolean; nearby: DeliveredNearby[] },
 ): SpotBody["provenance"] {
   const groups: Record<string, string[]> = {
     shelter: SHELTER_ATTRIBUTES,
@@ -499,20 +456,26 @@ function provenance(
     holding: ["holding"],
     limits: LIMIT_ATTRIBUTES,
     mooring: MOORING_ATTRIBUTES,
-    ...Object.fromEntries((Object.keys(SERVICE_ATTRIBUTE) as Service[]).map((s) => [`services.${s}`, [SERVICE_ATTRIBUTE[s]]])),
+    ...Object.fromEntries(
+      (Object.keys(SERVICE_ATTRIBUTE) as Service[]).flatMap((s) => (SERVICE_ATTRIBUTE[s] === null ? [] : [[`services.${s}`, [SERVICE_ATTRIBUTE[s]]]])),
+    ),
     berthable: ["berthable"],
     contact: ["contact"],
     occupancy: ["occupancy"],
-    exclude: o.banExcludes ? ["exclude", "prohibitions"] : ["exclude"],
+    exclude: o.banExcludes ? ["prohibitions"] : [],
     hazards: o.prohibitionHazard ? ["hazards", "prohibitions"] : ["hazards"],
-    anchorPosition: o.anchorPosition ? ["anchor_position"] : [],
-    seasonNote: o.seasonalBan ? ["derived.season", "prohibitions"] : ["derived.season"],
+    seasonNote: o.seasonalBan ? ["season_notes", "prohibitions"] : ["season_notes"],
   };
   const out: SpotBody["provenance"] = {};
   for (const [key, attributes] of Object.entries(groups)) {
-    const entries = attributes.filter(has).map((k) => p[k]).filter((e): e is AttributeProvenance => e !== undefined);
+    const entries = attributes.filter(has).map((k) => p[k]).filter((e): e is ProvenanceInfo => e !== undefined);
     if (entries.length > 0) out[key] = aggregateProvenance(entries);
   }
+  // the places's anchor position and the services drawn from the things on land are computed values
+  const computed: ProvenanceInfo = { origin: "computed", confidence: 1, observedAt: null };
+  if (o.anchorPosition) out["anchorPosition"] = aggregateProvenance([computed]);
+  if (reachedOnFoot(o.nearby, SHOP_CATEGORIES)) out["services.shop"] = aggregateProvenance([computed]);
+  if (reachedOnFoot(o.nearby, TAVERNA_CATEGORIES)) out["services.taverna"] = aggregateProvenance([computed]);
   return out;
 }
 

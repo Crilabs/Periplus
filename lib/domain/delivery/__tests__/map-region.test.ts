@@ -50,7 +50,6 @@ function region(n: number, o: Partial<RegionSource> = {}): RegionSource {
     areaKm2: null,
     parentGeoObjectIds: [],
     profile: null,
-    sources: [],
     ...o,
   };
 }

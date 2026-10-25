@@ -149,6 +149,9 @@ export const SEASON_DE: Record<SeasonKind, string> = {
   other: "Saisonhinweis",
 };
 
+/** What the contract's provenance needs of a value: a profile attribute's provenance and a berth state's core value both have it. */
+export type ProvenanceInfo = Pick<AttributeProvenance, "origin" | "confidence" | "observedAt">;
+
 /** Contract order of combined sources (`computed+text`). */
 const COMBINE_ORDER: ContractSource[] = ["computed", "text", "observed", "review"];
 /** Which source an aggregated provenance names: the strongest evidence (review > observed > text > computed). */
@@ -167,7 +170,7 @@ const round3 = (n: number) => Number(n.toFixed(3));
  * One contract provenance entry for several profile values: the strongest source, the lowest confidence and the
  * latest observation date (null when none has one); at least one entry.
  */
-export function aggregateProvenance(entries: AttributeProvenance[]): {
+export function aggregateProvenance(entries: ProvenanceInfo[]): {
   source: ContractSource;
   confidence: number;
   observedAt: string | null;

@@ -633,13 +633,17 @@ export async function validatePackage(pkg: DeliveryPackage, deps: ValidationDeps
   return { ok: checks.every((c) => c.ok), checks, warnings: [...(deps.warnings ?? []), ...own] };
 }
 
-const SPOT_OMITTED_DE: Record<"no_name" | "no_profile" | "shelter_incomplete", string> = {
+const SPOT_OMITTED_DE: Record<"no_name" | "no_state" | "incomplete_core", string> = {
   no_name: "Nicht geliefert: kein gültiger Name",
-  no_profile: "Nicht geliefert: kein Profil",
-  shelter_incomplete: "Nicht geliefert: Schutzwerte unvollständig oder ohne Herkunft",
+  no_state: "Nicht geliefert: kein Stand",
+  incomplete_core: "Nicht geliefert: Schutz oder Ankerposition fehlt im Stand",
 };
 
-const FIELD_DE: Record<"anchorPosition" | "depth" | "shelter", string> = { anchorPosition: "Ankerposition", depth: "Tiefe", shelter: "Schutz" };
+const SPOT_WARNING_DE: Record<SpotWarning["code"], string> = {
+  fallback_name: "Ausgeschlossener Spot ohne gültigen Namen, mit Ersatznamen geliefert",
+  nearby_without_id: "Ding an Land ohne öffentliche ID, nicht geliefert",
+  fact_without_subject: "Landfakt ohne Bezugsnamen, nicht geliefert",
+};
 
 const HIGHLIGHT_DROPPED_DE: Record<DroppedHighlight["reason"], string> = {
   no_name: "Nicht geliefert: kein gültiger Name",
@@ -675,18 +679,7 @@ export function buildWarnings(input: {
   const out: Finding[] = [];
   for (const s of input.spots ?? []) {
     for (const w of s.warnings) {
-      out.push(
-        finding(
-          SPOTS,
-          s.id,
-          null,
-          w.code === "fallback_name"
-            ? "Ausgeschlossener Spot ohne gültigen Namen, mit Ersatznamen geliefert"
-            : w.field === "shelter"
-              ? "Schutzwerte ohne Herkunft geliefert (ausgeschlossener Spot)"
-              : `${FIELD_DE[w.field]} ohne Herkunft, nicht geliefert`,
-        ),
-      );
+      out.push(finding(SPOTS, s.id, null, SPOT_WARNING_DE[w.code]));
     }
   }
   for (const s of input.omittedSpots ?? []) out.push(finding(SPOTS, s.id, null, SPOT_OMITTED_DE[s.reason]));

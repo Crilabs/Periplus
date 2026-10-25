@@ -256,9 +256,7 @@ async function assemble(
       : null,
     findCopies: async (text) => (await findArchiveCopies(tx, text)).longestRun,
     forbiddenSources: [
-      ...draft.spots.filter((s) => s.forbiddenSources.length > 0).map((s) => ({ file: "spots.json" as const, objectId: s.body.id, urls: s.forbiddenSources })),
       ...draft.highlightForbiddenSources.map((h) => ({ file: "highlights.json" as const, objectId: h.id, urls: h.urls })),
-      ...draft.regionForbiddenSources.map((r) => ({ file: "regions.json" as const, objectId: r.id, urls: r.urls })),
     ],
     cfg,
     imageAttribution: imageAttributionTexts(imagesCfg),
@@ -315,7 +313,7 @@ function buildManifest(
     areas: scope.areas.map((a) => ({ id: a.publicId, key: a.key, names: a.names })),
     generatedAt: o.generatedAt,
     bbox: scope.subdivision.bbox,
-    tiles: scope.tiles.map((t) => ({ id: t.id, lastRunAt: t.lastRunAt, profilesAsOf: t.profilesAsOf })),
+    tiles: scope.tiles.map((t) => ({ id: t.id, lastRunAt: t.lastRunAt, profilesAsOf: t.statesAsOf /* interim: Task 3 switches the manifest to 4.0 (statesAsOf) */ })),
     objectCounts: {
       spots: files["spots.json"].spots.length,
       highlights: files["highlights.json"].highlights.length,

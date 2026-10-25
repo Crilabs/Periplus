@@ -1,5 +1,6 @@
 import type { ChangesFile, CoastCollection, HighlightsFile, Manifest, RegionsFile, SpotsFile, WeatherPointsFile } from "@/contract/v3_0";
 import type { GeoObjectType, PlaceKind, PlaceStatus, HighlightCategory } from "@/lib/db/schema/geo";
+import type { berthStates } from "@/lib/db/schema/research-state";
 import type { DocType } from "@/lib/db/schema/sources";
 import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
 
@@ -8,6 +9,9 @@ import type { ProfileSnapshot } from "@/lib/domain/consolidation/types";
  * names and the documents behind them. Loaded by `loadSubdivisionScope` (load.ts), mapped to the contract by the
  * `map-*.ts` modules. Content belongs to the subdivision by `geo_objects.subdivision_id`, never by tile label.
  */
+
+/** A row of `berth_states`. */
+export type BerthStateRow = typeof berthStates.$inferSelect;
 
 export type LonLat = { lon: number; lat: number };
 
@@ -55,15 +59,20 @@ export type SpotSource = {
   names: SpotName[];
   osmId: string | null;
   wikidataId: string | null;
-  profile: ProfileSnapshot | null;
-  /** The `ok` summary of the latest profile version (highest prompt version), ruling M6-P9. */
-  summary: string | null;
+  /** The berth state (plan N4a); null for a place without one (an excluded place, or a confirmed one the research has not reached). */
+  state: BerthStateRow | null;
+  /** The computed anchor position of the place (`places.anchor_position`) with the configured confidence; null without one. */
+  anchor: { lon: number; lat: number; confidence: number } | null;
+  /** The geo objects the state's `nearby` entries point at (public id, names, position); an entry whose object is missing here is not delivered. */
+  nearbyObjects: NearbyObject[];
   /** `popularityForPlaces` on the build date (fixed neighbourhood across subdivisions, spec 18); null for a place outside its map (ruling M6-P8). */
   popularity: number | null;
-  sources: SourceRefRow[];
   /** The deliverable current images, best first (rank, sort order, slot). */
   images: DeliverableImage[];
 };
+
+/** A thing on land a state's `nearby` entry points at, as loaded from `geo_objects`; `publicId` null when it has none (contract 4.0, E1). */
+export type NearbyObject = { geoObjectId: string; publicId: string | null; name: string; names: SpotName[]; position: LonLat };
 
 /** A place merged into another: its public id and the final target's (ruling M6-P14). */
 export type MergedSpot = { publicId: string; mergedIntoPublicId: string };
@@ -99,8 +108,6 @@ export type RegionSource = {
   /** Ancestors via `parent_id`, nearest first. */
   parentGeoObjectIds: string[];
   profile: ProfileSnapshot | null;
-  /** The documents behind the profile; only checked against `forbiddenDomains` (final review I-2), never delivered. */
-  sources: SourceRefRow[];
 };
 
 export type PassageSource = {
@@ -125,8 +132,8 @@ export type SubdivisionScope = {
   };
   /** The sailing areas (Reviere) linked to the scope tiles (`tile_geo_objects`), by public id; information only. */
   areas: Array<{ publicId: string; key: string; names: ObjectName[] }>;
-  /** The scope tiles (`subdivisionTileIds`) with their state; a tile without a run has no `lastRunAt` and no profiles. */
-  tiles: Array<{ id: string; lastRunAt: string | null; profilesAsOf: string | null }>;
+  /** The scope tiles (`subdivisionTileIds`) with their state; a tile without a run has no `lastRunAt` and no states. */
+  tiles: Array<{ id: string; lastRunAt: string | null; statesAsOf: string | null }>;
   spots: SpotSource[];
   merged: MergedSpot[];
   pois: PoiSource[];
